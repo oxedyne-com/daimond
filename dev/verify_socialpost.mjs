@@ -458,6 +458,12 @@ try {
 	await page.waitForTimeout(2500);
 	await page.evaluate(() => { window.DaimondPanels.show('social'); });
 	await page.waitForTimeout(400);
+	// The panel opens on Messages after a reload now (2026-09-15: Feedback is a
+	// chip, not the default view), so the queue this section reads is hidden
+	// until Feedback is chosen -- the same switch the setup above already makes
+	// once, before any of this ever ran.
+	await page.evaluate(() => window.DaimondSocial.show('proposals'));
+	await page.waitForTimeout(200);
 	await page.evaluate(() => { if (window.DaimondImprove) window.DaimondImprove.onOpen(); });
 	await page.waitForTimeout(1200);
 	check('(d) a reload posts nothing: a refusal is final until it is edited',

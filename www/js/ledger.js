@@ -104,6 +104,15 @@
 	///   cachedTokens     — cached-input tokens (subset of prompt).
 	///   costUsd          — what the PROVIDER said the turn cost.
 	///   provider         — provider id, for a per-key breakdown.
+	///   turnId           — the turn this entry prices, when the caller ran one
+	///                      (chat and daimon-steer turns do; a whole-chat fold
+	///                      spends against no single turn and passes none).
+	///                      Stored as `tid`, so the debug feed's own `turn.end`
+	///                      -- which has always carried the same id -- can join
+	///                      this entry to it by identity instead of guessing
+	///                      from device, clock skew and prompt size, which is
+	///                      what let a synced copy of this entry be shown under
+	///                      a device that never ran the turn (`dev/lens.mjs`).
 	///
 	/// A reported `costUsd` is stored VERBATIM and the entry is
 	/// flagged `r`. It is the money that actually moved, so nothing
@@ -113,7 +122,7 @@
 	/// Absent a reported figure the table prices it as before, now
 	/// with the real cached count.
 	///
-	/// The stored entry is compact: `{ t, m, p, c, ca, u, pv, r, e }`
+	/// The stored entry is compact: `{ t, m, p, c, ca, u, pv, r, e, tid }`
 	/// where `u` is USD. Returns the entry, or null when the input is
 	/// unusable.
 	function record(turn) {
@@ -144,6 +153,7 @@
 		var entry = { t: turn.ts, m: model, p: p, c: c, ca: ca, u: usd, e: estimated };
 		if (provider) entry.pv = provider;
 		if (reported !== null) entry.r = 1;
+		if (turn.turnId) entry.tid = String(turn.turnId);
 		var entries = load();
 		entries.push(entry);
 		entries = prune(entries, turn.ts);

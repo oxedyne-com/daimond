@@ -23,8 +23,9 @@
 //
 // PROVED AGAINST THE PRE-FIX DISPATCH. `--break rerun` flips the one deciding line — the resume
 // branch's `runTurn(chat, CONTINUE_NUDGE)` back to `runTurn(chat, text)`, which is what the old
-// code did — and runs the SAME checks. The two dispatch assertions in section A then fail, which
-// is the proof they bite on the resume and not on something incidental:
+// code did — and runs the SAME checks. Section A's dispatch assertions then fail, and so does its
+// journal check (the break sends every Continue down the path that tombstones instead), which is
+// the proof they bite on the resume and not on something incidental:
 //
 //   node dev/verify_continue_resume.mjs --break rerun   # the resume-dispatch checks fail
 //   node dev/verify_continue_resume.mjs                 # and then, clean
@@ -103,13 +104,23 @@ check(/CONTINUE_NUDGE/.test(CT_ORIG),
 	'the lifted continueTurn references CONTINUE_NUDGE');
 check(/runTurn\(chat, CONTINUE_NUDGE\)/.test(CT_ORIG),
 	'and dispatches the continuation with runTurn(chat, CONTINUE_NUDGE)');
-check(/runTurn\(chat, text\)/.test(CT_ORIG),
-	'and keeps runTurn(chat, text) for the empty-partial case');
+// The empty-partial case still dispatches the ORIGINAL prompt. Matched on the argument
+// and not on the whole call: that dispatch carries a third argument now (`contOpts`,
+// which records a hand-off that fell back to running here), so a pattern closed with
+// `)` stopped matching the line it was written about and reported the one thing this
+// file exists to protect as missing.
+check(/runTurn\(chat, text[,)]/.test(CT_ORIG),
+	'and keeps runTurn(chat, text, ...) for the empty-partial case');
 
 /// Build the real `continueTurn` with its free identifiers supplied as stubs. Everything else it
 /// uses is a parameter or a local.
 function makeContinueTurn(stubs) {
-	const names = ['loadMsgTombs', 'msgTombstone', 'touchChat', 'persistChats', 'renderHistory', 'runTurn'];
+	// `window` AND the global it reaches through it. The shipped line is the house
+	// idiom -- `if (window.DaimondJournal) DaimondJournal.clearTurn(...)` -- so the
+	// bare name has to be supplied too, or it is a ReferenceError the function's own
+	// try/catch swallows and this file proves nothing.
+	const names = ['loadMsgTombs', 'msgTombstone', 'touchChat', 'persistChats', 'renderHistory',
+		'runTurn', 'window', 'DaimondJournal'];
 	const f = new Function(
 		...names,
 		NUDGE_STMT + '\n' + CT_SRC + '\nreturn continueTurn;');
@@ -118,7 +129,7 @@ function makeContinueTurn(stubs) {
 
 /// A spy set with sensible defaults; a test overrides `loadMsgTombs` where it needs to.
 function spies(over) {
-	const calls = { runTurn: [], msgTombstone: [] };
+	const calls = { runTurn: [], msgTombstone: [], clearTurn: [] };
 	const s = {
 		loadMsgTombs:  () => ({}),
 		msgTombstone:  (mids) => { calls.msgTombstone.push(mids); },
@@ -126,6 +137,11 @@ function spies(over) {
 		persistChats:  () => {},
 		renderHistory: () => {},
 		runTurn:       (chat, text) => { calls.runTurn.push({ chat, text }); },
+		// The page's own globals, as the function reaches for them. Only the journal is
+		// here: `DaimondPeer` absent is an ordinary interruption, which is what these
+		// cases are.
+		window:         { DaimondJournal: true },
+		DaimondJournal: { clearTurn: (id) => { calls.clearTurn.push(id); } },
 	};
 	Object.assign(s, over || {});
 	return { stubs: s, calls };
@@ -177,6 +193,14 @@ console.log('\nA turn with a partial resumes, carrying the partial');
 		'chat.app is nulled so ensureApp rebuilds the session ENDING with the partial');
 	check(chat.messages.filter((m) => m.role === 'user').length === 1,
 		'the original prompt stays in the thread exactly once');
+	// AND THE DEAD TURN LEAVES THE WRITE-AHEAD LOG. `runTurn`'s offline branch leaves it
+	// open there so a reload can recover it -- but it is being taken over here, and
+	// recovery cannot tell: its "already recovered" guard looks for a message carrying
+	// this turn id, and at boot a chat's transcript has not been read yet. Left open, the
+	// next reload appended a SECOND badged partial offering to buy the answer again.
+	check(calls.clearTurn.length === 1 && calls.clearTurn[0] === 'T1',
+		'and the turn is cleared from the journal, so no reload recovers it again',
+		JSON.stringify(calls.clearTurn));
 }
 
 // ── B: nothing arrived → RE-RUN (the one right re-run) ───────
@@ -235,7 +259,7 @@ console.log('\nthe guards that stop a double-run or a wipe');
 }
 
 // ── The count is pinned ──────────────────────────────────────
-const EXPECTED = 20;
+const EXPECTED = 21;
 const ranBefore = ran;
 check(ranBefore === EXPECTED,
 	`exactly ${EXPECTED} checks ran — a displaced case trips this`,

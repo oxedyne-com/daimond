@@ -276,8 +276,13 @@ const DIALOGS = [
 		},
 	},
 	{
+		// Moved off the row and into the cog (CHAT-15): reached through the
+		// dialog `mountChatFoldKeep` draws now, not a button on the tile itself.
 		name: 'Fold this chat into…', sel: '.fold-menu',
-		reach: async (p) => { await press(p, '#session-list .tile-fold'); },
+		reach: async (p) => {
+			await press(p, '#session-list .tile-cog');
+			await press(p, '.tile-dlg-card .tile-fold');
+		},
 	},
 	{
 		name: 'Admin home', sel: '#admin-home',
@@ -385,9 +390,12 @@ try {
 	const seeded = await page.evaluate(() => ({
 		d: document.querySelectorAll('#diamond-list .session-box').length,
 		c: document.querySelectorAll('#session-list .session-box').length,
-		// An ACTIVE chat, not a pending one: Fold is only on an active tile, and
-		// a pending one would make that dialog silently unreachable.
-		fold: document.querySelectorAll('#session-list .tile-fold').length,
+		// An ACTIVE chat, not a pending one: Fold is only offered for one that has
+		// said something, and a pending tile would make that dialog silently
+		// unreachable. Read off the status class rather than `.tile-fold` (CHAT-15
+		// moved that button off the row and into the cog, so its mere presence on
+		// the tile is no longer the tell).
+		fold: document.querySelectorAll('#session-list .session-box.chat-box:not(.pending)').length,
 	}));
 	console.log(`seeded: ${seeded.d} Diamond(s), ${seeded.c} chat(s), ${seeded.fold} foldable`);
 	if (!seeded.fold) console.log('note  the chat did not start — the Fold picker will be skipped');

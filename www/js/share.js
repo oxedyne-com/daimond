@@ -42,8 +42,9 @@
    A share is composed to bytes and then somebody has to CARRY
    them. There are two carriers and the choice is made by
    measuring, not by asking: `/api/post` refuses a sealed envelope
-   over 64 KiB, and the Log Life capp page alone is about 64 KB, so
-   a share carrying a capp cannot go through the relay at all.
+   over its own `max_bytes`, which is three mebibytes and was 64 KiB
+   until a share that would not fit through it made the number a
+   fault rather than a setting.
 
    So a share too large is written out as a `.dshare` file, and one
    arriving as a file is read back in — `carrier`, `save`, `take`
@@ -108,8 +109,20 @@
 	var MIME = 'application/octet-stream';
 
 	/// The largest sealed envelope `/api/post` carries: the gateway's own
-	/// `max_bytes` on that route (`gateway/src/settings.rs`, fallback 65536).
-	var RELAY_MAX = 64 * 1024;
+	/// `max_bytes` on that route (`gateway/src/settings.rs`, fallback 3145728).
+	///
+	/// THREE MEBIBYTES, RAISED FROM 64 KiB, and the number is the share's rather
+	/// than the message's. `TOTAL_MAX` below is two mebibytes of file bodies; the
+	/// paths, the head, one slot per recipient and the seal's tag sit on top of
+	/// that, and 3 MiB is the next round figure above the lot. At 64 KiB the Log
+	/// Life page alone was over the ceiling, so every diamond carrying a page took
+	/// the file route -- the relay was a carrier for a share that fitted in a
+	/// message, which is no share at all.
+	///
+	/// A share still larger than this takes the file route, with the sentence
+	/// `carrierWhy` already writes. The file route is not a fallback: it is the
+	/// honest route for a person with no gateway account and for a stick.
+	var RELAY_MAX = 3 * 1024 * 1024;
 
 	/// The most a share may carry, in bytes of file bodies. Exactly
 	/// `limit::TOTAL_BYTES` in the schema's own crate: checked here so a person is
@@ -148,9 +161,27 @@
 	///
 	/// The rule three lines below is the one that DOES hold, and it is the
 	/// principle worth keeping in view: a share too large is refused rather than
-	/// trimmed, because a copy missing a file is not a smaller copy. These three
-	/// are not part of the copy at all, which is why they are the exception.
-	var NEVER_TRAVELS = /^(\.daimond\/|versions\/|capp\.json$)/;
+	/// trimmed, because a copy missing a file is not a smaller copy. These are not
+	/// part of the copy at all, which is why they are the exception.
+	///
+	/// TWO OF THEM ARE NOT ABOUT TIDINESS. `triggers.json` is armed automation:
+	/// a trigger fires with nobody pressing anything, it spends the RECEIVER's
+	/// money, and a leaf that appears in the pause tree PLAYS -- so a share
+	/// carrying one would start work on somebody's machine because they accepted a
+	/// gift. `STATE.md` names folders and build commands on the SENDER's disk, and
+	/// the daimon rebuilds it on its first turn. The template path already refuses
+	/// both (`src/protocol.rs`, `TEMPLATE_DROP_EXACT`); a share did not, and the
+	/// two carry the same files for the same people.
+	var NEVER_TRAVELS = /^(\.daimond\/|versions\/|capp\.json$|triggers\.json$|STATE\.md$)/;
+
+	/// The sender's conversation with their daimon, which travels only when the
+	/// sender says so.
+	///
+	/// NOT IN `NEVER_TRAVELS`, because it is not a refusal: it is a decision, and
+	/// the tick on the sheet is where it is made. The template has had the same
+	/// tick since it existed (`tmpl.with_conversation`), and a share is the same
+	/// files going to the same person.
+	var CONVERSATION = 'transcript.md';
 
 	// ── Bytes ──────────────────────────────────────────────────
 
@@ -284,12 +315,17 @@
 
 	/// Everything of a Diamond that a share carries, as `[{path, body}]`.
 	///
-	/// The three things that never travel are dropped HERE, silently, rather than
+	/// The things that never travel are dropped HERE, silently, rather than
 	/// refused: a person sharing a recipe did not ask for their agent log to go
 	/// with it and should not have to know it exists to get the recipe sent. The
 	/// format refuses them too, which is what makes this a convenience rather than
 	/// the guard.
-	async function collect(id) {
+	///
+	/// `opts.conversation` carries `transcript.md` as well, which is the sheet's
+	/// tick and is off by default. It is the one thing here the FORMAT cannot
+	/// decide, because the format cannot see a tick.
+	async function collect(id, opts) {
+		var withConv = !!(opts && opts.conversation);
 		if (!landReady()) {
 			throw new Error(tOr('share.err_no_store',
 				'This build can read a share but has nowhere to put one.'));
@@ -301,6 +337,7 @@
 			var f = all[i];
 			var path = String((f && f.path) || '');
 			if (!path || NEVER_TRAVELS.test(path)) { log('not travelling', path); continue; }
+			if (path === CONVERSATION && !withConv) { log('conversation left behind'); continue; }
 			var body = f.body instanceof Uint8Array ? f.body
 				: (typeof f.body === 'string' ? utf8(f.body) : new Uint8Array(f.body || []));
 			total += body.length;
@@ -389,7 +426,7 @@
 				throw new Error(tOr('share.err_nothing',
 					'There is nothing to share: name a diamond or the files to send.'));
 			}
-			files = await collect(o.diamond);
+			files = await collect(o.diamond, { conversation: !!o.conversation });
 		}
 
 		var b = bridge();
@@ -642,7 +679,27 @@
 		// record of the sender's delivery and no history of theirs. The name is
 		// advisory — the store settles a clash, since two people may pick one name
 		// and neither is wrong.
-		var id = await DaimondDiamond.land(read.name(), files);
+		//
+		// WHERE IT CAME FROM TRAVELS WITH IT, and the anchor is the SHARE ADDRESS
+		// rather than the diamond's id. A diamond id is local -- the sender's copy
+		// and this one have different ones and always will -- so lineage anchored on
+		// an id would be lineage that means nothing on the second machine. The
+		// address is over the signed artefact, computed on this device, and a nonce
+		// makes two shares of one diamond two addresses.
+		//
+		// `handle` is the caller's: the name THIS account has for the sender, which
+		// is advisory, and `author` beside it is the key, which is not. `prior` is
+		// null and stays null until a landed diamond is shared onward under
+		// `daimond/share/1`.
+		var origin = {
+			share:  read.address(),
+			author: hex(read.author()),
+			handle: String(o.handle == null ? '' : o.handle) || fingerprintOf(read.author()),
+			name:   read.name(),
+			ts:     Number(read.time()) || Date.now(),
+			prior:  null,
+		};
+		var id = await DaimondDiamond.land(read.name(), files, origin);
 		log('landed', id, files.length, 'files,', left.length, 'left out');
 		// A PARTIAL LANDING SAYS SO, and `ok: true` beside a count of what did not
 		// arrive is exactly how it stopped saying so. `left` was returned and
@@ -735,10 +792,10 @@
 	/// The whole receiving side in one call, for the control that takes a file.
 	/// The wasm reading is freed whatever happens, which a caller doing the two
 	/// steps itself has to remember and this does not.
-	async function receive(bytes, expectAddr) {
+	async function receive(bytes, expectAddr, opts) {
 		var read = await openSealed(bytes, expectAddr);
 		try {
-			return await accept(read);
+			return await accept(read, opts);
 		} finally {
 			try { if (read && read.free) read.free(); } catch (e) { /* already freed */ }
 		}
@@ -761,10 +818,12 @@
 	// ── Which carrier ──────────────────────────────────────────
 	//
 	// A COMPOSED SHARE HAD NOWHERE TO GO. Everything above builds a sealed
-	// envelope and stops, and the relay -- the only carrier this app had -- refuses
+	// envelope and stops, and the relay -- the only carrier this app had -- refused
 	// one over 64 KiB. The Log Life capp page alone is about 64 KB, so a share
 	// carrying a capp could not go through the relay AT ALL: the whole capp-sharing
-	// feature dead-ended at a byte count, and it dead-ended silently.
+	// feature dead-ended at a byte count, and it dead-ended silently. The ceiling
+	// is three mebibytes now, so the ordinary diamond travels by relay and the file
+	// route carries the one that is genuinely large.
 	//
 	// So the carrier is CHOSEN, by measuring, and the file route below is what the
 	// large case takes. It is also the honest route for a person with no gateway
@@ -777,9 +836,13 @@
 		// turns a body away on the cheap base64-length estimate BEFORE it decodes
 		// anything -- `envelope.len() / 4 * 3 > max_bytes` -- and then again on the
 		// decoded length. base64 rounds up to a group of three, so the estimate is
-		// the stricter of the two, and a sealed envelope of exactly 64 KiB is
-		// refused by it: 65,536 bytes is 87,384 characters, and 87384 / 4 * 3 is
-		// 65,538. The last size that goes through is 65,535 bytes.
+		// the stricter of the two, and whether the ceiling itself is reachable
+		// depends on whether it divides by three. 64 KiB did not: 65,536 bytes is
+		// 87,384 characters and 87384 / 4 * 3 is 65,538, so the last size that went
+		// through was 65,535. Three mebibytes does divide by three, so the ceiling
+		// is exactly reachable and 3,145,729 is the first size refused. The
+		// arithmetic is the gateway's either way and is not restated as a number
+		// here, which is what kept this right through the change.
 		return Math.ceil(Number(n) / 3) * 3 <= RELAY_MAX;
 	}
 
@@ -1372,27 +1435,48 @@
 	/// Sending one. The Diamond is the one being worked, because that is the
 	/// gesture -- you are looking at something and you give somebody a copy --
 	/// and because a picker of every Diamond would be a second Diamonds list in a
-	/// panel that is not the rail.
+	/// panel that is not the rail. So with nothing open the line points at the
+	/// tile's own cog, which is where a share of a NAMED diamond starts.
 	function sendBlock() {
 		var box = node('div', 'shr-block');
 		box.appendChild(node('h3', 'shr-head', tOr('share.panel_send_head', 'Send a diamond')));
-
 		var cur = null;
 		try {
 			if (window.DaimondDiamond && DaimondDiamond.current) cur = DaimondDiamond.current();
 		} catch (e) { cur = null; }
 		if (!cur || !cur.id) {
 			box.appendChild(node('p', 'shr-note', tOr('share.panel_no_diamond',
-				'Open a diamond to share it. A share carries the files of one diamond, so '
-				+ 'there has to be one in front of you.')));
+				'Open a diamond to share it, or use Share\u2026 on its tile.')));
 			return box;
 		}
+		box.appendChild(sheet(cur));
+		return box;
+	}
+
+	/// THE SHEET, and there is one of it.
+	///
+	/// Two doors -- the Share view of the Social panel, and Share\u2026 on a tile's cog
+	/// -- open the same node, because they are the same act on the same diamond and
+	/// a second sheet is a second place for "they will own the copy" to stop being
+	/// said. `daimond.js` mounts it in the cog dialog; `sendBlock` above puts it in
+	/// the panel.
+	///
+	/// FOUR DECISIONS AND ONE CONSEQUENCE, in that order: who, what travels, the
+	/// conversation, the line about it, and then what it costs them. The last line
+	/// is the only one that is not a control, and it is last because it is what the
+	/// press means.
+	///
+	/// `cur` is `{id, name}`.
+	function sheet(cur) {
+		var box = node('div', 'shr-sheet');
+		var stop = why();
+		if (stop) { box.appendChild(node('p', 'shr-note', stop)); return box; }
 
 		var folk = [];
 		try {
 			if (window.DaimondPost && DaimondPost.people) folk = DaimondPost.people() || [];
 		} catch (e) { folk = []; }
-		folk = folk.filter(function (p) { return p && p.pub && p.enc; });
+		folk = folk.filter(function (p2) { return p2 && p2.pub && p2.enc; });
 		if (!folk.length) {
 			// A sealing key is what a share needs, and a person known by signing key
 			// alone has not got one. Said in those terms rather than "nobody yet",
@@ -1404,9 +1488,13 @@
 		}
 
 		box.appendChild(node('p', 'shr-note', tOr('share.panel_this',
-			'Sharing “{name}” — a copy they will own, not a view of yours.',
+			'Sharing \u201c{name}\u201d \u2014 a copy they will own, not a view of yours.',
 			{ name: cur.name || cur.id })));
 
+		// WHO, and the key line under them. trust.js draws that line and nothing
+		// here restates it: a share to a `new` key is a share to whoever holds that
+		// key, and only a `matched` one says who that is. The word "verified" is
+		// never used, which is trust.js's rule and the reason the drawing is theirs.
 		var pickWho = node('select', 'shr-who');
 		pickWho.setAttribute('aria-label', tOr('share.panel_who', 'Who it goes to'));
 		for (var i = 0; i < folk.length; i++) {
@@ -1414,7 +1502,71 @@
 			o.value = folk[i].pub;
 			pickWho.appendChild(o);
 		}
+		var keyLine = node('div', 'shr-key');
+		function whoNow() {
+			for (var j = 0; j < folk.length; j++) {
+				if (folk[j].pub === pickWho.value) return folk[j];
+			}
+			return null;
+		}
+		function drawKey() {
+			keyLine.textContent = '';
+			var p2 = whoNow();
+			if (!p2) return;
+			try {
+				if (window.DaimondTrust && DaimondTrust.drawKeyLine) {
+					keyLine.appendChild(DaimondTrust.drawKeyLine({ state: p2.state }));
+				}
+			} catch (e) { /* trust module not up: no claim is made about the key */ }
+		}
+		drawKey();
+		pickWho.addEventListener('change', drawKey);
 
+		// WHAT TRAVELS. A copy is the diamond as it stands; the shape only is the
+		// template, which is the same pack the cog already saves as a file -- sealed
+		// and signed here for one named person, which is the first time a template
+		// has had a route that is not a file.
+		var mode = node('div', 'shr-mode');
+		var modeName = 'shr-mode-' + (_sheetSeq++);
+		var modes = [['copy', tOr('share.mode_copy', 'A copy')],
+			['shape', tOr('share.mode_shape', 'The shape only')]];
+		var radios = [];
+		modes.forEach(function (m, ix) {
+			var lab = node('label', 'shr-radio');
+			var r = document.createElement('input');
+			r.type = 'radio';
+			r.name = modeName;
+			r.value = m[0];
+			r.checked = ix === 0;
+			radios.push(r);
+			lab.appendChild(r);
+			lab.appendChild(node('span', null, m[1]));
+			mode.appendChild(lab);
+		});
+		function modeNow() {
+			for (var k = 0; k < radios.length; k++) if (radios[k].checked) return radios[k].value;
+			return 'copy';
+		}
+
+		// THE CONVERSATION, OFF. It is the sender's talk with their own daimon and
+		// the receiver did not ask for it; the template has had the same tick since
+		// it existed, and this is the same decision about the same file.
+		var convRow = node('label', 'shr-check');
+		var conv = document.createElement('input');
+		conv.type = 'checkbox';
+		convRow.appendChild(conv);
+		convRow.appendChild(node('span', null,
+			tOr('share.with_conversation', 'Include the conversation')));
+
+		// The covering line. A sentence about what the gift is, not a letter -- the
+		// format stops at 512 bytes and a letter is a message.
+		var note = document.createElement('input');
+		note.type = 'text';
+		note.className = 'shr-note-in';
+		note.maxLength = 180;
+		note.placeholder = tOr('share.note_ph', 'A line about it (optional)');
+
+		var facts = node('p', 'shr-facts', '');
 		var say = node('p', 'shr-say');
 		say.hidden = true;
 		var extra = node('p', 'shr-say');
@@ -1423,19 +1575,17 @@
 		var go = node('button', 'shr-btn shr-send', tOr('share.panel_send', 'Share'));
 		go.type = 'button';
 		go.addEventListener('click', function () {
-			var who = null;
-			for (var j = 0; j < folk.length; j++) {
-				if (folk[j].pub === pickWho.value) { who = folk[j]; break; }
-			}
+			var who = whoNow();
 			if (!who) return;
 			go.disabled = true;
 			extra.hidden = true;
 			extra.textContent = '';
 			say.className = 'shr-say';
-			say.textContent = tOr('share.panel_sealing', 'Sealing…');
+			say.textContent = tOr('share.panel_sealing', 'Sealing\u2026');
 			say.hidden = false;
-			sendTo(cur, who, say, extra).then(function () { go.disabled = false; },
-				function (e) {
+			sendTo(cur, who, { mode: modeNow(), conversation: conv.checked,
+				note: note.value }, say, extra)
+				.then(function () { go.disabled = false; }, function (e) {
 					say.className = 'shr-say shr-warn';
 					say.textContent = (e && e.message) ? e.message : String(e);
 					say.hidden = false;
@@ -1447,9 +1597,65 @@
 		row.appendChild(pickWho);
 		row.appendChild(go);
 		box.appendChild(row);
+		box.appendChild(keyLine);
+		box.appendChild(mode);
+		box.appendChild(convRow);
+		box.appendChild(note);
+		box.appendChild(facts);
 		box.appendChild(say);
 		box.appendChild(extra);
+
+		// WHAT IS ACTUALLY IN IT, counted rather than guessed, and re-counted when
+		// the tick moves because the conversation is usually the largest file in a
+		// worked diamond. Asked of `collect`, which applies the refusals -- so the
+		// number on the sheet is the number that will be sealed and not the number
+		// of files the diamond happens to hold.
+		function countUp() {
+			facts.textContent = '';
+			collect(cur.id, { conversation: conv.checked }).then(function (files) {
+				var bytes = 0;
+				for (var n2 = 0; n2 < files.length; n2++) bytes += files[n2].body.length;
+				facts.textContent = tOr('share.facts',
+					'{n} files \u00b7 {size} \u00b7 they will own the copy',
+					{ n: files.length, size: kb(bytes) });
+			}, function (e) {
+				facts.textContent = (e && e.message) ? e.message : String(e);
+			});
+		}
+		conv.addEventListener('change', countUp);
+		countUp();
 		return box;
+	}
+
+	/// So two sheets on one screen do not share a radio group.
+	var _sheetSeq = 0;
+
+	/// The files a shape-only share carries: the template pack, unpacked.
+	///
+	/// THE PACK IS THE AUTHORITY ON WHAT A SHAPE IS. `export_template` applies
+	/// `protocol::template_carries`, which drops the memory, the kept conversation,
+	/// a capp's entries and the triggers, with the reasons written where the rule
+	/// is. Re-deciding any of that here would be a second, weaker copy of it in the
+	/// module that does not own it -- so the pack is built and then taken apart
+	/// again, and what comes out is exactly what a `.dtemplate` would have carried.
+	async function templateFiles(id) {
+		if (!window.DaimondDiamond || typeof DaimondDiamond.template !== 'function') {
+			throw new Error(tOr('share.err_no_store',
+				'This build can read a share but has nowhere to put one.'));
+		}
+		var val = JSON.parse(await DaimondDiamond.template(String(id), false));
+		var out = [];
+		Object.keys((val && val.files) || {}).forEach(function (path) {
+			out.push({ path: path, body: utf8(val.files[path]) });
+		});
+		Object.keys((val && val.binary) || {}).forEach(function (path) {
+			out.push({ path: path, body: b64dec(val.binary[path]) });
+		});
+		if (!out.length) {
+			throw new Error(tOr('share.err_empty',
+				'There is nothing in that diamond to send yet.'));
+		}
+		return out;
 	}
 
 	/// Compose a share of `cur` to `who`, and hand it to whichever carrier fits.
@@ -1458,10 +1664,17 @@
 	/// to know which happened, because the two ask different things of them: a
 	/// relay send is finished when it says so, and a file is finished when they
 	/// have given somebody the file.
-	async function sendTo(cur, who, say, extra) {
+	///
+	/// `opts` is the sheet's four answers: `mode` (`'copy'` or `'shape'`),
+	/// `conversation`, and `note`.
+	async function sendTo(cur, who, opts, say, extra) {
+		var o = opts || {};
 		var made = await compose({
 			name: cur.name || cur.id,
-			diamond: cur.id,
+			diamond: o.mode === 'shape' ? undefined : cur.id,
+			files:   o.mode === 'shape' ? await templateFiles(cur.id) : undefined,
+			conversation: !!o.conversation,
+			note: String(o.note || ''),
 			to: who.pub,
 			toEnc: who.enc,
 		});
@@ -1489,6 +1702,16 @@
 		}
 		var r = await DaimondPost.fanout(made, [who.pub]);
 		if (r && r.sent) {
+			// THE SENDER'S OWN ROW, kept only now the relay has taken it. Without it
+			// a person who gave somebody a diamond has no record anywhere that they
+			// did -- the receiver gets a tray row and the sender got a sentence that
+			// goes when the panel is redrawn.
+			try {
+				if (typeof DaimondPost.noteShareSent === 'function') {
+					await DaimondPost.noteShareSent({ addr: made.addr, to: who.pub,
+						name: made.name, who: name, ts: made.ts });
+				}
+			} catch (e) { log('the Sent row would not be written', e); }
 			say.className = 'shr-say';
 			say.textContent = tOr('share.panel_sent', 'Sent to {who}.', { who: name });
 			say.hidden = false;
@@ -1501,7 +1724,7 @@
 		var bad = (r && r.refused && r.refused[0]) || null;
 		say.className = 'shr-say shr-warn';
 		say.textContent = tOr('share.panel_refused',
-			'The relay would not take it: {why} It is saved as a file instead — give them '
+			'The relay would not take it: {why} It is saved as a file instead \u2014 give them '
 			+ 'that.', { why: (bad && bad.why) ? bad.why : '' });
 		say.hidden = false;
 		var fell = save(made);
@@ -1568,8 +1791,8 @@
 		ext:      EXT,
 		mime:     MIME,
 		/// Which carrier a composed share must take, and the sentence that says
-		/// why. The relay refuses one over 64 KiB and a capp page is about that on
-		/// its own, so this is not a corner case.
+		/// why. The relay refuses one over its own ceiling, so this is not a corner
+		/// case: a diamond of any size at all has a route.
 		carrier:    carrier,
 		carrierWhy: carrierWhy,
 		fitsRelay:  fitsRelay,
@@ -1585,6 +1808,14 @@
 		/// chip does rather than through a second path written for it.
 		render: render,
 		view:   VIEW,
+		/// THE SHEET, for the other door. `daimond.js` mounts it under Share… on a
+		/// tile's cog; the panel puts the same node in the Send block. Published
+		/// rather than copied, because two sheets would be two places for "they will
+		/// own the copy" to be said and one of them would stop saying it.
+		///
+		/// Takes `{id, name}` and answers a node -- including where there is nothing
+		/// to draw, in which case the node says why.
+		sheet: sheet,
 		/// A template: the shape of a Diamond, unsealed, opened by whoever holds
 		/// the file. `saveTemplate` writes one out; `readTemplate` says what is in
 		/// one without opening it; `takeTemplate` asks about any page in it and

@@ -90,7 +90,9 @@ async function importBackup(file, name) {
 	await (await chooser).setFiles(file);
 	await p.waitForSelector('.dlg-ok', { timeout: 20000 });
 	await p.click('.dlg-ok');
-	await p.waitForSelector('#id-primary', { timeout: 20000 });
+	// NOT a raw wait for '#id-primary': since stay-unlocked-across-reload
+	// (2026-09-13) a tab that was already unlocked comes back unlocked, with no
+	// gate to wait for at all. `signInAs` waits for either door itself.
 	await signInAs(s, name);
 	await p.waitForTimeout(600);
 }

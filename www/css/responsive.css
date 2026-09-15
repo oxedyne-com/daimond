@@ -148,7 +148,7 @@
 	/* Send and the walk-back sit in one row and are one control on desktop, both
 	   32px square. Only Send was grown for touch, so the pair read as a large
 	   button beside a small one, bottom-aligned and mismatched. They grow together. */
-	#chat-send, #chat-jump, #chat-end { min-width: 46px; width: 46px; height: 46px; font-size: var(--fs-2xl); }
+	#chat-send, #chat-stop, #chat-jump, #chat-end { min-width: 46px; width: 46px; height: 46px; font-size: var(--fs-2xl); }
 
 	/* ── The box you type in gets the room ────────────────────────
 	   Measured on a 390px phone: the bar is 372 wide and the text box got 170 of

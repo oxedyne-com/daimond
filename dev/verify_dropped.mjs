@@ -87,7 +87,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { open, newChat, scratch, shot, storedChats } from './harness.mjs';
+import { open, newChat, scratch, shot, storedChats, mockLog, contentText } from './harness.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const WWW  = path.join(HERE, '..', 'www');
@@ -146,10 +146,17 @@ const { page: p } = s;
 if (BREAK) console.log(`\n*** RUNNING UNDER --break ${BREAK}: failures below are the point ***\n`);
 
 /// What the last assistant message in the thread is, and what is offered about it.
+// A MESSAGE TILE IS NOT `.chat-msg` ANY MORE. Assistant and user messages are drawn
+// as `.ctile .chat-msg-assistant` / `.ctile .chat-msg-user`; only the notices
+// (`.ended-notice`, `.chat-msg-error`) still carry the old class. A check written
+// against `.chat-msg.interrupted` therefore matched nothing whatever the page did,
+// and reported a badge that was on screen as absent. Selected by the class that
+// names the thing -- the assistant tile -- rather than by furniture around it.
 const lastTurn = () => p.evaluate(() => {
-	const msgs = [...document.querySelectorAll('#chat-output .chat-msg')];
-	const last = msgs[msgs.length - 1] || null;
-	const inter = [...document.querySelectorAll('#chat-output .chat-msg.interrupted')].pop() || null;
+	const tiles = [...document.querySelectorAll(
+		'#chat-output .chat-msg-user, #chat-output .chat-msg-assistant, #chat-output .ended-notice')];
+	const last = tiles[tiles.length - 1] || null;
+	const inter = [...document.querySelectorAll('#chat-output .chat-msg-assistant.interrupted')].pop() || null;
 	return {
 		interrupted: !!inter,
 		// The button by its role rather than its words, so a translation does not
@@ -157,6 +164,10 @@ const lastTurn = () => p.evaluate(() => {
 		continues:   !!(inter && inter.querySelector('.turn-interrupted button')),
 		text:        inter ? (inter.querySelector('.chat-msg-content') || {}).textContent || '' : '',
 		errors:      [...document.querySelectorAll('#chat-output .chat-msg-error, #chat-output .error-log')].length,
+		// The trailing "how it ended" line, or ''. A dropped connection must not draw
+		// one: the badge on the partial is the whole account of it. See check 2b.
+		ending:      [...document.querySelectorAll('#chat-output .ended-notice .end-line')]
+			.map(e => e.textContent).join(' | '),
 		lastClass:   last ? last.className : '',
 	};
 });
@@ -168,6 +179,23 @@ const lastTurn = () => p.evaluate(() => {
 /// them, so a turn that ends fails nothing and a turn that HANGS still fails.
 /// Answers how long it waited, because that number is the retry budget and a
 /// change to it should be visible here rather than as a mystery timeout.
+/// Wait for a turn to BEGIN — the composer going busy — so `settle` is not asked
+/// about a turn that has not started. Answers whether it did, rather than throwing:
+/// a press that started nothing is what the checks below are there to report.
+const started = async (label, timeout = 15000) => {
+	const t0 = Date.now();
+	while (Date.now() - t0 < timeout) {
+		const busy = await p.evaluate(() => {
+			const b = document.getElementById('chat-send');
+			return !!b && (b.classList.contains('stop') || b.disabled);
+		});
+		if (busy) return true;
+		await p.waitForTimeout(100);
+	}
+	console.log(`  note  the ${label} turn never started within ${timeout} ms`);
+	return false;
+};
+
 const settle = async (label, timeout = 180000) => {
 	const t0 = Date.now();
 	while (Date.now() - t0 < timeout) {
@@ -209,6 +237,13 @@ try {
 	check(/word-1/.test(dropped.text),
 		'AND THE WORDS THAT ARRIVED SURVIVE — the partial answer is still there',
 		JSON.stringify(dropped.text.slice(0, 80)));
+	// ONE EVENT, SAID ONCE. The badge says the connection dropped and offers to carry
+	// on; an "Ended on an error" line above it was the same drop told twice, in two
+	// voices that disagreed — the louder one calling a lost connection an error, over
+	// a badge saying nothing was lost (UX run 2026-09-15, annoyance 4).
+	check(dropped.ending === '',
+		'AND IT IS SAID ONCE — no "how it ended" line above the badge',
+		dropped.ending ? JSON.stringify(dropped.ending) : 'no ending line');
 
 	// ── 3. Continue CONTINUES it ───────────────────────────────
 	//
@@ -220,15 +255,27 @@ try {
 	//
 	// THE ASSERTION THAT MATTERS IS `word-1` SURVIVING. The count and the badge are
 	// bookkeeping; the text is the complaint.
-	const before = await p.evaluate(() =>
-		document.querySelectorAll('#chat-output .chat-msg').length);
+	const before = await p.evaluate(() => document.querySelectorAll(
+		'#chat-output .chat-msg-user, #chat-output .chat-msg-assistant').length);
 	// THE PARTIAL'S OWN ID, off the disk. Text alone cannot answer this question: the
 	// prompt is `@drop 3`, so a Continue that RE-RUNS it produces `word-1 word-2` a
 	// second time and a check on the words passes while the user's answer has in fact
 	// been thrown away and bought again. The `mid` is the only thing that tells a kept
 	// message from an identical new one.
+	// THIS CHAT AND NOT ANOTHER. The profile is reused between runs, so the store
+	// holds every earlier run's chat too -- each with its own badged `word-1` partial,
+	// left there by the run that made it. A scan of the whole store answered with one
+	// of those, and this file then reported a Continue that had worked perfectly as a
+	// re-run, because the message it went looking for was never this turn's.
+	const chatId = await p.evaluate(() => {
+		try {
+			const f = window.DaimondAttach && window.DaimondAttach.focus();
+			return (f && f.kind === 'chat') ? String(f.id) : '';
+		} catch (e) { return ''; }
+	});
+	const thisChat = async () => (await storedChats(s)).filter(c => c.id === chatId);
 	const midOf = async () => {
-		const chats = await storedChats(s);
+		const chats = await thisChat();
 		for (const c of chats) {
 			for (const m of (c.messages || [])) {
 				if (m.role === 'assistant' && m.interrupted && /word-1/.test(m.content || '')) {
@@ -241,16 +288,26 @@ try {
 	const partialMid = await midOf();
 	if (dropped.continues) {
 		await p.evaluate(() => {
-			const inter = [...document.querySelectorAll('#chat-output .chat-msg.interrupted')].pop();
+			const inter = [...document.querySelectorAll('#chat-output .chat-msg-assistant.interrupted')].pop();
 			inter.querySelector('.turn-interrupted button').click();
 		});
+		// THE PRESS HAS TO BE WAITED FOR TWICE: for the turn to START and then for it
+		// to end. `settle` answers "the composer is offering Send", which is true the
+		// instant after the click as well as long after the answer -- so on its own it
+		// returned in 0 ms and everything below read a thread the continuation had not
+		// touched yet. It reported the press as a re-run when the press had simply not
+		// been given time to be anything.
+		await started('continued');
 		await settle('continued');
+		// And a beat for `persistChats` to land, since the checks below read the STORE.
+		await p.waitForTimeout(800);
 	}
 	const after = await p.evaluate(() => ({
-		count: document.querySelectorAll('#chat-output .chat-msg').length,
+		count: document.querySelectorAll(
+			'#chat-output .chat-msg-user, #chat-output .chat-msg-assistant').length,
 		// Nothing is left badged: the partial has become an ordinary answer, and the
 		// continuation finished cleanly.
-		interruptedCount: document.querySelectorAll('#chat-output .chat-msg.interrupted').length,
+		interruptedCount: document.querySelectorAll('#chat-output .chat-msg-assistant.interrupted').length,
 		user: [...document.querySelectorAll('#chat-output .chat-msg-user .chat-msg-content')]
 			.map(e => e.textContent).join('|'),
 		// Every assistant word on screen, so "is what I was reading still here?" is asked
@@ -260,7 +317,7 @@ try {
 	}));
 	// The same record, still there, still holding the same words, no longer badged.
 	const kept = await (async () => {
-		const chats = await storedChats(s);
+		const chats = await thisChat();
 		for (const c of chats) {
 			for (const m of (c.messages || [])) {
 				if (m.mid && m.mid === partialMid) {
@@ -282,6 +339,21 @@ try {
 	check(dropped.continues && after.interruptedCount === 0 && after.count > before,
 		'and the turn carries on from it rather than starting again',
 		`${before} messages before, ${after.count} after, ${after.interruptedCount} interrupted`);
+	// WHAT THE MODEL WAS ACTUALLY SENT, off the provider's own log. The screen can show
+	// a continuation while the request that produced it carried none: `captureSession`
+	// used to stamp its marker at the interrupted partial — a message the engine never
+	// held — so the rebuilt conversation reached the model WITHOUT the words it was
+	// being asked to carry on from, and it started again. Asked here because this is
+	// the only place the payload is visible.
+	const resume = mockLog()[mockLog().length - 1];
+	const sent = ((resume && resume.messages) || []).map(m => ({
+		role: m.role, text: contentText(m.content) }));
+	check(sent.some(m => m.role === 'assistant' && /word-1/.test(m.text)),
+		'AND THE REQUEST CARRIES THE PARTIAL, not just the question again',
+		JSON.stringify(sent.map(m => m.role + ':' + m.text.slice(0, 24))));
+	check(sent.filter(m => m.role === 'user' && /@drop 3/.test(m.text)).length === 1,
+		'with the prompt in it exactly once',
+		`${sent.filter(m => m.role === 'user').length} user message(s)`);
 	// One question, not two. This is the assertion that caught the first version of
 	// the offline branch: the prompt was left untagged, so Continue removed the answer,
 	// sent the question again, and the thread held it twice. It still holds, and it is

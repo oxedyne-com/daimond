@@ -324,10 +324,24 @@ console.log('\n4. the fold controls answer for the right conversation\n');
 		if (t) t.click();
 	}, chatTile);
 	await p.waitForTimeout(600);
+	// "Fold all" moved off the row and into the cog (CHAT-15): open it, then
+	// press the fold button `mountChatFoldKeep` draws inside.
 	await p.evaluate(() => {
-		const b = document.querySelector('#session-list .session-box.active .tile-fold')
-			|| document.querySelector('#session-list .tile-fold');
+		const box = document.querySelector('#session-list .session-box.active')
+			|| document.querySelector('#session-list .session-box');
+		const cog = box && box.querySelector('.tile-cog');
+		if (cog) cog.click();
+	});
+	await p.waitForTimeout(300);
+	await p.evaluate(() => {
+		const card = [...document.querySelectorAll('.modal.dlg .dlg-card')]
+			.find((c) => c.getClientRects().length);
+		const b = card && card.querySelector('.tile-fold');
 		if (b) b.click();
+		// The cog dialog itself is not what is under test here -- close it so the
+		// notice checked below is unambiguously the ONE modal left standing.
+		const x = card && card.querySelector('.tile-dlg-x');
+		if (x) x.click();
 	});
 	await p.waitForTimeout(400);
 	const picked = await p.evaluate((name) => {

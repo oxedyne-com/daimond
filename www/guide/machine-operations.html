@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="en" data-guide-locale="en" data-guide-locales="en de es fr ja ko pt-BR zh-Hans">
+<html lang="en" data-guide-locale="en" data-guide-locales="en">
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
@@ -70,7 +70,7 @@ flatpak list 2&gt;/dev/null | grep -Ei 'chrom|brave|vivaldi|edge'</code></pre>
 	<p>The installer writes one small file into the browser's profile directory, and that directory is created the first time the browser starts. Install a browser and never open it, and <code translate="no">install.sh</code> reports finding nothing, correctly, because there is nothing there yet.</p>
 
 	<h3 id="s5">3. Linux, with Landlock in the kernel</h3>
-	<p>The compartment is built from Landlock, which fences files, and seccomp, which filters system calls, and both are Linux kernel features. Landlock arrived in Linux 5.13, and <a href="#s29">Unconventional systems</a> sets out what older and unusual machines get. The hand builds and runs on macOS and Windows, but reports that it can fence nothing, and Daimond then refuses every command instead of running one unfenced. The refusal names what is missing. Neither platform’s fence is built.</p>
+	<p>The compartment is built from Landlock, which fences files, and seccomp, which filters system calls, and both are Linux kernel features. Landlock arrived in Linux 5.13, and <a href="#s30">Unconventional systems</a> sets out what older and unusual machines get. The hand builds and runs on macOS and Windows, but reports that it can fence nothing, and Daimond then refuses every command instead of running one unfenced. The refusal names what is missing. Neither platform’s fence is built.</p>
 
 	<div class="note stop"><strong>Installing a different browser? Your account does not come with you.</strong> Your account is a signing key held in the browser you made it in. The passphrase does not recreate that key, it only decrypts the copy already stored there, so the same passphrase in a fresh browser starts a <em>different</em> account, with its own credits and no Pro. The key has to travel, so before you retire the old browser do one of these in it: <strong><span class="ui">Link another device</span></strong>, then type the code in the new browser; add a passkey; or <strong><span class="ui">Export a backup</span></strong>, which writes the chats, diamonds and workspace files together with the key, still wrapped under your passphrase, for a browser that has no account of its own yet. See <a href="sync.html">More than one device</a> and <a href="accounts.html">Safety &amp; fixes</a>.</div>
 
@@ -131,7 +131,7 @@ flatpak list 2&gt;/dev/null | grep -Ei 'chrom|brave|vivaldi|edge'</code></pre>
 	</ul>
 	<p>Anything else is a whole sentence naming the path, the cause and the fix, because the hand has nowhere to print a code anyone could look up.</p>
 	<pre><code translate="no">hand/target/release/daimond-hand --report</code></pre>
-	<p>This prints what the compartment can enforce on <em>this</em> kernel and, at greater length, what it cannot. Read the second list closely, because on a kernel below Linux 7.1 it includes <a href="#s20">a route out of the compartment</a> that Landlock leaves open and the hand closes itself, by refusing unix sockets. It also names the folder from <code translate="no">root.txt</code>, so a stale one shows up here and not at the first command.</p>
+	<p>This prints what the compartment can enforce on <em>this</em> kernel and, at greater length, what it cannot. Read the second list closely, because on a kernel below Linux 7.1 it includes <a href="#s21">a route out of the compartment</a> that Landlock leaves open and the hand closes itself, by refusing unix sockets. It also names the folder from <code translate="no">root.txt</code>, so a stale one shows up here and not at the first command.</p>
 
 	<h3 id="s15">Read the journal</h3>
 	<pre><code translate="no">tail -n 5 ~/.local/share/daimond/hand/journal/hand-*.jsonl</code></pre>

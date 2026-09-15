@@ -1059,6 +1059,20 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 	/// its way into storage (`slimMessages`), so without that rule a merge against the store would
 	/// hand this tab's whole result back to it truncated — the store's copy is written first, and
 	/// first used to win.
+	/// A copy of a message with the interrupted badge off, or the message itself where
+	/// there is no badge to take off. A COPY, because the caller holds the live record
+	/// and a merge is not the place to edit one.
+	function unbadge(m) {
+		if (!m || !m.interrupted) return m;
+		var out = {};
+		for (var k in m) {
+			if (!Object.prototype.hasOwnProperty.call(m, k)) continue;
+			if (k === 'interrupted' || k === 'why') continue;
+			out[k] = m[k];
+		}
+		return out;
+	}
+
 	function mergeMessages(a, b, scope, tombs) {
 		// `tombs` lets a merge PASS parse the message-tombstone map once and thread the
 		// same object through every chat it merges, rather than re-reading and
@@ -1071,6 +1085,19 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			var had = at[m.mid];
 			if (had === undefined) { at[m.mid] = out.length; out.push(m); return; }
 			var prev = out[had];
+			// A BADGE CAN COME OFF, AND A FIRST-WINS UNION COULD NEVER TAKE IT OFF.
+			//
+			// `interrupted` is not content: it is a claim that the turn never finished,
+			// and `continueTurn` clears it on the partial the model has just been asked to
+			// carry on from. The STORED copy is merged first everywhere this is called, so
+			// the badge outlived every save -- and the next reload put a Continue button
+			// back on a turn that had already been continued, offering to buy the same
+			// answer a second time.
+			//
+			// Convergent in the one safe direction, like the prefix rule below: no copy of
+			// a mid is ever WRITTEN without the badge except by the clearing itself, so
+			// "either says finished" can only mean finished.
+			if (!prev.interrupted !== !m.interrupted) { prev = out[had] = unbadge(prev); m = unbadge(m); }
 			if ((prev.elided || 0) && !(m.elided || 0)) { out[had] = m; return; }
 			// STREAMED GROWTH CONVERGES. A turn running on another device streams its
 			// transcript in progress frames (sync.js pushProgress): the same message id
@@ -1227,7 +1254,11 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			// lookup that trusted it would lose the item on a disagreement.
 			if (byChat[w.id]) {
 				rec = byChat[w.id];
-				name = rec.name || t('trash.unnamed_chat');
+				// THE SAME TITLE RULE THE RAIL USES (B18/annoyance 12): "Unnamed chat" read
+				// as a second name for a chat the toast had just named by its opening line,
+				// so a person moving a chat to the Trash saw it arrive under a different
+				// title than the one they had just watched leave.
+				name = chatDisplayName(rec);
 				bytes = jsonBytes(JSON.stringify(rec));
 				w.kind = 'chat';
 			} else if (byDiamond[w.id]) {
@@ -2278,6 +2309,14 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 				updatedAt: c.updatedAt || 0,
 				foldedInto: c.foldedInto || null,
 				msgCount: (c.messages || []).length,
+				// THE FIRST THING SAID, carried on the summary so the rail can title and
+				// preview a chat it has never had to make resident (CHAT-02 / verify_chatlife
+				// "each tile shows its OWN opening"). Without this a non-resident chat's tile
+				// had no transcript to read from at all and fell back to "just now" for every
+				// chat but the one currently open. Capped well short of a full message: this
+				// rides in RAM for every chat on the rail, and six words is all a title ever
+				// takes from it.
+				opening: chatOpening({ messages: c.messages }).slice(0, 300),
 				chunks: chunks,                                   // how many chunk rows this transcript spans
 				hasSession: !!(c.session),                        // session-ref: the bytes stay in the legacy row this stage
 				sessionMsgs: (c.session && c.session.msgs) ? c.session.msgs.length : 0,
@@ -3218,6 +3257,9 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		return { id: c.id, name: c.name, app: null,
 			messages: loaded ? stampMessages(Array.isArray(c.messages) ? c.messages : [], c.id) : [],
 			_loaded: loaded, msgCount: msgCount, sessionMsgs: sessionMsgs,
+			// The opening line off the summary, for a chat that is not resident. See
+			// `chatOpening`, which reads this only once the live messages have nothing.
+			opening: c.opening || '',
 			model: c.model,
 			provider: c.provider || '',
 			// Which Diamond's daimon this conversation belongs to, or '' for an
@@ -8260,6 +8302,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 	var chatOutput    = document.getElementById('chat-output');
 	var chatInput     = document.getElementById('chat-input');
 	var chatSend      = document.getElementById('chat-send');
+	var chatStop      = document.getElementById('chat-stop');
 	var sessionNameEl = document.getElementById('current-session-name');
 	var settingsBtn   = document.getElementById('settings-btn');
 	// The word logo on the identity gate. It was looked up by `.brand-logo`, a
@@ -9002,12 +9045,198 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		// a page whose sheet script did not load, and are woken anyway: a panel
 		// shown without its onOpen is a panel that draws nothing.
 		if (name === 'work') Files.onOpen();
-		if (name === 'mail' && window.DaimondMail) DaimondMail.onOpen();
+		if (name === 'mail' && window.DaimondMail) { DaimondMail.onOpen(); Badge.seen('mail'); }
 		if (name === 'spend' && window.DaimondSpend) DaimondSpend.onOpen();
 		if (name === 'term' && window.DaimondTerm) DaimondTerm.onOpen();
 		if (name === 'trash' && window.DaimondTrashPanel) DaimondTrashPanel.onOpen();
-		if (name === 'social' && window.DaimondSocial) DaimondSocial.onOpen();
+		if (name === 'social' && window.DaimondSocial) { DaimondSocial.onOpen(); postBadge(); }
 	}
+
+	// ── The dock count badge ───────────────────────────────────
+	//
+	// ONE NUMBER ON A PANEL'S CHIP, and with Web Push declined (messaging_plan
+	// §10) this is the whole of what this app does to say that something arrived
+	// while you were looking somewhere else. It is drawn in three places at once,
+	// because a chip is not always on screen:
+	//
+	//   the chip row         `#panel-tags .ptag[data-panel]` -- the top bar on a
+	//                        desktop, the bottom strip on a phone, ONE row either
+	//                        way (js/mobile.js moves it rather than copying it),
+	//                        so this marks both by marking one
+	//   the document title   `(3) Daimond`, when the tab is not the one in front
+	//
+	// and `navigator.setAppBadge`, which an installed app shows on its icon and
+	// which needs no push subscription and no permission prompt. Where it is not
+	// implemented the call simply does not exist and nothing else changes.
+	//
+	// THE COUNT IS NEVER A ZERO ON SCREEN. `#pending-count`, `#agents-count` and
+	// `#trash-count` all write `n ? String(n) : ''` for the same reason: a badge
+	// reading 0 is a mark that has to be READ before it can be ignored, which is
+	// the opposite of what a badge is for.
+	//
+	// AND IT DOES NOT COUNT WHAT YOU ARE LOOKING AT. A panel that is open and on
+	// screen when its thing arrives has already told you; a badge over it would
+	// be asking you to go and see what is in front of you.
+	//
+	// TWO CALLERS AND ONE FUNCTION. Mail bumps it from `daimond:mail-arrived`;
+	// messages SET it from `DaimondPost.unread()`. The removal of 2026-08-31 took
+	// the badge out at the owner's word while messaging had no caller at all;
+	// §10.1 requires it, and it is back with both callers wired rather than one.
+	//
+	// The two are not the same kind of number and the difference is deliberate.
+	// Mail's is ARRIVALS SINCE YOU LAST LOOKED, held in memory: `mail.js` has the
+	// honest tally within reach -- every row it draws knows its own `seen` -- but
+	// exposes only per-folder TOTALS (`counts()`), and mail.js is another lane's
+	// file. When it offers an unseen tally, `set()` takes it and this paragraph
+	// goes. Messages' is the honest one: `post.js` marks a row read when it is
+	// DRAWN, and a message you have not opened stays unread while you stare at
+	// the list of them.
+	var Badge = (function () {
+		var counts = {};                 // panel id -> what has arrived unseen
+		var BASE = document.title;
+
+		function total() {
+			var n = 0;
+			Object.keys(counts).forEach(function (k) { n += counts[k] | 0; });
+			return n;
+		}
+
+		/// Is that panel in front of the user right now? Open is not enough on a
+		/// phone, where only the panel in the sheet or on the floor is visible.
+		function visible(id) {
+			try {
+				if (!DaimondPanels.isOpen(id)) return false;
+				if (!isMobile()) return true;
+				if (document.body.dataset.mpanel === id) return true;
+				return !!(window.DaimondSheet && DaimondSheet.guest && DaimondSheet.guest() === id);
+			} catch (e) { return false; }
+		}
+
+		/// Put the count on one host element, adding the mark only if there is
+		/// something to say and taking it away again when there is not.
+		function mark(host, n) {
+			if (!host) return;
+			var b = host.querySelector('.dock-count');
+			if (!b) {
+				if (!n) return;
+				b = document.createElement('span');
+				b.className = 'dock-count';
+				b.setAttribute('role', 'status');
+				host.appendChild(b);
+			}
+			b.textContent = n ? String(n) : '';
+			b.hidden = !n;
+			b.title = n ? tn('dock.unseen', n, { n: n }) : '';
+			if (n) host.dataset.unseen = String(n); else delete host.dataset.unseen;
+		}
+
+		/// Draw every count where it belongs. Called whenever a number changes and
+		/// again after the chip row is rebuilt, since that throws the chips away.
+		function paint() {
+			var ids = Object.keys(counts);
+			// Chips that no longer carry a count still have to be cleaned, so the
+			// sweep is over what is ON SCREEN and not over what is counted.
+			document.querySelectorAll('#panel-tags .ptag[data-panel]').forEach(function (c) {
+				mark(c, counts[c.dataset.panel] | 0);
+			});
+			ids.forEach(function (id) {
+				// A panel's own head, where one has been given a place for it.
+				mark(document.querySelector('#panel-' + id + ' .rail-count-host'), counts[id] | 0);
+			});
+			var n = total();
+			document.title = n ? '(' + n + ') ' + BASE : BASE;
+			try {
+				if (n && navigator.setAppBadge) navigator.setAppBadge(n);
+				else if (navigator.clearAppBadge) navigator.clearAppBadge();
+			} catch (e) { /* the platform does not draw one */ }
+		}
+
+		return {
+			/// Set the count for a panel outright. What an honest tally calls.
+			set: function (id, n) {
+				n = Math.max(0, n | 0);
+				if ((counts[id] | 0) === n) return;
+				counts[id] = n;
+				paint();
+			},
+			/// Something arrived. Ignored while that panel is in front of the user.
+			bump: function (id, n) {
+				n = Math.max(0, n | 0);
+				if (!n || visible(id)) return;
+				counts[id] = (counts[id] | 0) + n;
+				paint();
+			},
+			/// The user is looking at it now, so there is nothing left to say.
+			seen: function (id) {
+				if (!(counts[id] | 0)) return;
+				counts[id] = 0;
+				paint();
+			},
+			/// What it would draw, for a verifier that wants the record as well as
+			/// the pixels.
+			count: function (id) { return counts[id] | 0; },
+			/// Whether that panel is in front of the user, published because
+			/// `bump`'s refusal is otherwise indistinguishable from a lost event.
+			visible: visible,
+			total: total,
+			paint: paint,
+		};
+	})();
+	window.DaimondBadge = Badge;
+
+	// Mail's caller. `count` is what came in above the mark this fetch started
+	// from — mail.js's own definition of an arrival, with backfills and
+	// uid-validity rebuilds already fenced out of it.
+	window.addEventListener('daimond:mail-arrived', function (ev) {
+		var d = (ev && ev.detail) || {};
+		Badge.bump('mail', d.count);
+	});
+
+	/// The Social panel's own count: how many messages have not been read.
+	///
+	/// `set` rather than `bump`, and NOT cleared merely by opening the panel,
+	/// because this is an honest tally rather than a memory of arrivals —
+	/// `post.js` marks a row read when it DRAWS it, so opening the Messages view
+	/// clears exactly the rows the reader can see and no others. Mail's badge is
+	/// the weaker of the two and says so where it is wired.
+	///
+	/// NO TIMER OF ITS OWN. It is recomputed on the six occasions the number can
+	/// have changed: a message arriving (`daimond:post-arrived`), the minute clock
+	/// this file already runs, the panel opening, anything pressed inside the
+	/// panel, another tab writing the store, and a sync parcel arriving (js/sync.js
+	/// and js/post.js, both through `DaimondBadge.post`).
+	function postBadge() {
+		try {
+			if (!window.DaimondPost || !DaimondPost.unread) return;
+			// BELT AND BRACES over identity.js's `daimond:unlock`. The store is read
+			// lazily and answers 0 unread while it is unread, so a badge that only
+			// counted would be a badge that could never light: its whole job is to
+			// say "open the panel", and the panel opening was the only thing that
+			// read the store. Asking here means a listener that never fired costs a
+			// minute rather than the session.
+			if (DaimondPost.read && DaimondPost.state && !DaimondPost.state().read) {
+				DaimondPost.read().then(function () {
+					Badge.set('social', DaimondPost.unread());
+				}, function () { /* locked: there is nothing to count yet */ });
+			}
+			Badge.set('social', DaimondPost.unread());
+		} catch (e) { /* no messages in this build */ }
+	}
+	window.DaimondBadge.post = postBadge;
+	// THE ARRIVAL, which is the signal this whole mechanism was missing: until
+	// post.js raised it, a message could land on a parked poll and nothing in the
+	// app knew. The tally is recomputed rather than added to, because `unread()`
+	// is the authority and a running total could drift from it.
+	window.addEventListener('daimond:post-arrived', function () { postBadge(); });
+	document.addEventListener('click', function (e) {
+		if (!e.target || !e.target.closest || !e.target.closest('#panel-social')) return;
+		// After the press has been handled: `post.js` marks a message read on the
+		// way through, and a count taken in the same tick is the count before it.
+		setTimeout(postBadge, 0);
+	});
+	window.addEventListener('storage', function (e) {
+		if (e && e.key && e.key.indexOf('daimond-post') !== -1) postBadge();
+	});
 
 	// ── Layout: three zones ────────────────────────────────────
 	//
@@ -10391,6 +10620,10 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			if (!tagsEl) return;
 			if (window.DaimondWorkspace && DaimondWorkspace.renderTags) {
 				DaimondWorkspace.renderTags(tagModel());
+				// The chips were thrown away and rebuilt, and the counts on them
+				// with them. Repainted HERE rather than inside the renderer, so the
+				// badge has one owner and workspace.js need not know it exists.
+				Badge.paint();
 				return;
 			}
 			tagsEl.innerHTML = '';
@@ -10404,6 +10637,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 				b.addEventListener('click', function () { activate(p.id); });
 				tagsEl.appendChild(b);
 			});
+			Badge.paint();
 		}
 
 		/// Open a panel in its own zone. A stage panel takes a free seat, or evicts
@@ -10481,14 +10715,14 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		function openHooks(id) {
 			if (id === 'work') Files.onOpen();
 			if (id === 'doc') Files.onDocOpen();
-			if (id === 'mail' && window.DaimondMail) DaimondMail.onOpen();
+			if (id === 'mail' && window.DaimondMail) { DaimondMail.onOpen(); Badge.seen('mail'); }
 			if (id === 'spend' && window.DaimondSpend) DaimondSpend.onOpen();
 			// The terminal is built on the first open and started there: a pty is a
 			// real program on the user's machine, so it begins when a person asks
 			// for one and not when the app loads.
 			if (id === 'term' && window.DaimondTerm) DaimondTerm.onOpen();
 			if (id === 'trash' && window.DaimondTrashPanel) DaimondTrashPanel.onOpen();
-			if (id === 'social' && window.DaimondSocial) DaimondSocial.onOpen();
+			if (id === 'social' && window.DaimondSocial) { DaimondSocial.onOpen(); postBadge(); }
 		}
 
 		/// The pages are on screen again, so the watch that paused when they left
@@ -11054,7 +11288,11 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		/// A new Diamond with a new identity, not a copy of the sender's: the name
 		/// is advisory and the store settles a clash, because two people may
 		/// choose one name and neither is wrong.
-		land: function (name, files) { return landDiamond(name, files); },
+		land: function (name, files, origin) { return landDiamond(name, files, origin); },
+		/// Where a Diamond came from, where it came from anywhere: the parsed
+		/// `.daimond/origin.json`, or null. Read-only, and read out of the cache the
+		/// rail draws from, so a caller and a tile cannot disagree.
+		origin: function (id) { return _origins[String(id || '')] || null; },
 		/// This Diamond's SHAPE as a template pack, as JSON.
 		///
 		/// `withConversation` carries everything instead, which is the door back to
@@ -11161,7 +11399,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 	/// share format refuses to carry a `capp.json` at all. Writing the record here
 	/// would mark a stranger's page as delivered-by-us and skip the one question
 	/// the whole consent design exists to ask.
-	async function landDiamond(name, files) {
+	async function landDiamond(name, files, origin) {
 		var id = await diamondApp().create_diamond(String(name || '').trim()
 			|| tOr('share.landed_name', 'A shared diamond'));
 		var refused = [];
@@ -11237,6 +11475,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 				+ ((e && (e.message || e)) || '?'));
 		}
 		if (wroteBytes) trail('share land bytes', id + ' stamped after store_write_bytes');
+		if (origin) await landOrigin(id, origin);
 		// Every other path that makes a Diamond says so out loud: `bumpDiamonds`
 		// writes the cross-tab nonce and nudges the push. Without it a landed
 		// Diamond exists on this tab alone until something unrelated schedules a
@@ -11258,6 +11497,79 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 					{ list: refused.join(', ') }));
 		}
 		return id;
+	}
+
+	/// Say where a landed Diamond came from: the `shared` tag, and `origin.json`
+	/// under `.daimond/`.
+	///
+	/// UNDER `.daimond/`, WHICH IS WHY IT NEEDS NO SCHEMA CHANGE. The share format
+	/// refuses that whole prefix, so a diamond landed here and shared onward
+	/// carries none of this: the receiver's provenance is written by the receiver's
+	/// own device from the artefact they verified, and never copied across from
+	/// somebody who could have written anything in it.
+	///
+	/// The anchor is the SHARE ADDRESS and not a diamond id, because ids are local
+	/// and always will be. `prior` is where an onward share's address goes when
+	/// `daimond/share/1` exists; it is null today and the field is here so that a
+	/// diamond landed before then reads the same shape afterwards.
+	///
+	/// NEITHER FAILURE LOSES THE DIAMOND. The files are already written and stamped
+	/// by the time this runs, so a tag that would not set or a record that would
+	/// not write costs the line under the name and nothing else.
+	async function landOrigin(id, origin) {
+		try {
+			await Wasm.store_write('diamonds/' + id + '/.daimond/origin.json',
+				JSON.stringify(origin));
+			_origins[id] = origin;
+		} catch (e) {
+			trail('share land origin', id + ': ' + ((e && (e.message || e)) || '?'));
+		}
+		// `shared` is FILING, and filing is the receiver's: it is the tag the rail's
+		// own filter reads, so "what did people send me" is a tag press rather than
+		// a feature. A landed Diamond has no tags of its own, and a union rather
+		// than a set keeps that true if it ever does.
+		try {
+			var had = [];
+			JSON.parse(await diamondApp().list_diamonds()).forEach(function (d) {
+				if (d && d.id === id && Array.isArray(d.tags)) had = d.tags;
+			});
+			if (had.indexOf(SHARED_TAG) === -1) {
+				await diamondApp().set_tags(id, JSON.stringify(had.concat([SHARED_TAG])));
+			}
+		} catch (e) {
+			trail('share land tag', id + ': ' + ((e && (e.message || e)) || '?'));
+		}
+		await loadDiamonds();
+	}
+
+	/// The tag every landed share carries. One spelling, because the rail filters
+	/// on it and a second would be a filter that finds half of them.
+	var SHARED_TAG = 'shared';
+
+	/// Where each Diamond came from, by id: the parsed `origin.json`, or null for
+	/// one that was not shared with this account.
+	///
+	/// A CACHE BECAUSE THE TILE IS DRAWN SYNCHRONOUSLY. `diamondBox` builds a row
+	/// with no await in it, and reading a file per tile per redraw would be a store
+	/// read per Diamond every time the rail moves. `readOrigins` fills this once
+	/// per Diamond, on the walk that loads them, and `null` is a cached answer
+	/// rather than a missing one -- so a Diamond with no origin is asked about once
+	/// and never again.
+	var _origins = {};
+
+	/// Read the origin of every Diamond this walk has not already asked about.
+	async function readOrigins(list) {
+		for (var i = 0; i < (list || []).length; i++) {
+			var id = list[i] && list[i].id;
+			if (!id || _origins[id] !== undefined) continue;
+			var o = null;
+			try {
+				var raw = await Wasm.store_read('diamonds/' + id + '/.daimond/origin.json');
+				o = JSON.parse(raw);
+				if (!o || typeof o !== 'object' || !o.share) o = null;
+			} catch (e) { o = null; }		// not shared, or written by a build that could not
+			_origins[id] = o;
+		}
 	}
 
 	/// A file body as the store's write door wants it. Throws on bytes that are
@@ -12432,8 +12744,12 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 	/// words: every figure is the engine's own tally, which is the rule the whole
 	/// mechanism is built on.
 	function endingParts(e) {
-		// Rule 2, first, so no caller can forget it.
-		if (!e || !((e.offered | 0) > 0)) return null;
+		if (!e) return null;
+		// A TURN THE USER STOPPED IS NEWS WHATEVER WAS ON THE TABLE. Rule 2 is about a
+		// tally nobody needs; being stopped is not a tally, and a pure chat with no tools
+		// in it is exactly where a stopped answer looked finished (UX run B05). Every
+		// other ending still obeys the rule, first, so no caller can forget it.
+		if (String(e.how || '') !== 'stopped' && !((e.offered | 0) > 0)) return null;
 		var calls = e.calls | 0, refused = e.refused | 0, failed = e.failed | 0;
 		var missing = Array.isArray(e.missing) ? e.missing : [];
 		// The wire word, or the word itself where a later engine has learnt a
@@ -12508,9 +12824,16 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			shown = true;
 			break;
 		}
-		// Something is on screen, or the turn ended cleanly: no trailing line.
-		var bad = p.notice || e.how === 'failed' || e.how === 'silent' || e.how === 'reasoned_only';
-		if (shown || !bad) return;
+		// A STOPPED TURN SAYS SO EVEN THOUGH IT DREW SOMETHING, and that is the one
+		// ending for which `shown` is not the test. The words that arrived are exactly
+		// what makes it look finished: the partial reads as an answer, and only the
+		// missing tail says otherwise (UX run B05, annoyance 1). Everything else here
+		// is unchanged -- a line under a turn that drew its own outcome is the noise
+		// this function exists to withhold.
+		var stopped = e.how === 'stopped';
+		var bad = stopped || p.notice || e.how === 'failed' || e.how === 'silent'
+			|| e.how === 'reasoned_only';
+		if ((shown && !stopped) || !bad) return;
 		finalizeAssistant();
 		var div = document.createElement('div');
 		div.className = 'chat-msg chat-msg-ended ended-notice';
@@ -12532,7 +12855,10 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 	/// nothing: a record kept for a line no build will ever draw is a message per
 	/// turn in every pure chat, which is the noise rule 2 exists to prevent.
 	function endLogOf(ev) {
-		if (!ev || !((ev.offered | 0) > 0)) return null;
+		if (!ev) return null;
+		// Stored on the same rule `endingParts` draws on: a stopped turn is kept whatever
+		// was offered, so the line is still there after a reload.
+		if (String(ev.how || '') !== 'stopped' && !((ev.offered | 0) > 0)) return null;
 		return {
 			role:    'end_log',
 			how:     String(ev.how || ''),
@@ -14257,6 +14583,70 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		return now;
 	}
 
+	// ── One engine object, one mutable caller ──────────────────
+	//
+	// wasm-bindgen holds a SHARED borrow of a `DaimondApp` for the whole life of an
+	// async `&self` call, and `set_chat_scope` / `set_diamond_scope` are the only two
+	// `&mut self` methods on it (src/wasm/app.rs). So the mutable call made while an
+	// async one is still in flight throws
+	//
+	//     recursive use of an object detected which would lead to unsafe aliasing in rust
+	//
+	// and `scopeChatTo` reports that, returns, and THE TURN NEVER STARTS.
+	//
+	// ONE FAULT WITH THREE FACES, each reported as its own defect on 2026-09-15. The
+	// async call in flight is always the same one: `renderWire` awaiting `wire_system`
+	// to compose the System band, which every render of a thread starts and does not
+	// wait for. Anything that RENDERS AND THEN RUNS raced it --
+	//
+	//   * `continueTurn`: renders the thread and calls `runTurn`, so Continue on a
+	//     dropped turn sent no request at all (UX run B06);
+	//   * `selectChat`: renders the thread and drains the queue, so a message left
+	//     queued on a chat was not sent when the user came back to it (verify_queue);
+	//   * and the same door for an interjection left behind (verify_interject).
+	//
+	// -- and each press answered with a line about Rust aliasing, or with nothing.
+	//
+	// So an async call that borrows an app says so here, and the two mutable calls
+	// wait for the borrow to come back. A WeakMap keyed on the app itself: an app
+	// nobody holds is collected with its entry, so there is nothing to clear.
+	var _engineHeld = new WeakMap();		// app -> the calls in flight on it
+
+	/// Run an async engine call as a BORROW of `app`, so `engineIdle` knows not to
+	/// mutate it until the call has finished. Answers the promise it was given, so a
+	/// caller wraps the call in place.
+	function engineHold(app, p) {
+		if (!app || !p || typeof p.then !== 'function') return p;
+		// SETTLED, not resolved: a rejected call gives the borrow back exactly as a
+		// successful one does, and a gate that only ever saw fulfilment would wait for
+		// ever on the first engine error.
+		var done = p.then(function () {}, function () {});
+		var held = _engineHeld.get(app) || [];
+		held.push(done);
+		_engineHeld.set(app, held);
+		done.then(function () {
+			var rest = _engineHeld.get(app) || [];
+			var at = rest.indexOf(done);
+			if (at >= 0) rest.splice(at, 1);
+		});
+		return p;
+	}
+
+	/// Wait until nothing is borrowing `app`, so a `&mut self` call can be made.
+	///
+	/// A loop rather than one await, because a call registered WHILE this waits has to
+	/// be waited for too. Bounded, so a surface that somehow never goes idle leaves the
+	/// caller exactly where it stands today -- the mutable call throws and is reported
+	/// -- rather than hanging the turn in silence.
+	async function engineIdle(app) {
+		if (!app) return;
+		for (var i = 0; i < 64; i++) {
+			var held = _engineHeld.get(app) || [];
+			if (!held.length) return;
+			await Promise.all(held.slice(0));
+		}
+	}
+
 	/// Confine a dispatched agent to one Diamond's workspace, and prove it went in.
 	///
 	/// **This is a security boundary and it is set from JavaScript, so it is read back.** A
@@ -14296,6 +14686,8 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		if (!b.own_dir) {
 			throw new Error('That diamond has no directory, so there is nothing to confine it to.');
 		}
+		// Nothing may be mid-call on this app: `set_diamond_scope` is `&mut self`.
+		await engineIdle(app);
 		app.set_diamond_scope(
 			b.own_dir,
 			JSON.stringify(b.attached  || []),
@@ -14395,6 +14787,9 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		}
 		var scratch = chatScratchDir(chatId);
 		var marked = await chatScopePaths(chatId);
+		// Nothing may be mid-call on this app: `set_chat_scope` is `&mut self`, and the
+		// System band's `wire_system` is very often still composing when a turn starts.
+		await engineIdle(app);
 		app.set_chat_scope(scratch, JSON.stringify(marked));
 
 		var got = {};
@@ -16403,10 +16798,9 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			// Where a push goes, and the token it goes with.
 			pushSection();
 
-			// What this account may send on your behalf while you are not looking.
-			// Above Syncing rather than below it, because syncing moves your own
-			// work between your own devices and this puts mail in somebody's inbox.
-			doorbellSection();
+			// The email doorbell lives in Social ▸ Settings now, beside the
+			// posting name it shares that view with -- see `DaimondDoorbell` near
+			// the `Doorbell` state object below. This drawer keeps none of it.
 
 			// ── Syncing, and the app's own trail ──────────────────
 			//
@@ -16602,7 +16996,10 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 				homeView.appendChild(el('div', 'admin-sec', ''));
 			}
 
-			item(t('home.log_out'),         lockApp);
+			// Lock beside Log out: the only difference is the session on the gateway
+			// side, which Lock keeps and Log out ends (see `lockApp` above).
+			item(t('home.lock'),            function () { lockApp(true); });
+			item(t('home.log_out'),         function () { lockApp(false); });
 			item(t('identity.forget'),      forgetIdentity, true);
 
 			function item(label, fn, danger) {
@@ -16612,122 +17009,6 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 				b.addEventListener('click', fn);
 				homeView.appendChild(b);
 				return b;
-			}
-
-			/// The email doorbell: one email a day, at most, saying something is
-			/// waiting.
-			///
-			/// HERE, on the panel the cog opens, and for exactly the reason written
-			/// over the sync switch above: a control behind the settings form is a
-			/// control nobody finds. This one has a stronger claim still — it is ON
-			/// BY DEFAULT for a beta account (decision 11,
-			/// gateway/src/doorbell.rs:333), the privacy page says "You can turn it
-			/// off in the app", and the doorbell email's own body says "under
-			/// Settings". Until this section landed all three were untrue: the
-			/// gateway had answered `?view=doorbell` and `?op=doorbell` from the
-			/// start and nothing in www/ ever called either.
-			///
-			/// TWO ANSWERS, NEVER ONE. The button says what the account has CHOSEN;
-			/// the line under it says whether a bell could actually ring. An account
-			/// with no address on file has the first and not the second, and a
-			/// screen showing only the switch would be lying to the one person who
-			/// could fix it — which is why the gateway sends the reach beside the
-			/// state rather than folding them together.
-			function doorbellSection() {
-				if (!Doorbell.live()) return;
-				homeView.appendChild(el('div', 'admin-sec', tOr('doorbell.title', 'Email doorbell')));
-				var btn  = item('', function () { press(); });
-				var note = el('div', 'admin-note', '');
-				var why  = el('div', 'admin-note', '');
-				// Named, because three surfaces promise this control exists and a
-				// verifier has to be able to say whether it does. `dev/verify_doorbell.mjs`
-				// reads exactly these three.
-				btn.id  = 'doorbell-btn';
-				note.id = 'doorbell-note';
-				why.id  = 'doorbell-reach';
-				homeView.appendChild(note);
-				homeView.appendChild(why);
-				// Painted from the last answer FIRST, so reopening the drawer does not
-				// flash "Checking…" over a state already in hand -- and then asked
-				// again, every time, because the answer can change without this device
-				// doing anything: an address added on another device, a mailbox
-				// configured on the gateway, a bell that has rung and gone quiet. A row
-				// that only read once would go on saying "nothing can be sent" to
-				// somebody who had just fixed exactly that.
-				draw();
-				Doorbell.load(draw);
-
-				/// Say what the switch is, to the state the SERVER last reported.
-				function draw() {
-					var st = Doorbell.st;
-					// Not asked yet, and said so rather than drawn as off: a switch
-					// showing "off" while the answer is unknown tells somebody no mail
-					// is being sent when it may be.
-					if (!st) {
-						btn.textContent = tOr('doorbell.asking', 'Checking…');
-						btn.disabled = true;
-						note.textContent = '';
-						why.textContent  = '';
-						return;
-					}
-					btn.disabled = Doorbell.busy;
-					btn.textContent = Doorbell.busy
-						? tOr('doorbell.saving', 'Saving…')
-						: (st.on ? tOr('doorbell.turn_off', 'Turn the email doorbell off')
-							: tOr('doorbell.turn_on', 'Turn the email doorbell on'));
-					note.textContent = st.on
-						? tOr('doorbell.on_note',
-							'When a message arrives and you have no Daimond open, we may send '
-							+ 'one email to the address on your account saying something is '
-							+ 'waiting. No sender, no subject, no count, and at most one in any '
-							+ '24 hours. Turning it off also stops any that is already waiting '
-							+ 'to go.')
-						: tOr('doorbell.off_note',
-							'No email will be sent. You will see a message when you next open '
-							+ 'Daimond, and nowhere else.');
-					// A default is drawn AS a default. The gateway sends `set:false`
-					// while nobody has chosen, precisely so this can be said.
-					if (!st.set) {
-						note.textContent += ' ' + tOr('doorbell.default_note',
-							'This is the default for a beta account; you have not changed it.');
-					}
-					if (Doorbell.failed) {
-						Doorbell.failed = false;
-						note.textContent = tOr('doorbell.err_save',
-							'That did not save. The setting is unchanged; try again.');
-					}
-					// The reach, and only where it says something the switch does not:
-					// an account that is on and can ring needs no second line saying so
-					// twice.
-					var r = String(st.reach || '');
-					why.textContent = (r === 'no_address')
-						? tOr('doorbell.no_address',
-							'There is no email address on your account, so nothing can be sent '
-							+ 'whatever this is set to.')
-						: (r === 'unconfigured')
-							? tOr('doorbell.unconfigured',
-								'This gateway cannot send email, so nothing will be sent '
-								+ 'whatever this is set to.')
-							: '';
-				}
-
-				/// Flip it, and draw what the SERVER then said rather than what was
-				/// asked for. A switch that painted the request would show "Off" for a
-				/// write that never landed.
-				function press() {
-					if (Doorbell.busy || !Doorbell.st) return;
-					Doorbell.busy = true;
-					draw();
-					DaimondPost.setDoorbell(!Doorbell.st.on).then(function (r) {
-						Doorbell.busy = false;
-						if (r && r.ok) Doorbell.st = r; else Doorbell.failed = true;
-						draw();
-					}, function () {
-						Doorbell.busy = false;
-						Doorbell.failed = true;
-						draw();
-					});
-				}
 			}
 
 			/// The way through to the push credential, with the host it currently
@@ -16974,13 +17255,21 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 				// by default on a desktop; see the note above `stayUnlocked` in identity.js.
 				if (id === self && window.DaimondIdentity && DaimondIdentity.setStayUnlocked) {
 					var isStay = !!(DaimondIdentity.stayUnlocked && DaimondIdentity.stayUnlocked());
+					// A LABELLED TOGGLE, not the icon-only padlock this used to be with its
+					// meaning folded into a 54-word title (audit 2026-09-15, ADM-02 /
+					// annoyance 6). The label is the visible text now, so the title that
+					// used to carry it is gone rather than repeated (GEN-05) -- `role` and
+					// `aria-checked` are what say the rest to a reader who cannot see it.
 					var stay = document.createElement('button');
 					stay.className = 'device-stay' + (isStay ? ' is-on' : '');
 					stay.type = 'button';
-					stay.textContent = isStay ? '\u{1F513}' : '\u{1F512}';	// open / closed padlock
-					stay.title = t('devices.stay_unlocked') + ' — ' + t('devices.stay_unlocked_help');
-					stay.setAttribute('aria-label', t('devices.stay_unlocked'));
-					stay.setAttribute('aria-pressed', isStay ? 'true' : 'false');
+					stay.setAttribute('role', 'switch');
+					stay.setAttribute('aria-checked', isStay ? 'true' : 'false');
+					var stayIcon = el('span', 'device-stay-icon', isStay ? '\u{1F513}' : '\u{1F512}');	// open / closed padlock
+					stayIcon.setAttribute('aria-hidden', 'true');
+					var stayLabel = el('span', 'device-stay-label', t('devices.stay_unlocked_label'));
+					stay.appendChild(stayIcon);
+					stay.appendChild(stayLabel);
 					stay.addEventListener('click', function () {
 						DaimondIdentity.setStayUnlocked(!isStay);
 						renderHome();
@@ -21689,6 +21978,16 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		mine.forEach(function (m) {
 			if (m.role === 'assistant' && m.interrupted) { delete m.interrupted; delete m.why; }
 		});
+		// AND THE DEAD TURN LEAVES THE WRITE-AHEAD LOG. The offline branch in `runTurn`
+		// leaves it OPEN there on purpose, so a reload recovers it as interrupted -- but
+		// it is being taken over HERE, and the recovery's own "already recovered" guard
+		// cannot see that: it looks for a message carrying this `iturn`, and at boot a
+		// chat's transcript has not been read yet (seq 213 loads it when the chat is
+		// opened). So the next reload recovered the turn a second time and appended a
+		// second badged partial, offering Continue on work already continued. The
+		// continuation opens a journal entry of its own, so nothing is left unprotected.
+		try { if (window.DaimondJournal) DaimondJournal.clearTurn(iturn); }
+		catch (e) { /* the entry is stale either way; the continuation has its own */ }
 		// Drop any agent built before the break: its session still holds the dead turn, and
 		// `ensureApp` must rebuild the conversation from the messages that remain -- which now
 		// end with the partial, which is the whole point.
@@ -21943,12 +22242,25 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 	/// has killed the turn they were trying to steer.
 	function setSendMode(mode) {
 		chatSend.disabled = false;
-		if (mode === 'stop') { chatSend.innerHTML = '■'; chatSend.classList.add('stop'); chatSend.title = t('chat.stop'); }
+		// THE LABEL AND THE TITLE ARE ONE SENTENCE. The markup's `aria-label` said
+		// "Send" for the life of the page while the title changed under it, so a
+		// screen reader was told to press Send to stop a turn. Whatever the title
+		// says, the label says.
+		var words = mode === 'stop'      ? t('chat.stop')
+			: mode === 'interject'       ? t('chat.send_into')
+			:                              t('chat.send');
+		if (mode === 'stop') { chatSend.innerHTML = '■'; chatSend.classList.add('stop'); }
 		else {
 			chatSend.innerHTML = '➤';
 			chatSend.classList.remove('stop');
-			chatSend.title = t(mode === 'interject' ? 'chat.send_into' : 'chat.send');
 		}
+		chatSend.title = words;
+		chatSend.setAttribute('aria-label', words);
+		// AND STOP IS REACHABLE IN THE ONE MODE THE SEND BUTTON CANNOT CARRY IT.
+		// `interject` is a turn running with something typed into the box: the arrow
+		// sends the correction, and until this the only way to stop was to empty the
+		// box first. Hidden in the other two modes, so there is never a second ■.
+		if (chatStop) chatStop.hidden = (mode !== 'interject');
 	}
 
 	/// Which of the three the button should be showing.
@@ -22254,18 +22566,26 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 	///
 	/// THIS IS THE BUTTON THE TRASH WAS BUILT FOR. It shipped with a dialog
 	/// naming the count and no way back, and somebody pressed it expecting an
-	/// undo. The dialog was never the protection — a person about to delete
-	/// fourteen chats already believes that is what they want — so it is gone,
-	/// and what replaces it is that the fourteen are all still there.
+	/// undo, so the dialog came off: the fourteen are all still there, in the
+	/// Trash, if it was a mistake.
+	///
+	/// THE ASK CAME BACK (owner ruling, B18/annoyance 14): the Trash makes it
+	/// reversible, but reversible is not the same as unasked, and this is the
+	/// one bulk act in the rail with nothing chosen first to give a moment's
+	/// pause. One short question naming the count, then the same no-ceremony
+	/// path every other delete in this app already takes.
 	///
 	/// Reuses `removeChat` per chat rather than a bulk code path of its own, so
 	/// a chat mid-turn is aborted and the current-chat handoff runs exactly as
 	/// it does for a single delete -- one tested way to remove a chat, called
 	/// several times, not two ways that could disagree.
-	function deleteAllChats() {
+	async function deleteAllChats() {
 		var loose = chats.filter(function (c) { return !c.diamondId; });
 		var n = loose.length;
 		if (n === 0) return;
+		var ok = await confirmDialog(tn('rail.delete_all_chats_ask', n, { n: n }),
+			t('tile.dlg_delete'), { title: t('rail.delete_all_chats'), danger: true });
+		if (!ok) return;
 		loose.forEach(function (c) { removeChat(c); saidMoved(chatDisplayName(c)); });
 	}
 
@@ -22326,6 +22646,14 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			renderSessionList();
 		});
 		menu.appendChild(prev);
+
+		// A separator ahead of the destructive item (CHAT-14): the row above is
+		// a display toggle, and drawing them with nothing between them let a
+		// misread of "Show the first message" land on "Delete all chats" instead.
+		var sep = document.createElement('div');
+		sep.className = 'railhead-menu-sep';
+		sep.setAttribute('role', 'separator');
+		menu.appendChild(sep);
 
 		var del = document.createElement('button');
 		del.type = 'button';
@@ -23679,17 +24007,22 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 	/// The × in a chat tile's top right, restored beside the cog (notes4,
 	/// "the closer came back"). It does not merely hide the tile: a chat is
 	/// ephemeral but not disposable, so `onClose` is `deleteChat`, the SAME
-	/// confirm-then-remove path the cog's own dialog offers at its foot --
-	/// one function that knows how to end a chat, not two that could drift.
+	/// path the cog's own dialog offers at its foot -- one function that knows
+	/// how to end a chat, not two that could drift.
+	///
+	/// Titled "Delete" rather than "Close" (CHAT-13/B18): the glyph is a ×
+	/// everywhere else in this app, but "Close" reads as dismissing a panel,
+	/// not as moving a conversation to the Trash -- the same act the dialog's
+	/// own foot button already calls Delete.
 	///
 	/// `name` labels the button the way `tileCog` labels itself, so a screen
-	/// reader hears which chat a × belongs to rather than a bare "Close".
+	/// reader hears which chat a × belongs to rather than a bare "Delete".
 	function tileCloser(name, onClose) {
 		var b = document.createElement('button');
 		b.type = 'button';
 		b.className = 'tile-x';
-		b.title = t('common.close');
-		b.setAttribute('aria-label', t('tile.close_named', { name: name || '' }));
+		b.title = t('tile.dlg_delete');
+		b.setAttribute('aria-label', t('tile.delete_named', { name: name || '' }));
 		b.innerHTML = CLOSE_SVG;
 		b.addEventListener('click', function (e) {
 			// Same reason as the cog: the tile itself must not also open.
@@ -23770,6 +24103,13 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		// ── Colour, which the tile takes at once and the Graph takes with it.
 		mountTileColour(card, opts);
 
+		// ── A plain rename, for a Diamond, HERE IN THE DIALOG as well as the row's
+		// own double-click. RAIL-06: a rename that only works if you happen to
+		// double-click the right label is not a rename anybody can find, and the
+		// cog is where the rest of what a Diamond can be asked to do already
+		// lives.
+		if (opts.models === 'diamond') mountDiamondName(card, opts, h);
+
 		// ── Models. Only where the object HAS changeable models, which today is a
 		// Diamond: notes2 fixes a chat's models at creation and this dialog is not
 		// the place to quietly overturn that.
@@ -23778,6 +24118,10 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		// ── Context. Only for a chat, which is the only thing here that HAS a durable
 		// conversation to fold; a Diamond's daimon has one from phase E.
 		if (opts.chat) mountContextSection(card, opts.chat);
+
+		// ── The two ways to turn a chat into a Diamond (CHAT-15), moved off the
+		// row and into the cog: see `mountChatFoldKeep`.
+		if (opts.chat) mountChatFoldKeep(card, opts.chat);
 
 		// ── A plain rename, for a chat, HERE AND NOWHERE ELSE.
 		//
@@ -23795,6 +24139,12 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 
 		// ── Triggered actions, for a Diamond.
 		if (opts.models === 'diamond') mountTriggers(card, opts);
+
+		// ── Giving this Diamond to somebody, for a Diamond. ABOVE the template,
+		// because a share is the thing a person came here to do and a template is
+		// the shape of it: the sheet's own "the shape only" is the door between the
+		// two, and the section below is what to do when there is nobody to send to.
+		if (opts.models === 'diamond') mountShare(card, opts);
 
 		// ── A template of this Diamond, for a Diamond. BELOW the triggers, because
 		// the section immediately above is the one thing a template deliberately
@@ -23844,6 +24194,25 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		// arriving by keyboard most likely wants, and it is the one Escape mirrors.
 		x.focus();
 		return { card: card, close: close };
+	}
+
+	/// Give this Diamond to somebody: the share sheet, behind the cog.
+	///
+	/// BEHIND THE COG, for the reason `mountTemplate` gives: everything about ONE
+	/// Diamond is behind its cog, and "give this to somebody" is the most obvious
+	/// thing a person wants to do with the one in front of them. The Share view of
+	/// the Social panel keeps the same sheet for the Diamond that is open; this is
+	/// the door that names WHICH diamond, which is why the panel's own line now
+	/// points here when nothing is open.
+	///
+	/// THE SHEET IS share.js's AND IS NOT REBUILT HERE. A second one would be a
+	/// second place for the key line, the conversation tick and "they will own the
+	/// copy" to be drawn, and the one that stopped being drawn would be the one
+	/// nobody was looking at.
+	function mountShare(card, opts) {
+		if (!window.DaimondShare || typeof DaimondShare.sheet !== 'function') return;
+		card.appendChild(secHead(tOr('share.section', 'Share')));
+		card.appendChild(DaimondShare.sheet({ id: opts.id, name: opts.name }));
 	}
 
 	/// Save this Diamond's shape as a template file.
@@ -23922,6 +24291,80 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		});
 		card.appendChild(btn);
 		card.appendChild(say);
+	}
+
+	/// The rename field in a Diamond's cog dialog. Same shape as `mountChatName`
+	/// below, but committing through `rename_diamond` rather than `renameChat` --
+	/// a Diamond's name lives in the store, not in a rail record kept locally.
+	function mountDiamondName(card, opts, h) {
+		card.appendChild(secHead(tOr('tile.dlg_name', 'Name')));
+		var row = document.createElement('div');
+		row.className = 'tile-dlg-name';
+		var input = document.createElement('input');
+		input.type = 'text';
+		input.className = 'tile-dlg-name-input';
+		input.value = opts.name || '';
+		input.spellcheck = false;
+		input.setAttribute('autocomplete', 'off');
+		input.setAttribute('data-1p-ignore', '');
+		input.setAttribute('data-lpignore', 'true');
+		input.setAttribute('aria-label', tOr('tile.dlg_name', 'Name'));
+		input.addEventListener('change', function () {
+			var nn = input.value.trim();
+			if (!nn || nn === opts.name) { input.value = opts.name || ''; return; }
+			diamondApp().rename_diamond(opts.id, nn).then(function () {
+				opts.name = nn;
+				if (h) h.textContent = nn;
+				bumpDiamonds(); loadDiamonds();
+			}).catch(function (e2) {
+				input.value = opts.name || '';
+				noticeDialog(t('rail.rename_failed'), friendlyError(e2));
+			});
+		});
+		input.addEventListener('keydown', function (e) {
+			if (e.key === 'Enter') { e.preventDefault(); input.blur(); }
+		});
+		row.appendChild(input);
+		card.appendChild(row);
+	}
+
+	/// The two ways to turn a chat into a Diamond, off the row (CHAT-15) and
+	/// into the cog instead: `chat` is the same object the row's own buttons
+	/// used to act on, so pressing either here does exactly what pressing it on
+	/// the row always did.
+	///
+	/// FOLD AND KEEP ARE NOT THE SAME ACT. Fold runs the reducer on a Diamond
+	/// that already exists and writes a SUMMARY into its crystal, at the cost
+	/// of a paid round trip; Keep makes a NEW Diamond and carries the
+	/// transcript in whole, consults no model and costs nothing. Both are
+	/// offered because somebody reaching for the cog may want either.
+	function mountChatFoldKeep(card, chat) {
+		var row = document.createElement('div');
+		row.className = 'tile-dlg-actions';
+		var fold = document.createElement('button');
+		fold.type = 'button';
+		fold.className = 'tile-fold' + (chat.foldedInto ? ' folded' : '');
+		// Labelled by what pressing it walks you through rather than the
+		// internal verb "Fold" (CHAT-15): the row's own tooltip already said
+		// this, and now it is the word itself.
+		fold.textContent = chat.foldedInto ? t('tile.folded')
+			: tOr('tile.turn_into_diamond', 'Turn into a diamond…');
+		fold.title = chat.foldedInto
+			? t('tile.folded_help', { name: chat.foldedInto.name })
+			: t('tile.fold_all_help');
+		fold.addEventListener('click', function () { openFoldPicker(chat, fold); });
+		row.appendChild(fold);
+		var keep = document.createElement('button');
+		keep.type = 'button';
+		keep.className = 'tile-keep';
+		keep.textContent = tOr('tile.keep', 'Keep');
+		keep.title = tOr('tile.keep_help',
+			'Make a diamond of this chat, with the whole conversation as its first artefact.');
+		keep.addEventListener('click', function () {
+			keepAsDiamond(chat.id).catch(function (err) { toast(friendlyError(err), true); });
+		});
+		row.appendChild(keep);
+		card.appendChild(row);
 	}
 
 	/// The rename field in a chat's cog dialog. See the call site for why it is
@@ -24179,6 +24622,10 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		return (chat.sessionMsgs || 0) > 0;
 	}
 
+	// Mirrors `compact::MIN_KEEP_MESSAGES` (src/compact.rs) -- see `foldChatNow`,
+	// the one place this is read.
+	var FOLD_MIN_KEEP_MESSAGES = 6;
+
 	/// Fold a chat's context now, on the user's say-so.
 	///
 	/// One implementation, two callers: the tile dialog and the Fold button in
@@ -24201,16 +24648,27 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		// conversation is real and the engine is not, build one: `ensureApp` is idempotent,
 		// seeds the persisted session back in, and is the same path a turn takes.
 		if (!chatSaid(chat)) { toast(t('tile.fold_unavailable'), true); return; }
+		// NOTHING TO FOLD IS CHECKED BEFORE ASKING -- and before building an engine
+		// at all -- not after (B18/annoyance 15: a two-message chat used to be asked
+		// "Fold this conversation?" and only THEN told there was nothing to do).
+		// `MIN_KEEP_MESSAGES` (6) is `fold_by_hand`'s own floor in src/compact.rs --
+		// below it there is no tail to cut, and neither the engine nor a provider
+		// key is needed to know that. Not exhaustive: a handful of unusually bulky
+		// messages can still fold above this count, and that heavier case still
+		// builds the engine, still asks, and still pays for it, exactly as before --
+		// this only catches the short, free, common one without making the user
+		// answer a question -- or this app mint an engine -- for nothing.
+		if (chatMsgCount(chat) <= FOLD_MIN_KEEP_MESSAGES) { toast(t('tile.fold_nothing')); return; }
 		var app;
 		// `ensureApp` constructs a wasm `DaimondApp` and can throw -- no key, no module --
 		// which is why every other caller wraps it. A fold that cannot start says so with
 		// the reason rather than dying in a rejection nobody sees.
 		try { app = ensureApp(chat); }
 		catch (e) { noticeDialog(t('tile.fold_failed'), friendlyError(e)); return; }
-		// No check for `fold_now` itself. An engine too old to have it throws on the call
-		// below and is reported as the failure it is, which names the real fault; refusing
-		// here would have to borrow `fold_unavailable`, and that sentence is about a chat
-		// with nothing in it.
+		// No check for `fold_now` itself beyond the above. An engine too old to have it
+		// throws on the call below and is reported as the failure it is, which names the
+		// real fault; refusing here would have to borrow `fold_unavailable`, and that
+		// sentence is about a chat with nothing in it.
 		var ok = await confirmDialog(t('tile.fold_context_body'), t('tile.fold_context_ok'),
 			{ title: t('tile.fold_context_title'), danger: false });
 		if (!ok) return;
@@ -24221,7 +24679,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			// for is written into the thread and persisted exactly as an automatic one
 			// is. Anything less would leave the transcript quietly shorter than it was,
 			// which is the one thing `appendCompacted` exists to prevent.
-			moved = await app.fold_now(function (ev) {
+			moved = await engineHold(app, app.fold_now(function (ev) {
 				if (!ev || ev.type !== 'compacted') return;
 				var manualFoldTs = Date.now();
 				chat.messages.push({ role: 'fold_log', content: ev.content || '',
@@ -24229,7 +24687,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 				if (current && current.id === chat.id) {
 					appendCompacted(ev.content || '', ev.folded, ev.kept, manualFoldTs);
 				}
-			});
+			}));
 		} catch (e) {
 			fold.disabled = false;
 			noticeDialog(t('tile.fold_failed'), friendlyError(e));
@@ -25290,6 +25748,12 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			var line = String(m.content == null ? '' : m.content).replace(/\s+/g, ' ').trim();
 			if (line) return line;
 		}
+		// NOT RESIDENT: a Stage 1 chat's transcript is loaded only when it is
+		// opened, so a tile for anything else on the rail has no `messages` to
+		// scan here — see `hydrateChat`. `opening` is the same line, captured
+		// on the summary at the chat's last save, and is what lets a tile title
+		// and preview a chat this session has never had to load in full.
+		if (s && s.opening) return s.opening;
 		return '';
 	}
 
@@ -25403,7 +25867,11 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		_whenTimer = setInterval(function () {
 			if (locked || !sessionList) return;
 			var now = Date.now(), restack = false;
-			sessionList.querySelectorAll('.tile-when').forEach(function (el) {
+			// `.tile-when-sub` since the title moved off `.tile-when` and onto its
+			// own line that never carries a `data-at` -- see `sessionBox`. Both
+			// classes queried so an older tile mid-transition (there is none today,
+			// but the guard costs nothing) still ticks.
+			sessionList.querySelectorAll('.tile-when, .tile-when-sub').forEach(function (el) {
 				var ms = parseInt(el.dataset.at || '0', 10) || 0;
 				if (!ms) return;
 				if (el.dataset.bucket !== dayBucket(ms, now)) { restack = true; return; }
@@ -25626,26 +26094,26 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		var label = document.createElement('button');
 		label.type = 'button';
 		label.className = 'tile-label';
-		// A name only when a user set one. Otherwise the derived phrase, which
-		// the day heading above it completes: "Today" + "2 hr ago".
+		// THE TITLE, per `chatDisplayName`: the user's own name; else the first
+		// six words of the first thing they said; else "New chat" (CHAT-02 /
+		// annoyance 10 — every tile used to read as its bare age, "just now",
+		// with nothing beside it to tell one chat from the next). Kept as
+		// `.tile-when` and left with no `data-at`, so `startWhenClock` -- which
+		// walks that class to keep ages honest -- never overwrites a title with
+		// a clock face; that guard is the same one a user's own name already
+		// relied on.
 		var when = document.createElement('span');
 		when.className = 'tile-when';
-		when.dataset.at = String(stamp);
-		when.dataset.bucket = dayBucket(stamp);
-		when.textContent = s.name || tileWhen(stamp);
-		// A named chat keeps its clock too, quietly, so the rail's one ordering
-		// fact is legible on every tile rather than on all but the named ones.
-		if (s.name) {
-			when.dataset.at = '';		// the ticker leaves a user's own words alone
-			var clock = document.createElement('span');
-			clock.className = 'tile-when-sub';
-			clock.dataset.at = String(stamp);
-			clock.dataset.bucket = dayBucket(stamp);
-			clock.textContent = tileWhen(stamp);
-			label.appendChild(when); label.appendChild(clock);
-		} else {
-			label.appendChild(when);
-		}
+		when.textContent = chatDisplayName(s);
+		// THE AGE, always its own line beside the title rather than standing in
+		// for it. `data-at` is what `startWhenClock` ticks forward once a
+		// minute; see the comment there.
+		var clock = document.createElement('span');
+		clock.className = 'tile-when-sub';
+		clock.dataset.at = String(stamp);
+		clock.dataset.bucket = dayBucket(stamp);
+		clock.textContent = tileWhen(stamp);
+		label.appendChild(when); label.appendChild(clock);
 		label.title = t('tile.click_to_open');
 		label.setAttribute('aria-label', chatDisplayName(s));
 		label.addEventListener('click', function (e) { e.stopPropagation(); selectChat(s); });
@@ -25785,35 +26253,11 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			chip.className = 'tile-model-chip';
 			chip.textContent = shortModel(s.model); chip.title = s.model || '';
 			top.appendChild(chip);
-			var fold = document.createElement('button');
-			fold.className = 'tile-fold' + (s.foldedInto ? ' folded' : '');
-			// A chat that has been folded says so, rather than looking untouched
-			// and inviting the same fold again and again.
-			// "Fold all", because the chat panel now also folds a chosen few turns, and a button
-			// that says only "Fold" no longer says which of the two it does.
-			fold.textContent = t(s.foldedInto ? 'tile.folded' : 'tile.fold_all');
-			fold.title = s.foldedInto
-				? t('tile.folded_help', { name: s.foldedInto.name })
-				: t('tile.fold_all_help');
-			fold.addEventListener('click', function (e) { e.stopPropagation(); openFoldPicker(s, fold); });
-			top.appendChild(fold);
-			// KEEP AS A DIAMOND, in the slot the rename gesture used to occupy in
-			// spirit if not in pixels. It is beside Fold deliberately, and the two
-			// are not the same act: Fold runs the reducer on a Diamond that
-			// already exists and writes a SUMMARY into its crystal, at the cost of
-			// a paid round trip; Keep makes a new Diamond and carries the
-			// transcript in whole, consults no model and costs nothing. Somebody
-			// who has just decided a conversation matters wants the second one.
-			var keep = document.createElement('button');
-			keep.className = 'tile-keep';
-			keep.textContent = tOr('tile.keep', 'Keep');
-			keep.title = tOr('tile.keep_help',
-				'Make a diamond of this chat, with the whole conversation as its first artefact.');
-			keep.addEventListener('click', function (e) {
-				e.stopPropagation();
-				keepAsDiamond(s.id).catch(function (err) { toast(friendlyError(err), true); });
-			});
-			top.appendChild(keep);
+			// FOLD AND KEEP MOVED INTO THE COG (CHAT-15): every row used to carry
+			// both, always, whether or not there was even a Diamond to fold into --
+			// two internal verbs on every tile in the rail. `mountChatFoldKeep`
+			// draws the same two acts inside the cog's own dialog now; the row
+			// keeps only its title, its age and the cog that reaches them.
 			// What is waiting on this chat. A queue is only drawn in the thread of
 			// the chat on screen, so one left behind while the user works elsewhere
 			// was invisible until they happened to go back — and it is money about
@@ -25963,7 +26407,28 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			var msgs = app.export_session();
 			if (!msgs || !msgs.length) return;
 			var all  = chat.messages || [];
-			var last = all.length ? all[all.length - 1] : null;
+			// THE MARKER MUST STAND ON A MESSAGE THE AGENT ACTUALLY HOLDS.
+			//
+			// A turn that died leaves an INTERRUPTED assistant message in the transcript,
+			// pushed before this runs -- and the engine's own list stops at the prompt,
+			// because `run_turn` threw before any reply was appended to it. Marking the
+			// partial as accounted for made the stored session lie: `tailAfter` found
+			// nothing left to append, so a Continue rebuilt the conversation WITHOUT the
+			// words the model was being asked to carry on from, and the model started
+			// again. The request went out and the answer was a fresh one -- the exact
+			// complaint `continueTurn` was written to end, one layer further down.
+			//
+			// Trailing furniture is walked past for the same reason: an `end_log` or an
+			// `error_log` is not a message the agent holds, and a marker standing on one
+			// leaves `tailAfter` with nothing after it to find.
+			var at = all.length - 1;
+			while (at >= 0) {
+				var m = all[at];
+				if (m && m.content && (m.role === 'user' || m.role === 'assistant')
+					&& !(m.role === 'assistant' && m.interrupted)) break;
+				at--;
+			}
+			var last = at >= 0 ? all[at] : null;
 			chat.session = {
 				v:      1,
 				msgs:   Array.prototype.slice.call(msgs),
@@ -26221,6 +26686,16 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		/// after midnight, when "two hours ago" is genuinely yesterday.
 		railWhen:        function (ms, now) { return tileWhen(ms, now); },
 		railDay:         function (ms, now) { return dayBucket(ms, now); },
+		/// `chatDisplayName`, by id, off whichever list actually has it — the live
+		/// rail first, then the store's summaries. Published for `verify_chatlife`,
+		/// so the title rule (CHAT-02) is asserted against the same pure function
+		/// the rail, the header and the Trash panel all call, rather than a second
+		/// copy of "first six words" written into the test.
+		railTitle:       function (id) {
+			var c = chats.find(function (x) { return x.id === id; })
+				|| storedChats().find(function (x) { return x.id === id; });
+			return c ? chatDisplayName(c) : '';
+		},
 		/// The worker pool. Published for `verify_chatlife`, which has to put a
 		/// run in flight to prove that a chat with live work under it does not
 		/// expire — a rule whose whole value is that "the chat expired" is never
@@ -27732,6 +28207,9 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		var step = 0;
 		var writing = false;   // prose is arriving, so the caption has said so once
 		var sawError = false, threw = false;
+		// The road went and the turn was handed back badged, rather than written off.
+		// Read in the `finally`, where it decides whether an ending line is said at all.
+		var handedBack = false;
 		var telErr = null;                       // what threw, for the one number that says which class
 		var turnText = '';   // THE CURRENT SEGMENT ONLY — reset on every `tool_call`; see below
 		// The feed's `round`, throttled. A daimon-length turn can run ~150 rounds; sending
@@ -27949,11 +28427,13 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 				// which arrived before the road went are still there. The ending closes
 				// the turn, so it is drawn when the turn closes and not when the engine
 				// mentions it.
+				// AND STORED AT THE END OF THE TURN, NOT HERE. The answer is pushed after
+				// this event, and so is the partial of a turn the road killed -- so a record
+				// written now lands ABOVE the message it is about, on screen and again on
+				// every reload. The `finally` below is where a turn's records are complete,
+				// and that is where this one joins them.
 				var endLog = endLogOf(ev);
-				if (endLog) {
-					chat.messages.push(endLog);
-					pendingEnd = endLog;
-				}
+				if (endLog) pendingEnd = endLog;
 				// TRAINING WHEELS — the debug feed's `ended`. The round the turn actually
 				// stopped on may not be one of the throttled ones above, so it is caught
 				// here rather than lost: `roundSent !== step` means the last round sent
@@ -28296,7 +28776,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 				// turn while the user went to look at a Diamond was billing that Diamond for a
 				// conversation it had never seen.
 				recordSpend(chat.model, turnP, turnC, turnCa, turnCost, chat.provider,
-					chat.diamondId || '');
+					chat.diamondId || '', umid);
 				// A tool call arrived unparseable, which means the reply ran out of room
 				// mid-argument. Said once, at the end, naming the limit and the setting —
 				// the alternative is a tool that silently did nothing.
@@ -28349,6 +28829,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 					// is recovered -- and the same interrupted message is shown at once, because
 					// `recoverInterrupted` runs at boot and the user is still sitting here.
 					if (J) J.flush();
+					handedBack = true;
 					// EVERY MESSAGE OF THE TURN CARRIES ITS ID, which is what makes Continue a
 					// replacement rather than a second copy. `continueTurn` drops by `iturn`, and
 					// `recoverInterrupted` tags the prompt for exactly this reason
@@ -28403,7 +28884,19 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 				// 2026-09-15: a turn that reasoned itself to nothing read as `done` here
 				// even after `endedHow` learned the word, because this line never asked.
 				var lastHow = pendingEnd ? String(pendingEnd.how || '') : '';
-				if (pendingEnd && owns()) appendEnding(pendingEnd);
+				// THE ENDING IS THE LAST RECORD OF THE TURN. Stored here, so it sits under
+				// the answer it is about rather than over it, and so a reload draws it where
+				// this sitting drew it.
+				//
+				// WITHHELD ENTIRELY FOR A TURN HANDED BACK. The badge on the partial already
+				// says the connection dropped and offers to carry on; an "Ended on an error"
+				// line above it was the same event told twice, in two voices that disagreed
+				// -- the louder one calling a lost connection an error (UX run, annoyance 4).
+				// One ending, one sentence.
+				if (pendingEnd && !handedBack) {
+					chat.messages.push(pendingEnd);
+					if (owns()) appendEnding(pendingEnd);
+				}
 				pendingEnd = null;
 				chat._generating = false;
 				chat._capTry = 0;            // the backoff belonged to this turn only
@@ -28435,6 +28928,14 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 					ca:   turnCa || 0,
 					usd:  Math.round((turnCost || 0) * 1e6) / 1e6,
 					ms:   Date.now() - telT0,
+					// Named like `turn.start`'s own `model`/`prov`, so the lens can join a
+					// ledger entry to this row by turn id and take the model straight off
+					// the event -- without them the event's own model read as `?` and the
+					// lens had to GUESS which ledger entry was this turn (device + a 5s
+					// clock skew + equal prompt size), which is what put one turn on the
+					// screen twice under two devices.
+					m:    String(chat.model || '').slice(0, 48),
+					prov: String(chat.provider || '').slice(0, 24),
 					out:  chat._aborted ? 'stopped'
 						: (threw || sawError) ? (capFail ? 'cap' : 'error')
 						: (lastHow === 'silent' || lastHow === 'reasoned_only' || lastHow === 'malformed')
@@ -28588,15 +29089,20 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 	// ordinary chat `selectChat` nulls the global, so the same spend was billed to nobody.
 	// Passing '' means exactly that -- nobody -- and it is the honest answer for an ordinary
 	// chat, which is not a Diamond and has no row in the index.
+	// `turnId` is the debug feed's own turn id -- the same one its `turn.end`
+	// carries -- passed through so the lens can join this entry to that event
+	// by identity rather than guessing from device, clock skew and prompt size.
+	// Optional: a caller spending against no single turn (a whole-chat fold)
+	// passes none, and the entry is stored exactly as it was before.
 	function recordSpend(model, promptTokens, completionTokens, cachedTokens, costUsd, provider,
-		diamondId) {
+		diamondId, turnId) {
 		if (!window.DaimondLedger || (promptTokens + completionTokens) <= 0) return;
 		var entry = null;
 		try {
 			entry = DaimondLedger.record({ ts: Date.now(), model: model,
 				promptTokens: promptTokens, completionTokens: completionTokens,
 				cachedTokens: cachedTokens || 0, costUsd: costUsd || 0,
-				provider: provider || '' });
+				provider: provider || '', turnId: turnId || '' });
 		} catch (e) { /* ledger is best-effort */ }
 		if (entry && window.DaimondGovernor) {
 			try { DaimondGovernor.observe(entry); } catch (e) { /* governor is best-effort */ }
@@ -32004,7 +32510,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		// been fetched at boot -- the identity was still locked. Ask now that
 		// there is a session, or a returning user is told the account service is
 		// unreachable when it is fine.
-		if (window.DaimondMail && DaimondPanels.isOpen('mail')) DaimondMail.onOpen();
+		if (window.DaimondMail && DaimondPanels.isOpen('mail')) { DaimondMail.onOpen(); Badge.seen('mail'); }
 		grew('mail.onOpen');
 		// And what this account has unlocked, for the same reason: at boot there was no
 		// session to ask under, so the rail could count what Daimond is born with and
@@ -32046,7 +32552,10 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 	/// instead, which is a different variable with the same name in it -- every caller here is
 	/// past an await, and a fold that lands after the user has moved on was billed to wherever
 	/// they moved to.
-	function meterDiamondTurn(app, diamondId) {
+	// `turnId` is passed through to `recordSpend` for a caller that IS one turn (a
+	// daimon steer); a fold proposal is not, and its callers pass none -- see the
+	// parameter comment on `recordSpend`.
+	function meterDiamondTurn(app, diamondId, turnId) {
 		if (!app || !window.DaimondLedger) return;
 		var prev = _diamondMeter.get(app) || { p: 0, c: 0, ca: 0, cost: 0 };
 		var p = app.prompt_tokens || 0, c = app.completion_tokens || 0;
@@ -32056,7 +32565,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		_diamondMeter.set(app, { p: p, c: c, ca: ca, cost: cost });
 		if (dp + dc === 0) return;
 		recordSpend(_diamondAppModel.get(app) || cfg.model, dp, dc, dca, dcost,
-			_diamondAppProvider.get(app) || '', diamondId || '');
+			_diamondAppProvider.get(app) || '', diamondId || '', turnId || '');
 		updateSpend();
 	}
 
@@ -38718,6 +39227,8 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		/// an hour of wall clock to reach the case it is checking.
 		async function triggerTick() {
 			DaimondTriggers.tickActivity(TRIGGER_TICK_MS);
+			// The Social panel's unread count, on an occasion that already exists.
+			postBadge();
 			// Every TA is measured against ITS OWN stopwatch, so the reading goes in
 			// as a lookup: `due` stays pure and asks the occasion, and the occasion
 			// asks the clock. There is no early return on "less than a minute" any
@@ -38980,6 +39491,10 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 						return d && d.id && !trashed(d.id);
 					});
 				} catch (e) { diamonds = []; }
+				// Where each one came from, BEFORE the rail is drawn: `diamondBox` is
+				// synchronous and would otherwise draw the name with no line under it
+				// and never come back to it.
+				try { await readOrigins(diamonds); } catch (e) { /* the store said no */ }
 				renderDiamondList();
 				// The triggers travel with the Diamonds: the pause tree needs a leaf
 				// per action, and the tick needs to know what is armed. Read here
@@ -40018,6 +40533,20 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		// no model set, no fold pending and nothing queued -- the ordinary state of a
 		// new one.
 		box.appendChild(header);
+		// WHO GAVE IT TO YOU, under the name, in THIS device's colours. Colours are
+		// a device preference and the sender's are not carried, so a shared diamond
+		// looks like the rail it is on; what is borrowed is the name. A LINE AND NOT
+		// A BADGE: a badge is an official shape and only a verified key could earn
+		// one, and the key's standing is said in People, where it can be acted on.
+		// Below the header rather than inside it, which is a flex row holding the
+		// name, the light and the cog.
+		var from = _origins[f.id];
+		if (from && from.handle) {
+			var fl = document.createElement('div');
+			fl.className = 'diamond-from';
+			fl.textContent = t('rail.shared_by', { who: from.handle });
+			box.appendChild(fl);
+		}
 		if (meta.firstChild) box.appendChild(meta);
 		// The meter row, BELOW the tags and shaped like the one on an ordinary
 		// chat tile: context bar with its percentage, then the relative time that
@@ -45892,6 +46421,10 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		// went unseen -- no `truncated` arm existed here at all before this fix, and
 		// `closeFeedTurn`'s `out` never asked the engine what actually happened.
 		var lastHow = '';
+		// How this steer ended, held until the reply has been pushed. See the `ended`
+		// arm: a record stored when the engine mentions the ending lands ABOVE the
+		// answer it is about.
+		var pendingSteerEnd = null;
 		var closedFeed = false;
 		/// TRAINING WHEELS — close this turn in the feed, from whichever of the two
 		/// exits below is reached.
@@ -45944,6 +46477,11 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 				ca:   Math.max(0, a1 - dsA0),
 				usd:  Math.round(Math.max(0, u1 - dsU0) * 1e6) / 1e6,
 				ms:   Date.now() - dsT0,
+				// Same reason as the chat path's own `turn.end`: without them the lens read
+				// this turn's model as `?` and had to guess which ledger entry was it.
+				// `dsPair` is the pair this closure's `turn.start` already named.
+				m:    String((dsPair && dsPair.model) || '').slice(0, 48),
+				prov: String((dsPair && dsPair.provider) || '').slice(0, 24),
 				out:  String(out || 'done'),
 				dia:  1,
 			});
@@ -46048,11 +46586,10 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 				// is durable and it is the surface this app is developed from, so a
 				// steer that quietly did nothing is exactly as invisible here as it was
 				// in a chat -- and the reader is the same person.
-				var dEnd = endLogOf(ev);
-				if (dEnd) {
-					rec.messages.push(dEnd);
-					if (onScreen()) appendEnding(dEnd);
-				}
+				// AND STORED AFTER THE REPLY, not here, for the reason `runTurn`'s own
+				// `ended` arm gives: the answer is pushed when `steer_crystal` returns,
+				// so a record written now sits over the message it is about.
+				pendingSteerEnd = endLogOf(ev);
 				// TRAINING WHEELS — the debug feed's `ended`, the daimon's half. See the
 				// same pair in `runTurn`'s `ended` arm.
 				if (roundPayload && roundSent !== step) dsEvent('round', roundPayload);
@@ -46192,6 +46729,12 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 				rec.messages.push({ role: 'assistant', content: replyText,
 					mid: newMid(), ranOn: selfDeviceId(), ts: Date.now() });
 			}
+			// The ending, last, under whatever the turn managed to say.
+			if (pendingSteerEnd) {
+				rec.messages.push(pendingSteerEnd);
+				if (onScreen()) appendEnding(pendingSteerEnd);
+				pendingSteerEnd = null;
+			}
 			rec.session = { v: 1, msgs: Array.prototype.slice.call(after || []),
 				upto: '', uptoTs: 0 };
 			try {
@@ -46204,7 +46747,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		// and the Diamond's Links section stay stale until something unrelated
 		// redraws them, and the world model looks like it did not take.
 		signalLinksChanged();
-			meterDiamondTurn(fa, diamondId);
+			meterDiamondTurn(fa, diamondId, rec.id);
 			crystalSay('');
 			await refreshDiamondAfterChange();
 			Files.refresh();
@@ -46215,6 +46758,13 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			// sink, so the daimon does not forget a turn it was already billed for.
 			if (onCrystal()) hideCrystalSpinner();
 			if (onScreen()) { finalizeAssistant(); appendError(friendlyError(e)); }
+			// An ending the engine had already named is not lost to the throw that
+			// followed it.
+			if (pendingSteerEnd) {
+				rec.messages.push(pendingSteerEnd);
+				if (onScreen()) appendEnding(pendingSteerEnd);
+				pendingSteerEnd = null;
+			}
 			rec.messages.push({ role: 'error_log', content: friendlyError(e),
 				mid: newMid(), ts: Date.now() });
 			persistChats();
@@ -46667,12 +47217,12 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		// A panel that was already open when the app booted is never `show`n,
 		// so it would otherwise never ask the gateway what this account holds
 		// and would sit there reporting the account service unreachable.
-		if (window.DaimondMail && DaimondPanels.isOpen('mail')) DaimondMail.onOpen();
+		if (window.DaimondMail && DaimondPanels.isOpen('mail')) { DaimondMail.onOpen(); Badge.seen('mail'); }
 		// And the Terminal, for the same reason: a panel left open in the saved
 		// layout is never `show`n, so nothing would ever build the terminal into it.
 		if (window.DaimondTerm && DaimondPanels.isOpen('term')) DaimondTerm.onOpen();
 		if (window.DaimondTrashPanel && DaimondPanels.isOpen('trash')) DaimondTrashPanel.onOpen();
-		if (window.DaimondSocial && DaimondPanels.isOpen('social')) DaimondSocial.onOpen();
+		if (window.DaimondSocial && DaimondPanels.isOpen('social')) { DaimondSocial.onOpen(); postBadge(); }
 		// Expiry and retention, on every boot. A device that has been off for six
 		// weeks comes back to a trash whose whole contents are due, and works
 		// that out from the stamps it already holds rather than from a message
@@ -46808,10 +47358,16 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		}
 	}
 
-	function lockApp() {
+	/// Lock the app, and end the gateway session too unless `keepSession` says
+	/// otherwise. The two menu items this drives -- "Lock" and "Log out" -- were
+	/// one and the same until 2026-09-15 (annoyance 5): the only way to put the
+	/// passphrase gate back up also ended the session the operator console and a
+	/// pending offer both ride on, so a person stepping away for a minute paid
+	/// the cost of a person leaving for good.
+	function lockApp(keepSession) {
 		// In the trail, because "the app locked itself" and "the page reloaded"
 		// look identical from the outside and need completely different fixes.
-		try { DaimondTrail.note('lockApp', 'the user pressed log out'); } catch (e) {}
+		try { DaimondTrail.note('lockApp', keepSession ? 'the user pressed lock' : 'the user pressed log out'); } catch (e) {}
 		// Every chat that is still spending is stopped, not just the visible one.
 		chats.forEach(function (c) {
 			if (c._generating) {
@@ -46835,12 +47391,14 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 
 		try { DaimondIdentity.lock(); } catch (e) { /* already locked */ }
 
-		// And tell the gateway. Locking used to forget only the keys held here,
-		// which left the session opened at unlock alive for up to an hour -- and
-		// the operator console rides that session, so "Log out" shut the app and
-		// left the console open to whoever sat down next. Pressing it is a person
-		// saying they are done, and it has to mean it on both sides.
-		if (window.DaimondGateway && DaimondGateway.logout) {
+		// And tell the gateway -- for "Log out". Locking used to forget only the
+		// keys held here, which left the session opened at unlock alive for up to
+		// an hour -- and the operator console rides that session, so "Log out"
+		// shut the app and left the console open to whoever sat down next.
+		// Pressing LOG OUT is a person saying they are done, and it has to mean it
+		// on both sides; pressing LOCK is a person stepping away, and the session
+		// they are coming straight back to is exactly what `keepSession` keeps.
+		if (!keepSession && window.DaimondGateway && DaimondGateway.logout) {
 			DaimondGateway.logout().catch(function () {});
 		}
 
@@ -47047,12 +47605,13 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 	/// entered blind into a masked box does need checking against a second one.
 	function setGenMode(on) {
 		idGenMode = !!on && canGenerate();
-		var box    = document.getElementById('id-genbox');
-		var pass2  = document.getElementById('id-pass2-row');
-		var choose = document.getElementById('id-choose');
-		var note   = document.getElementById('id-gennote');
-		var wrote  = document.getElementById('id-wrote');
-		var inp    = document.getElementById('id-pass');
+		var box     = document.getElementById('id-genbox');
+		var passRow = document.getElementById('id-pass-row');
+		var pass2   = document.getElementById('id-pass2-row');
+		var choose  = document.getElementById('id-choose');
+		var note    = document.getElementById('id-gennote');
+		var wrote   = document.getElementById('id-wrote');
+		var inp     = document.getElementById('id-pass');
 		// The confirm field and the "choose my own" escape hatch belong to the
 		// CREATE screen only. On the UNLOCK screen there is nothing to generate and
 		// nothing to confirm -- and, crucially, leaving the confirm field (an
@@ -47062,6 +47621,18 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		// are gated on actually creating an account, not merely on gen mode.
 		var creating = document.getElementById('identity-modal').dataset.mode === 'create';
 		if (box)    box.style.display    = idGenMode ? '' : 'none';
+		// The field that actually holds the passphrase is masked dots -- and, while
+		// generating, those dots sit right under the words in plain view above them,
+		// saying nothing a reader has not already been told (audit 2026-09-15,
+		// annoyance 7). `.vh` (app.css), not `display: none`: a clipped 1x1 box is
+		// still LAID OUT and still a real `type="password"` field at submit time --
+		// which is what a password manager needs to see to offer to save it, and a
+		// stronger version of the same argument that kept the field masked rather
+		// than revealed (see `setSecretRevealed` below) -- and Playwright's fill()
+		// needs a non-empty bounding box, which `display: none` does not have.
+		// Typing a passphrase by hand still shows this row plainly, since there the
+		// field IS the only place the passphrase lives.
+		if (passRow) passRow.classList.toggle('vh', creating && idGenMode);
 		if (pass2)  pass2.style.display  = (creating && !idGenMode) ? '' : 'none';
 		// The escape hatch swings BOTH ways. It used to be shown only in generated
 		// mode, so choosing your own passphrase was a one-way door: the button that
@@ -47701,6 +48272,16 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		if ('open' in box) box.open = false;
 		if (box.dataset.wired) return;
 		box.dataset.wired = '1';
+		var backup = document.getElementById('id-door-backup');
+		if (backup) {
+			// `doImport` (below) already adopts a backup's identity when this
+			// browser holds none -- the branch existed but was unreachable from
+			// anywhere but the (identity-gated) account panel. Same function, same
+			// file parse and refusal messages ("not a Daimond backup", a newer
+			// format); the only thing new here is a caller that can reach it before
+			// an account exists (A12).
+			backup.addEventListener('click', function () { doImport(); });
+		}
 		if (!code) return;
 		code.addEventListener('click', function () {
 			// A passcode is redeemed onto THIS DEVICE'S KEY -- `redeemPasscode`
@@ -47923,6 +48504,110 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		}
 	}
 
+	// THE localStorage KEYS `forgetIdentity` SWEEPS, IN ONE PLACE. This used to be
+	// an unnamed array inline in the function below, and the comment that used to
+	// stand there claimed a separate catch-all caught anything left off this list
+	// -- it does not (see the note where the sweep runs), so a key missing HERE
+	// survives being forgotten. Audit 2026-09-15 (A11) found four that had:
+	// `daimond-stay-unlocked` and three siblings of the permission settings
+	// already named below, none of which had been added when those were. Kept as
+	// one array, not scattered `removeItem` calls, so the next key that needs
+	// adding has exactly one place to go and one list a reader can check against
+	// "does a fresh app after Forget equal a never-used app?" -- `verify_forgetkeys`
+	// asks that question directly. What stays OUT of this list, deliberately: true
+	// device preferences that describe the MACHINE and not the account or its
+	// trust -- theme, skin, language, currency, layout -- which a person handing
+	// a laptop to someone else has no reason to expect reset.
+	var FORGET_CLEARS = [
+		'daimond-chats', 'daimond-chats-deleted', 'daimond-chat-counter', 'daimond-diamond-counter',
+		'daimond-ledger', 'daimond-models', 'daimond-models-v2', 'daimond-diamond-models',
+		'daimond-byok', 'daimond-hide-tools', 'daimond-workers',
+		// `daimond-hands` stood here and removed nothing: it is a CustomEvent
+		// type (hand.js, web.js) and a `data-` attribute, and hand.js touches
+		// localStorage nowhere at all. The hand's one stored grant is the
+		// terminal ceiling, named below under its own reason.
+		'daimond-mail',
+		// The pause tree. The PRIMARY account's keys are un-namespaced, so a
+		// set left behind here is inherited whole by the next account made in
+		// this browser: a Diamond that starts paused for no reason the user
+		// can see, and no way to work out why.
+		'daimond-pause',
+		// The device roster and this device's own id. An account made here
+		// afterwards is a new account, and it must not inherit the erased
+		// one's identity as a device or the devices it used to sync with.
+		'daimond-devices', 'daimond-device-id', 'daimond-device-tombs',
+		'daimond-device-super',
+		// The trash. It is keyed by chat and Diamond id, and a chat id is
+		// `c1`, `c2`, … from a counter this list resets — so a record left
+		// behind here would hide the NEXT account's first chat, on an id it
+		// has every right to reuse. Same class of fault as the pause tree
+		// above, and the same reason it is named rather than swept.
+		'daimond-trash',
+		// THE PERMISSION SETTINGS. Without these a laptop handed over, forgotten
+		// and given a new identity boots in BYPASS -- nothing asked -- having
+		// never seen the one-off explanation of what bypass gives away, with
+		// commands granted the network in every chat. Nobody in that browser has
+		// answered one of those questions. Absent, they read: ask in each chat,
+		// guarded, and explain bypass the first time it is chosen. `-mode-at` and
+		// `-scopes` are the rung's own timestamp and its account-scope grants
+		// (handmode.js) -- companions of `-permission-mode` that this list did
+		// not carry until A11 found the gap.
+		'daimond-net-standing', 'daimond-permission-mode', 'daimond-permission-bypass-ack',
+		'daimond-permission-mode-at', 'daimond-permission-scopes',
+		// THE STAY-UNLOCKED ANSWER (identity.js `K_STAY`). Named in A11 by the
+		// owner directly: left behind, a fresh identity on this device reads the
+		// LAST person's answer instead of the desktop default, most visibly as
+		// '0' surviving to make a clean desktop behave like a phone.
+		'daimond-stay-unlocked',
+		// THIS COMPUTER'S UNATTENDED POSTURES (handmode.js `LS_AUTO`/`LS_HANDOFF`,
+		// daimond.js `AUTONOMOUS_KEY`): whether it may finish dispatched work and
+		// reach the web with nobody watching, and whether a running turn hands
+		// off when this device is stepped away from. Both are device-local by
+		// design and neither travels in sync -- which is exactly why a value one
+		// identity set here must not answer for the next one that unlocks this
+		// machine.
+		'daimond-autonomous-posture', 'daimond-handoff-when-away',
+		// COMMANDS ALREADY APPROVED WITHOUT ASKING AGAIN (approvelist.js). A
+		// standing "don't ask me again" is this identity's own answer to a
+		// specific command, and inherited by a stranger it is commands running
+		// silently that they were never asked about.
+		'daimond-approvelist',
+		// THE PASSKEY, which is the same fault at its worst. The record seals the
+		// identity bundle AND the passphrase (passkey.js, v2), so a blob left
+		// behind is a working door into the identity that was just erased -- and
+		// the only thing that removed it was the separate "Remove passkey"
+		// control. The credential stays in the authenticator, inert, for the user
+		// to delete there; the account service's copy goes with the account, not
+		// with this sweep, which runs after the session has already been closed.
+		// `-asked` goes with it: it records that a passkey was once offered for a
+		// record that no longer exists, and left behind it would deny the next
+		// identity the one offer it gets.
+		'daimond-passkey', 'daimond-passkey-asked',
+		// THE AGREEMENT TO BE RECORDED, which the sign-out above already clears
+		// (`DaimondGateway.logout` withdraws it before it touches the network).
+		// Named here anyway, and not as a flourish: that call is wrapped in a
+		// `try/catch` that says "erase anyway", and this is a key that MATTERS if
+		// it is missed. It holds the id of the account that agreed, and the
+		// primary keeps its id through a forget -- the registry is untouched and
+		// accounts.js will not remove it -- so an agreement left behind is matched
+		// by the next identity and recording simply continues, under a person who
+		// was never asked. A reader of this list should not have to know which
+		// other module happens to cover it.
+		'daimond-telemetry',
+		// THE TERMINAL'S CEILING on this computer, which is a folder grant: '' is
+		// the granted root and a stored value is a wider one the last person
+		// picked from what the machine offered.
+		'daimond-terminal-root',
+		// WHO THIS BROWSER HAS VERIFIED IN PERSON. A trust edge is an act the
+		// user performed on a key; inherited, it is a stranger the next identity
+		// is told it has already met.
+		'daimond-trust-log',
+		// AND THE SPEND CEILING, for the same reason in money: a budget the last
+		// person raised is a gate that no longer trips for the next one, and its
+		// absence is the figure the governor derives for itself.
+		'daimond-governor',
+	];
+
 	/// Destroy the identity. This USED to be labelled "forget everything" while
 	/// leaving every chat sitting in localStorage in the clear — so resetting on
 	/// a shared machine left the next person the whole conversation history. It
@@ -47995,87 +48680,17 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		// Sweep every store this account owns. removeItem is namespaced to the current account, so
 		// these clear THIS account's keys and no other's.
 		//
-		// THE LIST IS THE WHOLE SWEEP ON AN ORDINARY INSTALL, and the comment that
-		// used to stand here said otherwise -- that `remove()` below caught anything
-		// not named. It does not: `remove()` is guarded by `!acct.primary`, and
-		// accounts.js's own `remove()` refuses the primary outright and sweeps only
-		// `d~<id>~` keys anyway. There is no `localStorage.clear()` anywhere in the
-		// app. So on a single-user install -- which is nearly all of them -- a key
-		// missing from this list SURVIVES BEING FORGOTTEN, and the sentence saying it
-		// would not was how three security settings came to.
-		//
-		// WHAT BELONGS HERE, since the question kept being answered case by case: a
-		// key whose ABSENCE is the careful default and whose stale value would GRANT
-		// something the next person never chose, or SILENCE a warning they have never
-		// seen. Everything below the ordinary stores is named against that test, with
-		// the grant it would leave standing.
+		// FORGET_CLEARS, DEFINED ABOVE THIS FUNCTION, IS THE WHOLE SWEEP ON AN
+		// ORDINARY INSTALL, and the comment that used to stand here said otherwise
+		// -- that `remove()` below caught anything not named. It does not:
+		// `remove()` is guarded by `!acct.primary`, and accounts.js's own
+		// `remove()` refuses the primary outright and sweeps only `d~<id>~` keys
+		// anyway. There is no `localStorage.clear()` anywhere in the app. So on a
+		// single-user install -- which is nearly all of them -- a key missing from
+		// that list SURVIVES BEING FORGOTTEN, and the sentence saying it would not
+		// was how three security settings came to, and then a fourth (A11).
 		try {
-			['daimond-chats', 'daimond-chats-deleted', 'daimond-chat-counter', 'daimond-diamond-counter',
-			 'daimond-ledger', 'daimond-models', 'daimond-models-v2', 'daimond-diamond-models',
-			 'daimond-byok', 'daimond-hide-tools', 'daimond-workers',
-			 // `daimond-hands` stood here and removed nothing: it is a CustomEvent
-			 // type (hand.js, web.js) and a `data-` attribute, and hand.js touches
-			 // localStorage nowhere at all. The hand's one stored grant is the
-			 // terminal ceiling, named below under its own reason.
-			 'daimond-mail',
-			 // The pause tree. The PRIMARY account's keys are un-namespaced, so a
-			 // set left behind here is inherited whole by the next account made in
-			 // this browser: a Diamond that starts paused for no reason the user
-			 // can see, and no way to work out why.
-			 'daimond-pause',
-			 // The device roster and this device's own id. An account made here
-			 // afterwards is a new account, and it must not inherit the erased
-			 // one's identity as a device or the devices it used to sync with.
-			 'daimond-devices', 'daimond-device-id', 'daimond-device-tombs',
-			 'daimond-device-super',
-			 // The trash. It is keyed by chat and Diamond id, and a chat id is
-			 // `c1`, `c2`, … from a counter this list resets — so a record left
-			 // behind here would hide the NEXT account's first chat, on an id it
-			 // has every right to reuse. Same class of fault as the pause tree
-			 // above, and the same reason it is named rather than swept.
-			 'daimond-trash',
-			 // THE THREE PERMISSION SETTINGS. Without these a laptop handed over,
-			 // forgotten and given a new identity boots in BYPASS -- nothing asked --
-			 // having never seen the one-off explanation of what bypass gives away,
-			 // with commands granted the network in every chat. Nobody in that browser
-			 // has answered one of those questions. Absent, they read: ask in each
-			 // chat, guarded, and explain bypass the first time it is chosen.
-			 'daimond-net-standing', 'daimond-permission-mode', 'daimond-permission-bypass-ack',
-			 // THE PASSKEY, which is the same fault at its worst. The record seals the
-			 // identity bundle AND the passphrase (passkey.js, v2), so a blob left
-			 // behind is a working door into the identity that was just erased -- and
-			 // the only thing that removed it was the separate "Remove passkey"
-			 // control. The credential stays in the authenticator, inert, for the user
-			 // to delete there; the account service's copy goes with the account, not
-			 // with this sweep, which runs after the session has already been closed.
-			 // `-asked` goes with it: it records that a passkey was once offered for a
-			 // record that no longer exists, and left behind it would deny the next
-			 // identity the one offer it gets.
-			 'daimond-passkey', 'daimond-passkey-asked',
-			 // THE AGREEMENT TO BE RECORDED, which the sign-out above already clears
-			 // (`DaimondGateway.logout` withdraws it before it touches the network).
-			 // Named here anyway, and not as a flourish: that call is wrapped in a
-			 // `try/catch` that says "erase anyway", and this is a key that MATTERS if
-			 // it is missed. It holds the id of the account that agreed, and the
-			 // primary keeps its id through a forget -- the registry is untouched and
-			 // accounts.js will not remove it -- so an agreement left behind is matched
-			 // by the next identity and recording simply continues, under a person who
-			 // was never asked. A reader of this list should not have to know which
-			 // other module happens to cover it.
-			 'daimond-telemetry',
-			 // THE TERMINAL'S CEILING on this computer, which is a folder grant: '' is
-			 // the granted root and a stored value is a wider one the last person
-			 // picked from what the machine offered.
-			 'daimond-terminal-root',
-			 // WHO THIS BROWSER HAS VERIFIED IN PERSON. A trust edge is an act the
-			 // user performed on a key; inherited, it is a stranger the next identity
-			 // is told it has already met.
-			 'daimond-trust-log',
-			 // AND THE SPEND CEILING, for the same reason in money: a budget the last
-			 // person raised is a gate that no longer trips for the next one, and its
-			 // absence is the figure the governor derives for itself.
-			 'daimond-governor',
-			].forEach(function (k) { localStorage.removeItem(k); });
+			FORGET_CLEARS.forEach(function (k) { localStorage.removeItem(k); });
 		} catch (e) { /* best effort */ }
 
 		// OPFS. A namespaced account lives in one subdirectory, so remove just that. The primary
@@ -50172,11 +50787,12 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 	};
 
 	/// What the gateway last said about this account's doorbell, shared between
-	/// the admin drawer's section and the one-time notice.
+	/// the Social ▸ Settings row (`doorbellSection` below) and the one-time
+	/// notice.
 	///
-	/// Held out here because `renderHome` rebuilds its whole view on every paint,
-	/// so a state kept inside it would go back to the network on every open and
-	/// would flicker "Checking…" over an answer already in hand.
+	/// Held out here because a paint of the row it feeds would otherwise go back
+	/// to the network on every open and flicker "Checking…" over an answer
+	/// already in hand.
 	var Doorbell = {
 		st: null,		// the last answer, or null while nobody has asked
 		busy: false,	// a write in flight, so a double press cannot send two
@@ -50204,6 +50820,146 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 				if (then) { try { then(); } catch (e) { /* the drawer closed */ } }
 			}, function () { Doorbell.loading = false; });
 		},
+	};
+
+	/// The email doorbell control: one email a day, at most, saying something is
+	/// waiting.
+	///
+	/// LIVES IN SOCIAL ▸ SETTINGS, not the cog drawer -- a control behind a
+	/// second menu is a control nobody finds twice, and the owner put it beside
+	/// the posting name it shares that view with. `js/improve.js`'s
+	/// `drawSettings` calls `DaimondDoorbell.mount` with its own host every time
+	/// that view is drawn; nothing of this survives in the drawer, which is why
+	/// it was cut out of `renderHomeBody` rather than merely hidden there.
+	///
+	/// TWO ANSWERS, NEVER ONE. The button says what the account has CHOSEN; the
+	/// line under it says whether a bell could actually ring. An account with no
+	/// address on file has the first and not the second, and a screen showing
+	/// only the switch would be lying to the one person who could fix it —
+	/// which is why the gateway sends the reach beside the state rather than
+	/// folding them together.
+	function doorbellSection(host) {
+		if (!host || !Doorbell.live()) return;
+		var head = document.createElement('div');
+		head.className = 'admin-sec';
+		head.textContent = tOr('doorbell.title', 'Email doorbell');
+		host.appendChild(head);
+		var btn = document.createElement('button');
+		btn.type = 'button';
+		btn.className = 'admin-item';
+		btn.addEventListener('click', function () { press(); });
+		var note = document.createElement('div');
+		note.className = 'admin-note';
+		var why = document.createElement('div');
+		why.className = 'admin-note';
+		// Named, because three surfaces promise this control exists and a
+		// verifier has to be able to say whether it does. `dev/verify_doorbell.mjs`
+		// reads exactly these three.
+		btn.id  = 'doorbell-btn';
+		note.id = 'doorbell-note';
+		why.id  = 'doorbell-reach';
+		host.appendChild(btn);
+		host.appendChild(note);
+		host.appendChild(why);
+		// Painted from the last answer FIRST, so reopening Settings does not
+		// flash "Checking…" over a state already in hand -- and then asked
+		// again, every time, because the answer can change without this device
+		// doing anything: an address added on another device, a mailbox
+		// configured on the gateway, a bell that has rung and gone quiet. A row
+		// that only read once would go on saying "nothing can be sent" to
+		// somebody who had just fixed exactly that.
+		draw();
+		Doorbell.load(draw);
+
+		/// Say what the switch is, to the state the SERVER last reported.
+		///
+		/// READS ITS ELEMENTS BY ID, not the ones this call created. `render()`
+		/// calls `drawSettings` on every repaint, not only while Settings is the
+		/// view on screen, so a second mount can land (and remount fresh nodes)
+		/// before the first's `Doorbell.load` has answered; `load`'s own
+		/// one-in-flight guard then skips the second request, and it is the
+		/// FIRST call's `draw` that eventually runs. Closed over stale elements,
+		/// it would repaint a row already gone; by id, it repaints whichever row
+		/// is actually on screen.
+		function draw() {
+			var btn  = document.getElementById('doorbell-btn');
+			var note = document.getElementById('doorbell-note');
+			var why  = document.getElementById('doorbell-reach');
+			if (!btn || !note || !why) return;		// this mount's row is gone
+			var st = Doorbell.st;
+			// Not asked yet, and said so rather than drawn as off: a switch
+			// showing "off" while the answer is unknown tells somebody no mail
+			// is being sent when it may be.
+			if (!st) {
+				btn.textContent = tOr('doorbell.asking', 'Checking…');
+				btn.disabled = true;
+				note.textContent = '';
+				why.textContent  = '';
+				return;
+			}
+			btn.disabled = Doorbell.busy;
+			btn.textContent = Doorbell.busy
+				? tOr('doorbell.saving', 'Saving…')
+				: (st.on ? tOr('doorbell.turn_off', 'Turn the email doorbell off')
+					: tOr('doorbell.turn_on', 'Turn the email doorbell on'));
+			note.textContent = st.on
+				? tOr('doorbell.on_note',
+					'When a message arrives and you have no Daimond open, we may send '
+					+ 'one email to the address on your account saying something is '
+					+ 'waiting. No sender, no subject, no count, and at most one in any '
+					+ '24 hours. Turning it off also stops any that is already waiting '
+					+ 'to go.')
+				: tOr('doorbell.off_note',
+					'No email will be sent. You will see a message when you next open '
+					+ 'Daimond, and nowhere else.');
+			// A default is drawn AS a default. The gateway sends `set:false`
+			// while nobody has chosen, precisely so this can be said.
+			if (!st.set) {
+				note.textContent += ' ' + tOr('doorbell.default_note',
+					'This is the default for a beta account; you have not changed it.');
+			}
+			if (Doorbell.failed) {
+				Doorbell.failed = false;
+				note.textContent = tOr('doorbell.err_save',
+					'That did not save. The setting is unchanged; try again.');
+			}
+			// The reach, and only where it says something the switch does not:
+			// an account that is on and can ring needs no second line saying so
+			// twice.
+			var r = String(st.reach || '');
+			why.textContent = (r === 'no_address')
+				? tOr('doorbell.no_address',
+					'There is no email address on your account, so nothing can be sent '
+					+ 'whatever this is set to.')
+				: (r === 'unconfigured')
+					? tOr('doorbell.unconfigured',
+						'This gateway cannot send email, so nothing will be sent '
+						+ 'whatever this is set to.')
+					: '';
+		}
+
+		/// Flip it, and draw what the SERVER then said rather than what was
+		/// asked for. A switch that painted the request would show "Off" for a
+		/// write that never landed. By id for the same reason `draw` is.
+		function press() {
+			if (Doorbell.busy || !Doorbell.st) return;
+			Doorbell.busy = true;
+			draw();
+			DaimondPost.setDoorbell(!Doorbell.st.on).then(function (r) {
+				Doorbell.busy = false;
+				if (r && r.ok) Doorbell.st = r; else Doorbell.failed = true;
+				draw();
+			}, function () {
+				Doorbell.busy = false;
+				Doorbell.failed = true;
+				draw();
+			});
+		}
+	}
+	window.DaimondDoorbell = {
+		/// Draw the doorbell row into `host`. Called by `js/improve.js`'s
+		/// `drawSettings` every time Social ▸ Settings is drawn.
+		mount: doorbellSection,
 	};
 
 	// ── The one-time doorbell notice ───────────────────────────
@@ -50257,12 +51013,12 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 				+ 'we may send one email to the address on your account saying that '
 				+ 'something is waiting. It carries no sender, no subject, no count and no '
 				+ 'link to any message — and at most one in any 24 hours.\n\n'
-				+ 'You can turn it off whenever you like: open Settings from the cog beside '
-				+ 'your name, and it is the row called “Email doorbell”. Turning it off also '
-				+ 'stops any that is already waiting to go.'));
+				+ 'You can turn it off whenever you like: open Social, go to Settings, and '
+				+ 'it is the row called “Email doorbell”. Turning it off also stops any that '
+				+ 'is already waiting to go.'));
 		// The row may be on screen behind the notice, and its state is now stale.
-		// The cached answer is stale now, so the next time the drawer is opened it
-		// is read again. NOT `DaimondAdmin.home()`: that OPENS the drawer, and a
+		// The cached answer is stale now, so the next time Settings is opened it
+		// is read again. NOT `DaimondPanels.show('social')`: that OPENS the panel, and a
 		// panel that springs open behind a notice somebody has just dismissed is
 		// the app taking over the screen to show a control nobody asked for.
 		Doorbell.st = null;
@@ -51034,6 +51790,9 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		if (chatInput.value === '/') openSkillMenu();
 		else closeSkillMenu();
 	});
+	// The same act as the send button in stop mode, through the same function, so
+	// the two controls cannot come to mean different things.
+	if (chatStop) chatStop.addEventListener('click', function () { stopGeneration(); });
 	chatSend.addEventListener('click', function () {
 		// In stop-mode the same button cancels the current chat's running turn -- but
 		// only with an empty box. With something typed in it the button is a Send
@@ -51406,10 +52165,12 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		var seq = ++_wireSeq;
 		var w;
 		try {
-			w = JSON.parse(await app.wire_system(did,
+			// HELD: this await borrows the chat's own app for as long as it takes, and a
+			// turn starting underneath it must wait rather than throw. See `engineHold`.
+			w = JSON.parse(await engineHold(app, app.wire_system(did,
 				JSON.stringify(marks.attached  || []),
 				JSON.stringify(marks.read_only || []),
-				JSON.stringify(marks.toolkits  || [])));
+				JSON.stringify(marks.toolkits  || []))));
 		} catch (e) { dropWire(); return; }
 		// Still the thread this render was started for, and still wanted. Re-read rather than
 		// assumed: everything above this line may have happened while the user was moving.

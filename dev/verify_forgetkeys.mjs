@@ -19,26 +19,43 @@
 // THE TEST APPLIED, because "which keys" kept being answered case by case: a key
 // belongs in that list when its ABSENCE is the careful default and its stale value
 // would GRANT something the next person never chose, or SILENCE a warning they have
-// never seen. Eight keys meet it. They are seeded here with permissive values, and
-// the whole namespace was read against that test rather than only the three that
-// were reported.
+// never seen. Fourteen keys meet it now. They are seeded here with permissive
+// values, and the whole namespace was read against that test rather than only the
+// three that were first reported.
 //
-// FIVE PROPERTIES:
+// AUDIT 2026-09-15 (A11) FOUND FOUR MORE the same test had always covered but the
+// list had not: `daimond-stay-unlocked` (named by the owner directly — left
+// behind, a fresh identity on this device reads the last person's answer instead
+// of the desktop default) and three siblings of the permission settings in group
+// 2 below that had grown alongside them without being added here — the rung's own
+// timestamp and account-scope grants (`-permission-mode-at`, `-permission-scopes`),
+// the two device-local unattended postures (`-autonomous-posture`,
+// `-handoff-when-away`), and a standing "don't ask me again" per command
+// (`-approvelist`). `www/js/daimond.js`'s sweep is a named constant now,
+// `FORGET_CLEARS`, defined once beside `forgetIdentity` rather than inline in it —
+// so this file's own list below is the second reader of that same contract, kept
+// deliberately independent rather than importing the source's own list, which
+// would let the two drift together and prove nothing.
+//
+// SIX PROPERTIES:
 //
 //   1. THE PREMISE, ASSERTED AND NOT ASSUMED. The account being forgotten is the
 //      PRIMARY, and `DaimondAccounts.remove()` refuses it — so the named list really
 //      is the whole sweep. Held first, because every check below is only about
 //      anything at all if this is true, and a future change that made `remove()`
 //      general would make them pass for a reason that had nothing to do with them.
-//   2. THE THREE PERMISSION SETTINGS ARE GONE — the standing network answer, the
-//      rung, and the bypass acknowledgement.
+//   2. THE PERMISSION SETTINGS ARE GONE — the standing network answer, the rung,
+//      the bypass acknowledgement, the rung's timestamp and its account-scope
+//      grants.
 //   3. AND SO IS THE PASSKEY, which is the same fault at its worst.
-//   4. AND THE FOUR OTHERS THE SWEEP OF THE NAMESPACE FOUND: the terminal's folder
-//      ceiling, the trust log, the spend ceiling — and the agreement to be
+//   4. AND THE FOUR OTHERS THE FIRST SWEEP OF THE NAMESPACE FOUND: the terminal's
+//      folder ceiling, the trust log, the spend ceiling — and the agreement to be
 //      recorded, which turned out to be cleared already by the sign-out that runs
 //      first, and is asserted here because that call is wrapped in a `try/catch`
 //      that says "erase anyway".
-//   5. AND THE APP COMES BACK IN THE CAREFUL STATE, read from the engine and not
+//   5. AND THE FOUR A11 FOUND: stay-unlocked, the two unattended postures, and the
+//      command approval list.
+//   6. AND THE APP COMES BACK IN THE CAREFUL STATE, read from the engine and not
 //      from the absent key: guarded, and asking about the network in each chat.
 //      Separate from 2 because a key removed and a default not taken are two
 //      claims, and a build that read the rung from somewhere else would satisfy
@@ -46,10 +63,13 @@
 //
 // PROVED AGAINST BROKEN CODE FIRST:
 //
-//   node dev/verify_forgetkeys.mjs --break three   # 2, 5: the state before the fix
-//   node dev/verify_forgetkeys.mjs --break passkey # 3
-//   node dev/verify_forgetkeys.mjs --break sweep   # 2-4: the whole tail dropped
-//   node dev/verify_forgetkeys.mjs                 # and then, clean
+//   node dev/verify_forgetkeys.mjs --break three     # 2, 6: the state before the 2026-08 fix
+//   node dev/verify_forgetkeys.mjs --break passkey   # 3
+//   node dev/verify_forgetkeys.mjs --break sweep     # 2-5: the whole tail dropped
+//   node dev/verify_forgetkeys.mjs --break stay      # 5: the state before the A11 fix
+//   node dev/verify_forgetkeys.mjs --break posture   # 5
+//   node dev/verify_forgetkeys.mjs --break approvals # 5
+//   node dev/verify_forgetkeys.mjs                   # and then, clean
 //
 //   eval "$(bash dev/world.sh 4 --up)"
 //   node dev/verify_forgetkeys.mjs
@@ -68,24 +88,43 @@ const BREAK = (() => {
 	return i > 0 ? String(process.argv[i + 1] || '') : '';
 })();
 
-// Each break is one real edit to the served file: the sweep as it stood, in pieces.
+// Each break is one real edit to the served file: FORGET_CLEARS as it stood, in
+// pieces. Anchored on the array's OWN text, not on `forgetIdentity`'s -- the sweep
+// now runs as `FORGET_CLEARS.forEach(...)`, so breaking the constant is breaking
+// the one thing every caller shares.
 const BREAKS = {
 	three: {
 		file: 'js/daimond.js',
-		find: "\t\t\t 'daimond-net-standing', 'daimond-permission-mode', 'daimond-permission-bypass-ack',",
+		find: "\t\t'daimond-net-standing', 'daimond-permission-mode', 'daimond-permission-bypass-ack',\n",
 		with: "",
 	},
 	passkey: {
 		file: 'js/daimond.js',
-		find: "\t\t\t 'daimond-passkey', 'daimond-passkey-asked',",
+		find: "\t\t'daimond-passkey', 'daimond-passkey-asked',\n",
 		with: "",
 	},
-	// Everything after the trash swept into a list nothing runs: the sweep as it was
-	// the day before the three were reported, with the ordinary stores still going.
+	// Everything after the trash diverted into an array nothing reads: FORGET_CLEARS
+	// as it was before A11, with the ordinary stores still going.
 	sweep: {
 		file: 'js/daimond.js',
-		find: "\t\t\t 'daimond-trash',\n",
-		with: "\t\t\t 'daimond-trash',\n\t\t\t].forEach(function (k) { localStorage.removeItem(k); });\n\t\t\tif (false) [\n",
+		find: "\t\t'daimond-trash',\n",
+		with: "\t\t'daimond-trash',\n\t];\n\tvar FORGET_CLEARS_DEAD = [\n",
+	},
+	// A11's four, singly and together.
+	stay: {
+		file: 'js/daimond.js',
+		find: "\t\t'daimond-stay-unlocked',\n",
+		with: "",
+	},
+	posture: {
+		file: 'js/daimond.js',
+		find: "\t\t'daimond-autonomous-posture', 'daimond-handoff-when-away',\n",
+		with: "",
+	},
+	approvals: {
+		file: 'js/daimond.js',
+		find: "\t\t'daimond-approvelist',\n",
+		with: "",
 	},
 };
 if (BREAK && !BREAKS[BREAK]) {
@@ -123,11 +162,20 @@ const SEED = {
 	'daimond-net-standing':          'allow',
 	'daimond-permission-mode':       'bypass',
 	'daimond-permission-bypass-ack': '1',
+	'daimond-permission-mode-at':    String(Date.now()),
+	'daimond-permission-scopes':     JSON.stringify({ reading: { at: Date.now(), on: true } }),
 	'daimond-passkey':               JSON.stringify({ v: 2, cred: 'Y3JlZA==', blob: 'YmxvYg==' }),
 	'daimond-telemetry':             '__ACCOUNT__',
 	'daimond-terminal-root':         JSON.stringify({ 'ws-1': '/home' }),
 	'daimond-trust-log':             JSON.stringify([{ scope: 'identity', method: 'in_person_qr' }]),
 	'daimond-governor':              JSON.stringify({ budgetUsd: 500 }),
+	// A11's four (2026-09-15): the value that makes each one a GRANT the next
+	// identity never chose, matching the exact leftover the audit found —
+	// `daimond-stay-unlocked='0'` reading as off on a clean desktop.
+	'daimond-stay-unlocked':         '0',
+	'daimond-autonomous-posture':    '1',
+	'daimond-handoff-when-away':     '1',
+	'daimond-approvelist':           JSON.stringify(['rm -rf /tmp/scratch']),
 };
 
 const s = await open({
@@ -206,11 +254,12 @@ try {
 		return out;
 	}, Object.keys(SEED));
 
-	// ── 2. The three that were reported ──────────────────────────
-	const three = ['daimond-net-standing', 'daimond-permission-mode', 'daimond-permission-bypass-ack'];
+	// ── 2. The permission settings ────────────────────────────────
+	const three = ['daimond-net-standing', 'daimond-permission-mode', 'daimond-permission-bypass-ack',
+	               'daimond-permission-mode-at', 'daimond-permission-scopes'];
 	const threeLeft = three.filter(k => k in left);
 	check(threeLeft.length === 0,
-		'THE THREE PERMISSION SETTINGS ARE GONE — the standing network answer, the rung, the bypass note',
+		'THE PERMISSION SETTINGS ARE GONE — the standing network answer, the rung, the bypass note, its timestamp and its scope grants',
 		threeLeft.length ? `still set: ${JSON.stringify(threeLeft.map(k => [k, left[k]]))}` : '');
 
 	// ── 3. The passkey ───────────────────────────────────────────
@@ -218,14 +267,22 @@ try {
 		'AND THE PASSKEY IS GONE — a sealed record is a working door into the identity just erased',
 		left['daimond-passkey'] ? `still set: ${left['daimond-passkey']}` : '');
 
-	// ── 4. The four the namespace sweep found ────────────────────
+	// ── 4. The four the first namespace sweep found ──────────────
 	const rest = ['daimond-telemetry', 'daimond-terminal-root', 'daimond-trust-log', 'daimond-governor'];
 	const restLeft = rest.filter(k => k in left);
 	check(restLeft.length === 0,
 		'AND SO ARE THE TERMINAL CEILING, THE TRUST LOG, THE SPEND CEILING AND THE AGREEMENT TO BE RECORDED',
 		restLeft.length ? `still set: ${JSON.stringify(restLeft.map(k => [k, left[k]]))}` : '');
 
-	// ── 5. And the app comes back careful ────────────────────────
+	// ── 5. And the four A11 found ─────────────────────────────────
+	const a11 = ['daimond-stay-unlocked', 'daimond-autonomous-posture',
+	             'daimond-handoff-when-away', 'daimond-approvelist'];
+	const a11Left = a11.filter(k => k in left);
+	check(a11Left.length === 0,
+		'AND SO ARE STAY-UNLOCKED, BOTH UNATTENDED POSTURES AND THE COMMAND APPROVAL LIST',
+		a11Left.length ? `still set: ${JSON.stringify(a11Left.map(k => [k, left[k]]))}` : '');
+
+	// ── 6. And the app comes back careful ────────────────────────
 	//
 	// FROM THE ENGINE, not from the absent key. A key removed and a default taken
 	// are two claims: `DaimondHandMode.get()` is what the chip and the wasm are

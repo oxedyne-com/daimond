@@ -595,6 +595,11 @@
 		if (!handleReady()) return null;
 		var r = await accountCall('GET');
 		if (r.status !== 200 || !r.json || r.json.ok === false) return null;
+		// The card the gateway is serving under this name, compared with the one
+		// this device holds. Fired and forgotten: a name is not worth waiting on
+		// a second request for, and the next unlock asks again.
+		try { publishCard(r.json.card || '').catch(function (e) { log('card publish failed', e); }); }
+		catch (e) { log('card publish threw', e); }
 		var rec = { h: r.json.handle || '', t: r.json.handle_ts || 0 };
 		if (!rec.h) return null;
 		var moved = false;
@@ -640,6 +645,7 @@
 		if (reason === 'taken')    return t('handle.taken');
 		if (reason === 'invalid')  return t('handle.invalid');
 		if (reason === 'reserved') return t('handle.reserved');
+		if (reason === 'confusable') return t('handle.confusable');
 		return t('handle.failed');
 	}
 
@@ -652,20 +658,67 @@
 		catch (e) { log('handle refresh threw', e); }
 	}
 
-	/// Look up somebody else's handle. `{found, handle, fingerprint}`.
+	/// Look up somebody else's handle. `{found, handle, fingerprint, card, why}`.
 	///
 	/// The half that makes a handle worth having: a name is only a name if
-	/// somebody other than its owner can resolve it. Nothing in the app calls
-	/// this yet -- sharing and ratings are the callers it is waiting for -- and
-	/// it is here rather than deferred so that what those features need already
-	/// exists and has been proved to work.
+	/// somebody other than its owner can resolve it. `card` is the account's
+	/// signed identity card, base64, and it is what People's "Find somebody"
+	/// turns into a person -- a key that a message can be sealed to.
+	///
+	/// WHAT THIS DOES NOT DO, and it is the root of the whole trust model: a card
+	/// that came back from here came through something that could have replaced
+	/// it. `trust.js` records it as a LOOKUP and draws the key as new, for ever,
+	/// until a human compares a safety number out of band.
+	///
+	/// `why` tells the three kinds of nothing apart, because they are three
+	/// different sentences on screen: `none` (nobody holds that name), `busy`
+	/// (the cap, or no session) and `off` (this device cannot ask at all).
 	async function lookupHandle(wanted) {
-		if (!handleReady()) return { found: false };
+		if (!handleReady()) return { found: false, why: 'off' };
 		var q = '?handle=' + encodeURIComponent(String(wanted || ''));
 		var r = await accountCall('GET', undefined, q);
 		var j = r.json || {};
-		if (r.status !== 200 || !j.ok || !j.found) return { found: false };
-		return { found: true, handle: j.handle || '', fingerprint: j.fingerprint || '' };
+		if (r.status === 404) return { found: false, why: 'none' };
+		if (r.status !== 200 || !j.ok || !j.found) return { found: false, why: 'busy' };
+		return {
+			found:       true,
+			handle:      j.handle || '',
+			fingerprint: j.fingerprint || '',
+			card:        j.card || '',
+		};
+	}
+
+	/// Publish this device's identity card, if the gateway is not already
+	/// serving it. `served` is what the account's own record came back with.
+	///
+	/// WHY THE COMPARISON IS AGAINST THE SERVER'S COPY and not a marker kept
+	/// here: a marker is a second record of one fact, and it is wrong on every
+	/// device that has not published from this browser -- a phone carrying a
+	/// paired identity would sit on an unpublished card for ever because some
+	/// other device once wrote "sent". The account record is the only authority
+	/// on what is being served.
+	///
+	/// A card is minted here when this device holds none, because an account
+	/// nobody can look up is the whole defect this closes and the mint costs one
+	/// signature.
+	async function publishCard(served) {
+		if (!handleReady()) return false;
+		var mine = '';
+		try {
+			mine = DaimondIdentity.card() || '';
+			if (!mine) {
+				var made = await DaimondIdentity.mintCard();
+				if (!made || !made.ok) return false;
+				mine = DaimondIdentity.card() || '';
+			}
+		} catch (e) { return false; }
+		if (!mine || mine === served) return false;
+		var r = await accountCall('POST', { card: mine }, '?op=card');
+		if (r.status !== 200) {
+			log('card publish refused', r.status, (r.json || {}).error || '');
+			return false;
+		}
+		return true;
 	}
 
 	// ── Status indicator ───────────────────────────────────────
@@ -1233,6 +1286,11 @@
 				else DaimondPost.adopt(state && state.post);
 			}
 			catch (e) { log('post adopt failed', e); failed.push('post'); }
+			// A parcel is the one occasion the unread count can have changed that
+			// is neither a press nor an arrival on this device: messages read on
+			// another device arrive here already read.
+			try { if (window.DaimondBadge && DaimondBadge.post) DaimondBadge.post(); }
+			catch (e) { /* no badge in this build */ }
 		}
 		// The account's public handle, under the same rule as everything above
 		// it: `adoptHandle` takes the larger record and writes it VERBATIM, so a
@@ -3153,6 +3211,9 @@
 		refreshHandle: refreshHandle,
 		claimHandle:   claimHandle,
 		lookupHandle:  lookupHandle,
+		/// Publish this device's card, given what the gateway is serving.
+		/// Published so a verifier can drive the same door `refreshHandle` uses.
+		publishCard:   publishCard,
 		version: function () { return serverVersion; },
 		entitled: function () { return entitled; },
 		/// The wake channel, as it stands. Nothing in the app turns on this; it

@@ -25,6 +25,12 @@
 //      sender who could tell an ignore from a silence has a presence oracle.
 //   9. SENDING THROUGH THE PANEL. The delegated click, the real button, and the
 //      words nowhere in what left the browser.
+//  10. ARRIVAL AND THE REPLY. A message landing raises one `daimond:post-arrived`
+//      per new row and nothing at all for a row that was already folded, or a
+//      badge lights for mail already read; Reply points the box at the sender and
+//      puts the parent's address in the SIGNED payload; and the one quoted line a
+//      reply draws is found on this device or said to be gone, because only the
+//      address ever travels.
 //
 // FOUR LINES IN OTHER LANES' FILES WERE ONCE SUPPLIED HERE, by a script tag
 // injected from disk and a wrapper hung on `collectSync`. All four have landed,
@@ -734,6 +740,219 @@ async function parkWithoutWaitedStops() {
 	} finally { await s.close(); }
 }
 
+// ── 10. Arrival, and the reply ───────────────────────────────
+
+/// One collected message from this session's own key, with a distinct body so
+/// two rows are two addresses, and optionally answering another one.
+async function selfRowReply(s, seq, text, replyTo) {
+	return await s.page.evaluate(async ([seq, text, replyTo]) => {
+		await window.DaimondIdentity.ensureSealingKey();
+		const to = window.DaimondIdentity.publicKeyB64url();
+		const m = await window.DaimondPost.compose({ body: text, to, replyTo: replyTo || '' });
+		return {
+			seq, kind: 'post', addr: m.addr, from_pub: to,
+			ts: Math.floor(Date.now() / 1000), bytes: m.envelope.length,
+			tray: false, expired: false, envelope: m.envelope,
+		};
+	}, [seq, text, replyTo || '']);
+}
+
+/// 10a. The arrival event, which is the whole of what the app knows about a
+/// message landing.
+///
+/// Until this existed nothing in the app was told: a park folded a message and
+/// the only thing that rang was the doorbell email, which needs an address on
+/// the account and is silent for anybody without one. It is raised where a ROW
+/// IS FOLDED, so a park woken by other traffic and a pull that finds nothing
+/// stay quiet -- and that is what the second collect below measures.
+async function arrivalIsAnnounced() {
+	console.log('\n10a. a message landing raises exactly one arrival, per message');
+	const s = await open({ name: 'post-arrive', connect: false });
+	try {
+		await ready(s);
+		const r1 = await selfRowReply(s, 1, 'the first to land');
+		const r2 = await selfRowReply(s, 2, 'the second to land');
+		const r3 = await selfRowReply(s, 3, 'the third to land');
+		await mockServer(s, { rows: [r1, r2, r3] });
+		await entitle(s);
+
+		// The listener goes on BEFORE the collect, or what is measured is whatever
+		// the page happened to raise while this file was still setting up.
+		await s.page.evaluate(() => {
+			window.__arrivals = [];
+			window.addEventListener(window.DaimondPost.arrivedEvent,
+				(e) => window.__arrivals.push(e.detail));
+		});
+		ok(await s.page.evaluate(() => window.DaimondPost.arrivedEvent) === 'daimond:post-arrived',
+			'the event has the name the rest of the app listens for');
+
+		const r = await s.page.evaluate(() => window.DaimondPost.round());
+		ok(r.ok, 'the collect ran', r);
+		const first = await s.page.evaluate(() => window.__arrivals.slice());
+		ok(first.length >= 1, 'three messages landing said so', first);
+		const counted = first.reduce((n, d) => n + (d.count | 0), 0);
+		eq(counted, 3, 'and what was announced is exactly the three rows that were new');
+		const named = first.reduce((a, d) => a.concat(d.addrs || []), []);
+		eq(named.slice().sort().join(' '), [r1.addr, r2.addr, r3.addr].sort().join(' '),
+			'and it named them, so a listener can say WHICH and not only how many');
+		eq(first[first.length - 1].unread, 3,
+			'and carried the tally a badge draws, not a running total of arrivals');
+
+		// THE SECOND COLLECT. The same three rows are on the relay and all three are
+		// already folded, so nothing is new and nothing may be announced -- a
+		// message announced twice is a badge that lights for mail already read.
+		await s.page.evaluate(() => { window.__arrivals.length = 0; });
+		await s.page.evaluate(() => window.DaimondPost.round());
+		await s.page.waitForTimeout(300);
+		eq(await s.page.evaluate(() => window.__arrivals.length), 0,
+			'a collect that brought nothing new announced nothing');
+
+		// ONE ROW, ONE ARRIVAL, through the same door a collect uses.
+		const r4 = await selfRowReply(s, 4, 'one more, taken by hand');
+		await s.page.evaluate(async (row) => {
+			window.__arrivals.length = 0;
+			await window.DaimondPost.take(row);
+		}, r4);
+		const one = await s.page.evaluate(() => window.__arrivals.slice());
+		eq(one.length, 1, 'one row taken raised one arrival');
+		eq((one[0] || {}).count, 1, 'and it said one');
+
+		// A ROW THAT IS NOT A MESSAGE RAISES NOTHING. The relay's own notices go to
+		// their own section (§5), and a badge that counted them would be a badge
+		// that lit for the relay letting go of something the reader already sent.
+		const notice = Object.assign({}, await selfRowReply(s, 5, 'not a message'),
+			{ kind: 'expiry' });
+		await s.page.evaluate(async (row) => {
+			window.__arrivals.length = 0;
+			await window.DaimondPost.take(row);
+		}, notice);
+		eq(await s.page.evaluate(() => window.__arrivals.length), 0,
+			'a row the relay wrote raised no arrival');
+		eq(thrown(s), [], 'and nothing threw along the way');
+	} finally { await s.close(); }
+}
+
+/// 10b. Reply: the control, what it sets, and the line it draws.
+///
+/// `replyTo` has ridden the signed payload since the format was written and
+/// nothing in the app had ever set it. Nothing new is on the wire here: the
+/// proof that the press reached the wire is the DELIVERED ENVELOPE, opened
+/// again on this device through the sender's own slot.
+async function replySetsTheParent() {
+	console.log('\n10b. Reply points the box at the sender and sets `replyTo`');
+	const s = await open({ name: 'post-reply', connect: false });
+	try {
+		await ready(s);
+		const parent = await selfRowReply(s, 1, 'the message being answered');
+		const log = await mockServer(s, { rows: [parent] });
+		await entitle(s);
+		// Somebody to write to, which is what makes the box draw at all.
+		await s.page.evaluate(async () => {
+			await window.DaimondIdentity.mintCard();
+			const card = window.DaimondTrust.parse(window.DaimondTrust.cardText());
+			await window.DaimondTrust.record(card, window.DaimondTrust.ROUTE.PASTE);
+		});
+		await s.page.evaluate(() => window.DaimondPost.round());
+		await s.page.evaluate(() => window.DaimondSocial.open('messages'));
+		await s.page.waitForTimeout(900);
+
+		const rows = await s.page.locator('#social-messages-list .post-msg').count();
+		ok(rows >= 1, 'the message that will be answered is on the screen', rows);
+		const replies = await s.page.locator('#social-messages-list .post-reply').count();
+		eq(replies, 1, 'and it offers exactly one Reply');
+
+		await s.page.click('#social-messages-list .post-reply');
+		await s.page.waitForTimeout(400);
+		const armed = await s.page.evaluate(() => ({
+			parent: window.DaimondPost.replyTo(),
+			to:     window.DaimondPost.toNow(),
+			quoted: (document.querySelector('#post-replying .post-quote') || {}).textContent || '',
+		}));
+		eq(armed.parent, parent.addr, 'the press set the parent to that row');
+		eq(armed.to, parent.from_pub, 'and pointed the box at whoever sent it');
+		ok(/the message being answered/.test(armed.quoted),
+			'and the box says what it is answering', armed.quoted);
+
+		await s.page.fill('#post-text', 'and this answers it.');
+		await s.page.click('#social-messages-list [data-act="post-send"]');
+		await s.page.waitForTimeout(800);
+
+		const sent = log.filter(e => e.what === 'deliver');
+		eq(sent.length, 1, 'one envelope was delivered');
+		ok(!/being answered/.test(JSON.stringify(sent[0].body || {})),
+			'and neither message\'s words are anywhere in what left the browser');
+		// THE WIRE, read back. `compose` puts the sender's own slot in the envelope,
+		// so this device can open what it just sent -- which is how the Sent copy
+		// works on another device and is why it is the honest place to look.
+		const onWire = await s.page.evaluate(async (b) =>
+			(await window.DaimondPost.open(b.envelope, b.addr)).post, sent[0].body);
+		eq(onWire.replyTo, parent.addr, 'and the signed payload names the parent');
+
+		const after = await s.page.evaluate(() => window.DaimondPost.replyTo());
+		eq(after, '', 'the reply was spent: the box is a new message again');
+		eq(thrown(s), [], 'and the panel threw nothing while doing it');
+	} finally { await s.close(); }
+}
+
+/// 10c. The one line a reply draws of what it answers, including the wording
+/// for a parent this device does not hold.
+async function replyDrawsItsQuote() {
+	console.log('\n10c. a reply draws one quoted line, and says so when there is none');
+	const s = await open({ name: 'post-quote', connect: false });
+	try {
+		await ready(s);
+		const LONG = 'w'.repeat(200);
+		const parent = await selfRowReply(s, 1, LONG);
+		const child  = await selfRowReply(s, 2, 'the answer', parent.addr);
+		// A parent this device will never hold: the relay let it go (§11.3), or it
+		// was sent before this account had a device. Its address is well formed and
+		// is simply not in the store.
+		const orphan = await selfRowReply(s, 3, 'answering something long gone',
+			'00'.repeat(32));
+		await mockServer(s, { rows: [parent, child, orphan] });
+		await entitle(s);
+		await s.page.evaluate(() => window.DaimondPost.round());
+		await s.page.evaluate(() => window.DaimondSocial.open('messages'));
+		await s.page.waitForTimeout(900);
+
+		const drawn = await s.page.evaluate((ids) => {
+			const out = {};
+			for (const k of Object.keys(ids)) {
+				const row = document.querySelector(
+					'#social-messages-list .post-msg[data-addr="' + ids[k] + '"]');
+				const q = row && row.querySelector('.post-quote');
+				out[k] = { row: !!row, quote: q ? q.textContent : null,
+					gone: q ? q.classList.contains('post-quote-gone') : null };
+			}
+			return out;
+		}, { parent: parent.addr, child: child.addr, orphan: orphan.addr });
+
+		ok(drawn.parent.row && drawn.child.row && drawn.orphan.row,
+			'all three rows are on the screen', JSON.stringify(drawn));
+		eq(drawn.parent.quote, null, 'a message that answers nothing quotes nothing');
+		ok(drawn.child.quote !== null, 'a reply carries one quoted line',
+			JSON.stringify(drawn.child));
+		ok(drawn.child.quote.indexOf('w'.repeat(80)) !== -1,
+			'and the line holds the first eighty characters of what it answers',
+			drawn.child.quote);
+		ok(drawn.child.quote.indexOf('w'.repeat(81)) === -1,
+			'and no more than eighty, so one line stays one line',
+			drawn.child.quote.length);
+		eq(drawn.child.gone, false, 'and it is drawn as a quotation');
+
+		// THE PARENT THIS DEVICE DOES NOT HOLD. Only the ADDRESS travels, never the
+		// words, so a relay could not supply the quote even if it wanted to -- the
+		// row says the message is gone rather than heading itself with a blank.
+		ok(/expired/i.test(drawn.orphan.quote || ''),
+			'a reply to a message that has expired says so', drawn.orphan.quote);
+		eq(drawn.orphan.gone, true, 'and is drawn as a sentence, not as a quotation');
+		eq(drawn.orphan.quote,
+			await s.page.evaluate(() => window.DaimondPost.quoteText('00'.repeat(32))),
+			'and the row and the box say it in the same words');
+		eq(thrown(s), [], 'and nothing threw while drawing any of it');
+	} finally { await s.close(); }
+}
+
 // ── Run ──────────────────────────────────────────────────────
 
 const only = process.argv[2] || '';
@@ -752,6 +971,9 @@ const all = [
 	['park',    parkWithoutWaitedStops],
 	['tray',    trayButtons],
 	['panelsend', sendThroughThePanel],
+	['arrive',    arrivalIsAnnounced],
+	['reply',     replySetsTheParent],
+	['quote',     replyDrawsItsQuote],
 ];
 for (const [name, fn] of all) {
 	if (only && only !== name) continue;

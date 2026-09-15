@@ -769,6 +769,14 @@
 				<div class="chat-input-bar">
 					<textarea id="chat-input" placeholder="Type a message…" rows="1" data-i18n-placeholder="chat.input_ph"></textarea>
 					<button id="chat-send" title="Send" data-i18n-title="chat.send" aria-label="Send" data-i18n-aria-label="chat.send">➤</button>
+					<!-- STOP IS ALWAYS REACHABLE WHILE A TURN RUNS. The send button carries
+					     Stop only while the box is EMPTY: type a correction mid-turn and it
+					     becomes a Send arrow, because pressing it means send the correction
+					     and not kill the turn. That left a user who had typed something with
+					     no way to stop at all short of emptying the box first. So this one
+					     appears exactly when the send button stops being Stop, and there is
+					     never a second ■ beside it. -->
+					<button id="chat-stop" title="Stop" data-i18n-title="chat.stop" aria-label="Stop" data-i18n-aria-label="chat.stop" hidden>■</button>
 					<!-- Drawn chevrons, not ↑ and ↓: a font's arrowhead is a few
 					     pixels of ink on a 32px button, and read as specks beside
 					     the stroked icons the rest of the app is made of. -->
@@ -1250,8 +1258,16 @@
 		<aside class="panel social" id="panel-social" data-panel="social" data-zone="dock" data-label="Social" data-i18n-label="panel.social">
 			<div class="railhead"><span role="heading" aria-level="2" data-i18n="panel.social">Social</span>
 				<span class="imp-chips">
-					<button type="button" class="imp-chip" data-view="messages" aria-pressed="false" data-i18n="social.messages">Messages</button>
+					<button type="button" class="imp-chip on" data-view="messages" aria-pressed="true" data-i18n="social.messages">Messages</button>
 					<button type="button" class="imp-chip" data-view="people" aria-pressed="false" data-i18n="social.people">People</button>
+					<!-- GROUPS, its own chip now that the panel opens on Messages rather
+					     than a group being buried inside it. The view is the same section
+					     post.js mounts DaimondGroup into (`#post-groups`) -- the mount id
+					     is kept exactly, and js/improve.js reparents that one element into
+					     this chip's view every time post.js redraws it, because post.js's
+					     own `HOST` is fixed to the messages list and this lane does not
+					     touch that file. -->
+					<button type="button" class="imp-chip" data-view="groups" aria-pressed="false" data-i18n="social.groups">Groups</button>
 					<!-- SHARE, and it is here because the module behind it was complete
 					     and unreachable. js/share.js could compose a Diamond, seal it to
 					     one person, choose a carrier, write a .dshare out and read one
@@ -1260,7 +1276,10 @@
 					     before this one. Beside People because a share goes TO somebody,
 					     and the same projection names them in both. -->
 					<button type="button" class="imp-chip" data-view="share" aria-pressed="false" data-i18n="social.share">Share</button>
-					<button type="button" class="imp-chip on" data-view="proposals" aria-pressed="true" data-i18n="social.proposals">Proposals</button>
+					<!-- FEEDBACK, in the markup and the catalogue's VALUE only: the view
+					     id stays `proposals` and the i18n key stays `social.proposals` --
+					     a verifier names both -- and only the word a reader sees changed. -->
+					<button type="button" class="imp-chip" data-view="proposals" aria-pressed="false" data-i18n="social.proposals">Feedback</button>
 					<button type="button" class="imp-chip" data-view="settings" aria-pressed="false" data-i18n="social.settings">Settings</button>
 					<!-- What this panel is, in the guide. The one circled "i" this app
 					     draws -- the same path as the top bar's About button, because
@@ -1315,8 +1334,19 @@
 			</div>
 
 			<div class="imp-view" id="social-people" hidden>
-				<div class="rail-note imp-off" id="social-people-off" data-i18n="social.people_off">Nobody yet. Show your code to somebody in the room, or read theirs.</div>
+				<div class="rail-note imp-off" id="social-people-off" data-i18n="social.people_off">Nobody yet. Show your code or add somebody.</div>
 				<div class="imp-list" id="social-people-list"></div>
+			</div>
+
+			<!-- Groups, moved here from inside the Messages view. js/post.js still
+			     owns and redraws `#post-groups` -- its `HOST` is fixed to
+			     `#social-messages-list` and this lane does not edit that file -- so
+			     js/improve.js's `DaimondSocial.filled` reparents that one element
+			     into `#social-groups-list` every time post.js says it has drawn.
+			     Nothing else is parked in this container: it holds exactly the node
+			     post.js hands over, moved rather than copied. -->
+			<div class="imp-view" id="social-groups" hidden>
+				<div class="imp-list" id="social-groups-list"></div>
 			</div>
 
 			<!-- js/share.js OWNS the inside of this list and clears it on every
@@ -1336,7 +1366,7 @@
 			<div class="imp-view" id="improve-props-view">
 				<div class="imp-write imp-compose">
 					<textarea class="imp-box" id="improve-box" rows="3"
-						placeholder="Where it is, what you expected, and what happened instead."
+						placeholder="Where it is, what you expected, what happened."
 						data-i18n-placeholder="social.box_ph"
 						aria-label="Write a note about Daimond" data-i18n-aria-label="social.box_label"></textarea>
 					<!-- What goes with the note, in the exact characters that will
@@ -1381,8 +1411,11 @@
 				<div class="imp-queue" id="improve-queue"></div>
 			</div>
 
-			<!-- Settings: the voice this device posts with, and the drafts the model
-			     prepared. js/improve.js OWNS the inside and draws all of it. -->
+			<!-- Settings: the posting name this device posts under, the email
+			     doorbell switch (moved here from the cog drawer -- js/daimond.js's
+			     `DaimondDoorbell.mount` draws it, the drawer keeps none of it), and
+			     the drafts the model prepared. js/improve.js OWNS the inside and
+			     draws all of it. -->
 			<div class="imp-view" id="social-settings" hidden>
 				<div class="imp-settings" id="improve-settings"></div>
 			</div>
@@ -1558,6 +1591,16 @@
 				     screen with no way back. `aria-expanded` is what says so to a
 				     reader, and `aria-controls` names the thing it opens. -->
 				<button type="button" class="id-door" id="id-door-code" aria-expanded="false" aria-controls="id-doors-note" data-i18n="door.code">I have a passcode</button>
+				<!-- A11/A12 (audit 2026-09-15): the ONLY way into a backup used to be
+				     an account panel that does not exist until an account does --
+				     "Skip for now" left a stranger with an empty panel and no Import,
+				     so recovery meant making a throwaway account first, whose identity
+				     the import then kept instead of the backup's own. `doImport` in
+				     daimond.js already does the right thing when no identity exists
+				     yet (it ADOPTS the bundle rather than leaving it aside) -- that
+				     branch was simply unreachable before an account existed to host
+				     the button that calls it. Reachable here, before either. -->
+				<button type="button" class="id-door" id="id-door-backup" data-i18n="door.backup">Restore from a backup</button>
 			</div>
 			<p class="id-doors-note" id="id-doors-note" style="display:none"></p>
 		</details>

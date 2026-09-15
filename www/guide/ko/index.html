@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
-<title>시작하기 — Daimond 사용 안내</title>
+<title>Start here &mdash; Daimond guide</title>
 <link rel="icon" type="image/svg+xml" href="../../assets/daimond_mark.svg">
 <link rel="stylesheet" href="../../css/variables.css">
 <link rel="stylesheet" href="../../css/guide.css">
@@ -15,96 +15,149 @@
 
 <header class="site-head">
 	<div class="site-head-inner">
-		<a class="brand" href="index.html" aria-label="Daimond 사용 안내, 홈">
+		<a class="brand" href="index.html" aria-label="Daimond 가이드, 홈">
 			<img class="wordmark wm-dark" src="../../assets/daimond_word.svg" alt="Daimond" translate="no">
 			<img class="wordmark wm-light" src="../../assets/daimond_word_dark.svg" alt="Daimond" translate="no">
-			<span class="brand-sub">안내</span>
+			<span class="brand-sub">가이드</span>
 		</a>
-		<nav class="site-nav" aria-label="안내 페이지">
-			<a href="index.html" aria-current="page">시작하기</a>
+		<nav class="site-nav" aria-label="가이드 페이지">
+			<a href="index.html" aria-current="page">여기서 시작하기</a>
 			<a href="interface.html">인터페이스</a>
-			<a href="models.html">모델 &amp; 크레딧</a>
-			<a href="chats-and-diamonds.html">채팅 &amp; Diamonds</a>
-			<a href="../capps.html">Capps</a>
-			<a href="email-web-files.html">메일, 웹 &amp; 파일</a>
-			<a href="accounts.html">계정</a>
-			<a href="sync.html">기기 간 동기화</a>
+			<a href="chats-and-diamonds.html">채팅과 diamond</a>
+			<a href="../capps.html">diamond의 페이지</a>
+			<a href="email-web-files.html">파일, 이메일, 웹</a>
+			<a href="../machine-operations.html">내 컴퓨터</a>
+			<a href="../runner.html">헬퍼와 차례가 실행되는 곳</a>
+			<a href="sync.html">여러 대의 기기</a>
+			<a href="../social.html">소셜과 제안</a>
+			<a href="models.html">모델과 제공자</a>
 			<a href="spending.html">지출</a>
-			<a href="../machine-operations.html">기기에서 명령 실행</a>
-			<a href="../social.html">소셜</a>
+			<a href="accounts.html">안전과 해결</a>
 		</nav>
 	</div>
 </header>
 
 <main>
-	<h1>시작하기</h1>
-	<p class="lede">Daimond은 전부 브라우저 안에서 도는 AI 에이전트 작업 공간이에요. 서버에 계정도 없고 내려받을 것도 없어요. 채팅도 키도 파일도 이 기기 안에만 있어요.</p>
+	<h1>여기서 시작하기</h1>
+	<p class="lede">Daimond is an AI workspace that runs in your browser, and your chats, keys and files stay on this device. You connect a model, talk to it, and keep what works.</p>
 
-	<p>내가 시키지 않으면 기기에서 나가는 것은 없어요. 메시지는 연결한 모델 제공자에게 가고, 크레딧은 모델 실행이나 페이지 가져오기, 메일함 동기화에 쓰이고, 연결한 기기에는 암호화된 꾸러미가 가요. 나머지는 모두 이 브라우저에 남아요. <a href="accounts.html">계정 &amp; 프라이버시</a> 에 무엇이 어디로 가는지, 그리고 그것을 스스로 확인하는 방법이 적혀 있어요.</p>
+	<p>No server holds your account. Whatever leaves the browser is named on the page of this guide that covers it. The main ones are a message to the model provider you connected, a page fetched for you, a mailbox synced, and an encrypted parcel sent to a device you linked.</p>
 
-	<figure class="shot" data-shot="getting-started">
-		<img alt="처음 켰을 때의 Daimond 작업 공간: 왼쪽에 Diamonds과 채팅 레일, 가운데에 채팅 패널, 왼쪽 아래에 관리 패널." src="../shots/getting-started.png" loading="lazy">
-		<figcaption>처음 켰을 때의 Daimond. 대화는 가운데에 있고, 관리 패널은 왼쪽 아래에 있어요.</figcaption>
+	<figure class="shot">
+		<img alt="Daimond on first run. The rail on the left lists diamonds and Chats; the centre shows three numbered steps, the first of them a Connect a model button." src="../img/first-run.png" loading="lazy">
+		<figcaption>First run. The centre lists three steps, and the one you are at is drawn as the button.</figcaption>
 	</figure>
 
-	<h2 id="s1">첫 답까지 가는 가장 짧은 길</h2>
-	<p>세 단계예요. 저마다 화면에서 보이는 조작 하나를 가리켜요.</p>
-
+	<h2 id="s1">Three steps to a first answer</h2>
 	<ol class="steps">
 		<li>
-			<h3 id="s2">계정 만들기</h3>
-			<p>처음 켰을 때 Daimond은 <strong>이 기기를 보호하는</strong> 것을 암호문구로 권해요. 이름과 암호문구를 입력하고, <span class="ui">계정 만들기</span>를 고르세요. 암호문구는 저장한 키와 메일 자격 정보를 암호화하고, 이 기기에서 나를 나타내는 신원이 돼요. 어디로도 보내지 않으니 안전한 곳에 적어 두세요. 잃어버리면 암호화된 자료는 돌아오지 않아요.</p>
-			<p><span class="ui">지금은 건너뛰기</span> 를 고르면 나중에 정할 수 있어요. 다만 제공자 키는 그것을 지킬 암호문구가 있을 때 추가하는 편이 가장 좋아요.</p>
+			<h3 id="s2">Make your account</h3>
+			<p>Type a name, and Daimond generates a passphrase of eight random words and shows it once. <strong>Write it down.</strong> It unlocks everything stored here, and nobody can reset it. Then choose <span class="ui">계정 만들기</span>.</p>
+			<p>A password manager is a fine place for it, since eight random words are hard to guess.</p>
+			<p>Under the button, <span class="ui">Have a passcode or a pairing code?</span> opens two other routes, redeeming a passcode for an account with credits and pairing this browser to a device you already use. If you already have Daimond elsewhere, pair instead of creating, or you will end up with two accounts.</p>
 		</li>
 		<li>
-			<h3 id="s3">모델 연결하기, 또는 크레딧 사기</h3>
-			<p>daimon이 생각하려면 모델이 있어야 해요. 주는 길은 둘, 둘 다 왼쪽 아래 관리 패널에 있어요.</p>
+			<h3 id="s3">Connect a model</h3>
+			<p>A daimon thinks with a model, so connect one. Press <span class="ui">Connect a model</span> in the centre, or open the model row at the foot of the rail. There are three routes.</p>
 			<ul>
-				<li><strong>내 키 가져오기.</strong>  <span class="ui">모델</span> 행을 열고, <span class="ui">+ 제공자 추가</span>를 골라 제공자를 고르고, API 키를 붙여 넣고, 기본 모델에 별을 달아요. 그러면 메시지는 내 계정으로 그 제공자에게 곧바로 가요.</li>
-				<li><strong>크레딧 사기.</strong>  <span class="ui">크레딧</span> 행을 열어 팩을 사세요. Daimond이 대신 모델을 돌려요. 관리할 제공자 키도, 구독도 없어요.</li>
+				<li><strong>Your own key.</strong> Paste a key from Anthropic, Fireworks AI, OpenRouter, Together AI, Groq or DeepInfra. Your messages go straight to that provider, and we charge nothing.</li>
+				<li><strong>Credits.</strong> Daimond runs the model for you and draws on a prepaid balance, so there is no provider account to manage. While testing is closed, accounts with credits are given out by passcode.</li>
+				<li><strong>A model of your own.</strong>  <span class="ui">Custom</span> and give the address of any service that speaks the same chat API, including one running on your own machine.</li>
 			</ul>
-			<p>둘 중 하나면 충분해요. 자세한 것은 <a href="models.html">모델 &amp; 크레딧</a> 페이지를 보세요.</p>
+			<p><a href="models.html">모델과 제공자</a> has the detail.</p>
 		</li>
 		<li>
-			<h3 id="s4">채팅 시작하기</h3>
-			<p> <span class="ui">새 채팅</span> 항목을 레일 맨 위에서 고르고 (누를 것은 <strong>＋</strong> — 옆은 <strong>채팅</strong>). 가운데 패널 아래 칸에 입력하세요. 그리고 <span class="ui">➤</span>로 보내요. 그 가운데 패널이 daimon과 이야기하는 곳이고, Daimond은 그 대화를 중심으로 지어졌어요.</p>
+			<h3 id="s4">Say hello</h3>
+			<p>Press <span class="ui">Say hello</span>, or the <span class="ui">+</span> — 옆은 <span class="ui">채팅</span>, then type in the box and send. The answer arrives in the centre panel, where you will spend most of your time.</p>
+			<p>The chat takes its title from your first line, so a rail of chats reads as a list of subjects.</p>
 		</li>
 	</ol>
 
-	<h2 id="s5">지금 보고 있는 것</h2>
-	<p>화면에는 세 구역이 있어요. 왼쪽에 있는 <strong>레일</strong> 구역은 지금 하고 있는 일을 늘어놓고, 움직일 수 있는 칸막이 아래에 <strong>관리 패널</strong>을 둬요. 가운데에 있는 <strong>스테이지</strong> 는 대화와 그 옆에서 읽는 것을 담아요. 오른쪽의 <strong>독</strong> 은 내가 끌어오는 원천을 담아요. 메일, 작업 공간, 에이전트 실행, 지출, 나를 기다리는 것, 그리고 휴지통이에요.</p>
-	<p>위쪽에는 패널마다 열고 닫는 칩이 있고, 오른쪽 끝에는 About 대화상자, 이 안내서, 그리고 테마·글자 크기·독 분할 버튼이 있어요. 첫 답에 이르는 데 필요한 것은 하나도 없지만, 전부는 다음 페이지에 늘어놓았어요 — <a href="interface.html">인터페이스</a>.</p>
+	<h2 id="s5">Then keep what works</h2>
+	<p>A chat is only a conversation. When one has worked something out, press <span class="ui">Keep</span> on its row in the rail and it becomes a <strong>diamond</strong>.</p>
+	<p>A diamond is a saved project with its own memory, page and files. Work inside it starts from what it already knows, so you stop re-explaining yourself. <a href="chats-and-diamonds.html">채팅과 diamond</a> covers it.</p>
 
-	<figure class="shot" data-shot="admin-panel">
-		<img alt="왼쪽 아래 관리 패널: 신원 줄, 모델 줄, 크레딧 줄, 도구 줄, 그리고 작업 공간 저장 줄." src="../shots/admin-panel.png" loading="lazy">
-		<figcaption>관리 패널. 줄마다 이 기계에 대한 물음 하나에 답하고, 손댈 수 있는 것은 버튼이에요.</figcaption>
+	<h2 id="s6">What this does that a chat window does not</h2>
+	<ul>
+		<li><strong>It remembers per subject.</strong> A diamond carries what you worked out into every later turn, and you can read and edit that memory as a file.</li>
+		<li><strong>It works on real files.</strong> Point it at a folder and it edits the files in place, inside a fence you set.</li>
+		<li><strong>It shows the bill.</strong> Each turn is priced on this device as it is spent, from the provider's own figure.</li>
+		<li><strong>It can be checked.</strong> The code in this browser is public, builds byte for byte from source, and is sealed into a published record. <span class="ui">Verify this build</span> in the About dialog checks the one you are running.</li>
+	</ul>
+
+	<h2 id="s7">The four words this guide uses</h2>
+	<ul>
+		<li><strong>diamond</strong>, a saved project with its own memory and page.</li>
+		<li><strong>daimon</strong>, the assistant that works inside a diamond.</li>
+		<li><strong>crystal</strong>, what a diamond knows, kept as a file you can read and edit.</li>
+		<li><strong>forge</strong>, the shared board where proposals about Daimond itself are filed, shown in the Improve panel.</li>
+	</ul>
+
+	<h2 id="s8">What is on screen</h2>
+	<p>화면에는 세 구역이 있어요. 왼쪽에 있는 <strong>레일</strong> on the left lists your diamonds and chats, and under a movable divider shows your account, one status line and what you have spent. The <strong>centre</strong> holds the conversation, with whatever you are reading beside it. The <strong>독</strong> on the right holds what you pull from, such as files, mail, running agents and spending.</p>
+	<p>Across the top, each panel has a chip that opens or closes it. A fresh account shows six, for diamonds, Chat, Web, Workspace, Tools and Spending, and the rest are one press away in the gallery behind the <span class="ui">⋯</span> chip. At the far right are the update chip, About, <span class="ui">Link another device</span>, this guide and <span class="ui">Settings</span>.</p>
+	<p><a href="interface.html">인터페이스</a> walks through all of it, and none of it is needed to get an answer.</p>
+
+	<h2 id="s9">One status line</h2>
+	<figure class="shot narrow">
+		<img alt="The foot of the rail: an account row, a status line reading This device only, and a spend row showing today, this week and this month." src="../img/status.png" loading="lazy">
+		<figcaption>The foot of the rail. One line says where things stand, and <span class="ui">Details</span> opens the rest.</figcaption>
 	</figure>
+	<p>Above the spend row is one line, which reads <span class="ui">Locked</span>, <span class="ui">Not signed in</span>, <span class="ui">No model connected</span>, <span class="ui">Offline</span>, <span class="ui">Synced</span>, 또는 <span class="ui">This device only</span>. It answers the question most worth asking at that moment, showing the most blocking state first.</p>
+	<p>Press it to open <span class="ui">Details</span>, which covers models, tools, permissions, storage, machine, sync and the build you are on. Those are diagnostics, so they stay behind the line until you want them.</p>
 
-	<p>관리 패널은 Daimond을 설정하는 곳이고, 얼마가 들고 있는지 알려 주는 곳이에요. 줄마다 그 이름이 가리키는 것을 여는 버튼이에요. 내 신원, <span class="ui">모델</span>, <span class="ui">크레딧</span>, <span class="ui">도구</span>, <span class="ui">버전</span>, 그리고 작업 공간이 쓰는 저장 공간이에요. 다음 페이지에서 화면의 모든 부분을 하나씩 짚어 볼게요.</p>
+	<h2 id="s10">가까이 두기</h2>
+	<p>Use your browser's own <em>설치</em>, 또는 <em>홈 화면에 추가</em> on a phone, and Daimond gets an icon and a window of its own. It is the same page and the same stored work, so nothing is copied and nothing moves.</p>
+	<p>Daimond updates itself, taking a new build at a quiet moment and not in the middle of a running turn or a half-typed message. The chip beside the top-bar buttons says when one is ready.</p>
 
-	<h2 id="s6">가까이 두기</h2>
-	<p>브라우저 자체의 <span class="ui">설치</span>, 또는 <span class="ui">홈 화면에 추가</span> (휴대폰에서)를 쓰면 Daimond에 저만의 아이콘과 창이 생겨요. 같은 페이지이고, 저장된 작업도 그대로예요. 내려받는 것도 없고 옮겨 가는 것도 없으며, 서버가 지나쳐 간 빌드는 캐시에서 나오는 대신 그대로 거절돼요.</p>
+	<h2 id="s11">Where to go next</h2>
+	<div class="cards">
+		<div class="card">
+			<h3 id="s12"><a href="chats-and-diamonds.html">채팅과 diamond</a></h3>
+			<p>Reading a long thread, keeping a chat, and what a diamond remembers.</p>
+		</div>
+		<div class="card">
+			<h3 id="s13"><a href="email-web-files.html">파일, 이메일, 웹</a></h3>
+			<p>Getting files in, sharing a folder to your other devices, mail, and reading a page.</p>
+		</div>
+		<div class="card">
+			<h3 id="s14"><a href="../machine-operations.html">내 컴퓨터</a></h3>
+			<p>Letting a daimon edit real folders and run real commands, inside a fence.</p>
+		</div>
+		<div class="card">
+			<h3 id="s15"><a href="../runner.html">헬퍼와 차례가 실행되는 곳</a></h3>
+			<p>Agents dispatched to work in parallel, and naming the machine that picks turns up.</p>
+		</div>
+		<div class="card">
+			<h3 id="s16"><a href="accounts.html">안전과 해결</a></h3>
+			<p>What Daimond asks before it acts, what stays private, and what to do when something is wrong.</p>
+		</div>
+		<div class="card">
+			<h3 id="s17">Ask Daimond</h3>
+			<p>The rail holds a diamond called <strong>Daimond Help</strong>. It answers from this build and from this guide, and says which page an answer came from.</p>
+		</div>
+	</div>
 
 	<div class="next">
-		<span></span>
 		<a href="interface.html">다음: 인터페이스 &rarr;</a>
 	</div>
 </main>
 
 <footer class="site-foot">
-	<span>Daimond은 내 브라우저에서 돌아요. 여기 있는 어떤 것도 저희에게 보내지지 않아요.</span>
-	<nav aria-label="안내 페이지">
-		<a href="index.html">시작하기</a>
+	<span>Daimond는 브라우저 안에서 실행돼요. 여기 있는 어떤 것도 저희에게 전송되지 않아요.</span>
+	<nav aria-label="가이드 페이지">
+		<a href="index.html">여기서 시작하기</a>
 		<a href="interface.html">인터페이스</a>
-		<a href="models.html">모델</a>
-		<a href="chats-and-diamonds.html">채팅 &amp; Diamonds</a>
-		<a href="../capps.html">Capps</a>
-		<a href="email-web-files.html">메일, 웹 &amp; 파일</a>
-		<a href="accounts.html">계정</a>
-		<a href="sync.html">기기 간 동기화</a>
+		<a href="chats-and-diamonds.html">채팅과 diamond</a>
+		<a href="../capps.html">diamond의 페이지</a>
+		<a href="email-web-files.html">파일, 이메일, 웹</a>
+		<a href="../machine-operations.html">내 컴퓨터</a>
+		<a href="../runner.html">헬퍼와 차례가 실행되는 곳</a>
+		<a href="sync.html">여러 대의 기기</a>
+		<a href="../social.html">소셜과 제안</a>
+		<a href="models.html">모델과 제공자</a>
 		<a href="spending.html">지출</a>
-		<a href="../machine-operations.html">기기에서 명령 실행</a>
-		<a href="../social.html">소셜</a>
+		<a href="accounts.html">안전과 해결</a>
 	</nav>
 </footer>
 </body>

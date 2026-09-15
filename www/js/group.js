@@ -1066,16 +1066,14 @@
 		// lane does not own, for a heading that already has one.
 		var lsec = elt('section', 'post-list post-tray');
 		lsec.id = 'group-list';
-		lsec.appendChild(elt('h3', null, tOr('group.head', 'Groups')));
+		lsec.appendChild(drawHead());
 		if (!joined.length && !left.length && !closed.length) {
 			// Two sentences, because "no groups yet" over a pending invitation is
 			// a screen arguing with the row above it.
 			lsec.appendChild(elt('p', 'post-empty', invites.length
 				? tOr('group.none_joined',
 					'None joined yet. Answer the invitation above, or make one below.')
-				: tOr('group.none',
-					'No groups yet. A group is a list of people a message is sealed to '
-					+ 'one by one — there is no shared key, and nothing is kept on the relay.')));
+				: tOr('group.none', 'No groups yet.')));
 		}
 		joined.forEach(function (r) { lsec.appendChild(drawGroup(r)); });
 		left.forEach(function (r)   { lsec.appendChild(drawLeft(r)); });
@@ -1086,9 +1084,43 @@
 		// which group it was. So closing is not removing, and removing is not
 		// offered here -- see the note on `drawClosed`.
 		closed.forEach(function (r)  { lsec.appendChild(drawClosed(r)); });
-		lsec.appendChild(drawMake());
+		// NULL WHERE THERE IS NOBODY TO PUT IN ONE: an empty form is a grey bar
+		// that reads as a control which failed to load.
+		var make = drawMake();
+		if (make) lsec.appendChild(make);
 		_host.appendChild(lsec);
 		return rows.length;
+	}
+
+	/// The heading, with WHAT A GROUP IS behind a mark rather than under it.
+	///
+	/// The sentence is worth keeping -- a list of people, no shared key, nothing
+	/// kept on the relay, and each of those is a promise the design actually
+	/// makes -- but it was twenty-eight words standing between a reader and an
+	/// empty list they had already understood (audit SOC-02). So it moves onto the
+	/// mark, where somebody who wants it can reach it, and the section reads as a
+	/// section.
+	///
+	/// `.imp-info` and the same glyph as the panel's own mark, because two
+	/// information marks drawn differently are two marks a reader has to learn
+	/// separately.
+	function drawHead() {
+		var h = elt('h3', 'group-head', tOr('group.head', 'Groups'));
+		var i = elt('button', 'icon-btn imp-info');
+		i.type = 'button';
+		var says = tOr('group.what',
+			'A group is a list of people. A message is sealed to each of them one by '
+			+ 'one: there is no shared key, and nothing is kept on the relay.');
+		i.title = says;
+		i.setAttribute('aria-label', says);
+		// The one circled "i" this app draws, built the way index.html builds it.
+		// A literal, not user text: `elt` is used for everything a person wrote.
+		i.innerHTML = '<svg class="ic" viewBox="0 0 24 24" aria-hidden="true">'
+			+ '<circle cx="12" cy="12" r="9"/>'
+			+ '<circle cx="12" cy="7.4" r="1.2" fill="currentColor" stroke="none"/>'
+			+ '<path d="M12 11.6v5"/></svg>';
+		h.appendChild(i);
+		return h;
 	}
 
 	/// An invitation, with the first sentence on it.
@@ -1222,6 +1254,7 @@
 
 	/// The box that makes one. A name and a set of people this device holds cards
 	/// for, because a member with no card is a member nothing can be sealed to.
+	/// Null where there is nothing to say and nobody to choose from.
 	function drawMake() {
 		var box = elt('form', 'post-write');
 		box.id = 'group-make';
@@ -1229,9 +1262,26 @@
 		try { who = (window.DaimondPost && DaimondPost.people) ? DaimondPost.people() : []; }
 		catch (e) { who = []; }
 		if (!who.length) {
-			box.appendChild(elt('p', 'post-nobody', tOr('group.nobody',
-				'There is nobody to put in a group yet. Exchange codes with somebody '
-				+ 'in People, and they will be here.')));
+			// SAID ONCE. With no people and no messages, the Messages view's own
+			// empty line has already said exactly this a few rows above, and a box
+			// repeating it is the screen arguing with itself (audit SOC-02).
+			var msgs = 0;
+			try { msgs = (window.DaimondPost && DaimondPost.list) ? DaimondPost.list().length : 0; }
+			catch (e) { msgs = 0; }
+			if (!msgs) return null;
+			// THROUGH post.js's own line, so the sentence and the press exist once.
+			// A second copy here would be a second place for the word People to
+			// stop matching the chip it goes to.
+			try {
+				if (window.DaimondPost && DaimondPost.peopleLine) {
+					box.appendChild(DaimondPost.peopleLine('post-nobody',
+						tOr('group.nobody', 'Add somebody in {people}.')));
+					return box;
+				}
+			} catch (e) { /* fall through to the plain sentence */ }
+			box.appendChild(elt('p', 'post-nobody',
+				tOr('group.nobody', 'Add somebody in {people}.')
+					.replace('{people}', tOr('social.people', 'People'))));
 			return box;
 		}
 		var name = elt('input', 'post-to');

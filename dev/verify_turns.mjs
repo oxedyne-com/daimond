@@ -264,11 +264,27 @@ check('and the turns NOT chosen do not',
 	!!delta && !/MARK-ALPHA/.test(delta) && !/MARK-GAMMA/.test(delta) && !/MARK-DELTA/.test(delta),
 	delta ? MARKS.filter(m => delta.includes(m)).join(',') || '(only MARK-BETA)' : '(nothing read back)');
 
-// A fold of some turns is not the chat going anywhere, so the tile must not claim it was.
-const tileText = await p.evaluate(() => {
-	const f = document.querySelector('.tile-fold');
-	return f ? f.textContent.trim() : '(no tile)';
-});
+// A fold of some turns is not the chat going anywhere, so the cog's own fold
+// button must not claim it was. Read from the cog dialog now (CHAT-15): the
+// row itself no longer carries this button, `mountChatFoldKeep` does.
+const tileText = await p.evaluate(() => new Promise((res) => {
+	// The Delta viewer read above is still open over the rail; close it first
+	// or the cog's own click never reaches the row underneath it.
+	document.querySelectorAll('.modal .ui-close, .modal .modal-close').forEach((b) => b.click());
+	const box = document.querySelector('.session-box.chat-box');
+	const cog = box && box.querySelector('.tile-cog');
+	if (!cog) { res('(no tile)'); return; }
+	cog.click();
+	setTimeout(() => {
+		const card = [...document.querySelectorAll('.modal.dlg .dlg-card')]
+			.find((c) => c.getClientRects().length);
+		const f = card && card.querySelector('.tile-fold');
+		const text = f ? f.textContent.trim() : '(no fold button)';
+		const x = card && card.querySelector('.tile-dlg-x');
+		if (x) x.click();
+		res(text);
+	}, 250);
+}));
 check('a partial fold does not mark the whole chat "Folded"',
 	tileText !== 'Folded', tileText);
 

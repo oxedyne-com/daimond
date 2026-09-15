@@ -129,6 +129,13 @@ const made = await page.waitForSelector('#identity-modal', { state: 'hidden', ti
 	.then(() => true).catch(() => false);
 check(made, 'the account is created from the generated passphrase');
 
+// EVERY SECTION BELOW RELOADS AND EXPECTS THE UNLOCK SCREEN. Stay-unlocked
+// defaults ON at this (desktop) viewport (identity.js `stayUnlocked`,
+// 2026-09-13), and a reload of an already-unlocked tab comes back unlocked with
+// no gate at all -- which is a real default this test is not about. Forced off
+// once, here, since the key is durable and every reload below reads the same one.
+await page.evaluate(() => localStorage.setItem('daimond-stay-unlocked', '0'));
+
 // ── A reload locks it; the same phrase unlocks ──
 await page.reload({ waitUntil: 'domcontentloaded' });
 await page.waitForSelector('#id-primary', { timeout: 15000 });

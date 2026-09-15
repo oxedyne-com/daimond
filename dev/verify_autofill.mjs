@@ -24,6 +24,13 @@ const sleep = (ms) => new Promise(r => setTimeout(r, ms));
 const s = await open({ name: 'autofill-' + Date.now(), connect: false });
 const { page } = s;
 
+// EVERY CHECK BELOW RELOADS AND EXPECTS THE LOCK SCREEN. `open()` above creates
+// the account on this (desktop) viewport, where stay-unlocked defaults ON
+// (identity.js `stayUnlocked`, 2026-09-13) -- and a reload of an already-unlocked
+// tab comes back unlocked with no gate at all, which this file is not testing.
+// Forced off once: the key is durable, so every `relock()` below reads it.
+await page.evaluate(() => localStorage.setItem('daimond-stay-unlocked', '0'));
+
 /// Back to the lock screen, and wait for it.
 async function relock() {
 	await page.reload({ waitUntil: 'domcontentloaded' });

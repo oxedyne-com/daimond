@@ -89,29 +89,39 @@ console.log('\n-- the relay ceiling is the GATEWAY’s number, not one invented 
 // THE EXTERNAL SIDE OF THE CLAIM. The client refuses at a size; the gateway is
 // what actually refuses, and a client ceiling that had drifted from the server's
 // would send a share that comes back 413. Read out of lane G's own file.
+//
+// THE NUMBER CHANGED, AND THAT IS THE POINT. It was 64 KiB, which is a message's
+// ceiling and not a diamond's: the Log Life page alone is about 64 KB, so every
+// share carrying a page took the file route and the relay carried only shares
+// small enough to have been messages. Three mebibytes is the share format's two
+// mebibytes of file bodies with room for the paths, the head, the slots and the
+// seal's tag on top.
+const CEILING = 3 * 1024 * 1024;
 const gw = fs.readFileSync(new URL('../gateway/src/settings.rs', import.meta.url), 'utf8');
-const postBlock = gw.slice(gw.indexOf('route: "/api/post"'), gw.indexOf('route: "/api/post"') + 900);
+const postBlock = gw.slice(gw.indexOf('route: "/api/post"'), gw.indexOf('route: "/api/post"') + 1200);
 const fallback = (postBlock.match(/fallback:\s*"(\d+)"/) || [])[1];
-check(fallback === '65536', 'the /api/post max_bytes knob still falls back to 64 KiB',
+check(fallback === String(CEILING), 'the /api/post max_bytes knob falls back to 3 MiB',
 	'gateway says ' + fallback);
-check(!!surface && surface.limits.relay === 65536,
+check(!!surface && surface.limits.relay === CEILING,
 	'and share.js holds the same number', surface ? String(surface.limits.relay) : '');
 
-const fits = await page.evaluate(() => {
+const fits = await page.evaluate((max) => {
 	const f = window.DaimondShare.fitsRelay;
-	return { at64k: f(65536), one_under: f(65535), two_under: f(65534),
-		three_under: f(65533), small: f(555), zero: f(0) };
-});
+	return { at64k: f(65536), at_ceiling: f(max), over: f(max + 1),
+		one_under: f(max - 1), small: f(555), zero: f(0) };
+}, CEILING);
 // BOTH of the gateway's checks, which are not the same number. `/api/post` turns
 // a body away on the cheap base64-length estimate BEFORE decoding —
 // `envelope.len() / 4 * 3 > max_bytes` — and then again on the decoded length.
-// base64 rounds up to a group of three, so 65,536 bytes becomes 87,384
-// characters and 87384 / 4 * 3 is 65,538: refused. 65,535 is the last size that
-// goes through, and a client that stopped at `<= 65536` would post one that
-// bounces.
-check(fits.at64k === false, 'a sealed envelope of exactly 64 KiB does NOT fit: base64 rounds up',
+// base64 rounds up to a group of three, so whether the ceiling itself is
+// reachable depends on whether it divides by three. 64 KiB did not and 65,535
+// was the last size through; 3 MiB does, so the ceiling is exactly reachable and
+// one byte over is the first refusal.
+check(fits.at64k === true, 'what used to be the ceiling now fits with room to spare',
 	JSON.stringify(fits));
-check(fits.one_under === true, 'and 65,535 bytes is the last size that does',
+check(fits.at_ceiling === true, 'a sealed envelope of exactly 3 MiB fits: the ceiling divides by three',
+	JSON.stringify(fits));
+check(fits.over === false, 'and one byte over is refused — the file route still has a case',
 	JSON.stringify(fits));
 check(fits.small === true && fits.zero === true, 'small ones fit, obviously',
 	JSON.stringify(fits));
@@ -119,10 +129,11 @@ check(fits.small === true && fits.zero === true, 'small ones fit, obviously',
 // the two are computed independently and agreeing means something.
 const gateway = (n) => {
 	const chars = Math.ceil(n / 3) * 4;			// base64, padded
-	return !(Math.floor(chars / 4) * 3 > 65536) && !(n > 65536);
+	return !(Math.floor(chars / 4) * 3 > CEILING) && !(n > CEILING);
 };
 let boundaryAgree = true;
-for (const n of [0, 1, 555, 65533, 65534, 65535, 65536, 65537, 200000]) {
+for (const n of [0, 1, 555, 65535, 65536, 65537, CEILING - 2, CEILING - 1, CEILING,
+	CEILING + 1, CEILING + 4]) {
 	const mine = await page.evaluate((n) => window.DaimondShare.fitsRelay(n), n);
 	if (mine !== gateway(n)) { boundaryAgree = false; console.log('    disagree at ' + n); }
 }
@@ -169,15 +180,37 @@ const capp = await page.evaluate(async () => {
 	return { sealed: made.sealed.length, code: made.code,
 		carrier: DaimondShare.carrier(made), why: DaimondShare.carrierWhy(made) };
 });
-check(capp.sealed > 65536, 'a capp share really is over the relay’s ceiling',
+check(capp.sealed > 65536, 'a capp share really is over what the relay used to carry',
 	capp.sealed + ' bytes sealed');
-check(capp.carrier === 'file',
-	'so it takes the file route — this is the case that had NO carrier at all', capp.carrier);
+// THE CHANGE, FROM THE FRONT. At 64 KiB this took the file route and the file
+// route was the only route a capp had. It goes straight to the person now, which
+// is what raising the knob was for.
+check(capp.carrier === 'relay',
+	'and it goes by RELAY now — this is the case that had no relay carrier at all',
+	capp.carrier);
 check(capp.code === true, 'and the payload’s own signed claim says it carries code',
 	String(capp.code));
-check(/64\.0 KB/.test(capp.why) && /file/i.test(capp.why),
-	'the sentence names both sizes, because the sender is the only one who can act on it',
-	capp.why);
+check(/relay/i.test(capp.why), 'and the sentence says which carrier it took', capp.why);
+
+// THE FILE ROUTE IS STILL REACHABLE AND IT IS NOT REACHED BY SIZE ANY MORE. The
+// share format caps the file bodies at two mebibytes, so no share this app can
+// compose exceeds a three-mebibyte relay: `carrier` answers 'file' only for an
+// envelope larger than anything `compose` will produce. That leaves the file
+// route as the route for a person with NO GATEWAY ACCOUNT and for a stick, which
+// is what its own comment always said it was for — so it is driven here on a
+// composed share's bytes rather than waited for.
+const overCeiling = await page.evaluate((max) => {
+	const S = window.DaimondShare;
+	return { file: S.carrier({ sealed: { length: max + 1 } }),
+		relay: S.carrier({ sealed: { length: max } }),
+		bodies: S.limits.bytes, ceiling: S.limits.relay };
+}, CEILING);
+check(overCeiling.file === 'file' && overCeiling.relay === 'relay',
+	'over the ceiling is still the file route and at it is still the relay',
+	JSON.stringify(overCeiling));
+check(overCeiling.bodies < overCeiling.ceiling,
+	'and the format’s own body ceiling is BELOW the relay’s, so a legal share always fits',
+	overCeiling.bodies + ' bodies vs ' + overCeiling.ceiling + ' relay');
 
 console.log('\n-- writing one out --');
 const dl = await (async () => {
@@ -483,9 +516,21 @@ check(noSpill.scrollW <= noSpill.clientW + 1 && noSpill.bodyOver <= 0,
 	'and none of it pushes the panel or the page sideways', JSON.stringify(noSpill));
 
 console.log('\n-- with no Diamond open, the send half says why rather than nothing --');
-const bare = await page.evaluate(() => document.getElementById('social-share-list').textContent);
-check(/Open a Diamond to share it/.test(bare),
-	'it names what is missing and what to do about it', bare.slice(-140));
+// THE STATE THE CHECK IS ABOUT, PUT THERE RATHER THAN HOPED FOR. The browser
+// profile persists between runs, so a second run boots with a diamond already
+// open and the panel draws the sheet instead of this line -- a check going red
+// because the suite is re-runnable, which says nothing about the panel.
+const bare = await page.evaluate(() => {
+	const real = DaimondDiamond.current;
+	DaimondDiamond.current = () => null;
+	try { DaimondShare.render(); return document.getElementById('social-share-list').textContent; }
+	finally { DaimondDiamond.current = real; DaimondShare.render(); }
+});
+// AND IT POINTS SOMEWHERE. `sendBlock` refuses a picker of every diamond by
+// design -- that would be a second Diamonds list in a panel that is not the rail
+// -- so the line has to name the other door, which is Share... on the tile's cog.
+check(/Open a diamond to share it/i.test(bare) && /tile/i.test(bare),
+	'it names what is missing and the other door to it', bare.slice(-140));
 check(/Open a share file/.test(bare),
 	'while taking one in needs nothing and is offered anyway', bare.slice(0, 60));
 
@@ -711,6 +756,379 @@ check(Array.isArray(survived.back)
 	'and the picture is STILL there, byte for byte, after the merge',
 	Array.isArray(survived.back)
 		? survived.back.length + ' bytes' : String(survived.back));
+
+// ── WHAT MAY NOT TRAVEL, AND WHAT TRAVELS ONLY IF YOU SAY SO ──────────
+//
+// Two of these arm on the RECEIVER's money and one names folders on the
+// SENDER's disk, and none of the three was refused by a share until now — the
+// template path had refused all three since it existed, and a share carries the
+// same files to the same people.
+//
+// THE FORMAT IS THE AUTHORITY AND THIS IS THE BELT. `share.js`'s `NEVER_TRAVELS`
+// keeps the sender from being handed an encoder refusal for a file they never
+// asked to send; `fe2o3_sbj::share` refuses them whatever this file does. The
+// checks below drive `collect`, which is the client half, and the format half is
+// proved by its own crate's tests.
+//
+// TO SEE THESE FAIL: take `triggers\.json$` out of `NEVER_TRAVELS` — the trigger
+// check goes red and a diamond's armed automation starts travelling to
+// strangers. Drop the `CONVERSATION` line from `collect` and the conversation
+// travels whether or not the tick is on, which is the private half.
+console.log('\n-- triggers and the sender\u2019s own notes never travel; the conversation only on the tick --');
+const refusals = await page.evaluate(async () => {
+	// A diamond with one of everything in it, written through the store the way a
+	// worked diamond comes to hold them.
+	const m = await import('/pkg/oxedyne_daimond.js');
+	const id = await DaimondDiamond.create('Refusal fixture');
+	const put = async (path, body) => await m.store_write('diamonds/' + id + '/' + path, body);
+	await put('notes.md', '# Data\n');
+	await put('triggers.json', '[{"id":"t1","on":true,"every":"30m"}]');
+	await put('STATE.md', '# State\n\nMarked folder: /home/somebody/secret-project\n');
+	await put('transcript.md', '# The conversation\n\nSomething private.\n');
+	await put('capp.json', '{"v":1,"files":[]}');
+	const walked = (await DaimondDiamond.files(id)).map(f => f.path).sort();
+	const plain  = (await DaimondShare.collect(id)).map(f => f.path).sort();
+	const withIt = (await DaimondShare.collect(id, { conversation: true })).map(f => f.path).sort();
+	return { id, walked, plain, withIt };
+});
+// The walk carries everything: the filtering is the share's, not the store's, and
+// a check that could not see the file on disk would pass on a diamond that never
+// had one.
+check(refusals.walked.indexOf('triggers.json') !== -1
+	&& refusals.walked.indexOf('STATE.md') !== -1
+	&& refusals.walked.indexOf('transcript.md') !== -1,
+	'the fixture really holds all three — otherwise the refusals below prove nothing',
+	JSON.stringify(refusals.walked));
+check(refusals.plain.indexOf('triggers.json') === -1,
+	'triggers.json does NOT travel: a trigger fires with nobody pressing anything, '
+	+ 'and it would spend the receiver\u2019s money', JSON.stringify(refusals.plain));
+check(refusals.plain.indexOf('STATE.md') === -1,
+	'STATE.md does NOT travel: it names folders and build commands on the sender\u2019s disk',
+	JSON.stringify(refusals.plain));
+check(refusals.plain.indexOf('capp.json') === -1,
+	'nor does the delivery record, as before', JSON.stringify(refusals.plain));
+check(refusals.plain.indexOf('transcript.md') === -1,
+	'and the conversation stays behind by DEFAULT', JSON.stringify(refusals.plain));
+check(refusals.plain.indexOf('notes.md') !== -1,
+	'while the diamond\u2019s own contents travel, which is the whole point',
+	JSON.stringify(refusals.plain));
+// THE TICK IS THE ONLY THING THAT MOVES. Everything else stays refused with it
+// on, or the tick would be a way round the two rules that are about money and
+// about somebody's disk.
+check(refusals.withIt.indexOf('transcript.md') !== -1,
+	'the tick carries the conversation and nothing else does',
+	JSON.stringify(refusals.withIt));
+check(refusals.withIt.indexOf('triggers.json') === -1
+	&& refusals.withIt.indexOf('STATE.md') === -1,
+	'and the tick is NOT a way round the other two', JSON.stringify(refusals.withIt));
+
+// ── A RELAYED SHARE, END TO END, WITH NO GATEWAY IN THE PATH ────────────
+//
+// THE DEFECT THIS CLOSES IS SILENT DATA LOSS. A share sent through the relay
+// arrived in the receiver's post store as `bad:<addr>` — "that is not a message;
+// it is a share" — with the ENVELOPE NOT KEPT, and the ack then told the relay
+// it could let go. The sender was shown "Sent to Ada". The diamond was gone, and
+// nothing in the tree called `DaimondShare.receive` except the file chooser.
+//
+// Two browsers, two identities, and the row is carried between them by this file
+// exactly as verify_post.mjs §1 carries an envelope — so what is proved is the
+// seal and the routing and not a fixture's idea of either.
+//
+// TO SEE THESE FAIL: in `post.js`, drop `notPost.reading` from the kind branch,
+// or return `UNREADABLE` instead of calling `keepShare`. The tray goes empty and
+// `bad:<addr>` comes back, which is the state they were written against.
+console.log('\n-- a relayed share waits in the tray with its bytes, and Add is what lands it --');
+// A NAME OF THIS RUN'S OWN. The browser profiles persist between runs, so a
+// second run against the same world would find the first run's landing and count
+// it -- which is a check that goes red for the reason the suite is re-runnable
+// rather than for the reason it is about.
+const GIFT = 'Trip plan ' + Date.now().toString(36);
+const A = await open({ name: 'share-a', profile: scratch('pw', 'share-a'), connect: false });
+const B = await open({ name: 'share-b', profile: scratch('pw', 'share-b'), connect: false });
+let rowSeen = null;
+try {
+	const card = async (t) => t.page.evaluate(async () => {
+		await window.DaimondIdentity.ensureSealingKey();
+		await window.DaimondIdentity.mintCard();
+		await window.DaimondPost.read();
+		return { text: window.DaimondTrust.cardText(),
+			pub: window.DaimondIdentity.publicKeyB64url(),
+			enc: window.DaimondIdentity.sealingKeyRaw
+				? Array.from(window.DaimondIdentity.sealingKeyRaw()) : null };
+	});
+	const cardA = await card(A), cardB = await card(B);
+	// B knows A, so the tray row and the landed diamond can say a NAME rather than
+	// a fingerprint. A does not need to know B to seal to them — the card is the key.
+	const knows = await B.page.evaluate(async (text) => {
+		const c = window.DaimondTrust.parse(text);
+		if (!c) return 'A\u2019s card did not parse';
+		await window.DaimondTrust.record(c, window.DaimondTrust.ROUTE.QR);
+		await window.DaimondPost.refreshPeople();
+		const folk = window.DaimondPost.people() || [];
+		return folk.length === 1 ? (folk[0].label || '(no label)') : ('people=' + folk.length);
+	}, cardA.text);
+	check(typeof knows === 'string' && !/did not parse|people=/.test(knows),
+		'B holds A\u2019s card, so the row can name a person rather than a key', knows);
+
+	// A composes a share to B. Nothing is on a wire: the envelope is carried by
+	// this file, which is what the relay would have carried.
+	const made = await A.page.evaluate(async ([toPub, toEncArr, gift]) => {
+		const enc = new Uint8Array(toEncArr);
+		const m2 = await DaimondShare.compose({
+			name: gift, note: 'the plan we talked about',
+			to: toPub, toEnc: enc,
+			files: [{ path: 'notes.md', body: '# Trip\n\nFerry at seven.\n' },
+				{ path: 'crystal.html', body: '<!doctype html><p>a page</p>' }],
+		});
+		return { addr: m2.addr, envelope: m2.envelope, sealed: m2.sealed.length,
+			carrier: DaimondShare.carrier(m2), name: m2.name, ts: m2.ts };
+	}, [cardB.pub, cardB.enc, GIFT]);
+	check(!!made.addr && !!made.envelope, 'A sealed a share to B', JSON.stringify({ addr: made.addr }));
+	check(made.carrier === 'relay', 'and it goes by relay', made.carrier + ' ' + made.sealed + 'B');
+
+	// THE RELAY'S OWN ROW, through `DaimondPost.take` — the door a real collect
+	// drives. A test that opened the envelope and wrote the record itself would
+	// pass on a build where `takeRow` had stopped being called.
+	const took = await B.page.evaluate(async ([addr, env, fromPub, ts]) => {
+		const r = await window.DaimondPost.take({
+			seq: 1, kind: 'post', addr, from_pub: fromPub,
+			ts: Math.floor(ts / 1000), bytes: env.length, tray: true,
+			expired: false, envelope: env,
+		});
+		const held = window.DaimondPost.shares();
+		const msgs = window.DaimondPost.list();
+		return { r, held, badCount: msgs.filter(m => m.bad).length,
+			anyBad: Object.keys(window.DaimondPost.state()).length >= 0 };
+	}, [made.addr, made.envelope, cardA.pub, made.ts]);
+	check(took.held.length === 1, 'the share is held, once', JSON.stringify(took.r));
+	check(took.held.length === 1 && took.held[0].addr === made.addr,
+		'under the address the relay named', took.held.length ? took.held[0].addr : '');
+	// THE BYTES. This is the whole fix: without the envelope the ack drops the only
+	// copy there is and the diamond is gone with "Sent" on the sender's screen.
+	check(took.held.length === 1 && took.held[0].env === made.envelope,
+		'WITH THE SEALED ENVELOPE KEPT, byte for byte — the ack drops the relay\u2019s copy',
+		took.held.length ? (took.held[0].env || '').length + ' vs ' + made.envelope.length : '');
+	check(took.held.length === 1 && took.held[0].name === GIFT
+		&& took.held[0].n === 2 && took.held[0].code === true,
+		'and enough of the reading to draw a row without opening it again',
+		JSON.stringify(took.held[0] ? { name: took.held[0].name, n: took.held[0].n,
+			code: took.held[0].code, bytes: took.held[0].bytes } : null));
+	check(took.badCount === 0,
+		'and NOTHING landed in the message list — not even a `bad:` trace',
+		String(took.badCount));
+	// NEVER AUTOMATICALLY. A share is a write of somebody else's files and a page
+	// inside one is a program.
+	const nothingYet = await B.page.evaluate(async (gift) =>
+		(JSON.parse(await DaimondCore.diamondApp().list_diamonds()) || [])
+			.filter(d => d && d.name === gift).length, GIFT);
+	check(nothingYet === 0, 'and no diamond was created: a share WAITS, it never lands itself',
+		String(nothingYet));
+
+	// The row, on the screen a person looks at.
+	const drawn = await B.page.evaluate(async () => {
+		DaimondPanels.show('social');
+		await new Promise(r => setTimeout(r, 300));
+		const chip = document.querySelector('#panel-social .imp-chip[data-view="messages"]');
+		if (chip) chip.click();
+		await new Promise(r => setTimeout(r, 300));
+		const row = document.querySelector('#social-messages-list .post-share');
+		if (!row) return null;
+		const r = row.getBoundingClientRect();
+		return { text: row.textContent, w: Math.round(r.width), h: Math.round(r.height),
+			acts: Array.from(row.querySelectorAll('[data-act]')).map(b => b.dataset.act) };
+	});
+	check(!!drawn && drawn.w > 20 && drawn.h > 12,
+		'a tray row is drawn and has a box on screen', drawn ? drawn.w + 'x' + drawn.h : 'no row');
+	check(!!drawn && drawn.text.indexOf(GIFT) !== -1 && /2 files/.test(drawn.text),
+		'saying what it is and how much of it there is', drawn ? drawn.text.slice(0, 140) : '');
+	check(!!drawn && /includes a page/.test(drawn.text),
+		'and that a program is in it, BEFORE anybody presses Add',
+		drawn ? drawn.text.slice(0, 160) : '');
+	check(!!drawn && /the plan we talked about/.test(drawn.text),
+		'with the sender\u2019s own covering line', drawn ? drawn.text.slice(0, 200) : '');
+	check(!!drawn && drawn.acts.join(',') === 'post-share-add,post-share-ignore,post-share-block',
+		'and the three answers a person may give', drawn ? drawn.acts.join(',') : '');
+
+	// ADD, pressed the way a person presses it, with the page declined — so the
+	// consent question is proved to be on this route too and not only on the file.
+	const added = await B.page.evaluate(async (gift) => {
+		const seen = [];
+		const real = DaimondCore.confirm;
+		DaimondCore.confirm = async (body, ok, opts) => {
+			seen.push({ body, title: opts && opts.title });
+			return false;			// the receiver declines the page
+		};
+		try {
+			document.querySelector('#social-messages-list .post-share [data-act="post-share-add"]').click();
+			await new Promise(r => setTimeout(r, 2500));
+		} finally { DaimondCore.confirm = real; }
+		const list = JSON.parse(await DaimondCore.diamondApp().list_diamonds());
+		const landed = list.filter(d => d && d.name === gift);
+		const code = seen.filter(x => /program written by somebody else/i.test(x.body));
+		return { asked: seen.length, askedCode: code.length,
+			body: code[0] ? code[0].body : '',
+			landed: landed.map(d => ({ id: d.id, tags: d.tags || [] })),
+			stillWaiting: window.DaimondPost.shares().length };
+	}, GIFT);
+	// ONE QUESTION, and the second dialog is not one: `accept` says what it left
+	// out through the same reporter the file route uses, so a declined page is
+	// followed by a notice naming it. Counted by WHAT WAS ASKED rather than by how
+	// many boxes appeared, because only the first of those is consent.
+	check(added.askedCode === 1, 'pressing Add asks about the page, once, on the relay route too',
+		JSON.stringify({ code: added.askedCode, boxes: added.asked }));
+	check(/program written by somebody else/i.test(added.body || ''),
+		'in the same words the file route uses', (added.body || '').slice(0, 90));
+	check(added.landed.length === 1, 'and the diamond lands', JSON.stringify(added.landed));
+	check(added.stillWaiting === 0, 'and stops waiting in the tray', String(added.stillWaiting));
+	// §5 of the think: tag `shared`, and the provenance under `.daimond/`.
+	check(added.landed.length === 1 && added.landed[0].tags.indexOf('shared') !== -1,
+		'tagged `shared`, which is what the rail\u2019s own filter reads',
+		JSON.stringify(added.landed[0] ? added.landed[0].tags : null));
+	const prov = await B.page.evaluate(async (id) => {
+		const m2 = await import('/pkg/oxedyne_daimond.js');
+		let raw = null;
+		try { raw = await m2.store_read('diamonds/' + id + '/.daimond/origin.json'); }
+		catch (e) { return { why: 'unreadable: ' + e.message }; }
+		let o = null;
+		try { o = JSON.parse(raw); } catch (e) { return { why: 'not JSON: ' + raw.slice(0, 60) }; }
+		// The rail's own reading of it, and the line the tile draws.
+		const rail = window.DaimondDiamond.origin(id);
+		const box = Array.from(document.querySelectorAll('.diamond-list .diamond-box'))
+			.filter(b => b.dataset.id === id)[0];
+		const from = box ? box.querySelector('.diamond-from') : null;
+		const r = from ? from.getBoundingClientRect() : null;
+		return { o, rail, line: from ? from.textContent : null,
+			box: r ? { w: Math.round(r.width), h: Math.round(r.height) } : null };
+	}, added.landed.length ? added.landed[0].id : '');
+	check(!prov.why && prov.o && !!prov.o.share,
+		'`.daimond/origin.json` is written, anchored on the SHARE ADDRESS — a diamond id '
+		+ 'is local and means nothing on the second machine', prov.why || JSON.stringify(prov.o));
+	check(!prov.why && prov.o && prov.o.share === made.addr,
+		'and it is the address of the share that actually arrived',
+		prov.o ? prov.o.share + ' vs ' + made.addr : '');
+	check(!prov.why && prov.o && typeof prov.o.author === 'string' && prov.o.author.length === 64,
+		'with the author\u2019s KEY beside the name, because a name is advisory and a key is not',
+		prov.o ? String(prov.o.author).slice(0, 20) : '');
+	check(!prov.why && prov.o && prov.o.prior === null,
+		'and `prior` reserved and null — an onward share fills it under share/1',
+		prov.o ? JSON.stringify(prov.o.prior) : '');
+	// THE LINE ON THE TILE, measured rather than queried: a control the DOM has and
+	// the screen has not is already a recorded failure in this codebase.
+	check(!!prov.line && prov.line.length > 0 && !!prov.box
+		&& prov.box.w > 10 && prov.box.h > 4,
+		'and the rail draws who it came from, under the diamond\u2019s own name',
+		JSON.stringify({ line: prov.line, box: prov.box }));
+
+	// IGNORE KEEPS THE BYTES. The relay has been told to let go by now, so a person
+	// who ignored a gift and changed their mind has nothing else to change it with.
+	const ignored = await B.page.evaluate(async ([addr, env, fromPub]) => {
+		await window.DaimondPost.take({
+			seq: 2, kind: 'post', addr: addr + 'ff', from_pub: fromPub,
+			ts: Math.floor(Date.now() / 1000), bytes: env.length, tray: true,
+			expired: false, envelope: env,
+		});
+		const before = window.DaimondPost.shares().length;
+		await window.DaimondPost.hideShare(addr + 'ff');
+		const after = window.DaimondPost.shares().length;
+		const st = window.DaimondPost.snapshot();
+		return { before, after, kept: !!(st.shares[addr + 'ff'] || {}).env };
+	}, [made.addr, made.envelope, cardA.pub]);
+	check(ignored.before === 1 && ignored.after === 0,
+		'Ignore takes the row down', JSON.stringify(ignored));
+	check(ignored.kept === true,
+		'and KEEPS the envelope — the relay has let go and this is the only copy left',
+		JSON.stringify(ignored));
+} finally {
+	await A.close(); await B.close();
+}
+
+// ── AND THE SENDER HAS A RECORD OF IT ──────────────────────────
+//
+// The receiver gets a tray row. The sender got a sentence in a panel, which goes
+// the next time anything redraws — so a person who gave somebody a diamond had
+// no record anywhere that they had. Driven through the sheet's own button, with
+// the relay's answer stubbed, so what is measured is `sendTo` reaching the door
+// and not the door itself.
+console.log('\n-- the sender\u2019s Messages keeps an out row --');
+await dismiss();
+await page.click('#panel-social .imp-chip[data-view="share"]');
+await page.waitForTimeout(500);
+const outRow = await page.evaluate(async () => {
+	// COUNTED AS A DELTA, for the reason `GIFT` is unique: the profile persists and
+	// a second run would find the first run's row and read it as this one's.
+	const before = DaimondPost.list().filter(m => m.dir === 'out' && m.share).length;
+	const real = DaimondPost.fanout;
+	DaimondPost.fanout = async () => ({ sent: 1, refused: [] });
+	try {
+		const btn = document.querySelector('#social-share-list .shr-send');
+		if (!btn) return { why: 'no Share button on the sheet' };
+		btn.click();
+		await new Promise(r => setTimeout(r, 3000));
+	} finally { DaimondPost.fanout = real; }
+	const outs = DaimondPost.list().filter(m => m.dir === 'out' && m.share);
+	return { added: outs.length - before, outs: outs.map(m => ({ body: m.body, to: !!m.to })),
+		said: Array.from(document.querySelectorAll('#social-share-list .shr-say'))
+			.filter(n => !n.hidden).map(n => n.textContent).join(' | ') };
+});
+check(!outRow.why && outRow.added === 1,
+	'one Sent row, kept only after the relay took it',
+	outRow.why || JSON.stringify(outRow.outs));
+check(!outRow.why && outRow.outs.length >= 1 && /Sent .+ to /.test(outRow.outs[0].body),
+	'saying what was sent and to whom', outRow.outs.length ? outRow.outs[0].body : '');
+check(/Sent to/.test(outRow.said || ''), 'and the sheet says so too', (outRow.said || '').slice(0, 120));
+
+// ── THE SHEET IS ONE SHEET, AND THE COG IS THE OTHER DOOR ─────────────
+//
+// Two sheets would be two places for "they will own the copy", the key line and
+// the conversation tick to be drawn, and the one that stopped being drawn would
+// be the one nobody was looking at. So the cog mounts share.js's own node.
+console.log('\n-- Share\u2026 on the tile\u2019s cog opens the same sheet --');
+await dismiss();
+const cog = await page.evaluate(async () => {
+	const box = document.querySelector('.diamond-list .diamond-box');
+	if (!box) return { why: 'no diamond tile in the rail' };
+	const c = box.querySelector('.tile-cog');
+	if (!c) return { why: 'no cog on the tile' };
+	c.click();
+	await new Promise(r => setTimeout(r, 500));
+	// THE TILE'S OWN DIALOG, and not whatever modal happens to be first in the
+	// document: `openTileDialog` builds `modal dlg tile-dlg`, and a suite that has
+	// landed several shares has met a notice or two on the way here.
+	const cards = Array.from(document.querySelectorAll('.modal.tile-dlg .tile-dlg-card'));
+	if (!cards.length) return { why: 'the cog dialog did not open' };
+	const card = cards[cards.length - 1];
+	const sheet = card.querySelector('.shr-sheet');
+	if (!sheet) {
+		return { why: 'no sheet in ' + cards.length + ' dialog(s); the last holds '
+			+ Array.from(card.children).map(n => n.className || n.tagName).join(' | ') };
+	}
+	const r = sheet.getBoundingClientRect();
+	return {
+		text: sheet.textContent,
+		w: Math.round(r.width), h: Math.round(r.height),
+		who:    !!sheet.querySelector('.shr-who'),
+		modes:  sheet.querySelectorAll('.shr-radio input[type="radio"]').length,
+		tick:   !!sheet.querySelector('.shr-check input[type="checkbox"]'),
+		ticked: (sheet.querySelector('.shr-check input[type="checkbox"]') || {}).checked,
+		facts:  (sheet.querySelector('.shr-facts') || {}).textContent || '',
+		send:   !!sheet.querySelector('.shr-send'),
+	};
+});
+check(!cog.why && cog.w > 40 && cog.h > 30,
+	'the cog dialog carries the sheet, with a box on screen',
+	cog.why || (cog.w + 'x' + cog.h));
+check(!cog.why && cog.who && cog.send, 'who it goes to, and the press',
+	cog.why || JSON.stringify({ who: cog.who, send: cog.send }));
+check(!cog.why && cog.modes === 2, 'a copy or the shape only',
+	cog.why || String(cog.modes));
+check(!cog.why && cog.tick === true && cog.ticked === false,
+	'the conversation tick, OFF — it is the sender\u2019s talk with their own daimon',
+	cog.why || JSON.stringify({ tick: cog.tick, ticked: cog.ticked }));
+check(!cog.why && /they will own the copy/.test(cog.text || ''),
+	'and the one line that says what the press MEANS, said before it',
+	cog.why || (cog.text || '').slice(0, 160));
+check(!cog.why && /files/.test(cog.facts) ,
+	'with the files and the size counted rather than guessed', cog.why || cog.facts);
 
 console.log('\n' + pass + ' passed, ' + fail + ' failed');
 await s.close();

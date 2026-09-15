@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
-<title>开始使用 — Daimond 使用指南</title>
+<title>Start here &mdash; Daimond guide</title>
 <link rel="icon" type="image/svg+xml" href="../../assets/daimond_mark.svg">
 <link rel="stylesheet" href="../../css/variables.css">
 <link rel="stylesheet" href="../../css/guide.css">
@@ -15,96 +15,149 @@
 
 <header class="site-head">
 	<div class="site-head-inner">
-		<a class="brand" href="index.html" aria-label="Daimond 使用指南，首页">
+		<a class="brand" href="index.html" aria-label="Daimond 指南，首页">
 			<img class="wordmark wm-dark" src="../../assets/daimond_word.svg" alt="Daimond" translate="no">
 			<img class="wordmark wm-light" src="../../assets/daimond_word_dark.svg" alt="Daimond" translate="no">
-			<span class="brand-sub">使用指南</span>
+			<span class="brand-sub">指南</span>
 		</a>
 		<nav class="site-nav" aria-label="指南页面">
-			<a href="index.html" aria-current="page">开始使用</a>
+			<a href="index.html" aria-current="page">从这里开始</a>
 			<a href="interface.html">界面</a>
-			<a href="models.html">模型与额度</a>
-			<a href="chats-and-diamonds.html">聊天与 Diamonds</a>
-			<a href="../capps.html">Capps</a>
-			<a href="email-web-files.html">邮件、网页与文件</a>
-			<a href="accounts.html">账户</a>
-			<a href="sync.html">跨设备同步</a>
-			<a href="spending.html">支出</a>
-			<a href="../machine-operations.html">在本机运行命令</a>
-			<a href="../social.html">社交</a>
+			<a href="chats-and-diamonds.html">对话和 diamond</a>
+			<a href="../capps.html">diamond 的页面</a>
+			<a href="email-web-files.html">文件、邮件和网页</a>
+			<a href="../machine-operations.html">你的电脑</a>
+			<a href="../runner.html">帮手和轮次的运行位置</a>
+			<a href="sync.html">不止一台设备</a>
+			<a href="../social.html">社交和提案</a>
+			<a href="models.html">模型和提供商</a>
+			<a href="spending.html">花费</a>
+			<a href="accounts.html">安全和修复</a>
 		</nav>
 	</div>
 </header>
 
 <main>
-	<h1>开始使用</h1>
-	<p class="lede">Daimond 是一个完全在你浏览器里运行的 AI 智能体工作区。服务器上没有账户，也没有东西要下载：你的聊天、密钥和文件只存在这台设备上。</p>
+	<h1>从这里开始</h1>
+	<p class="lede">Daimond is an AI workspace that runs in your browser, and your chats, keys and files stay on this device. You connect a model, talk to it, and keep what works.</p>
 
-	<p>除非你让它出去，没有东西离开这台设备。你的消息去你连接的那家模型提供商；额度用来付一次模型运行、一次网页抓取或一次邮箱同步；你关联的设备收到一个加密的包裹。其余一切都留在这个浏览器里。 <a href="accounts.html">账户与隐私</a> 一页写明什么去了哪里，以及你自己怎么核实。</p>
+	<p>No server holds your account. Whatever leaves the browser is named on the page of this guide that covers it. The main ones are a message to the model provider you connected, a page fetched for you, a mailbox synced, and an encrypted parcel sent to a device you linked.</p>
 
-	<figure class="shot" data-shot="getting-started">
-		<img alt="首次运行时的 Daimond 工作区：左边是 Diamonds 和聊天的侧栏，中间是聊天面板，左下角是管理面板。" src="../shots/getting-started.png" loading="lazy">
-		<figcaption>首次运行时的 Daimond。对话在中间；管理面板在左下角。</figcaption>
+	<figure class="shot">
+		<img alt="Daimond on first run. The rail on the left lists diamonds and Chats; the centre shows three numbered steps, the first of them a Connect a model button." src="../img/first-run.png" loading="lazy">
+		<figcaption>First run. The centre lists three steps, and the one you are at is drawn as the button.</figcaption>
 	</figure>
 
-	<h2 id="s1">拿到第一个回答的最短路径</h2>
-	<p>三步。每一步都指向屏幕上看得见的一个控制项。</p>
-
+	<h2 id="s1">Three steps to a first answer</h2>
 	<ol class="steps">
 		<li>
-			<h3 id="s2">创建一个账户</h3>
-			<p>首次运行时，Daimond 会提议 <strong>保护这台设备</strong> —— 用一句密码短语。输入你的名字和一句密码短语，然后选择 <span class="ui">创建账户</span>。这句密码短语会加密你保存的密钥和邮箱凭据，它也是你在这台设备上的身份。它不会被发到任何地方，所以请放在安全的地方：弄丢了，加密的数据就没了。</p>
-			<p><span class="ui">暂时跳过</span> 可以把密码短语留到以后再设；不过提供商密钥最好等有了密码短语护着再加。</p>
+			<h3 id="s2">Make your account</h3>
+			<p>Type a name, and Daimond generates a passphrase of eight random words and shows it once. <strong>Write it down.</strong> It unlocks everything stored here, and nobody can reset it. Then choose <span class="ui">创建账户</span>.</p>
+			<p>A password manager is a fine place for it, since eight random words are hard to guess.</p>
+			<p>Under the button, <span class="ui">Have a passcode or a pairing code?</span> opens two other routes, redeeming a passcode for an account with credits and pairing this browser to a device you already use. If you already have Daimond elsewhere, pair instead of creating, or you will end up with two accounts.</p>
 		</li>
 		<li>
-			<h3 id="s3">连接一个模型，或者买额度</h3>
-			<p>daimon 要有一个模型才能思考。给它一个的方式有两种，都在左下角的管理面板里：</p>
+			<h3 id="s3">Connect a model</h3>
+			<p>A daimon thinks with a model, so connect one. Press <span class="ui">Connect a model</span> in the centre, or open the model row at the foot of the rail. There are three routes.</p>
 			<ul>
-				<li><strong>带上你自己的密钥。</strong> 打开 <span class="ui">模型</span> 行，选择 <span class="ui">+ 添加提供商</span>，挑一家提供商，粘贴它的 API 密钥，再给一个默认模型加星。你的消息此后就直接去那家提供商，记在你自己的账户上。</li>
-				<li><strong>买额度。</strong> 打开 <span class="ui">额度</span> 行，买一个额度包。Daimond 替你跑模型：不用管提供商密钥，也没有订阅。</li>
+				<li><strong>Your own key.</strong> Paste a key from Anthropic, Fireworks AI, OpenRouter, Together AI, Groq or DeepInfra. Your messages go straight to that provider, and we charge nothing.</li>
+				<li><strong>Credits.</strong> Daimond runs the model for you and draws on a prepaid balance, so there is no provider account to manage. While testing is closed, accounts with credits are given out by passcode.</li>
+				<li><strong>A model of your own.</strong> 选择 <span class="ui">Custom</span> and give the address of any service that speaks the same chat API, including one running on your own machine.</li>
 			</ul>
-			<p>两条随便哪一条都够用。细节见 <a href="models.html">模型与额度</a> 那一页。</p>
+			<p><a href="models.html">模型和提供商</a> has the detail.</p>
 		</li>
 		<li>
-			<h3 id="s4">开始一场聊天</h3>
-			<p>选择 <span class="ui">新建聊天</span> —— 它在侧栏顶部（就是 <strong>＋</strong> 紧挨着 <strong>聊天</strong>），在中间面板底部的框里打字，然后用 <span class="ui">➤</span>发送。中间那个面板就是你和 daimon 说话的地方，而 Daimond 正是围绕这场对话建起来的。</p>
+			<h3 id="s4">Say hello</h3>
+			<p>Press <span class="ui">Say hello</span>, or the <span class="ui">+</span> 紧挨着 <span class="ui">聊天</span>, then type in the box and send. The answer arrives in the centre panel, where you will spend most of your time.</p>
+			<p>The chat takes its title from your first line, so a rail of chats reads as a list of subjects.</p>
 		</li>
 	</ol>
 
-	<h2 id="s5">你眼前是什么</h2>
-	<p>屏幕分三个区域。左边的 <strong>侧栏</strong> 列出你正在做的东西，在一条可以移动的分隔线下面，是 <strong>管理面板</strong>。中间的 <strong>舞台</strong> 装着对话，以及你在它旁边读的任何东西。右边的 <strong>停靠区</strong> 装着你要取用的来源：邮件、工作区、智能体的运行、你的支出、等着你答复的事，还有回收站。</p>
-	<p>顶上一排，每个面板都有一个标签，点它可以打开或关掉那个面板；最右边的几个按钮分别打开关于对话框、这份指南，以及主题、字号和停靠区分格。走到第一个回答为止，这些你都用不上；它们全都摊开在 <a href="interface.html">界面</a>.</p>
+	<h2 id="s5">Then keep what works</h2>
+	<p>A chat is only a conversation. When one has worked something out, press <span class="ui">Keep</span> on its row in the rail and it becomes a <strong>diamond</strong>.</p>
+	<p>A diamond is a saved project with its own memory, page and files. Work inside it starts from what it already knows, so you stop re-explaining yourself. <a href="chats-and-diamonds.html">对话和 diamond</a> covers it.</p>
 
-	<figure class="shot" data-shot="admin-panel">
-		<img alt="左下角的管理面板：一行身份、一行模型、一行额度、一行工具，以及几行工作区存储。" src="../shots/admin-panel.png" loading="lazy">
-		<figcaption>管理面板。每一行回答一个关于这台机器的问题，能动手的那些是按钮。</figcaption>
+	<h2 id="s6">What this does that a chat window does not</h2>
+	<ul>
+		<li><strong>It remembers per subject.</strong> A diamond carries what you worked out into every later turn, and you can read and edit that memory as a file.</li>
+		<li><strong>It works on real files.</strong> Point it at a folder and it edits the files in place, inside a fence you set.</li>
+		<li><strong>It shows the bill.</strong> Each turn is priced on this device as it is spent, from the provider's own figure.</li>
+		<li><strong>It can be checked.</strong> The code in this browser is public, builds byte for byte from source, and is sealed into a published record. <span class="ui">Verify this build</span> in the About dialog checks the one you are running.</li>
+	</ul>
+
+	<h2 id="s7">The four words this guide uses</h2>
+	<ul>
+		<li><strong>diamond</strong>, a saved project with its own memory and page.</li>
+		<li><strong>daimon</strong>, the assistant that works inside a diamond.</li>
+		<li><strong>crystal</strong>, what a diamond knows, kept as a file you can read and edit.</li>
+		<li><strong>forge</strong>, the shared board where proposals about Daimond itself are filed, shown in the Improve panel.</li>
+	</ul>
+
+	<h2 id="s8">What is on screen</h2>
+	<p>屏幕分三个区域。左边的 <strong>侧栏</strong> on the left lists your diamonds and chats, and under a movable divider shows your account, one status line and what you have spent. The <strong>centre</strong> holds the conversation, with whatever you are reading beside it. The <strong>停靠区</strong> on the right holds what you pull from, such as files, mail, running agents and spending.</p>
+	<p>Across the top, each panel has a chip that opens or closes it. A fresh account shows six, for diamonds, Chat, Web, Workspace, Tools and Spending, and the rest are one press away in the gallery behind the <span class="ui">⋯</span> chip. At the far right are the update chip, About, <span class="ui">Link another device</span>, this guide and <span class="ui">Settings</span>.</p>
+	<p><a href="interface.html">界面</a> walks through all of it, and none of it is needed to get an answer.</p>
+
+	<h2 id="s9">One status line</h2>
+	<figure class="shot narrow">
+		<img alt="The foot of the rail: an account row, a status line reading This device only, and a spend row showing today, this week and this month." src="../img/status.png" loading="lazy">
+		<figcaption>The foot of the rail. One line says where things stand, and <span class="ui">Details</span> opens the rest.</figcaption>
 	</figure>
+	<p>Above the spend row is one line, which reads <span class="ui">Locked</span>, <span class="ui">Not signed in</span>, <span class="ui">No model connected</span>, <span class="ui">Offline</span>, <span class="ui">Synced</span>，或者手机上的 <span class="ui">This device only</span>. It answers the question most worth asking at that moment, showing the most blocking state first.</p>
+	<p>Press it to open <span class="ui">Details</span>, which covers models, tools, permissions, storage, machine, sync and the build you are on. Those are diagnostics, so they stay behind the line until you want them.</p>
 
-	<p>管理面板是给 Daimond 做设置的地方，也是它告诉你花了多少钱的地方。每一行都是一个按钮，打开它所指的东西：你的身份, <span class="ui">模型</span>, <span class="ui">额度</span>, <span class="ui">工具</span>, <span class="ui">版本</span>，以及你的工作区正在用的存储。下一页会把屏幕的每一部分都走一遍。</p>
+	<h2 id="s10">把它放在手边</h2>
+	<p>Use your browser's own <em>安装</em>，或者手机上的 <em>添加到主屏幕</em> on a phone, and Daimond gets an icon and a window of its own. It is the same page and the same stored work, so nothing is copied and nothing moves.</p>
+	<p>Daimond updates itself, taking a new build at a quiet moment and not in the middle of a running turn or a half-typed message. The chip beside the top-bar buttons says when one is ready.</p>
 
-	<h2 id="s6">把它放在手边</h2>
-	<p>用浏览器自带的 <span class="ui">安装</span>，或者手机上的 <span class="ui">添加到主屏幕</span> ，就能给 Daimond 一个自己的图标和一个自己的窗口。它还是同一个页面、同一份存下来的工作：没有下载什么，也没有搬动什么；服务器已经越过的旧构建照样会被拒绝，而不是从缓存里端出来。</p>
+	<h2 id="s11">Where to go next</h2>
+	<div class="cards">
+		<div class="card">
+			<h3 id="s12"><a href="chats-and-diamonds.html">对话和 diamond</a></h3>
+			<p>Reading a long thread, keeping a chat, and what a diamond remembers.</p>
+		</div>
+		<div class="card">
+			<h3 id="s13"><a href="email-web-files.html">文件、邮件和网页</a></h3>
+			<p>Getting files in, sharing a folder to your other devices, mail, and reading a page.</p>
+		</div>
+		<div class="card">
+			<h3 id="s14"><a href="../machine-operations.html">你的电脑</a></h3>
+			<p>Letting a daimon edit real folders and run real commands, inside a fence.</p>
+		</div>
+		<div class="card">
+			<h3 id="s15"><a href="../runner.html">帮手和轮次的运行位置</a></h3>
+			<p>Agents dispatched to work in parallel, and naming the machine that picks turns up.</p>
+		</div>
+		<div class="card">
+			<h3 id="s16"><a href="accounts.html">安全和修复</a></h3>
+			<p>What Daimond asks before it acts, what stays private, and what to do when something is wrong.</p>
+		</div>
+		<div class="card">
+			<h3 id="s17">Ask Daimond</h3>
+			<p>The rail holds a diamond called <strong>Daimond Help</strong>. It answers from this build and from this guide, and says which page an answer came from.</p>
+		</div>
+	</div>
 
 	<div class="next">
-		<span></span>
 		<a href="interface.html">下一页：界面 &rarr;</a>
 	</div>
 </main>
 
 <footer class="site-foot">
-	<span>Daimond 在你的浏览器里运行。这里的东西不会发给我们。</span>
+	<span>Daimond 在你的浏览器中运行。这里的任何内容都不会发送给我们。</span>
 	<nav aria-label="指南页面">
-		<a href="index.html">开始使用</a>
+		<a href="index.html">从这里开始</a>
 		<a href="interface.html">界面</a>
-		<a href="models.html">模型</a>
-		<a href="chats-and-diamonds.html">聊天与 Diamonds</a>
-		<a href="../capps.html">Capps</a>
-		<a href="email-web-files.html">邮件、网页与文件</a>
-		<a href="accounts.html">账户</a>
-		<a href="sync.html">跨设备同步</a>
-		<a href="spending.html">支出</a>
-		<a href="../machine-operations.html">在本机运行命令</a>
-		<a href="../social.html">社交</a>
+		<a href="chats-and-diamonds.html">对话和 diamond</a>
+		<a href="../capps.html">diamond 的页面</a>
+		<a href="email-web-files.html">文件、邮件和网页</a>
+		<a href="../machine-operations.html">你的电脑</a>
+		<a href="../runner.html">帮手和轮次的运行位置</a>
+		<a href="sync.html">不止一台设备</a>
+		<a href="../social.html">社交和提案</a>
+		<a href="models.html">模型和提供商</a>
+		<a href="spending.html">花费</a>
+		<a href="accounts.html">安全和修复</a>
 	</nav>
 </footer>
 </body>

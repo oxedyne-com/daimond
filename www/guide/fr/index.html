@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
-<title>Premiers pas — Guide Daimond</title>
+<title>Start here &mdash; Daimond guide</title>
 <link rel="icon" type="image/svg+xml" href="../../assets/daimond_mark.svg">
 <link rel="stylesheet" href="../../css/variables.css">
 <link rel="stylesheet" href="../../css/guide.css">
@@ -21,90 +21,143 @@
 			<span class="brand-sub">Guide</span>
 		</a>
 		<nav class="site-nav" aria-label="Pages du guide">
-			<a href="index.html" aria-current="page">Premiers pas</a>
+			<a href="index.html" aria-current="page">Commencez ici</a>
 			<a href="interface.html">L’interface</a>
-			<a href="models.html">Modèles &amp; crédits</a>
-			<a href="chats-and-diamonds.html">Chats &amp; Diamonds</a>
-			<a href="../capps.html">Capps</a>
-			<a href="email-web-files.html">E-mail, Web &amp; fichiers</a>
-			<a href="accounts.html">Comptes</a>
-			<a href="sync.html">Synchronisation entre appareils</a>
+			<a href="chats-and-diamonds.html">Discussions &amp; diamonds</a>
+			<a href="../capps.html">La page d’un diamond</a>
+			<a href="email-web-files.html">Fichiers, e-mail &amp; le web</a>
+			<a href="../machine-operations.html">Votre ordinateur</a>
+			<a href="../runner.html">Assistants &amp; où s’exécutent les tours</a>
+			<a href="sync.html">Plus d’un appareil</a>
+			<a href="social.html">Social &amp; propositions</a>
+			<a href="models.html">Modèles &amp; fournisseurs</a>
 			<a href="spending.html">Dépenses</a>
-			<a href="../machine-operations.html">Commandes sur la machine</a>
-			<a href="social.html">Social</a>
+			<a href="accounts.html">Sécurité &amp; dépannage</a>
 		</nav>
 	</div>
 </header>
 
 <main>
-	<h1>Premiers pas</h1>
-	<p class="lede">Daimond est un espace de travail à agents IA qui tourne entièrement dans votre navigateur. Aucun compte sur un serveur et rien à télécharger : vos chats, vos clés et vos fichiers ne vivent que sur cet appareil.</p>
+	<h1>Commencez ici</h1>
+	<p class="lede">Daimond is an AI workspace that runs in your browser, and your chats, keys and files stay on this device. You connect a model, talk to it, and keep what works.</p>
 
-	<p>Rien ne quitte votre appareil sans que vous l’ayez demandé. Vos messages partent chez le fournisseur de modèles que vous avez connecté ; les crédits paient un modèle qui tourne, une page récupérée ou une boîte mail synchronisée ; un appareil que vous associez reçoit un paquet chiffré. Tout le reste demeure dans ce navigateur. <a href="accounts.html">Comptes &amp; confidentialité</a> expose ce qui va où, et comment le vérifier vous-même.</p>
+	<p>No server holds your account. Whatever leaves the browser is named on the page of this guide that covers it. The main ones are a message to the model provider you connected, a page fetched for you, a mailbox synced, and an encrypted parcel sent to a device you linked.</p>
 
-	<figure class="shot" data-shot="getting-started">
-		<img alt="L’espace de travail Daimond au premier lancement : la barre latérale des Diamonds et des chats à gauche, le panneau de chat au centre, et le panneau d’administration en bas à gauche." src="../shots/getting-started.png" loading="lazy">
-		<figcaption>Daimond au premier lancement. La conversation est au centre ; le panneau d’administration est en bas à gauche.</figcaption>
+	<figure class="shot">
+		<img alt="Daimond on first run. The rail on the left lists diamonds and Chats; the centre shows three numbered steps, the first of them a Connect a model button." src="../img/first-run.png" loading="lazy">
+		<figcaption>First run. The centre lists three steps, and the one you are at is drawn as the button.</figcaption>
 	</figure>
 
-	<h2 id="s1">Le chemin le plus court vers une première réponse</h2>
-	<p>Trois étapes. Chacune pointe vers un contrôle que vous voyez à l’écran.</p>
-
+	<h2 id="s1">Three steps to a first answer</h2>
 	<ol class="steps">
 		<li>
-			<h3 id="s2">Créer un compte</h3>
-			<p>Au premier lancement, Daimond propose de <strong>protéger cet appareil</strong> avec une phrase secrète. Saisissez votre nom et une phrase secrète, puis choisissez <span class="ui">Créer le compte</span>. La phrase secrète chiffre vos clés et vos identifiants de messagerie enregistrés, et elle est votre identité sur l’appareil. Elle n’est envoyée nulle part : gardez-la en lieu sûr, car si vous la perdez, les données chiffrées sont perdues.</p>
-			<p><span class="ui">Plus tard</span> vous laisse en poser une plus tard ; mieux vaut cependant n’ajouter une clé de fournisseur qu’une fois qu’une phrase secrète est là pour la protéger.</p>
+			<h3 id="s2">Make your account</h3>
+			<p>Type a name, and Daimond generates a passphrase of eight random words and shows it once. <strong>Write it down.</strong> It unlocks everything stored here, and nobody can reset it. Then choose <span class="ui">Créer le compte</span>.</p>
+			<p>A password manager is a fine place for it, since eight random words are hard to guess.</p>
+			<p>Under the button, <span class="ui">Have a passcode or a pairing code?</span> opens two other routes, redeeming a passcode for an account with credits and pairing this browser to a device you already use. If you already have Daimond elsewhere, pair instead of creating, or you will end up with two accounts.</p>
 		</li>
 		<li>
-			<h3 id="s3">Connecter un modèle, ou acheter des crédits</h3>
-			<p>Un daimon a besoin d’un modèle pour penser. Deux façons de lui en donner un, toutes deux dans le panneau d’administration en bas à gauche :</p>
+			<h3 id="s3">Connect a model</h3>
+			<p>A daimon thinks with a model, so connect one. Press <span class="ui">Connect a model</span> in the centre, or open the model row at the foot of the rail. There are three routes.</p>
 			<ul>
-				<li><strong>Apportez votre propre clé.</strong> Ouvrez la ligne <span class="ui">Modèles</span> puis choisissez <span class="ui">+ Ajouter un fournisseur</span>, sélectionnez un fournisseur, collez sa clé d’API et mettez une étoile à un modèle par défaut. Vos messages partent alors directement chez ce fournisseur, sur votre propre compte.</li>
-				<li><strong>Achetez des crédits.</strong> Ouvrez la ligne <span class="ui">Crédits</span> et achetez un pack. Daimond fait tourner le modèle pour vous : aucune clé de fournisseur à gérer, pas d’abonnement.</li>
+				<li><strong>Your own key.</strong> Paste a key from Anthropic, Fireworks AI, OpenRouter, Together AI, Groq or DeepInfra. Your messages go straight to that provider, and we charge nothing.</li>
+				<li><strong>Credits.</strong> Daimond runs the model for you and draws on a prepaid balance, so there is no provider account to manage. While testing is closed, accounts with credits are given out by passcode.</li>
+				<li><strong>A model of your own.</strong> Choisissez <span class="ui">Custom</span> and give the address of any service that speaks the same chat API, including one running on your own machine.</li>
 			</ul>
-			<p>L’un ou l’autre suffit. Voir <a href="models.html">Modèles &amp; crédits</a> pour le détail.</p>
+			<p><a href="models.html">Modèles &amp; fournisseurs</a> has the detail.</p>
 		</li>
 		<li>
-			<h3 id="s4">Démarrer un chat</h3>
-			<p>Choisissez <span class="ui">Nouveau chat</span> en haut de la barre latérale (le <strong>＋</strong> à côté de <strong>Chats</strong>), tapez dans la zone en bas du panneau central, et envoyez avec <span class="ui">➤</span>. Ce panneau central est l’endroit où vous parlez au daimon, et Daimond est bâti autour de cette conversation.</p>
+			<h3 id="s4">Say hello</h3>
+			<p>Press <span class="ui">Say hello</span>, or the <span class="ui">+</span> à côté de <span class="ui">Chats</span>, then type in the box and send. The answer arrives in the centre panel, where you will spend most of your time.</p>
+			<p>The chat takes its title from your first line, so a rail of chats reads as a list of subjects.</p>
 		</li>
 	</ol>
 
-	<h2 id="s5">Ce que vous avez sous les yeux</h2>
-	<p>L’écran a trois zones. La <strong>barre latérale</strong> de gauche liste ce sur quoi vous travaillez et, sous un séparateur déplaçable, le <strong>panneau d’administration</strong>. La <strong>scène</strong> au centre tient la conversation et tout ce que vous lisez à côté. Le <strong>dock</strong> de droite tient les sources où vous puisez : l’E-mail, l’Espace de travail, les agents qui tournent, vos dépenses, ce qui vous attend, et la Corbeille.</p>
-	<p>En haut, chaque panneau a une puce qui l’ouvre ou le ferme, et à l’extrême droite des boutons pour la fenêtre À propos, ce guide, ainsi que le thème, la taille du texte et la disposition du dock. Rien de tout cela n’est nécessaire pour obtenir une première réponse ; tout est détaillé sur <a href="interface.html">L’interface</a>.</p>
+	<h2 id="s5">Then keep what works</h2>
+	<p>A chat is only a conversation. When one has worked something out, press <span class="ui">Keep</span> on its row in the rail and it becomes a <strong>diamond</strong>.</p>
+	<p>A diamond is a saved project with its own memory, page and files. Work inside it starts from what it already knows, so you stop re-explaining yourself. <a href="chats-and-diamonds.html">Discussions &amp; diamonds</a> covers it.</p>
 
-	<figure class="shot" data-shot="admin-panel">
-		<img alt="Le panneau d’administration en bas à gauche : une ligne d’identité, une ligne Modèles, une ligne Crédits, une ligne Outils et des lignes de stockage de l’espace de travail." src="../shots/admin-panel.png" loading="lazy">
-		<figcaption>Le panneau d’administration. Chaque ligne répond à une question sur la machine, et celles sur lesquelles vous pouvez agir sont des boutons.</figcaption>
+	<h2 id="s6">What this does that a chat window does not</h2>
+	<ul>
+		<li><strong>It remembers per subject.</strong> A diamond carries what you worked out into every later turn, and you can read and edit that memory as a file.</li>
+		<li><strong>It works on real files.</strong> Point it at a folder and it edits the files in place, inside a fence you set.</li>
+		<li><strong>It shows the bill.</strong> Each turn is priced on this device as it is spent, from the provider's own figure.</li>
+		<li><strong>It can be checked.</strong> The code in this browser is public, builds byte for byte from source, and is sealed into a published record. <span class="ui">Verify this build</span> in the About dialog checks the one you are running.</li>
+	</ul>
+
+	<h2 id="s7">The four words this guide uses</h2>
+	<ul>
+		<li><strong>diamond</strong>, a saved project with its own memory and page.</li>
+		<li><strong>daimon</strong>, the assistant that works inside a diamond.</li>
+		<li><strong>crystal</strong>, what a diamond knows, kept as a file you can read and edit.</li>
+		<li><strong>forge</strong>, the shared board where proposals about Daimond itself are filed, shown in the Improve panel.</li>
+	</ul>
+
+	<h2 id="s8">What is on screen</h2>
+	<p>L’écran a trois zones. La <strong>barre latérale</strong> on the left lists your diamonds and chats, and under a movable divider shows your account, one status line and what you have spent. The <strong>centre</strong> holds the conversation, with whatever you are reading beside it. The <strong>dock</strong> on the right holds what you pull from, such as files, mail, running agents and spending.</p>
+	<p>Across the top, each panel has a chip that opens or closes it. A fresh account shows six, for diamonds, Chat, Web, Workspace, Tools and Spending, and the rest are one press away in the gallery behind the <span class="ui">⋯</span> chip. At the far right are the update chip, About, <span class="ui">Link another device</span>, this guide and <span class="ui">Settings</span>.</p>
+	<p><a href="interface.html">L’interface</a> walks through all of it, and none of it is needed to get an answer.</p>
+
+	<h2 id="s9">One status line</h2>
+	<figure class="shot narrow">
+		<img alt="The foot of the rail: an account row, a status line reading This device only, and a spend row showing today, this week and this month." src="../img/status.png" loading="lazy">
+		<figcaption>The foot of the rail. One line says where things stand, and <span class="ui">Details</span> opens the rest.</figcaption>
 	</figure>
+	<p>Above the spend row is one line, which reads <span class="ui">Locked</span>, <span class="ui">Not signed in</span>, <span class="ui">No model connected</span>, <span class="ui">Offline</span>, <span class="ui">Synced</span>, ou <span class="ui">This device only</span>. It answers the question most worth asking at that moment, showing the most blocking state first.</p>
+	<p>Press it to open <span class="ui">Details</span>, which covers models, tools, permissions, storage, machine, sync and the build you are on. Those are diagnostics, so they stay behind the line until you want them.</p>
 
-	<p>C’est dans le panneau d’administration que Daimond se configure et qu’il vous dit ce qu’il coûte. Chaque ligne est un bouton qui ouvre ce qu’elle nomme : votre identité, <span class="ui">Modèles</span>, <span class="ui">Crédits</span>, <span class="ui">Outils</span>, <span class="ui">Version</span>, et le stockage qu’utilise votre espace de travail. La page suivante parcourt chaque partie de l’écran.</p>
+	<h2 id="s10">Le garder à portée</h2>
+	<p>Use your browser's own <em>Installer</em>, ou <em>Ajouter à l’écran d’accueil</em> on a phone, and Daimond gets an icon and a window of its own. It is the same page and the same stored work, so nothing is copied and nothing moves.</p>
+	<p>Daimond updates itself, taking a new build at a quiet moment and not in the middle of a running turn or a half-typed message. The chip beside the top-bar buttons says when one is ready.</p>
 
-	<h2 id="s6">Le garder à portée</h2>
-	<p>Votre navigateur a sa propre commande <span class="ui">Installer</span>, ou <span class="ui">Ajouter à l’écran d’accueil</span> sur un téléphone : elle donne à Daimond une icône et une fenêtre à lui. C’est la même page et le même travail enregistré — rien n’est téléchargé, rien ne bouge, et une version que le serveur a dépassée reste refusée plutôt que servie depuis un cache.</p>
+	<h2 id="s11">Where to go next</h2>
+	<div class="cards">
+		<div class="card">
+			<h3 id="s12"><a href="chats-and-diamonds.html">Discussions &amp; diamonds</a></h3>
+			<p>Reading a long thread, keeping a chat, and what a diamond remembers.</p>
+		</div>
+		<div class="card">
+			<h3 id="s13"><a href="email-web-files.html">Fichiers, e-mail &amp; le web</a></h3>
+			<p>Getting files in, sharing a folder to your other devices, mail, and reading a page.</p>
+		</div>
+		<div class="card">
+			<h3 id="s14"><a href="../machine-operations.html">Votre ordinateur</a></h3>
+			<p>Letting a daimon edit real folders and run real commands, inside a fence.</p>
+		</div>
+		<div class="card">
+			<h3 id="s15"><a href="../runner.html">Assistants &amp; où s’exécutent les tours</a></h3>
+			<p>Agents dispatched to work in parallel, and naming the machine that picks turns up.</p>
+		</div>
+		<div class="card">
+			<h3 id="s16"><a href="accounts.html">Sécurité &amp; dépannage</a></h3>
+			<p>What Daimond asks before it acts, what stays private, and what to do when something is wrong.</p>
+		</div>
+		<div class="card">
+			<h3 id="s17">Ask Daimond</h3>
+			<p>The rail holds a diamond called <strong>Daimond Help</strong>. It answers from this build and from this guide, and says which page an answer came from.</p>
+		</div>
+	</div>
 
 	<div class="next">
-		<span></span>
 		<a href="interface.html">Suivant : L’interface &rarr;</a>
 	</div>
 </main>
 
 <footer class="site-foot">
-	<span>Daimond fonctionne dans votre navigateur. Rien de ce qui s’y trouve ne nous est envoyé.</span>
+	<span>Daimond s’exécute dans votre navigateur. Rien de tout cela ne nous est envoyé.</span>
 	<nav aria-label="Pages du guide">
-		<a href="index.html">Premiers pas</a>
-		<a href="interface.html">Interface</a>
-		<a href="models.html">Modèles</a>
-		<a href="chats-and-diamonds.html">Chats &amp; Diamonds</a>
-		<a href="../capps.html">Capps</a>
-		<a href="email-web-files.html">E-mail, Web &amp; fichiers</a>
-		<a href="accounts.html">Comptes</a>
-		<a href="sync.html">Synchronisation entre appareils</a>
+		<a href="index.html">Commencez ici</a>
+		<a href="interface.html">L’interface</a>
+		<a href="chats-and-diamonds.html">Discussions &amp; diamonds</a>
+		<a href="../capps.html">La page d’un diamond</a>
+		<a href="email-web-files.html">Fichiers, e-mail &amp; le web</a>
+		<a href="../machine-operations.html">Votre ordinateur</a>
+		<a href="../runner.html">Assistants &amp; où s’exécutent les tours</a>
+		<a href="sync.html">Plus d’un appareil</a>
+		<a href="social.html">Social &amp; propositions</a>
+		<a href="models.html">Modèles &amp; fournisseurs</a>
 		<a href="spending.html">Dépenses</a>
-		<a href="../machine-operations.html">Commandes sur la machine</a>
-		<a href="social.html">Social</a>
+		<a href="accounts.html">Sécurité &amp; dépannage</a>
 	</nav>
 </footer>
 </body>

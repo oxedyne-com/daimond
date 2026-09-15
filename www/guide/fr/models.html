@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
-<title>Modèles &amp; crédits — Guide Daimond</title>
+<title>Models &amp; providers &mdash; Daimond guide</title>
 <link rel="icon" type="image/svg+xml" href="../../assets/daimond_mark.svg">
 <link rel="stylesheet" href="../../css/variables.css">
 <link rel="stylesheet" href="../../css/guide.css">
@@ -21,106 +21,96 @@
 			<span class="brand-sub">Guide</span>
 		</a>
 		<nav class="site-nav" aria-label="Pages du guide">
-			<a href="index.html">Premiers pas</a>
+			<a href="index.html">Commencez ici</a>
 			<a href="interface.html">L’interface</a>
-			<a href="models.html" aria-current="page">Modèles &amp; crédits</a>
-			<a href="chats-and-diamonds.html">Chats &amp; Diamonds</a>
-			<a href="../capps.html">Capps</a>
-			<a href="email-web-files.html">E-mail, Web &amp; fichiers</a>
-			<a href="accounts.html">Comptes</a>
-			<a href="sync.html">Synchronisation entre appareils</a>
+			<a href="chats-and-diamonds.html">Discussions &amp; diamonds</a>
+			<a href="../capps.html">La page d’un diamond</a>
+			<a href="email-web-files.html">Fichiers, e-mail &amp; le web</a>
+			<a href="../machine-operations.html">Votre ordinateur</a>
+			<a href="../runner.html">Assistants &amp; où s’exécutent les tours</a>
+			<a href="sync.html">Plus d’un appareil</a>
+			<a href="social.html">Social &amp; propositions</a>
+			<a href="models.html" aria-current="page">Modèles &amp; fournisseurs</a>
 			<a href="spending.html">Dépenses</a>
-			<a href="../machine-operations.html">Commandes sur la machine</a>
-			<a href="social.html">Social</a>
+			<a href="accounts.html">Sécurité &amp; dépannage</a>
 		</nav>
 	</div>
 </header>
 
 <main>
-	<h1>Modèles &amp; crédits</h1>
-	<p class="lede">Un daimon pense avec un modèle. Vous pouvez apporter votre propre clé de fournisseur et payer ce fournisseur directement, ou acheter des crédits et laisser Daimond faire tourner un modèle pour vous. Cette page couvre les deux, et la façon de garder les crédits au niveau.</p>
+	<h1>Modèles &amp; fournisseurs</h1>
+	<p class="lede">A daimon thinks with a model. Bring a key you already hold and pay that provider directly, or buy credits and let Daimond run one for you.</p>
 
-	<h2 id="s1">Deux façons d’alimenter un daimon</h2>
-	<div class="cards">
-		<div class="card">
-			<h3 id="s2">Apporter votre propre clé</h3>
-			<p>Connectez un compte que vous avez déjà chez un fournisseur de modèles. Vos messages partent directement chez ce fournisseur ; Daimond n’est pas sur le chemin, et nous ne facturons rien.</p>
-		</div>
-		<div class="card">
-			<h3 id="s3">Acheter des crédits</h3>
-			<p>Aucun compte de fournisseur à gérer. Daimond fait tourner le modèle pour vous et puise dans les crédits que vous avez achetés. Pas d’abonnement : vous gardez ce que vous achetez.</p>
-		</div>
-	</div>
-	<p>L’un ou l’autre suffit pour démarrer. Vous pouvez faire les deux — connecter une clé pour le travail de tous les jours et garder des crédits pour les moments où vous préférez ne pas en gérer.</p>
-
-	<h2 id="s4">Connecter un fournisseur</h2>
-	<p>Ouvrez la ligne <span class="ui">Modèles</span> du panneau d’administration, en bas à gauche. Elle liste une clé pour chaque fournisseur que vous utilisez et le modèle sur lequel démarrent les nouveaux chats. Pour en ajouter un, choisissez <span class="ui">+ Ajouter un fournisseur</span> et répondez aux trois mêmes questions, quel que soit le fournisseur.</p>
-
-	<figure class="shot" data-shot="models-form">
-		<img alt="Le formulaire Ajouter un fournisseur : une liste déroulante de fournisseurs, une zone pour la clé d’API et une liste déroulante de modèle par défaut, avec un bouton Enregistrer et démarrer." src="../shots/models-form.png" loading="lazy">
-		<figcaption>Ajouter un fournisseur : choisissez le fournisseur, collez la clé, mettez une étoile à un modèle par défaut, puis Enregistrer et démarrer.</figcaption>
+	<h2 id="s1">Your own key</h2>
+	<p>Open the model row at the foot of the rail. It lists a key for each provider you use and which model new work starts on. <span class="ui">+ Ajouter un fournisseur</span> asks the same three questions whoever the provider is.</p>
+	<figure class="shot">
+		<img alt="The add-provider form: a provider list, an API key box, and a default model." src="../shots/models-form.png" loading="lazy">
+		<figcaption>Choose the provider, paste the key, star a default model, then save.</figcaption>
 	</figure>
-
 	<ol class="steps">
 		<li>
-			<h3 id="s5">Choisir un fournisseur</h3>
-			<p>Prenez dans la liste: <strong translate="no">Anthropic</strong>, <strong translate="no">Fireworks AI</strong>, <strong translate="no">OpenRouter</strong>, <strong translate="no">Together AI</strong>, <strong translate="no">Groq</strong>, <strong translate="no">DeepInfra</strong>, ou <strong>Personnalisé</strong> pour tout autre service parlant la même API chat-completions. Choisir Personnalisé fait apparaître une zone <strong>URL de base</strong> pour pointer Daimond vers ce service.</p>
+			<h3 id="s2">Choisir un fournisseur</h3>
+			<p>Anthropic, Fireworks AI, OpenRouter, Together AI, Groq or DeepInfra. <span class="ui">Personnalisé</span> reveals a <span class="ui">URL de base</span> box for any other service speaking the same chat API, including one on your own machine.</p>
 		</li>
 		<li>
-			<h3 id="s6">Coller votre clé d’API</h3>
-			<p>Collez la clé de votre compte fournisseur dans la zone <strong>Clé d’API</strong> prévue à cet effet. Elle n’est stockée que sur cet appareil, enveloppée sous votre phrase secrète, et envoyée uniquement au fournisseur que vous avez choisi.</p>
+			<h3 id="s3">Paste the key</h3>
+			<p>It is stored wrapped under your passphrase, and sent to the provider you chose and to nobody else. It reaches your other devices only inside the encrypted sync parcel, still wrapped.</p>
 		</li>
 		<li>
-			<h3 id="s7">Mettre une étoile à un modèle par défaut</h3>
-			<p>Choisissez un <strong>Modèle par défaut</strong> dans la liste (ou tapez un identifiant de modèle pour un fournisseur personnalisé). C’est le modèle unique sur lequel démarrent les nouveaux chats et Diamonds. Puis choisissez <span class="ui">Enregistrer et démarrer</span>.</p>
+			<h3 id="s4">Mettre une étoile à un modèle par défaut</h3>
+			<p><span class="ui">List models</span> fetches the catalogue where the provider offers one, and otherwise you type the model id. The starred one is where new chats and diamonds begin.</p>
 		</li>
 	</ol>
+	<p>Your messages then go straight to that provider on your own account. Daimond is out of the path, and we charge nothing.</p>
 
-	<div class="note"><strong>Tout reste sur cet appareil.</strong> Vos clés, vos chats et vos fichiers ne vivent que dans ce navigateur. Rien ne nous est envoyé — une clé de fournisseur que vous ajoutez parle à ce fournisseur, et à personne d’autre.</div>
+	<h2 id="s5">Choosing a different model</h2>
+	<p>The default is a starting point. Any connected model can be chosen for one chat from the selector in its header, and the default is untouched. A diamond can also carry a separate <span class="ui">Helper model</span> for the agents it dispatches, which applies to the next one dispatched and to none already running.</p>
+	<p>Where a model publishes no context window, the tile says <span class="ui">Context size unknown for this model.</span> and guesses nothing.</p>
 
-	<h3 id="s8">Le modèle par défaut, et en choisir un autre pour un seul chat</h3>
-	<p>Un modèle est celui par défaut, sur lequel commencent les nouveaux chats et Diamonds. N’importe quel modèle connecté peut être choisi pour un seul chat, depuis le sélecteur de son en-tête, en haut à droite du panneau central ; le modèle par défaut reste intact. On peut aussi donner à un Diamond un modèle distinct pour les ouvriers qu’il dépêche.</p>
-
-	<h2 id="s9">Acheter des crédits</h2>
-	<p>Ouvrez la ligne <span class="ui">Crédits</span> du panneau d’administration. Elle affiche votre solde et un ensemble de packs à acheter. Il n’y a pas d’abonnement : vous gardez ce que vous achetez, et rien n’est facturé à nouveau sauf si vous activez la recharge automatique.</p>
-
-	<figure class="shot" data-shot="credits">
-		<img alt="La vue Crédits : le solde courant, une rangée de packs de crédits à acheter, et les réglages de recharge automatique en dessous." src="../shots/credits.png" loading="lazy">
-		<figcaption>Crédits : votre solde, les packs à acheter, et les réglages de recharge automatique en dessous.</figcaption>
-	</figure>
-
-	<p>Le paiement se fait sur la page hébergée par le prestataire de paiement lui-même. Aucun numéro de carte, date d’expiration ou code de sécurité n’est jamais saisi dans Daimond : il n’y a donc rien ici qui puisse fuir.</p>
-
-	<h2 id="s10">Recharge automatique</h2>
-	<p>La recharge automatique est une consigne permanente d’acheter des crédits quand ils s’épuisent, pour qu’un long travail ne s’arrête pas à mi-chemin. C’est le seul endroit où Daimond peut débiter une carte enregistrée en votre absence : elle est donc délibérément explicite. Trois nombres la règlent, sous les packs dans la vue Crédits :</p>
+	<h2 id="s6">Choosing who serves it</h2>
+	<p>A router hands one model to whichever upstream provider it likes, and they are not equally good. Under an OpenRouter provider, each model row carries a <span class="ui">Providers</span> field, with the placeholder <span class="ui">prefer, -avoid, !</span>.</p>
 	<ul>
-		<li><strong>En dessous de</strong>: le solde auquel une recharge se déclenche.</li>
-		<li><strong>Acheter</strong>: ce qu’une recharge ajoute.</li>
-		<li><strong>Jamais plus de</strong>: un plafond dur sur le total des recharges dans un mois civil. Réglez celui-ci avec soin. C’est un plafond plutôt qu’une cible, et il est appliqué sur le même chemin de code que le débit : rien ne peut le contourner.</li>
+		<li>A bare name prefers that provider.</li>
+		<li>A leading <code>-</code> avoids one.</li>
+		<li>A bare <code>!</code> means only these, refusing every fallback.</li>
 	</ul>
+	<p>So <code>Novita, -DeepInfra</code> prefers one and avoids another. The field is saved as you leave it. A provider whose catalogue has not been fetched keeps its rows behind a <span class="ui">Models&hellip;</span> disclosure, so a preference already set stays reachable.</p>
 
-	<div class="note">La recharge automatique ne peut pas être activée sans carte enregistrée — un contrôle qui s’activerait puis échouerait en silence serait pire qu’un contrôle désactivé qui dit pourquoi. Enregistrer une carte est une redirection vers la page hébergée du prestataire de paiement ; Daimond ne voit jamais les détails de la carte.</div>
+	<h2 id="s7">Crédits</h2>
+	<p>Credits run the model for you with no key needed, and they also meter the few things that leave the browser: fetching a page, the bandwidth of mail and of cross-device sync, and cloud storage beyond the free tier. Sync, Email and cloud storage themselves are turned on by Daimond Pro, and metered use is paid from credits with or without it.</p>
+	<p>Open the credits row for your balance and the packs. Credits are not a subscription, and you keep what you buy. Payment happens on the payment provider's own hosted page, so no card number is typed into Daimond.</p>
+	<p>While testing is closed, new accounts with credits are given out by passcode. Daimond works with your own provider key without one.</p>
+
+	<h2 id="s8">Recharge automatique</h2>
+	<p>Auto-reload is a standing instruction to buy credits when they run low, so a long job does not stop halfway. It is the one place Daimond may charge a saved card while you are away, so it is deliberately explicit. Three numbers set it.</p>
+	<ul>
+		<li><strong>En dessous de</strong> is the balance at which a top-up fires.</li>
+		<li><strong>Acheter</strong> is how much one top-up adds.</li>
+		<li><strong>Never spend more, per month, than</strong> is a hard cap on the calendar month. Set this one carefully. It is enforced on the same code path as the charge.</li>
+	</ul>
+	<p>It cannot be switched on without a saved card, because a control that turned on and then failed silently would be worse than one that is disabled and says why.</p>
 
 	<div class="next">
-		<a href="interface.html">&larr; L’interface</a>
-		<a href="chats-and-diamonds.html">Suivant : Chats &amp; Diamonds &rarr;</a>
+		<a href="social.html">&larr; Social &amp; proposals</a>
+		<a href="spending.html">Next: Spending &rarr;</a>
 	</div>
 </main>
 
 <footer class="site-foot">
-	<span>Daimond fonctionne dans votre navigateur. Rien de ce qui s’y trouve ne nous est envoyé.</span>
+	<span>Daimond s’exécute dans votre navigateur. Rien de tout cela ne nous est envoyé.</span>
 	<nav aria-label="Pages du guide">
-		<a href="index.html">Premiers pas</a>
-		<a href="interface.html">Interface</a>
-		<a href="models.html">Modèles</a>
-		<a href="chats-and-diamonds.html">Chats &amp; Diamonds</a>
-		<a href="../capps.html">Capps</a>
-		<a href="email-web-files.html">E-mail, Web &amp; fichiers</a>
-		<a href="accounts.html">Comptes</a>
-		<a href="sync.html">Synchronisation entre appareils</a>
+		<a href="index.html">Commencez ici</a>
+		<a href="interface.html">L’interface</a>
+		<a href="chats-and-diamonds.html">Discussions &amp; diamonds</a>
+		<a href="../capps.html">La page d’un diamond</a>
+		<a href="email-web-files.html">Fichiers, e-mail &amp; le web</a>
+		<a href="../machine-operations.html">Votre ordinateur</a>
+		<a href="../runner.html">Assistants &amp; où s’exécutent les tours</a>
+		<a href="sync.html">Plus d’un appareil</a>
+		<a href="social.html">Social &amp; propositions</a>
+		<a href="models.html">Modèles &amp; fournisseurs</a>
 		<a href="spending.html">Dépenses</a>
-		<a href="../machine-operations.html">Commandes sur la machine</a>
-		<a href="social.html">Social</a>
+		<a href="accounts.html">Sécurité &amp; dépannage</a>
 	</nav>
 </footer>
 </body>

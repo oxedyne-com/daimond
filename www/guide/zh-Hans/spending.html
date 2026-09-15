@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
-<title>支出 — Daimond 使用指南</title>
+<title>Spending &mdash; Daimond guide</title>
 <link rel="icon" type="image/svg+xml" href="../../assets/daimond_mark.svg">
 <link rel="stylesheet" href="../../css/variables.css">
 <link rel="stylesheet" href="../../css/guide.css">
@@ -15,70 +15,77 @@
 
 <header class="site-head">
 	<div class="site-head-inner">
-		<a class="brand" href="index.html" aria-label="Daimond 使用指南，首页">
+		<a class="brand" href="index.html" aria-label="Daimond 指南，首页">
 			<img class="wordmark wm-dark" src="../../assets/daimond_word.svg" alt="Daimond" translate="no">
 			<img class="wordmark wm-light" src="../../assets/daimond_word_dark.svg" alt="Daimond" translate="no">
-			<span class="brand-sub">使用指南</span>
+			<span class="brand-sub">指南</span>
 		</a>
 		<nav class="site-nav" aria-label="指南页面">
-			<a href="index.html">开始使用</a>
+			<a href="index.html">从这里开始</a>
 			<a href="interface.html">界面</a>
-			<a href="models.html">模型与额度</a>
-			<a href="chats-and-diamonds.html">聊天与 Diamonds</a>
-			<a href="../capps.html">Capps</a>
-			<a href="email-web-files.html">邮件、网页与文件</a>
-			<a href="accounts.html">账户</a>
-			<a href="sync.html">跨设备同步</a>
-			<a href="spending.html" aria-current="page">支出</a>
-			<a href="../machine-operations.html">在本机运行命令</a>
-			<a href="../social.html">社交</a>
+			<a href="chats-and-diamonds.html">对话和 diamond</a>
+			<a href="../capps.html">diamond 的页面</a>
+			<a href="email-web-files.html">文件、邮件和网页</a>
+			<a href="../machine-operations.html">你的电脑</a>
+			<a href="../runner.html">帮手和轮次的运行位置</a>
+			<a href="sync.html">不止一台设备</a>
+			<a href="../social.html">社交和提案</a>
+			<a href="models.html">模型和提供商</a>
+			<a href="spending.html" aria-current="page">花费</a>
+			<a href="accounts.html">安全和修复</a>
 		</nav>
 	</div>
 </header>
 
 <main>
-	<h1>支出</h1>
-	<p class="lede">支出视图显示你的钱去了哪里，并且把两个钱袋分开。它们是两个不同币种的不同账户，所以 Daimond 把它们显示成两条轨道，从不加在一起。</p>
+	<h1>花费</h1>
+	<p class="lede">Model calls are priced on this device, as they happen, from the provider's own figure. The bill arrives in front of you as it is spent, wherever the provider reports a figure, and not later as a surprise.</p>
 
 	<h2 id="s1">两个钱袋，分开放</h2>
+	<p>The two pots are different accounts in different currencies, so they are shown as two tracks and not added together.</p>
 	<ul>
-		<li><strong>推理。</strong> 模型调用本身，记在你自己的提供商密钥上。Daimond 在这台设备上按轮计价并记账，所以你能看到自己密钥花了多少，而这一切都不经过我们。</li>
-		<li><strong>额度。</strong> 预付的余额，网关拿它支付少数几件要离开浏览器的事：抓一个页面、同步或发送邮件、跨设备同步，以及把你的工作区放在 <a href="email-web-files.html">云端存储</a>.</li>
+		<li><strong>Inference</strong> covers the model calls billed to <span class="ui">your key</span>. They are recorded here per turn, and none of them passes through us.</li>
+		<li><strong>额度</strong> holds the prepaid balance, spent on the model when Daimond runs it for you and on what leaves the browser, <span class="ui">web, mail, sync</span>, and cloud storage.</li>
+	</ul>
+	<p>The foot of the rail carries the running figures for today, this week and this month. Press one to open the <span class="ui">花费</span> panel, which shows a headline figure per pot, a daily graph, a breakdown by category, and a plain table of movements.</p>
+
+	<h2 id="s2">What stops a runaway</h2>
+	<p>A workspace that runs many agents at once can spend quickly, and the danger lies in a sudden rate more than in a large monthly total. Four measures catch the rate, and none asks you to set a limit in advance.</p>
+	<ul>
+		<li><strong>A pace check before a fan-out.</strong> The cost of dispatching a batch is known before any of it starts. A batch that would run faster than your own recent pace is held, and Daimond asks once, with the number on the prompt. A few helpers of ordinary cost do not trip it, and a sudden fifty do.</li>
+		<li><strong>暂停和停止，永远在手边。</strong>  <span class="ui">智能体</span> panel pauses everything running, or stops it. The <span class="ui">全部</span> row at the top of the rail pauses the whole app. A paused thing refuses a turn before it starts, so a look costs nothing.</li>
+		<li><strong>每个智能体一把单独的密钥。</strong> Each helper running on credits spends its own freshly minted key, capped against what is left after its siblings' claims. No two share a key, so parallel helpers cannot race one allowance past its cap.</li>
+		<li><strong>一切都计量，按轮次，在你的设备上。</strong> Every call is priced and recorded as it happens, and the graphs are drawn from that record.</li>
 	</ul>
 
-	<h2 id="s2">怎么打开它</h2>
-	<p>打开支出面板，可以点侧栏底部的 <strong>支出行</strong> ，也可以点 <span class="ui">额度</span> 视图里的一个链接。它把每个钱袋都配上一个头条数字、一张按天的图、一份按类别的拆解，还有一张朴素的流水表，所以一笔扣费从来不会成谜。</p>
+	<h2 id="s3">A ceiling you set</h2>
+	<p>Settings carries a per-turn spend cap. A turn that reaches the round limit continues on its own, so this cap is the ceiling that holds a runaway. It applies where the provider reports what a round cost, and only there.</p>
 
-	<h2 id="s3">防止费用失控</h2>
-	<p>一个能同时跑很多智能体的工作区，可以花得很快。危险不在于月度总额很大，而在于一次 <em>速率尖峰</em>：一次扇出在几秒钟里烧掉额度，你还来不及反应。四道措施拦的正是这个尖峰，没有一道要求你事先设一个上限。</p>
-	<ul>
-		<li><strong>扇出跑起来之前，先查一次节奏。</strong> 派出一批要花多少，在其中任何一个启动之前就已知道。一批的速度会超过你自己近来的节奏，就先按住，Daimond 问你一次，数量和估算都摆在问句上。几个花费寻常的智能体永远不会触发它；突然来五十个就会。尺度是你自己的常态，从你近来的花销里学到，所以没有什么要配置。</li>
-		<li><strong>暂停和停止，永远在手边。</strong>  <a href="chats-and-diamonds.html">智能体</a> 面板一下暂停每一个正在跑的智能体，或者干脆把它们停掉；侧栏的 <span class="ui">全部</span> 行则暂停整个应用。暂停会立刻止住花费并保住已有的活，所以看一眼什么也不花。</li>
-		<li><strong>每个智能体一把单独的密钥。</strong> 每个用额度跑的智能体，花的是自己新签发的一把密钥，上限按扣掉同批兄弟已认领的部分之后剩下的量来定。没有两个智能体共用一把密钥，所以并行的智能体没法把一份共享额度抢过它的上限。</li>
-		<li><strong>一切都计量，按轮次，在你的设备上。</strong> 每一次模型调用都在这里当场计价并记下来，喂给上面那些图。账单在花的时候就摆到你面前，绝不会过后才来给你一惊。</li>
-	</ul>
-	<p>用意很朴素：跑一队智能体，不必担心一个失控的循环、或者一次比你以为的更大的扇出，会花掉多到一眼加一次点击都挽不回来的钱。</p>
+	<h2 id="s4">Watching one agent</h2>
+	<p>Each tile in <span class="ui">智能体</span> shows its cost as it accrues, in tokens and in money, and not only at the end. Under the header a line says how many are running, paused and queued, which makes the size of a fan-out legible before you decide whether to hold it.</p>
+	<p>The aim is a team of agents you can run without fear that a loop, or a fan-out larger than you realised, can cost more than a glance and a click can undo.</p>
 
 	<div class="next">
-		<a href="sync.html">&larr; 跨设备同步</a>
-		<a href="../machine-operations.html">下一页：在本机运行命令 &rarr;</a>
+		<a href="models.html">&larr; Models &amp; providers</a>
+		<a href="accounts.html">Next: Safety &amp; fixes &rarr;</a>
 	</div>
 </main>
 
 <footer class="site-foot">
-	<span>Daimond 在你的浏览器里运行。这里的东西不会发给我们。</span>
+	<span>Daimond 在你的浏览器中运行。这里的任何内容都不会发送给我们。</span>
 	<nav aria-label="指南页面">
-		<a href="index.html">开始使用</a>
+		<a href="index.html">从这里开始</a>
 		<a href="interface.html">界面</a>
-		<a href="models.html">模型</a>
-		<a href="chats-and-diamonds.html">聊天与 Diamonds</a>
-		<a href="../capps.html">Capps</a>
-		<a href="email-web-files.html">邮件、网页与文件</a>
-		<a href="accounts.html">账户</a>
-		<a href="sync.html">跨设备同步</a>
-		<a href="spending.html">支出</a>
-		<a href="../machine-operations.html">在本机运行命令</a>
-		<a href="../social.html">社交</a>
+		<a href="chats-and-diamonds.html">对话和 diamond</a>
+		<a href="../capps.html">diamond 的页面</a>
+		<a href="email-web-files.html">文件、邮件和网页</a>
+		<a href="../machine-operations.html">你的电脑</a>
+		<a href="../runner.html">帮手和轮次的运行位置</a>
+		<a href="sync.html">不止一台设备</a>
+		<a href="../social.html">社交和提案</a>
+		<a href="models.html">模型和提供商</a>
+		<a href="spending.html">花费</a>
+		<a href="accounts.html">安全和修复</a>
 	</nav>
 </footer>
 </body>

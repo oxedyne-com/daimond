@@ -25,6 +25,13 @@
 //      LINE UNDER THE NAME rather than a badge beside it — checked by geometry,
 //      which no translation can defeat, and by reading all eight locale files.
 //   H  Reachability: the panel seam is fed, and index.html loads the file.
+//   I  Finding somebody by handle, with THIS SCRIPT standing in for the
+//      gateway behind `sync.js`'s own fetch. That is not a shortcut: a
+//      stand-in is precisely the thing the ceiling exists for, and what it
+//      proves is that a card handed over by something in the middle is drawn
+//      NEW, is offered no way up, and is refused outright when it has been
+//      bent or when the fingerprint served beside it names another key.
+//   J  "Send my code" hands over exactly the bytes "Show my code" shows.
 //
 // Needs the dev server only (DAIMOND_PORT). Deliberately no gateway.
 import fs from 'node:fs';
@@ -489,6 +496,193 @@ try {
 	check('no locale table spells a key state with the other axis\'s word',
 		offenders.length === 0,
 		defined ? `${defined} key-state strings across the eight files` : 'none defined yet (Lane F)');
+
+	console.log(`\n── I. Finding somebody by handle ${'─'.repeat(37)}`);
+	// The gateway is STILL not running. What stands in for it is this script,
+	// through the one door `sync.js` fetches with -- which is exactly the shape
+	// of the thing the ceiling exists for: something in the middle, handing over
+	// a card that verifies perfectly and proves nothing about who holds the key.
+	const F = await device('trust-fern');
+	const fCard = await F.page.evaluate(() => window.DaimondTrust.cardText());
+	const fFp   = await F.page.evaluate(() => window.DaimondIdentity.fingerprint());
+	await F.close();
+
+	/// The base64 a gateway would serve, out of the string a paste carries.
+	const served = (paste) => {
+		const b64url = paste.replace(/^DMND-ID1\./i, '');
+		return b64url.replace(/-/g, '+').replace(/_/g, '/')
+			+ '='.repeat((4 - (b64url.length % 4)) % 4);
+	};
+	const bendCard = (b64) => {
+		const bin = Buffer.from(b64, 'base64');
+		bin[bin.length - 1] ^= 0x01;
+		return bin.toString('base64');
+	};
+
+	/// Put a stand-in gateway behind `sync.js`, answering one handle.
+	async function standIn(session, answers) {
+		await session.page.evaluate((rows) => {
+			const gw = window.DaimondGateway;
+			window.__lookups = [];
+			gw.state = () => ({ authed: true });
+			if (typeof gw.clientApi !== 'function') gw.clientApi = () => 1;
+			gw.gwFetch = async (path) => {
+				window.__lookups.push(path);
+				const m = /[?&]handle=([^&]+)/.exec(path);
+				const want = m ? decodeURIComponent(m[1]) : '';
+				const row = rows[want];
+				if (!row) {
+					return new Response(JSON.stringify({ ok: false, found: false }),
+						{ status: 404, headers: { 'content-type': 'application/json' } });
+				}
+				return new Response(JSON.stringify(Object.assign({ ok: true, found: true }, row)),
+					{ status: 200, headers: { 'content-type': 'application/json' } });
+			};
+		}, answers);
+	}
+
+	await standIn(A, {
+		'quiet-fern-0001': { handle: 'quiet-fern-0001', fingerprint: fFp, card: served(fCard) },
+		'bent-fern-0002':  { handle: 'bent-fern-0002',  fingerprint: fFp, card: bendCard(served(fCard)) },
+		'other-fern-0003': { handle: 'other-fern-0003', fingerprint: 'AAAA-BBBB-CCCC-DDDD', card: served(fCard) },
+		'quiet-mute-0004': { handle: 'quiet-mute-0004', fingerprint: fFp, card: '' },
+	});
+
+	const found = await A.page.evaluate(() => window.DaimondTrust.lookup('quiet-fern-0001')
+		.then(r => ({ found: r.found, why: r.why || '', key: r.card && r.card.key,
+			fp: r.card && r.card.fp, label: r.card && r.card.label })));
+	check('a lookup returns a card that verifies', found.found && !!found.key,
+		found.found ? found.fp : `why "${found.why}"`);
+	check('and the key it carries is the key that person holds', found.key === F.key);
+
+	const bent = await A.page.evaluate(() => window.DaimondTrust.lookup('bent-fern-0002')
+		.then(r => ({ found: r.found, why: r.why || '' })));
+	check('a tampered card is refused, not drawn', !bent.found && bent.why === 'bad',
+		`found=${bent.found} why="${bent.why}"`);
+
+	// The one check the card cannot make about itself: the account record and
+	// the card have to be about ONE key, or the name and the key are two claims
+	// about two different people wearing one row.
+	const crossed = await A.page.evaluate(() => window.DaimondTrust.lookup('other-fern-0003')
+		.then(r => ({ found: r.found, why: r.why || '' })));
+	check('a card whose fingerprint is not the one served is refused',
+		!crossed.found && crossed.why === 'bad', `why "${crossed.why}"`);
+
+	const nocard = await A.page.evaluate(() => window.DaimondTrust.lookup('quiet-mute-0004')
+		.then(r => ({ found: r.found, why: r.why || '' })));
+	check('a name whose holder has published nothing says so', !nocard.found && nocard.why === 'nocard',
+		`why "${nocard.why}"`);
+
+	const missing = await A.page.evaluate(() => window.DaimondTrust.lookup('nobody-at-all-9z')
+		.then(r => ({ found: r.found, why: r.why || '' })));
+	check('a name nobody holds comes back 404, and reads as "no such name"',
+		!missing.found && missing.why === 'none', `why "${missing.why}"`);
+	const asked = await A.page.evaluate(() => window.__lookups.slice());
+	check('every one of those went to /api/account?handle=',
+		asked.length >= 5 && asked.every(u => /\/api\/account\?handle=/.test(u)),
+		`${asked.length} requests`);
+
+	// THE FINDER, DRAWN. Typed into the real field, pressed with the real button,
+	// and then measured: a looked-up key must reach the screen as NEW and must
+	// never be offered the in-person act.
+	const drawnFind = await A.page.evaluate(async () => {
+		try { window.DaimondSocial.open('people'); } catch (e) { /* no panel */ }
+		await new Promise(r => setTimeout(r, 200));
+		const host = document.getElementById('social-people-list');
+		const field = host.querySelector('.trust-find input');
+		const go    = host.querySelector('.trust-find button');
+		if (!field || !go) return { seam: false };
+		field.value = 'quiet-fern-0001';
+		go.click();
+		await new Promise(r => setTimeout(r, 600));
+		const box  = host.querySelector('.trust-found');
+		const line = box && box.querySelector('[data-key-state]');
+		const name = box && box.querySelector('.trust-name, .trust-claim');
+		const n = name && name.getBoundingClientRect();
+		const l = line && line.getBoundingClientRect();
+		return {
+			seam:    true,
+			state:   line && line.getAttribute('data-key-state'),
+			words:   line && line.textContent,
+			below:   !!(n && l) && l.top >= n.bottom - 1 && l.height > 0,
+			digits:  box ? [...box.querySelectorAll('.trust-number span')].map(e => e.textContent) : [],
+			buttons: box ? [...box.querySelectorAll('button')].map(b => b.textContent) : [],
+		};
+	});
+	check('the People view carries a field for a handle', drawnFind.seam);
+	check('a looked-up key is drawn NEW', drawnFind.state === 'new' && /new key/i.test(drawnFind.words || ''),
+		drawnFind.words);
+	check('and its line is under the name here too, like every other row', drawnFind.below);
+	check('the sixty digits are on the result, not behind a second press',
+		drawnFind.digits.length === 12 && drawnFind.digits.every(g => /^[0-9]{5}$/.test(g)),
+		`${drawnFind.digits.length} groups`);
+	check('the result offers no way to mark a key matched',
+		!(drawnFind.buttons || []).some(b => /matched/i.test(b)),
+		(drawnFind.buttons || []).join(' · '));
+
+	const added = await A.page.evaluate(async () => {
+		const host = document.getElementById('social-people-list');
+		const box  = host.querySelector('.trust-found');
+		const add  = box && [...box.querySelectorAll('button')][0];
+		if (!add) return null;
+		add.click();
+		await new Promise(r => setTimeout(r, 500));
+		return null;
+	});
+	void added;
+	const inList = await A.page.evaluate(async (k) => {
+		await window.DaimondTrust.refresh();
+		const p = await window.DaimondTrust.person(k);
+		return p ? { state: p.state, route: p.route, method: p.method } : null;
+	}, F.key);
+	check('"Add" puts them in People', !!inList, inList ? `state "${inList.state}"` : 'not there');
+	check('and they are NEW, by the route they came in on',
+		inList && inList.state === 'new' && inList.route === 'lookup' && !inList.method,
+		inList ? `route "${inList.route}"` : '');
+
+	// Decision 4, at the one place it could still be got wrong: a lookup must not
+	// be able to reach the in-person offer even by being handed to the same door
+	// the camera uses.
+	const offered = await A.page.evaluate(async (text) => {
+		const card = window.DaimondTrust.parse(text);
+		await window.DaimondTrust.offer(card, window.DaimondTrust.ROUTE.LOOKUP);
+		await new Promise(r => setTimeout(r, 200));
+		const box = document.querySelector('.pair-scrim');
+		const words = box ? [...box.querySelectorAll('button')].map(b => b.textContent) : [];
+		const close = box && box.querySelector('button');
+		if (close) close.click();
+		return words;
+	}, fCard);
+	check('a card offered as a lookup is never offered "Mark matched now"',
+		!offered.some(w => /matched/i.test(w)), offered.join(' · '));
+
+	console.log(`\n── J. Send my code ${'─'.repeat(50)}`);
+	const sent = await A.page.evaluate(async () => {
+		const grabbed = [];
+		if (!navigator.clipboard) Object.defineProperty(navigator, 'clipboard', { value: {}, configurable: true });
+		navigator.clipboard.writeText = async (t) => { grabbed.push(['clipboard', t]); };
+		Object.defineProperty(navigator, 'share', {
+			value: async (d) => { grabbed.push(['share', d.text]); }, configurable: true,
+		});
+		const shown  = window.DaimondTrust.cardText();
+		const answer = await window.DaimondTrust.sendCard();
+		return { shown, answer, grabbed };
+	});
+	const copied = (sent.grabbed.find(g => g[0] === 'clipboard') || [])[1];
+	const shared = (sent.grabbed.find(g => g[0] === 'share') || [])[1];
+	check('"Send my code" copies exactly the string "Show my code" shows',
+		!!copied && copied === sent.shown,
+		copied ? copied.slice(0, 24) + '…' : 'nothing reached the clipboard');
+	check('the share sheet is offered the same bytes, and nothing wrapped round them',
+		shared === sent.shown);
+	check('and it answers with what it sent', sent.answer === sent.shown);
+	const button = await A.page.evaluate(() => {
+		const host = document.getElementById('social-people-list');
+		return [...host.querySelectorAll('.trust-acts button')].map(b => b.textContent);
+	});
+	check('the button sits beside "Show my code"',
+		button.some(b => /show my code/i.test(b)) && button.some(b => /send my code/i.test(b)),
+		button.join(' · '));
 
 	console.log(`\n── H. Reachability ${'─'.repeat(50)}`);
 	const tagged = await A.page.evaluate(async () => {

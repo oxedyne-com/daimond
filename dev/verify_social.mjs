@@ -46,6 +46,7 @@
 //   node dev/verify_social.mjs --break zerobadge   # 2a the badge draws a 0
 //   node dev/verify_social.mjs --break badgeblind  # 2b it counts what you are looking at
 //   node dev/verify_social.mjs --break badgestuck  # 2c looking at it does not clear it
+//   node dev/verify_social.mjs --break badgenosave # 2d the reading is never written
 //   node dev/verify_social.mjs --break fiveref     # 3a a fifth reference is drawn
 //   node dev/verify_social.mjs --break eagerref    # 3b every chip resolves on sight
 //   node dev/verify_social.mjs --break senderlabel # 3c the sender names the thing
@@ -100,7 +101,7 @@ const BREAKS = {
 		file: 'index.html',
 		find: '<button type="button" class="imp-chip" data-view="settings" aria-pressed="false" data-i18n="social.settings">Settings</button>',
 		with: '<button type="button" class="imp-chip" data-view="settings" aria-pressed="false" data-i18n="social.settings">Settings</button>\n'
-			+ '\t\t\t\t\t<button type="button" class="imp-chip" data-view="groups" aria-pressed="false">Groups</button>',
+			+ '\t\t\t\t\t<button type="button" class="imp-chip" data-view="extra" aria-pressed="false">Extra</button>',
 	}],
 	noask: [{
 		file: 'js/mobile.js',
@@ -134,6 +135,14 @@ const BREAKS = {
 		file: 'js/daimond.js',
 		find: '\t\t\t\tif (!n || visible(id)) return;',
 		with: '\t\t\t\tif (!n) return;',
+	}],
+	// The reading is held in memory and never written, so the count comes back on
+	// the next reload and the reader is told twice about a message they have
+	// already read. The badge is otherwise exactly right, which is the point.
+	badgenosave: [{
+		file: 'js/post.js',
+		find: '\t\tif (!n) return 0;\n\t\tsave();\n\t\tcountChanged();',
+		with: '\t\tif (!n) return 0;\n\t\tcountChanged();',
 	}],
 	// Looking at the panel does not clear it, so the mark outlives the thing it
 	// was about and stops meaning anything.
@@ -318,22 +327,24 @@ try {
 const panels = await page.locator('#panel-social').count();
 check('the panel is in the markup, exactly once', panels === 1, `${panels} found`);
 
-// FIVE, and the fifth is not decision 13's. That decision named four — Messages,
-// People, Notes, Proposals — and §5.5 of the same plan reserved room for sections
-// still to arrive, so the set was never closed at four. Share was added on
-// 2026-08-17 with the share carrier of `dev/SOCIAL_OFFICE_CONTRACT.md`: `share.js`
-// could already seal a Diamond to one person, choose a carrier and write a
-// `.dshare` out, and NOTHING IN THE APP CALLED ANY OF IT. It sits third, beside
-// People, because a share goes to somebody.
+// SIX, and the sixth is not decision 13's either. That decision named four —
+// Messages, People, Notes, Proposals — and §5.5 of the same plan reserved room
+// for sections still to arrive, so the set was never closed at four. Share was
+// added on 2026-08-17 with the share carrier of `dev/SOCIAL_OFFICE_CONTRACT.md`.
+// Groups followed on 2026-09-15, when the panel's default view moved from the
+// compose box to Messages: a group had been drawn inside the messages list
+// until then, which stopped making sense once Messages was what the panel
+// opened on. Proposals kept its view id and its i18n key — only the word a
+// reader sees became Feedback — so this list still reads `proposals`.
 //
 // ORDER AND ARITY BOTH, which is why this is an equality against a literal list
 // and not a membership test. A chip that has gone, two that have swapped, and a
-// sixth nobody decided on are three different faults, and this must redden for
-// every one of them — `--break nochip`, `--break swapchip`, `--break sixthchip`.
+// seventh nobody decided on are three different faults, and this must redden
+// for every one of them — `--break nochip`, `--break swapchip`, `--break sixthchip`.
 const chipViews = await page.evaluate(() =>
 	[...document.querySelectorAll('#panel-social .imp-chip[data-view]')].map(c => c.dataset.view));
-check('its head carries the five chips: Messages, People, Share, Proposals, Settings',
-	JSON.stringify(chipViews) === JSON.stringify(['messages', 'people', 'share', 'proposals', 'settings']),
+check('its head carries the six chips: Messages, People, Groups, Share, Feedback, Settings',
+	JSON.stringify(chipViews) === JSON.stringify(['messages', 'people', 'groups', 'share', 'proposals', 'settings']),
 	chipViews.join(' ') || 'none');
 
 check('the panel declares itself to the layout engine as `social`',
@@ -419,7 +430,7 @@ check('SOURCE: a panel already open at boot is told too (daimond.js)',
 		.test(SRC.daimond));
 
 // 1e. Every chip leads somewhere with something in it.
-for (const view of ['messages', 'people', 'proposals', 'settings']) {
+for (const view of ['messages', 'people', 'groups', 'proposals', 'settings']) {
 	const seen = await page.evaluate(async (v) => {
 		window.DaimondSocial.show(v);
 		await new Promise(r => setTimeout(r, 350));
@@ -444,31 +455,28 @@ for (const view of ['messages', 'people', 'proposals', 'settings']) {
 		seen.words);
 }
 
-// ── 2. Mail arrival draws no count, and the chip still works ─────────
+// ── 2. The count badge, which is the app's only notification ─────────
 //
-// `1eec9852` removed the unsolicited dock count: the `Badge` closure,
-// `window.DaimondBadge`, and every caller of it. `www/js/badge.test.mjs` is
-// the source guard for that removal, and says so itself: daimond.js imports
-// the compiled wasm and cannot be instantiated in that file's sandbox, so it
-// asserts the removal from the SOURCE and cannot drive the panel to prove the
-// chip still opens once a real arrival has happened. This file can, because
-// it already drives a real browser -- so this section, once the stale
-// `DaimondBadge.count('mail')` calls below made it throw, is where that
-// proof belongs.
+// Restored on the plan's terms (messaging_plan §10.1: "Build it in Phase 1,
+// wired to Mail… Messages become its second caller"). It was built, removed on
+// 2026-08-31 at the owner's word while messaging had no caller at all, and is
+// back with BOTH callers wired — so this section, which used to assert that no
+// count ever drew, now asserts that the right one does.
 //
-// `daimond.js`'s own `daimond:mail-arrived` listener still exists after the
-// removal; it now feeds `Triggers.fire({ kind: 'mail', … })` instead of a
-// count (see the "clock a timer trigger counts on" section of daimond.js).
-// Actually firing a TA needs a Diamond configured with a mail trigger, which
-// is `dev/verify_triggers.mjs`'s fixture, not this file's -- what belongs
-// here is what the SOCIAL/MAIL CHIPS do: draw nothing, throw nothing, and
-// keep working, across the same arrival the count used to be measured on.
+// The two ways it can be wrong are the ways it always could be: drawing a zero,
+// and counting what the reader is already looking at. The third, which is new,
+// is a count that does not survive a reload — an unread message is unread until
+// somebody reads it, and a tally that reset with the tab would be a tally that
+// lies every morning.
+//
+// COUNTED, then MEASURED, throughout, per this file's own rule at the top: an
+// absent element answers "hidden" to every question a locator can ask it.
 
 const TITLE = await page.evaluate(() => document.title);
 
-// Nothing has arrived, so there is no mark. COUNTED, then measured: "no badge"
-// and "a badge that draws an empty string" are the same thing to a reader and
-// only one of them is what the idiom asks for.
+// Nothing has arrived, so there is no mark. "No badge" and "a badge holding an
+// empty string" are the same thing to a reader, and only one of them is what
+// the idiom asks for — so both are allowed here and neither may carry a digit.
 const quiet = await page.evaluate(() =>
 	[...document.querySelectorAll('.dock-count')]
 		.map(e => ({ t: e.textContent, hidden: e.hidden, h: e.getBoundingClientRect().height })));
@@ -477,7 +485,7 @@ check('with nothing waiting, no count is drawn anywhere',
 check('and the tab title carries no count either', !/^\(\d/.test(TITLE), TITLE);
 
 // The Mail panel is put away, so an arrival is something the reader is NOT
-// looking at -- exactly the case the removed badge used to mark.
+// looking at — exactly the case the badge exists to mark.
 await page.evaluate(() => { window.DaimondPanels.hide('mail'); window.DaimondPanels.show('social'); });
 await sleep(400);
 
@@ -489,26 +497,146 @@ await page.evaluate(() => window.dispatchEvent(new CustomEvent('daimond:mail-arr
 })));
 await sleep(400);
 
-const afterArrival = await page.evaluate(() => ({
-	dock:  [...document.querySelectorAll('.dock-count')]
-		.map(e => ({ t: e.textContent, hidden: e.hidden })),
-	title: document.title,
-}));
-check('mail arriving while you are elsewhere still draws no count',
-	afterArrival.dock.every(b => b.t === '' && b.hidden), JSON.stringify(afterArrival.dock));
-check('and the tab title is not decorated with one either',
-	!/^\(\d/.test(afterArrival.title), afterArrival.title);
+/// The mark on one panel's chip, as a reader would find it. The chip row is the
+/// top bar on a desktop and the bottom strip on a phone, and it is ONE row
+/// either way (js/mobile.js moves it rather than copying it), so this reads
+/// whichever is on screen.
+const countOn = (id) => page.evaluate((p) => {
+	const b = document.querySelector('#panel-tags .ptag[data-panel="' + p + '"] .dock-count');
+	if (!b) return { there: false };
+	const r = b.getBoundingClientRect();
+	return { there: true, t: (b.textContent || '').trim(), hidden: b.hidden,
+		w: r.width, h: r.height, x: r.x, y: r.y };
+}, id);
 
-// A chip row rebuild throws the chips away and rebuilds them. Nothing should
-// come back that was not there before.
+const mailMark = await countOn('mail');
+check('three messages arriving draws the number three on the Email chip',
+	mailMark.there && mailMark.t === '3' && !mailMark.hidden, JSON.stringify(mailMark));
+check('and the mark has real area on the screen, not merely an element',
+	onScreen(mailMark), JSON.stringify(mailMark));
+check('and the tab title says how many are waiting',
+	/^\(3\)/.test(await page.evaluate(() => document.title)),
+	await page.evaluate(() => document.title));
+
+// A chip row rebuild throws the chips away and rebuilds them. The count has to
+// come back with them, or every resize silently clears the only notification
+// this app has.
 await page.evaluate(() => window.DaimondPanels.reflow());
 await sleep(350);
-check('and none appears after the chip row is rebuilt',
-	await page.evaluate(() =>
-		[...document.querySelectorAll('.dock-count')].every(e => e.textContent === '' && e.hidden)));
+check('and it survives the chip row being thrown away and rebuilt',
+	(await countOn('mail')).t === '3');
 
-// The chip itself is what the owner kept: it must still open the panel the
-// arrival was about, after an arrival has actually happened.
+// Looking at it is what clears it.
+await page.evaluate(() => { window.DaimondPanels.show('mail'); });
+await sleep(500);
+const cleared = await countOn('mail');
+check('opening the panel clears the count',
+	!cleared.there || (cleared.t === '' && cleared.hidden), JSON.stringify(cleared));
+check('and the tab title goes back to what it was',
+	await page.evaluate(() => document.title) === TITLE);
+
+// It never marks what is in front of you. This is the check that tells a badge
+// from a mark you have to read before you can ignore it.
+await page.evaluate(() => window.dispatchEvent(new CustomEvent('daimond:mail-arrived', {
+	detail: { mailbox: 'a@example.com', folder: 'INBOX', count: 2, uids: [10, 11] },
+})));
+await sleep(350);
+const whileWatching = await countOn('mail');
+check('mail arriving at a panel you are looking at raises no mark',
+	(!whileWatching.there || (whileWatching.t === '' && whileWatching.hidden))
+	&& (await page.evaluate(() => document.title)) === TITLE,
+	JSON.stringify(whileWatching));
+
+await page.evaluate(() => { window.DaimondPanels.hide('mail'); window.DaimondPanels.show('social'); });
+await sleep(350);
+
+// ── 2b. Messages, the badge's second caller ──────────────────────────
+//
+// The tally is `DaimondPost.unread()` and not a memory of arrivals: post.js
+// marks a row read when it DRAWS it, so a message folded by a park while the
+// panel was shut is still unread, and stays unread while the reader is looking
+// at some other view of the same panel.
+//
+// Seeded through `DaimondPost.take`, which is the door a collect takes: it
+// opens the envelope, records the message and WRITES the store. A fixture that
+// reached into the record in memory would prove nothing about the reload below,
+// which is the check this section exists for.
+await page.evaluate(() => { window.DaimondSocial.show('proposals'); });
+await sleep(300);
+const seeded = await page.evaluate(async () => {
+	if (!(await window.DaimondPost.read())) return { locked: true };
+	await window.DaimondIdentity.ensureSealingKey();
+	const to = window.DaimondIdentity.publicKeyB64url();
+	for (let i = 1; i <= 2; i++) {
+		const m = await window.DaimondPost.compose(
+			{ body: 'a message nobody has opened ' + i, to });
+		await window.DaimondPost.take({
+			seq: 900 + i, kind: 'post', addr: m.addr, from_pub: to,
+			ts: Math.floor(Date.now() / 1000), bytes: m.envelope.length,
+			tray: false, expired: false, envelope: m.envelope,
+		});
+	}
+	return { locked: false, unread: window.DaimondPost.unread() };
+});
+check('two unread messages are two unread messages', seeded.unread === 2,
+	JSON.stringify(seeded));
+
+// The Social panel is on screen, but on its PROPOSALS view — so nothing has
+// drawn the rows, and the count must stand. `DaimondBadge.post` is the same
+// recompute the minute clock makes.
+await page.evaluate(() => {
+	window.DaimondSocial.show('proposals');
+	window.DaimondBadge.post();
+});
+await sleep(400);
+const social = await countOn('social');
+check('the Social chip draws the number of unread messages',
+	social.there && social.t === '2' && !social.hidden, JSON.stringify(social));
+check('and that mark has real area too', onScreen(social), JSON.stringify(social));
+
+// PERSISTENCE. The record is wrapped under the identity key in the same
+// `daimond-` store post.js already writes, so a reload finds it — and a count
+// that reset on a reload would say nothing had arrived every time the tab was
+// reopened.
+await page.reload({ waitUntil: 'domcontentloaded' });
+await sleep(3000);
+await page.addStyleTag({ content: '*,*::before,*::after{transition:none!important;animation:none!important}' });
+const survived = await page.evaluate(async () => {
+	await window.DaimondPost.read();
+	window.DaimondBadge.post();
+	return { unread: window.DaimondPost.unread() };
+});
+await sleep(500);
+check('the unread count survives a reload', survived.unread === 2, JSON.stringify(survived));
+check('and is drawn again without anybody opening anything',
+	(await countOn('social')).t === '2', JSON.stringify(await countOn('social')));
+
+// OPENING THE VIEW IS WHAT CLEARS IT, and only the rows it actually drew. Read
+// when DRAWN and not when fetched: a device that cleared its own badge on
+// collection would clear it for messages nobody ever looked at.
+await page.evaluate(() => { window.DaimondPanels.show('social'); window.DaimondSocial.show('messages'); });
+await sleep(1200);
+const afterOpen = await page.evaluate(() => ({
+	unread: window.DaimondPost.unread(),
+	rows:   document.querySelectorAll('#social-messages-list .post-msg').length,
+}));
+check('opening the Messages view marks the rows it drew as read',
+	afterOpen.unread === 0 && afterOpen.rows >= 2, JSON.stringify(afterOpen));
+const gone = await countOn('social');
+check('so the Social chip carries no mark once they have been seen',
+	!gone.there || (gone.t === '' && gone.hidden), JSON.stringify(gone));
+
+// And the reading was WRITTEN, not merely held: the store is dropped from
+// memory and read back from disk, which is what the next reload will do.
+const reread = await page.evaluate(async () => {
+	window.DaimondPost.forget();
+	await window.DaimondPost.read();
+	return window.DaimondPost.unread();
+});
+check('and the reading was written, so a reload does not raise them again',
+	reread === 0, String(reread));
+
+// The chips themselves still open the panels they mark.
 const opensMail = await page.evaluate(() => {
 	const chip = document.querySelector('#panel-tags .ptag[data-panel="mail"]');
 	if (!chip) return { chip: false };
@@ -518,31 +646,6 @@ const opensMail = await page.evaluate(() => {
 await sleep(400);
 check('the mail chip is still there and still opens the panel',
 	opensMail.chip && opensMail.shown === true, JSON.stringify(opensMail));
-
-// Looking at the panel used to be what cleared the count. There is nothing to
-// clear now, so the only thing left to assert is that looking at it draws
-// nothing either.
-await page.evaluate(() => { window.DaimondPanels.show('mail'); });
-await sleep(500);
-const cleared = await page.evaluate(() =>
-	[...document.querySelectorAll('.dock-count')].map(e => ({ t: e.textContent, hidden: e.hidden })));
-check('and looking at the panel draws no count of its own',
-	cleared.every(b => b.t === '' && b.hidden), JSON.stringify(cleared));
-check('the tab title goes back to what it was',
-	await page.evaluate(() => document.title) === TITLE);
-
-// It never marked what is in front of you, before or after the removal.
-await page.evaluate(() => window.dispatchEvent(new CustomEvent('daimond:mail-arrived', {
-	detail: { mailbox: 'a@example.com', folder: 'INBOX', count: 2, uids: [10, 11] },
-})));
-await sleep(350);
-const whileWatching = await page.evaluate(() => ({
-	dock:  [...document.querySelectorAll('.dock-count')].map(e => ({ t: e.textContent, hidden: e.hidden })),
-	title: document.title,
-}));
-check('mail arriving at a panel you are looking at still raises no mark',
-	whileWatching.dock.every(b => b.t === '' && b.hidden) && whileWatching.title === TITLE,
-	JSON.stringify(whileWatching));
 
 await page.evaluate(() => { window.DaimondPanels.hide('mail'); window.DaimondPanels.show('social'); });
 await sleep(350);

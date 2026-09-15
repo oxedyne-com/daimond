@@ -476,6 +476,105 @@ try {
 	});
 	await page.waitForTimeout(300);
 
+	// ── 3a. The title rule, in the rail (CHAT-02) ───────────────────
+	//
+	// A tile used to read as its bare age -- "just now" -- with nothing beside
+	// it to say WHICH chat it was, because a non-resident chat (Stage 1) had no
+	// transcript to read a title from. Proved on 'c-today', which nothing else
+	// in this file touches, and against the SAME pure function the rail, the
+	// header and Trash all call (`DaimondCore.railTitle`) rather than a second
+	// copy of "first six words" written into this test.
+	rows = await railRows(page);
+	let todayTile = rows.find((r) => r.kind === 'tile' && r.id === 'c-today');
+	check('the rail row title is the opening line, not the bare age',
+		!!todayTile && todayTile.when === 'the pump seal on the boat',
+		todayTile && todayTile.when);
+	const pureTitle = await page.evaluate(() => window.DaimondCore.railTitle('c-today'));
+	check('and it is exactly what the title rule gives everywhere else',
+		!!todayTile && todayTile.when === pureTitle,
+		JSON.stringify({ tile: todayTile && todayTile.when, pure: pureTitle }));
+
+	// THE CHAT HEADER, opened rather than read off the rail, so a title that
+	// only the tile computed correctly would not pass here by accident.
+	const headerTitle = await page.evaluate(() => new Promise((res) => {
+		const box = document.querySelector('.session-box.chat-box[data-id="c-today"]');
+		if (box) box.click();
+		setTimeout(() => res((document.getElementById('current-session-name') || {}).textContent || ''), 300);
+	}));
+	check('the chat header shows the same first-six-words title',
+		headerTitle === 'the pump seal on the boat', headerTitle);
+
+	// ── 3b. Rename, from the cog dialog (RAIL-06) ───────────────────
+	//
+	// Double-click was never bound for a chat; the visible way in is the Name
+	// field in the cog's own dialog (`mountChatName`). Driven through the real
+	// cog and the real field, not the store, so a rename that reached the DOM
+	// but not `renameChat` -- or the reverse -- would be caught.
+	const renamed = await page.evaluate(() => new Promise((res) => {
+		const box = document.querySelector('.session-box.chat-box[data-id="c-today"]');
+		const cog = box && box.querySelector('.tile-cog');
+		if (!cog) { res('no cog'); return; }
+		cog.click();
+		setTimeout(() => {
+			const card = [...document.querySelectorAll('.modal.dlg .dlg-card')]
+				.find((c) => c.getClientRects().length);
+			const input = card && card.querySelector('.tile-dlg-name-input');
+			if (!input) { res('no name field in the cog dialog'); return; }
+			input.value = 'The pump seal';
+			input.dispatchEvent(new Event('change', { bubbles: true }));
+			setTimeout(() => {
+				const x = card.querySelector('.tile-dlg-x');
+				if (x) x.click();
+				res('done');
+			}, 200);
+		}, 200);
+	}));
+	check('the cog dialog offers a way to rename the chat', renamed === 'done', renamed);
+	await page.waitForTimeout(300);
+	rows = await railRows(page);
+	const renamedTile = rows.find((r) => r.kind === 'tile' && r.id === 'c-today');
+	check('and the rail shows the name that was typed',
+		!!renamedTile && renamedTile.when === 'The pump seal',
+		renamedTile && renamedTile.when);
+
+	// ── 3c. Fold now on a short chat asks nothing (annoyance 15) ────
+	//
+	// "Fold now" used to ask "Fold this conversation?" and only THEN say there
+	// was nothing to fold -- a paid-sounding question in front of an act that
+	// was always going to do nothing. 'c-today' carries one message, well under
+	// `fold_by_hand`'s own floor (`MIN_KEEP_MESSAGES`, 6 -- src/compact.rs), so
+	// the pre-check in `foldChatNow` must catch it before any dialog opens.
+	const foldNow = await page.evaluate(() => new Promise((res) => {
+		const box = document.querySelector('.session-box.chat-box[data-id="c-today"]');
+		const cog = box && box.querySelector('.tile-cog');
+		if (!cog) { res({ err: 'no cog' }); return; }
+		cog.click();
+		setTimeout(() => {
+			const card = [...document.querySelectorAll('.modal.dlg .dlg-card')]
+				.find((c) => c.getClientRects().length);
+			// `.tile-dlg-level` is worn by two buttons in this dialog (the colour
+			// reset comes first in DOM order) -- picked by its own text instead.
+			const btn = card && [...card.querySelectorAll('.tile-dlg-level')]
+				.find((b) => /fold now/i.test(b.textContent || ''));
+			if (!btn) { res({ err: 'no fold-now button' }); return; }
+			btn.click();
+			setTimeout(() => {
+				const confirmUp = [...document.querySelectorAll('.modal.dlg .dlg-card')]
+					.some((c) => c.getClientRects().length && c !== card);
+				const toastText = [...document.querySelectorAll('.daimond-toast')]
+					.map((n) => n.textContent).join(' | ');
+				const x = card.querySelector('.tile-dlg-x');
+				if (x) x.click();
+				res({ confirmUp, toastText });
+			}, 300);
+		}, 200);
+	}));
+	check('fold-now on a short chat opens no confirm dialog first',
+		foldNow.confirmUp === false, JSON.stringify(foldNow));
+	check('and says at once that there is nothing to fold',
+		/nothing to fold/i.test(foldNow.toastText || ''), JSON.stringify(foldNow));
+	await page.waitForTimeout(300);
+
 	// ── 4. Keep as a Diamond carries the transcript ───────────────
 	//
 	// Driven through `DaimondCore.keepAsDiamond`, which is what the tile's
@@ -593,6 +692,18 @@ try {
 	check('the expired chat is listed in the trash, as a chat, marked automatic',
 		trashRow.found && trashRow.kind === 'chat' && trashRow.auto === true,
 		JSON.stringify(trashRow));
+
+	// TRASH NAMES A CHAT THE SAME WAY THE RAIL DID (B18/annoyance 12): it used to
+	// say "Unnamed chat" for exactly the tile the toast had just named by its
+	// opening line. Same pure function, so the two cannot drift apart again.
+	const railVsTrash = await page.evaluate(async () => {
+		const items = await window.DaimondCore.trashList();
+		const it = items.find((x) => x.id === 'c-old');
+		return { trash: it ? it.name : null, rail: window.DaimondCore.railTitle('c-old') };
+	});
+	check('the Trash panel names the chat exactly as the rail did',
+		!!railVsTrash.trash && railVsTrash.trash === railVsTrash.rail,
+		JSON.stringify(railVsTrash));
 	await shot(s, 'chatlife-expired' + (BREAK ? '-' + BREAK : ''));
 
 	// ── 6. A live run keeps its chat, however stale ───────────────
@@ -736,6 +847,42 @@ try {
 	});
 	check('and once a pull has landed, the sweep destroys it',
 		afterPull === false, 'the sweep never ran, so nothing is ever destroyed');
+
+	// ── 8. "Delete all chats" asks first, naming the count (B18/annoyance 14) ──
+	//
+	// It used to act at once. Reversible from the Trash is not the same as
+	// unasked, and this is the one bulk act in the rail with nothing chosen
+	// first to give a moment's pause. Proved both ways: the confirm names a
+	// count, and declining it leaves every chat exactly where it was.
+	const beforeCount = await page.evaluate(() =>
+		document.querySelectorAll('#session-list .session-box').length);
+	const asked = await page.evaluate(() => new Promise((res) => {
+		document.getElementById('chats-menu-btn').click();
+		setTimeout(() => {
+			const del = [...document.querySelectorAll('.railhead-menu-item')]
+				.find((b) => /delete all/i.test(b.textContent || ''));
+			if (!del || del.disabled) { res({ err: 'no delete-all item (or nothing to delete)' }); return; }
+			del.click();
+			setTimeout(() => {
+				const card = [...document.querySelectorAll('.modal.dlg .dlg-card')]
+					.find((c) => c.getClientRects().length);
+				const msg = card ? (card.querySelector('.dlg-msg') || {}).textContent || '' : null;
+				// Decline: the cancel button, never the destructive one.
+				const cancel = card && card.querySelector('.dlg-cancel');
+				if (cancel) cancel.click();
+				res({ opened: !!card, msg });
+			}, 250);
+		}, 200);
+	}));
+	check('"Delete all chats" opens a confirm before acting',
+		asked.opened === true, JSON.stringify(asked));
+	check('and the confirm names how many chats are about to go',
+		/\d+/.test(asked.msg || ''), JSON.stringify(asked));
+	await page.waitForTimeout(300);
+	const afterCount = await page.evaluate(() =>
+		document.querySelectorAll('#session-list .session-box').length);
+	check('declining it deletes nothing', afterCount === beforeCount,
+		`${beforeCount} → ${afterCount}`);
 } finally {
 	await s.close();
 }

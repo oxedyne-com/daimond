@@ -650,8 +650,8 @@
 		line.className = 'imp-as';
 		line.id = 'improve-voice-say';
 		line.textContent = hasVoice()
-			? tOr('social.voice_held', 'Voice held on this device, encrypted under your passphrase.')
-			: tOr('social.voice_none', 'No voice yet: you can read proposals, but only Keep a note to this device.');
+			? tOr('social.voice_held', 'Posting name held on this device, encrypted under your passphrase.')
+			: tOr('social.voice_none', 'Posting name: none.');
 		host.appendChild(line);
 
 		// THE MANUAL-PASTE FALLBACK, shared by "Replace the voice" (a voice is
@@ -668,15 +668,15 @@
 			input.placeholder = tOr('social.voice_ph', 'Paste the line the forge showed you');
 			input.setAttribute('aria-label', tOr('social.voice_ph', 'Paste the line the forge showed you'));
 			host.appendChild(input);
-			host.appendChild(button('imp-send', 'improve-voice-save', tOr('social.voice_save', 'Save the voice')));
+			host.appendChild(button('imp-send', 'improve-voice-save', tOr('social.voice_save', 'Save the posting name')));
 			host.appendChild(button('imp-keep', 'improve-voice-cancel', t('common.cancel')));
 			return;
 		}
 
-		// A VOICE IS HELD: replace it, or forget the copy on this device.
+		// A POSTING NAME IS HELD: replace it, or forget the copy on this device.
 		if (hasVoice()) {
 			host.appendChild(button('imp-note-copy', 'improve-voice-open',
-				tOr('social.voice_replace', 'Replace the voice'),
+				tOr('social.voice_replace', 'Replace the posting name'),
 				tOr('social.voice_help', 'The line the forge showed you. Kept encrypted on this device.')));
 			host.appendChild(button('imp-note-copy', 'improve-voice-forget',
 				tOr('social.voice_forget', 'Forget it'),
@@ -684,13 +684,13 @@
 			return;
 		}
 
-		// NO VOICE HELD. One tap gets one, and there is nothing to paste.
+		// NO POSTING NAME HELD. One tap gets one, and there is nothing to paste.
 		//
 		// The old empty state told a reader to ask Oxedyne for an invitation link
-		// and paste 45 characters back in -- true of how the forge issues a voice,
-		// but a dead end for a person who just wants to write, which is what the
-		// owner met. Provisioning makes the voice for them: the honest instruction
-		// is now "tap the button", and the button does exactly what it says.
+		// and paste 45 characters back in -- true of how the forge issues one, but
+		// a dead end for a person who just wants to write, which is what the owner
+		// met. Provisioning makes it for them: the honest instruction is now "tap
+		// the button", and the button does exactly what it says.
 
 		// THE FORGE ALREADY HOLDS ONE, on another device -- the provision call said
 		// `already`. It is not minted again here; it arrives by sync. Say so, and
@@ -700,41 +700,35 @@
 			arriving.className = 'imp-as';
 			arriving.id = 'improve-voice-arriving';
 			arriving.textContent = tOr('social.voice_already',
-				'Your voice is set on another device and will sync here shortly.');
+				'Your posting name is set on another device and will sync here shortly.');
 			host.appendChild(arriving);
 			host.appendChild(button('imp-note-copy', 'improve-voice-reissue',
-				tOr('social.voice_reissue', 'I lost my voice \u2014 re-issue'),
+				tOr('social.voice_reissue', 'I lost my posting name \u2014 re-issue'),
 				tOr('social.voice_reissue_help',
-					'Makes a new voice; the old one stops working everywhere. Cannot be undone.')));
+					'Makes a new posting name; the old one stops working everywhere. Cannot be undone.')));
 			return;
 		}
 
-		var how = document.createElement('span');
-		how.className = 'imp-as';
-		how.id = 'improve-voice-how';
-		how.textContent = tOr('social.voice_intro',
-			'A voice lets you post, reply and vote on the forge; reading needs none.',
-			{ host: FORGE_HOST });
-		host.appendChild(how);
-
 		// THE PRIMARY PATH: one tap. Disabled and relabelled while the request is
-		// in flight, so a second press cannot mint a second voice.
+		// in flight, so a second press cannot mint a second one. No second line of
+		// explanation above it (SOC-04): the summary line already said there is
+		// none, and the button says what pressing it does.
 		var get = button('imp-send', 'improve-voice-get',
 			_voiceBusy
-				? tOr('social.voice_getting', 'Making your voice on the forge\u2026')
-				: tOr('social.voice_get', 'Get my voice'),
+				? tOr('social.voice_getting', 'Making your posting name on the forge\u2026')
+				: tOr('social.voice_get', 'Get one'),
 			tOr('social.voice_get_help',
-				'Makes your voice on the forge. One tap.'));
+				'Makes your posting name on the forge. One tap.'));
 		if (_voiceBusy) get.disabled = true;
 		host.appendChild(get);
 
 		// THE UNOBTRUSIVE FALLBACK, kept per the owner's instruction behind an "I
-		// already have a voice" affordance rather than as the primary path: for a
-		// voice the forge made elsewhere and handed over out of band.
+		// already have one" affordance rather than as the primary path: for a
+		// posting name the forge made elsewhere and handed over out of band.
 		host.appendChild(button('imp-keep', 'improve-voice-open',
-			tOr('social.voice_have', 'I already have a voice'),
+			tOr('social.voice_have', 'I already have a posting name'),
 			tOr('social.voice_have_help',
-				'Paste a voice the forge already gave you.')));
+				'Paste a posting name the forge already gave you.')));
 	}
 
 	/// Take the secret off the input and hand it to voice.js, which wraps it.
@@ -817,7 +811,7 @@
 		try {
 			if (window.DaimondIdentity && !DaimondIdentity.isUnlocked()) {
 				flash(tOr('voice.err.locked',
-					'Unlock Daimond first: your voice is kept encrypted under your passphrase.'));
+					'Unlock Daimond first: your posting name is kept encrypted under your passphrase.'));
 				return false;
 			}
 		} catch (e) { /* no identity module: let set() below speak */ }
@@ -832,11 +826,11 @@
 		// door mail.js and sync.js send a buyer to -- rather than drawing a second
 		// one here. Read off the status OR the token, so a body-less 402 still lands.
 		if (a.status === 402 || (a.data && a.data.error === 'pro_required')) {
-			flash(tOr('social.voice_pro', 'A voice is part of Daimond Pro.'));
+			flash(tOr('social.voice_pro', 'Posting needs Daimond Pro.'));
 			try {
 				if (window.DaimondAdmin && DaimondAdmin.credits) {
 					DaimondAdmin.credits(tOr('social.voice_pitch',
-						'A voice on the forge is part of Daimond Pro.'));
+						'Posting on the forge is part of Daimond Pro.'));
 				}
 			} catch (e) { /* the drawer is absent; the sentence still stood */ }
 			drawVoice();
@@ -845,7 +839,7 @@
 
 		if (!a.ok || !a.data || a.data.provisioned !== true) {
 			flash(tOr('social.voice_get_failed',
-				'Could not make your voice. Try again shortly.'));
+				'Could not make your posting name. Try again shortly.'));
 			drawVoice();
 			return false;
 		}
@@ -857,12 +851,12 @@
 			_voiceAlready = true;
 			_voiceOpen    = false;
 			flash(tOr('social.voice_already',
-				'Your voice is set on another device and will sync here shortly.'));
+				'Your posting name is set on another device and will sync here shortly.'));
 			drawVoice();
 			return true;
 		}
 
-		// A VOICE WAS MINTED. Hold it, then drop the plaintext at once.
+		// A POSTING NAME WAS MINTED. Hold it, then drop the plaintext at once.
 		try {
 			await v.set(a.data.secret);
 		} catch (e) {
@@ -870,21 +864,21 @@
 			// wrap that refused. Never quote the value.
 			flash(e && e.message ? String(e.message)
 				: tOr('social.voice_get_failed',
-					'Could not make your voice. Try again shortly.'));
+					'Could not make your posting name. Try again shortly.'));
 			drawVoice();
 			return false;
 		}
 		a.data.secret = '';			// in the clear only for the wrap above
 		_voiceOpen    = false;
 		_voiceAlready = false;
-		flash(tOr('social.voice_saved', 'Your voice is held here, encrypted.'));
+		flash(tOr('social.voice_saved', 'Your posting name is held here, encrypted.'));
 		render();
 		return true;
 	}
 
-	/// Re-issue a voice the forge holds but this device cannot read.
+	/// Re-issue a posting name the forge holds but this device cannot read.
 	///
-	/// DESTRUCTIVE, so it asks first: a re-issue mints a new voice and the old one
+	/// DESTRUCTIVE, so it asks first: a re-issue mints a new one and the old one
 	/// stops working on every device, and there is no undo. Offered only after a
 	/// provision answered `already` -- the one case where a person genuinely lost
 	/// the copy the forge made for them.
@@ -894,17 +888,17 @@
 			if (window.DaimondCore && DaimondCore.confirm) {
 				ok = await DaimondCore.confirm(
 					tOr('social.voice_reissue_ask',
-						'Re-issue your voice? The old one stops working on every device, and this cannot be undone.'),
+						'Re-issue your posting name? The old one stops working on every device, and this cannot be undone.'),
 					tOr('social.voice_reissue_do', 'Re-issue'),
-					{ title: tOr('social.voice_reissue_title', 'Re-issue your voice'), danger: true });
+					{ title: tOr('social.voice_reissue_title', 'Re-issue your posting name'), danger: true });
 			}
 		} catch (e) { ok = true; }
 		if (!ok) return false;
 		return await provision(true);
 	}
 
-	/// Forget the voice on this device. It asks, because the forge cannot give it
-	/// back: a voice is minted once and shown once.
+	/// Forget the posting name on this device. It asks, because the forge cannot
+	/// give it back: one is minted once and shown once.
 	async function forgetVoice() {
 		var v = voice();
 		if (!v) return false;
@@ -913,7 +907,7 @@
 			if (window.DaimondCore && DaimondCore.confirm) {
 				ok = await DaimondCore.confirm(
 					tOr('social.voice_ask_forget',
-						'Forget your voice here? It was shown once and will not be shown again.'),
+						'Forget your posting name here? It was shown once and will not be shown again.'),
 					tOr('social.voice_forget', 'Forget it'),
 					{ title: tOr('social.voice_forget', 'Forget it') });
 			}
@@ -1029,7 +1023,7 @@
 		// Post button's tooltip; the line under the box is the one fact that must be
 		// read before pressing -- it goes out in public, under your name.
 		line.textContent = tOr('social.compose_public',
-			'Posted publicly, under your voice name — anyone can read it.');
+			'Posted publicly, under your posting name — anyone can read it.');
 		line.hidden = !(send && !send.hidden);
 	}
 
@@ -1383,7 +1377,7 @@
 				return null;
 			}
 		}
-		if (!hasVoice()) { flash(tOr('social.novoice_set', 'No voice yet — set one in Settings to post.')); return null; }
+		if (!hasVoice()) { flash(tOr('social.novoice_set', 'No posting name yet — set one in Settings to post.')); return null; }
 		var rec = store(text, mode);
 		clearBox();
 		render();
@@ -1482,7 +1476,7 @@
 	async function resend(id) {
 		var rec = find(id);
 		if (!rec) return false;
-		if (!hasVoice()) { flash(tOr('social.novoice_set', 'No voice yet — set one in Settings to post.')); return false; }
+		if (!hasVoice()) { flash(tOr('social.novoice_set', 'No posting name yet — set one in Settings to post.')); return false; }
 		// WHAT IS ON THE SCREEN IS WHAT GOES. The row's title editor writes every
 		// keystroke onto the record, but a press landing between the last keystroke
 		// and that write would send the older characters, so the input is read once
@@ -1765,9 +1759,9 @@
 		case 'absent':
 			return tOr('social.err_absent', 'This repository is not available to you.');
 		case 'unvoiced':
-			return tOr('social.err_unvoiced', 'The forge was given no voice, so it refused.');
+			return tOr('social.err_unvoiced', 'The forge was given no posting name, so it refused.');
 		case 'unknown':
-			return tOr('social.err_unknown', 'The forge does not recognise your voice. Set it again from the line the forge printed for you.');
+			return tOr('social.err_unknown', 'The forge does not recognise your posting name. Set it again from the line the forge printed for you.');
 		case 'unpermitted':
 			// The one route where this refusal has a single cause worth naming. The
 			// forge refuses a stranger's revision with `unpermitted` and writes
@@ -1776,7 +1770,7 @@
 				return tOr('social.err_amend_unpermitted',
 					'Only the person who opened this proposal may revise it.');
 			}
-			return tOr('social.err_unpermitted', 'Your voice may not do that here.');
+			return tOr('social.err_unpermitted', 'Your posting name may not do that here.');
 		case 'throttled':
 			if (a.because === 'address') {
 				return tOr('social.err_throttled_address', 'Too many requests from this address just now. Wait a little, then try again.');
@@ -2380,7 +2374,10 @@
 		if (!host) return;
 		var q = load().notes.slice();
 		host.innerHTML = '';
-		if (!q.length) return;
+		if (!q.length) {
+			host.appendChild(line('post-empty', tOr('social.no_notes', 'No proposals yet.')));
+			return;
+		}
 
 		host.appendChild(line('imp-asat imp-queue-head', tnOr('social.queue', q.length,
 			'Waiting to send ({n})', 'Waiting to send ({n})', { n: q.length })));
@@ -2526,7 +2523,7 @@
 		if (!p.asked) {
 			var line = document.createElement('span');
 			line.className = 'imp-as';
-			line.textContent = tOr('social.vote_novoice', 'Set a voice to vote on this.');
+			line.textContent = tOr('social.vote_novoice', 'Set a posting name to vote on this.');
 			box.appendChild(line);
 			into.appendChild(box);
 			return;
@@ -2815,28 +2812,47 @@
 		list.appendChild(foot);
 	}
 
-	/// The Settings view: the voice this device posts with, and the drafts the
-	/// model prepared. Both used to sit beside the compose box; the owner moved them
-	/// out so the box is just a box (#7). `drawVoice` fills the voice section;
-	/// "Forget this plan" clears anything the model drafted that has not been sent.
+	/// Is there a prepared plan, or a queued draft, worth a "Forget this plan"
+	/// control? Asked rather than always drawn: a section offering to clear
+	/// nothing is a section that should not be on screen (SOC-04).
+	function hasDrafts() {
+		try {
+			var p = window.DaimondTriage && DaimondTriage.plan && DaimondTriage.plan();
+			var q = window.DaimondApproveList && DaimondApproveList.queue && DaimondApproveList.queue();
+			return !!(p || (q && q.length));
+		} catch (e) { return false; }
+	}
+
+	/// The Settings view: the posting name this device posts under, the email
+	/// doorbell (moved here from the cog drawer -- one implementation, this
+	/// file's own host handed to `js/daimond.js`'s `DaimondDoorbell.mount`), and
+	/// the drafts the model prepared, where there are any. `drawVoice` fills the
+	/// posting-name section; "Forget this plan" clears anything the model
+	/// drafted that has not been sent.
 	function drawSettings() {
 		var host = el('improve-settings');
 		if (!host) return;
 		host.innerHTML = '';
 
-		host.appendChild(line('imp-with-label imp-set-head', tOr('social.set_voice', 'Your voice')));
+		host.appendChild(line('imp-with-label imp-set-head', tOr('social.set_voice', 'Posting name')));
 		drawVoice();
 
-		host.appendChild(line('imp-with-label imp-set-head', tOr('social.set_drafts', 'Prepared drafts')));
-		host.appendChild(line('imp-as imp-set-note', tOr('social.set_drafts_note',
-			'Forgets any proposals the model drafted from your notes that you have not sent. '
-			+ 'Your notes waiting to send are not touched.')));
-		var acts = document.createElement('div');
-		acts.className = 'imp-acts';
-		acts.appendChild(button('imp-note-copy', 'improve-forget-plan',
-			tOr('social.triage_clear', 'Forget this plan'),
-			tOr('social.triage_clear_help', 'Clear the drafts. Nothing is sent.')));
-		host.appendChild(acts);
+		try {
+			if (window.DaimondDoorbell && DaimondDoorbell.mount) DaimondDoorbell.mount(host);
+		} catch (e) { /* no doorbell in this build */ }
+
+		if (hasDrafts()) {
+			host.appendChild(line('imp-with-label imp-set-head', tOr('social.set_drafts', 'Prepared drafts')));
+			host.appendChild(line('imp-as imp-set-note', tOr('social.set_drafts_note',
+				'Forgets any proposals the model drafted from your notes that you have not sent. '
+				+ 'Your notes waiting to send are not touched.')));
+			var acts = document.createElement('div');
+			acts.className = 'imp-acts';
+			acts.appendChild(button('imp-note-copy', 'improve-forget-plan',
+				tOr('social.triage_clear', 'Forget this plan'),
+				tOr('social.triage_clear_help', 'Clear the drafts. Nothing is sent.')));
+			host.appendChild(acts);
+		}
 	}
 
 	// ── The proposer's returned notes (a declined proposal comes back) ──
@@ -3274,32 +3290,39 @@
 
 	// ── The chips on the head ──────────────────────────────────
 	//
-	// The panel is Social. It holds five things -- Messages, People, Share,
-	// Proposals, Settings. Note-capture MERGED INTO PROPOSALS: the standalone Notes
-	// view is gone, its compose box now sits at the top of the Proposals view, and
-	// Settings is the new fifth. It defaults to Proposals, which is where a person
-	// both writes and reads.
+	// The panel is Social. It holds SIX things -- Messages, People, Groups,
+	// Share, Feedback, Settings. It opens on Messages, which is where a reader
+	// arrives from an unread arrival; the compose box lives in Feedback (the
+	// view id and the i18n key are both still `proposals` -- only the word a
+	// reader sees changed, so a rename here is markup and a catalogue value,
+	// never this table).
 	//
 	// The count is deliberately not in the heading. A heading that names a number
 	// goes stale the next time somebody adds a chip, and the panel is the only
 	// honest count.
 	//
 	// The views are looked up by NAME rather than listed twice: a chip is a
-	// `data-view` on the head and an element id in the table below, and a sixth
-	// chip is one line here.
+	// `data-view` on the head and an element id in the table below, and a
+	// seventh chip is one line here.
 
 	var VIEWS = {
 		messages:  'social-messages',
 		people:    'social-people',
+		// The section post.js mounts `#post-groups` into, moved here by
+		// `filled()` below every time post.js redraws it -- see the container's
+		// own comment in index.html for why this file reparents rather than
+		// post.js relocating its own mount.
+		groups:    'social-groups',
 		// js/share.js renders into `#social-share-list` the way post.js renders
 		// into the messages list; this file shows and hides it and nothing more.
 		share:     'social-share',
 		proposals: 'improve-props-view',
-		// This file's own, drawn by `drawSettings`: the voice and the drafts.
+		// This file's own, drawn by `drawSettings`: the posting name, the email
+		// doorbell (moved here from the cog drawer) and the drafts.
 		settings:  'social-settings',
 	};
 
-	var _view = 'proposals';
+	var _view = 'messages';
 
 	/// Callbacks a lane registers to be told its own view was opened, so it can
 	/// read what it needs LAZILY. Ten chips resolved on panel open is ten
@@ -3307,7 +3330,7 @@
 	var _watch = [];
 
 	function show(view) {
-		_view = VIEWS[view] ? view : 'proposals';
+		_view = VIEWS[view] ? view : 'messages';
 		Object.keys(VIEWS).forEach(function (v) {
 			var e = el(VIEWS[v]);
 			if (e) e.hidden = (v !== _view);
@@ -3332,6 +3355,27 @@
 	function filled(view, n) {
 		var off = el('social-' + view + '-off');
 		if (off) off.hidden = !!(n | 0);
+		// GROUPS RIDES IN ON MESSAGES. post.js's own `HOST` is fixed to
+		// `#social-messages-list` -- this lane does not touch that file -- so
+		// every time it says messages have been drawn, `#post-groups` (group.js's
+		// mount, appended fresh each render) is lifted out of that list and into
+		// the Groups view instead. The id travels with it unchanged; only its
+		// parent moves, which is why group.js's own `_host` reference is never
+		// invalidated by the move.
+		if (view === 'messages') relocateGroups();
+	}
+
+	/// Move post.js's `#post-groups` mount out of the messages list and into the
+	/// Groups view's own container. Idempotent and cheap: a no-op once the node
+	/// is already there, and a no-op before post.js has drawn anything at all.
+	function relocateGroups() {
+		try {
+			var src  = document.querySelector('#social-messages-list #post-groups');
+			var dest = el('social-groups-list');
+			if (!src || !dest || src.parentNode === dest) return;
+			dest.innerHTML = '';
+			dest.appendChild(src);
+		} catch (e) { /* group.js is absent in this build */ }
 	}
 
 	// ── Wiring ─────────────────────────────────────────────────
@@ -3499,14 +3543,15 @@
 	/// The panel SHELL, which is what the app and the other lanes talk to.
 	///
 	/// Separate from `DaimondImprove` below on purpose: the Social panel holds
-	/// four things and this file owns two of them. A lane rendering into
-	/// `#social-messages-list` or `#social-people-list` needs the chips, the
-	/// view switch and the empty line, and has no business with a note or a
-	/// proposal.
+	/// six things and this file owns three of them (Feedback, Settings and the
+	/// chip row itself). A lane rendering into `#social-messages-list` or
+	/// `#social-people-list` needs the chips, the view switch and the empty
+	/// line, and has no business with a note or a proposal.
 	window.DaimondSocial = {
 		/// The panel was shown. Every view is told, so a lane can read lazily.
 		onOpen: onOpen,
-		/// Switch to one of `messages`, `people`, `notes`, `proposals`.
+		/// Switch to one of `messages`, `people`, `groups`, `share`, `proposals`,
+		/// `settings`.
 		show:   show,
 		/// Show the panel AND switch to a view. What a reference chip presses.
 		open:   function (view) {
@@ -3645,15 +3690,15 @@
 	function whyNot(a) {
 		var w = (a && a.why) || 'gateway';
 		if (w === 'unvoiced') {
-			return 'this account has no voice on the forge, so it cannot write there. '
-				+ 'Tell the user: the Social panel has a control for setting one.';
+			return 'this account has no posting name on the forge, so it cannot write '
+				+ 'there. Tell the user: Social ▸ Settings has a control for setting one.';
 		}
 		if (w === 'unpermitted') {
 			if (a && a.on === 'amend') {
 				return 'only the person who opened that proposal may revise it, and this '
 					+ 'account did not open it. The forge wrote nothing.';
 			}
-			return 'this account\'s voice is not allowed to do that on the forge.';
+			return 'this account\'s posting name is not allowed to do that on the forge.';
 		}
 		if (w === 'throttled') {
 			return 'the forge is rate-limiting this account'
@@ -3800,9 +3845,9 @@
 		} catch (e) { withheld = ''; }
 		if (withheld) return JSON.stringify({ refusal: no(withheld) });
 		if (!hasVoice()) {
-			return JSON.stringify({ refusal: no('nothing was composed: this account has no voice '
-				+ 'on the forge, so it cannot publish there. Tell the user, and say what you '
-				+ 'wanted to publish -- the Social panel has a control for setting a voice.') });
+			return JSON.stringify({ refusal: no('nothing was composed: this account has no posting '
+				+ 'name on the forge, so it cannot publish there. Tell the user, and say what you '
+				+ 'wanted to publish -- Social ▸ Settings has a control for getting one.') });
 		}
 		var shown = '', payload = null;
 		if (act === 'propose') {
@@ -3812,7 +3857,7 @@
 			// did not read.
 			var build = contextOff() ? '' : _build;
 			payload = { act: 'propose', title: String(r.title || ''), body: String(r.body || ''), build: build };
-			shown = 'A NEW PROPOSAL at ' + FORGE_HOST + ', under this account\'s voice name.\n\n'
+			shown = 'A NEW PROPOSAL at ' + FORGE_HOST + ', under this account\'s posting name.\n\n'
 				+ payload.title + '\n' + payload.body
 				+ (build ? '\n\nand the build identifier ' + build : '');
 		} else if (act === 'vote') {
@@ -3827,14 +3872,14 @@
 			var d = (r.d | 0);
 			payload = { act: 'vote', n: n, d: d };
 			shown = (d === 1 ? 'A VOTE FOR' : d === -1 ? 'A VOTE AGAINST' : 'TAKING BACK THE VOTE ON')
-				+ ' proposal #' + n + ' at ' + FORGE_HOST + ', under this account\'s voice name.\n\n'
+				+ ' proposal #' + n + ' at ' + FORGE_HOST + ', under this account\'s posting name.\n\n'
 				+ (p.title || '(no title)')
 				+ (p.votes ? '\n\nIt stands at ' + p.votes.for + ' for and ' + p.votes.against + ' against.' : '');
 		} else if (act === 'comment') {
 			var cn = r.n | 0;
 			payload = { act: 'comment', n: cn, said: String(r.said || '') };
 			shown = 'A COMMENT on proposal #' + cn + ' at ' + FORGE_HOST
-				+ ', under this account\'s voice name.\n\n' + payload.said;
+				+ ', under this account\'s posting name.\n\n' + payload.said;
 		} else {
 			return JSON.stringify({ refusal: no('\'' + act + '\' is not an act this panel has.') });
 		}

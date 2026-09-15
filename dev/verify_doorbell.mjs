@@ -15,8 +15,10 @@
 //
 //   1. IT IS REACHABLE. Not "the element is in the DOM": measured with
 //      `getBoundingClientRect()` and required to have real area on screen after
-//      pressing the cog a person presses. An absent element reports itself to a
-//      locator as hidden, so everything here is COUNTED before it is asserted.
+//      opening Social ▸ Settings, the way a person reaches it (moved there from
+//      the cog drawer on 2026-09-15; the drawer keeps none of it). An absent
+//      element reports itself to a locator as hidden, so everything here is
+//      COUNTED before it is asserted.
 //   2. IT READS BEFORE IT DRAWS. The row must ask `?view=doorbell` and paint the
 //      answer -- never paint a guess. A switch that showed "off" while the
 //      answer was unknown would tell somebody no mail is being sent when it is.
@@ -217,16 +219,26 @@ const again = await page.evaluate(() => Array.from(
 check('and it is said once, not at every session', before >= 1 && again === 0,
 	JSON.stringify({ before, again }));
 
-// ── 1. The control is reachable, by pressing what a person presses ──
+// ── 1. The control is reachable, by opening what a person opens ─────
 //
-// THE COG, and nothing else. It opens the admin drawer's home view, which is
-// where the sync switch lives and where daimond.js:8323 says a control has to
-// be if anybody is to find it. A check that reached the row by calling
-// `DaimondAdmin.settings()` would be proving the row exists somewhere in the
-// app, which is a weaker claim than the one the privacy page makes.
+// SOCIAL ▸ SETTINGS, and nothing else. This is where the posting name and the
+// doorbell now both live (moved from the cog drawer's admin home on
+// 2026-09-15, `js/daimond.js`'s `DaimondDoorbell.mount`), and it is what the
+// doorbell email's own body and the privacy pages point a reader to. A check
+// that reached the row by calling `DaimondDoorbell.mount()` directly would be
+// proving the row exists somewhere in the app, which is a weaker claim than
+// the one those surfaces make.
 
-await page.evaluate(() => { document.getElementById('settings-btn').click(); });
-await sleep(900);
+/// Open the Social panel and switch it to Settings, the way a person does.
+async function openDoorbellRow() {
+	await page.evaluate(() => {
+		if (window.DaimondPanels) window.DaimondPanels.show('social');
+		if (window.DaimondSocial) window.DaimondSocial.show('settings');
+	});
+	await sleep(900);
+}
+
+await openDoorbellRow();
 
 // COUNTED FIRST. An absent element reports itself to a locator as hidden, so
 // asking "is it visible" before asking "is it there" gets the same answer for a
@@ -236,12 +248,12 @@ const count = await page.evaluate(() => ({
 	note:  document.querySelectorAll('#doorbell-note').length,
 	reach: document.querySelectorAll('#doorbell-reach').length,
 }));
-check('the drawer the cog opens has exactly one doorbell row',
+check('Social ▸ Settings has exactly one doorbell row',
 	count.btn === 1 && count.note === 1 && count.reach === 1, JSON.stringify(count));
 
-// The drawer is long, so the row is brought into view the way a finger would.
-// The property is that it is ON the page the cog opened and can be scrolled to,
-// not that it happened to land in the first screenful.
+// The view can scroll, so the row is brought into view the way a finger would.
+// The property is that it is ON the view Settings opened and can be scrolled
+// to, not that it happened to land in the first screenful.
 await page.evaluate(() => {
 	const el = document.getElementById('doorbell-btn');
 	if (el && el.scrollIntoView) el.scrollIntoView({ block: 'center' });
@@ -274,11 +286,10 @@ check('and with a bell that CAN ring, the reach line says nothing twice',
 
 server.reach = 'no_address';
 // Closed and reopened, which is what a person does and what re-reads the state.
-await page.evaluate(() => { document.getElementById('settings-btn').click(); });
+await page.evaluate(() => { window.DaimondPanels.hide('social'); });
 await sleep(300);
 await page.evaluate(() => { window.DaimondPost.doorbell().then(() => {}); });
-await page.evaluate(() => { document.getElementById('settings-btn').click(); });
-await sleep(900);
+await openDoorbellRow();
 await page.evaluate(() => {
 	const el = document.getElementById('doorbell-btn');
 	if (el && el.scrollIntoView) el.scrollIntoView({ block: 'center' });

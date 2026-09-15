@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
-<title>Chats &amp; Diamonds — Daimond-Handbuch</title>
+<title>Chats &amp; diamonds &mdash; Daimond guide</title>
 <link rel="icon" type="image/svg+xml" href="../../assets/daimond_mark.svg">
 <link rel="stylesheet" href="../../css/variables.css">
 <link rel="stylesheet" href="../../css/guide.css">
@@ -21,238 +21,135 @@
 			<span class="brand-sub">Handbuch</span>
 		</a>
 		<nav class="site-nav" aria-label="Handbuchseiten">
-			<a href="index.html">Erste Schritte</a>
+			<a href="index.html">Hier anfangen</a>
 			<a href="interface.html">Die Oberfläche</a>
-			<a href="models.html">Modelle &amp; Guthaben</a>
 			<a href="chats-and-diamonds.html" aria-current="page">Chats &amp; Diamonds</a>
-			<a href="../capps.html">Capps</a>
-			<a href="email-web-files.html">E-Mail, Web &amp; Dateien</a>
-			<a href="accounts.html">Konten</a>
-			<a href="sync.html">Geräteübergreifende Synchronisierung</a>
+			<a href="../capps.html">Die Seite eines diamond</a>
+			<a href="email-web-files.html">Dateien, E-Mail &amp; das Web</a>
+			<a href="../machine-operations.html">Dein Rechner</a>
+			<a href="../runner.html">Helfer &amp; wo Züge laufen</a>
+			<a href="sync.html">Mehr als ein Gerät</a>
+			<a href="social.html">Soziales &amp; Vorschläge</a>
+			<a href="models.html">Modelle &amp; Anbieter</a>
 			<a href="spending.html">Ausgaben</a>
-			<a href="../machine-operations.html">Befehle auf dem Rechner</a>
-			<a href="social.html">Soziales</a>
+			<a href="accounts.html">Sicherheit &amp; Problembehebung</a>
 		</nav>
 	</div>
 </header>
 
 <main>
 	<h1>Chats &amp; Diamonds</h1>
-	<p class="lede">Ein Chat ist ein Gespräch mit dem Daimon. Ein Diamond ist ein dauerhafter Behälter für ein Vorhaben und hält, was Sie über ein Stück Arbeit herausgefunden haben, damit spätere Arbeit davon ausgeht. Hier: Chats beginnen und lesen, die Bedienelemente für einen Zug, einen Chat in ein Diamond einklappen, der Arbeitsbereich, in dem ein Diamond arbeitet, Dateien an beides anhängen und ordnen, was sich ansammelt.</p>
+	<p class="lede">A chat is a conversation. A diamond is a saved project with its own memory, its own page and its own files. You keep the one inside the other.</p>
 
-	<h2 id="s1">Einen Chat beginnen und zu ihm zurückkehren</h2>
-	<p>Wählen Sie <span class="ui">Neuer Chat</span>, das <strong>＋</strong> neben <strong>Chats</strong> in der Leiste. Tippen Sie in das Feld unten im mittleren Bereich und senden Sie mit <span class="ui">➤</span>. Jeder Chat, den Sie beginnen, steht unter <strong>Chats</strong>, das neueste zuerst; klicken Sie einen an, um ihn in die Mitte zurückzuholen. Ein neuer Chat startet mit Ihrem Standardmodell, und die Auswahl in seiner Kopfzeile ändert das Modell nur für diesen Chat.</p>
+	<h2 id="s1">A chat</h2>
+	<p>Die <span class="ui">+</span> neben <span class="ui">Chats</span> starts one. Type in the box and send. A new chat is titled <span class="ui">Neuer Chat</span> until you say something, and after that its first line is its title.</p>
+	<p>While an answer is arriving you can keep typing. A message sent then waits as a dashed bubble and goes as its own turn when the answer finishes. Click it to take it back, or its cross to drop it. Pressing stop hands anything queued back to you, unsent.</p>
+	<p>Deleting a chat moves it to the Trash, so nothing asks first. The two acts that cannot be undone are the ones that ask, and both are in that panel.</p>
 
-	<p>Eine Chat-Kachel trägt ein <span class="ui">×</span>, und das <span class="ui">⋯</span> am Kopf der Liste <strong>Chats</strong> enthält <span class="ui">Alle Chats löschen</span>. Keines fragt nach: Beide verschieben Chats in den <strong>Papierkorb</strong>, wo sie sich zurückholen lassen. Die Rückfragen sind zu den beiden Handlungen gewandert, die sich nicht rückgängig machen lassen, und beide stehen in diesem Bereich.</p>
+	<h2 id="s2">Reading a long thread</h2>
+	<figure class="shot narrow">
+		<img alt="A chat thread: a tile labelled You holding the question, and a tile labelled Daimond holding the answer." src="../img/thread.png" loading="lazy">
+		<figcaption>Each turn is a labelled tile, so you can see at a glance who said what.</figcaption>
+	</figure>
+	<p>Every turn is a tile, labelled <span class="ui">You</span>, <span class="ui">Thinking</span>, <span class="ui">Tool</span>, <span class="ui">Daimond</span>, or as a note from the app itself. Each header carries the local date and time to the minute in the Holocene reckoning, so <code>12026-09-15 13:12</code> is this year plus ten thousand. Hover for the full instant with its offset.</p>
+	<p>The header of the chat carries the controls.</p>
+	<ul>
+		<li><strong>Show steps</strong> shows the work done between your message and the answer.</li>
+		<li><strong>Collapse answers</strong> leaves only what you asked. It is the quickest way to skim, and how you start picking turns.</li>
+		<li><strong>Short answers</strong> is a standing request for brevity in this chat. It is a file in your workspace that you can edit, not a hidden instruction.</li>
+		<li>The permission chip reads <span class="ui">Guarded</span>, <span class="ui">Ask every time</span> or <span class="ui">Bypass</span>. See <a href="accounts.html">Sicherheit &amp; Problembehebung</a>.</li>
+	</ul>
+	<p>Two chevrons beside the send button walk back through your own messages and return to the end.</p>
 
-	<p>Während eine Antwort eintrifft, können Sie weitertippen. Eine dann gesendete Nachricht muss <strong>warten</strong> statt verloren zu gehen: Sie erscheint unter dem Verlauf als gestrichelte Blase und geht als eigener Zug los, sobald die Antwort fertig ist. Klicken Sie eine wartende Blase an, um sie zurück ins Feld zu holen und zu ändern, oder ihr <span class="ui">×</span> verwirft sie. Drücken Sie <span class="ui">■</span> zum Stoppen der Antwort, und alles, was dahinter wartet, kommt ungesendet zu Ihnen zurück. Stoppen heißt stoppen.</p>
+	<h2 id="s3">What a stop looks like</h2>
+	<p>A turn says how it ended, in exact words.</p>
+	<ul>
+		<li><span class="ui">Answered</span> means it finished and said something.</li>
+		<li><span class="ui">Stopped</span> means you pressed stop.</li>
+		<li><span class="ui">Step limit reached</span> means it ran out of rounds.</li>
+		<li><span class="ui">Ended without saying anything</span> means the model returned nothing at all.</li>
+		<li><span class="ui">Ended without an answer, after reasoning</span> means it thought, was asked once to answer or use a tool, and still said nothing.</li>
+		<li><span class="ui">Ended on an error</span>, oder <span class="ui">Ended: the tool call arrived as text</span>, say what they say.</li>
+	</ul>
+	<p>None of these is dressed up as an answer.</p>
 
-	<h2 id="s2">Ein langes Gespräch lesen</h2>
-	<p>Ein Gespräch wächst schnell, deshalb trägt die Kopfzeile des Chats Bedienelemente, die es lesbar halten, oben rechts im mittleren Bereich. Zwei weitere sitzen in der Verfassen-Leiste neben <span class="ui">➤</span>.</p>
+	<h2 id="s4">Keeping a chat</h2>
+	<p>Two buttons sit on a chat's row in the rail. <span class="ui">Keep</span> turns the whole conversation into a diamond. <span class="ui">Fold all</span> turns it into a diamond by summarising it, keeping what was worked out and dropping the back-and-forth.</p>
+	<p>To keep only part, collapse the answers, tick the turns worth keeping, and choose <span class="ui">Ausgewählte einklappen</span>. Fold a step you have adopted, and leave a passing remark where it is.</p>
+	<p>Nothing is absorbed on its own. A diamond's memory changes only through a fold or an edit, and every write is kept in History.</p>
 
-	<div class="cards">
-		<div class="card">
-			<h3 id="s3">Schritte</h3>
-			<p>Die <span class="ui">Schritte</span> blenden im Verlauf die Werkzeugschritte ein oder aus — die Arbeit, die der Agent zwischen Ihrer Nachricht und seiner Antwort getan hat. Blenden Sie sie aus, um das Gespräch zu lesen; blenden Sie sie ein, um zu sehen, was er getan hat.</p>
-		</div>
-		<div class="card">
-			<h3 id="s4">Einklappen</h3>
-			<p>Die <span class="ui">−</span> Schaltfläche klappt jede Antwort ein und lässt stehen, was Sie gefragt haben. Sie ist der schnellste Weg, einen langen Verlauf zu überfliegen, und so beginnen Sie, Züge zum Einklappen auszuwählen.</p>
-		</div>
-		<div class="card">
-			<h3 id="s5">Zurückspringen</h3>
-			<p><strong>Die Pfeiltaste nach oben</strong> neben der Senden-Schaltfläche springt zu Ihrer letzten Nachricht zurück. Drücken Sie sie erneut, um durch die davor zurückzugehen.</p>
-		</div>
-		<div class="card">
-			<h3 id="s6">Ans Ende springen</h3>
-			<p><strong>Die Pfeiltaste nach unten</strong> kehrt an den Fuß des Chats zurück und beginnt den Gang von vorn, sodass der nächste Sprung zurück zu Ihrer letzten Nachricht führt, statt dort weiterzumachen, wo Sie stehen geblieben waren.</p>
-		</div>
-		<div class="card">
-			<h3 id="s7">Knapp</h3>
-			<p>Ein Dauerschalter, der in diesem Chat um kurze Antworten bittet. Er ist eine Fähigkeit und keine versteckte Anweisung: Worum er bittet, ist eine Datei in Ihrem Arbeitsbereich, die Sie lesen und bearbeiten können.</p>
-		</div>
-		<div class="card">
-			<h3 id="s8">Berechtigungsmodus</h3>
-			<p>Ein Wort neben dem Modell, das sagt, was Daimond ohne Nachfrage tut. Behandelt auf <a href="../machine-operations.html">Befehle auf dem Rechner</a>.</p>
-		</div>
-	</div>
+	<h2 id="s5">Inside a diamond</h2>
+	<p>Your diamonds sit above your chats, and the <span class="ui">+</span> makes one. A diamond has two faces, and a switch in its header moves between them. <span class="ui">Kristall</span> is what it knows, and <span class="ui">Chat</span> is its own conversation.</p>
 
-	<figure class="shot" data-shot="chat-turns">
-		<img alt="Ein Chat mit eingeklappten Antworten, der die gestellten Fragen zeigt, und die Bedienelemente zur Zugauswahl in der Kopfzeile." src="../shots/chat-turns.png" loading="lazy">
-		<figcaption>Die Antworten einzuklappen lässt stehen, was Sie gefragt haben, und schaltet die Bedienelemente zum Auswählen von Zügen zum Einklappen ein.</figcaption>
+	<figure class="shot narrow">
+		<img alt="A card headed What this diamond knows: a title, a summary, chips reading Objectives 2, Open tasks 3 and Done 1, then rows for Sections, Facts, Habits and People, with Edit and Show raw memory buttons." src="../img/knows.png" loading="lazy">
+		<figcaption><span class="ui">What this diamond knows</span>, on the Crystal face. The raw file is one press away.</figcaption>
 	</figure>
 
-	<h2 id="s9">Einen Chat in ein Diamond einklappen</h2>
-	<p>Wenn ein Gespräch etwas herausgearbeitet hat, klappen Sie es ein: Behalten Sie, was Sie gelernt haben, und lassen Sie das Hin und Her fallen, das dazu geführt hat. Eingeklappt wird in ein <strong>Diamond</strong>, und zwei Einheiten machen es aus:</p>
+	<p>The card lists the diamond's title and summary in its own words, then everything else it holds, a line each. <span class="ui">Edit</span> opens a form. <span class="ui">Show raw memory</span> opens the file itself, for when you would rather work in it directly.</p>
+
+	<h2 id="s6">The four files a diamond keeps</h2>
+	<p>Memory is kept in the open. Four files sit in the diamond's own folder, readable in the Workspace panel and by the daimon.</p>
 	<ul>
-		<li><strong>Eine Einklappung</strong> ist eine Verbesserung, ein einzelner Schritt nach vorn.</li>
-		<li><strong>Ein Kristall</strong> ist das, was die Einklappungen angesammelt haben: die Gestalt der Arbeit, die Schritte in ihrer Reihenfolge und die Prüfungen, die Sie auf die harte Tour gefunden haben. Ein Diamond ist ein Kristall zusammen mit der Kette von Einklappungen, die ihn hervorgebracht hat.</li>
+		<li><code>crystal.json</code> holds what this diamond <em>is</em>, meaning its title, summary, sections, facts and links.</li>
+		<li><code>REQUIREMENTS.md</code> holds what is to do, as objectives with ranked tasks under each. A task leaves it by being ticked or struck out, and by nothing else.</li>
+		<li><code>DECISIONS.md</code> holds what was ruled, dated, with the reason. New rulings are appended, and old ones are left as they were.</li>
+		<li><code>STATE.md</code> holds where things are now, and is overwritten each time.</li>
 	</ul>
+	<p>All four ride with the daimon on every round inside one budget, so what a diamond is told about itself is bounded and predictable. A crystal too large to fit whole keeps its overflow readable and searchable instead of dropping it. The counts on the card, <span class="ui">Objectives</span>, <span class="ui">Open tasks</span> und <span class="ui">Done</span>, are read off <code>REQUIREMENTS.md</code>.</p>
 
-	<h3 id="s10">Züge auswählen und einklappen</h3>
-	<p>Klappen Sie den Verlauf zusammen mit <span class="ui">−</span>, dann wählen Sie die Züge, die es wert sind. In der Kopfzeile erscheint eine Reihe von Bedienelementen: <span class="ui">Alle auswählen</span>, <span class="ui">Auswahl aufheben</span> und <span class="ui">Ausgewählte einklappen</span>, das die gewählten Züge in das Diamond einklappt. Klappen Sie einen Schritt ein, den Sie <em>übernommen haben</em> und keine beiläufige Bemerkung: Das Einklappen bewahrt, was Sie gelernt haben, nicht das Protokoll.</p>
-
-	<div class="note"><strong>Nichts wird von allein aufgenommen.</strong> Ein Kristall wächst nie im Hintergrund: Sie wählen die Züge, die angeboten werden, und das Einklappen selbst ist ein Vorschlag — der Agent schreibt den Kristall um und zeigt Ihnen das Ergebnis, das Sie annehmen oder ablehnen. Ein Kristall ändert sich nur, weil Sie es gesagt haben.</div>
-
-	<figure class="shot" data-shot="diamond-fold">
-		<img alt="Die Kommandofläche des Diamonds anstelle des Chats, mit Bedienelementen zum Lenken und Einklappen der Methode." src="../shots/diamond-fold.png" loading="lazy">
-		<figcaption>Ein ausgewähltes Diamond zeigt seine Kommandofläche anstelle des Chats, wo Sie die Methode lenken und einklappen.</figcaption>
-	</figure>
-
-	<h2 id="s11">Ein Diamond bearbeiten</h2>
-	<p>Diamonds stehen in der Leiste über Ihren Chats; eines fügen Sie hinzu mit dem <strong>＋</strong> neben <strong>Diamonds</strong>. Eines auszuwählen ersetzt den Chat in der Mitte durch seine Kommandofläche, eine kompakte Ansicht, in der Sie die Arbeit lenken und weitere Verbesserungen einklappen. Welche Seite der Bereich zeigt, sehen Sie, ohne zu lesen: Bei einem Diamond nimmt er die Daimond-Marke neben den Namen und macht seine Ecken eckig, gegen die runden Ecken von allem anderen auf dem Bildschirm.</p>
-
-	<p>Ein Diamond hat <strong>zwei Seiten</strong>, und ein Umschalter in der Kopfzeile wechselt zwischen ihnen. <span class="ui">Kristall</span> ist, was das Diamond weiß. <span class="ui">Chat</span> ist sein eigenes Gespräch, das wie jedes andere bestehen bleibt und eine Schaltfläche <span class="ui">Einklappen</span> trägt, denn eingeklappt wird mitten im Fluss und nicht beim Einrichten. Wählen Sie einen Chat in der Leiste, und das gewöhnliche Gespräch kehrt zurück, so wie immer, wenn die Bühne sonst leer wäre.</p>
-
-	<h3 id="s12">Was ein Diamond tut und was nicht</h3>
-	<p>A Diamond retains; on its own it does not run. Nothing executes a crystal: there is no workflow engine and no chain from one Diamond to another. Returning to a Diamond does not set it going, and neither does leaving it alone. A Diamond you have not automated answers when you prompt it and at no other time — which is what its panel says when you look: <em>Nothing set. This Diamond answers when you prompt it and at no other time.</em></p>
-
-	<p>Also <em>es wieder aufnehmen</em> heißt, es erneut zu lenken, mit allem, was es schon gelernt hat, zur Hand. Der Kristall ist Prosa, und Prosa liest ein Modell am besten; er wird dem Daimon gereicht, wenn Sie das Diamond bearbeiten, und jedem Arbeiter, der von ihm losgeschickt wird. Was Sie einmal herausgearbeitet haben, erreicht die Arbeit wieder, ohne dass Sie es abtippen oder daran denken müssten.</p>
-
-	<p>The one way a Diamond acts without you is the one you set up yourself, described next.</p>
-
-	<h2 id="s13">Triggered actions</h2>
-	<p>A <strong>triggered action</strong> is a standing arrangement for a Diamond to do something <em>without being asked</em>. You write it, you switch it on, and from then on the Diamond acts when the thing you named happens. It is the only part of Daimond that spends money with nobody at the keyboard, so it is worth reading this section before you set one.</p>
-
-	<p>They live under <span class="ui">When this Diamond acts</span> on a Diamond's crystal. <span class="ui">Add an action</span> makes one; a pulldown selects it for editing when there is more than one. Two things can set an action off:</p>
+	<h2 id="s7">Two kinds of fold</h2>
+	<p>The word covers two different acts.</p>
 	<ul>
-		<li><strong>Minutes of my activity.</strong> A timer that only counts while you are actually working. A tab left open overnight counts none of them, so a Diamond set to thirty minutes fires after half an hour of your work, not half an hour of wall clock.</li>
-		<li><strong>Mail arriving.</strong> Mail landing in a folder you name, in a mailbox you have already set up. Nothing fires until there is mail.</li>
+		<li><strong>Summarise earlier messages</strong>, in the chat header, is the app compressing a conversation that no longer fits. Its decisions are filed into <code>DECISIONS.md</code>, its open items into <code>REQUIREMENTS.md</code>, and its next step into <code>STATE.md</code>. What it files can be found afterwards, and what it leaves in a notice cannot.</li>
+		<li><strong>Fold now</strong>, on the Crystal face, is a model rewriting what this diamond remembers from what has happened since. Every write snapshots a version.</li>
 	</ul>
+	<p>Filing is repeatable, so running the same fold twice files nothing twice, and the order two folds arrive in does not change what the files end up saying.</p>
 
-	<p>Each action carries two pieces of writing. The <strong>instruction</strong> is what the Diamond is asked to do when it fires, and it is sent every time. The <strong>context</strong> is background it needs the first time only: it goes in front of the first instruction and then stops going, until you change it, at which point it is sent once more. That is what changing it means.</p>
+	<h2 id="s8">History</h2>
+	<p><span class="ui">History</span> lists every version, newest first. <span class="ui">Ansehen</span> reads one, <span class="ui">Wiederherstellen</span> makes it current again, and <span class="ui">Delta</span> shows the material a fold was given. Restore keeps what was current first, so a restore can itself be undone.</p>
 
-	<p>Actions are ordinary files. They sit in the Diamond's own directory as <strong translate="no">triggers.json</strong>, in the open, where you can read them in the Workspace panel and where the Diamond itself can read and edit them with the file tools it already has. Nothing about them is hidden from you or from it.</p>
+	<h2 id="s9">Acting without being asked</h2>
+	<p>A diamond answers when you prompt it and at no other time, unless you set up a triggered action. Those live under <span class="ui">When this diamond acts</span> on the Crystal face, and <span class="ui">Add an action</span> makes one. Two things can set one off, either minutes of your own activity, counted only while you work, or mail arriving in a folder you name.</p>
+	<p>Each action carries an instruction, sent every time, and a context, sent once until you change it. They are an ordinary file, <code>triggers.json</code>, in the diamond's folder.</p>
+	<p>A new action is <strong>stopped</strong>, and says so: <em>Stopped. Press &#9654; on the light beside the pulldown to let this action run.</em> One press arms it.</p>
 
-	<h3 id="s14">The play, the pause and the light</h3>
-	<p>Every triggered action wears the same three-part control the rest of the app uses: a <strong>play</strong>, a <strong>pause</strong> and a round <strong>light</strong>. The Diamond carries one that speaks for all of its actions, and the <span class="ui">Alles</span> row at the top of the rail carries one that speaks for the whole app.</p>
-
-	<p><strong>The light says whether anything is going to happen on its own.</strong> Not whether you have pressed pause — whether something is actually armed and free to fire:</p>
+	<h3 id="s10">The light</h3>
+	<p>Every action, every diamond and the <span class="ui">Alles</span> row wear the same three-part control, a play, a pause and a round light. The light says whether anything is armed and free to fire.</p>
 	<ul>
-		<li><strong>Red.</strong> Nothing here will act by itself — because you have set nothing up, or because what is here is switched off, held, or missing something it cannot fire without.</li>
-		<li><strong>Amber.</strong> Some of what is set up will act, and some is held.</li>
-		<li><strong>Green.</strong> Everything that is set up will act.</li>
+		<li><strong>Red.</strong> Nothing here will act by itself.</li>
+		<li><strong>Amber.</strong> Some of it will, and some is held.</li>
+		<li><strong>Green.</strong> Everything set up will act.</li>
 	</ul>
+	<p>A fresh account is red everywhere, which is the honest answer to whether anything is running by itself. An action missing its mailbox or its instruction is left out of the count, because it could not fire. Amber can only be arrived at, never set.</p>
+	<p>A held action spends nothing, because it is refused before the turn starts.</p>
 
-	<p>A Diamond you have not automated therefore shows <strong>red</strong>, and so does the <span class="ui">Alles</span> row on a fresh account. That is not a warning. It is the honest answer to "is anything running by itself?", and on a new account the answer is no.</p>
-
-	<p>The two buttons follow the light, so you never have to work out which one would do something:</p>
-	<ul>
-		<li>Red: <strong>play</strong> is live and <strong>pause</strong> is greyed. There is nothing running to stop.</li>
-		<li>Amber: <strong>both</strong> are live. You can release what is held or hold the rest.</li>
-		<li>Green: <strong>pause</strong> is live and <strong>play</strong> is greyed. There is nothing held to release.</li>
-	</ul>
-
-	<div class="note"><strong>An action that cannot fire is not counted.</strong> An action switched on but missing its mailbox, its folder or its instruction would never go off, so the light does not report it as though it would. Fill in what it is missing and the light changes on its own.</div>
-
-	<p>Pressing pause on a Diamond holds every action under it; pressing it on the <span class="ui">Alles</span> row holds the lot. Nothing is spent by a held action — it is refused before the turn starts, so a pause costs nothing but the wait. Amber can only be arrived at, never set: there is no button that makes a light amber, which is what stops the colour from meaning whatever somebody last clicked.</p>
-
-	<p>The same light rides on your mailboxes, and it reads the same way. A mailbox whose folders you refresh by hand is <strong>red</strong>: pressing refresh yourself is not automation, it is you. Give a folder an interval and it goes green.</p>
-
-	<h2 id="s15">Der Kristall und seine Historie</h2>
-	<p>The crystal is two real files in the Diamond's own directory: <strong translate="no">crystal.json</strong>, was das Diamond weiß, und <strong translate="no">crystal.html</strong>, the page that draws it. That directory is always in the Diamond's workspace, so both can be opened in the Workspace panel, read, and edited by hand. It is not inside the folder you have open as your workspace, though: a Diamond is kept in the browser's own storage, apart from your work.</p>
-
-	<p>Jedes Schreiben hält eine Fassung fest, ein Kristall hat also eine Historie, und nichts wird überschrieben. Die Historie führt jede Fassung auf, die neueste zuerst, jede mit dem, was sie hervorgebracht hat:</p>
-	<ul>
-		<li><span class="ui">Ansehen</span>: diese Version lesen.</li>
-		<li><span class="ui">Wiederherstellen</span>: diese Version wieder zur aktuellen machen.</li>
-		<li><span class="ui">Delta</span>: die rohe Eingabe ansehen, die ein Einklappen verbraucht hat, das Material, das der Agent zum Verdichten bekam.</li>
-	</ul>
-
-	<div class="note"><strong>Wiederherstellen zerstört nichts.</strong> Der Text, der aktuell war, kommt zuerst in die Historie; eine ältere Version wiederherzustellen fügt der Historie also etwas hinzu, statt sie zu ersetzen — eine Wiederherstellung, die Sie nicht meinten, lässt sich selbst rückgängig machen.</div>
-
-	<h2 id="s16">Artefakte</h2>
-	<p>Ein Diamond hält außerdem fest, was seine Arbeit berührt hat: die geschriebenen Dateien und die geöffneten Seiten, während Sie daran gearbeitet haben. Nichts davon müssen Sie selbst notieren. Daimond vermerkt ohnehin jedes Werkzeug, das ein Agent benutzt; die Liste wird also von dem abgelesen, was geschehen ist, und in dem Moment eingesammelt, in dem Sie ein Einklappen annehmen.</p>
-
-	<p>Dateien, die nur <em>gelesen</em> wurden, bleiben mit Absicht draußen. Ein Agent öffnet vielleicht vierzig Dateien auf der Suche nach einer Sache, und alle vierzig aufgeführt begrüben die eine, auf die es ankam. Behalten wird, was die Arbeit hervorgebracht hat, und die Seiten, die Sie sehen wollten.</p>
-
-	<p>Wenn ein Diamond welche hat, sagt eine Zeile über dem Lenkfeld, wie viele. Ein Klick darauf öffnet die Liste, in der jeder Eintrag drei Dinge tut:</p>
-	<ul>
-		<li><strong>Die Bezeichnung</strong> öffnet den Eintrag — eine Datei im Dok-Panel, eine Seite im Web-Panel.</li>
-		<li><strong>Die kleine Pfeiltaste</strong> setzt einen Verweis darauf ins Lenkfeld, sodass Sie „mach die Zahlen in diesem noch einmal“ sagen können, ohne den Pfad auszuschreiben.</li>
-		<li><strong>Die Kreuztaste</strong> entfernt ihn, falls er doch nicht zu diesem Diamond gehört.</li>
-	</ul>
-
-	<div class="note">Eine Datei, die Sie inzwischen umbenannt oder gelöscht haben, <strong>sagt das</strong> auch, wenn Sie sie öffnen wollen, statt stillschweigend nichts zu tun. Eine Liste toter Verweise, die etwas anderes vorgibt, ist schlimmer als gar keine Liste.</div>
-
-	<h2 id="s17">Der Arbeitsbereich eines Diamonds</h2>
-	<p>Ein Diamond hat einen <strong>Arbeitsbereich</strong>: die Dateien und Ordner, die Sie bei ihm behalten. Sie legen sie dorthin. Ein Daimon kann seinen eigenen Arbeitsbereich nicht erweitern, er arbeitet also mit dem, was ihm gegeben wurde, und fragt Sie, wenn er mehr braucht.</p>
-
-	<p><strong>Er ist eine Sicht auf Ihre Dateien, kein Kasten, der sie enthält.</strong> Beim Anhängen wird nichts kopiert: Die Datei bleibt, wo sie ist, und das Diamond zeigt auf sie. Hängen Sie denselben Ordner an zwei Diamonds, gibt es weiterhin einen Ordner, und eine Änderung über das eine ist die Datei, die das andere liest. Etwas aus dem Arbeitsbereich eines Diamonds zu nehmen löst nur die Verbindung; die Datei selbst bleibt unberührt, und nur ein bewusstes Löschen entfernt sie. Das Wort <em>Arbeitsbereich</em> lädt dazu ein, eine Kopie zu erwarten, und es gibt keine.</p>
-
-	<p>Ein Diamond hat außerdem ein eigenes Verzeichnis, immer in seinem Arbeitsbereich und immer beschreibbar, damit sein Daimon einen Ort zum Arbeiten hat, bevor Sie etwas angehängt haben; dort liegt der Kristall. Ein Ordner lässt sich so anhängen, dass er <strong>eingesehen statt bearbeitet wird</strong>, was einem Daimon erlaubt, ihn zu lesen, und jeden Schreibzugriff verweigert. Und das Panel <a href="email-web-files.html">Arbeitsbereich</a> zeigt entweder alle Ihre Dateien oder nur die, die dieses Diamond behält, je nachdem, was zur Arbeit vor Ihnen passt.</p>
-
-	<h3 id="s18">Anhängen, mit der Büroklammer</h3>
-	<p>Die <strong>📎</strong> in jeder Zeile des Arbeitsbereich-Panels — bei Dateien wie bei Ordnern — und in der Kopfzeile des Dok-Panels heißt <span class="ui">An den aktuellen Fokus anhängen</span>. Ein Bedienelement, dessen Wirkung dem folgt, was im Fokus ist, und nicht der Zeile, in der es sitzt. Ist nichts im Fokus, wird es gar nicht angeboten.</p>
-	<ul>
-		<li><strong>Ein Diamond ist im Fokus.</strong> Die Datei oder der Ordner tritt dem Arbeitsbereich dieses Diamonds bei und bleibt, bis Sie sie wieder abnehmen. Sein Daimon darf sie dann öffnen.</li>
-		<li><strong>Ein gewöhnlicher Chat ist im Fokus.</strong> Der Anhang gilt für den <em>nächsten Zug allein</em>, und steht in einer Fußzeile über dem Feld, die sich leert, sobald der Zug gesendet ist.</li>
-	</ul>
-	<p>Jeder Anhang trägt einen von zwei Zuständen, auf seiner Kachel umschaltbar. <strong>Notiz</strong> sagt, dass der Pfad erwähnenswert ist, und kostet ein paar Tokens. <strong>Lesen</strong> sagt, dass der Inhalt jetzt gebraucht wird, und eine Datei kann auf Tausende kommen. Ein Anhang beginnt bei Notiz, weil das viel billiger ist: Eine Voreinstellung, die ungefragt Ihr Geld ausgibt, wäre die falsche.</p>
-	<p>So oder so wird der Text, den es erzeugt (<em>Notiere …</em>, oder <em>Lies … vollständig.</em>) vor Ihre Nachricht ins Feld geschrieben, zum Bearbeiten oder Löschen vor dem Senden. Ein Prompt, den die App schreibt und versteckt, ist ein Prompt, dem niemand widersprechen kann.</p>
-	<p>Die Fußzeile trägt ein <strong>+</strong> zum Anhängen mehrerer Dinge, ohne zu verlassen, was Sie gerade lesen, und einen Umschalter zwischen den Kacheln als <span class="ui">Stapel</span> und Reihen größerer <span class="ui">Symbole</span>. Ab sechs Kacheln — vier, wenn das Fenster niedrig ist — scrollt sie, statt zu wachsen, das Verfassen-Feld bleibt also, wo es ist. Ein Anhang aus einem Arbeitsbereich, der nicht der offene ist, sagt, wo er liegt, statt sich als leerer Ordner zu lesen, und bleibt aus dem erzeugten Text heraus: Ein Pfad, den ein Modell nicht öffnen kann, erkauft einen Zug voller Entschuldigungen.</p>
-
-	<h3 id="s19">Was ein Daimon öffnen kann</h3>
-	<p><strong>Ein Daimon kann nur die Dateien im Arbeitsbereich seines Diamonds öffnen.</strong> Nichts außerhalb davon ist lesbar oder beschreibbar, weder für den Daimon noch für einen Arbeiter, den er losschickt. Das ist keine Anweisung in einem Prompt, an die ein Modell sich halten mag oder nicht: Die Prüfung sitzt im kompilierten Code, an der einen Tür, durch die jedes Dateiwerkzeug geht, und dieser Code steckt im veröffentlichten Bündel, das reproduzierbar gebaut wird. Es ist also eine Behauptung, die Sie prüfen können, und keine, die Sie glauben müssen.</p>
-
-	<p>Was sie nicht abdeckt, gehört in denselben Atemzug. Sie regelt, was ein Daimon erreichen kann, nicht wo das landet, was er liest: Was er öffnet, geht mit dem Rest des Zuges an Ihren Modellanbieter. Sie schützt sehr wohl vor einem Agenten, dem etwas eingeredet wurde — ein Zug, der eben die Anweisungen eines Fremden in einer Seite oder einer E-Mail gelesen hat und in dessen Auftrag sucht, erreicht trotzdem nichts außerhalb dieses Arbeitsbereichs. Sie schützt nicht davor, dass ein Anbieter missbraucht, was Sie ihm senden, oder dass ein Build nicht der ist, den wir veröffentlicht haben; darauf antworten <a href="accounts.html">was den Browser verlässt</a> und das <a href="interface.html">versiegelte Register jedes Builds</a>.</p>
-
-	<h2 id="s20">Arbeiter losschicken</h2>
-	<p>Manche Aufgaben wollen getan und nicht bloß festgehalten werden. Dafür schickt der Daimon des Diamonds einen <strong>Arbeiter-Agenten</strong> los. Jeder Arbeiter läuft in seinem eigenen Kontext mit den Dateiwerkzeugen des Arbeitsbereichs und bekommt die ständigen Anweisungen und den Kristall dieses Diamonds. Dieser Kristall ist alles, was er über Ihr Vorhaben weiß: Ein Arbeiter sieht Ihr Gespräch nicht, die Aufgabe, die man ihm gibt, muss alles Übrige also sagen.</p>
-
-	<p>Bis zu <strong>acht</strong> Arbeiter laufen gleichzeitig; der Rest wartet. Der Daimon schickt sie los, und damit endet sein Zug, ohne dass er ihre Ausgabe empfängt. Jeder meldet eine Zusammenfassung, und Sie klappen die bewahrenswerten von Hand ein — so bleibt die Wahl, was in einen Kristall kommt, bei Ihnen. Laufende Durchgänge erscheinen im Bereich <strong>Agenten</strong> im Dock.</p>
-
-	<h3 id="s21">Agenten anhalten und stoppen</h3>
-	<p>Die Kopfzeile des Agenten-Panels trägt drei Bedienelemente, die auf <em>alle</em> Agenten auf einmal wirken, und dieselben drei sitzen auf jeder Kachel, damit Sie auf einen einzelnen wirken können:</p>
-	<ul>
-		<li><strong>Pausieren</strong> <span class="ui">⏸</span>: hängt auf, was läuft, und hält die Warteschlange an. Ein laufender Agent behält, was er hervorgebracht hatte; ein wartender startet nicht. Nichts Neues startet, bis Sie fortsetzen. Das ist die Bremse für ein Auffächern, das schneller ausgibt, als Sie wollten.</li>
-		<li><strong>Fortsetzen</strong> <span class="ui">▶</span>: setzt jeden pausierten Agenten dort fort, wo er stehen geblieben ist, und nimmt seine eigene Arbeit wieder auf, statt von vorn zu beginnen; eine Pause kostet also nichts als die Wartezeit.</li>
-		<li><strong>Stopp</strong> <span class="ui">✕</span>: Agenten sofort beenden. Jeder behält, was er geschafft hat, als gestoppte Kachel; <span class="ui">Fertige Agenten entfernen</span> entfernt sie. Der sofortige Notschalter.</li>
-	</ul>
-	<p>Jede Kachel zeigt ihre <strong>Kosten im Lauf</strong>, die Tokens und Dollar laufen live auf statt erst am Ende, Sie sehen die Ausgaben also, während Sie entscheiden, ob Sie anhalten. Unter der Kopfzeile sagt eine Zeile, wie viele Agenten <strong>laufen, angehalten sind und in der Warteschlange stehen</strong>, was Größe und Kosten eines Auffächerns auf einen Blick lesbar macht. Was Daimond von sich aus tut, ist auf der Seite <a href="spending.html">Ausgaben</a> beschrieben.</p>
-
-	<p>Eine breitere Bremse sitzt auf der Zeile <span class="ui">Alles</span> oben in der Leiste. Sie hält alles auf einmal an und setzt es fort: jedes Diamond, jeden Chat, die Arbeiter, die Postfächer und jede Seite, die gerade für Sie geholt wird. Etwas Angehaltenes verweigert einen Zug, bevor er beginnt, es wird also nichts ausgegeben.</p>
-
-	<p>Zwei Grenzen gelten. Ein Arbeiter kann keinen weiteren Arbeiter losschicken, die Delegation geht also eine Ebene tief und hört auf. Und es wird immer nur ein Diamond gelenkt, kein zweites arbeitet also vor sich hin, während Sie wegsehen.</p>
-
-	<h2 id="s22">Tags</h2>
-	<p>Diamonds sammeln sich an, also lassen sie sich taggen. Ein Tag ist ein kurzes Etikett Ihrer Wahl, bearbeitet über <span class="ui">Tags</span> im Kristall eines Diamonds. Vier sind als Anfang vorgeschlagen (<strong>person</strong>, <strong>project</strong>, <strong>topic</strong> und <strong>org</strong>), Daimond erlegt aber keine Systematik auf, und Sie können tippen, was zu Ihrer Arbeit passt.</p>
-
-	<p>Was Sie eintippen, wird geglättet: Ein Tag wird kleingeschrieben, beschnitten und entdoppelt, mit bis zu <strong>8</strong> Tags an einem Diamond und <strong>24</strong> Zeichen je Tag. Tags liegen in den eigenen Metadaten des Diamonds, auf diesem Gerät, wie alles andere.</p>
-
-	<p>Der Editor zeigt zwei Kästen: die Tags <strong>Auf diesem Diamond</strong>, und <strong>Alle Ihre Tags</strong> darunter. Das <span class="ui">×</span> auf einem Chip im oberen Kasten nimmt dieses Tag vom Diamond und gibt es in den Vorrat darunter zurück, wo ein Klick es wieder anheftet. Das <span class="ui">×</span> im unteren Kasten ist eine andere Handlung: Es löscht das Tag selbst, aus jedem Diamond, das darunter abgelegt ist. Das fragt vorher nach und sagt, wie viele Diamonds es ändern wird. Die vier Anfangsvorschläge tragen kein <span class="ui">×</span>, sie werden immer angeboten.</p>
-
-	<div class="note"><strong>Tags sind untätig, und genau das ist ihr Sinn.</strong> Ein Tag ist Ihr Ablagesystem und sonst nichts. Es geht nie an ein Modell, es kommt nie in den Kristall, und es ändert nie, was ein Agent tut. Ein Diamond mit <em>dringend</em> zu taggen ändert nichts daran, wie es behandelt wird.</div>
-
-	<p>In der Leiste öffnet <span class="ui">Nach Tag filtern</span> die Tags, nach denen Sie eingrenzen können, mit ihrer Anzahl auf der Schaltfläche. Klicken Sie ein Tag an, um nur die Diamonds zu zeigen, die es tragen; klicken Sie es erneut an, um sie stattdessen zu verbergen. Sind mehrere gewählt, entscheiden <span class="ui">Alle</span> und <span class="ui">Eine</span> darüber, wie sie sich verbinden, und <span class="ui">Leeren</span> leert den Filter. Es gibt kein eigenes Suchfeld: Ein Diamond wird darüber gefunden, wo es abgelegt ist, und zwei Wege, eine kurze Liste einzugrenzen, sind einer zu viel. Die Liste ist nach der zuletzt berührten sortiert, oben steht also, woran Sie zuletzt gearbeitet haben.</p>
-
-	<h2 id="s23">Der Papierkorb</h2>
-	<p>Einen Chat oder ein Diamond zu löschen zerstört nichts. Der Eintrag wandert <strong>in den Papierkorb</strong>: weiter gespeichert, weiter synchronisiert, aus der Leiste, aus dem Graphen und dem Tag-Filter und aus der Reichweite jedes Daimons, aufgeführt im Bereich <strong>Papierkorb</strong> im Dock, mit einer Schaltfläche „Wiederherstellen“ daneben. Er wird <strong>dreißig Tage</strong> aufbewahrt und dann zerstört, und jede Zeile nennt das Datum.</p>
-
-	<p>Weil sich die Handlung zurücknehmen lässt, fragt vorher nichts. Die beiden Rückfragen wohnen stattdessen dort, wo sie zutreffen: <span class="ui">Endgültig löschen</span> an einem Eintrag, und <span class="ui">Papierkorb leeren</span>, das die Anzahl nennt. Beide sind unumkehrbar, und beide gehen von jedem Gerät. Ein Dialog vor einer umkehrbaren Handlung bringt Menschen bei, Dialoge wegzuklicken, und dann wird auch der unumkehrbare weggeklickt.</p>
-
-	<div class="note"><strong>Die Rücknahme reist mit.</strong> Auf einem Gerät in den Papierkorb gelegt heißt auf allen in den Papierkorb gelegt, und auf einem wiederhergestellt heißt auf allen wiederhergestellt, in welcher Reihenfolge die beiden Geräte auch handeln und in welcher ihre Pakete auch ankommen. Ein Gerät, das sechs Wochen fort war, rechnet aus demselben Stempel dasselbe Aufbewahrungsdatum aus, wenn es zurückkommt. Ein Backup trägt den Papierkorb mit sich; ein altes wiederherzustellen kann also nicht rückgängig machen, was Sie seither gelöscht haben, und nicht erneut löschen, was Sie wiederhergestellt haben.</div>
+	<h2 id="s11">Tags, links and the Trash</h2>
+	<p><span class="ui">Tags</span> on the Crystal face files a diamond in the rail. Up to eight tags, lowercased and deduplicated. <span class="ui">Suggested</span> offers four to start from. Tags are inert. They are not sent to a model, they are no part of the memory, and they change nothing an agent does. <span class="ui">Nach Tag filtern</span> in the rail narrows by them.</p>
+	<p>A diamond can also be linked to another, and the <a href="interface.html">Graph</a> is the picture of that.</p>
+	<p>Deleting a chat or a diamond trashes it. It is still stored and still synced, out of every daimon's reach, and kept thirty days with the date on the row. <span class="ui">Wiederherstellen</span> brings it back on every device. <span class="ui">Endgültig löschen</span> und <span class="ui">Papierkorb leeren</span> are the two that ask.</p>
 
 	<div class="next">
-		<a href="models.html">&larr; Modelle &amp; Guthaben</a>
-		<a href="../capps.html">Next: Capps &rarr;</a>
+		<a href="interface.html">&larr; The interface</a>
+		<a href="../capps.html">Next: A diamond&rsquo;s page &rarr;</a>
 	</div>
 </main>
 
 <footer class="site-foot">
-	<span>Daimond läuft in Ihrem Browser. Nichts davon wird an uns gesendet.</span>
+	<span>Daimond läuft in deinem Browser. Nichts davon wird an uns gesendet.</span>
 	<nav aria-label="Handbuchseiten">
-		<a href="index.html">Erste Schritte</a>
-		<a href="interface.html">Oberfläche</a>
-		<a href="models.html">Modelle</a>
+		<a href="index.html">Hier anfangen</a>
+		<a href="interface.html">Die Oberfläche</a>
 		<a href="chats-and-diamonds.html">Chats &amp; Diamonds</a>
-		<a href="../capps.html">Capps</a>
-		<a href="email-web-files.html">E-Mail, Web &amp; Dateien</a>
-		<a href="accounts.html">Konten</a>
-		<a href="sync.html">Geräteübergreifende Synchronisierung</a>
+		<a href="../capps.html">Die Seite eines diamond</a>
+		<a href="email-web-files.html">Dateien, E-Mail &amp; das Web</a>
+		<a href="../machine-operations.html">Dein Rechner</a>
+		<a href="../runner.html">Helfer &amp; wo Züge laufen</a>
+		<a href="sync.html">Mehr als ein Gerät</a>
+		<a href="social.html">Soziales &amp; Vorschläge</a>
+		<a href="models.html">Modelle &amp; Anbieter</a>
 		<a href="spending.html">Ausgaben</a>
-		<a href="../machine-operations.html">Befehle auf dem Rechner</a>
-		<a href="social.html">Soziales</a>
+		<a href="accounts.html">Sicherheit &amp; Problembehebung</a>
 	</nav>
 </footer>
 </body>

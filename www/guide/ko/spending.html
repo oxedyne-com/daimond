@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
-<title>지출 — Daimond 사용 안내</title>
+<title>Spending &mdash; Daimond guide</title>
 <link rel="icon" type="image/svg+xml" href="../../assets/daimond_mark.svg">
 <link rel="stylesheet" href="../../css/variables.css">
 <link rel="stylesheet" href="../../css/guide.css">
@@ -15,70 +15,77 @@
 
 <header class="site-head">
 	<div class="site-head-inner">
-		<a class="brand" href="index.html" aria-label="Daimond 사용 안내, 홈">
+		<a class="brand" href="index.html" aria-label="Daimond 가이드, 홈">
 			<img class="wordmark wm-dark" src="../../assets/daimond_word.svg" alt="Daimond" translate="no">
 			<img class="wordmark wm-light" src="../../assets/daimond_word_dark.svg" alt="Daimond" translate="no">
-			<span class="brand-sub">안내</span>
+			<span class="brand-sub">가이드</span>
 		</a>
-		<nav class="site-nav" aria-label="안내 페이지">
-			<a href="index.html">시작하기</a>
+		<nav class="site-nav" aria-label="가이드 페이지">
+			<a href="index.html">여기서 시작하기</a>
 			<a href="interface.html">인터페이스</a>
-			<a href="models.html">모델 &amp; 크레딧</a>
-			<a href="chats-and-diamonds.html">채팅 &amp; Diamonds</a>
-			<a href="../capps.html">Capps</a>
-			<a href="email-web-files.html">메일, 웹 &amp; 파일</a>
-			<a href="accounts.html">계정</a>
-			<a href="sync.html">기기 간 동기화</a>
+			<a href="chats-and-diamonds.html">채팅과 diamond</a>
+			<a href="../capps.html">diamond의 페이지</a>
+			<a href="email-web-files.html">파일, 이메일, 웹</a>
+			<a href="../machine-operations.html">내 컴퓨터</a>
+			<a href="../runner.html">헬퍼와 차례가 실행되는 곳</a>
+			<a href="sync.html">여러 대의 기기</a>
+			<a href="../social.html">소셜과 제안</a>
+			<a href="models.html">모델과 제공자</a>
 			<a href="spending.html" aria-current="page">지출</a>
-			<a href="../machine-operations.html">기기에서 명령 실행</a>
-			<a href="../social.html">소셜</a>
+			<a href="accounts.html">안전과 해결</a>
 		</nav>
 	</div>
 </header>
 
 <main>
 	<h1>지출</h1>
-	<p class="lede">지출 화면은 돈이 어디로 가는지 보여 주고, 두 주머니를 따로 둬요. 서로 다른 통화의 다른 계정이라, Daimond은 둘을 두 갈래로 보여 주고 절대 합치지 않아요.</p>
+	<p class="lede">Model calls are priced on this device, as they happen, from the provider's own figure. The bill arrives in front of you as it is spent, wherever the provider reports a figure, and not later as a surprise.</p>
 
 	<h2 id="s1">따로 두는 두 주머니</h2>
+	<p>The two pots are different accounts in different currencies, so they are shown as two tracks and not added together.</p>
 	<ul>
-		<li><strong>추론.</strong> 모델 호출 자체이고, 내 제공자 키로 청구돼요. Daimond이 이 기기에서 턴마다 값을 매기고 적어 두니, 내 키로 쓴 비용을 저희를 거치지 않고 볼 수 있어요.</li>
-		<li><strong>크레딧.</strong> 브라우저 밖으로 나가는 몇 안 되는 일에 게이트웨이가 쓰는 선불 잔액이에요. 페이지 가져오기, 메일 동기화와 발송, 기기 간 동기화, 그리고 작업 공간을 두는 곳인 <a href="email-web-files.html">클라우드 저장소</a>.</li>
+		<li><strong>Inference</strong> covers the model calls billed to <span class="ui">your key</span>. They are recorded here per turn, and none of them passes through us.</li>
+		<li><strong>크레딧</strong> holds the prepaid balance, spent on the model when Daimond runs it for you and on what leaves the browser, <span class="ui">web, mail, sync</span>, and cloud storage.</li>
+	</ul>
+	<p>The foot of the rail carries the running figures for today, this week and this month. Press one to open the <span class="ui">지출</span> panel, which shows a headline figure per pot, a daily graph, a breakdown by category, and a plain table of movements.</p>
+
+	<h2 id="s2">What stops a runaway</h2>
+	<p>A workspace that runs many agents at once can spend quickly, and the danger lies in a sudden rate more than in a large monthly total. Four measures catch the rate, and none asks you to set a limit in advance.</p>
+	<ul>
+		<li><strong>A pace check before a fan-out.</strong> The cost of dispatching a batch is known before any of it starts. A batch that would run faster than your own recent pace is held, and Daimond asks once, with the number on the prompt. A few helpers of ordinary cost do not trip it, and a sudden fifty do.</li>
+		<li><strong>일시정지와 정지는 언제나 손 닿는 곳에.</strong>  <span class="ui">에이전트</span> panel pauses everything running, or stops it. The <span class="ui">전체</span> row at the top of the rail pauses the whole app. A paused thing refuses a turn before it starts, so a look costs nothing.</li>
+		<li><strong>에이전트마다 따로 쓰는 키.</strong> Each helper running on credits spends its own freshly minted key, capped against what is left after its siblings' claims. No two share a key, so parallel helpers cannot race one allowance past its cap.</li>
+		<li><strong>모두 계량, 턴마다, 내 기기에서.</strong> Every call is priced and recorded as it happens, and the graphs are drawn from that record.</li>
 	</ul>
 
-	<h2 id="s2">여는 법</h2>
-	<p>레일 아래쪽에 있는 <strong>지출 행</strong> 쪽에서 열거나, <span class="ui">크레딧</span> 화면의 링크에서 지출 패널을 열어요. 주머니마다 대표 숫자, 날짜별 그래프, 갈래별 내역, 그리고 움직임을 적은 담백한 표를 보여 주니 청구가 수수께끼로 남는 일이 없어요.</p>
+	<h2 id="s3">A ceiling you set</h2>
+	<p>Settings carries a per-turn spend cap. A turn that reaches the round limit continues on its own, so this cap is the ceiling that holds a runaway. It applies where the provider reports what a round cost, and only there.</p>
 
-	<h2 id="s3">폭주하는 비용으로부터의 보호</h2>
-	<p>에이전트를 한 번에 여럿 돌릴 수 있는 작업 공간은 빨리 쓸 수 있어요. 위험한 것은 한 달 합계가 큰 것이 아니라 <em>쓰는 속도가 치솟는 것</em>이에요. 팬아웃이 몇 초 만에 크레딧을 태워, 손쓸 틈이 없는 일이죠. 네 가지 방책이 그 치솟음 자체를 잡고, 어느 것도 미리 한도를 정하라고 하지 않아요.</p>
-	<ul>
-		<li><strong>팬아웃이 돌기 전의 속도 확인.</strong> 한 묶음을 내보내는 비용은 그중 하나가 시작되기 전에 이미 알아요. 내 최근 속도보다 빠르게 돌 묶음은 붙잡히고, Daimond이 건수와 어림값을 물음에 붙여 딱 한 번 물어요. 보통 비용의 에이전트 몇은 여기 걸리지 않고, 갑작스러운 쉰은 걸려요. 잣대는 내 평소이고 최근 지출에서 배우니, 설정할 것은 없어요.</li>
-		<li><strong>일시정지와 정지는 언제나 손 닿는 곳에.</strong>  <a href="chats-and-diamonds.html">에이전트</a> 패널은 돌고 있는 에이전트를 한 번에 일시정지하거나 아예 세워요. 그리고 레일의 <span class="ui">전체</span> 행은 앱 전체를 일시정지해요. 일시정지는 지출을 그 자리에서 멈추고 일은 남기니, 들여다보는 데 드는 비용은 없어요.</li>
-		<li><strong>에이전트마다 따로 쓰는 키.</strong> 크레딧으로 도는 에이전트는 저마다 새로 찍어 낸 자기 키를 쓰고, 그 한도는 형제들이 잡아 둔 몫을 뺀 나머지에 맞춰져요. 키를 함께 쓰는 에이전트가 없으니, 나란히 도는 에이전트들이 공용 한도를 다투다 상한을 넘길 일이 없어요.</li>
-		<li><strong>모두 계량, 턴마다, 내 기기에서.</strong> 모델 호출은 일어나는 그 자리에서 값이 매겨지고 적히며 위 그래프로 흘러가요. 청구는 쓰는 그 자리에서 눈앞에 나오고, 나중에 놀라움으로 오지 않아요.</li>
-	</ul>
-	<p>뜻은 단순해요. 폭주하는 고리도, 생각보다 큰 팬아웃도, 한 번 보고 한 번 누르면 되돌릴 수 있는 것보다 더 들지는 않는다는 것. 그렇게 믿고 에이전트 한 팀을 돌릴 수 있게 하는 거예요.</p>
+	<h2 id="s4">Watching one agent</h2>
+	<p>Each tile in <span class="ui">에이전트</span> shows its cost as it accrues, in tokens and in money, and not only at the end. Under the header a line says how many are running, paused and queued, which makes the size of a fan-out legible before you decide whether to hold it.</p>
+	<p>The aim is a team of agents you can run without fear that a loop, or a fan-out larger than you realised, can cost more than a glance and a click can undo.</p>
 
 	<div class="next">
-		<a href="sync.html">&larr; 기기 간 동기화</a>
-		<a href="../machine-operations.html">다음: 기기에서 명령 실행 &rarr;</a>
+		<a href="models.html">&larr; Models &amp; providers</a>
+		<a href="accounts.html">Next: Safety &amp; fixes &rarr;</a>
 	</div>
 </main>
 
 <footer class="site-foot">
-	<span>Daimond은 내 브라우저에서 돌아요. 여기 있는 어떤 것도 저희에게 보내지지 않아요.</span>
-	<nav aria-label="안내 페이지">
-		<a href="index.html">시작하기</a>
+	<span>Daimond는 브라우저 안에서 실행돼요. 여기 있는 어떤 것도 저희에게 전송되지 않아요.</span>
+	<nav aria-label="가이드 페이지">
+		<a href="index.html">여기서 시작하기</a>
 		<a href="interface.html">인터페이스</a>
-		<a href="models.html">모델</a>
-		<a href="chats-and-diamonds.html">채팅 &amp; Diamonds</a>
-		<a href="../capps.html">Capps</a>
-		<a href="email-web-files.html">메일, 웹 &amp; 파일</a>
-		<a href="accounts.html">계정</a>
-		<a href="sync.html">기기 간 동기화</a>
+		<a href="chats-and-diamonds.html">채팅과 diamond</a>
+		<a href="../capps.html">diamond의 페이지</a>
+		<a href="email-web-files.html">파일, 이메일, 웹</a>
+		<a href="../machine-operations.html">내 컴퓨터</a>
+		<a href="../runner.html">헬퍼와 차례가 실행되는 곳</a>
+		<a href="sync.html">여러 대의 기기</a>
+		<a href="../social.html">소셜과 제안</a>
+		<a href="models.html">모델과 제공자</a>
 		<a href="spending.html">지출</a>
-		<a href="../machine-operations.html">기기에서 명령 실행</a>
-		<a href="../social.html">소셜</a>
+		<a href="accounts.html">안전과 해결</a>
 	</nav>
 </footer>
 </body>

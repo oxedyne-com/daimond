@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
-<title>기기 간 동기화 — Daimond 사용 안내</title>
+<title>More than one device &mdash; Daimond guide</title>
 <link rel="icon" type="image/svg+xml" href="../../assets/daimond_mark.svg">
 <link rel="stylesheet" href="../../css/variables.css">
 <link rel="stylesheet" href="../../css/guide.css">
@@ -15,99 +15,95 @@
 
 <header class="site-head">
 	<div class="site-head-inner">
-		<a class="brand" href="index.html" aria-label="Daimond 사용 안내, 홈">
+		<a class="brand" href="index.html" aria-label="Daimond 가이드, 홈">
 			<img class="wordmark wm-dark" src="../../assets/daimond_word.svg" alt="Daimond" translate="no">
 			<img class="wordmark wm-light" src="../../assets/daimond_word_dark.svg" alt="Daimond" translate="no">
-			<span class="brand-sub">안내</span>
+			<span class="brand-sub">가이드</span>
 		</a>
-		<nav class="site-nav" aria-label="안내 페이지">
-			<a href="index.html">시작하기</a>
+		<nav class="site-nav" aria-label="가이드 페이지">
+			<a href="index.html">여기서 시작하기</a>
 			<a href="interface.html">인터페이스</a>
-			<a href="models.html">모델 &amp; 크레딧</a>
-			<a href="chats-and-diamonds.html">채팅 &amp; Diamonds</a>
-			<a href="../capps.html">Capps</a>
-			<a href="email-web-files.html">메일, 웹 &amp; 파일</a>
-			<a href="accounts.html">계정</a>
-			<a href="sync.html" aria-current="page">기기 간 동기화</a>
+			<a href="chats-and-diamonds.html">채팅과 diamond</a>
+			<a href="../capps.html">diamond의 페이지</a>
+			<a href="email-web-files.html">파일, 이메일, 웹</a>
+			<a href="../machine-operations.html">내 컴퓨터</a>
+			<a href="../runner.html">헬퍼와 차례가 실행되는 곳</a>
+			<a href="sync.html" aria-current="page">여러 대의 기기</a>
+			<a href="../social.html">소셜과 제안</a>
+			<a href="models.html">모델과 제공자</a>
 			<a href="spending.html">지출</a>
-			<a href="../machine-operations.html">기기에서 명령 실행</a>
-			<a href="../social.html">소셜</a>
+			<a href="accounts.html">안전과 해결</a>
 		</nav>
 	</div>
 </header>
 
 <main>
-	<h1>기기 간 동기화</h1>
-	<p class="lede">Daimond은 로컬이 먼저라, 두 번째 기기는 비어 있는 채로 시작해요. 기기 간 동기화는 서버가 읽는 일 없이 채팅과 작업 공간 파일을 내 기기들 사이에서 날라요.</p>
+	<h1>여러 대의 기기</h1>
+	<p class="lede">Daimond keeps your work on the device you are using, so a second device starts empty. Link it, and your chats, diamonds and files stay in step without the server ever reading them.</p>
 
-	<p>게이트웨이를 지나는 것은 내 기기들만 키를 가진 암호화된 꾸러미 하나예요. 키는 암호문구에서 나오고 브라우저 밖으로 나가지 않으니, 서버는 꾸러미를 맡아 두고도 열지 못해요. 읽을 수 있는 것이 기기 사이를 건너가는 일은 없어요.</p>
+	<p>What crosses is one encrypted parcel, and only your devices hold the key to it. The key comes from your passphrase and does not leave the browser.</p>
 
-	<h2 id="s1">두 번째 기기 연결하기</h2>
-	<p>기기는 저마다 자기 신원을 만들어요. 그래서 새 기기에서 암호문구를 쳐도 지금 계정이 넘어오는 게 아니라 <em>별도의</em>, 빈 계정이 시작돼요. 이미 가진 계정을 쓰려면 새 기기를 거기에 <strong>연결하는</strong> 것이 답이에요. 세 단계예요.</p>
-
+	<h2 id="s1">Link a second device</h2>
+	<p>Each device makes its own identity, so typing your passphrase into a fresh browser starts a <em>별도의</em> account. To use the one you have, link the new device to it.</p>
 	<ol class="steps">
 		<li>
 			<h3 id="s2">이미 쓰는 기기에서 연결 대화상자 열기</h3>
-			<p>상단 바의 <span class="ui">다른 기기 연결</span> 버튼을 누르세요. QR 코드와 한 번만 쓰는 페어링 코드가 나와요.</p>
-			<figure class="shot narrow" data-shot="pair-desktop">
-				<img src="../img/pair-desktop.png" alt="“다른 기기 연결” 대화상자. QR 코드와, 열 분쯤 뒤에 만료되는 한 번만 쓰는 페어링 코드가 보여요.">
+			<p><span class="ui">다른 기기 연결</span> in the top bar shows a QR code and a one-time pairing code.</p>
+			<figure class="shot narrow">
+				<img alt="The link dialog on a desktop, showing a QR code above a short pairing code." src="../img/pair-desktop.png" loading="lazy">
 				<figcaption>첫 기기가 QR과 코드를 보여 줘요.</figcaption>
 			</figure>
 		</li>
 		<li>
-			<h3 id="s3">새 기기에서 QR을 읽기 — 또는 코드를 치기</h3>
-			<p>새 휴대폰의 카메라를 QR 코드에 대세요. Daimond이 열리고 코드도 채워지니, 톡 누르기만 하면 돼요. 누를 것은 <span class="ui">이 기기 연결</span>. 카메라가 없나요? 그 기기에서 Daimond을 열고, <span class="ui">페어링 코드가 있나요?</span>를 고른 다음 코드를 치세요. 보이는 코드는 첫 기기의 것과 맞는지 확인하라고 있는 것뿐이에요.</p>
-			<figure class="shot narrow" data-shot="pair-mobile">
-				<img src="../img/pair-mobile.png" alt="읽어 온 뒤 휴대폰에 뜨는 “이 기기 연결” 대화상자. 페어링 코드가 이미 채워져 있고, 이 기기 연결 버튼이 있어요.">
-				<figcaption>읽어 온 다음 톡 누를 것은 <span class="ui">이 기기 연결</span>.</figcaption>
+			<h3 id="s3">On the new device, scan the QR or type the code</h3>
+			<p>Point the phone's camera at the code. It opens Daimond and fills the code in, so you only tap <span class="ui">이 기기 연결</span>. Without a camera, open Daimond there, choose <span class="ui">Have a passcode or a pairing code?</span>, and type it.</p>
+			<figure class="shot narrow">
+				<img alt="The new phone, after scanning, with a single Link this device button." src="../img/pair-mobile.png" loading="lazy">
+				<figcaption>After scanning, one tap.</figcaption>
 			</figure>
 		</li>
 		<li>
 			<h3 id="s4">같은 암호문구로 잠금 풀기</h3>
-			<p>새 기기가 이제 계정을 가지고 있어요. 잠금을 풀 때 쓰는 것은 <strong>첫 기기에서 쓰는 것과 같은 암호문구예요</strong> (새것이 아니에요)그러면 채팅과 파일이 나타나요. 그다음 거기서 패스키를 하나 추가하면 더 빠르게 풀 수 있어요.</p>
+			<p>The new device now holds your account. Use the passphrase you already have, and your work appears. A passkey can unlock it faster afterwards.</p>
 		</li>
 	</ol>
-
-	<div class="note"><strong>암호문구는 어디서나 같지만, 혼자서는 옮겨 가지 못해요.</strong> 계정 하나, 암호문구 하나, 연결하는 모든 기기에서 같아요. 그리고 암호문구는 기기가 이미 가진 키를 풀 뿐이라, 한 번도 연결한 적 없는 브라우저에는 풀 것이 없어요. 어떤 기기가 암호문구를 <em>만들라고</em> 하고, <em>입력하라고</em> 하지 않는다면, 그건 새 계정을 시작하려는 거예요. 예전 계정을 가져오는 길은 연결하거나, 예전 계정의 백업을 그 기기로 가져오는 것뿐이에요.</div>
+	<div class="note"><strong>If a device asks you to create a passphrase instead of entering one, it is about to start a new account.</strong> Go back and pair it, or import a backup. One account, one passphrase, on every device you link. The passphrase cannot travel on its own, because it only decrypts a key the device already holds, so a browser that has never been linked has nothing for it to open.</div>
 
 	<h2 id="s5">무엇이 오가는지</h2>
-	<p>채팅, Diamonds, 그것들을 늘어놓은 관계도, 메일, 작업 공간 파일, 계정에 딸린 기기들, 그리고 일시정지해 둔 것. 파일은 종류를 가리지 않고 오가요. 사진도, 녹음도, PDF도, 표 계산 파일도 글자와 똑같이 다른 기기에 닿고, 파일 하나에 1기가바이트까지예요. 휴지통도 오가니, 지운 것도 되돌린 것도 모든 기기에 닿아요.</p>
-	<p>동기화되는 것은 그대로 클라우드 저장소에 두는 것이기도 해요. 그래서 작업 공간은 지금 읽고 있는 기기보다 클 수 있어요. 이 기기에 없는 파일도 나무에 그대로 보이고, 구름 표시가 붙고, 청하면 내려와요. <a href="email-web-files.html">작업 공간</a> 페이지에 파일이 있을 수 있는 세 상태, 브라우저가 차는 대로 공간이 어떻게 비워지는지, 그리고 클라우드 저장소가 얼마인지 적어 뒀어요.</p>
+	<p>Your chats, your diamonds and the way you laid them out, your mail, your workspace files, the devices on the account, and what you have paused all travel. Any kind of file travels, up to a gigabyte each. So does the Trash, so a deletion and a restore both reach every device.</p>
+	<p>What syncs is also what is kept in cloud storage, so a workspace can be larger than the device reading it. A file that is not here still shows in the tree and comes down when asked for.</p>
+	<p>A folder you opened on one computer is not in the browser's storage, so it does not travel by default. <a href="email-web-files.html">파일, 이메일, 웹</a> covers the per-folder control that copies one to devices that cannot open it.</p>
 
-	<h2 id="s6">다른 기기에서 턴 실행하기</h2>
-	<p>내 기기가 둘 이상 깨어 있고 연결돼 있으면, 하나가 다른 하나를 대신해 턴을 실행할 수 있고, 답은 그 턴을 시작한 기기로 동기화돼 돌아와요.</p>
-
-	<p>이건 켤 때까지 꺼져 있고, 기기 하나씩에 대해 설정해요. 스위치 하나, <span class="ui">자리를 뜰 때 넘기기</span> 가 있어서, 이 컴퓨터에서 돌던 턴을, 닫을 때 깨어 있는 다른 기기로 옮겨요 — 덮개가 닫히고, 탭이 닫히고, 연결이 끊길 때요. 턴은 거기서 끝나고 그 답이 동기화돼 돌아와요. 내가 돌아올 때까지 멈춘 채로 남아 있지 않아요.</p>
-
-	<p>턴은 어디로 갔는지 알려 줘요. <span class="ui">다른 기기로 보냈어요</span> 라고 읽히고, 이어 받은 기기의 이름을 내요 — <span class="ui">노트북이 하고 있어요</span> — 끝나면 답이 여기 나타나요. 옆에 버튼이 둘 있어요. <span class="ui">되가져오기</span> 는 턴을 이 기기로 돌려놓고, <span class="ui">여기서 실행</span> 은 어느 기기도 받지 않았거나 하나가 끝내지 못했을 때 로컬에서 돌려요. 이 줄이 <em>다른 기기</em> 가 아니라 <span class="ui">노트북</span> 으로 읽히는 건 계정 설정에서 기기에 이름을 붙였기 때문이에요.</p>
-
-	<div class="note"><strong>기기 하나를 실행할 기기로 지명할 수 있어요.</strong> 보통 켜져 있는 것 — 깨어 있는 데스크톱 — 을 고르면, 넘김은 턴을 먼저 잡는 기기가 아니라 그 기기로 가요. 넘길 때 그게 오프라인이면, 깨어 있는 아무 기기나 실행해요.</div>
-
-	<p>다른 기기로 넘긴 용건과 그 기기가 돌려보내는 답은, 게이트웨이를 건너는 다른 모든 것과 같이 내 계정으로 봉인돼요. 서버는 열지 못하는 암호화된 꾸러미를 중계할 뿐이고, 키는 내 기기만 가지고 있어요.</p>
+	<h2 id="s6">Running a turn somewhere else</h2>
+	<p>When more than one of your devices is awake, one can run a turn for another and the answer syncs back. One switch turns it on, <span class="ui">Hand off when you step away</span>. A turn on this computer then moves to another awake device when you close it, whether the lid shuts, the tab closes or the connection drops, and finishes there.</p>
+	<p><a href="../runner.html">헬퍼와 차례가 실행되는 곳</a> covers naming the machine that should pick turns up, and the two things that stop it.</p>
+	<p>An errand sent to another device, and the answer it sends back, are sealed to your account like everything else. The server routes a parcel it cannot open.</p>
 
 	<h2 id="s7">얼마인지</h2>
-	<p>기기 간 동기화는 <strong>Pro</strong>의 일부예요. 한 번만 푸는 잠금이고, Daimond의 나머지처럼 한 번 사면 그대로예요. Pro가 없으면 기기는 혼자 일하고, 있으면 기기들이 발을 맞춰요. Pro는 클라우드 저장소와 메일도 열어요. 동기화가 나르는 큰 파일 본체는 클라우드 저장소에 두고 크레딧으로 값을 치르며, 계량이 시작되기 전에 무료 몫이 있어요.</p>
+	<p>기기 간 동기화는 <strong>Daimond Pro</strong>, at $8 a month, billed monthly, and you can cancel any time. Pro also turns on cloud storage, Email and a posting name. Away for a month, the billing pauses on its own and resumes when you are back.</p>
+	<p>Without Pro a device works on its own and loses nothing. Inference, bandwidth and other metered use are paid from credits either way.</p>
 
 	<div class="next">
-		<a href="accounts.html">&larr; 계정</a>
-		<a href="spending.html">다음: 지출 &rarr;</a>
+		<a href="../runner.html">&larr; Helpers &amp; where turns run</a>
+		<a href="../social.html">Next: Social &amp; proposals &rarr;</a>
 	</div>
 </main>
 
 <footer class="site-foot">
-	<span>Daimond은 내 브라우저에서 돌아요. 여기 있는 어떤 것도 저희에게 보내지지 않아요.</span>
-	<nav aria-label="안내 페이지">
-		<a href="index.html">시작하기</a>
+	<span>Daimond는 브라우저 안에서 실행돼요. 여기 있는 어떤 것도 저희에게 전송되지 않아요.</span>
+	<nav aria-label="가이드 페이지">
+		<a href="index.html">여기서 시작하기</a>
 		<a href="interface.html">인터페이스</a>
-		<a href="models.html">모델</a>
-		<a href="chats-and-diamonds.html">채팅 &amp; Diamonds</a>
-		<a href="../capps.html">Capps</a>
-		<a href="email-web-files.html">메일, 웹 &amp; 파일</a>
-		<a href="accounts.html">계정</a>
-		<a href="sync.html">기기 간 동기화</a>
+		<a href="chats-and-diamonds.html">채팅과 diamond</a>
+		<a href="../capps.html">diamond의 페이지</a>
+		<a href="email-web-files.html">파일, 이메일, 웹</a>
+		<a href="../machine-operations.html">내 컴퓨터</a>
+		<a href="../runner.html">헬퍼와 차례가 실행되는 곳</a>
+		<a href="sync.html">여러 대의 기기</a>
+		<a href="../social.html">소셜과 제안</a>
+		<a href="models.html">모델과 제공자</a>
 		<a href="spending.html">지출</a>
-		<a href="../machine-operations.html">기기에서 명령 실행</a>
-		<a href="../social.html">소셜</a>
+		<a href="accounts.html">안전과 해결</a>
 	</nav>
 </footer>
 </body>

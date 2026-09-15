@@ -517,6 +517,13 @@
 		border-color: var(--accent);
 		color: var(--accent-text);
 	}
+	/* PH-12: the info mark sat alone on a bare row of its own once six chips
+	   filled the head's width and wrapped past it -- the panel's own closer is
+	   already hidden here (`.panel-close` is gone on a phone; the sheet's own
+	   ✕ is the only one). Ordered first, so it holds a place on the head's own
+	   first line -- the row that reads as this panel's title once the sheet has
+	   said the name -- rather than trailing after however many chips fit. */
+	#msheet #panel-social > .railhead > .railhead-acts { order: -1; }
 	/* The lifted strip is out of flow, so the title's box still runs the full
 	   width and a long panel name would ellipsise UNDER the buttons. Give the
 	   title back the room the strip is standing in. */

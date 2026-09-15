@@ -97,8 +97,12 @@ await fc.setFiles(path);
 // Acknowledge the notice, let it reload, and unlock the fresh session.
 await b.page.waitForSelector('.dlg-ok', { timeout: 15000 });
 await b.page.click('.dlg-ok');
-await b.page.waitForSelector('#id-primary', { timeout: 15000 });
-await signInAs(b, 'backupB');       // unlock the reloaded session
+// NOT a raw wait for '#id-primary': since stay-unlocked-across-reload (2026-09-13)
+// a tab that was already unlocked comes back unlocked, with no gate to wait for at
+// all, and a bare `waitForSelector` here timed out on exactly that. `signInAs`
+// itself waits for either door -- a gate to drive, or a tab already through it --
+// so it is called directly.
+await signInAs(b, 'backupB');       // unlock the reloaded session, or notice it already is
 
 // READ FROM OPFS, not from the thread: the store is what a restore has to reach.
 const restored = await opfsRead(b, WS_PATH);

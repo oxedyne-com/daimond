@@ -957,8 +957,13 @@ const mTurns = lensJson5('turns', '--since', '24h');
 const daimonM = mTurns.filter(t => t.turn === 'daimonM1');
 check('a daimon turn posting both a ledger tick and its own turn.end is ONE row',
 	daimonM.length === 1, JSON.stringify(mTurns.map(t => [t.src, t.turn, t.model, t.usd])));
-check('the merged row carries the ledger\'s model and reported flag',
-	!!daimonM[0] && daimonM[0].model === 'fixture/glm-5.3' && daimonM[0].reported === true,
+// This ledger entry carries no `tid` -- the shape a build before the turn-id join wrote --
+// so the merge below is the OLD device+clock-skew+prompt-size guess, not the new id join.
+// The model still comes from the ledger, which is all that guess ever had; but the guess is
+// marked `est` now even though the ledger itself says a provider billed it (`r`), because an
+// unproven join must not borrow the confidence a proven one earned (`dev/lens.test.mjs`).
+check('the merged row carries the ledger\'s model, but the GUESSED join is never `reported`',
+	!!daimonM[0] && daimonM[0].model === 'fixture/glm-5.3' && daimonM[0].reported === false,
 	JSON.stringify(daimonM[0]));
 check('and the turn.end\'s own rounds, not the ledger\'s null',
 	!!daimonM[0] && daimonM[0].rounds === 2, JSON.stringify(daimonM[0] && daimonM[0].rounds));

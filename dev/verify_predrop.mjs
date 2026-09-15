@@ -170,8 +170,14 @@ const { page: p } = s;
 if (BREAK) console.log(`\n*** RUNNING UNDER --break ${BREAK}: failures below are the point ***\n`);
 
 /// What the thread holds, and what is offered about the last answer in it.
+// A MESSAGE TILE IS NOT `.chat-msg` ANY MORE. Assistant and user messages are drawn
+// as `.ctile .chat-msg-assistant` / `.ctile .chat-msg-user`; only the notices
+// (`.ended-notice`, `.chat-msg-error`) still carry the old class. A check written
+// against `.chat-msg.interrupted` therefore matched nothing whatever the page did,
+// and reported a badge that was on screen as absent. Selected by the class that
+// names the thing -- the assistant tile -- rather than by furniture around it.
 const thread = () => p.evaluate(() => {
-	const inter = [...document.querySelectorAll('#chat-output .chat-msg.interrupted')].pop() || null;
+	const inter = [...document.querySelectorAll('#chat-output .chat-msg-assistant.interrupted')].pop() || null;
 	return {
 		interrupted: !!inter,
 		// By role rather than by its words, so a translation does not decide this file.

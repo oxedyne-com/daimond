@@ -417,8 +417,18 @@ check('the parcel is still far inside the ceiling daimond.js sets itself',
 await p.fill('#chat-input', '@text something worth keeping');
 await p.click('#chat-send', { force: true });
 await p.waitForTimeout(3000);
+// "Fold all" moved off the row and into the cog (CHAT-15): the cog opens
+// first, then the fold button `mountChatFoldKeep` draws inside it.
 await p.evaluate(() => {
-	const b = document.querySelector('.session-box.active .tile-fold');
+	const box = document.querySelector('.session-box.active');
+	const cog = box && box.querySelector('.tile-cog');
+	if (cog) cog.click();
+});
+await p.waitForTimeout(300);
+await p.evaluate(() => {
+	const card = [...document.querySelectorAll('.modal.dlg .dlg-card')]
+		.find((c) => c.getClientRects().length);
+	const b = card && card.querySelector('.tile-fold');
 	if (b) b.click();
 });
 await p.waitForTimeout(400);

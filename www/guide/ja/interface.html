@@ -3,22 +3,10 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
-<title>インターフェース — Daimond ユーザーガイド</title>
+<title>The interface &mdash; Daimond guide</title>
 <link rel="icon" type="image/svg+xml" href="../../assets/daimond_mark.svg">
 <link rel="stylesheet" href="../../css/variables.css">
 <link rel="stylesheet" href="../../css/guide.css">
-<style>
-/* The region map. On a phone the whole schematic scaled to the column width put
-   its labels at five pixels, which is a diagram that says nothing to the reader
-   who most needs it. It keeps a floor on its width and scrolls sideways inside
-   its own box instead: the page still never scrolls sideways, and the words can
-   still be read. The same treatment the widget map on social.html has, and the
-   floor is set from the same measurement -- 720px puts this map's smallest label
-   at the eleven rendered pixels that one's smallest label already gets, because
-   this map's smallest type is 9 units against that one's 10. */
-.diagram.scrolls { overflow-x: auto; }
-.diagram.scrolls svg { min-width: 720px; }
-</style>
 <script src="../frame.js"></script>
 <script src="search-index.js"></script>
 <script src="../search.js"></script>
@@ -27,360 +15,119 @@
 
 <header class="site-head">
 	<div class="site-head-inner">
-		<a class="brand" href="index.html" aria-label="Daimond ユーザーガイド、ホーム">
+		<a class="brand" href="index.html" aria-label="Daimond ガイド、ホーム">
 			<img class="wordmark wm-dark" src="../../assets/daimond_word.svg" alt="Daimond" translate="no">
 			<img class="wordmark wm-light" src="../../assets/daimond_word_dark.svg" alt="Daimond" translate="no">
 			<span class="brand-sub">ガイド</span>
 		</a>
 		<nav class="site-nav" aria-label="ガイドのページ">
-			<a href="index.html">はじめに</a>
+			<a href="index.html">ここから始める</a>
 			<a href="interface.html" aria-current="page">インターフェース</a>
-			<a href="models.html">モデル &amp; クレジット</a>
-			<a href="chats-and-diamonds.html">チャット &amp; Diamonds</a>
-			<a href="../capps.html">Capps</a>
-			<a href="email-web-files.html">メール、ウェブ &amp; ファイル</a>
-			<a href="accounts.html">アカウント</a>
-			<a href="sync.html">端末間の同期</a>
+			<a href="chats-and-diamonds.html">チャットと diamond</a>
+			<a href="../capps.html">diamond のページ</a>
+			<a href="email-web-files.html">ファイル、メール、ウェブ</a>
+			<a href="../machine-operations.html">あなたのコンピューター</a>
+			<a href="../runner.html">ヘルパーとターンの実行場所</a>
+			<a href="sync.html">複数の端末</a>
+			<a href="../social.html">ソーシャルと提案</a>
+			<a href="models.html">モデルとプロバイダー</a>
 			<a href="spending.html">支出</a>
-			<a href="../machine-operations.html">端末でのコマンド実行</a>
-			<a href="../social.html">ソーシャル</a>
+			<a href="accounts.html">安全性と対処</a>
 		</nav>
 	</div>
 </header>
 
 <main>
 	<h1>インターフェース</h1>
-	<p class="lede">画面のひとまわり。三つのゾーンと、それぞれの役目です。ゾーンが分かれば、Daimond のすべてに居場所があります。</p>
+	<p class="lede">Three zones and a top bar. Once you know the zones, every part of Daimond has a place.</p>
 
-	<figure class="diagram scrolls">
-		<svg class="regionmap" viewBox="0 0 760 470" role="img" aria-labelledby="rm-title rm-desc" preserveAspectRatio="xMidYMid meet">
-			<title id="rm-title">Daimond のウィンドウの、名前の付いた領域</title>
-			<desc id="rm-desc">A schematic of the window. Across the top is the top bar. Below it, three zones side by side: the rail on the left (what you work on above a divider, the admin panel below it), the stage in the centre, holding the conversation and, beside it, from one to three more panels according to how wide the stage is, and the dock on the right (Email, Workspace and Agents).</desc>
-			<style>
-				.regionmap text { font-family: var(--font); }
-				.rm-win  { fill: var(--bg-primary);   stroke: var(--border-2); stroke-width: 1; }
-				.rm-bar  { fill: var(--bg-tertiary);  stroke: var(--border);   stroke-width: 1; }
-				.rm-pan  { fill: var(--bg-secondary); stroke: var(--border);   stroke-width: 1; }
-				.rm-cell { fill: var(--bg-tertiary);  stroke: var(--border);   stroke-width: 1; }
-				.rm-name { fill: var(--accent); font-weight: 700; }
-				.rm-title{ fill: var(--text-secondary); font-weight: 600; }
-				.rm-sub  { fill: var(--text-muted); }
-				.rm-fill { fill: var(--accent); }
-				.rm-soft { fill: var(--accent-soft); stroke: var(--accent); stroke-width: 1; }
-				.rm-rule { stroke: var(--accent); stroke-width: 2; }
-				.rm-div  { stroke: var(--border-2); stroke-width: 1.5; }
-				.rm-divf { fill: var(--border-2); }
-				.rm-skel { fill: var(--text-muted); opacity: .30; }
-			</style>
+	<h2 id="s1">The rail, on the left</h2>
+	<p>The rail lists what you are working on, with <strong>diamonds</strong> at the top and <strong>チャット</strong> under them, newest first. The <span class="ui">+</span> on each head makes a new one, and dragging the divider gives one list more room.</p>
+	<p>Above them is the <span class="ui">すべて</span> row, a play, a pause and a round light for the whole app. Pause there and nothing runs anywhere until you release it.</p>
+	<p>Below the divider is your account, showing the name you gave, one status line, and what you have spent today, this week and this month. <a href="index.html">ここから始める</a> covers the status line, and <span class="ui">Details</span> opens the diagnostics behind it.</p>
+	<p>One of those details is the build you are on. Press it for the release history, which shows what is planned, the build you are running, and every earlier build with its date and its place in a sealed record. You cannot go back to an older build, by design, because an old client holds faults since fixed and may read newer data wrongly.</p>
 
-			<!-- window + top bar -->
-			<rect class="rm-win" x="10" y="10" width="740" height="450" rx="16"/>
-			<path class="rm-bar" d="M10,26 a16,16 0 0 1 16,-16 h708 a16,16 0 0 1 16,16 v30 h-740 z"/>
-			<!-- top-bar furniture: brand, name pill, panel chips, appearance menu -->
-			<rect class="rm-fill" x="30" y="27" width="12" height="12" rx="2" transform="rotate(45 36 33)"/>
-			<rect class="rm-skel" x="52" y="29" width="46" height="7" rx="3.5"/>
-			<rect class="rm-soft" x="118" y="22" width="98" height="22" rx="11"/>
-			<text class="rm-name" x="167" y="37" text-anchor="middle" font-size="12">上部バー</text>
-			<rect class="rm-cell" x="430" y="25" width="40" height="16" rx="8"/>
-			<rect class="rm-cell" x="478" y="25" width="34" height="16" rx="8"/>
-			<circle cx="716" cy="33" r="9" fill="none" stroke="var(--border-2)"/>
-			<path class="rm-fill" d="M716,24 a9,9 0 0 1 0,18 z" opacity=".5"/>
-
-			<!-- ── rail ───────────────────────────────────────────── -->
-			<rect class="rm-pan" x="22" y="66" width="196" height="382" rx="10"/>
-			<text class="rm-name" x="36" y="93" font-size="15">レール</text>
-			<text class="rm-sub"  x="112" y="93" font-size="11">左</text>
-			<line class="rm-rule" x1="36" y1="100" x2="70" y2="100"/>
-			<text class="rm-title" x="36" y="120" font-size="10.5">取り組んでいるもの</text>
-			<!-- Diamonds -->
-			<text class="rm-sub" x="36" y="137" font-size="9" letter-spacing="1">DIAMONDS</text>
-			<text class="rm-sub" x="204" y="137" text-anchor="end" font-size="12">+</text>
-			<rect class="rm-cell" x="36" y="142" width="170" height="26" rx="6"/>
-			<rect class="rm-skel" x="44" y="149" width="70" height="6" rx="3"/>
-			<rect class="rm-soft" x="150" y="148" width="20" height="9" rx="4.5"/>
-			<rect class="rm-soft" x="174" y="148" width="28" height="9" rx="4.5"/>
-			<rect class="rm-cell" x="36" y="172" width="170" height="26" rx="6"/>
-			<rect class="rm-skel" x="44" y="179" width="58" height="6" rx="3"/>
-			<rect class="rm-soft" x="150" y="178" width="24" height="9" rx="4.5"/>
-			<!-- Chats -->
-			<text class="rm-sub" x="36" y="219" font-size="9" letter-spacing="1">チャット</text>
-			<rect class="rm-cell" x="36" y="224" width="170" height="18" rx="6"/>
-			<rect class="rm-skel" x="44" y="230" width="96" height="6" rx="3"/>
-			<!-- divider between the two halves of the rail -->
-			<line class="rm-div" x1="30" y1="258" x2="198" y2="258"/>
-			<rect class="rm-divf" x="106" y="255.5" width="16" height="5" rx="2.5"/>
-			<text class="rm-sub" x="36" y="274" font-size="9.5">仕切り — ドラッグできます</text>
-			<!-- Admin panel -->
-			<text class="rm-title" x="36" y="294" font-size="10.5">管理パネル</text>
-			<g>
-				<rect class="rm-cell" x="36" y="300" width="170" height="15" rx="4"/>
-				<circle class="rm-fill" cx="46" cy="307.5" r="3" opacity=".55"/>
-				<rect class="rm-skel" x="56" y="304.5" width="66" height="6" rx="3"/>
-				<rect class="rm-skel" x="176" y="304.5" width="26" height="6" rx="3"/>
-				<rect class="rm-cell" x="36" y="320" width="170" height="15" rx="4"/>
-				<circle class="rm-fill" cx="46" cy="327.5" r="3" opacity=".55"/>
-				<rect class="rm-skel" x="56" y="324.5" width="54" height="6" rx="3"/>
-				<rect class="rm-skel" x="176" y="324.5" width="26" height="6" rx="3"/>
-				<rect class="rm-cell" x="36" y="340" width="170" height="15" rx="4"/>
-				<circle class="rm-fill" cx="46" cy="347.5" r="3" opacity=".55"/>
-				<rect class="rm-skel" x="56" y="344.5" width="72" height="6" rx="3"/>
-				<rect class="rm-skel" x="176" y="344.5" width="26" height="6" rx="3"/>
-				<rect class="rm-cell" x="36" y="360" width="170" height="15" rx="4"/>
-				<circle class="rm-fill" cx="46" cy="367.5" r="3" opacity=".55"/>
-				<rect class="rm-skel" x="56" y="364.5" width="60" height="6" rx="3"/>
-				<rect class="rm-skel" x="176" y="364.5" width="26" height="6" rx="3"/>
-			</g>
-
-			<!-- ── stage ──────────────────────────────────────────── -->
-			<rect class="rm-pan" x="228" y="66" width="300" height="382" rx="10"/>
-			<text class="rm-name" x="244" y="93" font-size="15">ステージ</text>
-			<text class="rm-sub"  x="330" y="93" font-size="11">中央</text>
-			<line class="rm-rule" x1="244" y1="100" x2="290" y2="100"/>
-			<text class="rm-title" x="244" y="119" font-size="10.5">チャット — あなたの会話</text>
-			<text class="rm-sub"   x="244" y="133" font-size="9.5">two to four seats, by width</text>
-			<rect class="rm-cell" x="244" y="146" width="196" height="30" rx="8"/>
-			<rect class="rm-skel" x="254" y="153" width="176" height="6" rx="3"/>
-			<rect class="rm-skel" x="254" y="164" width="120" height="6" rx="3"/>
-			<rect class="rm-soft" x="344" y="184" width="168" height="26" rx="8"/>
-			<rect class="rm-skel" x="354" y="194" width="148" height="6" rx="3"/>
-			<rect class="rm-cell" x="244" y="218" width="212" height="30" rx="8"/>
-			<rect class="rm-skel" x="254" y="225" width="192" height="6" rx="3"/>
-			<rect class="rm-skel" x="254" y="236" width="150" height="6" rx="3"/>
-			<!-- composer -->
-			<rect class="rm-cell" x="244" y="410" width="268" height="28" rx="8"/>
-			<rect class="rm-skel" x="256" y="421" width="150" height="6" rx="3"/>
-			<circle class="rm-fill" cx="498" cy="424" r="9"/>
-
-			<!-- ── dock ───────────────────────────────────────────── -->
-			<rect class="rm-pan" x="538" y="66" width="200" height="382" rx="10"/>
-			<text class="rm-name" x="552" y="93" font-size="15">ドック</text>
-			<text class="rm-sub"  x="642" y="93" font-size="11">右</text>
-			<line class="rm-rule" x1="552" y1="100" x2="596" y2="100"/>
-			<!-- Email -->
-			<rect class="rm-cell" x="552" y="112" width="172" height="90" rx="8"/>
-			<text class="rm-title" x="564" y="131" font-size="11">メール</text>
-			<rect class="rm-skel" x="564" y="142" width="148" height="6" rx="3"/>
-			<rect class="rm-skel" x="564" y="156" width="120" height="6" rx="3"/>
-			<rect class="rm-skel" x="564" y="170" width="134" height="6" rx="3"/>
-			<rect class="rm-skel" x="564" y="184" width="96" height="6" rx="3"/>
-			<!-- Workspace -->
-			<rect class="rm-cell" x="552" y="210" width="172" height="90" rx="8"/>
-			<text class="rm-title" x="564" y="229" font-size="11">作業領域</text>
-			<rect class="rm-skel" x="564" y="240" width="110" height="6" rx="3"/>
-			<rect class="rm-skel" x="576" y="254" width="120" height="6" rx="3"/>
-			<rect class="rm-skel" x="576" y="268" width="98" height="6" rx="3"/>
-			<rect class="rm-skel" x="564" y="282" width="88" height="6" rx="3"/>
-			<!-- Agents, with a mini tile that shows the chips -->
-			<rect class="rm-cell" x="552" y="308" width="172" height="132" rx="8"/>
-			<text class="rm-title" x="564" y="327" font-size="11">エージェント</text>
-			<rect class="rm-pan" x="562" y="336" width="152" height="96" rx="6"/>
-			<rect class="rm-skel" x="570" y="346" width="66" height="7" rx="3.5"/>
-			<circle class="rm-fill" cx="704" cy="350" r="4"/>
-			<rect class="rm-soft" x="570" y="362" width="50" height="12" rx="6"/>
-			<text class="rm-name" x="577" y="371" font-size="8">↳</text>
-			<rect class="rm-cell" x="626" y="362" width="26" height="12" rx="6"/>
-			<rect class="rm-cell" x="658" y="362" width="36" height="12" rx="6"/>
-			<rect class="rm-skel" x="570" y="384" width="128" height="6" rx="3"/>
-			<rect class="rm-skel" x="570" y="396" width="96" height="6" rx="3"/>
-			<rect class="rm-cell" x="570" y="410" width="52" height="13" rx="6"/>
-			<rect class="rm-cell" x="628" y="410" width="40" height="13" rx="6"/>
-		</svg>
-		<figcaption>名前の付いた領域。 <strong>上部バー</strong> が上を横切ります。その下に三つのゾーン。 <strong>レール</strong> （左）— 仕切りの上に取り組んでいるもの、下に管理パネル。 <strong>ステージ</strong> (centre) for the conversation and whatever you have opened beside it, two seats on a laptop and up to four on a wide screen; and the <strong>ドック</strong> （右）はメール、作業領域、エージェントを収めます。</figcaption>
-	</figure>
-
-	<h2 id="s1">レール — 左</h2>
-	<p>レールは、ドラッグはできても外せない仕切りで分かれています。仕切りの上はあなたが取り組んでいるもの、下は管理パネルです。</p>
-
-	<p> <span class="ui">すべて</span> の行がすべての上にあり、ひと押しで Diamond も、チャットも、ワーカーも、メールボックスも、ページの取得も止めます。その灯りはアプリのほかのすべての灯りの根です。費用の出うるものが動いているあいだは緑、どれも動いていなければ赤、その中間では琥珀。レール自身を閉じるボタンもその行にあり、レール全体を代表するのはこの行だけです。</p>
-
-	<div class="cards">
-		<div class="card">
-			<h3 id="s2">Diamonds</h3>
-			<p>あなたが続けている探求です。Diamond は、ある仕事についてチャットが教えてくれたことを収めておくので、その仕事の次の一区切りは、あなたが知っていることから始まります。追加するときに押すのは <strong>＋</strong> — 隣は <strong>Diamonds</strong>。その隣のボタンは、Diamonds を <strong>関係図</strong>として描きます。たまってきたらタグを付けます。 <span class="ui">タグで絞り込む</span> の行で一覧を狭められます。</p>
-		</div>
-		<div class="card">
-			<h3 id="s3">チャット</h3>
-			<p>あなたの会話が、新しい順に並びます。始めるときに押すのは <strong>＋</strong> — 隣は <strong>チャット</strong>。どのチャットもクリックすれば中央に戻ります。 <span class="ui">⋯</span> は <strong>＋</strong> の隣にあり、 <span class="ui">すべてのチャットを削除</span>を持っています。一つではなくすべてのチャットについての操作なので、チャットのタイルには置かれていません。</p>
-		</div>
-	</div>
-	<p>二つの一覧のあいだには、もう一つの仕切りがあります。Diamonds はたまっていくもので、これがないと、長い一覧がチャットのタイルを下へ押し出してしまいました。ドラッグすればどちらの一覧にも場所を与えられ、ダブルクリックすれば半々になります。どちらも完全に押しつぶすことはできません。この配分は、ほかのレイアウトと同じく端末ごとに覚えられます。</p>
-
-	<p>Diamonds がチャットの上にあるのは、地面のありようのままです。下の会話で掘り、掘り出したものはその上で切られ、磨かれます。チャットは原石、Diamond は仕上げたもの。この並びは、仕事がどちらへ流れるのかを、ひと言の説明もなしに語ります。 <strong>チャット</strong> という言葉をそのままにしたのも、同じ理由です。Diamond は新しい種類のものだから、新しい名前に値します。会話はありふれたものなので、ありふれた言葉のままです。</p>
-
-	<p>どちらも余さず扱っているのは、こちらのページです — <a href="chats-and-diamonds.html">チャット &amp; Diamonds</a>.</p>
-
-	<h3 id="s4">管理パネル</h3>
-	<p>仕切りの下にある管理パネルは、機械の状態をひと目で見せます。設定はポップアップではなくここにあるので、その横でチャットは生きたままです。アプリパスワードとは何かと Daimond に尋ねながら、それを求める欄を画面に出しておけます。操作できる行はどれも、その名前が指すものを開くボタンです。</p>
+	<h2 id="s2">The centre</h2>
+	<p>The centre holds the conversation and whatever you are reading beside it. Panels here sit side by side and not over the chat, so you need not leave the conversation to look at something.</p>
+	<p>Width decides how many fit, from two at the narrowest to four at the widest, with one more for roughly every 380 pixels. Narrow the window and the panel opened most recently closes, and the chat is never the one to go.</p>
 	<ul>
-		<li> <strong>識別情報の行</strong> （この端末でのあなたが誰か）横に設定の歯車があります。</li>
-		<li><span class="ui">モデル</span>。つないだプロバイダーの数を示し、モデルの入力画面を開きます。</li>
-		<li><span class="ui">クレジット</span>。残高を示し、クレジットの画面を開きます。</li>
-		<li><span class="ui">ツール · M 個中 N 個</span>。使えるツールの数を示し、ツールのパネルを開きます。</li>
-		<li><span class="ui">バージョン</span>。動かしているリリースの名前と、それを使っている長さを示し、下のリリースの履歴を開きます。</li>
-		<li><strong>作業領域の保存領域</strong>。作業領域が置かれうるそれぞれの場所で、ファイルがどれだけ場所を使っているかを示します。</li>
+		<li><span class="ui">AI</span> holds the conversation, and comes back whenever the centre would otherwise be empty.</li>
+		<li><span class="ui">ウェブ</span> shows a web page, or drives one.</li>
+		<li><span class="ui">文書</span> shows a file as its characters, with room to read and edit it.</li>
+		<li><span class="ui">Preview</span> shows what a file looks like, whether a picture, a PDF, or typeset pages beside their source.</li>
+		<li><span class="ui">Email message</span> opens one message beside the chat.</li>
+		<li><span class="ui">ツール</span> lists what Daimond can do.</li>
+		<li><span class="ui">作成</span> is for writing mail, and only you can press Send.</li>
+		<li><span class="ui">関係図</span> draws your diamonds and the links between them.</li>
+		<li><span class="ui">ターミナル</span> is a real terminal on your machine. See <a href="../machine-operations.html">あなたのコンピューター</a>.</li>
 	</ul>
 
-	<h3 id="s5">動かしているバージョン</h3>
-	<p> <span class="ui">バージョン</span> の行は、ビルド番号ではなく名前と経過として読めます（<span class="ui">バージョン · Albany · 今日</span>）。リリースには西オーストラリアの地名がアルファベット順に付くので、何も調べずに並びが読めます。名前が印すのは <strong>節目</strong>です。Daimond は一日に何度もビルドを出すので、ひとつずつ名前を付ければ雑音になります。行にポインタを合わせると、ビルド id と公開日が出ます。</p>
-	<p>行をクリックすると、管理パネルに <strong>リリースの履歴</strong>が開きます。上から順に、こう読みます。</p>
+	<h2 id="s3">The dock, on the right</h2>
+	<p>The dock holds what you pull from.</p>
 	<ul>
-		<li><strong>予定されているもの</strong>が最初に、破線の枠で。</li>
-		<li><strong>動かしているビルド</strong>。印は <span class="ui">現在地</span>.</li>
-		<li><strong>それ以前のすべてのビルド</strong>。新しい順に、日付、何が変わったかの一行、ビルド id、そして封印された記録の中での位置が付きます。</li>
-	</ul>
-	<p>これはアプリの横に置かれた変更履歴ではありません。Daimond 自身の配信の点検が読む、公開された記録です。これまで配信されたすべてのビルドが順に並び、壊さずには書き換えられない鎖になっています。一行の注記は、その鎖を乱さずに加えられました。ですからあなたが読んでいるのは、注釈の付いた歴史であって、語り直しではありません。</p>
-	<div class="note"><strong>予定の項目が違って見えるのは、実際に違うからです。</strong> ビルド id も封印の番号も持たず、まだ作られておらず、日付の約束もないと言葉で述べています。その下はすべて封印され、確かめられます。意向の表明はそのどちらでもなく、記録の権威を借りるべきではありません。</div>
-	<p>古いビルドへ戻る道はありません。留め置いたビルドは、古すぎるクライアントとは話さないというゲートウェイ自身の拒否にぶつかります。すでに直された安全上の欠陥を抱えたままかもしれず、そのアプリはあなたのプロバイダーの鍵、識別情報、パスキーを持っています。そして新しいローカルのデータに出会えば、読み違える恐れがあります。変更が気に入らないという声には、変更そのもので答えます。何が変わったのかをはっきり言うこと、この注記はそのためにあります。</p>
-
-	<h3 id="s6">更新はどう届くか</h3>
-	<p>Daimond は自分で更新します。ダウンロードするものはありません。走っているタブは新しいビルドに気づき、そこへ読み込み直します。読み込み直しても何も失われません。起動のたびに、あなたの作業が耐久ジャーナルから復元されるからです。</p>
-	<p>問うべきは <em>いつ</em> だけです。ふつうの更新は静かな時を待ちます — タブが背面にあるとき、あるいは十分ほど触れられていないとき — 走っているやり取りや書きかけのメッセージの上に読み込み直すことはありません。上のボタンの隣のチップが、更新が用意できた時を告げます。押せば、その場で更新を受け取れます。</p>
-	<p>待てない更新もあります。ある変更のせいで古くなったタブがもうサーバーと働けなくなるとき、サーバーはそれを拒み、タブは自分で現在のバージョンへ読み込み直します。それでも走っているやり取りを断ち切ることはなく、文の途中で読み込み直すのではなく、最後のキー入力のあと少し待ちます。バージョンを断る道はありません。あなたが残すアプリは同じ人たちの同じアプリで、ブラウザは昨日のビルドを今日のサーバーに当てて動かせないからです。</p>
-
-	<h2 id="s7">ステージ — 中央</h2>
-	<p>The stage is the middle zone. Its occupants sit side by side and never dock at the right, so you never leave the conversation to do a thing: read the message, watch the page, read the document beside the pages it was typeset into, with the daimon still there to be asked about any of it.</p>
-
-	<p>How many seats there are is decided by <strong>how wide the stage is</strong>, not by a fixed number: two at the narrowest, four at the widest, and one more for roughly every 380 pixels, which is where a line of prose still holds about 45 characters. Four of them want around 1550 pixels of stage, so they are for a large monitor; a laptop usually gets two or three. Two is the floor whatever the width, because the whole point of the stage is that whatever you are attending to opens <em>— 隣は</em> the conversation rather than over it.</p>
-
-	<p>Narrow the window and the rightmost seat closes, the one you opened most recently first. The conversation is never the one to go. Widening again does not bring the panel back: a panel that reappeared because a window grew would be one you never asked for, with no way to tell it not to, and getting it back is one click on its chip. Ask for a panel when every seat is taken and the guest that has been on the stage longest leaves instead, because you have just said which one you want.</p>
-
-	<div class="cards">
-		<div class="card">
-			<h3 id="s8">AI — チャット</h3>
-			<p>daimon と話す場所です。ここの既定の住人で、ステージが空になりそうなときはいつでも戻ってきます。あなたのメッセージ、回答、そしてツールのステップがここに出ます。</p>
-		</div>
-		<div class="card">
-			<h3 id="s9">ウェブ</h3>
-			<p>ウェブページを、表示するか操作します。ヘッダーから開くか、Daimond がリンクをたどったときに開きます。</p>
-		</div>
-		<div class="card">
-			<h3 id="s10">文書</h3>
-			<p>A file as its characters, given room to read it and to edit it. Its header carries the paperclip that attaches what you are reading to what you are working on.</p>
-		</div>
-		<div class="card">
-			<h3 id="s11">Preview</h3>
-			<p>What a file looks like, as against what it says: a compiled PDF, a picture, or the typeset pages of a document as you write it. It is a panel of its own so that a source and its pages can be on screen at once, which is why the stage grew past two seats.</p>
-		</div>
-		<div class="card">
-			<h3 id="s12">メッセージ</h3>
-			<p>一通のメール。メールから開き、チャットの横で読みます。</p>
-		</div>
-		<div class="card">
-			<h3 id="s13">ツール</h3>
-			<p>Daimond に何ができるか、そして残りはいくらか。開くのは <span class="ui">ツール</span> の行からです。</p>
-		</div>
-		<div class="card">
-			<h3 id="s14">作成</h3>
-			<p>メールのメッセージを書きます。ここからひとりでに送られるものはありません。 <span class="ui">送信</span> ボタンだけがメールを回線に乗せ、押せるのはあなただけです。</p>
-		</div>
-		<div class="card">
-			<h3 id="s15">関係図</h3>
-			<p>あなたの Diamonds と、そのあいだのリンクを描きます。Diamonds の見出しにある関係図のボタンから開き、そこで並べ直したり、新しいリンクを引いたりもできます。</p>
-		</div>
-		<div class="card">
-			<h3 id="s16">ターミナル</h3>
-			<p>あなた自身の端末にある本物のターミナルで、コマンドが走るのと同じ区画の中にあります。詳しくは <a href="../machine-operations.html">端末でのコマンド実行</a>.</p>
-		</div>
-	</div>
-
-	<p>ステージの客はどれもヘッダーに閉じるボタンを持っています。閉じたパネルは消えません。チップは上部バーに、塗りつぶされない形で残り、クリックすれば戻ってきます。</p>
-
-	<h2 id="s17">ドック — 右</h2>
-	<p>ドックは、あなたが引き出してくるもとを収めます。閉じてもチップは上部バーに残り、チップをクリックすればまた収まります。ドックをどう分割するか、つまり一度にいくつのパネルを収めるかは、 <strong>ドックの分割</strong> であなたが決めます。下で説明します。</p>
-
-	<div class="cards">
-		<div class="card">
-			<h3 id="s18">メール</h3>
-			<p>あなたのメールボックスと、その中身。メールボックスを追加し、同期し、メッセージをステージに開きます。</p>
-		</div>
-		<div class="card">
-			<h3 id="s19">作業領域</h3>
-			<p>あなたのファイルを、普通のツリーとして。エージェントのファイルツールはここを読み書きします。</p>
-		</div>
-		<div class="card">
-			<h3 id="s20">エージェント</h3>
-			<p>動いているエージェントの実行を、そのまま。いくつ働いているかの数も出ます。</p>
-		</div>
-		<div class="card">
-			<h3 id="s21">支出</h3>
-			<p>何にいくら使ったか。詳しくは <a href="spending.html">支出</a>.</p>
-		</div>
-		<div class="card">
-			<h3 id="s22">保留</h3>
-			<p>daimon が求めていて、待っているものです。行は優先度でも古さでも並べ替えられ、答えは <span class="ui">実行する</span>, <span class="ui">まず相談する</span> または <span class="ui">取りやめる</span>.</p>
-		</div>
-		<div class="card">
-			<h3 id="s23">ゴミ箱</h3>
-			<p>削除したチャットと Diamonds です。三十日のあいだ保たれ、どの端末からでも元に戻せます。詳しくは <a href="chats-and-diamonds.html">チャット &amp; Diamonds</a>.</p>
-		</div>
-	</div>
-
-	<h2 id="s24">上部バー</h2>
-	<p>上部には、ワードマーク、 <strong>パネルのチップ</strong>が並び、右端には <strong>ほかの端末をリンク</strong>のボタン、 <strong>About</strong> のダイアログ、この <strong>手引き</strong>、そして <strong>外観とレイアウト</strong> のメニューがあります。新しいビルドが出ると、その横にチップが現れます。</p>
-
-	<h3 id="s25">チップ</h3>
-	<p>パネルにはどれもチップがあります。開いていても閉じていてもあり、クリックすればそのパネルが切り替わります。開いているパネルのチップは塗りつぶされるので、この列は画面にあるものの地図として読めます。閉じたパネルだけにチップがあったなら、アプリがいちばん空のときに列がいちばん長くなり、ひとつ使うたびにどのチップも横へずれたでしょう。動かないチップだからこそ、位置を覚えられます。（エージェントは <em>すべての</em>という言い方の例外です。最初のエージェントが動くまでは出てきません。）</p>
-	<p>チップはゾーンごとにまとまっています。レール、ステージ、ドックの順で、あいだには細い仕切りが入り、画面でゾーンが並ぶ順そのままです。ですからチップは、それが開くパネルが現れる側にあります。意味を持つ印が二つあります。</p>
-	<ul>
-		<li>閉じたステージのチップのうち、そのパネルが <strong>displace a guest already on the stage</strong> is drawn with a dashed outline. It appears only when every seat is taken, which depends on the width, so the same chip is plain on a wide screen and dashed on a narrow one. The chat keeps its seat and the guest that has been there longest leaves. It warns without refusing, and it is an outline and not an added mark so the chip keeps its width and its neighbours stay put.</li>
-		<li>閉じたドックのチップは、 <strong>ドックがいっぱいのときは灰色になります</strong>。ツールチップが直し方を指します。外観のメニューで分割を大きくするか、ドックのパネルを閉じるかです。</li>
+		<li><span class="ui">メール</span> holds your mailboxes.</li>
+		<li><span class="ui">作業領域</span> shows your files as a tree.</li>
+		<li><span class="ui">エージェント</span> lists the helpers running now, with what each is costing. It stays out of the way until the first one runs.</li>
+		<li><span class="ui">支出</span> shows where the money went.</li>
+		<li><span class="ui">保留</span> lists what is waiting on you. Each row is answered with <span class="ui">実行する</span>, discussed, or dropped.</li>
+		<li><span class="ui">ゴミ箱</span> holds deleted chats and diamonds for thirty days.</li>
+		<li><span class="ui">ソーシャル</span> と <span class="ui">Improve</span> are covered in <a href="../social.html">ソーシャルと提案</a>.</li>
 	</ul>
 
-	<h3 id="s26">ピン留めしたパネルと、パネルの一覧</h3>
-	<p>上部バーにどのチップを置くかはあなたが決めます。どのパネルも <strong>ピン留め</strong> したり外したりできます。外したものは列の終わりにある <span class="ui">⋯</span> のチップの奥に入り、そこにいくつあるかの数が付きます。クリックすると <strong>パネルの一覧</strong>が開きます。あるかぎりのパネルが、名前で検索でき、ゾーンごとにまとまり、それぞれの行にピンの操作と、そのパネルが開いているかどうかが付いています。行をクリックすると、チップと同じようにパネルが開いたり閉じたりします。</p>
-	<p>この列が欠けていてよいのは、パネルの一覧が欠けていないからです。使う頻度で順位が付くこともありません。ひとりでに並び替わる列は、位置が動かないからこそ育つ体の記憶を壊してしまいます。</p>
+	<h2 id="s4">上部バー</h2>
+	<p>The top bar carries the wordmark, a row of chips, and five buttons at the far right, which are the update chip, About, <span class="ui">Link another device</span>, this guide, and <span class="ui">Settings</span>.</p>
+	<p>Every panel has a chip. Click one to open or close that panel. An open panel's chip is filled in, so the row reads as a map of what is on screen. Chips are grouped by zone in the order the zones sit, and each keeps its position so you can learn it.</p>
+	<p>A fresh account gets six chips, for diamonds, Chat, Web, Workspace, Tools and Spending. The rest live behind the <span class="ui">⋯</span> chip at the end of the row. Click it for the gallery, which lists every panel there is, searchable and grouped by zone, with a pin on each row that puts it in the bar.</p>
+	<p>A dock chip is greyed when the dock is full, and its tooltip names the fix. <kbd>Ctrl</kbd> <kbd>K</kbd> opens any panel or setting by typing.</p>
 
-	<h3 id="s27">コマンドパレット</h3>
-	<p><kbd>Ctrl</kbd> <kbd>K</kbd>, <kbd>Cmd</kbd> <kbd>K</kbd> （Mac の場合）を押すと、打つだけでどのパネルにも設定にも届く検索の欄が開きます。結果のあいだは矢印キーで動き、 <span class="ui">Enter</span> で選ばれているものを実行し、 <span class="ui">Esc</span> で閉じます。並ぶのは、パネル、パレット、四つの文字サイズ、ドックの分割、言語、通貨、そして権限のモードです。チップが見えているパネルへの最短路になることはありません。パネルがいくつあっても欠けない路です。</p>
-
-	<h3 id="s28">キーボードで、耳で</h3>
-	<p>Daimond はマウスなしでも動かせます。 <span class="ui">Tab</span> は描かれた順に操作をたどり、 <span class="ui">Enter</span> または <span class="ui">Space</span> はいまいる操作を働かせ、 <span class="ui">Esc</span> は開いているものを閉じます。どのダイアログ、メニュー、シートにも隅に×があり、同じ作りの一つの操作で、スマートフォンの親指に合う大きさです。</p>
-	<p>いまどこにいるかは、操作の <em>外側</em> に、縁から離れて立つ輪として描かれます。かつてのように操作自身の枠線の変化として描くと、輪は、休んでいるときの枠線がほとんど見えない状態でしか読み取れません。枠線を見えるようにすれば、すべてのパレットで焦点の輪が一度に失われていたはずです。背後の面に対して描かれた輪は、その全域で生き残ります。十一のパレットすべてで測って、いちばん薄い輪でも、規格が求めるコントラストの四・五倍あります。</p>
-	<p>とくに二つの場所があります。</p>
+	<h2 id="s5">Settings</h2>
+	<p>Settings is the last button on the right. It holds how Daimond looks and where things sit, and nothing about what it does.</p>
 	<ul>
-		<li><strong>メールはキーボードだけで完全に操作できます。</strong> メールボックスも、フォルダーも、下書きも、メッセージも、たどり着いて押せる操作であって、クリックにしか応じない行ではありません。いまいるメールボックスと、読んでいるフォルダーは現在のものとして伝えられるので、読み上げソフトは、そこに何があるかだけでなく、あなたがどこにいるかも告げます。</li>
-		<li><strong>ダイアログは焦点を自分の中に留めます</strong> 。開いているあいだはそうで、閉じるときは、それを開いたものへ焦点を返します。タブ移動が、画面を覆う窓の裏へさまよい出ることはありませんし、閉じたときにページの先頭へ落とされることもありません。</li>
+		<li><strong>View.</strong> <span class="ui">シンプル</span> shows names only, and <span class="ui">最大</span> puts the model, the cost and the context on every tile. A tile's own cog overrides it.</li>
+		<li><strong>Theme.</strong> Eleven palettes in three bands. This guide wears whichever the app is wearing.</li>
+		<li><strong>Text size.</strong> Four steps. Only the type changes, so for a bigger interface use the browser's zoom.</li>
+		<li><strong>Side panels.</strong> How the dock tiles, and so how many panels it holds, whether four in one column, four at 2&times;2, or six at 2&times;3 or 3&times;2. <span class="ui">自動</span> lets the window decide.</li>
+		<li><strong>言語</strong> と <strong>Currency.</strong> Billing is in US dollars whatever the figures show.</li>
 	</ul>
-	<p>読み上げソフトでは、回答は <strong>届いたときに一度だけ</strong> 告げられます — 「Daimond が回答しました、120 語」 — 書かれていくそばからではありません。ライブ領域は変化のたびに読み上げられるので、流れてくる回答は、モデルが書き続けるあいだずっと、断片で読み上げられ続けます。人はそれを切ります。そして、告知を切られたアプリは、応えられるように見えて応えられません。やり取りごとに一文は、少ないぶん、使えます。</p>
-	<p>ウィンドウには名前の付いた領域と、本物の見出しが行き渡っているので、読み上げソフトが持つ目印の一覧が、そのままアプリの目次として使えます。たどり着けないもの、聞こえないものは、限界ではなく不具合です。そう言ってください。</p>
+	<p>With a diamond open, the menu also offers to keep the current arrangement of panels with it, and opening that diamond again puts the panels back. It is saved only when you ask.</p>
 
-	<h3 id="s29">外観とレイアウト</h3>
-	<p>右上のボタンは、Daimond が何をするかではなく、どう見えてどう収まるかについての選択をまとめた一つのメニューを開きます。</p>
-	<ul>
-		<li><strong>表示</strong>: <span class="ui">シンプル</span> または <span class="ui">最大</span>。シンプルは、それぞれに名前と、動いているかどうかだけを与え、ほかはすべてひと押し先に置きます。最大は、モデル、費用、コンテキストを横に並べるので、どちらも開かずに二つを比べられます。インターフェースの形もこれで決まります。いちばん詰まった密度でゆったりした形、という組み合わせは誰も欲しがらないからです。タイル自身の歯車は、そのタイルについては今もこれに優先します。</li>
-		<li><strong>テーマ</strong>、三つの帯に十一のパレットがあります。 <span class="ui">明るい</span>, <span class="ui">中間</span> と <span class="ui">暗い</span>。帯は見つけるためのもので、その中では好みで選べます。ただし <span class="ui">琥珀</span>だけは、描くものすべてから青を抜いてあり、夜遅くの読書のためのものです。この手引きは、Daimond の中で表示されているとき、アプリが着ているパレットをそのまま着ます。</li>
-		<li><strong>文字サイズ</strong>：四段階、 <span class="ui">小</span>, <span class="ui">標準</span>, <span class="ui">大</span> と <span class="ui">特大</span>。変わるのは文字だけです。枠も、余白も、パネルの幅もそのままです。これは読むための操作であって、拡大ではないからです。インターフェース全体を大きくしたいときは、ブラウザ自身の拡大を使ってください。メニューの見本は、選ぼうとしている大きさで組まれているので、操作は変化を名前で言うのではなく、見せます。</li>
-		<li><strong>ドックの分割</strong>: <span class="ui">自動</span>, <span class="ui">1</span> 列、 <span class="ui">2×2</span>, <span class="ui">2×3</span> または <span class="ui">3×2</span>、それぞれ選ぶ格子の形で描かれます。分割は <em>ドックがいくつパネルを収められるか</em>を、列かける行で決めます。1 列なら四つ、2 × 2 でも四つ、2 × 3 でも 3 × 2 でも六つです。 <span class="ui">自動</span> は窓に決めさせ、二列目の場所ができたら二列にします。小さい格子にすると、入らなくなったパネルから閉じられます。いちばん最近開いたものが先で、どれも、見えてクリックできるチップに戻ります。</li>
-		<li><strong>言語</strong> と <strong>通貨</strong>：Daimond が話す言葉と、金額を映す単位です。まだ表のない言語は英語のままです。表示がどうであれ、請求は常に米ドルです。</li>
-	</ul>
+	<h2 id="s6">The Graph</h2>
+	<p>Open <span class="ui">関係図</span> to see your diamonds drawn, with the links between them. Bring the pointer near a tile's edge and four anchors appear. Drag from one and a line follows, snaps to the nearest diamond, and makes the link when you let go.</p>
+	<p>A link can exist with no relation on it, which means only that the two are joined. Chips offer a <span class="ui">Relation</span> on the line that has just appeared, and <kbd>Esc</kbd> leaves it blank.</p>
+	<p>Let go over empty canvas and a box asks for a name, then a new diamond is made there, already linked. Nothing is written until you give the name.</p>
+	<p>Click a link to select it and press <kbd>Delete</kbd> to drop it. Its form carries <span class="ui">Reverse</span>, which writes a new record, so the note travels and the date does not. <span class="ui">Organise</span> lays everything out again to reduce crossings. From the keyboard, select a diamond, press <kbd>L</kbd>, and click the target.</p>
 
-	<h3 id="s30">配置を Diamond と一緒に残す</h3>
-	<p>Diamond を選んでいるとき、外観のメニューは、いまのパネルの配置をその Diamond と一緒に残すことを申し出ます。すでに保存してあるものを更新したり、忘れさせたりもできます。その Diamond をまた開けば配置が戻るので、仕事に戻ることが、パネルを手で組み直すことにはなりません。保存されるのは頼んだときだけで、推し量ることも、裏で行うこともありません。黙ってパネルを閉じる切り替えは、仕事が失われたように読めるからです。</p>
+	<h2 id="s7">キーボードで、耳で</h2>
+	<p><kbd>Tab</kbd> moves through the controls, <kbd>Enter</kbd> または <kbd>Space</kbd> operates one, and <kbd>Esc</kbd> closes what is open. Every dialog, menu and sheet also carries a cross, sized for a thumb.</p>
+	<p>A dialog keeps focus inside itself and hands it back on closing. With a screen reader, an answer is announced once when it arrives instead of being recited as it is written. The window has named regions and real headings throughout. Anything you cannot reach or cannot hear is a fault, so say so on <a href="../social.html">ソーシャル</a>.</p>
 
-	<h2 id="s31">狭い画面では</h2>
-	<p>電話の幅より狭くなると、チップとギャラリーは電話シェルに代わり、より少ない場所で同じ問いに答えます。チャットが床であり、パネルはその上にドラッグできるシートとして立ち上がり、レールは左上のボタンで開く引き出しになります。下端の列は同じチップの列で、横にスクロールします。すべてのパネルがそこにチップを持ち、並びは広い画面でゾーンが並ぶ順のままです。塗りつぶされているのは今見ているものであり、開いているものすべてではありません。電話では見えているものは一つだけだからです。そしてチップは切り替えるのではなくそこへ連れて行きます。閉じるとすれば画面全体になってしまうからです。管理パネルは引き出しの下の方にあります。失われるものはありません。同じパネルを、一度に一つずつ見せているだけです。</p>
-	<p>ホーム画面に入れると、Daimond はブラウザの飾りのない専用の窓で動き、ノッチとホームインジケータを避けて収まります。同じページで、保存済みの作業も同じなので、そこへ移すものは何もありません。</p>
+	<h2 id="s8">On a phone</h2>
+	<p>Below the phone width the chips give way to the phone shell. The chat is the floor, and a panel rises over it as a sheet you can drag down again. The rail becomes a drawer, opened at the top left, with your account at the foot of it.</p>
+	<p>The row along the bottom is the same chip row, scrolled sideways, and it carries every panel instead of six. The filled chip is what you are looking at, because on a phone only one thing is, so a chip takes you there instead of toggling.</p>
+	<p>Where a row of controls runs off the edge, it scrolls, and fades at the edge to say so. A diamond's page has a full-screen button that gives the whole display to the page.</p>
+	<p>Installed to the home screen, Daimond runs in its own window with no browser furniture and holds clear of the notch. It is the same page and the same stored work.</p>
 
 	<div class="next">
-		<a href="index.html">&larr; はじめに</a>
-		<a href="models.html">次：モデル &amp; クレジット &rarr;</a>
+		<a href="index.html">&larr; Start here</a>
+		<a href="chats-and-diamonds.html">Next: Chats &amp; diamonds &rarr;</a>
 	</div>
 </main>
 
 <footer class="site-foot">
-	<span>Daimond はあなたのブラウザで動きます。ここにあるものがこちらに送られることはありません。</span>
+	<span>Daimond はブラウザの中で動きます。ここでの内容は私たちに送信されません。</span>
 	<nav aria-label="ガイドのページ">
-		<a href="index.html">はじめに</a>
+		<a href="index.html">ここから始める</a>
 		<a href="interface.html">インターフェース</a>
-		<a href="models.html">モデル</a>
-		<a href="chats-and-diamonds.html">チャット &amp; Diamonds</a>
-		<a href="../capps.html">Capps</a>
-		<a href="email-web-files.html">メール、ウェブ &amp; ファイル</a>
-		<a href="accounts.html">アカウント</a>
-		<a href="sync.html">端末間の同期</a>
+		<a href="chats-and-diamonds.html">チャットと diamond</a>
+		<a href="../capps.html">diamond のページ</a>
+		<a href="email-web-files.html">ファイル、メール、ウェブ</a>
+		<a href="../machine-operations.html">あなたのコンピューター</a>
+		<a href="../runner.html">ヘルパーとターンの実行場所</a>
+		<a href="sync.html">複数の端末</a>
+		<a href="../social.html">ソーシャルと提案</a>
+		<a href="models.html">モデルとプロバイダー</a>
 		<a href="spending.html">支出</a>
-		<a href="../machine-operations.html">端末でのコマンド実行</a>
-		<a href="../social.html">ソーシャル</a>
+		<a href="accounts.html">安全性と対処</a>
 	</nav>
 </footer>
 </body>

@@ -114,6 +114,13 @@ await page.locator('#id-primary').click();
 await page.waitForTimeout(4000);
 await page.keyboard.press('Escape');
 await page.waitForTimeout(300);
+// This account was just created on a desktop-sized viewport, so stay-unlocked
+// defaults ON (identity.js `stayUnlocked`) -- and a reload of a tab that is
+// already unlocked comes back unlocked, with no gate at all to measure the fold
+// of (2026-09-13). The whole point of the section below is that fold, so the
+// per-device answer is forced off first: a real setting a returning user could
+// equally have chosen, not a fixture the app does not really have.
+await page.evaluate(() => localStorage.setItem('daimond-stay-unlocked', '0'));
 await page.reload();
 await page.waitForSelector('#id-primary', { timeout: 15000 });
 await page.waitForTimeout(2000);

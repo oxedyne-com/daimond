@@ -1,4 +1,17 @@
-// verify_stopcontrol.mjs — can a daimon turn be stopped from the face a Diamond opens on?
+// verify_stopcontrol.mjs — can a turn be stopped, and does a stopped turn say so?
+//
+// Three claims now, all about the one control and what it leaves behind.
+//
+//   1. A DAIMON TURN CAN BE STOPPED FROM THE FACE A DIAMOND OPENS ON (below).
+//   2. STOP IS REACHABLE WITH TEXT IN THE BOX. Mid-turn the send button carries
+//      Stop only while the box is EMPTY -- type a correction and it becomes a Send
+//      arrow, which is right, since pressing it then means send the correction.
+//      That left a user who had typed something unable to stop at all without
+//      clearing the box first, and the button's `aria-label` said "Send" while its
+//      title said "Stop" (UX run 2026-09-15, annoyance 2).
+//   3. A STOPPED TURN SAYS IT WAS STOPPED, in the thread, and still says so after a
+//      reload. Stop kept the partial and drew nothing about it, so a stopped answer
+//      read as a finished one and only the missing tail told you otherwise (B05).
 //
 // The user's report: "i could not stop the llm, the arrow send button doesn't
 // change to a stop button! I had to refresh".
@@ -22,7 +35,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { open, connectMock, scratch } from './harness.mjs';
+import { open, connectMock, scratch, newChat } from './harness.mjs';
 
 // Derived, never written down. `gate.sh` runs the suite inside a `git
 // worktree` at a different path, and an absolute path here would read the
@@ -144,6 +157,83 @@ try {
 		'and the button goes back to Send', JSON.stringify(after));
 
 	await p.screenshot({ path: scratch('stopprobe-' + (BROKEN ? 'broken' : 'fixed') + '.png') });
+
+	// ── 2. Stop with something typed in the box ──────────────
+	//
+	// In an ordinary chat, which is where a correction gets typed. The send button
+	// is expected to LEAVE stop mode here -- that is the interject behaviour B03 and
+	// B04 rest on -- so what is asserted is that Stop is still on screen, as its own
+	// control, and that both controls say the same word twice.
+	await newChat(s);
+	await p.fill('#chat-input', '@long 300');
+	await p.click('#chat-send');
+	await p.waitForTimeout(1500);
+	await p.fill('#chat-input', 'a correction');
+	await p.waitForTimeout(300);
+	const typed = await p.evaluate(() => {
+		const b = document.getElementById('chat-send'), st = document.getElementById('chat-stop');
+		const shown = (e) => !!(e && e.getClientRects().length);
+		return {
+			sendStop:  b.classList.contains('stop'),
+			sendTitle: b.title || '',
+			sendAria:  b.getAttribute('aria-label') || '',
+			stopShown: shown(st),
+			stopTitle: st ? (st.title || '') : '',
+			stopAria:  st ? (st.getAttribute('aria-label') || '') : '',
+		};
+	});
+	check(!typed.sendStop,
+		'with a correction typed, the send button is a Send arrow — B04 is untouched',
+		JSON.stringify(typed.sendTitle));
+	check(typed.stopShown,
+		'BUT STOP IS STILL REACHABLE — a control of its own, so the box need not be emptied',
+		JSON.stringify(typed));
+	check(typed.sendAria === typed.sendTitle && typed.stopAria === typed.stopTitle,
+		'and each control says the same word to a reader and to a screen reader',
+		`send ${JSON.stringify(typed.sendAria)}/${JSON.stringify(typed.sendTitle)}, `
+			+ `stop ${JSON.stringify(typed.stopAria)}/${JSON.stringify(typed.stopTitle)}`);
+
+	// ── 3. And the stopped turn says it was stopped ─────────
+	await p.click('#chat-stop');
+	let stoppedIn = -1;
+	for (let i = 0; i < 60; i++) {
+		await p.waitForTimeout(250);
+		const busy = await p.evaluate(() => {
+			const b = document.getElementById('chat-send');
+			return !!b && (b.classList.contains('stop') || b.disabled);
+		});
+		if (!busy) { stoppedIn = i * 250; break; }
+	}
+	check(stoppedIn >= 0, 'PRESSING THE SEPARATE STOP ENDS THE TURN', stoppedIn + 'ms');
+	await p.waitForTimeout(800);
+
+	/// The trailing "how it ended" line, and the words the turn managed, from the thread.
+	const endLine = () => p.evaluate(() => ({
+		line: [...document.querySelectorAll('#chat-output .ended-notice .end-line')]
+			.map(e => e.textContent.trim()).join(' | '),
+		said: [...document.querySelectorAll('#chat-output .chat-msg-assistant .chat-msg-content')]
+			.map(e => e.textContent).join(' '),
+		// The ending belongs UNDER the answer it is about, not over it.
+		order: [...document.querySelectorAll(
+			'#chat-output .chat-msg-assistant, #chat-output .ended-notice')]
+			.map(e => e.classList.contains('ended-notice') ? 'end' : 'answer').join(','),
+	}));
+	const live = await endLine();
+	check(/chunk-1/.test(live.said),
+		'the partial the user was reading is kept', JSON.stringify(live.said.slice(0, 40)));
+	check(live.line !== '',
+		'AND THE TURN SAYS IT WAS STOPPED — a stopped answer no longer reads as a finished one',
+		JSON.stringify(live.line));
+	check(/answer,end$/.test(live.order),
+		'with the line UNDER the words it is about', JSON.stringify(live.order));
+	await p.screenshot({ path: scratch('stopprobe-stopped-line.png') });
+
+	await p.reload({ waitUntil: 'domcontentloaded' });
+	await p.waitForTimeout(3000);
+	const back = await endLine();
+	check(back.line === live.line && /chunk-1/.test(back.said),
+		'AND IT IS STILL THERE AFTER A RELOAD — the ending is stored, not drawn once',
+		JSON.stringify(back.line));
 } catch (e) {
 	console.log('  FAIL threw — ' + (e && e.message));
 	failures++;

@@ -10,13 +10,14 @@
 //      trash afterwards, which is what makes the silence safe.
 //
 //   2. DELETE ALL CHATS lives behind the Chats section's own overflow (the ⋯ /
-//      `#chats-menu-btn`), never as a second cross beside "+". It too asks
-//      nothing and puts every chat in the trash. THIS IS THE BUTTON THE TRASH
-//      WAS BUILT FOR: it shipped with a dialog naming the count and no way back,
-//      and somebody pressed it expecting an undo. The count in the question was
-//      never the protection; the protection is that the chats are still there.
-//      The confirm that names a count now lives on "Empty trash", where it is
-//      true — see dev/verify_trash.mjs.
+//      `#chats-menu-btn`), never as a second cross beside "+", and puts every
+//      chat in the trash. IT ASKS FIRST, NAMING THE COUNT (owner ruling,
+//      B18/annoyance 14, reversed 2026-09-15 from this file's own earlier
+//      finding): reversible from the Trash is not the same as unasked, and
+//      this is the one bulk act in the rail with nothing chosen first to give
+//      a moment's pause. "Empty trash" still asks its own question, on its own
+//      irreversible act — see dev/verify_trash.mjs — and the two are not the
+//      same confirm.
 //
 //   3. ORDERING. Tiles list newest-touched first. Before this file's fix,
 //      `renderSessionList` drew `chats` in plain array order, which was never a
@@ -36,7 +37,7 @@
 //   node dev/verify_chattiles.mjs --break nocross     # 1: no × on a chat tile
 //   node dev/verify_chattiles.mjs --break notrash     # 1: × destroys instead of trashing
 //   node dev/verify_chattiles.mjs --break nomenu      # 2: the overflow does nothing
-//   node dev/verify_chattiles.mjs --break bulkasks    # 2: "Delete all" puts a dialog back
+//   node dev/verify_chattiles.mjs --break bulksilent  # 2: "Delete all" skips the ask
 //   node dev/verify_chattiles.mjs --break noorder     # 3: tiles are not sorted
 //   node dev/verify_chattiles.mjs                     # and then, clean
 //
@@ -93,16 +94,16 @@ const BREAKS = {
 		find: 'openChatsMenu(chatsMenuBtn);',
 		with: '',
 	}],
-	// "Delete all chats" asks again. A dialog in front of a reversible act is
-	// the habit this change removed, and a break that puts one back must fail
-	// the check that says it is gone.
-	bulkasks: [{
+	// "Delete all chats" skips the ask and acts at once again -- the shape the
+	// owner asked to have reversed (B18/annoyance 14). A break that restores
+	// it must fail the check that says a confirm names the count first.
+	bulksilent: [{
 		file: 'js/daimond.js',
-		find: '\t\tloose.forEach(function (c) { removeChat(c); saidMoved(chatDisplayName(c)); });',
-		with: '\t\tconfirmDialog(\'Delete all \' + n + \' chats?\', \'Delete\').then(function (ok) {\n'
-			+ '\t\t\tif (!ok) return;\n'
-			+ '\t\t\tloose.forEach(function (c) { removeChat(c); });\n'
-			+ '\t\t});',
+		find: '\t\tvar ok = await confirmDialog(tn(\'rail.delete_all_chats_ask\', n, { n: n }),\n'
+			+ '\t\t\tt(\'tile.dlg_delete\'), { title: t(\'rail.delete_all_chats\'), danger: true });\n'
+			+ '\t\tif (!ok) return;\n'
+			+ '\t\tloose.forEach(function (c) { removeChat(c); saidMoved(chatDisplayName(c)); });',
+		with: '\t\tloose.forEach(function (c) { removeChat(c); saidMoved(chatDisplayName(c)); });',
 	}],
 	// The tile list draws in whatever order `chats` happens to hold, which is
 	// what "the ordering is weird" was about.
@@ -347,13 +348,18 @@ try {
 	// Reachable from the section's own overflow, and nowhere beside "+".
 	const railButtons = await page.evaluate(() => {
 		const head = document.querySelector('#new-session-btn').closest('.railhead');
-		return [...head.querySelectorAll('button')].map((b) => ({
-			id: b.id,
-			// A cross by SHAPE: two crossing diagonal strokes, the same test
-			// `verify_tiledlg` uses. The overflow must not be one of these.
-			crossy: /M6 6l12 12M18 6L6 18/.test(b.innerHTML),
-			dots: (b.innerHTML.match(/<circle/g) || []).length,
-		}));
+		// `.rail-fold` collapses the whole section and predates neither this
+		// check nor this file, but arrived after it was written -- excluded here
+		// because what this check is about is "+"  and the overflow, not every
+		// button the railhead has grown since.
+		return [...head.querySelectorAll('button')].filter((b) => !b.classList.contains('rail-fold'))
+			.map((b) => ({
+				id: b.id,
+				// A cross by SHAPE: two crossing diagonal strokes, the same test
+				// `verify_tiledlg` uses. The overflow must not be one of these.
+				crossy: /M6 6l12 12M18 6L6 18/.test(b.innerHTML),
+				dots: (b.innerHTML.match(/<circle/g) || []).length,
+			}));
 	});
 	check('the Chats railhead has exactly two buttons: "+" and the overflow — no second cross beside "+"',
 		railButtons.length === 2 && railButtons.every((b) => !b.crossy),
@@ -389,9 +395,18 @@ try {
 	const pickedItem1 = await clickDeleteAllItem();
 	await page.waitForTimeout(800);
 	const bulkMsg = pickedItem1 ? await openDialogMsg(page) : null;
-	check('"Delete all chats" asks NOTHING — the chats are all in the trash a moment later',
-		pickedItem1 && bulkMsg === null,
-		!pickedItem1 ? 'no menu item to click' : `a dialog opened: ${JSON.stringify(bulkMsg)}`);
+	check('"Delete all chats" asks first, naming the count (owner ruling, annoyance 14)',
+		pickedItem1 && typeof bulkMsg === 'string' && /\d+/.test(bulkMsg),
+		!pickedItem1 ? 'no menu item to click' : `dialog said: ${JSON.stringify(bulkMsg)}`);
+	// Confirm it, which is the one no-ceremony act every other delete in this
+	// app already takes — the ask is new, the deletion under it is not.
+	await page.evaluate(() => {
+		const card = [...document.querySelectorAll('.modal.dlg .dlg-card')]
+			.find((c) => c.getClientRects().length);
+		const ok = card && card.querySelector('.dlg-ok');
+		if (ok) ok.click();
+	});
+	await page.waitForTimeout(500);
 	const afterBulkYes = await tileNames(page);
 	check('and it empties the Chats rail entirely',
 		pickedItem1 && afterBulkYes.length === 0,

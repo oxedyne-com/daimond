@@ -1,11 +1,18 @@
 /* ============================================================
    Daimond — first contact (trust.js)
    ------------------------------------------------------------
-   How two people establish that they hold each other's real keys,
-   with NO SERVER IN THE PATH AT ALL. Everything in this file runs
-   between two devices in a room, or between two devices and a
-   voice call. The gateway is not consulted, and cannot be: it is
-   not a party to any of it.
+   How two people establish that they hold each other's real keys.
+   Everything that RAISES a key runs between two devices in a room,
+   or between two devices and a voice call. The gateway is not a
+   party to any of that and cannot be made one.
+
+   It is a party to exactly one thing: FINDING somebody. `lookup`
+   asks it who holds a handle and reads the card it answers with,
+   because the alternative was a room — a person holding nobody's
+   code and with nobody in front of them could reach nobody at all.
+   A card that arrives that way is recorded as having arrived that
+   way and is drawn new for ever, which is what the next paragraph
+   is about.
 
    ── THE RULE EVERYTHING ELSE HANGS ON ───────────────────────
 
@@ -256,6 +263,44 @@
 	function cardUrl() {
 		var c = window.DaimondIdentity && window.DaimondIdentity.card();
 		return c ? (location.origin + location.pathname + '#' + HASH_KEY + '=' + b64url(c)) : '';
+	}
+
+	/// Ask the gateway who holds a handle, and read the card it answers with.
+	///
+	/// THE CEILING IS `lookup`, AND IT IS THE POINT OF THE ROUTE RATHER THAN A
+	/// LIMITATION OF IT. The gateway is an intermediary: it could serve a card it
+	/// composed itself, signed perfectly by a key it holds, and nothing in the
+	/// bytes would say so. So a card from here is recorded as having come from
+	/// here, and the People list draws it new until a person does something out
+	/// of band.
+	///
+	/// What IS checked, because a check that can be made should be: the card
+	/// verifies under its own key, and the fingerprint the gateway served beside
+	/// it is the fingerprint of that key. The two disagreeing means the account
+	/// record and the card are about different keys, which is a server fault or a
+	/// tampered answer and is refused either way.
+	///
+	/// Answers `{found, handle, card, why}`; `why` is one of `none`, `bad`,
+	/// `nocard`, `off`, `busy`.
+	async function lookup(handle) {
+		var name = String(handle || '').trim().toLowerCase();
+		if (!name) return { found: false, why: 'none' };
+		var sync = window.DaimondSync;
+		if (!sync || typeof sync.lookupHandle !== 'function') return { found: false, why: 'off' };
+		var r = null;
+		try { r = await sync.lookupHandle(name); } catch (e) { r = null; }
+		if (!r || !r.found) return { found: false, why: (r && r.why) || 'none' };
+		if (!r.card) return { found: false, why: 'nocard', handle: r.handle || name };
+		var card = parse(PASTE_PREFIX + b64url(r.card));
+		if (!card) return { found: false, why: 'bad', handle: r.handle || name };
+		// The account record and the card must be about ONE key. A handle is the
+		// gateway's claim and the card is its holder's, and this is the only place
+		// the two can be held against each other.
+		if (r.fingerprint && card.fp && r.fingerprint !== card.fp) {
+			return { found: false, why: 'bad', handle: r.handle || name };
+		}
+		card.handle = r.handle || name;
+		return { found: true, handle: card.handle, card: card };
 	}
 
 	/// Read a card out of whatever was handed over: the paste form, the URL
@@ -832,6 +877,13 @@
 			'padding:12px;border:1px dashed var(--border,#444);border-radius:8px;margin:0 0 12px;' +
 			'user-select:all}' +
 			'.trust-empty{opacity:.7;font-size:var(--fs-base);margin:0 0 12px}' +
+			// The finder: one field, one button, and the answer directly under
+			// them, so the result cannot be read as belonging to the list below.
+			'.trust-find{display:flex;gap:8px;align-items:center;margin:0 0 8px}' +
+			'.trust-find input{flex:1;min-width:0}' +
+			'.trust-found{padding:10px;border:1px solid var(--border,#333);border-radius:8px;' +
+			'margin:0 0 12px}' +
+			'.trust-note{display:block;font-size:var(--fs-sm);opacity:.8;margin:4px 0 0}' +
 			'.trust-scan{display:block;width:100%;max-width:320px;margin:0 auto 12px;border-radius:8px;' +
 			'background:#000}';
 		document.head.appendChild(s);
@@ -879,6 +931,97 @@
 		return row;
 	}
 
+	/// Draw the found person: what is known about the KEY first, then what the
+	/// card CLAIMS, then the sixty digits that are the only way up from here.
+	///
+	/// The key line says NEW and there is no "Mark matched now" on this surface,
+	/// because there cannot be: the card came through a server. The safety number
+	/// is drawn rather than hidden behind a button so that the act which WOULD
+	/// raise it is in front of the person at the moment they find somebody.
+	async function drawFound(box, found, onAdd) {
+		box.innerHTML = '';
+		var card = found.card;
+		box.appendChild(el('div', 'trust-claim',
+			tOr('trust.calls_themselves', 'calls themselves “{name}”', { name: card.label || '—' })));
+		var known = await person(card.key);
+		box.appendChild(drawKeyLine(known || { state: 'new', method: '', matchedAt: 0, prevAt: 0 }));
+		box.appendChild(el('div', 'trust-fp', card.fp));
+		box.appendChild(el('p', 'pair-note', tOr('trust.async_lead',
+			'This came through something in the middle, so it stays a new key. Read the safety number aloud on a call to change that.')));
+		var grid = el('div', 'trust-number');
+		box.appendChild(grid);
+		safetyNumber(card.key).then(function (n) {
+			if (!n) return;
+			var groups = n.split(/\s+/);
+			for (var i = 0; i < groups.length; i++) grid.appendChild(el('span', null, groups[i]));
+		});
+		var row = el('div', 'pair-row');
+		var add = el('button', 'pair-btn', tOr('trust.find_add', 'Add'));
+		add.addEventListener('click', function () {
+			// Recorded as a LOOKUP, which is what decides everything the People
+			// row will say about this key for as long as it is there.
+			record(card, ROUTE.LOOKUP).then(function () {
+				box.innerHTML = '';
+				box.appendChild(el('div', 'trust-note', tOr('trust.find_added', 'Added to People.')));
+				if (onAdd) onAdd();
+			});
+		});
+		row.appendChild(add);
+		box.appendChild(row);
+	}
+
+	/// The reason a search found nobody, in the user's own language.
+	function findWhy(why) {
+		if (why === 'bad')    return tOr('trust.find_bad', 'Their code did not verify.');
+		if (why === 'nocard') return tOr('trust.find_nocard', 'They have no code yet.');
+		if (why === 'off')    return tOr('trust.find_off', 'Sign in to look a name up.');
+		if (why === 'busy')   return tOr('trust.find_busy', 'Too many looks just now. Try later.');
+		return tOr('trust.find_none', 'No such name.');
+	}
+
+	/// The finder: a field for a handle, and the answer under it.
+	///
+	/// A handle is the gateway's namespace and the only thing in this file that
+	/// needs a server at all. It is here because the alternative was a room: a
+	/// person who has nobody's code and nobody in front of them could reach
+	/// nobody, and every other surface in the panel said so.
+	function mountFind(host, onAdd) {
+		var row = el('div', 'trust-find');
+		var input = el('input', 'pair-name');
+		input.setAttribute('type', 'text');
+		input.setAttribute('autocapitalize', 'off');
+		input.setAttribute('autocomplete', 'off');
+		input.setAttribute('spellcheck', 'false');
+		input.setAttribute('placeholder', tOr('trust.find_hint', 'Their handle'));
+		var go = el('button', 'pair-btn ghost', tOr('trust.find', 'Find somebody'));
+		row.appendChild(input);
+		row.appendChild(go);
+		host.appendChild(row);
+		var out = el('div', 'trust-found');
+		out.hidden = true;
+		host.appendChild(out);
+
+		var run = function () {
+			var wanted = input.value;
+			if (!String(wanted || '').trim()) return;
+			out.hidden = false;
+			out.innerHTML = '';
+			out.appendChild(el('div', 'trust-note', '…'));
+			lookup(wanted).then(function (found) {
+				if (!found.found) {
+					out.innerHTML = '';
+					out.appendChild(el('div', 'trust-note', findWhy(found.why)));
+					return;
+				}
+				return drawFound(out, found, onAdd);
+			});
+		};
+		go.addEventListener('click', run);
+		input.addEventListener('keydown', function (e) {
+			if (e.key === 'Enter') { e.preventDefault(); run(); }
+		});
+	}
+
 	/// Show the People view of the Social panel, which is where the list lives.
 	function showPeople() {
 		try {
@@ -919,6 +1062,40 @@
 				box.appendChild(txt);
 			});
 		});
+	}
+
+	/// Put this identity's code on the clipboard, and offer the ways out of the
+	/// app that this device has.
+	///
+	/// EXACTLY THE STRING "Show my code" SHOWS, through the same `cardText`, so
+	/// the two surfaces cannot drift into handing over different bytes. The code
+	/// is public by design -- a public key, a label, and a signature over both --
+	/// and a code that arrives through a chat window is a new key whatever else
+	/// it travelled through. It is the CODE that is shared; nothing here shares a
+	/// secret and nothing here raises a key.
+	///
+	/// Answers the string it copied, or `''` when there was no card to send, so a
+	/// caller can say which happened without reading the clipboard.
+	async function sendCard() {
+		var id = window.DaimondIdentity;
+		if (id && !id.card()) {
+			try { await id.mintCard(); } catch (e) { /* the check below says so */ }
+		}
+		var text = cardText();
+		if (!text) return '';
+		try { await navigator.clipboard.writeText(text); }
+		catch (e) { /* a refused clipboard is not a refused share */ }
+		// The phone's own share sheet where there is one, and the mail client
+		// where there is not. Both carry the code and nothing else: a sentence
+		// wrapped around it is a sentence the reader has to strip back off.
+		try {
+			if (navigator.share) {
+				await navigator.share({ text: text });
+			} else {
+				window.location.href = 'mailto:?body=' + encodeURIComponent(text);
+			}
+		} catch (e) { /* dismissed, which is not a failure */ }
+		return text;
 	}
 
 	/// Take somebody's card: by camera, or by paste.
@@ -1128,13 +1305,27 @@
 		var acts = el('div', 'trust-acts');
 		var mine = el('button', 'pair-btn ghost', tOr('trust.show_mine', 'Show my code'));
 		mine.addEventListener('click', showCard);
+		// Beside it, because showing and sending are the same act through two
+		// different doors, and only one of them works when nobody is in the room.
+		var send = el('button', 'pair-btn ghost', tOr('trust.send_mine', 'Send my code'));
+		var sent = el('div', 'trust-note');
+		sent.hidden = true;
+		send.addEventListener('click', function () {
+			sendCard().then(function (text) {
+				sent.hidden = false;
+				sent.textContent = text
+					? tOr('trust.send_copied', 'Copied.')
+					: tOr('trust.no_card', 'This device has no card yet. Unlock it and try again.');
+			});
+		});
 		var add = el('button', 'pair-btn', tOr('trust.add', 'Add somebody'));
 		add.addEventListener('click', showAdd);
 		acts.appendChild(mine);
+		acts.appendChild(send);
 		acts.appendChild(add);
 		host.appendChild(acts);
+		host.appendChild(sent);
 		var list = el('div', 'trust-list');
-		host.appendChild(list);
 		var draw = function () {
 			return people().then(function (all) {
 				list.innerHTML = '';
@@ -1150,6 +1341,8 @@
 				return all.length;
 			});
 		};
+		mountFind(host, function () { draw(); });
+		host.appendChild(list);
 		draw();
 		return draw;
 	}
@@ -1214,7 +1407,15 @@
 		// The surfaces.
 		showPeople: showPeople,
 		showCard:   showCard,
+		/// Put this identity's code on the clipboard and offer the ways out of
+		/// the app. Published because a verifier has to prove it hands over the
+		/// SAME string `cardText` shows, which is the only thing that could go
+		/// wrong here.
+		sendCard:   sendCard,
 		showAdd:    showAdd,
+		/// Resolve a handle to a verified card. Published so the People finder
+		/// and a verifier drive one door rather than two.
+		lookup:     lookup,
 		/// What a card that has just arrived is offered, given how it arrived.
 		/// Published because the route is the whole of decision 4 and a verifier
 		/// has to be able to drive both routes through the SAME door the scanner

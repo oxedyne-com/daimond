@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
-<title>Cuentas y privacidad — Guía de Daimond</title>
+<title>Safety &amp; fixes &mdash; Daimond guide</title>
 <link rel="icon" type="image/svg+xml" href="../../assets/daimond_mark.svg">
 <link rel="stylesheet" href="../../css/variables.css">
 <link rel="stylesheet" href="../../css/guide.css">
@@ -21,91 +21,110 @@
 			<span class="brand-sub">Guía</span>
 		</a>
 		<nav class="site-nav" aria-label="Páginas de la guía">
-			<a href="index.html">Primeros pasos</a>
+			<a href="index.html">Empieza aquí</a>
 			<a href="interface.html">La interfaz</a>
-			<a href="models.html">Modelos y créditos</a>
-			<a href="chats-and-diamonds.html">Chats y Diamonds</a>
-			<a href="../capps.html">Capps</a>
-			<a href="email-web-files.html">Correo, Web y archivos</a>
-			<a href="accounts.html" aria-current="page">Cuentas</a>
-			<a href="sync.html">Sincronización entre dispositivos</a>
-			<a href="spending.html">Gastos</a>
-			<a href="../machine-operations.html">Comandos en el equipo</a>
-			<a href="social.html">Social</a>
+			<a href="chats-and-diamonds.html">Chats y diamonds</a>
+			<a href="../capps.html">La página de un diamond</a>
+			<a href="email-web-files.html">Archivos, correo y la web</a>
+			<a href="../machine-operations.html">Tu equipo</a>
+			<a href="../runner.html">Ayudantes y dónde se ejecutan los turnos</a>
+			<a href="sync.html">Más de un dispositivo</a>
+			<a href="social.html">Social y propuestas</a>
+			<a href="models.html">Modelos y proveedores</a>
+			<a href="spending.html">Gasto</a>
+			<a href="accounts.html" aria-current="page">Seguridad y soluciones</a>
 		</nav>
 	</div>
 </header>
 
 <main>
-	<h1>Cuentas y privacidad</h1>
-	<p class="lede">Una cuenta en Daimond es una frase de paso guardada en este dispositivo. No hay cuenta en ningún servidor: tu identidad, tus claves y tus archivos viven solo en este navegador. Esta página trata de la frase de paso, de compartir un navegador con otras personas y de lo que queda en privado.</p>
+	<h1>Seguridad y soluciones</h1>
+	<p class="lede">What your passphrase protects, what Daimond asks before it acts, what stays private, and what to do when something is wrong.</p>
 
 	<h2 id="s1">Tu cuenta es una frase de paso</h2>
-	<p>Al arrancar por primera vez, Daimond te ofrece <strong>proteger este dispositivo</strong>. Le das un nombre y una frase de paso, y esa frase de paso pasa a ser tu cuenta. Hace dos trabajos: cifra la clave de proveedor y las credenciales de correo que guardas, para que un mirón no pueda leerlas, y es la identidad con la que entras para los créditos. Nada de ello sale del navegador.</p>
+	<p>On first run Daimond generates a passphrase of eight random words and shows it once. It is the key to everything stored here. It is not sent anywhere, it is not stored in the clear, and nobody can reset it.</p>
+	<p>It unlocks everything encrypted here, meaning your provider keys, your mail credentials and the account's own signing key, and the key that seals the sync parcel is derived from it too. The signing key is what signs you in for credits. Forget the passphrase and the encrypted data is gone.</p>
+	<p>Once a passphrase is in place you can add a <strong>passkey</strong> for a faster unlock, by face, fingerprint or security key. It unseals the passphrase for you instead of replacing it, so the passphrase stays the fallback. The unlock happens on the device, and the credits service only ever sees a public key.</p>
 
-	<div class="note"><strong>La frase de paso no se guarda nunca y no se puede recuperar.</strong> Daimond conserva solo los datos cifrados, no la frase de paso que los abre. Si la olvidas, las claves y las credenciales cifradas se han ido, así que guárdala en un sitio seguro. Puedes seguir sin ella: tu elección es entonces <span class="ui">Ahora no</span>, pero una clave de proveedor se añade mejor cuando ya hay una frase de paso protegiéndola.</div>
-
-	<h2 id="s2">Un desbloqueo más rápido con una passkey</h2>
-	<p>Una vez que una frase de paso protege la aplicación, puedes añadir una <strong>passkey</strong> para desbloquear más rápido: una cara, una huella o una llave de seguridad, el mismo inicio de sesión sin contraseña que tu dispositivo ya ofrece. Una passkey no sustituye a la frase de paso, sino que la abre por ti, así que la frase de paso sigue siendo la raíz y el recurso siempre disponible, y perder una passkey no cuesta nada mientras conserves aquella. Nada de esto llega a un servidor: el desbloqueo ocurre en el dispositivo, y el servicio de créditos solo ve una clave pública.</p>
-
-	<h2 id="s3">Los controles de la cuenta</h2>
-	<p>Tu identidad está arriba del panel de administración, abajo a la izquierda. La portada de administración enumera sus controles:</p>
-
-	<figure class="shot" data-shot="accounts-switch">
-		<img alt="Los controles de la cuenta en el panel de administración: cambiar el nombre, cambiar la frase de paso, exportar o importar una copia de seguridad, cerrar sesión y olvidar esta identidad." src="../shots/accounts-switch.png" loading="lazy">
-		<figcaption>Los controles de la cuenta: cambiar tu nombre o tu frase de paso, hacer o restaurar una copia, cerrar sesión, u olvidar la identidad por completo.</figcaption>
-	</figure>
-
+	<h2 id="s2">Los controles de la cuenta</h2>
+	<p>Your name is at the top of the account area, at the foot of the rail.</p>
 	<ul>
-		<li><span class="ui">Cambiar el nombre…</span>: renombra la identidad.</li>
-		<li><span class="ui">Cambiar la frase de paso…</span>: establece una nueva; tus datos cifrados se vuelven a envolver bajo ella.</li>
-		<li><span class="ui">Añadir una llave de acceso…</span>: una cara, una huella o una llave de seguridad para desbloquear más rápido.</li>
-		<li><span class="ui">Exportar una copia de seguridad</span>: escribe tus chats, Diamonds, archivos del espacio de trabajo y la clave de tu cuenta en un archivo que te quedas. La clave entra envuelta, tal como la guarda este navegador, así que el archivo no es más débil que el navegador y no se abre con nada que no sea tu frase de paso.</li>
-		<li><span class="ui">Importar una copia de seguridad…</span>: trae ese archivo de vuelta aquí. Donde este navegador no tiene cuenta propia, se adopta la cuenta de la copia de seguridad, y la desbloqueas con la frase de paso de esa cuenta; donde ya hay una cuenta aquí, la de la copia se deja intacta y solo vuelve el trabajo.</li>
-		<li><span class="ui">Cerrar sesión</span>: bloquea la aplicación. Tus datos siguen en el dispositivo, cifrados, hasta que se vuelva a introducir la frase de paso.</li>
-		<li><span class="ui">Olvidar esta identidad…</span>: quita para siempre de este navegador la identidad y sus datos cifrados.</li>
+		<li><span class="ui">Change name&hellip;</span> y <span class="ui">Change passphrase&hellip;</span> do what they say, and the second re-wraps your encrypted data under the new passphrase.</li>
+		<li><span class="ui">Add a passkey&hellip;</span></li>
+		<li><span class="ui">Exportar una copia de seguridad</span> writes your chats, diamonds, workspace files and your account key to a file you keep.</li>
+		<li><span class="ui">Import a backup&hellip;</span> adopts the backup's account where this browser holds none, and where one is already here it brings back only the work.</li>
+		<li><span class="ui">Cerrar sesión</span> locks the app. Your data stays on the device, encrypted.</li>
+		<li><span class="ui">Forget this identity&hellip;</span> removes the account and its encrypted data from this browser for good.</li>
 	</ul>
-	<p>Junto a ellos hay dos filas más. <strong>Sincronización</strong> activa o desactiva la sincronización de este dispositivo; detenerla es inmediato y no pierde nada. <strong>Diagnóstico</strong> muestra y copia el rastro de la propia aplicación — nombres de eventos y un reloj, sin claves, sin texto de los mensajes y sin nada de tus archivos —, que es lo que hay que pegar en un informe de fallo.</p>
+	<p>Beside them, <span class="ui">Sincronización</span> turns this device's sync on or off, and <span class="ui">Diagnóstico</span> shows and copies the app's own log, which holds event names and a clock, with no keys, no message text and nothing from your files. That log is what to paste into a report.</p>
+
+	<h2 id="s3">Moving your account</h2>
+	<p>Your account is a signing key held in this browser. <strong>The passphrase does not recreate it</strong>, and only decrypts the copy stored here. So the same passphrase in a fresh browser starts a separate account, with its own credits and no Pro.</p>
+	<p>The key itself has to travel, and three things carry it.</p>
+	<ul>
+		<li><span class="ui">Vincular otro dispositivo</span>, which shows a pairing code.</li>
+		<li>A passkey, which stands a new device up in one gesture.</li>
+		<li><span class="ui">Exportar una copia de seguridad</span>, whose file holds the key for <span class="ui">Import a backup&hellip;</span> to adopt in a browser that has none.</li>
+	</ul>
+	<p>Do one of them before you retire a browser. Once its storage is gone, with no backup taken and no other device linked, the key is gone with it.</p>
+	<p>A backup holds your work in the clear and your key wrapped under your passphrase. Importing the file alone makes nobody you. Whoever holds the file <em>y</em> the passphrase holds the account, which is why the two should not travel together.</p>
 
 	<h2 id="s4">Más de una persona en un mismo navegador</h2>
-	<p>Un navegador puede tener varias cuentas, cada una con sus propios chats, claves, créditos y archivos. Nadie ve los datos de otra cuenta.</p>
-	<ul>
-		<li><strong>Te levantas un momento.</strong> Elige <span class="ui">Cerrar sesión</span> para bloquear la aplicación. Tus chats, claves y archivos siguen en el dispositivo y no se pueden leer sin tu frase de paso.</li>
-		<li><strong>Vuelves.</strong> Introduce tu frase de paso para desbloquear. Cada recarga vuelve a bloquear la aplicación, incluidas una recarga forzada y un navegador reiniciado, porque la clave que deriva se guarda en memoria y nunca se escribe en disco: no pierdes nada tuyo, y nada se abre hasta que la introduces. Una passkey, o un gestor de contraseñas que guarde la frase de paso, la pone por ti.</li>
-		<li><strong>Le toca a otra persona.</strong> <span class="ui">＋ Añadir otra cuenta</span> en el panel de administración crea una segunda, y la fila de encima cambia de una a otra. Al cambiar, primero se bloquea esta cuenta — sus claves se olvidan — y luego se abre la otra.</li>
-		<li><strong>Entregas el navegador para siempre.</strong> <span class="ui">Olvidar esta identidad…</span> borra tu cuenta de este navegador.</li>
-	</ul>
+	<p>One browser can hold several accounts, each with its own chats, keys, credits and files. <span class="ui">＋ Añadir otra cuenta</span> makes a second, and the row above it switches between them. Switching locks the first and forgets its keys before opening the other. Nobody sees another account's data.</p>
 
-	<h2 id="s5">Llevar tu cuenta de un dispositivo a otro</h2>
-	<p>Tu cuenta es una clave de firma guardada en este navegador. La frase de paso no la recrea, solo descifra la copia que ya está aquí, así que la misma frase de paso en un navegador nuevo empieza una cuenta <em>aparte</em> con su propio saldo y sin Pro. La clave en sí tiene que viajar, y tres cosas la llevan: <span class="ui">Vincular otro dispositivo</span>, que muestra un código de vinculación para teclear en el navegador nuevo; una passkey, que levanta un dispositivo nuevo en un solo gesto; y <span class="ui">Exportar una copia de seguridad</span>, cuyo archivo lleva la clave envuelta para que <span class="ui">Importar una copia de seguridad…</span> la adopte en un navegador que todavía no tiene cuenta. Haz una de ellas <strong>antes de</strong> quitar un navegador: en cuanto se va su almacenamiento, si no se tomó ninguna copia de seguridad, la clave se va con él, y con ella el saldo y cualquier licencia Pro, que ninguna otra cosa desbloquea.</p>
-	<div class="note"><strong>Una copia de seguridad guarda tu trabajo en claro y tu clave bajo tu frase de paso.</strong> Cada chat, Diamond y archivo del espacio de trabajo está ahí en texto plano, así que guárdala tan en privado como el propio trabajo. La clave que va al lado está envuelta, así que importar el archivo por sí solo no convierte a nadie en ti — pero quien tiene el archivo y la frase de paso tiene la cuenta, y por eso los dos nunca deberían viajar juntos.</div>
+	<h2 id="s5">What Daimond asks before it acts</h2>
+	<p>A chip beside the model says what Daimond does without asking. It has three settings, and they apply to the whole app.</p>
+	<ul>
+		<li><span class="ui">Ask every time</span> reads <em>Every command is put to you first. So is reaching the web, once in each conversation.</em></li>
+		<li><span class="ui">Guarded</span> reads <em>Commands run. Once something written by somebody else has been read, Daimond asks before reaching out.</em> It is the default.</li>
+		<li><span class="ui">Bypass</span> reads <em>Nothing is asked, whatever has been read.</em></li>
+	</ul>
+	<p>Under Guarded, once a turn has read something written by somebody else, such as a web page, an email or a build log, anything it then wants to fetch or send is put to you first, and a command in that turn runs with the network refused. That is the case where text you did not write could talk Daimond into carrying your work somewhere.</p>
+	<p>Switching to <span class="ui">Bypass</span> asks once, and says what you give up. No mode moves the fence a command runs inside, a diamond's folders, the system-call filter, or the log you can read afterwards.</p>
+	<p>An agent working on its own is asked about separately. Clicking something on a page can spend money or submit a form, and none of that can be taken back, so a click by an unattended agent is put to you even under looser settings.</p>
+	<p>Money has its own brakes, and they are on <a href="spending.html">Gasto</a>.</p>
 
 	<h2 id="s6">Lo que queda en privado</h2>
-	<p>Tu frase de paso, tus claves de proveedor, tus credenciales de correo, tus chats, tus Diamonds y tus archivos viven en este navegador y no se nos envían. Lo que tenemos en la pasarela es dinero y texto cifrado: tu saldo de créditos y tus licencias y, para la sincronización entre dispositivos, un paquete cifrado que no podemos abrir. No tenemos la clave, así que no podemos leer tu trabajo.</p>
-	<p>Conviene decir con exactitud a dónde van los datos. Tus mensajes llegan a un proveedor de modelos directamente con tu propia clave, o a través de nuestro servicio medido cuando gastas créditos. Traer una página, y sincronizar o enviar correo, pasan por la pasarela, y una sincronización lleva un paquete cifrado entre tus propios dispositivos. Así que la afirmación honesta no es que nunca salga nada: es que, con tu propia clave, tus chats y tus archivos nunca salen en claro, y puedes ver que hacia nuestros servidores solo sale texto cifrado.</p>
-	<div class="note"><strong>No hace falta que te fíes.</strong> El cliente de Daimond — el código que corre en este navegador, el que decide qué se envía — es de código abierto. Léelo, compílalo y abre el panel de red de tu navegador para confirmar que solo sale texto cifrado. La única afirmación que hace toda herramienta privada, aquí puedes comprobarla: <a href="https://github.com/oxedyne-com/daimond">github.com/oxedyne-com/daimond</a>.</div>
-	<p>La protección tiene límites honestos. La frase de paso protege frente a una inspección local casual y frente a fisgones en un dispositivo compartido: quien abra las herramientas de desarrollo del navegador encuentra datos cifrados y no tus claves. No protege frente a un navegador comprometido, una extensión maliciosa o un registrador de teclas, que derrotan cualquier esquema dentro del navegador, así que mantén el propio dispositivo digno de confianza. Y lo que un servidor remoto hace por dentro no se puede demostrar desde fuera, y por eso es el cliente — la parte que puedes comprobar — lo que te abrimos.</p>
+	<p>Your passphrase, provider keys, mail credentials, chats, diamonds and files live in this browser and are not sent to us. What we hold is money and ciphertext, meaning your balance and licences and, for sync, a parcel we cannot open.</p>
+	<p>Your messages reach a model provider directly with your own key, or through our metered service when you spend credits. Fetching a page, and syncing or sending mail, pass through the gateway. So the honest claim is that with your own key nothing of your work reaches us in the clear, and that you can watch only ciphertext leave for our servers.</p>
+	<p>You need not take that on trust. The code running in this browser is public, it builds byte for byte from that source, and every build served is sealed into a published record. <span class="ui">Verify this build</span>, in the About dialog, checks the one you are running. Open your browser's network panel and watch where the calls go.</p>
+	<p>The protection has limits. A passphrase guards against someone opening the browser's developer tools, and not against a compromised browser, a malicious extension or a keylogger, which defeat any in-browser scheme. And what a remote server does inside itself cannot be proven from outside, which is why it is the client that is opened to you.</p>
+
+	<h2 id="s7">When something goes wrong</h2>
+	<ul>
+		<li><strong><em>Connect a model to start.</em></strong> No model is connected. Add one, or add a key for the provider already listed.</li>
+		<li><strong>Your second device is empty.</strong> You made a second account instead of pairing. Pair it, or import a backup. See <a href="sync.html">Más de un dispositivo</a>.</li>
+		<li><strong>A shared folder is not arriving.</strong> It is over the 200&nbsp;MiB a shared folder may weigh. A banner names it. Share a smaller folder.</li>
+		<li><strong><em>Not valid JSON. Nothing saved.</em></strong> A hand edit to a diamond's memory left the file unreadable, so nothing was written. Fix the text or close without saving.</li>
+		<li><strong>Nothing runs on its own.</strong> The light is red because the action is stopped. Press play on the light beside it.</li>
+		<li><strong><em>Terminal needs the Daimond Hand on this computer.</em></strong> <span class="ui">Install&hellip;</span> beside it goes to <a href="../machine-operations.html">Tu equipo</a>.</li>
+		<li><strong>A turn is sitting on another device.</strong> That machine is probably waiting for a folder permission on its own screen. Go and look, or press <span class="ui">Run here</span>.</li>
+		<li><strong>A panel has disappeared.</strong> It is unpinned, and still there. The <span class="ui">⋯</span> chip opens the gallery, and <kbd>Ctrl</kbd> <kbd>K</kbd> reaches any panel by name.</li>
+		<li><strong>Everything is locked after a reload.</strong> The key is held in memory and nowhere else, unless this device is set to stay unlocked across reloads. Enter the passphrase, or use a passkey.</li>
+	</ul>
+	<p>Still stuck? The rail holds a diamond called <strong>Daimond Help</strong>, which answers from this build and this guide and says which page an answer came from. What it cannot answer belongs on <a href="social.html">Social</a>, with the three things a note needs.</p>
 
 	<div class="next">
-		<a href="email-web-files.html">&larr; Correo, Web y archivos</a>
-		<a href="sync.html">Siguiente: Sincronización entre dispositivos &rarr;</a>
+		<a href="spending.html">&larr; Spending</a>
+		<a href="index.html">Back to the start &rarr;</a>
 	</div>
 </main>
 
 <footer class="site-foot">
-	<span>Daimond funciona en tu navegador. Nada de esto se nos envía.</span>
+	<span>Daimond se ejecuta en tu navegador. Nada de esto se nos envía.</span>
 	<nav aria-label="Páginas de la guía">
-		<a href="index.html">Primeros pasos</a>
-		<a href="interface.html">Interfaz</a>
-		<a href="models.html">Modelos</a>
-		<a href="chats-and-diamonds.html">Chats y Diamonds</a>
-		<a href="../capps.html">Capps</a>
-		<a href="email-web-files.html">Correo, Web y archivos</a>
-		<a href="accounts.html">Cuentas</a>
-		<a href="sync.html">Sincronización entre dispositivos</a>
-		<a href="spending.html">Gastos</a>
-		<a href="../machine-operations.html">Comandos en el equipo</a>
-		<a href="social.html">Social</a>
+		<a href="index.html">Empieza aquí</a>
+		<a href="interface.html">La interfaz</a>
+		<a href="chats-and-diamonds.html">Chats y diamonds</a>
+		<a href="../capps.html">La página de un diamond</a>
+		<a href="email-web-files.html">Archivos, correo y la web</a>
+		<a href="../machine-operations.html">Tu equipo</a>
+		<a href="../runner.html">Ayudantes y dónde se ejecutan los turnos</a>
+		<a href="sync.html">Más de un dispositivo</a>
+		<a href="social.html">Social y propuestas</a>
+		<a href="models.html">Modelos y proveedores</a>
+		<a href="spending.html">Gasto</a>
+		<a href="accounts.html">Seguridad y soluciones</a>
 	</nav>
 </footer>
 </body>

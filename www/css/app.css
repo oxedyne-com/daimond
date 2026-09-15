@@ -246,6 +246,50 @@ body.dragging { cursor: col-resize; user-select: none; -webkit-user-select: none
 .railhead > span:first-child { flex: 1; font-size: var(--fs-2xs); font-weight: 600; letter-spacing: 0.04em; text-transform: uppercase; color: var(--text-muted); white-space: nowrap; }
 .rail-count { font-family: var(--font-mono); font-size: var(--fs-2xs); color: var(--text-muted); white-space: nowrap; }
 
+/* ── The dock count badge ───────────────────────────────────────────
+   How many things arrived at a panel while you were looking somewhere else.
+   `.rail-count` above says what a panel HOLDS, quietly, while you are already
+   reading it; this says something is WAITING, on the chip that opens it, and
+   has to be seen from across the row. So it is filled rather than muted.
+
+   `--accent-text` on `--accent-soft` and not `--accent` on it: this is 10px
+   text, small text needs 4.5, and the plain accent manages 3.6 on seven of the
+   eleven palettes. The same pairing the phone bar's own selected tab uses, and
+   for the same measurement.
+
+   It is never drawn holding a zero: the count that owns it writes an empty
+   string instead, and hides the element as well, so a count that has gone back
+   to nothing leaves no mark and no gap. */
+.dock-count {
+	display: inline-block;
+	min-width: 1.15em;
+	padding: 0 4px;
+	border-radius: 999px;
+	background: var(--accent-soft);
+	color: var(--accent-text);
+	border: 1px solid var(--accent);
+	font-family: var(--font-mono);
+	font-size: var(--fs-3xs);
+	line-height: 1.4;
+	text-align: center;
+	font-variant-numeric: tabular-nums;
+}
+.dock-count[hidden] { display: none; }
+/* ON A CHIP IT IS OVER THE CHIP, NOT ON THE LINE. It followed the label with a
+   5px margin, so a chip grew by ~21px the moment something arrived for it and
+   every chip left of it moved -- measured 2026-08-28 at 1440px, nine of thirteen
+   shifted 21px when three messages landed in the mailbox, which is the least
+   predictable moment there is to be reaching for one. Out of the chip's flow
+   instead, over its top-right corner, which is where a badge is looked for and
+   what `.mnav button .dock-count` (responsive.css) has always done. */
+.ptag { position: relative; }
+.ptag .dock-count {
+	position: absolute;
+	top: -6px;
+	right: -4px;
+	pointer-events: none;
+}
+
 .addbtn { width: 22px; height: 22px; padding: 0; display: flex; align-items: center; justify-content: center; border: 1px solid var(--border-strong); border-radius: 6px; background: var(--bg-secondary); color: var(--text-secondary); font-size: var(--fs-sm); line-height: 1; }
 .addbtn:hover { color: var(--text-primary); }
 .addbtn:disabled { opacity: 0.4; cursor: default; }
@@ -656,6 +700,14 @@ body.resizing-v { cursor: row-resize; user-select: none; -webkit-user-select: no
 .session-box-header { display: flex; align-items: center; gap: 6px; }
 .session-box-name { flex: 1; font-size: var(--fs-sm); font-weight: 500; color: var(--text-primary); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .session-box.active .session-box-name { color: var(--accent-text); }
+/* Who gave you this diamond, under its name. A LINE AND NOT A BADGE: only a
+   verified key could earn an official shape, and the key's standing is said in
+   People where it can be acted on. In the RECEIVER's colours, because colours
+   are a device preference and a sender's do not travel. */
+.diamond-from {
+	margin-top: 1px; font-size: var(--fs-3xs); color: var(--text-muted);
+	overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
 .session-box-rename { flex: 1; min-width: 0; background: var(--bg-primary); border: 1px solid var(--accent); border-radius: var(--radius-sm); color: var(--text-primary); padding: 2px 6px; font-size: var(--fs-sm); }
 .session-box-rename:focus { outline: none; }
 /* The cog, and the closer cross notes4 asked back beside it. Both always
@@ -849,7 +901,7 @@ body.resizing-v { cursor: row-resize; user-select: none; -webkit-user-select: no
    border — so the row reads as one control rather than a box with taller buttons
    beside it. The bar aligns to flex-end, so they stay on the baseline as the
    input grows. */
-#chat-send, #chat-jump, #chat-end {
+#chat-send, #chat-stop, #chat-jump, #chat-end {
 	box-sizing: border-box;
 	height: 32px;
 	width: 32px;
@@ -865,6 +917,11 @@ body.resizing-v { cursor: row-resize; user-select: none; -webkit-user-select: no
 #chat-send:disabled { opacity: 0.4; cursor: default; }
 #chat-send.stop { background: var(--danger); }
 #chat-send.stop:hover { filter: brightness(1.1); }
+/* The separate Stop, shown only while the send button is a Send arrow mid-turn.
+   Same ink as the send button in stop mode, so the one control the user has
+   learnt to read as "this ends it" looks the same wherever it appears. */
+#chat-stop { background: var(--danger); color: var(--on-fill, #fff); border: none; }
+#chat-stop:hover { filter: brightness(1.1); }
 #chat-jump, #chat-end { background: var(--bg-tertiary); border: 1px solid var(--border-strong); color: var(--text-secondary); }
 /* The two jumps draw an SVG chevron now, not a text arrowhead, so `font-size` no
    longer decides how big the mark is -- the glyph does. Stated here so the touch
@@ -2069,6 +2126,7 @@ span.arte-open { cursor: default; }
 .railhead-menu-item.danger:hover { background: var(--danger); color: var(--on-fill, #fff); }
 .railhead-menu-item:disabled { color: var(--text-muted); cursor: default; }
 .railhead-menu-item:disabled:hover { background: none; }
+.railhead-menu-sep { height: 1px; background: var(--border-2); margin: 4px 2px; }
 
 /* Global spend readout (session / week / month). */
 .spend-row { display: flex; flex-wrap: wrap; gap: 4px; padding: 6px 2px; border-top: 1px solid var(--border); }
@@ -2569,6 +2627,7 @@ span.arte-open { cursor: default; }
 .tile-dlg-pause { display: flex; align-items: center; gap: 8px; }
 .tile-dlg-pause-words { font-size: var(--fs-sm); color: var(--text-secondary); }
 .tile-dlg-seg { display: flex; gap: 6px; }
+.tile-dlg-actions { display: flex; gap: 8px; margin: 4px 0 14px; flex-wrap: wrap; }
 /* The colour reset closes the section above it, so it needs the air a section
    break has. Without this it sat directly under the Text swatch and read as a
    third row of the same control. */
@@ -2802,12 +2861,16 @@ body.locked .tile-fold, body.locked .spend-row { display: none; }
 .device-nominate { flex: none; align-self: center; display: flex; align-items: center; justify-content: center; width: 24px; height: 24px; padding: 0; margin-left: 2px; border: 0; border-radius: 6px; background: transparent; color: var(--text-secondary); font-size: var(--fs-2xl); line-height: 1; cursor: pointer; opacity: .75; }
 .device-row:hover .device-nominate, .device-nominate:hover, .device-nominate:focus-visible { opacity: 1; color: var(--text-primary); background: var(--bg-hover); }
 .device-nominate.is-nominee { opacity: 1; color: var(--accent); }
-/* This device's own row only -- see the JS comment above where it is built. Same
-   quiet icon-button footing as the star beside it; lit once the setting is on
-   rather than only on hover, so a glance at the row says which way it is set. */
-.device-stay { flex: none; align-self: center; display: flex; align-items: center; justify-content: center; width: 24px; height: 24px; padding: 0; margin-left: 2px; border: 0; border-radius: 6px; background: transparent; color: var(--text-secondary); font-size: var(--fs-lg); line-height: 1; cursor: pointer; opacity: .75; }
+/* This device's own row only -- see the JS comment above where it is built. A
+   LABELLED toggle (audit 2026-09-15, annoyance 6): text beside the padlock, not
+   the padlock alone, so its width is auto rather than the fixed icon-button
+   square its neighbours use. Lit once the setting is on rather than only on
+   hover, so a glance at the row says which way it is set. */
+.device-stay { flex: none; align-self: center; display: flex; align-items: center; gap: 4px; width: auto; height: 24px; padding: 0 7px; margin-left: 2px; border: 0; border-radius: 6px; background: transparent; color: var(--text-secondary); line-height: 1; cursor: pointer; opacity: .75; white-space: nowrap; }
 .device-row:hover .device-stay, .device-stay:hover, .device-stay:focus-visible { opacity: 1; background: var(--bg-hover); }
 .device-stay.is-on { opacity: 1; color: var(--accent); }
+.device-stay-icon  { font-size: var(--fs-lg); line-height: 1; }
+.device-stay-label { font-size: var(--fs-2xs); }
 /* A small badge on the nominee's line, so the runner reads at a glance beside the
    last-seen column rather than only through the star. */
 .device-nominee { flex: none; font-size: var(--fs-3xs); text-transform: uppercase; letter-spacing: .04em; color: var(--accent); border: 1px solid var(--border); border-radius: 4px; padding: 0 4px; white-space: nowrap; }
@@ -2851,9 +2914,11 @@ body.locked .tile-fold, body.locked .spend-row { display: none; }
 	.device-row > .device-ghost { order: 2; align-self: center; }
 	.device-row > .copy-id,
 	.device-row > .device-nominate,
-	.device-row > .device-stay,
 	.device-row > .device-rename,
 	.device-row > .device-remove { flex: none; width: 44px; height: 44px; margin-left: 0; }
+	/* Labelled, not icon-only, so it keeps its own width -- a 44px SQUARE would
+	   clip "Stay unlocked" -- but still stands 44px tall for a finger. */
+	.device-row > .device-stay { flex: none; width: auto; min-width: 44px; height: 44px; margin-left: 0; padding: 0 10px; }
 	/* After the group, or the reset above would undo the `auto` that pushes the
 	   whole cluster of controls to the right-hand edge of the first line. */
 	.device-row > .copy-id { order: 3; margin-left: auto; }

@@ -201,6 +201,7 @@
 	'rail.diamonds_help':        'Your saved projects',
 	'rail.new_diamond':          'New diamond',
 	'rail.unnamed_diamond': 'Unnamed diamond',
+	'rail.shared_by': 'From {who}',
 	'rail.chats':                'Chats',
 	'rail.chats_help':           'Your conversations',
 	// What an unnamed chat is called before anything has been said in it. After that
@@ -211,6 +212,12 @@
 	'rail.fold_section':           'Fold this section away',
 	'rail.unfold_section':           'Open this section',
 	'rail.delete_all_chats':     'Delete all chats',
+	// Asked once, naming the count, before "Delete all chats" acts — the one
+	// bulk act in the rail with nothing selected first to have second thoughts
+	// about (owner ruling, B18/annoyance 14). Still reversible from the Trash;
+	// the wording says so rather than reading like the two acts that are not.
+	'rail.delete_all_chats_ask.one':   'Delete {n} chat? It moves to the Trash.',
+	'rail.delete_all_chats_ask.other': 'Delete {n} chats? They move to the Trash.',
 	'layout.handle':             'Drag to resize, double-click to reset',
 
 	// ── Admin ──────────────────────────────────────────────────
@@ -276,6 +283,7 @@
 	'home.unnamed_account':   'Unnamed account',
 	'home.add_account':       '＋ Add another account',
 	'home.accounts_note':     'Separate chats, keys and files.',
+	'home.lock':              'Lock',
 	'home.log_out':           'Log out',
 	'home.sec_devices':       'Devices',
 	'home.sec_console':      'Console',
@@ -367,8 +375,9 @@
 	// STAYING UNLOCKED ACROSS A RELOAD (2026-09-13). An idle desktop now takes an
 	// update on its own, which reloads the tab; this is the per-device answer to what
 	// it comes back as. On for a desktop, off for a phone. See identity.js `K_STAY`.
-	'devices.stay_unlocked':      'Stay unlocked across reloads',
-	'devices.stay_unlocked_help': 'When Daimond updates itself, this device comes back where it was instead of asking for your passphrase again. The key is held for this tab only and is gone when you close it, when you lock, or when you sign out. Turn it off to be asked every time.',
+	// The label on the toggle itself (audit 2026-09-15, annoyance 6 / ADM-02):
+	// short, because it is now read on the control and not just in a tooltip.
+	'devices.stay_unlocked_label': 'Stay unlocked',
 	// A GHOST: a line a live device has replaced under a new id after re-minting its
 	// identity. It is safe to remove -- the machine is here now under the new line.
 	'devices.replaced':         'replaced',
@@ -479,6 +488,7 @@
 	'egress.search_title': 'Search the web?',
 	'egress.search_body':  'This turn has read content from outside your workspace. Daimond now wants to search the web.\n\nWhat it wants to search for:\n\n{query}\n\nSearching with {engine}, which is your setting. The query is what leaves this device.\n\nIf you did not expect this, decline. Nothing is lost but the one search.',
 	'egress.search_ok':    'Run this search',
+	'egress.search_remember': 'Allow web searches on this account without asking again',
 
 	// ── A chat tile in the rail ────────────────────────────────
 	'chat.tool_refused':   'refused',
@@ -533,6 +543,10 @@
 	'tile.settings': 'Settings',
 	'tile.settings_named': 'Settings for "{name}"',
 	'tile.close_named': 'Close "{name}"',
+	// The chat tile's × — moves the chat to the Trash, so it reads as the
+	// same act the cog dialog's own foot button names (CHAT: "Close" read as
+	// discarding the conversation, when it is only ever moved to the Trash).
+	'tile.delete_named': 'Delete "{name}"',
 	// The name field in a chat's cog dialog. A chat needs no name, so the hint
 	// says what happens when it is left empty rather than asking for one.
 	'tile.dlg_name': 'Name',
@@ -595,6 +609,9 @@
 	'tile.fold_all':       'Fold all',
 	'tile.folded_help':    'Already folded into "{name}". Fold again to add what is new since.',
 	'tile.fold_all_help':  'Turn into a diamond',
+	// The cog dialog's own button (CHAT-15): the internal verb "Fold" moved off
+	// the row, and the word it left with is what the button already does.
+	'tile.turn_into_diamond': 'Turn into a diamond…',
 	'tile.dlg_colour':  'Colour',
 	'tile.colour_bg':   'Background',
 	'tile.colour_fg':   'Text',
@@ -833,7 +850,7 @@
 	'beta.err_unreachable':  'The Daimond account service could not be reached, so the passcode was not used. Try again shortly.',
 	'beta.done_title':         'You are in',
 	'beta.done_pro':           'This device has a Daimond account, and Pro is on it: sync between devices, cloud storage and Email.',
-	'beta.done_plain':         'This device has a Daimond account. Everything in the app works, and credits buy inference for you, so you need no provider key of your own. Sync between devices, cloud storage and Email are what Pro adds — buy it whenever you want them.',
+	'beta.done_plain':         'This device has a Daimond account. Everything in the app works, and credits buy inference for you, so you need no provider key of your own. Sync between devices, cloud storage and Email are what Pro adds — subscribe whenever you want them.',
 	'beta.done_handle':        'Other people see this account as {handle}.',
 	'beta.done_not_signed_in': 'The passcode was spent and the account exists, but this device could not finish signing in just now. It will try again on its own.',
 
@@ -875,6 +892,12 @@
 	'door.test':       'Apply to test',
 	'door.waitlist':   'Join the waitlist',
 	'door.code':       'I have a passcode',
+	// A fourth route, added 2026-09-15 (A12): a fresh browser with no account
+	// used to have no way to reach Import at all, so recovering into a new
+	// browser meant making a throwaway account first. This calls the same
+	// import as the account panel's "Import a backup…", which already adopts
+	// the file's own identity when none is here yet.
+	'door.backup':     'Restore from a backup',
 	// Said when the code button is pressed before there is a key to redeem onto.
 	// It names the order and promises the next step, because the alternative —
 	// a code box that refuses the moment it is used — is the thing this app
@@ -1258,10 +1281,10 @@
 	// The pitch, shown while Email is not unlocked on this account. The first
 	// two carry markup and are placed as markup; keep the tags and add none.
 	'mail.pitch.head':    '<b>Daimond can read your mail.</b> Your inbox lands in the workspace as ordinary files, so every agent can read, search and work from it.',
-	'mail.pitch.fine':    'Email is part of Pro — one payment, and five years of it — alongside cross-device sync and cloud storage. Covers {cap} mailboxes. Sending and fetching are metered against credits, like inference. No subscription, and nothing renews.',
+	'mail.pitch.fine':    'Email is part of Pro — $8 a month, cancel any time — alongside cross-device sync and cloud storage. Covers {cap} mailboxes. Sending and fetching are metered against credits, like inference.',
 	'mail.pitch.privacy': 'Daimond’s gateway makes the connection and forgets your password. No mail is ever stored on our side.',
 	'mail.pitch.unknown': 'Email is part of Daimond Pro.',
-	'mail.pro_pitch':     'Email is part of Pro. Buy five years of Pro to turn it on, along with sync and cloud storage.',
+	'mail.pro_pitch':     'Email is part of Pro. Subscribe to turn it on, along with sync and cloud storage.',
 
 	// The mailbox list.
 	'mail.remove_mailbox': 'Remove this mailbox',
@@ -1425,7 +1448,7 @@
 	// a connection the gateway cannot see into. Each names the repair, because a
 	// refusal a reader cannot act on is a refusal they will simply retry.
 	'mail.tunnel.close.auth':        'Daimond signed this device out, so the mail connection was refused. Unlock Daimond and fetch again.',
-	'mail.tunnel.close.pro':         'Email is part of Pro, and this account has not unlocked it. Buy Pro under Credits and mail opens.',
+	'mail.tunnel.close.pro':         'Email is part of Pro, and this account has not unlocked it. Subscribe to Pro under Credits and mail opens.',
 	'mail.tunnel.close.host':        'Daimond will only reach a mail server this account has bound, and {host} is not one of them. Add the mailbox again — Daimond binds its servers as it does so — then fetch.',
 	'mail.tunnel.close.port':        'Mail connects on ports 993, 143, 465 and 587, and {port} is none of them. Correct the port in the mailbox’s settings.',
 	'mail.tunnel.close.credits':     'Your credits ran out part way through. Top up under Credits and fetch again; whatever already came down is on this device.',
@@ -1464,6 +1487,7 @@
 	// {thing} is a panel's name, lower-cased by the caller. A language where
 	// that reads badly should rewrite the sentence around it.
 	'sheet.ask_about': 'Ask about this {thing}…',
+	// i18n-indirect: mobile.js k = sheet.tab_source sheet.tab_pages
 	'sheet.tab_source': 'Source',
 	'sheet.tab_pages':  'Pages',
 
@@ -1571,6 +1595,7 @@
 	'handle.taken':    'Someone else already has that handle. Try another.',
 	'handle.invalid':  'A handle is 3 to 24 characters: lower-case letters, numbers, and hyphens between them.',
 	'handle.reserved': 'That handle is kept by Daimond and cannot be taken.',
+	'handle.confusable': 'That name reads like one somebody already has. Try another.',
 	'handle.failed':   'The handle could not be changed just now. Try again shortly.',
 
 	// ── Cloud storage cleanup ──────────────────────────────────
@@ -2059,8 +2084,8 @@
 	'chat.stop':           'Stop',
 	'turn.interrupted':       'Interrupted. The browser closed before this finished.',
 	'turn.interrupted_early': 'Interrupted before it could answer.',
-	'turn.offline':           'The connection dropped before this finished. Nothing was lost — pick it up where it stopped.',
-	'turn.offline_early':     'The connection dropped before an answer arrived. Nothing was lost — ask again from here.',
+	'turn.offline':           'The connection dropped before this finished.',
+	'turn.offline_early':     'The connection dropped before an answer arrived.',
 	'turn.peer_sent':         'Sent to your other devices.',
 	'turn.peer_sending_named': 'Sending to {name}…',
 	'turn.peer_none':         'No awake device picked this up.',
@@ -2137,7 +2162,7 @@
 	'turn.block_runhere':      'Run here instead',
 	'turn.block_runhere_help': 'Run here',
 	'turn.continue':          'Continue',
-	'turn.continue_help':     'Retry',
+	'turn.continue_help':     'Carry on from here.',
 	'astat.no_model':         'No model connected',
 	'astat.model_help':       'Models and keys',
 	// ── The rail's one status line, and the eight rows behind it ──
@@ -2917,8 +2942,8 @@
 	'changepass.the_api_key': 'your API key',
 	'changepass.search_not_resealed': 'These search services could not be re-encrypted under the new passphrase and need their keys again: {list}.',
 	'changepass.search_not_unsealed': 'These search services already had unreadable keys before the change, and still need their keys set again: {list}.',
-	'changepass.voice_not_resealed': 'Your forge voice could not be re-encrypted under the new passphrase. Set it again from the line the forge printed for you.',
-	'changepass.voice_not_unsealed': 'Your forge voice could not be read under the old passphrase, so it still needs setting again from the line the forge printed for you.',
+	'changepass.voice_not_resealed': 'Your posting name could not be re-encrypted under the new passphrase. Set it again from the line the forge printed for you.',
+	'changepass.voice_not_unsealed': 'Your posting name could not be read under the old passphrase, so it still needs setting again from the line the forge printed for you.',
 	'changepass.settle_not_resealed': 'Your settle voice could not be re-encrypted under the new passphrase. Paste it again from the line the forge printed for you.',
 	'changepass.settle_not_unsealed': 'Your settle voice could not be read under the old passphrase, so it still needs pasting again from the line the forge printed for you.',
 	// A module that seals something failed in a way it had no words of its own
@@ -2983,7 +3008,7 @@
 	'checkout.card_saved_body':  'Daimond can now top up your credits automatically. Set the limits below, then switch it on. Nothing has been charged.',
 	'checkout.card_pending_body': 'Stripe has taken the card. It may take a moment to appear here; reopen Credits shortly. Nothing has been charged.',
 	'checkout.pro_unlocked':     'Pro unlocked',
-	'checkout.pro_unlocked_body': 'You have Daimond Pro. Cross-device sync, cloud storage and Email are on. Pro runs for five years from purchase. No subscription, and nothing renews.',
+	'checkout.pro_unlocked_body': 'You have Daimond Pro. Cross-device sync, cloud storage and Email are on. Pro is $8 a month; cancel any time.',
 	'checkout.received':         'Payment received',
 	'checkout.pro_pending_body': 'Your Pro unlock is being confirmed and will appear here shortly. Reopen Credits in a moment.',
 	'checkout.credits_pending_body': 'Your credits are still being confirmed. They will appear here shortly.',
@@ -3521,6 +3546,14 @@
 	'settings.debugshare_note': 'Beta training-wheel, to be removed. When on, this shares ALL your Daimond data — your chats, costs, devices and settings — with the developer for debugging. Your keys are never shared. Off by default.',
 	'settings.debugshare_help': 'Beta only, and temporary. When on, everything on this device — chats, costs, devices, settings — is shared with the developer to debug a problem. Your provider key and passphrase key are never shared.',
 
+	// ── Autonomous work and step-away hand-off (see js/handmode.js) ──
+	'autonomous.head':   'Work on its own when you’re away',
+	'autonomous.body':   'Let this computer finish tasks you’ve dispatched to it without asking — it will reach the web, act on pages and run commands on its own. The limit is your provider and Daimond credit. This is set for THIS computer only and is off until you turn it on.',
+	'autonomous.switch': 'Work unattended on this computer',
+	'handoff.head':      'Hand off when you step away',
+	'handoff.body':      'If you close this computer while a turn is running, hand it to another device that is awake so it finishes there and syncs back, instead of waiting for you to return. This is set for THIS computer only and is off until you turn it on.',
+	'handoff.switch':    'Hand my turns to another device when I step away',
+
 	// ── The email doorbell ─────────────────────────────────────
 	// One email, at most once a day, saying something is waiting. On by default
 	// for a beta account, which is why the switch and the notice both exist: a
@@ -3619,7 +3652,13 @@
 	'share.panel_take_help':    'Take a {ext} somebody gave you. A page inside it is a program they wrote, and it is never written into your workspace without asking you first.',
 	'share.panel_take':         'Open a share file…',
 	'share.panel_send_head':    'Send a diamond',
-	'share.panel_no_diamond':   'Open a diamond to share it. A share carries the files of one diamond, so there has to be one in front of you.',
+	'share.panel_no_diamond':   'Open a diamond to share it, or use Share… on its tile.',
+	'share.section': 'Share',
+	'share.mode_copy': 'A copy',
+	'share.mode_shape': 'The shape only',
+	'share.with_conversation': 'Include the conversation',
+	'share.note_ph': 'A line about it (optional)',
+	'share.facts': '{n} files · {size} · they will own the copy',
 	'share.panel_no_people':    'Nobody here has a sealing key yet, so there is nobody a share can be sealed to. Show somebody your code, or read theirs.',
 	'share.panel_this':         'Sharing “{name}” — a copy they will own, not a view of yours.',
 	'share.panel_who':          'Who it goes to',
@@ -3654,13 +3693,14 @@
 	'panel.social':        'Social',
 	'social.messages':     'Messages',
 	'social.people':       'People',
+	'social.groups':       'Groups',
 	'social.notes':        'Notes',
-	'social.proposals':    'Proposals',
+	'social.proposals':    'Feedback',
 	'social.settings':     'Settings',
 	// The compose box, merged into Proposals. Post sends the words as they are;
 	// Polish & post has the model draft a proposal and then WAITS for Send now.
 	'social.post':         'Post',
-	'social.post_help':    'Post exactly what is above to the forge as a proposal. Public, under your voice name — no account needed to read it.',
+	'social.post_help':    'Post exactly what is above to the forge as a proposal. Public, under your posting name — no account needed to read it.',
 	'social.polish':       'Polish & post',
 	'social.polish_help':  'Let the model rewrite it as a proposal. You read it and press Send — nothing goes on its own.',
 	// The forge takes a title of 200 characters and its refusal names no number,
@@ -3671,7 +3711,7 @@
 	'social.title_over':   'That title is {n} characters; a title is up to {max}. Shorten it, then send.',
 	'social.title_count':  'Title {n} / {max}',
 	'social.title_label':  'The title this will be sent under',
-	'social.compose_public': 'Posted publicly, under your voice name — anyone can read it.',
+	'social.compose_public': 'Posted publicly, under your posting name — anyone can read it.',
 	// Shown after a note is raised (posted, or queued to send). The hub label is a
 	// press that opens the Improve panel, where it is read and settled.
 	'social.raised_lead':  'Raised — see it in',
@@ -3706,7 +3746,7 @@
 	// forge's English: keep the placeholder and do not translate around it.
 	'social.q_refused':    'The forge would not take this: {said}',
 	// The Settings view: the voice, and the drafts the model prepared.
-	'social.set_voice':    'Your voice',
+	'social.set_voice':    'Posting name',
 	'social.set_drafts':   'Prepared drafts',
 	'social.set_drafts_note': 'Forgets any proposals the model drafted from your notes that you have not sent. Your notes waiting to send are not touched.',
 	// What each chip's list says while it is empty, and the two are NOT the same
@@ -3715,10 +3755,10 @@
 	// different claim and is not true. People IS switched on, so its line is an
 	// ordinary empty state and tells you how to end it.
 	'social.messages_off': 'Messages: not yet.',
-	'social.people_off':   'Nobody yet. Swap codes to connect.',
+	'social.people_off':   'Nobody yet. Show your code or add somebody.',
 	// The fifth chip. Its module was complete and unreachable before it existed.
 	'social.share':             'Share',
-	'social.share_off':         'Sharing: not yet.',
+	'social.share_off':         'Sharing is not available in this build.',
 	// ── A private message ──────────────────────────────────────
 	//
 	// The Social panel's Messages chip. Written from the English at the call
@@ -3766,15 +3806,29 @@
 	'post.err_too_big':          'That message is too large for the relay to carry.',
 	'post.err_refused':          'The relay would not take that message, so it has not been sent.',
 	'post.err_bad_put':          'A post needs a recipient, an address and a sealed body.',
-	'post.locked':               'Unlock Daimond to read your messages: they are kept encrypted on this device.',
+	'post.locked':               'Unlock Daimond to read your messages.',
 	'post.tray_head':            'Waiting for your answer',
-	'post.none':                 'No messages yet.',
+	// ONE LINE, and the word People in it is the chip it goes to (post.js
+	// `peopleLine`). `post.nobody` below is the same sentence for the box, and is
+	// drawn only where this line is not -- two of them is the screen saying the
+	// same thing twice (audit SOC-02).
+	'post.none':                 'No messages yet. Add somebody in {people}.',
+	'post.reply':                'Reply',
+	'post.reply_quote':          'In reply to: {said}',
+	'post.reply_gone':           'In reply to a message that has expired.',
+	'post.reply_drop':           'Not a reply',
 	'post.you':                  'You',
 	'post.someone':              'Someone new',
 	'post.unreadable':           'A message arrived that this device could not open.',
 	'post.accept':               'Accept',
 	'post.ignore':               'Ignore',
 	'post.block':                'Block',
+	'post.share_row': '{who} sent you a diamond: {name} · {n} files · {size}',
+	'post.share_has_page': 'includes a page',
+	'post.share_add': 'Add',
+	'post.share_adding': 'Adding…',
+	'post.share_gone': 'That diamond is no longer waiting.',
+	'post.share_sent_row': 'Sent {name} to {who}',
 	'post.expired':              'A message you sent was never collected and the relay has let it go.',
 	// The same, for several copies of one group message. {n} is the SENDER'S
 	// own count of copies the relay let go, and it is not a read receipt and
@@ -3783,7 +3837,7 @@
 	// read it".
 	'post.expired_group':        'A message you sent to a group was never collected by {n} of the people it went to, and the relay has let those copies go.',
 	'post.notice':               'The relay left a notice here.',
-	'post.nobody':               'There is nobody to write to yet. Exchange codes with somebody in People, and they will be here.',
+	'post.nobody':               'Add somebody in {people}.',
 	'post.to_label':             'Who this goes to',
 	'post.audience':             'Private. Only you and the person you are writing to can read this.',
 	// WHO CAN READ THIS, when the answer is a group, and it is a different
@@ -3904,10 +3958,14 @@
 	'group.head':                      'Groups',
 
 	// Two empty states rather than one, because "no groups yet" printed over a
-	// pending invitation is a screen arguing with the row above it. The second
-	// says what a group IS, and "no shared key" is the whole of it.
+	// pending invitation is a screen arguing with the row above it.
 	'group.none_joined':               'None joined yet. Answer the invitation above, or make one below.',
-	'group.none':                      'No groups yet. A group is a list of people a message is sealed to one by one — there is no shared key, and nothing is kept on the relay.',
+	'group.none':                      'No groups yet.',
+	// WHAT A GROUP IS, on the heading's mark rather than under it. It used to be
+	// the second half of `group.none`: twenty-eight words between a reader and an
+	// empty list they had already understood (audit SOC-02). "No shared key" is
+	// the whole of it, so it is kept, and kept reachable.
+	'group.what':                      'A group is a list of people. A message is sealed to each of them one by one: there is no shared key, and nothing is kept on the relay.',
 
 	'group.invited_by':                '{n} people, invited by the person who made it.',
 	'group.join':                      'Join',
@@ -3944,7 +4002,7 @@
 	// Making one. A member with no sealing key is a member nothing can be
 	// sealed to, so People is where this sends somebody, in the same words
 	// `post.nobody` uses.
-	'group.nobody':                    'There is nobody to put in a group yet. Exchange codes with somebody in People, and they will be here.',
+	'group.nobody':                    'Add somebody in {people}.',
 	'group.name_ph':                   'What to call this group',
 	'group.name_label':                'The group\'s name',
 	'group.members_label':             'Who is in this group',
@@ -4013,9 +4071,20 @@
 	'trust.numbers_match':         'The numbers match',
 	'trust.no_number':             'This device cannot compute the number yet.',
 	'trust.numbers_differ_note':   'Then somebody is between you. Do not use this key. Meet, or start again from a code you read in person.',
+	'trust.send_mine':             'Send my code',
+	'trust.send_copied':           'Copied.',
+	'trust.find':                  'Find somebody',
+	'trust.find_hint':             'Their handle',
+	'trust.find_add':              'Add',
+	'trust.find_added':            'Added to People.',
+	'trust.find_none':             'No such name.',
+	'trust.find_bad':              'Their code did not verify.',
+	'trust.find_nocard':           'They have no code yet.',
+	'trust.find_off':              'Sign in to look a name up.',
+	'trust.find_busy':             'Too many looks just now. Try later.',
 	'social.info':         'What this panel is, in the guide',
 	'social.box_label':    'Write a note about Daimond',
-	'social.box_ph':       'Where it is, what you expected, and what happened instead.',
+	'social.box_ph':       'Where it is, what you expected, what happened.',
 	'social.with':         'Attached details',
 	'social.with_off':     'Take the details off this note',
 	'social.keep':         'Keep',
@@ -4024,7 +4093,7 @@
 	'social.send_help':    'Sends exactly what is above. Nothing else goes with it.',
 	// A note goes under the writer's VOICE. No handle and no name travels with
 	// it, so nothing here may name the writer.
-	'social.as_novoice':   'No voice yet — a note can only be kept here.',
+	'social.as_novoice':   'No posting name yet — a note can only be kept here.',
 	// Above Send, and on the screen exactly when Send is. The repository this
 	// panel reads is public — the forge draws no other kind — so a note that is
 	// sent is readable by ANYBODY, with NO account, under the name of the voice
@@ -4035,7 +4104,7 @@
 	'social.publish_body': 'Daimond will publish this in your name, for anyone to read. It cannot be taken back.\n\n{what}\n\nDecline if you did not expect it.',
 	'social.publish_ok': 'Publish it',
 	'social.publish_title': 'Publish this?',
-	'social.public_note':  'Sending publishes this at {host} with your voice name on it — anyone can read it, no account needed. A kept note stays on this device.',
+	'social.public_note':  'Sending publishes this at {host} with your posting name on it — anyone can read it, no account needed. A kept note stays on this device.',
 	'social.title_hint':   'First line is the title; what happened goes below.',
 	'social.no_title':     'First line is the title — write one, then what happened.',
 	'social.nothing':      'Write something first.',
@@ -4043,6 +4112,10 @@
 	// an empty body, so a note like that could never be sent and must not be
 	// taken as though it could.
 	'social.no_body':      'Write what happened under the first line — the forge will not take a proposal with no body.',
+	// A proposal the forge settled after it was raised, read back on this device.
+	'social.returned_one':     'Your proposal ‘{title}’ was declined: {reason}',
+	'social.returned_bare':    'Your proposal ‘{title}’ was declined.',
+	'social.returned_dismiss': 'Dismiss this note.',
 	// Said after a refusal. Nothing is queued and nothing is tried again, so a
 	// translation must not promise a retry.
 	'social.kept_here':    'Kept here; nothing tried again.',
@@ -4053,7 +4126,7 @@
 	'social.drop':         'Delete this note',
 	'social.drop_ask':     'Delete this note? It is only here — no other copy.',
 	'social.drop_ok':      'Delete',
-	'social.no_notes':     'No notes yet.',
+	'social.no_notes':     'No proposals yet.',
 	// The one line that goes with a note, in the characters it travels as.
 	'social.ctx_build':    'Build {id}',
 	'social.ctx_touch':    'touch',
@@ -4063,8 +4136,8 @@
 
 	// The voice: a per-person secret the forge looks the writer up by. It is
 	// held here encrypted under the passphrase, and it never goes in an address.
-	'social.voice_held':        'Voice held on this device, encrypted under your passphrase.',
-	'social.voice_none':        'No voice yet: you can read proposals, but only Keep a note to this device.',
+	'social.voice_held':        'Posting name held on this device, encrypted under your passphrase.',
+	'social.voice_none':        'Posting name: none.',
 	// \u2500\u2500 ONE TAP, NOT A PASTE \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
 	// `Get my voice` posts to `/api/voice/provision` and the forge mints one; the
 	// honest instruction is "tap the button". The old paste-first strings
@@ -4073,34 +4146,34 @@
 	// The paste FORM survives as a fallback for a voice made elsewhere, so
 	// `voice_ph`, `voice_help`, `voice_replace` and `voice_save` stay. Detail lives
 	// in guide/social.html, not here.
-	'social.voice_intro':       'A voice lets you post, reply and vote on the forge; reading needs none.',
-	'social.voice_get':         'Get my voice',
-	'social.voice_get_help':    'Makes your voice on the forge. One tap.',
-	'social.voice_getting':     'Making your voice on the forge\u2026',
-	'social.voice_get_failed':  'Could not make your voice. Try again shortly.',
-	'social.voice_pro':         'A voice is part of Daimond Pro.',
-	'social.voice_pitch':       'A voice on the forge is part of Daimond Pro.',
+	'social.voice_intro':       'A posting name lets you post, reply and vote on the forge; reading needs none.',
+	'social.voice_get':         'Get one',
+	'social.voice_get_help':    'Makes your posting name on the forge. One tap.',
+	'social.voice_getting':     'Making your posting name on the forge\u2026',
+	'social.voice_get_failed':  'Could not make your posting name. Try again shortly.',
+	'social.voice_pro':         'Posting needs Daimond Pro.',
+	'social.voice_pitch':       'Posting on the forge is part of Daimond Pro.',
 	// The forge already holds a voice for this account, on another device.
-	'social.voice_already':     'Your voice is set on another device and will sync here shortly.',
-	'social.voice_reissue':      'I lost my voice \u2014 re-issue',
-	'social.voice_reissue_help': 'Makes a new voice; the old one stops working everywhere. Cannot be undone.',
+	'social.voice_already':     'Your posting name is set on another device and will sync here shortly.',
+	'social.voice_reissue':      'I lost my posting name \u2014 re-issue',
+	'social.voice_reissue_help': 'Makes a new posting name; the old one stops working everywhere. Cannot be undone.',
 	'social.voice_reissue_do':    'Re-issue',
-	'social.voice_reissue_title': 'Re-issue your voice',
-	'social.voice_reissue_ask':   'Re-issue your voice? The old one stops working on every device, and this cannot be undone.',
+	'social.voice_reissue_title': 'Re-issue your posting name',
+	'social.voice_reissue_ask':   'Re-issue your posting name? The old one stops working on every device, and this cannot be undone.',
 	// The unobtrusive fallback: a voice the forge made elsewhere, pasted in.
-	'social.voice_have':        'I already have a voice',
-	'social.voice_have_help':   'Paste a voice the forge already gave you.',
+	'social.voice_have':        'I already have a posting name',
+	'social.voice_have_help':   'Paste a posting name the forge already gave you.',
 	// The paste fallback form (see the note above).
-	'social.voice_replace':     'Replace the voice',
+	'social.voice_replace':     'Replace the posting name',
 	'social.voice_help':        'The line the forge showed you. Kept encrypted on this device.',
 	'social.voice_ph':          'Paste the line the forge showed you',
-	'social.voice_save':        'Save the voice',
-	'social.voice_saved':       'Your voice is held here, encrypted.',
-	'social.voice_failed':      'That voice could not be stored.',
+	'social.voice_save':        'Save the posting name',
+	'social.voice_saved':       'Your posting name is held here, encrypted.',
+	'social.voice_failed':      'That posting name could not be stored.',
 	'social.voice_forget':      'Forget it',
 	'social.voice_forget_help': 'Remove the copy on this device.',
 	'social.voice_forgotten':   'The copy on this device is gone.',
-	'social.voice_ask_forget':  'Forget your voice here? It was shown once and will not be shown again.',
+	'social.voice_ask_forget':  'Forget your posting name here? It was shown once and will not be shown again.',
 
 	// ── What js/voice.js says when a voice will not do ──────────
 	// The secret itself, and every refusal about it. These were in NO catalogue
@@ -4113,19 +4186,19 @@
 	//
 	// NONE of these may quote the secret: an error message carrying a credential
 	// is a credential in a screenshot.
-	'voice.err.empty':      'A voice is needed to write on the forge.',
-	'voice.err.shape':      'That does not look like a voice. Copy the whole line the forge printed.',
-	'voice.err.short':      'That is shorter than any voice the forge issues. Copy the whole line.',
-	'voice.err.long':       'That is longer than a voice can be.',
-	'voice.err.locked':     'Unlock Daimond first: your voice is kept encrypted under your passphrase.',
-	'voice.err.locked_send': 'Unlock Daimond to write on the forge: your voice is encrypted under your passphrase.',
-	'voice.err.unreadable': 'Your voice cannot be read with this passphrase. Set it again from the line the forge printed for you.',
-	'voice.err.storage_full': 'This device is out of storage, so your voice could not be saved. Free some space in this browser and try again.',
-	'voice.err.inurl':      'A voice goes in a header, never in an address.',
+	'voice.err.empty':      'A posting name is needed to write on the forge.',
+	'voice.err.shape':      'That does not look like a posting name. Copy the whole line the forge printed.',
+	'voice.err.short':      'That is shorter than any posting name the forge issues. Copy the whole line.',
+	'voice.err.long':       'That is longer than a posting name can be.',
+	'voice.err.locked':     'Unlock Daimond first: your posting name is kept encrypted under your passphrase.',
+	'voice.err.locked_send': 'Unlock Daimond to write on the forge: your posting name is encrypted under your passphrase.',
+	'voice.err.unreadable': 'Your posting name cannot be read with this passphrase. Set it again from the line the forge printed for you.',
+	'voice.err.storage_full': 'This device is out of storage, so your posting name could not be saved. Free some space in this browser and try again.',
+	'voice.err.inurl':      'A posting name goes in a header, never in an address.',
 	// What the voice is CALLED in a list of what did not survive a passphrase
 	// change. Never shown on its own; `changepass.voice_not_resealed` is the
 	// sentence a person reads.
-	'voice.the_voice':      'your forge voice',
+	'voice.the_voice':      'your posting name',
 
 	'tracker.the_settle_voice': 'your settle voice',
 	// Proposals, read from the forge as the panel is looked at. Nothing tells a
@@ -4212,14 +4285,14 @@
 	'approve.target_new':    'opens a new proposal',
 	'approve.target_on':     'on proposal #{n}',
 	'approve.not_yours':     'Only the proposal’s author can revise it.',
-	'approve.novoice':       'No voice yet — a draft can only wait here.',
+	'approve.novoice':       'No posting name yet — a draft can only wait here.',
 	'approve.none_ticked':   'Tick a draft first.',
 	'approve.empty':         'Nothing to send.',
 	'approve.no_title':      'First line is the title — write one, then what happened.',
 	'approve.kept':          'Kept here; nothing tried again.',
 	'approve.sent_batch':    'Sent {sent}. {failed} still waiting.',
 
-	'social.vote_novoice': 'Set a voice to vote on this.',
+	'social.vote_novoice': 'Set a posting name to vote on this.',
 	'social.vote_off':     'Press again to take your vote back off.',
 	'social.reply':        'Say it',
 	'social.reply_ph':     'Say something about this proposal.',
@@ -4238,9 +4311,9 @@
 	// "this repository is private" leaks. Say only that it is not available to
 	// you. See dev/IMPROVE_CONTRACT.md §7 (and the forge contract §3.1).
 	'social.err_absent':    'This repository is not available to you.',
-	'social.err_unvoiced':  'The forge was given no voice, so it refused.',
-	'social.err_unknown':   'The forge does not recognise your voice. Set it again from the line the forge printed for you.',
-	'social.err_unpermitted': 'Your voice may not do that here.',
+	'social.err_unvoiced':  'The forge was given no posting name, so it refused.',
+	'social.err_unknown':   'The forge does not recognise your posting name. Set it again from the line the forge printed for you.',
+	'social.err_unpermitted': 'Your posting name may not do that here.',
 	'social.err_amend_unpermitted': 'Only the person who opened this proposal may revise it.',
 	'social.err_throttled': 'Too many requests just now. Wait a little, then try again.',
 	'social.err_throttled_address': 'Too many requests from this address just now. Wait a little, then try again.',
@@ -4398,9 +4471,9 @@
 	'tracker.say':            'Say it',
 	'tracker.say_help':       'Sends exactly this box. Nothing else.',
 	'tracker.say_empty':      'Write something first.',
-	'tracker.say_novoice':    'Set a voice in Social to comment.',
-	'tracker.vote_novoice':   'Set a voice in Social to vote.',
-	'tracker.set_voice':      'Set a voice',
+	'tracker.say_novoice':    'Set a posting name in Social to comment.',
+	'tracker.vote_novoice':   'Set a posting name in Social to vote.',
+	'tracker.set_voice':      'Set a posting name',
 	'tracker.set_voice_help': 'Set a posting name to vote.',
 	// The four board columns, and the empty note under one that holds nothing.
 	// tracker.js:drawColumn builds `tracker.` + col.key for the four column labels;
@@ -4426,17 +4499,20 @@
 	'tracker.state_done':     'Done',
 	'tracker.state_declined': 'Declined',
 	// The settle controls, on a board card and on the detail.
+	'tracker.reason_accept':  'Why accept it? Optional, shown to the proposer.',
+	'tracker.reason_decline': 'Why decline it? Optional, sent back to the proposer.',
 	'tracker.accept':         'Accept',
 	'tracker.decline':        'Decline',
+	'tracker.cancel':         'Cancel',
 	'tracker.done':           'Mark done',
 	'tracker.reopen':         'Reopen',
 	// Refusals, said not swallowed. `absent` is true whether the repository is
 	// missing or private, and leaks neither.
 	'tracker.err_offline':           'Nothing could be read just now.',
 	'tracker.err_absent':            'This repository is not available.',
-	'tracker.err_unvoiced':          'The forge was given no voice.',
-	'tracker.err_unknown':           'The forge does not recognise that voice.',
-	'tracker.err_unpermitted':       'That voice may not settle proposals here.',
+	'tracker.err_unvoiced':          'The forge was given no posting name.',
+	'tracker.err_unknown':           'The forge does not recognise that posting name.',
+	'tracker.err_unpermitted':       'That posting name may not settle proposals here.',
 	'tracker.err_throttled':         'Too many requests just now. Wait, then try again.',
 	'tracker.err_throttled_address': 'Too many requests from this address. Wait, then try again.',
 	'tracker.err_malformed':         'The forge could not read that request.',

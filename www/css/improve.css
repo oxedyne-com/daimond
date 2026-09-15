@@ -140,6 +140,11 @@
 	margin: 8px 0 4px; font-size: var(--fs-3xs); letter-spacing: 0.05em;
 	text-transform: uppercase; color: var(--text-muted); font-weight: 600;
 }
+/* The Groups heading carries the mark that says what a group IS, so the heading
+   is a row rather than a line. Baseline-aligned, since the mark reads as part of
+   the word and not as a control beside it. */
+.group-head { display: flex; align-items: center; gap: 6px; }
+.group-head .imp-info { width: 18px; height: 18px; }
 
 .post-msg, .post-req, .post-notice {
 	padding: 8px 0; border-bottom: 1px solid var(--border);
@@ -179,8 +184,56 @@
 
 .post-refs { margin-top: 4px; }
 
+/* ── A reply, and the one line it quotes ────────────────────── */
+
+/* What a message answers, above the words that answer it. One line, clipped
+   with an ellipsis rather than wrapped: the parent is on the list already, and a
+   quote long enough to wrap would be read as the message instead of as its
+   heading. The rule on the left is the same mark `.post-out` uses for your own
+   words -- both say "this is not the body", and one grammar is easier to learn
+   than two. */
+.post-quote {
+	margin: 4px 0 0; padding-left: 7px;
+	border-left: 2px solid var(--border-strong);
+	font-size: var(--fs-3xs-2xs); color: var(--text-muted); line-height: 1.45;
+	white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+/* The parent is gone, so the line is a sentence and not a quotation: it wraps,
+   because by this file's own rule a fact the reader is meant to act on may not
+   be ellipsised. */
+.post-quote-gone { white-space: normal; font-style: italic; }
+
+/* The box, while it is a reply: the quoted line and the way out of it. */
+.post-replying { display: flex; align-items: baseline; gap: 8px; }
+.post-replying .post-quote { flex: 1; min-width: 0; margin-top: 0; }
+.post-unreply { flex: none; }
+
+/* A word in a sentence that goes somewhere, drawn as a button and not a link --
+   the same reasoning as `.ref-chip` below: this is navigation inside the app,
+   and anything that looked like a URL is something a reader tries to copy out.
+   It keeps the sentence's own size and colour so the line still reads as one
+   sentence, and is underlined so it is not merely a differently coloured word. */
+.post-link {
+	display: inline; padding: 0; margin: 0; border: 0; background: none;
+	font: inherit; color: var(--accent-text); text-decoration: underline;
+	text-underline-offset: 2px; cursor: pointer;
+}
+.post-link:hover { color: var(--text-primary); }
+
 .post-acts { display: flex; gap: 6px; margin-top: 7px; flex-wrap: wrap; }
 /* `.post-btn` is the one pill (top of file). Nothing of its own. */
+
+/* A diamond somebody sent, waiting in the same tray. THE SAME ROW AS A
+   MESSAGE'S -- `.post-req` gives it everything -- because a share carries no
+   official shape either. Only the sender's covering line and the row's own
+   refusal need anything of their own, and both are quiet. */
+.post-share-note, .post-share-say {
+	margin: 3px 0 0; font-size: var(--fs-3xs-2xs); line-height: 1.45;
+	overflow-wrap: anywhere;
+}
+.post-share-note { color: var(--text-muted); font-style: italic; }
+.post-share-say  { color: var(--warn); }
+.post-share-say[hidden] { display: none; }
 
 /* The relay's own row: no author, no reply control, its own section. It is not
    in the message stream and must not read as though it were, so it is set in
@@ -531,6 +584,44 @@
 }
 .shr-say[hidden] { display: none; }
 .shr-warn { color: var(--warn); }
+
+/* ── The sheet ──────────────────────────────────────────────
+ *
+ * One sheet, two doors: the Send block of this panel, and Share… on a tile's
+ * cog. So every rule here is written against `.shr-sheet` and none of it against
+ * the panel, or the half of the feature that lives behind the cog would be
+ * unstyled — which is how the `.imp-list .shr-who` rule below came to be
+ * scoped and why the select is given its box again here. */
+.shr-sheet { display: flex; flex-direction: column; gap: 5px; }
+.shr-sheet .shr-who {
+	background: var(--bg-tertiary); border: 1px solid var(--border-strong);
+	color: var(--text-primary); border-radius: var(--radius-sm);
+	padding: 1px 6px; height: auto; min-height: 0;
+	font-size: var(--fs-3xs-2xs); line-height: 1.7;
+	max-width: 60%;
+}
+/* What is known about the KEY, drawn by trust.js and never restated here. */
+.shr-key:empty { display: none; }
+.shr-mode { display: flex; gap: 10px; flex-wrap: wrap; }
+.shr-radio, .shr-check {
+	display: flex; align-items: center; gap: 5px;
+	font-size: var(--fs-3xs-2xs); color: var(--text-secondary);
+	cursor: pointer;
+}
+.shr-note-in {
+	background: var(--bg-tertiary); border: 1px solid var(--border-strong);
+	color: var(--text-primary); border-radius: var(--radius-sm);
+	padding: 2px 6px; height: auto; min-height: 0;
+	font-size: var(--fs-3xs-2xs); line-height: 1.6; width: 100%;
+	box-sizing: border-box;
+}
+/* What is in it and what it costs them, counted rather than guessed. Last,
+   because it is the only line here that is not a control. */
+.shr-facts {
+	margin: 2px 0 0;
+	font-size: var(--fs-3xs-2xs); line-height: 1.45;
+	color: var(--text-muted);
+}
 
 /* ── The triage plan ────────────────────────────────────────── */
 

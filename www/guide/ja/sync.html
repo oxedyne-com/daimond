@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
-<title>端末間の同期 — Daimond ユーザーガイド</title>
+<title>More than one device &mdash; Daimond guide</title>
 <link rel="icon" type="image/svg+xml" href="../../assets/daimond_mark.svg">
 <link rel="stylesheet" href="../../css/variables.css">
 <link rel="stylesheet" href="../../css/guide.css">
@@ -15,99 +15,95 @@
 
 <header class="site-head">
 	<div class="site-head-inner">
-		<a class="brand" href="index.html" aria-label="Daimond ユーザーガイド、ホーム">
+		<a class="brand" href="index.html" aria-label="Daimond ガイド、ホーム">
 			<img class="wordmark wm-dark" src="../../assets/daimond_word.svg" alt="Daimond" translate="no">
 			<img class="wordmark wm-light" src="../../assets/daimond_word_dark.svg" alt="Daimond" translate="no">
 			<span class="brand-sub">ガイド</span>
 		</a>
 		<nav class="site-nav" aria-label="ガイドのページ">
-			<a href="index.html">はじめに</a>
+			<a href="index.html">ここから始める</a>
 			<a href="interface.html">インターフェース</a>
-			<a href="models.html">モデル &amp; クレジット</a>
-			<a href="chats-and-diamonds.html">チャット &amp; Diamonds</a>
-			<a href="../capps.html">Capps</a>
-			<a href="email-web-files.html">メール、ウェブ &amp; ファイル</a>
-			<a href="accounts.html">アカウント</a>
-			<a href="sync.html" aria-current="page">端末間の同期</a>
+			<a href="chats-and-diamonds.html">チャットと diamond</a>
+			<a href="../capps.html">diamond のページ</a>
+			<a href="email-web-files.html">ファイル、メール、ウェブ</a>
+			<a href="../machine-operations.html">あなたのコンピューター</a>
+			<a href="../runner.html">ヘルパーとターンの実行場所</a>
+			<a href="sync.html" aria-current="page">複数の端末</a>
+			<a href="../social.html">ソーシャルと提案</a>
+			<a href="models.html">モデルとプロバイダー</a>
 			<a href="spending.html">支出</a>
-			<a href="../machine-operations.html">端末でのコマンド実行</a>
-			<a href="../social.html">ソーシャル</a>
+			<a href="accounts.html">安全性と対処</a>
 		</nav>
 	</div>
 </header>
 
 <main>
-	<h1>端末間の同期</h1>
-	<p class="lede">Daimond はローカルが先なので、二台目の端末は空から始まります。端末間の同期は、サーバーに読まれることなく、チャットと作業領域のファイルをあなた自身の端末のあいだで運びます。</p>
+	<h1>複数の端末</h1>
+	<p class="lede">Daimond keeps your work on the device you are using, so a second device starts empty. Link it, and your chats, diamonds and files stay in step without the server ever reading them.</p>
 
-	<p>ゲートウェイを通るのは、あなたの端末だけが鍵を持つ暗号化された荷物ひとつです。鍵はパスフレーズから作られ、ブラウザから出ることはないので、サーバーは荷物を預かっていても開けません。読める形のものが端末のあいだを渡ることはありません。</p>
+	<p>What crosses is one encrypted parcel, and only your devices hold the key to it. The key comes from your passphrase and does not leave the browser.</p>
 
-	<h2 id="s1">二台目の端末をリンクする</h2>
-	<p>端末はそれぞれ自分の識別情報を作ります。ですから新しい端末でパスフレーズを打っても、いまのアカウントが移ってくるのではなく、 <em>別の</em>、空のアカウントが始まります。すでに持っているアカウントを使うには、新しい端末をそれに <strong>リンク</strong> します。手順は三つです。</p>
-
+	<h2 id="s1">Link a second device</h2>
+	<p>Each device makes its own identity, so typing your passphrase into a fresh browser starts a <em>別の</em> account. To use the one you have, link the new device to it.</p>
 	<ol class="steps">
 		<li>
 			<h3 id="s2">すでに使っている端末で、リンクのダイアログを開く</h3>
-			<p>上部バーの <span class="ui">ほかの端末をリンク</span> ボタンをクリックします。QR コードと、一度きりのペアリングコードが出ます。</p>
-			<figure class="shot narrow" data-shot="pair-desktop">
-				<img src="../img/pair-desktop.png" alt="「ほかの端末をリンク」のダイアログ。QR コードと、約十分で期限切れになる一度きりのペアリングコードが出ています。">
+			<p><span class="ui">ほかの端末をリンク</span> in the top bar shows a QR code and a one-time pairing code.</p>
+			<figure class="shot narrow">
+				<img alt="The link dialog on a desktop, showing a QR code above a short pairing code." src="../img/pair-desktop.png" loading="lazy">
 				<figcaption>最初の端末が QR とコードを見せます。</figcaption>
 			</figure>
 		</li>
 		<li>
-			<h3 id="s3">新しい端末で QR を読み取る — またはコードを打つ</h3>
-			<p>新しいスマートフォンのカメラを QR コードに向けます。Daimond が開き、コードも入力されるので、あとはタップするだけです。押すのは <span class="ui">この端末をリンク</span>。カメラがありませんか。そちらで Daimond を開き、 <span class="ui">ペアリングコードをお持ちですか？</span>を選んで、コードを打ちます。表示されるコードは、最初の端末のものと一致するか確かめるためだけのものです。</p>
-			<figure class="shot narrow" data-shot="pair-mobile">
-				<img src="../img/pair-mobile.png" alt="読み取ったあとのスマートフォンに出る「この端末をリンク」のダイアログ。ペアリングコードがすでに入っていて、この端末をリンクのボタンがあります。">
-				<figcaption>読み取ったあとにタップするのは <span class="ui">この端末をリンク</span>.</figcaption>
+			<h3 id="s3">On the new device, scan the QR or type the code</h3>
+			<p>Point the phone's camera at the code. It opens Daimond and fills the code in, so you only tap <span class="ui">この端末をリンク</span>. Without a camera, open Daimond there, choose <span class="ui">Have a passcode or a pairing code?</span>, and type it.</p>
+			<figure class="shot narrow">
+				<img alt="The new phone, after scanning, with a single Link this device button." src="../img/pair-mobile.png" loading="lazy">
+				<figcaption>After scanning, one tap.</figcaption>
 			</figure>
 		</li>
 		<li>
 			<h3 id="s4">同じパスフレーズでロックを解除する</h3>
-			<p>新しい端末は、これであなたのアカウントを持っています。解除に使うのは <strong>最初の端末で使っているのと同じパスフレーズ</strong> です — 新しいものではありません — そうすればチャットとファイルが現れます。そのあと、そちらでパスキーを追加すれば、もっと速く解除できます。</p>
+			<p>The new device now holds your account. Use the passphrase you already have, and your work appears. A passkey can unlock it faster afterwards.</p>
 		</li>
 	</ol>
-
-	<div class="note"><strong>パスフレーズはどこでも同じですが、それだけでは移りません。</strong> アカウントは一つ、パスフレーズは一つ、リンクするどの端末でも同じです。そしてパスフレーズは、その端末がすでに持っている鍵を復号するだけなので、一度もリンクしていないブラウザーには開くものがありません。端末がパスフレーズを <em>作る</em> ように求めてきて、 <em>入力する</em> ように求めていないなら、それは新しいアカウントを始めようとしています。古いほうを持ってこられるのは、リンクするか、古いアカウントのバックアップをそこへ読み込むか、そのどちらかだけです。</div>
+	<div class="note"><strong>If a device asks you to create a passphrase instead of entering one, it is about to start a new account.</strong> Go back and pair it, or import a backup. One account, one passphrase, on every device you link. The passphrase cannot travel on its own, because it only decrypts a key the device already holds, so a browser that has never been linked has nothing for it to open.</div>
 
 	<h2 id="s5">何が運ばれるか</h2>
-	<p>チャット、Diamonds、それらを並べた関係図、メール、作業領域のファイル、アカウントにある端末、そして一時停止にしたもの。ファイルは種類を問わず運ばれます。写真も、録音も、PDF も、表計算も、文字と同じようにほかの端末へ届きます。ひとつのファイルにつき 1 ギガバイトまでです。ゴミ箱も運ばれるので、削除も復元も、どの端末にも届きます。</p>
-	<p>同期されるものは、そのままクラウド保存に置かれるものでもあります。ですから作業領域は、いま読んでいる端末より大きくなれます。この端末にないファイルもツリーには出ていて、雲の印が付き、求めれば降りてきます。 <a href="email-web-files.html">作業領域</a> に、ファイルが取りうる三つの状態、ブラウザが埋まるにつれてどう空きが作られるか、そしてクラウド保存の費用が書いてあります。</p>
+	<p>Your chats, your diamonds and the way you laid them out, your mail, your workspace files, the devices on the account, and what you have paused all travel. Any kind of file travels, up to a gigabyte each. So does the Trash, so a deletion and a restore both reach every device.</p>
+	<p>What syncs is also what is kept in cloud storage, so a workspace can be larger than the device reading it. A file that is not here still shows in the tree and comes down when asked for.</p>
+	<p>A folder you opened on one computer is not in the browser's storage, so it does not travel by default. <a href="email-web-files.html">ファイル、メール、ウェブ</a> covers the per-folder control that copies one to devices that cannot open it.</p>
 
-	<h2 id="s6">別の端末でやり取りを実行する</h2>
-	<p>あなたの端末が二台以上、動いていてリンクされていれば、一台がもう一台の代わりにやり取りを実行でき、その答えは始めた端末へ同期で戻ってきます。</p>
-
-	<p>これは、あなたが入れるまで切れていて、一台ずつに対して設定します。スイッチがひとつ、<span class="ui">離れるときに引き継ぐ</span> があり、このコンピューターで走っているやり取りを、閉じたときに別の動いている端末へ移します — 蓋が閉じ、タブが閉じ、接続が切れる、そのときにです。やり取りはそちらで終わり、その答えが同期で戻ってきます。あなたが戻るまで中断したまま置かれることはありません。</p>
-
-	<p>やり取りは、どこへ行ったかを告げます。<span class="ui">ほかの端末に送りました</span> と読め、次に引き受けた端末の名を出し — <span class="ui">ラップトップが対応しています</span> — 終われば答えがここに現れます。隣に二つのボタンがあります。<span class="ui">取り戻す</span> はやり取りをこの端末へ戻し、<span class="ui">ここで実行</span> は、どの端末も受け取らなかったか、一台が終えられなかったときに、ローカルで動かします。これらの行が <em>ほかの端末</em> ではなく <span class="ui">ラップトップ</span> と読めるのは、アカウント設定で端末に名前を付けているからです。</p>
-
-	<div class="note"><strong>実行する端末を一台、指名できます。</strong> ふだん電源が入っているもの — 起きたままのデスクトップ — を選べば、引き継ぎはやり取りを最初に掴んだ端末ではなく、その端末に行きます。引き継ぐときにそれがオフラインなら、動いているどの端末でも実行します。</div>
-
-	<p>別の端末に渡された用件と、それが返してくる答えは、ゲートウェイを渡るほかのすべてと同じく、あなたのアカウントに封印されます。サーバーは開けない暗号化された荷物を中継するだけで、鍵を持つのはあなた自身の端末だけです。</p>
+	<h2 id="s6">Running a turn somewhere else</h2>
+	<p>When more than one of your devices is awake, one can run a turn for another and the answer syncs back. One switch turns it on, <span class="ui">Hand off when you step away</span>. A turn on this computer then moves to another awake device when you close it, whether the lid shuts, the tab closes or the connection drops, and finishes there.</p>
+	<p><a href="../runner.html">ヘルパーとターンの実行場所</a> covers naming the machine that should pick turns up, and the two things that stop it.</p>
+	<p>An errand sent to another device, and the answer it sends back, are sealed to your account like everything else. The server routes a parcel it cannot open.</p>
 
 	<h2 id="s7">費用</h2>
-	<p>端末間の同期は <strong>Pro</strong>の一部です。一度きりの解放で、Daimond のほかのものと同じく、買えばそのままです。Pro がなければ端末は単独で動き、あれば端末どうしが歩調を合わせます。Pro はクラウド保存とメールも開きます。同期が運ぶ大きなファイルの中身はクラウド保存に置かれ、クレジットから支払われます。計測が始まる前に無料の枠があります。</p>
+	<p>端末間の同期は <strong>Daimond Pro</strong>, at $8 a month, billed monthly, and you can cancel any time. Pro also turns on cloud storage, Email and a posting name. Away for a month, the billing pauses on its own and resumes when you are back.</p>
+	<p>Without Pro a device works on its own and loses nothing. Inference, bandwidth and other metered use are paid from credits either way.</p>
 
 	<div class="next">
-		<a href="accounts.html">&larr; アカウント</a>
-		<a href="spending.html">次：支出 &rarr;</a>
+		<a href="../runner.html">&larr; Helpers &amp; where turns run</a>
+		<a href="../social.html">Next: Social &amp; proposals &rarr;</a>
 	</div>
 </main>
 
 <footer class="site-foot">
-	<span>Daimond はあなたのブラウザで動きます。ここにあるものがこちらに送られることはありません。</span>
+	<span>Daimond はブラウザの中で動きます。ここでの内容は私たちに送信されません。</span>
 	<nav aria-label="ガイドのページ">
-		<a href="index.html">はじめに</a>
+		<a href="index.html">ここから始める</a>
 		<a href="interface.html">インターフェース</a>
-		<a href="models.html">モデル</a>
-		<a href="chats-and-diamonds.html">チャット &amp; Diamonds</a>
-		<a href="../capps.html">Capps</a>
-		<a href="email-web-files.html">メール、ウェブ &amp; ファイル</a>
-		<a href="accounts.html">アカウント</a>
-		<a href="sync.html">端末間の同期</a>
+		<a href="chats-and-diamonds.html">チャットと diamond</a>
+		<a href="../capps.html">diamond のページ</a>
+		<a href="email-web-files.html">ファイル、メール、ウェブ</a>
+		<a href="../machine-operations.html">あなたのコンピューター</a>
+		<a href="../runner.html">ヘルパーとターンの実行場所</a>
+		<a href="sync.html">複数の端末</a>
+		<a href="../social.html">ソーシャルと提案</a>
+		<a href="models.html">モデルとプロバイダー</a>
 		<a href="spending.html">支出</a>
-		<a href="../machine-operations.html">端末でのコマンド実行</a>
-		<a href="../social.html">ソーシャル</a>
+		<a href="accounts.html">安全性と対処</a>
 	</nav>
 </footer>
 </body>

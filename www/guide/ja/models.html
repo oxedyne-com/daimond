@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
-<title>モデル &amp; クレジット — Daimond ユーザーガイド</title>
+<title>Models &amp; providers &mdash; Daimond guide</title>
 <link rel="icon" type="image/svg+xml" href="../../assets/daimond_mark.svg">
 <link rel="stylesheet" href="../../css/variables.css">
 <link rel="stylesheet" href="../../css/guide.css">
@@ -15,112 +15,102 @@
 
 <header class="site-head">
 	<div class="site-head-inner">
-		<a class="brand" href="index.html" aria-label="Daimond ユーザーガイド、ホーム">
+		<a class="brand" href="index.html" aria-label="Daimond ガイド、ホーム">
 			<img class="wordmark wm-dark" src="../../assets/daimond_word.svg" alt="Daimond" translate="no">
 			<img class="wordmark wm-light" src="../../assets/daimond_word_dark.svg" alt="Daimond" translate="no">
 			<span class="brand-sub">ガイド</span>
 		</a>
 		<nav class="site-nav" aria-label="ガイドのページ">
-			<a href="index.html">はじめに</a>
+			<a href="index.html">ここから始める</a>
 			<a href="interface.html">インターフェース</a>
-			<a href="models.html" aria-current="page">モデル &amp; クレジット</a>
-			<a href="chats-and-diamonds.html">チャット &amp; Diamonds</a>
-			<a href="../capps.html">Capps</a>
-			<a href="email-web-files.html">メール、ウェブ &amp; ファイル</a>
-			<a href="accounts.html">アカウント</a>
-			<a href="sync.html">端末間の同期</a>
+			<a href="chats-and-diamonds.html">チャットと diamond</a>
+			<a href="../capps.html">diamond のページ</a>
+			<a href="email-web-files.html">ファイル、メール、ウェブ</a>
+			<a href="../machine-operations.html">あなたのコンピューター</a>
+			<a href="../runner.html">ヘルパーとターンの実行場所</a>
+			<a href="sync.html">複数の端末</a>
+			<a href="../social.html">ソーシャルと提案</a>
+			<a href="models.html" aria-current="page">モデルとプロバイダー</a>
 			<a href="spending.html">支出</a>
-			<a href="../machine-operations.html">端末でのコマンド実行</a>
-			<a href="../social.html">ソーシャル</a>
+			<a href="accounts.html">安全性と対処</a>
 		</nav>
 	</div>
 </header>
 
 <main>
-	<h1>モデル &amp; クレジット</h1>
-	<p class="lede">daimon はモデルで考えます。ご自分のプロバイダーの鍵を持ち込んでそのプロバイダーに直接支払うことも、クレジットを買って Daimond にモデルを動かしてもらうこともできます。このページでは両方と、クレジットを切らさない方法を扱います。</p>
+	<h1>モデルとプロバイダー</h1>
+	<p class="lede">A daimon thinks with a model. Bring a key you already hold and pay that provider directly, or buy credits and let Daimond run one for you.</p>
 
-	<h2 id="s1">daimon に力を与える二つの方法</h2>
-	<div class="cards">
-		<div class="card">
-			<h3 id="s2">自分の鍵を持ち込む</h3>
-			<p>モデルプロバイダーですでに持っているアカウントをつなぎます。メッセージはそのプロバイダーへ直接行きます。Daimond は経路に入りませんし、こちらから請求するものもありません。</p>
-		</div>
-		<div class="card">
-			<h3 id="s3">クレジットを買う</h3>
-			<p>管理するプロバイダーのアカウントはありません。Daimond があなたの代わりにモデルを動かし、買ったクレジットから引きます。サブスクリプションはありません。買った分はそのまま残ります。</p>
-		</div>
-	</div>
-	<p>始めるにはどちらか一方で足ります。両方もできます — ふだんの仕事には鍵をつなぎ、鍵を管理したくないときのためにクレジットを持っておく、という具合です。</p>
-
-	<h2 id="s4">プロバイダーをつなぐ</h2>
-	<p> <span class="ui">モデル</span> の行を管理パネル（左下）で開きます。使っているプロバイダーごとの鍵と、新しいチャットがどのモデルで始まるかが並びます。追加するには <span class="ui">+ プロバイダーを追加</span> を選び、同じ三つの問いに答えます。プロバイダーが誰であっても同じです。</p>
-
-	<figure class="shot" data-shot="models-form">
-		<img alt="プロバイダーを追加する入力画面。プロバイダーの選択、API キーの欄、既定のモデルの選択、そして保存して開始のボタン。" src="../shots/models-form.png" loading="lazy">
-		<figcaption>プロバイダーを追加する。プロバイダーを選び、鍵を貼り付け、既定のモデルに星を付け、そして保存して開始。</figcaption>
+	<h2 id="s1">Your own key</h2>
+	<p>Open the model row at the foot of the rail. It lists a key for each provider you use and which model new work starts on. <span class="ui">+ プロバイダーを追加</span> asks the same three questions whoever the provider is.</p>
+	<figure class="shot">
+		<img alt="The add-provider form: a provider list, an API key box, and a default model." src="../shots/models-form.png" loading="lazy">
+		<figcaption>Choose the provider, paste the key, star a default model, then save.</figcaption>
 	</figure>
-
 	<ol class="steps">
 		<li>
-			<h3 id="s5">プロバイダーを選ぶ</h3>
-			<p>一覧から選びます： <strong translate="no">Anthropic</strong>, <strong translate="no">Fireworks AI</strong>, <strong translate="no">OpenRouter</strong>, <strong translate="no">Together AI</strong>, <strong translate="no">Groq</strong>, <strong translate="no">DeepInfra</strong>、または <strong>カスタム</strong> は、同じ chat-completions API を話すほかのサービス向けです。カスタムを選ぶと <strong>ベース URL</strong> の欄が出て、Daimond をそのサービスに向けられます。</p>
+			<h3 id="s2">プロバイダーを選ぶ</h3>
+			<p>Anthropic, Fireworks AI, OpenRouter, Together AI, Groq or DeepInfra. <span class="ui">カスタム</span> reveals a <span class="ui">ベース URL</span> box for any other service speaking the same chat API, including one on your own machine.</p>
 		</li>
 		<li>
-			<h3 id="s6">API キーを貼り付ける</h3>
-			<p>プロバイダーのアカウントの鍵を <strong>API キー</strong> の欄に貼り付けます。この端末にだけ、あなたのパスフレーズのもとで包んで保存され、送られるのは選んだプロバイダーだけです。</p>
+			<h3 id="s3">Paste the key</h3>
+			<p>It is stored wrapped under your passphrase, and sent to the provider you chose and to nobody else. It reaches your other devices only inside the encrypted sync parcel, still wrapped.</p>
 		</li>
 		<li>
-			<h3 id="s7">既定のモデルに星を付ける</h3>
-			<p> <strong>既定のモデル</strong> を一覧から選びます（カスタムのプロバイダーならモデル ID を打ちます）。新しいチャットと Diamond が始まるのは、この一つのモデルです。そのあと <span class="ui">保存して開始</span>.</p>
+			<h3 id="s4">既定のモデルに星を付ける</h3>
+			<p><span class="ui">List models</span> fetches the catalogue where the provider offers one, and otherwise you type the model id. The starred one is where new chats and diamonds begin.</p>
 		</li>
 	</ol>
+	<p>Your messages then go straight to that provider on your own account. Daimond is out of the path, and we charge nothing.</p>
 
-	<div class="note"><strong>すべてこの端末に留まります。</strong> 鍵もチャットもファイルも、このブラウザの中だけにあります。こちらには何も送られません — 追加したプロバイダーの鍵が話す相手はそのプロバイダーだけで、ほかの誰でもありません。</div>
+	<h2 id="s5">Choosing a different model</h2>
+	<p>The default is a starting point. Any connected model can be chosen for one chat from the selector in its header, and the default is untouched. A diamond can also carry a separate <span class="ui">Helper model</span> for the agents it dispatches, which applies to the next one dispatched and to none already running.</p>
+	<p>Where a model publishes no context window, the tile says <span class="ui">Context size unknown for this model.</span> and guesses nothing.</p>
 
-	<h3 id="s8">既定のモデルと、チャットごとに別のモデルを選ぶこと</h3>
-	<p>既定のモデルは一つで、新しいチャットと Diamond はそこから始まります。つないであるモデルなら、中央パネル右上のヘッダーにある選択欄から、そのチャットだけに選べます。既定はそのままです。Diamond には、送り出すワーカー用に別のモデルを与えることもできます。</p>
-
-	<h2 id="s9">クレジットを買う</h2>
-	<p> <span class="ui">クレジット</span> の行を管理パネルで開きます。残高と、買えるパックの一覧が出ます。サブスクリプションはありません。買った分はそのまま残り、自動チャージをオンにしないかぎり、あらためて請求されることはありません。</p>
-
-	<figure class="shot" data-shot="credits">
-		<img alt="クレジットの画面。今の残高、買えるクレジットのパックの列、その下に自動チャージの設定。" src="../shots/credits.png" loading="lazy">
-		<figcaption>クレジット。残高、買えるパック、そしてその下の自動チャージの設定。</figcaption>
-	</figure>
-
-	<p>支払いは決済プロバイダー自身のページで行われます。カード番号も、有効期限も、セキュリティコードも Daimond に打ち込むことはないので、ここに漏れるものはありません。</p>
-
-	<h2 id="s10">自動チャージ</h2>
-	<p>自動チャージは、クレジットが少なくなったら買っておく、という常時の指示です。長い仕事が途中で止まりません。あなたが席にいないあいだに Daimond が保存したカードへ請求しうる唯一の場所なので、あえてはっきりさせてあります。設定する数字は三つ、クレジットの画面のパックの下にあります。</p>
+	<h2 id="s6">Choosing who serves it</h2>
+	<p>A router hands one model to whichever upstream provider it likes, and they are not equally good. Under an OpenRouter provider, each model row carries a <span class="ui">Providers</span> field, with the placeholder <span class="ui">prefer, -avoid, !</span>.</p>
 	<ul>
-		<li><strong>残高がこれを下回ったら</strong>：チャージが起きる残高です。</li>
-		<li><strong>買う金額</strong>：一度のチャージで足す額です。</li>
-		<li><strong>1 か月に使う上限は</strong>：暦の 1 か月あたりのチャージ合計の上限です。ここは慎重に決めてください。目標ではなく天井で、請求と同じコードの道筋で効くので、迂回できるものはありません。</li>
+		<li>A bare name prefers that provider.</li>
+		<li>A leading <code>-</code> avoids one.</li>
+		<li>A bare <code>!</code> means only these, refusing every fallback.</li>
 	</ul>
+	<p>So <code>Novita, -DeepInfra</code> prefers one and avoids another. The field is saved as you leave it. A provider whose catalogue has not been fetched keeps its rows behind a <span class="ui">Models&hellip;</span> disclosure, so a preference already set stays reachable.</p>
 
-	<div class="note">保存したカードがないと自動チャージはオンにできません — オンになったのに黙って失敗する操作は、使えないと理由を言う操作より悪いからです。カードの保存は決済プロバイダーのページへの転送で、Daimond がカードの情報を見ることはありません。</div>
+	<h2 id="s7">クレジット</h2>
+	<p>Credits run the model for you with no key needed, and they also meter the few things that leave the browser: fetching a page, the bandwidth of mail and of cross-device sync, and cloud storage beyond the free tier. Sync, Email and cloud storage themselves are turned on by Daimond Pro, and metered use is paid from credits with or without it.</p>
+	<p>Open the credits row for your balance and the packs. Credits are not a subscription, and you keep what you buy. Payment happens on the payment provider's own hosted page, so no card number is typed into Daimond.</p>
+	<p>While testing is closed, new accounts with credits are given out by passcode. Daimond works with your own provider key without one.</p>
+
+	<h2 id="s8">自動チャージ</h2>
+	<p>Auto-reload is a standing instruction to buy credits when they run low, so a long job does not stop halfway. It is the one place Daimond may charge a saved card while you are away, so it is deliberately explicit. Three numbers set it.</p>
+	<ul>
+		<li><strong>残高がこれを下回ったら</strong> is the balance at which a top-up fires.</li>
+		<li><strong>買う金額</strong> is how much one top-up adds.</li>
+		<li><strong>Never spend more, per month, than</strong> is a hard cap on the calendar month. Set this one carefully. It is enforced on the same code path as the charge.</li>
+	</ul>
+	<p>It cannot be switched on without a saved card, because a control that turned on and then failed silently would be worse than one that is disabled and says why.</p>
 
 	<div class="next">
-		<a href="interface.html">&larr; インターフェース</a>
-		<a href="chats-and-diamonds.html">次：チャット &amp; Diamonds &rarr;</a>
+		<a href="../social.html">&larr; Social &amp; proposals</a>
+		<a href="spending.html">Next: Spending &rarr;</a>
 	</div>
 </main>
 
 <footer class="site-foot">
-	<span>Daimond はあなたのブラウザで動きます。ここにあるものがこちらに送られることはありません。</span>
+	<span>Daimond はブラウザの中で動きます。ここでの内容は私たちに送信されません。</span>
 	<nav aria-label="ガイドのページ">
-		<a href="index.html">はじめに</a>
+		<a href="index.html">ここから始める</a>
 		<a href="interface.html">インターフェース</a>
-		<a href="models.html">モデル</a>
-		<a href="chats-and-diamonds.html">チャット &amp; Diamonds</a>
-		<a href="../capps.html">Capps</a>
-		<a href="email-web-files.html">メール、ウェブ &amp; ファイル</a>
-		<a href="accounts.html">アカウント</a>
-		<a href="sync.html">端末間の同期</a>
+		<a href="chats-and-diamonds.html">チャットと diamond</a>
+		<a href="../capps.html">diamond のページ</a>
+		<a href="email-web-files.html">ファイル、メール、ウェブ</a>
+		<a href="../machine-operations.html">あなたのコンピューター</a>
+		<a href="../runner.html">ヘルパーとターンの実行場所</a>
+		<a href="sync.html">複数の端末</a>
+		<a href="../social.html">ソーシャルと提案</a>
+		<a href="models.html">モデルとプロバイダー</a>
 		<a href="spending.html">支出</a>
-		<a href="../machine-operations.html">端末でのコマンド実行</a>
-		<a href="../social.html">ソーシャル</a>
+		<a href="accounts.html">安全性と対処</a>
 	</nav>
 </footer>
 </body>

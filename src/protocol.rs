@@ -1523,8 +1523,12 @@ const TEMPLATE_DROP_PREFIXES: [&str; 1] = ["log/"];
 // armed under it -- so a template that carried one and claimed it was off would be worse than
 // one that carries none.  The receiver sets up their own, which is a sentence of documentation
 // and not a data problem.
-const TEMPLATE_DROP_EXACT: [&str; 5] =
-    ["crystal.json", "crystal.md", "transcript.md", "log", "triggers.json"];
+//
+// IT IS IN `share::REFUSED_EXACT` AS WELL NOW, and so is `STATE.md`, which is why neither is
+// listed in the array any longer: `template_carries` walks that list first, so both are already
+// refused by the time this one is reached.  The argument stays here in words and the enforcement
+// moved to the format, where a receiver's exposure does not depend on which build sent it.
+const TEMPLATE_DROP_EXACT: [&str; 4] = ["crystal.json", "crystal.md", "transcript.md", "log"];
 
 /// Does a template carry this file?
 ///
@@ -1533,11 +1537,14 @@ const TEMPLATE_DROP_EXACT: [&str; 5] =
 /// from a list of what to keep would silently lose whichever folder the refinement was in.  That is
 /// the failure `cappManifest` exists to avoid on the delivery side.
 ///
-/// Three of the drops are `fe2o3_sbj`'s and are not invented here -- `.daimond/`, `versions/` and
-/// the `capp.json` delivery record -- so an unsealed template and a sealed share refuse the same
-/// paths for the same stated reasons and the two cannot drift.  What this adds is the memory, the
-/// kept conversation and a capp's entries, because a share is a copy of a Diamond for one named
-/// person and a template is its shape for anybody at all.
+/// Five of the drops are `fe2o3_sbj`'s and are not invented here -- `.daimond/`, `versions/`, the
+/// `capp.json` delivery record, `triggers.json` and `STATE.md` -- so an unsealed template and a
+/// sealed share refuse the same paths for the same stated reasons and the two cannot drift.  The
+/// last two moved to the format on 2026-09-15, having been this file's alone: a template refused
+/// armed automation and a share carried it, which is the same file going to the same person by a
+/// different door.  What this adds is the memory, the kept conversation and a capp's entries,
+/// because a share is a copy of a Diamond for one named person and a template is its shape for
+/// anybody at all.
 ///
 /// # Arguments
 /// * `rel` - The path relative to the Diamond's own directory.
@@ -1547,7 +1554,7 @@ pub fn template_carries(rel: &str) -> bool {
             return false;
         }
     }
-    if rel == share::REFUSED_EXACT {
+    if share::refused_exact(rel).is_some() {
         return false;
     }
     for prefix in TEMPLATE_DROP_PREFIXES.iter() {

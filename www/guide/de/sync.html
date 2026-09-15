@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
-<title>Geräteübergreifende Synchronisierung — Daimond-Handbuch</title>
+<title>More than one device &mdash; Daimond guide</title>
 <link rel="icon" type="image/svg+xml" href="../../assets/daimond_mark.svg">
 <link rel="stylesheet" href="../../css/variables.css">
 <link rel="stylesheet" href="../../css/guide.css">
@@ -21,93 +21,89 @@
 			<span class="brand-sub">Handbuch</span>
 		</a>
 		<nav class="site-nav" aria-label="Handbuchseiten">
-			<a href="index.html">Erste Schritte</a>
+			<a href="index.html">Hier anfangen</a>
 			<a href="interface.html">Die Oberfläche</a>
-			<a href="models.html">Modelle &amp; Guthaben</a>
 			<a href="chats-and-diamonds.html">Chats &amp; Diamonds</a>
-			<a href="../capps.html">Capps</a>
-			<a href="email-web-files.html">E-Mail, Web &amp; Dateien</a>
-			<a href="accounts.html">Konten</a>
-			<a href="sync.html" aria-current="page">Geräteübergreifende Synchronisierung</a>
+			<a href="../capps.html">Die Seite eines diamond</a>
+			<a href="email-web-files.html">Dateien, E-Mail &amp; das Web</a>
+			<a href="../machine-operations.html">Dein Rechner</a>
+			<a href="../runner.html">Helfer &amp; wo Züge laufen</a>
+			<a href="sync.html" aria-current="page">Mehr als ein Gerät</a>
+			<a href="social.html">Soziales &amp; Vorschläge</a>
+			<a href="models.html">Modelle &amp; Anbieter</a>
 			<a href="spending.html">Ausgaben</a>
-			<a href="../machine-operations.html">Befehle auf dem Rechner</a>
-			<a href="social.html">Soziales</a>
+			<a href="accounts.html">Sicherheit &amp; Problembehebung</a>
 		</nav>
 	</div>
 </header>
 
 <main>
-	<h1>Geräteübergreifende Synchronisierung</h1>
-	<p class="lede">Daimond ist local-first, ein zweites Gerät startet also leer. Die geräteübergreifende Synchronisierung trägt Ihre Chats und Arbeitsdateien zwischen Ihren eigenen Geräten hin und her, ohne dass der Server sie je liest.</p>
+	<h1>Mehr als ein Gerät</h1>
+	<p class="lede">Daimond keeps your work on the device you are using, so a second device starts empty. Link it, and your chats, diamonds and files stay in step without the server ever reading them.</p>
 
-	<p>Durch das Gateway reist ein einziges verschlüsseltes Paket, zu dem nur Ihre Geräte den Schlüssel haben. Der Schlüssel stammt aus Ihrer Passphrase und verlässt den Browser nie; der Server bewahrt das Paket also auf und kann es nicht öffnen. Nichts Lesbares geht von Gerät zu Gerät.</p>
+	<p>What crosses is one encrypted parcel, and only your devices hold the key to it. The key comes from your passphrase and does not leave the browser.</p>
 
-	<h2 id="s1">Ein zweites Gerät verknüpfen</h2>
-	<p>Jedes Gerät erzeugt seine eigene Identität; Ihre Passphrase auf einem neuen Gerät einzutippen startet also ein <em>eigenes</em>, leeres Konto, statt Ihr bestehendes herüberzuholen. Um das Konto zu nutzen, das Sie schon haben, <strong>verknüpfen</strong> Sie das neue Gerät damit. Drei Schritte.</p>
-
+	<h2 id="s1">Link a second device</h2>
+	<p>Each device makes its own identity, so typing your passphrase into a fresh browser starts a <em>eigenes</em> account. To use the one you have, link the new device to it.</p>
 	<ol class="steps">
 		<li>
 			<h3 id="s2">Auf dem Gerät, das Sie schon nutzen, den Verknüpfungsdialog öffnen</h3>
-			<p>Klicken Sie oben in der Leiste auf <span class="ui">Weiteres Gerät verknüpfen</span> . Es erscheinen ein QR-Code und ein einmaliger Kopplungscode.</p>
-			<figure class="shot narrow" data-shot="pair-desktop">
-				<img src="../img/pair-desktop.png" alt="Der Dialog „Weiteres Gerät verknüpfen“ mit einem QR-Code und einem einmaligen Kopplungscode, der nach etwa zehn Minuten verfällt.">
+			<p><span class="ui">Weiteres Gerät verknüpfen</span> in the top bar shows a QR code and a one-time pairing code.</p>
+			<figure class="shot narrow">
+				<img alt="The link dialog on a desktop, showing a QR code above a short pairing code." src="../img/pair-desktop.png" loading="lazy">
 				<figcaption>Ihr erstes Gerät zeigt einen QR-Code und einen Code.</figcaption>
 			</figure>
 		</li>
 		<li>
-			<h3 id="s3">Auf dem neuen Gerät den QR-Code scannen — oder den Code eintippen</h3>
-			<p>Richten Sie die Kamera des neuen Telefons auf den QR-Code: Daimond öffnet sich und trägt den Code für Sie ein, Sie tippen nur noch auf <span class="ui">Dieses Gerät verknüpfen</span>. Keine Kamera? Öffnen Sie Daimond dort, wählen Sie <span class="ui">Haben Sie einen Kopplungscode?</span>, und tippen Sie den Code ein. Der angezeigte Code dient nur dazu, dass Sie prüfen können, ob er zum ersten Gerät passt.</p>
-			<figure class="shot narrow" data-shot="pair-mobile">
-				<img src="../img/pair-mobile.png" alt="Der Dialog „Dieses Gerät verknüpfen“ auf einem Telefon nach dem Scannen, mit bereits eingetragenem Kopplungscode und einer Schaltfläche „Dieses Gerät verknüpfen“.">
-				<figcaption>Nach dem Scannen nur noch tippen auf <span class="ui">Dieses Gerät verknüpfen</span>.</figcaption>
+			<h3 id="s3">On the new device, scan the QR or type the code</h3>
+			<p>Point the phone's camera at the code. It opens Daimond and fills the code in, so you only tap <span class="ui">Dieses Gerät verknüpfen</span>. Without a camera, open Daimond there, choose <span class="ui">Have a passcode or a pairing code?</span>, and type it.</p>
+			<figure class="shot narrow">
+				<img alt="The new phone, after scanning, with a single Link this device button." src="../img/pair-mobile.png" loading="lazy">
+				<figcaption>After scanning, one tap.</figcaption>
 			</figure>
 		</li>
 		<li>
 			<h3 id="s4">Mit derselben Passphrase entsperren</h3>
-			<p>Das neue Gerät trägt jetzt Ihr Konto. Entsperren Sie es mit <strong>derselben Passphrase, die Sie auf dem ersten Gerät verwenden</strong> (nicht mit einer neuen)und Ihre Chats und Dateien erscheinen. Ein Passkey kann es danach schneller entsperren, sobald Sie dort einen anlegen.</p>
+			<p>The new device now holds your account. Use the passphrase you already have, and your work appears. A passkey can unlock it faster afterwards.</p>
 		</li>
 	</ol>
-
-	<div class="note"><strong>Die Passphrase ist überall dieselbe, aber sie reist nicht allein.</strong> Ein Konto, eine Passphrase, auf jedem Gerät, das Sie verknüpfen — und die Passphrase entschlüsselt nur einen Schlüssel, den das Gerät schon hat, sodass ein nie verknüpfter Browser nichts hat, was sie öffnen könnte. Wenn ein Gerät Sie auffordert, eine Passphrase zu <em>erstellen</em> statt sie <em>einzugeben</em> , ist es dabei, ein neues Konto anzulegen, und nur das Verknüpfen — oder das Importieren eines Backups des alten Kontos in dieses hinein — bringt das alte herüber.</div>
+	<div class="note"><strong>If a device asks you to create a passphrase instead of entering one, it is about to start a new account.</strong> Go back and pair it, or import a backup. One account, one passphrase, on every device you link. The passphrase cannot travel on its own, because it only decrypts a key the device already holds, so a browser that has never been linked has nothing for it to open.</div>
 
 	<h2 id="s5">Was mitreist</h2>
-	<p>Ihre Chats, Ihre Diamonds und der Graph, in dem Sie sie ausgelegt haben, Ihre E-Mail, Ihre Arbeitsdateien, die Geräte am Konto und was Sie angehalten haben. Jede Datei reist mit, gleich welcher Art: ein Foto, eine Aufnahme, ein PDF oder eine Tabelle erreicht Ihre anderen Geräte genauso wie Text, bis zu einem Gigabyte je Datei. Der Papierkorb ebenso, ein Löschen wie ein Wiederherstellen erreicht also jedes Gerät.</p>
-	<p>Was synchronisiert wird, ist zugleich das, was im Cloud-Speicher liegt; ein Arbeitsbereich kann also größer sein als das Gerät, auf dem Sie ihn lesen. Eine Datei, die nicht auf diesem Gerät liegt, steht trotzdem im Baum, mit einer Wolke markiert, und kommt herunter, wenn Sie sie anfordern. <a href="email-web-files.html">Der Arbeitsbereich</a> legt die drei Zustände dar, in denen eine Datei sein kann, wie Platz frei wird, wenn der Browser voll läuft, und was Cloud-Speicher kostet.</p>
+	<p>Your chats, your diamonds and the way you laid them out, your mail, your workspace files, the devices on the account, and what you have paused all travel. Any kind of file travels, up to a gigabyte each. So does the Trash, so a deletion and a restore both reach every device.</p>
+	<p>What syncs is also what is kept in cloud storage, so a workspace can be larger than the device reading it. A file that is not here still shows in the tree and comes down when asked for.</p>
+	<p>A folder you opened on one computer is not in the browser's storage, so it does not travel by default. <a href="email-web-files.html">Dateien, E-Mail &amp; das Web</a> covers the per-folder control that copies one to devices that cannot open it.</p>
 
-	<h2 id="s6">Einen Zug auf einem anderen Gerät ausführen</h2>
-	<p>Wenn mehr als eines Ihrer Geräte aktiv und verknüpft ist, kann eines einen Zug für ein anderes ausführen, und die Antwort synchronisiert zurück auf das Gerät, auf dem Sie ihn gestartet haben.</p>
-
-	<p>Das ist aus, bis Sie es einschalten, und gilt für ein Gerät nach dem anderen. Ein Schalter, <span class="ui">Übergeben, wenn Sie weggehen</span>, lässt einen auf diesem Rechner laufenden Zug auf ein anderes aktives Gerät wechseln, wenn Sie ihn schließen — der Deckel klappt zu, der Tab schließt, die Verbindung bricht ab. Der Zug wird dort fertig und seine Antwort synchronisiert zurück, statt unterbrochen liegen zu bleiben, bis Sie wiederkommen.</p>
-
-	<p>Der Zug sagt, wohin er ging. Er liest sich als <span class="ui">An Ihre anderen Geräte gesendet</span>, benennt dann das Gerät, das ihn übernommen hat — <span class="ui">Laptop erledigt dies</span> — und die Antwort erscheint hier, wenn er fertig ist. Zwei Schaltflächen stehen daneben: <span class="ui">Zurückholen</span> holt den Zug auf dieses Gerät zurück, und <span class="ui">Hier ausführen</span> führt ihn lokal aus, falls kein Gerät ihn aufgenommen hat oder eines nicht fertig wurde. Ihre Geräte in den Kontoeinstellungen zu benennen ist es, was diese Zeilen als <span class="ui">Laptop</span> lesen lässt statt als <em>Ihr anderes Gerät</em>.</p>
-
-	<div class="note"><strong>Sie können ein Gerät als das ausführende bestimmen.</strong> Wählen Sie das, das gewöhnlich an ist — ein Desktop, der wach bleibt — und Übergaben gehen an dieses, statt an das Gerät, das den Zug zuerst greift. Ist es offline, wenn ein Zug übergeben wird, führt ihn irgendein aktives Gerät aus.</div>
-
-	<p>Ein Auftrag, der an ein anderes Gerät übergeben wird, und die Antwort, die es zurückschickt, sind an Ihr Konto versiegelt wie alles andere, was das Gateway quert. Der Server leitet ein verschlüsseltes Paket weiter, das er nicht öffnen kann; nur Ihre eigenen Geräte haben den Schlüssel.</p>
+	<h2 id="s6">Running a turn somewhere else</h2>
+	<p>When more than one of your devices is awake, one can run a turn for another and the answer syncs back. One switch turns it on, <span class="ui">Hand off when you step away</span>. A turn on this computer then moves to another awake device when you close it, whether the lid shuts, the tab closes or the connection drops, and finishes there.</p>
+	<p><a href="../runner.html">Helfer &amp; wo Züge laufen</a> covers naming the machine that should pick turns up, and the two things that stop it.</p>
+	<p>An errand sent to another device, and the answer it sends back, are sealed to your account like everything else. The server routes a parcel it cannot open.</p>
 
 	<h2 id="s7">Was es kostet</h2>
-	<p>Die geräteübergreifende Synchronisierung gehört zu <strong>Pro</strong>, der einmaligen Freischaltung, die einmal gekauft bleibt wie der Rest von Daimond. Ohne Pro arbeitet ein Gerät für sich; mit Pro bleiben Ihre Geräte im Gleichschritt. Pro schaltet außerdem Cloud-Speicher und E-Mail frei. Die größeren Dateiinhalte, die die Synchronisierung trägt, liegen im Cloud-Speicher und werden aus dem Guthaben bezahlt, mit einem Freikontingent, bevor überhaupt etwas abgerechnet wird.</p>
+	<p>Die geräteübergreifende Synchronisierung gehört zu <strong>Daimond Pro</strong>, at $8 a month, billed monthly, and you can cancel any time. Pro also turns on cloud storage, Email and a posting name. Away for a month, the billing pauses on its own and resumes when you are back.</p>
+	<p>Without Pro a device works on its own and loses nothing. Inference, bandwidth and other metered use are paid from credits either way.</p>
 
 	<div class="next">
-		<a href="accounts.html">&larr; Konten</a>
-		<a href="spending.html">Weiter: Ausgaben &rarr;</a>
+		<a href="../runner.html">&larr; Helpers &amp; where turns run</a>
+		<a href="social.html">Next: Social &amp; proposals &rarr;</a>
 	</div>
 </main>
 
 <footer class="site-foot">
-	<span>Daimond läuft in Ihrem Browser. Nichts davon wird an uns gesendet.</span>
+	<span>Daimond läuft in deinem Browser. Nichts davon wird an uns gesendet.</span>
 	<nav aria-label="Handbuchseiten">
-		<a href="index.html">Erste Schritte</a>
-		<a href="interface.html">Oberfläche</a>
-		<a href="models.html">Modelle</a>
+		<a href="index.html">Hier anfangen</a>
+		<a href="interface.html">Die Oberfläche</a>
 		<a href="chats-and-diamonds.html">Chats &amp; Diamonds</a>
-		<a href="../capps.html">Capps</a>
-		<a href="email-web-files.html">E-Mail, Web &amp; Dateien</a>
-		<a href="accounts.html">Konten</a>
-		<a href="sync.html">Geräteübergreifende Synchronisierung</a>
+		<a href="../capps.html">Die Seite eines diamond</a>
+		<a href="email-web-files.html">Dateien, E-Mail &amp; das Web</a>
+		<a href="../machine-operations.html">Dein Rechner</a>
+		<a href="../runner.html">Helfer &amp; wo Züge laufen</a>
+		<a href="sync.html">Mehr als ein Gerät</a>
+		<a href="social.html">Soziales &amp; Vorschläge</a>
+		<a href="models.html">Modelle &amp; Anbieter</a>
 		<a href="spending.html">Ausgaben</a>
-		<a href="../machine-operations.html">Befehle auf dem Rechner</a>
-		<a href="social.html">Soziales</a>
+		<a href="accounts.html">Sicherheit &amp; Problembehebung</a>
 	</nav>
 </footer>
 </body>

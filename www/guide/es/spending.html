@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
-<title>Gastos — Guía de Daimond</title>
+<title>Spending &mdash; Daimond guide</title>
 <link rel="icon" type="image/svg+xml" href="../../assets/daimond_mark.svg">
 <link rel="stylesheet" href="../../css/variables.css">
 <link rel="stylesheet" href="../../css/guide.css">
@@ -21,64 +21,71 @@
 			<span class="brand-sub">Guía</span>
 		</a>
 		<nav class="site-nav" aria-label="Páginas de la guía">
-			<a href="index.html">Primeros pasos</a>
+			<a href="index.html">Empieza aquí</a>
 			<a href="interface.html">La interfaz</a>
-			<a href="models.html">Modelos y créditos</a>
-			<a href="chats-and-diamonds.html">Chats y Diamonds</a>
-			<a href="../capps.html">Capps</a>
-			<a href="email-web-files.html">Correo, Web y archivos</a>
-			<a href="accounts.html">Cuentas</a>
-			<a href="sync.html">Sincronización entre dispositivos</a>
-			<a href="spending.html" aria-current="page">Gastos</a>
-			<a href="../machine-operations.html">Comandos en el equipo</a>
-			<a href="social.html">Social</a>
+			<a href="chats-and-diamonds.html">Chats y diamonds</a>
+			<a href="../capps.html">La página de un diamond</a>
+			<a href="email-web-files.html">Archivos, correo y la web</a>
+			<a href="../machine-operations.html">Tu equipo</a>
+			<a href="../runner.html">Ayudantes y dónde se ejecutan los turnos</a>
+			<a href="sync.html">Más de un dispositivo</a>
+			<a href="social.html">Social y propuestas</a>
+			<a href="models.html">Modelos y proveedores</a>
+			<a href="spending.html" aria-current="page">Gasto</a>
+			<a href="accounts.html">Seguridad y soluciones</a>
 		</nav>
 	</div>
 </header>
 
 <main>
-	<h1>Gastos</h1>
-	<p class="lede">La vista Gastos muestra a dónde va tu dinero, y mantiene los dos botes separados. Son cuentas distintas en monedas distintas, así que Daimond las muestra como dos pistas y nunca las suma.</p>
+	<h1>Gasto</h1>
+	<p class="lede">Model calls are priced on this device, as they happen, from the provider's own figure. The bill arrives in front of you as it is spent, wherever the provider reports a figure, and not later as a surprise.</p>
 
 	<h2 id="s1">Dos botes, separados</h2>
+	<p>The two pots are different accounts in different currencies, so they are shown as two tracks and not added together.</p>
 	<ul>
-		<li><strong>Inferencia.</strong> Las llamadas al modelo en sí, cargadas a la clave de tu propio proveedor. Daimond las tarifica y las anota en este dispositivo, turno a turno, para que veas lo que gastas con tu clave sin que nada de ello pase por nosotros.</li>
-		<li><strong>Créditos.</strong> El saldo prepagado que la pasarela gasta en las pocas cosas que salen del navegador: traer una página, sincronizar o enviar correo, la sincronización entre dispositivos y mantener tu espacio de trabajo en el <a href="email-web-files.html">almacenamiento en la nube</a>.</li>
+		<li><strong>Inference</strong> covers the model calls billed to <span class="ui">your key</span>. They are recorded here per turn, and none of them passes through us.</li>
+		<li><strong>Créditos</strong> holds the prepaid balance, spent on the model when Daimond runs it for you and on what leaves the browser, <span class="ui">web, mail, sync</span>, and cloud storage.</li>
+	</ul>
+	<p>The foot of the rail carries the running figures for today, this week and this month. Press one to open the <span class="ui">Gasto</span> panel, which shows a headline figure per pot, a daily graph, a breakdown by category, and a plain table of movements.</p>
+
+	<h2 id="s2">What stops a runaway</h2>
+	<p>A workspace that runs many agents at once can spend quickly, and the danger lies in a sudden rate more than in a large monthly total. Four measures catch the rate, and none asks you to set a limit in advance.</p>
+	<ul>
+		<li><strong>A pace check before a fan-out.</strong> The cost of dispatching a batch is known before any of it starts. A batch that would run faster than your own recent pace is held, and Daimond asks once, with the number on the prompt. A few helpers of ordinary cost do not trip it, and a sudden fifty do.</li>
+		<li><strong>Pausar y parar, siempre a mano.</strong> El panel <span class="ui">Agentes</span> panel pauses everything running, or stops it. The <span class="ui">Todo</span> row at the top of the rail pauses the whole app. A paused thing refuses a turn before it starts, so a look costs nothing.</li>
+		<li><strong>Una clave aparte para cada agente.</strong> Each helper running on credits spends its own freshly minted key, capped against what is left after its siblings' claims. No two share a key, so parallel helpers cannot race one allowance past its cap.</li>
+		<li><strong>Todo medido, turno a turno, en tu dispositivo.</strong> Every call is priced and recorded as it happens, and the graphs are drawn from that record.</li>
 	</ul>
 
-	<h2 id="s2">Cómo abrirla</h2>
-	<p>Abre el panel Gastos desde la <strong>fila de gastos</strong> al pie de la barra lateral, o desde un enlace de la vista <span class="ui">Créditos</span> — muestra cada bote con una cifra destacada, una gráfica diaria, un desglose por categorías y una tabla llana de movimientos, así que un cargo nunca es un misterio.</p>
+	<h2 id="s3">A ceiling you set</h2>
+	<p>Settings carries a per-turn spend cap. A turn that reaches the round limit continues on its own, so this cap is the ceiling that holds a runaway. It applies where the provider reports what a round cost, and only there.</p>
 
-	<h2 id="s3">Protección frente a costes desbocados</h2>
-	<p>Un espacio de trabajo que puede correr muchos agentes a la vez puede gastar rápido. El peligro no es un total mensual grande, sino un <em>pico de ritmo</em>: un despliegue que quema crédito en segundos, antes de que puedas reaccionar. Cuatro medidas atrapan el pico en sí, y ninguna te pide fijar un límite por adelantado.</p>
-	<ul>
-		<li><strong>Una comprobación de ritmo antes de que corra un despliegue.</strong> El coste de despachar un lote se conoce antes de que empiece nada. Un lote que correría más rápido que tu propio ritmo reciente se retiene, y Daimond pregunta una vez, con el número y la estimación en el aviso. Unos pocos agentes de coste corriente no lo disparan nunca; cincuenta de golpe sí. La medida es tu propia normalidad, aprendida de tu gasto reciente, así que no hay nada que configurar.</li>
-		<li><strong>Pausar y parar, siempre a mano.</strong> El panel <a href="chats-and-diamonds.html">Agentes</a> pausa de golpe todos los agentes en marcha, o los para en seco, y la fila <span class="ui">Todo</span> de la barra lateral pausa la aplicación entera. Pausar detiene el gasto al instante y conserva el trabajo, así que mirar no cuesta nada.</li>
-		<li><strong>Una clave aparte para cada agente.</strong> Cada agente que corre con créditos gasta su propia clave recién acuñada, con un tope frente a lo que queda tras lo reclamado por sus hermanos. No hay dos agentes que compartan una clave, así que unos agentes en paralelo no pueden llevarse por delante un cupo compartido.</li>
-		<li><strong>Todo medido, turno a turno, en tu dispositivo.</strong> Cada llamada al modelo se tarifica y se anota aquí según ocurre, alimentando las gráficas de arriba. La cuenta te llega delante según se gasta, nunca después como sorpresa.</li>
-	</ul>
-	<p>La intención es sencilla: llevar un equipo de agentes sin miedo a que un bucle desbocado, o un despliegue mayor de lo que creías, cueste más de lo que un vistazo y un clic pueden deshacer.</p>
+	<h2 id="s4">Watching one agent</h2>
+	<p>Each tile in <span class="ui">Agentes</span> shows its cost as it accrues, in tokens and in money, and not only at the end. Under the header a line says how many are running, paused and queued, which makes the size of a fan-out legible before you decide whether to hold it.</p>
+	<p>The aim is a team of agents you can run without fear that a loop, or a fan-out larger than you realised, can cost more than a glance and a click can undo.</p>
 
 	<div class="next">
-		<a href="sync.html">&larr; Sincronización entre dispositivos</a>
-		<a href="../machine-operations.html">Siguiente: Comandos en el equipo &rarr;</a>
+		<a href="models.html">&larr; Models &amp; providers</a>
+		<a href="accounts.html">Next: Safety &amp; fixes &rarr;</a>
 	</div>
 </main>
 
 <footer class="site-foot">
-	<span>Daimond funciona en tu navegador. Nada de esto se nos envía.</span>
+	<span>Daimond se ejecuta en tu navegador. Nada de esto se nos envía.</span>
 	<nav aria-label="Páginas de la guía">
-		<a href="index.html">Primeros pasos</a>
-		<a href="interface.html">Interfaz</a>
-		<a href="models.html">Modelos</a>
-		<a href="chats-and-diamonds.html">Chats y Diamonds</a>
-		<a href="../capps.html">Capps</a>
-		<a href="email-web-files.html">Correo, Web y archivos</a>
-		<a href="accounts.html">Cuentas</a>
-		<a href="sync.html">Sincronización entre dispositivos</a>
-		<a href="spending.html">Gastos</a>
-		<a href="../machine-operations.html">Comandos en el equipo</a>
-		<a href="social.html">Social</a>
+		<a href="index.html">Empieza aquí</a>
+		<a href="interface.html">La interfaz</a>
+		<a href="chats-and-diamonds.html">Chats y diamonds</a>
+		<a href="../capps.html">La página de un diamond</a>
+		<a href="email-web-files.html">Archivos, correo y la web</a>
+		<a href="../machine-operations.html">Tu equipo</a>
+		<a href="../runner.html">Ayudantes y dónde se ejecutan los turnos</a>
+		<a href="sync.html">Más de un dispositivo</a>
+		<a href="social.html">Social y propuestas</a>
+		<a href="models.html">Modelos y proveedores</a>
+		<a href="spending.html">Gasto</a>
+		<a href="accounts.html">Seguridad y soluciones</a>
 	</nav>
 </footer>
 </body>

@@ -94,7 +94,11 @@
 	// that roster are ONE account state and must merge together: a device that
 	// adopted the messages and not the roster would hold a message for a group it
 	// does not know it is in, and would refuse to open the next one.
-	var REC_V = 3;
+	// 4 since `shares` joined it. A diamond somebody sent through the relay waits
+	// in the same tray a stranger's first message does, and the sealed envelope is
+	// kept beside it -- the ack tells the relay to let go, and after that this
+	// record is the only copy of the gift there is.
+	var REC_V = 4;
 
 	/// The region the Social panel gives this module: the Messages view's list.
 	/// Everything drawn below lives inside it, and the panel's own head, chips and
@@ -146,6 +150,11 @@
 
 	/// The most recipients one envelope may name. The slot count is one byte.
 	var SLOTS_MAX = 255;
+
+	/// The most of a parent message a reply quotes. One line at the dock's width,
+	/// which is the point: a quote that wrapped would compete with the message it
+	/// heads instead of placing it.
+	var QUOTE_MAX = 80;
 
 	// ── Encoding ───────────────────────────────────────────────
 
@@ -608,8 +617,19 @@
 		}
 		var got = JSON.parse(b.read(plain));
 		if (got.kind !== 'post') {
-			throw new Error(tOr('post.err_not_a_post',
+			// THE READING GOES OUT WITH THE REFUSAL. Refusing is still the right
+			// answer -- nothing but a message may reach the message list -- but a
+			// share arriving through the relay is a diamond somebody gave away, and
+			// the envelope this device is holding is the only copy of it there will
+			// be once the ack has run. `takeRow` routes on `kind` and draws the row
+			// from `reading`, so three megabytes are unsealed once rather than
+			// twice, and the alternative -- a bare refusal -- is how the bytes came
+			// to be dropped while the sender was told "Sent".
+			var notPost = new Error(tOr('post.err_not_a_post',
 				'That is not a message; it is a {kind}.', { kind: String(got.kind || '?') }));
+			notPost.kind    = String(got.kind || '?');
+			notPost.reading = got;
+			throw notPost;
 		}
 		var mine = await DaimondIdentity.publicKeyRaw();
 		if (!mine || hex(mine) !== String(got.post.to)) {
@@ -655,7 +675,25 @@
 
 	/// A fresh, empty record.
 	function blank() {
-		return { v: REC_V, through: 0, acked: 0, tries: 0, msgs: {}, notes: {}, groups: {} };
+		return { v: REC_V, through: 0, acked: 0, tries: 0, msgs: {}, notes: {}, groups: {},
+			shares: {} };
+	}
+
+	/// Bring a record written by an older build up to `REC_V`, or answer null where
+	/// this build cannot.
+	///
+	/// A BUMP USED TO EMPTY THE STORE, and that is what this exists to stop. `read`
+	/// answered `blank()` for any version it did not know, so raising `REC_V` to
+	/// make room for a new section deleted every message on the device -- and
+	/// `adopt` refuses a record at another version too, so no other device would
+	/// have put them back. The comment on `REC_V` argues the trade is right
+	/// "while nothing is deployed"; something is deployed now.
+	///
+	/// Each step is additive and names what it adds, so a record two versions old
+	/// walks up rather than being refused by a rule about the gap.
+	function upgrade(r) {
+		if (r.v === 3) { r.shares = {}; r.v = 4; }
+		return r.v === REC_V ? r : null;
 	}
 
 	/// Read the store out from under the passphrase. Idempotent.
@@ -674,10 +712,12 @@
 		catch (e) { log('store will not unwrap under this passphrase'); return null; }
 		var r = null;
 		try { r = JSON.parse(plain); } catch (e) { r = null; }
+		if (r && typeof r === 'object' && r.v !== REC_V) r = upgrade(r);
 		if (!r || r.v !== REC_V) { _st = blank(); return _st; }
 		r.msgs   = r.msgs   || {};
 		r.notes  = r.notes  || {};
 		r.groups = r.groups || {};
+		r.shares = r.shares || {};
 		r.through = r.through | 0;
 		r.acked   = r.acked | 0;
 		r.tries   = r.tries | 0;
@@ -771,6 +811,11 @@
 			await refreshDir();
 		} catch (e) { log('wake failed', e); }
 		try { render(); } catch (e) { /* no panel yet */ }
+		// The store has only just become readable, so this is the first moment the
+		// tally is a number at all. Until the badge was told here it could not
+		// light before somebody opened the panel -- and opening the panel is the
+		// thing it exists to ask for.
+		countChanged();
 		return !!_st;
 	}
 
@@ -875,6 +920,19 @@
 		});
 		Object.keys(rec.notes || {}).forEach(function (k) {
 			if (!_st.notes[k]) { _st.notes[k] = rec.notes[k]; moved = true; }
+		});
+		// SHARES MERGE LIKE MESSAGES, and for the same reason: a share is immutable
+		// -- its address is its content -- so only the flags move, and each of them
+		// only ever goes true. `taken` matters most: a gift added on the desktop
+		// must stop waiting in the tray on the phone, or a person lands two copies
+		// of one diamond and neither device is wrong about it.
+		Object.keys(rec.shares || {}).forEach(function (addr) {
+			var r = rec.shares[addr];
+			if (!r || typeof r !== 'object' || !r.addr) return;
+			var mine = _st.shares[addr];
+			if (!mine) { _st.shares[addr] = r; moved = true; return; }
+			if (r.taken && !mine.taken)   { mine.taken = 1; moved = true; }
+			if (r.hidden && !mine.hidden) { mine.hidden = 1; moved = true; }
 		});
 		// GROUPS: TWO CLOCKS, EACH WITH EXACTLY ONE WRITER, which is what lets
 		// this converge with no ordering machinery and no tie-break beyond an
@@ -1555,8 +1613,10 @@
 			return ROSTER;
 		}
 		// Already held. A message is immutable -- its address is its content -- so
-		// a second sighting of one is a re-collect and not news.
+		// a second sighting of one is a re-collect and not news. A share is
+		// immutable in exactly the same way and is held in its own section.
 		if (st.msgs[String(row.addr)]) return NOTHING;
+		if (st.shares && st.shares[String(row.addr)]) return NOTHING;
 		// THE PERSISTENT DESKTOP PEER'S OWN ENVELOPES (dev/PEER_DESIGN.md §4.3). An
 		// errand or a report rides this same box but is raw JSON, not a message
 		// artefact -- `openEnvelope` below would reject it as "not a message". So it
@@ -1661,6 +1721,17 @@
 			delete st.msgs['bad:' + row.addr];
 			return MESSAGE;
 		} catch (e) {
+			// A SHARE, AND ITS BYTES. This is where a relayed gift was lost: the
+			// row opened, `openEnvelope` said "that is not a message; it is a
+			// share", and the only thing kept was `bad:<addr>` with no envelope in
+			// it -- then the ack told the relay to let go and the diamond was gone,
+			// with "Sent to Ada" still on the sender's screen.
+			//
+			// NEVER LANDED HERE. A share is a write of somebody else's files and a
+			// page inside one is a program, so it waits in the tray exactly as a
+			// stranger's first message does, and `addShare` is the only thing that
+			// puts any of it on the machine.
+			if (e && e.kind === 'share' && keepShare(st, row, e.reading)) return SHARE;
 			// KEPT, NOT DROPPED. A row that will not open is still a row the
 			// ack would tell the relay to let go of, so it has to leave a
 			// trace somebody can be shown rather than vanishing between two
@@ -1674,16 +1745,92 @@
 		}
 	}
 
+	/// Keep a share that arrived through the relay, with the sealed envelope and
+	/// enough of the reading to draw a row without opening it again.
+	///
+	/// `reading` is `DaimondCrypto.read`'s own answer, which carries the name, the
+	/// note, the signed `code` bit and one entry per file -- everything the tray
+	/// row says. The BODIES are not in it, deliberately: they are in `env`, which
+	/// is kept whole because the signature is over the whole of it and a share
+	/// re-encoded here would be a share this device could no longer prove.
+	///
+	/// True when it was kept. False for anything that is not a share this build
+	/// can draw, which falls through to the unreadable trace rather than being
+	/// recorded as a gift nobody can open.
+	function keepShare(st, row, reading) {
+		var sh = reading && reading.share;
+		if (!sh || !row.envelope) return false;
+		var files = Array.isArray(sh.files) ? sh.files : [];
+		var bytes = 0;
+		for (var i = 0; i < files.length; i++) bytes += (files[i].bytes | 0);
+		st.shares = st.shares || {};
+		st.shares[String(row.addr)] = {
+			addr: String(row.addr),
+			from: String(row.from_pub || ''),
+			fp:   String(reading.fingerprint || ''),
+			name: String(sh.name || ''),
+			note: String(sh.note || ''),
+			code: !!sh.code,
+			n:    files.length,
+			bytes: bytes,
+			ts:   ms(reading.time) || (row.ts | 0) * 1000,
+			seq:  row.seq | 0,
+			env:  String(row.envelope),
+			taken: 0, hidden: 0,
+		};
+		return true;
+	}
+
 	/// What one row came to. Named, because three integers in a row are three
 	/// chances to add the wrong one.
 	var MESSAGE    = { got: 1, notes: 0, unreadable: 0 };
 	var ROSTER     = { got: 0, notes: 1, unreadable: 0 };
 	var UNREADABLE = { got: 0, notes: 0, unreadable: 1 };
 	var NOTHING    = { got: 0, notes: 0, unreadable: 0 };
+	// A diamond, waiting in the tray. None of `collect`'s three counters is about
+	// it -- it is not a message, not a relay notice and not a failure -- so it
+	// adds nothing to them and is counted where it is held, by `shares()`.
+	var SHARE      = { got: 0, notes: 0, unreadable: 0, share: 1 };
 	// Our own un-run errand: collected but deliberately LEFT on the relay for the
 	// peer. `hold` tells collect() to keep the ack watermark below this row's seq, so
 	// ackThrough never drops it -- only the peer that runs it may ack it away.
 	var HOLD       = { got: 0, notes: 0, unreadable: 0, hold: true };
+
+	// ── Arrival ────────────────────────────────────────────────
+	//
+	// THE ONE SIGNAL THIS MODULE RAISES. Web Push is declined (messaging_plan
+	// §10), so the count on the Social chip is the whole of what the app does to
+	// say a message landed while somebody was looking elsewhere -- and until this
+	// event existed nothing told it. The doorbell email rang and the app itself
+	// said nothing at all.
+	//
+	// RAISED WHERE A ROW IS FOLDED, never where a request is answered: a park
+	// woken by somebody else's traffic and a pull that found nothing both stay
+	// quiet. `count` is NEW ROWS, which is the definition `daimond:mail-arrived`
+	// already uses at mail.js, so one listener can take either. `unread` is the
+	// honest tally that follows it, because a badge draws what is unread and
+	// never a running total of arrivals.
+	var ARRIVED = 'daimond:post-arrived';
+
+	/// Say that `n` messages landed. Answers what it announced, so a caller can
+	/// count without asking the DOM.
+	function announce(n, addrs) {
+		if (!(n > 0)) return 0;
+		try {
+			window.dispatchEvent(new CustomEvent(ARRIVED, {
+				detail: { count: n | 0, unread: unread(), addrs: (addrs || []).slice() },
+			}));
+		} catch (e) { /* an old browser: the rows are folded either way */ }
+		return n | 0;
+	}
+
+	/// The unread tally moved. The badge holds the number, so it is TOLD rather
+	/// than left to poll -- and it is the same badge Mail lights, one function in
+	/// daimond.js, so a second count here would be a second thing to keep right.
+	function countChanged() {
+		try { if (window.DaimondBadge && DaimondBadge.post) DaimondBadge.post(); }
+		catch (e) { /* no badge in this build */ }
+	}
 
 	/// Collect everything above what this device has folded, and fold it.
 	///
@@ -1692,7 +1839,10 @@
 	async function collect() {
 		var st = await read();
 		if (!st) return { ok: false, why: 'locked' };
-		var got = 0, notes = 0, unread = 0, more = false;
+		// NOT `unread`: that is the exported tally, and a local of the same name
+		// here would hide it from `announce` below.
+		var got = 0, notes = 0, badRows = 0, more = false;
+		var arrived = [];
 
 		var holdSeq = 0;	// our own un-run errand's seq; the ack watermark stays below it
 		for (var round = 0; round < 8; round++) {
@@ -1704,9 +1854,10 @@
 			for (var i = 0; i < rows.length; i++) {
 				var row  = rows[i];
 				var took = await takeRow(st, row);
-				got    += took.got;
-				notes  += took.notes;
-				unread += took.unreadable;
+				got     += took.got;
+				notes   += took.notes;
+				badRows += took.unreadable;
+				if (took.got) arrived.push(String(row.addr));
 				// Our own errand (takeRow -> HOLD) pins the ack watermark just below it:
 				// every row still folds, but st.through -- what ackThrough acks through --
 				// never passes the errand, so the relay keeps it for the peer to collect.
@@ -1722,7 +1873,8 @@
 		await save();
 		render();
 		_servicedAt = Date.now();		// a collect completed: this device is servicing the channel
-		return { ok: true, got: got, notes: notes, unreadable: unread, more: more };
+		announce(got, arrived);
+		return { ok: true, got: got, notes: notes, unreadable: badRows, more: more };
 	}
 
 	// ── The ordering, which is the whole safety property ───────
@@ -1850,6 +2002,85 @@
 			}
 		}
 		return { ok: true };
+	}
+
+	/// Add a diamond somebody sent, as a diamond of this account's own.
+	///
+	/// THE ONLY THING THAT PUTS A SHARE ON THE MACHINE. `takeRow` keeps the sealed
+	/// envelope and nothing else happens until this is pressed, so the consent
+	/// step is a person's press and not a collect.
+	///
+	/// share.js does the opening and the landing, called and not copied: the
+	/// address is re-checked against the envelope, the payload's `to` against this
+	/// account's key, and `askAboutCode` is asked before a page is written. A
+	/// second landing path written here would be a second place for that question
+	/// to be forgotten.
+	async function addShare(addr) {
+		var st = await read();
+		if (!st || !st.shares || !st.shares[String(addr)]) {
+			return { ok: false, why: tOr('post.share_gone',
+				'That diamond is no longer waiting.') };
+		}
+		if (!window.DaimondShare || typeof DaimondShare.open !== 'function'
+			|| typeof DaimondShare.accept !== 'function') {
+			return { ok: false, why: tOr('share.err_no_bridge',
+				'This build cannot share a diamond: its share format is not loaded.') };
+		}
+		var rec = st.shares[String(addr)];
+		var reading;
+		try { reading = await DaimondShare.open(rec.env, rec.addr); }
+		catch (e) { return { ok: false, why: String((e && e.message) || e) }; }
+		var r;
+		try {
+			// The sender's name as THIS device knows them, so the landed diamond can
+			// say who it came from in words rather than in a key. Advisory, and the
+			// key beside it in `origin.json` is the fact.
+			r = await DaimondShare.accept(reading, { handle: nameFor(rec.from) });
+		} catch (e) {
+			return { ok: false, why: String((e && e.message) || e) };
+		} finally {
+			try { if (reading && reading.free) reading.free(); } catch (e2) { /* freed */ }
+		}
+		// MARKED TAKEN WHATEVER LANDED. `accept` answers `ok: false` where the whole
+		// share was a page the receiver declined, and that is an answer rather than
+		// a failure: re-drawing the row would ask the same question again for ever.
+		rec.taken = 1;
+		await save();
+		render();
+		return r;
+	}
+
+	/// Keep the sender's own row for a diamond they sent.
+	///
+	/// A share does not go through `send`, because `send` composes a message and a
+	/// share is composed by share.js and handed to `fanout` already sealed. So the
+	/// Sent copy is written here, at the one door, rather than share.js reaching
+	/// into this module's record -- and it is written only after the relay took it,
+	/// which is the rule `send` keeps for the same reason.
+	async function noteShareSent(o) {
+		var st = await read();
+		if (!st || !o || !o.addr) return false;
+		st.msgs[String(o.addr)] = {
+			addr: String(o.addr), dir: 'out', to: String(o.to || ''),
+			body: tOr('post.share_sent_row', 'Sent {name} to {who}',
+				{ name: String(o.name || ''), who: String(o.who || '') }),
+			ts: ms(o.ts) || Date.now(), read: 1, tray: 0, share: 1,
+		};
+		await save();
+		render();
+		return true;
+	}
+
+	/// Stop drawing a share's tray row. Local, like Ignore on a message, and it
+	/// keeps the envelope: a person who ignored a gift and changed their mind has
+	/// nothing left to change it with once the relay has let go.
+	async function hideShare(addr) {
+		var st = await read();
+		if (!st || !st.shares || !st.shares[String(addr)]) return false;
+		st.shares[String(addr)].hidden = 1;
+		await save();
+		render();
+		return true;
 	}
 
 	/// Stop drawing a tray row. Writes nothing to the relay and tells nobody --
@@ -2051,6 +2282,15 @@
 			.sort(function (a, b) { return (b.ts | 0) - (a.ts | 0); });
 	}
 
+	/// The diamonds waiting to be added, ignored or blocked. Newest first, as the
+	/// message tray is.
+	function shares() {
+		if (!_st || !_st.shares) return [];
+		return Object.keys(_st.shares).map(function (k) { return _st.shares[k]; })
+			.filter(function (s2) { return s2 && !s2.taken && !s2.hidden; })
+			.sort(function (a, b) { return (b.ts | 0) - (a.ts | 0); });
+	}
+
 	/// The rows waiting to be accepted, ignored or blocked.
 	function tray() {
 		if (!_st) return [];
@@ -2105,6 +2345,32 @@
 		return n;
 	}
 
+	/// Mark every incoming row that is NOW ON SCREEN as read.
+	///
+	/// DRAWN, NOT FETCHED, and that distinction is the whole of what makes the
+	/// count mean anything. A park folds messages while the panel is shut; a
+	/// device that cleared its own badge on collection would clear it for
+	/// messages nobody has ever looked at, which is precisely the case the badge
+	/// exists to announce. So the mark is made HERE, after the rows are in the
+	/// document, and only where the list has real area: an absent element and a
+	/// hidden one both measure nothing, which is the honest answer for both.
+	function markDrawnRead(addrs) {
+		if (!_st || !addrs || !addrs.length) return 0;
+		var h = host();
+		if (!h) return 0;
+		var b = h.getBoundingClientRect();
+		if (!(b.width > 1 && b.height > 1)) return 0;
+		var n = 0;
+		addrs.forEach(function (a) {
+			var m = _st.msgs[a];
+			if (m && m.dir === 'in' && !m.read) { m.read = 1; n++; }
+		});
+		if (!n) return 0;
+		save();
+		countChanged();
+		return n;
+	}
+
 	/// Take the panel's own empty line down, because this view has drawn.
 	///
 	/// UNLIKE People's, this line says "Messages are not switched on in this
@@ -2128,7 +2394,7 @@
 
 		if (!_st) {
 			h.appendChild(elt('p', 'post-empty', tOr('post.locked',
-				'Unlock Daimond to read your messages: they are kept encrypted on this device.')));
+				'Unlock Daimond to read your messages.')));
 			filled(true);		// locked is a state this view drew, not an absent feature
 			return;
 		}
@@ -2136,10 +2402,15 @@
 		// The request tray, above the list, because it is the thing waiting on a
 		// person and the list is not.
 		var pending = tray();
-		if (pending.length) {
+		var gifts   = shares();
+		if (pending.length || gifts.length) {
 			var tsec = elt('section', 'post-tray');
 			tsec.id = 'post-tray';
 			tsec.appendChild(elt('h3', null, tOr('post.tray_head', 'Waiting for your answer')));
+			// Diamonds first. A gift asks for more than an answer -- it asks to be
+			// written into the workspace -- and it is the row a person most needs to
+			// see before they start pressing things.
+			gifts.forEach(function (g) { tsec.appendChild(drawShareRow(g)); });
 			pending.forEach(function (m) { tsec.appendChild(drawTrayRow(m)); });
 			h.appendChild(tsec);
 		}
@@ -2148,8 +2419,8 @@
 		lsec.id = 'post-list';
 		var msgs = list();
 		if (!msgs.length) {
-			lsec.appendChild(elt('p', 'post-empty', tOr('post.none',
-				'No messages yet.')));
+			lsec.appendChild(peopleLine('post-empty', tOr('post.none',
+				'No messages yet. Add somebody in {people}.')));
 		} else {
 			msgs.forEach(function (m) { lsec.appendChild(drawRow(m)); });
 		}
@@ -2163,7 +2434,11 @@
 			h.appendChild(nsec);
 		}
 
-		h.appendChild(drawWrite());
+		// NULL WHERE THERE IS NOTHING TO WRITE WITH. An empty `.post-write` is a
+		// grey bar with nothing in it, which reads as a control that has failed to
+		// load rather than as a stage a new account is in.
+		var write = drawWrite();
+		if (write) h.appendChild(write);
 
 		// GROUPS, inside this module's own region and drawn by group.js.
 		//
@@ -2181,6 +2456,37 @@
 		} catch (e) { log('the group section did not draw', e); }
 
 		filled(true);
+
+		// READ WHEN DRAWN. Last, because it measures the element it has just put
+		// on the screen, and a row counted before it was placed is a row nobody
+		// saw.
+		markDrawnRead(msgs.filter(function (m) { return m.dir === 'in' && !m.read; })
+			.map(function (m) { return m.addr; }));
+	}
+
+	/// A line with the word People in it, drawn as the chip it goes to.
+	///
+	/// ONE SENTENCE, not two halves glued together: the whole of it is one
+	/// translated string with a `{people}` slot, so a translator moves the word
+	/// where their language puts it. The chip's own label fills the slot, so the
+	/// word in the sentence is always the word on the chip.
+	///
+	/// A BUTTON AND NOT A LINK, for the same reason `.ref-chip` is: this is
+	/// navigation inside the app, and a link is something a reader tries to copy
+	/// out. group.js draws its own empty line through this, so there is one of
+	/// these and not two.
+	function peopleLine(cls, text) {
+		var p = elt('p', cls);
+		var parts = String(text).split('{people}');
+		p.appendChild(document.createTextNode(parts[0]));
+		if (parts.length > 1) {
+			var b = elt('button', 'post-link', tOr('social.people', 'People'));
+			b.type = 'button';
+			b.dataset.act = 'post-people';
+			p.appendChild(b);
+			p.appendChild(document.createTextNode(parts.slice(1).join('{people}')));
+		}
+		return p;
 	}
 
 	/// One message. A handle and a fingerprint and no app chrome whatever: the
@@ -2189,6 +2495,9 @@
 	function drawRow(m) {
 		var row = elt('article', 'post-msg');
 		row.dataset.addr = m.addr;
+		// Who to answer, on the element, so the Reply press needs no lookup and no
+		// closure per row.
+		if (m.dir === 'in' && m.from) row.dataset.from = String(m.from);
 		if (m.dir === 'out') row.classList.add('post-out');
 		var who = elt('div', 'post-who');
 		who.appendChild(elt('span', 'post-name', m.dir === 'out'
@@ -2206,6 +2515,7 @@
 		}
 		row.appendChild(who);
 		if (m.dir === 'in') drawKeyLine(row, m.from);
+		drawQuote(row, m);
 		if (m.bad) {
 			// It arrived and it will not open. Said, rather than left as a gap.
 			row.appendChild(elt('p', 'post-bad', tOr('post.unreadable',
@@ -2215,8 +2525,53 @@
 			row.appendChild(elt('p', 'post-body', m.body || ''));
 		}
 		drawRefs(row, m.refs);
-		drawReport(row, m);
+		// One row of controls, and it is drawn only where there is something on
+		// it: an empty `.post-acts` is a gap under every message.
+		var acts = elt('div', 'post-acts');
+		drawReply(acts, m);
+		drawReport(acts, m);
+		if (acts.childNodes.length) row.appendChild(acts);
 		return row;
+	}
+
+	/// What a reply says of the message it answers, in one line.
+	///
+	/// FOUND LOCALLY. Only the parent's ADDRESS travels (`replyTo`, set in
+	/// `compose` and signed with the rest), never its words -- a relay that could
+	/// supply the quote would be a relay that had read the message. So a parent
+	/// the relay has let go of (§11.3) is simply not here, and the row says that
+	/// rather than heading itself with an empty line.
+	function quoteText(addr) {
+		var p = _st && _st.msgs[String(addr)];
+		var said = (p && !p.bad) ? String(p.body || '').replace(/\s+/g, ' ').trim() : '';
+		if (!said) return tOr('post.reply_gone', 'In reply to a message that has expired.');
+		return tOr('post.reply_quote', 'In reply to: {said}',
+			{ said: said.length > QUOTE_MAX ? said.slice(0, QUOTE_MAX) + '…' : said });
+	}
+
+	/// The quoted line, above the words that answer it.
+	function drawQuote(row, m) {
+		if (!m.replyTo) return;
+		var p = _st && _st.msgs[String(m.replyTo)];
+		var here = !!(p && !p.bad && String(p.body || '').trim());
+		var q = elt('p', 'post-quote' + (here ? '' : ' post-quote-gone'), quoteText(m.replyTo));
+		q.dataset.parent = String(m.replyTo);
+		row.appendChild(q);
+	}
+
+	/// Reply, on a row somebody else wrote.
+	///
+	/// THE SAME SEND PATH, and nothing new on the wire: `replyTo` has ridden the
+	/// signed payload since the format was written and this is the first thing in
+	/// the app that sets it. Not offered on a row this device sent, on one that
+	/// would not open, or on the relay's own notices: there is nobody to answer in
+	/// any of the three.
+	function drawReply(acts, m) {
+		if (m.dir !== 'in' || m.bad || !m.from) return;
+		var b = elt('button', 'post-btn post-reply', tOr('post.reply', 'Reply'));
+		b.type = 'button';
+		b.dataset.act = 'post-reply';
+		acts.appendChild(b);
 	}
 
 	/// The Report control, where there is something to report WITH.
@@ -2227,14 +2582,14 @@
 	/// guessed at -- a control that exists only to produce an error explains less
 	/// than its absence does, and a message collected by an older build has no
 	/// artefact to prove anything with.
-	function drawReport(row, m) {
+	function drawReport(acts, m) {
 		try {
 			if (!window.DaimondReport || !DaimondReport.canReport) return;
 			if (!DaimondReport.canReport(m)) return;
 			var b = elt('button', 'post-btn post-report', tOr('post.report', 'Report'));
 			b.type = 'button';
 			b.setAttribute('data-report-addr', String(m.addr));
-			row.appendChild(b);
+			acts.appendChild(b);
 		} catch (e) { /* no reporting in this build */ }
 	}
 
@@ -2291,6 +2646,60 @@
 		return row;
 	}
 
+	/// One diamond somebody sent, waiting in the same tray a stranger's first
+	/// message waits in.
+	///
+	/// THE SAME ROW AS A MESSAGE'S, and deliberately: a share carries no official
+	/// shape either. What differs is the facts line, because the three things a
+	/// person needs before they press Add are what it is, how big it is, and
+	/// whether a program is inside it.
+	function drawShareRow(sh) {
+		var row = elt('article', 'post-req post-share');
+		row.dataset.addr = sh.addr;
+		row.dataset.peer = sh.from || '';
+		var who = elt('div', 'post-who');
+		who.appendChild(elt('span', 'post-name',
+			nameFor(sh.from) || tOr('post.someone', 'Someone new')));
+		if (sh.fp) who.appendChild(elt('span', 'post-fp', sh.fp));
+		row.appendChild(who);
+		drawKeyLine(row, sh.from);
+		var facts = tOr('post.share_row',
+			'{who} sent you a diamond: {name} · {n} files · {size}', {
+				who:  nameFor(sh.from) || tOr('post.someone', 'Someone new'),
+				name: sh.name || tOr('share.landed_name', 'A shared diamond'),
+				n:    sh.n | 0, size: bytesSaid(sh.bytes),
+			});
+		// SAID BEFORE THE PRESS. A page is a program somebody else wrote, and
+		// `askAboutCode` asks about it properly -- but a person deciding whether to
+		// press Add at all should not have to press it to find out there is one.
+		if (sh.code) facts += ' · ' + tOr('post.share_has_page', 'includes a page');
+		row.appendChild(elt('p', 'post-body', facts));
+		if (sh.note) row.appendChild(elt('p', 'post-share-note', sh.note));
+		var acts = elt('div', 'post-acts');
+		[['post-share-add',    tOr('post.share_add', 'Add')],
+		 ['post-share-ignore', tOr('post.ignore', 'Ignore')],
+		 ['post-share-block',  tOr('post.block',  'Block')]].forEach(function (pair) {
+			var b = elt('button', 'post-btn', pair[1]);
+			b.type = 'button';
+			b.dataset.act = pair[0];
+			acts.appendChild(b);
+		});
+		row.appendChild(acts);
+		var say = elt('p', 'post-share-say', '');
+		say.hidden = true;
+		row.appendChild(say);
+		return row;
+	}
+
+	/// A byte count the way a person reads one. share.js says the same thing in
+	/// its own `kb`, which is not reachable from here without loading it first.
+	function bytesSaid(n) {
+		var v = Number(n) || 0;
+		if (v < 1024) return v + ' B';
+		if (v < 1024 * 1024) return (v / 1024).toFixed(1) + ' KB';
+		return (v / (1024 * 1024)).toFixed(1) + ' MB';
+	}
+
 	/// A row the relay wrote. No author, no reply control, and its own section --
 	/// never in the message stream.
 	function drawNotice(n) {
@@ -2313,7 +2722,9 @@
 		return row;
 	}
 
-	/// The box, with its audience named above the button and again on it.
+	/// The box, with its audience named above the button and again on it. Null
+	/// where there is nobody to write to AND nothing on the list, because the
+	/// empty line above has already said what to do about that.
 	///
 	/// A control labelled plain "Send" in two places that do opposite things is
 	/// the defect the wording exists to prevent, so the button says which channel
@@ -2331,9 +2742,12 @@
 		// their words to a roster they have not accepted.
 		var mine = joinedGroups();
 		if (!who.length && !mine.length) {
-			box.appendChild(elt('p', 'post-nobody', tOr('post.nobody',
-				'There is nobody to write to yet. Exchange codes with somebody in '
-				+ 'People, and they will be here.')));
+			// SAID ONCE. With no people and no messages the empty line above has
+			// already said exactly this, and a box repeating it is the screen
+			// arguing with itself (audit SOC-02).
+			if (!list().length) return null;
+			box.appendChild(peopleLine('post-nobody',
+				tOr('post.nobody', 'Add somebody in {people}.')));
 			return box;
 		}
 		var pick = elt('select', 'post-to');
@@ -2380,7 +2794,33 @@
 			}
 		};
 		sayAudience();
-		pick.addEventListener('change', sayAudience);
+		pick.addEventListener('change', function () {
+			sayAudience();
+			// A reply answers ONE message from ONE person. Pointing the box
+			// somewhere else makes it a new message, and the line above it must
+			// stop claiming otherwise.
+			if (_replyTo) {
+				_replyTo = '';
+				var head = document.getElementById('post-replying');
+				if (head && head.parentNode) head.parentNode.removeChild(head);
+			}
+		});
+
+		// WHAT THIS ANSWERS, in the box, because a reply that looks like a new
+		// message is a reply somebody sends into the wrong conversation. With the
+		// way out beside it: a box that could not stop being a reply would make
+		// the control a trap.
+		if (_replyTo) {
+			var head = elt('div', 'post-replying');
+			head.id = 'post-replying';
+			head.appendChild(elt('p', 'post-quote', quoteText(_replyTo)));
+			var drop = elt('button', 'post-btn post-unreply',
+				tOr('post.reply_drop', 'Not a reply'));
+			drop.type = 'button';
+			drop.dataset.act = 'post-unreply';
+			head.appendChild(drop);
+			box.appendChild(head);
+		}
 		var ta = elt('textarea', 'post-text');
 		ta.id = 'post-text';
 		ta.setAttribute('aria-label', tOr('post.box_label', 'Write a private message'));
@@ -2401,6 +2841,11 @@
 	/// a redraw so a collect arriving mid-sentence does not change the recipient
 	/// under the person typing.
 	var _to = '';
+
+	/// The message the box is ANSWERING, as its address, or ''. Held beside `_to`
+	/// and cleared on the same occasions: a redraw keeps it, a send spends it, and
+	/// choosing somebody else drops it.
+	var _replyTo = '';
 
 	/// Point the box at somebody. What a People row's "Message" press would call.
 	function to(pub) {
@@ -2510,12 +2955,19 @@
 			_to = whom;
 			say(tOr('post.sending', 'Sending…'));
 			var isGroup = whom.slice(0, 2) === 'g:';
+			// `replyTo` ONLY on the one-to-one path. A reply answers one person,
+			// and a group send seals to a roster -- a `replyTo` there would name a
+			// message most of the roster has never seen.
 			var args = isGroup
 				? { body: ta ? ta.value : '', group: whom.slice(2) }
-				: { body: ta ? ta.value : '', to: whom };
+				: { body: ta ? ta.value : '', to: whom, replyTo: _replyTo || '' };
 			send(args).then(function (r) {
 				if (!r.ok) { say(r.why + shortfall(r)); return; }
 				if (ta) ta.value = '';
+				// Spent. `send` has already redrawn once; this redraws the box
+				// without the reply head, and `say` below reads the note element
+				// that redraw just built.
+				if (_replyTo) { _replyTo = ''; render(); }
 				// SENT TO, never DELIVERED TO. The relay answers a blocked
 				// delivery exactly as it answers an accepted one, so the number
 				// this device holds is the number it wrote to and nothing more.
@@ -2530,8 +2982,62 @@
 			});
 			return;
 		}
+		if (act === 'post-reply') {
+			e.preventDefault();
+			var msg = b.closest('.post-msg');
+			if (!msg) return;
+			_replyTo = String(msg.dataset.addr || '');
+			to(msg.dataset.from || '');
+			render();
+			var box = document.getElementById('post-text');
+			if (box) box.focus();
+			return;
+		}
+		if (act === 'post-unreply') {
+			e.preventDefault();
+			_replyTo = '';
+			render();
+			return;
+		}
+		if (act === 'post-people') {
+			e.preventDefault();
+			try { if (window.DaimondSocial && DaimondSocial.show) DaimondSocial.show('people'); }
+			catch (err) { /* no panel shell in this build */ }
+			return;
+		}
 		if (!row) return;
 		var peer = row.dataset.peer;
+		if (act === 'post-share-add') {
+			e.preventDefault();
+			// NOT `say`. `say` is this module's own function, used by the send branch
+			// six lines above, and a `var` of that name here hoists to the top of the
+			// handler and shadows it with `undefined` for every branch -- so pressing
+			// Send threw "say is not a function" and no message left the browser. A
+			// `var` in a long delegated handler is function-scoped whatever line it
+			// is written on.
+			var line = row.querySelector('.post-share-say');
+			b.disabled = true;
+			if (line) {
+				line.hidden = false;
+				line.textContent = tOr('post.share_adding', 'Adding…');
+			}
+			addShare(row.dataset.addr).then(function (r) {
+				b.disabled = false;
+				// The row has gone by now where it landed, so the only sentence that
+				// has anywhere to be drawn is a refusal.
+				if (line && r && !r.ok) { line.textContent = r.why || ''; line.hidden = false; }
+			});
+			return;
+		}
+		if (act === 'post-share-ignore') { e.preventDefault(); hideShare(row.dataset.addr); return; }
+		if (act === 'post-share-block') {
+			e.preventDefault();
+			// The row goes first and the relay is told second: blocking somebody is
+			// about them, and a gift left drawn under a blocked name would be the
+			// one thing the press did not do.
+			hideShare(row.dataset.addr).then(function () { connect(peer, 'block'); });
+			return;
+		}
 		if (act === 'post-accept') { e.preventDefault(); connect(peer, 'accept'); return; }
 		if (act === 'post-block')  { e.preventDefault(); connect(peer, 'block');  return; }
 		if (act === 'post-ignore') { e.preventDefault(); hide(row.dataset.addr);  return; }
@@ -2679,6 +3185,7 @@
 			var r = await takeRow(st, row);
 			await save();
 			render();
+			announce(r.got, r.got ? [String(row.addr)] : []);
 			return r;
 		},
 		/// The half of a group send that involves no relay. Published for the
@@ -2696,12 +3203,37 @@
 		/// Point the box at somebody, and read who it is pointed at.
 		to:       to,
 		toNow:    toNow,
+		/// The message the box is answering, as its address, or ''. Published for
+		/// a verifier: a Reply that set the wrong parent would still look right on
+		/// the screen.
+		replyTo:  function () { return _replyTo; },
+		/// The one line a reply draws of what it answers, including the wording
+		/// for a parent this device no longer holds. Published so a verifier reads
+		/// the same sentence the row does rather than a second copy of it.
+		quoteText: quoteText,
+		/// One line with the word People in it, drawn as the chip it goes to.
+		/// group.js draws its own empty line through this, so the sentence and the
+		/// press exist once.
+		peopleLine: peopleLine,
+		/// The event this module raises when messages land: `daimond:post-arrived`,
+		/// carrying `{ count, unread, addrs }`.
+		arrivedEvent: ARRIVED,
 		/// What is held, for a panel and for a verifier.
 		list:     list,
 		tray:     tray,
 		notices:  notices,
 		unread:   unread,
 		hide:     hide,
+		/// The diamonds waiting in the tray, and the three things a person can do
+		/// with one. `addShare` is the ONLY door that lands one: `takeRow` keeps the
+		/// envelope and nothing else happens until somebody presses Add.
+		shares:     shares,
+		addShare:   addShare,
+		hideShare:  hideShare,
+		/// The sender's own Sent row for a diamond they gave away. share.js calls it
+		/// after `fanout` answered, so a Sent list never shows one that did not
+		/// leave.
+		noteShareSent: noteShareSent,
 		/// Everything this module would say if asked.
 		state:    function () {
 			return {
