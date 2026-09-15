@@ -372,7 +372,7 @@
 						+ 'each of those is a service we run on our side.'),
 				t('lapse.lic_keep',
 					'Everything on this device carries on exactly as before: your files, your chats, '
-					+ 'your Diamonds, your identity and your own provider key. Nothing is deleted, '
+					+ 'your diamonds, your identity and your own provider key. Nothing is deleted, '
 					+ 'nothing is locked, and nothing you have made becomes unreadable.'),
 				t('lapse.lic_pull',
 					'Pulling down what you have already stored never stops, and your credits are '

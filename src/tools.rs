@@ -20081,16 +20081,61 @@ impl Tool {
     #[cfg(any(target_arch = "wasm32", test))]
     const CAP_BIN_STALE: &str = "bin-stale:1";
 
+    /// What the hand's handshake says when it resolves the verify tree PER REQUEST.
+    ///
+    /// A fact about the hand and never about a folder, which is the whole of why it is a
+    /// separate word from `verify:dev`: the latter answers for the granted root and cannot
+    /// answer for a folder marked into a Diamond after the hand started.  `hand/src/verify.rs`
+    /// writes it, as `verify::BY_ROOT`.
+    #[cfg(any(target_arch = "wasm32", test))]
+    const CAP_VERIFY_BY_ROOT: &str = "verify:by-root";
+
     /// Does this hand have verifiers to run at all?
     ///
     /// From the handshake's `caps`, exactly as `fence_enforced` reads the fence out of it: a
     /// hand that does not say it can, has not said it can.
     ///
+    /// **`verify:dev` is a statement about the GRANT, and the grant is not the repository in the
+    /// case this app is for.**  A person grants the folder their projects live in and marks one of
+    /// them into a Diamond; the grant then holds no `dev/` of its own and says `verify:none`, and
+    /// this gate refused every call in a sentence about a folder the model could do nothing
+    /// about -- 64 of them across four tasks on 2026-09-15, because a refusal whose remedy is out
+    /// of reach becomes a loop.  So a hand carrying [`Self::CAP_VERIFY_BY_ROOT`] is asked instead:
+    /// the request names the folder the turn is working in and the hand answers for THAT tree, in
+    /// a sentence naming it.  A hand without the capability keeps the older gate, because it would
+    /// ignore the field and resolve in the grant.
+    ///
     /// # Arguments
     /// * `caps` - What the hand said it can do.
     #[cfg(any(target_arch = "wasm32", test))]
     fn verify_available(caps: &[String]) -> bool {
-        caps.iter().any(|c| c == "verify:dev")
+        caps.iter().any(|c| c == Self::CAP_VERIFY_BY_ROOT || c == "verify:dev")
+    }
+
+    /// The tree this Diamond is about, absolute on the machine, or empty for the granted root.
+    ///
+    /// **The folder the user MARKED, and not the folder they granted.**  A grant is commonly the
+    /// parent of several repositories -- a person grants `~/projects` and marks one of them into
+    /// a Diamond -- so a verify tree fixed at the grant answers about a folder nobody asked
+    /// about, which is what refused every call of the real-repository bank on 2026-09-15.
+    ///
+    /// Composed exactly as [`Tool::run_exec`] composes a command's working directory, out of
+    /// [`ToolContext::default_cwd`] and the machine's root, so a command and a verifier in one
+    /// turn cannot be about two different trees.  Empty is an unscoped turn, which works at the
+    /// grant, and is also what a page older than this sent.
+    ///
+    /// # Arguments
+    /// * `ctx` - The turn, whose bounds carry the mark.
+    /// * `machine` - The hand's grant, which the mark is relative to.
+    #[cfg(any(target_arch = "wasm32", test))]
+    fn verify_root_of(ctx: &ToolContext, machine: &Machine) -> String {
+        let rel = normalise(&ctx.default_cwd());
+        // A Diamond's own directory is in the browser's storage and not on the machine at all
+        // (see `is_store_path`), so naming it would send the hand a path it cannot resolve.
+        if rel.is_empty() || is_store_path(&rel) || !machine.rooted() {
+            return String::new();
+        }
+        fmt!("{}/{}", machine.root.trim_end_matches('/'), rel)
     }
 
     /// The wire request one `verify` call becomes, or the sentence refusing it.
@@ -20120,8 +20165,12 @@ impl Tool {
     /// # Arguments
     /// * `args` - The raw tool arguments.
     /// * `id` - The identifier every answer about this sequence is tagged with.
+    /// * `root` - The folder this turn is working in, absolute on the machine, or empty for the
+    ///   granted root.  Composed from the turn's BOUNDS and never from the model's text -- it is
+    ///   the mark the user made, which is the one thing that says which of the grant's
+    ///   repositories this Diamond is about.
     #[cfg(any(target_arch = "wasm32", test))]
-    fn verify_spec(args: &str, id: &str) -> Result<String, String> {
+    fn verify_spec(args: &str, id: &str, root: &str) -> Result<String, String> {
         let name = match extract_json_string(args, "name") {
             Some(n) => n,
             None    => return Err(fmt!(
@@ -20175,9 +20224,10 @@ impl Tool {
             None	=> "infer",
         };
         Ok(fmt!(
-            r#"{{"t":"verify","id":"{}","name":"{}","breaks":"{}","break":{},"world":"{}","timeout_ms":{}}}"#,
+            r#"{{"t":"verify","id":"{}","name":"{}","root":"{}","breaks":"{}","break":{},"world":"{}","timeout_ms":{}}}"#,
             json_escape(id),
             json_escape(&name),
+            json_escape(root),
             breaks,
             brk,
             world,
@@ -20545,7 +20595,8 @@ impl Tool {
                 verifiers; it is not a general test runner. Tell the user which folder they \
                 granted, and use 'run' for the project's own test command instead."));
         }
-        let spec = match Self::verify_spec(args, &Self::run_id("verify", ctx)) {
+        let root = Self::verify_root_of(ctx, &machine);
+        let spec = match Self::verify_spec(args, &Self::run_id("verify", ctx), &root) {
             Ok(s)  => s,
             Err(r) => return Ok(r),
         };
@@ -28326,13 +28377,13 @@ mod tests {
             r#"{"name":"-rf"}"#,
             r#"{"name":""}"#,
         ] {
-            match Tool::verify_spec(bad, "v-1") {
+            match Tool::verify_spec(bad, "v-1", "") {
                 Err(r) => assert!(r.starts_with("Refused:"), "{} -> {}", bad, r),
                 Ok(s)  => panic!("{} composed a request: {}", bad, s),
             }
         }
         // And the absence of the argument is its own sentence, not a silent default.
-        match Tool::verify_spec(r#"{}"#, "v-1") {
+        match Tool::verify_spec(r#"{}"#, "v-1", "") {
             Err(r) => assert!(r.contains("needs 'name'"), "{}", r),
             Ok(s)  => panic!("a nameless call composed a request: {}", s),
         }
@@ -28343,7 +28394,7 @@ mod tests {
     /// has changed and this test is where it shows.
     #[test]
     fn test_verify_composes_a_selector_and_not_a_command() {
-        let spec = match Tool::verify_spec(r#"{"name":"graph"}"#, "v-1") {
+        let spec = match Tool::verify_spec(r#"{"name":"graph"}"#, "v-1", "") {
             Ok(s)  => s,
             Err(r) => panic!("{}", r),
         };
@@ -28353,9 +28404,9 @@ mod tests {
         // Saying nothing about a world asks the hand to read the verifier's own source, which
         // is what a page built before the field existed does.
         assert!(spec.contains(r#""world":"infer""#), "{}", spec);
-        assert!(Tool::verify_spec(r#"{"name":"graph","world":true}"#, "v")
+        assert!(Tool::verify_spec(r#"{"name":"graph","world":true}"#, "v", "")
             .unwrap_or_default().contains(r#""world":"stand""#));
-        assert!(Tool::verify_spec(r#"{"name":"graph","world":false}"#, "v")
+        assert!(Tool::verify_spec(r#"{"name":"graph","world":false}"#, "v", "")
             .unwrap_or_default().contains(r#""world":"none""#));
         for forbidden in [r#""argv""#, r#""cwd""#, r#""env""#, r#""stdin""#, r#""fence""#] {
             assert!(!spec.contains(forbidden),
@@ -28369,20 +28420,20 @@ mod tests {
     /// wire says which of the three shapes was asked for so the two ends cannot disagree.
     #[test]
     fn test_verify_break_is_a_selector_and_clean_only_is_the_other_shape() {
-        let one = match Tool::verify_spec(r#"{"name":"graph","break":"nolinks"}"#, "v") {
+        let one = match Tool::verify_spec(r#"{"name":"graph","break":"nolinks"}"#, "v", "") {
             Ok(s)  => s,
             Err(r) => panic!("{}", r),
         };
         assert!(one.contains(r#""breaks":"one""#) && one.contains(r#""break":"nolinks""#), "{}", one);
-        let none = match Tool::verify_spec(r#"{"name":"graph","clean_only":true}"#, "v") {
+        let none = match Tool::verify_spec(r#"{"name":"graph","clean_only":true}"#, "v", "") {
             Ok(s)  => s,
             Err(r) => panic!("{}", r),
         };
         assert!(none.contains(r#""breaks":"none""#), "{}", none);
         // A break that is not spellable is refused here rather than sent.
-        assert!(Tool::verify_spec(r#"{"name":"graph","break":"../x"}"#, "v").is_err());
+        assert!(Tool::verify_spec(r#"{"name":"graph","break":"../x"}"#, "v", "").is_err());
         // The two arguments want opposite runs, and one of them is the run that proves nothing.
-        match Tool::verify_spec(r#"{"name":"graph","break":"nolinks","clean_only":true}"#, "v") {
+        match Tool::verify_spec(r#"{"name":"graph","break":"nolinks","clean_only":true}"#, "v", "") {
             Err(r) => assert!(r.contains("proves nothing"), "{}", r),
             Ok(s)  => panic!("both were accepted: {}", s),
         }
@@ -28392,13 +28443,13 @@ mod tests {
     #[test]
     fn test_verify_budget_is_bounded() {
         let big = match Tool::verify_spec(
-            r#"{"name":"graph","timeout_ms":999999999}"#, "v") {
+            r#"{"name":"graph","timeout_ms":999999999}"#, "v", "") {
             Ok(s)  => s,
             Err(r) => panic!("{}", r),
         };
         assert!(big.contains(&fmt!(r#""timeout_ms":{}"#, Tool::VERIFY_BUDGET_MAX_MS)),
             "an unbounded budget went out: {}", big);
-        let plain = match Tool::verify_spec(r#"{"name":"graph"}"#, "v") {
+        let plain = match Tool::verify_spec(r#"{"name":"graph"}"#, "v", "") {
             Ok(s)  => s,
             Err(r) => panic!("{}", r),
         };
@@ -28420,7 +28471,7 @@ mod tests {
     fn test_a_worker_verifies_its_own_work_and_is_charged_for_it() {
         // COMPOSED, and identically: `verify_spec` no longer asks whose turn this is.
         let asked = r#"{"name":"graph","break":"nolinks","timeout_ms":60000}"#;
-        let spec = match Tool::verify_spec(asked, "v-1") {
+        let spec = match Tool::verify_spec(asked, "v-1", "") {
             Ok(s)  => s,
             Err(r) => panic!("a worker's verify call was refused: {}", r),
         };
@@ -28806,6 +28857,48 @@ CLEAN            27 passed, 0 failed, exit 0, 900 ms
         assert!(Tool::verify_available(&[fmt!("fence:landlock"), fmt!("verify:dev")]));
         assert!(!Tool::verify_available(&[fmt!("verify:none")]));
         assert!(!Tool::verify_available(&[]), "an empty caps list read as a capability");
+        // A hand that resolves the tree PER REQUEST is asked, whatever the GRANT holds: the
+        // grant is the parent of the repository in the case this app is for, and `verify:none`
+        // over it is a statement about a folder nobody marked in.
+        assert!(Tool::verify_available(&[fmt!("verify:none"), fmt!("verify:by-root")]),
+            "a hand that answers per request was refused on the grant's own capability");
+    }
+
+    /// **The request names the folder the user MARKED, not the folder they granted.**
+    ///
+    /// The whole of blocker 2 of the real-repository bank, 2026-09-15: the hand was granted the
+    /// parent of five worktrees and every `verify` was refused, because the tree was fixed at the
+    /// grant and the grant holds no `dev/`.  A Diamond's mark is the only thing that says which
+    /// of a grant's repositories it is about, so the mark is what goes on the wire.
+    #[test]
+    fn test_verify_sends_the_tree_the_diamond_is_marked_on() {
+        let machine = Machine::at("/home/u/projects");
+        // Marked on one repository inside a grant that holds several.
+        let marked = scoped(&[&fmt!("daimond")], &[]);
+        assert_eq!("/home/u/projects/daimond", Tool::verify_root_of(&marked, &machine));
+        let spec = match Tool::verify_spec(r#"{"name":"graph"}"#, "v-1",
+            &Tool::verify_root_of(&marked, &machine))
+        {
+            Ok(s)  => s,
+            Err(r) => panic!("{}", r),
+        };
+        assert!(spec.contains(r#""root":"/home/u/projects/daimond""#),
+            "the request does not name the marked tree: {}", spec);
+        // Still a selector and nothing a shell could be made of: the root is a path the BOUNDS
+        // produced, and there is no argv, cwd or env beside it for a model's string to reach.
+        for forbidden in [r#""argv""#, r#""cwd""#, r#""env""#, r#""fence""#] {
+            assert!(!spec.contains(forbidden), "{} is on the verify wire: {}", forbidden, spec);
+        }
+        // An unscoped turn works at the grant, and says so by naming nothing -- which is also
+        // what a page older than this sent.
+        assert_eq!("", Tool::verify_root_of(&ctx(), &machine));
+        // A Diamond with nothing attached has only its own directory, which is browser storage
+        // and not a folder on the machine.
+        let bare = scoped(&[], &[]);
+        assert_eq!("", Tool::verify_root_of(&bare, &machine),
+            "Daimond's own storage was sent as a tree on the machine");
+        // And a hand that did not say where its grant is cannot be sent a path under it.
+        assert_eq!("", Tool::verify_root_of(&marked, &Machine::at("")));
     }
 
     /// The tool is offered where it can work, is described by its three numbers, and its

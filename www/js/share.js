@@ -270,9 +270,9 @@
 	/// Why sharing cannot be used, in words, or '' when it can.
 	function why() {
 		if (!bridge() || !cryptoReady()) return tOr('share.err_no_bridge',
-			'This build cannot share a Diamond: its share format is not loaded.');
+			'This build cannot share a diamond: its share format is not loaded.');
 		if (!sealReady()) return tOr('share.err_no_seal',
-			'This build cannot share a Diamond: the seal it would be sent under is not loaded.');
+			'This build cannot share a diamond: the seal it would be sent under is not loaded.');
 		if (!landReady()) return tOr('share.err_no_store',
 			'This build can read a share but has nowhere to put one.');
 		return '';
@@ -308,16 +308,16 @@
 		}
 		if (!out.length) {
 			throw new Error(tOr('share.err_empty',
-				'There is nothing in that Diamond to send yet.'));
+				'There is nothing in that diamond to send yet.'));
 		}
 		if (out.length > FILES_MAX) {
 			throw new Error(tOr('share.err_too_many_files',
-				'That Diamond holds {n} files, and a share carries at most {max}.',
+				'That diamond holds {n} files, and a share carries at most {max}.',
 				{ n: out.length, max: FILES_MAX }));
 		}
 		if (total > TOTAL_MAX) {
 			throw new Error(tOr('share.err_too_big',
-				'That Diamond is {mb} MB, and a share carries at most {max} MB. It is refused '
+				'That diamond is {mb} MB, and a share carries at most {max} MB. It is refused '
 				+ 'rather than trimmed: a copy missing a file is not a smaller copy.',
 				{ mb: (total / (1024 * 1024)).toFixed(1),
 				  max: (TOTAL_MAX / (1024 * 1024)).toFixed(0) }));
@@ -352,7 +352,7 @@
 		// is not required here; the other two are.
 		if (!cryptoReady() || !sealReady()) {
 			throw new Error(stop || tOr('share.err_no_bridge',
-				'This build cannot share a Diamond: its share format is not loaded.'));
+				'This build cannot share a diamond: its share format is not loaded.'));
 		}
 		if (!window.DaimondIdentity || !DaimondIdentity.isUnlocked()) {
 			throw new Error(tOr('share.err_locked',
@@ -387,7 +387,7 @@
 		if (!files) {
 			if (!o.diamond) {
 				throw new Error(tOr('share.err_nothing',
-					'There is nothing to share: name a Diamond or the files to send.'));
+					'There is nothing to share: name a diamond or the files to send.'));
 			}
 			files = await collect(o.diamond);
 		}
@@ -487,7 +487,7 @@
 	async function openSealed(bytes, expectAddr) {
 		if (!cryptoReady() || !sealReady()) {
 			throw new Error(tOr('share.err_no_bridge',
-				'This build cannot share a Diamond: its share format is not loaded.'));
+				'This build cannot share a diamond: its share format is not loaded.'));
 		}
 		var b = (bytes instanceof Uint8Array) ? bytes
 			: (typeof bytes === 'string' ? b64dec(bytes) : new Uint8Array(bytes));
@@ -720,7 +720,7 @@
 		try {
 			if (window.DaimondCore && typeof DaimondCore.confirm === 'function') {
 				DaimondCore.confirm(text, tOr('dlg.ok', 'OK'), {
-					title: tOr('share.landed_title', 'Shared Diamond added'),
+					title: tOr('share.landed_title', 'Shared diamond added'),
 					cancelLabel: null,
 					danger: false,
 				});
@@ -836,7 +836,7 @@
 	function save(made) {
 		if (!made || !made.sealed || !made.sealed.length) {
 			throw new Error(tOr('share.err_nothing',
-				'There is nothing to share: name a Diamond or the files to send.'));
+				'There is nothing to share: name a diamond or the files to send.'));
 		}
 		var name = filename(made);
 		var a = document.createElement('a');
@@ -1087,7 +1087,7 @@
 			'“{name}” includes a page: a program written by somebody else, which Daimond will '
 			+ 'run when you open it. A template carries no signature and nobody’s name, so '
 			+ 'nothing here can tell you where it came from — only the person who gave you the '
-			+ 'file can.\n\nWhat would be added: {files}\n\nIt opens as a NEW Diamond and can '
+			+ 'file can.\n\nWhat would be added: {files}\n\nIt opens as a NEW diamond and can '
 			+ 'never write over one you already have. Declining writes nothing at all.',
 			{ name: desc.name || tOr('tmpl.unnamed', 'this template'),
 			  files: desc.code.join(', ') });
@@ -1111,7 +1111,7 @@
 		var text = String(json || '');
 		if (!text.trim()) {
 			throw new Error(tOr('tmpl.err_nothing',
-				'There is nothing to save: that Diamond made an empty template.'));
+				'There is nothing to save: that diamond made an empty template.'));
 		}
 		var stem = String(name || 'template')
 			.replace(/[^A-Za-z0-9 _-]+/g, '').trim().replace(/\s+/g, '-').slice(0, 40);
@@ -1304,7 +1304,7 @@
 				// go looking for them.
 				say.className = 'shr-say';
 				say.textContent = tOr('share.landed_ok',
-					'Added as a Diamond of your own. {n} file(s) arrived.',
+					'Added as a diamond of your own. {n} file(s) arrived.',
 					{ n: r.wrote.length });
 				say.hidden = false;
 				if (r.said) {
@@ -1331,9 +1331,9 @@
 		// The two facts a person cannot guess, said before they press anything
 		// rather than in the dialog afterwards.
 		box.appendChild(node('p', 'shr-note', tOr('tmpl.panel_help',
-			'A template is a Diamond’s shape without its contents: the page it draws through '
+			'A template is a diamond’s shape without its contents: the page it draws through '
 			+ 'and its automation, and none of what it has recorded. It opens as a NEW '
-			+ 'Diamond and can never write over one you already have. Triggered actions are '
+			+ 'diamond and can never write over one you already have. Triggered actions are '
 			+ 'never carried, because a trigger fires with nobody pressing anything.')));
 		var say = node('p', 'shr-say');
 		say.hidden = true;
@@ -1355,7 +1355,7 @@
 					return;
 				}
 				say.textContent = tOr('tmpl.opened',
-					'Opened as a new Diamond, “{name}”. {n} file(s) arrived.',
+					'Opened as a new diamond, “{name}”. {n} file(s) arrived.',
 					{ name: r.name || '', n: r.files.length });
 				say.hidden = false;
 			}, function (e) {
@@ -1375,7 +1375,7 @@
 	/// panel that is not the rail.
 	function sendBlock() {
 		var box = node('div', 'shr-block');
-		box.appendChild(node('h3', 'shr-head', tOr('share.panel_send_head', 'Send a Diamond')));
+		box.appendChild(node('h3', 'shr-head', tOr('share.panel_send_head', 'Send a diamond')));
 
 		var cur = null;
 		try {
@@ -1383,7 +1383,7 @@
 		} catch (e) { cur = null; }
 		if (!cur || !cur.id) {
 			box.appendChild(node('p', 'shr-note', tOr('share.panel_no_diamond',
-				'Open a Diamond to share it. A share carries the files of one Diamond, so '
+				'Open a diamond to share it. A share carries the files of one diamond, so '
 				+ 'there has to be one in front of you.')));
 			return box;
 		}

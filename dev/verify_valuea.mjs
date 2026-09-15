@@ -349,8 +349,10 @@ try {
 			taSeen:   vis(box && box.querySelector('.crystal-memory-ta')),
 		};
 	});
-	check('the memory disclosure is named for what it holds, not "Memory"',
-		/knows/i.test(closed.summary), closed.summary);
+	// Named "Memory" as of the diamond-case pass (2026-09-15): the fewest words
+	// that name the thing, in place of "What this Diamond knows".
+	check('the memory disclosure is named "Memory"',
+		/^Memory$/i.test(closed.summary), closed.summary);
 
 	await page.evaluate(() => {
 		const box = document.querySelector('.crystal-memory');
@@ -385,8 +387,10 @@ try {
 	check('every top-level key is a labelled line, the capp\'s own included',
 		['Facts', 'Habits', 'People'].every(l => card.labels.indexOf(l) >= 0),
 		JSON.stringify(card.labels));
-	check('Edit and Show raw memory are the actions under it',
-		card.acts.some(a => /Edit/.test(a)) && card.acts.some(a => /raw memory/i.test(a)),
+	// "Show raw memory" was cut to "Raw" (plus the ▸ the code appends) in the
+	// same pass that renamed the disclosure to "Memory".
+	check('Edit and Raw are the actions under it',
+		card.acts.some(a => /Edit/.test(a)) && card.acts.some(a => /^Raw/i.test(a)),
 		JSON.stringify(card.acts));
 	check('THE RAW JSON IS NOT WHAT OPENS',
 		!card.rawSeen && !card.gaugeSeen, `textarea=${card.rawSeen} gauge=${card.gaugeSeen}`);

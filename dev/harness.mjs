@@ -160,6 +160,71 @@ export function scratch(...parts) {
 	return p;
 }
 
+/// Where a `--break` run's own artefacts go, and why they never go in the tree.
+///
+/// **A BREAK RUN MUST LEAVE THE WORKING COPY AS IT FOUND IT.** A verifier that writes its
+/// findings beside itself is writing them into a git repository, and under `--break` the
+/// findings are deliberately wrong -- so the tree is left dirty with numbers measured against
+/// a deliberately broken app. On 2026-09-15 that stopped a daimon's own work: `verify_render
+/// --break flushleft` left `dev/.math-ground-truth.json` modified, and the next `verify` call
+/// refused because the tree was not clean. The verifier had proved its instrument and made
+/// itself unrunnable in the same breath.
+///
+/// So: a clean run may write its artefact where it belongs, and a break run writes it here.
+/// `dev/verify_telemetry.mjs` already did exactly this for its patched copy of a module; this
+/// is the same move with a name on it.
+///
+/// # Arguments
+/// * `name` - The file's own name, kept, so the scratch copy is recognisable.
+/// * `inTree` - Where a clean run writes it.
+/// * `BREAK` - The break this run is under, or `''`.
+export function artefactPath(name, inTree, BREAK) {
+	return BREAK ? scratch('artefacts', `${BREAK}-${name}`) : inTree;
+}
+
+/// Hold a tracked file's contents, and put them back however this process ends.
+///
+/// For the verifiers that must MUTATE a real source file to prove their own check has teeth --
+/// `dev/verify_legalreach.mjs` moves one word in `landing/terms.html` to prove that a drift
+/// check would notice. A `try`/`finally` covers the throw; it does not cover a `process.exit`
+/// from a check that failed, an uncaught rejection, or the Ctrl-C of somebody watching a run
+/// that has gone wrong -- and each of those leaves a source file changed under a person who
+/// will next read it as their own edit.
+///
+/// Returns a `release()` that restores it now and disarms the handlers.
+///
+/// # Arguments
+/// * `file` - Absolute path of the file to hold.
+export function keepTracked(file) {
+	const had = fs.existsSync(file);
+	const was = had ? fs.readFileSync(file) : null;
+	let done = false;
+	const restore = () => {
+		if (done) return;
+		done = true;
+		try {
+			if (had) fs.writeFileSync(file, was);
+			else fs.rmSync(file, { force: true });
+		} catch (e) { console.error(`harness: could not restore ${file}: ${e.message}`); }
+	};
+	process.on('exit', restore);
+	// `exit` does not fire for a signal, so the two a person actually sends are named. The
+	// re-raise is what keeps the exit STATUS honest: swallowing the signal would report a run
+	// somebody killed as one that finished.
+	for (const sig of ['SIGINT', 'SIGTERM']) {
+		process.on(sig, () => { restore(); process.kill(process.pid, sig); });
+	}
+	// The file is put back and the error is printed and exited on exactly as node would have
+	// done: re-throwing from inside this handler is a fatal handler error, which reports a
+	// DIFFERENT status from the one an unguarded run would have given.
+	process.on('uncaughtException', (e) => {
+		restore();
+		console.error((e && e.stack) || String(e));
+		process.exit(1);
+	});
+	return restore;
+}
+
 /// The mock answering this world's port must be THIS world's mock.
 ///
 /// `mockLog()` below is how eighteen or more verifiers ask what the model was

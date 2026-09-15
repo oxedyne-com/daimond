@@ -124,7 +124,13 @@
 		b.dataset.panel = p.id;
 		b.setAttribute('aria-pressed', lit ? 'true' : 'false');
 		if (p.full) {
-			b.disabled = true;
+			// `aria-disabled`, NOT `disabled`, and that is the whole reason this
+			// branch changed. A disabled button receives no pointer events at all,
+			// so a chip the full dock refused could not be DRAGGED onto a panel to
+			// take its place -- which is the one thing a user with a full dock most
+			// wants to do. It still refuses a click, below, and still says why.
+			b.setAttribute('aria-disabled', 'true');
+			b.classList.add('full');
 			b.title = t('chip.dock_full');
 		} else if (p.folded) {
 			b.title = t('chip.show', { name: p.label });
@@ -142,6 +148,7 @@
 		// element and leave the hamburger opening nothing. See `goTo` in
 		// js/mobile.js.
 		b.addEventListener('click', function () {
+			if (b.getAttribute('aria-disabled') === 'true') return;
 			var s = shell();
 			if (s) s.goTo(p.id); else P().activate(p.id);
 		});
@@ -159,6 +166,24 @@
 		// Zones run left to right in the order they do on screen, so a chip sits
 		// on the side the panel it opens will appear. That is a stronger signal
 		// than colour, and it is the reason the groups are not merely sorted.
+		// WITHIN a zone, the order the user put the chips in. `pinned` is an
+		// ordered list and always has been; nothing read it as one until the
+		// phone's strip could be reordered by hand, so a chip carried along the
+		// footer came back where it started on the next draw.
+		var pins = P().pins();
+		if (pins && pins.length) {
+			var rank = {};
+			pins.forEach(function (id, i) { rank[id] = i; });
+			var keep = shown.slice();
+			shown.sort(function (a, b) {
+				var x = rank[a.id], y = rank[b.id];
+				if (x === undefined && y === undefined) return keep.indexOf(a) - keep.indexOf(b);
+				if (x === undefined) return 1;
+				if (y === undefined) return -1;
+				return x - y;
+			});
+		}
+
 		['rail', 'stage', 'dock'].forEach(function (zone) {
 			var inZone = shown.filter(function (p) { return p.zone === zone; });
 			if (!inZone.length) return;
@@ -533,6 +558,15 @@
 			gseg.appendChild(b);
 		});
 		menuEl.appendChild(gseg);
+		// A dragged dock is a dock no preset describes, so none is shown pressed
+		// (`P().grid()` answers 'custom') and one row offers the way back. No
+		// explanation beside it: the segment above says what it returns to.
+		if (P().grid() === 'custom') {
+			var reset = el('button', 'gal-row');
+			reset.appendChild(el('span', 'nm', t('menu.dock_reset')));
+			reset.addEventListener('click', function () { P().setGrid('auto'); renderMenu(); });
+			menuEl.appendChild(reset);
+		}
 
 		// This Diamond's arrangement, when there is a Diamond to hang it on.
 		var diamond = window.DaimondDiamond && DaimondDiamond.current && DaimondDiamond.current();

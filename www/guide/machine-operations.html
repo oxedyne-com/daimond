@@ -23,8 +23,8 @@
 		<nav class="site-nav" aria-label="Guide pages">
 			<a href="index.html">Start here</a>
 			<a href="interface.html">The interface</a>
-			<a href="chats-and-diamonds.html">Chats &amp; Diamonds</a>
-			<a href="capps.html">A Diamond&rsquo;s page</a>
+			<a href="chats-and-diamonds.html">Chats &amp; diamonds</a>
+			<a href="capps.html">A diamond&rsquo;s page</a>
 			<a href="email-web-files.html">Files, email &amp; the web</a>
 			<a href="machine-operations.html" aria-current="page">Your computer</a>
 			<a href="runner.html">Helpers &amp; where turns run</a>
@@ -72,7 +72,7 @@ flatpak list 2&gt;/dev/null | grep -Ei 'chrom|brave|vivaldi|edge'</code></pre>
 	<h3 id="s5">3. Linux, with Landlock in the kernel</h3>
 	<p>The compartment is built from Landlock, which fences files, and seccomp, which filters system calls, and both are Linux kernel features. Landlock arrived in Linux 5.13, and <a href="#s29">Unconventional systems</a> sets out what older and unusual machines get. The hand builds and runs on macOS and Windows, but reports that it can fence nothing, and Daimond then refuses every command instead of running one unfenced. The refusal names what is missing. Neither platform’s fence is built.</p>
 
-	<div class="note stop"><strong>Installing a different browser? Your account does not come with you.</strong> Your account is a signing key held in the browser you made it in. The passphrase does not recreate that key, it only decrypts the copy already stored there, so the same passphrase in a fresh browser starts a <em>different</em> account, with its own credits and no Pro. The key has to travel, so before you retire the old browser do one of these in it: <strong><span class="ui">Link another device</span></strong>, then type the code in the new browser; add a passkey; or <strong><span class="ui">Export a backup</span></strong>, which writes the chats, Diamonds and workspace files together with the key, still wrapped under your passphrase, for a browser that has no account of its own yet. See <a href="sync.html">More than one device</a> and <a href="accounts.html">Safety &amp; fixes</a>.</div>
+	<div class="note stop"><strong>Installing a different browser? Your account does not come with you.</strong> Your account is a signing key held in the browser you made it in. The passphrase does not recreate that key, it only decrypts the copy already stored there, so the same passphrase in a fresh browser starts a <em>different</em> account, with its own credits and no Pro. The key has to travel, so before you retire the old browser do one of these in it: <strong><span class="ui">Link another device</span></strong>, then type the code in the new browser; add a passkey; or <strong><span class="ui">Export a backup</span></strong>, which writes the chats, diamonds and workspace files together with the key, still wrapped under your passphrase, for a browser that has no account of its own yet. See <a href="sync.html">More than one device</a> and <a href="accounts.html">Safety &amp; fixes</a>.</div>
 
 	<div class="note"><strong>Not the same thing as the Machine workspace.</strong> The <span class="ui">Machine</span> chip in the <a href="email-web-files.html">Workspace</a> panel gives Daimond read and write access to a real folder on your disk. Machine Operations lets it <strong>run programs</strong>. They are two separate grants, made separately. Operations does need the workspace, because a command runs against a real folder, so the workspace has to be one, and the same one.</div>
 
@@ -92,7 +92,7 @@ flatpak list 2&gt;/dev/null | grep -Ei 'chrom|brave|vivaldi|edge'</code></pre>
 			<p>That one run does three things, each with a failure you would otherwise meet later.</p>
 			<ul>
 				<li><strong>Writes your folder into <code translate="no">root.txt</code></strong>, at <code translate="no">~/.local/share/daimond/hand/journal/root.txt</code>. The hand will not serve a page until it has been told the folder, and it never guesses, because a guessed folder is a guess about what a command may touch. To change it later, run the same command with a different folder.</li>
-				<li><strong>Creates that journal directory at mode 700.</strong> It holds the record of every command every Diamond has run, so the hand refuses to write it anywhere other users can read. A directory made under the usual default permissions is 755, and the hand would not start.</li>
+				<li><strong>Creates that journal directory at mode 700.</strong> It holds the record of every command every diamond has run, so the hand refuses to write it anywhere other users can read. A directory made under the usual default permissions is 755, and the hand would not start.</li>
 				<li><strong>Writes the registration</strong> into every usable browser profile, and prints which. That file is what lets the browser start the hand at all. It is JSON and nothing else, so the script builds nothing, downloads nothing, starts nothing and needs no root.</li>
 			</ul>
 			<div class="note"><strong><code translate="no">DAIMOND_HAND_ROOT</code> is a trap.</strong> The environment variable does the same job as <code translate="no">root.txt</code> and takes precedence, and it will not work, because your browser starts the hand with <em>its own</em> environment, and yours is not in it. Use the file.</div>
@@ -182,12 +182,12 @@ flatpak list 2&gt;/dev/null | grep -Ei 'chrom|brave|vivaldi|edge'</code></pre>
 	<p>Operations that touch only the repository do work. <code translate="no">git status</code>, <code translate="no">diff</code>, <code translate="no">log</code>, <code translate="no">add</code> and a local <code translate="no">commit</code> are ordinary file operations inside the folder you granted.</p>
 
 	<h3 id="s23">A toolchain needs a grant</h3>
-	<p>Open a Diamond and the Workspace panel shows a <strong>Toolchains</strong> row with five buttons: <span class="ui" translate="no">Rust</span>, <span class="ui" translate="no">Node</span>, <span class="ui" translate="no">Python</span>, <span class="ui" translate="no">Go</span>, <span class="ui" translate="no">Git</span>. All five start off, so <code translate="no">cargo</code> is refused until you turn Rust on, because <code translate="no">~/.cargo</code> and <code translate="no">~/.rustup</code> sit under your home directory, and your home directory is not in the compartment.</p>
+	<p>Open a diamond and the Workspace panel shows a <strong>Toolchains</strong> row with five buttons: <span class="ui" translate="no">Rust</span>, <span class="ui" translate="no">Node</span>, <span class="ui" translate="no">Python</span>, <span class="ui" translate="no">Go</span>, <span class="ui" translate="no">Git</span>. All five start off, so <code translate="no">cargo</code> is refused until you turn Rust on, because <code translate="no">~/.cargo</code> and <code translate="no">~/.rustup</code> sit under your home directory, and your home directory is not in the compartment.</p>
 	<p><span class="ui" translate="no">Git</span> is the odd one out. <code translate="no">git</code> is already in the read-only base, which is why <code translate="no">git status</code> and a local commit work with no grant. The button adds your own configuration, read-only, meaning your name, your email, and the hooks <code translate="no">core.hooksPath</code> names. Your stored passwords and <code translate="no">~/.ssh</code> are denied by name.</p>
 	<p>Three things about that are deliberate.</p>
 	<ul>
 		<li><strong>It is never inferred from what was asked to run.</strong> A compartment that widened itself to fit the requested binary would be a compartment the model chooses, and the whole arrangement depends on the compartment being something the model cannot choose. <code translate="no">cargo</code> is reachable because you granted the Rust toolchain, and for no other reason.</li>
-		<li><strong>It is per Diamond.</strong> A grant belongs to one Diamond, alongside the folders that Diamond holds, and is taken back the same way.</li>
+		<li><strong>It is per diamond.</strong> A grant belongs to one diamond, alongside the folders that diamond holds, and is taken back the same way.</li>
 		<li><strong>It is a short list of named directories, never the home directory.</strong> Rust grants <code translate="no">~/.cargo/bin</code> and <code translate="no">~/.rustup</code> read-only, makes the registry and caches writable because cargo cannot build without writing them, and <em>denies</em> <code translate="no">~/.cargo/credentials.toml</code>, where your crates.io token is written. The other four are drawn the same way, each leaving out the file that holds a secret.</li>
 	</ul>
 
@@ -217,7 +217,7 @@ flatpak list 2&gt;/dev/null | grep -Ei 'chrom|brave|vivaldi|edge'</code></pre>
 		</div>
 	</div>
 
-	<p><strong>A rung never changes what is possible.</strong> The compartment a command runs inside, the system-call filter under it, the folders a Diamond is scoped to, a granted toolchain, the marking on content from outside, and the journal are identical on all three. A rung changes only what you are asked.</p>
+	<p><strong>A rung never changes what is possible.</strong> The compartment a command runs inside, the system-call filter under it, the folders a diamond is scoped to, a granted toolchain, the marking on content from outside, and the journal are identical on all three. A rung changes only what you are asked.</p>
 	<p>The rung is a word in the chat header beside the model, because a mode you have to remember is one you will be wrong about. Click it to change it, or press <kbd>Ctrl</kbd> <kbd>K</kbd> (<kbd>Cmd</kbd> <kbd>K</kbd> on a Mac) and type the rung's name.</p>
 
 	<h2 id="s30">Unconventional systems</h2>
@@ -280,8 +280,8 @@ flatpak list 2&gt;/dev/null | grep -Ei 'chrom|brave|vivaldi|edge'</code></pre>
 	<nav aria-label="Guide pages">
 		<a href="index.html">Start here</a>
 		<a href="interface.html">The interface</a>
-		<a href="chats-and-diamonds.html">Chats &amp; Diamonds</a>
-		<a href="capps.html">A Diamond&rsquo;s page</a>
+		<a href="chats-and-diamonds.html">Chats &amp; diamonds</a>
+		<a href="capps.html">A diamond&rsquo;s page</a>
 		<a href="email-web-files.html">Files, email &amp; the web</a>
 		<a href="machine-operations.html">Your computer</a>
 		<a href="runner.html">Helpers &amp; where turns run</a>

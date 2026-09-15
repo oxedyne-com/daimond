@@ -54,7 +54,7 @@
 //   --break alwaysraise    "nothing stands out" raises a tile too
 //   --break posturecapture the producer captures a turn run under the posture
 //   --break offall         every activity action may run off screen
-//   --break socialbelt     no Diamond's publishing is withheld
+//   --break socialbelt     a daimon may publish in the user's name again
 //   --break workersok      no Diamond's worker cap is withheld
 //
 // Which break reddens which, so a reader can see that nothing here is decorative
@@ -82,7 +82,7 @@
 //   19 the tick sends "Do it: …" ..... ┐ kindrefused, seedoff
 //   20 and lands in that chat ........ ┘
 //   21 the cross empties the panel ....... kindrefused, seedoff
-//   22 withheld from the Optimiser alone . socialbelt
+//   22 withheld from every daimon ........ socialbelt
 //   23 the egress door denies ............ socialbelt, seedoff
 //   24 the Social panel is told why ...... socialbelt, seedoff
 //   25 the worker cap is zero ............ workersok
@@ -184,10 +184,13 @@ const BREAKS = {
 		what: 'every activity action may run off screen, asked for or not',
 		from: "\t\tif (!ta || ta.kind !== 'activity' || ta.offScreen !== true) return false;",
 		to:   "\t\tif (!ta || ta.kind !== 'activity') return false;" },
+	// WIDENED 2026-09-15 with the rule it breaks: publishing was withheld from the Optimiser
+	// alone, by a clause in `WITHHELD`; it is now withheld from every Diamond's daimon by
+	// `diamondMayPublish` itself, so the break is the sentence that used to stand there.
 	socialbelt: { file: 'js/daimond.js',
-		what: 'no Diamond’s publishing is withheld',
-		from: "\t\treturn !w || w.publish !== false;",
-		to:   "\t\treturn true;" },
+		what: 'a daimon may publish in the user’s name again',
+		from: "\t\treturn false;\n\t}\n\n\t/// How many workers may this Diamond's daimon dispatch at once?",
+		to:   "\t\treturn true;\n\t}\n\n\t/// How many workers may this Diamond's daimon dispatch at once?" },
 	workersok: { file: 'js/daimond.js',
 		what: 'no Diamond’s worker cap is withheld',
 		from: "\t\treturn (w && typeof w.workers === 'number') ? w.workers : Infinity;",
@@ -609,14 +612,20 @@ try {
 		out.afterwards = String(window.DaimondPublishGuard() || '');
 		return out;
 	}, ids);
-	check(pub.optQuiet === false && pub.helpQuiet === true,
-		'publishing is withheld from the Optimiser and from no other Diamond',
+	// WIDENED 2026-09-15, and the sentence is the finding: this was withheld from the Optimiser
+	// alone, on the ground that the Optimiser is the Diamond nobody is watching. Then the
+	// owner's own Daimond-dev daimon -- a Diamond he was talking to -- called `social_send` with
+	// a comment on the forge in his name, and the dialog sat on a tab he was not looking at. No
+	// daimon publishes now; see `diamondMayPublish` in www/js/daimond.js.
+	check(pub.optQuiet === false && pub.helpQuiet === false,
+		'publishing is withheld from every Diamond\'s daimon, this one included',
 		'optimiser=' + pub.optQuiet + ' help=' + pub.helpQuiet);
 	check(pub.verdict === 'deny',
 		'and the egress door denies its publication even under the autonomous posture',
 		String(pub.verdict));
-	check(/not allowed to publish/i.test(pub.guard) && pub.afterwards === '',
-		'the Social panel is told why, and only while that Diamond is actually running',
+	check(/does not publish in the user's name/i.test(pub.guard)
+			&& /I would post/i.test(pub.guard) && pub.afterwards === '',
+		'the Social panel is told why AND what to do instead, and only while a daimon runs',
 		JSON.stringify(pub.guard.slice(0, 60)) + ' / after: ' + JSON.stringify(pub.afterwards));
 
 	const caps = await p.evaluate((a) => ({

@@ -48,6 +48,8 @@ const chips = () => p.$$eval('#panel-tags .ptag[data-panel]', els => els.map(e =
 	id: e.dataset.panel,
 	on: e.classList.contains('on'),
 	disabled: e.disabled,
+	refused: e.getAttribute('aria-disabled') === 'true',
+	takes: getComputedStyle(e).pointerEvents !== 'none',
 	zone: (e.className.match(/ptag-(rail|stage|dock)/) || [])[1] || null,
 	x: Math.round(e.getBoundingClientRect().left),
 })));
@@ -313,9 +315,18 @@ const seatedNow = () => p.$$eval('#dock .pcol > .panel',
 	// full — and with four dock panels and a four-seat floor, that was every run.
 	check('a dock with no seat left names the chip it cannot honour',
 		full.length > 0, `full: [${full}]`);
-	check('and that chip is disabled rather than silently inert',
-		full.length > 0 && full.every(id => disabled.includes(id)),
-		`full: [${full}] disabled: [${disabled}]`);
+	// `aria-disabled`, NOT `disabled`, and the difference is the whole of it: a
+	// disabled button receives no pointer events, so a chip the full dock has
+	// refused could not be DRAGGED onto a panel to take its place -- which is
+	// the one thing a user with a full dock most wants to do. So the cell asks
+	// for both halves: the chip says it is refused, and it is still something a
+	// hand can pick up. The click stays refused in the handler (`chip` in
+	// js/workspace.js), which `--break disabledchip` of verify_dockdrag holds.
+	const refused = c.filter(x => x.refused).map(x => x.id);
+	check('and that chip says so, and is still something a hand can pick up',
+		full.length > 0 && full.every(id => refused.includes(id))
+			&& c.filter(x => x.refused).every(x => x.takes && !x.disabled),
+		`full: [${full}] refused: [${refused}] disabled: [${disabled}]`);
 	await p.evaluate(() => window.DaimondPanels.setGrid('auto'));
 	await p.waitForTimeout(300);
 }

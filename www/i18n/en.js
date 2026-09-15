@@ -83,7 +83,7 @@
 	// crosses this is rather than a fourth button called Close.
 	'common.close_named':  'Close {name}',
 	'admin.close_drawer':  'Close the Admin panel',
-	'rail.close_rail':     'Close the Diamonds panel',
+	'rail.close_rail':     'Close the diamonds panel',
 	'sheet.close':         'Close the sheet',
 	'pal.close':           'Close the Go to box',
 	'common.dismiss': 'Dismiss',
@@ -144,7 +144,7 @@
 
 	// ── Panel names ────────────────────────────────────────────
 	// Short: they ride in a chip row and a phone tab bar.
-	'panel.rail':    'Diamonds',
+	'panel.rail':    'diamonds',
 	'panel.ai':      'AI',
 	'panel.web':     'Web',
 	'panel.doc':     'Doc',
@@ -197,10 +197,10 @@
 	'pal.hint_current': 'current',
 
 	// ── The rail ───────────────────────────────────────────────
-	'rail.diamonds':             'Diamonds',
+	'rail.diamonds':             'diamonds',
 	'rail.diamonds_help':        'Your saved projects',
-	'rail.new_diamond':          'New Diamond',
-	'rail.unnamed_diamond': 'Unnamed Diamond',
+	'rail.new_diamond':          'New diamond',
+	'rail.unnamed_diamond': 'Unnamed diamond',
 	'rail.chats':                'Chats',
 	'rail.chats_help':           'Your conversations',
 	// What an unnamed chat is called before anything has been said in it. After that
@@ -243,7 +243,7 @@
 	// ── The centre with no chat in it: three steps, in order ───
 	'start.connect':          'Connect a model',
 	'start.say_hello':        'Say hello',
-	'start.keep':             'Keep what works as a Diamond',
+	'start.keep':             'Keep what works as a diamond',
 
 	'home.connect_model':     'Connect a model',
 	'home.connect_note':      'Daimond needs a provider key or credits before it can answer.',
@@ -543,7 +543,7 @@
 	'tile.detail_simple_help': 'The name, whether it is running, and what is waiting.',
 	'tile.detail_max': 'Max',
 	'tile.detail_max_help': 'Models, context, cost, version and when it last moved.',
-	'tile.spend_help': 'What this Diamond has cost, over {turns} turns.',
+	'tile.spend_help': 'What this diamond has cost, over {turns} turns.',
 	'tile.detail_default': 'Default ({what})',
 	'tile.detail_default_help': 'Follow the view set in Appearance, and any change to it.',
 	'tile.detail_note': 'Tiles follow the view unless you set one differently here.',
@@ -551,7 +551,7 @@
 	// ── The models a Diamond runs on, and the context its chats hold ──
 	'tile.dlg_models': 'Models',
 	'tile.model_daimon': 'Daimon',
-	'tile.model_daimon_help': 'The model this Diamond thinks with. The conversation carries over; use Fresh daimon to end it.',
+	'tile.model_daimon_help': 'The model this diamond thinks with. The conversation carries over; use Fresh daimon to end it.',
 	'tile.daimon_reset':      'Fresh daimon',
 	'tile.daimon_reset_help': 'End this daimon’s conversation without folding it into the crystal',
 	'tile.daimon_reset_title': 'Start a fresh daimon?',
@@ -565,7 +565,7 @@
 	'tile.model_vision_help': 'The model a worker runs on when its task names an image, and the model a worker is moved to when the one it is on turns out not to take pictures. Daimond cannot tell in advance which models see, so the choice is yours; it acts on the first refusal.',
 	'tile.model_same_as_text': 'Same as the daimon',
 	'tile.model_none': 'none',
-	'tile.diamond_model_help': 'This Diamond thinks with {model}.',
+	'tile.diamond_model_help': 'This diamond thinks with {model}.',
 	'tile.model_note': 'Applies to the next helper.',
 	'tile.model_change':      'Change',
 	'tile.model_change_help': 'Switch the daimon to the selected model. The conversation carries over.',
@@ -594,7 +594,7 @@
 	'tile.folded':         'Folded',
 	'tile.fold_all':       'Fold all',
 	'tile.folded_help':    'Already folded into "{name}". Fold again to add what is new since.',
-	'tile.fold_all_help':  'Turn into a Diamond',
+	'tile.fold_all_help':  'Turn into a diamond',
 	'tile.dlg_colour':  'Colour',
 	'tile.colour_bg':   'Background',
 	'tile.colour_fg':   'Text',
@@ -606,8 +606,8 @@
 	'gov.faster':      'Spending faster than usual',
 	'gov.per_min':     '{rate}/min',
 	'gov.run_spent':   'This run has spent {spent} of a {budget} pace budget. A large fan-out asks before it runs.',
-	'gov.fanout_body.one':   'This Diamond is about to run {n} agent, at about {total} ({each} each).',
-	'gov.fanout_body.other': 'This Diamond is about to run {n} agents, at about {total} ({each} each).',
+	'gov.fanout_body.one':   'This diamond is about to run {n} agent, at about {total} ({each} each).',
+	'gov.fanout_body.other': 'This diamond is about to run {n} agents, at about {total} ({each} each).',
 	'gov.burst_spent': 'This burst has spent {spent} already.',
 	'gov.would_pass':  'That would pass your {budget} pace budget for one run.',
 	'gov.run_n.one':   'Run {n} agent',
@@ -671,8 +671,8 @@
 	'models.econ_own':             'your key',
 	'models.favourites': 'Favourites',
 	'models.is_default':           'default',
-	'models.model_is_default':     'New chats and Diamonds start on this model.',
-	'models.model_make_default':   'Make this the model new chats and Diamonds start on.',
+	'models.model_is_default':     'New chats and diamonds start on this model.',
+	'models.model_make_default':   'Make this the model new chats and diamonds start on.',
 	'models.model_paid':           'Spends your Daimond balance, via {provider}.',
 	'models.model_own':            'Billed to your own {provider} account.',
 	'models.model_twin':           'Another provider serves a model of this name. This is the {provider} one.',
@@ -853,7 +853,7 @@
 	'beta.tel_title':    'Send usage counts?',
 	'beta.tel_title_on': 'Usage counts',
 	'beta.tel_lead':     'The test is far more useful to us if Daimond can report how it is being used. It sends numbers only: which of twenty things happened, how many milliseconds into the session, and one count each — how long a turn took, which panel was opened, how many errors were thrown.',
-	'beta.tel_never':    'It never sends words. Not a message, not a file name, not a Diamond’s name, not a path, not an error message. There is no box for them, and our server refuses a report that carries any.',
+	'beta.tel_never':    'It never sends words. Not a message, not a file name, not a diamond’s name, not a path, not an error message. There is no box for them, and our server refuses a report that carries any.',
 	'beta.tel_who':      'It goes to Oxedyne on the account your passcode made, so we can see which numbers are yours and come back and ask you about them.',
 	'beta.tel_free':     'Saying no costs you nothing. Your account, your credits and everything else stay exactly as they are, and nothing in the app behaves differently.',
 	'beta.tel_more':     'What is sent, in full',
@@ -917,8 +917,8 @@
 	'chat.fold_now_help': 'Summarise earlier messages',
 	'say.more':             'the detail',
 	'say.less':             'hide the detail',
-	'rail.dupes_trashed':   'Removed {n} duplicate copies of the built-in Diamonds — an old sync made them. They are in the Trash if you want one back.',
-	'rail.dupes_kept':      'There are {n} more duplicate built-in Diamonds, but you have worked in them, so nothing was removed. Delete the ones you do not want.',
+	'rail.dupes_trashed':   'Removed {n} duplicate copies of the built-in diamonds — an old sync made them. They are in the Trash if you want one back.',
+	'rail.dupes_kept':      'There are {n} more duplicate built-in diamonds, but you have worked in them, so nothing was removed. Delete the ones you do not want.',
 	// A question the model put, answered with one tap. `Chose: ` and `Other: ` are
 	// NOT here: they are the wire markers the answer travels under, read by the model
 	// and not by a person, so they are the same in every language on purpose.
@@ -937,7 +937,7 @@
 	'wire.tools_help':    'Written from the tools this conversation actually holds, so it cannot promise one that is not there.',
 	'wire.machine_help':  'Written from the same fence that enforces it, so the description and the rule cannot disagree.',
 	'wire.schemas_help':  'The full JSON schema of every tool, sent on every single request. Usually the largest thing in the payload.',
-	'wire.diamond_help':  'Composed for this turn alone: the Diamond\'s own folder, what the paperclip has attached, and its memory — crystal.json — as it stands. The capp beside it is named, never carried.',
+	'wire.diamond_help':  'Composed for this turn alone: the diamond\'s own folder, what the paperclip has attached, and its memory — crystal.json — as it stands. The capp beside it is named, never carried.',
 	'wire.standing_help': 'Your DAIMOND.md, appended to the system message of every turn in every conversation.',
 	'chat.copy_all_aria':   'Copy the conversation',
 	'wire.chip':          'Wire',
@@ -951,7 +951,7 @@
 	'wire.tools_why':     'from the registry',
 	'wire.machine':       'This computer',
 	'wire.machine_why':   'from the fence',
-	'wire.diamond':       'This Diamond',
+	'wire.diamond':       'This diamond',
 	'wire.diamond_why':   'this turn only',
 	'wire.standing':      'Standing instructions',
 	'wire.standing_why':  'yours',
@@ -1070,30 +1070,30 @@
 	// existing one, and triggered actions are deliberately not carried, because a
 	// trigger fires with nobody pressing anything.
 	'tmpl.section':               'Template',
-	'tmpl.dlg_help':              'Saves the page and settings, not the contents. Opens as a new Diamond.',
+	'tmpl.dlg_help':              'Saves the page and settings, not the contents. Opens as a new diamond.',
 	'tmpl.with_conversation':      'Include what it has recorded',
-	'tmpl.with_conversation_help': 'Carries everything instead: the memory, the kept conversation and a capp’s own entries. Still a template, so it still opens as a new Diamond.',
+	'tmpl.with_conversation_help': 'Carries everything instead: the memory, the kept conversation and a capp’s own entries. Still a template, so it still opens as a new diamond.',
 	'tmpl.save':                  'Save as template…',
 	'tmpl.saving':                'Making the template…',
-	'tmpl.saved':                 'Saved as {file}. Anybody you give it to opens it as a Diamond of their own, from the Share view of the Social panel.',
+	'tmpl.saved':                 'Saved as {file}. Anybody you give it to opens it as a diamond of their own, from the Share view of the Social panel.',
 	'tmpl.panel_head':            'Open a template',
-	'tmpl.panel_help':            'A template is a Diamond’s shape without its contents: the page it draws through and its automation, and none of what it has recorded. It opens as a NEW Diamond and can never write over one you already have. Triggered actions are never carried, because a trigger fires with nobody pressing anything.',
+	'tmpl.panel_help':            'A template is a diamond’s shape without its contents: the page it draws through and its automation, and none of what it has recorded. It opens as a NEW diamond and can never write over one you already have. Triggered actions are never carried, because a trigger fires with nobody pressing anything.',
 	'tmpl.panel_open':            'Open a template file…',
-	'tmpl.opened':                'Opened as a new Diamond, “{name}”. {n} file(s) arrived.',
+	'tmpl.opened':                'Opened as a new diamond, “{name}”. {n} file(s) arrived.',
 	'tmpl.unnamed':               'this template',
 	// The consent question. It says what it is (a page — a program), what cannot
 	// be told about it (a template carries no signature and no name, unlike a
 	// share), which files, and what declining does — which here is nothing at all,
 	// because the engine's door has no half-landing behind it.
 	'tmpl.code_title':            'This template contains code',
-	'tmpl.code_body':             '“{name}” includes a page: a program written by somebody else, which Daimond will run when you open it. A template carries no signature and nobody’s name, so nothing here can tell you where it came from — only the person who gave you the file can.\n\nWhat would be added: {files}\n\nIt opens as a NEW Diamond and can never write over one you already have. Declining writes nothing at all.',
+	'tmpl.code_body':             '“{name}” includes a page: a program written by somebody else, which Daimond will run when you open it. A template carries no signature and nobody’s name, so nothing here can tell you where it came from — only the person who gave you the file can.\n\nWhat would be added: {files}\n\nIt opens as a NEW diamond and can never write over one you already have. Declining writes nothing at all.',
 	'tmpl.code_ok':               'Accept the page and open it',
 	'tmpl.declined':              'The page was not accepted, so nothing has been opened.',
 	'tmpl.err_empty':             'That file is empty, so there is nothing to open.',
 	'tmpl.err_not_template':      'That file is not a Daimond template.',
 	'tmpl.err_file_huge':         'That file is {size}, which is larger than any template can be, so it was not opened.',
 	'tmpl.err_no_file':           'No file was chosen, so nothing was opened.',
-	'tmpl.err_nothing':           'There is nothing to save: that Diamond made an empty template.',
+	'tmpl.err_nothing':           'There is nothing to save: that diamond made an empty template.',
 	'tmpl.err_no_door':           'This build can read a template but has nowhere to open one.',
 
 	// ── The Web panel ──────────────────────────────────────────
@@ -1167,11 +1167,11 @@
 	'agents.resume_all':     'Resume all paused agents',
 	'agents.stop_all':       'Stop all agents',
 	'agents.clear_finished': 'Clear finished agents',
-	'agent.model_vision':    'This task names an image, so it runs on the Diamond’s image model, {model}.',
-	'agent.model_vision_fallback': 'This task names an image, but no image model is set for this Diamond, so it runs on the text model, {model}.',
+	'agent.model_vision':    'This task names an image, so it runs on the diamond’s image model, {model}.',
+	'agent.model_vision_fallback': 'This task names an image, but no image model is set for this diamond, so it runs on the text model, {model}.',
 	'agent.model_rerouted':   '{from} cannot be shown pictures, so this worker moved to {to}.',
 	'agent.model_blind':      '{model} cannot be shown pictures, so the picture was left out.',
-	'agent.model_blind_none': '{model} cannot be shown pictures and this Diamond has no image model set.',
+	'agent.model_blind_none': '{model} cannot be shown pictures and this diamond has no image model set.',
 	// ── Pending ────────────────────────────────────────────────
 	'pending.empty':        'Nothing waiting.',
 	'pending.sort':         'Sort',
@@ -1192,12 +1192,12 @@
 	'pending.cancel_named': 'Drop it: {what}',
 	'pending.noted':        'Noted, and taken off the list.',
 	'pending.opened':       'Opened for sending. It stays here until it is sent.',
-	'pending.diamond_gone': 'The Diamond that raised this is gone, so there is nobody to discuss it with.',
+	'pending.diamond_gone': 'The diamond that raised this is gone, so there is nobody to discuss it with.',
 	'pending.discuss_prompt': 'We need to discuss this further before I approve it: “{headline}”',
 	// A finding one Diamond's daimon made about how the account is being worked,
 	// raised by `proposeFromTurn` after a triggered turn. Nothing is held open by
 	// one, so the tick is a fresh instruction rather than a permission.
-	'pending.proposal.note': 'Found by its Diamond. “Do it” asks that Diamond to carry it out.',
+	'pending.proposal.note': 'Found by its diamond. “Do it” asks that diamond to carry it out.',
 	'pending.proposal_do':   'Do it: {headline}',
 
 	// A dispatched agent's request for permission, raised here because there was
@@ -1236,7 +1236,7 @@
 	// Built by concatenation at daimond.js's `tOr('agents.status_' + run.status,
 	// run.status)`, so a status with no key here reaches the screen as the raw
 	// internal word -- which is what it used to do for all seven.
-	// i18n-family: agents.status_ = queued running paused done error stopped interrupted
+	// i18n-family: agents.status_ = queued running paused done error stopped interrupted capped spend_cap
 	'agents.status_queued':      'queued',
 	'agents.status_running':     'running',
 	'agents.status_paused':      'paused',
@@ -1244,6 +1244,8 @@
 	'agents.status_error':       'failed',
 	'agents.status_stopped':     'stopped',
 	'agents.status_interrupted': 'cut off',
+	'agents.status_capped':      'capped',
+	'agents.status_spend_cap':   'spend capped',
 
 	'agents.search':         'Search agents',
 	'agents.search_help':    'Search',
@@ -1528,7 +1530,7 @@
 	// A refused parcel. Say what is too large, and what usually makes it so:
 	// "too large" on its own leaves nothing to do about it.
 	'sync.too_big':        'Sync paused',
-	'sync.too_big_reason': 'This device’s parcel is too large to send, so its work has stopped travelling. Usually one very large Diamond or workspace file is the cause; shrink or remove it and sync resumes on its own.',
+	'sync.too_big_reason': 'This device’s parcel is too large to send, so its work has stopped travelling. Usually one very large diamond or workspace file is the cause; shrink or remove it and sync resumes on its own.',
 	// A Diamond the parcel had no room for. Named, because the only thing the user can
 	// do about it is find that Diamond, and said aloud rather than logged, because
 	// nothing else on screen would look any different.
@@ -1671,12 +1673,12 @@
 	'menu.language_pending': 'not translated yet',
 	'menu.currency':      'Currency',
 	'menu.currency_help': 'Billing is in US dollars.',
-	'menu.this_diamond':  'This Diamond',
+	'menu.this_diamond':  'This diamond',
 	'menu.arrangement_update': 'Update the saved arrangement',
 	'menu.arrangement_keep':   'Keep this arrangement with {name}',
-	'menu.arrangement_keep_this': 'Keep this arrangement with this Diamond',
+	'menu.arrangement_keep_this': 'Keep this arrangement with this diamond',
 	'menu.arrangement_forget': 'Forget it',
-	'menu.arrangement_note':   'Remember which panels this Diamond uses.',
+	'menu.arrangement_note':   'Remember which panels this diamond uses.',
 
 	// ── Text-size steps ────────────────────────────────────────
 	// i18n-indirect: workspace.js STEP_KEYS[i] = size.small size.normal size.large size.larger
@@ -1684,6 +1686,14 @@
 	'size.normal': 'Normal',
 	'size.large':  'Large',
 	'size.larger': 'Larger',
+
+	// ── Dragging a panel into a slot of the Dock ───────────────
+	'dock.drag':      'Drag to move',
+	'dock.drop_close': 'Drop to close',
+	'dock.keys':      'Arrows move, Enter places, Esc cancels',
+	'dock.moved':     '{name} moved',
+	'chip.reorder':   'Hold to reorder',
+	'menu.dock_reset': 'Reset',
 
 	// ── Dock grids ─────────────────────────────────────────────
 	// i18n-indirect: workspace.js GRID_KEYS[k] || 'dock.automatic' = dock.one_column dock.2x2 dock.2x3 dock.3x2 dock.automatic
@@ -1856,7 +1866,7 @@
 		'tools.cap.dispatch.name':   'Sending workers out',
 		'tools.cap.dispatch.blurb':  'Daimond breaks a large job into bounded tasks and sends a worker to each, several at a time, then folds what they bring back into one answer.',
 		'tools.cap.graph.name':      'How your work relates',
-		'tools.cap.graph.blurb':     'Daimond reads and records the relations between your Diamonds, files, pages and chats — what supersedes what, what produced what.',
+		'tools.cap.graph.blurb':     'Daimond reads and records the relations between your diamonds, files, pages and chats — what supersedes what, what produced what.',
 		'tools.cap.email.name':      'Your email',
 		'tools.cap.email.blurb':     'Daimond reads the mailboxes you have synced to this device — listing them, finding a message by who it is from or its subject, and reading one in full — and writes a draft reply for you to review. It never sends: only you can press Send.',
 		'tools.cap.other.name':      'Not yet described',
@@ -1864,8 +1874,8 @@
 
 
 	// ── The rail's Diamonds and chats ──────────────────────────
-	'rail.no_diamonds':      'No Diamonds yet.',
-	'rail.no_match':         'No Diamonds match.',
+	'rail.no_diamonds':      'No diamonds yet.',
+	'rail.no_match':         'No diamonds match.',
 	'rail.no_chats':         'No chats yet.',
 	// A chat tile with nothing behind it is two different things: one nobody
 	// said anything in, and one whose transcript is on another device. The
@@ -1874,10 +1884,10 @@
 	'rail.not_synced_help':  'This conversation is on another of your devices and has not arrived here yet.',
 	// Shown under the search box when nothing is tagged, so that an empty
 	// filing system cannot be read as a missing one.
-	'rail.tag_hint':         'No tags yet. Tag a Diamond and filter chips appear here.',
-	'rail.tag_hint_help':    'Open a Diamond, then Tags on its crystal. Starter tags are offered there: {tags}.',
+	'rail.tag_hint':         'No tags yet. Tag a diamond and filter chips appear here.',
+	'rail.tag_hint_help':    'Open a diamond, then Tags on its crystal. Starter tags are offered there: {tags}.',
 	'rail.dblclick_rename':  'Double-click to rename',
-	'rail.rename_diamond':   'Rename Diamond',
+	'rail.rename_diamond':   'Rename diamond',
 	'rail.rename':           'Rename',
 	'rail.rename_failed':    'Rename failed',
 	'rail.delete_failed':    'Delete failed',
@@ -1885,13 +1895,13 @@
 	'rail.name':             'Name',
 	'rail.model':            'Model',
 	'rail.worker_model':     'Helper model',
-	'rail.worker_model_help': 'The daimon dispatches workers several at a time. Left as it is, they run on the Diamond’s own model.',
-	'rail.err_name':         'Give the Diamond a name.',
-	'rail.err_model':        'Choose a model for this Diamond to think with.',
+	'rail.worker_model_help': 'The daimon dispatches workers several at a time. Left as it is, they run on the diamond’s own model.',
+	'rail.err_name':         'Give the diamond a name.',
+	'rail.err_model':        'Choose a model for this diamond to think with.',
 	'rail.err_no_key':       'That provider has no readable key yet. Unlock, or add one.',
-	'rail.err_no_key_worker': 'The workers’ provider has no readable key yet, so they would fall back to the Diamond’s own model. Unlock the key, or choose another provider.',
-	'rail.create_failed':    'Could not create Diamond',
-	'rail.created_unreadable': 'Diamond created, but not readable',
+	'rail.err_no_key_worker': 'The workers’ provider has no readable key yet, so they would fall back to the diamond’s own model. Unlock the key, or choose another provider.',
+	'rail.create_failed':    'Could not create diamond',
+	'rail.created_unreadable': 'A diamond was created, but not readable',
 	'rail.created_unreadable_body': '"{name}" was written but could not be read back, so it is not in the rail. Reload the page. If it is still missing, this device’s storage is refusing to serve what it accepted.',
 
 	// ── When a chat happened, and keeping it ───────────────────
@@ -1914,9 +1924,9 @@
 	// The way across, offered on the tile and again in the trash. The body is
 	// the one place the difference between a chat and a Diamond is stated.
 	'tile.keep':             'Keep',
-	'tile.keep_help':        'Keep as a Diamond',
-	'keep.title':            'Keep as a Diamond',
-	'keep.body':             'Name it, and this conversation is kept whole inside it. Chats expire; Diamonds do not.',
+	'tile.keep_help':        'Keep as a diamond',
+	'keep.title':            'Keep as a diamond',
+	'keep.body':             'Name it, and this conversation is kept whole inside it. Chats expire; diamonds do not.',
 	'keep.ok':               'Keep it',
 	'keep.gone':             'That chat is no longer here',
 	'keep.gone_body':        'It was destroyed on this device or another one. Nothing was made.',
@@ -1928,7 +1938,7 @@
 	// they are appended to an action in the accessible name — "Pause Alpha —
 	// running" — and a capital mid-sentence would read as a second label.
 	'pause.everything':      'Everything',
-	'pause.everything_help': 'Pause or resume everything that can spend: every Diamond, every chat, the workers, the mailboxes and any page fetched for you.',
+	'pause.everything_help': 'Pause or resume everything that can spend: every diamond, every chat, the workers, the mailboxes and any page fetched for you.',
 	// {name} holds two different kinds of thing and no spacing suits both, so
 	// this has a known rough edge in ja, zh-Hans and fr, and it is left alone
 	// deliberately. It takes either a user-named Diamond or chat -- usually
@@ -1984,30 +1994,30 @@
 
 	// ── Tags ───────────────────────────────────────────────────
 	'tag.only_agents':   'Show only agents tagged "{tag}"',
-	'tag.only_diamonds': 'Show only Diamonds tagged "{tag}"',
+	'tag.only_diamonds': 'Show only diamonds tagged "{tag}"',
 	'tag.clear_filter':  'Clear the "{tag}" filter',
 	'tag.remove':        'Remove "{tag}"',
 	'tag.add':           'Add "{tag}"',
 	'tag.starters': 'person, project, topic, org',
 	'tag.add_btn':       'Add',
 	'tag.add_ph':        'Add a tag',
-	'tag.on_diamond':    'On this Diamond',
+	'tag.on_diamond':    'On this diamond',
 	'tag.all':           'Suggested',
-	'tag.all_used':      'Every tag you have is on this Diamond already.',
+	'tag.all_used':      'Every tag you have is on this diamond already.',
 	'tag.none_yet':      'No tags yet.',
 	'tag.save_failed':   'Could not save the tags',
 	// The rail's boolean filter: the tags wanted, the tags refused, and how two
 	// or more wanted tags combine. A chip in the rail cycles off, wanted,
 	// refused, off; a chip in the summary comes out of the filter altogether.
-	'tag.exclude_next':  'Showing Diamonds tagged "{tag}". Click again to hide them.',
-	'tag.clear_exclude': 'Stop hiding Diamonds tagged "{tag}"',
+	'tag.exclude_next':  'Showing diamonds tagged "{tag}". Click again to hide them.',
+	'tag.clear_exclude': 'Stop hiding diamonds tagged "{tag}"',
 	'tag.not_tagged':    'Not tagged "{tag}"',
 	// i18n-indirect: daimond.js m[1] = tag.mode_all tag.mode_any
 	// i18n-indirect: daimond.js m[2] = tag.mode_all_help tag.mode_any_help
 	'tag.mode_all':      'All',
 	'tag.mode_any':      'Any',
-	'tag.mode_all_help': 'Show only Diamonds carrying every one of these tags',
-	'tag.mode_any_help': 'Show Diamonds carrying any one of these tags',
+	'tag.mode_all_help': 'Show only diamonds carrying every one of these tags',
+	'tag.mode_any_help': 'Show diamonds carrying any one of these tags',
 	'tag.mode_aria':     'How the chosen tags combine',
 	'tag.clear_all':     'Clear',
 	'tag.clear_all_help': 'Take every tag out of the filter',
@@ -2025,14 +2035,14 @@
 	// Deleting a tag from the pool, which takes it off every Diamond that carries it.
 	'tag.delete_help':        'Delete the tag "{tag}" everywhere',
 	'tag.delete_title':       'Delete this tag?',
-	'tag.delete_body_used.one':   'Delete the tag "{tag}"? It comes off the {n} Diamond carrying it. Nothing else about that Diamond changes.',
-	'tag.delete_body_used.other': 'Delete the tag "{tag}"? It comes off all {n} Diamonds carrying it. Nothing else about them changes.',
-	'tag.delete_body_unused': 'Delete the tag "{tag}"? No Diamond carries it, so this only takes it off the list.',
+	'tag.delete_body_used.one':   'Delete the tag "{tag}"? It comes off the {n} diamond carrying it. Nothing else about that diamond changes.',
+	'tag.delete_body_used.other': 'Delete the tag "{tag}"? It comes off all {n} diamonds carrying it. Nothing else about them changes.',
+	'tag.delete_body_unused': 'Delete the tag "{tag}"? No diamond carries it, so this only takes it off the list.',
 	'tag.delete_ok':          'Delete the tag',
 	'tag.deleted':            'Tag "{tag}" deleted.',
-	'tag.deleted_from.one':   'Tag "{tag}" deleted from {n} Diamond.',
-	'tag.deleted_from.other': 'Tag "{tag}" deleted from {n} Diamonds.',
-	'tag.editor_note':   'Tags file this Diamond in the rail. They are never sent to a model and never enter the crystal.',
+	'tag.deleted_from.one':   'Tag "{tag}" deleted from {n} diamond.',
+	'tag.deleted_from.other': 'Tag "{tag}" deleted from {n} diamonds.',
+	'tag.editor_note':   'Tags file this diamond in the rail. They are never sent to a model and never enter the crystal.',
 
 	// ── Starting and interrupting a turn ───────────────────────
 	'chat.choose_model':   'Choose a model to start this chat.',
@@ -2141,25 +2151,25 @@
 
 	// ── Folding a chat into a Diamond ──────────────────────────
 	'fold.nothing':          'Nothing to fold',
-	'fold.chat_empty':       'This chat is empty. Send a message first, then fold it into a Diamond.',
+	'fold.chat_empty':       'This chat is empty. Send a message first, then fold it into a diamond.',
 	'fold.turns_empty':      'The turns you chose have no content to fold in.',
 	'fold.agent_empty':      'This agent produced no summary to fold.',
 	'fold.into':             'Fold into…',
 	'fold.n_turns_into.one':   'Fold {n} turn into…',
 	'fold.n_turns_into.other': 'Fold {n} turns into…',
-	'fold.no_diamonds':      'No Diamonds yet. Create one:',
-	'fold.new_diamond':      '＋ New Diamond…',
+	'fold.no_diamonds':      'No diamonds yet. Create one:',
+	'fold.new_diamond':      '＋ New diamond…',
 	'fold.connect_first':    'Connect a model first.',
 	'fold.create_and_fold':  'Create and fold',
-	'fold.no_key':           'That Diamond’s provider has no readable key. Unlock, or add one, to fold into it.',
+	'fold.no_key':           'That diamond’s provider has no readable key. Unlock, or add one, to fold into it.',
 	'fold.nothing_new':      'Nothing new to fold',
 	'fold.nothing_new_body': '"{chat}" has not changed since it was folded into "{diamond}".',
 	'fold.proposing':        'Proposing fold…',
-	'fold.busy_title':       'That Diamond is working',
+	'fold.busy_title':       'That diamond is working',
 	'fold.busy_body':        '“{diamond}” has a turn in flight, and a fold rewrites the same crystal. Wait for it to finish, then fold.',
-	'fold.diamond_gone':     'Diamond is gone',
-	'fold.diamond_gone_body': 'The Diamond that dispatched this agent no longer exists.',
-	'fold.diamond_gone_chat_body': 'The Diamond you chose no longer exists; it may have been deleted in another tab. Nothing was folded.',
+	'fold.diamond_gone':     'The diamond is gone',
+	'fold.diamond_gone_body': 'The diamond that dispatched this agent no longer exists.',
+	'fold.diamond_gone_chat_body': 'The diamond you chose no longer exists; it may have been deleted in another tab. Nothing was folded.',
 	'fold.empty_reply':      'The model returned nothing to fold, so nothing was written. Try again.',
 	// One-click commit (owner decision 2026-09-04): a fold writes straight to the
 	// crystal, no Accept/Reject. The version history is the undo path.
@@ -2169,7 +2179,7 @@
 	'fold.proposed_toast':   'Fold proposed. Accept or Reject it below.',
 	'fold.proposed_elsewhere': 'Fold proposed on "{diamond}". Open it to Accept or Reject.',
 	'fold.pending_badge':    'fold waiting',
-	'fold.pending_badge_help': 'A proposed fold is waiting on this Diamond. Open it to accept or reject the change.',
+	'fold.pending_badge_help': 'A proposed fold is waiting on this diamond. Open it to accept or reject the change.',
 	// The fold diff's heading. Four shapes rather than one with glue, because a
 	// language that puts the target first cannot reorder a fragment.
 	'diff.folding_chat':      'Folding "{chat}". Review the change, then Accept or Reject.',
@@ -2193,29 +2203,29 @@
 	// what rides with the turn and is never shown: it is the app's contract with the
 	// page, identical on every such request, and not the user's to word.
 	'crystal.page_ask':       'Change how this page looks: ',
-	'crystal.page_note':      'Change this Diamond\'s PAGE (crystal.html), not its memory (crystal.json). Read crystal.html first, then edit it, and leave crystal.json alone. Keep it self-contained: all CSS and JavaScript inline, images only as data: URIs, no fetch, no external files, no eval. Keep its ready, rendered and height messages, and let rendered name every top-level key of the data that has content. A page may also save files into this Diamond with the save message and read them back with asset, so an interactive page can keep what the user does. What I want: ',
+	'crystal.page_note':      'Change this diamond\'s PAGE (crystal.html), not its memory (crystal.json). Read crystal.html first, then edit it, and leave crystal.json alone. Keep it self-contained: all CSS and JavaScript inline, images only as data: URIs, no fetch, no external files, no eval. Keep its ready, rendered and height messages, and let rendered name every top-level key of the data that has content. A page may also save files into this diamond with the save message and read them back with asset, so an interactive page can keep what the user does. What I want: ',
 	'crystal.history':        'History',
 	'crystal.tags':           'Tags',
 	'crystal.tags_help':      'Tags',
-	'crystal.marks_unread':   'The attachments could not be read, so this turn works only in the Diamond.',
+	'crystal.marks_unread':   'The attachments could not be read, so this turn works only in the diamond.',
 	'crystal.empty':          'The crystal is empty. Steer it below to begin.',
 	'crystal.empty_paren':    '(empty)',
 	'crystal.save_failed':    'Could not save the crystal',
 	'crystal.back':           'Back',
 	'crystal.back_to_form':   'Back to form',
 	'crystal.memory':         'Memory',
-	'crystal.memory_help':    'What this Diamond remembers',
+	'crystal.memory_help':    'What this diamond remembers',
 	'crystal.memory_invalid': 'Not valid JSON. Nothing saved.',
-	// ── What this Diamond knows ────────────────────────────────
+	// ── Memory ──────────────────────────────────────────────────
 	// One view of crystal.json: the card is what opens, the raw file is behind
 	// `crystal.show_raw`. The counts come from REQUIREMENTS.md beside it and are
 	// drawn only where that file exists.
-	'crystal.knows':          'What this Diamond knows',
+	'crystal.knows':          'Memory',
 	'crystal.knows_nothing':  'Nothing yet. Ask below.',
 	'crystal.objectives':     'Objectives',
 	'crystal.open_tasks':     'Open tasks',
 	'crystal.done_tasks':     'Done',
-	'crystal.show_raw':       'Show raw memory',
+	'crystal.show_raw':       'Raw',
 	'crystal.fold_now_help':  'Fold this conversation into what it remembers',
 	// What the daimon pays for this memory: the hot part rides in every round, the rest is
 	// read on demand.
@@ -2233,7 +2243,7 @@
 	'crystal.delta_help':     'The raw input this fold was made from',
 	'crystal.delta_at':       'Delta folded at v{v}',
 	'crystal.read_delta_failed': 'Could not read the delta',
-	'crystal.view_switch':    'Which face of this Diamond',
+	'crystal.view_switch':    'Which face of this diamond',
 	'crystal.view_crystal':   'Crystal',
 	'crystal.view_chat':      'Chat',
 	// Full screen, on the crystal face. The label names the DESTINATION rather
@@ -2250,13 +2260,13 @@
 	// One template ships, and `{name}` is its name rather than a word in the
 	// English: a second template must not need a second set of these.
 	'capp.title':        '{name}',
-	'capp.make_body':    'This makes a Diamond called “{name}” and puts the {name} page inside it. What you record stays in that Diamond, on this device.',
+	'capp.make_body':    'This makes a diamond called “{name}” and puts the {name} page inside it. What you record stays in that diamond, on this device.',
 	'capp.make_ok':      'Make it',
 	// A second one is not a second log, it is a lost one.
-	'capp.exists_body':  'You already have a Diamond called “{name}”, and what you have logged is in it. Making a second one would leave those entries behind.',
+	'capp.exists_body':  'You already have a diamond called “{name}”, and what you have logged is in it. Making a second one would leave those entries behind.',
 	'capp.exists_ok':    'Open it',
-	'capp.missing_body': 'This build of Daimond does not carry the {name} template, so there is nothing to put in a Diamond. Nothing has been made. Ask your daimon for a page instead, or update Daimond and try again.',
-	'capp.page_failed':  'The Diamond was made, but its page could not be written: {why}',
+	'capp.missing_body': 'This build of Daimond does not carry the {name} template, so there is nothing to put in a diamond. Nothing has been made. Ask your daimon for a page instead, or update Daimond and try again.',
+	'capp.page_failed':  'The diamond was made, but its page could not be written: {why}',
 	// Keeping a capp's page up to date. A capp made before capps carried a
 	// version cannot be told apart from one the user has edited, so it is ASKED
 	// rather than replaced — an offer, not a warning. `{name}` is the capp's own
@@ -2277,13 +2287,13 @@
 	// `crystal.page_reset_confirm` is the one that says "the standard one" and it
 	// is a different sentence for a different case. Nothing here may imply the
 	// page comes back empty.
-	'capp.page_reset_confirm': 'Replace this Diamond’s page with the current {name} page? What you have logged is not touched.',
+	'capp.page_reset_confirm': 'Replace this diamond’s page with the current {name} page? What you have logged is not touched.',
 	'crystal.steering':       'Steering…',
-	'crystal.no_key_steer':   'This Diamond’s provider has no readable key. Unlock, or add one, to steer it.',
-	'crystal.page_failed':    'This Diamond’s page did not load, so its data is shown instead.',
-	'crystal.page_partial':   'This Diamond’s page did not show everything it holds, so its data is shown instead.',
+	'crystal.no_key_steer':   'This diamond’s provider has no readable key. Unlock, or add one, to steer it.',
+	'crystal.page_failed':    'This diamond’s page did not load, so its data is shown instead.',
+	'crystal.page_partial':   'This diamond’s page did not show everything it holds, so its data is shown instead.',
 	'crystal.page_reset':     'Reset the page',
-	'crystal.page_reset_confirm': 'Replace this Diamond’s page with the standard one? Its data is not touched.',
+	'crystal.page_reset_confirm': 'Replace this diamond’s page with the standard one? Its data is not touched.',
 	'crystal.ask':            'Ask the daimon to change this page',
 	'crystal.edit_json':      'Edit as JSON',
 	'crystal.json_invalid':   'That is not valid JSON, so nothing was saved.',
@@ -2304,14 +2314,14 @@
 	// ── Artefacts ──────────────────────────────────────────────
 	'arte.count.one':      '{n} artefact',
 	'arte.count.other':    '{n} artefacts',
-	'arte.strip_help':     'What this Diamond produced or consulted',
+	'arte.strip_help':     'What this diamond produced or consulted',
 	'arte.refer_help':     'Refer to this in the steer box',
-	'arte.drop_help':      'Not an artefact of this Diamond',
+	'arte.drop_help':      'Not an artefact of this diamond',
 	'arte.drop_named': 'Drop "{name}" as an artefact',
-	'arte.file_fenced':      'That path is outside what this Diamond may read',
-	'arte.file_fenced_body': 'The fence stopped the read. Grant the folder to this Diamond, or move the file inside one it already has.',
+	'arte.file_fenced':      'That path is outside what this diamond may read',
+	'arte.file_fenced_body': 'The fence stopped the read. Grant the folder to this diamond, or move the file inside one it already has.',
 	'arte.file_gone':      'That file is not there any more',
-	'arte.file_gone_body': '“{path}” is an artefact of this Diamond, but it cannot be read now; it may have been renamed, moved or deleted.',
+	'arte.file_gone_body': '“{path}” is an artefact of this diamond, but it cannot be read now; it may have been renamed, moved or deleted.',
 	'arte.nothing_to_open': 'Nothing to open',
 	'arte.no_viewer':      'This artefact is a \u201c{kind}\u201d, which this version has no viewer for.',
 
@@ -2355,11 +2365,11 @@
 	'dws.count.other':     '{n} items',
 	'dws.none_yet':        'Nothing kept here yet',
 	'dws.mode_all':        'Everything',
-	'dws.mode_diamond':    'This Diamond',
+	'dws.mode_diamond':    'This diamond',
 	'dws.empty':           'No files yet.',
 	// An attachment records the workspace it was made in, so one made on the
 	// machine can say so when the browser sandbox is what is open.
-	'dws.not_here':        'Kept with this Diamond, but it lives {where}, which is not the workspace you have open. Its daimon cannot reach it from here.',
+	'dws.not_here':        'Kept with this diamond, but it lives {where}, which is not the workspace you have open. Its daimon cannot reach it from here.',
 	'dws.in_machine':      'in the folder "{name}" on this machine',
 	'dws.in_browser':      'in the browser workspace',
 	'dws.a_folder':        'a folder',
@@ -2373,14 +2383,14 @@
 	'dws.share_unavailable': 'Can only be shared from a device that can open it',
 	'dws.showing':         'Showing',
 	'dws.reach':           'Reach',
-	'dws.reach_help':      'Folders this Diamond can edit',
+	'dws.reach_help':      'Editable folders',
 	'dws.reach_own':       'its own folder',
 	'dws.reach_search':    'A search that names no path looks in these and nowhere else.',
 	'dws.reach_none':      'This folder only.',
 	'dws.mark_here':       'Add “{name}”',
 	'dws.mark_here_help':  'Add this folder to {name}',
 	'dws.kits':            'Toolchains',
-	'dws.kits_help':       'Toolchains this Diamond may run',
+	'dws.kits_help':       'Runnable toolchains',
 	'dws.kit_on':          'Grant the {kit} toolchain to {name}',
 	'dws.kit_off':         'Take the {kit} toolchain back from {name}',
 	'dws.kit_failed':      'That toolchain grant was not saved',
@@ -2394,37 +2404,37 @@
 	'dws.drop_all_help':   'Take every one of these out of the workspace. The file or folder itself is untouched.',
 
 	// \u2500\u2500 Links between Diamonds \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
-	'link.count.one':      '{n} linked Diamond',
-	'link.count.other':    '{n} linked Diamonds',
+	'link.count.one':      '{n} linked diamond',
+	'link.count.other':    '{n} linked diamonds',
 	'link.strip_help':     'Links',
-	'link.none':           'No links to another Diamond yet.',
+	'link.none':           'No links to another diamond yet.',
 	'link.this':           'this',
 	'link.rel_blank':      'linked',
-	'link.out_help':       'This Diamond \u2192 {rel} \u2192 \u201c{name}\u201d',
-	'link.in_help':        '\u201c{name}\u201d \u2192 {rel} \u2192 this Diamond',
+	'link.out_help':       'This diamond \u2192 {rel} \u2192 \u201c{name}\u201d',
+	'link.in_help':        '\u201c{name}\u201d \u2192 {rel} \u2192 this diamond',
 	'link.open_other':     'Show \u201c{name}\u201d',
 	'link.note_help':      'Show the note on this link',
 	'link.drop':           'Remove link',
 	'link.drop_help':      'Remove this link',
-	'link.drop_confirm':   'Remove the \u201c{rel}\u201d link with \u201c{name}\u201d? Both Diamonds stay; only the link goes.',
+	'link.drop_confirm':   'Remove the \u201c{rel}\u201d link with \u201c{name}\u201d? Both diamonds stay; only the link goes.',
 	'link.drop_failed':    'Could not remove the link',
-	'link.gone':           'That Diamond is not there any more',
-	'link.gone_body':      '“{ref}” is linked from this Diamond, but no Diamond of that id can be read now; it may have been deleted.',
-	'link.gone_name':      '(deleted Diamond)',
+	'link.gone':           'That diamond is not there any more',
+	'link.gone_body':      '“{ref}” is linked from this diamond, but no diamond of that id can be read now; it may have been deleted.',
+	'link.gone_name':      '(deleted diamond)',
 	'link.add_btn':        'Link',
-	'link.add_title':      'Link this Diamond to another',
-	'link.pick_label':     'Diamond',
-	'link.pick_ph':        'Find a Diamond by name',
-	'link.pick_none':      'No Diamond matches that.',
-	'link.pick_empty':     'There is no other Diamond to link to yet.',
+	'link.add_title':      'Link this diamond to another',
+	'link.pick_label':     'diamond',
+	'link.pick_ph':        'Find a diamond by name',
+	'link.pick_none':      'No diamond matches that.',
+	'link.pick_empty':     'There is no other diamond to link to yet.',
 	'link.change_pick':    'Change',
 	'link.rel_label':      'Relation',
 	'link.rel_sug_help':   'Suggestions only; any word will do',
 	'link.rel_use':        'Use \u201c{rel}\u201d',
 	'link.note_label':     'Note',
 	'link.note_ph':        'Why, in a sentence (optional)',
-	'link.direction_note': 'The link runs from this Diamond to the one you pick.',
-	'link.need_target':    'Choose the Diamond to link to first.',
+	'link.direction_note': 'The link runs from this diamond to the one you pick.',
+	'link.need_target':    'Choose the diamond to link to first.',
 	'link.save':           'Add link',
 	'link.graph_open':     'Graph',
 
@@ -2436,8 +2446,8 @@
 	'agents.folded':              'folded',
 	'agents.already_folded':      'Already folded',
 	'agents.already_folded_body': 'This agent\u2019s summary has already been folded into the crystal.',
-	'agents.a_diamond':           'Diamond',
-	'agents.clear_diamond_filter': 'Clear the Diamond filter',
+	'agents.a_diamond':           'diamond',
+	'agents.clear_diamond_filter': 'Clear the diamond filter',
 	'agents.clear_chat_filter':    'Clear the chat filter',
 	'instructions.chip_help':     'Instructions',
 	'instructions.chip_empty':    'Write your instructions',
@@ -2456,15 +2466,15 @@
 	// i18n-indirect: daimond.js r.blurb = role.chat_help role.daimon_help role.worker_help role.reducer_help role.compactor_help
 	'role.chat':            'Chat',
 	'role.chat_help':       'The agent you talk to.',
-	'role.daimon':         'Diamond daimon',
-	'role.daimon_help':    'Keeps a Diamond\u2019s crystal, and dispatches workers.',
+	'role.daimon':         'diamond daimon',
+	'role.daimon_help':    'Keeps a diamond\u2019s crystal, and dispatches workers.',
 	'role.worker':          'Helper',
 	'role.worker_help':     'One task, its own context, reports back.',
 	'role.reducer':         'Crystal update',
 	'role.reducer_help':    'Folds one delta into the crystal.',
 	// ── Triggered actions ──────────────────────────────────────
-	'trig.head':            'When this Diamond acts',
-	'trig.none':            'Nothing set. This Diamond answers when you prompt it and at no other time.',
+	'trig.head':            'When this diamond acts',
+	'trig.none':            'Nothing set. This diamond answers when you prompt it and at no other time.',
 	'trig.activity':        'After {n} minutes of your activity',
 	'trig.mail':            'When mail arrives in {folder} ({mailbox})',
 	'trig.edit':            'Edit this action',
@@ -2478,7 +2488,7 @@
 	'trig.copied':          'Copied.',
 	'trig.copy_failed':     'The clipboard refused. Open the action and copy from the box.',
 	'trig.remove':          'Remove',
-	'trig.remove_body':     'Remove “{what}”? This Diamond will stop acting on it.',
+	'trig.remove_body':     'Remove “{what}”? This diamond will stop acting on it.',
 	'trig.add':             'Add an action',
 	'trig.add_kind':        'What sets it off',
 	// The trigger editor builds its rows from helpers handed a key: `field`,
@@ -2489,7 +2499,7 @@
 	// i18n-indirect: daimond.js helpKey = tile.model_daimon_help tile.worker_model_help tile.model_vision_help
 	'trig.kind_activity':   'Minutes of my activity',
 	'trig.kind_mail':       'Mail arriving',
-	'trig.note':            'These live in {path}, where you and this Diamond can both read them.',
+	'trig.note':            'These live in {path}, where you and this diamond can both read them.',
 	'trig.arm_note':        'Stopped. Press ▶ on the light beside the pulldown to let this action run.',
 	'trig.edit_title':      'Edit: {what}',
 	'trig.minutes':         'Minutes',
@@ -2498,7 +2508,7 @@
 	'trig.folder':          'Folder',
 	'trig.no_mailbox':      'No mailbox set up yet',
 	'trig.instruction':     'Instruction',
-	'trig.instruction_ph':  'What to ask this Diamond to do when it fires…',
+	'trig.instruction_ph':  'What to ask this diamond to do when it fires…',
 	'trig.context':         'Context',
 	'trig.context_ph':      'Background it needs the first time, and only the first time…',
 	'trig.context_note':    'Sent once, in front of the first instruction. Change it and it is sent again.',
@@ -2642,15 +2652,15 @@
 	// Diamond files an earlier build left in a folder, brought back into Daimond's own storage.
 	// Said out loud rather than done quietly: files moved, and the copies in the user's project
 	// are still there for them to delete when they are satisfied.
-	'files.adopted_title.one':   'A Diamond was brought back',
-	'files.adopted_title.other': '{n} Diamonds were brought back',
+	'files.adopted_title.one':   'A diamond was brought back',
+	'files.adopted_title.other': '{n} diamonds were brought back',
 	'files.adopted_body':        'Daimond found its own files in this folder and copied them back into its own storage, where they sync: {names}. The copies were left where they are, under diamonds/; delete them once you are satisfied.',
 	'files.adopted_kept':        'These differed from what Daimond already held, so both copies were kept:\n{paths}',
 	// And what did not come back. The copy runs under a budget, and a file past it is
 	// left where it is — which the user has to be told, or a Diamond arrives missing a
 	// part of itself and looks whole.
 	'files.adopt_left_title':    'Some files stayed in the folder',
-	'files.adopted_skipped':     'These were not copied, being over 8 MiB or unreadable, so a Diamond that needs one is here without it, or not here at all:\n{paths}',
+	'files.adopted_skipped':     'These were not copied, being over 8 MiB or unreadable, so a diamond that needs one is here without it, or not here at all:\n{paths}',
 
 	// ── The file viewer ────────────────────────────────────────
 	// A file is shown as what it IS: decoded where the browser can decode it,
@@ -2870,9 +2880,9 @@
 	'forget.skip':           'Skip',
 	'forget.title':          'Forget this account?',
 	'forget.ok':             'Erase everything',
-	'forget.body':           'This erases your passphrase, your encrypted API key, and all of your chats, Diamonds and spend history on this device.',
+	'forget.body':           'This erases your passphrase, your encrypted API key, and all of your chats, diamonds and spend history on this device.',
 	'forget.tail':           'There is no recovery. Everything is gone.',
-	'forget.body_secondary': 'This removes the account “{name}” from this browser: its passphrase, keys, chats, Diamonds, spend and files.',
+	'forget.body_secondary': 'This removes the account “{name}” from this browser: its passphrase, keys, chats, diamonds, spend and files.',
 	'forget.tail_secondary': 'There is no recovery. Other accounts here are untouched.',
 	'forget.abandons':       'It also abandons {amount} held on the server. Only this identity unlocks it, and only this account\u2019s passphrase opens a backup of the identity.',
 
@@ -2994,8 +3004,8 @@
 	'files.import_body':        'Copy "{name}" into the workspace? Everything in it then syncs to your other devices and counts towards your storage.',
 	'files.this_file':          'this file',
 	'files.unsaved_close':      'Your changes to {path} have not been saved. Close it and lose them?',
-	'agents.no_diamond':        'no Diamond',
-	'agents.no_diamond_help':   'This run has no Diamond',
+	'agents.no_diamond':        'no diamond',
+	'agents.no_diamond_help':   'This run has no diamond',
 	'agents.only_from':         'Show only agents from "{name}"',
 	'agents.only_from_chat':    'Show only agents from this chat.',
 	// A run dispatched from a chat rather than a Diamond. It has no crystal, so
@@ -3034,12 +3044,12 @@
 	'settings.max_rounds':         'Steps per turn',
 	'settings.crystal_limits':   'Size limits',
 	'settings.crystal_cap':      'Crystal size limit',
-	'settings.crystal_cap_note': 'How large a Diamond’s memory may grow.',
+	'settings.crystal_cap_note': 'How large a diamond’s memory may grow.',
 	'settings.crystal_cap_auto': 'Default',
 	'settings.crystal_page_cap': 'Page size limit',
-	'settings.crystal_page_cap_note': 'How large a Diamond’s page may grow.',
+	'settings.crystal_page_cap_note': 'How large a diamond’s page may grow.',
 	'settings.crystal_hot_cap': 'Always-present part',
-	'settings.crystal_hot_cap_note': 'How much of a Diamond’s memory rides in every round; the rest is read on demand.',
+	'settings.crystal_hot_cap_note': 'How much of a diamond’s memory rides in every round; the rest is read on demand.',
 	'settings.max_rounds_auto':    'Default',
 	'settings.steps':              'steps',
 	'settings.max_rounds_note':    'How many tool-calls one turn may take.',
@@ -3319,26 +3329,26 @@
 	// One still picture of the Diamonds and the links between them. It is an
 	// instrument for checking the structure, so the wording states what is
 	// there rather than praising it.
-	'graph.no_diamonds':        'No Diamonds yet, so there is nothing to draw.',
+	'graph.no_diamonds':        'No diamonds yet, so there is nothing to draw.',
 	'graph.isolated':           'Not linked',
 	'graph.unnamed':            'Untitled',
 	'graph.link_mode': 'Link',
-	'graph.link_help': 'Tap the first Diamond, then the second.',
+	'graph.link_help': 'Tap the first diamond, then the second.',
 	'graph.organise': 'Organise',
 	'graph.organise_help': 'Tidy up',
 	'graph.pick_source': 'Click the source, then the target. Escape cancels.',
 	'graph.pick_target': 'From {name}. Click the target, or press Escape.',
 	'graph.menu_link': 'Link from here…',
-	'graph.menu_open': 'Open this Diamond',
-	'graph.menu_reset_node': 'Put this Diamond back',
-	'graph.menu_reset_all': 'Put every Diamond back',
+	'graph.menu_open': 'Open this diamond',
+	'graph.menu_reset_node': 'Put this diamond back',
+	'graph.menu_reset_all': 'Put every diamond back',
 	'graph.menu_reset_view': 'Reset the view',
 	'graph.menu_edit_link': 'Edit this link…',
 	'graph.menu_drop_link': 'Delete this link',
 	// The zoom control that takes in the whole picture. One word: it rides in a
 	// row of zoom buttons beside the numbers.
 	'graph.fit': 'All',
-	'graph.fit_help': 'Scale the picture until every Diamond is on screen.',
+	'graph.fit_help': 'Scale the picture until every diamond is on screen.',
 	'graph.edit_title': 'Link',
 	'graph.new_title': 'New link',
 	// A link carries several relations, added one at a time. `graph.rel_pool` heads
@@ -3359,7 +3369,7 @@
 	'graph.create': 'Create',
 	'graph.cancel': 'Cancel',
 	'graph.drop': 'Delete',
-	'graph.self_link': 'A link joins two different Diamonds.',
+	'graph.self_link': 'A link joins two different diamonds.',
 	// ── Linking by dragging ────────────────────────────────────
 	// The anchors a pointer raises on a tile's edge, and what happens when a link
 	// is let go. `graph.rel_pick_ph` names the way out as well as the way on: a
@@ -3368,29 +3378,29 @@
 	'graph.linked': 'Linked {from} → {to}',
 	'graph.rel_pick': 'Relation',
 	'graph.rel_pick_ph': 'Relation, or Escape',
-	'graph.new_diamond': 'New Diamond',
-	'graph.no_create': 'This build cannot make a Diamond from the graph.',
+	'graph.new_diamond': 'New diamond',
+	'graph.no_create': 'This build cannot create diamonds.',
 	'graph.reverse': 'Reverse',
 	'graph.menu_reverse': 'Reverse this link',
 	'graph.reverse_help': 'Swap the ends. A new record: the note travels, the date does not.',
 	'graph.reversed': 'Reversed: {from} → {to}',
 	'graph.write_failed': 'That could not be written: {err}',
 	'graph.edit_help': 'Edit this link',
-	'graph.in_cycle':           'This Diamond is on a cycle.',
+	'graph.in_cycle':           'This diamond is on a cycle.',
 	'graph.back_edge':          'This link closes a cycle. Cycles are allowed; it is drawn dashed so it can be seen.',
 	'graph.edge_tip':           '{from} → {to}',
 	'graph.edge_rel':           'Relation: {rel}',
 	'graph.failed':             'The graph could not be read: {err}',
 	'graph.artefacts.one':      '{n} link to a file, page or chat',
 	'graph.artefacts.other':    '{n} links to files, pages or chats',
-	'graph.stat_diamonds.one':  '{n} Diamond',
-	'graph.stat_diamonds.other': '{n} Diamonds',
-	'graph.stat_links.one':     '{n} link between Diamonds',
-	'graph.stat_links.other':   '{n} links between Diamonds',
+	'graph.stat_diamonds.one':  '{n} diamond',
+	'graph.stat_diamonds.other': '{n} diamonds',
+	'graph.stat_links.one':     '{n} link between diamonds',
+	'graph.stat_links.other':   '{n} links between diamonds',
 	'graph.stat_cycles.one':    '{n} link closes a cycle',
 	'graph.stat_cycles.other':  '{n} links close cycles',
-	'graph.stat_dangling.one':  '{n} link points at a Diamond that is gone',
-	'graph.stat_dangling.other': '{n} links point at Diamonds that are gone',
+	'graph.stat_dangling.one':  '{n} link points at a diamond that is gone',
+	'graph.stat_dangling.other': '{n} links point at diamonds that are gone',
 
 	// ── The terminal ───────────────────────────────────────────
 	'term.label':            'Terminal',
@@ -3571,16 +3581,16 @@
 	// Every refusal here names what was NOT sent, because a share that half
 	// happened is worse than one that did not: a copy missing a file is not a
 	// smaller copy, and the sentences say so rather than trimming.
-	'share.err_no_bridge':      'This build cannot share a Diamond: its share format is not loaded.',
-	'share.err_no_seal':        'This build cannot share a Diamond: the seal it would be sent under is not loaded.',
+	'share.err_no_bridge':      'This build cannot share a diamond: its share format is not loaded.',
+	'share.err_no_seal':        'This build cannot share a diamond: the seal it would be sent under is not loaded.',
 	'share.err_no_store':       'This build can read a share but has nowhere to put one.',
 	'share.err_locked':         'Unlock Daimond to share: a share is signed with your own key.',
-	'share.err_empty':          'There is nothing in that Diamond to send yet.',
-	'share.err_nothing':        'There is nothing to share: name a Diamond or the files to send.',
+	'share.err_empty':          'There is nothing in that diamond to send yet.',
+	'share.err_nothing':        'There is nothing to share: name a diamond or the files to send.',
 	'share.err_no_name':        'A share needs a name for what is in it.',
 	'share.err_note_long':      'That note is longer than {n} characters and was not sent. A share carries a line about what it is; a letter is a message.',
-	'share.err_too_many_files': 'That Diamond holds {n} files, and a share carries at most {max}.',
-	'share.err_too_big':        'That Diamond is {mb} MB, and a share carries at most {max} MB. It is refused rather than trimmed: a copy missing a file is not a smaller copy.',
+	'share.err_too_many_files': 'That diamond holds {n} files, and a share carries at most {max}.',
+	'share.err_too_big':        'That diamond is {mb} MB, and a share carries at most {max} MB. It is refused rather than trimmed: a copy missing a file is not a smaller copy.',
 	'share.err_bad_key':        'That person has no usable key, so nothing was sent.',
 	'share.err_no_card':        'There is no sealing key for that person yet, so nothing can be sealed to them. Scan their code, or ask them to send you theirs.',
 	'share.err_not_addressed':  'That share is addressed to a different key from this one.',
@@ -3591,16 +3601,16 @@
 	'share.code_title':         'This share contains code',
 	'share.code_body':          '“{name}” includes a page: a program written by somebody else, which Daimond will run when you open it. It came from {who}. Accept it only if you meant to receive a page from them.\n\nWhat would be added: {files}',
 	'share.code_ok':            'Accept the page',
-	'share.landed_name':        'A shared Diamond',
-	'share.landed_title':       'Shared Diamond added',
-	'share.landed_partial':     'These files could not be written into the Diamond: {list}. Everything else in the share is there.',
+	'share.landed_name':        'A shared diamond',
+	'share.landed_title':       'Shared diamond added',
+	'share.landed_partial':     'These files could not be written into the diamond: {list}. Everything else in the share is there.',
 	// A SHARE THAT LANDED SHORT SAYS SO. `accept` answered `ok: true` beside a
 	// count of the files it had left out and nothing anywhere read the count, so a
 	// share of five files of which two were pages landed three and reported plain
 	// success. `share.err_all_code` covered only the total case — nothing landing
 	// at all — which is the one case a person cannot fail to notice.
 	'share.left_page':          'it is a page you did not accept',
-	'share.landed_ok':          'Added as a Diamond of your own. {n} file(s) arrived.',
+	'share.landed_ok':          'Added as a diamond of your own. {n} file(s) arrived.',
 	// The Share view of the Social panel. Both halves of the feature: taking one
 	// in needs nothing but the file, and sending one needs a Diamond and somebody
 	// to send it to. Every refusal names what to do instead, because a person told
@@ -3608,8 +3618,8 @@
 	'share.panel_take_head':    'Open a share',
 	'share.panel_take_help':    'Take a {ext} somebody gave you. A page inside it is a program they wrote, and it is never written into your workspace without asking you first.',
 	'share.panel_take':         'Open a share file…',
-	'share.panel_send_head':    'Send a Diamond',
-	'share.panel_no_diamond':   'Open a Diamond to share it. A share carries the files of one Diamond, so there has to be one in front of you.',
+	'share.panel_send_head':    'Send a diamond',
+	'share.panel_no_diamond':   'Open a diamond to share it. A share carries the files of one diamond, so there has to be one in front of you.',
 	'share.panel_no_people':    'Nobody here has a sealing key yet, so there is nobody a share can be sealed to. Show somebody your code, or read theirs.',
 	'share.panel_this':         'Sharing “{name}” — a copy they will own, not a view of yours.',
 	'share.panel_who':          'Who it goes to',
@@ -4308,8 +4318,8 @@
 	// A trashed chat can still be made into a Diamond, which is the useful act
 	// on a conversation somebody has just found again.
 	'trash.keep': 'Keep',
-	'trash.keep_help': 'Make a Diamond of this chat, with the whole conversation as its first artefact.',
-	'trash.keep_named': 'Keep {name} as a Diamond',
+	'trash.keep_help': 'Make a diamond of this chat, with the whole conversation as its first artefact.',
+	'trash.keep_named': 'Keep {name} as a diamond',
 	'trash.restore': 'Restore',
 	'trash.restore_named': 'Restore {name}',
 	'trash.restore_all': 'Restore everything',
@@ -4355,7 +4365,7 @@
 	'lapse.lic_head_past':        'Your Pro licence ended on {date}.',
 	'lapse.lic_off':              'Cross-device sync, cloud storage and Daimond Email switch off then, because each of those is a service we run on our side.',
 	'lapse.lic_off_past':         'Cross-device sync, cloud storage and Daimond Email are off, because each of those is a service we run on our side.',
-	'lapse.lic_keep':             'Everything on this device carries on exactly as before: your files, your chats, your Diamonds, your identity and your own provider key. Nothing is deleted, nothing is locked, and nothing you have made becomes unreadable.',
+	'lapse.lic_keep':             'Everything on this device carries on exactly as before: your files, your chats, your diamonds, your identity and your own provider key. Nothing is deleted, nothing is locked, and nothing you have made becomes unreadable.',
 	'lapse.lic_pull':             'Pulling down what you have already stored never stops, and your credits are unaffected.',
 
 	// ── The Tracker view (js/tracker.js) ───────────────────────

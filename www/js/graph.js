@@ -1073,7 +1073,7 @@
 		if (!box) {
 			// The rail is filtered to a tag this Diamond does not carry, so its
 			// box is not in the document to click.
-			console.warn('graph: no rail entry for Diamond ' + id);
+			console.warn('graph: no rail entry for diamond ' + id);
 			return;
 		}
 		box.click();

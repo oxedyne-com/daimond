@@ -20,13 +20,17 @@
 //   @tool <name> <json>      one tool call, then a text reply once it returns
 //   @tools <name> <json> ;; <name> <json>   several tool calls in one turn
 //   @chain <name> <json>     tool call, then a second call, then text
-//   @rounds <n> <name> <json>
+//   @rounds <n>[/<ms>] <name> <json>
 //                            the SAME call, over and over, until `n` tool results have
 //                            come back in this turn -- then a text reply. The only way
 //                            in this tree to reach a round limit, and therefore the only
 //                            way to see `at_the_cap` grant a continuation. The count
 //                            carries across legs, since a continuation adds no user
 //                            message.
+//                            `<n>/<ms>` paces it: each round is answered after that many
+//                            milliseconds, which is the only way here to make a turn take
+//                            TIME as well as rounds -- a worker still running when the turn
+//                            that dispatched it ends.
 //   @narrate <words> ;; <name> <json>
 //   @reason <working> ;; <answer>
 //                           the model THINKS before it answers, on the wire the way
@@ -767,11 +771,21 @@ const plan = (messages) => {
 		// turn stops itself at `n` however many legs it took.
 		case 'rounds': {
 			const sp = d.rest.indexOf(' ');
-			const n  = Math.max(1, numArg(sp === -1 ? d.rest : d.rest.slice(0, sp), 20, 'rounds'));
-			if (rounds >= n) return { text: `Called ${rounds} time(s); done.` };
+			const head = sp === -1 ? d.rest : d.rest.slice(0, sp);
+			// `@rounds 400/300` is four hundred rounds PACED AT 300 ms EACH, and the pace is
+			// what makes a long turn take TIME rather than merely take rounds. A mock answers
+			// in about twenty milliseconds, so an unpaced `@rounds 400` runs a hundred rounds
+			// inside two seconds -- which is a round limit reached, but it is not a worker
+			// still going when the turn that dispatched it ends, and that is the shape
+			// `dev/verify_spawn_gather.mjs` scenario four has to produce. Optional: with no
+			// slash nothing waits, exactly as before.
+			const slash = head.indexOf('/');
+			const n    = Math.max(1, numArg(slash === -1 ? head : head.slice(0, slash), 20, 'rounds'));
+			const pace = slash === -1 ? 0 : Math.max(0, numArg(head.slice(slash + 1), 0, 'rounds pace'));
+			if (rounds >= n) return { text: `Called ${rounds} time(s); done.`, delayMs: pace };
 			const { name, args } = splitCall((sp === -1 ? 'file_list {"path":"."}'
 				: d.rest.slice(sp + 1).trim()));
-			return { calls: [toolCall(nextCallId(), name, args)] };
+			return { calls: [toolCall(nextCallId(), name, args)], delayMs: pace };
 		}
 
 		case 'tools': {

@@ -1104,6 +1104,22 @@ impl DaimondApp {
         self.agent.set_spend_cap_usd(usd);
     }
 
+    /// Say that the turn which dispatched this worker has ended, so nothing is waiting for its
+    /// report.
+    ///
+    /// Called from the page's `Workers.releaseTurn` for every run of a turn that is still
+    /// going when the turn goes.  It bounds the worker in ROUNDS rather than aborting it --
+    /// see [`crate::agent::compact::ORPHAN_GRACE_ROUNDS`] -- so what it has already done is kept and
+    /// its report still comes back; what it may not do is spend another two hundred rounds on
+    /// work nobody is holding a promise on.
+    ///
+    /// Takes `&self`, like [`DaimondApp::abort`] and for the same reason: the turn it is about
+    /// is already running.
+    pub fn orphan_worker(&self) {
+        self.agent.orphan();
+    }
+
+
     /// Hold this agent to a dispatched worker's ceiling, whatever the chat is set to.
     ///
     /// **A worker has always run on the chat's own figures**, because `Workers.start` applies the
@@ -1192,6 +1208,7 @@ impl DaimondApp {
             \"written_age\":{},\"result_age\":{},\"result_cap\":{},\"sweep_every\":{},\
             \"worker_max_rounds\":{},\"worker_continuations\":{},\"worker_context_cap\":{},\
             \"worker_keep\":{},\"worker_spend_usd\":{},\"gather_timeout_s\":{},\
+            \"orphan_grace_rounds\":{},\
             \"batch_line\":{},\
             \"compound\":{},\
             \"standing\":{},\"briefing_top3\":{},\"task_log\":{},\"tail_note\":{},\
@@ -1204,6 +1221,7 @@ impl DaimondApp {
             l.written_age, l.result_age, l.result_cap, l.sweep_every,
             l.worker_max_rounds, l.worker_continuations, l.worker_context_cap,
             l.worker_keep, l.worker_spend_usd, l.gather_timeout_s,
+            l.orphan_grace_rounds,
             l.batch_line, l.compound,
             l.standing_files, l.briefing_top3, l.task_log, l.tail_note,
             l.thinking.wire(), l.effort.wire(),

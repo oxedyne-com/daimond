@@ -410,7 +410,7 @@
 		}
 		if (!spec.fence || typeof spec.fence !== 'object' || Array.isArray(spec.fence)) {
 			return 'A terminal needs a fence saying what the session may touch: {rw, ro, deny, net}. '
-				+ 'It is composed by fence_spec in src/tools.rs from the Diamond\'s bounds and the '
+				+ 'It is composed by fence_spec in src/tools.rs from the diamond\'s bounds and the '
 				+ 'folder the user granted, exactly as it is for a command — this relay does not '
 				+ 'compose one, and a session with no compartment is not opened.';
 		}

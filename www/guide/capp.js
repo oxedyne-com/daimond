@@ -27,8 +27,8 @@
 	/// because it is the reader's language that decides the wording and this page
 	/// is the thing they are looking at.
 	var SAID = {
-		made:      'Made. Log Life is open in the Diamonds rail.',
-		opened:    'You already had one. It is open in the Diamonds rail.',
+		made:      'Made. Log Life is open in the diamonds rail.',
+		opened:    'You already had one. It is open in the diamonds rail.',
 		cancelled: 'Nothing was made.',
 		missing:   'This build of Daimond does not carry the Log Life template, so nothing was made.',
 		failed:    'Daimond could not finish making it. It said so on screen.',
@@ -54,7 +54,7 @@
 			// control on the page.
 			if (!window.parent || window.parent === window) {
 				tell('Open this page inside Daimond, with the ? in its top bar, and this '
-					+ 'button will make the Diamond for you.');
+					+ 'button will make the diamond for you.');
 				return;
 			}
 			btn.disabled = true;

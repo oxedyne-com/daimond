@@ -144,6 +144,16 @@ pub struct Agent {
     /// steering turn whose 200-message prior folded to 27 died at the slice with the promise
     /// never settled; see [`Agent::turn_start`].
     turn_start:          Cell<usize>,
+    /// Whether the turn in flight has been orphaned: whatever dispatched this agent has
+    /// ended, so nothing is holding a promise on what it is about to say.
+    ///
+    /// Written from outside a running turn -- [`crate::wasm::app::DaimondApp::orphan_worker`],
+    /// from the page's `releaseTurn` -- which is why it is a cell and not an argument: by the
+    /// time the dispatcher ends, the turn it is about is already several rounds in.  Read at
+    /// the seam of each round; see [`compact::ORPHAN_GRACE_ROUNDS`].  Not shared on clone,
+    /// like `prior_end` and `turn_start` beside it: it belongs to whichever agent is running
+    /// the turn.
+    orphaned:            Cell<bool>,
     // How the last turn ended.  Shared on clone rather than copied, exactly as the
     // interjection queue is: the page holds a clone of the agent and has to be able to read
     // the ending of the turn it just watched, which a detached cell would not carry.  Written
@@ -421,6 +431,7 @@ impl Agent {
             fold_prompt:     Rc::new(RefCell::new(String::new())),
             prior_end:       Cell::new(0),
             turn_start:      Cell::new(0),
+            orphaned:        Cell::new(false),
             ending:          Rc::new(RefCell::new(None)),
             diamond:         Rc::new(RefCell::new(String::new())),
         }
@@ -679,6 +690,12 @@ impl Agent {
             // past a slow worker sets this low; nought is "absent", as everywhere above.
             if let Some(n) = crate::llm::extract_json_number(text, "gather_timeout_s") {
                 if n > 0 { l.gather_timeout_s = n; }
+            }
+            // What an orphaned worker has left.  Nought is a choice here and not an absence:
+            // "stop at the next seam" is the tightest arm of the measure, and a verifier's
+            // break needs the other end of it -- see `dev/verify_spawn_gather.mjs`.
+            if let Some(n) = crate::llm::extract_json_number(text, "orphan_grace_rounds") {
+                l.orphan_grace_rounds = n as usize;
             }
             // A MEASURE UNDER TRIAL, which is a switch and not a figure -- so false is taken as
             // written, exactly as `retire_prior` is, and the arm that turns the measure OFF is
@@ -966,6 +983,31 @@ impl Agent {
     /// What is waiting to be said, for the UI to draw.
     pub fn interjections(&self) -> Vec<String> {
         self.interject.borrow().clone()
+    }
+
+    /// Say that whatever dispatched this agent has ended, so nothing is waiting for its report.
+    ///
+    /// **The bound it arms is on ROUNDS and not on the clock**, which is what makes it safe to
+    /// arm from outside a running turn: a request already in flight is never torn up, the round
+    /// that is running finishes and is paid for, and the turn stops at the next seam once the
+    /// grace is used.  See [`compact::ORPHAN_GRACE_ROUNDS`] for the figure and why a worker
+    /// nobody is waiting for is not owed the whole ceiling.
+    ///
+    /// Idempotent: a second call says the same thing, and the grace is counted from the first
+    /// round that read the flag rather than from the call.
+    ///
+    /// **It is never cleared, and that is what lets it be armed EARLY.**  A worker still in the
+    /// queue when its dispatcher ends has no turn to interrupt, so the page arms the flag on its
+    /// app and the bound applies from its first seam.  A turn that reset it would undo exactly
+    /// that.  Nothing carries into work the user later resumes: `Workers.start` builds a fresh
+    /// `DaimondApp` for every session, so a resumed worker is a fresh agent with the flag unset.
+    pub fn orphan(&self) {
+        self.orphaned.set(true);
+    }
+
+    /// Has the turn in flight been orphaned?
+    pub fn is_orphaned(&self) -> bool {
+        self.orphaned.get()
     }
 
     /// Take everything waiting, leaving the queue empty.
@@ -1510,6 +1552,10 @@ impl Agent {
         // conversation's bill, and the ceiling is PER TURN -- measured against the session's total
         // it would end every turn of a long chat the moment the chat itself got expensive.
         let opening_cost = session.cost_usd;
+        // THE ROUND THIS TURN WAS ORPHANED IN, or `None` while something is still waiting for it.
+        // Read at the seam, so the grace is counted in rounds the model actually got to use --
+        // see the seam below and `compact::ORPHAN_GRACE_ROUNDS`.
+        let mut orphan_from: Option<usize> = None;
         loop {
             // THE CAP IS MET AT THE TOP OF A ROUND and not after the loop, because what happens
             // there is no longer one thing: either the turn carries on into another leg or it
@@ -2017,6 +2063,32 @@ impl Agent {
                 session.messages.push(msg);
             }
 
+            // NOTHING IS WAITING FOR THIS TURN ANY MORE, and this is the seam where that
+            // becomes a bound.  The page arms it when the turn that dispatched this worker ends
+            // (`Workers.releaseTurn` -> `DaimondApp::orphan_worker`), which is always mid-flight:
+            // the worker is several rounds in by then.  Here rather than inside the round, so
+            // the request that is running is never torn up and every call of this round has its
+            // result -- the same rule the spend ceiling below follows.
+            //
+            // Told first, stopped afterwards.  See `compact::ORPHAN_GRACE_ROUNDS` for why a
+            // worker nobody is holding a promise on is not owed the two hundred rounds its
+            // preset allows, and `compact::orphan_note` for why it is told the figure.
+            if self.orphaned.get() {
+                let grace = self.limits.borrow().orphan_grace_rounds;
+                let armed = *orphan_from.get_or_insert(rounds);
+                if rounds.saturating_sub(armed) >= grace {
+                    self.stop_on_orphan(session, rounds, grace, &claims, registry, on_event).await;
+                    return Ok(());
+                }
+                // Once, in the round it was orphaned in: a standing sentence re-sent every round
+                // after it would be read as the app nagging rather than as a boundary moving.
+                if armed == rounds {
+                    let msg = compact::orphan_note(grace);
+                    working.push(msg.clone());
+                    session.messages.push(msg);
+                }
+            }
+
             // A TURN THAT CANNOT BE TOLD IT IS STUCK IS ENDED.  At the seam rather than inside
             // the round, so every call the model made this round still gets its own result and
             // the conversation is well formed. The sentence is the assistant's last word, the way
@@ -2125,6 +2197,36 @@ impl Agent {
         on_event(AgentEvent::Error(msg));
         session.messages.push(compact::spend_limit_note(spent, cap));
         let ending = self.audit(TurnEnd::SpendCapped, rounds, claims, Some(registry)).await;
+        self.ended(ending, on_event);
+        on_event(AgentEvent::Done);
+    }
+
+    /// End a turn nobody is waiting for, at the grace its orphaning allowed it.
+    ///
+    /// Shaped exactly like [`Agent::stop_on_spend`], and it ends as [`TurnEnd::Capped`] for the
+    /// same reason that one ends as `SpendCapped`: a ceiling was met with work still going.
+    /// Which ceiling is in the sentence and in the note, not in a further word of the ending
+    /// vocabulary -- every reader of `TurnEnd::wire()` would have to learn a word to draw a
+    /// distinction none of them acts on, and the browser's own `isTerminal` is the reader that
+    /// would have gone wrong quietly.
+    ///
+    /// # Arguments
+    /// * `rounds` - The whole turn's count, legs included.
+    /// * `grace` - The ceiling it met; see [`compact::ORPHAN_GRACE_ROUNDS`].
+    async fn stop_on_orphan(
+        &self,
+        session:    &mut Session,
+        rounds:     usize,
+        grace:      usize,
+        claims:     &Claims,
+        registry:   &ToolRegistry,
+        on_event:   &mut impl FnMut(AgentEvent),
+    ) {
+        let msg = fmt!("Stopped after {} rounds: the turn that dispatched this worker ended, \
+            and a worker nobody is waiting for runs on for {} more round(s).", rounds, grace);
+        on_event(AgentEvent::Error(msg));
+        session.messages.push(compact::orphan_limit_note(rounds, grace));
+        let ending = self.audit(TurnEnd::Capped, rounds, claims, Some(registry)).await;
         self.ended(ending, on_event);
         on_event(AgentEvent::Done);
     }
@@ -4881,6 +4983,84 @@ mod tests {
         assert_eq!(4, end.rounds,
             "a worker's true ceiling is its leg times (1 + its continuations), not the leg alone: {:?}",
             end);
+    }
+
+    #[tokio::test]
+    async fn test_an_orphaned_worker_stops_at_its_grace_rather_than_its_ceiling_00() {
+        // Proposal 15's drive, 2026-09-15: a `gather` ran out of time at 120 s, the daimon
+        // answered, its turn ended -- and the worker went on ALONE for thirty minutes to the
+        // full two hundred rounds with nothing left able to read what it found. The ceiling is
+        // calibrated for a worker whose report a turn is holding a promise on; once that promise
+        // is gone the grace is what it gets. Two rounds here rather than five, so the shape is
+        // proved in milliseconds.
+        let registry = one_tool();
+        let (port, _seen) = crate::llm::tests::start_stub(vec![
+            tool_round(&[("file_write", r#"{"path":"a.txt","content":"1"}"#)]),
+        ]).await;
+        let mut llm = crate::llm::tests::stub_client(port);
+        llm.retry.max_attempts = 1;
+        let a = Agent::new(llm, "You are Daimond.");
+        // A worker's own ceiling, and then the orphaning: the point is that the SECOND is what
+        // ends the turn, well inside the first.
+        if let Err(e) = a.set_tune(r#"{"worker_max_rounds":50,"worker_continuations":1,
+            "orphan_grace_rounds":2}"#) {
+            panic!("the worker tune was refused: {}", e);
+        }
+        a.set_worker_limits();
+        a.orphan();
+        let mut session = Session::new(fmt!("s1"), fmt!("w-orphan"), fmt!("model"));
+        let mut events: Vec<AgentEvent> = Vec::new();
+        let _ = a.run_turn(&mut session, fmt!("read the whole repository"), &registry,
+            &mut |ev| events.push(ev)).await;
+
+        let end = a.ending().unwrap_or_else(|| panic!("a turn ran and said nothing about how it ended"));
+        assert_eq!(TurnEnd::Capped, end.how,
+            "an orphaned worker must end at a ceiling, not as though it had answered: {:?}", end);
+        assert_eq!(3, end.rounds,
+            "the grace is counted from the round it was orphaned in: {:?}", end);
+        // AND IT WAS TOLD, once. A bound a model cannot see is a bound it walks into mid-file.
+        let told = session.messages.iter().filter(|m| match m {
+            ChatMessage::System { content } =>
+                content.as_text().contains("The turn that dispatched you has ended"),
+            _ => false,
+        }).count();
+        assert_eq!(1, told, "the worker was told {} times that its dispatcher had gone", told);
+        // And the ending note is the orphan's own, not the round limit's: a reader told only
+        // "the round limit" would look for a budget that was never spent.
+        let note = session.messages.iter().any(|m| match m {
+            ChatMessage::System { content } =>
+                content.as_text().contains("left nothing waiting for its report"),
+            _ => false,
+        });
+        assert!(note, "the turn ended with no note saying why: {:?}", session.messages.last());
+    }
+
+    #[tokio::test]
+    async fn test_a_worker_nobody_orphaned_keeps_its_whole_ceiling_00() {
+        // The other half, and the one that says the bound above is the orphaning and not the
+        // tune: the same figures, nobody orphaning it, and the turn runs its leg and its one
+        // continuation to the end.
+        let registry = one_tool();
+        let (port, _seen) = crate::llm::tests::start_stub(vec![
+            tool_round(&[("file_write", r#"{"path":"a.txt","content":"1"}"#)]),
+        ]).await;
+        let mut llm = crate::llm::tests::stub_client(port);
+        llm.retry.max_attempts = 1;
+        let a = Agent::new(llm, "You are Daimond.");
+        if let Err(e) = a.set_tune(r#"{"worker_max_rounds":2,"worker_continuations":1,
+            "orphan_grace_rounds":2}"#) {
+            panic!("the worker tune was refused: {}", e);
+        }
+        a.set_worker_limits();
+        let mut session = Session::new(fmt!("s1"), fmt!("w-kept"), fmt!("model"));
+        let mut events: Vec<AgentEvent> = Vec::new();
+        let _ = a.run_turn(&mut session, fmt!("keep going"), &registry,
+            &mut |ev| events.push(ev)).await;
+
+        let end = a.ending().unwrap_or_else(|| panic!("a turn ran and said nothing about how it ended"));
+        assert_eq!(4, end.rounds,
+            "a worker still being waited for lost rounds to a grace nobody armed: {:?}", end);
+        assert!(!a.is_orphaned(), "nothing orphaned this worker and the flag says otherwise");
     }
 
     #[tokio::test]

@@ -112,7 +112,7 @@
 		  asks: 'Where do new testers stop? The one number a beta most needs: passphrase, model, first turn, first answer.' },
 		{ code:  4, name: 'panel.open',   n: 'which panel, from PANELS',
 		  asks: 'Which panels earn their place, and which has nobody ever opened?' },
-		{ code:  5, name: 'diamond.new',  n: 'how many Diamonds exist afterwards',
+		{ code:  5, name: 'diamond.new',  n: 'how many diamonds exist afterwards',
 		  asks: 'Do people build a workspace of their own, or stay with the two Daimond seeds?' },
 		{ code:  6, name: 'chat.new',     n: 'how many chats exist afterwards',
 		  asks: 'Is work divided into many short chats or kept in a few long ones? It decides what the rail should be optimised for.' },

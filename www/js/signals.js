@@ -335,7 +335,7 @@
 					kind: 'dormant',
 					what: (byId[id] || id) + ' has not been worked for '
 						+ Math.round(idle) + ' days.',
-					do_: 'Fold it into another Diamond, or delete it.',
+					do_: 'Fold it into another diamond, or delete it.',
 				});
 			}
 		});
@@ -373,13 +373,13 @@
 		var byId = {};
 		(diamonds || []).forEach(function (d) { byId[d.id] = d.name || d.id; });
 
-		L.push('## Diamonds');
+		L.push('## diamonds');
 		L.push('');
 		var ids = Object.keys(ix.diamonds);
 		if (!ids.length) {
 			L.push('Nothing recorded yet.');
 		} else {
-			L.push('| Diamond | turns | spend (USD) | last worked |');
+			L.push('| diamond | turns | spend (USD) | last worked |');
 			L.push('|---|---|---|---|');
 			ids.sort(function (a, b) {
 				return (ix.diamonds[b].turns || 0) - (ix.diamonds[a].turns || 0);

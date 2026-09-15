@@ -822,8 +822,8 @@
 				cls:  'trash-keep',
 				text: tOr('trash.keep', 'Keep'),
 				title: tOr('trash.keep_help',
-					'Make a Diamond of this chat, with the whole conversation as its first artefact.'),
-				aria: tOr('trash.keep_named', 'Keep {name} as a Diamond', { name: it.name }),
+					'Make a diamond of this chat, with the whole conversation as its first artefact.'),
+				aria: tOr('trash.keep_named', 'Keep {name} as a diamond', { name: it.name }),
 				on:   function () { keep(it); },
 			});
 		}

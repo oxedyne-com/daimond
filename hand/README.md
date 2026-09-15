@@ -259,7 +259,16 @@ Three things keep that checkable rather than merely asserted:
 * `--report` prints the verifiers this machine would run, and says they run
   outside the fence, above the list of what the fence enforces.
 * The handshake carries `verify:dev` or `verify:none`, so a page can say "not on
-  this computer" rather than discovering it one refusal at a time.
+  this computer" rather than discovering it one refusal at a time. That answers
+  for the GRANT; the tree a call resolves in is the `root` the request names.
+* **A request names the tree it means.** A grant is often the parent of several
+  repositories -- a person grants the folder their projects live in and marks one
+  of them into a Diamond -- so `Req::Verify` carries the folder the turn is
+  working in, vetted against the grant the way a command's `cwd` is, and the name,
+  the provenance gate, the world's scratch and the spawn's directory all answer
+  for it. `verify:by-root` in the handshake is how a page knows it may send one.
+  `DAIMOND_HAND_VERIFY_ROOT`, or `verify-root.txt` beside the journal, is a
+  person's pin made at a shell and overrides whatever the page sent.
 
 And the verb **cannot report a bare pass**. It runs the clean pass and each
 declared break, and answers with three numbers: checks passed, breaks confirmed

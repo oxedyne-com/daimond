@@ -65,7 +65,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
-import { APP, CHROME, signInAs, connectMock, scratch } from './harness.mjs';
+import { APP, CHROME, signInAs, connectMock, scratch, artefactPath } from './harness.mjs';
 
 const PW = process.env.DAIMOND_PW
 	|| path.join(os.homedir(), '.red-pw/node_modules/playwright-core/index.mjs');
@@ -1182,16 +1182,23 @@ L.push('## Screenshots');
 L.push('');
 L.push(`\`dev/shots/sweepm/\` — ${shots.length} files, \`<width>-<skin>-<palette>-<state>.png\`.`);
 L.push('');
-fs.mkdirSync(path.join(HERE, 'results'), { recursive: true });
-fs.writeFileSync(path.join(HERE, 'results', 'sweep_mobile_raw.md'), L.join('\n'));
-fs.writeFileSync(path.join(HERE, 'results', 'sweep_mobile.json'),
+// A BREAK RUN'S FINDINGS ARE NOT THE RECORD. Both files under `dev/results/` are tracked, so
+// a run under `--break` -- whose findings are deliberately wrong -- would otherwise leave the
+// working copy holding them, and the next person to read `git status` reads their own edit.
+// See `artefactPath` in dev/harness.mjs.
+const RAW  = artefactPath('sweep_mobile_raw.md', path.join(HERE, 'results', 'sweep_mobile_raw.md'), BREAK);
+const JSN  = artefactPath('sweep_mobile.json',   path.join(HERE, 'results', 'sweep_mobile.json'), BREAK);
+fs.mkdirSync(path.dirname(RAW), { recursive: true });
+fs.mkdirSync(path.dirname(JSN), { recursive: true });
+fs.writeFileSync(RAW, L.join('\n'));
+fs.writeFileSync(JSN,
 	JSON.stringify({ rolled: rolled.map(r => ({ ...r, widths: [...r.widths], skins: [...r.skins],
 		states: [...r.states], palettes: [...r.palettes], details: [...r.details] })),
 		safeFindings, cssSafe, notch: [...notch.values()], shots }, null, 1));
 
 console.log(`\n${hard.length} findings + ${soft.length} advisory, over ${probes} probes; ${shots.length} screenshots.`);
 for (const r of hard) console.log(`  ${r.check.padEnd(11)} ${r.sel}  [${[...r.widths].join(' ')}]`);
-console.log(`\nevidence: ${path.join(HERE, 'results', 'sweep_mobile_raw.md')}\n`);
+console.log(`\nevidence: ${RAW}\n`);
 
 // ── The instrument, judged ──────────────────────────────────────────────────
 // None of this is a threshold on the findings: see the header. It is the set of
@@ -1226,10 +1233,8 @@ check('EVERY SURFACE IT WAS ASKED FOR WAS REACHED',
 	unreached.length ? `${unreached.length} of ${reached.length} never opened: ${unreached.slice(0, 4).join('; ')}`
 		: `${reached.length} (width, spacing, state) cells, all open`);
 
-// 3. The evidence exists to be read.
-const RAW = path.join(HERE, 'results', 'sweep_mobile_raw.md');
+// 3. The evidence exists to be read -- wherever this run was entitled to write it.
 const bytes = (p) => { try { return fs.statSync(p).size; } catch (e) { return 0; } };
-const JSN = path.join(HERE, 'results', 'sweep_mobile.json');
 check('the evidence was written', bytes(RAW) > 500 && bytes(JSN) > 200,
 	`${bytes(RAW)} bytes of markdown, ${bytes(JSN)} of JSON`);
 

@@ -797,6 +797,14 @@
 	'size.large': 'Groß',
 	'size.larger': 'Größer',
 
+	// ── Dragging a panel into a slot of the Dock ───────────────
+	'dock.drag':      'Zum Verschieben ziehen',
+	'dock.drop_close': 'Zum Schließen loslassen',
+	'dock.keys':      'Pfeile bewegen, Enter platziert, Esc bricht ab',
+	'dock.moved':     '{name} verschoben',
+	'chip.reorder':   'Zum Umsortieren halten',
+	'menu.dock_reset': 'Zurücksetzen',
+
 	// ── Dock grids ─────────────────────────────────────────────
 	'dock.one_column': 'Eine Spalte',
 	'dock.2x2': '2 × 2',
@@ -2929,6 +2937,8 @@
 	'agents.status_error': 'fehlgeschlagen',
 	'agents.status_stopped': 'gestoppt',
 	'agents.status_interrupted': 'abgebrochen',
+	'agents.status_capped': 'gedeckelt',
+	'agents.status_spend_cap': 'Budget erreicht',
 	'tools.intro': 'Was Daimond kann.',
 	'tools.count': '<b>{have} von {all}</b> auf diesem Konto verfügbar.',
 	'tools.sec_included': 'Enthalten',
@@ -3001,7 +3011,7 @@
 	'astat.sum_local': 'Nur dieses Gerät',
 	'astat.sum_help': 'Details',
 	'crystal.page_ask': 'Ändere das Aussehen dieser Seite: ',
-	'crystal.knows': 'Was dieses Diamond weiß',
+	'crystal.knows': 'Gedächtnis',
 	'crystal.knows_nothing': 'Noch nichts. Frag unten.',
 	'crystal.objectives': 'Ziele',
 	'crystal.open_tasks': 'Offene Aufgaben',

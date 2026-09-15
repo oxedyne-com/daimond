@@ -1195,10 +1195,11 @@ fn req_dat(req: &Req) -> Dat {
                 "toolkits"		=> strs(toolkits),
             }
         },
-        Req::Verify { id, name, breaks, world, timeout_ms } => omapdat!{
+        Req::Verify { id, name, root, breaks, world, timeout_ms } => omapdat!{
             "t"				=> "verify",
             "id"			=> Dat::Str(id.clone()),
             "name"			=> Dat::Str(name.clone()),
+            "root"			=> Dat::Str(root.clone()),
             "breaks"		=> Dat::Str(breaks.word().to_string()),
             "break"			=> match breaks {
                 Breaks::One(b)	=> Dat::Str(b.clone()),
@@ -1392,6 +1393,10 @@ pub fn req_of_json(txt: &str) -> Outcome<Req> {
         "verify" => Ok(Req::Verify {
             id:         res!(str_field(&obj, "verify", "id")),
             name:       res!(str_field(&obj, "verify", "name")),
+            // Absent is a page that named no tree, which is every page older than
+            // `verify::BY_ROOT`, and the hand then resolves in the granted root
+            // exactly as it always did.
+            root:       res!(opt_str_field(&obj, "verify", "root")).unwrap_or_default(),
             breaks:     res!(breaks_of(&obj)),
             world:      res!(world_of(&obj)),
             timeout_ms: res!(safe_int_field(&obj, "verify", "timeout_ms")),
@@ -2293,6 +2298,7 @@ mod tests {
             Req::Verify {
                 id:         fmt!("v-1"),
                 name:       fmt!("graph"),
+                root:       fmt!("/w/repo"),
                 breaks:     Breaks::All,
                 world:      World::Infer,
                 timeout_ms: 1_200_000,
@@ -2300,6 +2306,7 @@ mod tests {
             Req::Verify {
                 id:         fmt!("v-2"),
                 name:       fmt!("a11y_aria"),
+                root:       String::new(),
                 breaks:     Breaks::One(fmt!("nolinks")),
                 world:      World::Stand,
                 timeout_ms: 60_000,
@@ -2307,6 +2314,7 @@ mod tests {
             Req::Verify {
                 id:         fmt!("v-3"),
                 name:       fmt!("graph"),
+                root:       fmt!("/w/repo/sub"),
                 breaks:     Breaks::None,
                 world:      World::None,
                 timeout_ms: SAFE_INT_MAX,
@@ -2542,6 +2550,7 @@ mod tests {
         assert_eq!(Req::Verify {
             id:         fmt!("v"),
             name:       fmt!("graph"),
+            root:       String::new(),
             breaks:     Breaks::One(fmt!("x")),
             world:      World::Infer,
             timeout_ms: 1000,
@@ -2562,6 +2571,7 @@ mod tests {
         assert_eq!(Req::Verify {
             id:         fmt!("v"),
             name:       fmt!("graph"),
+            root:       String::new(),
             breaks:     Breaks::All,
             world:      World::Infer,
             timeout_ms: 1000,

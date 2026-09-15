@@ -1,0 +1,131 @@
+/* dockdrag.css — what a panel being carried into the Dock looks like.
+ *
+ * The indicators borrow the dividers' own language on purpose: `--accent` at the
+ * weight `.phandle` draws its line at, so an insertion line reads as "a boundary
+ * will be here" rather than as a new kind of mark. Nothing carries a label --
+ * the shape is the whole message, and a caption would be one more thing to read
+ * while a hand is already moving. */
+
+/* ── The overlay ──────────────────────────────────────────────────────────
+   Fixed rather than absolute, and on `body` rather than inside `#main`: the
+   rectangles it is given are the pointer's own, so a positioned or clipping
+   ancestor would silently move every one of them. */
+#dock-drop {
+	position: fixed;
+	inset: 0;
+	z-index: 2400;
+	pointer-events: none;
+}
+#dock-drop > * {
+	position: fixed;
+	pointer-events: none;
+	transition: left 80ms ease, top 80ms ease, width 80ms ease, height 80ms ease;
+}
+
+/* A boundary between two rows. Two pixels, pulled up by one so the line sits ON
+   the boundary rather than under it. */
+.ddz-line {
+	height: 2px;
+	margin-top: -1px;
+	background: var(--accent);
+	border-radius: 2px;
+	box-shadow: 0 0 0 1px var(--accent-soft);
+}
+
+/* A panel's place, about to be taken by the one being carried. */
+.ddz-box {
+	border: 2px solid var(--accent);
+	border-radius: 6px;
+	background: color-mix(in srgb, var(--accent) 12%, transparent);
+}
+
+/* A column that does not exist yet: the edge band's promise, and the
+   placeholder an empty Dock offers. Dashed, because nothing is there. */
+.ddz-col {
+	border: 2px dashed var(--accent);
+	border-radius: 6px;
+	background: color-mix(in srgb, var(--accent) 7%, transparent);
+}
+
+/* ── The ghost ───────────────────────────────────────────────────────────
+   A clone of the chip, from EITHER source: a thumbnail for a header drag and a
+   chip for a chip drag would be two answers to "what am I carrying". */
+.ptag-ghost {
+	position: fixed;
+	left: 0;
+	top: 0;
+	z-index: 2500;
+	pointer-events: none;
+	opacity: 0.92;
+	box-shadow: 0 6px 18px rgba(0, 0, 0, 0.35);
+	border-color: var(--accent);
+}
+.ptag-ghost .gx {
+	margin-left: 6px;
+	color: var(--accent-text);
+	font-weight: 600;
+}
+
+/* What the ghost was cloned from, while it is away. */
+.ptag.dragging,
+.railhead.dragging { opacity: 0.45; }
+
+/* The same shape `body.resizing` takes in app.css, and deliberately without the
+   `* { cursor: … !important }` sweep that would go with it: the pointer is
+   CAPTURED for the length of the gesture, so what it is over does not get to
+   choose the cursor anyway, and a rule that important would outlive the one
+   case it was written for. */
+body.dock-dragging { cursor: grabbing; user-select: none; -webkit-user-select: none; }
+
+/* A docked panel's heading is a handle. `touch-action` because a finger
+   pressing it is starting a gesture, not scrolling the panel under it. */
+.panel[data-zone="dock"] .railhead > [role="heading"] {
+	cursor: grab;
+	touch-action: none;
+}
+.panel[data-zone="dock"] .railhead > [role="heading"]:focus-visible {
+	outline: 2px solid var(--accent);
+	outline-offset: 2px;
+	border-radius: 3px;
+}
+
+/* A chip the dock has no room for. `aria-disabled` rather than `disabled`, so
+   it can still be picked up and carried onto a panel to take its place -- see
+   `chip` in js/workspace.js -- which means the dimming has to be written here
+   rather than inherited from `:disabled`. */
+.ptag.full { opacity: 0.4; cursor: grab; }
+.ptag.full:hover { color: var(--text-secondary); border-color: var(--border); }
+
+/* ── The phone's strip ───────────────────────────────────────────────────
+   No Dock is drawn below 760px, so the layout IS the footer's chip order and
+   the gesture is the tab strip's: hold, slide, release. */
+.ptag.lifted {
+	transform: scale(1.06);
+	box-shadow: 0 4px 14px rgba(0, 0, 0, 0.4);
+	border-color: var(--accent);
+	opacity: 0.9;
+}
+
+/* Where the lifted chip would land. */
+.ptag-ins {
+	width: 2px;
+	align-self: stretch;
+	min-height: 20px;
+	background: var(--accent);
+	border-radius: 2px;
+	flex: none;
+}
+
+/* A lifted chip must not also be panning the strip it is being carried along.
+   `touch-action` is read when the gesture starts and so cannot be changed by
+   then; taking the overflow away is what actually stops the pan.
+
+   BOTH SELECTORS, and the second is the one that works. The phone's rule in
+   mobile.css is `#mnav .panel-tags { overflow-x: auto }` -- an id, which beats
+   any number of classes -- so the plain form below loses on the one width where
+   the strip actually scrolls. It is kept because it is the honest statement of
+   the rule; the id-scoped form is kept because it is the one the phone obeys.
+   A synthetic pointer starts no native scroll, so no headless driving of this
+   path can tell the two apart. */
+.panel-tags.reordering,
+#mnav .panel-tags.reordering { overflow-x: hidden; }

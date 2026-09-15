@@ -1,5 +1,7 @@
 // verify_draftdup.mjs — the junk-draft-duplicate bug (2026-09-13), in isolation.
 //
+// node dev/verify_draftdup.mjs --break gateless   restore the shipped defect and run
+// Declared breaks: gateless
 // Live symptom: `#chat-input` refilled with "Note code/dev_handover,
 // code/dev_handover/06_projects/daimond.md, …" and grew ANOTHER copy on every
 // load or unlock -- 7 copies became 8 on one unlock.
@@ -34,8 +36,66 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
-const DAIMOND_SRC = fs.readFileSync(path.join(HERE, '..', 'www', 'js', 'daimond.js'), 'utf8');
-const DRAFTS_SRC  = fs.readFileSync(path.join(HERE, '..', 'www', 'js', 'drafts.js'),  'utf8');
+
+// Declared breaks, run by the verify verb as `--break <name>`. Each restores
+// the defect EXACTLY as it shipped, so what reddens under it is what a user
+// saw in the product — never a synthetic weakening of the check.
+const BREAKS = {
+	// Before 63ea78e5 there was NO first-turn gate at all: every select —
+	// including the mid-session resume a restart does — reseeded the box.
+	// Restoring that is the defect the owner reported on the forge (#15).
+	gateless: [{
+		file: 'js/daimond.js',
+		find: '\tfunction attachPrefixGateOpen(hasTurns, boxValue, lastWritten) {\n'
+			+ '\t\tif (hasTurns) return false;\n'
+			+ '\t\tif (!boxValue) return true;\n'
+			+ '\t\treturn !!(lastWritten && boxValue.indexOf(lastWritten) === 0);\n'
+			+ '\t}\n',
+		with: '\tfunction attachPrefixGateOpen(hasTurns, boxValue, lastWritten) {\n'
+			+ '\t\t// [break:gateless] the defect as it shipped: no first-turn gate —\n'
+			+ '\t\t// every select reseeded, including a mid-session resume.\n'
+			+ '\t\tif (!boxValue) return true;\n'
+			+ '\t\treturn !!(lastWritten && boxValue.indexOf(lastWritten) === 0);\n'
+			+ '\t}\n',
+	}],
+};
+const BREAK = process.argv.find(a => a.startsWith('--break='))?.slice(8)
+	|| (process.argv[2] === '--break' ? process.argv[3] : null);
+if (BREAK && !BREAKS[BREAK]) {
+	console.error(`unknown break '${BREAK}'; known: ${Object.keys(BREAKS).join(', ')}`);
+	process.exit(2);
+}
+
+// The damaged source, loaded BEFORE any check reads it: the break edits the
+// file the checks grep and evaluate, so a red here is the shipped defect.
+// The pristine copy is taken BEFORE any damage, so exit-restore undoes it.
+const SRC_DIR = path.join(HERE, '..', 'www');
+const PATCHES = BREAK ? BREAKS[BREAK] : [];
+const MEMENTOES = new Map();
+function memento(file) {
+	if (!MEMENTOES.has(file)) MEMENTOES.set(file, fs.readFileSync(file, 'utf8'));
+	return MEMENTOES.get(file);
+}
+for (const p of PATCHES) {
+	const file = path.join(SRC_DIR, p.file);
+	const src = memento(file);
+	if (!src.includes(p.find)) {
+		console.error(`break '${BREAK}': anchor not found in ${p.file}`);
+		process.exit(2);
+	}
+	fs.writeFileSync(file, src.replace(p.find, p.with));
+}
+process.on('exit', () => { for (const p of PATCHES) {                    // restore on exit, always
+	const file = path.join(SRC_DIR, p.file);
+	const src = MEMENTOES.get(file);
+	if (src != null) fs.writeFileSync(file, src);
+} });
+
+// The damaged source as it NOW sits on disk, read AFTER any break was applied:
+// the checks must see the defect, while MEMENTOES holds the pristine bytes
+// captured BEFORE the patch loop for the restore-on-exit.
+const DAIMOND_SRC = fs.readFileSync(path.join(SRC_DIR, 'js', 'daimond.js'), 'utf8');
+const DRAFTS_SRC  = fs.readFileSync(path.join(SRC_DIR, 'js', 'drafts.js'), 'utf8');
 
 let bad = 0, ran = 0;
 const check = (pass, name, detail) => {
@@ -240,13 +300,25 @@ console.log('\nscrubAttachPrefixDup — the owner\'s six stacked copies, collaps
 }
 
 // ── A single legitimate seed -- one Note line AND one Read line -- is not a
-// stack of two and must survive untouched. ──────────────────────────────
+// stack of two. On an UNSTARTED thread it survives untouched, exactly as a
+// lone copy of the plain prefix does above; the property under test is that
+// the pair is recognised as ONE unit, never as two stacked half-copies of
+// something shorter. (2026-09-15: this used to be asserted under
+// `hasTurns: true` as well, which is the keeper itself -- a single seed left
+// standing forever on a thread the summary already proved had turns, because
+// nothing downstream ever revisits a copy count under two. See
+// `verify_prefixpeer.mjs`, which drives that exact fault end to end.) ───
 {
 	const READ = 'Read spec.md in full.\n';
 	const single = NOTE + READ;
-	const out = scrubAttachPrefixDup(single, NOTE + READ, true);
+	const out = scrubAttachPrefixDup(single, NOTE + READ, false);
 	check(out === single, 'one Note line plus one Read line is ONE seed, not two: left untouched',
 		JSON.stringify(out));
+	// A STARTED thread keeps none of it back, the Note+Read pair included --
+	// one copy is still one copy too many once a turn has been spent.
+	const outTurns = scrubAttachPrefixDup(single, NOTE + READ, true);
+	check(outTurns === '', 'the same pair on a STARTED thread is stripped, not kept as "one seed"',
+		JSON.stringify(outTurns));
 }
 
 // ── The loose fallback: the attach list has since changed, so the exact text

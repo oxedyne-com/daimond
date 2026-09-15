@@ -556,6 +556,18 @@ pub enum Req {
         id:         String,
         /// The verifier's short name: `graph` for `dev/verify_graph.mjs`.
         name:       String,
+        /// The tree to resolve that name in: the folder the turn is working in.
+        ///
+        /// Absolute, as every path on this wire is, and vetted against the grant
+        /// the way [`Req::Exec`]'s `cwd` is.  Empty is a page that named none,
+        /// and gets the granted root -- which is what a page older than
+        /// [`crate::verify::BY_ROOT`] sends.
+        ///
+        /// **A grant is not a repository in the case this exists for.**  A person
+        /// grants the folder their projects live in and marks ONE of them into a
+        /// Diamond; the verifiers are a level down, and a verify root fixed at the
+        /// grant answers for a folder nobody asked about.
+        root:       String,
         /// Which of its declared breaks to run beside the clean pass.
         breaks:     Breaks,
         /// Whether to stand a dev world for the sequence.

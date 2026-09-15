@@ -443,12 +443,101 @@ pub fn available(root: &Path) -> bool {
 /// The capability entry the handshake carries.
 ///
 /// # Arguments
-/// * `root` - The granted root.
+/// * `root` - The tree the verb would resolve in.
 pub fn cap(root: &Path) -> String {
     match available(root) {
         true	=> fmt!("verify:dev"),
         false	=> fmt!("verify:none"),
     }
+}
+
+/// The capability saying this hand resolves the verify tree PER REQUEST.
+///
+/// **The granted root is not the repository, in the case the product is actually
+/// for.**  A person grants `~/projects`, which holds a dozen of them, and marks
+/// one into a Diamond; the grant is then the parent of a repository and holds no
+/// `dev/` of its own, so [`cap`] over it says `verify:none` and the verb refuses
+/// every call in a sentence about a folder the model cannot do anything about --
+/// measured on 2026-09-15, where four tasks spent 30, 11, 20 and 3 rounds
+/// repeating the same refused call.
+///
+/// So the page sends the folder the turn is working in with each request and the
+/// hand answers for THAT tree.  This capability is how a page knows it may: a
+/// hand that does not carry it is one that resolves in the granted root alone,
+/// and the page keeps the older gate rather than sending a field that would be
+/// ignored.  It is a fact about the HAND and never about a folder, which is why
+/// it cannot go stale the way [`cap`] can -- a repository cloned into the grant
+/// after the handshake is one [`cap`] answers `none` about for the life of the
+/// process.
+pub const BY_ROOT: &str = "verify:by-root";
+
+/// The sentence for a folder that is not a repository, naming the folder.
+///
+/// **The remedy has to be one the reader can carry out.**  The refusal this
+/// replaces told the model to "tell the user which folder they granted", which
+/// is a thing a model cannot check and cannot fix, and a refusal whose remedy is
+/// out of reach becomes a loop.  This one names the directory that was looked in,
+/// so the reader can see whether it is the folder it meant.
+///
+/// # Arguments
+/// * `root` - The tree that was looked in.
+/// * `granted` - The hand's grant, said only where it is a different folder.
+pub fn none_here(root: &Path, granted: &Path) -> String {
+    let inside = match root == granted {
+        true	=> fmt!(""),
+        false	=> fmt!(" That folder is the one marked into this Diamond, inside the hand's \
+            grant of '{}'.", granted.display()),
+    };
+    fmt!(
+        "Refused: '{}' holds no 'dev/verify_*.mjs', so there is nothing in it to verify with.{} \
+        This verb runs a REPOSITORY's own verifiers and is not a general test runner; use 'run' \
+        for the project's own test command instead. Nothing was run.",
+        root.join(DEV_DIR).display(), inside)
+}
+
+/// The tree one request resolves in, or the sentence refusing it.
+///
+/// **The verify tree is the folder the turn is working in, and it is decided per
+/// REQUEST.**  It arrives absolute, as every path on this wire does, and it is
+/// held to the same three questions a working directory is held to in
+/// [`crate::exec::vet_cwd`]: it resolves, it is a directory, and it is inside the
+/// grant.  Symbolic links are resolved before the comparison, because a link
+/// inside the grant pointing out of it is otherwise a way past the whole
+/// arrangement.
+///
+/// An empty `asked` is a page that named none, and gets the granted root -- which
+/// is what every page before this one sent.
+///
+/// # Arguments
+/// * `granted` - The folder this hand may work in, already canonical.
+/// * `asked` - What the page sent, absolute or empty.
+pub fn vet_root(granted: &Path, asked: &str) -> Result<PathBuf, String> {
+    if asked.trim().is_empty() {
+        return Ok(granted.to_path_buf());
+    }
+    let raw = Path::new(asked.trim());
+    if !raw.is_absolute() {
+        return Err(fmt!(
+            "Refused: '{}' is not an absolute path, and the hand does not guess what a verify \
+            root is relative to. Nothing was run.", trim_for_message(asked)));
+    }
+    let dir = match std::fs::canonicalize(raw) {
+        Ok(p)  => p,
+        Err(e) => return Err(fmt!(
+            "Refused: '{}' cannot be resolved to a folder on this machine ({}), so there is no \
+            tree to look a verifier up in. Nothing was run.", trim_for_message(asked), e)),
+    };
+    if !dir.is_dir() {
+        return Err(fmt!(
+            "Refused: '{}' is a file and not a folder, so it holds no 'dev/' to look a verifier \
+            up in. Nothing was run.", dir.display()));
+    }
+    if !dir.starts_with(granted) {
+        return Err(fmt!(
+            "Refused: '{}' is outside '{}', the folder this hand was granted, so nothing there is \
+            this hand's to run. Nothing was run.", dir.display(), granted.display()));
+    }
+    Ok(dir)
 }
 
 /// The verifier a name refers to, or the sentence saying why there is none.
@@ -475,8 +564,8 @@ pub fn resolve(root: &Path, name: &str) -> Result<Script, String> {
     let rd = match std::fs::read_dir(&dir) {
         Ok(r)  => r,
         Err(e) => return Err(fmt!(
-            "Refused: this computer's granted folder has no readable '{}' directory ({}), so \
-            there are no verifiers on it to run.", dir.display(), e)),
+            "Refused: '{}' has no readable '{}' directory ({}), so there are no verifiers in it \
+            to run.", root.display(), dir.display(), e)),
     };
     let mut found: Option<std::ffi::OsString> = None;
     for entry in rd {
@@ -541,8 +630,8 @@ fn no_such(root: &Path, name: &str, wanted: &str) -> String {
         false	=> fmt!("Names close to it: {}.", near.join(", ")),
     };
     fmt!(
-        "Refused: there is no 'dev/{}' in the folder this hand was granted, so '{}' names no \
-        verifier. {} Nothing was run.", wanted, trim_for_message(name), tail)
+        "Refused: there is no '{}' in '{}', so '{}' names no verifier there. {} Nothing was run.",
+        wanted, root.join(DEV_DIR).display(), trim_for_message(name), tail)
 }
 
 /// A caller's string, cut short and stripped of control characters, for a message.
@@ -3072,6 +3161,119 @@ if (BREAK) console.log(`running with --break ${BREAK}`);
         assert_eq!(fmt!("verify:none"), cap(&bare));
         res!(put(&bare, "one", "//\n"));
         assert_eq!(fmt!("verify:dev"), cap(&bare));
+        Ok(())
+    }
+
+    // ── A grant that holds several repositories ─────────────────────
+    //
+    // The case the product is actually for, and the case the real-repository bank
+    // ran into on 2026-09-15: the hand is granted the folder the projects live in,
+    // and ONE of them is marked into the Diamond.  The grant's own root then holds
+    // no `dev/` at all, so a verify tree fixed at the grant answers `none` about a
+    // folder nobody asked about -- and answered it 64 times across four tasks.
+
+    /// A parent holding two repositories and one folder that is neither.
+    ///
+    /// Named by its caller, because `tree` clears what it makes and these tests run
+    /// beside each other.
+    fn grant_of_two(name: &str) -> Outcome<PathBuf> {
+        let base = res!(tree(name));
+        for (repo, name) in [("alpha", "alef"), ("beta", "bet")] {
+            let dir = base.join(repo);
+            res!(fs::create_dir_all(dir.join(DEV_DIR))
+                .map_err(|e| err!(e, "making {:?}", dir; Test, IO)));
+            res!(put(&dir, name, "//\n"));
+        }
+        res!(fs::create_dir_all(base.join("notes"))
+            .map_err(|e| err!(e, "making the non-repository"; Test, IO)));
+        Ok(base)
+    }
+
+    #[test]
+    fn a_request_names_which_of_the_grants_repositories_it_means() -> Outcome<()> {
+        let grant = res!(grant_of_two("grant_two_which"));
+        // `tree` makes a `dev/` of its own at the grant, which would make the parent
+        // a repository and the whole distinction disappear.
+        res!(fs::remove_dir_all(grant.join(DEV_DIR))
+            .map_err(|e| err!(e, "clearing the grant's own dev"; Test, IO)));
+        assert_eq!(fmt!("verify:none"), cap(&grant),
+            "the parent of two repositories was read as one");
+
+        let alpha = match vet_root(&grant, &fmt!("{}", grant.join("alpha").display())) {
+            Ok(p)  => p,
+            Err(e) => return Err(err!("a mark on 'alpha' was refused: {}", e; Test, Invalid)),
+        };
+        assert_eq!(fmt!("verify:dev"), cap(&alpha));
+        assert_eq!(vec![fmt!("alef")], res!(catalogue(&alpha)));
+
+        let beta = match vet_root(&grant, &fmt!("{}", grant.join("beta").display())) {
+            Ok(p)  => p,
+            Err(e) => return Err(err!("a mark on 'beta' was refused: {}", e; Test, Invalid)),
+        };
+        assert_eq!(vec![fmt!("bet")], res!(catalogue(&beta)),
+            "the tree a request named answered with another tree's verifiers");
+        // And the one that is not in the tree it named is REFUSED there, which is
+        // the whole of what "answers for that root" means.
+        match resolve(&beta, "alef") {
+            Ok(_)  => return Err(err!(
+                "'alef' resolved in 'beta', which does not hold it"; Test, Invalid)),
+            Err(s) => assert!(s.contains("beta"), "the refusal names no tree: {}", s),
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn a_mark_that_is_not_a_repository_is_refused_with_the_folder_named() -> Outcome<()> {
+        let grant = res!(grant_of_two("grant_two_notes"));
+        let notes = match vet_root(&grant, &fmt!("{}", grant.join("notes").display())) {
+            Ok(p)  => p,
+            Err(e) => return Err(err!("a mark on 'notes' was refused early: {}", e; Test, Invalid)),
+        };
+        assert!(!available(&notes), "a folder with no dev/ was read as a repository");
+        let why = none_here(&notes, &grant);
+        assert!(why.starts_with("Refused:"), "{}", why);
+        assert!(why.contains("notes/dev"), "the refusal does not name the folder: {}", why);
+        assert!(why.contains(&fmt!("{}", grant.display())),
+            "the refusal does not name the grant it sits in: {}", why);
+        assert!(why.contains("Nothing was run"), "{}", why);
+        Ok(())
+    }
+
+    #[test]
+    fn a_verify_root_is_held_to_the_grant() -> Outcome<()> {
+        let grant = res!(grant_of_two("grant_two_vetted"));
+        // Named nothing: the granted root, which is what every page before this sent.
+        match vet_root(&grant, "") {
+            Ok(p)  => assert_eq!(grant, p),
+            Err(e) => return Err(err!("an empty root was refused: {}", e; Test, Invalid)),
+        }
+        for (asked, want) in [
+            ("alpha",                  "not an absolute path"),
+            ("/no/such/folder/at/all", "cannot be resolved"),
+        ] {
+            match vet_root(&grant, asked) {
+                Ok(p)  => return Err(err!(
+                    "'{}' was taken as a verify root ({:?})", asked, p; Test, Invalid)),
+                Err(s) => assert!(s.contains(want), "'{}' said {:?}", asked, s),
+            }
+        }
+        // A file is not a tree, and the sentence says which it is.
+        let file = grant.join("alpha").join(DEV_DIR).join("verify_alef.mjs");
+        match vet_root(&grant, &fmt!("{}", file.display())) {
+            Ok(_)  => return Err(err!("a file was taken as a verify root"; Test, Invalid)),
+            Err(s) => assert!(s.contains("is a file"), "{}", s),
+        }
+        // OUTSIDE the grant, which is the one that matters: the page composes this
+        // path and the page is not the thing the grant is being kept from, but a
+        // root the grant does not reach is a tree this hand has no business in.
+        let outside = match grant.parent() {
+            Some(p) => p.to_path_buf(),
+            None    => return Err(err!("the fixture has no parent"; Test, Missing)),
+        };
+        match vet_root(&grant, &fmt!("{}", outside.display())) {
+            Ok(_)  => return Err(err!("a root outside the grant was taken"; Test, Invalid)),
+            Err(s) => assert!(s.contains("outside"), "{}", s),
+        }
         Ok(())
     }
 

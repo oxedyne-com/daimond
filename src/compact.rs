@@ -206,6 +206,22 @@ pub const WORKER_CONTEXT_CAP:   u64   = 96_000;
 pub const WORKER_KEEP:          f64   = 0.3;
 pub const WORKER_SPEND_CAP_USD: f64   = 1.0;
 
+/// Rounds a worker may still take once the turn that dispatched it has ended.
+///
+/// **A worker nobody is waiting for is not owed its whole ceiling.**  On 2026-09-15 a `gather`
+/// ran out of time at 120 s, the daimon answered and its turn ended, and the worker went on
+/// alone for thirty minutes to the full 200 rounds (`WORKER_MAX_ROUNDS` times its one
+/// continuation) at US$0.47, with nothing left in the page able to read what it found.  The
+/// ceiling above is calibrated for a worker whose report a turn is holding a promise on; once
+/// that promise is gone the remaining rounds buy a report that will be read, at best, at the top
+/// of somebody's next turn.
+///
+/// Five is enough to finish the file in hand and write the answer, and far too few to start a
+/// fresh line of work.  The worker is TOLD at the seam of the round it is orphaned in -- see
+/// [`orphan_note`] -- so the bound is something it can work to rather than something that
+/// happens to it.
+pub const ORPHAN_GRACE_ROUNDS: usize = 5;
+
 /// Seconds `gather` waits for the workers it was named before it answers with whatever has
 /// finished.
 ///
@@ -418,6 +434,7 @@ pub struct Limits {
 	pub worker_context_cap:   u64,
 	pub worker_keep:          f64,
 	pub worker_spend_usd:     f64,
+	pub orphan_grace_rounds:  usize,	// see `ORPHAN_GRACE_ROUNDS`
 
 	// How long an in-turn gather waits
 	pub gather_timeout_s: u64,	// seconds; see `GATHER_TIMEOUT_S`
@@ -491,6 +508,7 @@ impl Default for Limits {
 			worker_context_cap:   WORKER_CONTEXT_CAP,
 			worker_keep:          WORKER_KEEP,
 			worker_spend_usd:     WORKER_SPEND_CAP_USD,
+			orphan_grace_rounds:  ORPHAN_GRACE_ROUNDS,
 			gather_timeout_s:     GATHER_TIMEOUT_S,
 			batch_line:           true,
 			compound:             false,
@@ -1678,6 +1696,42 @@ pub fn spend_limit_note(spent: f64, cap: f64) -> ChatMessage {
 		"[Daimond stopped the previous turn after it had spent about US${:.2}, which is past \
 		 the US${:.2} a turn is allowed. The assistant did not choose to stop and the task may \
 		 be unfinished; say where it had got to before carrying on.]", spent, cap))
+}
+
+/// What a worker is told at the seam of the round its dispatcher's turn ended in.
+///
+/// **It is told, rather than simply stopped.**  A bound a model cannot see is a bound it walks
+/// into mid-file; told the figure, it can write down what it has.  In the app's voice, for the
+/// reason [`round_limit_note`] gives, and it names what became of the audience rather than only
+/// the number -- a worker that knows nobody is holding a promise on its report knows to make
+/// that report short.
+///
+/// # Arguments
+/// * `grace` - Rounds it has left; see [`ORPHAN_GRACE_ROUNDS`].
+pub fn orphan_note(grace: usize) -> ChatMessage {
+	ChatMessage::system(fmt!(
+		"[The turn that dispatched you has ended, so nothing is waiting on your report and \
+		 there is nobody to ask. Daimond will stop this turn after {} more tool-call round(s). \
+		 Finish what is in hand and write your report now; it will be read at the top of the \
+		 next turn rather than in this one.]", grace))
+}
+
+/// What goes into the conversation when an orphaned worker is stopped at that grace.
+///
+/// Said separately from [`round_limit_note`] and [`continuation_limit_note`] because it is a
+/// different fact from either: the round budget was not spent and no continuation was refused --
+/// the audience went away.  A worker resumed by hand from here has its whole ceiling again, and
+/// the sentence says the work may be unfinished so that whoever reads it knows to ask.
+///
+/// # Arguments
+/// * `rounds` - Rounds the whole turn ran.
+/// * `grace` - The ceiling it met; see [`ORPHAN_GRACE_ROUNDS`].
+pub fn orphan_limit_note(rounds: usize, grace: usize) -> ChatMessage {
+	ChatMessage::system(fmt!(
+		"[Daimond stopped the previous turn after {} tool-call rounds, {} of them after the turn \
+		 that dispatched this worker had ended and left nothing waiting for its report. The \
+		 assistant did not choose to stop and the task may be unfinished; say where it had got \
+		 to before carrying on.]", rounds, grace))
 }
 
 

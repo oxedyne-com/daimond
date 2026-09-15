@@ -87,6 +87,8 @@
      it leaves behind in the Credits drawer. -->
 <link rel="stylesheet" href="css/passcode.css">
 <link rel="stylesheet" href="css/workspace.css">
+<!-- dockdrag.css AFTER workspace.css: it dresses the chip the row draws. -->
+<link rel="stylesheet" href="css/dockdrag.css">
 <link rel="stylesheet" href="css/trash.css">
 <link rel="stylesheet" href="css/improve.css">
 <link rel="stylesheet" href="css/tracker.css"><!-- js/tracker.js — the Proposals tracker view -->
@@ -216,7 +218,7 @@
 		     that configure Daimond live there rather than in a popup, so a chat
 		     stays live beside them: the user can ask Daimond what an app password is
 		     while the box asking for one is still on screen. -->
-		<aside class="panel rail" id="panel-rail" data-panel="rail" data-zone="rail" data-label="Diamonds" data-i18n-label="panel.rail">
+		<aside class="panel rail" id="panel-rail" data-panel="rail" data-zone="rail" data-label="diamonds" data-i18n-label="panel.rail">
 			<div class="rail-top" id="rail-top">
 				<!-- The global pause, which is not a seventh setting: it is the ROOT
 				     of the tree every other traffic light hangs off, so it is green
@@ -227,7 +229,7 @@
 				     The control itself is built in daimond.js, which owns the DOM. -->
 				<div class="pptw-head" id="pptw-global-row">
 					<span class="pptw-slot" id="pptw-global"></span>
-					<span class="pptw-head-label" title="Pause or resume everything that can spend: every Diamond, every chat, the workers, the mailboxes and any page fetched for you." data-i18n="pause.everything" data-i18n-title="pause.everything_help">Everything</span>
+					<span class="pptw-head-label" title="Pause or resume everything that can spend: every diamond, every chat, the workers, the mailboxes and any page fetched for you." data-i18n="pause.everything" data-i18n-title="pause.everything_help">Everything</span>
 					<!-- The rail's closer, and it is the RAIL it closes. It stood on the
 					     Diamonds head below, in the run of buttons that make a Diamond
 					     and draw the graph, where it read as the closer of that section:
@@ -240,7 +242,7 @@
 					     handler in daimond.js binds by `[data-close]` and does not care
 					     where the button sits. -->
 					<button class="addbtn panel-close ui-close" data-close="rail" title="Close panel"
-						aria-label="Close the Diamonds panel" data-i18n-title="common.close_panel" data-i18n-aria-label="rail.close_rail">
+						aria-label="Close the diamonds panel" data-i18n-title="common.close_panel" data-i18n-aria-label="rail.close_rail">
 						<svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"/></svg>
 					</button>
 				</div>
@@ -249,8 +251,8 @@
 				     is cut and polished above it. The order is not decoration --
 				     a chat is raw and a Diamond is worked, and the rail says so
 				     without needing a word of explanation. -->
-				<div class="railhead"><span role="heading" aria-level="2" title="A repeatable method, distilled from a conversation." data-i18n="rail.diamonds" data-i18n-title="rail.diamonds_help">Diamonds</span>
-					<button class="addbtn" id="new-diamond-btn" title="New Diamond" data-i18n-title="rail.new_diamond">
+				<div class="railhead"><span role="heading" aria-level="2" title="A repeatable method, distilled from a conversation." data-i18n="rail.diamonds" data-i18n-title="rail.diamonds_help">diamonds</span>
+					<button class="addbtn" id="new-diamond-btn" title="New diamond" data-i18n-title="rail.new_diamond">
 						<svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>
 					</button>
 					<!-- The Diamonds and the links between them, drawn. It belongs on
@@ -290,7 +292,7 @@
 				     list used to grow until the chat tiles were off the bottom of the
 				     rail with no way to get them back. -->
 				<div class="rhandle" id="handle-rail-split" title="Drag to resize, double-click to reset" data-i18n-title="layout.handle"></div>
-				<div class="railhead"><span role="heading" aria-level="2" title="Raw conversation. A Diamond is cut from it." data-i18n="rail.chats" data-i18n-title="rail.chats_help">Chats</span>
+				<div class="railhead"><span role="heading" aria-level="2" title="Raw conversation. A diamond is cut from it." data-i18n="rail.chats" data-i18n-title="rail.chats_help">Chats</span>
 					<button class="addbtn" id="new-session-btn" title="New chat" data-i18n-title="rail.new_chat">
 						<svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>
 					</button>
@@ -435,7 +437,7 @@
 					     Reached from the "Models" status row above, which counts them. -->
 					<div class="admin-view" id="admin-models" style="display:none">
 						<div class="settings-section">
-							<p class="cfg-lead" data-i18n="models.lead">A key for each provider you use. New chats and Diamonds start on the default model; any model can be picked for a single chat.</p>
+							<p class="cfg-lead" data-i18n="models.lead">A key for each provider you use. New chats and diamonds start on the default model; any model can be picked for a single chat.</p>
 							<div id="models-list" class="models-list"></div>
 							<!-- The panel's message line: a provider that would not say what is left,
 							     a credit figure that is not a number, a models list that would not
@@ -642,7 +644,7 @@
 						     is its conversation, which is persistent and was until now not shown
 						     at all. Only drawn on a Diamond — a chat has one face. -->
 						<div class="dview" id="diamond-view" role="group" style="display:none"
-						     data-i18n-aria-label="crystal.view_switch" aria-label="Which face of this Diamond">
+						     data-i18n-aria-label="crystal.view_switch" aria-label="Which face of this diamond">
 							<button class="dview-btn" id="dview-crystal" type="button" aria-pressed="true"
 							        data-i18n="crystal.view_crystal">Crystal</button>
 							<button class="dview-btn" id="dview-chat" type="button" aria-pressed="false"
@@ -1108,7 +1110,7 @@
 			     belongs to rides on the run as a chip, so the tree's height is
 			     not spent on it. -->
 			<div class="diamond-find agent-find">
-				<input type="search" class="diamond-search" id="agent-search" placeholder="Search agents" aria-label="Search agents by name, task, Diamond or tag" autocomplete="off" data-i18n-placeholder="agents.search" data-i18n-aria-label="agents.search_help">
+				<input type="search" class="diamond-search" id="agent-search" placeholder="Search agents" aria-label="Search agents by name, task, diamond or tag" autocomplete="off" data-i18n-placeholder="agents.search" data-i18n-aria-label="agents.search_help">
 				<div class="diamond-filter" id="agent-filter" style="display:none"></div>
 			</div>
 			<div class="agents-list" id="agents-list"></div>
@@ -1763,6 +1765,11 @@
      its own so it can be proved under node with no browser. -->
 <script src="js/graphgeom.js"></script>
 <script src="js/graph.js"></script>
+<!-- dockdrag.js AFTER graphgeom.js and gesture.js, which it uses rather than
+     reimplementing: the Dock's slot search IS `nearest` over rectangles, and
+     its press-and-drag IS the recogniser the Graph's canvas uses. Before
+     daimond.js, whose `init` binds it. -->
+<script src="js/dockdrag.js"></script>
 <!-- The persistent desktop peer: window.DaimondPeer / DaimondLease /
      DaimondPresence, consumed by the guarded glue in daimond.js. Money-safe
      (the sequential double-bill is closed, proven in live two-context QA). See

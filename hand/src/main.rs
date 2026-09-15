@@ -1545,10 +1545,17 @@ impl Desk {
         caps.push(self.ws.cap());
         // Whether this folder holds verifiers at all. A page that knows the answer can say
         // "not on this computer" once, instead of letting a model find it out one refusal at
-        // a time -- which is what `fence:` beside it is for.  Asked of the tree the verb
-        // will actually resolve in, so a pinned root is reflected here too.
+        // a time -- which is what `fence:` beside it is for.  Asked of the GRANT, or of
+        // the person's pin where there is one: a request names the folder the turn is
+        // working in and this line cannot know it, so `verify:none` here means the
+        // grant's own root is not a repository and not that nothing under it is.
         let vroot = self.verify_root.clone().unwrap_or_else(|| self.root.clone());
         caps.push(verify::cap(&vroot));
+        // And that the tree is decided PER REQUEST, which is a fact about this hand
+        // and not about any folder -- so a page reading it knows it may send the
+        // folder the turn is working in, and a page that does not read it keeps the
+        // older gate rather than sending a field an older hand would ignore.
+        caps.push(fmt!("{}", verify::BY_ROOT));
         // That this hand can be ASKED what it is still running, and told to stop
         // one of them. A page that cannot see the capability cannot know whether
         // silence means "nothing is running" or "this hand is older than the
@@ -1887,9 +1894,9 @@ impl Desk {
     /// # Arguments
     /// * `req` - The [`Req::Verify`].
     async fn verify(&self, req: Req) -> Outcome<()> {
-        let (id, name, want, world, budget_ms) = match &req {
-            Req::Verify { id, name, breaks, world, timeout_ms } =>
-                (id.clone(), name.clone(), breaks.clone(), *world, *timeout_ms),
+        let (id, name, asked_root, want, world, budget_ms) = match &req {
+            Req::Verify { id, name, root, breaks, world, timeout_ms } =>
+                (id.clone(), name.clone(), root.clone(), breaks.clone(), *world, *timeout_ms),
             _ => return Ok(()),
         };
 
@@ -1903,13 +1910,38 @@ impl Desk {
             return Ok(());
         }
 
-        // The tree this hand resolves verifiers in: the one the person pinned,
-        // else the granted root. Computed ONCE, before anything below, because
-        // the lookup, the capability, the provenance gate and the spawn's
-        // working directory must all answer for the same tree -- a vroot that
-        // changed between two of them would resolve a script in one tree and
-        // prove it against another.
-        let vroot = self.verify_root.clone().unwrap_or_else(|| self.root.clone());
+        // The tree this hand resolves verifiers in: the one the person pinned at a
+        // shell, else the folder the PAGE says this turn is working in, else the
+        // granted root. Computed ONCE, before anything below, because the lookup,
+        // the provenance gate, the world's scratch and the spawn's working
+        // directory must all answer for the same tree -- a vroot that changed
+        // between two of them would resolve a script in one tree and prove it
+        // against another.
+        //
+        // THE REQUEST DECIDES, AND THE PIN OVERRIDES IT. A grant is not a
+        // repository in the case this exists for: a person grants the folder their
+        // projects live in and marks one of them into a Diamond, so the verifiers
+        // are a level below the grant and a root fixed at the grant answers about
+        // a folder nobody asked about. `DAIMOND_HAND_VERIFY_ROOT` stays what it
+        // always was -- a person's pin, made at a shell, which nothing on the wire
+        // may move.
+        let vroot = match &self.verify_root {
+            Some(v) => v.clone(),
+            None    => match verify::vet_root(&self.root, &asked_root) {
+                Ok(p)  => p,
+                Err(s) => { self.refuse(&id, s); return Ok(()); },
+            },
+        };
+
+        // ASKED OF THE TREE THIS REQUEST NAMED, not of the grant, and said in a
+        // sentence naming the folder that was looked in. The handshake's
+        // `verify:` capability answers for the grant and cannot answer for a mark
+        // the page had not made when the hand started; this is where the question
+        // is really settled.
+        if !verify::available(&vroot) {
+            self.refuse(&id, verify::none_here(&vroot, &self.root));
+            return Ok(());
+        }
 
         let script = match verify::resolve(&vroot, &name) {
             Ok(s)  => s,
@@ -4262,6 +4294,145 @@ mod tests {
         let dir = res!(scratch("verify-root-02"));
         res!(fs::write(dir.join(VERIFY_ROOT_FILE), "just/a/name"), IO, File);
         assert!(verify_root(&dir).is_none());
+        Ok(())
+    }
+
+    // ── A grant that holds several repositories ─────────────────────
+    //
+    // The product's own case, and the one the real-repository bank met on
+    // 2026-09-15: the hand is granted the folder the projects live in and ONE of
+    // them is marked into the Diamond.  The tree the verb resolves in is therefore
+    // the REQUEST's, not the grant's, and these three tests are what say so from
+    // outside the hand -- through the framing, as the page speaks to it.
+
+    /// Everything a byte stream of requests gets back.
+    ///
+    /// `Req::Bye` is appended, so `serve` returns, the writer is dropped and the
+    /// read below reaches an end.
+    ///
+    /// # Arguments
+    /// * `cfg` - What to serve with.
+    /// * `reqs` - The requests, in order, after the handshake.
+    async fn asked(cfg: Serve, reqs: &[Req]) -> Outcome<Vec<Resp>> {
+        let mut input = res!(framed(&hello()));
+        for q in reqs {
+            input.extend_from_slice(&res!(framed(q)));
+        }
+        input.extend_from_slice(&res!(framed(&Req::Bye)));
+        let (w, mut r) = tokio::io::duplex(1 << 20);
+        let task = tokio::spawn(serve(Cursor::new(input), w, cfg));
+        let mut bytes = Vec::new();
+        let mut buf = [0u8; 4096];
+        loop {
+            let n = res!(r.read(&mut buf).await.map_err(|e| err!(e, "read"; IO)));
+            if n == 0 {
+                break;
+            }
+            bytes.extend_from_slice(&buf[..n]);
+        }
+        res!(res!(task.await.map_err(|e| err!(e, "join"; IO))));
+        responses(&bytes)
+    }
+
+    /// One verify request naming the tree it means.
+    ///
+    /// # Arguments
+    /// * `root` - The folder the turn is working in, absolute or empty.
+    /// * `name` - The verifier's short name.
+    fn verify_in(root: &Path, name: &str) -> Req {
+        Req::Verify {
+            id:         fmt!("v1"),
+            name:       fmt!("{}", name),
+            root:       fmt!("{}", root.display()),
+            breaks:     daimond_hand::wire::Breaks::None,
+            world:      daimond_hand::wire::World::None,
+            timeout_ms: 10_000,
+        }
+    }
+
+    /// The reason a response list refuses with, or the empty string.
+    fn refusal(rs: &[Resp]) -> String {
+        for r in rs {
+            if let Resp::Refused { reason, .. } = r {
+                return fmt!("{}", reason);
+            }
+        }
+        String::new()
+    }
+
+    /// A grant with two sibling repositories and a folder that is neither.
+    ///
+    /// # Arguments
+    /// * `name` - A name unique to the test.
+    fn two_repos(name: &str) -> Outcome<(Serve, PathBuf)> {
+        let (mut cfg, _jdir) = res!(setup(name, Fence::detect()));
+        for (repo, verifier) in [("alpha", "alef"), ("beta", "bet")] {
+            let dev = cfg.root.join(repo).join("dev");
+            res!(fs::create_dir_all(&dev));
+            res!(fs::write(dev.join(fmt!("verify_{}.mjs", verifier)), "//\n"), IO, File);
+        }
+        res!(fs::create_dir_all(cfg.root.join("notes")));
+        // The grant itself is NOT a repository, which is the whole case.
+        cfg.journal.max_bytes = 1 << 20;
+        let root = cfg.root.clone();
+        Ok((cfg, root))
+    }
+
+    /// The handshake says the tree is decided per request, and the grant's own
+    /// capability is honest about the grant.
+    #[tokio::test]
+    async fn the_handshake_says_the_verify_tree_is_decided_per_request() -> Outcome<()> {
+        let (cfg, _root) = res!(two_repos("verify-root-03"));
+        let rs = res!(asked(cfg, &[]).await);
+        let caps = rs.iter().find_map(|r| match r {
+            Resp::Hello { caps, .. } => Some(caps.clone()),
+            _ => None,
+        });
+        let caps = ok!(caps.ok_or_else(|| err!("no handshake came back"; Test, Missing)));
+        assert!(caps.iter().any(|c| c == daimond_hand::verify::BY_ROOT),
+            "the handshake does not say the tree is per request: {:?}", caps);
+        assert!(caps.iter().any(|c| c == "verify:none"),
+            "the parent of two repositories was described as one: {:?}", caps);
+        Ok(())
+    }
+
+    /// The request's root chooses which of the grant's repositories answers.
+    #[tokio::test]
+    async fn the_request_chooses_which_repository_the_verb_resolves_in() -> Outcome<()> {
+        let (cfg, root) = res!(two_repos("verify-root-04"));
+        // 'bet' is beta's and beta was not named, so alpha must refuse it -- by the
+        // name of alpha's own dev directory, which is what says which tree looked.
+        let rs = res!(asked(cfg.clone(), &[verify_in(&root.join("alpha"), "bet")]).await);
+        let why = refusal(&rs);
+        assert!(why.contains(&fmt!("{}", root.join("alpha").join("dev").display())),
+            "the refusal does not name the tree the request chose: {:?}", why);
+        // And beta's own verifier is found in beta: the refusal there is about node
+        // or about a run, never about the name.
+        let rs = res!(asked(cfg, &[verify_in(&root.join("beta"), "bet")]).await);
+        let why = refusal(&rs);
+        assert!(!why.contains("names no verifier"),
+            "'bet' was not found in the tree that holds it: {:?}", why);
+        Ok(())
+    }
+
+    /// A mark that is not a repository is refused by name, and the person's pin
+    /// still overrides whatever the page sent.
+    #[tokio::test]
+    async fn a_mark_with_no_verifiers_is_named_and_a_pin_still_wins() -> Outcome<()> {
+        let (cfg, root) = res!(two_repos("verify-root-05"));
+        let rs = res!(asked(cfg.clone(), &[verify_in(&root.join("notes"), "alef")]).await);
+        let why = refusal(&rs);
+        assert!(why.contains(&fmt!("{}", root.join("notes").join("dev").display())),
+            "a non-repository mark was not named in the refusal: {:?}", why);
+        assert!(why.contains("not a general test runner"), "{:?}", why);
+
+        // THE PIN IS A PERSON'S, MADE AT A SHELL, and nothing on the wire moves it.
+        let mut pinned = cfg;
+        pinned.verify_root = Some(res!(fs::canonicalize(root.join("alpha"))));
+        let rs = res!(asked(pinned, &[verify_in(&root.join("beta"), "bet")]).await);
+        let why = refusal(&rs);
+        assert!(why.contains(&fmt!("{}", root.join("alpha").join("dev").display())),
+            "the request's root overrode the person's pin: {:?}", why);
         Ok(())
     }
 }

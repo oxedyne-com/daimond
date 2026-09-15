@@ -98,7 +98,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { open, shot, scratch, errors } from './harness.mjs';
+import { open, shot, scratch, errors, artefactPath } from './harness.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const WWW  = path.join(HERE, '..', 'www');
@@ -881,7 +881,12 @@ try {
 	// Printed every run: the aligns and rects are the ground truth a pixel
 	// reading is adjudicated against, and a passing check never shows detail.
 	console.log("  9o ground truth: wrapper="+mx.display.alignWrap+" display="+mx.display.alignDisp+" offset="+mx.display.ctr+" rects="+JSON.stringify(mx.display.rects)+" brackets="+JSON.stringify(mx.display.bracketsRect));
-	try { fs.writeFileSync(path.join(HERE, ".math-ground-truth.json"),
+	// THE CLEAN RUN'S NUMBERS ARE THE GROUND TRUTH, so a break run's are written to scratch
+	// instead of over them. Twice wrong otherwise: the file would hold figures measured against
+	// an app deliberately broken, and -- until this was untracked on 2026-09-15 -- it left the
+	// working copy dirty, which stopped the daimon's next `verify` call outright. See
+	// `artefactPath` in dev/harness.mjs.
+	try { fs.writeFileSync(artefactPath(".math-ground-truth.json", path.join(HERE, ".math-ground-truth.json"), BREAK),
 		JSON.stringify({ break: BREAK, wrapper: mx.display.alignWrap, display: mx.display.alignDisp,
 		offset: mx.display.ctr, rects: mx.display.rects, brackets: mx.display.bracketsRect })); } catch (e) { /* diagnostic only */ }
 	mcheck('9c both paren delimiter families render',

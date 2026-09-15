@@ -69,7 +69,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
-import { open, signInAs, scratch } from './harness.mjs';
+import { open, signInAs, scratch, keepTracked } from './harness.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.join(HERE, '..');
@@ -492,12 +492,17 @@ try {
 		if (keep.indexOf(spot) < 0) {
 			check('the drift check has teeth', false, 'the sentence it mutates is not in the source');
 		} else {
+			// A TRACKED SOURCE IS BEING MOVED, so it is held first. The `finally` below
+			// covers a throw and nothing else: a failed check that exits, an uncaught
+			// rejection, or somebody's Ctrl-C leaves `landing/terms.html` changed under the
+			// next person to read `git status`. See `keepTracked` in dev/harness.mjs.
+			const release = keepTracked(src);
 			fs.writeFileSync(src, keep.replace(spot, 'You may be told in the app'));
 			let moved = false;
 			try {
 				moved = gen.build({ file: 'terms.html', title: 'Terms of Service' }) !== real;
 			} finally {
-				fs.writeFileSync(src, keep);
+				release();
 			}
 			check('and a word changed in landing/ would be caught', moved);
 		}

@@ -11,21 +11,25 @@
 // PROVIDER LOG: one user turn from the chat, and a `tool` message in it carrying
 // both reports. A tile that shows the text proves nothing about what the model saw.
 //
-// Three scenarios, all of them in every run: the gather that works, the gather
-// that runs out of time, and the gather the user stops. The last two are where
-// the path can silently lose a report, which is the failure worth catching.
+// Five scenarios, all of them in every run: the gather that works, the gather that
+// runs out of time, the gather the user stops, the worker that OUTLIVES the turn that
+// dispatched it, and a Diamond's daimon doing the same thing as a chat. The last four
+// are where the path can silently lose a report -- or, in the fourth's case, spend an
+// afternoon and two more turns producing one nobody asked for.
 //
 //   node dev/verify_spawn_gather.mjs
 //   node dev/verify_spawn_gather.mjs --break nobridge    # must fail something
 //   node dev/verify_spawn_gather.mjs --break twice
 //   node dev/verify_spawn_gather.mjs --break nostop
+//   node dev/verify_spawn_gather.mjs --break noorphan   # the orphan runs to its whole ceiling
+//   node dev/verify_spawn_gather.mjs --break emptyturn  # a turn is spent on an empty report
 import { open, newChat, shot, mockLog, clearMockLog } from './harness.mjs';
 
 const BREAK = (() => {
 	const i = process.argv.indexOf('--break');
 	return (i >= 0 && process.argv[i + 1]) ? process.argv[i + 1] : '';
 })();
-const BREAKS = ['nobridge', 'twice', 'nostop'];
+const BREAKS = ['nobridge', 'twice', 'nostop', 'noorphan', 'emptyturn'];
 if (BREAK && !BREAKS.includes(BREAK)) {
 	console.error(`unknown break '${BREAK}'; one of: ${BREAKS.join(', ')}`);
 	process.exit(2);
@@ -122,6 +126,40 @@ if (BREAK === 'nostop') {
 	});
 	if (!applied) {
 		console.error("break 'nostop': no cancel to take away, so nothing was broken.");
+		process.exit(2);
+	}
+}
+// `noorphan` lets the arming happen and takes away the engine's ear for it: the page still
+// marks every run of a turn that has ended, and `DaimondApp::orphan_worker` does nothing. That
+// is proposal 15's own shape -- a worker with nobody waiting, running to the whole 200 rounds
+// its preset allows. Scenario four reddens.
+if (BREAK === 'noorphan') {
+	const applied = await page.evaluate(async () => {
+		const mod = await import('/pkg/oxedyne_daimond.js');
+		if (!mod || !mod.DaimondApp || !mod.DaimondApp.prototype.orphan_worker) return false;
+		mod.DaimondApp.prototype.orphan_worker = function () {};
+		return true;
+	});
+	if (!applied) {
+		console.error("break 'noorphan': this wasm has no orphan ceiling to deafen, so nothing "
+			+ 'was broken. Rebuild www/pkg.');
+		process.exit(2);
+	}
+}
+// `emptyturn` tells `deliverToChat` that every report has something in it, which is what this
+// file said before the reading of an empty one cost US$1.14. Only scenario four's no-turn check
+// reddens; the reports still land in the transcript either way.
+if (BREAK === 'emptyturn') {
+	const applied = await page.evaluate(() => {
+		if (!window.DaimondWorkers || !window.DaimondWorkers.deliverToChat) return false;
+		const real = window.DaimondWorkers.deliverToChat;
+		window.DaimondWorkers.deliverToChat = function (b, mine, instruction, parts) {
+			return real.call(this, b, mine, instruction, parts, true);
+		};
+		return true;
+	});
+	if (!applied) {
+		console.error("break 'emptyturn': no delivery to unguard, so nothing was broken.");
 		process.exit(2);
 	}
 }
@@ -298,7 +336,95 @@ check('and nothing is left waiting, so the turn is not held open by a dead gathe
 	settled === 0, `${settled} await(s)`);
 await shot(s, 'spawngather-3-stopped');
 
-// ── Four: a DIAMOND's daimon, which is the surface the saving was measured on ──
+// ── Four: the worker that outlives its turn ─────────────────────────────────
+//
+// PROPOSAL 15'S DRIVE, 2026-09-15, on the owner's own account. A `gather` ran out of time at
+// 120 s; the daimon answered and its turn ended; and the worker went on ALONE for thirty
+// minutes to the full 200 rounds its preset allows, US$0.47, with nothing in the page holding
+// a promise on what it would say. Then the app spent a THIRD turn -- US$1.14 -- reading the
+// report it finally produced, which was empty, because a worker stopped at a ceiling has
+// written nothing since its last tool call.
+//
+// Two properties, and the second is not a consequence of the first: a worker nobody is waiting
+// for is bounded (`compact::ORPHAN_GRACE_ROUNDS`, armed by `Workers.releaseTurn`), and a report
+// with nothing in it starts no turn (`reportHasSubstance`). The reports still reach the
+// transcript either way, which is what makes the second safe.
+clearMockLog();
+// The chat's own turn count before this one, so "the turn ended" is a fact read off the app
+// rather than a wait long enough to be sure. `lastTurn().turns` is written on the engine's
+// `ended` event, one seam before the `finally` that arms the ceiling.
+const turns0 = await page.evaluate(() => {
+	try { const t = window.DaimondCore.lastTurn(); return t ? (t.turns | 0) : 0; }
+	catch (e) { return 0; }
+});
+await page.fill('#chat-input',
+	'@tools spawn_agent {"name":"lonely","task":"@rounds 400/300 file_list {\\"path\\":\\".\\"}"}'
+	+ ' ;; gather {"names":["lonely"],"timeout_s":5}');
+await page.keyboard.press('Enter');
+
+// The turn: it waits five seconds, is handed a worker still running, and ends.
+const ended = await page.waitForFunction((was) => {
+	try { const t = window.DaimondCore.lastTurn(); return !!t && (t.turns | 0) > was; }
+	catch (e) { return false; }
+}, turns0, { timeout: 40000 }).catch(() => null);
+const lateWire = mockLog();
+check('the gather ran out of time on a worker that was still going',
+	toolRepliesWith(lateWire, 'lonely').some(x => /is still running/i.test(x.content)),
+	`${toolRepliesWith(lateWire, 'lonely').length} tool repl(y|ies) about it`);
+check('and the turn ended anyway, leaving the worker with nobody waiting for it', !!ended);
+
+// The bound. Up to forty seconds, because the unbounded shape this is about takes about
+// twenty -- a check that looked sooner would pass under the break for want of looking.
+const bounded = await page.waitForFunction(() => {
+	const r = (window.DaimondWorkers ? window.DaimondWorkers.runs : [])
+		.find(x => x.name === 'lonely');
+	return !!(r && ['done', 'error', 'stopped', 'capped', 'spend_cap'].includes(r.status));
+}, null, { timeout: 40000 }).catch(() => null);
+const lonely = await page.evaluate(() => {
+	const r = (window.DaimondWorkers ? window.DaimondWorkers.runs : [])
+		.find(x => x.name === 'lonely');
+	if (!r) return null;
+	return { status: String(r.status || ''), orphaned: !!r.orphaned,
+		rounds: (r.ended && r.ended.rounds) || 0,
+		told: String(r.text || '').includes('the turn that dispatched this worker ended'),
+		report: String(r.report == null ? '' : r.report).trim().length };
+});
+check('the orphaned worker was stopped rather than left to its own ceiling',
+	!!bounded && !!lonely && lonely.status === 'capped', JSON.stringify(lonely));
+// THE SENTENCE IS THE EVIDENCE, not the round count: the round it was orphaned in depends on
+// how fast the mock answered, so a number here would be a timing assertion wearing a ceiling's
+// clothes. The engine writes this sentence at one seam and nowhere else.
+check('and it was stopped BY the orphaning, with its dispatcher named',
+	!!lonely && lonely.told, lonely ? `told=${lonely.told} rounds=${lonely.rounds}` : 'no run');
+// A HUNDRED, not the two hundred of the whole preset: the paced fixture reaches about
+// thirty-five before its dispatcher lets go, and an unbounded one runs to the leg cap. A
+// ceiling of 200 here would be met by both, which is a check that measures nothing.
+check('far inside the hundred-round leg its preset would otherwise have allowed',
+	!!lonely && lonely.rounds > 0 && lonely.rounds < 100, lonely ? `${lonely.rounds} rounds` : 'no run');
+
+// AND NO TURN WAS SPENT READING WHAT IT DID NOT SAY. `Their reports follow` is the hand-back
+// prompt and appears in no other message; the transcript block is drawn either way, which is
+// where the reports actually live.
+await page.waitForTimeout(3000);
+const afterWire = mockLog();
+check('no turn was started to read a report with nothing in it',
+	userTurnsWith(afterWire, 'Their reports follow').length === 0,
+	`${userTurnsWith(afterWire, 'Their reports follow').length} hand-back turn(s)`);
+// READ AS THE READER SEES IT: the block is Markdown, so `### lonely` is an H3 whose text is
+// the worker's name and its ending note -- a raw-text search for the hashes finds nothing and
+// would pass with the whole delivery removed.
+const pastedLonely = await page.evaluate(() => {
+	const out = document.getElementById('chat-output');
+	if (!out) return 0;
+	return [...out.querySelectorAll('h1,h2,h3,h4')]
+		.filter(h => (h.textContent || '').trim().startsWith('lonely')).length;
+});
+check('and the reports were put in the conversation instead, where they cost nothing',
+	pastedLonely >= 1, `${pastedLonely} block(s) on screen`);
+await shot(s, 'spawngather-4-orphan');
+
+
+// ── Five: a DIAMOND's daimon, which is the surface the saving was measured on ──
 //
 // A daimon's turn does not run on the app's own belt: `compose_daimon` builds a
 // fresh registry from the daimon tool set, so the page has to ask
@@ -331,7 +457,7 @@ check('and read its report back as a tool result, not as a further turn',
 		&& userTurnsWith(diaWire, 'Their reports follow').length === 0,
 	`${toolRepliesWith(diaWire, '### dia').length} tool repl(y|ies), `
 	+ `${userTurnsWith(diaWire, 'Their reports follow').length} hand-back`);
-await shot(s, 'spawngather-4-daimon');
+await shot(s, 'spawngather-5-daimon');
 
 await s.close();
 

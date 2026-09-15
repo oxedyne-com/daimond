@@ -31,8 +31,11 @@
 //   --break blinddialogopen  an open dialog is not seen before sending -> preflight-dialog-open
 //   --break noclick         selectDiamond never clicks the tile        -> select-diamond-focus
 //   --break nobusywait      the send loop never waits on busy()        -> send-awaits-busy
+//                           (and publish-dialog-cancelled, which needs the same wait to meet
+//                            the card at all -- two reds, one fault)
 //   --break noconsent       the consent dialog is never clicked        -> consent-dialog-allowed-once
 //   --break noforeignstop   a foreign dialog no longer stops the run   -> foreign-dialog-stops
+//   --break nopublishcancel a publication card is left standing        -> publish-dialog-cancelled
 //   --break noreport        the reply's verify report is never read    -> score-row-verify-report
 //   --break dryrunsends     --dry-run sends anyway                     -> dry-run-sends-nothing
 //   --break commentalways   --comment posts with no ORE_VOICE          -> comment-gated-by-ore-voice
@@ -117,6 +120,12 @@ const BREAKS = {
 			+ '\t\t\t\t+ `(${dlg.kind}${dlg.title ? \': \' + dlg.title : \'\'}).`, transcriptTail: tail };\n'
 			+ '\t\t\tbreak;',
 		with: 'stop = null;',
+	},
+	// The publication card is met and left standing again, which is proposal 11 whole: the
+	// turn holds on a question nobody is going to answer and the run's record ends there.
+	nopublishcancel: {
+		find: 'if (dlg.isPublish && dlg.hasCancel) {',
+		with: 'if (false) {',
 	},
 	noreport: {
 		find: 'const report = parseVerifyReport(tail);',
@@ -414,6 +423,76 @@ async function main() {
 			const dlg = await naive.readDialog(s.page);
 			if (!dlg) throw new Error('the foreign dialog was answered rather than left standing');
 			await closeAnyDialog();
+		});
+
+		await t('publish-dialog-cancelled', async () => {
+			// PROPOSAL 11, 2026-09-15. The daimon called `social_send` with a comment on the
+			// forge in the owner's name, the "Publish this?" card rose on a tab he was not
+			// looking at, and the run's record ends there: the turn held, and the driver --
+			// which correctly answers nothing -- sat beside it. A naive user asked by a machine
+			// whether to publish in their name says no, so this card is the one thing the driver
+			// answers with a Cancel, and the STOP is the finding.
+			//
+			// `busy()` is stubbed true for the length of the check so the driver stays in its
+			// loop with no daimon turn running -- which is the only state in which the card can
+			// be raised at all on this build, since `diamondMayPublish` refuses a daimon's
+			// publication before any dialog (see dev/verify_optimiser.mjs, which measures that).
+			await naive.selectDiamond(s.page, GOOD_ID);
+			await s.page.evaluate(() => {
+				window.__busyWas = window.DaimondCore.busy;
+				window.DaimondCore.busy = () => true;
+			});
+			try {
+				const p = run(
+					{ proposal: 80, diamondId: GOOD_ID, deadlineMs: 20000, pollMs: 300 },
+					{ page: s.page, forgeRead: forgeReadDir('@text QUICK'), lens: lensFixture(false, null),
+						fetchImpl: fetchOk, log: () => {} });
+				// The card is raised only once the daimon's own turn is over, because a
+				// daimon's publication never reaches a card at all -- `publishWithheld` denies
+				// it before any dialog while that Diamond is steering. What is under test here
+				// is the DRIVER, so the card has to exist to be met.
+				await s.page.waitForFunction((id) => {
+					try { return !window.DaimondCore.diamondBusy(id); } catch (e) { return false; }
+				}, GOOD_ID, { timeout: 20000 });
+				await s.page.waitForTimeout(500);
+				await s.page.evaluate(() => {
+					window.__pubVerdict = 'pending';
+					window.__daimondEgressAllowed(JSON.stringify({
+						tool: 'social_send', url: 'A COMMENT on proposal 11, in your name.' }))
+						.then((v) => { window.__pubVerdict = String(v); });
+				});
+				await s.page.waitForFunction(
+					() => !!document.querySelector('.modal.dlg[data-ask="publish"]'),
+					null, { timeout: 8000 }).catch(async () => {
+						const why = await s.page.evaluate(() => ({
+							verdict: window.__pubVerdict,
+							diaBusy: (window.DaimondCore.diamondBusy
+								? [...document.querySelectorAll('.diamond-box')]
+									.map(e => e.dataset.id)
+									.filter(id => window.DaimondCore.diamondBusy(id)) : 'n/a'),
+						}));
+						throw new Error(`no publication card: ${JSON.stringify(why)}`);
+					});
+				const seen = await naive.readDialog(s.page);
+				if (!seen || !seen.isPublish) {
+					throw new Error(`the card was not read as a publication: ${JSON.stringify(seen)}`);
+				}
+				const r = await p;
+				if (r.code !== naive.EXIT.stopDialog) throw new Error(`got ${JSON.stringify(r)}`);
+				if (!/publication/i.test(r.message)) {
+					throw new Error(`the stop does not say what it was: ${JSON.stringify(r.message)}`);
+				}
+				// CANCELLED, not merely stopped beside: the card is gone and the app was told no.
+				const after = await naive.readDialog(s.page);
+				if (after) throw new Error('the publication card was left standing');
+				const verdict = await s.page.evaluate(() => window.__pubVerdict);
+				if (verdict !== 'deny') throw new Error(`the gate answered ${JSON.stringify(verdict)}`);
+			} finally {
+				await s.page.evaluate(() => {
+					if (window.__busyWas) window.DaimondCore.busy = window.__busyWas;
+				});
+				await closeAnyDialog();
+			}
 		});
 
 		await t('score-row-verify-report', async () => {

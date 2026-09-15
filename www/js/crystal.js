@@ -1067,9 +1067,9 @@
 		why.className = 'crystal-fallback-why';
 		why.textContent = (opts.reason === 'partial')
 			? tr(opts, 'crystal.page_partial',
-				'This Diamond\u2019s page did not show everything it holds, so its data is shown instead.')
+				'This diamond\u2019s page did not show everything it holds, so its data is shown instead.')
 			: tr(opts, 'crystal.page_failed',
-				'This Diamond\u2019s page did not load, so its data is shown instead.');
+				'This diamond\u2019s page did not load, so its data is shown instead.');
 		note.appendChild(why);
 		if (typeof opts.onReset === 'function') {
 			var btn = document.createElement('button');

@@ -47,6 +47,8 @@
 //                                                     same world asked about four ways: the fixture
 //                                                     verifier drops its harness import
 //   node dev/verify_verifyverb.mjs --break quietrefusal 18 fails: the failing world says nothing
+//   node dev/verify_verifyverb.mjs --break parentroot  21 fails: the page names the GRANT rather
+//                                                     than the folder the turn works in
 //
 // ── THE WORLD, WHICH IS THE OTHER HALF OF "IT RAN" ──────────────────
 //
@@ -63,9 +65,12 @@
 // writes to disk is the ports it actually reached, so "it was given the world"
 // is a fact about a child process rather than a line in a report.
 //
-// Each break damages ONE thing and reddens the check named beside it. THREE checks
+// Each break damages ONE thing and reddens the check named beside it. FIVE checks
 // have no break, and it is worth saying which rather than leaving a reader to
-// count. Check 11 -- that the report says it ran outside the command fence -- is a
+// count. Checks 21b and 21c -- what a folder with no verifiers is told, and what
+// the handshake says about where the tree comes from -- are constants in
+// `hand/src/verify.rs` and `hand/src/main.rs` in the same way check 11 is.
+// Check 11 -- that the report says it ran outside the command fence -- is a
 // constant in `hand/src/verify.rs` and nothing out here can reach it. Check 1b --
 // that `ext/hand.js` and the hand agree on the protocol version -- reads both
 // shipped numbers, and damaging either of them is damaging the tree rather than
@@ -97,7 +102,7 @@ const BEQ   = process.argv.find(a => a.startsWith('--break='));
 const BREAK = BEQ ? BEQ.split('=')[1] : (BI >= 0 ? (process.argv[BI + 1] || '') : '');
 const KNOWN = ['nodev', 'realname', 'declaredbreak', 'proveclean', 'liveinstrument', 'deadlive',
 	'silentdead', 'noshot', 'ghost', 'committed', 'slander', 'noedit', 'wrongjournal',
-	'leak', 'noworld', 'quietrefusal'];
+	'leak', 'noworld', 'quietrefusal', 'parentroot'];
 if (BREAK && !KNOWN.includes(BREAK)) {
 	console.error(`unknown break '${BREAK}'; known: ${KNOWN.join(', ')}`);
 	process.exit(2);
@@ -375,13 +380,13 @@ const LE = os.endianness() === 'LE';
 /// port and kills it when the port closes. It also means one request cannot leave
 /// state behind for the next, so a check that passed because of an earlier one is
 /// not a failure mode this file has.
-function talk(messages, ms = 60000, later = []) {
+function talk(messages, ms = 60000, later = [], grant = GRANT) {
 	return new Promise((resolve) => {
 		const child = spawn(HAND, [], {
 			cwd: BASE,
 			env: {
 				...process.env,
-				DAIMOND_HAND_ROOT: GRANT,
+				DAIMOND_HAND_ROOT: grant,
 				DAIMOND_HAND_JOURNAL_DIR: JOURNAL,
 			},
 			stdio: ['pipe', 'pipe', 'pipe'],
@@ -476,8 +481,12 @@ check('1b the hand and the page agree on what protocol they speak',
 const HELLO = { t: 'hello', proto: PAGE_PROTO, client: 'verify_verifyverb' };
 
 /// One verify request, and everything the hand said about it.
-async function verify(req, ms) {
-	const r = await talk([HELLO, { t: 'verify', id: 'v1', timeout_ms: 60000, break: null, ...req }], ms);
+///
+/// `grant` is the folder the hand is given, which is `GRANT` -- the repository
+/// itself -- for every check but the parent-granted pair at the end.
+async function verify(req, ms, grant = GRANT) {
+	const r = await talk([HELLO, { t: 'verify', id: 'v1', timeout_ms: 60000, break: null, ...req }],
+		ms, [], grant);
 	const hello   = r.msgs.find(m => m.t === 'hello');
 	const refused = r.msgs.find(m => m.t === 'refused');
 	const ended   = r.msgs.find(m => m.t === 'ended');
@@ -855,6 +864,90 @@ const stood = [];
 	check('20 a world.sh the model has edited is refused before anything stands',
 		!!r.refused && /dev\/world\.sh/.test(why) && /NOT THE COMMIT'S/.test(why),
 		why.slice(0, 200) || `no refusal; report=${(r.out.split('\n')[0] || '').slice(0, 120)}`);
+}
+
+// ── 21. A GRANT THAT IS THE PARENT OF THE REPOSITORY ────────────────
+//
+// The case the product is actually for, and the one the real-repository bank met
+// on 2026-09-15: the hand is granted the folder the projects live in, and ONE of
+// them is marked into the Diamond. Every check above this granted the repository
+// itself, which is the arrangement a developer has and not the arrangement a user
+// has -- and with the verify tree fixed at the grant, every call in that bank was
+// refused, 64 of them across four tasks, because the parent of five worktrees
+// holds no `dev/` of its own.
+//
+// So the page sends the folder the turn is working in with the request, and the
+// hand answers for THAT tree. What makes this a check rather than a restatement
+// is the WORLD: its scratch is stood under the tree the request named, so the
+// path in the report is a fact about a directory on disk and not a line of text.
+//
+// `--break parentroot` sends the GRANT instead of the mark, which is what the
+// page did before this, and check 21 goes red.
+{
+	const PARENT = path.join(BASE, 'parent');
+	const CHILD  = path.join(PARENT, 'repo');
+	const PLAIN  = path.join(PARENT, 'notes');
+	fs.rmSync(PARENT, { recursive: true, force: true });
+	fs.mkdirSync(PLAIN, { recursive: true });
+	// A COPY OF THE FIXTURE REPOSITORY, `.git` and all, so the child is a real
+	// repository whose verifiers pass the provenance gate rather than a directory
+	// with `.mjs` files in it. The world's three files come with it.
+	fs.cpSync(GRANT, CHILD, { recursive: true });
+	// THE REAL world.sh, COMMITTED IN THE COPY. Check 18 commits a world.sh that
+	// refuses on purpose and check 20 edits it after that, so the copy inherits a
+	// world that cannot come up -- which would redden check 21 for a reason that has
+	// nothing to do with which tree it resolved in. The three files a world is made
+	// of are restored from this tree and committed, because an uncommitted one is
+	// refused before anything stands.
+	const cgit = (...args) => spawnSync('git', ['-C', CHILD, ...args], { stdio: 'ignore',
+		env: { ...process.env, GIT_CONFIG_GLOBAL: '/dev/null', GIT_CONFIG_SYSTEM: '/dev/null' } });
+	for (const f of WORLD_FILES) {
+		fs.copyFileSync(path.join(HERE, f), path.join(CHILD, 'dev', f));
+	}
+	cgit('add', ...WORLD_FILES.map(f => `dev/${f}`));
+	cgit('commit', '-q', '-m', 'the world, as this tree writes it');
+	fs.rmSync(path.join(CHILD, '.scratch'), { recursive: true, force: true });
+	fs.rmSync(path.join(CHILD, 'dev', 'saw-clean.json'), { force: true });
+
+	const asked = BREAK === 'parentroot' ? PARENT : CHILD;
+	const r = await verify(
+		{ name: 'needsworld', root: asked, breaks: 'none', timeout_ms: 120000 }, 180000, PARENT);
+	const n = worldOf(r.out);
+	const line = (r.out.match(/^\[world:.*$/m) || [''])[0];
+	// The scratch the report names is under the CHILD and not under the grant, and
+	// the child asked both servers who they were and wrote down what answered.
+	let saw = null;
+	try { saw = JSON.parse(fs.readFileSync(path.join(CHILD, 'dev', 'saw-clean.json'), 'utf8')); }
+	catch (e) { saw = null; }
+	if (n !== null) {
+		const r2 = spawnSync('bash', [path.join(HERE, 'world.sh'), String(n), '--down'],
+			{ encoding: 'utf8',
+				env: { ...process.env, DAIMOND_WORLD_ROOT: path.join(CHILD, '.scratch/worlds') } });
+		if (r2.status !== 0) console.log(`  note  world ${n} did not shut down cleanly`);
+	}
+	check('21 a repository one level inside the grant is the tree the verb resolves in',
+		n !== null && BAND.includes(n) && !!saw && saw.app === 8777 + n
+			&& fs.existsSync(path.join(CHILD, '.scratch/worlds')),
+		`report says ${n}, the verifier reached app ${saw ? saw.app : '(no file)'}, `
+		+ `scratch under the child: ${fs.existsSync(path.join(CHILD, '.scratch/worlds'))} — `
+		+ (line || (r.refused ? r.refused.reason : 'no world line').slice(0, 160)));
+
+	// NO BREAK, and it is worth saying which: what a folder with no `dev/` gets
+	// back is a constant in `verify::none_here`, and nothing out here can reach it.
+	const bad = await verify({ name: 'needsworld', root: PLAIN, breaks: 'none' }, 60000, PARENT);
+	const why = bad.refused ? bad.refused.reason : '';
+	check('21b a mark inside the grant that is not a repository is refused BY NAME',
+		!!bad.refused && why.includes(path.join(PLAIN, 'dev'))
+			&& /not a general test runner/.test(why),
+		why.slice(0, 220) || 'no refusal');
+
+	// And the handshake says the tree is the request's, which is how a page knows
+	// it may send one -- while `verify:` goes on answering for the grant.
+	const hs = await talk([HELLO, { t: 'bye' }], 60000, [], PARENT);
+	const caps = (hs.msgs.find(m => m.t === 'hello') || {}).caps || [];
+	check('21c the handshake says the tree is per request, and still answers for the grant',
+		caps.includes('verify:by-root') && caps.includes('verify:none'),
+		JSON.stringify(caps.filter(c => c.startsWith('verify'))));
 }
 
 // STOP WHATEVER IS LEFT. `--break leak` deliberately leaves a world standing, and

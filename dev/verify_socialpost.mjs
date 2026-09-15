@@ -32,6 +32,11 @@
 //   (d) A RELOAD AFTER A REFUSAL DOES NOT RE-POST. The note is still there and the
 //       wire is still.
 //   (e) THE BOX REFUSES AN OVER-LENGTH TITLE BEFORE IT IS QUEUED, and counts.
+//   (g) A PUBLICATION PUT TO A SCREEN NOBODY IS AT DECLINES ITSELF, after a bounded wait --
+//       and one put to somebody who is there does not. Proposal 11, 2026-09-15: a daimon
+//       reached for the forge in the owner's name, this card rose on a tab he was not looking
+//       at, and the turn held on it. No daimon reaches this card now (dev/verify_optimiser.mjs
+//       measures that); this is the half that is still raised, by the user's own chat.
 //
 // The forge is stubbed at `/api/improve`: 201-shaped answers, and — on a flag —
 // the 400 the real forge gives, with its sentence verbatim. The model is stubbed
@@ -43,6 +48,7 @@
 //   node dev/verify_socialpost.mjs --break autosend      # polish posts at once, as it did
 //   node dev/verify_socialpost.mjs --break deadend       # a refusal draws no editor
 //   node dev/verify_socialpost.mjs --break nobrake       # the box does not count the title
+//   node dev/verify_socialpost.mjs --break nodeadline    # the card waits for ever, unattended
 
 import fs from 'node:fs';
 import path from 'node:path';
@@ -77,6 +83,10 @@ const SEAM = [
 	  why: 'a refused note has no title editor' },
 	{ file: 'js/triage.js', want: 'polishSystem',
 	  why: 'the model is not told the forge\'s title limit' },
+	{ file: 'js/daimond.js', want: 'function publishAskDeadline(opts)',
+	  why: 'a publication card put to a screen nobody is at waits for ever' },
+	{ file: 'js/daimond.js', want: "ask: 'publish'",
+	  why: 'nothing can tell the publication card from any other confirm' },
 ];
 
 function requireSeams() {
@@ -117,6 +127,13 @@ const BREAKS = {
 	}],
 	// The box takes an over-length title again and queues it for the forge to
 	// refuse. Only (e) reddens.
+	// The publication card waits for ever again, on a screen nobody is at: proposal 11's own
+	// shape. Only (g)'s first two checks redden.
+	nodeadline: [{
+		file: 'js/daimond.js',
+		find: '			var pubWaitMs = (req.alone || !isAttended()) ? publishAskDeadline(opts) : 0;',
+		with: '			var pubWaitMs = 0;\t\t// the bound removed by the break',
+	}],
 	nobrake: [{
 		file: 'js/improve.js',
 		find: '			if (titleLen(cut.title) > TITLE_LIMIT) {',
@@ -507,6 +524,62 @@ try {
 		opens().length - before === 1 && vf.title === 'A shorter title'
 		&& /and the body under it\./.test(vf.body || ''),
 		JSON.stringify(vf).slice(0, 140));
+
+	// ── (g) A publication put to a screen nobody is at ─────────
+	//
+	// PROPOSAL 11, 2026-09-15. A daimon called `social_send` with a comment on the forge in the
+	// owner's name; this card rose on a tab he was not looking at, nothing answered it, and the
+	// turn held there until somebody told him. No daimon reaches this card any more -- see
+	// `diamondMayPublish`, measured in dev/verify_optimiser.mjs -- but the card itself is still
+	// raised by an ordinary chat, and a question nobody can answer must not hold a turn open for
+	// an afternoon. So: bounded when nobody is there, and NOT bounded when somebody is.
+	//
+	// The deadline is driven short through `__daimondEgressAllowed`'s second argument, which
+	// `publishAskDeadline` clamps DOWNWARD only -- a caller can bring the refusal forward and
+	// can never push it back. Two minutes is what it gets in production.
+	const gone = () => page.evaluate(() => !document.querySelector('.modal.dlg[data-ask="publish"]'));
+	before = opens().length;
+	const t0 = Date.now();
+	// RACED, so the break this check exists for REDDENS rather than hanging: the fault being
+	// measured is a card that waits for ever, and a verifier that waits for ever with it has
+	// reported nothing. `still-waiting` is not a verdict the gate can return, so it can only
+	// mean the deadline never fired.
+	const unattended = await page.evaluate(() => Promise.race([
+		window.__daimondEgressAllowed(
+			JSON.stringify({ tool: 'social_send', url: 'A COMMENT on proposal 11, in your name.',
+				alone: true }), { deadlineMs: 1500 }),
+		new Promise((r) => setTimeout(() => r('still-waiting'), 12000)),
+	]));
+	const waited = Date.now() - t0;
+	// Read BEFORE anything of this run's tidies up, or the tidying is what the check measures.
+	const wentAway = await gone();
+	// And then tidied, so a card the break left standing does not sit over the next check.
+	await page.keyboard.press('Escape').catch(() => {});
+	await page.waitForTimeout(200);
+	check('(g) a publication nobody is there to answer declines itself, and says no',
+		unattended === 'deny' && waited >= 1200 && waited < 12000, `${unattended} after ${waited}ms`);
+	check('(g) and the card is gone rather than left standing on the screen', wentAway);
+	check('(g) and nothing was published by the running out',
+		opens().length - before === 0, `${opens().length - before} posts`);
+
+	// The other direction, which is the one that would be the worse fault: a person who has just
+	// typed the sentence that led here is reading a draft, and a card that withdrew itself from
+	// under them is worse than one that waits. `isAttended` is true here -- this run has been
+	// clicking the page for a minute -- so no deadline is armed at all.
+	// Stamped deliberately: `isAttended` is foreground plus an interaction inside 90 s, and a
+	// run that had spent its last minute in `page.evaluate` alone would read as walked-away and
+	// measure the wrong branch. A key press is what a person at the device produces.
+	await page.keyboard.press('Shift');
+	const attended = page.evaluate(() => window.__daimondEgressAllowed(
+		JSON.stringify({ tool: 'social_send', url: 'A PROPOSAL the user asked for.' }),
+		{ deadlineMs: 1500 }));
+	await page.waitForSelector('.modal.dlg[data-ask="publish"]', { timeout: 5000 });
+	await page.waitForTimeout(3000);
+	check('(g) a publication somebody IS there for keeps its card, however long they read it',
+		!(await gone()));
+	await page.click('.modal.dlg .dlg-cancel', { force: true });
+	check('(g) and Cancel is still the no it always was', (await attended) === 'deny');
+	await shot(s, 'socialpost-publish-wait' + (BREAK ? '-' + BREAK : ''));
 
 	const errs = errors(s).filter(e => !/Failed to load resource/.test(e));
 	check('nothing above was reached by way of an unhandled error', errs.length === 0,

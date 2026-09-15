@@ -1687,7 +1687,7 @@ function laneRemove() {
 	S.scr = null; S.lane = ls[0]; S.tile = -1; S.off = 0; S.bar = null; S.pie = null;
 	save('index.json', JSON.stringify(IDX), 'replace').then(function (r) {
 		if (r && r.error) { IDX.lanes = prev; toast('Not removed: ' + r.error, 1); draw(); return; }
-		toast('Removed. Its entries are still in this Diamond.');
+		toast('Removed. Its entries are still in this diamond.');
 		loadRange().then(draw);
 	});
 	draw();
