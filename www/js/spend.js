@@ -222,10 +222,12 @@
 		return '≈ ';
 	}
 
-	// One line under the headline saying what the figure IS.
-	function provenance(tot) {
+	// The tooltip behind the "Estimated" badge -- the rate-table detail that used
+	// to sit in the panel itself. `''` when the period is a real bill: an
+	// accurate figure needs no badge and no note.
+	function estimateNote(tot) {
 		if (!tot || !(tot.usd > 0)) return '';
-		if (allReported(tot)) return t('spend.all_reported');
+		if (allReported(tot)) return '';
 		if ((tot.reportedUsd || 0) > 0) {
 			return t('spend.part_reported', { amount: fmtUsd(tot.reportedUsd) });
 		}
@@ -285,11 +287,15 @@
 		head.appendChild(bigStat(fmtTokens(win.tokens) + ' ' + t('spend.tok'), periodLbl));
 		sec.appendChild(head);
 
-		// Say where the figure came from, once, under the headline. A total the
-		// providers themselves billed is a fact, and dressing it in a "≈" was
-		// telling the user it was guesswork when it was the opposite.
-		var prov = provenance(win);
-		if (prov) sec.appendChild(el('div', 'spend-note', prov));
+		// A total the providers themselves billed is a fact and needs no flag.
+		// One that is not gets a small badge -- the rate-table detail moves into
+		// its tooltip, so the panel reads as a figure rather than a paragraph.
+		var note = estimateNote(win);
+		if (note) {
+			var badge = el('span', 'spend-badge', t('spend.estimated_badge'));
+			badge.title = note;
+			sec.appendChild(badge);
+		}
 
 		// And, while the correction is still in view, why the figure fell.
 		var rn = repriceNote(win);
@@ -305,15 +311,20 @@
 		});
 		sec.appendChild(toggle);
 
-		// The daily time graph.
+		// The daily time graph -- but not before there is a shape to it. A brand
+		// new account draws 30 empty bars under a date range that never held a
+		// turn, which reads as a chart rather than as "not enough yet".
 		var days = period === 'week' ? 7 : 30;
 		var ser = [];
 		try { ser = L.series(days) || []; } catch (e) { ser = []; }
-		var bars = ser.map(function (d) {
-			var dd = new Date(d.ts);
-			return { value: d.usd, label: dd.toLocaleDateString(undefined, { month: 'short', day: 'numeric' }) };
-		});
-		sec.appendChild(barChart(bars, { fmt: fmtUsd, empty: t('spend.no_turns') }));
+		var activeDays = ser.filter(function (d) { return d.usd > 0 || d.turns > 0; }).length;
+		if (activeDays >= 3) {
+			var bars = ser.map(function (d) {
+				var dd = new Date(d.ts);
+				return { value: d.usd, label: dd.toLocaleDateString(undefined, { month: 'short', day: 'numeric' }) };
+			});
+			sec.appendChild(barChart(bars, { fmt: fmtUsd, empty: t('spend.no_turns') }));
+		}
 
 		// The by-model table.
 		var byModel = [];
@@ -418,9 +429,15 @@
 		var st = (g && g.state) ? g.state() : { authed: false };
 
 		if (!st.authed) {
-			var note = el('div', 'spend-note');
-			note.textContent = t('spend.no_account');
-			sec.appendChild(note);
+			var none = el('div', 'spend-note');
+			none.appendChild(document.createTextNode(t('spend.no_account') + ' '));
+			var add = el('button', 'spend-add-credits', t('spend.add_credits'));
+			add.addEventListener('click', function () {
+				if (window.DaimondAdmin && DaimondAdmin.credits) DaimondAdmin.credits('');
+				if (window.DaimondPanels) DaimondPanels.show('rail');
+			});
+			none.appendChild(add);
+			sec.appendChild(none);
 			return sec;
 		}
 
@@ -480,8 +497,8 @@
 		var host = document.getElementById('spend-view');
 		if (!host) return;
 		host.innerHTML = '';
-		// Frame the two pots before the numbers, so nobody reads them as one sum.
-		host.appendChild(el('div', 'spend-intro', t('spend.intro')));
+		// The figures lead; each section's own head ("Inference — your key",
+		// "Credits — web, mail, sync") already says which pot it is.
 		host.appendChild(inferenceSection());
 		host.appendChild(el('div', 'spend-divider'));
 		host.appendChild(creditsSection());
@@ -551,10 +568,16 @@
 	};
 
 	// A language or currency change redraws the panel if it is on screen; a
-	// closed one is rebuilt from scratch when it next opens.
+	// closed one is rebuilt from scratch when it next opens. The rail meter's
+	// own title is set once by `wireActions`, outside `render()`, because it
+	// exists whether or not the panel has ever been opened -- so a locale
+	// change has to touch it separately, or it is left reading its BOOT
+	// language for the rest of the session.
 	if (window.DaimondI18n) {
 		DaimondI18n.onChange(function () {
 			if (document.getElementById('spend-view')) render();
+			var row = document.getElementById('spend-row');
+			if (row) row.title = t('spend.meter_help');
 		});
 	}
 

@@ -113,6 +113,15 @@ try {
 	await p.evaluate((did) => {
 		document.querySelector(`#diamond-list .diamond-box[data-id="${did}"] .tile-cog`).click();
 	}, id);
+	// BEHIND THE DISCLOSURE SINCE CRY-15: the triggered actions moved into the
+	// dialog's Advanced fold, which ships closed, so the controls are attached
+	// and not VISIBLE -- and `waitForSelector` waits for visible. Opened the way
+	// a reader opens it, rather than waited for with `state: 'attached'`, which
+	// would go on passing after the fold stopped opening.
+	await p.evaluate(() => {
+		const d = document.querySelector('.tile-dlg-card details.tile-dlg-adv');
+		if (d) d.open = true;
+	});
 	await p.waitForSelector('.tile-dlg-card .trig-add', { timeout: 8000 });
 
 	// ══ A fresh Diamond has no actions, and says so with ONE button ═══

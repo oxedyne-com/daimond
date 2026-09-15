@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
-<title>Chats &amp; diamonds &mdash; Daimond guide</title>
+<title>채팅과 diamond &mdash; Daimond 사용 안내</title>
 <link rel="icon" type="image/svg+xml" href="../../assets/daimond_mark.svg">
 <link rel="stylesheet" href="../../css/variables.css">
 <link rel="stylesheet" href="../../css/guide.css">
@@ -24,12 +24,12 @@
 			<a href="index.html">여기서 시작하기</a>
 			<a href="interface.html">인터페이스</a>
 			<a href="chats-and-diamonds.html" aria-current="page">채팅과 diamond</a>
-			<a href="../capps.html">diamond의 페이지</a>
+			<a href="capps.html">diamond의 페이지</a>
 			<a href="email-web-files.html">파일, 이메일, 웹</a>
-			<a href="../machine-operations.html">내 컴퓨터</a>
-			<a href="../runner.html">헬퍼와 차례가 실행되는 곳</a>
+			<a href="machine-operations.html">내 컴퓨터</a>
+			<a href="runner.html">헬퍼와 차례가 실행되는 곳</a>
 			<a href="sync.html">여러 대의 기기</a>
-			<a href="../social.html">소셜과 제안</a>
+			<a href="social.html">소셜과 제안</a>
 			<a href="models.html">모델과 제공자</a>
 			<a href="spending.html">지출</a>
 			<a href="accounts.html">안전과 해결</a>
@@ -39,99 +39,99 @@
 
 <main>
 	<h1>채팅과 diamond</h1>
-	<p class="lede">A chat is a conversation. A diamond is a saved project with its own memory, its own page and its own files. You keep the one inside the other.</p>
+	<p class="lede">채팅은 대화예요. diamond은 저만의 기억, 페이지, 파일을 가진 저장된 프로젝트고요. 하나를 다른 하나 안에 남겨 두는 거예요.</p>
 
-	<h2 id="s1">A chat</h2>
-	<p> <span class="ui">+</span> — 옆은 <span class="ui">채팅</span> starts one. Type in the box and send. A new chat is titled <span class="ui">새 채팅</span> until you say something, and after that its first line is its title.</p>
-	<p>While an answer is arriving you can keep typing. A message sent then waits as a dashed bubble and goes as its own turn when the answer finishes. Click it to take it back, or its cross to drop it. Pressing stop hands anything queued back to you, unsent.</p>
-	<p>Deleting a chat moves it to the Trash, so nothing asks first. The two acts that cannot be undone are the ones that ask, and both are in that panel.</p>
+	<h2 id="s1">채팅</h2>
+	<p> <span class="ui">+</span> — 옆은 <span class="ui">채팅</span> 이 하나를 시작해요. 칸에 입력해서 보내세요. 새 채팅의 제목은 <span class="ui">새 채팅</span> 예요, 무언가 말하기 전까지는요. 그다음부터는 첫 줄이 제목이 돼요.</p>
+	<p>답이 오는 동안에도 계속 입력할 수 있어요. 그때 보낸 메시지는 점선 말풍선으로 기다리다가, 답이 끝나면 자기만의 턴으로 나가요. 누르면 되가져오고, 가위표를 누르면 버려요. 정지를 누르면 줄 서 있던 것은 보내지 않은 채로 돌려줘요.</p>
+	<p>채팅을 지우면 휴지통으로 가니, 먼저 묻는 것은 없어요. 되돌릴 수 없는 두 행동만 먼저 묻고, 둘 다 그 패널 안에 있어요.</p>
 
-	<h2 id="s2">Reading a long thread</h2>
+	<h2 id="s2">긴 스레드 읽기</h2>
 	<figure class="shot narrow">
-		<img alt="A chat thread: a tile labelled You holding the question, and a tile labelled Daimond holding the answer." src="../img/thread.png" loading="lazy">
-		<figcaption>Each turn is a labelled tile, so you can see at a glance who said what.</figcaption>
+		<img alt="채팅 스레드. 나라고 표시된 타일에는 물음이, Daimond이라고 표시된 타일에는 답이 담겨 있어요." src="../img/thread.png" loading="lazy">
+		<figcaption>턴마다 표시된 타일이라, 누가 무엇을 말했는지 한눈에 보여요.</figcaption>
 	</figure>
-	<p>Every turn is a tile, labelled <span class="ui">You</span>, <span class="ui">Thinking</span>, <span class="ui">Tool</span>, <span class="ui">Daimond</span>, or as a note from the app itself. Each header carries the local date and time to the minute in the Holocene reckoning, so <code>12026-09-15 13:12</code> is this year plus ten thousand. Hover for the full instant with its offset.</p>
-	<p>The header of the chat carries the controls.</p>
+	<p>턴마다 타일 하나예요. 표시는 <span class="ui">나</span>, <span class="ui">생각 중</span>, <span class="ui">도구</span>, <span class="ui">Daimond</span>이거나, 앱 자신의 쪽지예요. 머리글마다 홀로세 기년법으로 분 단위까지 그 지역의 날짜와 시각이 있어요. 그래서 <code>12026-09-15 13:12</code> 는 올해에 만을 더한 거예요. 마우스를 올리면 오프셋이 붙은 정확한 순간이 나와요.</p>
+	<p>채팅의 머리글에 조작이 있어요.</p>
 	<ul>
-		<li><strong>Show steps</strong> shows the work done between your message and the answer.</li>
-		<li><strong>Collapse answers</strong> leaves only what you asked. It is the quickest way to skim, and how you start picking turns.</li>
-		<li><strong>Short answers</strong> is a standing request for brevity in this chat. It is a file in your workspace that you can edit, not a hidden instruction.</li>
-		<li>The permission chip reads <span class="ui">Guarded</span>, <span class="ui">Ask every time</span> or <span class="ui">Bypass</span>. See <a href="accounts.html">안전과 해결</a>.</li>
+		<li><strong>단계 보이기</strong> 는 내 메시지와 답 사이에 한 일을 보여 줘요.</li>
+		<li><strong>답 접기</strong> 는 물어본 것만 남겨요. 훑어보는 가장 빠른 길이고, 턴을 고르기 시작하는 방법이에요.</li>
+		<li><strong>짧은 답</strong> 은 이 채팅에서 짧게 답해 달라는 상시 요청이에요. 내 작업 공간의 파일이라 고칠 수 있고, 숨은 지시가 아니에요.</li>
+		<li>권한 칩에는 <span class="ui">가드</span>, <span class="ui">매번 묻기</span> 또는 <span class="ui">바이패스</span>라고 적혀 있어요. 참고할 곳은 <a href="accounts.html">안전과 해결</a>.</li>
 	</ul>
-	<p>Two chevrons beside the send button walk back through your own messages and return to the end.</p>
+	<p>보내기 버튼 옆의 화살표 두 개가 내 예전 메시지들을 거슬러 올라가고, 끝으로 되돌아와요.</p>
 
-	<h2 id="s3">What a stop looks like</h2>
-	<p>A turn says how it ended, in exact words.</p>
+	<h2 id="s3">멈춤은 어떻게 보이는가</h2>
+	<p>턴은 어떻게 끝났는지 정확한 말로 알려 줘요.</p>
 	<ul>
-		<li><span class="ui">Answered</span> means it finished and said something.</li>
-		<li><span class="ui">Stopped</span> means you pressed stop.</li>
-		<li><span class="ui">Step limit reached</span> means it ran out of rounds.</li>
-		<li><span class="ui">Ended without saying anything</span> means the model returned nothing at all.</li>
-		<li><span class="ui">Ended without an answer, after reasoning</span> means it thought, was asked once to answer or use a tool, and still said nothing.</li>
-		<li><span class="ui">Ended on an error</span>, 또는 <span class="ui">Ended: the tool call arrived as text</span>, say what they say.</li>
+		<li><span class="ui">답함</span> 은 끝나고 무언가 말했다는 뜻이에요.</li>
+		<li><span class="ui">멈춤</span> 은 정지를 눌렀다는 뜻이에요.</li>
+		<li><span class="ui">단계 한도 도달</span> 은 라운드가 다 됐다는 뜻이에요.</li>
+		<li><span class="ui">아무 말 없이 끝남</span> 은 모델이 아무것도 돌려주지 않았다는 뜻이에요.</li>
+		<li><span class="ui">추론 뒤 답 없이 끝남</span> 은 생각은 했지만, 답하거나 도구를 쓰라고 한 번 청해도 여전히 아무 말도 하지 않았다는 뜻이에요.</li>
+		<li><span class="ui">오류로 끝남</span>, 또는 <span class="ui">끝남: 도구 호출이 글자로 도착함</span>는 말 그대로예요.</li>
 	</ul>
-	<p>None of these is dressed up as an answer.</p>
+	<p>이 가운데 어느 것도 답인 척 꾸며지지 않아요.</p>
 
-	<h2 id="s4">Keeping a chat</h2>
-	<p>Two buttons sit on a chat's row in the rail. <span class="ui">Keep</span> turns the whole conversation into a diamond. <span class="ui">Fold all</span> turns it into a diamond by summarising it, keeping what was worked out and dropping the back-and-forth.</p>
-	<p>To keep only part, collapse the answers, tick the turns worth keeping, and choose <span class="ui">선택한 것 접기</span>. Fold a step you have adopted, and leave a passing remark where it is.</p>
-	<p>Nothing is absorbed on its own. A diamond's memory changes only through a fold or an edit, and every write is kept in History.</p>
+	<h2 id="s4">채팅 남기기</h2>
+	<p>레일 안 채팅의 행에 버튼이 둘 있어요. <span class="ui">남기기</span> 는 대화 전체를 diamond으로 바꿔요. <span class="ui">모두 접기</span> 는 요약해서 diamond으로 바꿔요. 알아낸 것은 남기고 주고받은 말은 버려요.</p>
+	<p>일부만 남기려면 답을 접고, 남길 만한 턴에 표시한 다음 <span class="ui">선택한 것 접기</span>를 고르세요. 받아들인 단계는 접고, 지나가는 말은 있던 자리에 그대로 두세요.</p>
+	<p>저절로 흡수되는 것은 없어요. diamond의 기억은 접기나 고치기를 통해서만 바뀌고, 쓸 때마다 이력에 남아요.</p>
 
-	<h2 id="s5">Inside a diamond</h2>
-	<p>Your diamonds sit above your chats, and the <span class="ui">+</span> makes one. A diamond has two faces, and a switch in its header moves between them. <span class="ui">결정체</span> is what it knows, and <span class="ui">채팅</span> is its own conversation.</p>
+	<h2 id="s5">diamond 안에서</h2>
+	<p>내 diamond은 채팅 위에 있고, <span class="ui">+</span> 이 하나를 만들어요. diamond에는 얼굴이 둘 있고, 머리글의 스위치가 그 사이를 오가요. <span class="ui">결정체</span> 은 그것이 아는 것이고, <span class="ui">채팅</span> 은 그 자신의 대화예요.</p>
 
 	<figure class="shot narrow">
-		<img alt="A card headed What this diamond knows: a title, a summary, chips reading Objectives 2, Open tasks 3 and Done 1, then rows for Sections, Facts, Habits and People, with Edit and Show raw memory buttons." src="../img/knows.png" loading="lazy">
-		<figcaption><span class="ui">What this diamond knows</span>, on the Crystal face. The raw file is one press away.</figcaption>
+		<img alt="'이 diamond이 아는 것'이라는 머리글의 카드. 제목, 요약, 목표 2·열린 과제 3·완료 1이라고 적힌 칩, 그다음 절·사실·습관·사람 행, 그리고 고치기와 원본 기억 보기 버튼." src="../img/knows.png" loading="lazy">
+		<figcaption><span class="ui">이 diamond이 아는 것</span>, 결정체 얼굴에 있어요. 원본 파일은 한 번만 누르면 나와요.</figcaption>
 	</figure>
 
-	<p>The card lists the diamond's title and summary in its own words, then everything else it holds, a line each. <span class="ui">Edit</span> opens a form. <span class="ui">Show raw memory</span> opens the file itself, for when you would rather work in it directly.</p>
+	<p>카드는 diamond의 제목과 요약을 자기 말로 늘어놓고, 그다음 가진 나머지 모든 것을 한 줄씩 보여 줘요. <span class="ui">고치기</span> 는 양식을 열어요. <span class="ui">원본 기억 보기</span> 는 직접 그 안에서 일하고 싶을 때를 위해 파일 자체를 열어요.</p>
 
-	<h2 id="s6">The four files a diamond keeps</h2>
-	<p>Memory is kept in the open. Four files sit in the diamond's own folder, readable in the Workspace panel and by the daimon.</p>
+	<h2 id="s6">diamond이 지니는 네 파일</h2>
+	<p>기억은 드러내 둬요. 파일 넷이 diamond 자신의 폴더에 있고, 작업 공간 패널에서도 daimon에게도 읽혀요.</p>
 	<ul>
-		<li><code>crystal.json</code> holds what this diamond <em>is</em>, meaning its title, summary, sections, facts and links.</li>
-		<li><code>REQUIREMENTS.md</code> holds what is to do, as objectives with ranked tasks under each. A task leaves it by being ticked or struck out, and by nothing else.</li>
-		<li><code>DECISIONS.md</code> holds what was ruled, dated, with the reason. New rulings are appended, and old ones are left as they were.</li>
-		<li><code>STATE.md</code> holds where things are now, and is overwritten each time.</li>
+		<li><code>crystal.json</code> 은 이 diamond이 <em>무엇인지를</em> 담아요. 제목, 요약, 절, 사실, 링크가 그것이에요.</li>
+		<li><code>REQUIREMENTS.md</code> 은 할 일을 담아요. 목표마다 순위 매겨진 과제가 그 아래 있어요. 과제가 여기서 빠지는 길은 표시되거나 줄이 그어지는 것뿐이에요.</li>
+		<li><code>DECISIONS.md</code> 은 정해진 것을 날짜와 이유와 함께 담아요. 새 결정은 덧붙고, 옛것은 그대로 남아요.</li>
+		<li><code>STATE.md</code> 은 지금 상황을 담고, 매번 덮어써져요.</li>
 	</ul>
-	<p>All four ride with the daimon on every round inside one budget, so what a diamond is told about itself is bounded and predictable. A crystal too large to fit whole keeps its overflow readable and searchable instead of dropping it. The counts on the card, <span class="ui">Objectives</span>, <span class="ui">Open tasks</span> 그리고 <span class="ui">Done</span>, are read off <code>REQUIREMENTS.md</code>.</p>
+	<p>넷 모두 라운드마다 daimon과 함께 하나의 예산 안에서 실려 가요. 그래서 diamond이 자기 자신에 대해 듣는 것은 한도가 있고 예측할 수 있어요. 통째로 들어가기엔 너무 큰 결정체는 그 넘치는 부분을 버리는 대신 읽고 검색할 수 있게 남겨요. 카드의 숫자들, <span class="ui">목표</span>, <span class="ui">열린 과제</span> 그리고 <span class="ui">완료</span>은 <code>REQUIREMENTS.md</code>.</p>
 
-	<h2 id="s7">Two kinds of fold</h2>
-	<p>The word covers two different acts.</p>
+	<h2 id="s7">접기의 두 종류</h2>
+	<p>이 말은 서로 다른 두 행동을 가리켜요.</p>
 	<ul>
-		<li><strong>Summarise earlier messages</strong>, in the chat header, is the app compressing a conversation that no longer fits. Its decisions are filed into <code>DECISIONS.md</code>, its open items into <code>REQUIREMENTS.md</code>, and its next step into <code>STATE.md</code>. What it files can be found afterwards, and what it leaves in a notice cannot.</li>
-		<li><strong>Fold now</strong>, on the Crystal face, is a model rewriting what this diamond remembers from what has happened since. Every write snapshots a version.</li>
+		<li><strong>이전 메시지 요약</strong>는 채팅 머리글에 있고, 더는 들어가지 않는 대화를 앱이 압축하는 거예요. 결정은 <code>DECISIONS.md</code>에, 열린 항목은 <code>REQUIREMENTS.md</code>에, 다음 단계는 <code>STATE.md</code>에 파일로 넣어요. 파일에 넣은 것은 나중에 찾을 수 있고, 알림에만 남긴 것은 찾을 수 없어요.</li>
+		<li><strong>지금 접기</strong>는 결정체 얼굴에 있고, 그동안 일어난 일로부터 이 diamond의 기억을 모델이 다시 쓰는 거예요. 쓸 때마다 한 버전의 스냅숏이 남아요.</li>
 	</ul>
-	<p>Filing is repeatable, so running the same fold twice files nothing twice, and the order two folds arrive in does not change what the files end up saying.</p>
+	<p>파일에 넣는 것은 되풀이해도 안전해요. 같은 접기를 두 번 돌려도 두 번 넣히지 않고, 접기 두 개가 도착하는 순서가 파일이 결국 말하는 것을 바꾸지 않아요.</p>
 
-	<h2 id="s8">History</h2>
-	<p><span class="ui">History</span> lists every version, newest first. <span class="ui">보기</span> reads one, <span class="ui">되살리기</span> makes it current again, and <span class="ui">델타</span> shows the material a fold was given. Restore keeps what was current first, so a restore can itself be undone.</p>
+	<h2 id="s8">이력</h2>
+	<p><span class="ui">이력</span> 은 모든 버전을 최신순으로 늘어놓아요. <span class="ui">보기</span> 는 하나를 읽고, <span class="ui">되살리기</span> 는 다시 지금 것으로 만들고, <span class="ui">델타</span> 는 접기에 주어졌던 재료를 보여 줘요. 되살리기는 먼저 지금 것을 지켜 두니, 되살리기 자체도 되돌릴 수 있어요.</p>
 
-	<h2 id="s9">Acting without being asked</h2>
-	<p>A diamond answers when you prompt it and at no other time, unless you set up a triggered action. Those live under <span class="ui">When this diamond acts</span> on the Crystal face, and <span class="ui">Add an action</span> makes one. Two things can set one off, either minutes of your own activity, counted only while you work, or mail arriving in a folder you name.</p>
-	<p>Each action carries an instruction, sent every time, and a context, sent once until you change it. They are an ordinary file, <code>triggers.json</code>, in the diamond's folder.</p>
-	<p>A new action is <strong>stopped</strong>, and says so: <em>Stopped. Press &#9654; on the light beside the pulldown to let this action run.</em> One press arms it.</p>
+	<h2 id="s9">묻지 않고 움직이기</h2>
+	<p>diamond은 내가 물을 때만 답해요. 다른 때는 아니에요, 자동 동작을 정해 두지 않는 한요. 그것들은 <span class="ui">이 diamond이 움직일 때</span> 에, 결정체 얼굴에 있어요. 그리고 <span class="ui">동작 추가</span> 이 하나를 만들어요. 그것을 일으키는 것은 둘 가운데 하나예요. 일하는 동안만 세는 내 활동 분수, 또는 내가 정한 폴더에 도착하는 메일이에요.</p>
+	<p>동작마다 매번 보내는 지시와, 바꿀 때까지 한 번만 보내는 맥락을 지녀요. 이것들은 보통의 파일이에요, <code>triggers.json</code>, diamond의 폴더 안에 있는.</p>
+	<p>새 동작은 <strong>멈춰 있고</strong>, 그렇게 말해요: <em>멈춤. 이 동작을 돌리려면 펼침 메뉴 옆 불빛에서 &#9654;를 누르세요.</em> 한 번 누르면 장전돼요.</p>
 
-	<h3 id="s10">The light</h3>
-	<p>Every action, every diamond and the <span class="ui">전체</span> row wear the same three-part control, a play, a pause and a round light. The light says whether anything is armed and free to fire.</p>
+	<h3 id="s10">불빛</h3>
+	<p>모든 동작, 모든 diamond, 그리고 <span class="ui">전체</span>  행 모두 재생, 일시정지, 둥근 불빛으로 된 같은 세 부분 조작을 입고 있어요. 불빛은 무언가 장전돼 터질 준비가 됐는지를 말해 줘요.</p>
 	<ul>
-		<li><strong>Red.</strong> Nothing here will act by itself.</li>
-		<li><strong>Amber.</strong> Some of it will, and some is held.</li>
-		<li><strong>Green.</strong> Everything set up will act.</li>
+		<li><strong>빨강.</strong> 여기서 저절로 움직이는 것은 없어요.</li>
+		<li><strong>호박색.</strong> 일부는 움직이고, 일부는 붙잡혀 있어요.</li>
+		<li><strong>초록.</strong> 정해 둔 것은 모두 움직여요.</li>
 	</ul>
-	<p>A fresh account is red everywhere, which is the honest answer to whether anything is running by itself. An action missing its mailbox or its instruction is left out of the count, because it could not fire. Amber can only be arrived at, never set.</p>
-	<p>A held action spends nothing, because it is refused before the turn starts.</p>
+	<p>갓 만든 계정은 어디나 빨강이에요. 저절로 도는 것이 있느냐는 물음에 대한 정직한 답이죠. 메일함이나 지시가 없는 동작은 셈에서 빠져요. 터질 수 없으니까요. 호박색은 저절로 이르는 것일 뿐, 직접 정할 수는 없어요.</p>
+	<p>붙잡힌 동작은 아무것도 쓰지 않아요. 턴이 시작되기 전에 거절되니까요.</p>
 
-	<h2 id="s11">Tags, links and the Trash</h2>
-	<p><span class="ui">태그</span> on the Crystal face files a diamond in the rail. Up to eight tags, lowercased and deduplicated. <span class="ui">Suggested</span> offers four to start from. Tags are inert. They are not sent to a model, they are no part of the memory, and they change nothing an agent does. <span class="ui">태그로 거르기</span> in the rail narrows by them.</p>
-	<p>A diamond can also be linked to another, and the <a href="interface.html">Graph</a> is the picture of that.</p>
-	<p>Deleting a chat or a diamond trashes it. It is still stored and still synced, out of every daimon's reach, and kept thirty days with the date on the row. <span class="ui">되살리기</span> brings it back on every device. <span class="ui">완전히 지우기</span> 그리고 <span class="ui">휴지통 비우기</span> are the two that ask.</p>
+	<h2 id="s11">태그, 링크, 휴지통</h2>
+	<p><span class="ui">태그</span> 는 결정체 얼굴에 있고, 레일의 diamond을 정리해요. 최대 여덟 개까지, 소문자로 바뀌고 중복은 없어져요. <span class="ui">제안됨</span> 은 시작할 넷을 내놓아요. 태그는 아무 힘이 없어요. 모델에 보내지지도 않고, 기억의 일부도 아니고, 에이전트가 하는 일을 조금도 바꾸지 않아요. <span class="ui">태그로 거르기</span> 는 레일에서 그것들로 좁혀요.</p>
+	<p>diamond은 다른 diamond과 링크될 수도 있고, <a href="interface.html">관계도</a> 가 그것을 그린 그림이에요.</p>
+	<p>채팅이나 diamond을 지우면 휴지통으로 가요. 저장된 채로, 동기화된 채로 남고, 어느 daimon의 손도 닿지 않는 곳에서 서른 날 동안 행에 날짜와 함께 있어요. <span class="ui">되살리기</span> 은 모든 기기에서 그것을 되돌려 놔요. <span class="ui">완전히 지우기</span> 그리고 <span class="ui">휴지통 비우기</span> 는 먼저 묻는 둘이에요.</p>
 
 	<div class="next">
-		<a href="interface.html">&larr; The interface</a>
-		<a href="../capps.html">Next: A diamond&rsquo;s page &rarr;</a>
+		<a href="interface.html">&larr; 인터페이스</a>
+		<a href="capps.html">다음: diamond의 페이지 &rarr;</a>
 	</div>
 </main>
 
@@ -141,12 +141,12 @@
 		<a href="index.html">여기서 시작하기</a>
 		<a href="interface.html">인터페이스</a>
 		<a href="chats-and-diamonds.html">채팅과 diamond</a>
-		<a href="../capps.html">diamond의 페이지</a>
+		<a href="capps.html">diamond의 페이지</a>
 		<a href="email-web-files.html">파일, 이메일, 웹</a>
-		<a href="../machine-operations.html">내 컴퓨터</a>
-		<a href="../runner.html">헬퍼와 차례가 실행되는 곳</a>
+		<a href="machine-operations.html">내 컴퓨터</a>
+		<a href="runner.html">헬퍼와 차례가 실행되는 곳</a>
 		<a href="sync.html">여러 대의 기기</a>
-		<a href="../social.html">소셜과 제안</a>
+		<a href="social.html">소셜과 제안</a>
 		<a href="models.html">모델과 제공자</a>
 		<a href="spending.html">지출</a>
 		<a href="accounts.html">안전과 해결</a>

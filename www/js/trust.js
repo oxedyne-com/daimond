@@ -265,6 +265,31 @@
 		return c ? (location.origin + location.pathname + '#' + HASH_KEY + '=' + b64url(c)) : '';
 	}
 
+	/// What "Send my code" hands over: the link, then the string under it.
+	///
+	/// THE LINK FIRST, BECAUSE THE LINK IS THE ONE THAT WORKS BY ITSELF. It
+	/// opens the app at People with the card already loaded (`maybeOpenFromHash`),
+	/// and for somebody who has never seen Daimond it opens Daimond. The string
+	/// needs a reader who knows to copy it, find the app, and press Add
+	/// somebody -- which is three steps a link does not ask for.
+	///
+	/// THE STRING STILL GOES, ON ITS OWN LINE, because plenty of readers strip
+	/// or rewrite a link and nothing about that is visible to either end. So the
+	/// two lines are the two things "Show my code" puts on the screen -- the
+	/// symbol's URL and the pasteable string -- and the two surfaces now hand
+	/// over the same pair rather than half of it each.
+	///
+	/// `parse` reads either line: it looks for `#c=` first and falls back to the
+	/// `DMND-ID1.` prefix, so the whole payload pasted into "Add somebody" works
+	/// as well as either line alone.
+	function cardPayload() {
+		var url  = cardUrl();
+		var text = cardText();
+		if (!url)  return text;
+		if (!text) return url;
+		return url + '\n' + text;
+	}
+
 	/// Ask the gateway who holds a handle, and read the card it answers with.
 	///
 	/// THE CEILING IS `lookup`, AND IT IS THE POINT OF THE ROUTE RATHER THAN A
@@ -889,6 +914,62 @@
 		document.head.appendChild(s);
 	}
 
+	// ── Following, which is not connecting ────────────────────
+	//
+	// A follow is DIRECTIONAL and it is not messaging consent: following somebody
+	// says nothing about their following back, and a matched key does not grant a
+	// read of their feed -- the author chooses who reads. So the control here is
+	// beside Block and Compare, and it never changes anything this file records
+	// about a key.
+
+	/// The key this account's feed records name, which is the gateway's encoding
+	/// and not this file's. A public key is hex here and base64url on the wire.
+	function wirePub(keyHex) {
+		try { return b64url(b64enc(unhex(String(keyHex || '')))); }
+		catch (e) { return ''; }
+	}
+
+	/// What this device last heard about following this key: `'following'`,
+	/// `'requested'`, or `''` for neither. Read off js/feed.js's cached answer to
+	/// `?view=following`; null there means nobody has asked the gateway yet, and
+	/// the row then offers Follow, which is the honest offer.
+	function followState(keyHex) {
+		try {
+			var by = (window.DaimondFeed && DaimondFeed.follows) ? DaimondFeed.follows() : null;
+			return (by && by[wirePub(keyHex)]) || '';
+		} catch (e) { return ''; }
+	}
+
+	/// The one control, for the People row and for a card just found.
+	///
+	/// "REQUESTED" IS A FACT ABOUT THIS DEVICE, not about the other person. The
+	/// gateway answers a request the same way whether it stored it, deduped it or
+	/// dropped it for a block, so this says what was asked and never that anybody
+	/// has it.
+	function followBtn(keyHex, onChange) {
+		if (!window.DaimondFeed) return null;
+		var state = followState(keyHex);
+		var label = state === 'following' ? tOr('feed.unfollow', 'Unfollow')
+			: state === 'requested' ? tOr('feed.requested', 'Requested')
+			: tOr('feed.follow', 'Follow');
+		var b = el('button', 'pair-btn ghost trust-follow', label);
+		b.dataset.follow = state || 'none';
+		b.dataset.peer   = wirePub(keyHex);
+		if (state === 'requested') b.disabled = true;		// asked; theirs to answer
+		b.addEventListener('click', function () {
+			b.disabled = true;
+			DaimondFeed.follow(wirePub(keyHex), state === 'following' ? 'unfollow' : 'request')
+				.then(function (r) {
+					b.disabled = false;
+					if (!r.ok) { b.textContent = r.why; return; }
+					if (onChange) onChange();
+					else b.textContent = state === 'following'
+						? tOr('feed.follow', 'Follow') : tOr('feed.requested', 'Requested');
+				});
+		});
+		return b;
+	}
+
 	/// One row of the People list. The order is deliberate and it is the
 	/// 2026-07-16 design's: what is known about the KEY comes before what the
 	/// card CLAIMS about the person, and the fingerprint is on the row rather
@@ -920,6 +1001,12 @@
 			var num = el('button', 'pair-btn ghost', tOr('trust.compare_numbers', 'Compare safety numbers'));
 			num.addEventListener('click', function () { showSafety(p.key, onChange); });
 			acts.appendChild(num);
+		}
+		// FOLLOW, which asks to read what they write and grants them nothing. Not
+		// offered on a blocked key: the block is this account's own answer already.
+		if (p.state !== 'blocked') {
+			var fol = followBtn(p.key, onChange);
+			if (fol) acts.appendChild(fol);
 		}
 		var blk = el('button', 'pair-btn ghost',
 			p.state === 'blocked' ? tOr('trust.unblock', 'Unblock') : tOr('trust.block', 'Block'));
@@ -967,6 +1054,11 @@
 			});
 		});
 		row.appendChild(add);
+		// AND FOLLOW, from the card, because this is the moment somebody has found
+		// the person they were looking for. It is independent of Add: following
+		// asks the gateway for a read of their feed and records nothing here.
+		var fol = followBtn(card.key, null);
+		if (fol) row.appendChild(fol);
 		box.appendChild(row);
 	}
 
@@ -1020,6 +1112,26 @@
 		input.addEventListener('keydown', function (e) {
 			if (e.key === 'Enter') { e.preventDefault(); run(); }
 		});
+		// THE SAME FINDER, DRIVEN FROM ELSEWHERE. A handle pressed on a feed post
+		// arrives here through `findHandle` below rather than opening a second one:
+		// the card, the safety number and every word said about a key belong to this
+		// file, and a second surface would be a second place to get them wrong.
+		_find = function (wanted) { input.value = String(wanted || ''); run(); };
+	}
+
+	/// The finder's own `run`, once one has been mounted.
+	var _find = null;
+
+	/// Look a handle up on the People view, from anywhere in the app.
+	///
+	/// Answers false where there is no panel or no finder yet, so a caller can say
+	/// so rather than appearing to have done nothing.
+	function findHandle(name) {
+		if (!String(name || '').trim()) return false;
+		if (!showPeople()) return false;
+		if (!_find) return false;
+		_find(name);
+		return true;
 	}
 
 	/// Show the People view of the Social panel, which is where the list lives.
@@ -1067,35 +1179,41 @@
 	/// Put this identity's code on the clipboard, and offer the ways out of the
 	/// app that this device has.
 	///
-	/// EXACTLY THE STRING "Show my code" SHOWS, through the same `cardText`, so
-	/// the two surfaces cannot drift into handing over different bytes. The code
-	/// is public by design -- a public key, a label, and a signature over both --
-	/// and a code that arrives through a chat window is a new key whatever else
-	/// it travelled through. It is the CODE that is shared; nothing here shares a
-	/// secret and nothing here raises a key.
+	/// EXACTLY WHAT "Show my code" SHOWS, through the same `cardUrl` and
+	/// `cardText`, so the two surfaces cannot drift into handing over different
+	/// bytes. THIS SENT THE STRING ALONE UNTIL 2026-09-15, and the guide's
+	/// sentence -- a code "hands yours over however you already talk to them" --
+	/// was only half true of it: a link hands it over, a string leaves the
+	/// reader to work out what it is. `cardUrl` had existed the whole time.
 	///
-	/// Answers the string it copied, or `''` when there was no card to send, so a
-	/// caller can say which happened without reading the clipboard.
+	/// The code is public by design -- a public key, a label, and a signature
+	/// over both -- and a code that arrives through a chat window is a new key
+	/// whatever else it travelled through, link or string. It is the CODE that
+	/// is shared; nothing here shares a secret and nothing here raises a key.
+	///
+	/// Answers what it sent, or `''` when there was no card to send, so a caller
+	/// can say which happened without reading the clipboard.
 	async function sendCard() {
 		var id = window.DaimondIdentity;
 		if (id && !id.card()) {
 			try { await id.mintCard(); } catch (e) { /* the check below says so */ }
 		}
-		var text = cardText();
-		if (!text) return '';
-		try { await navigator.clipboard.writeText(text); }
+		var payload = cardPayload();
+		if (!payload) return '';
+		try { await navigator.clipboard.writeText(payload); }
 		catch (e) { /* a refused clipboard is not a refused share */ }
 		// The phone's own share sheet where there is one, and the mail client
-		// where there is not. Both carry the code and nothing else: a sentence
-		// wrapped around it is a sentence the reader has to strip back off.
+		// where there is not. Both carry the two lines and nothing else: a
+		// sentence wrapped around them is a sentence the reader has to strip
+		// back off, and the second line already says what the first one is.
 		try {
 			if (navigator.share) {
-				await navigator.share({ text: text });
+				await navigator.share({ text: payload });
 			} else {
-				window.location.href = 'mailto:?body=' + encodeURIComponent(text);
+				window.location.href = 'mailto:?body=' + encodeURIComponent(payload);
 			}
 		} catch (e) { /* dismissed, which is not a failure */ }
-		return text;
+		return payload;
 	}
 
 	/// Take somebody's card: by camera, or by paste.
@@ -1384,6 +1502,8 @@
 		// decides the ceiling.
 		cardText:   cardText,
 		cardUrl:    cardUrl,
+		/// The two lines "Send my code" hands over: the link, then the string.
+		cardPayload: cardPayload,
 		parse:      parse,
 		ROUTE:      ROUTE,
 		METHOD:     METHOD,
@@ -1416,6 +1536,13 @@
 		/// Resolve a handle to a verified card. Published so the People finder
 		/// and a verifier drive one door rather than two.
 		lookup:     lookup,
+		/// Show People and look one handle up in the finder there. What a handle
+		/// pressed on a feed post does; answers false where there is nothing to
+		/// drive.
+		findHandle: findHandle,
+		/// Whether this account follows a key, or has asked to. Published so a
+		/// verifier reads the state a row draws rather than a second copy of it.
+		followState: followState,
 		/// What a card that has just arrived is offered, given how it arrived.
 		/// Published because the route is the whole of decision 4 and a verifier
 		/// has to be able to drive both routes through the SAME door the scanner

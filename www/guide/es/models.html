@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
-<title>Models &amp; providers &mdash; Daimond guide</title>
+<title>Modelos y proveedores &mdash; Guía de Daimond</title>
 <link rel="icon" type="image/svg+xml" href="../../assets/daimond_mark.svg">
 <link rel="stylesheet" href="../../css/variables.css">
 <link rel="stylesheet" href="../../css/guide.css">
@@ -24,10 +24,10 @@
 			<a href="index.html">Empieza aquí</a>
 			<a href="interface.html">La interfaz</a>
 			<a href="chats-and-diamonds.html">Chats y diamonds</a>
-			<a href="../capps.html">La página de un diamond</a>
+			<a href="capps.html">La página de un diamond</a>
 			<a href="email-web-files.html">Archivos, correo y la web</a>
-			<a href="../machine-operations.html">Tu equipo</a>
-			<a href="../runner.html">Ayudantes y dónde se ejecutan los turnos</a>
+			<a href="machine-operations.html">Tu equipo</a>
+			<a href="runner.html">Ayudantes y dónde se ejecutan los turnos</a>
 			<a href="sync.html">Más de un dispositivo</a>
 			<a href="social.html">Social y propuestas</a>
 			<a href="models.html" aria-current="page">Modelos y proveedores</a>
@@ -39,60 +39,60 @@
 
 <main>
 	<h1>Modelos y proveedores</h1>
-	<p class="lede">A daimon thinks with a model. Bring a key you already hold and pay that provider directly, or buy credits and let Daimond run one for you.</p>
+	<p class="lede">Un daimon piensa con un modelo. Trae una clave que ya tengas y paga directamente a ese proveedor, o compra créditos y deja que Daimond ejecute uno por ti.</p>
 
-	<h2 id="s1">Your own key</h2>
-	<p>Open the model row at the foot of the rail. It lists a key for each provider you use and which model new work starts on. <span class="ui">+ Añadir proveedor</span> asks the same three questions whoever the provider is.</p>
+	<h2 id="s1">Tu propia clave</h2>
+	<p>Abre la fila de modelos al pie de la barra lateral. Lista una clave por cada proveedor que uses y con qué modelo empieza el trabajo nuevo. <span class="ui">+ Añadir proveedor</span> hace las mismas tres preguntas sea cual sea el proveedor.</p>
 	<figure class="shot">
-		<img alt="The add-provider form: a provider list, an API key box, and a default model." src="../shots/models-form.png" loading="lazy">
-		<figcaption>Choose the provider, paste the key, star a default model, then save.</figcaption>
+		<img alt="El formulario de añadir proveedor: una lista de proveedores, una caja para la clave de API y un modelo predeterminado." src="../shots/models-form.png" loading="lazy">
+		<figcaption>Elige el proveedor, pega la clave, marca con una estrella un modelo predeterminado y guarda.</figcaption>
 	</figure>
 	<ol class="steps">
 		<li>
 			<h3 id="s2">Elige un proveedor</h3>
-			<p>Anthropic, Fireworks AI, OpenRouter, Together AI, Groq or DeepInfra. <span class="ui">Personalizado</span> reveals a <span class="ui">URL base</span> box for any other service speaking the same chat API, including one on your own machine.</p>
+			<p>Anthropic, Fireworks AI, OpenRouter, Together AI, Groq o DeepInfra. <span class="ui">Personalizado</span> muestra una caja <span class="ui">URL base</span> para cualquier otro servicio que hable la misma API de chat, incluido uno en tu propia máquina.</p>
 		</li>
 		<li>
-			<h3 id="s3">Paste the key</h3>
-			<p>It is stored wrapped under your passphrase, and sent to the provider you chose and to nobody else. It reaches your other devices only inside the encrypted sync parcel, still wrapped.</p>
+			<h3 id="s3">Pega la clave</h3>
+			<p>Se guarda envuelta bajo tu frase de paso, y se envía al proveedor que elegiste y a nadie más. Llega a tus otros dispositivos solo dentro del paquete cifrado de sincronización, todavía envuelta.</p>
 		</li>
 		<li>
 			<h3 id="s4">Marca con una estrella un modelo predeterminado</h3>
-			<p><span class="ui">List models</span> fetches the catalogue where the provider offers one, and otherwise you type the model id. The starred one is where new chats and diamonds begin.</p>
+			<p><span class="ui">Listar modelos</span> trae el catálogo donde el proveedor ofrece uno, y si no, escribes tú el id del modelo. El marcado con estrella es donde empiezan los chats y diamonds nuevos.</p>
 		</li>
 	</ol>
-	<p>Your messages then go straight to that provider on your own account. Daimond is out of the path, and we charge nothing.</p>
+	<p>Tus mensajes van entonces directos a ese proveedor con tu propia cuenta. Daimond queda fuera del camino, y no cobramos nada.</p>
 
-	<h2 id="s5">Choosing a different model</h2>
-	<p>The default is a starting point. Any connected model can be chosen for one chat from the selector in its header, and the default is untouched. A diamond can also carry a separate <span class="ui">Helper model</span> for the agents it dispatches, which applies to the next one dispatched and to none already running.</p>
-	<p>Where a model publishes no context window, the tile says <span class="ui">Context size unknown for this model.</span> and guesses nothing.</p>
+	<h2 id="s5">Elegir un modelo distinto</h2>
+	<p>El predeterminado es un punto de partida. Cualquier modelo conectado se puede elegir para un chat desde el selector de su cabecera, y el predeterminado queda intacto. Un diamond también puede llevar un <span class="ui">Modelo ayudante</span> propio para los agentes que despache, que se aplica al siguiente que despache y a ninguno que ya esté corriendo.</p>
+	<p>Cuando un modelo no publica ventana de contexto, el mosaico dice <span class="ui">Tamaño de contexto desconocido para este modelo.</span> y no adivina nada.</p>
 
-	<h2 id="s6">Choosing who serves it</h2>
-	<p>A router hands one model to whichever upstream provider it likes, and they are not equally good. Under an OpenRouter provider, each model row carries a <span class="ui">Providers</span> field, with the placeholder <span class="ui">prefer, -avoid, !</span>.</p>
+	<h2 id="s6">Elegir quién lo sirve</h2>
+	<p>Un enrutador entrega un modelo al proveedor de origen que prefiera, y no todos son igual de buenos. Bajo un proveedor OpenRouter, cada fila de modelo lleva un <span class="ui">Proveedores</span> campo, con el marcador de posición <span class="ui">prefer, -avoid, !</span>.</p>
 	<ul>
-		<li>A bare name prefers that provider.</li>
-		<li>A leading <code>-</code> avoids one.</li>
-		<li>A bare <code>!</code> means only these, refusing every fallback.</li>
+		<li>Un nombre a secas prefiere ese proveedor.</li>
+		<li>Un guion inicial <code>-</code> evita uno.</li>
+		<li>Un <code>!</code> a secas significa solo estos, rechazando cualquier alternativa.</li>
 	</ul>
-	<p>So <code>Novita, -DeepInfra</code> prefers one and avoids another. The field is saved as you leave it. A provider whose catalogue has not been fetched keeps its rows behind a <span class="ui">Models&hellip;</span> disclosure, so a preference already set stays reachable.</p>
+	<p>Así <code>Novita, -DeepInfra</code> prefiere uno y evita otro. El campo se guarda al salir de él. Un proveedor cuyo catálogo no se ha traído mantiene sus filas detrás de un <span class="ui">Modelos&hellip;</span> desplegable, así que una preferencia ya puesta sigue siendo accesible.</p>
 
 	<h2 id="s7">Créditos</h2>
-	<p>Credits run the model for you with no key needed, and they also meter the few things that leave the browser: fetching a page, the bandwidth of mail and of cross-device sync, and cloud storage beyond the free tier. Sync, Email and cloud storage themselves are turned on by Daimond Pro, and metered use is paid from credits with or without it.</p>
-	<p>Open the credits row for your balance and the packs. Credits are not a subscription, and you keep what you buy. Payment happens on the payment provider's own hosted page, so no card number is typed into Daimond.</p>
-	<p>While testing is closed, new accounts with credits are given out by passcode. Daimond works with your own provider key without one.</p>
+	<p>Los créditos ejecutan el modelo por ti sin necesitar clave, y también miden las pocas cosas que salen del navegador: traer una página, el ancho de banda del correo y de la sincronización entre dispositivos, y el almacenamiento en la nube más allá del nivel gratuito. La sincronización, el correo y el almacenamiento en la nube en sí los activa Daimond Pro, y el uso medido se paga con créditos, lo tengas o no.</p>
+	<p>Abre la fila de créditos para ver tu saldo y los paquetes. Los créditos no son una suscripción, y te quedas con lo que compras. El pago ocurre en la propia página alojada del proveedor de pago, así que ningún número de tarjeta se teclea en Daimond.</p>
+	<p>Mientras las pruebas están cerradas, las cuentas nuevas con créditos se reparten por código de acceso. Daimond funciona con tu propia clave de proveedor sin necesitar uno.</p>
 
 	<h2 id="s8">Recarga automática</h2>
-	<p>Auto-reload is a standing instruction to buy credits when they run low, so a long job does not stop halfway. It is the one place Daimond may charge a saved card while you are away, so it is deliberately explicit. Three numbers set it.</p>
+	<p>La recarga automática es una instrucción permanente para comprar créditos cuando escasean, para que un trabajo largo no se pare a medias. Es el único sitio donde Daimond puede cobrar a una tarjeta guardada mientras estás fuera, así que es deliberadamente explícito. La fijan tres números.</p>
 	<ul>
-		<li><strong>Cuando el saldo baje de</strong> is the balance at which a top-up fires.</li>
-		<li><strong>Comprar esta cantidad</strong> is how much one top-up adds.</li>
-		<li><strong>Never spend more, per month, than</strong> is a hard cap on the calendar month. Set this one carefully. It is enforced on the same code path as the charge.</li>
+		<li><strong>Cuando el saldo baje de</strong> es el saldo al que salta una recarga.</li>
+		<li><strong>Comprar esta cantidad</strong> es cuánto añade una recarga.</li>
+		<li><strong>No gastes nunca más, al mes, de</strong> es un tope duro para el mes natural. Este ponlo con cuidado. Se aplica en el mismo camino de código que el cobro.</li>
 	</ul>
-	<p>It cannot be switched on without a saved card, because a control that turned on and then failed silently would be worse than one that is disabled and says why.</p>
+	<p>No se puede activar sin una tarjeta guardada, porque un control que se activara y luego fallara en silencio sería peor que uno desactivado que dice por qué.</p>
 
 	<div class="next">
-		<a href="social.html">&larr; Social &amp; proposals</a>
-		<a href="spending.html">Next: Spending &rarr;</a>
+		<a href="social.html">&larr; Social y propuestas</a>
+		<a href="spending.html">Siguiente: Gasto &rarr;</a>
 	</div>
 </main>
 
@@ -102,10 +102,10 @@
 		<a href="index.html">Empieza aquí</a>
 		<a href="interface.html">La interfaz</a>
 		<a href="chats-and-diamonds.html">Chats y diamonds</a>
-		<a href="../capps.html">La página de un diamond</a>
+		<a href="capps.html">La página de un diamond</a>
 		<a href="email-web-files.html">Archivos, correo y la web</a>
-		<a href="../machine-operations.html">Tu equipo</a>
-		<a href="../runner.html">Ayudantes y dónde se ejecutan los turnos</a>
+		<a href="machine-operations.html">Tu equipo</a>
+		<a href="runner.html">Ayudantes y dónde se ejecutan los turnos</a>
 		<a href="sync.html">Más de un dispositivo</a>
 		<a href="social.html">Social y propuestas</a>
 		<a href="models.html">Modelos y proveedores</a>

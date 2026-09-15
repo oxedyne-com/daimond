@@ -1,0 +1,112 @@
+<!DOCTYPE html>
+<html lang="ja" data-guide-locale="ja" data-guide-locales="en de es fr ja ko pt-BR zh-Hans">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<title>ヘルパーとターンの実行場所 &mdash; Daimond ユーザーガイド</title>
+<link rel="icon" type="image/svg+xml" href="../../assets/daimond_mark.svg">
+<link rel="stylesheet" href="../../css/variables.css">
+<link rel="stylesheet" href="../../css/guide.css">
+<script src="../frame.js"></script>
+<script src="search-index.js"></script>
+<script src="../search.js"></script>
+</head>
+<body>
+
+<header class="site-head">
+	<div class="site-head-inner">
+		<a class="brand" href="index.html" aria-label="Daimond ガイド、ホーム">
+			<img class="wordmark wm-dark" src="../../assets/daimond_word.svg" alt="Daimond" translate="no">
+			<img class="wordmark wm-light" src="../../assets/daimond_word_dark.svg" alt="Daimond" translate="no">
+			<span class="brand-sub">ガイド</span>
+		</a>
+		<nav class="site-nav" aria-label="ガイドのページ">
+			<a href="index.html">ここから始める</a>
+			<a href="interface.html">インターフェース</a>
+			<a href="chats-and-diamonds.html">チャットと diamond</a>
+			<a href="capps.html">diamond のページ</a>
+			<a href="email-web-files.html">ファイル、メール、ウェブ</a>
+			<a href="machine-operations.html">あなたのコンピューター</a>
+			<a href="runner.html" aria-current="page">ヘルパーとターンの実行場所</a>
+			<a href="sync.html">複数の端末</a>
+			<a href="social.html">ソーシャルと提案</a>
+			<a href="models.html">モデルとプロバイダー</a>
+			<a href="spending.html">支出</a>
+			<a href="accounts.html">安全性と対処</a>
+		</nav>
+	</div>
+</header>
+
+<main>
+	<h1>ヘルパーとターンの実行場所</h1>
+	<p class="lede">daimon はヘルパーを並行して働かせることができ、ある端末で始めたやり取りは別の端末が実行することもあります。どちらも目に見え、どちらもあなたが止められます。</p>
+
+	<h2 id="s1">ヘルパー</h2>
+	<p>仕事そのものをしてほしい用件もあり、そのとき diamond の daimon が送り出すのが <strong>ヘルパー</strong>です。ファイルツールを持って自分の力で走るエージェントで、それぞれに常時の指示と、この diamond の記憶が与えられます。</p>
+	<p>ヘルパーにあなたの会話は見えません。記憶が、仕事について知っていることのすべてなので、渡す仕事にはほかに必要なことをすべて書いておかなければなりません。</p>
+	<p>一度に八体まで走り、残りは待ちます。daimon は送り出したところでやり取りを終えます。それぞれが結果を報告し、残す値打ちのあるものをあなたが残します。ヘルパーは別のヘルパーを送り出せないので、任せるのは一段で止まります。</p>
+	<p>diamond の設定には <span class="ui">ヘルパーモデル</span>があり、daimon が考えるのに使うモデルとは別です。ヘルパーは始めたときのモデルを保ち続け、変更は次のものから効きます。</p>
+
+	<h3 id="s2">エージェントパネル</h3>
+	<p>動いている実行は、 <span class="ui">エージェント</span>、ドックの中に現れます。いくつ動いていて、一時停止していて、待っているかを示す一行が添えられます。各タイルは、たまっていく費用を、最後だけでなく示します。</p>
+	<p>三つの操作が、ヘッダーと、それぞれのタイルの両方にあります。</p>
+	<ul>
+		<li><strong>一時停止。</strong> 動いているものを切り、待機列を止めます。走っているヘルパーは、それまで作り出したものを保ち、新しいものは始まりません。</li>
+		<li><strong>再開。</strong> それぞれが終えたところから続き、最初からやり直しません。ですから一時停止にかかる費用は、待つ時間だけです。</li>
+		<li><strong>停止。</strong> それらをきっぱりと終わらせます。それぞれが、成し遂げたところまでを保ちます。 <span class="ui">終わったエージェントを消去</span> すると片付きます。</li>
+	</ul>
+	<p>より広い制動は、 <span class="ui">すべて</span> の行、レール上部にあるものです。どの diamond も、どのチャットも、ヘルパーも、メールボックスも、取得中のどのページも覆います。止まっているものはやり取りが始まる前にそれを断るので、費用は出ません。</p>
+
+	<h2 id="s3">どの端末がやり取りを実行するか</h2>
+	<p>アカウントに端末が二台以上あれば、一台がもう一台の代わりにやり取りを実行し、答えは同期して戻ってきます。引き継ぎは、許可のチップでオンにするまでオフのままです。オンにするのは「 <span class="ui">席を外したら引き継ぐ」</span>.</p>
+	<p>いちばん役立つのは、あなたのコンピューターでコマンドを実行できないスマートフォンでのとき、そして閉じようとしているノートパソコンでのときです。</p>
+
+	<h3 id="s4">やり取りを引き受ける端末に名前を付ける</h3>
+	<p>指名がなければ、引き継がれたやり取りは、いちばん新しく起きている端末に行きます。いちばん新しい端末がたいてい正解ですが、閉じようとしているノートパソコンがやり取りを受け取り、そのまま持ち去ってしまうこともあります。</p>
+	<p> <span class="ui">設定</span> を開き、次に <span class="ui">端末</span>を開きます。どの行も星で終わっています。ふだん起動している機器の横にある、色のない星を押すと、それが塗りつぶされます。星は一度に一つだけなので、二つ目に星を付けると一つ目は消えます。指名は、いつもの同期とともに運ばれます。</p>
+	<p>指名はその半分にすぎません。次にその機器で Daimond が動いているとき、こう尋ねてきます。「 <span class="ui">この端末を実行役にしますか？」</span> 答えが「 <span class="ui">この端末が実行役です</span> 」なら、それ以降その構えを保ちます。この構えは同期では運ばれません。その機器を、起きて聞き続ける役目に縛るものだからです。</p>
+	<p>この問いは一度だけ尋ねられます。いいえと答えれば、指名を消してあらためて行うまで、二度と尋ねられません。</p>
+
+	<h3 id="s5">ブラウザを邪魔させない</h3>
+	<p>ブラウザは、隠れたタブを一分に一回ほどの目覚めまで遅くし、メモリを節約するためにページ全体を止めてしまうこともあります。遅くされた端末は、無いよりも悪いものです。自分は起きていると報告し続けながら、何も引き受けないからです。</p>
+	<p>ですから、専用のブラウザを与えてください。 <code>dev/runner-chrome.sh</code> は、Daimond のソースの中にあり、別のプロファイルで、タブの代わりにアプリのウィンドウとして、それらの制限をオフにした状態で一つを立ち上げます。実行するときは <code>--dry-run</code> を付けてまずコマンドを確かめるか、 <code>--install</code> を付けてデスクトップセッションと一緒に始まるようにします。</p>
+	<p>スクリプトの手が届かないことが二つあります。そのプロファイルで Memory Saver をオフにするか、Daimond を例外に加えてください。そしてウィンドウは開いたまま、最小化せずに置いてください。ほかのウィンドウの後ろにあるのはかまいませんが、最小化は隠れているものとして扱われます。</p>
+
+	<h3 id="s6">実行中に見えるもの</h3>
+	<p>やり取りは、自分がどこへ行ったかを語ります。最初は <span class="ui">ほかの端末に送信済み</span>と表示され、その機器がやり取りを引き受け、働いているあいだはその機器自身の名前になります。答えは、始めた場所に現れます。</p>
+	<p>その行の横には、ずっと二つのボタンがあります。 <span class="ui">取り戻す</span> は、やり取りを手元の端末に戻します。そして <span class="ui">ここで実行</span> は、誰も引き受けていなければその場で実行します。端末に名前を付けるのは、 <span class="ui">設定</span> &rsaquo; <span class="ui">端末</span> の下です。それによって、これらの行が名前として読めるようになります。</p>
+	<p>引き継がれたやり取りは、まず指名された端末を探し、次に聞いている起きているほかのコンピューターを、最後にいまいる端末を探します。スマートフォンにほかの端末のやり取りが渡されることはありません。</p>
+
+	<h3 id="s7">それでも止める二つのこと</h3>
+	<p>どちらも、その機器での少しの対応を必要とし、どちらも手元の端末には現れません。</p>
+	<ul>
+		<li><strong>クリックを待つフォルダーの許可。</strong> やり取りがブラウザの許可していないフォルダーを必要とするとき、要求はその機器自身の画面に上がって待ちます。そこで一度フォルダーを開けば、あとのやり取りは許可が与えられているのを見つけます。</li>
+		<li><strong>ロックされた画面。</strong> コンピューターは、そのタブのために持つ鍵を再読み込みをまたいで保ち続けるので、更新がそれを止めなくなります。これは端末ごとに、「 <span class="ui">再読み込みをまたいでロック解除を保つ</span> 」というスイッチが <span class="ui">端末</span>の下にあり、それでオフにできます。スマートフォンがロック解除のまま保たれることはないので、この仕事をするスマートフォンはロックされて戻ります。</li>
+	</ul>
+	<p>端末がやり取りを引き受けなくなり、ほかに理由が見当たらないなら、その画面を見に行ってください。</p>
+
+	<div class="next">
+		<a href="machine-operations.html">&larr; あなたのコンピューター</a>
+		<a href="sync.html">次：複数の端末 &rarr;</a>
+	</div>
+</main>
+
+<footer class="site-foot">
+	<span>Daimond はブラウザの中で動きます。ここでの内容は私たちに送信されません。</span>
+	<nav aria-label="ガイドのページ">
+		<a href="index.html">ここから始める</a>
+		<a href="interface.html">インターフェース</a>
+		<a href="chats-and-diamonds.html">チャットと diamond</a>
+		<a href="capps.html">diamond のページ</a>
+		<a href="email-web-files.html">ファイル、メール、ウェブ</a>
+		<a href="machine-operations.html">あなたのコンピューター</a>
+		<a href="runner.html">ヘルパーとターンの実行場所</a>
+		<a href="sync.html">複数の端末</a>
+		<a href="social.html">ソーシャルと提案</a>
+		<a href="models.html">モデルとプロバイダー</a>
+		<a href="spending.html">支出</a>
+		<a href="accounts.html">安全性と対処</a>
+	</nav>
+</footer>
+</body>
+</html>

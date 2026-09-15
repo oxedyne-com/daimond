@@ -75,9 +75,24 @@ const setPoolOn = async (pg, want) => {
 	return want;
 };
 
-// An empty account is already told "No Diamonds yet." -- a second line about
-// tags there would be nagging about a thing there is nothing to do it to.
-check(!(await page.isVisible('#diamond-tag-hint')), 'no tag hint on an account with no Diamonds at all');
+// THE HINT IS GONE, AT EVERY TAG COUNT (RAIL-02, 2026-09-15).
+//
+// A line reading "No tags yet. Tag a diamond and filter chips appear here." used
+// to be drawn under the Diamonds head whenever a rail held Diamonds and no tag.
+// It was here so an empty pool would not read as filing somebody had taken away
+// -- but the pool is not drawn when it is empty either, so there was nothing on
+// screen to misread, and what stood was an instruction to use a feature, paid
+// for in rail height that comes off the Chats list.
+//
+// What replaces the checks is the same question asked of the SILENCE: with no
+// tag anywhere, the rail must say nothing about tags at all -- no hint, and no
+// empty pool standing in for one. Asserted at three points below, because the
+// hint had three: no Diamonds, Diamonds but no tags, and the last tag removed.
+const noTagFurniture = async (where) => {
+	check(!(await page.isVisible('#diamond-tag-hint')), `no tag hint ${where}`);
+	check(!(await page.isVisible('#diamond-filter')), `and no empty filter pool ${where}`);
+};
+await noTagFurniture('on an account with no Diamonds at all');
 
 // ── Create three Diamonds ────────────────────────────────────────────
 async function newDiamond(name) {
@@ -115,29 +130,25 @@ check(untaggedMeta.every(h => !h.includes('tag-chip')), 'untagged Diamonds rende
 // anything draws none, and a rail that is just a search box reads as filing
 // that was taken away rather than filing not yet done. That is how the tag
 // loss was read, twice. Say which, where the chips would be.
-const hintText = () => page.$eval('#diamond-tag-hint', e => e.textContent).catch(() => '');
-check(await page.isVisible('#diamond-tag-hint'),
-	'a store with Diamonds but no tags shows a hint where the chips would be');
-check((await hintText()).includes('No tags yet'),
-	`the hint says the tags are missing, not the feature: ${JSON.stringify(await hintText())}`);
-// It must not sit anywhere a chip's text is read from: the filter chip's text
-// IS a tag name, and the list's text is read for "No Diamonds match".
-check(await page.$eval('#diamond-tag-hint',
-	e => !e.closest('#diamond-filter') && !e.closest('#diamond-list')).catch(() => false),
-	'the hint sits outside the filter chip and outside the Diamonds list');
-check(!(await page.isVisible('#diamond-filter')), 'and it does not raise an empty filter chip beside it');
-// The route to a first tag, for the reader who wants it, in the order the pool
-// really offers them -- a hint promising chips the editor does not offer would
-// be the same lie in a smaller font.
+await noTagFurniture('on a store with Diamonds but no tags');
+// And the key it was drawn from is gone from every table, so nothing can draw it
+// back from a stale reference. Read from the files rather than from the page,
+// because a key that survives in seven translations is a key a locale switch
+// brings back.
+const HINT_KEYS = ['rail.tag_hint', 'rail.tag_hint_help'];
+const stillNamed = ['en', 'de', 'es', 'fr', 'ja', 'ko', 'pt-BR', 'zh-Hans'].filter((loc) => {
+	const src = fs.readFileSync(new URL(`../www/i18n/${loc}.js`, import.meta.url), 'utf8');
+	return HINT_KEYS.some((k) => src.includes(`'${k}'`));
+});
+check(stillNamed.length === 0,
+	`the hint's keys are out of all eight tables: ${JSON.stringify(stillNamed)}`);
 // The starters are translated, so they are read from the table rather than
 // spelled out here: a test that hardcodes the English four passes in English
-// and fails in the other seven for no reason but its own assumption.
+// and fails in the other seven for no reason but its own assumption. Still
+// wanted below, where the tag editor offers them.
 const STARTERS = fs.readFileSync(new URL('../www/i18n/en.js', import.meta.url), 'utf8')
 	.match(/'tag\.starters':\s*'([^']*)'/)[1]
 	.split(',').map(x => x.trim()).filter(Boolean);
-const hintTip = await page.$eval('#diamond-tag-hint', e => e.title).catch(() => '');
-check(hintTip.includes(STARTERS.join(', ')),
-	`the hint's tooltip names the starter tags in the pool's order: ${JSON.stringify(hintTip)}`);
 await shot(s, 'tags-empty-hint');
 
 // The order tagging must not disturb.
@@ -199,10 +210,10 @@ const orderAfter = await boxes();
 check(JSON.stringify(orderBefore) === JSON.stringify(orderAfter),
 	`rail order is stable across a tag edit: ${JSON.stringify(orderAfter)}`);
 
-// ── The hint goes when there is something to filter with ─────────
+// ── One tag anywhere is what raises the pool ─────────────────────
 const tagged = (await railOf()).find(r => r.name === 'Ship a CSV parser');
 check(tagged && tagged.tags.length === 2 && !(await page.isVisible('#diamond-tag-hint')),
-	`one tag anywhere replaces the hint with chips: chips=${JSON.stringify(tagged && tagged.tags)}`);
+	`one tag anywhere raises chips, and still no hint: chips=${JSON.stringify(tagged && tagged.tags)}`);
 
 // ── The standing pool ────────────────────────────────────────────
 // The filter used to be drawn only once something had been clicked, and the
@@ -395,9 +406,7 @@ for (let i = 0; i < 2; i++) {
 	await page.waitForTimeout(600);
 }
 check((await editorTags()).length === 0, `both tags come off: ${JSON.stringify(await editorTags())}`);
-check(await page.isVisible('#diamond-tag-hint'), 'deleting the LAST tag brings the hint back');
-check(!(await page.isVisible('#diamond-filter')),
-	'and the pool goes with it -- an empty pool is a row of nothing, which is what the hint is for');
+await noTagFurniture('once the LAST tag is deleted');
 // Put them back the way the pool offers them, so the rest of this pass sees
 // the store it expects.
 for (const want of ['person', 'rust']) {
@@ -408,7 +417,7 @@ for (const want of ['person', 'rust']) {
 }
 const restoredTwo = await editorTags();
 check(restoredTwo.includes('person') && restoredTwo.includes('rust') && !(await page.isVisible('#diamond-tag-hint')),
-	`and goes again once a tag is back: ${JSON.stringify(restoredTwo)}`);
+	`and the pool is back once a tag is: ${JSON.stringify(restoredTwo)}`);
 await page.click('.crystal-act', { force: true });          // ← Back to the crystal
 await page.waitForTimeout(500);
 
@@ -617,7 +626,7 @@ const dBoot = await disc();
 check(!!dBoot && dBoot.open === true,
 	`and comes back OPEN, because that is the way it was left: ${JSON.stringify(dBoot)}`);
 check(!(await page.isVisible('#diamond-tag-hint')),
-	'and the empty-pool hint stays away, because it keys off tags existing, not off filtering');
+	'and no hint is drawn over the pool, at any tag count');
 await clickTag('person');
 await clickTag('rust');
 const kept = await fstate();

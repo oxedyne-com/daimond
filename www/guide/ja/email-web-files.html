@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
-<title>Files, email &amp; the web &mdash; Daimond guide</title>
+<title>ファイル、メール、ウェブ &mdash; Daimond ユーザーガイド</title>
 <link rel="icon" type="image/svg+xml" href="../../assets/daimond_mark.svg">
 <link rel="stylesheet" href="../../css/variables.css">
 <link rel="stylesheet" href="../../css/guide.css">
@@ -24,12 +24,12 @@
 			<a href="index.html">ここから始める</a>
 			<a href="interface.html">インターフェース</a>
 			<a href="chats-and-diamonds.html">チャットと diamond</a>
-			<a href="../capps.html">diamond のページ</a>
+			<a href="capps.html">diamond のページ</a>
 			<a href="email-web-files.html" aria-current="page">ファイル、メール、ウェブ</a>
-			<a href="../machine-operations.html">あなたのコンピューター</a>
-			<a href="../runner.html">ヘルパーとターンの実行場所</a>
+			<a href="machine-operations.html">あなたのコンピューター</a>
+			<a href="runner.html">ヘルパーとターンの実行場所</a>
 			<a href="sync.html">複数の端末</a>
-			<a href="../social.html">ソーシャルと提案</a>
+			<a href="social.html">ソーシャルと提案</a>
 			<a href="models.html">モデルとプロバイダー</a>
 			<a href="spending.html">支出</a>
 			<a href="accounts.html">安全性と対処</a>
@@ -39,84 +39,84 @@
 
 <main>
 	<h1>ファイル、メール、ウェブ</h1>
-	<p class="lede">A daimon works from files it can read and write, folders you hand it, mail you can answer, and pages it can show or drive.</p>
+	<p class="lede">daimon は、読み書きできるファイル、あなたが渡すフォルダー、返事のできるメール、そして見せたり操作したりできるページから仕事をします。</p>
 
 	<h2 id="s1">作業領域</h2>
-	<p> <span class="ui">Workspace</span> panel shows your files as an ordinary tree. Three chips at the top name where the workspace lives.</p>
+	<p> <span class="ui">作業領域</span> パネルは、あなたのファイルを普通のツリーとして見せます。上部の三つのチップが、作業領域がどこにあるかを示します。</p>
 	<ul>
-		<li><span class="ui">ブラウザ</span> is this browser's own private storage, reachable by nothing outside Daimond. It is the default, and it syncs to your other devices.</li>
-		<li><span class="ui">この端末</span> is a real folder on this computer's disk. Daimond works in it directly, so the same files are in your file manager. It stays on that computer, and travels only if you share it with the <span class="ui">⇄</span> control. Chromium-based browsers only.</li>
-		<li><span class="ui">クラウド</span> is where the bytes are kept, which is what lets a workspace be larger than the device holding it. It is not a third place to work. Files are encrypted before they leave.</li>
+		<li><span class="ui">ブラウザ</span> は、このブラウザ自身の専用の保存領域で、Daimond の外からは届きません。既定はこれで、ほかの端末とも同期します。</li>
+		<li><span class="ui">この端末</span> は、このコンピュータのディスクにある本物のフォルダーです。Daimond はそこで直に働くので、同じファイルがご自分のファイル管理ソフトにもあります。そのコンピュータに留まり、動くのは <span class="ui">⇄</span> の操作で共有したときだけです。Chromium 系のブラウザだけです。</li>
+		<li><span class="ui">クラウド</span> は、バイトが保たれる場所で、だからこそ作業領域は、持っている端末よりも大きくなれます。働く三つ目の場所ではありません。ファイルは出ていく前に暗号化されます。</li>
 	</ul>
-	<p>The folder you open as <span class="ui">この端末</span> is the whole of what Daimond can see, with nothing above it and nothing beside it.</p>
+	<p> <span class="ui">この端末</span> として開くフォルダーが、Daimond に見えるもののすべてです。その上にも、その横にも、何もありません。</p>
 
-	<h3 id="s2">Getting a file in</h3>
+	<h3 id="s2">ファイルを取り込む</h3>
 	<ul>
-		<li><strong>ファイルをアップロード</strong>, the arrow-into-tray in the header, takes one file or a handful.</li>
-		<li><strong>Import a folder&hellip;</strong> copies a folder in, after which it syncs like everything else.</li>
-		<li><strong>本物のフォルダーを開く</strong> with the <span class="ui">この端末</span> chip. Nothing is copied, and it syncs only if you share it.</li>
+		<li><strong>ファイルをアップロード</strong>は、ヘッダーにある受け皿への矢印で、一つか数個のファイルを受け取ります。</li>
+		<li><strong>フォルダーを取り込む&hellip;</strong> は、フォルダーをコピーして取り込みます。そのあとはほかと同じように同期します。</li>
+		<li><strong>本物のフォルダーを開く</strong> を、 <span class="ui">この端末</span> のチップで開きます。何もコピーされず、同期するのは共有したときだけです。</li>
 	</ul>
-	<p>Mail arrives here as ordinary files, and a daimon writes here where it is allowed to.</p>
+	<p>メールは普通のファイルとしてここに届き、daimon は許された場所にここへ書き込みます。</p>
 
-	<h3 id="s3">Held, in the cloud, or pinned</h3>
-	<p>A file is in one of three states, and the tree says which. <strong>Held</strong> means it is on this device. <strong>In cloud storage</strong> means it is only there, marked with a cloud, and clicking it brings it down. <strong>留め置き</strong> means it is never freed automatically.</p>
-	<p>As storage fills, the files longest unused go back to the cloud on their own. Freeing is not deleting, since the file is still listed and comes back when asked for.</p>
-	<p>A daimon is told plainly when a file it wants is in the cloud, and has to fetch it deliberately. A cap limits how much it may bring down on its own.</p>
+	<h3 id="s3">手元にある、クラウドにある、留め置く</h3>
+	<p>ファイルは三つの状態のどれかにあり、ツリーがどれかを示します。 <strong>手元にある</strong> とは、この端末にあることです。 <strong>クラウド保存にある</strong> とは、そこだけにあることです。雲の印が付き、クリックすれば降りてきます。 <strong>留め置き</strong> とは、ひとりでに空けられることは決してない、ということです。</p>
+	<p>保存領域が埋まってくると、いちばん長く使われていないファイルからひとりでにクラウドへ戻ります。空けることは削除ではありません。ファイルは一覧に残り、求められれば戻ってくるからです。</p>
+	<p>daimon は、欲しいファイルがクラウドにあるとき、はっきりそれを告げられ、自分で取ってくる操作をしなければなりません。自分の判断で降ろせる量には上限があります。</p>
 
-	<h2 id="s4">Handing a folder over</h2>
-	<p>The paperclip on every row reads <span class="ui">Attach to current focus</span>. What it does follows what is in focus, whichever row it sits on.</p>
+	<h2 id="s4">フォルダーを渡す</h2>
+	<p>どの行にもあるクリップには <span class="ui">今の焦点に添付</span>とあります。その働きは、それがどの行にあっても、焦点にあるものに従います。</p>
 	<ul>
-		<li><strong>A diamond is in focus.</strong> The file or folder joins that diamond's workspace and stays until you take it out.</li>
-		<li><strong>A chat is in focus.</strong> The attachment is for the next turn only.</li>
+		<li><strong>焦点にあるのが diamond のとき。</strong> そのファイルやフォルダーは、その diamond の作業領域に加わり、あなたが外すまで残ります。</li>
+		<li><strong>焦点にあるのがチャットのとき。</strong> その添付は、次のやり取りだけのものです。</li>
 	</ul>
-	<p>Attaching copies nothing. The file stays where it is and the diamond points at it, so attaching one folder to two diamonds still leaves one folder.</p>
-	<p>Each attachment is either <span class="ui">Note</span>, meaning the path is worth knowing and costs a few tokens, or <span class="ui">Read</span>, meaning the contents are wanted now. Start with Note, which is much the cheaper. Either way the text it generates goes into the message box in front of what you type, where you can edit or delete it.</p>
-	<p>Ticking a <em>folder</em> in the workspace group is the permission, so this chat or diamond may then read and change what is inside. Ticking a file only puts it in front of the model. A diamond's <span class="ui">Reach</span> row names every folder it may write in, and says so in both trees.</p>
+	<p>添付は何もコピーしません。ファイルはそのままの場所にあり、diamond はそれを指し示すだけです。ですから一つのフォルダーを二つの diamond に添付しても、フォルダーは一つのままです。</p>
+	<p>それぞれの添付は、 <span class="ui">メモ</span>——パスを知っておく値打ちがあり、数トークンで済みます——か、 <span class="ui">読み込み</span>——中身をいま求めていることを意味します——のどちらかです。ずっと安いメモから始めてください。どちらでも、生成される文章はあなたが打つものの前にメッセージ欄に入り、そこで編集したり消したりできます。</p>
+	<p>作業領域のグループで <em>フォルダー</em> にチェックを入れることが許可になり、このチャットや diamond はその中身を読んだり変えたりできるようになります。ファイルにチェックを入れても、それはモデルの前に置かれるだけです。diamond の <span class="ui">到達範囲</span> の行が、書き込める可能性のあるフォルダーをすべて名指しし、両方のツリーでそれを示します。</p>
 
-	<h3 id="s5">What a daimon can open</h3>
-	<p>A daimon can open only what is in its diamond's workspace. Nothing else is readable or writable through the file tools, by the daimon or by any helper it dispatches. The check is in compiled code at the one door every file tool passes, and that code is in a bundle that builds reproducibly from public source, so it is not an instruction in a prompt.</p>
-	<p>That rule settles what a daimon can reach and says nothing about where what it reads ends up, because whatever it opens goes to your model provider with the rest of the turn.</p>
+	<h3 id="s5">daimon が開けるもの</h3>
+	<p>daimon が開けるのは、自分の diamond の作業領域にあるものだけです。それ以外は、daimon にも、送り出したどのヘルパーにも、ファイルツールを通じて読み書きできません。検査は、すべてのファイルツールが通る唯一の扉のところにあるコンパイル済みのコードにあり、そのコードは公開されたソースから再現可能に組み立てられるバンドルの中にあります。ですからこれは、プロンプトの中の指示ではありません。</p>
+	<p>この規則が定めるのは daimon が届く範囲であって、読んだものの行き先については何も語りません。開いたものは、やり取りの残りと一緒にあなたのモデルプロバイダーへ行くからです。</p>
 
-	<h3 id="s6">The attachment list</h3>
-	<p>Rows carry an age, <span class="ui">Added {when}</span>. A path that is no longer there is drawn as <span class="ui">Gone</span> with no open action, so a dead row never poses as a live one.</p>
-	<p>Anything a daimon attached for itself, such as a fold's harvest or a file an agent kept, sits under one collapsed heading, <span class="ui">Added by the daimon</span>, with a count and a <span class="ui">Drop all</span>. Your own attachments stay where they are.</p>
+	<h3 id="s6">添付の一覧</h3>
+	<p>行には経過時間があり、 <span class="ui">{when} に追加</span>。もう存在しないパスは <span class="ui">見つかりません</span> として描かれ、開く操作はありません。ですから死んだ行が生きているふりをすることはありません。</p>
+	<p>daimon が自分のために添付したもの——たたみ込みの実りや、エージェントが残したファイルなど——は、折りたたまれた一つの見出しの下にまとまります。 <span class="ui">daimon が追加したもの</span>。件数と <span class="ui">すべて外す</span>があります。あなた自身の添付は、そのままの場所にあります。</p>
 
-	<h3 id="s7">Sharing a folder to your other devices</h3>
-	<p>A <span class="ui">この端末</span> folder lives on one computer, and your phone cannot open it. The <span class="ui">⇄</span> control on the row is how it reaches one anyway, with <span class="ui">Share with devices that lack native access</span>.</p>
-	<p>Off, only devices that can open the folder themselves see it. On, it is copied to your other devices, up to <strong>200&nbsp;MiB</strong> per folder. The setting is per folder, whichever device you set it from, and only a device that can open the folder can set it.</p>
-	<p>A folder over the ceiling is left out whole, and a banner says which one and what it weighed. Share a smaller folder, or take some of it out.</p>
+	<h3 id="s7">フォルダーをほかの端末と共有する</h3>
+	<p> <span class="ui">この端末</span> のフォルダーは一台のコンピュータにあり、あなたのスマートフォンはそれを開けません。 <span class="ui">⇄</span> の操作が、それでもそこへ届かせる方法です。 <span class="ui">直接開けない端末と共有</span>.</p>
+	<p>オフなら、自分でそのフォルダーを開ける端末だけに見えます。オンなら、ほかの端末にもコピーされます。上限は <strong>200&nbsp;MiB</strong> でフォルダーごとです。設定はフォルダーごとで、どの端末から設定してもよく、そのフォルダーを開ける端末だけが設定できます。</p>
+	<p>上限を超えるフォルダーはまるごと外され、バナーがどれで、どれだけの重さだったかを伝えます。もっと小さいフォルダーを共有するか、中身を減らしてください。</p>
 
-	<h2 id="s8">Documents, and books</h2>
-	<p>Open a <code>.typ</code> file and the Doc panel gains two buttons. <span class="ui">Compile</span> lays the document out in the page and writes a preview PDF beside the source, and while those pages are up, every save rebuilds them. Press it on a chapter and it compiles the document that includes the chapter, then takes you to that chapter's page.</p>
-	<p>Both panels have to be on screen for the loop to run. Where the window is too narrow, the Doc panel says so, and one rebuild catches up when they return.</p>
-	<p>The editor need not be Daimond's. A save from any editor writing into the granted folder is picked up within about a second.</p>
-	<p>A phone cannot hold a book's files or afford the memory a layout costs, so it hands the compile to a paired computer that can, sealed to your account exactly as a turn is, and the laid-out pages come back.</p>
+	<h2 id="s8">文書と書籍</h2>
+	<p> <code>.typ</code> ファイルを開くと、文書パネルに二つのボタンが増えます。 <span class="ui">コンパイル</span> は、文書をページに組み、ソースの横にプレビューの PDF を書き出します。そのページが開いているあいだは、保存するたびに作り直されます。ある章で押すと、その章を含む文書をコンパイルし、その章のページへ連れて行きます。</p>
+	<p>この循環が働くには、両方のパネルが画面に出ている必要があります。ウィンドウが狭すぎるときは、文書パネルがそう伝え、戻ってきたときに一回分の作り直しで追いつきます。</p>
+	<p>エディタは Daimond のものである必要はありません。許可されたフォルダーに書き込むエディタなら、どれで保存しても、およそ一秒以内に拾われます。</p>
+	<p>スマートフォンは書籍のファイルを持てず、組版にかかるメモリも足りないので、コンパイルは、それができるペアのコンピュータに渡します。やり取りと同じようにあなたのアカウントに封じられ、組まれたページが返ってきます。</p>
 
 	<h2 id="s9">どんな種類のファイルでも</h2>
-	<p>Any file is stored and travels, up to a gigabyte each. A document or a spreadsheet opens as a <strong>reading view</strong>, which shows what it says and not how it prints. Values are as stored, formulas are not recalculated, and macros are neither run nor read. <span class="ui">Save a copy</span> writes one to your own device and leaves the file here untouched.</p>
-	<p>Where nothing recognises a file, its bytes are shown, and the panel says so.</p>
+	<p>どんなファイルも保存され、運ばれます。一つにつき一ギガバイトまでです。文書や表計算は、 <strong>閲覧ビュー</strong>として開きます。示すのは書かれている内容で、印刷したときの見た目ではありません。値は保存されたとおりで、数式は再計算されず、マクロは実行も読み込みもされません。 <span class="ui">写しを保存</span> が、あなた自身の端末へ書き出し、ここのファイルはそのままにします。</p>
+	<p>何もそのファイルを認識しないときは、バイトがそのまま示され、パネルがそう伝えます。</p>
 
 	<h2 id="s10">メール</h2>
-	<p>A browser cannot open a mail connection, so Daimond connects through the gateway, which hands back the raw message and forgets your credential. Your mail is written into the workspace as ordinary files.</p>
-	<p>Add a mailbox with the <span class="ui">+</span> in the Email panel. Type your address and Daimond guesses the server settings, and every field stays editable. Most providers want an app password in place of your account password, and the panel says where to find it.</p>
-	<p>The credential is stored on this device under your passphrase, handed to the gateway for one sync, and forgotten. Daimond stores no mail on any server.</p>
-	<p><strong>Only you can send.</strong> A daimon can draft a message into the Compose panel. The Send button is the one thing that puts mail on the wire, and only a person can press it. Email is part of Daimond Pro.</p>
+	<p>ブラウザだけではメールの接続を開けないので、Daimond はゲートウェイを通してつなぎます。ゲートウェイは生のメッセージを返し、あなたの資格情報は忘れます。メールは作業領域に普通のファイルとして書かれます。</p>
+	<p>メールボックスを追加するには、 <span class="ui">+</span> を、メールパネルで使います。アドレスを入力すると Daimond がサーバーの設定を推測しますが、どの欄も編集できるままです。多くのプロバイダーが求めるのは、アカウントのパスワードではなくアプリパスワードで、どこにあるかはパネルが伝えます。</p>
+	<p>資格情報はこの端末に、あなたのパスフレーズのもとで保存され、一度の同期のためだけにゲートウェイへ渡され、そのあと忘れられます。Daimond はどのサーバーにもメールを保存しません。</p>
+	<p><strong>送れるのはあなただけです。</strong> daimon は作成パネルにメッセージを下書きできます。送信ボタンは、メールを回線に乗せる唯一のもので、押せるのは人だけです。メールは Daimond Pro の一部です。</p>
 
 	<h2 id="s11">ウェブパネル</h2>
-	<p>Ask Daimond to open a page, or paste a link. There are three ways, and the site decides which works.</p>
+	<p>Daimond にページを開くよう頼むか、リンクを貼ってください。方法は三つあり、どれが通るかはサイトが決めます。</p>
 	<ul>
-		<li><strong>Show it.</strong> The page appears in the panel. Most sites refuse to be embedded, so this works for a minority.</li>
-		<li><strong>Read it.</strong> Daimond fetches the page and reads its text. It works where showing does not. You do not see the page, and Daimond does.</li>
-		<li><strong>Drive it.</strong> With the browser add-on, Daimond opens a real tab, signed in as you, and works it while you watch. It is the only way to work a live, logged-in site.</li>
+		<li><strong>表示する。</strong> ページがパネルの中に現れます。ほとんどのサイトは埋め込みを拒むので、これが通るのは少数です。</li>
+		<li><strong>読み取る。</strong> Daimond がページを取ってきて、その文字を読みます。表示できないところでも働きます。ページはあなたには見えず、Daimond が見ます。</li>
+		<li><strong>操作する。</strong> ブラウザの拡張機能があれば、Daimond は実際のタブを、あなたとしてサインインした状態で開き、あなたが見ている前で操作します。ログイン済みの生きたサイトを扱う方法は、これだけです。</li>
 	</ul>
-	<p>Signing in stays yours. When you sign in on a driven page, Daimond stops watching entirely, taking no text, no picture and no keystrokes, and never sees your password. You hand the wheel back from the browser tab and not from Daimond, so a page cannot take it from you.</p>
+	<p>サインインはあなたのものであり続けます。操作中のページでサインインするとき、Daimond は見るのを完全にやめます。文字も、画像も、キー入力も取りません。あなたのパスワードを見ることもありません。操作を戻すのはブラウザのタブからで、Daimond からではありません。ですからページがあなたから操作を奪うことはできません。</p>
 
 	<h2 id="s12">ツール</h2>
-	<p> <span class="ui">ツール</span> panel says what Daimond can do. Built-in tools are already yours and free, and the panel lists exactly what is held, so it cannot promise one that is not there. Packs are extras, bought once, in dollars.</p>
+	<p> <span class="ui">ツール</span> パネルは、Daimond に何ができるかを伝えます。標準のツールはすでにあなたのもので無料です。パネルは持っているものをそのまま並べるので、ないものを約束することはできません。パックは追加のもので、ドルで一度だけ買います。</p>
 
 	<div class="next">
-		<a href="../capps.html">&larr; A diamond&rsquo;s page</a>
-		<a href="../machine-operations.html">Next: Your computer &rarr;</a>
+		<a href="capps.html">&larr; diamond のページ</a>
+		<a href="machine-operations.html">次：あなたのコンピューター &rarr;</a>
 	</div>
 </main>
 
@@ -126,12 +126,12 @@
 		<a href="index.html">ここから始める</a>
 		<a href="interface.html">インターフェース</a>
 		<a href="chats-and-diamonds.html">チャットと diamond</a>
-		<a href="../capps.html">diamond のページ</a>
+		<a href="capps.html">diamond のページ</a>
 		<a href="email-web-files.html">ファイル、メール、ウェブ</a>
-		<a href="../machine-operations.html">あなたのコンピューター</a>
-		<a href="../runner.html">ヘルパーとターンの実行場所</a>
+		<a href="machine-operations.html">あなたのコンピューター</a>
+		<a href="runner.html">ヘルパーとターンの実行場所</a>
 		<a href="sync.html">複数の端末</a>
-		<a href="../social.html">ソーシャルと提案</a>
+		<a href="social.html">ソーシャルと提案</a>
 		<a href="models.html">モデルとプロバイダー</a>
 		<a href="spending.html">支出</a>
 		<a href="accounts.html">安全性と対処</a>

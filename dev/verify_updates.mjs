@@ -69,7 +69,9 @@ try {
 	// ── A. Boot reads the stamp; the chip is present and quiet. ──────────────
 	await reboot({ build: 'AAA', note: 'first' });
 	check('boot records its own build id', (await page.evaluate(() => DaimondUpdater.booted())) === 'AAA');
-	check('chip is visible and "current" at boot', (await state()) === 'current' && !(await hidden()));
+	// TOP-05: current is the one state with nothing to click for, so it is the
+	// one state the chip is not drawn in.
+	check('chip is hidden and "current" at boot', (await state()) === 'current' && (await hidden()));
 
 	// ── B. A newer stamp is noticed; chip goes "ready"; NO auto-reload in the foreground. ──
 	await serve({ build: 'BBB', note: 'second' });
@@ -181,6 +183,77 @@ try {
 	});
 	const reloadedJ = await until(page, () => typeof window.__m === 'undefined' && !!window.DaimondUpdater, 35000);
 	check('once sync goes quiet the automatic path reloads on its own', reloadedJ);
+
+	// ── K. A standing dialog holds the automatic path; the dialog's own idle bound
+	// clears it with no human touching the page; the turn having ended, the
+	// automatic path proceeds on its own -- and the banner named the reason while
+	// it was held. 2026-09-15: a Publish card stood a full day, `busy()` true
+	// throughout because the turn genuinely was that dialog, and nothing bounded
+	// an ATTENDED screen nobody was answering. `dialogOpen()` (updater.js) and
+	// `armIdleBound` (daimond.js's `dialog()`) are the two-part fix this measures.
+	//
+	// The "run a command" consent is the vehicle: unlike the net and publish
+	// questions, it carried no `deadlineMs` of its own before this change, so
+	// what closes it here can only be the new idle bound. `window.__daimondDialogIdleMs`
+	// is that bound's own test hook (clamps DOWNWARD only, `netAskDeadline`'s
+	// bargain) -- fifteen seconds rather than the real thirty minutes.
+	await reboot({ build: 'LLL', note: 'l' });
+	// The previous scenario's automatic reload wrote the once-per-ten-minutes
+	// gap guard; left in place it would silently refuse THIS scenario's own
+	// automatic reload at the end, which would then read as this fix failing.
+	await page.evaluate(() => { try { localStorage.removeItem('daimond-soft-at'); } catch (e) {} });
+	// The one-minute boot guard is real time here too (see scenario J's own
+	// note): `whyUnsafe` checks it BEFORE `dialogOpen`, so a `held()` read taken
+	// inside that first minute says 'boot', not 'dialog', whatever else is true.
+	await new Promise(r => setTimeout(r, 61000));
+	// And `quietEnough`'s ten-minute foreground quiescence is real time as well,
+	// for a REAL focused tab -- scenario J's own note. Told backgrounded, exactly
+	// as J is, so the automatic reload this scenario ends on is not itself
+	// waiting on a clock ten times longer than the one under test.
+	await page.evaluate(() => {
+		Object.defineProperty(document, 'hidden', { get: () => true, configurable: true });
+	});
+	await setBusy(true);                                    // the turn this dialog belongs to
+	await page.evaluate(() => { window.__daimondDialogIdleMs = 15000; });
+	await serve({ build: 'MMM', note: 'm' });
+	await page.evaluate(() => DaimondUpdater.check());
+	const sawK = await until(page, () => DaimondUpdater.pending() === 'MMM');
+	check('scenario K: a newer build is detected while a turn runs', sawK);
+
+	const runP = page.evaluate(() => window.__daimondEgressAllowed(
+		JSON.stringify({ tool: 'run', url: 'echo hi', detail: '/work' })));
+	await page.waitForSelector('.modal.dlg', { timeout: 5000 });
+
+	// PROVEN WHILE THE TURN IS STILL RUNNING: the dialog is the reason, not the
+	// bare fact of a turn -- `whyUnsafe` reads `dialogOpen()` before `busy()`,
+	// so this is more specific than "a turn is running" would have been.
+	const heldDialog = await until(page, () => DaimondUpdater.held() === 'dialog', 15000);
+	check('scenario K: a standing dialog holds the automatic path, named specifically',
+		heldDialog, await page.evaluate(() => DaimondUpdater.held()));
+
+	// Now the TURN itself concludes (busy() false) while the dialog still stands
+	// -- the incident's own shape, a day apart: the turn is not what is left
+	// holding this back any more, the dialog is, and the banner has to say so
+	// once something asks it to redraw.
+	await setBusy(false);
+	await page.evaluate(() => window.dispatchEvent(new Event('daimond:idle')));
+	const bannerTxtK = await page.evaluate(() => {
+		const b = document.querySelector('.update-banner');
+		return b && !b.hidden ? b.textContent : null;
+	});
+	check('scenario K: the banner says why -- "a dialog is open", not merely "available"',
+		/a dialog is open/.test(bannerTxtK || ''), bannerTxtK);
+
+	const runResult = await runP;
+	check('scenario K: nobody touched the page for the idle window, so it declines itself',
+		runResult === 'deny', runResult);
+	const dialogGoneK = await until(page, () => !document.querySelector('.modal.dlg'), 20000);
+	check('scenario K: the card is gone rather than left standing for ever', dialogGoneK);
+
+	await page.evaluate(() => { window.__m = 1; });
+	const reloadedK = await until(page, () => typeof window.__m === 'undefined' && !!window.DaimondUpdater, 40000);
+	check('scenario K: turn ended and dialog gone -- the automatic reload proceeds on its own',
+		reloadedK);
 
 	// ── F. No console errors from any of it. ────────────────────────────────
 	// Gateway bootstrap 401s are expected here: this test runs signed-out with no gateway, so those

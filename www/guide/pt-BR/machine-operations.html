@@ -1,0 +1,296 @@
+<!DOCTYPE html>
+<html lang="pt-BR" data-guide-locale="pt-BR" data-guide-locales="en de es fr ja ko pt-BR zh-Hans">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<title>Seu computador &mdash; Guia do Daimond</title>
+<link rel="icon" type="image/svg+xml" href="../../assets/daimond_mark.svg">
+<link rel="stylesheet" href="../../css/variables.css">
+<link rel="stylesheet" href="../../css/guide.css">
+<script src="../frame.js"></script>
+<script src="search-index.js"></script>
+<script src="../search.js"></script>
+</head>
+<body>
+
+<header class="site-head">
+	<div class="site-head-inner">
+		<a class="brand" href="index.html" aria-label="Guia do Daimond, início">
+			<img class="wordmark wm-dark" src="../../assets/daimond_word.svg" alt="Daimond" translate="no">
+			<img class="wordmark wm-light" src="../../assets/daimond_word_dark.svg" alt="Daimond" translate="no">
+			<span class="brand-sub">Guia</span>
+		</a>
+		<nav class="site-nav" aria-label="Páginas do guia">
+			<a href="index.html">Comece aqui</a>
+			<a href="interface.html">A interface</a>
+			<a href="chats-and-diamonds.html">Chats e diamonds</a>
+			<a href="capps.html">A página de um diamond</a>
+			<a href="email-web-files.html">Arquivos, e-mail e a web</a>
+			<a href="machine-operations.html" aria-current="page">Seu computador</a>
+			<a href="runner.html">Ajudantes e onde os turnos rodam</a>
+			<a href="sync.html">Mais de um dispositivo</a>
+			<a href="social.html">Social e propostas</a>
+			<a href="models.html">Modelos e provedores</a>
+			<a href="spending.html">Gastos</a>
+			<a href="accounts.html">Segurança e soluções</a>
+		</nav>
+	</div>
+</header>
+
+<main>
+	<h1>Seu computador</h1>
+	<p class="lede">O Daimond pode rodar programas no seu computador (um build, uma suíte de testes, um linter, um script) dentro de um compartimento que o kernel impõe. É gratuito, leva dois comandos em um terminal, e é só para Linux. Leia o aviso primeiro, antes de digitar qualquer um dos dois comandos.</p>
+
+	<div class="note stop"><strong>Um navegador snap ou flatpak não consegue fazer isso, e não há como forçá-lo.</strong> O instalador detecta um e recusa em vez de escrever nele, então isso é a primeira coisa que você vai encontrar, e no Ubuntu o Chromium padrão é um snap. <a href="#s2">Por quê, e o que instalar em vez disso</a>.</div>
+
+	<h2 id="s1">O que isso lhe dá</h2>
+	<p>Com o hand instalado, um daimon pode rodar um build, uma suíte de testes, um linter ou um script contra a pasta que você concedeu, e ler o resultado. Mais nada na máquina está ao alcance.</p>
+	<p>As ferramentas que ele usa são nomeadas no painel <span class="ui">Ferramentas</span> , e quatro delas vale a pena conhecer pelo nome.</p>
+	<ul>
+		<li><strong>run</strong> roda um comando, dado como uma lista de argumentos, e responde com o código de saída, o final da saída e o tempo gasto.</li>
+		<li><strong>verify</strong> roda a própria verificação do seu projeto. O Daimond lê o argv de <code translate="no">.daimond/verify.json</code>, ou o infere a partir de <code translate="no">Cargo.toml</code>, <code translate="no">package.json</code>, <code translate="no">pyproject.toml</code> ou <code translate="no">go.mod</code>. O código de saída é o veredito.</li>
+		<li><strong>runs</strong> lista o que ainda está rodando, e como parar um. Um comando pode sobreviver ao próprio turno, porque algo iniciado em segundo plano mantém suas portas até ser parado, e mais nada no computador consegue alcançá-lo, já que o compartimento restringe sinais a si mesmo.</li>
+		<li><strong>serve</strong> inicia um servidor de arquivos somente leitura para uma pasta, para que uma página gerada possa ser vista no painel <span class="ui">Web</span> . Ele continua ativo depois do turno, então pare-o pelo id.</li>
+	</ul>
+	<p>Uma recusa nomeia o caminho, a causa e a solução, então não há código para consultar. O turno então termina do jeito que todo turno termina, como <span class="ui">Respondido</span>, <span class="ui">Parado</span> ou <span class="ui">Limite de etapas atingido</span>, então um comando recusado nunca se lê como um que funcionou.</p>
+
+	<h2 id="s2">Antes de começar</h2>
+	<p>Três coisas decidem se algo disso vai funcionar. Checá-las leva um minuto, e descobri-las depois leva uma hora, porque o erro que o navegador relata não nomeia nenhuma delas.</p>
+
+	<h3 id="s3">1. Um navegador instalado a partir de um <code translate="no">.deb</code></h3>
+	<p>Um navegador snap ou flatpak confina os programas que inicia, e esse confinamento alcança o hand do Daimond. A <code translate="no">home</code> interface que um snap recebe não concede os diretórios escondidos no topo do seu diretório home, e o hand guarda o diário dele em <code translate="no">~/.local/share/daimond/hand/journal/</code>, atrás de um deles. O hand não consegue abrir o arquivo em que teria registrado o motivo, então ele sai sem dizer nada, e o Chrome só relata <em>Native host has exited</em>. Essa frase não lhe dá nada para agir, e o confinamento é para isso que um snap serve. Mover o diário não ajuda, porque o navegador entrega ao programa o próprio ambiente dele.</p>
+	<p>Você não precisa descobrir isso sozinho. O instalador escreve nos perfis que podem usá-lo e nomeia os que não podem, e onde todo navegador que encontra está confinado, ele para, então você não fica com uma instalação que parece ter funcionado. <code translate="no">--check</code> sinaliza um navegador confinado mesmo com um utilizável ao lado dele, porque o navegador que você está de fato usando é quem decide.</p>
+	<p>Para ver o que você tem antes de começar:</p>
+	<pre><code translate="no">snap list 2&gt;/dev/null | grep -Ei 'chrom|brave|vivaldi|edge'
+flatpak list 2&gt;/dev/null | grep -Ei 'chrom|brave|vivaldi|edge'</code></pre>
+	<p>Qualquer coisa que os dois comandos nomeiem está confinada. O que funciona é Chrome, Brave, Vivaldi ou Edge instalados como um <code translate="no">.deb</code>, ou um Chromium <code translate="no">.deb</code> vindo de algum lugar que não o repositório do Ubuntu.</p>
+	<div class="note"><strong><code translate="no">apt install chromium-browser</code> lhe dá o snap.</strong> O pacote <code translate="no">chromium-browser</code> do Ubuntu é um stub que instala o snap desde a versão 20.04, então o jeito comum de conseguir um navegador sem o app Software leva você ao mesmo lugar. Instale um dos quatro <code translate="no">.deb</code>s acima, em vez disso.</div>
+
+	<h3 id="s4">2. Rode aquele navegador uma vez antes de instalar</h3>
+	<p>O instalador escreve um arquivinho no diretório de perfil do navegador, e esse diretório é criado na primeira vez que o navegador inicia. Instale um navegador e nunca o abra, e <code translate="no">install.sh</code> relata não encontrar nada, corretamente, porque ainda não há nada ali.</p>
+
+	<h3 id="s5">3. Linux, com Landlock no kernel</h3>
+	<p>O compartimento é construído a partir do Landlock, que cerca arquivos, e do seccomp, que filtra chamadas de sistema, e os dois são recursos do kernel Linux. O Landlock chegou no Linux 5.13, e <a href="#s30">Sistemas não convencionais</a> expõe o que máquinas mais antigas e incomuns recebem. O hand compila e roda no macOS e no Windows, mas relata que não consegue cercar nada, e o Daimond então recusa todo comando em vez de rodar um sem cerca. A recusa nomeia o que está faltando. A cerca de nenhuma das duas plataformas está construída.</p>
+
+	<div class="note stop"><strong>Instalando um navegador diferente? A sua conta não vem junto.</strong> Sua conta é uma chave de assinatura guardada no navegador em que você a criou. A frase-senha não recria essa chave, apenas decifra a cópia já guardada ali, então a mesma frase-senha em um navegador novo começa uma conta <em>diferente</em> , com créditos próprios e sem Pro. A chave precisa viajar, então antes de aposentar o navegador antigo, faça uma destas coisas nele: <strong><span class="ui">Vincular outro dispositivo</span></strong>, depois digite o código no navegador novo; adicione uma chave de acesso; ou <strong><span class="ui">Exportar um backup</span></strong>, que grava os chats, diamonds e arquivos do espaço de trabalho junto com a chave, ainda envolvida pela sua frase-senha, para um navegador que ainda não tem conta própria. Veja <a href="sync.html">Mais de um dispositivo</a> e <a href="accounts.html">Segurança e soluções</a>.</div>
+
+	<div class="note"><strong>Não é a mesma coisa que o espaço de trabalho Máquina.</strong> O botão <span class="ui">Máquina</span> chip no painel <a href="email-web-files.html">Espaço</a> dá ao Daimond acesso de leitura e escrita a uma pasta de verdade no seu disco. Comandos na máquina permite que ele <strong>rode programas</strong>. São duas concessões separadas, feitas separadamente. Comandos na máquina precisa sim do espaço de trabalho, porque um comando roda contra uma pasta de verdade, então o espaço de trabalho tem de ser uma pasta real, e a mesma.</div>
+
+	<h2 id="s6">Instalando</h2>
+	<p>Instalar leva dois comandos em um terminal, a partir da raiz do repositório do Daimond, e depois duas coisas no navegador. Isso tudo soma um arquivo JSON pequeno por perfil de navegador, mais um binário que você compilou. A instalação não deixa nada escutando em uma porta, nenhum daemon rodando, e nenhum segredo para roubar.</p>
+
+	<ol class="steps">
+		<li>
+			<h3 id="s7">Compile o hand</h3>
+			<pre><code translate="no">cargo build --release --manifest-path hand/Cargo.toml</code></pre>
+			<p>Use <code translate="no">--manifest-path</code> e não <code translate="no">-p</code>, porque o hand é um workspace cargo próprio, então <code translate="no">-p</code> relata que não existe tal pacote e não compila nada.</p>
+		</li>
+		<li>
+			<h3 id="s8">Conceda uma pasta, e registre o hand</h3>
+			<pre><code translate="no">hand/install/install.sh --workspace ~/work</code></pre>
+			<p>Ponha a sua própria pasta no lugar de <code translate="no">~/work</code>. Essa pasta limita tudo o que qualquer comando pode ler ou escrever, então escolha uma para o trabalho. O script recusa o seu diretório home e <code>/</code> de imediato, já que conceder qualquer um dos dois concede tudo. A pasta já precisa existir.</p>
+			<p>Essa única execução faz três coisas, cada uma com uma falha que você encontraria mais tarde de outro jeito.</p>
+			<ul>
+				<li><strong>Grava a sua pasta em <code translate="no">root.txt</code></strong>, em <code translate="no">~/.local/share/daimond/hand/journal/root.txt</code>. O hand não vai servir uma página até que lhe digam a pasta, e ele nunca chuta, porque uma pasta chutada é um chute sobre o que um comando pode tocar. Para mudar depois, rode o mesmo comando com uma pasta diferente.</li>
+				<li><strong>Cria aquele diretório de diário no modo 700.</strong> Ele guarda o registro de todo comando que todo diamond já rodou, então o hand recusa escrevê-lo em qualquer lugar que outros usuários possam ler. Um diretório criado sob as permissões padrão comuns é 755, e o hand não iniciaria.</li>
+				<li><strong>Grava o registro</strong> em todo perfil de navegador utilizável, e mostra quais. É esse arquivo que permite ao navegador iniciar o hand. É JSON e mais nada, então o script não compila nada, não baixa nada, não inicia nada e não precisa de root.</li>
+			</ul>
+			<div class="note"><strong><code translate="no">DAIMOND_HAND_ROOT</code> é uma armadilha.</strong> A variável de ambiente faz o mesmo trabalho que <code translate="no">root.txt</code> e tem precedência, e não vai funcionar, porque o seu navegador inicia o hand com <em>o próprio</em> ambiente dele, e o seu não está nele. Use o arquivo.</div>
+		</li>
+		<li>
+			<h3 id="s9">Carregue a extensão</h3>
+			<p>O passo anterior mostrou o caminho. Abra <code translate="no">chrome://extensions</code>, ligue <strong>Modo desenvolvedor</strong>, escolha <strong>Carregar sem compactação</strong>, e selecione o diretório <code translate="no">ext/</code> .</p>
+			<p>A extensão carrega uma chave pública fixa, então o id dela é o mesmo em toda máquina, o que é como o registro escrito há pouco já consegue nomeá-la. O manifesto dela nomeia uma única origem, <code translate="no">https://daimond.oxedyne.com</code>, como a única página autorizada a falar com ela, então nenhuma outra página no seu navegador consegue alcançá-la de jeito nenhum.</p>
+		</li>
+		<li>
+			<h3 id="s10">Reinicie o navegador</h3>
+			<p>O navegador só lê esses diretórios de perfil quando inicia, então um arquivo que apareceu enquanto ele já estava rodando fica invisível até lá. Uma reinicialização esquecida é o motivo mais comum de uma instalação correta parecer quebrada.</p>
+		</li>
+	</ol>
+
+	<h3 id="s11">Depois, confira</h3>
+	<pre><code translate="no">hand/install/install.sh --check</code></pre>
+	<p>A checagem não muda nada, e mostra uma linha para cada coisa que precisa ser verdadeira: um navegador utilizável, o registro, o binário, o diretório de diário e o modo dele, <code translate="no">root.txt</code>, o diário estando fora da pasta concedida, e a extensão. Uma linha que falha traz a solução dela na linha abaixo. Trabalhe de cima para baixo, já que uma linha posterior costuma falhar só porque uma anterior falhou.</p>
+
+	<h2 id="s12">Os dois últimos passos são seus</h2>
+	<p>Nenhum dos passos acima tomou uma decisão por você. As duas coisas que restam são as duas que são decisões.</p>
+	<p><strong>Abra a mesma pasta no Daimond.</strong> No painel Espaço, use o chip <span class="ui">Máquina</span> para abrir a pasta que você concedeu. Tem de ser a mesma. O hand grava um token em <code translate="no">&lt;folder&gt;/.daimond/workspace.id</code> e o nomeia quando se apresenta, e a página lê esse arquivo pelo identificador que já tem e compara os dois. Um espaço de trabalho que seja o próprio armazenamento do navegador, ou uma pasta diferente daquela em <code translate="no">root.txt</code>, tem seus comandos recusados com uma linha dizendo qual. O token vive dentro de <code translate="no">.daimond</code> porque o compartimento sempre nega esse diretório, então um comando não consegue ler o token nem responder por uma pasta em que não está.</p>
+	<p><strong>Permita o primeiro comando.</strong> Na primeira vez que o Daimond quiser rodar algo, uma janela <strong translate="no">Daimond Hands</strong> abre e pergunta. Nenhuma permissão de navegador cobre "pode rodar programas neste computador", então essa janela <em>é</em> a aprovação, e a própria extensão registra a sua resposta. É isso também que a torna revogável, porque o navegador não tem nada para tirar. Até você permitir, nada roda.</p>
+	<p>A janela nomeia a pasta e a página que pediu, e diz em uma linha até onde um comando pode alcançar nesta máquina. <span class="ui">O que isso cobre, e o que não cobre</span> abre o resto, que é o que o compartimento impede, o que não impede, e como retirar a permissão.</p>
+
+	<h2 id="s13">Quando não funciona</h2>
+	<p>Comece com <code translate="no">install.sh --check</code> de novo. Ele percorre toda checagem daqui em ordem e para na primeira coisa errada. Os três passos que ele automatiza são úteis por si só, e são o que buscar quando <code translate="no">--check</code> passa e o Daimond ainda diz que o hand não está lá.</p>
+
+	<h3 id="s14">Rode o hand você mesmo</h3>
+	<pre><code translate="no">hand/target/release/daimond-hand &lt; /dev/null</code></pre>
+	<p>Isso inicia o hand exatamente do jeito que o seu navegador iniciaria, sem navegador nenhum do outro lado, então o que quer que ele diria ao navegador, ele diz a você. Há três respostas.</p>
+	<ul>
+		<li><code translate="no">daimond-hand: the page closed the pipe.</code> O hand está configurado e pronto. O que quer que esteja errado está do lado do navegador, e reiniciá-lo é a primeira coisa a tentar.</li>
+		<li><em>This hand has not been told which folder it may work in</em> quer dizer que <code translate="no">root.txt</code> está faltando. Rode <code translate="no">install.sh --workspace</code> de novo.</li>
+		<li><em>…is readable by users other than its owner</em> quer dizer que o diretório de diário não está em 700, e o hand não vai escrever o registro dos seus comandos onde outra conta possa ler. <code translate="no">chmod 700</code> nele.</li>
+	</ul>
+	<p>Qualquer outra coisa é uma frase inteira nomeando o caminho, a causa e a solução, porque o hand não tem onde imprimir um código que alguém pudesse consultar.</p>
+	<pre><code translate="no">hand/target/release/daimond-hand --report</code></pre>
+	<p>Isso imprime o que o compartimento consegue impor <em>neste</em> kernel e, com mais detalhes, o que não consegue. Leia a segunda lista com atenção, porque em um kernel abaixo do Linux 7.1 ela inclui <a href="#s21">uma rota para fora do compartimento</a> que o Landlock deixa aberta e o hand fecha por conta própria, recusando sockets unix. Também nomeia a pasta de <code translate="no">root.txt</code>, então uma desatualizada aparece aqui e não no primeiro comando.</p>
+
+	<h3 id="s15">Leia o diário</h3>
+	<pre><code translate="no">tail -n 5 ~/.local/share/daimond/hand/journal/hand-*.jsonl</code></pre>
+	<p>O diário guarda um objeto JSON por linha, na ordem em que as coisas aconteceram: o aperto de mãos inicial, todo comando, e toda recusa com o motivo dela. Se o hand chegou a iniciar, ele escreveu algo aqui. Um diretório vazio depois de uma tentativa falha quer dizer que o hand nunca chegou longe o bastante, o que no Ubuntu quase sempre quer dizer o navegador confinado do topo desta página.</p>
+
+	<h3 id="s16">Pergunte à extensão</h3>
+	<p>No navegador, na aba do Daimond, abra o console de desenvolvedor e rode:</p>
+	<pre><code translate="no">await DaimondHand.status()</code></pre>
+	<p>A extensão responde com JSON dizendo se um hand está pareado, qual pasta ela diz que foi concedida, o que consegue impor, e, onde a resposta é não, um <code translate="no">reason</code> escrito como uma frase inteira. O Daimond mostra ao modelo essa mesma frase, então o JSON explica o que foi dito ao daimon.</p>
+
+	<h2 id="s17">O que isso realmente é</h2>
+	<p>Um comando é um processo comum, seu, no seu próprio kernel, contra os seus próprios arquivos, com capacidades removidas antes. Não há máquina virtual, nem contêiner, nem emulação, então nada é simulado e nada é copiado para dentro. Quatro partes fazem cada uma um trabalho.</p>
+	<ul>
+		<li><strong>A página pede.</strong> O Daimond calcula o que este turno pode tocar e envia a regra inteira com a requisição. Ele nunca envia uma linha de shell, porque <code translate="no">argv</code>, a lista de argumentos, é um array, e não há nada em que injetar.</li>
+		<li><strong>A extensão retransmite.</strong> <strong translate="no">Daimond Hands</strong> é a única coisa a que a página pode entregar um comando, e uma única origem pode falar com ela.</li>
+		<li><strong>Um pequeno programa local o executa.</strong> O botão <em>hand</em> constrói o compartimento a partir da regra que recebeu, aplica-a a si mesmo, e então <em>se torna</em> o comando. Nenhum supervisor observa um filho, porque nada resta do hand assim que o comando começa.</li>
+		<li><strong>Seu navegador inicia o hand.</strong> É por isso que não há porta nem senha. Um serviço em uma porta seria alcançável por toda página que você visita.</li>
+	</ul>
+
+	<div class="note"><strong>É gratuito, e não faz parte do Pro.</strong> Nada em um comando toca o gateway do Daimond. A requisição vai da página para uma extensão, para um programa no seu próprio disco, e volta, então nada é medido. Um comando custa o que pensar sobre ele custa ao modelo, como qualquer outro turno.</div>
+
+	<h3 id="s18">O Daimond não implementa ferramentas</h3>
+	<p>Não há <code translate="no">ls</code>, nem <code translate="no">grep</code>, nenhuma caixa de ferramentas inclusa e nenhum shell. <code translate="no">ls</code> é <code translate="no">/usr/bin/ls</code>, o mesmo que já está na sua máquina, na versão que você instalou.</p>
+
+	<p>Todo programa sob os diretórios do sistema é alcançável, porque o compartimento os acrescenta à concessão <strong>somente leitura</strong>: <code translate="no">/usr</code>, <code translate="no">/bin</code>, <code translate="no">/sbin</code>, <code translate="no">/lib</code>, <code translate="no">/lib32</code>, <code translate="no">/lib64</code>, <code translate="no">/libx32</code>, <code translate="no">/etc</code>, <code translate="no">/opt</code>, e os dispositivos inofensivos <code translate="no">/dev/null</code>, <code translate="no">/dev/zero</code>, <code translate="no">/dev/full</code>, <code translate="no">/dev/random</code> e <code translate="no">/dev/urandom</code>. Sem eles, nada inicia, nem mesmo <code translate="no">cat</code>, porque o carregador precisa ler os objetos compartilhados, e o processo precisa abrir algo para os fluxos padrão.</p>
+
+	<p>Um nome isolado é procurado em <code translate="no">PATH</code>, que é <code translate="no">/usr/local/bin:/usr/bin:/bin</code> a menos que um toolchain concedido tenha acrescentado a ele. O que isso encontra é resolvido para um caminho absoluto e checado contra o compartimento como qualquer outra coisa, então encontrar não é ter permissão. Um <code translate="no">PATH</code> apontando para fora encontra um programa que o comando não pode rodar, e a recusa o nomeia.</p>
+
+	<div class="note"><strong>Não há shell, então não há sintaxe de shell.</strong> Um comando é uma lista (<code translate="no">["cargo", "test", "--lib"]</code>), e um ponto e vírgula, um pipe, um redirecionamento, um crase, <code>$(…)</code> ou <code translate="no">&amp;&amp;</code> chega ao programa como um argumento literal. Para encadear dois comandos, o daimon roda a ferramenta duas vezes, o que é melhor de qualquer forma, porque ele lê o primeiro resultado antes de escolher o segundo.</div>
+
+	<h2 id="s19">O que um comando pode e não pode fazer</h2>
+
+	<h3 id="s20">Arquivos</h3>
+	<ul>
+		<li><strong>Ler e escrever dentro da pasta concedida.</strong> Essa pasta, menos o próprio diretório <code translate="no">.daimond</code> do Daimond, é o mundo gravável.</li>
+		<li><strong>Um diretório temporário privado.</strong> É gravável, com <code translate="no">TMPDIR</code> apontando para ele, removido quando a execução termina, inalcançável por qualquer outra execução, e o único lugar fora da sua pasta em que um comando pode escrever. <code translate="no">/tmp</code> está fora do compartimento, e um build que não consegue escrever um arquivo temporário falha no meio do caminho por um motivo que ninguém consegue ler.</li>
+		<li><strong>O sistema, somente leitura.</strong> <code translate="no">/usr</code>, <code translate="no">/etc</code>, <code translate="no">/opt</code> e o resto da lista acima.</li>
+		<li><strong>Tudo mais é recusado pelo kernel</strong>, e não por uma checagem que alguém escreveu. Um arquivo uma pasta fora da concessão volta com <code>Permission denied</code>, e o daimon vê aquela recusa no lugar do arquivo.</li>
+	</ul>
+	<p>Uma consequência vale a pena conhecer antes que pareça uma ferramenta quebrada. Onde a pasta inteira concedida é gravável, aquela pasta <em>em si</em> não pode ser listada, e um arquivo não pode ser criado diretamente nela, porque o Landlock não consegue conceder um diretório e reter parte dele, então os filhos são concedidos um a um. Tudo um nível abaixo funciona normalmente.</p>
+
+	<h3 id="s21">Sockets locais nomeados são recusados, sempre</h3>
+	<p>Um comando não consegue criar um socket unix, seja o que for mais que tenha sido permitido. Isso custa um banco de dados local por arquivo de socket, <code translate="no">docker</code>, qualquer coisa que queira X11, e <code translate="no">ssh-agent</code>. <code translate="no">socketpair</code>, o socket pareado que um build usa para falar com os próprios processos filhos, fica intocado, então <code translate="no">cargo build</code> não é afetado.</p>
+	<p>Abaixo do Landlock ABI 9 (Linux 7.1), o compartimento não governa a conexão a um arquivo de socket de jeito nenhum. Nós medimos isso. Com a cerca em vigor e a rede recusada, uma mensagem para o barramento de sessão do desktop inicia um processo que nunca foi cercado e lê um arquivo que a cerca nega. Isso é uma rota para fora do compartimento, e não um vazamento na borda dela, então é fechada incondicionalmente.</p>
+
+	<h3 id="s22"><code translate="no">ssh</code> não funciona</h3>
+	<p>Duas razões independentes o impedem, e fechar só uma delas não bastaria. <code translate="no">~/.ssh</code> não está no compartimento, porque todo caminho é construído a partir da pasta que você concedeu. E o socket do agente é um socket unix, recusado acima. <code translate="no">git push</code> por SSH falha pelas duas razões ao mesmo tempo. Conceder o seu diretório home removeria a primeira razão e a maior parte do sentido do compartimento, e é por isso que o instalador o recusa.</p>
+	<p>Operações que tocam só o repositório funcionam. <code translate="no">git status</code>, <code translate="no">diff</code>, <code translate="no">log</code>, <code translate="no">add</code> e um <code translate="no">commit</code> local são operações de arquivo comuns dentro da pasta que você concedeu.</p>
+
+	<h3 id="s23">Um toolchain precisa de uma concessão</h3>
+	<p>Abra um diamond, e o painel Espaço mostra uma linha <strong>Toolchains</strong> com cinco botões: <span class="ui" translate="no">Rust</span>, <span class="ui" translate="no">Node</span>, <span class="ui" translate="no">Python</span>, <span class="ui" translate="no">Go</span>, <span class="ui" translate="no">Git</span>. Os cinco começam desligados, então <code translate="no">cargo</code> é recusado até você ligar o Rust, porque <code translate="no">~/.cargo</code> e <code translate="no">~/.rustup</code> ficam sob o seu diretório home, e o seu diretório home não está no compartimento.</p>
+	<p><span class="ui" translate="no">Git</span> é a exceção. <code translate="no">git</code> já está na base somente leitura, que é por isso que <code translate="no">git status</code> e um commit local funcionam sem concessão nenhuma. O botão acrescenta a sua própria configuração, somente leitura — seu nome, seu e-mail, e os hooks <code translate="no">core.hooksPath</code> que ela nomeia. Suas senhas guardadas e <code translate="no">~/.ssh</code> são negados pelo nome.</p>
+	<p>Três coisas sobre isso são deliberadas.</p>
+	<ul>
+		<li><strong>Nunca é inferido a partir do que foi pedido para rodar.</strong> Um compartimento que se alargasse para caber o binário pedido seria um compartimento que o modelo escolhe, e todo o arranjo depende de o compartimento ser algo que o modelo não pode escolher. <code translate="no">cargo</code> é alcançável porque você concedeu o toolchain Rust, e por nenhum outro motivo.</li>
+		<li><strong>É por diamond.</strong> Uma concessão pertence a um diamond, junto com as pastas que aquele diamond guarda, e é retirada da mesma forma.</li>
+		<li><strong>É uma lista curta de diretórios nomeados, nunca o diretório home.</strong> O Rust concede <code translate="no">~/.cargo/bin</code> e <code translate="no">~/.rustup</code> somente leitura, torna o registro e os caches graváveis porque o cargo não consegue compilar sem escrever neles, e <em>nega</em> <code translate="no">~/.cargo/credentials.toml</code>, onde o seu token do crates.io é escrito. Os outros quatro são traçados do mesmo jeito, cada um deixando de fora o arquivo que guarda um segredo.</li>
+	</ul>
+
+	<h3 id="s24">A rede</h3>
+	<p>Se um comando pode alcançar a rede depende do modo de permissão e do que o turno já leu. Sob <strong>Perguntar</strong> e <strong>Guardado</strong>, assim que um turno recebe conteúdo de fora (uma página web que leu ou buscou, um e-mail, a saída de um comando anterior), todo comando naquele turno roda com o TCP recusado, e o daimon é informado do porquê, então ele relata a causa em vez de um projeto quebrado. Sob <strong>Sem guarda</strong> a rede é mantida seja o que for que o turno tenha lido.</p>
+	<div class="note"><strong>A própria saída de um comando conta como conteúdo de fora.</strong> Então o primeiro comando em um turno tem a rede, e um segundo, no mesmo turno, não tem. Um log de build é escrito pelo que quer que o build tenha rodado, então isso é deliberado, e surpreende as pessoas. Ler um arquivo comum no seu próprio espaço de trabalho não conta, e uma mensagem no seu correio conta. Se algo precisa buscar, peça isso em uma mensagem nova, que inicia um turno novo.</div>
+	<p>O que é recusado é bind e connect de TCP, que é o que o Landlock governa. UDP e sockets brutos ficam fora disso.</p>
+
+	<h3 id="s25">Binários de 32 bits são mortos</h3>
+	<p>O filtro de chamadas de sistema é compilado para uma arquitetura e checa a arquitetura primeiro, porque a ABI de compatibilidade numera as chamadas dela de forma diferente, e um filtro construído para a tabela errada recusaria as coisas erradas e relataria sucesso. Um programa que declara uma arquitetura diferente é, por isso, morto de imediato em vez de filtrado. Isso falha de forma segura, e um build que executa um ajudante de 32 bits não vai funcionar aqui.</p>
+
+	<h2 id="s26">A escada de permissão</h2>
+	<p>Um ajuste tem três degraus, e o eixo é o que o Daimond faz <em>sem perguntar</em>. Ele começa no Guardado.</p>
+
+	<div class="cards">
+		<div class="card">
+			<h3 id="s27">Perguntar sempre</h3>
+			<p>Todo comando é levado a você antes de rodar, com o comando e o diretório no aviso, e o Daimond pergunta uma vez em cada conversa antes de acessar a web. Escolha-o para observar cada passo, e para uma máquina que guarda algo que você não pode perder.</p>
+		</div>
+		<div class="card">
+			<h3 id="s28">Guardado</h3>
+			<p>O padrão. Os comandos rodam sem perguntar. Um turno que leu conteúdo de fora perde a rede, e o Daimond pergunta uma vez, naquela conversa, antes de acessar qualquer lugar que o modelo escolheu. Um sim cobre todo site até a conversa terminar; um chat novo ou um daimon novo pergunta de novo; e um endereço incomumente longo é sempre levado a você à parte.</p>
+		</div>
+		<div class="card">
+			<h3 id="s29">Sem guarda</h3>
+			<p>Nada é perguntado, exceto um clique que um agente sem supervisão quer dar em uma página, que é sempre levado a você. Comandos rodam, páginas são buscadas, e um build que precisa de rede ainda a tem no décimo comando do turno tanto quanto no primeiro. Escolhido uma vez, deliberadamente, e depois em silêncio.</p>
+		</div>
+	</div>
+
+	<p><strong>Um degrau nunca muda o que é possível.</strong> O compartimento em que um comando roda, o filtro de chamadas de sistema por baixo dele, as pastas a que um diamond está restrito, um toolchain concedido, a marcação em conteúdo de fora, e o diário são idênticos nos três. Um degrau muda só o que é perguntado a você.</p>
+	<p>O degrau é uma palavra no cabeçalho do chat ao lado do modelo, porque um modo que você precisa lembrar é um sobre o qual você vai errar. Clique nele para mudá-lo, ou aperte <kbd>Ctrl</kbd> <kbd>K</kbd> (<kbd>Cmd</kbd> <kbd>K</kbd> em um Mac) e digite o nome do degrau.</p>
+
+	<h2 id="s30">Sistemas não convencionais</h2>
+	<p>O compartimento é construído a partir de uma lista fixa de caminhos absolutos, e essa lista decide se uma dada máquina funciona. Rode <code translate="no">--report</code> na sua antes de presumir qualquer coisa.</p>
+
+	<h3 id="s31">Não vai funcionar</h3>
+	<ul>
+		<li><strong>NixOS e Guix.</strong> Programas vivem em <code translate="no">/nix/store</code> ou <code translate="no">/gnu/store</code>, e nenhum dos dois é concedido, e <code translate="no">/usr/bin</code> quase não tem nada. Um nome isolado se resolve por <code translate="no">PATH</code> para um caminho de store fora do compartimento, e o comando é recusado pelo nome. O app não consegue alargar isso hoje.</li>
+		<li><strong>Um kernel sem Landlock.</strong> Isso quer dizer antes do Linux 5.13, ou compilado fora, ou ausente da lista ativa de LSM, ou removido por um patch de enrijecimento. O hand relata <code translate="no">fence:none</code> e o Daimond recusa todo comando em vez de rodar um sem cerca. Confira que <code translate="no">landlock</code> aparece em <code translate="no">/sys/kernel/security/lsm</code>.</li>
+		<li><strong>Uma arquitetura que não seja x86-64 ou aarch64.</strong> Os números de chamada de sistema do filtro são escritos por arquitetura, e não há uma terceira tabela. O hand não vai chutar uma, então não há filtro, e sem filtro nenhum comando roda.</li>
+	</ul>
+
+	<h3 id="s32">Parcialmente</h3>
+	<ul>
+		<li><strong>Linux 5.13 a 6.6.</strong> Os arquivos são cercados, mas o Landlock não tem regras de rede antes do Linux 6.7, então um comando que teria de rodar com a rede retida é recusado de imediato, com uma frase dizendo isso, em vez de rodar com a rede que deveria ter perdido. O Sem guarda funciona, e o Guardado funciona até o turno ler algo.</li>
+		<li><strong>Homebrew no Linux, Flatpak e Snap.</strong> Nenhum de <code translate="no">/home/linuxbrew/.linuxbrew</code>, das árvores do Flatpak, ou <code translate="no">/snap</code> é concedido, então um programa instalado desse jeito é recusado, enquanto o que a sua distribuição pôs sob <code translate="no">/usr</code> é alcançável na mesma sessão. Isso diz respeito aos programas que um comando roda. Um navegador empacotado desse jeito é um problema separado, e fatal, coberto em <a href="#s2">Antes de começar</a>.</li>
+		<li><strong>Gerenciadores de versão que não os dois conhecidos.</strong> Os caminhos de toolchain são uma lista fixa, e <code translate="no">~/.nvm</code> e <code translate="no">~/.pyenv</code> são os únicos gerenciadores de versão nela. <code translate="no">asdf</code>, <code translate="no">mise</code>, <code translate="no">volta</code>, <code translate="no">rbenv</code> e <code translate="no">sdkman</code> instalam sob <code translate="no">~/.asdf</code>, <code translate="no">~/.local/share</code>, <code translate="no">~/.volta</code>, <code translate="no">~/.rbenv</code> e <code translate="no">~/.sdkman</code>, e nada concede nenhum deles. A concessão do Python cobre <code translate="no">~/.local/bin</code> e <code translate="no">~/.local/lib</code> e deliberadamente deixa de fora <code translate="no">~/.local/share</code>.</li>
+	</ul>
+
+	<h3 id="s33">Bem</h3>
+	<ul>
+		<li><strong>Debian, Ubuntu, Fedora, Arch, openSUSE</strong> com os próprios pacotes, em um kernel novo o bastante para <code translate="no">--report</code> nomear uma ABI do Landlock.</li>
+		<li><strong>musl e Alpine</strong>, dadas as mesmas condições.</li>
+		<li><strong>BusyBox coreutils.</strong> Um binário multichamada decide o que é a partir do nome pelo qual foi invocado, e o hand executa o binário resolvido <em>sob o nome que foi pedido</em>, então ele ainda sabe qual ferramenta deve ser.</li>
+	</ul>
+
+	<h2 id="s34">Um terminal, também</h2>
+	<p>O botão <span class="ui">Terminal</span> abre um terminal de verdade na mesma máquina, dentro do mesmo compartimento, e você digita nele. Ele existe porque alguns programas fazem as perguntas deles a um terminal e não à entrada padrão. As teclas digitadas não são escritas no diário. Ele precisa de um hand pareado, como tudo mais aqui.</p>
+
+	<h2 id="s35">O que é registrado</h2>
+	<p>Toda execução — o que foi pedido, o que foi recusado, o que retornou — é anexada ao diário em <code translate="no">~/.local/share/daimond/hand/journal/</code>, como linhas JSON comuns que você pode ler. As entradas são encadeadas por hash, e o diário fica fora de todo compartimento, porque o hand recusa uma cerca que o alcançasse. Então um comando não consegue reescrever o próprio registro, e nenhum modo de permissão desliga isso.</p>
+
+	<h2 id="s36">O que não é protegido</h2>
+	<p><code translate="no">--report</code> imprime duas listas, e a segunda é o motivo para rodá-lo. Toda entrada nela foi medida em um kernel rodando, e não inferida, e ela muda com o seu kernel, então leia a sua própria. As entradas se dividem em alguns grupos.</p>
+	<ul>
+		<li><strong>Perguntar sobre um arquivo não é abri-lo.</strong> <code translate="no">stat</code> ainda responde fora do compartimento, então tamanhos, marcas de tempo, dono e a presença ou ausência de um arquivo são legíveis. O compartimento governa a abertura.</li>
+		<li><strong>A concessão do sistema é ampla.</strong> <code translate="no">/usr</code>, <code translate="no">/etc</code> e <code translate="no">/opt</code> somente leitura é o que permite que um comando rode, e também significa que todo arquivo legível por qualquer um sob <code translate="no">/etc</code> pode ser lido, e toda ferramenta da máquina, executada. <code translate="no">/etc</code> guarda, em especial, um bocado de detalhe que identifica a máquina.</li>
+		<li><strong>O filtro é uma lista de negação.</strong> Ele remove capacidades nomeadas de um comando e não é uma sandbox de chamadas de sistema. Qualquer coisa que ele não nomeou é permitida, incluindo uma chamada que um kernel futuro acrescente.</li>
+		<li><strong>Um filtro não consegue seguir um ponteiro.</strong> Ele vê um número de chamada de sistema e seis registradores, nunca o que eles apontam, então não vê caminho, endereço nem nome de arquivo. Um <code translate="no">chmod</code> recusado é, portanto, recusado em toda parte, e um permitido é permitido em toda parte. <code translate="no">chmod 777</code> é recusado, e <code translate="no">chmod 644</code> em uma chave privada não é, porque 644 não acrescenta escrita e é o modo que o cargo define em tudo que descompacta.</li>
+		<li><strong>Marcas de tempo não são protegidas em lugar nenhum.</strong> Um comando pode reescrever os horários de qualquer arquivo, em qualquer parte da máquina, porque o cargo não consegue descompactar uma crate do registro sem fazer isso. Esse é o lugar mais claro onde manter os builds funcionando custou cobertura.</li>
+		<li><strong>Coisas já abertas, e nomes já feitos.</strong> Um descritor de arquivo aberto antes de o compartimento entrar em vigor continua funcionando, e um hard link feito antes é um segundo nome para o mesmo arquivo. Um comando não consegue criar um para dentro de uma subárvore negada, e não consegue desfazer um que já existe.</li>
+		<li><strong>A única exceção a "só dentro da sua pasta"</strong> é o diretório temporário privado descrito acima.</li>
+	</ul>
+
+	<h2 id="s37">Retirando</h2>
+	<p>Três coisas diferentes podem ser retiradas, e as três aparecem.</p>
+	<ul>
+		<li><strong>Retire a permissão.</strong> Clique no ícone do Daimond Hands na barra de ferramentas. <em>Rodando comandos neste computador</em> fica listado ali ao lado dos sites que você aprovou, com um botão Revogar. Revogar para o que quer que esteja rodando naquele momento, de imediato, e não espera o fim do build em andamento.</li>
+		<li><strong>Tire a pasta.</strong> Apague <code translate="no">root.txt</code>. O hand então recusa servir de vez, seja o que for que o navegador diga, e a recusa é uma frase inteira.</li>
+		<li><strong>Remova o registro.</strong> Rode <code translate="no">hand/install/uninstall.sh</code>, ou com <code translate="no">--dir DIR</code> para um único diretório. Isso apaga o arquivo que o instalador escreveu, então o navegador não consegue mais iniciar o hand. O binário fica onde está, porque o script não foi quem o colocou lá.</li>
+	</ul>
+
+	<div class="next">
+		<a href="email-web-files.html">&larr; Arquivos, e-mail e a web</a>
+		<a href="runner.html">Próximo: Ajudantes e onde os turnos rodam &rarr;</a>
+	</div>
+</main>
+<footer class="site-foot">
+	<span>O Daimond roda no seu navegador. Nada daqui é enviado para nós.</span>
+	<nav aria-label="Páginas do guia">
+		<a href="index.html">Comece aqui</a>
+		<a href="interface.html">A interface</a>
+		<a href="chats-and-diamonds.html">Chats e diamonds</a>
+		<a href="capps.html">A página de um diamond</a>
+		<a href="email-web-files.html">Arquivos, e-mail e a web</a>
+		<a href="machine-operations.html">Seu computador</a>
+		<a href="runner.html">Ajudantes e onde os turnos rodam</a>
+		<a href="sync.html">Mais de um dispositivo</a>
+		<a href="social.html">Social e propostas</a>
+		<a href="models.html">Modelos e provedores</a>
+		<a href="spending.html">Gastos</a>
+		<a href="accounts.html">Segurança e soluções</a>
+	</nav>
+</footer>
+</body>
+</html>

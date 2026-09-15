@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
-<title>Files, email &amp; the web &mdash; Daimond guide</title>
+<title>文件、邮件和网页 &mdash; Daimond 指南</title>
 <link rel="icon" type="image/svg+xml" href="../../assets/daimond_mark.svg">
 <link rel="stylesheet" href="../../css/variables.css">
 <link rel="stylesheet" href="../../css/guide.css">
@@ -24,12 +24,12 @@
 			<a href="index.html">从这里开始</a>
 			<a href="interface.html">界面</a>
 			<a href="chats-and-diamonds.html">对话和 diamond</a>
-			<a href="../capps.html">diamond 的页面</a>
+			<a href="capps.html">diamond 的页面</a>
 			<a href="email-web-files.html" aria-current="page">文件、邮件和网页</a>
-			<a href="../machine-operations.html">你的电脑</a>
-			<a href="../runner.html">帮手和轮次的运行位置</a>
+			<a href="machine-operations.html">你的电脑</a>
+			<a href="runner.html">帮手和轮次的运行位置</a>
 			<a href="sync.html">不止一台设备</a>
-			<a href="../social.html">社交和提案</a>
+			<a href="social.html">社交和提案</a>
 			<a href="models.html">模型和提供商</a>
 			<a href="spending.html">花费</a>
 			<a href="accounts.html">安全和修复</a>
@@ -39,84 +39,84 @@
 
 <main>
 	<h1>文件、邮件和网页</h1>
-	<p class="lede">A daimon works from files it can read and write, folders you hand it, mail you can answer, and pages it can show or drive.</p>
+	<p class="lede">一个 daimon 靠它能读写的文件工作，靠你交给它的文件夹，你能回复的邮件，以及它能展示或操作的网页。</p>
 
 	<h2 id="s1">工作区</h2>
-	<p> <span class="ui">Workspace</span> panel shows your files as an ordinary tree. Three chips at the top name where the workspace lives.</p>
+	<p> <span class="ui">工作区</span> 面板把你的文件显示成一棵普通的树。顶上三个标签，说明这个工作区住在哪里。</p>
 	<ul>
-		<li><span class="ui">浏览器</span> is this browser's own private storage, reachable by nothing outside Daimond. It is the default, and it syncs to your other devices.</li>
-		<li><span class="ui">本机</span> is a real folder on this computer's disk. Daimond works in it directly, so the same files are in your file manager. It stays on that computer, and travels only if you share it with the <span class="ui">⇄</span> control. Chromium-based browsers only.</li>
-		<li><span class="ui">云端</span> is where the bytes are kept, which is what lets a workspace be larger than the device holding it. It is not a third place to work. Files are encrypted before they leave.</li>
+		<li><span class="ui">浏览器</span> ，是这个浏览器自己的私有存储，Daimond 之外的任何东西都碰不到。这是默认选项，会同步到你的其他设备。</li>
+		<li><span class="ui">本机</span> ，是这台电脑硬盘上一个真实的文件夹。Daimond 直接在里面工作，所以同样的文件也在你的文件管理器里。它留在那台电脑上，只有你用 <span class="ui">⇄</span> 这个开关分享它，它才会传出去。仅限基于 Chromium 的浏览器。</li>
+		<li><span class="ui">云端</span> ，是字节保存的地方，这也是工作区能比装着它的设备还大的原因。它不是第三个工作的地方。文件在离开之前会被加密。</li>
 	</ul>
-	<p>The folder you open as <span class="ui">本机</span> is the whole of what Daimond can see, with nothing above it and nothing beside it.</p>
+	<p>你打开当作 <span class="ui">本机</span> 的那个文件夹，就是 Daimond 能看到的全部——它上面没有什么，旁边也没有什么。</p>
 
-	<h3 id="s2">Getting a file in</h3>
+	<h3 id="s2">把文件弄进来</h3>
 	<ul>
-		<li><strong>上传文件</strong>, the arrow-into-tray in the header, takes one file or a handful.</li>
-		<li><strong>Import a folder&hellip;</strong> copies a folder in, after which it syncs like everything else.</li>
-		<li><strong>打开一个真实文件夹</strong> with the <span class="ui">本机</span> chip. Nothing is copied, and it syncs only if you share it.</li>
+		<li><strong>上传文件</strong>，标题栏里那个箭头指向托盘的图标，可以拿一个文件，也可以拿一小把。</li>
+		<li><strong>导入一个文件夹&hellip;</strong> ，把一个文件夹复制进来，之后它就和别的一切一样同步。</li>
+		<li><strong>打开一个真实文件夹</strong> ，靠 <span class="ui">本机</span> 标签。什么都不会被复制，只有你分享它，它才会同步。</li>
 	</ul>
-	<p>Mail arrives here as ordinary files, and a daimon writes here where it is allowed to.</p>
+	<p>邮件会以普通文件的形式到达这里，一个 daimon 也会在被允许的地方往这里写。</p>
 
-	<h3 id="s3">Held, in the cloud, or pinned</h3>
-	<p>A file is in one of three states, and the tree says which. <strong>Held</strong> means it is on this device. <strong>In cloud storage</strong> means it is only there, marked with a cloud, and clicking it brings it down. <strong>已钉住</strong> means it is never freed automatically.</p>
-	<p>As storage fills, the files longest unused go back to the cloud on their own. Freeing is not deleting, since the file is still listed and comes back when asked for.</p>
-	<p>A daimon is told plainly when a file it wants is in the cloud, and has to fetch it deliberately. A cap limits how much it may bring down on its own.</p>
+	<h3 id="s3">在本地、在云端，还是钉住</h3>
+	<p>一个文件处在三种状态之一，文件树会说明是哪一种。 <strong>在本地</strong> ，表示它就在这台设备上。 <strong>在云端存储中</strong> ，表示它只在那里，标着一朵云，点它就能下载下来。 <strong>已钉住</strong> ，表示它永远不会被自动释放。</p>
+	<p>存储满了的时候，最久没用过的文件会自己回到云端。释放不是删除，因为文件仍然列在那里，一旦被要求就会回来。</p>
+	<p>一个 daimon 想要的文件如果在云端，会被明白地告知，并且必须刻意去取。一个上限限制着它能自主下载多少。</p>
 
-	<h2 id="s4">Handing a folder over</h2>
-	<p>The paperclip on every row reads <span class="ui">Attach to current focus</span>. What it does follows what is in focus, whichever row it sits on.</p>
+	<h2 id="s4">把一个文件夹交出去</h2>
+	<p>每一行上的回形针写着 <span class="ui">附加到当前焦点</span>。它做的事，跟着当前焦点走，不管它坐在哪一行上。</p>
 	<ul>
-		<li><strong>A diamond is in focus.</strong> The file or folder joins that diamond's workspace and stays until you take it out.</li>
-		<li><strong>A chat is in focus.</strong> The attachment is for the next turn only.</li>
+		<li><strong>焦点在一个 diamond 上。</strong> 这个文件或文件夹会加入那个 diamond 的工作区，一直留到你把它拿出去。</li>
+		<li><strong>焦点在一场聊天上。</strong> 这个附件只用于下一轮。</li>
 	</ul>
-	<p>Attaching copies nothing. The file stays where it is and the diamond points at it, so attaching one folder to two diamonds still leaves one folder.</p>
-	<p>Each attachment is either <span class="ui">Note</span>, meaning the path is worth knowing and costs a few tokens, or <span class="ui">Read</span>, meaning the contents are wanted now. Start with Note, which is much the cheaper. Either way the text it generates goes into the message box in front of what you type, where you can edit or delete it.</p>
-	<p>Ticking a <em>folder</em> in the workspace group is the permission, so this chat or diamond may then read and change what is inside. Ticking a file only puts it in front of the model. A diamond's <span class="ui">Reach</span> row names every folder it may write in, and says so in both trees.</p>
+	<p>附加不会复制任何东西。文件留在原地，diamond 只是指向它，所以把一个文件夹附加给两个 diamond，留下的还是一个文件夹。</p>
+	<p>每个附件要么是 <span class="ui">记下</span>，意思是这个路径值得知道，花几个 token；要么是 <span class="ui">读取</span>，意思是现在就要内容。先用「记下」，它便宜得多。不管哪一种，生成的文字都会放进消息框里、你打的字前面，你可以在那里改它或者删它。</p>
+	<p>在工作区那一组里勾选一个 <em>文件夹</em> ，就是许可，于是这场聊天或这个 diamond 就可以读取并修改里面的东西。勾选一个文件，只是把它放到模型面前。一个 diamond 的 <span class="ui">可及范围</span> 行，点出它可以写入的每一个文件夹，并且在两棵树里都会这样说明。</p>
 
-	<h3 id="s5">What a daimon can open</h3>
-	<p>A daimon can open only what is in its diamond's workspace. Nothing else is readable or writable through the file tools, by the daimon or by any helper it dispatches. The check is in compiled code at the one door every file tool passes, and that code is in a bundle that builds reproducibly from public source, so it is not an instruction in a prompt.</p>
-	<p>That rule settles what a daimon can reach and says nothing about where what it reads ends up, because whatever it opens goes to your model provider with the rest of the turn.</p>
+	<h3 id="s5">一个 daimon 能打开什么</h3>
+	<p>一个 daimon 只能打开它这个 diamond 工作区里的东西。别的任何东西，不管是这个 daimon 还是它派发的任何帮手，都没法通过文件工具读到或写到。这个检查是编译好的代码，在每个文件工具都要经过的那一道门上，而那份代码在一个从公开源码可复现构建出来的软件包里，所以它不是提示词里的一条指示。</p>
+	<p>这条规则定下的是一个 daimon 能碰到什么，不涉及它读到的东西最后去哪里，因为它打开的一切，都会连同这一轮的其余内容一起发给你的模型提供商。</p>
 
-	<h3 id="s6">The attachment list</h3>
-	<p>Rows carry an age, <span class="ui">Added {when}</span>. A path that is no longer there is drawn as <span class="ui">Gone</span> with no open action, so a dead row never poses as a live one.</p>
-	<p>Anything a daimon attached for itself, such as a fold's harvest or a file an agent kept, sits under one collapsed heading, <span class="ui">Added by the daimon</span>, with a count and a <span class="ui">Drop all</span>. Your own attachments stay where they are.</p>
+	<h3 id="s6">附件列表</h3>
+	<p>每一行都带着一个时间， <span class="ui">已添加 {when}</span>。一个不再存在的路径，会画成 <span class="ui">已不在</span> ，没有打开的动作，所以一行失效的记录，绝不会假装自己还活着。</p>
+	<p>一个 daimon 自己附加的任何东西——比如一次折叠的收获，或者一个智能体留下的文件——都收在一个折起来的标题下面， <span class="ui">由 daimon 添加</span>，带着一个数目和一个 <span class="ui">全部移除</span>。你自己的附件留在原处。</p>
 
-	<h3 id="s7">Sharing a folder to your other devices</h3>
-	<p>A <span class="ui">本机</span> folder lives on one computer, and your phone cannot open it. The <span class="ui">⇄</span> control on the row is how it reaches one anyway, with <span class="ui">Share with devices that lack native access</span>.</p>
-	<p>Off, only devices that can open the folder themselves see it. On, it is copied to your other devices, up to <strong>200&nbsp;MiB</strong> per folder. The setting is per folder, whichever device you set it from, and only a device that can open the folder can set it.</p>
-	<p>A folder over the ceiling is left out whole, and a banner says which one and what it weighed. Share a smaller folder, or take some of it out.</p>
+	<h3 id="s7">把一个文件夹分享给你的其他设备</h3>
+	<p>一个 <span class="ui">本机</span> 文件夹住在一台电脑上，你的手机打不开它。 <span class="ui">⇄</span> 行上的这个开关，是让它无论如何都能到达手机的办法，靠 <span class="ui">分享给没有原生访问权限的设备</span>.</p>
+	<p>。关闭时，只有能自己打开这个文件夹的设备才看得到它。打开时，它会被复制到你的其他设备，最多 <strong>200&nbsp;MiB</strong> 每个文件夹。这个设置按文件夹来定，不管你从哪台设备设置；也只有能打开这个文件夹的设备才能设置它。</p>
+	<p>一个超过上限的文件夹会被整个排除在外，一条横幅会说明是哪一个、有多重。换一个更小的文件夹来分享，或者把其中一部分拿出来。</p>
 
-	<h2 id="s8">Documents, and books</h2>
-	<p>Open a <code>.typ</code> file and the Doc panel gains two buttons. <span class="ui">Compile</span> lays the document out in the page and writes a preview PDF beside the source, and while those pages are up, every save rebuilds them. Press it on a chapter and it compiles the document that includes the chapter, then takes you to that chapter's page.</p>
-	<p>Both panels have to be on screen for the loop to run. Where the window is too narrow, the Doc panel says so, and one rebuild catches up when they return.</p>
-	<p>The editor need not be Daimond's. A save from any editor writing into the granted folder is picked up within about a second.</p>
-	<p>A phone cannot hold a book's files or afford the memory a layout costs, so it hands the compile to a paired computer that can, sealed to your account exactly as a turn is, and the laid-out pages come back.</p>
+	<h2 id="s8">文档，以及书</h2>
+	<p>打开一个 <code>.typ</code> 文件，文档面板会多出两个按钮。 <span class="ui">编译</span> ，把文档排版进页面，在源码旁边写出一份预览 PDF；这些页面开着的时候，每次保存都会重新构建它们。在一个章节上按它，会编译包含这个章节的文档，然后带你去那一章的页面。</p>
+	<p>两个面板都得在屏幕上，这个循环才能运行。窗口太窄的时候，文档面板会说明这一点，等它们回来时，一次重新构建会补上。</p>
+	<p>编辑器不必是 Daimond 的。任何编辑器只要保存写进了被授权的文件夹，大约一秒内就会被察觉。</p>
+	<p>一部手机装不下一本书的文件，也承受不起排版要花的内存，所以它把编译交给一台配对过、能承受的电脑，像一轮对话一样封进你的账户，排好版的页面再送回来。</p>
 
 	<h2 id="s9">任何类型的文件</h2>
-	<p>Any file is stored and travels, up to a gigabyte each. A document or a spreadsheet opens as a <strong>reading view</strong>, which shows what it says and not how it prints. Values are as stored, formulas are not recalculated, and macros are neither run nor read. <span class="ui">Save a copy</span> writes one to your own device and leaves the file here untouched.</p>
-	<p>Where nothing recognises a file, its bytes are shown, and the panel says so.</p>
+	<p>任何文件都会被存储、同步，每个最多一 GB。一份文档或一张电子表格会以一个 <strong>阅读视图</strong>打开，显示的是它说了什么，而不是它打印出来什么样。数值按存的样子给出，公式不会重新计算，宏既不运行也不读取。 <span class="ui">保存副本</span> ，把一份写到你自己的设备上，这里的文件原样不动。</p>
+	<p>没有什么能认出一个文件时，它的字节会被直接显示出来，面板也会说明这一点。</p>
 
 	<h2 id="s10">邮件</h2>
-	<p>A browser cannot open a mail connection, so Daimond connects through the gateway, which hands back the raw message and forgets your credential. Your mail is written into the workspace as ordinary files.</p>
-	<p>Add a mailbox with the <span class="ui">+</span> in the Email panel. Type your address and Daimond guesses the server settings, and every field stays editable. Most providers want an app password in place of your account password, and the panel says where to find it.</p>
-	<p>The credential is stored on this device under your passphrase, handed to the gateway for one sync, and forgotten. Daimond stores no mail on any server.</p>
-	<p><strong>Only you can send.</strong> A daimon can draft a message into the Compose panel. The Send button is the one thing that puts mail on the wire, and only a person can press it. Email is part of Daimond Pro.</p>
+	<p>浏览器没法打开一个邮件连接，所以 Daimond 通过网关连接，网关把原始邮件传回来，然后忘掉你的凭据。你的邮件会以普通文件的形式写进工作区。</p>
+	<p>用 <span class="ui">+</span> ，在邮件面板里，添加一个邮箱。输入你的地址，Daimond 会猜出服务器设置，每个字段都仍然可以改。多数提供商要的是一个应用专用密码，而不是你的账户密码，面板会说明去哪里找它。</p>
+	<p>凭据存在这台设备上，用你的密码短语包着，为了一次同步交给网关，然后就被忘掉。Daimond 不在任何服务器上存邮件。</p>
+	<p><strong>只有你能发送。</strong> 一个 daimon 可以把一封邮件的草稿写进撰写面板。发送按钮是唯一能把邮件放上线路的东西，也只有一个人能按它。邮件是 Daimond Pro 的一部分。</p>
 
 	<h2 id="s11">网页面板</h2>
-	<p>Ask Daimond to open a page, or paste a link. There are three ways, and the site decides which works.</p>
+	<p>请 Daimond 打开一个网页，或者粘贴一个链接。有三种方式，由网站决定哪一种能用。</p>
 	<ul>
-		<li><strong>Show it.</strong> The page appears in the panel. Most sites refuse to be embedded, so this works for a minority.</li>
-		<li><strong>Read it.</strong> Daimond fetches the page and reads its text. It works where showing does not. You do not see the page, and Daimond does.</li>
-		<li><strong>Drive it.</strong> With the browser add-on, Daimond opens a real tab, signed in as you, and works it while you watch. It is the only way to work a live, logged-in site.</li>
+		<li><strong>显示它。</strong> 网页出现在面板里。多数网站拒绝被嵌入，所以这只对少数网站管用。</li>
+		<li><strong>读取它。</strong> Daimond 抓取这个网页，读它的文字。显示不了的地方，这个方式管用。你看不到这个网页，Daimond 看得到。</li>
+		<li><strong>操作它。</strong> 有了浏览器扩展，Daimond 会打开一个真正的标签页，以你的身份登录，在你看着的时候操作它。这是操作一个实时的、已登录网站的唯一办法。</li>
 	</ul>
-	<p>Signing in stays yours. When you sign in on a driven page, Daimond stops watching entirely, taking no text, no picture and no keystrokes, and never sees your password. You hand the wheel back from the browser tab and not from Daimond, so a page cannot take it from you.</p>
+	<p>登录这件事，始终是你自己的。你在一个被操作的页面上登录时，Daimond 会完全停止观察——不取文字、不取画面、不取按键，也从不看到你的密码。你把方向盘交还给浏览器标签页，而不是交给 Daimond，所以一个网页没法从你手上把它拿走。</p>
 
 	<h2 id="s12">工具</h2>
-	<p> <span class="ui">工具</span> panel says what Daimond can do. Built-in tools are already yours and free, and the panel lists exactly what is held, so it cannot promise one that is not there. Packs are extras, bought once, in dollars.</p>
+	<p> <span class="ui">工具</span> 面板说明 Daimond 能做什么。内置工具已经是你的，而且免费；面板准确列出手上有什么，所以它没法许诺一个不存在的工具。工具包是额外购买的，一次性付费，以美元计。</p>
 
 	<div class="next">
-		<a href="../capps.html">&larr; A diamond&rsquo;s page</a>
-		<a href="../machine-operations.html">Next: Your computer &rarr;</a>
+		<a href="capps.html">&larr; diamond 的页面</a>
+		<a href="machine-operations.html">下一步：你的电脑 &rarr;</a>
 	</div>
 </main>
 
@@ -126,12 +126,12 @@
 		<a href="index.html">从这里开始</a>
 		<a href="interface.html">界面</a>
 		<a href="chats-and-diamonds.html">对话和 diamond</a>
-		<a href="../capps.html">diamond 的页面</a>
+		<a href="capps.html">diamond 的页面</a>
 		<a href="email-web-files.html">文件、邮件和网页</a>
-		<a href="../machine-operations.html">你的电脑</a>
-		<a href="../runner.html">帮手和轮次的运行位置</a>
+		<a href="machine-operations.html">你的电脑</a>
+		<a href="runner.html">帮手和轮次的运行位置</a>
 		<a href="sync.html">不止一台设备</a>
-		<a href="../social.html">社交和提案</a>
+		<a href="social.html">社交和提案</a>
 		<a href="models.html">模型和提供商</a>
 		<a href="spending.html">花费</a>
 		<a href="accounts.html">安全和修复</a>

@@ -158,6 +158,40 @@ svg { display: block; }
    .icon-btn default of 16, so the row of five read as two different sets. */
 .top-actions .icon-btn .ic { width: 18px; height: 18px; }
 
+/* Settings names itself once the bar has room (TOP-03): the icon alone is
+   what "the button people look for" was missing. Hidden by default so the
+   same span reads as an icon-only control at a narrower desktop width and,
+   folded into the Help popup on a phone, is overridden back on there instead
+   (see `#help-menu .btn-label` below). */
+.btn-label { display: none; }
+@media (min-width: 900px) {
+	#settings-menu-btn .btn-label { display: inline; margin-left: 2px; font-size: var(--fs-sm); }
+}
+
+/* ── Help: About and Guide behind one control (TOP-03), and on a phone
+   Settings and Link device besides (js/workspace.js foldOverflow). A list of
+   full-width rows, not the appearance menu's settings, so each reads as a
+   place to go rather than a value to change. ── */
+/* `:not([hidden])`, not a bare `#help-menu`: an ID selector outranks
+   `.pop[hidden] { display: none }` (workspace.css) on specificity alone, so a
+   bare `display: flex` here left the popup laid out, and visible, at every
+   page load until first toggled -- caught by dev/verify_about.mjs reading
+   `about-btn` as drawn outside the row before this control ever opens. */
+#help-menu:not([hidden]) { display: flex; flex-direction: column; gap: 1px; min-width: 200px; }
+#help-menu .icon-btn { justify-content: flex-start; width: 100%; padding: 8px 10px; gap: 10px; }
+#help-menu .btn-label { display: inline; font-size: var(--fs-sm); }
+/* Moving a row out of `.top-actions` must not shrink its icon: `.ic`'s bare
+   16px is for everywhere else, and the row this popup extends draws at 18px. */
+#help-menu .icon-btn .ic { width: 18px; height: 18px; }
+
+/* The Help trigger wears the guide's "?" until a phone also parks Settings and
+   Link device in it, at which point the glyph becomes the generic dots — a
+   "?" would say only half of what a four-row overflow means. Same two-face
+   pattern as `#fullscreen-btn` in css/fullscreen.css. */
+#help-btn .ic-more { display: none; }
+#help-btn.is-more .ic-help { display: none; }
+#help-btn.is-more .ic-more { display: block; }
+
 
 .main { display: flex; flex: 1; min-height: 0; }
 
@@ -304,6 +338,16 @@ body.dragging { cursor: col-resize; user-select: none; -webkit-user-select: none
 	background: var(--accent-soft); border-color: var(--accent); color: var(--accent-text);
 }
 label.addbtn { cursor: pointer; }
+/* A RAIL-HEAD BUTTON THAT SAYS WHAT IT MAKES. `.addbtn` is a 22px square, which
+   is right for a glyph and wrong for a word, so this widens it and keeps
+   everything else -- the border, the radius, the focus ring the keyboard census
+   reads by name. `--fs-2xs` is the heading's own size beside it: the label and
+   the button are one row of small type rather than a word shouting next to a
+   whisper. */
+.railbtn {
+	width: auto; min-width: 0; padding: 0 7px;
+	font-size: var(--fs-2xs); white-space: nowrap;
+}
 .rail-note { font-size: var(--fs-xs); color: var(--text-muted); padding: 0 6px 4px; }
 
 /* ── The PPTW: play, pause, traffic light ─────────────────────────
@@ -407,6 +451,14 @@ label.addbtn { cursor: pointer; }
 	flex: 1; min-width: 0; font-size: var(--fs-sm); font-weight: 500;
 	color: var(--text-secondary); white-space: nowrap;
 	overflow: hidden; text-overflow: ellipsis;
+}
+/* What the root is doing, in a word, after the label. Muted and small: it is a
+   reading, not a control, and it must not compete with the two verbs to its
+   left. `flex: none` so the label above it is what gives way on a narrow rail --
+   a truncated state word would be worse than a truncated label, since the label
+   is the same three syllables every time and the word is the news. */
+.pptw-head-state {
+	flex: none; font-size: var(--fs-2xs); color: var(--text-muted); white-space: nowrap;
 }
 /* The closer holds its 22px against a long label. */
 .pptw-head .panel-close { flex: none; }
@@ -697,6 +749,37 @@ body.resizing-v { cursor: row-resize; user-select: none; -webkit-user-select: no
 .session-box { padding: 8px 9px; border-radius: var(--radius); border: 1px solid var(--border); background: var(--bg-secondary); cursor: pointer; flex: none; }
 .session-box:hover { border-color: var(--border-2); }
 .session-box.active { border-color: var(--accent); background: var(--accent-soft); }
+/* EXACTLY ONE ROW IN THE RAIL WEARS IT, across both lists. See `paintRailRow`
+   in js/daimond.js, which is the only thing that sets the class. */
+
+/* ── The built-ins, folded away at the foot of the Diamonds list ──
+   Dressed as a `.railhead` heading rather than as a tile, because that is what
+   it is: a label over a group, not an object in the list. It starts shut, so on
+   a first run the whole of it is one small line of muted type under whatever the
+   user has actually made. The tiles inside keep the list's own gap. */
+/* NO `display` OF ITS OWN, and that is load-bearing rather than tidy. A
+   `<details>` hides everything but its summary while it is shut through a UA
+   rule on its own box; giving the element `display: flex` overrides that rule,
+   and the group came up shut with both tiles drawn inside it -- caught by
+   `verify_railtop`, which measures the widgets rather than reading the `open`
+   flag. So the element keeps its own layout and the spacing is a margin. */
+.rail-builtin > .diamond-box { margin-top: 6px; }
+.rail-builtin > summary {
+	list-style: none; cursor: pointer;
+	padding: 4px 5px;
+	font-size: var(--fs-2xs); font-weight: 600; letter-spacing: 0.04em;
+	text-transform: uppercase; color: var(--text-muted);
+}
+.rail-builtin > summary::-webkit-details-marker { display: none; }
+/* Its own marker, so the triangle points the way the rail's section folds do
+   -- at the heading when shut, down when open -- instead of the platform's. */
+.rail-builtin > summary::before {
+	content: '\25B8'; display: inline-block; margin-right: 6px;
+	transition: transform .18s;
+}
+.rail-builtin[open] > summary::before { transform: rotate(90deg); }
+.rail-builtin > summary:hover { color: var(--text-secondary); }
+.rail-builtin > summary:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; border-radius: var(--radius-sm); }
 .session-box-header { display: flex; align-items: center; gap: 6px; }
 .session-box-name { flex: 1; font-size: var(--fs-sm); font-weight: 500; color: var(--text-primary); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .session-box.active .session-box-name { color: var(--accent-text); }
@@ -1219,7 +1302,6 @@ button.tag-pool { cursor: pointer; }
 .tagf-ctl { gap: 8px; }
 /* No tags anywhere: one muted line where the chips would be, so an empty
    filing system does not look like a missing one. */
-.rail-tag-hint { font-size: var(--fs-2xs); line-height: 1.35; color: var(--text-muted); }
 
 /* Crystal view — the Diamond command surface (steer + fold). */
 .crystal-view { flex: 1; display: flex; flex-direction: column; overflow: hidden; }
@@ -1956,6 +2038,18 @@ span.arte-open { cursor: default; }
    a negative default here put every OTHER form's label flush on its box. */
 .cfg-fieldlabel { display: block; font-size: var(--fs-xs); color: var(--text-secondary); margin: 12px 0 6px; }
 .cfg-fieldlabel:first-child { margin-top: 0; }
+/* A form field the caller marked `advanced` (CRY-14): behind a disclosure, so
+   the dialog opens on the question it is really asking. The label inside loses
+   its top margin -- the summary above it is already the gap. */
+.dlg-adv { margin-top: 12px; border-top: 1px solid var(--border); padding-top: 4px; }
+.dlg-adv-sum {
+	cursor: pointer; list-style: revert; padding: 6px 0;
+	font-size: var(--fs-xs); color: var(--text-secondary);
+}
+.dlg-adv-sum:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.dlg-adv > summary + .cfg-fieldlabel { margin-top: 6px; }
+/* See `.tile-dlg-adv` for why a closed fold is hidden by hand as well. */
+.dlg-adv:not([open]) > *:not(summary) { display: none; }
 /* A CHILD of the form, not a descendant. The -4px only makes sense where the
    form's own 10px gap is above the label; #cfg-url-row is a plain div holding
    the Base URL pair, no gap reaches inside it, and the compensation there put
@@ -2792,6 +2886,25 @@ span.arte-open { cursor: default; }
 .tile-dlg-foot { margin-top: 20px; border-top: 1px solid var(--border); padding-top: 14px; }
 .tile-dlg-foot .tile-dlg-delete { flex: 0 0 auto; }
 .tile-dlg-foot .tile-dlg-done { flex: 1; }
+
+/* The collapsed half (CRY-15). Its summary IS a section heading -- it carries
+   `.tile-dlg-head` as well -- so all that is wanted here is the triangle, a
+   hit area worth pressing and a rule separating what is looked up from what
+   is changed. The first heading INSIDE the fold loses its top margin: the
+   summary above it is already a heading and two in a row read as a gap. */
+.tile-dlg-adv { margin-top: 16px; border-top: 1px solid var(--border); padding-top: 4px; }
+.tile-dlg-adv-sum { cursor: pointer; list-style: revert; padding: 6px 0; margin: 0; }
+.tile-dlg-adv-sum:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.tile-dlg-adv > summary + .tile-dlg-head { margin-top: 8px; }
+/* A CLOSED FOLD MUST TAKE NO SPACE, said explicitly.  Chromium lays the
+   content of a closed `<details>` out behind `content-visibility: hidden` and
+   still answers `getClientRects()` with real boxes for it, so the pause
+   buttons inside this one reported themselves sitting on top of Delete and
+   `dev/verify_raildialogs.mjs` counted sixteen always-wrong overlaps for a
+   dialog that draws correctly.  Nothing was on screen; the geometry was.
+   `.id-doors` above carries the same rule for the same reason; the same rule
+   guards `.dlg-adv` too. */
+.tile-dlg-adv:not([open]) > *:not(summary) { display: none; }
 
 
 /* Locked: lockApp() empties the panels of the user's content, so the shell

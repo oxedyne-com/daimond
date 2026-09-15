@@ -2722,15 +2722,27 @@
 			var ub = els.state.querySelector('.mail-unlock');
 			if (ub) ub.addEventListener('click', unlock);
 		} else if (state.unlocked === null) {
-			els.state.appendChild(html('<div class="mail-fine">'
-				+ esc(t('mail.pitch.unknown')) + '</div>'));
+			// The account service could not say whether this is unlocked, so
+			// there is nothing here to refresh -- no mailbox list, no spinner
+			// pretending to reach a server this device cannot reach.
+			var unk = html('<div class="mail-fine">' + esc(t('mail.pitch.unknown')) + ' </div>');
+			var lm = document.createElement('button');
+			lm.className = 'mail-learn-more';
+			lm.textContent = t('mail.pitch.learn_more');
+			lm.addEventListener('click', function () {
+				if (window.DaimondWeb && DaimondWeb.guide) DaimondWeb.guide('email-web-files.html');
+			});
+			unk.appendChild(lm);
+			els.state.appendChild(unk);
 		}
 		if (state.err) els.state.appendChild(html('<div class="mail-err">' + esc(state.err) + '</div>'));
 		else if (state.note) els.state.appendChild(html('<div class="mail-note">' + esc(state.note) + '</div>'));
 
-		// The mailboxes.
+		// The mailboxes. Drawn only once the account service has confirmed
+		// this is unlocked -- `null` (unknown) gets the pitch above and nothing
+		// that looks like it is talking to a server.
 		els.accounts.innerHTML = '';
-		if (state.unlocked !== false) {
+		if (state.unlocked === true) {
 			els.accounts.appendChild(globalRow());
 			state.accounts.forEach(function (a) {
 				var row = document.createElement('div');

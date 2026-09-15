@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
-<title>Spending &mdash; Daimond guide</title>
+<title>Gastos &mdash; Guia do Daimond</title>
 <link rel="icon" type="image/svg+xml" href="../../assets/daimond_mark.svg">
 <link rel="stylesheet" href="../../css/variables.css">
 <link rel="stylesheet" href="../../css/guide.css">
@@ -24,10 +24,10 @@
 			<a href="index.html">Comece aqui</a>
 			<a href="interface.html">A interface</a>
 			<a href="chats-and-diamonds.html">Chats e diamonds</a>
-			<a href="../capps.html">A página de um diamond</a>
+			<a href="capps.html">A página de um diamond</a>
 			<a href="email-web-files.html">Arquivos, e-mail e a web</a>
-			<a href="../machine-operations.html">Seu computador</a>
-			<a href="../runner.html">Ajudantes e onde os turnos rodam</a>
+			<a href="machine-operations.html">Seu computador</a>
+			<a href="runner.html">Ajudantes e onde os turnos rodam</a>
 			<a href="sync.html">Mais de um dispositivo</a>
 			<a href="social.html">Social e propostas</a>
 			<a href="models.html">Modelos e provedores</a>
@@ -39,35 +39,35 @@
 
 <main>
 	<h1>Gastos</h1>
-	<p class="lede">Model calls are priced on this device, as they happen, from the provider's own figure. The bill arrives in front of you as it is spent, wherever the provider reports a figure, and not later as a surprise.</p>
+	<p class="lede">As chamadas de modelo são precificadas neste dispositivo, conforme acontecem, a partir da própria cifra do provedor. A conta chega à sua frente conforme é gasta, onde quer que o provedor informe uma cifra, e nunca depois como surpresa.</p>
 
 	<h2 id="s1">Dois potes, mantidos separados</h2>
-	<p>The two pots are different accounts in different currencies, so they are shown as two tracks and not added together.</p>
+	<p>Os dois potes são contas diferentes em moedas diferentes, então são mostrados como duas trilhas e nunca somados.</p>
 	<ul>
-		<li><strong>Inference</strong> covers the model calls billed to <span class="ui">your key</span>. They are recorded here per turn, and none of them passes through us.</li>
-		<li><strong>Créditos</strong> holds the prepaid balance, spent on the model when Daimond runs it for you and on what leaves the browser, <span class="ui">web, mail, sync</span>, and cloud storage.</li>
+		<li><strong>Inferência</strong> cobre as chamadas de modelo cobradas na <span class="ui">sua chave</span>. Elas são registradas aqui por turno, e nada disso passa por nós.</li>
+		<li><strong>Créditos</strong> guarda o saldo pré-pago, gasto no modelo quando o Daimond o roda para você e no que sai do navegador, <span class="ui">web, e-mail, sincronização</span>, e armazenamento na nuvem.</li>
 	</ul>
-	<p>The foot of the rail carries the running figures for today, this week and this month. Press one to open the <span class="ui">Gastos</span> panel, which shows a headline figure per pot, a daily graph, a breakdown by category, and a plain table of movements.</p>
+	<p>O pé da barra lateral traz as cifras em andamento de hoje, desta semana e deste mês. Pressione uma delas para abrir o painel <span class="ui">Gastos</span> , que mostra uma cifra de destaque por pote, um gráfico diário, uma quebra por categoria e uma tabela simples de movimentos.</p>
 
-	<h2 id="s2">What stops a runaway</h2>
-	<p>A workspace that runs many agents at once can spend quickly, and the danger lies in a sudden rate more than in a large monthly total. Four measures catch the rate, and none asks you to set a limit in advance.</p>
+	<h2 id="s2">O que contém um descontrole</h2>
+	<p>Um espaço de trabalho que roda muitos agentes ao mesmo tempo pode gastar rápido, e o perigo está mais num ritmo repentino do que num total mensal alto. Quatro medidas pegam esse ritmo, e nenhuma pede que você defina um limite de antemão.</p>
 	<ul>
-		<li><strong>A pace check before a fan-out.</strong> The cost of dispatching a batch is known before any of it starts. A batch that would run faster than your own recent pace is held, and Daimond asks once, with the number on the prompt. A few helpers of ordinary cost do not trip it, and a sudden fifty do.</li>
-		<li><strong>Pausar e parar, sempre à mão.</strong> O painel <span class="ui">Agentes</span> panel pauses everything running, or stops it. The <span class="ui">Tudo</span> row at the top of the rail pauses the whole app. A paused thing refuses a turn before it starts, so a look costs nothing.</li>
-		<li><strong>Uma chave separada para cada agente.</strong> Each helper running on credits spends its own freshly minted key, capped against what is left after its siblings' claims. No two share a key, so parallel helpers cannot race one allowance past its cap.</li>
-		<li><strong>Tudo medido, turno a turno, no seu dispositivo.</strong> Every call is priced and recorded as it happens, and the graphs are drawn from that record.</li>
+		<li><strong>Uma checagem de ritmo antes de um leque.</strong> O custo de despachar um lote é conhecido antes que qualquer parte dele comece. Um lote que rodaria mais rápido do que o seu ritmo recente fica retido, e o Daimond pergunta uma vez, com o número no aviso. Uns poucos ajudantes de custo comum não o disparam, mas cinquenta de uma vez disparam.</li>
+		<li><strong>Pausar e parar, sempre à mão.</strong> O painel <span class="ui">Agentes</span> pausa tudo em execução, ou interrompe tudo. A linha <span class="ui">Tudo</span> no topo da barra lateral pausa o app inteiro. Algo pausado recusa um turno antes de começar, então dar uma olhada não custa nada.</li>
+		<li><strong>Uma chave separada para cada agente.</strong> Cada ajudante que roda com créditos gasta a própria chave recém-cunhada, limitada ao que sobra depois do que seus irmãos reivindicaram. Não há dois que compartilhem uma chave, então ajudantes em paralelo não conseguem levar uma cota além do teto dela.</li>
+		<li><strong>Tudo medido, turno a turno, no seu dispositivo.</strong> Toda chamada é precificada e registrada conforme acontece, e os gráficos são desenhados a partir desse registro.</li>
 	</ul>
 
-	<h2 id="s3">A ceiling you set</h2>
-	<p>Settings carries a per-turn spend cap. A turn that reaches the round limit continues on its own, so this cap is the ceiling that holds a runaway. It applies where the provider reports what a round cost, and only there.</p>
+	<h2 id="s3">Um teto que você define</h2>
+	<p>Configurações traz um teto de gasto por turno. Um turno que alcança o limite da rodada continua por conta própria, então esse teto é o limite que contém um descontrole. Ele vale onde o provedor informa o que uma rodada custou, e só lá.</p>
 
-	<h2 id="s4">Watching one agent</h2>
-	<p>Each tile in <span class="ui">Agentes</span> shows its cost as it accrues, in tokens and in money, and not only at the end. Under the header a line says how many are running, paused and queued, which makes the size of a fan-out legible before you decide whether to hold it.</p>
-	<p>The aim is a team of agents you can run without fear that a loop, or a fan-out larger than you realised, can cost more than a glance and a click can undo.</p>
+	<h2 id="s4">Observando um agente</h2>
+	<p>Cada bloco em <span class="ui">Agentes</span> mostra seu custo conforme se acumula, em tokens e em dinheiro, e não só no final. Sob o cabeçalho, uma linha diz quantos estão em execução, pausados e na fila, o que torna o tamanho de um leque legível antes de você decidir se o segura.</p>
+	<p>A intenção é um time de agentes que você pode rodar sem medo de que um laço, ou um leque maior do que você percebeu, custe mais do que uma olhada e um clique podem desfazer.</p>
 
 	<div class="next">
-		<a href="models.html">&larr; Models &amp; providers</a>
-		<a href="accounts.html">Next: Safety &amp; fixes &rarr;</a>
+		<a href="models.html">&larr; Modelos e provedores</a>
+		<a href="accounts.html">Próximo: Segurança e soluções &rarr;</a>
 	</div>
 </main>
 
@@ -77,10 +77,10 @@
 		<a href="index.html">Comece aqui</a>
 		<a href="interface.html">A interface</a>
 		<a href="chats-and-diamonds.html">Chats e diamonds</a>
-		<a href="../capps.html">A página de um diamond</a>
+		<a href="capps.html">A página de um diamond</a>
 		<a href="email-web-files.html">Arquivos, e-mail e a web</a>
-		<a href="../machine-operations.html">Seu computador</a>
-		<a href="../runner.html">Ajudantes e onde os turnos rodam</a>
+		<a href="machine-operations.html">Seu computador</a>
+		<a href="runner.html">Ajudantes e onde os turnos rodam</a>
 		<a href="sync.html">Mais de um dispositivo</a>
 		<a href="social.html">Social e propostas</a>
 		<a href="models.html">Modelos e provedores</a>

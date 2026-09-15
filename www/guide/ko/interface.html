@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
-<title>The interface &mdash; Daimond guide</title>
+<title>인터페이스 &mdash; Daimond 사용 안내</title>
 <link rel="icon" type="image/svg+xml" href="../../assets/daimond_mark.svg">
 <link rel="stylesheet" href="../../css/variables.css">
 <link rel="stylesheet" href="../../css/guide.css">
@@ -24,12 +24,12 @@
 			<a href="index.html">여기서 시작하기</a>
 			<a href="interface.html" aria-current="page">인터페이스</a>
 			<a href="chats-and-diamonds.html">채팅과 diamond</a>
-			<a href="../capps.html">diamond의 페이지</a>
+			<a href="capps.html">diamond의 페이지</a>
 			<a href="email-web-files.html">파일, 이메일, 웹</a>
-			<a href="../machine-operations.html">내 컴퓨터</a>
-			<a href="../runner.html">헬퍼와 차례가 실행되는 곳</a>
+			<a href="machine-operations.html">내 컴퓨터</a>
+			<a href="runner.html">헬퍼와 차례가 실행되는 곳</a>
 			<a href="sync.html">여러 대의 기기</a>
-			<a href="../social.html">소셜과 제안</a>
+			<a href="social.html">소셜과 제안</a>
 			<a href="models.html">모델과 제공자</a>
 			<a href="spending.html">지출</a>
 			<a href="accounts.html">안전과 해결</a>
@@ -39,77 +39,77 @@
 
 <main>
 	<h1>인터페이스</h1>
-	<p class="lede">Three zones and a top bar. Once you know the zones, every part of Daimond has a place.</p>
+	<p class="lede">구역 셋과 상단 바 하나예요. 구역을 알고 나면 Daimond의 모든 부분에 자리가 있어요.</p>
 
-	<h2 id="s1">The rail, on the left</h2>
-	<p>The rail lists what you are working on, with <strong>diamonds</strong> at the top and <strong>채팅</strong> under them, newest first. The <span class="ui">+</span> on each head makes a new one, and dragging the divider gives one list more room.</p>
-	<p>Above them is the <span class="ui">전체</span> row, a play, a pause and a round light for the whole app. Pause there and nothing runs anywhere until you release it.</p>
-	<p>Below the divider is your account, showing the name you gave, one status line, and what you have spent today, this week and this month. <a href="index.html">여기서 시작하기</a> covers the status line, and <span class="ui">Details</span> opens the diagnostics behind it.</p>
-	<p>One of those details is the build you are on. Press it for the release history, which shows what is planned, the build you are running, and every earlier build with its date and its place in a sealed record. You cannot go back to an older build, by design, because an old client holds faults since fixed and may read newer data wrongly.</p>
+	<h2 id="s1">레일, 왼쪽</h2>
+	<p>레일은 지금 하는 일을 늘어놓아요, <strong>diamond</strong> 이 위에, <strong>채팅</strong> 이 그 아래에 최신순으로 있어요. <span class="ui">+</span> 을 누르면 각 머리에서 새로 만들고, 칸막이를 끌면 한쪽 목록에 자리를 더 줘요.</p>
+	<p>그 위에는 <span class="ui">전체</span>  행이 있어요. 앱 전체를 위한 재생, 일시정지, 둥근 불빛이에요. 거기서 일시정지하면 풀 때까지 아무 데서도 아무것도 돌지 않아요.</p>
+	<p>칸막이 아래에는 내 계정이 있어요. 정한 이름, 상태 줄 하나, 그리고 오늘·이번 주·이번 달에 쓴 것을 보여 줘요. <a href="index.html">여기서 시작하기</a> 에 상태 줄 이야기가 있고, <span class="ui">자세히</span> 가 그 뒤의 진단을 열어 줘요.</p>
+	<p>그 자세한 것 가운데 하나가 지금 쓰는 빌드예요. 누르면 출시 이력이 나와요. 계획된 것, 지금 도는 빌드, 그리고 이전의 모든 빌드가 날짜와 함께 봉인된 기록 속 자리로 나와요. 옛 빌드로 되돌아갈 수는 없어요. 일부러 그래요. 옛 클라이언트는 이미 고친 결함을 그대로 가지고 있어서 더 새로운 자료를 잘못 읽을 수 있으니까요.</p>
 
-	<h2 id="s2">The centre</h2>
-	<p>The centre holds the conversation and whatever you are reading beside it. Panels here sit side by side and not over the chat, so you need not leave the conversation to look at something.</p>
-	<p>Width decides how many fit, from two at the narrowest to four at the widest, with one more for roughly every 380 pixels. Narrow the window and the panel opened most recently closes, and the chat is never the one to go.</p>
+	<h2 id="s2">가운데</h2>
+	<p>가운데는 대화와 그 옆에서 읽는 것을 담아요. 여기 패널은 채팅 위에 덮이지 않고 나란히 앉으니, 무언가를 보려고 대화를 떠날 필요가 없어요.</p>
+	<p>너비가 몇 개가 들어갈지 정해요. 가장 좁을 때 둘에서 가장 넓을 때 넷까지이고, 대략 380픽셀마다 하나씩 늘어요. 창을 좁히면 가장 최근에 연 패널이 닫히고, 채팅이 닫히는 일은 없어요.</p>
 	<ul>
-		<li><span class="ui">AI</span> holds the conversation, and comes back whenever the centre would otherwise be empty.</li>
-		<li><span class="ui">웹</span> shows a web page, or drives one.</li>
-		<li><span class="ui">문서</span> shows a file as its characters, with room to read and edit it.</li>
-		<li><span class="ui">Preview</span> shows what a file looks like, whether a picture, a PDF, or typeset pages beside their source.</li>
-		<li><span class="ui">Email message</span> opens one message beside the chat.</li>
-		<li><span class="ui">도구</span> lists what Daimond can do.</li>
-		<li><span class="ui">작성</span> is for writing mail, and only you can press Send.</li>
-		<li><span class="ui">관계도</span> draws your diamonds and the links between them.</li>
-		<li><span class="ui">터미널</span> is a real terminal on your machine. See <a href="../machine-operations.html">내 컴퓨터</a>.</li>
+		<li><span class="ui">AI</span> 는 대화를 담고, 가운데가 비게 될 때마다 돌아와요.</li>
+		<li><span class="ui">웹</span> 은 웹 페이지를 보여 주거나 조작해요.</li>
+		<li><span class="ui">문서</span> 는 파일을 글자 그대로 보여 주고, 읽고 고칠 자리를 줘요.</li>
+		<li><span class="ui">미리 보기</span> 는 파일이 어떻게 보이는지 보여 줘요. 그림이든 PDF든, 조판된 페이지를 원본과 나란히 보여 주는 것이든요.</li>
+		<li><span class="ui">메일 메시지</span> 는 채팅 옆에 메시지 하나를 열어요.</li>
+		<li><span class="ui">도구</span> 는 Daimond이 할 수 있는 것을 늘어놓아요.</li>
+		<li><span class="ui">작성</span> 는 메일을 쓰는 곳이고, 보내기를 누를 수 있는 건 나뿐이에요.</li>
+		<li><span class="ui">관계도</span> 는 내 diamond과 그 사이의 링크를 그려요.</li>
+		<li><span class="ui">터미널</span> 은 내 컴퓨터의 진짜 터미널이에요. 참고할 곳은 <a href="machine-operations.html">내 컴퓨터</a>.</li>
 	</ul>
 
-	<h2 id="s3">The dock, on the right</h2>
-	<p>The dock holds what you pull from.</p>
+	<h2 id="s3">독, 오른쪽</h2>
+	<p>독은 내가 끌어오는 것들을 담아요.</p>
 	<ul>
-		<li><span class="ui">메일</span> holds your mailboxes.</li>
-		<li><span class="ui">작업 공간</span> shows your files as a tree.</li>
-		<li><span class="ui">에이전트</span> lists the helpers running now, with what each is costing. It stays out of the way until the first one runs.</li>
-		<li><span class="ui">지출</span> shows where the money went.</li>
-		<li><span class="ui">대기</span> lists what is waiting on you. Each row is answered with <span class="ui">실행</span>, discussed, or dropped.</li>
-		<li><span class="ui">휴지통</span> holds deleted chats and diamonds for thirty days.</li>
-		<li><span class="ui">소셜</span> 그리고 <span class="ui">Improve</span> are covered in <a href="../social.html">소셜과 제안</a>.</li>
+		<li><span class="ui">메일</span> 은 내 메일함을 담아요.</li>
+		<li><span class="ui">작업 공간</span> 은 내 파일을 나무로 보여 줘요.</li>
+		<li><span class="ui">에이전트</span> 는 지금 도는 헬퍼와 저마다 드는 비용을 늘어놓아요. 첫 번째가 돌기 전까지는 자리를 차지하지 않아요.</li>
+		<li><span class="ui">지출</span> 은 돈이 어디로 갔는지 보여 줘요.</li>
+		<li><span class="ui">대기</span> 는 나를 기다리는 것을 늘어놓아요. 줄마다 답하는 방법은 <span class="ui">실행</span>, 상의하거나, 취소하는 거예요.</li>
+		<li><span class="ui">휴지통</span> 은 지운 채팅과 diamond을 서른 날 동안 담아 둬요.</li>
+		<li><span class="ui">소셜</span> 그리고 <span class="ui">개선</span> 은 다음 페이지에서 다뤄요:  <a href="social.html">소셜과 제안</a>.</li>
 	</ul>
 
 	<h2 id="s4">상단 바</h2>
-	<p>The top bar carries the wordmark, a row of chips, and five buttons at the far right, which are the update chip, About, <span class="ui">Link another device</span>, this guide, and <span class="ui">Settings</span>.</p>
-	<p>Every panel has a chip. Click one to open or close that panel. An open panel's chip is filled in, so the row reads as a map of what is on screen. Chips are grouped by zone in the order the zones sit, and each keeps its position so you can learn it.</p>
-	<p>A fresh account gets six chips, for diamonds, Chat, Web, Workspace, Tools and Spending. The rest live behind the <span class="ui">⋯</span> chip at the end of the row. Click it for the gallery, which lists every panel there is, searchable and grouped by zone, with a pin on each row that puts it in the bar.</p>
-	<p>A dock chip is greyed when the dock is full, and its tooltip names the fix. <kbd>Ctrl</kbd> <kbd>K</kbd> opens any panel or setting by typing.</p>
+	<p>상단 바에는 워드마크, 칩 줄, 그리고 맨 오른쪽에 다섯 버튼이 있어요. 업데이트 칩, About, <span class="ui">다른 기기 연결</span>, 이 안내서, 그리고 <span class="ui">설정</span>.</p>
+	<p>패널에는 모두 칩이 있어요. 하나를 누르면 그 패널이 열리거나 닫혀요. 열린 패널의 칩은 채워져 있어서, 줄이 화면에 있는 것의 지도처럼 읽혀요. 칩은 구역이 앉은 순서대로 구역별로 묶이고, 저마다 자리를 지키니 익힐 수 있어요.</p>
+	<p>갓 만든 계정은 diamond, 채팅, 웹, 작업 공간, 도구, 지출 여섯 개의 칩을 받아요. 나머지는 <span class="ui">⋯</span>  칩 뒤에, 줄 끝에 있어요. 누르면 갤러리가 나와요. 있는 모든 패널을 검색할 수 있고 구역별로 묶여 있으며, 줄마다 핀이 있어 바에 꽂을 수 있어요.</p>
+	<p>독의 칩은 독이 꽉 차면 회색이 되고, 툴팁이 해결책을 알려 줘요. <kbd>Ctrl</kbd> <kbd>K</kbd> 는 입력만으로 어떤 패널이나 설정이든 열어요.</p>
 
-	<h2 id="s5">Settings</h2>
-	<p>Settings is the last button on the right. It holds how Daimond looks and where things sit, and nothing about what it does.</p>
+	<h2 id="s5">설정</h2>
+	<p>설정은 오른쪽 맨 끝 버튼이에요. Daimond이 어떻게 보이고 무엇이 어디에 앉는지를 담을 뿐, 무엇을 하는지는 담지 않아요.</p>
 	<ul>
-		<li><strong>View.</strong> <span class="ui">심플</span> shows names only, and <span class="ui">최대</span> puts the model, the cost and the context on every tile. A tile's own cog overrides it.</li>
-		<li><strong>Theme.</strong> Eleven palettes in three bands. This guide wears whichever the app is wearing.</li>
-		<li><strong>Text size.</strong> Four steps. Only the type changes, so for a bigger interface use the browser's zoom.</li>
-		<li><strong>Side panels.</strong> How the dock tiles, and so how many panels it holds, whether four in one column, four at 2&times;2, or six at 2&times;3 or 3&times;2. <span class="ui">자동</span> lets the window decide.</li>
-		<li><strong>언어</strong> 그리고 <strong>Currency.</strong> Billing is in US dollars whatever the figures show.</li>
+		<li><strong>보기.</strong> <span class="ui">심플</span> 은 이름만 보여 주고, <span class="ui">최대</span> 는 타일마다 모델, 비용, 컨텍스트를 붙여요. 타일 자신의 톱니가 있으면 그것이 앞서요.</li>
+		<li><strong>테마.</strong> 세 갈래에 걸친 열한 팔레트예요. 이 안내서는 앱이 입은 것을 그대로 입어요.</li>
+		<li><strong>글자 크기.</strong> 네 단계예요. 글자만 바뀌니, 인터페이스를 더 크게 하려면 브라우저의 확대를 쓰세요.</li>
+		<li><strong>곁 패널.</strong> 독이 어떻게 타일로 놓이는지, 그래서 패널을 몇 개 담는지를 정해요. 한 칸에 넷, 2&times;2로 넷, 2&times;3이나 3&times;2로 여섯 가운데 하나예요. <span class="ui">자동</span> 은 창이 정하게 둬요.</li>
+		<li><strong>언어</strong> 그리고 <strong>통화.</strong> 청구는 화면에 뭐라고 보이든 미국 달러로 이루어져요.</li>
 	</ul>
-	<p>With a diamond open, the menu also offers to keep the current arrangement of panels with it, and opening that diamond again puts the panels back. It is saved only when you ask.</p>
+	<p>diamond을 열어 둔 채로는, 메뉴가 지금 패널 배치를 그 diamond과 함께 두자고도 제안해요. 그 diamond을 다시 열면 패널이 그대로 돌아와요. 저장은 내가 청할 때만 돼요.</p>
 
-	<h2 id="s6">The Graph</h2>
-	<p>Open <span class="ui">관계도</span> to see your diamonds drawn, with the links between them. Bring the pointer near a tile's edge and four anchors appear. Drag from one and a line follows, snaps to the nearest diamond, and makes the link when you let go.</p>
-	<p>A link can exist with no relation on it, which means only that the two are joined. Chips offer a <span class="ui">Relation</span> on the line that has just appeared, and <kbd>Esc</kbd> leaves it blank.</p>
-	<p>Let go over empty canvas and a box asks for a name, then a new diamond is made there, already linked. Nothing is written until you give the name.</p>
-	<p>Click a link to select it and press <kbd>Delete</kbd> to drop it. Its form carries <span class="ui">Reverse</span>, which writes a new record, so the note travels and the date does not. <span class="ui">Organise</span> lays everything out again to reduce crossings. From the keyboard, select a diamond, press <kbd>L</kbd>, and click the target.</p>
+	<h2 id="s6">관계도</h2>
+	<p>여세요 <span class="ui">관계도</span> 면 내 diamond들이 그려진 모습과 그 사이 링크를 볼 수 있어요. 타일 가장자리에 포인터를 가까이 대면 앵커 네 개가 나타나요. 하나에서 끌면 선이 따라오고, 가장 가까운 diamond에 붙었다가 놓으면 링크가 만들어져요.</p>
+	<p>링크에는 관계가 없어도 돼요. 그러면 둘이 이어져 있다는 것만 뜻해요. 칩이 내놓는 것은 <span class="ui">관계</span>  — 방금 나타난 선 위에요. 그리고 <kbd>Esc</kbd> 는 비워 둬요.</p>
+	<p>빈 캔버스 위에서 놓으면 상자가 이름을 물어요. 그러면 새 diamond이 거기 만들어지고 이미 링크돼 있어요. 이름을 줄 때까지 아무것도 쓰이지 않아요.</p>
+	<p>링크를 눌러 고르고 <kbd>Delete</kbd> 를 눌러 없애세요. 그 양식에는 <span class="ui">뒤집기</span>가 있어서, 새 기록을 써요. 그래서 쪽지는 옮겨 가고 날짜는 그대로예요. <span class="ui">정리</span> 는 겹침을 줄이려고 모든 것을 다시 늘어놓아요. 키보드로는 diamond을 고르고 <kbd>L</kbd>를 누른 다음, 목표를 클릭하세요.</p>
 
 	<h2 id="s7">키보드로, 귀로</h2>
-	<p><kbd>Tab</kbd> moves through the controls, <kbd>Enter</kbd> 또는 <kbd>Space</kbd> operates one, and <kbd>Esc</kbd> closes what is open. Every dialog, menu and sheet also carries a cross, sized for a thumb.</p>
-	<p>A dialog keeps focus inside itself and hands it back on closing. With a screen reader, an answer is announced once when it arrives instead of being recited as it is written. The window has named regions and real headings throughout. Anything you cannot reach or cannot hear is a fault, so say so on <a href="../social.html">소셜</a>.</p>
+	<p><kbd>Tab</kbd> 은 조작 사이를 옮겨 다니고, <kbd>Enter</kbd> 또는 <kbd>Space</kbd> 는 하나를 작동시키고, <kbd>Esc</kbd> 는 열린 것을 닫아요. 어떤 대화상자든 메뉴든 시트든, 엄지에 맞는 크기의 가위표도 있어요.</p>
+	<p>대화상자는 초점을 제 안에 붙들어 두었다가 닫힐 때 돌려줘요. 화면 읽기 프로그램에서는 답이 쓰이는 대로 낭독되는 대신 도착했을 때 한 번만 알려져요. 창에는 곳곳에 이름 붙은 영역과 진짜 제목이 있어요. 닿을 수 없거나 들을 수 없는 것이 있다면 그건 결함이니, <a href="social.html">소셜</a>.</p>
 
-	<h2 id="s8">On a phone</h2>
-	<p>Below the phone width the chips give way to the phone shell. The chat is the floor, and a panel rises over it as a sheet you can drag down again. The rail becomes a drawer, opened at the top left, with your account at the foot of it.</p>
-	<p>The row along the bottom is the same chip row, scrolled sideways, and it carries every panel instead of six. The filled chip is what you are looking at, because on a phone only one thing is, so a chip takes you there instead of toggling.</p>
-	<p>Where a row of controls runs off the edge, it scrolls, and fades at the edge to say so. A diamond's page has a full-screen button that gives the whole display to the page.</p>
-	<p>Installed to the home screen, Daimond runs in its own window with no browser furniture and holds clear of the notch. It is the same page and the same stored work.</p>
+	<h2 id="s8">휴대폰에서는</h2>
+	<p>휴대폰 너비 아래에서는 칩이 휴대폰 껍데기에 자리를 내줘요. 채팅이 바닥이 되고, 패널은 다시 끌어 내릴 수 있는 시트로 그 위에 떠올라요. 레일은 서랍이 되어 왼쪽 위에서 열리고, 내 계정은 그 아래쪽에 있어요.</p>
+	<p>아래쪽 줄은 옆으로 스크롤되는 같은 칩 줄이고, 여섯 대신 모든 패널을 실어요. 채워진 칩이 지금 보고 있는 것이에요. 휴대폰에서는 한 번에 하나만 보이니까요. 그래서 칩은 켜고 끄는 대신 그리로 데려가요.</p>
+	<p>조작 줄이 가장자리를 넘어가면 스크롤되고, 가장자리가 흐려져 그것을 알려요. diamond의 페이지에는 화면 전체를 페이지에 내주는 전체 화면 버튼이 있어요.</p>
+	<p>홈 화면에 설치하면 Daimond은 브라우저 장식 없이 저만의 창에서 돌고, 노치를 피해서 자리 잡아요. 같은 페이지이고 저장된 작업도 그대로예요.</p>
 
 	<div class="next">
-		<a href="index.html">&larr; Start here</a>
-		<a href="chats-and-diamonds.html">Next: Chats &amp; diamonds &rarr;</a>
+		<a href="index.html">&larr; 시작하기</a>
+		<a href="chats-and-diamonds.html">다음: 채팅과 diamond &rarr;</a>
 	</div>
 </main>
 
@@ -119,12 +119,12 @@
 		<a href="index.html">여기서 시작하기</a>
 		<a href="interface.html">인터페이스</a>
 		<a href="chats-and-diamonds.html">채팅과 diamond</a>
-		<a href="../capps.html">diamond의 페이지</a>
+		<a href="capps.html">diamond의 페이지</a>
 		<a href="email-web-files.html">파일, 이메일, 웹</a>
-		<a href="../machine-operations.html">내 컴퓨터</a>
-		<a href="../runner.html">헬퍼와 차례가 실행되는 곳</a>
+		<a href="machine-operations.html">내 컴퓨터</a>
+		<a href="runner.html">헬퍼와 차례가 실행되는 곳</a>
 		<a href="sync.html">여러 대의 기기</a>
-		<a href="../social.html">소셜과 제안</a>
+		<a href="social.html">소셜과 제안</a>
 		<a href="models.html">모델과 제공자</a>
 		<a href="spending.html">지출</a>
 		<a href="accounts.html">안전과 해결</a>

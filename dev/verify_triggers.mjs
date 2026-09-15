@@ -487,6 +487,17 @@ try {
 		await p.evaluate((id) => {
 			document.querySelector(`#diamond-list .diamond-box[data-id="${id}"] .tile-cog`).click();
 		}, opt.id);
+		// BEHIND THE DISCLOSURE SINCE CRY-15. Triggered actions moved into the
+		// dialog's Advanced fold, which ships closed, so the chooser exists and
+		// is not VISIBLE -- and `waitForSelector` waits for visible by default.
+		// Opened the way a reader opens it rather than waited for with `state:
+		// 'attached'`: a check that reads a control nobody can see is a check
+		// that would go on passing after the fold stopped opening.
+		await p.waitForSelector('.tile-dlg-card details.tile-dlg-adv', { timeout: 8000 });
+		await p.evaluate(() => {
+			const d = document.querySelector('.tile-dlg-card details.tile-dlg-adv');
+			if (d) d.open = true;
+		});
 		// The actions are named by the chooser's options now, not by a row each:
 		// notes2 asks for them to be "selected for editing from a pulldown", so
 		// the pulldown is the census of what a Diamond has.

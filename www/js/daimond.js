@@ -9205,6 +9205,18 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 	/// this file already runs, the panel opening, anything pressed inside the
 	/// panel, another tab writing the store, and a sync parcel arriving (js/sync.js
 	/// and js/post.js, both through `DaimondBadge.post`).
+	/// What the two lanes of the Social panel have waiting, added. ONE BADGE: a
+	/// message nobody has read and a feed post nobody has drawn are both "open the
+	/// panel", and two counts on one chip would be two numbers to keep right.
+	function socialUnread() {
+		var n = 0;
+		try { n += DaimondPost.unread() | 0; } catch (e) { /* locked */ }
+		try {
+			if (window.DaimondFeed && DaimondFeed.unread) n += DaimondFeed.unread() | 0;
+		} catch (e) { /* no feed in this build */ }
+		return n;
+	}
+
 	function postBadge() {
 		try {
 			if (!window.DaimondPost || !DaimondPost.unread) return;
@@ -9216,10 +9228,10 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			// minute rather than the session.
 			if (DaimondPost.read && DaimondPost.state && !DaimondPost.state().read) {
 				DaimondPost.read().then(function () {
-					Badge.set('social', DaimondPost.unread());
+					Badge.set('social', socialUnread());
 				}, function () { /* locked: there is nothing to count yet */ });
 			}
-			Badge.set('social', DaimondPost.unread());
+			Badge.set('social', socialUnread());
 		} catch (e) { /* no messages in this build */ }
 	}
 	window.DaimondBadge.post = postBadge;
@@ -13762,7 +13774,27 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		chatOutput.appendChild(card);
 		_askCard = card;
 		if (nearBottom()) setScrollTop(chatOutput.scrollHeight);
+		armAskIdleBound(card, typeof o.if_silent === 'string' ? o.if_silent.trim() : '');
 		return true;
+	}
+
+	/// The ask card's own half of `armIdleBound`: it is drawn straight into the
+	/// transcript rather than through `dialog()`, so it cannot share that seam's
+	/// timer, only the same RULE. Half an hour untouched answers it on the model's
+	/// OWN word for what silence means -- `if_silent`, said on the card already
+	/// (see `renderAsk`) -- so this never invents a choice among the options; where
+	/// the model declared none, it says plainly that none came, which is the ask
+	/// card's version of `nothing()`.
+	function armAskIdleBound(card, ifSilent) {
+		armIdleBound(
+			function () { return _askCard === card && !card.dataset.answered && document.body.contains(card); },
+			function () {
+				var said = ifSilent || t('ask.no_answer');
+				trail('ask idle', 'Nobody touched the page for '
+					+ Math.round(dialogIdleMs() / 60000) + ' min while this question stood open, '
+					+ 'so it answered itself: ' + said);
+				askAnswer(card, ASK_OTHER + said, said);
+			});
 	}
 
 	/// The question card's whole surface to the engine: `window.DaimondAsk`.
@@ -14068,7 +14100,25 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		var first  = null;
 		var note   = document.createElement('div');
 		note.className = 'dlg-note';
+		// A field marked `advanced` lands behind a disclosure instead of in the
+		// form proper (CRY-14). Built lazily and appended after the plain fields,
+		// so a form with none of them is exactly the form it was and one with
+		// them opens on the question it is really asking.
+		var adv = null;
+		function hostFor(f) {
+			if (!f.advanced) return host;
+			if (!adv) {
+				adv = document.createElement('details');
+				adv.className = 'dlg-adv';
+				var sum = document.createElement('summary');
+				sum.className = 'dlg-adv-sum';
+				mark(sum, '', opts.advancedLabel || t('tile.dlg_advanced'));
+				adv.appendChild(sum);
+			}
+			return adv;
+		}
 		(opts.fields || []).forEach(function (f) {
+			var into = hostFor(f);
 			var lab = document.createElement('label');
 			lab.className = 'cfg-fieldlabel';
 			// Marked, so the row follows a language change while the form stands open.
@@ -14076,7 +14126,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			// A field whose label cannot say what happens if it is left alone carries the
 			// sentence on hover instead, on both halves of the row.
 			if (f.title) mark(lab, 'title', f.title);
-			host.appendChild(lab);
+			into.appendChild(lab);
 
 			// A `models` field is a pulldown of every model, grouped by provider, drawn by the
 			// one function that draws every such pulldown. A form that asks which model to use
@@ -14086,9 +14136,12 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 				sel.className = 'dlg-input dlg-select';
 				if (f.title) { mark(sel, 'title', f.title); mark(sel, 'aria-label', f.title); }
 				if (window.DaimondModels) DaimondModels.fillSelect(sel, f.provider || '', f.value || '');
-				host.appendChild(sel);
+				into.appendChild(sel);
 				inputs[f.name] = sel;
-				if (!first) first = sel;
+				// Never the field the dialog opens on: a control behind a closed
+				// disclosure cannot take the focus, and handing it there leaves the
+				// caret nowhere.
+				if (!first && !f.advanced) first = sel;
 				return;
 			}
 
@@ -14105,10 +14158,11 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			if (f.hint) {
 				el.addEventListener('input', function () { f.hint(el.value, inputs, note); });
 			}
-			host.appendChild(el);
+			into.appendChild(el);
 			inputs[f.name] = el;
-			if (!first) first = el;
+			if (!first && !f.advanced) first = el;
 		});
+		if (adv) host.appendChild(adv);
 		host.appendChild(note);
 		if (opts.onInit) opts.onInit(inputs, note);
 		return {
@@ -14247,12 +14301,64 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		return row;
 	}
 
+	// Half an hour on a screen nobody is touching, whatever kind of turn-blocking
+	// wait it is. Shortened by a verifier and never lengthened -- the bargain
+	// `netAskDeadline` and `publishAskDeadline` already strike below -- because
+	// `dev/verify_updates.mjs` cannot spend thirty real minutes proving this any
+	// more than `verify_socialpost.mjs` can spend two.
+	//
+	// 2026-09-15: a Publish card stood a full day on the owner's own screen.
+	// `busy()` stayed true throughout (the turn was genuinely still open, waiting
+	// on this exact dialog), so the automatic update path held behind it with no
+	// way to say why -- and nothing bounded the wait, because the drive-fixes
+	// lane's `PUBLISH_ASK_DEADLINE_MS` only fires when NOBODY is there
+	// (`req.alone || !isAttended()`); attended-but-ignored was left unbounded.
+	// This is the general case that incident is one instance of.
+	var DIALOG_IDLE_MS = 30 * 60 * 1000;
+	function dialogIdleMs() {
+		var n = Number(window.__daimondDialogIdleMs);
+		return (n > 0) ? Math.min(n, DIALOG_IDLE_MS) : DIALOG_IDLE_MS;
+	}
+
+	/// The one rule every turn-blocking wait obeys, whatever shape it takes: nobody
+	/// has touched the page -- pointer, key or a visibility change all count, see
+	/// `noteInteraction` below -- for `dialogIdleMs()` while it stands, so it takes
+	/// its own safe answer and the turn ends under its own honest word, exactly as
+	/// the unattended path already does at two minutes. `dialog()`'s modal is one
+	/// shape this takes; the ask card (`DaimondAsk`, drawn straight into the
+	/// transcript rather than through `dialog()`) is the other, and both arm this
+	/// the same way rather than each keeping its own clock.
+	///
+	/// The clock starts at the LATER of "this appeared" and "the page was last
+	/// touched", never at a stale `_lastInteractAt` of 0 -- a tab nobody has ever
+	/// interacted with (a fresh runner) would otherwise read as idle since boot,
+	/// and its first dialog would answer itself within one poll of appearing.
+	///
+	/// # Arguments
+	/// * `isStanding` - Still open and still the one waiting? Polling stops the
+	///   moment this says no, whether that is because it was answered or because
+	///   something else replaced it.
+	/// * `onIdle` - What "answer myself" means here.
+	function armIdleBound(isStanding, onIdle) {
+		var openedAt = Date.now();
+		var ms = dialogIdleMs();
+		var poll = Math.max(50, Math.min(15000, ms));
+		var timer = setInterval(function () {
+			if (!isStanding()) { clearInterval(timer); return; }
+			if (Date.now() - Math.max(_lastInteractAt, openedAt) < ms) return;
+			clearInterval(timer);
+			onIdle();
+		}, poll);
+		return timer;
+	}
+
 	/// The app's one modal. `opts.deadlineMs`, where a caller sets one, is how long
 	/// it may stand unanswered before it answers itself: the timer calls
 	/// `opts.onDeadline` (so the caller can SAY that nobody answered) and then closes
 	/// the card exactly as Escape does. No caller gets a deadline by default -- a
 	/// dialog somebody is reading must not be withdrawn from under them -- and only a
-	/// question whose unanswered outcome is the SAFE one may ask for one.
+	/// question whose unanswered outcome is the SAFE one may ask for one. Every
+	/// dialog, deadline or not, ALSO gets `armIdleBound`'s half-hour backstop below.
 	function dialog(opts) {
 		return new Promise(function (resolve) {
 			var back = document.createElement('div');
@@ -14362,8 +14468,10 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			// second three must not have its caller told at second 120 that nobody was
 			// there. `close` is the single exit, so one line covers all of them.
 			var deadline = null;
+			var idleTimer = null;
 			function close(value) {
 				if (deadline) { clearTimeout(deadline); deadline = null; }
+				if (idleTimer) { clearInterval(idleTimer); idleTimer = null; }
 				document.removeEventListener('keydown', onKey, true);
 				back.remove();
 				refocus(prev, prevHost);
@@ -14421,6 +14529,23 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 					close(nothing());
 				}, opts.deadlineMs);
 			}
+			// THE BACKSTOP EVERY DIALOG GETS, a caller's own deadlineMs or none. A
+			// caller's deadline above is a SHORTER, caller-specific judgement about an
+			// UNATTENDED screen, and fires first where it applies; this catches what
+			// that judgement does not -- an ATTENDED screen nobody is actually looking
+			// at any more, which is exactly what stood open for a day on 2026-09-15.
+			// Not folded into `opts.onDeadline`: that callback's own wording (e.g. the
+			// publish card's "on a screen nobody was at") is written for the SHORT,
+			// unattended deadline and would misdescribe this one, so this logs its own
+			// generic line instead.
+			idleTimer = armIdleBound(function () { return document.body.contains(back); },
+				function () {
+					trail('dialog idle', 'Nobody touched the page for '
+						+ Math.round(dialogIdleMs() / 60000) + ' min while "'
+						+ (opts.ask || opts.title || opts.kind || 'a dialog')
+						+ '" stood open, so it took its own safe answer and the turn ended.');
+					close(nothing());
+				});
 		});
 	}
 
@@ -14866,6 +14991,10 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 	// device a person is actually ON. Routing to an awake-but-unwatched device would
 	// simply relocate the invisible stall it exists to fix. `_lastInteractAt` is
 	// stamped on real input; a device visible but idle past the window is not attended.
+	//
+	// The same stamp is `armIdleBound`'s clock, above -- one signal of "somebody is
+	// there", read on two different windows (90s for routing, 30 min for a
+	// turn-blocking wait), rather than two clocks that could disagree about it.
 	var _lastInteractAt = 0;
 	var ATTENDED_IDLE_MS = 90 * 1000;	// interaction older than this is not "at the device"
 	function noteInteraction() { _lastInteractAt = Date.now(); }
@@ -14873,6 +15002,9 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		['pointerdown', 'keydown', 'touchstart'].forEach(function (ev) {
 			window.addEventListener(ev, noteInteraction, { passive: true, capture: true });
 		});
+		// A visibility change -- switching back to this tab, or away from it -- is
+		// also a person doing something with the page, not a script; count it too.
+		document.addEventListener('visibilitychange', noteInteraction, { passive: true });
 	} catch (e) { /* no window: attention stays false, so a runner parks (fail-safe) */ }
 
 	/// Is a person AT this device now -- foreground and recently interacting? The
@@ -16798,9 +16930,21 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			// Where a push goes, and the token it goes with.
 			pushSection();
 
-			// The email doorbell lives in Social ▸ Settings now, beside the
-			// posting name it shares that view with -- see `DaimondDoorbell` near
-			// the `Doorbell` state object below. This drawer keeps none of it.
+			// The email doorbell and the posting name live in Social ▸ Settings,
+			// which no longer has a chip of its own: Feed took the sixth slot on
+			// 2026-09-15 and the cog is where this app keeps settings, so this row
+			// is the door. The view is unmoved -- js/improve.js's `drawSettings`
+			// still draws all of it and still calls `DaimondDoorbell.mount` with its
+			// own host -- and this drawer keeps none of it.
+			if (window.DaimondSocial && DaimondSocial.open) {
+				var ssb = item(tOr('home.social_settings', 'Social settings…'), function () {
+					closeAdmin();				// the panel is behind this drawer
+					DaimondSocial.open('settings');
+				});
+				ssb.id = 'admin-social-settings';
+				ssb.title = tOr('home.social_settings_help',
+					'The posting name this device writes under, and the email doorbell.');
+			}
 
 			// ── Syncing, and the app's own trail ──────────────────
 			//
@@ -22782,9 +22926,16 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		// waiting for the word they had in mind. Not prefilled with the first
 		// message: a Diamond's name is a decision, and offering a sentence to
 		// accept is how a rail fills up with Diamonds called "can you help me".
+		// THE NUMBER, NOT THE WORD "expire" (CHAT-11). The app knows how long a
+		// chat lives -- `DaimondPolicy` holds it, and the gateway can move it --
+		// and a sentence that says "chats expire" makes the reader guess at a
+		// figure the page is already holding. Read at open time, so a policy the
+		// gateway changed this boot is the one quoted.
+		var expireDays = 3;
+		try { expireDays = DaimondPolicy.days().expire; } catch (e) { /* no policy module: the shipped figure stands */ }
 		var name = await promptDialog(tOr('keep.title', 'Keep as a diamond'), {
 			message: tOr('keep.body',
-				'Name it, and this conversation is kept whole inside it. Chats expire; diamonds do not.'),
+				'Chats are deleted after {n} days. A diamond is kept.', { n: expireDays }),
 			value:   chat.name || '',
 			okLabel: tOr('keep.ok', 'Keep it'),
 		});
@@ -22865,12 +23016,34 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		// acts with the same button, and the menu is the last place to tell them apart.
 		head.textContent = turns ? tn('fold.n_turns_into', turns.length) : t('fold.into');
 		menu.appendChild(head);
-		if (diamonds.length === 0) {
+
+		// NEW FIRST, AND NO BUILT-IN AMONG THE TARGETS (CRY-18).
+		//
+		// The picker offered every Diamond in the rail, which on a new account is
+		// "Daimond Optimiser" and "Daimond Help" and nothing else: the first fold
+		// anybody makes was offered a choice between writing their conversation
+		// into the app's own help text and writing it into the usage reporter.
+		// Both are ordinary Diamonds and could take it, which is exactly why the
+		// offer had to go -- nothing downstream would have refused.
+		//
+		// So "New diamond…" leads, where on that account it is the only honest
+		// answer, and it stays first afterwards because it is the one entry whose
+		// position does not move as Diamonds are made and renamed.
+		var neww = document.createElement('button');
+		neww.className = 'fold-menu-item new'; neww.textContent = t('fold.new_diamond');
+		neww.addEventListener('click', function () {
+			closeFoldMenu();
+			foldChatIntoNew(chat, turns).catch(foldFailed);
+		});
+		menu.appendChild(neww);
+
+		var targets = diamonds.filter(function (f) { return !isBuiltInDiamond(f); });
+		if (targets.length === 0) {
 			var none = document.createElement('div');
 			none.className = 'fold-menu-empty'; none.textContent = t('fold.no_diamonds');
 			menu.appendChild(none);
 		}
-		diamonds.forEach(function (f) {
+		targets.forEach(function (f) {
 			var item = document.createElement('button');
 			item.className = 'fold-menu-item';
 			item.textContent = f.name;                 // escaped via textContent (H5)
@@ -22880,13 +23053,6 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			});
 			menu.appendChild(item);
 		});
-		var neww = document.createElement('button');
-		neww.className = 'fold-menu-item new'; neww.textContent = t('fold.new_diamond');
-		neww.addEventListener('click', function () {
-			closeFoldMenu();
-			foldChatIntoNew(chat, turns).catch(foldFailed);
-		});
-		menu.appendChild(neww);
 
 		document.body.appendChild(menu);
 		var r = anchor.getBoundingClientRect();
@@ -23578,12 +23744,29 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		}
 	}
 
+	/// The root's state, in a word, beside the rail's "Pause all".
+	///
+	/// The lamp answers "is anything running?" in a colour, and a colour is not an
+	/// answer to somebody who cannot see it or who has not learned which of the
+	/// three this app means. The word is the same fact in language, and it is why
+	/// the row's tooltip could come down to five words: what the control does is
+	/// on the label, what it is doing is here, and neither needs a sentence.
+	function paintGlobalState() {
+		var el = document.getElementById('pptw-global-state');
+		if (!el) return;
+		var st = 'play';
+		try { st = DaimondPause.state(DaimondPause.ROOT) || 'play'; } catch (e) { /* module not up */ }
+		el.textContent = pauseSays(st);
+		el.dataset.state = st;
+	}
+
 	/// Repaint every control on the page. A node's state is a walk of the leaves
 	/// under it and the page carries a handful of both, so this is cheap enough
 	/// to run on every announcement rather than working out who moved.
 	function repaintPause(root) {
 		var list = (root || document).querySelectorAll('.pptw');
 		for (var i = 0; i < list.length; i++) paintPause(list[i]);
+		paintGlobalState();
 	}
 
 	/// One pause control — light, pause, play — ready to place. `name` is what
@@ -23793,6 +23976,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			slot.innerHTML = '';
 			mountPause(slot, DaimondPause.ROOT, t('pause.everything'));
 		}
+		paintGlobalState();
 		// The Web panel's own leaf. Named "Web access" rather than "Web": the
 		// widget's spoken name is "Pause <name>", and what is being paused is the
 		// app's reach out of the browser, not the panel — a control announced as
@@ -24078,14 +24262,29 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		top.appendChild(x);
 		card.appendChild(top);
 
-		// ── Pause. The same widget as the rail and the tile, never a second
-		// drawing of it: two pictures of one state drift the first time either
-		// changes.
+		// ── The order, and it is the same order for a Diamond and for a chat
+		// (CRY-15): Name → Model → Colour → the act → Advanced → Delete. What a
+		// person opened the cog to CHANGE is above the fold and what they opened
+		// it to LOOK UP is behind the disclosure, so the cog means one thing
+		// whichever tile it sits on. It used to open on the pause transport and
+		// put the name — the one field anybody edits — below three model
+		// pulldowns.
+		//
+		// The advanced half is built here and appended at the END, so a section
+		// can be mounted into it from wherever it reads best above. Its own
+		// contents go in in reading order, which is why the pause section is
+		// filled in first and the name section written second.
+		var adv = advancedBox();
+
+		// ── Advanced. Running, the helper models, the triggers and the template:
+		// four things worth reaching and none worth meeting.
 		var sayPause = null;		// set only where a pause control was placed
 		if (window.DaimondPause && opts.node) {
-			card.appendChild(secHead(t('tile.dlg_running')));
+			adv.appendChild(secHead(t('tile.dlg_running')));
 			var prow = document.createElement('div');
 			prow.className = 'tile-dlg-pause';
+			// The same widget as the rail and the tile, never a second drawing of
+			// it: two pictures of one state drift the first time either changes.
 			mountPause(prow, opts.node, opts.name || '');
 			var pwords = document.createElement('span');
 			pwords.className = 'tile-dlg-pause-words';
@@ -24097,59 +24296,56 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			sayPause();
 			window.addEventListener('daimond:pause', sayPause);
 			prow.appendChild(pwords);
-			card.appendChild(prow);
+			adv.appendChild(prow);
 		}
+
+		// ── Name, first for both kinds.
+		if (opts.models === 'diamond') mountDiamondName(card, opts, h);
+		// A chat's rename used to be the tile's own double-click, which put the
+		// one gesture a chat obviously offered — pretending a throw-away
+		// conversation is a kept thing — in front of everybody. The tile now
+		// offers Keep instead, and this is the honest use: a chat somebody
+		// genuinely is coming back to tomorrow. Empty puts the derived label
+		// back rather than storing a blank name, so the field is also the undo.
+		if (opts.chat) mountChatName(card, opts.chat, h);
+
+		// ── Model. Only where the object HAS a changeable one, which today is a
+		// Diamond: notes2 fixes a chat's models at creation and this dialog is not
+		// the place to quietly overturn that. The daimon's model stays here; the
+		// helper and images models go into `adv`, because they are answers to
+		// "what do the workers run on", which nobody asks on the way past.
+		if (opts.models === 'diamond') mountDiamondModels(card, adv, opts);
 
 		// ── Colour, which the tile takes at once and the Graph takes with it.
 		mountTileColour(card, opts);
 
-		// ── A plain rename, for a Diamond, HERE IN THE DIALOG as well as the row's
-		// own double-click. RAIL-06: a rename that only works if you happen to
-		// double-click the right label is not a rename anybody can find, and the
-		// cog is where the rest of what a Diamond can be asked to do already
-		// lives.
-		if (opts.models === 'diamond') mountDiamondName(card, opts, h);
-
-		// ── Models. Only where the object HAS changeable models, which today is a
-		// Diamond: notes2 fixes a chat's models at creation and this dialog is not
-		// the place to quietly overturn that.
-		if (opts.models === 'diamond') mountDiamondModels(card, opts);
-
-		// ── Context. Only for a chat, which is the only thing here that HAS a durable
-		// conversation to fold; a Diamond's daimon has one from phase E.
-		if (opts.chat) mountContextSection(card, opts.chat);
+		// ── Giving this Diamond to somebody, for a Diamond. Above the fold and
+		// not inside it: a share is a thing a person came here to DO, and the
+		// template below — the shape of it without the contents — is where they
+		// go when there is nobody to send to.
+		if (opts.models === 'diamond') mountShare(card, opts);
 
 		// ── The two ways to turn a chat into a Diamond (CHAT-15), moved off the
-		// row and into the cog: see `mountChatFoldKeep`.
+		// row and into the cog: see `mountChatFoldKeep`. Acts, so they sit beside
+		// Share rather than under Advanced.
 		if (opts.chat) mountChatFoldKeep(card, opts.chat);
 
-		// ── A plain rename, for a chat, HERE AND NOWHERE ELSE.
-		//
-		// It used to be the tile's own double-click, which put it in front of
-		// everybody: the one gesture a chat obviously offered was the one that
-		// pretends a throw-away conversation is a kept thing. The tile now offers
-		// Keep as a Diamond instead. This survives because it costs three lines
-		// and because there are honest uses for it -- a chat somebody genuinely
-		// is coming back to tomorrow -- but it lives two clicks in, behind a cog,
-		// below the context section, which is where a rarely-right act belongs.
-		//
-		// Empty puts the derived label back rather than storing a blank name, so
-		// the field is also the way to UNDO a name.
-		if (opts.chat) mountChatName(card, opts.chat, h);
+		// ── Context. Only for a chat, which is the only thing here that HAS a durable
+		// conversation to fold; a Diamond's daimon has one from phase E. A reading,
+		// so it belongs with the rest of what is looked up rather than changed.
+		if (opts.chat) mountContextSection(adv, opts.chat);
 
 		// ── Triggered actions, for a Diamond.
-		if (opts.models === 'diamond') mountTriggers(card, opts);
-
-		// ── Giving this Diamond to somebody, for a Diamond. ABOVE the template,
-		// because a share is the thing a person came here to do and a template is
-		// the shape of it: the sheet's own "the shape only" is the door between the
-		// two, and the section below is what to do when there is nobody to send to.
-		if (opts.models === 'diamond') mountShare(card, opts);
+		if (opts.models === 'diamond') mountTriggers(adv, opts);
 
 		// ── A template of this Diamond, for a Diamond. BELOW the triggers, because
 		// the section immediately above is the one thing a template deliberately
 		// leaves behind, and reading them in that order is the explanation.
-		if (opts.models === 'diamond') mountTemplate(card, opts);
+		if (opts.models === 'diamond') mountTemplate(adv, opts);
+
+		// Nothing to disclose, no disclosure: an empty "Advanced" is a control
+		// that teaches people not to press the next one.
+		if (adv.childNodes.length > 1) card.appendChild(adv);
 
 		// ── The foot, which is now Delete and nothing else. Done has become the
 		// closer cross above, so the destructive act no longer shares a row with
@@ -24158,7 +24354,11 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		row.className = 'dlg-actions tile-dlg-foot';
 		var del = document.createElement('button');
 		del.type = 'button';
-		del.className = 'dlg-ok danger tile-dlg-delete';
+		// PLAIN, not the red pill it was (CRY-15). A Diamond deleted here goes to
+		// the trash and can be restored, so the loudest control in the dialog was
+		// the most reversible thing in it; the weight belongs on what the person
+		// came to change. What it does, and whether it asks first, is unchanged.
+		del.className = 'dlg-ok tile-dlg-delete';
 		del.textContent = t('tile.dlg_delete');
 		row.appendChild(del);
 		card.appendChild(row);
@@ -25078,21 +25278,21 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 	///   * **The vision worker** is the second half of the same setting, keyed by
 	///     modality. Empty means "use the text model", which is a real answer rather than
 	///     a missing one.
-	function mountDiamondModels(card, opts) {
+	function mountDiamondModels(card, adv, opts) {
 		if (!window.DaimondModels) return;
 		card.appendChild(secHead(t('tile.dlg_models')));
 
 		var rec = diamondModels()[opts.id] || {};
 		var own = diamondModel(opts.id);
 
-		/// One labelled pulldown. `onPick` gets `{provider, model}`.
+		/// One labelled pulldown, on `host`. `onPick` gets `{provider, model}`.
 		///
 		/// The label is a `<label>`, not a `.tile-model-chip`. That class is what a
 		/// model NAME is drawn in on the tile — a mono pill with a border — so
 		/// wearing it here made three form labels look like three values, which is
 		/// the "rushed" the author was pointing at. It also earns the click: the
 		/// word now focuses the control it names.
-		function row(labelKey, helpKey, provider, model, allowNone, onPick) {
+		function row(host, labelKey, helpKey, provider, model, allowNone, onPick) {
 			var r = document.createElement('div');
 			r.className = 'tile-dlg-field tile-dlg-model';
 			var lab = document.createElement('label');
@@ -25120,7 +25320,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 				onPick({ provider: p.provider || '', model: p.model || '' }, sel);
 			});
 			r.appendChild(lab); r.appendChild(sel);
-			card.appendChild(r);
+			host.appendChild(r);
 			return sel;
 		}
 
@@ -25138,7 +25338,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		change.hidden = true;
 		var pendingPick = null;			// the pick awaiting a Change press, or null when it matches
 
-		var daimonSel = row('tile.model_daimon', 'tile.model_daimon_help',
+		var daimonSel = row(card, 'tile.model_daimon', 'tile.model_daimon_help',
 			own.provider, own.model, false, function (p) {
 				// The pulldown only relabels the button; the switch itself waits for Change.
 				var plan = DaimondModels.planModelSwitch(diamondModel(opts.id), p, 0);
@@ -25204,14 +25404,21 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		// Thinking and Daimond tile headers, so a button to force a fresh start was
 		// redundant. `mountDaimonReset` is left defined but no longer mounted.
 
-		// ── The workers, text.
-		row('tile.model_workers', 'tile.worker_model_help',
+		// ── The helpers, text and images, BEHIND THE DISCLOSURE (CRY-15).
+		//
+		// They are a different question from the one above it. The daimon's model
+		// is what this Diamond thinks with and is changed deliberately; these two
+		// say what the workers it dispatches run on, which most people never set
+		// and nobody sets on the way past. Their own heading, so the fold does not
+		// open onto two unlabelled pulldowns.
+		var host = adv || card;
+		host.appendChild(secHead(t('tile.dlg_workers')));
+		row(host, 'tile.model_workers', 'tile.worker_model_help',
 			rec.workerProvider || own.provider, rec.workerModel || '', true, function (p) {
 				setDiamondModel(opts.id, { workerProvider: p.provider, workerModel: p.model });
 			});
 
-		// ── The workers, vision.
-		row('tile.model_vision', 'tile.model_vision_help',
+		row(host, 'tile.model_vision', 'tile.model_vision_help',
 			rec.visionProvider || '', rec.visionModel || '', true, function (p) {
 				setDiamondModel(opts.id, { visionProvider: p.provider, visionModel: p.model });
 			});
@@ -25219,7 +25426,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		var note = document.createElement('div');
 		note.className = 'tile-dlg-note';
 		note.textContent = t('tile.model_note');
-		card.appendChild(note);
+		host.appendChild(note);
 		return daimonSel;
 	}
 
@@ -25656,13 +25863,65 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		return d;
 	}
 
+	/// The collapsed half of a tile dialog (CRY-15): what a reader looks up
+	/// rather than what they came to change.
+	///
+	/// A real `<details>`, so the open state, the keyboard route and the
+	/// disclosure triangle are the browser's and nothing here has to draw them.
+	/// It is returned DETACHED and the caller appends it, which is what lets a
+	/// section be mounted into it from wherever it reads best in the order
+	/// above -- and what lets an empty one be dropped rather than offered.
+	function advancedBox() {
+		var d = document.createElement('details');
+		d.className = 'tile-dlg-adv';
+		var sum = document.createElement('summary');
+		// `tile-dlg-head` as well as its own class: it IS a section heading, and
+		// the rest of the dialog's headings are drawn by that rule.
+		sum.className = 'tile-dlg-head tile-dlg-adv-sum';
+		sum.textContent = tOr('tile.dlg_advanced', 'Advanced');
+		d.appendChild(sum);
+		return d;
+	}
+
 	/// Escape an id for use inside an attribute selector. Chat and Diamond ids
 	/// are generated, but a quote in one would otherwise break the selector.
 	function cssId(id) { return String(id == null ? '' : id).replace(/["\\]/g, '\\$&'); }
 
+	/// WHICH LIST HOLDS THE FOCUS -- 'chats' or 'diamonds'.
+	///
+	/// The rail draws two selections and only one of them is what the Centre is
+	/// showing. Both used to take the accent, so two rows read as "current" at
+	/// once and nothing on screen said which of them the panel beside them
+	/// belonged to. `centreMode` already knows: the chat face is the chat's, and
+	/// both of a Diamond's faces -- its crystal and its daimon's conversation --
+	/// are the Diamond's.
+	function railFocus() { return centreMode === 'chat' ? 'chats' : 'diamonds'; }
+
+	/// Paint one row of either list. THE ONE PLACE THE ACCENT IS DECIDED.
+	///
+	/// The audit found a Diamond and a chat wearing the accent border at the same
+	/// time, so two rows read as "current" and nothing said which of them the
+	/// Centre belonged to. The cause is not that the app holds two selections at
+	/// once -- it does not, `selectChat` clears `currentDiamond` and `selectDiamond`
+	/// points `current` at the daimon's own conversation, which has no tile -- but
+	/// that each list cleared only its OWN accent. Select a Diamond, then a chat,
+	/// and the Diamond's row kept a class nobody came back for.
+	///
+	/// So the two painters are run together, from the face switch (`showCentre`),
+	/// which every route to either selection passes through. `aria-current` follows
+	/// the accent, since a screen reader offered two current items is in the
+	/// position the eye was.
+	function paintRailRow(box, chosen, focused) {
+		var on = !!chosen && focused;
+		box.classList.toggle('active', on);
+		if (on) box.setAttribute('aria-current', 'true');
+		else box.removeAttribute('aria-current');
+	}
+
 	function updateActiveSession() {
+		var focused = railFocus() === 'chats';
 		sessionList.querySelectorAll('.session-box').forEach(function (box) {
-			box.classList.toggle('active', current && box.dataset.id === current.id);
+			paintRailRow(box, current && box.dataset.id === current.id, focused);
 		});
 	}
 
@@ -26072,7 +26331,9 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 	function sessionBox(s) {
 		var status = s.status || 'active';
 		var box = document.createElement('div');
-		box.className = 'session-box chat-box ' + status + (current && s.id === current.id ? ' active' : '');
+		// The row's selected look is `paintRailRow`'s alone, so there is one place
+		// that decides which of the rail's two lists wears the accent.
+		box.className = 'session-box chat-box ' + status;
 		box.dataset.id = s.id;
 		// How much of itself this tile draws, which is the global view and the
 		// CSS is what acts on it.
@@ -40221,44 +40482,14 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		railFurnitureChanged();
 	}
 
-	/// Does any Diamond carry any tag at all?
-	function anyTagged() {
-		return diamonds.some(function (f) { return tagsOf(f).length > 0; });
-	}
-
-	/// The rail's honest empty state for tags.
-	///
-	/// Every tag chip in the rail is drawn from a Diamond, so a store with no tag
-	/// on anything draws no chip anywhere and the rail head has nothing under it --
-	/// which reads as a filing system that was removed rather than one that is
-	/// empty. Say which, in one quiet line, and take it away the moment a tag
-	/// exists -- which is the moment the standing pool takes its place. It sits
-	/// beside the pool rather than inside it: a pool chip's text is read as a
-	/// tag name, and a sentence in there would be read as one.
-	function renderTagHint() {
-		if (!diamondFilter || !diamondFilter.parentNode) return;
-		var hint = document.getElementById('diamond-tag-hint');
-		var was  = !!hint && hint.style.display !== 'none';   // on screen a moment ago
-		var want = diamonds.length > 0 && !anyTagged();
-		if (!want) {
-			if (hint) hint.style.display = 'none';
-			if (was) railFurnitureChanged();
-			return;
-		}
-		if (!hint) {
-			hint = document.createElement('div');
-			hint.id = 'diamond-tag-hint';
-			hint.className = 'rail-tag-hint';
-			diamondFilter.parentNode.insertBefore(hint, diamondFilter.nextSibling);
-		}
-		hint.textContent = t('rail.tag_hint');
-		// Where to go and what is waiting there, for the reader who wants it.
-		// The starter tags are named from the list itself, so a translated hint
-		// cannot promise chips in words the pool does not offer.
-		hint.title = t('rail.tag_hint_help', { tags: starterTags().join(', ') });
-		hint.style.display = '';
-		if (!was) railFurnitureChanged();
-	}
+	// 2026-09-15: the standing tag hint is gone, and with it `anyTagged`, which
+	// had no other caller. A line reading "No tags yet. Tag a diamond and filter
+	// chips appear here." was drawn under the Diamonds head on every account that
+	// had not tagged anything, behind a seventeen-word tooltip. It was written so
+	// that an empty pool would not read as a filing system somebody had removed --
+	// but the pool is not drawn when it is empty either, so there was nothing to
+	// misread, and what stood was an instruction to use a feature, paid for in
+	// rail height taken off the Chats list. Chips appear when tags exist.
 
 	/// The rail's two lists share what the furniture above them leaves, and a line
 	/// appearing or going takes that height off the Chats list alone. Say what a
@@ -40272,10 +40503,49 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		try { if (window.DaimondPanels) DaimondPanels.reflow(); } catch (e) { /* the layout is not up yet */ }
 	}
 
+	/// Is this one of the two Diamonds every account is seeded with?
+	///
+	/// Asked by id AND by name. The id is the honest answer -- `DEFAULT_IDS` fixes
+	/// one per name so two devices seed one object -- but an account seeded by an
+	/// engine too old to export `create_diamond_at` got a minted id, and those
+	/// accounts exist. The name is what identifies them there, and it is also the
+	/// key `seedDefaultDiamonds` de-duplicates on, so the two agree.
+	function isBuiltInDiamond(f) {
+		if (!f) return false;
+		for (var n in DEFAULT_IDS) if (DEFAULT_IDS[n] === f.id) return true;
+		return Object.prototype.hasOwnProperty.call(DEFAULT_IDS, f.name);
+	}
+
+	// Whether the built-in group is open, per DEVICE. It is a fact about a screen
+	// -- a rail that is 300px tall wants it shut and a tall one may not -- and it
+	// must not travel in the parcel and reopen on the phone.
+	var BUILTIN_OPEN_KEY = 'daimond-builtin-open';
+
+	/// The built-ins, folded away at the foot of the Diamonds list.
+	///
+	/// A `<details>` rather than a div and a class: the disclosure triangle, the
+	/// keyboard route and the announced expanded/collapsed state all come with the
+	/// element, and every one of them would otherwise have to be built and then
+	/// kept right.
+	function builtInGroup(list) {
+		var d = document.createElement('details');
+		d.className = 'rail-builtin';
+		try { d.open = localStorage.getItem(BUILTIN_OPEN_KEY) === '1'; }
+		catch (e) { /* storage blocked: shut, which is the default anyway */ }
+		d.addEventListener('toggle', function () {
+			try { localStorage.setItem(BUILTIN_OPEN_KEY, d.open ? '1' : '0'); }
+			catch (e) { /* quota: the choice holds for this session */ }
+		});
+		var sum = document.createElement('summary');
+		sum.textContent = t('rail.builtin');
+		d.appendChild(sum);
+		list.forEach(function (f) { d.appendChild(diamondBox(f)); });
+		return d;
+	}
+
 	function renderDiamondList() {
 		diamondList.innerHTML = '';
 		renderTagFilter();
-		renderTagHint();
 		if (diamonds.length === 0) {
 			var note = document.createElement('div');
 			note.className = 'rail-note';
@@ -40294,7 +40564,33 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			repaintPause();
 			return;
 		}
-		shown.forEach(function (f) { diamondList.appendChild(diamondBox(f)); });
+		// THE TWO BUILT-INS GO TO THE FOOT, IN A GROUP THAT STARTS SHUT (RAIL-07).
+		//
+		// Every account is seeded "Daimond Help" and "Daimond Optimiser" -- they are
+		// features, not decoration, and `seedDefaultDiamonds` says why nobody is
+		// allowed to opt out of being offered them. But a person who has just
+		// arrived meets a rail whose whole contents are two objects they did not
+		// make, one of them wearing a play, a pause and a traffic light, before
+		// they own anything at all.
+		//
+		// A disclosure answers both. They stay in the list, in the DOM, in the
+		// pause tree, with their tiles and their controls exactly as they were --
+		// `verify_defaults` still finds them in the store and `verify_optimiser`
+		// still drives the tile -- but they are behind one word at the bottom
+		// instead of in front of the first thing the eye reaches, and the
+		// transport controls on the Optimiser's tile are not on the first screen.
+		var mine = [], built = [];
+		shown.forEach(function (f) { (isBuiltInDiamond(f) ? built : mine).push(f); });
+		mine.forEach(function (f) { diamondList.appendChild(diamondBox(f)); });
+		// An account whose only Diamonds are the built-ins has made none, and the
+		// rail should say so rather than look like a list that failed to draw.
+		if (!mine.length) {
+			var own = document.createElement('div');
+			own.className = 'rail-note';
+			own.textContent = t('rail.no_diamonds');
+			diamondList.appendChild(own);
+		}
+		if (built.length) diamondList.appendChild(builtInGroup(built));
 		updateActiveDiamond();
 		// A Diamond appearing or going moves the root and the section above it,
 		// and neither of those lights is rebuilt here.
@@ -40405,9 +40701,11 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 	}
 
 	function diamondBox(f) {
-		var active = currentDiamond && f.id === currentDiamond.id;
 		var box = document.createElement('div');
-		box.className = 'session-box diamond-box' + (active ? ' active' : '');
+		// As on a chat tile: `paintRailRow` is the one place that decides which of
+		// the rail's two selections wears the accent, and `renderDiamondList` calls
+		// it through `updateActiveDiamond` once the list is built.
+		box.className = 'session-box diamond-box';
 		box.dataset.id = f.id;
 		// How much of itself this tile draws — the global view sets it.
 		box.dataset.detail = tileDetail();
@@ -40420,7 +40718,6 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		box.setAttribute('role', 'button');
 		box.setAttribute('tabindex', '0');
 		box.setAttribute('aria-label', f.name || t('rail.unnamed_diamond'));
-		if (active) box.setAttribute('aria-current', 'true');
 		box.addEventListener('keydown', function (e) {
 			if (e.key !== 'Enter' && e.key !== ' ') return;
 			// Not when the press belongs to something inside the row -- the cog,
@@ -40637,8 +40934,9 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 	}
 
 	function updateActiveDiamond() {
+		var focused = railFocus() === 'diamonds';
 		diamondList.querySelectorAll('.diamond-box').forEach(function (box) {
-			box.classList.toggle('active', currentDiamond && box.dataset.id === currentDiamond.id);
+			paintRailRow(box, currentDiamond && box.dataset.id === currentDiamond.id, focused);
 		});
 	}
 
@@ -40732,6 +41030,11 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			if (cb) cb.setAttribute('aria-pressed', crystalOn ? 'true' : 'false');
 			if (hb) hb.setAttribute('aria-pressed', crystalOn ? 'false' : 'true');
 		}
+		// The face decides which of the rail's two selections wears the accent, so
+		// both lists are repainted here rather than only where a row is clicked --
+		// the face also changes from the view switch, from a fold and from a link.
+		try { updateActiveDiamond(); updateActiveSession(); }
+		catch (e) { /* the lists are not built at first paint */ }
 	}
 
 	/// Show one mail message on the stage, beside the chat — so it can be read
@@ -41286,11 +41589,22 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			title: t('rail.new_diamond'),
 			okLabel: t('rail.create'),
 			fields: [
-				{ name: 'name',  label: t('rail.name'),  value: peekDiamondLabel() },
+				// EMPTY, with the question as its placeholder (CRY-14). It used to
+				// open pre-filled with "diamond-0007", which is a name nobody chose
+				// and which a person accepts because it is already there -- and a
+				// rail of numbered Diamonds is a rail nobody can read. The number is
+				// still the answer for somebody who leaves it blank, taken below;
+				// what changed is that it stopped being the SUGGESTION.
+				{ name: 'name',  label: t('rail.name'), value: '',
+					placeholder: t('rail.name_hint') },
 				{ name: 'model', label: t('rail.model'), kind: 'models', provider: d.provider, value: d.model },
-				// Below the model, because it is a second decision about money: this Diamond's
-				// daimon dispatches workers, and a fan-out is several turns at once.
+				// BEHIND THE DISCLOSURE (CRY-14). It is a second decision about money
+				// -- this Diamond's daimon dispatches workers and a fan-out is several
+				// turns at once -- but it is not one anybody takes at creation, and two
+				// model pulldowns in a dialog that exists to name a thing is the dialog
+				// asking its least important question at the same rank as its first.
 				{ name: 'workerModel', label: t('rail.worker_model'), kind: 'models',
+					advanced: true,
 					title: t('rail.worker_model_help'), provider: d.provider, value: d.model },
 			],
 			// The worker pulldown follows the Diamond's own model until the user moves it
@@ -41307,7 +41621,9 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 				});
 			},
 			validate: function (v) {
-				if (!v.name) return t('rail.err_name');
+				// NO name check: blank is legal and takes the sequential default
+				// below. `rail.err_name` stays for the rename paths, which do have
+				// to refuse an empty answer -- there is nothing to fall back to.
 				if (!v.model || !v.model.model) return t('rail.err_model');
 				if (!DaimondModels.resolve(v.model.provider, v.model.model)) {
 					return t('rail.err_no_key');
@@ -41322,7 +41638,10 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			},
 		});
 		if (!vals) return;
-		var name = vals.name.trim();
+		// The sequential name is the FALLBACK now, not the offer: somebody who
+		// had no word in mind still gets a Diamond with a name on it, and the
+		// counter is still only burned once one really exists (`takeDiamondLabel`).
+		var name = vals.name.trim() || peekDiamondLabel();
 
 		var id;
 		try {

@@ -308,7 +308,7 @@
 	border-top: 1px solid var(--border);
 	color: var(--text-muted);
 	font-size: var(--fs-2xs);
-	font-family: var(--font-mono);
+	font-family: var(--font);
 }
 /* The stats line is the panel's foot, not part of what scrolls. */
 .graph-body > .graph-stats { position: sticky; bottom: 0; background: var(--bg-secondary); }

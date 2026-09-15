@@ -132,34 +132,25 @@
 				<svg class="ic ic-refresh" viewBox="0 0 24 24" aria-hidden="true"><path d="M20 11a8 8 0 10-.6 4"/><path d="M20 4v5h-5"/></svg>
 				<svg class="ic ic-check" viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12.5l4.5 4.5L19 7"/></svg>
 			</button>
-			<!-- About, in the slot the maker's badge held. The badge said who made
-			     Daimond and how, in a 36px lozenge with two invisible hit areas
-			     over it: two claims that nobody could read and that a phone dropped
-			     entirely. Both survive, in the dialog this opens, where each has
-			     room to be a sentence.
-
-			     The glyph is an "i" in a circle, which is what "about" is drawn as
-			     everywhere. The guide button beside it is a "?" in a circle, so the
-			     two are deliberately separated by where the dot sits: the "i" wears
-			     its dot on TOP of the stem, the "?" underneath its hook. Two
-			     buttons in one row that read the same are two buttons that do the
-			     same thing, as far as the user is concerned. -->
-			<button class="icon-btn" id="about-btn" title="About Daimond" aria-label="About Daimond"
-				data-i18n-title="topbar.about" data-i18n-aria-label="topbar.about">
-				<!-- The dot is r=1.2 and not the "?"'s r=0.6, and the stem starts 2.4
-				     units below it. At 18px that is the difference between a dotted
-				     "i" and a plain vertical bar: 8x crops of both glyphs were read
-				     side by side, and the first attempt's r=0.6 dot merged into the
-				     stem at every size the bar draws. -->
-				<svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9"/><circle cx="12" cy="7.4" r="1.2" fill="currentColor" stroke="none"/><path d="M12 11.6v5"/></svg>
-			</button>
-			<button class="icon-btn" id="guide-btn" title="Open the user guide" aria-label="User guide" data-i18n-title="topbar.guide" data-i18n-aria-label="topbar.guide_short">
-				<svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M9.2 9.3a2.8 2.8 0 115.3 1.2c-.4.9-1.5 1.3-2 2-.3.4-.3.9-.3 1.5"/><circle cx="12" cy="17.4" r="0.6" fill="currentColor" stroke="none"/></svg>
+			<!-- Help: About and the guide, merged. Both were a circled glyph with
+			     no word beside it, and both answer the same kind of question --
+			     "what is this" -- so one control opening a two-row menu is a
+			     single decision where there were two. On a phone the same
+			     control also takes in Settings and Link device (see
+			     js/workspace.js foldOverflow), which is why its icon has a
+			     second face: a "?" for Help alone, three dots once it is
+			     standing in for the whole overflow. -->
+			<button class="icon-btn menu-btn" id="help-btn" title="Help" aria-label="Help"
+				aria-haspopup="menu" aria-expanded="false" aria-controls="help-menu"
+				data-i18n-title="topbar.help" data-i18n-aria-label="topbar.help">
+				<svg class="ic ic-help" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M9.2 9.3a2.8 2.8 0 115.3 1.2c-.4.9-1.5 1.3-2 2-.3.4-.3.9-.3 1.5"/><circle cx="12" cy="17.4" r="0.6" fill="currentColor" stroke="none"/></svg>
+				<svg class="ic ic-more" viewBox="0 0 24 24" aria-hidden="true"><circle cx="5" cy="12" r="1.7" fill="currentColor" stroke="none"/><circle cx="12" cy="12" r="1.7" fill="currentColor" stroke="none"/><circle cx="19" cy="12" r="1.7" fill="currentColor" stroke="none"/></svg>
 			</button>
 			<button class="icon-btn menu-btn" id="settings-menu-btn" title="Appearance and layout"
 				aria-label="Appearance and layout" aria-haspopup="menu" aria-expanded="false" aria-controls="settings-menu"
 				data-i18n-title="topbar.appearance" data-i18n-aria-label="topbar.appearance">
 				<svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h10M18 7h2M4 17h2M10 17h10"/><circle cx="16" cy="7" r="2.2"/><circle cx="8" cy="17" r="2.2"/></svg>
+				<span class="btn-label" data-i18n="topbar.appearance">Settings</span>
 			</button>
 			<!-- Full screen: PHONE ONLY, and only where the browser offers the
 			     Fullscreen API. Firefox on Android will not install the PWA
@@ -184,6 +175,32 @@
 
 	<!-- Appearance and layout: theme, reading size, dock tiling. -->
 	<div class="pop" id="settings-menu" hidden role="dialog" aria-label="Appearance and layout" data-i18n-aria-label="topbar.appearance"></div>
+
+	<!-- Help: Guide and About, TOP-03's merge of the header's two "what is
+	     this" buttons into one. Below 760px js/workspace.js's foldOverflow
+	     also parks Settings and Link device in here, moving the real buttons
+	     rather than building copies, so each keeps the one click handler
+	     daimond.js, workspace.js or pairing.js already gave it. -->
+	<div class="pop" id="help-menu" hidden role="dialog" aria-label="Help" data-i18n-aria-label="topbar.help">
+		<!-- The glyph is an "i" in a circle, which is what "about" is drawn as
+		     everywhere. Guide is a "?" in a circle, so the two are deliberately
+		     separated by where the dot sits: the "i" wears its dot on TOP of
+		     the stem, the "?" underneath its hook. -->
+		<button class="icon-btn" id="about-btn" role="menuitem" title="About Daimond" aria-label="About Daimond"
+			data-i18n-title="topbar.about" data-i18n-aria-label="topbar.about">
+			<!-- The dot is r=1.2 and not the "?"'s r=0.6, and the stem starts 2.4
+			     units below it. At 18px that is the difference between a dotted
+			     "i" and a plain vertical bar: 8x crops of both glyphs were read
+			     side by side, and the first attempt's r=0.6 dot merged into the
+			     stem at every size the bar draws. -->
+			<svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9"/><circle cx="12" cy="7.4" r="1.2" fill="currentColor" stroke="none"/><path d="M12 11.6v5"/></svg>
+			<span class="btn-label" data-i18n="topbar.about_label">About</span>
+		</button>
+		<button class="icon-btn" id="guide-btn" role="menuitem" title="Open the user guide" aria-label="User guide" data-i18n-title="topbar.guide" data-i18n-aria-label="topbar.guide_short">
+			<svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M9.2 9.3a2.8 2.8 0 115.3 1.2c-.4.9-1.5 1.3-2 2-.3.4-.3.9-.3 1.5"/><circle cx="12" cy="17.4" r="0.6" fill="currentColor" stroke="none"/></svg>
+			<span class="btn-label" data-i18n="topbar.guide">Guide</span>
+		</button>
+	</div>
 	<!-- The permission ladder. A `.pop`, like the appearance menu and the panel
 	     gallery, so Escape and a click outside dismiss it exactly as they do —
 	     and a radio group inside, so the arrow keys work without a line of code. -->
@@ -229,7 +246,15 @@
 				     The control itself is built in daimond.js, which owns the DOM. -->
 				<div class="pptw-head" id="pptw-global-row">
 					<span class="pptw-slot" id="pptw-global"></span>
-					<span class="pptw-head-label" title="Pause or resume everything that can spend: every diamond, every chat, the workers, the mailboxes and any page fetched for you." data-i18n="pause.everything" data-i18n-title="pause.everything_help">Everything</span>
+					<!-- NAMED FOR WHAT PRESSING IT DOES, and followed by the word for
+					     what it is doing now. It said "Everything", which names the
+					     scope and leaves the act to be guessed from two glyphs, and
+					     carried a twenty-one word tooltip to make up for it. The
+					     state word is the lamp's colour said in language: the lamp
+					     is the glance and the word is the answer, and a screen
+					     reader gets both without a colour it cannot see. -->
+					<span class="pptw-head-label" title="Pause everything that can spend." data-i18n="pause.all" data-i18n-title="pause.everything_help">Pause all</span>
+					<span class="pptw-head-state" id="pptw-global-state"></span>
 					<!-- The rail's closer, and it is the RAIL it closes. It stood on the
 					     Diamonds head below, in the run of buttons that make a Diamond
 					     and draw the graph, where it read as the closer of that section:
@@ -251,10 +276,15 @@
 				     is cut and polished above it. The order is not decoration --
 				     a chat is raw and a Diamond is worked, and the rail says so
 				     without needing a word of explanation. -->
-				<div class="railhead"><span role="heading" aria-level="2" title="A repeatable method, distilled from a conversation." data-i18n="rail.diamonds" data-i18n-title="rail.diamonds_help">diamonds</span>
-					<button class="addbtn" id="new-diamond-btn" title="New diamond" data-i18n-title="rail.new_diamond">
-						<svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>
-					</button>
+				<div class="railhead"><span role="heading" aria-level="2" title="Your saved projects" data-i18n="rail.diamonds" data-i18n-title="rail.diamonds_help">diamonds</span>
+					<!-- IT SAYS WHAT IT MAKES. The Diamonds head and the Chats head
+					     each carried the same 22px "+" and the same plus glyph, so the
+					     rail's two most-used controls were indistinguishable at a
+					     glance and told apart only by which row the eye had landed on.
+					     A word is shorter to read than a row is to locate, and it
+					     takes the tooltip with it: a button whose label is its own
+					     name needs no second copy of that name on hover. -->
+					<button class="addbtn railbtn" id="new-diamond-btn" data-i18n="rail.new_diamond">New diamond</button>
 					<!-- The Diamonds and the links between them, drawn. It belongs on
 					     the rail head because the rail is the list the picture is of.
 					     It TOGGLES the Graph rather than only opening it, so it is a
@@ -292,10 +322,9 @@
 				     list used to grow until the chat tiles were off the bottom of the
 				     rail with no way to get them back. -->
 				<div class="rhandle" id="handle-rail-split" title="Drag to resize, double-click to reset" data-i18n-title="layout.handle"></div>
-				<div class="railhead"><span role="heading" aria-level="2" title="Raw conversation. A diamond is cut from it." data-i18n="rail.chats" data-i18n-title="rail.chats_help">Chats</span>
-					<button class="addbtn" id="new-session-btn" title="New chat" data-i18n-title="rail.new_chat">
-						<svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>
-					</button>
+				<div class="railhead"><span role="heading" aria-level="2" title="Your conversations" data-i18n="rail.chats" data-i18n-title="rail.chats_help">Chats</span>
+					<!-- Its opposite number on the Diamonds head; see the note there. -->
+					<button class="addbtn railbtn" id="new-session-btn" data-i18n="rail.new_chat">New chat</button>
 					<!-- The section's own overflow, for an act that is about every chat
 					     rather than one -- "Delete all chats" lives behind this, not
 					     beside the "+" above. A cross next to "+" would have been a
@@ -1275,12 +1304,26 @@
 					     this project's signature failure and it had shipped three times
 					     before this one. Beside People because a share goes TO somebody,
 					     and the same projection names them in both. -->
+					<!-- FEED, the followers-only one: what this account writes to the
+					     people it has approved, and what the people it follows have
+					     written. It is the one thing this panel carries that is NOT
+					     sealed — a post is stored on the gateway in the clear, shown to
+					     the approved followers and to nobody else, readable by the
+					     operator for a report, and deletable. js/feed.js owns the inside
+					     of its list and says all of that on the screen, because there is
+					     no seal to point at.
+
+					     IT TOOK SETTINGS' SLOT rather than becoming a seventh chip:
+					     seven blanks or crowds a 390px dock, and the posting name and
+					     the doorbell are settings, so they are reached from the header
+					     cog now (js/daimond.js, "Social settings…"). The view itself is
+					     unmoved and is still `#social-settings`. -->
+					<button type="button" class="imp-chip" data-view="feed" aria-pressed="false" data-i18n="feed.chip">Feed</button>
 					<button type="button" class="imp-chip" data-view="share" aria-pressed="false" data-i18n="social.share">Share</button>
 					<!-- FEEDBACK, in the markup and the catalogue's VALUE only: the view
 					     id stays `proposals` and the i18n key stays `social.proposals` --
 					     a verifier names both -- and only the word a reader sees changed. -->
 					<button type="button" class="imp-chip" data-view="proposals" aria-pressed="false" data-i18n="social.proposals">Feedback</button>
-					<button type="button" class="imp-chip" data-view="settings" aria-pressed="false" data-i18n="social.settings">Settings</button>
 					<!-- What this panel is, in the guide. The one circled "i" this app
 					     draws -- the same path as the top bar's About button, because
 					     two information marks drawn differently are two marks the
@@ -1347,6 +1390,15 @@
 			     post.js hands over, moved rather than copied. -->
 			<div class="imp-view" id="social-groups" hidden>
 				<div class="imp-list" id="social-groups-list"></div>
+			</div>
+
+			<!-- The feed. js/feed.js OWNS the inside of this list and clears it on
+			     every redraw, exactly as post.js owns the messages list above. The
+			     head, the chip and the empty line are the panel's; everything below
+			     the line is that lane's. -->
+			<div class="imp-view" id="social-feed" hidden>
+				<div class="rail-note imp-off" id="social-feed-off" data-i18n="feed.off">The feed is not switched on in this build.</div>
+				<div class="imp-list" id="social-feed-list"></div>
 			</div>
 
 			<!-- js/share.js OWNS the inside of this list and clears it on every
@@ -1769,6 +1821,11 @@
      they travel under and the region it draws into. It holds no storage of its
      own and no seal of its own. -->
 <script src="js/group.js"></script>
+<!-- feed.js AFTER post.js, whose record holds its marks, whose `call` is the
+     one relay door it uses and whose tray draws the follow requests it answers.
+     It holds no storage of its own and no seal of any kind: a feed post is
+     stored on the gateway in the clear. -->
+<script src="js/feed.js"></script>
 <!-- report.js and share.js AFTER post.js, which holds the messages the one
      reports on and the seal the other borrows. Both couple to post.js through
      one delegated listener each and touch none of its DOM, so the order is

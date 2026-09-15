@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
-<title>Chats &amp; diamonds &mdash; Daimond guide</title>
+<title>チャットと diamond &mdash; Daimond ユーザーガイド</title>
 <link rel="icon" type="image/svg+xml" href="../../assets/daimond_mark.svg">
 <link rel="stylesheet" href="../../css/variables.css">
 <link rel="stylesheet" href="../../css/guide.css">
@@ -24,12 +24,12 @@
 			<a href="index.html">ここから始める</a>
 			<a href="interface.html">インターフェース</a>
 			<a href="chats-and-diamonds.html" aria-current="page">チャットと diamond</a>
-			<a href="../capps.html">diamond のページ</a>
+			<a href="capps.html">diamond のページ</a>
 			<a href="email-web-files.html">ファイル、メール、ウェブ</a>
-			<a href="../machine-operations.html">あなたのコンピューター</a>
-			<a href="../runner.html">ヘルパーとターンの実行場所</a>
+			<a href="machine-operations.html">あなたのコンピューター</a>
+			<a href="runner.html">ヘルパーとターンの実行場所</a>
 			<a href="sync.html">複数の端末</a>
-			<a href="../social.html">ソーシャルと提案</a>
+			<a href="social.html">ソーシャルと提案</a>
 			<a href="models.html">モデルとプロバイダー</a>
 			<a href="spending.html">支出</a>
 			<a href="accounts.html">安全性と対処</a>
@@ -39,99 +39,99 @@
 
 <main>
 	<h1>チャットと diamond</h1>
-	<p class="lede">A chat is a conversation. A diamond is a saved project with its own memory, its own page and its own files. You keep the one inside the other.</p>
+	<p class="lede">チャットは会話です。diamond は、自分専用の記憶とページとファイルを持つ、保存されたプロジェクトです。片方をもう片方の中に保存します。</p>
 
-	<h2 id="s1">A chat</h2>
-	<p> <span class="ui">+</span> — 隣は <span class="ui">チャット</span> starts one. Type in the box and send. A new chat is titled <span class="ui">新しいチャット</span> until you say something, and after that its first line is its title.</p>
-	<p>While an answer is arriving you can keep typing. A message sent then waits as a dashed bubble and goes as its own turn when the answer finishes. Click it to take it back, or its cross to drop it. Pressing stop hands anything queued back to you, unsent.</p>
-	<p>Deleting a chat moves it to the Trash, so nothing asks first. The two acts that cannot be undone are the ones that ask, and both are in that panel.</p>
+	<h2 id="s1">チャット</h2>
+	<p> <span class="ui">+</span> — 隣は <span class="ui">チャット</span> が一つ始めます。欄に入力して送信してください。新しいチャットの題名は <span class="ui">新しいチャット</span> 何か言うまでで、そのあとは最初の行が題名になります。</p>
+	<p>答えが届いているあいだも、打ち続けられます。そのとき送ったメッセージは、破線の吹き出しとして待ち、答えが終わると自分のやり取りとして送られます。クリックすれば取り戻せ、その×を押せば捨てられます。停止を押すと、待っているものはすべて、送られないままあなたに返ります。</p>
+	<p>チャットを削除すると、ゴミ箱に移るだけなので、先に何も尋ねられません。取り消せない二つの行いだけが尋ねてきて、どちらもそのパネルの中にあります。</p>
 
-	<h2 id="s2">Reading a long thread</h2>
+	<h2 id="s2">長いスレッドを読む</h2>
 	<figure class="shot narrow">
-		<img alt="A chat thread: a tile labelled You holding the question, and a tile labelled Daimond holding the answer." src="../img/thread.png" loading="lazy">
-		<figcaption>Each turn is a labelled tile, so you can see at a glance who said what.</figcaption>
+		<img alt="チャットのスレッド。「あなた」というタイルに質問があり、「Daimond」というタイルに答えがあります。" src="../img/thread.png" loading="lazy">
+		<figcaption>それぞれのやり取りはラベルの付いたタイルなので、誰が何を言ったか一目で分かります。</figcaption>
 	</figure>
-	<p>Every turn is a tile, labelled <span class="ui">You</span>, <span class="ui">Thinking</span>, <span class="ui">Tool</span>, <span class="ui">Daimond</span>, or as a note from the app itself. Each header carries the local date and time to the minute in the Holocene reckoning, so <code>12026-09-15 13:12</code> is this year plus ten thousand. Hover for the full instant with its offset.</p>
-	<p>The header of the chat carries the controls.</p>
+	<p>どのやり取りもタイルで、 <span class="ui">あなた</span>, <span class="ui">思考中</span>, <span class="ui">ツール</span>, <span class="ui">Daimond</span>、あるいはアプリ自身からのメモというラベルが付きます。それぞれのヘッダーには、ホロシーン紀元での現地の日時が分単位で添えられます。ですから <code>12026-09-15 13:12</code> は、今年に一万を足した年です。ポインターを乗せると、時差を含めた完全な瞬間が見えます。</p>
+	<p>チャットのヘッダーに操作があります。</p>
 	<ul>
-		<li><strong>Show steps</strong> shows the work done between your message and the answer.</li>
-		<li><strong>Collapse answers</strong> leaves only what you asked. It is the quickest way to skim, and how you start picking turns.</li>
-		<li><strong>Short answers</strong> is a standing request for brevity in this chat. It is a file in your workspace that you can edit, not a hidden instruction.</li>
-		<li>The permission chip reads <span class="ui">Guarded</span>, <span class="ui">Ask every time</span> or <span class="ui">Bypass</span>. See <a href="accounts.html">安全性と対処</a>.</li>
+		<li><strong>手順を表示</strong> は、あなたのメッセージと答えのあいだに行われた作業を示します。</li>
+		<li><strong>答えを折りたたむ</strong> は、あなたが尋ねたことだけを残します。ざっと目を通すいちばん速い方法で、やり取りを選び始めるやり方でもあります。</li>
+		<li><strong>短い答え</strong> は、このチャットで簡潔さを求める常時の要望です。隠された指示ではなく、あなたの作業領域にあって編集できるファイルです。</li>
+		<li>権限のチップには <span class="ui">見張り付き</span>, <span class="ui">毎回尋ねる</span> または <span class="ui">素通り</span>とあります。詳しくは <a href="accounts.html">安全性と対処</a>.</li>
 	</ul>
-	<p>Two chevrons beside the send button walk back through your own messages and return to the end.</p>
+	<p>送信ボタンの横にある二つの山形が、あなた自身のメッセージをさかのぼり、末尾に戻ります。</p>
 
-	<h2 id="s3">What a stop looks like</h2>
-	<p>A turn says how it ended, in exact words.</p>
+	<h2 id="s3">停止の見え方</h2>
+	<p>やり取りは、どう終わったかを、そのままの言葉で伝えます。</p>
 	<ul>
-		<li><span class="ui">Answered</span> means it finished and said something.</li>
-		<li><span class="ui">Stopped</span> means you pressed stop.</li>
-		<li><span class="ui">Step limit reached</span> means it ran out of rounds.</li>
-		<li><span class="ui">Ended without saying anything</span> means the model returned nothing at all.</li>
-		<li><span class="ui">Ended without an answer, after reasoning</span> means it thought, was asked once to answer or use a tool, and still said nothing.</li>
-		<li><span class="ui">Ended on an error</span>、または <span class="ui">Ended: the tool call arrived as text</span>, say what they say.</li>
+		<li><span class="ui">回答済み</span> は、終わって何かを言った、という意味です。</li>
+		<li><span class="ui">停止</span> は、あなたが停止を押した、という意味です。</li>
+		<li><span class="ui">手順の上限に到達</span> は、ラウンドを使い切った、という意味です。</li>
+		<li><span class="ui">何も言わずに終了</span> は、モデルが何一つ返さなかった、という意味です。</li>
+		<li><span class="ui">推論のあと、答えずに終了</span> は、考えたうえで、答えるかツールを使うよう一度促され、それでも何も言わなかった、という意味です。</li>
+		<li><span class="ui">エラーで終了</span>、または <span class="ui">終了：ツール呼び出しが文章として届いた</span>は、書かれているとおりの意味です。</li>
 	</ul>
-	<p>None of these is dressed up as an answer.</p>
+	<p>これらのどれも、答えらしく取り繕われることはありません。</p>
 
-	<h2 id="s4">Keeping a chat</h2>
-	<p>Two buttons sit on a chat's row in the rail. <span class="ui">Keep</span> turns the whole conversation into a diamond. <span class="ui">Fold all</span> turns it into a diamond by summarising it, keeping what was worked out and dropping the back-and-forth.</p>
-	<p>To keep only part, collapse the answers, tick the turns worth keeping, and choose <span class="ui">選択分をたたむ</span>. Fold a step you have adopted, and leave a passing remark where it is.</p>
-	<p>Nothing is absorbed on its own. A diamond's memory changes only through a fold or an edit, and every write is kept in History.</p>
+	<h2 id="s4">チャットを保存する</h2>
+	<p>チャットの、レールにある行には二つのボタンがあります。 <span class="ui">保存</span> は、会話全体を diamond に変えます。 <span class="ui">すべてたたむ</span> は、要約することでそれを diamond に変え、分かったことを残し、やり取りの往復を落とします。</p>
+	<p>一部だけを残すには、答えを折りたたみ、残す値打ちのあるやり取りにチェックを入れ、 <span class="ui">選択分をたたむ</span>を選びます。取り入れた手順はたたみ込み、通りすがりの発言はそのままにしておきます。</p>
+	<p>何もひとりでに取り込まれることはありません。diamond の記憶が変わるのは、たたみ込みか編集を通してだけで、書き込みはすべて履歴に保たれます。</p>
 
-	<h2 id="s5">Inside a diamond</h2>
-	<p>Your diamonds sit above your chats, and the <span class="ui">+</span> makes one. A diamond has two faces, and a switch in its header moves between them. <span class="ui">結晶</span> is what it knows, and <span class="ui">チャット</span> is its own conversation.</p>
+	<h2 id="s5">diamond の中</h2>
+	<p>あなたの diamond はチャットの上に並び、 <span class="ui">+</span> が一つを作ります。diamond には二つの面があり、ヘッダーにある切り替えでそのあいだを移動します。 <span class="ui">結晶</span> はそれが知っていることで、 <span class="ui">チャット</span> はそれ自身の会話です。</p>
 
 	<figure class="shot narrow">
-		<img alt="A card headed What this diamond knows: a title, a summary, chips reading Objectives 2, Open tasks 3 and Done 1, then rows for Sections, Facts, Habits and People, with Edit and Show raw memory buttons." src="../img/knows.png" loading="lazy">
-		<figcaption><span class="ui">What this diamond knows</span>, on the Crystal face. The raw file is one press away.</figcaption>
+		<img alt="「この diamond が知っていること」という見出しのカード。題名、要約、「目標 2」「未処理のタスク 3」「完了 1」というチップ、そして「セクション」「事実」「習慣」「人物」の行があり、編集と生の記憶を表示のボタンがあります。" src="../img/knows.png" loading="lazy">
+		<figcaption><span class="ui">この diamond が知っていること</span>。結晶の面にあります。生のファイルはひと押し先です。</figcaption>
 	</figure>
 
-	<p>The card lists the diamond's title and summary in its own words, then everything else it holds, a line each. <span class="ui">Edit</span> opens a form. <span class="ui">Show raw memory</span> opens the file itself, for when you would rather work in it directly.</p>
+	<p>カードは、diamond の題名と要約をその言葉のままに並べ、そのあとそれが持つほかのすべてを、一行ずつ並べます。 <span class="ui">編集</span> が入力画面を開きます。 <span class="ui">生の記憶を表示</span> は、直接そこで作業したいときのために、ファイルそのものを開きます。</p>
 
-	<h2 id="s6">The four files a diamond keeps</h2>
-	<p>Memory is kept in the open. Four files sit in the diamond's own folder, readable in the Workspace panel and by the daimon.</p>
+	<h2 id="s6">diamond が保つ四つのファイル</h2>
+	<p>記憶は、開かれたところに保たれます。四つのファイルが diamond 自身のフォルダーにあり、作業領域パネルでも daimon からも読めます。</p>
 	<ul>
-		<li><code>crystal.json</code> holds what this diamond <em>is</em>, meaning its title, summary, sections, facts and links.</li>
-		<li><code>REQUIREMENTS.md</code> holds what is to do, as objectives with ranked tasks under each. A task leaves it by being ticked or struck out, and by nothing else.</li>
-		<li><code>DECISIONS.md</code> holds what was ruled, dated, with the reason. New rulings are appended, and old ones are left as they were.</li>
-		<li><code>STATE.md</code> holds where things are now, and is overwritten each time.</li>
+		<li><code>crystal.json</code> は、この diamond が <em>何であるか</em>を保ちます。題名、要約、セクション、事実、リンクのことです。</li>
+		<li><code>REQUIREMENTS.md</code> は、するべきことを、目標ごとに順位付けされたタスクとして保ちます。タスクがそこから消えるのは、チェックされるか取り消し線を引かれるかしたときだけです。</li>
+		<li><code>DECISIONS.md</code> は、日付と理由を添えて、決めたことを保ちます。新しい裁定は追記され、古いものはそのままにされます。</li>
+		<li><code>STATE.md</code> は、いま物事がどうなっているかを保ち、そのたびに上書きされます。</li>
 	</ul>
-	<p>All four ride with the daimon on every round inside one budget, so what a diamond is told about itself is bounded and predictable. A crystal too large to fit whole keeps its overflow readable and searchable instead of dropping it. The counts on the card, <span class="ui">Objectives</span>, <span class="ui">Open tasks</span> と <span class="ui">Done</span>, are read off <code>REQUIREMENTS.md</code>.</p>
+	<p>この四つはすべて、一つの予算の中で、どのラウンドにも daimon と一緒に運ばれます。ですから diamond が自分について知らされることには、上限があり、予測できます。丸ごと収まらないほど大きな結晶は、あふれた分を捨てるのではなく、読めて検索できる形で保ちます。カードにある数—— <span class="ui">目標</span>, <span class="ui">未処理のタスク</span> と <span class="ui">完了</span>の出どころは、 <code>REQUIREMENTS.md</code>.</p>
 
-	<h2 id="s7">Two kinds of fold</h2>
-	<p>The word covers two different acts.</p>
+	<h2 id="s7">たたみ込みの二つの種類</h2>
+	<p>この言葉は、二つの違う行いを指します。</p>
 	<ul>
-		<li><strong>Summarise earlier messages</strong>, in the chat header, is the app compressing a conversation that no longer fits. Its decisions are filed into <code>DECISIONS.md</code>, its open items into <code>REQUIREMENTS.md</code>, and its next step into <code>STATE.md</code>. What it files can be found afterwards, and what it leaves in a notice cannot.</li>
-		<li><strong>Fold now</strong>, on the Crystal face, is a model rewriting what this diamond remembers from what has happened since. Every write snapshots a version.</li>
+		<li><strong>以前のメッセージを要約</strong>は、チャットのヘッダーにあり、収まらなくなった会話をアプリが圧縮することです。決定事項は <code>DECISIONS.md</code>に、未処理の項目は <code>REQUIREMENTS.md</code>に、次の一手は <code>STATE.md</code>に、それぞれ収められます。収められたものはあとで見つけられますが、通知の中に残されるだけのものは見つけられません。</li>
+		<li><strong>いまたたみ込む</strong>は、結晶の面にあり、それ以降に起きたことをもとに、この diamond が覚えていることをモデルが書き直すことです。書き込むたびにバージョンが記録されます。</li>
 	</ul>
-	<p>Filing is repeatable, so running the same fold twice files nothing twice, and the order two folds arrive in does not change what the files end up saying.</p>
+	<p>収めることは繰り返しがききます。同じたたみ込みを二度行っても、二度収められることはなく、二つのたたみ込みが届く順序が、最終的にファイルが語る内容を変えることもありません。</p>
 
-	<h2 id="s8">History</h2>
-	<p><span class="ui">History</span> lists every version, newest first. <span class="ui">表示</span> reads one, <span class="ui">復元</span> makes it current again, and <span class="ui">差分</span> shows the material a fold was given. Restore keeps what was current first, so a restore can itself be undone.</p>
+	<h2 id="s8">履歴</h2>
+	<p><span class="ui">履歴</span> は、すべてのバージョンを新しい順に並べます。 <span class="ui">表示</span> が一つを読み、 <span class="ui">復元</span> がそれを再び最新にし、 <span class="ui">差分</span> がたたみ込みに与えられた材料を示します。復元は最初にいまのものを保ってから行うので、復元そのものも取り消せます。</p>
 
-	<h2 id="s9">Acting without being asked</h2>
-	<p>A diamond answers when you prompt it and at no other time, unless you set up a triggered action. Those live under <span class="ui">When this diamond acts</span> on the Crystal face, and <span class="ui">Add an action</span> makes one. Two things can set one off, either minutes of your own activity, counted only while you work, or mail arriving in a folder you name.</p>
-	<p>Each action carries an instruction, sent every time, and a context, sent once until you change it. They are an ordinary file, <code>triggers.json</code>, in the diamond's folder.</p>
-	<p>A new action is <strong>stopped</strong>, and says so: <em>Stopped. Press &#9654; on the light beside the pulldown to let this action run.</em> One press arms it.</p>
+	<h2 id="s9">尋ねられずに動く</h2>
+	<p>diamond は、あなたが促したときにだけ答えます。それ以外のときは動きません。トリガーされる動作を設定しないかぎりは。それらがあるのは <span class="ui">この diamond が動くとき</span> 、結晶の面です。そして <span class="ui">動作を追加</span> が一つを作ります。きっかけになりうるのは二つ。あなた自身の活動時間——実際に働いているあいだだけ数えられます——か、名指ししたフォルダーに届くメールです。</p>
+	<p>それぞれの動作には、毎回送られる指示と、あなたが変えるまで一度だけ送られる文脈があります。これらは普通のファイルで、 <code>triggers.json</code>、diamond のフォルダーにあります。</p>
+	<p>新しい動作は <strong>停止済み</strong>で、そう伝えます。 <em>「停止済み。この動作を走らせるには、プルダウンの横の灯りにある ▶ を押してください。」</em> ひと押しで有効になります。</p>
 
-	<h3 id="s10">The light</h3>
-	<p>Every action, every diamond and the <span class="ui">すべて</span> row wear the same three-part control, a play, a pause and a round light. The light says whether anything is armed and free to fire.</p>
+	<h3 id="s10">灯り</h3>
+	<p>どの動作も、どの diamond も、そして <span class="ui">すべて</span> の行も、同じ三部構成の操作——再生、一時停止、丸い灯り——を身に着けています。灯りは、何かが有効で、いつでも動ける状態かどうかを伝えます。</p>
 	<ul>
-		<li><strong>Red.</strong> Nothing here will act by itself.</li>
-		<li><strong>Amber.</strong> Some of it will, and some is held.</li>
-		<li><strong>Green.</strong> Everything set up will act.</li>
+		<li><strong>赤。</strong> ここにあるものは、ひとりでには動きません。</li>
+		<li><strong>琥珀。</strong> 一部は動き、一部は保留されています。</li>
+		<li><strong>緑。</strong> 設定したものはすべて動きます。</li>
 	</ul>
-	<p>A fresh account is red everywhere, which is the honest answer to whether anything is running by itself. An action missing its mailbox or its instruction is left out of the count, because it could not fire. Amber can only be arrived at, never set.</p>
-	<p>A held action spends nothing, because it is refused before the turn starts.</p>
+	<p>新しいアカウントはどこもかしこも赤で、それが、何かがひとりでに動いているかという問いへの正直な答えです。メールボックスや指示が欠けている動作は、発動できないので数には入りません。琥珀は、たどり着く先であって、自分で設定するものではありません。</p>
+	<p>保留された動作は何も使いません。やり取りが始まる前に断られるからです。</p>
 
-	<h2 id="s11">Tags, links and the Trash</h2>
-	<p><span class="ui">タグ</span> on the Crystal face files a diamond in the rail. Up to eight tags, lowercased and deduplicated. <span class="ui">Suggested</span> offers four to start from. Tags are inert. They are not sent to a model, they are no part of the memory, and they change nothing an agent does. <span class="ui">タグで絞り込む</span> in the rail narrows by them.</p>
-	<p>A diamond can also be linked to another, and the <a href="interface.html">Graph</a> is the picture of that.</p>
-	<p>Deleting a chat or a diamond trashes it. It is still stored and still synced, out of every daimon's reach, and kept thirty days with the date on the row. <span class="ui">復元</span> brings it back on every device. <span class="ui">完全に削除</span> と <span class="ui">ゴミ箱を空にする</span> are the two that ask.</p>
+	<h2 id="s11">タグ、リンク、ゴミ箱</h2>
+	<p><span class="ui">タグ</span> は結晶の面にあり、diamond をレールの中に整理します。タグは最大八つ、小文字化され、重複は取り除かれます。 <span class="ui">候補</span> が、はじめの目安として四つを差し出します。タグは何もしません。モデルに送られることはなく、記憶の一部でもなく、エージェントの動きを何も変えません。 <span class="ui">タグで絞り込む</span> がレールで、タグによって絞り込みます。</p>
+	<p>diamond はほかの diamond とリンクすることもでき、 <a href="interface.html">関係図</a> がその絵です。</p>
+	<p>チャットや diamond を削除すると、ゴミ箱に入ります。保存も同期もされたまま、どの daimon の手も届かなくなり、行に日付を添えて三十日のあいだ保たれます。 <span class="ui">復元</span> が、どの端末にも元に戻します。 <span class="ui">完全に削除</span> と <span class="ui">ゴミ箱を空にする</span> が、尋ねてくる二つです。</p>
 
 	<div class="next">
-		<a href="interface.html">&larr; The interface</a>
-		<a href="../capps.html">Next: A diamond&rsquo;s page &rarr;</a>
+		<a href="interface.html">&larr; インターフェース</a>
+		<a href="capps.html">次：diamond のページ &rarr;</a>
 	</div>
 </main>
 
@@ -141,12 +141,12 @@
 		<a href="index.html">ここから始める</a>
 		<a href="interface.html">インターフェース</a>
 		<a href="chats-and-diamonds.html">チャットと diamond</a>
-		<a href="../capps.html">diamond のページ</a>
+		<a href="capps.html">diamond のページ</a>
 		<a href="email-web-files.html">ファイル、メール、ウェブ</a>
-		<a href="../machine-operations.html">あなたのコンピューター</a>
-		<a href="../runner.html">ヘルパーとターンの実行場所</a>
+		<a href="machine-operations.html">あなたのコンピューター</a>
+		<a href="runner.html">ヘルパーとターンの実行場所</a>
 		<a href="sync.html">複数の端末</a>
-		<a href="../social.html">ソーシャルと提案</a>
+		<a href="social.html">ソーシャルと提案</a>
 		<a href="models.html">モデルとプロバイダー</a>
 		<a href="spending.html">支出</a>
 		<a href="accounts.html">安全性と対処</a>

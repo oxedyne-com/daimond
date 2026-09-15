@@ -1,0 +1,296 @@
+<!DOCTYPE html>
+<html lang="de" data-guide-locale="de" data-guide-locales="en de es fr ja ko pt-BR zh-Hans">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<title>Dein Rechner &mdash; Daimond-Handbuch</title>
+<link rel="icon" type="image/svg+xml" href="../../assets/daimond_mark.svg">
+<link rel="stylesheet" href="../../css/variables.css">
+<link rel="stylesheet" href="../../css/guide.css">
+<script src="../frame.js"></script>
+<script src="search-index.js"></script>
+<script src="../search.js"></script>
+</head>
+<body>
+
+<header class="site-head">
+	<div class="site-head-inner">
+		<a class="brand" href="index.html" aria-label="Daimond-Handbuch, Startseite">
+			<img class="wordmark wm-dark" src="../../assets/daimond_word.svg" alt="Daimond" translate="no">
+			<img class="wordmark wm-light" src="../../assets/daimond_word_dark.svg" alt="Daimond" translate="no">
+			<span class="brand-sub">Handbuch</span>
+		</a>
+		<nav class="site-nav" aria-label="Handbuchseiten">
+			<a href="index.html">Hier anfangen</a>
+			<a href="interface.html">Die Oberfläche</a>
+			<a href="chats-and-diamonds.html">Chats &amp; Diamonds</a>
+			<a href="capps.html">Die Seite eines diamond</a>
+			<a href="email-web-files.html">Dateien, E-Mail &amp; das Web</a>
+			<a href="machine-operations.html" aria-current="page">Dein Rechner</a>
+			<a href="runner.html">Helfer &amp; wo Züge laufen</a>
+			<a href="sync.html">Mehr als ein Gerät</a>
+			<a href="social.html">Soziales &amp; Vorschläge</a>
+			<a href="models.html">Modelle &amp; Anbieter</a>
+			<a href="spending.html">Ausgaben</a>
+			<a href="accounts.html">Sicherheit &amp; Problembehebung</a>
+		</nav>
+	</div>
+</header>
+
+<main>
+	<h1>Dein Rechner</h1>
+	<p class="lede">Daimond kann Programme auf Ihrem Rechner ausführen (einen Build, eine Testsuite, einen Linter, ein Skript) innerhalb eines Abteils, das der Kernel durchsetzt. Es ist kostenlos, braucht zwei Befehle in einem Terminal, und ist nur unter Linux verfügbar. Lesen Sie zuerst die Warnung, bevor Sie einen der beiden Befehle eintippen.</p>
+
+	<div class="note stop"><strong>Ein Snap- oder Flatpak-Browser kann das nicht, und lässt sich auch nicht dazu bringen.</strong> Der Installer erkennt einen und verweigert, statt hineinzuschreiben, das ist also das Erste, worauf Sie stoßen werden, und unter Ubuntu ist das voreingestellte Chromium ein Snap. <a href="#s2">Warum, und was Sie stattdessen installieren</a>.</div>
+
+	<h2 id="s1">Was es Ihnen gibt</h2>
+	<p>Mit installierter Hand kann ein Daimon einen Build, eine Testsuite, einen Linter oder ein Skript gegen den Ordner ausführen, den Sie freigegeben haben, und das Ergebnis lesen. Nichts sonst auf der Maschine ist in Reichweite.</p>
+	<p>Die Werkzeuge, die er benutzt, sind benannt im <span class="ui">Werkzeuge</span> -Panel, und vier davon lohnt es, mit Namen zu kennen.</p>
+	<ul>
+		<li><strong>run</strong> führt einen Befehl aus, gegeben als Liste von Argumenten, und antwortet mit dem Exit-Code, dem Ende der Ausgabe und der benötigten Zeit.</li>
+		<li><strong>verify</strong> führt die eigene Prüfung Ihres Projekts aus. Daimond liest die argv aus <code translate="no">.daimond/verify.json</code>, oder erschließt sie aus <code translate="no">Cargo.toml</code>, <code translate="no">package.json</code>, <code translate="no">pyproject.toml</code> oder <code translate="no">go.mod</code>. Der Exit-Code ist das Urteil.</li>
+		<li><strong>führt aus</strong> führt auf, was noch läuft, und wie man eines stoppt. Ein Befehl kann seinen Zug überdauern, denn etwas im Hintergrund Gestartetes hält seine Ports, bis es gestoppt wird, und nichts sonst auf dem Rechner kann es erreichen, da das Abteil Signale auf sich selbst beschränkt.</li>
+		<li><strong>serve</strong> startet einen schreibgeschützten Dateiserver für einen Ordner, sodass eine gebaute Seite betrachtet werden kann im <span class="ui">Web</span> -Panel. Er bleibt nach dem Zug bestehen, stoppen Sie ihn also über seine ID.</li>
+	</ul>
+	<p>Eine Verweigerung nennt den Pfad, die Ursache und die Abhilfe, es gibt also keinen Code nachzuschlagen. Der Zug endet dann so, wie jeder Zug endet, als <span class="ui">Beantwortet</span>, <span class="ui">Angehalten</span> oder <span class="ui">Schrittgrenze erreicht</span>, ein verweigerter Befehl liest sich also nie wie einer, der funktioniert hat.</p>
+
+	<h2 id="s2">Bevor Sie beginnen</h2>
+	<p>Drei Dinge entscheiden, ob irgendetwas davon funktioniert. Sie zu prüfen dauert eine Minute, sie hinterher zu entdecken eine Stunde, denn der Fehler, den der Browser meldet, nennt keines von ihnen.</p>
+
+	<h3 id="s3">1. Ein Browser, installiert aus einem <code translate="no">.deb</code></h3>
+	<p>Ein Snap- oder Flatpak-Browser schließt die Programme ein, die er startet, und diese Einschließung erreicht Daimonds Hand. Die <code translate="no">home</code> -Schnittstelle, die ein Snap bekommt, gibt keinen Zugriff auf die versteckten Verzeichnisse oben in Ihrem Home-Verzeichnis, und die Hand hält ihr Journal unter <code translate="no">~/.local/share/daimond/hand/journal/</code>, hinter einem von ihnen. Die Hand kann die Datei nicht öffnen, in der sie ihren Grund aufgezeichnet hätte, sie beendet sich also ohne ein Wort, und Chrome meldet nur <em>Native host has exited</em>. Dieser Satz gibt Ihnen nichts, worauf Sie reagieren könnten, und die Einschließung ist genau das, wofür ein Snap da ist. Das Journal zu verschieben hilft nicht, denn der Browser reicht dem Programm seine eigene Umgebung.</p>
+	<p>Das müssen Sie nicht selbst herausfinden. Der Installer schreibt in die Profile, die es nutzen können, und nennt die, die es nicht können, und findet er nur eingeschlossene Browser, hält er an, Sie bleiben also nicht mit einer Installation zurück, die funktioniert zu haben scheint. <code translate="no">--check</code> meldet einen eingeschlossenen Browser auch dann, wenn ein nutzbarer daneben steht, denn der Browser, den Sie tatsächlich benutzen, entscheidet.</p>
+	<p>Um zu sehen, was Sie haben, bevor Sie beginnen:</p>
+	<pre><code translate="no">snap list 2&gt;/dev/null | grep -Ei 'chrom|brave|vivaldi|edge'
+flatpak list 2&gt;/dev/null | grep -Ei 'chrom|brave|vivaldi|edge'</code></pre>
+	<p>Alles, was einer der beiden Befehle nennt, ist eingeschlossen. Was funktioniert, ist Chrome, Brave, Vivaldi oder Edge, installiert als <code translate="no">.deb</code>, oder ein Chromium <code translate="no">.deb</code> von anderswo als Ubuntus Archiv.</p>
+	<div class="note"><strong><code translate="no">apt install chromium-browser</code> gibt Ihnen den Snap.</strong> Ubuntus <code translate="no">chromium-browser</code> -Paket ist seit 20.04 ein Stub, der den Snap installiert, der übliche Weg, ohne die Software-App an einen Browser zu kommen, bringt Sie also an denselben Ort. Installieren Sie eines der vier <code translate="no">.deb</code> von oben stattdessen.</div>
+
+	<h3 id="s4">2. Diesen Browser einmal ausführen, bevor Sie installieren</h3>
+	<p>Der Installer schreibt eine kleine Datei in das Profilverzeichnis des Browsers, und dieses Verzeichnis wird beim ersten Start des Browsers angelegt. Installieren Sie einen Browser und öffnen Sie ihn nie, und <code translate="no">install.sh</code> meldet zu Recht, nichts zu finden, denn es ist noch nichts da.</p>
+
+	<h3 id="s5">3. Linux, mit Landlock im Kernel</h3>
+	<p>Das Abteil wird aus Landlock gebaut, das Dateien einzäunt, und seccomp, das Systemaufrufe filtert, und beide sind Linux-Kernel-Funktionen. Landlock kam mit Linux 5.13, und <a href="#s30">Unkonventionelle Systeme</a> legt dar, was ältere und ungewöhnliche Maschinen bekommen. Die Hand baut und läuft unter macOS und Windows, meldet aber, dass sie nichts einzäunen kann, und Daimond verweigert dann jeden Befehl, statt einen uneingezäunten laufen zu lassen. Die Verweigerung nennt, was fehlt. Für keine der beiden Plattformen ist ein Zaun gebaut.</p>
+
+	<div class="note stop"><strong>Einen anderen Browser installieren? Ihr Konto kommt nicht mit.</strong> Ihr Konto ist ein Signaturschlüssel, gehalten in dem Browser, in dem Sie es angelegt haben. Die Passphrase erzeugt diesen Schlüssel nicht neu, sie entschlüsselt nur die dort schon gespeicherte Kopie, dieselbe Passphrase in einem neuen Browser startet also ein <em>eigenes</em> Konto, mit eigenem Guthaben und ohne Pro. Der Schlüssel muss reisen, tun Sie also eines davon im alten Browser, bevor Sie ihn ausmustern: <strong><span class="ui">Weiteres Gerät verknüpfen</span></strong>, dann tippen Sie den Code im neuen Browser ein; einen Passkey hinzufügen; oder <strong><span class="ui">Backup exportieren</span></strong>, das die Chats, Diamonds und Workspace-Dateien zusammen mit dem Schlüssel schreibt, weiterhin unter Ihrer Passphrase verpackt, für einen Browser, der noch kein eigenes Konto hat. Siehe <a href="sync.html">Mehr als ein Gerät</a> und <a href="accounts.html">Sicherheit &amp; Problembehebung</a>.</div>
+
+	<div class="note"><strong>Nicht dasselbe wie der Machine-Arbeitsbereich.</strong> Die <span class="ui">Machine</span> -Chip im <a href="email-web-files.html">Workspace</a> -Panel gibt Daimond Lese- und Schreibzugriff auf einen echten Ordner auf Ihrer Platte. Machine Operations lässt es <strong>Programme ausführen</strong>. Es sind zwei getrennte Freigaben, getrennt erteilt. Operations braucht aber den Arbeitsbereich, denn ein Befehl läuft gegen einen echten Ordner, der Arbeitsbereich muss also einer sein, und derselbe.</div>
+
+	<h2 id="s6">Es installieren</h2>
+	<p>Das Installieren braucht zwei Befehle in einem Terminal, vom Wurzelverzeichnis des Daimond-Repositorys aus, dann zwei Dinge im Browser. Sie ergeben eine kleine JSON-Datei je Browserprofil plus eine von Ihnen gebaute Binärdatei. Die Installation lässt nichts auf einem Port lauschen, keinen Daemon laufen und kein Geheimnis zu stehlen.</p>
+
+	<ol class="steps">
+		<li>
+			<h3 id="s7">Die Hand bauen</h3>
+			<pre><code translate="no">cargo build --release --manifest-path hand/Cargo.toml</code></pre>
+			<p>Verwenden Sie <code translate="no">--manifest-path</code> und nicht <code translate="no">-p</code>, denn die Hand ist ein eigener Cargo-Workspace, also <code translate="no">-p</code> meldet kein solches Paket und baut nichts.</p>
+		</li>
+		<li>
+			<h3 id="s8">Einen Ordner freigeben und die Hand registrieren</h3>
+			<pre><code translate="no">hand/install/install.sh --workspace ~/work</code></pre>
+			<p>Setzen Sie Ihren eigenen Ordner an die Stelle von <code translate="no">~/work</code>. Dieser Ordner begrenzt alles, was ein Befehl lesen oder schreiben kann, wählen Sie also einen für die Arbeit. Das Skript verweigert Ihr Home-Verzeichnis und <code>/</code> rundheraus, denn eines von beiden freizugeben würde alles freigeben. Der Ordner muss schon bestehen.</p>
+			<p>Dieser eine Lauf tut drei Dinge, jedes mit einem Fehlschlag, dem Sie sonst später begegnet wären.</p>
+			<ul>
+				<li><strong>Schreibt Ihren Ordner in <code translate="no">root.txt</code></strong>, unter <code translate="no">~/.local/share/daimond/hand/journal/root.txt</code>. Die Hand bedient keine Seite, bevor ihr der Ordner genannt wurde, und sie rät nie, denn ein geratener Ordner wäre eine Vermutung darüber, was ein Befehl berühren darf. Um ihn später zu ändern, führen Sie denselben Befehl mit einem anderen Ordner aus.</li>
+				<li><strong>Legt das Journal-Verzeichnis mit Modus 700 an.</strong> Es hält die Aufzeichnung jedes Befehls, den jedes Diamond ausgeführt hat, die Hand weigert sich also, es irgendwo zu schreiben, wo andere Nutzer lesen können. Ein unter den üblichen Standardrechten angelegtes Verzeichnis ist 755, und die Hand würde nicht starten.</li>
+				<li><strong>Schreibt die Registrierung</strong> in jedes nutzbare Browserprofil und gibt aus, in welche. Diese Datei ist es, die den Browser die Hand überhaupt starten lässt. Sie ist JSON und nichts sonst, das Skript baut also nichts, lädt nichts herunter, startet nichts und braucht keine Root-Rechte.</li>
+			</ul>
+			<div class="note"><strong><code translate="no">DAIMOND_HAND_ROOT</code> ist eine Falle.</strong> Die Umgebungsvariable tut denselben Dienst wie <code translate="no">root.txt</code> und hat Vorrang, und wird nicht funktionieren, denn Ihr Browser startet die Hand mit <em>seiner eigenen</em> Umgebung, und Ihre ist nicht darin. Verwenden Sie die Datei.</div>
+		</li>
+		<li>
+			<h3 id="s9">Die Erweiterung laden</h3>
+			<p>Der vorige Schritt hat den Pfad ausgegeben. Öffnen Sie <code translate="no">chrome://extensions</code>, schalten Sie ein <strong>Entwicklermodus</strong>, wählen Sie <strong>Entpackte Erweiterung laden</strong>, und wählen Sie das <code translate="no">ext/</code> -Verzeichnis aus.</p>
+			<p>Die Erweiterung trägt einen festen öffentlichen Schlüssel, ihre ID ist also auf jeder Maschine dieselbe, weshalb die eben geschriebene Registrierung sie schon nennen kann. Ihr Manifest nennt einen einzigen Origin, <code translate="no">https://daimond.oxedyne.com</code>, als die einzige Seite, die mit ihr sprechen darf, keine andere Seite in Ihrem Browser kann sie also überhaupt erreichen.</p>
+		</li>
+		<li>
+			<h3 id="s10">Den Browser neu starten</h3>
+			<p>Der Browser liest diese Profilverzeichnisse nur beim Start, eine Datei, die erschien, während er lief, ist bis dahin also unsichtbar. Ein vergessener Neustart ist der häufigste Grund, warum eine korrekte Installation kaputt aussieht.</p>
+		</li>
+	</ol>
+
+	<h3 id="s11">Dann prüfen</h3>
+	<pre><code translate="no">hand/install/install.sh --check</code></pre>
+	<p>Die Prüfung ändert nichts und gibt eine Zeile je Ding aus, das wahr sein muss: ein nutzbarer Browser, die Registrierung, die Binärdatei, das Journal-Verzeichnis und sein Modus, <code translate="no">root.txt</code>, das Journal, das außerhalb des freigegebenen Ordners liegt, und die Erweiterung. Eine fehlschlagende Zeile trägt ihre Abhilfe in der Zeile darunter. Arbeiten Sie von oben, denn eine spätere Zeile schlägt oft nur fehl, weil eine frühere es tat.</p>
+
+	<h2 id="s12">Die letzten zwei Schritte sind Ihre</h2>
+	<p>Keiner der obigen Schritte hat eine Entscheidung für Sie getroffen. Die zwei übrigen Dinge sind die zwei, die Entscheidungen sind.</p>
+	<p><strong>Denselben Ordner in Daimond öffnen.</strong> Verwenden Sie im Workspace-Panel den <span class="ui">Machine</span> -Chip, um den Ordner zu öffnen, den Sie freigegeben haben. Es muss derselbe sein. Die Hand schreibt einen Token in <code translate="no">&lt;folder&gt;/.daimond/workspace.id</code> und nennt ihn, wenn sie sich vorstellt, und die Seite liest diese Datei über den Handle, den sie schon hält, und vergleicht die beiden. Ein Arbeitsbereich, der der eigene Speicher des Browsers ist, oder ein anderer Ordner als der in <code translate="no">root.txt</code>, bekommt seine Befehle verweigert, mit einer Zeile, die sagt, welcher es sein sollte. Der Token liegt innerhalb von <code translate="no">.daimond</code> , denn das Abteil verweigert dieses Verzeichnis immer, ein Befehl kann den Token also nicht lesen und für einen Ordner, in dem er nicht ist, nicht bürgen.</p>
+	<p><strong>Den ersten Befehl erlauben.</strong> Wenn Daimond zum ersten Mal etwas ausführen will, öffnet sich ein <strong translate="no">Daimond Hands</strong> -Fenster und fragt. Keine Browser-Berechtigung deckt „darf Programme auf diesem Rechner ausführen“ ab, dieses Fenster <em>ist</em> die Zustimmung, und die Erweiterung zeichnet Ihre Antwort selbst auf. Das ist auch, was sie widerrufbar macht, denn der Browser hat nichts wegzunehmen. Bis Sie erlauben, läuft nichts.</p>
+	<p>Das Fenster nennt den Ordner und die Seite, die gefragt hat, und sagt in einer Zeile, wie weit ein Befehl auf dieser Maschine reichen kann. <span class="ui">Was das abdeckt, und was nicht</span> öffnet den Rest, der sagt, was das Abteil verhindert, was nicht, und wie Sie die Erlaubnis zurückziehen.</p>
+
+	<h2 id="s13">Wenn es nicht funktioniert</h2>
+	<p>Beginnen Sie mit <code translate="no">install.sh --check</code> erneut. Es geht jede Prüfung hier der Reihe nach durch und hält beim ersten falschen Ding an. Die drei Schritte, die es automatisiert, sind auch für sich nützlich, und sie sind es, wonach Sie greifen, wenn <code translate="no">--check</code> durchgeht und Daimond trotzdem sagt, die Hand sei nicht da.</p>
+
+	<h3 id="s14">Die Hand selbst ausführen</h3>
+	<pre><code translate="no">hand/target/release/daimond-hand &lt; /dev/null</code></pre>
+	<p>Das startet die Hand genau so, wie Ihr Browser es täte, ohne Browser am anderen Ende, was auch immer sie dem Browser gesagt hätte, sagt sie also Ihnen. Es gibt drei Antworten.</p>
+	<ul>
+		<li><code translate="no">daimond-hand: the page closed the pipe.</code> Die Hand ist eingerichtet und bereit. Was auch immer falsch ist, liegt auf der Seite des Browsers, und ihn neu zu starten ist das Erste, was Sie versuchen.</li>
+		<li><em>Dieser Hand wurde nicht gesagt, in welchem Ordner sie arbeiten darf</em> heißt, <code translate="no">root.txt</code> fehlt. Führen Sie <code translate="no">install.sh --workspace</code> erneut aus.</li>
+		<li><em>…ist für andere Nutzer als seinen Besitzer lesbar</em> heißt, das Journal-Verzeichnis ist nicht 700, und die Hand schreibt die Aufzeichnung Ihrer Befehle nicht dorthin, wo ein anderes Konto sie lesen kann. <code translate="no">chmod 700</code> es.</li>
+	</ul>
+	<p>Alles andere ist ein ganzer Satz, der den Pfad, die Ursache und die Abhilfe nennt, denn die Hand hat nirgends einen Code auszugeben, den jemand nachschlagen könnte.</p>
+	<pre><code translate="no">hand/target/release/daimond-hand --report</code></pre>
+	<p>Das gibt aus, was das Abteil durchsetzen kann auf <em>diesem</em> -Kernel und, ausführlicher, was nicht. Lesen Sie die zweite Liste genau, denn auf einem Kernel unter Linux 7.1 enthält sie <a href="#s21">einen Weg aus dem Abteil hinaus</a> , den Landlock offen lässt und den die Hand selbst schließt, indem sie Unix-Sockets verweigert. Es nennt außerdem den Ordner aus <code translate="no">root.txt</code>, ein veralteter zeigt sich also hier und nicht erst beim ersten Befehl.</p>
+
+	<h3 id="s15">Das Journal lesen</h3>
+	<pre><code translate="no">tail -n 5 ~/.local/share/daimond/hand/journal/hand-*.jsonl</code></pre>
+	<p>Das Journal hält ein JSON-Objekt je Zeile, in der Reihenfolge, in der die Dinge geschahen: den Handshake, jeden Befehl und jede Verweigerung mit ihrem Grund. Ist die Hand überhaupt gestartet, hat sie hier etwas geschrieben. Ein leeres Verzeichnis nach einem gescheiterten Versuch heißt, die Hand kam nie weit genug, was unter Ubuntu fast immer den eingeschlossenen Browser oben auf dieser Seite bedeutet.</p>
+
+	<h3 id="s16">Die Erweiterung fragen</h3>
+	<p>Öffnen Sie im Browser, auf dem Daimond-Tab, die Entwicklerkonsole und führen Sie aus:</p>
+	<pre><code translate="no">await DaimondHand.status()</code></pre>
+	<p>Die Erweiterung antwortet mit JSON, das sagt, ob eine Hand gekoppelt ist, welchen Ordner sie als freigegeben nennt, was sie durchsetzen kann, und, wo die Antwort Nein ist, einem <code translate="no">reason</code> als ganzen Satz geschrieben. Daimond zeigt dem Modell genau diesen Satz, das JSON erklärt also, was dem Daimon gesagt wurde.</p>
+
+	<h2 id="s17">Was es tatsächlich ist</h2>
+	<p>Ein Befehl ist ein gewöhnlicher Prozess, Ihnen gehörend, auf Ihrem eigenen Kernel, gegen Ihre eigenen Dateien, mit zuerst entfernten Capabilities. Es gibt keine virtuelle Maschine, keinen Container und keine Emulation, nichts wird also simuliert und nichts hineinkopiert. Vier Teile tun je einen Job.</p>
+	<ul>
+		<li><strong>Die Seite fragt.</strong> Daimond ermittelt, was dieser Zug berühren darf, und sendet die ganze Regel mit der Anfrage. Es sendet nie eine Shell-Zeile, denn <code translate="no">argv</code>, die Liste der Argumente, ist ein Array, und es gibt nichts, wohinein sich etwas einschleusen ließe.</li>
+		<li><strong>Die Erweiterung leitet weiter.</strong> <strong translate="no">Daimond Hands</strong> ist das Einzige, dem die Seite einen Befehl übergeben kann, und nur ein Origin darf mit ihr sprechen.</li>
+		<li><strong>Ein kleines lokales Programm führt ihn aus.</strong> Die <em>hand</em> baut das Abteil aus der Regel, die ihr gesendet wurde, wendet es auf sich selbst an, und wird dann <em>zu</em> dem Befehl. Kein Aufseher beobachtet ein Kind, denn von der Hand bleibt nichts übrig, sobald der Befehl beginnt.</li>
+		<li><strong>Ihr Browser startet die Hand.</strong> Deshalb gibt es keinen Port und kein Passwort. Ein Dienst auf einem Port wäre für jede Seite erreichbar, die Sie besuchen.</li>
+	</ul>
+
+	<div class="note"><strong>Es ist kostenlos und nicht Teil von Pro.</strong> Nichts an einem Befehl berührt Daimonds Gateway. Die Anfrage geht von der Seite zu einer Erweiterung zu einem Programm auf Ihrer eigenen Platte und zurück, es wird also nichts abgerechnet. Ein Befehl kostet, was das Nachdenken des Modells darüber kostet, wie jeder andere Zug.</div>
+
+	<h3 id="s18">Daimond implementiert keine Werkzeuge</h3>
+	<p>Es gibt kein eingebautes <code translate="no">ls</code>, kein eingebautes <code translate="no">grep</code>, keinen mitgelieferten Werkzeugkasten und keine Shell. <code translate="no">ls</code> ist <code translate="no">/usr/bin/ls</code>, das, das schon auf Ihrer Maschine ist, in der Version, die Sie installiert haben.</p>
+
+	<p>Jedes Programm unter den Systemverzeichnissen ist erreichbar, denn das Abteil fügt sie der Freigabe hinzu, <strong>schreibgeschützt</strong>: <code translate="no">/usr</code>, <code translate="no">/bin</code>, <code translate="no">/sbin</code>, <code translate="no">/lib</code>, <code translate="no">/lib32</code>, <code translate="no">/lib64</code>, <code translate="no">/libx32</code>, <code translate="no">/etc</code>, <code translate="no">/opt</code>, und die harmlosen Geräte <code translate="no">/dev/null</code>, <code translate="no">/dev/zero</code>, <code translate="no">/dev/full</code>, <code translate="no">/dev/random</code> und <code translate="no">/dev/urandom</code>. Ohne sie startet nichts, nicht einmal <code translate="no">cat</code>, denn der Loader muss die Shared Objects lesen, und der Prozess muss etwas für die Standard-Streams öffnen.</p>
+
+	<p>Ein bloßer Name wird nachgeschlagen auf <code translate="no">PATH</code>, das ist <code translate="no">/usr/local/bin:/usr/bin:/bin</code> , sofern keine freigegebene Toolchain etwas hinzugefügt hat. Was das findet, wird zu einem absoluten Pfad aufgelöst und wie alles andere gegen das Abteil geprüft, Finden ist also keine Erlaubnis. Ein <code translate="no">PATH</code> , der nach außen zeigt, findet ein Programm, das der Befehl nicht ausführen darf, und die Verweigerung nennt es.</p>
+
+	<div class="note"><strong>Es gibt keine Shell, also gibt es keine Shell-Syntax.</strong> Ein Befehl ist eine Liste (<code translate="no">["cargo", "test", "--lib"]</code>), und ein Semikolon, eine Pipe, eine Umleitung, ein Backtick, <code>$(…)</code> oder <code translate="no">&amp;&amp;</code> kommt beim Programm als wörtliches Argument an. Um zwei Befehle zu verketten, führt der Daimon das Werkzeug zweimal aus, was ohnehin besser ist, denn er liest das erste Ergebnis, bevor er das zweite wählt.</div>
+
+	<h2 id="s19">Was ein Befehl kann und nicht kann</h2>
+
+	<h3 id="s20">Dateien</h3>
+	<ul>
+		<li><strong>Lesen und Schreiben innerhalb des freigegebenen Ordners.</strong> Dieser Ordner, minus Daimonds eigenem <code translate="no">.daimond</code> -Verzeichnis, ist die beschreibbare Welt.</li>
+		<li><strong>Ein privates temporäres Verzeichnis.</strong> Es ist beschreibbar, wobei <code translate="no">TMPDIR</code> darauf zeigt; entfernt, wenn der Lauf endet, für jeden anderen Lauf unerreichbar, und der einzige Ort außerhalb Ihres Ordners, in den ein Befehl schreiben darf. <code translate="no">/tmp</code> liegt außerhalb des Abteils, und ein Build, der keine temporäre Datei schreiben kann, scheitert auf halbem Weg aus einem Grund, den niemand lesen kann.</li>
+		<li><strong>Das System, schreibgeschützt.</strong> <code translate="no">/usr</code>, <code translate="no">/etc</code>, <code translate="no">/opt</code> und der Rest der Liste oben.</li>
+		<li><strong>Alles andere wird vom Kernel verweigert</strong>, nicht durch eine Prüfung, die jemand geschrieben hat. Eine Datei einen Ordner außerhalb der Freigabe kommt zurück als <code>Permission denied</code>, und dem Daimon wird diese Verweigerung gezeigt statt der Datei.</li>
+	</ul>
+	<p>Eine Folge lohnt es zu kennen, bevor sie wie ein kaputtes Werkzeug aussieht. Wo der ganze freigegebene Ordner beschreibbar ist, kann dieser Ordner <em>selbst</em> nicht aufgelistet werden, und eine Datei kann nicht direkt in ihm angelegt werden, denn Landlock kann ein Verzeichnis nicht freigeben und einen Teil davon zurückhalten, die Kinder werden also einzeln freigegeben. Alles eine Ebene tiefer funktioniert normal.</p>
+
+	<h3 id="s21">Benannte lokale Sockets werden immer verweigert</h3>
+	<p>Ein Befehl kann keinen Unix-Socket anlegen, was auch immer sonst erlaubt war. Das kostet eine lokale Datenbank über eine Socket-Datei, <code translate="no">docker</code>, alles, was X11 will, und <code translate="no">ssh-agent</code>. <code translate="no">socketpair</code>, das gepaarte Socket, mit dem ein Build mit seinen eigenen Kindprozessen spricht, ist unberührt, also <code translate="no">cargo build</code> ist unbetroffen.</p>
+	<p>Unter Landlock ABI 9 (Linux 7.1) regelt das Abteil das Verbinden zu einer Socket-Datei überhaupt nicht. Wir haben es gemessen. Mit wirksamem Zaun und verweigertem Netzwerk startet eine einzige Nachricht an den Sitzungsbus des Desktops einen nie eingezäunten Prozess, der eine vom Zaun verweigerte Datei liest. Das ist ein Weg aus dem Abteil hinaus und kein Leck an seinem Rand, es wird also bedingungslos geschlossen.</p>
+
+	<h3 id="s22"><code translate="no">ssh</code> funktioniert nicht</h3>
+	<p>Zwei unabhängige Gründe verhindern das, und nur einen davon zu schließen würde nicht genügen. <code translate="no">~/.ssh</code> ist nicht im Abteil, denn jeder Pfad wird aus dem Ordner gebaut, den Sie freigegeben haben. Und das Agent-Socket ist ein Unix-Socket, oben verweigert. <code translate="no">git push</code> über SSH scheitert an beiden Gründen zugleich. Ihr Home-Verzeichnis freizugeben würde den ersten Grund beseitigen und den größten Teil des Sinns des Abteils, weshalb der Installer es verweigert.</p>
+	<p>Vorgänge, die nur das Repository berühren, funktionieren. <code translate="no">git status</code>, <code translate="no">diff</code>, <code translate="no">log</code>, <code translate="no">add</code> und ein lokaler <code translate="no">commit</code> sind gewöhnliche Dateioperationen innerhalb des Ordners, den Sie freigegeben haben.</p>
+
+	<h3 id="s23">Eine Toolchain braucht eine Freigabe</h3>
+	<p>Öffnen Sie ein Diamond, und das Workspace-Panel zeigt eine <strong>Toolchains</strong> -Zeile mit fünf Schaltflächen: <span class="ui" translate="no">Rust</span>, <span class="ui" translate="no">Node</span>, <span class="ui" translate="no">Python</span>, <span class="ui" translate="no">Go</span>, <span class="ui" translate="no">Git</span>. Alle fünf beginnen aus, also <code translate="no">cargo</code> wird verweigert, bis Sie Rust einschalten, denn <code translate="no">~/.cargo</code> und <code translate="no">~/.rustup</code> liegen unter Ihrem Home-Verzeichnis, und Ihr Home-Verzeichnis ist nicht im Abteil.</p>
+	<p><span class="ui" translate="no">Git</span> ist der Ausreißer. <code translate="no">git</code> ist schon in der schreibgeschützten Basis, weshalb <code translate="no">git status</code> und ein lokaler Commit ohne Freigabe funktionieren. Die Schaltfläche fügt Ihre eigene Konfiguration hinzu, schreibgeschützt, also Ihren Namen, Ihre E-Mail und die Hooks <code translate="no">core.hooksPath</code> -Namen. Ihre gespeicherten Passwörter und <code translate="no">~/.ssh</code> werden namentlich verweigert.</p>
+	<p>Drei Dinge daran sind Absicht.</p>
+	<ul>
+		<li><strong>Sie wird nie aus dem erschlossen, was auszuführen verlangt wurde.</strong> Ein Abteil, das sich selbst erweiterte, um zur verlangten Binärdatei zu passen, wäre ein Abteil, das das Modell wählt, und die ganze Anordnung hängt davon ab, dass das Abteil etwas ist, das das Modell nicht wählen kann. <code translate="no">cargo</code> ist erreichbar, weil Sie die Rust-Toolchain freigegeben haben, und aus keinem anderen Grund.</li>
+		<li><strong>Sie gilt je Diamond.</strong> Eine Freigabe gehört zu einem Diamond, neben den Ordnern, die dieses Diamond hält, und wird auf demselben Weg zurückgenommen.</li>
+		<li><strong>Sie ist eine kurze Liste benannter Verzeichnisse, nie das Home-Verzeichnis.</strong> Rust gibt frei <code translate="no">~/.cargo/bin</code> und <code translate="no">~/.rustup</code> schreibgeschützt, macht die Registry und die Caches beschreibbar, denn Cargo kann ohne Schreiben in sie nicht bauen, und <em>verweigert</em> <code translate="no">~/.cargo/credentials.toml</code>, wo Ihr crates.io-Token geschrieben steht. Die anderen vier sind auf dieselbe Art gezogen, jede lässt die Datei aus, die ein Geheimnis hält.</li>
+	</ul>
+
+	<h3 id="s24">Das Netzwerk</h3>
+	<p>Ob ein Befehl das Netzwerk erreichen darf, hängt vom Berechtigungsmodus ab und davon, was der Zug schon gelesen hat. Unter <strong>Fragen</strong> und <strong>Bewacht</strong>: Sobald ein Zug Inhalt von außen aufgenommen hat (eine gelesene oder geholte Webseite, eine E-Mail, die Ausgabe eines früheren Befehls), läuft jeder Befehl in diesem Zug mit verweigertem TCP, und dem Daimon wird gesagt, warum, er meldet also die Ursache statt eines kaputten Projekts. Unter <strong>Umgehen</strong> bleibt das Netzwerk, was auch immer der Zug gelesen hat.</p>
+	<div class="note"><strong>Die eigene Ausgabe eines Befehls zählt als Inhalt von außen.</strong> Der erste Befehl in einem Zug hat also das Netzwerk, ein zweiter, im selben Zug, nicht. Ein Build-Protokoll wird von dem geschrieben, was der Build ausgeführt hat, das ist also Absicht, und es überrascht Leute. Eine gewöhnliche Datei im eigenen Arbeitsbereich zu lesen zählt nicht, eine Nachricht in Ihrer Mail schon. Muss etwas geholt werden, fragen Sie in einer neuen Nachricht danach, die einen neuen Zug beginnt.</div>
+	<p>Verweigert werden TCP bind und connect, das ist es, was Landlock regelt. UDP und rohe Sockets liegen außerhalb.</p>
+
+	<h3 id="s25">32-Bit-Binärdateien werden beendet</h3>
+	<p>Der Systemaufruf-Filter ist für eine Architektur kompiliert und prüft die Architektur zuerst, denn die Kompatibilitäts-ABI nummeriert ihre Aufrufe anders, und ein Filter, der für die falsche Tabelle gebaut wäre, würde die falschen Dinge verweigern und Erfolg melden. Ein Programm, das eine andere Architektur angibt, wird deshalb sofort beendet statt gefiltert. Das schlägt geschlossen fehl, und ein Build, der einen 32-Bit-Helfer ausführt, funktioniert hier nicht.</p>
+
+	<h2 id="s26">Die Berechtigungsleiter</h2>
+	<p>Eine Einstellung hat drei Sprossen, und die Achse ist, was Daimond tut, <em>ohne zu fragen</em>. Sie beginnt auf Bewacht.</p>
+
+	<div class="cards">
+		<div class="card">
+			<h3 id="s27">Jedes Mal fragen</h3>
+			<p>Jeder Befehl wird Ihnen vorgelegt, bevor er läuft, mit dem Befehl und dem Verzeichnis in der Rückfrage, und Daimond fragt einmal je Gespräch, bevor es das Web erreicht. Wählen Sie das, um jeden Schritt zu beobachten, und für eine Maschine, auf der etwas liegt, das Sie nicht verlieren können.</p>
+		</div>
+		<div class="card">
+			<h3 id="s28">Bewacht</h3>
+			<p>Der Standard. Befehle laufen ohne zu fragen. Ein Zug, der Inhalt von außen gelesen hat, verliert das Netzwerk, und Daimond fragt einmal, in diesem Gespräch, bevor es irgendwohin greift, das das Modell gewählt hat. Ein Ja deckt jede Website ab, bis das Gespräch endet; ein neuer Chat oder ein frischer Daimon fragt erneut, und eine ungewöhnlich lange Adresse wird immer für sich allein vorgelegt.</p>
+		</div>
+		<div class="card">
+			<h3 id="s29">Umgehen</h3>
+			<p>Es wird nichts gefragt, außer einem Klick, den ein unbeaufsichtigter Agent auf einer Seite machen will, der immer vorgelegt wird. Befehle laufen, Seiten werden geholt, und ein Build, der das Netzwerk braucht, hat es beim zehnten Befehl des Zugs ebenso wie beim ersten. Einmal bewusst gewählt, dann still.</p>
+		</div>
+	</div>
+
+	<p><strong>Eine Sprosse ändert nie, was möglich ist.</strong> Das Abteil, in dem ein Befehl läuft, der Systemaufruf-Filter darunter, die Ordner, auf die ein Diamond beschränkt ist, eine freigegebene Toolchain, die Markierung von Inhalt von außen und das Journal sind auf allen dreien identisch. Eine Sprosse ändert nur, was Sie gefragt werden.</p>
+	<p>Die Sprosse ist ein Wort in der Kopfzeile des Chats neben dem Modell, denn ein Modus, den Sie sich merken müssen, ist einer, bei dem Sie sich irren werden. Klicken Sie ihn an, um ihn zu ändern, oder drücken Sie <kbd>Strg</kbd> <kbd>K</kbd> (<kbd>Cmd</kbd> <kbd>K</kbd> auf einem Mac) und tippen Sie den Namen der Sprosse ein.</p>
+
+	<h2 id="s30">Unkonventionelle Systeme</h2>
+	<p>Das Abteil wird aus einer festen Liste absoluter Pfade gebaut, und diese Liste entscheidet, ob eine bestimmte Maschine funktioniert. Führen Sie <code translate="no">--report</code> auf Ihrer aus, bevor Sie in die eine oder andere Richtung annehmen.</p>
+
+	<h3 id="s31">Wird nicht funktionieren</h3>
+	<ul>
+		<li><strong>NixOS und Guix.</strong> Programme liegen in <code translate="no">/nix/store</code> oder <code translate="no">/gnu/store</code>, von denen keines freigegeben ist, und <code translate="no">/usr/bin</code> hält fast nichts. Ein bloßer Name löst sich auf über <code translate="no">PATH</code> zu einem Store-Pfad außerhalb des Abteils, und der Befehl wird namentlich verweigert. Die App kann das heute nicht erweitern.</li>
+		<li><strong>Ein Kernel ohne Landlock.</strong> Das heißt vor Linux 5.13, oder herauskompiliert, oder nicht in der aktiven LSM-Liste, oder von einem Härtungs-Patch entfernt. Die Hand meldet <code translate="no">fence:none</code> und Daimond verweigert jeden Befehl, statt einen uneingezäunten laufen zu lassen. Prüfen Sie, dass <code translate="no">landlock</code> erscheint in <code translate="no">/sys/kernel/security/lsm</code>.</li>
+		<li><strong>Eine andere Architektur als x86-64 oder aarch64.</strong> Die Syscall-Nummern des Filters sind je Architektur ausgeschrieben, und es gibt keine dritte Tabelle. Die Hand rät keine, es gibt also keinen Filter, und ohne Filter läuft kein Befehl.</li>
+	</ul>
+
+	<h3 id="s32">Teilweise</h3>
+	<ul>
+		<li><strong>Linux 5.13 bis 6.6.</strong> Dateien werden eingezäunt, aber Landlock hat vor Linux 6.7 keine Netzwerkregeln, ein Befehl, der eigentlich mit entzogenem Netzwerk laufen müsste, wird also rundheraus verweigert, mit einem Satz, der das sagt, statt mit dem Netzwerk zu laufen, das er eigentlich verlieren sollte. Umgehen funktioniert, und Bewacht funktioniert, bis der Zug etwas liest.</li>
+		<li><strong>Homebrew unter Linux, Flatpak und Snap.</strong> Keines von <code translate="no">/home/linuxbrew/.linuxbrew</code>, den Flatpak-Bäumen oder <code translate="no">/snap</code> ist freigegeben, ein so installiertes Programm wird also verweigert, während das, was Ihre Distribution unter <code translate="no">/usr</code> abgelegt hat, in derselben Sitzung erreichbar ist. Das betrifft die Programme, die ein Befehl ausführt. Ein so verpackter Browser ist ein eigenes Problem, und ein tödliches, behandelt unter <a href="#s2">Bevor Sie beginnen</a>.</li>
+		<li><strong>Andere Versionsmanager als die zwei bekannten.</strong> Die Toolchain-Pfade sind eine feste Liste, und <code translate="no">~/.nvm</code> und <code translate="no">~/.pyenv</code> sind die einzigen Versionsmanager darauf. <code translate="no">asdf</code>, <code translate="no">mise</code>, <code translate="no">volta</code>, <code translate="no">rbenv</code> und <code translate="no">sdkman</code> installieren unter <code translate="no">~/.asdf</code>, <code translate="no">~/.local/share</code>, <code translate="no">~/.volta</code>, <code translate="no">~/.rbenv</code> und <code translate="no">~/.sdkman</code>, und nichts davon wird freigegeben. Die Python-Freigabe deckt <code translate="no">~/.local/bin</code> und <code translate="no">~/.local/lib</code> ab und lässt bewusst aus <code translate="no">~/.local/share</code>.</li>
+	</ul>
+
+	<h3 id="s33">Gut</h3>
+	<ul>
+		<li><strong>Debian, Ubuntu, Fedora, Arch, openSUSE</strong> mit ihren eigenen Paketen, auf einem Kernel, neu genug, damit <code translate="no">--report</code> eine Landlock-ABI nennt.</li>
+		<li><strong>musl und Alpine</strong>, unter derselben Bedingung.</li>
+		<li><strong>BusyBox-Coreutils.</strong> Eine Multi-Call-Binärdatei entscheidet aus dem Namen, unter dem sie aufgerufen wurde, was sie ist, und die Hand führt die aufgelöste Binärdatei aus <em>unter dem Namen, der verlangt wurde</em>, sie weiß also weiterhin, welches Werkzeug sie sein soll.</li>
+	</ul>
+
+	<h2 id="s34">Auch ein Terminal</h2>
+	<p>Die <span class="ui">Terminal</span> -Panel öffnet ein echtes Terminal auf derselben Maschine, innerhalb desselben Abteils, und Sie tippen hinein. Es gibt das, weil manche Programme ihre Fragen an ein Terminal stellen und nicht an die Standardeingabe. Tastenanschläge werden nicht ins Journal geschrieben. Es braucht eine gekoppelte Hand, wie alles andere hier.</p>
+
+	<h2 id="s35">Was aufgezeichnet wird</h2>
+	<p>Jeder Lauf (was verlangt wurde, was verweigert wurde, was er zurückgab) wird an das Journal angehängt in <code translate="no">~/.local/share/daimond/hand/journal/</code>, als gewöhnliche JSON-Zeilen, die Sie lesen können. Die Einträge sind hash-verkettet, und das Journal sitzt außerhalb jedes Abteils, denn die Hand verweigert einen Zaun, der es erreichen würde. Ein Befehl kann die Aufzeichnung seiner selbst also nicht umschreiben, und kein Berechtigungsmodus schaltet das ab.</p>
+
+	<h2 id="s36">Was nicht geschützt ist</h2>
+	<p><code translate="no">--report</code> gibt zwei Listen aus, und die zweite ist der Grund, es auszuführen. Jeder Eintrag darin wurde auf einem laufenden Kernel gemessen und nicht erschlossen, und er ändert sich mit Ihrem Kernel, lesen Sie also Ihren eigenen. Die Einträge fallen in ein paar Gruppen.</p>
+	<ul>
+		<li><strong>Nach einer Datei zu fragen ist nicht, sie zu öffnen.</strong> <code translate="no">stat</code> antwortet weiterhin außerhalb des Abteils, Größen, Zeitstempel, Besitz und das Vorhandensein oder Fehlen einer Datei sind also lesbar. Das Abteil regelt das Öffnen.</li>
+		<li><strong>Die Systemfreigabe ist weit.</strong> <code translate="no">/usr</code>, <code translate="no">/etc</code> und <code translate="no">/opt</code> schreibgeschützt ist es, was einen Befehl überhaupt laufen lässt, und es heißt auch, dass jede weltweit lesbare Datei unter <code translate="no">/etc</code> gelesen und jedes Werkzeug auf der Maschine ausgeführt werden kann. <code translate="no">/etc</code> hält insbesondere eine Menge maschinenidentifizierender Details.</li>
+		<li><strong>Der Filter ist eine Sperrliste.</strong> Er entfernt benannte Capabilities von einem Befehl und ist keine Syscall-Sandbox. Alles, was er nicht genannt hat, ist erlaubt, auch ein Aufruf, den ein künftiger Kernel hinzufügt.</li>
+		<li><strong>Ein Filter kann keinem Zeiger folgen.</strong> Er sieht eine Syscall-Nummer und sechs Register, nie, worauf sie zeigen, er sieht also keinen Pfad, keine Adresse und keinen Dateinamen. Ein verweigertes <code translate="no">chmod</code> wird deshalb überall verweigert, und ein erlaubtes überall erlaubt. <code translate="no">chmod 777</code> wird verweigert, und <code translate="no">chmod 644</code> auf einem privaten Schlüssel nicht, denn 644 fügt kein Schreiben hinzu und ist der Modus, den Cargo auf alles setzt, was es entpackt.</li>
+		<li><strong>Zeitstempel sind nirgends geschützt.</strong> Ein Befehl kann die Zeiten jeder Datei umschreiben, auf jedem Teil der Maschine, denn Cargo kann eine Crate aus der Registry nicht entpacken, ohne das zu tun. Das ist die deutlichste Stelle, an der es Abdeckung gekostet hat, Builds am Laufen zu halten.</li>
+		<li><strong>Bereits Geöffnetes und bereits vergebene Namen.</strong> Ein Dateideskriptor, der geöffnet wurde, bevor das Abteil griff, funktioniert weiter, und ein zuvor angelegter harter Link ist ein zweiter Name für dieselbe Datei. Ein Befehl kann keinen in einen verweigerten Teilbaum anlegen und keinen bestehenden aufheben.</li>
+		<li><strong>Die eine Ausnahme von „nur innerhalb Ihres Ordners“</strong> ist das oben beschriebene private temporäre Verzeichnis.</li>
+	</ul>
+
+	<h2 id="s37">Es zurücknehmen</h2>
+	<p>Drei verschiedene Dinge lassen sich zurücknehmen, und alle drei kommen vor.</p>
+	<ul>
+		<li><strong>Die Erlaubnis zurückziehen.</strong> Klicken Sie das Daimond-Hands-Symbol in der Symbolleiste an. <em>Befehle auf diesem Rechner ausführen</em> steht dort neben den Websites, die Sie genehmigt haben, mit einer Schaltfläche Widerrufen. Widerrufen stoppt, was in diesem Moment läuft, sofort, und wartet nicht auf das Ende des laufenden Builds.</li>
+		<li><strong>Den Ordner wegnehmen.</strong> Löschen <code translate="no">root.txt</code>. Die Hand verweigert dann jede Bedienung, was auch immer der Browser sagt, und die Verweigerung ist ein ganzer Satz.</li>
+		<li><strong>Die Registrierung entfernen.</strong> Führen Sie aus <code translate="no">hand/install/uninstall.sh</code>, oder mit <code translate="no">--dir DIR</code> für ein Verzeichnis. Das löscht die Datei, die der Installer geschrieben hat, der Browser kann die Hand also nicht mehr starten. Die Binärdatei bleibt, wo sie ist, denn das Skript hat sie nicht dorthin gelegt.</li>
+	</ul>
+
+	<div class="next">
+		<a href="email-web-files.html">&larr; Dateien, E-Mail &amp; das Web</a>
+		<a href="runner.html">Weiter: Helfer &amp; wo Züge laufen &rarr;</a>
+	</div>
+</main>
+<footer class="site-foot">
+	<span>Daimond läuft in deinem Browser. Nichts davon wird an uns gesendet.</span>
+	<nav aria-label="Handbuchseiten">
+		<a href="index.html">Hier anfangen</a>
+		<a href="interface.html">Die Oberfläche</a>
+		<a href="chats-and-diamonds.html">Chats &amp; Diamonds</a>
+		<a href="capps.html">Die Seite eines diamond</a>
+		<a href="email-web-files.html">Dateien, E-Mail &amp; das Web</a>
+		<a href="machine-operations.html">Dein Rechner</a>
+		<a href="runner.html">Helfer &amp; wo Züge laufen</a>
+		<a href="sync.html">Mehr als ein Gerät</a>
+		<a href="social.html">Soziales &amp; Vorschläge</a>
+		<a href="models.html">Modelle &amp; Anbieter</a>
+		<a href="spending.html">Ausgaben</a>
+		<a href="accounts.html">Sicherheit &amp; Problembehebung</a>
+	</nav>
+</footer>
+</body>
+</html>

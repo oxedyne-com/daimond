@@ -213,6 +213,14 @@
 	.top-actions .update-chip,
 	#drawer-btn { min-width: 40px; min-height: 40px; }
 	.railhead .addbtn { width: 40px; height: 40px; }
+	/* A word cannot live in a 40px square. The thumb target is kept in the
+	   HEIGHT, which is what a finger misses in a row of this shape, and the width
+	   is whatever the word needs. */
+	.railhead .railbtn { width: auto; padding: 0 10px; font-size: var(--fs-xs); }
+	/* The built-ins' disclosure is a row a thumb has to land on, and at the
+	   heading's own type it was 20px tall. The ink stays small -- it is a label
+	   over a group, not a tile -- and the box is what grows. */
+	.rail-builtin > summary { padding: 11px 5px; }
 	/* The search box was 29px tall: legible, but nothing like a target. */
 	.diamond-search { padding: 9px 10px; }
 

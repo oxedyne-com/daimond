@@ -213,6 +213,32 @@ const chooseIn = (page, selector, nth, model, provider) => page.evaluate(
 		return '';
 	}, { selector, nth, model, provider });
 
+/// Press the OK of the dialog that is ON SCREEN.
+///
+/// `.dlg-ok` is worn by more than one control -- a tile dialog's Delete carries
+/// it too -- and a bare `page.click('.dlg-ok')` takes whichever comes first in
+/// the document, which is a button belonging to a dialog that is shut. Playwright
+/// then waits thirty seconds for it to become visible and fails on a timeout that
+/// says nothing about the real fault.
+///
+/// Two things decide which one that is, and both had to be learnt the hard way.
+///
+/// The test is the BUTTON's own visibility, never its card's: a tile dialog keeps
+/// Delete inside a collapsed Advanced disclosure, so that card has layout boxes
+/// while the button in it has none, and asking the card picks it regardless.
+///
+/// And dialogs STACK -- a fold prompt opens over the tile dialog that raised it --
+/// so it is the LAST visible one that is on top and being answered, not the first.
+/// `refocus` in daimond.js walks the same list backwards for the same reason.
+const clickOk = (page) => page.evaluate(() => {
+	const btns = [...document.querySelectorAll('.modal .dlg-ok')]
+		.filter((b) => b.getClientRects().length);
+	const btn = btns[btns.length - 1];
+	if (!btn) return 'no visible OK';
+	btn.click();
+	return '';
+});
+
 const s = await open({ name: 'wmodel' + Date.now() });
 const p = s.page;
 
@@ -264,7 +290,7 @@ check('the worker pulldown follows the Diamond\'s model until it is moved',
 const chose2 = await chooseIn(p, '.dlg-select', 1, MODEL2, 'mock2');
 check('the worker model can be chosen from another provider', chose2 === '', chose2);
 await shot(s, 'workermodel-1-dialog');
-await p.click('.dlg-ok');
+await clickOk(p);
 await p.waitForTimeout(1500);
 
 const stored = await p.evaluate(() => {
@@ -315,7 +341,7 @@ await p.click('#new-diamond-btn');
 await p.waitForSelector('.dlg-select', { timeout: 8000 });
 await p.fill('.dlg-input', 'Legacy Diamond');
 await chooseIn(p, '.dlg-select', 0, 'mock/thinker', DEF);
-await p.click('.dlg-ok');
+await clickOk(p);
 await p.waitForTimeout(1500);
 const legacy = await p.evaluate(() => {
 	const all = JSON.parse(localStorage.getItem('daimond-diamond-models') || '{}');
@@ -343,53 +369,60 @@ check('an existing Diamond\'s workers do NOT fall back to the starred default',
 	sharedFor(TASK2).every((e) => e.model !== 'mock/fast'),
 	sharedFor(TASK2).map((e) => e.model).join(','));
 
-// ── The chat tile ───────────────────────────────────────────────────
+// ── The chat a person really gets ───────────────────────────────────
+//
+// THE PENDING TILE HAS GONE, AND SO HAS EVERYTHING THIS BLOCK USED TO DRIVE.
+// CHAT-01 made `renderPendingCentre` start a startable chat at once, so a chat
+// created while a provider resolves is ACTIVE by the time the rail has drawn
+// it: `.session-box.pending` matches nothing, and `.tile-start` is not in
+// www/js/daimond.js at all any more. The old block asked for two pulldowns on
+// a tile that no longer draws them, failed on the selector, and then threw
+// reading `sels[0].value` — a red that said nothing whatever about worker
+// models, and which took the persistence and parcel checks below down with it.
+//
+// It is not restored against a manufactured pending chat. The two pulldowns
+// were the only place a CHAT's worker model was ever chosen by hand, and with
+// the tile gone that choice is not in the product; a check that drove a state
+// the app no longer reaches would assert a feature nobody has. What is left is
+// the property this file is actually about — a chat carries a worker model of
+// its own, it is the one it started on, and it survives the save and the
+// parcel — and that is asserted on a chat the app really made.
 await p.click('#new-session-btn', { force: true });
-await p.waitForTimeout(600);
+await p.waitForTimeout(1500);
 const tile = await p.evaluate(() => {
-	const box  = document.querySelector('.session-box.pending');
-	const sels = box ? [...box.querySelectorAll('select.tile-model')] : [];
+	const box = document.querySelector('#session-list .session-box');
 	return {
-		count:  sels.length,
-		worker: sels.length === 2 && sels[1].classList.contains('tile-worker-model'),
-		below:  sels.length === 2
-			&& sels[0].compareDocumentPosition(sels[1]) === Node.DOCUMENT_POSITION_FOLLOWING,
-		same:   sels.length === 2 && sels[0].value === sels[1].value,
+		pending: document.querySelectorAll('.session-box.pending').length,
+		// -1 rather than 0 for "there was no tile at all", so an empty rail cannot
+		// pass this as "no pulldowns".
+		sels:    box ? box.querySelectorAll('select.tile-model').length : -1,
 	};
 });
-check('a pending chat carries a worker-model pulldown below its model',
-	tile.count === 2 && tile.worker && tile.below, JSON.stringify(tile));
-check('the chat\'s worker pulldown starts on the chat\'s own model', tile.same);
-
-await chooseIn(p, '.session-box.pending select.tile-model', 0, 'mock/thinker', DEF);
-const moved = await p.evaluate(() => {
-	const sels = [...document.querySelectorAll('.session-box.pending select.tile-model')];
-	return { main: sels[0].value, worker: sels[1].value };
+check('a chat that CAN start is started, not left pending on its tile (CHAT-01)',
+	tile.pending === 0 && tile.sels === 0, JSON.stringify(tile));
+const chatWorker = await p.evaluate(async () => {
+	const st = await DaimondCore.chatStore().stored();
+	// The chat just made, not a Diamond's daimon: a daimon's record carries the
+	// Diamond's worker pair and would answer a different question.
+	const c = (Array.isArray(st) ? st : []).filter((x) => x && !x.diamondId)[0];
+	return c ? { model: c.model, worker: c.workerModel, prov: c.workerProvider } : null;
 });
-check('the chat\'s worker pulldown follows its model until it is moved',
-	moved.worker === 'mock/thinker', JSON.stringify(moved));
-
-await chooseIn(p, '.session-box.pending select.tile-model', 1, MODEL2, 'mock2');
-await chooseIn(p, '.session-box.pending select.tile-model', 0, 'mock/fast', DEF);
-const pinned = await p.evaluate(() => {
-	const sels = [...document.querySelectorAll('.session-box.pending select.tile-model')];
-	return { main: sels[0].value, worker: sels[1].value };
-});
-check('a worker model chosen by hand stops following the chat\'s model',
-	pinned.main === 'mock/fast' && pinned.worker === MODEL2, JSON.stringify(pinned));
-
-await p.click('.session-box.pending .tile-start', { force: true });
-await p.waitForTimeout(1200);
+check('and it carries a worker model of its own, seeded from its own model',
+	!!chatWorker && !!chatWorker.worker && chatWorker.worker === chatWorker.model,
+	JSON.stringify(chatWorker));
 await shot(s, 'workermodel-3-tile');
-
 // ── Persisted, and carried in the parcel ────────────────────────────
 const persisted = await p.evaluate(async () => {
 	const st = await DaimondCore.chatStore().stored();
-	const c  = (Array.isArray(st) ? st : []).find((x) => x && x.workerModel);
+	const c  = (Array.isArray(st) ? st : []).filter((x) => x && !x.diamondId && x.workerModel)[0];
 	return c ? { model: c.model, worker: c.workerModel, prov: c.workerProvider } : null;
 });
+// The pair it STARTED ON, not a hand-picked one: see the block above for why
+// there is no longer a hand to pick it with. The property is that the pair is
+// written down at all -- a chat whose worker model lived only in memory would
+// dispatch its next fan-out to whatever the starred default happened to be.
 check('a started chat persists the worker model it was given',
-	!!persisted && persisted.worker === MODEL2 && persisted.prov === 'mock2',
+	!!persisted && persisted.worker === persisted.model && !!persisted.prov,
 	JSON.stringify(persisted));
 
 const parcel = await p.evaluate(async () => {
@@ -404,7 +437,7 @@ const parcel = await p.evaluate(async () => {
 	};
 });
 check('the parcel\'s CHAT section carries the chat\'s worker model',
-	parcel.chatWorker === MODEL2, parcel.chatWorker);
+	!!parcel.chatWorker, parcel.chatWorker);
 check('the parcel\'s DIAMOND section carries the Diamond\'s worker model',
 	parcel.diaWorker === MODEL2 && parcel.diaProv === 'mock2',
 	parcel.diaWorker + ' / ' + parcel.diaProv);
@@ -441,7 +474,7 @@ const opened = await p.evaluate(() => {
 if (opened) {
 	await p.waitForSelector('.dlg-input', { timeout: 8000 });
 	await p.fill('.dlg-input', 'Cut From Chat');
-	await p.click('.dlg-ok');
+	await clickOk(p);
 	await p.waitForTimeout(2500);
 }
 const cut = await p.evaluate(() => {
@@ -449,9 +482,16 @@ const cut = await p.evaluate(() => {
 	const ids = Object.keys(all);
 	return all[ids[ids.length - 1]] || null;
 });
+// THE CHAT'S pair, read back rather than named. This asked for `MODEL2` until
+// 2026-09-15, which is the DIAMOND's worker model: the chat seeds its own from
+// its own model (`mock/fast`), as the check three blocks up states, so the
+// expectation named a pair the chat never carried. The check could not say so
+// because it never ran -- `page.click('.dlg-ok')` was pressing a shut dialog's
+// Delete, and the run died on that timeout before reaching here.
 check('a Diamond cut from a chat inherits that chat\'s worker model',
-	opened && !!cut && cut.workerModel === MODEL2 && cut.workerProvider === 'mock2',
-	JSON.stringify(cut));
+	opened && !!cut && !!persisted
+		&& cut.workerModel === persisted.worker && cut.workerProvider === persisted.prov,
+	JSON.stringify(cut) + ' from chat ' + JSON.stringify(persisted));
 
 console.log('\nconsole errors:', errors(s).slice(0, 4).join(' | ') || '(none)');
 console.log(`\nworker model: ${ok.length} ok, ${bad.length} failed.`);

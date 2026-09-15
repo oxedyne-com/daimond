@@ -473,9 +473,21 @@
 		var c = counts();
 
 		els.body.appendChild(html('<div class="tools-intro">' + esc(t('tools.intro')) + '</div>'));
-		els.body.appendChild(html('<div class="tools-count">' + t('tools.count', c) + '</div>'));
+		// "13 of 13" is true of every account until something is actually locked --
+		// on a BYOK account, or while the service cannot say, it is ALWAYS true and
+		// says nothing. Shown only once there is a real shelf to count against.
+		if (c.all > c.have) {
+			els.body.appendChild(html('<div class="tools-count">' + t('tools.count', c) + '</div>'));
+		}
 
-		if (state.err) els.body.appendChild(html('<div class="tools-err">' + esc(state.err) + '</div>'));
+		// A stale entitlement list is worse than none, so a failed refresh clears
+		// `state.packs` (see `load()`) -- which means this can only be true when a
+		// LATER call (`unlock()`) failed after a good load already put packs on
+		// the shelf. That is exactly when the band belongs: not on a BYOK or
+		// dev account that never had a shelf to begin with.
+		if (state.err && state.packs.length) {
+			els.body.appendChild(html('<div class="tools-err">' + esc(state.err) + '</div>'));
+		}
 
 		els.body.appendChild(html('<div class="tools-sec">' + esc(t('tools.sec_included')) + '</div>'));
 		r.included.forEach(function (row) { els.body.appendChild(capCard(row)); });

@@ -98,7 +98,13 @@
 	// in the same tray a stranger's first message does, and the sealed envelope is
 	// kept beside it -- the ack tells the relay to let go, and after that this
 	// record is the only copy of the gift there is.
-	var REC_V = 4;
+	// 5 since `feed` joined it. The followers-only feed keeps NO POST BODY on the
+	// device -- a deletion propagates because nothing is cached past the session --
+	// so what is here is three small maps: how far the cadence read has got, the
+	// highest post id DRAWN per author, and the ids that arrived and have not been.
+	// The badge is counted off the last of them, so it survives a reload the way
+	// an unread message does.
+	var REC_V = 5;
 
 	/// The region the Social panel gives this module: the Messages view's list.
 	/// Everything drawn below lives inside it, and the panel's own head, chips and
@@ -676,7 +682,15 @@
 	/// A fresh, empty record.
 	function blank() {
 		return { v: REC_V, through: 0, acked: 0, tries: 0, msgs: {}, notes: {}, groups: {},
-			shares: {} };
+			shares: {}, feed: blankFeed() };
+	}
+
+	/// The feed's corner of the record. `since` is the CADENCE watermark the merged
+	/// read carries and is advanced only on a page that says `more:false`; `read` is
+	/// the highest post id per author that has actually been drawn on a screen; `new`
+	/// holds the ids that arrived above that mark, which is what the badge counts.
+	function blankFeed() {
+		return { since: 0, read: {}, new: {} };
 	}
 
 	/// Bring a record written by an older build up to `REC_V`, or answer null where
@@ -693,6 +707,7 @@
 	/// walks up rather than being refused by a rule about the gap.
 	function upgrade(r) {
 		if (r.v === 3) { r.shares = {}; r.v = 4; }
+		if (r.v === 4) { r.feed = blankFeed(); r.v = 5; }
 		return r.v === REC_V ? r : null;
 	}
 
@@ -718,6 +733,10 @@
 		r.notes  = r.notes  || {};
 		r.groups = r.groups || {};
 		r.shares = r.shares || {};
+		r.feed   = r.feed   || blankFeed();
+		r.feed.read = r.feed.read || {};
+		r.feed.new  = r.feed.new  || {};
+		r.feed.since = r.feed.since | 0;
 		r.through = r.through | 0;
 		r.acked   = r.acked | 0;
 		r.tries   = r.tries | 0;
@@ -790,6 +809,85 @@
 			if (st.msgs[a].gid === String(gid) && st.msgs[a].tray) { st.msgs[a].tray = 0; n++; }
 		});
 		if (n) { await save(); render(); }
+		return n;
+	}
+
+	// ── The feed half of the record ────────────────────────────
+	//
+	// js/feed.js HOLDS NO STORAGE OF ITS OWN and reaches its three maps through
+	// these, for the reason group.js does: the record is already wrapped at rest
+	// under the identity key, already re-sealed on a passphrase change and already
+	// carried on the sync parcel, and a second store would have to repeat all three
+	// while being exercised a tenth as often.
+	//
+	// NO POST BODY IS EVER KEPT HERE, only ids. A follower's device caching the
+	// words would be a device where an author's deletion never arrived, and the
+	// whole claim of the feed is that a delete deletes.
+
+	/// The feed's three maps, as a copy, or null while the identity is locked.
+	function feedState() {
+		if (!_st) return null;
+		return JSON.parse(JSON.stringify(_st.feed || blankFeed()));
+	}
+
+	/// Move the cadence watermark. Only a page that said `more:false` may do it:
+	/// advancing on a partial page skips every row the next page would have held.
+	async function feedSince(ts) {
+		var st = await read();
+		if (!st) return 0;
+		if ((ts | 0) > (st.feed.since | 0)) { st.feed.since = ts | 0; await save(); }
+		return st.feed.since | 0;
+	}
+
+	/// Note the ids one author's rows arrived with, and answer how many of them are
+	/// new. `whole` is for a read that fetched the author's rows ENTIRE -- it
+	/// replaces the list rather than adding to it, which is how a post deleted by
+	/// its author stops being counted as unread here.
+	async function feedSaw(author, ids, whole) {
+		var st = await read();
+		if (!st) return 0;
+		var a    = String(author || '');
+		var mark = st.feed.read[a] | 0;
+		var want = (ids || []).map(function (i) { return i | 0; })
+			.filter(function (i) { return i > mark; });
+		var had  = whole ? [] : (st.feed.new[a] || []);
+		var seen = {}, out = [];
+		had.concat(want).forEach(function (i) {
+			if (i > mark && !seen[i]) { seen[i] = 1; out.push(i | 0); }
+		});
+		var fresh = out.length - had.filter(function (i) { return i > mark; }).length;
+		if (out.length) st.feed.new[a] = out.sort(function (x, y) { return x - y; });
+		else delete st.feed.new[a];
+		await save();
+		return fresh > 0 ? fresh : 0;
+	}
+
+	/// One author's posts are DRAWN up to `id`: raise the mark and drop what it
+	/// covers. The measuring of "drawn" belongs to feed.js, on the rule
+	/// `markDrawnRead` keeps below -- this only records what it decided.
+	async function feedDrawn(author, id) {
+		var st = await read();
+		if (!st) return 0;
+		var a = String(author || '');
+		if ((id | 0) <= (st.feed.read[a] | 0)) return 0;
+		st.feed.read[a] = id | 0;
+		var left = (st.feed.new[a] || []).filter(function (i) { return (i | 0) > (id | 0); });
+		if (left.length) st.feed.new[a] = left; else delete st.feed.new[a];
+		await save();
+		countChanged();
+		return 1;
+	}
+
+	/// How many feed posts have arrived and not been drawn. The Social badge adds
+	/// this to `unread()` above; see `postBadge` in js/daimond.js, and the comment
+	/// there insisting there is ONE badge.
+	function feedUnread() {
+		if (!_st || !_st.feed) return 0;
+		var n = 0;
+		Object.keys(_st.feed.new).forEach(function (a) {
+			var mark = _st.feed.read[a] | 0;
+			(_st.feed.new[a] || []).forEach(function (i) { if ((i | 0) > mark) n++; });
+		});
 		return n;
 	}
 
@@ -967,6 +1065,12 @@
 				mine.name    = r.name;
 				mine.creator = r.creator;
 				mine.members = r.members;
+				// The roster's own signed bytes travel with the four fields
+				// they were read out of -- see group.js on `art`. A parcel from
+				// an older build carries none, and blanking what this device
+				// holds would leave a group whose messages it can no longer
+				// report.
+				if (r.art) mine.art = String(r.art);
 				moved = true;
 			}
 			if (ms(r.stateAt) > ms(mine.stateAt)) {
@@ -1593,7 +1697,29 @@
 	///
 	/// Answers the three counters `collect` keeps, so that the caller adds rather
 	/// than branches.
+	/// The relay rows the FEED writes, and which of them waits for an answer.
+	///
+	/// All three carry their words in `envelope` and not in a body -- the collect
+	/// has nothing sealed to put there -- and all three are the relay's own rows,
+	/// so they are kept beside the notices and can never reach the message list.
+	var FEED_KINDS = { follow: 1, followed: 1, feedgone: 1 };
+
 	async function takeRow(st, row) {
+		if (FEED_KINDS[String(row.kind)]) {
+			st.notes['n' + row.seq] = {
+				seq:  row.seq | 0, kind: String(row.kind),
+				addr: String(row.addr || ''), ts: row.ts | 0,
+				// Who asked, or whose post was taken down. `from` is the relay's
+				// `from_pub`; `text` is a handle for a follow and "<id> <reason>"
+				// for a removal.
+				from: String(row.from_pub || ''),
+				text: String(row.envelope || ''),
+				// A follow request WAITS ON A PERSON, so it is drawn in the tray
+				// with three buttons; the other two are notices and ask nothing.
+				ask:  String(row.kind) === 'follow' ? 1 : 0,
+			};
+			return ROSTER;
+		}
 		// THE SAFETY FIELD. A row the relay wrote carries no envelope and no
 		// signature. It is recorded, and it can never reach the message list.
 		if (String(row.kind) !== 'post') {
@@ -2004,6 +2130,31 @@
 		return { ok: true };
 	}
 
+	/// Ask to follow somebody, answer somebody who asked, or let go either way.
+	///
+	/// Here beside `connect` rather than in js/feed.js because it is the SAME
+	/// door: one path, a peer's public key and a verb, and the block that governs
+	/// both is the one this module already reads. `action` is `request`,
+	/// `approve`, `remove` or `unfollow`.
+	///
+	/// A REQUEST IS ANSWERED THE SAME WHETHER IT WAS STORED OR NOT. The relay
+	/// answers a blocked ask exactly as it answers an ordinary one, for the reason
+	/// `deliver` gives above, so nothing here may report a block and no caller may
+	/// infer one from `{ok:true}`.
+	async function follow(peerPub, action) {
+		if (['request', 'approve', 'remove', 'unfollow'].indexOf(String(action)) < 0) {
+			return { ok: false, why: 'unknown_action' };
+		}
+		var r;
+		try { r = await call('POST', { peer: String(peerPub), action: String(action) }, '?op=follow'); }
+		catch (e) { return { ok: false, why: 'offline' }; }
+		if (r.status !== 200 || !r.json || !r.json.ok) {
+			return { ok: false, status: r.status | 0,
+				why: (r.json && r.json.reason) || 'status_' + r.status };
+		}
+		return { ok: true };
+	}
+
 	/// Add a diamond somebody sent, as a diamond of this account's own.
 	///
 	/// THE ONLY THING THAT PUTS A SHARE ON THE MACHINE. `takeRow` keeps the sealed
@@ -2299,6 +2450,31 @@
 			.sort(function (a, b) { return (b.ts | 0) - (a.ts | 0); });
 	}
 
+	/// The follow requests waiting to be approved, ignored or blocked. Newest
+	/// first, as the message tray is, and kept with the notices because that is
+	/// what they are: rows the relay wrote, with nothing signed in them.
+	function follows() {
+		if (!_st) return [];
+		return Object.keys(_st.notes).map(function (k) { return _st.notes[k]; })
+			.filter(function (n) { return n && n.ask && !n.hidden; })
+			.sort(function (a, b) { return (b.seq | 0) - (a.seq | 0); });
+	}
+
+	/// Take one follow request off this device's tray. WRITES NOTHING TO THE
+	/// RELAY, on the rule Ignore keeps everywhere else in this panel: a sender who
+	/// could tell an ignore from a silence has a presence oracle. The pending
+	/// entry stays on the gateway until it is approved, blocked, or falls off the
+	/// end of the author's pending list.
+	async function hideFollow(seq) {
+		var st = await read();
+		var n  = st && st.notes['n' + (seq | 0)];
+		if (!n) return false;
+		n.hidden = 1;
+		await save();
+		render();
+		return true;
+	}
+
 	/// The relay's own rows. Never a message from a person.
 	///
 	/// FOLDED BY ADDRESS, which matters only for a group and costs nothing for
@@ -2318,11 +2494,14 @@
 		Object.keys(_st.notes).forEach(function (k) {
 			var n = _st.notes[k];
 			if (!n) return;
+			// A follow request is drawn in the TRAY, because it waits on an answer,
+			// and one that was ignored is drawn nowhere at all.
+			if (n.ask || n.hidden) return;
 			var key = n.kind === 'expired' && n.addr ? 'a:' + n.addr : 'k:' + k;
 			var held = byAddr[key];
 			if (!held) {
 				byAddr[key] = { seq: n.seq | 0, kind: n.kind, addr: n.addr,
-					ts: n.ts | 0, copies: 1 };
+					ts: n.ts | 0, copies: 1, from: n.from || '', text: n.text || '' };
 				out.push(byAddr[key]);
 				return;
 			}
@@ -2403,10 +2582,15 @@
 		// person and the list is not.
 		var pending = tray();
 		var gifts   = shares();
-		if (pending.length || gifts.length) {
+		var asks    = follows();
+		if (pending.length || gifts.length || asks.length) {
 			var tsec = elt('section', 'post-tray');
 			tsec.id = 'post-tray';
 			tsec.appendChild(elt('h3', null, tOr('post.tray_head', 'Waiting for your answer')));
+			// Somebody asking to read what this account writes. First, because it is
+			// the shortest decision on the tray and the only one with no words in it
+			// to read.
+			asks.forEach(function (f) { tsec.appendChild(drawFollowRow(f)); });
 			// Diamonds first. A gift asks for more than an answer -- it asks to be
 			// written into the workspace -- and it is the row a person most needs to
 			// see before they start pressing things.
@@ -2582,6 +2766,12 @@
 	/// guessed at -- a control that exists only to produce an error explains less
 	/// than its absence does, and a message collected by an older build has no
 	/// artefact to prove anything with.
+	/// A GROUP ROW GETS THE SAME CONTROL, and this is where that used to stop
+	/// being true in practice: the control was drawn, and the gateway refused
+	/// every filing, because a group message's signed `to` is the group's id and
+	/// not the reporter's key. report.js now sends the roster with it and the
+	/// gateway checks membership from that; nothing here changes, because `m`
+	/// already carries `gid` and report.js reads it off the same record.
 	function drawReport(acts, m) {
 		try {
 			if (!window.DaimondReport || !DaimondReport.canReport) return;
@@ -2646,6 +2836,36 @@
 		return row;
 	}
 
+	/// One follow request: who is asking, and the three answers.
+	///
+	/// THE SAME ROW A STRANGER'S FIRST MESSAGE GETS, because it is the same kind
+	/// of decision and a feed request dressed differently would be a second thing
+	/// to learn. The handle is the relay's word for the asker and is drawn as the
+	/// claim it is -- a handle is the gateway's namespace, not a matched key.
+	function drawFollowRow(f) {
+		var row = elt('article', 'post-req post-follow');
+		row.dataset.seq  = String(f.seq | 0);
+		row.dataset.peer = f.from || '';
+		var who = elt('div', 'post-who');
+		who.appendChild(elt('span', 'post-name',
+			nameFor(f.from) || f.text || tOr('post.someone', 'Someone new')));
+		row.appendChild(who);
+		drawKeyLine(row, f.from);
+		row.appendChild(elt('p', 'post-body', tOr('feed.wants', '{who} wants to follow you',
+			{ who: f.text || nameFor(f.from) || tOr('post.someone', 'Someone new') })));
+		var acts = elt('div', 'post-acts');
+		[['post-follow-approve', tOr('feed.approve', 'Approve')],
+		 ['post-follow-ignore',  tOr('post.ignore',  'Ignore')],
+		 ['post-follow-block',   tOr('post.block',   'Block')]].forEach(function (pair) {
+			var b = elt('button', 'post-btn', pair[1]);
+			b.type = 'button';
+			b.dataset.act = pair[0];
+			acts.appendChild(b);
+		});
+		row.appendChild(acts);
+		return row;
+	}
+
 	/// One diamond somebody sent, waiting in the same tray a stranger's first
 	/// message waits in.
 	///
@@ -2704,6 +2924,22 @@
 	/// never in the message stream.
 	function drawNotice(n) {
 		var row = elt('article', 'post-notice');
+		// SOMEBODY LET THIS ACCOUNT FOLLOW THEM, or one of this account's own posts
+		// was taken down. Both are the relay's rows and neither is a message, so
+		// they are said here and never in the list -- the `feedgone` text is
+		// "<id> <reason>", of which the reader is owed the reason.
+		if (n.kind === 'followed') {
+			row.appendChild(elt('p', null, tOr('feed.followed', '{who} let you follow them',
+				{ who: n.text || nameFor(n.from) || tOr('post.someone', 'Someone new') })));
+			return row;
+		}
+		if (n.kind === 'feedgone') {
+			var said = String(n.text || '').split(' ').slice(1).join(' ');
+			row.appendChild(elt('p', null, tOr('feed.gone',
+				'A post of yours was removed: {reason}.',
+				{ reason: said || tOr('feed.gone_why', 'the operator gave no reason') })));
+			return row;
+		}
 		var expiry = n.kind === 'expired' || n.kind === 'expiry';
 		row.appendChild(elt('p', null, !expiry
 			? tOr('post.notice', 'The relay left a notice here.')
@@ -3005,6 +3241,29 @@
 			catch (err) { /* no panel shell in this build */ }
 			return;
 		}
+		// A FOLLOW REQUEST, answered. Approve and Block reach the relay; Ignore
+		// reaches it in no way at all, which is the same rule the message tray's
+		// Ignore keeps and for the same reason.
+		if (act === 'post-follow-approve' || act === 'post-follow-ignore'
+			|| act === 'post-follow-block') {
+			e.preventDefault();
+			var frow = b.closest('.post-follow');
+			if (!frow) return;
+			var fseq = frow.dataset.seq | 0;
+			var fpub = String(frow.dataset.peer || '');
+			if (act === 'post-follow-ignore') { hideFollow(fseq); return; }
+			b.disabled = true;
+			var done = function () { hideFollow(fseq); };
+			if (act === 'post-follow-block') {
+				// The messaging block, which the gateway also reads as "take this
+				// pair out of both feed records" -- one block, not two, so a person
+				// blocking somebody does not have to do it twice.
+				connect(fpub, 'block').then(done, done);
+			} else {
+				follow(fpub, 'approve').then(done, done);
+			}
+			return;
+		}
 		if (!row) return;
 		var peer = row.dataset.peer;
 		if (act === 'post-share-add') {
@@ -3111,6 +3370,14 @@
 		ack:     ackThrough,
 		round:   round,
 		connect: connect,
+		/// Ask to follow, answer somebody who asked, or let go. The same door
+		/// `connect` takes, with the feed's four verbs on it.
+		follow:  follow,
+		/// THE RELAY'S DOOR, published so js/feed.js reaches the gateway through
+		/// the same path, the same api header and the same deadline handling
+		/// rather than a second copy of them. `call(method, body, query, timeoutMs)`
+		/// answers `{ status, json }` and throws only where the request never went.
+		call:    call,
 		/// The doorbell: whether one email a day may say something is waiting.
 		/// The read carries the REACH as well as the switch -- see above.
 		doorbell:    doorbell,
@@ -3155,6 +3422,17 @@
 		/// the only authority; this reads it and holds nothing of its own.
 		refreshPeople: refreshDir,
 		people:   people,
+		/// The feed half of the record, for js/feed.js, which holds no storage of
+		/// its own either. `feedState` answers a COPY; the other four write and
+		/// save. No post body is ever kept -- see the section's own header.
+		feedState:  feedState,
+		feedSince:  feedSince,
+		feedSaw:    feedSaw,
+		feedDrawn:  feedDrawn,
+		feedUnread: feedUnread,
+		/// The follow requests waiting in the tray, and the local-only Ignore.
+		follows:    follows,
+		hideFollow: hideFollow,
 		/// The groups half of the record, for group.js, which holds no storage of
 		/// its own. `groups` answers a COPY and null while the identity is locked.
 		groups:      groups,

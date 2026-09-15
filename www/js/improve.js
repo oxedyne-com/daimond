@@ -3290,12 +3290,20 @@
 
 	// ── The chips on the head ──────────────────────────────────
 	//
-	// The panel is Social. It holds SIX things -- Messages, People, Groups,
-	// Share, Feedback, Settings. It opens on Messages, which is where a reader
-	// arrives from an unread arrival; the compose box lives in Feedback (the
-	// view id and the i18n key are both still `proposals` -- only the word a
-	// reader sees changed, so a rename here is markup and a catalogue value,
-	// never this table).
+	// The panel is Social. It holds SIX CHIPS -- Messages, People, Groups, Feed,
+	// Share, Feedback. It opens on Messages, which is where a reader arrives from
+	// an unread arrival; the compose box lives in Feedback (the view id and the
+	// i18n key are both still `proposals` -- only the word a reader sees changed,
+	// so a rename here is markup and a catalogue value, never this table).
+	//
+	// SEVEN VIEWS, SIX CHIPS, and the odd one out is `settings`. Feed took its
+	// slot on 2026-09-15 rather than becoming a seventh chip -- seven blanks or
+	// crowds a 390px dock, and the head's closer census in index.html is the
+	// record of what wrapping did last time. The view is unmoved and everything
+	// that addresses it by id still works; what changed is the door, which is now
+	// the header cog's "Social settings…" row calling `open('settings')`. The
+	// posting name and the doorbell are settings, and the cog is where this app
+	// keeps settings.
 	//
 	// The count is deliberately not in the heading. A heading that names a number
 	// goes stale the next time somebody adds a chip, and the panel is the only
@@ -3316,9 +3324,15 @@
 		// js/share.js renders into `#social-share-list` the way post.js renders
 		// into the messages list; this file shows and hides it and nothing more.
 		share:     'social-share',
+		// js/feed.js renders into `#social-feed-list` the way post.js renders into
+		// the messages list. NOT SEALED, unlike everything else this panel carries;
+		// that lane's own header says what follows from it.
+		feed:      'social-feed',
 		proposals: 'improve-props-view',
 		// This file's own, drawn by `drawSettings`: the posting name, the email
-		// doorbell (moved here from the cog drawer) and the drafts.
+		// doorbell and the drafts. NO CHIP OPENS IT -- the header cog's "Social
+		// settings…" row does (js/daimond.js) -- so it is a view without a chip,
+		// which is why the head carries six and this table holds seven.
 		settings:  'social-settings',
 	};
 
@@ -3821,6 +3835,9 @@
 			return 'People this account can reach (' + who.length + '):\n\n'
 				+ who.map(function (p) { return (p.label || '(unnamed)') + '  [' + p.state + ']'; }).join('\n');
 		}
+		// SEAM FOR THE DAIMON LANE: `view === 'feed'` lands here — the merged read
+		// through `DaimondFeed`, rows as `handle: body`, and wrapped as a
+		// stranger's words before a model sees any of it (feed plan §6).
 		return no('\'' + view + '\' is not one of this panel\'s views.');
 	}
 
@@ -3844,6 +3861,9 @@
 				? String(window.DaimondPublishGuard() || '') : '';
 		} catch (e) { withheld = ''; }
 		if (withheld) return JSON.stringify({ refusal: no(withheld) });
+		// SEAM FOR THE DAIMON LANE: `act === 'feed_post'` lands here, AHEAD of the
+		// voice refusal below — a feed post needs no forge voice, and its Pro gate
+		// is the gateway's (feed plan §6).
 		if (!hasVoice()) {
 			return JSON.stringify({ refusal: no('nothing was composed: this account has no posting '
 				+ 'name on the forge, so it cannot publish there. Tell the user, and say what you '

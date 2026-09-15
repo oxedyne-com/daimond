@@ -1,0 +1,112 @@
+<!DOCTYPE html>
+<html lang="es" data-guide-locale="es" data-guide-locales="en de es fr ja ko pt-BR zh-Hans">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<title>Ayudantes y dónde se ejecutan los turnos &mdash; Guía de Daimond</title>
+<link rel="icon" type="image/svg+xml" href="../../assets/daimond_mark.svg">
+<link rel="stylesheet" href="../../css/variables.css">
+<link rel="stylesheet" href="../../css/guide.css">
+<script src="../frame.js"></script>
+<script src="search-index.js"></script>
+<script src="../search.js"></script>
+</head>
+<body>
+
+<header class="site-head">
+	<div class="site-head-inner">
+		<a class="brand" href="index.html" aria-label="Guía de Daimond, inicio">
+			<img class="wordmark wm-dark" src="../../assets/daimond_word.svg" alt="Daimond" translate="no">
+			<img class="wordmark wm-light" src="../../assets/daimond_word_dark.svg" alt="Daimond" translate="no">
+			<span class="brand-sub">Guía</span>
+		</a>
+		<nav class="site-nav" aria-label="Páginas de la guía">
+			<a href="index.html">Empieza aquí</a>
+			<a href="interface.html">La interfaz</a>
+			<a href="chats-and-diamonds.html">Chats y diamonds</a>
+			<a href="capps.html">La página de un diamond</a>
+			<a href="email-web-files.html">Archivos, correo y la web</a>
+			<a href="machine-operations.html">Tu equipo</a>
+			<a href="runner.html" aria-current="page">Ayudantes y dónde se ejecutan los turnos</a>
+			<a href="sync.html">Más de un dispositivo</a>
+			<a href="social.html">Social y propuestas</a>
+			<a href="models.html">Modelos y proveedores</a>
+			<a href="spending.html">Gasto</a>
+			<a href="accounts.html">Seguridad y soluciones</a>
+		</nav>
+	</div>
+</header>
+
+<main>
+	<h1>Ayudantes y dónde se ejecutan los turnos</h1>
+	<p class="lede">Un daimon puede poner ayudantes a trabajar en paralelo, y un turno que empiezas en un dispositivo puede ejecutarlo otro. Los dos son visibles, y los dos son tuyos para parar.</p>
+
+	<h2 id="s1">Ayudantes</h2>
+	<p>Algunas tareas quieren trabajo hecho, y para esas el daimon de un diamond despacha <strong>ayudantes</strong>, agentes que corren por su cuenta con las herramientas de archivos, cada uno con las instrucciones permanentes y la memoria de este diamond.</p>
+	<p>Un ayudante no puede ver tu conversación. La memoria es todo lo que sabe sobre el trabajo, así que la tarea que se le encarga tiene que decir todo lo demás.</p>
+	<p>Corren hasta ocho a la vez y el resto hace cola. El daimon los despacha y su turno termina ahí. Cada uno informa de vuelta, y te quedas con los que merece la pena quedarse. Un ayudante no puede despachar a otro ayudante, así que la delegación llega hasta un nivel y para.</p>
+	<p>Los ajustes de un diamond llevan un <span class="ui">Modelo ayudante</span>, aparte del que usa su daimon para pensar. Un ayudante conserva el modelo con el que empezó, y un cambio se aplica al siguiente.</p>
+
+	<h3 id="s2">El panel Agentes</h3>
+	<p>Las ejecuciones en marcha aparecen en <span class="ui">Agentes</span>, en el dock, con una línea que dice cuántos están corriendo, pausados y en cola. Cada mosaico muestra su coste según se acumula, y no solo al final.</p>
+	<p>Tres controles están en la cabecera y de nuevo en cada mosaico.</p>
+	<ul>
+		<li><strong>Pausar.</strong> Cuelga lo que está corriendo y retiene la cola. Un ayudante en marcha conserva lo que había producido, y no empieza nada nuevo.</li>
+		<li><strong>Reanudar.</strong> Sigue desde donde lo dejó cada uno, sin volver a empezar, así que una pausa no cuesta nada más que la espera.</li>
+		<li><strong>Parar.</strong> Termínalos del todo. Cada uno se queda con lo que consiguió. <span class="ui">Limpiar agentes terminados</span> ordena.</li>
+	</ul>
+	<p>El freno más amplio es la <span class="ui">Todo</span> fila de arriba de la barra lateral, que cubre cada diamond, cada chat, los ayudantes, los buzones, y cualquier página que se esté trayendo. Algo pausado rechaza un turno antes de que empiece, así que no se gasta nada.</p>
+
+	<h2 id="s3">Qué dispositivo ejecuta un turno</h2>
+	<p>Con más de un dispositivo en tu cuenta, uno puede ejecutar un turno por otro y la respuesta vuelve sincronizada. La cesión de turno está desactivada hasta que la activas en la ficha de permisos, con <span class="ui">Cede el turno cuando te apartas</span>.</p>
+	<p>Ayuda sobre todo en un teléfono, que no puede ejecutar una orden en tu equipo, y en un portátil que estás a punto de cerrar.</p>
+
+	<h3 id="s4">Nombrar el dispositivo que recoge los turnos</h3>
+	<p>Sin una designación, un turno cedido va al dispositivo que esté más fresco y despierto. El dispositivo más fresco suele ser el correcto, pero un portátil a punto de cerrarse puede coger un turno y llevárselo consigo.</p>
+	<p>Abre <span class="ui">Ajustes</span> y luego <span class="ui">Dispositivos</span>. Cada fila termina en una estrella. Pulsa la hueca junto al equipo que suele estar encendido y se rellena. Hay exactamente una a la vez, así que marcar una segunda borra la primera. La designación viaja con tu sincronización normal.</p>
+	<p>La designación es solo la mitad. La próxima vez que ese equipo tenga Daimond corriendo, pregunta <span class="ui">¿Hacer de este dispositivo el ejecutor?</span> Responde <span class="ui">Este dispositivo es el ejecutor</span> y mantiene esa postura desde entonces. La postura no viaja, porque compromete a ese equipo a seguir despierto y escuchando.</p>
+	<p>La pregunta se hace una vez. Di que no y no se vuelve a preguntar hasta que borres la designación y la hagas de nuevo.</p>
+
+	<h3 id="s5">Mantener el navegador fuera de en medio</h3>
+	<p>Un navegador ralentiza una pestaña oculta a más o menos una activación por minuto, y puede aparcar toda una página para ahorrar memoria. Un dispositivo ralentizado es peor que ninguno, porque sigue diciendo que está despierto y no recoge nada.</p>
+	<p>Así que dale un navegador propio. <code>dev/runner-chrome.sh</code> en el código fuente de Daimond arranca uno con un perfil aparte, una ventana de aplicación en vez de una pestaña, y esas limitaciones desactivadas. Ejecútalo con <code>--dry-run</code> para leer la orden primero, o <code>--install</code> para que arranque con tu sesión de escritorio.</p>
+	<p>Dos cosas quedan fuera del alcance del script. Desactiva Memory Saver en ese perfil, o añade Daimond a sus excepciones. Y deja la ventana abierta y sin minimizar, porque detrás de otras ventanas está bien, pero minimizada se trata como oculta.</p>
+
+	<h3 id="s6">Qué ves mientras corre</h3>
+	<p>El turno dice adónde fue. Primero dice <span class="ui">Enviado a tus otros dispositivos</span>, y luego el nombre propio del equipo mientras recoge el turno y mientras trabaja. La respuesta aparece donde lo empezaste.</p>
+	<p>Dos botones están junto a esa línea todo el tiempo. <span class="ui">Recuperar</span> devuelve el turno al dispositivo que tienes en la mano, y <span class="ui">Ejecutar aquí</span> lo ejecuta en local si nada lo ha recogido. Nombrar tus dispositivos en <span class="ui">Ajustes</span> &rsaquo; <span class="ui">Dispositivos</span> es lo que hace que estas líneas se lean como un nombre.</p>
+	<p>Un turno cedido busca primero el dispositivo designado, luego cualquier otro equipo despierto que esté escuchando, y luego el dispositivo en el que estás. A un teléfono nunca se le da el turno de otro dispositivo.</p>
+
+	<h3 id="s7">Dos cosas que todavía lo detienen</h3>
+	<p>Las dos necesitan un momento de tu atención en ese equipo, y ninguna aparece en el dispositivo que tienes en la mano.</p>
+	<ul>
+		<li><strong>Un permiso de carpeta esperando un clic.</strong> Si un turno necesita una carpeta que el navegador no ha concedido, la petición se plantea en la propia pantalla de ese equipo y espera. Abre la carpeta ahí una vez y los turnos posteriores encuentran el permiso ya dado.</li>
+		<li><strong>Una pantalla bloqueada.</strong> Un equipo conserva la clave que tiene para esa pestaña a través de una recarga, así que una actualización ya no lo detiene. Puedes desactivar eso por dispositivo con <span class="ui">Seguir desbloqueado entre recargas</span> en <span class="ui">Dispositivos</span>. Un teléfono nunca se mantiene desbloqueado, así que un teléfono que hace este trabajo vuelve bloqueado.</li>
+	</ul>
+	<p>Si un dispositivo ha dejado de coger turnos y nada más lo explica, ve a mirar su pantalla.</p>
+
+	<div class="next">
+		<a href="machine-operations.html">&larr; Tu equipo</a>
+		<a href="sync.html">Siguiente: Más de un dispositivo &rarr;</a>
+	</div>
+</main>
+
+<footer class="site-foot">
+	<span>Daimond se ejecuta en tu navegador. Nada de esto se nos envía.</span>
+	<nav aria-label="Páginas de la guía">
+		<a href="index.html">Empieza aquí</a>
+		<a href="interface.html">La interfaz</a>
+		<a href="chats-and-diamonds.html">Chats y diamonds</a>
+		<a href="capps.html">La página de un diamond</a>
+		<a href="email-web-files.html">Archivos, correo y la web</a>
+		<a href="machine-operations.html">Tu equipo</a>
+		<a href="runner.html">Ayudantes y dónde se ejecutan los turnos</a>
+		<a href="sync.html">Más de un dispositivo</a>
+		<a href="social.html">Social y propuestas</a>
+		<a href="models.html">Modelos y proveedores</a>
+		<a href="spending.html">Gasto</a>
+		<a href="accounts.html">Seguridad y soluciones</a>
+	</nav>
+</footer>
+</body>
+</html>

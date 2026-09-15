@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
-<title>More than one device &mdash; Daimond guide</title>
+<title>不止一台设备 &mdash; Daimond 指南</title>
 <link rel="icon" type="image/svg+xml" href="../../assets/daimond_mark.svg">
 <link rel="stylesheet" href="../../css/variables.css">
 <link rel="stylesheet" href="../../css/guide.css">
@@ -24,12 +24,12 @@
 			<a href="index.html">从这里开始</a>
 			<a href="interface.html">界面</a>
 			<a href="chats-and-diamonds.html">对话和 diamond</a>
-			<a href="../capps.html">diamond 的页面</a>
+			<a href="capps.html">diamond 的页面</a>
 			<a href="email-web-files.html">文件、邮件和网页</a>
-			<a href="../machine-operations.html">你的电脑</a>
-			<a href="../runner.html">帮手和轮次的运行位置</a>
+			<a href="machine-operations.html">你的电脑</a>
+			<a href="runner.html">帮手和轮次的运行位置</a>
 			<a href="sync.html" aria-current="page">不止一台设备</a>
-			<a href="../social.html">社交和提案</a>
+			<a href="social.html">社交和提案</a>
 			<a href="models.html">模型和提供商</a>
 			<a href="spending.html">花费</a>
 			<a href="accounts.html">安全和修复</a>
@@ -39,53 +39,53 @@
 
 <main>
 	<h1>不止一台设备</h1>
-	<p class="lede">Daimond keeps your work on the device you are using, so a second device starts empty. Link it, and your chats, diamonds and files stay in step without the server ever reading them.</p>
+	<p class="lede">Daimond 把你的工作留在你正在用的这台设备上，所以第二台设备一开始是空的。把它连起来，你的聊天、diamond 和文件就会保持同步，而服务器从来读不到它们。</p>
 
-	<p>What crosses is one encrypted parcel, and only your devices hold the key to it. The key comes from your passphrase and does not leave the browser.</p>
+	<p>穿过去的是一个加密的包裹，只有你的设备握着它的钥匙。这把钥匙来自你的密码短语，从不离开浏览器。</p>
 
-	<h2 id="s1">Link a second device</h2>
-	<p>Each device makes its own identity, so typing your passphrase into a fresh browser starts a <em>另外的</em> account. To use the one you have, link the new device to it.</p>
+	<h2 id="s1">连接第二台设备</h2>
+	<p>每台设备都会生成自己的身份，所以在一个全新的浏览器里输入你的密码短语，开出来的是一个 <em>另外的</em> 账户。要用你已经有的那个，把新设备连接到它就行。</p>
 	<ol class="steps">
 		<li>
 			<h3 id="s2">在你已经在用的那台设备上，打开关联对话框</h3>
-			<p><span class="ui">关联另一台设备</span> in the top bar shows a QR code and a one-time pairing code.</p>
+			<p><span class="ui">关联另一台设备</span> ，它在顶栏里，显示一个二维码和一个一次性配对码。</p>
 			<figure class="shot narrow">
-				<img alt="The link dialog on a desktop, showing a QR code above a short pairing code." src="../img/pair-desktop.png" loading="lazy">
+				<img alt="桌面上的关联对话框，上面是二维码，下面是一个简短的配对码。" src="../img/pair-desktop.png" loading="lazy">
 				<figcaption>你的第一台设备显示一个 QR 码和一串码。</figcaption>
 			</figure>
 		</li>
 		<li>
-			<h3 id="s3">On the new device, scan the QR or type the code</h3>
-			<p>Point the phone's camera at the code. It opens Daimond and fills the code in, so you only tap <span class="ui">关联这台设备</span>. Without a camera, open Daimond there, choose <span class="ui">Have a passcode or a pairing code?</span>, and type it.</p>
+			<h3 id="s3">在新设备上，扫二维码或者输入配对码</h3>
+			<p>把手机摄像头对准这个码。它会打开 Daimond 并自动填好码，你只需要点一下 <span class="ui">关联这台设备</span>。没有摄像头的话，在那台设备上打开 Daimond，选择 <span class="ui">有验证码或配对码吗？</span>，然后把它输进去。</p>
 			<figure class="shot narrow">
-				<img alt="The new phone, after scanning, with a single Link this device button." src="../img/pair-mobile.png" loading="lazy">
-				<figcaption>After scanning, one tap.</figcaption>
+				<img alt="扫码之后的新手机，屏幕上只有一个「关联这台设备」按钮。" src="../img/pair-mobile.png" loading="lazy">
+				<figcaption>扫码之后，点一下就行。</figcaption>
 			</figure>
 		</li>
 		<li>
 			<h3 id="s4">用同一句密码短语解锁</h3>
-			<p>The new device now holds your account. Use the passphrase you already have, and your work appears. A passkey can unlock it faster afterwards.</p>
+			<p>新设备现在拿到了你的账户。用你已经有的那句密码短语，你的工作就会出现。之后，一个通行密钥可以让解锁更快。</p>
 		</li>
 	</ol>
-	<div class="note"><strong>If a device asks you to create a passphrase instead of entering one, it is about to start a new account.</strong> Go back and pair it, or import a backup. One account, one passphrase, on every device you link. The passphrase cannot travel on its own, because it only decrypts a key the device already holds, so a browser that has never been linked has nothing for it to open.</div>
+	<div class="note"><strong>如果一台设备让你新建一句密码短语，而不是输入已有的那句，它就要开出一个新账户了。</strong> 退回去把它配对好，或者导入一份备份。一个账户，一句密码短语，贯穿你连接的每一台设备。密码短语没法独自传播，因为它解的是设备已经握有的一把密钥；一个从没被关联过的浏览器，手里根本没有它能打开的东西。</div>
 
 	<h2 id="s5">什么会跟着走</h2>
-	<p>Your chats, your diamonds and the way you laid them out, your mail, your workspace files, the devices on the account, and what you have paused all travel. Any kind of file travels, up to a gigabyte each. So does the Trash, so a deletion and a restore both reach every device.</p>
-	<p>What syncs is also what is kept in cloud storage, so a workspace can be larger than the device reading it. A file that is not here still shows in the tree and comes down when asked for.</p>
-	<p>A folder you opened on one computer is not in the browser's storage, so it does not travel by default. <a href="email-web-files.html">文件、邮件和网页</a> covers the per-folder control that copies one to devices that cannot open it.</p>
+	<p>你的聊天、你的 diamond 以及你把它们摆开的方式、你的邮件、你的工作区文件、账户上的设备，还有你暂停了的东西，全都会同步。任何类型的文件都会同步，每个最多一 GB。回收站也一样，所以一次删除和一次还原都会到达每一台设备。</p>
+	<p>同步的东西，也是保存在云端存储里的东西，所以工作区可以比读取它的这台设备还大。一个不在本地的文件仍然会显示在文件树里，一旦被用到就会下载下来。</p>
+	<p>你在一台电脑上打开的文件夹，不在浏览器的存储里，所以默认不会同步。 <a href="email-web-files.html">文件、邮件和网页</a> ，讲的是那个按文件夹设置的开关，把一个文件夹复制到打不开它的设备上。</p>
 
-	<h2 id="s6">Running a turn somewhere else</h2>
-	<p>When more than one of your devices is awake, one can run a turn for another and the answer syncs back. One switch turns it on, <span class="ui">Hand off when you step away</span>. A turn on this computer then moves to another awake device when you close it, whether the lid shuts, the tab closes or the connection drops, and finishes there.</p>
-	<p><a href="../runner.html">帮手和轮次的运行位置</a> covers naming the machine that should pick turns up, and the two things that stop it.</p>
-	<p>An errand sent to another device, and the answer it sends back, are sealed to your account like everything else. The server routes a parcel it cannot open.</p>
+	<h2 id="s6">在别处跑一轮</h2>
+	<p>当你不止一台设备醒着时，一台可以替另一台跑一轮，答案再同步回来。一个开关打开它， <span class="ui">你不在时移交</span>。这样一来，这台电脑上的一轮会在你把它关掉时——不管是合上盖子、关掉标签页，还是断了连接——转移到另一台醒着的设备上，并在那里跑完。</p>
+	<p><a href="runner.html">帮手和轮次的运行位置</a> ，讲的是怎么指定接手轮次的那台机器，以及拦住它的两件事。</p>
+	<p>发给另一台设备的一件差事，连同它送回来的答案，都像其他一切一样封进你的账户。服务器只是转发一个它打不开的包裹。</p>
 
 	<h2 id="s7">它要花多少钱</h2>
-	<p>跨设备同步属于 <strong>Daimond Pro</strong>, at $8 a month, billed monthly, and you can cancel any time. Pro also turns on cloud storage, Email and a posting name. Away for a month, the billing pauses on its own and resumes when you are back.</p>
-	<p>Without Pro a device works on its own and loses nothing. Inference, bandwidth and other metered use are paid from credits either way.</p>
+	<p>跨设备同步属于 <strong>Daimond Pro</strong>，每月 8 美元，按月计费，随时可以取消。Pro 还会开启云端存储、邮件，以及一个发布用的名字。离开一个月，账单会自动暂停，你回来后再恢复。</p>
+	<p>没有 Pro，单台设备照常工作，什么都不会丢。推理、带宽和其他计量用量，不管有没有 Pro 都从额度里扣。</p>
 
 	<div class="next">
-		<a href="../runner.html">&larr; Helpers &amp; where turns run</a>
-		<a href="../social.html">Next: Social &amp; proposals &rarr;</a>
+		<a href="runner.html">&larr; 帮手和轮次的运行位置</a>
+		<a href="social.html">下一步：社交和提案 &rarr;</a>
 	</div>
 </main>
 
@@ -95,12 +95,12 @@
 		<a href="index.html">从这里开始</a>
 		<a href="interface.html">界面</a>
 		<a href="chats-and-diamonds.html">对话和 diamond</a>
-		<a href="../capps.html">diamond 的页面</a>
+		<a href="capps.html">diamond 的页面</a>
 		<a href="email-web-files.html">文件、邮件和网页</a>
-		<a href="../machine-operations.html">你的电脑</a>
-		<a href="../runner.html">帮手和轮次的运行位置</a>
+		<a href="machine-operations.html">你的电脑</a>
+		<a href="runner.html">帮手和轮次的运行位置</a>
 		<a href="sync.html">不止一台设备</a>
-		<a href="../social.html">社交和提案</a>
+		<a href="social.html">社交和提案</a>
 		<a href="models.html">模型和提供商</a>
 		<a href="spending.html">花费</a>
 		<a href="accounts.html">安全和修复</a>

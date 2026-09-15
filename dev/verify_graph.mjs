@@ -367,9 +367,9 @@ check(badged.length === 1 && badged[0].did === id.A && badged[0].badge === '◈ 
 check(!g.edges.some(e => e.from === id.X || e.to === id.X)
 	&& !g.nodes.some(n => n.did === id.X),
 	'the deleted Diamond has no node and no edge');
-check((g.stats || '').includes('1 link points at a Diamond that is gone'),
+check((g.stats || '').includes('1 link points at a diamond that is gone'),
 	`the stats line confesses the dangling link: ${JSON.stringify(g.stats)}`);
-check((g.stats || '').includes('6 Diamonds') && (g.stats || '').includes('7 links between Diamonds')
+check((g.stats || '').includes('6 diamonds') && (g.stats || '').includes('7 links between diamonds')
 	&& (g.stats || '').includes('1 link closes a cycle'),
 	`the stats line counts what is drawn: ${JSON.stringify(g.stats)}`);
 
@@ -475,7 +475,7 @@ check(noLinks.empty.length === 0 && !!noLinks.band && /\S/.test(noLinks.band),
 	+ `hint ${JSON.stringify(noLinks.empty)}, band ${JSON.stringify(noLinks.band)}`);
 check(noLinks.nodes.length === 2 && bIds.every(x => noLinks.nodes.includes(x)) && noLinks.edges === 0,
 	`and the Diamonds are still drawn: ${noLinks.nodes.length} node(s), ${noLinks.edges} edge(s), ${noLinks.iso} unlinked`);
-check((noLinks.stats || '').includes('2 Diamonds') && (noLinks.stats || '').includes('0 links'),
+check((noLinks.stats || '').includes('2 diamonds') && (noLinks.stats || '').includes('0 links'),
 	`the stats line is still there and honest: ${JSON.stringify(noLinks.stats)}`);
 await shot(b, 'graph-empty');
 

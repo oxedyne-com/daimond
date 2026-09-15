@@ -1,0 +1,296 @@
+<!DOCTYPE html>
+<html lang="ja" data-guide-locale="ja" data-guide-locales="en de es fr ja ko pt-BR zh-Hans">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<title>あなたのコンピューター &mdash; Daimond ユーザーガイド</title>
+<link rel="icon" type="image/svg+xml" href="../../assets/daimond_mark.svg">
+<link rel="stylesheet" href="../../css/variables.css">
+<link rel="stylesheet" href="../../css/guide.css">
+<script src="../frame.js"></script>
+<script src="search-index.js"></script>
+<script src="../search.js"></script>
+</head>
+<body>
+
+<header class="site-head">
+	<div class="site-head-inner">
+		<a class="brand" href="index.html" aria-label="Daimond ガイド、ホーム">
+			<img class="wordmark wm-dark" src="../../assets/daimond_word.svg" alt="Daimond" translate="no">
+			<img class="wordmark wm-light" src="../../assets/daimond_word_dark.svg" alt="Daimond" translate="no">
+			<span class="brand-sub">ガイド</span>
+		</a>
+		<nav class="site-nav" aria-label="ガイドのページ">
+			<a href="index.html">ここから始める</a>
+			<a href="interface.html">インターフェース</a>
+			<a href="chats-and-diamonds.html">チャットと diamond</a>
+			<a href="capps.html">diamond のページ</a>
+			<a href="email-web-files.html">ファイル、メール、ウェブ</a>
+			<a href="machine-operations.html" aria-current="page">あなたのコンピューター</a>
+			<a href="runner.html">ヘルパーとターンの実行場所</a>
+			<a href="sync.html">複数の端末</a>
+			<a href="social.html">ソーシャルと提案</a>
+			<a href="models.html">モデルとプロバイダー</a>
+			<a href="spending.html">支出</a>
+			<a href="accounts.html">安全性と対処</a>
+		</nav>
+	</div>
+</header>
+
+<main>
+	<h1>あなたのコンピューター</h1>
+	<p class="lede">Daimond は、カーネルが強制する隔離領域の中で、あなたのコンピューター上のプログラム（ビルド、テストスイート、リンター、スクリプト）を実行できます。無料で、ターミナルでの二つのコマンドで済み、Linux 専用です。どちらかのコマンドを打つ前に、まず警告を読んでください。</p>
+
+	<div class="note stop"><strong>snap や flatpak のブラウザにはこれができず、できるようにもできません。</strong> インストーラーはそれを検出すると、書き込む代わりに拒みます。ですからこれが最初に出会うことになるもので、Ubuntu の既定の Chromium は snap です。 <a href="#s2">なぜか、そして代わりに何を入れるべきか</a>.</div>
+
+	<h2 id="s1">それが与えてくれるもの</h2>
+	<p>hand をインストールすれば、daimon は、あなたが付与したフォルダーに対してビルド、テストスイート、リンター、スクリプトを実行し、結果を読めます。その機器のほかのものには届きません。</p>
+	<p>それが使うツールは、 <span class="ui">ツール</span> パネルに名前が挙がっており、そのうち四つは名前を知っておく価値があります。</p>
+	<ul>
+		<li><strong>run</strong> は、引数の一覧として与えられた一つのコマンドを実行し、終了コード、出力の末尾、かかった時間で答えます。</li>
+		<li><strong>verify</strong> は、あなたのプロジェクト自身の検査を実行します。Daimond は argv を <code translate="no">.daimond/verify.json</code>から読むか、 <code translate="no">Cargo.toml</code>, <code translate="no">package.json</code>, <code translate="no">pyproject.toml</code> または <code translate="no">go.mod</code>から推測します。終了コードが判定です。</li>
+		<li><strong>runs</strong> は、まだ動いているものを一覧にし、止め方を示します。コマンドはやり取りより長生きすることがあります。バックグラウンドで始まった何かが、止められるまでポートを持ち続けるからです。コンピューターのほかの何もそれには届きません。隔離領域はシグナルを自分自身に限るからです。</li>
+		<li><strong>serve</strong> は、フォルダーに対して読み取り専用のファイルサーバーを起動し、ビルドされたページを <span class="ui">ウェブ</span> パネルで見られるようにします。やり取りが終わっても動き続けるので、ID で止めてください。</li>
+	</ul>
+	<p>拒否は、パスと原因と直し方を名指しするので、調べるべきコードはありません。やり取りは、そのあとどのやり取りとも同じように終わります。 <span class="ui">回答済み</span>, <span class="ui">停止</span> または <span class="ui">手順の上限に到達</span>のいずれかとして。ですから拒否されたコマンドが、うまくいったかのように読めることはありません。</p>
+
+	<h2 id="s2">始める前に</h2>
+	<p>これがうまくいくかどうかは、三つのことで決まります。確かめるのに一分もかかりませんが、あとから気づくのには一時間かかります。ブラウザが報告するエラーは、そのどれも名指ししないからです。</p>
+
+	<h3 id="s3">1. インストール元が <code translate="no">.deb</code></h3>
+	<p>のブラウザであること。snap や flatpak のブラウザは、起動するプログラムを閉じ込めます。その閉じ込めは、Daimond の hand にも及びます。 <code translate="no">home</code> というインターフェース——snap が受け取るもの——は、ホームディレクトリの直下にある隠しディレクトリを付与しません。hand はジャーナルを <code translate="no">~/.local/share/daimond/hand/journal/</code>その中に置きます——それらの一つの裏に。hand は、理由を記録していたはずのファイルを開けないので、何も言わずに終了し、Chrome はただ <em>Native host has exited</em>とだけ報告します。この一文では、何もできません。そしてその閉じ込めこそが snap の目的です。ジャーナルを移しても助けにはなりません。ブラウザはそのプログラムに、それ自身の環境を渡すからです。</p>
+	<p>これを自分で解き明かす必要はありません。インストーラーは、使えるプロファイルには書き込み、使えないものは名指しします。見つけたブラウザがすべて閉じ込められていれば止まるので、うまくいったように見えるだけのインストールが残ることはありません。 <code translate="no">--check</code> は、隣に使えるブラウザがあっても、閉じ込められたブラウザに印を付けます。実際に使っているブラウザが決め手だからです。</p>
+	<p>始める前に、何を持っているか確かめるには：</p>
+	<pre><code translate="no">snap list 2&gt;/dev/null | grep -Ei 'chrom|brave|vivaldi|edge'
+flatpak list 2&gt;/dev/null | grep -Ei 'chrom|brave|vivaldi|edge'</code></pre>
+	<p>どちらのコマンドが名指ししたものも閉じ込められています。使えるのは、Chrome、Brave、Vivaldi、Edge を <code translate="no">.deb</code>としてインストールしたもの、あるいは Chromium の <code translate="no">.deb</code> を、Ubuntu のアーカイブ以外の場所から入れたものです。</p>
+	<div class="note"><strong><code translate="no">apt install chromium-browser</code> は、snap を与えます。</strong> Ubuntu の <code translate="no">chromium-browser</code> パッケージは、20.04 以来、snap をインストールするだけの空の中身になっています。ですから Software アプリを使わずにブラウザを手に入れるふつうの方法でも、同じ場所に行き着きます。上の四つの <code translate="no">.deb</code>のどれかを、代わりにインストールしてください。</div>
+
+	<h3 id="s4">2. インストールする前に、そのブラウザを一度実行する</h3>
+	<p>インストーラーは、ブラウザのプロファイルディレクトリに小さなファイルを一つ書き込みますが、そのディレクトリはブラウザが最初に起動したときに作られます。ブラウザをインストールして一度も開かなければ、 <code translate="no">install.sh</code> は、正しくも何も見つからないと報告します。まだそこに何もないからです。</p>
+
+	<h3 id="s5">3. Linux で、カーネルに Landlock があること</h3>
+	<p>隔離領域は、ファイルを柵で囲む Landlock と、システムコールをフィルターする seccomp から組み立てられています。どちらも Linux カーネルの機能です。Landlock は Linux 5.13 で登場しました。そして <a href="#s30">型破りなシステム</a> が、古い、あるいは珍しい機器に何が起きるかを記しています。hand は macOS と Windows でもビルドされ動きますが、何も柵で囲めないと報告し、Daimond はそのため柵のないコマンドを実行する代わりに、すべてのコマンドを拒みます。拒否は、何が欠けているかを名指しします。どちらのプラットフォームの柵も組み立てられていません。</p>
+
+	<div class="note stop"><strong>別のブラウザをインストールしますか？ アカウントは一緒には来ません。</strong> あなたのアカウントは、それを作ったブラウザに置かれた署名鍵です。パスフレーズはその鍵を作り直すのではなく、そこにすでに保存されている写しを復号するだけです。ですから、まっさらなブラウザで同じパスフレーズを使っても、始まるのは <em>別の</em> アカウントで、クレジットもそれ自身のもの、Pro もありません。鍵は渡っていく必要があるので、古いブラウザを退役させる前に、そこで次のどれかを行ってください。 <strong><span class="ui">ほかの端末をリンク</span></strong>してから、新しいブラウザにコードを入力する。パスキーを追加する。あるいは <strong><span class="ui">バックアップを書き出す</span></strong>。チャット、diamond、作業領域のファイルを、まだパスフレーズのもとで包まれたままの鍵と一緒に書き出し、まだ自分のアカウントを持たないブラウザのために使います。詳しくは <a href="sync.html">複数の端末</a> と <a href="accounts.html">安全性と対処</a>.</div>
+
+	<div class="note"><strong>「この端末」の作業領域とは別のものです。</strong>  <span class="ui">この端末</span> のチップは、 <a href="email-web-files.html">作業領域</a> パネルにあり、ディスク上の本物のフォルダーへの読み書きアクセスを Daimond に与えます。「端末でのコマンド実行」がそれに許すのは <strong>プログラムを実行すること</strong>です。これらは別々に与えられる、別々の許可です。コマンド実行の側は作業領域を必要とします。コマンドは本物のフォルダーに対して走るので、作業領域はフォルダーでなければならず、しかも同じフォルダーでなければなりません。</div>
+
+	<h2 id="s6">インストールする</h2>
+	<p>インストールには、Daimond リポジトリのトップから、ターミナルでの二つのコマンドと、そのあとブラウザでの二つのことが要ります。合わせて、ブラウザのプロファイルごとの小さな JSON ファイル一つと、あなたがビルドしたバイナリになります。インストールは、ポートで待ち受けるものも、動いているデーモンも、盗まれる秘密も何も残しません。</p>
+
+	<ol class="steps">
+		<li>
+			<h3 id="s7">hand をビルドする</h3>
+			<pre><code translate="no">cargo build --release --manifest-path hand/Cargo.toml</code></pre>
+			<p>使うのは <code translate="no">--manifest-path</code> であって <code translate="no">-p</code>ではありません。hand はそれ自身の cargo ワークスペースだからです。ですから <code translate="no">-p</code> は、そんなパッケージはないと報告し、何もビルドしません。</p>
+		</li>
+		<li>
+			<h3 id="s8">フォルダーを付与し、hand を登録する</h3>
+			<pre><code translate="no">hand/install/install.sh --workspace ~/work</code></pre>
+			<p>自分のフォルダーを、 <code translate="no">~/work</code>の場所に置いてください。そのフォルダーが、どのコマンドでも読み書きできるものすべての境界になります。仕事用に一つ選んでください。スクリプトは、あなたのホームディレクトリと <code>/</code> を、はなから拒みます。どちらを付与しても、すべてを付与することになるからです。フォルダーはあらかじめ存在していなければなりません。</p>
+			<p>その一回の実行は三つのことを行い、それぞれ、やらなければあとで出会うはずの失敗を防ぎます。</p>
+			<ul>
+				<li><strong>あなたのフォルダーを <code translate="no">root.txt</code></strong>に書き込みます。場所は <code translate="no">~/.local/share/daimond/hand/journal/root.txt</code>です。hand は、そのフォルダーを教えられるまでページを提供しません。決して推測しません。推測したフォルダーは、コマンドが何に触れてよいかについての推測になるからです。あとで変えるには、別のフォルダーで同じコマンドを実行してください。</li>
+				<li><strong>そのジャーナルディレクトリをモード 700 で作ります。</strong> そこには、すべての diamond が実行したすべてのコマンドの記録が入るので、hand はほかのユーザーが読める場所には書き込みを拒みます。ふつうの既定の権限で作られたディレクトリは 755 であり、それでは hand は起動しません。</li>
+				<li><strong>登録を書き込みます</strong> 。使えるすべてのブラウザプロファイルに書き込み、どれかを表示します。このファイルこそが、ブラウザに hand を起動させる唯一のものです。JSON でしかないので、スクリプトは何もビルドせず、何もダウンロードせず、何も起動せず、root も必要としません。</li>
+			</ul>
+			<div class="note"><strong><code translate="no">DAIMOND_HAND_ROOT</code> は罠です。</strong> この環境変数は、 <code translate="no">root.txt</code> と同じ仕事をし、しかも優先されますが、うまくいきません。あなたのブラウザは、hand を <em>それ自身の</em> 環境で起動し、あなたの環境はそこに含まれないからです。ファイルを使ってください。</div>
+		</li>
+		<li>
+			<h3 id="s9">拡張機能を読み込む</h3>
+			<p>前の手順がパスを表示しています。 <code translate="no">chrome://extensions</code>を開き、 <strong>デベロッパーモード</strong>をオンにして、 <strong>パッケージ化されていない拡張機能を読み込む</strong>を選び、 <code translate="no">ext/</code> ディレクトリを選択します。</p>
+			<p>この拡張機能は固定された公開鍵を持つので、その ID はどの機器でも同じです。だからこそ、少し前に書き込まれた登録が、すでにそれを名指しできます。そのマニフェストは、単一のオリジン <code translate="no">https://daimond.oxedyne.com</code>だけを、話しかけることを許されたページとして名指しします。ですからあなたのブラウザのほかのどのページも、それにはまったく届きません。</p>
+		</li>
+		<li>
+			<h3 id="s10">ブラウザを再起動する</h3>
+			<p>ブラウザがそれらのプロファイルディレクトリを読むのは、起動するときだけです。動いているあいだに現れたファイルは、そのときまで見えません。再起動を忘れることが、正しいインストールが壊れているように見える、いちばんよくある理由です。</p>
+		</li>
+	</ol>
+
+	<h3 id="s11">そして確かめる</h3>
+	<pre><code translate="no">hand/install/install.sh --check</code></pre>
+	<p>この確認は何も変えず、真であるべきことごとに一行を表示します。使えるブラウザ、登録、バイナリ、ジャーナルディレクトリとそのモード、 <code translate="no">root.txt</code>、付与されたフォルダーの外にあるジャーナル、そして拡張機能です。失敗した行には、その下の行に直し方が添えられます。上から取り組んでください。あとの行が失敗するのは、たいてい前の行が失敗したせいでしかないからです。</p>
+
+	<h2 id="s12">最後の二つの手順はあなたのもの</h2>
+	<p>上の手順のどれも、あなたに代わって決めたものはありません。残る二つが、決断そのものです。</p>
+	<p><strong>同じフォルダーを Daimond で開く。</strong> 作業領域パネルで、 <span class="ui">この端末</span> のチップを使い、付与したフォルダーを開いてください。同じものでなければなりません。hand はトークンを <code translate="no">&lt;folder&gt;/.daimond/workspace.id</code> に書き込み、自分を紹介するときにそれを名指しします。ページは、すでに持っているハンドルを通してそのファイルを読み、両者を見比べます。作業領域がブラウザ自身の保存領域である場合、あるいは <code translate="no">root.txt</code>とは違うフォルダーである場合、コマンドはどちらが違うかを一行で伝えられて拒まれます。トークンがあるのは <code translate="no">.daimond</code> の内側です。隔離領域は常にそのディレクトリを拒むので、コマンドはトークンを読めず、自分がいないフォルダーについて答えることもできません。</p>
+	<p><strong>最初のコマンドを許可する。</strong> Daimond が何かを実行しようとする最初のとき、 <strong translate="no">Daimond Hands</strong> というウィンドウが開いて尋ねます。「このコンピューターでプログラムを実行してよい」を対象にするブラウザの許可はありません。ですからそのウィンドウ <em>こそが</em> 承認そのもので、拡張機能自身があなたの答えを記録します。だからこそ取り消せるのでもあります。ブラウザには取り去るものが何もないからです。あなたが許可するまで、何も走りません。</p>
+	<p>ウィンドウは、フォルダーと尋ねてきたページを名指しし、この機器でコマンドがどこまで届くかを一行で伝えます。 <span class="ui">これが対象にすること、しないこと</span> が、残り——隔離領域が止めるもの、止めないもの、そして許可を取り下げる方法——を開きます。</p>
+
+	<h2 id="s13">うまくいかないとき</h2>
+	<p>まずは <code translate="no">install.sh --check</code> をもう一度。ここにあるすべての確認を順に歩き、最初に間違っているところで止まります。これが自動化している三つの手順は、それ自体でも役に立ち、 <code translate="no">--check</code> が通っているのに Daimond がまだ hand がないと言うとき、頼るべきものです。</p>
+
+	<h3 id="s14">hand を自分で実行する</h3>
+	<pre><code translate="no">hand/target/release/daimond-hand &lt; /dev/null</code></pre>
+	<p>これは、あなたのブラウザがするのとまったく同じように hand を起動しますが、反対側にブラウザはありません。ですから、ブラウザに言うはずだったことを、あなたに言います。答えは三つあります。</p>
+	<ul>
+		<li><code translate="no">daimond-hand: the page closed the pipe.</code> hand は設定済みで準備できています。何か問題があるとすればブラウザの側で、まず再起動を試してください。</li>
+		<li><em>「この hand は、どのフォルダーで働いてよいか教えられていません」</em> は、 <code translate="no">root.txt</code> が欠けている、という意味です。 <code translate="no">install.sh --workspace</code> をもう一度実行してください。</li>
+		<li><em>「…は、所有者以外のユーザーにも読める」</em> は、ジャーナルディレクトリが 700 になっていない、という意味です。hand は、ほかのアカウントが読める場所に、あなたのコマンドの記録を書きません。 <code translate="no">chmod 700</code> してください。</li>
+	</ul>
+	<p>それ以外は、パスと原因と直し方を名指しする、まるごとの一文です。hand には、誰かが調べられるようなコードを表示する場所がないからです。</p>
+	<pre><code translate="no">hand/target/release/daimond-hand --report</code></pre>
+	<p>これは、隔離領域が <em>この</em> カーネルで強制できることと、より詳しく、できないことを表示します。二つ目の一覧はよく読んでください。Linux 7.1 より前のカーネルでは、そこに <a href="#s21">隔離領域から出る道</a> が含まれます。それは Landlock が開けたままにしているもので、hand は unix ソケットを拒むことで自分でそれを閉じます。これはまた、 <code translate="no">root.txt</code>からフォルダーも名指しするので、古くなったものは最初のコマンドではなくここに現れます。</p>
+
+	<h3 id="s15">ジャーナルを読む</h3>
+	<pre><code translate="no">tail -n 5 ~/.local/share/daimond/hand/journal/hand-*.jsonl</code></pre>
+	<p>ジャーナルは、起きたことの順に、一行に一つの JSON オブジェクトを保ちます。ハンドシェイク、すべてのコマンド、そして理由を添えたすべての拒否です。hand がとにかく起動していれば、ここに何か書かれています。失敗した試みのあとに空のディレクトリしかなければ、hand が十分に遠くまでたどり着けなかった、という意味です。Ubuntu では、それはほとんど常に、このページの冒頭にある閉じ込められたブラウザを意味します。</p>
+
+	<h3 id="s16">拡張機能に尋ねる</h3>
+	<p>ブラウザで、Daimond のタブを開き、デベロッパーコンソールを開いて、次を実行してください。</p>
+	<pre><code translate="no">await DaimondHand.status()</code></pre>
+	<p>拡張機能は、hand がペアリングされているか、どのフォルダーを付与されたと言っているか、何を強制できるか、そして答えがノーの場合には <code translate="no">reason</code> を、まるごとの一文として書いた JSON で答えます。Daimond はモデルにもその同じ一文を見せるので、この JSON は daimon が何を伝えられたかを説明しています。</p>
+
+	<h2 id="s17">実際のところ何なのか</h2>
+	<p>コマンドとは、あなたが所有する、あなた自身のカーネルで、あなた自身のファイルに対して走る、ふつうのプロセスです。ただしケーパビリティは先に取り除かれています。仮想マシンも、コンテナも、エミュレーションもありません。ですから何もシミュレートされず、何もコピーして持ち込まれません。四つの部分が、それぞれ一つの仕事をします。</p>
+	<ul>
+		<li><strong>ページが尋ねる。</strong> Daimond は、このやり取りが何に触れてよいかを算出し、規則をまるごと要求と一緒に送ります。シェルの行を送ることは決してありません。 <code translate="no">argv</code>——引数の一覧——は配列であり、注入する先が何もないからです。</li>
+		<li><strong>拡張機能が中継する。</strong> <strong translate="no">Daimond Hands</strong> は、ページがコマンドを渡せる唯一のもので、話しかけられるオリジンは一つだけです。</li>
+		<li><strong>小さなローカルのプログラムがそれを実行する。</strong>  <em>hand</em> は、送られてきた規則から隔離領域を組み立て、自分自身にそれを適用し、そのあと <em>なります</em> そのコマンドそのものに。子を見張る監督はいません。コマンドが始まった時点で、hand には何も残っていないからです。</li>
+		<li><strong>あなたのブラウザが hand を起動する。</strong> だからこそ、ポートもパスワードもありません。ポートで動くサービスは、訪れるどのページからも届いてしまいます。</li>
+	</ul>
+
+	<div class="note"><strong>無料で、Pro の一部でもありません。</strong> コマンドにまつわる何も、Daimond のゲートウェイに触れません。要求はページから拡張機能へ、あなた自身のディスクにあるプログラムへ、そしてまた戻ります。ですから計測されるものは何もありません。コマンドの費用は、それについて考えるモデルの費用だけで、ほかのどのやり取りとも同じです。</div>
+
+	<h3 id="s18">Daimond はツールを実装していません</h3>
+	<p>組み込みの <code translate="no">ls</code>はなく、組み込みの <code translate="no">grep</code>もありません。同梱のツール箱もシェルもありません。 <code translate="no">ls</code> こそが <code translate="no">/usr/bin/ls</code>は、あなたの機器にすでにある、インストールしたバージョンのそれです。</p>
+
+	<p>システムディレクトリの下にあるプログラムはすべて届きます。隔離領域が、それらを付与に加えるからです—— <strong>読み取り専用</strong>: <code translate="no">/usr</code>, <code translate="no">/bin</code>, <code translate="no">/sbin</code>, <code translate="no">/lib</code>, <code translate="no">/lib32</code>, <code translate="no">/lib64</code>, <code translate="no">/libx32</code>, <code translate="no">/etc</code>, <code translate="no">/opt</code>で。そして無害なデバイス <code translate="no">/dev/null</code>, <code translate="no">/dev/zero</code>, <code translate="no">/dev/full</code>, <code translate="no">/dev/random</code> と <code translate="no">/dev/urandom</code>。これらがなければ何も起動しません。 <code translate="no">cat</code>さえも。ローダーは共有オブジェクトを読まなければならず、プロセスは標準ストリームのために何かを開かなければならないからです。</p>
+
+	<p>そのままの名前は、 <code translate="no">PATH</code>で探されます。それは <code translate="no">/usr/local/bin:/usr/bin:/bin</code> です。付与されたツールチェーンがそこに何かを加えていないかぎりは。そこで見つかったものは絶対パスに解決され、ほかの何とも同じように隔離領域と照合されます。見つかることは、許可されることではありません。 <code translate="no">PATH</code> が外を指していれば、コマンドが実行してはいけないプログラムが見つかり、拒否がそれを名指しします。</p>
+
+	<div class="note"><strong>シェルがないので、シェルの構文もありません。</strong> コマンドは一つのリストです（<code translate="no">["cargo", "test", "--lib"]</code>）。セミコロン、パイプ、リダイレクト、バッククォート、 <code>$(…)</code> または <code translate="no">&amp;&amp;</code> は、プログラムにそのままの引数として届きます。二つのコマンドをつなげるには、daimon がそのツールを二回実行します。そのほうがどのみち良いのです。最初の結果を読んでから二つ目を選べるからです。</div>
+
+	<h2 id="s19">コマンドにできること、できないこと</h2>
+
+	<h3 id="s20">ファイル</h3>
+	<ul>
+		<li><strong>付与されたフォルダーの中を読み書きする。</strong> そのフォルダーから、Daimond 自身の <code translate="no">.daimond</code> ディレクトリを除いたものが、書き込める世界です。</li>
+		<li><strong>専用の一時ディレクトリ。</strong> 書き込み可能で、 <code translate="no">TMPDIR</code> がそこを指します。実行が終われば削除され、ほかのどの実行からも届かず、あなたのフォルダーの外でコマンドが書き込める唯一の場所です。 <code translate="no">/tmp</code> は隔離領域の外にあります。一時ファイルを書けないビルドは、誰にも読めない理由で途中で失敗します。</li>
+		<li><strong>システム、読み取り専用。</strong> <code translate="no">/usr</code>, <code translate="no">/etc</code>, <code translate="no">/opt</code> そして上の一覧の残りです。</li>
+		<li><strong>それ以外はすべて、カーネルに拒まれます</strong>。誰かが書いた検査によってではありません。付与から一つ外のフォルダーにあるファイルは、 <code>Permission denied</code>が返り、daimon にはファイルの代わりにその拒否が見せられます。</li>
+	</ul>
+	<p>壊れた道具に見える前に、知っておく価値のある帰結が一つあります。付与されたフォルダー全体が書き込み可能であっても、そのフォルダー <em>自体</em> は一覧にできず、その中に直接ファイルを作ることもできません。Landlock はディレクトリを付与しつつその一部を留保することができないので、子は一つずつ付与されるからです。一段下のものはすべて、ふつうに働きます。</p>
+
+	<h3 id="s21">名前付きのローカルソケットは、常に拒まれる</h3>
+	<p>コマンドは、ほかに何が許されていようと、unix ソケットを作れません。それが犠牲にするのは、ソケットファイル越しのローカルデータベース、 <code translate="no">docker</code>、X11 を望むもの、そして <code translate="no">ssh-agent</code>. <code translate="no">socketpair</code>は、ビルドが自分の子プロセスと話すのに使うペアのソケットで、手を付けられません。ですから <code translate="no">cargo build</code> は影響を受けません。</p>
+	<p>Landlock ABI 9（Linux 7.1）より前では、隔離領域はソケットファイルへの接続をまったく統制しません。実際に測定しました。柵が効いていてネットワークが拒まれている状態でも、デスクトップのセッションバスへの一通のメッセージが、一度も柵に囲まれたことのないプロセスを起動し、柵が拒むファイルを読みます。これは隔離領域からの抜け道であり、その縁のわずかな漏れではないので、無条件で閉じられています。</p>
+
+	<h3 id="s22"><code translate="no">ssh</code> は動きません</h3>
+	<p>二つの独立した理由がそれを止めていて、どちらか一方を閉じるだけでは足りません。 <code translate="no">~/.ssh</code> は隔離領域の中にありません。どのパスも、あなたが付与したフォルダーから組み立てられるからです。そしてエージェントのソケットは unix ソケットで、上で拒まれています。 <code translate="no">git push</code> は SSH越しに、両方の理由で同時に失敗します。ホームディレクトリを付与すれば、最初の理由も、隔離領域の意味の大半も失われます。だからこそインストーラーはそれを拒みます。</p>
+	<p>リポジトリだけに触れる操作はうまくいきます。 <code translate="no">git status</code>, <code translate="no">diff</code>, <code translate="no">log</code>, <code translate="no">add</code> 、そしてローカルの <code translate="no">commit</code> は、あなたが付与したフォルダーの中の、ふつうのファイル操作です。</p>
+
+	<h3 id="s23">ツールチェーンには付与が要る</h3>
+	<p>diamond を開くと、作業領域パネルに <strong>ツールチェーン</strong> の行が現れ、五つのボタンがあります。 <span class="ui" translate="no">Rust</span>, <span class="ui" translate="no">Node</span>, <span class="ui" translate="no">Python</span>, <span class="ui" translate="no">Go</span>, <span class="ui" translate="no">Git</span>。五つとも既定でオフになっているので、 <code translate="no">cargo</code> は Rust をオンにするまで拒まれます。 <code translate="no">~/.cargo</code> と <code translate="no">~/.rustup</code> は、あなたのホームディレクトリの下にあり、ホームディレクトリは隔離領域の中にないからです。</p>
+	<p><span class="ui" translate="no">Git</span> は例外です。 <code translate="no">git</code> はすでに読み取り専用の基盤の中にあり、だからこそ <code translate="no">git status</code> と、ローカルのコミットが、付与なしで動きます。ボタンが加えるのは、あなた自身の設定——名前、メール、そして <code translate="no">core.hooksPath</code> が名指しするフック——を、読み取り専用で加えます。保存されたパスワードと <code translate="no">~/.ssh</code> は、名前で拒まれます。</p>
+	<p>それについて、三つのことは意図的です。</p>
+	<ul>
+		<li><strong>実行を頼まれたものから推測されることは、決してありません。</strong> 要求されたバイナリに合わせて自分を広げる隔離領域は、モデルが選ぶ隔離領域になってしまいます。この仕組み全体は、隔離領域がモデルの選べないものであることに懸かっています。 <code translate="no">cargo</code> が届くのは、あなたが Rust のツールチェーンを付与したからで、ほかの理由はありません。</li>
+		<li><strong>diamond ごとです。</strong> 付与は一つの diamond に属し、その diamond が持つフォルダーと並びます。取り消し方も同じです。</li>
+		<li><strong>名指しされたディレクトリの短い一覧であって、ホームディレクトリでは決してありません。</strong> Rust が付与するのは、 <code translate="no">~/.cargo/bin</code> と <code translate="no">~/.rustup</code> を読み取り専用でです。レジストリとキャッシュを書き込み可能にするのは、cargo がそれらに書き込まずにビルドできないからです。そして <em>拒むのが</em> <code translate="no">~/.cargo/credentials.toml</code>です。あなたの crates.io のトークンが書かれている場所です。ほかの四つも同じように引かれていて、それぞれ秘密を持つファイルを外しています。</li>
+	</ul>
+
+	<h3 id="s24">ネットワーク</h3>
+	<p>コマンドがネットワークに届けるかどうかは、権限のモードと、そのやり取りがすでに何を読んだかによります。 <strong>毎回尋ねる</strong> と <strong>見張り付き</strong>の下では、やり取りがいったん外からの内容——読んだり取得したりしたウェブページ、メール、前のコマンドの出力——を取り込むと、そのやり取りの中のすべてのコマンドは TCP を拒まれた状態で走り、daimon はその理由を伝えられるので、壊れたプロジェクトの代わりに原因を報告します。 <strong>素通り</strong> の下では、そのやり取りが何を読んでいようと、ネットワークは保たれます。</p>
+	<div class="note"><strong>コマンド自身の出力も、外からの内容に数えられます。</strong> ですから、あるやり取りの最初のコマンドにはネットワークがありますが、同じやり取りの二つ目にはありません。ビルドログは、ビルドが実行した何かによって書かれるので、これは意図的で、人を驚かせます。自分の作業領域にあるふつうのファイルを読むことは数えられませんが、メールの中のメッセージは数えられます。何かを取得する必要があるなら、新しいメッセージで頼んでください。それが新しいやり取りを始めます。</div>
+	<p>拒まれるのは TCP の bind と connect で、それが Landlock の統制するものです。UDP と raw ソケットはその外にあります。</p>
+
+	<h3 id="s25">32 ビットのバイナリは強制終了される</h3>
+	<p>システムコールのフィルターは一つのアーキテクチャ向けにコンパイルされていて、まずアーキテクチャを確認します。互換性のための ABI は呼び出しを違う番号で振るので、間違った表のために組まれたフィルターは、間違ったものを拒み、成功を報告してしまうからです。ですから、違うアーキテクチャを宣言するプログラムは、フィルターにかけられる代わりに、はなから強制終了されます。これは安全側に倒れる失敗で、32 ビットのヘルパーを exec するビルドは、ここでは動きません。</p>
+
+	<h2 id="s26">権限のはしご</h2>
+	<p>一つの設定に三つの段があり、その軸になっているのは、Daimond が <em>尋ねずに</em>何をするかです。始まりは見張り付きです。</p>
+
+	<div class="cards">
+		<div class="card">
+			<h3 id="s27">毎回尋ねる</h3>
+			<p>どのコマンドも、走る前にコマンドとディレクトリをプロンプトに添えてあなたに諮られます。Daimond は、ウェブに届く前に会話ごとに一度尋ねます。一歩ずつ見守りたいときや、失うわけにいかないものを抱えた機器で選んでください。</p>
+		</div>
+		<div class="card">
+			<h3 id="s28">見張り付き</h3>
+			<p>既定です。コマンドは尋ねずに走ります。外からの内容を読んだやり取りはネットワークを失い、Daimond はその会話の中で、モデルが選んだどこかに届く前に一度尋ねます。一度のはいが、その会話が終わるまですべてのサイトを覆います。新しいチャットや新しい daimon はまた尋ね、異例に長いアドレスは常に単独であなたに諮られます。</p>
+		</div>
+		<div class="card">
+			<h3 id="s29">素通り</h3>
+			<p>何も尋ねられません。ただし、見張りのないエージェントがページで行いたいクリックだけは別で、それは常にあなたに諮られます。コマンドは走り、ページは取得され、ネットワークを必要とするビルドは、そのやり取りの十番目のコマンドでも最初のコマンドと同じくネットワークを持ちます。一度、意図して選べば、あとは静かです。</p>
+		</div>
+	</div>
+
+	<p><strong>段が、可能なことを変えることはありません。</strong> コマンドが走る隔離領域、その下のシステムコールのフィルター、diamond が限られるフォルダー、付与されたツールチェーン、外からの内容への印付け、そしてジャーナルは、三つの段のどれでも同じです。段が変えるのは、あなたに尋ねられることだけです。</p>
+	<p>段は、モデルの横にあるチャットのヘッダーの中の一語です。覚えておかなければならないモードは、間違えるモードだからです。クリックすれば変えられますし、あるいは <kbd>Ctrl</kbd> <kbd>K</kbd> (<kbd>Cmd</kbd> <kbd>K</kbd> （Mac の場合）を押して、段の名前を入力します。</p>
+
+	<h2 id="s30">型破りなシステム</h2>
+	<p>隔離領域は、絶対パスの固定された一覧から組み立てられていて、その一覧が、ある機器で動くかどうかを決めます。 <code translate="no">--report</code> を、どちらとも決めてかかる前に、あなたの機器で実行してください。</p>
+
+	<h3 id="s31">動かないもの</h3>
+	<ul>
+		<li><strong>NixOS と Guix。</strong> プログラムがあるのは <code translate="no">/nix/store</code> または <code translate="no">/gnu/store</code>で、どちらも付与されていません。そして <code translate="no">/usr/bin</code> にはほとんど何もありません。そのままの名前は <code translate="no">PATH</code> を通じて、隔離領域の外にあるストアのパスへ解決され、コマンドは名前で拒まれます。このアプリは、今日のところそれを広げられません。</li>
+		<li><strong>Landlock のないカーネル。</strong> それは、Linux 5.13 より前であるか、コンパイルから外されているか、有効な LSM の一覧にないか、あるいは堅牢化パッチで取り除かれている、という意味です。hand は <code translate="no">fence:none</code> と報告し、Daimond は柵のないコマンドを実行する代わりに、すべてのコマンドを拒みます。確認すべきは、 <code translate="no">landlock</code> が含まれているかどうか、その場所は <code translate="no">/sys/kernel/security/lsm</code>.</li>
+		<li><strong>x86-64 でも aarch64 でもないアーキテクチャ。</strong> フィルターのシステムコール番号はアーキテクチャごとに書き出されていて、三つ目の表はありません。hand はそれを推測しないので、フィルターは存在せず、フィルターがなければコマンドは一つも走りません。</li>
+	</ul>
+
+	<h3 id="s32">部分的に</h3>
+	<ul>
+		<li><strong>Linux 5.13 から 6.6。</strong> ファイルは柵で囲まれますが、Landlock は Linux 6.7 より前にはネットワークの規則を持たないので、ネットワークを取り上げられて走るはずだったコマンドは、失うはずだったネットワークを持ったまま走る代わりに、そう伝える一文とともにはなから拒まれます。素通りは働き、見張り付きはやり取りが何かを読むまで働きます。</li>
+		<li><strong>Linux 上の Homebrew、Flatpak、Snap。</strong> どれも <code translate="no">/home/linuxbrew/.linuxbrew</code>、Flatpak のツリー、あるいは <code translate="no">/snap</code> も付与されていません。ですからそうした方法でインストールされたプログラムは拒まれますが、あなたのディストリビューションが <code translate="no">/usr</code> の下に置いたものは、同じセッションの中で届きます。これは、コマンドが実行するプログラムについての話です。そうした形で梱包されたブラウザは別の問題で、しかも致命的な問題であり、 <a href="#s2">始める前に</a>.</li>
+		<li><strong>知られている二つ以外のバージョンマネージャー。</strong> ツールチェーンのパスは固定された一覧で、 <code translate="no">~/.nvm</code> と <code translate="no">~/.pyenv</code> が、そこにある唯一のバージョンマネージャーです。 <code translate="no">asdf</code>, <code translate="no">mise</code>, <code translate="no">volta</code>, <code translate="no">rbenv</code> と <code translate="no">sdkman</code> がインストールされる先は <code translate="no">~/.asdf</code>, <code translate="no">~/.local/share</code>, <code translate="no">~/.volta</code>, <code translate="no">~/.rbenv</code> と <code translate="no">~/.sdkman</code>。それらのどれにも付与はありません。Python の付与が対象にするのは <code translate="no">~/.local/bin</code> と <code translate="no">~/.local/lib</code> であり、意図的に <code translate="no">~/.local/share</code>.</li>
+	</ul>
+
+	<h3 id="s33">問題なし</h3>
+	<ul>
+		<li><strong>Debian、Ubuntu、Fedora、Arch、openSUSE</strong> を、それぞれのパッケージで使う場合。カーネルが十分新しく、 <code translate="no">--report</code> が Landlock の ABI を名指しできることが条件です。</li>
+		<li><strong>musl と Alpine</strong>も、同じ条件のもとで。</li>
+		<li><strong>BusyBox の coreutils。</strong> マルチコールバイナリは、呼び出された名前から自分が何であるかを決めます。hand は、解決したバイナリを <em>頼まれた名前のもとで</em>実行するので、自分がどのツールであるべきかを、それでも知っています。</li>
+	</ul>
+
+	<h2 id="s34">ターミナルも</h2>
+	<p> <span class="ui">ターミナル</span> パネルは、同じ機器の、同じ隔離領域の中に、本物のターミナルを開き、そこに打ち込めます。存在する理由は、ターミナルに向かって問いを発し、標準入力には発しないプログラムがあるからです。キー入力はジャーナルに書かれません。ここのほかのすべてと同じく、ペアリングされた hand が要ります。</p>
+
+	<h2 id="s35">記録されるもの</h2>
+	<p>すべての実行——何が頼まれ、何が拒まれ、何を返したか——は、 <code translate="no">~/.local/share/daimond/hand/journal/</code>のジャーナルに、あなたが読めるふつうの JSON 行として追記されます。エントリはハッシュで連鎖しており、ジャーナルはどの隔離領域の外にもあります。hand が、そこに届くような柵を拒むからです。ですからコマンドは自分自身の記録を書き換えられず、どの権限モードもこれをオフにはしません。</p>
+
+	<h2 id="s36">守られないもの</h2>
+	<p><code translate="no">--report</code> は二つの一覧を表示し、二つ目こそがそれを実行する理由です。そこにあるどの項目も、動いているカーネルで実測されたもので、推測ではありません。あなたのカーネルによって変わるので、自分のものを読んでください。項目はいくつかの群に分かれます。</p>
+	<ul>
+		<li><strong>ファイルについて尋ねることは、それを開くことではありません。</strong> <code translate="no">stat</code> は隔離領域の外でも答え続けます。ですから大きさ、タイムスタンプ、所有者、そしてファイルの有無は読めます。隔離領域が統制するのは、開くことです。</li>
+		<li><strong>システムへの付与は広いものです。</strong> <code translate="no">/usr</code>, <code translate="no">/etc</code> と <code translate="no">/opt</code> を読み取り専用にすることが、そもそもコマンドを走らせられる理由です。それはまた、 <code translate="no">/etc</code> の下にある、誰でも読めるファイルはすべて読め、機器のどのツールも実行できる、という意味でもあります。 <code translate="no">/etc</code> は特に、機器を特定する詳細を大量に持っています。</li>
+		<li><strong>フィルターは拒否リストです。</strong> 名指しされたケーパビリティをコマンドから取り除くものであって、システムコールのサンドボックスではありません。名指ししなかったものはすべて許可されます。将来のカーネルが加える呼び出しも含めてです。</li>
+		<li><strong>フィルターはポインターをたどれません。</strong> 見えるのはシステムコール番号と六つのレジスタだけで、それらが指す先は決して見えません。ですからパスも、アドレスも、ファイル名も見えません。拒まれた <code translate="no">chmod</code> は、だからこそどこでも拒まれ、許されたものはどこでも許されます。 <code translate="no">chmod 777</code> は拒まれ、 <code translate="no">chmod 644</code> を秘密鍵に対して行うのは拒まれません。644 は書き込みを加えず、cargo が展開するすべてのものに設定するモードだからです。</li>
+		<li><strong>タイムスタンプは、どこでも守られていません。</strong> コマンドは、機器のどの部分にあるファイルの時刻でも書き換えられます。cargo が、そうしなければレジストリから crate を展開できないからです。それは、ビルドを動かし続けることが守りを犠牲にした、いちばんはっきりした場所です。</li>
+		<li><strong>すでに開かれているもの、すでに作られた名前。</strong> 隔離領域が効き始める前に開かれたファイルディスクリプタは、そのまま動き続けます。以前に作られたハードリンクは、同じファイルの二つ目の名前です。コマンドは、拒まれたサブツリーへ向けて新しく作ることはできず、すでにあるものを取り消すこともできません。</li>
+		<li><strong>「あなたのフォルダーの中だけ」の唯一の例外は、</strong> 上で述べた専用の一時ディレクトリです。</li>
+	</ul>
+
+	<h2 id="s37">取り消す</h2>
+	<p>取り消せることが三つ違ってあり、そのどれもが実際に起こります。</p>
+	<ul>
+		<li><strong>許可を取り下げる。</strong> ツールバーの Daimond Hands のアイコンをクリックします。 <em>このコンピューターでコマンドを実行する</em> は、承認したサイトの横に、取り消すボタンとともに並んでいます。取り消すと、その瞬間に動いているものが即座に止まり、いまのビルドの終わりを待ちません。</li>
+		<li><strong>フォルダーを取り上げる。</strong> 削除してください、 <code translate="no">root.txt</code>を。hand はそのあと、ブラウザが何を言おうと、まったく提供を拒みます。拒否はまるごとの一文です。</li>
+		<li><strong>登録を取り除く。</strong> 実行するか、 <code translate="no">hand/install/uninstall.sh</code>、あるいは <code translate="no">--dir DIR</code> を付けて一つのディレクトリに対して実行してください。これは、インストーラーが書いたファイルを削除するので、ブラウザはもう hand を起動できなくなります。バイナリはそのままの場所に残ります。スクリプトがそこに置いたものではないからです。</li>
+	</ul>
+
+	<div class="next">
+		<a href="email-web-files.html">&larr; ファイル、メール、ウェブ</a>
+		<a href="runner.html">次：ヘルパーとターンの実行場所 &rarr;</a>
+	</div>
+</main>
+<footer class="site-foot">
+	<span>Daimond はブラウザの中で動きます。ここでの内容は私たちに送信されません。</span>
+	<nav aria-label="ガイドのページ">
+		<a href="index.html">ここから始める</a>
+		<a href="interface.html">インターフェース</a>
+		<a href="chats-and-diamonds.html">チャットと diamond</a>
+		<a href="capps.html">diamond のページ</a>
+		<a href="email-web-files.html">ファイル、メール、ウェブ</a>
+		<a href="machine-operations.html">あなたのコンピューター</a>
+		<a href="runner.html">ヘルパーとターンの実行場所</a>
+		<a href="sync.html">複数の端末</a>
+		<a href="social.html">ソーシャルと提案</a>
+		<a href="models.html">モデルとプロバイダー</a>
+		<a href="spending.html">支出</a>
+		<a href="accounts.html">安全性と対処</a>
+	</nav>
+</footer>
+</body>
+</html>

@@ -109,16 +109,63 @@ check('guide: "?" raises the web sheet', await page.evaluate(() =>
 await page.evaluate(() => { try { window.DaimondSheet.close(); } catch (e) {} });
 await sleep(300);
 
-// ── 7. The update chip answers a click ──
-check('update-chip: visible', await page.evaluate(() => {
-	const c = document.getElementById('update-chip'); return c && !c.hidden;
-}));
-await page.evaluate(() => document.getElementById('update-chip').click());
-await sleep(500);
-check('update-chip: click gives feedback (not inert)', await page.evaluate(() => {
+// ── 7. The update chip: hidden when current, shown once ready (TOP-05) ──
+// A disabled-looking chip drawn at every boot, titled "up to date", was a
+// button that did nothing most of the time -- see dev/verify_updates.mjs
+// scenario A, which pins the same contract with the reload harness this file
+// does not have. `build.json` here is the real one this tab booted from, so
+// booting with nothing pending is exactly the "current" state.
+check('update-chip: hidden while current', await page.evaluate(() => {
 	const c = document.getElementById('update-chip');
-	return /latest|checking|update/i.test(c.title || '');
-}), await page.evaluate(() => document.getElementById('update-chip').title));
+	return c && c.hidden && c.dataset.state === 'current';
+}), await page.evaluate(() => {
+	const c = document.getElementById('update-chip'); return c && (c.hidden + '/' + c.dataset.state);
+}));
+// Fake a newer build the way verify_updates.mjs does, without a reload this
+// flow's signed-in state would not survive.
+await page.route('**/build.json', route => route.fulfill({
+	status: 200, contentType: 'application/json', body: JSON.stringify({ build: 'MUXNEWER', note: 'mux' }),
+}));
+await page.evaluate(() => window.DaimondUpdater && window.DaimondUpdater.check());
+await page.waitForFunction(() =>
+	document.getElementById('update-chip') && document.getElementById('update-chip').dataset.state === 'ready',
+	null, { timeout: 5000 }).catch(() => {});
+check('update-chip: shown once an update is ready', await page.evaluate(() => {
+	const c = document.getElementById('update-chip');
+	return c && !c.hidden && c.dataset.state === 'ready';
+}), await page.evaluate(() => {
+	const c = document.getElementById('update-chip'); return c && (c.hidden + '/' + c.dataset.state);
+}));
+await page.unroute('**/build.json').catch(() => {});
+
+// ── 7b. PH-01: seven icon buttons become drawer, logo, one "more", full screen ──
+check('help menu: holds Guide and About (TOP-03)', await page.evaluate(() => {
+	const h = document.getElementById('help-menu');
+	return !!h && !!h.querySelector('#guide-btn') && !!h.querySelector('#about-btn');
+}));
+check('phone: Settings and Link device are folded into the "more" control, not standing icons', await page.evaluate(() => {
+	const help = document.getElementById('help-menu');
+	const settings = document.getElementById('settings-menu-btn');
+	const link = document.getElementById('pair-link-btn');
+	return !!help && settings && settings.parentNode === help
+		&& (!link || link.parentNode === help);
+}));
+check('phone top bar: drawer, logo, "more" and full screen — nothing else standing', await page.evaluate(() => {
+	const header = document.querySelector('header.topbar');
+	if (!header) return false;
+	const items = Array.from(header.querySelectorAll('button, .brand-group'))
+		.filter(el => el.closest('#help-menu') === null
+			&& el.id !== 'update-chip' && el.id !== 'panel-more'
+			&& getComputedStyle(el).display !== 'none');
+	return items.length <= 4;
+}), await page.evaluate(() => {
+	const header = document.querySelector('header.topbar');
+	const items = Array.from(header.querySelectorAll('button, .brand-group'))
+		.filter(el => el.closest('#help-menu') === null
+			&& el.id !== 'update-chip' && el.id !== 'panel-more'
+			&& getComputedStyle(el).display !== 'none');
+	return items.map(el => el.id || el.className).join(', ');
+}));
 
 // ── 8. Files toolbar: real icons, and a new-file dialog with a ≥16px field ──
 // The footer is the chip row since 2026-08-28; a destination is its chip.

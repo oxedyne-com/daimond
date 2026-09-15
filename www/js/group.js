@@ -250,8 +250,16 @@
 	// Neither clock is compared against the other and neither is a Lamport
 	// counter pretending to be a timestamp. A record is:
 	//
-	//   { gid, creator, salt, name, at, addr, members: [ {k, e, n} ],
+	//   { gid, creator, salt, name, at, addr, art, members: [ {k, e, n} ],
 	//     state: 'invited' | 'joined' | 'left', stateAt }
+	//
+	// `art` is the ROSTER'S OWN SIGNED BYTES, base64, and it rides the roster
+	// half because it IS the roster half -- the artefact those four fields were
+	// read out of. It is kept for one caller: report.js, which sends it with a
+	// report about a group message, because a group message's signed `to` is the
+	// group's id and the gateway has no group record to check a membership claim
+	// against (gateway/src/handlers/report.rs). Without it a group message could
+	// be shown and never reported, which is where this file's `art` came from.
 
 	/// The three states a group is in on THIS device.
 	var STATE = { INVITED: 'invited', JOINED: 'joined', LEFT: 'left' };
@@ -497,6 +505,20 @@
 			name:    op.name,
 			at:      at,
 			addr:    String(got.address || ''),
+			// THE EVIDENCE, on the same rule post.js keeps `art` on a message:
+			// the relay lets go once the ack has run, and after that this device
+			// holds the only copy of the bytes that prove who is in this group.
+			//
+			// ONLY A ROSTER THAT NAMES THIS DEVICE REPLACES IT, which is the
+			// whole reason this is not a plain assignment. The roster that
+			// removes somebody is SENT TO THEM (see `setMembers`), and it is
+			// the one roster of theirs that does not name them -- so taking it
+			// would leave a removed member unable to report anything that was
+			// said to them, and a creator could silence the person a removal
+			// happened for by removing them. The last roster that did name this
+			// device is kept instead: it is still signed, still derives the same
+			// id, and is still true of the moment the message arrived.
+			art:     (got.art && inIt) ? b64enc(got.art) : String((rec && rec.art) || ''),
 			members: op.members,
 			state:   rec ? rec.state : STATE.INVITED,
 			stateAt: rec ? ms(rec.stateAt) : 0,
@@ -850,6 +872,11 @@
 		try {
 			var got = JSON.parse(DaimondPost.bridgeRead(made.artefact));
 			got.address = got.address || made.addr;
+			// The bytes, beside the reading of them, exactly as `openEnvelope`
+			// hands them over for an arriving roster. Without this the creator is
+			// the one member of their own group who could not report a message
+			// sent to it.
+			got.art = made.artefact;
 			if (!await consume(got)) {
 				throw new Error('this device could not apply the roster it just wrote,'
 					+ ' so it was not sent');
@@ -1468,6 +1495,14 @@
 			return Object.keys(g).map(function (k) { return g[k]; });
 		},
 		get:     get,
+		/// The signed roster this device holds for a group, base64, or ''.
+		///
+		/// report.js's, and nothing else asks: it is what the gateway checks a
+		/// membership claim against when a group message is reported.
+		rosterArt: async function (gid) {
+			var rec = await get(gid);
+			return String((rec && rec.art) || '');
+		},
 		/// The panel, hosted inside post.js's own region.
 		mount:   mount,
 		draw:    draw,

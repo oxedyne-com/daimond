@@ -1943,19 +1943,30 @@
 	}
 
 	/// The updater's state, in the one word a reader needs: `'none'` (nothing
-	/// pending), `'countdown'` (an automatic reload is due), `'manual'` (the watch
-	/// has given up finding a safe moment, or a controlling worker will not
-	/// advance -- only a manual reload will move this device), `'held:<why>'` (a
-	/// build is pending but a named guard is holding the automatic path back --
-	/// see `updater.js`'s `whyUnsafe`), or `'ready'` (safe and quiet, waiting only
-	/// on the next tick). `window.DaimondUpdater` absent -- an older build, or a
+	/// pending), `'countdown'` (an automatic reload is due), `'manual'` or
+	/// `'manual:<why>'` (the watch has given up finding a safe moment, or a
+	/// controlling worker will not advance -- only a manual reload will move this
+	/// device; `<why>` is the LAST reason it was refused, when one was ever
+	/// recorded, see `heldWhy` in updater.js), `'held:<why>'` (a build is pending
+	/// but a named guard is holding the automatic path back right now -- see
+	/// `updater.js`'s `whyUnsafe`), or `'ready'` (safe and quiet, waiting only on
+	/// the next tick). `window.DaimondUpdater` absent -- an older build, or a
 	/// test -- reads as `'none'`.
+	///
+	/// `manual` used to say nothing more, even once `heldWhy` had a reason on
+	/// file -- `gaveUp`/`stuck` short-circuited the `held` check below and the
+	/// lens saw a device stuck on manual with no way to tell why. Same reason
+	/// word either way now, since it is the SAME question -- what is stopping
+	/// this build -- read at a different moment.
 	function updaterState() {
 		try {
 			var U = window.DaimondUpdater;
 			if (!U || !(U.pending && U.pending())) return 'none';
 			if (U.countdown && U.countdown() > 0) return 'countdown';
-			if ((U.stuck && U.stuck()) || (U.gaveUp && U.gaveUp())) return 'manual';
+			if ((U.stuck && U.stuck()) || (U.gaveUp && U.gaveUp())) {
+				var manualWhy = (U.held && U.held()) || '';
+				return manualWhy ? 'manual:' + manualWhy : 'manual';
+			}
 			if (U.held) { var why = U.held(); if (why) return 'held:' + why; }
 			return 'ready';
 		} catch (e) { return 'none'; }

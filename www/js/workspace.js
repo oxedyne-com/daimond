@@ -213,8 +213,10 @@
 			more.id = 'panel-more';
 			more.setAttribute('aria-haspopup', 'dialog');
 			more.setAttribute('aria-expanded', 'false');
-			// Set after the second fit, below, once the true count is known.
-			more.innerHTML = '⋯<span class="n">' + hidden + '</span>';
+			// A bare "⋯4" named a count and nothing else (TOP-04): the word is
+			// what makes it a control rather than a stray character. Set after
+			// the second fit, below, once the true count is known.
+			more.innerHTML = t('chip.more_word') + '<span class="n">' + hidden + '</span>';
 			more.addEventListener('click', function (e) { e.stopPropagation(); toggleGallery(more); });
 			tagsEl.appendChild(more);
 			// Adding the button costs width of its own, so anything it pushed out
@@ -466,7 +468,6 @@
 				vseg.appendChild(vb);
 			});
 			menuEl.appendChild(vseg);
-			menuEl.appendChild(el('div', 'pop-note', t('menu.view_note')));
 		}
 
 		// Theme. A pulldown rather than a row of buttons: ten palettes in three
@@ -660,7 +661,6 @@
 		lsel.addEventListener('pointerdown', probeLocales);
 		lrow.appendChild(lsel);
 		box.appendChild(lrow);
-		box.appendChild(el('div', 'pop-note', t('menu.language_help')));
 
 		box.appendChild(el('div', 'pop-head', t('menu.currency')));
 		var crow = el('div', 'set-pick');
@@ -704,6 +704,96 @@
 		menuEl.hidden = true;
 		var b = document.getElementById('settings-menu-btn');
 		if (b) { b.setAttribute('aria-expanded', 'false'); b.focus(); }
+	}
+
+	// ── The Help menu: About and Guide, one control (TOP-03) ─────────────
+
+	var helpEl;
+
+	/// The head only. `about-btn` and `guide-btn` (and, on a phone, Settings
+	/// and Link device -- see `foldOverflow` below) are REAL buttons already
+	/// wired by daimond.js, workspace.js and pairing.js, sitting in the popup
+	/// as static markup; wiping them out and rebuilding them the way
+	/// `renderMenu` rebuilds the appearance menu would tear those listeners
+	/// off. Only the title row is rebuilt, each open, so a language change
+	/// between one open and the next still says the right word.
+	function renderHelp() {
+		helpEl = helpEl || document.getElementById('help-menu');
+		if (!helpEl) return;
+		var old = helpEl.querySelector(':scope > .ui-head');
+		if (old) old.parentNode.removeChild(old);
+		helpEl.insertBefore(closerHead(t('topbar.help'), closeHelp), helpEl.firstChild);
+	}
+
+	function toggleHelp(anchor) {
+		helpEl = helpEl || document.getElementById('help-menu');
+		if (!helpEl) return;
+		if (!helpEl.hidden) { closeHelp(); return; }
+		closeMenu(); closeGallery();
+		renderHelp();
+		openPop(helpEl, anchor);
+		anchor.setAttribute('aria-expanded', 'true');
+		var first = helpEl.querySelector('button:not(.ui-close)');
+		if (first) first.focus();
+	}
+
+	/// `returnFocus` is false when a row inside the popup has just opened
+	/// something of its own (the About dialog, the appearance menu, the link
+	/// sheet): focus is already on its way into that surface, and pulling it
+	/// back to `help-btn` here would yank it out again the instant it landed.
+	/// Escape and a click outside -- where nothing else is claiming focus --
+	/// keep the default, matching `closeMenu`/`closeGallery`.
+	function closeHelp(returnFocus) {
+		if (!helpEl || helpEl.hidden) return;
+		helpEl.hidden = true;
+		var b = document.getElementById('help-btn');
+		if (b) {
+			b.setAttribute('aria-expanded', 'false');
+			if (returnFocus !== false) b.focus();
+		}
+	}
+
+	/// Settings and Link device fold into the Help popup below 760px (PH-01):
+	/// seven icons a thumb cannot label become drawer, wordmark, this one
+	/// control and full screen. A comment left where each button sat is how
+	/// it finds its way home again above 760px -- inserting relative to a
+	/// sibling that may itself have moved is otherwise a guess.
+	var FOLDABLE = [
+		{ id: 'pair-link-btn',     mark: null },	// PH-01 order: Link device before Settings
+		{ id: 'settings-menu-btn', mark: null },
+	];
+	var phoneMQ = window.matchMedia ? window.matchMedia('(max-width: 760px)') : null;
+
+	function isPhone() { return !!(phoneMQ && phoneMQ.matches); }
+
+	function foldOverflow() {
+		helpEl = helpEl || document.getElementById('help-menu');
+		var helpBtn = document.getElementById('help-btn');
+		if (!helpEl || !helpBtn) return;
+		var phone = isPhone();
+		FOLDABLE.forEach(function (item) {
+			var b = document.getElementById(item.id);
+			if (!b) return;
+			if (phone) {
+				if (b.parentNode !== helpEl) {
+					if (!item.mark) item.mark = document.createComment('fold:' + item.id);
+					if (b.parentNode) b.parentNode.insertBefore(item.mark, b);
+					helpEl.appendChild(b);
+				}
+			} else if (item.mark && b.parentNode === helpEl) {
+				var home = item.mark.parentNode;
+				if (home) { home.insertBefore(b, item.mark); home.removeChild(item.mark); }
+				item.mark = null;
+			}
+			// A row that opens ANOTHER popover (Settings) or dialog (Link device)
+			// closes this one first, or two float over each other. Wired once,
+			// and harmless on the side where Help is not open.
+			if (!b.dataset.foldWired) {
+				b.dataset.foldWired = '1';
+				b.addEventListener('click', function () { closeHelp(false); });
+			}
+		});
+		helpBtn.classList.toggle('is-more', phone);
 	}
 
 	/// Place a popover under the control that opened it, kept inside the window.
@@ -844,7 +934,7 @@
 	function openPalette() {
 		palEl = palEl || document.getElementById('palette');
 		if (!palEl || !palEl.hidden) return;
-		closeMenu(); closeGallery();
+		closeMenu(); closeGallery(); closeHelp();
 		palPrev = document.activeElement;
 		palInput = document.getElementById('pal-input');
 		palList = document.getElementById('pal-list');
@@ -898,6 +988,40 @@
 		var menuBtn = document.getElementById('settings-menu-btn');
 		if (menuBtn) menuBtn.addEventListener('click', function (e) { e.stopPropagation(); toggleMenu(menuBtn); });
 
+		var helpBtn = document.getElementById('help-btn');
+		if (helpBtn) helpBtn.addEventListener('click', function (e) { e.stopPropagation(); toggleHelp(helpBtn); });
+
+		// Guide and About each open a surface of their own (the web sheet, the
+		// About dialog) -- daimond.js wires the click that does it, and this is
+		// only the popup closing behind that click, the same courtesy
+		// `foldOverflow` gives Settings and Link device.
+		//
+		// LEAVING HELP OPEN INSTEAD IS THE WORSE BUG. `keepFocusIn` (daimond.js)
+		// traps Tab only at the CARD's own first/last element; it has no reason
+		// to know a second `position: fixed` surface exists, and Chromium's
+		// focus order for stacked fixed-position surfaces is not plain DOM
+		// order -- a live surface that is merely COVERED, not closed, is
+		// something the dialog's own trap cannot see and Tab can still reach.
+		// Closing it costs About's dialog its literal opener (`about-btn`
+		// cannot be refocused once its popup is hidden), so `refocus`
+		// (daimond.js) falls through to whatever is still standing, which here
+		// is `help-btn` -- one level up, and still exactly where the user's
+		// hand is.
+		['about-btn', 'guide-btn'].forEach(function (id) {
+			var b = document.getElementById(id);
+			if (b) b.addEventListener('click', function () { closeHelp(false); });
+		});
+
+		// The fold is a function of width alone, so it is set once here for
+		// whatever width the tab opened at, and again wherever the width can
+		// change (resize below, and the matchMedia listener beside it).
+		foldOverflow();
+		if (phoneMQ) {
+			var onFoldChange = function () { foldOverflow(); };
+			if (phoneMQ.addEventListener) phoneMQ.addEventListener('change', onFoldChange);
+			else if (phoneMQ.addListener) phoneMQ.addListener(onFoldChange);	// old Safari
+		}
+
 		// A language or currency change repaints what this file draws. The chip
 		// row and the gallery are redrawn from the model, which is re-read from
 		// the DOM first, because a panel's name is an attribute on it.
@@ -907,6 +1031,7 @@
 				else if (P()) P().reflow();
 				if (galEl && !galEl.hidden) renderGallery();
 				if (menuEl && !menuEl.hidden) renderMenu();
+				if (helpEl && !helpEl.hidden) renderHelp();
 				// And the framed guide, which carries the language the same way it
 				// carries the palette. Without this line the guide stays in the
 				// language it was opened in -- the whole point of sending a locale.
@@ -949,7 +1074,7 @@
 				palEl && palEl.hidden ? openPalette() : closePalette();
 				return;
 			}
-			if (e.key === 'Escape') { closeMenu(); closeGallery(); closePalette(); }
+			if (e.key === 'Escape') { closeMenu(); closeGallery(); closeHelp(); closePalette(); }
 			// Both popovers say `role="dialog"` and cover the app, and Tab used to
 			// walk straight out of them into the page behind -- with the popover
 			// still up, still covering whatever now had the focus. A dialog that
@@ -958,7 +1083,8 @@
 			// real dialogs use, borrowed rather than copied.
 			if (e.key === 'Tab' && window.DaimondCore && DaimondCore.keepFocusIn) {
 				var open = (menuEl && !menuEl.hidden) ? menuEl
-					: (galEl && !galEl.hidden) ? galEl : null;
+					: (galEl && !galEl.hidden) ? galEl
+					: (helpEl && !helpEl.hidden) ? helpEl : null;
 				if (open) DaimondCore.keepFocusIn(open, e);
 			}
 		});
@@ -981,9 +1107,10 @@
 		document.addEventListener('click', function (e) {
 			if (menuEl && !menuEl.hidden && !beganIn(menuEl, e)) closeMenu();
 			if (galEl && !galEl.hidden && !beganIn(galEl, e)) closeGallery();
+			if (helpEl && !helpEl.hidden && !beganIn(helpEl, e)) closeHelp();
 		});
 
-		window.addEventListener('resize', function () { closeMenu(); closeGallery(); });
+		window.addEventListener('resize', function () { closeMenu(); closeGallery(); closeHelp(); foldOverflow(); });
 	}
 
 	window.DaimondWorkspace = {

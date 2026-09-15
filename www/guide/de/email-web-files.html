@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
-<title>Files, email &amp; the web &mdash; Daimond guide</title>
+<title>Dateien, E-Mail &amp; das Web &mdash; Daimond-Handbuch</title>
 <link rel="icon" type="image/svg+xml" href="../../assets/daimond_mark.svg">
 <link rel="stylesheet" href="../../css/variables.css">
 <link rel="stylesheet" href="../../css/guide.css">
@@ -24,10 +24,10 @@
 			<a href="index.html">Hier anfangen</a>
 			<a href="interface.html">Die Oberfläche</a>
 			<a href="chats-and-diamonds.html">Chats &amp; Diamonds</a>
-			<a href="../capps.html">Die Seite eines diamond</a>
+			<a href="capps.html">Die Seite eines diamond</a>
 			<a href="email-web-files.html" aria-current="page">Dateien, E-Mail &amp; das Web</a>
-			<a href="../machine-operations.html">Dein Rechner</a>
-			<a href="../runner.html">Helfer &amp; wo Züge laufen</a>
+			<a href="machine-operations.html">Dein Rechner</a>
+			<a href="runner.html">Helfer &amp; wo Züge laufen</a>
 			<a href="sync.html">Mehr als ein Gerät</a>
 			<a href="social.html">Soziales &amp; Vorschläge</a>
 			<a href="models.html">Modelle &amp; Anbieter</a>
@@ -39,84 +39,84 @@
 
 <main>
 	<h1>Dateien, E-Mail &amp; das Web</h1>
-	<p class="lede">A daimon works from files it can read and write, folders you hand it, mail you can answer, and pages it can show or drive.</p>
+	<p class="lede">Ein Daimon arbeitet mit Dateien, die er lesen und schreiben kann, Ordnern, die Sie ihm geben, Mail, die Sie beantworten können, und Seiten, die er zeigen oder bedienen kann.</p>
 
 	<h2 id="s1">Der Arbeitsbereich</h2>
-	<p>Die Schaltfläche <span class="ui">Workspace</span> panel shows your files as an ordinary tree. Three chips at the top name where the workspace lives.</p>
+	<p>Die Schaltfläche <span class="ui">Workspace</span> -Panel zeigt Ihre Dateien als gewöhnlichen Baum. Drei Chips oben benennen, wo der Arbeitsbereich liegt.</p>
 	<ul>
-		<li><span class="ui">Browser</span> is this browser's own private storage, reachable by nothing outside Daimond. It is the default, and it syncs to your other devices.</li>
-		<li><span class="ui">Rechner</span> is a real folder on this computer's disk. Daimond works in it directly, so the same files are in your file manager. It stays on that computer, and travels only if you share it with the <span class="ui">⇄</span> control. Chromium-based browsers only.</li>
-		<li><span class="ui">Cloud</span> is where the bytes are kept, which is what lets a workspace be larger than the device holding it. It is not a third place to work. Files are encrypted before they leave.</li>
+		<li><span class="ui">Browser</span> ist der eigene private Speicher dieses Browsers, für nichts außerhalb von Daimond erreichbar. Das ist der Standard, und er synchronisiert zu Ihren anderen Geräten.</li>
+		<li><span class="ui">Rechner</span> ist ein echter Ordner auf der Platte dieses Rechners. Daimond arbeitet direkt darin, dieselben Dateien liegen also in Ihrem Dateimanager. Er bleibt auf diesem Rechner und reist nur, wenn Sie ihn mit der <span class="ui">⇄</span> -Kontrolle teilen. Nur in Browsern auf Chromium-Basis.</li>
+		<li><span class="ui">Cloud</span> ist, wo die Bytes aufbewahrt werden — das lässt einen Arbeitsbereich größer sein als das Gerät, das ihn hält. Es ist kein dritter Ort zum Arbeiten. Dateien werden verschlüsselt, bevor sie hinausgehen.</li>
 	</ul>
-	<p>The folder you open as <span class="ui">Rechner</span> is the whole of what Daimond can see, with nothing above it and nothing beside it.</p>
+	<p>Der Ordner, den Sie öffnen als <span class="ui">Rechner</span> ist alles, was Daimond sehen kann, nichts darüber und nichts daneben.</p>
 
-	<h3 id="s2">Getting a file in</h3>
+	<h3 id="s2">Eine Datei hineinbekommen</h3>
 	<ul>
-		<li><strong>Dateien hochladen</strong>, the arrow-into-tray in the header, takes one file or a handful.</li>
-		<li><strong>Import a folder&hellip;</strong> copies a folder in, after which it syncs like everything else.</li>
-		<li><strong>Einen echten Ordner öffnen</strong> with the <span class="ui">Rechner</span> chip. Nothing is copied, and it syncs only if you share it.</li>
+		<li><strong>Dateien hochladen</strong>, der Pfeil in die Ablage in der Kopfzeile, nimmt eine Datei oder eine Handvoll.</li>
+		<li><strong>Einen Ordner importieren&hellip;</strong> kopiert einen Ordner herein; danach synchronisiert er wie alles andere.</li>
+		<li><strong>Einen echten Ordner öffnen</strong> mit der <span class="ui">Rechner</span> -Chip. Es wird nichts kopiert, und es synchronisiert nur, wenn Sie ihn teilen.</li>
 	</ul>
-	<p>Mail arrives here as ordinary files, and a daimon writes here where it is allowed to.</p>
+	<p>Mail kommt hier als gewöhnliche Dateien an, und ein Daimon schreibt hier, wo er darf.</p>
 
-	<h3 id="s3">Held, in the cloud, or pinned</h3>
-	<p>A file is in one of three states, and the tree says which. <strong>Held</strong> means it is on this device. <strong>In cloud storage</strong> means it is only there, marked with a cloud, and clicking it brings it down. <strong>Angeheftet</strong> means it is never freed automatically.</p>
-	<p>As storage fills, the files longest unused go back to the cloud on their own. Freeing is not deleting, since the file is still listed and comes back when asked for.</p>
-	<p>A daimon is told plainly when a file it wants is in the cloud, and has to fetch it deliberately. A cap limits how much it may bring down on its own.</p>
+	<h3 id="s3">Gehalten, in der Cloud oder angeheftet</h3>
+	<p>Eine Datei ist in einem von drei Zuständen, und der Baum sagt, in welchem. <strong>Gehalten</strong> heißt, sie ist auf diesem Gerät. <strong>Im Cloud-Speicher</strong> heißt, sie ist nur dort, mit einer Wolke gekennzeichnet, und ein Klick holt sie herunter. <strong>Angeheftet</strong> heißt, sie wird nie automatisch freigegeben.</p>
+	<p>Wenn der Speicher voll läuft, gehen die am längsten unbenutzten Dateien von selbst zurück in die Cloud. Freigeben ist kein Löschen, die Datei bleibt aufgeführt und kommt zurück, wenn sie angefordert wird.</p>
+	<p>Einem Daimon wird klar gesagt, wenn eine gewünschte Datei in der Cloud liegt, und er muss sie bewusst holen. Eine Grenze beschränkt, wie viel er von sich aus herunterholen darf.</p>
 
-	<h2 id="s4">Handing a folder over</h2>
-	<p>The paperclip on every row reads <span class="ui">Attach to current focus</span>. What it does follows what is in focus, whichever row it sits on.</p>
+	<h2 id="s4">Einen Ordner übergeben</h2>
+	<p>Die Büroklammer in jeder Zeile liest sich als <span class="ui">An aktuellen Fokus anhängen</span>. Was sie tut, richtet sich danach, was im Fokus ist, gleich auf welcher Zeile sie sitzt.</p>
 	<ul>
-		<li><strong>A diamond is in focus.</strong> The file or folder joins that diamond's workspace and stays until you take it out.</li>
-		<li><strong>A chat is in focus.</strong> The attachment is for the next turn only.</li>
+		<li><strong>Ein Diamond ist im Fokus.</strong> Die Datei oder der Ordner tritt dem Arbeitsbereich dieses Diamond bei und bleibt, bis Sie sie herausnehmen.</li>
+		<li><strong>Ein Chat ist im Fokus.</strong> Der Anhang gilt nur für den nächsten Zug.</li>
 	</ul>
-	<p>Attaching copies nothing. The file stays where it is and the diamond points at it, so attaching one folder to two diamonds still leaves one folder.</p>
-	<p>Each attachment is either <span class="ui">Note</span>, meaning the path is worth knowing and costs a few tokens, or <span class="ui">Read</span>, meaning the contents are wanted now. Start with Note, which is much the cheaper. Either way the text it generates goes into the message box in front of what you type, where you can edit or delete it.</p>
-	<p>Ticking a <em>folder</em> in the workspace group is the permission, so this chat or diamond may then read and change what is inside. Ticking a file only puts it in front of the model. A diamond's <span class="ui">Reach</span> row names every folder it may write in, and says so in both trees.</p>
+	<p>Anhängen kopiert nichts. Die Datei bleibt, wo sie ist, und das Diamond zeigt auf sie; einen Ordner an zwei Diamonds zu hängen lässt also weiterhin einen Ordner übrig.</p>
+	<p>Jeder Anhang ist entweder <span class="ui">Notiz</span>, was heißt, der Pfad ist wissenswert und kostet ein paar Token, oder <span class="ui">Lesen</span>, was heißt, der Inhalt wird jetzt gebraucht. Beginnen Sie mit Notiz, das deutlich billiger ist. So oder so geht der erzeugte Text in das Nachrichtenfeld vor das, was Sie tippen, wo Sie ihn bearbeiten oder löschen können.</p>
+	<p>Ein Häkchen bei einem <em>Ordner</em> in der Arbeitsbereichsgruppe ist die Erlaubnis, dieser Chat oder dieses Diamond darf dann lesen und ändern, was darin liegt. Ein Häkchen bei einer Datei stellt sie nur vor das Modell. Die <span class="ui">Reichweite</span> -Zeile eines Diamond nennt jeden Ordner, in den es schreiben darf, und sagt das in beiden Bäumen.</p>
 
-	<h3 id="s5">What a daimon can open</h3>
-	<p>A daimon can open only what is in its diamond's workspace. Nothing else is readable or writable through the file tools, by the daimon or by any helper it dispatches. The check is in compiled code at the one door every file tool passes, and that code is in a bundle that builds reproducibly from public source, so it is not an instruction in a prompt.</p>
-	<p>That rule settles what a daimon can reach and says nothing about where what it reads ends up, because whatever it opens goes to your model provider with the rest of the turn.</p>
+	<h3 id="s5">Was ein Daimon öffnen kann</h3>
+	<p>Ein Daimon kann nur öffnen, was im Arbeitsbereich seines Diamond liegt. Nichts anderes ist über die Dateiwerkzeuge lesbar oder beschreibbar, weder für den Daimon noch für einen Helfer, den er losschickt. Die Prüfung sitzt im kompilierten Code, an der einen Tür, durch die jedes Dateiwerkzeug geht, und dieser Code steckt in einem Bündel, das reproduzierbar aus öffentlichem Quelltext baut — es ist also keine Anweisung in einem Prompt.</p>
+	<p>Diese Regel legt fest, was ein Daimon erreichen kann, und sagt nichts darüber, wo das, was er liest, endet, denn was auch immer er öffnet, geht mit dem Rest des Zugs an Ihren Modellanbieter.</p>
 
-	<h3 id="s6">The attachment list</h3>
-	<p>Rows carry an age, <span class="ui">Added {when}</span>. A path that is no longer there is drawn as <span class="ui">Gone</span> with no open action, so a dead row never poses as a live one.</p>
-	<p>Anything a daimon attached for itself, such as a fold's harvest or a file an agent kept, sits under one collapsed heading, <span class="ui">Added by the daimon</span>, with a count and a <span class="ui">Drop all</span>. Your own attachments stay where they are.</p>
+	<h3 id="s6">Die Anhangsliste</h3>
+	<p>Zeilen tragen ein Alter, <span class="ui">Hinzugefügt {when}</span>. Ein Pfad, der nicht mehr da ist, wird gezeichnet als <span class="ui">Weg</span> ohne Öffnen-Aktion, eine tote Zeile gibt sich also nie als lebende aus.</p>
+	<p>Alles, was ein Daimon von sich aus angehängt hat, etwa der Ertrag eines Einklappens oder eine Datei, die ein Agent behalten hat, sitzt unter einer eingeklappten Überschrift, <span class="ui">Vom Daimon hinzugefügt</span>, mit einer Zählung und einem <span class="ui">Alle entfernen</span>. Ihre eigenen Anhänge bleiben, wo sie sind.</p>
 
-	<h3 id="s7">Sharing a folder to your other devices</h3>
-	<p>A <span class="ui">Rechner</span> folder lives on one computer, and your phone cannot open it. The <span class="ui">⇄</span> control on the row is how it reaches one anyway, with <span class="ui">Share with devices that lack native access</span>.</p>
-	<p>Off, only devices that can open the folder themselves see it. On, it is copied to your other devices, up to <strong>200&nbsp;MiB</strong> per folder. The setting is per folder, whichever device you set it from, and only a device that can open the folder can set it.</p>
-	<p>A folder over the ceiling is left out whole, and a banner says which one and what it weighed. Share a smaller folder, or take some of it out.</p>
+	<h3 id="s7">Einen Ordner mit Ihren anderen Geräten teilen</h3>
+	<p>Ein <span class="ui">Rechner</span> -Ordner liegt auf einem Rechner, und Ihr Telefon kann ihn nicht öffnen. Die <span class="ui">⇄</span> -Kontrolle in der Zeile ist, wie er ihn trotzdem erreicht, mit <span class="ui">Mit Geräten ohne nativen Zugriff teilen</span>.</p>
+	<p>Aus, sehen ihn nur Geräte, die den Ordner selbst öffnen können. An, wird er auf Ihre anderen Geräte kopiert, bis zu <strong>200&nbsp;MiB</strong> je Ordner. Die Einstellung gilt je Ordner, gleich von welchem Gerät Sie sie setzen, und nur ein Gerät, das den Ordner öffnen kann, kann sie setzen.</p>
+	<p>Ein Ordner über der Obergrenze wird ganz ausgelassen, und ein Banner sagt, welcher und wie viel er wog. Teilen Sie einen kleineren Ordner, oder nehmen Sie etwas daraus heraus.</p>
 
-	<h2 id="s8">Documents, and books</h2>
-	<p>Open a <code>.typ</code> file and the Doc panel gains two buttons. <span class="ui">Compile</span> lays the document out in the page and writes a preview PDF beside the source, and while those pages are up, every save rebuilds them. Press it on a chapter and it compiles the document that includes the chapter, then takes you to that chapter's page.</p>
-	<p>Both panels have to be on screen for the loop to run. Where the window is too narrow, the Doc panel says so, and one rebuild catches up when they return.</p>
-	<p>The editor need not be Daimond's. A save from any editor writing into the granted folder is picked up within about a second.</p>
-	<p>A phone cannot hold a book's files or afford the memory a layout costs, so it hands the compile to a paired computer that can, sealed to your account exactly as a turn is, and the laid-out pages come back.</p>
+	<h2 id="s8">Dokumente und Bücher</h2>
+	<p>Öffnen Sie eine <code>.typ</code> -Datei, und das Dok-Panel bekommt zwei Schaltflächen. <span class="ui">Kompilieren</span> setzt das Dokument in der Seite und schreibt ein Vorschau-PDF neben die Quelle; solange diese Seiten offen sind, baut jedes Speichern sie neu. Drücken Sie es bei einem Kapitel, kompiliert es das Dokument, das das Kapitel enthält, und bringt Sie dann zur Seite dieses Kapitels.</p>
+	<p>Beide Panels müssen auf dem Bildschirm sein, damit die Schleife läuft. Ist das Fenster zu schmal, sagt das Dok-Panel das, und ein Neubau holt nach, sobald sie zurückkehren.</p>
+	<p>Der Editor muss nicht der von Daimond sein. Ein Speichern aus jedem Editor, der in den gewährten Ordner schreibt, wird innerhalb etwa einer Sekunde aufgenommen.</p>
+	<p>Ein Telefon kann die Dateien eines Buchs nicht halten oder sich den Arbeitsspeicher leisten, den ein Layout kostet, es reicht das Kompilieren also an einen gekoppelten Rechner weiter, der das kann, versiegelt an Ihr Konto genau wie ein Zug, und die gesetzten Seiten kommen zurück.</p>
 
 	<h2 id="s9">Jede Art von Datei</h2>
-	<p>Any file is stored and travels, up to a gigabyte each. A document or a spreadsheet opens as a <strong>reading view</strong>, which shows what it says and not how it prints. Values are as stored, formulas are not recalculated, and macros are neither run nor read. <span class="ui">Save a copy</span> writes one to your own device and leaves the file here untouched.</p>
-	<p>Where nothing recognises a file, its bytes are shown, and the panel says so.</p>
+	<p>Jede Datei wird gespeichert und reist mit, bis zu einem Gigabyte je Stück. Ein Dokument oder eine Tabelle öffnet sich als <strong>Leseansicht</strong>, die zeigt, was darin steht, nicht wie es gedruckt aussieht. Werte sind, wie gespeichert, Formeln werden nicht neu berechnet, und Makros werden weder ausgeführt noch gelesen. <span class="ui">Eine Kopie speichern</span> schreibt eine auf Ihr eigenes Gerät und lässt die Datei hier unberührt.</p>
+	<p>Erkennt nichts eine Datei, werden ihre Bytes gezeigt, und das Panel sagt das.</p>
 
 	<h2 id="s10">E-Mail</h2>
-	<p>A browser cannot open a mail connection, so Daimond connects through the gateway, which hands back the raw message and forgets your credential. Your mail is written into the workspace as ordinary files.</p>
-	<p>Add a mailbox with the <span class="ui">+</span> in the Email panel. Type your address and Daimond guesses the server settings, and every field stays editable. Most providers want an app password in place of your account password, and the panel says where to find it.</p>
-	<p>The credential is stored on this device under your passphrase, handed to the gateway for one sync, and forgotten. Daimond stores no mail on any server.</p>
-	<p><strong>Only you can send.</strong> A daimon can draft a message into the Compose panel. The Send button is the one thing that puts mail on the wire, and only a person can press it. Email is part of Daimond Pro.</p>
+	<p>Ein Browser kann keine Mail-Verbindung öffnen, deshalb verbindet sich Daimond über das Gateway, das die rohe Nachricht zurückgibt und Ihre Zugangsdaten vergisst. Ihre Mail wird als gewöhnliche Dateien in den Arbeitsbereich geschrieben.</p>
+	<p>Fügen Sie ein Postfach hinzu mit dem <span class="ui">+</span> im E-Mail-Panel. Geben Sie Ihre Adresse ein, und Daimond rät die Servereinstellungen, und jedes Feld bleibt änderbar. Die meisten Anbieter wollen ein App-Passwort anstelle Ihres Kontopassworts, und das Panel sagt, wo Sie es finden.</p>
+	<p>Die Zugangsdaten liegen auf diesem Gerät unter Ihrer Passphrase, werden dem Gateway für eine Synchronisierung gereicht und dann vergessen. Daimond legt auf keinem Server Mail ab.</p>
+	<p><strong>Nur Sie können senden.</strong> Ein Daimon kann eine Nachricht in das Verfassen-Panel entwerfen. Die Schaltfläche Senden ist das Einzige, das Mail auf die Leitung bringt, und nur ein Mensch kann sie drücken. E-Mail ist Teil von Daimond Pro.</p>
 
 	<h2 id="s11">Das Web-Panel</h2>
-	<p>Ask Daimond to open a page, or paste a link. There are three ways, and the site decides which works.</p>
+	<p>Bitten Sie Daimond, eine Seite zu öffnen, oder fügen Sie einen Link ein. Es gibt drei Wege, und die Website entscheidet, welcher funktioniert.</p>
 	<ul>
-		<li><strong>Show it.</strong> The page appears in the panel. Most sites refuse to be embedded, so this works for a minority.</li>
-		<li><strong>Read it.</strong> Daimond fetches the page and reads its text. It works where showing does not. You do not see the page, and Daimond does.</li>
-		<li><strong>Drive it.</strong> With the browser add-on, Daimond opens a real tab, signed in as you, and works it while you watch. It is the only way to work a live, logged-in site.</li>
+		<li><strong>Zeigen.</strong> Die Seite erscheint im Panel. Die meisten Websites lassen sich nicht einbetten, das geht also nur bei einer Minderheit.</li>
+		<li><strong>Lesen.</strong> Daimond holt die Seite und liest ihren Text. Das geht, wo Zeigen nicht geht. Sie sehen die Seite nicht, Daimond schon.</li>
+		<li><strong>Bedienen.</strong> Mit der Browser-Erweiterung öffnet Daimond einen echten Tab, angemeldet als Sie, und bedient ihn, während Sie zusehen. Nur so lässt sich eine lebende, angemeldete Website bedienen.</li>
 	</ul>
-	<p>Signing in stays yours. When you sign in on a driven page, Daimond stops watching entirely, taking no text, no picture and no keystrokes, and never sees your password. You hand the wheel back from the browser tab and not from Daimond, so a page cannot take it from you.</p>
+	<p>Das Anmelden bleibt Ihre Sache. Wenn Sie sich auf einer bedienten Seite anmelden, hört Daimond ganz auf zuzusehen, nimmt weder Text noch Bild noch Tastenanschläge, und sieht Ihr Passwort nie. Sie geben das Steuer im Browser-Tab zurück, nicht in Daimond, eine Seite kann es Ihnen also nie nehmen.</p>
 
 	<h2 id="s12">Werkzeuge</h2>
-	<p>Die Schaltfläche <span class="ui">Werkzeuge</span> panel says what Daimond can do. Built-in tools are already yours and free, and the panel lists exactly what is held, so it cannot promise one that is not there. Packs are extras, bought once, in dollars.</p>
+	<p>Die Schaltfläche <span class="ui">Werkzeuge</span> -Panel sagt, was Daimond kann. Eingebaute Werkzeuge sind schon Ihres und kostenlos, und das Panel führt genau auf, was gehalten wird, es kann also keines versprechen, das es nicht gibt. Pakete sind Extras, einmal gekauft, in Dollar.</p>
 
 	<div class="next">
-		<a href="../capps.html">&larr; A diamond&rsquo;s page</a>
-		<a href="../machine-operations.html">Next: Your computer &rarr;</a>
+		<a href="capps.html">&larr; Die Seite eines diamond</a>
+		<a href="machine-operations.html">Weiter: Dein Rechner &rarr;</a>
 	</div>
 </main>
 
@@ -126,10 +126,10 @@
 		<a href="index.html">Hier anfangen</a>
 		<a href="interface.html">Die Oberfläche</a>
 		<a href="chats-and-diamonds.html">Chats &amp; Diamonds</a>
-		<a href="../capps.html">Die Seite eines diamond</a>
+		<a href="capps.html">Die Seite eines diamond</a>
 		<a href="email-web-files.html">Dateien, E-Mail &amp; das Web</a>
-		<a href="../machine-operations.html">Dein Rechner</a>
-		<a href="../runner.html">Helfer &amp; wo Züge laufen</a>
+		<a href="machine-operations.html">Dein Rechner</a>
+		<a href="runner.html">Helfer &amp; wo Züge laufen</a>
 		<a href="sync.html">Mehr als ein Gerät</a>
 		<a href="social.html">Soziales &amp; Vorschläge</a>
 		<a href="models.html">Modelle &amp; Anbieter</a>

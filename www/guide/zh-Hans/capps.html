@@ -1,0 +1,123 @@
+<!DOCTYPE html>
+<html lang="zh-Hans" data-guide-locale="zh-Hans" data-guide-locales="en de es fr ja ko pt-BR zh-Hans">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<title>diamond 的页面 &mdash; Daimond 指南</title>
+<link rel="icon" type="image/svg+xml" href="../../assets/daimond_mark.svg">
+<link rel="stylesheet" href="../../css/variables.css">
+<link rel="stylesheet" href="../../css/guide.css">
+<script src="../frame.js"></script>
+<script src="../capp.js"></script>
+<script src="search-index.js"></script>
+<script src="../search.js"></script>
+</head>
+<body>
+
+<header class="site-head">
+	<div class="site-head-inner">
+		<a class="brand" href="index.html" aria-label="Daimond 指南，首页">
+			<img class="wordmark wm-dark" src="../../assets/daimond_word.svg" alt="Daimond" translate="no">
+			<img class="wordmark wm-light" src="../../assets/daimond_word_dark.svg" alt="Daimond" translate="no">
+			<span class="brand-sub">指南</span>
+		</a>
+		<nav class="site-nav" aria-label="指南页面">
+			<a href="index.html">从这里开始</a>
+			<a href="interface.html">界面</a>
+			<a href="chats-and-diamonds.html">对话和 diamond</a>
+			<a href="capps.html" aria-current="page">diamond 的页面</a>
+			<a href="email-web-files.html">文件、邮件和网页</a>
+			<a href="machine-operations.html">你的电脑</a>
+			<a href="runner.html">帮手和轮次的运行位置</a>
+			<a href="sync.html">不止一台设备</a>
+			<a href="social.html">社交和提案</a>
+			<a href="models.html">模型和提供商</a>
+			<a href="spending.html">花费</a>
+			<a href="accounts.html">安全和修复</a>
+		</nav>
+	</div>
+</header>
+
+<main>
+	<h1>diamond 的页面</h1>
+	<p class="lede">每一个 diamond 都由它自己的一个页面画出来。默认情况下，这个页面呈现的是这个 diamond 知道的东西。开口去问，它就能变成一个小应用——一个你去点、它就记下你点了什么的东西。</p>
+
+	<p>这个页面是一个真实的文件， <code>crystal.html</code>，在这个 diamond 自己的文件夹里。每一个 diamond 从被造出来那天起就有一个，朴素的那种和精致的那种，规则完全一样。</p>
+
+	<h2 id="s1">开口去要一个</h2>
+	<p>打开这个 diamond，选择 <span class="ui">重新设计页面&hellip;</span> ，在晶体上方的那一行。消息框会填上一行， <span class="ui">改一改这个页面的样子：</span>，光标停在它末尾。把这句话写完，然后发送。</p>
+	<p>这个页面必须遵守的规则，会跟着那一轮一起送出去，但从不给你看。它们是这个应用和页面之间的约定，每次都一模一样，你没法改写它们。删掉开头那一行，你问的就是别的事，这些规则也就不会跟着走了。</p>
+	<p>说清楚你点的是什么，它该记下什么。 <em>"给我吃的每一种食物做一张卡片：点一下就用今天的日期记下来，当天的总数摆在最上面。"</em> daimon 猜不出一条记录是个数、重量还是时间，所以要说清楚是哪一种。</p>
+
+	<h2 id="s2">这个页面能做什么</h2>
+	<ul>
+		<li><strong>画出这个 diamond 知道的东西。</strong> 加载时，一切都会交给它；你每次改变 Daimond 的外观，也会再交一次，好让它能跟着换装。</li>
+		<li><strong>读它自己这个 diamond 里的文件。</strong> 它画成图的一张表，它维护的一个索引，昨天的一份日志。</li>
+		<li><strong>往那里写文件。</strong> 这才是让它成为一个应用的地方。点一下被记下来，明天它还在。</li>
+		<li><strong>请 Daimond 打开一个链接</strong>，走的是和其他任何一次对外请求一样的那道门。</li>
+	</ul>
+	<p>写入默认是追加的，所以同一瞬间的两次点击都能留下来。一次写入上限是半兆字节，文件本身没有上限，一次长一行。</p>
+
+	<h2 id="s3">它不能做什么</h2>
+	<p>这个页面跑在一个密封的框架里，这里的限制没有一条是设置项。这个页面是一个模型写出来的，它不是这个 diamond 所知内容的一部分，而且会传到你连接的每一台设备上。</p>
+	<ul>
+		<li><strong>没有网络。</strong> 任何形式的抓取都没有，也没有来自服务器的图片，所以它没法调用 API，也没法把你放进去的东西发去任何地方。</li>
+		<li><strong>没有库。</strong> 一个自成一体的文件，图片是画出来的或者内嵌的，代码也是自己的。它跑起来的时候，没法凭文字造出新代码。</li>
+		<li><strong>512 KB</strong> ，是整个页面的上限。 <span class="ui">页面大小上限</span> ，在设置里，可以把它调高。</li>
+		<li><strong>没有属于自己的存储。</strong> 除了它请 Daimond 写下的、你能读到的那些文件，没有什么能在两次加载之间留存。</li>
+		<li><strong>它没法重写自己</strong>，也没法重写记忆，或者版本历史。</li>
+		<li><strong>它没法离开自己的 diamond。</strong> 每一条路径都只在那一个文件夹里解析，所以一个页面读不到另一个 diamond 的文件，它们也都到不了你的工作区。</li>
+	</ul>
+	<div class="note"><strong>这个页面放弃了什么，又换来了什么。</strong> 这样一个页面，比别的工具替你写的那些小应用要朴素，也只有在你分享它的 diamond 时，才会到别人手上。作为交换，它不用联网就能用；里面的东西留在你的设备上，除非你分享它或者一个 daimon 读了它；也没有订阅在维持它活着。</div>
+
+	<h2 id="s4">你记下的东西去了哪里</h2>
+	<p>它进了这个 diamond，在页面旁边，存在浏览器自己的存储里。那份存储在你的机器上，但不是一个你能用文件管理器打开的文件夹，也不是你打开当工作区的那个文件夹。你在工作区面板里读它。</p>
+	<p>删掉页面不会删掉它记录的东西。文件还在，一个新的页面可以读到它们。</p>
+	<p>文件跟着 diamond 一起走，所以你手机上记的日志，也在你的笔记本电脑上。由此有两点。</p>
+	<ul>
+		<li><strong>一个 diamond 是整个搬走的</strong>，从最后碰过它的那台设备搬走。在两次同步之间，用两台设备各记一次，后来的那次赢，所以一次只在一个地方记。</li>
+		<li><strong>大宗数据要抢地方。</strong> 你的 diamond 们共享一个包裹里的几兆字节，一个长得超过剩余空间的，会被排除在同步之外，而不是被削减。一份记录你做过什么的日志能小上好多年，而一张几十兆字节的参考表格该放在工作区里。</li>
+	</ul>
+
+	<h2 id="s5">改动它，再把它放回去</h2>
+	<p>用同样的方式要求改动。这个页面的每一个版本都保留着， <span class="ui">历史</span> 把它们列出来，任何一个都可以还原。</p>
+	<p>一个加载不出来的页面，不是死路。Daimond 会换上自己的渲染，说明是怎么失败的，并提出把标准页面放回去。</p>
+
+	<h2 id="s6">在手机上</h2>
+	<p>页面上方那一行的最右端，有一个画成四个角的按钮， <span class="ui">全屏</span>。它拿掉侧栏、顶栏、停靠区、消息框和页面自己那一行按钮，把整个显示都让给这个页面。</p>
+	<p>同一个按钮，这时变成 <span class="ui">退出全屏</span>，会把它们带回来， <kbd>Esc</kbd> 在 Daimond 拿着键盘的时候也一样。全屏从不会替你自动进入，也不会被记住。</p>
+
+	<h2 id="s7">一个实例</h2>
+	<p>有一个这样的页面随 Daimond 一起提供。这里的按钮会建一个叫 Log Life 的 diamond，把页面放进去，配置好、可以直接记录。Daimond 会先问一声，并且提出打开你已经有的那一个，而不是再建一个。</p>
+	<div class="do" id="lifelog">
+		<button class="do-btn" id="make-lifelog" type="button">给我建一个 Log Life</button>
+		<p class="do-say" id="lifelog-say" role="status" aria-live="polite"></p>
+		<p class="do-note">什么都不会发去任何地方。它在这台设备上建一个 diamond，把页面复制进去。</p>
+	</div>
+	<p>从 Log Life 内部本身，要求一个变体。 <span class="ui">重新设计页面&hellip;</span> 在那里，然后说 <em>"一样的东西，但把吃饭换成练习环节"</em>，就给了眼前这个 daimon 一个现成的例子。另一个 diamond 里的 daimon 看不到这个页面，只能从零开始。</p>
+
+	<div class="next">
+		<a href="chats-and-diamonds.html">&larr; 对话和 diamond</a>
+		<a href="email-web-files.html">下一步：文件、邮件和网页 &rarr;</a>
+	</div>
+</main>
+
+<footer class="site-foot">
+	<span>Daimond 在你的浏览器中运行。这里的任何内容都不会发送给我们。</span>
+	<nav aria-label="指南页面">
+		<a href="index.html">从这里开始</a>
+		<a href="interface.html">界面</a>
+		<a href="chats-and-diamonds.html">对话和 diamond</a>
+		<a href="capps.html">diamond 的页面</a>
+		<a href="email-web-files.html">文件、邮件和网页</a>
+		<a href="machine-operations.html">你的电脑</a>
+		<a href="runner.html">帮手和轮次的运行位置</a>
+		<a href="sync.html">不止一台设备</a>
+		<a href="social.html">社交和提案</a>
+		<a href="models.html">模型和提供商</a>
+		<a href="spending.html">花费</a>
+		<a href="accounts.html">安全和修复</a>
+	</nav>
+</footer>
+</body>
+</html>

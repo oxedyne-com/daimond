@@ -587,6 +587,39 @@ try {
 	check('(g) and Cancel is still the no it always was', (await attended) === 'deny');
 	await shot(s, 'socialpost-publish-wait' + (BREAK ? '-' + BREAK : ''));
 
+	// A THIRD DIRECTION, and the one proposal 11 actually was (2026-09-15): attended
+	// at the MOMENT the card rose -- `isAttended` only ever asks about the last 90
+	// seconds -- and then genuinely left. Nobody presses Cancel, nobody touches the
+	// page again, and the turn held there for a day. `publishAskDeadline`'s own
+	// bound never arms here (`req.alone || !isAttended()` reads false at the
+	// moment of raising, exactly as the check above proves), so what has to close
+	// this card is the OTHER half of the fix: `armIdleBound` inside `dialog()`
+	// itself, which answers ANY standing dialog once nobody has touched the page
+	// for `DIALOG_IDLE_MS`. Driven fast through `window.__daimondDialogIdleMs`,
+	// the same downward-only test hook `netAskDeadline`/`publishAskDeadline`
+	// already use for their own deadlines.
+	await page.evaluate(() => { window.__daimondDialogIdleMs = 1200; });
+	await page.keyboard.press('Shift');            // attended at the moment it is raised
+	before = opens().length;
+	const t1 = Date.now();
+	const abandoned = page.evaluate(() => Promise.race([
+		window.__daimondEgressAllowed(
+			JSON.stringify({ tool: 'social_send', url: 'A PROPOSAL, then nobody answers it.' })),
+		new Promise((r) => setTimeout(() => r('still-waiting'), 8000)),
+	]));
+	await page.waitForSelector('.modal.dlg[data-ask="publish"]', { timeout: 5000 });
+	// And then nothing: no more keys, no more clicks, past the idle bound above.
+	const abandonedResult = await abandoned;
+	const waitedAbandoned = Date.now() - t1;
+	const wentAwayAbandoned = await gone();
+	check('(g) attended when it was raised, then genuinely left, declines itself too',
+		abandonedResult === 'deny' && waitedAbandoned < 8000, `${abandonedResult} after ${waitedAbandoned}ms`);
+	check('(g) and the card does not stand for ever once nobody is answering it any more',
+		wentAwayAbandoned);
+	check('(g) and nothing was published by the idle bound running out',
+		opens().length - before === 0, `${opens().length - before} posts`);
+	await page.evaluate(() => { window.__daimondDialogIdleMs = 0; });   // back to the real 30 minutes
+
 	const errs = errors(s).filter(e => !/Failed to load resource/.test(e));
 	check('nothing above was reached by way of an unhandled error', errs.length === 0,
 		errs.slice(0, 3).join(' | '));

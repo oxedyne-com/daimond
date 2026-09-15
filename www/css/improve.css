@@ -694,3 +694,51 @@
 .imp-raised-hub { background: none; border: none; padding: 0; font: inherit; cursor: pointer;
 	color: var(--accent-text); text-decoration: underline; }
 .imp-raised-hub:hover { color: var(--accent-hover); }
+
+/* ── The feed ───────────────────────────────────────────────── */
+
+/* js/feed.js draws into `#social-feed-list` and owns no stylesheet, so it is
+   dressed here beside the panel it lives in. It borrows the message row
+   wholesale -- `.post-msg`, `.post-who`, `.post-body`, `.post-acts` -- because a
+   post and a message are the same kind of thing on a screen, and the difference
+   between them is what the words say and not how they are drawn.
+
+   THE ONE RULE THAT IS NOT DECORATION, and it is the message list's own: no
+   official shape. No seal, no badge, no accent frame. A feed post is stored in
+   the clear and the operator can read it, which is MORE reason to dress it
+   plainly, not less: anything that looked endorsed here would be endorsement a
+   stranger could put on themselves. */
+
+/* The two halves of the view. Smaller than the panel's own chips, because these
+   name halves of one view and those name the views. */
+.feed-tabs { display: flex; gap: 6px; padding: 6px 10px 2px; flex-wrap: wrap; }
+.feed-tab {
+	flex: none; white-space: nowrap; padding: 3px 9px;
+	font-size: var(--fs-3xs-2xs); border: 1px solid var(--border);
+	border-radius: 999px; background: none; color: var(--text-secondary); cursor: pointer;
+}
+.feed-tab.on { border-color: var(--accent); color: var(--text-primary); }
+
+.feed-list, .feed-followers { padding: 2px 10px; }
+.feed-followers h3 {
+	margin: 12px 0 4px; font-size: var(--fs-3xs); letter-spacing: 0.05em;
+	text-transform: uppercase; color: var(--text-muted); font-weight: 600;
+}
+.feed-follower { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; }
+
+/* Arrived and not yet drawn. A RULE DOWN THE LEFT and no colour: a post nobody
+   has read is not more important than one they have, it is merely newer, and
+   colour would rank them. It goes as soon as the row is measured on screen,
+   which is what `markDrawnRead` means by read. */
+.feed-unread { border-left: 2px solid var(--accent); padding-left: 8px; }
+
+/* The author's own name on a post, drawn as the press it is: looking somebody up
+   is navigation inside the app, so it is a button and never a link. */
+.feed-who { font-size: var(--fs-xs); }
+
+/* The box, the count and the one line under them. Two rows, as the note box is,
+   because a post to your followers is a paragraph and not an essay. */
+.feed-write { padding: 8px 10px; border-top: 1px solid var(--border); }
+.feed-write .imp-box { width: 100%; }
+.feed-count { margin-right: auto; }
+.feed-say:empty { display: none; }

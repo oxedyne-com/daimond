@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
-<title>Models &amp; providers &mdash; Daimond guide</title>
+<title>模型和提供商 &mdash; Daimond 指南</title>
 <link rel="icon" type="image/svg+xml" href="../../assets/daimond_mark.svg">
 <link rel="stylesheet" href="../../css/variables.css">
 <link rel="stylesheet" href="../../css/guide.css">
@@ -24,12 +24,12 @@
 			<a href="index.html">从这里开始</a>
 			<a href="interface.html">界面</a>
 			<a href="chats-and-diamonds.html">对话和 diamond</a>
-			<a href="../capps.html">diamond 的页面</a>
+			<a href="capps.html">diamond 的页面</a>
 			<a href="email-web-files.html">文件、邮件和网页</a>
-			<a href="../machine-operations.html">你的电脑</a>
-			<a href="../runner.html">帮手和轮次的运行位置</a>
+			<a href="machine-operations.html">你的电脑</a>
+			<a href="runner.html">帮手和轮次的运行位置</a>
 			<a href="sync.html">不止一台设备</a>
-			<a href="../social.html">社交和提案</a>
+			<a href="social.html">社交和提案</a>
 			<a href="models.html" aria-current="page">模型和提供商</a>
 			<a href="spending.html">花费</a>
 			<a href="accounts.html">安全和修复</a>
@@ -39,60 +39,60 @@
 
 <main>
 	<h1>模型和提供商</h1>
-	<p class="lede">A daimon thinks with a model. Bring a key you already hold and pay that provider directly, or buy credits and let Daimond run one for you.</p>
+	<p class="lede">daimon 用一个模型来思考。带上你已经有的一把密钥，直接付钱给那家提供商；或者买额度，让 Daimond 替你跑模型。</p>
 
-	<h2 id="s1">Your own key</h2>
-	<p>Open the model row at the foot of the rail. It lists a key for each provider you use and which model new work starts on. <span class="ui">+ 添加提供商</span> asks the same three questions whoever the provider is.</p>
+	<h2 id="s1">你自己的密钥</h2>
+	<p>打开侧栏底部的模型行。它列出你用到的每一家提供商的密钥，以及新工作从哪个模型开始。 <span class="ui">+ 添加提供商</span> ，不管提供商是哪一家，问的都是同样三个问题。</p>
 	<figure class="shot">
-		<img alt="The add-provider form: a provider list, an API key box, and a default model." src="../shots/models-form.png" loading="lazy">
-		<figcaption>Choose the provider, paste the key, star a default model, then save.</figcaption>
+		<img alt="添加提供商表单：一个提供商列表、一个 API 密钥框，以及一个默认模型。" src="../shots/models-form.png" loading="lazy">
+		<figcaption>选择提供商，粘贴密钥，给一个默认模型加星，然后保存。</figcaption>
 	</figure>
 	<ol class="steps">
 		<li>
 			<h3 id="s2">选一家提供商</h3>
-			<p>Anthropic, Fireworks AI, OpenRouter, Together AI, Groq or DeepInfra. <span class="ui">自定义</span> reveals a <span class="ui">基础 URL</span> box for any other service speaking the same chat API, including one on your own machine.</p>
+			<p>Anthropic、Fireworks AI、OpenRouter、Together AI、Groq 或 DeepInfra。 <span class="ui">自定义</span> ，展开一个 <span class="ui">基础 URL</span> 框，给任何说同一套聊天 API 的服务用，包括你自己机器上的一个。</p>
 		</li>
 		<li>
-			<h3 id="s3">Paste the key</h3>
-			<p>It is stored wrapped under your passphrase, and sent to the provider you chose and to nobody else. It reaches your other devices only inside the encrypted sync parcel, still wrapped.</p>
+			<h3 id="s3">粘贴密钥</h3>
+			<p>它被你的密码短语包住存起来，只发给你选的那家提供商，不给任何其他人。它只会裹在加密的同步包裹里到达你的其他设备，而且到了那里依然是包着的。</p>
 		</li>
 		<li>
 			<h3 id="s4">给一个默认模型加星</h3>
-			<p><span class="ui">List models</span> fetches the catalogue where the provider offers one, and otherwise you type the model id. The starred one is where new chats and diamonds begin.</p>
+			<p><span class="ui">列出模型</span> ，在提供商提供目录的地方拉取目录，否则你自己输入模型 ID。加了星的那个，就是新聊天和 diamond 开始的地方。</p>
 		</li>
 	</ol>
-	<p>Your messages then go straight to that provider on your own account. Daimond is out of the path, and we charge nothing.</p>
+	<p>你的消息此后直接去那家提供商，记在你自己的账户上。Daimond 不在这条路上，我们也不收你任何钱。</p>
 
-	<h2 id="s5">Choosing a different model</h2>
-	<p>The default is a starting point. Any connected model can be chosen for one chat from the selector in its header, and the default is untouched. A diamond can also carry a separate <span class="ui">Helper model</span> for the agents it dispatches, which applies to the next one dispatched and to none already running.</p>
-	<p>Where a model publishes no context window, the tile says <span class="ui">Context size unknown for this model.</span> and guesses nothing.</p>
+	<h2 id="s5">换一个模型</h2>
+	<p>默认值只是一个起点。任何已连接的模型都可以在某场聊天的头部选择器里单独选用，默认值不受影响。一个 diamond 还可以带一个独立的 <span class="ui">帮手模型</span> ，给它派发的智能体用，只对下一个被派发的生效，对已经在跑的不起作用。</p>
+	<p>如果一个模型没有公开上下文窗口，卡片上会写 <span class="ui">此模型的上下文大小未知。</span> ，不做任何猜测。</p>
 
-	<h2 id="s6">Choosing who serves it</h2>
-	<p>A router hands one model to whichever upstream provider it likes, and they are not equally good. Under an OpenRouter provider, each model row carries a <span class="ui">Providers</span> field, with the placeholder <span class="ui">prefer, -avoid, !</span>.</p>
+	<h2 id="s6">选择由谁来服务</h2>
+	<p>路由器把一个模型交给它中意的任何一家上游提供商，而它们的质量并不一样。在一个 OpenRouter 提供商下面，每一行模型都带一个 <span class="ui">提供商</span> 字段，占位符是 <span class="ui">偏好, -避开, !</span>.</p>
 	<ul>
-		<li>A bare name prefers that provider.</li>
-		<li>A leading <code>-</code> avoids one.</li>
-		<li>A bare <code>!</code> means only these, refusing every fallback.</li>
+		<li>单写一个名字，表示偏好那家提供商。</li>
+		<li>开头带一个 <code>-</code> ，表示避开那一家。</li>
+		<li>单独一个 <code>!</code> ，表示只要这些，拒绝任何后备。</li>
 	</ul>
-	<p>So <code>Novita, -DeepInfra</code> prefers one and avoids another. The field is saved as you leave it. A provider whose catalogue has not been fetched keeps its rows behind a <span class="ui">Models&hellip;</span> disclosure, so a preference already set stays reachable.</p>
+	<p>比如 <code>Novita, -DeepInfra</code> ，表示偏好一家、避开另一家。这个字段在你离开时自动保存。目录还没拉取过的提供商，它的那些行会先收在一个 <span class="ui">模型&hellip;</span> 的展开里，这样已经设好的偏好仍然能找得到。</p>
 
 	<h2 id="s7">额度</h2>
-	<p>Credits run the model for you with no key needed, and they also meter the few things that leave the browser: fetching a page, the bandwidth of mail and of cross-device sync, and cloud storage beyond the free tier. Sync, Email and cloud storage themselves are turned on by Daimond Pro, and metered use is paid from credits with or without it.</p>
-	<p>Open the credits row for your balance and the packs. Credits are not a subscription, and you keep what you buy. Payment happens on the payment provider's own hosted page, so no card number is typed into Daimond.</p>
-	<p>While testing is closed, new accounts with credits are given out by passcode. Daimond works with your own provider key without one.</p>
+	<p>额度替你跑模型，不需要密钥；它们也计量少数几件要离开浏览器的事：抓一个页面、邮件和跨设备同步的带宽，以及超出免费额度的云端存储。同步、邮件和云端存储本身由 Daimond Pro 开启，而计量用量不论有没有 Pro 都从额度里扣。</p>
+	<p>打开额度那一行，看你的余额和可以买的额度包。额度不是订阅，买到的一直是你的。付款在支付服务商自己的托管页面上完成，所以没有卡号会输进 Daimond。</p>
+	<p>测试还没开放的时候，带额度的新账户凭验证码发放。没有验证码，Daimond 也能配合你自己的提供商密钥使用。</p>
 
 	<h2 id="s8">自动充值</h2>
-	<p>Auto-reload is a standing instruction to buy credits when they run low, so a long job does not stop halfway. It is the one place Daimond may charge a saved card while you are away, so it is deliberately explicit. Three numbers set it.</p>
+	<p>自动充值是一条常设指令：额度不够时就去买，好让一个长任务不会跑到一半就停。这是 Daimond 唯一可能在你不在场时向一张已保存的卡收费的地方，所以它特意写得明明白白。三个数字设定它。</p>
 	<ul>
-		<li><strong>当余额低于</strong> is the balance at which a top-up fires.</li>
-		<li><strong>每次买这么多</strong> is how much one top-up adds.</li>
-		<li><strong>Never spend more, per month, than</strong> is a hard cap on the calendar month. Set this one carefully. It is enforced on the same code path as the charge.</li>
+		<li><strong>当余额低于</strong> ，是触发一次充值的余额。</li>
+		<li><strong>每次买这么多</strong> ，是一次充值加多少。</li>
+		<li><strong>每月绝不多花超过</strong> ，是这个自然月的硬上限。这个数要仔细定。它和扣费走同一条代码路径来强制执行。</li>
 	</ul>
-	<p>It cannot be switched on without a saved card, because a control that turned on and then failed silently would be worse than one that is disabled and says why.</p>
+	<p>没有保存过卡，它就打不开——一个打开之后悄悄失败的开关，比一个禁用着并说明原因的开关更糟。</p>
 
 	<div class="next">
-		<a href="../social.html">&larr; Social &amp; proposals</a>
-		<a href="spending.html">Next: Spending &rarr;</a>
+		<a href="social.html">&larr; 社交和提案</a>
+		<a href="spending.html">下一步：花费 &rarr;</a>
 	</div>
 </main>
 
@@ -102,12 +102,12 @@
 		<a href="index.html">从这里开始</a>
 		<a href="interface.html">界面</a>
 		<a href="chats-and-diamonds.html">对话和 diamond</a>
-		<a href="../capps.html">diamond 的页面</a>
+		<a href="capps.html">diamond 的页面</a>
 		<a href="email-web-files.html">文件、邮件和网页</a>
-		<a href="../machine-operations.html">你的电脑</a>
-		<a href="../runner.html">帮手和轮次的运行位置</a>
+		<a href="machine-operations.html">你的电脑</a>
+		<a href="runner.html">帮手和轮次的运行位置</a>
 		<a href="sync.html">不止一台设备</a>
-		<a href="../social.html">社交和提案</a>
+		<a href="social.html">社交和提案</a>
 		<a href="models.html">模型和提供商</a>
 		<a href="spending.html">花费</a>
 		<a href="accounts.html">安全和修复</a>

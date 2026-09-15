@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
-<title>Safety &amp; fixes &mdash; Daimond guide</title>
+<title>Sécurité &amp; dépannage &mdash; Guide Daimond</title>
 <link rel="icon" type="image/svg+xml" href="../../assets/daimond_mark.svg">
 <link rel="stylesheet" href="../../css/variables.css">
 <link rel="stylesheet" href="../../css/guide.css">
@@ -24,10 +24,10 @@
 			<a href="index.html">Commencez ici</a>
 			<a href="interface.html">L’interface</a>
 			<a href="chats-and-diamonds.html">Discussions &amp; diamonds</a>
-			<a href="../capps.html">La page d’un diamond</a>
+			<a href="capps.html">La page d’un diamond</a>
 			<a href="email-web-files.html">Fichiers, e-mail &amp; le web</a>
-			<a href="../machine-operations.html">Votre ordinateur</a>
-			<a href="../runner.html">Assistants &amp; où s’exécutent les tours</a>
+			<a href="machine-operations.html">Votre ordinateur</a>
+			<a href="runner.html">Assistants &amp; où s’exécutent les tours</a>
 			<a href="sync.html">Plus d’un appareil</a>
 			<a href="social.html">Social &amp; propositions</a>
 			<a href="models.html">Modèles &amp; fournisseurs</a>
@@ -39,74 +39,74 @@
 
 <main>
 	<h1>Sécurité &amp; dépannage</h1>
-	<p class="lede">What your passphrase protects, what Daimond asks before it acts, what stays private, and what to do when something is wrong.</p>
+	<p class="lede">Ce que votre phrase secrète protège, ce que Daimond demande avant d’agir, ce qui reste privé, et que faire quand quelque chose ne va pas.</p>
 
 	<h2 id="s1">Votre compte est une phrase secrète</h2>
-	<p>On first run Daimond generates a passphrase of eight random words and shows it once. It is the key to everything stored here. It is not sent anywhere, it is not stored in the clear, and nobody can reset it.</p>
-	<p>It unlocks everything encrypted here, meaning your provider keys, your mail credentials and the account's own signing key, and the key that seals the sync parcel is derived from it too. The signing key is what signs you in for credits. Forget the passphrase and the encrypted data is gone.</p>
-	<p>Once a passphrase is in place you can add a <strong>clé d’accès</strong> for a faster unlock, by face, fingerprint or security key. It unseals the passphrase for you instead of replacing it, so the passphrase stays the fallback. The unlock happens on the device, and the credits service only ever sees a public key.</p>
+	<p>Au premier lancement, Daimond génère une phrase secrète de huit mots aléatoires et la montre une seule fois. C’est la clé de tout ce qui est stocké ici. Elle n’est envoyée nulle part, elle n’est pas stockée en clair, et personne ne peut la réinitialiser.</p>
+	<p>Elle déverrouille tout ce qui est chiffré ici, c’est-à-dire vos clés de fournisseur, vos identifiants de messagerie et la clé de signature propre au compte, et la clé qui scelle le paquet de synchronisation en dérive elle aussi. La clé de signature est ce qui vous authentifie pour les crédits. Oubliez la phrase secrète, et les données chiffrées disparaissent.</p>
+	<p>Une fois une phrase secrète en place, vous pouvez ajouter une <strong>clé d’accès</strong> pour un déverrouillage plus rapide, par visage, empreinte ou clé de sécurité. Elle descelle la phrase secrète pour vous plutôt que de la remplacer : la phrase secrète reste donc le recours. Le déverrouillage a lieu sur l’appareil, et le service de crédits ne voit jamais qu’une clé publique.</p>
 
 	<h2 id="s2">Les contrôles du compte</h2>
-	<p>Your name is at the top of the account area, at the foot of the rail.</p>
+	<p>Votre nom est en haut de la zone de compte, au bas de la barre latérale.</p>
 	<ul>
-		<li><span class="ui">Change name&hellip;</span> et <span class="ui">Change passphrase&hellip;</span> do what they say, and the second re-wraps your encrypted data under the new passphrase.</li>
-		<li><span class="ui">Add a passkey&hellip;</span></li>
-		<li><span class="ui">Exporter une sauvegarde</span> writes your chats, diamonds, workspace files and your account key to a file you keep.</li>
-		<li><span class="ui">Import a backup&hellip;</span> adopts the backup's account where this browser holds none, and where one is already here it brings back only the work.</li>
-		<li><span class="ui">Se déconnecter</span> locks the app. Your data stays on the device, encrypted.</li>
-		<li><span class="ui">Forget this identity&hellip;</span> removes the account and its encrypted data from this browser for good.</li>
+		<li><span class="ui">Changer de nom&hellip;</span> et <span class="ui">Changer de phrase secrète&hellip;</span> font ce qu’ils disent, et le second réenveloppe vos données chiffrées sous la nouvelle phrase secrète.</li>
+		<li><span class="ui">Ajouter une clé d’accès&hellip;</span></li>
+		<li><span class="ui">Exporter une sauvegarde</span> écrit vos chats, vos diamonds, les fichiers de votre espace de travail et la clé de votre compte dans un fichier que vous gardez.</li>
+		<li><span class="ui">Importer une sauvegarde&hellip;</span> adopte le compte de la sauvegarde là où ce navigateur n’en détient aucun, et là où il en détient déjà un, elle ne ramène que le travail.</li>
+		<li><span class="ui">Se déconnecter</span> verrouille l’application. Vos données restent sur l’appareil, chiffrées.</li>
+		<li><span class="ui">Oublier cette identité&hellip;</span> retire le compte et ses données chiffrées de ce navigateur pour de bon.</li>
 	</ul>
-	<p>Beside them, <span class="ui">Synchronisation</span> turns this device's sync on or off, and <span class="ui">Diagnostic</span> shows and copies the app's own log, which holds event names and a clock, with no keys, no message text and nothing from your files. That log is what to paste into a report.</p>
+	<p>À côté d’eux, <span class="ui">Synchronisation</span> active ou désactive la synchronisation de cet appareil, et <span class="ui">Diagnostic</span> affiche et copie le propre journal de l’application, qui contient des noms d’événements et une horloge, sans aucune clé, aucun texte de message et rien de vos fichiers. C’est ce journal qu’il faut coller dans un signalement.</p>
 
-	<h2 id="s3">Moving your account</h2>
-	<p>Your account is a signing key held in this browser. <strong>The passphrase does not recreate it</strong>, and only decrypts the copy stored here. So the same passphrase in a fresh browser starts a separate account, with its own credits and no Pro.</p>
-	<p>The key itself has to travel, and three things carry it.</p>
+	<h2 id="s3">Déplacer votre compte</h2>
+	<p>Votre compte est une clé de signature détenue dans ce navigateur. <strong>La phrase secrète ne la recrée pas</strong>, elle ne fait que déchiffrer la copie stockée ici. Aussi la même phrase secrète, dans un navigateur neuf, démarre-t-elle un compte distinct, avec ses propres crédits et sans Pro.</p>
+	<p>La clé elle-même doit voyager, et trois choses la transportent.</p>
 	<ul>
-		<li><span class="ui">Associer un autre appareil</span>, which shows a pairing code.</li>
-		<li>A passkey, which stands a new device up in one gesture.</li>
-		<li><span class="ui">Exporter une sauvegarde</span>, whose file holds the key for <span class="ui">Import a backup&hellip;</span> to adopt in a browser that has none.</li>
+		<li><span class="ui">Associer un autre appareil</span>, qui montre un code d’association.</li>
+		<li>Une clé d’accès, qui met un nouvel appareil en place d’un seul geste.</li>
+		<li><span class="ui">Exporter une sauvegarde</span>, dont le fichier détient la clé pour <span class="ui">Importer une sauvegarde&hellip;</span> à adopter dans un navigateur qui n’en a aucune.</li>
 	</ul>
-	<p>Do one of them before you retire a browser. Once its storage is gone, with no backup taken and no other device linked, the key is gone with it.</p>
-	<p>A backup holds your work in the clear and your key wrapped under your passphrase. Importing the file alone makes nobody you. Whoever holds the file <em>et</em> the passphrase holds the account, which is why the two should not travel together.</p>
+	<p>Faites l’un des deux avant de mettre un navigateur au rebut. Une fois son stockage disparu, sans sauvegarde prise et sans autre appareil associé, la clé disparaît avec lui.</p>
+	<p>Une sauvegarde détient votre travail en clair et votre clé enveloppée sous votre phrase secrète. Importer seulement le fichier ne fait de personne vous. Quiconque détient le fichier <em>et</em> la phrase secrète détient le compte, ce qui explique pourquoi les deux ne devraient pas voyager ensemble.</p>
 
 	<h2 id="s4">Plusieurs personnes sur un même navigateur</h2>
-	<p>One browser can hold several accounts, each with its own chats, keys, credits and files. <span class="ui">＋ Ajouter un autre compte</span> makes a second, and the row above it switches between them. Switching locks the first and forgets its keys before opening the other. Nobody sees another account's data.</p>
+	<p>Un navigateur peut détenir plusieurs comptes, chacun avec ses propres chats, clés, crédits et fichiers. <span class="ui">＋ Ajouter un autre compte</span> en crée un second, et la ligne au-dessus bascule entre eux. Basculer verrouille le premier et oublie ses clés avant d’ouvrir l’autre. Personne ne voit les données d’un autre compte.</p>
 
-	<h2 id="s5">What Daimond asks before it acts</h2>
-	<p>A chip beside the model says what Daimond does without asking. It has three settings, and they apply to the whole app.</p>
+	<h2 id="s5">Ce que Daimond demande avant d’agir</h2>
+	<p>Une puce à côté du modèle dit ce que Daimond fait sans demander. Elle a trois réglages, qui s’appliquent à l’application entière.</p>
 	<ul>
-		<li><span class="ui">Ask every time</span> reads <em>Every command is put to you first. So is reaching the web, once in each conversation.</em></li>
-		<li><span class="ui">Guarded</span> reads <em>Commands run. Once something written by somebody else has been read, Daimond asks before reaching out.</em> It is the default.</li>
-		<li><span class="ui">Bypass</span> reads <em>Nothing is asked, whatever has been read.</em></li>
+		<li><span class="ui">Toujours demander</span> affiche <em>Chaque commande vous est soumise d’abord. Il en va de même pour atteindre le web, une fois par conversation.</em></li>
+		<li><span class="ui">Gardé</span> affiche <em>Les commandes tournent. Une fois que quelque chose écrit par quelqu’un d’autre a été lu, Daimond demande avant de tendre la main vers l’extérieur.</em> C’est le réglage par défaut.</li>
+		<li><span class="ui">Contournement</span> affiche <em>Rien n’est demandé, quoi qu’ait été lu.</em></li>
 	</ul>
-	<p>Under Guarded, once a turn has read something written by somebody else, such as a web page, an email or a build log, anything it then wants to fetch or send is put to you first, and a command in that turn runs with the network refused. That is the case where text you did not write could talk Daimond into carrying your work somewhere.</p>
-	<p>Switching to <span class="ui">Bypass</span> asks once, and says what you give up. No mode moves the fence a command runs inside, a diamond's folders, the system-call filter, or the log you can read afterwards.</p>
-	<p>An agent working on its own is asked about separately. Clicking something on a page can spend money or submit a form, and none of that can be taken back, so a click by an unattended agent is put to you even under looser settings.</p>
-	<p>Money has its own brakes, and they are on <a href="spending.html">Dépenses</a>.</p>
+	<p>Sous Gardé, une fois qu’un tour a lu quelque chose écrit par quelqu’un d’autre — une page web, un e-mail ou un journal de build —, tout ce qu’il veut ensuite récupérer ou envoyer vous est soumis d’abord, et une commande de ce tour tourne avec le réseau refusé. C’est le cas où un texte que vous n’avez pas écrit pourrait convaincre Daimond d’emporter votre travail quelque part.</p>
+	<p>Passer à <span class="ui">Contournement</span> demande une fois, et dit ce que vous abandonnez. Aucun mode ne déplace la clôture dans laquelle une commande tourne, les dossiers d’un diamond, le filtre d’appels système, ou le journal que vous pouvez lire ensuite.</p>
+	<p>Un agent qui travaille seul fait l’objet d’une question à part. Cliquer sur quelque chose dans une page peut dépenser de l’argent ou soumettre un formulaire, et rien de tout cela ne peut être défait : un clic d’un agent sans surveillance vous est donc soumis même sous des réglages plus lâches.</p>
+	<p>L’argent a ses propres freins, et ils sont dans <a href="spending.html">Dépenses</a>.</p>
 
 	<h2 id="s6">Ce qui reste privé</h2>
-	<p>Your passphrase, provider keys, mail credentials, chats, diamonds and files live in this browser and are not sent to us. What we hold is money and ciphertext, meaning your balance and licences and, for sync, a parcel we cannot open.</p>
-	<p>Your messages reach a model provider directly with your own key, or through our metered service when you spend credits. Fetching a page, and syncing or sending mail, pass through the gateway. So the honest claim is that with your own key nothing of your work reaches us in the clear, and that you can watch only ciphertext leave for our servers.</p>
-	<p>You need not take that on trust. The code running in this browser is public, it builds byte for byte from that source, and every build served is sealed into a published record. <span class="ui">Verify this build</span>, in the About dialog, checks the one you are running. Open your browser's network panel and watch where the calls go.</p>
-	<p>The protection has limits. A passphrase guards against someone opening the browser's developer tools, and not against a compromised browser, a malicious extension or a keylogger, which defeat any in-browser scheme. And what a remote server does inside itself cannot be proven from outside, which is why it is the client that is opened to you.</p>
+	<p>Votre phrase secrète, vos clés de fournisseur, vos identifiants de messagerie, vos chats, vos diamonds et vos fichiers vivent dans ce navigateur et ne nous sont pas envoyés. Ce que nous détenons, c’est de l’argent et du texte chiffré, c’est-à-dire votre solde et vos licences et, pour la synchronisation, un paquet que nous ne pouvons pas ouvrir.</p>
+	<p>Vos messages atteignent un fournisseur de modèle directement avec votre propre clé, ou passent par notre service compté quand vous dépensez des crédits. Récupérer une page, et synchroniser ou envoyer du courrier, passent par la passerelle. L’affirmation honnête est donc qu’avec votre propre clé, rien de votre travail ne nous atteint en clair, et que vous ne pouvez voir partir vers nos serveurs que du texte chiffré.</p>
+	<p>Vous n’avez pas à le croire sur parole. Le code qui tourne dans ce navigateur est public, il se construit octet pour octet à partir de cette source, et chaque build servi est scellé dans un registre publié. <span class="ui">Vérifier ce build</span>, dans la fenêtre À propos, vérifie celui que vous utilisez. Ouvrez le panneau réseau de votre navigateur et regardez où partent les appels.</p>
+	<p>La protection a des limites. Une phrase secrète protège contre quelqu’un qui ouvrirait les outils de développement du navigateur, pas contre un navigateur compromis, une extension malveillante ou un enregistreur de frappe, qui déjouent tout schéma reposant sur le navigateur seul. Et ce qu’un serveur distant fait en son sein ne peut se prouver de l’extérieur, c’est pourquoi c’est le client qui vous est ouvert.</p>
 
-	<h2 id="s7">When something goes wrong</h2>
+	<h2 id="s7">Quand quelque chose ne va pas</h2>
 	<ul>
-		<li><strong><em>Connect a model to start.</em></strong> No model is connected. Add one, or add a key for the provider already listed.</li>
-		<li><strong>Your second device is empty.</strong> You made a second account instead of pairing. Pair it, or import a backup. See <a href="sync.html">Plus d’un appareil</a>.</li>
-		<li><strong>A shared folder is not arriving.</strong> It is over the 200&nbsp;MiB a shared folder may weigh. A banner names it. Share a smaller folder.</li>
-		<li><strong><em>Not valid JSON. Nothing saved.</em></strong> A hand edit to a diamond's memory left the file unreadable, so nothing was written. Fix the text or close without saving.</li>
-		<li><strong>Nothing runs on its own.</strong> The light is red because the action is stopped. Press play on the light beside it.</li>
-		<li><strong><em>Terminal needs the Daimond Hand on this computer.</em></strong> <span class="ui">Install&hellip;</span> beside it goes to <a href="../machine-operations.html">Votre ordinateur</a>.</li>
-		<li><strong>A turn is sitting on another device.</strong> That machine is probably waiting for a folder permission on its own screen. Go and look, or press <span class="ui">Run here</span>.</li>
-		<li><strong>A panel has disappeared.</strong> It is unpinned, and still there. The <span class="ui">⋯</span> chip opens the gallery, and <kbd>Ctrl</kbd> <kbd>K</kbd> reaches any panel by name.</li>
-		<li><strong>Everything is locked after a reload.</strong> The key is held in memory and nowhere else, unless this device is set to stay unlocked across reloads. Enter the passphrase, or use a passkey.</li>
+		<li><strong><em>Connectez un modèle pour commencer.</em></strong> Aucun modèle n’est connecté. Ajoutez-en un, ou ajoutez une clé pour le fournisseur déjà listé.</li>
+		<li><strong>Votre second appareil est vide.</strong> Vous avez créé un second compte au lieu de l’associer. Associez-le, ou importez une sauvegarde. Voir <a href="sync.html">Plus d’un appareil</a>.</li>
+		<li><strong>Un dossier partagé n’arrive pas.</strong> Il dépasse les 200&nbsp;Mio qu’un dossier partagé peut peser. Une bannière le nomme. Partagez un dossier plus petit.</li>
+		<li><strong><em>JSON non valide. Rien n’a été enregistré.</em></strong> Une modification manuelle de la mémoire d’un diamond a rendu le fichier illisible, rien n’a donc été écrit. Corrigez le texte ou fermez sans enregistrer.</li>
+		<li><strong>Rien ne tourne de lui-même.</strong> Le voyant est rouge parce que l’action est arrêtée. Appuyez sur lecture, sur le voyant à côté.</li>
+		<li><strong><em>Le terminal a besoin de la Main Daimond sur cet ordinateur.</em></strong> <span class="ui">Installer&hellip;</span> à côté renvoie vers <a href="machine-operations.html">Votre ordinateur</a>.</li>
+		<li><strong>Un tour patiente sur un autre appareil.</strong> Cette machine attend probablement une permission de dossier sur son propre écran. Allez voir, ou appuyez sur <span class="ui">Exécuter ici</span>.</li>
+		<li><strong>Un panneau a disparu.</strong> Il est désépinglé, mais toujours là. La puce <span class="ui">⋯</span> ouvre la galerie, et <kbd>Ctrl</kbd> <kbd>K</kbd> atteint n’importe quel panneau par son nom.</li>
+		<li><strong>Tout est verrouillé après un rechargement.</strong> La clé est détenue en mémoire et nulle part ailleurs, à moins que cet appareil ne soit réglé pour rester déverrouillé d’un rechargement à l’autre. Entrez la phrase secrète, ou utilisez une clé d’accès.</li>
 	</ul>
-	<p>Still stuck? The rail holds a diamond called <strong>Daimond Help</strong>, which answers from this build and this guide and says which page an answer came from. What it cannot answer belongs on <a href="social.html">Social</a>, with the three things a note needs.</p>
+	<p>Toujours coincé ? La barre latérale détient un diamond appelé <strong>Daimond Help</strong>, qui répond à partir de ce build et de ce guide et dit de quelle page vient une réponse. Ce à quoi elle ne peut pas répondre a sa place sur <a href="social.html">Social</a>, avec les trois choses dont une note a besoin.</p>
 
 	<div class="next">
-		<a href="spending.html">&larr; Spending</a>
-		<a href="index.html">Back to the start &rarr;</a>
+		<a href="spending.html">&larr; Dépenses</a>
+		<a href="index.html">Retour au début &rarr;</a>
 	</div>
 </main>
 
@@ -116,10 +116,10 @@
 		<a href="index.html">Commencez ici</a>
 		<a href="interface.html">L’interface</a>
 		<a href="chats-and-diamonds.html">Discussions &amp; diamonds</a>
-		<a href="../capps.html">La page d’un diamond</a>
+		<a href="capps.html">La page d’un diamond</a>
 		<a href="email-web-files.html">Fichiers, e-mail &amp; le web</a>
-		<a href="../machine-operations.html">Votre ordinateur</a>
-		<a href="../runner.html">Assistants &amp; où s’exécutent les tours</a>
+		<a href="machine-operations.html">Votre ordinateur</a>
+		<a href="runner.html">Assistants &amp; où s’exécutent les tours</a>
 		<a href="sync.html">Plus d’un appareil</a>
 		<a href="social.html">Social &amp; propositions</a>
 		<a href="models.html">Modèles &amp; fournisseurs</a>

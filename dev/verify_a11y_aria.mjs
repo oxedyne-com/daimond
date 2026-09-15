@@ -539,14 +539,16 @@ red(await page.getAttribute('#settings-menu-btn', 'aria-expanded') === 'true',
 await page.keyboard.press('Escape');
 await page.waitForTimeout(350);
 
-// (c) Unhide one icon svg.
+// (c) Unhide one icon svg. The graph button on the Diamonds head, which is an
+// icon button and stays one -- "New diamond" beside it carries a word now
+// (RAIL-03), so it has no svg to unhide and this self-test died on a null.
 await page.evaluate(() => {
-	const g = document.querySelector('#new-diamond-btn svg');
+	const g = document.querySelector('#link-graph-btn svg');
 	g.removeAttribute('aria-hidden');
 	g.id = 'a11y-selftest-svg';
 });
 let loud2 = await page.evaluate(LOUD_ICONS);
-red(loud2.some((x) => x.includes('new-diamond-btn')), 'an icon that is no longer hidden is caught');
+red(loud2.some((x) => x.includes('link-graph-btn')), 'an icon that is no longer hidden is caught');
 await page.evaluate(() => {
 	const g = document.getElementById('a11y-selftest-svg');
 	g.setAttribute('aria-hidden', 'true'); g.removeAttribute('id');

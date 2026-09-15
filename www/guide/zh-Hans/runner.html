@@ -1,0 +1,112 @@
+<!DOCTYPE html>
+<html lang="zh-Hans" data-guide-locale="zh-Hans" data-guide-locales="en de es fr ja ko pt-BR zh-Hans">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<title>帮手和轮次的运行位置 &mdash; Daimond 指南</title>
+<link rel="icon" type="image/svg+xml" href="../../assets/daimond_mark.svg">
+<link rel="stylesheet" href="../../css/variables.css">
+<link rel="stylesheet" href="../../css/guide.css">
+<script src="../frame.js"></script>
+<script src="search-index.js"></script>
+<script src="../search.js"></script>
+</head>
+<body>
+
+<header class="site-head">
+	<div class="site-head-inner">
+		<a class="brand" href="index.html" aria-label="Daimond 指南，首页">
+			<img class="wordmark wm-dark" src="../../assets/daimond_word.svg" alt="Daimond" translate="no">
+			<img class="wordmark wm-light" src="../../assets/daimond_word_dark.svg" alt="Daimond" translate="no">
+			<span class="brand-sub">指南</span>
+		</a>
+		<nav class="site-nav" aria-label="指南页面">
+			<a href="index.html">从这里开始</a>
+			<a href="interface.html">界面</a>
+			<a href="chats-and-diamonds.html">对话和 diamond</a>
+			<a href="capps.html">diamond 的页面</a>
+			<a href="email-web-files.html">文件、邮件和网页</a>
+			<a href="machine-operations.html">你的电脑</a>
+			<a href="runner.html" aria-current="page">帮手和轮次的运行位置</a>
+			<a href="sync.html">不止一台设备</a>
+			<a href="social.html">社交和提案</a>
+			<a href="models.html">模型和提供商</a>
+			<a href="spending.html">花费</a>
+			<a href="accounts.html">安全和修复</a>
+		</nav>
+	</div>
+</header>
+
+<main>
+	<h1>帮手和轮次的运行位置</h1>
+	<p class="lede">一个 daimon 可以让帮手并行工作，你在一台设备上开始的一轮，也可以由另一台设备来跑。这两者都看得见，也都由你来叫停。</p>
+
+	<h2 id="s1">帮手</h2>
+	<p>有些任务要的就是把事做完，为了这些，一个 diamond 的 daimon 会派发 <strong>帮手</strong>——带着文件工具、自己独立运行的智能体，各自领到常设指令和这个 diamond 的记忆。</p>
+	<p>一个帮手看不到你的对话。这份记忆就是它对这件工作了解的全部，所以交给它的任务必须把其余一切都说清楚。</p>
+	<p>最多八个同时运行，其余的排队。daimon 把它们派发出去，它那一轮就到此为止。每一个都会回报，你留下值得留下的那些。一个帮手不能再派发另一个帮手，所以委托只往下走一层就停。</p>
+	<p>一个 diamond 的设置里带着一个 <span class="ui">帮手模型</span>，和它的 daimon 用来思考的那个分开。一个帮手会保持它开始时的那个模型，改动只作用于下一个。</p>
+
+	<h3 id="s2">智能体面板</h3>
+	<p>正在跑的会出现在 <span class="ui">智能体</span>里，在停靠区里，有一行说明运行中、暂停和排队的各有多少。每张卡片都会随花费发生显示成本，而不是只在结束时才给。</p>
+	<p>三个控件坐在标题栏里，也重复出现在每一张卡片上。</p>
+	<ul>
+		<li><strong>暂停。</strong> 把正在跑的挂起来，把队列按住。一个正在跑的帮手保留它已经做出来的东西，不会有新的启动。</li>
+		<li><strong>恢复。</strong> 从各自停下的地方接着做，不用重新开始，所以一次暂停除了等待，什么都不花。</li>
+		<li><strong>停止。</strong> 直接结束它们。每一个都保留它来得及做完的部分。 <span class="ui">清除已完成的智能体</span> ，收拾干净。</li>
+	</ul>
+	<p>更大的那道刹车是 <span class="ui">全部</span> 行，在侧栏顶部，管着每一个 diamond、每一场聊天、那些帮手、那些邮箱，以及任何正在抓取的网页。被暂停的东西会在一轮开始之前就拒绝它，所以什么都不花。</p>
+
+	<h2 id="s3">哪台设备来跑一轮</h2>
+	<p>你的账户上不止一台设备时，一台可以替另一台跑一轮，答案再同步回来。移交默认关闭，直到你在权限标签里打开它，靠 <span class="ui">你不在时移交</span>.</p>
+	<p>它在手机上最有用——手机没法在你的电脑上运行命令——在你正要合上的笔记本电脑上也是。</p>
+
+	<h3 id="s4">指定接手轮次的那台设备</h3>
+	<p>没有指定的话，一轮被移交出去的活会去最新醒着的那台设备。最新的那台通常是对的，但一台正要合上的笔记本电脑，可能接手一轮，然后把它一起带走。</p>
+	<p>打开 <span class="ui">设置</span> ，然后 <span class="ui">设备</span>。每一行末尾都有一颗星。按一下平时开着的那台机器旁边那颗空心的星，它就会填满。同一时间正好只有一颗，所以给第二台加星会清掉第一台的。这个指定会跟着你平常的同步走。</p>
+	<p>指定只是一半。那台机器下一次运行 Daimond 时，会问 <span class="ui">把这台设备设为运行者？</span> 回答 <span class="ui">这台设备就是运行者</span> ，从那以后它就保持这个身份。这个身份不会跟着同步走，因为它是让那台机器承诺保持醒着、随时听命。</p>
+	<p>这个问题只问一次。回答否，它就不会再问，除非你清掉这个指定，重新来一遍。</p>
+
+	<h3 id="s5">别让浏览器碍事</h3>
+	<p>浏览器会把一个隐藏的标签页放慢到大约一分钟醒一次，还可能为了省内存把整个页面搁置。一台被放慢的设备比没有还糟，因为它照样报告自己醒着，却什么都收不到。</p>
+	<p>所以给它一个自己的浏览器。 <code>dev/runner-chrome.sh</code> ，在 Daimond 源码里，启动一个带独立配置文件、用应用窗口代替标签页、并且关掉那些限速的浏览器。用 <code>--dry-run</code> 运行它，先读一遍命令，或者用 <code>--install</code> ，让它跟着你的桌面会话一起启动。</p>
+	<p>有两件事在这个脚本管不到的地方。在那个配置文件里关掉内存节省模式，或者把 Daimond 加进它的例外名单。还有，让窗口开着、别最小化——被别的窗口挡住没关系，最小化会被当成隐藏。</p>
+
+	<h3 id="s6">它运行时你会看到什么</h3>
+	<p>这一轮会说明它去了哪里。一开始写着 <span class="ui">已发给你的其他设备</span>，接着是那台机器自己的名字——它接手这一轮、以及正在工作的时候。答案会出现在你开始它的地方。</p>
+	<p>那一行旁边始终坐着两个按钮。 <span class="ui">收回</span> ，把这一轮还给你手上的设备，而 <span class="ui">在这里运行</span> ，如果没有谁接手，就在本地运行它。在 <span class="ui">设置</span> &rsaquo; <span class="ui">设备</span> 下面给你的设备起名字，就是这些行能读成一个名字的原因。</p>
+	<p>一轮被移交出去的活，会先找被指定的那台设备，然后是任何其他醒着、在听命的电脑，最后才是你正用着的这台。手机永远不会被塞给另一台设备的轮次。</p>
+
+	<h3 id="s7">仍然会拦住它的两件事</h3>
+	<p>两件事都需要你在那台机器上花一点注意力，而且都不会出现在你手上这台设备上。</p>
+	<ul>
+		<li><strong>一个等着被点一下的文件夹权限。</strong> 如果一轮需要一个浏览器还没授权的文件夹，请求会在那台机器自己的屏幕上提出来，然后等着。在那里打开一次这个文件夹，之后的轮次就会发现权限已经给了。</li>
+		<li><strong>一块锁着的屏幕。</strong> 一台电脑会让它为那个标签页持有的密钥跨越一次重新加载，所以一次更新不会再拦住它。你可以按设备用 <span class="ui">跨重新加载保持解锁</span> ，在 <span class="ui">设备</span>下面把这个关掉。手机永远不会被保持解锁，所以做这项工作的手机，回来时是锁着的。</li>
+	</ul>
+	<p>如果一台设备不再接手轮次，又没有别的解释，就去看看它的屏幕。</p>
+
+	<div class="next">
+		<a href="machine-operations.html">&larr; 你的电脑</a>
+		<a href="sync.html">下一步：不止一台设备 &rarr;</a>
+	</div>
+</main>
+
+<footer class="site-foot">
+	<span>Daimond 在你的浏览器中运行。这里的任何内容都不会发送给我们。</span>
+	<nav aria-label="指南页面">
+		<a href="index.html">从这里开始</a>
+		<a href="interface.html">界面</a>
+		<a href="chats-and-diamonds.html">对话和 diamond</a>
+		<a href="capps.html">diamond 的页面</a>
+		<a href="email-web-files.html">文件、邮件和网页</a>
+		<a href="machine-operations.html">你的电脑</a>
+		<a href="runner.html">帮手和轮次的运行位置</a>
+		<a href="sync.html">不止一台设备</a>
+		<a href="social.html">社交和提案</a>
+		<a href="models.html">模型和提供商</a>
+		<a href="spending.html">花费</a>
+		<a href="accounts.html">安全和修复</a>
+	</nav>
+</footer>
+</body>
+</html>

@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
-<title>Safety &amp; fixes &mdash; Daimond guide</title>
+<title>安全性と対処 &mdash; Daimond ユーザーガイド</title>
 <link rel="icon" type="image/svg+xml" href="../../assets/daimond_mark.svg">
 <link rel="stylesheet" href="../../css/variables.css">
 <link rel="stylesheet" href="../../css/guide.css">
@@ -24,12 +24,12 @@
 			<a href="index.html">ここから始める</a>
 			<a href="interface.html">インターフェース</a>
 			<a href="chats-and-diamonds.html">チャットと diamond</a>
-			<a href="../capps.html">diamond のページ</a>
+			<a href="capps.html">diamond のページ</a>
 			<a href="email-web-files.html">ファイル、メール、ウェブ</a>
-			<a href="../machine-operations.html">あなたのコンピューター</a>
-			<a href="../runner.html">ヘルパーとターンの実行場所</a>
+			<a href="machine-operations.html">あなたのコンピューター</a>
+			<a href="runner.html">ヘルパーとターンの実行場所</a>
 			<a href="sync.html">複数の端末</a>
-			<a href="../social.html">ソーシャルと提案</a>
+			<a href="social.html">ソーシャルと提案</a>
 			<a href="models.html">モデルとプロバイダー</a>
 			<a href="spending.html">支出</a>
 			<a href="accounts.html" aria-current="page">安全性と対処</a>
@@ -39,74 +39,74 @@
 
 <main>
 	<h1>安全性と対処</h1>
-	<p class="lede">What your passphrase protects, what Daimond asks before it acts, what stays private, and what to do when something is wrong.</p>
+	<p class="lede">あなたのパスフレーズが何を守るか、Daimond が動く前に何を尋ねるか、何が外に出ないか、そして何かがおかしいときにどうするか。</p>
 
 	<h2 id="s1">アカウントとはパスフレーズのことです</h2>
-	<p>On first run Daimond generates a passphrase of eight random words and shows it once. It is the key to everything stored here. It is not sent anywhere, it is not stored in the clear, and nobody can reset it.</p>
-	<p>It unlocks everything encrypted here, meaning your provider keys, your mail credentials and the account's own signing key, and the key that seals the sync parcel is derived from it too. The signing key is what signs you in for credits. Forget the passphrase and the encrypted data is gone.</p>
-	<p>Once a passphrase is in place you can add a <strong>パスキー</strong> for a faster unlock, by face, fingerprint or security key. It unseals the passphrase for you instead of replacing it, so the passphrase stays the fallback. The unlock happens on the device, and the credits service only ever sees a public key.</p>
+	<p>初回起動時、Daimond は八つの無作為な単語から成るパスフレーズを作り、一度だけ表示します。それが、ここに保存されるすべての鍵です。どこにも送られず、平文で保存されることもなく、誰にもリセットできません。</p>
+	<p>それは、ここにある暗号化されたものすべて——プロバイダーの鍵、メールの資格情報、そしてアカウント自身の署名鍵——を解きます。同期の荷物を封じる鍵も、そこから導かれます。署名鍵は、クレジットのためにあなたを示すものです。パスフレーズを忘れれば、暗号化されたデータは失われます。</p>
+	<p>パスフレーズができたら、 <strong>パスキー</strong> を追加すれば、顔、指紋、セキュリティキーでもっと速く解除できます。パスキーはパスフレーズを置き換えるのではなく、あなたに代わってその封を解くので、パスフレーズは控えのままです。解除は端末で行われ、クレジットのサービスが見るのは公開鍵だけです。</p>
 
 	<h2 id="s2">アカウントの操作</h2>
-	<p>Your name is at the top of the account area, at the foot of the rail.</p>
+	<p>あなたの名前は、レール下部にあるアカウント領域の上部にあります。</p>
 	<ul>
-		<li><span class="ui">Change name&hellip;</span> と <span class="ui">Change passphrase&hellip;</span> do what they say, and the second re-wraps your encrypted data under the new passphrase.</li>
-		<li><span class="ui">Add a passkey&hellip;</span></li>
-		<li><span class="ui">バックアップを書き出す</span> writes your chats, diamonds, workspace files and your account key to a file you keep.</li>
-		<li><span class="ui">Import a backup&hellip;</span> adopts the backup's account where this browser holds none, and where one is already here it brings back only the work.</li>
-		<li><span class="ui">ログアウト</span> locks the app. Your data stays on the device, encrypted.</li>
-		<li><span class="ui">Forget this identity&hellip;</span> removes the account and its encrypted data from this browser for good.</li>
+		<li><span class="ui">名前を変更&hellip;</span> と <span class="ui">パスフレーズを変更&hellip;</span> は、それぞれ書かれているとおりのことをします。二つ目は、暗号化されたデータを新しいパスフレーズのもとで包み直します。</li>
+		<li><span class="ui">パスキーを追加&hellip;</span></li>
+		<li><span class="ui">バックアップを書き出す</span> は、チャット、diamond、作業領域のファイル、そしてアカウントの鍵を、手元に置くファイルへ書き出します。</li>
+		<li><span class="ui">バックアップを読み込む&hellip;</span> は、このブラウザにアカウントがなければバックアップのアカウントを引き受け、すでにあるならバックアップから仕事だけを取り戻します。</li>
+		<li><span class="ui">ログアウト</span> は、アプリをロックします。データは暗号化されたまま端末に残ります。</li>
+		<li><span class="ui">この識別情報を消す&hellip;</span> は、アカウントとその暗号化データを、このブラウザから完全に取り除きます。</li>
 	</ul>
-	<p>Beside them, <span class="ui">同期</span> turns this device's sync on or off, and <span class="ui">診断</span> shows and copies the app's own log, which holds event names and a clock, with no keys, no message text and nothing from your files. That log is what to paste into a report.</p>
+	<p>その横では、 <span class="ui">同期</span> がこの端末の同期を入り切りし、 <span class="ui">診断</span> がアプリ自身のログを見せてコピーします。出来事の名前と時刻だけを持ち、鍵も、メッセージの本文も、ファイルの中身も含みません。報告に貼り付けるのはこのログです。</p>
 
-	<h2 id="s3">Moving your account</h2>
-	<p>Your account is a signing key held in this browser. <strong>The passphrase does not recreate it</strong>, and only decrypts the copy stored here. So the same passphrase in a fresh browser starts a separate account, with its own credits and no Pro.</p>
-	<p>The key itself has to travel, and three things carry it.</p>
+	<h2 id="s3">アカウントを移す</h2>
+	<p>あなたのアカウントは、このブラウザに置かれた署名鍵です。 <strong>パスフレーズはそれを作り直すのではなく</strong>、ここに保存されている写しを復号するだけです。ですから、まっさらなブラウザで同じパスフレーズを使っても、始まるのは別のアカウントで、クレジットもそれ自身のもの、Pro もありません。</p>
+	<p>鍵そのものが渡っていく必要があり、それを運べるものは三つあります。</p>
 	<ul>
-		<li><span class="ui">ほかの端末をリンク</span>, which shows a pairing code.</li>
-		<li>A passkey, which stands a new device up in one gesture.</li>
-		<li><span class="ui">バックアップを書き出す</span>, whose file holds the key for <span class="ui">Import a backup&hellip;</span> to adopt in a browser that has none.</li>
+		<li><span class="ui">ほかの端末をリンク</span>。ペアリングコードが表示されます。</li>
+		<li>パスキーは、ひと動作で新しい端末を立ち上げます。</li>
+		<li><span class="ui">バックアップを書き出す</span>。そのファイルには、 <span class="ui">バックアップを読み込む&hellip;</span> が引き受けるための鍵が入っています——アカウントを持たないブラウザで。</li>
 	</ul>
-	<p>Do one of them before you retire a browser. Once its storage is gone, with no backup taken and no other device linked, the key is gone with it.</p>
-	<p>A backup holds your work in the clear and your key wrapped under your passphrase. Importing the file alone makes nobody you. Whoever holds the file <em>と</em> the passphrase holds the account, which is why the two should not travel together.</p>
+	<p>ブラウザを退役させる前に、どれか一つを済ませてください。その保存領域が消え、バックアップも取らず、ほかの端末もリンクしていなければ、鍵もろとも失われます。</p>
+	<p>バックアップには、あなたの仕事が平文で、鍵はパスフレーズの下に包まれて入っています。ファイルを取り込むだけでは、誰もあなたにはなりません。ファイルを持つ者 <em>と</em> パスフレーズを持つ者は、アカウントを持つのと同じです。だからこそ、この二つを一緒に持ち歩かせてはいけません。</p>
 
 	<h2 id="s4">ひとつのブラウザを複数の人で使う</h2>
-	<p>One browser can hold several accounts, each with its own chats, keys, credits and files. <span class="ui">＋ 別のアカウントを追加</span> makes a second, and the row above it switches between them. Switching locks the first and forgets its keys before opening the other. Nobody sees another account's data.</p>
+	<p>ひとつのブラウザは複数のアカウントを持てます。それぞれに、自分のチャット、鍵、クレジット、ファイルがあります。 <span class="ui">＋ 別のアカウントを追加</span> は二つ目を作り、その上の行が両者を切り替えます。切り替えるときは、まず一つ目をロックしてその鍵を忘れ、それから別のほうを開きます。ほかのアカウントのデータを見る者はいません。</p>
 
-	<h2 id="s5">What Daimond asks before it acts</h2>
-	<p>A chip beside the model says what Daimond does without asking. It has three settings, and they apply to the whole app.</p>
+	<h2 id="s5">Daimond が動く前に尋ねること</h2>
+	<p>モデルの横にあるチップが、Daimond が尋ねずに行うことを示します。設定は三つあり、アプリ全体に適用されます。</p>
 	<ul>
-		<li><span class="ui">Ask every time</span> reads <em>Every command is put to you first. So is reaching the web, once in each conversation.</em></li>
-		<li><span class="ui">Guarded</span> reads <em>Commands run. Once something written by somebody else has been read, Daimond asks before reaching out.</em> It is the default.</li>
-		<li><span class="ui">Bypass</span> reads <em>Nothing is asked, whatever has been read.</em></li>
+		<li><span class="ui">毎回尋ねる</span> の説明は <em>「どのコマンドもまずあなたに諮られます。ウェブへのアクセスも、会話ごとに一度、同じです」</em></li>
+		<li><span class="ui">見張り付き</span> の説明は <em>「コマンドは実行されます。ほかの誰かが書いたものを一度読むと、Daimond は外に出る前に尋ねます」</em> 既定はこれです。</li>
+		<li><span class="ui">素通り</span> の説明は <em>「何を読んでいても、何も尋ねません」</em></li>
 	</ul>
-	<p>Under Guarded, once a turn has read something written by somebody else, such as a web page, an email or a build log, anything it then wants to fetch or send is put to you first, and a command in that turn runs with the network refused. That is the case where text you did not write could talk Daimond into carrying your work somewhere.</p>
-	<p>Switching to <span class="ui">Bypass</span> asks once, and says what you give up. No mode moves the fence a command runs inside, a diamond's folders, the system-call filter, or the log you can read afterwards.</p>
-	<p>An agent working on its own is asked about separately. Clicking something on a page can spend money or submit a form, and none of that can be taken back, so a click by an unattended agent is put to you even under looser settings.</p>
-	<p>Money has its own brakes, and they are on <a href="spending.html">支出</a>.</p>
+	<p>見張り付きのもとでは、あるやり取りがウェブページやメール、ビルドログなど、ほかの誰かが書いたものを一度読むと、そのあと取得や送信を望むものはすべてまずあなたに諮られ、そのやり取りの中のコマンドはネットワークを拒まれた状態で走ります。これは、あなたが書いていない文章が Daimond を言いくるめて、あなたの仕事をどこかへ運ばせかねない場面です。</p>
+	<p> <span class="ui">素通り</span> への切り替えは、一度だけ尋ね、何を手放すことになるかを告げます。どのモードでも、コマンドが走る柵、diamond のフォルダー、システムコールのフィルター、あとで読めるログの位置は動きません。</p>
+	<p>自分の力で働くエージェントについては、別に尋ねられます。ページの何かをクリックするとお金を使ったりフォームを送信したりでき、そのどちらも取り消せません。ですから、見張りのないエージェントによるクリックは、ゆるい設定のもとでもあなたに諮られます。</p>
+	<p>お金には専用の制動があり、それがあるのは <a href="spending.html">支出</a>.</p>
 
 	<h2 id="s6">外に出ないもの</h2>
-	<p>Your passphrase, provider keys, mail credentials, chats, diamonds and files live in this browser and are not sent to us. What we hold is money and ciphertext, meaning your balance and licences and, for sync, a parcel we cannot open.</p>
-	<p>Your messages reach a model provider directly with your own key, or through our metered service when you spend credits. Fetching a page, and syncing or sending mail, pass through the gateway. So the honest claim is that with your own key nothing of your work reaches us in the clear, and that you can watch only ciphertext leave for our servers.</p>
-	<p>You need not take that on trust. The code running in this browser is public, it builds byte for byte from that source, and every build served is sealed into a published record. <span class="ui">Verify this build</span>, in the About dialog, checks the one you are running. Open your browser's network panel and watch where the calls go.</p>
-	<p>The protection has limits. A passphrase guards against someone opening the browser's developer tools, and not against a compromised browser, a malicious extension or a keylogger, which defeat any in-browser scheme. And what a remote server does inside itself cannot be proven from outside, which is why it is the client that is opened to you.</p>
+	<p>あなたのパスフレーズ、プロバイダーの鍵、メールの資格情報、チャット、diamond、ファイルは、このブラウザの中にあり、こちらには送られません。こちらが持っているのはお金と暗号文——あなたの残高とライセンス、そして同期のために、こちらが開けない荷物です。</p>
+	<p>あなたのメッセージは、ご自分の鍵ならモデルプロバイダーへ直接届き、クレジットを使うならこちらの計測付きのサービスを通って届きます。ページの取得と、メールの同期や送信は、ゲートウェイを通ります。ですから正直な言い方は、ご自分の鍵ならあなたの仕事が平文でこちらに届くことはなく、こちらのサーバーへ出ていくのが暗号文だけであることを、あなたが見て確かめられる、ということです。</p>
+	<p>それを信用で受け取る必要はありません。このブラウザで動くコードは公開されていて、そのソースからバイト単位で組み立てられ、配布されるビルドはどれも公開された記録に封じられます。 <span class="ui">このビルドを検証</span>は、About のダイアログにあり、いま動いているものを確かめます。ブラウザのネットワークパネルを開いて、通信がどこへ行くかを見てください。</p>
+	<p>この守りには限界があります。パスフレーズが防ぐのは、誰かがブラウザの開発者ツールを開くことで、乗っ取られたブラウザ、悪意のある拡張機能、キーロガーには効きません。これらはどれもブラウザの中の仕組みを丸ごと破ります。そして、離れたサーバーが内側で何をしているかは外からは証明できません。だからこそ、あなたに開かれているのはクライアントの側なのです。</p>
 
-	<h2 id="s7">When something goes wrong</h2>
+	<h2 id="s7">何かがおかしいとき</h2>
 	<ul>
-		<li><strong><em>Connect a model to start.</em></strong> No model is connected. Add one, or add a key for the provider already listed.</li>
-		<li><strong>Your second device is empty.</strong> You made a second account instead of pairing. Pair it, or import a backup. See <a href="sync.html">複数の端末</a>.</li>
-		<li><strong>A shared folder is not arriving.</strong> It is over the 200&nbsp;MiB a shared folder may weigh. A banner names it. Share a smaller folder.</li>
-		<li><strong><em>Not valid JSON. Nothing saved.</em></strong> A hand edit to a diamond's memory left the file unreadable, so nothing was written. Fix the text or close without saving.</li>
-		<li><strong>Nothing runs on its own.</strong> The light is red because the action is stopped. Press play on the light beside it.</li>
-		<li><strong><em>Terminal needs the Daimond Hand on this computer.</em></strong> <span class="ui">Install&hellip;</span> beside it goes to <a href="../machine-operations.html">あなたのコンピューター</a>.</li>
-		<li><strong>A turn is sitting on another device.</strong> That machine is probably waiting for a folder permission on its own screen. Go and look, or press <span class="ui">Run here</span>.</li>
-		<li><strong>A panel has disappeared.</strong> It is unpinned, and still there. The <span class="ui">⋯</span> chip opens the gallery, and <kbd>Ctrl</kbd> <kbd>K</kbd> reaches any panel by name.</li>
-		<li><strong>Everything is locked after a reload.</strong> The key is held in memory and nowhere else, unless this device is set to stay unlocked across reloads. Enter the passphrase, or use a passkey.</li>
+		<li><strong><em>「モデルをつないで始めてください」</em></strong> モデルがつながっていません。一つ追加するか、すでに載っているプロバイダーの鍵を追加してください。</li>
+		<li><strong>「二台目の端末が空です」</strong> ペアリングの代わりに二つ目のアカウントを作ってしまいました。ペアリングするか、バックアップを読み込んでください。参照： <a href="sync.html">複数の端末</a>.</li>
+		<li><strong>「共有フォルダーが届きません」</strong> 共有フォルダーの上限である 200&nbsp;MiB を超えています。バナーがそれを名指しします。もっと小さいフォルダーを共有してください。</li>
+		<li><strong><em>「正しい JSON ではありません。何も保存されませんでした」</em></strong> diamond の記憶を手で編集した結果、ファイルが読めなくなり、何も書き込まれませんでした。文章を直すか、保存せずに閉じてください。</li>
+		<li><strong>「何も自分では走りません」</strong> 灯りが赤いのは、動作が止まっているからです。横の灯りにある再生を押してください。</li>
+		<li><strong><em>「ターミナルにはこのコンピューターの Daimond Hand が要ります」</em></strong> <span class="ui">インストール&hellip;</span> の横にあるものの行き先は、 <a href="machine-operations.html">あなたのコンピューター</a>.</li>
+		<li><strong>「やり取りがほかの端末で待っています」</strong> その機器はおそらく、自分の画面でフォルダーの許可を待っています。見に行くか、押すのは <span class="ui">ここで実行</span>.</li>
+		<li><strong>「パネルが消えました」</strong> 固定を外しているだけで、まだそこにあります。 <span class="ui">⋯</span> チップがギャラリーを開き、そして <kbd>Ctrl</kbd> <kbd>K</kbd> が、名前でどのパネルにも届きます。</li>
+		<li><strong>「再読み込みのあと、すべてがロックされています」</strong> 鍵はメモリにだけあり、ほかのどこにもありません。この端末が再読み込みをまたいでロック解除を保つよう設定されていないかぎりは。パスフレーズを入力するか、パスキーを使ってください。</li>
 	</ul>
-	<p>Still stuck? The rail holds a diamond called <strong>Daimond Help</strong>, which answers from this build and this guide and says which page an answer came from. What it cannot answer belongs on <a href="../social.html">ソーシャル</a>, with the three things a note needs.</p>
+	<p>それでも困ったときは。レールには、 <strong>Daimond Help</strong>という diamond があります。このビルドとこのガイドから答え、答えがどのページから来たかも教えてくれます。それが答えられないことは、 <a href="social.html">ソーシャル</a>へ。メモに要る三つのことを添えて。</p>
 
 	<div class="next">
-		<a href="spending.html">&larr; Spending</a>
-		<a href="index.html">Back to the start &rarr;</a>
+		<a href="spending.html">&larr; 支出</a>
+		<a href="index.html">最初に戻る &rarr;</a>
 	</div>
 </main>
 
@@ -116,12 +116,12 @@
 		<a href="index.html">ここから始める</a>
 		<a href="interface.html">インターフェース</a>
 		<a href="chats-and-diamonds.html">チャットと diamond</a>
-		<a href="../capps.html">diamond のページ</a>
+		<a href="capps.html">diamond のページ</a>
 		<a href="email-web-files.html">ファイル、メール、ウェブ</a>
-		<a href="../machine-operations.html">あなたのコンピューター</a>
-		<a href="../runner.html">ヘルパーとターンの実行場所</a>
+		<a href="machine-operations.html">あなたのコンピューター</a>
+		<a href="runner.html">ヘルパーとターンの実行場所</a>
 		<a href="sync.html">複数の端末</a>
-		<a href="../social.html">ソーシャルと提案</a>
+		<a href="social.html">ソーシャルと提案</a>
 		<a href="models.html">モデルとプロバイダー</a>
 		<a href="spending.html">支出</a>
 		<a href="accounts.html">安全性と対処</a>

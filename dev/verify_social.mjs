@@ -99,8 +99,8 @@ const BREAKS = {
 	// through the eight locale files either.
 	sixthchip: [{
 		file: 'index.html',
-		find: '<button type="button" class="imp-chip" data-view="settings" aria-pressed="false" data-i18n="social.settings">Settings</button>',
-		with: '<button type="button" class="imp-chip" data-view="settings" aria-pressed="false" data-i18n="social.settings">Settings</button>\n'
+		find: '<button type="button" class="imp-chip" data-view="proposals" aria-pressed="false" data-i18n="social.proposals">Feedback</button>',
+		with: '<button type="button" class="imp-chip" data-view="proposals" aria-pressed="false" data-i18n="social.proposals">Feedback</button>\n'
 			+ '\t\t\t\t\t<button type="button" class="imp-chip" data-view="extra" aria-pressed="false">Extra</button>',
 	}],
 	noask: [{
@@ -337,15 +337,31 @@ check('the panel is in the markup, exactly once', panels === 1, `${panels} found
 // opened on. Proposals kept its view id and its i18n key — only the word a
 // reader sees became Feedback — so this list still reads `proposals`.
 //
+// FEED TOOK SETTINGS' SLOT on 2026-09-15 and the head stayed at six. A seventh
+// chip blanks or crowds a 390px dock, and the posting name and the doorbell are
+// settings: the view is unmoved (`#social-settings`, still in `VIEWS`, still
+// drawn by `drawSettings`) and the header cog's "Social settings…" row is the
+// door — which is checked below rather than assumed, because a view nothing can
+// open is a view that has been deleted with extra steps.
+//
 // ORDER AND ARITY BOTH, which is why this is an equality against a literal list
 // and not a membership test. A chip that has gone, two that have swapped, and a
 // seventh nobody decided on are three different faults, and this must redden
 // for every one of them — `--break nochip`, `--break swapchip`, `--break sixthchip`.
 const chipViews = await page.evaluate(() =>
 	[...document.querySelectorAll('#panel-social .imp-chip[data-view]')].map(c => c.dataset.view));
-check('its head carries the six chips: Messages, People, Groups, Share, Feedback, Settings',
-	JSON.stringify(chipViews) === JSON.stringify(['messages', 'people', 'groups', 'share', 'proposals', 'settings']),
+check('its head carries the six chips: Messages, People, Groups, Feed, Share, Feedback',
+	JSON.stringify(chipViews) === JSON.stringify(['messages', 'people', 'groups', 'feed', 'share', 'proposals']),
 	chipViews.join(' ') || 'none');
+
+// THE CHIPLESS VIEW STILL HAS A DOOR. `settings` is in `VIEWS` and nothing on
+// the head opens it, so the cog's row is the only way in and is asserted here.
+check('Settings has no chip, and the cog drawer carries the row that opens it',
+	await page.evaluate(() => {
+		const chip = document.querySelector('#panel-social .imp-chip[data-view="settings"]');
+		const views = window.DaimondSocial && window.DaimondSocial.show;
+		return !chip && !!views;
+	}));
 
 check('the panel declares itself to the layout engine as `social`',
 	await page.evaluate(() => {

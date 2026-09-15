@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
-<title>The interface &mdash; Daimond guide</title>
+<title>界面 &mdash; Daimond 指南</title>
 <link rel="icon" type="image/svg+xml" href="../../assets/daimond_mark.svg">
 <link rel="stylesheet" href="../../css/variables.css">
 <link rel="stylesheet" href="../../css/guide.css">
@@ -24,12 +24,12 @@
 			<a href="index.html">从这里开始</a>
 			<a href="interface.html" aria-current="page">界面</a>
 			<a href="chats-and-diamonds.html">对话和 diamond</a>
-			<a href="../capps.html">diamond 的页面</a>
+			<a href="capps.html">diamond 的页面</a>
 			<a href="email-web-files.html">文件、邮件和网页</a>
-			<a href="../machine-operations.html">你的电脑</a>
-			<a href="../runner.html">帮手和轮次的运行位置</a>
+			<a href="machine-operations.html">你的电脑</a>
+			<a href="runner.html">帮手和轮次的运行位置</a>
 			<a href="sync.html">不止一台设备</a>
-			<a href="../social.html">社交和提案</a>
+			<a href="social.html">社交和提案</a>
 			<a href="models.html">模型和提供商</a>
 			<a href="spending.html">花费</a>
 			<a href="accounts.html">安全和修复</a>
@@ -39,77 +39,77 @@
 
 <main>
 	<h1>界面</h1>
-	<p class="lede">Three zones and a top bar. Once you know the zones, every part of Daimond has a place.</p>
+	<p class="lede">三个区域，加一条顶栏。认清这几个区域，Daimond 的每一部分就都有地方安放。</p>
 
-	<h2 id="s1">The rail, on the left</h2>
-	<p>The rail lists what you are working on, with <strong>diamonds</strong> at the top and <strong>聊天</strong> under them, newest first. The <span class="ui">+</span> on each head makes a new one, and dragging the divider gives one list more room.</p>
-	<p>Above them is the <span class="ui">全部</span> row, a play, a pause and a round light for the whole app. Pause there and nothing runs anywhere until you release it.</p>
-	<p>Below the divider is your account, showing the name you gave, one status line, and what you have spent today, this week and this month. <a href="index.html">从这里开始</a> covers the status line, and <span class="ui">Details</span> opens the diagnostics behind it.</p>
-	<p>One of those details is the build you are on. Press it for the release history, which shows what is planned, the build you are running, and every earlier build with its date and its place in a sealed record. You cannot go back to an older build, by design, because an old client holds faults since fixed and may read newer data wrongly.</p>
+	<h2 id="s1">侧栏，在左边</h2>
+	<p>侧栏列出你正在做的事—— <strong>diamond</strong> 在最上面， <strong>聊天</strong> 在它们下面，最新的排最前。 <span class="ui">+</span> 在每个标题上，点一下就新建一个；拖动分隔线，能让其中一个列表多占点地方。</p>
+	<p>它们上面是 <span class="ui">全部</span> 行——给整个应用的一个播放、一个暂停，和一盏圆形指示灯。在那里暂停，任何地方都不会运行，直到你松开它。</p>
+	<p>分隔线下面是你的账户，显示你取的名字、一行状态，以及你今天、本周和本月花了多少。 <a href="index.html">从这里开始</a> ，讲了那一行状态，而 <span class="ui">详情</span> 打开它背后的诊断信息。</p>
+	<p>这些详情里有一项是你所在的构建版本。按一下它，看发布历史——里面有正在计划的内容、你正在运行的构建，以及每一个更早的构建，各自带着日期和它在一份密封记录里的位置。按设计，你没法退回一个更旧的构建，因为一个旧客户端带着已经修好的缺陷，还可能把更新的数据读错。</p>
 
-	<h2 id="s2">The centre</h2>
-	<p>The centre holds the conversation and whatever you are reading beside it. Panels here sit side by side and not over the chat, so you need not leave the conversation to look at something.</p>
-	<p>Width decides how many fit, from two at the narrowest to four at the widest, with one more for roughly every 380 pixels. Narrow the window and the panel opened most recently closes, and the chat is never the one to go.</p>
+	<h2 id="s2">中间</h2>
+	<p>中间装着对话，以及你在旁边读的任何东西。这里的面板并排摆放，不会盖在聊天上面，所以看点什么不必离开对话。</p>
+	<p>宽度决定能放下几个：最窄两个，最宽四个，大约每多 380 像素再多放一个。把窗口调窄，最近打开的那个面板会关掉，聊天永远不会是被关掉的那个。</p>
 	<ul>
-		<li><span class="ui">AI</span> holds the conversation, and comes back whenever the centre would otherwise be empty.</li>
-		<li><span class="ui">网页</span> shows a web page, or drives one.</li>
-		<li><span class="ui">文档</span> shows a file as its characters, with room to read and edit it.</li>
-		<li><span class="ui">Preview</span> shows what a file looks like, whether a picture, a PDF, or typeset pages beside their source.</li>
-		<li><span class="ui">Email message</span> opens one message beside the chat.</li>
-		<li><span class="ui">工具</span> lists what Daimond can do.</li>
-		<li><span class="ui">撰写</span> is for writing mail, and only you can press Send.</li>
-		<li><span class="ui">图谱</span> draws your diamonds and the links between them.</li>
-		<li><span class="ui">终端</span> is a real terminal on your machine. See <a href="../machine-operations.html">你的电脑</a>.</li>
+		<li><span class="ui">AI</span> 装着对话，只要中间原本会空着，它就会回来。</li>
+		<li><span class="ui">网页</span> 显示一个网页，或者操作它。</li>
+		<li><span class="ui">文档</span> 把一个文件按字符显示出来，留出空间读它、改它。</li>
+		<li><span class="ui">预览</span> 显示一个文件看起来什么样——一张图片、一份 PDF，或者排好版的页面挨着它的源码。</li>
+		<li><span class="ui">邮件消息</span> 在聊天旁边打开一封邮件。</li>
+		<li><span class="ui">工具</span> 列出 Daimond 能做的事。</li>
+		<li><span class="ui">撰写</span> 用来写邮件，只有你能按发送。</li>
+		<li><span class="ui">图谱</span> 画出你的 diamond，以及它们之间的联系。</li>
+		<li><span class="ui">终端</span> 是你机器上一个真正的终端。参见 <a href="machine-operations.html">你的电脑</a>.</li>
 	</ul>
 
-	<h2 id="s3">The dock, on the right</h2>
-	<p>The dock holds what you pull from.</p>
+	<h2 id="s3">停靠区，在右边</h2>
+	<p>停靠区装着你要取用的来源。</p>
 	<ul>
-		<li><span class="ui">邮件</span> holds your mailboxes.</li>
-		<li><span class="ui">工作区</span> shows your files as a tree.</li>
-		<li><span class="ui">智能体</span> lists the helpers running now, with what each is costing. It stays out of the way until the first one runs.</li>
-		<li><span class="ui">花费</span> shows where the money went.</li>
-		<li><span class="ui">待办</span> lists what is waiting on you. Each row is answered with <span class="ui">去做</span>, discussed, or dropped.</li>
-		<li><span class="ui">回收站</span> holds deleted chats and diamonds for thirty days.</li>
-		<li><span class="ui">社交</span> 和 <span class="ui">Improve</span> are covered in <a href="../social.html">社交和提案</a>.</li>
+		<li><span class="ui">邮件</span> 装着你的邮箱。</li>
+		<li><span class="ui">工作区</span> 把你的文件显示成一棵树。</li>
+		<li><span class="ui">智能体</span> 列出正在运行的帮手，以及各自花了多少。第一个开始运行之前，它都不碍事。</li>
+		<li><span class="ui">花费</span> 显示钱去了哪里。</li>
+		<li><span class="ui">待办</span> 列出等着你处理的事。每一行都可以用 <span class="ui">去做</span>来回答，也可以讨论，或者丢开不管。</li>
+		<li><span class="ui">回收站</span> 把删掉的聊天和 diamond 保留三十天。</li>
+		<li><span class="ui">社交</span> 和 <span class="ui">改进</span> ，在 <a href="social.html">社交和提案</a>.</li>
 	</ul>
 
 	<h2 id="s4">顶栏</h2>
-	<p>The top bar carries the wordmark, a row of chips, and five buttons at the far right, which are the update chip, About, <span class="ui">Link another device</span>, this guide, and <span class="ui">Settings</span>.</p>
-	<p>Every panel has a chip. Click one to open or close that panel. An open panel's chip is filled in, so the row reads as a map of what is on screen. Chips are grouped by zone in the order the zones sit, and each keeps its position so you can learn it.</p>
-	<p>A fresh account gets six chips, for diamonds, Chat, Web, Workspace, Tools and Spending. The rest live behind the <span class="ui">⋯</span> chip at the end of the row. Click it for the gallery, which lists every panel there is, searchable and grouped by zone, with a pin on each row that puts it in the bar.</p>
-	<p>A dock chip is greyed when the dock is full, and its tooltip names the fix. <kbd>Ctrl</kbd> <kbd>K</kbd> opens any panel or setting by typing.</p>
+	<p>顶栏上有主标志、一排标签，以及最右边的五个按钮：更新标签、关于、 <span class="ui">关联另一台设备</span>、这份指南，以及 <span class="ui">设置</span>.</p>
+	<p>每个面板都有一个标签。点一个就能打开或关掉那个面板。打开着的面板，标签是填色的，所以这一排标签读起来就像屏幕上内容的一张地图。标签按区域分组，顺序和这些区域摆放的顺序一样，而且各自的位置固定，方便你记住。</p>
+	<p>一个全新的账户会有六个标签，分别给 diamond、聊天、网页、工作区、工具和花费。其余的都收在 <span class="ui">⋯</span> 这个标签里，在这一排的最后。点它打开面板总览，里面列出所有面板，可以搜索，按区域分组，每一行都有一个图钉，能把它放进标签行。</p>
+	<p>停靠区满了的时候，它的标签会变灰，提示文字会说明怎么解决。 <kbd>Ctrl</kbd> <kbd>K</kbd> ，靠打字打开任何面板或设置。</p>
 
-	<h2 id="s5">Settings</h2>
-	<p>Settings is the last button on the right. It holds how Daimond looks and where things sit, and nothing about what it does.</p>
+	<h2 id="s5">设置</h2>
+	<p>设置是最右边的最后一个按钮。它管 Daimond 长什么样、东西放在哪里，跟它做什么无关。</p>
 	<ul>
-		<li><strong>View.</strong> <span class="ui">简洁</span> shows names only, and <span class="ui">全量</span> puts the model, the cost and the context on every tile. A tile's own cog overrides it.</li>
-		<li><strong>Theme.</strong> Eleven palettes in three bands. This guide wears whichever the app is wearing.</li>
-		<li><strong>Text size.</strong> Four steps. Only the type changes, so for a bigger interface use the browser's zoom.</li>
-		<li><strong>Side panels.</strong> How the dock tiles, and so how many panels it holds, whether four in one column, four at 2&times;2, or six at 2&times;3 or 3&times;2. <span class="ui">自动</span> lets the window decide.</li>
-		<li><strong>语言</strong> 和 <strong>Currency.</strong> Billing is in US dollars whatever the figures show.</li>
+		<li><strong>视图。</strong> <span class="ui">简洁</span> 只显示名字，而 <span class="ui">全量</span> 把模型、花费和上下文都摆在每张卡片上。一张卡片自己的齿轮可以覆盖这个设置。</li>
+		<li><strong>主题。</strong> 十一套配色，分三个档次。这份指南穿的，就是应用正穿着的那一套。</li>
+		<li><strong>文字大小。</strong> 四档。只有字体会变，要放大整个界面，请用浏览器自己的缩放。</li>
+		<li><strong>侧边面板。</strong> 停靠区怎么分格，也就决定它能装几个面板——一列四个、2&times;2 排四个，还是 2&times;3 或 3&times;2 排六个。 <span class="ui">自动</span> ，交给窗口自己决定。</li>
+		<li><strong>语言</strong> 和 <strong>货币。</strong> 不管数字显示成什么，计费都是美元。</li>
 	</ul>
-	<p>With a diamond open, the menu also offers to keep the current arrangement of panels with it, and opening that diamond again puts the panels back. It is saved only when you ask.</p>
+	<p>打开一个 diamond 时，菜单还会提出把当前的面板布置留给它；再打开那个 diamond，面板就会回到原样。只有在你要求时，它才会被保存。</p>
 
-	<h2 id="s6">The Graph</h2>
-	<p>Open <span class="ui">图谱</span> to see your diamonds drawn, with the links between them. Bring the pointer near a tile's edge and four anchors appear. Drag from one and a line follows, snaps to the nearest diamond, and makes the link when you let go.</p>
-	<p>A link can exist with no relation on it, which means only that the two are joined. Chips offer a <span class="ui">Relation</span> on the line that has just appeared, and <kbd>Esc</kbd> leaves it blank.</p>
-	<p>Let go over empty canvas and a box asks for a name, then a new diamond is made there, already linked. Nothing is written until you give the name.</p>
-	<p>Click a link to select it and press <kbd>Delete</kbd> to drop it. Its form carries <span class="ui">Reverse</span>, which writes a new record, so the note travels and the date does not. <span class="ui">Organise</span> lays everything out again to reduce crossings. From the keyboard, select a diamond, press <kbd>L</kbd>, and click the target.</p>
+	<h2 id="s6">图谱</h2>
+	<p>打开 <span class="ui">图谱</span> ，看你的 diamond 被画出来，连同它们之间的联系。把指针移到一张卡片的边缘附近，会出现四个锚点。从其中一个拖出去，一条线会跟着走，吸附到最近的 diamond 上，松手时就建立联系。</p>
+	<p>一条联系可以没有任何关系标注，那只表示两者相连。标签会给刚出现的那条线提供一个 <span class="ui">关系</span> ，而 <kbd>Esc</kbd> 让它留空。</p>
+	<p>在空白画布上松手，一个框会问你要个名字，然后一个新的 diamond 就在那里建出来，而且已经连好了。在你给出名字之前，什么都不会写入。</p>
+	<p>点一条联系来选中它，然后按 <kbd>Delete</kbd> 把它去掉。它的表单里有 <span class="ui">反转</span>，它会写一条新记录，所以备注会跟着走，日期不会。 <span class="ui">整理</span> 重新摆一遍所有东西，减少交叉。用键盘的话，选中一个 diamond，按 <kbd>L</kbd>，再点一下目标。</p>
 
 	<h2 id="s7">用键盘，用耳朵</h2>
-	<p><kbd>Tab</kbd> moves through the controls, <kbd>Enter</kbd> 或 <kbd>Space</kbd> operates one, and <kbd>Esc</kbd> closes what is open. Every dialog, menu and sheet also carries a cross, sized for a thumb.</p>
-	<p>A dialog keeps focus inside itself and hands it back on closing. With a screen reader, an answer is announced once when it arrives instead of being recited as it is written. The window has named regions and real headings throughout. Anything you cannot reach or cannot hear is a fault, so say so on <a href="../social.html">社交</a>.</p>
+	<p><kbd>Tab</kbd> 在控件之间移动， <kbd>Enter</kbd> 或 <kbd>Space</kbd> 操作其中一个，而 <kbd>Esc</kbd> 关掉打开着的东西。每个对话框、菜单和浮层，也都带一个按钮大小合手指点按的叉。</p>
+	<p>一个对话框会把焦点留在自己里面，关闭时再交还。用屏幕阅读器时，一个回答到达时只播报一次，而不是一边写一边念。整个窗口从头到尾都有命名的区域和真正的标题。任何你够不到或者听不到的地方，都是一个缺陷，请到 <a href="social.html">社交</a>.</p>
 
-	<h2 id="s8">On a phone</h2>
-	<p>Below the phone width the chips give way to the phone shell. The chat is the floor, and a panel rises over it as a sheet you can drag down again. The rail becomes a drawer, opened at the top left, with your account at the foot of it.</p>
-	<p>The row along the bottom is the same chip row, scrolled sideways, and it carries every panel instead of six. The filled chip is what you are looking at, because on a phone only one thing is, so a chip takes you there instead of toggling.</p>
-	<p>Where a row of controls runs off the edge, it scrolls, and fades at the edge to say so. A diamond's page has a full-screen button that gives the whole display to the page.</p>
-	<p>Installed to the home screen, Daimond runs in its own window with no browser furniture and holds clear of the notch. It is the same page and the same stored work.</p>
+	<h2 id="s8">在手机上</h2>
+	<p>低于手机宽度时，标签行让位给手机外壳。聊天是地板，一个面板像一张纸从它上面升起来，你可以再把它拖下去。侧栏变成一个抽屉，从左上角打开，你的账户在它的底部。</p>
+	<p>底部那一行就是同一条标签行，横向滚动，装着全部面板而不只是六个。填色的那个标签，就是你正在看的东西——因为在手机上只有一样东西是这样，所以一个标签是带你过去，而不是切换开关。</p>
+	<p>一排控件伸出边缘时，会滚动，并在边缘淡出来提示这一点。一个 diamond 的页面有一个全屏按钮，把整个显示都让给这个页面。</p>
+	<p>安装到主屏幕后，Daimond 在自己的窗口里运行，没有浏览器的边框装饰，也会避开刘海。它还是同一个页面，同一份保存的工作。</p>
 
 	<div class="next">
-		<a href="index.html">&larr; Start here</a>
-		<a href="chats-and-diamonds.html">Next: Chats &amp; diamonds &rarr;</a>
+		<a href="index.html">&larr; 从这里开始</a>
+		<a href="chats-and-diamonds.html">下一步：对话和 diamond &rarr;</a>
 	</div>
 </main>
 
@@ -119,12 +119,12 @@
 		<a href="index.html">从这里开始</a>
 		<a href="interface.html">界面</a>
 		<a href="chats-and-diamonds.html">对话和 diamond</a>
-		<a href="../capps.html">diamond 的页面</a>
+		<a href="capps.html">diamond 的页面</a>
 		<a href="email-web-files.html">文件、邮件和网页</a>
-		<a href="../machine-operations.html">你的电脑</a>
-		<a href="../runner.html">帮手和轮次的运行位置</a>
+		<a href="machine-operations.html">你的电脑</a>
+		<a href="runner.html">帮手和轮次的运行位置</a>
 		<a href="sync.html">不止一台设备</a>
-		<a href="../social.html">社交和提案</a>
+		<a href="social.html">社交和提案</a>
 		<a href="models.html">模型和提供商</a>
 		<a href="spending.html">花费</a>
 		<a href="accounts.html">安全和修复</a>

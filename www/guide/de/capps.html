@@ -1,0 +1,123 @@
+<!DOCTYPE html>
+<html lang="de" data-guide-locale="de" data-guide-locales="en de es fr ja ko pt-BR zh-Hans">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<title>Die Seite eines diamond &mdash; Daimond-Handbuch</title>
+<link rel="icon" type="image/svg+xml" href="../../assets/daimond_mark.svg">
+<link rel="stylesheet" href="../../css/variables.css">
+<link rel="stylesheet" href="../../css/guide.css">
+<script src="../frame.js"></script>
+<script src="../capp.js"></script>
+<script src="search-index.js"></script>
+<script src="../search.js"></script>
+</head>
+<body>
+
+<header class="site-head">
+	<div class="site-head-inner">
+		<a class="brand" href="index.html" aria-label="Daimond-Handbuch, Startseite">
+			<img class="wordmark wm-dark" src="../../assets/daimond_word.svg" alt="Daimond" translate="no">
+			<img class="wordmark wm-light" src="../../assets/daimond_word_dark.svg" alt="Daimond" translate="no">
+			<span class="brand-sub">Handbuch</span>
+		</a>
+		<nav class="site-nav" aria-label="Handbuchseiten">
+			<a href="index.html">Hier anfangen</a>
+			<a href="interface.html">Die Oberfläche</a>
+			<a href="chats-and-diamonds.html">Chats &amp; Diamonds</a>
+			<a href="capps.html" aria-current="page">Die Seite eines diamond</a>
+			<a href="email-web-files.html">Dateien, E-Mail &amp; das Web</a>
+			<a href="machine-operations.html">Dein Rechner</a>
+			<a href="runner.html">Helfer &amp; wo Züge laufen</a>
+			<a href="sync.html">Mehr als ein Gerät</a>
+			<a href="social.html">Soziales &amp; Vorschläge</a>
+			<a href="models.html">Modelle &amp; Anbieter</a>
+			<a href="spending.html">Ausgaben</a>
+			<a href="accounts.html">Sicherheit &amp; Problembehebung</a>
+		</nav>
+	</div>
+</header>
+
+<main>
+	<h1>Die Seite eines diamond</h1>
+	<p class="lede">Jedes Diamond wird von einer eigenen Seite dargestellt. Standardmäßig zeigt diese Seite, was das Diamond weiß. Fragen Sie danach, und sie wird zu einer kleinen Anwendung, etwas zum Antippen, das aufzeichnet, was Sie angetippt haben.</p>
+
+	<p>Die Seite ist eine echte Datei, <code>crystal.html</code>, im eigenen Ordner des Diamond. Jedes Diamond hat eine ab dem Tag, an dem es entsteht, und dieselben Regeln gelten für die schlichte wie für die kunstvolle.</p>
+
+	<h2 id="s1">Danach fragen</h2>
+	<p>Öffnen Sie das Diamond und wählen Sie <span class="ui">Seite neu gestalten&hellip;</span> in der Zeile über dem Kristall. Das Nachrichtenfeld füllt sich mit einer Zeile, <span class="ui">Ändern Sie, wie diese Seite aussieht:</span>, mit dem Cursor an ihrem Ende. Beenden Sie den Satz und senden Sie.</p>
+	<p>Die Regeln, denen die Seite gehorchen muss, reisen mit diesem Zug mit und werden Ihnen nie gezeigt. Sie sind der Vertrag der App mit der Seite, jedes Mal derselbe, und Sie können sie nicht umformulieren. Löschen Sie die einleitende Zeile, fragen Sie etwas anderes, und sie reisen nicht mit.</p>
+	<p>Sagen Sie, was Sie antippen und was dabei aufgezeichnet werden soll. <em>"Eine Kachel für jedes Essen, das ich zu mir nehme: Antippen zeichnet es mit dem heutigen Datum auf, und die Tagessumme steht oben."</em> Ein Daimon kann nicht erraten, ob ein Eintrag eine Anzahl, ein Gewicht oder eine Zeit ist, sagen Sie also, welches.</p>
+
+	<h2 id="s2">Was die Seite kann</h2>
+	<ul>
+		<li><strong>Zeichnet, was das Diamond weiß.</strong> Alles wird ihr beim Laden gereicht, und erneut, sobald Sie ändern, wie Daimond aussieht, sodass sie sich passend kleiden kann.</li>
+		<li><strong>Liest die Dateien in ihrem eigenen Diamond.</strong> Eine Tabelle, die sie darstellt, ein Verzeichnis, das sie pflegt, das Protokoll von gestern.</li>
+		<li><strong>Schreibt dort Dateien.</strong> Das macht sie zu einer Anwendung. Ein Antippen wird aufgezeichnet und ist morgen noch da.</li>
+		<li><strong>Bittet Daimond, einen Link zu öffnen</strong>, durch dieselbe Schleuse, durch die jede andere ausgehende Anfrage geht.</li>
+	</ul>
+	<p>Schreiben hängt standardmäßig an, sodass zwei Antippen im selben Augenblick beide erhalten bleiben. Ein Schreibvorgang ist auf ein halbes Megabyte gedeckelt, die Datei selbst hat keine Obergrenze und wächst zeilenweise.</p>
+
+	<h2 id="s3">Was sie nicht kann</h2>
+	<p>Die Seite läuft in einem abgeschotteten Rahmen, und keine der hier genannten Grenzen ist eine Einstellung. Die Seite wurde von einem Modell geschrieben, sie ist nicht Teil dessen, was das Diamond weiß, und sie reist auf jedes Gerät, das Sie verknüpft haben.</p>
+	<ul>
+		<li><strong>Kein Netzwerk.</strong> Kein Abruf jeglicher Art und kein Bild von einem Server, sie kann also keine API aufrufen und nirgendwohin senden, was Sie hineingeben.</li>
+		<li><strong>Keine Bibliotheken.</strong> Eine einzige, in sich geschlossene Datei, mit gezeichneten oder eingebetteten Bildern und eigenem Code. Sie kann während des Laufens keinen neuen Code aus Text bauen.</li>
+		<li><strong>512 KB</strong> für die ganze Seite. <span class="ui">Seitengrößenlimit</span> in den Einstellungen hebt es an.</li>
+		<li><strong>Kein eigener Speicher.</strong> Zwischen zwei Ladevorgängen überlebt nichts außer den Dateien, um deren Schreiben sie Daimond bittet und die Sie lesen können.</li>
+		<li><strong>Sie kann sich nicht selbst umschreiben</strong>, weder das Gedächtnis noch den Versionsverlauf.</li>
+		<li><strong>Sie kann ihr Diamond nicht verlassen.</strong> Jeder Pfad löst sich innerhalb dieses einen Ordners auf, eine Seite kann also nicht die Dateien eines anderen Diamond lesen, und keine von ihnen erreicht Ihren Arbeitsbereich.</li>
+	</ul>
+	<div class="note"><strong>Was die Seite aufgibt, und was sie dafür bekommt.</strong> Eine solche Seite ist schlichter als die kleinen Apps, die andere Werkzeuge für Sie schreiben, und sie erreicht eine andere Person nur, wenn Sie ihr Diamond teilen. Im Gegenzug funktioniert sie ohne Verbindung, was darin steht, bleibt auf Ihren Geräten, sofern Sie es nicht teilen oder ein Daimon es liest, und kein Abonnement hält sie am Leben.</div>
+
+	<h2 id="s4">Wohin geht, was Sie aufzeichnen</h2>
+	<p>Es geht in das Diamond, neben die Seite, in den eigenen Speicher des Browsers. Dieser Speicher liegt auf Ihrem Rechner, aber er ist kein Ordner, den Sie in einem Dateimanager öffnen können, und er ist nicht der Ordner, den Sie als Arbeitsbereich geöffnet haben. Sie lesen es im Workspace-Feld.</p>
+	<p>Die Seite zu löschen löscht nicht, was sie aufgezeichnet hat. Die Dateien bleiben, und eine neue Seite kann sie lesen.</p>
+	<p>Die Dateien reisen mit dem Diamond, ein auf Ihrem Telefon geführtes Protokoll ist also auch auf Ihrem Laptop. Zwei Dinge folgen daraus.</p>
+	<ul>
+		<li><strong>Ein Diamond reist als Ganzes</strong>, von welchem Gerät auch immer es zuletzt berührt hat. Protokollieren Sie auf zwei Geräten zwischen zwei Synchronisierungen, gewinnt das spätere, protokollieren Sie also jeweils nur an einem Ort.</li>
+		<li><strong>Große Datenmengen konkurrieren.</strong> Ihre Diamonds teilen sich wenige Megabyte in einem Paket, und eines, das mehr braucht, als übrig ist, wird aus der Synchronisierung ausgelassen, statt gekürzt zu werden. Ein Protokoll dessen, was Sie getan haben, bleibt jahrelang klein, während eine Nachschlagetabelle von mehreren zig Megabyte in den Arbeitsbereich gehört.</li>
+	</ul>
+
+	<h2 id="s5">Sie ändern, und sie zurücksetzen</h2>
+	<p>Bitten Sie auf die gleiche Weise um Änderungen. Jede Version der Seite wird aufbewahrt, <span class="ui">Verlauf</span> listet sie auf, und jede lässt sich wiederherstellen.</p>
+	<p>Eine Seite, die nicht lädt, ist keine Sackgasse. Daimond zeigt stattdessen seine eigene Darstellung, sagt, woran es gescheitert ist, und bietet an, die Standardseite zurückzusetzen.</p>
+
+	<h2 id="s6">Auf einem Telefon</h2>
+	<p>Am rechten Ende der Zeile über der Seite sitzt eine Schaltfläche, gezeichnet als vier Ecken, <span class="ui">Vollbild</span>. Sie nimmt die Leiste, die obere Leiste, das Dock, das Nachrichtenfeld und die eigene Schaltflächenzeile der Seite weg und gibt der Seite die ganze Anzeige.</p>
+	<p>Dieselbe Schaltfläche, jetzt <span class="ui">Vollbild verlassen</span>, holt sie zurück, ebenso wie <kbd>Esc</kbd> wenn Daimond die Tastatur hat. Vollbild wird nie in Ihrem Namen betreten und nicht gemerkt.</p>
+
+	<h2 id="s7">Ein durchgerechnetes Beispiel</h2>
+	<p>Eine solche Seite liefert Daimond mit. Die Schaltfläche hier legt ein Diamond namens Log Life an und setzt die Seite hinein, eingerichtet und aufzeichnungsbereit. Daimond fragt zuerst und bietet an, das vorhandene zu öffnen, statt ein zweites anzulegen.</p>
+	<div class="do" id="lifelog">
+		<button class="do-btn" id="make-lifelog" type="button">Erstelle mir Log Life</button>
+		<p class="do-say" id="lifelog-say" role="status" aria-live="polite"></p>
+		<p class="do-note">Nichts wird irgendwohin gesendet. Es legt ein Diamond auf diesem Gerät an und kopiert die Seite hinein.</p>
+	</div>
+	<p>Bitten Sie aus Log Life selbst heraus um eine Variante. <span class="ui">Seite neu gestalten&hellip;</span> dort, und <em>"dasselbe, aber für Übungseinheiten statt für Mahlzeiten"</em>, gibt dem Daimon ein durchgerechnetes Beispiel vor sich. Ein Daimon in einem anderen Diamond kann diese Seite nicht sehen und beginnt bei null.</p>
+
+	<div class="next">
+		<a href="chats-and-diamonds.html">&larr; Chats &amp; Diamonds</a>
+		<a href="email-web-files.html">Weiter: Dateien, E-Mail &amp; das Web &rarr;</a>
+	</div>
+</main>
+
+<footer class="site-foot">
+	<span>Daimond läuft in deinem Browser. Nichts davon wird an uns gesendet.</span>
+	<nav aria-label="Handbuchseiten">
+		<a href="index.html">Hier anfangen</a>
+		<a href="interface.html">Die Oberfläche</a>
+		<a href="chats-and-diamonds.html">Chats &amp; Diamonds</a>
+		<a href="capps.html">Die Seite eines diamond</a>
+		<a href="email-web-files.html">Dateien, E-Mail &amp; das Web</a>
+		<a href="machine-operations.html">Dein Rechner</a>
+		<a href="runner.html">Helfer &amp; wo Züge laufen</a>
+		<a href="sync.html">Mehr als ein Gerät</a>
+		<a href="social.html">Soziales &amp; Vorschläge</a>
+		<a href="models.html">Modelle &amp; Anbieter</a>
+		<a href="spending.html">Ausgaben</a>
+		<a href="accounts.html">Sicherheit &amp; Problembehebung</a>
+	</nav>
+</footer>
+</body>
+</html>

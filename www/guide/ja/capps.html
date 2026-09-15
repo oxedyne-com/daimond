@@ -1,0 +1,123 @@
+<!DOCTYPE html>
+<html lang="ja" data-guide-locale="ja" data-guide-locales="en de es fr ja ko pt-BR zh-Hans">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<title>diamond のページ &mdash; Daimond ユーザーガイド</title>
+<link rel="icon" type="image/svg+xml" href="../../assets/daimond_mark.svg">
+<link rel="stylesheet" href="../../css/variables.css">
+<link rel="stylesheet" href="../../css/guide.css">
+<script src="../frame.js"></script>
+<script src="../capp.js"></script>
+<script src="search-index.js"></script>
+<script src="../search.js"></script>
+</head>
+<body>
+
+<header class="site-head">
+	<div class="site-head-inner">
+		<a class="brand" href="index.html" aria-label="Daimond ガイド、ホーム">
+			<img class="wordmark wm-dark" src="../../assets/daimond_word.svg" alt="Daimond" translate="no">
+			<img class="wordmark wm-light" src="../../assets/daimond_word_dark.svg" alt="Daimond" translate="no">
+			<span class="brand-sub">ガイド</span>
+		</a>
+		<nav class="site-nav" aria-label="ガイドのページ">
+			<a href="index.html">ここから始める</a>
+			<a href="interface.html">インターフェース</a>
+			<a href="chats-and-diamonds.html">チャットと diamond</a>
+			<a href="capps.html" aria-current="page">diamond のページ</a>
+			<a href="email-web-files.html">ファイル、メール、ウェブ</a>
+			<a href="machine-operations.html">あなたのコンピューター</a>
+			<a href="runner.html">ヘルパーとターンの実行場所</a>
+			<a href="sync.html">複数の端末</a>
+			<a href="social.html">ソーシャルと提案</a>
+			<a href="models.html">モデルとプロバイダー</a>
+			<a href="spending.html">支出</a>
+			<a href="accounts.html">安全性と対処</a>
+		</nav>
+	</div>
+</header>
+
+<main>
+	<h1>diamond のページ</h1>
+	<p class="lede">どの diamond にも、自分専用のページが描かれます。既定では、そのページは diamond が知っていることを表示します。求めれば、それは小さなアプリケーションになります——タップすると、タップしたことを記録するものに。</p>
+
+	<p>そのページは本物のファイルで、 <code>crystal.html</code>、diamond 自身のフォルダーにあります。どの diamond も、作られた日からこれを持っていて、同じ規則が、素朴なものにも凝ったものにも及びます。</p>
+
+	<h2 id="s1">ページを求める</h2>
+	<p>diamond を開いて、 <span class="ui">ページを作り直す&hellip;</span> を、結晶の上の行から選びます。メッセージ欄には一行——「 <span class="ui">このページの見た目を変える：</span>」——が入り、カーソルはその末尾にあります。文を続けて送ってください。</p>
+	<p>ページが従うべき規則は、そのやり取りに乗って運ばれますが、あなたに示されることはありません。それはアプリとページのあいだの契約で、毎回同じであり、あなたが言い換えることはできません。冒頭の一行を消せば、それは別のことを求めることになり、規則は乗りません。</p>
+	<p>何をタップし、それが何を記録すべきかを言ってください。 <em>「食べる食品ごとにタイルを一つ。どれかをタップすると今日の日付とともに記録され、上部にはその日の合計が出る」</em> daimon は、ある項目が個数なのか、重さなのか、時刻なのかを推し量れません。だからそれを言ってください。</p>
+
+	<h2 id="s2">ページにできること</h2>
+	<ul>
+		<li><strong>diamond が知っていることを描く。</strong> 読み込み時にすべてが渡され、Daimond の見た目を変えるたびにも渡されるので、それに合わせて自分を装うことができます。</li>
+		<li><strong>自分の diamond の中のファイルを読む。</strong> 自分がグラフ化する表、自分が保つ索引、昨日の記録。</li>
+		<li><strong>そこにファイルを書く。</strong> これが、それをアプリケーションたらしめるものです。タップは記録され、明日になってもまだそこにあります。</li>
+		<li><strong>Daimond にリンクを開くよう頼む</strong>——ほかの外向けの要求すべてが通るのと同じ門を通って。</li>
+	</ul>
+	<p>書き込みは既定で追記され、同じ瞬間の二つのタップもどちらも残ります。一回の書き込みは半メガバイトが上限ですが、ファイル自体に上限はなく、一行ずつ増えていきます。</p>
+
+	<h2 id="s3">ページにできないこと</h2>
+	<p>ページは封じられたフレームの中で走り、ここに挙げる制限はどれも設定ではありません。ページはモデルが書いたもので、diamond が知っていることの一部ではなく、リンクしたどの端末にも運ばれます。</p>
+	<ul>
+		<li><strong>ネットワークなし。</strong> いかなる取得もサーバーからの画像もないので、API を呼ぶことも、あなたが入れたものをどこかへ送ることもできません。</li>
+		<li><strong>ライブラリなし。</strong> 自己完結した一つのファイルで、絵は描画するか埋め込み、コードも自前です。走っているあいだに、文字列から新しいコードを組み立てることはできません。</li>
+		<li><strong>512 KB</strong> がページ全体の上限です。 <span class="ui">ページサイズの上限</span> を設定で上げられます。</li>
+		<li><strong>自分専用の保存領域なし。</strong> 読み込みのあいだに残るのは、Daimond に書くよう頼んだファイルだけで、それはあなたが読めます。</li>
+		<li><strong>自分自身を書き換えることはできません</strong>。記憶も、バージョン履歴もです。</li>
+		<li><strong>自分の diamond の外へ出ることはできません。</strong> どのパスも、その一つのフォルダーの中で解決されます。ですから一つのページがほかの diamond のファイルを読むことはなく、どれもあなたの作業領域に届きません。</li>
+	</ul>
+	<div class="note"><strong>ページが手放すものと、得るもの。</strong> こうしたページは、ほかの道具があなたのために書く小さなアプリより素朴で、ほかの人に届くのは、その diamond を共有したときだけです。代わりに、接続なしで動き、中身は共有するか daimon が読むかしないかぎりあなたの端末に留まり、それを生かし続けるサブスクリプションもありません。</div>
+
+	<h2 id="s4">記録したものの行き先</h2>
+	<p>それは diamond の中、ページの横、ブラウザ自身の保存領域に入ります。その保存領域はあなたのマシンにありますが、ファイルマネージャーで開けるフォルダーではなく、作業領域として開いているフォルダーでもありません。読むのは作業領域パネルです。</p>
+	<p>ページを削除しても、それが記録したものは消えません。ファイルは残り、新しいページがそれを読めます。</p>
+	<p>ファイルは diamond と一緒に運ばれるので、スマートフォンに残した記録はノートパソコンにもあります。ここから二つのことが続きます。</p>
+	<ul>
+		<li><strong>diamond は丸ごと運ばれます</strong>、最後に触れた端末のものが基準です。二回の同期のあいだに二台の端末で記録すると、あとのほうが勝つので、記録は一度に一か所で行ってください。</li>
+		<li><strong>大量のデータは競合します。</strong> あなたの diamond は、荷物の中で数メガバイトを分け合っています。残りを超えて大きくなったものは、切り詰められるのではなく同期から外れます。あなたが行ったことの記録は何年も小さいままですが、数十メガバイトの参照用テーブルは作業領域にこそふさわしいものです。</li>
+	</ul>
+
+	<h2 id="s5">変えて、また戻す</h2>
+	<p>変更も同じように求めます。ページのバージョンはすべて保存され、 <span class="ui">履歴</span> がそれらを一覧にし、どれでも元に戻せます。</p>
+	<p>読み込めないページは行き止まりではありません。Daimond が代わりに自前の表示を出し、どのように失敗したかを伝え、標準のページに戻すことを申し出ます。</p>
+
+	<h2 id="s6">スマートフォンでは</h2>
+	<p>ページの上の行、右端には、四隅を描いたボタンがあります。 <span class="ui">全画面表示</span>です。レール、上部バー、ドック、メッセージ欄、そしてページ自身のボタンの行を取り去り、画面全体をページに与えます。</p>
+	<p>同じボタンは、今度は <span class="ui">全画面表示を終了</span>となり、それらを元に戻します。それは <kbd>Esc</kbd> も同じで、Daimond がキーボードを持っているときに効きます。全画面表示は、あなたに代わって勝手に入ることはなく、記憶もされません。</p>
+
+	<h2 id="s7">実例</h2>
+	<p>そうしたページの一つが Daimond に同梱されています。ここにあるボタンは、Log Life という diamond を作り、そこにページを、支度の整った記録可能な状態で入れます。Daimond はまず尋ね、すでに持っているものがあれば、二つ目を作る代わりにそれを開くことを申し出ます。</p>
+	<div class="do" id="lifelog">
+		<button class="do-btn" id="make-lifelog" type="button">Log Life を作る</button>
+		<p class="do-say" id="lifelog-say" role="status" aria-live="polite"></p>
+		<p class="do-note">どこにも何も送られません。この端末に diamond を一つ作り、そこにページをコピーします。</p>
+	</div>
+	<p>Log Life 自身の中から、変化形を求めてください。 <span class="ui">ページを作り直す&hellip;</span> をそこで使い、そして <em>「同じだけれど、食事ではなく練習セッション用に」</em>とすれば、daimon の目の前に実例を渡すことになります。ほかの diamond の daimon はこのページを見られず、ゼロから始めることになります。</p>
+
+	<div class="next">
+		<a href="chats-and-diamonds.html">&larr; チャットと diamond</a>
+		<a href="email-web-files.html">次：ファイル、メール、ウェブ &rarr;</a>
+	</div>
+</main>
+
+<footer class="site-foot">
+	<span>Daimond はブラウザの中で動きます。ここでの内容は私たちに送信されません。</span>
+	<nav aria-label="ガイドのページ">
+		<a href="index.html">ここから始める</a>
+		<a href="interface.html">インターフェース</a>
+		<a href="chats-and-diamonds.html">チャットと diamond</a>
+		<a href="capps.html">diamond のページ</a>
+		<a href="email-web-files.html">ファイル、メール、ウェブ</a>
+		<a href="machine-operations.html">あなたのコンピューター</a>
+		<a href="runner.html">ヘルパーとターンの実行場所</a>
+		<a href="sync.html">複数の端末</a>
+		<a href="social.html">ソーシャルと提案</a>
+		<a href="models.html">モデルとプロバイダー</a>
+		<a href="spending.html">支出</a>
+		<a href="accounts.html">安全性と対処</a>
+	</nav>
+</footer>
+</body>
+</html>

@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
-<title>Safety &amp; fixes &mdash; Daimond guide</title>
+<title>Sicherheit &amp; Problembehebung &mdash; Daimond-Handbuch</title>
 <link rel="icon" type="image/svg+xml" href="../../assets/daimond_mark.svg">
 <link rel="stylesheet" href="../../css/variables.css">
 <link rel="stylesheet" href="../../css/guide.css">
@@ -24,10 +24,10 @@
 			<a href="index.html">Hier anfangen</a>
 			<a href="interface.html">Die Oberfläche</a>
 			<a href="chats-and-diamonds.html">Chats &amp; Diamonds</a>
-			<a href="../capps.html">Die Seite eines diamond</a>
+			<a href="capps.html">Die Seite eines diamond</a>
 			<a href="email-web-files.html">Dateien, E-Mail &amp; das Web</a>
-			<a href="../machine-operations.html">Dein Rechner</a>
-			<a href="../runner.html">Helfer &amp; wo Züge laufen</a>
+			<a href="machine-operations.html">Dein Rechner</a>
+			<a href="runner.html">Helfer &amp; wo Züge laufen</a>
 			<a href="sync.html">Mehr als ein Gerät</a>
 			<a href="social.html">Soziales &amp; Vorschläge</a>
 			<a href="models.html">Modelle &amp; Anbieter</a>
@@ -39,74 +39,74 @@
 
 <main>
 	<h1>Sicherheit &amp; Problembehebung</h1>
-	<p class="lede">What your passphrase protects, what Daimond asks before it acts, what stays private, and what to do when something is wrong.</p>
+	<p class="lede">Was Ihre Passphrase schützt, was Daimond fragt, bevor es handelt, was privat bleibt, und was zu tun ist, wenn etwas schiefgeht.</p>
 
 	<h2 id="s1">Ihr Konto ist eine Passphrase</h2>
-	<p>On first run Daimond generates a passphrase of eight random words and shows it once. It is the key to everything stored here. It is not sent anywhere, it is not stored in the clear, and nobody can reset it.</p>
-	<p>It unlocks everything encrypted here, meaning your provider keys, your mail credentials and the account's own signing key, and the key that seals the sync parcel is derived from it too. The signing key is what signs you in for credits. Forget the passphrase and the encrypted data is gone.</p>
-	<p>Once a passphrase is in place you can add a <strong>Passkey</strong> for a faster unlock, by face, fingerprint or security key. It unseals the passphrase for you instead of replacing it, so the passphrase stays the fallback. The unlock happens on the device, and the credits service only ever sees a public key.</p>
+	<p>Beim ersten Start erzeugt Daimond eine Passphrase aus acht zufälligen Wörtern und zeigt sie einmal. Sie ist der Schlüssel zu allem, was hier gespeichert ist. Sie wird nirgendwohin gesendet, nicht im Klartext gespeichert, und niemand kann sie zurücksetzen.</p>
+	<p>Sie entsperrt alles, was hier verschlüsselt ist, also Ihre Anbieterschlüssel, Ihre Mail-Zugangsdaten und den eigenen Signaturschlüssel des Kontos, und auch der Schlüssel, der das Synchronisierungspaket versiegelt, wird aus ihr abgeleitet. Der Signaturschlüssel ist es, mit dem Sie sich für Guthaben anmelden. Vergessen Sie die Passphrase, sind die verschlüsselten Daten weg.</p>
+	<p>Sobald eine Passphrase eingerichtet ist, können Sie einen <strong>Passkey</strong> für ein schnelleres Entsperren hinzufügen, per Gesicht, Fingerabdruck oder Sicherheitsschlüssel. Er entsiegelt die Passphrase für Sie, statt sie zu ersetzen, die Passphrase bleibt also der Rückweg. Das Entsperren geschieht auf dem Gerät, und der Guthabendienst sieht immer nur einen öffentlichen Schlüssel.</p>
 
 	<h2 id="s2">Die Bedienelemente für das Konto</h2>
-	<p>Your name is at the top of the account area, at the foot of the rail.</p>
+	<p>Ihr Name steht oben im Kontobereich, am Fuß der Leiste.</p>
 	<ul>
-		<li><span class="ui">Change name&hellip;</span> und <span class="ui">Change passphrase&hellip;</span> do what they say, and the second re-wraps your encrypted data under the new passphrase.</li>
-		<li><span class="ui">Add a passkey&hellip;</span></li>
-		<li><span class="ui">Backup exportieren</span> writes your chats, diamonds, workspace files and your account key to a file you keep.</li>
-		<li><span class="ui">Import a backup&hellip;</span> adopts the backup's account where this browser holds none, and where one is already here it brings back only the work.</li>
-		<li><span class="ui">Abmelden</span> locks the app. Your data stays on the device, encrypted.</li>
-		<li><span class="ui">Forget this identity&hellip;</span> removes the account and its encrypted data from this browser for good.</li>
+		<li><span class="ui">Namen ändern&hellip;</span> und <span class="ui">Passphrase ändern&hellip;</span> tun, was sie sagen, und Zweiteres verpackt Ihre verschlüsselten Daten unter der neuen Passphrase neu.</li>
+		<li><span class="ui">Passkey hinzufügen&hellip;</span></li>
+		<li><span class="ui">Backup exportieren</span> schreibt Ihre Chats, Diamonds, Workspace-Dateien und Ihren Kontoschlüssel in eine Datei, die Sie behalten.</li>
+		<li><span class="ui">Backup importieren&hellip;</span> übernimmt das Konto des Backups, wo dieser Browser keines hält, und wo schon eines da ist, bringt es nur die Arbeit zurück.</li>
+		<li><span class="ui">Abmelden</span> sperrt die App. Ihre Daten bleiben verschlüsselt auf dem Gerät.</li>
+		<li><span class="ui">Diese Identität vergessen&hellip;</span> entfernt das Konto und seine verschlüsselten Daten endgültig aus diesem Browser.</li>
 	</ul>
-	<p>Beside them, <span class="ui">Synchronisierung</span> turns this device's sync on or off, and <span class="ui">Diagnose</span> shows and copies the app's own log, which holds event names and a clock, with no keys, no message text and nothing from your files. That log is what to paste into a report.</p>
+	<p>Daneben, <span class="ui">Synchronisierung</span> schaltet die Synchronisierung dieses Geräts ein oder aus, und <span class="ui">Diagnose</span> zeigt und kopiert das eigene Protokoll der App, das Ereignisnamen und eine Uhrzeit hält, ohne Schlüssel, ohne Nachrichtentext und ohne irgendetwas aus Ihren Dateien. Dieses Protokoll ist es, was Sie in einen Bericht einfügen.</p>
 
-	<h2 id="s3">Moving your account</h2>
-	<p>Your account is a signing key held in this browser. <strong>The passphrase does not recreate it</strong>, and only decrypts the copy stored here. So the same passphrase in a fresh browser starts a separate account, with its own credits and no Pro.</p>
-	<p>The key itself has to travel, and three things carry it.</p>
+	<h2 id="s3">Ihr Konto umziehen</h2>
+	<p>Ihr Konto ist ein Signaturschlüssel, der in diesem Browser gehalten wird. <strong>Die Passphrase erzeugt ihn nicht neu</strong>, sie entschlüsselt nur die hier gespeicherte Kopie. Dieselbe Passphrase in einem neuen Browser startet also ein eigenes Konto, mit eigenem Guthaben und ohne Pro.</p>
+	<p>Der Schlüssel selbst muss reisen, und drei Dinge tragen ihn.</p>
 	<ul>
-		<li><span class="ui">Weiteres Gerät verknüpfen</span>, which shows a pairing code.</li>
-		<li>A passkey, which stands a new device up in one gesture.</li>
-		<li><span class="ui">Backup exportieren</span>, whose file holds the key for <span class="ui">Import a backup&hellip;</span> to adopt in a browser that has none.</li>
+		<li><span class="ui">Weiteres Gerät verknüpfen</span>, der einen Kopplungscode zeigt.</li>
+		<li>Ein Passkey, der ein neues Gerät mit einer einzigen Geste einrichtet.</li>
+		<li><span class="ui">Backup exportieren</span>, dessen Datei den Schlüssel hält, damit <span class="ui">Backup importieren&hellip;</span> ein Browser ohne eigenes Konto ihn übernehmen kann.</li>
 	</ul>
-	<p>Do one of them before you retire a browser. Once its storage is gone, with no backup taken and no other device linked, the key is gone with it.</p>
-	<p>A backup holds your work in the clear and your key wrapped under your passphrase. Importing the file alone makes nobody you. Whoever holds the file <em>und</em> the passphrase holds the account, which is why the two should not travel together.</p>
+	<p>Tun Sie eines davon, bevor Sie einen Browser ausmustern. Ist sein Speicher erst weg, ohne genommenes Backup und ohne verknüpftes anderes Gerät, ist der Schlüssel mit ihm weg.</p>
+	<p>Ein Backup hält Ihre Arbeit im Klartext und Ihren Schlüssel verpackt unter Ihrer Passphrase. Allein das Importieren der Datei macht niemanden zu Ihnen. Wer die Datei hält, <em>und</em> und die Passphrase hält das Konto, deshalb sollten die beiden nicht zusammen reisen.</p>
 
 	<h2 id="s4">Mehr als eine Person an einem Browser</h2>
-	<p>One browser can hold several accounts, each with its own chats, keys, credits and files. <span class="ui">＋ Weiteres Konto hinzufügen</span> makes a second, and the row above it switches between them. Switching locks the first and forgets its keys before opening the other. Nobody sees another account's data.</p>
+	<p>Ein Browser kann mehrere Konten halten, jedes mit eigenen Chats, Schlüsseln, Guthaben und Dateien. <span class="ui">＋ Weiteres Konto hinzufügen</span> legt ein zweites an, und die Zeile darüber wechselt zwischen ihnen. Das Wechseln sperrt das erste und vergisst dessen Schlüssel, bevor es das andere öffnet. Niemand sieht die Daten eines anderen Kontos.</p>
 
-	<h2 id="s5">What Daimond asks before it acts</h2>
-	<p>A chip beside the model says what Daimond does without asking. It has three settings, and they apply to the whole app.</p>
+	<h2 id="s5">Was Daimond fragt, bevor es handelt</h2>
+	<p>Ein Chip neben dem Modell sagt, was Daimond ohne Nachfrage tut. Er hat drei Einstellungen, die für die ganze App gelten.</p>
 	<ul>
-		<li><span class="ui">Ask every time</span> reads <em>Every command is put to you first. So is reaching the web, once in each conversation.</em></li>
-		<li><span class="ui">Guarded</span> reads <em>Commands run. Once something written by somebody else has been read, Daimond asks before reaching out.</em> It is the default.</li>
-		<li><span class="ui">Bypass</span> reads <em>Nothing is asked, whatever has been read.</em></li>
+		<li><span class="ui">Jedes Mal fragen</span> liest <em>Jeder Befehl wird Ihnen zuerst vorgelegt. Ebenso der Zugriff aufs Web, einmal je Gespräch.</em></li>
+		<li><span class="ui">Bewacht</span> liest <em>Befehle laufen. Sobald etwas gelesen wurde, das jemand anderes geschrieben hat, fragt Daimond, bevor es hinausgreift.</em> Das ist der Standard.</li>
+		<li><span class="ui">Umgehen</span> liest <em>Es wird nichts gefragt, was auch immer gelesen wurde.</em></li>
 	</ul>
-	<p>Under Guarded, once a turn has read something written by somebody else, such as a web page, an email or a build log, anything it then wants to fetch or send is put to you first, and a command in that turn runs with the network refused. That is the case where text you did not write could talk Daimond into carrying your work somewhere.</p>
-	<p>Switching to <span class="ui">Bypass</span> asks once, and says what you give up. No mode moves the fence a command runs inside, a diamond's folders, the system-call filter, or the log you can read afterwards.</p>
-	<p>An agent working on its own is asked about separately. Clicking something on a page can spend money or submit a form, and none of that can be taken back, so a click by an unattended agent is put to you even under looser settings.</p>
-	<p>Money has its own brakes, and they are on <a href="spending.html">Ausgaben</a>.</p>
+	<p>Unter Bewacht wird, sobald ein Zug etwas gelesen hat, das jemand anderes geschrieben hat, etwa eine Webseite, eine E-Mail oder ein Build-Protokoll, alles, was er danach holen oder senden will, Ihnen zuerst vorgelegt, und ein Befehl in diesem Zug läuft mit verweigertem Netzwerk. Das ist der Fall, in dem Text, den Sie nicht geschrieben haben, Daimond dazu überreden könnte, Ihre Arbeit irgendwohin zu tragen.</p>
+	<p>Der Wechsel zu <span class="ui">Umgehen</span> fragt einmal und sagt, worauf Sie verzichten. Kein Modus verschiebt den Zaun, in dem ein Befehl läuft, die Ordner eines Diamond, den Systemaufruf-Filter, oder das Protokoll, das Sie danach lesen können.</p>
+	<p>Ein Agent, der auf eigene Faust arbeitet, wird gesondert gefragt. Etwas auf einer Seite anzuklicken kann Geld ausgeben oder ein Formular absenden, und nichts davon lässt sich zurücknehmen, ein Klick durch einen unbeaufsichtigten Agenten wird Ihnen also auch unter lockereren Einstellungen vorgelegt.</p>
+	<p>Geld hat seine eigenen Bremsen, und die stehen auf <a href="spending.html">Ausgaben</a>.</p>
 
 	<h2 id="s6">Was privat bleibt</h2>
-	<p>Your passphrase, provider keys, mail credentials, chats, diamonds and files live in this browser and are not sent to us. What we hold is money and ciphertext, meaning your balance and licences and, for sync, a parcel we cannot open.</p>
-	<p>Your messages reach a model provider directly with your own key, or through our metered service when you spend credits. Fetching a page, and syncing or sending mail, pass through the gateway. So the honest claim is that with your own key nothing of your work reaches us in the clear, and that you can watch only ciphertext leave for our servers.</p>
-	<p>You need not take that on trust. The code running in this browser is public, it builds byte for byte from that source, and every build served is sealed into a published record. <span class="ui">Verify this build</span>, in the About dialog, checks the one you are running. Open your browser's network panel and watch where the calls go.</p>
-	<p>The protection has limits. A passphrase guards against someone opening the browser's developer tools, and not against a compromised browser, a malicious extension or a keylogger, which defeat any in-browser scheme. And what a remote server does inside itself cannot be proven from outside, which is why it is the client that is opened to you.</p>
+	<p>Ihre Passphrase, Anbieterschlüssel, Mail-Zugangsdaten, Chats, Diamonds und Dateien liegen in diesem Browser und werden nicht an uns gesendet. Was wir halten, ist Geld und Chiffrat, also Ihr Saldo und Ihre Lizenzen und, für die Synchronisierung, ein Paket, das wir nicht öffnen können.</p>
+	<p>Ihre Nachrichten erreichen einen Modellanbieter direkt mit Ihrem eigenen Schlüssel, oder über unseren abgerechneten Dienst, wenn Sie Guthaben ausgeben. Eine Seite zu holen und Mail zu synchronisieren oder zu senden läuft über das Gateway. Die ehrliche Aussage ist also, dass mit Ihrem eigenen Schlüssel nichts von Ihrer Arbeit im Klartext bei uns ankommt, und dass Sie zu unseren Servern nur Chiffrat abgehen sehen.</p>
+	<p>Das müssen Sie nicht auf Vertrauen hin hinnehmen. Der Code, der in diesem Browser läuft, ist öffentlich, er baut sich byte-genau aus diesem Quelltext, und jeder ausgelieferte Build ist in ein veröffentlichtes Register versiegelt. <span class="ui">Diesen Build verifizieren</span>, im Info-Dialog, prüft den, den Sie gerade ausführen. Öffnen Sie das Netzwerkfenster Ihres Browsers und beobachten Sie, wohin die Aufrufe gehen.</p>
+	<p>Der Schutz hat Grenzen. Eine Passphrase schützt davor, dass jemand die Entwicklertools des Browsers öffnet, nicht aber vor einem kompromittierten Browser, einer bösartigen Erweiterung oder einem Keylogger, die jedes Verfahren im Browser aushebeln. Und was ein entfernter Server in sich selbst tut, lässt sich von außen nicht beweisen, deshalb ist es der Client, der Ihnen offengelegt wird.</p>
 
-	<h2 id="s7">When something goes wrong</h2>
+	<h2 id="s7">Wenn etwas schiefgeht</h2>
 	<ul>
-		<li><strong><em>Connect a model to start.</em></strong> No model is connected. Add one, or add a key for the provider already listed.</li>
-		<li><strong>Your second device is empty.</strong> You made a second account instead of pairing. Pair it, or import a backup. See <a href="sync.html">Mehr als ein Gerät</a>.</li>
-		<li><strong>A shared folder is not arriving.</strong> It is over the 200&nbsp;MiB a shared folder may weigh. A banner names it. Share a smaller folder.</li>
-		<li><strong><em>Not valid JSON. Nothing saved.</em></strong> A hand edit to a diamond's memory left the file unreadable, so nothing was written. Fix the text or close without saving.</li>
-		<li><strong>Nothing runs on its own.</strong> The light is red because the action is stopped. Press play on the light beside it.</li>
-		<li><strong><em>Terminal needs the Daimond Hand on this computer.</em></strong> <span class="ui">Install&hellip;</span> beside it goes to <a href="../machine-operations.html">Dein Rechner</a>.</li>
-		<li><strong>A turn is sitting on another device.</strong> That machine is probably waiting for a folder permission on its own screen. Go and look, or press <span class="ui">Run here</span>.</li>
-		<li><strong>A panel has disappeared.</strong> It is unpinned, and still there. The <span class="ui">⋯</span> chip opens the gallery, and <kbd>Ctrl</kbd> <kbd>K</kbd> reaches any panel by name.</li>
-		<li><strong>Everything is locked after a reload.</strong> The key is held in memory and nowhere else, unless this device is set to stay unlocked across reloads. Enter the passphrase, or use a passkey.</li>
+		<li><strong><em>Verbinden Sie ein Modell, um zu starten.</em></strong> Kein Modell ist verbunden. Fügen Sie eines hinzu, oder fügen Sie einen Schlüssel für den bereits aufgeführten Anbieter hinzu.</li>
+		<li><strong>Ihr zweites Gerät ist leer.</strong> Sie haben ein zweites Konto angelegt, statt zu koppeln. Koppeln Sie es, oder importieren Sie ein Backup. Siehe <a href="sync.html">Mehr als ein Gerät</a>.</li>
+		<li><strong>Ein geteilter Ordner kommt nicht an.</strong> Er liegt über den 200&nbsp;MiB, die ein geteilter Ordner wiegen darf. Ein Banner nennt ihn. Teilen Sie einen kleineren Ordner.</li>
+		<li><strong><em>Kein gültiges JSON. Nichts gespeichert.</em></strong> Eine Handbearbeitung am Gedächtnis eines Diamond hat die Datei unlesbar gemacht, es wurde also nichts geschrieben. Beheben Sie den Text, oder schließen Sie ohne zu speichern.</li>
+		<li><strong>Nichts läuft von selbst.</strong> Das Licht ist rot, weil die Aktion angehalten ist. Drücken Sie auf das Licht daneben auf Abspielen.</li>
+		<li><strong><em>Terminal braucht die Daimond Hand auf diesem Computer.</em></strong> <span class="ui">Installieren&hellip;</span> daneben führt zu <a href="machine-operations.html">Dein Rechner</a>.</li>
+		<li><strong>Ein Zug sitzt auf einem anderen Gerät fest.</strong> Diese Maschine wartet wahrscheinlich auf ihrem eigenen Bildschirm auf eine Ordnerberechtigung. Sehen Sie nach, oder drücken Sie <span class="ui">Hier ausführen</span>.</li>
+		<li><strong>Ein Feld ist verschwunden.</strong> Es ist nicht angeheftet und trotzdem noch da. Der <span class="ui">⋯</span> -Chip öffnet die Galerie, und <kbd>Strg</kbd> <kbd>K</kbd> erreicht jedes Feld über seinen Namen.</li>
+		<li><strong>Nach einem Neuladen ist alles gesperrt.</strong> Der Schlüssel wird nur im Arbeitsspeicher gehalten und sonst nirgends, außer dieses Gerät ist so eingestellt, dass es über Neuladen hinweg entsperrt bleibt. Geben Sie die Passphrase ein, oder verwenden Sie einen Passkey.</li>
 	</ul>
-	<p>Still stuck? The rail holds a diamond called <strong>Daimond Help</strong>, which answers from this build and this guide and says which page an answer came from. What it cannot answer belongs on <a href="social.html">Soziales</a>, with the three things a note needs.</p>
+	<p>Immer noch nicht weiter? Die Leiste enthält ein Diamond namens <strong>Daimond Help</strong>, das aus diesem Build und diesem Handbuch antwortet und sagt, von welcher Seite eine Antwort stammt. Was es nicht beantworten kann, gehört auf <a href="social.html">Soziales</a>, mit den drei Dingen, die eine Notiz braucht.</p>
 
 	<div class="next">
-		<a href="spending.html">&larr; Spending</a>
-		<a href="index.html">Back to the start &rarr;</a>
+		<a href="spending.html">&larr; Ausgaben</a>
+		<a href="index.html">Zurück zum Anfang &rarr;</a>
 	</div>
 </main>
 
@@ -116,10 +116,10 @@
 		<a href="index.html">Hier anfangen</a>
 		<a href="interface.html">Die Oberfläche</a>
 		<a href="chats-and-diamonds.html">Chats &amp; Diamonds</a>
-		<a href="../capps.html">Die Seite eines diamond</a>
+		<a href="capps.html">Die Seite eines diamond</a>
 		<a href="email-web-files.html">Dateien, E-Mail &amp; das Web</a>
-		<a href="../machine-operations.html">Dein Rechner</a>
-		<a href="../runner.html">Helfer &amp; wo Züge laufen</a>
+		<a href="machine-operations.html">Dein Rechner</a>
+		<a href="runner.html">Helfer &amp; wo Züge laufen</a>
 		<a href="sync.html">Mehr als ein Gerät</a>
 		<a href="social.html">Soziales &amp; Vorschläge</a>
 		<a href="models.html">Modelle &amp; Anbieter</a>

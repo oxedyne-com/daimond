@@ -151,6 +151,10 @@
 		   between five whole tiles and six. */
 		gap: 4px;
 	}
+	/* The built-in group spaces its own tiles with a margin rather than the
+	   list's gap -- see the note beside `.rail-builtin` in app.css -- so it takes
+	   the phone's 4px here too. */
+	.panel.rail .rail-builtin > .diamond-box { margin-top: 4px; }
 
 	/* ── THE DRAWER IS AN ACCORDION ───────────────────────────────────
 	   Reported from an iPhone PWA, 2026-09-14: "the height of the diamond and

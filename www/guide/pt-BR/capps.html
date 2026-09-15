@@ -1,0 +1,123 @@
+<!DOCTYPE html>
+<html lang="pt-BR" data-guide-locale="pt-BR" data-guide-locales="en de es fr ja ko pt-BR zh-Hans">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<title>A página de um diamond &mdash; Guia do Daimond</title>
+<link rel="icon" type="image/svg+xml" href="../../assets/daimond_mark.svg">
+<link rel="stylesheet" href="../../css/variables.css">
+<link rel="stylesheet" href="../../css/guide.css">
+<script src="../frame.js"></script>
+<script src="../capp.js"></script>
+<script src="search-index.js"></script>
+<script src="../search.js"></script>
+</head>
+<body>
+
+<header class="site-head">
+	<div class="site-head-inner">
+		<a class="brand" href="index.html" aria-label="Guia do Daimond, início">
+			<img class="wordmark wm-dark" src="../../assets/daimond_word.svg" alt="Daimond" translate="no">
+			<img class="wordmark wm-light" src="../../assets/daimond_word_dark.svg" alt="Daimond" translate="no">
+			<span class="brand-sub">Guia</span>
+		</a>
+		<nav class="site-nav" aria-label="Páginas do guia">
+			<a href="index.html">Comece aqui</a>
+			<a href="interface.html">A interface</a>
+			<a href="chats-and-diamonds.html">Chats e diamonds</a>
+			<a href="capps.html" aria-current="page">A página de um diamond</a>
+			<a href="email-web-files.html">Arquivos, e-mail e a web</a>
+			<a href="machine-operations.html">Seu computador</a>
+			<a href="runner.html">Ajudantes e onde os turnos rodam</a>
+			<a href="sync.html">Mais de um dispositivo</a>
+			<a href="social.html">Social e propostas</a>
+			<a href="models.html">Modelos e provedores</a>
+			<a href="spending.html">Gastos</a>
+			<a href="accounts.html">Segurança e soluções</a>
+		</nav>
+	</div>
+</header>
+
+<main>
+	<h1>A página de um diamond</h1>
+	<p class="lede">Todo diamond é desenhado por uma página própria. Por padrão, essa página renderiza o que o diamond sabe. Peça, e ela vira um pequeno aplicativo, algo em que você toca que registra o que você tocou.</p>
+
+	<p>A página é um arquivo de verdade, <code>crystal.html</code>, na pasta do próprio diamond. Todo diamond tem uma desde o dia em que é criado, e as mesmas regras cobrem a simples e a elaborada.</p>
+
+	<h2 id="s1">Pedindo uma</h2>
+	<p>Abra o diamond e escolha <span class="ui">Redesenhar página&hellip;</span> na linha acima do cristal. A caixa de mensagem se preenche com uma linha, <span class="ui">Mude a aparência desta página:</span>, com o cursor no final dela. Termine a frase e envie.</p>
+	<p>As regras que a página tem de obedecer viajam com aquele turno e nunca são mostradas a você. Elas são o contrato do app com a página, idêntico toda vez, e você não pode reformulá-las. Apague a linha de abertura e você está pedindo outra coisa, então elas não viajam.</p>
+	<p>Diga o que você toca e o que isso deve registrar. <em>"Um bloco para cada alimento que eu como: tocar em um o registra com a data de hoje, e o total do dia fica no topo."</em> Um daimon não consegue adivinhar se um registro é uma contagem, um peso ou um horário, então diga qual.</p>
+
+	<h2 id="s2">O que a página pode fazer</h2>
+	<ul>
+		<li><strong>Desenhar o que o diamond sabe.</strong> Tudo é entregue a ela ao carregar, e de novo sempre que você muda a aparência do Daimond, para que ela possa se vestir para combinar.</li>
+		<li><strong>Ler os arquivos no próprio diamond.</strong> Uma tabela que ela transforma em gráfico, um índice que ela mantém, o registro de ontem.</li>
+		<li><strong>Escrever arquivos ali.</strong> É isso que faz dela um aplicativo. Um toque é registrado, e continua ali amanhã.</li>
+		<li><strong>Pedir ao Daimond para abrir um link</strong>, pelo mesmo portão por onde passa toda outra requisição para fora.</li>
+	</ul>
+	<p>Escrever anexa por padrão, então dois toques no mesmo instante sobrevivem os dois. Uma escrita é limitada a meio megabyte, e o próprio arquivo não tem teto e cresce uma linha de cada vez.</p>
+
+	<h2 id="s3">O que ela não pode fazer</h2>
+	<p>A página roda em um quadro selado, e nenhum dos limites aqui é um ajuste. A página foi escrita por um modelo, não é parte do que o diamond sabe, e viaja para todo dispositivo que você vinculou.</p>
+	<ul>
+		<li><strong>Sem rede.</strong> Nenhuma busca de qualquer tipo e nenhuma imagem de um servidor, então ela não consegue chamar uma API nem enviar a lugar nenhum o que você coloca nela.</li>
+		<li><strong>Sem bibliotecas.</strong> Um arquivo autocontido, com imagens desenhadas ou embutidas e código próprio. Ela não consegue montar código novo a partir de texto enquanto roda.</li>
+		<li><strong>512 KB</strong> para a página inteira. <span class="ui">Limite de tamanho da página</span> em Configurações a aumenta.</li>
+		<li><strong>Sem armazenamento próprio.</strong> Nada sobrevive entre carregamentos, exceto os arquivos que ela pede ao Daimond para escrever, que você pode ler.</li>
+		<li><strong>Ela não pode reescrever a si mesma</strong>, nem a memória, nem o histórico de versões.</li>
+		<li><strong>Ela não pode sair do próprio diamond.</strong> Todo caminho se resolve dentro daquela única pasta, então uma página não consegue ler os arquivos de outro diamond, e nenhuma delas alcança o seu espaço de trabalho.</li>
+	</ul>
+	<div class="note"><strong>O que a página abre mão, e o que ela ganha.</strong> Uma página assim é mais simples do que os aplicativozinhos que outras ferramentas escrevem para você, e só alcança outra pessoa quando você compartilha o diamond dela. Em troca, ela funciona sem conexão nenhuma, o que está nela fica nos seus dispositivos a menos que você a compartilhe ou um daimon a leia, e nenhuma assinatura a mantém viva.</div>
+
+	<h2 id="s4">Para onde vai o que você registra</h2>
+	<p>Vai para dentro do diamond, ao lado da página, no armazenamento do próprio navegador. Esse armazenamento fica na sua máquina, mas não é uma pasta que você pode abrir em um gerenciador de arquivos, e não é a pasta que você tem aberta como espaço de trabalho. Você o lê no painel Espaço.</p>
+	<p>Excluir a página não exclui o que ela registrou. Os arquivos ficam, e uma página nova pode lê-los.</p>
+	<p>Os arquivos viajam com o diamond, então um registro guardado no seu telefone está no seu laptop. Duas coisas decorrem disso.</p>
+	<ul>
+		<li><strong>Um diamond viaja inteiro</strong>, a partir de qualquer dispositivo que o tocou por último. Registre em dois dispositivos entre duas sincronizações, e o mais recente vence, então registre em um lugar de cada vez.</li>
+		<li><strong>Dados volumosos competem.</strong> Seus diamonds dividem alguns megabytes em um pacote, e um que ultrapassa o que sobra fica de fora da sincronização em vez de ser cortado. Um registro do que você fez fica pequeno por anos, enquanto uma tabela de referência de dezenas de megabytes pertence ao espaço de trabalho.</li>
+	</ul>
+
+	<h2 id="s5">Mudando-a, e devolvendo-a</h2>
+	<p>Peça mudanças da mesma forma. Toda versão da página é guardada, <span class="ui">Histórico</span> as lista, e qualquer uma pode ser restaurada.</p>
+	<p>Uma página que não carrega não é um beco sem saída. O Daimond põe a própria renderização no lugar, diz de que jeito ela falhou, e oferece para devolver a página padrão.</p>
+
+	<h2 id="s6">Em um telefone</h2>
+	<p>Na ponta direita da linha acima da página há um botão desenhado como quatro cantos, <span class="ui">Tela cheia</span>. Ele tira a barra lateral, a barra superior, o dock, a caixa de mensagem e a própria linha de botões da página, e dá a tela inteira à página.</p>
+	<p>O mesmo botão, agora <span class="ui">Sair da tela cheia</span>, os traz de volta, e o mesmo faz <kbd>Esc</kbd> quando o Daimond tem o teclado. A tela cheia nunca é ativada em seu nome e não é lembrada.</p>
+
+	<h2 id="s7">Um exemplo trabalhado</h2>
+	<p>Uma página assim já vem com o Daimond. O botão aqui cria um diamond chamado Log Life e põe a página dentro dele, mobiliada e pronta para registrar. O Daimond pergunta primeiro, e oferece abrir o que você já tem em vez de criar um segundo.</p>
+	<div class="do" id="lifelog">
+		<button class="do-btn" id="make-lifelog" type="button">Crie um Log Life para mim</button>
+		<p class="do-say" id="lifelog-say" role="status" aria-live="polite"></p>
+		<p class="do-note">Nada é enviado a lugar nenhum. Isso cria um diamond neste dispositivo e copia a página para dentro dele.</p>
+	</div>
+	<p>Peça uma variação de dentro do próprio Log Life. <span class="ui">Redesenhar página&hellip;</span> ali, e <em>"o mesmo, mas para sessões de prática em vez de refeições"</em>, dá ao daimon um exemplo trabalhado na frente dele. Um daimon em outro diamond não consegue ver esta página e vai começar do zero.</p>
+
+	<div class="next">
+		<a href="chats-and-diamonds.html">&larr; Chats e diamonds</a>
+		<a href="email-web-files.html">Próximo: Arquivos, e-mail e a web &rarr;</a>
+	</div>
+</main>
+
+<footer class="site-foot">
+	<span>O Daimond roda no seu navegador. Nada daqui é enviado para nós.</span>
+	<nav aria-label="Páginas do guia">
+		<a href="index.html">Comece aqui</a>
+		<a href="interface.html">A interface</a>
+		<a href="chats-and-diamonds.html">Chats e diamonds</a>
+		<a href="capps.html">A página de um diamond</a>
+		<a href="email-web-files.html">Arquivos, e-mail e a web</a>
+		<a href="machine-operations.html">Seu computador</a>
+		<a href="runner.html">Ajudantes e onde os turnos rodam</a>
+		<a href="sync.html">Mais de um dispositivo</a>
+		<a href="social.html">Social e propostas</a>
+		<a href="models.html">Modelos e provedores</a>
+		<a href="spending.html">Gastos</a>
+		<a href="accounts.html">Segurança e soluções</a>
+	</nav>
+</footer>
+</body>
+</html>

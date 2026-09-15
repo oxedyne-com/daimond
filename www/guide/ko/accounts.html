@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
-<title>Safety &amp; fixes &mdash; Daimond guide</title>
+<title>안전과 해결 &mdash; Daimond 사용 안내</title>
 <link rel="icon" type="image/svg+xml" href="../../assets/daimond_mark.svg">
 <link rel="stylesheet" href="../../css/variables.css">
 <link rel="stylesheet" href="../../css/guide.css">
@@ -24,12 +24,12 @@
 			<a href="index.html">여기서 시작하기</a>
 			<a href="interface.html">인터페이스</a>
 			<a href="chats-and-diamonds.html">채팅과 diamond</a>
-			<a href="../capps.html">diamond의 페이지</a>
+			<a href="capps.html">diamond의 페이지</a>
 			<a href="email-web-files.html">파일, 이메일, 웹</a>
-			<a href="../machine-operations.html">내 컴퓨터</a>
-			<a href="../runner.html">헬퍼와 차례가 실행되는 곳</a>
+			<a href="machine-operations.html">내 컴퓨터</a>
+			<a href="runner.html">헬퍼와 차례가 실행되는 곳</a>
 			<a href="sync.html">여러 대의 기기</a>
-			<a href="../social.html">소셜과 제안</a>
+			<a href="social.html">소셜과 제안</a>
 			<a href="models.html">모델과 제공자</a>
 			<a href="spending.html">지출</a>
 			<a href="accounts.html" aria-current="page">안전과 해결</a>
@@ -39,74 +39,74 @@
 
 <main>
 	<h1>안전과 해결</h1>
-	<p class="lede">What your passphrase protects, what Daimond asks before it acts, what stays private, and what to do when something is wrong.</p>
+	<p class="lede">암호문구가 지키는 것, Daimond이 움직이기 전에 무엇을 묻는지, 무엇이 밖으로 나가지 않는지, 그리고 무언가 잘못됐을 때 할 일.</p>
 
 	<h2 id="s1">계정은 곧 암호문구예요</h2>
-	<p>On first run Daimond generates a passphrase of eight random words and shows it once. It is the key to everything stored here. It is not sent anywhere, it is not stored in the clear, and nobody can reset it.</p>
-	<p>It unlocks everything encrypted here, meaning your provider keys, your mail credentials and the account's own signing key, and the key that seals the sync parcel is derived from it too. The signing key is what signs you in for credits. Forget the passphrase and the encrypted data is gone.</p>
-	<p>Once a passphrase is in place you can add a <strong>패스키를</strong> for a faster unlock, by face, fingerprint or security key. It unseals the passphrase for you instead of replacing it, so the passphrase stays the fallback. The unlock happens on the device, and the credits service only ever sees a public key.</p>
+	<p>처음 켤 때 Daimond은 무작위 여덟 단어로 된 암호문구를 만들어 한 번 보여 줘요. 여기 저장된 모든 것의 열쇠예요. 어디로도 보내지지 않고, 평문으로 저장되지도 않으며, 아무도 다시 설정할 수 없어요.</p>
+	<p>여기 암호화된 모든 것을 열어요. 제공자 키, 메일 자격 정보, 계정 자신의 서명 키가 그것이고, 동기화 꾸러미를 봉인하는 키도 거기서 나와요. 서명 키는 크레딧을 쓸 때 나를 나타내는 것이에요. 암호문구를 잊으면 암호화된 자료는 사라져요.</p>
+	<p>암호문구가 자리 잡으면 <strong>패스키를</strong> 를 추가해 얼굴이나 지문, 보안 키로 더 빠르게 풀 수 있어요. 암호문구를 대신하지 않고 나 대신 그 봉인을 풀어 줄 뿐이라, 암호문구는 여전히 대비책으로 남아요. 잠금은 기기에서 풀리고, 크레딧 서비스가 보는 것은 공개 키뿐이에요.</p>
 
 	<h2 id="s2">계정 조작</h2>
-	<p>Your name is at the top of the account area, at the foot of the rail.</p>
+	<p>내 이름은 계정 영역 맨 위, 레일 아래쪽에 있어요.</p>
 	<ul>
-		<li><span class="ui">Change name&hellip;</span> 그리고 <span class="ui">Change passphrase&hellip;</span> do what they say, and the second re-wraps your encrypted data under the new passphrase.</li>
-		<li><span class="ui">Add a passkey&hellip;</span></li>
-		<li><span class="ui">백업 내보내기</span> writes your chats, diamonds, workspace files and your account key to a file you keep.</li>
-		<li><span class="ui">Import a backup&hellip;</span> adopts the backup's account where this browser holds none, and where one is already here it brings back only the work.</li>
-		<li><span class="ui">로그아웃</span> locks the app. Your data stays on the device, encrypted.</li>
-		<li><span class="ui">Forget this identity&hellip;</span> removes the account and its encrypted data from this browser for good.</li>
+		<li><span class="ui">이름 바꾸기&hellip;</span> 그리고 <span class="ui">암호문구 바꾸기&hellip;</span> 이 둘은 이름 그대로 해요. 다만 둘째는 새 암호문구 아래로 암호화된 자료를 다시 감싸요.</li>
+		<li><span class="ui">패스키 추가&hellip;</span></li>
+		<li><span class="ui">백업 내보내기</span> 은 채팅, diamond, 작업 공간 파일, 계정 키를 내가 간직할 파일로 써 내요.</li>
+		<li><span class="ui">백업 가져오기&hellip;</span> 은 이 브라우저에 계정이 없으면 백업의 계정을 받아들이고, 이미 있으면 작업만 되돌려요.</li>
+		<li><span class="ui">로그아웃</span> 은 앱을 잠가요. 자료는 암호화된 채 기기에 남아요.</li>
+		<li><span class="ui">이 신원 지우기&hellip;</span> 은 이 브라우저에서 계정과 그 암호화된 자료를 아주 없애요.</li>
 	</ul>
-	<p>Beside them, <span class="ui">동기화</span> turns this device's sync on or off, and <span class="ui">진단</span> shows and copies the app's own log, which holds event names and a clock, with no keys, no message text and nothing from your files. That log is what to paste into a report.</p>
+	<p>그 옆에는, <span class="ui">동기화</span> 이 이 기기의 동기화를 켜고 끄고, <span class="ui">진단</span> 은 앱 자신의 기록을 보여 주고 복사해 줘요. 사건 이름과 시각만 있고, 키도 메시지 본문도 내 파일 속 내용도 없어요. 보고서에 붙여 넣을 것이 이 기록이에요.</p>
 
-	<h2 id="s3">Moving your account</h2>
-	<p>Your account is a signing key held in this browser. <strong>The passphrase does not recreate it</strong>, and only decrypts the copy stored here. So the same passphrase in a fresh browser starts a separate account, with its own credits and no Pro.</p>
-	<p>The key itself has to travel, and three things carry it.</p>
+	<h2 id="s3">계정 옮기기</h2>
+	<p>내 계정은 이 브라우저에 있는 서명 키예요. <strong>암호문구는 그것을 다시 만들어 내지 않고</strong>, 여기 저장된 사본을 풀 뿐이에요. 그래서 새 브라우저에서 같은 암호문구를 써도 자기 크레딧으로, Pro 없이 별도의 계정이 시작돼요.</p>
+	<p>키 자체가 건너가야 하고, 그것을 옮기는 것은 세 가지예요.</p>
 	<ul>
-		<li><span class="ui">다른 기기 연결</span>, which shows a pairing code.</li>
-		<li>A passkey, which stands a new device up in one gesture.</li>
-		<li><span class="ui">백업 내보내기</span>, whose file holds the key for <span class="ui">Import a backup&hellip;</span> to adopt in a browser that has none.</li>
+		<li><span class="ui">다른 기기 연결</span>, 페어링 코드를 보여 줘요.</li>
+		<li>패스키. 한 번의 동작으로 새 기기를 세워 줘요.</li>
+		<li><span class="ui">백업 내보내기</span>. 그 파일에는 키가 담겨 있고, <span class="ui">백업 가져오기&hellip;</span> 이 계정 없는 브라우저에서 그것을 받아들여요.</li>
 	</ul>
-	<p>Do one of them before you retire a browser. Once its storage is gone, with no backup taken and no other device linked, the key is gone with it.</p>
-	<p>A backup holds your work in the clear and your key wrapped under your passphrase. Importing the file alone makes nobody you. Whoever holds the file <em>그리고</em> the passphrase holds the account, which is why the two should not travel together.</p>
+	<p>브라우저를 없애기 전에 이 가운데 하나를 해 두세요. 저장 공간이 사라지고 백업도, 연결된 다른 기기도 없다면 키도 함께 사라져요.</p>
+	<p>백업에는 작업이 평문으로, 키는 암호문구 아래 감싸인 채 들어 있어요. 파일만 가져간다고 그 사람이 당신이 되지는 않아요. 파일을 쥔 사람 <em>그리고</em> 암호문구까지 쥔 사람이 계정을 쥔 것이니, 둘은 같이 다니지 않아야 해요.</p>
 
 	<h2 id="s4">한 브라우저를 여러 사람이 쓸 때</h2>
-	<p>One browser can hold several accounts, each with its own chats, keys, credits and files. <span class="ui">＋ 다른 계정 추가</span> makes a second, and the row above it switches between them. Switching locks the first and forgets its keys before opening the other. Nobody sees another account's data.</p>
+	<p>브라우저 하나가 계정을 여럿 담을 수 있어요. 저마다 자기 채팅, 키, 크레딧, 파일을 가져요. <span class="ui">＋ 다른 계정 추가</span> 이 두 번째를 만들고, 그 위 줄에서 둘을 오가요. 바꿀 때는 먼저 계정을 잠그고 키를 잊은 다음에 다른 쪽을 열어요. 다른 계정의 자료가 보이는 일은 없어요.</p>
 
-	<h2 id="s5">What Daimond asks before it acts</h2>
-	<p>A chip beside the model says what Daimond does without asking. It has three settings, and they apply to the whole app.</p>
+	<h2 id="s5">Daimond이 움직이기 전에 묻는 것</h2>
+	<p>모델 옆의 칩이 Daimond이 묻지 않고 하는 일을 말해 줘요. 설정은 세 가지이고, 앱 전체에 적용돼요.</p>
 	<ul>
-		<li><span class="ui">Ask every time</span> reads <em>Every command is put to you first. So is reaching the web, once in each conversation.</em></li>
-		<li><span class="ui">Guarded</span> reads <em>Commands run. Once something written by somebody else has been read, Daimond asks before reaching out.</em> It is the default.</li>
-		<li><span class="ui">Bypass</span> reads <em>Nothing is asked, whatever has been read.</em></li>
+		<li><span class="ui">매번 묻기</span> :  <em>모든 명령을 먼저 나에게 물어요. 웹에 닿는 것도 대화마다 한 번은 마찬가지예요.</em></li>
+		<li><span class="ui">가드</span> :  <em>명령은 그냥 돌아요. 다른 누군가 쓴 것을 읽고 나면, 그다음부터 Daimond은 밖에 닿기 전에 물어요.</em> 이게 기본이에요.</li>
+		<li><span class="ui">바이패스</span> :  <em>무엇을 읽었든 묻지 않아요.</em></li>
 	</ul>
-	<p>Under Guarded, once a turn has read something written by somebody else, such as a web page, an email or a build log, anything it then wants to fetch or send is put to you first, and a command in that turn runs with the network refused. That is the case where text you did not write could talk Daimond into carrying your work somewhere.</p>
-	<p>Switching to <span class="ui">Bypass</span> asks once, and says what you give up. No mode moves the fence a command runs inside, a diamond's folders, the system-call filter, or the log you can read afterwards.</p>
-	<p>An agent working on its own is asked about separately. Clicking something on a page can spend money or submit a form, and none of that can be taken back, so a click by an unattended agent is put to you even under looser settings.</p>
-	<p>Money has its own brakes, and they are on <a href="spending.html">지출</a>.</p>
+	<p>가드 아래에서는, 한 턴이 다른 누군가 쓴 것 — 웹 페이지든 이메일이든 빌드 로그든 — 을 읽고 나면, 그다음 가져오거나 보내려는 것은 무엇이든 먼저 나에게 물어요. 그리고 그 턴의 명령은 네트워크가 거절된 채로 돌아요. 내가 쓰지 않은 글이 Daimond을 구슬려 내 작업을 어딘가로 나르게 할 수 있는 경우가 바로 이것이에요.</p>
+	<p>로 바꾸면 <span class="ui">바이패스</span>  한 번 묻고, 무엇을 내려놓는지 말해 줘요. 어느 모드도 명령이 도는 울타리, diamond의 폴더, 시스템 호출 필터, 나중에 읽을 수 있는 기록은 옮기지 않아요.</p>
+	<p>혼자 일하는 에이전트는 따로 물어요. 페이지의 무언가를 누르면 돈을 쓰거나 양식을 제출할 수 있고, 그 무엇도 되돌릴 수 없으니, 보는 사람 없는 에이전트의 클릭은 느슨한 설정에서도 나에게 물어요.</p>
+	<p>돈에는 자기만의 제동이 있고, 그것은 <a href="spending.html">지출</a>.</p>
 
 	<h2 id="s6">밖으로 나가지 않는 것</h2>
-	<p>Your passphrase, provider keys, mail credentials, chats, diamonds and files live in this browser and are not sent to us. What we hold is money and ciphertext, meaning your balance and licences and, for sync, a parcel we cannot open.</p>
-	<p>Your messages reach a model provider directly with your own key, or through our metered service when you spend credits. Fetching a page, and syncing or sending mail, pass through the gateway. So the honest claim is that with your own key nothing of your work reaches us in the clear, and that you can watch only ciphertext leave for our servers.</p>
-	<p>You need not take that on trust. The code running in this browser is public, it builds byte for byte from that source, and every build served is sealed into a published record. <span class="ui">Verify this build</span>, in the About dialog, checks the one you are running. Open your browser's network panel and watch where the calls go.</p>
-	<p>The protection has limits. A passphrase guards against someone opening the browser's developer tools, and not against a compromised browser, a malicious extension or a keylogger, which defeat any in-browser scheme. And what a remote server does inside itself cannot be proven from outside, which is why it is the client that is opened to you.</p>
+	<p>암호문구, 제공자 키, 메일 자격 정보, 채팅, diamond, 파일은 이 브라우저 안에 있고 저희에게 보내지지 않아요. 저희가 가진 것은 돈과 암호문이에요. 잔액과 라이선스, 그리고 동기화를 위한, 저희가 열 수 없는 꾸러미 하나가 그거예요.</p>
+	<p>메시지는 내 키로는 모델 제공자에게 곧바로 가고, 크레딧을 쓸 때는 저희의 계량된 서비스를 거쳐 가요. 페이지 가져오기와 메일 동기화·발송은 게이트웨이를 지나요. 그러니 정직한 말은 이거예요. 내 키를 쓰면 내 작업의 어떤 것도 평문으로 저희에게 닿지 않고, 저희 서버로 나가는 것이 암호문뿐임을 직접 지켜볼 수 있다는 것.</p>
+	<p>그 말을 믿음으로 받아들일 필요는 없어요. 이 브라우저에서 도는 코드는 공개돼 있고, 그 소스에서 바이트 그대로 빌드되며, 내보내는 모든 빌드는 공개된 기록에 봉인돼요. <span class="ui">이 빌드 확인하기</span>은 About 대화상자에 있고, 지금 도는 것을 확인해 줘요. 브라우저의 네트워크 패널을 열어 호출이 어디로 가는지 지켜보세요.</p>
+	<p>이 보호에는 한계가 있어요. 암호문구가 막는 것은 누군가 브라우저 개발자 도구를 여는 것이고, 장악당한 브라우저나 악의 있는 확장, 키로거는 막지 못해요. 이런 것들은 브라우저 안의 어떤 방식이든 무너뜨려요. 그리고 멀리 있는 서버가 제 안에서 무엇을 하는지는 밖에서 증명할 수 없어요. 그래서 확인할 수 있게 열어 두는 것이 클라이언트예요.</p>
 
-	<h2 id="s7">When something goes wrong</h2>
+	<h2 id="s7">무언가 잘못됐을 때</h2>
 	<ul>
-		<li><strong><em>Connect a model to start.</em></strong> No model is connected. Add one, or add a key for the provider already listed.</li>
-		<li><strong>Your second device is empty.</strong> You made a second account instead of pairing. Pair it, or import a backup. See <a href="sync.html">여러 대의 기기</a>.</li>
-		<li><strong>A shared folder is not arriving.</strong> It is over the 200&nbsp;MiB a shared folder may weigh. A banner names it. Share a smaller folder.</li>
-		<li><strong><em>Not valid JSON. Nothing saved.</em></strong> A hand edit to a diamond's memory left the file unreadable, so nothing was written. Fix the text or close without saving.</li>
-		<li><strong>Nothing runs on its own.</strong> The light is red because the action is stopped. Press play on the light beside it.</li>
-		<li><strong><em>Terminal needs the Daimond Hand on this computer.</em></strong> <span class="ui">Install&hellip;</span> beside it goes to <a href="../machine-operations.html">내 컴퓨터</a>.</li>
-		<li><strong>A turn is sitting on another device.</strong> That machine is probably waiting for a folder permission on its own screen. Go and look, or press <span class="ui">Run here</span>.</li>
-		<li><strong>A panel has disappeared.</strong> It is unpinned, and still there. The <span class="ui">⋯</span> chip opens the gallery, and <kbd>Ctrl</kbd> <kbd>K</kbd> reaches any panel by name.</li>
-		<li><strong>Everything is locked after a reload.</strong> The key is held in memory and nowhere else, unless this device is set to stay unlocked across reloads. Enter the passphrase, or use a passkey.</li>
+		<li><strong><em>시작하려면 모델을 연결하세요.</em></strong> 연결된 모델이 없어요. 하나를 추가하거나, 이미 목록에 있는 제공자의 키를 추가하세요.</li>
+		<li><strong>두 번째 기기가 비어 있어요.</strong> 연결하는 대신 두 번째 계정을 만든 거예요. 연결하거나 백업을 가져오세요. 참고할 곳은 <a href="sync.html">여러 대의 기기</a>.</li>
+		<li><strong>공유 폴더가 도착하지 않아요.</strong> 공유 폴더가 가질 수 있는 200&nbsp;MiB를 넘은 거예요. 배너가 그것을 짚어 줘요. 더 작은 폴더를 공유하세요.</li>
+		<li><strong><em>올바른 JSON이 아니에요. 저장된 것이 없어요.</em></strong> diamond의 기억을 손으로 고치다가 파일을 읽을 수 없게 만들어서 아무것도 쓰이지 않았어요. 글을 고치거나 저장하지 말고 닫으세요.</li>
+		<li><strong>저절로 도는 것은 없어요.</strong> 빨간불인 것은 동작이 멈췄기 때문이에요. 옆의 불에서 재생을 누르세요.</li>
+		<li><strong><em>터미널을 쓰려면 이 컴퓨터에 Daimond 손이 있어야 해요.</em></strong> <span class="ui">설치&hellip;</span>  옆에 있고, 가는 곳은 <a href="machine-operations.html">내 컴퓨터</a>.</li>
+		<li><strong>턴이 다른 기기에 머물러 있어요.</strong> 그 기기는 아마 자기 화면에서 폴더 권한을 기다리고 있을 거예요. 가서 보거나, <span class="ui">여기서 돌리기</span>.</li>
+		<li><strong>패널이 사라졌어요.</strong> 핀을 떼었을 뿐 여전히 있어요. <span class="ui">⋯</span>  칩이 갤러리를 열고, <kbd>Ctrl</kbd> <kbd>K</kbd> 는 이름으로 어떤 패널이든 찾아가요.</li>
+		<li><strong>새로고침 뒤에는 모든 것이 잠겨요.</strong> 키는 메모리에만 있어요. 이 기기가 새로고침 사이에도 풀린 채로 두게 설정돼 있지 않다면요. 암호문구를 넣거나 패스키를 쓰세요.</li>
 	</ul>
-	<p>Still stuck? The rail holds a diamond called <strong>Daimond Help</strong>, which answers from this build and this guide and says which page an answer came from. What it cannot answer belongs on <a href="../social.html">소셜</a>, with the three things a note needs.</p>
+	<p>그래도 막혔나요? 레일에는 <strong>Daimond Help</strong>라는 diamond이 있어요. 이 빌드와 이 안내서에서 답을 찾아 주고, 어느 페이지에서 나온 답인지도 말해 줘요. 답하지 못하는 것은 <a href="social.html">소셜</a>에 올리세요. 쪽지에 필요한 세 가지와 함께요.</p>
 
 	<div class="next">
-		<a href="spending.html">&larr; Spending</a>
-		<a href="index.html">Back to the start &rarr;</a>
+		<a href="spending.html">&larr; 지출</a>
+		<a href="index.html">처음으로 돌아가기 &rarr;</a>
 	</div>
 </main>
 
@@ -116,12 +116,12 @@
 		<a href="index.html">여기서 시작하기</a>
 		<a href="interface.html">인터페이스</a>
 		<a href="chats-and-diamonds.html">채팅과 diamond</a>
-		<a href="../capps.html">diamond의 페이지</a>
+		<a href="capps.html">diamond의 페이지</a>
 		<a href="email-web-files.html">파일, 이메일, 웹</a>
-		<a href="../machine-operations.html">내 컴퓨터</a>
-		<a href="../runner.html">헬퍼와 차례가 실행되는 곳</a>
+		<a href="machine-operations.html">내 컴퓨터</a>
+		<a href="runner.html">헬퍼와 차례가 실행되는 곳</a>
 		<a href="sync.html">여러 대의 기기</a>
-		<a href="../social.html">소셜과 제안</a>
+		<a href="social.html">소셜과 제안</a>
 		<a href="models.html">모델과 제공자</a>
 		<a href="spending.html">지출</a>
 		<a href="accounts.html">안전과 해결</a>

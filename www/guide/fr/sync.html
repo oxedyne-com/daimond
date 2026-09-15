@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
-<title>More than one device &mdash; Daimond guide</title>
+<title>Plus d’un appareil &mdash; Guide Daimond</title>
 <link rel="icon" type="image/svg+xml" href="../../assets/daimond_mark.svg">
 <link rel="stylesheet" href="../../css/variables.css">
 <link rel="stylesheet" href="../../css/guide.css">
@@ -24,10 +24,10 @@
 			<a href="index.html">Commencez ici</a>
 			<a href="interface.html">L’interface</a>
 			<a href="chats-and-diamonds.html">Discussions &amp; diamonds</a>
-			<a href="../capps.html">La page d’un diamond</a>
+			<a href="capps.html">La page d’un diamond</a>
 			<a href="email-web-files.html">Fichiers, e-mail &amp; le web</a>
-			<a href="../machine-operations.html">Votre ordinateur</a>
-			<a href="../runner.html">Assistants &amp; où s’exécutent les tours</a>
+			<a href="machine-operations.html">Votre ordinateur</a>
+			<a href="runner.html">Assistants &amp; où s’exécutent les tours</a>
 			<a href="sync.html" aria-current="page">Plus d’un appareil</a>
 			<a href="social.html">Social &amp; propositions</a>
 			<a href="models.html">Modèles &amp; fournisseurs</a>
@@ -39,53 +39,53 @@
 
 <main>
 	<h1>Plus d’un appareil</h1>
-	<p class="lede">Daimond keeps your work on the device you are using, so a second device starts empty. Link it, and your chats, diamonds and files stay in step without the server ever reading them.</p>
+	<p class="lede">Daimond garde votre travail sur l’appareil que vous utilisez : un second appareil démarre donc vide. Associez-le, et vos chats, vos diamonds et vos fichiers restent au même point, sans que le serveur ne les lise jamais.</p>
 
-	<p>What crosses is one encrypted parcel, and only your devices hold the key to it. The key comes from your passphrase and does not leave the browser.</p>
+	<p>Ce qui traverse est un unique paquet chiffré, et seuls vos appareils en détiennent la clé. Cette clé vient de votre phrase secrète et ne quitte pas le navigateur.</p>
 
-	<h2 id="s1">Link a second device</h2>
-	<p>Each device makes its own identity, so typing your passphrase into a fresh browser starts a <em>distinct</em> account. To use the one you have, link the new device to it.</p>
+	<h2 id="s1">Associer un second appareil</h2>
+	<p>Chaque appareil se fait sa propre identité : taper votre phrase secrète dans un navigateur neuf démarre donc un compte <em>distinct</em> compte. Pour utiliser celui que vous avez déjà, associez-y le nouvel appareil.</p>
 	<ol class="steps">
 		<li>
 			<h3 id="s2">Sur l’appareil que vous utilisez déjà, ouvrez la fenêtre d’association</h3>
-			<p><span class="ui">Associer un autre appareil</span> in the top bar shows a QR code and a one-time pairing code.</p>
+			<p><span class="ui">Associer un autre appareil</span> dans la barre du haut affiche un QR code et un code d’association à usage unique.</p>
 			<figure class="shot narrow">
-				<img alt="The link dialog on a desktop, showing a QR code above a short pairing code." src="../img/pair-desktop.png" loading="lazy">
+				<img alt="La fenêtre d’association sur un ordinateur, montrant un QR code au-dessus d’un court code d’association." src="../img/pair-desktop.png" loading="lazy">
 				<figcaption>Votre premier appareil affiche un QR code et un code.</figcaption>
 			</figure>
 		</li>
 		<li>
-			<h3 id="s3">On the new device, scan the QR or type the code</h3>
-			<p>Point the phone's camera at the code. It opens Daimond and fills the code in, so you only tap <span class="ui">Associer cet appareil</span>. Without a camera, open Daimond there, choose <span class="ui">Have a passcode or a pairing code?</span>, and type it.</p>
+			<h3 id="s3">Sur le nouvel appareil, scannez le QR ou tapez le code</h3>
+			<p>Pointez la caméra du téléphone sur le code. Cela ouvre Daimond et remplit le code, si bien que vous n’avez plus qu’à toucher <span class="ui">Associer cet appareil</span>. Sans caméra, ouvrez Daimond là-bas, choisissez <span class="ui">Vous avez un code d’accès ou un code d’association ?</span>, et tapez-le.</p>
 			<figure class="shot narrow">
-				<img alt="The new phone, after scanning, with a single Link this device button." src="../img/pair-mobile.png" loading="lazy">
-				<figcaption>After scanning, one tap.</figcaption>
+				<img alt="Le nouveau téléphone, après le scan, avec un unique bouton Associer cet appareil." src="../img/pair-mobile.png" loading="lazy">
+				<figcaption>Après le scan, un seul geste.</figcaption>
 			</figure>
 		</li>
 		<li>
 			<h3 id="s4">Déverrouillez avec la même phrase secrète</h3>
-			<p>The new device now holds your account. Use the passphrase you already have, and your work appears. A passkey can unlock it faster afterwards.</p>
+			<p>Le nouvel appareil détient désormais votre compte. Utilisez la phrase secrète que vous avez déjà, et votre travail apparaît. Une clé d’accès peut ensuite le déverrouiller plus vite.</p>
 		</li>
 	</ol>
-	<div class="note"><strong>If a device asks you to create a passphrase instead of entering one, it is about to start a new account.</strong> Go back and pair it, or import a backup. One account, one passphrase, on every device you link. The passphrase cannot travel on its own, because it only decrypts a key the device already holds, so a browser that has never been linked has nothing for it to open.</div>
+	<div class="note"><strong>Si un appareil vous demande de créer une phrase secrète plutôt que d’en saisir une, il est sur le point de démarrer un nouveau compte.</strong> Revenez en arrière et associez-le, ou importez une sauvegarde. Un compte, une phrase secrète, sur chaque appareil que vous associez. La phrase secrète ne peut pas voyager seule, car elle ne fait que déchiffrer une clé que l’appareil détient déjà : un navigateur qui n’a jamais été associé n’a donc rien à ouvrir avec elle.</div>
 
 	<h2 id="s5">Ce qui voyage</h2>
-	<p>Your chats, your diamonds and the way you laid them out, your mail, your workspace files, the devices on the account, and what you have paused all travel. Any kind of file travels, up to a gigabyte each. So does the Trash, so a deletion and a restore both reach every device.</p>
-	<p>What syncs is also what is kept in cloud storage, so a workspace can be larger than the device reading it. A file that is not here still shows in the tree and comes down when asked for.</p>
-	<p>A folder you opened on one computer is not in the browser's storage, so it does not travel by default. <a href="email-web-files.html">Fichiers, e-mail &amp; le web</a> covers the per-folder control that copies one to devices that cannot open it.</p>
+	<p>Vos chats, vos diamonds et la façon dont vous les avez disposés, votre courrier, les fichiers de votre espace de travail, les appareils du compte, et ce que vous avez mis en pause voyagent tous. N’importe quel type de fichier voyage, jusqu’à un gigaoctet chacun. La Corbeille aussi, si bien qu’une suppression comme une restauration atteignent chaque appareil.</p>
+	<p>Ce qui se synchronise est aussi ce qui est gardé dans le stockage en ligne, si bien qu’un espace de travail peut être plus grand que l’appareil qui le lit. Un fichier absent d’ici apparaît quand même dans l’arborescence et redescend quand on le demande.</p>
+	<p>Un dossier que vous avez ouvert sur un ordinateur n’est pas dans le stockage du navigateur, il ne voyage donc pas par défaut. <a href="email-web-files.html">Fichiers, e-mail &amp; le web</a> expose le contrôle par dossier qui en copie un vers les appareils qui ne peuvent pas l’ouvrir.</p>
 
-	<h2 id="s6">Running a turn somewhere else</h2>
-	<p>When more than one of your devices is awake, one can run a turn for another and the answer syncs back. One switch turns it on, <span class="ui">Hand off when you step away</span>. A turn on this computer then moves to another awake device when you close it, whether the lid shuts, the tab closes or the connection drops, and finishes there.</p>
-	<p><a href="../runner.html">Assistants &amp; où s’exécutent les tours</a> covers naming the machine that should pick turns up, and the two things that stop it.</p>
-	<p>An errand sent to another device, and the answer it sends back, are sealed to your account like everything else. The server routes a parcel it cannot open.</p>
+	<h2 id="s6">Faire tourner un tour ailleurs</h2>
+	<p>Quand plus d’un de vos appareils est éveillé, l’un peut faire tourner un tour pour un autre, et la réponse revient par synchronisation. Un seul interrupteur l’active, <span class="ui">Passer la main quand vous vous éloignez</span>. Un tour sur cet ordinateur se déplace alors vers un autre appareil éveillé quand vous le fermez, que le capot se rabatte, que l’onglet se ferme ou que la connexion tombe, et se termine là-bas.</p>
+	<p><a href="runner.html">Assistants &amp; où s’exécutent les tours</a> expose comment nommer la machine qui doit reprendre les tours, et les deux choses qui l’en empêchent.</p>
+	<p>Une commission envoyée à un autre appareil, et la réponse qu’il renvoie, sont scellées sur votre compte comme tout le reste. Le serveur route un paquet qu’il ne peut pas ouvrir.</p>
 
 	<h2 id="s7">Ce que cela coûte</h2>
-	<p>La synchronisation entre appareils fait partie de <strong>Daimond Pro</strong>, at $8 a month, billed monthly, and you can cancel any time. Pro also turns on cloud storage, Email and a posting name. Away for a month, the billing pauses on its own and resumes when you are back.</p>
-	<p>Without Pro a device works on its own and loses nothing. Inference, bandwidth and other metered use are paid from credits either way.</p>
+	<p>La synchronisation entre appareils fait partie de <strong>Daimond Pro</strong>, à 8 $ par mois, facturé au mois, et vous pouvez annuler à tout moment. Pro active aussi le stockage en ligne, l’e-mail et un nom de publication. Absent un mois, la facturation se met en pause d’elle-même et reprend à votre retour.</p>
+	<p>Sans Pro, un appareil fonctionne seul et ne perd rien. L’inférence, la bande passante et les autres usages comptés sont de toute façon payés sur les crédits.</p>
 
 	<div class="next">
-		<a href="../runner.html">&larr; Helpers &amp; where turns run</a>
-		<a href="social.html">Next: Social &amp; proposals &rarr;</a>
+		<a href="runner.html">&larr; Assistants &amp; où s’exécutent les tours</a>
+		<a href="social.html">Suivant : Social &amp; propositions &rarr;</a>
 	</div>
 </main>
 
@@ -95,10 +95,10 @@
 		<a href="index.html">Commencez ici</a>
 		<a href="interface.html">L’interface</a>
 		<a href="chats-and-diamonds.html">Discussions &amp; diamonds</a>
-		<a href="../capps.html">La page d’un diamond</a>
+		<a href="capps.html">La page d’un diamond</a>
 		<a href="email-web-files.html">Fichiers, e-mail &amp; le web</a>
-		<a href="../machine-operations.html">Votre ordinateur</a>
-		<a href="../runner.html">Assistants &amp; où s’exécutent les tours</a>
+		<a href="machine-operations.html">Votre ordinateur</a>
+		<a href="runner.html">Assistants &amp; où s’exécutent les tours</a>
 		<a href="sync.html">Plus d’un appareil</a>
 		<a href="social.html">Social &amp; propositions</a>
 		<a href="models.html">Modèles &amp; fournisseurs</a>

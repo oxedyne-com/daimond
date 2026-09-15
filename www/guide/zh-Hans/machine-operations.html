@@ -1,0 +1,296 @@
+<!DOCTYPE html>
+<html lang="zh-Hans" data-guide-locale="zh-Hans" data-guide-locales="en de es fr ja ko pt-BR zh-Hans">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<title>你的电脑 &mdash; Daimond 指南</title>
+<link rel="icon" type="image/svg+xml" href="../../assets/daimond_mark.svg">
+<link rel="stylesheet" href="../../css/variables.css">
+<link rel="stylesheet" href="../../css/guide.css">
+<script src="../frame.js"></script>
+<script src="search-index.js"></script>
+<script src="../search.js"></script>
+</head>
+<body>
+
+<header class="site-head">
+	<div class="site-head-inner">
+		<a class="brand" href="index.html" aria-label="Daimond 指南，首页">
+			<img class="wordmark wm-dark" src="../../assets/daimond_word.svg" alt="Daimond" translate="no">
+			<img class="wordmark wm-light" src="../../assets/daimond_word_dark.svg" alt="Daimond" translate="no">
+			<span class="brand-sub">指南</span>
+		</a>
+		<nav class="site-nav" aria-label="指南页面">
+			<a href="index.html">从这里开始</a>
+			<a href="interface.html">界面</a>
+			<a href="chats-and-diamonds.html">对话和 diamond</a>
+			<a href="capps.html">diamond 的页面</a>
+			<a href="email-web-files.html">文件、邮件和网页</a>
+			<a href="machine-operations.html" aria-current="page">你的电脑</a>
+			<a href="runner.html">帮手和轮次的运行位置</a>
+			<a href="sync.html">不止一台设备</a>
+			<a href="social.html">社交和提案</a>
+			<a href="models.html">模型和提供商</a>
+			<a href="spending.html">花费</a>
+			<a href="accounts.html">安全和修复</a>
+		</nav>
+	</div>
+</header>
+
+<main>
+	<h1>你的电脑</h1>
+	<p class="lede">Daimond 可以在你的电脑上运行程序——一次构建、一套测试、一个检查工具、一个脚本——在一个由内核强制执行的隔离舱里。这是免费的，只需要在终端里敲两条命令，而且仅限 Linux。在敲任何一条命令之前，先读一下下面的警告。</p>
+
+	<div class="note stop"><strong>一个 snap 或 flatpak 版的浏览器做不到这件事，也没法被强行改成能做到。</strong> 安装脚本会检测到这种情况，宁可拒绝也不往里面写，所以这是你会遇到的第一件事——而且在 Ubuntu 上，默认的 Chromium 就是一个 snap。 <a href="#s2">为什么，以及该装什么来代替</a>.</div>
+
+	<h2 id="s1">它给你什么</h2>
+	<p>装好 hand 之后，一个 daimon 就可以对你授权的文件夹运行一次构建、一套测试、一个检查工具或一个脚本，并读取结果。这台机器上别的任何东西都够不到。</p>
+	<p>它用到的工具，点在 <span class="ui">工具</span> 面板里，其中四个值得记住名字。</p>
+	<ul>
+		<li><strong>run</strong> 运行一条命令——以一份参数列表的形式给出——并给出退出码、输出的尾部，以及花了多长时间。</li>
+		<li><strong>verify</strong> 运行你项目自己的检查。Daimond 从 <code translate="no">.daimond/verify.json</code>读取参数列表，否则从 <code translate="no">Cargo.toml</code>, <code translate="no">package.json</code>, <code translate="no">pyproject.toml</code> 或者 <code translate="no">go.mod</code>推断出来。退出码就是结论。</li>
+		<li><strong>runs</strong> 列出仍在运行的东西，以及怎么停掉一个。一条命令可以活得比它那一轮更久，因为在后台启动的东西会一直占着自己的端口，直到被停掉；而且这台电脑上别的任何东西都够不到它，因为隔离舱把信号的作用范围限定在自己里面。</li>
+		<li><strong>serve</strong> 为一个文件夹启动一个只读的文件服务器，好让构建出来的页面能在 <span class="ui">网页</span> 面板里看到。它在这一轮结束后仍然开着，所以要按它的 id 把它停掉。</li>
+	</ul>
+	<p>一次拒绝会点出路径、原因和修法，所以没有代码要查。这一轮之后会像任何一轮一样结束，标为 <span class="ui">已回答</span>, <span class="ui">已停止</span> 或者 <span class="ui">达到步骤上限</span>，所以一条被拒绝的命令绝不会读起来像是成功了。</p>
+
+	<h2 id="s2">开始之前</h2>
+	<p>有三件事决定这一切是否能用。检查它们要花一分钟，事后才发现要花一个小时，因为浏览器报出的错误一个都不会点名。</p>
+
+	<h3 id="s3">1. 浏览器装自一份 <code translate="no">.deb</code></h3>
+	<p>一个 snap 或 flatpak 版的浏览器，会把它启动的程序关起来，这层禁闭也会波及 Daimond 的 hand。 <code translate="no">home</code> 接口，snap 拿到的这个接口不会授权你主目录顶层那些隐藏目录，而 hand 把它的日志放在 <code translate="no">~/.local/share/daimond/hand/journal/</code>，就在其中一个隐藏目录后面。hand 打不开它本该把原因记进去的那个文件，所以它一声不吭地退出，Chrome 只会报出 <em>Native host has exited</em>这句话。这句话没给你留下任何可以下手的地方，而这种禁闭正是 snap 存在的意义。搬动日志的位置没有用，因为浏览器会把它自己的环境交给这个程序。</p>
+	<p>你不必自己把这些搞清楚。安装脚本会往能用的配置文件里写，并点出哪些不能用；如果它找到的每一个浏览器都被关着，它就会停下来，不会留给你一个看起来成功、其实没用的安装。 <code translate="no">--check</code> ，即使旁边就有一个能用的浏览器，也会标出一个被关起来的浏览器，因为起作用的是你实际在用的那个。</p>
+	<p>开始之前，看看你手上有什么：</p>
+	<pre><code translate="no">snap list 2&gt;/dev/null | grep -Ei 'chrom|brave|vivaldi|edge'
+flatpak list 2&gt;/dev/null | grep -Ei 'chrom|brave|vivaldi|edge'</code></pre>
+	<p>任何一条命令点出名字的，都是被关着的。能用的是 Chrome、Brave、Vivaldi 或 Edge，装成一个 <code translate="no">.deb</code>，或者一个 <code translate="no">.deb</code> 版的 Chromium，来自 Ubuntu 官方仓库以外的地方。</p>
+	<div class="note"><strong><code translate="no">apt install chromium-browser</code> ，给你的是那个 snap。</strong> Ubuntu 的 <code translate="no">chromium-browser</code> 这个包，从 20.04 起就是个只会装那个 snap 的空壳，所以不用软件商店获取浏览器的常规办法，会把你带到同一个地方。装上面四个 <code translate="no">.deb</code>版本里的一个来代替。</div>
+
+	<h3 id="s4">2. 安装之前，先把那个浏览器打开一次</h3>
+	<p>安装脚本会往浏览器的配置文件目录里写一个小文件，而这个目录要等浏览器第一次启动时才会被建出来。装了一个浏览器却从没打开过它， <code translate="no">install.sh</code> 就会如实报告什么都没找到，因为那时候确实什么都还没有。</p>
+
+	<h3 id="s5">3. Linux，内核里有 Landlock</h3>
+	<p>这个隔离舱是用 Landlock（围住文件）和 seccomp（过滤系统调用）搭出来的，两者都是 Linux 内核的特性。Landlock 是从 Linux 5.13 开始有的， <a href="#s30">非常规系统</a> 说明了更老、更特殊的机器能拿到什么。hand 在 macOS 和 Windows 上能构建、能运行，但会报告自己什么都围不住，于是 Daimond 会拒绝每一条命令，而不是运行一条没有围栏的。拒绝会点出缺了什么。这两个平台的围栏都还没做出来。</p>
+
+	<div class="note stop"><strong>要装一个不同的浏览器？你的账户不会自动跟过去。</strong> 你的账户是一把签名密钥，存在你建它时用的那个浏览器里。密码短语不会重新造出那把密钥，只会解开存在那里的那一份，所以同一句密码短语，在一个全新的浏览器里开出的是一个 <em>另外的</em> 账户，有它自己的额度，没有 Pro。这把密钥本身得能搬家，所以在你退役旧浏览器之前，先在里面做以下一件事： <strong><span class="ui">关联另一台设备</span></strong>，然后在新浏览器里输入那个码；添加一个通行密钥；或者 <strong><span class="ui">导出一份备份</span></strong>，把聊天、diamond 和工作区文件连同密钥一起写下来，密钥仍然被你的密码短语包着，供一个还没有账户的浏览器采用。参见 <a href="sync.html">不止一台设备</a> 和 <a href="accounts.html">安全和修复</a>.</div>
+
+	<div class="note"><strong>这和 Machine 工作区不是一回事。</strong>  <span class="ui">本机</span> 标签，在 <a href="email-web-files.html">工作区</a> 面板里，给 Daimond 一个你硬盘上真实文件夹的读写权限。「在本机运行命令」让它能 <strong>运行程序</strong>。这是两个分开的授权，分开给。「运行命令」确实需要这个工作区，因为一条命令要针对一个真实的文件夹运行，所以这个工作区必须是一个真实文件夹，而且是同一个。</div>
+
+	<h2 id="s6">安装它</h2>
+	<p>安装要在 Daimond 仓库的根目录下，在终端里敲两条命令，然后在浏览器里做两件事。加起来，是每个浏览器配置文件里一个小小的 JSON 文件，再加上一个你自己构建的二进制文件。安装完不会留下任何监听端口的东西，没有守护进程在跑，也没有秘密可偷。</p>
+
+	<ol class="steps">
+		<li>
+			<h3 id="s7">构建 hand</h3>
+			<pre><code translate="no">cargo build --release --manifest-path hand/Cargo.toml</code></pre>
+			<p>用 <code translate="no">--manifest-path</code> 而不是 <code translate="no">-p</code>，因为 hand 是它自己的一个 cargo 工作区，所以 <code translate="no">-p</code> 会报告没有这个包，什么都不会构建。</p>
+		</li>
+		<li>
+			<h3 id="s8">授权一个文件夹，并注册 hand</h3>
+			<pre><code translate="no">hand/install/install.sh --workspace ~/work</code></pre>
+			<p>把你自己的文件夹换到 <code translate="no">~/work</code>的位置。这个文件夹框定了任何命令能读写的全部范围，所以要选一个用来干活的文件夹。这个脚本会直接拒绝你的主目录，也拒绝 <code>/</code> ，因为授权其中任何一个都等于授权一切。这个文件夹必须已经存在。</p>
+			<p>运行这一次，会做三件事，每一件不做好，你迟早都会撞上一个失败。</p>
+			<ul>
+				<li><strong>把你的文件夹写进 <code translate="no">root.txt</code></strong>，位置在 <code translate="no">~/.local/share/daimond/hand/journal/root.txt</code>。hand 在被告知这个文件夹之前，不会为任何页面服务，而且它从不猜测，因为猜一个文件夹，就是在猜一条命令可以碰什么。以后要改，就用一个不同的文件夹再运行一次同样的命令。</li>
+				<li><strong>以 700 模式创建那个日志目录。</strong> 它保存着每一个 diamond 运行过的每一条命令的记录，所以 hand 拒绝把它写在别的用户能读到的地方。用平常的默认权限建出来的目录是 755，那样的话 hand 不会启动。</li>
+				<li><strong>写入注册信息</strong> ，写进每一个能用的浏览器配置文件里，并打印出是哪些。正是这个文件，才让浏览器能够启动 hand。它只是 JSON，没有别的，所以这个脚本不构建任何东西，不下载任何东西，不启动任何东西，也不需要 root 权限。</li>
+			</ul>
+			<div class="note"><strong><code translate="no">DAIMOND_HAND_ROOT</code> 是一个陷阱。</strong> 这个环境变量做的是和 <code translate="no">root.txt</code> 一样的事，并且优先级更高，但它不会起作用，因为你的浏览器启动 hand 时，用的是 <em>它自己的</em> 环境，你的环境变量不在里面。用那个文件。</div>
+		</li>
+		<li>
+			<h3 id="s9">加载扩展</h3>
+			<p>上一步打印出了路径。打开 <code translate="no">chrome://extensions</code>，打开 <strong>开发者模式</strong>，选择 <strong>加载已解压的扩展程序</strong>，然后选中 <code translate="no">ext/</code> 目录。</p>
+			<p>这个扩展带着一把固定的公钥，所以它在每一台机器上的 id 都一样，这也是刚才写入的注册信息已经能点出它名字的原因。它的清单文件只点名了一个来源， <code translate="no">https://daimond.oxedyne.com</code>，作为唯一被允许跟它说话的页面，所以你浏览器里别的任何页面都完全够不到它。</p>
+		</li>
+		<li>
+			<h3 id="s10">重启浏览器</h3>
+			<p>浏览器只在启动时读取那些配置文件目录，所以一个在它运行期间才出现的文件，要等到那时候才会被看见。忘了重启，是一次正确的安装看起来像是坏掉的最常见原因。</p>
+		</li>
+	</ol>
+
+	<h3 id="s11">然后检查一下</h3>
+	<pre><code translate="no">hand/install/install.sh --check</code></pre>
+	<p>这个检查不会改变任何东西，只为每一件必须成立的事打印一行：一个能用的浏览器、注册信息、这个二进制文件、日志目录和它的权限模式， <code translate="no">root.txt</code>、日志目录位于被授权文件夹之外，还有这个扩展。失败的一行，修法就写在它下面一行。从上往下逐一处理，因为靠后的一行常常只是因为前面一行没弄好才失败的。</p>
+
+	<h2 id="s12">最后两步由你来做</h2>
+	<p>上面这些步骤，没有一步替你做决定。剩下的两件事，才是真正的决定。</p>
+	<p><strong>在 Daimond 里打开同一个文件夹。</strong> 在工作区面板里，用 <span class="ui">本机</span> 标签，打开你授权的那个文件夹。必须是同一个。hand 会往 <code translate="no">&lt;folder&gt;/.daimond/workspace.id</code> 里写一个令牌，并在自我介绍时点出它的名字；页面则通过自己已经握着的句柄读这个文件，把两者对比。一个是浏览器自己存储的工作区，或者是一个和 <code translate="no">root.txt</code>里不一样的文件夹，它的命令都会被拒绝，并附一行说明是哪一种。这个令牌住在 <code translate="no">.daimond</code> 因为隔离舱永远拒绝那个目录，所以一条命令读不到这个令牌，也没法替一个它不在其中的文件夹说话。</p>
+	<p><strong>允许第一条命令。</strong> Daimond 第一次想运行点什么时，一个 <strong translate="no">Daimond Hands</strong> 窗口会打开来问。没有哪个浏览器权限涵盖「可以在这台电脑上运行程序」，所以这扇窗口 <em>就是</em> 那个批准，扩展自己记录你的回答。这也正是它能被撤销的原因，因为浏览器没有什么可以拿走的。在你允许之前，什么都不会运行。</p>
+	<p>这扇窗口会点出文件夹和提出请求的页面，并用一行字说明一条命令在这台机器上能碰到多远。 <span class="ui">这管着什么，又不管什么</span> ，打开其余的部分：这个隔离舱拦住了什么、没拦住什么，以及怎么收回这个权限。</p>
+
+	<h2 id="s13">不管用的时候</h2>
+	<p>先用 <code translate="no">install.sh --check</code> 再来一次。它会按顺序走一遍这里的每一项检查，在第一件出错的事上停下。它自动化的那三步，本身也很有用，是在 <code translate="no">--check</code> 通过、Daimond 却还说没有 hand 时该去用的东西。</p>
+
+	<h3 id="s14">自己运行 hand</h3>
+	<pre><code translate="no">hand/target/release/daimond-hand &lt; /dev/null</code></pre>
+	<p>这会像你的浏览器那样精确地启动 hand，只是另一端没有浏览器，所以它本来要跟浏览器说的话，都会说给你听。有三种回答。</p>
+	<ul>
+		<li><code translate="no">daimond-hand: the page closed the pipe.</code> hand 已经配置好，随时可用。不对劲的地方在浏览器那一侧，先试着重启它。</li>
+		<li><em>This hand has not been told which folder it may work in</em> ，意思是 <code translate="no">root.txt</code> 缺失了。再运行一次 <code translate="no">install.sh --workspace</code> 。</li>
+		<li><em>…is readable by users other than its owner</em> ，意思是日志目录不是 700 权限，hand 不会把你命令的记录写在别的账户能读到的地方。 <code translate="no">chmod 700</code> 它。</li>
+	</ul>
+	<p>别的任何情况，都会是一整句话，点出路径、原因和修法，因为 hand 没有地方可以打印一个谁都能去查的代码。</p>
+	<pre><code translate="no">hand/target/release/daimond-hand --report</code></pre>
+	<p>这会打印出隔离舱在 <em>这台</em> 内核上能强制执行什么，以及篇幅更长的、它不能强制执行什么。仔细读第二份列表，因为在低于 Linux 7.1 的内核上，它包含 <a href="#s21">一条走出隔离舱的路</a> ，这条路是 Landlock 留开的，hand 自己把它关上的办法是拒绝 unix 套接字。它还会点出来自 <code translate="no">root.txt</code>的那个文件夹，所以一个过时的文件夹会在这里现形，而不是等到第一条命令才现形。</p>
+
+	<h3 id="s15">读日志</h3>
+	<pre><code translate="no">tail -n 5 ~/.local/share/daimond/hand/journal/hand-*.jsonl</code></pre>
+	<p>这份日志每行一个 JSON 对象，按事情发生的顺序排列：握手、每一条命令，以及每一次拒绝连同它的理由。只要 hand 启动过，这里就会写下点什么。一次失败尝试之后是空目录，就说明 hand 根本没走到那一步，在 Ubuntu 上，这几乎总是意味着这一页最前面说的那个被关起来的浏览器。</p>
+
+	<h3 id="s16">问这个扩展</h3>
+	<p>在浏览器里，在 Daimond 标签页上，打开开发者控制台，运行：</p>
+	<pre><code translate="no">await DaimondHand.status()</code></pre>
+	<p>这个扩展会用 JSON 回答：是否配对了一个 hand、它说自己被授权了哪个文件夹、它能强制执行什么，以及在答案是否的地方，一个 <code translate="no">reason</code> 写成一整句话的原因。Daimond 会把同一句话给模型看，所以这份 JSON 解释的，正是这个 daimon 被告知了什么。</p>
+
+	<h2 id="s17">它实际上是什么</h2>
+	<p>一条命令就是一个普通的进程，属于你，跑在你自己的内核上，针对你自己的文件，只是先被拿掉了一些能力。没有虚拟机，没有容器，没有模拟，所以什么都不是模拟出来的，什么都不是复制进来的。四个部分各司其职。</p>
+	<ul>
+		<li><strong>页面提出请求。</strong> Daimond 算出这一轮可以碰什么，把整条规则连同请求一起发出去。它从不发一行 shell 命令，因为 <code translate="no">argv</code>——参数列表——是一个数组，没有什么地方可以被注入。</li>
+		<li><strong>扩展转发。</strong> <strong translate="no">Daimond Hands</strong> ，是页面唯一能把一条命令交给的东西，而且只有一个来源能跟它说话。</li>
+		<li><strong>一个本地小程序来运行它。</strong>  <em>hand</em> 根据收到的那条规则搭出隔离舱，把它套在自己身上，然后 <em>变成</em> 这条命令本身。没有一个监督者盯着一个子进程，因为命令一旦开始，hand 就什么都不剩了。</li>
+		<li><strong>你的浏览器启动 hand。</strong> 这就是为什么没有端口，也没有密码。一个开在端口上的服务，会被你访问的每一个页面都够得到。</li>
+	</ul>
+
+	<div class="note"><strong>这是免费的，不是 Pro 的一部分。</strong> 一条命令的任何部分都碰不到 Daimond 的网关。请求从页面到扩展、到你自己硬盘上的一个程序，再原路返回，所以没有什么被计量。一条命令的花费，就是模型思考它要花的钱，和任何别的一轮一样。</div>
+
+	<h3 id="s18">Daimond 不实现任何工具</h3>
+	<p>没有内置的 <code translate="no">ls</code>，也没有内置的 <code translate="no">grep</code>，没有捆绑的工具箱，也没有 shell。 <code translate="no">ls</code> 就是 <code translate="no">/usr/bin/ls</code>，就是你机器上已经有的那个，版本是你装的那个版本。</p>
+
+	<p>系统目录下的每一个程序都够得到，因为隔离舱把它们加进了授权里， <strong>只读</strong>: <code translate="no">/usr</code>, <code translate="no">/bin</code>, <code translate="no">/sbin</code>, <code translate="no">/lib</code>, <code translate="no">/lib32</code>, <code translate="no">/lib64</code>, <code translate="no">/libx32</code>, <code translate="no">/etc</code>, <code translate="no">/opt</code>，以及那些无害的设备 <code translate="no">/dev/null</code>, <code translate="no">/dev/zero</code>, <code translate="no">/dev/full</code>, <code translate="no">/dev/random</code> 和 <code translate="no">/dev/urandom</code>。没有它们，什么都启动不了，连 <code translate="no">cat</code>都不行，因为加载器得读共享对象，进程也得为标准流打开点什么。</p>
+
+	<p>一个光秃秃的名字，会在 <code translate="no">PATH</code>上查找，也就是 <code translate="no">/usr/local/bin:/usr/bin:/bin</code> ，除非一个被授权的工具链往里面加了东西。查到的结果会被解析成一个绝对路径，像别的任何东西一样接受隔离舱的检查，所以查到不等于被允许。一个指向外部的 <code translate="no">PATH</code> ，会找到一个这条命令不可以运行的程序，拒绝会点出它的名字。</p>
+
+	<div class="note"><strong>没有 shell，所以也没有 shell 语法。</strong> 一条命令是一份列表（<code translate="no">["cargo", "test", "--lib"]</code>），一个分号、管道、重定向、反引号， <code>$(…)</code> 或者 <code translate="no">&amp;&amp;</code> 到达程序时都只是一个字面意义上的参数。要串联两条命令，daimon 会把这个工具运行两次，反正这样更好，因为它可以先读第一次的结果，再决定第二次。</div>
+
+	<h2 id="s19">一条命令能做什么，不能做什么</h2>
+
+	<h3 id="s20">文件</h3>
+	<ul>
+		<li><strong>在被授权的文件夹里读写。</strong> 那个文件夹，减去 Daimond 自己的 <code translate="no">.daimond</code> 目录，就是可写的整个世界。</li>
+		<li><strong>一个私有的临时目录。</strong> 它是可写的， <code translate="no">TMPDIR</code> 指向它；运行结束就删掉；别的任何一次运行都够不到它；它是你文件夹之外，一条命令唯一可以写的地方。 <code translate="no">/tmp</code> 在隔离舱之外，一次连临时文件都写不了的构建，会半途而废，而且没有人能读懂原因。</li>
+		<li><strong>系统，只读。</strong> <code translate="no">/usr</code>, <code translate="no">/etc</code>, <code translate="no">/opt</code> ，以及上面那份列表里的其余部分。</li>
+		<li><strong>别的一切都被内核拒绝</strong>，而不是被某人写的一个检查拒绝。一个在授权范围之外一层的文件，返回的是 <code>Permission denied</code>，daimon 看到的是这个拒绝，而不是这个文件。</li>
+	</ul>
+	<p>有一个后果值得先知道，免得它看起来像个坏掉的工具。当整个被授权的文件夹都可写时，这个文件夹 <em>本身</em> 却没法被列出来，也没法直接在里面新建一个文件，因为 Landlock 没法只授权一个目录、又扣下它的一部分，所以是一个一个地授权它的子项。往下一层的任何东西都正常工作。</p>
+
+	<h3 id="s21">命名的本地套接字，永远被拒绝</h3>
+	<p>不管别的方面被允许什么，一条命令都没法建一个 unix 套接字。这会牺牲掉一个走套接字文件的本地数据库、 <code translate="no">docker</code>、任何要用 X11 的东西，以及 <code translate="no">ssh-agent</code>. <code translate="no">socketpair</code>——一次构建用来和自己的子进程说话的配对套接字——不受影响，所以 <code translate="no">cargo build</code> 不受影响。</p>
+	<p>在 Landlock ABI 9（Linux 7.1）以下，这个隔离舱完全不管连接一个套接字文件这件事。我们实测过：围栏生效、网络被拒绝的情况下，给桌面的会话总线发一条消息，就能启动一个从没被围住的进程，读到一个围栏本该拒绝的文件。这是一条走出隔离舱的路，不是边缘上的一丝渗漏，所以它被无条件关闭。</p>
+
+	<h3 id="s22"><code translate="no">ssh</code> 不管用</h3>
+	<p>有两个各自独立的原因拦着它，只堵上其中一个都不够。 <code translate="no">~/.ssh</code> 不在这个隔离舱里，因为每一条路径都是从你授权的那个文件夹搭出来的。而代理套接字是一个 unix 套接字，已经在上面被拒绝了。 <code translate="no">git push</code> 走 SSH 会同时因为这两个原因失败。授权你的主目录能消掉第一个原因，但也消掉了这个隔离舱大半的意义，这就是安装脚本拒绝它的原因。</p>
+	<p>只碰这个仓库本身的操作是能用的。 <code translate="no">git status</code>, <code translate="no">diff</code>, <code translate="no">log</code>, <code translate="no">add</code> ，以及一次本地的 <code translate="no">commit</code> ，都是你授权的文件夹里普普通通的文件操作。</p>
+
+	<h3 id="s23">一个工具链需要一次授权</h3>
+	<p>打开一个 diamond，工作区面板会显示一个 <strong>工具链</strong> 行，带五个按钮： <span class="ui" translate="no">Rust</span>, <span class="ui" translate="no">Node</span>, <span class="ui" translate="no">Python</span>, <span class="ui" translate="no">Go</span>, <span class="ui" translate="no">Git</span>。这五个默认都是关的，所以 <code translate="no">cargo</code> 会被拒绝，直到你打开 Rust，因为 <code translate="no">~/.cargo</code> 和 <code translate="no">~/.rustup</code> 都在你的主目录下面，而你的主目录不在这个隔离舱里。</p>
+	<p><span class="ui" translate="no">Git</span> 是个例外。 <code translate="no">git</code> 已经在那份只读的基础清单里，这就是为什么 <code translate="no">git status</code> 和一次本地提交不用任何授权就能用。这个按钮加的是你自己的配置，只读——也就是你的名字、你的邮箱，以及 <code translate="no">core.hooksPath</code> 点名的那些钩子。你存的密码，还有 <code translate="no">~/.ssh</code> ，都被点名拒绝。</p>
+	<p>这里有三件事是刻意为之的。</p>
+	<ul>
+		<li><strong>它绝不会从被要求运行的东西反推出来。</strong> 一个会为了迁就被请求的二进制文件而自己变宽的隔离舱，就成了一个由模型选择的隔离舱，而这整套安排，靠的正是这个隔离舱是模型没法选择的东西。 <code translate="no">cargo</code> 够得到，是因为你授权了 Rust 工具链，没有别的原因。</li>
+		<li><strong>它是按 diamond 来的。</strong> 一次授权属于一个 diamond，和那个 diamond 持有的文件夹一样，也用同样的方式收回。</li>
+		<li><strong>它是一份点了名的目录短清单，从来不是主目录。</strong> Rust 授权 <code translate="no">~/.cargo/bin</code> 和 <code translate="no">~/.rustup</code> 只读，把注册表和缓存改成可写，因为 cargo 不写这些就没法构建，而且它会 <em>拒绝访问</em> <code translate="no">~/.cargo/credentials.toml</code>——你的 crates.io 令牌写在这里。另外四个工具链都是照同样的方式画出来的，各自都漏掉了那个装着秘密的文件。</li>
+	</ul>
+
+	<h3 id="s24">网络</h3>
+	<p>一条命令能不能碰到网络，取决于权限模式，也取决于这一轮已经读过什么。在 <strong>每次都问</strong> 和 <strong>有防护</strong>档下，只要一轮吸收过外部内容——它读过或抓取过的一个网页、一封邮件、更早一条命令的输出——那一轮里的每一条命令都会在 TCP 被拒绝的情况下运行，daimon 会被告知原因，所以它报出的是原因，而不是一个坏掉的项目。在 <strong>跳过</strong> 档下，不管这一轮读过什么，网络都保留着。</p>
+	<div class="note"><strong>一条命令自己的输出，算作来自外部的内容。</strong> 所以一轮里的第一条命令有网络，同一轮里的第二条就没有。一份构建日志，是构建跑起来的那个东西写的，所以这是刻意的，也常常让人意外。读你自己工作区里一个普通文件不算，你邮件里的一条消息算。如果有什么需要抓取，就在一条新消息里去要，这样会开始新的一轮。</div>
+	<p>被拒绝的是 TCP 的绑定和连接，这正是 Landlock 管的范围。UDP 和原始套接字不在它管辖之内。</p>
+
+	<h3 id="s25">32 位二进制文件会被直接杀掉</h3>
+	<p>系统调用过滤器是为一种架构编译的，会先检查架构，因为兼容 ABI 给调用编号的方式不一样，一个用错表建出来的过滤器，会拒绝错的东西，还报告成功。所以一个声明了不同架构的程序，会被直接杀掉，而不是被过滤。这是往安全的方向失败，一次要 exec 一个 32 位帮手的构建，在这里不会管用。</p>
+
+	<h2 id="s26">权限的阶梯</h2>
+	<p>一项设置，三个档级，衡量的轴是 Daimond <em>不问就做</em>的是什么。它默认在「有防护」档。</p>
+
+	<div class="cards">
+		<div class="card">
+			<h3 id="s27">每次都问</h3>
+			<p>每一条命令在运行之前都会先给你看，提示里带着命令本身和所在目录；每场对话里，Daimond 碰网络之前也会问一次。想盯着每一步，或者这台机器上有你输不起的东西，就选这一档。</p>
+		</div>
+		<div class="card">
+			<h3 id="s28">有防护</h3>
+			<p>默认档。命令不问就运行。一轮如果读过外部内容，就会失去网络，Daimond 在那场对话里，去模型选的任何地方之前，会问一次。答一次是，就管到这场对话结束为止；一场新聊天，或者一个全新的 daimon，会重新问。一个异常长的地址，永远会单独拿来给你过目。</p>
+		</div>
+		<div class="card">
+			<h3 id="s29">跳过</h3>
+			<p>什么都不问，除了一个没人看着的智能体想在页面上点一下——这个永远会先给你过目。命令直接运行，页面直接抓取，一次需要网络的构建，在这一轮的第十条命令上和第一条命令上，网络一样都在。刻意选一次，之后就安静下来。</p>
+		</div>
+	</div>
+
+	<p><strong>任何一档都不会改变可能做到什么。</strong> 一条命令运行所在的隔离舱、它下面的系统调用过滤器、一个 diamond 被限定的文件夹范围、一个被授权的工具链、给外部内容打的标记，以及日志，这三档全都一样。一档改变的，只是你会被问到什么。</p>
+	<p>这一档是聊天标题栏里、模型旁边的一个词，因为一个你得自己记住的模式，就是一个你迟早会弄错的模式。点它可以改，或者按 <kbd>Ctrl</kbd> <kbd>K</kbd> (<kbd>Cmd</kbd> <kbd>K</kbd> （Mac 上是 Cmd K），然后打这一档的名字。</p>
+
+	<h2 id="s30">非常规系统</h2>
+	<p>这个隔离舱是用一份固定的绝对路径清单搭出来的，这份清单决定了一台给定的机器能不能用。先在你的机器上运行 <code translate="no">--report</code> ，再假设是哪种情况，不管是哪个方向。</p>
+
+	<h3 id="s31">不会管用</h3>
+	<ul>
+		<li><strong>NixOS 和 Guix。</strong> 程序住在 <code translate="no">/nix/store</code> 或者 <code translate="no">/gnu/store</code>，两者都没被授权，而 <code translate="no">/usr/bin</code> 里几乎什么都没有。一个光秃秃的名字，经 <code translate="no">PATH</code> 解析出来的，是一个在隔离舱之外的 store 路径，命令会被点名拒绝。这个应用目前没法把它拓宽。</li>
+		<li><strong>一个没有 Landlock 的内核。</strong> 意思是低于 Linux 5.13，或者编译时被去掉了，或者不在生效的 LSM 列表里，或者被一个加固补丁移除了。hand 会报告 <code translate="no">fence:none</code> ，Daimond 会拒绝每一条命令，而不是运行一条没有围栏的。检查一下 <code translate="no">landlock</code> 有没有出现在 <code translate="no">/sys/kernel/security/lsm</code>.</li>
+		<li><strong>一种既不是 x86-64 也不是 aarch64 的架构。</strong> 过滤器的系统调用编号是按架构分别写出来的，没有第三份表。hand 不会去猜一份，所以没有过滤器；没有过滤器，就没有命令能运行。</li>
+	</ul>
+
+	<h3 id="s32">部分管用</h3>
+	<ul>
+		<li><strong>Linux 5.13 到 6.6。</strong> 文件被围住了，但 Landlock 在 Linux 6.7 之前没有网络规则，所以一条本该在网络被扣住的情况下运行的命令，会被直接拒绝，并附一句话说明，而不是带着它本该失去的网络运行。「跳过」档能用，「有防护」档在这一轮读到什么之前也能用。</li>
+		<li><strong>Linux 上的 Homebrew、Flatpak 和 Snap。</strong> 无论是 <code translate="no">/home/linuxbrew/.linuxbrew</code>、Flatpak 的目录树，还是 <code translate="no">/snap</code> ，没有一个被授权，所以那样装的程序会被拒绝，而你的发行版放在 <code translate="no">/usr</code> 下面的东西，在同一个会话里够得到。这说的是一条命令运行的程序。一个用那种方式打包的浏览器是另一个问题，而且是致命的，讲在 <a href="#s2">开始之前</a>.</li>
+		<li><strong>已知的那两个之外的版本管理器。</strong> 工具链路径是一份固定的清单，而 <code translate="no">~/.nvm</code> 和 <code translate="no">~/.pyenv</code> 是清单上仅有的两个版本管理器。 <code translate="no">asdf</code>, <code translate="no">mise</code>, <code translate="no">volta</code>, <code translate="no">rbenv</code> 和 <code translate="no">sdkman</code> ，装在 <code translate="no">~/.asdf</code>, <code translate="no">~/.local/share</code>, <code translate="no">~/.volta</code>, <code translate="no">~/.rbenv</code> 和 <code translate="no">~/.sdkman</code>下面，而这些一个都没被授权。Python 的授权涵盖 <code translate="no">~/.local/bin</code> 和 <code translate="no">~/.local/lib</code> ，并且刻意漏掉了 <code translate="no">~/.local/share</code>.</li>
+	</ul>
+
+	<h3 id="s33">没问题</h3>
+	<ul>
+		<li><strong>Debian、Ubuntu、Fedora、Arch、openSUSE，</strong> 用它们自己的包，内核新到足以让 <code translate="no">--report</code> 点出一个 Landlock ABI 版本。</li>
+		<li><strong>musl 和 Alpine</strong>，条件一样的话。</li>
+		<li><strong>BusyBox 的 coreutils。</strong> 一个多用途二进制文件，靠自己被调用时用的名字来决定自己是什么，而 hand 会 <em>以被请求的那个名字</em>，去 exec 解析出来的那个二进制文件，所以它仍然知道自己该扮演哪个工具。</li>
+	</ul>
+
+	<h2 id="s34">还有一个终端</h2>
+	<p> <span class="ui">终端</span> 面板会在同一台机器上、在同一个隔离舱里，打开一个真正的终端，你直接往里面打字。它存在是因为有些程序会向一个终端提问，而不是向标准输入。按键不会被写进日志。它需要配对一个 hand，和这里的其他一切一样。</p>
+
+	<h2 id="s35">记录了什么</h2>
+	<p>每一次运行——被要求做什么、被拒绝了什么、返回了什么——都会追加进 <code translate="no">~/.local/share/daimond/hand/journal/</code>里的日志，是你能读的普通 JSON 行。这些条目用哈希链在一起，而且日志坐落在每一个隔离舱之外，因为 hand 拒绝一道能碰到它的围栏。所以一条命令没法改写自己的记录，也没有哪个权限模式能把这个关掉。</p>
+
+	<h2 id="s36">什么没有被保护</h2>
+	<p><code translate="no">--report</code> 会打印两份列表，第二份才是运行它的理由。里面的每一条，都是在一个正在运行的内核上实测出来的，不是推断的，而且会随你的内核变化，所以要读你自己那份。这些条目大致分成几组。</p>
+	<ul>
+		<li><strong>打听一个文件，不等于打开它。</strong> <code translate="no">stat</code> 仍然会在隔离舱之外回答，所以大小、时间戳、所有者，以及一个文件在不在，都是可读的。隔离舱管的是打开这件事。</li>
+		<li><strong>系统这份授权很宽。</strong> <code translate="no">/usr</code>, <code translate="no">/etc</code> 和 <code translate="no">/opt</code> 只读，是让一条命令能运行起来的前提，但这也意味着 <code translate="no">/etc</code> 下面每一个所有人可读的文件都能被读到，这台机器上的每一个工具都能被执行。 <code translate="no">/etc</code> 尤其装着大量能识别出这台机器的细节。</li>
+		<li><strong>这个过滤器是一份拒绝名单。</strong> 它从一条命令身上拿掉点了名的能力，不是一个系统调用沙盒。任何它没点名的东西都是允许的，包括一个未来内核才会加进去的调用。</li>
+		<li><strong>一个过滤器没法跟踪一个指针。</strong> 它看到的是一个系统调用编号和六个寄存器，从不是它们指向的东西，所以它看不到路径、地址或文件名。一个被拒绝的 <code translate="no">chmod</code> ，因此在任何地方都被拒绝；一个被允许的，在任何地方都被允许。 <code translate="no">chmod 777</code> 被拒绝，而 <code translate="no">chmod 644</code> 对一把私钥不会被拒绝，因为 644 不加写权限，而且这正是 cargo 解包任何东西时设的模式。</li>
+		<li><strong>时间戳在任何地方都没有被保护。</strong> 一条命令可以改写这台机器上任何部分、任何文件的时间，因为 cargo 不这样做就没法从注册表解包一个 crate。这是「让构建能跑起来」牺牲掉覆盖范围最明显的地方。</li>
+		<li><strong>已经打开的东西，和已经建好的名字。</strong> 一个在隔离舱生效之前就打开的文件描述符，会继续工作；一个更早建好的硬链接，是同一个文件的第二个名字。一条命令没法把一个硬链接建进一个被拒绝的子树，也没法撤销一个已经存在的。</li>
+		<li><strong>「只能在你的文件夹里」唯一的例外，</strong> 就是上面说的那个私有临时目录。</li>
+	</ul>
+
+	<h2 id="s37">收回它</h2>
+	<p>有三样不同的东西可以被收回，三样都会用到。</p>
+	<ul>
+		<li><strong>撤回权限。</strong> 点工具栏里的 Daimond Hands 图标。 <em>在这台电脑上运行命令</em> ，会和你批准过的网站并排列在那里，带一个撤销按钮。撤销会立刻停下当时正在运行的任何东西，不会等当前的构建跑完。</li>
+		<li><strong>把文件夹拿走。</strong> 删掉 <code translate="no">root.txt</code>。之后不管浏览器说什么，hand 都会完全拒绝服务，而且拒绝的话是一整句。</li>
+		<li><strong>移除注册信息。</strong> 运行 <code translate="no">hand/install/uninstall.sh</code>，或者带上 <code translate="no">--dir DIR</code> ，只针对一个目录。这会删掉安装脚本写的那个文件，所以浏览器不能再启动 hand 了。这个二进制文件还留在原地，因为这个脚本本来就不是它放在那里的。</li>
+	</ul>
+
+	<div class="next">
+		<a href="email-web-files.html">&larr; 文件、邮件和网页</a>
+		<a href="runner.html">下一步：帮手和轮次的运行位置 &rarr;</a>
+	</div>
+</main>
+<footer class="site-foot">
+	<span>Daimond 在你的浏览器中运行。这里的任何内容都不会发送给我们。</span>
+	<nav aria-label="指南页面">
+		<a href="index.html">从这里开始</a>
+		<a href="interface.html">界面</a>
+		<a href="chats-and-diamonds.html">对话和 diamond</a>
+		<a href="capps.html">diamond 的页面</a>
+		<a href="email-web-files.html">文件、邮件和网页</a>
+		<a href="machine-operations.html">你的电脑</a>
+		<a href="runner.html">帮手和轮次的运行位置</a>
+		<a href="sync.html">不止一台设备</a>
+		<a href="social.html">社交和提案</a>
+		<a href="models.html">模型和提供商</a>
+		<a href="spending.html">花费</a>
+		<a href="accounts.html">安全和修复</a>
+	</nav>
+</footer>
+</body>
+</html>

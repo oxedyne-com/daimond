@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
-<title>Safety &amp; fixes &mdash; Daimond guide</title>
+<title>安全和修复 &mdash; Daimond 指南</title>
 <link rel="icon" type="image/svg+xml" href="../../assets/daimond_mark.svg">
 <link rel="stylesheet" href="../../css/variables.css">
 <link rel="stylesheet" href="../../css/guide.css">
@@ -24,12 +24,12 @@
 			<a href="index.html">从这里开始</a>
 			<a href="interface.html">界面</a>
 			<a href="chats-and-diamonds.html">对话和 diamond</a>
-			<a href="../capps.html">diamond 的页面</a>
+			<a href="capps.html">diamond 的页面</a>
 			<a href="email-web-files.html">文件、邮件和网页</a>
-			<a href="../machine-operations.html">你的电脑</a>
-			<a href="../runner.html">帮手和轮次的运行位置</a>
+			<a href="machine-operations.html">你的电脑</a>
+			<a href="runner.html">帮手和轮次的运行位置</a>
 			<a href="sync.html">不止一台设备</a>
-			<a href="../social.html">社交和提案</a>
+			<a href="social.html">社交和提案</a>
 			<a href="models.html">模型和提供商</a>
 			<a href="spending.html">花费</a>
 			<a href="accounts.html" aria-current="page">安全和修复</a>
@@ -39,74 +39,74 @@
 
 <main>
 	<h1>安全和修复</h1>
-	<p class="lede">What your passphrase protects, what Daimond asks before it acts, what stays private, and what to do when something is wrong.</p>
+	<p class="lede">你的密码短语护住什么、Daimond 动手之前会问什么、什么留在私下，以及出问题时该怎么办。</p>
 
 	<h2 id="s1">你的账户就是一句密码短语</h2>
-	<p>On first run Daimond generates a passphrase of eight random words and shows it once. It is the key to everything stored here. It is not sent anywhere, it is not stored in the clear, and nobody can reset it.</p>
-	<p>It unlocks everything encrypted here, meaning your provider keys, your mail credentials and the account's own signing key, and the key that seals the sync parcel is derived from it too. The signing key is what signs you in for credits. Forget the passphrase and the encrypted data is gone.</p>
-	<p>Once a passphrase is in place you can add a <strong>通行密钥</strong> for a faster unlock, by face, fingerprint or security key. It unseals the passphrase for you instead of replacing it, so the passphrase stays the fallback. The unlock happens on the device, and the credits service only ever sees a public key.</p>
+	<p>首次运行时，Daimond 生成一句由八个随机词组成的密码短语，只显示一次。它是这里存的一切的钥匙。它不会被发送到任何地方，不会以明文保存，也没有人能帮你重置它。</p>
+	<p>它解锁这里加密的一切：你的提供商密钥、你的邮箱凭据，还有账户自己的签名密钥；封住同步包裹的那把钥匙也是从它派生出来的。签名密钥就是取用额度时用来登录的那个身份。忘了密码短语，加密数据就没了。</p>
+	<p>有了密码短语之后，你可以加一个 <strong>通行密钥</strong> ，靠一张脸、一枚指纹或一把安全密钥，更快地解锁。它替你把密码短语解封，而不是取代它，所以密码短语仍然是那条退路。解锁发生在设备上，额度服务从头到尾只看到一把公钥。</p>
 
 	<h2 id="s2">账户的那些控制项</h2>
-	<p>Your name is at the top of the account area, at the foot of the rail.</p>
+	<p>你的名字在账户区域的顶部，也就是侧栏的底部。</p>
 	<ul>
-		<li><span class="ui">Change name&hellip;</span> 和 <span class="ui">Change passphrase&hellip;</span> do what they say, and the second re-wraps your encrypted data under the new passphrase.</li>
-		<li><span class="ui">Add a passkey&hellip;</span></li>
-		<li><span class="ui">导出备份</span> writes your chats, diamonds, workspace files and your account key to a file you keep.</li>
-		<li><span class="ui">Import a backup&hellip;</span> adopts the backup's account where this browser holds none, and where one is already here it brings back only the work.</li>
-		<li><span class="ui">退出登录</span> locks the app. Your data stays on the device, encrypted.</li>
-		<li><span class="ui">Forget this identity&hellip;</span> removes the account and its encrypted data from this browser for good.</li>
+		<li><span class="ui">改名字&hellip;</span> 和 <span class="ui">改密码短语&hellip;</span> ，做的就是字面的事，第二个会用新密码短语重新包一遍你的加密数据。</li>
+		<li><span class="ui">添加通行密钥&hellip;</span></li>
+		<li><span class="ui">导出备份</span> ，把你的聊天、diamond、工作区文件和账户密钥写成一个由你保管的文件。</li>
+		<li><span class="ui">导入备份&hellip;</span> ，在这个浏览器还没有账户时，采用备份里的账户；已经有账户时，只找回其中的工作内容。</li>
+		<li><span class="ui">退出登录</span> ，锁上应用。你的数据留在设备上，是加密的。</li>
+		<li><span class="ui">忘记这个身份&hellip;</span> ，把这个账户和它的加密数据从这个浏览器里永久移除。</li>
 	</ul>
-	<p>Beside them, <span class="ui">同步</span> turns this device's sync on or off, and <span class="ui">诊断</span> shows and copies the app's own log, which holds event names and a clock, with no keys, no message text and nothing from your files. That log is what to paste into a report.</p>
+	<p>在它们旁边， <span class="ui">同步</span> 开或关这台设备的同步，而 <span class="ui">诊断</span> 显示并复制应用自己的日志——里面是事件名和时间戳，没有密钥，没有消息正文，也没有你文件里的任何东西。这份日志就是提缺陷报告时该贴的内容。</p>
 
-	<h2 id="s3">Moving your account</h2>
-	<p>Your account is a signing key held in this browser. <strong>The passphrase does not recreate it</strong>, and only decrypts the copy stored here. So the same passphrase in a fresh browser starts a separate account, with its own credits and no Pro.</p>
-	<p>The key itself has to travel, and three things carry it.</p>
+	<h2 id="s3">迁移你的账户</h2>
+	<p>你的账户就是一把存在这个浏览器里的签名密钥。 <strong>密码短语不会重新造出它</strong>，只能解开存在这里的那一份。所以同一句密码短语，在一个全新的浏览器里开出的是另一个账户，有它自己的额度，没有 Pro。</p>
+	<p>这把密钥本身得能搬家，有三样东西能带着它走。</p>
 	<ul>
-		<li><span class="ui">关联另一台设备</span>, which shows a pairing code.</li>
-		<li>A passkey, which stands a new device up in one gesture.</li>
-		<li><span class="ui">导出备份</span>, whose file holds the key for <span class="ui">Import a backup&hellip;</span> to adopt in a browser that has none.</li>
+		<li><span class="ui">关联另一台设备</span>，会显示一个配对码。</li>
+		<li>一个通行密钥，一个动作就能把新设备立起来。</li>
+		<li><span class="ui">导出备份</span>，它的文件里存着这把密钥，供 <span class="ui">导入备份&hellip;</span> 在一个还没有账户的浏览器里采用。</li>
 	</ul>
-	<p>Do one of them before you retire a browser. Once its storage is gone, with no backup taken and no other device linked, the key is gone with it.</p>
-	<p>A backup holds your work in the clear and your key wrapped under your passphrase. Importing the file alone makes nobody you. Whoever holds the file <em>和</em> the passphrase holds the account, which is why the two should not travel together.</p>
+	<p>退役一台浏览器之前，先做其中一件。它的存储一旦没了，又没做过备份、也没连过别的设备，这把密钥就跟着没了。</p>
+	<p>备份里，你的工作是明文的，你的密钥则被密码短语包着。光导入这个文件，谁也成不了你。谁握着这个文件 <em>和</em> 密码短语，谁就握有这个账户，这正是为什么这两样不该一起传播。</p>
 
 	<h2 id="s4">一个浏览器，不止一个人用</h2>
-	<p>One browser can hold several accounts, each with its own chats, keys, credits and files. <span class="ui">＋添加另一个账户</span> makes a second, and the row above it switches between them. Switching locks the first and forgets its keys before opening the other. Nobody sees another account's data.</p>
+	<p>一个浏览器可以装下好几个账户，每个都有自己的聊天、密钥、额度和文件。 <span class="ui">＋添加另一个账户</span> ，新建第二个；它上面那一行在它们之间切换。切换会先锁上第一个、忘掉它的密钥，再打开另一个。谁也看不到别的账户的数据。</p>
 
-	<h2 id="s5">What Daimond asks before it acts</h2>
-	<p>A chip beside the model says what Daimond does without asking. It has three settings, and they apply to the whole app.</p>
+	<h2 id="s5">Daimond 动手之前会问什么</h2>
+	<p>模型旁边的一个标签，说明 Daimond 不问就会做什么。它有三档设置，作用于整个应用。</p>
 	<ul>
-		<li><span class="ui">Ask every time</span> reads <em>Every command is put to you first. So is reaching the web, once in each conversation.</em></li>
-		<li><span class="ui">Guarded</span> reads <em>Commands run. Once something written by somebody else has been read, Daimond asks before reaching out.</em> It is the default.</li>
-		<li><span class="ui">Bypass</span> reads <em>Nothing is asked, whatever has been read.</em></li>
+		<li><span class="ui">每次都问</span> 写着 <em>每一条命令都先给你过目。碰网络也一样，每场对话问一次。</em></li>
+		<li><span class="ui">有防护</span> 写着 <em>命令直接跑。一旦读过别人写的东西，Daimond 在碰网络之前会先问。</em> 这是默认档。</li>
+		<li><span class="ui">跳过</span> 写着 <em>不管读过什么，什么都不问。</em></li>
 	</ul>
-	<p>Under Guarded, once a turn has read something written by somebody else, such as a web page, an email or a build log, anything it then wants to fetch or send is put to you first, and a command in that turn runs with the network refused. That is the case where text you did not write could talk Daimond into carrying your work somewhere.</p>
-	<p>Switching to <span class="ui">Bypass</span> asks once, and says what you give up. No mode moves the fence a command runs inside, a diamond's folders, the system-call filter, or the log you can read afterwards.</p>
-	<p>An agent working on its own is asked about separately. Clicking something on a page can spend money or submit a form, and none of that can be taken back, so a click by an unattended agent is put to you even under looser settings.</p>
-	<p>Money has its own brakes, and they are on <a href="spending.html">花费</a>.</p>
+	<p>在「有防护」档下，一轮只要读过别人写的东西——一个网页、一封邮件或一份构建日志——它之后想抓取或发送的任何东西都会先给你过目，那一轮里的命令则会在网络被拒绝的情况下运行。这正是针对不是你写的文字，有可能说动 Daimond 把你的工作带去别处的情形。</p>
+	<p>切到 <span class="ui">跳过</span> ，会问一次，并说清楚你放弃了什么。任何一档都不会挪动命令运行所在的那道围栏、diamond 的文件夹、系统调用过滤器，或者事后你能读到的那份日志。</p>
+	<p>一个独自干活的智能体，是另外被问的。在页面上点一下可能会花钱或者提交一个表单，这些都收不回来，所以哪怕设置更松，一个没人看着的智能体要点一下，也会先给你过目。</p>
+	<p>钱有它自己的刹车，在 <a href="spending.html">花费</a>.</p>
 
 	<h2 id="s6">哪些东西留在本地</h2>
-	<p>Your passphrase, provider keys, mail credentials, chats, diamonds and files live in this browser and are not sent to us. What we hold is money and ciphertext, meaning your balance and licences and, for sync, a parcel we cannot open.</p>
-	<p>Your messages reach a model provider directly with your own key, or through our metered service when you spend credits. Fetching a page, and syncing or sending mail, pass through the gateway. So the honest claim is that with your own key nothing of your work reaches us in the clear, and that you can watch only ciphertext leave for our servers.</p>
-	<p>You need not take that on trust. The code running in this browser is public, it builds byte for byte from that source, and every build served is sealed into a published record. <span class="ui">Verify this build</span>, in the About dialog, checks the one you are running. Open your browser's network panel and watch where the calls go.</p>
-	<p>The protection has limits. A passphrase guards against someone opening the browser's developer tools, and not against a compromised browser, a malicious extension or a keylogger, which defeat any in-browser scheme. And what a remote server does inside itself cannot be proven from outside, which is why it is the client that is opened to you.</p>
+	<p>你的密码短语、提供商密钥、邮箱凭据、聊天、diamond 和文件都在这个浏览器里，不会发给我们。我们手上是钱和密文：你的余额和授权，以及为了同步而存的一个我们打不开的包裹。</p>
+	<p>用你自己的密钥时，你的消息直接到模型提供商那里；花额度时，经由我们的计量服务。抓一个页面，以及同步或发邮件，都要穿过网关。所以老实的说法是：用你自己的密钥，你的工作没有一点以明文到达我们这里，而你能看到的，只有密文流向我们的服务器。</p>
+	<p>这话不必你单凭信任接受。跑在这个浏览器里的代码是公开的，它逐字节地从那份源码构建出来，而每一个提供服务的构建都被封进一份公开的记录里。 <span class="ui">校验这个构建</span>，在关于对话框里，校验的就是你正在运行的这一个。打开浏览器的网络面板，看请求都去了哪里。</p>
+	<p>这层保护是有边界的。密码短语挡得住打开浏览器开发者工具的人，却挡不住被攻陷的浏览器、恶意扩展或键盘记录器，这些能击穿任何在浏览器里做的方案。而一台远程服务器内部在做什么，从外面无法证明——这正是为什么被打开给你看的是客户端。</p>
 
-	<h2 id="s7">When something goes wrong</h2>
+	<h2 id="s7">出问题时</h2>
 	<ul>
-		<li><strong><em>Connect a model to start.</em></strong> No model is connected. Add one, or add a key for the provider already listed.</li>
-		<li><strong>Your second device is empty.</strong> You made a second account instead of pairing. Pair it, or import a backup. See <a href="sync.html">不止一台设备</a>.</li>
-		<li><strong>A shared folder is not arriving.</strong> It is over the 200&nbsp;MiB a shared folder may weigh. A banner names it. Share a smaller folder.</li>
-		<li><strong><em>Not valid JSON. Nothing saved.</em></strong> A hand edit to a diamond's memory left the file unreadable, so nothing was written. Fix the text or close without saving.</li>
-		<li><strong>Nothing runs on its own.</strong> The light is red because the action is stopped. Press play on the light beside it.</li>
-		<li><strong><em>Terminal needs the Daimond Hand on this computer.</em></strong> <span class="ui">Install&hellip;</span> beside it goes to <a href="../machine-operations.html">你的电脑</a>.</li>
-		<li><strong>A turn is sitting on another device.</strong> That machine is probably waiting for a folder permission on its own screen. Go and look, or press <span class="ui">Run here</span>.</li>
-		<li><strong>A panel has disappeared.</strong> It is unpinned, and still there. The <span class="ui">⋯</span> chip opens the gallery, and <kbd>Ctrl</kbd> <kbd>K</kbd> reaches any panel by name.</li>
-		<li><strong>Everything is locked after a reload.</strong> The key is held in memory and nowhere else, unless this device is set to stay unlocked across reloads. Enter the passphrase, or use a passkey.</li>
+		<li><strong><em>连接一个模型才能开始。</em></strong> 没有连接任何模型。添加一个，或者给已经列出的那家提供商添一把密钥。</li>
+		<li><strong>你的第二台设备是空的。</strong> 你开出了第二个账户，而不是配对。把它配对起来，或者导入一份备份。参见 <a href="sync.html">不止一台设备</a>.</li>
+		<li><strong>一个共享的文件夹没有到达。</strong> 它超过了一个共享文件夹可以有的 200&nbsp;MiB。一条横幅会点出它的名字。换一个更小的文件夹来共享。</li>
+		<li><strong><em>不是合法的 JSON。什么都没保存。</em></strong> 手动编辑一个 diamond 的记忆，把文件改得读不出来了，所以什么都没写入。把文字改对，或者不保存直接关掉。</li>
+		<li><strong>没有什么会自己运行。</strong> 指示灯是红的，因为这个动作被停住了。按一下它旁边指示灯上的播放。</li>
+		<li><strong><em>终端需要这台电脑上的 Daimond Hand。</em></strong> <span class="ui">安装&hellip;</span> ，在它旁边，去往 <a href="machine-operations.html">你的电脑</a>.</li>
+		<li><strong>一轮正卡在另一台设备上。</strong> 那台机器大概正在它自己的屏幕上等一个文件夹权限。过去看看，或者按 <span class="ui">在这里运行</span>.</li>
+		<li><strong>一个面板不见了。</strong> 它只是没有固定，但还在。 <span class="ui">⋯</span> 标签打开面板总览，而 <kbd>Ctrl</kbd> <kbd>K</kbd> 可以按名字找到任何面板。</li>
+		<li><strong>重新加载之后，一切都锁上了。</strong> 密钥只放在内存里，别的地方都没有——除非这台设备被设成跨重新加载保持解锁。输入密码短语，或者用一个通行密钥。</li>
 	</ul>
-	<p>Still stuck? The rail holds a diamond called <strong>Daimond Help</strong>, which answers from this build and this guide and says which page an answer came from. What it cannot answer belongs on <a href="../social.html">社交</a>, with the three things a note needs.</p>
+	<p>还是卡住？侧栏里有一个 diamond，叫 <strong>Daimond Help</strong>，它依据这个构建和这份指南来回答，并说明答案来自哪一页。它答不上来的，该去 <a href="social.html">社交</a>，带上一条留言需要的那三样东西。</p>
 
 	<div class="next">
-		<a href="spending.html">&larr; Spending</a>
-		<a href="index.html">Back to the start &rarr;</a>
+		<a href="spending.html">&larr; 花费</a>
+		<a href="index.html">回到起点 &rarr;</a>
 	</div>
 </main>
 
@@ -116,12 +116,12 @@
 		<a href="index.html">从这里开始</a>
 		<a href="interface.html">界面</a>
 		<a href="chats-and-diamonds.html">对话和 diamond</a>
-		<a href="../capps.html">diamond 的页面</a>
+		<a href="capps.html">diamond 的页面</a>
 		<a href="email-web-files.html">文件、邮件和网页</a>
-		<a href="../machine-operations.html">你的电脑</a>
-		<a href="../runner.html">帮手和轮次的运行位置</a>
+		<a href="machine-operations.html">你的电脑</a>
+		<a href="runner.html">帮手和轮次的运行位置</a>
 		<a href="sync.html">不止一台设备</a>
-		<a href="../social.html">社交和提案</a>
+		<a href="social.html">社交和提案</a>
 		<a href="models.html">模型和提供商</a>
 		<a href="spending.html">花费</a>
 		<a href="accounts.html">安全和修复</a>

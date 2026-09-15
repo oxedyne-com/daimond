@@ -188,7 +188,7 @@ try {
 				// a model with "max" in its name, and that is not a view control.
 				named: [...card.querySelectorAll('button')]
 					.map(b => (b.textContent || '').trim())
-					.filter(w => /^(simple|max)$/i.test(w)),
+					.filter(w => /^(simple|detailed)$/i.test(w)),
 				closer: !!card.querySelector('.tile-dlg-title .tile-dlg-done'),
 			};
 		});

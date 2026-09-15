@@ -215,15 +215,30 @@
 		} catch (e) { return true; }
 	}
 
+	/// Is Daimond's one modal standing open right now? `busy()` usually says yes
+	/// too -- the turn that raised it is still running -- but not always: a
+	/// dialog `dialog()` opened for a reason of its own (an unlock prompt, the
+	/// spend governor) can stand with no chat turn generating underneath it, and a
+	/// reload would yank it from under whoever is mid-answer. Read straight off
+	/// the DOM (`data-kind` on the modal root, see `dialog()` in daimond.js)
+	/// rather than through a registered seam, because this must stay true for
+	/// every kind of dialog the app will ever add, not only the ones that
+	/// remembered to tell the updater about themselves.
+	function dialogOpen() {
+		try { return !!document.querySelector('.modal.dlg'); } catch (e) { return false; }
+	}
+
 	/// Everything an automatic reload must not land on top of. `busy()` already
 	/// answers for the chat turn, the daimon's steer, a fold and a live worker (see
-	/// `DaimondCore.busy`, which asks all four); this adds the two it cannot know
-	/// about -- what the user has typed and not sent, and a sync round in flight.
+	/// `DaimondCore.busy`, which asks all four); this adds the ones it cannot know
+	/// about -- an open dialog, what the user has typed and not sent, and a sync
+	/// round in flight.
 	///
 	/// The debug feed is deliberately NOT a condition. Its outbox is persisted
 	/// (`loadOutbox` at boot) and it flushes its console buffer on `pagehide`, so a
 	/// reload costs it nothing and waiting on it would only hold updates back.
 	function safeNow() {
+		if (dialogOpen()) return false;
 		if (busy()) return false;
 		if (composerHasUnsavedText()) return false;
 		return syncQuiet();
@@ -353,11 +368,18 @@
 		var last = 0;
 		try { last = parseInt(localStorage.getItem(SKEY), 10) || 0; } catch (e) {}
 		if (now - last < GAP_MS) return 'gap';
+		if (dialogOpen()) return 'dialog';
 		if (busy()) return 'turn';
 		if (composerHasUnsavedText()) return 'typed';
 		if (!syncQuiet()) return 'sync:' + syncBusyWith();
 		try {
-			if (window.DaimondIdentity && DaimondIdentity.isUnlocked() && !idleUnlocked()) return 'lease';
+			// Split from one bare 'lease': `idleUnlocked` refuses for two different
+			// reasons (see its own header) and a reader benefits from knowing which --
+			// "a phone" is something the person holding it understands at a glance,
+			// where "lease" means this device is running a turn FOR another one.
+			if (window.DaimondIdentity && DaimondIdentity.isUnlocked() && !idleUnlocked()) {
+				return mobileDevice() ? 'phone' : 'lease';
+			}
 		} catch (e) {}
 		if (!document.hidden && quietFor() < QUIESCE_MS) return 'foreground-active';
 		return '';   // safeNow() && quietEnough() && softAllowed() all pass; should not be reached
@@ -557,7 +579,12 @@
 		}[state] || '';
 		chip.title = label;
 		chip.setAttribute('aria-label', label);
-		chip.hidden = false;
+		// TOP-05: a disabled-looking chip drawn at every boot, titled "up to
+		// date", was a button that did nothing most of the time. Current is
+		// the one state with nothing to click FOR, so it is the one state the
+		// chip is not drawn in; every other state is something to click or to
+		// notice, and stays visible.
+		chip.hidden = (state === 'current');
 	}
 
 	/// The update state, reflected on the chip. Stale (the gateway refuses this tab) is the loudest
@@ -641,6 +668,24 @@
 
 	function hideBanner() { if (banner) banner.el.hidden = true; }
 
+	/// One of `whyUnsafe`'s codes, in the words the owner asked for on his own
+	/// screen -- the SAME reason the debug feed already gets (see `heldWhy` and
+	/// `noteHeld`), just said in front of a person instead of buried in
+	/// telemetry. 2026-09-15: a Publish card stood open a full day and the banner
+	/// that eventually appeared said only "available", never why the automatic
+	/// path had not taken it -- this is the fix. Only the reasons a person can DO
+	/// something about get a word; the rest (`boot`, `deferred`, `gap`,
+	/// `foreground-active`, `lease`) are the automatic path's own bookkeeping and
+	/// would tell him nothing he could act on, so they say nothing at all.
+	function heldReason(why) {
+		if (why === 'dialog') return t('update.held_dialog');
+		if (why === 'turn')   return t('update.held_turn');
+		if (why === 'typed')  return t('update.held_typed');
+		if (why && why.indexOf('sync:') === 0) return t('update.held_sync');
+		if (why === 'phone')  return t('update.held_phone');
+		return '';
+	}
+
 	/// Show, hide or relabel the banner to match the chip's state, so the loud line
 	/// and the quiet mark never disagree about whether an update is waiting. Shown
 	/// for `ready` (a new build the foreground tab is holding) and `stale` (the
@@ -683,10 +728,20 @@
 		// a desktop that HAS given up gets it too -- there the button is, in truth,
 		// the only way this build is ever taken.
 		var readyDesktopWatching = state === 'ready' && !gaveUp && !mobileDevice();
-		banner.msg.textContent = state === 'stuck'
+		var msg = state === 'stuck'
 			? t('update.stuck')
 			: (state === 'stale' ? t('update.stale')
 				: (readyDesktopWatching ? t('update.available_auto') : t('update.available')));
+		// WHY the automatic path never took it, one short clause -- only for `ready`,
+		// where "Reload" is standing in for a path that was actually refused
+		// something. `heldWhy` is `whyUnsafe`'s own last reading (see `noteHeld`) and
+		// is null once the tab is genuinely safe, so this says nothing on a `ready`
+		// reached any other way.
+		if (state === 'ready') {
+			var reason = heldReason(heldWhy);
+			if (reason) msg = msg + ' — ' + reason;
+		}
+		banner.msg.textContent = msg;
 		// The stuck button offers the guarded cache-clear reload -- the one worth
 		// trying -- while the message names the sure escape (close and reopen).
 		banner.go.textContent = state === 'stuck' ? t('update.stuck_reload') : t('update.reload');

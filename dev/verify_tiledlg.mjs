@@ -222,6 +222,85 @@ try {
 	check(dlg && dlg.hasDelete && dlg.deleteInFoot && dlg.footLast,
 		'Delete is at the foot of the dialog', dlg && JSON.stringify(dlg.labels));
 
+	// ── 2b. THE ORDER, and what is behind the fold (CRY-15) ──
+	//
+	// The dialog used to open on the pause transport and reach the NAME — the
+	// one field anybody edits — below three model pulldowns and a paragraph
+	// about templates. The claim now is an order, so the check is an order:
+	// what is above the fold, in sequence, and what is behind it.
+	//
+	// Read by the dialog's OWN WORDS rather than by English ones. Every heading
+	// here is an i18n key, and a check written against "Colour" would be a check
+	// that only holds in one locale — and would go red the day the word is
+	// shortened rather than the day the order breaks.
+	const order = await page.evaluate(() => {
+		const t = (k) => (window.DaimondI18n ? DaimondI18n.t(k) : k);
+		const card = document.querySelector('.tile-dlg-card');
+		if (!card) return null;
+		const adv = card.querySelector('details.tile-dlg-adv');
+		const txt = (e) => (e.textContent || '').trim();
+		// Direct children only, so a heading inside the disclosure is not counted
+		// as being above it.
+		const heads = [...card.children].filter(e => e.classList.contains('tile-dlg-head')).map(txt);
+		const advHeads = adv
+			? [...adv.querySelectorAll('.tile-dlg-head')].filter(e => e !== adv.firstElementChild).map(txt)
+			: [];
+		const foot = card.querySelector('.tile-dlg-foot');
+		const del  = card.querySelector('.tile-dlg-delete');
+		return {
+			heads, advHeads,
+			words: {
+				name: t('tile.dlg_name'), models: t('tile.dlg_models'),
+				colour: t('tile.dlg_colour'), running: t('tile.dlg_running'),
+				workers: t('tile.dlg_workers'), advanced: t('tile.dlg_advanced'),
+				trig: t('trig.section'), tmpl: t('tmpl.section'),
+			},
+			hasAdv:    !!adv,
+			advSummary: adv ? txt(adv.firstElementChild) : '',
+			// The property is "collapsed by DEFAULT", so it is the attribute that
+			// is asked about, not whatever the last run left in a browser.
+			advOpen:   !!(adv && adv.open),
+			// Last of the card, and after the disclosure: Delete is the end of the
+			// dialog, not a thing you meet on the way to the settings.
+			advBeforeFoot: !!(adv && foot
+				&& (adv.compareDocumentPosition(foot) & Node.DOCUMENT_POSITION_FOLLOWING)),
+			footLast:  !!(foot && card.lastElementChild === foot),
+			// PLAIN, not the red pill it wore. A Diamond deleted here goes to the
+			// trash, so the loudest control in the dialog was the most reversible
+			// thing in it.
+			delDanger: !!(del && del.classList.contains('danger')),
+		};
+	});
+	const seq = (list, want) => {
+		// `want` in order and with nothing of `want` between them — a subsequence
+		// check would pass on Colour, Name, Models, Colour.
+		const at = want.map(w => list.indexOf(w));
+		return at.every(i => i >= 0) && at.every((v, i) => i === 0 || v > at[i - 1]);
+	};
+	const W = order && order.words;
+	check(order && seq(order.heads, [W.name, W.models, W.colour]),
+		'the Diamond dialog reads Name → Model → Colour, in that order',
+		order && JSON.stringify(order.heads));
+	check(order && order.hasAdv && order.advSummary === W.advanced,
+		'and the rest is behind one Advanced disclosure',
+		order && JSON.stringify({ has: order.hasAdv, summary: order.advSummary }));
+	check(order && order.hasAdv && !order.advOpen,
+		'which is COLLAPSED when the dialog opens — it is what you look up, not what you meet',
+		order && String(order.advOpen));
+	check(order && seq(order.advHeads, [W.running, W.workers, W.trig, W.tmpl]),
+		'and holds running, the helper models, the triggered actions and the template',
+		order && JSON.stringify(order.advHeads));
+	check(order && order.advBeforeFoot && order.footLast,
+		'Delete is LAST — after the disclosure, at the foot of the card',
+		order && JSON.stringify({ advBeforeFoot: order.advBeforeFoot, footLast: order.footLast }));
+	check(order && !order.delDanger,
+		'and it is drawn plain, not as a red pill: it goes to the trash and comes back',
+		order && String(order.delDanger));
+	// Proved red: the old order really is refused. If `seq` passed the shape the
+	// dialog had before this lane, every check above would be decoration.
+	check(!seq([W.running, W.colour, W.models], [W.name, W.models, W.colour]),
+		'self-test: the order this replaced — Running, Colour, Models with no Name — is refused');
+
 	// ── The colours, driven rather than described ──
 	//
 	// A picker that paints the tile and writes nothing is the failure worth
@@ -359,6 +438,145 @@ try {
 	});
 	check(inTrash.includes('Alpha'), 'IT IS IN THE TRASH, which is why Delete no longer has to ask',
 		JSON.stringify(inTrash));
+
+	// ── 2c. THE CHAT DIALOG READS THE SAME WAY (CRY-15/CHAT-10) ──
+	//
+	// The two dialogs are one control on two objects, so the cog has to mean the
+	// same thing whichever tile it is on. A chat has no changeable models — notes2
+	// fixes those at creation — so its sequence is Name → Colour, and the rest of
+	// the skeleton is identical: a collapsed Advanced, Delete last.
+	await openCog(page, '#session-list');
+	await snap(page, 'chat-dialog', '.tile-dlg-card');
+	const chatDlg = await page.evaluate(() => {
+		const t = (k) => (window.DaimondI18n ? DaimondI18n.t(k) : k);
+		const card = document.querySelector('.tile-dlg-card');
+		if (!card) return null;
+		const adv  = card.querySelector('details.tile-dlg-adv');
+		const foot = card.querySelector('.tile-dlg-foot');
+		const txt  = (e) => (e.textContent || '').trim();
+		const nameIn = card.querySelector('.tile-dlg-name-input');
+		return {
+			heads: [...card.children].filter(e => e.classList.contains('tile-dlg-head')).map(txt),
+			advHeads: adv
+				? [...adv.querySelectorAll('.tile-dlg-head')].filter(e => e !== adv.firstElementChild).map(txt)
+				: [],
+			words: { name: t('tile.dlg_name'), colour: t('tile.dlg_colour'),
+				running: t('tile.dlg_running'), hint: t('tile.dlg_name_hint') },
+			hasAdv:   !!adv,
+			advOpen:  !!(adv && adv.open),
+			footLast: !!(foot && card.lastElementChild === foot),
+			// CHAT-10: the placeholder ASKS for the thing. It used to explain the
+			// empty case — "Unnamed: the rail shows the time" — which is a sentence
+			// about what happens if you do nothing, in the one place a reader is
+			// looking to be told what to do.
+			hint:     nameIn ? (nameIn.getAttribute('placeholder') || '') : null,
+			// And the field is not a model pulldown in disguise: a chat's cog
+			// offers no model at all.
+			models:   card.querySelectorAll('select.tile-model').length,
+		};
+	});
+	const CW = chatDlg && chatDlg.words;
+	check(chatDlg && seq(chatDlg.heads, [CW.name, CW.colour]),
+		'the chat dialog reads Name → Colour, the same skeleton as the Diamond’s',
+		chatDlg && JSON.stringify(chatDlg.heads));
+	check(chatDlg && chatDlg.hasAdv && !chatDlg.advOpen && chatDlg.advHeads.includes(CW.running),
+		'with running behind the same collapsed Advanced',
+		chatDlg && JSON.stringify({ has: chatDlg.hasAdv, open: chatDlg.advOpen, heads: chatDlg.advHeads }));
+	check(chatDlg && chatDlg.footLast, 'and Delete last');
+	check(chatDlg && chatDlg.models === 0,
+		'and no model pulldown — a chat’s models are fixed at creation',
+		chatDlg && String(chatDlg.models));
+	check(chatDlg && chatDlg.hint === CW.hint && /\?|[Nn]ame|名|이름|命名/.test(chatDlg.hint),
+		'the name field ASKS for a name rather than explaining the empty case',
+		chatDlg && JSON.stringify(chatDlg.hint));
+
+	// ── 2d. KEEP SAYS THE NUMBER (CHAT-11) ──
+	//
+	// "Chats expire" told a reader a fact the page was already holding and made
+	// them guess the figure. The policy is `DaimondPolicy`, the gateway can move
+	// it, and the sentence has to quote whatever it is now — so the check reads
+	// the policy and looks for THAT number, not for a three.
+	const keepSays = await page.evaluate(async () => {
+		const btn = document.querySelector('.tile-dlg-card .tile-keep');
+		if (!btn) return { err: 'no Keep button in the chat dialog' };
+		btn.click();
+		await new Promise(r => setTimeout(r, 900));
+		// NOT the tile dialog, which wears `.dlg-card` as well and is still
+		// standing underneath: taking the first visible one found that and read
+		// an empty message out of it.
+		const card = [...document.querySelectorAll('.modal.dlg .dlg-card')]
+			.filter(c => c.getClientRects().length && !c.classList.contains('tile-dlg-card'))[0];
+		const msg = card ? (card.querySelector('.dlg-msg') || {}).textContent || '' : '';
+		let days = null;
+		try { days = window.DaimondPolicy.days().expire; } catch (e) { /* no module */ }
+		// Put it back the way it was found.
+		const cancel = card && card.querySelector('.dlg-cancel');
+		if (cancel) cancel.click();
+		return { msg: msg.trim(), days };
+	});
+	check(!keepSays.err && keepSays.days != null && !!keepSays.msg,
+		'the Keep dialog opens and the expiry policy is readable', JSON.stringify(keepSays));
+	check(!keepSays.err && new RegExp('\\b' + keepSays.days + '\\b').test(keepSays.msg),
+		'and its body carries the real number of days a chat lives',
+		JSON.stringify(keepSays.msg));
+	check(!keepSays.err && !/expire|expires/i.test(keepSays.msg),
+		'and no longer says "expire" with no figure beside it', JSON.stringify(keepSays.msg));
+	await page.evaluate(() => {
+		const x = document.querySelector('.tile-dlg-card .tile-dlg-x');
+		if (x) x.click();
+	});
+	await page.waitForTimeout(300);
+
+	// ── 2e. THE NEW DIAMOND DIALOG ASKS ONE QUESTION (CRY-14) ──
+	//
+	// It opened pre-filled with "diamond-0007" and asked for two models. The name
+	// nobody chose is the name everybody accepts, and the second model is a
+	// decision about a fan-out that has not happened yet — so the field is empty
+	// with the question in it, the helper model is behind the disclosure, and a
+	// blank name still gets the sequential default when Create is pressed.
+	await page.evaluate(() => document.getElementById('new-diamond-btn').click());
+	await page.waitForSelector('.dlg-card', { timeout: 8000 });
+	await page.waitForTimeout(200);
+	const nd = await page.evaluate(() => {
+		const card = [...document.querySelectorAll('.dlg-card')].find(c => c.getClientRects().length);
+		if (!card) return null;
+		const adv  = card.querySelector('details.dlg-adv');
+		const name = card.querySelector('input.dlg-input');
+		const all  = [...card.querySelectorAll('select.dlg-select')];
+		return {
+			nameValue:  name ? name.value : null,
+			namePlace:  name ? (name.getAttribute('placeholder') || '') : null,
+			hasAdv:     !!adv,
+			advOpen:    !!(adv && adv.open),
+			// The property is WHERE each pulldown is, not how many there are.
+			outside:    all.filter(sl => !(adv && adv.contains(sl))).length,
+			inside:     adv ? all.filter(sl => adv.contains(sl)).length : 0,
+		};
+	});
+	check(nd && nd.nameValue === '',
+		'the New diamond dialog opens on an EMPTY name field',
+		nd && JSON.stringify(nd.nameValue));
+	check(nd && /\?|？/.test(nd.namePlace || ''),
+		'whose placeholder asks what the diamond is for',
+		nd && JSON.stringify(nd.namePlace));
+	check(nd && nd.hasAdv && !nd.advOpen,
+		'and carries a collapsed Advanced', nd && JSON.stringify({ has: nd.hasAdv, open: nd.advOpen }));
+	check(nd && nd.outside === 1 && nd.inside === 1,
+		'with ONE model pulldown in the form and the helper model behind the disclosure',
+		nd && JSON.stringify({ outside: nd.outside, inside: nd.inside }));
+
+	// A blank name still makes a Diamond, and it is the sequential one.
+	const wouldTake = await page.evaluate(() => window.DaimondCore.nextDiamondLabel());
+	await page.evaluate(() => {
+		const card = [...document.querySelectorAll('.dlg-card')].find(c => c.getClientRects().length);
+		card.querySelector('.dlg-ok').click();
+	});
+	await page.waitForTimeout(2000);
+	const madeBlank = await page.evaluate(() =>
+		[...document.querySelectorAll('#diamond-list .session-box-name')].map(n => n.textContent.trim()));
+	check(madeBlank.includes(wouldTake),
+		'and Create with the field left blank still names it with the next number',
+		`${wouldTake} in ${JSON.stringify(madeBlank)}`);
 	await page.evaluate(() => window.DaimondPanels.show('trash'));
 	await page.waitForTimeout(700);
 	await snap(page, 'delete-trash', '#panel-trash');
@@ -434,9 +652,15 @@ try {
 
 	await page.reload({ waitUntil: 'domcontentloaded' });
 	await page.waitForTimeout(1200);
-	// Back through the gate.
-	await page.waitForSelector('#id-primary', { timeout: 15000 }).catch(() => {});
-	if (await page.$('#id-pass')) {
+	// Back through the gate -- IF the gate is there. `#id-pass` sits in the markup
+	// of every boot, inside a modal that starts `display:none`, so its PRESENCE
+	// says nothing about whether this reload is being asked to unlock. Filling on
+	// presence waits thirty seconds for a hidden field and dies on a timeout that
+	// names the field rather than the reason. Wait for the modal to be SHOWN, and
+	// carry on quietly when it never is.
+	const gated = await page.waitForSelector('#identity-modal', { state: 'visible', timeout: 15000 })
+		.then(() => true, () => false);
+	if (gated) {
 		await page.fill('#id-pass', 'testpass1234');
 		await page.evaluate(() => document.getElementById('id-primary').click());
 		await page.waitForSelector('#identity-modal', { state: 'hidden', timeout: 15000 }).catch(() => {});

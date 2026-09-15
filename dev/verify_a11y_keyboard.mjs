@@ -122,7 +122,12 @@ const NO_FOCUS_RING = (sel) => {
 		'backgroundColor', 'borderColor', 'borderWidth', 'borderStyle', 'color',
 		'textDecorationLine', 'filter'];
 	const snap = (e) => { const cs = getComputedStyle(e); return P.map((p) => cs[p]).join('|'); };
-	const vis = (e) => { const r = e.getBoundingClientRect(); return r.width > 0 && r.height > 0; };
+	// `visibility` too, not only the box (TOP-05): a `visibility: hidden`
+	// control (the update chip, while current) keeps its rect but cannot
+	// truly take focus, so `.focus()` on it is a silent no-op that this
+	// check would otherwise read as "the ring never changes".
+	const vis = (e) => { const r = e.getBoundingClientRect();
+		return r.width > 0 && r.height > 0 && getComputedStyle(e).visibility !== 'hidden'; };
 	const sig = (e) => e.tagName.toLowerCase()
 		+ (typeof e.className === 'string' && e.className.trim()
 			? '.' + e.className.trim().split(/\s+/).join('.') : '') + (e.id ? '#' + e.id : '');
@@ -182,7 +187,13 @@ const COUNT_IN = ({ sel, focusSel }) => {
 
 /// The first `n` visible focusables, in document order.
 const DOM_ORDER = ({ sel, n }) => [...document.querySelectorAll(sel)]
-	.filter((e) => { const r = e.getBoundingClientRect(); return r.width > 0 && r.height > 0; })
+	// `getBoundingClientRect` alone missed one real case (TOP-05): the update
+	// chip is `visibility: hidden` while current (css/updater.css), which
+	// keeps its box (a laid-out width, so nothing else in the row jumps) but
+	// takes it OUT of the tab order same as `display: none` would -- real Tab
+	// correctly skips it and this filter, without the visibility check, did not.
+	.filter((e) => { const r = e.getBoundingClientRect();
+		return r.width > 0 && r.height > 0 && getComputedStyle(e).visibility !== 'hidden'; })
 	.slice(0, n)
 	.map((e) => e.tagName + (e.id ? '#' + e.id : '')
 		+ (typeof e.className === 'string' && e.className.trim()
@@ -431,11 +442,17 @@ await page.setViewportSize({ width: 1500, height: 950 });
 await page.waitForTimeout(450);
 
 // ── 8. The command palette ──────────────────────────────────────────
+// Guide is behind Help since TOP-03, so reaching it is two presses, not one.
+await press(page, '#help-btn');
+await page.waitForTimeout(250);
 await press(page, '#guide-btn');
 await page.waitForTimeout(300);
 await page.keyboard.press('Escape');
 await page.waitForTimeout(250);
-await page.evaluate(() => document.getElementById('guide-btn').focus());
+// Some ordinary button holds the focus, not a text field -- `help-btn`
+// stands in for `guide-btn` here, which Escape (closing Help behind the
+// guide's own click) has already left unfocusable.
+await page.evaluate(() => document.getElementById('help-btn').focus());
 await page.keyboard.press('Control+k');
 await page.waitForSelector('#palette', { state: 'visible', timeout: 8000 });
 await page.waitForTimeout(300);

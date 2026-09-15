@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
-<title>Start here &mdash; Daimond guide</title>
+<title>ここから始める &mdash; Daimond ユーザーガイド</title>
 <link rel="icon" type="image/svg+xml" href="../../assets/daimond_mark.svg">
 <link rel="stylesheet" href="../../css/variables.css">
 <link rel="stylesheet" href="../../css/guide.css">
@@ -24,12 +24,12 @@
 			<a href="index.html" aria-current="page">ここから始める</a>
 			<a href="interface.html">インターフェース</a>
 			<a href="chats-and-diamonds.html">チャットと diamond</a>
-			<a href="../capps.html">diamond のページ</a>
+			<a href="capps.html">diamond のページ</a>
 			<a href="email-web-files.html">ファイル、メール、ウェブ</a>
-			<a href="../machine-operations.html">あなたのコンピューター</a>
-			<a href="../runner.html">ヘルパーとターンの実行場所</a>
+			<a href="machine-operations.html">あなたのコンピューター</a>
+			<a href="runner.html">ヘルパーとターンの実行場所</a>
 			<a href="sync.html">複数の端末</a>
-			<a href="../social.html">ソーシャルと提案</a>
+			<a href="social.html">ソーシャルと提案</a>
 			<a href="models.html">モデルとプロバイダー</a>
 			<a href="spending.html">支出</a>
 			<a href="accounts.html">安全性と対処</a>
@@ -39,102 +39,102 @@
 
 <main>
 	<h1>ここから始める</h1>
-	<p class="lede">Daimond is an AI workspace that runs in your browser, and your chats, keys and files stay on this device. You connect a model, talk to it, and keep what works.</p>
+	<p class="lede">Daimond は、あなたのブラウザの中で動く AI の作業場です。チャットも、鍵も、ファイルもこの端末に留まります。モデルをつなぎ、それと話し、うまくいったものを残します。</p>
 
-	<p>No server holds your account. Whatever leaves the browser is named on the page of this guide that covers it. The main ones are a message to the model provider you connected, a page fetched for you, a mailbox synced, and an encrypted parcel sent to a device you linked.</p>
+	<p>あなたのアカウントを持つサーバーはありません。ブラウザから出ていくものは何であれ、それを扱うこのガイドのページで名指しされています。主なものは、つないだモデルプロバイダーへのメッセージ、あなたのために取得したページ、同期されたメールボックス、そしてリンクした端末へ送られる暗号化された荷物です。</p>
 
 	<figure class="shot">
-		<img alt="Daimond on first run. The rail on the left lists diamonds and Chats; the centre shows three numbered steps, the first of them a Connect a model button." src="../img/first-run.png" loading="lazy">
-		<figcaption>First run. The centre lists three steps, and the one you are at is drawn as the button.</figcaption>
+		<img alt="初回起動時の Daimond。左のレールに diamond とチャットが並び、中央には番号の付いた三つの手順が表示され、最初は「モデルをつなぐ」ボタンです。" src="../img/first-run.png" loading="lazy">
+		<figcaption>初回起動。中央に三つの手順が並び、いまいる手順がボタンとして描かれます。</figcaption>
 	</figure>
 
-	<h2 id="s1">Three steps to a first answer</h2>
+	<h2 id="s1">最初の答えまでの三つの手順</h2>
 	<ol class="steps">
 		<li>
-			<h3 id="s2">Make your account</h3>
-			<p>Type a name, and Daimond generates a passphrase of eight random words and shows it once. <strong>Write it down.</strong> It unlocks everything stored here, and nobody can reset it. Then choose <span class="ui">アカウントを作成</span>.</p>
-			<p>A password manager is a fine place for it, since eight random words are hard to guess.</p>
-			<p>Under the button, <span class="ui">Have a passcode or a pairing code?</span> opens two other routes, redeeming a passcode for an account with credits and pairing this browser to a device you already use. If you already have Daimond elsewhere, pair instead of creating, or you will end up with two accounts.</p>
+			<h3 id="s2">アカウントを作る</h3>
+			<p>名前を入力すると、Daimond が八つの無作為な単語から成るパスフレーズを作り、一度だけ表示します。 <strong>書き留めてください。</strong> それが、ここに保存されるすべての鍵になり、誰にもリセットできません。そのあと <span class="ui">アカウントを作成</span>.</p>
+			<p>パスワード管理ソフトは、控えておくのによい場所です。無作為な八つの単語は、推測しにくいからです。</p>
+			<p>ボタンの下にある <span class="ui">「パスコードやペアリングコードをお持ちですか？」</span> は、ほかの二つの道を開きます。パスコードを引き換えてクレジット付きのアカウントを得る道と、このブラウザをすでに使っている端末とペアリングする道です。ほかの場所ですでに Daimond を使っているなら、作る代わりにペアリングしてください。さもないと、アカウントが二つできてしまいます。</p>
 		</li>
 		<li>
-			<h3 id="s3">Connect a model</h3>
-			<p>A daimon thinks with a model, so connect one. Press <span class="ui">Connect a model</span> in the centre, or open the model row at the foot of the rail. There are three routes.</p>
+			<h3 id="s3">モデルをつなぐ</h3>
+			<p>daimon はモデルで考えるので、一つつないでください。押すのは <span class="ui">モデルをつなぐ</span> を中央で押すか、レール下部のモデルの行を開いてください。道は三つあります。</p>
 			<ul>
-				<li><strong>Your own key.</strong> Paste a key from Anthropic, Fireworks AI, OpenRouter, Together AI, Groq or DeepInfra. Your messages go straight to that provider, and we charge nothing.</li>
-				<li><strong>Credits.</strong> Daimond runs the model for you and draws on a prepaid balance, so there is no provider account to manage. While testing is closed, accounts with credits are given out by passcode.</li>
-				<li><strong>A model of your own.</strong>  <span class="ui">Custom</span> and give the address of any service that speaks the same chat API, including one running on your own machine.</li>
+				<li><strong>自分の鍵。</strong> Anthropic、Fireworks AI、OpenRouter、Together AI、Groq、DeepInfra のいずれかの鍵を貼り付けます。あなたのメッセージはそのプロバイダーへ直接届き、こちらは何も請求しません。</li>
+				<li><strong>クレジット。</strong> Daimond があなたの代わりにモデルを動かし、前払いの残高から引きます。管理するプロバイダーのアカウントはありません。テストが非公開のあいだ、クレジット付きのアカウントはパスコードで配られます。</li>
+				<li><strong>自分だけのモデル。</strong>  <span class="ui">カスタム</span> を選び、同じチャット API を話すサービスのアドレスを与えます。自分のマシンで動いているものも含めてです。</li>
 			</ul>
-			<p><a href="models.html">モデルとプロバイダー</a> has the detail.</p>
+			<p><a href="models.html">モデルとプロバイダー</a> に詳しく書かれています。</p>
 		</li>
 		<li>
-			<h3 id="s4">Say hello</h3>
-			<p>Press <span class="ui">Say hello</span>, or the <span class="ui">+</span> — 隣は <span class="ui">チャット</span>, then type in the box and send. The answer arrives in the centre panel, where you will spend most of your time.</p>
-			<p>The chat takes its title from your first line, so a rail of chats reads as a list of subjects.</p>
+			<h3 id="s4">こんにちはと言う</h3>
+			<p>押すのは <span class="ui">こんにちはと言う</span>、または <span class="ui">+</span> — 隣は <span class="ui">チャット</span>。それから欄に入力して送ってください。答えは中央パネルに届きます。そこが、あなたがいちばん長く過ごす場所になります。</p>
+			<p>チャットの題名は最初の行から取られるので、チャットの並ぶレールは話題の一覧のように読めます。</p>
 		</li>
 	</ol>
 
-	<h2 id="s5">Then keep what works</h2>
-	<p>A chat is only a conversation. When one has worked something out, press <span class="ui">Keep</span> on its row in the rail and it becomes a <strong>diamond</strong>.</p>
-	<p>A diamond is a saved project with its own memory, page and files. Work inside it starts from what it already knows, so you stop re-explaining yourself. <a href="chats-and-diamonds.html">チャットと diamond</a> covers it.</p>
+	<h2 id="s5">そして、うまくいったものを残す</h2>
+	<p>チャットはただの会話です。何かが分かったら、レールのその行にある <span class="ui">保存</span> を押すと、そのチャットが変わる先が <strong>diamond</strong>.</p>
+	<p>diamond とは、自分専用の記憶とページとファイルを持つ、保存されたプロジェクトです。その中の作業は、すでに知っていることから始まるので、自分をあらためて説明し直す必要がなくなります。 <a href="chats-and-diamonds.html">チャットと diamond</a> が扱っています。</p>
 
-	<h2 id="s6">What this does that a chat window does not</h2>
+	<h2 id="s6">これが、チャットウィンドウにはできないこと</h2>
 	<ul>
-		<li><strong>It remembers per subject.</strong> A diamond carries what you worked out into every later turn, and you can read and edit that memory as a file.</li>
-		<li><strong>It works on real files.</strong> Point it at a folder and it edits the files in place, inside a fence you set.</li>
-		<li><strong>It shows the bill.</strong> Each turn is priced on this device as it is spent, from the provider's own figure.</li>
-		<li><strong>It can be checked.</strong> The code in this browser is public, builds byte for byte from source, and is sealed into a published record. <span class="ui">Verify this build</span> in the About dialog checks the one you are running.</li>
+		<li><strong>話題ごとに覚えている。</strong> diamond は、あなたが分かったことをその後のすべてのやり取りに運び、その記憶はファイルとして読んだり編集したりできます。</li>
+		<li><strong>本物のファイルの上で働く。</strong> フォルダーを指させば、その場でファイルを編集します。あなたが決めた柵の中でです。</li>
+		<li><strong>請求書を見せる。</strong> どのやり取りも、使ったその場でこの端末で値段が付きます。プロバイダー自身の数字をもとにです。</li>
+		<li><strong>確かめられる。</strong> このブラウザで動くコードは公開されていて、ソースからバイト単位で組み立てられ、公開された記録に封じられます。 <span class="ui">このビルドを検証</span> は、About のダイアログで、いま動いているものを確かめます。</li>
 	</ul>
 
-	<h2 id="s7">The four words this guide uses</h2>
+	<h2 id="s7">このガイドが使う四つの言葉</h2>
 	<ul>
-		<li><strong>diamond</strong>, a saved project with its own memory and page.</li>
-		<li><strong>daimon</strong>, the assistant that works inside a diamond.</li>
-		<li><strong>crystal</strong>, what a diamond knows, kept as a file you can read and edit.</li>
-		<li><strong>forge</strong>, the shared board where proposals about Daimond itself are filed, shown in the Improve panel.</li>
+		<li><strong>diamond</strong>。自分専用の記憶とページを持つ、保存されたプロジェクトです。</li>
+		<li><strong>daimon</strong>。diamond の中で働くアシスタントです。</li>
+		<li><strong>結晶</strong>。diamond が知っていることで、読んだり編集したりできるファイルとして保たれます。</li>
+		<li><strong>鍛冶場</strong>。Daimond 自身についての提案が集められる共有の掲示板で、改善パネルに表示されます。</li>
 	</ul>
 
-	<h2 id="s8">What is on screen</h2>
-	<p>画面は三つのゾーンでできています。左の <strong>レール</strong> on the left lists your diamonds and chats, and under a movable divider shows your account, one status line and what you have spent. The <strong>centre</strong> holds the conversation, with whatever you are reading beside it. The <strong>ドック</strong> on the right holds what you pull from, such as files, mail, running agents and spending.</p>
-	<p>Across the top, each panel has a chip that opens or closes it. A fresh account shows six, for diamonds, Chat, Web, Workspace, Tools and Spending, and the rest are one press away in the gallery behind the <span class="ui">⋯</span> chip. At the far right are the update chip, About, <span class="ui">Link another device</span>, this guide and <span class="ui">Settings</span>.</p>
-	<p><a href="interface.html">インターフェース</a> walks through all of it, and none of it is needed to get an answer.</p>
+	<h2 id="s8">画面にあるもの</h2>
+	<p>画面は三つのゾーンでできています。左の <strong>レール</strong> は、あなたの diamond とチャットを一覧にし、動かせる仕切りの下にアカウント、一行の状態、使った額を示します。 <strong>中央</strong> は会話を収め、その横に読んでいるものを置きます。 <strong>ドック</strong> は、あなたが引き出してくるもの——ファイル、メール、走っているエージェント、支出——を収めます。</p>
+	<p>上部には、それぞれのパネルを開閉するチップがあります。新しいアカウントには六つが表示されます。diamond、チャット、ウェブ、作業領域、ツール、支出のためのものです。残りは、 <span class="ui">⋯</span> チップの裏のギャラリーにひと押しであります。右端には、更新のチップ、About、 <span class="ui">ほかの端末をリンク</span>、このガイド、そして <span class="ui">設定</span>.</p>
+	<p><a href="interface.html">インターフェース</a> は、そのすべてをひととおり見せてくれますが、答えを得るのに必要なものは一つもありません。</p>
 
-	<h2 id="s9">One status line</h2>
+	<h2 id="s9">一行の状態</h2>
 	<figure class="shot narrow">
-		<img alt="The foot of the rail: an account row, a status line reading This device only, and a spend row showing today, this week and this month." src="../img/status.png" loading="lazy">
-		<figcaption>The foot of the rail. One line says where things stand, and <span class="ui">Details</span> opens the rest.</figcaption>
+		<img alt="レール下部。アカウントの行、「この端末のみ」と表示される状態の行、そして今日・今週・今月を示す支出の行。" src="../img/status.png" loading="lazy">
+		<figcaption>レール下部。一行が状況を伝え、 <span class="ui">詳細</span> が残りを開きます。</figcaption>
 	</figure>
-	<p>Above the spend row is one line, which reads <span class="ui">Locked</span>, <span class="ui">Not signed in</span>, <span class="ui">No model connected</span>, <span class="ui">Offline</span>, <span class="ui">Synced</span>、または <span class="ui">This device only</span>. It answers the question most worth asking at that moment, showing the most blocking state first.</p>
-	<p>Press it to open <span class="ui">Details</span>, which covers models, tools, permissions, storage, machine, sync and the build you are on. Those are diagnostics, so they stay behind the line until you want them.</p>
+	<p>支出の行の上には一行があり、そこには <span class="ui">ロック中</span>, <span class="ui">サインインなし</span>, <span class="ui">モデル未接続</span>, <span class="ui">オフライン</span>, <span class="ui">同期済み</span>、または <span class="ui">この端末のみ</span>のいずれかが表示されます。その瞬間もっとも尋ねる価値のある問いに答え、いちばん妨げになっている状態を先に示します。</p>
+	<p>押すと開くのが <span class="ui">詳細</span>です。モデル、ツール、権限、保存領域、機器、同期、そしていまのビルドを扱います。これらは診断情報なので、求めるまではその行の裏に留まります。</p>
 
 	<h2 id="s10">手元に置いておく</h2>
-	<p>Use your browser's own <em>インストール</em>、または <em>ホーム画面に追加</em> on a phone, and Daimond gets an icon and a window of its own. It is the same page and the same stored work, so nothing is copied and nothing moves.</p>
-	<p>Daimond updates itself, taking a new build at a quiet moment and not in the middle of a running turn or a half-typed message. The chip beside the top-bar buttons says when one is ready.</p>
+	<p>ブラウザ自身の <em>インストール</em>、または <em>ホーム画面に追加</em> （スマートフォンでは）を使うと、Daimond に専用のアイコンとウィンドウができます。同じページで、保存されている仕事もそのままです。何もコピーされず、何も移動しません。</p>
+	<p>Daimond は自分で更新します。新しいビルドを取り込むのは静かな瞬間で、動いているやり取りの途中や、書きかけのメッセージの最中ではありません。上部バーのボタンの横にあるチップが、準備できたときを教えてくれます。</p>
 
-	<h2 id="s11">Where to go next</h2>
+	<h2 id="s11">次にどこへ行くか</h2>
 	<div class="cards">
 		<div class="card">
 			<h3 id="s12"><a href="chats-and-diamonds.html">チャットと diamond</a></h3>
-			<p>Reading a long thread, keeping a chat, and what a diamond remembers.</p>
+			<p>長いスレッドを読むこと、チャットを保存すること、そして diamond が何を覚えているか。</p>
 		</div>
 		<div class="card">
 			<h3 id="s13"><a href="email-web-files.html">ファイル、メール、ウェブ</a></h3>
-			<p>Getting files in, sharing a folder to your other devices, mail, and reading a page.</p>
+			<p>ファイルを取り込むこと、フォルダーをほかの端末と共有すること、メール、そしてページを読むこと。</p>
 		</div>
 		<div class="card">
-			<h3 id="s14"><a href="../machine-operations.html">あなたのコンピューター</a></h3>
-			<p>Letting a daimon edit real folders and run real commands, inside a fence.</p>
+			<h3 id="s14"><a href="machine-operations.html">あなたのコンピューター</a></h3>
+			<p>daimon に、柵の中で本物のフォルダーを編集させ、本物のコマンドを実行させること。</p>
 		</div>
 		<div class="card">
-			<h3 id="s15"><a href="../runner.html">ヘルパーとターンの実行場所</a></h3>
-			<p>Agents dispatched to work in parallel, and naming the machine that picks turns up.</p>
+			<h3 id="s15"><a href="runner.html">ヘルパーとターンの実行場所</a></h3>
+			<p>並行して働くよう送り出されたエージェントと、やり取りを引き受ける機器に名前を付けること。</p>
 		</div>
 		<div class="card">
 			<h3 id="s16"><a href="accounts.html">安全性と対処</a></h3>
-			<p>What Daimond asks before it acts, what stays private, and what to do when something is wrong.</p>
+			<p>Daimond が動く前に何を尋ねるか、何が外に出ないか、そして何かがおかしいときにどうするか。</p>
 		</div>
 		<div class="card">
-			<h3 id="s17">Ask Daimond</h3>
-			<p>The rail holds a diamond called <strong>Daimond Help</strong>. It answers from this build and from this guide, and says which page an answer came from.</p>
+			<h3 id="s17">Daimond に尋ねる</h3>
+			<p>レールには、 <strong>Daimond Help</strong>という diamond があります。このビルドとこのガイドから答え、答えがどのページから来たかを教えてくれます。</p>
 		</div>
 	</div>
 
@@ -149,12 +149,12 @@
 		<a href="index.html">ここから始める</a>
 		<a href="interface.html">インターフェース</a>
 		<a href="chats-and-diamonds.html">チャットと diamond</a>
-		<a href="../capps.html">diamond のページ</a>
+		<a href="capps.html">diamond のページ</a>
 		<a href="email-web-files.html">ファイル、メール、ウェブ</a>
-		<a href="../machine-operations.html">あなたのコンピューター</a>
-		<a href="../runner.html">ヘルパーとターンの実行場所</a>
+		<a href="machine-operations.html">あなたのコンピューター</a>
+		<a href="runner.html">ヘルパーとターンの実行場所</a>
 		<a href="sync.html">複数の端末</a>
-		<a href="../social.html">ソーシャルと提案</a>
+		<a href="social.html">ソーシャルと提案</a>
 		<a href="models.html">モデルとプロバイダー</a>
 		<a href="spending.html">支出</a>
 		<a href="accounts.html">安全性と対処</a>

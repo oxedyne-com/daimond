@@ -31,7 +31,8 @@
 //      proves is that a card handed over by something in the middle is drawn
 //      NEW, is offered no way up, and is refused outright when it has been
 //      bent or when the fingerprint served beside it names another key.
-//   J  "Send my code" hands over exactly the bytes "Show my code" shows.
+//   J  "Send my code" hands over the LINK, with the string form under it, and
+//      the link on its own adds the person who pastes it.
 //
 // Needs the dev server only (DAIMOND_PORT). Deliberately no gateway.
 import fs from 'node:fs';
@@ -657,6 +658,12 @@ try {
 		!offered.some(w => /matched/i.test(w)), offered.join(' · '));
 
 	console.log(`\n── J. Send my code ${'─'.repeat(50)}`);
+	// BOTH OF WHAT "Show my code" SHOWS, because that is what the two surfaces
+	// must not drift apart on: the symbol is drawn from `cardUrl` and the
+	// textarea from `cardText`, and "Send my code" used to hand over the second
+	// alone. A string leaves the reader to find the app and press Add somebody;
+	// a link opens the app with the card already loaded, and for somebody who
+	// has never seen Daimond it opens Daimond.
 	const sent = await A.page.evaluate(async () => {
 		const grabbed = [];
 		if (!navigator.clipboard) Object.defineProperty(navigator, 'clipboard', { value: {}, configurable: true });
@@ -664,18 +671,44 @@ try {
 		Object.defineProperty(navigator, 'share', {
 			value: async (d) => { grabbed.push(['share', d.text]); }, configurable: true,
 		});
+		const url    = window.DaimondTrust.cardUrl();
 		const shown  = window.DaimondTrust.cardText();
 		const answer = await window.DaimondTrust.sendCard();
-		return { shown, answer, grabbed };
+		return { url, shown, answer, grabbed };
 	});
 	const copied = (sent.grabbed.find(g => g[0] === 'clipboard') || [])[1];
 	const shared = (sent.grabbed.find(g => g[0] === 'share') || [])[1];
-	check('"Send my code" copies exactly the string "Show my code" shows',
-		!!copied && copied === sent.shown,
-		copied ? copied.slice(0, 24) + '…' : 'nothing reached the clipboard');
-	check('the share sheet is offered the same bytes, and nothing wrapped round them',
-		shared === sent.shown);
-	check('and it answers with what it sent', sent.answer === sent.shown);
+	const lines  = String(copied || '').split('\n');
+	check('"Send my code" hands over the LINK the symbol carries',
+		!!copied && !!sent.url && lines[0] === sent.url,
+		copied ? lines[0].slice(0, 36) + '…' : 'nothing reached the clipboard');
+	check('with the string form on its own line under it',
+		lines.length === 2 && lines[1] === sent.shown,
+		`${lines.length} line(s)`);
+	check('the share sheet is offered the same two lines, and nothing wrapped round them',
+		shared === copied);
+	check('and it answers with what it sent', sent.answer === copied);
+	// WHAT THE RECIPIENT DOES WITH IT. The link alone, pasted by a device that
+	// has never met this key, adds the person -- which is the whole claim the
+	// link form makes over the string form. Read by S, a stranger to A.
+	const byLink = await S.page.evaluate(async (url) => {
+		const card = window.DaimondTrust.parse(url);
+		if (!card) return null;
+		await window.DaimondTrust.record(card, window.DaimondTrust.ROUTE.LINK);
+		await window.DaimondTrust.refresh();
+		const them = await window.DaimondTrust.person(card.key);
+		return { key: card.key, listed: !!them, route: them ? them.route : '' };
+	}, sent.url);
+	check('pasting the link alone adds the person', !!byLink && byLink.key === A.key
+		&& byLink.listed, byLink ? `route "${byLink.route}"` : 'the link did not parse');
+	// And the whole payload pasted at once is the same card, not two halves or a
+	// parse failure: somebody copying a message copies both lines.
+	const bothLines = await S.page.evaluate(async (payload) => {
+		const card = window.DaimondTrust.parse(payload);
+		return card ? card.key : '';
+	}, copied);
+	check('and so does the whole payload, pasted as it arrives',
+		bothLines === A.key, bothLines ? bothLines.slice(0, 16) + '…' : 'it did not parse');
 	const button = await A.page.evaluate(() => {
 		const host = document.getElementById('social-people-list');
 		return [...host.querySelectorAll('.trust-acts button')].map(b => b.textContent);

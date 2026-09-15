@@ -33,6 +33,12 @@ async function newDiamond(name) {
 }
 await newDiamond('Alpha');
 await newDiamond('Beta');
+// The only tile with a pause control on it is the Optimiser's -- Alpha and Beta
+// have no triggered action, so they draw none -- and since RAIL-07 the built-ins
+// sit in a `<details>` at the foot of the list that starts shut. Opened, or every
+// tile crop below is taken of a box the user cannot see.
+await p.evaluate(() => { const d = document.querySelector('.rail-builtin'); if (d) d.open = true; });
+await p.waitForTimeout(300);
 {
 	const drawer = p.locator('#admin-close');
 	if (await drawer.isVisible().catch(() => false)) { await drawer.click({ force: true }); await p.waitForTimeout(300); }

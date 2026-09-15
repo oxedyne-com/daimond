@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
-<title>Spending &mdash; Daimond guide</title>
+<title>花费 &mdash; Daimond 指南</title>
 <link rel="icon" type="image/svg+xml" href="../../assets/daimond_mark.svg">
 <link rel="stylesheet" href="../../css/variables.css">
 <link rel="stylesheet" href="../../css/guide.css">
@@ -24,12 +24,12 @@
 			<a href="index.html">从这里开始</a>
 			<a href="interface.html">界面</a>
 			<a href="chats-and-diamonds.html">对话和 diamond</a>
-			<a href="../capps.html">diamond 的页面</a>
+			<a href="capps.html">diamond 的页面</a>
 			<a href="email-web-files.html">文件、邮件和网页</a>
-			<a href="../machine-operations.html">你的电脑</a>
-			<a href="../runner.html">帮手和轮次的运行位置</a>
+			<a href="machine-operations.html">你的电脑</a>
+			<a href="runner.html">帮手和轮次的运行位置</a>
 			<a href="sync.html">不止一台设备</a>
-			<a href="../social.html">社交和提案</a>
+			<a href="social.html">社交和提案</a>
 			<a href="models.html">模型和提供商</a>
 			<a href="spending.html" aria-current="page">花费</a>
 			<a href="accounts.html">安全和修复</a>
@@ -39,35 +39,35 @@
 
 <main>
 	<h1>花费</h1>
-	<p class="lede">Model calls are priced on this device, as they happen, from the provider's own figure. The bill arrives in front of you as it is spent, wherever the provider reports a figure, and not later as a surprise.</p>
+	<p class="lede">模型调用的价格在这台设备上实时算出，按提供商自己给出的数字来。账单在花钱的当下就摆在你面前——只要提供商报出数字——而不是事后才给你一个意外。</p>
 
 	<h2 id="s1">两个钱袋，分开放</h2>
-	<p>The two pots are different accounts in different currencies, so they are shown as two tracks and not added together.</p>
+	<p>两个钱袋是两种不同币种的不同账户，所以显示成两条轨道，从不相加。</p>
 	<ul>
-		<li><strong>Inference</strong> covers the model calls billed to <span class="ui">your key</span>. They are recorded here per turn, and none of them passes through us.</li>
-		<li><strong>额度</strong> holds the prepaid balance, spent on the model when Daimond runs it for you and on what leaves the browser, <span class="ui">web, mail, sync</span>, and cloud storage.</li>
+		<li><strong>推理</strong> ，是记在 <span class="ui">你的密钥</span>上的模型调用。它们按轮记在这里，一律不经过我们。</li>
+		<li><strong>额度</strong> ，装着预付余额，花在 Daimond 替你跑模型，以及离开浏览器的那些事—— <span class="ui">网页、邮件、同步</span>——还有云端存储。</li>
 	</ul>
-	<p>The foot of the rail carries the running figures for today, this week and this month. Press one to open the <span class="ui">花费</span> panel, which shows a headline figure per pot, a daily graph, a breakdown by category, and a plain table of movements.</p>
+	<p>侧栏底部列着今天、本周和本月的实时数字。按其中一个，打开 <span class="ui">花费</span> 面板——它按每个钱袋给出一个头条数字、一张按天的图、一份按类别的拆解，还有一张朴素的流水表。</p>
 
-	<h2 id="s2">What stops a runaway</h2>
-	<p>A workspace that runs many agents at once can spend quickly, and the danger lies in a sudden rate more than in a large monthly total. Four measures catch the rate, and none asks you to set a limit in advance.</p>
+	<h2 id="s2">什么拦住一次失控</h2>
+	<p>一个同时跑着许多智能体的工作区，花钱可以很快，危险在于突然的速率，而不在于一个大的月度总数。四道措施拦的正是这个速率，没有一道要求你事先设一个上限。</p>
 	<ul>
-		<li><strong>A pace check before a fan-out.</strong> The cost of dispatching a batch is known before any of it starts. A batch that would run faster than your own recent pace is held, and Daimond asks once, with the number on the prompt. A few helpers of ordinary cost do not trip it, and a sudden fifty do.</li>
-		<li><strong>暂停和停止，永远在手边。</strong>  <span class="ui">智能体</span> panel pauses everything running, or stops it. The <span class="ui">全部</span> row at the top of the rail pauses the whole app. A paused thing refuses a turn before it starts, so a look costs nothing.</li>
-		<li><strong>每个智能体一把单独的密钥。</strong> Each helper running on credits spends its own freshly minted key, capped against what is left after its siblings' claims. No two share a key, so parallel helpers cannot race one allowance past its cap.</li>
-		<li><strong>一切都计量，按轮次，在你的设备上。</strong> Every call is priced and recorded as it happens, and the graphs are drawn from that record.</li>
+		<li><strong>扇出之前，先查一次节奏。</strong> 派发一批任务的花费，在它真正开始之前就已经知道。一批任务如果会比你近来的节奏更快地跑起来，就会被拦住，Daimond 只问一次，把数字摆在提示里。几个花费寻常的帮手不会触发它，突然来的五十个会。</li>
+		<li><strong>暂停和停止，永远在手边。</strong>  <span class="ui">智能体</span> 面板暂停所有正在运行的，或者干脆停掉。 <span class="ui">全部</span> 行，在侧栏顶部，暂停整个应用。被暂停的东西会在一轮开始之前就拒绝它，所以看一眼不花钱。</li>
+		<li><strong>每个智能体一把单独的密钥。</strong> 每个靠额度跑的帮手，花的是自己新签发的一把密钥，上限按扣掉同批兄弟已认领的部分之后剩下的量来定。没有两个共用一把密钥，所以并行的帮手没法把一份限额抢过它的上限。</li>
+		<li><strong>一切都计量，按轮次，在你的设备上。</strong> 每一次调用都当场计价、当场记录，图表就是从这份记录画出来的。</li>
 	</ul>
 
-	<h2 id="s3">A ceiling you set</h2>
-	<p>Settings carries a per-turn spend cap. A turn that reaches the round limit continues on its own, so this cap is the ceiling that holds a runaway. It applies where the provider reports what a round cost, and only there.</p>
+	<h2 id="s3">你设的天花板</h2>
+	<p>设置里有一个按轮的花费上限。一轮如果碰到回合上限，会自己继续下去，所以这个上限才是拦住失控的天花板。它只在提供商会报出一个回合花了多少的地方起作用，仅此而已。</p>
 
-	<h2 id="s4">Watching one agent</h2>
-	<p>Each tile in <span class="ui">智能体</span> shows its cost as it accrues, in tokens and in money, and not only at the end. Under the header a line says how many are running, paused and queued, which makes the size of a fan-out legible before you decide whether to hold it.</p>
-	<p>The aim is a team of agents you can run without fear that a loop, or a fan-out larger than you realised, can cost more than a glance and a click can undo.</p>
+	<h2 id="s4">盯住一个智能体</h2>
+	<p>在 <span class="ui">智能体</span> 里，每张卡片都会随花费发生显示成本——token 数和金额都有——而不是只在结束时才给。标题下面一行，写着运行中、暂停和排队的各有多少，让你在决定要不要拦住之前，就能看清一次扇出的规模。</p>
+	<p>目标是一队你可以放心跑的智能体：不怕一个循环，或者一次比你以为的更大的扇出，会花掉多到一眼加一次点击都挽不回来的钱。</p>
 
 	<div class="next">
-		<a href="models.html">&larr; Models &amp; providers</a>
-		<a href="accounts.html">Next: Safety &amp; fixes &rarr;</a>
+		<a href="models.html">&larr; 模型和提供商</a>
+		<a href="accounts.html">下一步：安全和修复 &rarr;</a>
 	</div>
 </main>
 
@@ -77,12 +77,12 @@
 		<a href="index.html">从这里开始</a>
 		<a href="interface.html">界面</a>
 		<a href="chats-and-diamonds.html">对话和 diamond</a>
-		<a href="../capps.html">diamond 的页面</a>
+		<a href="capps.html">diamond 的页面</a>
 		<a href="email-web-files.html">文件、邮件和网页</a>
-		<a href="../machine-operations.html">你的电脑</a>
-		<a href="../runner.html">帮手和轮次的运行位置</a>
+		<a href="machine-operations.html">你的电脑</a>
+		<a href="runner.html">帮手和轮次的运行位置</a>
 		<a href="sync.html">不止一台设备</a>
-		<a href="../social.html">社交和提案</a>
+		<a href="social.html">社交和提案</a>
 		<a href="models.html">模型和提供商</a>
 		<a href="spending.html">花费</a>
 		<a href="accounts.html">安全和修复</a>

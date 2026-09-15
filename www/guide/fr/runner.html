@@ -1,0 +1,112 @@
+<!DOCTYPE html>
+<html lang="fr" data-guide-locale="fr" data-guide-locales="en de es fr ja ko pt-BR zh-Hans">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<title>Assistants &amp; où s’exécutent les tours &mdash; Guide Daimond</title>
+<link rel="icon" type="image/svg+xml" href="../../assets/daimond_mark.svg">
+<link rel="stylesheet" href="../../css/variables.css">
+<link rel="stylesheet" href="../../css/guide.css">
+<script src="../frame.js"></script>
+<script src="search-index.js"></script>
+<script src="../search.js"></script>
+</head>
+<body>
+
+<header class="site-head">
+	<div class="site-head-inner">
+		<a class="brand" href="index.html" aria-label="Guide Daimond, accueil">
+			<img class="wordmark wm-dark" src="../../assets/daimond_word.svg" alt="Daimond" translate="no">
+			<img class="wordmark wm-light" src="../../assets/daimond_word_dark.svg" alt="Daimond" translate="no">
+			<span class="brand-sub">Guide</span>
+		</a>
+		<nav class="site-nav" aria-label="Pages du guide">
+			<a href="index.html">Commencez ici</a>
+			<a href="interface.html">L’interface</a>
+			<a href="chats-and-diamonds.html">Discussions &amp; diamonds</a>
+			<a href="capps.html">La page d’un diamond</a>
+			<a href="email-web-files.html">Fichiers, e-mail &amp; le web</a>
+			<a href="machine-operations.html">Votre ordinateur</a>
+			<a href="runner.html" aria-current="page">Assistants &amp; où s’exécutent les tours</a>
+			<a href="sync.html">Plus d’un appareil</a>
+			<a href="social.html">Social &amp; propositions</a>
+			<a href="models.html">Modèles &amp; fournisseurs</a>
+			<a href="spending.html">Dépenses</a>
+			<a href="accounts.html">Sécurité &amp; dépannage</a>
+		</nav>
+	</div>
+</header>
+
+<main>
+	<h1>Assistants &amp; où s’exécutent les tours</h1>
+	<p class="lede">Un daimon peut mettre des agents au travail en parallèle, et un tour que vous démarrez sur un appareil peut être exécuté par un autre. Les deux sont visibles, et les deux sont à vous d’arrêter.</p>
+
+	<h2 id="s1">Assistants</h2>
+	<p>Certaines tâches veulent que le travail soit fait, et pour celles-là le daimon d’un diamond dépêche des <strong>agents</strong>, des agents qui tournent seuls avec les outils de fichier, chacun muni des consignes permanentes et de la mémoire de ce diamond.</p>
+	<p>Un agent ne peut pas voir votre conversation. La mémoire est la totalité de ce qu’il sait du travail, si bien que la tâche qu’on lui confie doit dire tout le reste.</p>
+	<p>Jusqu’à huit tournent à la fois et le reste attend. Le daimon les dépêche et son tour s’arrête là. Chacun rend un rapport, et vous gardez ceux qui valent d’être gardés. Un agent ne peut pas en dépêcher un autre, si bien que la délégation va sur un niveau et s’arrête.</p>
+	<p>Les réglages d’un diamond portent un <span class="ui">Modèle assistant</span>, séparé de celui avec lequel son daimon pense. Un agent garde le modèle sur lequel il a démarré, et un changement s’applique au prochain.</p>
+
+	<h3 id="s2">Le panneau Agents</h3>
+	<p>Les exécutions en cours apparaissent dans <span class="ui">Agents</span>, dans le dock, avec une ligne disant combien tournent, sont en pause et en attente. Chaque tuile montre son coût à mesure qu’il s’accumule, pas seulement à la fin.</p>
+	<p>Trois contrôles se trouvent dans l’en-tête et de nouveau sur chaque tuile.</p>
+	<ul>
+		<li><strong>Pause.</strong> Suspend ce qui tourne et retient la file. Un agent en cours garde ce qu’il avait produit, et rien de nouveau ne démarre.</li>
+		<li><strong>Reprendre.</strong> Continue là où chacun s’est arrêté, sans repartir à zéro, si bien qu’une pause ne coûte rien que l’attente.</li>
+		<li><strong>Arrêt.</strong> Les termine net. Chacun garde ce qu’il a réussi à faire. <span class="ui">Effacer les agents terminés</span> range.</li>
+	</ul>
+	<p>Le frein plus large est la ligne <span class="ui">Tout</span> en haut de la barre latérale, qui couvre chaque diamond, chaque chat, les agents, les boîtes aux lettres, et toute page en cours de récupération. Une chose en pause refuse un tour avant qu’il ne commence, rien n’est donc dépensé.</p>
+
+	<h2 id="s3">Quel appareil exécute un tour</h2>
+	<p>Avec plus d’un appareil sur votre compte, l’un peut exécuter un tour pour un autre et la réponse revient par synchronisation. Le passage de main est désactivé jusqu’à ce que vous l’activiez dans la puce de permission, avec <span class="ui">Passer la main quand vous vous éloignez</span>.</p>
+	<p>Cela aide surtout sur un téléphone, qui ne peut pas exécuter une commande sur votre ordinateur, et sur un portable que vous êtes sur le point de fermer.</p>
+
+	<h3 id="s4">Nommer l’appareil qui reprend les tours</h3>
+	<p>Sans nomination, un tour passé la main va à l’appareil le plus frais et éveillé. L’appareil le plus frais est d’habitude le bon, mais un portable sur le point de fermer peut prendre un tour et l’emporter avec lui.</p>
+	<p>Ouvrez <span class="ui">Réglages</span> puis <span class="ui">Appareils</span>. Chaque ligne se termine par une étoile. Appuyez sur celle qui est creuse à côté de la machine qui est d’habitude allumée, et elle se remplit. Il y en a exactement une à la fois, si bien qu’étoiler une seconde efface la première. La nomination voyage avec votre synchronisation ordinaire.</p>
+	<p>La nomination n’en est que la moitié. La prochaine fois que cette machine fait tourner Daimond, elle demande <span class="ui">Faire de cet appareil l’exécutant ?</span> Répondez <span class="ui">Cet appareil est l’exécutant</span> et elle tient cette posture à partir de là. La posture ne voyage pas, parce qu’elle engage cette machine à rester éveillée et à l’écoute.</p>
+	<p>La question est posée une fois. Dites non et elle n’est plus posée avant que vous n’effaciez la nomination et la refassiez à neuf.</p>
+
+	<h3 id="s5">Garder le navigateur hors du chemin</h3>
+	<p>Un navigateur ralentit un onglet caché à environ un réveil par minute, et peut mettre toute une page en sommeil pour économiser la mémoire. Un appareil ralenti est pire qu’aucun, parce qu’il se déclare quand même éveillé et ne récolte rien.</p>
+	<p>Donnez-lui donc son propre navigateur. <code>dev/runner-chrome.sh</code> dans la source de Daimond en démarre un avec un profil séparé, une fenêtre d’application à la place d’un onglet, et ces limitations désactivées. Exécutez-le avec <code>--dry-run</code> pour lire la commande d’abord, ou <code>--install</code> pour le faire démarrer avec votre session de bureau.</p>
+	<p>Deux choses échappent au script. Désactivez l’Économiseur de mémoire dans ce profil, ou ajoutez Daimond à ses exceptions. Et laissez la fenêtre ouverte et non réduite, car derrière d’autres fenêtres ne pose pas de problème, mais réduite est traité comme caché.</p>
+
+	<h3 id="s6">Ce que vous voyez pendant qu’il tourne</h3>
+	<p>Le tour dit où il est allé. D’abord il affiche <span class="ui">Envoyé à vos autres appareils</span>, puis le nom propre de la machine quand elle reprend le tour et pendant qu’elle travaille. La réponse apparaît là où vous l’avez démarré.</p>
+	<p>Deux boutons se trouvent à côté de cette ligne tout le temps. <span class="ui">Reprendre la main</span> rend le tour à l’appareil dans votre main, et <span class="ui">Exécuter ici</span> l’exécute localement si rien ne l’a repris. Nommer vos appareils sous <span class="ui">Réglages</span> &rsaquo; <span class="ui">Appareils</span> est ce qui fait que ces lignes se lisent comme un nom.</p>
+	<p>Un tour passé la main cherche d’abord l’appareil nommé, puis tout autre ordinateur éveillé qui écoute, puis l’appareil sur lequel vous êtes. Un téléphone ne reçoit jamais le tour d’un autre appareil.</p>
+
+	<h3 id="s7">Deux choses qui l’arrêtent encore</h3>
+	<p>Les deux ont besoin d’un moment de votre attention sur cette machine, et aucune n’apparaît sur l’appareil que vous tenez.</p>
+	<ul>
+		<li><strong>Une permission de dossier qui attend un clic.</strong> Si un tour a besoin d’un dossier que le navigateur n’a pas accordé, la demande est soulevée sur l’écran propre de cette machine et attend. Ouvrez le dossier là-bas une fois, et les tours suivants trouvent la permission donnée.</li>
+		<li><strong>Un écran verrouillé.</strong> Un ordinateur garde la clé qu’il détient pour cet onglet d’un rechargement à l’autre, si bien qu’une mise à jour ne l’arrête plus. Vous pouvez désactiver cela par appareil avec <span class="ui">Rester déverrouillé d’un rechargement à l’autre</span> sous <span class="ui">Appareils</span>. Un téléphone n’est jamais gardé déverrouillé, si bien qu’un téléphone qui fait ce travail revient verrouillé.</li>
+	</ul>
+	<p>Si un appareil a arrêté de prendre des tours et que rien d’autre ne l’explique, allez regarder son écran.</p>
+
+	<div class="next">
+		<a href="machine-operations.html">&larr; Votre ordinateur</a>
+		<a href="sync.html">Suivant : Plus d’un appareil &rarr;</a>
+	</div>
+</main>
+
+<footer class="site-foot">
+	<span>Daimond s’exécute dans votre navigateur. Rien de tout cela ne nous est envoyé.</span>
+	<nav aria-label="Pages du guide">
+		<a href="index.html">Commencez ici</a>
+		<a href="interface.html">L’interface</a>
+		<a href="chats-and-diamonds.html">Discussions &amp; diamonds</a>
+		<a href="capps.html">La page d’un diamond</a>
+		<a href="email-web-files.html">Fichiers, e-mail &amp; le web</a>
+		<a href="machine-operations.html">Votre ordinateur</a>
+		<a href="runner.html">Assistants &amp; où s’exécutent les tours</a>
+		<a href="sync.html">Plus d’un appareil</a>
+		<a href="social.html">Social &amp; propositions</a>
+		<a href="models.html">Modèles &amp; fournisseurs</a>
+		<a href="spending.html">Dépenses</a>
+		<a href="accounts.html">Sécurité &amp; dépannage</a>
+	</nav>
+</footer>
+</body>
+</html>

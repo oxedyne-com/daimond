@@ -509,6 +509,16 @@ const DIALOGS = [
 			await page.evaluate(() => { const b = document.getElementById('admin-close'); if (b) b.click(); });
 			await page.waitForTimeout(250);
 			await openDrawer(page);
+			// The only Diamonds on this profile are the two built-ins, and since
+			// RAIL-07 those live in a `<details>` at the foot of the list that starts
+			// shut -- so their cogs are on the page and not on the screen, and a real
+			// press (which is the whole point of `pressFrom`) times out. Opened
+			// first, exactly as a user reaching that cog would.
+			await page.evaluate(() => {
+				const d = document.querySelector('.rail-builtin');
+				if (d && !document.querySelector('#diamond-list > .diamond-box')) d.open = true;
+			});
+			await page.waitForTimeout(250);
 			await pressFrom(page, '#diamond-list .tile-cog');
 			await page.waitForSelector('.tile-dlg-card', { timeout: 8000 });
 		},
