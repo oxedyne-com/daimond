@@ -142,7 +142,8 @@
 	<ul>
 		<li><strong>Your account public key.</strong> This identifies your account to the gateway. It is a public key, not a secret, and it is not your name.</li>
 		<li><strong>Credit ledger.</strong> Your prepaid credit balance and the debits made against it for metered actions.</li>
-		<li><strong>Licence and entitlement records.</strong> Whether you hold a Pro licence, when it was issued, and what it grants. A Pro licence runs for five years from purchase, so the issue date is also what says when it ends. Beside it, which tool packs your account has bought, when each was bought, and a reference to the payment that bought it. A pack has no term, so that record simply stays.</li>
+		<li><strong>Subscription and entitlement records.</strong> Whether you have an active Pro subscription, its status and the period it currently covers, and what it grants. Beside it, which tool packs your account has bought, when each was bought, and a reference to the payment that bought it. A pack has no term, so that record simply stays.</li>
+		<li><strong>A last-activity timestamp.</strong> One time per account, recording when your account was last active. It exists so that we can pause your Pro billing automatically when you are away and resume it when you return, so you are never charged for a month you did not use Daimond. It records the timing of activity, not what you did: no chat, no file, and no content of any kind is part of it.</li>
 		<li><strong>Payment metadata from Stripe.</strong> Records of your payments, such as amount, currency, time and a Stripe reference. We do not store your card numbers; Stripe handles card details.</li>
 		<li><strong>Your sealed sync data.</strong> When you use cross-device sync, the gateway holds one end-to-end-encrypted blob for your account, and the encrypted file data that blob refers to, so your other devices can pull it. This is <strong>stored, not merely relayed</strong>: it stays until you replace it, reset your sync from a device, or it lapses as described in section 9. We cannot read any of it.</li>
 		<li><strong>Sizes, not contents.</strong> Alongside that encrypted file data we hold what each piece is addressed by (a hash), how large it is, and which storage tier it sits in, so that storage can be accounted for and swept. Never the content.</li>
@@ -246,15 +247,21 @@
 			<tbody>
 				<tr>
 					<td>Account public key (an identifier, not your name)</td>
-					<td>To recognise your account and attach your balance and licence to it</td>
+					<td>To recognise your account and attach your balance and subscription to it</td>
 					<td>No</td>
 					<td>Until you delete the account</td>
 				</tr>
 				<tr>
-					<td>Credit ledger and licence records</td>
-					<td>To run prepaid credits and the Pro licence</td>
+					<td>Credit ledger and subscription records</td>
+					<td>To run prepaid credits and the Pro subscription</td>
 					<td>No</td>
 					<td>As tax and accounting law requires <span class="tbc">[TO CONFIRM: period, e.g. 5–7 years]</span></td>
+				</tr>
+				<tr>
+					<td>Last-activity timestamp (one time, no content)</td>
+					<td>To pause your Pro billing when you are away and resume it when you return</td>
+					<td>No</td>
+					<td>Updated as you use Daimond; held while your account exists</td>
 				</tr>
 				<tr>
 					<td>Payment metadata from Stripe (amount, currency, time, reference)</td>
@@ -303,6 +310,12 @@
 					<td>To route the message, to enforce a block, and to tell a sender that a message of theirs was never collected</td>
 					<td>No</td>
 					<td>90 days, and then only a counter per account survives</td>
+				</tr>
+				<tr>
+					<td>Feed posts and follower lists, in plain text. <strong>Readable by us.</strong></td>
+					<td>To show your posts to the followers you approved, and to act on a report</td>
+					<td>No</td>
+					<td>Until you delete the post or we remove it; a feed keeps at most 200, and the oldest goes when a new one arrives</td>
 				</tr>
 				<tr>
 					<td>The email doorbell: we tell your mail provider, at most once a day, that something is waiting. No sender, no subject, no content.</td>
@@ -420,6 +433,7 @@
 		<li><strong>Credit ledger, licence and payment metadata.</strong> Kept for as long as the account is active and thereafter for the period tax and accounting law requires. <span class="tbc">[TO CONFIRM: period]</span></li>
 		<li><strong>Messages.</strong> A message is sealed on the sending device and we cannot open it. We hold it until one of the recipient's devices has collected it and folded it into that account's own sealed data, and if nobody collects it we drop it after 30 days. <strong>What is left behind then is a marker, not the message</strong>: enough for a returning device to say "four messages expired before this device collected them" and not enough to read a word of them. The sender is told, once, that a message of theirs was never collected. <strong>We never tell anybody that a message was read</strong> &mdash; that is a fact about the recipient, and it is not ours to send.</li>
 		<li><strong>Message metadata.</strong> Who wrote to whom, when, and how large, which we can read because we route it. Kept for 90 days and then compacted away, leaving one number per account: enough to tell a device that has been away longer than that "anything sent to you before this date is gone", and not enough to say how much or from whom.</li>
+		<li><strong>Feed posts.</strong> A post to your followers is kept on our server in the clear, shown to the followers you approved and to nobody else, and readable by us so that a report can be acted on. We also hold who follows whom. A post stays until you delete it, we remove it, or it is the oldest of more than 200; deleting one deletes it, and nothing survives but a report, if one was filed.</li>
 		<li><strong>The email doorbell.</strong> If a message arrives while you have no Daimond open, we may send one email to the address on your account saying that something is waiting. It carries no sender, no subject, no count and no link to any particular message. At most one in any 24 hours, so what your mail provider learns is about one bit a day: that a day was one on which something arrived. The first message of each such day is the one whose timing is visible, and that is the residual we cannot remove without making the doorbell slower than a support channel should be. <strong>It is on by default while the closed test runs</strong> &mdash; those accounts applied by email and were invited by email, and with browser notifications declined it is the only thing a closed tab hears. Daimond tells you so once, the first time you open it, and you can turn it off at any time: the cog beside your name, then the row called &ldquo;Email doorbell&rdquo;. Turning it off also stops one that is already waiting to go. That notice cannot cover one case: if somebody writes to you before you have ever opened Daimond, the email reaches you before the notice does.</li>
 		<li><strong>What we cannot do about a message, in either direction.</strong> We cannot read one, and we cannot recover one. If you lose your passphrase, the messages in your own sealed data go with everything else wrapped under it, and we have no copy to give you. If a device of yours was linked before it was given your message key, it will list messages it cannot open and tell you to unlock on a device that has it or to link that one again &mdash; <strong>those messages are not lost</strong>. And a message sealed to a key your account no longer holds cannot be opened by us or by you; the sender can send it again. <strong>This protects you against a leak of what we store and against a demand for it. It is not a protection against a malicious build of the app itself</strong> &mdash; what makes that claim checkable is the sealed build and its published record, at <code>verify/transparency.jsonl</code>.</li>
 		<li><strong>Beta usage counts.</strong> Deleted 180 days after they arrive, and the whole set is deleted when the closed test ends. Turning the counts off stops new ones; it does not delete the ones already sent, which the expiry does. The sweep that enforces the 180 days runs on the gateway's own schedule and reports what it removed.</li>
@@ -681,7 +695,7 @@
 		the expiry above is what limits how long they exist.
 	</p>
 	<p>
-		<strong>Saying no costs you nothing.</strong> Declining does not affect your account, your Pro licence,
+		<strong>Saying no costs you nothing.</strong> Declining does not affect your account, your Pro subscription,
 		your credits, or anything else your passcode gave you, and nothing about the app behaves differently.
 		In the EEA and the UK our lawful basis for these counts is your consent, which you may withdraw at any
 		time without affecting anything else and without affecting what was collected before you did

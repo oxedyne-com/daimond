@@ -86,6 +86,29 @@ if (!await stat(ROOT).then(s => s.isDirectory(), () => false)) {
 	}
 }
 
+// AND the revision it pins is the one this release settled on. A deploy chooses fe2o3 once, in
+// step 0f of `dev/deploy.sh`, and hands it down in `DAIMOND_FE2O3_REV`; the lock generated just
+// below is resolved from this manifest, so a manifest carved against some other revision would
+// be sealed here, with a lock to match, and nothing later in the release would notice. Nothing
+// set means a seal run by hand, which takes the manifest as it finds it.
+{
+	const want = (process.env.DAIMOND_FE2O3_REV || '').trim();
+	const man  = await readFile(join(ROOT, 'Cargo.toml'), 'utf8');
+	const revs = [...new Set((man.match(/^\s*oxedyne_fe2o3_[a-z_]+\s*=.*$/gm) || [])
+		.map(l => (/\brev\s*=\s*"([0-9a-f]+)"/.exec(l) || [])[1] || '')
+		.filter(Boolean))];
+	if (want && (revs.length !== 1 || revs[0] !== want)) {
+		console.error(`REFUSING TO SEAL ${ROOT}/Cargo.toml — it is pinned to a different fe2o3 than this release.`);
+		console.error(`  this release pins:  ${want}`);
+		console.error(`  the manifest pins:  ${revs.join(', ') || '(no revision at all)'}`);
+		console.error(`\nThe seal and the lock would then describe a build from a library this release never`);
+		console.error(`chose. Carve again -- \`node dev/publish.mjs\` takes the revision from the environment --`);
+		console.error(`and seal what that produces.`);
+		process.exit(2);
+	}
+	if (want) { console.log(`fe2o3      pinned at ${want.slice(0, 12)}, as this release settled`); }
+}
+
 if (!NO_LOCK) {
 	const r = spawnSync('cargo', ['generate-lockfile', '--manifest-path', join(ROOT, 'Cargo.toml')],
 		{ encoding: 'utf8' });

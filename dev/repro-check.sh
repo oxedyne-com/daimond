@@ -32,6 +32,16 @@
 #   bash dev/repro-check.sh          # ~8 minutes, mostly cold dependency builds
 #   SKIP_HAND=1 bash dev/repro-check.sh
 #   bash dev/repro-check.sh --static-only   # the www-only FAST path (no wasm rebuild)
+#   bash dev/repro-check.sh --check-pin MANIFEST   # the pin assertion alone, on a fixture
+#
+# WHICH fe2o3, as well as which release. A deploy settles the revision once, in step
+# 0f, and hands it down in `DAIMOND_FE2O3_REV`; this checks that the clone it is
+# about to build is pinned exactly there. The clone is a fresh checkout of whatever
+# the mirror last committed, and a carve run by hand in between -- against an fe2o3
+# that had moved -- would put a different revision in it, so the release that shipped
+# and the release that was reproduced would be built from two different libraries
+# while both reported green. Set nothing and the check is skipped, which is what an
+# ordinary hand-run of this script wants.
 #
 # `--static-only` is for `deploy.sh`'s www-only fast path. The wasm is UNCHANGED
 # and was reproduced by an outsider when it first shipped -- deploy.sh's
@@ -49,9 +59,44 @@
 # release, which is the only time its answer can change.
 set -e
 
+# Every fe2o3 revision a manifest pins, one per line, however many crates name it.
+manifest_revs() {
+	grep -E '^[[:space:]]*oxedyne_fe2o3_[a-z_]+[[:space:]]*=' "$1" 2>/dev/null \
+		| sed -n 's/.*\brev[[:space:]]*=[[:space:]]*"\([0-9a-f]*\)".*/\1/p' | sort -u
+}
+
+# Refuse a manifest pinned anywhere but where this run said. A no-op when the run
+# recorded nothing, so a hand-run of this script behaves exactly as it always did.
+pin_matches_or_die() {
+	local what="$1" man="$2" revs n
+	[ -n "${DAIMOND_FE2O3_REV:-}" ] || return 0
+	[ -f "$man" ] || { echo "FAILED — $what has no Cargo.toml at $man to check the fe2o3 pin in."; exit 1; }
+	revs="$(manifest_revs "$man")"
+	n=$(printf '%s\n' "$revs" | grep -c '[0-9a-f]' || true)
+	if [ "$n" = 0 ]; then
+		echo "FAILED — $what pins no fe2o3 revision at all ($man)."
+		echo "   This run pins ${DAIMOND_FE2O3_REV:0:12}, and the thing about to be built names nothing."
+		exit 1
+	fi
+	if [ "$revs" != "$DAIMOND_FE2O3_REV" ]; then
+		echo "FAILED — $what is pinned to a different fe2o3 than this run."
+		echo "   this run pins:   $DAIMOND_FE2O3_REV"
+		printf '   the clone pins:  %s\n' $revs
+		echo
+		echo "   The release that ships and the release that is reproduced would be built from"
+		echo "   two different libraries, both of them reporting green. Carve again with this"
+		echo "   run's revision, commit the mirror, then check."
+		exit 1
+	fi
+	echo "   $what pins fe2o3 ${DAIMOND_FE2O3_REV:0:12}, as this run settled in step 0f"
+}
+
 STATIC_ONLY=0
 case "${1:-}" in
 	--static-only) STATIC_ONLY=1 ;;
+	# The assertion alone, against a manifest a test wrote, so `dev/verify_deploy.mjs`
+	# proves this code and not a copy of it.
+	--check-pin) pin_matches_or_die "the fixture" "${2:?repro-check: --check-pin wants a manifest path}"; exit 0 ;;
 	'') ;;
 	*) echo "repro-check: unknown argument '$1'" >&2; exit 2 ;;
 esac
@@ -109,6 +154,16 @@ if [ "$HERE_BUILD" != "$CLONE_BUILD" ]; then
 	exit 1
 fi
 echo "   both manifests name build $HERE_BUILD"
+
+# …and WHICH fe2o3 the clone is pinned to, when the run has settled one. The hand's
+# manifest is the one the carve derives, so it is the one that can have been carved
+# against a moved HEAD; the root manifest is the mirror's own hand-maintained file
+# and is reported rather than refused, since it is the wasm's pin and moves on a
+# human's say-so.
+pin_matches_or_die "the clone's hand" hand/Cargo.toml
+if [ -n "${DAIMOND_FE2O3_REV:-}" ]; then
+	printf '   the clone'"'"'s root Cargo.toml pins: %s\n' $(manifest_revs Cargo.toml)
+fi
 if [ "$STATIC_ONLY" = 1 ]; then
 	# The www-only fast path: reuse the wasm rather than rebuild it. The clone is a
 	# fresh checkout of the committed mirror, so it carries the new static www and
