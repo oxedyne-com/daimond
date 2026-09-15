@@ -456,20 +456,21 @@ try {
 		const a = document.activeElement;
 		return a ? (a.id || a.tagName.toLowerCase()) : '(none)';
 	});
-	// TOP-03, KNOWN GAP: About now opens from inside the Help popup, and Help
-	// closes the moment it does -- leaving it open let a keyboard user Tab out
-	// of the modal's own trap and into a popup merely COVERED by the modal,
+	// TOP-03, AND THE GAP IS SHUT. About opens from inside the Help popup, and
+	// Help closes the moment it does -- leaving it open let a keyboard user Tab
+	// out of the modal's own trap and into a popup merely COVERED by the modal,
 	// not shut (Chromium does not order stacked `position: fixed` surfaces by
-	// DOM position the way `keepFocusIn`, daimond.js, assumes). Closing Help
-	// is the smaller fault: it costs `about-btn` its own refocus target --
-	// `refocus`'s fallback (daimond.js) climbs to the nearest ANCESTOR with an
-	// id, and `about-btn` has one of its own, so it never reaches `help-menu`
-	// or `help-btn` at all. The focus lands on `<body>` rather than on
-	// nothing, which is real but narrow: `refocus` would need to accept an
-	// explicit fallback target from the opener, or climb past an id'd-but-
-	// invisible element, and that is daimond.js, not this lane's file.
-	check('the focus lands on <body> rather than staying trapped nowhere (TOP-03 known gap, see comment)',
-		landed === 'body', landed);
+	// DOM position the way `keepFocusIn`, daimond.js, assumes). Closing Help was
+	// the smaller fault, and it used to cost `about-btn` its own refocus target:
+	// `refocus`'s fallback climbed to the nearest ANCESTOR with an id, and
+	// `about-btn` has one of its own, so it never reached `help-menu` or
+	// `help-btn` and the focus landed on `<body>`. Since 0f15b36f `refocus`
+	// climbs the host's ancestors for an `aria-controls` reference and takes the
+	// control that names it -- the Help button, which is still standing. So the
+	// focus comes back to a control a keyboard user can carry on from, which is
+	// what this check was always about.
+	check('the focus comes back to the Help button that opened it',
+		landed === 'help-btn', landed);
 
 	// ── 3. The artwork is the right shape ────────────────────────
 	// Both skins: `--about-pad` mirrors the card's padding and the warm skin

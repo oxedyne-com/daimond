@@ -20,6 +20,7 @@ use crate::protocol::{AgentEvent, ChatMessage, Session, ToolCall, generate_sessi
 use crate::tools::{Tool, ToolContext, ToolRegistry};
 use crate::executor::Executor;
 use crate::workspace::Workspace;
+use crate::diamond_versions::{self as versions, Cause};
 use crate::wasm::{diamond, js_prop, to_js_err};
 
 use oxedyne_fe2o3_core::prelude::*;
@@ -30,6 +31,21 @@ use std::path::PathBuf;
 
 use wasm_bindgen::prelude::*;
 
+
+/// What a version-recording call answers with, or `{}` where nothing had changed.
+///
+/// Its own function because two exports answer in the same shape, and a caller that had to tell
+/// them apart would be reading two spellings of one fact.
+fn versions_said(got: Option<(u64, Vec<String>)>) -> Result<String, JsValue> {
+    let (version, files) = match got {
+        Some(v) => v,
+        None    => return Ok("{}".to_string()),
+    };
+    let names: Vec<String> = files.iter()
+        .map(|f| fmt!("\"{}\"", crate::llm::json_escape(f)))
+        .collect();
+    Ok(fmt!("{{\"version\":{},\"files\":[{}]}}", version, names.join(",")))
+}
 
 /// The browser-side Daimond application: one session driven by the agent
 /// loop over the wasm transport.
@@ -1433,6 +1449,68 @@ impl DaimondApp {
         obj
     }
 
+    /// The same call as [`Self::run_tool_outcome`], fenced by ONE Diamond's bounds and leaving
+    /// this app's own unchanged.
+    ///
+    /// The door the page's Restore writes a marked file back through.  It cannot use
+    /// [`Self::set_diamond_scope`]: that COMPOSES rather than assigns, deliberately, so the one
+    /// shared tool runner the panels hold cannot be pointed at a second Diamond without
+    /// intersecting the two to [`Bound::Nowhere`](crate::tools::Bound::Nowhere) -- and it must
+    /// not be pointed at the first one permanently either, since a panel writing an ordinary
+    /// workspace file a moment later would then be refused.  So the bounds are built here, per
+    /// call, by the same [`crate::tools::diamond_bounds`] a turn is built from, and thrown away
+    /// with the registry that carried them.
+    ///
+    /// **This is what makes a restore obey a mark that has since been withdrawn.**  Run
+    /// unfenced, the restore wrote the old bytes into a folder the Diamond no longer reaches,
+    /// which is the one thing `dev/VERSIONS_CONTRACT.md` §6 says it must not do.
+    ///
+    /// # Arguments
+    /// * `id` - The Diamond whose reach this call gets.
+    /// * `attached` - JSON array of the paths marked into it, as `Files.bounds` reports them.
+    /// * `read_only` - JSON array of those that may be read but not written.
+    pub async fn run_diamond_tool(
+        &self,
+        id:        String,
+        attached:  String,
+        read_only: String,
+        name:      String,
+        args_json: String,
+    )
+        -> js_sys::Object
+    {
+        let bounds = crate::tools::diamond_bounds(
+            &diamond::diamond_dir(&id),
+            &parse_path_array(&attached),
+            &parse_path_array(&read_only));
+        let ctx = ToolContext {
+            workspace:   Workspace::unchecked(PathBuf::from("/")),
+            executor:    Executor::Wasm,
+            cwd:         String::new(),
+            path_prefix: String::new(),
+            root:        crate::tools::FileRoot::Workspace,
+            // Shared with this app's own, so a write through this door leaves the same mark on
+            // the read cache an ordinary one would.
+            read_seen:   self.registry.ctx.read_seen.clone(),
+            no_write:    bounds,
+            // EMPTY, and that is not an oversight. `ctx.daimon()` is what makes the write door
+            // keep the bytes it is replacing for the TURN to record -- and this is not a turn.
+            // A restore recorded that way would land in the next turn's manifest under the
+            // daimon's name, for a change the user made.
+            daimon_of:   String::new(),
+        };
+        let registry = ToolRegistry::new(Tool::daimon(), ctx);
+        let text = registry.dispatch_unbilled(&name, &args_json).await.as_text().into_owned();
+        let outcome = crate::tools::call_outcome(&text);
+        let obj = js_sys::Object::new();
+        let set = |k: &str, v: &JsValue| {
+            let _ = js_sys::Reflect::set(&obj, &JsValue::from_str(k), v);
+        };
+        set("text",    &JsValue::from_str(&text));
+        set("outcome", &JsValue::from_str(outcome.wire()));
+        obj
+    }
+
     // ── Diamond / crystal / fold surface ─────────────────────────────────
 
     /// Create a Diamond named `name`, returning its id.  Creates the Diamond
@@ -1842,6 +1920,125 @@ impl DaimondApp {
     /// migration; the caller renders its default.
     pub async fn read_version_page(&self, id: String, version: f64) -> Result<String, JsValue> {
         diamond::read_version_page(&id, version as u64).await.map_err(to_js_err)
+    }
+
+    // ── The file version store ──────────────────────────────────────────────
+    //
+    // Beside the crystal's own chain and on the same counter, so one History row can carry both
+    // halves of what a version was. What each of these is FOR is written where it is done, in
+    // `crate::wasm::diamond`; here is only the boundary.
+
+    /// Every file manifest this Diamond holds, newest first, each with its version number.
+    ///
+    /// The rows the History draws, joined to `log_read`'s by that number.
+    pub async fn versions_list(&self, id: String) -> Result<String, JsValue> {
+        diamond::versions_list(&id).await.map_err(to_js_err)
+    }
+
+    /// What the file version store weighs against what it may weigh:
+    /// `{bytes, cap, manifests, manifests_cap, file_max}`.
+    ///
+    /// The gauge in the History bar. `bytes` counts only bodies this device actually holds, so a
+    /// store the user cannot empty is never charged for.
+    pub async fn versions_state(&self, id: String) -> Result<String, JsValue> {
+        diamond::versions_gauge(&id).await.map_err(to_js_err)
+    }
+
+    /// One stored body, by its content hash.
+    ///
+    /// An EMPTY string means this device has not got it -- the "Not on this device" row -- which
+    /// is not an error: a Diamond travels whole, and the next full pull from the device that has
+    /// it brings it. Answered as text, lossily where the body is not UTF-8, because the two
+    /// callers are the diff view and the page's own write door.
+    pub async fn versions_body(&self, id: String, hash: String) -> Result<String, JsValue> {
+        match ok!(diamond::versions_body(&id, &hash).await.map_err(to_js_err)) {
+            Some(b) => Ok(String::from_utf8_lossy(&b).to_string()),
+            None    => Ok(String::new()),
+        }
+    }
+
+    /// Two stored bodies as the lines that differ: `{add, del, rows:[{k, t}]}`, `k` one of
+    /// `" "`, `"-"`, `"+"`.
+    ///
+    /// An empty hash is an empty side, which is how a file's creation and its deletion are shown.
+    /// A body that is not text, one this device has not got, and a file past the line ceiling all
+    /// come back as an error for the caller to render as "Cannot compare".
+    pub async fn versions_diff(&self, id: String, was: String, now: String)
+        -> Result<String, JsValue>
+    {
+        diamond::versions_diff(&id, &was, &now).await.map_err(to_js_err)
+    }
+
+    /// Put the Diamond's files back as they stood at `version`, and say what became of each:
+    /// `{version, restored, missing, refused, machine}`.
+    ///
+    /// **Never destructive**: what is on disk now is recorded as a `restore` version before a
+    /// byte is written, so the state a restore replaced is one row up in the same history.
+    ///
+    /// Paths under `machine` are files on the user's computer. They are NOT written here -- the
+    /// hand is reached only from inside a fenced turn -- and come back with the body to write for
+    /// the caller that does have a door, which is the same `file_write` the Files panel uses.
+    ///
+    /// # Arguments
+    /// * `path` - One path, or empty for the whole version, which also REMOVES a file that did
+    ///   not exist at `version`.
+    pub async fn versions_restore(&self, id: String, version: f64, path: String)
+        -> Result<String, JsValue>
+    {
+        let one = path.trim();
+        let want = if one.is_empty() { None } else { Some(one) };
+        let (said, wrote) = ok!(diamond::versions_restore(&id, version as u64, want).await
+            .map_err(to_js_err));
+        // WHAT THE AGENT LAST SAW OF THESE FILES IS NO LONGER TRUE. The write guard in
+        // `Tool::FileWrite` refuses a write whose file has moved since this agent read it, which
+        // is how one agent stops erasing another's work -- and a Restore moves it from outside the
+        // turn altogether. Without this the daimon's next write to a file the user has just
+        // restored comes back "changed on disk since you read it -- another agent edited it",
+        // naming an agent that does not exist. `Tool::FileRevert` does the same for its own path.
+        crate::tools::forget_seen(&self.registry.ctx.read_seen, &wrote);
+        Ok(said)
+    }
+
+    /// Bring the store back inside its ceilings now, rather than at the next write:
+    /// `{manifests, bodies}`, counting what went.
+    pub async fn versions_prune(&self, id: String) -> Result<String, JsValue> {
+        let (m, b) = ok!(diamond::versions_prune(&id).await.map_err(to_js_err));
+        Ok(fmt!("{{\"manifests\":{},\"bodies\":{}}}", m, b))
+    }
+
+    /// Save a version the user asked for: every file in the Diamond's own directory, with the
+    /// name they typed. Answers `{version, files}`, or `{}` where nothing had changed.
+    ///
+    /// Pruned LAST of all the causes, which is what makes the button mean something.
+    pub async fn versions_save_user(&self, id: String, note: String) -> Result<String, JsValue> {
+        versions_said(ok!(diamond::versions_save(&id, &note).await.map_err(to_js_err)))
+    }
+
+    /// Record what a Diamond arrived holding, after a share has been landed.
+    ///
+    /// Called once the files are written, because the version IS what arrived: a share that later
+    /// turns out to be wrong can be walked back to the moment it landed.
+    pub async fn versions_landed(&self, id: String) -> Result<String, JsValue> {
+        versions_said(ok!(diamond::versions_landed(&id).await.map_err(to_js_err)))
+    }
+
+    /// Note that one of the user's own doors changed a file in this Diamond.
+    ///
+    /// `writeOpenFile`, the Files panel's create and delete, and a capp page's Save each call
+    /// this with the path they wrote. The set is drained at the START of the next turn and
+    /// recorded as one `user` version, so a turn can be undone back past the user's own last
+    /// edit and a version is not minted per keystroke-adjacent save.
+    pub fn versions_mark_dirty(&self, id: String, path: String) {
+        diamond::mark_dirty(&id, &path);
+    }
+
+    /// What all of one Diamond's stored bodies may weigh, in bytes; zero restores the default.
+    ///
+    /// The settings pulldown, and the test setter: 0.5 / 1 / 2 / 4 MiB. The ceiling is four
+    /// because a Diamond's export is built as one string in wasm memory and wasm memory never
+    /// shrinks.
+    pub fn set_versions_cap(&self, bytes: f64) {
+        versions::set_versions_bytes_cap(bytes.max(0.0) as u64);
     }
 
     /// Steer a Diamond's crystal: run one daimon turn for `instruction`, streaming
@@ -2508,6 +2705,24 @@ impl DaimondApp {
         // able to disagree with the first.
         let DaimonTurn { agent, registry, crystal: before, standing: standing_before, .. } =
             self.compose_daimon(id, &attached, &read_only, &toolkits).await;
+        // THE USER'S OWN EDITS BECOME A VERSION BEFORE THE TURN CAN WRITE OVER THEM.
+        //
+        // The Files panel, a capp's Save and a landed Diamond each marked the path they wrote,
+        // and nothing has recorded them yet -- deliberately, because recording at the moment of
+        // every keystroke-adjacent save would mint a version per save.  Draining the set here is
+        // what makes "put it back to how it was before this turn" true of the USER'S last edit
+        // and not merely of the daimon's.
+        //
+        // Best effort, and it must stay that way: a turn the user asked for is not refused
+        // because the history could not be written.
+        let dirty = diamond::drain_dirty(id);
+        if !dirty.is_empty() {
+            let changes = diamond::versions_changes(id, &dirty).await;
+            if let Err(e) = diamond::versions_record(id, None, Cause::User, "", "", changes).await {
+                web_sys::console::warn_1(&JsValue::from_str(&fmt!(
+                    "the state of {} before this turn could not be recorded: {}", id, e)));
+            }
+        }
         // Read before the turn, compared after it. The page is not put in the prompt -- it is
         // markup the daimon can open with `file_read` when it has been asked to change it, and it
         // would otherwise be paid for on every request of every steering turn.
@@ -2574,8 +2789,10 @@ impl DaimondApp {
         // `before` to do it.
         let standing_after = diamond::read_standing(id).await;
         let tune = agent.limits();
+        let mut minted: Option<u64> = None;
         if after != before || page_after != page_before || standing_after != standing_before {
             let version = res!(diamond::record_steer(id, &after, &typed).await);
+            minted = Some(version);
             // ONE `kind:"task"` RECORD PER TICK, carrying what the ledger shows behind it. A
             // task that went from `- [ ]` to `- [x]` in `before`/`after` earns one whether or not
             // anything else changed in the same turn -- ticking three tasks with one file write
@@ -2606,6 +2823,54 @@ impl DaimondApp {
                     res!(diamond::record_task_tick(id, version, parent, &task_id, backed).await);
                 }
             }
+        }
+        // WHAT THIS TURN CHANGED IN FILES, against the same version the crystal took.
+        //
+        // The ledger is arithmetic and not judgement -- it holds the paths the tool layer says
+        // were actually written -- so this records what happened rather than what the model said
+        // it did.  Three sources join here and each covers what the others cannot:
+        //
+        // * the ledger's own paths, for everything written through a named door;
+        // * what the file tools captured mid-turn, which is the only account there will ever be
+        //   of a machine file's bytes before the daimon overwrote them (see `diamond::capture`);
+        // * and, only where the turn ran something OPAQUE, a walk of the Diamond's own directory
+        //   -- a command, a verifier or a worker names no path at all, and the honest answer to
+        //   "what did it change" is to look.
+        //
+        // Attempted even when the turn ended badly, for the reason the version above is: a turn
+        // that wrote a file and then died has still changed it.
+        let captured = diamond::drain_captured(id);
+        let covered: std::collections::BTreeSet<&str> =
+            captured.iter().map(|(raw, _)| raw.as_str()).collect();
+        let mut named: Vec<String> = Vec::new();
+        for wrote in ledger.wrote.iter() {
+            // A move is one ledger line naming two paths, and both of them moved.
+            for half in wrote.split(" -> ") {
+                let half = half.trim();
+                if !half.is_empty() && !covered.contains(half) {
+                    named.push(half.to_string());
+                }
+            }
+        }
+        let mut changes = diamond::versions_changes(id, &named).await;
+        changes.extend(captured.into_iter().map(|(_, ch)| ch));
+        if !ledger.ran.is_empty() || !ledger.spawned.is_empty() {
+            changes.extend(diamond::versions_walk(id).await);
+        }
+        // The turn's own id is the browser's (`iturn`, the user message's `mid`) and does not
+        // cross the wasm boundary today, so the manifest is joined to its History row by VERSION
+        // NUMBER, which is what `showCrystalHistory` joins on anyway. The field stays, for the
+        // caller that will one day have the id.
+        match diamond::versions_record(id, minted, Cause::Turn, "", &typed, changes).await {
+            // THE DAIMON IS TOLD, in one sentence, and only where a manifest was actually
+            // written. A model with no way to undo its own work does not merely fail to undo it:
+            // it reports that the app cannot, which is the defect `Tool::FileShow` was written
+            // for arriving by another road.
+            Ok(Some((v, files))) => session.messages.push(
+                ChatMessage::user(versions::tail_note(v, &files))),
+            Ok(None) => {},         // nothing moved, so there is nothing to say
+            Err(e)   => web_sys::console::warn_1(&JsValue::from_str(&fmt!(
+                "the files {} changed this turn could not be recorded: {}", id, e))),
         }
         // THE TAIL NOTE, said once and never twice running: a turn that edited a file or read a
         // worker's report and left `REQUIREMENTS.md` and `STATE.md` exactly as they were is a
@@ -2648,6 +2913,21 @@ impl DaimondApp {
         -> Outcome<()>
     {
         let want = res!(Self::proposal_of(proposal));
+        // BEFORE THE FOLD REWRITES ANYTHING. The crystal chain takes its own snapshot inside
+        // `fold_apply`; what has no chain is whatever the user's own doors changed since the last
+        // version, and the fold is about to be the thing that stands between them and it. The
+        // dirty set is the whole of it -- the three files below are the fold's own work and are
+        // recorded by the version it mints, not by this one -- so a fold that follows no user
+        // edit writes no manifest at all.
+        let dirty = diamond::drain_dirty(id);
+        if !dirty.is_empty() {
+            let changes = diamond::versions_changes(id, &dirty).await;
+            if let Err(e) = diamond::versions_record(id, None, Cause::Fold, "", note, changes).await
+            {
+                web_sys::console::warn_1(&JsValue::from_str(&fmt!(
+                    "the state of {} before this fold could not be recorded: {}", id, e)));
+            }
+        }
         // The three files first, and the crystal last, so the version the snapshot mints is
         // taken with the Diamond in the state the fold left it: `record_steer` and
         // `diamond::fold_apply` both read the store as it stands.

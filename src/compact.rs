@@ -1110,7 +1110,10 @@ fn record(l: &mut Ledger, tc: &ToolCall, outcome: CallOutcome) {
 			fmt!("crystal")),
 		"file_list" | "file_search"							=> Ledger::push(&mut l.read,
 			if path.is_empty() { fmt!(".") } else { path }),
-		"file_write" | "file_edit" | "file_delete"
+		// `file_revert` writes a path exactly as the three above it do -- it puts an earlier
+		// copy back -- so a fold that left it out would tell the model a file it can see
+		// changed was not written this turn.
+		"file_write" | "file_edit" | "file_delete" | "file_revert"
 		| "dir_create" | "file_fetch" | "artefact_add"		=> Ledger::push(&mut l.wrote, path),
 		"typst_compile"										=> Ledger::push(&mut l.wrote, path),
 		"file_move"											=> Ledger::push(&mut l.wrote,

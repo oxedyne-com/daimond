@@ -246,6 +246,11 @@
 	/// costing somebody a proposal.
 	var TITLE_LIMIT = 200;
 
+	/// What one feed post may be, in BYTES. Matches `POST_MAX` in `js/feed.js`
+	/// and the gateway's own `FEED_POST_MAX_BYTES` -- checked here as well so the
+	/// daimon is told before a round trip rather than after a 413.
+	var FEED_POST_MAX = 4096;
+
 	/// How long a string is as the forge counts it: characters, not UTF-16 units.
 	function titleLen(s) { return Array.from(String(s || '')).length; }
 
@@ -3835,10 +3840,40 @@
 			return 'People this account can reach (' + who.length + '):\n\n'
 				+ who.map(function (p) { return (p.label || '(unnamed)') + '  [' + p.state + ']'; }).join('\n');
 		}
-		// SEAM FOR THE DAIMON LANE: `view === 'feed'` lands here — the merged read
-		// through `DaimondFeed`, rows as `handle: body`, and wrapped as a
-		// stranger's words before a model sees any of it (feed plan §6).
+		if (view === 'feed') {
+			if (!window.DaimondFeed) return no('this build has no feed.');
+			var got = await DaimondFeed.following(0);
+			if (!got.ok) return no('nothing was read: ' + got.why);
+			var rows = (got.rows || []).slice(0, limit);
+			if (!rows.length) {
+				return 'Nobody this account follows has posted anything yet.';
+			}
+			// The wrapping that fences this as a stranger's words happens one layer
+			// out, in `Tool::social_result` -- every view answers here in plain
+			// words, and the fence is the same for all of them (feed plan §6).
+			return 'Posts from the people this account follows and is approved by, newest '
+				+ 'first (' + rows.length + ' shown):\n\n'
+				+ rows.map(function (r) {
+					return '@' + (r.handle || '?') + ' · ' + feedAge(r.ts) + ' · ' + r.body;
+				}).join('\n');
+		}
 		return no('\'' + view + '\' is not one of this panel\'s views.');
+	}
+
+	/// A plain-English age for a feed timestamp, for the model rather than the
+	/// screen -- `js/feed.js`'s own `when()` answers a locale string through
+	/// `DaimondI18n`, which is the wrong words for a daimon that reasons in
+	/// English whatever the viewer's language is set to.
+	function feedAge(ts) {
+		var ms = (ts | 0) * 1000;
+		if (!ms) return 'just now';
+		var s = Math.max(0, Math.round((Date.now() - ms) / 1000));
+		if (s < 60) return 'just now';
+		var m = Math.round(s / 60);
+		if (m < 60) return m + 'm';
+		var h = Math.round(m / 60);
+		if (h < 24) return h + 'h';
+		return Math.round(h / 24) + 'd';
 	}
 
 	/// Work out what one act would publish, and mint a token standing for it.
@@ -3861,9 +3896,34 @@
 				? String(window.DaimondPublishGuard() || '') : '';
 		} catch (e) { withheld = ''; }
 		if (withheld) return JSON.stringify({ refusal: no(withheld) });
-		// SEAM FOR THE DAIMON LANE: `act === 'feed_post'` lands here, AHEAD of the
-		// voice refusal below — a feed post needs no forge voice, and its Pro gate
-		// is the gateway's (feed plan §6).
+		// AHEAD of the voice refusal below: a feed post needs no forge voice --
+		// it goes to the gateway, not the forge -- and its Pro gate is the
+		// gateway's own (feed plan §6). `social_send_step` (src/tools.rs) has
+		// already checked the words are non-empty and within the byte bound; what
+		// is left here is asking the panel who this account is and how many
+		// followers it has, so the question put to the user names them.
+		if (act === 'feed_post') {
+			var fbody = String(r.body || '');
+			if (!fbody.trim()) {
+				return JSON.stringify({ refusal: no('nothing was composed: there is nothing to post.') });
+			}
+			if (new TextEncoder().encode(fbody).length > FEED_POST_MAX) {
+				return JSON.stringify({ refusal: no('nothing was composed: longer than '
+					+ FEED_POST_MAX + ' bytes.') });
+			}
+			if (!window.DaimondFeed) {
+				return JSON.stringify({ refusal: no('nothing was composed: this build has no feed.') });
+			}
+			var mine = await DaimondFeed.mine();
+			if (!mine.ok) return JSON.stringify({ refusal: no('nothing was composed: ' + mine.why) });
+			var fpayload = { act: 'feed_post', body: fbody };
+			var fshown = 'A POST TO YOUR ' + (mine.followers | 0) + ' FOLLOWERS, under '
+				+ (mine.handle || '?') + '.\n\n' + fbody;
+			var ftoken = 'd' + (++_draftN) + '-' + Math.random().toString(36).slice(2, 10);
+			_drafts[ftoken] = { at: Date.now(), payload: fpayload };
+			sweepDrafts();
+			return JSON.stringify({ shown: fshown, token: ftoken });
+		}
 		if (!hasVoice()) {
 			return JSON.stringify({ refusal: no('nothing was composed: this account has no posting '
 				+ 'name on the forge, so it cannot publish there. Tell the user, and say what you '
@@ -3961,6 +4021,14 @@
 			_list.err = null;
 			drawProps();
 			return 'The comment is on proposal #' + d.n + ', where everybody reading it can see it.';
+		}
+		if (d.act === 'feed_post') {
+			if (!window.DaimondFeed) return no('nothing was published: this build has no feed.');
+			var fp = await DaimondFeed.post(d.body);
+			if (!fp.ok) return no('nothing was published: ' + fp.why);
+			return 'Posted to ' + (fp.followers | 0) + ' follower' + (fp.followers === 1 ? '' : 's')
+				+ ' on the Daimond feed.'
+				+ (fp.dropped != null ? ' The oldest post was dropped to make room.' : '');
 		}
 		return no('nothing was published: that draft names no act.');
 	}

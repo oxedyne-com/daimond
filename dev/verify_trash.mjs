@@ -620,15 +620,30 @@ try {
 	const doomedId = (onDisk.find((d) => d.name === 'Doomed') || {}).id || '';
 	const keptId   = (onDisk.find((d) => d.name === 'Kept') || {}).id || '';
 
-	const fold = await A.evaluate(() => {
+	// FOLD IS IN THE COG NOW, not on the row (1a69469f, `mountChatFoldKeep`). This
+	// read the row's own `.tile-fold`, found nothing, opened no picker and asked
+	// its question of an empty list -- which passed the `!includes('Doomed')` half
+	// for the wrong reason and failed the other. Two presses, the way a person
+	// reaches it: the cog, then the button in the dialog it opens.
+	await A.evaluate(() => {
 		const box = [...document.querySelectorAll('#session-list .session-box')][0];
-		const f = box && box.querySelector('.tile-fold');
+		const cog = box && box.querySelector('.tile-cog');
+		if (cog) cog.click();
+	});
+	await A.waitForTimeout(700);
+	const fold = await A.evaluate(() => {
+		const f = [...document.querySelectorAll('.tile-dlg-actions .tile-fold')]
+			.filter((b) => b.getClientRects().length).pop();
 		if (f) f.click();
 		return [...document.querySelectorAll('.fold-menu-item')].map((e) => e.textContent.trim());
 	});
 	check('a trashed Diamond is not offered as somewhere to fold a chat, while a live one is',
 		!fold.includes('Doomed') && fold.includes('Kept'), JSON.stringify(fold));
-	await A.evaluate(() => { const m = document.querySelector('.fold-menu'); if (m) m.remove(); });
+	await A.evaluate(() => {
+		const m = document.querySelector('.fold-menu'); if (m) m.remove();
+		document.querySelectorAll('.modal').forEach((x) => x.remove());
+		document.body.classList.remove('modal-open');
+	});
 
 	const deadBounds = await A.evaluate((id) => window.DaimondDiamond.bounds(id), doomedId)
 		.catch(() => null);

@@ -30,6 +30,14 @@ pub mod diamond_delta;
 /// while the OPFS edge over it stays in [`wasm::diamond`].
 pub mod diamond_link;
 pub mod diamond_meta;
+/// What a Diamond's FILES held before the change that overwrote them: the per-version manifest,
+/// the content-addressed bodies under it, the sparse "as at N" resolver, the prune order and the
+/// reference-count sweep.
+///
+/// Target-agnostic on purpose, like the delta log beside it: the OPFS edge is compiled for the
+/// browser alone, so what decides -- what a manifest says, what a path held at a version, and
+/// what a prune is willing to throw away -- is tested natively instead.
+pub mod diamond_versions;
 /// How one path component is spelled on a filesystem that will not take it as it stands.
 ///
 /// Target-agnostic on purpose: the rules are a browser's, but the codec is a pure string

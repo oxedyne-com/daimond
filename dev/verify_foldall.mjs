@@ -40,20 +40,46 @@ const p = s.page;
 // remove themselves after ~4s, which is shorter than some of the waits here, so
 // they are RECORDED as they appear rather than looked for afterwards — a check
 // that polls for a live toast passes or fails on the sleep it happened to use.
+//
+// TWO KINDS NOW. A fold that SUCCEEDS says so in the undo window (`#daimond-undo`,
+// js/undo.js) rather than in the plain toast, because a fold can be taken back for
+// five seconds; a fold that FAILS still uses the plain one, because there is
+// nothing to take back. Both are recorded here, so "did it say something" is
+// answered whichever it said it in. The undo element is built once and reused, so
+// `clearToasts` REMOVES it -- the next window re-appends it and the observer sees
+// it again -- and `pending()` is read as well, for a window raised between two
+// clears.
 await p.evaluate(() => {
 	window.__toasts = [];
 	new MutationObserver(muts => {
 		for (const m of muts) for (const n of m.addedNodes) {
-			if (n.nodeType === 1 && n.classList && n.classList.contains('daimond-toast')) {
+			if (n.nodeType !== 1 || !n.classList) continue;
+			if (n.classList.contains('daimond-toast')) {
 				window.__toasts.push({ text: n.textContent, err: n.classList.contains('err') });
+			} else if (n.classList.contains('daimond-undo')) {
+				window.__toasts.push({ text: n.textContent, err: false, undo: true });
 			}
 		}
 	}).observe(document.body, { childList: true });
 });
-const toasts = () => p.evaluate(() => window.__toasts.slice());
+const toasts = () => p.evaluate(() => {
+	const held = window.__toasts.slice();
+	try {
+		const now = window.DaimondUndo && DaimondUndo.pending();
+		if (now && !held.some(x => x.undo && x.text.indexOf(now.text) >= 0)) {
+			held.push({ text: now.text, err: false, undo: true });
+		}
+	} catch (e) { /* no module in this build */ }
+	return held;
+});
 const clearToasts = () => p.evaluate(() => {
 	window.__toasts = [];
 	document.querySelectorAll('.daimond-toast').forEach(e => e.remove());
+	// The window closes the way it would have anyway: the act stands, and the
+	// element goes so the next one is a fresh append the observer can see.
+	try { if (window.DaimondUndo) DaimondUndo.flush(); } catch (e) { /* no module */ }
+	const u = document.getElementById('daimond-undo');
+	if (u) u.remove();
 });
 // The Diamond's own crystal surface: is a diff on show, and can it be applied?
 const diffState = () => p.evaluate(() => {

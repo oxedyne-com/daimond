@@ -3185,6 +3185,44 @@ body.locked .tile-fold, body.locked .spend-row { display: none; }
 .hist-kind { font-size: var(--fs-xs); color: var(--text-secondary); }
 .hist-when { font-size: var(--fs-2xs); color: var(--text-muted); }
 .hist-acts { display: flex; gap: 6px; flex: none; }
+/* The History bar's own two: the user's explicit Save, and how much of the cap
+   the bodies have taken. The gauge turns amber at nine tenths, where the next
+   snapshot starts pruning somebody's history. */
+.hist-save { flex: none; }
+.hist-gauge { margin-left: auto; font-size: var(--fs-2xs); color: var(--text-muted); font-variant-numeric: tabular-nums; }
+.hist-gauge.warn { color: var(--warn, var(--danger)); }
+
+/* What a version did to the FILES. Collapsed to a count, because most versions
+   changed one or two and a list under every row would bury the version numbers
+   the panel is for. */
+.hist-files-n {
+	flex: 1 0 100%; align-self: start; justify-self: start; width: max-content;
+	background: transparent; border: 0; padding: 0; margin: 2px 0 0; cursor: pointer;
+	font-size: var(--fs-2xs); color: var(--text-secondary); text-decoration: underline dotted;
+}
+.hist-files-n:hover { color: var(--accent); }
+.hist-files { flex: 1 0 100%; display: none; flex-direction: column; gap: 3px; margin-top: 4px; }
+.hist-files.open { display: flex; }
+.hist-file { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px; padding: 4px 6px; background: var(--bg-secondary); border-radius: var(--radius-sm); }
+.hist-file-path { flex: 1 1 auto; min-width: 0; font-family: var(--font-mono); font-size: var(--fs-2xs); color: var(--text-primary); overflow-wrap: anywhere; }
+/* `+12 −3`, filled in once the before/after has been drawn: the count is the
+   diff's own answer, so it is not claimed before there is one. */
+.hist-file-delta { flex: none; font-size: var(--fs-2xs); color: var(--text-muted); font-variant-numeric: tabular-nums; }
+.hist-file-mark { flex: none; font-size: var(--fs-2xs); color: var(--text-muted); }
+.hist-file-why { flex: none; font-size: var(--fs-2xs); color: var(--text-muted); }
+.hist-file-view, .hist-file-restore { flex: none; }
+.hist-file-view[disabled], .hist-file-restore[disabled] { opacity: 0.45; cursor: default; }
+
+/* The before/after. Scrolls sideways on its own rather than widening the panel,
+   because one long line in a file must not push the whole history off screen. */
+.hist-diff { flex: 1 0 100%; margin-top: 4px; max-height: 40vh; overflow: auto; background: var(--bg-primary); border: 1px solid var(--border); border-radius: var(--radius-sm); padding: 4px 6px; }
+.hist-diff-line { font-family: var(--font-mono); font-size: var(--fs-2xs); line-height: 1.45; white-space: pre; color: var(--text-secondary); }
+.hist-diff-line.add { color: var(--ok); background: color-mix(in srgb, var(--ok) 10%, transparent); }
+.hist-diff-line.del { color: var(--danger); background: color-mix(in srgb, var(--danger) 10%, transparent); }
+
+/* What the versions do NOT cover, said once under the list. */
+.hist-foot { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 8px; margin-top: 10px; padding-top: 8px; border-top: 1px solid var(--border); font-size: var(--fs-2xs); color: var(--text-muted); }
+.hist-foot-head { color: var(--text-secondary); }
 
 /* ── Tags ────────────────────────────────────────────────────────
    The user's filing system for Diamonds, and nothing more: a tag never reaches a
@@ -4693,3 +4731,55 @@ details.md-fold > .md-fold-body > :last-child { margin-bottom: 0; }
 	from { opacity: 0; transform: translate(-50%, 8px); }
 	to   { opacity: 1; transform: translate(-50%, 0); }
 }
+
+/* ── The undo window ─────────────────────────────────────────────
+   The actionable twin of the plain `toast()`, which stays where it is for status
+   nobody acts on. Two differences carry the whole of it: `pointer-events: auto`,
+   because this one is MEANT to be pressed, and `role="status"` in the markup, so
+   a screen reader finishes its sentence before reading it out. It sits above the
+   composer rather than over it -- a five-second box across the send button is a
+   five-second box people press by accident. */
+.daimond-undo {
+	position: fixed; left: 50%; bottom: 32px; transform: translateX(-50%) translateY(6px);
+	z-index: 9999; display: flex; align-items: center; gap: 12px;
+	padding: 9px 12px 9px 16px; border-radius: 8px; max-width: min(80vw, 420px);
+	pointer-events: auto; font-size: var(--fs-sm); color: var(--text-primary);
+	background: var(--bg-tertiary); border: 1px solid var(--border);
+	box-shadow: 0 4px 16px rgba(0, 0, 0, .28);
+	opacity: 0; transition: opacity .15s, transform .15s;
+}
+.daimond-undo.up { opacity: 1; transform: translateX(-50%) translateY(0); }
+/* AND `hidden` MUST WIN. `display: flex` above beats the user agent's own
+   `[hidden] { display: none }`, so without this line the element stands over the
+   page for the whole session -- invisible at `opacity: 0`, and still taking every
+   click that lands on it, because this is the one toast with pointer events. */
+.daimond-undo[hidden] { display: none; }
+.daimond-undo-text { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.daimond-undo-btn {
+	flex: none; cursor: pointer; padding: 4px 12px; border-radius: var(--radius-sm);
+	font-size: var(--fs-sm); font-weight: 600;
+	color: var(--accent); background: transparent;
+	border: 1px solid color-mix(in srgb, var(--accent) 45%, transparent);
+}
+.daimond-undo-btn:hover { background: color-mix(in srgb, var(--accent) 12%, transparent); }
+/* Above the composer on a phone, where the send row owns the bottom of the
+   screen and the mobile bar is not this change's to move. */
+@media (max-width: 540px) {
+	.daimond-undo { bottom: calc(96px + env(safe-area-inset-bottom, 0px)); max-width: calc(100vw - 24px); }
+}
+
+/* Retry and Edit & resend, on the last user tile only. They live in `.ctile-ctl`
+   beside the copy button and wear its manners: invisible until the tile is
+   hovered, so a thread reads as prose rather than as a column of controls. */
+.ctile-retry, .ctile-edit {
+	background: transparent; border: 0; padding: 2px 4px; cursor: pointer;
+	color: var(--text-muted); border-radius: var(--radius-sm);
+	font-size: var(--fs-xs); line-height: 1;
+	opacity: 0; transition: opacity 0.12s;
+}
+.ctile:hover > .ctile-lbl .ctile-retry,
+.ctile:hover > .ctile-lbl .ctile-edit { opacity: 0.75; }
+.ctile-retry:hover, .ctile-edit:hover { opacity: 1; color: var(--accent); background: color-mix(in srgb, var(--accent) 12%, transparent); }
+/* While choosing turns the bar belongs to the checkbox, as it does for copy. */
+.chat-output.selecting .ctile-retry,
+.chat-output.selecting .ctile-edit { display: none; }

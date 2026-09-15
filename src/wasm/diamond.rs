@@ -58,6 +58,7 @@ use crate::diamond_link::{
 	write_links,
 };
 use crate::diamond_delta::{self, Snap};
+use crate::diamond_versions::{self as versions, At, Cause, Entry, Manifest};
 use crate::diamond_meta::{Meta, normalise_tags};
 use crate::llm::{extract_json_string, json_escape};
 use crate::protocol::generate_session_id;
@@ -1941,6 +1942,783 @@ pub async fn log_read(id: &str) -> Outcome<String> {
 
 
 // ┌───────────────────────────────────────────────────────────────┐
+// │ File versions                                                  │
+// └───────────────────────────────────────────────────────────────┘
+
+/// What a path holds now, as the caller found it.
+pub enum Body {
+    Held(Vec<u8>),      // the bytes, read whole
+    TooLarge(u64),      // it is there, it is this long, and it was not read
+    Unseen,             // it changed and the app never saw what it became
+    Gone,               // there is nothing at the path
+}
+
+/// One path as a caller found it, before anything has been decided about it.
+///
+/// `before` is filled in only where the caller CAPTURED the prior bytes itself, which is the
+/// machine case: the hand read the file a moment before the daimon overwrote it, inside the same
+/// fence, and nothing else in the app will ever see those bytes again.  Everywhere else it is
+/// `None` and [`versions_record`] answers "what stood there" from the history instead, which
+/// costs no read at all.
+pub struct Change {
+    pub path:    String,            // workspace-relative, or absolute where `mark`
+    pub after:   Body,
+    pub before:  Option<Vec<u8>>,   // the prior bytes, where the caller captured them
+    pub mark:    bool,              // a file on this computer, under a folder the user marked in
+    pub refused: Option<String>,    // why the prior bytes could not be read, in the hand's words
+}
+
+impl Change {
+
+    /// A path the caller has just read off the disk.
+    pub fn of(path: &str, body: Vec<u8>) -> Self {
+        Self { path: path.to_string(), after: Body::Held(body), before: None, mark: false,
+            refused: None }
+    }
+
+    /// A path that is no longer there.
+    pub fn gone(path: &str) -> Self {
+        Self { path: path.to_string(), after: Body::Gone, before: None, mark: false,
+            refused: None }
+    }
+}
+
+/// The most files one walk of a Diamond's own directory hashes.
+///
+/// A bound rather than a budget: the walk serves Save a version and the turn that ran a command,
+/// both of which are about a Diamond's own small files, and a capp with a data directory of ten
+/// thousand entries must not turn a button press into a minute of hashing on a phone.
+const WALK_FILES_MAX: usize = 500;
+
+thread_local! {
+    /// Paths the user's own doors have changed since the last version, per Diamond.
+    ///
+    /// **This is what makes "the state before the turn began" true without walking every turn.**
+    /// The Files panel, a capp's Save and a landed Diamond each name the path they wrote; the
+    /// next turn's start drains the set and records them as one `user` version.  Held in memory
+    /// rather than on disk on purpose: a mark that did not survive a reload would describe a
+    /// change the next turn cannot attribute anyway, and the change itself is still on disk for
+    /// the next Save a version to find.
+    static DIRTY: std::cell::RefCell<
+        std::collections::BTreeMap<String, std::collections::BTreeSet<String>>> =
+        std::cell::RefCell::new(std::collections::BTreeMap::new());
+
+    /// What the file tools captured mid-turn, per Diamond, waiting for the turn to end.
+    ///
+    /// A machine file's prior bytes exist for one instant -- between the hand's read and the
+    /// daimon's write, inside one fence -- and there is no turn-end walk that could go back for
+    /// them.  So they are taken then and held here, and the turn-end hook records them in the
+    /// same manifest as everything else the turn wrote.
+    ///
+    /// Each is held under BOTH names: the path the model wrote, which is what the turn's ledger
+    /// will say, and the absolute path on the machine, which is what the manifest shows and what
+    /// a restore writes to.  Without the first, the turn-end sweep would read the same file a
+    /// second time under its workspace spelling and record it twice -- or, with no folder open,
+    /// fail to read it and record the file the daimon had just written as deleted.
+    static CAPTURED: std::cell::RefCell<
+        std::collections::BTreeMap<String, Vec<(String, Change)>>> =
+        std::cell::RefCell::new(std::collections::BTreeMap::new());
+}
+
+/// Note that one of the user's own doors changed `path` in this Diamond.
+pub fn mark_dirty(id: &str, path: &str) {
+    if path.trim().is_empty() {
+        return;
+    }
+    DIRTY.with(|d| {
+        d.borrow_mut().entry(id.to_string()).or_default().insert(path.to_string());
+    });
+}
+
+/// Take the dirty set for this Diamond, leaving it empty.
+pub fn drain_dirty(id: &str) -> Vec<String> {
+    DIRTY.with(|d| match d.borrow_mut().remove(id) {
+        Some(set) => set.into_iter().collect(),
+        None      => Vec::new(),
+    })
+}
+
+/// Hold what a file tool captured about a machine file it is about to change.
+///
+/// Called from [`crate::tools::Tool::execute`], inside the fence and between the hand's read and
+/// the hand's write.  A turn that edited one file six times records the bytes it STARTED with
+/// and the bytes it ENDED with and nothing between: the newest content wins, and the prior bytes
+/// stay those of the first capture, because that is the state the row has to go back to.
+///
+/// # Arguments
+/// * `raw` - The path as the model wrote it, which is what the turn's ledger will name.
+/// * `change` - The capture, whose own `path` is absolute on the machine.
+pub fn capture(id: &str, raw: &str, change: Change) {
+    CAPTURED.with(|c| {
+        let mut all = c.borrow_mut();
+        let held = all.entry(id.to_string()).or_default();
+        match held.iter().position(|(_, h)| h.path == change.path) {
+            Some(at) => {
+                let before  = held[at].1.before.take();
+                let refused = held[at].1.refused.clone();
+                held[at] = (raw.to_string(), Change { before, refused, ..change });
+            },
+            None => held.push((raw.to_string(), change)),
+        }
+    });
+}
+
+/// Take what the file tools captured for this Diamond, leaving nothing.
+///
+/// Each entry is `(the path the model wrote, the capture)`, and the note on `CAPTURED` says why
+/// both names travel.  Drained at the END of a turn and not at the start, so a turn that died with files
+/// already written still records them -- which is the one outcome with no way back.
+pub fn drain_captured(id: &str) -> Vec<(String, Change)> {
+    CAPTURED.with(|c| c.borrow_mut().remove(id).unwrap_or_default())
+}
+
+/// A manifest's path, `diamonds/<id>/versions/NNNN.files.json`.
+fn manifest_path(id: &str, version: u64) -> String {
+    fmt!("{}/{}", versions_dir(id), versions::manifest_name(version))
+}
+
+/// A body's path, `diamonds/<id>/versions/b/<sha256hex>`.
+fn body_path(id: &str, hash: &str) -> String {
+    fmt!("{}/{}", versions_dir(id), versions::body_name(hash))
+}
+
+/// Every manifest this Diamond holds, by version, oldest first.
+///
+/// **Never an error.**  A manifest that will not parse is one row of history, and refusing the
+/// whole store for it would take the other hundred and ninety-nine with it -- including, on the
+/// turn that met it, the ability to record anything new.  The bad one is named on the console and
+/// passed over, which is also what a manifest from a NEWER build looks like from here.
+pub async fn versions_manifests(id: &str) -> Vec<(u64, Manifest)> {
+    let mut out: Vec<(u64, Manifest)> = Vec::new();
+    for (name, is_dir, _size) in version_entries(id).await {
+        if is_dir {
+            continue;
+        }
+        let n = match versions::manifest_version(&name) {
+            Some(n) => n,
+            None    => continue,        // the crystal's own snapshots, and anything else
+        };
+        let at = fmt!("{}/{}", versions_dir(id), name);
+        let bytes = match opfs::read_file(FileRoot::Opfs, &at).await {
+            Ok(b)  => b,
+            Err(_) => continue,
+        };
+        match Manifest::from_json(&String::from_utf8_lossy(&bytes)) {
+            Ok(m)  => out.push((n, m)),
+            Err(e) => console_log(&fmt!(
+                "Diamond '{}': the version manifest '{}' could not be read ({}), so that row of \
+                 the history is passed over.", id, name, e)),
+        }
+    }
+    out.sort_by_key(|(n, _)| *n);
+    out
+}
+
+/// Every body on disk, by hash and size.
+async fn versions_bodies(id: &str) -> Vec<(String, u64)> {
+    let dir = fmt!("{}/{}", versions_dir(id), versions::BODY_DIR);
+    match opfs::list_dir(FileRoot::Opfs, &dir).await {
+        Ok(e)  => e.into_iter()
+            .filter(|(name, is_dir, _)| !*is_dir && versions::is_hash(name))
+            .map(|(name, _, size)| (name, size))
+            .collect(),
+        Err(_) => Vec::new(),           // no bodies yet, which is every Diamond until the first
+    }
+}
+
+/// Mint a version number for a change to FILES alone, leaving the crystal exactly as it is.
+///
+/// **Through the crystal's own chain rather than beside it**, which is the whole point.  The
+/// counter is shared, so a files version occupies a number; a number with no `versions/NNNN.json`
+/// under it is a number [`read_version`] cannot answer and, worse, one that
+/// [`parent_data`] cannot rebuild -- so the NEXT crystal edit would record a full copy of a page
+/// that had not changed.  One empty patch costs a few bytes and keeps the chain whole.
+///
+/// [`snapshot`] is deliberately not used: it is a write door and applies the crystal's ceilings,
+/// and a Diamond whose crystal is already over one would be unable to record a file version at
+/// all -- refused for growing a file it is writing back byte for byte.
+async fn mint_files_version(id: &str, now: u64) -> Outcome<u64> {
+    let data = res!(read_crystal_data(id).await);
+    let mut meta = res!(read_meta(id).await);
+    let next = meta.version + 1;
+    let entries = version_entries(id).await;
+    let snaps = classify(&entries, DATA_KEYFRAME_EXT, DATA_PATCH_EXT);
+    let parent = parent_data(id, meta.version, &snaps).await;
+    res!(write_snapshot(id, next, parent.as_deref(), &data, &snaps,
+        DATA_KEYFRAME_EXT, DATA_PATCH_EXT).await);
+    meta.version = next;
+    meta.updated = now;
+    meta.touched = now;         // files changed, so the Diamond both moved and travels
+    res!(write_meta(id, &meta).await);
+    Ok(next)
+}
+
+/// Record what changed, as one version, and answer with the version it was recorded at.
+///
+/// **`Ok(None)` is an ordinary answer and not a failure.**  A version that lists nothing says
+/// nothing, costs a row in the history and costs the sync a restamped parcel, so a turn that
+/// wrote a file back byte for byte earns no version at all -- which is how [`record_steer`] has
+/// always worked, and is decision D2 of the launch plan.  The test is on BYTES and never on the
+/// fact that a door was used.
+///
+/// # Arguments
+/// * `at` - The version to record against, for a caller that has just minted one -- the turn end,
+///   which called [`record_steer`] a moment before.  `None` mints one (see
+///   [`mint_files_version`]) and writes the log line for it.
+/// * `turn` - The user message id of the turn this belongs to, or empty.
+/// * `note` - What the user typed, or the name they gave a save.
+pub async fn versions_record(
+    id:      &str,
+    at:      Option<u64>,
+    cause:   Cause,
+    turn:    &str,
+    note:    &str,
+    changes: Vec<Change>,
+)
+    -> Outcome<Option<(u64, Vec<String>)>>
+{
+    if changes.is_empty() {
+        return Ok(None);
+    }
+    let held  = versions_manifests(id).await;
+    let index = versions::index_of(&held);
+    let mut entries: Vec<Entry> = Vec::new();
+    let mut bodies: Vec<(String, Vec<u8>)> = Vec::new();
+    let mut seen: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
+    for ch in changes.into_iter() {
+        // ONE ROW PER PATH.  A turn's ledger and the walk that follows an opaque tool both name
+        // the same file, and two rows for one change would double the entry, double the `was` and
+        // make the restore of one of them a no-op against the other.
+        if !seen.insert(ch.path.clone()) {
+            continue;
+        }
+        // What stood there: the bytes the caller captured, else what the store last recorded.
+        let was = match &ch.before {
+            Some(b) => {
+                let h = versions::hash_of(b);
+                bodies.push((h.clone(), b.clone()));
+                Some(h)
+            },
+            None => index.get(&ch.path).cloned(),
+        };
+        match ch.after {
+            Body::Gone => {
+                // A path that was never held and is still not there is not a deletion.
+                if was.is_none() {
+                    continue;
+                }
+                entries.push(Entry {
+                    path:    ch.path,
+                    hash:    String::new(),
+                    bytes:   0,
+                    was,
+                    gone:    true,
+                    mark:    ch.mark,
+                    skipped: ch.refused,
+                });
+            },
+            Body::TooLarge(size) => {
+                entries.push(Entry {
+                    path:    ch.path,
+                    hash:    String::new(),
+                    bytes:   size,
+                    was,
+                    gone:    false,
+                    mark:    ch.mark,
+                    skipped: Some("size".to_string()),
+                });
+            },
+            // A ROW WITH NO BODY IS STILL A ROW. A file the daimon changed and the app could not
+            // read back is a file the user has to be told about: leaving it out would make the
+            // History say the turn changed less than it did, which is the one thing a record of
+            // changes must not do.
+            Body::Unseen => {
+                entries.push(Entry {
+                    path:    ch.path,
+                    hash:    String::new(),
+                    bytes:   0,
+                    was,
+                    gone:    false,
+                    mark:    ch.mark,
+                    skipped: Some(ch.refused.unwrap_or_else(|| "unreadable".to_string())),
+                });
+            },
+            Body::Held(body) => {
+                let hash = versions::hash_of(&body);
+                if was.as_deref() == Some(hash.as_str()) && ch.refused.is_none() {
+                    continue;           // the door was used and the bytes did not move
+                }
+                let skipped = match ch.refused {
+                    Some(w)                                         => Some(w),
+                    None if body.len() > versions::VERSION_FILE_MAX => Some("size".to_string()),
+                    None                                            => None,
+                };
+                let bytes = body.len() as u64;
+                if skipped.is_none() {
+                    bodies.push((hash.clone(), body));
+                }
+                entries.push(Entry { path: ch.path, hash, bytes, was, gone: false,
+                    mark: ch.mark, skipped });
+            },
+        }
+    }
+    if entries.is_empty() {
+        return Ok(None);
+    }
+    let manifest = Manifest::new(cause, now_ms() as u64, turn, note, entries);
+    // What the manifest ACTUALLY holds, after the truncation, so the daimon is never told about
+    // a file whose row was not written.
+    let named: Vec<String> = manifest.files.iter().map(|e| e.path.clone()).collect();
+
+    // THE BODIES BEFORE THE MANIFEST, so a failure half way through leaves bytes nothing names --
+    // which the next sweep collects -- rather than a manifest naming bytes that are not there,
+    // which reads to the user as history their own device has lost.
+    for (hash, body) in bodies.into_iter() {
+        // Content-addressed, so the third write of content already held writes nothing at all.
+        let to = body_path(id, &hash);
+        if res!(opfs::exists(FileRoot::Opfs, &to).await) {
+            continue;
+        }
+        res!(opfs::write_file(FileRoot::Opfs, &to, &body).await);
+    }
+
+    let minted = at.is_none();
+    let version = match at {
+        Some(v) => v,
+        None    => res!(mint_files_version(id, manifest.ts).await),
+    };
+    res!(opfs::write_file(FileRoot::Opfs, &manifest_path(id, version),
+        manifest.to_json().as_bytes()).await);
+
+    // A version minted for files alone earns its own line in the one history the user reads.  A
+    // version the crystal minted already has one, and a second would show the same turn twice.
+    if minted {
+        let rec = LogRecord {
+            id:        generate_session_id(),
+            ts:        manifest.ts,
+            kind:      "files",
+            agent:     match cause {
+                Cause::Turn => "daimon".to_string(),
+                Cause::Fold => "reducer".to_string(),
+                _           => "user".to_string(),
+            },
+            task:      cause.wire().to_string(),
+            parent:    version as i64 - 1,
+            version,
+            delta_ref: String::new(),
+            note:      note.to_string(),
+        };
+        res!(append_log(id, &rec).await);
+    }
+    // Best effort: a store over its ceiling is a store that still works, and a prune that failed
+    // must not lose the version it was called after.
+    if let Err(e) = versions_prune(id).await {
+        console_log(&fmt!("Diamond '{}': the version store could not be pruned ({}).", id, e));
+    }
+    Ok(Some((version, named)))
+}
+
+/// The manifests as the history reads them, newest first, each carrying its version number.
+pub async fn versions_list(id: &str) -> Outcome<String> {
+    let held = versions_manifests(id).await;
+    let mut rows: Vec<String> = Vec::with_capacity(held.len());
+    for (n, m) in held.iter().rev() {
+        let body = m.to_json();
+        let inner = match body.strip_prefix('{') {
+            Some(s) => s,
+            None    => body.as_str(),
+        };
+        rows.push(fmt!("{{\"version\":{},{}", n, inner));
+    }
+    Ok(fmt!("[{}]", rows.join(",")))
+}
+
+/// What the version store weighs against what it is allowed to weigh.
+///
+/// The gauge in the History bar.  `bytes` counts the bodies the kept manifests name AND that this
+/// device actually holds -- a body a manifest names and the device has not got weighs nothing,
+/// because charging for bytes the user cannot delete would read as a store that will not empty.
+pub async fn versions_gauge(id: &str) -> Outcome<String> {
+    let held   = versions_manifests(id).await;
+    let bodies = versions_bodies(id).await;
+    Ok(fmt!(
+        "{{\"bytes\":{},\"cap\":{},\"manifests\":{},\"manifests_cap\":{},\"file_max\":{}}}",
+        versions::used_bytes(&held, &bodies), versions::versions_bytes_cap(),
+        held.len(), versions::MANIFESTS_MAX, versions::VERSION_FILE_MAX))
+}
+
+/// One body's bytes, or `None` where this device has not got it.
+///
+/// `None` is the "Not on this device" row and not an error: a manifest may name a body a device
+/// on an older build never packed, or one pruned there before the manifest naming it was pruned
+/// here.  There is no fetch by hash -- a body is not chunk-addressed, and chunk addresses are
+/// hashes of CIPHERTEXT -- and the next whole pull from the device that has it brings it, since a
+/// Diamond travels whole.
+pub async fn versions_body(id: &str, hash: &str) -> Outcome<Option<Vec<u8>>> {
+    if !versions::is_hash(hash) {
+        return Err(err!(
+            "'{}' is not the name of a stored version body.", hash; Invalid, Input, Path));
+    }
+    match opfs::read_file(FileRoot::Opfs, &body_path(id, hash)).await {
+        Ok(b)  => Ok(Some(b)),
+        Err(_) => Ok(None),
+    }
+}
+
+/// Bring the version store back inside its ceilings, and answer with what went: manifests, then
+/// bodies.
+///
+/// The order and the sweep are [`crate::diamond_versions::prune_plan`]'s; this is the edge that
+/// deletes what it named.
+pub async fn versions_prune(id: &str) -> Outcome<(usize, usize)> {
+    let held   = versions_manifests(id).await;
+    let bodies = versions_bodies(id).await;
+    let plan   = versions::prune_plan(&held, &bodies, versions::Caps::default());
+    if plan.is_empty() {
+        return Ok((0, 0));
+    }
+    let mut gone_m = 0usize;
+    for n in plan.manifests.iter() {
+        match opfs::delete_entry(FileRoot::Opfs, &manifest_path(id, *n), false).await {
+            Ok(())  => gone_m += 1,
+            Err(e)  => console_log(&fmt!(
+                "Diamond '{}': version manifest {} could not be pruned ({}).", id, n, e)),
+        }
+    }
+    let mut gone_b = 0usize;
+    for hash in plan.bodies.iter() {
+        match opfs::delete_entry(FileRoot::Opfs, &body_path(id, hash), false).await {
+            Ok(())  => gone_b += 1,
+            Err(e)  => console_log(&fmt!(
+                "Diamond '{}': version body {} could not be swept ({}).", id, hash, e)),
+        }
+    }
+    Ok((gone_m, gone_b))
+}
+
+/// Read these paths as they stand, for a caller that is about to record them.
+///
+/// The paths are taken as they were given -- they are what a turn's ledger, the dirty set or a
+/// restore named, and that is what the manifest must say.  A path that is not there comes back as
+/// a deletion rather than being dropped, which is what makes a deleted file a row.
+///
+/// Nothing over the per-file ceiling is READ: the length comes off the file handle, which costs
+/// no bytes, so the one case the ceiling exists for is also the one case that costs nothing.
+///
+/// # Arguments
+/// * `id` - The Diamond, for the paths of its own that are not versioned at all.
+pub async fn versions_changes(id: &str, paths: &[String]) -> Vec<Change> {
+    let ceiling = versions::VERSION_FILE_MAX as u32;
+    let mut out: Vec<Change> = Vec::new();
+    for path in paths.iter() {
+        if !versionable(id, path) {
+            continue;
+        }
+        match opfs::read_file_capped(FileRoot::Workspace, path, ceiling).await {
+            Ok((body, total)) if total as usize <= versions::VERSION_FILE_MAX =>
+                out.push(Change::of(path, body)),
+            Ok((_, total)) => out.push(Change {
+                path:    path.clone(),
+                after:   Body::TooLarge(total as u64),
+                before:  None,
+                mark:    false,
+                refused: None,
+            }),
+            Err(_) => out.push(Change::gone(path)),
+        }
+    }
+    out
+}
+
+/// Every file in the Diamond's own directory that the store versions, as it stands.
+///
+/// For Save a version, and for the turn that ran a command: an opaque tool names no paths at all,
+/// so the only honest account of what it changed is to look.  Bounded at [`WALK_FILES_MAX`]
+/// entries, so a capp with a large data directory cannot turn a button press into a minute of
+/// hashing on the device least able to afford it.
+pub async fn versions_walk(id: &str) -> Vec<Change> {
+    let root = diamond_dir(id);
+    let mut found: Vec<String> = Vec::new();
+    let mut todo: Vec<String> = vec![String::new()];
+    while let Some(rel) = todo.pop() {
+        if found.len() >= WALK_FILES_MAX {
+            break;
+        }
+        let dir = if rel.is_empty() { root.clone() } else { fmt!("{}/{}", root, rel) };
+        let entries = match opfs::list_dir(FileRoot::Opfs, &dir).await {
+            Ok(e)  => e,
+            Err(_) => continue,         // a directory that has gone holds nothing
+        };
+        for (name, is_dir, _size) in entries {
+            let child = if rel.is_empty() { name.clone() } else { fmt!("{}/{}", rel, name) };
+            let whole = fmt!("{}/{}", root, child);
+            if !versionable(id, &whole) {
+                continue;
+            }
+            if is_dir {
+                todo.push(child);
+            } else if found.len() < WALK_FILES_MAX {
+                found.push(whole);
+            }
+        }
+    }
+    versions_changes(id, &found).await
+}
+
+/// Does the version store keep this path?
+///
+/// `versions/` is the store itself and `.daimond/` is the Diamond's own record -- the log, the
+/// metadata, the retained deltas.  Versioning either would version the act of versioning.  The
+/// crystal's two files keep the chain they have had since they existed, and a files manifest and
+/// a crystal snapshot at one number are two halves of one History row rather than two rows.
+///
+/// Asked of THIS Diamond's own paths only: a file a turn wrote elsewhere in the workspace is
+/// versioned whatever it is called, so a user's own folder named `versions` is not caught by a
+/// rule about Daimond's.
+pub fn versionable(id: &str, path: &str) -> bool {
+    if !is_safe_rel(path) {
+        return false;       // an absolute machine path, or one with a `..` in it
+    }
+    let own = diamond_dir(id);
+    for guard in [
+        versions_dir(id),
+        fmt!("{}/{}", own, STORE_DIR),
+        fmt!("{}/{}", own, LEGACY_STORE_DIR),
+    ] {
+        if path == guard || path.starts_with(&fmt!("{}/", guard)) {
+            return false;
+        }
+    }
+    path != crystal_data_path(id) && path != crystal_page_path(id)
+}
+
+/// What one path held as at `at`, for a caller that is about to write it back: the version, the
+/// body's hash, and whether the file is on this computer.
+///
+/// `at` of `None` means "before the change that is being undone": the version of the newest entry
+/// naming the path, and the content that stood under it.  A path whose newest entry carries no
+/// `was` answers `None` -- there is nothing to go back to, and an older version is not an answer
+/// to a question about a state the user never saw.
+pub async fn versions_undo_target(id: &str, path: &str, at: Option<u64>)
+    -> Outcome<Option<(u64, String, bool)>>
+{
+    let held = versions_manifests(id).await;
+    let mark = held.iter().rev()
+        .flat_map(|(_, m)| m.files.iter())
+        .find(|e| e.path == path)
+        .map(|e| e.mark)
+        .unwrap_or(false);
+    match at {
+        Some(n) => Ok(versions::path_at(&held, path, n)
+            .and_then(|s| s.hash().map(|h| (n, h.to_string(), mark)))),
+        None    => Ok(versions::undo_target(&held, path).map(|(n, h)| (n, h, mark))),
+    }
+}
+
+/// Put the Diamond's files back as they stood at `at`, and say what became of each.
+///
+/// **Never destructive.**  What is on disk now is recorded as a `restore` version BEFORE anything
+/// is written, so the state a restore replaced is one row up in the same history -- which is what
+/// makes the restore itself undoable, and why no confirmation stands between the user and one
+/// file.
+///
+/// **The machine half is the caller's.**  A file in a folder the user marked in is reached only
+/// through the hand, behind the turn's own fence, and nothing in this module has either.  Those
+/// paths come back under `machine`, with the body to write, for the caller that does have a fence
+/// -- the page's own write door, or [`crate::tools::Tool::FileRevert`] inside a turn.
+///
+/// The answer is `(what the caller is owed, the paths this function itself wrote)`.  The second
+/// is not in the JSON's gift: a Restore changes bytes underneath an agent that may have read
+/// them, and the caller has to tell the read cache so before the daimon's next write to one of
+/// them is refused as another agent's edit.
+///
+/// # Arguments
+/// * `at` - The version to put the files back to.
+/// * `path` - One path, or `None` for every path the history names -- which includes REMOVING a
+///   file that did not exist at `at`.
+pub async fn versions_restore(id: &str, at: u64, path: Option<&str>)
+    -> Outcome<(String, Vec<String>)>
+{
+    let held = versions_manifests(id).await;
+    let want: Vec<(String, At)> = match path {
+        Some(p) => match versions::path_at(&held, p, at) {
+            Some(s) => vec![(p.to_string(), s)],
+            None    => return Err(err!(
+                "Diamond '{}' has no record of '{}' at version {}, so there is nothing to put \
+                back.", id, p, at; Missing, Data)),
+        },
+        None => versions::state_at(&held, at),
+    };
+    // A machine path is absolute and a stored one is not, which is what tells the two apart for a
+    // path whose state at `at` is GONE and so carries no flag of its own.
+    let here = |p: &str| -> bool { is_safe_rel(p) };
+
+    // WHAT IS THERE NOW, read before a byte is written.  These bytes become the `was` of the
+    // version this leaves behind, which is what "today's state is kept" means and what makes a
+    // restore itself undoable -- and they have to be taken now, because in a moment they are
+    // what was overwritten.
+    let mine: Vec<String> = want.iter()
+        .filter(|(p, s)| here(p) && !s.mark())
+        .map(|(p, _)| p.clone())
+        .collect();
+    let mut today: std::collections::BTreeMap<String, Option<Vec<u8>>> =
+        std::collections::BTreeMap::new();
+    for ch in versions_changes(id, &mine).await.into_iter() {
+        let bytes = match ch.after {
+            Body::Held(b) => Some(b),
+            _             => None,      // absent, or past the ceiling: no body to keep
+        };
+        today.insert(ch.path, bytes);
+    }
+
+    let mut done:    Vec<Change> = Vec::new();
+    let mut restored: Vec<String> = Vec::new();
+    let mut missing:  Vec<String> = Vec::new();
+    let mut refused:  Vec<String> = Vec::new();
+    let mut machine:  Vec<String> = Vec::new();
+    for (p, state) in want.iter() {
+        // A file on this computer is reached only through the hand, behind a turn's own fence,
+        // and this module has neither.  It comes back for the caller that does.
+        if state.mark() || !here(p) {
+            machine.push(match state {
+                At::Held { hash, bytes, skipped, .. } => fmt!(
+                    "{{\"path\":\"{}\",\"hash\":\"{}\",\"bytes\":{}{}}}",
+                    json_escape(p), json_escape(hash), bytes, match skipped {
+                        Some(w) => fmt!(",\"skipped\":\"{}\"", json_escape(w)),
+                        None    => String::new(),
+                    }),
+                At::Gone => fmt!("{{\"path\":\"{}\",\"gone\":true}}", json_escape(p)),
+            });
+            continue;
+        }
+        let before = today.get(p).cloned().unwrap_or_default();
+        match state {
+            At::Gone => {
+                if before.is_none() {
+                    continue;           // not there then, not there now: nothing to do
+                }
+                // A file made AFTER `at` is removed, which is the half of "put it back" that a
+                // per-path restore never needs and a whole-version one cannot do without.
+                match opfs::delete_entry(FileRoot::Workspace, p, false).await {
+                    Ok(()) => {
+                        restored.push(p.clone());
+                        done.push(Change { path: p.clone(), after: Body::Gone, before,
+                            mark: false, refused: None });
+                    },
+                    Err(_) => {},       // already gone, which is the state that was asked for
+                }
+            },
+            At::Held { skipped: Some(why), .. } => refused.push(fmt!(
+                "{{\"path\":\"{}\",\"why\":\"{}\"}}", json_escape(p), json_escape(why))),
+            At::Held { hash, .. } => match res!(versions_body(id, hash).await) {
+                Some(body) => {
+                    res!(opfs::write_file(FileRoot::Workspace, p, &body).await);
+                    restored.push(p.clone());
+                    done.push(Change { path: p.clone(), after: Body::Held(body), before,
+                        mark: false, refused: None });
+                },
+                None => missing.push(p.clone()),
+            },
+        }
+    }
+
+    // THE VERSION THE RESTORE ITSELF IS.  Written after the files, so it describes what actually
+    // landed rather than what was intended, and carrying today's bytes as each row's `was` -- so
+    // the state a restore replaced is one row up in the same history and Undo is a Restore of the
+    // row above.  A restore that changed nothing writes nothing, by the same rule every other
+    // cause lives under.
+    let at_now = res!(versions_record(id, None, Cause::Restore, "", &fmt!("restore v{}", at),
+        done).await);
+
+    let quote = |v: &[String]| -> String {
+        let items: Vec<String> = v.iter().map(|s| fmt!("\"{}\"", json_escape(s))).collect();
+        items.join(",")
+    };
+    let said = fmt!(
+        "{{\"version\":{},\"recorded\":{},\"restored\":[{}],\"missing\":[{}],\
+          \"refused\":[{}],\"machine\":[{}]}}",
+        at, match at_now { Some((v, _)) => v as i64, None => -1 },
+        quote(&restored), quote(&missing), refused.join(","), machine.join(","));
+    Ok((said, restored))
+}
+
+
+/// Record every file in the Diamond's own directory as one version, because the user asked for
+/// one.
+///
+/// The dirty set is drained into it rather than left standing: the paths the user's own doors
+/// touched are part of what they are saving, and leaving them marked would record them a second
+/// time at the next turn's start under a different cause.
+///
+/// # Arguments
+/// * `note` - What the user called this version, or empty.
+pub async fn versions_save(id: &str, note: &str) -> Outcome<Option<(u64, Vec<String>)>> {
+    let _ = drain_dirty(id);
+    let changes = versions_walk(id).await;
+    versions_record(id, None, Cause::Save, "", note, changes).await
+}
+
+/// Record what a Diamond arrived holding, so a share that later goes wrong has somewhere to go
+/// back to.
+///
+/// After the files are written and not before: the version IS what landed.  The dirty set is
+/// dropped rather than recorded, because what a landed Diamond holds is not the user's own edit
+/// and attributing it to them would put their name on somebody else's work.
+pub async fn versions_landed(id: &str) -> Outcome<Option<(u64, Vec<String>)>> {
+    let _ = drain_dirty(id);
+    let changes = versions_walk(id).await;
+    versions_record(id, None, Cause::Share, "", "", changes).await
+}
+
+/// One change, shown as the lines that differ.
+///
+/// The rows come from [`crate::diamond_versions::line_diff`], which is also what the daimon's
+/// own `file_revert` answer is drawn from, so the page and the model are shown the same
+/// comparison.
+///
+/// # Arguments
+/// * `was` - The hash of the content before, or empty for a file that did not exist.
+/// * `now` - The hash of the content after, or empty for one that was deleted.
+pub async fn versions_diff(id: &str, was: &str, now: &str) -> Outcome<String> {
+    let side = |b: Option<Vec<u8>>, hash: &str| -> Outcome<String> {
+        match b {
+            None if hash.is_empty() => Ok(String::new()),
+            None                    => Err(err!(
+                "The stored content '{}' is not on this device, so the two versions cannot be \
+                compared here.", hash; Missing, Data)),
+            // Refused rather than made lossy: a picture rendered as replacement characters
+            // would be shown as a diff of nonsense, which reads as the file being ruined.
+            Some(bytes) => match std::str::from_utf8(&bytes) {
+                Ok(t)  => Ok(t.to_string()),
+                Err(_) => Err(err!(
+                    "One side of this comparison is not text, so it cannot be shown as lines.";
+                    Invalid, Data)),
+            },
+        }
+    };
+    let before = res!(side(match was.is_empty() {
+        true  => None,
+        false => res!(versions_body(id, was).await),
+    }, was));
+    let after = res!(side(match now.is_empty() {
+        true  => None,
+        false => res!(versions_body(id, now).await),
+    }, now));
+    let rows = res!(versions::line_diff(&before, &after));
+    let (add, del) = versions::diff_counts(&rows);
+    let out: Vec<String> = rows.iter().map(|r| {
+        let (k, t) = match r {
+            versions::Row::Same(t) => (" ", t),
+            versions::Row::Del(t)  => ("-", t),
+            versions::Row::Add(t)  => ("+", t),
+        };
+        fmt!("{{\"k\":\"{}\",\"t\":\"{}\"}}", k, json_escape(t))
+    }).collect();
+    Ok(fmt!("{{\"add\":{},\"del\":{},\"rows\":[{}]}}", add, del, out.join(",")))
+}
+
+
+// ┌───────────────────────────────────────────────────────────────┐
 // │ Links                                                          │
 // └───────────────────────────────────────────────────────────────┘
 
@@ -2470,6 +3248,17 @@ pub async fn export_template(id: &str, with_conversation: bool) -> Outcome<Strin
 /// export cannot leave the user with neither copy.  The window between the delete
 /// and the last write remains: a failure inside it leaves the Diamond gone from
 /// this device, and the next pull brings it back.
+///
+/// **`versions/` travels, and that is the whole of what keeps file history across a pull.**  The
+/// file manifests and their bodies are ordinary files under the Diamond's directory, so
+/// [`export_diamond`] packs them and this lays them down with everything else -- which is
+/// decision D3 of the launch plan, and it is a decision about THIS function.  Keeping them per
+/// device instead would need a carve-out here, in the one place that has lost a Diamond's tags
+/// before, and the carve-out would have to survive every future change to how a Diamond is
+/// replaced.  The cost is the rule every file in a Diamond already lives under: a version made
+/// offline on one device is gone when a fresher whole copy lands from another.  The bodies are
+/// bytes, so the ones that are not valid UTF-8 travel in the pack's `binary` map
+/// ([`crate::protocol::pack_diamond`]) and arrive byte for byte.
 pub async fn import_diamond(json: &str) -> Outcome<()> {
     // The browser's own parser, not a second one written here.  This JSON holds
     // whole files, and a hand-rolled scan would be a second unescaping

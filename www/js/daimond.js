@@ -307,7 +307,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		// `pushToken` is deliberately NOT in the stored shape and never read back: the
 		// wrapped `pushTokenEnc` is the only form that reaches storage. See `saveCfg`.
 		var cfg = { baseUrl: '', apiKey: '', apiKeyEnc: '', model: '', maxOut: 0, maxRounds: 0,
-			crystalKb: 0, crystalPageKb: 0, crystalHotKb: 0, tools: true,
+			crystalKb: 0, crystalPageKb: 0, crystalHotKb: 0, versionsKb: 0, tools: true,
 			foldModel: '', foldProvider: '', foldAt: 0, contextCap: 0, spendCap: 0,
 			// The compaction and worker-preset knobs, as one flat JSON object -- see
 			// `Agent::set_tune`. Empty is how "nobody has tuned anything" travels, and it is
@@ -351,6 +351,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 				// A crystal is now two files and each has its own ceiling: the data the
 				// daimon reads, and the page that draws it.
 				if (typeof j.crystalKb === 'number') cfg.crystalKb = j.crystalKb;
+				if (typeof j.versionsKb === 'number') cfg.versionsKb = j.versionsKb;
 				if (typeof j.crystalPageKb === 'number') cfg.crystalPageKb = j.crystalPageKb;
 				if (typeof j.crystalHotKb === 'number') cfg.crystalHotKb = j.crystalHotKb;
 				if (typeof j.tools === 'boolean') cfg.tools = j.tools;
@@ -443,6 +444,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			maxOut:    c.maxOut || 0,
 		maxRounds: c.maxRounds || 0,
 			crystalKb:     c.crystalKb || 0,
+			versionsKb:    c.versionsKb || 0,
 			crystalPageKb: c.crystalPageKb || 0,
 			crystalHotKb:  c.crystalHotKb || 0,
 			tools:     c.tools !== false,
@@ -1568,7 +1570,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 	/// both devices agree, which is the property the whole design rests on; what
 	/// must not also be true is that it happened without a word.
 	///
-	/// Coalesced into one line, for the same reason `saidMoved` is: a sweep after
+	/// Coalesced into one line, the way a burst of deletes is: a sweep after
 	/// a long absence destroys a dozen things at once, and a dozen overlapping
 	/// toasts over the composer is how a notice becomes a mess.
 	async function sweepDue(due) {
@@ -11487,6 +11489,13 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 				+ ((e && (e.message || e)) || '?'));
 		}
 		if (wroteBytes) trail('share land bytes', id + ' stamped after store_write_bytes');
+		// EVERYTHING LANDED IS VERSION 1 OF IT (contract §2, cause `share`). One
+		// call after all the writes rather than a mark per file: the engine walks
+		// the diamond it has just been given and records what is there, which is
+		// also the only thing that could catch a file written through the bytes
+		// door. Best-effort -- a share that landed is landed either way.
+		try { if (window.DaimondVersions) DaimondVersions.landed(id); }
+		catch (e) { trail('share land unversioned', id + ': ' + ((e && (e.message || e)) || '?')); }
 		if (origin) await landOrigin(id, origin);
 		// Every other path that makes a Diamond says so out loud: `bumpDiamonds`
 		// writes the cross-tab nonce and nudges the push. Without it a landed
@@ -14242,7 +14251,17 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		for (var i = cards.length - 1; i >= 0; i--) {
 			if (onScreen(cards[i]) && focusWithin(cards[i])) return;
 		}
-		if (host && host.isConnected && onScreen(host)) focusWithin(host);
+		if (host && host.isConnected && onScreen(host)) { focusWithin(host); return; }
+		// `host` can itself be a popover control that closed along with the
+		// dialog -- About closes the Help menu it opened from (workspace.js),
+		// so `about-btn` goes dark too. Climb to whatever names it in an
+		// `aria-controls`, which is the button that opened the popover and is
+		// still standing.
+		for (var n = host; n; n = n.parentElement) {
+			if (!n.id) continue;
+			var opener = document.querySelector('[aria-controls="' + n.id + '"]');
+			if (opener && tookFocus(opener)) return;
+		}
 	}
 
 	/// Focus `el` and report whether it actually took it. `focus()` on a detached
@@ -16275,10 +16294,10 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		return 'nothing was published, and nothing was composed. A daimon does not publish in '
 			+ 'the user\'s name: a post is theirs, it is read by strangers, and nothing here '
 			+ 'can take it back. WRITE WHAT YOU WOULD HAVE PUBLISHED INTO YOUR ANSWER, opening '
-			+ '"I would post:", with the act (propose, vote or comment) and the proposal number '
-			+ 'where there is one -- they can then publish it themselves from the Social panel '
-			+ 'in one press, or tell this diamond it may publish for them. Do not call this '
-			+ 'again in this turn.';
+			+ '"I would post:" for a proposal, a vote or a comment, naming the proposal number '
+			+ 'where there is one, or "I would post to followers:" for a feed post -- they can '
+			+ 'then publish it themselves from the Social panel in one press, or tell this '
+			+ 'diamond it may publish for them. Do not call this again in this turn.';
 	};
 
 	// The reachable hand-a-turn-to-a-peer hook (dev/PEER_DESIGN.md §4, step 4).
@@ -18812,6 +18831,11 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		// conversation's commands have the network. Two chats side by side differ, and
 		// the mark is on a button that does not otherwise redraw.
 		if (window.DaimondHandMode && DaimondHandMode.refresh) DaimondHandMode.refresh();
+		// Retry and Edit & resend, which belong to the LAST turn and so move with
+		// every question asked. Here because this is the one call every render path
+		// makes -- the rebuild, the append fast path, and the nothing-changed early
+		// return, which still has furniture to put right.
+		mountTurnActions();
 	}
 
 	function renderHistory(messages) {
@@ -22141,6 +22165,148 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		runTurn(chat, CONTINUE_NUDGE);
 	}
 
+	/// Ask the last question again, and REPLACE the answer (§9, D7).
+	///
+	/// It is `continueTurn`'s empty-partial branch applied to a turn that finished:
+	/// the same tombstone, the same drop, the same `chat.app = null` so the session
+	/// is rebuilt without the retracted turn, the same journal path and the same Web
+	/// Lock inside `runTurn`. What differs is only the reason -- there the turn died,
+	/// here the user did not like the answer.
+	///
+	/// REPLACED, NEVER APPENDED. A second answer beside the first is a branch, and a
+	/// branch needs somewhere to draw both and a way to choose between them; the
+	/// decision (D7) was that a retry means the first answer was not wanted.
+	///
+	/// Lifted out as its own function so a verifier can run it against stubs the way
+	/// `dev/verify_continue_resume.mjs` runs `continueTurn`.
+	///
+	/// # Arguments
+	/// * `iturn` - The turn to replace; every message of it carries this.
+	/// * `text` - What to send. Retry passes the original prompt back; Edit & resend
+	///   passes what the user rewrote.
+	function retryTurn(chat, iturn, text) {
+		if (!chat || !text || chat._generating) return;
+		// The same guard `continueTurn` keeps, and for the same reason: `x.iturn ===
+		// iturn` with an undefined `iturn` matches every ordinary message in the
+		// chat, and the lines below would tombstone the whole transcript.
+		if (!iturn) return;
+		// A turn a PEER still holds must not be re-run here: that is the cross-device
+		// double bill the lease exists to stop. Only a vacant or expired lease lets a
+		// local retry through.
+		try {
+			if (window.DaimondPeer && DaimondPeer.dispatchState) {
+				var dm = null;
+				for (var di = 0; di < (chat.messages || []).length; di++) {
+					var mm = chat.messages[di];
+					if (mm.iturn === iturn && mm.why === 'dispatched') { dm = mm; break; }
+				}
+				if (dm) {
+					var lease = (window.DaimondLease && DaimondLease.record) ? DaimondLease.record(iturn) : null;
+					if (DaimondPeer.dispatchState(dm, lease, selfDeviceId(), Date.now()) === 'peer-held') return;
+				}
+			}
+		} catch (e) { /* fall through to the ordinary retry */ }
+		var mine = (chat.messages || []).filter(function (x) { return x.iturn === iturn; });
+		if (!mine.length) return;
+		// Idempotent across tabs: a turn another tab has already retracted is not
+		// retracted and billed again here.
+		var tombs = loadMsgTombs();
+		if (mine.every(function (m) { return tombs[m.mid]; })) return;
+		msgTombstone(mine.map(function (m) { return m.mid; }));
+		chat.messages = (chat.messages || []).filter(function (x) { return x.iturn !== iturn; });
+		chat.app = null;
+		touchChat(chat); persistChats();
+		if (chat.id) ChatStore.compact(chat.id);   // off the chunks, not only hidden on read
+		// The retracted turn leaves the write-ahead log with it, or the next boot
+		// recovers a turn that is being asked again right now.
+		try { if (window.DaimondJournal) DaimondJournal.clearTurn(iturn); }
+		catch (e) { /* the continuation opens an entry of its own */ }
+		renderHistory(chat.messages);
+		runTurn(chat, text);
+	}
+
+	/// Put the last question back in the composer, and run NOTHING.
+	///
+	/// The whole of the difference from Retry: pressing this costs the user nothing
+	/// and commits them to nothing. The transcript is untouched, no tokens are
+	/// spent, and clearing the box again leaves the chat exactly as it was. `_editing`
+	/// is the note to `sendUserMessage` saying which turn Send replaces, and it is
+	/// the only state this leaves behind.
+	function editResend(chat, iturn, text) {
+		if (!chat || !text || chat._generating) return;
+		if (!iturn) return;
+		chat._editing = iturn;
+		chatInput.value = text;
+		try { chatInput.focus(); } catch (e) { /* no composer on screen */ }
+	}
+
+	/// Draw Retry and Edit & resend on the LAST user tile, and nowhere else.
+	///
+	/// ONLY THE LAST, because the two acts replace a turn and every turn after it
+	/// was asked in the light of that answer -- retrying a question from ten turns
+	/// back would silently retract ten turns or leave a hole in the conversation.
+	///
+	/// Redrawn rather than kept: the last turn moves with every question, and the
+	/// thread is rebuilt under it by a sync pull, another tab's write or a reload.
+	/// Called from `renderHistoryFurniture`, which every render path goes through,
+	/// and again where a turn ends.
+	function mountTurnActions() {
+		if (!chatOutput) return;
+		var stale = chatOutput.querySelectorAll('.ctile-retry, .ctile-edit');
+		for (var i = 0; i < stale.length; i++) stale[i].remove();
+		var chat = current;
+		if (!chat || chat._generating) return;
+		if ((chat.status || 'active') !== 'active') return;
+		var msgs = chat.messages || [], last = null;
+		for (var j = msgs.length - 1; j >= 0; j--) {
+			// An interjected message belongs to the turn it cut into rather than
+			// starting one, so it is not a turn to replace.
+			if (msgs[j].role === 'user' && !msgs[j].interject && msgs[j].iturn && msgs[j].content) { last = msgs[j]; break; }
+		}
+		if (!last) return;
+		// Withheld while a peer holds the lease, by the same test `continueTurn` and
+		// `retryTurn` make -- a control that would be refused is not drawn.
+		try {
+			if (window.DaimondPeer && DaimondPeer.dispatchState) {
+				var dm = null;
+				for (var k = 0; k < msgs.length; k++) {
+					if (msgs[k].iturn === last.iturn && msgs[k].why === 'dispatched') { dm = msgs[k]; break; }
+				}
+				if (dm) {
+					var lease = (window.DaimondLease && DaimondLease.record) ? DaimondLease.record(last.iturn) : null;
+					if (DaimondPeer.dispatchState(dm, lease, selfDeviceId(), Date.now()) === 'peer-held') return;
+				}
+			}
+		} catch (e) { /* draw them */ }
+		var tiles = chatOutput.querySelectorAll('.chat-msg-user');
+		var tile = tiles.length ? tiles[tiles.length - 1] : null;
+		var ctl = tile ? tile.querySelector('.ctile-ctl') : null;
+		if (!ctl) return;
+		var iturn = last.iturn, text = last.content;
+		var retry = document.createElement('button');
+		retry.type = 'button';
+		retry.className = 'ctile-retry';
+		retry.textContent = '\u21BB';
+		retry.title = t('undo.retry');
+		retry.setAttribute('aria-label', t('undo.retry'));
+		retry.addEventListener('click', function (e) {
+			e.stopPropagation();
+			retryTurn(current, iturn, text);
+		});
+		var edit = document.createElement('button');
+		edit.type = 'button';
+		edit.className = 'ctile-edit';
+		edit.textContent = '\u270E';
+		edit.title = t('undo.edit_resend');
+		edit.setAttribute('aria-label', t('undo.edit_resend'));
+		edit.addEventListener('click', function (e) {
+			e.stopPropagation();
+			editResend(current, iturn, text);
+		});
+		ctl.insertBefore(retry, ctl.firstChild);
+		ctl.insertBefore(edit, retry.nextSibling);
+	}
+
 	/// Fold whatever was in flight when the tab died back into the chats and the Agents panel, from
 	/// the write-ahead journal. A turn that never closed becomes an interrupted turn (its prompt is
 	/// already in the snapshot from persist-first; its partial reply and the tools that ran come
@@ -22536,14 +22702,21 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 	/// label at all -- which is no longer true of anything.
 	///
 	/// The centre header mirrors the label read-only, so it is updated here too.
-	function renameChat(chat, name) {
+	/// # Arguments
+	/// * `quiet` - Rename without opening an undo window. Set by the undo's own
+	///   revert, which would otherwise offer to undo the undo.
+	function renameChat(chat, name, quiet) {
 		name = (name || '').trim();
-		if (name === (chat.name || '')) return;
+		var was = chat.name || '';
+		if (name === was) return;
 		chat.name = name;
 		touchChat(chat);
 		persistChats();
 		if (current === chat) sessionNameEl.textContent = chatDisplayName(chat);
 		renderSessionList();
+		if (!quiet) {
+			undoAble(t('undo.renamed'), function () { renameChat(chat, was, true); });
+		}
 	}
 
 	/// Take a chat off the rail and out of this tab's live state, whatever is
@@ -22671,30 +22844,81 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 	/// two places on the tile -- the dialog's foot and, since notes4, the corner
 	/// × -- and a second copy of the rule would be a second place for it to drift.
 	function deleteChat(chat) {
+		var name = chatDisplayName(chat), id = chat.id, wasCurrent = (current === chat);
 		removeChat(chat);
-		saidMoved(chatDisplayName(chat));
+		// THE TOAST IS THE ONLY THING SAID. It replaces the "Moved to the trash"
+		// line this used to coalesce: it says the same thing and carries the way
+		// back, and two status lines for one press would be one too many.
+		// Nothing to commit -- the trash IS the commit, and a chat left there is
+		// a chat that can still be had back from the panel a week later.
+		undoAble(t('undo.deleted', { name: name }), function () {
+			trashRestore(id).then(function () { if (wasCurrent) reselectChat(id); });
+		});
 		return true;
 	}
 
-	/// "Moved X to the trash" — said once for a burst.
+	/// Put a restored chat back on screen, where it was the one being read.
 	///
-	/// Said out loud at all because what the button now does is not what it has
-	/// meant for the life of this app, and the panel it went to may well be
-	/// closed. Coalesced because toasts are drawn at one fixed place and stack on
-	/// top of each other: deleting three chats in three seconds otherwise puts
-	/// three overlapping boxes over the composer, which is how a reassurance
-	/// becomes a mess. One name when it was one thing, a count when it was
-	/// several — and that is also what makes "Delete all chats" a single line
-	/// rather than fourteen.
-	var _movedNames = [], _movedTimer = null;
-	function saidMoved(name) {
-		_movedNames.push(name);
-		if (_movedTimer) return;
-		_movedTimer = setTimeout(function () {
-			var n = _movedNames.length, first = _movedNames[0];
-			_movedNames = []; _movedTimer = null;
-			toast(n === 1 ? t('trash.moved', { name: first }) : tn('trash.moved_n', n, { n: n }));
-		}, 700);
+	/// `detachChat` moved `current` on when the chat left, so a bare restore
+	/// brings it back to the rail and leaves the reader looking at whatever it
+	/// handed them -- which is not what pressing Undo asked for.
+	function reselectChat(id) {
+		var c = chats.find(function (x) { return x.id === id; });
+		if (c) selectChat(c);
+	}
+
+	/// Offer the act just done back, for the few seconds somebody needs to
+	/// realise they did not mean it (audit row GEN-02).
+	///
+	/// A thin seam onto `js/undo.js` so that every act reads the same at its own
+	/// call site, and so that a build without the module still WORKS: the tail
+	/// runs at once rather than the act hanging unfinished for ever.
+	function undoAble(text, revert, commit) {
+		if (!window.DaimondUndo) { if (commit) commit(); return; }
+		DaimondUndo.able({ text: text, revert: revert, commit: commit });
+	}
+
+	/// Which diamond a path belongs to, and what it is called inside it.
+	///
+	/// A manifest names a path as the tool that wrote it named it (contract §3): a
+	/// diamond's own file is diamond-relative, and a file in a folder marked into
+	/// the diamond keeps the path the fence knows it by. So a store path under
+	/// `diamonds/<id>/` is split, and anything else belongs to the diamond on
+	/// screen -- which is the only one whose marks could cover it. Null where
+	/// there is no diamond to belong to, and the write is not versioned.
+	function versionsPath(path) {
+		var p = String(path || '');
+		// THE PATH IS NEVER REWRITTEN ON THE WAY IN (contract §3). A manifest names
+		// a path as the door that wrote it named it, so a store path goes in whole
+		// and only the diamond is read off it. Stripping the prefix here would put
+		// one spelling in the manifest and another in the walk that compares it.
+		var m = /^diamonds\/([^/]+)\//.exec(p);
+		if (m) return { id: m[1], rel: p };
+		if (currentDiamond && currentDiamond.id && p) return { id: currentDiamond.id, rel: p };
+		return null;
+	}
+
+	/// Rename a diamond in the STORE, with the way back.
+	///
+	/// A diamond's name is not a rail record kept locally -- it is a field in the
+	/// store that travels -- so the undo has to be a second rename rather than a
+	/// restore. Two doors reach this, the cog dialog's field and the rail's
+	/// double-click, and a second copy of the window would be a second place for
+	/// it to drift. `redraw` is what each door puts its own label back with; the
+	/// revert calls it too, so the field and the header follow the name back.
+	function renameDiamondTo(id, was, now, redraw) {
+		return diamondApp().rename_diamond(id, now).then(function () {
+			if (redraw) redraw(now);
+			bumpDiamonds(); loadDiamonds();
+			undoAble(t('undo.renamed'), function () {
+				diamondApp().rename_diamond(id, was).then(function () {
+					if (redraw) redraw(was);
+					bumpDiamonds(); loadDiamonds();
+				}).catch(function (e) {
+					noticeDialog(t('rail.rename_failed'), friendlyError(e));
+				});
+			});
+		});
 	}
 
 	/// Delete every ordinary chat.
@@ -22730,7 +22954,13 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		var ok = await confirmDialog(tn('rail.delete_all_chats_ask', n, { n: n }),
 			t('tile.dlg_delete'), { title: t('rail.delete_all_chats'), danger: true });
 		if (!ok) return;
-		loose.forEach(function (c) { removeChat(c); saidMoved(chatDisplayName(c)); });
+		var ids = loose.map(function (c) { return c.id; });
+		loose.forEach(function (c) { removeChat(c); });
+		// ONE toast for the burst, as one line was coalesced for it before: n
+		// toasts stacked over the composer is how a reassurance becomes a mess.
+		undoAble(tn('undo.deleted_n', n, { n: n }), function () {
+			ids.forEach(function (id) { trashRestore(id); });
+		});
 	}
 
 	// ── The Chats section's own overflow ────────────────────────
@@ -23002,8 +23232,18 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 	function onFoldOutside(e) { if (_foldMenu && !_foldMenu.contains(e.target)) closeFoldMenu(); }
 
 	/// Offer the Diamonds to fold into. `turns`, when given, narrows the fold to those turns.
-	function openFoldPicker(chat, anchor, turns) {
+	///
+	/// THE TRANSCRIPT IS READ BEFORE IT IS JUDGED EMPTY. A chat this tab has not opened is
+	/// NON-RESIDENT (seq 213): the rail holds its summary and `messages` is `[]` until
+	/// `loadChatMessages` reads the row. Without this, a chat restored from the trash --
+	/// and any chat a reload left unopened -- answered "Turn into a diamond…" with "This
+	/// chat is empty", which is a sentence about this tab's memory and not about the chat.
+	async function openFoldPicker(chat, anchor, turns) {
 		closeFoldMenu();
+		if (chat && !chat._loaded) {
+			try { await loadChatMessages(chat); }
+			catch (e) { /* the emptiness test below is then the honest answer */ }
+		}
 		if (!(chat.messages && chat.messages.length)) {
 			noticeDialog(t('fold.nothing'), t('fold.chat_empty'));
 			return;
@@ -23205,6 +23445,16 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		// (a round that returned nothing never reaches here, so a bad round cannot wipe
 		// the crystal), and the version snapshot `fold_apply` takes on write — which is
 		// now the undo path for a fold the user did not want.
+		// THE VERSION THE FOLD IS ABOUT TO LEAVE BEHIND, read before it moves. It is
+		// the whole of the undo: `fold_apply` snapshots on write, so the state the
+		// user is giving up is exactly this version, and putting it back is a NEW
+		// version rather than a deletion of the fold (§8). Read now because
+		// afterwards there is no way to tell which of two numbers was the parent.
+		var parentV = await diamondCrystalVersion(diamondId);
+		// And the conversation as it stands, for the same reason: a self-fold is
+		// about to empty it, and the array is the only copy once it does.
+		var wasMsgs = (chat.messages || []).slice();
+		var wasMids = wasMsgs.map(function (m) { return m.mid; });
 		try {
 			await commitFold(diamondId, st);
 		} catch (e) {
@@ -23236,7 +23486,72 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			if (daimonOnScreen(chat)) await selectDiamond(f, 'chat');
 		}
 		renderDiamondList();
-		toast(selfFold ? t('fold.committed_fresh') : t('fold.committed', { diamond: f.name }));
+		// THE TOAST REPLACES `fold.committed`. A fold is one press, it is paid for,
+		// and until now the only way back from one the user did not want was to find
+		// the version in History and restore it -- which is exactly the hunt this
+		// window exists to spare them.
+		//
+		// `selfFold` is the only case with a transcript to put back, and it is also
+		// the only case with a destructive tail: the tombstone and the compaction
+		// that `clearDaimonSession` used to run on the spot now wait here for the
+		// window to close. An ordinary chat's fold commits nothing -- its thread was
+		// never touched -- so its revert is the crystal alone.
+		undoAble(t('undo.folded', { name: f.name }),
+			function () { undoFold(chat, diamondId, parentV, selfFold ? wasMsgs : null); },
+			selfFold ? function () { commitDaimonClear(chat, wasMids); } : null);
+	}
+
+	/// The crystal version a diamond stands at right now.
+	///
+	/// Off `list_diamonds` rather than off the in-memory rail: the rail's copy is as
+	/// old as the last `loadDiamonds`, and this is read at the moment a fold is about
+	/// to move the number.
+	async function diamondCrystalVersion(id) {
+		try {
+			var list = JSON.parse(await diamondApp().list_diamonds() || '[]');
+			var f = list.find(function (x) { return x.id === id; });
+			return (f && f.crystal_version != null) ? f.crystal_version : 0;
+		} catch (e) { return 0; }
+	}
+
+	/// Put a diamond back to the version a fold moved it off, and the conversation
+	/// back to what the fold cleared.
+	///
+	/// A NEW VERSION, NEVER A DELETE. The fold is a fact of this diamond's history
+	/// and stays in it; what the user gets back is the memory as it stood, written
+	/// forward. That is the same rule the History panel's own Restore keeps, and it
+	/// is why an undone fold can itself be undone.
+	async function undoFold(chat, diamondId, parentV, msgs) {
+		try {
+			var was = await diamondApp().read_version(diamondId, parentV);
+			var wasPage = '';
+			try { wasPage = await diamondApp().read_version_page(diamondId, parentV); }
+			catch (e) { wasPage = ''; }
+			if (wasPage && wasPage.trim()) {
+				await diamondApp().write_crystal_both(diamondId, crystalJson(was), wasPage);
+			} else {
+				await diamondApp().write_crystal_data(diamondId, crystalJson(was));
+			}
+		} catch (e) {
+			noticeDialog(t('crystal.restore_failed'), friendlyError(e));
+			return;
+		}
+		if (msgs) {
+			// Nothing was tombstoned -- that was the commit, and it never ran -- so
+			// the array going back is the whole of it.
+			chat.messages = msgs;
+			touchChat(chat);
+			persistChats();
+			if (current === chat || daimonOnScreen(chat)) renderHistory(chat.messages);
+		}
+		// The tile said "Folded", and it is no longer true.
+		if (chat && chat.foldedInto && chat.foldedInto.id === diamondId) {
+			delete chat.foldedInto;
+			touchChat(chat);
+			persistChats();
+			renderSessionList();
+		}
+		await refreshDiamondAfterChange();
 	}
 
 	function timeLabel() {
@@ -24512,10 +24827,10 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		input.addEventListener('change', function () {
 			var nn = input.value.trim();
 			if (!nn || nn === opts.name) { input.value = opts.name || ''; return; }
-			diamondApp().rename_diamond(opts.id, nn).then(function () {
-				opts.name = nn;
-				if (h) h.textContent = nn;
-				bumpDiamonds(); loadDiamonds();
+			renameDiamondTo(opts.id, opts.name, nn, function (n2) {
+				opts.name = n2;
+				input.value = n2;
+				if (h) h.textContent = n2;
 			}).catch(function (e2) {
 				input.value = opts.name || '';
 				noticeDialog(t('rail.rename_failed'), friendlyError(e2));
@@ -25465,19 +25780,45 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 	/// conversation held is forgotten with it; the Diamond's directory, crystal and
 	/// links are untouched — this ends a conversation, it does not undo what the
 	/// conversation did.
+	/// THE TAIL IS NOT HERE ANY MORE, and that is the change this file needed for
+	/// undo to mean anything. Emptying the record is reversible -- the messages are
+	/// in hand and can be put straight back. Tombstoning them is not: a tombstone
+	/// travels, and the other device acts on it. So the two halves came apart, and
+	/// `commitDaimonClear` below holds the half that cannot be taken back.
+	///
+	/// EVERY CALLER MUST COMMIT. A clear whose tombstone never runs is the
+	/// 2026-08-14 data loss inverted: `persistChats`'s union puts the whole
+	/// conversation back at the next save, and the screen that cleared fills again.
+	/// So a caller either commits at once (the reset button) or hands the commit to
+	/// the undo window (the fold), and there is no third way.
 	function clearDaimonSession(rec, id) {
 		if (!rec) return;
-		msgTombstone((rec.messages || []).map(function (m) { return m.mid; }));
 		rec.messages = [];
 		rec.session = { v: 1, msgs: [], upto: '', uptoTs: 0 };
 		rec.lastPrompt = 0;
 		if (id) forgetDiamondWebConsent(id);
 		touchChat(rec);
 		persistChats();
-		// The tombstoned mids are hidden on read at once, but they are still PHYSICALLY
-		// in this chat's append-only chunks; compaction drops them from disk so they
-		// cannot resurrect once the tombstone ages out (seq 214, Stage 2). Handles a
-		// non-resident daimon the save path cannot compact on its own.
+	}
+
+	/// Make a cleared daimon conversation final: the tombstone, and the compaction
+	/// that takes the bytes off the disk.
+	///
+	/// `mids` is the conversation as it stood BEFORE the clear, because by the time
+	/// this runs `rec.messages` is empty and the ids are only in the caller's hand.
+	///
+	/// A tombstone is how a deliberate removal survives `persistChats`'s deliberate
+	/// union -- the union is what stops an idle tab rolling back a turn another tab
+	/// has just taken -- and it travels in the sync parcel, so a daimon ended here
+	/// is ended on the other devices too. The tombstoned mids are hidden on read at
+	/// once, but they are still PHYSICALLY in this chat's append-only chunks;
+	/// compaction drops them from disk so they cannot resurrect once the tombstone
+	/// ages out (seq 214, Stage 2), and handles a non-resident daimon the save path
+	/// cannot compact on its own.
+	function commitDaimonClear(rec, mids) {
+		if (!rec) return;
+		msgTombstone((mids || []).slice());
+		persistChats();
 		if (rec.id) ChatStore.compact(rec.id);
 	}
 
@@ -25531,8 +25872,12 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			// A tombstone is how a deliberate removal survives the union; it is the same
 			// mechanism a replaced interrupted turn already uses, and it travels in the sync
 			// parcel, so a daimon ended here is ended on the other devices too.
-			// The safe clear, guard and all (see `clearDaimonSession`).
+			// The safe clear, guard and all (see `clearDaimonSession`) -- and its
+			// commit in the same breath. Reset is the deliberate end of a
+			// conversation behind its own confirm, so nothing is held open for it.
+			var wasMids = (rec.messages || []).map(function (m) { return m.mid; });
 			clearDaimonSession(rec, id);
+			commitDaimonClear(rec, wasMids);
 			// The daimon's own directory, its crystal and its links are untouched. This ends a
 			// conversation; it does not undo anything the conversation did.
 			//
@@ -26922,7 +27267,17 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		/// findable on a machine the author can actually inspect.
 		heapBytes:       function () { try { return heap_bytes(); } catch (e) { return -1; } },
 		/// The Diamond engine, for a probe that needs to make Diamonds in bulk.
-		diamondApp:      function () { return diamondApp(); },
+		diamondApp:      function (id) { return diamondApp(id); },
+		/// The bare tool runner, rooted at the active workspace and fenced by
+		/// NOTHING. It is the door `writeOpenFile` uses, where the user is the one
+		/// pressing Save and the workspace is the whole of the question.
+		///
+		/// It is NOT the door a restore writes a marked file back through: that one
+		/// has to obey the diamond's bounds as they stand now, and this app carries
+		/// none -- `set_diamond_scope` composes rather than assigns, so pointing one
+		/// shared runner at a diamond would confine every later panel write to it.
+		/// `js/versions.js` uses `run_diamond_tool`, which builds the fence per call.
+		toolsApp:        function () { return tools(); },
 		/// A workspace file, as bytes-turned-text. Published for
 		/// `verify_chatlife`, which has to prove that "Keep as a Diamond" put the
 		/// actual conversation inside the Diamond rather than merely creating one
@@ -27860,6 +28215,18 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		// it (the answer syncs back) and a desktop hands off only a long/agentic turn,
 		// staying local for a quick foreground one; no fresh peer means local. Guarded,
 		// so any hiccup runs locally.
+		// EDIT & RESEND, ON SEND AND NOT ON PRESS (§9). `editResend` put the words in
+		// the box and set the note; nothing was retracted, and clearing the box would
+		// have cost nothing. This is where the turn it names is taken out of the
+		// transcript and asked again in the rewritten words -- through `retryTurn`,
+		// so the two controls share one retraction and cannot come to disagree.
+		var replacing = chat._editing;
+		if (replacing) {
+			chat._editing = null;
+			clearComposer();
+			retryTurn(chat, replacing, text);
+			return;
+		}
 		if (await maybeAutoDispatch(chat, text)) return;
 		clearComposer();
 		runTurn(chat, text);
@@ -28298,6 +28665,12 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 	/// button: `text` is the user's message; the rest is durability.
 	async function runTurn(chat, text, opts) {
 		opts = opts || {};
+		// A NEW TURN CLOSES THE UNDO WINDOW (§8). Anything still open is committed
+		// now rather than held across a turn: the user has moved on, and a delete
+		// left half-done while the app spends money is a delete the other device
+		// never hears about.
+		try { if (window.DaimondUndo) DaimondUndo.flush(); }
+		catch (e) { /* no module: nothing was held open */ }
 		// When this turn began, so a hand-off run can record how long it took. Read only
 		// for a dispatched/errand turn (see the answer enrichment below), whose answer
 		// draws a hand-off tile on the device that dispatched it.
@@ -29161,6 +29534,10 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 				pendingEnd = null;
 				chat._generating = false;
 				chat._capTry = 0;            // the backoff belonged to this turn only
+				// The turn is over, so the last question can be asked again. The two
+				// controls are withheld while one runs (`mountTurnActions` tests
+				// `_generating`), so this is the moment they come back.
+				if (owns()) mountTurnActions();
 				// HOW THE TURN ENDED, reported here because this is the one place
 				// every ending arrives -- and BEFORE `drainQueue` below, which
 				// reads `_aborted` and then clears it. Giving up early means it
@@ -35277,6 +35654,16 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 				var msg = t(e.dir ? 'files.delete_folder_body' : 'files.delete_file_body',
 					{ name: e.name });
 				if (!await confirmDialog(msg, t('files.delete'))) return;
+				// WHAT WAS THERE, read before it goes (contract §8). A file can be
+				// written back from its bytes; a FOLDER cannot, so only a file gets
+				// the window and a folder keeps the confirm it already had. An
+				// unreadable file gets no window either, rather than an Undo button
+				// that would do nothing when pressed.
+				var was = null;
+				if (!e.dir) {
+					try { was = await Wasm.read_file(full); }
+					catch (err) { was = null; }
+				}
 				// The result used to be discarded, so a failed directory
 				// delete looked exactly like a successful one: the user
 				// confirmed a destructive action and was told nothing.
@@ -35286,7 +35673,24 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 				}));
 				if (!res || res.outcome !== 'done') {
 					fileMsg(t('files.delete_failed', { name: e.name, reason: toolReason(res) }), true);
-				} else nudgeSync();	// a quiet delete must travel like any edit
+				} else {
+					nudgeSync();	// a quiet delete must travel like any edit
+					// The deletion is a user door, so it marks the path dirty: the
+					// next turn's `user` manifest records that the file went, and the
+					// body it had is in the version before it.
+					var vp = versionsPath(full);
+					if (vp && window.DaimondVersions) DaimondVersions.dirty(vp.id, vp.rel);
+					if (was !== null) {
+						undoAble(t('undo.deleted', { name: e.name }), function () {
+							tools().run_tool_outcome('file_write',
+								JSON.stringify({ path: full, content: was })).then(function () {
+									if (vp && window.DaimondVersions) DaimondVersions.dirty(vp.id, vp.rel);
+									nudgeSync();
+									list(curDir);
+								}, function () { /* the fence refused; the row says so on the next list */ });
+						});
+					}
+				}
 				list(curDir);
 			});
 			row.appendChild(del);
@@ -37374,6 +37778,13 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		/// took the success branch, and told the user the file was saved -- while the fence
 		/// had stopped the write and the edit existed nowhere but in the textarea.
 		function writeOpenFile(path, content) {
+			// THE USER'S OWN WRITE DOOR (contract §2), so the file is marked dirty
+			// and the next turn snapshots what is on disk NOW -- before the daimon
+			// touches it. Marked BEFORE the write and not after: the drain re-hashes
+			// against the index, so a mark for a write that then failed costs one
+			// hash and records nothing.
+			var vp = versionsPath(path);
+			if (vp && window.DaimondVersions) DaimondVersions.dirty(vp.id, vp.rel);
 			if (storeFile) {
 				return Wasm.store_write(path, content)
 					.then(function () { return { outcome: 'done', text: '' }; });
@@ -40641,7 +41052,10 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		if (dchat) { detachChat(dchat); persistChats(); }
 		bumpDiamonds();
 		await loadDiamonds();
-		saidMoved(f.name);
+		// The same window a chat gets, for the same reason: the trash is the
+		// commit, and the five seconds are for the press somebody regrets at
+		// once rather than for the panel they would otherwise have to hunt.
+		undoAble(t('undo.deleted', { name: f.name }), function () { trashRestore(f.id); });
 		return true;
 	}
 
@@ -40737,7 +41151,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			var nn = await promptDialog(t('rail.rename_diamond'), { value: f.name, okLabel: t('rail.rename') });
 			if (nn === null) return; nn = nn.trim();
 			if (!nn || nn === f.name) return;
-			diamondApp().rename_diamond(f.id, nn).then(function () { f.name = nn; bumpDiamonds(); loadDiamonds(); })
+			renameDiamondTo(f.id, f.name, nn, function (n2) { f.name = n2; })
 				.catch(function (e2) { noticeDialog(t('rail.rename_failed'), friendlyError(e2)); });
 		});
 		header.appendChild(name);
@@ -43872,9 +44286,14 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 	/// rendering would put the page's own bugs between the reader and the answer.
 	async function showCrystalHistory() {
 		if (!currentDiamond) return;
-		var recs = [];
-		try { recs = JSON.parse(await diamondApp().log_read(currentDiamond.id) || '[]'); }
-		catch (e) { recs = []; }
+		var id = currentDiamond.id;
+		var rows = [];
+		try { rows = await DaimondVersions.rows(id); }
+		catch (e) { rows = []; }
+		// Whether THIS build's engine carries the file versions. Where it does not,
+		// every control below that reads a manifest is simply not drawn and the
+		// panel is the crystal history it has always been.
+		var files = !!(window.DaimondVersions && DaimondVersions.ready());
 
 		clearCrystalBody();
 		var bar = document.createElement('div');
@@ -43884,129 +44303,349 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		back.textContent = '← ' + t('crystal.back');
 		back.addEventListener('click', function () { renderCrystal(); });
 		bar.appendChild(back);
+		if (files) {
+			// SAVE A VERSION: the user's own mark in the history, kept last by the
+			// prune (contract §4) precisely because they asked for it.
+			var save = document.createElement('button');
+			save.className = 'crystal-act hist-save';
+			save.textContent = t('versions.save');
+			save.addEventListener('click', async function () {
+				var name = await promptDialog(t('versions.save'),
+					{ value: '', placeholder: t('versions.save_name'), okLabel: t('versions.save') });
+				if (name === null) return;
+				var made = await DaimondVersions.save(id, name.trim());
+				// Nothing changed, so nothing was written (D2) -- said, because a
+				// button that appears to do nothing is a button people stop trusting.
+				if (!made) { toast(t('crystal.no_history')); return; }
+				showCrystalHistory();
+			});
+			bar.appendChild(save);
+			var gauge = document.createElement('span');
+			gauge.className = 'hist-gauge';
+			bar.appendChild(gauge);
+			DaimondVersions.gauge(id).then(function (g) {
+				gauge.textContent = t('versions.gauge',
+					{ used: fmtBytes(g.used || 0), cap: fmtBytes(g.cap || 0) });
+				// At nine tenths the number stops being information and becomes a
+				// decision: the next snapshot starts pruning somebody's history.
+				if (g.cap && g.used / g.cap >= 0.9) {
+					gauge.classList.add('warn');
+					var link = document.createElement('button');
+					link.className = 'crystal-act';
+					link.textContent = t('versions.cap_label');
+					link.addEventListener('click', function () { openSettings(); });
+					bar.appendChild(link);
+				}
+			});
+		}
 		crystalBody.appendChild(bar);
 
 		var list = document.createElement('div');
 		list.className = 'hist-list';
-		if (!recs.length) {
+		if (!rows.length) {
 			var none = document.createElement('div');
 			none.className = 'crystal-empty';
 			none.textContent = t('crystal.no_history');
 			list.appendChild(none);
 		}
 		// Newest first: the version you most likely want back is the last good one.
-		recs.slice().reverse().forEach(function (r) {
-			// A record written before the rename says `brief_version`. Reading only
-			// the new name would drop every historical fold out of this list -- the
-			// history would look as though it began today.
-			var v = (r.crystal_version !== undefined && r.crystal_version !== null)
-				? r.crystal_version : r.brief_version;
-			if (v === undefined || v === null) return;
-			var row = document.createElement('div');
-			row.className = 'hist-row';
-
-			var head = document.createElement('div');
-			head.className = 'hist-head';
-			var ver = document.createElement('span');
-			ver.className = 'hist-ver';
-			ver.textContent = 'v' + v;
-			var kind = document.createElement('span');
-			kind.className = 'hist-kind';
-			kind.textContent = r.kind || 'change';
-			var when = document.createElement('span');
-			when.className = 'hist-when';
-			when.textContent = r.ts ? relTime(r.ts) : '';
-			head.appendChild(ver); head.appendChild(kind); head.appendChild(when);
-			row.appendChild(head);
-			// What the version WAS. Every record has carried a note since folds were
-			// written and the list showed none of them, so a history of a busy Diamond
-			// read as a column of "fold, fold, fold, edit" — the versions were all
-			// there and none of them said anything about itself.
-			if (r.note) {
-				var note = document.createElement('div');
-				note.className = 'hist-note';
-				note.textContent = r.note;             // escaped via textContent (H5)
-				row.appendChild(note);
-			}
-
-			var acts = document.createElement('div');
-			acts.className = 'hist-acts';
-			var view = document.createElement('button');
-			view.className = 'crystal-act';
-			view.textContent = t('crystal.view');
-			view.addEventListener('click', async function () {
-				var was = '';
-				try { was = await diamondApp().read_version(currentDiamond.id, v); }
-				catch (e) { noticeDialog(t('crystal.read_version_failed'), friendlyError(e)); return; }
-				noticeDialog(t('crystal.at_version', { v: v }),
-					crystalVersionText(was) || t('crystal.empty_paren'), { pre: true });
-			});
-			var revert = document.createElement('button');
-			revert.className = 'crystal-act';
-			revert.textContent = t('crystal.restore');
-			revert.addEventListener('click', async function () {
-				var was = '';
-				try { was = await diamondApp().read_version(currentDiamond.id, v); }
-				catch (e) { noticeDialog(t('crystal.read_version_failed'), friendlyError(e)); return; }
-				var ok = await confirmDialog(
-					t('crystal.restore_body', { v: v }),
-					t('crystal.restore_v', { v: v }),
-					{ title: t('crystal.restore_title'), danger: false });
-				if (!ok) return;
-				// A pre-migration version is markdown, and writing markdown into `crystal.json`
-				// would leave the Diamond holding a file nothing downstream can read. It goes
-				// through the same migration a legacy crystal does on the way in.
-				// The page as it was then, restored with it. "Restore v12" means the Diamond
-				// as it stood at v12, and a Diamond is its memory AND the page that draws it;
-				// leaving today's page over v12's data is a state that never existed.
-				//
-				// A page is only snapshotted at the versions where it changed, so
-				// `read_version_page` walks back to the highest at or below this one that has
-				// one. A version from before there were pages has none at all, and that is
-				// answered by leaving the current page alone -- the data is the half worth
-				// restoring.
-				var wasPage = '';
-				try { wasPage = await diamondApp().read_version_page(currentDiamond.id, v); }
-				catch (e) { wasPage = ''; }
-				// BOTH HALVES IN ONE VERSION. Written separately they take a version each, so
-				// one press of Restore left two rows in the history -- and the history is the
-				// record of a Diamond's discontinuities, so a reader counting them counts one
-				// restore as two.
-				try {
-					if (wasPage && wasPage.trim()) {
-						await diamondApp().write_crystal_both(
-							currentDiamond.id, crystalJson(was), wasPage);
-					} else {
-						await diamondApp().write_crystal_data(
-							currentDiamond.id, crystalJson(was));
-					}
-				}
-				catch (e) { noticeDialog(t('crystal.restore_failed'), friendlyError(e)); return; }
-				await refreshDiamondAfterChange();
-			});
-			acts.appendChild(view); acts.appendChild(revert);
-			// A fold retains the raw delta it consumed, in a file the log record
-			// points at by `delta_ref`. It was kept but never shown, so the audit
-			// trail was write-only; a Delta button now reads that file back.
-			if (r.delta_ref) {
-				var dref = r.delta_ref;
-				var seeDelta = document.createElement('button');
-				seeDelta.className = 'crystal-act';
-				seeDelta.textContent = t('crystal.delta');
-				seeDelta.title = t('crystal.delta_help');
-				seeDelta.addEventListener('click', async function () {
-					var d = '';
-					try { d = await readBytes(dref); }
-					catch (e) { noticeDialog(t('crystal.read_delta_failed'), friendlyError(e)); return; }
-					noticeDialog(t('crystal.delta_at', { v: v }), d || t('crystal.empty_paren'), { pre: true });
-				});
-				acts.appendChild(seeDelta);
-			}
-			row.appendChild(acts);
-			list.appendChild(row);
-		});
+		rows.forEach(function (r) { list.appendChild(histRow(id, r, files)); });
 		crystalBody.appendChild(list);
+		if (files) crystalBody.appendChild(histFoot());
 		renderCrystalControls();
+	}
+
+	/// One version: what it was, what it changed, and the two ways back.
+	function histRow(id, r, files) {
+		var v = r.v;
+		var row = document.createElement('div');
+		row.className = 'hist-row';
+
+		var head = document.createElement('div');
+		head.className = 'hist-head';
+		var ver = document.createElement('span');
+		ver.className = 'hist-ver';
+		ver.textContent = 'v' + v;
+		var kind = document.createElement('span');
+		kind.className = 'hist-kind';
+		// The MANIFEST's own word where there is one -- `turn`, `user`, `save`,
+		// `fold`, `restore`, `share` -- because it says what caused the version,
+		// which is what a reader walking the list is looking for. The log record's
+		// `kind` where there is not.
+		kind.textContent = r.cause || r.kind || 'change';
+		var when = document.createElement('span');
+		when.className = 'hist-when';
+		when.textContent = r.ts ? relTime(r.ts) : '';
+		head.appendChild(ver); head.appendChild(kind); head.appendChild(when);
+		row.appendChild(head);
+		// What the version WAS. Every record has carried a note since folds were
+		// written and the list showed none of them, so a history of a busy Diamond
+		// read as a column of "fold, fold, fold, edit" — the versions were all
+		// there and none of them said anything about itself.
+		if (r.note) {
+			var note = document.createElement('div');
+			note.className = 'hist-note';
+			note.textContent = r.note;             // escaped via textContent (H5)
+			row.appendChild(note);
+		}
+
+		// ── What this version did to the FILES ───────────────────────
+		//
+		// Collapsed to a count, because most versions changed one or two files and a
+		// list of them under every row would bury the version numbers the panel is
+		// for. Expanded once, on the press, and left open.
+		if (files && (r.files || []).length) {
+			var block = document.createElement('div');
+			block.className = 'hist-files';
+			var chip = document.createElement('button');
+			chip.className = 'hist-files-n';
+			chip.textContent = tn('versions.files_n', r.files.length, { n: r.files.length });
+			var drawn = false;
+			chip.addEventListener('click', function () {
+				if (drawn) { block.classList.toggle('open'); return; }
+				drawn = true;
+				block.classList.add('open');
+				r.files.forEach(function (e) { block.appendChild(histFile(id, v, e)); });
+			});
+			row.appendChild(chip);
+			row.appendChild(block);
+			if (r.truncated) {
+				var more = document.createElement('div');
+				more.className = 'hist-note';
+				more.textContent = tn('versions.files_n', r.truncated, { n: r.truncated });
+				row.appendChild(more);
+			}
+		}
+
+		var acts = document.createElement('div');
+		acts.className = 'hist-acts';
+		var view = document.createElement('button');
+		view.className = 'crystal-act hist-view';
+		view.textContent = t('crystal.view');
+		view.addEventListener('click', async function () {
+			var was = '';
+			try { was = await diamondApp().read_version(currentDiamond.id, v); }
+			catch (e) { noticeDialog(t('crystal.read_version_failed'), friendlyError(e)); return; }
+			noticeDialog(t('crystal.at_version', { v: v }),
+				crystalVersionText(was) || t('crystal.empty_paren'), { pre: true });
+		});
+		var revert = document.createElement('button');
+		revert.className = 'crystal-act hist-restore';
+		revert.textContent = t('crystal.restore');
+		revert.addEventListener('click', function () { restoreWholeVersion(id, v); });
+		acts.appendChild(view); acts.appendChild(revert);
+		// A fold retains the raw delta it consumed, in a file the log record
+		// points at by `delta_ref`. It was kept but never shown, so the audit
+		// trail was write-only; a Delta button now reads that file back.
+		if (r.delta_ref) {
+			var dref = r.delta_ref;
+			var seeDelta = document.createElement('button');
+			seeDelta.className = 'crystal-act';
+			seeDelta.textContent = t('crystal.delta');
+			seeDelta.title = t('crystal.delta_help');
+			seeDelta.addEventListener('click', async function () {
+				var d = '';
+				try { d = await readBytes(dref); }
+				catch (e) { noticeDialog(t('crystal.read_delta_failed'), friendlyError(e)); return; }
+				noticeDialog(t('crystal.delta_at', { v: v }), d || t('crystal.empty_paren'), { pre: true });
+			});
+			acts.appendChild(seeDelta);
+		}
+		row.appendChild(acts);
+		return row;
+	}
+
+	/// A version row's path, as the person reading it knows the file.
+	///
+	/// Relative to the diamond for its own files; unchanged for a file in a folder
+	/// the user marked in, which is already spelled the way their own file manager
+	/// spells it. The store's key is kept on the row's `dataset.path` and in the
+	/// tooltip, because that is what a restore is asked for.
+	function shownPath(id, path) {
+		var own = 'diamonds/' + id + '/';
+		return path.indexOf(own) === 0 ? path.slice(own.length) : path;
+	}
+
+	/// One file inside a version: its path, what it cost in lines, and the way back.
+	///
+	/// The row is drawn at once and the two buttons are settled asynchronously,
+	/// because whether a body is on THIS device is a read (contract §10) and a panel
+	/// that waited for one read per file before drawing anything would be a panel
+	/// that looked broken on a version that touched forty of them.
+	function histFile(id, v, e) {
+		var row = document.createElement('div');
+		row.className = 'hist-file';
+		row.dataset.path = e.path;                 // the store's own spelling, which is what a restore needs
+		var p = document.createElement('span');
+		p.className = 'hist-file-path';
+		// THE PATH AS THE PERSON KNOWS IT, not as the store keys it. Every file of
+		// the diamond's own is under `diamonds/<id>/`, so printing that prefix on
+		// forty rows says nothing forty times and pushes the name that matters off
+		// a phone. A marked file is already the path in the folder they opened.
+		p.textContent = shownPath(id, e.path);     // escaped via textContent (H5)
+		p.title = e.path;
+		row.appendChild(p);
+		if (e.mark) {
+			// A file on the user's own machine, said beside its path: the same fact
+			// the foot says once for the panel, said where it applies.
+			var mk = document.createElement('span');
+			mk.className = 'hist-file-mark';
+			mk.textContent = t('versions.on_machine');
+			row.appendChild(mk);
+		}
+		var delta = document.createElement('span');
+		delta.className = 'hist-file-delta';
+		row.appendChild(delta);
+		var view = document.createElement('button');
+		view.className = 'crystal-act hist-file-view';
+		view.textContent = t('crystal.view');
+		var restore = document.createElement('button');
+		restore.className = 'crystal-act hist-file-restore';
+		restore.textContent = t('versions.restore_file');
+		var why = document.createElement('span');
+		why.className = 'hist-file-why';
+		row.appendChild(view); row.appendChild(restore); row.appendChild(why);
+
+		/// Refuse both buttons, and say which of the three reasons it is.
+		function refuse(text) {
+			view.disabled = true;
+			restore.disabled = true;
+			why.textContent = text;
+		}
+		// Too large to have kept a body at all: the manifest says the file changed
+		// and there is nothing to compare or to put back (contract §3).
+		if (e.skipped === 'size') { refuse(t('versions.too_big')); return row; }
+		if (e.skipped) { refuse(t('versions.not_here')); return row; }
+		// THE BODY THIS ROW DEPENDS ON. A deletion is restored from what the file
+		// WAS; every other change from what it became.
+		var need = e.gone ? e.was : e.hash;
+		if (need) {
+			DaimondVersions.body(id, need).then(function (b) {
+				if (b === null) refuse(t('versions.not_here'));
+			});
+		}
+		view.addEventListener('click', async function () {
+			var shown = row.querySelector('.hist-diff');
+			if (shown) { shown.remove(); return; }      // a second press folds it away
+			var d = await DaimondVersions.diff(id, e.was || '', e.hash || '');
+			// THREE WAYS THERE IS NO HONEST ANSWER, and the engine refuses all three
+			// alike: a binary body, a body this device has not got, and a file past
+			// the line cap. Said as one sentence rather than three, because what the
+			// reader can do about it is the same in each case -- nothing.
+			if (!d) {
+				noticeDialog(t('versions.at_v', { name: e.path, v: v }), t('versions.cannot_compare'));
+				return;
+			}
+			var pre = document.createElement('div');
+			pre.className = 'hist-diff';
+			(d.rows || []).forEach(function (l) {
+				var ln = document.createElement('div');
+				ln.className = 'hist-diff-line' + (l.op === '+' ? ' add' : l.op === '-' ? ' del' : '');
+				ln.textContent = l.op + l.text;     // escaped via textContent (H5)
+				pre.appendChild(ln);
+			});
+			delta.textContent = '+' + (d.add || 0) + ' −' + (d.del || 0);
+			row.appendChild(pre);
+		});
+		restore.addEventListener('click', async function () {
+			if (diamondBusy(id)) {
+				var f = diamonds.find(function (x) { return x.id === id; }) || {};
+				noticeDialog(t('fold.busy_title'), t('fold.busy_body', { diamond: f.name || '' }));
+				return;
+			}
+			var res = await DaimondVersions.restoreFile(id, e.path, v);
+			// THE FENCE'S OWN WORDS, in the row. A mark since withdrawn, or a path
+			// the fence no longer covers, is refused where the user pressed rather
+			// than in a dialog that says nothing about which file (contract §6).
+			var ref = res && (res.refused || []).find(function (x) { return x.path === e.path; });
+			if (ref) {
+				why.textContent = ref.why || t('versions.refused');
+				why.title = ref.said || '';         // the fence's whole sentence, a hover away
+				return;
+			}
+			why.textContent = '';
+			await refreshDiamondAfterChange();
+		});
+		return row;
+	}
+
+	/// What the versions do NOT cover, said once under the list (contract §5).
+	function histFoot() {
+		var foot = document.createElement('div');
+		foot.className = 'hist-foot';
+		var head = document.createElement('span');
+		head.className = 'hist-foot-head';
+		head.textContent = t('versions.on_machine');
+		var note = document.createElement('span');
+		note.textContent = t('versions.machine_note');
+		var more = document.createElement('button');
+		more.className = 'crystal-act';
+		more.textContent = t('topbar.guide');
+		more.addEventListener('click', function () {
+			if (window.DaimondWeb && DaimondWeb.guide) DaimondWeb.guide('chats-and-diamonds.html');
+			else window.open('guide/chats-and-diamonds.html', '_blank');
+		});
+		foot.appendChild(head); foot.appendChild(note); foot.appendChild(more);
+		return foot;
+	}
+
+	/// Restore a whole version: the crystal as it stood, and every file with it.
+	///
+	/// ONE CONFIRM, and it is the only Restore in this panel that asks. A per-file
+	/// restore is undoable by its own toast; this one moves everything at once, so
+	/// the sentence names what is kept -- today's state, as a version of its own.
+	///
+	/// THE CRYSTAL IS RESTORED HERE AND NOT IN RUST where the engine has no file
+	/// versions: a build without them still has the version chain this panel was
+	/// written for, and the crystal half must keep working on it.
+	async function restoreWholeVersion(id, v) {
+		if (diamondBusy(id)) {
+			var f = diamonds.find(function (x) { return x.id === id; }) || {};
+			noticeDialog(t('fold.busy_title'), t('fold.busy_body', { diamond: f.name || '' }));
+			return;
+		}
+		var was = '';
+		try { was = await diamondApp().read_version(id, v); }
+		catch (e) { noticeDialog(t('crystal.read_version_failed'), friendlyError(e)); return; }
+		var ok = await confirmDialog(
+			t('versions.restore_ask', { v: v }),
+			t('crystal.restore_v', { v: v }),
+			{ title: t('crystal.restore_title'), danger: false });
+		if (!ok) return;
+		// THE FILES FIRST, and the crystal below. The engine's `versions_restore`
+		// puts the FILES back and deliberately touches no crystal -- it has no
+		// business minting a crystal version -- so "Restore v12" would otherwise
+		// leave today's memory over v12's files, which is a state that never
+		// existed. Asked once, up there, and not again here.
+		if (window.DaimondVersions && DaimondVersions.ready()) {
+			await DaimondVersions.restore(id, v, { ask: false });
+		}
+		// A pre-migration version is markdown, and writing markdown into `crystal.json`
+		// would leave the Diamond holding a file nothing downstream can read. It goes
+		// through the same migration a legacy crystal does on the way in.
+		//
+		// The page as it was then, restored with it. "Restore v12" means the Diamond
+		// as it stood at v12, and a Diamond is its memory AND the page that draws it;
+		// leaving today's page over v12's data is a state that never existed. A page is
+		// only snapshotted at the versions where it changed, so `read_version_page`
+		// walks back to the highest at or below this one that has one.
+		//
+		// BOTH HALVES IN ONE VERSION. Written separately they take a version each, so
+		// one press of Restore left two rows in the history -- and the history is the
+		// record of a Diamond's discontinuities, so a reader counting them counts one
+		// restore as two.
+		var wasPage = '';
+		try { wasPage = await diamondApp().read_version_page(id, v); }
+		catch (e) { wasPage = ''; }
+		try {
+			if (wasPage && wasPage.trim()) {
+				await diamondApp().write_crystal_both(id, crystalJson(was), wasPage);
+			} else {
+				await diamondApp().write_crystal_data(id, crystalJson(was));
+			}
+		}
+		catch (e) { noticeDialog(t('crystal.restore_failed'), friendlyError(e)); return; }
+		await refreshDiamondAfterChange();
 	}
 
 	/// The Diamond's tags: the user's own filing system, edited here.
@@ -50163,6 +50802,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		CrystalCap.render();
 		CrystalPageCap.render();
 		CrystalHotCap.render();
+		VersionsCap.render();
 		// Which service the agent searches with, and the key for it. Redrawn with
 		// the rest because unlocking is what makes a sealed key readable, and the
 		// row says something different either side of that.
@@ -51611,6 +52251,99 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		},
 	};
 
+	/// How much of a diamond's FILE history it keeps, in bytes on disk.
+	///
+	/// The fourth row under the same heading, and the only one that bounds a store
+	/// rather than a document: the three above it say how large a crystal, its page
+	/// and its hot part may be, and this says how much of what a diamond's files USED
+	/// to be is kept beside them. Past it the oldest turns are pruned first and the
+	/// user's own saved versions last (contract §4), so raising it buys depth and
+	/// lowering it buys parcel.
+	///
+	/// A twin of `CrystalCap`, including that zero means the engine's default. The
+	/// setter is on the MODULE and not on an app: the ceiling belongs to the wasm
+	/// instance, the way the three above it do.
+	var VersionsCap = {
+		/// The ladder offered, in kilobytes, bracketing the 1 MiB default.
+		STEPS: [512, 1024, 2048, 4096],
+
+		mount: function () {
+			if (document.getElementById('cfg-versions-cap')) return true;
+			var form = document.getElementById('byok-form');
+			var section = form && form.parentNode;
+			if (!section) return false;
+			// The data row carries the heading all four share.
+			if (!CrystalCap.mount()) return false;
+			var lab = document.createElement('label');
+			lab.className = 'cfg-fieldlabel';
+			lab.setAttribute('for', 'cfg-versions-cap');
+			var sel = document.createElement('select');
+			sel.className = 'settings-select';
+			sel.id = 'cfg-versions-cap';
+			var note = document.createElement('p');
+			note.className = 'cfg-fieldnote';
+			note.id = 'cfg-versions-cap-note';
+			section.insertBefore(lab, form);
+			section.insertBefore(sel, form);
+			section.insertBefore(note, form);
+			sel.addEventListener('change', function () { VersionsCap.save(sel.value); });
+			return true;
+		},
+
+		render: function () {
+			// Not drawn at all on a build whose engine has no file versions: a
+			// ceiling on something that is not kept is a setting that lies.
+			if (!(window.DaimondVersions && DaimondVersions.ready())) return;
+			if (!this.mount()) return;
+			var lab = document.querySelector('label[for="cfg-versions-cap"]');
+			if (lab) lab.textContent = t('versions.cap_label');
+			var vnote = document.getElementById('cfg-versions-cap-note');
+			if (vnote) vnote.textContent = t('versions.machine_note');
+			var sel = document.getElementById('cfg-versions-cap');
+			sel.innerHTML = '';
+			var mine = cfg.versionsKb || 0;
+			var steps = this.STEPS.slice();
+			if (mine > 0 && steps.indexOf(mine) === -1) steps.push(mine);
+			steps.sort(function (a, b) { return a - b; });
+			var mk = function (value, label) {
+				var o = document.createElement('option');
+				o.value = String(value); o.textContent = label;
+				sel.appendChild(o);
+			};
+			mk(0, tOr('settings.crystal_cap_auto', 'Default') + ' — 1024 KB');
+			steps.forEach(function (n) { mk(n, String(n) + ' KB'); });
+			sel.value = String(mine);
+			if (sel.selectedIndex === -1) sel.value = '0';
+		},
+
+		save: function (raw) {
+			var n = Math.max(0, Math.round(Number(raw) || 0));
+			cfg.versionsKb = n;
+			var stored = readJson(CFG_KEY, {}) || {};
+			stored.versionsKb = n;
+			try { localStorage.setItem(CFG_KEY, JSON.stringify(stored)); }
+			catch (e) { /* quota or unavailable — the choice holds for this session */ }
+			applyVersionsCap();
+			this.render();
+		},
+	};
+
+	/// Put the user's version ceiling on the engine. Zero is the engine's own
+	/// default, which the setter already understands.
+	///
+	/// ON THE APP, NOT ON THE MODULE. `set_versions_cap` is a method of `DaimondApp`,
+	/// beside the crystal ceilings it belongs with -- `Wasm` is the module namespace and
+	/// has never carried it, so this asked a question that was always answered no and
+	/// the pulldown moved nothing.
+	function applyVersionsCap() {
+		try {
+			var app = diamondApp();
+			if (app && typeof app.set_versions_cap === 'function') {
+				app.set_versions_cap((cfg.versionsKb || 0) * 1024);
+			}
+		} catch (e) { /* an older wasm build has no setter */ }
+	}
+
 	/// Put the user's crystal ceilings on the engine — all three of them.
 	///
 	/// One function for three settings, because they are one setting to a person: a crystal's
@@ -51641,6 +52374,9 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			try { app.set_crystal_hot_cap((cfg.crystalHotKb || 0) * 1024); }
 			catch (e) { /* an older wasm build has no setter */ }
 		}
+		// And the fourth of them, which is on the module rather than on an app --
+		// it bounds the store, not a document.
+		applyVersionsCap();
 	}
 
 	/// Which model folds a conversation, and what it is told.
@@ -52053,6 +52789,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		CrystalCap.render();
 		CrystalPageCap.render();
 		CrystalHotCap.render();
+		VersionsCap.render();
 		var f = document.getElementById('byok-form');
 		if (f) f.style.display = 'none';
 		DaimondAdmin.status();
@@ -52108,6 +52845,10 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 	chatInput.addEventListener('input', function () {
 		if (chatInput.value === '/') openSkillMenu();
 		else closeSkillMenu();
+		// An edit ABANDONED. `editResend` leaves a note saying which turn Send
+		// replaces; emptying the box is how somebody takes that back, and without
+		// this the note would attach itself to whatever they typed next.
+		if (current && current._editing && !chatInput.value.trim()) current._editing = null;
 	});
 	// The same act as the send button in stop mode, through the same function, so
 	// the two controls cannot come to mean different things.

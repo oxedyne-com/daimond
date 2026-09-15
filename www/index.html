@@ -1710,6 +1710,13 @@
      Classic, before the module, so window.DaimondCrystal exists when the app
      mounts one. -->
 <script src="js/crystal.js"></script>
+<!-- undo.js and versions.js AFTER crystal.js and before the module (contract
+     dev/VERSIONS_CONTRACT.md §12): the app's own delete, rename and fold doors
+     reach for window.DaimondUndo the moment somebody presses one, and the
+     History panel reaches for window.DaimondVersions as it mounts. undo.js
+     first -- a restore opens an undo window. -->
+<script src="js/undo.js"></script>
+<script src="js/versions.js"></script>
 <!-- viewer.js: the Doc panel's file viewer, so that opening a PDF or a PNG shows
      the document rather than a screenful of replacement characters. Classic,
      before the module, so window.DaimondViewer exists when the app reaches for
