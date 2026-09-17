@@ -15274,6 +15274,23 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		return chatIsActiveErrand(chat.id);
 	}
 
+	/// May a gather round steer THIS DIAMOND here -- because the user is looking at it,
+	/// or because this device is the runner executing its handed-off daimon turn? The
+	/// daimon half of `chatShowingOrRunning`, and it exists for the same reason: a runner
+	/// reconstructs the daimon errand's chat into a DETACHED record and never sets the
+	/// on-screen `currentDiamond`, so a gather round gated on `currentDiamond` would never
+	/// run the fan-out's next round on the device the turn is on. The chat is live here
+	/// because a live errand names it (`daimonChat(f).id` is the errand's chatId).
+	function diamondShowingOrRunning(id) {
+		var want = String(id || '');
+		if (!want) return false;
+		if (currentDiamond && currentDiamond.id === want) return true;
+		var f = diamonds.find(function (x) { return x.id === want; });
+		if (!f) return false;
+		var rec = daimonChat(f);
+		return !!(rec && chatIsActiveErrand(rec.id));
+	}
+
 	/// PARK this runner turn: record the intent, hard-abort the in-flight turn, and
 	/// answer 'deny' so the pending act does not happen while the turn tears down.
 	/// runErrand then reports parked/terminal and releases the lease.
@@ -19452,6 +19469,10 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		var parkCount = (opts && (opts.parkCount | 0)) || 0;
 		var plan = DaimondPeer.buildDispatch(chat, {
 			turnId: turnId,
+			// The Diamond this chat belongs to (a daimon chat), so the runner services it
+			// through `steer_crystal`. '' for an ordinary chat. Falls back to the chat's own
+			// `diamondId` when the caller did not name one.
+			diamondId: (opts && opts.diamondId) || (chat && chat.diamondId) || '',
 			prompt: promptText,
 			// THE THREAD, taken from the chat as it stands now -- after `maybeAutoDispatch`
 			// pushed this turn's user message, so the seed ends at the prompt itself.
@@ -19762,13 +19783,55 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			diag('reconstruct prompt from errand', 'chat=' + chat.id + ' turn=' + errand.turnId
 				+ ' (the parcel had not landed and the seed did not carry it)');
 		}
+		// A DAIMON ERRAND NEEDS THE DIAMOND RECORD RESIDENT, not just the chat: the turn
+		// runs on `diamondApp(diamondId)` and reads the Diamond from `diamonds[]`, and a
+		// Diamond's content is chunk-offloaded, so it can lag the chat that names it. Wait
+		// the same bounded way the chat waited above -- pull, rebuild, re-check -- and on
+		// failure throw UNDELIVERABLE so runErrand hands the turn back (the backstop re-hands
+		// or the phone runs local) rather than the runner steering a Diamond it does not
+		// hold. The chat's `diamondId` is the authority; the errand's is the older-build
+		// fallback. `rec.session` rides the chat record, so `loadChatMessages` above (which
+		// `_loaded` gates) has already made it resident.
+		var wantDia = String(chat.diamondId || errand.diamondId || '');
+		if (wantDia) {
+			var diaBy = Date.now() + RECONSTRUCT_ABS_CAP_MS;
+			var haveDia = false;
+			while (true) {
+				try { await loadDiamonds(); } catch (e) { /* retry within the window */ }
+				if (diamonds.find(function (x) { return x.id === wantDia; })) { haveDia = true; break; }
+				if (Date.now() > diaBy) break;
+				if (window.DaimondSync && DaimondSync.pull) { try { await DaimondSync.pull(true); } catch (e) { /* offline: retry */ } }
+				await pause(300);
+			}
+			if (!haveDia) {
+				diag('reconstruct UNDELIVERABLE', 'diamond=' + wantDia + ' not resident');
+				var eDia = new Error('the diamond this errand names could not be synced in time');
+				eDia.undeliverable = true;
+				throw eDia;
+			}
+			// THIS DEVICE IS ALREADY STEERING THIS DIAMOND. `steer_crystal` borrows the
+			// Diamond's session mutably for a whole turn, so a second concurrent turn on the
+			// same Diamond cannot run here -- and `runSteer`'s busy-guard would SWALLOW a
+			// detached run (a preset returns '' without queueing), leaving the errand to
+			// report an empty `done`: a silent hand-off failure. Hand it back UNDELIVERABLE
+			// instead, from here (the fast path: report + release + ack), so the dispatcher
+			// drops to a local run or the backstop re-hands -- never a blank steer, never a
+			// turn reported done with no answer. Thrown before the lease goes busy.
+			if (typeof diamondBusy === 'function' && diamondBusy(wantDia)) {
+				diag('reconstruct UNDELIVERABLE', 'diamond=' + wantDia + ' busy with a local turn here');
+				var eBusy = new Error('this device is already running a turn for this diamond');
+				eBusy.undeliverable = true;
+				throw eBusy;
+			}
+		}
 		// D3 — rebuild the agent from the freshly-synced transcript (a stale app from
 		// before the sync would carry neither the dispatched prompt nor whatever the
 		// phone did since), and SEED IT WITHOUT the errand's own user prompt: runTurn
 		// re-sends that prompt through `run_turn`, so seeding it too would feed the
 		// model the same message twice. `ensureApp`'s `exceptMid` drops exactly the one
 		// message whose mid is the turn id; runTurn (promptInTranscript) then does not
-		// append a duplicate to the transcript either.
+		// append a duplicate to the transcript either. A daimon runs on `diamondApp`, not
+		// this app, but building it is harmless and keeps the ctx shape uniform.
 		chat.app = null;
 		var app = ensureApp(chat, String(errand.turnId || ''));
 		await scopeChatTo(app, chat.id);
@@ -19934,6 +19997,52 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 				// Publish this turn's hard-stop to the runner context, so egressAllowed can
 				// abort exactly this turn when it parks. The app exists now (reconstruct ran).
 				var tid = String((ropts && ropts.turnId) || '');
+				// A DAIMON ERRAND IS NOT A CHAT TURN. The reconstructed chat carries a
+				// `diamondId`, so this turn runs the crystal-agent (`steer_crystal`) against
+				// the Diamond's own app and fence, NOT the chat engine. `steer_crystal` is
+				// fenced per call to the RUNNER's own `Files.bounds(diamondId)` -- the marks
+				// sync, the folder is the runner's -- and fails closed to the Diamond's
+				// directory on an empty scope, so the authority is correct here.
+				var did = String((c && c.chat && c.chat.diamondId) || '');
+				if (did) {
+					// THIS RUNNER MUST BE ABLE TO RUN THE DIAMOND'S MODEL. A runner that
+					// lacks its key would otherwise `openSettings` and answer nothing, and
+					// runErrand would report an empty `done`. Hand it back as a provider
+					// failure instead (classified by runnerErrorKind): the lease releases,
+					// the errand stays on the relay, and the dispatcher -- which has the key
+					// -- runs it local or another keyed peer takes it. Nothing was spent.
+					if (typeof diamondCanRun === 'function' && !diamondCanRun(did)) {
+						var eKey = new Error('the diamond’s model has no usable api key on this device');
+						eKey.code = 401;
+						throw eKey;
+					}
+					var f = diamonds.find(function (x) { return x.id === did; });
+					if (!f) {
+						// The Diamond record never became resident (a chunk-offload the parcel
+						// did not deliver). Hand the turn back undeliverable rather than steer a
+						// blank -- the backstop re-hands or the phone runs local.
+						var eDia = new Error('the diamond this errand names is not resident');
+						eDia.undeliverable = true;
+						throw eDia;
+					}
+					// The hard-stop reaches the DIAMOND'S app (a daimon runs on `diamondApp`,
+					// not `chat.app`), so a take-back or a park actually stops the turn.
+					if (tid && _runnerCtx[tid]) {
+						_runnerCtx[tid].abort = function () {
+							try { if (c && c.chat) Workers.cancelAwaits(c.chat.id); } catch (e) { /* best effort */ }
+							try { var da = diamondApp(did); if (da) da.abort(); } catch (e) { /* idempotent */ }
+						};
+					}
+					// The crystal-agent turn, streamed to the dispatcher through the same
+					// progress door a chat uses (pushProgress reads this daimon record by the
+					// turn's mid). `ropts.onProgress` is the lease-liveness piggyback.
+					await runSteerDetached(f, prompt, c.chat, ropts);
+					// A daimon that fanned out settles here too, so `done` is posted after the
+					// real end of the turn -- `drainAgenticRounds` reads worker/batch state
+					// and re-dispatches nothing, so it cannot double-run.
+					await drainAgenticRounds(c.chat);
+					return;
+				}
 				if (tid && _runnerCtx[tid]) {
 					_runnerCtx[tid].abort = function () {
 						try { if (c && c.chat) Workers.cancelAwaits(c.chat.id); } catch (e) { /* best effort */ }
@@ -19958,7 +20067,13 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 				try { if (ctx && ctx.chat && ctx.chat.app) ctx.chat.app.abort(); } catch (e) { /* idempotent */ }
 			},
 			pushResult: async function () {
-				try { if (ctx && ctx.chat) captureSession(ctx.chat, ctx.app); } catch (e) { /* best effort */ }
+				// A DAIMON'S session is written by `runSteer` itself, straight from
+				// `steer_crystal`'s return (its turn runs on the Diamond's app, not `ctx.app`).
+				// Capturing `ctx.app`'s session here would overwrite the real one with the
+				// chat app's empty conversation, so the daimon is skipped -- its `rec.session`
+				// is already on the record and rides the parcel push below.
+				try { if (ctx && ctx.chat && !ctx.chat.diamondId) captureSession(ctx.chat, ctx.app); }
+				catch (e) { /* best effort */ }
 				// CONFIRM the final answer committed, resilient to a streaming progress push
 				// still settling. A progress push holds the one-round gate for a moment; a
 				// bare push() arriving in that window would see `inFlight`, defer to the
@@ -21333,7 +21448,11 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 	function seatPlanNow() {
 		try {
 			if (!window.DaimondPeer || !DaimondPeer.seatPlan) return null;
-			if (!current || current.diamondId) return null;
+			// A daimon chat now seats like any other: `renderSeatLine` draws "Runs on
+			// <device>" for it, because a daimon turn dispatches. `seatOpts()` reads the
+			// daimon chat's own toolsEnabled/runOnPeer, so the pure `seatPlan` decides it
+			// the same way it decides a chat.
+			if (!current) return null;
 			var o = seatOpts();
 			if (!o.selfId) return null;
 			var presence = annotatePresence((window.DaimondPresence && DaimondPresence.snapshot()) || {});
@@ -21591,7 +21710,14 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 	/// hiccup runs locally -- the safe default.
 	async function maybeAutoDispatch(chat, text) {
 		try {
-			if (!chat || chat.diamondId) return false;			// daimons never dispatch
+			// A DAIMON DISPATCHES TOO. The election/lease/hand-off is proven for chats and
+			// is switched on for daimons here: the runner services the turn through
+			// `steer_crystal` (peerRunErrandDeps.runTurn branches on the errand's diamondId),
+			// which is per-call fenced to the Diamond's own directory. The `diamondId` rides
+			// the errand so the runner steers the crystal rather than the chat engine. Money-
+			// safety is unchanged: the take-if-vacant lease is still the sole single-runner
+			// arbiter, and the transcript `iturn` finished-guard stops a re-collect re-running.
+			if (!chat) return false;
 			if (typeof navigator !== 'undefined' && navigator.onLine === false) return false;
 			if (!window.DaimondPeer || !DaimondPeer.autoDispatchDecision) return false;
 			var self     = selfDeviceId();
@@ -21776,7 +21902,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 				});
 			} catch (e) { /* the durable placeholder draws it after the push */ }
 			dispatchToPeer(chat, umid, text, Array.isArray(chat.holds) ? chat.holds : [],
-				{ toId: advId, toName: advName, t0: tSend }
+				{ toId: advId, toName: advName, t0: tSend, diamondId: String(chat.diamondId || '') }
 			).then(function (res) {
 				if (!res || !res.ok) { try { appendError((res && res.why) || 'could not hand this to a peer'); } catch (e) { /* drawn best-effort */ } }
 			});
@@ -21827,7 +21953,11 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			var presence = (window.DaimondPresence && DaimondPresence.snapshot()) || {};
 			var self = selfDeviceId(), now = Date.now();
 			chats.forEach(function (chat) {
-				if (!chat || !chat._generating || chat.diamondId) return;
+				// A daimon turn hands off on step-away too: `runSteer` sets `_generating` and
+			// its user message carries the `mid` `inflightTurnOf` resolves, so the same
+			// dispatch reaches it. The dispatch names the chat's `diamondId` so the runner
+			// steers the crystal.
+			if (!chat || !chat._generating) return;
 				var turn = inflightTurnOf(chat);
 				if (!turn) return;
 				// The posture gate above is the "should we hand off at all" decision;
@@ -21862,7 +21992,8 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 				// inside runs first and is synchronous, so recovery-on-return sees the turn
 				// as dispatched even if the push/post do not finish — and a dispatched turn
 				// no peer ran is reclaimable.
-				try { dispatchToPeer(chat, turn.turnId, turn.text, Array.isArray(chat.holds) ? chat.holds : []); }
+				try { dispatchToPeer(chat, turn.turnId, turn.text, Array.isArray(chat.holds) ? chat.holds : [],
+					{ diamondId: String(chat.diamondId || '') }); }
 				catch (e) { /* recovery-on-return is the net */ }
 			});
 		} catch (e) { /* the page is going; nothing here may throw into unload */ }
@@ -28167,6 +28298,12 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			// note 14. A daimon queues behind its own turn, as a chat queues behind
 			// its own, and behind nobody else's.
 			if (diamondBusy(current.diamondId)) { enqueueMessage(current, text); return; }
+			// AUTO-DISPATCH the daimon turn, exactly as a chat does (§4.1). The queue guard
+			// above runs FIRST, so a steer typed during this daimon's own in-flight turn
+			// queues rather than dispatching a second time. `maybeAutoDispatch` pushes the
+			// user message, clears the composer and hands off to the runner (which services
+			// it through `steer_crystal`); false falls through to the ordinary local steer.
+			if (await maybeAutoDispatch(current, text)) return;
 			clearComposer();
 			doSteer(text);
 			return;
@@ -30719,10 +30856,14 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 					+ parts.join('\n\n'));
 				return;
 			}
-			// The Diamond must still exist and still be the one on screen. A gather
-			// round steers a Diamond, and steering one the user has navigated away
-			// from would spend on a surface they are not looking at.
-			if (!currentDiamond || currentDiamond.id !== b.diamondId) {
+			// The Diamond must still be the one this device is running -- on screen, OR
+			// handed off to this device as a live errand. `currentDiamond` alone stranded
+			// a fan-out's next round on the RUNNER, which reconstructs the daimon into a
+			// detached record and never sets `currentDiamond`; `diamondShowingOrRunning`
+			// admits it. It still refuses a Diamond the user merely walked away from that
+			// no errand names here, so a round is never spent on an unwatched surface.
+			var dGath = diamonds.find(function (x) { return x.id === b.diamondId; });
+			if (!dGath || !diamondShowingOrRunning(b.diamondId)) {
 				this.tellDaimon(b.diamondId, held + 'the user was looking at something else.'
 					+ ' Their reports follow.\n\n' + parts.join('\n\n'));
 				return;
@@ -30737,9 +30878,12 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 				? 'Agent finished; reporting back.'
 				: mine.length + ' agents finished; reporting back.');
 			// Deferred, so this does not run inside the finishing worker's `finally`:
-			// doSteer marks the Diamond busy, and re-entering the pump from under it is how
-			// a turn ends up racing its own bookkeeping.
-			setTimeout(function () { doSteer(instruction, b.depth + 1); }, 0);
+			// runSteer marks the Diamond busy, and re-entering the pump from under it is how
+			// a turn ends up racing its own bookkeeping. Steered BY ID, not `currentDiamond`:
+			// on a runner `currentDiamond` is null, so `doSteer` would run `runSteer(null)`
+			// and drop the round. `runSteer` no-ops every on-screen write when the Diamond
+			// is off-screen, so the gather round runs wherever the turn is.
+			setTimeout(function () { runSteer(dGath, instruction, b.depth + 1); }, 0);
 		},
 
 		/// Put the app's own word about a fan-out into the daimon's own conversation.
@@ -47172,9 +47316,28 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 	/// an off-screen turn needs nothing new here: it simply answers false to both
 	/// and draws nowhere, while its words go into its own Diamond's chat record.
 	///
+	/// Service a handed-off DAIMON errand on this runner: one crystal-agent turn for the
+	/// Diamond `f`, run against the errand's OWN reconstructed chat record and streamed to
+	/// the dispatcher. It lifts `runSteer`'s core by handing it the chat record (the
+	/// errand's, not `daimonChat`'s fresh lookup) and the errand turn id, so the turn
+	/// anchors to the ALREADY-SYNCED user message rather than appending a second, and its
+	/// answer carries the `iturn` the finished-guard reads (a re-collect then stands down --
+	/// no double-run). No screen here: every `mine()/onScreen()` write inside `runSteer`
+	/// no-ops, and the tool tiles reach the phone through the progress door instead.
+	function runSteerDetached(f, prompt, chatRec, ropts) {
+		return runSteer(f, prompt, 0, {
+			chat:       chatRec,
+			turnId:     String((ropts && ropts.turnId) || ''),
+			onProgress: (ropts && ropts.onProgress) || null,
+		});
+	}
+
 	/// # Arguments
 	/// * `f` - The Diamond whose daimon runs this turn.
-	async function runSteer(f, presetArg, depthArg) {
+	/// * `detached` - When present (`{ chat, turnId, onProgress }`) this is a runner
+	///   servicing a handed-off errand: use the given chat record, anchor to `turnId`,
+	///   and stream liveness/tail through `onProgress`, rather than the on-screen daimon.
+	async function runSteer(f, presetArg, depthArg, detached) {
 		if (!f) return '';
 		// A STEER TYPED WHILE THIS DIAMOND'S OWN TURN IS IN FLIGHT USED TO VANISH.
 		// This was `if (crystalBusy || !currentDiamond) return;`: Send did nothing,
@@ -47280,7 +47443,11 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		// streamed into whatever thread was on screen -- one conversation's words
 		// in another's transcript, still arriving minutes later. `runTurn` asks
 		// the same question the same way, through `owns()`.
-		var rec = daimonChat(f);
+		// The runner services an errand against ITS OWN reconstructed record; every other
+		// caller means the one on screen and looks it up. Same record either way (both are
+		// the chat whose `diamondId` is this Diamond), named here only so a runner is not at
+		// the mercy of the lookup finding it.
+		var rec = detached ? detached.chat : daimonChat(f);
 		var onScreen = function () { return daimonOnScreen(rec); };
 		// The OTHER face of the same Diamond. Both faces share one composer, so a
 		// steer is just as likely to be typed at the crystal -- which is the face
@@ -47295,8 +47462,14 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		// spinner belonging to the turn the user is actually watching.
 		var onCrystal = function () { return mine() && centreMode === 'focus'; };
 		var its = Date.now();
-		rec.messages.push({ role: 'user', content: instruction, mid: newMid(), ts: its });
-		if (onScreen()) appendUserMessage(instruction, its);
+		// A DETACHED runner run anchors to the user message the dispatch already synced
+		// (mid === the errand turn id): pushing a second copy here would duplicate it in
+		// the transcript and let `progressTail`/`chatHoldingTurn` disagree on the turn. So
+		// the push -- and the on-screen draw of it -- is the local-caller's alone.
+		if (!detached) {
+			rec.messages.push({ role: 'user', content: instruction, mid: newMid(), ts: its });
+			if (onScreen()) appendUserMessage(instruction, its);
+		}
 		// The composer's Send becomes Stop while a daimon turn runs, and `anyGen()` --
 		// which is what stops a reload, a sign-out or an update landing on top of work
 		// in flight -- counts it. Both read `_generating`, so a daimon turn that did not
@@ -47449,10 +47622,19 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		var roundSent = 0, roundPayload = null;
 		var onEvent = function (ev) {
 			if (!ev || !ev.type) return;
+			// A HANDED-OFF turn checks lease liveness between the ticker's own reads, so a
+			// take-back aborts the daimon promptly rather than at the next tick. Cheap and
+			// idempotent; the read-only ticker is still the backstop.
+			if (detached && detached.onProgress) { try { detached.onProgress(); } catch (e) { /* the ticker still catches it */ } }
 			if (ev.type === 'text') {
 				// The conductor's own words — a question, a refusal, or an account
 				// of what it did. Kept, so a text-only turn is not silently dropped.
 				replyText += (ev.content || '');
+				// STREAM THE PROSE to a watching dispatcher. A background runner's answer is
+				// in neither the stored transcript nor an on-screen buffer until the turn
+				// ends, so without this the phone's progress frame shows tool tiles and then
+				// nothing until `done`. `_liveTurn` is what `pushProgress` reads for the tail.
+				if (detached) { try { _liveTurn[String(detached.turnId)] = replyText; } catch (e) { /* a dropped frame only slows the stream */ } }
 				if (!writing) { writing = true; busySay(rec, tOr('chat.busy_writing', 'Writing the answer…')); }
 				if (onScreen()) appendAssistantText(ev.content || '');
 			} else if (ev.type === 'tool_call') {
@@ -47684,9 +47866,17 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 				(rec.session && rec.session.msgs) || [], onEvent);
 			if (onScreen()) finalizeAssistant();
 			if (replyText) {
+				// A DETACHED turn stamps the answer with the errand's turn id, so the
+				// runErrand finished-guard (an assistant message whose `iturn` is the turn,
+				// with content) stands a re-collect down before it can re-take the released
+				// lease and re-bill -- the transcript belt to the `done` report's braces.
 				rec.messages.push({ role: 'assistant', content: replyText,
-					mid: newMid(), ranOn: selfDeviceId(), ts: Date.now() });
+					mid: newMid(), iturn: detached ? String(detached.turnId) : undefined,
+					ranOn: selfDeviceId(), ts: Date.now() });
 			}
+			// The live-stream buffer is spent: the answer is in `messages` now, so the next
+			// progress frame reads it from there, not from here.
+			if (detached) { try { delete _liveTurn[String(detached.turnId)]; } catch (e) { /* bounded map */ } }
 			// The ending, last, under whatever the turn managed to say.
 			if (pendingSteerEnd) {
 				rec.messages.push(pendingSteerEnd);
@@ -47729,6 +47919,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			crystalSay(friendlyError(e));
 			rec._generating = false;
 			rec._busy = '';
+			if (detached) { try { delete _liveTurn[String(detached.turnId)]; } catch (e2) { /* bounded map */ } }
 			// TRAINING WHEELS — a failure BEFORE the turn is still an end of it.
 			closeFeedTurn('error');
 			// `syncComposer` is what takes the dots down, because it is what decides

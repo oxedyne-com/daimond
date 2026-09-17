@@ -234,6 +234,29 @@ try {
 				.every((k) => en && !/\.\s/.test(String(en[k])) && String(en[k]).length <= 40));
 	}
 
+	// ── (j) A DAIMON CHAT SEATS LIKE ANY OTHER CHAT (daimon hand-off). ──
+	//
+	// The pure `seatPlan` is chat-agnostic -- it reads provider/model, not `diamondId` --
+	// so a daimon chat (a chat record with `diamondId` set) seats on the live runner just
+	// as an ordinary chat does. The gate that USED to keep the seat line off daimons was
+	// `seatPlanNow`'s `current.diamondId` early-return in daimond.js; with a daimon turn
+	// now dispatching, that gate is gone, and this proves the formatter it hands to does
+	// the right thing with a daimon chat.
+	{
+		const daimon = { id: 'dc', provider: 'openrouter', model: 'm', diamondId: 'x1' };
+		const p = P.seatPlan(daimon, { [ARG]: desk('argonaut', 2000) },
+			{ selfId: PHONE, isPhone: true, selfMobile: true, freshWindowMs: W, nominatedId: ARG }, now);
+		check('(j) a DAIMON chat with a live nominee -> seat.on_runner, named',
+			p.where === 'runner' && p.key === 'seat.on_runner' && p.label === 'argonaut',
+			'key=' + p.key + ' label=' + p.label);
+		// AND the daimon gate is gone from `seatPlanNow`: the line is drawn for a daimon.
+		const js = readFileSync(join(HERE, '..', 'www', 'js', 'daimond.js'), 'utf8');
+		const sp = js.slice(js.indexOf('\tfunction seatPlanNow('),
+			js.indexOf('\tfunction seatPlanNow(') + 700);
+		check('(j) seatPlanNow no longer early-returns on a daimon (current.diamondId gate lifted)',
+			!/current\.diamondId\)\s*return null/.test(sp), 'gate still present');
+	}
+
 	// ── (g) EVERY KEY THE PLAN CAN NAME IS IN en.js, WITH ITS {name}. ──
 	//
 	// The line names its own key, so no call-site read can check it; i18ncheck takes

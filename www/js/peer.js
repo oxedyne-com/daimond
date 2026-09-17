@@ -254,6 +254,12 @@
 			eid:     o.eid || newId(),
 			turnId:  String(o.turnId || ''),
 			chatId:  String(o.chatId || ''),
+			// The Diamond this errand's chat belongs to, or '' for an ordinary chat. A
+			// daimon errand is serviced by `steer_crystal` (the crystal-agent turn), not
+			// the chat engine, so the runner has to know which it is BEFORE it reconstructs
+			// -- the chatId alone cannot say, an older phone build carries none, and the
+			// runner then falls back to the reconstructed `ctx.chat.diamondId`.
+			diamondId: String(o.diamondId || ''),
 			prompt:  String(o.prompt == null ? '' : o.prompt),
 			model:   o.model || null,		// { provider, model, url } -- models.js:127-129
 			scope:   o.scope || null,		// the workspace fence -- scopeChatTo, daimond.js:17553
@@ -858,6 +864,9 @@
 		var prompt   = String(o.prompt == null ? '' : o.prompt);
 		// The peer must run the model the CHAT chose, not the peer's own default.
 		var model    = o.model || { provider: c.provider || '', model: c.model || '', url: String(o.url || '') };
+		// The Diamond the chat belongs to, so the runner services a daimon turn through
+		// `steer_crystal` rather than the chat engine. Taken from the caller, or the chat.
+		var diamondId = String(o.diamondId || c.diamondId || '');
 		var scope    = o.scope || null;			// the workspace fence -- scopeChatTo, daimond.js:17553
 		var pause    = o.pause || null;			// pause-tree snapshot pinned to dispatch -- §1.1
 		var deadline = leaseMs(o.deadline) || (now + DISPATCH_DEADLINE_MS);
@@ -893,7 +902,8 @@
 			/// catch-up already handles. The seed is what the runner actually needs.
 			errand: function (parcelVersion) {
 				return makeErrand({
-					eid: eid, turnId: turnId, chatId: chatId, prompt: prompt, model: model,
+					eid: eid, turnId: turnId, chatId: chatId, diamondId: diamondId,
+					prompt: prompt, model: model,
 					scope: scope, pause: pause, parcelVersion: parcelVersion,
 					deadline: deadline, dispatchedBy: by, parkCount: parkCount, ts: now,
 					seed: seed,
@@ -901,7 +911,8 @@
 			},
 			// The fully-resolved fields (bar parcelVersion), exposed for inspection.
 			fields: {
-				turnId: turnId, chatId: chatId, prompt: prompt, model: model, scope: scope,
+				turnId: turnId, chatId: chatId, diamondId: diamondId, prompt: prompt,
+				model: model, scope: scope,
 				pause: pause, deadline: deadline, dispatchedBy: by, eid: eid, parkCount: parkCount,
 				seed: seed,
 			},
