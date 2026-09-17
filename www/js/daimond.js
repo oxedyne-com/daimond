@@ -3030,11 +3030,27 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 	/// what it cost, plus that it can be carried on rather than restarted.
 	function workerEndingNote(r) {
 		var rounds = (r.ended && r.ended.rounds) || 0;
+		var calls  = (r.ended && r.ended.calls)  || 0;
 		// `withCommas` groups EVERY digit run it is given, decimal point or not, so it
 		// runs on the whole-dollar part alone -- a spend of $0.4567 commified as one
 		// string reads back as "0.4,567", which is wrong rather than merely ugly.
 		var usdParts = (r.costUsd || 0).toFixed(4).split('.');
 		var usd = withCommas(usdParts[0]) + '.' + usdParts[1];
+		// A WORKER THAT DID THE WORK AND THEN SAID NOTHING. `silent` (an empty final reply,
+		// no reasoning) and `reasoned_only` (reasoned, then neither answered nor called a
+		// tool) both leave a blank report -- but a worker with `calls > 0` RAN TOOLS, so its
+		// work is real and its only trace is its files. The bare status word is `done` for
+		// both (see `workerEndStatus`), which is why this switches on the engine's own
+		// `ended.how`: telling the reader the rounds, the tool calls and to CHECK THE FILES
+		// is the difference between reading the silence as "nothing found" -- and
+		// re-dispatching finished work -- and knowing the work is done, only the report is not.
+		var how = (r.ended && r.ended.how) || '';
+		if ((how === 'silent' || how === 'reasoned_only') && calls > 0) {
+			return ' — ran ' + calls + ' tool call' + (calls === 1 ? '' : 's') + ' over ' + rounds
+				+ ' round' + (rounds === 1 ? '' : 's') + ', US$' + usd
+				+ ', then ended without a final message'
+				+ '\n\n(the work is done — check its files before re-dispatching, do not restart it)';
+		}
 		switch (r.status) {
 			case 'capped':
 				return ' — stopped at the round cap after ' + rounds + ' rounds, US$' + usd
@@ -15272,23 +15288,6 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		if (!chat) return false;
 		if (current && current.id === chat.id) return true;
 		return chatIsActiveErrand(chat.id);
-	}
-
-	/// May a gather round steer THIS DIAMOND here -- because the user is looking at it,
-	/// or because this device is the runner executing its handed-off daimon turn? The
-	/// daimon half of `chatShowingOrRunning`, and it exists for the same reason: a runner
-	/// reconstructs the daimon errand's chat into a DETACHED record and never sets the
-	/// on-screen `currentDiamond`, so a gather round gated on `currentDiamond` would never
-	/// run the fan-out's next round on the device the turn is on. The chat is live here
-	/// because a live errand names it (`daimonChat(f).id` is the errand's chatId).
-	function diamondShowingOrRunning(id) {
-		var want = String(id || '');
-		if (!want) return false;
-		if (currentDiamond && currentDiamond.id === want) return true;
-		var f = diamonds.find(function (x) { return x.id === want; });
-		if (!f) return false;
-		var rec = daimonChat(f);
-		return !!(rec && chatIsActiveErrand(rec.id));
 	}
 
 	/// PARK this runner turn: record the intent, hard-abort the in-flight turn, and
@@ -30836,9 +30835,19 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			// because "the workers finished" beside a blank body reads as a fan-out that found
 			// nothing rather than one that was cut short. 2026-09-15: this turn cost US$1.14.
 			if (!substance) {
-				this.tellDaimon(b.diamondId, held + (one ? 'it' : 'they')
-					+ ' stopped before saying anything, so there was nothing to read. Ask again'
-					+ ' with a narrower task if the work still matters.'
+				// DID ANY OF THEM ACTUALLY DO WORK? A worker with `ended.calls > 0` ran tools --
+				// its report is blank but its work is real and on the store. Telling the daimon to
+				// "ask again with a narrower task" then invites a RE-DISPATCH OF FINISHED WORK,
+				// which is the very fault this branch exists to name honestly. So when the batch
+				// used tools, point it at the files instead of inviting a restart; only a batch
+				// that ran nothing at all keeps the narrow-task advice.
+				var didWork = mine.some(function (r) { return r.ended && r.ended.calls > 0; });
+				this.tellDaimon(b.diamondId, held + (didWork
+					? (one ? 'it' : 'they') + ' ran tools and ended without a final message, so there'
+						+ ' is no report to read -- but the work is done. Check its files before'
+						+ ' re-dispatching; do not restart finished work.'
+					: (one ? 'it' : 'they') + ' stopped before saying anything, so there was nothing'
+						+ ' to read. Ask again with a narrower task if the work still matters.')
 					+ '\n\n' + parts.join('\n\n'));
 				return;
 			}
@@ -30856,34 +30865,49 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 					+ parts.join('\n\n'));
 				return;
 			}
-			// The Diamond must still be the one this device is running -- on screen, OR
-			// handed off to this device as a live errand. `currentDiamond` alone stranded
-			// a fan-out's next round on the RUNNER, which reconstructs the daimon into a
-			// detached record and never sets `currentDiamond`; `diamondShowingOrRunning`
-			// admits it. It still refuses a Diamond the user merely walked away from that
-			// no errand names here, so a round is never spent on an unwatched surface.
+			// The Diamond must still EXIST; whether the user is LOOKING at it no longer
+			// gates the round. A finished worker's report must reach its daimon whatever
+			// the user is looking at -- the round runs OFF-SCREEN, where `runSteer` no-ops
+			// every on-screen write, so the report is read and acted on rather than left
+			// unread on an unwatched Diamond until a next turn that may never come. (The
+			// screen guard used to withhold the round and only `tellDaimon` the report; a
+			// Diamond nobody returns to then never read it. The batch is deleted above --
+			// once only -- so there is no re-gather to lose either.)
 			var dGath = diamonds.find(function (x) { return x.id === b.diamondId; });
-			if (!dGath || !diamondShowingOrRunning(b.diamondId)) {
-				this.tellDaimon(b.diamondId, held + 'the user was looking at something else.'
-					+ ' Their reports follow.\n\n' + parts.join('\n\n'));
-				return;
-			}
+			if (!dGath) return;			// the Diamond is gone; the reports remain on their tiles
 			if (!diamondCanRun(b.diamondId)) {
 				this.tellDaimon(b.diamondId, held + 'this diamond has no model it can run on.'
 					+ ' Their reports follow.\n\n' + parts.join('\n\n'));
 				return;
 			}
+			// Exactly-once, belt-and-braces: the runs are marked read here as well as the
+			// batch being deleted, so nothing that later re-referenced them could deliver a
+			// second copy the daimon would read as a second finding.
+			mine.forEach(function (r) { r.gathered = r.gathered || ('post-' + b.diamondId); });
 
 			setCrystalStatus(mine.length === 1
 				? 'Agent finished; reporting back.'
 				: mine.length + ' agents finished; reporting back.');
-			// Deferred, so this does not run inside the finishing worker's `finally`:
-			// runSteer marks the Diamond busy, and re-entering the pump from under it is how
-			// a turn ends up racing its own bookkeeping. Steered BY ID, not `currentDiamond`:
-			// on a runner `currentDiamond` is null, so `doSteer` would run `runSteer(null)`
-			// and drop the round. `runSteer` no-ops every on-screen write when the Diamond
-			// is off-screen, so the gather round runs wherever the turn is.
-			setTimeout(function () { runSteer(dGath, instruction, b.depth + 1); }, 0);
+			// DELIVER, NEVER DROP. Deferred so it does not run inside the finishing worker's
+			// `finally` (runSteer marks the Diamond busy, and re-entering the pump from under
+			// it races its own bookkeeping). Steered BY ID, not `currentDiamond`, so it runs
+			// off-screen and on a runner alike. And it WAITS for an idle moment rather than
+			// being dropped when a turn is in flight: `runSteer` returns '' for a preset while
+			// the Diamond is busy, and the batch is already gone, so a dropped round would
+			// lose the report for good. If no idle moment comes within the window, the report
+			// is preserved in the conversation (`tellDaimon`) to be read at the next turn --
+			// the no-cost fallback -- rather than lost.
+			var GATHER_IDLE_TRIES = 40;		// ~60s of 1.5s polls before the preserve fallback
+			var deliverGather = function (tries) {
+				if (diamondBusy(b.diamondId)) {
+					if (tries > 0) { setTimeout(function () { deliverGather(tries - 1); }, 1500); return; }
+					self.tellDaimon(b.diamondId, held + 'the diamond was busy with another turn.'
+						+ ' Their reports follow.\n\n' + parts.join('\n\n'));
+					return;
+				}
+				runSteer(dGath, instruction, b.depth + 1);
+			};
+			setTimeout(function () { deliverGather(GATHER_IDLE_TRIES); }, 0);
 		},
 
 		/// Put the app's own word about a fan-out into the daimon's own conversation.

@@ -334,6 +334,15 @@ fn reasoned_only_nudge() -> String {
 	"You reasoned but neither answered nor called a tool; do one of them now.".to_string()
 }
 
+/// What a WORKER is told when it did its work through tools and then ended with an empty
+/// final reply.  It wrote no report, and the fan-out that dispatched it reads that silence
+/// as "nothing found" -- so it is asked, once, to write the report the work is worth.
+fn report_nudge() -> String {
+	"You have finished your tool calls but written no report. Write your report now: \
+	 say what you did, what you found, and where you left it. This is the only thing the \
+	 person who dispatched you will read.".to_string()
+}
+
 /// One dispatched tool call, as the audit sees it.
 #[derive(Clone, Debug)]
 struct Claim {
@@ -1548,6 +1557,12 @@ impl Agent {
         // tool call.  Bounded at one nudge the same way `leaks` is; see the note where it is
         // read, in the empty-reply arm below.
         let mut reasoned_only = 0usize;
+        // WHETHER THIS TURN HAS ALREADY BEEN ASKED TO WRITE ITS REPORT.  A worker that did its
+        // work through tools and then ended with an EMPTY final reply wrote no report at all, so
+        // the fan-out reads its silence as "nothing found" and re-dispatches finished work.  It is
+        // nudged ONCE to write the report, bounded the same way `leaks` and `reasoned_only` are: a
+        // second empty round after being asked is not something a third sentence fixes.
+        let mut report_nudged = false;
         // WHAT THE SESSION HAD SPENT BEFORE THIS TURN OPENED.  `session.cost_usd` is the whole
         // conversation's bill, and the ceiling is PER TURN -- measured against the session's total
         // it would end every turn of a long chat the moment the chat itself got expensive.
@@ -1781,6 +1796,29 @@ impl Agent {
 
             if resp.tool_calls.is_empty() {
                 let empty_reply = resp.content.trim().is_empty();
+                // A TOOL-USING WORKER THAT ENDED WITH AN EMPTY FINAL REPLY.  It did the work --
+                // `claims.calls` is non-empty -- and then said nothing, so no report is written;
+                // the fan-out that dispatched it reads that silence as "nothing found" and
+                // re-dispatches FINISHED work (the `Silent` note used to invite exactly that:
+                // "ask again with a narrower task").  Nudge it ONCE to write its report, ahead of
+                // the reasoned-only arm because a worker that DID something should be told to
+                // report it, not merely to "finish the thought".  Bounded at one, like `leaks`
+                // and `reasoned_only`: a second empty round after being asked ends the turn on its
+                // own word (Silent/ReasonedOnly below), now carrying `calls > 0` so the note names
+                // the work rather than inviting a re-dispatch.
+                if empty_reply && !report_nudged && !claims.calls.is_empty() {
+                    report_nudged = true;
+                    let said = ChatMessage::Assistant {
+                        content:    MessageContent::text(crate::llm::seamed(resp.content.clone())),
+                        tool_calls: Vec::new(),
+                    };
+                    working.push(said.clone());
+                    session.messages.push(said);
+                    let nudge = report_nudge();
+                    working.push(ChatMessage::user(nudge.clone()));
+                    session.messages.push(ChatMessage::user(nudge));
+                    continue;
+                }
                 // THE MODEL REASONED AND THEN SAID NOTHING.  Found by proposal 15's naive
                 // drive on 2026-09-15: a round returned 3,372 tokens on `resp.thinking` and
                 // an empty `content`, ending mid-sentence, with no tool call either.  This
@@ -5288,6 +5326,61 @@ mod tests {
         let end = ran(vec![quiet], &registry, 1).await;
         assert_eq!(TurnEnd::Silent, end.how, "{:?}", end);
         assert_eq!(0, end.offered, "a pure chat holds no tools: {:?}", end);
+    }
+
+    #[tokio::test]
+    async fn test_a_tool_using_worker_with_an_empty_final_reply_is_nudged_to_write_its_report_00() {
+        // Ontheism worker-report fix. A worker that did its work through TOOLS and then returned
+        // an EMPTY final reply wrote no report -- and the fan-out that dispatched it reads that
+        // silence as "nothing found", re-dispatching FINISHED work. So an empty reply in a turn
+        // whose `claims.calls > 0` is nudged ONCE to write its report, exactly as a reasoned-only
+        // round is nudged to finish its thought. Without the nudge the turn ends `Silent` at the
+        // empty round -- one round early, with no report at all -- which is what this asserts is
+        // no longer so.
+        let registry = one_tool();
+        // Round 1: a tool call, so the turn has done work by the empty round.
+        let tool_round = crate::llm::tests::Reply::Sse {
+            chunks: vec![
+                "data: {\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"id\":\"c0\",\
+                 \"type\":\"function\",\"function\":{\"name\":\"file_write\",\"arguments\":\
+                 \"{\\\"path\\\":\\\"a.txt\\\",\\\"content\\\":\\\"1\\\"}\"}}]}}]}\n\n".to_string(),
+                "data: {\"choices\":[{\"delta\":{},\"finish_reason\":\"tool_calls\"}]}\n\n".to_string(),
+                "data: [DONE]\n\n".to_string(),
+            ],
+            reset_after: None,
+        };
+        // Round 2: an empty final reply, no reasoning -- the shape that used to end `Silent`.
+        let empty_round = crate::llm::tests::Reply::Sse {
+            chunks: vec![
+                "data: {\"choices\":[{\"delta\":{}}]}\n\n".to_string(),
+                "data: {\"choices\":[{\"delta\":{},\"finish_reason\":\"stop\"}]}\n\n".to_string(),
+                "data: [DONE]\n\n".to_string(),
+            ],
+            reset_after: None,
+        };
+        // Round 3: the report the nudge asks for. Only reached if the empty round was nudged.
+        let report_round = sse_saying("I wrote a.txt; it holds 1.");
+        let (port, seen) = crate::llm::tests::start_stub(
+            vec![tool_round, empty_round, report_round]).await;
+        let mut llm = crate::llm::tests::stub_client(port);
+        llm.retry.max_attempts = 1;
+        let a = Agent::new(llm, "You are Daimond.");
+        a.set_max_rounds(10);
+        let mut session = Session::new(fmt!("s1"), fmt!("worker-report"), fmt!("model"));
+        let _ = a.run_turn(&mut session, fmt!("do the work"), &registry, &mut |_| {}).await;
+
+        let end = a.ending().expect("the turn said nothing about how it ended");
+        // The empty round did NOT end the turn: it was nudged, and a report followed.
+        assert_eq!(TurnEnd::Answered, end.how,
+            "an empty final reply after tool work ended the turn instead of being nudged to \
+             report: {:?}", end);
+        assert_eq!(1, end.calls, "the tool call the worker made was not counted: {:?}", end);
+        // THE NUDGE REACHED THE MODEL: the report round was actually requested. Two rounds means
+        // the empty reply ended the turn (the pre-fix behaviour); three means it was nudged.
+        let asked = match seen.lock() { Ok(g) => g.bodies.len(), Err(e) => panic!("{}", e) };
+        assert_eq!(3, asked,
+            "the worker was not nudged to write its report -- the turn ended at the empty round \
+             ({} rounds requested)", asked);
     }
 
     #[test]

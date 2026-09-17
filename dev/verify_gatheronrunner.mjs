@@ -255,53 +255,23 @@ function reset() {
 		took >= 500 && took < 3000, `capped after ${took}ms`);
 }
 
-// ── (d) The DAIMON half: diamondShowingOrRunning admits a live errand's daimon ──
+// ── (d) The DAIMON gather round runs OFF-SCREEN, by id (worker-report fix) ──
 //
-// A daimon fan-out's next gather round is gated by `diamondShowingOrRunning`, the daimon
-// twin of `chatShowingOrRunning`: on a runner `currentDiamond` is null, but a live errand
-// names the daimon's chat, so the round runs where the turn is. Sliced verbatim and driven
-// over the same `_runnerCtx`, with `currentDiamond`, `diamonds` and a `daimonChat` stub
-// bound the way the app resolves them.
+// The daimon fan-out's next gather round no longer gates on the screen at all: a finished
+// worker's report must reach its daimon whatever the user is looking at. Asserted against
+// the shipped `Workers.gather` body (literal slice): the screen gate is GONE, the round is
+// steered BY ID off-screen, and it is delivered through a wait-for-idle deferral rather than
+// dropped. `verify_workerreport.mjs` drives the fuller behaviour; this only holds the site.
 {
-	reset();
-	// Diamond 'd1' whose daimon chat is 'cd1'. `daimonChat(f)` maps the Diamond to it.
-	const diamonds = [{ id: 'd1' }];
-	const daimonChat = (f) => (f && f.id === 'd1' ? { id: 'cd1' } : null);
-	function buildDia(currentDiamond) {
-		// eslint-disable-next-line no-new-func
-		const factory = new Function(
-			'_runnerCtx', 'currentDiamond', 'diamonds', 'daimonChat',
-			slice('chatIsActiveErrand') + '\n'
-			+ slice('diamondShowingOrRunning') + '\n'
-			+ 'return { chatIsActiveErrand, diamondShowingOrRunning };');
-		return factory(_runnerCtx, currentDiamond, diamonds, daimonChat);
-	}
-
-	// On screen: the user is looking at d1.
-	check('a daimon gather round is admitted when the Diamond is ON SCREEN',
-		buildDia({ id: 'd1' }).diamondShowingOrRunning('d1') === true);
-
-	// Runner: no currentDiamond, but a live errand names the daimon's chat 'cd1'.
-	_runnerCtx['t1'] = { turnId: 't1', chatId: 'cd1' };
-	check('and admitted on the RUNNER — a live errand names the daimon chat, though currentDiamond is null',
-		buildDia(null).diamondShowingOrRunning('d1') === true, 'STRANDED if false');
-
-	// The guard still bites: no screen, no errand -> refused (no round on an unwatched Diamond).
-	delete _runnerCtx['t1'];
-	check('but a Diamond neither on screen nor an active errand here is still refused',
-		buildDia(null).diamondShowingOrRunning('d1') === false);
-
-	// The gather site USES the predicate and steers BY ID (not doSteer/currentDiamond).
-	// The gather round lives in `Workers.gather`; anchor on its own `var dGath` line.
 	const anchor = SRC.indexOf('var dGath = diamonds.find');
-	const gatherSlice = anchor >= 0 ? SRC.slice(anchor - 200, anchor + 1800) : '';
-	check('the daimon gather guard uses diamondShowingOrRunning, not a bare currentDiamond test',
-		/diamondShowingOrRunning\(b\.diamondId\)/.test(gatherSlice)
+	const gatherSlice = anchor >= 0 ? SRC.slice(anchor - 300, anchor + 2200) : '';
+	check('the daimon gather site no longer gates on the screen (off-screen reports never lost)',
+		!/diamondShowingOrRunning\(b\.diamondId\)/.test(gatherSlice)
 		&& !/currentDiamond\.id !== b\.diamondId/.test(gatherSlice),
-		'gate not switched');
-	check('and the deferred gather round steers the Diamond BY ID (runs on the runner)',
+		'a screen gate is still present at the gather site');
+	check('and the deferred gather round steers the Diamond BY ID (runs off-screen / on a runner)',
 		/runSteer\(dGath, instruction, b\.depth \+ 1\)/.test(gatherSlice),
-		'still doSteer(currentDiamond)');
+		'not steered by id');
 }
 
 if (BREAK) {
