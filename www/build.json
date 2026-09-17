@@ -1,1 +1,1 @@
-{"build":"e91ea2ef2595","note":"A tool-using worker always delivers its report, even when its own turn ends silent."}
+{"build":"7a0d1b0ae232","note":"A daimon whose fence carries no .daimond mark accepts commands again."}

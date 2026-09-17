@@ -4936,6 +4936,13 @@ pub fn fence_spec_surfaced(
         })
         .filter(|p| !p.is_empty())
         .filter(|p| !is_store_path(p))
+        // A mark under Daimond's own directory can never be granted -- `diamond_bounds` denies
+        // `DAIMOND_DIR` outright, so surfacing it here is a self-contradiction the hand cannot
+        // absorb: when the named file does not exist, `canonical()` cannot resolve it and refuses
+        // the WHOLE fence, taking every real folder's grant down with it. Reading a skill file
+        // under `.daimond/` already needs no mark (`is_skills_disclosure`), so nothing legitimate
+        // is lost by dropping it here.
+        .filter(|p| !under(p, DAIMOND_DIR))
         .collect();
     // A NoWrite prefix takes writing away. It may sit ABOVE an allowed path or BELOW it, and both
     // directions matter: above, the whole grant becomes read-only; below, the grant stays writable
@@ -5716,6 +5723,10 @@ pub(crate) fn marks_of(bounds: &[Bound]) -> Vec<String> {
         })
         .filter(|p| !p.is_empty())
         .filter(|p| !is_store_path(p))
+        // Dropped for the same reason `fence_spec` drops it: a mark under Daimond's own
+        // directory can never be granted, so the door must not name it either, or the door and
+        // the fence disagree about what the marks are.
+        .filter(|p| !under(p, DAIMOND_DIR))
         .collect()
 }
 
@@ -23680,6 +23691,20 @@ mod tests {
         }
     }
 
+    /// `marks_of` drops a mark under `.daimond/` for the same reason `fence_spec` does, or the
+    /// door and the fence disagree about what the marks are -- and the fence cannot grant it in
+    /// the first place, so the disagreement would be the door claiming a machine path that a
+    /// command sent through the same bounds is refused.
+    #[test]
+    fn test_marks_of_drops_an_absent_path_under_daimond_00() {
+        let c = scoped(&[".daimond/skills/think/SKILL.md", "notes/specs"], &[]);
+        assert_eq!(mark_over(&c.no_write, ".daimond/skills/think/SKILL.md"), None,
+            "a mark under .daimond/ must not be named to the door: it is denied outright and \
+            naming it here would let a file tool claim a machine path a command cannot reach");
+        assert_eq!(mark_over(&c.no_write, "notes/specs/api.md"), Some(fmt!("notes/specs")),
+            "a legitimate mark beside the impossible one must still be named to the door");
+    }
+
     /// Every path the door calls a machine path is a path the command fence already grants.
     ///
     /// **This is the check that keeps the two doors one door.** `fence_spec`'s own comment
@@ -24036,6 +24061,37 @@ mod tests {
         assert!(!f.rw.contains(&fmt!("/home/u/ws")),
             "the workspace root is not a Diamond's to write; granting it would make every other \
             rule here decoration");
+    }
+
+    /// A mark that names a file under Daimond's own directory is dropped from the fence
+    /// entirely, rather than surfaced as a grant of something the hand cannot resolve.
+    ///
+    /// `diamond_bounds` denies `.daimond` outright, so a mark inside it is a self-contradiction --
+    /// and when the named file is absent (a stale skill reference, say), the hand's `canonical()`
+    /// cannot resolve it and refuses the WHOLE fence, taking every real folder's grant down with
+    /// it. Reading a skill file under `.daimond/` already needs no mark (`is_skills_disclosure`),
+    /// so nothing legitimate is lost by dropping it here.
+    #[test]
+    fn test_an_absent_mark_under_daimond_does_not_take_the_whole_fence_down_00() {
+        let b = diamond_bounds(
+            "diamonds/d1",
+            &[fmt!(".daimond/skills/think/SKILL.md"), fmt!("code")],
+            &[],
+        );
+        let f = fence_spec(&b, &Machine::at("/home/u/ws"), false);
+        // The absent mark under `.daimond/` must not be surfaced as a grant of any kind -- an
+        // unresolvable `rw` (or `ro`) entry is exactly what makes the hand refuse everything.
+        assert!(!f.rw.iter().any(|p| p.contains("skills/think")),
+            "a mark under .daimond/ was surfaced as writable: rw={:?}", f.rw);
+        assert!(!f.ro.iter().any(|p| p.contains("skills/think")),
+            "a mark under .daimond/ was surfaced as readable: ro={:?}", f.ro);
+        // A legitimate mark beside it still reaches the fence -- the fix drops only the
+        // impossible mark, not the turn's whole allow-list.
+        assert!(f.rw.contains(&fmt!("/home/u/ws/code")),
+            "a real folder's grant was taken down along with the impossible one: rw={:?}", f.rw);
+        // The whole-directory deny still stands, exactly as it does with no mark under
+        // `.daimond/` at all.
+        assert!(f.deny.contains(&fmt!("/home/u/ws/.daimond")));
     }
 
     #[test]
