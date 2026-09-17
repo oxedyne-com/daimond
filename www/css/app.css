@@ -984,7 +984,7 @@ body.resizing-v { cursor: row-resize; user-select: none; -webkit-user-select: no
    border — so the row reads as one control rather than a box with taller buttons
    beside it. The bar aligns to flex-end, so they stay on the baseline as the
    input grows. */
-#chat-send, #chat-stop, #chat-jump, #chat-end {
+#chat-send, #chat-jump, #chat-end {
 	box-sizing: border-box;
 	height: 32px;
 	width: 32px;
@@ -1003,8 +1003,6 @@ body.resizing-v { cursor: row-resize; user-select: none; -webkit-user-select: no
 /* The separate Stop, shown only while the send button is a Send arrow mid-turn.
    Same ink as the send button in stop mode, so the one control the user has
    learnt to read as "this ends it" looks the same wherever it appears. */
-#chat-stop { background: var(--danger); color: var(--on-fill, #fff); border: none; }
-#chat-stop:hover { filter: brightness(1.1); }
 #chat-jump, #chat-end { background: var(--bg-tertiary); border: 1px solid var(--border-strong); color: var(--text-secondary); }
 /* The two jumps draw an SVG chevron now, not a text arrowhead, so `font-size` no
    longer decides how big the mark is -- the glyph does. Stated here so the touch

@@ -27,6 +27,10 @@
 //! - [`ask`] — the question card's edge: bindings to `window.DaimondAsk`
 //!   behind `ask`, which is how a model puts ONE decision to the user with
 //!   options they answer by tapping rather than by typing.
+//! - [`shot`] — the self-capture edge: bindings to `window.DaimondShot`
+//!   behind `capture`, which draws the app's own live DOM to a PNG in the
+//!   page so the daimon can hand a picture to a vision worker without a
+//!   browser to launch.
 //! - [`doc`] — the document panel's edge: bindings to `window.DaimondDoc`
 //!   behind `file_show`, which is how a model puts a file in front of the
 //!   user rather than reading its bytes.
@@ -61,6 +65,7 @@ pub mod ocr;
 pub mod office;
 pub mod opfs;
 pub mod pty;
+pub mod shot;
 pub mod social;
 pub mod typst;
 pub mod web;

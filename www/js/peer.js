@@ -1808,6 +1808,13 @@
 		// it too or iOS labels a fresher peer while the worker actually runs.
 		if (isWorker) return { dispatch: true, peer: target, reason: res.reason, staleBuild: !!target.staleBuild };
 
+		// THIS DEVICE IS THE NOMINEE. `handoffTarget`'s own nominee clause (a) excludes a
+		// self match (`nom !== self`), so a nominee reading its own id back here would fall
+		// through to (a')/(a'')/(b) and seat some OTHER live desktop instead -- dispatching
+		// the elected runner's own turn away to a peer that was never asked to take it, which
+		// then just sits unclaimed. The elected nominee always runs its own turns locally.
+		if (o.nominatedId && String(o.nominatedId) === String(o.selfId)) return { dispatch: false, reason: 'self-nominee' };
+
 		// A device stepping away (backgrounding) with a turn STILL IN FLIGHT hands the
 		// running turn to a live desktop before it suspends -- but only if one exists;
 		// none means keep it here to be recovered on return.

@@ -1750,6 +1750,23 @@ async function runPresenceAcceptance(P, PR, check) {
 		(() => { const d = P.autoDispatchDecision(quickChat, phantomP, { selfId: 'phone', nominatedId: 'argonaut' }, T); return d.dispatch === true && d.reason === 'nominee' && d.peer.deviceId === 'argonaut'; })());
 	check('this device IS the nominee -> it does not dispatch a turn to itself',
 		P.autoDispatchDecision(quickChat, fresh, { selfId: 'argonaut', nominatedId: 'argonaut' }, T).dispatch === false);
+	// The REAL regression (a hung daimon turn, 2026-09-17): `handoffTarget`'s own
+	// nominee clause excludes a self match (`nom !== self`), by design, so when THIS
+	// device is the elected nominee reading its own id back, that clause simply
+	// never fires and the search falls through to (a')/(a'')/(b) -- which can find
+	// some OTHER genuinely-live desktop and seat IT instead, dispatching the
+	// nominee's own agentic/daimon turn away to a peer that was never asked to run
+	// it (and which then just hangs, self-healing being the OTHER half of this fix).
+	// `quickChat` above is not enough to expose this -- only the AGENTIC branch
+	// (long-turn) reaches a target found this way before the runner-down fallback.
+	{
+		const otherDesktop = { gilgamesh: { name: 'gilgamesh', lastSeen: T, servicedAt: T, mobile: false } };
+		const d = P.autoDispatchDecision(quickChat, otherDesktop,
+			{ selfId: 'argonaut', nominatedId: 'argonaut', toolsEnabled: true }, T);
+		check('this device IS the nominee -> an AGENTIC turn still runs local, not seated on some OTHER live desktop',
+			d.dispatch === false && d.reason === 'self-nominee',
+			JSON.stringify(d));
+	}
 	check('a per-chat opt-out (toggle OFF) STILL wins over a fresh nominee',
 		(() => { const d = P.autoDispatchDecision(quickChat, fresh, { selfId: 'phone', nominatedId: 'argonaut', toggle: false }, T); return d.dispatch === false && d.reason === 'chat-local'; })());
 

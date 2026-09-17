@@ -798,14 +798,10 @@
 				<div class="chat-input-bar">
 					<textarea id="chat-input" placeholder="Type a message…" rows="1" data-i18n-placeholder="chat.input_ph"></textarea>
 					<button id="chat-send" title="Send" data-i18n-title="chat.send" aria-label="Send" data-i18n-aria-label="chat.send">➤</button>
-					<!-- STOP IS ALWAYS REACHABLE WHILE A TURN RUNS. The send button carries
-					     Stop only while the box is EMPTY: type a correction mid-turn and it
-					     becomes a Send arrow, because pressing it means send the correction
-					     and not kill the turn. That left a user who had typed something with
-					     no way to stop at all short of emptying the box first. So this one
-					     appears exactly when the send button stops being Stop, and there is
-					     never a second ■ beside it. -->
-					<button id="chat-stop" title="Stop" data-i18n-title="chat.stop" aria-label="Stop" data-i18n-aria-label="chat.stop" hidden>■</button>
+					<!-- The second stop that lived here is gone (proposal #19): the send
+					     button itself is ■ while a turn runs and the box is empty, and a box
+					     with text mid-turn is a correction to send, not a turn to kill.
+					     Emptying the box reaches stop in that mode. -->
 					<!-- Drawn chevrons, not ↑ and ↓: a font's arrowhead is a few
 					     pixels of ink on a 32px button, and read as specks beside
 					     the stroked icons the rest of the app is made of. -->
@@ -1851,6 +1847,7 @@
 <script src="js/search.js"></script>
 <script src="js/autoreload.js"></script>
 <script src="js/web.js"></script>
+<script src="js/selfshot.js"></script><!-- js/selfshot.js — in-page DOM→PNG self-capture behind the `capture` tool (window.DaimondShot) -->
 <script src="js/hand.js"></script>
 <script src="js/handpty.js"></script>
 <script src="js/terminal.js"></script>

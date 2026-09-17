@@ -315,6 +315,16 @@ try {
 	check('the directly-posted proposal number enters raisedProposalNumbers()',
 		raisedAfter.length === 1 && raisedAfter[0] >= 100, JSON.stringify(raisedAfter));
 
+	// The Improve proposals list is the tracker hub (js/tracker.js), NOT the Social ▸
+	// Proposals surface — that one is a capture box since 2026-08-31 (see the note
+	// above on the retired browse-list). Open the tracker panel and wait for its board
+	// to draw the seeded proposals, so the shot shows the list this verifier is about.
+	await page.evaluate(() => { window.DaimondPanels.show('tracker'); });
+	await page.waitForTimeout(600);
+	await page.evaluate(() => { if (window.DaimondTracker) window.DaimondTracker.onOpen(); });
+	await page.waitForSelector('.trk-card', { timeout: 8000 });
+	await page.waitForTimeout(400);
+
 	await shot(s, 'proposalsappear' + (BREAK ? '-' + BREAK : ''));
 
 	const errs = errors(s).filter(e => !/Failed to load resource/.test(e));
