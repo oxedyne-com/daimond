@@ -1,1 +1,1 @@
-{"build":"78feb785d4b0","note":"#22 changed-files table + immutable streamed handoff tiles + pre-claim take-back"}
+{"build":"5dde587e62e5","note":"#22 fix: wire tail-note into rendered transcript so the changed-files table shows"}

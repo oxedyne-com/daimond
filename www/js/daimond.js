@@ -12359,7 +12359,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		var entries = [];
 		try {
 			var ms = await DaimondVersions.manifests(id);
-			var mv = (ms || []).find(function (m) { return m && m.v === p.v; });
+			var mv = (ms || []).find(function (m) { return m && m.version === p.v; });
 			entries = (mv && mv.files) || [];
 		} catch (e) { entries = []; }
 		var byPath = {};
@@ -48331,6 +48331,25 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			// The live-stream buffer is spent: the answer is in `messages` now, so the next
 			// progress frame reads it from there, not from here.
 			if (detached) { try { delete _liveTurn[String(detached.turnId)]; delete _liveMid[String(detached.turnId)]; } catch (e) { /* bounded map */ } }
+			// #22: the engine appends the end-of-turn changed-files note as the LAST
+			// element of `after` when the turn wrote anything (diamond_versions.rs
+			// `tail_note`, via wasm/app.rs:2870). It always lands in `rec.session.msgs`
+			// below, which is what the NEXT turn sends back -- but the drawn transcript
+			// is `rec.messages`, so without this push the note reached the wire and
+			// never the screen. `_parseTailNote` is the one place that shape is
+			// recognised; anything else here answers null and this does nothing.
+			var tailMsg = (after && after.length) ? after[after.length - 1] : null;
+			if (tailMsg && tailMsg.role === 'user' && _parseTailNote(tailMsg.content)) {
+				var tailLast = rec.messages.length ? rec.messages[rec.messages.length - 1] : null;
+				var haveTail = !!tailLast && tailLast.role === 'user' && tailLast.content === tailMsg.content;
+				if (!haveTail) {
+					var tailTs = Date.now();
+					rec.messages.push({ role: 'user', content: tailMsg.content,
+						mid: newMid(), iturn: detached ? String(detached.turnId) : undefined,
+						ts: tailTs });
+					if (onScreen()) appendUserMessage(tailMsg.content, tailTs);
+				}
+			}
 			// The ending, last, under whatever the turn managed to say.
 			if (pendingSteerEnd) {
 				rec.messages.push(pendingSteerEnd);
