@@ -137,6 +137,7 @@
 	var GIVEUP_MS   = 1800000;      // never safe for this long: stop trying, leave a button
 	var BOOT_MS     = 60000;        // never reload within this of boot
 	var GAP_MS      = 600000;       // and never more than one automatic reload per this
+	var SYNC_YIELD_MS = 120000;     // sync alone has held this build this long: yield to it (see safeNow)
 	var SKEY        = 'daimond-soft-at';   // when the last automatic reload went, across boots
 	var bootedAt    = Date.now();
 	var tick        = null;         // the safety re-evaluation interval
@@ -145,6 +146,7 @@
 	var deferUntil  = 0;            // Cancel, or a reload just taken
 	var unsafeSince = 0;            // when this pending build first found the tab unsafe
 	var gaveUp      = false;        // unsafe for GIVEUP_MS: a button only, until the next build
+	var syncYield   = false;        // sync alone held past SYNC_YIELD_MS: treat it as quiet (build-scoped)
 
 	// TRAINING WHEELS -- remove with the DEBUG_SHARE module. One guarded line per
 	// call site, as in sync.js and peer.js; lifts out in one grep of `DEBUG_SHARE`.
@@ -241,7 +243,17 @@
 		if (dialogOpen()) return false;
 		if (busy()) return false;
 		if (composerHasUnsavedText()) return false;
-		return syncQuiet();
+		if (syncQuiet()) return true;
+		// Sync is not quiet. Unlike the three above, that loses no work -- a reload
+		// mid-push throws the round away but the parcel re-sends, the device only
+		// reads as briefly stalled (see the header). So sync-not-quiet DELAYS an
+		// update, it must not block it for ever: on a build whose sync never settles
+		// -- exactly the state a device is in before it takes a sync fix -- the tab
+		// would otherwise sit unsafe until GIVEUP_MS and re-nag on every focus. Once
+		// sync alone has held the build past SYNC_YIELD_MS (latched in `evaluate`),
+		// yield. The latch is gated on `!stuck`, so a device whose reloads never
+		// advance the build cannot churn here -- the one path that could loop.
+		return syncYield;
 	}
 
 	/// Is this a phone or a tablet? The shell's own measurement — touch, pointer and
@@ -415,6 +427,17 @@
 	function evaluate() {
 		if (applying || !pending) { heldWhy = null; disarm(); return; }
 		if (counting()) return;
+		// Latch the sync yield (read by `safeNow`, so it survives into the countdown,
+		// where `unsafeSince` is reset to 0). It arms only once every HARD block is
+		// clear and sync is the sole thing left unsafe, the build has already waited
+		// SYNC_YIELD_MS, and this device is not stuck -- so a genuinely busy turn
+		// still blocks, and a device whose reloads never advance cannot loop here.
+		if (!syncYield && !stuck && unsafeSince
+			&& !dialogOpen() && !busy() && !composerHasUnsavedText()
+			&& !syncQuiet()
+			&& Date.now() - unsafeSince >= SYNC_YIELD_MS) {
+			syncYield = true;
+		}
 		if (!softAllowed() || !safeNow() || !quietEnough()) {
 			if (!unsafeSince) unsafeSince = Date.now();
 			noteHeld();
@@ -761,6 +784,7 @@
 		// SUPERSEDED build says nothing about this one.
 		gaveUp      = false;
 		unsafeSince = 0;
+		syncYield   = false;
 		heldWhy     = null;
 		announced   = {};
 		share('update', { live: pending, mine: booted, at: 'ready' });

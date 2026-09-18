@@ -231,6 +231,7 @@ function makeTab(cfg) {
 const BOOTED = { build: 'aaaaaaaaaaaa', note: 'first' };
 const NEWER  = { build: 'bbbbbbbbbbbb', note: 'second' };
 const MIN = 60000;
+const SYNC_YIELD_MS = 120000;   // mirrors updater.js: sync alone yields after this
 
 async function boot(cfg) {
 	const tab = makeTab(cfg);
@@ -325,15 +326,104 @@ async function main() {
 		check('it reloaded with the draft still in the box', tab.reloads.n === 1);
 	}
 
-	console.log('\nupdater: a sync round in flight holds it off');
+	console.log('\nupdater: a sync round in flight holds it off (within the yield window)');
 	{
+		// Sync-not-quiet holds the automatic path back -- but only for a bound, since a
+		// mid-push reload loses no data (the parcel re-sends). Here the window stays
+		// under SYNC_YIELD_MS (two minutes), so it is still held; the perpetual case
+		// that yields is the next scenario.
 		const tab = await boot({ stamps: [BOOTED, NEWER], state: { quiet: false } });
-		await tab.clock.advance(5 * MIN);
+		await tab.clock.advance(65000);            // past the boot guard
+		await learn(tab);                          // drive the stamp read by hand
+		check('the newer build is pending', tab.U().pending() === NEWER.build);
+		await tab.clock.advance(60000);            // still under SYNC_YIELD_MS since it went unsafe
 		check('a sync round in flight is not safe', tab.U().safe() === false);
 		check('it did not reload over a push', tab.reloads.n === 0);
 		tab.state.quiet = true;
 		await tab.clock.advance(11000 + 21000);
 		check('it reloads once sync is quiet', tab.reloads.n === 1);
+	}
+
+	console.log('\nupdater: sync that never settles YIELDS after the bound, and applies');
+	{
+		// The gilgamesh bug: a build whose sync round never quiets held the tab
+		// permanently unsafe, so the silent auto-update never fired and, after
+		// GIVEUP_MS, a manual banner re-nagged on every focus. Sync-not-quiet is
+		// DATA-SAFE to reload over, so it must DELAY the update, not block it for
+		// ever: with every hard block clear it yields after SYNC_YIELD_MS.
+		const tab = await boot({ stamps: [BOOTED, NEWER], state: { quiet: false } });
+		await tab.clock.advance(65000);            // past the boot guard
+		await learn(tab);
+		check('the newer build is pending', tab.U().pending() === NEWER.build);
+		// Just before the bound: still held, still naming sync, no countdown.
+		await tab.clock.advance(SYNC_YIELD_MS - 30000);
+		check('before the bound it is still held', tab.U().safe() === false);
+		check('and no countdown has started', tab.U().countdown() === 0);
+		check('the held reason still names sync', /^sync:/.test(tab.U().held() || ''));
+		check('nothing reloaded yet', tab.reloads.n === 0);
+		check('it has not given up (it never reaches GIVEUP_MS)', tab.U().gaveUp() === false);
+		// Cross the bound: sync is STILL not quiet, but now the tab is safe enough.
+		await tab.clock.advance(40000);
+		check('past the bound, with sync still churning, the tab is safe enough',
+			tab.U().safe() === true);
+		check('a countdown is now running', tab.U().countdown() > 0);
+		await tab.clock.advance(21000);
+		check('it reloaded although sync never went quiet', tab.reloads.n === 1);
+		check('sync was never quiet through the whole scenario', tab.state.quiet === false);
+	}
+
+	console.log('\nupdater: a HARD block still holds indefinitely, even past the sync bound');
+	{
+		// The yield is ONLY for sync-not-quiet. A busy turn is a hard block: it stays
+		// unsafe past SYNC_YIELD_MS and on to GIVEUP_MS, exactly as before -- work in
+		// flight is never reloaded over.
+		const tab = await boot({ stamps: [BOOTED, NEWER], state: { busy: true, quiet: false } });
+		await tab.clock.advance(SYNC_YIELD_MS + 60000);   // well past the sync bound
+		check('a busy turn is still unsafe past the sync bound', tab.U().safe() === false);
+		check('a busy turn never yields to the sync bound', tab.reloads.n === 0);
+		check('and no countdown started', tab.U().countdown() === 0);
+	}
+	{
+		// Unsaved composer text (nothing to restore it) is a hard block too: past the
+		// sync bound it is still held, because a reload would lose the text.
+		const tab = await boot({ stamps: [BOOTED, NEWER], state: { typed: true, quiet: false } });
+		await tab.clock.advance(SYNC_YIELD_MS + 60000);
+		check('unsaved text is still unsafe past the sync bound', tab.U().safe() === false);
+		check('unsaved text never yields to the sync bound', tab.reloads.n === 0);
+	}
+
+	console.log('\nupdater: the sync yield cannot loop -- one reload per build, and the gap guard holds');
+	{
+		// (c) Once it has reloaded for the sync yield, it does not immediately try
+		// again on the same build: `applying` is latched and the tick disarmed, so no
+		// second reload follows however long the churn goes on.
+		const tab = await boot({ stamps: [BOOTED, NEWER], state: { quiet: false } });
+		await tab.clock.advance(65000);
+		await learn(tab);
+		await tab.clock.advance(SYNC_YIELD_MS + 21000);
+		check('it reloaded exactly once', tab.reloads.n === 1);
+		await tab.clock.advance(30 * MIN);
+		check('and it does not reload again on the same build', tab.reloads.n === 1);
+	}
+	{
+		// The once-per-ten-minutes guard bounds the sync yield exactly as it bounds
+		// every other automatic reload: a tab that auto-reloaded two minutes ago does
+		// NOT sync-yield again before GAP_MS, even though sync never quiets and the
+		// bound is long past. This is the loop-breaker that survives a reboot.
+		const store = new Map([['daimond-soft-at', String(1757000000000 - 2 * MIN)]]);
+		const tab = await boot({ stamps: [BOOTED, NEWER], state: { quiet: false }, store });
+		await tab.clock.advance(SYNC_YIELD_MS + 60000);   // bound long past, sync still churning
+		check('the gap guard blocks a second reload inside ten minutes', tab.reloads.n === 0);
+		await tab.clock.advance(6 * MIN);
+		check('and it reloads once the ten-minute gap has passed', tab.reloads.n === 1);
+	}
+
+	console.log('\nupdater: SYNC_YIELD_MS is the bound the module actually uses');
+	{
+		const src = readFileSync(join(HERE, 'updater.js'), 'utf8');
+		check('the sync-yield bound is defined', /var SYNC_YIELD_MS = 120000;/.test(src));
+		check('safeNow yields to the latch, not to syncQuiet alone', /return syncYield;/.test(src));
+		check('the latch is gated on !stuck', /!syncYield && !stuck && unsafeSince/.test(src));
 	}
 
 	console.log('\nupdater: sync going busy DURING the countdown holds it, tells the feed why, and resumes');

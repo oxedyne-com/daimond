@@ -1,1 +1,1 @@
-{"build":"ab21d0da6e21","note":"End held-row post-park spin (park above=max(through,seen)) + cap expedite 120s; client JS only"}
+{"build":"26e81893461d","note":"updater.js: a never-settling sync now yields the silent auto-reload after ~2min, not forever; hard blocks unchanged"}
