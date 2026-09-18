@@ -3215,6 +3215,19 @@ body.locked .tile-fold, body.locked .spend-row { display: none; }
    because one long line in a file must not push the whole history off screen. */
 .hist-diff { flex: 1 0 100%; margin-top: 4px; max-height: 40vh; overflow: auto; background: var(--bg-primary); border: 1px solid var(--border); border-radius: var(--radius-sm); padding: 4px 6px; }
 .hist-diff-line { font-family: var(--font-mono); font-size: var(--fs-2xs); line-height: 1.45; white-space: pre; color: var(--text-secondary); }
+
+/* #22 — the changed-files table under a turn. Two columns, name left and
+   delta right; the name and the delta are each pressable (Doc panel, diff). */
+.turn-files { margin: 8px 0 2px; border: 1px solid var(--line); border-radius: 8px; padding: 6px 10px; display: flex; flex-direction: column; gap: 2px; }
+.turn-files-h { font-size: var(--fs-2xs); color: var(--text-secondary); padding-bottom: 4px; }
+.turn-file-row { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; font-size: var(--fs-xs); }
+.turn-file-name { color: var(--accent, var(--primary)); cursor: pointer; overflow-wrap: anywhere; text-align: left; background: none; border: none; padding: 0; font: inherit; }
+.turn-file-name:hover { text-decoration: underline; }
+.turn-file-delta { font-family: var(--font-mono); font-size: var(--fs-2xs); white-space: nowrap; cursor: pointer; }
+.turn-file-delta .add { color: var(--ok); }
+.turn-file-delta .del { color: var(--danger); }
+.turn-file-more { font-size: var(--fs-2xs); color: var(--text-secondary); cursor: pointer; padding-top: 2px; background: none; border: none; padding: 2px 0 0; font: inherit; }
+.turn-file-more:hover { text-decoration: underline; }
 .hist-diff-line.add { color: var(--ok); background: color-mix(in srgb, var(--ok) 10%, transparent); }
 .hist-diff-line.del { color: var(--danger); background: color-mix(in srgb, var(--danger) 10%, transparent); }
 

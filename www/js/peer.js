@@ -3661,99 +3661,236 @@
 	// result; the decisions are here.
 	// ════════════════════════════════════════════════════════════
 
-	// Tool arguments can be an entire file, and thinking can be thousands of words.
-	// Neither is what a watcher is waiting to see, so each is cut to a label: the
-	// frame carries the daimon's TEXT in full (up to the tail budget) and everything
-	// else as one line saying it happened.
-	var TOOL_ARG_CHARS = 120;
+	// Any one streamed message's content share, so one huge tool argument or a giant
+	// paste cannot be the whole frame. A message longer than this is clipped -- and a
+	// clipped provisional row does NOT byte-match its final copy, so it is REPLACED by
+	// mid on the parcel merge rather than converged; the common turn is well under it
+	// and its provisional rows match their final copies exactly (no rebuild at merge).
+	var PROGRESS_MSG_CHARS = 16 * 1024;
+	// The roles a watcher draws (drawHistoryMessage's own set): anything else after the
+	// user turn is view-only scaffolding the watcher rebuilds for itself.
+	var PROGRESS_ROLES = {
+		assistant: 1, think_log: 1, tool_log: 1, vision_log: 1,
+		error_log: 1, note_log: 1, fold_log: 1, leak_log: 1, end_log: 1,
+	};
 
-	/// The rendered tail of `turnId`, as the device running it has the transcript now.
-	///
-	/// Everything after the turn's own user message, in order, each message reduced to
-	/// what a person watching would want on screen: the daimon's text verbatim, a tool
-	/// call as `[tool name ...]`, a thinking stretch COLLAPSED TO A COUNT. The last
-	/// `maxChars` of that, so a long turn costs a fixed frame and the part dropped is
-	/// the part the watcher already received in an earlier frame.
+	/// The turn's messages AFTER its own user message, as STRUCTURED rows a watcher can
+	/// fold into its transcript and draw through the ordinary renderer -- not flattened
+	/// text. Each row carries only what the drawing reads: `{mid, role, name, content,
+	/// outcome, args, callId, folded, kept, interrupted, ts}`. A message's content is
+	/// kept in FULL (up to `PROGRESS_MSG_CHARS`), so a provisional row byte-matches the
+	/// final copy that syncs later and the parcel merge is a no-op redraw rather than a
+	/// rebuild. The whole array is bounded by `maxChars`, OLDEST rows dropped first --
+	/// what falls off the front the watcher already holds from an earlier frame.
 	///
 	/// Pure and DOM-free: `messages` is the chat's array. A turn whose user message is
-	/// not in it answers '' -- the runner has nothing to say about a turn it does not
+	/// not in it answers [] -- the runner has nothing to say about a turn it does not
 	/// hold, which is a quiet frame and not an error.
 	function progressTail(messages, turnId, maxChars) {
 		var msgs = Array.isArray(messages) ? messages : [];
 		var id   = String(turnId || '');
 		var cap  = (maxChars | 0) > 0 ? (maxChars | 0) : 48 * 1024;
-		if (!id) return '';
+		if (!id) return [];
 		var at = -1;
 		for (var i = 0; i < msgs.length; i++) {
 			var m = msgs[i];
 			if (m && (String(m.mid || '') === id || String(m.iturn || '') === id)
 				&& m.role === 'user') { at = i; break; }
 		}
-		if (at < 0) return '';
-		var out = [];
-		for (var j = at + 1; j < msgs.length; j++) {
-			var line = progressLine(msgs[j]);
-			if (line) out.push(line);
+		if (at < 0) return [];
+		// Gather from the tail backwards under the total budget, so the OLDEST row is
+		// the one dropped (the watcher already saw it), then restore document order.
+		var picked = [];
+		var used = 0;
+		for (var j = msgs.length - 1; j > at; j--) {
+			var row = progressRow(msgs[j]);
+			if (!row) continue;
+			var len = row.content ? row.content.length : 0;
+			if (used + len > cap && picked.length) break;	// budget spent, oldest dropped first
+			used += len;
+			picked.push(row);
 		}
-		var text = out.join('\n');
-		return text.length > cap ? text.slice(-cap) : text;
+		picked.reverse();
+		return picked;
 	}
 
-	/// One message as the streamed view shows it, or '' for one it does not show.
-	function progressLine(m) {
-		if (!m || !m.role) return '';
-		var c = String(m.content || '');
-		switch (m.role) {
-			case 'assistant':
-				return c;
-			case 'think_log':
-				// A count, not the thinking: a watcher wants to know it IS thinking, and
-				// the thinking itself arrives with the finished turn.
-				return c ? '[thinking ' + c.length + ' chars]' : '';
-			case 'vision_log':
-				return '[looking at an image]';
-			case 'error_log':
-				return c ? '[error: ' + clipLine(c, TOOL_ARG_CHARS) + ']' : '[error]';
-			case 'tool_log':
-				var bits = ['[tool ' + (m.name || '?')];
-				if (m.args) bits.push(clipLine(String(m.args), TOOL_ARG_CHARS));
-				if (m.outcome) bits.push('-> ' + clipLine(String(m.outcome), TOOL_ARG_CHARS));
-				return bits.join(' ') + ']';
-			default:
-				return '';
-		}
-	}
-
-	/// One line of at most `n` characters, newlines folded away so a frame's line
-	/// structure is the message structure and not the content's.
-	function clipLine(s, n) {
-		var one = String(s).replace(/\s+/g, ' ').trim();
-		return one.length > n ? one.slice(0, n) + '\u2026' : one;
+	/// One transcript message as a streamed structured row, or null for a view-only
+	/// row a watcher does not draw. Content is kept in full up to `PROGRESS_MSG_CHARS`.
+	function progressRow(m) {
+		if (!m || !m.role || !PROGRESS_ROLES[m.role]) return null;
+		var c = String(m.content == null ? '' : m.content);
+		if (c.length > PROGRESS_MSG_CHARS) c = c.slice(0, PROGRESS_MSG_CHARS);
+		var row = { mid: String(m.mid || ''), role: m.role, content: c, ts: +m.ts || 0 };
+		if (m.name)        row.name    = String(m.name);
+		if (m.outcome)     row.outcome = String(m.outcome);
+		if (m.args)        row.args    = String(m.args).length > PROGRESS_MSG_CHARS
+			? String(m.args).slice(0, PROGRESS_MSG_CHARS) : String(m.args);
+		if (m.callId)      row.callId  = String(m.callId);
+		if (m.folded)      row.folded  = m.folded | 0;
+		if (m.kept)        row.kept    = m.kept | 0;
+		if (m.interrupted) row.interrupted = 1;
+		// `ranOn` is what the answer's final copy carries (the device that ran the turn):
+		// streaming it means the FINAL provisional row byte-matches the parcel copy's
+		// `msgSig`, so the merge is a no-op redraw rather than a rebuild.
+		if (m.ranOn)       row.ranOn   = String(m.ranOn);
+		return row;
 	}
 
 	/// Fold an arriving frame into what a watcher is showing: answers the new state,
 	/// or null when the frame changes nothing and no redraw is owed.
 	///
-	/// A frame REPLACES the one before it -- the tail is the whole tail, not a delta --
-	/// so this is a newest-wins reducer and the rules are about what "newest" means:
+	/// A frame REPLACES the one before it -- it carries the whole tail as structured
+	/// rows, not a delta -- so this is a newest-wins reducer and the rules are about
+	/// what "newest" means:
 	///
 	///   * a frame for another turn is not this watcher's, and is ignored;
 	///   * a seq at or below the one in hand arrived late (the door's park and the
 	///     fallback poll can both answer, and either may be overtaken), and is ignored,
 	///     so a late frame never rewinds the view;
-	///   * `final` closes the streamed view: the real transcript has landed and is
-	///     what the reader should be looking at, so no later frame reopens it.
+	///   * `final` closes the streamed view and CARRIES the full final rows -- the last
+	///     word on the turn, which no later frame reopens or overdraws.
 	function foldProgress(state, frame) {
 		var cur = state || {};
 		if (cur.final) return null;
 		if (!frame || !frame.turn) return null;
 		if (cur.turn && String(cur.turn) !== String(frame.turn)) return null;
-		if (frame.final) return { turn: String(frame.turn), seq: cur.seq | 0, tail: '', final: true };
+		if (frame.final) {
+			var fin = Array.isArray(frame.msgs) ? frame.msgs : (cur.msgs || []);
+			return { turn: String(frame.turn), seq: (frame.seq | 0) || (cur.seq | 0),
+				msgs: fin, final: true };
+		}
 		var seq = frame.seq | 0;
 		if (seq <= (cur.seq | 0)) return null;
-		var tail = String(frame.tail || '');
-		if (!tail) return null;
-		return { turn: String(frame.turn), seq: seq, tail: tail, final: false };
+		var rows = Array.isArray(frame.msgs) ? frame.msgs : [];
+		if (!rows.length) return null;
+		return { turn: String(frame.turn), seq: seq, msgs: rows, final: false };
+	}
+
+	/// Fold a frame's structured rows into a transcript `messages` array as PROVISIONAL
+	/// rows, so the ordinary renderer draws the handed-off turn as it is produced and
+	/// the tile grows exactly like a live local turn. Pure: answers a NEW array, or null
+	/// when nothing changed (so the caller draws nothing).
+	///
+	/// The rules that keep tiles immutable and the parcel merge a no-op redraw:
+	///   * a new row is APPENDED after the turn's dispatched placeholder (the chrome tile
+	///     that stands above the streaming answer and is removed when it merges) -- after,
+	///     not before, so an add is an APPEND and the append fast path draws it without
+	///     rebuilding the thread; absent a placeholder the rows go at the tail of the turn;
+	///   * a REAL (non-provisional) row already in the transcript for a mid WINS -- the
+	///     answer has merged, and a stale frame must never overdraw it;
+	///   * a provisional row is updated in place BY MID, never moved, so a tile already
+	///     shown grows rather than being rebuilt underneath the reader;
+	///   * each provisional row carries the SAME mid the runner will push, so the parcel
+	///     merge replaces it by mid (mergeMessages) with a byte-identical final copy --
+	///     equal `msgSig`, no rebuild.
+	function foldProvisional(messages, turnId, frameMsgs) {
+		var msgs = Array.isArray(messages) ? messages : [];
+		var id   = String(turnId || '');
+		var rows = Array.isArray(frameMsgs) ? frameMsgs : [];
+		if (!id) return null;
+		// Where the user turn is, and where the placeholder for it sits (if any).
+		var userAt = -1, placeAt = -1;
+		for (var i = 0; i < msgs.length; i++) {
+			var m = msgs[i];
+			if (m && m.role === 'user' && (String(m.mid || '') === id || String(m.iturn || '') === id)) userAt = i;
+			if (userAt >= 0 && m && m.why === REASON_DISPATCHED && String(m.iturn || '') === id) { placeAt = i; break; }
+		}
+		if (userAt < 0) return null;					// the watcher does not hold this turn yet
+		// The mids the transcript already carries: a REAL (merged) row is authoritative
+		// and a frame never touches it; a provisional row of the same mid may grow.
+		var real = {}, prov = {};
+		for (var k = 0; k < msgs.length; k++) {
+			var mm = msgs[k];
+			if (!mm || !mm.mid) continue;
+			if (mm.provisional) prov[String(mm.mid)] = mm; else real[String(mm.mid)] = k;
+		}
+		var changed = false;
+		var add = [];
+		for (var j = 0; j < rows.length; j++) {
+			var r = rows[j];
+			if (!r || !r.mid) continue;
+			var rid = String(r.mid);
+			if (real[rid] != null) continue;			// the real copy has landed: leave it
+			var want = provRow(r, id);
+			var have = prov[rid];
+			if (have) {
+				if (provRowSig(have) !== provRowSig(want)) { copyProv(have, want); changed = true; }
+			} else {
+				add.push(want); prov[rid] = want; changed = true;
+			}
+		}
+		if (!changed) return null;
+		if (!add.length) return msgs.slice();			// in-place growth only: same order, new content
+		// AFTER the placeholder (or at the tail when there is none), in the frame's
+		// order -- so while the placeholder is the last message an add is a pure append.
+		var out = msgs.slice();
+		var insAt = placeAt >= 0 ? placeAt + 1 : out.length;
+		out.splice.apply(out, [insAt, 0].concat(add));
+		return out;
+	}
+
+	/// A provisional transcript row from a streamed structured row.
+	function provRow(r, turnId) {
+		var m = {
+			mid: String(r.mid), role: r.role,
+			content: String(r.content == null ? '' : r.content),
+			iturn: String(turnId || ''), ts: +r.ts || 0, provisional: 1,
+		};
+		if (r.name)        m.name    = String(r.name);
+		if (r.outcome)     m.outcome = String(r.outcome);
+		if (r.args)        m.args    = String(r.args);
+		if (r.callId)      m.callId  = String(r.callId);
+		if (r.folded)      m.folded  = r.folded | 0;
+		if (r.kept)        m.kept    = r.kept | 0;
+		if (r.interrupted) m.interrupted = 1;
+		if (r.ranOn)       m.ranOn   = String(r.ranOn);
+		return m;
+	}
+	/// Copy a provisional row's drawable fields onto an existing one, in place, so the
+	/// tile grows rather than the array reordering.
+	function copyProv(dst, src) {
+		dst.content = src.content; dst.ts = src.ts;
+		dst.name = src.name; dst.outcome = src.outcome; dst.args = src.args;
+		dst.callId = src.callId; dst.folded = src.folded; dst.kept = src.kept;
+		dst.interrupted = src.interrupted; dst.ranOn = src.ranOn;
+	}
+	/// The drawable signature of a provisional row -- what a redraw or the transcript's
+	/// own `msgSig` would read, so an unchanged frame folds to null AND the final frame's
+	/// `ranOn`/content changes are applied (making the provisional row match the parcel
+	/// copy so the merge is a no-op redraw).
+	function provRowSig(m) {
+		var c = m.content == null ? '' : String(m.content);
+		return m.role + '#' + c.length + '#' + (m.outcome || '') + '#' + (m.name || '')
+			+ '#' + (m.folded || 0) + '#' + (m.kept || 0) + '#' + (m.interrupted ? 1 : 0)
+			+ '#' + (m.ranOn || '');
+	}
+
+	// The control a dispatched turn's footer offers, given its §5 display state. The
+	// TABLE, lifted out of the renderer so it is one thing a test can enumerate rather
+	// than a chain of DOM branches -- and so the owner's take-back ruling (2026-09-17)
+	// is stated once:
+	//
+	//   TAKE-BACK IS PRE-CLAIM ONLY. Before any device has claimed the turn there is
+	//   nothing spent and nothing to revoke -- the reclaim is instant and money-safe by
+	//   construction -- so the button is offered. The MOMENT a peer claims (claimed /
+	//   running / awaiting-consent / blocked), there is no take-back: the mid-run revoke
+	//   is dropped. A turn that failed, was aborted, or found no awake device offers
+	//   [Run here] (reclaim + run locally); a parked turn offers a re-run.
+	var DISPATCH_CONTROLS = {
+		dispatched:         'takeback',	// pre-claim: reclaim locally, nothing spent
+		'no-peer-awake':    'runhere',	// nobody took it: run here
+		failed:             'runhere',	// the peer stopped/refused: run here
+		parked:             'rerun',	// survivable park: re-run
+		claimed:            '',			// a peer holds it: no take-back
+		running:            '',			// a peer is running it: no take-back
+		'awaiting-consent': '',			// blocked on a live question: no take-back
+		blocked:            '',			// blocked on the runner: no take-back
+		done:               '',			// the answer draws itself
+	};
+	/// The one control a dispatched turn's footer offers for a §5 state, or '' for none.
+	function dispatchControl(state) {
+		var s = String(state || '');
+		return Object.prototype.hasOwnProperty.call(DISPATCH_CONTROLS, s) ? DISPATCH_CONTROLS[s] : '';
 	}
 
 	window.DaimondPeer = {
@@ -3950,13 +4087,21 @@
 		/// The content address of some sealed bytes, exposed for a caller that
 		/// seals by hand.
 		addressOf:   addressOf,
-		/// THE STREAMED VIEW of a running turn, both halves pure. `progressTail(messages,
-		/// turnId, maxChars)` is what a runner's frame SAYS -- the turn's rendered tail,
-		/// the daimon's text verbatim, tool calls as labels, thinking as a count, cut to
-		/// the last `maxChars`. `foldProgress(state, frame)` is what a watcher DOES with
-		/// an arriving frame: newest-wins replacement, a late or foreign frame ignored,
-		/// and `final` closing the streamed view once the real transcript has landed.
-		progressTail: progressTail,
-		foldProgress: foldProgress,
+		/// THE STREAMED VIEW of a running turn, all pure. `progressTail(messages, turnId,
+		/// maxChars)` is what a runner's frame SAYS -- the turn's messages after the user
+		/// turn as STRUCTURED rows (full content, oldest dropped to fit the budget), not
+		/// flattened text. `foldProgress(state, frame)` is what a watcher DOES with an
+		/// arriving frame: newest-wins replacement, a late or foreign frame ignored, and
+		/// `final` carrying the full rows once the real transcript has landed.
+		/// `foldProvisional(messages, turnId, frameMsgs)` folds those rows INTO a
+		/// transcript as PROVISIONAL messages the ordinary renderer draws -- the immutable
+		/// tile that grows like a live turn and is replaced by mid on the parcel merge.
+		progressTail:    progressTail,
+		foldProgress:    foldProgress,
+		foldProvisional: foldProvisional,
+		/// The footer control a dispatched turn offers for a §5 state -- 'takeback'
+		/// (pre-claim reclaim), 'runhere', 'rerun' or '' (none). Pure table, so the
+		/// owner's pre-claim-only take-back ruling is one thing a test enumerates.
+		dispatchControl: dispatchControl,
 	};
 })();

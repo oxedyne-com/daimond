@@ -2397,9 +2397,12 @@ async function runRunnerAcceptance(P, L, check) {
 			},
 			abort: () => {},
 			finalFrame: async (tid) => {
-				const tail = P.progressTail(ctxChat.messages, tid, 48 * 1024);
-				frames.push({ tid, tail });
-				return tail;
+				// The runner encodes the structured rows as the door's JSON payload, which
+				// is what the originator folds back in -- mirror that here.
+				const rows = P.progressTail(ctxChat.messages, tid, 48 * 1024);
+				const payload = JSON.stringify({ v: 1, msgs: rows });
+				frames.push({ tid, rows, payload });
+				return payload;
 			},
 			pushResult: async () => { pushed += 1; return 9; },
 			post: async (rep) => { report = rep; },
@@ -2413,8 +2416,10 @@ async function runRunnerAcceptance(P, L, check) {
 		check('the answer was folded into the transcript',
 			ctxChat.messages.some((m) => m.role === 'assistant' && m.content === 'the answer is 42'));
 		check('the transcript was pushed exactly once', pushed === 1);
-		check('R1: the FINAL FRAME carried the answer, and went out BEFORE the parcel',
-			frames.length === 1 && /the answer is 42/.test(frames[0].tail)
+		check('R1: the FINAL FRAME carried the answer (as a structured row), and went out BEFORE the parcel',
+			frames.length === 1
+			&& frames[0].rows.some((r) => r.role === 'assistant' && r.content === 'the answer is 42')
+			&& /the answer is 42/.test(frames[0].payload)
 			&& res.trace.indexOf('final-frame') < res.trace.indexOf('push'));
 		check('R2: the report went out BEFORE the parcel -- the originator is not behind a flush',
 			res.trace.indexOf('report') < res.trace.indexOf('push'));
@@ -2496,12 +2501,15 @@ async function runRunnerAcceptance(P, L, check) {
 	// ── R8. A FINAL FRAME CLOSES THE WATCHER'S VIEW, so a late ordinary frame cannot
 	//    draw a stale tail over the answer that replaced it. ──
 	{
-		const open1 = P.foldProgress(null, { turn: 'T1', seq: 1, tail: 'word one' });
-		check('R8a: an ordinary frame opens the view', !!open1 && open1.tail === 'word one' && open1.final === false);
-		const closed = P.foldProgress(open1, { turn: 'T1', seq: 2, tail: 'the whole answer', final: true });
-		check('R8b: a final frame closes it', !!closed && closed.final === true);
+		const one = [{ mid: 'x1', role: 'assistant', content: 'word one' }];
+		const whole = [{ mid: 'x1', role: 'assistant', content: 'the whole answer' }];
+		const open1 = P.foldProgress(null, { turn: 'T1', seq: 1, msgs: one });
+		check('R8a: an ordinary frame opens the view', !!open1 && open1.msgs === one && open1.final === false);
+		const closed = P.foldProgress(open1, { turn: 'T1', seq: 2, msgs: whole, final: true });
+		check('R8b: a final frame closes it and carries the final rows',
+			!!closed && closed.final === true && closed.msgs === whole);
 		check('R8c: and no later frame reopens it',
-			P.foldProgress(closed, { turn: 'T1', seq: 3, tail: 'a late straggler' }) === null);
+			P.foldProgress(closed, { turn: 'T1', seq: 3, msgs: one }) === null);
 	}
 
 	// ── Stand down: a peer already holds the lease, so the runner does not run. ──
@@ -3246,64 +3254,83 @@ async function runBroadcastConsentAcceptance(phone, laptop, desk, stranger, chec
 function streamedViewChecks(tab) {
 	const P = tab.DaimondPeer;
 
-	console.log('\nThe streamed view — the frame a runner sends');
+	console.log('\nThe streamed view — the frame a runner sends (STRUCTURED rows)');
 	{
 		const msgs = [
 			{ role: 'user',      content: 'earlier turn', mid: 't0', iturn: 't0' },
 			{ role: 'assistant', content: 'earlier answer', mid: 'a0' },
 			{ role: 'user',      content: 'the dispatched prompt', mid: 't1', iturn: 't1' },
 			{ role: 'think_log', content: 'x'.repeat(4000), mid: 'k1' },
-			{ role: 'tool_log',  name: 'file_read', args: '{"path":"/very/long/'
-				+ 'p'.repeat(400) + '"}', outcome: 'ok', mid: 'l1' },
-			{ role: 'assistant', content: 'PARTIAL ANSWER so far', mid: 'a1' },
+			{ role: 'tool_log',  name: 'file_read', args: '{"path":"/p"}', outcome: 'ok', mid: 'l1' },
+			{ role: 'assistant', content: 'PARTIAL ANSWER so far', mid: 'a1', ranOn: 'dev-runner' },
 		];
-		const tail = P.progressTail(msgs, 't1', 48 * 1024);
-		check('S1a: the frame holds the daimon\'s text for THIS turn',
-			tail.includes('PARTIAL ANSWER so far'));
-		check('S1b: a PREVIOUS turn is not in the frame (the tail starts at this turn)',
-			!tail.includes('earlier answer') && !tail.includes('earlier turn'));
-		check('S1c: thinking is collapsed to a COUNT, not 4,000 characters of it',
-			tail.includes('[thinking 4000 chars]') && !tail.includes('x'.repeat(100)));
-		check('S1d: a tool call is one labelled line naming the tool',
-			/\[tool file_read .*-> ok\]/.test(tail));
-		check('S1e: a tool\'s arguments are clipped, so one big argument cannot be the frame',
-			tail.length < 1200 && !tail.includes('p'.repeat(200)));
-		check('S1f: a turn this device does not hold says nothing (a quiet frame, not an error)',
-			P.progressTail(msgs, 'not-a-turn', 4096) === '' && P.progressTail([], 't1', 4096) === '');
+		const rows = P.progressTail(msgs, 't1', 48 * 1024);
+		const byMid = {};
+		rows.forEach((r) => { byMid[r.mid] = r; });
+		check('S1a: the frame is an ARRAY of structured rows, not flattened text',
+			Array.isArray(rows));
+		check('S1b: it holds the daimon\'s text for THIS turn as an assistant row',
+			byMid.a1 && byMid.a1.role === 'assistant' && byMid.a1.content === 'PARTIAL ANSWER so far');
+		check('S1c: a PREVIOUS turn is not in the frame (the tail starts at this turn)',
+			!byMid.a0 && !byMid.t0 && !byMid.t1);
+		check('S1d: thinking rides as a think_log ROW in full (the watcher draws it collapsed itself)',
+			byMid.k1 && byMid.k1.role === 'think_log' && byMid.k1.content.length === 4000);
+		check('S1e: a tool call is a tool_log row naming the tool, its outcome carried',
+			byMid.l1 && byMid.l1.role === 'tool_log' && byMid.l1.name === 'file_read' && byMid.l1.outcome === 'ok');
+		check('S1f: the answer row carries `ranOn`, so the FINAL row matches the parcel copy',
+			byMid.a1.ranOn === 'dev-runner');
+		check('S1g: a turn this device does not hold says nothing (an empty array, not an error)',
+			P.progressTail(msgs, 'not-a-turn', 4096).length === 0 && P.progressTail([], 't1', 4096).length === 0);
 
-		// The budget: the tail is the LAST n characters, because what falls off the
-		// front is what the watcher already received in an earlier frame.
-		const long = [
-			{ role: 'user',      content: 'p', mid: 't2', iturn: 't2' },
-			{ role: 'assistant', content: 'START' + 'y'.repeat(5000) + 'END', mid: 'a2' },
+		// One huge message is clipped so it cannot be the whole frame -- and being clipped
+		// it will NOT byte-match its final copy, so the parcel merge replaces it by mid.
+		const big = [
+			{ role: 'user', content: 'p', mid: 'tb', iturn: 'tb' },
+			{ role: 'assistant', content: 'Z'.repeat(40 * 1024), mid: 'ab' },
 		];
-		const cut = P.progressTail(long, 't2', 1000);
-		check('S1g: the frame is cut to the budget and keeps the END of the transcript',
-			cut.length === 1000 && cut.endsWith('END') && !cut.includes('START'));
+		const bigRows = P.progressTail(big, 'tb', 48 * 1024);
+		check('S1h: one huge message\'s content is clipped to the per-message share',
+			bigRows.length === 1 && bigRows[0].content.length === 16 * 1024);
+
+		// The budget: the OLDEST rows fall off the front, because those are what the
+		// watcher already received in an earlier frame; the newest are kept.
+		const many = [
+			{ role: 'user',      content: 'p', mid: 'tc', iturn: 'tc' },
+			{ role: 'assistant', content: 'A'.repeat(600), mid: 'm1' },
+			{ role: 'assistant', content: 'B'.repeat(600), mid: 'm2' },
+			{ role: 'assistant', content: 'C'.repeat(600), mid: 'm3' },
+		];
+		const cut = P.progressTail(many, 'tc', 1000);
+		const cutMids = cut.map((r) => r.mid);
+		check('S1i: the frame is cut to the budget and keeps the NEWEST rows',
+			cutMids.indexOf('m3') >= 0 && cutMids.indexOf('m1') < 0);
 	}
 
 	console.log('\nThe streamed view — what a watcher does with an arriving frame');
 	{
-		const f1 = { turn: 't1', seq: 1, tail: 'first' };
+		const A = [{ mid: 'a1', role: 'assistant', content: 'first' }];
+		const B = [{ mid: 'a1', role: 'assistant', content: 'first and second' }];
+		const f1 = { turn: 't1', seq: 1, msgs: A };
 		const v1 = P.foldProgress(null, f1);
-		check('S2a: the first frame becomes the view', v1 && v1.seq === 1 && v1.tail === 'first');
-		const v2 = P.foldProgress(v1, { turn: 't1', seq: 2, tail: 'first and second' });
-		check('S2b: a newer frame REPLACES the one before it (the tail is the whole tail)',
-			v2 && v2.seq === 2 && v2.tail === 'first and second');
+		check('S2a: the first frame becomes the view', v1 && v1.seq === 1 && v1.msgs === A);
+		const v2 = P.foldProgress(v1, { turn: 't1', seq: 2, msgs: B });
+		check('S2b: a newer frame REPLACES the one before it (the rows are the whole tail)',
+			v2 && v2.seq === 2 && v2.msgs === B);
 		check('S2c: a frame already held changes nothing (no redraw is owed)',
-			P.foldProgress(v2, { turn: 't1', seq: 2, tail: 'first and second' }) === null);
+			P.foldProgress(v2, { turn: 't1', seq: 2, msgs: B }) === null);
 		check('S2d: a LATE frame never rewinds the view',
-			P.foldProgress(v2, { turn: 't1', seq: 1, tail: 'first' }) === null);
+			P.foldProgress(v2, { turn: 't1', seq: 1, msgs: A }) === null);
 		check('S2e: a frame for ANOTHER turn is not this watcher\'s',
-			P.foldProgress(v2, { turn: 't9', seq: 99, tail: 'someone else' }) === null);
-		check('S2f: an empty tail is not a view (nothing is drawn over something)',
-			P.foldProgress(v2, { turn: 't1', seq: 3, tail: '' }) === null);
+			P.foldProgress(v2, { turn: 't9', seq: 99, msgs: A }) === null);
+		check('S2f: an empty frame is not a view (nothing is drawn over something)',
+			P.foldProgress(v2, { turn: 't1', seq: 3, msgs: [] }) === null);
 		// The close: the real transcript has landed, so the streamed view stands down
-		// and no frame still in flight can reopen it.
-		const done = P.foldProgress(v2, { turn: 't1', final: true });
-		check('S2g: `final` closes the streamed view', done && done.final === true && done.tail === '');
+		// and no frame still in flight can reopen it. The final frame CARRIES the rows.
+		const done = P.foldProgress(v2, { turn: 't1', final: true, msgs: B });
+		check('S2g: `final` closes the streamed view and carries the final rows',
+			done && done.final === true && done.msgs === B);
 		check('S2h: a frame arriving after the close is ignored (the answer is not overdrawn)',
-			P.foldProgress(done, { turn: 't1', seq: 9, tail: 'too late' }) === null);
+			P.foldProgress(done, { turn: 't1', seq: 9, msgs: A }) === null);
 		check('S2i: a malformed frame is ignored rather than thrown on',
 			P.foldProgress(v2, null) === null && P.foldProgress(v2, {}) === null);
 	}

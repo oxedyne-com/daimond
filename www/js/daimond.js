@@ -12320,9 +12320,145 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		el.textContent = n ? tn('chat.selected_n', n, { n: n }) : '';
 	}
 
+	// ── #22: the changed-files table at the end of a turn ─────────────────
+	// The engine already ends every file-changing turn with the tail-note user
+	// message (diamond_versions.rs tail_note → wasm/app.rs:2870). This diverts
+	// that one message into the table the proposal asked for: one row per file,
+	// name on the left, +N −M on the right, 6 rows then a fold.
+	var _TAIL_MORE = 6;   // rows before the "show N more" fold
+
+	/// Parse the engine's own tail note into { count, v, files, rest }.
+	/// The shape is diamond_versions.rs:726's, and this is the only string that
+	/// ever reaches here — anything else draws as an ordinary user message.
+	function _parseTailNote(text) {
+		var m = /^\[Daimond: this turn changed (\d+) files? \(v(\d+)\): (.+?)\. The user can restore/.exec(String(text || ''));
+		if (!m) return null;
+		var shown = m[3].split(',').map(function (x) { return x.trim(); }).filter(Boolean);
+		var rest = 0;
+		var last = shown.length ? shown[shown.length - 1] : '';
+		var rm = /^and (\d+) more$/.exec(last);
+		if (rm) { rest = Number(rm[1]); shown.pop(); }
+		return { count: Number(m[1]), v: Number(m[2]), files: shown, rest: rest };
+	}
+
+	/// The changed-files table for one turn, or null when the text is not the
+	/// tail note. Names open the file (openFile); the +N −M loads the version
+	/// store's diff and folds it in under the row, History-style.
+	async function _tailNoteTable(text) {
+		var p = _parseTailNote(text);
+		if (!p) return null;
+		var id = currentDiamond ? currentDiamond.id : '';
+		var box = document.createElement('div');
+		box.className = 'turn-files';
+		var head = document.createElement('div');
+		head.className = 'turn-files-head';
+		head.textContent = tn('chat.turn_files', p.count, { n: p.count });
+		box.appendChild(head);
+		// The manifest rows for this version: was→hash per file, so the delta
+		// comes from the version store, never re-derived from the bytes on disk.
+		var entries = [];
+		try {
+			var ms = await DaimondVersions.manifests(id);
+			var mv = (ms || []).find(function (m) { return m && m.v === p.v; });
+			entries = (mv && mv.files) || [];
+		} catch (e) { entries = []; }
+		var byPath = {};
+		entries.forEach(function (e) { if (e && e.path) byPath[e.path] = e; });
+		var rows = document.createElement('div');
+		rows.className = 'turn-files-rows';
+		var shown = p.files.slice(0, _TAIL_MORE);
+		var restCount = p.files.length - shown.length + (p.rest || 0);
+		shown.forEach(function (name) { rows.appendChild(_turnFileRow(id, name, byPath[name], p.v)); });
+		if (restCount > 0) {
+			var more = document.createElement('button');
+			more.type = 'button';
+			more.className = 'turn-files-more';
+			more.textContent = tn('chat.turn_files_more', restCount, { n: restCount });
+			more.addEventListener('click', function () {
+				// Unfold in place: the fold button goes, the remaining rows follow.
+				p.files.slice(_TAIL_MORE).forEach(function (nm) {
+					rows.insertBefore(_turnFileRow(id, nm, byPath[nm], p.v), more);
+				});
+				restCount = 0; more.remove();			});
+			rows.appendChild(more);
+		}
+		box.appendChild(rows);
+		return box;
+	}
+
+	/// One file row: the name opens the file in the Doc panel; the delta loads
+	/// the version store's diff and folds it in under the row (History's own
+	/// .hist-diff classes, so the diff renders like the History view's).
+	function _turnFileRow(id, name, e, v) {
+		var row = document.createElement('div');
+		row.className = 'turn-file-row';
+		var nm = document.createElement('button');
+		nm.type = 'button';
+		nm.className = 'turn-file-name';
+		nm.textContent = name;
+		nm.title = name;
+		nm.addEventListener('click', function (ev) {
+			ev.stopPropagation();
+			openFile(name, { line: 0 });
+		});
+		row.appendChild(nm);
+		var de = document.createElement('button');
+		de.type = 'button';
+		de.className = 'turn-file-delta';
+		// was→hash for this file, straight from the manifest: a NEW file has no
+		// `was` (all-add), a deleted one has `gone` (all-del), an update has both.
+		var was = e && !e.gone && e.was ? e.was : '';
+		var now = e && !e.gone ? (e.hash || '') : '';
+		de.textContent = '·';
+		row.appendChild(de);
+		if (e && !e.gone && (e.was || e.hash)) {
+			de.addEventListener('click', async function (ev) {
+				ev.stopPropagation();
+				var shown = row.querySelector('.hist-diff');
+				if (shown) { shown.remove(); return; }   // a second press folds it away
+				try {
+					var d = await DaimondVersions.diff(id, e.was || '', e.hash || '');
+					if (!d) { de.textContent = '·'; return; }   // binary or not kept: no honest count
+					de.textContent = '+' + (d.add || 0) + ' −' + (d.del || 0);
+					var pre = document.createElement('div');
+					pre.className = 'hist-diff';
+					(d.rows || []).forEach(function (l) {
+						var ln = document.createElement('div');
+						ln.className = 'hist-diff-line' + (l.op === '+' ? ' add' : l.op === '-' ? ' del' : '');
+						ln.textContent = l.op + l.text;   // escaped via textContent
+						pre.appendChild(ln);
+					});
+					row.appendChild(pre);
+				} catch (err) { /* the store was pruned or the body was not kept: the delta stays · */ }
+			});
+			if (e.was && e.hash) {
+				// The count is shown without a press on the common path (an update
+				// with both bodies kept) — a press then folds the diff in/out.
+				DaimondVersions.diff(id, e.was, e.hash).then(function (d) {
+					if (d) de.textContent = '+' + (d.add || 0) + ' −' + (d.del || 0);
+				}).catch(function () { });
+			}
+		} else {
+			de.classList.add('turn-file-delta-none');
+			de.textContent = e && e.gone ? '−' : '·';
+		}
+		row.appendChild(de);
+		return row;
+	}
+
 	function appendUserMessage(text, ts) {
 		var div = buildTile('user', { expanded: true, copy: text, ts: ts });
 		div.classList.add('chat-msg-user');           // kept for older hooks
+		// #22: the tail note becomes the changed-files table rather than a
+		// sentence the user must parse. Anything that is not the tail note draws
+		// exactly as before.
+		_tailNoteTable(text).then(function (tbl) {
+			if (!tbl) return;
+			var content = div.querySelector('.chat-msg-content');
+			if (content) content.replaceChildren(tbl);
+			var _h = div.querySelector('.chat-msg-head');
+			if (_h) _h.classList.add('is-turn-files');
+		}).catch(function () { /* never reached: _tailNoteTable does not throw */ });
 		var content = document.createElement('div');
 		content.className = 'chat-msg-content';
 		content.textContent = text;                    // escaped
@@ -13259,6 +13395,10 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			var replyTs = (meta && meta.ts) || Date.now();
 			curAsstDiv = buildTile('reply', { expanded: true, meta: respModel(), ts: replyTs });
 			curAsstDiv.classList.add('chat-msg-assistant');
+			// The message's own id on the tile, so a PROVISIONAL streamed answer can be
+			// grown in place by mid (`growProvisionalTiles`) rather than rebuilt as it
+			// arrives, and so the tile is the one the parcel's real answer converges onto.
+			if (meta && meta.mid) curAsstDiv.dataset.mid = String(meta.mid);
 			curAsstDiv._copyText = function () { return curAsstText; };
 			var content = document.createElement('div');
 			content.className = 'chat-msg-content';
@@ -19075,6 +19215,21 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 	function renderDispatchedFooter(foot, m) {
 		var st = peerUiStateFor(m);
 		if (st === 'done') return;			// the merged answer draws itself; no badge
+		// TAKING BACK -- a pre-claim reclaim is in flight (owner ruling 2026-09-17: never
+		// a silent no-op). Say so, with the spinner, and offer no control until the local
+		// run has taken over the tile. Read from `_reclaiming`, cleared on recover/drop.
+		if (_reclaiming[String(m.iturn)]) {
+			var rsp = document.createElement('span');
+			rsp.className = 'ti-spin';
+			rsp.innerHTML = '<span class="chat-spinner-dot"></span>'
+				+ '<span class="chat-spinner-dot"></span><span class="chat-spinner-dot"></span>';
+			foot.appendChild(rsp);
+			var rlab = document.createElement('span');
+			rlab.className = 'ti-label';
+			rlab.textContent = tOr('turn.peer_takingback', 'Taking back…');
+			foot.appendChild(rlab);
+			return;
+		}
 		// BLOCKED -- the runner is stopped on something, and the tile says what and
 		// offers the runner's own controls (owner ruling 2026-09-12). Drawn by its own
 		// function and returned from here, so a blocker's words and buttons are one
@@ -19126,16 +19281,17 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			label.textContent = tgt ? t('turn.peer_sending_named', { name: tgt }) : t('turn.peer_sent');
 		}
 		foot.appendChild(label);
-		// The one control this state offers. A live claim, or a runner blocked on a
-		// question, can be TAKEN BACK; a stall or a failure can be RUN HERE; a parked
-		// turn can be RE-RUN (a fresh dispatch, or a local run at the bound).
-		if (st === 'running' || st === 'claimed' || st === 'awaiting-consent') {
-			var tb = document.createElement('button');
-			tb.className = 'ti-continue';
-			tb.textContent = t('turn.peer_takeback');
-			tb.addEventListener('click', function () { peerTakeBack(m.iturn); });
-			foot.appendChild(tb);
-		} else if (st === 'dispatched') {
+		// The one control this state offers, from the pure table (owner take-back ruling
+		// 2026-09-17): TAKE-BACK is PRE-CLAIM ONLY -- offered while the errand is out but
+		// UNCLAIMED, when nothing is spent and there is nothing to revoke, and gone the
+		// moment a peer claims. A stall or a failure offers RUN HERE; a parked turn a
+		// RE-RUN. `DaimondPeer.dispatchControl` is the table; this owns the words and the
+		// wiring, so a state can never draw a control the ruling forbids.
+		var control = (window.DaimondPeer && DaimondPeer.dispatchControl)
+			? DaimondPeer.dispatchControl(st)
+			: (st === 'dispatched' ? 'takeback' : (st === 'parked' ? 'rerun'
+				: ((st === 'failed' || st === 'no-peer-awake') ? 'runhere' : '')));
+		if (control === 'takeback') {
 			// PRE-CLAIM take-back: the errand is out but NO device holds the lease yet, so
 			// there is nothing to revoke -- pull it back and run HERE instead. Money-safe:
 			// `takeBackToLocal` goes through recoverOneLocally -> runErrand({allowSelf}),
@@ -19147,13 +19303,13 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			tbk.textContent = t('turn.peer_takeback');
 			tbk.addEventListener('click', function () { takeBackToLocal(m.iturn); });
 			foot.appendChild(tbk);
-		} else if (st === 'parked') {
+		} else if (control === 'rerun') {
 			var rr = document.createElement('button');
 			rr.className = 'ti-continue';
 			rr.textContent = t('turn.peer_rerun');
 			rr.addEventListener('click', function () { reRunParked(current, m.iturn, m.itext); });
 			foot.appendChild(rr);
-		} else if (st === 'failed' || st === 'no-peer-awake') {
+		} else if (control === 'runhere') {
 			var rh = document.createElement('button');
 			rh.className = 'ti-continue';
 			rh.textContent = t('turn.peer_runhere');
@@ -19248,29 +19404,33 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 				});
 			}
 		}
-		// A blocked turn can also simply be TAKEN BACK, exactly as a running one can:
-		// the question may no longer be worth answering.
-		if (spec.answerable) {
-			btn(t('turn.peer_takeback'), '', function () { peerTakeBack(m.iturn); });
-		}
+		// NO TAKE-BACK on a blocked turn (owner take-back ruling 2026-09-17): a blocker
+		// means a peer has CLAIMED and is running the turn, and take-back is pre-claim
+		// only. The turn is answered here (the controls above) or run here, never revoked.
 	}
 
-	/// Has this dispatched turn's ANSWER already arrived? A `done` report is the
-	/// authority; failing that, the merged reply is found positionally, because a
-	/// peer's answer syncs back with no `iturn` on it (runTurn stamps only the
-	/// interrupted branches) — so the answer that belongs to a dispatched turn is
-	/// the first non-empty, non-interrupted assistant message after its placeholder
-	/// and before the next question. Used to stop the hand-off tile spinning beside
-	/// a reply in the window between the parcel syncing back and its report landing.
+	/// Has this dispatched turn's REAL answer already arrived? The merged reply is found
+	/// positionally, because a peer's answer syncs back with no `iturn` on it (runTurn
+	/// stamps only the interrupted branches) — so the answer that belongs to a dispatched
+	/// turn is the first non-empty, non-interrupted assistant message after its
+	/// placeholder and before the next question. Used to drop the placeholder and to stop
+	/// the hand-off chrome once the durable answer has landed.
+	///
+	/// A PROVISIONAL streamed row does NOT count (owner standing rule 2026-09-18): the
+	/// answer streams as provisional tiles WHILE the turn runs, and the placeholder's
+	/// chrome (the spinner) must stay until the durable answer merges. A bare `done`
+	/// report no longer counts either -- the report is a nudge, not the answer; dropping
+	/// the placeholder on it (before the answer was in the transcript) is what forced the
+	/// rebuild that lost the streamed tile.
 	function dispatchedAnswerPresent(chat, m) {
-		try { var rep = peerReports[String(m.iturn)]; if (rep && rep.status === 'done') return true; } catch (e) { /* no report */ }
 		if (!chat || !chat.messages) return false;
 		var msgs = chat.messages;
 		// A merged answer may still carry the turn's iturn (the interrupted-then-
-		// finished paths do stamp it); match that first, wherever it sits.
+		// finished paths do stamp it); match that first, wherever it sits. Provisional
+		// rows are skipped -- only the durable, merged copy counts.
 		for (var k = 0; k < msgs.length; k++) {
 			var a = msgs[k];
-			if (a.role === 'assistant' && !a.interrupted && a.content && a.content.trim()
+			if (a.role === 'assistant' && !a.interrupted && !a.provisional && a.content && a.content.trim()
 				&& String(a.iturn) === String(m.iturn)) return true;
 		}
 		// Positional: from the placeholder to the next question, a real reply is this
@@ -19281,7 +19441,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		for (var j = i + 1; j < msgs.length; j++) {
 			var mm = msgs[j];
 			if (mm.role === 'user' && !mm.interject) break;		// the next turn began
-			if (mm.role === 'assistant' && !mm.interrupted && mm.content && mm.content.trim()) return true;
+			if (mm.role === 'assistant' && !mm.interrupted && !mm.provisional && mm.content && mm.content.trim()) return true;
 		}
 		return false;
 	}
@@ -19343,20 +19503,18 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			:       tOr('chat.who_handoff', 'Hand-off');
 		var tile = buildTile('handoff', { expanded: true, who: line, ts: m.ts });
 		tile.classList.add('chat-msg-handoff');
-		// The turn this tile is for, so an arriving frame can find it without a rebuild.
-		// On the TILE and not on the streamed node, because the first frame has to find
-		// somewhere to be drawn before any streamed node exists.
+		// The turn this tile is for.
 		tile.dataset.handoffTurn = String(m.iturn || '');
 		var foot = document.createElement('div');
 		foot.className = 'turn-interrupted ti-handoff';
 		renderDispatchedFooter(foot, m);
 		tile._body.appendChild(foot);
-		// THE STREAMED VIEW. Whatever the runner has sent of this turn so far, above
-		// the footer's status line, so the wait is the turn unfolding rather than a
-		// spinner. Nothing is added before the first frame arrives, and the whole node
-		// goes when the real answer merges (this tile is not drawn at all then).
-		var streamed = progressNodeFor(m.iturn);
-		if (streamed) tile._body.insertBefore(streamed, foot);
+		// CHROME ONLY (owner standing rule 2026-09-18). The hand-off tile is now the
+		// header, spinner and footer -- transient chrome. The turn's answer is not drawn
+		// here: it STREAMS into its own real transcript tiles as provisional messages
+		// (`watchProgress` -> `applyProvisional`), which grow like a live local turn and
+		// are never discarded. The flattened `.handoff-stream` text view this once held
+		// was exactly the interim view that filled and was then lost.
 		// WHAT HAPPENED TO THE SEAT, under the status. Two things the footer cannot say,
 		// because it is written from the turn's state and these are about the CHASE:
 		// a re-seat ("argonaut did not pick it up; trying gilgamesh"), and a turn that
@@ -20134,56 +20292,51 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 					// The chat the TURN is in, which on a runner is whatever chat it
 					// reconstructed and need not be the one on screen.
 					var chat = chatHoldingTurn(turnId);
-					var tail = (window.DaimondPeer && DaimondPeer.progressTail && chat)
-						? DaimondPeer.progressTail(chat.messages, turnId, PROGRESS_TAIL_MAX) : '';
-					// AND THE TEXT STILL ARRIVING, which is in neither the stored transcript
-					// nor the on-screen buffer while a BACKGROUND runner produces it. See
-					// `_liveTurn`: without it a frame says "[thinking N chars]" for the whole
-					// run and the reader watches a counter instead of an answer.
-					var live = _liveTurn[String(turnId)] || '';
-					if (live) {
-						tail = (tail ? tail + '\n' : '') + live;
-					}
-					// AND THE WORKERS THIS TURN STARTED, which is the one thing the phone
-					// watching a runner cannot see. The transcript already carries the
-					// `[tool spawn_agent …]` line; what it does not carry is whether the
-					// worker is still going, and that is what a reader waiting on a fan-out
-					// is actually waiting for.
-					var wl = '';
-					try { wl = Workers.liveLine(turnId); } catch (e) { wl = ''; }
-					if (wl) tail = (tail ? tail + '\n' : '') + wl;
-					if (tail.length > PROGRESS_TAIL_MAX) tail = tail.slice(-PROGRESS_TAIL_MAX);
-					if (tail && DaimondSync && DaimondSync.pushProgressFrame) {
-						if (tail === _progressSent[turnId]) return;		// nothing new to say
-						var out = await DaimondSync.pushProgressFrame(turnId, tail);
-						if (out && out.ok) { _progressSent[turnId] = tail; return; }
+					var rows = (window.DaimondPeer && DaimondPeer.progressTail && chat)
+						? DaimondPeer.progressTail(chat.messages, turnId, PROGRESS_TAIL_MAX) : [];
+					// The frame carries STRUCTURED rows the watcher folds into its transcript
+					// and draws through the ordinary renderer, so the handed-off tile grows
+					// like a live local turn rather than a throwaway text view. Plus the live
+					// answer still arriving (below), which is in neither the stored transcript
+					// nor the on-screen buffer while a BACKGROUND runner produces it.
+					rows = withLiveAnswer(rows, turnId, chat);
+					var payload = frameJson(rows);
+					if (payload && DaimondSync && DaimondSync.pushProgressFrame) {
+						if (payload === _progressSent[turnId]) return;		// nothing new to say
+						var out = await DaimondSync.pushProgressFrame(turnId, payload);
+						if (out && out.ok) { _progressSent[turnId] = payload; return; }
 					}
 					if (DaimondSync && DaimondSync.pushProgress) await DaimondSync.pushProgress();
 				} catch (e) { /* a dropped frame is only a slower stream */ }
 			},
-			// THE LAST FRAME OF THE TURN. The whole rendered tail, on the progress door
-			// the originator is already reading, marked `final` -- so the finished answer
-			// is on its screen without waiting for the account parcel. That wait was
-			// 20.3 s of the owner's 58.9 s hand-off, every second of it after the model
-			// had stopped, and it included a 409 against a third device's push.
+			// THE LAST FRAME OF THE TURN. The whole finished tail, as structured rows on
+			// the progress door the originator is already reading, marked `final` -- so
+			// the finished answer is on its screen without waiting for the account parcel.
+			// That wait was 20.3 s of the owner's 58.9 s hand-off, every second of it
+			// after the model had stopped, and it included a 409 against a third device's
+			// push.
 			//
 			// NOT a frame like the streaming ones: those are the turn unfolding and are
-			// skipped when the tail has not changed; this one is the answer, is sent
-			// whether or not it differs from the last, and closes the watcher's view.
+			// skipped when nothing changed; this one is the finished rows (full content,
+			// their real mids), is sent whether or not it differs from the last, and
+			// carries `final` so the watcher's provisional rows converge by mid with the
+			// parcel that follows -- equal `msgSig`, no rebuild.
 			finalFrame: async function (turnId) {
 				try {
 					var chat = chatHoldingTurn(turnId);
 					if (!chat) return '';
-					var tail = (window.DaimondPeer && DaimondPeer.progressTail)
-						? DaimondPeer.progressTail(chat.messages, turnId, PROGRESS_TAIL_MAX) : '';
-					if (!tail) return '';
+					var rows = (window.DaimondPeer && DaimondPeer.progressTail)
+						? DaimondPeer.progressTail(chat.messages, turnId, PROGRESS_FINAL_MAX) : [];
+					if (!rows || !rows.length) return '';
 					if (!(DaimondSync && DaimondSync.pushProgressFrame)) return '';
-					var out = await DaimondSync.pushProgressFrame(turnId, tail, true);
+					var payload = frameJson(rows);
+					if (!payload) return '';
+					var out = await DaimondSync.pushProgressFrame(turnId, payload, true);
 					if (!out || !out.ok) return '';
-					_progressSent[turnId] = tail;
+					_progressSent[turnId] = payload;
 					diag('handoff final frame', 'turn=' + String(turnId).slice(0, 12)
 						+ ' ' + (out.bytes | 0) + 'B in ' + (out.ms | 0) + 'ms (ahead of the parcel)');
-					return tail;
+					return payload;
 				} catch (e) { return ''; }
 			},
 			post: async function (report) {
@@ -20297,15 +20450,18 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			if (res && res.why === 'nominee') scheduleNomineeFallback();
 			return res;
 		});
-		// The DISPATCHING side: a report is the nudge that a dispatched turn is
-		// settled. Stash it by turnId for the UI state machine, and on a `done` drop
-		// the local "dispatched" placeholder so the merged answer stands alone (the
-		// iturn tombstone path, §2.6 / §4.5).
+		// The DISPATCHING side: a report is the nudge that a dispatched turn is settled.
+		// Stash it by turnId for the UI state machine. The placeholder is NOT dropped on
+		// a bare `done` report (owner standing rule 2026-09-18): the report is only a
+		// nudge, and dropping the placeholder before the real answer was in the transcript
+		// is what forced the rebuild that lost the streamed tile. The drop happens when
+		// the durable answer actually merges -- the sync-path reconcile in
+		// `onChatsChangedElsewhere`, guarded by `dispatchedAnswerPresent`. Until then the
+		// streamed provisional tiles carry the answer and the chrome keeps its spinner.
 		DaimondPeer.onReport(function (report) {
 			try {
 				var tid = String(report.turnId);
 				peerReports[tid] = report;
-				if (report.status === 'done') dropDispatchedPlaceholder(tid);
 				// A parked / terminal report settles the live question, so retire the
 				// dispatcher's "awaiting" marker; the footer then reads the report state.
 				// A parked, terminal or HANDED-BACK report settles the live question, so
@@ -20372,6 +20528,13 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 	/// Reports collected for dispatched turns, by turnId, for the UI state machine.
 	var peerReports = {};
 
+	/// Turns whose PRE-CLAIM take-back is in flight, by turnId -> when it began. The
+	/// footer reads it so a take-back is never a silent no-op (owner ruling 2026-09-17):
+	/// it shows "Taking back…" from the click until the local run has taken over the
+	/// tile. Cleared when the placeholder is recovered or dropped, and bounded by a
+	/// timeout so a take-back that could not land does not sit on the label for ever.
+	var _reclaiming = {};
+
 	// ── The dispatched-placeholder index ───────────────────────
 	//
 	// A CACHE over `chats`: iturn -> chatId for every `why:'dispatched'` placeholder.
@@ -20437,73 +20600,147 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 	// being stored; the 4s expedite pull below stays as the fallback for a device whose
 	// parked request an intermediary drops, and for the answer itself.
 
-	// The tail budget a runner sends, under the gateway's 64 KiB ceiling on the sealed
-	// frame. Defined here because the runner side reads it.
-	var PROGRESS_TAIL_MAX = 48 * 1024;
-	// Runner side: the last tail actually sent per turn, so an unchanged tail is not
+	// The CONTENT budget a runner's frame carries -- the sum of the streamed rows'
+	// content, passed to `progressTail`. Kept well under the door's own 48 KiB frame
+	// guard (sync.js PROGRESS_TAIL_MAX) and the gateway's 64 KiB ceiling, because the
+	// rows ride as JSON: the envelope (keys, escaping) is overhead on top of the
+	// content, and the door's guard slices the STRING tail, which would corrupt JSON.
+	// So the content budget is the limiter and the JSON always fits inside the guard.
+	// The FINAL frame is allowed more -- it carries the finished rows in full for the
+	// common turn -- while still fitting; a turn larger than this rides its overflow on
+	// the parcel, and the tile keeps the streamed rows until then (never blanks).
+	var PROGRESS_TAIL_MAX  = 28 * 1024;
+	var PROGRESS_FINAL_MAX = 36 * 1024;
+	// Runner side: the last frame actually sent per turn, so an unchanged frame is not
 	// re-sent every two seconds; and the text of each turn currently in flight, which
 	// is the only place the answer being produced exists until the turn settles (see
-	// the `text` arm of runTurn's onEvent).
+	// the `text` arm of runTurn's onEvent). `_liveMid` is the mid the finished answer
+	// WILL carry, minted at turn start, so the streamed live-answer row shares its mid
+	// with the message that syncs back and the parcel merge converges by mid.
 	var _progressSent = {};
 	var _liveTurn = {};
+	var _liveMid = {};
 	// Watcher side: the streamed view per turn (`DaimondPeer.foldProgress` state), and
 	// which turns currently have a read loop running.
 	var _progressView = {};
 	var _progressLoops = {};
 
-	/// Draw the streamed tail into the hand-off tile of `turnId`, creating the node on
-	/// the first frame and REPLACING its text after that. Answers whether it drew.
-	///
-	/// STRAIGHT INTO THE TILE, never through a thread rebuild. The first version of
-	/// this called `renderHistory` on every frame and drew nothing at all: the redraw
-	/// was conditional on the watched chat being `current` BY IDENTITY, which it is not
-	/// always, so six frames arrived, were opened, were folded into the view, and never
-	/// reached the screen -- the door working perfectly and the reader seeing a spinner.
-	/// Going at the tile directly removes that condition, and removes the rebuild that
-	/// would have yanked a reader's scroll position twice a second besides.
-	function paintProgressTile(turnId) {
-		var view = _progressView[String(turnId)];
-		if (!view || !view.tail) return false;
-		var tile = document.querySelector('[data-handoff-turn="' + cssEsc(String(turnId)) + '"]');
-		if (!tile) return false;
-		var node = tile.querySelector('.handoff-stream');
-		if (!node) {
-			node = progressNode(view.tail);
-			var foot = tile.querySelector('.ti-handoff');
-			if (foot && foot.parentNode) foot.parentNode.insertBefore(node, foot);
-			else tile.appendChild(node);
-			return true;
+	/// Append the LIVE ANSWER still arriving to a frame's structured rows. The finished
+	/// assistant message is not in `chat.messages` until the turn settles, and a
+	/// BACKGROUND runner draws nothing on screen, so the text being produced is in
+	/// neither place -- `_liveTurn` is the accumulator that always has it. It rides as an
+	/// assistant row under `_liveMid` (the mid the finished message WILL carry), so the
+	/// watcher's provisional row and the message that syncs back share a mid and the
+	/// parcel merge converges by mid. No-op once the answer is a real row in the frame.
+	function withLiveAnswer(rows, turnId, chat) {
+		var id = String(turnId);
+		var text = _liveTurn[id];
+		if (!text) return rows;
+		var amid = String(_liveMid[id] || ('live-' + id));
+		for (var i = 0; i < rows.length; i++) {
+			if (rows[i] && String(rows[i].mid) === amid) return rows;	// already a real row
 		}
-		// Pinned to the bottom only while the reader has it there, so a long tail
-		// follows the turn without fighting a reader who has scrolled back up it.
-		var atEnd = node.scrollTop + node.clientHeight >= node.scrollHeight - 8;
-		node.textContent = view.tail;
-		if (atEnd) node.scrollTop = node.scrollHeight;
-		return true;
+		// A STABLE ts AFTER every message the turn holds (the user turn and the dispatched
+		// placeholder both), so the live answer sorts LAST and a mergeMessages ordering
+		// never swaps it past the placeholder -- the pre-merge order and the sorted order
+		// agree, so the parcel merge is a no-op redraw and not a rebuild. Stable across
+		// pushes (not Date.now()), so an unchanged answer produces a byte-identical frame
+		// and the resend skip holds. `ranOn` is left for the FINAL frame, which reads the
+		// settled message that carries it.
+		var ts = 0;
+		try {
+			var ms = chat && chat.messages;
+			for (var j = 0; ms && j < ms.length; j++) { if (ms[j] && (+ms[j].ts || 0) > ts) ts = +ms[j].ts || 0; }
+		} catch (e) { ts = 0; }
+		ts += 1;
+		var out = rows.slice();
+		out.push({ mid: amid, role: 'assistant', content: String(text), ts: ts });
+		return out;
 	}
 
-	/// The streamed-view node itself.
-	function progressNode(tail) {
-		var pre = document.createElement('div');
-		pre.className = 'handoff-stream';
-		pre.textContent = String(tail || '');
-		return pre;
+	/// A frame's rows as the door's payload -- `{v:1, msgs:[...]}` JSON. The door
+	/// carries a string, and the compile hand-off streams a text tail on the same door;
+	/// a `v` marks this one as the structured turn payload so a reader tells them apart.
+	function frameJson(rows) {
+		if (!rows || !rows.length) return '';
+		try { return JSON.stringify({ v: 1, msgs: rows }); }
+		catch (e) { return ''; }
 	}
 
-	/// The streamed-view node for a tile being BUILT, or null when this turn has
-	/// nothing streamed yet. Called by `appendDispatchedTile`, so a redraw for any
-	/// other reason keeps the streamed text rather than blanking back to the spinner.
-	function progressNodeFor(turnId) {
-		var view = _progressView[String(turnId)];
-		if (!view || !view.tail) return null;
-		return progressNode(view.tail);
+	/// The rows a frame's payload carries, or null when it is not a structured turn
+	/// frame (an older build's text tail, or an unparseable blob). Data off the door is
+	/// UNTRUSTED: only an object with a `msgs` array is honoured, and each row is read
+	/// field by field into the provisional fold -- never spread wholesale.
+	function parseFrame(payload) {
+		if (!payload || typeof payload !== 'string' || payload.charAt(0) !== '{') return null;
+		var obj;
+		try { obj = JSON.parse(payload); } catch (e) { return null; }
+		if (!obj || obj.v !== 1 || !Array.isArray(obj.msgs)) return null;
+		return obj.msgs;
 	}
 
-	/// Follow one turn's frames until its placeholder clears.
+	/// Fold a watched turn's streamed rows into its chat as PROVISIONAL messages and
+	/// draw them, so the handed-off turn's tiles appear and GROW like a live local turn
+	/// and are never discarded -- the flattened `.handoff-stream` text view this replaced
+	/// was exactly the interim view the owner asked be removed. Immutable: a new row is
+	/// APPENDED (the append fast path draws it, nothing rebuilt), and a growing assistant
+	/// row is patched IN PLACE by mid -- no tile is torn down. The rows carry the mids the
+	/// runner will push, so the parcel merge converges by mid with no rebuild.
+	function applyProvisional(turnId, rows) {
+		if (!window.DaimondPeer || !DaimondPeer.foldProvisional) return;
+		var chat = dispatchedChat(turnId);
+		if (!chat || !chat.messages) return;
+		var prevLen = chat.messages.length;
+		var next = DaimondPeer.foldProvisional(chat.messages, turnId, rows);
+		if (!next) return;						// nothing changed, so nothing is drawn
+		var grewOnly = next.length === prevLen;	// no rows added: only content grew in place
+		chat.messages = next;
+		// Off screen (another chat open, or not this device's chat): the array is updated
+		// and the ordinary open/redraw draws it. The runner's parcel is still the durable
+		// copy; these provisional rows are render-only and never pushed.
+		if (!(current && current.id === chat.id && ownsChat(chat))) { touchChat(chat); return; }
+		if (grewOnly) {
+			// GROW IN PLACE, by mid, and keep the render bookkeeping in step so a later
+			// store-driven redraw sees nothing changed -- the tile is never rebuilt.
+			growProvisionalTiles(chat.messages, turnId);
+			try { _renderedSigs = sigsOf(chat.messages); } catch (e) { /* the rebuild path stays correct */ }
+		} else {
+			// New rows appended after the placeholder: the ordinary renderer's append
+			// fast path draws each once and leaves the tiles already shown alone.
+			renderHistory(chat.messages);
+		}
+		touchChat(chat);
+	}
+
+	/// Re-render, IN PLACE, the provisional ASSISTANT tiles of `turnId` whose content has
+	/// moved -- found by the `data-mid` the tile carries (set in `appendAssistantText`).
+	/// Only the answer grows token by token; the other rows are complete when they first
+	/// appear and are left untouched. A render that throws leaves the tile as it was
+	/// rather than blanking it -- the immutability rule holds even on a bad frame.
+	function growProvisionalTiles(messages, turnId) {
+		var id = String(turnId);
+		for (var i = 0; i < messages.length; i++) {
+			var m = messages[i];
+			if (!m || !m.provisional || m.role !== 'assistant' || String(m.iturn || '') !== id) continue;
+			var tile = chatOutput && chatOutput.querySelector('[data-mid="' + cssEsc(String(m.mid)) + '"]');
+			if (!tile) continue;
+			var host = tile.querySelector('.chat-msg-content');
+			if (!host) continue;
+			try {
+				var html = window.DaimondRender ? DaimondRender.md(String(m.content || '')) : String(m.content || '');
+				if (host.innerHTML !== html) host.innerHTML = html;
+			} catch (e) { /* leave the tile standing rather than blank it */ }
+		}
+	}
+
+	/// Follow one turn's frames until its placeholder clears, folding each frame's rows
+	/// into the watched chat as provisional messages.
 	///
 	/// One loop per outstanding turn, each a parked read that answers the instant a
 	/// frame lands. A read that answers nothing (the park ran out) simply asks again;
-	/// an error backs off, because a door that is not there must not become a spin.
+	/// an error backs off, because a door that is not there must not become a spin. The
+	/// PARKED read is what keeps the tile live WITHOUT a heavy expedite pull -- the frame
+	/// arrives on the door's own wake, so per-device request rate does not rise.
 	async function watchProgress(turnId) {
 		var key = String(turnId);
 		if (_progressLoops[key]) return;
@@ -20517,26 +20754,20 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 				} catch (e) { frame = null; }
 				if (!_progressLoops[key]) break;
 				if (frame) {
-					// A FINAL FRAME IS THE ANSWER, not another glimpse of the turn. Drawn
-					// BEFORE it is folded, because `foldProgress` closes the view on a final
-					// frame (deliberately -- no later frame may draw a stale tail over a
-					// finished turn) and closing it empties the tail. So the finished text is
-					// put on screen here, and the fold then shuts the view behind it.
-					if (frame.final && frame.tail) {
-						_progressView[key] = { turn: key, seq: frame.seq | 0, tail: String(frame.tail), final: false };
-						paintProgressTile(key);
-						diag('handoff final frame seen', 'turn=' + key.slice(0, 12)
-							+ ' ' + String(frame.tail).length + ' chars, ahead of the parcel');
-					}
+					// The door carries a string; an older build (or the compile hand-off)
+					// sends a text tail this reader does not fold. Only a structured turn
+					// frame yields rows.
+					var rows = parseFrame(frame.tail);
 					var next = DaimondPeer.foldProgress(_progressView[key], {
-						turn: key, seq: frame.seq, tail: frame.tail, final: frame.final });
+						turn: key, seq: frame.seq, msgs: rows, final: frame.final });
 					if (next) {
 						_progressView[key] = next;
-						// Nothing more: the tile paints itself if it is on screen, and if it
-						// is not -- another chat is open, or the placeholder has not been
-						// drawn yet -- the next ordinary redraw picks the view up through
-						// `progressNodeFor`. No rebuild is asked for on a frame's account.
-						paintProgressTile(key);
+						// The finished rows on a final frame, else the streaming rows: fold
+						// them into the transcript as provisional messages and let them draw.
+						var draw = next.final ? next.msgs : (rows || next.msgs);
+						if (draw && draw.length) applyProvisional(key, draw);
+						if (next.final) diag('handoff final frame seen', 'turn=' + key.slice(0, 12)
+							+ ' ' + (next.msgs ? next.msgs.length : 0) + ' rows, ahead of the parcel');
 					}
 				} else {
 					await new Promise(function (r) { setTimeout(r, PROGRESS_WATCH_IDLE_MS); });
@@ -20744,9 +20975,11 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		return 0;
 	}
 
-	/// The phone's TAKE-BACK (§3.3): revoke the lease whoever holds it. The peer's
-	/// next renew reads `released` and hard-aborts (proven in peer.test.mjs); the
-	/// turn is then reclaimable locally.
+	/// The lease REVOKE primitive, used only as the reclaim half of [Run here] on a
+	/// BLOCKED turn (`runBlockedTurnHere`). It is NOT a standalone take-back control any
+	/// more (owner ruling 2026-09-17: no mid-run take-back) -- a claimed turn is answered
+	/// or run here, never revoked to nothing. The peer's next renew reads `released` and
+	/// hard-aborts (proven in peer.test.mjs), then `continueTurn` runs the turn here.
 	async function peerTakeBack(turnId) {
 		try {
 			if (!window.DaimondLease || !DaimondLease.revoke) return;
@@ -20775,6 +21008,15 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			if (x && x.why === 'dispatched' && String(x.iturn) === tid) { m = x; break; }
 		}
 		if (!m) return;
+		// SURFACE IT (owner ruling 2026-09-17: no silent no-op). Mark the take-back in
+		// flight and redraw the footer, so it reads "Taking back…" from the click; the
+		// local run that follows replaces the tile with the live turn, and the flag is
+		// cleared when the placeholder is recovered/dropped or by the timeout below.
+		_reclaiming[tid] = Date.now();
+		try { renderDispatchedBadges(); } catch (e) { /* the recovery below still runs */ }
+		setTimeout(function () {
+			if (_reclaiming[tid]) { delete _reclaiming[tid]; try { renderDispatchedBadges(); } catch (e) { /* gone */ } }
+		}, 12000);
 		// Cancel the backstop timer -- this IS the local run now -- and recover through the
 		// lease-guarded path (a peer that already holds a live lease makes recoverDecision
 		// stand this down; the take-if-vacant CAS arbitrates a dead heat).
@@ -20844,6 +21086,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		// The placeholder is gone: its index entry goes with it, and any armed
 		// dispatcher-side recovery backstop (Fix B) has nothing left to recover.
 		delete _dispatchedIx[String(turnId)];
+		delete _reclaiming[String(turnId)];		// a take-back that reached its answer is settled
 		try { clearDispatchFallback(turnId); } catch (e) { /* no timer armed */ }
 		// The hand-off is settled: if it was the last one outstanding, the in-flight
 		// poll stands down.
@@ -29068,6 +29311,10 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		// Open the turn in the write-ahead log. From here every delta, tool call and tool result
 		// is journalled; if the tab dies, recovery reads this back as an interrupted turn.
 		var amid = newMid();                     // the assistant message this turn is producing
+		// The mid the finished answer WILL carry, published for the streamed live-answer
+		// row, so a watcher's provisional answer and the message that syncs back share a
+		// mid and the parcel merge converges by mid (no rebuild, no duplicate).
+		if (umid) _liveMid[String(umid)] = amid;
 		var J = window.DaimondJournal;
 		if (J) J.turnOpen(umid, chat.id, text, { model: chat.model, provider: chat.provider });
 
@@ -29581,7 +29828,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 				// ran (the answer syncs back onto this record) shows "ran on <that device>"
 				// rather than looking as if this device produced it. The runner writes it
 				// here from its own id; it travels on the message in the parcel.
-				if (umid) delete _liveTurn[String(umid)];	// the answer is in `messages` now
+				if (umid) { delete _liveTurn[String(umid)]; delete _liveMid[String(umid)]; }	// the answer is in `messages` now
 				var ansMsg = null;		// the answer, kept so a hand-off turn can be enriched below
 				if (turnText) {
 				var amsg = { role: 'assistant', content: turnText, mid: amid, ranOn: selfDeviceId(), ts: Date.now() };
@@ -47623,6 +47870,11 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		crystalSay(t('crystal.steering'), true);
 
 		var dispatched = [], rejected = 0, replyText = '';
+		// The mid the detached answer WILL carry, minted up front and published for the
+		// streamed live-answer row, so a watcher's provisional answer and the message
+		// that syncs back share a mid and converge on the parcel merge.
+		var dmid = newMid();
+		if (detached) _liveMid[String(detached.turnId)] = dmid;
 		// CAN THIS ENGINE READ A WORKER BACK INSIDE THE TURN? Set just before the turn goes out,
 		// where the Diamond's app is resolved, and read by the collector below at call time --
 		// so a bundle whose engine has the pair keeps its workers off the post-turn path, and
@@ -48073,12 +48325,12 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 				// with content) stands a re-collect down before it can re-take the released
 				// lease and re-bill -- the transcript belt to the `done` report's braces.
 				rec.messages.push({ role: 'assistant', content: replyText,
-					mid: newMid(), iturn: detached ? String(detached.turnId) : undefined,
+					mid: dmid, iturn: detached ? String(detached.turnId) : undefined,
 					ranOn: selfDeviceId(), ts: Date.now() });
 			}
 			// The live-stream buffer is spent: the answer is in `messages` now, so the next
 			// progress frame reads it from there, not from here.
-			if (detached) { try { delete _liveTurn[String(detached.turnId)]; } catch (e) { /* bounded map */ } }
+			if (detached) { try { delete _liveTurn[String(detached.turnId)]; delete _liveMid[String(detached.turnId)]; } catch (e) { /* bounded map */ } }
 			// The ending, last, under whatever the turn managed to say.
 			if (pendingSteerEnd) {
 				rec.messages.push(pendingSteerEnd);
@@ -48121,7 +48373,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			crystalSay(friendlyError(e));
 			rec._generating = false;
 			rec._busy = '';
-			if (detached) { try { delete _liveTurn[String(detached.turnId)]; } catch (e2) { /* bounded map */ } }
+			if (detached) { try { delete _liveTurn[String(detached.turnId)]; delete _liveMid[String(detached.turnId)]; } catch (e2) { /* bounded map */ } }
 			// TRAINING WHEELS — a failure BEFORE the turn is still an end of it.
 			closeFeedTurn('error');
 			// `syncComposer` is what takes the dots down, because it is what decides

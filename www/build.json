@@ -1,1 +1,1 @@
-{"build":"26e81893461d","note":"updater.js: a never-settling sync now yields the silent auto-reload after ~2min, not forever; hard blocks unchanged"}
+{"build":"78feb785d4b0","note":"#22 changed-files table + immutable streamed handoff tiles + pre-claim take-back"}
