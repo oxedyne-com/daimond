@@ -12502,9 +12502,12 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			var d2 = buildTile('tool', { expanded: true, copy: text, ts: ts });
 			_tailNoteTable(text).then(function (tbl) {
 				if (!tbl) return;
-				var c = d2.querySelector('.chat-msg-content');
+				var c = d2.querySelector('.ctile-body');
 				if (c) c.replaceChildren(tbl);
 			}).catch(function () { });
+			tilePeek(d2, text);
+			postToChat(d2);
+			setScrollTop(chatOutput.scrollHeight);
 			return d2;
 		}
 		var div = buildTile('user', { expanded: true, copy: text, ts: ts });
