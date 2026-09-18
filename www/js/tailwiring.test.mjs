@@ -189,6 +189,10 @@ async function main() {
 					this._children.splice(i < 0 ? this._children.length : i, 0, child);
 					return child;
 				},
+				// #22 rework (f1fa6e0a): `paintDelta` clears the delta cell with
+				// `replaceChildren()` before appending its two `.tf-add`/`.tf-del`
+				// spans, rather than setting `.textContent` directly.
+				replaceChildren() { this._children = []; },
 				addEventListener(type, fn) { this._listeners[type] = fn; },
 				querySelector() { return null; },
 				remove() {},
@@ -247,9 +251,18 @@ async function main() {
 		const [nameA, deltaA] = rowA._children;
 		check('(b5) row 1 opens a.txt', nameA.textContent === 'a.txt');
 		// THE JOIN-FIX PROOF: with the old `m.v === p.v` join (always 1 === 58,
-		// false), `byPath` would be empty and this would read '·' forever.
-		check('(b6) row 1\'s delta is +3 −1 -- the manifest joined by VERSION NUMBER (the fix)',
-			deltaA.textContent === '+3 −1', deltaA.textContent);
+		// false), `byPath` would be empty and `paintDelta` would never fire, so
+		// this would read '·' forever. Stale as of the #22 rework (f1fa6e0a):
+		// `paintDelta` now clears the cell and appends two spans (`.tf-add`
+		// "+N", `.tf-del` "-M") rather than setting `.textContent` to one
+		// string -- verify_p22table.mjs proves the CSS/shape of that rework
+		// but never drives the live version join, so that proof stays here,
+		// updated to the current two-span shape rather than removed.
+		const [addA, delA] = deltaA._children;
+		check('(b6) row 1\'s delta is +3/−1 -- the manifest joined by VERSION NUMBER (the fix)',
+			!!addA && !!delA && addA.className === 'tf-add' && addA.textContent === '+3'
+			&& delA.className === 'tf-del' && delA.textContent === '−1',
+			deltaA._children.map((c) => c.className + ':' + c.textContent));
 
 		const rowB = rows._children[1];
 		const [nameB, deltaB] = rowB._children;

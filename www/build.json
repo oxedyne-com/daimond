@@ -1,1 +1,1 @@
-{"build":"c3d22b89029b","note":"#22 render fix: tail-note tool tile now posts to the transcript (table renders)"}
+{"build":"c7ea1cd23ed4","note":"capture safe: node/pixel caps + throw-guard + watchdog so self-capture cannot freeze the app"}

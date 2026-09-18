@@ -44,6 +44,21 @@
 	/// refused one does not.
 	var TARGET_MAX_W = 1600;
 
+	/// The most descendants a target subtree may hold before `capture` refuses it. The
+	/// rasteriser is O(nodes x style-props) -- one `getComputedStyle` walk of ~350-400
+	/// properties per node -- so a subtree above this froze the whole app's main thread
+	/// (proven live against `document.body` with the ~700-tile transcript in view). The
+	/// count is taken with a single cheap `querySelectorAll('*').length` BEFORE any
+	/// cloning or style work starts, so the refusal is instant rather than discovered by
+	/// hanging.
+	var MAX_NODES = 3000;
+
+	/// The canvas limits a browser enforces (Chromium refuses a dimension over 16384px
+	/// or an area over ~64 million pixels and silently hands back `"data:,"`). Rejecting
+	/// first, with a message that names the size, beats a mysterious empty image.
+	var MAX_CANVAS_H = 16384;
+	var MAX_CANVAS_PX = 64e6;
+
 	/// Elements that draw nothing and only bloat -- or break -- the serialised SVG.
 	var DROP = { SCRIPT: 1, NOSCRIPT: 1, LINK: 1, TEMPLATE: 1 };
 
@@ -130,6 +145,15 @@
 		var h = Math.max(1, Math.ceil(rect.height));
 		var maxW = opts.max_w > 0 ? opts.max_w : TARGET_MAX_W;
 		var scale = opts.scale > 0 ? opts.scale : Math.min(1, maxW / w);
+		var cw = Math.max(1, Math.round(w * scale));
+		var ch = Math.max(1, Math.round(h * scale));
+		if (ch > MAX_CANVAS_H || cw * ch > MAX_CANVAS_PX) {
+			throw new Error(
+				'The capture would draw a ' + cw + 'x' + ch + ' canvas, over the browser\'s '
+				+ 'limit (' + MAX_CANVAS_H + 'px tall, or ' + MAX_CANVAS_PX + ' pixels total) '
+				+ 'and liable to come back as an empty image. Pass a smaller "max_w", or name '
+				+ 'a narrower selector.');
+		}
 		var bg = backdrop(el, opts.background);
 
 		var clone = cloneStyled(el);
@@ -158,11 +182,28 @@
 		var url = 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(xml);
 
 		return new Promise(function (resolve, reject) {
+			// Watchdog: an SVG that never fires onload or onerror (a decoder wedged on
+			// pathological markup) must not hang the turn. Cleared the moment either
+			// fires, so the normal path pays nothing.
+			var settled = false;
+			var watchdog = setTimeout(function () {
+				if (settled) return;
+				settled = true;
+				reject(new Error(
+					'The view did not rasterise within 20s and was abandoned. Capture a '
+					+ 'smaller selector.'));
+			}, 20000);
+			function settle(fn) {
+				return function (arg) {
+					if (settled) return;
+					settled = true;
+					clearTimeout(watchdog);
+					fn(arg);
+				};
+			}
 			var img = new Image();
-			img.onload = function () {
+			img.onload = settle(function () {
 				try {
-					var cw = Math.max(1, Math.round(w * scale));
-					var ch = Math.max(1, Math.round(h * scale));
 					var canvas = document.createElement('canvas');
 					canvas.width = cw;
 					canvas.height = ch;
@@ -187,12 +228,12 @@
 						+ '. A cross-origin image or background taints the canvas -- capture a '
 						+ 'selector that excludes it.'));
 				}
-			};
-			img.onerror = function () {
+			});
+			img.onerror = settle(function () {
 				reject(new Error(
 					'The view could not be rasterised. An embedded resource may be cross-origin, '
 					+ 'or the subtree may hold markup the SVG serialiser rejected.'));
-			};
+			});
 			img.src = url;
 		});
 	}
@@ -221,17 +262,46 @@
 		var el;
 		try { el = target(req.selector); }
 		catch (e) { return Promise.reject(e); }
-		return rasterise(el, {
-			max_w:      req.max_w,
-			background: req.background,
-			scale:      req.scale,
-		}).then(function (shot) {
+
+		// Node gate -- counted BEFORE any clone or style work, so a huge subtree (the
+		// whole page via a blank selector, the transcript, the chat pane) is refused
+		// instantly rather than discovered by freezing on the O(nodes x style-props)
+		// walk inside `rasterise`. This is the fix for the live freeze: a throw from
+		// deep in `rasterise` used to escape as an uncaught exception and trap the wasm
+		// instance (src/wasm/shot.rs calls `capture` with no catch); a subtree this
+		// size never reaches that code path at all.
+		var n = el.querySelectorAll('*').length;
+		if (n > MAX_NODES) {
+			return Promise.reject(new Error(
+				(el === document.body ? 'That is the whole page -- ' : 'That selector -- ')
+				+ n + ' elements -- is above the ' + MAX_NODES + ' the self-capture rasteriser '
+				+ 'can style and serialise without freezing the app. Name the smallest selector '
+				+ '(an #id or a specific class) that shows the change; never capture the whole '
+				+ 'page, the transcript (#chat-output) or the chat pane.'));
+		}
+
+		// Throw-to-reject guard -- `rasterise` does real work synchronously before it
+		// returns its Promise (getBoundingClientRect, the pixel gate, cloneStyled,
+		// XMLSerializer). Any of those throwing must become a rejection, never an
+		// uncaught exception, because src/wasm/shot.rs calls this method with no catch
+		// and an uncaught JS exception there traps the whole wasm instance.
+		var shot;
+		try {
+			shot = rasterise(el, {
+				max_w:      req.max_w,
+				background: req.background,
+				scale:      req.scale,
+			});
+		} catch (e) {
+			return Promise.reject(e);
+		}
+		return shot.then(function (result) {
 			return JSON.stringify({
 				ok:      true,
-				png_b64: shot.b64,
-				w:       shot.w,
-				h:       shot.h,
-				bytes:   shot.bytes,
+				png_b64: result.b64,
+				w:       result.w,
+				h:       result.h,
+				bytes:   result.bytes,
 			});
 		});
 	}
