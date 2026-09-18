@@ -1,1 +1,1 @@
-{"build":"b7365db546cb","note":"fix: line_diff empty-side off-by-one (new/deleted file counts); capture help scoping"}
+{"build":"c433cee03fe2","note":"vision worker fix: ceiling + provider (stop hang→hallucinate); #21 table CSS"}

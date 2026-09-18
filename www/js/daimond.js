@@ -30458,6 +30458,13 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 	var VISION_NUDGE = 'You are now running on a model that can be shown pictures. Read the '
 		+ 'image again with file_read and "as":"image", then carry on. Do not repeat work '
 		+ 'already done above.';
+	// A wall-clock ceiling on a single `run_turn` call, BELOW `GATHER_TIMEOUT_S` (600s,
+	// src/compact.rs). Without one, a worker whose provider call never settles -- no
+	// resolve, no reject -- hangs the `await` in `Workers.start` forever, and the daimon's
+	// `gather` sits out its own 600s wait and reports "still running" rather than
+	// anything a model can act on. This fires first, aborts the run and produces a
+	// terminal report of its own, so `gather` always has a real answer to hand back.
+	var WORKER_WALL_CLOCK_MS = 540000;
 
 	/// What a daimon -- or a chat -- is told when the workers it asked for were never
 	/// started.  One wording for both surfaces, because it is one fact.
@@ -31095,7 +31102,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 					// is billed to the wrong balance or refused outright. `appCfgFor(run)` and the
 					// credits check in `start` both read this pair, so setting them together here
 					// is what puts the worker on the right endpoint with the right key.
-					provider: wm.provider || '',
+					provider: mm.provider || wm.provider || '',
 					status: 'queued',
 					// A worker starts with a clean context, which is exactly how an
 					// instruction absorbed from a stranger could be laundered through
@@ -31871,13 +31878,38 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			// A worker runs in this tab exactly as a chat turn does, so it needs the screen
 			// awake for the same reason. The count is shared; see `WakeLock`.
 			WakeLock.hold();
+			// Races `run_turn` against `WORKER_WALL_CLOCK_MS`. A rejection that arrives
+			// before the ceiling fires is rethrown, exactly as an un-raced `await` would --
+			// so the auth-remint catch below sees it unchanged. One that arrives (or never
+			// arrives) after the ceiling has already aborted the run is swallowed: the run
+			// is terminal by then and nothing is left awaiting that promise.
+			var runTurnCapped = function (task) {
+				var capped = false;
+				var real = run.app.run_turn(task, sink).catch(function (e) {
+					if (!capped) throw e;
+				});
+				return Promise.race([
+					real,
+					new Promise(function (resolve) {
+						setTimeout(function () { capped = true; resolve('capped'); }, WORKER_WALL_CLOCK_MS);
+					}),
+				]).then(function (winner) {
+					if (winner !== 'capped') return;
+					try { if (run.app) run.app.abort(); } catch (e) { /* already gone */ }
+					run.status = 'capped';
+					var said = 'stopped after ' + Math.round(WORKER_WALL_CLOCK_MS / 1000) + 's, no result';
+					run.text += (run.text ? '\n' : '') + said;
+					run._tail = said;
+					run.said = (run.said || []).concat([said]);
+				});
+			};
 			try {
 				try {
 					// Cleared as it is read, so one re-route buys one vision nudge: a worker
 					// paused by hand afterwards resumes on the ordinary one.
 					var nudge = run.resume ? (run._vision ? VISION_NUDGE : RESUME_NUDGE) : run.task;
 					run._vision = false;
-					await run.app.run_turn(nudge, sink);
+					await runTurnCapped(nudge);
 				} catch (e) {
 					if (!authFail || run.status === 'stopped' || run.status === 'paused') throw e;
 					reminted = true; authFail = false;
@@ -31911,15 +31943,18 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 					// The rebuilt app is a NEW app and carries no scope: a re-mint that skipped
 					// this would quietly hand the retry the whole workspace.
 					await scope();
-					await run.app.run_turn(run.task, sink);
+					await runTurnCapped(run.task);
 				}
 				// A stopped worker keeps whatever it managed to do; it did not fail.
+				// A capped one is terminal too -- `runTurnCapped` has already written its
+				// status and report -- and must not be overwritten by the `done` default
+				// below, which is exactly what happened before this guard included it.
 				//
 				// The engine's OWN word for how the turn ended, not a blanket `done` --
 				// see `workerEndStatus`. `run.ended` is unset only when the turn produced
 				// no `ended` event at all (nothing ran that could end it), which is `done`
 				// by default rather than a status nothing maps to.
-				if (run.status !== 'stopped' && run.status !== 'paused') {
+				if (run.status !== 'stopped' && run.status !== 'paused' && run.status !== 'capped') {
 					run.status = run.ended ? workerEndStatus(run.ended.how) : 'done';
 				}
 			} catch (e) {

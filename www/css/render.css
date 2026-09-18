@@ -118,11 +118,13 @@
 	margin: 10px 0;
 	font-family: var(--font);
 	font-size: var(--fs-sm);
+	border: 1px solid var(--border-strong);
+	border-radius: var(--radius-sm);
 }
 .chat-msg-content th,
 .chat-msg-content td {
-	border: 1px solid var(--border);
-	padding: 6px 10px;
+	border: 1px solid var(--border-strong);
+	padding: 8px 12px;
 	text-align: left;
 	white-space: nowrap;
 }
@@ -133,6 +135,9 @@
 }
 .chat-msg-content tbody tr:nth-child(even) td {
 	background: var(--bg-secondary);
+}
+.chat-msg-content tbody tr:hover td {
+	background: var(--bg-hover);
 }
 
 

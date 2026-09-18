@@ -3218,25 +3218,25 @@ body.locked .tile-fold, body.locked .spend-row { display: none; }
 
 /* #22 — the changed-files table under a turn. Two columns, name left and
    delta right; the name and the delta are each pressable (Doc panel, diff). */
-.turn-files { margin: 8px 0 2px; border: 1px solid var(--line); border-radius: 8px; padding: 6px 10px; display: flex; flex-direction: column; gap: 2px; }
-.turn-files-h { font-size: var(--fs-2xs); color: var(--text-secondary); padding-bottom: 4px; }
-.turn-file-row { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; font-size: var(--fs-xs); }
-.turn-file-name { color: var(--accent, var(--primary)); cursor: pointer; overflow-wrap: anywhere; text-align: left; background: none; border: none; padding: 0; font: inherit; }
+.turn-files { margin: 8px 0 2px; border: 1px solid var(--line); border-radius: 8px; padding: 8px 12px; display: flex; flex-direction: column; gap: 4px; }
+.turn-files-h { font-size: var(--fs-xs); color: var(--text-secondary); padding-bottom: 6px; font-weight: 500; }
+.turn-file-row { display: flex; align-items: center; justify-content: space-between; gap: 16px; font-size: var(--fs-sm); padding: 4px 0; }
+.turn-file-name { color: var(--accent, var(--primary)); cursor: pointer; overflow-wrap: anywhere; text-align: left; background: none; border: none; padding: 2px 0; font: inherit; }
 .turn-file-name:hover { text-decoration: underline; }
-.turn-file-delta { font-family: var(--font-mono); font-size: var(--fs-2xs); white-space: nowrap; cursor: pointer; background: none; border: none; padding: 0; display: inline-flex; gap: 6px; }
+.turn-file-delta { font-family: var(--font-mono); font-size: var(--fs-xs); white-space: nowrap; cursor: pointer; background: none; border: none; padding: 2px 0; display: inline-flex; gap: 8px; }
 .turn-file-delta .tf-add { color: var(--ok, #2e7d32); }
 .turn-file-delta .tf-del { color: var(--danger, #c62828); }
-.turn-file-delta-none { cursor: default; }
+.turn-file-delta-none { cursor: default; color: var(--text-muted); }
 /* #22 side-by-side diff: two cells per row, add green / del red, foldable */
-.tf-sbs { display: flex; flex-direction: column; margin: 4px 0 2px; border: 1px solid var(--line); border-radius: 6px; overflow: hidden; max-height: 340px; overflow-y: auto; }
+.tf-sbs { display: flex; flex-direction: column; margin: 8px 0 4px; border: 1px solid var(--line); border-radius: 8px; overflow: hidden; max-height: 340px; overflow-y: auto; }
 .tf-sbs-row { display: grid; grid-template-columns: 1fr 1fr; }
-.tf-sbs-cell { padding: 0 8px; font-family: var(--font-mono); font-size: var(--fs-2xs); white-space: pre-wrap; overflow-wrap: anywhere; min-height: 1.2em; }
+.tf-sbs-cell { padding: 2px 10px; font-family: var(--font-mono); font-size: var(--fs-xs); white-space: pre-wrap; overflow-wrap: anywhere; min-height: 1.3em; }
 .tf-sbs-cell.del { background: color-mix(in srgb, var(--danger, #c62828) 12%, transparent); color: var(--danger, #c62828); }
 .tf-sbs-cell.add { background: color-mix(in srgb, var(--ok, #2e7d32) 12%, transparent); color: var(--ok, #2e7d32); }
 .tf-sbs-folded .tf-sbs-row.skip { display: none; }
-.tf-fold { margin: 2px 0; font-size: var(--fs-2xs); color: var(--text-secondary); background: none; border: 1px dashed var(--line); border-radius: 6px; padding: 2px 8px; cursor: pointer; }
+.tf-fold { margin: 4px 0; font-size: var(--fs-xs); color: var(--text-secondary); background: none; border: 1px dashed var(--line); border-radius: 6px; padding: 4px 10px; cursor: pointer; }
 .tf-fold:hover { color: var(--accent, var(--primary)); }
-.turn-file-more { font-size: var(--fs-2xs); color: var(--text-secondary); cursor: pointer; padding-top: 2px; background: none; border: none; padding: 2px 0 0; font: inherit; }
+.turn-file-more { font-size: var(--fs-xs); color: var(--text-secondary); cursor: pointer; padding-top: 4px; background: none; border: none; padding: 4px 0 0; font: inherit; }
 .turn-file-more:hover { text-decoration: underline; }
 .hist-diff-line.add { color: var(--ok); background: color-mix(in srgb, var(--ok) 10%, transparent); }
 .hist-diff-line.del { color: var(--danger); background: color-mix(in srgb, var(--danger) 10%, transparent); }
