@@ -1,1 +1,1 @@
-{"build":"3aaf916dcf9f","note":"#22: fold label shows translated text not a raw i18n key; new-file all-add count fixed (daimon vision-caught)"}
+{"build":"b7365db546cb","note":"fix: line_diff empty-side off-by-one (new/deleted file counts); capture help scoping"}

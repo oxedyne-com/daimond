@@ -757,8 +757,11 @@ pub enum Row {
 /// it is reported as one replacement, because the table an exact match needs is the product of
 /// the two sides.
 pub fn line_diff(before: &str, after: &str) -> Outcome<Vec<Row>> {
-	let a: Vec<&str> = before.split('\n').collect();
-	let b: Vec<&str> = after.split('\n').collect();
+	// `"".split('\n')` yields one empty element, not zero -- unguarded, a brand-new file (an
+	// empty `before`) reads as one phantom blank line removed, and a deleted file as one
+	// phantom blank line added.
+	let a: Vec<&str> = if before.is_empty() { Vec::new() } else { before.split('\n').collect() };
+	let b: Vec<&str> = if after.is_empty() { Vec::new() } else { after.split('\n').collect() };
 	if a.len() > DIFF_LINES_MAX || b.len() > DIFF_LINES_MAX {
 		return Err(err!(
 			"A comparison of {} lines against {} is past the {} this shows, so these two \
@@ -1239,6 +1242,24 @@ mod tests {
 	fn test_a_file_past_the_line_ceiling_is_refused_rather_than_compared() {
 		let long = vec!["x"; DIFF_LINES_MAX + 1].join("\n");
 		assert!(line_diff(&long, "x").is_err());
+	}
+
+	/// A brand-new file has no `before` at all, not a `before` of one blank line -- so its diff
+	/// must be all-add, with no phantom deletion.
+	#[test]
+	fn test_a_new_file_diffs_as_all_add_with_no_phantom_deletion() -> Outcome<()> {
+		let rows = res!(line_diff("", "a\nb\nc"));
+		assert_eq!((3, 0), diff_counts(&rows));
+		Ok(())
+	}
+
+	/// A deleted file has no `after` at all -- its diff must be all-remove, with no phantom
+	/// addition.
+	#[test]
+	fn test_a_deleted_file_diffs_as_all_remove_with_no_phantom_addition() -> Outcome<()> {
+		let rows = res!(line_diff("a\nb\nc", ""));
+		assert_eq!((0, 3), diff_counts(&rows));
+		Ok(())
 	}
 
 	#[test]
