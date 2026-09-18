@@ -1,1 +1,1 @@
-{"build":"c433cee03fe2","note":"vision worker fix: ceiling + provider (stop hang→hallucinate); #21 table CSS"}
+{"build":"9da6dc03176e","note":"Reach: reload the workspace on a Diamond focus change, and refuse a paperclip that would edit another Diamond's reach"}

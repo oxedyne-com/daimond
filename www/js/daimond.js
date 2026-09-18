@@ -34393,6 +34393,13 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			if (!currentDiamond) return;
 			var id = currentDiamond.id, ref = rootedRef(dir ? 'dir' : 'file', path);
 			var rec = attachedOf(ref);
+			// GUARD: `attached` is scoped to the focused Diamond (`loadAttached`), but a
+			// reload `onDiamondChanged` ever misses must not let a stale record from
+			// ANOTHER Diamond stand in for this one's link -- that is how a click here
+			// once called `remove_link` on a Diamond that was not even open. Refused
+			// outright rather than repaired: a missed reload costs a no-op click, never
+			// someone else's link.
+			if (rec && rec.link && rec.link.owner !== id) return;
 			var link = rec ? rec.link : await linkTo(id, ref);
 			try {
 				if (link) await diamondApp().remove_link(link.owner, link.id);
@@ -34793,7 +34800,14 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			var same = (id === lastDiamondId);
 			lastDiamondId = id;
 			renderScope();
-			if (same || scope !== 'diamond') return;
+			if (same) return;
+			// The attach cache is scoped to the focused Diamond, and it has to move
+			// WITH the focus in either tree -- the paperclip in "Everything" still
+			// toggles the FOCUSED Diamond's link (`toggleAttachHold`), and a cache
+			// left holding the departed Diamond's marks pointed that toggle at the
+			// wrong Diamond's link. Only the Diamond tree also needs to renavigate,
+			// below, so "Everything" stops here with a reload and a repaint.
+			if (scope !== 'diamond') { refreshAttached(); return; }
 			announceScope();
 			// Back to the top of whichever tree now applies: the directory the user
 			// was in belonged to the Diamond that just left.
