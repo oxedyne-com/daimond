@@ -21061,6 +21061,12 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			var jobs = [];
 			var byId = {};
 			for (var bi = 0; bi < chats.length; bi++) if (chats[bi] && chats[bi].id) byId[chats[bi].id] = chats[bi];
+			// The lease section, read ONCE for the whole rescue rather than per placeholder.
+			// It is an in-memory map (`DaimondLease.snapshot` is the section `_leases`), so a
+			// per-turn `record()` is cheap -- but a storm-time rescue can carry several held
+			// placeholders, and there is no reason to re-index the map for each. Indexed by
+			// turnId below, exactly as `record` would have.
+			var leaseSnap = (window.DaimondLease && DaimondLease.snapshot) ? DaimondLease.snapshot() : null;
 			var turns = Object.keys(_dispatchedIx);
 			for (var ti = 0; ti < turns.length; ti++) {
 				var chat = byId[_dispatchedIx[turns[ti]]];
@@ -21072,7 +21078,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 				for (var j = 0; j < chat.messages.length; j++) {
 					var m = chat.messages[j];
 					if (!m || m.why !== DaimondPeer.REASON_DISPATCHED || String(m.iturn) !== turns[ti]) continue;
-					var lease = (window.DaimondLease && DaimondLease.record) ? DaimondLease.record(m.iturn) : null;
+					var lease = leaseSnap ? (leaseSnap[String(m.iturn)] || null) : null;
 					var fin   = dispatchedTurnFinished(chat, m.iturn);
 					if (DaimondPeer.recoverDecision(m, lease, fin, self, now)) jobs.push({ chat: chat, m: m });
 				}

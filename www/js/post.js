@@ -681,7 +681,7 @@
 
 	/// A fresh, empty record.
 	function blank() {
-		return { v: REC_V, through: 0, acked: 0, tries: 0, msgs: {}, notes: {}, groups: {},
+		return { v: REC_V, through: 0, seen: 0, acked: 0, tries: 0, msgs: {}, notes: {}, groups: {},
 			shares: {}, feed: blankFeed() };
 	}
 
@@ -738,6 +738,12 @@
 		r.feed.new  = r.feed.new  || {};
 		r.feed.since = r.feed.since | 0;
 		r.through = r.through | 0;
+		// The highest box seq this device has FOLDED, held rows included. The ack
+		// watermark `through` is pinned below a HELD errand (takeRow), so a park keyed on
+		// `through` re-answers instantly for ever against the box's own higher high-water --
+		// the held-row spin. `seen` is what a park is keyed on instead; it climbs past a
+		// held row so the park waits for something GENUINELY new. Never below `through`.
+		r.seen    = Math.max(r.seen | 0, r.through);
 		r.acked   = r.acked | 0;
 		r.tries   = r.tries | 0;
 		_st = r;
@@ -974,7 +980,14 @@
 	/// the same rule the pairing look record is carried under.
 	function snapshot() {
 		if (!_st) return null;
-		return JSON.parse(JSON.stringify(_st));
+		var rec = JSON.parse(JSON.stringify(_st));
+		// `seen` is a PURELY LOCAL park cursor (post-park spin fix): it climbs past a
+		// HELD row that `through` cannot pass, and it is per-device, so it must never ride
+		// the parcel -- syncing it would push the parcel every time a held row is folded,
+		// a new amplifier, and `adopt` has no rule for it. It persists locally through
+		// `save` (which serialises `_st` directly), not through here.
+		delete rec.seen;
+		return rec;
 	}
 
 	/// Merge another device's record into this one. True when this device moved.
@@ -1143,6 +1156,7 @@
 	async function snapshotRefs() {
 		if (!_st) return null;
 		var rec = JSON.parse(JSON.stringify(_st));
+		delete rec.seen;		// a local park cursor, never on the parcel -- see `snapshot`.
 		// ...and whether this device may DECLARE what it uploads. The gateway sweeps
 		// every held chunk the committed index does not name, and only a device that
 		// merged that index may commit it, so a message tail offloaded from a device
@@ -1988,6 +2002,12 @@
 				// every row still folds, but st.through -- what ackThrough acks through --
 				// never passes the errand, so the relay keeps it for the peer to collect.
 				if (took.hold && !holdSeq) holdSeq = row.seq | 0;
+				// EVERY folded row moves `seen`, a HELD one included -- this is the whole
+				// spin fix. `through` stops below a held errand so the relay keeps it for the
+				// peer, but the park is keyed on `seen`, so it climbs past the held row and
+				// the next park waits rather than re-answering at once against the box's own
+				// high-water.
+				if ((row.seq | 0) > (st.seen | 0)) st.seen = row.seq | 0;
 				if ((row.seq | 0) > st.through && (!holdSeq || (row.seq | 0) < holdSeq)) {
 					st.through = row.seq | 0;
 				}
@@ -2355,7 +2375,17 @@
 				// listener's door, which is how a handed-off turn reaches a device, so it
 				// is the second door a removed device must not hold. Optional on the wire:
 				// a gateway that does not read it parks exactly as before.
-				r = await call('GET', undefined, '?above=' + st.through
+				// ABOVE THE HIGHEST SEQ FOLDED, not the ack watermark. `through` is pinned
+				// below a HELD errand (takeRow HOLDs an own-dispatch or a nominee stand-down
+				// so the relay keeps it for the peer), and the box's high-water is above it,
+				// so a park keyed on `through` returns instantly (post.rs:608) and `round()`
+				// re-folds the same held rows every PARK_FLOOR_MS -- the 1 Hz spin that tripped
+				// AddressGuard. `seen` climbs past a held row, so the park waits for a row that
+				// is genuinely new. A held row is still re-decided: `collect` fetches from
+				// `through`, and the nominee-fallback re-collect (daimond.js) fires on the
+				// freshness window, so a stand-down still resolves.
+				var above = Math.max(st.through | 0, st.seen | 0);
+				r = await call('GET', undefined, '?above=' + above
 					+ '&ms=' + PARK_MS + '&w=' + encodeURIComponent(WAKE_ID)
 					+ '&device=' + encodeURIComponent(selfDeviceIdForPark()), PARK_DEADLINE_MS);
 			} catch (e) {

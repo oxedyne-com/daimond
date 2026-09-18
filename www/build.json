@@ -1,1 +1,1 @@
-{"build":"6ba0d3588bc7","note":"Proposals 12-19: hand-off self-heal, worker-report + UI fixes, fold-as-transcript, in-page vision capture"}
+{"build":"ab21d0da6e21","note":"End held-row post-park spin (park above=max(through,seen)) + cap expedite 120s; client JS only"}

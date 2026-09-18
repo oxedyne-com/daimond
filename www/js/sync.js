@@ -171,6 +171,15 @@
 	// down and costs nothing; where the park is frozen, it is the thing that asks.
 	// A GET, served to every device, so it is never a per-turn charge.
 	var EXPEDITE_PULL_MS = 4000;
+	// A hand-off's answer arrives within one of these of the dispatch on any healthy
+	// path (the runner claims, runs, pushes; the streaming frames land throughout). A
+	// placeholder still outstanding past this is a STUCK hand-off -- a peer that never
+	// claimed, an errand merely HELD on the relay -- and pulling the whole 1.4 MB parcel
+	// every 4 s for it is the amplifier that fed the request storm. Past this the expedite
+	// poll stands down and the 45 s wake tick plus the dispatcher's ~95 s recovery backstop
+	// carry it, so the full-parcel poll is bounded to the window a live hand-off needs and
+	// a stuck one no longer floods. A GET only -- the single-runner lease is untouched.
+	var EXPEDITE_MAX_MS = 120000;
 	// ── The streaming progress push ────────────────────────────
 	// The minimum spacing between a runner's progress pushes, so a long turn streams
 	// as a trickle rather than a flood. Between ~1.5-3s per the streaming design: a
@@ -331,6 +340,7 @@
 	// daimond.js through the `expedite` verb; drives the short in-flight poll.
 	var expediting    = false;
 	var expediteTimer = null;	// The in-flight-poll interval, live only while expediting.
+	var expediteSince = 0;		// when the current expedite window began, for EXPEDITE_MAX_MS
 	var started       = false;	// The engine has attached its listeners.
 	var catchupTimer  = null;	// The catch-up supervisor, for a device with no channel.
 	// This device has read the mailbox and knows what is in it -- a parcel it
@@ -2820,6 +2830,11 @@
 	async function expeditePull() {
 		if (!expediting) return;
 		if (!ready() || !entitled) return;
+		// A hand-off outstanding past EXPEDITE_MAX_MS is stuck, not live: stand the full-
+		// parcel poll down (the wake tick and the recovery backstop carry it) rather than
+		// pull 1.4 MB every 4 s for ever. The flag stays on so a fresh hand-off arriving
+		// re-arms the window through setExpedite's rising edge.
+		if (expediteSince && Date.now() - expediteSince > EXPEDITE_MAX_MS) return;
 		if (inFlight) return;			// a round is running, and it is fresher than this one
 		if (Date.now() - lastPullAt < EXPEDITE_PULL_MS) return;	// the channel already asked
 		inFlight = true;
@@ -2835,12 +2850,16 @@
 		if (on === expediting) return;
 		expediting = on;
 		if (on) {
+			expediteSince = Date.now();		// the rising edge: a fresh window for EXPEDITE_MAX_MS
 			if (!expediteTimer) expediteTimer = setInterval(expeditePull, EXPEDITE_PULL_MS);
 			// Ask once now rather than wait a whole tick: the hand-off just went out.
 			expeditePull();
-		} else if (expediteTimer) {
-			clearInterval(expediteTimer);
-			expediteTimer = null;
+		} else {
+			expediteSince = 0;
+			if (expediteTimer) {
+				clearInterval(expediteTimer);
+				expediteTimer = null;
+			}
 		}
 	}
 
