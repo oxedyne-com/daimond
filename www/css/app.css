@@ -3223,9 +3223,19 @@ body.locked .tile-fold, body.locked .spend-row { display: none; }
 .turn-file-row { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; font-size: var(--fs-xs); }
 .turn-file-name { color: var(--accent, var(--primary)); cursor: pointer; overflow-wrap: anywhere; text-align: left; background: none; border: none; padding: 0; font: inherit; }
 .turn-file-name:hover { text-decoration: underline; }
-.turn-file-delta { font-family: var(--font-mono); font-size: var(--fs-2xs); white-space: nowrap; cursor: pointer; }
-.turn-file-delta .add { color: var(--ok); }
-.turn-file-delta .del { color: var(--danger); }
+.turn-file-delta { font-family: var(--font-mono); font-size: var(--fs-2xs); white-space: nowrap; cursor: pointer; background: none; border: none; padding: 0; display: inline-flex; gap: 6px; }
+.turn-file-delta .tf-add { color: var(--ok, #2e7d32); }
+.turn-file-delta .tf-del { color: var(--danger, #c62828); }
+.turn-file-delta-none { cursor: default; }
+/* #22 side-by-side diff: two cells per row, add green / del red, foldable */
+.tf-sbs { display: flex; flex-direction: column; margin: 4px 0 2px; border: 1px solid var(--line); border-radius: 6px; overflow: hidden; max-height: 340px; overflow-y: auto; }
+.tf-sbs-row { display: grid; grid-template-columns: 1fr 1fr; }
+.tf-sbs-cell { padding: 0 8px; font-family: var(--font-mono); font-size: var(--fs-2xs); white-space: pre-wrap; overflow-wrap: anywhere; min-height: 1.2em; }
+.tf-sbs-cell.del { background: color-mix(in srgb, var(--danger, #c62828) 12%, transparent); color: var(--danger, #c62828); }
+.tf-sbs-cell.add { background: color-mix(in srgb, var(--ok, #2e7d32) 12%, transparent); color: var(--ok, #2e7d32); }
+.tf-sbs-folded .tf-sbs-row.skip { display: none; }
+.tf-fold { margin: 2px 0; font-size: var(--fs-2xs); color: var(--text-secondary); background: none; border: 1px dashed var(--line); border-radius: 6px; padding: 2px 8px; cursor: pointer; }
+.tf-fold:hover { color: var(--accent, var(--primary)); }
 .turn-file-more { font-size: var(--fs-2xs); color: var(--text-secondary); cursor: pointer; padding-top: 2px; background: none; border: none; padding: 2px 0 0; font: inherit; }
 .turn-file-more:hover { text-decoration: underline; }
 .hist-diff-line.add { color: var(--ok); background: color-mix(in srgb, var(--ok) 10%, transparent); }

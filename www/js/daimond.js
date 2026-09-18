@@ -12336,8 +12336,8 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		var shown = m[3].split(',').map(function (x) { return x.trim(); }).filter(Boolean);
 		var rest = 0;
 		var last = shown.length ? shown[shown.length - 1] : '';
-		var rm = /^and (\d+) more$/.exec(last);
-		if (rm) { rest = Number(rm[1]); shown.pop(); }
+		var rm = /^(.+) and (\d+) more$/.exec(last);
+		if (rm) { rest = Number(rm[2]); shown[shown.length - 1] = rm[1].trim(); }
 		return { count: Number(m[1]), v: Number(m[2]), files: shown, rest: rest };
 	}
 
@@ -12399,7 +12399,11 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		nm.title = name;
 		nm.addEventListener('click', function (ev) {
 			ev.stopPropagation();
-			openFile(name, { line: 0 });
+			// #22 live-fix: the chat closure has its own `openFile` (the free-note
+			// door), so calling it here opened nothing. The Files module's public
+			// door is the one that opens a file in the Doc panel.
+			var open = (window.DaimondFiles && DaimondFiles.open) || (typeof openFile === 'function' ? openFile : null);
+			if (open) { try { open(name, { line: 0 }); } catch (e) { /* the panel says why */ } }
 		});
 		row.appendChild(nm);
 		var de = document.createElement('button');
@@ -12411,47 +12415,100 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		var now = e && !e.gone ? (e.hash || '') : '';
 		de.textContent = '·';
 		row.appendChild(de);
-		if (e && !e.gone && (e.was || e.hash)) {
+		var was = e && !e.gone && e.was ? e.was : '';
+		var now = e && !e.gone ? (e.hash || '') : '';
+		if (was || now) {
+			function paintDelta(d) {
+				// #22 live-fix: green additions, red deletions — two spans, one count.
+				if (!d) { de.textContent = '·'; return; }
+				de.replaceChildren();
+				var a = document.createElement('span'); a.className = 'tf-add'; a.textContent = '+' + (d.add || 0);
+				var s = document.createElement('span'); s.className = 'tf-del'; s.textContent = '−' + (d.del || 0);
+				de.appendChild(a); de.appendChild(s);
+			}
+			function paintDiff(d) {
+				// #22 live-fix: a SIDE-BY-SIDE diff with foldable unchanged runs, not a
+				// flat one-line-per-change listing. Left = before (was), right = after
+				// (hash); runs of context longer than the fold gap collapse to a bar.
+				var wrap = document.createElement('div');
+				wrap.className = 'tf-sbs';
+				var rows = (d && d.rows) || [];
+				// Pair '-' lines with the '+' lines that follow into one side-by-side row.
+				var pairs = [], li = 0;
+				while (li < rows.length) {
+					var r = rows[li];
+					if (r.op === '-') {
+						var before = r.text, after = null, nj = li + 1;
+							while (nj < rows.length && rows[nj].op === '-') { before += '\n' + rows[nj].text; nj++; }
+							if (nj < rows.length && rows[nj].op === '+') {
+								after = rows[nj].text; var pj = nj + 1;
+								while (pj < rows.length && rows[pj].op === '+') { after += '\n' + rows[pj].text; pj++; }
+								nj = pj;
+							}
+						pairs.push({ op: '!', before: before, after: after }); li = nj; continue;
+					}
+					if (r.op === '+') { pairs.push({ op: '+', before: null, after: r.text }); li++; continue; }
+					pairs.push({ op: ' ', before: r.text, after: r.text }); li++;
+				}
+				var GAP = 3, built = 0, hunk = [];
+				pairs.forEach(function (p) {
+					if (p.op === ' ') { hunk.push(p); return; }
+					built += hunk.length + 1; hunk.forEach(drawPair); hunk = [];
+					drawPair(p);
+				});
+				built += hunk.length; hunk.forEach(drawPair);
+				if (built > GAP * 2) wrap.classList.add('tf-sbs-folded');
+				function drawPair(p) {
+					var line = document.createElement('div');
+					line.className = 'tf-sbs-row' + (p.op === '!' ? ' chg' : p.op === '+' ? ' add' : '');
+					var L = document.createElement('div'); L.className = 'tf-sbs-cell tf-sbs-l' + (p.op === '!' || p.op === ' ' ? '' : ' empty');
+					var R = document.createElement('div'); R.className = 'tf-sbs-cell tf-sbs-r' + (p.op === '+' ? ' add' : '');
+					if (p.op === '+' || p.after === null) { L.textContent = p.before || ''; L.classList.add('del'); R.textContent = ''; }
+					else if (p.op === '!') { L.textContent = p.before || ''; L.classList.add('del'); R.textContent = p.after || ''; R.classList.add('add'); }
+					else { L.textContent = p.before || ''; R.textContent = p.after || ''; }
+					line.appendChild(L); line.appendChild(R); wrap.appendChild(line);
+				}
+				return wrap;
+			}
 			de.addEventListener('click', async function (ev) {
 				ev.stopPropagation();
-				var shown = row.querySelector('.hist-diff');
+				var shown = row.querySelector('.tf-sbs');
 				if (shown) { shown.remove(); return; }   // a second press folds it away
 				try {
-					var d = await DaimondVersions.diff(id, e.was || '', e.hash || '');
+					var d = await DaimondVersions.diff(id, was, now);
 					if (!d) { de.textContent = '·'; return; }   // binary or not kept: no honest count
-					de.textContent = '+' + (d.add || 0) + ' −' + (d.del || 0);
-					var pre = document.createElement('div');
-					pre.className = 'hist-diff';
-					(d.rows || []).forEach(function (l) {
-						var ln = document.createElement('div');
-						ln.className = 'hist-diff-line' + (l.op === '+' ? ' add' : l.op === '-' ? ' del' : '');
-						ln.textContent = l.op + l.text;   // escaped via textContent
-						pre.appendChild(ln);
-					});
-					row.appendChild(pre);
+					paintDelta(d);
+					var sbs = paintDiff(d);
+					if (sbs) row.appendChild(sbs);
 				} catch (err) { /* the store was pruned or the body was not kept: the delta stays · */ }
 			});
-			if (e.was && e.hash) {
+			if (was && now) {
 				// The count is shown without a press on the common path (an update
 				// with both bodies kept) — a press then folds the diff in/out.
-				DaimondVersions.diff(id, e.was, e.hash).then(function (d) {
-					if (d) de.textContent = '+' + (d.add || 0) + ' −' + (d.del || 0);
-				}).catch(function () { });
+				DaimondVersions.diff(id, was, now).then(paintDelta).catch(function () { });
 			}
 		} else {
 			de.classList.add('turn-file-delta-none');
 			de.textContent = e && e.gone ? '−' : '·';
 		}
-		row.appendChild(de);
 		return row;
 	}
 
 	function appendUserMessage(text, ts) {
+		// #22 live-fix: the tail note is the daimon's WORK, not the user's words — it
+		// renders as a tool-style tile (the same furniture #17's fold tiles use),
+		// never as a "You" bubble.
+		if (/^\[Daimond: this turn changed /.test(text)) {
+			var d2 = buildTile('tool', { expanded: true, copy: text, ts: ts });
+			_tailNoteTable(text).then(function (tbl) {
+				if (!tbl) return;
+				var c = d2.querySelector('.chat-msg-content');
+				if (c) c.replaceChildren(tbl);
+			}).catch(function () { });
+			return d2;
+		}
 		var div = buildTile('user', { expanded: true, copy: text, ts: ts });
 		div.classList.add('chat-msg-user');           // kept for older hooks
-		// #22: the tail note becomes the changed-files table rather than a
-		// sentence the user must parse. Anything that is not the tail note draws
-		// exactly as before.
 		_tailNoteTable(text).then(function (tbl) {
 			if (!tbl) return;
 			var content = div.querySelector('.chat-msg-content');

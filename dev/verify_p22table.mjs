@@ -38,6 +38,9 @@ const src = fs.readFileSync(path.join(root, 'www/js/daimond.js'), 'utf8');
 //   --break divert   removes the tail-note diversion from appendUserMessage
 //   --break fold     removes the 6-plus fold
 //   --break deltas   removes the DaimondVersions.diff wiring
+//   --break click    restores the broken openFile call (chat closure, not Files)
+//   --break sbs      removes the side-by-side diff (flat .hist-diff restored)
+//   --break tool     restores the 'user' tile for the tail note
 const BIDX = process.argv.indexOf('--break');
 const BEQ = process.argv.find(a => a.startsWith('--break='));
 const BREAK = BEQ ? BEQ.slice(8) : (BIDX > -1 ? process.argv[BIDX + 1] : '');
@@ -45,11 +48,14 @@ let s = src;
 if (BREAK === 'divert') s = s.replace(/_tailNoteTable/g, '_tailNoteTableGone');
 if (BREAK === 'fold') s = s.replace(/var _TAIL_MORE = 6;/, 'var _TAIL_MORE = 6000;');
 if (BREAK === 'deltas') s = s.replace(/DaimondVersions\.diff/g, 'DaimondVersionsX.diff');
+if (BREAK === 'click') s = s.replace(/var open = \(window\.DaimondFiles && DaimondFiles\.open\) \|\| \(typeof openFile === 'function' \? openFile : null\);/, 'var open = openFile;');
+if (BREAK === 'sbs') s = s.replace("wrap.className = 'tf-sbs';", "wrap.className = 'x';").replace(/function paintDiff\(d\) \{/, 'function paintDiffGone(d) {');
+if (BREAK === 'tool') s = s.replace(/buildTile\('tool', \{ expanded: true, copy: text, ts: ts \}\)/, "buildTile('user', { expanded: true, copy: text, ts: ts })");
 const checks = [];
 const ok = (name, pass) => checks.push([name, !!pass]);
 
-function red(msg) { process.stdout.write('\x1b[31m' + msg + '\x1b[0m\n'); }
-function grn(msg) { process.stdout.write('\x1b[32m' + msg + '\x1b[0m\n'); }
+function red(msg) { process.stdout.write(msg + '\n'); }
+function grn(msg) { process.stdout.write(msg + '\n'); }
 
 // 1. the engine's exact tail-note parses: files, version, the fold
 (function () {
@@ -58,10 +64,12 @@ function grn(msg) { process.stdout.write('\x1b[32m' + msg + '\x1b[0m\n'); }
 	ok('the fold parses ("and N more")', parseTailNote('[Daimond: this turn changed 9 files (v7): a.md, b.md, c.md, d.md, e.md, f.md and 3 more. The user can restore any of them from History, and file_revert does the same when they ask.]').rest === 3);
 })();
 
-// 2. the tile diverts the tail note into the table
+// 2. the tile diverts the tail note into the table, and the tile is TOOL-styled
 (function () {
 	const i = s.indexOf("function appendUserMessage(text, ts)");
 	ok('appendUserMessage carries the #22 diversion', i > 0 && /_tailNoteTable\(/.test(s.slice(i, i + 2000)));
+	const j = s.indexOf("function appendUserMessage(text, ts)");
+	ok('the tail note renders as a tool tile, not a user tile', j > 0 && /buildTile\('tool'/.test(s.slice(j, j + 600)) && /this turn changed/.test(s.slice(j, j + 600)));
 })();
 
 // 3. the table builder exists with its contract parts
@@ -69,8 +77,10 @@ function grn(msg) { process.stdout.write('\x1b[32m' + msg + '\x1b[0m\n'); }
 	const i = s.indexOf('function _tailNoteTable');
 	ok('the table builder exists (name _tailNoteTable)', i > 0);
 	ok('the table folds past ~6 files', /var _TAIL_MORE = 6;/.test(s));
-	ok('the name click opens the file (openFile)', /openFile\(/.test(s.slice(i, i + 4200)));
-	ok('the delta click shows the diff (.hist-diff)', /hist-diff/.test(s.slice(i, i + 4200)) && /DaimondVersions\.diff\(/.test(s.slice(i, i + 4200)));
+	ok('the name click opens the file via the Files module door (DaimondFiles.open)', /DaimondFiles && DaimondFiles\.open/.test(s.slice(i, i + 6000)));
+	const k = s.indexOf('function paintDiff');
+	const kdiff = s.indexOf('DaimondVersions.diff', k);
+	ok('the delta click shows the diff (side-by-side .tf-sbs)', k > 0 && /tf-sbs/.test(s.slice(k, k + 600)) && kdiff > k && kdiff < k + 4000);
 })();
 
 // 4. the delta reads +N −M
@@ -95,6 +105,10 @@ function grn(msg) { process.stdout.write('\x1b[32m' + msg + '\x1b[0m\n'); }
 (function () {
 	const s = fs.readFileSync(path.join(root, 'www/css/app.css'), 'utf8');
 	ok('css: .turn-files styles the table', /\.turn-files/.test(s) && /\.turn-file-row/.test(s));
+	ok('css: the name is one horizontal line (no per-character stack)', !/\.turn-file-name \{[^}]*writing-mode/.test(s) && !/\.turn-file-name \{[^}]*flex-direction: column/.test(s));
+	ok('css: additions green, deletions red', /\.tf-add \{ color: var\(--ok/.test(s) && /\.tf-del \{ color: var\(--danger/.test(s));
+	ok('css: the side-by-side diff grid', /\.tf-sbs-row \{ display: grid; grid-template-columns: 1fr 1fr; \}/.test(s));
+	ok('css: the fold bar (.tf-fold) is styled', /\.tf-fold/.test(s));
 })();
 
 let fails = 0;
