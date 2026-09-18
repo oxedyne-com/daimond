@@ -51,6 +51,8 @@ if (BREAK === 'deltas') s = s.replace(/DaimondVersions\.diff/g, 'DaimondVersions
 if (BREAK === 'click') s = s.replace(/var open = \(window\.DaimondFiles && DaimondFiles\.open\) \|\| \(typeof openFile === 'function' \? openFile : null\);/, 'var open = openFile;');
 if (BREAK === 'sbs') s = s.replace("wrap.className = 'tf-sbs';", "wrap.className = 'x';").replace(/function paintDiff\(d\) \{/, 'function paintDiffGone(d) {');
 if (BREAK === 'tool') s = s.replace(/buildTile\('tool', \{ expanded: true, copy: text, ts: ts \}\)/, "buildTile('user', { expanded: true, copy: text, ts: ts })");
+if (BREAK === 'foldkey') s = s.replace("more.textContent = t('chat.turn_files_more', { n: restCount });", "more.textContent = tn('chat.turn_files_more', restCount, { n: restCount });");
+if (BREAK === 'newadd') s = s.replace("if (now && !was) {", "if (false) {");
 const checks = [];
 const ok = (name, pass) => checks.push([name, !!pass]);
 
@@ -81,6 +83,16 @@ function grn(msg) { process.stdout.write(msg + '\n'); }
 	const k = s.indexOf('function paintDiff');
 	const kdiff = s.indexOf('DaimondVersions.diff', k);
 	ok('the delta click shows the diff (side-by-side .tf-sbs)', k > 0 && /tf-sbs/.test(s.slice(k, k + 600)) && kdiff > k && kdiff < k + 4000);
+})();
+
+// 3b. the two defects the 2026-09-18 vision pass found (keep them red-first):
+//   --break foldkey  the fold label calls the plural tn() (raw key on screen)
+//   --break newadd   a new file (no was) never paints its all-add count
+(function () {
+	const i = s.indexOf('function _tailNoteTable');
+	const body = s.slice(i, i + 8000);
+	ok('the fold label uses the flat key (t), never plural tn()', /t\('chat\.turn_files_more'/.test(body) && !/tn\('chat\.turn_files_more'/.test(body));
+	ok('a new file (no was) still paints its all-add count', /if \(now && !was\) \{/.test(body) && /DaimondVersions\.diff\(id, '', now\)/.test(body));
 })();
 
 // 4. the delta reads +N −M

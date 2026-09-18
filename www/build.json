@@ -1,1 +1,1 @@
-{"build":"c7ea1cd23ed4","note":"capture safe: node/pixel caps + throw-guard + watchdog so self-capture cannot freeze the app"}
+{"build":"3aaf916dcf9f","note":"#22: fold label shows translated text not a raw i18n key; new-file all-add count fixed (daimon vision-caught)"}

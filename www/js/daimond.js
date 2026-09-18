@@ -12372,8 +12372,10 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		if (restCount > 0) {
 			var more = document.createElement('button');
 			more.type = 'button';
-			more.className = 'turn-files-more';
-			more.textContent = tn('chat.turn_files_more', restCount, { n: restCount });
+		more.className = 'turn-file-more';
+		// #22 vision pass: the plural lookup (tn → '.one'/'.other') shows the raw key
+		// on screen because only the flat key exists in every catalogue; the flat key is it.
+		more.textContent = t('chat.turn_files_more', { n: restCount });
 			more.addEventListener('click', function () {
 				// Unfold in place: the fold button goes, the remaining rows follow.
 				p.files.slice(_TAIL_MORE).forEach(function (nm) {
@@ -12418,6 +12420,9 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		var was = e && !e.gone && e.was ? e.was : '';
 		var now = e && !e.gone ? (e.hash || '') : '';
 		if (was || now) {
+			// #22 vision pass: a NEW file (no `was`) never got its all-add count — the
+			// auto-paint gate demanded both hashes. The empty `was` is legal to diff
+			// (an empty before is an all-add after), so gate on either hash existing.
 			function paintDelta(d) {
 				// #22 live-fix: green additions, red deletions — two spans, one count.
 				if (!d) { de.textContent = '·'; return; }
@@ -12482,7 +12487,11 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 					if (sbs) row.appendChild(sbs);
 				} catch (err) { /* the store was pruned or the body was not kept: the delta stays · */ }
 			});
-			if (was && now) {
+			if (now && !was) {
+				// A new file: all-add, no press needed. (`was` empty is legal: the Rust
+				// side reads an empty before, so the whole after body is additions.)
+				DaimondVersions.diff(id, '', now).then(paintDelta).catch(function () { });
+			} else if (was && now) {
 				// The count is shown without a press on the common path (an update
 				// with both bodies kept) — a press then folds the diff in/out.
 				DaimondVersions.diff(id, was, now).then(paintDelta).catch(function () { });
