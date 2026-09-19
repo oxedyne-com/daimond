@@ -284,6 +284,179 @@ async function main() {
 			missDeltaA.textContent === '·', missDeltaA.textContent);
 	}
 
+	// ── (C) THE CLICKS: name opens the file, the delta folds a REAL diff ──
+	//
+	// (B) proves the table PAINTS. It never clicks a row. Live (owner, 2026-09-19)
+	// both clicks were dead: the name link opened nothing, and the +N −M diff came
+	// up empty. Two root causes, one per click, each proven fail-first here:
+	//
+	//   * the NAME click resolved its opener from `window.DaimondFiles.open` (never
+	//     exposed -- js:39069) and a bare `openFile` (defined inside the Files
+	//     closure, not in scope in the chat closure), so `open` was null and the
+	//     click did nothing. The opener is `Files.open`, in scope in the one IIFE.
+	//   * the DELTA click's `paintDiff` routed a pure-add pair (`op '+'`) into the
+	//     deletion branch, which blanks the right cell -- so an all-add diff
+	//     (`+N −0`, a new file) rendered as empty rows.
+	//
+	// The harness mirrors the REAL scope: `window` exists but exposes no `open`,
+	// there is NO bare `openFile` (deliberately not a Function param), and `Files`
+	// carries the real door. On the pre-fix tree (c1) and (c3) fail.
+	console.log('\n(C) the row clicks: name -> opener; delta -> a non-empty side-by-side diff');
+	{
+		function makeEl(tag) {
+			return {
+				tagName: tag, className: '', textContent: '', title: '', type: '',
+				_children: [], _listeners: {},
+				classList: { _s: new Set(), add(c) { this._s.add(c); }, remove(c) { this._s.delete(c); }, contains(c) { return this._s.has(c); } },
+				appendChild(child) { const i = this._children.indexOf(child); if (i >= 0) this._children.splice(i, 1); this._children.push(child); return child; },
+				insertBefore(child, ref) { const i = this._children.indexOf(ref); this._children.splice(i < 0 ? this._children.length : i, 0, child); return child; },
+				replaceChildren() { this._children = []; },
+				addEventListener(type, fn) { this._listeners[type] = fn; },
+				querySelector(sel) { return findEl(this, sel); },
+				remove() {},
+			};
+		}
+		// A node's classes come from BOTH `.className` (set as a whole string, e.g.
+		// paintDiff's `wrap.className = 'tf-sbs'`) and `classList.add(...)`; a real
+		// querySelector sees both, so the stub must too.
+		function classesOf(el) {
+			const set = new Set((el.classList && el.classList._s) ? el.classList._s : []);
+			String(el.className || '').split(/\s+/).forEach((c) => { if (c) set.add(c); });
+			return set;
+		}
+		function matchesSel(el, sel) { return sel.charAt(0) === '.' ? classesOf(el).has(sel.slice(1)) : el.className === sel; }
+		function findEl(el, sel) {
+			for (const c of (el._children || [])) { if (matchesSel(c, sel)) return c; const d = findEl(c, sel); if (d) return d; }
+			return null;
+		}
+		function textsOf(el, acc) { acc = acc || []; if (el.textContent) acc.push(el.textContent); (el._children || []).forEach((c) => textsOf(c, acc)); return acc; }
+
+		const document = { createElement: (tag) => makeEl(tag) };
+		function tn(key, n) {
+			if (key === 'chat.turn_files') return n + ' file' + (n === 1 ? '' : 's') + ' changed this turn';
+			if (key === 'chat.turn_files_more') return 'Show ' + n + ' more';
+			return key;
+		}
+		// a.txt is an UPDATE (was -> now); b.txt is a NEW file (no `was`, all-add).
+		const manifestsFixture = [{
+			version: 7, v: 1, files: [
+				{ path: 'a.txt', hash: 'A1', was: 'A0', gone: false },
+				{ path: 'b.txt', hash: 'B1', gone: false },
+			],
+		}];
+		const DIFFS = {
+			'A0|A1': { add: 1, del: 1, rows: [{ op: '-', text: 'old line' }, { op: '+', text: 'new line' }] },
+			'|B1':   { add: 2, del: 0, rows: [{ op: '+', text: 'added alpha' }, { op: '+', text: 'added beta' }] },
+		};
+		const DaimondVersions = {
+			manifests: async () => manifestsFixture,
+			diff: async (id, was, now) => DIFFS[(was || '') + '|' + (now || '')] || null,
+		};
+		// The real opener, in scope in the app's one IIFE as `Files.open`.
+		const openSpy = [];
+		const Files = { open: (p, opts) => { openSpy.push({ path: p, opts: opts }); } };
+		// `window` exists but exposes NO `open` -- the exact shape of
+		// window.DaimondFiles at daimond.js:39069. And `openFile` is deliberately
+		// NOT a Function parameter, so it is out of scope here as it is in the real
+		// chat closure: the pre-fix opener resolution therefore yields null.
+		const windowStub = { DaimondFiles: { entries() {}, folder() { return null; } } };
+
+		const tableSrc = [
+			extractVar(src, '_TAIL_MORE'),
+			extractFn(src, '_parseTailNote'),
+			extractFn(src, '_tailNoteTable'),
+			extractFn(src, '_turnFileRow'),
+		].join('\n');
+		const wrapperBody = 'var currentDiamond = { id: "d1" };\n' + tableSrc
+			+ '\nreturn { tailNoteTable: _tailNoteTable };\n';
+		// `DaimondFiles` is passed as its own name too: in the browser a bare
+		// `DaimondFiles` IS `window.DaimondFiles` (a global), and the pre-fix code
+		// reads it bare -- so the harness resolves it the same way. It has no
+		// `open`, exactly as the real public object does not (js:39069). The fixed
+		// code ignores both and reaches `Files.open`.
+		const table = new Function('document', 'tn', 'DaimondVersions', 'window', 'DaimondFiles', 'Files', wrapperBody)(
+			document, tn, DaimondVersions, windowStub, windowStub.DaimondFiles, Files);
+
+		const TAIL = '[Daimond: this turn changed 2 files (v7): a.txt, b.txt. The user can '
+			+ 'restore any of them from History, and file_revert does the same when they ask.]';
+		const box = await table.tailNoteTable(TAIL);
+		await new Promise((r) => setImmediate(r));
+		await new Promise((r) => setImmediate(r));
+
+		const rows = box._children[1];
+		const rowA = rows._children[0], rowB = rows._children[1];
+		const [nameA, deltaA] = rowA._children;
+		const deltaB = rowB._children[1];
+
+		// (c1) NAME CLICK -> the real opener is invoked with the row's path.
+		// PRE-FIX: `open` is null, the spy is never called -> this fails.
+		nameA._listeners.click({ stopPropagation() {} });
+		await new Promise((r) => setImmediate(r));
+		check('(c1) clicking a name invokes the opener with the file path',
+			openSpy.length === 1 && openSpy[0].path === 'a.txt', JSON.stringify(openSpy));
+
+		// (c2) DELTA CLICK on an UPDATE -> a non-empty side-by-side with BOTH sides.
+		// (A regression guard: the update path was already right; this keeps it so.)
+		await deltaA._listeners.click({ stopPropagation() {} });
+		const sbsA = rowA.querySelector('.tf-sbs');
+		const bodyA = textsOf(sbsA || makeEl('x')).join('\n');
+		check('(c2) an update\'s delta folds in a non-empty diff carrying both sides',
+			!!sbsA && bodyA.indexOf('old line') >= 0 && bodyA.indexOf('new line') >= 0, bodyA);
+
+		// (c3) DELTA CLICK on a NEW FILE (all-add) -> the ADDED lines render.
+		// PRE-FIX: `op '+'` pairs blank the right cell -> the diff is all-empty -> fails.
+		await deltaB._listeners.click({ stopPropagation() {} });
+		const sbsB = rowB.querySelector('.tf-sbs');
+		const bodyB = textsOf(sbsB || makeEl('x')).join('\n');
+		check('(c3) a new file\'s all-add delta renders the added lines (not empty rows)',
+			!!sbsB && bodyB.indexOf('added alpha') >= 0 && bodyB.indexOf('added beta') >= 0, bodyB);
+	}
+
+	// (D) the +95s dispatch backstop stands down while a LOCAL recovery of the turn is
+	// in flight. The milestone audit (D-11) found runDispatchFallback would re-seat a
+	// turn to another desktop even while dispatchToPeer was recovering it locally (a
+	// refused hand-off holds the SELF lease for the whole run) -- a second placeholder
+	// and a stray errand. The two-line `_localRecovering` guard fixes it; this lifts the
+	// REAL runDispatchFallback out of daimond.js and locks the guard both ways.
+	{
+		const fnSrc = extractFn(src, 'runDispatchFallback');
+		const makeFn = (recovering) => {
+			const retrySpy = [], localSpy = [];
+			const peer  = { REASON_DISPATCHED: 'dispatched', recoverDecision: () => true, runErrand: () => {} };
+			const lease = { record: () => null };
+			const stubs = {
+				window:                      { DaimondPeer: peer, DaimondLease: lease },
+				DaimondPeer:                 peer,
+				DaimondLease:                lease,
+				chats:                       [{ id: 'c1', messages: [{ why: 'dispatched', iturn: 't1' }] }],
+				dispatchedChat:              () => null,
+				dispatchedTurnFinished:      () => false,
+				selfDeviceId:                () => 'self',
+				_localRecovering:            recovering ? { t1: true } : Object.create(null),
+				retryNextDesktopBeforeLocal: async () => { retrySpy.push(1); return false; },
+				recoverOneLocally:           async () => { localSpy.push(1); },
+			};
+			const names = Object.keys(stubs);
+			const fn = new Function(...names, fnSrc + '\nreturn runDispatchFallback;')(...names.map((n) => stubs[n]));
+			return { fn, retrySpy, localSpy };
+		};
+
+		// (d1) GUARD ON: a turn already recovering locally is neither re-seated nor re-run.
+		// PRE-FIX (no guard) this re-dispatched the still-running turn to another desktop.
+		const on = makeFn(true);
+		await on.fn('c1', 't1');
+		check('(d1) backstop stands down while _localRecovering[tid] is set (no re-seat, no re-run)',
+			on.retrySpy.length === 0 && on.localSpy.length === 0,
+			{ retry: on.retrySpy.length, local: on.localSpy.length });
+
+		// (d2) GUARD OFF: with no local recovery in flight, the backstop still proceeds
+		// to try the next desktop -- the guard is surgical, not a blanket stand-down.
+		const off = makeFn(false);
+		await off.fn('c1', 't1');
+		check('(d2) with no local recovery in flight, the backstop still retries the next desktop',
+			off.retrySpy.length === 1, { retry: off.retrySpy.length });
+	}
+
 	console.log(failures ? ('\nFAIL -- ' + failures + '/' + checks + ' checks') : ('\nALL PASS -- ' + checks + '/' + checks));
 	process.exit(failures ? 1 : 0);
 }

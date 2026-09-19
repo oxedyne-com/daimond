@@ -882,15 +882,17 @@
 		var seed = (o.seed === false) ? null
 			: (o.seed || seedFrom(c, turnId, o.seedMaxMsgs, o.seedMaxChars));
 		return {
-			// ERRAND FIRST (seq 223). The errand carries the thread (`seed`), so a peer
-			// can read the prompt the moment it claims and the claim no longer waits on a
-			// whole-account flush -- which on the owner's phone was 23.3 s of a 27.6 s
-			// wait, for a conversation of a few kilobytes. The local turn is marked
-			// SECOND, so the placeholder and its "is on it" follow the post rather than
-			// the push. The parcel goes LAST and in the BACKGROUND: the workspace, the
-			// Diamonds and the rest of the account still travel, and nothing the runner
-			// waits on is behind them.
-			order:  [STEP_POST_ERRAND, STEP_MARK_DISPATCH, STEP_PUSH_PROMPT],
+			// MARK FIRST, then post, then push. The durable `why:'dispatched'`
+			// placeholder is written BEFORE the errand is posted, so a refused post is a
+			// TRANSCRIPT event a store-driven rebuild reproduces -- not DOM chrome the
+			// rebuild wipes, leaving the user an empty turn (D-20260918-27). The mark is a
+			// LOCAL write, no network, so it does not reintroduce the seq-223 wait: the
+			// errand still carries the thread (`seed`) and is still posted AHEAD of the
+			// parcel PUSH, which was the whole of seq 223 -- a peer that claims reads the
+			// prompt at once and waits on no whole-account flush. The parcel goes LAST and
+			// in the BACKGROUND: the workspace, the Diamonds and the rest of the account
+			// still travel, and nothing the runner waits on is behind them.
+			order:  [STEP_MARK_DISPATCH, STEP_POST_ERRAND, STEP_PUSH_PROMPT],
 			turnId: turnId, chatId: chatId, eid: eid, seed: seed,
 			// What daimond.js writes on the local turn BETWEEN the push and the post,
 			// so recoverInterrupted and Continue treat it as peer-held, not a local
@@ -917,6 +919,45 @@
 				seed: seed,
 			},
 		};
+	}
+
+	/// Seal the dispatch errand, DROPPING the thread seed when the sealed envelope
+	/// would not fit the relay. The seed is a fast-path for a peer that has NOT synced
+	/// (peer.js §, "a device that has not synced"); a peer already holding the thread
+	/// grafts nothing from it. When the recent tail is large the seed both DUPLICATES
+	/// what a synced peer already has AND seals past the post door -- and the gateway
+	/// then 413s the WHOLE hand-off, so the errand never arrives and the turn is lost.
+	/// So the sealed size is measured against the effective `/api/post` cap
+	/// (`DaimondPost.relayMaxBytes`, the one number the relay client owns), and on a miss
+	/// the errand is re-sealed with `seed:false`: the runner reconstructs the thread from
+	/// the parcel it is syncing anyway (`seedGraft` returns nothing, `peerReconstruct`
+	/// pulls), the documented fallback -- a reconstruct wait, never the turn.
+	///
+	/// `plan` (optional) is a `buildDispatch` result the caller already built, so the
+	/// local mark can be drawn before this awaits; omitted, it is built here. `cap`
+	/// (optional) overrides the relay cap, for tests. Answers
+	/// `{ plan, body, seedDropped, sealedLen }` -- `plan` is the one whose `errand` the
+	/// returned `body` actually seals (the seedless re-seal when the seed was dropped).
+	async function sealFittingErrand(chat, opts, plan, cap) {
+		var lim = (cap | 0) > 0 ? (cap | 0)
+			: (window.DaimondPost && DaimondPost.relayMaxBytes ? DaimondPost.relayMaxBytes() : (64 * 1024));
+		var p    = plan || buildDispatch(chat, opts);
+		var body = await sealForSelf(p.errand(0));
+		var hadSeed = !!(p.fields && p.fields.seed);
+		var envLen  = String((body && body.envelope) || '').length;
+		var fits = (window.DaimondPost && DaimondPost.fitsRelay)
+			? DaimondPost.fitsRelay(envLen, lim)
+			: (Math.floor(envLen / 4) * 3 <= lim);
+		if (hadSeed && !fits) {
+			var o2 = {};
+			if (opts) Object.keys(opts).forEach(function (k) { o2[k] = opts[k]; });
+			o2.seed = false;			// suppress the thread -- the runner pulls the parcel
+			o2.eid  = p.fields.eid;		// keep the errand id stable across the re-seal
+			p    = buildDispatch(chat, o2);
+			body = await sealForSelf(p.errand(0));
+			return { plan: p, body: body, seedDropped: true, sealedLen: String((body && body.envelope) || '').length };
+		}
+		return { plan: p, body: body, seedDropped: false, sealedLen: envLen };
 	}
 
 	/// What a turn marked `why:'dispatched'` should be treated as, given the lease.
@@ -3945,6 +3986,9 @@
 		/// (`buildDispatch`), and classify a `why:'dispatched'` turn against the
 		/// lease (`dispatchState`). daimond.js runs the order; these hold the logic.
 		buildDispatch: buildDispatch,
+		/// Seal the dispatch errand, dropping the thread seed when it would not fit the
+		/// relay (a large tail a synced peer already holds, which would 413 the hand-off).
+		sealFittingErrand: sealFittingErrand,
 		dispatchState: dispatchState,
 		/// The §5 display state of a dispatched turn (dispatched/no-peer-awake/
 		/// claimed/running/done/failed). Pure; daimond.js only renders it.

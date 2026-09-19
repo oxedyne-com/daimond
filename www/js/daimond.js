@@ -12401,11 +12401,27 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		nm.title = name;
 		nm.addEventListener('click', function (ev) {
 			ev.stopPropagation();
-			// #22 live-fix: the chat closure has its own `openFile` (the free-note
-			// door), so calling it here opened nothing. The Files module's public
-			// door is the one that opens a file in the Doc panel.
-			var open = (window.DaimondFiles && DaimondFiles.open) || (typeof openFile === 'function' ? openFile : null);
-			if (open) { try { open(name, { line: 0 }); } catch (e) { /* the panel says why */ } }
+			// #22 root-fix: the opener is `Files.open` -- the one door in this IIFE
+			// that opens a file in the Doc panel (var Files ~34001), the same one the
+			// file tree's own rows and the daimon's `file_show` reach. The earlier
+			// fix reached for `window.DaimondFiles.open`, which that public object
+			// never exposed (js:39069), and then for a bare `openFile`, which is
+			// defined INSIDE the Files closure and is not in scope here -- so the
+			// opener resolved to null and every name click opened nothing. A store
+			// path (`diamonds/<id>/…`) resolves to the OPFS store through `read_file`
+			// itself (`is_store_path` in src/tools.rs), exactly as the tree's own
+			// diamond rows open it, so no store flag is owed. The failure is no longer
+			// swallowed: `openFile` is async, so a sync try/catch never caught its
+			// rejection anyway -- the panel says why, and the console does too.
+			try {
+				Promise.resolve(Files.open(name, { line: 0 })).catch(function (e) {
+					try { console.warn('Daimond: could not open "' + name + '": '
+						+ ((e && e.message) ? e.message : e)); } catch (e2) { /* no console */ }
+				});
+			} catch (e) {
+				try { console.warn('Daimond: could not open "' + name + '": '
+					+ ((e && e.message) ? e.message : e)); } catch (e2) { /* no console */ }
+			}
 		});
 		row.appendChild(nm);
 		var de = document.createElement('button');
@@ -12468,7 +12484,14 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 					line.className = 'tf-sbs-row' + (p.op === '!' ? ' chg' : p.op === '+' ? ' add' : '');
 					var L = document.createElement('div'); L.className = 'tf-sbs-cell tf-sbs-l' + (p.op === '!' || p.op === ' ' ? '' : ' empty');
 					var R = document.createElement('div'); R.className = 'tf-sbs-cell tf-sbs-r' + (p.op === '+' ? ' add' : '');
-					if (p.op === '+' || p.after === null) { L.textContent = p.before || ''; L.classList.add('del'); R.textContent = ''; }
+					// #22 root-fix: a pure addition (`op '+'`) has its OWN branch. It used
+					// to fall into the deletion branch below (the `p.op === '+'` guard),
+					// which puts the empty `before` on the LEFT and BLANKS the right cell --
+					// so the added text was thrown away and an all-add diff (a new file, or
+					// `+N −0`) rendered as a block of empty rows. The added line belongs on
+					// the right (add) side; the left stays empty.
+					if (p.op === '+') { L.textContent = ''; R.textContent = p.after || ''; R.classList.add('add'); }
+					else if (p.after === null) { L.textContent = p.before || ''; L.classList.add('del'); R.textContent = ''; }
 					else if (p.op === '!') { L.textContent = p.before || ''; L.classList.add('del'); R.textContent = p.after || ''; R.classList.add('add'); }
 					else { L.textContent = p.before || ''; R.textContent = p.after || ''; }
 					line.appendChild(L); line.appendChild(R); wrap.appendChild(line);
@@ -12508,7 +12531,9 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		// renders as a tool-style tile (the same furniture #17's fold tiles use),
 		// never as a "You" bubble.
 		if (/^\[Daimond: this turn changed /.test(text)) {
-			var d2 = buildTile('tool', { expanded: true, copy: text, ts: ts });
+			// #22: the changed-files summary is the app noticing files changed, not a
+			// model tool call — so it wears a "Files" header, not the generic "Tool".
+			var d2 = buildTile('tool', { who: tOr('chat.who_files', 'Files'), expanded: true, copy: text, ts: ts });
 			_tailNoteTable(text).then(function (tbl) {
 				if (!tbl) return;
 				var c = d2.querySelector('.ctile-body');
@@ -19741,7 +19766,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		// carried total on a re-run of a parked turn), so the ≤MAX_PARKS respend bound
 		// holds across devices.
 		var parkCount = (opts && (opts.parkCount | 0)) || 0;
-		var plan = DaimondPeer.buildDispatch(chat, {
+		var dispatchOpts = {
 			turnId: turnId,
 			// The Diamond this chat belongs to (a daimon chat), so the runner services it
 			// through `steer_crystal`. '' for an ordinary chat. Falls back to the chat's own
@@ -19760,42 +19785,86 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			pause:  pause,
 			dispatchedBy: by,
 			parkCount: parkCount,
-		});
+		};
+		var plan = DaimondPeer.buildDispatch(chat, dispatchOpts);
 		var t0 = (opts && opts.t0) || Date.now();		// turn-send origin, if the caller gave one
-		// 1. POST THE ERRAND FIRST. It carries the prompt, the model, the scope, the
-		//    pause snapshot AND the thread (`seed`), so a peer that claims it can read
-		//    everything the turn needs without waiting for a parcel. `parcelVersion` is
-		//    0 -- there is no pushed version yet -- which the receiver reads as "no
-		//    target version" and its progress-based catch-up already handles.
-		var body;
-		try { body = await DaimondPeer.sealForSelf(plan.errand(0)); }
-		catch (e) { return { ok: false, why: 'the errand could not be sealed: ' + (e && e.message || e) }; }
-		var tPost = Date.now();
-		var res = await DaimondPost.post(body);
-		if (!res || !res.ok) {
-			diag('dispatch FAILED', 'turn=' + turnId + ' ' + ((res && res.why) || 'relay refused'));
-			return { ok: false, why: (res && res.why) || 'the relay would not take the errand' };
-		}
-		// (a) THE ERRAND POSTED, and WHAT IT WEIGHED. The whole dispatcher-side cost of
-		// the hand-off now, because nothing else stands between the send and a peer
-		// being able to claim. The seed is named so a thread that grew past its budget
-		// is visible rather than inferred.
-		var seedMsgs = (plan.fields.seed && plan.fields.seed.msgs) ? plan.fields.seed.msgs.length : 0;
-		diag('dispatch posted', 'turn=' + turnId + ' post=' + (Date.now() - tPost) + 'ms'
-			+ ' send->posted=' + (Date.now() - t0) + 'ms seed=' + seedMsgs + 'msg/'
-			+ String((body && body.envelope) || '').length + 'B');
-		// 2. MARK the local turn peer-held, so the placeholder -- and the hand-off tile
-		//    with it -- is on screen the moment the errand is on the relay. Carry the
-		//    chosen target onto the mark, so the tile names the device before a lease
-		//    holder exists.
+		// Carry the chosen target onto the mark, so the tile names the device before a
+		// lease holder exists.
 		if (opts && (opts.toId || opts.toName)) {
 			plan.mark.toDevice = opts.toId || '';
 			plan.mark.toName   = opts.toName || '';
 		}
+		// 1. MARK THE LOCAL TURN FIRST. The DURABLE `why:'dispatched'` placeholder --
+		//    and, through `drawHistoryMessage`, its hand-off tile -- is written BEFORE
+		//    the post, so a refused post is a TRANSCRIPT event a store-driven rebuild
+		//    reproduces, not DOM chrome the rebuild wipes into an empty turn
+		//    (D-20260918-27). It is a local write, so it does not reintroduce the seq-223
+		//    flush wait: the errand is still posted ahead of the parcel PUSH below.
 		markTurnDispatched(chat, plan.mark);
-		// 3. PUSH THE PARCEL, IN THE BACKGROUND. Everything the turn may reach for that
+		var placeholder = null;
+		for (var pmi = chat.messages.length - 1; pmi >= 0; pmi--) {
+			var pmm = chat.messages[pmi];
+			if (pmm && pmm.why === DaimondPeer.REASON_DISPATCHED && String(pmm.iturn) === String(turnId)) { placeholder = pmm; break; }
+		}
+		// 2. SEAL THE ERRAND, dropping the thread seed if the sealed envelope would not
+		//    fit the relay. A large recent tail both DUPLICATES what a synced peer already
+		//    holds and would 413 the whole hand-off; the errand is then re-sealed seedless
+		//    and the runner reconstructs from the parcel (peerReconstruct) -- the
+		//    documented fallback (§, `seed:null` = "pull the parcel as before").
+		var tPost = Date.now();
+		var sealed;
+		try { sealed = await DaimondPeer.sealFittingErrand(chat, dispatchOpts, plan); }
+		catch (e) {
+			// The identity is locked or absent: the errand cannot be sealed and the turn
+			// cannot be run locally either (a local run needs the same identity). The
+			// durable placeholder stands, so `recoverInterrupted` picks the turn up on the
+			// next unlock rather than it being lost.
+			var whyS = 'the errand could not be sealed: ' + (e && e.message || e);
+			diag('dispatch FAILED', 'turn=' + turnId + ' seal: ' + whyS);
+			if (placeholder) {
+				placeholder.refused = { status: 0, why: whyS, ts: Date.now() };
+				try { touchChat(chat); persistChats(); if (ownsChat(chat)) renderHistory(chat.messages); } catch (e2) { /* the record stands regardless */ }
+			}
+			return { ok: false, why: whyS };
+		}
+		var body = sealed.body;
+		// 3. POST THE ERRAND. It carries the prompt, the model, the scope, the pause
+		//    snapshot and (where it fit) the thread, so a peer that claims reads
+		//    everything the turn needs without waiting for a parcel. `parcelVersion` is 0
+		//    -- there is no pushed version yet -- which the receiver reads as "no target
+		//    version" and its progress-based catch-up already handles.
+		var res = await DaimondPost.post(body);
+		if (!res || !res.ok) {
+			// A REFUSED POST IS NOT A LOST TURN (the D-20260918-27 / 413 failure). Stamp
+			// the durable placeholder with the refusal and run the turn HERE at once: this
+			// device holds the chat, so the take-if-vacant lease makes the local run
+			// money-safe and it carries the seq-207 "Ran here -- hand-off didn't finish"
+			// provenance on completion. A post refusal is relay-wide -- the errand goes to
+			// the account's OWN box, collected by any device -- so re-posting to another
+			// desktop cannot succeed where this did not; local recovery is the terminating,
+			// correct route (it is the same money-safe path the +95 s backstop takes).
+			var whyR = (res && res.why) || 'the relay would not take the errand';
+			diag('dispatch FAILED', 'turn=' + turnId + ' ' + whyR + ' status=' + (res && res.status | 0));
+			if (placeholder) {
+				placeholder.refused = { status: (res && res.status) | 0, why: whyR, ts: Date.now() };
+				try { touchChat(chat); persistChats(); if (ownsChat(chat)) renderHistory(chat.messages); } catch (e3) { /* the record stands regardless */ }
+				try { recoverOneLocally(chat, placeholder); } catch (e4) { /* backstop + recovery-on-return remain */ }
+			}
+			return { ok: false, why: whyR, refused: true };
+		}
+		// (a) THE ERRAND POSTED, and WHAT IT WEIGHED. The seed count is named -- and a
+		// dropped-because-too-large seed flagged -- so a thread that outgrew the door is
+		// visible rather than inferred.
+		var seedMsgs = (sealed.plan.fields.seed && sealed.plan.fields.seed.msgs) ? sealed.plan.fields.seed.msgs.length : 0;
+		diag('dispatch posted', 'turn=' + turnId + ' post=' + (Date.now() - tPost) + 'ms'
+			+ ' send->posted=' + (Date.now() - t0) + 'ms seed=' + seedMsgs + 'msg'
+			+ (sealed.seedDropped ? '(dropped:too-large)' : '') + '/'
+			+ String((body && body.envelope) || '').length + 'B');
+		// 4. PUSH THE PARCEL, IN THE BACKGROUND. Everything the turn may reach for that
 		//    the errand does not carry -- the workspace, the Diamonds, the models, the
-		//    ledger -- and the durable copy of this turn's own prompt. Not awaited: the
+		//    ledger -- and the durable copy of this turn's own prompt. When the seed was
+		//    dropped this push is also what the runner reconstructs the thread from. Not
+		//    awaited: the
 		//    runner is not waiting for it, and neither should the person who sent the
 		//    turn. Its cost is logged when it lands, so a slow parcel stays visible.
 		var tFlush = Date.now();
@@ -21422,6 +21491,9 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 				}
 			}
 			for (var k = 0; k < jobs.length; k++) {
+				// Skip a turn already being recovered locally here (a refused hand-off runs
+				// it at once and holds the SELF lease); the wake path must not re-seat it.
+				if (_localRecovering[String(jobs[k].m.iturn)]) continue;
 				// NO PREMATURE LOCAL, on the WAKE path too (owner rule 2026-09-09). The
 				// backstop timer (runDispatchFallback) already prefers re-handing an orphan
 				// to the NEXT live non-mobile desktop before running it here; the wake path
@@ -21522,6 +21594,13 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			// "Ran here — hand-off to X didn't finish" provenance (seq 207), so the owner
 			// can always tell where it ran.
 			if (!DaimondPeer.recoverDecision(m, lease, fin, selfDeviceId(), Date.now())) return;
+			// Stand down while a local recovery of this turn is already in flight: a refused
+			// hand-off recovers locally at once (dispatchToPeer -> recoverOneLocally) and holds
+			// the lease as SELF for the whole run, so the +95s backstop would otherwise re-seat
+			// the still-running turn to another desktop -- a second placeholder and a stray
+			// errand. `_localRecovering` is the synchronous "this device is running that turn"
+			// set; the lease stays the cross-device arbiter.
+			if (_localRecovering[tid]) return;
 			// NO PREMATURE LOCAL (owner rule 2026-09-09): a seated desktop that never claimed
 			// within the backstop window must not send the phone straight to a local run while
 			// ANOTHER live non-mobile desktop is available. Try the next live desktop first --
@@ -22254,29 +22333,20 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			try { appendUserMessage(text, uts); } catch (e) { /* the record below is the truth */ }
 			chat.messages.push({ role: 'user', content: text, mid: umid, iturn: umid, ts: uts });
 			touchChat(chat); persistChats();
-			// SHOW THE HAND-OFF THE INSTANT IT IS DECIDED. `dispatchToPeer` pushes the
-			// prompt parcel FIRST (a network round trip) and only marks the turn
-			// dispatched — the point renderHistory draws the placeholder — AFTER that
-			// returns, so until this the turn sat with no indication for the whole
-			// push, which read as "it did nothing" (owner review 2026-09-05). Draw the
-			// hand-off tile with its spinner immediately from a synthetic placeholder
-			// naming the chosen peer; the durable placeholder's identical tile takes
-			// over on the post-push re-render, so the spinner is continuous.
-			try {
-				appendDispatchedTile({
-					why:      'dispatched',
-					iturn:    umid,
-					itext:    text,
-					toDevice: advId,			// the nominee (who the claim routes to), or '' -> generic
-					toName:   advName,
-					ts:       Date.now(),
-				});
-			} catch (e) { /* the durable placeholder draws it after the push */ }
+			// SHOW THE HAND-OFF THE INSTANT IT IS DECIDED, from the DURABLE record.
+			// `dispatchToPeer` now MARKS the turn dispatched FIRST -- before it seals or
+			// posts -- so the durable `why:'dispatched'` placeholder, and its identical
+			// hand-off tile through `drawHistoryMessage`, is on screen the moment the seal
+			// completes (local crypto, not the network round trip). No SYNTHETIC DOM-only
+			// tile is drawn here: that was the interim representation a store-driven
+			// rebuild wiped, which -- with no durable row behind it on a refused post --
+			// left the user an empty turn (D-20260918-27). A refused or undeliverable post
+			// is handled INSIDE `dispatchToPeer`: it stamps the durable placeholder and
+			// runs the turn locally (money-safe via the lease), so there is no DOM-only
+			// `appendError` to be wiped and no dead turn to recover from nothing.
 			dispatchToPeer(chat, umid, text, Array.isArray(chat.holds) ? chat.holds : [],
 				{ toId: advId, toName: advName, t0: tSend, diamondId: String(chat.diamondId || '') }
-			).then(function (res) {
-				if (!res || !res.ok) { try { appendError((res && res.why) || 'could not hand this to a peer'); } catch (e) { /* drawn best-effort */ } }
-			});
+			);
 			// Arm the last-resort recovery backstop: if no peer claims this within ~one
 			// freshness window, run it here rather than let the spinner hang to the
 			// 15-min deadline (Fix B). Money-safe via the take-if-vacant lease. A turn

@@ -77,6 +77,31 @@
 	/// The relay. One path, five operations, all on the caller's own account.
 	var PATH = '/api/post';
 
+	/// The largest sealed envelope `/api/post` carries, in bytes: the gateway's own
+	/// `max_bytes` on this route (`gateway/app.jdat` `/api/post`, and the knob in
+	/// `gateway/src/settings.rs`). The deployed door is 64 KiB -- the same budget
+	/// peer.js's compile errand is sized against -- and the ERRAND dispatch measures
+	/// its sealed envelope against this so a hand-off never seals past the door and
+	/// 413s (which loses the whole turn). ONE number for the relay client, mirrored
+	/// from the deployed config because there is no served-settings door to read it
+	/// from at runtime; raise it here in step with the gateway if the door is widened.
+	/// NOT 3 MiB: that is the knob's fallback, not what jarrah has ever run.
+	var RELAY_MAX_BYTES = 64 * 1024;
+
+	/// The effective `/api/post` cap in bytes.
+	function relayMaxBytes() { return RELAY_MAX_BYTES; }
+
+	/// Would a sealed envelope whose BASE64 form is `envB64Len` characters long fit the
+	/// relay? The gateway turns a body away on the cheap pre-decode estimate --
+	/// `envelope.len() / 4 * 3 > max_bytes` -- before it decodes anything, so that exact
+	/// integer arithmetic is the authority and is written ONCE here, for the errand
+	/// dispatch (peer.js) and share.js to consult rather than each carrying its own copy.
+	/// `max` overrides the cap (share.js passes its own 3 MiB share ceiling).
+	function fitsRelay(envB64Len, max) {
+		var cap = (max | 0) > 0 ? (max | 0) : relayMaxBytes();
+		return Math.floor(Number(envB64Len || 0) / 4) * 3 <= cap;
+	}
+
 	/// The store, wrapped. `daimond-` prefixed so accounts.js namespaces it per
 	/// account without this file knowing: two people at one browser have two
 	/// message stores and neither can see the other's.
@@ -3396,6 +3421,12 @@
 		/// The raw put: an already-sealed `{ to, addr, envelope }` in the box, for
 		/// the peer's errand and report. Not a message; composes and stores nothing.
 		post:    post,
+		/// The relay's own size door, published so the errand dispatch (peer.js) and
+		/// share.js measure a sealed envelope against ONE cap and ONE arithmetic rather
+		/// than each guessing. `fitsRelay(base64Len, max?)` mirrors the gateway's cheap
+		/// pre-decode estimate exactly; `relayMaxBytes()` is the deployed `/api/post` cap.
+		relayMaxBytes: relayMaxBytes,
+		fitsRelay:     fitsRelay,
 		collect: collect,
 		ack:     ackThrough,
 		round:   round,

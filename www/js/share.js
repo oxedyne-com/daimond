@@ -830,19 +830,18 @@
 	// account and for a share going onto a memory stick, which is why it is not
 	// hidden behind the size.
 
-	/// Whether a sealed envelope of `n` bytes fits through the relay.
+	/// Whether a sealed envelope of `n` DECODED bytes fits through the relay.
 	function fitsRelay(n) {
-		// BOTH of the gateway's checks, which are not the same number. `/api/post`
-		// turns a body away on the cheap base64-length estimate BEFORE it decodes
-		// anything -- `envelope.len() / 4 * 3 > max_bytes` -- and then again on the
-		// decoded length. base64 rounds up to a group of three, so the estimate is
-		// the stricter of the two, and whether the ceiling itself is reachable
-		// depends on whether it divides by three. 64 KiB did not: 65,536 bytes is
-		// 87,384 characters and 87384 / 4 * 3 is 65,538, so the last size that went
-		// through was 65,535. Three mebibytes does divide by three, so the ceiling
-		// is exactly reachable and 3,145,729 is the first size refused. The
-		// arithmetic is the gateway's either way and is not restated as a number
-		// here, which is what kept this right through the change.
+		// The gateway turns a body away on the cheap base64-length estimate BEFORE it
+		// decodes anything -- `envelope.len() / 4 * 3 > max_bytes`. That arithmetic is
+		// the gateway's, and it is written ONCE, in post.js (the relay client), so a
+		// change to how the door measures lands in one place for both the share carrier
+		// and the errand dispatch. The share door's ceiling is `RELAY_MAX` (3 MiB, the
+		// SHARE route's intended cap), passed explicitly; the decoded count maps to the
+		// base64 length the gateway checks by `ceil(n/3) * 4`. The local fallback below
+		// is the identical rule, for the (unused in the app) case where post.js is absent.
+		var b64Len = Math.ceil(Number(n) / 3) * 4;
+		if (window.DaimondPost && DaimondPost.fitsRelay) return DaimondPost.fitsRelay(b64Len, RELAY_MAX);
 		return Math.ceil(Number(n) / 3) * 3 <= RELAY_MAX;
 	}
 

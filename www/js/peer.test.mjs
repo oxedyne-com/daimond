@@ -590,34 +590,35 @@ async function main() {
 		scope: dchat.holds,			// daimond.js resolves scope (scopeChatTo / holds) and passes it
 		dispatchedBy: 'devPHONE', now: T0,
 	});
-	check('the order is post-errand -> mark-dispatched -> push-prompt (the errand first)',
-		plan.order.join(',') === 'post-errand,mark-dispatched,push-prompt');
+	check('the order is mark-dispatched -> post-errand -> push-prompt (the DURABLE record first)',
+		plan.order.join(',') === 'mark-dispatched,post-errand,push-prompt');
 	check('the mark is the dispatched reason on the turn',
 		plan.mark.why === 'dispatched' && plan.mark.iturn === 'turn-9' && plan.mark.interrupted === true);
 	check('the deadline defaults to ~15 minutes out',
 		plan.fields.deadline === T0 + phone.DaimondPeer.DISPATCH_DEADLINE_MS);
 
-	// Drive the order end to end: post the errand FIRST (it carries the thread, so a
-	// peer can read the prompt the moment it claims), mark the turn, and push the
-	// parcel LAST -- exactly what daimond.js's thin wiring now does, with the push
-	// left running in the background. The sequence is recorded and must equal
-	// plan.order.
+	// Drive the order end to end: MARK the local turn first (the durable placeholder,
+	// so a refused post is a transcript event, D-20260918-27), post the errand SECOND
+	// (it still carries the thread AND is still ahead of the parcel push, which was the
+	// whole of seq 223), and push the parcel LAST in the background. The sequence is
+	// recorded and must equal plan.order.
 	let ver = 41;
 	const fakeSync = { push: async () => { ver += 1; }, version: () => ver };
 	const seq = [];
 	const errand9 = plan.errand(0);
 	const body9 = await phone.DaimondPeer.sealForSelf(errand9);
 	const before9 = relay2.since(0).length;
+	seq.push('mark-dispatched');			// daimond.js marks the local turn here, BEFORE the post
 	await phone.DaimondPost.post(body9); seq.push('post-errand');
-	seq.push('mark-dispatched');			// daimond.js marks the local turn here
 	await fakeSync.push(); seq.push('push-prompt');
 	const pv = fakeSync.version();
 
 	check('the executed sequence matches the planned order', seq.join(',') === plan.order.join(','));
 	check('the errand names NO parcel version -- there is no pushed version yet',
 		errand9.parcelVersion === 0 && pv === 42);
-	check('the errand was posted BEFORE the parcel push (the whole point of seq 223)',
-		seq.indexOf('post-errand') < seq.indexOf('push-prompt'));
+	check('the durable mark precedes the post, and the post precedes the parcel push',
+		seq.indexOf('mark-dispatched') < seq.indexOf('post-errand')
+		&& seq.indexOf('post-errand') < seq.indexOf('push-prompt'));
 	check('the post box grew by exactly the one errand', relay2.since(0).length === before9 + 1);
 
 	// The full envelope survives seal+sign+open, cross-device (laptop opens it).
@@ -712,6 +713,132 @@ async function main() {
 		check('S16: and TRUE once the prompt is in it, by mid and role',
 			P.holdsTurn(all, 'TURN') === true
 			&& P.holdsTurn({ messages: [{ role: 'assistant', content: 'x', mid: 'TURN' }] }, 'TURN') === false);
+	}
+
+	// ══════════════════════════════════════════════════════════
+	// FIX B — HAND OFF BY REFERENCE, NOT BY VALUE. The errand carries the thread
+	// (`seed`) only when the SEALED envelope fits the relay; a large conversation the
+	// target already has synced is handed off with `seed:null` so the errand never
+	// seals past the /api/post door and 413s (which lost the whole turn). The runner
+	// reconstructs the thread from the parcel it is syncing anyway.
+	//
+	// FIX A — a REFUSED POST is a durable transcript event, and the turn is recovered
+	// locally, never cleared into an empty prompt.
+	//
+	// Fail-first on the unmodified tree: `DaimondPost.relayMaxBytes`/`fitsRelay` and
+	// `DaimondPeer.sealFittingErrand` do not exist, and the dispatch order is
+	// post-first, so B0–B4 and A1 all fail there.
+	console.log('\nFIX B — a large synced thread is handed off by reference (seed:null), fitting the relay');
+	{
+		const cap = phone.DaimondPost.relayMaxBytes();
+		check('B0: the relay client publishes ONE effective /api/post cap (the deployed 64 KiB)',
+			cap === 64 * 1024);
+		check('B0: fitsRelay mirrors the gateway estimate exactly (base64Len/4*3 <= cap)',
+			phone.DaimondPost.fitsRelay(87380, cap) === true        // 87380/4*3 = 65535 <= 65536
+			&& phone.DaimondPost.fitsRelay(87384, cap) === false);  // 87384/4*3 = 65538  > 65536
+
+		// A REALISTIC ~90 KB thread -- the recent tail a long daimon chat carries. seedFrom
+		// clips it to SEED_MAX_CHARS, and that seed still SEALS (sign + GCM + base64) past
+		// the 64 KiB door: this is the Ontheism 413, reproduced.
+		const big = { id: 'chat-big', provider: 'openrouter', model: 'test/m', holds: [], messages: [] };
+		for (let i = 0; i < 24; i++) {
+			const role = i % 2 ? 'assistant' : 'user';
+			big.messages.push({ role, content: (role[0]).repeat(3100), mid: 'b' + i, ts: T0 + i * 10 });
+		}
+		big.messages.push({ role: 'user', content: 'the big-thread prompt', mid: 'TURN-BIG', ts: T0 + 1000 });
+		const bigOpts = { turnId: 'TURN-BIG', prompt: 'the big-thread prompt', dispatchedBy: 'devPHONE', now: T0 };
+
+		// The DISEASE: the default seed-bearing errand for this thread seals PAST the cap.
+		const withSeed  = phone.DaimondPeer.buildDispatch(big, bigOpts);
+		const sealedWith = await phone.DaimondPeer.sealForSelf(withSeed.errand(0));
+		check('B1: a seed-bearing errand for a ~90 KB thread would NOT fit the relay (the 413)',
+			!!withSeed.fields.seed
+			&& phone.DaimondPost.fitsRelay(sealedWith.envelope.length, cap) === false,
+			'sealed WITH seed: ' + sealedWith.envelope.length + ' B base64');
+
+		// The CURE: sealFittingErrand measures the sealed errand and drops the seed.
+		const fit = await phone.DaimondPeer.sealFittingErrand(big, bigOpts);
+		check('B2: sealFittingErrand DROPPED the oversized seed', fit.seedDropped === true);
+		check('B3: the errand it seals carries seed:null (handed off BY REFERENCE)',
+			fit.plan.fields.seed === null);
+		check('B4: and the seedless sealed errand FITS the relay -- no 413',
+			phone.DaimondPost.fitsRelay(fit.body.envelope.length, cap) === true,
+			'sealed seedless: ' + fit.body.envelope.length + ' B base64');
+
+		// The peer opens the seedless errand whole, and grafts nothing -- it must pull.
+		const openedBig = await laptop.DaimondPeer.openEnvelope(fit.body.envelope);
+		check('B5: the peer opens the seedless errand -- prompt and turn intact, seed null',
+			openedBig.turnId === 'TURN-BIG' && openedBig.prompt === 'the big-thread prompt'
+			&& openedBig.seed == null);
+		check('B6: a seedless errand grafts NOTHING -- the runner reconstructs from the parcel',
+			phone.DaimondPeer.seedGraft({ messages: [] }, openedBig).length === 0);
+
+		// And the runner RUNS it: reconstruct stands in for the parcel pull, runTurn fires
+		// once, the answer is pushed and the relay errand acked -- the documented fallback.
+		L.forget();
+		const sync = makeLeaseSync({});
+		let ran = 0, pushed = 0, acked = 0;
+		const res = await phone.DaimondPeer.runErrand(openedBig, {
+			selfId: 'devLAPTOP', cas: phone.DaimondPeer.syncCas(sync),
+			finished:    async () => false,
+			reconstruct: async () => ({ chat: big, app: {} }),		// the parcel pull, stood in
+			runTurn:     async () => { ran++; },
+			abort: () => {}, pushResult: async () => { pushed++; return 1; },
+			post:  async () => {}, ack: async () => { acked++; }, now: () => T0 + 2000,
+		});
+		check('B7: the runner reconstructs from the parcel and RUNS the by-reference turn once',
+			res.ran === true && res.done === true && ran === 1 && pushed === 1 && acked === 1);
+	}
+
+	console.log('\nFIX A — a refused /api/post preserves the turn (durable record) and recovers it locally');
+	{
+		// A refusing relay: the errand post is turned away (a 413, or a relay that is down).
+		const refuse = async () => ({ ok: false, status: 413, why: 'too large for the relay to carry' });
+
+		// The turn as the send path leaves it: the user prompt persisted, and
+		// dispatchToPeer's FIRST act (order[0]) is the durable why:'dispatched' placeholder.
+		const chatA = { id: 'chat-A', provider: 'openrouter', model: 'test/m', holds: [],
+			messages: [{ role: 'user', content: 'run this somewhere', mid: 'TURN-A', iturn: 'TURN-A', ts: T0 }] };
+		const planA = phone.DaimondPeer.buildDispatch(chatA, {
+			turnId: 'TURN-A', prompt: 'run this somewhere', dispatchedBy: 'devPHONE', now: T0 });
+		check('A1: the durable placeholder is written BEFORE the post (order[0] === mark-dispatched)',
+			planA.order[0] === 'mark-dispatched');
+
+		// MARK FIRST: the placeholder exists before the post is even attempted.
+		chatA.messages.push({ role: 'assistant', content: '', mid: 'ph-A', interrupted: true,
+			why: planA.mark.why, iturn: planA.mark.iturn, itext: planA.mark.itext });
+		const placeholder = chatA.messages.find((m) => m.why === 'dispatched' && m.iturn === 'TURN-A');
+
+		// The post is REFUSED, and the placeholder is STAMPED -- not left bare, not lost.
+		const sealedA  = await phone.DaimondPeer.sealFittingErrand(chatA, {
+			turnId: 'TURN-A', prompt: 'run this somewhere', dispatchedBy: 'devPHONE', now: T0 }, planA);
+		const postRes = await refuse(sealedA.body);
+		check('A2: the relay refused the errand post', postRes.ok === false && postRes.status === 413);
+		if (!postRes.ok) placeholder.refused = { status: postRes.status, why: postRes.why, ts: T0 };
+		check('A3: the turn is PRESERVED -- the durable placeholder stands, stamped refused',
+			chatA.messages.some((m) => m.why === 'dispatched' && m.iturn === 'TURN-A')
+			&& !!placeholder.refused && placeholder.refused.status === 413);
+
+		// The refused turn is RECOVERED LOCALLY -- the money-safe path dispatchToPeer takes
+		// on refusal: a recovery errand from the placeholder runs HERE, once, via the lease.
+		L.forget();
+		const sync = makeLeaseSync({});
+		let ran = 0, pushed = 0, acked = 0;
+		const recovery = phone.DaimondPeer.makeErrand({
+			turnId: 'TURN-A', chatId: 'chat-A', prompt: placeholder.itext, eid: 'e-A',
+			deadline: 0, dispatchedBy: 'devPHONE' });
+		const rec = await phone.DaimondPeer.runErrand(recovery, {
+			selfId: 'devPHONE', cas: phone.DaimondPeer.syncCas(sync), allowSelf: true,
+			finished:    async () => false,
+			reconstruct: async () => ({ chat: chatA, app: {} }),
+			runTurn:     async () => { ran++; },
+			abort: () => {}, pushResult: async () => { pushed++; return 1; },
+			post:  async () => {}, ack: async () => { acked++; }, now: () => T0 + 2000,
+		});
+		check('A4: the refused turn RUNS locally exactly once (never cleared into an empty turn)',
+			rec.ran === true && rec.done === true && ran === 1);
+		check('A5: the local recovery pushes the answer and acks the relay errand',
+			pushed === 1 && acked === 1);
 	}
 
 	// ── The why:'dispatched' handling: dispatchState against the lease ──

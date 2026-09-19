@@ -528,6 +528,7 @@
 	'chat.handoff_tokens':        '{n} tok',
 	'chat.who_handoff':    'Hand-off',
 	'chat.who_tool':       'Tool',
+	'chat.who_files':      'Files',
 	'chat.who_tools':      'Tools',
 	'chat.who_system':     'System',
 	'chat.who_leak':       'Tool call',
