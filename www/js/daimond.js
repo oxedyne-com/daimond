@@ -12516,7 +12516,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			}).catch(function () { });
 			tilePeek(d2, text);
 			postToChat(d2);
-			setScrollTop(chatOutput.scrollHeight);
+			pinBottom();
 			return d2;
 		}
 		var div = buildTile('user', { expanded: true, copy: text, ts: ts });
@@ -12553,7 +12553,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		tagTurn(div);
 		tilePeek(div, text);
 		postToChat(div);
-		setScrollTop(chatOutput.scrollHeight);
+		pinBottom();
 		// A new question is a new place to jump back to, so the walk starts again from the bottom.
 		_jumpAt = -1;
 	}
@@ -13241,6 +13241,13 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 	// True when the thread is scrolled to (near) the bottom, so streaming
 	// auto-scroll can be suppressed while the user reads earlier output.
 	function nearBottom() {
+		// Reading `scrollHeight`/`scrollTop`/`clientHeight` forces a layout flush, so a
+		// per-tile `if (nearBottom()) setScrollTop(...)` in the draw path is one more reflow
+		// per tile -- and evaluating the `chatOutput.scrollHeight` argument would flush again
+		// even if the write no-oped. So during a rebuild answer FALSE without touching layout:
+		// the caller short-circuits (no read, no write) and the single end-pin in
+		// `renderHistory` decides the final position with one reflow.
+		if (_renderingHistory) return false;
 		return chatOutput.scrollHeight - chatOutput.scrollTop - chatOutput.clientHeight < 48;
 	}
 
@@ -14124,7 +14131,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		tagTurn(block);
 		postToChat(block);
 		lastToolBlock = block;
-		setScrollTop(chatOutput.scrollHeight);
+		pinBottom();
 	}
 
 	/// How a tool call ended, read back out of its RESULT TEXT.
@@ -14208,7 +14215,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			// having had to survive the journey.
 			noNetLine(lastToolBlock, ranWithoutNet(result));
 		}
-		setScrollTop(chatOutput.scrollHeight);
+		pinBottom();
 	}
 
 	/// Say on the block itself that this command ran with the network withheld.
@@ -14313,7 +14320,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		div.querySelector('.chat-msg-content').textContent = friendlyError(msg);
 		tagTurn(div);
 		postToChat(div);
-		setScrollTop(chatOutput.scrollHeight);
+		pinBottom();
 	}
 
 	/// The app's own neutral voice in a thread — a status line, not a failure.
@@ -14332,7 +14339,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		div.appendChild(body);
 		tagTurn(div);
 		postToChat(div);
-		setScrollTop(chatOutput.scrollHeight);
+		pinBottom();
 	}
 
 	// Turn a raw error — which may be an ANSI-coloured fe2o3 `Outcome` chain
@@ -18841,9 +18848,28 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 
 	/// Move the thread, and remember that WE moved it.
 	function setScrollTop(v) {
+		// REFLOW-FREE BATCH DRAW. A full rebuild (and the tail-only append) draws every
+		// tile through `drawHistoryMessage`, and several of those tiles pin the thread to
+		// the bottom as they land (a question, a tool call, a tool result). Each such write
+		// reads `scrollTop` back on the next line, which forces the browser to flush the
+		// layout the just-appended tile invalidated -- so a transcript of n tiles costs n
+		// synchronous reflows, quadratic on a switch to a long chat. The per-tile pin is
+		// wasted anyway: `renderHistory` pins the thread ONCE at the end (see the end-pin at
+		// the close of the rebuild and of the append). So drop every scroll write while the
+		// rebuild owns the thread; the single end-pin does the work with one reflow.
+		if (_renderingHistory) return;
 		chatOutput.scrollTop = v;
 		_selfTop = chatOutput.scrollTop;		// read back: the browser clamps to the range
 		_wasAtEnd = nearBottom();
+	}
+
+	/// Pin the thread to the live end. The unconditional draw-path idiom, kept in one
+	/// place so the `scrollHeight` read -- which flushes the layout the just-drawn tile
+	/// invalidated -- happens AFTER the rebuild guard, not while evaluating an argument.
+	/// A no-op during a rebuild: the single end-pin in `renderHistory` does the one write.
+	function pinBottom() {
+		if (_renderingHistory) return;
+		setScrollTop(chatOutput.scrollHeight);
 	}
 	try {
 		if (chatOutput && chatOutput.addEventListener) {

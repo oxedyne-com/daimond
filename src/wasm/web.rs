@@ -12,6 +12,7 @@
 //! would destroy the only instruction the model gets about what to do
 //! next.
 
+use crate::llm::extract_json_string;
 use crate::llm::json_escape;
 use crate::tools::SearchAnswer;
 use crate::tools::SearchHit;
@@ -19,6 +20,7 @@ use crate::tools::Verdict;
 use crate::wasm::js_str;
 
 use oxedyne_fe2o3_core::prelude::*;
+use oxedyne_fe2o3_text::base64;
 
 use wasm_bindgen::prelude::wasm_bindgen;
 use wasm_bindgen::{JsCast, JsValue};
@@ -40,9 +42,10 @@ extern "C" {
     #[wasm_bindgen(method)]
     fn open(this: &Driver, url: &str) -> js_sys::Promise;
 
-    /// Read `url` through the gateway, without a driver.
+    /// Read `url` through the gateway, without a driver. `raw` asks for the bytes
+    /// themselves rather than the page stripped to text.
     #[wasm_bindgen(method)]
-    fn fetch(this: &Driver, url: &str) -> js_sys::Promise;
+    fn fetch(this: &Driver, url: &str, raw: bool) -> js_sys::Promise;
 
     /// The accessibility tree of the open page.
     #[wasm_bindgen(method)]
@@ -174,7 +177,35 @@ pub async fn open(url: &str) -> Outcome<String> {
 /// Read `url` through the gateway, driver or no driver.
 pub async fn fetch(url: &str) -> Outcome<String> {
     let d = res!(driver());
-    settle(d.fetch(url)).await
+    settle(d.fetch(url, false)).await
+}
+
+/// The bytes of a raw fetch, and the content type the site sent them under.
+pub struct RawPage {
+    pub bytes:        Vec<u8>,
+    pub content_type: String,
+}
+
+/// Fetch `url` and hand back the RAW bytes, base64-decoded from the gateway's reply.
+///
+/// The gateway skips its usual strip-to-text for a raw request, so this is how a binary
+/// or a bulk file arrives whole. It is the daimon's only egress: the hand that runs its
+/// commands has no network of its own, so `curl > file` there returns nothing.
+pub async fn fetch_raw(url: &str) -> Outcome<RawPage> {
+    let d = res!(driver());
+    let json = res!(settle(d.fetch(url, true)).await);
+    let content_type = extract_json_string(&json, "content_type").unwrap_or_default();
+    // An absent field is a gateway that answered 200 with no bytes, which must not be
+    // read as an empty file; an empty string is a real, empty download and decodes to
+    // no bytes, which is correct.
+    let b64 = match extract_json_string(&json, "body_b64") {
+        Some(b) => b,
+        None    => return Err(err!(
+            "The gateway answered the download without any bytes, so nothing was saved.";
+            Network, Invalid, Data)),
+    };
+    let bytes = res!(base64::decode(&b64));
+    Ok(RawPage { bytes, content_type })
 }
 
 // ── Searching ───────────────────────────────────────────────────────

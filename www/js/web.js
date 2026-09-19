@@ -581,8 +581,16 @@
 	/// gateway, so it is the one route that always works — and the one route the
 	/// user must never log in through, because a page served from our origin is a
 	/// page we can read.
-	async function fetchPage(url) {
-		var j = await gw('/api/web/fetch', { url: String(url || '').trim() });
+	async function fetchPage(url, raw) {
+		var body = { url: String(url || '').trim() };
+		// RAW asks the gateway for the bytes themselves, base64-encoded, rather than the
+		// page stripped to text. It is the daimon's sanctioned download: the hand has no
+		// network, so this is the only way a canonical bulk file arrives whole.
+		if (raw) body.raw = true;
+		var j = await gw('/api/web/fetch', body);
+		if (raw) {
+			return { url: j.url, contentType: j.content_type, bytes: j.bytes, bodyB64: j.body_b64 };
+		}
 		return {
 			url: j.url, title: j.title, text: j.text, bytes: j.bytes,
 			readOnly: true,

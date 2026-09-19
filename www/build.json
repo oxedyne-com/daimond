@@ -1,1 +1,1 @@
-{"build":"342ecf25974d","note":"tracker: stop the /api/improve 429 burst (carry enriched cards forward, 60s cooldown, hidden-panel silence)"}
+{"build":"b1e14c4b8408","note":"web_fetch to:path raw download + tracker 429-storm fix + faster heavy-diamond chat switch"}
