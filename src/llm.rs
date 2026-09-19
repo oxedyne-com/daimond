@@ -6101,6 +6101,30 @@ pub mod tests {
     }
 
     #[test]
+    fn test_raw_fetch_reply_parses_to_bytes() {
+        // `fetch_raw` (src/wasm/web.rs) reads the gateway's raw reply with this same
+        // `extract_json_string`, on the same snake_case keys `raw_fetch_fields`
+        // (gateway/src/handlers/web.rs) answers with -- `content_type` and `body_b64`.
+        // The web panel used to rename those keys to camelCase in flight, so this
+        // field never matched and every raw download failed with "no bytes". This
+        // fixes the JS side; the guard is here so a future rename trips a native test
+        // rather than only a browser downloading a real file.
+        let json = r#"{"ok":true,"url":"https://example.com/words.bin","content_type":"application/octet-stream","bytes":11,"body_b64":"AP/+d29yZIAKwyg="}"#;
+        let content_type = extract_json_string(json, "content_type").unwrap_or_default();
+        assert_eq!(content_type, "application/octet-stream");
+        let b64 = match extract_json_string(json, "body_b64") {
+            Some(b) => b,
+            None    => panic!("body_b64 must be found in the gateway's own reply shape"),
+        };
+        let bytes = match oxedyne_fe2o3_text::base64::decode(&b64) {
+            Ok(b)  => b,
+            Err(e) => panic!("body_b64 must decode: {}", e),
+        };
+        assert!(!bytes.is_empty(), "a real download must not parse to zero bytes");
+        assert_eq!(bytes, vec![0x00, 0xFF, 0xFE, b'w', b'o', b'r', b'd', 0x80, 0x0A, 0xC3, 0x28]);
+    }
+
+    #[test]
     fn test_parse_sse_simple() {
         let sse = "data: {\"choices\":[{\"delta\":{\"content\":\"Hello\"}}]}\n\ndata: {\"choices\":[{\"delta\":{\"content\":\" world\"}}]}\n\ndata: [DONE]\n";
         let mut tokens = Vec::new();

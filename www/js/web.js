@@ -588,9 +588,7 @@
 		// network, so this is the only way a canonical bulk file arrives whole.
 		if (raw) body.raw = true;
 		var j = await gw('/api/web/fetch', body);
-		if (raw) {
-			return { url: j.url, contentType: j.content_type, bytes: j.bytes, bodyB64: j.body_b64 };
-		}
+		if (raw) return j;
 		return {
 			url: j.url, title: j.title, text: j.text, bytes: j.bytes,
 			readOnly: true,
