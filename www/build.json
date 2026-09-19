@@ -1,1 +1,1 @@
-{"build":"a037e0cd729a","note":"daimon writes bulk data to a file via sh -c, not through model context"}
+{"build":"342ecf25974d","note":"tracker: stop the /api/improve 429 burst (carry enriched cards forward, 60s cooldown, hidden-panel silence)"}

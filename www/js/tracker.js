@@ -341,7 +341,15 @@
 			};
 		}
 		if (r.ok && data && typeof data === 'object') return { ok: true, data: data };
-		return { ok: false, why: 'gateway', status: r.status };
+		// A 429 from the gateway's own meter (not a forge token, so not caught
+		// above) carries `reason`: 'too_fast' or 'quota'. Passed through so a
+		// caller can tell a real meter refusal from any other gateway failure.
+		return {
+			ok:     false,
+			why:    'gateway',
+			status: r.status,
+			reason: (data && typeof data === 'object' && typeof data.reason === 'string') ? data.reason : '',
+		};
 	}
 
 	var TOKENS = {
@@ -485,6 +493,7 @@
 	var _voiceOpen = false;				// the admin-voice paste form is showing
 	var _filter    = 'all';				// board filter: 'all', or 'mine' (raised from this device)
 	var _lastLoad  = 0;				// when the listing last loaded, so a re-show refetches a stale board
+	var _cooldownUntil = 0;			// ms epoch; a 429 sets this, and onOpen() is silent until it passes
 
 	function absorb(rec) {
 		if (!rec) return null;
@@ -526,20 +535,37 @@
 		// Stamp the throttle on a FAILED read too, not just a success: otherwise a
 		// forge that is erroring is refetched on every re-entry with no floor at all,
 		// and a down forge gets pounded once per panel show.
-		if (!a.ok) { _st.err = a; _lastLoad = Date.now(); draw(); return false; }
-		// Keep the pre-refetch records so a just-cast local vote survives the rebuild.
-		// The listing read is unvoiced, so `a.data` carries no `mine`/`asked`; clearing
-		// _by outright would drop a fresh upvote's highlight until the next voiced read.
-		var prev = _by;
-		_by = {}; _order = [];
+		if (!a.ok) {
+			_st.err = a; _lastLoad = Date.now();
+			// The gateway's own meter refused this one (burst or window), not the
+			// forge. It sends no Retry-After, so hold a fixed floor: the next
+			// re-show's onOpen() (below) is silent until this passes, rather than
+			// firing the whole enrich burst again 4s later against a meter that is
+			// still cooling.
+			if (a.status === 429) _cooldownUntil = Date.now() + COOLDOWN_MS;
+			draw(); return false;
+		}
+		// Absorb into the LIVE `_by`/`_order` rather than a fresh map. `absorb`
+		// carries `enriched`/`latest`/`shipped`/`asked`/`mine` forward from `cur =
+		// _by[rec.n]` -- which only ever finds anything when `_by` has not just
+		// been wiped. Resetting it here made that carry-forward dead code: every
+		// Greenlit/Shipped card came back `enriched: false` on every reload, so
+		// `draw()` re-`enrich()`'d all of them (an N-way GET burst) on every
+		// re-show, not just a genuine first open.
+		var seen  = {};
+		var order = [];
 		var raw = Array.isArray(a.data.proposals) ? a.data.proposals : [];
 		raw.forEach(function (p) {
 			var rec = clean(p);
 			if (!rec) return;
-			var was = prev[rec.n];
-			if (was && was.asked && !rec.asked) { rec.asked = was.asked; rec.mine = was.mine; }
+			seen[rec.n] = true;
+			order.push(rec.n);
 			absorb(rec);
 		});
+		// Drop cards the listing no longer returns (declined or paged off), so an
+		// enriched record does not linger forever once its proposal is gone.
+		Object.keys(_by).forEach(function (n) { if (!seen[n]) delete _by[n]; });
+		_order = order;
 		_st.total = Math.max(0, whole(a.data.total));
 		_st.read  = true;
 		_lastLoad = Date.now();
@@ -582,12 +608,25 @@
 	// but enough to swallow an IntersectionObserver re-entry from a scroll.
 	var REFRESH_MS = 4000;
 
+	// The gateway sends no Retry-After on its 429, so this is a fixed floor, not
+	// a measured one: long enough to sit out its window comfortably.
+	var COOLDOWN_MS = 60000;
+
 	/// Read the listing when the panel is shown. The FIRST show reads it (a panel
 	/// nobody opened costs no request); a later show REFETCHES if the snapshot has
 	/// gone stale, because a board that reads once and freezes shows declines that
 	/// were made elsewhere still sitting in "Awaiting you".
+	///
+	/// Silent while the panel itself is not actually visible (the tab is
+	/// backgrounded, or an ancestor is `display:none`) -- a reflow can re-fire the
+	/// IntersectionObserver below without anyone having opened anything -- and
+	/// silent during a post-429 cooldown, so a re-show does not fire the same
+	/// burst straight back into a meter that has not yet reset.
 	function onOpen() {
 		if (_st.loading) return true;
+		if (Date.now() < _cooldownUntil) return true;
+		if (document.hidden) return true;
+		if (_host && _host.offsetParent === null) return true;
 		if (!_st.read || Date.now() - _lastLoad >= REFRESH_MS) load();
 		return true;
 	}
