@@ -1,1 +1,1 @@
-{"build":"ffce2266429a","note":"worker-hang root fix: first-byte timeout terminal, abort authoritative; reach link resolved from store not cache"}
+{"build":"a037e0cd729a","note":"daimon writes bulk data to a file via sh -c, not through model context"}

@@ -2925,7 +2925,11 @@ pub fn truncated_call_note(max_tokens: u32) -> String {
          the arguments of this tool call, so it could not be run. Nothing was changed. \
          The JSON was not wrong -- there was no room left for the rest of it. Do the same \
          work in smaller pieces: write or edit a part at a time, or read a range rather \
-         than a whole file, so that no single call carries this much text.",
+         than a whole file, so that no single call carries this much text. But if what was \
+         cut is data you did not author -- a list, a download, the output of a command -- \
+         do not type it at all: produce it with run on the machine (a redirection to a file \
+         via sh -c) or fetch it to a file, and name the path. Chunking data through yourself \
+         is never the answer.",
         max_tokens)
 }
 
