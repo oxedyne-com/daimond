@@ -4653,6 +4653,7 @@
 	'versions.on_machine':     'On this computer',
 	'versions.machine_note':   'Only what the daimon wrote here',
 	'versions.not_here':       'Not on this device',
+	'versions.snapshot':       'snapshot',
 	'versions.too_big':        'Too large to keep',
 	'versions.refused':        'Outside this diamond\u2019s reach',
 	'versions.save':           'Save a version',

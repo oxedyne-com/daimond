@@ -224,6 +224,7 @@ async function main() {
 			extractVar(src, '_TAIL_MORE'),
 			extractFn(src, '_parseTailNote'),
 			extractFn(src, '_tailNoteTable'),
+			extractFn(src, 'openTurnFile'),
 			extractFn(src, '_turnFileRow'),
 		].join('\n');
 		const wrapperBody = 'var currentDiamond = null;\n' + tableSrc
@@ -337,24 +338,40 @@ async function main() {
 			if (key === 'chat.turn_files_more') return 'Show ' + n + ' more';
 			return key;
 		}
-		// a.txt is an UPDATE (was -> now); b.txt is a NEW file (no `was`, all-add).
+		// a.txt is an UPDATE (was -> now); b.txt is a NEW file (no `was`, all-add);
+		// code/ws.txt is a NEW WORKSPACE file whose LIVE open fails (as a `code/…`
+		// path with no folder mounted does), so it must fall back to the snapshot.
 		const manifestsFixture = [{
 			version: 7, v: 1, files: [
 				{ path: 'a.txt', hash: 'A1', was: 'A0', gone: false },
 				{ path: 'b.txt', hash: 'B1', gone: false },
+				{ path: 'code/ws.txt', hash: 'C1', gone: false },
 			],
 		}];
 		const DIFFS = {
 			'A0|A1': { add: 1, del: 1, rows: [{ op: '-', text: 'old line' }, { op: '+', text: 'new line' }] },
 			'|B1':   { add: 2, del: 0, rows: [{ op: '+', text: 'added alpha' }, { op: '+', text: 'added beta' }] },
+			'|C1':   { add: 3, del: 0, rows: [{ op: '+', text: 'ws one' }, { op: '+', text: 'ws two' }] },
 		};
+		const BODIES = { 'A1': 'A body', 'B1': 'B body', 'C1': 'the workspace snapshot body' };
+		const bodySpy = [];
 		const DaimondVersions = {
 			manifests: async () => manifestsFixture,
 			diff: async (id, was, now) => DIFFS[(was || '') + '|' + (now || '')] || null,
+			body: async (id, hash) => { bodySpy.push({ id: id, hash: hash }); return BODIES[hash] || null; },
 		};
-		// The real opener, in scope in the app's one IIFE as `Files.open`.
+		// The real opener, in scope in the app's one IIFE as `Files.open`. A live
+		// workspace read fails for `code/…` (NotFound), exactly as in the browser --
+		// UNLESS the caller supplies the snapshot content (the read-only fallback),
+		// which always resolves.
 		const openSpy = [];
-		const Files = { open: (p, opts) => { openSpy.push({ path: p, opts: opts }); } };
+		const Files = { open: (p, opts) => {
+			openSpy.push({ path: p, opts: opts });
+			if (/^code\//.test(p) && !(opts && typeof opts.content === 'string')) {
+				return Promise.reject(new Error('OPFS: NotFound'));
+			}
+			return Promise.resolve();
+		} };
 		// `window` exists but exposes NO `open` -- the exact shape of
 		// window.DaimondFiles at daimond.js:39069. And `openFile` is deliberately
 		// NOT a Function parameter, so it is out of scope here as it is in the real
@@ -365,6 +382,7 @@ async function main() {
 			extractVar(src, '_TAIL_MORE'),
 			extractFn(src, '_parseTailNote'),
 			extractFn(src, '_tailNoteTable'),
+			extractFn(src, 'openTurnFile'),
 			extractFn(src, '_turnFileRow'),
 		].join('\n');
 		const wrapperBody = 'var currentDiamond = { id: "d1" };\n' + tableSrc
@@ -377,23 +395,23 @@ async function main() {
 		const table = new Function('document', 'tn', 'DaimondVersions', 'window', 'DaimondFiles', 'Files', wrapperBody)(
 			document, tn, DaimondVersions, windowStub, windowStub.DaimondFiles, Files);
 
-		const TAIL = '[Daimond: this turn changed 2 files (v7): a.txt, b.txt. The user can '
+		const TAIL = '[Daimond: this turn changed 3 files (v7): a.txt, b.txt, code/ws.txt. The user can '
 			+ 'restore any of them from History, and file_revert does the same when they ask.]';
 		const box = await table.tailNoteTable(TAIL);
 		await new Promise((r) => setImmediate(r));
 		await new Promise((r) => setImmediate(r));
 
 		const rows = box._children[1];
-		const rowA = rows._children[0], rowB = rows._children[1];
+		const rowA = rows._children[0], rowB = rows._children[1], rowC = rows._children[2];
 		const [nameA, deltaA] = rowA._children;
 		const deltaB = rowB._children[1];
+		const nameC = rowC._children[0];
 
-		// (c1) NAME CLICK -> the real opener is invoked with the row's path.
-		// PRE-FIX: `open` is null, the spy is never called -> this fails.
+		// (c1) NAME CLICK on a live/store file -> the opener is invoked with the path.
 		nameA._listeners.click({ stopPropagation() {} });
 		await new Promise((r) => setImmediate(r));
 		check('(c1) clicking a name invokes the opener with the file path',
-			openSpy.length === 1 && openSpy[0].path === 'a.txt', JSON.stringify(openSpy));
+			openSpy.some((o) => o.path === 'a.txt'), JSON.stringify(openSpy));
 
 		// (c2) DELTA CLICK on an UPDATE -> a non-empty side-by-side with BOTH sides.
 		// (A regression guard: the update path was already right; this keeps it so.)
@@ -403,13 +421,32 @@ async function main() {
 		check('(c2) an update\'s delta folds in a non-empty diff carrying both sides',
 			!!sbsA && bodyA.indexOf('old line') >= 0 && bodyA.indexOf('new line') >= 0, bodyA);
 
-		// (c3) DELTA CLICK on a NEW FILE (all-add) -> the ADDED lines render.
-		// PRE-FIX: `op '+'` pairs blank the right cell -> the diff is all-empty -> fails.
+		// (c3) DELTA CLICK on a NEW file -> it OPENS the file and renders NO diff.
+		// PRE-FIX: a new file's delta drew a two-column side-by-side with an empty
+		// left column -- the broken "mess" the owner reported. Now: no `.tf-sbs`, and
+		// the opener is reached instead.
+		const openBeforeC3 = openSpy.length;
 		await deltaB._listeners.click({ stopPropagation() {} });
+		await new Promise((r) => setImmediate(r));
 		const sbsB = rowB.querySelector('.tf-sbs');
-		const bodyB = textsOf(sbsB || makeEl('x')).join('\n');
-		check('(c3) a new file\'s all-add delta renders the added lines (not empty rows)',
-			!!sbsB && bodyB.indexOf('added alpha') >= 0 && bodyB.indexOf('added beta') >= 0, bodyB);
+		check('(c3) a new file\'s delta opens the file and renders no diff mess',
+			!sbsB && openSpy.length > openBeforeC3 && openSpy[openSpy.length - 1].path === 'b.txt',
+			JSON.stringify({ sbsB: !!sbsB, last: openSpy[openSpy.length - 1] }));
+
+		// (c4) NAME CLICK on a WORKSPACE file whose live open FAILS -> it falls back
+		// to the version-store snapshot, opened READ-ONLY with the recorded content.
+		// PRE-FIX: the click called Files.open once, it threw NotFound, and nothing
+		// happened -- the owner's "click the path, nothing".
+		bodySpy.length = 0;
+		nameC._listeners.click({ stopPropagation() {} });
+		await new Promise((r) => setImmediate(r));
+		await new Promise((r) => setImmediate(r));
+		await new Promise((r) => setImmediate(r));
+		const roOpen = openSpy.filter((o) => o.path === 'code/ws.txt')
+			.find((o) => o.opts && o.opts.readOnly && o.opts.content === 'the workspace snapshot body');
+		check('(c4) a workspace file that will not open live falls back to the snapshot, read-only',
+			bodySpy.some((b) => b.hash === 'C1') && !!roOpen && !rowC.querySelector('.tf-sbs'),
+			JSON.stringify({ bodySpy, opens: openSpy.filter((o) => o.path === 'code/ws.txt') }));
 	}
 
 	// (D) the +95s dispatch backstop stands down while a LOCAL recovery of the turn is

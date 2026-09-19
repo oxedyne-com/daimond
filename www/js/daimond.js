@@ -12388,9 +12388,33 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		return box;
 	}
 
-	/// One file row: the name opens the file in the Doc panel; the delta loads
-	/// the version store's diff and folds it in under the row (History's own
-	/// .hist-diff classes, so the diff renders like the History view's).
+	/// Open a changed file from a turn tile, landing on the file whatever its kind.
+	///
+	/// The live file is tried first: a store file (`diamonds/…`) and a workspace file
+	/// under a mounted folder both open editable. A `code/…` workspace path with no
+	/// folder mounted resolves into OPFS, where it is not, and the live read throws --
+	/// so on failure the version-store SNAPSHOT this tile is already about is shown
+	/// read-only. The click therefore always lands on the file, never on nothing.
+	async function openTurnFile(id, name, hash) {
+		try { await Files.open(name, { line: 0 }); return; }
+		catch (liveErr) {
+			var snap = null;
+			try { snap = hash ? await DaimondVersions.body(id, hash) : null; }
+			catch (e) { snap = null; }
+			if (snap != null) {
+				try { await Files.open(name, { content: snap, readOnly: true }); return; }
+				catch (e2) { /* fall through to the notice */ }
+			}
+			try { console.warn('Daimond: could not open "' + name + '": '
+				+ ((liveErr && liveErr.message) ? liveErr.message : liveErr)); }
+			catch (e3) { /* no console */ }
+		}
+	}
+
+	/// One file row: the name opens the file in the Doc panel; the delta shows the
+	/// count and, for an UPDATE, folds the version store's diff in under the row
+	/// (History's own .hist-diff classes). A NEW file has no before, so its delta
+	/// opens the file rather than a two-column diff with an empty side.
 	function _turnFileRow(id, name, e, v) {
 		var row = document.createElement('div');
 		row.className = 'turn-file-row';
@@ -12401,27 +12425,14 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		nm.title = name;
 		nm.addEventListener('click', function (ev) {
 			ev.stopPropagation();
-			// #22 root-fix: the opener is `Files.open` -- the one door in this IIFE
-			// that opens a file in the Doc panel (var Files ~34001), the same one the
-			// file tree's own rows and the daimon's `file_show` reach. The earlier
-			// fix reached for `window.DaimondFiles.open`, which that public object
-			// never exposed (js:39069), and then for a bare `openFile`, which is
-			// defined INSIDE the Files closure and is not in scope here -- so the
-			// opener resolved to null and every name click opened nothing. A store
-			// path (`diamonds/<id>/…`) resolves to the OPFS store through `read_file`
-			// itself (`is_store_path` in src/tools.rs), exactly as the tree's own
-			// diamond rows open it, so no store flag is owed. The failure is no longer
-			// swallowed: `openFile` is async, so a sync try/catch never caught its
-			// rejection anyway -- the panel says why, and the console does too.
-			try {
-				Promise.resolve(Files.open(name, { line: 0 })).catch(function (e) {
-					try { console.warn('Daimond: could not open "' + name + '": '
-						+ ((e && e.message) ? e.message : e)); } catch (e2) { /* no console */ }
-				});
-			} catch (e) {
-				try { console.warn('Daimond: could not open "' + name + '": '
-					+ ((e && e.message) ? e.message : e)); } catch (e2) { /* no console */ }
-			}
+			// The opener is `openTurnFile`: it tries the live file (a store path, or a
+			// workspace path under a mounted folder) and, when that read fails (a
+			// `code/…` path with no folder mounted lands in OPFS, where it is not),
+			// falls back to the version-store snapshot this tile is about, read-only.
+			// The earlier fix called `Files.open` directly, which threw NotFound for
+			// exactly those workspace files and left the click doing nothing. A
+			// deletion opens what the file WAS; every other change what it became.
+			openTurnFile(id, name, e && e.gone ? (e.was || '') : (e && e.hash ? e.hash : ''));
 		});
 		row.appendChild(nm);
 		var de = document.createElement('button');
@@ -12500,6 +12511,11 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			}
 			de.addEventListener('click', async function (ev) {
 				ev.stopPropagation();
+				// A NEW file has no "before": a two-column side-by-side with an empty
+				// left column rendered as a broken mess (the filename crushed into a
+				// narrow column beside a wall of added lines). There is nothing to diff,
+				// so open the file itself — exactly what the name does.
+				if (now && !was) { openTurnFile(id, name, now); return; }
 				var shown = row.querySelector('.tf-sbs');
 				if (shown) { shown.remove(); return; }   // a second press folds it away
 				try {
@@ -36735,6 +36751,14 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			// `file_write` every other save goes through, so a fence that would refuse
 			// it refuses it there rather than here.
 			var blank = !!(opts && opts.blank);
+			// A SNAPSHOT opened from somewhere other than the live file: the
+			// changed-files tile passes the version-store body for a file the live
+			// workspace cannot read (a `code/…` path with no folder mounted lands in
+			// OPFS, where it is not — see `_turnFileRow`). Nothing is probed or read;
+			// the given text is shown read-only, because Save would write it back
+			// through a root that does not hold the file.
+			var provided = !!(opts && typeof opts.content === 'string');
+			var readOnly = !!(opts && opts.readOnly);
 			// ASK WHAT THE FILE IS BEFORE DECODING IT AS CHARACTERS.
 			//
 			// What was here asked `DaimondCloud.fileAt`, which resolves through the
@@ -36751,7 +36775,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			// `file_probe` reads 512 bytes and answers with the format, from the magic
 			// bytes AND the name, saying so when the two disagree.
 			var info = null;
-			try { if (!blank) info = await DaimondViewer.probe(path, { store: store }); }
+			try { if (!blank && !provided) info = await DaimondViewer.probe(path, { store: store }); }
 			catch (e) {
 				// A missing file falls through to the text path, which reports it
 				// properly -- but the failure is SAID before it does. This catch used
@@ -36791,7 +36815,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			// Only now: this open is the document's, so the door it came through is
 			// the door the editor, the conflict check and the save must all use.
 			storeFile = store;
-			var content = blank ? '' : await readRaw(path);
+			var content = provided ? opts.content : (blank ? '' : await readRaw(path));
 			curFile = path; curContent = content; editing = false;
 			viewEl.style.display = '';
 			var isTypst = /\.typ$/i.test(path);
@@ -36858,6 +36882,17 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			// Edit ⇄ Save: swap the <pre> for a textarea; Save writes via the
 			// file_write tool (honouring the active workspace root — OPFS or FSA).
 			var editBtn   = viewEl.querySelector('[data-act="edit"]');
+			// A snapshot from the version store is not the live file, so it cannot be
+			// saved back: hide Edit (and Compile/Publish, which also write) and name the
+			// panel as a snapshot so the reader knows why.
+			if (readOnly) {
+				['edit', 'compile', 'publish'].forEach(function (act) {
+					var b = viewEl.querySelector('[data-act="' + act + '"]');
+					if (b) b.style.display = 'none';
+				});
+				var nEl = document.getElementById('doc-name');
+				if (nEl) nEl.textContent = path + ' — ' + t('versions.snapshot');
+			}
 			/// Caption and tooltip together, because they were set apart and drifted.
 			///
 			/// `title` was written once, at build, and six later sites changed only

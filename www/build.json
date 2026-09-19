@@ -1,1 +1,1 @@
-{"build":"5d0466d83059","note":"fix hand-off 413 (seed by reference) + cleared turn; changed-files tile clicks + Files title"}
+{"build":"7852c24dff49","note":"fix changed-files tile: open workspace files from version snapshot; new files no longer show a broken diff"}
