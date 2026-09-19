@@ -34392,15 +34392,14 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		async function toggleAttachHold(path, dir) {
 			if (!currentDiamond) return;
 			var id = currentDiamond.id, ref = rootedRef(dir ? 'dir' : 'file', path);
-			var rec = attachedOf(ref);
-			// GUARD: `attached` is scoped to the focused Diamond (`loadAttached`), but a
-			// reload `onDiamondChanged` ever misses must not let a stale record from
-			// ANOTHER Diamond stand in for this one's link -- that is how a click here
-			// once called `remove_link` on a Diamond that was not even open. Refused
-			// outright rather than repaired: a missed reload costs a no-op click, never
-			// someone else's link.
-			if (rec && rec.link && rec.link.owner !== id) return;
-			var link = rec ? rec.link : await linkTo(id, ref);
+			// The remove/add decision is never taken from `attached` (the on-screen
+			// cache `loadAttached` fills, and stale whenever a reload
+			// `onDiamondChanged` misses) -- that once let a click here call
+			// `remove_link` on a Diamond that was not even open. `linkTo` re-reads the
+			// store for THIS Diamond's own link, every time, so correctness no longer
+			// depends on the cache being fresh; the cache is repainted afterwards by
+			// `signalLinksChanged` regardless.
+			var link = await linkTo(id, ref);
 			try {
 				if (link) await diamondApp().remove_link(link.owner, link.id);
 				else await diamondApp().add_link(id, 'diamond:' + id, ref, 'holds', '', 'user');

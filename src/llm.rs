@@ -214,6 +214,16 @@ const CARRY_MAX_TURNS: usize = 32;
 /// Overridable per turn via `Limits::stream_idle_ms`; see `Agent::set_stream_idle_ms`.
 pub const DEFAULT_STREAM_IDLE_MS: u64 = 60_000;
 
+/// How much longer a non-streaming reply may take to arrive than a stream's first byte.
+///
+/// `do_request_full` (the transport behind `chat_once`, which serves the fold summary) awaits
+/// the WHOLE body in one piece, where `stream_sse` only needs the first token to arrive within
+/// `stream_idle_ms`.  A non-streaming provider generates the entire answer before it sends a
+/// byte, so a slow fold must not be cut at the streaming ceiling: its first-byte bound is this
+/// multiple of the idle figure -- 5 x 60 s = 300 s by default, still inside the JS 540 s wall
+/// clock that wraps the round.
+const REPLY_WAIT_FACTOR: u64 = 5;
+
 /// Which upstream providers OpenRouter should try for this model, and in what order.
 ///
 /// Sent as the request body's `provider` object, OpenRouter's own field -- never a client
@@ -407,6 +417,15 @@ pub struct LlmClient {
     /// is native-only.
     #[cfg(not(target_arch = "wasm32"))]
     pub tls_config: Arc<ClientConfig>,
+    /// Abort authority for the native transport.  The wasm build takes this from its
+    /// browser [`AbortController`](Self::abort); the native transport has no browser Stop,
+    /// so it backs [`abort`](Self::abort) and `abort_signalled` onto a shared flag.  This
+    /// keeps the retry loop's top-of-attempt abort check compiling on both targets and lets
+    /// the tests drive an abort.  Set once and left set -- native production never aborts
+    /// (the only real caller is the wasm `app.rs`).  `Rc<Cell<…>>`, shared across clones for
+    /// the reason `stream_idle_ms` is.
+    #[cfg(not(target_arch = "wasm32"))]
+    aborted: std::rc::Rc<std::cell::Cell<bool>>,
     /// Wasm transport URL scheme selector: `true` builds `https://…`,
     /// `false` builds `http://…`.  Defaults to `https` (all real
     /// providers are TLS-only); an `http` client targets a local mock
@@ -871,6 +890,24 @@ impl TransportErr {
         Self { retryable: false, after_ms: None, reason, err }
     }
 
+    /// Classify a transport error by its tags, terminal if it is a first-byte/idle timeout.
+    ///
+    /// THE ONE DOOR.  A first-byte or idle timeout is a stall, and a stall is not fixed by
+    /// retrying it: the provider took the connection and stopped answering, so an identical
+    /// second attempt only waits out the same ceiling again -- worst case eight times over,
+    /// tens of minutes, on a path with no outer wall clock.  So a timeout is `fatal` and ends
+    /// the round.  Every other transient -- a 429, a 5xx, a reset connection -- still retries,
+    /// exactly as before.  This is the single site that decision is made (per transport), so
+    /// the several timeout arms (header wait, body wait, browser first byte) cannot drift apart
+    /// into per-caller overrides.
+    fn classify(reason: String, err: Error<ErrTag>) -> Self {
+        if err.tags().contains(&ErrTag::Timeout) {
+            Self::fatal(reason, err)
+        } else {
+            Self::transient(reason, err)
+        }
+    }
+
     /// Attach the provider's requested delay.
     fn after(mut self, after_ms: Option<u64>) -> Self {
         self.after_ms = after_ms;
@@ -1034,6 +1071,7 @@ impl LlmClient {
             stream_idle_ms: std::rc::Rc::new(std::cell::Cell::new(DEFAULT_STREAM_IDLE_MS)),
             provider_routing: std::rc::Rc::new(std::cell::RefCell::new(ProviderRouting::default())),
             tls_config,
+            aborted:    std::rc::Rc::new(std::cell::Cell::new(false)),
         }
     }
 
@@ -1174,6 +1212,18 @@ impl LlmClient {
         let mut waited = 0u64;
         let mut retries = 0u32;
         loop {
+            // ABORT IS AUTHORITATIVE ACROSS ATTEMPTS. A Stop, or the 540 s wall clock in
+            // `www/js/daimond.js`, may fire `abort()` during the backoff sleep between
+            // attempts. On the browser that abort tore down the previous attempt's fetch, but a
+            // fresh `AbortController` is armed per attempt, so without this check the loop would
+            // launch another request and the abort would be lost. Consulted only once a retry is
+            // in hand (`retries > 0`): the flag is read from the previous attempt's controller,
+            // which was armed by THIS turn -- a stale controller from an earlier turn is never
+            // read as this turn's Stop. An abort is a clean stop, so the round returns aborted,
+            // never an error.
+            if retries > 0 && self.abort_signalled() {
+                return Ok(Acc::new(self.dialect).into_response(true, retries));
+            }
             let mut acc = Acc::new(self.dialect);
             let mut emitted = false;
             let outcome = {
@@ -1294,6 +1344,15 @@ impl LlmClient {
         let mut waited = 0u64;
         let mut retries = 0u32;
         let raw = loop {
+            // Abort is authoritative across attempts, as in `stream_turn`: a Stop or the 540 s
+            // wall clock that lands during the backoff between attempts halts the ladder at the
+            // top of the next attempt rather than opening another request. Only once a retry is
+            // in hand, so a stale abort from an earlier turn is never read here. The fold has no
+            // partial to preserve, so the aborted response is returned as itself (its empty
+            // content ends the fold upstream).
+            if retries > 0 && self.abort_signalled() {
+                return Ok(Acc::new(self.dialect).into_response(true, retries));
+            }
             match self.do_request_full(&body).await {
                 Ok(r)  => break r,
                 Err(e) => {
@@ -2033,7 +2092,8 @@ impl LlmClient {
     #[cfg(not(target_arch = "wasm32"))]
     async fn open(
         &self,
-        body: &str,
+        body:    &str,
+        wait_ms: u64,
     )
         -> Result<(tokio_rustls::client::TlsStream<tokio::net::TcpStream>, bool), TransportErr>
     {
@@ -2087,19 +2147,26 @@ impl LlmClient {
                 "LLM: flush failed."; IO, Network, Wire, Write)));
         }
 
-        // Read headers byte-by-byte until \r\n\r\n.
+        // Read headers byte-by-byte until \r\n\r\n.  Each read is bounded by the first-byte
+        // watchdog: a provider that accepts the connection and then never sends a status line
+        // is the same hang the stream watchdog catches mid-body, so it ends the attempt as a
+        // transient timeout rather than blocking the round.  Per-read, so a header block that
+        // dribbles in is never cut -- each byte that arrives re-arms the window.
+        let idle = std::time::Duration::from_millis(wait_ms);
         let mut hdr_buf = Vec::with_capacity(2048);
         let mut byte = [0u8; 1];
         loop {
-            match stream.read(&mut byte).await {
-                Ok(0) => break,
-                Ok(_) => {
+            match tokio::time::timeout(idle, stream.read(&mut byte)).await {
+                Ok(Ok(0)) => break,
+                Ok(Ok(_)) => {
                     hdr_buf.push(byte[0]);
                     if hdr_buf.ends_with(b"\r\n\r\n") { break; }
                 }
-                Err(e) if e.kind() == tokio::io::ErrorKind::UnexpectedEof => break,
-                Err(e) => return Err(TransportErr::transient("the provider closed before replying".to_string(), err!(e,
+                Ok(Err(e)) if e.kind() == tokio::io::ErrorKind::UnexpectedEof => break,
+                Ok(Err(e)) => return Err(TransportErr::transient("the provider closed before replying".to_string(), err!(e,
                     "LLM: read headers failed."; IO, Network, Wire, Read))),
+                Err(_elapsed) => return Err(TransportErr::classify("no response from the provider".to_string(), err!(
+                    "LLM: no response headers within {} ms.", wait_ms; IO, Network, Timeout))),
             }
         }
 
@@ -2147,19 +2214,28 @@ impl LlmClient {
         &self,
         body: &str,
     ) -> Result<String, TransportErr> {
-        let (stream, is_chunked) = match self.open(body).await {
+        // A non-streaming provider generates the whole answer before it sends a byte, so both
+        // the header wait (in `open`) and the body wait below get the wider ceiling; see
+        // `REPLY_WAIT_FACTOR`.
+        let wait_ms = self.stream_idle_ms.get().saturating_mul(REPLY_WAIT_FACTOR);
+        let (stream, is_chunked) = match self.open(body, wait_ms).await {
             Ok(v)  => v,
             Err(e) => return Err(e),
         };
         let mut reader = LineReader::new(stream, is_chunked);
+        let idle = std::time::Duration::from_millis(wait_ms);
         let mut full = String::new();
         loop {
-            match reader.read_line().await {
-                Ok(Some(l)) => full.push_str(&l),
-                Ok(None) => break,
-                Err(e) if e.kind() == tokio::io::ErrorKind::UnexpectedEof => break,
-                Err(e) => return Err(TransportErr::transient("the reply was cut short".to_string(), err!(e,
+            // Bounded per line, like the streaming path: a body that stops arriving ends the
+            // attempt as a transient timeout rather than hanging on a dead connection.
+            match tokio::time::timeout(idle, reader.read_line()).await {
+                Ok(Ok(Some(l))) => full.push_str(&l),
+                Ok(Ok(None)) => break,
+                Ok(Err(e)) if e.kind() == tokio::io::ErrorKind::UnexpectedEof => break,
+                Ok(Err(e)) => return Err(TransportErr::transient("the reply was cut short".to_string(), err!(e,
                     "LLM: read response body failed."; IO, Network, Wire, Read))),
+                Err(_elapsed) => return Err(TransportErr::classify("the reply was cut short".to_string(), err!(
+                    "LLM: no response body within {} ms.", wait_ms; IO, Network, Timeout))),
             }
         }
         Ok(full)
@@ -2180,7 +2256,9 @@ impl LlmClient {
         on_data:    &mut impl FnMut(&str),
     ) -> Result<StreamOutcome, TransportErr>
     {
-        let (stream, is_chunked) = match self.open(body).await {
+        // Headers arrive before the first token on a streaming request, so the header wait in
+        // `open` is the plain idle ceiling; the per-line watchdog below covers the body.
+        let (stream, is_chunked) = match self.open(body, self.stream_idle_ms.get()).await {
             Ok(v)  => v,
             Err(e) => return Err(e),
         };
@@ -2258,7 +2336,7 @@ impl LlmClient {
             content: MessageContent::text("ping"),
         }];
         let body = self.build_body(&messages, None, false);
-        let resp = res!(self.wasm_fetch_raw(&body).await);
+        let resp = res!(self.wasm_fetch_raw(&body, self.stream_idle_ms.get()).await);
         Ok(resp.status())
     }
 
@@ -2277,9 +2355,20 @@ impl LlmClient {
     /// nothing at all -- so a request refused for being too long and one refused for
     /// being wrong had to be told apart by size alone.  Both dialects are covered,
     /// because it is the raw body that is carried and neither is parsed.
-    async fn wasm_fetch(&self, body: &str) -> Result<web_sys::Response, TransportErr> {
-        let resp = match self.wasm_fetch_raw(body).await {
+    async fn wasm_fetch(&self, body: &str, wait_ms: u64) -> Result<web_sys::Response, TransportErr> {
+        let resp = match self.wasm_fetch_raw(body, wait_ms).await {
             Ok(r) => r,
+            // The first-byte watchdog fired: the provider accepted the connection and then
+            // never answered.  Checked BEFORE `abort_signalled` -- abort-first would read
+            // this as a user cancel and mislabel a stall as a Stop -- and the tear-down is
+            // fired HERE (as the stream idle watchdog does) so a dropped future does not
+            // leave the `fetch` running.  TERMINAL, not transient: a stall is not fixed by
+            // retrying it, so `classify` ends the round rather than re-entering the ladder.
+            Err(e) if e.tags().contains(&ErrTag::Timeout) => {
+                self.abort();
+                return Err(TransportErr::classify(
+                    "no response from the provider".to_string(), e));
+            }
             // A rejected `fetch` is a network or CORS failure; an armed abort is
             // the caller cancelling, and must not be retried.
             Err(e) => return Err(if self.abort_signalled() {
@@ -2300,7 +2389,7 @@ impl LlmClient {
             } else {
                 None
             };
-            let detail = self.body_detail(&resp).await;
+            let detail = self.body_detail(&resp, wait_ms).await;
             let err = err!(
                 "LLM: HTTP error: {} {} | {}", status, status_text, detail;
                 IO, Network, Wire, Read);
@@ -2323,14 +2412,24 @@ impl LlmClient {
     ///
     /// # Arguments
     /// * `resp` - The non-2xx response, whose body is read to exhaustion.
-    async fn body_detail(&self, resp: &web_sys::Response) -> String {
+    async fn body_detail(&self, resp: &web_sys::Response, wait_ms: u64) -> String {
+        use wasm_bindgen::JsValue;
         use wasm_bindgen_futures::JsFuture;
 
         let text = match resp.text() {
-            Ok(p) => match JsFuture::from(p).await {
-                Ok(v)  => v.as_string().unwrap_or_default(),
-                Err(_) => String::new(),
-            },
+            // Race the body against the same idle ceiling: a refusal whose body will not
+            // resolve resolves to nothing rather than hanging the error path itself.
+            Ok(p) => {
+                enum Raced { Done(Result<JsValue, JsValue>), Idle }
+                let raced = race(
+                    Box::pin(async move { Raced::Done(JsFuture::from(p).await) }),
+                    Box::pin(async move { sleep_ms(wait_ms).await; Raced::Idle }),
+                ).await;
+                match raced {
+                    Raced::Done(Ok(v)) => v.as_string().unwrap_or_default(),
+                    Raced::Idle | Raced::Done(Err(_)) => String::new(),
+                }
+            }
             Err(_) => String::new(),
         };
         clip_bytes(&text, ERR_BODY_BYTES).to_string()
@@ -2340,7 +2439,7 @@ impl LlmClient {
     /// the status, mapping any JS error into an `Outcome`.  TLS trust is
     /// the browser's.  Callers that need a 2xx guarantee go through
     /// [`wasm_fetch`](Self::wasm_fetch).
-    async fn wasm_fetch_raw(&self, body: &str) -> Outcome<web_sys::Response> {
+    async fn wasm_fetch_raw(&self, body: &str, wait_ms: u64) -> Outcome<web_sys::Response> {
         use wasm_bindgen::JsCast;
         use wasm_bindgen::JsValue;
         use wasm_bindgen_futures::JsFuture;
@@ -2387,8 +2486,23 @@ impl LlmClient {
             scope.fetch_with_request(&request)
         };
 
-        let resp_val = res!(JsFuture::from(promise).await
-            .map_err(|e| err!("LLM: fetch failed: {}.", js_str(&e); IO, Network, Wire)));
+        // Bound the wait for the response the same way `stream_sse` bounds the wait for a
+        // stream chunk: race the `fetch` against `sleep_ms`, so a provider that accepts the
+        // connection and then never answers ends the attempt instead of hanging.  No
+        // `self.abort()` here -- that is the caller's to fire once it has classified the
+        // timeout (see `wasm_fetch`), so this layer stays a plain "did it arrive?".
+        enum Raced { Done(Result<JsValue, JsValue>), Idle }
+        let raced = race(
+            Box::pin(async move { Raced::Done(JsFuture::from(promise).await) }),
+            Box::pin(async move { sleep_ms(wait_ms).await; Raced::Idle }),
+        ).await;
+        let resp_val = match raced {
+            Raced::Idle         => return Err(err!(
+                "LLM: no response within {} ms.", wait_ms; IO, Network, Timeout)),
+            Raced::Done(Ok(v))  => v,
+            Raced::Done(Err(e)) => return Err(err!(
+                "LLM: fetch failed: {}.", js_str(&e); IO, Network, Wire)),
+        };
         let resp: Response = res!(resp_val.dyn_into()
             .map_err(|_| err!("LLM: fetch did not return a Response."; IO, Network, Wire)));
         Ok(resp)
@@ -2396,9 +2510,14 @@ impl LlmClient {
 
     /// Non-streaming request — await the full response body as text.
     async fn do_request_full(&self, body: &str) -> Result<String, TransportErr> {
+        use wasm_bindgen::JsValue;
         use wasm_bindgen_futures::JsFuture;
 
-        let resp = match self.wasm_fetch(body).await {
+        // The whole reply arrives in one body here (`chat_once` -> the fold summary), and a
+        // non-streaming provider generates the answer before sending a byte, so this path gets
+        // the wider first-byte ceiling; see `REPLY_WAIT_FACTOR`.
+        let wait_ms = self.stream_idle_ms.get().saturating_mul(REPLY_WAIT_FACTOR);
+        let resp = match self.wasm_fetch(body, wait_ms).await {
             Ok(r)  => r,
             Err(e) => return Err(e),
         };
@@ -2407,9 +2526,33 @@ impl LlmClient {
             Err(e) => return Err(TransportErr::transient("the reply was cut short".to_string(), err!(
                 "LLM: read response text failed: {}.", js_str(&e); IO, Network, Wire, Read))),
         };
-        let text_val = match JsFuture::from(text_promise).await {
-            Ok(v)  => v,
-            Err(e) => return Err(TransportErr::transient("the reply was cut short".to_string(), err!(
+        // Bound the body wait as well: headers can arrive before a slow generation finishes,
+        // so a body that never resolves must end the attempt rather than hang it.
+        enum Raced { Done(Result<JsValue, JsValue>), Idle }
+        let raced = race(
+            Box::pin(async move { Raced::Done(JsFuture::from(text_promise).await) }),
+            Box::pin(async move { sleep_ms(wait_ms).await; Raced::Idle }),
+        ).await;
+        let text_val = match raced {
+            Raced::Idle => {
+                // The body never resolved.  Read the abort flag BEFORE tearing the fetch down
+                // (which itself fires the signal): if a Stop or the 540 s wall clock already
+                // landed, this is a cancel; otherwise it is a first-byte-class stall.  Either
+                // way TERMINAL -- `classify` on the timeout tag, and an abort is never
+                // retryable -- so the body wait no longer re-enters the ladder (was the hole
+                // that retried an abort landing between the headers and the text).
+                let cancelled = self.abort_signalled();
+                self.abort();
+                return Err(if cancelled {
+                    TransportErr::fatal("the turn was cancelled".to_string(), err!(
+                        "LLM: aborted awaiting the response body."; IO, Network))
+                } else {
+                    TransportErr::classify("the reply was cut short".to_string(), err!(
+                        "LLM: no response body within {} ms.", wait_ms; IO, Network, Timeout))
+                });
+            }
+            Raced::Done(Ok(v))  => v,
+            Raced::Done(Err(e)) => return Err(TransportErr::transient("the reply was cut short".to_string(), err!(
                 "LLM: await response text failed: {}.", js_str(&e); IO, Network, Wire, Read))),
         };
         Ok(text_val.as_string().unwrap_or_default())
@@ -2434,7 +2577,9 @@ impl LlmClient {
         use wasm_bindgen_futures::JsFuture;
         use web_sys::{ReadableStream, ReadableStreamDefaultReader};
 
-        let resp = match self.wasm_fetch(body).await {
+        // Headers arrive before the first token on a streaming request, so the first-byte
+        // wait is the plain idle ceiling; the per-chunk watchdog below covers the rest.
+        let resp = match self.wasm_fetch(body, self.stream_idle_ms.get()).await {
             Ok(r) => r,
             Err(e) => {
                 if self.abort_signalled() {
@@ -2553,6 +2698,25 @@ impl LlmClient {
             .as_ref()
             .map(|ctrl| ctrl.signal().aborted())
             .unwrap_or(false)
+    }
+}
+
+// Native abort authority.  The wasm build's `abort`/`abort_signalled` (above) ride on the
+// browser `AbortController`; the native transport has no browser Stop, so it backs the same
+// two methods onto the shared `aborted` flag.  This keeps the retry loop's top-of-attempt
+// abort check compiling on both targets and lets the tests drive an abort.
+#[cfg(not(target_arch = "wasm32"))]
+impl LlmClient {
+    /// Set the abort flag for the current turn.  It stays set across retry attempts, so the
+    /// ladder halts at the top of the next attempt rather than opening another request.  Safe
+    /// to call when idle.
+    pub fn abort(&self) {
+        self.aborted.set(true);
+    }
+
+    /// Whether the current turn has been aborted; see [`abort`](Self::abort).
+    fn abort_signalled(&self) -> bool {
+        self.aborted.get()
     }
 }
 
@@ -7663,6 +7827,14 @@ pub mod tests {
             chunks:  Vec<String>,
             idle_ms: u64,
         },
+        /// Accept the connection, send NO status line and NO headers, then hold the socket
+        /// open silently for `idle_ms` before closing -- what a provider that took the request
+        /// and then never answered looks like on the wire.  The client's first-byte watchdog,
+        /// not this close, should decide when the attempt ends.  Distinct from `Stall`, which
+        /// answers with headers and some body before going quiet; here nothing arrives at all.
+        Hang {
+            idle_ms: u64,
+        },
     }
 
     impl Reply {
@@ -8005,6 +8177,12 @@ pub mod tests {
                 let _ = tls.write_all(b"0\r\n\r\n").await;
                 let _ = tls.flush().await;
             }
+            Reply::Hang { idle_ms } => {
+                // Not a byte of a reply -- no status line, no headers.  Just hold the
+                // connection open past whatever the client's first-byte watchdog is set to,
+                // so the watchdog and not this close is what ends the attempt.
+                tokio::time::sleep(std::time::Duration::from_millis(*idle_ms)).await;
+            }
         }
     }
 
@@ -8205,6 +8383,114 @@ pub mod tests {
         // the round is over, with whatever it had, not sent again from the top.
         assert_eq!(connections(&seen), 1,
             "a stall must not trigger a full resend of the request");
+    }
+
+    /// A provider that accepts the connection and then sends NOTHING is given up on by the
+    /// first-byte watchdog after ONE attempt -- not waited on until it closes, and not retried.
+    /// A first-byte/idle timeout is a stall, and a stall is not fixed by retrying it: another
+    /// identical attempt only waits out the same ceiling again. So the round ends as an error
+    /// after one connection, never as a fabricated success and never as a resend storm. This is
+    /// the transport half of the vision self-verify fix: the JS wall clock (seq 290) is the
+    /// outer bound and the tools.rs wording refuses to read a non-reporting worker as a pass;
+    /// this stops the hang that started it.
+    #[tokio::test]
+    async fn test_a_provider_that_never_answers_is_given_up_on_not_hung_on() {
+        // Two replies are scripted, but only the first should ever be reached: a terminal
+        // timeout must not advance to the second.
+        let (port, seen) = start_stub(vec![
+            Reply::Hang {
+                // Comfortably longer than the client's own ceiling below, so the watchdog and
+                // not the stub's close is what ends the attempt.
+                idle_ms: 4_000,
+            },
+            Reply::answer(),
+        ]).await;
+        let mut client = stub_client(port);
+        // Room for retries in the policy, precisely so the test proves the timeout does NOT use
+        // them: a stall is terminal, so the ladder must stop after one attempt regardless.
+        client.retry = RetryPolicy {
+            max_attempts:      4,
+            base_ms:           20,
+            max_backoff_ms:    40,
+            max_total_wait_ms: 5_000,
+        };
+        client.set_stream_idle_ms(80); // floored to 1_000ms by set_stream_idle_ms
+        let msgs = [ChatMessage::user("hello".to_string())];
+        let mut tokens = Vec::new();
+
+        let started = std::time::Instant::now();
+        let result = client.chat_stream_tools(&msgs, None, &mut text_sink(&mut tokens)).await;
+        let elapsed = started.elapsed();
+
+        assert!(result.is_err(),
+            "a provider that never answered must not be reported as a completed round");
+        // ONE 1s ceiling, no retry. Without the terminal classification the ladder would sit
+        // on a fresh socket each attempt; without the watchdog it would wait out the stub's 4s
+        // close. Either would put this well past the bound.
+        assert!(elapsed < std::time::Duration::from_millis(2_500),
+            "the first-byte timeout was retried or waited out: waited {:?}", elapsed);
+        assert!(tokens.is_empty(),
+            "nothing was ever sent, so nothing should have streamed: {:?}", tokens);
+        // ONE CONNECTION. The timeout is TERMINAL: the stall ends the round after a single
+        // attempt rather than re-entering the retry ladder. The scripted `answer()` is never
+        // reached.
+        assert_eq!(connections(&seen), 1,
+            "a first-byte timeout was retried instead of ending the round");
+    }
+
+    /// An abort that lands during a retry backoff halts the ladder at the top of the next
+    /// attempt, rather than opening another connection.
+    ///
+    /// This is the abort-authority half of the ruling. On the browser a user's Stop and the
+    /// 540 s wall clock in `www/js/daimond.js` both fire `abort()`, and a fresh
+    /// `AbortController` is armed per attempt -- so the retry loop, not the per-fetch
+    /// controller, has to be what stops the ladder. Here a 500 backs the first attempt off; the
+    /// abort fires during that backoff (native `abort` sets the shared flag the wasm controller
+    /// stands in for); the second attempt must never be opened. An abort is a clean stop, so
+    /// the round returns aborted, not an error.
+    #[tokio::test]
+    async fn test_an_abort_during_backoff_halts_the_retry_ladder() {
+        let (port, seen) = start_stub(vec![
+            Reply::server_error(),  // attempt 1: retryable, so the ladder backs off
+            Reply::answer(),        // attempt 2: only reached if the abort is lost
+        ]).await;
+        let mut client = stub_client(port);
+        // A backoff long enough for the abort to land inside it, deterministically ahead of the
+        // 500ms retry pause.
+        client.retry = RetryPolicy {
+            max_attempts:      4,
+            base_ms:           500,
+            max_backoff_ms:    500,
+            max_total_wait_ms: 5_000,
+        };
+        let msgs = [ChatMessage::user("hello".to_string())];
+        let mut tokens = Vec::new();
+
+        let started = std::time::Instant::now();
+        // Fire the abort 100ms in -- after attempt 1's immediate 500, during its 500ms backoff.
+        let mut sink = text_sink(&mut tokens);
+        let run = client.chat_stream_tools(&msgs, None, &mut sink);
+        let abort_at = async {
+            sleep_ms(100).await;
+            client.abort();
+        };
+        let (result, ()) = tokio::join!(run, abort_at);
+        let elapsed = started.elapsed();
+
+        let resp = match result {
+            Ok(r)  => r,
+            Err(e) => panic!("an abort is a clean stop, not an error: {}", e),
+        };
+        assert!(resp.aborted, "the aborted round did not report itself aborted");
+        // ONE CONNECTION. The abort landed during the backoff and stopped the ladder at the top
+        // of attempt 2, so the second connection was never opened and the good answer was never
+        // fetched -- exactly the hole where a fresh controller per attempt lost the abort.
+        assert_eq!(connections(&seen), 1,
+            "the ladder opened another connection after the abort");
+        assert!(resp.content.is_empty(),
+            "an aborted round must not carry the answer it never fetched: {:?}", resp.content);
+        assert!(elapsed < std::time::Duration::from_millis(2_000),
+            "the aborted ladder did not stop promptly: waited {:?}", elapsed);
     }
 
     #[tokio::test]

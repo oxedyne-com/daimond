@@ -15380,7 +15380,7 @@ impl Tool {
             Tool::ArtefactAdd => "Record that a file already in the workspace is an artefact of this Diamond, so it is listed with the work rather than only sitting in the folder. Use it for files the user put there, or found, or wrote themselves -- anything this Diamond produced is recorded without being asked. Recording a file does not read it: read it as well if what it says belongs in the crystal.",
             Tool::SocialRead  => "THIS IS HOW YOU SEE WHAT PEOPLE ARE SAYING ABOUT DAIMOND, and whether something has already been reported. Six views. 'proposals': what anybody has asked for or reported about Daimond itself -- bugs, requests, complaints -- newest first, each with its number, state and votes for and against. 'proposal': ONE in full with its discussion; give 'n'. 'notes': what was written on this device and not sent. 'messages': what other people sent this account. 'people': who this account can reach. 'feed': what the people this account follows have posted to their followers. SO WHEN THE USER REPORTS A DEFECT IN DAIMOND, OR ASKS FOR SOMETHING, THIS IS WHERE IT GOES: read the proposals to see whether somebody has already said it, then use social_send. There is no external issue tracker and no web page to fetch: this panel IS how something about Daimond gets reported, and reading it takes no permission.",
             Tool::SocialSend  => "Publish on Daimond's Social panel, in the user's name, where other people read it. Four acts. 'propose' opens one: 'title', one line on what it is about, and 'body', what happened and what was expected -- this is how a defect in Daimond reaches the people who build it. 'vote' backs or opposes an open one: 'n' and 'd' as 'for', 'against' or 'withdraw'. 'comment' says something on one: 'n' and 'said'. 'feed_post' publishes 'body' to this account's own followers, and needs Daimond Pro. Read with social_read first, so you have the number and do not repeat a proposal already there. EVERY CALL IS PUT TO THE USER BEFORE IT GOES OUT: they see exactly what would be published and say yes or no, and the yes covers that one publication. Write it as though they are reading it, because they are. If they decline, do not send it again -- say what you wanted to publish and why. A dispatched worker cannot publish at all: say in your report what should be published and let the daimon put it.",
-            Tool::Capture     => "Photograph the app's OWN current view and write it to a PNG in the workspace, so you can LOOK at a change you just made without launching a browser -- which your shell and your workers cannot do inside the fence. NAME THE SMALLEST SELECTOR THAT SHOWS THE CHANGE -- an '#id' or a specific class -- NEVER the whole page, the transcript ('#chat-output') or the chat pane: it rasterises by cloning the target subtree and inlining every computed style onto every descendant, which is cheap for a widget and ruinous for hundreds of tiles, so a selector over ~3000 elements is refused outright and the refusal names the count. It writes to 'path' (default 'dev/shots/self.png'). THE HAND-OFF: after it writes, dispatch a vision-capable worker and give it that path -- the worker file_reads it with \"as\":\"image\" and confirms the change appears and nothing else looks broken; only then is a UI change done. Two honest limits: a web font renders in a fallback face (layout, colour and every box are exact; only the glyph shapes may differ), and a cross-origin image in the subtree taints the picture and is refused by name so you can narrow the selector past it. Browser build only.",
+            Tool::Capture     => "Photograph the app's OWN current view and write it to a PNG in the workspace, so you can LOOK at a change you just made without launching a browser -- which your shell and your workers cannot do inside the fence. NAME THE SMALLEST SELECTOR THAT SHOWS THE CHANGE -- an '#id' or a specific class -- NEVER the whole page, the transcript ('#chat-output') or the chat pane: it rasterises by cloning the target subtree and inlining every computed style onto every descendant, which is cheap for a widget and ruinous for hundreds of tiles, so a selector over ~3000 elements is refused outright and the refusal names the count. It writes to 'path' (default 'dev/shots/self.png'). THE HAND-OFF: after it writes, dispatch a vision-capable worker and give it that path -- the worker file_reads it with \"as\":\"image\" and confirms the change appears and nothing else looks broken; only then is a UI change done. IF THAT WORKER DOES NOT REPORT BACK, the change is UNVERIFIED: say so and do not infer that it passed -- a verification you did not receive did not happen. Two honest limits: a web font renders in a fallback face (layout, colour and every box are exact; only the glyph shapes may differ), and a cross-origin image in the subtree taints the picture and is refused by name so you can narrow the selector past it. Browser build only.",
             Tool::Ask         => "Put ONE decision to the user as options they answer with a single tap. THIS IS HOW YOU ASK THEM SOMETHING: a decision answered by typing is a decision put off, so reach for this wherever you would otherwise stop and ask which of these, or shall I go on. ONE at a time, never a list; where more follow, set 'n' and 'of'. Each option carries a short 'label' -- the button's words -- and a 'means': what choosing it concretely does, what they see, get or pay, with an example and the trade-off. 'recommend' must match one 'label' EXACTLY. 'it depends' is not an answer: say what it depends on and pick the branch you believe applies. 'why' is one sentence citing THEIR world -- their constraint, cost or users -- not a general virtue. 'if_silent' says what you will do if they answer nothing; they may also answer in their own words and reject every option. YOUR TURN ENDS WHEN YOU CALL THIS: do not restate the question afterwards. Their answer arrives next, opening 'Chose:' with the label or 'Other:' with words of their own.",
             Tool::FileShow    => "Put a workspace file on the user's screen, in Daimond's document panel beside the chat -- this is for showing them something; the other file tools only hand bytes to you. A PDF is drawn page by page by the browser's own viewer, so say 'it is on screen now', never 'I cannot display a PDF'. Pictures (PNG, JPEG, GIF, WebP, AVIF, HEIC, BMP, ICO, TIFF, SVG) are drawn, sound and video get a player, HTML is rendered, JSON becomes a tree, CSV and TSV a table, Markdown is rendered, and source opens in an editor the user can type in. A format with no viewer of its own is still shown as a paged hex dump naming the format, so this never fails and you must never conclude Daimond cannot display things. It takes a PATH, not content: the panel reads the file, so call it again with the same path after you rewrite or recompile it. 'page' opens a PDF at a page. Show a file when they asked to see one, when you have just produced a document, or when the thing under discussion is easier looked at than described.",
             Tool::SheetRead   => "Read a rectangle of an Excel spreadsheet (.xlsx) as a table. Give a 'path', optionally a 'sheet' by the name on its tab (the first sheet otherwise) and optionally a 'range' like 'A1:H40' (the first 100 rows otherwise). The result carries the column letters and the row numbers, so your next call can name exactly the range you now want. THE VALUE SHOWN IS THE ONE STORED IN THE FILE -- the number the person who wrote it saw. Formulas are NOT recalculated; the formulas inside the range are listed after the table, so you can see what produced a figure without being handed a different figure. Call file_read on a .xlsx first to learn what sheets it has and how big they are, then this to read the cells. A workbook is a compressed archive of XML and one sheet can be a hundred thousand rows, which is why this takes a range and file_read does not hand you the whole thing.",
@@ -16197,7 +16197,8 @@ impl Tool {
             let mut out = fmt!(
                 "No worker finished within {} s: {} {} still running. Carry on with your own \
                  work and call gather again, or finish your answer and their reports will reach \
-                 you as a later turn.",
+                 you as a later turn. A worker that has not reported has verified NOTHING: do \
+                 not report a verification, a pass, or any result you did not receive from it.",
                 args.timeout_s, who, if still.len() == 1 { "is" } else { "are" });
             Self::gather_push_unresolved(&mut out, &unresolved);
             out.push_str(&fmt!("\n\n[gather: n=0 pending={} usd=0.0000]", still.len()));
@@ -16215,10 +16216,13 @@ impl Tool {
         if !still.is_empty() {
             out.push_str(&fmt!(
                 "\n\nStill running: {}. Call gather again to wait for {}, or finish your answer \
-                 and {} will report as a later turn.",
+                 and {} will report as a later turn. {} has verified NOTHING yet: do not report \
+                 a verification, a pass, or any result you have not received from {}.",
                 still.join(", "),
                 if still.len() == 1 { "it" } else { "them" },
-                if still.len() == 1 { "it" } else { "they" }));
+                if still.len() == 1 { "it" } else { "they" },
+                if still.len() == 1 { "It" } else { "They" },
+                if still.len() == 1 { "it" } else { "them" }));
         }
         Self::gather_push_unresolved(&mut out, &unresolved);
         out.push_str(&fmt!("\n\n[gather: n={} pending={} usd={:.4}]", done, still.len(), usd));
@@ -16252,15 +16256,18 @@ impl Tool {
     /// Mirrors `workerEndingNote` in `www/js/daimond.js`; see [`Self::gather_result`] for why
     /// the vocabulary is shared.  `done` says nothing, because the ordinary case needs no note.
     fn gather_ending_note(status: &str, rounds: u64, usd: f64) -> String {
+        // A non-`done` ending carries NO verdict: the worker was cut off (a round or spend cap,
+        // an error, or a stop -- the JS wall-clock stop reuses `capped`) before it could report.
+        // The heading says so, so a partial run is never read as a verification or a pass.
         match status {
             "capped" => fmt!(
-                " — stopped at the round cap after {} rounds, US${:.4}\n\n\
-                 (partial — continue with resume)", rounds, usd),
+                " — stopped at the round cap after {} rounds, US${:.4} (no verdict; treat as \
+                 unverified)\n\n(partial — continue with resume)", rounds, usd),
             "spend_cap" => fmt!(
-                " — stopped at the spend cap after {} rounds, US${:.4}\n\n\
-                 (partial — continue with resume)", rounds, usd),
-            "error"   => fmt!(" — error"),
-            "stopped" => fmt!(" — stopped"),
+                " — stopped at the spend cap after {} rounds, US${:.4} (no verdict; treat as \
+                 unverified)\n\n(partial — continue with resume)", rounds, usd),
+            "error"   => fmt!(" — error (no verdict; treat as unverified)"),
+            "stopped" => fmt!(" — stopped (no verdict; treat as unverified)"),
             _         => fmt!(" — done, {} rounds, US${:.4}", rounds, usd),
         }
     }
@@ -18874,7 +18881,8 @@ impl Tool {
             "Photographed the view to {} ({}x{} px, {} bytes). To finish a UI change: dispatch a \
             vision-capable worker and give it this path -- it reads the picture with file_read \
             \"as\":\"image\" and confirms the change appears and nothing else on the page looks \
-            broken.",
+            broken. If that worker does not report back, the change is UNVERIFIED: say so, and \
+            never infer a pass from a verification you did not receive.",
             path, shot.w, shot.h, shot.png.len()))
     }
 
@@ -26766,8 +26774,16 @@ mod tests {
         assert!(said.contains("continue with resume"),
             "a partial report did not say it can be carried on: {}", said);
         assert!(said.contains("— error"), "an errored worker did not say so: {}", said);
+        // Each cut-off ending (capped, spend_cap, error, stopped) says it carries NO verdict, so
+        // a partial or errored worker is never read as a verification or a pass.
+        assert!(said.matches("no verdict; treat as unverified").count() >= 4,
+            "the cut-off endings do not each say they carry no verdict: {}", said);
         assert!(said.contains("Still running: writer"),
             "the worker still running was not named: {}", said);
+        // The still-running worker is guarded the same way the no-finish branch is: it has
+        // reported nothing, so the model must not claim a result from it.
+        assert!(said.contains("verified NOTHING"),
+            "a still-running worker is not guarded against a fabricated pass: {}", said);
         // The machine-readable tail, which is what a trial reads rather than parsing the prose.
         assert!(said.contains("[gather: n=5 pending=1 usd=1.4687]"),
             "the tail line does not carry the figures: {}", said);
@@ -26776,6 +26792,33 @@ mod tests {
             "the turn was charged {} for its workers", c.worker_usd());
         assert_eq!(CallOutcome::Done, call_outcome(&said),
             "a gather that returned reports is work, not a refusal");
+    }
+
+    /// When NOTHING has finished, the wait's report tells the model plainly that a worker which
+    /// has not reported has verified nothing.
+    ///
+    /// This is the gather half of the vision self-verify fix: a stalled or still-running
+    /// self-verify worker must never be read as a pass.  No test covered this branch before.
+    #[test]
+    fn test_gather_with_no_finisher_guards_against_a_fabricated_pass_00() {
+        let c = scripted(vec![
+            ScriptedReport { name: fmt!("verify"), status: fmt!("done"),
+                report: fmt!("never"), usd: 0.0, rounds: 0, terminal: false },
+        ]);
+        c.note_spawned("w1", "verify");
+        let said = Tool::gather_scripted("{}", &c).expect("gather");
+        assert!(said.contains("No worker finished"),
+            "the no-finish branch was not taken: {}", said);
+        assert!(said.contains("verified NOTHING"),
+            "the no-finish report does not guard against a fabricated pass: {}", said);
+        assert!(said.contains("do not report a verification"),
+            "the guard does not forbid reporting a result never received: {}", said);
+        // A worker that never reported must not appear as a finished report the model could
+        // read a verdict out of.
+        assert!(!said.contains("### verify"),
+            "an unfinished worker was rendered as a finished heading: {}", said);
+        // Nothing finished, so nothing was charged.
+        assert!((c.worker_usd() - 0.0).abs() < 1e-9, "an unfinished wait charged the turn: {}", c.worker_usd());
     }
 
     /// A `gather` with nothing outstanding is a refusal, and is booked as one.

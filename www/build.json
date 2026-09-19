@@ -1,1 +1,1 @@
-{"build":"9da6dc03176e","note":"Reach: reload the workspace on a Diamond focus change, and refuse a paperclip that would edit another Diamond's reach"}
+{"build":"ffce2266429a","note":"worker-hang root fix: first-byte timeout terminal, abort authoritative; reach link resolved from store not cache"}
