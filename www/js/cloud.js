@@ -77,7 +77,36 @@
 	}
 
 	function index()      { return readJson(IX_KEY, {}); }
-	function setIndex(ix) { return writeJson(IX_KEY, ix || {}); }
+
+	// ── Is this device's index durably written? ────────────────────
+	// THE INDEX IS WHAT A COMMIT DECLARES LIVE, and a commit sweeps every chunk the
+	// declared index does not name. So an index write LOST TO QUOTA is not a
+	// best-effort miss recomputed next round: the collector that failed to record a
+	// manifest still hangs a `messagesRef`/`dataRef`/`msgRef` on the parcel, and the
+	// next commit -- built from the index that never took the manifest -- declares a
+	// live set MISSING those addresses and sweeps the chunks the parcel it just
+	// pushed points at. The far device then gets an empty chat, re-swept every round.
+	//
+	// So `setIndex` remembers a write it could not land, and `indexDurable()` is what
+	// gates the commit: a device whose index is not durable declares no live set at
+	// all (see `syncMayCommitChunks` in daimond.js). Sticky until the next write
+	// succeeds -- exactly like `chunks.js`'s refusal, and re-derived by the next
+	// collect, which retries the write every round until localStorage has room.
+	var indexDirty = null;		// { at } while the last index write did not land.
+
+	function setIndex(ix) {
+		var ok = writeJson(IX_KEY, ix || {});
+		if (ok) indexDirty = null;
+		else indexDirty = indexDirty || { at: Date.now() };
+		return ok;
+	}
+
+	/// Did this device's index write land, so a commit may declare a live set from
+	/// it? False while a `setIndex` has been lost to quota and no later one has
+	/// succeeded -- the state in which committing would sweep the parcel's own
+	/// chunks.
+	function indexDurable() { return !indexDirty; }
+
 	function pins()       { return readJson(PIN_KEY, {}); }
 	function atimes()     { return readJson(ATIME_KEY, {}); }
 
@@ -128,11 +157,15 @@
 	/// own change-key beside `{v,size,key,chunks}` — `touched` for a Diamond, `fp`
 	/// for a chat — so the next collect can tell an unchanged item from a moved
 	/// one WITHOUT re-offloading it, which is what keeps the parcel a fixed point.
+	/// Answers whether the write LANDED, so a collector can ride its content inline
+	/// this round rather than hang a reference on the parcel that the index -- and so
+	/// the next commit -- does not name. A false here without that check is the
+	/// frozen-index committer: content offloaded, reference on the parcel, address
+	/// absent from the committed live set, chunk swept.
 	function contentSet(key, rec) {
 		var ix = index();
 		ix[key] = rec;
-		setIndex(ix);
-		return ix;
+		return setIndex(ix);
 	}
 
 	/// Drop the content manifest at `key`, so its chunks stop being named live
@@ -835,8 +868,10 @@
 			chunks: mani.chunks,
 			at:     o.timeless ? 0 : Date.now(),
 		};
-		setIndex(ix);
-		return ix;
+		// The boolean, for the same reason `contentSet` returns it: a file manifest
+		// lost to quota leaves the parcel naming chunks the index does not, and the
+		// caller may want to know. `indexDurable()` catches it regardless.
+		return setIndex(ix);
 	}
 
 	// ── Manifests this device cannot heal ──────────────────────
@@ -1194,6 +1229,11 @@
 		contentGet:   contentGet,
 		contentSet:   contentSet,
 		contentForget: contentForget,
+		/// Whether this device's index write landed. `syncMayCommitChunks` gates the
+		/// commit on it: a device whose index is not durable declares no live set,
+		/// because a commit from an index that lost a manifest to quota sweeps the
+		/// very chunks the parcel it pushed still points at.
+		indexDurable: indexDurable,
 		/// A manifest this device cannot heal: record it (`noteUnrestorable`, which
 		/// answers how many rounds it has been seen), read the set (`unrestorable`),
 		/// and forget one (`clearUnrestorable`). The second answered sighting is what

@@ -702,6 +702,10 @@
 	'sync.when_mins': 'há {n} min',
 	'sync.when_hours': 'há {n} h',
 	'sync.when_days': 'há {n} d',
+	'sync.rekey_needed': 'Frase-senha alterada',
+	'sync.rekey_needed_reason': 'A frase-senha foi alterada em outro dispositivo, e este não consegue se atualizar sozinho. Vincule-o novamente a esta conta.',
+	'sync.rekey_adopted': 'Frase-senha atualizada',
+	'sync.rekey_adopted_body': 'A frase-senha foi alterada em outro dispositivo, e este já se atualizou. Você não precisa digitá-la aqui.',
 
 	// ── O identificador público da conta ───────────────────────
 	'handle.taken': 'Esse identificador já é de outra pessoa. Escolha outro.',
@@ -2103,6 +2107,7 @@
 	'changepass.changed': 'Frase-senha mudada',
 	'changepass.changed_body': 'Sua nova frase-senha está ativa. Sua chave de API salva foi recriptografada com ela.',
 	'changepass.passkey_stale': 'Sua chave de acesso não pôde ser atualizada, então ela vai pedir a frase-senha nova. Adicione-a de novo nas Configurações.',
+	'changepass.other_devices': 'Seus outros dispositivos adotam a nova frase-senha automaticamente na próxima sincronização.',
 
 	// ── Backups ────────────────────────────────────────────────
 	'backup.unreadable': 'Não foi possível ler esse arquivo de backup.',
@@ -3092,6 +3097,7 @@
 	'chat.ran_on': 'executado em {name}',
 	'chat.handed_off': '{name} está com isso',
 	'chat.ran_here_failed': 'Executado aqui — o repasse para {name} não terminou',
+	'chat.ran_here_refused': 'Executado aqui — o relay recusou o repasse',
 	'chat.ran_here': 'Executado neste dispositivo',
 	'chat.handoff_ran_on': 'Executado em {name}; a resposta sincronizou de volta para este dispositivo.',
 	'chat.handoff_ran_here': 'Executado neste dispositivo depois que o repasse para {name} não terminou.',
@@ -3157,6 +3163,8 @@
 	'seat.why_chat_local': 'Este chat está fixado neste dispositivo.',
 	'seat.tile_local_mobile': 'Roda aqui — mantenha aberto',
 	'seat.retry': '{from} não pegou isso; tentando {to}',
+	'seat.refused': 'Repasse recusado ({status}) — executando aqui',
+	'errand.prompt_too_large': 'só o prompt já é maior do que o relay aceita',
 	'place.why_here': 'Tudo o que precisa está aqui.',
 	'place.why_missing_files': 'Nem todos os arquivos deste documento estão aqui — faltam {n}.',
 	'place.why_too_large': 'Grande demais para este telefone: a última build precisou de {need} MB e esta página tem {room} MB.',

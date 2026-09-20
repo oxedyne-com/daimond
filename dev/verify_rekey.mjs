@@ -601,7 +601,19 @@ async function changePassphrase(cur, next, before) {
 }
 
 /// Unlock after a reload, with a passphrase this file chose.
+///
+/// The reload MUST land on the lock screen, because the whole point (see the caller's
+/// comment) is that the wrapping key is re-derived from the passphrase from scratch.
+/// Since the stay-unlocked-across-reload work (identity.js K_STAY, default ON for a
+/// desktop) a reload of an unlocked tab comes back UNLOCKED -- a memory restore, not a
+/// fresh derivation -- and `#id-primary` never appears. So the session is dropped and
+/// the identity locked before the reload, which both makes the gate appear and makes
+/// this the honest test it says it is.
 async function unlockWith(pass) {
+	await page.evaluate(() => {
+		try { DaimondIdentity.setStayUnlocked(false); } catch (e) { /* older build */ }
+		try { DaimondIdentity.lock(); } catch (e) { /* already locked */ }
+	});
 	await page.reload({ waitUntil: 'domcontentloaded' });
 	await page.waitForSelector('#id-primary', { timeout: 15000 });
 	await page.waitForTimeout(400);

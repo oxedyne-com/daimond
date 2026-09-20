@@ -87,12 +87,42 @@
 	// deviceId() for why the account public key cannot serve this purpose.
 	var K_DEVID = 'daimond-id-device';	// hex random 128-bit, per-device, un-synced.
 	// A durable "an identity was once created in this account" marker. Written at
-	// the first create() and cleared only by reset(). It is the positive evidence
+	// the first create() or importBundle() -- pairing, passkey adopt and backup
+	// restore all arrive through importBundle(), so one write site covers every
+	// arrival path -- and cleared only by reset(). It is the positive evidence
 	// the boot gate reads to refuse a BARE create after a premature empty read: a
 	// stored keypair that reads empty on a cold iOS tab still leaves this behind,
 	// so a re-mint that would orphan the sealed keys is turned into a recover
 	// prompt instead. See existsSettled() and daimond.js's orphan guard.
 	var K_EVER  = 'daimond-id-ever';	// '1' once an identity has existed here.
+	// A "this device was removed from the account" marker, set by retire() (called
+	// from daimond.js's onThisDeviceRemoved) and cleared by create(), importBundle()
+	// -- a re-pair is the intended way back -- and reset() -- forget-me is a
+	// genuine fresh start. Read by the boot gate to show a "removed, link again"
+	// screen rather than the lost-keys recover screen: the identity here was TAKEN
+	// AWAY, not lost to a bad read, and the two must not look the same on screen.
+	var K_REMOVED = 'daimond-id-removed';	// '1' once this device has been removed.
+	// ── Surviving a passphrase change made on ANOTHER device ────
+	//
+	// A passphrase change re-derives the wrapping key under a fresh salt, so a second
+	// device still on the old salt cannot read a byte the changer pushes -- and used
+	// to fork the account for ever (sync.js's corruption recovery, each device pushing
+	// its own over the other's). These two keys carry the change to linked devices as
+	// an EPOCH CHAIN: the new key bits, sealed UNDER THE OLD KEY, so a device that
+	// holds the old key adopts the new one without ever knowing the new passphrase.
+	//
+	// K_EPOCH is an integer, absent (read as 0) for every account that has never
+	// changed its passphrase -- and such an account's parcel stays byte-identical to
+	// today, so nothing on the gateway changes and no existing account is touched.
+	// K_REKEY is the rekey RECORD: the account's values at rest after the change (the
+	// exportBundle shape) plus a `chain` of links, each `{ from, to, wk }` where `wk`
+	// is `sealAad(newBits, 'rekey:from>to:pub')` under the key at step `from`. It rides
+	// inside the sync blob (see sync.js openEnvelope) so a lagging device adopts on its
+	// next pull. The AAD binds each link to the account key and the step, so a link
+	// cannot be replayed for a different account or a different rung of the chain.
+	var K_EPOCH = 'daimond-id-epoch';	// integer; absent/0 for an account never rekeyed.
+	var K_REKEY = 'daimond-id-rekey';	// the rekey record, JSON. See adoptRekey().
+	var CHAIN_MAX = 8;			// the most chain links a record carries.
 
 	// ── Staying unlocked across a reload (2026-09-13) ───────────
 	//
@@ -120,6 +150,12 @@
 	var _wrapKey = null;	// AES-GCM CryptoKey deriving from the passphrase.
 	var _signKey = null;	// Device private signing key (non-extractable).
 	var _sealKey = null;	// Device private SEALING key (non-extractable). See ensureSealingKey.
+	// The wrapping key from BEFORE the last epoch change on this device, held for the
+	// length of the session and never persisted. It closes the lost-edit race: a device
+	// that pushed a parcel at the old epoch just before the change lands is opened with
+	// this rather than clobbered. Set by changePassphrase (the old key) and by
+	// adoptRekey (the key it just replaced); nulled by lock(). See sync.js pullOnce.
+	var _prevWrapKey = null;	// previous epoch's wrapping key, this session only.
 	// Pure-JS fallback material, set ONLY on an engine whose WebCrypto lacks the
 	// curve, and null otherwise. Unlike the CryptoKeys above these hold the RAW
 	// private key in JS memory — see curvefallback.js for why that is accepted
@@ -366,6 +402,57 @@
 			ct,
 		);
 		return new Uint8Array(pt);
+	}
+
+	/// Seal raw bytes under a GIVEN key, binding a purpose string as the AES-GCM
+	/// additional data. Like `wrapBytesAad` but takes the key explicitly rather than
+	/// the in-memory `_wrapKey`, because the epoch chain seals the new key bits under
+	/// the OLD key and opens them under keys derived along the chain -- neither of which
+	/// is `_wrapKey` at the moment it is needed. Answers base64 of `IV(12) || ct(+tag)`,
+	/// the record's string shape. `openAad` with the same key and purpose opens it.
+	async function sealAad(key, plainBytes, purpose) {
+		var iv = crypto.getRandomValues(new Uint8Array(IV_BYTES));
+		var ct = new Uint8Array(await crypto.subtle.encrypt(
+			{ name: 'AES-GCM', iv: iv, additionalData: utf8(String(purpose)) }, key, plainBytes));
+		var out = new Uint8Array(iv.length + ct.length);
+		out.set(iv, 0);
+		out.set(ct, iv.length);
+		return b64enc(out);
+	}
+
+	/// Open what `sealAad` sealed, under the SAME key and purpose. Throws (the GCM tag)
+	/// on a wrong key, a tampered ciphertext, or a purpose that does not match.
+	async function openAad(key, b64, purpose) {
+		var buf = b64dec(b64);
+		var pt = await crypto.subtle.decrypt(
+			{ name: 'AES-GCM', iv: buf.slice(0, IV_BYTES), additionalData: utf8(String(purpose)) },
+			key, buf.slice(IV_BYTES));
+		return new Uint8Array(pt);
+	}
+
+	/// The canonical bytes a rekey record is SIGNED over: every at-rest value an
+	/// adopting device would otherwise take on trust -- the salt, the wrapped private
+	/// key, the sealing material and the card -- in a fixed order, as an array so key
+	/// ordering cannot vary between the mint and the check. The chain links are
+	/// authenticated by their own AAD, and a signature cannot sign itself, so both are
+	/// excluded. `changePassphrase` (mint) and `adoptRekey`/`adoptDiverged` (verify)
+	/// build this identically; any byte that differs between the two fails the check.
+	/// See D1: without it a mailbox writer can swap the salt for garbage and brick
+	/// every device that adopts the record.
+	function rekeyBody(rec) {
+		return JSON.stringify([
+			'daimond-rekey-v1',
+			rec.v | 0,
+			rec.epoch | 0,
+			String(rec.pub   || ''),
+			String(rec.salt  || ''),
+			String(rec.priv  || ''),
+			String(rec.alg   || ''),
+			String(rec.sealp || ''),
+			String(rec.sealk || ''),
+			String(rec.seala || ''),
+			String(rec.card  || ''),
+		]);
 	}
 
 	/// Generate the device signing keypair. Ed25519 is preferred;
@@ -642,12 +729,48 @@
 		try { return !!localStorage.getItem(K_EVER); } catch (e) { return false; }
 	}
 
-	/// The retry budget for `existsSettled`. A cold-tab empty read settles within a
-	/// tick or two; this is several times that, and is only ever spent on a boot
-	/// that would otherwise fall through to "create" -- never on a returning user
-	/// whose very first read succeeds.
-	var SETTLE_TRIES = 12;	// re-reads after the first
-	var SETTLE_GAP   = 50;	// ms between them (<=600ms worst case)
+	/// This device's epoch: how many passphrase changes it has adopted. 0 for an
+	/// account that has never had one -- and such an account's blob is byte-identical
+	/// to what it was before the epoch chain existed.
+	function epochNow() {
+		try { return (parseInt(localStorage.getItem(K_EPOCH), 10) || 0) | 0; }
+		catch (e) { return 0; }
+	}
+
+	/// The rekey record as stored, or null. Read by sync.js's push() to carry it in
+	/// the blob, and by changePassphrase to extend its chain. See the K_REKEY note.
+	function rekeyRecord() {
+		try {
+			var raw = localStorage.getItem(K_REKEY);
+			return raw ? JSON.parse(raw) : null;
+		} catch (e) { return null; }
+	}
+
+	/// The account's current wrapping salt, base64, or null. Read by sync.js to tell
+	/// a same-epoch DIVERGENCE (two devices rekeyed to one epoch under different
+	/// salts) from genuine corruption: a pulled record whose salt differs from this
+	/// one is the other branch, never a bad blob. A public value -- the salt gates
+	/// nothing on its own. See sync.js pullOnce's `re === le` branch (D2).
+	function saltB64() { try { return localStorage.getItem(K_SALT); } catch (e) { return null; } }
+
+	/// Was this device removed from its account (and not yet re-paired)?
+	///
+	/// Set by retire(), cleared by create()/importBundle()/reset() -- see the
+	/// K_REMOVED note above. The boot gate reads this BEFORE the orphan-evidence
+	/// check: a removed device is not one that lost its keys, it is one whose
+	/// keys were taken away on purpose, and it must not be shown the lost-keys
+	/// recover screen's "Try again", which can never work for it.
+	function removed() {
+		try { return !!localStorage.getItem(K_REMOVED); } catch (e) { return false; }
+	}
+
+	/// The retry budget for `existsSettled`, spent UNCONDITIONALLY once `exists()`
+	/// reads false at entry -- see the note on the loop below for why this is no
+	/// longer gated on seeing `K_EVER` first. A cold-tab empty read settles within
+	/// a tick or two, so a returning device pays only that; the full budget is
+	/// spent only on a boot that would otherwise fall through to "create".
+	var SETTLE_GAP        = 50;	// ms between re-reads.
+	var SETTLE_TRIES_LONG = 48;	// re-reads after the first (<=2.4s worst case).
 
 	function settleSleep(ms) {
 		return new Promise(function (r) { setTimeout(r, ms); });
@@ -669,9 +792,29 @@
 	/// adds unlock outcomes where a create was wrongly about to be shown and can
 	/// never wrongly deny a genuine first run -- after the budget it returns false
 	/// and create proceeds as before.
+	///
+	/// THE BUDGET IS UNCONDITIONAL, not gated on seeing `K_EVER` first. It used to
+	/// extend from a short base budget to this long one only once `everExisted()`
+	/// read true inside the loop -- but a WHOLE-STORE cold read (proven by
+	/// `verify_pairing.mjs`'s `coldShim(900, true)`) blocks the marker for exactly
+	/// as long as it blocks the keypair, so the marker was never observed within
+	/// the short budget and the extension never fired: the read fell through to a
+	/// re-minting create before either had a chance to load, which is the SEV-1
+	/// this function exists to close. Polling to the long budget unconditionally
+	/// closes that gap; the trade is that a genuinely fresh browser -- one where
+	/// the keypair never appears at all -- now pays the full ~2.4s before create
+	/// is offered, which is the correct price for never reminting a real device.
+	///
+	/// A REAL device whose read outlasts even this budget still returns false
+	/// here, and is not turned into a bare create by this function: `K_EVER` and
+	/// the sealed-provider-key evidence have had the SAME window to load, so the
+	/// boot gate's `orphanIdentityEvidence()` check (daimond.js) reads them
+	/// correctly on this false and routes to the locked recover screen instead --
+	/// existsSettled does not need to tell that case apart from a genuine first
+	/// run itself.
 	async function existsSettled() {
 		if (exists()) return true;
-		for (var i = 0; i < SETTLE_TRIES; i++) {
+		for (var i = 0; i < SETTLE_TRIES_LONG; i++) {
 			await settleSleep(SETTLE_GAP);
 			if (exists()) return true;
 		}
@@ -795,6 +938,15 @@
 		localStorage.removeItem(K_SEALA);
 		localStorage.removeItem(K_CARD);
 		localStorage.removeItem(K_FP);
+		// A fresh create is "start a new account", which is the explicit way out
+		// of the removed screen too -- so the marker goes with the rest of the
+		// left-over identity above.
+		localStorage.removeItem(K_REMOVED);
+		// A new account is at epoch 0. Any epoch or rekey record left from an identity
+		// this create is replacing belongs to that other account, and carrying it would
+		// wrap this one's parcels in an envelope naming a chain nobody can walk.
+		localStorage.removeItem(K_EPOCH);
+		localStorage.removeItem(K_REKEY);
 
 		// Leave unlocked: keep the wrapping key and the signing key.
 		_wrapKey = wrapKey;
@@ -1025,19 +1177,97 @@
 			catch (e) { return { ok: false }; }
 		}
 
-		localStorage.setItem(K_SALT, b64enc(salt));
-		localStorage.setItem(K_PRIV, wrapped);
-		if (sealWrappedNew) {
-			localStorage.setItem(K_SEALK, sealWrappedNew);
-		} else {
-			// Either there was none, or it was already unreadable. Drop the public
-			// half and the card with it: a card naming a sealing key whose private
-			// half is gone tells a correspondent to seal something nobody can open.
-			localStorage.removeItem(K_SEALP);
-			localStorage.removeItem(K_SEALK);
-			localStorage.removeItem(K_SEALA);
-			localStorage.removeItem(K_CARD);
+		var newSaltB64 = b64enc(salt);
+
+		// ── Mint the epoch record, so linked devices adopt this change ──
+		//
+		// The new key bits, sealed under the OLD key, into a chain link: a device
+		// holding the old key opens the link, derives the new key, and adopts without
+		// ever knowing the new passphrase. Built ENTIRELY from the values in hand
+		// (D4) -- never read back from a store this function is mid-way through
+		// writing, so a half-written store can never leak into the record -- and
+		// SIGNED with the account key (D1) so a mailbox writer cannot forge a body an
+		// adopting device would take on trust. The public sealing values are unchanged
+		// by a rekey, so they are the currently stored ones (still the old, correct
+		// values: nothing has been written yet). Done here, under the old key, for the
+		// same reason the sealing key is read out here: after `newBits.fill(0)` below
+		// there is no way to seal them, and `_wrapKey` is about to become the NEW key.
+		var rec;
+		try {
+			var curEpoch = epochNow();
+			var newEpoch = curEpoch + 1;
+			var pubB64   = localStorage.getItem(K_PUB) || '';
+			var purpose  = 'rekey:' + curEpoch + '>' + newEpoch + ':' + pubB64;
+			var link     = { from: curEpoch, to: newEpoch, wk: await sealAad(oldKey, newBits, purpose) };
+			var prevRec  = rekeyRecord();
+			var chain    = (prevRec && Array.isArray(prevRec.chain)) ? prevRec.chain.slice() : [];
+			chain.push(link);
+			while (chain.length > CHAIN_MAX) chain.shift();
+			rec = {
+				v:     1,
+				epoch: newEpoch,
+				pub:   pubB64,
+				salt:  newSaltB64,
+				priv:  wrapped,
+				alg:   alg,
+				sealp: sealWrappedNew ? (localStorage.getItem(K_SEALP) || '') : '',
+				sealk: sealWrappedNew || '',
+				seala: sealWrappedNew ? (localStorage.getItem(K_SEALA) || 'X25519') : '',
+				card:  sealWrappedNew ? (localStorage.getItem(K_CARD)  || '') : '',
+				chain: chain,
+			};
+			rec.sig = await signWith(signKey, signSeed, alg, rekeyBody(rec));
+		} catch (e) {
+			// The record could not be built or signed. Nothing has been written yet,
+			// so the identity is whole on the OLD passphrase -- fail the change rather
+			// than swap the key and leave a device that forks on the next change (D4).
+			return { ok: false };
 		}
+
+		// ── Write it all as one atomic group (D4) ────────────────────
+		//
+		// The record and the epoch FIRST, then the salt/priv swap: a throw partway
+		// through must never leave a device on the NEW passphrase reading epoch 0,
+		// which is exactly the fork this whole mechanism removes. Every touched key is
+		// snapshotted, and any failure rolls the lot back to the old passphrase, so
+		// the change is all-or-nothing rather than half on each.
+		var prior = {};
+		[K_SALT, K_PRIV, K_SEALP, K_SEALK, K_SEALA, K_CARD, K_EPOCH, K_REKEY].forEach(function (k) {
+			prior[k] = localStorage.getItem(k);
+		});
+		try {
+			localStorage.setItem(K_REKEY, JSON.stringify(rec));
+			localStorage.setItem(K_EPOCH, String(rec.epoch));
+			localStorage.setItem(K_SALT, newSaltB64);
+			localStorage.setItem(K_PRIV, wrapped);
+			if (sealWrappedNew) {
+				localStorage.setItem(K_SEALK, sealWrappedNew);
+			} else {
+				// Either there was none, or it was already unreadable. Drop the public
+				// half and the card with it: a card naming a sealing key whose private
+				// half is gone tells a correspondent to seal something nobody can open.
+				localStorage.removeItem(K_SEALP);
+				localStorage.removeItem(K_SEALK);
+				localStorage.removeItem(K_SEALA);
+				localStorage.removeItem(K_CARD);
+			}
+		} catch (e) {
+			// Roll every touched key back to its pre-change value: the identity is left
+			// exactly as it was, whole on the OLD passphrase, and the caller sees the
+			// failure rather than a device split across two passphrases.
+			Object.keys(prior).forEach(function (k) {
+				try {
+					if (prior[k] === null) localStorage.removeItem(k);
+					else                   localStorage.setItem(k, prior[k]);
+				} catch (e2) { /* best effort */ }
+			});
+			return { ok: false };
+		}
+
+		// The old key opens a parcel a lagging device may have pushed at the old epoch
+		// just before this change lands -- held for the session so pull can MERGE it
+		// rather than clobber it. See sync.js pullOnce's `re < le` branch.
+		_prevWrapKey = oldKey;
 
 		// NO `announce` HERE. `isUnlocked()` answered true before this call and
 		// answers true after it, so nothing has changed for a listener -- and a
@@ -1054,6 +1284,249 @@
 		await loadSealingKey(newKey);
 		try { await ensureSealingKey(); } catch (e) { /* a rekey is not a failure for this */ }
 		return { ok: true };
+	}
+
+	/// Adopt a passphrase change made on ANOTHER device, from its rekey record.
+	///
+	/// The counterpart to `changePassphrase`'s mint. This device is unlocked at some
+	/// epoch `local`; the record is at a HIGHER epoch and carries the chain of links
+	/// from one to the other. Walking the chain -- opening each link under the key of
+	/// its step -- derives the new key WITHOUT the new passphrase, because each link was
+	/// sealed under the key of the step before it. The account's keypair is unchanged by
+	/// a passphrase change (only the wrapping is), so once the new key opens the record's
+	/// wrapped private key the device simply takes the record's values at rest.
+	///
+	/// UNLOCKED ONLY, and it does NOT touch the DaimondRekey registry: like
+	/// changePassphrase it swaps only what this file owns (the identity keys and the
+	/// in-memory key material), and leaves the app's other sealed stores to the caller,
+	/// which runs `readAll` before this and `resealAll` after -- see sync.js adoptEpoch.
+	///
+	/// Answers `{ ok:true, epoch }`, or `{ ok:false, reason }` where reason is
+	/// 'foreign' (a different account), 'stale' (not ahead of us), 'unsigned' (the
+	/// record body's signature does not check against the account key -- a tampered
+	/// or forged body), 'gap' (a link is missing or will not open), 'bad' (the chain
+	/// produced a key the private key will not open under), 'unsupported' (an engine
+	/// that cannot load the key) or 'storage'. On EVERY failure the identity is left
+	/// exactly on its old key -- nothing is written and `_wrapKey` is untouched -- so
+	/// a device that cannot adopt loses nothing.
+	async function adoptRekey(rec) {
+		requireUnlocked();
+		if (!rec || rec.v !== 1 || typeof rec.epoch !== 'number') return { ok: false, reason: 'malformed' };
+		var pubB64 = localStorage.getItem(K_PUB);
+		if (!pubB64 || rec.pub !== pubB64) return { ok: false, reason: 'foreign' };
+		var local  = epochNow();
+		var target = rec.epoch | 0;
+		if (target <= local) return { ok: false, reason: 'stale' };
+		// AUTHENTICATE THE BODY BEFORE THE WALK (D1). The at-rest values below -- the
+		// salt, the wrapped private key, the sealing material -- are taken on trust by
+		// the walk and the commit, so a mailbox writer who swapped the salt for garbage
+		// would brick every device that adopted it ("wrong passphrase" for ever, sealed
+		// mail dead). The changer signed the body with the account key on mint; a bad
+		// signature refuses here, with nothing written.
+		if (!(await recordSigOk(rec))) return { ok: false, reason: 'unsigned' };
+		var res = await applyRekeyRecord(rec, local, _wrapKey, false);
+		// STRANDING RECOVERY (Gap 3, D2). A device that LOST a same-epoch divergence
+		// holds a DEAD branch key at `local`, so the chain's first rung (from `local`)
+		// will not open under it -- a 'gap'. But when it changed to `local` it KEPT the
+		// shared previous-epoch key, and the record's chain also carries the rung from
+		// `local-1` that the winner minted over the branch both sides share. Retry the
+		// walk from there under `_prevWrapKey`: it crosses onto the winning branch at
+		// `local` and walks on to the record's epoch. Guarded so it fires only when there
+		// is a previous key to cross with and a rung below to cross from; the walk's own
+		// proof-against-the-private-key gate keeps a wrong key from ever committing, so a
+		// retry that does not belong here fails harmlessly and the original result stands.
+		if (!res.ok && res.reason === 'gap' && local > 0 && _prevWrapKey) {
+			var alt = await applyRekeyRecord(rec, local - 1, _prevWrapKey, false);
+			if (alt.ok) return alt;
+		}
+		return res;
+	}
+
+	/// Adopt the OTHER branch when two devices rekeyed to the SAME epoch under
+	/// different salts before either pulled -- the divergence yield (D2). The
+	/// yielding side is chosen deterministically in sync.js (the larger salt yields),
+	/// and it walks the single link both chains share, from the epoch before this one
+	/// under the key it kept from its own change, onto the incoming branch. Same-epoch
+	/// only ('stale' otherwise), and it needs the previous key ('noprev' without it,
+	/// so the device must be linked again). Leaves `_prevWrapKey` in place -- it is the
+	/// shared previous-epoch key, not the dead branch just abandoned. Same reasons and
+	/// same all-or-nothing failure guarantee as `adoptRekey`.
+	async function adoptDiverged(rec) {
+		requireUnlocked();
+		if (!rec || rec.v !== 1 || typeof rec.epoch !== 'number') return { ok: false, reason: 'malformed' };
+		var pubB64 = localStorage.getItem(K_PUB);
+		if (!pubB64 || rec.pub !== pubB64) return { ok: false, reason: 'foreign' };
+		var local  = epochNow();
+		var target = rec.epoch | 0;
+		if (target !== local) return { ok: false, reason: 'stale' };	// divergence is same-epoch only
+		if (!_prevWrapKey)    return { ok: false, reason: 'noprev' };
+		if (!(await recordSigOk(rec))) return { ok: false, reason: 'unsigned' };
+		return applyRekeyRecord(rec, local - 1, _prevWrapKey, true);
+	}
+
+	/// Does a rekey record's signature check against the account key (D1)? The body
+	/// is `rekeyBody` -- every at-rest value an adopting device would take on trust;
+	/// the chain links are authenticated separately by their AAD, and the signature
+	/// does not sign itself. False on any bad or missing signature rather than
+	/// throwing, so the caller branches on one boolean.
+	async function recordSigOk(rec) {
+		try { return await verifySig(rec.pub, rec.sig || '', rekeyBody(rec)); }
+		catch (ex) { return false; }
+	}
+
+	/// Does a PULLED rekey record verify against THIS account (Gap 1, the DoS)? Both
+	/// halves, and both are load-bearing: `rec.pub` must equal the account's own trusted
+	/// public key -- a forged record names the ATTACKER's pub, whose own signature would
+	/// then check against it, so the anchor to the stored pub is what a forgery cannot
+	/// satisfy -- AND the body must be signed by that key (`recordSigOk`). Read by
+	/// sync.js immediately after `openEnvelope`, before the record is allowed to steer
+	/// the pull: a record that does not verify is treated as ABSENT, so a forgery
+	/// degrades to corruption recovery and can never set the sticky `rekeyBehind`. False
+	/// rather than throwing, so the caller branches on one boolean.
+	async function verifyRecord(rec) {
+		if (!rec) return false;
+		var pubB64 = localStorage.getItem(K_PUB);
+		if (!pubB64 || rec.pub !== pubB64) return false;
+		return await recordSigOk(rec);
+	}
+
+	/// Walk a validated rekey record from `startEpoch` (under `startKey`) to the
+	/// record's own epoch, deriving the wrapping key at each rung, then commit the
+	/// record's at-rest values and swap the in-memory key to it.
+	///
+	/// Shared by `adoptRekey` (a device BEHIND the chain, walking from its own epoch
+	/// under its current key) and `adoptDiverged` (two devices at the SAME epoch on
+	/// different salts, the yielding side walking from the shared previous epoch under
+	/// the key it kept from its own change). The caller has already checked the
+	/// account, the epoch relation and the signature; this does the cryptographic walk
+	/// and the storage swap. `keepPrev` leaves `_prevWrapKey` untouched (the diverged
+	/// yield keeps the shared previous key it holds); otherwise the key just replaced
+	/// becomes the new `_prevWrapKey`. Reasons as `adoptRekey` documents; on every
+	/// failure the identity is left exactly on its old key.
+	async function applyRekeyRecord(rec, startEpoch, startKey, keepPrev) {
+		var pubB64 = localStorage.getItem(K_PUB);
+		var target = rec.epoch | 0;
+		var chain  = Array.isArray(rec.chain) ? rec.chain : [];
+
+		// Walk startEpoch -> target, deriving the key at each rung. `key` starts as the
+		// key at `startEpoch`; `bits` holds the raw PBKDF2 output of the rung just
+		// opened, zeroed as soon as the next supersedes it. `penultKey` trails one rung
+		// behind `key`: at loop end it is the key at `target-1`, which becomes
+		// `_prevWrapKey` (Gap 3b) so a MULTI-rung adopter can still cross a later
+		// divergence at its new epoch -- the START key would be too many rungs back.
+		var key       = startKey;
+		var penultKey = startKey;
+		var bits = null;
+		var zero = function () { if (bits) { try { bits.fill(0); } catch (e) { /* best effort */ } } };
+		for (var e = startEpoch; e < target; e++) {
+			var link = null;
+			for (var i = 0; i < chain.length; i++) {
+				if (chain[i] && (chain[i].from | 0) === e && (chain[i].to | 0) === e + 1) { link = chain[i]; break; }
+			}
+			if (!link || !link.wk) { zero(); return { ok: false, reason: 'gap' }; }
+			var purpose = 'rekey:' + e + '>' + (e + 1) + ':' + pubB64;
+			var next;
+			try { next = await openAad(key, link.wk, purpose); }
+			catch (ex) { zero(); return { ok: false, reason: 'gap' }; }
+			zero();
+			bits = next;
+			penultKey = key;		// key at epoch `e`; after the last rung, key at `target-1`
+			try { key = await wrapKeyFromBits(bits); }
+			catch (ex) { zero(); return { ok: false, reason: 'bad' }; }
+		}
+		if (!bits) { return { ok: false, reason: 'gap' }; }
+		var newKey = key;			// the key at epoch `target`
+
+		// PROVE it: the record's wrapped private key must open under the derived key.
+		// A chain that produced the wrong key fails here rather than leaving the device
+		// on a key that opens nothing.
+		var alg = rec.alg || localStorage.getItem(K_ALG) || 'Ed25519';
+		var pkcs8;
+		try { pkcs8 = await open(newKey, rec.priv); }
+		catch (ex) { zero(); return { ok: false, reason: 'bad' }; }
+		var sk = await signKeyFrom(pkcs8, alg);
+		if (!sk) { zero(); return { ok: false, reason: 'unsupported' }; }
+
+		// Commit the record's at-rest values verbatim, as one group. Nothing in memory
+		// has changed yet, so a storage failure here still leaves the old key in force.
+		// Snapshot every touched key first and roll the lot back on any throw (Gap 4,
+		// D4): a half-applied commit -- the new salt written, the epoch not, say -- would
+		// leave the device unable to open its own private key, the very brick this walk
+		// exists to avoid. Mirrors `changePassphrase`'s mint, which already rolls back.
+		var prior = {};
+		[K_SALT, K_PRIV, K_ALG, K_SEALP, K_SEALK, K_SEALA, K_CARD, K_EPOCH, K_REKEY, K_FP].forEach(function (k) {
+			prior[k] = localStorage.getItem(k);
+		});
+		try {
+			localStorage.setItem(K_SALT, rec.salt);
+			localStorage.setItem(K_PRIV, rec.priv);
+			localStorage.setItem(K_ALG,  alg);
+			if (rec.sealp && rec.sealk) {
+				localStorage.setItem(K_SEALP, rec.sealp);
+				localStorage.setItem(K_SEALK, rec.sealk);
+				localStorage.setItem(K_SEALA, rec.seala || 'X25519');
+				if (rec.card) localStorage.setItem(K_CARD, rec.card);
+				else          localStorage.removeItem(K_CARD);
+			} else {
+				localStorage.removeItem(K_SEALP);
+				localStorage.removeItem(K_SEALK);
+				localStorage.removeItem(K_SEALA);
+				localStorage.removeItem(K_CARD);
+			}
+			localStorage.setItem(K_EPOCH, String(target));
+			localStorage.setItem(K_REKEY, JSON.stringify(rec));
+			localStorage.removeItem(K_FP);
+		} catch (ex) {
+			// Roll every touched key back to its pre-adopt value: the identity is left
+			// exactly on its old key, whole, and the caller sees the failure rather than
+			// a device stranded between two epochs. The in-memory key is untouched below,
+			// so nothing has moved off the old key.
+			Object.keys(prior).forEach(function (k) {
+				try {
+					if (prior[k] === null) localStorage.removeItem(k);
+					else                   localStorage.setItem(k, prior[k]);
+				} catch (e2) { /* best effort */ }
+			});
+			zero();
+			return { ok: false, reason: 'storage' };
+		}
+
+		// Now, and only now -- after the store write has SUCCEEDED -- swap the in-memory
+		// key. Its replaced value is kept for the session as the previous-epoch key (the
+		// lost-edit race guard and the divergence-cross key), UNLESS the caller is a
+		// same-epoch yield, which must keep the shared previous key it holds rather than
+		// the dead divergent branch this one is leaving. The kept key is the one at
+		// `target-1` (`penultKey`), not the walk's start key: for a multi-rung adopt the
+		// start key is several epochs back, and a later divergence at `target` is crossed
+		// from `target-1` (Gap 3b).
+		if (!keepPrev) _prevWrapKey = penultKey;
+		_wrapKey  = newKey;
+		_signKey  = sk.key;
+		_signSeed = sk.seed;
+		rememberSession(bits, alg);
+		zero();
+		await loadSealingKey(newKey);
+		try { await ensureSealingKey(); } catch (ex) { /* an adopt is not a failure for this */ }
+		refreshFingerprint();
+		// NO event fired here. The shell notification -- and any reseal failures that
+		// must ride with it -- belongs to the caller (sync.js adoptEpoch), which fires
+		// `daimond:rekey` AFTER the DaimondRekey registry has resealed every store, so
+		// the notice can name what did not survive the change (D5).
+		return { ok: true, epoch: target };
+	}
+
+	/// Is the previous epoch's wrapping key held for this session? Read by sync.js
+	/// before it tries to open a parcel a lagging device pushed at the old epoch.
+	function hasPrevKey() { return !!_prevWrapKey; }
+
+	/// Open a wrapped string under the PREVIOUS epoch's key. The counterpart to
+	/// `unwrap` for the lost-edit race: a parcel sealed at the epoch before this
+	/// device's last change opens under the key kept from that change. Throws when no
+	/// previous key is held, or when it does not open the blob.
+	async function unwrapPrev(b64) {
+		if (!_prevWrapKey) throw new Error('no previous key held this session');
+		var pt = await open(_prevWrapKey, b64);
+		return fromUtf8(pt);
 	}
 
 	/// Import a recovered pkcs8 private key for signing, answering `{ key, seed }`
@@ -1222,6 +1695,10 @@
 		_wrapKey = null;
 		_signKey = null;
 		_sealKey = null;
+		// The previous epoch's key is a session-only race guard (see changePassphrase /
+		// adoptRekey). It is a non-extractable CryptoKey holding nothing readable, so it
+		// is dropped rather than zeroed, but it must not outlive the session.
+		_prevWrapKey = null;
 		// Overwrite the raw fallback material before dropping the reference. The
 		// CryptoKeys above are non-extractable and hold nothing readable; these
 		// two do, so they are zeroed. Best-effort — see curvefallback.js.
@@ -1258,27 +1735,57 @@
 		// fresh start, and leaving it would make the next create here read as a
 		// re-mint and demand the replace acknowledgement for no reason.
 		localStorage.removeItem(K_EVER);
+		// Forget-me is a genuine fresh start too, not a removal, so it must not
+		// leave the device reading as "removed" on its next boot.
+		localStorage.removeItem(K_REMOVED);
+		// The epoch and its chain belong to the account that is being forgotten; a
+		// fresh identity starts again at epoch 0, byte-identical to a never-rekeyed one.
+		localStorage.removeItem(K_EPOCH);
+		localStorage.removeItem(K_REKEY);
+	}
+
+	/// Take this device out of its account because the ACCOUNT removed it, not
+	/// because the user asked to forget it here.
+	///
+	/// The distinction is the whole of what daimond.js's boot gate has to show
+	/// correctly: reset() alone leaves a device that reads exactly like one that
+	/// lost its keys to a bad read, and is offered the recover screen's "Try
+	/// again" -- which can never work, because there is nothing to retry. retire()
+	/// is reset() plus the marker that lets the boot gate tell the two apart.
+	function retire() {
+		reset();
+		try { localStorage.setItem(K_REMOVED, '1'); } catch (e) { /* best effort */ }
 	}
 
 	// ── Signing / public key (for future Oxegen binding) ───────
+
+	/// Sign a string or byte array with a GIVEN signing key, returning a base64
+	/// signature. The engine split `sign` uses, taken explicitly rather than off the
+	/// in-memory `_signKey`/`_signSeed`, so `changePassphrase` can sign the epoch
+	/// record with the key it has freshly derived for the new passphrase (D1) at a
+	/// moment the globals may not yet hold. `signKey` is the WebCrypto private key, or
+	/// null when `signSeed` (the pure-JS Ed25519 seed) is set instead.
+	async function signWith(signKey, signSeed, alg, bytesOrString) {
+		var data = (typeof bytesOrString === 'string')
+			? utf8(bytesOrString)
+			: bytesOrString;
+		if (signSeed) {
+			// Pure-JS Ed25519, deterministic and byte-for-byte the signature
+			// WebCrypto would make from the same seed. Only reached on an engine
+			// without WebCrypto Ed25519.
+			var d = (data instanceof Uint8Array) ? data : new Uint8Array(data);
+			return b64enc(curveFallback().edSign(signSeed, d));
+		}
+		var sig = await crypto.subtle.sign(signAlg(alg), signKey, data);
+		return b64enc(sig);
+	}
 
 	/// Sign a string or byte array with the device private key,
 	/// returning a base64 signature. Unlocked only.
 	async function sign(bytesOrString) {
 		requireUnlocked();
-		var data = (typeof bytesOrString === 'string')
-			? utf8(bytesOrString)
-			: bytesOrString;
 		var alg = localStorage.getItem(K_ALG) || 'Ed25519';
-		if (_signSeed) {
-			// Pure-JS Ed25519, deterministic and byte-for-byte the signature
-			// WebCrypto would make from the same seed. Only reached on an engine
-			// without WebCrypto Ed25519.
-			var d = (data instanceof Uint8Array) ? data : new Uint8Array(data);
-			return b64enc(curveFallback().edSign(_signSeed, d));
-		}
-		var sig = await crypto.subtle.sign(signAlg(alg), _signKey, data);
-		return b64enc(sig);
+		return signWith(_signKey, _signSeed, alg, bytesOrString);
 	}
 
 	/// Verify a detached signature against a raw public key. The counterpart to
@@ -1535,6 +2042,13 @@
 			// tunnel could be a long wait. Copied whole, stamp and all; the
 			// receiving device gets a fact, not a fresh one.
 			hdl:  handleRecord(),
+			// The account's epoch and its rekey record, so a device paired AFTER a
+			// passphrase change arrives at the right epoch and carries the chain onward
+			// -- rather than at epoch 0, where it would fork the instant the next change
+			// landed. Both absent (0/null) for an account that has never changed its
+			// passphrase, which keeps such a bundle exactly as it was before this field.
+			epoch: epochNow(),
+			rk:    rekeyRecord(),
 		};
 	}
 
@@ -1547,6 +2061,12 @@
 	/// Overwrites any identity already on this device, so callers confirm first.
 	function importBundle(b) {
 		if (!b || b.v !== 1 || !b.salt || !b.pub || !b.priv) return false;
+		// Snapshotted before any write, so the catch below can tell whether this
+		// device already carried the durable marker -- see the K_EVER note above
+		// create(). A device that HAD an identity and just destroyed it mid-import
+		// keeps its evidence; a fresh device that failed to import one leaves none
+		// standing.
+		var hadEver = everExisted();
 		// Written as a group. A quota failure partway through would leave a
 		// half-written identity — a salt and public key with no wrapped private key,
 		// which reads as present and then fails every unlock as "wrong passphrase".
@@ -1558,6 +2078,11 @@
 		localStorage.setItem(K_PRIV, b.priv);
 		localStorage.setItem(K_ALG,  b.alg || 'Ed25519');
 		localStorage.setItem(K_NAME, b.name || '');
+		// The durable "an identity has existed here" marker (see the K_EVER note
+		// above create()). Pairing, passkey adopt and backup restore all arrive
+		// through this one write site, so setting it here gives all three arrival
+		// paths the same iOS remint protection create() already had.
+		localStorage.setItem(K_EVER, '1');
 		// The fingerprint is a RENDERING of `pub`, so it is recomputed here rather
 		// than copied: a bundle written by an older build carries a rendering this
 		// one does not draw, and copying it would put a fingerprint on the new
@@ -1592,15 +2117,38 @@
 		var hdl = saneHandle(b.hdl);
 		if (hdl) localStorage.setItem(K_HDL, JSON.stringify({ h: hdl.h, t: hdl.t }));
 		else     localStorage.removeItem(K_HDL);
+		// The account's epoch and rekey record, when the bundle carries them. Taken
+		// together or cleared together: an epoch with no record could not carry a change
+		// onward, and a record with no epoch would have this device read as behind its
+		// own chain. Both absent is an account that has never been rekeyed, which is
+		// epoch 0 -- the same state a fresh device is in.
+		if (b.epoch && b.rk) {
+			localStorage.setItem(K_EPOCH, String(b.epoch | 0));
+			localStorage.setItem(K_REKEY, JSON.stringify(b.rk));
+		} else {
+			localStorage.removeItem(K_EPOCH);
+			localStorage.removeItem(K_REKEY);
+		}
 		} catch (e) {
 			[K_SALT, K_PUB, K_PRIV, K_ALG, K_NAME, K_FP,
-			 K_SEALP, K_SEALK, K_SEALA, K_CARD, K_HDL].forEach(function (k) {
+			 K_SEALP, K_SEALK, K_SEALA, K_CARD, K_HDL, K_EPOCH, K_REKEY].forEach(function (k) {
 				try { localStorage.removeItem(k); } catch (e2) { /* best effort */ }
 			});
+			// Only drop the marker if this device did not already have one: a device
+			// that HAD an identity and just destroyed it mid-import keeps its
+			// evidence, so the boot gate offers recover rather than a bare create.
+			if (!hadEver) {
+				try { localStorage.removeItem(K_EVER); } catch (e4) { /* best effort */ }
+			}
 			try { lock(); } catch (e3) { /* best effort */ }
 			return false;
 		}
 		lock();		// require an explicit unlock with the passphrase next.
+		// A re-pair is the intended way back for a device that was removed: it is
+		// getting a fresh copy of the account's keys, precisely the situation the
+		// marker exists to end. Cleared only here, on confirmed success, so a
+		// failed import leaves the device exactly as removed as it was.
+		localStorage.removeItem(K_REMOVED);
 		return true;
 	}
 
@@ -1692,6 +2240,31 @@
 		/// authority on what the account is called. See the note above it.
 		setHandle:      setHandle,
 		changePassphrase: changePassphrase,
+		/// This device's epoch (passphrase changes adopted), and the rekey record it
+		/// carries. Read by sync.js: `epoch()` decides whether a pushed blob is wrapped
+		/// in a rekey envelope, and `rekeyRecord()` is what goes inside it. 0/null for
+		/// an account that has never changed its passphrase.
+		epoch:        epochNow,
+		rekeyRecord:  rekeyRecord,
+		/// The account's current wrapping salt, base64. Read by sync.js to tell a
+		/// same-epoch divergence from corruption (D2). See the note above it.
+		saltB64:      saltB64,
+		/// Does a pulled rekey record verify against this account (Gap 1)? The anchor
+		/// AND the signature. Read by sync.js right after openEnvelope, before the record
+		/// is allowed to steer the pull -- a record that fails is treated as absent.
+		verifyRecord: verifyRecord,
+		/// Adopt a passphrase change made on another device, from its rekey record.
+		/// Unlocked only; swaps this file's keys and nothing else, so the caller runs
+		/// the DaimondRekey registry around it. See the note above it.
+		adoptRekey:   adoptRekey,
+		/// Adopt the OTHER branch of a same-epoch divergence (two devices rekeyed to
+		/// one epoch on different salts). The deterministic yield -- see the note above
+		/// it, and sync.js pullOnce's `re === le` branch (D2).
+		adoptDiverged: adoptDiverged,
+		/// The lost-edit race guard: whether the previous epoch's wrapping key is held
+		/// this session, and an open under it. See sync.js pullOnce's `re < le` branch.
+		hasPrevKey:   hasPrevKey,
+		unwrapPrev:   unwrapPrev,
 		verify:       verify,
 		sign:         sign,
 		/// Verify a detached signature against a raw public key. The JS counterpart
@@ -1710,6 +2283,12 @@
 		wrapBytesAad:   wrapBytesAad,
 		unwrapBytesAad: unwrapBytesAad,
 		reset:        reset,
+		/// Take this device out of its account because the ACCOUNT removed it.
+		/// reset() plus the marker the boot gate needs to show "removed, link
+		/// again" rather than the lost-keys recover screen. See the note above it.
+		retire:       retire,
+		/// Was this device removed from its account (and not yet re-paired)?
+		removed:      removed,
 		exportBundle: exportBundle,
 		importBundle: importBundle,
 	};

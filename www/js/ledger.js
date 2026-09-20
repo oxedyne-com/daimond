@@ -8,8 +8,11 @@
    log up into day, session, weekly and monthly totals for the meters.
 
    Storage is bounded: entries older than ~90 days are pruned on
-   write, so the log cannot grow without limit. A corrupt or
-   absent store degrades to an empty ledger rather than throwing.
+   write AND on every merge (`merge`, used by sync collect, sync
+   apply and backup restore alike), so a device that never records
+   its own turns cannot hand pruned entries back to one that does.
+   A corrupt or absent store degrades to an empty ledger rather
+   than throwing.
 
    Depends on `window.DaimondPricing` (loaded first). Attaches a
    single global, `window.DaimondLedger`.
@@ -88,6 +91,78 @@
 	function prune(entries, now) {
 		var cutoff = now - PRUNE_MS;
 		return entries.filter(function (e) { return e && typeof e.t === 'number' && e.t >= cutoff; });
+	}
+
+	/// The retention window in ms (~90 days), for a caller that needs to
+	/// anchor its own cutoff -- `merge` below is the one that should.
+	function retentionMs() { return PRUNE_MS; }
+
+	// ── Cross-device merge ──────────────────────────────────────
+	// The moment, the model, the token counts and whose key paid -- two
+	// ledgers naming the same millisecond, model, tokens and provider are
+	// naming one turn. Deliberately NOT the price: an entry the provider
+	// never billed is re-priced in place when the rate table is corrected
+	// (`u` changes, `u0` keeps the old guess), so a key that included the
+	// price would see the same turn twice and double the user's spend on
+	// the strength of our own arithmetic.
+	function ledgerKey(e) {
+		return [e.t, e.m || '', e.p || 0, e.c || 0, e.ca || 0, e.pv || ''].join('|');
+	}
+
+	/// Merge two spend ledgers by UNION, keeping `mine` where both hold a
+	/// turn, then PRUNE the result -- so pruning holds across every path an
+	/// incoming ledger can arrive by (a sync collect, a sync apply, a backup
+	/// restore), not only the device that happens to call `record`. Without
+	/// this a dispatch-only device that never records hands every entry the
+	/// runner already pruned straight back on its next pull, and the runner
+	/// re-adds them on its next push -- the ledger never shrinks.
+	///
+	/// A ledger is an append-only record of money that actually moved, and
+	/// two ledgers of one account differ only by turns the other has not
+	/// seen -- never by disagreeing about a turn they both hold. So union is
+	/// the only merge that cannot lose spend before the prune runs.
+	///
+	/// The cutoff is `min(now, newest.t + 1 day) - retentionMs()`, anchored
+	/// to the NEWEST entry the union holds rather than to `now` alone: a
+	/// device whose clock has drifted into the future cannot drag the
+	/// window forward and prune entries that are genuinely within 90 days
+	/// of the fleet's real activity, and a clock that has drifted into the
+	/// past only ever keeps more than the window strictly requires. `now`
+	/// still caps it so a clock behind the newest entry cannot treat that
+	/// entry as fresher than it is.
+	///
+	/// Sorted by time, so the result is a function of its inputs and not of
+	/// the order they were read in -- the sync parcel is compared
+	/// byte-for-byte to decide whether there is anything to push, and a
+	/// merge that reordered itself would push for ever.
+	///
+	/// # Arguments
+	/// * `mine` - This device's ledger, which wins any tie.
+	/// * `theirs` - The incoming ledger, from a backup file or another device.
+	/// * `now` - The caller's clock, epoch-ms.
+	function merge(mine, theirs, now) {
+		var out = [], seen = {};
+		function take(list) {
+			(Array.isArray(list) ? list : []).forEach(function (e) {
+				if (!e || typeof e.t !== 'number') return;
+				var k = ledgerKey(e);
+				if (seen[k]) return;
+				seen[k] = 1;
+				out.push(e);
+			});
+		}
+		take(mine);
+		take(theirs);
+		if (out.length === 0) return out;
+		var newest = out.reduce(function (m, e) { return e.t > m ? e.t : m; }, -Infinity);
+		var cutoff = Math.min(now, newest + DAY_MS) - PRUNE_MS;
+		out = out.filter(function (e) { return e.t >= cutoff; });
+		out.sort(function (a, b) {
+			if (a.t !== b.t) return a.t - b.t;
+			var ka = ledgerKey(a), kb = ledgerKey(b);
+			return ka < kb ? -1 : ka > kb ? 1 : 0;
+		});
+		return out;
 	}
 
 	// ── Recording ──────────────────────────────────────────────
@@ -389,5 +464,8 @@
 		series:      series,
 		samples:     samples,
 		clear:       clear,
+		merge:       merge,
+		ledgerKey:   ledgerKey,
+		retentionMs: retentionMs,
 	};
 })();

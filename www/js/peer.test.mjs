@@ -756,25 +756,29 @@ async function main() {
 			&& phone.DaimondPost.fitsRelay(sealedWith.envelope.length, cap) === false,
 			'sealed WITH seed: ' + sealedWith.envelope.length + ' B base64');
 
-		// The CURE: sealFittingErrand measures the sealed errand and drops the seed.
+		// THE CURE (S-HAND #3): sealFittingErrand SHRINKS the seed down a ladder and re-seals
+		// until it fits -- it CLIPS rather than dropping, so a synced peer still grafts the
+		// tail. (Pre-#3 it dropped the whole seed: `seedDropped:true` -- the fail-first here.)
 		const fit = await phone.DaimondPeer.sealFittingErrand(big, bigOpts);
-		check('B2: sealFittingErrand DROPPED the oversized seed', fit.seedDropped === true);
-		check('B3: the errand it seals carries seed:null (handed off BY REFERENCE)',
-			fit.plan.fields.seed === null);
-		check('B4: and the seedless sealed errand FITS the relay -- no 413',
+		check('B2: sealFittingErrand CLIPPED the seed to fit (did not drop it)',
+			fit.seedDropped === false && fit.seedClipped === true, JSON.stringify({ d: fit.seedDropped, c: fit.seedClipped, tries: fit.tries }));
+		check('B3: the errand it seals still carries a seed, with FEWER messages than the full thread',
+			!!fit.plan.fields.seed && fit.plan.fields.seed.msgs.length < fit.plan.fields.thread.n,
+			'seed msgs=' + (fit.plan.fields.seed && fit.plan.fields.seed.msgs.length) + ' thread.n=' + (fit.plan.fields.thread && fit.plan.fields.thread.n));
+		check('B4: and the clipped sealed errand FITS the relay -- no 413',
 			phone.DaimondPost.fitsRelay(fit.body.envelope.length, cap) === true,
-			'sealed seedless: ' + fit.body.envelope.length + ' B base64');
+			'sealed clipped: ' + fit.body.envelope.length + ' B base64');
 
-		// The peer opens the seedless errand whole, and grafts nothing -- it must pull.
+		// The peer opens the clipped errand and grafts the carried tail into an empty chat.
 		const openedBig = await laptop.DaimondPeer.openEnvelope(fit.body.envelope);
-		check('B5: the peer opens the seedless errand -- prompt and turn intact, seed null',
+		check('B5: the peer opens the clipped errand -- prompt and turn intact, seed present',
 			openedBig.turnId === 'TURN-BIG' && openedBig.prompt === 'the big-thread prompt'
-			&& openedBig.seed == null);
-		check('B6: a seedless errand grafts NOTHING -- the runner reconstructs from the parcel',
-			phone.DaimondPeer.seedGraft({ messages: [] }, openedBig).length === 0);
+			&& !!openedBig.seed && openedBig.seed.msgs.length > 0);
+		check('B6: a clipped seed grafts its carried tail into an empty chat',
+			phone.DaimondPeer.seedGraft({ messages: [] }, openedBig).length === openedBig.seed.msgs.length);
 
 		// And the runner RUNS it: reconstruct stands in for the parcel pull, runTurn fires
-		// once, the answer is pushed and the relay errand acked -- the documented fallback.
+		// once, the answer is pushed and the relay errand acked.
 		L.forget();
 		const sync = makeLeaseSync({});
 		let ran = 0, pushed = 0, acked = 0;
@@ -786,8 +790,67 @@ async function main() {
 			abort: () => {}, pushResult: async () => { pushed++; return 1; },
 			post:  async () => {}, ack: async () => { acked++; }, now: () => T0 + 2000,
 		});
-		check('B7: the runner reconstructs from the parcel and RUNS the by-reference turn once',
+		check('B7: the runner reconstructs and RUNS the clipped-seed turn once',
 			res.ran === true && res.done === true && ran === 1 && pushed === 1 && acked === 1);
+
+		// B8 — SEEDLESS only when the seed cannot ride at all: here the PROMPT alone is
+		// larger than the door, so the char budget goes negative and the ladder drops
+		// straight to seedless (the runner must reconstruct from the parcel; #3(c) flushes
+		// it first). A seedless errand that STILL overflows is what Fix 6 refuses to post.
+		const hugePrompt = 'x'.repeat(80 * 1024);
+		const hugeOpts = { turnId: 'TURN-BIG', prompt: hugePrompt, dispatchedBy: 'devPHONE', now: T0 };
+		const seedless = await phone.DaimondPeer.sealFittingErrand(big, hugeOpts);
+		check('B8: a prompt larger than the door drops the seed entirely (seed:null)',
+			seedless.seedDropped === true && seedless.plan.fields.seed === null,
+			JSON.stringify({ d: seedless.seedDropped, tries: seedless.tries }));
+		check('B8: and even seedless it does NOT fit -- Fix 6 refuses to post such a prompt',
+			phone.DaimondPost.fitsRelay(seedless.body.envelope.length, cap) === false,
+			'seedless len=' + seedless.body.envelope.length);
+	}
+
+	// ── S-HAND #3: the thread fingerprint and the runner's readiness over it ──
+	console.log('\nFIX #3 — threadSig/holdsThread: the runner never runs an incomplete thread');
+	{
+		const P = phone.DaimondPeer;
+		const chat = { id: 'chat-ts', provider: 'openrouter', model: 'test/m', messages: [
+			{ role: 'user',      content: 'q1', mid: 'm1', ts: T0 },
+			{ role: 'assistant', content: 'a1', mid: 'm2', ts: T0 + 1 },
+			{ role: 'tool',      content: 't1', mid: 'm3', ts: T0 + 2 },
+			{ role: 'think_log', content: 'thinking...', mid: 'mx', ts: T0 + 3 },	// view-only, not fed
+			{ role: 'assistant', content: 'half', mid: 'm4', interrupted: true, ts: T0 + 4 }, // a half turn
+			{ role: 'assistant', content: 'prov', mid: 'm5', provisional: true, ts: T0 + 5 },  // render-only
+			{ role: 'user',      content: 'the turn', mid: 'TURN', ts: T0 + 6 },
+			{ role: 'assistant', content: 'after',  mid: 'm7', ts: T0 + 7 },		// after the turn
+		] };
+		const sig = P.threadSig(chat, 'TURN');
+		check('#3a: threadSig counts only user|assistant|tool BEFORE the turn (3), not think_log/interrupted/provisional/after',
+			sig.n === 3, 'n=' + sig.n);
+
+		const errand = { turnId: 'TURN', thread: sig };
+		check('#3b: holdsThread TRUE for the dispatcher\'s own chat', P.holdsThread(chat, errand) === true);
+
+		// One model-facing row missing -> the prefix differs -> NOT ready.
+		const missing = { id: 'x', messages: chat.messages.filter((m) => m.mid !== 'm2') };
+		check('#3c: holdsThread FALSE with one model-facing row missing (a stale runner)',
+			P.holdsThread(missing, errand) === false);
+		// One extra model-facing row -> also not the same thread.
+		const extra = { id: 'x', messages: chat.messages.slice(0, 3)
+			.concat([{ role: 'assistant', content: 'extra', mid: 'mE', ts: T0 + 2 }])
+			.concat(chat.messages.slice(3)) };
+		check('#3d: holdsThread FALSE with one EXTRA model-facing row', P.holdsThread(extra, errand) === false);
+
+		// A chat holding the PREFIX but NOT the turn's user message is ready once the prompt
+		// is appended -- the reconstruct's "prefix proven, complete the turn" path.
+		const prefixOnly = { id: 'x', messages: chat.messages.filter((m) => m.mid !== 'TURN' && m.mid !== 'm7') };
+		check('#3e: holdsThread TRUE for a chat holding the prefix only (turn message absent)',
+			P.holdsThread(prefixOnly, errand) === true);
+		check('#3e: ...and holdsTurn is FALSE there, so the reconstruct appends the prompt',
+			P.holdsTurn(prefixOnly, 'TURN') === false);
+
+		// An errand with no `thread` (an older dispatcher) falls back to holdsTurn.
+		check('#3f: holdsThread falls back to holdsTurn for an errand carrying no thread',
+			P.holdsThread(chat, { turnId: 'TURN' }) === true
+			&& P.holdsThread(prefixOnly, { turnId: 'TURN' }) === false);
 	}
 
 	console.log('\nFIX A — a refused /api/post preserves the turn (durable record) and recovers it locally');
@@ -885,6 +948,15 @@ async function main() {
 	// ══════════════════════════════════════════════════════════
 	console.log('\nDeadline lease — a >TTL turn cannot be double-run (claim expires at the deadline, no renew)');
 	await runDeadlineExpiryMoneySafety(phone.DaimondPeer, phone.DaimondLease, check);
+
+	// ══════════════════════════════════════════════════════════
+	// S-HAND #1 — the SETTLED own-errand is released (the MONEY
+	// defect). `holdOwnDispatch` tells post.js when to stop holding
+	// the sender's own errand; `leaseSetCas` stamps `settled:1` on
+	// done->released and `leaseTakeFromCas` refuses a settled lease.
+	// ══════════════════════════════════════════════════════════
+	console.log('\nSettle — a settled own-errand stops holding, and a settled lease refuses a take');
+	await runSettleMoneySafety(phone.DaimondPeer, phone.DaimondLease, check);
 
 	// ══════════════════════════════════════════════════════════
 	// STEP 6 — the UI state machine (pure). daimond.js only renders
@@ -2720,6 +2792,89 @@ function makeCas(initialLeases) {
 		peekVersion: () => version,
 		peekLeases: () => JSON.parse(JSON.stringify(leases)),
 	};
+}
+
+/// S-HAND #1: the settled own-errand is released, and a settled lease refuses a take.
+/// `holdOwnDispatch` is what post.js `takeRow` asks before it HOLDs; `leaseSetCas`
+/// carries the completion proof into the lease so a raced taker stands down.
+async function runSettleMoneySafety(P, L, check) {
+	const TID = 'turn-settle';
+	const TTL = L.LEASE_TTL_MS;
+	const now = 1700000000000;
+
+	// ── holdOwnDispatch: hold while live, drop when settled or past deadline+TTL ──
+	{
+		P.onSettled(null);					// no probe registered yet: decide on the deadline alone
+		check('holdOwnDispatch HOLDS an errand within its deadline (no settle probe)',
+			(await P.holdOwnDispatch({ deadline: now + P.DISPATCH_DEADLINE_MS }, now)) === true);
+		check('holdOwnDispatch DROPS an errand past deadline + one TTL (no peer may start it)',
+			(await P.holdOwnDispatch({ deadline: now - 20 * 60 * 1000 }, now)) === false);
+		check('holdOwnDispatch still HOLDS just inside deadline + TTL',
+			(await P.holdOwnDispatch({ deadline: now - (TTL - 1000) }, now)) === true);
+		// A deadline-less recovery errand (deadline 0) is not aged out by the deadline arm.
+		check('holdOwnDispatch HOLDS a deadline-less errand (the deadline arm does not fire)',
+			(await P.holdOwnDispatch({ deadline: 0 }, now)) === true);
+
+		// Register a probe: an errand whose turn is settled here must NOT be held.
+		let settledTurns = new Set();
+		P.onSettled((env) => settledTurns.has(String(env && env.turnId)));
+		check('holdOwnDispatch HOLDS while the settle probe says not-finished',
+			(await P.holdOwnDispatch({ turnId: TID, deadline: now + P.DISPATCH_DEADLINE_MS }, now)) === true);
+		settledTurns.add(TID);
+		check('holdOwnDispatch DROPS once the settle probe says the turn is finished here',
+			(await P.holdOwnDispatch({ turnId: TID, deadline: now + P.DISPATCH_DEADLINE_MS }, now)) === false);
+		P.onSettled(null);					// leave the module as we found it for later suites
+	}
+
+	// ── leaseSetCas: done->released stamps settled:1; other releases do not ──
+	// The clock ADVANCES between take, complete and release, exactly as a real turn's
+	// does -- a same-holder tie on `renewedAt` is resolved in favour of the existing
+	// record (pickLease), so a constant clock would lose the `complete` write.
+	{
+		L.forget();
+		let t = now;
+		const clock = () => t;
+		const cas = makeCas({});
+		const took = await L.take(TID, { holder: 'PEER', eid: 'eS', deadline: now + P.DISPATCH_DEADLINE_MS }, cas, clock);
+		check('the peer takes the lease', took.won === true);
+		t = now + 3000;							// the turn ran for a few seconds
+		const done = await L.complete(TID, 'PEER', cas, clock);
+		check('complete() marks the lease done', done.ok === true);
+		check('a done lease is NOT yet stamped settled (done is transient)',
+			(cas.peekLeases()[TID].settled | 0) === 0);
+		t = now + 3010;
+		const rel = await L.release(TID, 'PEER', cas, clock);
+		check('release() after done succeeds', rel.ok === true);
+		check('a done->released lease is stamped settled:1 (the completion proof)',
+			cas.peekLeases()[TID].settled === 1);
+
+		// A taker whose collect raced the errand and the done report together reads the
+		// released lease as vacant -- but the settled stamp stands it down (S-HAND #1).
+		t = now + 3020;
+		const race = await L.take(TID, { holder: 'RACER', eid: 'eR', deadline: now + P.DISPATCH_DEADLINE_MS }, cas, clock);
+		check('a take of a SETTLED lease stands down (why:settled)',
+			race.won === false && race.why === 'settled', JSON.stringify(race));
+	}
+
+	// ── a PARK release (running->released) is NOT settled: a re-dispatch still claims ──
+	{
+		L.forget();
+		let t = now;
+		const clock = () => t;
+		const cas = makeCas({});
+		await L.take(TID, { holder: 'PEER', eid: 'eP', deadline: now + P.DISPATCH_DEADLINE_MS }, cas, clock);
+		// running->released (a park hands the turn back), NOT done->released.
+		t = now + 3000;
+		await L.renew(TID, 'PEER', cas, clock);		// claimed -> running
+		t = now + 3010;
+		const rel = await L.release(TID, 'PEER', cas, clock);
+		check('a park release succeeds', rel.ok === true);
+		check('a running->released lease is NOT stamped settled (a re-dispatch may claim)',
+			(cas.peekLeases()[TID].settled | 0) === 0);
+		t = now + 3020;
+		const reclaim = await L.take(TID, { holder: 'NEXT', eid: 'eN', deadline: now + P.DISPATCH_DEADLINE_MS }, cas, clock);
+		check('a re-dispatch CLAIMS a parked (non-settled) released lease', reclaim.won === true);
+	}
 }
 
 async function runLeaseAcceptance(L, check) {

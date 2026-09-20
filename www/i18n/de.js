@@ -706,6 +706,10 @@
 	'sync.when_mins': 'vor {n} Min.',
 	'sync.when_hours': 'vor {n} Std.',
 	'sync.when_days': 'vor {n} T.',
+	'sync.rekey_needed': 'Passphrase geändert',
+	'sync.rekey_needed_reason': 'Die Passphrase wurde auf einem anderen Gerät geändert, und dieses kann nicht von selbst nachziehen. Verknüpfe es erneut mit diesem Konto.',
+	'sync.rekey_adopted': 'Passphrase aktualisiert',
+	'sync.rekey_adopted_body': 'Die Passphrase wurde auf einem anderen Gerät geändert, und dieses Gerät hat nachgezogen. Du musst sie hier nicht eingeben.',
 
 	// ── Das öffentliche Handle des Kontos ──────────────────────
 	'handle.taken': 'Dieses Handle hat bereits jemand anderes. Nimm ein anderes.',
@@ -2110,6 +2114,7 @@
 	'changepass.changed': 'Passphrase geändert',
 	'changepass.changed_body': 'Deine neue Passphrase ist aktiv. Dein gespeicherter API-Schlüssel wurde damit neu verschlüsselt.',
 	'changepass.passkey_stale': 'Dein Passkey ließ sich nicht aktualisieren, er wird also nach der neuen Passphrase fragen. Füge ihn in den Einstellungen neu hinzu.',
+	'changepass.other_devices': 'Deine anderen Geräte übernehmen die neue Passphrase automatisch beim nächsten Synchronisieren.',
 
 	// ── Backups ────────────────────────────────────────────────
 	'backup.unreadable': 'Diese Backup-Datei ließ sich nicht lesen.',
@@ -3100,6 +3105,7 @@
 	'chat.ran_on': 'auf {name} ausgeführt',
 	'chat.handed_off': '{name} übernimmt',
 	'chat.ran_here_failed': 'Hier ausgeführt — Übergabe an {name} nicht abgeschlossen',
+	'chat.ran_here_refused': 'Hier ausgeführt — das Relay hat die Übergabe abgelehnt',
 	'chat.ran_here': 'Auf diesem Gerät ausgeführt',
 	'chat.handoff_ran_on': 'Auf {name} ausgeführt; die Antwort wurde zu diesem Gerät zurücksynchronisiert.',
 	'chat.handoff_ran_here': 'Auf diesem Gerät ausgeführt, nachdem die Übergabe an {name} nicht abgeschlossen wurde.',
@@ -3165,6 +3171,8 @@
 	'seat.why_chat_local': 'Dieser Chat ist an dieses Gerät geheftet.',
 	'seat.tile_local_mobile': 'Läuft hier — lass das geöffnet',
 	'seat.retry': '{from} hat es nicht übernommen; versuche es bei {to}',
+	'seat.refused': 'Übergabe abgelehnt ({status}) — wird hier ausgeführt',
+	'errand.prompt_too_large': 'Allein die Eingabe ist größer, als das Relay akzeptiert',
 	'place.why_here': 'Alles, was es braucht, ist hier.',
 	'place.why_missing_files': 'Nicht alle Dateien dieses Dokuments sind hier — {n} fehlen.',
 	'place.why_too_large': 'Zu groß für dieses Telefon: Der letzte Build brauchte {need} MB, und diese Seite hat {room} MB.',

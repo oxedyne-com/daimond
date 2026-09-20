@@ -1659,8 +1659,13 @@ impl DaimondApp {
 
     /// Recreate a Diamond from an [`DaimondApp::export_diamond`] JSON, replacing
     /// whatever this device held under that id.
-    pub async fn import_diamond(&self, json: String) -> Result<(), JsValue> {
-        diamond::import_diamond(&json).await.map_err(to_js_err)
+    ///
+    /// `keep_conflict` is the caller's word that this device ALSO moved the Diamond since
+    /// the copy both sides last agreed on, so the local state is kept as a recoverable
+    /// version before the replace rather than lost (S-SYNC #4).  A one-sided pull passes
+    /// `false`; either way `versions/` is preserved.
+    pub async fn import_diamond(&self, json: String, keep_conflict: bool) -> Result<(), JsValue> {
+        diamond::import_diamond(&json, keep_conflict).await.map_err(to_js_err)
     }
 
     /// Export a Diamond's SHAPE as a template anybody can open, sealed to nobody.
@@ -1955,6 +1960,14 @@ impl DaimondApp {
             Some(b) => Ok(String::from_utf8_lossy(&b).to_string()),
             None    => Ok(String::new()),
         }
+    }
+
+    /// The OPFS store PATH of a version body, `diamonds/<id>/versions/b/<hash>`, so the JS
+    /// viewer can read its bytes through `store_read_bytes` and render a BINARY changed file
+    /// through the viewer door rather than `versions_body`'s lossy UTF-8 (S-HAND #4). The
+    /// path is formed whether or not the body is present; the read decides that.
+    pub fn versions_body_path(&self, id: String, hash: String) -> String {
+        diamond::body_path(&id, &hash)
     }
 
     /// Two stored bodies as the lines that differ: `{add, del, rows:[{k, t}]}`, `k` one of

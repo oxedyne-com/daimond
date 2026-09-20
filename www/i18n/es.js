@@ -703,6 +703,10 @@
 	'sync.when_mins': 'hace {n} min',
 	'sync.when_hours': 'hace {n} h',
 	'sync.when_days': 'hace {n} d',
+	'sync.rekey_needed': 'Frase de paso cambiada',
+	'sync.rekey_needed_reason': 'La frase de paso se cambió en otro dispositivo y este no puede ponerse al día por sí solo. Vuelve a vincularlo a esta cuenta.',
+	'sync.rekey_adopted': 'Frase de paso actualizada',
+	'sync.rekey_adopted_body': 'La frase de paso se cambió en otro dispositivo y este ya se ha puesto al día. No hace falta que la escribas aquí.',
 
 	// ── El identificador público de la cuenta ──────────────────
 	'handle.taken': 'Ese identificador ya lo tiene otra persona. Prueba con otro.',
@@ -2104,6 +2108,7 @@
 	'changepass.changed': 'Frase de paso cambiada',
 	'changepass.changed_body': 'Tu nueva frase de paso está activa. Tu clave de API guardada se ha vuelto a cifrar con ella.',
 	'changepass.passkey_stale': 'Tu llave de acceso no se pudo actualizar, así que pedirá la frase de paso nueva. Vuelve a añadirla desde Ajustes.',
+	'changepass.other_devices': 'Tus otros dispositivos adoptarán la nueva frase de paso automáticamente la próxima vez que se sincronicen.',
 
 	// ── Backups ────────────────────────────────────────────────
 	'backup.unreadable': 'No se pudo leer ese archivo de copia de seguridad.',
@@ -3093,6 +3098,7 @@
 	'chat.ran_on': 'ejecutado en {name}',
 	'chat.handed_off': '{name} lo tiene',
 	'chat.ran_here_failed': 'Ejecutado aquí — la cesión a {name} no terminó',
+	'chat.ran_here_refused': 'Ejecutado aquí — el relay rechazó la cesión',
 	'chat.ran_here': 'Ejecutado en este dispositivo',
 	'chat.handoff_ran_on': 'Ejecutado en {name}; la respuesta se sincronizó de vuelta a este dispositivo.',
 	'chat.handoff_ran_here': 'Ejecutado en este dispositivo tras no completarse la cesión a {name}.',
@@ -3158,6 +3164,8 @@
 	'seat.why_chat_local': 'Este chat está fijado a este dispositivo.',
 	'seat.tile_local_mobile': 'Se ejecuta aquí — manténlo abierto',
 	'seat.retry': '{from} no lo recogió; probando con {to}',
+	'seat.refused': 'Cesión rechazada ({status}) — ejecutando aquí',
+	'errand.prompt_too_large': 'el propio mensaje es más grande de lo que el relay acepta',
 	'place.why_here': 'Todo lo que necesita está aquí.',
 	'place.why_missing_files': 'No todos los archivos de este documento están aquí — faltan {n}.',
 	'place.why_too_large': 'Demasiado grande para este teléfono: la última compilación necesitó {need} MB y esta página tiene {room} MB.',

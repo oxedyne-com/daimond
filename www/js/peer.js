@@ -281,6 +281,12 @@
 			// null from a dispatcher that carries none (an older build, or a thread too
 			// large to seed) -- read as "pull the parcel as before".
 			seed:    o.seed || null,
+			// THE THREAD'S FINGERPRINT, `{ n, sig }` over the model-facing prefix (content-
+			// free, `threadSig`). Readiness on the runner is "holds THIS thread", not "holds
+			// the turn's user message" -- so a runner whose parcel is stale hands the turn
+			// back rather than running an incomplete conversation (S-HAND #3). null from an
+			// older dispatcher, which `holdsThread` reads as "fall back to holdsTurn".
+			thread:  o.thread || null,
 			ts:      o.ts || Date.now(),
 		};
 	}
@@ -848,6 +854,52 @@
 		return false;
 	}
 
+	/// FNV-1a over a string, 32-bit unsigned. Only for the content-free thread
+	/// fingerprint below -- a fast, dependency-free hash, never a cryptographic one.
+	function fnv1a(s) {
+		var h = 0x811c9dc5, str = String(s == null ? '' : s);
+		for (var i = 0; i < str.length; i++) {
+			h ^= str.charCodeAt(i);
+			h = (h + ((h << 1) + (h << 4) + (h << 7) + (h << 8) + (h << 24))) >>> 0;
+		}
+		return h >>> 0;
+	}
+
+	/// The thread's fingerprint UP TO (excluding) the turn's own user message: `{ n, sig }`
+	/// over the model-facing rows' `role:mid` pairs. CONTENT-FREE, so it costs almost
+	/// nothing on the errand and cannot disagree with itself across seed clips -- it names
+	/// no content, only the shape of the prefix a model would be fed. Only user|assistant|
+	/// tool travel to a model; a half turn (interrupted) and a render-only provisional row
+	/// are not history and are skipped, exactly as `seedFrom` skips them.
+	function threadSig(chat, turnId) {
+		var msgs = (chat && Array.isArray(chat.messages)) ? chat.messages : [];
+		var id   = String(turnId || '');
+		var parts = [], n = 0;
+		for (var i = 0; i < msgs.length; i++) {
+			var m = msgs[i];
+			if (!m || !m.role) continue;
+			if (m.role === 'user' && String(m.mid || '') === id) break;	// stop AT the turn's user message
+			if (m.role !== 'user' && m.role !== 'assistant' && m.role !== 'tool') continue;
+			if (m.interrupted || m.provisional) continue;
+			parts.push(m.role + ':' + String(m.mid || ''));
+			n++;
+		}
+		return { n: n, sig: fnv1a(parts.join('\n')) };
+	}
+
+	/// Does this chat hold EXACTLY the thread the errand was dispatched from -- the same
+	/// model-facing prefix, by `{ n, sig }`? The reconstruct's readiness test (S-HAND #3):
+	/// a runner whose parcel is behind or ahead does not match, so it hands the turn back
+	/// undeliverable rather than running the model against a stale or truncated conversation.
+	/// An errand without `thread` (an older dispatcher) falls back to `holdsTurn`, the
+	/// pre-fix readiness, so a mixed-build fleet still hands off in both directions.
+	function holdsThread(chat, errand) {
+		var e = errand || {};
+		if (!e.thread || typeof e.thread.n !== 'number') return holdsTurn(chat, e.turnId);
+		var mine = threadSig(chat, e.turnId);
+		return mine.n === (e.thread.n | 0) && mine.sig === (e.thread.sig >>> 0);
+	}
+
 	/// Assemble a dispatch. PURE: it reads `chat` and the raw materials in `opts`
 	/// (already gathered by daimond.js -- the turn id, the prompt, the scope from
 	/// `scopeChatTo`, a `DaimondPause.snapshot()` pinned to this moment, the chat's
@@ -881,6 +933,11 @@
 		// turn on the device that already holds the chat).
 		var seed = (o.seed === false) ? null
 			: (o.seed || seedFrom(c, turnId, o.seedMaxMsgs, o.seedMaxChars));
+		// THE THREAD'S FINGERPRINT, computed from the SAME chat the seed is (content-free,
+		// so it is unaffected by whether the seed is clipped or dropped). It rides the
+		// errand and decides the runner's readiness -- the seed only ACCELERATES a runner
+		// that has not synced; the sig decides whether the thread is complete there.
+		var thread = (o.thread !== undefined) ? o.thread : threadSig(c, turnId);
 		return {
 			// MARK FIRST, then post, then push. The durable `why:'dispatched'`
 			// placeholder is written BEFORE the errand is posted, so a refused post is a
@@ -908,7 +965,7 @@
 					prompt: prompt, model: model,
 					scope: scope, pause: pause, parcelVersion: parcelVersion,
 					deadline: deadline, dispatchedBy: by, parkCount: parkCount, ts: now,
-					seed: seed,
+					seed: seed, thread: thread,
 				});
 			},
 			// The fully-resolved fields (bar parcelVersion), exposed for inspection.
@@ -916,7 +973,7 @@
 				turnId: turnId, chatId: chatId, diamondId: diamondId, prompt: prompt,
 				model: model, scope: scope,
 				pause: pause, deadline: deadline, dispatchedBy: by, eid: eid, parkCount: parkCount,
-				seed: seed,
+				seed: seed, thread: thread,
 			},
 		};
 	}
@@ -939,25 +996,60 @@
 	/// `{ plan, body, seedDropped, sealedLen }` -- `plan` is the one whose `errand` the
 	/// returned `body` actually seals (the seedless re-seal when the seed was dropped).
 	async function sealFittingErrand(chat, opts, plan, cap) {
+		// The door: `DaimondWire.fits('post', b64Len)` (the one client-side owner of the
+		// post cap), or the relay client's own `fitsRelay`, or the bare estimate -- and an
+		// explicit `cap` overrides all three for tests.
 		var lim = (cap | 0) > 0 ? (cap | 0)
-			: (window.DaimondPost && DaimondPost.relayMaxBytes ? DaimondPost.relayMaxBytes() : (64 * 1024));
-		var p    = plan || buildDispatch(chat, opts);
-		var body = await sealForSelf(p.errand(0));
-		var hadSeed = !!(p.fields && p.fields.seed);
-		var envLen  = String((body && body.envelope) || '').length;
-		var fits = (window.DaimondPost && DaimondPost.fitsRelay)
-			? DaimondPost.fitsRelay(envLen, lim)
-			: (Math.floor(envLen / 4) * 3 <= lim);
-		if (hadSeed && !fits) {
-			var o2 = {};
-			if (opts) Object.keys(opts).forEach(function (k) { o2[k] = opts[k]; });
-			o2.seed = false;			// suppress the thread -- the runner pulls the parcel
-			o2.eid  = p.fields.eid;		// keep the errand id stable across the re-seal
-			p    = buildDispatch(chat, o2);
-			body = await sealForSelf(p.errand(0));
-			return { plan: p, body: body, seedDropped: true, sealedLen: String((body && body.envelope) || '').length };
+			: (window.DaimondWire && DaimondWire.limit && DaimondWire.limit('post') > 0 ? DaimondWire.limit('post')
+				: (window.DaimondPost && DaimondPost.relayMaxBytes ? DaimondPost.relayMaxBytes() : (64 * 1024)));
+		function fits(envLen) {
+			if ((cap | 0) > 0) return Math.floor(envLen / 4) * 3 <= (cap | 0);
+			if (window.DaimondWire && DaimondWire.fits) return DaimondWire.fits('post', envLen);
+			if (window.DaimondPost && DaimondPost.fitsRelay) return DaimondPost.fitsRelay(envLen);
+			return Math.floor(envLen / 4) * 3 <= lim;
 		}
-		return { plan: p, body: body, seedDropped: false, sealedLen: envLen };
+		var o = opts || {};
+		var prompt  = String(o.prompt == null ? '' : o.prompt);
+		var p       = plan || buildDispatch(chat, opts);
+		var threadN = (p.fields && p.fields.thread && (p.fields.thread.n | 0)) || 0;
+		var hadSeed = !!(p.fields && p.fields.seed);
+		var body    = await sealForSelf(p.errand(0));
+		var envLen  = String((body && body.envelope) || '').length;
+		var tries   = 1;
+		function answer(pl, bod, dropped, t) {
+			var sm = (pl.fields && pl.fields.seed && pl.fields.seed.msgs) ? pl.fields.seed.msgs.length : 0;
+			return { plan: pl, body: bod, seedDropped: dropped,
+				seedClipped: sm > 0 && sm < threadN, tries: t,
+				sealedLen: String((bod && bod.envelope) || '').length };
+		}
+		if (!hadSeed || fits(envLen)) return answer(p, body, !hadSeed && threadN > 0, tries);
+
+		// The seed is present but the sealed envelope is over the door. SHRINK it -- not to
+		// nothing at once (a synced peer grafts the tail and completes instantly), but down
+		// a ladder, re-measuring each rung against the SAME door. `DaimondWire.fits` is the
+		// door (WS-BRICK's `daimond_wire_fits_seam_plan` follow-on). Seedless is the last
+		// rung: the runner reconstructs from the parcel it is syncing anyway, and its
+		// readiness is `holdsThread`, so it never runs a truncated thread (S-HAND #3).
+		var cMax0   = Math.min(SEED_MAX_CHARS, Math.floor(lim * 3 / 4) - prompt.length - 4096);
+		var budgets = [cMax0, Math.floor(cMax0 / 2), Math.floor(cMax0 / 4)];
+		for (var b = 0; b < budgets.length; b++) {
+			if (budgets[b] <= 0) break;
+			var o2 = {}; if (opts) Object.keys(opts).forEach(function (k) { o2[k] = opts[k]; });
+			o2.seedMaxChars = budgets[b];
+			o2.eid = p.fields.eid;			// keep the errand id stable across the re-seal
+			var pc   = buildDispatch(chat, o2);
+			var bc   = await sealForSelf(pc.errand(0));
+			tries++;
+			if (fits(String((bc && bc.envelope) || '').length)) return answer(pc, bc, false, tries);
+		}
+		// Seedless.
+		var o3 = {}; if (opts) Object.keys(opts).forEach(function (k) { o3[k] = opts[k]; });
+		o3.seed = false;
+		o3.eid  = p.fields.eid;
+		var pd = buildDispatch(chat, o3);
+		var bd = await sealForSelf(pd.errand(0));
+		tries++;
+		return answer(pd, bd, true, tries);
 	}
 
 	/// What a turn marked `why:'dispatched'` should be treated as, given the lease.
@@ -2269,6 +2361,23 @@
 		return !!r && r.mode !== 'released' && leaseMs(r.expiry) > now;
 	}
 
+	/// Is a record DEAD: vacant, and past the last moment any copy of it anywhere
+	/// could still read live, by one TTL of grace? A released tombstone (expiry 0)
+	/// must outlive the stale 'running' copy it supersedes, and that copy's expiry is
+	/// at most its deadline (clampExpiry), so the deadline is IN the max -- shortening
+	/// the grace to `expiry` alone would drop a tombstone while its stale live copy
+	/// still circulates and resurrect a released turn. A dead record decides nothing
+	/// (the both-vacant arm of pickLease grants nothing), so dropping it changes no
+	/// arbitration -- it only stops the lease door growing for ever, which is the S1
+	/// this guards (the sealed door 413s at ~200-300 dispatched turns and hand-off
+	/// dies for the account). A record lives at most DISPATCH_DEADLINE_MS +
+	/// LEASE_TTL_MS (16.5 min) after its dispatch.
+	function deadLease(r, now) {
+		if (!r || liveLease(r, now)) return false;
+		var last = Math.max(leaseMs(r.expiry), leaseMs(r.deadline), leaseMs(r.renewedAt));
+		return now - last > LEASE_TTL_MS;
+	}
+
 	/// The ceiling an adopted expiry may reach on the ADOPTING device's clock: one TTL
 	/// from now, OR the errand's own `deadline` when the record carries one. A running
 	/// turn's lease is claimed with `expiry = deadline` (see leaseTakeFrom), because a
@@ -2320,8 +2429,10 @@
 	///    by the CAS and so never reaches the winner as an incoming;
 	///  - different holders, only LOCAL live -> local (the incoming is dead/vacant,
 	///    e.g. reclaiming an expired lease);
-	///  - both vacant -> the fresher record, for history only (a dead lease grants
-	///    nothing, so this never decides a claim).
+	///  - both vacant -> the fresher record, kept for one TTL past its deadline, then
+	///    drained (`deadLease`, applied in `mergeLeases`). A dead lease grants nothing,
+	///    so this never decides a claim; keeping it briefly only lets a tombstone
+	///    outlive the stale live copy it supersedes.
 	function mergeOneLease(local, incoming, now) {
 		return clampExpiry(pickLease(local, incoming, now), now);
 	}
@@ -2356,6 +2467,13 @@
 		for (k in b) {
 			if (!Object.prototype.hasOwnProperty.call(b, k)) continue;
 			out[k] = mergeOneLease(a[k], b[k], now);
+		}
+		// THE DRAIN (fix for the S1 lease-door 413). A dead record re-arriving from a
+		// device that has not merged yet is re-added by the union loop above and dropped
+		// again here, so the map stays bounded rather than growing one entry per turn for
+		// ever. Every proposal and every local view folds through this one choke point.
+		for (k in out) {
+			if (Object.prototype.hasOwnProperty.call(out, k) && deadLease(out[k], now)) delete out[k];
 		}
 		return out;
 	}
@@ -2541,6 +2659,14 @@
 			if (deadline && now > deadline) {
 				return { won: false, why: 'deadline' };
 			}
+			// A SETTLED lease is the tombstone of a turn a peer already finished
+			// (leaseSetCas stamps `settled:1` on done->released). It reads VACANT, so without
+			// this a taker whose collect delivered the errand and the done report in one page
+			// would route the errand first and take the freed lease -- a second run, a second
+			// charge (S-HAND #1). The proof of completion is in the lease, which every taker
+			// reads before it takes, so it stands down here on the snapshot in hand.
+			var settledCur = snap && snap.leases ? snap.leases[tid] : null;
+			if (settledCur && settledCur.settled) return { won: false, why: 'settled' };
 			// The claim expiry is the errand's DEADLINE, not now + TTL, so the lease
 			// stays live for the whole turn WITHOUT a renew -- a busy turn cannot push a
 			// renew (sync.js:1077), so a TTL-capped claim would read expired elsewhere
@@ -2581,6 +2707,17 @@
 				}
 				return { won: false, holder: landed ? landed.holder : null };
 			}
+			// A SIZE refusal is not a race: the door weighed the sealed blob and it does
+			// not fit (DaimondWire.fits, or a real 413). Retrying spins MAX_TAKE_TRIES
+			// times against a fixed-size refusal for no gain, so stand down at once with
+			// the honest reason -- the drain heals the door as records age out.
+			if (res.why === 'too_large') return { won: false, why: 'too_large' };
+			// A REKEY refusal is not a race either (Gap 5): the device is behind the epoch
+			// chain, so `leaseCommit` will refuse EVERY try with the same 'rekey' -- its
+			// stale wrap key seals a lease blob nobody on the current epoch can open. Stand
+			// down at once rather than burn MAX_TAKE_TRIES to reach 'exhausted'; a re-link
+			// clears it. Carried out as its own reason so the caller can tell it apart.
+			if (res.why === 'rekey') return { won: false, why: 'rekey' };
 			// 409: the version CHURNED under us. Under active two-device sync the parcel
 			// version keeps moving, so a stale `base` is refused by the commit BEFORE it
 			// even pushes -- back-to-back tries then all fail and the claim never lands
@@ -2635,6 +2772,7 @@
 			var proposed = mergeLeases({ [tid]: bumped }, snap.leases, now);
 			var res = await cas.write(snap.version, proposed);
 			if (res.ok) { _leases = proposed; return { ok: true }; }
+			if (res.why === 'too_large') return { ok: false, why: 'too_large' };	// not a race: no retry
 		}
 		return { ok: false, why: 'exhausted' };
 	}
@@ -2664,14 +2802,26 @@
 				_leases = mergeLeases(_leases, snap.leases, now);
 				return { ok: false, why: 'not_ours' };
 			}
+			// THE PROOF OF COMPLETION, CARRIED IN THE LEASE. A released lease reads vacant
+			// (`liveLease` false), so a peer whose `GET ?since=` was in flight can receive the
+			// errand and the done report in one page, route the errand first and take the
+			// freed lease -- a second run and a second charge (S-HAND #1, the narrow race).
+			// So a done->released transition stamps `settled:1`; `leaseTakeFromCas` reads it
+			// before it takes and stands down. A release from a PARK (`running`->`released`)
+			// or a take-back / undeliverable hand-back (`claimed`->`released`) is NOT a
+			// completion, so it never sets it -- a parked re-dispatch still claims. Once set,
+			// it is preserved (`cur.settled | 0`), and it survives every merge because
+			// `pickLease`/`clampExpiry` carry whole records rather than rebuilding fields.
 			var next = {
 				turnId: tid, eid: cur.eid, holder: h, mode: mode,
 				deadline: leaseMs(cur.deadline),
 				expiry: mode === 'released' ? 0 : cur.expiry, renewedAt: now,
+				settled: (mode === 'released' && cur.mode === 'done') ? 1 : (cur.settled | 0),
 			};
 			var proposed = mergeLeases({ [tid]: next }, snap.leases, now);
 			var res = await cas.write(snap.version, proposed);
 			if (res.ok) { _leases = proposed; return { ok: true }; }
+			if (res.why === 'too_large') return { ok: false, why: 'too_large' };	// not a race: no retry
 		}
 		return { ok: false, why: 'exhausted' };
 	}
@@ -2712,6 +2862,7 @@
 			var proposed = mergeLeases({ [tid]: revoked }, snap.leases, now);
 			var res = await cas.write(snap.version, proposed);
 			if (res.ok) { _leases = proposed; return { ok: true }; }
+			if (res.why === 'too_large') return { ok: false, why: 'too_large' };	// not a race: no retry
 		}
 		return { ok: false, why: 'exhausted' };
 	}
@@ -2754,9 +2905,10 @@
 
 	// A blocker is read by a human on another device, so its text is capped where
 	// it is built rather than where it is drawn: the lease door has a 64 KiB
-	// ceiling (gateway LEASE_MAX_BYTES) shared by every turn's record, and a
-	// runaway `detail` -- a whole page of typed text -- would push a live lease map
-	// over it and fail the CLAIM, not merely the blocker.
+	// ceiling (gateway LEASE_MAX_BYTES, guarded client-side by DaimondWire.fits(
+	// 'lease', …) before the CAS) shared by every turn's record, and a runaway
+	// `detail` -- a whole page of typed text -- would push a live lease map over it
+	// and fail the CLAIM, not merely the blocker.
 	var BLOCKER_DETAIL_MAX  = 600;	// the exact string being authorised, cut with an ellipsis
 	var BLOCKER_OPTIONS_MAX = 4;	// `ask` offers two to four; the tool refuses more
 	var BLOCKER_LABEL_MAX   = 80;
@@ -2876,6 +3028,7 @@
 			if (!proposed[tid] || proposed[tid].holder !== h) continue;
 			var res = await cas.write(snap.version, proposed);
 			if (res.ok) { _leases = proposed; return { ok: true, blocked: !!blocker }; }
+			if (res.why === 'too_large') return { ok: false, why: 'too_large' };	// not a race: no retry
 		}
 		return { ok: false, why: 'exhausted' };
 	}
@@ -3014,6 +3167,9 @@
 		mergeOne:  mergeOneLease,
 		merge:     mergeLeases,
 		live:      liveLease,
+		/// Is a record vacant and past every copy's last-live moment by a TTL? The
+		/// drain predicate `mergeLeases` applies; published for the drain test.
+		dead:      deadLease,
 		/// The two halves of sync.js's section contract.
 		snapshot:  leaseSnapshot,
 		adopt:     leaseAdopt,
@@ -3170,8 +3326,10 @@
 		// finished and not held by a live foreign lease. It is STILL money-safe, because
 		// it goes through the SAME `finished` (D1(b)) check and the SAME take-if-vacant
 		// lease below -- a peer that took the lease first wins the merge and recovery
-		// stands down; a peer that collects AFTER recovery's ack finds no errand and,
-		// if it somehow does, `finished`/the released-with-answer lease stand it down.
+		// stands down. On completion the ack dep SETTLES the errand's own hold first
+		// (post.js `settle`), so the ack now genuinely drops the relay row and a peer that
+		// collects after finds no errand; a peer whose collect raced in the errand and the
+		// done report together reads `settled:1` on the released lease and stands down.
 		// `allowSelf` only lifts THIS blanket refusal; every other guard is untouched.
 		// `dispatchedBy` names the dispatching device (the per-device id, not the
 		// account key), so a match to this device is our own dispatch.
@@ -3330,7 +3488,7 @@
 				try { await leaseSet(turnId, d.selfId, 'released', d.cas, d.now); trace.push('release'); }
 				catch (e2) { /* an unreleased lease still expires at its deadline */ }
 				if (undeliverable) {
-					try { if (d.ack) { await d.ack(); trace.push('ack'); } }
+					try { if (d.ack) { await d.ack(e); trace.push('ack'); } }
 					catch (e2) { /* a missed ack costs one idempotent re-collect, never a re-run: finished guards it */ }
 				}
 				return { ran: false, error: true, undeliverable: undeliverable, why: rwhy, trace: trace };
@@ -3454,7 +3612,7 @@
 				trace.push('report');
 			} catch (err) { /* the report is only the nudge; the frame already carried the answer */ }
 			await leaseSet(turnId, d.selfId, 'done', d.cas, d.now); trace.push('complete');
-			try { if (d.ack) { await d.ack(); trace.push('ack'); } }
+			try { if (d.ack) { await d.ack(e); trace.push('ack'); } }
 			catch (err) { /* a missed ack costs one idempotent re-collect, never a drop */ }
 			await leaseSet(turnId, d.selfId, 'released', d.cas, d.now); trace.push('release');
 			// THE PARCEL, AFTER THE LEASE IS FREE. Awaited only where the caller asked
@@ -3598,7 +3756,7 @@
 			if (!ck.ok) {
 				await report({ status: 'refused', why: String(ck.why || '') });
 				await release();
-				try { if (d.ack) { await d.ack(); trace.push('ack'); } } catch (err) {}
+				try { if (d.ack) { await d.ack(e); trace.push('ack'); } } catch (err) {}
 				return { ran: false, refused: true, why: String(ck.why || ''), trace: trace };
 			}
 
@@ -3631,7 +3789,7 @@
 				await report({ status: 'error', why: String(out.error), ms: out.ms | 0,
 					heap: heap, imports: out.watch || [], hashes: out.hashes || {}, wrote: wrote });
 				await release();
-				try { if (d.ack) { await d.ack(); trace.push('ack'); } } catch (err) {}
+				try { if (d.ack) { await d.ack(e); trace.push('ack'); } } catch (err) {}
 				return { ran: true, error: true, why: String(out.error), trace: trace };
 			}
 			await say('laid out ' + (out.pages | 0) + ' pages in ' + (out.ms | 0) + ' ms');
@@ -3660,7 +3818,7 @@
 				imports: out.watch || [], hashes: out.hashes || {},
 				wrote: wrote, moved: moved, vector: vector, pdf: pdf });
 			await release();
-			try { if (d.ack) { await d.ack(); trace.push('ack'); } }
+			try { if (d.ack) { await d.ack(e); trace.push('ack'); } }
 			catch (err) { /* a missed ack costs one idempotent re-collect, never a re-compile */ }
 			return { ran: true, done: true, pages: out.pages | 0, vector: vector, trace: trace };
 		} catch (err) {
@@ -3690,6 +3848,33 @@
 				? String(DaimondIdentity.deviceId() || '') : '';
 		} catch (e) { self = ''; }
 		return !!self && String(env.dispatchedBy) === self;
+	}
+
+	/// The dispatching-side settle probe, registered by daimond.js. Does THIS device
+	/// already hold the finished turn -- a done/aborted report collected for it, or a
+	/// non-empty assistant answer merged under its iturn? Null until registered (the
+	/// runner-acceptance path and peer.test's older stubs); then `holdOwnDispatch` decides
+	/// on the deadline alone.
+	var _settled = null;
+	function onSettled(fn) { _settled = fn; }
+
+	/// Should this device keep its OWN un-run errand on the relay for a peer? Consulted by
+	/// post.js `takeRow` before it HOLDs an own dispatch. NOT once the turn is settled here
+	/// (a peer answered it, or this device recovered it locally): holding a settled errand
+	/// leaves it for a peer waking inside the deadline to re-run and RE-BILL (S-HAND #1),
+	/// and freezes the ack cursor for the row's 30-day life (S-HAND #2). NOT once no peer
+	/// may start it either: `leaseTakeFromCas` refuses every claim past `deadline`, so past
+	/// `deadline + LEASE_TTL_MS` the row can only freeze the cursor. Answers true = hold,
+	/// which is the default and the safe direction -- the take-if-vacant lease means a held
+	/// errand is never run twice, while a wrongly-dropped one costs only a local recovery.
+	async function holdOwnDispatch(env, now) {
+		var n = now == null ? Date.now() : now;
+		var dl = leaseMs(env && env.deadline);
+		if (dl && n > dl + LEASE_TTL_MS) return false;		// past the last moment any peer may start it
+		if (_settled) {
+			try { if (await _settled(env)) return false; } catch (e) { /* on doubt, hold */ }
+		}
+		return true;
 	}
 
 	// ════════════════════════════════════════════════════════════
@@ -3965,6 +4150,11 @@
 		/// Whether an errand is THIS device's own dispatch -- so the sender's collect
 		/// leaves it on the relay for the peer rather than acking it away.
 		isOwnDispatch: isOwnDispatch,
+		/// Whether the sender should KEEP holding its own errand (post.js `takeRow`): false
+		/// once the turn is settled here or no peer may start it any more. `onSettled`
+		/// registers the "is this turn finished here?" probe daimond.js supplies.
+		holdOwnDispatch: holdOwnDispatch,
+		onSettled:       onSettled,
 		/// Register the runners the collector hands a verified envelope to. Set by
 		/// daimond.js; absent, `absorb` verifies and drops.
 		onErrand: onErrand,
@@ -4021,6 +4211,11 @@
 		seedFrom:      seedFrom,
 		seedGraft:     seedGraft,
 		holdsTurn:     holdsTurn,
+		/// The content-free thread fingerprint the errand carries (`threadSig`) and the
+		/// runner's readiness test over it (`holdsThread`): does this device hold exactly
+		/// the model-facing prefix the turn was dispatched from? S-HAND #3.
+		threadSig:     threadSig,
+		holdsThread:   holdsThread,
 		SEED_MAX_MSGS:  SEED_MAX_MSGS,
 		SEED_MAX_CHARS: SEED_MAX_CHARS,
 		/// Should this device defer its parcel push because another device is mid-turn on

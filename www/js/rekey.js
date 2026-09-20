@@ -40,6 +40,7 @@
            read:     unsealForRekey,   // OPTIONAL, see below
            reseal:   resealAfterRekey, // required
            forget:   forgetRekey,      // OPTIONAL, see below
+           purge:    dropSealedRekey,  // OPTIONAL, see below
            sentence: function (kind, list) { … },  // OPTIONAL
        });
 
@@ -68,6 +69,17 @@
    `forget()` drops anything held, for a change that did not
    happen. A participant with a `read` needs one; a participant
    without holds nothing, so it does not.
+
+   `purge()` is a FOURTH, separate occasion, not a change: this
+   device was REMOVED from the account (`identity.js retire()`),
+   the key is gone for good, and every ciphertext this participant
+   holds under it is unopenable rubbish from now on. `purge()`
+   drops it -- sets it to '' or removes it, whatever the module's
+   own shape calls for -- and answers nothing, because there is
+   nobody left to tell. OPTIONAL, unlike `reseal`: a participant
+   with no `purge` still runs every other phase, and `purgeAll`'s
+   caller decides what an absent purge means for that module (today,
+   `dev/verify_rekey.mjs` requires each to say so explicitly).
 
    `sentence(kind, list)` composes the module's own words for
    `kind` of 'unread' or 'failed'. The words stay in the module
@@ -147,6 +159,7 @@
 		else if (typeof p.reseal !== 'function')  why = 'a participant needs a reseal phase';
 		else if (p.read && typeof p.read !== 'function') why = 'read must be a function';
 		else if (p.forget && typeof p.forget !== 'function') why = 'forget must be a function';
+		else if (p.purge && typeof p.purge !== 'function') why = 'purge must be a function';
 		else if (p.sentence && typeof p.sentence !== 'function') why = 'sentence must be a function';
 		else if (names().indexOf(p.name) >= 0)    why = 'a participant of that name is already registered';
 		// A `read` with no `forget` cannot let go of what it holds on a change that
@@ -294,6 +307,28 @@
 		return ran;
 	}
 
+	/// Drop every ciphertext held under this account's key, because the account
+	/// has removed this device and the key is never coming back.
+	///
+	/// NOT a change: there is no `read`/`reseal` pair around this, because there
+	/// is nothing to put back. Called by `daimond.js onThisDeviceRemoved` BEFORE
+	/// `DaimondIdentity.retire()`, while the participants can still tell what they
+	/// hold. Every participant with a `purge` runs, in its own try/catch, whatever
+	/// the one before it did -- the same no-early-return shape as `resealAll` and
+	/// for the same reason: one module refusing to drop its key must cost no
+	/// other module its own drop. Answers the names that ran, so a caller (or the
+	/// verifier) can tell a skipped participant from one that has nothing to do.
+	function purgeAll() {
+		var ran = [];
+		for (var i = 0; i < parts.length; i++) {
+			var p = parts[i];
+			if (typeof p.purge !== 'function') continue;
+			ran.push(p.name);
+			try { p.purge(); } catch (e) { /* it kept its ciphertext; the others still drop theirs */ }
+		}
+		return ran;
+	}
+
 	// ── Public surface ──────────────────────────────────────────────
 	window.DaimondRekey = {
 		register:     register,
@@ -305,5 +340,6 @@
 		readAll:      readAll,
 		resealAll:    resealAll,
 		forgetAll:    forgetAll,
+		purgeAll:     purgeAll,
 	};
 })();

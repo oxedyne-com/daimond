@@ -860,6 +860,10 @@
 	'sync.when_mins':      '{n} 分钟前',
 	'sync.when_hours':     '{n} 小时前',
 	'sync.when_days':      '{n} 天前',
+	'sync.rekey_needed':        '密码短语已更改',
+	'sync.rekey_needed_reason': '密码短语已在另一台设备上更改，而这台设备无法自行跟上。请将它重新链接到此账户。',
+	'sync.rekey_adopted':       '密码短语已更新',
+	'sync.rekey_adopted_body':  '密码短语已在另一台设备上更改，这台设备也已跟上。你无需在此重新输入。',
 
 	// ── 账户的公开用户名 ───────────────────────────────────────
 	'handle.taken':    '这个用户名已被别人使用，请换一个。',
@@ -2118,6 +2122,7 @@
 	'changepass.changed':         '密码短语已更改',
 	'changepass.changed_body':    '你的新密码短语已经生效。保存的 API 密钥也用它重新加密了。',
 	'changepass.passkey_stale':   '你的通行密钥没能更新，所以它会要你输入新的密码短语。请到设置里重新添加。',
+	'changepass.other_devices':   '你的其他设备会在下次同步时自动获取新的密码短语。',
 
 	// ── 备份 ───────────────────────────────────────────────────
 	'backup.unreadable':      '那个备份文件读不出来。',
@@ -3123,6 +3128,7 @@
 	'chat.ran_on': '在 {name} 上运行',
 	'chat.handed_off': '{name} 正在处理',
 	'chat.ran_here_failed': '在这里运行——移交给 {name} 未完成',
+	'chat.ran_here_refused': '在这里运行——中继拒绝了移交',
 	'chat.ran_here': '在这台设备上运行',
 	'chat.handoff_ran_on': '在 {name} 上运行，结果已同步回这台设备。',
 	'chat.handoff_ran_here': '移交给 {name} 未完成，改为在这台设备上运行。',
@@ -3188,6 +3194,8 @@
 	'seat.why_chat_local': '这个对话固定在这台设备上。',
 	'seat.tile_local_mobile': '在这里运行——请保持打开',
 	'seat.retry': '{from} 没有接手；正在尝试 {to}',
+	'seat.refused': '移交被拒绝（{status}）——正在这里运行',
+	'errand.prompt_too_large': '仅提示词就超过了中继允许的大小',
 	'place.why_here': '需要的一切都在这里。',
 	'place.why_missing_files': '这份文档的文件并非都在这里——缺 {n} 个。',
 	'place.why_too_large': '对这部手机来说太大了：上次构建需要 {need} MB，而这个页面只有 {room} MB。',

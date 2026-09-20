@@ -170,6 +170,16 @@
 		return (out === '' || out == null) ? null : out;
 	}
 
+	/// The OPFS store PATH of a body, `diamonds/<id>/versions/b/<hash>`, so the file viewer
+	/// can probe and read a BINARY changed file's bytes through the store door
+	/// (`store_read_bytes`) rather than `body`'s lossy UTF-8 text (S-HAND #4). The path is
+	/// formed whether or not the body is present; a subsequent read decides that.
+	function bodyPath(id, hash) {
+		if (!id || !hash || !ready()) return '';
+		try { return String(app().versions_body_path(String(id), String(hash)) || ''); }
+		catch (e) { return ''; }
+	}
+
 	/// The user's own Save a version. `null` when nothing had changed — a save
 	/// that wrote a row saying nothing would be worse than no row (D2).
 	async function save(id, name) {
@@ -394,6 +404,7 @@
 		rows:        rows,
 		manifests:   manifests,
 		body:        body,
+		bodyPath:    bodyPath,
 		save:        save,
 		restore:     restore,
 		restoreFile: restoreFile,

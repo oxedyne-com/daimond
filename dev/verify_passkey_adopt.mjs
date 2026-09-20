@@ -165,6 +165,12 @@ check(after.fp === before.fp, 'it is the SAME identity, not a new one', after.fp
 check(after.name === before.name, 'carrying its name across', after.name);
 check(after.rec && after.rec.v === 2, 'and the sealed blob is cached locally for next time');
 
+// Fix #1 (S-ID) -- passkey adopt routes through `importBundle()`, which now
+// writes the durable K_EVER marker there too, so this arrival path gets the
+// same iOS-remint protection create() always had.
+const everAfterAdopt = await page.evaluate(() => localStorage.getItem('daimond-id-ever'));
+check(everAfterAdopt === '1', 'K_EVER is set after a passkey adopt', 'daimond-id-ever=' + everAfterAdopt);
+
 // ── Removing it revokes the gateway copy too ──
 await page.evaluate(async () => { await window.DaimondPasskey.remove(); });
 await sleep(400);

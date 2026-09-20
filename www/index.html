@@ -1774,6 +1774,12 @@
      recover the passphrase behind a WebAuthn PRF credential. -->
 <script src="js/passkey.js"></script>
 <script src="js/gateway.js"></script>
+<!-- wire.js: the measure-before-send seam (DaimondWire.fits/limit/learn). ONE owner
+     of the message-path caps, loaded here so sync.js, post.js, share.js and peer.js
+     all see it at load. The fallback table IS today's live pin, so it is exact with
+     no gateway change; a Phase-B gateway serves `limits` and `learn` moves an entry.
+     www/sw.js caches js/ by directory prefix, so a new script needs no cache-list edit. -->
+<script src="js/wire.js"></script>
 <!-- telemetry.js: what a beta tester who agreed sends, and the whole of it —
      twenty events, three integers each, and no text field anywhere in the
      payload. Read the top of the file; it is written to be read.

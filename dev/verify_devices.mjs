@@ -30,8 +30,13 @@
 //
 // Needs dev/serve.mjs (DAIMOND_PORT, default 8777) and dev/mockllm.mjs
 // (DAIMOND_MOCK_PORT, default 9099). No gateway.
+//
+// The "devrem" block at the end is the one exception: fix #4 (S-ID, 2026-09-20)
+// is about what a REMOVED device does with the 410 the GATEWAY sends, so it
+// needs the dev gateway (:9002 by default) as well, and two REAL paired
+// profiles rather than the fabricated peers above.
 import fs from 'node:fs';
-import { open, shot, scratch } from './harness.mjs';
+import { open, shot, scratch, signInAs, connectMock } from './harness.mjs';
 
 // Two FIXED profiles, wiped before use rather than minted per run. Every check
 // below is about a FRESH install -- one that has never seen a roster -- so the
@@ -730,6 +735,161 @@ try {
 	check('verify_devices ran without throwing', false, String(e && e.message || e));
 } finally {
 	await s.close?.().catch?.(() => {});
+}
+
+// ── Fix #4 (S-ID) — a REMOVED device retires, it does not strand ───────────
+//
+// Two REAL profiles, paired through the dev gateway. A removes B for real
+// (the actual gateway call, not a routed stub); B's own next sync round meets
+// the 410 the gateway now genuinely answers with, through the SAME detection
+// path as always (`sync.js notedRemoval`, unedited by this fix). What changed
+// is what `onThisDeviceRemoved` does about it -- `retire()`, not `reset()` --
+// and what the boot gate shows for it. `DaimondModels`/`mail.js`/etc.'s own
+// sealed secrets are NOT asserted empty here: their `purge()` participants are
+// outside this build's file scope (see the build report), so only identity's
+// own keys and the two `cfg`-held secrets this build DID add `purge` to
+// (`apikey`, `push`) are checked.
+{
+	const profA = scratch('pw', 'devrem-a');
+	const profB = scratch('pw', 'devrem-b');
+	for (const p of [profA, profB]) fs.rmSync(p, { recursive: true, force: true });
+	let a = null, b = null;
+	try {
+		a = await open({ name: 'devrem', profile: profA, connect: false });
+
+		const code = await a.page.evaluate(async () => {
+			try { return await DaimondPairing.create(); } catch (e) { return { error: e.message }; }
+		});
+		check('devrem: A creates a pairing code', !!(code && code.code), code && (code.code || code.error));
+
+		b = await open({ name: 'devrem', profile: profB, signIn: false, connect: false });
+		const redeemed = await b.page.evaluate(async (c) => {
+			try { return { ok: await DaimondPairing.redeem(c) }; } catch (e) { return { err: e.message }; }
+		}, code.code);
+		check('devrem: B redeems the code', redeemed.ok === true, redeemed.err || '');
+
+		// The real UI unlock, not a direct call to DaimondIdentity.unlock(): B's
+		// own afterUnlock() (settings fill, gateway connect) has to have run, the
+		// same as any returning user, before B connects its own provider key below.
+		await b.page.reload({ waitUntil: 'domcontentloaded' });
+		await signInAs(b, 'devrem');
+
+		// B connects its OWN mock provider through the real settings form. FOUND
+		// WHILE WRITING THIS CHECK: the modern connect path seals the key into
+		// `daimond-models-v2` (models.js's own per-provider registry), NOT into
+		// `cfg.apiKeyEnc`/`daimond-byok` -- that path is legacy today. So the
+		// `apikey`/`push` `purge()` this build added to `daimond.js` guards a
+		// participant that is rarely the one actually holding a live secret; the
+		// module that IS -- `models.js` -- is outside this build's permitted file
+		// scope (see the report) and got no `purge()` at all. Recorded here as a
+		// fixture fact, not asserted pass/fail either way: this file is not the
+		// place to decide whether that gap is acceptable.
+		await connectMock(b);
+		const sealedInModels = await b.page.evaluate(() => {
+			try {
+				const j = JSON.parse(localStorage.getItem('daimond-models-v2') || '{}');
+				const ps = j.providers || {};
+				return Object.keys(ps).some(id => ps[id] && ps[id].keyEnc);
+			} catch (e) { return false; }
+		});
+		console.log('  note  provider key sealed into daimond-models-v2 (no purge() there in this build): '
+			+ sealedInModels);
+
+		const bId = await b.page.evaluate(() => DaimondIdentity.deviceId());
+		check('devrem: B has its own device id', typeof bId === 'string' && bId.length >= 8, String(bId));
+
+		// Fix #4 (S-ID) self-guard, at the door: A must not be able to remove ITS
+		// OWN device id through the same call B is about to be removed with --
+		// checked with a fetch spy so the refusal is proved to happen before any
+		// network call, not just to answer the right shape by luck.
+		const selfGuard = await a.page.evaluate(async () => {
+			const real = window.fetch;
+			let calls = 0;
+			window.fetch = function () { calls++; return real.apply(this, arguments); };
+			try {
+				const myId = DaimondIdentity.deviceId();
+				const res = await DaimondSync.removeDevice(myId);
+				return { res, calls, myId };
+			} finally { window.fetch = real; }
+		});
+		check('devrem: A cannot remove its OWN device — {ok:false, why:\'self\'}',
+			selfGuard.res && selfGuard.res.ok === false && selfGuard.res.why === 'self',
+			JSON.stringify(selfGuard.res));
+		check('devrem: the self-removal refusal made zero network calls',
+			selfGuard.calls === 0, 'fetch calls=' + selfGuard.calls);
+
+		// A removes B -- the real gateway call.
+		const rm = await a.page.evaluate(async (id) => {
+			try { return await DaimondSync.removeDevice(id); } catch (e) { return { ok: false, err: e.message }; }
+		}, bId);
+		check('devrem: A removes B through the gateway', rm && rm.ok === true, JSON.stringify(rm));
+
+		// B's own next sync round meets the 410 and raises `daimond:device-removed`
+		// -- unedited code; what this fix changed is downstream of it.
+		const removedFired = await b.page.evaluate(() => new Promise((resolve) => {
+			let done = false;
+			window.addEventListener('daimond:device-removed', () => { done = true; resolve(true); });
+			(window.DaimondSync ? DaimondSync.pull() : Promise.resolve()).catch(() => {});
+			setTimeout(() => { if (!done) resolve(false); }, 15000);
+		}));
+		check("devrem: B's own next sync round raises daimond:device-removed",
+			removedFired === true, String(removedFired));
+		await b.page.waitForTimeout(400);
+
+		const afterB = await b.page.evaluate(() => ({
+			priv:       !!localStorage.getItem('daimond-id-priv'),
+			pub:        !!localStorage.getItem('daimond-id-pub'),
+			salt:       !!localStorage.getItem('daimond-id-salt'),
+			ever:       localStorage.getItem('daimond-id-ever'),
+			removed:    localStorage.getItem('daimond-id-removed'),
+			passkey:    localStorage.getItem('daimond-passkey'),
+		}));
+		check('devrem: B\'s identity key material is gone (priv/pub/salt)',
+			!afterB.priv && !afterB.pub && !afterB.salt, JSON.stringify(afterB));
+		check('devrem: B carries the REMOVED marker, and the EVER marker is gone',
+			afterB.removed === '1' && !afterB.ever, JSON.stringify(afterB));
+
+		// The cfg-held secrets this build's `purge` participants own. Read via a
+		// FRESH reload -- app-level `cfg` is a module-local variable, not one the
+		// harness can reach without the page re-reading storage from scratch, and
+		// a reload is exactly where a stray plaintext left in memory would be lost
+		// anyway (which is the property under test).
+		const cfgAfterStorage = await b.page.evaluate(() => ({
+			apiKeyEnc:    (function () { try { return JSON.parse(localStorage.getItem('daimond-byok') || '{}').apiKeyEnc || ''; } catch (e) { return '(unreadable)'; } })(),
+			pushTokenEnc: (function () { try { return JSON.parse(localStorage.getItem('daimond-byok') || '{}').pushTokenEnc || ''; } catch (e) { return '(unreadable)'; } })(),
+		}));
+		check('devrem: cfg.apiKeyEnc/pushTokenEnc are empty after removal (legacy path; see the note above)',
+			cfgAfterStorage.apiKeyEnc === '' && cfgAfterStorage.pushTokenEnc === '', JSON.stringify(cfgAfterStorage));
+
+		// Reload B: the boot gate must show "removed, link again", never the
+		// lost-keys recover screen -- fix #4's whole point.
+		await b.page.reload({ waitUntil: 'domcontentloaded' });
+		await b.page.waitForSelector('#identity-modal', { timeout: 15000 }).catch(() => {});
+		await b.page.waitForTimeout(500);
+		const gate = await b.page.evaluate(() => {
+			const m = document.getElementById('identity-modal');
+			return {
+				mode:    m ? m.dataset.mode : '',
+				recover: !!document.getElementById('id-recover'),
+				lead:    (document.getElementById('id-lead') || {}).textContent || '',
+				pairBtn: !!document.getElementById('pair-redeem-entry'),
+			};
+		});
+		check('devrem: B boots to CREATE, not the lost-keys recover screen',
+			gate.mode === 'create' && !gate.recover, JSON.stringify(gate));
+		check('devrem: the lead names the removal, not a generic create',
+			/removed/i.test(gate.lead), JSON.stringify(gate.lead));
+		check('devrem: the pairing entry (link again) is on that screen',
+			gate.pairBtn === true, JSON.stringify(gate));
+
+		const errsB = b.errs.filter(e => !/favicon|ERR_|Failed to load resource|401|402|409|410|426|502/.test(e));
+		check('devrem: no unexpected console errors on B', errsB.length === 0, errsB.slice(0, 3).join(' | '));
+	} catch (e) {
+		check('devrem: the removal scenario ran without throwing', false, String(e && e.message || e));
+	} finally {
+		await a?.close?.().catch?.(() => {});
+		await b?.close?.().catch?.(() => {});
+	}
 }
 
 console.log('\n' + (bad.length ? `FAIL: ${bad.length} failed, ${ok.length} passed` : `ok: all ${ok.length} passed`));

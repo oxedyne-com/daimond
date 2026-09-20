@@ -77,29 +77,25 @@
 	/// The relay. One path, five operations, all on the caller's own account.
 	var PATH = '/api/post';
 
-	/// The largest sealed envelope `/api/post` carries, in bytes: the gateway's own
-	/// `max_bytes` on this route (`gateway/app.jdat` `/api/post`, and the knob in
-	/// `gateway/src/settings.rs`). The deployed door is 64 KiB -- the same budget
-	/// peer.js's compile errand is sized against -- and the ERRAND dispatch measures
-	/// its sealed envelope against this so a hand-off never seals past the door and
-	/// 413s (which loses the whole turn). ONE number for the relay client, mirrored
-	/// from the deployed config because there is no served-settings door to read it
-	/// from at runtime; raise it here in step with the gateway if the door is widened.
-	/// NOT 3 MiB: that is the knob's fallback, not what jarrah has ever run.
-	var RELAY_MAX_BYTES = 64 * 1024;
-
-	/// The effective `/api/post` cap in bytes.
-	function relayMaxBytes() { return RELAY_MAX_BYTES; }
+	/// The largest sealed envelope `/api/post` carries, in bytes. The number now lives
+	/// in ONE place for the whole client -- `DaimondWire` (js/wire.js), whose fallback
+	/// IS the deployed 64 KiB pin and whose served value the gateway teaches later.
+	/// These two keep their names because peer.js's errand dispatch and share.js call
+	/// them; they delegate to the seam so #3/#5/#6 migrate their call sites to
+	/// `DaimondWire.fits` later without a flag day. The 64 KiB below is the pre-seam
+	/// fallback for the impossible case where wire.js did not load; NOT 3 MiB, which is
+	/// the knob's default and not what jarrah has ever run.
+	function relayMaxBytes() { return window.DaimondWire ? DaimondWire.limit('post') : 64 * 1024; }
 
 	/// Would a sealed envelope whose BASE64 form is `envB64Len` characters long fit the
 	/// relay? The gateway turns a body away on the cheap pre-decode estimate --
-	/// `envelope.len() / 4 * 3 > max_bytes` -- before it decodes anything, so that exact
-	/// integer arithmetic is the authority and is written ONCE here, for the errand
-	/// dispatch (peer.js) and share.js to consult rather than each carrying its own copy.
-	/// `max` overrides the cap (share.js passes its own 3 MiB share ceiling).
+	/// `envelope.len() / 4 * 3 > max_bytes` -- before it decodes anything, so the seam
+	/// applies that exact integer arithmetic. `max` overrides the cap (share.js passes
+	/// its own 3 MiB share ceiling until #5 routes it through `fits('share', n)`).
 	function fitsRelay(envB64Len, max) {
-		var cap = (max | 0) > 0 ? (max | 0) : relayMaxBytes();
-		return Math.floor(Number(envB64Len || 0) / 4) * 3 <= cap;
+		if ((max | 0) > 0) return Math.floor(Number(envB64Len || 0) / 4) * 3 <= (max | 0);
+		return window.DaimondWire ? DaimondWire.fits('post', envB64Len)
+			: Math.floor(Number(envB64Len || 0) / 4) * 3 <= 64 * 1024;
 	}
 
 	/// The store, wrapped. `daimond-` prefixed so accounts.js namespaces it per
@@ -706,7 +702,7 @@
 
 	/// A fresh, empty record.
 	function blank() {
-		return { v: REC_V, through: 0, seen: 0, acked: 0, tries: 0, msgs: {}, notes: {}, groups: {},
+		return { v: REC_V, through: 0, seen: 0, acked: 0, tries: 0, holds: [], msgs: {}, notes: {}, groups: {},
 			shares: {}, feed: blankFeed() };
 	}
 
@@ -771,21 +767,40 @@
 		r.seen    = Math.max(r.seen | 0, r.through);
 		r.acked   = r.acked | 0;
 		r.tries   = r.tries | 0;
+		// The seqs of this device's OWN un-run errands still on the relay, each with its
+		// turnId. LOCAL like `seen` (stripped from every parcel snapshot below): it is a
+		// per-device view of the shared box, and `adopt` has no rule for it. Rebuilt every
+		// collect pass and freed by `settle`; defaulted here for a record written before it.
+		r.holds   = Array.isArray(r.holds) ? r.holds : [];
 		_st = r;
 		return _st;
 	}
 
 	/// Write the store back, wrapped. Serialised, so an interleaved pair of
-	/// writes cannot leave the older one on disk.
+	/// writes cannot leave the older one on disk. Answers whether the write COMPLETED:
+	/// `true` when `setItem` returned, `false` on a throw (a quota over-run is the one
+	/// that bites). `ackThrough` reads this before it acks -- a swallowed failure would
+	/// let the relay drop the only copy of a message this device never actually stored.
+	/// The other `await save()` call sites ignore the value, so this is additive.
 	async function save() {
-		if (!_st) return;
+		if (!_st) return false;
+		// Captured HERE, not inside the queued `.then` below. This call can sit behind
+		// an earlier write on `_writing` for a tick or more, and the `storage` handler
+		// (below) nulls `_st` the moment ANOTHER tab writes -- so reading `_st` inside
+		// the `.then` can find it already null and stringify that, wrapping the four
+		// bytes "null". `read()` then unwraps "null" into a record that fails the
+		// version check and answers `blank()`, discarding the store. The snapshot at
+		// the door is what this device actually had when `save()` was called.
+		var snapshot = JSON.stringify(_st);
 		var mine = _writing = (_writing || Promise.resolve()).then(async function () {
 			try {
-				localStorage.setItem(LS, await DaimondIdentity.wrap(JSON.stringify(_st)));
-			} catch (e) { log('store write failed', e); }
+				localStorage.setItem(LS, await DaimondIdentity.wrap(snapshot));
+				return true;
+			} catch (e) { log('store write failed', e); return false; }
 		});
-		await mine;
+		var okSaved = await mine;
 		if (_writing === mine) _writing = null;
+		return okSaved;
 	}
 
 	/// Drop what is in memory, for an account switch or a lock.
@@ -1012,6 +1027,7 @@
 		// a new amplifier, and `adopt` has no rule for it. It persists locally through
 		// `save` (which serialises `_st` directly), not through here.
 		delete rec.seen;
+		delete rec.holds;		// per-device view of the shared box, never on the parcel -- see `seen`.
 		return rec;
 	}
 
@@ -1182,6 +1198,7 @@
 		if (!_st) return null;
 		var rec = JSON.parse(JSON.stringify(_st));
 		delete rec.seen;		// a local park cursor, never on the parcel -- see `snapshot`.
+		delete rec.holds;		// a local view of the box's held rows, never on the parcel.
 		// ...and whether this device may DECLARE what it uploads. The gateway sweeps
 		// every held chunk the committed index does not name, and only a device that
 		// merged that index may commit it, so a message tail offloaded from a device
@@ -1231,8 +1248,17 @@
 				var mani;
 				try { mani = await DaimondChunks.offloadBytes('m:' + addr, new TextEncoder().encode(recs[j].serial)); }
 				catch (e) { continue; }						// offload failed: ride inline this round
-				DaimondCloud.contentSet(ckey, {
-					v: mani.v, size: mani.size, key: mani.key, chunks: mani.chunks, fp: fpv });
+				// Recorded, or the heavy half rides inline. A `contentSet` lost to quota
+				// leaves the parcel naming a `msgRef` whose chunks the next commit -- built
+				// from the index that never took them -- does not declare, so the gateway
+				// sweeps them and the far device gets a body-less message, re-swept every
+				// round. So on a failed index write the row rides inline this round (its
+				// heavy half is left in place, not stripped below) and the collector retries
+				// next round; `indexDurable` also blocks the commit until the write lands.
+				if (!DaimondCloud.contentSet(ckey, {
+						v: mani.v, size: mani.size, key: mani.key, chunks: mani.chunks, fp: fpv })) {
+					continue;
+				}
 				ref = { v: mani.v, size: mani.size, key: mani.key, chunks: mani.chunks };
 			}
 			// Strip the heavy half; keep the flags and identity; hang the reference.
@@ -1811,7 +1837,25 @@
 				if (DaimondPeer.isOwnDispatch && DaimondPeer.isOwnDispatch(peer)) {
 					var ours = false;
 					try { ours = await DaimondPeer.verifyEnvelope(peer); } catch (e) { ours = false; }
-					if (ours) return HOLD;
+					if (ours) {
+						// HOLD ONLY WHILE THE TURN IS LIVE. An own errand left on the relay is
+						// what a peer runs -- but once THIS device has settled the turn (it ran
+						// locally, or a peer's answer merged) or the turn can no longer be
+						// started by anyone (past `deadline + LEASE_TTL_MS`, where
+						// leaseTakeFromCas refuses every claim), holding it only freezes the ack
+						// cursor (S-HAND #2) AND leaves the errand for a peer waking inside the
+						// 15-min window to re-run and re-bill (S-HAND #1 -- the MONEY defect).
+						// `holdOwnDispatch` answers false in exactly those two cases; an older
+						// peer.js without the hook leaves `keep` true, so the behaviour is
+						// unchanged there and the held-errand tests stay green.
+						var keep = true;
+						try { if (DaimondPeer.holdOwnDispatch) keep = await DaimondPeer.holdOwnDispatch(peer); }
+						catch (e) { keep = true; }
+						if (keep) return hold(peer.turnId);
+						// Settled or dead: fall through to absorb, which answers
+						// 'self-dispatched' and routes nothing; takeRow then answers NOTHING and
+						// the cursor passes the row, so the relay drops it and no peer re-runs it.
+					}
 				}
 				var routed = null;
 				try { routed = await DaimondPeer.absorb(peer, row); }
@@ -1823,7 +1867,7 @@
 				// ack watermark below it, so it is re-collected -- and re-decided against
 				// live presence -- until the nominee runs it, or its beat ages out and
 				// this device claims. The stand-down is money-safe by the lease either way.
-				if (routed && routed.result && routed.result.why === 'nominee') return HOLD;
+				if (routed && routed.result && routed.result.why === 'nominee') return hold(peer.turnId);
 				return NOTHING;			// routed, and never a message on the list
 			}
 		}
@@ -1956,10 +2000,12 @@
 	// it -- it is not a message, not a relay notice and not a failure -- so it
 	// adds nothing to them and is counted where it is held, by `shares()`.
 	var SHARE      = { got: 0, notes: 0, unreadable: 0, share: 1 };
-	// Our own un-run errand: collected but deliberately LEFT on the relay for the
-	// peer. `hold` tells collect() to keep the ack watermark below this row's seq, so
-	// ackThrough never drops it -- only the peer that runs it may ack it away.
-	var HOLD       = { got: 0, notes: 0, unreadable: 0, hold: true };
+	// Our own un-run errand, or a stand-down for the account's nominee: collected but
+	// deliberately LEFT on the relay for the peer. `hold` tells collect() to keep the ack
+	// watermark below this row's seq (so ackThrough never drops it) AND names the turn, so
+	// `settle` can later drop exactly this hold -- without a network round -- the moment
+	// the turn is settled here. Only the peer that runs it may otherwise ack it away.
+	function hold(turnId) { return { got: 0, notes: 0, unreadable: 0, hold: true, turnId: String(turnId || '') }; }
 
 	// ── Arrival ────────────────────────────────────────────────
 	//
@@ -1997,6 +2043,21 @@
 		catch (e) { /* no badge in this build */ }
 	}
 
+	/// The ack watermark for a record: `seen` when nothing is held, else one below the
+	/// LOWEST live hold, so `ackThrough` never drops a held errand off the relay before
+	/// its peer runs it. `seen` has already climbed past every held row (the park spin
+	/// fix), so a hold clips `through` DOWN without stalling the park. A hold dropped
+	/// (settled, or re-decided vacant on the next collect) lets `through` rejoin `seen`.
+	function watermark(st) {
+		if (!st || !Array.isArray(st.holds) || !st.holds.length) return st && st.seen | 0;
+		var lo = Infinity;
+		for (var i = 0; i < st.holds.length; i++) {
+			var s = st.holds[i].seq | 0;
+			if (s < lo) lo = s;
+		}
+		return Math.min(st.seen | 0, lo - 1);
+	}
+
 	/// Collect everything above what this device has folded, and fold it.
 	///
 	/// NOTHING IS ACKED HERE. The relay drops nothing on a read; it drops only on
@@ -2009,12 +2070,24 @@
 		var got = 0, notes = 0, badRows = 0, more = false;
 		var arrived = [];
 
-		var holdSeq = 0;	// our own un-run errand's seq; the ack watermark stays below it
 		for (var round = 0; round < 8; round++) {
 			var r = await call('GET', undefined, '?since=' + st.through);
 			if (r.status !== 200 || !r.json || !r.json.ok) {
 				return { ok: false, why: 'status_' + r.status, got: got };
 			}
+			// Phase B: the collect answer carries the post-door caps, which is how
+			// `post`/`post_rows`/`collect` reach the client for the later findings. A
+			// Phase-A gateway sends no `limits`, and `learn` ignores absence.
+			if (window.DaimondWire && r.json.limits) {
+				DaimondWire.learn({ post: r.json.limits.max_bytes, post_rows: r.json.limits.max_rows,
+					collect: r.json.limits.max_collect_bytes });
+			}
+			// RE-DECIDE EVERY HOLD THIS PASS. `through` is pinned below the lowest live
+			// hold, so `?since=through` re-fetches every held row and `takeRow` re-runs
+			// `holdOwnDispatch` on each -- a turn settled since the last pass no longer holds,
+			// so the cursor passes it here (S-HAND #1/#2) even without a `settle` call. The
+			// set is rebuilt from scratch, never carried, so a stale hold cannot linger.
+			st.holds = [];
 			var rows = r.json.rows || [];
 			for (var i = 0; i < rows.length; i++) {
 				var row  = rows[i];
@@ -2023,105 +2096,116 @@
 				notes   += took.notes;
 				badRows += took.unreadable;
 				if (took.got) arrived.push(String(row.addr));
-				// Our own errand (takeRow -> HOLD) pins the ack watermark just below it:
-				// every row still folds, but st.through -- what ackThrough acks through --
-				// never passes the errand, so the relay keeps it for the peer to collect.
-				if (took.hold && !holdSeq) holdSeq = row.seq | 0;
+				// A HELD row (our own live errand, or a stand-down for the nominee) is
+				// recorded with its turnId, so `settle` can drop exactly it later.
+				if (took.hold) st.holds.push({ seq: row.seq | 0, turnId: String(took.turnId || '') });
 				// EVERY folded row moves `seen`, a HELD one included -- this is the whole
-				// spin fix. `through` stops below a held errand so the relay keeps it for the
-				// peer, but the park is keyed on `seen`, so it climbs past the held row and
-				// the next park waits rather than re-answering at once against the box's own
+				// spin fix. `through` -- what ackThrough acks through -- is clipped just below
+				// the LOWEST live hold (watermark), so the relay keeps every held row for its
+				// peer; but the park is keyed on `seen`, which climbs past the held row so the
+				// next park waits rather than re-answering at once against the box's own
 				// high-water.
 				if ((row.seq | 0) > (st.seen | 0)) st.seen = row.seq | 0;
-				if ((row.seq | 0) > st.through && (!holdSeq || (row.seq | 0) < holdSeq)) {
-					st.through = row.seq | 0;
-				}
+				st.through = Math.max(st.through | 0, watermark(st));
 			}
 			parkAgain();			// a request that was served proves the session is back
 			more = !!r.json.more;
-			if (!more || holdSeq) break;	// once holding, stop fetching further batches this pass
+			if (!more || st.holds.length) break;	// once holding, stop fetching further batches this pass
 		}
 		await save();
 		render();
 		_servicedAt = Date.now();		// a collect completed: this device is servicing the channel
 		announce(got, arrived);
+		// SCHEDULE a push, never gate the ack on one: an idle always-on receiver that
+		// folds rows and acks them off the relay is now the only copy until this fires.
+		// `nudge` only arms sync's own debounced timer -- it is a no-op with no parcel,
+		// no entitlement or no sync module at all, so this is safe unconditionally.
+		if (got || notes) {
+			try { if (window.DaimondSync && DaimondSync.nudge) DaimondSync.nudge(); }
+			catch (e) { /* no sync module, or it declined: the ack below still stands */ }
+		}
 		return { ok: true, got: got, notes: notes, unreadable: badRows, more: more };
+	}
+
+	/// Drop this device's OWN hold on `turnId`, because the turn is now settled here (it
+	/// ran locally, or a peer's answer merged). The held errand no longer needs to sit on
+	/// the relay, so the ack watermark is freed past it AT ONCE -- rather than waiting for
+	/// the next collect to re-decide the hold -- and the next `ackThrough` then tells the
+	/// relay it may drop the row so no peer waking inside the deadline re-runs and re-bills
+	/// it (S-HAND #1). NEVER acks itself: `ackThrough` owns the durable-commit-before-ack
+	/// order (WS-BRICK), and `settle` only moves the local watermark. A no-op -- and no
+	/// save -- when no hold matches, so the ack dep can call it on every errand cheaply.
+	async function settle(turnId) {
+		var id = String(turnId || '');
+		if (!id) return { settled: false };
+		var st = await read();
+		if (!st) return { settled: false };
+		if (!Array.isArray(st.holds) || !st.holds.length) return { settled: false };
+		var before = st.holds.length;
+		st.holds = st.holds.filter(function (h) { return String(h.turnId || '') !== id; });
+		if (st.holds.length === before) return { settled: false };
+		st.through = Math.max(st.through | 0, watermark(st));
+		await save();
+		return { settled: true, through: st.through };
 	}
 
 	// ── The ordering, which is the whole safety property ───────
 	//
-	// COLLECTED = one device has fetched the envelope, folded it into the
-	// account's sync parcel, and THAT PARCEL PUSH HAS COMMITTED. The device then
-	// acks. Nothing else counts, and the ack is sent in that order and no other.
+	// COLLECTED = one device has fetched the envelope, folded it into THIS DEVICE'S
+	// wrapped record, and READ THAT RECORD BACK to prove the fold is durably on disk.
+	// The device then acks. Nothing else counts, and the ack is sent in that order.
 	//
-	// Both halves are checked here rather than assumed:
+	// The ack is a WATERMARK BY REFERENCE (a `seq`): it tells the relay it may let go
+	// of rows this device has already stored. It must not demand the whole account
+	// parcel by value. It used to: the old ack gated on `DaimondSync.push()` moving the
+	// parcel version, so once the parcel was over Steel's door (sync.js `tooLarge`) the
+	// version never moved, the device never acked, the relay box filled to `max_rows`,
+	// and EVERY sender to the account was refused (the S1 this fixes). Coupling the
+	// mailbox to the size of unrelated account state is the bug; the fix is to commit
+	// the rows LOCALLY and ack on that, never on the parcel.
 	//
-	//  - the parcel that is about to be pushed is READ BACK and must actually
-	//    carry the sequence about to be acked. Without this the ack would rest on
-	//    the belief that sync.js hangs this module's record on the parcel, and a
-	//    build where that line is missing would ack messages that travel nowhere.
-	//  - the push must MOVE THE SERVER VERSION. A push that 409'd, 402'd, was
-	//    refused for size or never reached the gateway leaves the version where it
-	//    was, and none of those is a commit.
-	//
-	// `tries` is bumped before the parcel is read so the record is never
-	// byte-identical to the one last pushed. sync.js returns early from a push
-	// whose parcel has not changed, which would otherwise leave a fold that can
-	// never be acked because the push that would prove it has nothing to send.
+	// The parcel still carries the folded rows to the account's OTHER devices, on the
+	// sync engine's own schedule (`state.post = snapshotRefs()`), and nothing about the
+	// mailbox waits on it. A device wiped between its ack and its next successful push
+	// loses those rows -- the same one-copy exposure every other local-only state has,
+	// and the read-back is what makes "durable" mean written rather than intended.
 
-	/// Whether a parcel push is available to commit through.
+	/// Whether the account has a parcel push at all -- used ONLY to LABEL the report
+	/// (`solo`), never to choose the ack path. `state()` reports the same thing.
 	function syncReady() {
 		return !!(window.DaimondSync && DaimondSync.entitled && DaimondSync.entitled()
 			&& DaimondSync.parcel && DaimondSync.push && DaimondSync.version);
 	}
 
-	/// Tell the relay it may let go, once the parcel carrying it has committed.
-	///
-	/// Answers `{ acked, why }`. Every `why` is a refusal to ack, and every one of
-	/// them costs a re-collect and nothing else: the relay still holds the
-	/// envelope, and collecting it again is idempotent by address.
+	/// The wrapped record as it sits in storage, re-read: `through` on it, or -1 when
+	/// the record is absent, will not unwrap, or will not parse. Never `_st` -- that is
+	/// memory, and the point is to prove what reached the disk.
+	async function storedThrough() {
+		var raw = null;
+		try { raw = localStorage.getItem(LS); } catch (e) { return -1; }
+		if (!raw) return -1;
+		try {
+			var r = JSON.parse(await DaimondIdentity.unwrap(raw));
+			return (r && r.v === REC_V) ? (r.through | 0) : -1;
+		} catch (e) { return -1; }
+	}
+
+	/// Tell the relay it may let go of rows up to `through`, once they are durably in
+	/// THIS device's record. Answers `{ acked, why, solo }`. Every `why` is a refusal
+	/// to ack, and every one costs a re-collect and nothing else: the relay still holds
+	/// the envelope, and collecting it again is idempotent by address.
 	async function ackThrough() {
 		var st = await read();
 		if (!st) return { acked: 0, why: 'locked' };
 		if (st.through <= st.acked) return { acked: 0, why: 'nothing' };
 		var want = st.through;
-
-		if (!syncReady()) return await soloAck(want);
-
-		st.tries = (st.tries | 0) + 1;
-		await save();
-
-		// What a push would send, read back. `DaimondSync.parcel()` is exactly what
-		// leaves, not an approximation of it.
-		var parcel = null;
-		try { parcel = await DaimondSync.parcel(); }
-		catch (e) { return { acked: 0, why: 'no_parcel' }; }
-		if (!parcel || !parcel.post || (parcel.post.through | 0) < want) {
-			// The record is not on the parcel. Said out loud, because the ordinary
-			// cause is one missing line in sync.js and the symptom -- mail that is
-			// collected and never released -- looks like a relay fault.
-			log('the parcel does not carry the message record; not acking');
-			return { acked: 0, why: 'not_in_parcel' };
-		}
-
-		var before = DaimondSync.version();
-		try { await DaimondSync.push(); }
-		catch (e) { return { acked: 0, why: 'push_failed' }; }
-		if (DaimondSync.version() <= before) return { acked: 0, why: 'not_committed' };
-
-		return await tellRelay(want);
-	}
-
-	/// The ack for an account with no parcel to commit to.
-	///
-	/// Collection degrades honestly to this one device's own ack, and that account
-	/// then has one copy of its mail in one place -- which is true of everything
-	/// else it owns. It is a degrade and is reported as one by `state()`, never a
-	/// silent equivalent of the real thing.
-	async function soloAck(want) {
-		await save();				// the local record IS the commit here
+		// The local durable commit. `save()` answers false on a write throw (a quota
+		// over-run), and the read-back proves the row actually reached the disk -- a
+		// swallowed failure here is how the relay would drop the only copy.
+		if (!(await save())) return { acked: 0, why: 'not_saved' };
+		if ((await storedThrough()) < want) return { acked: 0, why: 'not_saved' };
 		var r = await tellRelay(want);
-		r.solo = true;
+		r.solo = !syncReady();			// one copy in one place, as state() reports it
 		return r;
 	}
 
@@ -2138,13 +2222,32 @@
 		return { acked: want, dropped: (r.json.dropped | 0) };
 	}
 
-	/// Collect, fold and ack, in that order. The one routine anything else calls.
+	/// Hold an exclusive lock across `fn`, so two tabs cannot interleave a collect, a fold
+	/// and an ack against the same mailbox record. Without this, tab A can fold rows, save,
+	/// prove the save with a read-back and ack the relay -- while tab B, still holding the
+	/// `_st` it had before any of that, runs its OWN collect (which saves unconditionally,
+	/// see `collect` above) mid-way through and overwrites disk with a record that never
+	/// saw A's rows. The rows are then gone from disk (B's write), the relay (A's ack) and
+	/// memory (nobody's `_st` has both) -- collected, acked, and never pushed anywhere.
+	/// Mirrors `withTurnLock` in daimond.js; degrades to running `fn` straight where the
+	/// Web Locks API is absent (an older engine), exactly as that one does.
+	function withMailboxLock(fn) {
+		if (window.navigator && navigator.locks && navigator.locks.request) {
+			return navigator.locks.request('daimond-post-mailbox', { mode: 'exclusive' }, fn);
+		}
+		return fn();
+	}
+
+	/// Collect, fold and ack, in that order, under the mailbox lock. The one routine
+	/// anything else calls.
 	async function round() {
-		var c = await collect();
-		if (!c.ok) return c;
-		var a = await ackThrough();
-		return { ok: true, got: c.got, notes: c.notes, unreadable: c.unreadable,
-			acked: a.acked | 0, why: a.why || '' };
+		return withMailboxLock(async function () {
+			var c = await collect();
+			if (!c.ok) return c;
+			var a = await ackThrough();
+			return { ok: true, got: c.got, notes: c.notes, unreadable: c.unreadable,
+				acked: a.acked | 0, why: a.why || '' };
+		});
 	}
 
 	// ── The tray's buttons ─────────────────────────────────────
@@ -3427,8 +3530,16 @@
 		/// pre-decode estimate exactly; `relayMaxBytes()` is the deployed `/api/post` cap.
 		relayMaxBytes: relayMaxBytes,
 		fitsRelay:     fitsRelay,
-		collect: collect,
-		ack:     ackThrough,
+		// Locked individually as well as `round` is: daimond.js and peer.js call `collect`
+		// and `ack` on their own, not only through `round`, and each is its own tab-crossing
+		// critical section. `round` itself calls the raw functions above, not these wrapped
+		// exports, so it takes the lock exactly once rather than deadlocking on itself.
+		collect: function () { return withMailboxLock(collect); },
+		ack:     function () { return withMailboxLock(ackThrough); },
+		/// Free this device's own hold on a turn's errand once the turn is settled here, so
+		/// the next ack drops it from the relay and no peer re-runs it. Under the same lock
+		/// as `collect`/`ack`; the ack dep (daimond.js) calls it before `ack` on a done turn.
+		settle:  function (turnId) { return withMailboxLock(function () { return settle(turnId); }); },
 		round:   round,
 		connect: connect,
 		/// Ask to follow, answer somebody who asked, or let go. The same door

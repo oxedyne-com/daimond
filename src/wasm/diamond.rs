@@ -2077,8 +2077,10 @@ fn manifest_path(id: &str, version: u64) -> String {
     fmt!("{}/{}", versions_dir(id), versions::manifest_name(version))
 }
 
-/// A body's path, `diamonds/<id>/versions/b/<sha256hex>`.
-fn body_path(id: &str, hash: &str) -> String {
+/// A body's path, `diamonds/<id>/versions/b/<sha256hex>`. Public so the wasm app can
+/// hand the store path to the JS viewer, which reads the bytes through `store_read_bytes`
+/// -- a binary changed file is then shown through the viewer door, not lossily as text.
+pub fn body_path(id: &str, hash: &str) -> String {
     fmt!("{}/{}", versions_dir(id), versions::body_name(hash))
 }
 
@@ -3228,6 +3230,128 @@ pub async fn export_template(id: &str, with_conversation: bool) -> Outcome<Strin
     Ok(crate::protocol::pack_template(id, meta.touched, &name, &kept))
 }
 
+/// The leaf directory the version store lives in, `versions`.
+const VERSIONS_SUBDIR: &str = "versions";
+
+/// The version number a `versions/` file name begins with -- the four (or more)
+/// leading digits before the first dot -- or `None` for a name that is not one of
+/// ours (the body directory `b`, a stray file).  `0005.json`, `0005.jpatch`,
+/// `0005.html` and `0005.files.json` all answer 5.
+fn version_prefix(name: &str) -> Option<u64> {
+    let stem = name.split('.').next().unwrap_or("");
+    if !stem.is_empty() && stem.bytes().all(|b| b.is_ascii_digit()) {
+        stem.parse::<u64>().ok()
+    } else {
+        None
+    }
+}
+
+/// The highest version number this device holds for a Diamond, across the crystal
+/// counter and every file in `versions/`.  Zero for a Diamond with no store yet.
+async fn local_version_max(id: &str) -> u64 {
+    let mut max = read_meta(id).await.map(|m| m.version).unwrap_or(0);
+    if let Ok(entries) = opfs::list_dir(FileRoot::Opfs, &versions_dir(id)).await {
+        for (name, is_dir, _size) in entries {
+            if is_dir {
+                continue;
+            }
+            if let Some(n) = version_prefix(&name) {
+                if n > max {
+                    max = n;
+                }
+            }
+        }
+    }
+    max
+}
+
+/// Keep the local copy of a Diamond as a recoverable version BEFORE a two-sided
+/// sync import replaces it wholesale (S-SYNC #4), and answer the version number it
+/// was kept at.
+///
+/// The loser's crystal, its page and the files the store versions are written as
+/// ONE `restore` manifest -- bodies content-addressed, so a snapshot of files that
+/// already have a version costs only what differs.  The note names it so the
+/// History reads "kept before sync".
+///
+/// **The number is chosen above every version either side holds** (`incoming` is the
+/// export about to land), so neither the remote manifests written straight after nor
+/// the next local crystal edit can overwrite it.  No data KEYFRAME is written at that
+/// number: the live crystal after the import is the remote's, and the crystal as at a
+/// number with no snapshot rebuilds to the newest one at or before it -- the remote's
+/// live copy -- so the store stays consistent.  The one visible cost is that the first
+/// crystal edit after the import records a full copy rather than a patch, which
+/// [`parent_data`] already handles.
+///
+/// The loser's tags and links live in `.daimond/`, which the store does not version;
+/// they are preserved by the union the caller (`applyDiamonds`) runs after the import.
+async fn keep_local_before_import(id: &str, incoming: &[(String, Vec<u8>)]) -> Outcome<Option<u64>> {
+    let local_max  = local_version_max(id).await;
+    let remote_max = incoming.iter()
+        .filter_map(|(rel, _)| rel.strip_prefix(&fmt!("{}/", VERSIONS_SUBDIR)))
+        .filter_map(version_prefix)
+        .max()
+        .unwrap_or(0);
+    let at = local_max.max(remote_max) + 1;
+
+    // The loser's state: its crystal and page, read from OPFS where they always live,
+    // and the files the store versions, walked the same way Save a version walks them.
+    let mut sources: Vec<(String, Vec<u8>)> = Vec::new();
+    for p in [crystal_data_path(id), crystal_page_path(id)] {
+        if let Ok(body) = opfs::read_file(FileRoot::Opfs, &p).await {
+            if body.len() <= versions::VERSION_FILE_MAX {
+                sources.push((p, body));
+            }
+        }
+    }
+    for ch in versions_walk(id).await {
+        if let Body::Held(body) = ch.after {
+            if body.len() <= versions::VERSION_FILE_MAX {
+                sources.push((ch.path, body));
+            }
+        }
+    }
+    if sources.is_empty() {
+        return Ok(None);        // nothing local to keep -- a fresh adopt is not a conflict
+    }
+
+    // THE BODIES BEFORE THE MANIFEST, so a failure half way leaves bytes nothing names
+    // rather than a manifest naming bytes that are not there -- the discipline
+    // [`versions_record`] states.
+    let mut entries: Vec<Entry> = Vec::new();
+    for (path, body) in sources.into_iter() {
+        let hash = versions::hash_of(&body);
+        let to = body_path(id, &hash);
+        if !res!(opfs::exists(FileRoot::Opfs, &to).await) {
+            res!(opfs::write_file(FileRoot::Opfs, &to, &body).await);
+        }
+        entries.push(Entry::changed(&path, &body, None));
+    }
+    let manifest = Manifest::new(Cause::Restore, now_ms() as u64, "",
+        "kept before sync — a local edit the merge replaced", entries);
+    res!(opfs::write_file(FileRoot::Opfs, &manifest_path(id, at),
+        manifest.to_json().as_bytes()).await);
+    Ok(Some(at))
+}
+
+/// Delete everything a Diamond holds EXCEPT its version store, so the file history --
+/// and any conflict snapshot just kept -- survives a wholesale replace (S-SYNC #4).
+/// The export's own `versions/` files are written over what is kept, unioning by
+/// content address.
+async fn delete_except_versions(dir: &str) -> Outcome<()> {
+    let entries = match opfs::list_dir(FileRoot::Opfs, dir).await {
+        Ok(e)  => e,
+        Err(_) => return Ok(()),
+    };
+    for (name, is_dir, _size) in entries {
+        if name == VERSIONS_SUBDIR {
+            continue;
+        }
+        res!(opfs::delete_entry(FileRoot::Opfs, &fmt!("{}/{}", dir, name), is_dir).await);
+    }
+    Ok(())
+}
+
 /// Recreate a Diamond from an [`export_diamond`] JSON, REPLACING whatever this
 /// device held under that id.
 ///
@@ -3252,14 +3376,24 @@ pub async fn export_template(id: &str, with_conversation: bool) -> Outcome<Strin
 /// **`versions/` travels, and that is the whole of what keeps file history across a pull.**  The
 /// file manifests and their bodies are ordinary files under the Diamond's directory, so
 /// [`export_diamond`] packs them and this lays them down with everything else -- which is
-/// decision D3 of the launch plan, and it is a decision about THIS function.  Keeping them per
-/// device instead would need a carve-out here, in the one place that has lost a Diamond's tags
-/// before, and the carve-out would have to survive every future change to how a Diamond is
-/// replaced.  The cost is the rule every file in a Diamond already lives under: a version made
-/// offline on one device is gone when a fresher whole copy lands from another.  The bodies are
+/// decision D3 of the launch plan, and it is a decision about THIS function.  The bodies are
 /// bytes, so the ones that are not valid UTF-8 travel in the pack's `binary` map
 /// ([`crate::protocol::pack_diamond`]) and arrive byte for byte.
-pub async fn import_diamond(json: &str) -> Outcome<()> {
+///
+/// **`versions/` is PRESERVED, not deleted (S-SYNC #4).**  The wholesale replace once deleted the
+/// whole directory, `versions/` included, so a two-sided edit -- the phone changed the memory,
+/// backgrounded before its push, and pulled the desktop's copy on resume -- was gone with no
+/// conflict copy and nothing in the trail.  Now everything but `versions/` is deleted and the
+/// export's own `versions/` written over what is kept (union by content address), so the file
+/// history is never lost to a pull.  On a one-sided sync the result is identical to the old delete:
+/// the winner's chain is a superset of the loser's, so writing it over yields the winner's store.
+///
+/// **`keep_conflict` keeps the loser.**  When the caller has found that this device ALSO moved the
+/// Diamond since the copy both sides last agreed on, the local state is kept as a recoverable
+/// `restore` version FIRST ([`keep_local_before_import`]), so the losing edit becomes a version the
+/// user can restore rather than a silent loss.  A one-sided pull passes `false` and behaves exactly
+/// as before, bar the preserved `versions/`.
+pub async fn import_diamond(json: &str, keep_conflict: bool) -> Outcome<()> {
     // The browser's own parser, not a second one written here.  This JSON holds
     // whole files, and a hand-rolled scan would be a second unescaping
     // implementation to keep exactly in step with the first.
@@ -3301,8 +3435,23 @@ pub async fn import_diamond(json: &str) -> Outcome<()> {
     writes.sort_by_key(|(rel, _)| (*rel == meta_rel) as u8);
 
     let dir = diamond_dir(&id);
-    if res!(opfs::exists(FileRoot::Opfs, &dir).await) {
-        res!(opfs::delete_entry(FileRoot::Opfs, &dir, true).await);
+    let existed = res!(opfs::exists(FileRoot::Opfs, &dir).await);
+    // Keep the local edit a two-sided sync would otherwise destroy, BEFORE anything is
+    // deleted, at a number the writes below and the next edit cannot land on (S-SYNC #4).
+    let mut kept_at: Option<u64> = None;
+    if existed && keep_conflict {
+        match keep_local_before_import(&id, &writes).await {
+            Ok(n)  => kept_at = n,
+            Err(e) => console_log(&fmt!(
+                "Diamond '{}': the pre-sync snapshot could not be written ({}); the import \
+                 proceeds and the local edit rides in the version store's file history instead.",
+                id, e)),
+        }
+    }
+    if existed {
+        // PRESERVE `versions/`; delete only the rest.  The kept snapshot and the whole file
+        // history live under it, and the export's own `versions/` is written over it below.
+        res!(delete_except_versions(&dir).await);
     }
     for (rel, body) in writes {
         // THE METADATA IS REBUILT, NOT COPIED. Every other file in an export is
@@ -3344,6 +3493,24 @@ pub async fn import_diamond(json: &str) -> Outcome<()> {
             body
         };
         res!(opfs::write_file(FileRoot::Opfs, &fmt!("{}/{}", dir, rel), &bytes).await);
+    }
+    // Reserve the kept snapshot's number (S-SYNC #4): the import wrote the remote's
+    // `meta.json`, so the crystal counter now points at the remote's live version -- and
+    // the next crystal edit would mint the number just above it, which is where the
+    // conflict snapshot sits.  Advance the counter past it so nothing overwrites the kept
+    // edit.  The live crystal is the remote's; a number with no data snapshot rebuilds to
+    // the newest one at or before it, so the store stays consistent.
+    if let Some(at) = kept_at {
+        if let Ok(mut meta) = read_meta(&id).await {
+            if meta.version < at {
+                meta.version = at;
+                if let Err(e) = write_meta(&id, &meta).await {
+                    console_log(&fmt!(
+                        "Diamond '{}': the version counter could not be advanced past the kept \
+                         snapshot ({}); the next edit may record a full copy.", id, e));
+                }
+            }
+        }
     }
     Ok(())
 }

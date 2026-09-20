@@ -449,6 +449,14 @@ export async function open(opts = {}) {
 		// session. Defaults to it; a suite sets DAIMOND_BROWSER once and every session
 		// follows.
 		browser: engine = BROWSER,
+		// EXTRA CHROMIUM LAUNCH FLAGS, appended verbatim to the args below. Chromium
+		// only -- WebKit understands none of these and is launched without `args`. A
+		// heap verifier needs `--enable-precise-memory-info` (so
+		// `performance.memory.usedJSHeapSize` reports real bytes rather than a
+		// 100 kB-bucketed value) and `--js-flags=--expose-gc` (so `window.gc()`
+		// settles the heap before a reading); nothing else here wants them, so they
+		// are passed per call rather than made the default. See dev/verify_collectheap.mjs.
+		extraArgs = [],
 	} = opts;
 
 	// Before a browser is even launched: is the mock this run will read the mock
@@ -457,6 +465,7 @@ export async function open(opts = {}) {
 	if (connect) await requireOwnMock();
 
 	const args = ['--no-sandbox', '--disable-dev-shm-usage'];
+	if (Array.isArray(extraArgs)) args.push(...extraArgs);
 	if (extension) {
 		// `ext/` is the SHIPPED extension and names one origin, which is not this
 		// dev server. A test that asked for it wants the build that will talk to
@@ -1174,4 +1183,73 @@ export function errors(s) {
 		console.log(`  note  outside this world, so not counted as the app throwing: ${a.text}`);
 	}
 	return out;
+}
+
+/// A document-start shim that reproduces the cold iOS tab: the identity keypair
+/// reads EMPTY for a window that OPENS ON THE FIRST READ of the private key and
+/// stays open for `ms`, then passes through. Arming on the first read — not on
+/// page load — is what makes the window still be open when the boot gate reads,
+/// which is long after the wasm has loaded; a fixed-from-load window closes before
+/// boot ever looks, so the bug never shows. It overrides `Storage.prototype.
+/// getItem` before accounts.js captures it, so the namespaced reads the whole app
+/// makes flow through it. Optionally also blanks the orphan-evidence marker, for a
+/// faithful WHOLE-store cold read where the guard's inputs are empty too.
+///
+/// `window.__COLD` records how it behaved (armed, and how many empties it
+/// served), so a test can PROVE the boot read was actually served empty rather
+/// than passing because the window had already closed.
+///
+/// Moved here from `verify_identityguard.mjs` (2026-09-20) so a second verifier —
+/// `verify_pairing.mjs`'s cold-boot check on a just-paired child — can arm the
+/// same shim without a second copy of it.
+export function coldShim(ms, alsoEvidence) {
+	const keys = ['daimond-id-priv', 'daimond-id-pub'];
+	if (alsoEvidence) keys.push('daimond-id-ever');
+	return `(function(){
+		var proto = window.Storage.prototype;
+		var realGet = proto.getItem;
+		var ARM_KEY = 'daimond-id-priv';   // the boot gate reads this first
+		var COLD_MS = ${ms};
+		var TARGETS = ${JSON.stringify(keys)};
+		var t0 = 0;
+		window.__COLD = { armed: false, empties: 0, armAt: 0 };
+		proto.getItem = function(k){
+			if (TARGETS.indexOf(k) >= 0) {
+				if (!t0 && k === ARM_KEY) { t0 = Date.now(); window.__COLD.armed = true; window.__COLD.armAt = t0; }
+				if (t0 && (Date.now() - t0) < COLD_MS) { window.__COLD.empties++; return null; }
+			}
+			return realGet.call(this, k);
+		};
+	})();`;
+}
+
+/// How the cold shim behaved this page: was it armed, and did it serve empties?
+export function coldReport(page) {
+	return page.evaluate(() => window.__COLD || { armed: false, empties: 0 }).catch(() => ({ armed: false, empties: 0 }));
+}
+
+/// What the identity boot gate settled on. Waits for the modal (both unlock and
+/// create end there) or, for a genuine unlock, its disappearance.
+///
+/// Moved here from `verify_identityguard.mjs` (2026-09-20), alongside `coldShim`,
+/// for the same reason: a second verifier reading a cold-booted page's gate state
+/// needs this, not a copy of it.
+export async function gateState(page) {
+	await page.waitForFunction(() => {
+		const m = document.getElementById('identity-modal');
+		return !!(m && getComputedStyle(m).display !== 'none' && m.dataset.mode);
+	}, { timeout: 15000 }).catch(() => {});
+	return page.evaluate(() => {
+		const m = document.getElementById('identity-modal');
+		const vis = e => !!e && getComputedStyle(e).display !== 'none';
+		return {
+			shown:    vis(m),
+			mode:     m ? (m.dataset.mode || '') : '',
+			recover:  !!document.getElementById('id-recover'),
+			again:    !!document.getElementById('id-recover-again'),
+			over:     !!document.getElementById('id-recover-over'),
+			title:    (document.getElementById('id-title') || {}).textContent || '',
+			primary:  (document.getElementById('id-primary') || {}).textContent || '',
+		};
+	});
 }

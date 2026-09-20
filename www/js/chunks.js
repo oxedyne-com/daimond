@@ -258,7 +258,12 @@
 			keys.slice(keys.length - MAP_MAX).forEach(function (k) { trimmed[k] = m[k]; });
 			m = trimmed;
 		}
-		try { localStorage.setItem(MAP_KEY, JSON.stringify(m)); } catch (e) { /* quota: rebuilt next time */ }
+		// The boolean, for symmetry with the cloud index's `setIndex`. The chunk map
+		// is only a CACHE, though -- a lost entry costs one re-upload and never a
+		// missing file (see the header) -- so unlike the index this does not gate a
+		// commit; the caller may ignore it, as `offloadFile` does.
+		try { localStorage.setItem(MAP_KEY, JSON.stringify(m)); return true; }
+		catch (e) { return false; }		// quota: rebuilt next time
 	}
 
 	// ── Surviving a passphrase change ──────────────────────────

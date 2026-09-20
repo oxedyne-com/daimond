@@ -312,6 +312,85 @@ try {
 	gate.blocking = false;
 	b.page.off('console', bAllListener);
 
+	// ═══════════════════════════════════════════════════════════════════════════
+	// CASE 3 — STALE RUNNER (WS-HAND #3). B is synced, then A's chat gains extra
+	// messages (three ~20 KiB tool rows among them) while B's content pull is HELD.
+	// A dispatches: the seed is CLIPPED (fits the door), but B's copy of the thread is
+	// behind, so B's readiness (`holdsThread`) FAILS -- B hands the turn back
+	// UNDELIVERABLE and never runs the model against the stale thread; A runs it.
+	// ═══════════════════════════════════════════════════════════════════════════
+	console.log('\nCASE 3 — a runner whose thread is behind hands back UNDELIVERABLE (does not run stale)');
+	const bAll3 = []; const bAll3Listener = (m) => bAll3.push(m.text());
+	b.page.on('console', bAll3Listener);
+
+	const newId3 = await newChatRetry(a);
+	check('A created a brand-new chat (CASE 3)', !!newId3, 'chat id: ' + newId3);
+	await a.page.setViewportSize({ width: 1500, height: 950 });
+	await a.page.waitForTimeout(300);
+	// Seed the chat and let B sync it, so B holds a KNOWN, EARLIER thread.
+	await chat(a, 'CASE3 base turn');
+	await settle(a.page);
+	await wakeB();
+	await b.page.waitForTimeout(2500);
+	await settle(b.page);
+
+	// HOLD B's content pull, then grow A's thread by six model-facing rows (three of
+	// them ~20 KiB tool outputs) that B will not see while gated.
+	gate.blocking = true;
+	await a.page.evaluate(async () => {
+		await new Promise((res) => {
+			const req = indexedDB.open('daimond-chats');
+			req.onsuccess = () => {
+				const t = req.result.transaction('chats', 'readwrite');
+				const store = t.objectStore('chats');
+				const all = store.getAll();
+				all.onsuccess = () => {
+					const cs = (all.result || []).sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0));
+					const c = cs[0];
+					if (c) {
+						c.messages = c.messages || [];
+						const big = 'T'.repeat(20 * 1024);
+						for (let i = 0; i < 6; i++) {
+							const isTool = i % 2 === 1;
+							c.messages.push({ role: isTool ? 'tool' : 'assistant',
+								content: isTool ? big : ('row ' + i), mid: 'grow-' + i, ts: Date.now() + i });
+						}
+						c.updatedAt = Date.now(); store.put(c);
+					}
+				};
+				t.oncomplete = () => res(); t.onerror = () => res();
+			};
+			req.onerror = () => res();
+		});
+	});
+	// Reload A so the grown thread is the live one it dispatches from.
+	await a.page.reload({ waitUntil: 'domcontentloaded' });
+	await a.page.waitForFunction(() => !!window.DaimondSync && !!window.DaimondPeer, null, { timeout: 20000 }).catch(() => {});
+	await a.page.waitForTimeout(1500);
+	await a.page.setViewportSize({ width: 420, height: 860 });
+	await a.page.waitForTimeout(300);
+
+	const PROMPT3 = 'STALERUN answer against the whole thread';
+	await a.page.fill('#chat-input', PROMPT3);
+	await a.page.click('#chat-send', { force: true });
+
+	const aStore3 = await untilChats(a, (cs) => answersMatching(cs, 'STALERUN').length >= 1, CASE2_MS);
+	const ans3 = answersMatching(aStore3, 'STALERUN');
+	const ranA3 = ans3.filter((m) => String(m.ranOn) === String(idA)).length;
+	const ranB3 = ans3.filter((m) => String(m.ranOn) === String(idB)).length;
+	const undeliverable3 = bAll3.filter((e) => /reconstruct undeliverable/i.test(e) && /incomplete/i.test(e));
+	const stalePromptRun = bAll3.filter((e) => /reconstruct prompt from errand/i.test(e));
+	check('CASE 3: B logged reconstruct UNDELIVERABLE … incomplete (refused the stale thread)',
+		undeliverable3.length >= 1, 'undeliverable-incomplete lines: ' + undeliverable3.length);
+	check('CASE 3: B NEVER ran the stale prompt-from-errand', stalePromptRun.length === 0,
+		'prompt-from-errand lines: ' + stalePromptRun.length);
+	check('CASE 3: the turn was answered exactly once, on A (B did not run the stale thread)',
+		ans3.length === 1 && ranA3 === 1 && ranB3 === 0,
+		'answers: ' + ans3.length + ' onA: ' + ranA3 + ' onB: ' + ranB3);
+	await shot(a, 'handoff_slowparcel_case3');
+	gate.blocking = false;
+	b.page.off('console', bAll3Listener);
+
 } catch (e) {
 	check('the run finished without throwing', false, String((e && e.stack) || e));
 } finally {

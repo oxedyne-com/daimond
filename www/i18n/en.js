@@ -518,6 +518,7 @@
 	// A hand-off that fell back to this device: it was sent to {name}, that device
 	// never finished, and the turn ran here. Said so provenance is never silent.
 	'chat.ran_here_failed': 'Ran here — hand-off to {name} didn’t finish',
+	'chat.ran_here_refused': 'Ran here — the relay refused the hand-off',
 	'chat.ran_here':       'Ran on this device',
 	// The hand-off tile's expanded body: a concise account of what happened when a
 	// turn ran off this device. The provenance line, then a facts row of only the
@@ -1606,6 +1607,16 @@
 	'sync.when_hours':     '{n}h ago',
 	'sync.when_days':      '{n}d ago',
 
+	// ── A passphrase change adopted from another device (rekey) ──
+	// The chip a device shows when it is behind the epoch chain and stands down
+	// (needed / _reason), and the one-time notice on a device that DID adopt
+	// (adopted / _body). The passkey-stale line and any reseal sentences the notice
+	// adds already have their own keys under changepass above.
+	'sync.rekey_needed':        'Passphrase changed',
+	'sync.rekey_needed_reason': 'The passphrase was changed on another device, and this one cannot catch up on its own. Link it again to this account.',
+	'sync.rekey_adopted':       'Passphrase updated',
+	'sync.rekey_adopted_body':  'The passphrase was changed on another device, and this one has caught up. You do not need to type it here.',
+
 	// ── The account's public handle ─────────────────────────────
 	// The public name, minted by the gateway and the same on every device of
 	// the account. Three refusals and a shrug, because "no" on its own leaves
@@ -2132,6 +2143,11 @@
 	'seat.why_chat_local':       'This chat is pinned to this device.',
 	'seat.tile_local_mobile':    'Runs here — keep this open',
 	'seat.retry':                '{from} did not pick it up; trying {to}',
+	// The relay REFUSED the hand-off (S-HAND #6): it never reached a peer, so the turn
+	// is running here. The status rides the tooltip; the reason `errand.prompt_too_large`
+	// is one such refusal a device raises itself, without a round trip.
+	'seat.refused':              'Hand-off refused ({status}) — running here',
+	'errand.prompt_too_large':   'the prompt alone is larger than the relay accepts',
 	// ── WHERE A TASK OTHER THAN A TURN RUNS (owner design, 2026-09-14) ──
 	// A compile and a publish are placed by the same election a turn is, and the
 	// button says WHERE while its tooltip says WHY. A task moves only for a need this
@@ -2972,6 +2988,7 @@
 	'changepass.changed':         'Passphrase changed',
 	'changepass.changed_body':    'Your new passphrase is active.',
 	'changepass.passkey_stale':   'Your passkey could not be updated, so it will ask for the new passphrase. Re-add it from Settings.',
+	'changepass.other_devices':   'Your other devices pick up the new passphrase automatically the next time they sync.',
 
 	// ── Backups ────────────────────────────────────────────────
 	'backup.unreadable':      'That backup file could not be read.',
@@ -3216,6 +3233,9 @@
 	'store.alarm_download': 'Download a copy',
 	'store.alarm_retry':    'Try again',
 	'store.full':           'there is no room left in this browser’s storage for this site',
+	// A deletion whose tombstone could not be recorded, so it was refused rather
+	// than left to resurrect from disk or from the other device (S-SYNC #6).
+	'store.delete_unrecorded': 'a deletion could not be recorded — this browser’s storage is full',
 	// A read that returned nothing where the last good write left {n}. The
 	// number is the count, so keep the placeholder.
 	'store.empty_read':     'this browser returned none of the {n} conversations it is holding',

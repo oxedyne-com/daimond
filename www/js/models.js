@@ -592,7 +592,7 @@
 	/// a paused leaf is refused here and no request goes out. A slot of 1 or more
 	/// is the worker pump spending, and that leaf is checked whether the caller
 	/// names one or not: the pump is the same pump however the work reached it.
-	async function mintRequest(slot, node) {
+	async function mintRequest(slot, node, opts) {
 		var stop = held(node) ? node
 			: (((slot | 0) >= 1 && held(workersNode())) ? workersNode() : '');
 		if (stop) throw pauseError(stop);
@@ -600,11 +600,23 @@
 		if (window.DaimondGateway && DaimondGateway.clientApi) {
 			head['x-daimond-api'] = String(DaimondGateway.clientApi());
 		}
+		var body = { slot: slot | 0 };
+		// `ensure` asks the gateway to RAISE this slot's live key in place, to
+		// `want_minor` of headroom, rather than mint a fresh one -- so a turn costing
+		// more than the mint float is not refused and re-run on a new key. The number is
+		// a REQUEST: the gateway clamps it to its own [float, max_headroom] band, for
+		// the reason `mint`'s own note gives (a browser that could ask for a number
+		// could ask for the wrong one). Both fields are absent on an ordinary mint, so a
+		// gateway that predates `ensure` sees byte-for-byte the request it always did.
+		if (opts && opts.ensure) {
+			body.ensure     = true;
+			body.want_minor = Math.max(0, opts.wantMinor | 0);
+		}
 		var r = await fetch(MINT_URL, {
 			method:      'POST',
 			headers:     head,
 			credentials: 'same-origin',
-			body:        JSON.stringify({ slot: slot | 0 }),
+			body:        JSON.stringify(body),
 		});
 		if (r.status === 426) { try { window.dispatchEvent(new Event('daimond:stale')); } catch (e) {} }
 		var j = null;
@@ -625,6 +637,10 @@
 			err.noCredits = r.status === 402 || !!(j && j.credits_minor === 0);
 			throw err;
 		}
+		// An `ensure` that RAISED a live key answers with no key -- the key the caller
+		// already holds is the one that was raised -- so the key/url check is the
+		// caller's (`ensure` gates on `raised_minor`), not this one's.
+		if (opts && opts.ensure) return j;
 		if (!j.key || !j.url) throw new Error(t('models.err_bad_key'));
 		return j;
 	}
@@ -633,15 +649,23 @@
 	/// belongs to no leaf and passes none: gating it would leave a paused chat's
 	/// pause holding the whole account keyless.
 	async function mint(node) {
-		var j           = await mintRequest(0, node);
+		return installCreditsFromReply(await mintRequest(0, node));
+	}
+
+	/// Install a mint reply as the live credits key.
+	///
+	/// Factored out of `mint` so `ensure` can adopt a key too: a raise cannot save a
+	/// dead key, so a gateway that had to mint after all answers WITH a key, and it is
+	/// installed here exactly as `mint` would install it.
+	function installCreditsFromReply(j) {
 		var url         = chatUrl(j.url);
 		plain[CREDITS]  = j.key;                // memory, and nowhere else — see `plain`.
 		mintGen++;                              // this key's generation; the last one is revoked.
 		credits.bal     = typeof j.credits_minor === 'number' ? j.credits_minor : 0;
 		credits.cur     = j.currency || 'usd';
 		// What the key itself may draw, which is NOT the balance: the gateway caps a minted key
-		// at a float, so a key can be spent while the account still holds credits. That is why
-		// a refusal mid-session is answered with another key rather than reported as an error.
+		// at a float, so a key can be spent while the account still holds credits. `ensure`
+		// raises that cap in place; only a dead key reaches this path, so a fresh cap is set.
 		credits.limit   = typeof j.limit_minor === 'number' ? j.limit_minor : 0;
 		credits.via     = hostOf(url);
 		credits.state   = 'ready';
@@ -773,7 +797,13 @@
 	/// triggered action. The worker pump's own leaf is checked regardless; see
 	/// `mintRequest`.
 	async function mintSlot(slot, node) {
-		var j = await mintRequest(slot, node);
+		return installSlotFromReply(slot, await mintRequest(slot, node));
+	}
+
+	/// Install a mint reply as a worker slot's key, counting its generation up.
+	/// Factored out of `mintSlot` for the same reason `installCreditsFromReply` is: an
+	/// `ensure` on a slot whose key was dead adopts the fresh key the gateway minted.
+	function installSlotFromReply(slot, j) {
 		var s = slots[slot] || (slots[slot] = { key: '', url: '', gen: 0 });
 		s.key  = j.key;
 		s.url  = chatUrl(j.url);
@@ -783,6 +813,65 @@
 		if (typeof j.credits_minor === 'number') credits.bal = j.credits_minor;
 		return s;
 	}
+
+	// ── Ensure: raise a live key's cap in place, sized to the turn ───
+	// The mint float is the LEAST headroom a key gets, not the most it may ever draw.
+	// A turn worth more than the float used to be refused at the cap and re-run on a
+	// fresh key -- billed once for nothing, and stuck when the refusal was a 402 the
+	// old regex did not match. `ensure` raises the SAME key instead, so the turn runs
+	// on the key it started on and the partial draw is that key's own usage.
+
+	/// An `ensure` in flight, per slot, so callers arriving together make one request.
+	var ensuring = {};
+	/// Set once a reply arrives WITHOUT `raised_minor`: the gateway predates `ensure`
+	/// and treated the call as a mint. From then on `ensure` is a no-op, so an old
+	/// gateway is never made to rotate the key on every turn -- the client falls back
+	/// to plain mint/remint.
+	var ensureUnsupported = false;
+
+	/// Raise this slot's key to `wantMinor` of headroom, without rotating it.
+	///
+	/// Returns the gateway reply, or `null` when `ensure` is unsupported. The caller
+	/// reads `reply.key`: absent means the live key was raised in place and the app
+	/// around it stands; present means a dead key forced a mint and the app must be
+	/// rebuilt around the new key, exactly as a `remint` would make it.
+	async function ensure(slot, wantMinor, node) {
+		if (ensureUnsupported) return null;
+		var s = slot | 0;
+		if (ensuring[s]) return await ensuring[s];
+		ensuring[s] = (async function () {
+			var j = await mintRequest(s, node, { ensure: true, wantMinor: wantMinor });
+			// The gate: a gateway that understands `ensure` always reports what it
+			// raised, even a raise of zero. Its absence means this call was read as a
+			// mint -- so adopt the key it gave (this turn is not billed for nothing on a
+			// key the gateway just revoked) and never ensure again this session.
+			if (!j || typeof j.raised_minor !== 'number') {
+				ensureUnsupported = true;
+				if (j && j.key && j.url) {
+					if (s === 0) installCreditsFromReply(j);
+					else installSlotFromReply(s, j);
+				}
+				return j;
+			}
+			if (j.key && j.url) {
+				// A raise cannot save a dead key, so the gateway minted after all.
+				if (s === 0) installCreditsFromReply(j);
+				else installSlotFromReply(s, j);
+			} else {
+				// Raised in place: the key stands, only the ceiling and balance moved.
+				if (s === 0 && typeof j.limit_minor === 'number') credits.limit = j.limit_minor;
+				if (typeof j.credits_minor === 'number') credits.bal = j.credits_minor;
+				if (deps && deps.onChange) deps.onChange();
+			}
+			return j;
+		})();
+		try { return await ensuring[s]; }
+		finally { delete ensuring[s]; }
+	}
+
+	/// Is `ensure` still worth calling? False once a gateway without it has answered,
+	/// so a mid-turn top-up loop can stop reaching for it.
+	function ensureActive() { return !ensureUnsupported; }
 
 	/// A fresh key for a slot whose key was refused — unless another mint has
 	/// already replaced it, the same generation guard `remint` uses, per slot.
@@ -2868,6 +2957,9 @@
 		CREDITS:        CREDITS,
 		syncCredits:    syncCredits,
 		remint:         remint,
+		// Raise a live key's cap in place, sized to the turn — the F1 charge-for-nothing fix.
+		ensure:         ensure,
+		ensureActive:   ensureActive,
 		creditsGen:     creditsGen,
 		creditsState:   creditsState,
 		// Per-slot worker keys, so parallel workers never share one.

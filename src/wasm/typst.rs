@@ -2082,6 +2082,55 @@ pub async fn typst_compile_project_vector(path: String) -> js_sys::Object {
     page_compile(&path, Want::Vector).await
 }
 
+/// Gather the project a workspace `.typ` file belongs to for the Austenite
+/// changed-only delta live view, resolving the GATHERED PROJECT with its `known`
+/// page ids attached, or `{ error, remedy? }`.
+///
+/// This door lays nothing out.  The delta compiler is `fe2o3_austenite`, vendored
+/// as a JavaScript module under `www/vendor/austenite` and deliberately NOT linked
+/// into this wasm -- linking it needs an fe2o3 bump the live-view A/B is holding
+/// off.  So the split runs the other way from [`typst_compile_project_vector`],
+/// which lays the pages out through the page's typst.ts driver: here the OPFS-jail
+/// GATHER is the only part that touches the filesystem, and so the only part that
+/// must stay on this side, and the COMPILE is `DaimondTypst.compileProjectDelta` on
+/// the far side, feeding the vendored module.  What comes back is the same project
+/// object the vector door hands its driver (see [`to_js`]) with one field added:
+/// `known`, the ids the live view still holds in its own SVG cache, so the delta
+/// can be against exactly those.
+///
+/// Dark until the engine flag is `austenite`; the watch loop's own `typeof` gate on
+/// this symbol is the other half, so a build without this door simply keeps drawing
+/// the vector path.
+///
+/// # Arguments
+/// * `path`  - Workspace-relative path of the `.typ` file to lay out.
+/// * `known` - The ids the live view holds now, from its cache; empty asks for a full send.
+#[wasm_bindgen]
+pub async fn typst_compile_project_delta(path: String, known: Vec<String>) -> js_sys::Object {
+    let project = match page_gather(&path).await {
+        Ok(p)  => p,
+        Err(e) => return e,
+    };
+    let arg = match to_js(&project) {
+        Ok(a)  => a,
+        Err(e) => {
+            let obj = js_sys::Object::new();
+            let _ = js_sys::Reflect::set(
+                &obj, &JsValue::from_str("error"), &JsValue::from_str(&fmt!("{}", e)));
+            return obj;
+        },
+    };
+    // `known` is the one field the vector door has no use for and the delta cannot do
+    // without: the pages already on screen, so the compiler resends only what they do
+    // not cover.  It is attached here rather than gathered because it is the live view's
+    // state and not the document's -- the gatherer knows the files, and only the
+    // consumer knows what is in its own cache.
+    let knowns = js_sys::Array::new();
+    for k in known.iter() { knowns.push(&JsValue::from_str(k)); }
+    let _ = js_sys::Reflect::set(&arg, &JsValue::from_str("known"), &knowns);
+    arg.unchecked_into::<js_sys::Object>()
+}
+
 /// Which artifact the page's door is being asked for.
 enum Want {
     /// The published document: real bytes, written to disk, opened by a reader.
@@ -2101,34 +2150,27 @@ impl Want {
     }
 }
 
-/// Gather and compile for the PAGE -- the Compile button and the live view alike.
+/// Gather a page's project under the OPFS jail, or the `{ error }` object to
+/// answer the page with.
 ///
-/// One gatherer, one refusal vocabulary and one remedy, whichever artifact was
-/// asked for.  Two copies of this would be two answers to "what is a project", and
-/// the live view would drift from the PDF it is supposed to be a preview of.
-///
-/// # Arguments
-/// * `path` - Workspace-relative path of the `.typ` file.
-/// * `want` - Which artifact to ask the driver for.
-async fn page_compile(path: &str, want: Want) -> js_sys::Object {
-    let obj = js_sys::Object::new();
-    let set = |k: &str, v: &JsValue| {
-        let _ = js_sys::Reflect::set(&obj, &JsValue::from_str(k), v);
-    };
+/// One gatherer, one refusal vocabulary and one remedy, whichever the caller then
+/// does with a gathered project.  Two page doors reach it -- the vector live view,
+/// which lays the project out through the page's typst.ts driver, and the Austenite
+/// delta, which hands the project to a vendored compiler in JavaScript -- and both
+/// must answer a refusal in the SAME shape, or the watch loop would read one door's
+/// error differently from the other's.  A refusal is `{ error }`, with a `{ remedy }`
+/// -- `{ action, path, line }` -- when there is an action to offer rather than only
+/// prose to read.
+async fn page_gather(path: &str) -> Result<Project, js_sys::Object> {
     // The page's own button is the user acting on a folder they marked in
     // themselves, so it carries the workspace's reach and not a turn's.
     let reach = Reach::Workspace;
-    let gathered = match gather(&reach, FileRoot::Workspace, path).await {
-        Ok(g)  => g,
-        Err(e) => {
-            set("error", &JsValue::from_str(&fmt!("{}", e)));
-            return obj;
-        },
-    };
-    let project = match gathered {
-        Gathered::Ready(p) => p,
-        Gathered::Refused { why, remedy } => {
-            set("error", &JsValue::from_str(&why));
+    match gather(&reach, FileRoot::Workspace, path).await {
+        Ok(Gathered::Ready(p)) => Ok(p),
+        Ok(Gathered::Refused { why, remedy }) => {
+            let obj = js_sys::Object::new();
+            let _ = js_sys::Reflect::set(
+                &obj, &JsValue::from_str("error"), &JsValue::from_str(&why));
             if let Some(r) = remedy {
                 let rem = js_sys::Object::new();
                 let _ = js_sys::Reflect::set(
@@ -2137,10 +2179,38 @@ async fn page_compile(path: &str, want: Want) -> js_sys::Object {
                     &rem, &JsValue::from_str("path"), &JsValue::from_str(&r.subject()));
                 let _ = js_sys::Reflect::set(
                     &rem, &JsValue::from_str("line"), &JsValue::from_str(&r.line()));
-                set("remedy", &rem.into());
+                let _ = js_sys::Reflect::set(
+                    &obj, &JsValue::from_str("remedy"), &rem.into());
             }
-            return obj;
+            Err(obj)
         },
+        Err(e) => {
+            let obj = js_sys::Object::new();
+            let _ = js_sys::Reflect::set(
+                &obj, &JsValue::from_str("error"), &JsValue::from_str(&fmt!("{}", e)));
+            Err(obj)
+        },
+    }
+}
+
+/// Gather and compile for the PAGE -- the Compile button and the vector live view
+/// alike.
+///
+/// The gather is shared with the Austenite delta door through [`page_gather`], so
+/// there is exactly one answer to "what is a project"; only the artifact asked of
+/// the driver differs, and that is this function's whole job.
+///
+/// # Arguments
+/// * `path` - Workspace-relative path of the `.typ` file.
+/// * `want` - Which artifact to ask the driver for.
+async fn page_compile(path: &str, want: Want) -> js_sys::Object {
+    let project = match page_gather(path).await {
+        Ok(p)  => p,
+        Err(e) => return e,
+    };
+    let obj = js_sys::Object::new();
+    let set = |k: &str, v: &JsValue| {
+        let _ = js_sys::Reflect::set(&obj, &JsValue::from_str(k), v);
     };
     // The watch list goes out even when the compile then FAILS, and that is the
     // point: a broken source is exactly when a watcher most needs to know which

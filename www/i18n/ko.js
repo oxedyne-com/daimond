@@ -865,6 +865,10 @@
 	'sync.when_mins':      '{n}분 전',
 	'sync.when_hours':     '{n}시간 전',
 	'sync.when_days':      '{n}일 전',
+	'sync.rekey_needed':        '암호문구가 변경됨',
+	'sync.rekey_needed_reason': '다른 기기에서 암호문구가 변경되었고, 이 기기는 스스로 따라잡을 수 없어요. 이 계정에 다시 연결해 주세요.',
+	'sync.rekey_adopted':       '암호문구가 업데이트됨',
+	'sync.rekey_adopted_body':  '다른 기기에서 암호문구가 변경되었고, 이 기기도 따라잡았어요. 여기서 다시 입력할 필요는 없어요.',
 
 	// ── 계정의 공개 핸들 ───────────────────────────────────────
 	'handle.taken':    '그 핸들은 이미 다른 사람이 쓰고 있어요. 다른 것을 시도해 보세요.',
@@ -2124,6 +2128,7 @@
 	'changepass.changed':         '암호문구를 바꿨어요',
 	'changepass.changed_body':    '새 암호문구가 켜졌어요. 저장해 둔 API 키도 그것으로 다시 암호화했어요.',
 	'changepass.passkey_stale':   '패스키를 갱신하지 못해서 새 암호문구를 물어봐요. 설정에서 다시 추가해 주세요.',
+	'changepass.other_devices':   '다른 기기들은 다음 동기화 때 새 암호문구를 자동으로 받아요.',
 
 	// ── 백업 ───────────────────────────────────────────────────
 	'backup.unreadable':      '그 백업 파일을 읽을 수 없었어요.',
@@ -3133,6 +3138,7 @@
 	'chat.ran_on': '{name}에서 실행됨',
 	'chat.handed_off': '{name}이(가) 처리 중',
 	'chat.ran_here_failed': '여기서 실행됨 — {name}으로의 인계가 끝나지 않았어요',
+	'chat.ran_here_refused': '여기서 실행됨 — 릴레이가 인계를 거부했어요',
 	'chat.ran_here': '이 기기에서 실행됨',
 	'chat.handoff_ran_on': '{name}에서 실행됐고, 답변이 이 기기로 동기화돼 돌아왔어요.',
 	'chat.handoff_ran_here': '{name}으로의 인계가 끝나지 않아 이 기기에서 실행됐어요.',
@@ -3198,6 +3204,8 @@
 	'seat.why_chat_local': '이 채팅은 이 기기에 고정돼 있어요.',
 	'seat.tile_local_mobile': '여기서 실행돼요 — 열어 두세요',
 	'seat.retry': '{from}이(가) 받지 않아서 {to}에 시도하고 있어요',
+	'seat.refused': '인계가 거부됨({status}) — 여기서 실행합니다',
+	'errand.prompt_too_large': '프롬프트만으로도 릴레이가 받아들일 수 있는 크기를 넘어요',
 	'place.why_here': '필요한 것이 모두 여기 있어요.',
 	'place.why_missing_files': '이 문서의 파일이 모두 여기 있지는 않아요 — {n}개 없어요.',
 	'place.why_too_large': '이 휴대전화에는 너무 커요: 지난 빌드에는 {need}MB가 필요했는데 이 페이지는 {room}MB예요.',

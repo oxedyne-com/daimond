@@ -181,12 +181,15 @@
 	// a stuck one no longer floods. A GET only -- the single-runner lease is untouched.
 	var EXPEDITE_MAX_MS = 120000;
 	// ── The streaming progress push ────────────────────────────
-	// The minimum spacing between a runner's progress pushes, so a long turn streams
-	// as a trickle rather than a flood. Between ~1.5-3s per the streaming design: a
-	// peer watching a hand-off sees the thinking and the tool calls appear as the
-	// runner produces them, instead of a blank wait until the turn finishes. See
-	// pushProgress; the runner's own timer lives in peer.js runErrand.
-	var PROGRESS_PUSH_MIN_MS = 1800;
+	// The minimum spacing between the OLD-gateway whole-parcel progress pushes. On a
+	// current gateway a hand-off streams through the lightweight frame door
+	// (pushProgressFrame) and this whole-parcel `pushProgress` is NOT taken at all --
+	// the runner's frame dep falls back to it only when the door is absent (a pre-door
+	// gateway). So this floor now bounds only that fallback, and it is raised to 10 s:
+	// a whole-account `collectSync` every 1.8 s is the ~40 MB-per-frame cost the S1
+	// collect fix exists to avoid, and on a pre-door gateway a slower stream is the
+	// right trade against it. The runner's own timer lives in peer.js runErrand.
+	var PROGRESS_PUSH_MIN_MS = 10000;
 	// The most a single frame may carry, in characters of PLAINTEXT tail. The
 	// gateway's own ceiling is 64 KiB of ciphertext and it refuses a frame over it
 	// (413, naming the ceiling); this keeps the ordinary frame comfortably under,
@@ -312,6 +315,19 @@
 	// work did NOT leave, and both are cleared by the next round that works.
 	var jammed        = '';
 	var lastFailed    = [];		// Sections the last merge could not apply.
+	// A passphrase was changed on another device and this one is BEHIND the epoch chain
+	// -- it could not walk the links to the account's current key (a missing link, or a
+	// chain longer than this build kept). It cannot read the account and must NOT push
+	// its own over the top, so this is sticky: it stands until the device is linked again
+	// (importBundle brings it to the current epoch) or adopts a record it can walk. Set
+	// in pullOnce, cleared by a successful adopt.
+	var rekeyBehind   = false;
+	// The in-flight epoch adoption, or null. Two pulls (a focus pull and the timer,
+	// say) can arrive with the same rekey record at once; each would run readAll /
+	// swap / resealAll, and the second would readAll under a key the first has already
+	// changed. `withAdoptLock` serialises them behind this one promise (D7), so only
+	// one adoption runs and the other sees the epoch already advanced.
+	var adopting      = null;
 	var lastSynced    = 0;		// ms of the last successful pull or push.
 	var pushTimer     = null;	// Debounce handle.
 	var focusTimer    = null;	// Focus-pull debounce handle.
@@ -826,6 +842,15 @@
 	/// reported, so its reason has to travel with it rather than into a dialog.
 	function t(k, v) { return window.DaimondI18n ? DaimondI18n.t(k, v) : k; }
 
+	/// A string from the table, or the English written here where the table has no entry
+	/// for it yet -- the same device identity.js and voice.js use. The rekey chip's copy
+	/// is carried this way until its keys land in i18n/en.js and zh-Hans.js, so a device
+	/// behind the epoch chain reads a sentence rather than a key.
+	function tOr(key, fallback) {
+		var s = t(key);
+		return (s !== key) ? s : fallback;
+	}
+
 	function setStatus(state, text, holdMs, title) {
 		var c = statusChip();
 		if (!c) return;
@@ -933,6 +958,23 @@
 		// that will not fit, are true whatever the session is doing; a session
 		// that has gone is the narrower fact and would be noise over either.
 		if (sessionGone)   { setStatus('stalled', t('sync.signed_out'), 0, t('sync.signed_out_reason')); return; }
+		// A device behind the epoch chain cannot read the account and must not push over
+		// it, so this is a standing refusal like the two above and outranks a jam. The
+		// copy is carried in English until the two i18n keys land (see tOr).
+		if (rekeyBehind)   {
+			setStatus('stalled',
+				tOr('sync.rekey_needed', 'Passphrase changed'),
+				0,
+				// Not "too far behind": the stranding also happens one epoch apart (N vs
+				// N+1) when the link cannot be walked, or at the SAME epoch when two
+				// devices diverged and this one holds no previous key to cross with. The
+				// honest fact is that it cannot catch up on its own; the remedy is the
+				// same either way.
+				tOr('sync.rekey_needed_reason',
+					'The passphrase was changed on another device, and this one cannot catch up on '
+					+ 'its own. Link it again to this account.'));
+			return;
+		}
 		// And above nothing at all: a jam is this round's failure rather than a
 		// state of this device, so all three standing refusals outrank it.
 		if (jammed)        { setStatus('stalled', t('sync.paused'), 0, jamReason()); return; }
@@ -1072,10 +1114,31 @@
 	/// count as well (see parcelSizes) and the scan is the expensive half.
 	function wireBytes(pbytes) {
 		var sealed = pbytes + 12 + 16;
-		var b64    = 4 * Math.ceil(sealed / 3);
-		var env    = utf8Len(JSON.stringify(
+		// At epoch >= 1 the push wraps the sealed parcel in the rekey envelope (the
+		// DRK1 header and the record JSON) INSIDE this same base64, so the record's
+		// kilobytes actually travel on the wire. Count them, or a parcel that fits with
+		// an empty envelope 413s at the gateway the moment the record is added -- the
+		// blind stop WS-BRICK removed (D6). The envelope base64s the whole concatenated
+		// buffer at once, so the overhead is added to the RAW bytes before the 4/3, to
+		// match `wrapEnvelope` exactly. Zero at epoch 0: byte-identical to before.
+		var b64 = 4 * Math.ceil((sealed + envelopeOverheadBytes()) / 3);
+		var env = utf8Len(JSON.stringify(
 			{ base_version: serverVersion, device: deviceLabel(), blob: '', w: WAKE_ID }));
 		return env + b64;
+	}
+
+	/// The RAW bytes the rekey envelope adds around the sealed parcel at epoch >= 1:
+	/// the 8-byte DRK1 header and the record JSON. Zero at epoch 0 (no envelope emitted),
+	/// so a never-rekeyed account measures byte-identically to before the chain existed.
+	/// See wireBytes (D6) and wrapEnvelope.
+	function envelopeOverheadBytes() {
+		try {
+			if (!window.DaimondIdentity || !DaimondIdentity.epoch || !DaimondIdentity.rekeyRecord) return 0;
+			if ((DaimondIdentity.epoch() | 0) <= 0) return 0;
+			var rec = DaimondIdentity.rekeyRecord();
+			if (!rec) return 0;
+			return 8 + utf8Len(JSON.stringify(rec));
+		} catch (e) { return 0; }
 	}
 
 	/// Where the parcel's bytes actually are, section by section, in UTF-8 bytes.
@@ -1127,6 +1190,39 @@
 	function sizesLine(sizes) {
 		return Object.keys(sizes).sort(function (a, b) { return sizes[b] - sizes[a]; })
 			.map(function (k) { return k + '=' + Math.round(sizes[k] / 1024) + 'K'; }).join(' ');
+	}
+
+	/// Over this many distinct addresses, the parcel's ref list is left off the push:
+	/// it rides in the clear beside the blob, and a store large enough to have this
+	/// many chunks would add megabytes to every push for a belt the client already
+	/// carries (`DaimondCore.parcelRefs`) and the gateway's version guard already
+	/// backs. Well under the gateway's own `MAX_COMMIT_ENTRIES`.
+	var PARCEL_REFS_MAX = 50000;
+
+	/// Every distinct chunk address the parcel `state` references -- the index union
+	/// every `messagesRef`/`dataRef`/`msgRef` it carries -- for the gateway's
+	/// "do not sweep what a live parcel names" belt. `null` when the list is too long
+	/// to send or the belt is unavailable, in which case the push carries no `refs`.
+	function parcelRefAddrs(state) {
+		if (!window.DaimondCore || !DaimondCore.parcelRefs) return null;
+		var m;
+		try { m = DaimondCore.parcelRefs(state); } catch (e) { return null; }
+		if (!m || typeof m !== 'object') return null;
+		var seen = {}, out = [];
+		var keys = Object.keys(m);
+		for (var i = 0; i < keys.length; i++) {
+			var ent = m[keys[i]];
+			if (!ent || !Array.isArray(ent.chunks)) continue;
+			for (var j = 0; j < ent.chunks.length; j++) {
+				var c = ent.chunks[j];
+				if (c && c.addr && !seen[c.addr]) {
+					seen[c.addr] = 1;
+					out.push(c.addr);
+					if (out.length > PARCEL_REFS_MAX) return null;	// too many: gateway skips, belt holds
+				}
+			}
+		}
+		return out;
 	}
 
 	async function collectParcel() {
@@ -1399,46 +1495,193 @@
 		// nothing to hear. See `pulledOk`.
 		if (!j.present) { diag('pull', 'v' + (j.version | 0) + ' empty mailbox'); adoptVersion(0, preRead); reapplyDone(); pulledOk = true; restStatus(); return serverVersion; }
 		var state;
-		try {
-			// The size of what arrived, before it is opened. Three forms of this
-			// pass through in a moment -- the sealed blob, the plain text, and the
-			// object graph `JSON.parse` builds from it -- but each is released as
-			// soon as the next exists (see below), so no more than two are ever
-			// live at once and only the graph survives into the merge. On a phone
-			// this is still the single largest allocation the app makes. Bytes
-			// only: no content.
-			trail('sync pull', Math.round((j.blob || '').length / 1024) + 'K sealed');
-			var plain = await DaimondIdentity.unwrap(j.blob);	// throws on a wrong key.
-			// The sealed copy has done its work: release it the moment the plain
-			// text exists, so the blob and the object graph never coexist. On a
-			// phone the three of them together are the single largest allocation
-			// the app makes, and iOS kills the tab before they all fit. `j.version`
-			// is still read below, so only the blob field goes -- what is applied
-			// and the order it is applied in do not change by a byte.
-			j.blob = null;
-			trail('sync parcel', Math.round(plain.length / 1024) + 'K plain');
-			state = JSON.parse(plain);
-			// Same again: the plain text is redundant to the graph now, and
-			// applyParcel below is the memory-heavy phase, so free it before that
-			// runs rather than leaving it alive across the merge.
-			plain = null;
-			trail('sync parsed');
-		} catch (e) {
-			// Not readable at all, which is a DIFFERENT thing from readable and
-			// not mergeable, and the two must not be handled alike. What cannot
-			// be opened is unusable to every device that holds this identity, so
-			// the version is adopted and this device's own good state goes over
-			// the top of it -- that is how an account recovers from a corrupt or
-			// half-written blob at all. Refusing to push here instead would leave
-			// the mailbox unreadable and every device silently stuck behind it.
-			// `lastFailed` is for sections that ARRIVED and could not be merged;
-			// this is not one.
-			log('pull decrypt/parse failed; keeping local state');
-			adoptVersion(j.version | 0, preRead);
-			reapplyDone();
-			if (!quiet) restStatus();
-			return serverVersion;
+		// ── Read the parcel, EPOCH-AWARE ──────────────────────────
+		//
+		// The blob may carry a rekey record (see openEnvelope). Which of three things it
+		// is turns on how the record's epoch compares to this device's, and getting that
+		// comparison right is the whole of the anti-fork fix: the corruption recovery
+		// below must fire ONLY on genuine same-epoch corruption, never across an epoch
+		// change, or the two devices clobber each other for ever.
+		//
+		// The size of what arrived, before it is opened. Bytes only, no content: a slow
+		// or large pull is the first thing the "sync is slow" question asks.
+		trail('sync pull', Math.round((j.blob || '').length / 1024) + 'K sealed');
+		var env = openEnvelope(j.blob);
+		// Release the raw blob the moment the envelope has been split off it, so the blob
+		// and the object graph never coexist -- the iOS memory ceiling this whole path is
+		// written against. `env.sealed` holds its own reference to what still has to open.
+		j.blob = null;
+		// GATE THE RECORD BEFORE IT STEERS THE PULL (Gap 1, the DoS). Every branch below
+		// turns on `env.rec.epoch` and `env.rec.salt` -- but nothing has authenticated the
+		// record yet. A forged, UNSIGNED `{v:1, epoch:le+1, pub:<account pub>}` would drive
+		// this device to `rekeyBehind = true` and a standing push lockout (adoptRekey would
+		// refuse it 'unsigned', which the re>le branch reads as "behind"), and a same-epoch
+		// salt-diverged forgery would drive a needless yield -- a forged mailbox write
+		// standing every device down. So a record that does not VERIFY against this account
+		// (its pub is the account's own trusted pub AND its body is signed by it) is treated
+		// as ABSENT: `re` becomes 0, the pull degrades to the corruption-recovery path a
+		// legacy blob already takes, and `rekeyBehind` can never be set by a forgery.
+		// `rekeyBehind` is thereby reserved for a VERIFIED record this device genuinely
+		// cannot walk. A never-rekeyed account (le=0) meeting a forgery behaves EXACTLY as
+		// it does today -- re===le===0, no record, straight to recovery.
+		if (env.rec && !(window.DaimondIdentity && DaimondIdentity.verifyRecord
+			&& await DaimondIdentity.verifyRecord(env.rec))) {
+			log('pull: rekey record did not verify against this account; treating it as absent');
+			env.rec = null;
 		}
+		var re  = env.rec ? (env.rec.epoch | 0) : 0;		// the parcel's epoch
+		var le  = (window.DaimondIdentity && DaimondIdentity.epoch) ? (DaimondIdentity.epoch() | 0) : 0;
+		if (re > le) {
+			// A passphrase was changed on another device. Adopt the epoch -- walk the
+			// chain, swap the key, reseal every store -- and only then open the parcel
+			// under the NEW key. A device that CANNOT walk the chain (a gap, or one too
+			// far behind) must not adopt the version and must not push: it would replace
+			// the account with a blob nobody else can open. That is the sticky 'rekey'
+			// chip, and the one place this pull returns -1 rather than the version.
+			var adopted = await withAdoptLock(function () { return adoptEpoch(env.rec); });
+			// A concurrent pull may already have walked us to this epoch (or past it)
+			// while this one waited on the lock -- `adoptRekey` then answers 'stale'.
+			// That is not "behind": we hold the key, so treat it as adopted and fall
+			// through to open under it, rather than false-setting rekeyBehind (D7).
+			var nowEp = (window.DaimondIdentity && DaimondIdentity.epoch) ? (DaimondIdentity.epoch() | 0) : 0;
+			if (!adopted.ok && !(adopted.reason === 'stale' && nowEp >= re)) {
+				rekeyBehind = true;
+				log('pull: behind the account epoch (' + adopted.reason
+					+ '); not adopting, not pushing — this device must be linked again');
+				if (!quiet) restStatus();
+				return -1;
+			}
+			rekeyBehind = false;
+			try {
+				var plainA = await DaimondIdentity.unwrap(env.sealed);
+				state = JSON.parse(plainA);
+				plainA = null;
+			} catch (e) {
+				// The new key was adopted and proven against the record's own private
+				// key, so a parcel that still will not open under it is genuine
+				// corruption of THIS blob, not an epoch mismatch. Today's recovery.
+				log('pull: adopted the new epoch but the parcel would not open; keeping local state');
+				adoptVersion(j.version | 0, preRead);
+				reapplyDone();
+				if (!quiet) restStatus();
+				return serverVersion;
+			}
+			trail('sync parsed');
+		} else if (re === le) {
+			var okB = null;
+			try {
+				var plainB = await DaimondIdentity.unwrap(env.sealed);	// throws on a wrong key.
+				trail('sync parcel', Math.round(plainB.length / 1024) + 'K plain');
+				okB = JSON.parse(plainB);
+				plainB = null;
+			} catch (e) { okB = null; }
+			if (okB) {
+				state = okB;
+				trail('sync parsed');
+			} else {
+				// It did not open under our key. Two very different things look alike
+				// here and MUST NOT be handled alike:
+				//   * the record carries a DIFFERENT salt from ours -> two devices both
+				//     rekeyed to THIS epoch on their own before either pulled. That is
+				//     DIVERGENCE, never corruption. Firing recovery would clobber the
+				//     other branch, and it would clobber back -- the ping-pong fork this
+				//     fix removes (D2).
+				//   * same salt (or no record at all) -> a genuinely corrupt or
+				//     half-written blob at our own epoch, which recovery is for.
+				var localSalt = (window.DaimondIdentity && DaimondIdentity.saltB64)
+					? DaimondIdentity.saltB64() : null;
+				if (env.rec && env.rec.salt && localSalt && env.rec.salt !== localSalt) {
+					// DETERMINISTIC YIELD. The branch with the lexicographically SMALLER
+					// salt wins, so the LARGER-salt side adopts the other branch by
+					// walking the one link both chains share (from the previous epoch,
+					// under the key it kept from its own change). Symmetric and stable:
+					// each device compares the same two salts and exactly one yields.
+					if (localSalt > env.rec.salt) {
+						var yld = await withAdoptLock(function () { return adoptDivergedEpoch(env.rec); });
+						if (yld.ok) {
+							rekeyBehind = false;
+							try {
+								var plainY = await DaimondIdentity.unwrap(env.sealed);
+								state = JSON.parse(plainY);
+								plainY = null;
+								trail('sync parsed');
+							} catch (e2) {
+								// Crossed to the other branch but its parcel still will not
+								// open under the now-proven key: genuine corruption of that
+								// blob. Keep local state and let our own go over it.
+								log('pull: yielded to the diverged branch but the parcel would not open; keeping local state');
+								adoptVersion(j.version | 0, preRead);
+								reapplyDone();
+								if (!quiet) restStatus();
+								return serverVersion;
+							}
+						} else {
+							// Cannot cross (no previous key held this session): stand behind
+							// the chain rather than clobber the winning branch. A re-link
+							// brings this device onto it and clears the state.
+							rekeyBehind = true;
+							log('pull: diverged at the same epoch and cannot yield (' + yld.reason
+								+ '); not pushing — this device must be linked again');
+							if (!quiet) restStatus();
+							return -1;
+						}
+					} else {
+						// OUR salt is the smaller: our branch wins. Keep local state and let
+						// the retry carry our record over the other branch; the other side
+						// yields to us on its next pull. Not corruption -- but the mechanics
+						// (adopt the version, push our own) are the same and are right here.
+						log('pull: diverged at the same epoch; holding our branch (smaller salt wins)');
+						adoptVersion(j.version | 0, preRead);
+						reapplyDone();
+						if (!quiet) restStatus();
+						return serverVersion;
+					}
+				} else {
+					// Same salt (or no record): a corrupt or half-written blob at our own
+					// epoch. Adopt the version and let our good state go over the top of
+					// it -- how an account recovers from a bad blob at all. `lastFailed`
+					// is for sections that ARRIVED and could not be merged; this is not one.
+					log('pull decrypt/parse failed; keeping local state');
+					adoptVersion(j.version | 0, preRead);
+					reapplyDone();
+					if (!quiet) restStatus();
+					return serverVersion;
+				}
+			}
+		} else {
+			// re < le: a device BEHIND us pushed, at an older epoch. If it is exactly one
+			// epoch back, or a pre-change blob with no record at all, and this session
+			// still holds the previous key (set when this device changed or adopted the
+			// passphrase), open it with that and merge -- the lost-edit race, closed. The
+			// retry then pushes our own state, at the current epoch and with our record,
+			// so nothing is lost and the lagging device adopts from it on its next pull.
+			var got = null;
+			// A pre-change / old-build blob: try the current key first, then the previous.
+			if (!env.rec) {
+				try { got = JSON.parse(await DaimondIdentity.unwrap(env.sealed)); }
+				catch (e) { got = null; }
+			}
+			if (!got && (re === le - 1 || !env.rec)
+				&& window.DaimondIdentity && DaimondIdentity.hasPrevKey && DaimondIdentity.hasPrevKey()) {
+				try { got = JSON.parse(await DaimondIdentity.unwrapPrev(env.sealed)); }
+				catch (e) { got = null; }
+			}
+			if (!got) {
+				// Older than the previous key we hold, or none held (a fresh page): carry
+				// our record over it. Finite -- the lagging device adopts on its next pull.
+				log('pull sealed under an older epoch; carrying our record over it');
+				adoptVersion(j.version | 0, preRead);
+				reapplyDone();
+				if (!quiet) restStatus();
+				return serverVersion;
+			}
+			state = got;
+			trail('sync parsed');
+		}
+		// A parcel opened, so this device is not behind the chain -- clears the sticky
+		// 'rekey' state a re-link (importBundle brings the epoch forward) or an adopt
+		// resolves, whichever it was.
+		rekeyBehind = false;
 		// The parcel PULLED, at its version and with the ids it carried, into the
 		// opt-in ring. `applyChats` records what the merge then DID with each; this
 		// records what arrived, so the two read together as "carried X, kept Y".
@@ -1544,6 +1787,13 @@
 	/// changed since the last push, so an idle app is quiet on the wire.
 	async function push() {
 		if (!ready() || !entitled) return;
+		// BEHIND THE EPOCH CHAIN: never overwrite the account. A device that could not
+		// walk the chain to the account's current key (rekeyBehind, set in pullOnce)
+		// holds a parcel sealed under a key the account has moved past; pushing it would
+		// replace the account with a blob the other devices cannot open. It must be
+		// linked again first, which brings its epoch forward and clears this on the next
+		// pull. See the `re > le` branch in pullOnce.
+		if (rekeyBehind) { restStatus(); return; }
 		if (window.DaimondCore.busy && DaimondCore.busy()) { schedule(); return; }	// never over a live turn.
 		if (inFlight) { schedule(); return; }
 		// NOR OVER SOMEBODY ELSE'S LIVE TURN, on a device that is no part of it. A
@@ -1595,7 +1845,12 @@
 					// must not become a poll -- nor a second GET on the heels
 					// of the one a focus just made.
 					if (Date.now() - lastPullAt >= IDLE_PULL_MIN_MS) await pull();
-					return;
+					// TELL flush() the live parcel is already what the mailbox holds, so it
+					// need not pay a second whole-parcel collect to find that out (the ~40 MB
+					// collect the S1 fix bounds -- flush ran three per round). Only this
+					// branch reports it; every other exit returns undefined and flush confirms
+					// against a fresh collect, exactly as before.
+					return { committed: true };
 				}
 
 				// WHAT THIS WILL WEIGH, BEFORE A BYTE OF IT IS ENCRYPTED. Counted
@@ -1641,13 +1896,37 @@
 				var blob;
 				try { blob = await DaimondIdentity.wrap(plain); }
 				catch (e) { log('encrypt failed', e); return; }
+				// Carry the rekey record for a device on an older epoch to adopt, when
+				// this device is at epoch >= 1. A no-op at epoch 0 -- the blob stays
+				// byte-identical to today, so a never-rekeyed account needs no gateway
+				// change and is untouched. The record is public (ciphertexts only), so it
+				// rides in the clear inside the base64. See wrapEnvelope.
+				blob = wrapEnvelope(blob);
 
 				setStatus('syncing', t('sync.syncing'));
 				var res;
+				// EVERY ADDRESS THIS PARCEL REFERENCES, so the gateway can protect them
+				// from a sweep by ANY device -- an old client, or a peer whose own index
+				// omits them -- not only from this device's own commit (the www belt).
+				// The gateway keeps the latest parcel's refs and treats them as live; a
+				// commit against a stale version is refused by the version guard, so the
+				// latest is the only set that matters. A store too large to list them all
+				// sends none, and the client-side `parcelRefs` belt still holds. Optional
+				// on the wire: a gateway without the belt ignores the field.
+				//
+				// AND ONLY WHILE THEY FIT UNDER THE DOOR. `refs` rides in the clear beside
+				// the blob and is NOT in the wire weigh above, so a near-door parcel plus a
+				// long ref list would exceed Steel's front door and turn a push that would
+				// have landed into a reset. So they are attached only when the blob leaves
+				// room for them; dropped, the www belt still holds. ~68 bytes per hex
+				// address with its quotes and comma.
+				var refs = parcelRefAddrs(state);
+				var body = { base_version: serverVersion, device: deviceLabel(), blob: blob, w: WAKE_ID };
+				if (refs && refs.length && wire + refs.length * 68 <= WIRE_DOOR_BYTES) body.refs = refs;
 				// `w` names this tab's wake channel, so the gateway taps the
 				// account's OTHER devices and not this one: a device that pulled
 				// in answer to its own push would double every round.
-				try { res = await call('POST', { base_version: serverVersion, device: deviceLabel(), blob: blob, w: WAKE_ID }); }
+				try { res = await call('POST', body); }
 				catch (e) { log('push network error', e); restStatus(); return; }
 
 				if (res.status === 200 && res.json && res.json.ok) {
@@ -1705,11 +1984,20 @@
 						try {
 							if (window.DaimondChunks && state.chunked) {
 								var tiers = window.DaimondCloud ? DaimondCloud.tierPlan(DaimondCloud.allowance()) : null;
+								// THE LIVE SET IS THE PARCEL'S, not the index's alone. The
+								// index can name fewer addresses than the parcel points at --
+								// a manifest write lost to quota -- and committing the index
+								// would then sweep the very chunks this parcel references.
+								// `parcelRefs` is the index UNION every `messagesRef`/
+								// `dataRef`/`msgRef` the parcel carries, so the declared set
+								// can never omit one; on a durable round it equals the index.
+								var live = (DaimondCore.parcelRefs)
+									? DaimondCore.parcelRefs(state) : state.chunked;
 								// A refusal is a swept-or-not answer nobody heard: the
 								// gateway can decline this commit, and a client that
 								// throws the result away cannot tell a sweep that
 								// happened from one that did not.
-								var swept = await DaimondChunks.commit(state.chunked, serverVersion, tiers);
+								var swept = await DaimondChunks.commit(live, serverVersion, tiers);
 								if (!swept) log('chunk commit refused at version', serverVersion);
 								dsCommit(swept ? 'swept' : 'refused-by-gateway');
 							}
@@ -1825,6 +2113,8 @@
 	/// progress-based catch-up is the further net.
 	async function flush() {
 		if (!ready() || !entitled) return { ok: false, version: serverVersion, why: 'not_entitled' };
+		// Behind the epoch chain: never overwrite the account (see push()).
+		if (rekeyBehind) return { ok: false, version: serverVersion, why: 'rekey' };
 		// Over a live turn push() will not send (it must not churn the parcel while a
 		// turn runs), so do not spin: one best-effort attempt and report it unconfirmed.
 		if (window.DaimondCore.busy && DaimondCore.busy()) {
@@ -1833,22 +2123,27 @@
 		}
 		for (var i = 0; i < FLUSH_MAX_ROUNDS; i++) {
 			if (tooLarge) return { ok: false, version: serverVersion, why: 'too_large' };
-			var cmp;
+			// ONE collect per round, not three. push() already collects the parcel and
+			// compares it against lastPushed; a pre-push collect here just paid for a
+			// second whole-parcel collect of the same state, and this loop ran a third to
+			// confirm -- three ~40 MB collects a round on the runner, the S1 the collect
+			// fix bounds. So push() does the one collect and, when it finds the live
+			// parcel is ALREADY on the server, says so (`committed`), which is the settled
+			// case done in one collect. Otherwise a single confirm collect catches a
+			// change that landed DURING the push, so a caller is never handed a version
+			// that predates the state it just added.
+			var r;
+			try { r = await push(); } catch (e) { return { ok: false, version: serverVersion, why: 'push_failed' }; }
+			if (r && r.committed && serverVersion > 0) return { ok: true, version: serverVersion };
+			// Confirm against the live parcel: a change under us forces another round.
 			// Through compareKey, like push(): a `seen` stamp that moved between the
 			// collect and this comparison is not a parcel the mailbox is missing, and
 			// reading it as one would spin every round of this loop.
-			try { cmp = compareKey(await collectParcel()); }
-			catch (e) { return { ok: false, version: serverVersion, why: 'collect_failed' }; }
-			// Already committed: the parcel we hold is what the mailbox holds, at
-			// serverVersion (lastPushed is set only after a 200 that moved the version).
-			if (cmp === lastPushed && serverVersion > 0) return { ok: true, version: serverVersion };
-			try { await push(); } catch (e) { return { ok: false, version: serverVersion, why: 'push_failed' }; }
-			// Confirm against the live parcel: a change under us forces another round.
 			var after = null;
 			try { after = compareKey(await collectParcel()); }
 			catch (e) { after = null; }
 			if (after !== null && after === lastPushed && serverVersion > 0) return { ok: true, version: serverVersion };
-			await new Promise(function (r) { setTimeout(r, FLUSH_RETRY_MS); });
+			await new Promise(function (r2) { setTimeout(r2, FLUSH_RETRY_MS); });
 		}
 		return { ok: false, version: serverVersion, why: 'not_confirmed' };
 	}
@@ -1881,6 +2176,7 @@
 	// reconciles. Nothing here ever waits, so it cannot stall the turn it is watching.
 	async function pushProgress() {
 		if (!ready() || !entitled) return;
+		if (rekeyBehind) return;			// behind the epoch chain: never overwrite the account (see push())
 		if (tooLarge || sessionGone) return;
 		if (Date.now() - lastProgressAt < PROGRESS_PUSH_MIN_MS) return;	// throttle the trickle
 		if (inFlight) return;			// a round is running; the next tick tries again
@@ -1895,6 +2191,12 @@
 			var blob;
 			try { blob = await DaimondIdentity.wrap(plain); }
 			catch (e) { log('progress encrypt failed', e); return; }
+			// Carry the rekey record, exactly as the ordinary push does (D3). A progress
+			// frame is a full parcel write to the SAME mailbox, so at epoch >= 1 a bare
+			// blob would reach a watcher on an older epoch as an unreadable parcel it
+			// could neither open nor adopt -- and it would then clobber the account
+			// mid-turn. A no-op at epoch 0, byte-identical to today. See wrapEnvelope.
+			blob = wrapEnvelope(blob);		// D3: carry the record on the progress path too
 			var res;
 			// `w` names this tab's wake channel, so the gateway taps the OTHER devices --
 			// the ones watching the hand-off -- and not this runner. NO xtra: this is a
@@ -2056,6 +2358,14 @@
 	async function removeDeviceRemote(deviceId) {
 		var id = String(deviceId || '');
 		if (!id) return { ok: false, why: 'no-device' };
+		// AUTHORITATIVE self-removal guard, before any network call. The panel's own
+		// UI already hides the ✕ on this device's own row (daimond.js), but that is
+		// a belt, not the buckle: the gateway's `removed_op` accepts any hex id
+		// including the caller's own, since the removal POST carries no `by` field
+		// yet (see the fix plan's item 5, a gateway-side follow-up). A caller that
+		// reaches this function directly -- the API, or a UI path that bypasses the
+		// hidden ✕ -- must not be able to remove the device it is running on.
+		if (id === selfDeviceIdForDoor()) return { ok: false, why: 'self' };
 		if (!ready()) return { ok: false, why: 'offline' };
 		try {
 			var res = await call('POST', { device: id }, '?removed=1');
@@ -2132,6 +2442,153 @@
 		return out;
 	}
 
+	// ── The rekey envelope, carried INSIDE the sync blob ───────
+	//
+	// A passphrase change on one device forks the account: a second device on the old
+	// salt cannot read a byte the changer pushes, adopts its version, and pushes its own
+	// over the top, and the two clobber each other for ever (the corruption recovery in
+	// pullOnce, misfiring across an epoch change). The fix carries the change TO the
+	// lagging device: identity.js seals the new key bits under the old key into a rekey
+	// record, and that record rides here, in the clear, alongside the sealed parcel.
+	//
+	// THE GATEWAY NEVER SEES IT. `blob_b64` is stored opaque and validated only as
+	// base64 and size, so the envelope lives INSIDE the base64 the gateway already
+	// accepts -- no gateway change, and an account at epoch 0 emits NO envelope, so its
+	// blob is byte-identical to what it was before any of this existed.
+	//
+	// The wire shape: base64( 'DRK1' ‖ u32-BE(len) ‖ utf8(record JSON) ‖ IV‖ct ). The
+	// record carries only ciphertexts and public values (a wrapped private key, a salt,
+	// a public key, the chain of links each of which is itself a ciphertext), so it is
+	// safe in the clear -- nothing a passphrase gates is legible in it.
+	var DRK_B0 = 68, DRK_B1 = 82, DRK_B2 = 75, DRK_B3 = 49;	// 'D','R','K','1'
+
+	/// Wrap a sealed parcel in the rekey envelope when this device is at epoch >= 1.
+	/// At epoch 0 (or with no record) the blob is returned unchanged -- byte-identical to
+	/// today. Never throws over the envelope: a failure here falls back to the bare blob,
+	/// which a same-epoch device still reads.
+	function wrapEnvelope(sealedB64) {
+		try {
+			if (!window.DaimondIdentity || !DaimondIdentity.epoch || !DaimondIdentity.rekeyRecord) return sealedB64;
+			var ep  = DaimondIdentity.epoch() | 0;
+			var rec = DaimondIdentity.rekeyRecord();
+			if (ep <= 0 || !rec) return sealedB64;
+			var json   = new TextEncoder().encode(JSON.stringify(rec));
+			var sealed = bytesFromB64(sealedB64);
+			var out    = new Uint8Array(8 + json.length + sealed.length);
+			out[0] = DRK_B0; out[1] = DRK_B1; out[2] = DRK_B2; out[3] = DRK_B3;
+			out[4] = (json.length >>> 24) & 255; out[5] = (json.length >>> 16) & 255;
+			out[6] = (json.length >>> 8) & 255;  out[7] = json.length & 255;
+			out.set(json, 8);
+			out.set(sealed, 8 + json.length);
+			return b64FromBytes(out);
+		} catch (e) { log('rekey envelope not written', e); return sealedB64; }
+	}
+
+	/// Split a pulled blob into its rekey record (or null) and the sealed parcel.
+	///
+	/// A legacy / epoch-0 blob is base64 of `IV‖ct` with no header, and is returned as
+	/// `{ rec: null, sealed: <the blob unchanged> }`. Only a blob whose first four
+	/// decoded bytes are 'DRK1' AND whose length and JSON both parse cleanly is read as
+	/// an envelope; a random legacy IV beginning 'DRK1' is 2^-32, and the parse fallback
+	/// catches even that. `sealed` is what DaimondIdentity.unwrap / unwrapPrev opens.
+	function openEnvelope(b64) {
+		try {
+			var bytes = bytesFromB64(b64);
+			if (bytes.length >= 8
+				&& bytes[0] === DRK_B0 && bytes[1] === DRK_B1
+				&& bytes[2] === DRK_B2 && bytes[3] === DRK_B3) {
+				var len = ((bytes[4] << 24) | (bytes[5] << 16) | (bytes[6] << 8) | bytes[7]) >>> 0;
+				if (8 + len <= bytes.length) {
+					var rec = JSON.parse(new TextDecoder().decode(bytes.slice(8, 8 + len)));
+					if (rec && rec.v === 1 && typeof rec.epoch === 'number') {
+						return { rec: rec, sealed: b64FromBytes(bytes.slice(8 + len)) };
+					}
+				}
+			}
+		} catch (e) { /* not an envelope: fall through to the legacy reading */ }
+		return { rec: null, sealed: b64 };
+	}
+
+	/// Adopt a passphrase change carried in a pulled record: read the app's sealed
+	/// secrets out under the OLD key, swap to the new key (via `swap`), and put them
+	/// back under it.
+	///
+	/// The same three-step shape as `doChangePassphrase` (daimond.js), and for the same
+	/// reason: mail/voice/post hold secrets ONLY sealed, so they must be read out before
+	/// the key changes and resealed after. The identity swap itself (`adoptRekey` or
+	/// `adoptDiverged`) touches only the identity's own keys and names no module; this
+	/// runs the DaimondRekey registry around it. On a failure to walk the chain the
+	/// registry's `forgetAll` drops whatever was read out -- the old key is still in
+	/// force, so nothing is lost.
+	///
+	/// Any reseal FAILURE is carried out in `sentences` and surfaced to the user, on
+	/// this adopting device, via the `daimond:rekey` event -- the same words the
+	/// changer's own notice carries (D5). A secret that could not be resealed is lost
+	/// to this device otherwise, silently.
+	/// Run `run` (an adoption) with at most one adoption in flight at a time (D7).
+	/// A second caller waits for the first to finish -- by then the epoch has moved,
+	/// so it sees 'stale' rather than resealing over a key the first already changed.
+	/// The set of `adopting` happens with no await between the wait and the set, so it
+	/// cannot race in this single-threaded engine.
+	async function withAdoptLock(run) {
+		while (adopting) { try { await adopting; } catch (e) { /* its own caller handled it */ } }
+		var p = run();
+		adopting = p;
+		try { return await p; }
+		finally { if (adopting === p) adopting = null; }
+	}
+
+	async function runAdopt(swap, rec) {
+		if (window.DaimondRekey && DaimondRekey.readAll) {
+			try { await DaimondRekey.readAll(); }
+			catch (e) { /* a participant that could not read is forgotten below on failure */ }
+		}
+		var ad;
+		try { ad = await swap(rec); }
+		catch (e) { ad = { ok: false, reason: 'threw' }; }
+		if (!ad || !ad.ok) {
+			if (window.DaimondRekey && DaimondRekey.forgetAll) {
+				try { DaimondRekey.forgetAll(); } catch (e) { /* each caught its own */ }
+			}
+			return { ok: false, reason: (ad && ad.reason) || 'bad' };
+		}
+		// Back under the new key, and -- via the sync participant's own reseal --
+		// `lastPushed` is dropped so this device carries the record onward on its next
+		// push. `resealAll` collects each participant's failure sentences rather than
+		// stopping on the first, exactly as the changer's own path does.
+		var sentences = [];
+		if (window.DaimondRekey && DaimondRekey.resealAll) {
+			try {
+				var rr = await DaimondRekey.resealAll();
+				if (rr && rr.sentences && rr.sentences.length) sentences = rr.sentences;
+			}
+			catch (e) { /* a reseal failure is not a reason to fork; the notice still fires */ }
+		}
+		// ONE shell notification for the whole adoption, fired AFTER the reseal so it
+		// can carry what did not survive it (D5). The identity swap fires nothing; this
+		// is the single `daimond:rekey` the shell listens for. Any reseal sentences ride
+		// in the detail so the notice on this device reads like the changer's own.
+		try {
+			window.dispatchEvent(new CustomEvent('daimond:rekey', { detail: { sentences: sentences } }));
+		} catch (e) {
+			try { window.dispatchEvent(new Event('daimond:rekey')); } catch (e2) { /* no window */ }
+		}
+		return { ok: true, sentences: sentences };
+	}
+
+	/// Adopt a record from a HIGHER epoch -- a device behind the chain catching up.
+	function adoptEpoch(rec) {
+		return runAdopt(function (r) { return DaimondIdentity.adoptRekey(r); }, rec);
+	}
+
+	/// Yield to the OTHER branch of a same-epoch divergence (D2): the larger-salt side
+	/// walks the shared link onto the incoming branch. `adoptDiverged` needs the
+	/// previous-epoch key; without it this returns `{ ok:false, reason:'noprev' }` and
+	/// the caller stands the device behind the chain rather than clobber.
+	function adoptDivergedEpoch(rec) {
+		return runAdopt(function (r) { return DaimondIdentity.adoptDiverged(r); }, rec);
+	}
+
 	/// Seal a lease map for the door, or '' when there is nothing (or no key) to
 	/// send -- an empty blob is a vacant door, which the gateway stores verbatim.
 	async function leaseSeal(map) {
@@ -2163,6 +2620,9 @@
 		var j   = res && res.json;
 		var ver = (j && j.version) | 0;
 		_leaseVer = ver;
+		// Phase B: the gateway serves the door's cap on this answer. `learn` ignores an
+		// absent field, so a Phase-A gateway that sends none changes nothing.
+		if (window.DaimondWire && j && j.max) DaimondWire.learn({ lease: j.max });
 		var leases = (j && j.blob) ? (await leaseUnseal(j.blob)) : null;
 		return { version: ver, leases: leases || {} };
 	}
@@ -2171,14 +2631,34 @@
 	/// Answers the shape DaimondLease's CAS expects -- `{ ok, version, leases }` --
 	/// so a 409 hands back the door's current version and map for the retry.
 	async function leaseCommit(base, proposed) {
+		// Behind the epoch chain: never overwrite a shared door (see push()) (D8). This
+		// device's wrap key is stale, so a lease blob it sealed would be unreadable to
+		// the devices on the current epoch -- the same reason push/flush/pushProgress
+		// all stand down. Reported as a no-op CAS the take loop drops.
+		if (rekeyBehind) return { ok: false, why: 'rekey', version: base | 0, leases: proposed };
 		var blob = await leaseSeal(proposed);
+		// WEIGH BEFORE THE CAS. The gateway refuses a lease blob over LEASE_MAX_BYTES
+		// with a 413 (sync.rs:423); measuring the sealed size against the same rule here
+		// means an over-large door is answered `too_large` with ZERO requests, rather
+		// than the take loop spinning MAX_TAKE_TRIES times against a size refusal read as
+		// a 409. `proposed` is handed back so the caller's merge/re-read is unchanged.
+		if (blob && window.DaimondWire && !DaimondWire.fits('lease', blob.length)) {
+			log('lease blob would not fit the door (' + blob.length + ' b64 chars); not sending');
+			return { ok: false, why: 'too_large', version: base | 0, leases: proposed };
+		}
 		var res  = await call('POST', { base_version: base | 0, blob: blob, w: WAKE_ID }, '?lease=1');
 		var j    = res && res.json;
 		if (res && res.status === 200 && j && j.ok) {
 			_leaseVer = (j.version) | 0;
 			return { ok: true, version: _leaseVer };
 		}
-		// 409 (or any refusal): report the door's current state for the re-read.
+		// A real 413: the door weighed it and it does not fit. Report it as such and
+		// hold the base version (NOT the 0 an empty-body refusal would zero it to), so
+		// the take path stands down at once with `too_large` instead of spinning.
+		if (res && res.status === 413) {
+			return { ok: false, why: 'too_large', version: base | 0, leases: proposed };
+		}
+		// 409 (or any other refusal): report the door's current state for the re-read.
 		var ver = (j && j.version) | 0;
 		_leaseVer = ver;
 		return { ok: false, version: ver, leases: (j && j.blob) ? (await leaseUnseal(j.blob)) || {} : {} };
@@ -2191,6 +2671,9 @@
 	async function adoptLeaseDoor(lease) {
 		if (!lease || !window.DaimondLease) return;
 		_leaseVer = (lease.version) | 0;
+		// Phase B: the door's cap rides the folded lease dat too. Absent on a Phase-A
+		// gateway, which `learn` tolerates.
+		if (window.DaimondWire && lease.max) DaimondWire.learn({ lease: lease.max });
 		var map = lease.blob ? (await leaseUnseal(lease.blob)) : null;
 		try { DaimondLease.adopt(map || {}); } catch (e) { log('lease adopt failed', e); }
 	}
@@ -2258,6 +2741,7 @@
 	async function pushProgressFrame(turnId, tail, final) {
 		var out = { ok: false, seq: 0, bytes: 0, ms: 0 };
 		if (!ready() || !entitled || sessionGone) return out;
+		if (rekeyBehind) return out;			// behind the epoch chain: never overwrite the account (see push())
 		if (!turnId || !tail) return out;
 		var t0 = Date.now();
 		var q  = '?progress=' + encodeURIComponent(String(turnId));
@@ -2924,12 +3408,14 @@
 	// unrelated edit happens to change the state. Forgetting what was last pushed
 	// is the whole of the fix, and the next round re-seals it.
 	//
-	// WHAT THIS DOES NOT FIX, deliberately: a SECOND device still on the old
-	// passphrase cannot read this blob, adopts its version, and pushes its own
-	// over the top — after which the two clobber each other for ever and nothing
-	// tells anyone. That is a known defect of the merge path, it is out of this
-	// file's rekey participation, and it is not made better or worse by re-sending
-	// here.
+	// The old defect this once could not touch -- a SECOND device still on the old
+	// passphrase reading this blob as corruption, adopting its version and pushing its
+	// own over the top, the two clobbering each other for ever -- is now closed by the
+	// epoch chain: the record rides beside the blob (wrapEnvelope), the lagging device
+	// adopts the change from it (pullOnce's re>le branch) rather than treating it as a
+	// bad blob, and a same-epoch divergence is settled by the deterministic yield (D2).
+	// This participation's part in that is only to make sure the resealed blob is sent
+	// again, below; the anti-fork logic itself lives in pullOnce.
 
 	/// Re-seal the mailbox copy: forget what was last sent, so the next push
 	/// genuinely sends, and ask for that push.
@@ -3280,8 +3766,13 @@
 				// parcel that will not fit, a session that has gone, or a reconcile
 				// that gave up. Ordered as the chip orders them, so what this says
 				// and what the chip shows can never disagree.
-				stalled:      tooLarge || sessionGone || !!jammed,
-				stalledWhy:   tooLarge ? 'too_big' : (sessionGone ? 'signed_out' : (jammed || '')),
+				stalled:      tooLarge || sessionGone || rekeyBehind || !!jammed,
+				stalledWhy:   tooLarge ? 'too_big'
+					: (sessionGone ? 'signed_out'
+						: (rekeyBehind ? 'rekey' : (jammed || ''))),
+				/// A passphrase was changed elsewhere and this device is too far behind
+				/// the epoch chain to catch up on its own; it must be linked again.
+				rekeyBehind:  rekeyBehind,
 				failedParts:  lastFailed.slice(),
 				entitled:     entitled,
 				/// Whether a 401 is standing that a fresh session could not clear.

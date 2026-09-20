@@ -110,6 +110,14 @@ console.log('\nSession B, after import, the file on disk:', JSON.stringify(resto
 check('IMPORT RESTORES WORKSPACE — the file is on disk in session B, with its bytes',
 	restored === MARKER, JSON.stringify(restored));
 
+// Fix #1 (S-ID) -- every arrival path (pairing, passkey adopt, backup restore)
+// writes the durable K_EVER marker through `importBundle()`. Session B here
+// already has its OWN identity from `signInAs` (an import only replaces one
+// where `exists()` is false), so this mainly guards create()'s own write, but
+// it is the plan's named assertion for this file and costs nothing to keep.
+const everInB = await b.page.evaluate(() => localStorage.getItem('daimond-id-ever'));
+check('K_EVER is set in session B after the restore', everInB === '1', 'daimond-id-ever=' + everInB);
+
 const errs = errors(b).filter(e => !/502|Bad Gateway/.test(e));
 check('nothing threw in session B', errs.length === 0, errs.slice(0, 2).join(' | '));
 await b.close();

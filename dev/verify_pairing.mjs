@@ -9,7 +9,7 @@
 // localStorage, no identity of its own. That is the only way to prove the
 // presentation snapshot, since a snapshot applied in the parent's own page would
 // be indistinguishable from the parent's own settings.
-import { open, signInAs } from './harness.mjs';
+import { open, signInAs, scratch, coldShim, coldReport, gateState } from './harness.mjs';
 
 const ok = [], bad = [];
 const check = (name, pass, detail) => {
@@ -94,7 +94,13 @@ try {
 		!!(handover && handover.code), handover && (handover.code || handover.error));
 
 	if (handover && handover.code) {
-		child = await open({ name: 'pairchild', signIn: false, connect: false });
+		// Named explicitly (not left to `open`'s own pid-based default) so the
+		// cold-boot checks below can reopen this SAME on-disk profile after
+		// `child` redeems -- a genuinely fresh page against identity that is
+		// already there, rather than a reload stacking a second monkeypatch
+		// onto the first.
+		const childProfile = scratch('pw', 'pairchild-' + process.pid);
+		child = await open({ name: 'pairchild', signIn: false, connect: false, profile: childProfile });
 		await child.page.waitForFunction(() => !!window.DaimondPairing, null, { timeout: 12000 })
 			.catch(() => {});
 		// The child starts with its OWN look, deliberately different in every
@@ -119,6 +125,46 @@ try {
 			catch (e) { return { err: e.message }; }
 		}, handover.code);
 		check('the child redeems the code', took.ok === true, took.err || '');
+
+		// Fix #1 (S-ID) -- importBundle() now writes the durable K_EVER marker,
+		// so a linked device gets the same iOS-remint protection create() always
+		// had. Checked on the child right after redeem, per the fix plan.
+		const everAfterRedeem = await child.page.evaluate(
+			() => localStorage.getItem('daimond-id-ever'));
+		check('K_EVER is set on the child after redeem', everAfterRedeem === '1',
+			'daimond-id-ever=' + everAfterRedeem);
+
+		// The marker alone does not close the ">600ms" regime (a whole-store cold
+		// read reads K_EVER empty too) -- existsSettled()'s patience extension
+		// does. Proved on a genuinely fresh page against this same on-disk
+		// profile, not a reload stacking a second shim onto the first -- so
+		// `child`'s OWN context has to close before either reopens the profile;
+		// a persistent-context profile directory admits one browser at a time.
+		await child.close();
+
+		const short = await open({
+			name: 'pairchild', connect: false, signIn: false, profile: childProfile,
+			route: async (p) => { await p.addInitScript(coldShim(260, true)); },
+		});
+		const stShort = await gateState(short.page);
+		const coldShort = await coldReport(short.page);
+		check('cold child (260ms, within the base budget): UNLOCK, not create',
+			stShort.mode === 'unlock' && !stShort.recover,
+			'mode="' + stShort.mode + '" recover=' + stShort.recover + ' armed=' + coldShort.armed);
+		await short.close();
+
+		// Reopened as `child` itself (not a throwaway) -- everything below still
+		// wants the paired device, and this is that same on-disk profile.
+		child = await open({
+			name: 'pairchild', connect: false, signIn: false, profile: childProfile,
+			route: async (p) => { await p.addInitScript(coldShim(900, true)); },
+		});
+		const stLong = await gateState(child.page);
+		const coldLong = await coldReport(child.page);
+		check('cold child (900ms, past the base 600ms budget): STILL unlock, not create',
+			stLong.mode === 'unlock' && !stLong.recover,
+			'mode="' + stLong.mode + '" recover=' + stLong.recover + ' armed=' + coldLong.armed
+				+ ' empties=' + coldLong.empties);
 
 		const stored = await child.page.evaluate(() => ({
 			theme:    localStorage.getItem('daimond-theme'),

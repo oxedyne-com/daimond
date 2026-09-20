@@ -1,1 +1,1 @@
-{"build":"7852c24dff49","note":"fix changed-files tile: open workspace files from version snapshot; new files no longer show a broken diff"}
+{"build":"ae976ffc98b0","note":"Launch-hardening: account-brickers, hand-off dup-bill + tile, rekey, payments, sync fixes, symlink, identity"}

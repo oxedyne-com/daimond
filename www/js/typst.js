@@ -45,6 +45,39 @@ const DIAG_FULL = 3;
 // The main source path inside the compiler's shadow filesystem.
 const MAIN = '/main.typ';
 
+// ── The engine flag: which compiler lays the LIVE VIEW out ──────────────────
+//
+// Two live-view engines, and a flag chooses between them. `typst` is everything above
+// -- typst.ts's vendored compiler, drawn through its renderer -- and is the DEFAULT, so
+// nothing changes for anyone until the flag is flipped. `austenite` is the fe2o3
+// compiler (`fe2o3_austenite`), fed to the changed-only delta consumer in
+// `typstwatch.js`; it is dark until its wasm is vendored under `www/vendor/austenite`.
+//
+// It is a localStorage override rather than a build constant so the A/B can flip it per
+// run on the owner's own device -- `DaimondTypst.engine('austenite')` then Rebuild --
+// without a redeploy. It gates the LIVE VIEW only: the PDF publishing path
+// (`compileProject`, the Compile button, export) is always typst.ts.
+const ENGINE_DEFAULT = 'typst';
+const ENGINE_KEY = 'daimond-typst-engine';
+let _engine = null;			// resolved once from localStorage, then cached
+
+/// Read the live-view engine, or set it. `'austenite'` or `'typst'`; anything else is
+/// read as the default. Setting it remembers the choice for the next load.
+export function engine(name) {
+	if (name !== undefined) {
+		_engine = (String(name) === 'austenite') ? 'austenite' : 'typst';
+		try { window.localStorage.setItem(ENGINE_KEY, _engine); } catch (e) { /* private mode */ }
+		return _engine;
+	}
+	if (_engine == null) {
+		_engine = ENGINE_DEFAULT;
+		try {
+			if (window.localStorage.getItem(ENGINE_KEY) === 'austenite') _engine = 'austenite';
+		} catch (e) { /* no storage: the default stands */ }
+	}
+	return _engine;
+}
+
 // ── The memo is the incremental compiler, and it is not an optimisation ─────
 //
 // `_compilerPromise` holds ONE `TypstCompiler` for the life of the document. It is
@@ -68,6 +101,34 @@ let _glue = null;              // the glue module, kept for its font-resolver bu
 let _init = null;              // the wasm exports, kept so the heap can be read
 let _bundled = null;           // the bundled font bytes, kept so a project set can re-add them
 let _fontState = '';           // which project fonts the live compiler was last given
+
+// ── The Austenite compiler, loaded lazily behind the flag ───────────────────
+//
+// Vendored beside typst.ts, fetched once, and built ONCE for the life of the page for
+// the same reason the typst.ts compiler is -- its incremental memo and its `version`
+// counter live on the instance, so a second instance would be a second cache starting
+// cold and a `version` that restarts below the last one this view discarded on.
+//
+// It does not exist yet: austenite-a's lane builds `www/vendor/austenite`. Until it is
+// there `getAustenite` rejects, `compileProjectDelta` answers `{ error }`, and the flag
+// being off by default means none of this is reached in a shipped build.
+const AUST_VENDOR = new URL('../vendor/austenite/', import.meta.url);
+const AUST_GLUE   = new URL('oxedyne_fe2o3_austenite.js', AUST_VENDOR);
+const AUST_WASM   = new URL('oxedyne_fe2o3_austenite_bg.wasm', AUST_VENDOR);
+let _austPromise = null;       // memoised Austenite instance build
+let _aust = null;              // the built instance, once resolved, for the sync heap read
+
+/// Build (once) and return the Austenite compiler instance.
+function getAustenite() {
+	if (_austPromise) return _austPromise;
+	_austPromise = (async function () {
+		const mod = await import(AUST_GLUE.href);
+		await mod.default(AUST_WASM.href);
+		_aust = new mod.DaimondTypst();
+		return _aust;
+	})();
+	return _austPromise;
+}
 
 /// Build (once) and return the Typst compiler with its fonts
 /// loaded.  Subsequent calls reuse the same instance.
@@ -631,6 +692,22 @@ let _lastMain = '';            // the main path of the last project compiled
 /// * `selector` - A typst selector, as `typst query` takes it: `heading`, `<label>`.
 /// * `field`    - One field of each element, or nothing for all of them.
 export async function queryProject(selector, field) {
+	// ON THE AUSTENITE ENGINE THE RAIL COMES FROM THE AUSTENITE INSTANCE, which answers
+	// `queryProject(selector, field)` with the heading page already among the fields --
+	// its signature takes a `&str` field, so `''` is passed where typst.ts took nothing.
+	// A refusal is a rail that is not shown, exactly as below, so a missing instance or a
+	// non-array answer degrades to null rather than throwing.
+	if (engine() === 'austenite') {
+		if (!_austPromise) return null;
+		try {
+			const aust = await getAustenite();
+			const out = await aust.queryProject(String(selector), field == null ? '' : String(field));
+			const arr = (typeof out === 'string') ? JSON.parse(out) : out;
+			return Array.isArray(arr) ? arr : null;
+		} catch (e) {
+			return null;
+		}
+	}
 	if (!_lastMain || !_compilerPromise) return null;
 	try {
 		const compiler = await getCompiler();
@@ -652,6 +729,34 @@ export async function compileProjectVector(p) {
 	return await compileProjectAs(p, 'vector');
 }
 
+/// Compile a gathered project to a changed-only delta, for the Austenite live view.
+///
+/// The DRIVER METHOD the Rust delta door calls once it has gathered the project (with
+/// its `known` ids). It resolves `{ version, order, changed, reset }` -- the consumer
+/// contract in `typstwatch.js` -- or `{ error }`, and like every method here it RESOLVES
+/// rather than rejecting, so the watch loop reads a reason instead of an exception.
+///
+/// The pack gate is shared with the other doors, at the one point all three meet. The
+/// font pre-check the vector path runs is NOT reproduced yet: Austenite embeds Libertinus
+/// and does not expose the families it can supply (U3 in the wiring plan), so a project
+/// font list cannot be checked against it here without a `fontFamilies()` -- that is the
+/// follow-up that closes this gap. Until then a missing family falls back inside Austenite
+/// exactly as it would in the command-line compiler.
+export async function compileProjectDelta(p) {
+	if (await packLocked()) {
+		return { error: tt('typst.pack_locked') };
+	}
+	if (!p || !Array.isArray(p.sources) || !p.sources.length) {
+		return { error: 'Nothing was gathered to compile.' };
+	}
+	try {
+		const aust = await getAustenite();
+		return await Promise.resolve(aust.compileProjectDelta(p));
+	} catch (e) {
+		return { error: tt('typst.compile_error', { reason: (e && e.message ? e.message : e) }) };
+	}
+}
+
 /// The compiler's wasm heap, in megabytes, or 0 before it has been built.
 ///
 /// A wasm32 `WebAssembly.Memory` can GROW and can NEVER SHRINK, so this is the
@@ -659,6 +764,14 @@ export async function compileProjectVector(p) {
 /// of what is live. That is the property the watch loop's budget rests on: a figure
 /// that only ever goes up can be compared against a ceiling without sampling.
 export function heapMB() {
+	// ON THE AUSTENITE ENGINE THE BUDGET GUARDS THE AUSTENITE HEAP, which is a different
+	// `WebAssembly.Memory`. Read from the instance if it is built; before that, or on the
+	// typst.ts engine, the typst.ts heap is the one that matters. Synchronous by contract
+	// (the watch loop's `holdCheck` cannot await), so it reads the instance only once it
+	// has resolved rather than forcing a load.
+	if (engine() === 'austenite' && _aust && typeof _aust.heapMB === 'function') {
+		try { return Number(_aust.heapMB()) || 0; } catch (e) { /* fall through to typst.ts */ }
+	}
 	if (!_init || !_init.memory) return 0;
 	return _init.memory.buffer.byteLength / 1048576;
 }
@@ -696,6 +809,13 @@ if (typeof window !== 'undefined' && !window.DaimondTypst) {
 		/// The same project, laid out but not written out: `{ vector }` or
 		/// `{ error }`. What the live view draws, and what makes it affordable.
 		compileProjectVector: function (project) { return compileProjectVector(project); },
+		/// The same project, laid out as a CHANGED-ONLY DELTA for the Austenite engine:
+		/// `{ version, order, changed, reset }` or `{ error }`. Dark until the flag is
+		/// set and the Austenite wasm is vendored.
+		compileProjectDelta: function (project) { return compileProjectDelta(project); },
+		/// Read or set which engine lays the live view out: `'typst'` (default) or
+		/// `'austenite'`. The A/B flips this between runs on one device.
+		engine: engine,
 		/// What the compiler will say ABOUT the document it last laid out -- the
 		/// headings the live view's section rail is made of. It lays nothing out
 		/// again: comemo hands back the layout it already has.

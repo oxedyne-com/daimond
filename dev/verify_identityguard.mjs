@@ -43,7 +43,7 @@
 // WebKit (Playwright's JavaScriptCore) is the iOS Safari engine the owner runs,
 // so the gate is proved on the engine that lost the identity.
 
-import { open, connectMock, PASS, scratch, errors } from './harness.mjs';
+import { open, connectMock, PASS, scratch, errors, coldShim, coldReport, gateState } from './harness.mjs';
 import fs from 'node:fs';
 
 const NEG = process.argv.includes('--expect-create');
@@ -53,70 +53,9 @@ const check = (name, pass, detail) => {
 	console.log((pass ? '  ok   ' : '  FAIL ') + name + (detail ? ' — ' + detail : ''));
 };
 
-/// A document-start shim that reproduces the cold iOS tab: the identity keypair
-/// reads EMPTY for a window that OPENS ON THE FIRST READ of the private key and
-/// stays open for `ms`, then passes through. Arming on the first read — not on
-/// page load — is what makes the window still be open when the boot gate reads,
-/// which is long after the wasm has loaded; a fixed-from-load window closes before
-/// boot ever looks, so the bug never shows. It overrides `Storage.prototype.
-/// getItem` before accounts.js captures it, so the namespaced reads the whole app
-/// makes flow through it. Optionally also blanks the orphan-evidence marker, for a
-/// faithful WHOLE-store cold read where the guard's inputs are empty too.
-///
-/// `window.__COLD` records how it behaved (armed, and how many empties it served),
-/// so a test can PROVE the boot read was actually served empty rather than passing
-/// because the window had already closed.
-function coldShim(ms, alsoEvidence) {
-	const keys = ['daimond-id-priv', 'daimond-id-pub'];
-	if (alsoEvidence) keys.push('daimond-id-ever');
-	return `(function(){
-		var proto = window.Storage.prototype;
-		var realGet = proto.getItem;
-		var ARM_KEY = 'daimond-id-priv';   // the boot gate reads this first
-		var COLD_MS = ${ms};
-		var TARGETS = ${JSON.stringify(keys)};
-		var t0 = 0;
-		window.__COLD = { armed: false, empties: 0, armAt: 0 };
-		proto.getItem = function(k){
-			if (TARGETS.indexOf(k) >= 0) {
-				if (!t0 && k === ARM_KEY) { t0 = Date.now(); window.__COLD.armed = true; window.__COLD.armAt = t0; }
-				if (t0 && (Date.now() - t0) < COLD_MS) { window.__COLD.empties++; return null; }
-			}
-			return realGet.call(this, k);
-		};
-	})();`;
-}
-
-/// How the cold shim behaved this page: was it armed, and did it serve empties?
-function coldReport(page) {
-	return page.evaluate(() => window.__COLD || { armed: false, empties: 0 }).catch(() => ({ armed: false, empties: 0 }));
-}
-
-/// What the boot gate settled on. Waits for the modal (both unlock and create end
-/// there) or, for a genuine unlock, its disappearance.
-async function gateState(page) {
-	// The gate has decided once the modal is visible with a mode set. Every case
-	// here ends on the modal (create / unlock / recover), so this is the settle
-	// point — NOT `__DAIMOND_READY`, which can flip true a beat before the modal
-	// is drawn and read back a mode of "".
-	await page.waitForFunction(() => {
-		const m = document.getElementById('identity-modal');
-		return !!(m && getComputedStyle(m).display !== 'none' && m.dataset.mode);
-	}, { timeout: 15000 }).catch(() => {});
-	return page.evaluate(() => {
-		const m = document.getElementById('identity-modal');
-		const vis = e => !!e && getComputedStyle(e).display !== 'none';
-		return {
-			shown:    vis(m),
-			mode:     m ? (m.dataset.mode || '') : '',
-			recover:  !!document.getElementById('id-recover'),
-			again:    !!document.getElementById('id-recover-again'),
-			over:     !!document.getElementById('id-recover-over'),
-			title:    (document.getElementById('id-title') || {}).textContent || '',
-			primary:  (document.getElementById('id-primary') || {}).textContent || '',
-		};
-	});
-}
+// `coldShim`, `coldReport` and `gateState` moved to `harness.mjs` (2026-09-20) so
+// `verify_pairing.mjs`'s cold-boot check on a just-paired child can share them
+// rather than carry a second copy.
 
 /// Unlock with the passphrase through the real form, and say whether it took.
 async function unlockWith(page, pass) {
@@ -203,8 +142,10 @@ const run = async () => {
 		// Blank the durable marker too, so ONLY the retry — not the guard — is in play.
 		await s.page.evaluate(() => { try { localStorage.removeItem('daimond-id-ever'); } catch (e) {} });
 		await s.page.addInitScript(coldShim(260, true));   // keys AND marker read cold
+		const t0 = Date.now();
 		await s.page.reload({ waitUntil: 'domcontentloaded' });
 		const st = await gateState(s.page);
+		const settleMs = Date.now() - t0;
 		const cold = await coldReport(s.page);
 		// The shim must have actually served the boot gate an empty read; otherwise
 		// this passes for the wrong reason (the keys were readable all along).
@@ -213,6 +154,12 @@ const run = async () => {
 		check('b1 cold read + keys present → UNLOCK, not Create (retry alone)',
 			st.shown && st.mode === 'unlock' && !st.recover,
 			`mode="${st.mode}" recover=${st.recover} noEvidence=${noEvidence}`);
+		// existsSettled() now polls to the LONG (~2.4s) budget UNCONDITIONALLY once
+		// exists() reads false at entry (Fix A) — but it still returns the INSTANT
+		// exists() becomes true, so a real device whose key merely loaded slowly (here,
+		// 260ms) must settle in well under the long budget, not pay the full ~2.4s.
+		check('b1b a fast-loading real key settles well under the 2.4s long budget',
+			settleMs < 1500, `settleMs=${settleMs}`);
 		// And it is a REAL unlock screen: the passphrase actually opens it.
 		const opened = await unlockWith(s.page, PASS);
 		check('b2 cold read: the recovered unlock screen actually unlocks', opened, `opened=${opened}`);

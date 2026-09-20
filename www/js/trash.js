@@ -379,9 +379,13 @@
 		return _items;
 	}
 
+	/// Returns whether the write landed. A quota failure used to be swallowed here,
+	/// so a chat "moved to trash" left the rail while nothing recorded it -- the
+	/// caller now surfaces a false so the loss is not silent (S-SYNC #6, sibling of
+	/// the tombstone durability fix).
 	function save() {
-		try { localStorage.setItem(KEY, JSON.stringify({ v: 1, items: sorted(load()) })); }
-		catch (e) { log('could not write the trash record', e); }
+		try { localStorage.setItem(KEY, JSON.stringify({ v: 1, items: sorted(load()) })); return true; }
+		catch (e) { log('could not write the trash record', e); return false; }
 	}
 
 	/// The map with its ids in order and each record's fields in a fixed order.
@@ -424,9 +428,9 @@
 		r.a  = 0;					// a person did this, whatever put it here before
 		r.r  = retainDays();		// the term it is going in under, pinned now
 		items[id] = r;
-		save();
+		var ok = save();
 		announce();
-		return true;
+		return ok;
 	}
 
 	/// A chat whose time ran out, put in the trash by the clock rather than by

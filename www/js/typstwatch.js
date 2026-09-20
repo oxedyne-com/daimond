@@ -366,6 +366,23 @@ let renderer = null;		// the typst.ts renderer, built lazily
 let vec = null;			// the vector artifact on screen, kept so a scroll can draw
 let rinit = null;		// the renderer's wasm exports, for `rheap`
 
+// ── The changed-only delta cache, for the Austenite engine ──────────────────
+//
+// A SECOND DRAW PATH, DARK BY DEFAULT (see `DaimondTypst.engine()` in typst.js). The
+// typst.ts path above draws bands out of ONE vector artifact (`vec`); the Austenite
+// path draws each page from its OWN cached SVG and is fed only the pages that changed.
+// The two never run at once: entering the delta path clears `vec`, and a vector `draw`
+// clears the cache, so `ensureWindow`/`resized` can tell which is live by `vec` versus
+// `order.length` and nothing mixes across an A/B flip of the flag.
+//
+// IDS ARE OPAQUE DECIMAL STRINGS. They are the compiler's stable page identity and are
+// only ever compared and keyed AS STRINGS -- never `Number()`/`parseInt`, which would
+// collide `010` with `10` and lose the identity the whole delta rests on. Only a page's
+// width and height, which are lengths, are parsed as numbers.
+let cache = new Map();		// string id -> { svg, w, h, node }: the pages held, by identity
+let order = [];			// string ids in document order; `order[i]` is the i-th sheet
+let ver = -1;			// the last `version` applied, so a stale async return is dropped
+
 /// Everything the loop knows, in one object so `state()` cannot drift from it.
 const S = {
 	path:     '',		// the `.typ` being watched, or '' when idle
@@ -546,6 +563,50 @@ const SHEET_CSS =
 	+ '}\n'
 	+ '.tl-sheet > svg { display: block; }\n';
 
+/// The selection rules for the Austenite engine, and NOTHING that shapes an HTML box.
+///
+/// `TYPST_CSS` above is written for typst.ts's invisible layer, which is a
+/// `<foreignObject>` holding a `div.tsel` -- so it fixes that div's position, width and
+/// height and lays its text out as justified `pre`. Austenite's page is a self-contained
+/// SVG whose transparent layer is one `<text class="tsel">` carrying its own
+/// `<style>.tsel { fill: transparent }`, so the box rules do not apply and, adopted onto
+/// an SVG `<text>`, `position: fixed` and `white-space` would only misplace selection.
+/// What is kept is the pair that makes a dragged selection VISIBLE over transparent
+/// glyphs -- the `::selection` colours -- plus the inert `.pseudo-link`, harmless where
+/// Austenite emits none. The `fill: transparent` itself rides in the page's own sheet.
+const AUST_CSS =
+	'.tsel span::-moz-selection,\n'
+	+ '.tsel::-moz-selection {\n'
+	+ '  color: transparent;\n'
+	+ '  background: #7db9dea0;\n'
+	+ '}\n'
+	+ '.tsel span::selection,\n'
+	+ '.tsel::selection {\n'
+	+ '  color: transparent;\n'
+	+ '  background: #7db9dea0;\n'
+	+ '}\n'
+	+ '.pseudo-link {\n'
+	+ '  fill: transparent;\n'
+	+ '  pointer-events: none;\n'
+	+ '}\n';
+
+/// Which engine the live view is drawing with, or the default when nothing says.
+///
+/// Read from the same flag `typst.js` exposes, so the CSS `adopt` puts up and the draw
+/// path `build` takes cannot disagree about which engine is live.
+function engineName() {
+	try {
+		if (window.DaimondTypst && window.DaimondTypst.engine) return window.DaimondTypst.engine();
+	} catch (e) { /* the driver is not up yet */ }
+	return 'typst';
+}
+
+/// The stylesheet text for the live engine: the SVG-text rules for Austenite, the
+/// typst.ts `<div>` rules otherwise, `SHEET_CSS` for both.
+function cssFor() {
+	return (engineName() === 'austenite' ? AUST_CSS : TYPST_CSS) + SHEET_CSS;
+}
+
 let sheetEl = null;		// the fallback <style>, where sheets cannot be adopted
 
 /// Put `TYPST_CSS` into `root` so that `replaceChildren` cannot remove it.
@@ -556,15 +617,16 @@ let sheetEl = null;		// the fallback <style>, where sheets cannot be adopted
 /// the first band is drawn, because a first frame of black bars is still a frame of
 /// black bars.
 function adopt(root) {
+	const css = cssFor();
 	try {
 		const s = new CSSStyleSheet();
-		s.replaceSync(TYPST_CSS + SHEET_CSS);
+		s.replaceSync(css);
 		root.adoptedStyleSheets = [s];
 		sheetEl = null;
 		return;
 	} catch (e) { /* an engine without constructable sheets */ }
 	sheetEl = document.createElement('style');
-	sheetEl.textContent = TYPST_CSS + SHEET_CSS;
+	sheetEl.textContent = css;
 }
 
 /// Put `node` on screen as the whole of the pages, rules included.
@@ -913,6 +975,13 @@ function unmount() {
 	host = null;
 	band = null;
 	vec = null;
+	// The delta cache goes with the pages. This is the whole of "known:[]": a next
+	// build, whether from a close, a switch or an unmount, finds the cache empty and
+	// sends no known ids, so the compiler answers with a full `reset` rather than a
+	// delta against pages this view no longer holds.
+	cache.clear();
+	order = [];
+	ver = -1;
 	for (const [el, was] of stood) el.style.display = was;
 	stood = [];
 }
@@ -1334,7 +1403,11 @@ let sick = null;		// the visible window whose render threw, until it is left
 ///           reader asked for, where the wait would be a wait for nothing.
 function ensureWindow(now) {
 	const sc = scroller();
-	if (!sc || !vec || !band || !renderer) return;
+	// EITHER ENGINE, ONE GUARD. The typst.ts path draws out of `vec` and needs its
+	// renderer; the Austenite path draws out of the cache and `order` and needs
+	// neither. A band must be up for a redraw to be a redraw rather than a first draw.
+	if (!sc || !band || !(vec || order.length)) return;
+	if (vec && !renderer) return;
 	const scale = S.scale || 1;
 	const top = sc.scrollTop / scale, deep = sc.clientHeight / scale;
 	// In PAGES, because a sheet is what gets drawn. Clamped to the stack, so a
@@ -1365,7 +1438,7 @@ function ensureWindow(now) {
 ///              tried again.
 function drawBand(top, deep, scale, a, b) {
 	try {
-		paint(bandNode(vec, top, deep, scale));
+		paint(vec ? bandNode(vec, top, deep, scale) : bandNodeSvg(top, deep, scale));
 		sick = null;
 		S.bandErr = '';
 	} catch (e) {
@@ -1385,7 +1458,8 @@ function drawBand(top, deep, scale, a, b) {
 /// not depend on how wide the panel is. So this is a repaint, not a rebuild — the
 /// reader's page and offset are in points and survive it untouched.
 function resized() {
-	if (!vec || !host || !renderer) return;
+	if (!host || !(vec || order.length)) return;
+	if (vec && !renderer) return;
 	const was = where();
 	S.scale = scaleFor(S.docW);
 	const pages = host.querySelector('.tl-pages');
@@ -1400,7 +1474,7 @@ function resized() {
 		: (sc ? sc.scrollTop / S.scale : 0);
 	const deep = sc ? sc.clientHeight / S.scale : S.laid;
 	try {
-		paint(bandNode(vec, top, deep, S.scale));
+		paint(vec ? bandNode(vec, top, deep, S.scale) : bandNodeSvg(top, deep, S.scale));
 	} catch (e) { return; }
 	if (was) goTo(was);
 	sayWhere();
@@ -1512,12 +1586,246 @@ async function draw(bytes) {
 	// 281-page book), on the JavaScript heap, because a scroll has to be able to draw
 	// a page the current source may no longer produce.
 	vec = bytes;
+	// THE VECTOR ENGINE OWNS THE SCREEN NOW, so the Austenite cache is dropped. It is
+	// not merely tidiness: `ensureWindow` and `resized` pick the draw path by `vec`
+	// versus `order.length`, so a stale `order` left from a previous engine would send a
+	// scroll down the wrong one. Dropping it also means a later flip back to Austenite
+	// starts with an empty cache -- `known:[]`, a clean `reset` -- rather than a delta
+	// against pages this artifact replaced.
+	cache.clear();
+	order = [];
+	ver = -1;
 	S.drawn++;
 	// The scale may have moved a hair between builds, so the band is confirmed
 	// against where the reader actually landed rather than where we aimed. In this
 	// turn: the pages have just been replaced, and a band left for the scroll to
 	// settle would be a band nobody is scrolling.
 	ensureWindow(true);
+}
+
+
+// ── The changed-only delta path ─────────────────────────────────────────────
+//
+// THE SAME VIEW, FED DIFFERENTLY. The vector path above lays out the whole document
+// every compile and draws a band out of the one artifact. The delta path is given only
+// the pages that CHANGED since the ids this view last held, keyed by a stable page id,
+// and it keeps a cache of the rest -- so a one-word edit re-parses one page rather than
+// the book. Everything downstream is shared: the sheet-per-page look, the band-only
+// drawing, `where`/`goTo`, the scroll restore, the no-blank swap.
+//
+// The wasm that produces these deltas does not exist yet (it is austenite-a's lane), so
+// this path is dark until `DaimondTypst.engine('austenite')` is set AND the Rust door
+// `typst_compile_project_delta` is present. `applyDelta` is exercised on its own, from a
+// crafted stub, in `www/js/typstdelta.test.mjs`.
+
+/// One length off an SVG root's opening tag, in whatever unit it carries, or 0.
+///
+/// Read with a regex over the head of the string rather than parsed, because it is
+/// wanted once per changed page and a `DOMParser` per page is the cost the whole-book
+/// draw could not afford. Anchored at `<svg` so an inner element's `width` cannot answer.
+function svgAttrLen(head, name) {
+	const m = new RegExp('<svg\\b[^>]*\\b' + name + '="\\s*([0-9]+(?:\\.[0-9]+)?)', 'i').exec(head);
+	return m ? parseFloat(m[1]) : 0;
+}
+
+/// A changed page's own width and height, in the SVG's units: `{ w, h }`.
+///
+/// The `width`/`height` attributes first; a `viewBox` as the fallback for a root that
+/// carries only that. The consumer treats these as points -- see U2 in the wiring plan:
+/// if Austenite's unit turns out not to be points the delta should carry `w`/`h`
+/// explicitly and this is where they would be read instead.
+function rootSize(svg) {
+	const head = String(svg == null ? '' : svg).slice(0, 600);
+	let w = svgAttrLen(head, 'width');
+	let h = svgAttrLen(head, 'height');
+	if (!(w > 0) || !(h > 0)) {
+		const vb = /<svg\b[^>]*\bviewBox="\s*[-0-9.]+\s+[-0-9.]+\s+([0-9]+(?:\.[0-9]+)?)\s+([0-9]+(?:\.[0-9]+)?)/i
+			.exec(head);
+		if (vb) {
+			if (!(w > 0)) w = parseFloat(vb[1]);
+			if (!(h > 0)) h = parseFloat(vb[2]);
+		}
+	}
+	return { w: w > 0 ? w : 0, h: h > 0 ? h : 0 };
+}
+
+/// Apply a delta to the cache, the order and the version -- and NOTHING on screen.
+///
+/// The whole of the delta contract lives here, and none of it touches the DOM, so it is
+/// unit-tested directly. Returns whether there is anything new to draw; throws only when
+/// the delta names a page in `order` that it neither sent nor left in the cache, which is
+/// a broken compiler and leaves the pages that are up alone.
+///
+///   * A `version` at or below the last one applied is a STALE async return and is
+///     dropped whole -- the only use of `version`, and it is never sent back.
+///   * `reset` empties the cache first, so a cold load or a structural reset is a full
+///     resend rather than a special path.
+///   * each `changed` page is cached by its id as an opaque STRING; a new svg for an id
+///     drops its parsed node so the next band re-parses it.
+///   * `order` is the document, by id; every id in it must now be in the cache.
+///   * any cached id not in `order` is PRUNED -- a page deleted from the middle stops
+///     being held, and its id leaves `known` so the compiler stops diffing against it.
+function deltaCore(d) {
+	d = d || {};
+	if (typeof d.version === 'number' && d.version <= ver) return { drew: false };
+	if (typeof d.version === 'number') ver = d.version;
+	if (d.reset) cache.clear();
+	const changed = Array.isArray(d.changed) ? d.changed : [];
+	for (const c of changed) {
+		if (!c) continue;
+		const id = String(c.id);
+		const svg = String(c.svg == null ? '' : c.svg);
+		const size = rootSize(svg);
+		cache.set(id, { svg: svg, w: size.w, h: size.h, node: null });
+	}
+	const ord = (Array.isArray(d.order) ? d.order : []).map(String);
+	for (const id of ord) {
+		if (!cache.has(id)) {
+			throw new Error('delta named a page it did not send: ' + id);
+		}
+	}
+	order = ord;
+	const keep = new Set(order);
+	for (const k of Array.from(cache.keys())) if (!keep.has(k)) cache.delete(k);
+	return { drew: true };
+}
+
+/// Rebuild `S`'s geometry from the cache and the order.
+///
+/// Austenite places each page at the exact running sum of the heights -- there is no
+/// windowed renderer rounding those to whole points, so `rtops` equals `tops` and the
+/// drift the vector path corrects for is zero here.
+function deltaGeometry() {
+	const heights = [], tops = [];
+	let acc = 0, maxW = 0;
+	for (const id of order) {
+		const e = cache.get(id);
+		const h = e ? e.h : 0;
+		tops.push(acc);
+		heights.push(h);
+		acc += h;
+		if (e && e.w > maxW) maxW = e.w;
+	}
+	S.heights = heights;
+	S.tops    = tops;
+	S.rtops   = tops.slice();
+	S.drift   = 0;
+	S.docW    = maxW;
+	S.docH    = acc;
+	S.pages   = order.length;
+	layOut();
+}
+
+/// The sheets for the pages around the reader, drawn from the cache, ready to insert.
+///
+/// The Austenite counterpart of `bandNode`: each page is a self-contained SVG, so there
+/// are no shared glyph defs to hang in the first sheet and no whole-document viewBox to
+/// crop against -- the cached svg is placed as its own sheet at its own laid-out top, and
+/// only the pages in the band are parsed. A parsed node is memoised on its cache entry
+/// and cloned on use, so a scroll never re-parses a page it has already drawn.
+///
+/// # Arguments
+/// * `top`   - The top of the visible area, in LAID-OUT points.
+/// * `deep`  - How tall the visible area is, in points.
+/// * `scale` - Rendered pixels per document point.
+function bandNodeSvg(top, deep, scale) {
+	const last = order.length - 1;
+	if (last < 0) throw new Error('There are no pages to draw.');
+	const p0 = Math.max(0, pageAt(Math.max(0, top)) - MARGIN_PAGES);
+	const p1 = Math.min(last, pageAt(Math.max(0, top + deep)) + MARGIN_PAGES);
+	const wrap = document.createElement('div');
+	wrap.className = 'tl-band';
+	for (let i = p0; i <= p1; i++) {
+		const e = cache.get(order[i]);
+		if (!e) continue;			// `order` is validated against the cache, so unreachable
+		if (!e.node) e.node = parseSvg(e.svg);	// parsed once, on the first band that shows it
+		const svg = e.node.cloneNode(true);
+		const w = e.w || S.docW;
+		svg.setAttribute('width', String(w * scale));
+		svg.setAttribute('height', String(e.h * scale));
+		svg.setAttribute('preserveAspectRatio', 'xMidYMin meet');
+		const sheet = document.createElement('div');
+		sheet.className = 'tl-sheet';
+		sheet.setAttribute('data-page', String(i + 1));
+		sheet.style.top    = (S.lays[i] * scale) + 'px';
+		sheet.style.width  = (w * scale) + 'px';
+		sheet.style.height = (e.h * scale) + 'px';
+		sheet.appendChild(svg);
+		wrap.appendChild(sheet);
+	}
+	band = { p0, p1 };
+	return wrap;
+}
+
+/// Draw a delta into the live view: cache it, lay it out, and put the band up.
+///
+/// The Austenite counterpart of `draw`, and the same three promises hold. Everything
+/// expensive happens on a DETACHED node and the swap is one `replaceChildren` with the
+/// scroll put back in the same turn, so there is no blank frame. The reader's place is a
+/// page and an offset in points, so it survives the document growing above him. And a
+/// build that produced nothing to draw -- a stale version -- changes nothing.
+async function applyDelta(d) {
+	const sc = scroller();
+	const was = where();			// the reader's place in the OLD layout
+	const res = deltaCore(d);		// cache / order / version; may throw on a broken delta
+	if (!res.drew) return;			// a stale version, discarded
+	// The geometry is pure and is computed even with nothing mounted, so `state()` and
+	// the unit tests see the right page count and heights; only the paint needs a host.
+	const snap = { docW: S.docW, docH: S.docH, tops: S.tops, heights: S.heights,
+		lays: S.lays, laid: S.laid, pages: S.pages, rtops: S.rtops, drift: S.drift };
+	deltaGeometry();
+	if (!host) return;
+	const pages = host.querySelector('.tl-pages');
+	const scale = scaleFor(S.docW);
+	let top = sc ? sc.scrollTop / (S.scale || scale) : 0;
+	if (was) {
+		const i = Math.min(was.page, S.lays.length - 1);
+		top = S.lays[i] + Math.min(was.into, S.heights[i] || 0);
+	}
+	const deep = sc ? sc.clientHeight / scale : (S.laid || 1);
+	band = null;
+	sick = null;
+	S.bandErr = '';
+	let node;
+	try {
+		node = bandNodeSvg(top, deep, scale);
+	} catch (e) {
+		// Nothing has been swapped on screen yet, so putting the geometry back leaves
+		// the pages that are up exactly as they were, as the vector path does.
+		S.docW = snap.docW; S.docH = snap.docH;
+		S.tops = snap.tops; S.heights = snap.heights;
+		S.lays = snap.lays; S.laid = snap.laid;
+		S.rtops = snap.rtops; S.drift = snap.drift; S.pages = snap.pages;
+		throw e;
+	}
+	pages.style.width  = (S.docW * scale) + 'px';
+	pages.style.height = (S.laid * scale) + 'px';
+	paint(node);
+	S.scale = scale;
+	if (was) goTo(was); else if (sc) sc.scrollTop = 0;
+	sayWhere();
+	S.drawn++;
+	ensureWindow(true);
+}
+
+/// The ids this view is holding, as opaque strings -- what `build` feeds the compiler as
+/// `known` so it can answer with only what changed. An empty array asks for a full send.
+function knownIds() {
+	return Array.from(cache.keys());
+}
+
+/// A read-only look at the delta cache, for the tests and the A/B verifier.
+///
+/// `state()` carries the counts; this carries the ids and, on request, the svg held for
+/// one -- enough to prove an edit replaced a page's markup without exposing the Map.
+function deltaPeek() {
+	return {
+		ver:   ver,
+		order: order.slice(),
+		ids:   Array.from(cache.keys()),
+		size:  cache.size,
+		svg:   function (id) { const e = cache.get(String(id)); return e ? e.svg : null; },
+	};
 }
 
 
@@ -2075,9 +2383,35 @@ async function build(force) {
 		? window.DaimondTypst.heapMB() : 0;
 	const t0 = Date.now();
 	let out = null;
+	// WHICH ENGINE LAYS THIS BUILD OUT is one question, asked once, here. The flag is
+	// `DaimondTypst.engine()` (typst.js), dark by default; the delta door only exists
+	// once the Austenite wasm is linked, so both must be true to leave the vector path.
+	// The delta compiler is fed `known` -- the ids this view holds RIGHT NOW, from the
+	// cache and never from `order`, so a cleared cache with a stale order cannot ask for
+	// a delta against pages it no longer has.
+	let useDelta = false;
 	try {
 		const m = await wasm();
-		out = await m.typst_compile_project_vector(S.path);
+		useDelta = engineName() === 'austenite' && typeof m.typst_compile_project_delta === 'function';
+		if (useDelta) {
+			// TWO STEPS, ONE DARK PATH. The gather is in Rust, behind the OPFS jail
+			// (`typst_compile_project_delta` returns the project with `known` attached);
+			// the delta COMPILE is the vendored Austenite module, which this wasm does
+			// not link, reached through the driver. A gather refusal is already the
+			// `{ error }` shape, so it is passed straight on; otherwise the project goes
+			// to the delta compiler. The gathered project carries the watch list and the
+			// delta result does not, so it is carried across before the watch list is
+			// read below.
+			const project = await m.typst_compile_project_delta(S.path, knownIds());
+			if (project && project.error) {
+				out = project;
+			} else {
+				out = await window.DaimondTypst.compileProjectDelta(project);
+				if (out && !out.error && project && project.watch) out.watch = project.watch;
+			}
+		} else {
+			out = await m.typst_compile_project_vector(S.path);
+		}
 	} catch (e) {
 		out = { error: (e && e.message) ? e.message : String(e) };
 	}
@@ -2093,7 +2427,14 @@ async function build(force) {
 		S.files = Array.from(out.watch).map(String);
 	}
 
-	if (out && out.vector && out.vector.length) {
+	// A DELTA IS A SUCCESS WHEN IT CARRIES AN ORDER, a vector when it carries bytes.
+	// The delta may carry an empty `changed` -- nothing moved -- and still be a good
+	// build that must clear a stale error and announce, so the test is `order`, not
+	// `changed`.
+	const drew = useDelta
+		? !!(out && !out.error && Array.isArray(out.order))
+		: !!(out && out.vector && out.vector.length);
+	if (drew) {
 		// A REBUILD NOBODY COULD CONFIRM is counted, because it is the only kind left
 		// that can spin. Everything small enough to read back is checked against its
 		// own contents and never gets here twice for nothing; what remains is a file
@@ -2101,7 +2442,7 @@ async function build(force) {
 		// evidence behind it and the heap ceiling at the end of it.
 		S.same = S.blind ? S.same + 1 : 0;
 		try {
-			await draw(out.vector);
+			if (useDelta) await applyDelta(out); else await draw(out.vector);
 			// The sections, asked of the compiler in the same turn as the compile that
 			// produced these pages — see `refreshToc`. Not awaited on purpose: the
 			// pages are up and the rail filling in a moment later costs the reader
@@ -2753,11 +3094,22 @@ function state() {
 		sheets:   band ? (band.p1 - band.p0 + 1) : 0,
 		band:     band ? { p0: band.p0, p1: band.p1 } : null,
 		bandErr:  S.bandErr,
+		// WHICH ENGINE IS DRAWING, and what the delta path is holding. `engine` is the
+		// flag the last `adopt`/`build` read; `cached` is how many pages the delta cache
+		// holds (0 on the vector path); `version` is the last delta applied (-1 when
+		// none); `order` is the page ids in document order, for a verifier to hold
+		// against `changed`.
+		engine:   engineName(),
+		cached:   cache.size,
+		version:  ver,
+		order:    order.slice(),
 		// WHAT THE VIEW IS HOLDING, in bytes: the vector artifact every band is drawn
-		// out of, 11.1 MB on the author's 281-page book. It is the largest single
-		// thing on this page and the first thing let go when a phone is backgrounded,
-		// so it is worth being able to read rather than infer.
-		holds:    vec ? vec.length : 0,
+		// out of, 11.1 MB on the author's 281-page book, or the sum of the cached page
+		// svgs on the delta path. It is the largest single thing on this page and the
+		// first thing let go when a phone is backgrounded, so it is worth being able to
+		// read rather than infer.
+		holds:    vec ? vec.length
+			: order.reduce(function (n, id) { const e = cache.get(id); return n + (e ? e.svg.length : 0); }, 0),
 		// THE TWO WAYS THE RENDERER'S ROUNDING SHOWS, both in points, so a check can
 		// hold one against the other. `drift` is the renderer's own total height less
 		// the exact sum of the page heights, taken in `draw` before anything is drawn;
@@ -2836,6 +3188,12 @@ if (typeof window !== 'undefined' && !window.DaimondTypstWatch) {
 		if (S.mode !== 'live' && S.mode !== 'held' && S.mode !== 'paused') return;
 		pause('backgrounded');
 		vec = null;
+		// The delta cache goes with it, for the same reason and to the same end: nothing
+		// to draw a band from, and the rebuild that follows sends `known:[]` and gets a
+		// clean full resend rather than a delta against pages that were let go.
+		cache.clear();
+		order = [];
+		ver = -1;
 		S.dirty = true;		// there is nothing to draw a band from until a rebuild
 	});
 	window.DaimondTypstWatch = {
@@ -2859,8 +3217,15 @@ if (typeof window !== 'undefined' && !window.DaimondTypstWatch) {
 		pause:    pause,
 		resume:   resume,
 		goToSection: goToSection,
+		// The delta path, for the Austenite engine and its verifier: `applyDelta` takes
+		// one `{ version, order, changed, reset }`, `knownIds` is what a compile is fed,
+		// `deltaPeek` is the cache for a check to read.
+		applyDelta: applyDelta,
+		knownIds:  knownIds,
+		deltaPeek: deltaPeek,
 	};
 }
 
 export { began, stop, pause, resume, touched, rebuild, budgetMB, zoom, dark, state,
-	pageBox, goToPage, rail, sections, goToSection, fitPage, given, placeWith };
+	pageBox, goToPage, rail, sections, goToSection, fitPage, given, placeWith,
+	applyDelta, knownIds, deltaPeek };

@@ -351,8 +351,12 @@ async function main() {
 		// drops the placeholder) and never rebuilds it after -- confirm the divert lives
 		// in appendUserMessage (the user path), not in the provisional streaming path.
 		const dSrc = readFileSync(join(HERE, 'daimond.js'), 'utf8');
+		// `_tailNoteTable` now takes the chat as its second argument (S-HAND #4: the id is
+		// resolved from `chat.diamondId`, so a daimon chat opened from the chat list -- where
+		// `currentDiamond` is null -- still finds its manifests), so the call is
+		// `_tailNoteTable(text, current)`.
 		check('(g7) the #22 table is diverted in appendUserMessage (the user tail-note path), not the stream',
-			/_tailNoteTable\(text\)/.test(dSrc) && /function appendUserMessage/.test(dSrc));
+			/_tailNoteTable\(text,/.test(dSrc) && /function appendUserMessage/.test(dSrc));
 		check('(g8) applyProvisional folds only into the model rows -- it does not touch appendUserMessage',
 			/function applyProvisional/.test(dSrc)
 			&& dSrc.split('function applyProvisional')[1].split('function ')[0].indexOf('appendUserMessage') < 0);

@@ -707,6 +707,10 @@
 	'sync.when_mins': 'il y a {n} min',
 	'sync.when_hours': 'il y a {n} h',
 	'sync.when_days': 'il y a {n} j',
+	'sync.rekey_needed': 'Phrase secrète changée',
+	'sync.rekey_needed_reason': 'La phrase secrète a été changée sur un autre appareil, et celui-ci ne peut pas se mettre à jour tout seul. Reliez-le de nouveau à ce compte.',
+	'sync.rekey_adopted': 'Phrase secrète mise à jour',
+	'sync.rekey_adopted_body': 'La phrase secrète a été changée sur un autre appareil, et celui-ci s’est mis à jour. Vous n’avez pas besoin de la saisir ici.',
 
 	// ── L’identifiant public du compte ─────────────────────────
 	'handle.taken': 'Cet identifiant est déjà pris par quelqu’un d’autre. Essayez-en un autre.',
@@ -2117,6 +2121,7 @@
 	'changepass.changed': 'Phrase secrète changée',
 	'changepass.changed_body': 'Votre nouvelle phrase secrète est active. Votre clé d’API enregistrée a été rechiffrée avec elle.',
 	'changepass.passkey_stale': 'Votre clé d’accès n’a pas pu être mise à jour : elle demandera la nouvelle phrase secrète. Rajoutez-la depuis les Réglages.',
+	'changepass.other_devices': 'Vos autres appareils adoptent la nouvelle phrase secrète automatiquement lors de leur prochaine synchronisation.',
 
 	// ── Backups ────────────────────────────────────────────────
 	'backup.unreadable': 'Ce fichier de sauvegarde n’a pas pu être lu.',
@@ -3108,6 +3113,7 @@
 	'chat.ran_on': 'exécuté sur {name}',
 	'chat.handed_off': '{name} s’en charge',
 	'chat.ran_here_failed': 'Exécuté ici — le transfert vers {name} ne s’est pas terminé',
+	'chat.ran_here_refused': 'Exécuté ici — le relais a refusé le transfert',
 	'chat.ran_here': 'Exécuté sur cet appareil',
 	'chat.handoff_ran_on': 'Exécuté sur {name} ; la réponse a été resynchronisée vers cet appareil.',
 	'chat.handoff_ran_here': 'Exécuté sur cet appareil après l’échec du transfert vers {name}.',
@@ -3173,6 +3179,8 @@
 	'seat.why_chat_local': 'Cette discussion est épinglée à cet appareil.',
 	'seat.tile_local_mobile': 'S’exécute ici — laissez ouvert',
 	'seat.retry': '{from} ne l’a pas pris en charge ; tentative avec {to}',
+	'seat.refused': 'Transfert refusé ({status}) — exécution ici',
+	'errand.prompt_too_large': 'l’invite seule dépasse ce que le relais accepte',
 	'place.why_here': 'Tout ce qu’il faut est ici.',
 	'place.why_missing_files': 'Les fichiers de ce document ne sont pas tous ici — {n} manquants.',
 	'place.why_too_large': 'Trop volumineux pour ce téléphone : le dernier build nécessitait {need} Mo et cette page dispose de {room} Mo.',

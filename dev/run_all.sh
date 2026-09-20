@@ -354,6 +354,11 @@ slow_for() {
 		# twice the measurement, on the same reasoning as verify_reversible, and
 		# those 10s waits are exactly what stretches when the box is busy.
 		verify_raildialogs)               echo 480 ;;
+		# S-SYNC #6, two real devices with a pair, several reloads, and a
+		# localStorage-fill quota arm on top of the two-phase delete-sync flow.
+		# Same shape and reasoning as verify_syncviews/verify_reloadpush: the waits
+		# stretch on a busy box and a killed verifier does not say it was killed.
+		verify_chatdelete_sync)           echo 900 ;;
 		# Eleven palettes, each opened, focused through and measured for ink. Killed
 		# by the 180s default and reported as exit 124 -- it dies part way through
 		# the fifth palette, which reads on a summary as the app's focus ring being

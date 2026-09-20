@@ -864,6 +864,10 @@
 	'sync.when_mins':      '{n} 分前',
 	'sync.when_hours':     '{n} 時間前',
 	'sync.when_days':      '{n} 日前',
+	'sync.rekey_needed':        'パスフレーズが変更されました',
+	'sync.rekey_needed_reason': 'パスフレーズは別のデバイスで変更されました。このデバイスは自力で追いつけません。このアカウントに再度リンクしてください。',
+	'sync.rekey_adopted':       'パスフレーズを更新しました',
+	'sync.rekey_adopted_body':  'パスフレーズは別のデバイスで変更され、このデバイスも追いつきました。ここで入力し直す必要はありません。',
 
 	// ── アカウントの公開ハンドル ───────────────────────────────
 	'handle.taken':    'そのハンドルはすでに他の人が使っています。別のものをお試しください。',
@@ -2125,6 +2129,7 @@
 	'changepass.changed':         'パスフレーズを変更しました',
 	'changepass.changed_body':    '新しいパスフレーズが有効になりました。保存された API キーは、それで暗号化し直しました。',
 	'changepass.passkey_stale':   'パスキーを更新できなかったため、新しいパスフレーズを求められます。設定から追加し直してください。',
+	'changepass.other_devices':   'ほかのデバイスは、次回の同期時に新しいパスフレーズを自動で受け取ります。',
 
 	// ── バックアップ ───────────────────────────────────────────
 	'backup.unreadable':      'そのバックアップファイルは読み取れませんでした。',
@@ -3135,6 +3140,7 @@
 	'chat.ran_on': '{name} で実行',
 	'chat.handed_off': '{name} が対応中',
 	'chat.ran_here_failed': 'ここで実行——{name} への引き継ぎが完了しませんでした',
+	'chat.ran_here_refused': 'ここで実行——リレーが引き継ぎを拒否しました',
 	'chat.ran_here': 'この端末で実行',
 	'chat.handoff_ran_on': '{name} で実行され、答えがこの端末に同期して戻りました。',
 	'chat.handoff_ran_here': '{name} への引き継ぎが完了しなかったため、この端末で実行されました。',
@@ -3200,6 +3206,8 @@
 	'seat.why_chat_local': 'このチャットはこの端末に固定されています。',
 	'seat.tile_local_mobile': 'ここで実行——開いたままにしてください',
 	'seat.retry': '{from} が引き受けなかったので、{to} を試しています',
+	'seat.refused': '引き継ぎが拒否されました（{status}）——ここで実行します',
+	'errand.prompt_too_large': 'プロンプトだけでリレーが受け入れられるサイズを超えています',
 	'place.why_here': '必要なものはすべてここにあります。',
 	'place.why_missing_files': 'この文書のファイルがすべてここにあるわけではありません——{n} 件不足しています。',
 	'place.why_too_large': 'この端末には大きすぎます：前回のビルドには {need} MB 必要でしたが、このページには {room} MB しかありません。',

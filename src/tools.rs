@@ -7392,8 +7392,86 @@ fn linking_script(arg: &str) -> Option<&'static Linking> {
     LINKING_SCRIPTS.iter().find(|s| s.path == named)
 }
 
+/// Does `a` spell the long flag that asks for a symbolic link, in full or as the unambiguous
+/// abbreviation `getopt_long` itself would accept?
+///
+/// `ln`'s `--symbolic` and `cp`'s `--symbolic-link` are the only long options either program has
+/// starting `--sym`, so any prefix of one -- `--sym`, `--symb`, `--symbo`, and so on up to the
+/// full spelling -- names it exactly as `getopt_long` resolves an abbreviation: matched against
+/// `long` rather than against a bare `starts_with`, so a token that merely shares the prefix
+/// without being one, such as a typo past the end of the real flag, is not caught by accident.
+///
+/// # Arguments
+/// * `a` - One token of `argv`.
+/// * `long` - The long flag's full spelling, e.g. `"--symbolic"`.
+fn is_symbolic_long_flag(a: &str, long: &str) -> bool {
+    a.starts_with("--sym") && long.starts_with(a)
+}
+
+/// Does `rest` -- an `argv` with the program itself already stripped off -- carry the flag that
+/// asks for a symbolic link, spelled either as `long` (or an abbreviation of it, see
+/// [`is_symbolic_long_flag`]) or bundled into a short-flag cluster with `short`?
+///
+/// A bare `--` ends option parsing: everything after it is an operand, matched or not, so
+/// `ln -s -- -sf x` links a file literally named `-sf` rather than asking twice. Before that, any
+/// token starting with a single `-` (not `--`) is a cluster of short flags -- `-sf`, `-fs` and
+/// `-sn` all carry `-s` -- so the letter is looked for among a token's characters in order, not
+/// just checked against the whole token.
+///
+/// The scan of a cluster stops the moment it meets `t` or `S` -- `-t`/`--target-directory` and
+/// `-S`/`--suffix`, on both `ln` and `cp` -- because both TAKE an argument that may be glued
+/// straight onto the flag: `ln -tsrc a` links `a` into the directory `src`, and the `s` inside
+/// `"src"` is that argument's text, not a second flag. Scanning past it is how `-tsrc` was
+/// wrongly refused as if it were `-t` plus `-s`.
+///
+/// # Arguments
+/// * `rest` - `argv[1..]`, the program's own arguments.
+/// * `short` - The short flag's letter, e.g. `'s'`.
+/// * `long` - The long flag's own spelling, e.g. `"--symbolic"`.
+fn asks_for_symlink(rest: &[String], short: char, long: &str) -> bool {
+    for a in rest {
+        if a == "--" {
+            break;
+        }
+        if is_symbolic_long_flag(a, long) {
+            return true;
+        }
+        if a.starts_with('-') && !a.starts_with("--") {
+            for c in a.chars().skip(1) {
+                if c == short {
+                    return true;
+                }
+                if c == 't' || c == 'S' {
+                    break; // the rest of this token is that option's glued-on argument
+                }
+            }
+        }
+    }
+    false
+}
+
+/// Does `argv` invoke `ln` or `cp` asking, directly, for a symbolic link -- `ln -s`, `ln -sf`,
+/// `ln --symbolic`, `cp -s`, `cp --symbolic-link` -- as opposed to a hard link (`ln a b`, no `-s`
+/// anywhere) or a command that merely shares the letter for an unrelated reason (`ls -s` is a
+/// different program, checked by its exact name, not by the flags it happens to take)?
+///
+/// # Arguments
+/// * `argv` - The command, as the model wrote it.
+fn direct_symlink_command(argv: &[String]) -> bool {
+    let prog = match argv.first() {
+        Some(a) => a.rsplit('/').next().unwrap_or(""),
+        None    => return false,
+    };
+    match prog {
+        "ln" => asks_for_symlink(&argv[1..], 's', "--symbolic"),
+        "cp" => asks_for_symlink(&argv[1..], 's', "--symbolic-link"),
+        _    => false,
+    }
+}
+
 /// The refusal a `run` gets for an `argv` that would start one of the scripts that cannot work
-/// under the fence, or `None` where it would not.
+/// under the fence, or that itself asks `ln`/`cp` to create a symbolic link directly, or `None`
+/// where neither is true.
 ///
 /// Deliberately not the same sentence as [`verifier_refusal`], because it is not the same fault.
 /// A verifier is refused for something ABSENT from the fence -- playwright, and the network to
@@ -7404,6 +7482,23 @@ fn linking_script(arg: &str) -> Option<&'static Linking> {
 /// # Arguments
 /// * `argv` - The command, as the model wrote it.
 pub fn symlink_refusal(argv: &[String]) -> Option<String> {
+    if direct_symlink_command(argv) {
+        return Some(fmt!(
+            "Refused: '{}' asks to create a symbolic link, and a fenced command cannot create \
+            one anywhere: not in the folders it may write, not in its own scratch directory. \
+            'ln -s' and 'cp -s' answer 'Permission denied', and that is the fence working rather \
+            than a fault -- not a transient permission error and not something a retry or an \
+            install fixes. The capability is withheld by design, because a link is half of a \
+            leak: this command would make it, and whatever later follows it supplies the other \
+            half -- including the Ore replica this tree records into, which absorbs the CONTENT \
+            of a link that leaves the working copy into a signed history that cannot forget. Do \
+            not attempt to create the link. Where a reference inside the workspace will do, copy \
+            instead -- 'cp -r' for a directory, a plain 'cp' for a file -- and reach for a hard \
+            link only where the target is a single file on the same filesystem; where the link \
+            genuinely needs to reach outside the workspace, ask the user to make it themselves. \
+            Nothing was run.",
+            argv.join(" ")));
+    }
     for (i, a) in argv.iter().enumerate() {
         // A `.sh` is started by a shell or by itself, a `.mjs` by node or by itself. Asked of
         // both sets rather than of the file's extension, so that `bash dev/shot_betatier.mjs` --
@@ -7429,6 +7524,28 @@ pub fn symlink_refusal(argv: &[String]) -> Option<String> {
         }
     }
     None
+}
+
+/// Does this stderr read as a symbolic link the fence denied, however the command reached it?
+///
+/// [`symlink_refusal`] is the cheap fast path -- it reads `argv` before anything runs -- but it
+/// only sees a call spelled out directly. A shell (`bash -c 'ln -s a b'`), another interpreter
+/// (`python3 -c 'import os; os.symlink(a, b)'`, `node -e 'fs.symlinkSync(a, b)'`, `perl -e
+/// 'symlink(...)'`) or a program that makes links as a side effect (`tar`, `rsync -l`, `cp -a`)
+/// hides the call from argv entirely, and what comes back is a bare "Permission denied" with
+/// nothing to say why -- the exact symptom the pre-emptive check exists to kill. This is the
+/// other half: read on the stderr the command actually printed, after the fact, whatever produced
+/// it. Matched case-insensitively and on substrings rather than one error format, because every
+/// runtime spells the same denial differently -- coreutils capitalises ("Permission denied"),
+/// Node's libuv does not ("EACCES: permission denied, symlink '...'"), and Python's OSError
+/// repeats the OS text verbatim.
+///
+/// # Arguments
+/// * `err` - The command's stderr, as the hand returned it.
+fn looks_like_symlink_denial(err: &str) -> bool {
+    let hay = err.to_ascii_lowercase();
+    (hay.contains("symbolic link") || hay.contains("symlink"))
+        && (hay.contains("permission denied") || hay.contains("operation not permitted"))
 }
 
 // ── Content that did not come from the user ─────────────────────────
@@ -20709,6 +20826,15 @@ impl Tool {
         {
             out.push_str(DENIED_DIR_NOTE);
         }
+        // The same fence, met through a route `symlink_refusal`'s pre-emptive argv check cannot
+        // see: a shell, an interpreter, or a program that links as a side effect made the call
+        // itself, so nothing in `argv` names it -- and what comes back is a bare "Permission
+        // denied" with no reason attached. Caught here instead, on the stderr the command
+        // actually printed, which is the only place such a route can be told apart from an
+        // ordinary permission fault.
+        if looks_like_symlink_denial(&err) {
+            out.push_str(SYMLINK_DENIED_NOTE);
+        }
         // Why the build failed, said by the app rather than guessed at by the model.
         //
         // Outside the envelope, because this is Daimond speaking and not the command; and
@@ -21778,6 +21904,26 @@ const DENIED_DIR_NOTE: &str =
     are complete apart from that one directory. Do not re-run it with sudo or hunt for the cause: \
     start the walk lower down, or exclude that directory, and read the non-zero status as this and \
     not as a failure.]";
+
+/// What a command's result says when its stderr shows a symbolic link the fence denied, however
+/// the command reached it.
+///
+/// Written for the model to act on, exactly like [`DENIED_DIR_NOTE`] beside it: it names the
+/// cause, says it is the fence working rather than a fault, and says not to retry or install
+/// anything to fix it. Phrased for AFTER the run, unlike `symlink_refusal`'s pre-emptive sentence
+/// -- this one describes what already happened rather than what is about to be refused.
+#[cfg(any(target_arch = "wasm32", test))]
+const SYMLINK_DENIED_NOTE: &str =
+    "\n[that command tried to create a symbolic link, and a fenced command cannot create one \
+    anywhere -- not in the folders it may write, not in its own scratch directory. That is the \
+    fence working, not a transient permission error and not something a retry or an install \
+    fixes: the capability is withheld by design, because a link is half of a leak, including into \
+    the Ore replica this tree records into, which absorbs the CONTENT of a link that leaves the \
+    working copy into a signed history that cannot forget. Do not retry it or chase the \
+    permission as if it were a bug. Where a reference inside the workspace will do, copy instead \
+    -- 'cp -r' for a directory, a plain 'cp' for a file -- and reach for a hard link only where \
+    the target is a single file on the same filesystem; where the link genuinely needs to reach \
+    outside the workspace, ask the user to make it themselves.]";
 
 /// What a command's result says when the turn ran it with the network refused.
 ///
@@ -35663,6 +35809,102 @@ CLEAN            27 passed, 0 failed, exit 0, 900 ms
             assert!(std::path::Path::new(s.path).exists(),
                 "{} is named as a linking script and is not in the tree", s.path);
         }
+    }
+
+    /// **`run` refuses `ln`/`cp` asked, directly, to make a symbolic link -- and only that.**
+    ///
+    /// A hard link (`ln a b`, no `-s` anywhere) is a different, permitted right, so it must not
+    /// be caught by the same net a bundled `-sf` is; and a program that merely shares the letter
+    /// (`ls -s`) is told apart by its exact name, never by the flags it happens to take.
+    #[test]
+    fn test_run_refuses_a_direct_symlink_command() {
+        // Every spelling that asks for a symbolic link.
+        for argv in [
+            vec![fmt!("ln"), fmt!("-s"), fmt!("a"), fmt!("b")],
+            vec![fmt!("ln"), fmt!("-sf"), fmt!("a"), fmt!("b")],
+            vec![fmt!("ln"), fmt!("-fs"), fmt!("a"), fmt!("b")],
+            vec![fmt!("ln"), fmt!("-sn"), fmt!("a"), fmt!("b")],
+            vec![fmt!("ln"), fmt!("--symbolic"), fmt!("a"), fmt!("b")],
+            vec![fmt!("/bin/ln"), fmt!("-s"), fmt!("a"), fmt!("b")],
+            vec![fmt!("cp"), fmt!("-s"), fmt!("a"), fmt!("b")],
+            vec![fmt!("cp"), fmt!("--symbolic-link"), fmt!("a"), fmt!("b")],
+        ] {
+            let refused = symlink_refusal(&argv)
+                .unwrap_or_else(|| panic!("{:?} was allowed to make a symbolic link", argv));
+            assert!(refused.starts_with(REFUSAL_OPENING),
+                "the refusal is not recognisable as one: {}", refused);
+            assert!(refused.contains("symbolic link") && refused.contains("Permission denied"),
+                "the refusal does not say what will actually happen: {}", refused);
+            assert!(!refused.contains("playwright"),
+                "the direct-command refusal blames the verifier rule's cause: {}", refused);
+        }
+        // A `--` ends option parsing: what follows is an operand, not a flag, however it reads.
+        assert!(symlink_refusal(&[fmt!("ln"), fmt!("--"), fmt!("-s"), fmt!("b")]).is_none(),
+            "a literal file named '-s' after '--' was read as the symbolic flag");
+        // What must NOT be refused: a hard link, a force-only flag, a same-lettered program, and
+        // `-t`/`-S` with the flag's letter glued into what is actually THEIR argument.
+        for argv in [
+            vec![fmt!("ln"), fmt!("a"), fmt!("b")],           // hard link, no -s anywhere
+            vec![fmt!("ln"), fmt!("-f"), fmt!("a"), fmt!("b")], // force, still no -s
+            vec![fmt!("ls"), fmt!("-s"), fmt!("dev")],          // a different program entirely
+            vec![fmt!("ln"), fmt!("-tsrc"), fmt!("a")],   // hard link INTO src/, not -t plus -s
+            vec![fmt!("cp"), fmt!("-S.bak.s"), fmt!("a"), fmt!("b")], // suffix ".bak.s", not -S plus -s
+        ] {
+            assert!(symlink_refusal(&argv).is_none(),
+                "{:?} was refused, and it makes no symbolic link: {:?}",
+                argv, symlink_refusal(&argv));
+        }
+    }
+
+    /// **The long flag is caught at every unambiguous abbreviation `getopt_long` itself accepts.**
+    ///
+    /// `ln --sym a b` and `cp --sym a b` are exactly what a model writes when it half-remembers
+    /// the flag, and `getopt_long` runs them -- silently taking the abbreviation as the full
+    /// option -- so the fence has to catch the same shorthand or the model meets a bare
+    /// "Permission denied" instead of the refusal.
+    #[test]
+    fn test_run_refuses_an_abbreviated_symbolic_long_flag() {
+        for argv in [
+            vec![fmt!("ln"), fmt!("--sym"), fmt!("a"), fmt!("b")],
+            vec![fmt!("ln"), fmt!("--symb"), fmt!("a"), fmt!("b")],
+            vec![fmt!("cp"), fmt!("--sym"), fmt!("a"), fmt!("b")],
+        ] {
+            assert!(symlink_refusal(&argv).is_some(),
+                "{:?} was allowed through as an unrecognised abbreviation", argv);
+        }
+    }
+
+    /// **The stderr from a wrapper the argv check cannot see still gets the same explanation.**
+    ///
+    /// `symlink_refusal` reads `argv` before anything runs, so it never sees a call made from
+    /// inside `bash -c`, `python3 -c`, or `node -e` -- those come back as a bare "Permission
+    /// denied" with nothing to say why, which is the exact symptom the fix exists to kill. This is
+    /// the other half: read on the stderr the command actually printed, whatever produced it.
+    #[test]
+    fn test_a_wrapped_symlink_denial_is_explained_after_the_fact() {
+        for (argv, stderr) in [
+            (vec![fmt!("bash"), fmt!("-c"), fmt!("ln -s a b")],
+                "ln: failed to create symbolic link 'b': Permission denied"),
+            (vec![fmt!("python3"), fmt!("-c"), fmt!("import os; os.symlink('a', 'b')")],
+                "Traceback (most recent call last): File <string>, line 1, in <module> \
+                import os; os.symlink('a', 'b') PermissionError: [Errno 1] Operation not \
+                permitted: 'a' -> 'b'"),
+            (vec![fmt!("node"), fmt!("-e"), fmt!("require('fs').symlinkSync('a', 'b')")],
+                "Error: EACCES: permission denied, symlink 'a' -> 'b'"),
+        ] {
+            let res = fmt!(r#"{{"stdout":"","stderr":"{}","exit":1}}"#, stderr);
+            let hit = Tool::run_result(&argv, &res, &ctx(), false, false, None);
+            assert!(hit.contains("tried to create a symbolic link"),
+                "{:?} was not explained: {}", argv, hit);
+            assert!(hit.contains("the fence working"),
+                "{:?} was not attributed to the fence: {}", argv, hit);
+        }
+        // The control: an ordinary permission failure that mentions neither word must not get it.
+        let ordinary = Tool::run_result(&[fmt!("cat"), fmt!("/root/secret")],
+            r#"{"stdout":"","stderr":"cat: /root/secret: Permission denied","exit":1}"#,
+            &ctx(), false, false, None);
+        assert!(!ordinary.contains("tried to create a symbolic link"),
+            "an unrelated permission failure got the symlink note: {}", ordinary);
     }
 
     // ── A tool that is sold rather than shipped ─────────────────────────────
