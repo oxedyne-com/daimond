@@ -8009,6 +8009,14 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			// say", so a fresh device cannot clear a fleet another device just armed.
 			debugShare:   (window.DEBUG_SHARE && DEBUG_SHARE.syncSnapshot)
 			                  ? DEBUG_SHARE.syncSnapshot() : null,
+			// The "Something went wrong" report's CONSENT decision (D-20260920-02):
+			// an account-level fact, not a device one, carried the same way as
+			// `debugShare` just above -- freshest-`at`-wins `{on, at}`, verbatim, so
+			// agreeing on one device is remembered on every linked device rather than
+			// asked again. `null` on a device that has never been asked (or a build
+			// without the module) reads as "nothing to say".
+			support:      (window.DaimondSupport && DaimondSupport.syncSnapshot)
+			                  ? DaimondSupport.syncSnapshot() : null,
 			// What the account has spent, turn by turn.
 			//
 			// The provider keys and their credit bases already travel, so without
@@ -8550,6 +8558,12 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		// same tolerance as `perms` and `models` above.
 		await section('debugshare', function () {
 			if (window.DEBUG_SHARE && DEBUG_SHARE.adoptSync) DEBUG_SHARE.adoptSync(remote.debugShare);
+		});
+		// The "Something went wrong" report's consent decision (D-20260920-02).
+		// Same rule as `debugshare` just above: freshest-`at`-wins, verbatim, so a
+		// value this device already holds moves nothing.
+		await section('support', function () {
+			if (window.DaimondSupport && DaimondSupport.adoptSync) DaimondSupport.adoptSync(remote.support);
 		});
 		// If the Workspace panel is open, show what just landed — including any
 		// file that arrived as a cloud reference rather than as bytes. Drawing is
@@ -9573,7 +9587,12 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 	window.addEventListener('unhandledrejection', function (e) {
 		if (_unloading) return;                 // the page is going; its dead requests are not news
 		var why = e && (e.reason !== undefined ? e.reason : e);
-		try { toast(friendlyError(why), true); } catch (e2) { /* nothing left to tell them with */ }
+		// D-20260920-02: arm the diag ring BEFORE the toast, so a tap on the
+		// report affordance the toast is about to show already has something
+		// beyond this one line to send.
+		try { if (window.DaimondSupport) DaimondSupport.arm('error.thrown'); } catch (e3) {}
+		try { errorToastWithReport(friendlyError(why), 'error.thrown'); }
+		catch (e2) { try { toast(friendlyError(why), true); } catch (e4) { /* nothing left to tell them with */ } }
 		// The count, and never the error. What stands in for the message is the
 		// ORDER: the events before this one in the same batch say roughly where
 		// it happened, which is the trade this whole design makes.
@@ -9648,7 +9667,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 	// question, raised while the tab was hidden, blanked the phone the moment its
 	// owner came back to it.
 	var MOBILE_GUESTS = {
-		web: 1, doc: 1, msg: 1, compose: 1, tools: 1, spend: 1, term: 1, trash: 1,
+		web: 1, doc: 1, msg: 1, compose: 1, tools: 1, spend: 1, modeldash: 1, term: 1, trash: 1,
 		graph: 1, pending: 1,
 		// The Preview panel is a stage panel like the Doc panel it was split out of,
 		// and a phone shows one thing at a time. It was two SHEETS, raised in turn,
@@ -9709,6 +9728,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		if (name === 'work') Files.onOpen();
 		if (name === 'mail' && window.DaimondMail) { DaimondMail.onOpen(); Badge.seen('mail'); }
 		if (name === 'spend' && window.DaimondSpend) DaimondSpend.onOpen();
+		if (name === 'modeldash' && window.DaimondModelDash) DaimondModelDash.onOpen();
 		if (name === 'term' && window.DaimondTerm) DaimondTerm.onOpen();
 		if (name === 'trash' && window.DaimondTrashPanel) DaimondTrashPanel.onOpen();
 		if (name === 'social' && window.DaimondSocial) { DaimondSocial.onOpen(); postBadge(); }
@@ -11391,6 +11411,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			if (id === 'doc') Files.onDocOpen();
 			if (id === 'mail' && window.DaimondMail) { DaimondMail.onOpen(); Badge.seen('mail'); }
 			if (id === 'spend' && window.DaimondSpend) DaimondSpend.onOpen();
+			if (id === 'modeldash' && window.DaimondModelDash) DaimondModelDash.onOpen();
 			// The terminal is built on the first open and started there: a pty is a
 			// real program on the user's machine, so it begins when a person asks
 			// for one and not when the app loads.
@@ -15042,6 +15063,26 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		div.className = 'chat-msg chat-msg-error';
 		div.innerHTML = '<div class="chat-msg-content" style="color: var(--danger);"></div>';
 		div.querySelector('.chat-msg-content').textContent = friendlyError(msg);
+		// D-20260920-02 (#4): the chat's own error line is where a person
+		// actually IS when a turn fails -- give the one-tap report a home here,
+		// not only on the unhandled-rejection toast (`errorToastWithReport`)
+		// and not only behind a hunt for the Settings button, which is the
+		// exact "number in a column" B2 exists to fix. Arm before offering it:
+		// an `appendError` not already preceded by a `DaimondSupport.arm` call
+		// elsewhere (e.g. "Could not start agent") must still have something
+		// for the tap to send; `arm()` is a no-op once already armed.
+		if (window.DaimondSupport) {
+			try { DaimondSupport.arm('chat.error'); } catch (eArm) {}
+			var reportBtn = document.createElement('button');
+			reportBtn.type = 'button';
+			reportBtn.className = 'post-btn chat-err-report';
+			reportBtn.textContent = tOr('support.report_link', 'Report this');
+			reportBtn.addEventListener('click', function () {
+				reportBtn.disabled = true;
+				DaimondSupport.report('chat.error', function (said) { reportBtn.textContent = said; });
+			});
+			div.appendChild(reportBtn);
+		}
 		tagTurn(div);
 		postToChat(div);
 		pinBottom();
@@ -17949,6 +17990,31 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			// exactly when it mattered. A control nobody can find is a control
 			// that does not exist.
 			homeView.appendChild(el('div', 'admin-sec', tOr('home.sec_sync', 'Syncing and diagnostics')));
+			// ── "Something went wrong": the Feedback surface's half of D-20260920-02 ──
+			//
+			// The other tap of the same one-tap action the error toast offers
+			// (`errorToastWithReport`), for the person who dismissed that toast, or
+			// whose bug did not throw loudly enough to raise one, and wants to say so
+			// from here instead. Always visible — unlike the Diagnostics toggle below,
+			// this needs no opt-in to press, because pressing it IS the opt-in
+			// (`DaimondSupport` asks consent itself, once per account, the first time).
+			if (window.DaimondSupport) {
+				var reportOut = el('div', 'admin-note', '');
+				reportOut.hidden = true;
+				var reportBtn = item(tOr('settings.support_report', 'Something went wrong? Send a report'), function () {
+					reportBtn.disabled = true;
+					reportOut.hidden = false;
+					DaimondSupport.report('settings', function (said) {
+						reportOut.textContent = said;
+						reportBtn.disabled = false;
+					});
+				});
+				reportBtn.title = tOr('settings.support_help',
+					'Sends the app’s recent activity log — event names, ids, counts and a '
+						+ 'clock, never your messages, files or keys — to the Daimond team. Asked '
+						+ 'to agree once; every linked device remembers the answer.');
+				homeView.appendChild(reportOut);
+			}
 			if (window.DaimondSafe) {
 				var syncing = !DaimondSafe.on();
 				var sb = item(syncing
@@ -31221,6 +31287,10 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 					// reply length; anything else is read off the error itself.
 					tel('turn.fail', telOrd('FAILURES',
 						capFail ? 'too_long' : failureClass(telErr)));
+					// D-20260920-02: arm the diag ring, so a "Something went wrong" report
+					// made after this failure (from the chat's own error line, or from
+					// Settings) is not empty.
+					try { if (window.DaimondSupport) DaimondSupport.arm('turn.fail'); } catch (eArm) {}
 				} else {
 					tel('turn.done', telSecs);
 				}
@@ -52091,6 +52161,47 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		document.body.appendChild(box);
 		setTimeout(function () { box.style.transition = 'opacity .4s'; box.style.opacity = '0'; }, 3600);
 		setTimeout(function () { if (box.parentNode) box.parentNode.removeChild(box); }, 4200);
+	}
+
+	/// The error toast a genuine unhandled failure gets (D-20260920-02), rather
+	/// than `toast()`'s plain floater: an inline "Report" affordance the person
+	/// can tap without leaving what they were doing. Not folded into `toast()`
+	/// itself -- that helper is called for every soft validation failure in the
+	/// app ("Nothing selected", "Too long"), and a report link on all of those
+	/// would be noise; this is only for the one place that ALREADY means "the
+	/// app broke", the unhandled-rejection net above.
+	///
+	/// Held open longer than the plain toast (8s vs 3.6s) — long enough to read
+	/// and decide, not only to notice — and the box keeps `pointer-events:none`
+	/// exactly as `toast()` does, with the button alone opted back in, so it
+	/// never becomes a click-trap over the composer while it fades.
+	function errorToastWithReport(text, reason) {
+		try {
+			var box = document.createElement('div');
+			box.className = 'daimond-toast err';
+			box.style.cssText = 'position:fixed;left:50%;bottom:32px;transform:translateX(-50%);pointer-events:none;'
+				+ 'z-index:9999;padding:10px 16px;border-radius:8px;font-size:var(--fs-sm);max-width:80vw;'
+				+ 'background:var(--warn-bg);color:var(--text-primary);border:1px solid var(--danger);'
+				+ 'box-shadow:0 4px 16px rgba(0,0,0,.28);display:flex;gap:10px;align-items:center;flex-wrap:wrap;';
+			var msg = document.createElement('span');
+			msg.textContent = text;
+			box.appendChild(msg);
+			if (window.DaimondSupport) {
+				var btn = document.createElement('button');
+				btn.type = 'button';
+				btn.textContent = tOr('support.report_link', 'Report this');
+				btn.style.cssText = 'pointer-events:auto;cursor:pointer;border:1px solid currentColor;'
+					+ 'background:transparent;color:inherit;border-radius:6px;padding:2px 8px;font:inherit;';
+				btn.addEventListener('click', function () {
+					btn.disabled = true;
+					DaimondSupport.report(reason, function (said) { btn.textContent = said; });
+				});
+				box.appendChild(btn);
+			}
+			document.body.appendChild(box);
+			setTimeout(function () { box.style.transition = 'opacity .4s'; box.style.opacity = '0'; }, 8000);
+			setTimeout(function () { if (box.parentNode) box.parentNode.removeChild(box); }, 8600);
+		} catch (e) { toast(text, true); }		// fall back to the plain toast if anything above throws
 	}
 
 	/// Write bytes to a path in THIS ACCOUNT's OPFS sandbox, creating folders as

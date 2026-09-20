@@ -696,6 +696,17 @@ body.resizing-v { cursor: row-resize; user-select: none; -webkit-user-select: no
 .admin-item.danger { color: var(--danger); }
 .admin-item.danger:hover { background: var(--danger); color: var(--on-fill, #fff); }
 .admin-note { font-size: var(--fs-xs); color: var(--text-muted); padding: 4px 8px 8px; line-height: 1.5; }
+/* The stranger-support consent sheet (support.js, D-20260920-02). Same
+   `.modal`/`.modal-card`/`.post-acts`/`.post-btn` furniture as every other
+   dialog -- only its own text and status rows, and the chat error line's
+   inline report link, need a rule of their own. */
+.report-rule   { font-size: var(--fs-sm); color: var(--text-secondary); line-height: 1.5; margin: 4px 0 12px; }
+.report-status { font-size: var(--fs-sm); color: var(--text-secondary); min-height: 1.4em; margin: 4px 0; }
+/* `.report-send` is the sheet's one primary act -- filled the same way
+   `.imp-chip.on` marks the active chip (improve.css), so "Send this report"
+   reads as the main verb beside "Not now". */
+.report-send   { background: var(--accent-soft); border-color: var(--accent); color: var(--accent-text); }
+.chat-err-report { display: block; margin-top: 6px; font-size: var(--fs-xs); }
 /* One heading idiom for the whole drawer. The account (user-name) menu heads its
    groups with `.admin-sec` -- small, upper-case, muted -- while the Models,
    Credits and Push views wore `.settings-section h3` at `--fs-lg`, so the two

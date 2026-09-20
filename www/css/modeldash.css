@@ -1,0 +1,168 @@
+/* modeldash.css — the per-model dashboard panel.
+ *
+ * One row per model the person has actually used: tokens, cost, turns and a
+ * one-tap trust rating, read straight off the local cost ledger and the local
+ * rating store. The layout borrows spend.css's table and stat conventions
+ * (same variables, same rhythm) rather than inventing a second visual
+ * language for a screen that sits one click away from Spending. */
+
+.mdash-view {
+	height: 100%;
+	overflow-y: auto;
+	overflow-x: hidden;
+	padding: 12px 10px 24px;
+	font-size: var(--fs-sm);
+	color: var(--text-primary);
+}
+
+.mdash-sec { margin: 0 0 6px; }
+
+.mdash-sec-head {
+	display: flex;
+	align-items: baseline;
+	gap: 8px;
+	flex-wrap: wrap;
+	margin: 4px 0 10px;
+}
+.mdash-sec-title {
+	margin: 0;
+	font-size: var(--fs-lg);
+	font-weight: 600;
+	letter-spacing: 0.01em;
+}
+.mdash-sec-hint {
+	font-size: var(--fs-2xs-xs);
+	color: var(--text-muted);
+}
+
+/* The "this is a preview, nothing is sent" note. Quiet, not a warning. */
+.mdash-note {
+	color: var(--text-secondary);
+	font-size: var(--fs-xs-sm);
+	line-height: 1.5;
+	background: var(--bg-tertiary);
+	border: 1px solid var(--border);
+	border-radius: var(--radius);
+	padding: 12px 14px;
+	margin: 0 0 14px;
+}
+
+/* Week / Month toggle, the same shape as Spending's. */
+.mdash-toggle {
+	display: inline-flex;
+	gap: 2px;
+	padding: 2px;
+	background: var(--bg-tertiary);
+	border: 1px solid var(--border-strong);
+	border-radius: var(--radius-sm);
+	margin: 0 0 12px;
+}
+.mdash-toggle-btn {
+	appearance: none;
+	border: 0;
+	background: transparent;
+	color: var(--text-secondary);
+	font: inherit;
+	font-size: var(--fs-xs);
+	padding: 3px 12px;
+	border-radius: var(--radius-sm);
+	cursor: pointer;
+}
+.mdash-toggle-btn.on {
+	background: var(--bg-secondary);
+	color: var(--text-primary);
+	box-shadow: 0 1px 2px rgba(0, 0, 0, 0.15);
+}
+
+.mdash-empty {
+	color: var(--text-muted);
+	font-size: var(--fs-xs);
+	padding: 10px 0;
+}
+
+/* The model table. */
+.mdash-table {
+	width: 100%;
+	border-collapse: collapse;
+	margin: 4px 0 8px;
+	font-size: var(--fs-xs);
+}
+.mdash-table th {
+	text-align: left;
+	font-weight: 600;
+	color: var(--text-muted);
+	font-size: var(--fs-2xs);
+	padding: 4px 8px 4px 0;
+	border-bottom: 1px solid var(--border);
+	white-space: nowrap;
+}
+.mdash-table td {
+	padding: 6px 8px 6px 0;
+	border-bottom: 1px solid var(--border);
+	color: var(--text-secondary);
+	vertical-align: middle;
+}
+.mdash-table th.num,
+.mdash-table td.num {
+	text-align: right;
+	font-variant-numeric: tabular-nums;
+	padding-right: 0;
+	white-space: nowrap;
+}
+.mdash-table td.mdash-model {
+	color: var(--text-primary);
+	font-family: var(--font-mono);
+	font-size: var(--fs-2xs);
+	word-break: break-all;
+}
+.mdash-default-badge {
+	display: inline-block;
+	margin-left: 6px;
+	padding: 0 6px;
+	border-radius: 999px;
+	background: var(--bg-hover);
+	color: var(--text-muted);
+	font-size: var(--fs-3xs-2xs);
+	vertical-align: middle;
+}
+
+/* One tap up, one tap down. Plain glyph buttons, not icons -- the same
+   idiom tracker.js uses for a proposal's upvote, so a trust tap on a model
+   reads like the vote it is rather than a different control language. */
+.mdash-rate {
+	display: inline-flex;
+	gap: 4px;
+	align-items: center;
+	white-space: nowrap;
+}
+.mdash-rate-btn {
+	appearance: none;
+	border: 1px solid var(--border-strong);
+	background: var(--bg-tertiary);
+	color: var(--text-secondary);
+	font: inherit;
+	font-size: var(--fs-2xs);
+	line-height: 1;
+	padding: 4px 7px;
+	border-radius: var(--radius-sm);
+	cursor: pointer;
+	font-variant-numeric: tabular-nums;
+}
+.mdash-rate-btn:hover { filter: brightness(1.08); }
+.mdash-rate-up.mdash-has   { color: var(--ok); border-color: var(--ok); }
+.mdash-rate-down.mdash-has { color: var(--danger); border-color: var(--danger); }
+
+.mdash-divider {
+	height: 1px;
+	background: var(--border);
+	margin: 16px 0 14px;
+}
+
+/* What the contribution preview lists as not yet tracked -- honest about the
+   gap rather than a row that quietly reads zero. */
+.mdash-gap {
+	color: var(--text-muted);
+	font-size: var(--fs-2xs-xs);
+	line-height: 1.5;
+	margin: 0 0 14px;
+}

@@ -174,7 +174,7 @@
 	// meaning of every number already gathered under 16.
 	var PANELS = ['other', 'ai', 'rail', 'work', 'web', 'preview', 'doc', 'mail',
 		'msg', 'compose', 'term', 'graph', 'spend', 'trash', 'agents', 'tools',
-		'social', 'pending'];
+		'social', 'pending', 'modeldash'];
 
 	/// The tools a Diamond can run, BY THE NAME THE MODEL CALLS THEM BY.
 	///

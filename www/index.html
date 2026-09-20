@@ -82,6 +82,7 @@
 <link rel="stylesheet" href="css/models.css">
 <link rel="stylesheet" href="css/updater.css">
 <link rel="stylesheet" href="css/spend.css">
+<link rel="stylesheet" href="css/modeldash.css">
 <link rel="stylesheet" href="css/passkey.css">
 <!-- The beta passcode: the dialog a refused registration raises, and the block
      it leaves behind in the Credits drawer. -->
@@ -1241,6 +1242,26 @@
 			<div class="spend-view" id="spend-view"></div>
 		</aside>
 
+		<!-- Model stats: the private per-model dashboard -- tokens, cost, turns
+		     and a one-tap trust rating, read from the local cost ledger and a
+		     local rating store. Doubles as the "contribution preview" for the
+		     future anonymous Leaders board: what is drawn here is, to the
+		     integer, what a later opt-in would send. Nothing on this panel has
+		     a network path. See js/modeldash.js. -->
+		<aside class="panel modeldash" id="panel-modeldash" data-panel="modeldash" data-zone="dock" data-label="Model stats" data-i18n-label="panel.modeldash">
+			<div class="railhead"><span role="heading" aria-level="2" data-i18n="panel.modeldash">Model stats</span>
+				<span class="spend-actions">
+					<button class="addbtn" data-act="modeldash-refresh" title="Refresh" aria-label="Refresh" data-i18n-title="common.refresh" data-i18n-aria-label="common.refresh">
+						<svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M20 11a8 8 0 10-.6 4"/><path d="M20 4v5h-5"/></svg>
+					</button>
+					<button class="addbtn panel-close" data-close="modeldash" title="Close panel" data-i18n-title="common.close_panel">
+						<svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"/></svg>
+					</button>
+				</span>
+			</div>
+			<div class="mdash-view" id="modeldash-view"></div>
+		</aside>
+
 		<!-- Trash: what has been deleted, and is not gone. Deleting a chat or a
 		     Diamond moves it here and asks nothing; the two questions in this app
 		     that cannot be taken back are both in this panel. See js/trash.js. -->
@@ -1668,6 +1689,10 @@
      early so its no-op log() is defined before any seam that calls it, and its
      stored on/off switch is read before the first pull. -->
 <script src="js/diag.js"></script>
+<!-- support.js beside diag.js and breadcrumb.js: the "Something went wrong"
+     one-tap report (D-20260920-02). Reads both their rings, so it loads after
+     both and before anything that could report an error. -->
+<script src="js/support.js"></script>
 <!-- TRAINING WHEELS — remove after beta. debugshare.js: the temporary,
      owner-requested "share all data for debugging" aid. Classic script, so it
      defines window.DEBUG_SHARE before the deferred daimond.js module registers
@@ -1858,6 +1883,7 @@
 <script src="js/handpty.js"></script>
 <script src="js/terminal.js"></script>
 <script src="js/spend.js"></script>
+<script src="js/modeldash.js"></script>
 <!-- pwa.js beside updater.js, deliberately: the updater reads build.json and pwa.js
      passes what it read to the shell worker, so the worker's cache is emptied by
      the same reading that moves the update chip. -->

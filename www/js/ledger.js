@@ -321,10 +321,15 @@
 		return since(entries, now - MONTH_MS);
 	}
 
-	/// Per-model breakdown for a period, for a future UI. `period`
-	/// is one of 'session', 'week', 'month' (default 'month').
-	/// Returns an array of `{ model, usd, tokens, turns }`, sorted
-	/// by descending cost. This getter reads the clock.
+	/// Per-model breakdown for a period. `period` is one of 'session',
+	/// 'week', 'month' (default 'month'). Returns an array of
+	/// `{ model, usd, tokens, prompt, completion, turns, reportedUsd }`,
+	/// sorted by descending cost -- `tokens` is `prompt + completion` as
+	/// before, and the two are also split out so a caller that needs
+	/// "in vs out" (the model dashboard's contribution preview, which
+	/// mirrors the Leaders board's per-field table) does not re-walk the
+	/// ledger to get what this function had already summed. This getter
+	/// reads the clock.
 	function perModel(period) {
 		var entries = reprice(load());
 		var slice = periodSlice(entries, period, Date.now());
@@ -333,9 +338,11 @@
 		for (var i = 0; i < slice.length; i++) {
 			var e = slice[i];
 			var m = e.m || '';
-			if (!by[m]) by[m] = { model: m, usd: 0, tokens: 0, turns: 0, reportedUsd: 0 };
+			if (!by[m]) by[m] = { model: m, usd: 0, tokens: 0, prompt: 0, completion: 0, turns: 0, reportedUsd: 0 };
 			by[m].usd += e.u || 0;
 			by[m].tokens += tokensOf(e);
+			by[m].prompt += e.p || 0;
+			by[m].completion += e.c || 0;
 			by[m].turns += 1;
 			if (e.r) by[m].reportedUsd += e.u || 0;
 		}

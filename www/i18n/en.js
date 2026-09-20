@@ -173,6 +173,7 @@
 	'panel.mail':    'Email',
 	'panel.work':    'Workspace',
 	'panel.spend':   'Spending',
+	'panel.modeldash': 'Model stats',
 	'panel.term':    'Terminal',
 
 	// ── The chip row ───────────────────────────────────────────
@@ -1857,6 +1858,27 @@
 	// the gateway's own token instead is how three weeks of untranslated
 	// "infer" reached eight languages unnoticed.
 	'spend.cat_unlisted': 'Not accounted for',
+
+	// ── Model stats (private per-model dashboard + one-tap trust rating) ──
+	// Read-only over the local cost ledger and the local rating store; no
+	// network path. See www/js/modeldash.js.
+	'modeldash.title':        'Model stats',
+	'modeldash.hint':         'this device only',
+	'modeldash.preview_note': 'These are your own figures, kept on this device. Nothing here is sent anywhere. If Daimond later offers to share model figures anonymously with other people, this table — to the integer — is what that would send.',
+	'modeldash.no_usage':     'No model usage recorded yet.',
+	'modeldash.period_week':  'Week',
+	'modeldash.period_month': 'Month',
+	'modeldash.col_model':    'Model',
+	'modeldash.col_turns':    'Turns',
+	'modeldash.col_tok_in':   'Tokens in',
+	'modeldash.col_tok_out':  'Tokens out',
+	'modeldash.col_cost':     'Cost',
+	'modeldash.col_rating':   'Trust',
+	'modeldash.unknown_model': '(unknown)',
+	'modeldash.default_badge': 'default',
+	'modeldash.rate_up_help':   'I trust this model. Taps add up; they are not a single switch.',
+	'modeldash.rate_down_help': 'I do not trust this model. Taps add up; they are not a single switch.',
+	'modeldash.gap_note': 'Not shown: failed turns, interrupted turns and a turn-time spread. Daimond does not record those yet, so this table does not guess at them.',
 
 	// ── Tools ──────────────────────────────────────────────────
 	// `tools.head` and `tools.shop_fine` are placed inside markup, so any HTML
@@ -3579,6 +3601,22 @@
 	'settings.diag_shared':     'Shared — thank you',
 	'settings.diag_share_fail': 'Could not share',
 	'settings.diag_share_note': 'Sends this device\'s diagnostic log to the team, never message text.',
+
+	// The "Something went wrong" report, D-20260920-02: the error toast's
+	// affordance (`errorToastWithReport` in daimond.js) and its Settings
+	// twin, and the one-time consent sheet `support.js` shows for either.
+	// See www/js/support.js.
+	'settings.support_report': 'Something went wrong? Send a report',
+	'settings.support_help':   'Sends the app’s recent activity log — event names, ids, counts and a clock, never your messages, files or keys — to the Daimond team. Asked to agree once; every linked device remembers the answer.',
+	'support.report_link':     'Report this',
+	'support.title':           'Send a report?',
+	'support.rule':            'This sends the app’s recent activity log — event names, ids, counts and a clock, never your messages, files or keys — to the Daimond team, so this problem can be diagnosed. Asked once for this account; every linked device remembers the answer.',
+	'support.send':            'Send this report',
+	'support.cancel':          'Not now',
+	'support.done':            'Close',
+	'support.sending':         'Sending a report…',
+	'support.sent':            'Sent — thank you.',
+	'support.send_failed':     'Could not send',
 
 	// ── TRAINING WHEELS — the temporary debug-data-sharing feature ──
 	// Remove these with www/js/debugshare.js and the DEBUG_SHARE touch points in

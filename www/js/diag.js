@@ -131,7 +131,11 @@
 			log('diagnostics on', why || '');
 		}
 		try {
-			window.dispatchEvent(new CustomEvent('daimond:diagnostics', { detail: { on: enabled } }));
+			// `why` rides along so a listener (support.js's auto-arm) can tell a
+			// PERSON's own Settings toggle (`why === 'settings'`) apart from this
+			// module's own auto-arm/auto-expire calls, and never claim ownership
+			// of a ring it did not switch on.
+			window.dispatchEvent(new CustomEvent('daimond:diagnostics', { detail: { on: enabled, why: why || '' } }));
 		} catch (e) {}
 	}
 
