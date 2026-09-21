@@ -31218,6 +31218,30 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 				// 2026-09-15: a turn that reasoned itself to nothing read as `done` here
 				// even after `endedHow` learned the word, because this line never asked.
 				var lastHow = pendingEnd ? String(pendingEnd.how || '') : '';
+				// D-20260921-01 — DURATION AND OUTCOME, stamped here because this is the
+				// one point every exit already funnels through and every flag the
+				// classification needs (`threw`, `sawError`, `capFail`, `_unloading`,
+				// `handedBack`, `chat._aborted`) is settled by now.
+				//
+				// `chat._aborted` (the Stop button) and `_unloading` (the tab or app
+				// going away mid-turn -- "an aborted request is not a failure", the
+				// comment on `_unloading`'s own declaration) both read as INTERRUPTED,
+				// not failed: neither is the model or the provider going wrong. So does
+				// a dropped connection handed back for Continue (`handedBack`): the
+				// badge it draws, and the message it pushes, already call that turn
+				// `interrupted` rather than an error. What is left under `threw ||
+				// sawError` once those three are excluded is a genuine provider/model
+				// failure -- a refusal, a malformed reply, a road that never recovers --
+				// and that is the only case tagged FAILED. Anything that reached here
+				// without throwing or a mid-stream error event completed, whatever shape
+				// the reply took (`lastHow`'s silent/reasoned_only/malformed are still a
+				// completion; they end the turn, they do not fail it).
+				var turnOutcome = chat._aborted ? 'interrupted'
+					: (threw && _unloading) ? 'interrupted'
+					: (threw && handedBack) ? 'interrupted'
+					: (threw || sawError) ? 'failed'
+					: 'completed';
+				recordTurnOutcome(chat.model, chat.provider, umid, Date.now() - telT0, turnOutcome);
 				// THE ENDING IS THE LAST RECORD OF THE TURN. Stored here, so it sits under
 				// the answer it is about rather than over it, and so a reload draws it where
 				// this sitting drew it.
@@ -31477,6 +31501,31 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		// from counters, so it costs a string and a file write, and a digest
 		// that lags the work it describes is worth less than no digest at all.
 		try { writeUsageDigest(); } catch (e) { /* best-effort */ }
+	}
+
+	/// D-20260921-01 — stamp how long a turn took and how it ended onto its
+	/// ledger entry, so `DaimondLedger.perModel` can report a median turn
+	/// time and a failure/stopped rate (the model dashboard's own
+	/// `gapFields`, until now).
+	///
+	/// Called from the ONE place every turn's ending is already funnelled
+	/// through (`runTurn`'s `finally`, `doSteer`'s `closeFeedTurn`), after
+	/// its outcome is settled. Most turns already have a billed ledger entry
+	/// under this `turnId` (`recordSpend`/`meterDiamondTurn` ran earlier in
+	/// the same turn) -- `patchOutcome` finds and stamps it. A turn that
+	/// billed nothing at all -- it failed, or was stopped, before a single
+	/// token came back -- has no entry to find, so one is recorded fresh,
+	/// carrying the duration and outcome only: `outcomeOnly` skips pricing
+	/// entirely and marks it `ol`, so it is never counted as a billed turn.
+	function recordTurnOutcome(model, provider, turnId, durationMs, outcome) {
+		if (!window.DaimondLedger || !turnId) return;
+		try {
+			var patched = DaimondLedger.patchOutcome(turnId, durationMs, outcome);
+			if (!patched) {
+				DaimondLedger.record({ ts: Date.now(), model: model || '', provider: provider || '',
+					turnId: turnId, durationMs: durationMs, outcome: outcome, outcomeOnly: true });
+			}
+		} catch (e) { /* ledger is best-effort */ }
 	}
 
 	// The global spend readout at the foot of the Diamonds/Chats panel: day
@@ -49396,6 +49445,26 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 				out:  String(out || 'done'),
 				dia:  1,
 			});
+			// D-20260921-01 — duration and outcome, the daimon's half of what
+			// `runTurn`'s `finally` stamps for an ordinary chat turn; see the
+			// comment there for the full classification. Only two outcomes are
+			// reachable here: the failure exit's `'error'`, and
+			// the engine's own ending word from the success exit -- there is no
+			// signal in this loop today for a daimon turn the user STOPPED (no
+			// `_aborted`-equivalent is read here the way `runTurn` reads
+			// `chat._aborted`), so a stopped daimon turn is indistinguishable from
+			// a failed one and is tagged FAILED rather than guessed at as
+			// interrupted. Flagged, not fixed, in this build -- see the session's
+			// return note.
+			// D-20260921 audit fix -- keyed on `dmid`, THIS steer's own id, not `rec.id`
+			// (the daimon chat's id, shared by every steer it ever runs): `rec.id` found
+			// and patched the PREVIOUS steer's billed entry instead of this one's, so a
+			// failed turn tagged the wrong turn failed and this turn was never recorded
+			// at all. `dmid` is generated fresh per call (`newMid()`, above) and is the
+			// same id `meterDiamondTurn` below now bills against, so the entry `record()`
+			// wrote and the outcome patched here are always the same entry.
+			recordTurnOutcome(dsPair.model, dsPair.provider, dmid, Date.now() - dsT0,
+				(out === 'error') ? 'failed' : 'completed');
 		};
 		// The feed's `round`, throttled -- this is the loop that runs ~150 rounds; see
 		// the same pair in `runTurn`.
@@ -49706,7 +49775,9 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		// and the Diamond's Links section stay stale until something unrelated
 		// redraws them, and the world model looks like it did not take.
 		signalLinksChanged();
-			meterDiamondTurn(fa, diamondId, rec.id);
+			// D-20260921 audit fix -- `dmid`, not `rec.id`; see the comment on
+			// `recordTurnOutcome` above, which now patches by the same id this bills under.
+			meterDiamondTurn(fa, diamondId, dmid);
 			crystalSay('');
 			await refreshDiamondAfterChange();
 			Files.refresh();

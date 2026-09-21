@@ -47,17 +47,18 @@ const MAIN = '/main.typ';
 
 // ── The engine flag: which compiler lays the LIVE VIEW out ──────────────────
 //
-// Two live-view engines, and a flag chooses between them. `typst` is everything above
-// -- typst.ts's vendored compiler, drawn through its renderer -- and is the DEFAULT, so
-// nothing changes for anyone until the flag is flipped. `austenite` is the fe2o3
+// Two live-view engines, and a flag chooses between them. `austenite` is the fe2o3
 // compiler (`fe2o3_austenite`), fed to the changed-only delta consumer in
-// `typstwatch.js`; it is dark until its wasm is vendored under `www/vendor/austenite`.
+// `typstwatch.js`, and is the DEFAULT since its wasm is vendored under
+// `www/vendor/austenite`. `typst` is typst.ts's vendored compiler drawn through its
+// renderer -- everything above -- and stays selectable for reversibility.
 //
 // It is a localStorage override rather than a build constant so the A/B can flip it per
-// run on the owner's own device -- `DaimondTypst.engine('austenite')` then Rebuild --
-// without a redeploy. It gates the LIVE VIEW only: the PDF publishing path
-// (`compileProject`, the Compile button, export) is always typst.ts.
-const ENGINE_DEFAULT = 'typst';
+// run on the owner's own device -- `DaimondTypst.engine('typst')` then Rebuild -- without
+// a redeploy. Either value is remembered, so a device pinned to `typst` overrides the
+// `austenite` default and vice versa. It gates the LIVE VIEW only: the PDF publishing
+// path (`compileProject`, the Compile button, export) is always typst.ts.
+const ENGINE_DEFAULT = 'austenite';
 const ENGINE_KEY = 'daimond-typst-engine';
 let _engine = null;			// resolved once from localStorage, then cached
 
@@ -72,7 +73,10 @@ export function engine(name) {
 	if (_engine == null) {
 		_engine = ENGINE_DEFAULT;
 		try {
-			if (window.localStorage.getItem(ENGINE_KEY) === 'austenite') _engine = 'austenite';
+			// Either value overrides, so a device pinned to `typst` survives the
+			// `austenite` default -- the A/B stays reversible from localStorage.
+			const stored = window.localStorage.getItem(ENGINE_KEY);
+			if (stored === 'austenite' || stored === 'typst') _engine = stored;
 		} catch (e) { /* no storage: the default stands */ }
 	}
 	return _engine;
@@ -810,11 +814,11 @@ if (typeof window !== 'undefined' && !window.DaimondTypst) {
 		/// `{ error }`. What the live view draws, and what makes it affordable.
 		compileProjectVector: function (project) { return compileProjectVector(project); },
 		/// The same project, laid out as a CHANGED-ONLY DELTA for the Austenite engine:
-		/// `{ version, order, changed, reset }` or `{ error }`. Dark until the flag is
-		/// set and the Austenite wasm is vendored.
+		/// `{ version, order, changed, reset }` or `{ error }`. The default live-view
+		/// path now that the Austenite wasm is vendored.
 		compileProjectDelta: function (project) { return compileProjectDelta(project); },
-		/// Read or set which engine lays the live view out: `'typst'` (default) or
-		/// `'austenite'`. The A/B flips this between runs on one device.
+		/// Read or set which engine lays the live view out: `'austenite'` (default)
+		/// or `'typst'`. The A/B flips this between runs on one device.
 		engine: engine,
 		/// What the compiler will say ABOUT the document it last laid out -- the
 		/// headings the live view's section rail is made of. It lays nothing out

@@ -368,9 +368,10 @@ let rinit = null;		// the renderer's wasm exports, for `rheap`
 
 // ── The changed-only delta cache, for the Austenite engine ──────────────────
 //
-// A SECOND DRAW PATH, DARK BY DEFAULT (see `DaimondTypst.engine()` in typst.js). The
-// typst.ts path above draws bands out of ONE vector artifact (`vec`); the Austenite
-// path draws each page from its OWN cached SVG and is fed only the pages that changed.
+// THE DEFAULT DRAW PATH (see `DaimondTypst.engine()` in typst.js; typst.ts stays
+// selectable). The typst.ts path above draws bands out of ONE vector artifact (`vec`);
+// the Austenite path draws each page from its OWN cached SVG and is fed only the pages
+// that changed.
 // The two never run at once: entering the delta path clears `vec`, and a vector `draw`
 // clears the cache, so `ensureWindow`/`resized` can tell which is live by `vec` versus
 // `order.length` and nothing mixes across an A/B flip of the flag.

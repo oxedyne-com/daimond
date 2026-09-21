@@ -105,7 +105,12 @@
 	// without this file reaching for a global the test did not set up.
 	//
 	// Returns `[{ model, tokens, promptTokens, completionTokens, usd, turns,
-	// reportedUsd, up, down }]` in `perModel`'s own order (dearest first).
+	// reportedUsd, up, down, medianTurnMs, turnsCompleted, turnsFailed,
+	// turnsStopped, outcomeTurns, failureRate }]` in `perModel`'s own order
+	// (dearest first). The outcome fields (D-20260921-01) are `null`/`0` for
+	// a model whose turns predate turn-time tracking, or that has none in
+	// the window -- `outcomeTurns === 0` is the panel's own signal to show
+	// "not recorded" rather than a rate it did not earn.
 	function dashboardRows(period, ledgerApi) {
 		var L = ledgerApi || (typeof window !== 'undefined' ? window.DaimondLedger : null);
 		var rows = [];
@@ -125,18 +130,28 @@
 				reportedUsd:      r.reportedUsd || 0,
 				up:               rt.up || 0,
 				down:             rt.down || 0,
+				medianTurnMs:     (typeof r.medianTurnMs === 'number') ? r.medianTurnMs : null,
+				turnsCompleted:   r.turnsCompleted || 0,
+				turnsFailed:      r.turnsFailed || 0,
+				turnsStopped:     r.turnsStopped || 0,
+				outcomeTurns:     r.outcomeTurns || 0,
+				failureRate:      (typeof r.failureRate === 'number') ? r.failureRate : null,
 			};
 		});
 	}
 
 	/// The design's per-contribution fields this build genuinely has no
 	/// record of, named once so the panel can say so honestly instead of
-	/// drawing a zero it did not earn. `turns failed` / `turns stopped` need
-	/// a provider-outcome tag on the ledger entry; the turn-time histogram
-	/// needs a start/finish timestamp. Neither is recorded anywhere on the
-	/// device today -- see the session's return note.
+	/// drawing a zero it did not earn.
+	///
+	/// D-20260921-01 added a duration and an outcome tag to the ledger, so
+	/// median turn time and the failed/stopped rate are real figures now
+	/// (`medianTurnMs`/`failureRate` above) and have left this list. What
+	/// remains is the turn-time SPREAD the design's histogram wants -- fixed
+	/// duration buckets, not just the middle value -- which still needs
+	/// storage this build does not add.
 	function gapFields() {
-		return ['turnsFailed', 'turnsStopped', 'turnSecondsHistogram'];
+		return ['turnSecondsHistogram'];
 	}
 
 	var PURE = {
@@ -172,6 +187,22 @@
 		if (n >= 1e6) return (n / 1e6).toFixed(1) + 'M';
 		if (n >= 1e3) return (n / 1e3).toFixed(1) + 'k';
 		return String(n);
+	}
+
+	// Median turn time, ms -> a short reading: seconds to one decimal past a
+	// second, whole milliseconds under it. `null` (no turn in the window
+	// carries a duration) reads as an em dash, not a zero it did not earn.
+	function fmtMs(ms) {
+		if (typeof ms !== 'number') return '—';
+		if (ms >= 1000) return (ms / 1000).toFixed(1) + 's';
+		return Math.round(ms) + 'ms';
+	}
+
+	// Failed-or-stopped share of the turns this build has an outcome for,
+	// `null` (none recorded) reading the same em dash `fmtMs` does.
+	function fmtRate(rate) {
+		if (typeof rate !== 'number') return '—';
+		return Math.round(rate * 100) + '%';
 	}
 
 	function sectionHead(title, hint) {
@@ -224,9 +255,10 @@
 		var tbl = el('table', 'mdash-table');
 		var thead = el('tr');
 		[t('modeldash.col_model'), t('modeldash.col_turns'), t('modeldash.col_tok_in'),
-			t('modeldash.col_tok_out'), t('modeldash.col_cost'), t('modeldash.col_rating')]
+			t('modeldash.col_tok_out'), t('modeldash.col_cost'), t('modeldash.col_median'),
+			t('modeldash.col_fail_rate'), t('modeldash.col_rating')]
 			.forEach(function (h, i) {
-				thead.appendChild(el('th', i > 0 && i < 5 ? 'num' : null, h));
+				thead.appendChild(el('th', i > 0 && i < 7 ? 'num' : null, h));
 			});
 		var thd = el('thead'); thd.appendChild(thead); tbl.appendChild(thd);
 
@@ -243,6 +275,15 @@
 			tr.appendChild(el('td', 'num', fmtTokens(r.promptTokens)));
 			tr.appendChild(el('td', 'num', fmtTokens(r.completionTokens)));
 			tr.appendChild(el('td', 'num', fmtUsd(r.usd)));
+			// D-20260921-01 -- real figures now the ledger carries a duration and
+			// an outcome per turn; `outcomeTurns === 0` (nothing in this window
+			// recorded either) is the one case still shown as "—", not "0%".
+			var medianTd = el('td', 'num', fmtMs(r.medianTurnMs));
+			medianTd.title = t('modeldash.col_median_help');
+			tr.appendChild(medianTd);
+			var failTd = el('td', 'num', r.outcomeTurns > 0 ? fmtRate(r.failureRate) : '—');
+			failTd.title = t('modeldash.col_fail_rate_help', { failed: r.turnsFailed, stopped: r.turnsStopped });
+			tr.appendChild(failTd);
 			var rateTd = el('td');
 			rateTd.appendChild(rateCell(r.model));
 			tr.appendChild(rateTd);

@@ -1873,12 +1873,18 @@
 	'modeldash.col_tok_in':   'Tokens in',
 	'modeldash.col_tok_out':  'Tokens out',
 	'modeldash.col_cost':     'Cost',
+	'modeldash.col_median':   'Median',
+	'modeldash.col_fail_rate': 'Fail %',
 	'modeldash.col_rating':   'Trust',
 	'modeldash.unknown_model': '(unknown)',
 	'modeldash.default_badge': 'default',
 	'modeldash.rate_up_help':   'I trust this model. Taps add up; they are not a single switch.',
 	'modeldash.rate_down_help': 'I do not trust this model. Taps add up; they are not a single switch.',
-	'modeldash.gap_note': 'Not shown: failed turns, interrupted turns and a turn-time spread. Daimond does not record those yet, so this table does not guess at them.',
+	// D-20260921-01 -- the ledger now carries a duration and an outcome per
+	// turn, so these two are real figures rather than a gap.
+	'modeldash.col_median_help':    'Median time from send to answer, across turns this window recorded a duration for.',
+	'modeldash.col_fail_rate_help': 'Failed or stopped turns as a share of turns with a recorded outcome ({failed} failed, {stopped} stopped).',
+	'modeldash.gap_note': 'Not shown: how turn time is spread out — only the median. Daimond does not record the full spread yet.',
 
 	// ── Tools ──────────────────────────────────────────────────
 	// `tools.head` and `tools.shop_fine` are placed inside markup, so any HTML

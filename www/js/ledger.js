@@ -60,7 +60,7 @@
 		var changed = false;
 		for (var i = 0; i < entries.length; i++) {
 			var e = entries[i];
-			if (!e || e.r || e.rp) continue;
+			if (!e || e.r || e.rp || e.ol) continue;	// `ol`: outcome-only, nothing to price
 			var res;
 			try { res = window.DaimondPricing.priceFor(e.m || '', e.p || 0, e.c || 0, e.ca || 0, e.pv || ''); }
 			catch (err) { continue; }
@@ -197,9 +197,20 @@
 	/// Absent a reported figure the table prices it as before, now
 	/// with the real cached count.
 	///
-	/// The stored entry is compact: `{ t, m, p, c, ca, u, pv, r, e, tid }`
+	/// The stored entry is compact: `{ t, m, p, c, ca, u, pv, r, e, tid, dur, out, ol }`
 	/// where `u` is USD. Returns the entry, or null when the input is
 	/// unusable.
+	///
+	/// `durationMs` and `outcome` are additive: how long the turn took, end to
+	/// end, and how it ended -- `'completed'`, `'failed'` or `'interrupted'`.
+	/// Neither changes what is billed; a caller that never passes them gets
+	/// exactly the entry it always got. `outcomeOnly` is for a turn that never
+	/// billed anything at all (a failure before a single token came back, or
+	/// one the user stopped before that point) -- it skips pricing entirely
+	/// (there is nothing to price) and marks the entry `ol`, so the turn/cost
+	/// aggregates in `perModel` -- which counted only billed turns before this
+	/// build and must go on doing so -- pass over it, while the duration and
+	/// outcome it carries are still counted.
 	function record(turn) {
 		if (!turn || typeof turn.ts !== 'number') return null;
 		var model = turn.model || '';
@@ -211,7 +222,11 @@
 			&& turn.costUsd > 0) ? turn.costUsd : null;
 
 		var usd = 0, estimated = false;
-		if (reported !== null) {
+		if (turn.outcomeOnly) {
+			// Nothing was billed -- there is nothing to price, and asking
+			// `DaimondPricing` for zero tokens would only risk it marking a
+			// true zero as `estimated`.
+		} else if (reported !== null) {
 			usd = reported;
 		} else if (window.DaimondPricing && typeof window.DaimondPricing.priceFor === 'function') {
 			// Price through DaimondPricing; if it is somehow absent, record
@@ -227,8 +242,15 @@
 		// figure is not an approximation at all and must not be dressed as one.
 		var entry = { t: turn.ts, m: model, p: p, c: c, ca: ca, u: usd, e: estimated };
 		if (provider) entry.pv = provider;
-		if (reported !== null) entry.r = 1;
+		if (!turn.outcomeOnly && reported !== null) entry.r = 1;
 		if (turn.turnId) entry.tid = String(turn.turnId);
+		if (typeof turn.durationMs === 'number' && isFinite(turn.durationMs) && turn.durationMs >= 0) {
+			entry.dur = Math.round(turn.durationMs);
+		}
+		if (turn.outcome === 'completed' || turn.outcome === 'failed' || turn.outcome === 'interrupted') {
+			entry.out = turn.outcome;
+		}
+		if (turn.outcomeOnly) entry.ol = 1;
 		var entries = load();
 		entries.push(entry);
 		entries = prune(entries, turn.ts);
@@ -236,11 +258,54 @@
 		return entry;
 	}
 
+	/// Attach a duration and an outcome to the entry already recorded for
+	/// `turnId` -- for the common case, a billed turn whose cost `record()`
+	/// already wrote before its duration and outcome were known (both are
+	/// only settled once the turn has fully ended). Finds the MOST RECENT
+	/// entry carrying that `tid` and patches it in place; a no-op, returning
+	/// null, when no such entry exists -- the caller's own fallback is to
+	/// `record` a fresh `outcomeOnly` entry instead, for a turn that billed
+	/// nothing to patch.
+	///
+	/// Best-effort like every other write here: a caller that races this
+	/// against nothing (there is no concurrent write path in a single tab)
+	/// simply finds what `record` last wrote.
+	function patchOutcome(turnId, durationMs, outcome) {
+		if (!turnId) return null;
+		var entries = load();
+		var tid = String(turnId);
+		for (var i = entries.length - 1; i >= 0; i--) {
+			var e = entries[i];
+			if (!e || e.tid !== tid) continue;
+			if (typeof durationMs === 'number' && isFinite(durationMs) && durationMs >= 0) {
+				e.dur = Math.round(durationMs);
+			}
+			if (outcome === 'completed' || outcome === 'failed' || outcome === 'interrupted') {
+				e.out = outcome;
+			}
+			save(entries);
+			return e;
+		}
+		return null;
+	}
+
 	// ── Aggregation ────────────────────────────────────────────
 	// Tokens counted in a total are prompt + completion (cached
 	// tokens are a subset of the prompt, so they are not added
 	// again).
 	function tokensOf(e) { return (e.p || 0) + (e.c || 0); }
+
+	// The middle value of a numeric array, or null when it is empty. The
+	// median rather than the mean, so one very slow (or very fast) turn does
+	// not swing the figure the way an outlier swings an average -- the same
+	// reason the Leaders design (`daimond_leaderboards_design.md`) medians
+	// cost-per-turn across contributors instead of summing it.
+	function median(nums) {
+		if (!nums || nums.length === 0) return null;
+		var sorted = nums.slice().sort(function (a, b) { return a - b; });
+		var mid = Math.floor(sorted.length / 2);
+		return sorted.length % 2 ? sorted[mid] : (sorted[mid - 1] + sorted[mid]) / 2;
+	}
 
 	// Entries at or after `since`, chronologically sorted.
 	function since(entries, since) {
@@ -323,13 +388,25 @@
 
 	/// Per-model breakdown for a period. `period` is one of 'session',
 	/// 'week', 'month' (default 'month'). Returns an array of
-	/// `{ model, usd, tokens, prompt, completion, turns, reportedUsd }`,
-	/// sorted by descending cost -- `tokens` is `prompt + completion` as
-	/// before, and the two are also split out so a caller that needs
-	/// "in vs out" (the model dashboard's contribution preview, which
-	/// mirrors the Leaders board's per-field table) does not re-walk the
-	/// ledger to get what this function had already summed. This getter
-	/// reads the clock.
+	/// `{ model, usd, tokens, prompt, completion, turns, reportedUsd,
+	/// medianTurnMs, turnsCompleted, turnsFailed, turnsStopped, outcomeTurns,
+	/// failureRate }`, sorted by descending cost -- `tokens` is
+	/// `prompt + completion` as before, and the two are also split out so a
+	/// caller that needs "in vs out" (the model dashboard's contribution
+	/// preview, which mirrors the Leaders board's per-field table) does not
+	/// re-walk the ledger to get what this function had already summed. This
+	/// getter reads the clock.
+	///
+	/// The outcome fields are read off `dur`/`out`/`ol`, which a turn only
+	/// carries once the app has been built with turn-time tracking; an
+	/// older entry has neither and is silently excluded from them, the same
+	/// way it was excluded from `reportedUsd` before this field existed.
+	/// `turnsFailed` and `turnsStopped` use the app's own established words
+	/// (`modeldash.js`'s `gapFields`/`gap_note`) for what the ledger itself
+	/// stores as the outcome `'failed'` / `'interrupted'`. `medianTurnMs` is
+	/// null, and `failureRate` is null, when no turn in the window carries a
+	/// duration or an outcome -- a window with no data says so rather than
+	/// showing a zero it did not earn.
 	function perModel(period) {
 		var entries = reprice(load());
 		var slice = periodSlice(entries, period, Date.now());
@@ -339,15 +416,41 @@
 			var e = slice[i];
 			var m = e.m || '';
 			if (!by[m]) by[m] = { model: m, usd: 0, tokens: 0, prompt: 0, completion: 0, turns: 0, reportedUsd: 0 };
-			by[m].usd += e.u || 0;
-			by[m].tokens += tokensOf(e);
-			by[m].prompt += e.p || 0;
-			by[m].completion += e.c || 0;
-			by[m].turns += 1;
-			if (e.r) by[m].reportedUsd += e.u || 0;
+			// Outcome accumulators, kept off the object literal above (as a
+			// separate statement guarded the same way) so the `nosplit` break
+			// in modeldash.test.mjs -- which patches that exact literal --
+			// still finds it unchanged.
+			if (!by[m]._durs) { by[m]._durs = []; by[m]._completed = 0; by[m]._failed = 0; by[m]._interrupted = 0; }
+			// An `ol` (outcome-only) entry billed nothing and must not
+			// inflate the turn/cost figures the table already showed --
+			// only a billed entry (the shape every entry had before this
+			// build) counts toward them.
+			if (!e.ol) {
+				by[m].usd += e.u || 0;
+				by[m].tokens += tokensOf(e);
+				by[m].prompt += e.p || 0;
+				by[m].completion += e.c || 0;
+				by[m].turns += 1;
+				if (e.r) by[m].reportedUsd += e.u || 0;
+			}
+			if (typeof e.dur === 'number' && e.dur >= 0) by[m]._durs.push(e.dur);
+			if (e.out === 'completed') by[m]._completed += 1;
+			else if (e.out === 'failed') by[m]._failed += 1;
+			else if (e.out === 'interrupted') by[m]._interrupted += 1;
 		}
 		var out = [];
-		for (var k in by) out.push(by[k]);
+		for (var k in by) {
+			var acc = by[k];
+			var outcomeTurns = acc._completed + acc._failed + acc._interrupted;
+			acc.medianTurnMs   = median(acc._durs);
+			acc.turnsCompleted = acc._completed;
+			acc.turnsFailed    = acc._failed;
+			acc.turnsStopped   = acc._interrupted;
+			acc.outcomeTurns   = outcomeTurns;
+			acc.failureRate    = outcomeTurns > 0 ? (acc._failed + acc._interrupted) / outcomeTurns : null;
+			delete acc._durs; delete acc._completed; delete acc._failed; delete acc._interrupted;
+			out.push(acc);
+		}
 		out.sort(function (a, b) { return b.usd - a.usd; });
 		return out;
 	}
@@ -463,7 +566,8 @@
 	}
 
 	window.DaimondLedger = {
-		record:      record,
+		record:       record,
+		patchOutcome: patchOutcome,
 		totals:      totals,
 		perModel:    perModel,
 		perProvider: perProvider,
