@@ -457,6 +457,11 @@ export async function open(opts = {}) {
 		// settles the heap before a reading); nothing else here wants them, so they
 		// are passed per call rather than made the default. See dev/verify_collectheap.mjs.
 		extraArgs = [],
+		// A directory to record this session's video into (Playwright's own
+		// `recordVideo`, one .webm per page). For a drive that is FOR WATCHING --
+		// a demo, an owner recording -- rather than for asserting on. Left unset,
+		// nothing is recorded, as before.
+		video     = null,
 	} = opts;
 
 	// Before a browser is even launched: is the mock this run will read the mock
@@ -550,6 +555,7 @@ export async function open(opts = {}) {
 			hasTouch:   touch,
 			...(ua ? { userAgent: ua } : {}),
 			...(timezoneId ? { timezoneId: timezoneId } : {}),
+			...(video ? { recordVideo: { dir: video, size: { width: 1500, height: 950 } } } : {}),
 		});
 	} else if (engine === 'chromium') {
 		browser = await chromium.launchPersistentContext(profileDir, {
@@ -562,6 +568,7 @@ export async function open(opts = {}) {
 			...(isMobile ? { isMobile: true } : {}),
 			...(ua ? { userAgent: ua } : {}),
 			...(timezoneId ? { timezoneId: timezoneId } : {}),
+			...(video ? { recordVideo: { dir: video, size: { width: 1500, height: 950 } } } : {}),
 		});
 	} else {
 		throw new Error('unknown engine "' + engine + '"; set DAIMOND_BROWSER to chromium or webkit');
