@@ -29,9 +29,38 @@
         given, so committing `parcelRefs` names the stranded chunk
         live where committing the bare index would have swept it.
 
+   THE ROOT FIX (S-SYNC #2, part 2). The strand above is DETECTED and
+   belted, but a device whose ~5 MiB localStorage box is full still
+   cannot write ANY index, so a large Diamond is held for ever and
+   nothing frees the box. The index therefore LEFT the box: it lives in
+   IndexedDB (durable.js), whose origin quota is hundreds of megabytes
+   and is not shared with the mailbox or the ledger. Section 4 drives
+   the REAL durable.js + cloud.js over a fake IndexedDB and a full box
+   and proves the four new facts:
+     - migrate() moves the index into IndexedDB and frees the box,
+       removing the localStorage key ONLY after the write commits.
+     - with the box full, contentSet still lands and the content rides
+       by reference; indexDurable() is true after settle() (this is
+       IMPOSSIBLE without the fix — `--break nodurable`).
+     - a durable write clears the storage alarm (`--break noalarmclear`).
+     - a lost durable write raises the alarm and holds indexDurable()
+       false, and migrate() loses nothing if the write throws
+       (`--break migrateearly`).
+
+   A MID-SESSION IndexedDB DROP (Safari eviction) must not empty the index:
+   durable.js reopens on the next op and cloud.js serves its sticky in-memory
+   cache, so a dropped connection never rebuilds the index from the emptied box
+   and sweeps cloud-only files. Section 5 forces an `onclose` and proves it
+   (`--break nostickyread` reads the box back; `--break noreopen` resurrects it).
+
    Run:   node www/js/quotamanifest.test.mjs
           node www/js/quotamanifest.test.mjs --break ignorequota
           node www/js/quotamanifest.test.mjs --break noindexrefs
+          node www/js/quotamanifest.test.mjs --break nodurable
+          node www/js/quotamanifest.test.mjs --break migrateearly
+          node www/js/quotamanifest.test.mjs --break noalarmclear
+          node www/js/quotamanifest.test.mjs --break noreopen
+          node www/js/quotamanifest.test.mjs --break nostickyread
    ============================================================ */
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
@@ -45,7 +74,7 @@ function check(name, cond, detail) {
 	else { console.log('  FAIL ' + line); failures++; }
 }
 
-const KNOWN = ['ignorequota', 'noindexrefs'];
+const KNOWN = ['ignorequota', 'noindexrefs', 'nodurable', 'migrateearly', 'noalarmclear', 'noreopen', 'nostickyread'];
 const BREAK = (() => {
 	const i = process.argv.indexOf('--break');
 	return (i >= 0 && process.argv[i + 1]) ? process.argv[i + 1] : '';
@@ -155,6 +184,136 @@ function makeChunksTab() {
 	return { commit: win.DaimondChunks.commit, lastCommit: () => lastCommit };
 }
 
+// ── A minimal, async IndexedDB ────────────────────────────────────
+// Enough of the shape durable.js uses: open (with onupgradeneeded on a fresh db),
+// one object store backed by a Map, and get/put/delete over a real transaction that
+// fires oncomplete/onabort a tick later, so the async commit is modelled honestly.
+// `setFailWrites` makes every put abort, as a full disk does — the case that proves
+// migrate() loses nothing and the durability gate still bites.
+function makeIndexedDB() {
+	const dbs = new Map();		// name -> Map(store -> Map(key -> val))
+	let failWrites = false;
+	let lastDb = null;		// the most recently opened connection, so a test can drop it (Safari eviction)
+	const soon = (fn) => setTimeout(fn, 0);
+	function makeDb(name) {
+		if (!dbs.has(name)) dbs.set(name, new Map());
+		const stores = dbs.get(name);
+		return {
+			objectStoreNames: { contains: (s) => stores.has(s) },
+			createObjectStore: (s) => { stores.set(s, new Map()); return {}; },
+			close: () => {},
+			transaction: (sname) => {
+				const data = stores.get(sname);
+				const tx = { oncomplete: null, onerror: null, onabort: null, objectStore: null };
+				const os = {
+					get: (k) => {
+						const rq = { onsuccess: null, onerror: null, result: undefined };
+						soon(() => { rq.result = data.has(k) ? data.get(k) : undefined;
+							if (rq.onsuccess) rq.onsuccess(); if (tx.oncomplete) tx.oncomplete(); });
+						return rq;
+					},
+					put: (v, k) => {
+						const rq = { onsuccess: null, onerror: null };
+						soon(() => {
+							if (failWrites) { if (rq.onerror) rq.onerror(); if (tx.onabort) tx.onabort(); return; }
+							data.set(k, v); if (rq.onsuccess) rq.onsuccess(); if (tx.oncomplete) tx.oncomplete();
+						});
+						return rq;
+					},
+					delete: (k) => {
+						const rq = { onsuccess: null, onerror: null };
+						soon(() => { data.delete(k); if (rq.onsuccess) rq.onsuccess(); if (tx.oncomplete) tx.oncomplete(); });
+						return rq;
+					},
+				};
+				tx.objectStore = () => os;
+				return tx;
+			},
+		};
+	}
+	return {
+		api: {
+			open: (name) => {
+				const req = { onupgradeneeded: null, onsuccess: null, onerror: null, result: null };
+				soon(() => {
+					const fresh = !dbs.has(name) || dbs.get(name).size === 0;
+					req.result = makeDb(name);
+					lastDb = req.result;	// remember the live connection so a test can drop it
+					if (fresh && req.onupgradeneeded) req.onupgradeneeded();
+					if (req.onsuccess) req.onsuccess();
+				});
+				return req;
+			},
+		},
+		setFailWrites: (v) => { failWrites = v; },
+		dropConnection: () => { if (lastDb && lastDb.onclose) lastDb.onclose(); },
+	};
+}
+
+const QUIET = { log: () => {}, debug: () => {}, warn: () => {}, error: () => {} };
+
+/// Apply the cloud.js break arms that only bite in the durable path.
+function patchCloud(body) {
+	if (BREAK === 'nodurable') {
+		// Force the localStorage path: the index cannot leave the box, so with the
+		// box full nothing lands — exactly the world before this fix.
+		const needle = 'var live = !!(DaimondDurable.durable && DaimondDurable.durable());';
+		if (!body.includes(needle)) throw new Error('break target not found: durable mode');
+		body = body.replace(needle, 'var live = false; // BROKEN: durable path disabled');
+	}
+	if (BREAK === 'nostickyread') {
+		// Revert the sticky read: index() re-checks the momentary connection, so after a
+		// drop it reads the emptied box and rebuilds the index from nothing.
+		const needle = 'function index() { return _durableMode ? _ix : readJson(IX_KEY, {}); }';
+		if (!body.includes(needle)) throw new Error('break target not found: sticky index');
+		body = body.replace(needle,
+			'function index() { return (_durableMode && window.DaimondDurable && DaimondDurable.durable && DaimondDurable.durable()) ? _ix : readJson(IX_KEY, {}); } // BROKEN: momentary read');
+	}
+	if (BREAK === 'noalarmclear') {
+		const needle = 'if (landed) { indexDirty = null; alarmClear(); }';
+		if (!body.includes(needle)) throw new Error('break target not found: alarmClear');
+		body = body.replace(needle, 'if (landed) { indexDirty = null; /* BROKEN: alarm not cleared */ }');
+	}
+	return body;
+}
+
+/// Apply the durable.js break arm.
+function patchDurable(body) {
+	if (BREAK === 'noreopen') {
+		// Revert the reopen: onclose drops the handle but leaves the resolved readyP, so
+		// a later op never reopens and a write falls back to the (emptied) box.
+		const needle = 'db.onclose = function () { db = null; dbOpen = null; idbOk = false; readyP = null; };';
+		if (!body.includes(needle)) throw new Error('break target not found: onclose reopen');
+		body = body.replace(needle, 'db.onclose = function () { db = null; dbOpen = null; idbOk = false; }; // BROKEN: no reopen');
+	}
+	if (BREAK === 'migrateearly') {
+		// Free the box BEFORE the write commits: a write that then throws has lost the
+		// only copy of the index.
+		const needle = 'var ok = await set(key, val);\n\t\tif (ok) { try { localStorage.removeItem(key); } catch (e) { /* best effort */ } }\n\t\treturn ok;';
+		if (!body.includes(needle)) throw new Error('break target not found: migrate order');
+		body = body.replace(needle,
+			'try { localStorage.removeItem(key); } catch (e) {} // BROKEN: box freed before the commit\n\t\tvar ok = await set(key, val);\n\t\treturn ok;');
+	}
+	return body;
+}
+
+/// One tab holding the REAL durable.js and cloud.js over the fake IndexedDB, so
+/// cloud.js sees `window.DaimondDurable` and backs the index on it. `core` stands in
+/// for daimond.js's storage alarm, so a test can watch it raised and cleared.
+function makeDurableCloudTab(storage, idbApi, core) {
+	const win = { addEventListener: () => {}, dispatchEvent: () => true,
+		indexedDB: idbApi, DaimondCore: core };
+	const nav = { storage: {} };
+	const run = (src) => {
+		const fn = new Function('window', 'localStorage', 'navigator', 'setTimeout', 'clearTimeout', 'console',
+			'with (window) {\n' + src + '\n}');
+		fn(win, storage.api, nav, setTimeout, clearTimeout, QUIET);
+	};
+	run(patchDurable(readFileSync(join(HERE, 'durable.js'), 'utf8')));
+	run(patchCloud(readFileSync(join(HERE, 'cloud.js'), 'utf8')));
+	return win.DaimondCloud;
+}
+
 // Two chunk addresses: one the index will name, one only the parcel will (the
 // stranded transcript's).
 const ADDR_INDEXED  = 'aa'.repeat(32);
@@ -239,6 +398,91 @@ async function main() {
 	check('3c. committing the bare index would have OMITTED the stranded chunk',
 		!indexOnly.has(ADDR_STRANDED),
 		'this is the sweep the parcelRefs belt prevents');
+
+	// ── 4. the index lives in IndexedDB, off the box (the root fix) ─
+	const ADDR_OLD = 'cc'.repeat(32), ADDR_BIG = 'dd'.repeat(32);
+	const OLD_IX = { '@c/old': { v: 2, size: 4, key: 'k0', chunks: [{ addr: ADDR_OLD, size: 4 }] } };
+
+	// 4a–f: migrate frees the box, and a write lands with the box full.
+	{
+		const s4 = makeStorage();
+		let raised = 0, cleared = 0;
+		const core = { noteCloudIndexStuck: () => { raised++; }, clearStorageAlarm: () => { cleared++; } };
+		s4.store.set('daimond-cloud-index', JSON.stringify(OLD_IX));	// a device upgrading from the LS era
+		const D = makeDurableCloudTab(s4, makeIndexedDB().api, core);
+		await D.ready();
+
+		check('4a. migrate removes the LS index key — the box is freed',
+			s4.store.get('daimond-cloud-index') === undefined);
+		check('4b. and the migrated index is intact in the durable store',
+			!!D.index()['@c/old']);
+
+		s4.setFull(true);	// the box is now full: a localStorage index write would be refused
+		const landed = D.contentSet('@d/big', { v: 2, size: 4, key: 'kb',
+			chunks: [{ addr: ADDR_BIG, size: 4 }], touched: 1 });
+		check('4c. contentSet lands with the box full — the Diamond rides by reference',
+			landed === true, 'impossible without the fix: the box is jammed');
+		await D.settle();
+		check('4d. indexDurable() is true once the write settles', D.indexDurable() === true);
+		check('4e. the durable write cleared the storage alarm', cleared > 0);
+		check('4f. and the index never touched the full box', s4.store.get('daimond-cloud-index') === undefined);
+	}
+
+	// 4g: a migrate whose IDB write throws keeps the box copy — loss-free.
+	{
+		const s5 = makeStorage();
+		const idb5 = makeIndexedDB();
+		idb5.setFailWrites(true);	// every IDB put aborts, as a full disk does
+		s5.store.set('daimond-cloud-index', JSON.stringify(OLD_IX));
+		const D = makeDurableCloudTab(s5, idb5.api, { noteCloudIndexStuck: () => {}, clearStorageAlarm: () => {} });
+		await D.ready();
+		check('4g. migrate keeps the LS key when the IDB write fails — nothing is lost',
+			s5.store.get('daimond-cloud-index') !== undefined);
+		check('4h. and the index is still readable this session', !!D.index()['@c/old']);
+	}
+
+	// 4i–j: a lost durable write raises the alarm and holds the commit gate shut.
+	{
+		const s6 = makeStorage();
+		const idb6 = makeIndexedDB();
+		let raised = 0;
+		const D = makeDurableCloudTab(s6, idb6.api, { noteCloudIndexStuck: () => { raised++; }, clearStorageAlarm: () => {} });
+		await D.ready();
+		idb6.setFailWrites(true);	// the disk fills after boot
+		D.contentSet('@d/x', { v: 2, size: 4, key: 'kx', chunks: [{ addr: 'ee'.repeat(32), size: 4 }], touched: 1 });
+		await D.settle();
+		check('4i. a lost durable write raises the storage alarm', raised > 0);
+		check('4j. and holds indexDurable() false, so no commit sweeps', D.indexDurable() === false);
+	}
+
+	// ── 5. a mid-session IndexedDB drop does not empty the index (finding #1) ─
+	// Safari closes IndexedDB connections under memory pressure. durable.js dropped the
+	// handle on `onclose` but never reopened (it kept a resolved `readyP`, and get/set
+	// fell straight to the box), and cloud.js then read the index back from the box that
+	// migrate() had emptied — an empty index whose commit sweeps every cloud-only file.
+	// The fix: durable.js reopens on the next op, and cloud.js serves the sticky
+	// in-memory cache, never the emptied box.
+	{
+		const s7 = makeStorage();
+		const idb7 = makeIndexedDB();
+		s7.store.set('daimond-cloud-index', JSON.stringify(OLD_IX));
+		const D = makeDurableCloudTab(s7, idb7.api, { noteCloudIndexStuck: () => {}, clearStorageAlarm: () => {} });
+		await D.ready();
+		check('5a. after migration the index is served from IndexedDB', !!D.index()['@c/old']);
+		check('5b. and the box was freed', s7.store.get('daimond-cloud-index') === undefined);
+
+		idb7.dropConnection();	// Safari evicts the connection mid-session
+		check('5c. index() still names the migrated content after the drop, not the emptied box',
+			!!D.index()['@c/old'], 'the empty-index rebuild that swept cloud-only chunks (--break nostickyread)');
+
+		const landed = D.contentSet('@d/after', { v: 2, size: 4, key: 'ka',
+			chunks: [{ addr: 'ff'.repeat(32), size: 4 }], touched: 1 });
+		check('5d. a write after the drop rides by reference', landed === true);
+		await D.settle();
+		check('5e. and lands durably once the connection reopens', D.indexDurable() === true);
+		check('5f. without resurrecting the index in the box (--break noreopen)',
+			s7.store.get('daimond-cloud-index') === undefined);
+	}
 
 	console.log('');
 	if (BREAK) {

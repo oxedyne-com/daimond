@@ -8530,6 +8530,10 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			catch (e) { /* quota: the merge re-runs on the next sync */ }
 			// The meters are showing a total that just changed.
 			try { updateSpend(); } catch (e) { /* nothing is drawn yet */ }
+			// This write bypasses `DaimondLedger.save` (the merged array already
+			// carries the prune), so it raises the same signal by hand -- the
+			// Model-stats panel, if it is open, redraws on this too.
+			try { if (window.DaimondLedger) DaimondLedger.notifyChanged(); } catch (e) { /* best-effort */ }
 		});
 		// The mailboxes. A second device that holds the account holds the
 		// entitlement too, so an account that arrives here is an account that can
@@ -11443,6 +11447,10 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			// time the program prints, and a session nobody can see is one nobody
 			// can stop.
 			if (id === 'term' && window.DaimondTerm) DaimondTerm.onClose();
+			// Unhooks the live-ledger redraw subscription the panel takes out on
+			// open (S-UI #2) -- a panel closed and never reopened must not keep a
+			// listener nothing on screen needs any more.
+			if (id === 'modeldash' && window.DaimondModelDash) DaimondModelDash.onClose();
 			open[id] = false;
 			if (id === 'rail') railForced = false;   // a closed rail is not a forced one
 			stage = stage.filter(function (x) { return x !== id; });
@@ -29082,6 +29090,12 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		// And, when it may not, which of the three conditions is in the way, so the
 		// refusal in sync.js says so instead of being read as a mystery.
 		syncCommitBlockedReason: offloadBlockedReason,
+		// The storage alarm, reached by cloud.js's durable index path: raised when an
+		// index write-through is lost (the pause the collector used to raise), and
+		// CLEARED on the first write that lands durably -- which the box-bound index
+		// never did, so the banner it raised stood for ever.
+		noteCloudIndexStuck: noteCloudIndexStuck,
+		clearStorageAlarm:   storageAlarmClear,
 		// This device's own line in the roster `devices` section of the parcel.
 		// sync.js masks that line's `seen` stamp out of the push-skip comparison --
 		// `touchSelfDevice` moves it every five minutes whether or not anything else
@@ -52257,6 +52271,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			var msg = document.createElement('span');
 			msg.textContent = text;
 			box.appendChild(msg);
+			var fadeTimer, removeTimer;
 			if (window.DaimondSupport) {
 				var btn = document.createElement('button');
 				btn.type = 'button';
@@ -52264,14 +52279,33 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 				btn.style.cssText = 'pointer-events:auto;cursor:pointer;border:1px solid currentColor;'
 					+ 'background:transparent;color:inherit;border-radius:6px;padding:2px 8px;font:inherit;';
 				btn.addEventListener('click', function () {
+					// The already-consented path answers straight away and can race
+					// the auto-dismiss below (a slow request landing past 8.6s wrote
+					// its result into a detached box, S-UI #1); the first-ever tap
+					// opens the consent sheet instead, which has its own status line
+					// and its own timing, so it is left alone.
+					var live = DaimondSupport.consented();
+					if (live) {
+						clearTimeout(fadeTimer);
+						clearTimeout(removeTimer);
+						box.style.transition = '';
+						box.style.opacity = '1';
+					}
 					btn.disabled = true;
-					DaimondSupport.report(reason, function (said) { btn.textContent = said; });
+					DaimondSupport.report(reason, function (said) {
+						btn.textContent = said;
+						if (live) {
+							btn.disabled = false;	// as settings' own report button does -- a failed send can be retried
+							fadeTimer = setTimeout(function () { box.style.transition = 'opacity .4s'; box.style.opacity = '0'; }, 3600);
+							removeTimer = setTimeout(function () { if (box.parentNode) box.parentNode.removeChild(box); }, 4200);
+						}
+					});
 				});
 				box.appendChild(btn);
 			}
 			document.body.appendChild(box);
-			setTimeout(function () { box.style.transition = 'opacity .4s'; box.style.opacity = '0'; }, 8000);
-			setTimeout(function () { if (box.parentNode) box.parentNode.removeChild(box); }, 8600);
+			fadeTimer = setTimeout(function () { box.style.transition = 'opacity .4s'; box.style.opacity = '0'; }, 8000);
+			removeTimer = setTimeout(function () { if (box.parentNode) box.parentNode.removeChild(box); }, 8600);
 		} catch (e) { toast(text, true); }		// fall back to the plain toast if anything above throws
 	}
 
@@ -52664,6 +52698,9 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 				try {
 					localStorage.setItem('daimond-ledger',
 						JSON.stringify(mergeLedgers(readJson('daimond-ledger', []), data.ledger)));
+					// Same bypass as the sync-apply merge above -- raise the change
+					// signal by hand so an open Model-stats panel redraws.
+					if (window.DaimondLedger) DaimondLedger.notifyChanged();
 				} catch (e) { /* keep */ }
 			}
 			// A Diamond is stored in full under `diamonds/<id>/` -- the crystal, every

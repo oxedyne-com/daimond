@@ -93,6 +93,77 @@ function load(store) {
 	return { L: win.DaimondLedger, M: win.DaimondModelDash, store: store };
 }
 
+/// The DOM half, for the live-redraw claim (S-UI #2): a minimal fake
+/// document (just enough for `render()`'s table to build) plus a REAL
+/// `window.addEventListener`/`dispatchEvent` pair -- not stubs that record
+/// calls, an actual pub-sub -- so `ledger.js`'s own `notifyChanged()` and
+/// `modeldash.js`'s own subscription are what is under test, not a rewrite
+/// of either.
+function loadDom(store) {
+	store = store || new Map();
+	const localStorage = {
+		getItem:    (k) => (store.has(k) ? store.get(k) : null),
+		setItem:    (k, v) => { store.set(k, String(v)); },
+		removeItem: (k) => { store.delete(k); },
+	};
+
+	function node(tag) {
+		const n = {
+			tagName: tag, className: '', textContent: '', type: '', title: '', disabled: false,
+			children: [], _listeners: {},
+			set innerHTML(v) { this.children = []; },	// render() only ever clears with ''
+			get innerHTML() { return ''; },
+			appendChild(c) { this.children.push(c); return c; },
+			addEventListener(k, fn) { (this._listeners[k] = this._listeners[k] || []).push(fn); },
+		};
+		return n;
+	}
+	const host = node('div');
+	host.id = 'modeldash-view';
+	const document_ = {
+		readyState: 'complete',
+		createElement: (tag) => node(tag),
+		getElementById: (id) => (id === 'modeldash-view' ? host : null),
+		addEventListener() {},
+	};
+
+	const winOn = {};
+	const win = {
+		addEventListener(k, fn) { (winOn[k] = winOn[k] || []).push(fn); },
+		removeEventListener(k, fn) {
+			if (!winOn[k]) return;
+			const i = winOn[k].indexOf(fn);
+			if (i !== -1) winOn[k].splice(i, 1);
+		},
+		dispatchEvent(ev) { (winOn[ev.type] || []).slice().forEach((fn) => fn(ev)); },
+	};
+
+	const ledgerSrc = readFileSync(LEDGER_SRC, 'utf8');
+	new Function('window', 'localStorage', ledgerSrc)(win, localStorage);
+	const modeldashSrc = readFileSync(MODELDASH_SRC, 'utf8');
+	new Function('window', 'document', 'localStorage', modeldashSrc)(win, document_, localStorage);
+
+	return { L: win.DaimondLedger, M: win.DaimondModelDash, host: host, winOn: winOn, localStorage: localStorage };
+}
+
+/// The rendered table's rows, `[[model, turns], ...]`, read back out of the
+/// fake host the same shape `table()` builds it in -- a `<table><tbody>` of
+/// `<tr>` each starting `[model-td, turns-td, ...]`. Empty when the panel is
+/// showing its "no usage" placeholder instead of a table.
+function readRows(host) {
+	function find(n, tag) {
+		var out = [];
+		(n.children || []).forEach((c) => {
+			if (c.tagName === tag) out.push(c);
+			out = out.concat(find(c, tag));
+		});
+		return out;
+	}
+	const tbody = find(host, 'tbody')[0];
+	if (!tbody) return [];
+	return find(tbody, 'tr').map((tr) => [tr.children[0].textContent, tr.children[1].textContent]);
+}
+
 /// A minimal ledger entry, the shape `ledger.js` stores and `record()`
 /// writes: epoch-ms, model, prompt/completion/cached tokens, USD.
 function entry(t, m, p, c, u) {
@@ -197,6 +268,44 @@ function main() {
 		const { M } = load(store);
 		check('corrupt store reads as no ratings', JSON.stringify(M.ratingsFor('x')) === JSON.stringify({ up: 0, down: 0 }));
 		check('and a tap still works afterwards', M.rate('x', 'up').up === 1);
+	}
+
+	console.log('\nmodeldash: DOM half -- the panel redraws live while open, and stops once closed (S-UI #2)');
+	{
+		const { L, M, host, winOn, localStorage } = loadDom();
+		M.onOpen();
+		check('opens with no usage recorded yet', readRows(host).length === 0, JSON.stringify(readRows(host)));
+		check('onOpen subscribed exactly one ledger-change listener',
+			(winOn['daimond:ledger'] || []).length === 1, (winOn['daimond:ledger'] || []).length);
+
+		console.log('    revert: before the fix, record() raises nothing and this table never moves');
+		L.record({ ts: Date.now(), model: 'alpha/one', promptTokens: 10, completionTokens: 5, costUsd: 0.01 });
+		let rows = readRows(host);
+		check('a turn recorded WHILE THE PANEL SITS OPEN redraws it without a manual refresh',
+			rows.length === 1 && rows[0][0] === 'alpha/one' && rows[0][1] === '1', JSON.stringify(rows));
+
+		// A live merge (a sync apply/backup restore) writes the store DIRECTLY --
+		// exactly what `daimond.js`'s two `mergeLedgers` call sites do -- and
+		// cannot call `save()`, so it raises the same signal by hand
+		// (`DaimondLedger.notifyChanged`, which those call sites now also call).
+		const mine = JSON.parse(localStorage.getItem('daimond-ledger') || '[]');
+		const merged = L.merge(mine, [
+			{ t: Date.now() + 1, m: 'beta/two', p: 4, c: 2, ca: 0, pv: '', u: 0.002 },
+		], Date.now() + 1000);
+		localStorage.setItem('daimond-ledger', JSON.stringify(merged));
+		L.notifyChanged();
+		rows = readRows(host);
+		check('a MERGED entry (the sync/backup path) redraws it too, not just a locally recorded one',
+			rows.some((r) => r[0] === 'beta/two'), JSON.stringify(rows));
+
+		M.onClose();
+		check('onClose released the subscription', (winOn['daimond:ledger'] || []).length === 0,
+			(winOn['daimond:ledger'] || []).length);
+
+		L.record({ ts: Date.now() + 2000, model: 'gamma/three', promptTokens: 1, completionTokens: 1, costUsd: 0.001 });
+		rows = readRows(host);
+		check('once closed, a further ledger change does NOT keep drawing into the old host (no leak)',
+			!rows.some((r) => r[0] === 'gamma/three'), JSON.stringify(rows));
 	}
 
 	console.log('\n' + checks + ' checks, ' + failures + ' failed');

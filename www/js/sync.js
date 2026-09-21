@@ -1453,6 +1453,9 @@
 
 	async function pull(quiet) {
 		if (!ready()) return -1;
+		// The merge reads and writes the cloud index; wait for it to have loaded out
+		// of IndexedDB (and migrated off the box) before the first one.
+		if (window.DaimondCloud && DaimondCloud.ready) { try { await DaimondCloud.ready(); } catch (e) { /* fallback path stays active */ } }
 		try { return await pullOnce(quiet); }
 		finally { notePulled(); }
 	}
@@ -1816,6 +1819,9 @@
 		}
 		inFlight = true;
 		try {
+			// The collectors record manifests in the cloud index; wait for it to have
+			// loaded out of IndexedDB before collecting, so `index()` is authoritative.
+			if (window.DaimondCloud && DaimondCloud.ready) { try { await DaimondCloud.ready(); } catch (e) { /* fallback path stays active */ } }
 			for (var attempt = 0; attempt < MAX_CONFLICT_RETRIES; attempt++) {
 				var state = await collectParcel();
 				var plain = JSON.stringify(state);
@@ -1958,6 +1964,10 @@
 					// files and the gateway swept every one of them. The same
 					// condition gates both, so what cannot be merged cannot be
 					// declared.
+					// Wait for the collectors' index writes to reach IndexedDB before asking
+					// whether the index is durable: the write is now async, so the gate must
+					// be consulted after it lands, not during it.
+					if (window.DaimondCloud && DaimondCloud.settle) { try { await DaimondCloud.settle(); } catch (e) { /* the gate reads dirty regardless */ } }
 					var mayCommit = !!(DaimondCore.syncMayCommitChunks && DaimondCore.syncMayCommitChunks());
 					// TRAINING WHEELS — the debug feed's `sync`, COMMIT half. A device
 					// whose chunk index has not merged refuses every commit and says so
@@ -3540,6 +3550,10 @@
 	function start() {
 		if (started) return;
 		started = true;
+		// Begin loading the cloud index out of IndexedDB (and migrating it off the
+		// localStorage box) now, so a device at quota is relieved before its first
+		// round rather than waiting on it. The sync entry points await this too.
+		if (window.DaimondCloud && DaimondCloud.ready) { try { DaimondCloud.ready(); } catch (e) { /* awaited again at pull/push */ } }
 		loadVersion();
 		// The row is in the markup and empty until something writes to it, and on a
 		// device that never syncs nothing ever would: the honest admission that

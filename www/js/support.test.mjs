@@ -457,6 +457,97 @@ async function main() {
 		console.log('    revert: this fails if appendError() stops adding a report affordance, or DaimondSupport.arm/report is dropped from it');
 	}
 
+	console.log('(j) the error toast\'s "Report this" result reaches a LIVE element, and a failed send can be retried (S-UI #1)');
+	{
+		// The REAL daimond.js `errorToastWithReport`, lifted the same way (i) lifts
+		// `appendError`: a brace-balanced scan, not a retyped copy.
+		const daimondSrc = readFileSync(join(HERE, 'daimond.js'), 'utf8');
+		function extractFn(src, name) {
+			const start = src.indexOf('\n\tfunction ' + name + '(');
+			if (start < 0) throw new Error('function not found in daimond.js: ' + name);
+			const brace = src.indexOf('{', start);
+			let depth = 0, i = brace;
+			for (; i < src.length; i++) {
+				if (src[i] === '{') depth++;
+				else if (src[i] === '}') { depth--; if (depth === 0) { i++; break; } }
+			}
+			return src.slice(start + 1, i);
+		}
+		const toastSrc = extractFn(daimondSrc, 'errorToastWithReport');
+
+		// setTimeout/clearTimeout never actually fire here -- the test drives the
+		// toast's own dismiss clock by hand, so it can prove a tap cancels the
+		// PENDING auto-removal rather than waiting 8.6 real seconds to find out.
+		const scheduled = [];
+		const cleared = [];
+		const timers = new Map();
+		let nextTimerId = 1;
+		const fakeSetTimeout = (fn, ms) => {
+			const id = nextTimerId++;
+			scheduled.push({ id, ms });
+			timers.set(id, fn);
+			return id;
+		};
+		const fakeClearTimeout = (id) => { cleared.push(id); timers.delete(id); };
+		const fire = (id) => { const fn = timers.get(id); timers.delete(id); if (fn) fn(); };
+
+		const bodyEl = makeNode('body');
+		const doc = { createElement: (tag) => makeNode(tag), body: bodyEl };
+
+		const reported = [];
+		let consented = true;
+		let sayCb = null;
+		const win = {
+			DaimondSupport: {
+				consented: () => consented,
+				report: (reason, say) => { reported.push(reason); sayCb = say; },	// answers later -- simulates the real network round trip
+			},
+		};
+
+		const fn = new Function('window', 'document', 'tOr', 'toast', 'setTimeout', 'clearTimeout',
+			'with (window) {\n' + toastSrc + '\nreturn errorToastWithReport;\n}\n');
+		const errorToastWithReport = fn(win, doc,
+			(k, fallback) => fallback,
+			() => { throw new Error('toast() fallback must not run for a text/reason that never throws'); },
+			fakeSetTimeout, fakeClearTimeout);
+
+		errorToastWithReport('Something went wrong.', 'error.thrown');
+		const box = bodyEl.children[0];
+		const btn = box.children.find((c) => c.tagName === 'button');
+		check('the toast opens with its own auto-dismiss already scheduled',
+			scheduled.length === 2 && scheduled[0].ms === 8000 && scheduled[1].ms === 8600);
+
+		btn._listeners.click[0]();
+		check('tapping "Report this" cancels the toast\'s pending auto-removal',
+			cleared.indexOf(scheduled[0].id) !== -1 && cleared.indexOf(scheduled[1].id) !== -1);
+		check('the tap disables the button while the send is in flight', btn.disabled === true);
+
+		console.log('    revert: firing the (now-cancelled) 8.6s removal must be a no-op -- the pre-fix box would already be gone here');
+		fire(scheduled[1].id);
+		check('the box is still attached once the old 8.6s mark passes', bodyEl.children.indexOf(box) !== -1);
+
+		sayCb('Could not send: the server declined (429).');
+		check('a failed send\'s result is written into the STILL-LIVE button', btn.textContent === 'Could not send: the server declined (429).');
+		check('a failed send does not leave the button permanently disabled', btn.disabled === false);
+		check('the toast re-arms its own dismiss clock once the result is shown',
+			scheduled.length === 4 && scheduled[2].ms === 3600 && scheduled[3].ms === 4200);
+
+		btn._listeners.click[0]();
+		check('the re-enabled button genuinely retries -- a second report is sent', reported.length === 2);
+
+		console.log('    revert: the not-yet-consented path (first-ever tap, opens the consent sheet) must be untouched');
+		consented = false;
+		reported.length = 0;
+		scheduled.length = 0;
+		errorToastWithReport('Something else went wrong.', 'error.thrown');
+		const box2 = bodyEl.children[bodyEl.children.length - 1];
+		const btn2 = box2.children.find((c) => c.tagName === 'button');
+		btn2._listeners.click[0]();
+		check('the first-ever tap still calls DaimondSupport.report', reported.length === 1);
+		check('an unconsented tap leaves the toast\'s own auto-dismiss running (the consent sheet owns its own timing)',
+			cleared.indexOf(scheduled[0].id) === -1 && cleared.indexOf(scheduled[1].id) === -1);
+	}
+
 	console.log('\n' + (failures ? 'FAIL' : 'PASS') + ' — support.js (D-20260920-02)');
 	process.exit(failures ? 1 : 0);
 }

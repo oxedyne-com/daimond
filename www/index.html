@@ -1839,6 +1839,9 @@
      paths those are, so the rule lives in one file. Before daimond.js, which closes
      over both call sites. -->
 <script src="js/ignore.js"></script>
+<!-- A roomy per-account key-value store on IndexedDB, before cloud.js, which backs
+     the cloud index on it so the index leaves the ~5 MiB localStorage box. -->
+<script src="js/durable.js"></script>
 <script src="js/cloud.js"></script>
 <script src="js/sync.js"></script>
 <script src="js/pairing.js"></script>

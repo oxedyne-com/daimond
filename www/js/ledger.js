@@ -83,6 +83,19 @@
 		} catch (e) {
 			/* quota or unavailable — spend stays in-memory this session */
 		}
+		notifyChanged();
+	}
+
+	/// Tell whoever is on screen that the ledger moved -- a panel sitting open
+	/// in the dock (`modeldash.js`) redraws on this rather than only on its own
+	/// Refresh button. The one event name, so a live merge (`daimond.js`'s
+	/// `mergeLedgers` call sites, which write the store directly and cannot
+	/// call `save` above) fires the exact same signal rather than a second one
+	/// nothing listens for. Best-effort: no `window` (a node test harness) or
+	/// no `CustomEvent`/`Event` is the ordinary case for most callers of this
+	/// file, not a fault.
+	function notifyChanged() {
+		try { window.dispatchEvent(new Event('daimond:ledger')); } catch (e) { /* no window */ }
 	}
 
 	// Drop entries older than the retention window, bounding
@@ -576,6 +589,7 @@
 		samples:     samples,
 		clear:       clear,
 		merge:       merge,
+		notifyChanged: notifyChanged,	// for a caller that writes the store directly (a sync merge, a backup restore)
 		ledgerKey:   ledgerKey,
 		retentionMs: retentionMs,
 	};

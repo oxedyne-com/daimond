@@ -76,7 +76,79 @@
 		catch (e) { return false; }		// quota: recomputed next round rather than corrupted.
 	}
 
-	function index()      { return readJson(IX_KEY, {}); }
+	// ── The index, backed by the durable store ─────────────────
+	// THE INDEX LEFT THE ~5 MiB BOX. It now lives in IndexedDB (durable.js), whose
+	// origin quota is hundreds of megabytes and is not shared with the mailbox, the
+	// ledger or the trash, so the one write a commit depends on no longer competes
+	// for the box that jammed (S-SYNC #2). A synchronous in-memory cache sits in
+	// front, because `index()` is read from many synchronous sites (`merge`,
+	// `contentGet`, `tierPlan`, `refreshPaths`), and IndexedDB is async: `ready()`
+	// loads the cache once, `setIndex` writes it through, and `settle()` lets the
+	// commit gate wait for the write to land.
+	//
+	// The cache is authoritative in the durable path, so `setIndex` reports the
+	// write as landed and the collector rides its content BY REFERENCE — the relief
+	// a full box denied. Durability is not dropped, only moved: `indexDirty` stays
+	// set until the IndexedDB transaction commits, and the commit is gated on
+	// `indexDurable()` after `settle()`, so a write that never lands still declares
+	// no live set.
+	//
+	// When IndexedDB will not open (private mode, old WebKit) the durable path is
+	// not active and the old localStorage path stands unchanged — the same quota
+	// semantics, `setIndex` answering false on a lost write, so no device regresses.
+	var _ix     = readJson(IX_KEY, {});		// the in-memory cache, seeded from the box
+	var _ready  = false;
+	var _readyP = null;
+	var _durableMode = false;				// sticky: the index has moved to IndexedDB, so read _ix, never the emptied box
+	var _writeSeq  = 0;						// the latest requested write-through
+	var _writeTail = Promise.resolve();		// the tail of the coalesced write chain
+
+	/// The index this device serves. Once the durable store is live the in-memory cache
+	/// is authoritative and is the ONLY truth: `migrate()` has removed the localStorage
+	/// copy, so reading the box back would return an empty index — and it stays the truth
+	/// even after a mid-session IndexedDB drop (Safari under memory pressure), because the
+	/// cache is not lost with the connection and durable.js reopens on the next write.
+	/// Falling back to the emptied box here would rebuild the index from nothing and sweep
+	/// every cloud-only file (S-SYNC #2 follow-up).
+	function index() { return _durableMode ? _ix : readJson(IX_KEY, {}); }
+
+	/// Load the index cache from the durable store, migrating it out of the box on
+	/// the first boot after deploy. Awaited by the sync boot before any collect, so
+	/// a synchronous `index()` read never precedes the load. Idempotent.
+	function ready() {
+		if (_ready) return Promise.resolve();
+		if (_readyP) return _readyP;
+		_readyP = (async function () {
+			if (window.DaimondDurable && DaimondDurable.ready) {
+				try {
+					await DaimondDurable.ready();
+					var live = !!(DaimondDurable.durable && DaimondDurable.durable());
+					if (live) {
+						// The index now lives in IndexedDB; from here the cache is the sole truth
+						// and the box copy is migrated away (see `index()`). Sticky, so a later
+						// connection drop cannot send a read back to the emptied box.
+						_durableMode = true;
+						await DaimondDurable.migrate(IX_KEY);
+						var v = await DaimondDurable.get(IX_KEY);
+						if (v && typeof v === 'object') _ix = v;
+					}
+				} catch (e) { /* keep the box-seeded cache; the fallback path stays active */ }
+			}
+			_ready = true;
+		})();
+		return _readyP;
+	}
+
+	/// Resolves when no index write-through is pending, so the commit gate asks
+	/// `indexDurable()` AFTER the write has landed rather than during it. A no-op in
+	/// the localStorage path, where a write is synchronous.
+	function settle() { return Promise.resolve(_writeTail); }
+
+	// The alarm lives in daimond.js; cloud.js reaches it defensively, because the
+	// durable path clears it on a landed write and raises it on a lost one — the one
+	// the collector used to raise itself when `contentSet` answered false.
+	function alarmClear() { try { if (window.DaimondCore && DaimondCore.clearStorageAlarm) DaimondCore.clearStorageAlarm(); } catch (e) { /* no core */ } }
+	function alarmRaise() { try { if (window.DaimondCore && DaimondCore.noteCloudIndexStuck) DaimondCore.noteCloudIndexStuck(); } catch (e) { /* no core */ } }
 
 	// ── Is this device's index durably written? ────────────────────
 	// THE INDEX IS WHAT A COMMIT DECLARES LIVE, and a commit sweeps every chunk the
@@ -95,6 +167,26 @@
 	var indexDirty = null;		// { at } while the last index write did not land.
 
 	function setIndex(ix) {
+		if (_durableMode) {
+			// The cache is authoritative: the manifest is recorded the moment this
+			// returns, so the collector rides its content by reference. The write is
+			// held dirty until the transaction commits; the commit gate waits for it
+			// via `settle()`, so a write lost to a full DISK still declares no live set.
+			_ix = ix || {};
+			indexDirty = indexDirty || { at: Date.now() };
+			var mySeq = ++_writeSeq;
+			_writeTail = _writeTail.then(function () {
+				// Coalesce: a newer write superseded this one, so let it carry the cache.
+				if (mySeq !== _writeSeq) return null;
+				return DaimondDurable.set(IX_KEY, _ix).then(function (landed) {
+					if (mySeq !== _writeSeq) return landed;	// a newer write queued while we ran
+					if (landed) { indexDirty = null; alarmClear(); }
+					else { indexDirty = indexDirty || { at: Date.now() }; alarmRaise(); }
+					return landed;
+				});
+			}, function () { return null; });
+			return true;
+		}
 		var ok = writeJson(IX_KEY, ix || {});
 		if (ok) indexDirty = null;
 		else indexDirty = indexDirty || { at: Date.now() };
@@ -1216,6 +1308,12 @@
 	// ── Public surface ─────────────────────────────────────────
 	window.DaimondCloud = {
 		index:        index,
+		// Load the index cache from the durable store (IndexedDB), migrating it out
+		// of the localStorage box on first boot. Awaited by the sync boot.
+		ready:        ready,
+		// Resolves when the last index write-through has committed, so the commit
+		// gate asks `indexDurable()` after the write rather than during it.
+		settle:       settle,
 		manifest:     manifest,
 		merge:        merge,
 		put:          put,

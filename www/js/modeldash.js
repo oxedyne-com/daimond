@@ -332,11 +332,28 @@
 		wiredActions = true;
 	}
 
+	// A turn recorded (or a sync/backup ledger merge) while this panel sits
+	// open in the dock, so the table does not go stale until a tap on
+	// Refresh (S-UI #2). `ledger.js` raises the one event every write path
+	// funnels through; redrawn only if the panel is actually the thing on
+	// screen, the same "am I open" test the locale hook above already makes.
+	var hooked = false;
+	function onLedgerChanged() {
+		if (document.getElementById('modeldash-view')) render();
+	}
+
 	/// Called when the panel is revealed. Everything here is local and
 	/// synchronous -- no fetch, ever -- so the draw is instant.
 	function onOpen() {
 		wireActions();
 		render();
+		if (!hooked) { window.addEventListener('daimond:ledger', onLedgerChanged); hooked = true; }
+	}
+
+	/// Called when the panel is dismissed -- drops the subscription above so a
+	/// closed panel is not still redrawing itself nobody can see.
+	function onClose() {
+		if (hooked) { window.removeEventListener('daimond:ledger', onLedgerChanged); hooked = false; }
 	}
 
 	function show() {
@@ -358,6 +375,7 @@
 		gapFields:     gapFields,
 		// DOM surface.
 		onOpen:  onOpen,
+		onClose: onClose,
 		refresh: onOpen,
 		show:    show,
 	};
