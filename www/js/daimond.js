@@ -8970,6 +8970,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 	// everything typed into it.
 	var linkOpen  = false;      // the section is expanded
 	var arteDaimonOpen = false; // the "added by the daimon" group in renderArtefacts; see there
+	var _lastDiamondSig = '';   // dedup key for the `ev diamond` debug row; see renderArtefacts
 	var linkForm  = null;       // { target, query, rel, note } while adding, else null
 	var linkNotes = {};         // link id -> its note is expanded
 	var linkFor   = null;       // the Diamond id the three above belong to
@@ -39044,6 +39045,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 				// caller at all, so a 63-file book compiled here came back "only the one
 				// source was given to the compiler" and the daimon reading that concluded
 				// the compiler could not resolve imports.
+				var _compileT0 = Date.now();
 				var out = await Wasm.typst_compile_project(main);
 				if (!out) { out = { error: t('files.compile_failed', { reason: 'no compiler' }) }; }
 				if (out.error) {
@@ -39067,10 +39069,43 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 							if (again && again.ok) return;
 						}
 					}
+					// TRAINING WHEELS — remove with the DEBUG_SHARE module. The debug feed's
+					// `compile` row, error half: engine, elapsed ms and the error's first
+					// 120 chars. Never the document's own content. Lifts out in one grep of
+					// `DEBUG_SHARE`.
+					try {
+						if (window.DEBUG_SHARE && DEBUG_SHARE.event) {
+							DEBUG_SHARE.event('compile', {
+								main: main,
+								engine: (window.DaimondTypst && DaimondTypst.engine && DaimondTypst.engine()) || '',
+								ok: false,
+								ms: Date.now() - _compileT0,
+								bytes: 0,
+								err: out.error ? String(out.error).slice(0, 120) : '',
+								retried: retried,
+							});
+						}
+					} catch (e) { /* the feed must never break a compile */ }
 					msgEl.classList.add('err');
 					msgEl.textContent = out.error;               // escaped
 					return;
 				}
+				// TRAINING WHEELS — remove with the DEBUG_SHARE module. The debug feed's
+				// `compile` row, success half: engine, elapsed ms and the PDF's byte size.
+				// Never the document's own content. Lifts out in one grep of `DEBUG_SHARE`.
+				try {
+					if (window.DEBUG_SHARE && DEBUG_SHARE.event) {
+						DEBUG_SHARE.event('compile', {
+							main: main,
+							engine: (window.DaimondTypst && DaimondTypst.engine && DaimondTypst.engine()) || '',
+							ok: true,
+							ms: Date.now() - _compileT0,
+							bytes: out.pdf.length,
+							err: '',
+							retried: retried,
+						});
+					}
+				} catch (e) { /* the feed must never break a compile */ }
 				var pdfPath = previewPdfPath(main);
 				await writeWorkspaceBytes(pdfPath, out.pdf);
 				// Render from a blob URL (same-origin) in the CENTRE panel, where
@@ -46999,6 +47034,28 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			none.textContent = t('dws.empty');
 			body.appendChild(none);
 		}
+
+		// TRAINING WHEELS — remove with the DEBUG_SHARE module. The debug feed's
+		// `diamond` row: what is mounted on the open Diamond, one `KIND path` string
+		// per attached item, derived from the same `links` this strip already draws --
+		// never a second read of the workspace. Deduped on (id + item paths) so a
+		// repaint that changes nothing does not spam the feed. Lifts out in one grep
+		// of `DEBUG_SHARE`.
+		try {
+			var _items = links.map(function (l) {
+				var kind = l.other.slice(0, l.other.indexOf(':'));
+				var rest = l.other.slice(l.other.indexOf(':') + 1);
+				var path = (parseRef(l.other).path) || rest;
+				return kind.toUpperCase() + ' ' + path;
+			});
+			var _sig = diamondId + '|' + _items.join(',');
+			if (_sig !== _lastDiamondSig) {
+				_lastDiamondSig = _sig;
+				if (window.DEBUG_SHARE && DEBUG_SHARE.event) {
+					DEBUG_SHARE.event('diamond', { id: diamondId, items: _items });
+				}
+			}
+		} catch (e) { /* the feed must never break the artefact strip */ }
 	}
 
 	/// The link by which a Diamond holds this reference, or nothing.
