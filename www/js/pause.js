@@ -27,7 +27,9 @@
        Diamond arriving paused. A branch has no state to inherit,
        and inventing one would be the settable amber this rule
        exists to forbid. Something that must start paused is
-       seeded paused when it is created.
+       seeded paused when it is created. The one exception is a
+       triggered action's leaf, which is held until a person
+       releases it on this device: see `releasedHereOnly`.
 
      - Pause is about SPENDING, not access. A paused Diamond still
        opens, its crystal still renders, its files still list. The
@@ -53,11 +55,13 @@
 
 	// Per-account; accounts.js namespaces every `daimond-*` key.
 	var STORE_KEY = 'daimond-pause';
+	var HERE_KEY  = 'daimond-pause-here';	// releases given on THIS device; never synced
 
 	// ── Node ids ───────────────────────────────────────────────
 	// Slash-delimited paths, so an ancestor is a string prefix and
 	// the tree can be walked without the tree being present. The
-	// shapes in use, all built by `DaimondPause.id`:
+	// shapes in use, all built by `DaimondPause.id`, but for a trigger's,
+	// which `triggerLeaf` builds:
 	//
 	//   root
 	//   root/diamonds
@@ -85,17 +89,70 @@
 
 	var ROOT = 'root';
 
-	/// Build a node id from parts, escaping any slash a name carries.
-	/// A Diamond id or a mail folder is user- or server-named, and one
-	/// containing a slash would otherwise invent a level in the tree.
+	/// One name as one level of a node id. A Diamond id, a mail folder or a
+	/// triggered action's id is user-, server- or model-named, and one containing
+	/// a slash would otherwise invent a level in the tree. `%` is escaped first so
+	/// that no name can pass for another's escape. The one escaping helper: every
+	/// id built from a name goes through it, by `id` or by `triggerLeaf`.
+	function seg(s) {
+		return String(s).replace(/%/g, '%25').replace(/\//g, '%2F');
+	}
+
+	/// Build a node id from parts, each escaped by `seg`. An empty part is
+	/// dropped.
 	function id() {
 		var parts = [];
 		for (var i = 0; i < arguments.length; i++) {
 			var s = arguments[i];
 			if (s == null || s === '') continue;
-			parts.push(String(s).replace(/%/g, '%25').replace(/\//g, '%2F'));
+			parts.push(seg(s));
 		}
 		return parts.join('/');
+	}
+
+	// ── A leaf only this device can release ────────────────────
+	//
+	// A triggered action spends with nobody present, so for its leaf being out of
+	// the paused set is not enough to let it run. On 2026-09-24 a daimon wrote its
+	// own `triggers.json`; the new action's leaf had never been seeded, a leaf that
+	// appears later PLAYS, and the next mail to arrive started a turn nobody sent.
+	// The `+` button seeded its leaf held. A file write, a synced copy and an
+	// import did not, and could not be made to.
+	//
+	// So for this one kind of leaf the default is reversed. It is held until a
+	// person on THIS device releases it -- play on its light, its Diamond's or the
+	// global one -- and the release is kept here and never travels in the parcel:
+	// a release on the phone does not arm the desktop, as a folder marked on one
+	// device is not in force on another. The release is bound to the action's
+	// TERMS, the text of what it does, which the tree node carries. An action
+	// changed anywhere but the app's own editor is therefore held again, and a
+	// daimon cannot keep a released leaf while rewriting its instruction.
+	//
+	// Pausing is untouched and still travels: a hold from any device holds here,
+	// and ends the release given here (`settle`), so resuming it is a new decision
+	// made on this device.
+	//
+	// THE SHAPE AND THE TEST THAT KNOWS IT LIVE HERE TOGETHER. Until the delta
+	// re-check of 2026-09-24 (D1) the leaf was joined in triggers.js with the id
+	// raw, and this test knew a one-segment id only. A daimon that wrote
+	// `"id": "m/arm"` made a leaf the test did not recognise, the leaf fell back
+	// to the paused set, where it was not, and the next mail fired it with nobody
+	// pressing play. Now `triggerLeaf` escapes each name, so every leaf is exactly
+	// one level, and the test takes ANYTHING under a Diamond's `triggers/` as
+	// waiting for a release: a leaf built some other way still holds rather than
+	// arms. An id with neither `%` nor `/` in it -- every id the app writes --
+	// names the same leaf it always did, so existing holds and releases carry over.
+	var HERE_LEAF = /^root\/diamonds\/[^/]*\/triggers\//;
+
+	/// The leaf of one triggered action. Every level is kept, even an empty one,
+	/// where `id` would fold it into the branch above.
+	function triggerLeaf(diamondId, actionId) {
+		return ROOT + '/diamonds/' + seg(diamondId) + '/triggers/' + seg(actionId);
+	}
+
+	/// Does this leaf wait for a release on this device?
+	function releasedHereOnly(nodeId) {
+		return HERE_LEAF.test(String(nodeId || ''));
 	}
 
 	// ── Pure core ──────────────────────────────────────────────
@@ -116,6 +173,17 @@
 		var out = [];
 		for (var i = 0; i < node.children.length; i++) {
 			out = out.concat(leavesUnder(node.children[i]));
+		}
+		return out;
+	}
+
+	/// Every leaf NODE at or under `node`, for the fields a leaf carries.
+	function leafNodesUnder(node) {
+		if (!node) return [];
+		if (!node.children) return [node];
+		var out = [];
+		for (var i = 0; i < node.children.length; i++) {
+			out = out.concat(leafNodesUnder(node.children[i]));
 		}
 		return out;
 	}
@@ -275,6 +343,7 @@
 
 	var _paused = null;		// lazily loaded set
 	var _stamp  = 0;
+	var _here   = null;		// leaf -> the terms it was released on, here
 	var _tree   = null;		// a function returning the live tree
 	var _subs   = [];
 
@@ -284,22 +353,89 @@
 
 	function load() {
 		if (_paused) return;
-		_paused = {};
+		_paused = {};			// storage blocked or corrupt: everything plays
 		_stamp = 0;
+		_here = {};
+		fresh();
+	}
+
+	/// Read both records again, over what this tab holds.
+	///
+	/// Every tab of this account on this device shares the store, and until the
+	/// delta re-check of 2026-09-24 (D2) each read it once, at load. "Pause all"
+	/// in one tab left a second one playing -- its triggers fired and its turns
+	/// reached the provider -- and the second tab's next save wrote back a set it
+	/// had never loaded. So another tab's write re-reads here (`onStorage`), and
+	/// every change re-reads before it writes (`current`).
+	///
+	/// The paused set is merged by stamp, as the sync merges one: the later wins
+	/// whole, so the other tab's play arrives as well as its pause, and a change
+	/// this tab made but could not store is not thrown away for an older set. The
+	/// releases carry no stamp and are read whole, so one this tab could not store
+	/// is lost to the next read, which errs held.
+	function fresh() {
 		try {
 			var raw = localStorage.getItem(STORE_KEY);
-			if (raw) {
-				var rec = JSON.parse(raw);
-				_paused = fromRecord(rec);
-				_stamp = (rec && rec.stamp) || 0;
+			var merged = mergeRecords(toRecord(_paused, _stamp), raw ? JSON.parse(raw) : null);
+			_paused = fromRecord(merged);
+			_stamp = merged.stamp || 0;
+		} catch (e) { /* storage blocked or corrupt: what this tab holds stands */ }
+		var got = {};
+		try {
+			var here = JSON.parse(localStorage.getItem(HERE_KEY) || '{}') || {};
+			for (var k in here) {
+				if (releasedHereOnly(k) && typeof here[k] === 'string' && here[k]) got[k] = here[k];
 			}
-		} catch (e) { /* storage blocked or corrupt: everything plays */ }
+		} catch (e) { /* storage blocked or corrupt: every triggered action is held */ }
+		_here = got;
+		if (settle()) saveHere();
+	}
+
+	/// Before a change: what the store holds now, so this tab writes its change
+	/// onto another tab's rather than over it.
+	function current() {
+		if (_paused) fresh(); else load();
+	}
+
+	/// Move the stamp for a change made here. Always forward, even past a stamp
+	/// adopted from a device whose clock runs ahead: a change made after it has to
+	/// read as later to every tab's re-read, and to the sync.
+	function bump() {
+		_stamp = Math.max(now(), _stamp + 1);
 	}
 
 	function save() {
 		try {
 			localStorage.setItem(STORE_KEY, JSON.stringify(toRecord(_paused, _stamp)));
 		} catch (e) { /* quota */ }
+	}
+
+	function saveHere() {
+		try { localStorage.setItem(HERE_KEY, JSON.stringify(_here)); }
+		catch (e) { /* quota: the release lasts this session, and errs held after */ }
+	}
+
+	/// A hold, from this device or another, ends the release given here. Returns
+	/// true when one was ended.
+	function settle() {
+		var hit = false;
+		for (var k in _here) {
+			if (_paused[k]) { delete _here[k]; hit = true; }
+		}
+		return hit;
+	}
+
+	/// The held set as a light must read it under `node`: every paused leaf, and
+	/// every leaf there that waits on a release here, judged on the terms its tree
+	/// node carries -- the same terms the trigger is judged on when it fires.
+	function heldUnder(node) {
+		var out = {};
+		for (var k in _paused) if (_paused[k]) out[k] = true;
+		var leaves = leafNodesUnder(node);
+		for (var i = 0; i < leaves.length; i++) {
+			if (isPaused(leaves[i].id, leaves[i].terms)) out[leaves[i].id] = true;
+		}
+		return out;
 	}
 
 	function announce() {
@@ -326,10 +462,18 @@
 	/// flag: branches hold no state, so there is no ancestor to
 	/// consult and no tree to walk. Enforcement calls this, and it
 	/// must stay cheap enough to sit in front of every spend.
-	function isPaused(nodeId) {
+	///
+	/// A triggered action's leaf is also held until it is released on this
+	/// device (see `releasedHereOnly`). `terms` is what the action does now;
+	/// given, a release made on any other terms does not count.
+	function isPaused(nodeId, terms) {
 		if (!nodeId) return false;
 		load();
-		return !!_paused[nodeId];
+		if (_paused[nodeId]) return true;
+		if (!releasedHereOnly(nodeId)) return false;
+		var got = _here[nodeId];
+		if (!got) return true;
+		return terms !== undefined && got !== terms;
 	}
 
 	/// The state of any node, leaf or branch: 'play', 'pause' or
@@ -339,24 +483,72 @@
 		load();
 		var t = tree();
 		var node = t ? findNode(t, nodeId) : null;
-		if (!node) return _paused[nodeId] ? 'pause' : 'play';
-		return stateOf(node, _paused);
+		if (!node) return isPaused(nodeId) ? 'pause' : 'play';
+		return stateOf(node, heldUnder(node));
+	}
+
+	/// Has a PERSON held everything under this node? The paused set alone.
+	///
+	/// Not `state(nodeId) === 'pause'`, which since the per-device release also
+	/// counts a triggered action that only waits for a release here. That is
+	/// right for the light -- it will not run by itself -- and wrong for a spend
+	/// that falls back on the global control: a daimon's file write would then
+	/// read as the person holding everything, and refuse their page fetches.
+	///
+	/// Also not `stateOf(node, _paused)`, which walks ARMED leaves only. A
+	/// fresh account seeds one armed, held leaf (the Optimiser's own trigger)
+	/// alongside unarmed ones nobody has touched, and `stateOf` called that
+	/// "everything held" -- refusing the person's first search on a `root/web`
+	/// leaf nobody had paused. "Pause all" writes every leaf via `applySet`,
+	/// armed or not, so that is what held-by-hand has to check.
+	function heldByHand(nodeId) {
+		load();
+		var t = tree();
+		var node = t ? findNode(t, nodeId) : null;
+		if (!node) return !!_paused[nodeId];
+		var leaves = leavesUnder(node);
+		if (!leaves.length) return false;
+		for (var i = 0; i < leaves.length; i++) if (!_paused[leaves[i]]) return false;
+		return true;
 	}
 
 	/// Set a node playing or paused, writing every leaf under it.
 	/// Returns true when something actually changed — the stamp moves
 	/// only then, which is what keeps the sync parcel a fixed point.
+	///
+	/// This is the one door a release on this device comes through, and every
+	/// caller of it is a person pressing play or pause. Playing a node releases
+	/// each triggered action under it on the terms its tree node carries; a leaf
+	/// the tree does not know, or one with no terms, is not released, because
+	/// nothing can be released that the app cannot show. Pausing ends the release.
 	function set(nodeId, playing) {
-		load();
+		current();
 		var t = tree();
 		var node = (t ? findNode(t, nodeId) : null) || { id: nodeId };
 		var next = applySet(node, _paused, playing);
 		var before = JSON.stringify(toRecord(_paused, 0));
 		var after  = JSON.stringify(toRecord(next, 0));
-		if (before === after) return false;
-		_paused = next;
-		_stamp = now();
-		save();
+		var moved  = before !== after;
+		var here   = false;
+		var leaves = leafNodesUnder(node);
+		for (var i = 0; i < leaves.length; i++) {
+			var l = leaves[i];
+			if (!releasedHereOnly(l.id)) continue;
+			if (playing) {
+				var terms = (typeof l.terms === 'string') ? l.terms : '';
+				if (terms && _here[l.id] !== terms) { _here[l.id] = terms; here = true; }
+			} else if (_here[l.id]) {
+				delete _here[l.id];
+				here = true;
+			}
+		}
+		if (!moved && !here) return false;
+		if (moved) {
+			_paused = next;
+			bump();
+			save();
+		}
+		if (here) saveHere();
 		announce();
 		return true;
 	}
@@ -364,10 +556,10 @@
 	/// Click a node: a branch that is wholly playing pauses, anything
 	/// else resumes.
 	function toggle(nodeId) {
-		load();
+		current();
 		var t = tree();
 		var node = (t ? findNode(t, nodeId) : null) || { id: nodeId };
-		return set(nodeId, clickWould(node, _paused) === 'play');
+		return set(nodeId, clickWould(node, heldUnder(node)) === 'play');
 	}
 
 	/// Seed a leaf as paused at the moment it is created, without
@@ -375,12 +567,48 @@
 	/// paused this way, rather than by a branch that remembers.
 	function seedPaused(nodeId) {
 		if (!nodeId) return false;
-		load();
+		current();
 		if (_paused[nodeId]) return false;
 		_paused[nodeId] = true;
-		_stamp = now();
+		bump();
 		save();
+		if (settle()) saveHere();
 		announce();
+		return true;
+	}
+
+	/// The terms this leaf was released on here, or '' where it was not.
+	function releasedHere(nodeId) {
+		load();
+		return (nodeId && _here[nodeId]) || '';
+	}
+
+	/// Drop the releases given here to a Diamond's actions for leaves no longer in
+	/// `live`. An action gone from its file takes its release with it, so the same
+	/// action written back later -- by a daimon, a sync or a hand -- arrives held.
+	function pruneHere(diamondId, live) {
+		current();
+		var under = triggerLeaf(diamondId, '');
+		var keep = {};
+		for (var i = 0; i < (live || []).length; i++) keep[live[i]] = true;
+		var gone = false;
+		for (var k in _here) {
+			if (k.indexOf(under) === 0 && !keep[k]) { delete _here[k]; gone = true; }
+		}
+		if (gone) saveHere();
+		return gone;
+	}
+
+	/// Carry a release given here across an edit made in the app's own editor:
+	/// only a release that was good for the action as it read before (`from`) is
+	/// moved to what it reads now (`to`), so this cannot arm anything that was not
+	/// already running on this device. Returns true when it moved one.
+	function carry(nodeId, from, to) {
+		current();
+		if (!releasedHereOnly(nodeId) || !from || !to || _here[nodeId] !== from) return false;
+		if (from === to) return false;
+		_here[nodeId] = to;
+		saveHere();
 		return true;
 	}
 
@@ -389,12 +617,17 @@
 	/// ever and would travel in the parcel for the life of the
 	/// account.
 	function forget(prefix) {
-		load();
+		current();
 		var hit = false;
 		for (var k in _paused) {
 			if (k === prefix || k.indexOf(prefix + '/') === 0) { delete _paused[k]; hit = true; }
 		}
-		if (hit) { _stamp = now(); save(); announce(); }
+		var gone = false;
+		for (var h in _here) {
+			if (h === prefix || h.indexOf(prefix + '/') === 0) { delete _here[h]; gone = true; }
+		}
+		if (gone) saveHere();
+		if (hit) { bump(); save(); announce(); }
 		return hit;
 	}
 
@@ -407,7 +640,7 @@
 	/// Take a record from the sync, merged against what is held here.
 	/// Returns true when the local state moved.
 	function adopt(rec) {
-		load();
+		current();
 		var merged = mergeRecords(toRecord(_paused, _stamp), rec);
 		var before = JSON.stringify(toRecord(_paused, _stamp));
 		var after  = JSON.stringify(merged);
@@ -415,6 +648,9 @@
 		_paused = fromRecord(merged);
 		_stamp = merged.stamp || 0;
 		save();
+		// A hold that arrived ends the release given here. A leaf that arrives
+		// UNPAUSED gains nothing: what another device released is not released here.
+		if (settle()) saveHere();
 		announce();
 		return true;
 	}
@@ -424,9 +660,34 @@
 		if (typeof fn === 'function') _subs.push(fn);
 	}
 
+	/// Is this `storage` event about one of this account's two records? The key
+	/// comes as stored, so a second account's carries its accounts.js prefix, and
+	/// another account's is not ours. A null key is the whole store cleared.
+	function ours(key) {
+		if (key === null) return true;
+		var pre = '';
+		try { if (window.DaimondAccounts) pre = window.DaimondAccounts.prefix() || ''; }
+		catch (e) { /* no accounts module: the raw keys */ }
+		return key === pre + STORE_KEY || key === pre + HERE_KEY;
+	}
+
+	/// Another tab of this account moved a record: read both again, and tell the
+	/// lights, the pump and the mail poll if anything here moved. The browser
+	/// raises this in every tab but the writer, so a tab never answers itself.
+	function onStorage(e) {
+		if (!_paused || !e || !ours(e.key)) return;	// not read yet: the first read is fresh
+		var was = JSON.stringify([toRecord(_paused, _stamp), _here]);
+		fresh();
+		if (JSON.stringify([toRecord(_paused, _stamp), _here]) !== was) announce();
+	}
+
+	if (typeof window !== 'undefined' && typeof window.addEventListener === 'function') {
+		window.addEventListener('storage', onStorage);
+	}
+
 	/// Drop everything held, for an account switch: one account's
 	/// pauses must never colour another's.
-	function reset() { _paused = null; _stamp = 0; }
+	function reset() { _paused = null; _stamp = 0; _here = null; }
 
 	/// Every paused leaf, for a verifier or a diagnostic.
 	function pausedIds() { load(); return toRecord(_paused, _stamp).paused; }
@@ -453,13 +714,18 @@
 	var api = {
 		// Live API.
 		id:         id,
+		triggerLeaf: triggerLeaf,
 		ROOT:       ROOT,
 		setTree:    setTree,
 		isPaused:   isPaused,
 		state:      state,
+		heldByHand: heldByHand,
 		set:        set,
 		toggle:     toggle,
 		seedPaused: seedPaused,
+		releasedHere: releasedHere,
+		carry:      carry,
+		pruneHere:  pruneHere,
 		forget:     forget,
 		snapshot:   snapshot,
 		adopt:      adopt,
@@ -470,6 +736,8 @@
 		// Pure core, exposed for tests and for reuse.
 		_core: {
 			leavesUnder:   leavesUnder,
+			leafNodesUnder: leafNodesUnder,
+			releasedHereOnly: releasedHereOnly,
 			armedUnder:    armedUnder,
 			findNode:      findNode,
 			stateOf:       stateOf,
@@ -478,7 +746,7 @@
 			toRecord:      toRecord,
 			fromRecord:    fromRecord,
 			mergeRecords:  mergeRecords,
-			consts: { STORE_KEY: STORE_KEY, ROOT: ROOT },
+			consts: { STORE_KEY: STORE_KEY, HERE_KEY: HERE_KEY, ROOT: ROOT },
 		},
 	};
 

@@ -322,7 +322,7 @@
 	/// same tree, so a held root holds a search even where the leaf itself is running.
 	function allHeld() {
 		if (!window.DaimondPause) return false;
-		try { return DaimondPause.state(ROOT()) === 'pause'; } catch (e) { return false; }
+		try { return DaimondPause.heldByHand(ROOT()); } catch (e) { return false; }
 	}
 
 	/// The refusal a pause produces: an Error naming the node. `paused` marks it so a

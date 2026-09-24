@@ -1006,15 +1006,27 @@
 	}
 
 
-	/// Drop a path from the index — the file is GONE, not merely absent. Its
-	/// chunks are swept on the next commit. Only an explicit delete does this.
+	/// Drop a path from the index, and every path beneath it — the file is GONE,
+	/// not merely absent. Its chunks are swept on the next commit. Only an
+	/// explicit delete does this.
+	///
+	/// BENEATH IT TOO, because a folder the user deletes is the path of every
+	/// cloud-only file inside it: those were not on this device to go with the
+	/// folder, and matched on the one key they stayed in the index and came back
+	/// in the parent as files the user had just deleted.
 	function forget(path) {
 		var ix = index();
-		if (!Object.prototype.hasOwnProperty.call(ix, path)) return false;
-		delete ix[path];
+		var want = String(path || '').replace(/\/+$/, '');
+		if (!want) return false;
+		var gone = Object.keys(ix).filter(function (k) {
+			return k === want || k.indexOf(want + '/') === 0;
+		});
+		if (!gone.length) return false;
+		var a = atimes(), p = pins();
+		gone.forEach(function (k) { delete ix[k]; delete a[k]; delete p[k]; });
 		setIndex(ix);
-		var a = atimes(); delete a[path]; writeJson(ATIME_KEY, a);
-		var p = pins();   delete p[path]; writeJson(PIN_KEY, p);
+		writeJson(ATIME_KEY, a);
+		writeJson(PIN_KEY, p);
 		refreshPaths();
 		return true;
 	}

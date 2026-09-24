@@ -786,7 +786,10 @@ impl Event {
             Req::Input { .. } => None,
             // Nothing happened that anyone need answer for.
             Req::Resize { .. } => None,
-            Req::Exec { id, argv, cwd, env, stdin, timeout_ms, capture, fence, toolkits: _ } => {
+            // An answer to the meter's question, and a request to put files back: the run
+            // they concern is already journalled, and the trash keeps its own record.
+            Req::Release { .. } | Req::Restore { .. } => None,
+            Req::Exec { id, argv, cwd, env, stdin, timeout_ms, capture, fence, toolkits: _, meter: _ } => {
                 let (safe, cut) = redact_argv(argv);
                 Some(Self::Exec {
                     id:          id.clone(),
@@ -868,6 +871,8 @@ impl Event {
     /// nothing the request has not already said.
     pub fn from_resp(resp: &Resp) -> Option<Self> {
         match resp {
+            // What the meter counted is said to the page; the trash is its record.
+            Resp::Held { .. } | Resp::Metered { .. } | Resp::Restored { .. } => None,
             Resp::Opened { id, pid } => Some(Self::Started {
                 id:  id.clone(),
                 pid: *pid,
@@ -3782,6 +3787,7 @@ mod tests {
                 net:  false,
             },
             toolkits: Vec::new(),
+            meter:    None,
         }
     }
 
@@ -4288,6 +4294,7 @@ mod tests {
             capture:    Capture::Both,
             fence:      FenceSpec::default(),
             toolkits: Vec::new(),
+            meter:    None,
         };
         match Event::from_req(&req, &[]) {
             Some(ev) => { res!(j.append(&ev)); },
@@ -4320,6 +4327,7 @@ mod tests {
             capture:    Capture::Both,
             fence:      FenceSpec::default(),
             toolkits: Vec::new(),
+            meter:    None,
         };
         match Event::from_req(&req, &[]) {
             Some(ev) => { res!(j.append(&ev)); },
@@ -4403,6 +4411,7 @@ mod tests {
             capture:    Capture::None,
             fence:      FenceSpec::default(),
             toolkits: Vec::new(),
+            meter:    None,
         };
         match Event::from_req(&req, &[]) {
             Some(ev) => { res!(j.append(&ev)); },
@@ -4801,6 +4810,7 @@ mod tests {
                 net:  false,
             },
             toolkits: Vec::new(),
+            meter:    None,
         };
         match Event::from_req(&req, &[fmt!("landlock-{}", key)]) {
             Some(ev) => { res!(j.append(&ev)); },

@@ -1,14 +1,23 @@
 /* ============================================================
    Daimond — pure-JS Ed25519 / X25519 fallback (curvefallback.js)
    ------------------------------------------------------------
-   A last resort for unlock on a browser whose WebCrypto does not
-   implement Ed25519 or X25519 — old Android Chrome, and Firefox
-   before ~129/132. On those engines the passphrase-derived AES-GCM
-   unwrap of the private key still works, but the importKey/deriveBits
-   call that loads the signing or sealing key THROWS, and the account
-   cannot be opened at all. This module lets identity.js fall back to
-   the vendored @noble/curves implementation so the same account
-   still signs and still opens sealed messages.
+   A last resort for a browser whose WebCrypto does not implement
+   Ed25519 or X25519. Ed25519 arrived in Chrome 137, Firefox 129 and
+   Safari 17, X25519 in Chrome 133, Firefox 130 and Safari 17, and a
+   device stuck below those (an iPhone X on iOS 16, a Windows 7 PC,
+   Firefox ESR 115) lacks them. On those engines the passphrase-
+   derived AES-GCM unwrap of the private key still works, but the
+   importKey/deriveBits call that loads the signing or sealing key
+   THROWS, and the account cannot be opened at all. This module lets
+   identity.js fall back to the vendored @noble/curves implementation
+   so the same account still signs and still opens sealed messages.
+
+   It MAKES keys too, since 2026-09-23: every Daimond account is
+   Ed25519 on every browser (the owner's ruling, D-20260923-46), so an
+   account created on such an engine gets its Ed25519 signing key
+   here rather than a key of another curve. The pkcs8 built around it
+   is the one WebCrypto emits, so a modern browser opens the account
+   natively afterwards.
 
    INTEROPERABILITY. The fallback is bit-identical to WebCrypto:
    Ed25519 is deterministic (RFC 8032), so a signature made here
@@ -46,9 +55,13 @@
 	var OID_ED25519 = 0x70;
 	var OID_X25519  = 0x6e;
 
-	// The exact 16-byte pkcs8 header WebCrypto emits for an X25519 private key,
-	// used to rebuild a pkcs8 around a freshly generated scalar so a later
-	// modern browser can import it unchanged.
+	// The exact 16-byte pkcs8 headers WebCrypto emits for these curves, used to
+	// build a pkcs8 around a freshly generated key so a later modern browser can
+	// import it unchanged. They differ only in the OID's final octet.
+	var ED25519_PKCS8_HEADER = [
+		0x30, 0x2e, 0x02, 0x01, 0x00, 0x30, 0x05, 0x06,
+		0x03, 0x2b, 0x65, 0x70, 0x04, 0x22, 0x04, 0x20,
+	];
 	var X25519_PKCS8_HEADER = [
 		0x30, 0x2e, 0x02, 0x01, 0x00, 0x30, 0x05, 0x06,
 		0x03, 0x2b, 0x65, 0x6e, 0x04, 0x22, 0x04, 0x20,
@@ -85,15 +98,26 @@
 		return keyFromPkcs8(pkcs8, OID_X25519);
 	}
 
+	/// Wrap a 32-byte key in the pkcs8 WebCrypto would emit under `header`.
+	function pkcs8FromKey(key, header, what) {
+		var k = (key instanceof Uint8Array) ? key : new Uint8Array(key);
+		if (k.length !== 32) throw new Error('curvefallback: ' + what + ' must be 32 bytes');
+		var out = new Uint8Array(PKCS8_LEN);
+		out.set(header, 0);
+		out.set(k, HEADER_LEN);
+		return out;
+	}
+
+	/// Wrap a 32-byte Ed25519 seed in the pkcs8 WebCrypto would emit, so a
+	/// signing key made here is stored exactly as a modern engine stores one.
+	function edPkcs8FromSeed(seed) {
+		return pkcs8FromKey(seed, ED25519_PKCS8_HEADER, 'Ed25519 seed');
+	}
+
 	/// Wrap a 32-byte X25519 scalar back into the pkcs8 WebCrypto would emit,
 	/// so a stored sealing key made here stays importable by a modern engine.
 	function xPkcs8FromScalar(scalar) {
-		var s = (scalar instanceof Uint8Array) ? scalar : new Uint8Array(scalar);
-		if (s.length !== 32) throw new Error('curvefallback: X25519 scalar must be 32 bytes');
-		var out = new Uint8Array(PKCS8_LEN);
-		out.set(X25519_PKCS8_HEADER, 0);
-		out.set(s, HEADER_LEN);
-		return out;
+		return pkcs8FromKey(scalar, X25519_PKCS8_HEADER, 'X25519 scalar');
 	}
 
 	/// The raw 32-byte Ed25519 public key for a seed.
@@ -124,6 +148,14 @@
 		return noble().x25519.getSharedSecret(scalar, theirPub);
 	}
 
+	/// A fresh 32-byte Ed25519 seed for generating a signing key on an engine
+	/// without WebCrypto Ed25519. An Ed25519 private key IS 32 uniformly random
+	/// bytes (RFC 8032 5.1.5), and it is what pkcs8 carries, so this is the
+	/// whole of key generation; the public key follows from it.
+	function randomEdSeed() {
+		return crypto.getRandomValues(new Uint8Array(32));
+	}
+
 	/// A fresh 32-byte X25519 scalar for generating a sealing key on an engine
 	/// without WebCrypto X25519. noble clamps at use; WebCrypto clamps on
 	/// import, so the two agree on the derived secret.
@@ -144,12 +176,14 @@
 		available:         available,
 		edSeedFromPkcs8:   edSeedFromPkcs8,
 		xScalarFromPkcs8:  xScalarFromPkcs8,
+		edPkcs8FromSeed:   edPkcs8FromSeed,
 		xPkcs8FromScalar:  xPkcs8FromScalar,
 		edPublicKey:       edPublicKey,
 		edSign:            edSign,
 		edVerify:          edVerify,
 		xPublicKey:        xPublicKey,
 		xSharedSecret:     xSharedSecret,
+		randomEdSeed:      randomEdSeed,
 		randomXScalar:     randomXScalar,
 		zero:              zero,
 	};

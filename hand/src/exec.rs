@@ -380,6 +380,7 @@ struct Live {
     sigtx: UnboundedSender<Sig>,	// to the supervisor, which owns the child and does the killing
     what:  String,					// the command line, for the listing
     since: std::time::Instant,		// when it started
+    hold:  Option<std::sync::mpsc::Sender<bool>>,	// the meter's ear, where the run is metered
 }
 
 // ── A run that ended and left its process group standing ────────────────────
@@ -469,13 +470,13 @@ impl Runner {
     /// # Returns
     /// [`Launch::Started`] with the child's process id, or [`Launch::Refused`].
     pub async fn spawn(&self, req: Req, tx: Sender<Resp>) -> Outcome<Launch> {
-        let (id, argv, cwd, mut env, stdin, timeout_ms, capture, mut fence) = match req {
+        let (id, argv, cwd, mut env, stdin, timeout_ms, capture, mut fence, meter) = match req {
             // `toolkits` is spent before the request gets here: `Desk::exec` clamps the fence
             // against it, and what survives that is a fence of absolute paths the runner needs no
             // grant to interpret. Named rather than swept up by `..`, so a field added later has
             // to be looked at here too.
-            Req::Exec { id, argv, cwd, env, stdin, timeout_ms, capture, fence, toolkits: _ } =>
-                (id, argv, cwd, env, stdin, timeout_ms, capture, fence),
+            Req::Exec { id, argv, cwd, env, stdin, timeout_ms, capture, fence, toolkits: _, meter } =>
+                (id, argv, cwd, env, stdin, timeout_ms, capture, fence, meter),
             other => return Err(err!(
                 "Runner::spawn was given {:?}, which is not an Exec request.", other;
                 Bug, Invalid, Input)),
@@ -563,6 +564,25 @@ impl Runner {
                 "Refused: this command could not be given a private directory to write temporary \
                 files in, and the hand will not run one without. {} ", e.msgs().join(" "))).await,
         };
+        // The roots whose pre-existing files the deletion meter counts: what the caller
+        // asked to write, before the hand adds its scratch, less any that is a toolchain
+        // cache -- and the caches themselves, which are free wherever a mark holds one.
+        let (marks, caches) = meter_marks(&fence);
+        let metered = cfg!(target_os = "linux") && !marks.is_empty();
+        // A command from a page older than the meter is its own turn.
+        let turn_ms = crate::meter::Watch::now_ms();
+        let trash = if metered {
+            match crate::meter::trash_root() {
+                Ok(t)  => { crate::meter::sweep(&t); t },
+                Err(e) => return self.refuse(&id, &tx, fmt!(
+                    "Refused: {}", e.msgs().join(" "))).await,
+            }
+        } else {
+            PathBuf::new()
+        };
+        if metered {
+            quiet_gc(&mut env);
+        }
         fence.rw.push(fmt!("{}", scratch.dir().display()));
         // Appended after the caller's pairs, so that the hand's answer is the
         // last word even if one of these names ever reached this far.
@@ -660,6 +680,7 @@ impl Runner {
             plan: plan.clone(),
             tty:  false,
             act:  Act::Exec,
+            meter: metered,
         }));
 
         let mut child = res!(cmd.spawn()
@@ -677,10 +698,21 @@ impl Runner {
         // Written from a task: the plan can exceed a pipe buffer, and a caller
         // sending more input than a pipe holds would otherwise deadlock against
         // its own output.
+        //
+        // A metered launcher reads one more byte after the plan, and does not `exec`
+        // until it arrives: the hand must hold its copy of the meter's listener
+        // before the command exists. No byte, and the launcher refuses to run.
+        let (go_tx, go_rx) = tokio::sync::oneshot::channel::<bool>();
         if let Some(mut w) = child.stdin.take() {
             tokio::spawn(async move {
                 if w.write_all(&payload).await.is_err() {
                     return; // The launcher died; `Ended` will carry its code.
+                }
+                if metered {
+                    match go_rx.await {
+                        Ok(true) => if w.write_all(&[1u8]).await.is_err() { return; },
+                        _        => return, // Dropping the pipe is the refusal.
+                    }
                 }
                 if let Some(text) = stdin {
                     let _ = w.write_all(text.as_bytes()).await;
@@ -691,6 +723,7 @@ impl Runner {
 
         let what = cut_to(&argv.join(" "), RUN_WHAT_MAX);
         let (sigtx, sigrx) = tokio::sync::mpsc::unbounded_channel::<Sig>();
+        let (hold_tx, hold_rx) = std::sync::mpsc::channel::<bool>();
         {
             let mut g = lock_mutex!(self.live);
             g.insert(id.clone(), Live {
@@ -698,6 +731,7 @@ impl Runner {
                 sigtx: sigtx.clone(),
                 what:  what.clone(),
                 since: std::time::Instant::now(),
+                hold:  if metered { Some(hold_tx) } else { None },
             });
         }
 
@@ -716,6 +750,44 @@ impl Runner {
                 Channel, IO));
         }
 
+        // The meter's listener, taken before the command exists, and its watcher.
+        let tally = if metered {
+            let t = Arc::new(crate::meter::Tally::default());
+            let w = crate::meter::Watch {
+                id:       id.clone(),
+                marks,
+                caches,
+                budget:   match meter { Some(m) => m.budget, None => crate::meter::BUDGET },
+                since:    crate::meter::Watch::since_of(match meter {
+                    Some(m) => m.since_ms,
+                    None    => turn_ms,
+                }),
+                since_ms: match meter { Some(m) => m.since_ms, None => turn_ms },
+                trash:    trash.clone(),
+            };
+            match attach_meter(pid, w, tx.clone(), sigtx.clone(), hold_rx, Arc::clone(&t)).await {
+                Ok(()) => {
+                    let _ = go_tx.send(true);
+                    Some(t)
+                },
+                Err(e) => {
+                    let _ = go_tx.send(false);
+                    let _ = tx.send(Resp::Error {
+                        id:      Some(id.clone()),
+                        message: fmt!(
+                            "The command was not run, because the hand could not attach the \
+                            meter that stops a command emptying a folder. {}",
+                            e.msgs().join(" ")),
+                    }).await;
+                    None
+                },
+            }
+        } else {
+            drop(go_tx);
+            drop(hold_rx);
+            None
+        };
+
         let job = Job {
             id:      id.clone(),
             pgid:    pid,
@@ -725,6 +797,7 @@ impl Runner {
             left:    Arc::clone(&self.left),
             tx:      tx.clone(),
             scratch: Some(scratch),
+            tally,
         };
         tokio::spawn(async move {
             let jid = job.id.clone();
@@ -980,6 +1053,22 @@ impl Runner {
         Ok(g.get(id).map(|l| l.pid))
     }
 
+    /// Hands the user's answer to a run the deletion meter is holding.
+    ///
+    /// Whether it reached a metered run, which says nothing about whether that run was
+    /// held at the moment: an answer waits for the next hold if it arrives early.
+    ///
+    /// # Arguments
+    /// * `id` - The held run.
+    /// * `allow` - True to let it go on removing, false to stop it.
+    pub fn release(&self, id: &str, allow: bool) -> Outcome<bool> {
+        let g = lock_mutex!(self.live);
+        Ok(match g.get(id).and_then(|l| l.hold.as_ref()) {
+            Some(h) => h.send(allow).is_ok(),
+            None    => false,
+        })
+    }
+
     /// How many runs are live.
     pub fn live_count(&self) -> Outcome<usize> {
         let g = lock_mutex!(self.live);
@@ -1103,6 +1192,7 @@ impl Files {
             plan: plan.clone(),
             tty:  false,
             act:  Act::File(op.clone()),
+            meter: false,
         }));
 
         let mut cmd = Command::new(res!(self.launcher.prog()));
@@ -1202,6 +1292,7 @@ struct Job {
     /// which covers the ways a run can end before this struct exists -- has
     /// nothing left to do.
     scratch: Option<Scratch>,
+    tally:   Option<Arc<crate::meter::Tally>>,	// what the deletion meter counted, where it ran
 }
 
 /// Watches one child to its end and sends the closing [`wire::Resp::Ended`].
@@ -1380,6 +1471,14 @@ async fn supervise(
         },
         Err(_) => -1,
     };
+
+    if let Some(t) = &job.tally {
+        let _ = job.tx.send(Resp::Metered {
+            id:      job.id.clone(),
+            counted: t.counted.load(Ordering::Relaxed),
+            stopped: t.stopped.load(Ordering::Relaxed),
+        }).await;
+    }
 
     let ended = Resp::Ended {
         id:        job.id.clone(),
@@ -2056,6 +2155,140 @@ pub(crate) fn add_defaults(env: &mut Vec<(String, String)>) {
             env.push((fmt!("{}", name), v));
         }
     }
+}
+
+/// The roots the deletion meter counts removals under, and the toolchain caches it lets be.
+///
+/// Every writable directory the caller named, resolved, except one that IS a toolchain
+/// cache: a package cache is regenerated by its tool and is not the user's work.  The
+/// caches come back as well, so that one sitting INSIDE a mark -- a granted home directory
+/// holds all of them -- is free while the rest of the mark is counted.  The hand's own
+/// scratch is added to the fence after this is read, so it is never a mark.
+///
+/// Until the audit of 2026-09-23 (F5) a root merely NESTED in a toolchain folder was
+/// dropped too, so a Diamond's folder under `~/.cache/daimond` or `~/go/pkg/mod` was never
+/// metered at all: a fail-open decided by where the user happened to keep their work.
+///
+/// # Arguments
+/// * `fence` - The fence as the caller sent it.
+fn meter_marks(fence: &FenceSpec) -> (Vec<PathBuf>, Vec<PathBuf>) {
+    let home = home_dir().map(PathBuf::from);
+    meter_marks_in(fence, home.as_deref())
+}
+
+/// [`meter_marks`], against a named home directory, so the answer can be tested without
+/// setting `HOME` for the whole process.
+///
+/// # Arguments
+/// * `fence` - The fence as the caller sent it.
+/// * `home` - The home directory the toolchain caches are under, if one is known.
+fn meter_marks_in(fence: &FenceSpec, home: Option<&Path>) -> (Vec<PathBuf>, Vec<PathBuf>) {
+    let caches = match home {
+        Some(h) => toolkit_caches(h),
+        None    => Vec::new(),
+    };
+    let mut marks = Vec::new();
+    for r in &fence.rw {
+        let p = match Path::new(r).canonicalize() {
+            Ok(p)  => p,
+            Err(_) => continue,
+        };
+        if !p.is_dir() || caches.contains(&p) || marks.contains(&p) {
+            continue;
+        }
+        marks.push(p);
+    }
+    (marks, caches)
+}
+
+/// The toolchain folders a tool regenerates, resolved: the writable [`TOOLKIT_ROOTS`] rows
+/// a command may have.  Read-only rows are not caches -- `~/.local/bin` holds what the user
+/// installed and `~/.gitconfig` is the user's own -- and a terminal-only row is never a
+/// command's.  A cache that does not exist holds nothing a command could remove, so it is
+/// left out rather than guessed at.
+///
+/// # Arguments
+/// * `home` - The home directory the tails are under.
+fn toolkit_caches(home: &Path) -> Vec<PathBuf> {
+    TOOLKIT_ROOTS.iter()
+        .filter(|k| k.write && !k.term)
+        .filter_map(|k| home.join(k.tail).canonicalize().ok())
+        .filter(|p| p.is_dir())
+        .collect()
+}
+
+/// Turns off git's automatic garbage collection for a metered command.
+///
+/// Auto-gc prunes loose objects that existed before the turn, and each would be a counted
+/// removal.  An explicit `git gc` is rare, and asking about it is right.  Added to any
+/// `GIT_CONFIG_COUNT` series already in the environment rather than replacing it, since the
+/// page passes a push credential the same way.
+///
+/// # Arguments
+/// * `env` - The command's environment, appended to in place.
+fn quiet_gc(env: &mut Vec<(String, String)>) {
+    let at = env.iter().position(|(k, _)| k == "GIT_CONFIG_COUNT");
+    let n = match at {
+        Some(i) => env[i].1.parse::<u32>().unwrap_or(0),
+        None    => 0,
+    };
+    env.push((fmt!("GIT_CONFIG_KEY_{}", n), fmt!("gc.auto")));
+    env.push((fmt!("GIT_CONFIG_VALUE_{}", n), fmt!("0")));
+    match at {
+        Some(i) => env[i].1 = fmt!("{}", n + 1),
+        None    => env.push((fmt!("GIT_CONFIG_COUNT"), fmt!("{}", n + 1))),
+    }
+}
+
+/// Takes the metered launcher's listener and starts the thread that answers it.
+///
+/// # Arguments
+/// * `pid` - The launcher.
+/// * `w` - What the meter is told.
+/// * `tx` - Where the held question and the refusals go.
+/// * `sigtx` - The run's supervisor, for a stop.
+/// * `answers` - The user's answers to a held question.
+/// * `tally` - What is counted.
+#[cfg(target_os = "linux")]
+async fn attach_meter(
+    pid:     u32,
+    w:       crate::meter::Watch,
+    tx:      Sender<Resp>,
+    sigtx:   UnboundedSender<Sig>,
+    answers: std::sync::mpsc::Receiver<bool>,
+    tally:   Arc<crate::meter::Tally>,
+)
+    -> Outcome<()>
+{
+    let fd = match tokio::task::spawn_blocking(move ||
+        crate::meter::grab(pid, Duration::from_secs(60))).await
+    {
+        Ok(r)  => res!(r),
+        Err(e) => return Err(err!(e, "The meter's listener could not be taken."; System, IO)),
+    };
+    let spawned = std::thread::Builder::new()
+        .name(fmt!("meter-{}", pid))
+        .spawn(move || crate::meter::watch(fd, w, tx, sigtx, answers, tally));
+    match spawned {
+        Ok(_)  => Ok(()),
+        Err(e) => Err(err!(e, "The meter's thread could not be started."; System, Init)),
+    }
+}
+
+/// Everywhere but Linux there is no meter, and nothing asks for one.
+#[cfg(not(target_os = "linux"))]
+async fn attach_meter(
+    pid:     u32,
+    w:       crate::meter::Watch,
+    tx:      Sender<Resp>,
+    sigtx:   UnboundedSender<Sig>,
+    answers: std::sync::mpsc::Receiver<bool>,
+    tally:   Arc<crate::meter::Tally>,
+)
+    -> Outcome<()>
+{
+    let _ = (pid, w, tx, sigtx, answers, tally);
+    Err(err!("There is no deletion meter on this platform."; Unimplemented))
 }
 
 /// How much of a run's identifier reaches the directory name.
@@ -3773,6 +4006,9 @@ pub struct Payload {
     /// same ruleset, the same filter, applied in the same order -- and that sharing is the
     /// whole guarantee the file door rests on.
     pub act:  Act,
+    /// Whether the launcher installs the deletion meter and waits for the hand to take
+    /// its listener.  See `meter.rs`.
+    pub meter: bool,
     /// Whether this command is to have a controlling terminal.
     ///
     /// A terminal is adopted BEFORE the fence, because Landlock's ABI 5 governs `ioctl` on a
@@ -3921,6 +4157,29 @@ fn launch_inner() -> (i32, String) {
         }
         std::process::exit(0)
     }
+
+    // The deletion meter, last of all and immediately before the `exec`, so no call the
+    // launcher makes itself is held. The context is kept until the `exec` replaces this
+    // process, and the launcher waits for the hand's go-ahead: the hand must hold its own
+    // copy of the listener before the command exists, or a removal would have nobody to
+    // answer it and would fail rather than be counted.
+    #[cfg(target_os = "linux")]
+    let _meter = if payload.meter {
+        let held = match crate::meter::install() {
+            Ok((ctx, _fd)) => ctx,
+            Err(e) => return (EXIT_FENCE_FAILED, fmt!(
+                "the deletion meter could not be installed, so the command was not run. {}",
+                e.msgs().join(" "))),
+        };
+        if !go_ahead() {
+            return (EXIT_FENCE_FAILED, fmt!(
+                "the hand did not take the deletion meter's listener, so the command was not \
+                run."));
+        }
+        Some(held)
+    } else {
+        None
+    };
 
     let mut cmd = std::process::Command::new(&payload.prog);
     // Exec the RESOLVED binary, but under the name the caller asked for.
@@ -4683,6 +4942,21 @@ fn read_payload() -> Outcome<Payload> {
     decode_payload(&body)
 }
 
+/// Reads the hand's one-byte go-ahead that follows a metered plan.
+///
+/// Unbuffered, like [`read_payload`], so not a byte of the command's own input is taken.
+fn go_ahead() -> bool {
+    use std::io::Read;
+    use std::os::fd::AsFd;
+    let dup = match std::io::stdin().as_fd().try_clone_to_owned() {
+        Ok(d)  => d,
+        Err(_) => return false,
+    };
+    let mut src = std::fs::File::from(dup);
+    let mut b = [0u8; 1];
+    matches!(src.read_exact(&mut b), Ok(())) && b[0] == 1
+}
+
 /// The most the launcher will read as a plan.
 ///
 /// A carved workspace produces one rule per child, so a large plan is ordinary;
@@ -4728,6 +5002,7 @@ pub(crate) fn encode_payload(p: &Payload) -> Outcome<Vec<u8>> {
     });
     e.byte(u8::from(p.plan.net));
     e.byte(u8::from(p.tty));
+    e.byte(u8::from(p.meter));
     match &p.plan.waiver {
         None => e.byte(0),
         Some(w) => {
@@ -4742,6 +5017,7 @@ pub(crate) fn encode_payload(p: &Payload) -> Outcome<Vec<u8>> {
             Level::Deny	=> 0,
             Level::Ro	=> 1,
             Level::Rw	=> 2,
+            Level::Keep	=> 3,
         });
     }
     res!(e.len(p.plan.sealed.len()));
@@ -4869,6 +5145,7 @@ fn decode_payload(b: &[u8]) -> Outcome<Payload> {
     };
     let net = res!(d.byte()) != 0;
     let tty = res!(d.byte()) != 0;
+    let meter = res!(d.byte()) != 0;
     let waiver = match res!(d.byte()) {
         0 => None,
         1 => Some(res!(d.text())),
@@ -4882,6 +5159,7 @@ fn decode_payload(b: &[u8]) -> Outcome<Payload> {
             0 => Level::Deny,
             1 => Level::Ro,
             2 => Level::Rw,
+            3 => Level::Keep,
             n => return Err(err!("The plan grants level {}, which does not exist.", n;
                 Invalid, Input)),
         };
@@ -4974,6 +5252,7 @@ fn decode_payload(b: &[u8]) -> Outcome<Payload> {
         plan: Plan { abi, listing, base, reach, grants, sealed, dropped, net, waiver },
         tty,
         act,
+        meter,
     })
 }
 
@@ -5324,6 +5603,7 @@ mod tests {
             capture:    Capture::Both,
             fence:      fence_here(),
             toolkits: Vec::new(),
+            meter:    None,
         }
     }
 
@@ -5361,6 +5641,7 @@ mod tests {
                 net:  false,
             },
             toolkits:   Vec::new(),
+            meter:    None,
         }
     }
 
@@ -5474,7 +5755,7 @@ mod tests {
     async fn test_timeout_kills_and_reports_it() -> Outcome<()> {
         let req = match exec("e3", &["/bin/sleep", "30"]) {
             Req::Exec { id, argv, cwd, env, stdin, capture, fence, .. } =>
-                Req::Exec { id, argv, cwd, env, stdin, timeout_ms: 300, capture, fence, toolkits: Vec::new() },
+                Req::Exec { id, argv, cwd, env, stdin, timeout_ms: 300, capture, fence, toolkits: Vec::new(), meter: None },
             other => other,
         };
         let rs = res!(run(req).await);
@@ -5495,6 +5776,7 @@ mod tests {
                     stdin: Some(fmt!("through the pipe\n")),
                     timeout_ms, capture, fence,
                     toolkits: Vec::new(),
+                    meter:    None,
                 },
             other => other,
         };
@@ -5514,6 +5796,7 @@ mod tests {
                     stdin: Some(big.clone()),
                     timeout_ms, capture, fence,
                     toolkits: Vec::new(),
+                    meter:    None,
                 },
             other => other,
         };
@@ -5553,6 +5836,7 @@ mod tests {
                         (fmt!("AND"),   fmt!("that")),
                     ],
                     toolkits: Vec::new(),
+                    meter:    None,
                 },
             other => other,
         };
@@ -5595,6 +5879,7 @@ mod tests {
             "{} is not under the scratch base {}", tmp[0], base.display());
 
         let mut want = vec![fmt!("AND=that"), fmt!("ONLY=this")];
+        want.extend(gc_quieted());
         for name in TMP_VARS {
             want.push(fmt!("{}={}", name, tmp[0]));
         }
@@ -5606,6 +5891,14 @@ mod tests {
         want.sort();
         assert_eq!(lines, want);
         Ok(())
+    }
+
+    /// What `quiet_gc` adds to a metered command that named no git configuration: the
+    /// command's workspace is a mark, so the deletion meter is on it.
+    fn gc_quieted() -> Vec<String> {
+        let mut env = Vec::new();
+        quiet_gc(&mut env);
+        env.iter().map(|(k, v)| fmt!("{}={}", k, v)).collect()
     }
 
     /// The central design decision, stated as a test.
@@ -5653,6 +5946,7 @@ mod tests {
                     id, argv, env, stdin, timeout_ms, capture, fence,
                     cwd: fmt!("/"),
                     toolkits: Vec::new(),
+                    meter:    None,
                 },
             other => other,
         };
@@ -5684,6 +5978,7 @@ mod tests {
                     id, argv, env, stdin, timeout_ms, capture, fence,
                     cwd: file.clone(),
                     toolkits: Vec::new(),
+                    meter:    None,
                 },
             other => other,
         };
@@ -5733,6 +6028,7 @@ mod tests {
                     id, argv, env, stdin, timeout_ms, capture, fence,
                     cwd: fmt!("relative/place"),
                     toolkits: Vec::new(),
+                    meter:    None,
                 },
             other => other,
         };
@@ -5756,6 +6052,7 @@ mod tests {
                     id, argv, cwd, env, stdin, timeout_ms, fence,
                     capture: Capture::None,
                     toolkits: Vec::new(),
+                    meter:    None,
                 },
             other => other,
         };
@@ -5824,6 +6121,7 @@ mod tests {
                     id, argv, cwd, env, timeout_ms, capture, fence,
                     stdin: Some(fmt!("47\n")), // The sleep's argument, via the pipe.
                     toolkits: Vec::new(),
+                    meter:    None,
                 },
             other => other,
         };
@@ -6063,6 +6361,7 @@ mod tests {
                 net:  false,
             },
             toolkits: Vec::new(),
+            meter:    None,
         }).await);
         let (exit, ..) = match ended(&rs) {
             Some(e) => e,
@@ -6095,6 +6394,7 @@ mod tests {
                 net:  false,
             },
             toolkits: Vec::new(),
+            meter:    None,
         }).await);
         let (exit, ..) = match ended(&rs) {
             Some(e) => e,
@@ -6153,6 +6453,7 @@ mod tests {
                 capture:    Capture::Both,
                 fence:      fence.clone(),
                 toolkits: Vec::new(),
+                meter:    None,
             }
         };
 
@@ -6204,6 +6505,7 @@ mod tests {
                 capture:    Capture::Both,
                 fence:      fence.clone(),
                 toolkits: Vec::new(),
+                meter:    None,
             }
         };
 
@@ -6396,6 +6698,7 @@ mod tests {
                     net:  false,
                 },
                 toolkits: Vec::new(),
+                meter:    None,
             }
         };
 
@@ -6556,6 +6859,7 @@ mod tests {
             capture:    Capture::Both,
             fence:      fence.clone(),
             toolkits:   kits.to_vec(),
+            meter:      None,
         };
         let commits_in = |at: &Path| -> Outcome<String> {
             let out = res!(std::process::Command::new("git")
@@ -6741,6 +7045,7 @@ mod tests {
                 net:  false,
             },
             toolkits: Vec::new(),
+            meter:    None,
         };
         let rs = res!(run(req).await);
         let said = text_of(&rs, Stream::Out);
@@ -6771,6 +7076,7 @@ mod tests {
                 net:  false,
             },
             toolkits: Vec::new(),
+            meter:    None,
         };
         let rs = res!(run(req).await);
         let said = text_of(&rs, Stream::Out);
@@ -6788,6 +7094,7 @@ mod tests {
             .collect::<Vec<_>>();
         pairs.sort();
         let mut want = vec![fmt!("MARKER=kept")];
+        want.extend(gc_quieted());
         for name in TMP_VARS {
             want.push(fmt!("{}={}", name, scratch));
         }
@@ -7462,6 +7769,7 @@ mod tests {
                 grants:  vec![
                     Grant { path: PathBuf::from("/usr"), level: Level::Ro },
                     Grant { path: PathBuf::from("/home/u/ws"), level: Level::Rw },
+                    Grant { path: PathBuf::from("/home/u"), level: Level::Keep },
                 ],
                 sealed:  vec![PathBuf::from("/home/u/ws")],
                 dropped: vec![PathBuf::from("/home/u/ws/escape")],
@@ -7470,6 +7778,7 @@ mod tests {
             },
             tty:  true,   // round-tripped as set, so the byte is proved to travel
             act:  Act::Exec,
+            meter: true,  // and this one
         }; 
         let framed = res!(encode_payload(&p));
         let back = res!(decode_payload(&framed[4..]));
@@ -7509,6 +7818,7 @@ mod tests {
                         rw: vec![fmt!("")], ro: Vec::new(), deny: Vec::new(), net: false,
                     },
                     toolkits: Vec::new(),
+                    meter:    None,
                 },
             other => other,
         };
@@ -7556,6 +7866,7 @@ mod tests {
                 capture:    Capture::Both,
                 fence:      fence.clone(),
                 toolkits: Vec::new(),
+                meter:    None,
             };
             let rs = res!(run(req).await);
             let why = res!(refusal(&rs));
@@ -7588,6 +7899,7 @@ mod tests {
                 rw: vec![fmt!("{}", ws.display())], ro: Vec::new(), deny: Vec::new(), net: false,
             },
             toolkits: Vec::new(),
+            meter:    None,
         };
         let rs = res!(run(req).await);
         let why = res!(refusal(&rs));
@@ -7614,6 +7926,7 @@ mod tests {
                         id, argv, cwd, stdin, timeout_ms, capture, fence,
                         env: vec![(fmt!("{}", k), fmt!("{}", v))],
                         toolkits: Vec::new(),
+                        meter:    None,
                     },
                 other => other,
             };
@@ -7629,6 +7942,7 @@ mod tests {
                     id, argv, cwd, stdin, timeout_ms, capture, fence,
                     env: vec![(fmt!("LDAP_CONF"), fmt!("x"))],
                     toolkits: Vec::new(),
+                    meter:    None,
                 },
             other => other,
         };
@@ -7695,7 +8009,7 @@ mod tests {
     async fn output_is_capped_in_total() -> Outcome<()> {
         let req = match exec("flood", &["/usr/bin/yes"]) {
             Req::Exec { id, argv, cwd, env, stdin, capture, fence, .. } =>
-                Req::Exec { id, argv, cwd, env, stdin, timeout_ms: 4_000, capture, fence, toolkits: Vec::new() },
+                Req::Exec { id, argv, cwd, env, stdin, timeout_ms: 4_000, capture, fence, toolkits: Vec::new(), meter: None },
             other => other,
         };
         let rs = res!(run(req).await);
@@ -7852,7 +8166,7 @@ mod tests {
         res!(clear_scratches("scr-timeout"));
         let req = match exec("scr-timeout", &["/bin/sleep", "30"]) {
             Req::Exec { id, argv, cwd, env, stdin, capture, fence, .. } =>
-                Req::Exec { id, argv, cwd, env, stdin, timeout_ms: 1_500, capture, fence, toolkits: Vec::new() },
+                Req::Exec { id, argv, cwd, env, stdin, timeout_ms: 1_500, capture, fence, toolkits: Vec::new(), meter: None },
             other => other,
         };
         let waiter = res!(runner());
@@ -7996,6 +8310,7 @@ mod tests {
                         id, argv, cwd, stdin, timeout_ms, capture, fence,
                         env: vec![(fmt!("{}", name), fmt!("{}", root()))],
                         toolkits: Vec::new(),
+                        meter:    None,
                     },
                 other => other,
             };
@@ -8154,6 +8469,7 @@ mod tests {
                 net:  false,
             },
             toolkits: Vec::new(),
+            meter:    None,
         };
 
         let rs = res!(run(req).await);
@@ -8238,6 +8554,7 @@ mod tests {
                     id, argv, cwd, stdin, timeout_ms, capture, fence,
                     env: vec![(fmt!("HOME"), fmt!("{}", ws.display()))],
                     toolkits: Vec::new(),
+                    meter:    None,
                 },
             other => other,
         };
@@ -8688,6 +9005,7 @@ mod tests {
                 net:  false,
             },
             toolkits: Vec::new(),
+            meter:    None,
         };
         let rs = res!(run(req).await);
         let said = fmt!("{}{}", text_of(&rs, Stream::Out), text_of(&rs, Stream::Err));
@@ -8831,6 +9149,44 @@ mod tests {
     /// `REVIEW.md` §1.5.  Both halves matter equally and the second is the one
     /// that decides whether this ships: a clamp that refuses `/etc` and also
     /// refuses `~/.cargo` is a clamp that stops `cargo` working, and a security
+    /// **A folder kept inside a toolchain cache is metered; the cache itself is not (audit F5).**
+    ///
+    /// `meter_marks` dropped every root that STARTED WITH a toolchain tail, so a Diamond's
+    /// folder under `~/.cache/daimond` ran unmetered -- `rm -rf` there emptied it exactly as on
+    /// 2026-09-22.  Only a root that IS a cache is exempt now, and a cache inside a mark comes
+    /// back separately, for the judge to free.
+    #[test]
+    fn a_folder_kept_inside_a_toolchain_cache_is_still_a_mark() -> Outcome<()> {
+        let base = res!(fixture("meter-marks"));
+        let home = base.join("home");
+        let nested = home.join(".cache/daimond/proj");
+        let work = home.join("work");
+        for d in [&nested, &work, &home.join(".cache/cargo-targets")] {
+            res!(std::fs::create_dir_all(d));
+        }
+        let s = |p: &Path| fmt!("{}", p.display());
+        let fence = FenceSpec {
+            rw:   vec![s(&home.join(".cache/daimond")), s(&nested), s(&work), s(&home)],
+            ro:   Vec::new(),
+            deny: Vec::new(),
+            net:  false,
+        };
+        let (marks, caches) = meter_marks_in(&fence, Some(&home));
+        assert!(marks.contains(&nested),
+            "a folder inside ~/.cache/daimond was dropped from the marks: {:?}", marks);
+        assert!(marks.contains(&work) && marks.contains(&home), "{:?}", marks);
+        assert!(!marks.contains(&home.join(".cache/daimond")),
+            "a root that IS a toolchain cache was metered: {:?}", marks);
+        for c in [home.join(".cache/daimond"), home.join(".cache/cargo-targets")] {
+            assert!(caches.contains(&c), "{} is not among the caches: {:?}", c.display(), caches);
+        }
+        // Read-only toolchain folders are the user's own and never a cache.
+        res!(std::fs::create_dir_all(home.join(".local/bin")));
+        let (_, caches) = meter_marks_in(&fence, Some(&home));
+        assert!(!caches.contains(&home.join(".local/bin")), "{:?}", caches);
+        Ok(())
+    }
+
     /// The Remote posture is the key and the wrapper, and neither half alone.
     ///
     /// This is where the whole of B12's answer sits for the Remote grant: the permission is not

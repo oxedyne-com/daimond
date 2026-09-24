@@ -531,6 +531,10 @@ pub enum Req {
         /// back.  A name this build does not know grants nothing, and an absent
         /// field is no grant -- both fail closed.
         toolkits:   Vec<String>,
+        /// The turn's deletion allowance, which the page carries from command to
+        /// command.  Absent is a page older than the meter, and such a command is
+        /// metered all the same, against a whole budget of its own.
+        meter:      Option<Meter>,
     },
     /// Run one named verifier from the tracked tree, clean and under its breaks.
     ///
@@ -698,8 +702,28 @@ pub enum Req {
         /// it would contain this hand's own journal.
         path: String,
     },
+    /// The user's answer to a [`Resp::Held`]: let the command go on removing, or stop it.
+    Release {
+        id:    String,	// the held run
+        allow: bool,	// true lifts the budget for this one command
+    },
+    /// Put back every file the meter moved to the trash during one turn.
+    Restore {
+        id:       String,	// echoed on the answer
+        since_ms: u64,		// the turn, as its `Meter::since_ms` named it
+    },
     /// The page is going away; stop everything and exit.
     Bye,
+}
+
+/// What a turn has left to delete, carried on every [`Req::Exec`].
+///
+/// A removal is counted when it takes a file that existed before `since_ms`, under a
+/// root the command was given, and outside a regenerable cache.  See `meter.rs`.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct Meter {
+    pub budget:   u32,	// counted removals left this turn
+    pub since_ms: u64,	// the turn's start, in milliseconds since the Unix epoch
 }
 
 // ┌───────────────────────────────────────────────────────────────┐
@@ -802,6 +826,31 @@ pub enum Resp {
         ok:   bool,
         /// The answer: the file's text, the listing, or the sentence explaining the refusal.
         text: String,
+    },
+    /// A command has used the turn's deletion allowance and is waiting, blocked in the
+    /// kernel, for the user to say whether it may go on.
+    ///
+    /// Put to the user in every rung, `bypass` included: it is the compartment speaking,
+    /// like the fence, and no rung moves the fence.  Answered by [`Req::Release`]; unanswered,
+    /// the command is stopped after `meter::HOLD_MS`.
+    Held {
+        id:      String,		// the run
+        counted: u32,			// files removed so far this turn, all of them in the trash
+        sample:  Vec<String>,	// a few of their paths
+        mark:    String,		// the root they were removed from
+        since_ms: u64,			// the turn, so the page can ask for them back
+    },
+    /// What the meter counted for one command, sent just before its [`Resp::Ended`].
+    Metered {
+        id:      String,	// the run
+        counted: u32,		// pre-existing files this command removed, each first linked into the trash
+        stopped: bool,		// whether the meter stopped the command
+    },
+    /// The answer to a [`Req::Restore`].
+    Restored {
+        id:       String,	// echoed from the request
+        restored: u32,		// files put back
+        skipped:  u32,		// files left in the trash, because something now stands in their place
     },
     /// A terminal is open and the command is attached to it.
     Opened {

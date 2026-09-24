@@ -755,7 +755,12 @@
 	/// receiver did not write, on a machine whose owner never chose it. The share format refuses
 	/// to carry a delivery record at all (fe2o3_sbj `share.rs`), and this is the other half:
 	/// having refused to carry one, it must also refuse to let a page mint one.
-	var PAGE_NEVER_WRITES = /^(crystal\.(json|html|md)$|versions\/|\.daimond\/|capp\.json$)/;
+	///
+	/// `triggers.json` is here as of 2026-09-24. It is the Diamond's automation: what may start
+	/// a turn with nobody present. A page that wrote it could not arm anything, since a
+	/// triggered action is held until a person releases it on this device (`releasedHereOnly`
+	/// in pause.js), but what a page may not start it has no business writing either.
+	var PAGE_NEVER_WRITES = /^(crystal\.(json|html|md)$|versions\/|\.daimond\/|capp\.json$|triggers\.json$)/;
 
 	/// The most a page may write in one call.
 	///

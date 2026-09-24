@@ -157,8 +157,11 @@
 			t.offScreen = r.offScreen === true;
 			t.minutes = Math.max(1, Math.round(Number(t.minutes) || 30));
 			// An id that is absent or already taken gets one, so two TAs can never
-			// share a pause leaf.
-			if (!t.id || seen[t.id]) t.id = t.kind + '-' + (i + 1) + '-' + Date.now().toString(36);
+			// share a pause leaf. Made from what the action does rather than from the
+			// clock, so the same file reads as the same leaf on every load: a release
+			// given here is kept against the leaf, and a leaf renamed on each read
+			// would be a release nobody could keep.
+			if (!t.id || seen[t.id]) t.id = t.kind + '-' + (i + 1) + '-' + hash(termsOf(t));
 			seen[t.id] = 1;
 			out.actions.push(t);
 		});
@@ -188,6 +191,26 @@
 		// TA that would send nothing.
 		if (!String(t.instruction || '').trim()) return false;
 		return true;
+	}
+
+	/// What a normalised TA does, as one string. Every field but the two that do
+	/// not change it: `id`, which is the leaf itself, and `contextSent`, which the
+	/// app writes after a firing.
+	function termsOf(t) {
+		return JSON.stringify(Object.keys(t).filter(function (k) {
+			return k !== 'id' && k !== 'contextSent';
+		}).sort().map(function (k) { return [k, t[k]]; }));
+	}
+
+	/// The terms a person releases a TA on, and the terms it is judged on when it
+	/// fires: see `releasedHereOnly` in pause.js. Normalised first, so the record
+	/// the editor holds and the one read back off disk give the same text.
+	///
+	/// The whole text and not a hash of it. A 32-bit hash can be matched by a
+	/// daimon that wants its own instruction to wear the user's release.
+	function terms(t) {
+		var n = normalise({ actions: [t] }).actions[0];
+		return n ? termsOf(n) : '';
 	}
 
 	/// A short, stable hash of a context, for "has this daimon been told?".
@@ -222,10 +245,13 @@
 		};
 	}
 
-	/// The pause-tree leaf for one TA. Kept here so the one shape is written
-	/// once; `pause.js` documents it and `daimond.js` builds the tree from it.
+	/// The pause-tree leaf for one TA, which `daimond.js` builds the tree from.
+	/// The shape is `DaimondPause.triggerLeaf`'s, written beside the test that
+	/// recognises it: the id joined raw here once let a slash in it arm a live
+	/// trigger (see `HERE_LEAF` in pause.js). The tree names the leaf, so with no
+	/// pause module there is none, and `allowed` has already answered no.
 	function node(diamondId, actionId) {
-		return 'root/diamonds/' + diamondId + '/triggers/' + actionId;
+		return window.DaimondPause.triggerLeaf(diamondId, actionId);
 	}
 
 	/// Is this TA allowed to spend right now?
@@ -233,14 +259,20 @@
 	/// The tree is the authority and it is asked HERE, at the moment of firing,
 	/// rather than being copied into the record: a pause that arrived from
 	/// another device between the schedule and the fire has to be honoured.
+	///
+	/// ONLY A PERSON ON THIS DEVICE MAKES ONE LIVE. The tree holds a TA's leaf
+	/// until it is released here, on these terms, so an action a daimon wrote
+	/// into `triggers.json`, one that arrived by sync or import, and one edited
+	/// anywhere but the app's own editor are all held. With no tree there is no
+	/// release, and nothing fires.
 	function allowed(diamondId, t) {
 		if (!ready(t)) return false;
 		try {
 			if (typeof window !== 'undefined' && window.DaimondPause) {
-				return !window.DaimondPause.isPaused(node(diamondId, t.id));
+				return !window.DaimondPause.isPaused(node(diamondId, t.id), terms(t));
 			}
-		} catch (e) { /* module not up: fall through to allowed */ }
-		return true;
+		} catch (e) { /* module not up: nothing is released */ }
+		return false;
 	}
 
 	// ── The activity clock ─────────────────────────────────────
@@ -373,6 +405,7 @@
 		ready:       ready,
 		compose:     compose,
 		hash:        hash,
+		terms:       terms,
 		node:        node,
 		allowed:     allowed,
 		due:         due,

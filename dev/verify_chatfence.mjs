@@ -77,9 +77,14 @@ try {
 			// relay on every page, paired or not, so its mere presence says nothing and a
 			// stub that leaves this out is an UNPAIRED page however much else it answers.
 			hasHand: () => true,
+			// A CURRENT hand: it fences, and it meters what a command removes. A stub that
+			// did not say `meter:deletes` was a hand older than the meter, to which the engine
+			// gives nothing writable by any door (`command_fence` in src/tools.rs: audit F2
+			// for a command, the re-check's H1 for a file tool) -- which is
+			// dev/verify_handmeterless.mjs's subject, not this file's.
 			status: async () => ({
 				paired: true, os: 'linux (stub)', root: '/home/tester/granted',
-				home: '/home/tester', caps: ['fence:linux'],
+				home: '/home/tester', caps: ['fence:linux', 'meter:deletes'],
 			}),
 			// The file door (`Req::File`, 2026-08-25). A file tool whose path is under a
 			// mark goes through the hand now, so a stub without this is a hand that cannot
@@ -89,6 +94,13 @@ try {
 				const spec = JSON.parse(specJson);
 				window.__hand.files = window.__hand.files || [];
 				window.__hand.files.push(spec);
+				// A READ ANSWERS AS THE HAND DOES FOR A FILE IT HAS NOT GOT (`fs_said` in
+				// hand/src/exec.rs), which is what a write door's copy-first read meets on a new
+				// file. An empty "ok" is no read the engine can parse, and since 2026-09-23 a
+				// write whose file could not be kept is refused, never made (audit finding 5).
+				if (spec.op === 'read') {
+					return JSON.stringify({ ok: false, text: "There is no '" + spec.path + "' on this machine." });
+				}
 				return JSON.stringify({ ok: true, text: '' });
 			},
 			run: async (specJson) => {

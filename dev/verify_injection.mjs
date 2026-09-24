@@ -90,6 +90,15 @@ async function withDialog(action, answer, arg) {
 		});
 		if (seen) {
 			clicked.asked = true; clicked.title = seen.title; clicked.body = seen.body;
+			// The affirmative is held for its first second on an unbidden question (R6),
+			// so a click fired the instant the dialog is seen lands on a disabled `.dlg-ok`
+			// and does nothing -- the dialog stays open and `runner` never resolves. Wait
+			// for it to be pressable first, as `verify_deletekeep`'s F8 does.
+			if (answer) {
+				await page.waitForSelector(
+					'.dlg .dlg-ok:not([disabled]), dialog[open] .dlg-ok:not([disabled]), .modal-dialog .dlg-ok:not([disabled])',
+					{ timeout: 2000 }).catch(() => {});
+			}
 			await page.evaluate((yes) => {
 				const d = document.querySelector('.dlg, dialog[open], .modal-dialog');
 				// BY CLASS, not by reading the button text. Every dialog carries a `×`

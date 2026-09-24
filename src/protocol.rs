@@ -953,7 +953,10 @@ pub enum AgentEvent {
     /// than "Error", was drawn as a completed step, journalled as a success and reported to the
     /// Optimiser as a tool that had worked.  A daimon has nothing to check that against, and
     /// reports the turn done.
-    ToolResult { name: String, result: String, outcome: CallOutcome },
+    ///
+    /// `class` is where a destructive call's path sat -- [`crate::tools::PathClass::wire`], empty
+    /// for any other call -- so the lens can say how far a delete reached without the path.
+    ToolResult { name: String, result: String, outcome: CallOutcome, class: String },
     /// The user said something while the turn was running, and it has now been put
     /// into the conversation at the seam between two rounds.
     ///
@@ -1154,11 +1157,14 @@ impl AgentEvent {
                 m.insert(dat!("name"), dat!(name.clone()));
                 m.insert(dat!("args"), dat!(args.clone()));
             }
-            Self::ToolResult { name, result, outcome } => {
+            Self::ToolResult { name, result, outcome, class } => {
                 m.insert(dat!("type"), dat!("tool_result"));
                 m.insert(dat!("name"), dat!(name.clone()));
                 m.insert(dat!("content"), dat!(result.clone()));
                 m.insert(dat!("outcome"), dat!(outcome.wire()));
+                if !class.is_empty() {
+                    m.insert(dat!("class"), dat!(class.clone()));
+                }
             }
             Self::Interjected(text) => {
                 m.insert(dat!("type"), dat!("interjected"));

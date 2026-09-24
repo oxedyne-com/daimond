@@ -36,6 +36,7 @@ import { dirname, join } from 'node:path';
 import { webcrypto } from 'node:crypto';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
+const DAIMOND_SRC = readFileSync(join(HERE, 'daimond.js'), 'utf8');
 const real = webcrypto;
 let failures = 0;
 function check(name, cond) {
@@ -57,6 +58,22 @@ const eqBytes = (a, b) => {
 	for (let i = 0; i < x.length; i++) if (x[i] !== y[i]) return false;
 	return true;
 };
+
+/// An errand as a sender builds one: its seed ends at the turn's own user message,
+/// stamped when the turn was born (`born`, else the send), which is the birth a
+/// collector ages it by (`turnAgeVerdict`, E-R1). A bare fixture id such as 't1'
+/// carries no time of its own, so an errand without this is refused as unaged.
+function sentErrand(P, fields) {
+	const f = Object.assign({}, fields || {});
+	f.ts = f.ts || Date.now();
+	const born = f.born || f.ts;
+	delete f.born;
+	if (f.seed === undefined) {
+		f.seed = { chatId: String(f.chatId || ''), title: '', provider: '', model: '',
+			msgs: [{ role: 'user', content: String(f.prompt || ''), mid: String(f.turnId || ''), ts: born }] };
+	}
+	return P.makeErrand(f);
+}
 
 // ── One simulated tab ──────────────────────────────────────
 //
@@ -555,7 +572,21 @@ async function main() {
 
 	const col = await phone.DaimondPost.collect();
 	check('collect() succeeded', col.ok === true);
+	// AN ERRAND IS WORK, started once the collect has let go of the mailbox lock (E-R4):
+	// the runner calls back into the mailbox from inside its turn. So it is routed a few
+	// turns of the event loop after collect() answers, never inside it.
+	for (let i = 0; i < 50 && !routedErrands.some((e) => e.turnId === 'turn-2'); i++) {
+		await new Promise((r) => setTimeout(r, 0));
+	}
 	check('the errand was routed to the peer runner', routedErrands.some((e) => e.turnId === 'turn-2'));
+	const PP = phone.DaimondPeer;
+	check('an errand and a compile are work, run after the lock; the four notes are not',
+		PP.isWork({ t: 'errand' }) && PP.isWork({ t: 'compile' })
+		&& ['report', 'consent-ask', 'consent-grant', 'built'].every((t) => !PP.isWork({ t })));
+	check('a device runs one of each turn and each compile at a time',
+		PP.workKey({ t: 'errand', turnId: 'T', eid: 'e1' }) === PP.workKey({ t: 'errand', turnId: 'T', eid: 'e2' })
+		&& PP.workKey({ t: 'compile', cid: 'C' }) === 'compile:C'
+		&& PP.workKey({ t: 'errand', turnId: 'T' }) !== PP.workKey({ t: 'compile', cid: 'T' }));
 	check('the report was routed to the peer runner', routedReports.some((r) => r.turnId === 'turn-2'));
 	// The crisp proof that the peer route did not touch the message list: collect's
 	// own tally counts NO message stored from the errand and report rows, and the
@@ -887,11 +918,14 @@ async function main() {
 		L.forget();
 		const sync = makeLeaseSync({});
 		let ran = 0, pushed = 0, acked = 0;
+		// As `errandForRecovery` builds it: no seed, the placeholder's stamp, and the birth
+		// read off this device's own copy of the chat (`turnBirthsHeld`, daimond.js).
 		const recovery = phone.DaimondPeer.makeErrand({
 			turnId: 'TURN-A', chatId: 'chat-A', prompt: placeholder.itext, eid: 'e-A',
-			deadline: 0, dispatchedBy: 'devPHONE' });
+			deadline: 0, dispatchedBy: 'devPHONE', ts: T0 });
 		const rec = await phone.DaimondPeer.runErrand(recovery, {
 			selfId: 'devPHONE', cas: phone.DaimondPeer.syncCas(sync), allowSelf: true,
+			births: (er) => phone.DaimondPeer.turnBirthHints(chatA.messages, er.turnId),
 			finished:    async () => false,
 			reconstruct: async () => ({ chat: chatA, app: {} }),
 			runTurn:     async () => { ran++; },
@@ -1017,6 +1051,13 @@ async function main() {
 	await runRecoveryAcceptance(phone.DaimondPeer, phone.DaimondLease, check);
 
 	// ══════════════════════════════════════════════════════════
+	// S6-1 — the LOCAL doors get the same ask-answer guard the dispatched
+	// tile already has: `continueTurn`/`retryTurn` (daimond.js), driven from
+	// their real extracted source. Fails on 2207f686, passes on the fix.
+	// ══════════════════════════════════════════════════════════
+	await runLocalAskAnswerGuardAcceptance(phone.DaimondPeer, check);
+
+	// ══════════════════════════════════════════════════════════
 	// FIRE-AND-FORGET — once a desktop CLAIMS the lease it runs the
 	// turn to COMPLETION and syncs the result WITHOUT the phone
 	// staying awake. The phone dispatches, may background mid-turn
@@ -1076,6 +1117,15 @@ async function main() {
 	// refused by the provider, hands the turn back instead of hanging it.
 	// ══════════════════════════════════════════════════════════
 	await runBlockerAcceptance(phone.DaimondPeer, phone.DaimondLease, check);
+
+	// ══════════════════════════════════════════════════════════
+	// E-R1 AND R4b (2026-09-23) — a handed-off turn is judged by its BIRTH,
+	// never by the deadline its sender wrote, and the backstop never hands a
+	// turn straight back to the desktop that just failed to collect it.
+	// Every check fails at 4d164343 unless it says it holds a property.
+	// ══════════════════════════════════════════════════════════
+	await runTurnAgeAcceptance(phone.DaimondPeer, phone.DaimondLease, phone.DaimondPresence, check);
+	await runElectedTriedAcceptance(phone.DaimondPeer, check);
 
 	console.log(failures === 0 ? '\nALL PASS' : ('\n' + failures + ' FAILURE(S)'));
 	if (failures) process.exitCode = 1;
@@ -1150,7 +1200,7 @@ async function runRecoveryAcceptance(P, L, check) {
 		L.forget();
 		const sync = makeLeaseSync({});
 		let ran = 0, acked = 0, pushed = 0, reported = 0;
-		const errand = P.makeErrand({ turnId: 't-orphan', chatId: 'c', prompt: 'p', eid: 'e', deadline: 0, dispatchedBy: 'PHONE' });
+		const errand = sentErrand(P, { turnId: 't-orphan', chatId: 'c', prompt: 'p', eid: 'e', deadline: 0, dispatchedBy: 'PHONE' });
 		const res = await P.runErrand(errand, {
 			selfId: 'PHONE', cas: P.syncCas(sync), allowSelf: true,
 			finished:    async () => false,
@@ -1176,7 +1226,7 @@ async function runRecoveryAcceptance(P, L, check) {
 		L.forget();
 		const sync = makeLeaseSync({});
 		let ran = 0, acked = 0, pushed = 0; let report = null;
-		const errand = P.makeErrand({ turnId: 't-undel', chatId: 'c', prompt: 'p', eid: 'e', deadline: 0, dispatchedBy: 'DESK' });
+		const errand = sentErrand(P, { turnId: 't-undel', chatId: 'c', prompt: 'p', eid: 'e', deadline: 0, dispatchedBy: 'DESK' });
 		const res = await P.runErrand(errand, {
 			selfId: 'PEER', cas: P.syncCas(sync),
 			finished:    async () => false,
@@ -1205,7 +1255,7 @@ async function runRecoveryAcceptance(P, L, check) {
 		L.forget();
 		const sync = makeLeaseSync({});
 		let ran = 0, acked = 0; let report = null;
-		const errand = P.makeErrand({ turnId: 't-err', chatId: 'c', prompt: 'p', eid: 'e', deadline: 0, dispatchedBy: 'DESK' });
+		const errand = sentErrand(P, { turnId: 't-err', chatId: 'c', prompt: 'p', eid: 'e', deadline: 0, dispatchedBy: 'DESK' });
 		const res = await P.runErrand(errand, {
 			selfId: 'PEER', cas: P.syncCas(sync),
 			finished:    async () => false,
@@ -1228,18 +1278,155 @@ async function runRecoveryAcceptance(P, L, check) {
 		L.forget();
 		const now = NOW;
 		const live = { 't-held': { turnId: 't-held', eid: 'e', holder: 'PEER', mode: 'running', expiry: now + L.LEASE_TTL_MS, renewedAt: now } };
+		// The phone's own placeholder, sent a minute ago: the one the rescue exists for.
+		const own = (iturn) => ({ why: 'dispatched', iturn, dispatchedBy: 'PHONE', ts: now - 60000 });
 		check('recoverDecision: FALSE under a live foreign lease (leave it to the peer)',
-			P.recoverDecision({ why: 'dispatched', iturn: 't-held' }, live['t-held'], false, 'PHONE', now) === false);
+			P.recoverDecision(own('t-held'), live['t-held'], false, 'PHONE', now) === false);
 		check('recoverDecision: TRUE when vacant and unfinished (rescue the orphan)',
-			P.recoverDecision({ why: 'dispatched', iturn: 'x' }, null, false, 'PHONE', now) === true);
+			P.recoverDecision(own('x'), null, false, 'PHONE', now) === true);
 		check('recoverDecision: FALSE when the turn is already finished (a peer answered)',
-			P.recoverDecision({ why: 'dispatched', iturn: 'x' }, null, true, 'PHONE', now) === false);
+			P.recoverDecision(own('x'), null, true, 'PHONE', now) === false);
 		check('recoverDecision: FALSE for a turn that was never dispatched',
-			P.recoverDecision({ why: 'offline', iturn: 'x' }, null, false, 'PHONE', now) === false);
+			P.recoverDecision({ why: 'offline', iturn: 'x', dispatchedBy: 'PHONE', ts: now }, null, false, 'PHONE', now) === false);
+		// THE 2026-09-22 INCIDENT: gilgamesh re-ran turns another device had sent five days
+		// before. A placeholder synced from elsewhere is never this device's to rescue, and
+		// no hand-off is rescued automatically once its errand deadline has passed.
+		check('recoverDecision: FALSE for a placeholder ANOTHER device sent (synced here, not ours)',
+			P.recoverDecision({ why: 'dispatched', iturn: 'x', dispatchedBy: 'LAPTOP', ts: now - 60000 }, null, false, 'PHONE', now) === false);
+		check('recoverDecision: FALSE for a placeholder that names no sender',
+			P.recoverDecision({ why: 'dispatched', iturn: 'x', ts: now - 60000 }, null, false, 'PHONE', now) === false);
+		check('recoverDecision: FALSE for our own hand-off once past its errand deadline',
+			P.recoverDecision({ why: 'dispatched', iturn: 'x', dispatchedBy: 'PHONE', ts: now - P.DISPATCH_DEADLINE_MS - 1 }, null, false, 'PHONE', now) === false);
+		check('recoverDecision: FALSE for a five-day-old hand-off (the incident, exactly)',
+			P.recoverDecision({ why: 'dispatched', iturn: 'mu4y7fa4-1-du152', dispatchedBy: 'PHONE', ts: now - 5 * 86400000 }, null, false, 'PHONE', now) === false);
+		check('uiState: an unclaimed hand-off past its errand deadline offers [Run here] (no-peer-awake)',
+			P.uiState({ why: 'dispatched', iturn: 'x', ts: now - P.DISPATCH_DEADLINE_MS - 1 }, null, null, 'PHONE', now) === 'no-peer-awake');
+		check('uiState: and one inside it is still "dispatched"',
+			P.uiState({ why: 'dispatched', iturn: 'x', ts: now - 60000 }, null, null, 'PHONE', now) === 'dispatched');
+
+		// THE WATCH BOUND (2026-09-23): a handed-off turn is watched for frames only while
+		// some device could still be sending them.
+		const DL = 15 * 60 * 1000;
+		const seat = { why: 'dispatched', iturn: 'w', ts: now - 60000 };
+		check('watchDecision: TRUE under a live foreign lease (the runner is streaming)',
+			P.watchDecision(seat, live['t-held'], false, 'PHONE', now) === true);
+		check('watchDecision: FALSE under this device\'s own live lease (it runs here)',
+			P.watchDecision(seat, { holder: 'PHONE', mode: 'running', expiry: now + 1000, renewedAt: now }, false, 'PHONE', now) === false);
+		check('watchDecision: TRUE for a fresh seat nobody has claimed yet',
+			P.watchDecision(seat, null, false, 'PHONE', now) === true);
+		check('watchDecision: FALSE for an unclaimed seat past the errand deadline',
+			P.watchDecision({ why: 'dispatched', iturn: 'w', ts: now - DL - 1 }, null, false, 'PHONE', now) === false);
+		check('watchDecision: FALSE once finished, even under a live lease',
+			P.watchDecision(seat, live['t-held'], true, 'PHONE', now) === false);
+		check('watchDecision: FALSE when this seat\'s claim lapsed (no device holds it)',
+			P.watchDecision(seat, { holder: 'PEER', mode: 'running', expiry: now - 1, renewedAt: now - 30000 }, false, 'PHONE', now) === false);
+		check('watchDecision: FALSE when this seat\'s claim was released',
+			P.watchDecision(seat, { holder: 'PEER', mode: 'released', expiry: 0, renewedAt: now - 30000 }, false, 'PHONE', now) === false);
+		check('watchDecision: TRUE for a re-seat whose only lease is an EARLIER seating\'s',
+			P.watchDecision(seat, { holder: 'PEER', mode: 'released', expiry: 0, renewedAt: now - 120000 }, false, 'PHONE', now) === true);
+		check('watchDecision: FALSE for a placeholder with no stamp to age it by',
+			P.watchDecision({ why: 'dispatched', iturn: 'w' }, null, false, 'PHONE', now) === false);
+		check('watchDecision: FALSE for a turn that was never dispatched',
+			P.watchDecision({ why: 'offline', iturn: 'w', ts: now }, null, false, 'PHONE', now) === false);
+		check('recoverDecision: FALSE for an ask-card answer ("Chose: …"), even our own and fresh',
+			P.recoverDecision({ why: 'dispatched', iturn: 'x', dispatchedBy: 'PHONE', ts: now - 60000,
+				itext: 'Chose: Detach the paths' }, null, false, 'PHONE', now) === false);
+		check('recoverDecision: FALSE for an ask-card answer in the reader\'s own words ("Other: …")',
+			P.recoverDecision({ why: 'dispatched', iturn: 'x', dispatchedBy: 'PHONE', ts: now - 60000,
+				itext: 'Other: leave them' }, null, false, 'PHONE', now) === false);
+		// AN UNDELIVERABLE HAND-BACK SPINS ONLY WHERE IT WILL BE RUN (audit F2). The tile
+		// reads 'claimed', a spinner with no control, only on the device whose own recovery
+		// gate says it runs the turn; everywhere else it is 'failed', with [Run here].
+		{
+			const undel = { t: 'report', status: 'undeliverable' };
+			check('uiState: undeliverable on the sender, own fresh hand-off, is claimed (it recovers it)',
+				P.uiState(own('u'), null, undel, 'PHONE', now) === 'claimed');
+			check('uiState: undeliverable on a device that did NOT send it is failed ([Run here]), not a spinner',
+				P.uiState(own('u'), null, undel, 'LAPTOP', now) === 'failed');
+			check('uiState: undeliverable ask answer is failed, since no recovery will run it',
+				P.uiState({ why: 'dispatched', iturn: 'u', dispatchedBy: 'PHONE', ts: now - 60000,
+					itext: 'Chose: Detach the paths' }, null, undel, 'PHONE', now) === 'failed');
+			check('uiState: undeliverable past the errand deadline is failed',
+				P.uiState({ why: 'dispatched', iturn: 'u', dispatchedBy: 'PHONE',
+					ts: now - P.DISPATCH_DEADLINE_MS - 1 }, null, undel, 'PHONE', now) === 'failed');
+		}
+		// THE DEADLINE CANNOT OUTLIVE THE ERRAND (audit F4): a placeholder's `deadline` is
+		// capped at DISPATCH_DEADLINE_MS past its stamp, and a stamp far in the future (a
+		// fast clock at send) reads as expired rather than recoverable for the skew.
+		{
+			const DDM = P.DISPATCH_DEADLINE_MS;
+			check('handoffDeadline: a deadline past the errand\'s is capped at ts + DISPATCH_DEADLINE_MS',
+				P.handoffDeadline({ ts: now - 60000, deadline: now + 10 * DDM }) === now - 60000 + DDM);
+			check('handoffDeadline: a shorter deadline stands',
+				P.handoffDeadline({ ts: now - 60000, deadline: now + 1000 }) === now + 1000);
+			check('recoverDecision: FALSE for our own twenty-minute-old hand-off with an inflated deadline',
+				P.recoverDecision({ why: 'dispatched', iturn: 'x', dispatchedBy: 'PHONE', ts: now - 20 * 60000,
+					deadline: now + 10 * DDM }, null, false, 'PHONE', now) === false);
+			check('recoverDecision: FALSE for our own hand-off stamped far in the future (clock ran fast)',
+				P.recoverDecision({ why: 'dispatched', iturn: 'x', dispatchedBy: 'PHONE', ts: now + 2 * DDM },
+					null, false, 'PHONE', now) === false);
+			check('recoverDecision: TRUE for our own hand-off stamped a little ahead (ordinary skew)',
+				P.recoverDecision({ why: 'dispatched', iturn: 'x', dispatchedBy: 'PHONE', ts: now + 30000 },
+					null, false, 'PHONE', now) === true);
+		}
+		// AN ANSWER IS NEVER SENT WITHOUT ITS QUESTION, NOT EVEN ON A CLICK (replay site 4).
+		{
+			const ans = { why: 'dispatched', iturn: 'q', dispatchedBy: 'PHONE', ts: now - 5 * 86400000,
+				itext: 'Chose: Detach the paths' };
+			check('dispatchControl: an expired ask answer offers answeragain, never [Run here]',
+				P.dispatchControl('no-peer-awake', ans) === 'answeragain');
+			check('dispatchControl: a failed ask answer offers answeragain',
+				P.dispatchControl('failed', ans) === 'answeragain');
+			check('dispatchControl: a parked ask answer offers answeragain, not a re-run',
+				P.dispatchControl('parked', ans) === 'answeragain');
+			check('dispatchControl: an "Other: …" answer is an answer too',
+				P.dispatchControl('no-peer-awake', Object.assign({}, ans, { itext: 'Other: leave them' })) === 'answeragain');
+			check('dispatchControl: a plain expired prompt keeps [Run here]',
+				P.dispatchControl('no-peer-awake', Object.assign({}, ans, { itext: 'Keep going autonomously now' })) === 'runhere');
+			check('dispatchControl: an ask answer still in flight keeps its pre-claim take-back',
+				P.dispatchControl('dispatched', ans) === 'takeback');
+		}
+		// A PLACEHOLDER WITH NO STAMP READS AS EXPIRED (audit F6), as watchDecision has it.
+		check('uiState: a placeholder with no stamp is no-peer-awake ([Run here]), not "dispatched" for ever',
+			P.uiState({ why: 'dispatched', iturn: 'x' }, null, null, 'PHONE', now) === 'no-peer-awake');
+		// THE EXECUTION POINT HOLDS TOO: a recovery errand naming another device as its
+		// sender is refused by the runner, whatever decided to ask.
+		{
+			const s2 = makeLeaseSync({});
+			let ran2 = 0;
+			const foreign = P.makeErrand({ turnId: 'mu4y7fa4-1-du152', chatId: 'c', prompt: 'Chose: Detach the paths',
+				eid: 'e', deadline: now + 60000, dispatchedBy: 'ARGONAUT' });
+			const r2 = await P.runErrand(foreign, {
+				selfId: 'GILGAMESH', cas: P.syncCas(s2), allowSelf: true,
+				finished: async () => false,
+				reconstruct: async () => ({}),
+				runTurn: async () => { ran2++; },
+				abort: () => {}, pushResult: async () => 1, post: async () => {}, ack: async () => {}, now: () => now,
+			});
+			check('runErrand: a RECOVERY of a turn another device sent is refused (not-own-recovery), nothing runs',
+				ran2 === 0 && r2.ran === false && r2.why === 'not-own-recovery', JSON.stringify({ ran2, why: r2.why }));
+		}
+		{
+			const s3 = makeLeaseSync({});
+			let ran3 = 0;
+			// As `errandForRecovery` builds it from a placeholder sent a window ago: the
+			// placeholder's own stamp, and its deadline.
+			const stale = sentErrand(P, { turnId: 't-stale', chatId: 'c', prompt: 'p', eid: 'e',
+				deadline: now - 1000, dispatchedBy: 'PHONE', ts: now - P.DISPATCH_DEADLINE_MS - 1000 });
+			const r3 = await P.runErrand(stale, {
+				selfId: 'PHONE', cas: P.syncCas(s3), allowSelf: true,
+				finished: async () => false,
+				reconstruct: async () => ({}),
+				runTurn: async () => { ran3++; },
+				abort: () => {}, pushResult: async () => 1, post: async () => {}, ack: async () => {}, now: () => now,
+			});
+			check('runErrand: our own recovery past the hand-off deadline takes no lease and runs nothing',
+				ran3 === 0 && r3.ran === false, JSON.stringify({ ran3, why: r3.why }));
+		}
 		// And the runner itself stands down on the take, even asked to recover.
 		const sync = makeLeaseSync(live);
 		let ran = 0, touched = false;
-		const errand = P.makeErrand({ turnId: 't-held', chatId: 'c', prompt: 'p', eid: 'e', deadline: 0, dispatchedBy: 'PHONE' });
+		const errand = sentErrand(P, { turnId: 't-held', chatId: 'c', prompt: 'p', eid: 'e', deadline: 0, dispatchedBy: 'PHONE' });
 		const res = await P.runErrand(errand, {
 			selfId: 'PHONE', cas: P.syncCas(sync), allowSelf: true,
 			finished: async () => false,
@@ -1257,7 +1444,7 @@ async function runRecoveryAcceptance(P, L, check) {
 		L.forget();
 		const sync = makeLeaseSync({});			// lease vacant (peer released after done)
 		let ran = 0;
-		const errand = P.makeErrand({ turnId: 't-fin', chatId: 'c', prompt: 'p', eid: 'e', deadline: 0, dispatchedBy: 'PHONE' });
+		const errand = sentErrand(P, { turnId: 't-fin', chatId: 'c', prompt: 'p', eid: 'e', deadline: 0, dispatchedBy: 'PHONE' });
 		const res = await P.runErrand(errand, {
 			selfId: 'PHONE', cas: P.syncCas(sync), allowSelf: true,
 			finished:    async () => true,			// a done report / merged answer exists
@@ -1277,7 +1464,7 @@ async function runRecoveryAcceptance(P, L, check) {
 		L.forget();
 		const sync = makeLeaseSync({});
 		let ran = 0;
-		const errand = P.makeErrand({ turnId: 't-self', chatId: 'c', prompt: 'p', eid: 'e', deadline: 0, dispatchedBy: 'PHONE' });
+		const errand = sentErrand(P, { turnId: 't-self', chatId: 'c', prompt: 'p', eid: 'e', deadline: 0, dispatchedBy: 'PHONE' });
 		const res = await P.runErrand(errand, {			// allowSelf omitted -> false
 			selfId: 'PHONE', cas: P.syncCas(sync),
 			finished: async () => false,
@@ -1287,6 +1474,133 @@ async function runRecoveryAcceptance(P, L, check) {
 		});
 		check('automatic path refuses this device\'s OWN errand (D1a intact)',
 			res.ran === false && res.why === 'self-dispatched' && ran === 0);
+	}
+}
+
+// ── Pull the exact text of a top-level `function NAME(args) { ... }` out of
+//    www/js/daimond.js, brace-matched from its opening `{` -- the same trick
+//    verify_attach.test.mjs's `asyncFuncBody` and workerfinish.test.mjs's
+//    `funcBody` use, kept whole here (not split into args/body) so three
+//    sibling functions can be concatenated and evaluated together with their
+//    calls to one another intact. None of the three carries a brace-bearing
+//    string or regex literal, so a naive depth count is exact.
+function daimondFuncSource(name) {
+	const head = new RegExp('function\\s+' + name + '\\s*\\([^)]*\\)\\s*\\{');
+	const m = head.exec(DAIMOND_SRC);
+	if (!m) throw new Error('function not found in daimond.js: ' + name);
+	let i = m.index + m[0].length - 1, depth = 0;
+	for (; i < DAIMOND_SRC.length; i++) {
+		const c = DAIMOND_SRC[i];
+		if (c === '{') depth++;
+		else if (c === '}') { depth--; if (depth === 0) break; }
+	}
+	return DAIMOND_SRC.slice(m.index, i + 1);
+}
+
+// Build `continueTurn`, `retryTurn` and `answerAgain` exactly as daimond.js
+// defines them (hoisted together so each can call the others), closed over a
+// stub `window` and the handful of free identifiers they read bare -- the
+// same `with (window)` construct `loadScript` above uses for the real app
+// files, which is what makes evaluating them outside daimond.js's own IIFE
+// legal (no `'use strict'` in this synthetic wrapper).
+function buildS61Sandbox(P, spy) {
+	const win = {
+		DaimondPeer: {
+			// The REAL isAskAnswer from peer.js, not a re-implementation --
+			// S6-1 is a daimond.js bug, and peer.js's own marker logic is
+			// already covered by the dispatchControl checks above.
+			isAskAnswer:     P.isAskAnswer,
+			dispatchState:   () => 'no-peer-awake',	// never peer-held here
+			dispatchControl: () => '',					// no dispatched placeholder here
+		},
+		DaimondLease:   { record: () => null },
+		DaimondJournal: { clearTurn: (id) => spy.journalCleared.push(id) },
+		loadMsgTombs:       () => ({}),
+		msgTombstone:       (mids) => spy.tombstoned.push.apply(spy.tombstoned, mids),
+		touchChat:          (chat) => spy.touched.push(chat && chat.id),
+		persistChats:       () => { spy.persisted++; },
+		renderHistory:      () => { spy.rendered++; },
+		runTurn:            (chat, text, opts) => spy.ranTurn.push({ text: text, opts: opts }),
+		ChatStore:          { compact: (id) => spy.compacted.push(id) },
+		CONTINUE_NUDGE:     '__continue_nudge__',
+		handoffTargetLabel: () => '',
+		peerUiStateFor:     () => 'no-peer-awake',
+		selfDeviceId:       () => 'SELF',
+		_askCard:           null,
+	};
+	const src = [
+		daimondFuncSource('continueTurn'),
+		daimondFuncSource('retryTurn'),
+		daimondFuncSource('answerAgain'),
+	].join('\n')
+	+ '\nwindow.continueTurn = continueTurn;\nwindow.retryTurn = retryTurn;\nwindow.answerAgain = answerAgain;\n';
+	const fn = new Function('window', 'with (window) {\n' + src + '\n}');
+	fn(win);
+	return win;
+}
+
+// S6-1 (re-check §6): an ask-card answer ("Chose: …" / "Other: …") interrupted
+// LOCALLY and recovered from the write-ahead journal offers Continue and
+// Retry, and -- before the fix -- either one re-sent the bare answer with no
+// card beside it, because `continueTurn`/`retryTurn` had no `isAskAnswer`
+// guard (the dispatched tile already had one, via `dispatchControl`). Each
+// check here fails on daimond.js as it stood at 2207f686 and passes on the fix.
+async function runLocalAskAnswerGuardAcceptance(P, check) {
+	function freshSpy() {
+		return { tombstoned: [], touched: [], persisted: 0, rendered: 0, ranTurn: [], compacted: [], journalCleared: [] };
+	}
+
+	// ── continueTurn: an ask-answer turn that died before any token arrived
+	//    (the empty-partial branch, recovered as `interrupted` from the
+	//    journal) must reopen the question, not resend "Chose: …" bare. ──
+	{
+		const spy = freshSpy();
+		const win = buildS61Sandbox(P, spy);
+		const chat = { id: 'c1', messages: [
+			{ mid: 'm1', iturn: 'T1', role: 'user', content: 'Chose: Detach the paths' },
+		] };
+		win.continueTurn(chat, 'T1', 'Chose: Detach the paths');
+		check('S6-1 continueTurn: an ask-answer with nothing arrived reopens the question (answerAgain), never resends',
+			spy.ranTurn.length === 0 && spy.tombstoned.includes('m1') && chat.messages.length === 0);
+	}
+	// ── continueTurn: an ORDINARY interrupted turn (not an ask answer) with
+	//    nothing arrived is UNCHANGED -- still retracted and re-run bare. ──
+	{
+		const spy = freshSpy();
+		const win = buildS61Sandbox(P, spy);
+		const chat = { id: 'c2', messages: [
+			{ mid: 'm2', iturn: 'T2', role: 'user', content: 'Keep going autonomously now' },
+		] };
+		win.continueTurn(chat, 'T2', 'Keep going autonomously now');
+		check('S6-1 continueTurn: an ordinary interrupted turn is still retracted and re-run (unchanged)',
+			spy.ranTurn.length === 1 && spy.ranTurn[0].text === 'Keep going autonomously now');
+	}
+	// ── retryTurn: a COMPLETED local ask-answer turn (no dispatched
+	//    placeholder to key the tile's own guard off) must also reopen the
+	//    question rather than resend the bare answer. ──
+	{
+		const spy = freshSpy();
+		const win = buildS61Sandbox(P, spy);
+		const chat = { id: 'c3', messages: [
+			{ mid: 'm3', iturn: 'T3', role: 'user', content: 'Other: leave them' },
+			{ mid: 'm4', iturn: 'T3', role: 'assistant', content: 'Done.' },
+		] };
+		win.retryTurn(chat, 'T3', 'Other: leave them');
+		check('S6-1 retryTurn: a completed local ask-answer reopens the question, never resends it bare',
+			spy.ranTurn.length === 0 && spy.tombstoned.includes('m3') && chat.messages.length === 0);
+	}
+	// ── retryTurn: an ordinary completed turn is UNCHANGED -- still
+	//    retracted and re-run with the given text. ──
+	{
+		const spy = freshSpy();
+		const win = buildS61Sandbox(P, spy);
+		const chat = { id: 'c4', messages: [
+			{ mid: 'm5', iturn: 'T4', role: 'user', content: 'What is the capital of France?' },
+			{ mid: 'm6', iturn: 'T4', role: 'assistant', content: 'Paris.' },
+		] };
+		win.retryTurn(chat, 'T4', 'What is the capital of France?');
+		check('S6-1 retryTurn: an ordinary retry is still retracted and re-run (unchanged)',
+			spy.ranTurn.length === 1 && spy.ranTurn[0].text === 'What is the capital of France?');
 	}
 }
 
@@ -1328,7 +1642,7 @@ async function runFireAndForgetAcceptance(P, L, check) {
 		let progressPushes = 0, reported = null;
 		let releaseTurn;
 		const turnGate = new Promise((r) => { releaseTurn = r; });
-		const errand = P.makeErrand({ turnId: TURN, chatId: CHAT, prompt: 'do the thing',
+		const errand = sentErrand(P, { turnId: TURN, chatId: CHAT, prompt: 'do the thing',
 			eid: 'e-faf', deadline: NOW + P.DISPATCH_DEADLINE_MS, dispatchedBy: 'PHONE' });
 		const running = P.runErrand(errand, {
 			selfId: 'DESK', cas: P.syncCas(sync), now: () => NOW,
@@ -1579,7 +1893,7 @@ async function runNominationAcceptance(P, L, check) {
 		L.forget();
 		const sync = makeLeaseSync({});
 		let ran = 0, touched = false;
-		const errand = P.makeErrand({ turnId: 't-nom-b', chatId: 'c', prompt: 'p', eid: 'e', deadline: 0, dispatchedBy: 'PHONE' });
+		const errand = sentErrand(P, { turnId: 't-nom-b', chatId: 'c', prompt: 'p', eid: 'e', deadline: 0, dispatchedBy: 'PHONE' });
 		const res = await P.runErrand(errand, {
 			selfId: OTHER, cas: P.syncCas(sync),
 			nominatedId: NOMINEE, presence: freshNom, freshWindowMs: W,
@@ -1596,7 +1910,7 @@ async function runNominationAcceptance(P, L, check) {
 		L.forget();
 		const sync = makeLeaseSync({});
 		let ran = 0;
-		const errand = P.makeErrand({ turnId: 't-nom-a', chatId: 'c', prompt: 'p', eid: 'e', deadline: 0, dispatchedBy: 'PHONE' });
+		const errand = sentErrand(P, { turnId: 't-nom-a', chatId: 'c', prompt: 'p', eid: 'e', deadline: 0, dispatchedBy: 'PHONE' });
 		const res = await P.runErrand(errand, {
 			selfId: NOMINEE, cas: P.syncCas(sync),
 			nominatedId: NOMINEE, presence: freshNom, freshWindowMs: W,
@@ -1613,7 +1927,7 @@ async function runNominationAcceptance(P, L, check) {
 		L.forget();
 		const sync = makeLeaseSync({});
 		let ran = 0;
-		const errand = P.makeErrand({ turnId: 't-nom-c', chatId: 'c', prompt: 'p', eid: 'e', deadline: 0, dispatchedBy: 'PHONE' });
+		const errand = sentErrand(P, { turnId: 't-nom-c', chatId: 'c', prompt: 'p', eid: 'e', deadline: 0, dispatchedBy: 'PHONE' });
 		const res = await P.runErrand(errand, {
 			selfId: OTHER, cas: P.syncCas(sync),
 			nominatedId: NOMINEE, presence: {}, freshWindowMs: W,
@@ -1631,7 +1945,7 @@ async function runNominationAcceptance(P, L, check) {
 		L.forget();
 		const sync = makeLeaseSync({});
 		let ran = 0;
-		const errand = P.makeErrand({ turnId: 't-nom-s', chatId: 'c', prompt: 'p', eid: 'e', deadline: 0, dispatchedBy: 'PHONE' });
+		const errand = sentErrand(P, { turnId: 't-nom-s', chatId: 'c', prompt: 'p', eid: 'e', deadline: 0, dispatchedBy: 'PHONE' });
 		const res = await P.runErrand(errand, {
 			selfId: OTHER, cas: P.syncCas(sync),
 			nominatedId: NOMINEE, presence: staleNom, freshWindowMs: W,
@@ -1648,7 +1962,7 @@ async function runNominationAcceptance(P, L, check) {
 		L.forget();
 		const sync = makeLeaseSync({});
 		let ran = 0;
-		const errand = P.makeErrand({ turnId: 't-nom-d', chatId: 'c', prompt: 'p', eid: 'e', deadline: 0, dispatchedBy: 'PHONE' });
+		const errand = sentErrand(P, { turnId: 't-nom-d', chatId: 'c', prompt: 'p', eid: 'e', deadline: 0, dispatchedBy: 'PHONE' });
 		const res = await P.runErrand(errand, {
 			selfId: OTHER, cas: P.syncCas(sync),
 			nominatedId: '', presence: freshNom, freshWindowMs: W,
@@ -1764,7 +2078,7 @@ async function runFallbackLivenessAcceptance(tab, check) {
 		});
 
 		// Seal an errand to this account and drop it on the relay.
-		const errand = P.makeErrand({ turnId: 'turn-live', chatId: 'c', prompt: 'p', model: {}, deadline: 0, dispatchedBy: 'phone-device' });
+		const errand = sentErrand(P, { turnId: 'turn-live', chatId: 'c', prompt: 'p', model: {}, deadline: 0, dispatchedBy: 'phone-device' });
 		const sealed = await P.sealForSelf(errand);
 		box.post(sealed);
 
@@ -2156,7 +2470,7 @@ async function runMoneySafety(phone, laptop, check) {
 		phone.DaimondLease.forget(); laptop.DaimondLease.forget();
 		const sync = makeLeaseSync({});
 		let runCount = 0;
-		const errand = Pp.makeErrand({
+		const errand = sentErrand(Pp, {
 			turnId: 'turn-d1', chatId: 'chat-d1', prompt: 'add up', eid: 'e-d1',
 			deadline: 9e15, dispatchedBy: 'phoneDev',
 		});
@@ -2231,7 +2545,7 @@ async function runMoneySafety(phone, laptop, check) {
 	{
 		phone.DaimondLease.forget();
 		const sync = makeLeaseSync({});
-		const errand = Pp.makeErrand({ turnId: 'turn-d3', chatId: 'chat-d3', prompt: 'the question', eid: 'e-d3', deadline: 9e15 });
+		const errand = sentErrand(Pp, { turnId: 'turn-d3', chatId: 'chat-d3', prompt: 'the question', eid: 'e-d3', deadline: 9e15 });
 		const ctxChat = { id: 'chat-d3', messages: [{ role: 'user', content: 'the question', mid: 'turn-d3', ts: 1 }] };
 		let request = null;
 		const res = await Pp.runErrand(errand, {
@@ -2310,7 +2624,7 @@ async function runMoneySafety(phone, laptop, check) {
 			abort: () => {}, pushResult: async () => { counters.pushed += 1; counters.answered = true; return 7; },
 			post: async () => {}, ack: async () => { counters.acked += 1; }, now: () => 5000,
 		}, extra || {});
-		const errand = Pp.makeErrand({ turnId: 'turn-d5', chatId: 'c', prompt: 'q', eid: 'e-d5',
+		const errand = sentErrand(Pp, { turnId: 'turn-d5', chatId: 'c', prompt: 'q', eid: 'e-d5',
 			deadline: 9e15, dispatchedBy: SELF });
 
 		// (a) WITH the synchronous guard (the fix): a module-level in-flight set shared by
@@ -2410,7 +2724,7 @@ async function runHeartbeatContainment(P, L, check) {
 		L.forget();
 		const sync = makeCountingSync({});
 		const timer = makeFakeTimer();
-		const errand = P.makeErrand({ turnId: TID, chatId: 'c', prompt: 'p', eid: 'e', deadline: 9e15 });
+		const errand = sentErrand(P, { turnId: TID, chatId: 'c', prompt: 'p', eid: 'e', deadline: 9e15 });
 		const res = await P.runErrand(errand, {
 			selfId: 'peerA', cas: P.syncCas(sync), now: () => 2000,
 			setTimer: timer.set, clearTimer: timer.clear,
@@ -2438,7 +2752,7 @@ async function runHeartbeatContainment(P, L, check) {
 		const sync = makeCountingSync({});
 		const timer = makeFakeTimer();
 		let clock = 1000, aborted = 0;
-		const errand = P.makeErrand({ turnId: TID, chatId: 'c', prompt: 'p', eid: 'e', deadline: 9e15 });
+		const errand = sentErrand(P, { turnId: TID, chatId: 'c', prompt: 'p', eid: 'e', deadline: 9e15 });
 		const running = P.runErrand(errand, {
 			selfId: 'peerHang', cas: P.syncCas(sync), now: () => clock,
 			setTimer: timer.set, clearTimer: timer.clear,
@@ -2473,7 +2787,7 @@ async function runHeartbeatContainment(P, L, check) {
 		L.forget();
 		const sync = makeCountingSync({});
 		const timer = makeFakeTimer();
-		const errand = P.makeErrand({ turnId: TID, chatId: 'c', prompt: 'p', eid: 'e', deadline: 9e15 });
+		const errand = sentErrand(P, { turnId: TID, chatId: 'c', prompt: 'p', eid: 'e', deadline: 9e15 });
 		const res = await P.runErrand(errand, {
 			selfId: 'peerCrash', cas: P.syncCas(sync), now: () => 2000,
 			setTimer: timer.set, clearTimer: timer.clear,
@@ -2515,6 +2829,29 @@ async function runDeadlineExpiryMoneySafety(P, L, check) {
 			cas.peekLeases()['turn-rec'].expiry === NOW + L.LEASE_TTL_MS);
 	}
 
+	// ── S6-2: a MISSING or zero deadline is not "no deadline" once the errand
+	//    carries a `ts` -- only an old build (or a hand-crafted envelope) posts one
+	//    with no `deadline`, and it must age exactly as `handoffDeadline` ages a
+	//    deadline-less PLACEHOLDER: `ts + DISPATCH_DEADLINE_MS`, not sit reclaimable
+	//    by any fresh runner for ever. ──
+	{
+		L.forget();
+		const cas = makeCas({});
+		const OLD_TS = NOW - 20 * 60 * 1000;	// 20 min old -- past DISPATCH_DEADLINE_MS (15 min)
+		const took = await L.take('turn-oldbuild',
+			{ holder: 'DESK', eid: 'e', deadline: 0, ts: OLD_TS }, cas, () => NOW);
+		check('S6-2: a stale deadline-less errand is refused on the deadline gate, not taken',
+			took.won === false && took.why === 'deadline');
+		check('S6-2: the refused take left no lease behind',
+			!cas.peekLeases()['turn-oldbuild']);
+		// A FRESH deadline-less errand (posted moments ago) is unaffected -- it is not
+		// "no deadline" that is refused, only staleness past the derived one.
+		const fresh = await L.take('turn-freshbuild',
+			{ holder: 'DESK', eid: 'e', deadline: 0, ts: NOW - 1000 }, cas, () => NOW);
+		check('S6-2: a fresh deadline-less errand is still taken normally',
+			fresh.won === true && cas.peekLeases()['turn-freshbuild'].holder === 'DESK');
+	}
+
 	// ── THE MONEY CRUX: a busy peer holds a turn for >90s; the phone returns and MUST
 	//    stand down, because the deadline-bounded lease still reads LIVE. Reverting the
 	//    claim expiry to now+TTL re-opens the double-charge (proven by the mutation run).
@@ -2531,7 +2868,7 @@ async function runDeadlineExpiryMoneySafety(P, L, check) {
 		check('>TTL: the peer lease still reads LIVE after 90s (deadline-bounded, no renew needed)',
 			L.live(rec, later) === true);
 		check('>TTL: recoverDecision stands the phone DOWN (a live foreign lease holds it)',
-			P.recoverDecision({ why: 'dispatched', iturn: 'turn-long' }, rec, false, 'PHONE', later) === false);
+			P.recoverDecision({ why: 'dispatched', iturn: 'turn-long', dispatchedBy: 'PHONE', ts: NOW }, rec, false, 'PHONE', later) === false);
 		// The take itself: the phone tries to reclaim through the CAS and MUST lose.
 		const phone = await L.take('turn-long', { holder: 'PHONE', eid: 'e2', deadline: 0 }, cas, () => later);
 		check('>TTL: the phone take STANDS DOWN while the peer still runs (no double-run/charge)',
@@ -2562,7 +2899,7 @@ async function runDeadlineExpiryMoneySafety(P, L, check) {
 
 async function runRunnerAcceptance(P, L, check) {
 	const TID = 'turn-run';
-	const errand = P.makeErrand({ turnId: TID, chatId: 'chat-r', prompt: 'compute', eid: 'e-run', deadline: 9e15 });
+	const errand = sentErrand(P, { turnId: TID, chatId: 'chat-r', prompt: 'compute', eid: 'e-run', deadline: 9e15 });
 
 	// ── syncCas arbitration: two takes from ONE base, exactly one wins. ──
 	{
@@ -2792,6 +3129,298 @@ function makeCas(initialLeases) {
 		peekVersion: () => version,
 		peekLeases: () => JSON.parse(JSON.stringify(leases)),
 	};
+}
+
+// E-R1 (2026-09-23). On 2026-09-22 a tab still on an older build came back to the
+// foreground and re-handed a turn sent five days before; the re-hand carried a fresh
+// `ts` and a fresh `deadline`, the collector judged it by them, and the turn ran with
+// nobody there. The age is now read off the turn's BIRTH, which no re-hand refreshes.
+async function runTurnAgeAcceptance(P, L, PR, check) {
+	console.log('\nE-R1 — a handed-off turn is aged from its birth, never from its sender\'s deadline');
+	const DAY = 86400000, MIN = 60000, DL = P.DISPATCH_DEADLINE_MS;
+	const REAL = Date.UTC(2026, 8, 23, 14, 0, 0);				// the relay's (true) time of the post
+	const idAt = (ms, tag) => ms.toString(36) + '-1-' + (tag || 'abcde');
+	const has = typeof P.turnAgeVerdict === 'function';
+	const V = (e, o) => has ? P.turnAgeVerdict(e, o) : { ok: null, why: 'absent', age: -1, until: 0, clock: '' };
+	// An errand as its sender posts it: born and sent on the SENDER's clock, the seed
+	// ending at the turn's own user message, and the deadline the sender writes.
+	const errandAt = (born, sent, extra) => P.makeErrand(Object.assign({
+		turnId: idAt(born), chatId: 'c', prompt: 'p', eid: 'e', dispatchedBy: 'PHONE',
+		ts: sent, deadline: sent + DL,
+		seed: { chatId: 'c', title: '', provider: '', model: '',
+			msgs: [{ role: 'user', content: 'p', mid: idAt(born), ts: born }] },
+	}, extra || {}));
+	// The relay stamped the row at `posted` (Unix seconds) and reads `relayNow` now.
+	const at = (posted, relayNow, now, births) => ({ rowTs: Math.floor(posted / 1000), relayNow, now, births });
+
+	// (1) THE INCIDENT: born five days ago, re-handed now with a fresh stamp and deadline.
+	{
+		const e = errandAt(REAL - 5 * DAY, REAL);
+		const v = V(e, at(REAL, REAL + 30, REAL + 30));
+		check('E-R1 (1): a turn born five days ago and re-handed now is refused, though its own deadline is 15 min off',
+			v.ok === false && v.why === 'stale' && e.deadline > REAL + 30);
+	}
+	// (2) A SENDER FIVE DAYS FAST. Its five-day-old turn was born, on its clock, at the
+	// relay's NOW -- so a collector reading the birth against its own clock passes it.
+	{
+		const fast = 5 * DAY;
+		const e = errandAt(REAL - 5 * DAY + fast, REAL + fast);
+		const v = V(e, at(REAL, REAL + 30, REAL + 30));
+		check('E-R1 (2): a sender five days fast still reads its five-day-old turn as five days old (refused)',
+			v.ok === false && v.why === 'stale' && Math.abs((REAL + 30) - (REAL - 5 * DAY + fast)) < DL);
+	}
+	// (3) A SENDER AN HOUR SLOW, a fresh turn: the deadline it wrote is already past on the
+	// collector, which is what the old judge refused it on.
+	{
+		const slow = -60 * MIN;
+		const e = errandAt(REAL + slow - 2000, REAL + slow);
+		const v = V(e, at(REAL, REAL + 300, REAL + 300));
+		check('E-R1 (3): a fresh hand-off from a sender an hour slow is started, though its deadline is past here',
+			v.ok === true && v.age < 10000 && e.deadline < REAL + 300);
+	}
+	// (4) A COLLECTOR FIVE DAYS SLOW reads the relay's clock through presence, not its own.
+	{
+		const slow = -5 * DAY;
+		const e = errandAt(REAL - 5 * DAY, REAL);
+		check('E-R1 (4): a collector five days slow still refuses a five-day-old turn',
+			V(e, at(REAL, REAL + 30, REAL + 30 + slow)).why === 'stale');
+		const f = errandAt(REAL - 1000, REAL);
+		check('E-R1 (4): ...and still starts a fresh one',
+			V(f, at(REAL, REAL + 30, REAL + 30 + slow)).ok === true);
+	}
+	// (5) THE SENDER'S CLOCK STEPPED BACK between the birth and the send (audit F4's
+	// future stamp): refused. A minute of ordinary disorder is not a step.
+	{
+		check('E-R1 (5): a turn born two days after it was sent is refused (clock-back)',
+			V(errandAt(REAL + 2 * DAY, REAL), at(REAL, REAL + 30, REAL + 30)).why === 'clock-back');
+		check('E-R1 (5): ...but a birth a minute after the stamp is ordinary disorder, and starts',
+			V(errandAt(REAL + MIN, REAL), at(REAL, REAL + 30, REAL + 30)).ok === true);
+	}
+	// (6) NO PLAUSIBLE BIRTH: an id with no time in it, and `legacy-0000`, whose prefix
+	// parses as base 36 to a moment in 1970. Unaged is refused; the stamps the collector
+	// holds itself age it.
+	{
+		const bare = P.makeErrand({ turnId: 't1', chatId: 'c', prompt: 'p', ts: REAL, deadline: REAL + DL });
+		const legacy = P.makeErrand({ turnId: 'legacy-0000', chatId: 'c', prompt: 'p', ts: REAL, deadline: REAL + DL });
+		check('E-R1 (6): an errand whose turn has no plausible birth cannot be aged, and is refused',
+			V(bare, at(REAL, REAL + 30, REAL + 30)).why === 'unaged'
+			&& V(legacy, at(REAL, REAL + 30, REAL + 30)).why === 'unaged');
+		check('E-R1 (6): ...and a birth the collector holds itself (its own copy of the chat) ages it',
+			V(bare, at(REAL, REAL + 30, REAL + 30, [REAL - 5 * DAY])).why === 'stale'
+			&& V(bare, at(REAL, REAL + 30, REAL + 30, [REAL - MIN])).ok === true);
+		check('E-R1 (6): the EARLIEST birth wins: a fresh id does not hide an old seed stamp',
+			V(errandAt(REAL - 1000, REAL, { seed: { chatId: 'c', msgs: [{ role: 'user', mid: idAt(REAL - 1000), ts: REAL - 5 * DAY }] } }),
+				at(REAL, REAL + 30, REAL + 30)).why === 'stale');
+	}
+	// (7) THE RELAY TERM: time on the relay counts, read on the relay's clock.
+	{
+		const e = errandAt(REAL - 1000, REAL);
+		check('E-R1 (7): a fresh errand that sat on the relay past the window is refused',
+			V(e, at(REAL, REAL + DL + 1000, REAL + DL + 1000)).why === 'stale');
+		const v = V(e, at(REAL, REAL + MIN, REAL + MIN));
+		check('E-R1 (7): ...one that sat a minute starts, and ages out on this device\'s clock at birth + window',
+			v.ok === true && v.clock === 'relay' && Math.abs(v.until - (REAL - 1000 + DL)) <= 1000);
+		const vFast = V(e, at(REAL, REAL + MIN, REAL + MIN + 5 * DAY));
+		check('E-R1 (7): a collector five days FAST reads the minute on the relay\'s clock, and starts it',
+			vFast.ok === true && vFast.clock === 'relay');
+		const vLocal = V(e, at(REAL, null, REAL + MIN));
+		check('E-R1 (7): with no relay clock yet the local clock stands in, and the verdict says so',
+			vLocal.ok === true && vLocal.clock === 'local');
+		check('E-R1 (7): a relay stamp already in milliseconds is read as one, not as a post this instant',
+			V(e, { rowTs: REAL, relayNow: REAL + DL + 1000, now: REAL + DL + 1000 }).why === 'stale');
+		const vRec = V(e, { now: REAL + 20 * MIN });
+		check('E-R1 (7): a recovery (no relay row) ages the turn on the sender\'s own clock',
+			vRec.why === 'stale' && vRec.clock === 'sender');
+	}
+	// (8) THE RUNNER. A stale errand takes no lease and runs nothing, and the refusal is
+	// ANSWERED with an `aborted` report, so the sender stops re-handing it.
+	{
+		L.forget();
+		const cas = makeCas({});
+		const posted = []; let ran = 0;
+		const e = errandAt(REAL - 5 * DAY, REAL);
+		const res = await P.runErrand(e, {
+			selfId: 'DESK', cas, rowTs: Math.floor(REAL / 1000), relayNow: () => REAL + 30,
+			finished: async () => false, reconstruct: async () => ({}), runTurn: async () => { ran++; },
+			abort: () => {}, pushResult: async () => 1, post: async (r) => { posted.push(r); },
+			ack: async () => {}, now: () => REAL + 30, setTimer: () => null, clearTimer: () => {},
+		});
+		check('E-R1 (8): runErrand refuses the five-day-old re-hand: nothing runs, no lease is taken',
+			ran === 0 && res.ran === false && res.why === 'stale-turn' && !cas.peekLeases()[e.turnId]);
+		check('E-R1 (8): ...and answers it with one `aborted` report for the turn',
+			posted.length === 1 && posted[0].status === 'aborted' && posted[0].turnId === e.turnId);
+		// A turn already settled is not reported aborted (its `done` would be overwritten).
+		const posted2 = [];
+		const r2 = await P.runErrand(e, {
+			selfId: 'DESK', cas, rowTs: Math.floor(REAL / 1000), relayNow: () => REAL + 30,
+			finished: async () => true, reconstruct: async () => ({}), runTurn: async () => { ran++; },
+			abort: () => {}, pushResult: async () => 1, post: async (r) => { posted2.push(r); },
+			ack: async () => {}, now: () => REAL + 30,
+		});
+		check('E-R1 (8): a stale errand for a turn already answered stands down as done, reporting nothing',
+			has && r2.why === 'already-done' && posted2.length === 0);
+	}
+	// (9) A fresh turn from an hour-slow sender RUNS, which the old deadline judge refused.
+	{
+		L.forget();
+		const cas = makeCas({});
+		let ran = 0;
+		const e = errandAt(REAL - 60 * MIN - 2000, REAL - 60 * MIN);
+		const res = await P.runErrand(e, {
+			selfId: 'DESK', cas, rowTs: Math.floor(REAL / 1000), relayNow: () => REAL + 300,
+			finished: async () => false, reconstruct: async () => ({ chat: {}, app: {} }),
+			runTurn: async () => { ran++; }, abort: () => {}, pushResult: async () => 1,
+			post: async () => {}, ack: async () => {}, now: () => REAL + 300, awaitPush: true,
+			setTimer: () => null, clearTimer: () => {},
+		});
+		check('E-R1 (9): runErrand starts a fresh turn from a sender an hour slow, exactly once',
+			res.done === true && ran === 1);
+	}
+	// (10) THE TAKE. The verdict's `until`, on this device's clock, replaces the sender's
+	// deadline as the judge; the claim lives to the later of the two.
+	{
+		L.forget();
+		const cas = makeCas({});
+		const took = await L.take('tu', { holder: 'DESK', eid: 'e', deadline: REAL - 45 * MIN, until: REAL + 14 * MIN }, cas, () => REAL);
+		check('E-R1 (10): the take honours the age verdict over a sender deadline already past here',
+			took.won === true);
+		check('E-R1 (10): ...and holds the claim to the turn\'s window on this clock, not to one TTL',
+			took.won === true && cas.peekLeases().tu.expiry === REAL + 14 * MIN);
+		const late = await L.take('tv', { holder: 'DESK', eid: 'e', deadline: REAL + 10 * MIN, until: REAL - 1 }, cas, () => REAL);
+		check('E-R1 (10): a turn that aged out between the verdict and the take is not taken',
+			late.won === false && late.why === 'stale-turn');
+		const fast = await L.take('tw', { holder: 'DESK', eid: 'e', deadline: REAL + 5 * DAY, until: REAL + 10 * MIN }, cas, () => REAL);
+		check('E-R1 (10): (holds) a later sender deadline still bounds the claim, as it always has',
+			fast.won === true && cas.peekLeases().tw.expiry === REAL + 5 * DAY);
+		const cmp = await L.take('tx', { holder: 'DESK', eid: 'e', deadline: REAL - 1, ts: REAL - 20 * MIN }, cas, () => REAL);
+		check('E-R1 (10): (holds) a take with no verdict -- a compile -- keeps the deadline refusal',
+			cmp.won === false && cmp.why === 'deadline');
+	}
+	// (11) THE SENDER'S SIDE. A re-seat refreshes the placeholder's stamp and never its
+	// turn's birth, so the chain of re-seats ends where the collector's verdict does.
+	{
+		const born = REAL - 20 * MIN;
+		const reseat = { why: 'dispatched', iturn: idAt(born), mid: idAt(born + 50, 'ph'), itext: 'p',
+			dispatchedBy: 'PHONE', ts: REAL - MIN };
+		check('E-R1 (11): a hand-off re-seated a minute ago, born twenty minutes ago, is past its window',
+			P.handoffExpired(reseat, REAL) === true);
+		check('E-R1 (11): ...so its sender neither recovers nor re-seats it',
+			P.recoverDecision(reseat, null, false, 'PHONE', REAL) === false);
+		check('E-R1 (11): ...nor watches it, and its tile offers [Run here]',
+			P.watchDecision(reseat, null, false, 'PHONE', REAL) === false
+			&& P.uiState(reseat, null, null, 'PHONE', REAL) === 'no-peer-awake');
+		const young = Object.assign({}, reseat, { iturn: idAt(REAL - 2 * MIN), mid: idAt(REAL - 2 * MIN + 50, 'ph') });
+		check('E-R1 (11): (holds) a young one is still its sender\'s to recover',
+			P.recoverDecision(young, null, false, 'PHONE', REAL) === true);
+		check('E-R1 (11): a sender asks the same window before a parked re-run or a step-away',
+			has && P.turnInWindow([idAt(REAL - 2 * MIN)], [], REAL) === true
+			&& P.turnInWindow([idAt(REAL - 20 * MIN)], [], REAL) === false
+			&& P.turnInWindow(['t1'], [], REAL) === false);
+	}
+	// (12) THE STAMPS A DEVICE HOLDS: the turn's user message and its placeholder's mid.
+	{
+		const msgs = [
+			{ role: 'user', mid: 'TURN', ts: REAL - 5 * DAY },
+			{ role: 'assistant', why: 'dispatched', iturn: 'TURN', mid: idAt(REAL - 5 * DAY + 30, 'ph') },
+			{ role: 'user', mid: 'OTHER', ts: REAL },
+		];
+		const h = has ? P.turnBirthHints(msgs, 'TURN') : [];
+		check('E-R1 (12): a device reads the turn\'s user message and placeholder as birth stamps, and nothing else',
+			h.length === 2 && Math.min.apply(null, h) === REAL - 5 * DAY);
+	}
+	// (13) THE RELAY CLOCK comes from presence: kept from the server's `now`, and absent
+	// until an answer carried one.
+	{
+		const ok = !!(PR && PR.relayNow);
+		if (ok) {
+			PR.forget();
+			const before = PR.relayNow();
+			PR.ingest({}, Date.now() + 5 * DAY);
+			const lead = PR.relayNow() - Date.now();
+			check('E-R1 (13): presence keeps the relay\'s clock from the server\'s `now`, and none before an answer',
+				before === null && Math.abs(lead - 5 * DAY) < 5000);
+			PR.ingest({}, undefined);
+			check('E-R1 (13): an answer with no server clock leaves the kept one alone',
+				Math.abs((PR.relayNow() - Date.now()) - 5 * DAY) < 5000);
+			PR.forget();
+		} else {
+			check('E-R1 (13): presence keeps the relay\'s clock from the server\'s `now`', false);
+		}
+	}
+}
+
+// R4b (2026-09-23). With no nominee the send advertises no device, and the backstop
+// seeded what it had tried from that advertisement alone: it found nothing tried and
+// re-handed the turn to the very desktop that had just failed to collect it, so a
+// one-desktop account ran it here only at the SECOND backstop, about 190 s after the
+// send. The elected device is now recorded in `triedDevices` from the first send.
+// Driven through daimond.js's own `electedTried`, `markTurnDispatched` and
+// `retryNextDesktopBeforeLocal`, extracted from source, over the real peer.js.
+async function runElectedTriedAcceptance(P, check) {
+	console.log('\nR4b — the first backstop does not hand a turn back to the desktop that did not collect it');
+	function sandbox(presence) {
+		const spy = { redispatched: [], persisted: 0 };
+		const win = {
+			DaimondPeer: P,
+			DaimondLease: { holder: () => null },
+			DaimondPresence: { snapshot: () => presence },
+			selfDeviceId: () => 'PHONE',
+			annotatePresence: (p) => p,
+			fleetCurrentBuild: () => '',
+			preferredWorkerLabel: () => '',
+			nominatedDeviceId: () => '',
+			deviceLabelFor: (id) => String(id),
+			touchChat: () => {}, persistChats: () => { spy.persisted++; },
+			renderHistory: () => {}, ownsChat: () => false, diag: () => {},
+			newMid: () => Date.now().toString(36) + '-1-ph000',
+			_dispatchedIx: {}, updateExpedite: () => {},
+			dispatchToPeer: (chat, tid, text, holds, opts) => {
+				spy.redispatched.push({ tid, to: opts && opts.toId });
+				return Promise.resolve({ ok: true });
+			},
+			scheduleDispatchFallback: () => {}, runDispatchFallback: () => {},
+			DISPATCH_RETRY_MAX: 3,
+			_msNum: (x) => +x || 0,
+		};
+		const src = ['electedTried', 'markTurnDispatched', 'retryNextDesktopBeforeLocal']
+			.map((n) => daimondFuncSource(n)).join('\n')
+			+ '\nwindow.electedTried = electedTried;\nwindow.markTurnDispatched = markTurnDispatched;'
+			+ '\nwindow.retryNextDesktopBeforeLocal = retryNextDesktopBeforeLocal;\n';
+		new Function('window', 'with (window) {\n' + src + '\n}')(win);
+		return { win, spy };
+	}
+	const now = Date.now();
+	const desk = (name) => ({ name, lastSeen: now - 1000, servicedAt: now - 1000, mobile: false });
+	const send = (sb, d) => {
+		const chat = { id: 'c', messages: [{ role: 'user', mid: 'T', iturn: 'T', content: 'p', ts: now }] };
+		// What dispatchToPeer marks for a send with no nominee: no advertised device, and
+		// (the fix) the elected one recorded as tried.
+		sb.win.markTurnDispatched(chat, { interrupted: true, why: 'dispatched', iturn: 'T', itext: 'p',
+			dispatchedBy: 'PHONE', parkCount: 0, toDevice: '', toName: '', tried: sb.win.electedTried(d) });
+		return { chat, m: chat.messages.find((x) => x.why === 'dispatched') };
+	};
+	try {
+		// ONE desktop, which did not collect: the first backstop runs the turn here.
+		{
+			const sb = sandbox({ DESK: desk('desk') });
+			const { chat, m } = send(sb, { dispatch: true, peer: { deviceId: 'DESK', name: 'desk' }, reason: 'mobile-peer' });
+			check('R4b: the placeholder records the elected desktop as tried, and still advertises no device',
+				Array.isArray(m.triedDevices) && m.triedDevices.indexOf('DESK') !== -1 && m.toDevice === '');
+			const re = await sb.win.retryNextDesktopBeforeLocal(chat, m);
+			check('R4b: at the first backstop a one-desktop account runs the turn here, not back to that desktop',
+				re === false && sb.spy.redispatched.length === 0);
+		}
+		// TWO desktops: the first backstop moves the turn to the OTHER one.
+		{
+			const sb = sandbox({ DESK: desk('desk'), DESK2: desk('desk2') });
+			const { chat, m } = send(sb, { dispatch: true, peer: { deviceId: 'DESK', name: 'desk' }, reason: 'mobile-peer' });
+			const re = await sb.win.retryNextDesktopBeforeLocal(chat, m);
+			check('R4b: with a second desktop the first backstop re-hands to it, never to the first',
+				re === true && sb.spy.redispatched.length === 1 && sb.spy.redispatched[0].to === 'DESK2');
+		}
+	} catch (e) {
+		check('R4b: the elected desktop is recorded as tried (' + String(e && e.message || e).slice(0, 80) + ')', false);
+	}
 }
 
 /// S-HAND #1: the settled own-errand is released, and a settled lease refuses a take.
@@ -3080,7 +3709,7 @@ async function runRemoteConsentAcceptance(phone, laptop, stranger, check) {
 		phone.DaimondLease.forget();
 		const sync = makeLeaseSync({});
 		const reports = [], rc = { n: 0 };
-		const errand = P.makeErrand({ turnId: 't-park', chatId: 'c', prompt: 'go', eid: 'e', deadline: 9e15, parkCount: 0 });
+		const errand = sentErrand(P, { turnId: 't-park', chatId: 'c', prompt: 'go', eid: 'e', deadline: 9e15, parkCount: 0 });
 		const res = await P.runErrand(errand, parkDeps(sync, 'runnerDev', reports, rc));
 		check('a park below the bound is NOT terminal', res.parked === true && res.terminal === false);
 		check('the turn spent exactly once before parking', rc.n === 1);
@@ -3093,7 +3722,7 @@ async function runRemoteConsentAcceptance(phone, laptop, stranger, check) {
 		phone.DaimondLease.forget();
 		const sync2 = makeLeaseSync({});
 		const reports2 = [], rc2 = { n: 0 };
-		const errandN = P.makeErrand({ turnId: 't-term', chatId: 'c', prompt: 'go', eid: 'e2', deadline: 9e15, parkCount: MAX - 1 });
+		const errandN = sentErrand(P, { turnId: 't-term', chatId: 'c', prompt: 'go', eid: 'e2', deadline: 9e15, parkCount: MAX - 1 });
 		const res2 = await P.runErrand(errandN, parkDeps(sync2, 'runnerDev', reports2, rc2));
 		check('a park AT the bound is TERMINAL', res2.terminal === true && res2.parked === false);
 		check('the terminal park posts an ABORTED report, the count at MAX_PARKS',
@@ -3121,7 +3750,7 @@ async function runRemoteConsentAcceptance(phone, laptop, stranger, check) {
 
 		// Dispatch #1 (parkCount 0): one runner spends and parks -> parked report, count 1.
 		const r1 = await Pl.runErrand(
-			P.makeErrand({ turnId: TID, chatId: 'c', prompt: 'go', eid: 'e0', deadline: 9e15, parkCount: 0 }),
+			sentErrand(P, { turnId: TID, chatId: 'c', prompt: 'go', eid: 'e0', deadline: 9e15, parkCount: 0 }),
 			parkDeps(sync, 'lapDev', reports, rc, terminal));
 		check('two-device: the first dispatch spends once and parks (GLOBAL count -> 1)',
 			r1.parked === true && rc.n === 1 && reports[reports.length - 1].parkCount === 1);
@@ -3133,10 +3762,10 @@ async function runRemoteConsentAcceptance(phone, laptop, stranger, check) {
 		check('two-device: the re-dispatch reads the count off the SYNCED report (not a device-local zero)',
 			carried === 1);
 		const rA = await phone.DaimondPeer.runErrand(
-			P.makeErrand({ turnId: TID, chatId: 'c', prompt: 'go', eid: 'eA', deadline: 9e15, parkCount: carried }),
+			sentErrand(P, { turnId: TID, chatId: 'c', prompt: 'go', eid: 'eA', deadline: 9e15, parkCount: carried }),
 			parkDeps(sync, 'phoneDev', reports, rc, terminal));
 		const rB = await laptop.DaimondPeer.runErrand(
-			P.makeErrand({ turnId: TID, chatId: 'c', prompt: 'go', eid: 'eB', deadline: 9e15, parkCount: carried }),
+			sentErrand(P, { turnId: TID, chatId: 'c', prompt: 'go', eid: 'eB', deadline: 9e15, parkCount: carried }),
 			parkDeps(sync, 'lap2Dev', reports, rc, terminal));
 		check('two-device: exactly ONE re-run spends; the other STANDS DOWN on the terminal report',
 			rc.n === 2 && (rA.ran === false || rB.ran === false));
@@ -3817,7 +4446,7 @@ async function runBlockerAcceptance(P, L, check) {
 		const cas = makeCas({});
 		const posted = [];
 		const out = await P.runErrand(
-			{ eid: 'e8', turnId: 'turn-402', chatId: 'c', prompt: 'p', deadline: 0 },
+			sentErrand(P, { eid: 'e8', turnId: 'turn-402', chatId: 'c', prompt: 'p', deadline: 0 }),
 			{
 				selfId: 'RUNNER', selfName: 'argonaut', cas: cas,
 				reconstruct: async () => ({}),

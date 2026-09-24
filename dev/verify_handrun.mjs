@@ -224,10 +224,21 @@ function register(cfg) {
 		allowed_origins: [`chrome-extension://${EXTID}/`],
 	}, null, '\t') + '\n');
 	fs.writeFileSync(CFG, JSON.stringify(Object.assign({
-		// What a Linux hand with a working fence reports, plus the granted
-		// folder. The folder arrives as a CAPABILITY because `wire.rs` has no
-		// field for it and the wire is fixed; see ROOT_CAP in www/js/hand.js.
-		caps: ['fence:linux', 'landlock:abi-8', 'carve:sealed', `root:${GRANT}`],
+		// What a CURRENT Linux hand reports, plus the granted folder: it fences,
+		// and it meters what a command removes (`hand/src/main.rs` says
+		// `meter:deletes` on Linux). The folder arrives as a CAPABILITY because
+		// `wire.rs` has no field for it and the wire is fixed; see ROOT_CAP in
+		// www/js/hand.js.
+		//
+		// Without the meter this stand-in is a hand OLDER than the deletion meter,
+		// and since the hand merge the page does what it must for one: it puts
+		// "The machine hand needs updating" over the whole page once the hand says
+		// hello, and every door is given nothing writable (`command_fence` in
+		// src/tools.rs). Neither is this file's subject -- both are
+		// dev/verify_handmeterless.mjs's, against real hands -- and the notice
+		// stopped this run at the `+` below on 2026-09-24. `verify_chatfence` and
+		// `verify_scope` had the same stale stand-in, put right in 058ce3ad.
+		caps: ['fence:linux', 'landlock:abi-8', 'carve:sealed', 'meter:deletes', `root:${GRANT}`],
 	}, cfg || {}), null, '\t') + '\n');
 }
 function unregister() {
@@ -253,15 +264,40 @@ function toolResult() {
 // ── What the HOST was asked to do ───────────────────────────────────
 //
 // The mock appends every frame it receives to `mock_host.log`, which is the one
-// record in this run that the app did not write. Two things are asked of it that
+// record in this run that the app did not write. Three things are asked of it that
 // nothing else here can answer: whether a refused command was really never
-// dispatched, and which directory a dispatched one was told to run in.
+// dispatched, which directory a dispatched one was told to run in, and what a
+// model's file tool asked of the machine and behind which fence.
 //
 // The file is beside the mock and therefore SHARED — every world's runs append to
 // the same one — so this reads only what was appended after this run started and
 // keeps only the frames naming this run's granted root, which carries the world
 // number in its path.
-const logFrom = (() => { try { return fs.statSync(HOSTLOG).size; } catch (e) { return 0; } })();
+const hostLogSize = () => { try { return fs.statSync(HOSTLOG).size; } catch (e) { return 0; } };
+const logFrom = hostLogSize();
+
+/// The frames the host was sent after byte `from` of its log, one line each,
+/// keeping only those that name this run's granted root.
+function hostHeard(from) {
+	let text = '';
+	try {
+		const fd = fs.openSync(HOSTLOG, 'r');
+		const size = fs.fstatSync(fd).size;
+		const buf = Buffer.alloc(Math.max(0, size - from));
+		if (buf.length) fs.readSync(fd, buf, 0, buf.length, from);
+		fs.closeSync(fd);
+		text = buf.toString('utf8');
+	} catch (e) { return []; }
+	return text.split('\n').filter((l) => /^\S+ <- \{/.test(l) && l.includes(GRANT));
+}
+
+/// Every `file` request the host was sent after byte `from` of its log, as
+/// `{ op, line }`: the file tools' door to the machine, in the host's words.
+function filesSent(from) {
+	return hostHeard(from)
+		.filter((l) => /<- \{"t": "file"/.test(l))
+		.map((l) => ({ op: (/"op": "([^"]*)"/.exec(l) || [])[1] || '', line: l }));
+}
 
 /// Every `exec` the model's own `run` tool caused, as `{ id, cwd, line }`.
 ///
@@ -273,17 +309,8 @@ const logFrom = (() => { try { return fs.statSync(HOSTLOG).size; } catch (e) { r
 /// logged frame at 400 characters, and a fence carrying several roots can reach
 /// that. The working directory is near the front and always survives.
 function execsSent() {
-	let text = '';
-	try {
-		const fd = fs.openSync(HOSTLOG, 'r');
-		const size = fs.fstatSync(fd).size;
-		const buf = Buffer.alloc(Math.max(0, size - logFrom));
-		if (buf.length) fs.readSync(fd, buf, 0, buf.length, logFrom);
-		fs.closeSync(fd);
-		text = buf.toString('utf8');
-	} catch (e) { return []; }
-	return text.split('\n')
-		.filter((l) => /<- \{"t": "exec"/.test(l) && l.includes(GRANT))
+	return hostHeard(logFrom)
+		.filter((l) => /<- \{"t": "exec"/.test(l))
 		.map((l) => ({
 			id:   (/"id": "([^"]*)"/.exec(l) || [])[1] || '',
 			cwd:  (/"cwd": "([^"]*)"/.exec(l) || [])[1] || '',
@@ -506,6 +533,25 @@ try {
 	// person drives it. Not `DaimondAttach.chatWs`, which would set the field and
 	// prove only that the field exists — the press is the permission, and a press
 	// that reached nothing is one of the two defects this app was rebuilt over.
+	//
+	// WHAT THE PRESS WILL LAND ON, asked before it is made. A forced click goes to
+	// whatever is topmost at the button's centre, and on 2026-09-24 that was a card
+	// the page had put up over everything: the press closed it through its
+	// backdrop, the `+` never heard it, and all this file said was that no picker
+	// row appeared within ten seconds. A card in the way is named here instead.
+	const cover = await page.evaluate(() => {
+		const btn = document.querySelector('#chat-attachments .ws-group [data-act="attach-add"]');
+		if (!btn) return 'there is no + in the workspace group';
+		btn.scrollIntoView({ block: 'nearest' });
+		const r = btn.getBoundingClientRect();
+		const top = document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2);
+		if (top && (top === btn || btn.contains(top))) return '';
+		const card = top && top.closest('.dlg');
+		const head = card && card.querySelector('h2');
+		if (head) return 'a dialog stands over it: ' + head.textContent;
+		return top ? 'it is under ' + top.outerHTML.slice(0, 160) : 'it is not on screen';
+	});
+	check('nothing stands over the + as the person reaches for it', cover === '', cover);
 	await page.click('#chat-attachments .ws-group [data-act="attach-add"]', { force: true });
 	await page.waitForSelector('.attach-pick-row', { timeout: 10000 });
 	const ticked = await page.evaluate((name) => {
@@ -551,6 +597,45 @@ try {
 	check('and fenced to that folder, not to the whole granted root',
 		sent.length > 0 && sent.every((e) => e.line.includes(`"fence": {"rw": ["${MARKED_ABS}"]`)),
 		(sent[sent.length - 1] || {}).line || 'nothing was sent');
+
+	// ── A model's file tools reach the machine no further than the fence ──
+	//
+	// The picker lists the workspace's root with `file_list`, and a model has the
+	// same tool. The person's listing is the page's own storage and never the
+	// machine's, and so is the model's: the file tools' door to the machine
+	// (`reach_of` in src/tools.rs) opens only under a folder marked in, behind the
+	// fence a command there is given (`command_fence`, the re-check's H1). A write
+	// outside the folder is refused before any door is asked. Each is asked of the
+	// host's own log, and the last is the control that makes the other two mean
+	// something: a door that never opened would pass both of them.
+	let from = hostLogSize();
+	clearMockLog();
+	await chat(s, '@tool file_list {"path":"."}', { timeout: 60000 });
+	r = toolResult();
+	check('a model\'s listing of the workspace root is the page\'s own, as the picker\'s is',
+		new RegExp(`(^|\\n)${MARKED}/`).test(r) && !/^Refused/.test(r), r.slice(0, 200));
+	check('and the machine was not asked for its root',
+		filesSent(from).length === 0, JSON.stringify(filesSent(from).map((f) => f.line)));
+	from = hostLogSize();
+	clearMockLog();
+	await chat(s, '@tool file_write {"path":"elsewhere.txt","content":"x"}', { timeout: 60000 });
+	r = toolResult();
+	check('a model\'s write outside the folder marked in is refused',
+		/^Refused: /.test(r), r.slice(0, 200));
+	check('and nothing was sent to the machine to write',
+		filesSent(from).length === 0, JSON.stringify(filesSent(from).map((f) => f.line)));
+	from = hostLogSize();
+	clearMockLog();
+	await chat(s, `@tool file_list {"path":"${MARKED}"}`, { timeout: 60000 });
+	r = toolResult();
+	const looked = filesSent(from);
+	check('a listing inside the folder marked in goes to the machine, fenced to that folder alone',
+		looked.length === 1 && looked[0].op === 'list'
+			&& looked[0].line.includes(`"path": "${MARKED_ABS}"`)
+			&& looked[0].line.includes(`"fence": {"rw": ["${MARKED_ABS}"], "ro": []`),
+		JSON.stringify(looked.map((f) => f.line)));
+	check('and what the machine answered is what the model read',
+		/the mock hand reads and writes no files/.test(r), r.slice(0, 200));
 
 	// ── A failure is reported as a failure ──────────────────────────
 	await relink();
@@ -681,8 +766,12 @@ try {
 		/^Refused:/.test(r) && /cannot fence/i.test(r), r.slice(0, 200));
 
 	// ── No root, no fence to express ────────────────────────────────
+	//
+	// A current hand that names no folder, so it says the meter: without it this
+	// hello is an old hand's, and the notice that raises would stand over the
+	// Send of every case below.
 	await relink();
-	register({ chunks: 1, caps: ['fence:linux', 'landlock:abi-8'] });
+	register({ chunks: 1, caps: ['fence:linux', 'landlock:abi-8', 'meter:deletes'] });
 	clearMockLog();
 	await chat(s, '@tool run {"argv":["cargo","test"]}', { timeout: 60000 });
 	r = toolResult();

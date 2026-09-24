@@ -1918,6 +1918,9 @@ impl Agent {
                 // "Running <tool>, step n…" names something that is actually running for as long
                 // as the batch is in flight, exactly as it does for a batch of one.
                 on_event(Self::announce(&group[0]));
+                // WHERE A DESTRUCTIVE CALL'S PATH SAT, asked before it runs: after a delete there
+                // is nothing left to ask. For the lens, which carries no path.
+                let class = registry.path_class(&group[0].name, &group[0].arguments).await;
                 // A sink per call while a batch runs, drained into `on_event` in the model's
                 // order as each result is recorded.  Empty for a batch of one, which keeps its
                 // events live.  Today it is provably empty for a batch of several as well --
@@ -2030,6 +2033,13 @@ impl Agent {
                         name:   tc.name.clone(),
                         result: text.clone(),
                         outcome,
+                        // Only the first of a group can be destructive: `batch` runs nothing
+                        // beside a call that writes.
+                        class:  match (&class, n) {
+                            (Some(c), 0) => c.wire(matches!(outcome,
+                                crate::tools::CallOutcome::Refused)),
+                            _            => String::new(),
+                        },
                     });
                     // A PICTURE FOR A MODEL THAT WILL NOT TAKE ONE NEVER ENTERS THE SESSION.
                     //
@@ -3850,6 +3860,8 @@ mod tests {
             read_seen:   crate::tools::new_read_cache(),
             no_write:    Vec::new(),
             daimon_of:   String::new(),
+            keeper:      String::new(),
+            unconfirmed: Vec::new(),
         })
     }
 
@@ -3896,6 +3908,8 @@ mod tests {
                 read_seen:   crate::tools::new_read_cache(),
                 no_write:    Vec::new(),
                 daimon_of:   String::new(),
+                keeper:      String::new(),
+                unconfirmed: Vec::new(),
             })
     }
 
@@ -4155,7 +4169,7 @@ mod tests {
     /// Every `ToolResult` in a run, as `(name, outcome, text)`.
     fn tool_results(events: &[AgentEvent]) -> Vec<(String, CallOutcome, String)> {
         events.iter().filter_map(|e| match e {
-            AgentEvent::ToolResult { name, result, outcome } =>
+            AgentEvent::ToolResult { name, result, outcome, .. } =>
                 Some((name.clone(), *outcome, result.clone())),
             _ => None,
         }).collect()
@@ -4486,6 +4500,8 @@ mod tests {
             read_seen:   crate::tools::new_read_cache(),
             no_write:    Vec::new(),
             daimon_of:   String::new(),
+            keeper:      String::new(),
+            unconfirmed: Vec::new(),
         });
         r.tools = vec![crate::tools::Tool::FileRead, crate::tools::Tool::FileWrite];
         r

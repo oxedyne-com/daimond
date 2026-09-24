@@ -35,6 +35,7 @@ pub mod codec;
 pub mod exec;
 pub mod fence;
 pub mod journal;
+pub mod meter;
 #[cfg(unix)]
 pub mod pty;
 pub mod seccomp;

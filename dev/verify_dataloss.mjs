@@ -383,9 +383,12 @@ const marked = await p.evaluate(async (a) => {
 	const id = await app.create_diamond('Marked');
 	// MARKED AND FLAGGED. Since 2026-09-14 the mark is the daimon's grant to READ the
 	// folder and nothing more; what travels to devices that cannot open it is what
-	// carries `share` on its attachment.
-	const linkId = await app.add_link(id, 'diamond:' + id, 'dir:' + a.work, 'holds', '', 'user');
-	await app.update_link(id, linkId, 'holds', 'share');
+	// carries `share` on its attachment. The reference names this device (owner ruling,
+	// 2026-09-23), so the mark is in force here from the moment it is written -- this
+	// fixture is driven on the one device that makes it, and never needs it confirmed.
+	const linkId = await app.add_link(id, 'diamond:' + id, window.DaimondAttach.ref('dir', a.work),
+		'holds', '', 'user');
+	await app.set_link_share(id, linkId, true);
 	await window.DaimondCore.loadDiamonds();
 	window.DaimondCore.syncClearWalkCache();
 	const share = await window.DaimondCore.syncFolderShare();

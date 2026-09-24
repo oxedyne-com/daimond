@@ -16,7 +16,7 @@
 // pinned everything to the sandbox would break real-folder mode outright and
 // several checks below would still pass.
 //
-// What is pinned:
+// What is pinned (and, since 2026-09-23, the marks section at the end):
 //   * a Diamond's directory lists and reads the same in both modes;
 //   * a write into it lands in the store and travels in the export;
 //   * the user's own files still follow the folder, and are out of view in the
@@ -417,6 +417,71 @@ check('and said the copies in their folder are still there, untaken — and they
 	!!booted.body && told.kept && told.where && told.notMoved && onDisk,
 	Object.entries({ ...told, onDisk }).filter(([, v]) => !v).map(([k]) => 'no ' + k).join(', ')
 		|| JSON.stringify(booted.body));
+
+// ── A mark is the user's, and in force on the device it was made on ──────
+//
+// 2026-09-22: four folders a daimon removed on gilgamesh were marks, and the forensics could
+// not say who made them. Two doors let a mark govern a disk nobody marked it on: a `holds` link
+// became a write mark whoever wrote it (a model's `artefact_add`, harvested at the fold, or its
+// `link_add`), and a mark made on argonaut's folder `usr` was matched by NAME on gilgamesh's.
+// The page is in folder mode here (the reconnect above), which is where both matter.
+const marks = await p.evaluate(async () => {
+	const out = {};
+	const A = window.DaimondAttach || {};
+	const app = DaimondCore.diamondApp();
+	const id = await app.create_diamond('Marks');
+	const self = 'diamond:' + id;
+	// Written out rather than asked of the page, so the scope checks below hold any build to
+	// the same references: this device's, another's, and one from before devices were named.
+	out.dev = (window.DaimondIdentity && DaimondIdentity.deviceId && DaimondIdentity.deviceId()) || '';
+	const mine  = 'dir:[machine:standin-folder@' + out.dev + ']mine';
+	const other = 'dir:[machine:standin-folder@0123456789abcdef]theirs';
+	const older = 'dir:[machine:standin-folder]older';
+	await app.add_link(id, self, mine, 'holds', '', 'user');
+	await app.add_link(id, self, other, 'holds', '', 'user');
+	await app.add_link(id, self, older, 'holds', '', 'user');
+	await app.add_link(id, self, 'dir:rootless', 'holds', '', 'user');
+	// What an agent leaves: a model's own `link_add`, and what a fold harvests -- one on this
+	// device and one on a reference that names none.
+	await app.add_link(id, self, 'dir:[machine:standin-folder@' + out.dev + ']agentmade', 'holds', '',
+		'agent:daimon');
+	await app.add_link(id, self, 'dir:[machine:standin-folder@' + out.dev + ']harvested', 'holds', '',
+		'fold');
+	await app.add_link(id, self, 'dir:[machine:standin-folder]agentold', 'holds', '', 'agent:daimon');
+	out.b1 = (await DaimondDiamond.bounds(id)).attached;
+	out.api = !!(A.ref && A.reachable && A.where && A.confirmHere);
+	if (out.api) {
+		out.here       = A.ref('dir', 'mine');        // what the paperclip writes on this device
+		out.whereOther = A.where(other);
+		out.whereOlder = A.where(older);
+		out.confirmed  = await A.confirmHere(id, other);
+	}
+	out.b2 = (await DaimondDiamond.bounds(id)).attached;
+	const refs = JSON.parse(await app.links_touching(self) || '[]').map((l) => l.other);
+	out.theirs = refs.find((r) => /theirs$/.test(r)) || '';
+	out.src = await fetch('js/daimond.js').then((x) => x.text()).catch(() => '');
+	return out;
+});
+const has = (list, x) => Array.isArray(list) && list.includes(x);
+check('MARKS: this device has an id to name', !!marks.dev, marks.dev);
+check('a mark made on this device is in force here, and another device\'s on a folder of the same name is not',
+	has(marks.b1, 'mine') && !has(marks.b1, 'theirs'), JSON.stringify(marks.b1));
+check('nor one made before devices were recorded, nor one with no root at all',
+	!!marks.b1 && !has(marks.b1, 'older') && !has(marks.b1, 'rootless'), JSON.stringify(marks.b1));
+check('a holds link a model asserted or a fold harvested is never a mark',
+	!!marks.b1 && !has(marks.b1, 'agentmade') && !has(marks.b1, 'harvested') && !has(marks.b1, 'agentold'),
+	JSON.stringify(marks.b1));
+check("a model's artefact_add is harvested as produced, not holds",
+	/artefact_add:\s*\{[^}]*rel:\s*'produced'/.test(marks.src || ''));
+check('the paperclip names this device in what it writes',
+	marks.api === true && marks.here === 'dir:[machine:standin-folder@' + marks.dev + ']mine', marks.here);
+check('a mark from elsewhere is shown with the device it was made on',
+	/012345/.test(marks.whereOther || '') && /another device/.test(marks.whereOlder || ''),
+	JSON.stringify([marks.whereOther, marks.whereOlder]));
+check('confirming it here brings it into force, and keeps the device it came from',
+	marks.confirmed === true && has(marks.b2, 'theirs')
+		&& marks.theirs === 'dir:[machine:standin-folder@0123456789abcdef,' + marks.dev + ']theirs',
+	JSON.stringify({ b2: marks.b2, ref: marks.theirs }));
 
 // A resource the browser could not load is the dev stack, not the page: no
 // gateway runs here, so its probes answer 401 or 502 and neither is a throw.

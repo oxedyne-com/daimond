@@ -146,7 +146,15 @@ needs_live_gateway() {          # name -> 0 if it needs a gateway ALREADY up
 # provisioned by hand it answers 177/177. That is the same defect this file's own
 # header records against `verify_look` and `verify_wakerearm` -- a hand-kept list
 # that nobody remembered to edit -- reappearing one field along.
-NEEDS_GRANT="verify_compose verify_mailfolders verify_sync verify_pausesync verify_sessionrenew"
+#
+# `verify_handoff_noresurrect` and `verify_ed25519_forall` JOINED THIS LIST too
+# (recheck §6 test-harness gap): neither was named here, so the fresh identity
+# each drives against a real gateway (`nrlead`, `ed25519-old`) was never
+# provisioned, and a beta-closed gateway refuses its FIRST registration outright
+# -- the same wall `verify_pausesync`/`verify_sessionrenew` hit, and the same
+# honest skip below is what a first run of either now gets instead of an
+# unexplained refusal three checks deep.
+NEEDS_GRANT="verify_compose verify_mailfolders verify_sync verify_pausesync verify_sessionrenew verify_handoff_noresurrect verify_ed25519_forall verify_handoff_backtoback"
 
 # WHICH IDENTITY EACH OF THEM DRIVES, because they do not all drive one.
 #
@@ -171,6 +179,14 @@ ident_for() {
 		# of a new identity has to create the profile before `/api/account` is asked.
 		verify_pausesync)					echo "pausesync" ;;
 		verify_sessionrenew)				echo "sessrenew" ;;
+		# `verify_handoff_noresurrect` pairs two devices on one account, `pair(check,
+		# 'nrlead', 'nrmate')` -- `nrlead` is the one that binds to the gateway.
+		# `verify_ed25519_forall` opens several throwaway sessions of its own; only
+		# block A's, `ed25519-old`, is the one block B drives against a real gateway.
+		verify_handoff_noresurrect)			echo "nrlead" ;;
+		# `verify_handoff_backtoback` pairs the same way, as `b2blead` and `b2bmate`.
+		verify_handoff_backtoback)			echo "b2blead" ;;
+		verify_ed25519_forall)				echo "ed25519-old" ;;
 		*)									echo "" ;;
 	esac
 }
@@ -201,6 +217,18 @@ needs_input() {                 # name -> prints why it cannot run, or nothing
 				return
 			}
 			[ -f "$DAIMOND_BACKUP" ] || echo "DAIMOND_BACKUP=$DAIMOND_BACKUP is not a file" ;;
+		# Both prove the deletion fence against a REAL hand older than the meter --
+		# verify_handdelete on the wire, verify_handmeterless through the page -- and that
+		# hand is not a source file the tree can build: it is a binary from BEFORE the meter
+		# existed, kept wherever the machine happens to have one (`HD_OLD_BINS`'s own default
+		# is a sibling worktree, `../lane-bc-base`, that will not exist on every machine this
+		# runs on). Unset, the property each file exists to prove is silently not proven
+		# rather than run, the same distinction `verify_droots_real` draws for a missing
+		# backup -- so the suite asks for it explicitly and skips, loudly, rather than
+		# reporting a red for binaries this tree was never given.
+		verify_handmeterless|verify_handdelete)
+			[ -n "${HD_OLD_BINS:-}" ] \
+				|| echo "needs a hand older than the deletion meter: HD_OLD_BINS=<a:b> (it would otherwise report red on binaries this tree does not have)" ;;
 		# ASKED OF THE VERIFIER, not answered here. `verify_conformance` measures a
 		# LIVE Oregami forge, and where that forge is meant to be is resolved from
 		# ORE_FORGE or gateway/app.jdat by the same lines that will do the asking.
@@ -317,6 +345,18 @@ slow_for() {
 		verify_sweep_mobile)              echo 900 ;;
 		verify_sweep_desktop)             echo 900 ;;
 		verify_handreal)                  echo 900 ;;
+		# Drives old and new hand binaries through a real page, each through the create
+		# dialogs and a held rm -rf, and starts its own throwaway dev server first. Lighter
+		# than verify_handreal (no build from source when HD_NEW_BIN/HD_OLD_BINS are already
+		# built binaries) but still two full browser drives, so twice verify_reversible's 420
+		# rather than the 180s default that killed it silently for want of a listed budget.
+		verify_handmeterless)             echo 420 ;;
+		# (a)-(k) against branch, base and every HD_OLD_BINS entry, no browser but up to five
+		# hand processes driven in turn, one rm -rf held near its three-minute measured worst
+		# case (see the comment on `session`'s `until`) and, when a binary is stale, a build
+		# this file does itself. The widest property set of the two hand-delete verifiers, so
+		# above verify_handmeterless and in line with verify_style/verify_scope.
+		verify_handdelete)                echo 600 ;;
 		verify_ptyedge)                   echo 2400 ;;
 		# A real model, a real browser and a hand built from source before either
 		# of them -- verify_handreal's 900 plus a turn's worth of a provider.
@@ -478,6 +518,54 @@ reported_failures() {           # log file -> prints the count, or nothing
 : > "$SCRATCH/suite-gw.log"
 say() { echo "$1" | tee -a "$LOG"; }
 
+# The hand binary neither hand-delete verifier should be left to guess at.
+#
+# Both shipped with their OWN default -- `<slot>/lane-hand/release/daimond-hand` for
+# verify_handmeterless, `handBinary(ROOT, 'lane-hand')` for verify_handdelete's branch side --
+# a literal lane name that is right only on a checkout laid out exactly as this one's, and
+# wrong (an unbuilt path, or a build of the WRONG worktree once `git worktree` lays lanes
+# out any other way) everywhere else. `dev/verify_verifyverb.mjs` already answers the same
+# question without naming a lane: `DAIMOND_HAND_BIN` first, where one caller has already
+# resolved it, else the slot's own `daimond-hand` target -- not named for any lane, so it
+# means the same thing wherever this suite runs from. Read here rather than left to each
+# verifier's own fallback, so both agree with the one binary the rest of the suite would
+# reach for.
+hand_bin_default() {
+	if [ -n "${DAIMOND_HAND_BIN:-}" ]; then
+		echo "$DAIMOND_HAND_BIN"
+	else
+		echo "$HOME/.cache/cargo-targets/${RC_SLOT:-solo}/daimond-hand/debug/daimond-hand"
+	fi
+}
+
+# A TCP port nothing is listening on yet, for verify_handmeterless's OWN throwaway dev
+# server. NOT the ambient DAIMOND_PORT: that names the server the REST of this suite
+# already has running (see this file's header), and verify_handmeterless starts a second
+# server of its own and refuses outright if the port it is given is already answering --
+# so handed the ambient one it never runs at all. Offset by the shell's own pid so two
+# lanes racing this suite at once do not reach for the same port.
+free_port_for_handmeterless() {
+	local base=$((8850 + ($$ % 100))) p
+	for p in $(seq "$base" $((base + 50))); do
+		ss -ltn 2>/dev/null | grep -q ":$p " || { echo "$p"; return; }
+	done
+	echo 0
+}
+
+# Env-var assignments to run a verifier under, beyond its CLI args (`args_for`) -- empty
+# for every name but the two above, which need a binary named and, for the page-driven
+# one, a server port of its own.
+hand_env_for() {                # name -> "VAR=val VAR=val", or nothing
+	case "$1" in
+		verify_handmeterless)
+			echo "HD_NEW_BIN=$(hand_bin_default) DAIMOND_PORT=$(free_port_for_handmeterless)" ;;
+		verify_handdelete)
+			echo "HD_BRANCH_BIN=$(hand_bin_default)" ;;
+		*)
+			echo "" ;;
+	esac
+}
+
 run_one() {
 	local name=$1 out code tail why extra
 	# A verifier that cannot be given what it needs is not run at all. It is NOT
@@ -487,11 +575,12 @@ run_one() {
 	why=$(needs_input "$name")
 	if [ -n "$why" ]; then skip_one "$name" "$why"; return; fi
 	extra=$(args_for "$name")
+	local henv; henv=$(hand_env_for "$name")
 	[ "$name" = "verify_durability" ] && rm -rf "$SCRATCH/durability-profile"
 	case " $HEADED " in
 		*" $name "*)
 			if command -v xvfb-run >/dev/null 2>&1; then
-				out=$(timeout "$(slow_for "$name")" xvfb-run -a -s "-screen 0 1400x900x24" \
+				out=$(env $henv timeout "$(slow_for "$name")" xvfb-run -a -s "-screen 0 1400x900x24" \
 					node "dev/$name.mjs" $extra 2>&1)
 				code=$?
 			else
@@ -499,7 +588,7 @@ run_one() {
 				return
 			fi ;;
 		*)
-			out=$(timeout "$(slow_for "$name")" node "dev/$name.mjs" $extra 2>&1)
+			out=$(env $henv timeout "$(slow_for "$name")" node "dev/$name.mjs" $extra 2>&1)
 			code=$? ;;
 	esac
 	# Keep the WHOLE output, not just the line the summary quotes.

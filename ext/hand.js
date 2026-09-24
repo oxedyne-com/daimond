@@ -1316,6 +1316,29 @@
 					return;
 				}
 				break;
+			// The user's answer to a command the deletion meter is holding, and a request to
+			// put back what the meter kept. Both name a run or a turn and nothing else: the
+			// hand decides what either reaches.
+			case 'release':
+				if (!m.id || typeof m.id !== 'string') {
+					fail(null, 'A release needs the id of the command that is being held.');
+					return;
+				}
+				if (typeof m.allow !== 'boolean') {
+					fail(m.id, 'A release says allow: true to let the command go on removing files, or allow: false to stop it.');
+					return;
+				}
+				break;
+			case 'restore':
+				if (!m.id || typeof m.id !== 'string') {
+					fail(null, 'A restore needs an id, which the answer is tagged with.');
+					return;
+				}
+				if (!Number.isInteger(m.since_ms) || m.since_ms < 0) {
+					fail(m.id, 'A restore names the turn by since_ms, the whole number of milliseconds its meter carried.');
+					return;
+				}
+				break;
 			// Takes nothing, so there is nothing to check. It was reaching the
 			// default below -- which refuses -- so a page could be TOLD by the
 			// hand that a command had left a server standing and had no way to
@@ -1346,7 +1369,7 @@
 				closing = true;
 				break;
 			default:
-				fail(m.id, `The machine hand does not know the message "${m.t}". It understands hello, exec, open, file, verify, input, resize, signal, runs, dirs, grant and bye.`);
+				fail(m.id, `The machine hand does not know the message "${m.t}". It understands hello, exec, open, file, verify, input, resize, signal, release, restore, runs, dirs, grant and bye.`);
 				return;
 			}
 

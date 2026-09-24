@@ -30,6 +30,11 @@ pub mod diamond_delta;
 /// while the OPFS edge over it stays in [`wasm::diamond`].
 pub mod diamond_link;
 pub mod diamond_meta;
+/// What an import does with this device's own history before it lays another device's copy of a
+/// Diamond over it: which versions are this device's alone, and the files that refile each one
+/// whole above both histories.  Target-agnostic, so the plan is tested natively while the OPFS
+/// edge that carries it out stays in [`wasm::diamond`].
+pub mod diamond_rebase;
 /// What a Diamond's FILES held before the change that overwrote them: the per-version manifest,
 /// the content-addressed bodies under it, the sparse "as at N" resolver, the prune order and the
 /// reference-count sweep.

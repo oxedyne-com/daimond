@@ -32,9 +32,10 @@
 // light are checked below, because both have been got wrong.
 //
 // Both verbs are always present; the inapplicable one is DISABLED, not hidden.
-// On a leaf exactly one is ever live. ON AN AMBER BRANCH BOTH ARE — which is
-// the property one button could not have: a single control had to guess, and
-// `clickWould` guessed resume-all with nothing on screen to say so.
+// On a leaf a person has released or held, exactly one is live. ON AN AMBER
+// BRANCH BOTH ARE — which is the property one button could not have: a single
+// control had to guess, and `clickWould` guessed resume-all with nothing on
+// screen to say so. So are both on a red node a person has not wholly held (G).
 //
 // A test that pauses one thing and reads the flag back confirms the script. So
 // this enumerates: every subset of the leaf set is built directly, and then
@@ -65,6 +66,10 @@
 //     answering Enter and Space, each with an accessible name that says which
 //     node it governs and which verb it is — and the light beside them is
 //     named, unfocusable and inert.
+//  G. Pause is on offer wherever a person has not held everything, whatever the
+//     light says: on a fresh account's rail, on a Diamond whose action waits for
+//     a release here, and on that action's own leaf. Pressing Pause all from
+//     there holds every leaf and releases no triggered action on the way.
 //
 // PROVED RED. Two ways. `--unbuilt` neuters the three new pieces before the app
 // boots — no widget is built, no tree is registered, and the pump reads the old
@@ -74,13 +79,34 @@
 //
 //   node dev/verify_pausewidget.mjs
 //   node dev/verify_pausewidget.mjs --unbuilt     # must fail, loudly
+//   PAUSEWIDGET_BASE=<rev> node dev/verify_pausewidget.mjs
+//                                  # every www/js file that differs from <rev>,
+//                                  # served as it was there: at b32be427, G fails
 //
 // Needs a world: `eval "$(bash dev/world.sh N --up)"`. No gateway.
 
 import fs from 'node:fs';
+import path from 'node:path';
+import { execFileSync } from 'node:child_process';
+import { fileURLToPath } from 'node:url';
 import { open, newChat, scratch, mockLog, clearMockLog } from './harness.mjs';
 
 const UNBUILT = process.argv.includes('--unbuilt');
+const BASE = process.env.PAUSEWIDGET_BASE || '';
+const TREE = path.join(path.dirname(fileURLToPath(import.meta.url)), '..');
+
+/// Every www/js file that differs from the base, served as it stood there.
+async function routeBase(page) {
+	if (!BASE) return;
+	const files = execFileSync('git', ['-C', TREE, 'diff', '--name-only', BASE, '--', 'www/js'])
+		.toString().split('\n').filter((f) => /\.js$/.test(f));
+	for (const f of files) {
+		const body = execFileSync('git', ['-C', TREE, 'show', BASE + ':' + f], { maxBuffer: 1 << 26 }).toString();
+		await page.context().route('**/' + f.replace(/^www\//, '') + '*', (r) => r.fulfill({ status: 200,
+			contentType: 'application/javascript', body }));
+	}
+	console.log('  ..   serving ' + files.join(', ') + ' as at ' + BASE);
+}
 
 const out = [];
 let bad = 0;
@@ -167,10 +193,19 @@ const heldAll = (node, paused) => {
 /// not — while holding it still stops something. `root/web` is the only one:
 /// the app answers a page fetch with 423 while that leaf is held, so the pause
 /// verb has work to do on a control the light calls idle. Everything else takes
-/// its verbs from the light, which is the owner's rule.
-const verbsFor = (node, paused) =>
-	node.stoppable ? (heldAll(node, paused) ? ['play'] : ['pause'])
-		: VERBS[ruleFor(node, paused)];
+/// its verbs from the light, which is the owner's rule -- but for one case.
+///
+/// A RED LIGHT A PERSON HAS NOT WHOLLY HELD OFFERS PAUSE AS WELL (D3 of the delta
+/// re-check, 2026-09-24). The light counts armed leaves, so it reads `pause` while
+/// an unarmed leaf under it -- a chat, a Diamond's own turns, the web -- still
+/// plays. Taking the pause verb from the light greyed "Pause all" on a fresh
+/// account, and the only way to it was play first, which released every held
+/// triggered action on the device. `idle` keeps play alone: nothing is set up.
+const verbsFor = (node, paused) => {
+	if (node.stoppable) return heldAll(node, paused) ? ['play'] : ['pause'];
+	const st = ruleFor(node, paused);
+	return (st === 'pause' && !heldAll(node, paused)) ? ['play', 'pause'] : VERBS[st];
+};
 
 /// FOUR STATES, THREE COLOURS. `idle` and `pause` are both red, so a paint is
 /// compared through the same collapse the widget makes rather than to the raw
@@ -291,7 +326,7 @@ async function expectedTree(p) {
 // ── The run ─────────────────────────────────────────────────────────
 
 const profile = scratch('pw', 'pptw-' + process.pid);
-const s = await open({ name: 'pptw' + process.pid, profile });
+const s = await open({ name: 'pptw' + process.pid, profile, route: routeBase });
 const closeBrowser = s.close;
 s.close = async () => {
 	await closeBrowser();
@@ -499,6 +534,63 @@ check(lamps.length > 0 && lamps.every((l) => l && l.kids === 0 && l.inside === '
 		&& !/^(Pause|Resume)\b/i.test(alpha.lamp.label || ''),
 		'and the light names the node and its STATE, never an action',
 		JSON.stringify(alpha && alpha.lamp.label));
+}
+
+// ── G. Pause is on offer while a person has not held everything ─────
+//
+// D3 of the delta re-check of Deploy 1 (2026-09-24). A triggered action waits for
+// a release on this device, and the light counts it as held -- right for the
+// light, which answers "will anything here go off by itself?". The pause verb was
+// drawn from the same answer, so this account's rail -- the Optimiser's seeded
+// hold, and Alpha's and Beta's actions made above and never released -- read
+// "paused" with Pause all greyed while its chats and the web could spend. The only
+// way to Pause all from there was play first, which released every held action
+// on the device. Asked here before anything on the page has been pressed.
+{
+	const fresh = await p.evaluate(() => {
+		const verbs = (g) => g ? [...g.querySelectorAll('.pptw-act')].filter((b) => !b.disabled).map((b) => b.dataset.act) : null;
+		const alpha = [...document.querySelectorAll('#diamond-list .diamond-box')]
+			.find((x) => /Alpha/.test(x.getAttribute('aria-label') || x.textContent || ''));
+		const aid = alpha ? alpha.dataset.id : '';
+		const ta = aid ? (DaimondTriggersOf(aid) || [])[0] : null;
+		const leaf = ta ? DaimondTriggers.node(aid, ta.id) : '';
+		// The action's own leaf, drawn as the Diamond dialog's pulldown draws it.
+		const leafCtl = leaf && window.DaimondUI ? DaimondUI.pauseWidget(leaf, 'probe') : null;
+		const trig = [];
+		for (const b of document.querySelectorAll('#diamond-list .diamond-box')) {
+			for (const t of (DaimondTriggersOf(b.dataset.id) || [])) trig.push(DaimondTriggers.node(b.dataset.id, t.id));
+		}
+		return {
+			root: DaimondPause.state('root'), byHand: DaimondPause.heldByHand('root'),
+			web: DaimondPause.isPaused('root/web'),
+			global: verbs(document.querySelector('#pptw-global .pptw')),
+			alpha: verbs(alpha && alpha.querySelector('.pptw')), alphaState: alpha && DaimondPause.state(DaimondPause.id('root', 'diamonds', aid)),
+			leaf: verbs(leafCtl), leafState: leaf ? DaimondPause.state(leaf) : '',
+			trig, released: trig.filter((l) => DaimondPause.releasedHere(l)),
+		};
+	});
+	check(fresh.root === 'pause' && !fresh.byHand && !fresh.web,
+		'G. (the state D3 was found in: the rail reads held, and the web plays)', JSON.stringify(fresh));
+	check(!!fresh.global && fresh.global.includes('pause'),
+		'G. the rail offers Pause all while a person has not held everything', JSON.stringify(fresh.global));
+	check(fresh.alphaState === 'pause' && !!fresh.alpha && fresh.alpha.includes('pause'),
+		'G. so does a Diamond whose action waits for a release here', JSON.stringify(fresh.alpha));
+	check(fresh.leafState === 'pause' && JSON.stringify(fresh.leaf) === '["play","pause"]',
+		'G. and that action\'s own leaf offers both: play releases it here, pause holds it everywhere',
+		JSON.stringify(fresh.leaf));
+	const pressed = await clickReal(p, '#pptw-global .pptw-pause');
+	await p.waitForTimeout(600);
+	const after = await p.evaluate((trig) => ({
+		byHand: DaimondPause.heldByHand('root'), web: DaimondPause.isPaused('root/web'),
+		held: trig.filter((l) => DaimondPause.isPaused(l)).length, of: trig.length,
+		released: trig.filter((l) => DaimondPause.releasedHere(l)),
+		global: [...document.querySelectorAll('#pptw-global .pptw-act')].filter((b) => !b.disabled).map((b) => b.dataset.act),
+	}), fresh.trig);
+	check(pressed && after.byHand && after.web && after.held === after.of && after.of > 0,
+		'G. pressed from there, Pause all holds every leaf, the web included', JSON.stringify(after));
+	check(fresh.released.length === 0 && after.released.length === 0,
+		'G. and no triggered action was released on the way', JSON.stringify(after.released));
+	check(JSON.stringify(after.global) === '["play"]', 'G. then only play is offered', JSON.stringify(after.global));
 }
 
 // ── A. A verb does what it says ─────────────────────────────────────
@@ -807,7 +899,11 @@ check(sweep.length > 0, `the sweep ran (${sweep.length} presses over ${1 << leav
 		'and every per-tile control shows it', JSON.stringify(paused.tiles));
 	check(!!paused.after && paused.after.indexOf('root/workers') !== -1,
 		'including the worker pump, which is a leaf of the same tree and not a second flag');
-	check(JSON.stringify(paused.keys) === JSON.stringify(['daimond-pause']),
+	// ONE STORE IS THE TREE. `daimond-pause-here` beside it is not a second pause
+	// flag: it is the releases a person gave triggered actions on THIS device
+	// (pause.js `releasedHereOnly`, F1 of 2026-09-24), which must never travel --
+	// so it cannot live in the record that does.
+	check(paused.keys.filter((k) => k !== 'daimond-pause-here').join() === 'daimond-pause',
 		'one store holds the whole tree', JSON.stringify(paused.keys));
 
 	const back = await p.evaluate(() => {

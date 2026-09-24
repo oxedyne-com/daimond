@@ -25,7 +25,10 @@
 //      next, and nothing anybody reviewed would stay reviewed.
 //   4. A page CANNOT LEAVE ITS DIAMOND. Not by `..`, not by an absolute path, not by a scheme.
 //   5. A page CANNOT TOUCH `.daimond/` or `versions/` — the rules about what agents may do, and
-//      the crystal's own history.
+//      the crystal's own history — nor `.red/`, the store directory's old name, which a sync
+//      still reads a Diamond's links from. Refused by the write fence's own rule for a keeper's
+//      record (`is_keeper_record`), asked of the wasm, since the page's list of its own had left
+//      `.red/` out (re-check of 2026-09-23).
 //   6. A WRITE STAMPS THE DIAMOND, so what a capp logged travels to the other devices. Without
 //      this a phone where the user only ever logged into a capp stays the STALE side and its
 //      log is replaced wholesale by the other device's copy — the tag-loss shape of
@@ -36,6 +39,7 @@
 // EACH CHECK IS PROVED AGAINST BROKEN CODE FIRST.
 //
 //   node dev/verify_capp.mjs --break unfenced   # 3 and 5 fail: the protected-name guard goes
+//   node dev/verify_capp.mjs --break unrecorded # 5's `.red/` and folded rows fail: the record rule goes
 //   node dev/verify_capp.mjs --break escapable  # 4 fails: the path fence goes, in BOTH files
 //   node dev/verify_capp.mjs --break unstamped  # 6 fails: the write no longer stamps the Diamond
 //   node dev/verify_capp.mjs --break boundless  # 7 fails: the runaway bound comes off
@@ -94,8 +98,12 @@ const BREAKS = {
 		},
 		{
 			file: 'js/daimond.js',
-			find: "\t\tif (path.indexOf(home) !== 0 || path.indexOf('..') >= 0) {\n\t\t\tthrow new Error('Not a path in this Diamond: ' + String(rel == null ? path : rel));\n\t\t}\n\t\t// One write at a time, per page.",
-			with: "\t\t// One write at a time, per page.",
+			// Anchored on the record check that follows it, which only `writeCrystalAsset` has: the
+			// path check is word for word the same in `readCrystalAsset`. (The anchor read "this
+			// Diamond" against a source that says "this diamond", so until 2026-09-23 this break
+			// exited without breaking anything.)
+			find: "\t\tif (path.indexOf(home) !== 0 || path.indexOf('..') >= 0) {\n\t\t\tthrow new Error('Not a path in this diamond: ' + String(rel == null ? path : rel));\n\t\t}\n\t\t// THE RECORD IS NOT A PAGE'S TO WRITE",
+			with: "\t\t// THE RECORD IS NOT A PAGE'S TO WRITE",
 		},
 	],
 	// The stamp, so what a capp logged never travels. Seen red by accident first -- the check
@@ -112,6 +120,13 @@ const BREAKS = {
 		file: 'js/crystal.js',
 		find: "		if (live.saves > SAVE_BUDGET) { toFrame({ id: id, error: 'too many' }); return; }",
 		with: "		if (false) { toFrame({ id: id, error: 'too many' }); return; }",
+	},
+	// The record rule the tools are fenced by, gone from the page's door: `.red/` is then the
+	// page's to write, since `PAGE_NEVER_WRITES` never named it.
+	unrecorded: {
+		file: 'js/daimond.js',
+		find: "		if (typeof Wasm.is_keeper_record !== 'function' || Wasm.is_keeper_record(path)) {",
+		with: "		if (false) {",
 	},
 	// The appends stop queueing, so two in one tick each read the file before either wrote.
 	racy: {
@@ -291,11 +306,32 @@ try {
 			!!(r && r.error) && !r.ok, JSON.stringify(r));
 	}
 
-	// ── 5. Nor the rules, nor the history.
-	for (const p of ['.daimond/config.json', 'versions/0000.md']) {
-		const r = await inFrame((pp) => window.__capp.save(pp, 'no', 'replace'), p);
+	// ── 5. Nor the rules, nor the history -- nor the record under its old name or another case.
+	for (const p of ['.daimond/config.json', 'versions/0000.md', '.red/links.jsonl',
+		'.Daimond/links.jsonl']) {
+		const r = await inFrame((pp) => window.__capp.save(pp, 'written-by-page', 'replace'), p);
 		check('A PAGE CANNOT WRITE ' + p, !!(r && r.error) && !r.ok, JSON.stringify(r));
 	}
+	// ── 5b. Nor the Diamond's automation (F1 of 2026-09-24). A page that wrote
+	//       `triggers.json` could not arm anything -- an action is held until a person
+	//       releases it on this device -- but what a page may not start, it may not write.
+	{
+		const armed = JSON.stringify({ v: 1, actions: [{ id: 'page-armed', kind: 'mail',
+			mailbox: 'x@y.z', folder: 'INBOX', instruction: 'from the page' }] });
+		const r = await inFrame((a) => window.__capp.save('triggers.json', a, 'replace'), armed);
+		check('A PAGE CANNOT WRITE ITS DIAMOND\'S triggers.json', !!(r && r.error) && !r.ok,
+			JSON.stringify(r));
+		const trig = await page.evaluate((did) => window.__free
+			.run_tool('file_read', JSON.stringify({ path: 'diamonds/' + did + '/triggers.json' }))
+			.then(String).catch(e => 'ERR ' + e), id);
+		check('and no page-written action is on disk, not merely the reply refused',
+			!/page-armed/.test(trig), trig.slice(0, 60).replace(/\n/g, ' '));
+	}
+	const oldSide = await page.evaluate((did) => window.__free
+		.run_tool('file_read', JSON.stringify({ path: 'diamonds/' + did + '/.red/links.jsonl' }))
+		.then(String).catch(e => 'ERR ' + e), id);
+	check('and no link sidecar under the old name is on disk, not merely the reply refused',
+		!/written-by-page/.test(oldSide), oldSide.slice(0, 60).replace(/\n/g, ' '));
 
 	// ── 6. The write stamped the Diamond, so the log will travel.
 	const stamped = await page.evaluate(async (did) => {

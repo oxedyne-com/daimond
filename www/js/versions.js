@@ -212,7 +212,14 @@
 		// because it carries no diamond's bounds and `set_diamond_scope` composes
 		// rather than assigns.
 		var marks = { attached: [], read_only: [] };
-		try { marks = await DaimondDiamond.bounds(id); }
+		// A CHAT'S STORE (`chat:<id>`) goes back through the CHAT'S marks, which are
+		// what its turn was fenced to; a Diamond's through its own.
+		var chat = String(id).indexOf('chat:') === 0 ? String(id).slice(5) : '';
+		try {
+			marks = chat
+				? { attached: await DaimondAttach.chatScope(chat), read_only: [] }
+				: await DaimondDiamond.bounds(id);
+		}
 		catch (e) { marks = { attached: [], read_only: [] }; }
 		var eng = app(id);
 		// FAILS CLOSED. An engine without the fenced door is not a reason to write
@@ -300,6 +307,25 @@
 		if (!res) return null;
 		res.refused = (res.refused || []).concat(await writeMachine(id, res.machine || []));
 		return res;
+	}
+
+	/// Put back what one recorded version changed, each file to how it stood just
+	/// before it: the undo a chat's turn offers (`offerTurnUndo` in daimond.js).
+	///
+	/// File by file and never the whole version at `n - 1`, because a whole-version
+	/// restore takes a path the store first met at `n` to have been absent before
+	/// it -- which for a file the turn deleted is the opposite of the truth. A
+	/// per-path restore reads the row's own `was`.
+	async function undoVersion(id, n, paths) {
+		if (!id || !ready() || !(Number(n) > 0)) return null;
+		var restored = [], refused = [];
+		for (var i = 0; i < (paths || []).length; i++) {
+			var res = await restoreAt(id, Number(n) - 1, String(paths[i]));
+			if (!res) continue;
+			restored = restored.concat(res.restored || []);
+			refused = refused.concat(res.refused || []);
+		}
+		return { restored: restored, refused: refused };
 	}
 
 	/// Restore the WHOLE version: the crystal as it stood, and every file to its
@@ -408,6 +434,7 @@
 		save:        save,
 		restore:     restore,
 		restoreFile: restoreFile,
+		undoVersion: undoVersion,
 		gauge:       gauge,
 		diff:        diff,
 		lineDiff:    lineDiff,

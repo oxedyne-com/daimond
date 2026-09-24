@@ -274,6 +274,32 @@ pub async fn write_file(path: String, content: String) -> Result<(), JsValue> {
     opfs::write_file(FileRoot::Workspace, &path, content.as_bytes()).await.map_err(to_js_err)
 }
 
+/// Delete the folder at `path` in the active Workspace root, and everything in it.
+///
+/// **The user's door, and never a model's.**  The Files panel's × on a folder, after its
+/// confirmation, is the one caller.  It used to reach this through the `file_delete` TOOL with
+/// `recursive`, which put a recursive delete of the user's own disk in every model's hands; on
+/// 2026-09-22 a daimon used it and ~4,900 files went.  The tool now removes one file, and this
+/// export -- which no tool dispatch can name -- is where a confirmed folder delete goes instead.
+/// A file here is refused, so a caller cannot use this to skip the tool's own path.
+#[wasm_bindgen]
+pub async fn delete_folder(path: String) -> Result<(), JsValue> {
+    match opfs::is_directory(FileRoot::Workspace, &path).await {
+        Ok(true)  => {},
+        Ok(false) => return Err(to_js_err(err!(
+            "'{}' is not a folder, so nothing was deleted.", path; Invalid, Input, Path))),
+        Err(e)    => return Err(to_js_err(e)),
+    }
+    if let Err(e) = opfs::delete_entry(FileRoot::Workspace, &path, true).await {
+        return Err(to_js_err(e));
+    }
+    // Every cloud copy at or under it -- `forget` drops a path and everything beneath it -- so a
+    // cloud-only file inside, which was not on this device to go with the folder, does not
+    // reappear in its parent as a file the user has just deleted.
+    let _ = crate::wasm::cloud::forget(&path).await;
+    Ok(())
+}
+
 /// Read `path` from the active Workspace root (FSA real folder when open,
 /// else OPFS) and return its contents as a UTF-8 string.
 #[wasm_bindgen]
@@ -474,6 +500,20 @@ pub async fn store_write(path: String, content: String) -> Result<(), JsValue> {
 #[wasm_bindgen]
 pub async fn store_write_bytes(path: String, bytes: Vec<u8>) -> Result<(), JsValue> {
     opfs::write_file(FileRoot::Opfs, &path, &bytes).await.map_err(to_js_err)
+}
+
+/// Is `path` part of a keeper's record -- a Diamond's or a chat's version store or store
+/// directory, the link sidecar included -- which the write fence refuses every tool?  See
+/// [`crate::tools::is_keeper_record`].
+///
+/// **For the page's doors that write what a model chose**, a crystal page's `save` first among
+/// them, so they refuse by the rule the tools are refused by rather than by a list of their own.
+/// The page's list left out `.red/`, the store directory's old name, which a sync still reads a
+/// Diamond's links from (re-check of 2026-09-23, R1's class: a fence that is a list protects
+/// what its author remembered).
+#[wasm_bindgen]
+pub fn is_keeper_record(path: String) -> bool {
+    crate::tools::is_keeper_record(&path)
 }
 
 /// Stamp a Diamond as changed, so what was written inside it travels to the other devices.

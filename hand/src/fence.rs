@@ -221,6 +221,16 @@ pub enum Level {
     Deny,
     /// Read, list and execute.  Never write, create, delete or rename.
     Ro,
+    /// Read and write, but nothing directly inside may be removed or renamed away.
+    ///
+    /// Given to the parent of a root, and to every directory between that parent
+    /// and the root that encloses it, and never named by a caller.  Landlock checks
+    /// `REMOVE_DIR`, `REMOVE_FILE` and `REFER` against the directory an entry sits
+    /// in, not against the entry, so withholding them here is what keeps a nested
+    /// root from being removed or moved: `rm -rf <mark>`, `rmdir <mark>` and
+    /// `mv <mark> x` are refused by the kernel on every code path.  Each child is
+    /// granted [`Level::Rw`] on its own rule, so work inside a child is untouched.
+    Keep,
     /// Read and write.
     Rw,
 }
@@ -232,6 +242,7 @@ impl Level {
         match self {
             Self::Deny	=> "deny",
             Self::Ro	=> "ro",
+            Self::Keep	=> "keep",
             Self::Rw	=> "rw",
         }
     }
@@ -894,6 +905,14 @@ impl Plan {
                 existed when the fence was built, and a name appearing \
                 afterwards has no rule."));
         }
+        for g in self.grants.iter().filter(|g| g.level == Level::Keep) {
+            out.push(fmt!(
+                "Nothing directly inside {} can be removed or renamed, because a \
+                root of this fence lies at or beneath it, and a root cannot be \
+                removed or moved away by a command. Files there can still be read, \
+                written and created, and everything inside the root itself can be \
+                removed and renamed as usual.", g.path.display()));
+        }
         for p in &self.dropped {
             out.push(fmt!(
                 "{} was not granted, because it is a symbolic link rather than \
@@ -1017,6 +1036,7 @@ impl Plan {
         for g in &self.grants {
             let mut access = match g.level {
                 Level::Rw	=> writable(abi),
+                Level::Keep	=> kept(abi),
                 Level::Ro	=> AccessFs::from_read(abi),
                 // A denied path carries no rule at all; it is absent from
                 // `grants` by construction, and this arm is here so that adding
@@ -1216,6 +1236,7 @@ fn resolve(spec: &FenceSpec, base: SysBase) -> Outcome<Resolved> {
     // because Landlock takes the union walking upwards and a narrower rule
     // deeper down would read as an addition rather than a subtraction.
     let mut cuts: BTreeMap<PathBuf, Vec<PathBuf>> = BTreeMap::new();
+    let mut keeps: BTreeMap<PathBuf, Vec<PathBuf>> = BTreeMap::new();
     for (p, level) in want.iter() {
         if let Some(owner) = nearest_owner(&want, p) {
             let owner_level = match want.get(&owner) {
@@ -1225,6 +1246,14 @@ fn resolve(spec: &FenceSpec, base: SysBase) -> Outcome<Resolved> {
             };
             if *level < owner_level {
                 cuts.entry(owner).or_default().push(p.clone());
+            } else if *level == Level::Rw && owner_level == Level::Rw && p.is_dir() {
+                // A writable root inside a writable root. The outer grant carries
+                // removal and renaming over everything beneath it, the inner root
+                // included, so the inner root could be deleted or moved away as a
+                // whole: `rm -rf <mark>` took a Diamond's folder on 2026-09-22.
+                // The outer root is carved down to the inner root's parent, and
+                // the directories on that path are kept rather than sealed.
+                keeps.entry(owner).or_default().push(p.clone());
             }
         }
     }
@@ -1241,16 +1270,23 @@ fn resolve(spec: &FenceSpec, base: SysBase) -> Outcome<Resolved> {
             Some(v) => v.as_slice(),
             None => none.as_slice(),
         };
-        res!(carve(p, p, mine, *level, &mut grants, &mut sealed, &mut dropped));
+        let held = match keeps.get(p) {
+            Some(v) => v.as_slice(),
+            None => none.as_slice(),
+        };
+        res!(carve(p, p, mine, held, *level, &mut grants, &mut sealed, &mut dropped));
     }
 
     // One rule per path, at the widest level anything asked for. The kernel
     // would union them anyway; doing it here makes the plan readable and keeps
-    // the rule count down.
+    // the rule count down. `Keep` is the exception and wins over `Rw`: the two on
+    // one directory would union to `Rw`, and the root beneath it would be
+    // removable again.
     let mut best: BTreeMap<PathBuf, Level> = BTreeMap::new();
     for g in grants {
         match best.get(&g.path) {
-            Some(l) if *l >= g.level => (),
+            Some(Level::Keep) => (),
+            Some(l) if *l >= g.level && g.level != Level::Keep => (),
             _ => { best.insert(g.path, g.level); },
         }
     }
@@ -1315,14 +1351,20 @@ fn resolve(spec: &FenceSpec, base: SysBase) -> Outcome<Resolved> {
 /// * `top` - The outermost root this carve descends from; nothing may be granted
 ///   outside it.
 /// * `cuts` - Paths strictly beneath it that must be withheld from this grant.
+/// * `keeps` - Writable roots strictly beneath it, which must not be removable or
+///   renameable through it.  Where there are keeps and no cuts, the directories on
+///   the way down are granted [`Level::Keep`] rather than sealed, so they can still
+///   be listed and written.
 /// * `level` - What to grant.
 /// * `grants` - Where the rules accumulate.
 /// * `sealed` - Where carved directories are recorded.
 /// * `dropped` - Where children that do not resolve to themselves are recorded.
+#[allow(clippy::too_many_arguments)]
 fn carve(
     root:    &Path,
     top:     &Path,
     cuts:    &[PathBuf],
+    keeps:   &[PathBuf],
     level:   Level,
     grants:  &mut Vec<Grant>,
     sealed:  &mut Vec<PathBuf>,
@@ -1330,7 +1372,7 @@ fn carve(
 )
     -> Outcome<()>
 {
-    if cuts.is_empty() {
+    if cuts.is_empty() && keeps.is_empty() {
         grants.push(Grant { path: root.to_path_buf(), level });
         return Ok(());
     }
@@ -1338,15 +1380,24 @@ fn carve(
         return Err(err!(
             "{} must be carved around {} path(s) inside it, but it is not a \
             directory, so there is nothing inside it to carve.",
-            root.display(), cuts.len();
+            root.display(), cuts.len() + keeps.len();
             Invalid, Path, Bug));
     }
-    sealed.push(root.to_path_buf());
+    // Sealed where something beneath must be withheld, since any rule here would
+    // reach it. Kept where the only reason to carve is a root beneath: a rule here
+    // reaches that root too, but the root carries its own `Rw` rule, and removing
+    // or renaming it is asked of this directory, which `Keep` refuses.
+    let keeping = cuts.is_empty();
+    if keeping {
+        grants.push(Grant { path: root.to_path_buf(), level: Level::Keep });
+    } else {
+        sealed.push(root.to_path_buf());
+    }
 
-    // Group the cuts by the child of `root` leading to each of them, so the walk
-    // descends once per branch rather than once per cut.
-    let mut branch: BTreeMap<OsString, Vec<PathBuf>> = BTreeMap::new();
-    for c in cuts {
+    // Group the cuts and keeps by the child of `root` leading to each of them, so
+    // the walk descends once per branch rather than once per path.
+    let mut branch: BTreeMap<OsString, (Vec<PathBuf>, Vec<PathBuf>)> = BTreeMap::new();
+    for (c, is_keep) in cuts.iter().map(|c| (c, false)).chain(keeps.iter().map(|k| (k, true))) {
         let rel = match c.strip_prefix(root) {
             Ok(r) => r,
             Err(_) => return Err(err!(
@@ -1359,7 +1410,12 @@ fn carve(
             None => return Err(err!(
                 "{} was to be cut out of itself.", root.display(); Bug, Path)),
         };
-        branch.entry(first).or_default().push(c.clone());
+        let slot = branch.entry(first).or_default();
+        if is_keep {
+            slot.1.push(c.clone());
+        } else {
+            slot.0.push(c.clone());
+        }
     }
 
     let entries = match std::fs::read_dir(root) {
@@ -1379,15 +1435,19 @@ fn carve(
             None => {
                 if resolves_to_itself(&child, top) {
                     grants.push(Grant { path: child, level });
-                } else {
+                } else if !keeping {
                     dropped.push(child);
                 }
+                // Under a kept directory a link needs no rule of its own and is
+                // not reported: the `Keep` rule covers the link as an entry, and
+                // whatever it points at is judged at its own path.
             },
-            Some(sub) => {
-                // The cut itself. It carries its own level, applied where the
-                // caller's own entry for it is handled, so nothing is granted
-                // here -- and for a deny, nothing is granted anywhere.
-                if sub.iter().any(|c| c.as_path() == child.as_path()) {
+            Some((sub, held)) => {
+                // The cut or the kept root itself. It carries its own level,
+                // applied where the caller's own entry for it is handled, so
+                // nothing is granted here -- and for a deny, nothing is granted
+                // anywhere.
+                if sub.iter().chain(held.iter()).any(|c| c.as_path() == child.as_path()) {
                     continue;
                 }
                 // An intermediate directory on the way down. A cut is a
@@ -1403,7 +1463,7 @@ fn carve(
                         child.display();
                         Conflict, Path, Security));
                 }
-                res!(carve(&child, top, sub, level, grants, sealed, dropped));
+                res!(carve(&child, top, sub, held, level, grants, sealed, dropped));
             },
         }
     }
@@ -1627,6 +1687,20 @@ fn probe_abi() -> Abi {
 #[cfg(target_os = "linux")]
 fn writable(abi: ABI) -> BitFlags<AccessFs> {
     AccessFs::from_all(abi) & !BitFlags::from(AccessFs::MakeSym)
+}
+
+/// The rights the parent of a root carries: [`writable`] less removal and renaming.
+///
+/// `REFER` goes too, although a rename within one directory does not need it: a
+/// root moved to another directory would, and withholding `REMOVE_*` alone already
+/// stops the same-directory rename, since the kernel asks for removal on the source.
+///
+/// # Arguments
+/// * `abi` - The ABI the rules are being built for.
+#[cfg(target_os = "linux")]
+fn kept(abi: ABI) -> BitFlags<AccessFs> {
+    writable(abi)
+        & !(AccessFs::RemoveDir | AccessFs::RemoveFile | AccessFs::Refer)
 }
 
 /// The crate's ABI constant for a detected level, capped at what it knows.
@@ -1856,6 +1930,56 @@ mod tests {
         assert!(
             !plan.grants.iter().any(|g| g.path.starts_with(&deny)),
             "a rule reaches inside the denied subtree: {:?}", plan.grants);
+        Ok(())
+    }
+
+    /// **A writable root inside a writable root is kept, not sealed.**
+    ///
+    /// The outer root and every directory down to the inner root's parent carry
+    /// `Keep`; their other children carry `Rw` whole; the inner root carries its own
+    /// `Rw`; and nothing is sealed, because nothing is being withheld.  With the
+    /// `.daimond` deny added, the directory holding both is sealed as before and the
+    /// kept chain continues below it.
+    #[test]
+    fn a_nested_root_keeps_its_parents() -> Outcome<()> {
+        let base = res!(fixture("carve-keep"));
+        let ws = res!(base.join("ws").canonicalize());
+        let mark = ws.join("sub/deep");
+        let nested = FenceSpec {
+            rw:   vec![fmt!("{}", ws.display()), fmt!("{}", mark.display())],
+            ro:   Vec::new(),
+            deny: Vec::new(),
+            net:  false,
+        };
+        let plan = res!(planner(Abi::V5).plan(&nested, &Unfenced::Refuse));
+        let at = |p: &Path| plan.grants.iter().find(|g| g.path == p).map(|g| g.level);
+        assert_eq!(Some(Level::Keep), at(&ws), "{:?}", plan.grants);
+        assert_eq!(Some(Level::Keep), at(&ws.join("sub")), "{:?}", plan.grants);
+        assert_eq!(Some(Level::Rw), at(&mark), "{:?}", plan.grants);
+        assert_eq!(Some(Level::Rw), at(&ws.join("refs")), "{:?}", plan.grants);
+        assert_eq!(Some(Level::Rw), at(&ws.join("ok.txt")), "{:?}", plan.grants);
+        assert!(plan.sealed.is_empty(), "a keep sealed something: {:?}", plan.sealed);
+        assert!(plan.caveats().iter().any(|c| c.contains("Nothing directly inside")));
+
+        let mut denied = nested.clone();
+        denied.deny.push(fmt!("{}", ws.join(".daimond").display()));
+        let plan = res!(planner(Abi::V5).plan(&denied, &Unfenced::Refuse));
+        let at = |p: &Path| plan.grants.iter().find(|g| g.path == p).map(|g| g.level);
+        assert_eq!(None, at(&ws), "{:?}", plan.grants);
+        assert!(plan.sealed.contains(&ws));
+        assert_eq!(Some(Level::Keep), at(&ws.join("sub")), "{:?}", plan.grants);
+        assert_eq!(Some(Level::Rw), at(&mark), "{:?}", plan.grants);
+        assert_eq!(None, at(&ws.join(".daimond")), "{:?}", plan.grants);
+
+        // A writable FILE inside a writable root is not a root to protect.
+        let file = FenceSpec {
+            rw:   vec![fmt!("{}", ws.display()), fmt!("{}", ws.join("ok.txt").display())],
+            ro:   Vec::new(),
+            deny: Vec::new(),
+            net:  false,
+        };
+        let plan = res!(planner(Abi::V5).plan(&file, &Unfenced::Refuse));
+        assert!(plan.grants.iter().all(|g| g.level != Level::Keep), "{:?}", plan.grants);
         Ok(())
     }
 

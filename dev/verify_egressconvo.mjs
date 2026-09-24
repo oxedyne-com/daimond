@@ -215,6 +215,14 @@ const asks = async (body, { yes = true, snap = '' } = {}) => {
 			}).catch(() => null);
 			if (got) {
 				if (snap && !seen.length) await shot(s, snap);
+				// The affirmative is held for its first second on an unbidden question
+				// (R6). A click fired before that second is up lands on a disabled
+				// `.dlg-ok` and does nothing, so the SAME dialog is still on screen --
+				// and counted again -- on the next poll. Wait for it to be pressable
+				// first, as `verify_deletekeep`'s F8 does.
+				if (yes) {
+					await p.waitForSelector('.dlg-card .dlg-ok:not([disabled])', { timeout: 2000 }).catch(() => {});
+				}
 				await p.evaluate((ok) => {
 					const card = [...document.querySelectorAll('.dlg-card')]
 						.filter(c => c.getClientRects().length).pop();

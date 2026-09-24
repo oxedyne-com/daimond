@@ -147,6 +147,15 @@ pub fn children_of(dir: &str) -> Vec<(String, bool, u64)> {
 /// The result string starts with `OK` on success and `Error` on failure, and is passed back to
 /// the model as it stands.
 ///
+/// **It takes a path and not a [`crate::tools::Licence`], and that is the one exception to the
+/// write fence's rule, argued.**  What lands is the user's own file, at its own path, as their
+/// cloud holds it -- no byte of it is chosen by a model -- and the index lists only files that
+/// are NOT on this device, so a fetch creates what is absent and never replaces anything.  It is a
+/// read that happens to leave a copy behind, which is why `file_read` makes one for itself; a
+/// licence here would refuse a bounded turn the reading of a cloud file outside its marks, which
+/// is free everywhere else.  `file_fetch` is still named to the guard as a write
+/// (`Tool::write_targets`), as it always was.
+///
 /// # Arguments
 /// * `path` - The workspace-relative path to download.
 pub async fn fetch(path: &str) -> Outcome<String> {
@@ -162,11 +171,18 @@ pub async fn fetch(path: &str) -> Outcome<String> {
 ///
 /// # Arguments
 /// * `path` - The workspace-relative path to forget.
-pub async fn forget(path: &str) -> Outcome<String> {
+pub(in crate::wasm) async fn forget(path: &str) -> Outcome<String> {
     if global(FORGET_FN).is_err() {
         return Ok(String::new());
     }
     call(FORGET_FN, path).await
+}
+
+/// [`forget`], for a tool: the path its delete's licence names, and no other.  A forget is a
+/// deletion from every device at once, so a tool reaches it through the write fence like any
+/// other removal (see [`crate::wasm::opfs::delete_licensed`]).
+pub async fn forget_licensed(lic: &crate::tools::Licence) -> Outcome<String> {
+    forget(lic.path()).await
 }
 
 /// Reach a cloud global on `window`, or refuse in the model's language.

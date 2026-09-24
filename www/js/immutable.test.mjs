@@ -253,9 +253,9 @@ async function main() {
 	console.log('\n(d) — the streamed fix adds no per-device request, and expedite stays bounded');
 	{
 		// The streaming path is PURE + DOM: folding a frame into the transcript issues no
-		// network request. The watcher's ONE request per frame is the SAME parked door
-		// read the pre-fix code made (getProgressFrame with wait); a frame arrives on the
-		// door's own wake, so N frames still cost N parked reads -- no amplification.
+		// network request. The watcher's ONE request per frame is a short door read made
+		// when the wake channel taps a stored frame; nothing is parked per turn (the
+		// connection-starvation fix of 2026-09-23).
 		let requests = 0;
 		const fakeFetch = () => { requests += 1; };
 		let t = baseTranscript();
@@ -273,11 +273,12 @@ async function main() {
 		check('(d4) sync.js still stands the full pull down past EXPEDITE_MAX_MS',
 			/Date\.now\(\)\s*-\s*expediteSince\s*>\s*EXPEDITE_MAX_MS/.test(syncSrc));
 
-		// The daimond.js watcher relies on the PARKED door read for liveness, not on a
-		// heavier expedite pull -- the frame carries the answer, so expedite is unchanged.
+		// The daimond.js watcher follows frames through the sync engine's tap-driven
+		// watch, not a parked read per turn and not a heavier expedite pull.
 		const dSrc = readFileSync(join(HERE, 'daimond.js'), 'utf8');
-		check('(d5) the watcher reads the PARKED progress door (a frame per parked read, as before)',
-			/getProgressFrame\(key, since, PROGRESS_WATCH_WAIT_MS\)/.test(dSrc));
+		check('(d5) the watcher follows frames through the wake-tapped watch, never a parked read',
+			/DaimondSync\.watchProgress\(k, onProgressFrame/.test(dSrc)
+			&& !/[?&]wait=/.test(syncSrc) && !/getProgressFrame\([^)]*,[^)]*,/.test(dSrc + syncSrc));
 		check('(d6) no new expedite trigger was added -- expedite is still driven only by the dispatched index',
 			(dSrc.match(/DaimondSync\.expedite\(/g) || []).length === 1);
 		check('(d7) the flattened interim view is gone -- no `.handoff-stream` node is built, no painter defined',

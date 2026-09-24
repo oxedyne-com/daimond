@@ -69,9 +69,17 @@
 		caps:      [],       // what the hand can actually enforce here
 	};
 
-	var deps = {};           // { onChunk, onStart, onEnd, note, client } — supplied by daimond.js
+	var deps = {};           // { onChunk, onStart, onEnd, onHeld, onHost, onMeterless, note, client } — supplied by daimond.js
 	var live = {};           // id -> run record
-	var link = null;         // the one port: { port, greeted, waiters, note }
+	var link = null;         // the one port: { port, greeted, waiters, note, gen }
+
+	/// How many links this page has opened, which numbers each one (`gen`). A link is one hand
+	/// process and one hello, and every fence the engine builds is built from a hello: `status`
+	/// says which link it read, the engine sends that number back on each request it builds from
+	/// the answer, and `boundElsewhere` posts the request on that link or on none. A hand that
+	/// went away and came back as another -- one older than the deletion meter, say -- therefore
+	/// never receives a fence built for the one before it (re-check of 2026-09-23, H3).
+	var links = 0;
 
 	/// Handlers watching one id, for a conversation this file does not itself
 	/// carry. A terminal session is the first: it travels on THIS link, told
@@ -168,6 +176,16 @@
 	/// machine that would not say, means this prefix is simply absent.
 	var HOST_CAP = 'host:';
 
+	/// What a hand that meters a command's removals says, inside `caps`: the
+	/// `meter:deletes` of `hand/src/main.rs`, read by `deletes_metered` in
+	/// src/tools.rs.
+	var METER_CAP = 'meter:deletes';
+
+	/// Whether the person has been told this machine's hand is older than the
+	/// deletion meter. Once per page: it is a fact about the machine, and the
+	/// machine does not change between one command and the next.
+	var meterlessSaid = false;
+
 	/// What the hand publishes where it could not establish an identity at all.
 	///
 	/// A literal word, and a token can never be it: a token is 32 hexadecimal characters. One
@@ -192,6 +210,12 @@
 	/// Kept apart from `NO_HAND` on purpose. Every disconnect used to be reported
 	/// as "not installed", so a host that crashed, was killed, or blew Chrome's
 	/// 1 MB cap made the daimon tell the user to install what they already had.
+	/// What a request built for one hand meets where another hand has taken its place.
+	var HAND_CHANGED = 'The machine hand changed while this waited: the hand that answers now is '
+		+ 'not the one whose hello this request was built from, and what it may read and write '
+		+ 'was worked out for that one, so it was not sent. Nothing was run or changed. Ask '
+		+ 'again, and it is built for the hand that is there now.';
+
 	var HAND_GONE = 'The machine hand answered earlier and has now gone, so it is installed and '
 		+ 'does not need installing again. Something stopped it — a crash, a quit, or a message '
 		+ 'too large for the browser to carry. Try once more; if it stops a second time, close '
@@ -314,7 +338,8 @@
 		}
 		if (!hasExt()) return Promise.reject(new Error(NO_HAND));
 
-		var rec = { port: null, greeted: false, waiters: [], note: '', timer: null, dead: false };
+		var rec = { port: null, greeted: false, waiters: [], note: '', timer: null, dead: false,
+			gen: ++links };
 		link = rec;
 		var p = new Promise(function (resolve, reject) { rec.waiters.push({ resolve: resolve, reject: reject }); });
 		connect(rec);
@@ -665,6 +690,11 @@
 			return;
 		}
 		if (msg.t === 'chunk')   { absorb(run, msg); return; }
+		if (msg.t === 'error' && run.restoring) {
+			// A restore has one answer, and this is it.
+			settle(run, 'reject', new Error(msg.message || 'The files could not be put back.'));
+			return;
+		}
 		if (msg.t === 'error') {
 			// An error ABOUT a run is a note, not an ending. The extension
 			// reports a gap in the sequence this way and then carries on
@@ -675,6 +705,38 @@
 		}
 		if (msg.t === 'refused') {
 			settle(run, 'resolve', JSON.stringify({ refused: msg.reason }));
+			return;
+		}
+		// The deletion meter is holding the command, blocked in the kernel, because it has
+		// removed the turn's allowance of files that existed before the turn. The question
+		// goes to the person in EVERY rung, bypass included: it is the compartment speaking,
+		// like the fence, and no rung moves the fence. No one to ask is a stop -- and the
+		// hand stops it anyway after two minutes without an answer.
+		if (msg.t === 'held') {
+			var ask = deps.onHeld
+				? Promise.resolve().then(function () {
+					return deps.onHeld(msg.id, {
+						counted: msg.counted, sample: msg.sample || [], mark: msg.mark || '',
+						since_ms: msg.since_ms,
+					});
+				})
+				: Promise.resolve(false);
+			ask.then(function (allow) { return !!allow; }, function () { return false; })
+				.then(function (allow) {
+					return send({ t: 'release', id: msg.id, allow: allow });
+				})
+				.catch(function () { /* the hand stops it after its own wait */ });
+			return;
+		}
+		if (msg.t === 'metered') {
+			run.counted = Number(msg.counted) || 0;
+			run.stopped = !!msg.stopped;
+			return;
+		}
+		if (msg.t === 'restored') {
+			settle(run, 'resolve', JSON.stringify({
+				restored: Number(msg.restored) || 0, skipped: Number(msg.skipped) || 0,
+			}));
 			return;
 		}
 		// A file operation has one answer and no lifecycle: no `started`, no chunks, no
@@ -695,6 +757,8 @@
 				out_bytes: msg.out_bytes,
 				err_bytes: msg.err_bytes,
 				note:      run.note,
+				counted:   run.counted || 0,
+				stopped:   !!run.stopped,
 			}));
 		}
 	}
@@ -795,6 +859,36 @@
 		// link that would otherwise stay closed until something else needed it.
 		var host = capValue(state.caps, HOST_CAP);
 		if (host && deps.onHost) { try { deps.onHost(host); } catch (e) {} }
+		// A HAND THAT FENCES AND DOES NOT METER is older than the deletion meter,
+		// and the engine has already made every folder read-only to its commands
+		// and its file tools (`command_fence` in src/tools.rs, audit F2 and the
+		// re-check's H1). Said to the person once,
+		// with how to update it, because a string of read-only failures nobody
+		// explained reads as the app being broken. The machine is named from
+		// `host:` or not at all: the hello's own `host` is the hand's program
+		// name, and a notice about a computer called "daimond-hand" sends the
+		// person looking for a machine they do not have.
+		if (!meterlessSaid && fencesWithoutMeter(state.caps) && deps.onMeterless) {
+			meterlessSaid = true;
+			try { deps.onMeterless(host || ''); } catch (e) {}
+		}
+	}
+
+	/// Does this hand fence a command and not meter what the command removes?
+	///
+	/// The twin of `fence_enforced` and `deletes_metered` in src/tools.rs, over
+	/// the same `caps`. A hand that cannot fence at all refuses every command
+	/// already, and is not told about a meter it could not use.
+	function fencesWithoutMeter(caps) {
+		var fenced = false, none = false, metered = false;
+		for (var i = 0; i < caps.length; i++) {
+			var c = caps[i];
+			if (typeof c !== 'string') continue;
+			if (c === 'fence:none') none = true;
+			else if (c.indexOf('fence:') === 0) fenced = true;
+			if (c === METER_CAP) metered = true;
+		}
+		return fenced && !none && !metered;
 	}
 
 	/// The granted root, as the `caps` list carries it. See `ROOT_CAP`.
@@ -1043,6 +1137,23 @@
 		if (how === 'resolve') run.resolve(value); else run.reject(value);
 	}
 
+	/// Why `spec` may not go out on `rec`, or '' where it may: it was built from another link's
+	/// hello. The binding is taken off the request either way -- it is the page's own, and the
+	/// wire has no field for it. A request that names no link is posted as it always was: the
+	/// engine names one on every request it builds, and a harness that composes its own has no
+	/// hello to have built it from.
+	///
+	/// Asked HERE, synchronously, beside the `postMessage` it guards and after `open` has
+	/// answered with the link the request is about to go out on. The engine reads the hand's
+	/// status, may then wait on a question -- the network, the command itself -- and only then
+	/// sends; a check anywhere earlier would leave that wait between the check and the post.
+	function boundElsewhere(spec, rec) {
+		if (!Object.prototype.hasOwnProperty.call(spec, 'link')) return '';
+		var want = spec.link;
+		delete spec.link;
+		return want === rec.gen ? '' : HAND_CHANGED;
+	}
+
 	/// Run one command. `specJson` is the wire's own `exec` request, built by the
 	/// wasm side; this function does not interpret it beyond reading the id and
 	/// the timeout, so there is one place the request is composed and it is the
@@ -1054,6 +1165,8 @@
 
 		return open().then(function (rec) {
 			return new Promise(function (resolve, reject) {
+				var elsewhere = boundElsewhere(spec, rec);
+				if (elsewhere) { reject(new Error(elsewhere)); return; }
 				var id = spec.id || 'run';
 				var r = {
 					id:      id,
@@ -1098,6 +1211,8 @@
 
 		return open().then(function (rec) {
 			return new Promise(function (resolve, reject) {
+				var elsewhere = boundElsewhere(spec, rec);
+				if (elsewhere) { reject(new Error(elsewhere)); return; }
 				var id = spec.id || 'file';
 				var r = {
 					id:      id,
@@ -1119,6 +1234,31 @@
 					+ 'stopped; ask the user to check it is still running. Do not assume the file '
 					+ 'is unchanged.');
 				try { rec.port.postMessage(spec); }
+				catch (e) { endWith(r, met ? HAND_GONE : NO_HAND); }
+			});
+		});
+	}
+
+	/// Put back every file the deletion meter kept during one turn.
+	///
+	/// # Arguments
+	/// * `sinceMs` - The turn, as the meter on its commands named it.
+	///
+	/// # Returns
+	/// A promise for `{ restored, skipped }`, or a rejection carrying the sentence.
+	function restore(sinceMs) {
+		return open().then(function (rec) {
+			return new Promise(function (resolve, reject) {
+				var id = 'restore-' + sinceMs;
+				var r = {
+					id: id, link: rec, resolve: resolve, reject: reject,
+					seq: { out: null, err: null }, out: stream(), err: stream(),
+					gap: false, note: '', started: true, done: false, timer: null,
+					limit: FILE_WAIT, restoring: true,
+				};
+				live[id] = r;
+				arm(r, FILE_WAIT, 'The machine hand did not say whether the files were put back.');
+				try { rec.port.postMessage({ t: 'restore', id: id, since_ms: sinceMs }); }
 				catch (e) { endWith(r, met ? HAND_GONE : NO_HAND); }
 			});
 		});
@@ -1429,7 +1569,7 @@
 
 	/// What we know about the hand now, as the tool reads it.
 	function mine() {
-		return JSON.stringify({
+		var out = {
 			paired:    true,
 			transport: state.transport,
 			machine:   state.machine,
@@ -1437,7 +1577,10 @@
 			os:        state.os,
 			root:      state.root,
 			caps:      state.caps,
-		});
+		};
+		// Which link said all that, read in the same moment as the rest of it: see `links`.
+		if (link && link.greeted) out.link = link.gen;
+		return JSON.stringify(out);
 	}
 
 	/// Forget the hand. Called when the user revokes the grant, so the next
@@ -1507,6 +1650,7 @@
 		grant: grant,
 		held: held,
 		signal: signal,
+		restore: restore,
 		send: send,
 		subscribe: subscribe,
 		hasHand: function () { return state.transport !== 'none'; },

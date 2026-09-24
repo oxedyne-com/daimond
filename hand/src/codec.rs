@@ -36,6 +36,7 @@ use crate::wire::{
     Capture,
     FenceSpec,
     FileOp,
+    Meter,
     PtySize,
     Req,
     Resp,
@@ -582,6 +583,28 @@ fn opt_strs_field(obj: &Dat, what: &str, key: &str) -> Outcome<Vec<String>> {
         Some(_) => strs_field(obj, what, key),
         None    => Ok(Vec::new()),
     }
+}
+
+/// The turn's deletion allowance, where the page sent one.
+///
+/// Absent or `null` is a page older than the meter, and reads as `None`; the hand
+/// meters such a command all the same, against a whole budget.
+///
+/// # Arguments
+/// * `obj` - The decoded object.
+/// * `what` - The message being read, for the error.
+/// * `key` - The field wanted.
+fn meter_field(obj: &Dat, what: &str, key: &str) -> Outcome<Option<Meter>> {
+    let v = match res!(obj.map_get(&Dat::Str(key.to_string()))) {
+        Some(Dat::Opt(b)) if b.is_none() => return Ok(None),
+        Some(v) => v,
+        None    => return Ok(None),
+    };
+    res!(want_object(v, key));
+    Ok(Some(Meter {
+        budget:   res!(u32_field(v, what, "budget")),
+        since_ms: res!(safe_int_field(v, what, "since_ms")),
+    }))
 }
 
 /// A field that is either a string or JSON `null`.
@@ -1170,7 +1193,7 @@ fn req_dat(req: &Req) -> Dat {
             "proto"		=> *proto,
             "client"	=> Dat::Str(client.clone()),
         },
-        Req::Exec { id, argv, cwd, env, stdin, timeout_ms, capture, fence, toolkits } => {
+        Req::Exec { id, argv, cwd, env, stdin, timeout_ms, capture, fence, toolkits, meter } => {
             let pairs = env.iter()
                 .map(|(k, v)| Dat::List(vec![Dat::Str(k.clone()), Dat::Str(v.clone())]))
                 .collect::<Vec<_>>();
@@ -1193,6 +1216,13 @@ fn req_dat(req: &Req) -> Dat {
                     "net"	=> fence.net,
                 },
                 "toolkits"		=> strs(toolkits),
+                "meter"			=> match meter {
+                    Some(m)	=> omapdat!{
+                        "budget"	=> m.budget,
+                        "since_ms"	=> m.since_ms,
+                    },
+                    None	=> Dat::Opt(Box::new(None)),
+                },
             }
         },
         Req::Verify { id, name, root, breaks, world, timeout_ms } => omapdat!{
@@ -1321,6 +1351,16 @@ fn req_dat(req: &Req) -> Dat {
             "t"		=> "grant",
             "path"	=> Dat::Str(path.clone()),
         },
+        Req::Release { id, allow } => omapdat!{
+            "t"		=> "release",
+            "id"	=> Dat::Str(id.clone()),
+            "allow"	=> *allow,
+        },
+        Req::Restore { id, since_ms } => omapdat!{
+            "t"			=> "restore",
+            "id"		=> Dat::Str(id.clone()),
+            "since_ms"	=> *since_ms,
+        },
         Req::Bye => omapdat!{
             "t"	=> "bye",
         },
@@ -1389,6 +1429,7 @@ pub fn req_of_json(txt: &str) -> Outcome<Req> {
             capture:    res!(capture_of(&res!(str_field(&obj, "exec", "capture")))),
             fence:      res!(fence_field(&obj, "exec", "fence")),
             toolkits:   res!(opt_strs_field(&obj, "exec", "toolkits")),
+            meter:      res!(meter_field(&obj, "exec", "meter")),
         }),
         "verify" => Ok(Req::Verify {
             id:         res!(str_field(&obj, "verify", "id")),
@@ -1435,6 +1476,14 @@ pub fn req_of_json(txt: &str) -> Outcome<Req> {
         }),
         "grant" => Ok(Req::Grant {
             path: res!(str_field(&obj, "grant", "path")),
+        }),
+        "release" => Ok(Req::Release {
+            id:    res!(str_field(&obj, "release", "id")),
+            allow: res!(bool_field(&obj, "release", "allow")),
+        }),
+        "restore" => Ok(Req::Restore {
+            id:       res!(str_field(&obj, "restore", "id")),
+            since_ms: res!(safe_int_field(&obj, "restore", "since_ms")),
         }),
         "bye" => Ok(Req::Bye),
         other => Err(Fault::UnknownTag.raise(&fmt!(
@@ -1493,6 +1542,26 @@ fn resp_dat(resp: &Resp) -> Dat {
             "id"	=> Dat::Str(id.clone()),
             "ok"	=> *ok,
             "text"	=> Dat::Str(text.clone()),
+        },
+        Resp::Held { id, counted, sample, mark, since_ms } => omapdat!{
+            "t"			=> "held",
+            "id"		=> Dat::Str(id.clone()),
+            "counted"	=> *counted,
+            "sample"	=> strs(sample),
+            "mark"		=> Dat::Str(mark.clone()),
+            "since_ms"	=> *since_ms,
+        },
+        Resp::Metered { id, counted, stopped } => omapdat!{
+            "t"			=> "metered",
+            "id"		=> Dat::Str(id.clone()),
+            "counted"	=> *counted,
+            "stopped"	=> *stopped,
+        },
+        Resp::Restored { id, restored, skipped } => omapdat!{
+            "t"			=> "restored",
+            "id"		=> Dat::Str(id.clone()),
+            "restored"	=> *restored,
+            "skipped"	=> *skipped,
         },
         Resp::Opened { id, pid } => omapdat!{
             "t"		=> "opened",
@@ -1652,6 +1721,23 @@ pub fn resp_of_json(txt: &str) -> Outcome<Resp> {
             id:   res!(str_field(&obj, "filed", "id")),
             ok:   res!(bool_field(&obj, "filed", "ok")),
             text: res!(str_field(&obj, "filed", "text")),
+        }),
+        "held" => Ok(Resp::Held {
+            id:      res!(str_field(&obj, "held", "id")),
+            counted: res!(u32_field(&obj, "held", "counted")),
+            sample:  res!(strs_field(&obj, "held", "sample")),
+            mark:    res!(str_field(&obj, "held", "mark")),
+            since_ms: res!(safe_int_field(&obj, "held", "since_ms")),
+        }),
+        "metered" => Ok(Resp::Metered {
+            id:      res!(str_field(&obj, "metered", "id")),
+            counted: res!(u32_field(&obj, "metered", "counted")),
+            stopped: res!(bool_field(&obj, "metered", "stopped")),
+        }),
+        "restored" => Ok(Resp::Restored {
+            id:       res!(str_field(&obj, "restored", "id")),
+            restored: res!(u32_field(&obj, "restored", "restored")),
+            skipped:  res!(u32_field(&obj, "restored", "skipped")),
         }),
         "opened" => Ok(Resp::Opened {
             id:  res!(str_field(&obj, "opened", "id")),
@@ -2278,6 +2364,7 @@ mod tests {
                     net:  false,
                 },
                 toolkits: Vec::new(),
+                meter:    None,
             },
             Req::Exec {
                 id:         fmt!("run-2"),
@@ -2294,6 +2381,7 @@ mod tests {
                     net:  true,
                 },
                 toolkits: Vec::new(),
+                meter:    None,
             },
             Req::Verify {
                 id:         fmt!("v-1"),
@@ -2637,7 +2725,14 @@ mod tests {
             capture:    Capture::Both,
             fence:      FenceSpec { rw: vec![fmt!("/a")], ..Default::default() },
             toolkits: Vec::new(),
+            meter:    Some(crate::wire::Meter { budget: 7, since_ms: 1_758_600_000_000 }),
         }));
+        assert!(txt.contains("\"since_ms\""), "{}", txt);
+        match res!(req_of_json(&txt)) {
+            Req::Exec { meter, .. } => assert_eq!(
+                Some(crate::wire::Meter { budget: 7, since_ms: 1_758_600_000_000 }), meter),
+            other => return Err(err!("Came back as {:?}.", other; Test, Mismatch)),
+        }
         // The absent standard input is `null`, not the word "none": in
         // JavaScript the latter is a truthy string and would read as present.
         assert!(txt.contains("null"), "{}", txt);
@@ -3358,6 +3453,7 @@ mod tests {
                 capture:    Capture::Both,
                 fence:      FenceSpec::default(),
                 toolkits: Vec::new(),
+                meter:    None,
             }) {
                 Ok(v) => return Err(err!(
                     "timeout_ms {} was written as {}.", n, v; Test, Invalid)),

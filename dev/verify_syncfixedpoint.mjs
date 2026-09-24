@@ -1027,21 +1027,32 @@ check('(vii) the two desktops hold identical bytes at DIFFERENT times — the Sy
 	`sizes ${st1.map(f => f.size).join(',')}; times differ on `
 	+ st1.filter((f, i) => f.mtime !== st2[i].mtime).length + ' of ' + st1.length);
 
-// The mark and the flag, made once and carried to the other mounted device by the
+// The mark and the flag, made once on A and carried to the other mounted device by the
 // ordinary parcel: the Diamond travels, its links travel inside it -- the flag is a
-// field on the link -- and both devices then compute the same shared roots without
-// either of them being told.
-await A.page.evaluate(async (scope) => {
+// field on the link. THE MARK ITSELF DOES NOT (owner ruling, 2026-09-23): a machine
+// reference now names the device it was made on, so A2 receives A's mark inactive --
+// exactly the state a mark synced from another desktop is in everywhere else -- and
+// brings it into force with the same one-press confirm the notice above the composer
+// offers. Only then do both devices compute the same shared roots.
+const bookId = await A.page.evaluate(async (scope) => {
 	const mod = await import('/pkg/oxedyne_daimond.js');
 	const app = new mod.DaimondApp('http://127.0.0.1/v1/chat/completions', '', 'none', 4096, '', true);
 	const id = await app.create_diamond('The Book');
-	const linkId = await app.add_link(id, 'diamond:' + id, 'dir:' + scope, 'holds', '', 'user');
-	await app.update_link(id, linkId, 'holds', 'share');
+	const linkId = await app.add_link(id, 'diamond:' + id, window.DaimondAttach.ref('dir', scope),
+		'holds', '', 'user');
+	await app.set_link_share(id, linkId, true);
 	await window.DaimondCore.loadDiamonds();
 	window.DaimondCore.syncClearWalkCache();
+	return id;
 }, SCOPE);
 await push(A); await pull(A2); await pull(B);
 await A2.page.evaluate(() => window.DaimondCore.loadDiamonds());
+const confirmedOnA2 = await A2.page.evaluate(
+	({ id, scope }) => window.DaimondAttach.confirmHere(id, 'dir:' + scope),
+	{ id: bookId, scope: SCOPE });
+check('(vii) A2 confirms the mark A made, brought in by the ordinary parcel',
+	confirmedOnA2 === true, String(confirmedOnA2));
+await A2.page.evaluate(() => window.DaimondCore.syncClearWalkCache());
 
 const shares = {
 	a1: await A.page.evaluate(() => window.DaimondCore.syncFolderShare()),

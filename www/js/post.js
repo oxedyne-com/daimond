@@ -1769,7 +1769,9 @@
 	/// so they are kept beside the notices and can never reach the message list.
 	var FEED_KINDS = { follow: 1, followed: 1, feedgone: 1 };
 
-	async function takeRow(st, row) {
+	/// `work` collects the rows that ask this device to run something; the caller
+	/// starts them once it has let go of the mailbox lock (`startWork`).
+	async function takeRow(st, row, work) {
 		if (FEED_KINDS[String(row.kind)]) {
 			st.notes['n' + row.seq] = {
 				seq:  row.seq | 0, kind: String(row.kind),
@@ -1857,17 +1859,38 @@
 						// the cursor passes the row, so the relay drops it and no peer re-runs it.
 					}
 				}
-				var routed = null;
-				try { routed = await DaimondPeer.absorb(peer, row); }
+				// WORK STARTS AFTER THE MAILBOX LOCK, NEVER UNDER IT (E-R4, 2026-09-23). An
+				// errand or a compile asks this device to RUN something: minutes of turn that
+				// end by calling back into this module (daimond.js's ack dep calls `settle`
+				// and `ack`), whose locked exports ask for the lock `round` holds across this
+				// collect. A Web Lock is not re-entrant, so the turn waited on the lock and
+				// the lock on the turn: the first hand-off answered, and the desktop never
+				// parked or collected again until it was reloaded. So the row is only CLAIMED
+				// here and HELD -- left on the relay, as an own dispatch is, until its run is
+				// over -- and the run starts once the lock is let go (`startWork`). The claim
+				// is a lock of its own per turn, so a second collect, in this tab or another,
+				// holds the row rather than running the turn twice.
+				if (DaimondPeer.isWork && DaimondPeer.isWork(peer)) {
+					var claim = await claimWork(DaimondPeer.workKey(peer));
+					if (!claim) return hold(peer.turnId);	// already being run on this device
+					var signed = false;
+					try { signed = await DaimondPeer.verifyEnvelope(peer); } catch (e) { signed = false; }
+					if (!signed) {
+						// The forged-errand defence `absorb` applies, applied before the hold,
+						// so a forgery can never pin the ack cursor.
+						claim.release();
+						log('a peer envelope failed its signature check; dropped');
+						return NOTHING;
+					}
+					work.push({ peer: peer, row: row, claim: claim });
+					return hold(peer.turnId);
+				}
+				// A NOTE -- a report, a consent question or its answer, a compile's account --
+				// is folded here, under the lock, as a message is: each handler records it in
+				// page memory and returns. Nothing folded here may call a locked verb of this
+				// module or wait on the network.
+				try { await DaimondPeer.absorb(peer, row); }
 				catch (e) { log('a peer envelope would not apply', e); }
-				// A non-nominee that STOOD DOWN for the account's nominated always-on
-				// runner leaves the errand on the relay, exactly as an own-dispatch does
-				// above: acking past it here would drop it before the nominee collects,
-				// and a nominee that then never ran would strand the turn. HOLD keeps the
-				// ack watermark below it, so it is re-collected -- and re-decided against
-				// live presence -- until the nominee runs it, or its beat ages out and
-				// this device claims. The stand-down is money-safe by the lease either way.
-				if (routed && routed.result && routed.result.why === 'nominee') return hold(peer.turnId);
 				return NOTHING;			// routed, and never a message on the list
 			}
 		}
@@ -2062,7 +2085,10 @@
 	///
 	/// NOTHING IS ACKED HERE. The relay drops nothing on a read; it drops only on
 	/// an ack, and the ack is `ackThrough` below, after a commit.
-	async function collect() {
+	///
+	/// NOTHING IS RUN HERE EITHER. A row that asks for work is claimed into `work`
+	/// and held; the caller starts it after letting go of the mailbox lock.
+	async function collect(work) {
 		var st = await read();
 		if (!st) return { ok: false, why: 'locked' };
 		// NOT `unread`: that is the exported tally, and a local of the same name
@@ -2071,7 +2097,12 @@
 		var arrived = [];
 
 		for (var round = 0; round < 8; round++) {
-			var r = await call('GET', undefined, '?since=' + st.through);
+			// BOUNDED, because everything else waits on the lock this read is made under.
+			// A request the network black-holes answers nothing for as long as the
+			// operating system keeps the socket, which is the park's forty-one minutes.
+			var r;
+			try { r = await call('GET', undefined, '?since=' + st.through, RELAY_DEADLINE_MS); }
+			catch (e) { return { ok: false, why: (e && e.timedOut) ? 'timeout' : 'offline', got: got }; }
 			if (r.status !== 200 || !r.json || !r.json.ok) {
 				return { ok: false, why: 'status_' + r.status, got: got };
 			}
@@ -2091,7 +2122,7 @@
 			var rows = r.json.rows || [];
 			for (var i = 0; i < rows.length; i++) {
 				var row  = rows[i];
-				var took = await takeRow(st, row);
+				var took = await takeRow(st, row, work);
 				got     += took.got;
 				notes   += took.notes;
 				badRows += took.unreadable;
@@ -2212,8 +2243,8 @@
 	/// The ack request itself, and the only place it is made.
 	async function tellRelay(want) {
 		var r;
-		try { r = await call('POST', { through: want }, '?op=ack'); }
-		catch (e) { return { acked: 0, why: 'offline' }; }
+		try { r = await call('POST', { through: want }, '?op=ack', RELAY_DEADLINE_MS); }
+		catch (e) { return { acked: 0, why: (e && e.timedOut) ? 'timeout' : 'offline' }; }
 		if (r.status !== 200 || !r.json || !r.json.ok) {
 			return { acked: 0, why: 'status_' + r.status };
 		}
@@ -2231,6 +2262,11 @@
 	/// memory (nobody's `_st` has both) -- collected, acked, and never pushed anywhere.
 	/// Mirrors `withTurnLock` in daimond.js; degrades to running `fn` straight where the
 	/// Web Locks API is absent (an older engine), exactly as that one does.
+	///
+	/// NOT RE-ENTRANT. `fn` must never reach a locked export of this module (`collect`,
+	/// `ack`, `settle`): the request queues behind the lock its own caller holds, and
+	/// neither ever settles. That is what stopped a desktop collecting after its first
+	/// hand-off (E-R4), and why work is started after the lock (`startWork`).
 	function withMailboxLock(fn) {
 		if (window.navigator && navigator.locks && navigator.locks.request) {
 			return navigator.locks.request('daimond-post-mailbox', { mode: 'exclusive' }, fn);
@@ -2238,16 +2274,116 @@
 		return fn();
 	}
 
-	/// Collect, fold and ack, in that order, under the mailbox lock. The one routine
-	/// anything else calls.
+	/// The longest a relay read or an ack may take while it holds the mailbox lock.
+	/// A collect carries up to the relay's 1 MiB batch, so this is generous.
+	var RELAY_DEADLINE_MS = 60000;
+
+	/// Collect, fold and ack, in that order, under the mailbox lock; then start the
+	/// work the collect claimed. The one routine anything else calls.
 	async function round() {
-		return withMailboxLock(async function () {
-			var c = await collect();
-			if (!c.ok) return c;
-			var a = await ackThrough();
-			return { ok: true, got: c.got, notes: c.notes, unreadable: c.unreadable,
-				acked: a.acked | 0, why: a.why || '' };
+		var work = [];
+		try {
+			return await withMailboxLock(async function () {
+				var c = await collect(work);
+				if (!c.ok) return c;
+				var a = await ackThrough();
+				return { ok: true, got: c.got, notes: c.notes, unreadable: c.unreadable,
+					acked: a.acked | 0, why: a.why || '' };
+			});
+		} finally { startWork(work); }
+	}
+
+	/// `collect` under the mailbox lock, and the work it claimed started after it.
+	async function collectLocked() {
+		var work = [];
+		try { return await withMailboxLock(function () { return collect(work); }); }
+		finally { startWork(work); }
+	}
+
+	// ── The work a row asks for ────────────────────────────────
+	//
+	// An errand or a compile is claimed under the mailbox lock and run after it. The
+	// row stays HELD for the whole run, so the relay keeps it until the run is over
+	// (the ack-after-the-answer order `runErrand` promises), and the claim is kept
+	// until the row has been let go, so no collect in between takes it for unclaimed.
+
+	/// Claims held in THIS tab, for an engine without the Web Locks API.
+	var _claimed = {};
+
+	/// Claim the right to run one row's work: `{ release }`, or null when a run of the
+	/// same turn is already claimed on this device -- in this tab, or in another tab of
+	/// this browser, which shares the device id and so would win the same lease.
+	///
+	/// NEVER WAITS (`ifAvailable`): it is asked for under the mailbox lock, and a wait
+	/// there is the deadlock this exists to prevent.
+	function claimWork(key) {
+		var name = 'daimond-post-work:' + String(key || '');
+		function here() {
+			if (_claimed[name]) return null;
+			_claimed[name] = 1;
+			return { release: function () { delete _claimed[name]; } };
+		}
+		if (!(window.navigator && navigator.locks && navigator.locks.request)) {
+			return Promise.resolve(here());
+		}
+		return new Promise(function (resolve) {
+			navigator.locks.request(name, { mode: 'exclusive', ifAvailable: true }, function (lock) {
+				if (!lock) { resolve(null); return undefined; }
+				// Held until `release`: the lock is let go when this promise settles.
+				return new Promise(function (done) { resolve({ release: function () { done(); } }); });
+			}).catch(function () { resolve(here()); });
 		});
+	}
+
+	/// This tab's work, one piece at a time and in the order it was collected -- as it
+	/// ran when it ran inside the collect, and as the runner expects: a consent is
+	/// routed for THE running turn (`activeRunnerTurn`, daimond.js).
+	var _workChain = Promise.resolve();
+
+	/// Start the work a collect claimed, now that the mailbox lock is let go. Not
+	/// awaited by whoever collected it: a turn is minutes long, and the listener that
+	/// found it must be back on its park, collecting, while it runs. Answers a promise
+	/// of whether each row is still held once its work is over, for `take`.
+	function startWork(list) {
+		return Promise.all((list || []).map(function (w) {
+			var run = function () { return runWork(w); };
+			var p = _workChain.then(run, run);
+			_workChain = p;
+			return p;
+		}));
+	}
+
+	/// Run one claimed row, let the row go, and only then give up the claim. Answers
+	/// whether the row is still held.
+	async function runWork(w) {
+		var res = null, stood = false;
+		try { res = await DaimondPeer.absorb(w.peer, w.row); }
+		catch (e) { log('a peer envelope would not apply', e); }
+		try {
+			// A non-nominee that STOOD DOWN for the account's nominated always-on runner
+			// leaves the errand on the relay, exactly as an own dispatch is left: acking
+			// past it would drop it before the nominee collects, and a nominee that then
+			// never ran would strand the turn. So the row stays HELD and is collected --
+			// and decided against live presence -- again, until the nominee runs it or its
+			// beat ages out and this device claims. Money-safe by the lease either way.
+			stood = !!(res && res.result && res.result.why === 'nominee');
+			if (!stood) await withMailboxLock(function () { return letGo(w.row.seq); });
+		} catch (e) { log('a finished row could not be let go; the next collect decides it', e); }
+		finally { w.claim.release(); }
+		return stood;
+	}
+
+	/// Drop the hold on one row whose work is over, and ack what that frees. Under the
+	/// mailbox lock; the ack keeps its durable-commit-first order (`ackThrough`).
+	async function letGo(seq) {
+		var st = await read();
+		if (!st) return { acked: 0, why: 'locked' };
+		if (Array.isArray(st.holds) && st.holds.length) {
+			var s = seq | 0;
+			st.holds = st.holds.filter(function (h) { return (h.seq | 0) !== s; });
+			st.through = Math.max(st.through | 0, watermark(st));
+		}
+		return await ackThrough();
 	}
 
 	// ── The tray's buttons ─────────────────────────────────────
@@ -2552,7 +2688,14 @@
 			// throttled background tab that only beats (peer.js recGenuine).
 			_servicedAt = Date.now();
 			_parkFails  = 0;		// an answered park clears the outage
-			if (r.json.changed) await round();
+			// THE LISTENER OUTLIVES ITS ROUND. A round that threw used to throw out of
+			// this loop with `_parking` still true, and `parkStart` refuses while it is:
+			// the device went on beating presence and never parked again. The next park
+			// asks again from the same cursor, so a failed round costs one round.
+			if (r.json.changed) {
+				try { await round(); }
+				catch (e) { log('a round failed; the next park asks again', e); }
+			}
 			var spent = Date.now() - began;
 			if (spent < PARK_FLOOR_MS) await sleep(PARK_FLOOR_MS - spent);
 		}
@@ -3533,8 +3676,10 @@
 		// Locked individually as well as `round` is: daimond.js and peer.js call `collect`
 		// and `ack` on their own, not only through `round`, and each is its own tab-crossing
 		// critical section. `round` itself calls the raw functions above, not these wrapped
-		// exports, so it takes the lock exactly once rather than deadlocking on itself.
-		collect: function () { return withMailboxLock(collect); },
+		// exports, so it takes the lock exactly once rather than deadlocking on itself --
+		// and the work a collect claims runs after the lock, because a runner calls `settle`
+		// and `ack` from inside its turn (E-R4).
+		collect: collectLocked,
 		ack:     function () { return withMailboxLock(ackThrough); },
 		/// Free this device's own hold on a turn's errand once the turn is settled here, so
 		/// the next ack drops it from the relay and no peer re-runs it. Under the same lock
@@ -3632,10 +3777,16 @@
 		take:        async function (row) {
 			var st = await read();
 			if (!st) return { got: 0, notes: 0, unreadable: 0, why: 'locked' };
-			var r = await takeRow(st, row);
+			var work = [];
+			var r = await takeRow(st, row, work);
 			await save();
 			render();
 			announce(r.got, r.got ? [String(row.addr)] : []);
+			// THE WORK IT STARTED, RUN TO THE END. No lock is held here, and a door a
+			// suite drives is no use if it answers before what it started has happened. A
+			// row whose work is over has been let go, and answers as one never held.
+			var held = await startWork(work);
+			if (held.length && !held.some(Boolean)) return NOTHING;
 			return r;
 		},
 		/// The half of a group send that involves no relay. Published for the

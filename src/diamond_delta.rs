@@ -44,6 +44,14 @@ use oxedyne_fe2o3_ore::diff;
 /// per version.
 pub const KEYFRAME_EVERY: usize = 20;
 
+// What a snapshot of each file is called, after its version number.  A version holds the keyframe
+// extension or the patch one and never both; where it somehow holds both, the keyframe wins,
+// because that is the one that stands on its own.
+pub const DATA_KEYFRAME_EXT:	&str = ".json";
+pub const DATA_PATCH_EXT:	&str = ".jpatch";
+pub const PAGE_KEYFRAME_EXT:	&str = ".html";
+pub const PAGE_PATCH_EXT:	&str = ".hpatch";
+
 
 /// What one stored snapshot is.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -191,6 +199,36 @@ pub fn materialise(keyframe: Vec<u8>, patches: &[Vec<u8>])
 		};
 	}
 	Ok(at)
+}
+
+/// Does a snapshot stand between the version the Diamond is at and the one about to be written?
+///
+/// **The reader and the writer have to agree on what a patch is against.**  A reader applies a
+/// version's patch to the snapshot below it in number order ([`plan_at`]); a writer records it
+/// against the version the Diamond is at.  The two are the same snapshot until something is filed
+/// above the counter -- this device's own history kept above another device's by an import, or a
+/// version whose metadata never landed -- and a patch recorded then is read over the wrong bytes
+/// and never rebuilds.  So where one stands between, the new version is written in full, which
+/// also starts a chain that runs through nothing filed from elsewhere.
+///
+/// # Arguments
+/// * `snaps` - The file's snapshots.
+/// * `live` - The version the Diamond is at.
+/// * `next` - The version about to be written.
+pub fn stands_between(snaps: &[(u64, Snap)], live: u64, next: u64) -> bool {
+	snaps.iter().any(|(n, _)| *n > live && *n < next)
+}
+
+/// Version numbers in the order a reader falls back through them when the file itself is gone:
+/// the version the Diamond is at and every one below it, newest first, and only then anything
+/// filed above it.
+///
+/// Newest first alone would answer with whatever stands highest, and after an import that is this
+/// device's own history kept above the copy that arrived -- a memory that is no longer the one the
+/// Diamond is at.
+pub fn live_first(mut ns: Vec<u64>, live: u64) -> Vec<u64> {
+	ns.sort_unstable_by(|a, b| (*a > live).cmp(&(*b > live)).then(b.cmp(a)));
+	ns
 }
 
 fn sorted(snaps: &[(u64, Snap)]) -> Vec<(u64, Snap)> {
@@ -718,5 +756,55 @@ mod tests {
 			"{} patches stand over the last full copy and none is due",
 			KEYFRAME_EVERY - 1);
 		assert!(wants_keyframe(&[]), "an empty history is not asking for a full copy");
+	}
+
+	/// A version filed above the counter is the snapshot a reader takes the next patch against, so
+	/// a patch recorded against the counter's version does not read back; a full copy does.
+	#[test]
+	fn test_a_version_written_over_a_snapshot_above_the_counter_reads_back_00() -> Outcome<()> {
+		let lines = |what: &str| -> String {
+			(0..80).map(|i| fmt!("line {} of {}\n", i, what)).collect::<String>()
+		};
+		let shared = lines("the memory both devices hold");
+		let mut log = Log::new();
+		res!(log.write(1, shared.as_bytes()));
+		res!(log.write(2, fmt!("{}and a line more\n", shared).as_bytes()));
+		// Kept above the counter by an import: another memory altogether, in full.
+		let kept = lines("what this device wrote before the copy arrived").into_bytes();
+		log.bytes.insert(5, kept.clone());
+		log.held.push((5, Snap::Keyframe));
+		let live = 2;
+		let next = 6;
+		assert!(stands_between(&log.held, live, next));
+		let want = fmt!("{}and a line more\nand one after the import\n", shared).into_bytes();
+		let want = want.as_slice();
+		// Recorded against the counter's version, as the writer did: the reader walks the kept
+		// snapshot at 5 instead, and the version is lost.
+		let parent = res!(log.read(live));
+		let rec = record(Some(&parent), want, &log.held);
+		assert!(rec.is_patch(), "the premise: a small change is recorded as a patch");
+		let mut wrong = Log { held: log.held.clone(), bytes: log.bytes.clone() };
+		wrong.bytes.insert(next, rec.bytes().to_vec());
+		wrong.held.push((next, rec.snap()));
+		assert!(wrong.read(next).is_err(), "a patch against 2 read over 5 must not rebuild");
+		// Written in full because something stands between: it reads back, and so does the kept
+		// version under it.
+		let rec = record(None, want, &log.held);
+		assert_eq!(Snap::Keyframe, rec.snap());
+		log.bytes.insert(next, rec.bytes().to_vec());
+		log.held.push((next, rec.snap()));
+		assert_eq!(want.to_vec(), res!(log.read(next)));
+		assert_eq!(kept, res!(log.read(5)));
+		// Nothing between: the ordinary case is untouched.
+		assert!(!stands_between(&log.held, 6, 7));
+		assert!(!stands_between(&[(1, Snap::Keyframe), (2, Snap::Patch)], 2, 3));
+		Ok(())
+	}
+
+	#[test]
+	fn test_a_lost_file_falls_back_to_the_version_the_diamond_is_at_first_00() {
+		assert_eq!(vec![5, 4, 2, 9, 7], live_first(vec![2, 9, 4, 7, 5], 5));
+		assert_eq!(vec![3, 2, 1], live_first(vec![1, 2, 3], 3));
+		assert_eq!(vec![8, 6], live_first(vec![6, 8], 0), "nothing at or below the counter");
 	}
 }

@@ -311,7 +311,7 @@
 	/// attributed to a leaf of its own.
 	function allHeld() {
 		if (!window.DaimondPause) return false;
-		return DaimondPause.state(DaimondPause.ROOT) === 'pause';
+		return DaimondPause.heldByHand(DaimondPause.ROOT);
 	}
 
 	/// The body a request carries, parsed, or an empty object. Every body in

@@ -571,6 +571,12 @@
 
 		var res;
 		try { res = await DaimondIdentity.unlock(opened.pass); } catch (e) { res = { ok: false }; }
+		if (res && !res.ok && res.reason === 'unsupported') {
+			// The passphrase was RIGHT: it opened the key, and this browser cannot load
+			// a key of the account's curve even through the pure-JS fallback. Neither
+			// the passkey nor the passphrase is at fault, so neither is blamed.
+			return { ok: false, error: t('identity.err_unsupported_crypto') };
+		}
 		if (!res || !res.ok) {
 			// The sealed passphrase no longer opens the identity — the passphrase
 			// was changed since enrolment. The passkey is stale; say so plainly.
@@ -652,6 +658,11 @@
 		var res;
 		try { res = await DaimondIdentity.unlock(opened.pass); } catch (e) { res = { ok: false }; }
 		opened.pass = null;
+		if (res && !res.ok && res.reason === 'unsupported') {
+			// The account arrived and its passphrase opened the key; this browser
+			// cannot load the curve. "Use your passphrase" would fail the same way.
+			return { ok: false, error: t('identity.err_unsupported_crypto') };
+		}
 		if (!res || !res.ok) {
 			return { ok: false, error: t('passkey.err_stored_locked') };
 		}

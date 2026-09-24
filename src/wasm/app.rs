@@ -149,6 +149,8 @@ impl DaimondApp {
             no_write:    Vec::new(),
             // A chat acts for no Diamond, so a link tool in one must be told which it means.
             daimon_of:   String::new(),
+            keeper:      String::new(),
+            unconfirmed: Vec::new(),
         };
         // The whole file toolset is OPFS-backed in the browser; only the
         // shell tool has no in-browser executor, so it is left out.
@@ -211,11 +213,19 @@ impl DaimondApp {
             // JS-side result deliberately.
             let _ = on_event.call1(&JsValue::NULL, &js);
         };
-        let mut session = self.session.borrow_mut();
-        self.agent
-            .run_turn(&mut session, user_msg, &self.registry, &mut sink)
-            .await
-            .map_err(to_js_err)
+        let ran = {
+            let mut session = self.session.borrow_mut();
+            self.agent.run_turn(&mut session, user_msg, &self.registry, &mut sink).await
+        };
+        // WHAT A CHAT'S TURN REPLACED OR REMOVED BECOMES A VERSION OF THE CHAT'S STORE, whichever
+        // way the turn went -- a turn that deleted a file and then died has still deleted it.  A
+        // Diamond's worker keeps into its Diamond, whose daimon's turn end records it.
+        if let Some(key) = self.registry.ctx.keeper() {
+            if key.starts_with(crate::tools::CHAT_KEEPER) {
+                self.record_chat_turn(&key, &on_event).await;
+            }
+        }
+        ran.map_err(to_js_err)
     }
 
     /// Cancel the in-flight turn.  Fires the transport's abort signal, so
@@ -536,11 +546,15 @@ impl DaimondApp {
     /// * `scratch` - The chat's own working directory, workspace-relative.
     /// * `workspace` - JSON array of paths the user marked into this chat's workspace.
     /// * `read_only` - JSON array of those that may be read but not written; may be omitted.
+    /// * `unconfirmed` - JSON array of the places marked into it that are NOT in force on this
+    ///   device until the user confirms them here; may be omitted.  Named in a refusal of one of
+    ///   them, so the model asks for the press (see [`crate::tools::ToolContext::unconfirmed`]).
     pub fn set_chat_scope(
         &mut self,
-        scratch:   String,
-        workspace: String,
-        read_only: Option<String>,
+        scratch:     String,
+        workspace:   String,
+        read_only:   Option<String>,
+        unconfirmed: Option<String>,
     ) {
         let paths = parse_path_array;
         let bounds = crate::tools::chat_bounds(
@@ -548,6 +562,10 @@ impl DaimondApp {
             &paths(&workspace),
             &paths(&read_only.unwrap_or_default()));
         self.registry.ctx.no_write = crate::tools::compose(&self.registry.ctx.no_write, &bounds);
+        // AND WHOSE STORE KEEPS WHAT IT REPLACES OR REMOVES: the chat's, read off its scratch.
+        // A chat deleting a file in the user's open folder kept nothing until 2026-09-23.
+        self.registry.ctx.keeper = crate::tools::keeper_of_dir(&scratch);
+        self.registry.ctx.unconfirmed = paths(&unconfirmed.unwrap_or_default());
     }
 
     /// Confine this agent to a Diamond's workspace.
@@ -585,12 +603,15 @@ impl DaimondApp {
     /// * `attached` - JSON array of paths in this Diamond's workspace.
     /// * `read_only` - JSON array of those that may be read but not written.
     /// * `toolkits` - JSON array of granted toolkit names (`rust`, `node`, `python`, `go`).
+    /// * `unconfirmed` - JSON array of the places marked into the Diamond that are NOT in force
+    ///   on this device until the user confirms them here; may be omitted.
     pub fn set_diamond_scope(
         &mut self,
-        own_dir:   String,
-        attached:  String,
-        read_only: String,
-        toolkits:  String,
+        own_dir:     String,
+        attached:    String,
+        read_only:   String,
+        toolkits:    String,
+        unconfirmed: Option<String>,
     ) {
         let paths = parse_path_array;
         let mut bounds = crate::tools::diamond_bounds(
@@ -606,6 +627,10 @@ impl DaimondApp {
         // different one intersects to `Bound::Nowhere`, which `diamond_scope` reports and the
         // caller already refuses to start a turn on.
         self.registry.ctx.no_write = crate::tools::compose(&self.registry.ctx.no_write, &bounds);
+        // A worker's changes are its Diamond's, kept in its store and recorded at the end of the
+        // daimon's turn that dispatched it, beside the daimon's own.
+        self.registry.ctx.keeper = crate::tools::keeper_of_dir(&own_dir);
+        self.registry.ctx.unconfirmed = paths(&unconfirmed.unwrap_or_default());
     }
 
     /// What this agent is actually confined to, as the engine holds it.
@@ -1493,11 +1518,13 @@ impl DaimondApp {
             // the read cache an ordinary one would.
             read_seen:   self.registry.ctx.read_seen.clone(),
             no_write:    bounds,
-            // EMPTY, and that is not an oversight. `ctx.daimon()` is what makes the write door
-            // keep the bytes it is replacing for the TURN to record -- and this is not a turn.
-            // A restore recorded that way would land in the next turn's manifest under the
+            // EMPTY, both, and that is not an oversight. `ctx.keeper()` is what makes the write
+            // door keep the bytes it is replacing for the TURN to record -- and this is not a
+            // turn. A restore recorded that way would land in the next turn's manifest under the
             // daimon's name, for a change the user made.
             daimon_of:   String::new(),
+            keeper:      String::new(),
+            unconfirmed: Vec::new(),
         };
         let registry = ToolRegistry::new(Tool::daimon(), ctx);
         let text = registry.dispatch_unbilled(&name, &args_json).await.as_text().into_owned();
@@ -1576,12 +1603,15 @@ impl DaimondApp {
     /// * `toolkits` - The toolchains granted to that Diamond, so the view of the request says
     ///   what the turn will actually carry.  A view composed without them described a briefing
     ///   nobody would be sent.
+    /// * `unconfirmed` - The places marked into it that are not in force on this device, as
+    ///   [`DaimondApp::steer_crystal`] takes them; optional.
     pub async fn wire_system(
         &self,
-        diamond_id: String,
-        attached:   String,
-        read_only:  String,
-        toolkits:   String,
+        diamond_id:  String,
+        attached:    String,
+        read_only:   String,
+        toolkits:    String,
+        unconfirmed: Option<String>,
     )
         -> Result<String, JsValue>
     {
@@ -1594,7 +1624,8 @@ impl DaimondApp {
             self.agent.set_briefing(&brief);
             return Ok(wire_json(&self.agent, &self.registry, ""));
         }
-        let turn = self.compose_daimon(&diamond_id, &attached, &read_only, &toolkits).await;
+        let turn = self.compose_daimon(&diamond_id, &attached, &read_only, &toolkits,
+            &unconfirmed.unwrap_or_default()).await;
         Ok(wire_json(&turn.agent, &turn.registry, &turn.local))
     }
 
@@ -1702,7 +1733,9 @@ impl DaimondApp {
     /// `owner` is the Diamond whose sidecar holds the record; `rel` and `note`
     /// may both be empty, and `by` names who asserted it (`user`, or
     /// `agent:<name>`) so a later reader can tell a drawn line from a
-    /// suggested one.
+    /// suggested one.  `share`, left out for off, flags a mark the user is
+    /// confirming here with the copy grant it already had; it is refused on
+    /// anything but the user's own mark.
     pub async fn add_link(
         &self,
         owner: String,
@@ -1711,10 +1744,21 @@ impl DaimondApp {
         rel:   String,
         note:  String,
         by:    String,
+        share: Option<bool>,
     )
         -> Result<String, JsValue>
     {
-        diamond::add_link(&owner, &from, &to, &rel, &note, &by).await.map_err(to_js_err)
+        diamond::add_link_with(&owner, &from, &to, &rel, &note, &by, share.unwrap_or(false)).await
+            .map_err(to_js_err)
+    }
+
+    /// Flag a mark to be copied to the devices of this account that cannot open it, or take the
+    /// flag off.  True when anything moved.  The user's own ⇄, and refused on any link that is not
+    /// the user's mark: see [`diamond::set_link_share`].
+    pub async fn set_link_share(&self, owner: String, link_id: String, on: bool)
+        -> Result<bool, JsValue>
+    {
+        diamond::set_link_share(&owner, &link_id, on).await.map_err(to_js_err)
     }
 
     /// Revise a link's relation and note in place.  True when anything moved.
@@ -2054,6 +2098,20 @@ impl DaimondApp {
         versions::set_versions_bytes_cap(bytes.max(0.0) as u64);
     }
 
+    /// How many files a turn may delete from the folder the user opened on this computer before
+    /// they are asked whether it may go on; a negative number restores the default of eight.
+    ///
+    /// The settings pulldown, and the test setter.  Held at the store's own per-turn bound at
+    /// most, past which a turn is stopped whatever was asked.
+    pub fn set_open_deletes_ask(&self, n: f64) {
+        versions::set_open_deletes_ask(if n.is_nan() || n < 0.0 { None } else { Some(n as usize) });
+    }
+
+    /// The limit [`DaimondApp::set_open_deletes_ask`] set, as a turn will apply it.
+    pub fn open_deletes_ask(&self) -> f64 {
+        versions::open_deletes_ask() as f64
+    }
+
     /// Steer a Diamond's crystal: run one daimon turn for `instruction`, streaming
     /// [`AgentEvent`]s to `on_event`, and return the daimon's conversation as it
     /// stands afterwards.
@@ -2092,6 +2150,10 @@ impl DaimondApp {
     /// * `prior` - The daimon's conversation so far, in the shape
     ///   [`DaimondApp::export_session`] produces. Empty starts a new daimon.
     /// * `on_event` - The event sink.
+    /// * `unconfirmed` - JSON array of the places marked into this Diamond that are NOT in force
+    ///   on this device until the user confirms them here, which the daimon is told so that it
+    ///   asks for the press rather than working around a refusal.  Last and optional, so a caller
+    ///   that says nothing is a turn with none waiting.
     ///
     /// # Returns
     /// The conversation after the turn, to be stored and handed back next time.
@@ -2107,10 +2169,12 @@ impl DaimondApp {
         toolkits:    String,
         prior:       js_sys::Array,
         on_event:    js_sys::Function,
+        unconfirmed: Option<String>,
     )
         -> Result<js_sys::Array, JsValue>
     {
-        self.steer_inner(&id, instruction, attached, read_only, toolkits, prior, on_event)
+        self.steer_inner(&id, instruction, attached, read_only, toolkits,
+            unconfirmed.unwrap_or_default(), prior, on_event)
             .await
             .map_err(to_js_err)
     }
@@ -2395,6 +2459,47 @@ struct DaimonTurn {
 /// wrappers above map the result to the JS boundary.
 impl DaimondApp {
 
+    /// Record what a chat's turn captured as one version of the chat's store, and tell the page
+    /// with a `versions` event: `{type, keeper, version, files}`, so it can offer the way back.
+    ///
+    /// Best effort, like the daimon's: a turn the user asked for is not failed because its
+    /// history could not be written, and the console says so.
+    async fn record_chat_turn(&self, key: &str, on_event: &js_sys::Function) {
+        // With the copies noted on disk before each act, including any an earlier life of the
+        // page left unrecorded.
+        let (captured, notes) = diamond::drain_turn(key).await;
+        if captured.is_empty() {
+            diamond::settle(key, &notes).await;
+            return;
+        }
+        let changes = captured.into_iter().map(|(_, ch)| ch).collect();
+        let recorded = diamond::versions_record(key, None, Cause::Turn, "", "", changes).await;
+        if recorded.is_ok() {
+            diamond::settle(key, &notes).await;
+        }
+        match recorded {
+            Ok(Some((v, files))) => {
+                let ev = js_sys::Object::new();
+                let list = js_sys::Array::new();
+                for f in files.iter() {
+                    list.push(&JsValue::from_str(f));
+                }
+                let _ = js_sys::Reflect::set(&ev, &JsValue::from_str("type"),
+                    &JsValue::from_str("versions"));
+                let _ = js_sys::Reflect::set(&ev, &JsValue::from_str("keeper"),
+                    &JsValue::from_str(key));
+                let _ = js_sys::Reflect::set(&ev, &JsValue::from_str("version"),
+                    &JsValue::from_f64(v as f64));
+                let _ = js_sys::Reflect::set(&ev, &JsValue::from_str("files"), &list);
+                let _ = on_event.call1(&JsValue::NULL, &ev);
+            },
+            Ok(None) => {},
+            Err(e)   => web_sys::console::warn_1(&JsValue::from_str(&fmt!(
+                "the files the turn in {} changed could not be recorded: {}", key, e))),
+        }
+    }
+
+
     /// What this turn is told beyond its role: which model is carrying it, and what machine it can
     /// reach.
     ///
@@ -2484,12 +2589,15 @@ impl DaimondApp {
     /// * `read_only` - Those of them to be consulted rather than edited.
     /// * `toolkits` - JSON array of the toolchain names the user granted this Diamond, as
     ///   `Files.bounds` reports them.
+    /// * `unconfirmed` - JSON array of the places marked into this Diamond that are not in force
+    ///   on this device until the user confirms them here, as `Files.bounds` reports them.
     async fn compose_daimon(
         &self,
-        id:        &str,
-        attached:  &str,
-        read_only: &str,
-        toolkits:  &str,
+        id:          &str,
+        attached:    &str,
+        read_only:   &str,
+        toolkits:    &str,
+        unconfirmed: &str,
     )
         -> DaimonTurn
     {
@@ -2555,10 +2663,19 @@ impl DaimondApp {
         local.push_str(&diamond::diamond_dir(id));
         local.push_str("/crystal.json` and its page is the `crystal.html` beside it. Paths you \
             give the file tools are whole workspace-relative paths, never bare names.");
-        if marked.is_empty() && consult.is_empty() {
+        // MARKED, AND NOT IN FORCE ON THIS DEVICE.  A mark is in force only on a device where
+        // the user made it or confirmed it, so every mark made elsewhere -- and every one made
+        // before marks said who made them -- is out of reach here until they press to confirm it.
+        // A daimon not told that meets a plain refusal and concludes the folder is not its to use,
+        // or goes looking for another way in; told, it asks the user for the one press.
+        let waiting = parse_path_array(unconfirmed);
+        if marked.is_empty() && consult.is_empty() && waiting.is_empty() {
             local.push_str(" Nothing is attached to this Diamond yet, so the folder above is the \
                 only place you may write. If the user asks for work on files that are not there, \
                 say what needs marking in with the + in the Workspace group rather than creating it.");
+        } else if marked.is_empty() && consult.is_empty() {
+            local.push_str(" Nothing attached to this Diamond is in force on this device yet, so \
+                the folder above is the only place you may write.");
         } else {
             local.push_str("\n\nAttached to this Diamond, and reachable now:\n");
             for p in &marked {
@@ -2573,6 +2690,19 @@ impl DaimondApp {
             }
             local.push_str("Look at what is attached before you answer a question about it. You \
                 may READ anywhere in the workspace, and you may write only in the places above.");
+        }
+        if !waiting.is_empty() {
+            local.push_str("\n\nMarked into this Diamond on another device, or before this \
+                device recorded marks, and NOT in force on this device until the user confirms \
+                them here:\n");
+            for p in &waiting {
+                local.push_str("- `");
+                local.push_str(p);
+                local.push_str("` (unconfirmed on this device)\n");
+            }
+            local.push_str("You may read these but not write in them yet. If the work needs one, \
+                tell the user it is unconfirmed on this device and ask them to confirm it -- one \
+                press on the notice above the message box -- rather than working around it.");
         }
         // THE SAME DEPTH-LIMITED TREE A CHAT TURN GETS, not a bespoke sentence of its own -- see
         // `DaimondApp::briefing`, called near the bottom of this function to build the agent's
@@ -2651,6 +2781,8 @@ impl DaimondApp {
             // Who this turn acts for, which the prefix used to say and no longer can.  A link this
             // daimon asserts goes in THIS Diamond's sidecar and is stamped `agent:daimon`.
             daimon_of:   id.to_string(),
+            keeper:      id.to_string(),
+            unconfirmed: waiting,
         };
         let registry = ToolRegistry::new(Tool::daimon(), ctx)
             .with_family(self.registry.family());
@@ -2692,6 +2824,7 @@ impl DaimondApp {
         attached:    String,
         read_only:   String,
         toolkits:    String,
+        unconfirmed: String,
         prior:       js_sys::Array,
         on_event:    js_sys::Function,
     )
@@ -2717,7 +2850,7 @@ impl DaimondApp {
         // which the agent already holds, and a second copy of half of it would be one more thing
         // able to disagree with the first.
         let DaimonTurn { agent, registry, crystal: before, standing: standing_before, .. } =
-            self.compose_daimon(id, &attached, &read_only, &toolkits).await;
+            self.compose_daimon(id, &attached, &read_only, &toolkits, &unconfirmed).await;
         // THE USER'S OWN EDITS BECOME A VERSION BEFORE THE TURN CAN WRITE OVER THEM.
         //
         // The Files panel, a capp's Save and a landed Diamond each marked the path they wrote,
@@ -2852,7 +2985,9 @@ impl DaimondApp {
         //
         // Attempted even when the turn ended badly, for the reason the version above is: a turn
         // that wrote a file and then died has still changed it.
-        let captured = diamond::drain_captured(id);
+        // The copies were noted on disk before each act (`diamond::pend`), so a turn that died
+        // mid-way, or a page reloaded under a worker, left them for this turn end to adopt.
+        let (captured, notes) = diamond::drain_turn(id).await;
         let covered: std::collections::BTreeSet<&str> =
             captured.iter().map(|(raw, _)| raw.as_str()).collect();
         let mut named: Vec<String> = Vec::new();
@@ -2874,7 +3009,13 @@ impl DaimondApp {
         // cross the wasm boundary today, so the manifest is joined to its History row by VERSION
         // NUMBER, which is what `showCrystalHistory` joins on anyway. The field stays, for the
         // caller that will one day have the id.
-        match diamond::versions_record(id, minted, Cause::Turn, "", &typed, changes).await {
+        let recorded = diamond::versions_record(id, minted, Cause::Turn, "", &typed, changes).await;
+        // Settled only once the manifest is written: a note outliving a failed record is adopted
+        // by the next turn end instead of lost.
+        if recorded.is_ok() {
+            diamond::settle(id, &notes).await;
+        }
+        match recorded {
             // THE DAIMON IS TOLD, in one sentence, and only where a manifest was actually
             // written. A model with no way to undo its own work does not merely fail to undo it:
             // it reports that the app cannot, which is the defect `Tool::FileShow` was written
@@ -3104,6 +3245,8 @@ impl DaimondApp {
             no_write:    Vec::new(),
             // The reducer holds no tools, so it asserts nothing and owns nothing.
             daimon_of:   String::new(),
+            keeper:      String::new(),
+            unconfirmed: Vec::new(),
         };
         let registry = ToolRegistry::new(Vec::new(), ctx);
         let reducer = Role::Reducer.compose(&self.reducer_prompt.borrow());
@@ -3453,13 +3596,17 @@ fn event_to_js(ev: &AgentEvent) -> JsValue {
             set("name", &JsValue::from_str(name));
             set("args", &JsValue::from_str(args));
         }
-        AgentEvent::ToolResult { name, result, outcome } => {
+        AgentEvent::ToolResult { name, result, outcome, class } => {
             set("type", &JsValue::from_str("tool_result"));
             set("name", &JsValue::from_str(name));
             set("content", &JsValue::from_str(result));
             // Passed through, never recomputed. `src/agent.rs` set it from `call_outcome` at the
             // one place the event is built; this encoder only spells it.
             set("outcome", &JsValue::from_str(outcome.wire()));
+            // A destructive call's path class, a JSON object carrying no path; absent otherwise.
+            if !class.is_empty() {
+                set("class", &JsValue::from_str(class));
+            }
         }
         AgentEvent::Interjected(text) => {
             set("type", &JsValue::from_str("interjected"));

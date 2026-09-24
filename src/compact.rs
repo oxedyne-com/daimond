@@ -3872,6 +3872,8 @@ mod tests {
 			read_seen:   new_read_cache(),
 			no_write:    chat_bounds("chats/c1", &[fmt!("notes")], &[fmt!("book")]),
 			daimon_of:   String::new(),
+			keeper:      String::new(),
+			unconfirmed: Vec::new(),
 		}
 	}
 

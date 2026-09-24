@@ -462,6 +462,8 @@ pub async fn handle_chat_websocket<
                                 no_write:    Vec::new(),
                                 // The native handler serves no Diamond.
                                 daimon_of:   String::new(),
+                                keeper:      String::new(),
+                                unconfirmed: Vec::new(),
                             };
                             ToolRegistry::new(Tool::defaults(), ctx)
                         }
@@ -724,8 +726,14 @@ fn fs_read_file(ws: &Workspace, path: &str) -> Outcome<String> {
 
 /// Delete a workspace file.
 fn fs_delete_file(ws: &Workspace, path: &str) -> Outcome<()> {
-    let abs = res!(ws.resolve(path));
-    res!(std::fs::remove_file(&abs)
+    // Proved on disk, so a linked folder cannot carry the delete out of the workspace.
+    let pin = match res!(ws.pin(path, false)) {
+        Some(p) => p,
+        None    => return Err(err!(
+            "fs_delete: '{}' leads outside the workspace through a link.", path;
+            Invalid, Input, Path)),
+    };
+    res!(std::fs::remove_file(pin.act())
         .map_err(|e| err!(e, "fs_delete: cannot delete '{}'.", path; IO, File)));
     Ok(())
 }

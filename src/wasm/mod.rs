@@ -55,6 +55,7 @@
 pub mod app;
 pub mod ask;
 pub mod cloud;
+pub mod deletes;
 pub mod doc;
 pub mod entry;
 pub mod hand;

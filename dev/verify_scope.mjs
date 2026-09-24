@@ -292,9 +292,13 @@ try {
 	await page.evaluate((root) => {
 		const real = window.DaimondHand.status;
 		window.DaimondHand._realStatus = real;
+		// `meter:deletes` because the real hand said it: this tree's hand meters removals, and a
+		// stand-in without it is a hand older than the meter, to which the file tools' door gives
+		// nothing writable (`command_fence`, the re-check's H1) -- verify_handmeterless.mjs's
+		// subject, not this file's.
 		window.DaimondHand.status = () => Promise.resolve(JSON.stringify({
 			paired: true, transport: 'machine', machine: 'test', os: 'linux',
-			root: root, caps: ['fence:linux', 'landlock:abi-8'],
+			root: root, caps: ['fence:linux', 'landlock:abi-8', 'meter:deletes'],
 		}));
 	}, GRANT);
 

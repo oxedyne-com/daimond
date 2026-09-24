@@ -1991,13 +1991,30 @@ async function refreshToc() {
 	} catch (e) {
 		list = null;
 	}
+	// Austenite answers with `title` (a plain string) and a 1-based `page` already
+	// resolved from its ledger; typst.ts answers with `body` (a content tree, see
+	// `wordsOf`) and no `page`, which the renderer locate-scan below fills in. A row
+	// with a page needs no scan, so `havePage` tracks whether every row this query
+	// answered already carries one.
+	let havePage = Array.isArray(list) && list.length > 0;
 	S.toc = Array.isArray(list) ? list.map(function (h) {
+		const title = h && h.title != null ? String(h.title) : wordsOf(h && h.body);
+		const page = Math.max(0, Number(h && h.page) || 0);
+		if (!page) havePage = false;
 		return {
-			text:  wordsOf(h && h.body).replace(/\s+/g, ' ').trim(),
+			text:  title.replace(/\s+/g, ' ').trim(),
 			level: Math.max(1, Math.min(6, Number(h && (h.level || h.depth)) || 1)),
-			page:  0,
+			page:  page,
 		};
 	}).filter(function (e) { return e.text; }) : [];
+	if (havePage) {
+		// The query already resolved every page, so the renderer locate-scan --
+		// typst.ts only, and pointless work on a document Austenite already placed --
+		// is skipped outright by marking this build already scanned.
+		S.scanned = S.drawn;
+		drawRail();
+		return;
+	}
 	S.scanned = 0;
 	drawRail();
 	locate();
@@ -2331,6 +2348,52 @@ function dead(why) {
 	offerRebuild(false);
 }
 
+/// What the live view's `ev compile` should say about one build: the REAL producer
+/// (`useDelta` says which door was actually taken, never a flag read after the
+/// fact -- see typst.js's own comment on `engine()`, which gates the live view
+/// only), a real page floor for `ok`, and a byte count.
+///
+/// The floor is not "no error". A delta with an empty `order` -- zero pages --
+/// would satisfy `build`'s own `drew` test (which checks the FIELD, not its
+/// length, on purpose: an empty `changed` with a non-empty `order` is a good,
+/// unchanged build) and must not read as a good compile here. The vector door
+/// carries no page count at all (`typst_compile_project_vector` answers `{
+/// vector, watch }`, not `{ vector, watch, pages }` as its own doc comment
+/// once claimed), so non-empty bytes is the only floor it can offer today --
+/// stated here rather than pretended away.
+///
+/// # Arguments
+/// * `useDelta` - Which door this build actually took.
+/// * `out`      - The door's own answer: `{ order, changed, error }` for a delta,
+///   `{ vector, error }` for a vector.
+function liveCompileTelemetry(useDelta, out) {
+	if (useDelta) {
+		const order = (out && Array.isArray(out.order)) ? out.order : [];
+		const changed = (out && Array.isArray(out.changed)) ? out.changed : [];
+		let bytes = 0;
+		for (let i = 0; i < changed.length; i++) {
+			bytes += (changed[i] && changed[i].svg) ? String(changed[i].svg).length : 0;
+		}
+		return { producer: 'austenite', ok: !(out && out.error) && order.length >= 1, bytes: bytes };
+	}
+	const vecLen = (out && out.vector) ? out.vector.length : 0;
+	return { producer: 'typst', ok: !(out && out.error) && vecLen > 0, bytes: vecLen };
+}
+
+/// Raise the live view's own `ev compile` -- this loop used to compile silently, so
+/// the lens saw the button's builds and nothing of the preview that runs on every
+/// keystroke. A no-op when the feed is not loaded or off; never throws into the
+/// caller, since a debug row must never cost a compile.
+function emitLiveCompileEvent(useDelta, out, ms, path) {
+	if (typeof window === 'undefined' || !window.DEBUG_SHARE || !DEBUG_SHARE.event) return;
+	const t = liveCompileTelemetry(useDelta, out);
+	DEBUG_SHARE.event('compile', {
+		main: path, producer: t.producer, ok: t.ok, ms: ms, bytes: t.bytes,
+		err: (!t.ok && out && out.error) ? String(out.error).slice(0, 120) : '',
+		retried: false,
+	});
+}
+
 /// Rebuild now, coalescing anything already in flight.
 ///
 /// ONE COMPILE AT A TIME AND ONE QUEUED, and a third edit replaces the queued one.
@@ -2435,6 +2498,13 @@ async function build(force) {
 	const drew = useDelta
 		? !!(out && !out.error && Array.isArray(out.order))
 		: !!(out && out.vector && out.vector.length);
+
+	// TRAINING WHEELS — remove with the DEBUG_SHARE module. THE LIVE VIEW'S OWN
+	// `ev compile` -- this loop used to compile silently, so the lens saw the
+	// button's builds and nothing of the preview that runs on every keystroke.
+	try { emitLiveCompileEvent(useDelta, out, took, S.path); }
+	catch (e) { /* the feed must never break the live view */ }
+
 	if (drew) {
 		// A REBUILD NOBODY COULD CONFIRM is counted, because it is the only kind left
 		// that can spin. Everything small enough to read back is checked against its
@@ -3229,4 +3299,7 @@ if (typeof window !== 'undefined' && !window.DaimondTypstWatch) {
 
 export { began, stop, pause, resume, touched, rebuild, budgetMB, zoom, dark, state,
 	pageBox, goToPage, rail, sections, goToSection, fitPage, given, placeWith,
-	applyDelta, knownIds, deltaPeek };
+	applyDelta, knownIds, deltaPeek,
+	// A pure test seam for `ev compile`'s labelling, read by no runtime caller --
+	// `window.DaimondTypstWatch` (above) does not carry it. See dev/verify_lens_compile_truth.mjs.
+	liveCompileTelemetry };

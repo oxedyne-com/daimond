@@ -1343,8 +1343,37 @@ button.tag-pool { cursor: pointer; }
 :root[data-cfull] .panel.ai .seat-line { display: none !important; }
 
 .panel.ai.crystal-face .crystal-view   { order: 1; }
+.panel.ai.crystal-face .mark-notice    { order: 2; }
 .panel.ai.crystal-face .chat-input-bar { order: 2; }
 .panel.ai.crystal-face .seat-line      { order: 3; }
+
+/* MARKS NOT IN FORCE ON THIS DEVICE. It asks something of the person, so it is drawn
+   as the crystal's fallback note is -- a warning band, in the text ink that holds its
+   contrast on every palette -- and it sits straight over the composer on both faces
+   (ordered with it above, since it comes first in the document). Each row carries its
+   own press; a long path gives way before the button does. */
+.mark-notice {
+	margin: 0 12px 8px;
+	padding: 8px 10px;
+	background: var(--warn-bg);
+	border: 1px solid var(--warn);
+	border-radius: var(--radius-sm);
+	color: var(--text-primary);
+	font-size: var(--fs-sm);
+	line-height: 1.45;
+}
+.mark-notice[hidden] { display: none; }
+.mark-notice-head { margin: 0; font-weight: 600; }
+.mark-notice-why { margin: 2px 0 6px; font-size: var(--fs-xs); }
+.mark-notice-row { display: flex; align-items: center; gap: 8px; min-width: 0; padding: 2px 0; }
+/* The path is what the row is about, so it keeps its width and the where-it-was-made text
+   gives way first: "ol..." beside a whole sentence was the first draw of this row. */
+.mark-notice-path { flex: 0 1 auto; min-width: 2.5em; max-width: 60%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.mark-notice-where { flex: 1 1 0; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: var(--fs-xs); }
+.mark-notice-row .chip-btn,
+.mark-notice-all { flex: 0 0 auto; }
+.mark-notice-all { margin-top: 6px; }
+:root[data-cfull] .panel.ai .mark-notice { display: none !important; }
 
 /* ── Full screen: the crystal, alone ─────────────────────────────────
    A capp is an application, and an application inside a panel inside an app
@@ -2607,6 +2636,8 @@ span.arte-open { cursor: default; }
 .dlg-actions .dlg-ok { margin-top: 0; flex: 1; width: auto; }
 .dlg-actions .dlg-ok.danger { background: var(--danger); border-color: var(--danger); color: var(--on-fill, #fff); }
 .dlg-actions .dlg-ok.danger:hover { filter: brightness(1.1); }
+/* An unbidden question's yes, for the second it cannot be pressed (`dialog` in daimond.js). */
+.dlg-actions .dlg-ok:disabled, .dlg-actions .dlg-ok:disabled:hover { opacity: 0.5; cursor: default; filter: none; }
 .tile-fold.folded { color: var(--text-secondary); border-style: dashed; }
 
 /* ── About ───────────────────────────────────────────────────────
@@ -4770,9 +4801,15 @@ details.md-fold > .md-fold-body > :last-child { margin-bottom: 0; }
    because this one is MEANT to be pressed, and `role="status"` in the markup, so
    a screen reader finishes its sentence before reading it out. It sits above the
    composer rather than over it -- a five-second box across the send button is a
-   five-second box people press by accident. */
+   five-second box people press by accident.
+   AT EVERY WIDTH. It was 32px from the bottom on a wider screen, which is the send row
+   there too, and so across the send button: harmless while only a delete or a rename
+   raised it, and since every chat turn that changes a file offers its copies back for
+   fifteen seconds (`offerTurnUndo`, daimond.js), a click on Send in that time pressed
+   the toast and the message went nowhere (dev/verify_chatstore.mjs). */
 .daimond-undo {
-	position: fixed; left: 50%; bottom: 32px; transform: translateX(-50%) translateY(6px);
+	position: fixed; left: 50%; bottom: calc(96px + env(safe-area-inset-bottom, 0px));
+	transform: translateX(-50%) translateY(6px);
 	z-index: 9999; display: flex; align-items: center; gap: 12px;
 	padding: 9px 12px 9px 16px; border-radius: 8px; max-width: min(80vw, 420px);
 	pointer-events: auto; font-size: var(--fs-sm); color: var(--text-primary);
@@ -4794,10 +4831,9 @@ details.md-fold > .md-fold-body > :last-child { margin-bottom: 0; }
 	border: 1px solid color-mix(in srgb, var(--accent) 45%, transparent);
 }
 .daimond-undo-btn:hover { background: color-mix(in srgb, var(--accent) 12%, transparent); }
-/* Above the composer on a phone, where the send row owns the bottom of the
-   screen and the mobile bar is not this change's to move. */
+/* The width of a phone. */
 @media (max-width: 540px) {
-	.daimond-undo { bottom: calc(96px + env(safe-area-inset-bottom, 0px)); max-width: calc(100vw - 24px); }
+	.daimond-undo { max-width: calc(100vw - 24px); }
 }
 
 /* Retry and Edit & resend, on the last user tile only. They live in `.ctile-ctl`

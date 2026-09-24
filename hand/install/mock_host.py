@@ -6,7 +6,8 @@ UTF-8 JSON, which is Chrome's format and not negotiable -- and the real
 messages, from ``hand/src/wire.rs``.  It runs nothing.  Every ``exec`` produces
 invented output on a schedule, which is exactly what is wanted: the relay's job
 is order, attribution and the shape of failure, and none of that needs a real
-process to exercise.
+process to exercise.  Every ``file`` request is answered that it touches no
+files, so what the page SENT is in the log without a wait for an answer.
 
 It is also the only way to reach the failures that matter.  A gap in the
 sequence, a message over Chrome's 1 MB limit, and a host that dies mid-command
@@ -193,6 +194,14 @@ def main():
                   'version': '0.0.0-mock', 'os': 'linux', 'caps': c['caps']})
         elif t == 'exec':
             run(req, c)
+        elif t == 'file':
+            # Answered, and truthfully: this stand-in reads and writes no files, so
+            # it says so rather than inventing a listing. The frame received is
+            # already in the log, which is what a test of the page asks about. An
+            # `error` would be taken as a note about the request and the relay
+            # would wait out its whole file deadline for the answer that never came.
+            send({'t': 'filed', 'id': req.get('id', ''), 'ok': False,
+                  'text': 'the mock hand reads and writes no files'})
         elif t == 'signal':
             send({'t': 'ended', 'id': req.get('id', ''), 'exit': -1, 'timed_out': False,
                   'killed': True, 'out_bytes': 0, 'err_bytes': 0})

@@ -61,6 +61,7 @@
 
 use crate::fsname;
 use crate::tools::FileRoot;
+use crate::tools::Licence;
 use crate::wasm::js_str;
 
 use oxedyne_fe2o3_core::prelude::*;
@@ -501,7 +502,7 @@ async fn open_parent(
 
 /// Write `content` to `path` under `root`, creating parent directories
 /// and the file as needed, replacing any existing contents.
-pub async fn write_file(root: FileRoot, path: &str, content: &[u8]) -> Outcome<()> {
+pub(in crate::wasm) async fn write_file(root: FileRoot, path: &str, content: &[u8]) -> Outcome<()> {
     let handle = res!(resolve_root(root, path).await);
     let components = res!(jail_components(path));
     let (dir, leaf) = res!(descend(&handle, components).await);
@@ -558,9 +559,9 @@ pub async fn write_file(root: FileRoot, path: &str, content: &[u8]) -> Outcome<(
 /// **This is the one place a mutation is announced**, so every door that changes the
 /// tree calls it: [`write_file`] for bytes — a daimon's `file_write`, the Doc panel's
 /// Save, a compiled PDF and an upload all arrive there — [`create_dir`] for a new
-/// folder, and [`delete_entry`] for a removal.  [`move_entry`] needs no call of its
-/// own: it is a write (or a `copy_dir`) followed by a delete, and both ends announce
-/// themselves.
+/// folder, and [`delete_entry`] for a removal.  [`move_entry`] announces its destination
+/// itself, because a folder's contents are copied by their stored names below the doors
+/// that announce.
 ///
 /// **A DELETION HAS TO BE ANNOUNCED OR IT IS INVISIBLE.**  The sync walk memoises its
 /// census for `SYNC_WALKPLAN_TTL_MS` — 25 seconds, in `www/js/daimond.js` — and drops
@@ -605,7 +606,7 @@ fn announce_change(path: &str) {
 ///
 /// Only an agent could make a directory before this, and only as a side effect
 /// of writing a file into one; the user had no way at all.
-pub async fn create_dir(root: FileRoot, path: &str) -> Outcome<()> {
+pub(in crate::wasm) async fn create_dir(root: FileRoot, path: &str) -> Outcome<()> {
     let handle = res!(resolve_root(root, path).await);
     let components = res!(jail_components(path));
     let mut dir = handle;
@@ -628,49 +629,124 @@ pub async fn create_dir(root: FileRoot, path: &str) -> Outcome<()> {
 /// recursively.  The destination must not already exist, so a move can never
 /// silently clobber the user's work.
 ///
-/// Each sub-call resolves the root for ITS OWN path (see [`resolve_root`]), so a move between
-/// Daimond's store and the user's folder crosses roots correctly rather than half-happening: the
-/// bytes are read from wherever `from` lives and written to wherever `to` lives.  What it is not is
-/// a way to move a Diamond out of the store and have it still be a Diamond -- the store is where
-/// the rail reads, so such a move REMOVES it, exactly as asked.
-pub async fn move_entry(root: FileRoot, from: &str, to: &str) -> Outcome<()> {
+/// Each end resolves the root for ITS OWN path (see [`resolve_root`]), so the bytes are read from
+/// wherever `from` lives and written to wherever `to` lives.  What it is not is a way to move a
+/// Diamond out of the store and have it still be a Diamond -- the store is where the rail reads,
+/// so such a move REMOVES it, exactly as asked.
+pub(in crate::wasm) async fn move_entry(root: FileRoot, from: &str, to: &str) -> Outcome<()> {
     if res!(exists(root, to).await) {
         return Err(err!("'{}' already exists.", to; Invalid, Input));
     }
     let is_dir = res!(is_directory(root, from).await);
-    if is_dir {
-        res!(copy_dir(root, from, to).await);
-    } else {
+    if !is_dir {
         let bytes = res!(read_file(root, from).await);
         res!(write_file(root, to, &bytes).await);
+        return delete_entry(root, from, false).await;
     }
-    res!(delete_entry(root, from, is_dir).await);
-    Ok(())
+    // BY THE NAMES ON DISK, BELOW THE FOLDER THE MODEL NAMED.  The contents are never passed
+    // through the workspace spelling: [`read_entries`] decodes `a%3Ab` and `a:b` to one name, so a
+    // copy by decoded name read the same file twice, and the by-name delete that followed fell
+    // through [`disk_name`] to the escaped entry and removed the file that had never been copied.
+    // And a name with `:` or `*` in it came out at the destination under its `%XX` form -- a
+    // rename on the user's disk nobody asked for.  Each entry is copied and removed under exactly
+    // the name it is stored as, so the destination holds what the source held, spelled as it was.
+    let src = res!(descend_dir(&res!(resolve_root(root, from).await), from).await);
+    res!(create_dir(root, to).await);
+    let dst = res!(descend_dir(&res!(resolve_root(root, to).await), to).await);
+    let copied = res!(copy_tree(&src, &dst).await);
+    // THE SOURCE GOES ONLY AS FAR AS THE COPY CAME.  This ended in one recursive `removeEntry`,
+    // which removes whatever is under `from` -- including anything the listing did not show and
+    // so the copy never took.  Each copied file is removed by its stored name, then each folder
+    // deepest first and NON-recursively, so a folder still holding something uncopied refuses to
+    // go and the move fails with the source intact rather than succeeding with a loss.
+    for (dir, name, is_dir) in copied.iter() {
+        if !*is_dir {
+            res!(remove_stored(dir, name).await);
+        }
+    }
+    for (dir, name, is_dir) in copied.iter().rev() {
+        if *is_dir {
+            res!(remove_stored(dir, name).await);
+        }
+    }
+    announce_change(to);
+    delete_entry(root, from, false).await
 }
 
-/// Copy a directory and everything under it.  Recursion is spelled out with an
-/// explicit stack: an `async fn` cannot recurse without boxing its future.
-async fn copy_dir(root: FileRoot, from: &str, to: &str) -> Outcome<()> {
-    res!(create_dir(root, to).await);
-    let mut todo = vec![(from.to_string(), to.to_string())];
-    while let Some((src, dst)) = todo.pop() {
-        for (name, is_dir, _) in res!(list_dir(root, &src).await) {
-            let s = fmt!("{}/{}", src, name);
-            let d = fmt!("{}/{}", dst, name);
+/// Copy everything under `src` into `dst`, each entry under the name it is stored as, and answer
+/// with what was copied as `(its folder in the source, its stored name, is it a folder)`, a folder
+/// before anything inside it.
+///
+/// A file's bytes go across as the browser's own `File`, never through wasm memory, so a large
+/// file costs no copy here.  Recursion is spelled out with an explicit stack: an `async fn` cannot
+/// recurse without boxing its future.
+async fn copy_tree(src: &FileSystemDirectoryHandle, dst: &FileSystemDirectoryHandle)
+    -> Outcome<Vec<(FileSystemDirectoryHandle, String, bool)>>
+{
+    let mut copied = Vec::new();
+    let mut todo = vec![(src.clone(), dst.clone())];
+    while let Some((from, into)) = todo.pop() {
+        for (name, handle, is_dir) in res!(stored_entries(&from).await) {
             if is_dir {
-                res!(create_dir(root, &d).await);
-                todo.push((s, d));
+                let opts = FileSystemGetDirectoryOptions::new();
+                opts.set_create(true);
+                let made_val = res!(JsFuture::from(
+                        into.get_directory_handle_with_options(&name, &opts)).await
+                    .map_err(|e| err!("OPFS: create dir '{}' failed: {}.", name, js_err(&e);
+                        IO, File, Write)));
+                let made: FileSystemDirectoryHandle = res!(made_val.dyn_into()
+                    .map_err(|_| err!("OPFS: '{}' was not a directory.", name; IO, File)));
+                let sub: FileSystemDirectoryHandle = res!(handle.dyn_into()
+                    .map_err(|_| err!("OPFS: '{}' was not a directory.", name; IO, File)));
+                copied.push((from.clone(), name, true));
+                todo.push((sub, made));
             } else {
-                let bytes = res!(read_file(root, &s).await);
-                res!(write_file(root, &d, &bytes).await);
+                let fh: FileSystemFileHandle = res!(handle.dyn_into()
+                    .map_err(|_| err!("OPFS: '{}' was not a file.", name; IO, File, Read)));
+                let file_val = res!(JsFuture::from(fh.get_file()).await
+                    .map_err(|e| err!("OPFS: get file '{}' failed: {}.", name, js_err(&e);
+                        IO, File, Read)));
+                let file: File = res!(file_val.dyn_into()
+                    .map_err(|_| err!("OPFS: '{}' did not read as a file.", name; IO, File, Read)));
+                let opts = FileSystemGetFileOptions::new();
+                opts.set_create(true);
+                let out_val = res!(JsFuture::from(
+                        into.get_file_handle_with_options(&name, &opts)).await
+                    .map_err(|e| err!("OPFS: create file '{}' failed: {}.", name, js_err(&e);
+                        IO, File, Write)));
+                let out: FileSystemFileHandle = res!(out_val.dyn_into()
+                    .map_err(|_| err!("OPFS: '{}' was not a file.", name; IO, File, Write)));
+                let w_val = res!(JsFuture::from(out.create_writable()).await
+                    .map_err(|e| err!("OPFS: create writable for '{}' failed: {}.", name,
+                        js_err(&e); IO, File, Write)));
+                let w: FileSystemWritableFileStream = res!(w_val.dyn_into()
+                    .map_err(|_| err!("OPFS: writable for '{}' had the wrong type.", name;
+                        IO, File, Write)));
+                let put = res!(w.write_with_blob(&file)
+                    .map_err(|e| err!("OPFS: queue write for '{}' failed: {}.", name, js_err(&e);
+                        IO, File, Write)));
+                res!(JsFuture::from(put).await
+                    .map_err(|e| err!("OPFS: write '{}' failed: {}.", name, js_err(&e);
+                        IO, File, Write)));
+                res!(JsFuture::from(w.close()).await
+                    .map_err(|e| err!("OPFS: close '{}' failed: {}.", name, js_err(&e);
+                        IO, File, Write)));
+                copied.push((from.clone(), name, false));
             }
         }
     }
+    Ok(copied)
+}
+
+/// Remove one entry of `dir` by the name it is stored under, never recursively.
+async fn remove_stored(dir: &FileSystemDirectoryHandle, name: &str) -> Outcome<()> {
+    res!(JsFuture::from(dir.remove_entry(name)).await
+        .map_err(|e| err!("OPFS: remove '{}' failed: {}.", name, js_err(&e); IO, File)));
     Ok(())
 }
 
 /// True when `path` names a directory.
-async fn is_directory(root: FileRoot, path: &str) -> Outcome<bool> {
+pub async fn is_directory(root: FileRoot, path: &str) -> Outcome<bool> {
     let handle = res!(resolve_root(root, path).await);
     let components = res!(jail_components(path));
     let (dir, leaf) = res!(open_parent(&handle, components).await);
@@ -887,8 +963,38 @@ fn file_stamp(f: &File) -> Option<f64> {
 async fn read_entries(dir: &FileSystemDirectoryHandle)
     -> Outcome<Vec<(String, bool, u64, Option<f64>)>>
 {
-    let iter = dir.entries();
     let mut out: Vec<(String, bool, u64, Option<f64>)> = Vec::new();
+    for (name, handle, is_dir) in res!(stored_entries(dir).await) {
+        let (size, when) = if is_dir {
+            (0u64, None)
+        } else {
+            match handle.dyn_into::<FileSystemFileHandle>() {
+                Ok(fh) => {
+                    let file_val = res!(JsFuture::from(fh.get_file()).await
+                        .map_err(|e| err!("OPFS: get file '{}' failed: {}.", name, js_err(&e); IO, File, Read)));
+                    match file_val.dyn_into::<File>() {
+                        Ok(f)  => (f.size() as u64, file_stamp(&f)),
+                        Err(_) => (0u64, None),
+                    }
+                }
+                Err(_) => (0u64, None),
+            }
+        };
+        out.push((fsname::decode(&name), is_dir, size, when));
+    }
+    Ok(out)
+}
+
+/// The entries of `dir` as the browser stores them: `(stored name, handle, is it a folder)`.
+///
+/// The name is NOT decoded.  [`read_entries`] decodes for everything that shows a name to a
+/// person or a model; a caller that must act on each entry exactly -- [`move_entry`]'s copy and
+/// removal -- takes the stored name from here, because two stored names can decode to one.
+async fn stored_entries(dir: &FileSystemDirectoryHandle)
+    -> Outcome<Vec<(String, JsValue, bool)>>
+{
+    let iter = dir.entries();
+    let mut out: Vec<(String, JsValue, bool)> = Vec::new();
     loop {
         let promise = res!(iter.next()
             .map_err(|e| err!("OPFS: directory iterator next() failed: {}.", js_err(&e); IO, File, Read)));
@@ -917,23 +1023,7 @@ async fn read_entries(dir: &FileSystemDirectoryHandle)
             .and_then(|v| v.as_string())
             .map(|k| k == "directory")
             .unwrap_or(false);
-
-        let (size, when) = if is_dir {
-            (0u64, None)
-        } else {
-            match handle.dyn_into::<FileSystemFileHandle>() {
-                Ok(fh) => {
-                    let file_val = res!(JsFuture::from(fh.get_file()).await
-                        .map_err(|e| err!("OPFS: get file '{}' failed: {}.", name, js_err(&e); IO, File, Read)));
-                    match file_val.dyn_into::<File>() {
-                        Ok(f)  => (f.size() as u64, file_stamp(&f)),
-                        Err(_) => (0u64, None),
-                    }
-                }
-                Err(_) => (0u64, None),
-            }
-        };
-        out.push((fsname::decode(&name), is_dir, size, when));
+        out.push((name, handle, is_dir));
     }
     Ok(out)
 }
@@ -966,11 +1056,35 @@ pub async fn list_dir_stamped(root: FileRoot, path: &str)
     read_entries(&dir).await
 }
 
+/// Delete the one regular file at `path` under `root`, and nothing else.
+///
+/// **The only removal a model's `file_delete` reaches.**  It asks for a FILE handle before it
+/// removes anything, so a folder -- empty or not -- is an error here whatever the caller passed,
+/// and there is no option to make it otherwise.  `Tool::FileDelete` refuses a folder in words
+/// before it gets this far; this is the floor under that sentence.
+pub(in crate::wasm) async fn delete_file(root: FileRoot, path: &str) -> Outcome<()> {
+    let handle = res!(resolve_root(root, path).await);
+    let components = res!(jail_components(path));
+    let (dir, leaf) = res!(open_parent(&handle, components).await);
+    if JsFuture::from(dir.get_file_handle(&leaf)).await.is_err() {
+        return Err(err!("OPFS: '{}' is not a file, so it was not removed.", path;
+            Invalid, Input, Path));
+    }
+    res!(JsFuture::from(dir.remove_entry(&leaf)).await
+        .map_err(|e| err!("OPFS: remove '{}' failed: {}.", leaf, js_err(&e); IO, File)));
+    announce_change(path);
+    Ok(())
+}
+
 /// Delete the entry at `path` under `root`.  With `recursive` set, a
 /// directory and all its contents are removed; otherwise a non-empty
 /// directory is rejected by the browser.  Errors if the entry or any
 /// parent does not exist.
-pub async fn delete_entry(root: FileRoot, path: &str, recursive: bool) -> Outcome<()> {
+///
+/// **Never for a model-reachable caller.**  Every caller is Daimond's own housekeeping or a
+/// deletion the user confirmed in the Files panel; a model's `file_delete` goes through
+/// [`delete_file`], which cannot remove a folder.
+pub(in crate::wasm) async fn delete_entry(root: FileRoot, path: &str, recursive: bool) -> Outcome<()> {
     let handle = res!(resolve_root(root, path).await);
     let components = res!(jail_components(path));
     let (dir, leaf) = res!(open_parent(&handle, components).await);
@@ -1001,3 +1115,36 @@ pub async fn exists(root: FileRoot, path: &str) -> Outcome<bool> {
     Ok(false)
 }
 
+
+// ── The doors a tool comes through ──────────────────────────────────────────
+//
+// Re-check R1, 2026-09-23: the write fence was a list of the paths each tool named, and a tool the
+// list forgot (`web_fetch` with a `to`) wrote past it.  So a tool no longer names a path to a door
+// that changes one: it hands over a [`Licence`], which only the fence mints
+// ([`crate::tools::ToolContext::licence`]), and the door acts on exactly the path the licence
+// names.  The plain doors above are `pub(in crate::wasm)`, so `crate::tools` -- where every tool
+// runs -- cannot reach them; Daimond's own record (the version store, the link sidecar, the log) is
+// written by this module's callers inside `crate::wasm`, through the plain doors, as it always was.
+
+/// [`write_file`], for a tool: the bytes go to the path `lic` names and nowhere else.
+pub async fn write_licensed(root: FileRoot, lic: &Licence, content: &[u8]) -> Outcome<()> {
+    write_file(root, lic.path(), content).await
+}
+
+/// [`delete_file`], for a tool: one regular file, the one `lic` names.
+pub async fn delete_licensed(root: FileRoot, lic: &Licence) -> Outcome<()> {
+    delete_file(root, lic.path()).await
+}
+
+/// [`create_dir`], for a tool.
+pub async fn create_dir_licensed(root: FileRoot, lic: &Licence) -> Outcome<()> {
+    create_dir(root, lic.path()).await
+}
+
+/// [`move_entry`], for a tool: both ends licensed, since a move removes one path and writes the
+/// other.  The source's licence covers everything under it ([`crate::tools::ToolContext::licence`]
+/// refuses a folder holding anything the turn may not change), which is what makes a folder's move
+/// no wider than its licence.
+pub async fn move_licensed(root: FileRoot, from: &Licence, to: &Licence) -> Outcome<()> {
+    move_entry(root, from.path(), to.path()).await
+}

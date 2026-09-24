@@ -553,8 +553,10 @@ console.log('\n3a. the user\'s own doors mark the file dirty');
 	check('writeOpenFile calls DaimondVersions.dirty', /DaimondVersions\.dirty\(/.test(w), w ? '' : 'not found');
 	// The FILES PANEL's delete, which is the one that keeps a body — not the sync
 	// helper that propagates another device's deletion, which is the first of the four
-	// `file_delete` calls in the file and has nothing to undo.
-	const site = SRC.indexOf("recursive: e.dir ? 'true' : 'false'");
+	// `file_delete` calls in the file and has nothing to undo. Anchored on the
+	// panel's own folder door, `Wasm.delete_folder`, which only the × handler calls;
+	// its file branch is the `file_delete` beside it.
+	const site = SRC.indexOf('Wasm.delete_folder(full)');
 	const around = site > 0 ? SRC.slice(site - 1500, site + 1500) : '';
 	check('the Files-panel delete captures the body and offers Undo',
 		/undoAble\(/.test(around) && /DaimondVersions\.dirty\(/.test(around),

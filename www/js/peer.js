@@ -629,6 +629,19 @@
 	function onCompile(fn) { _onCompile = fn; }
 	function onBuilt(fn)   { _onBuilt = fn; }
 
+	/// Does this envelope ask the device that collects it to RUN something -- a turn or
+	/// a compile -- rather than note something? The collector folds a note where it
+	/// collects it and starts work only after letting go of the mailbox lock (post.js
+	/// `takeRow`), because a runner calls back into the mailbox from inside its run.
+	function isWork(env) { return !!env && (env.t === T_ERRAND || env.t === T_COMPILE); }
+
+	/// What a device runs once at a time for a work envelope: the turn, so a re-hand of a
+	/// turn already running here waits for that run, or the compile.
+	function workKey(env) {
+		if (!env) return '';
+		return env.t === T_COMPILE ? 'compile:' + String(env.cid || '') : 'turn:' + String(env.turnId || '');
+	}
+
 	/// Verify a peeked envelope and, if it was authored by this account, hand it to
 	/// the registered runner. An envelope that does not verify is DROPPED with a
 	/// note, never run -- that is the forged-errand defence, applied at the one door
@@ -1095,11 +1108,14 @@
 		if (report && report.t === 'report') {
 			if (report.status === 'done')   return 'done';
 			if (report.status === 'parked') return 'parked';	// survivable: re-runs when a human is back
-			// UNDELIVERABLE is not terminal: the peer could not sync the chat and handed
-			// the turn back, and the dispatcher is running it locally now (or the backstop
-			// will). Keep the spinner ('claimed'), not a [Run here] failure, while that
-			// happens -- if the local recovery genuinely stalls the deadline still lands it.
-			if (report.status === 'undeliverable') return 'claimed';
+			// UNDELIVERABLE: the peer could not sync the chat and handed the turn back. A
+			// spinner ('claimed') only where this device will run it itself -- the same
+			// gate the recovery goes through (`recoverDecision`). Anywhere else nothing
+			// will ever pick it up (a non-sender, an ask answer, a hand-off past its
+			// deadline), so the tile says so and offers [Run here] rather than spin for ever.
+			if (report.status === 'undeliverable') {
+				return recoverDecision(turn, lease, false, selfId, n) ? 'claimed' : 'failed';
+			}
 			return 'failed';									// aborted / error / refused-spend: terminal
 		}
 		// A BLOCKER ON THE LEASE outranks everything the lease mode could say (it
@@ -1120,9 +1136,12 @@
 		// A lease that was taken then expired without a report is a peer that
 		// stopped mid-run (§6): failed, offer a local re-run.
 		if (lease && lease.mode !== 'released') return 'failed';
-		// No live lease and none reported: waiting, or nobody picked it up in time.
-		var deadline = leaseMs(turn.deadline);
-		if (deadline && n > deadline) return 'no-peer-awake';
+		// No live lease and none reported: waiting, or nobody picked it up in time. A
+		// placeholder carries no `deadline` of its own, so the errand's is read off its
+		// stamp; without that fallback a hand-off nobody took said "Sent to your other
+		// devices" for ever and never offered [Run here]. One with no stamp cannot be
+		// aged at all, and reads as expired, as it does to `watchDecision`.
+		if (handoffExpired(turn, n)) return 'no-peer-awake';
 		return 'dispatched';
 	}
 
@@ -1138,12 +1157,254 @@
 	/// no lease, or our own lease is reclaimable. This only decides whether to TRY;
 	/// the take-if-vacant lease is the money-safe arbiter at run time, so a peer that
 	/// claims between this decision and the local take still wins (and vice-versa).
+	///
+	/// AND ONLY A LIVE HAND-OFF OF THIS DEVICE'S OWN (2026-09-23). This decision was the
+	/// sole gate on re-executing a turn nobody had just asked for, and it asked neither
+	/// whose turn it was nor how old. The index it is fed from is rebuilt from EVERY
+	/// synced summary, so any device holding a placeholder synced from another could
+	/// run it, however stale: on 2026-09-22 at 13:37Z gilgamesh claimed and ran five
+	/// turns minted on 2026-09-17 (`mu4y7fa4-1-du152` first, in Diamond 19faba2f2212,
+	/// with the file deletes at 13:38:33Z) while its owner worked in another Diamond.
+	/// Two conditions now: the placeholder names THIS device as the one that sent it,
+	/// and the hand-off is still inside its window (`handoffExpired`: the errand's
+	/// deadline, never more than `DISPATCH_DEADLINE_MS` past the turn's birth). Past
+	/// that the person decides, from the tile: [Run here], or [Answer again] for the
+	/// answers below.
+	///
+	/// AN ANSWER TO A QUESTION IS NEVER RECOVERED. A turn whose prompt is an ask-card
+	/// answer (`Chose: …`, `Other: …`) means something only beside the card it answered;
+	/// run later as a bare prompt it is an instruction nobody gave. The 09-22 delete was
+	/// "Chose: Detach the paths", five days after the card. It is left for the person,
+	/// and its tile never offers [Run here]: [Answer again] opens the question again and
+	/// sends nothing (`dispatchControl`).
 	function recoverDecision(turn, lease, finished, selfId, now) {
 		if (!turn || turn.why !== REASON_DISPATCHED) return false;
 		if (finished) return false;
 		var n = now == null ? Date.now() : now;
+		if (!turn.dispatchedBy || String(turn.dispatchedBy) !== String(selfId)) return false;
+		if (isAskAnswer(turn.itext)) return false;
+		if (handoffExpired(turn, n)) return false;
 		if (liveLease(lease, n) && lease.holder !== String(selfId)) return false;	// a peer is on it
 		return true;
+	}
+
+	/// The two words an ask-card answer travels under, a wire format between the page
+	/// and the model (daimond.js `ASK_CHOSE`, `ASK_OTHER`), never translated.
+	var ASK_ANSWER_MARKS = ['Chose: ', 'Other: '];
+
+	/// Is this prompt an answer to an ask card rather than something typed?
+	function isAskAnswer(text) {
+		var t = String(text == null ? '' : text);
+		for (var i = 0; i < ASK_ANSWER_MARKS.length; i++) {
+			if (t.indexOf(ASK_ANSWER_MARKS[i]) === 0) return true;
+		}
+		return false;
+	}
+
+	/// The moment after which no device may start a handed-off turn: the placeholder's
+	/// own `deadline` where it carries one, else `DISPATCH_DEADLINE_MS` from its stamp,
+	/// which is when the errand it was sent with expires. 0 when it has none of these.
+	///
+	/// Never later than `DISPATCH_DEADLINE_MS` past the stamp, whatever `deadline` says:
+	/// no errand is sent with a longer one (`buildDispatch`), so a longer value is a
+	/// fault, and it must not buy a turn a longer life than the errand it rode on.
+	///
+	/// NOR LATER THAN THE WINDOW PAST THE TURN'S BIRTH (E-R1). A re-seat refreshes the
+	/// placeholder's `ts`, so the stamp alone let every re-seat buy another fifteen
+	/// minutes; the turn id and the placeholder's own `mid` are stamped once and kept,
+	/// so the whole chain of re-seats ends where a collector's `turnAgeVerdict` does.
+	function handoffDeadline(turn) {
+		var ts = leaseMs(turn && turn.ts);
+		var dl = leaseMs(turn && turn.deadline);
+		var born = turnBirth([turn && turn.iturn, turn && turn.mid], []);
+		var caps = [dl, ts ? ts + DISPATCH_DEADLINE_MS : 0, born ? born + DISPATCH_DEADLINE_MS : 0];
+		var out = 0;
+		for (var i = 0; i < caps.length; i++) if (caps[i] && (!out || caps[i] < out)) out = caps[i];
+		return out;
+	}
+
+	/// Is a handed-off turn past the point where any device may start it? Pure. Also
+	/// true when it cannot be aged (no stamp, no deadline, no birth), and when its stamp
+	/// or its birth lies more than `DISPATCH_DEADLINE_MS` in the future: the sending
+	/// device's clock ran fast, or stepped back since, and trusting that stamp would keep
+	/// the turn recoverable for the length of the skew.
+	function handoffExpired(turn, now) {
+		var n = now == null ? Date.now() : now;
+		var dl = handoffDeadline(turn);
+		if (!dl || n > dl) return true;
+		var ts = leaseMs(turn && turn.ts);
+		if (ts && ts > n + DISPATCH_DEADLINE_MS) return true;
+		var born = turnBirth([turn && turn.iturn, turn && turn.mid], []);
+		return !!born && born > n + DISPATCH_DEADLINE_MS;
+	}
+
+	// ── The age of a handed-off turn (E-R1, 2026-09-23) ────────
+	//
+	// On 2026-09-22 a tab still on an older build came back to the foreground and
+	// handed on a turn it had sent five days before. The re-hand carried a fresh `ts`
+	// and a fresh `deadline`; the desktop that collected it judged it by them, and ran
+	// it with nobody there. A deadline the sender writes is only as old as the send it
+	// rode on, so a turn is aged from its BIRTH, which no re-hand can refresh.
+
+	// Nothing Daimond wrote is older than this, so an id whose prefix reads earlier is
+	// not a time at all: `legacy-0000` parses as base 36 too.
+	var BIRTH_FLOOR_MS = Date.UTC(2020, 0, 1);
+
+	/// A millisecond stamp, or 0 where it is not a plausible one.
+	function plausibleMs(t) {
+		var n = leaseMs(t);
+		return (isFinite(n) && n >= BIRTH_FLOOR_MS) ? n : 0;
+	}
+
+	/// The moment an id was minted, read off its base-36 prefix (`newMid`, daimond.js),
+	/// or 0 for an id that carries none.
+	function midMs(id) {
+		var m = /^([0-9a-z]{8,9})-/.exec(String(id == null ? '' : id));
+		return m ? plausibleMs(parseInt(m[1], 36)) : 0;
+	}
+
+	/// When a turn was born, on the clock of the device that sent it: the earliest
+	/// plausible of the ids' prefixes and of the stamps, or 0 where none is plausible.
+	/// The earliest, because a re-hand can refresh a stamp but never make one older.
+	function turnBirth(ids, stamps) {
+		var best = 0, i, t;
+		for (i = 0; i < (ids || []).length; i++) {
+			t = midMs(ids[i]);
+			if (t && (!best || t < best)) best = t;
+		}
+		for (i = 0; i < (stamps || []).length; i++) {
+			t = plausibleMs(stamps[i]);
+			if (t && (!best || t < best)) best = t;
+		}
+		return best;
+	}
+
+	/// The birth stamps a device holds for a turn in its OWN copy of the chat: the
+	/// turn's user message (`mid === turnId`), and the dispatched placeholder, whose
+	/// `mid` a re-seat keeps (`markTurnDispatched` updates it in place). Pure.
+	function turnBirthHints(messages, turnId) {
+		var id = String(turnId || ''), out = [];
+		var msgs = Array.isArray(messages) ? messages : [];
+		for (var i = 0; i < msgs.length; i++) {
+			var m = msgs[i];
+			if (!m) continue;
+			if (m.role === 'user' && String(m.mid || '') === id && plausibleMs(m.ts)) out.push(plausibleMs(m.ts));
+			if (m.why === REASON_DISPATCHED && String(m.iturn || '') === id && midMs(m.mid)) out.push(midMs(m.mid));
+		}
+		return out;
+	}
+
+	/// The birth of an errand's turn: its id, the seed's copy of the turn's user
+	/// message, and whatever the collecting device holds itself (`hints`).
+	function errandBirth(e, hints) {
+		var stamps = Array.isArray(hints) ? hints.slice() : [];
+		var msgs = (e && e.seed && Array.isArray(e.seed.msgs)) ? e.seed.msgs : [];
+		for (var i = 0; i < msgs.length; i++) {
+			var sm = msgs[i];
+			if (sm && sm.role === 'user' && String(sm.mid || '') === String(e.turnId)) stamps.push(sm.ts);
+		}
+		return turnBirth([e && e.turnId], stamps);
+	}
+
+	/// Is a turn still inside the window a device may start it in, judged on this
+	/// device's clock? Pure. What a sender asks before it hands a turn on at all -- a
+	/// parked re-run, a step-away -- so it never posts an errand every collector would
+	/// refuse. False for a turn with no plausible birth.
+	function turnInWindow(ids, stamps, now) {
+		var n = now == null ? Date.now() : now;
+		var born = turnBirth(ids, stamps);
+		return !!born && born <= n + DISPATCH_DEADLINE_MS && n - born < DISPATCH_DEADLINE_MS;
+	}
+
+	/// May this device start a handed-off turn now? Pure, and the one age rule every
+	/// path to a run asks (`runErrand`): a turn starts only while it is younger than
+	/// `DISPATCH_DEADLINE_MS`, measured from its birth and never from a deadline the
+	/// sender wrote.
+	///
+	/// NO TWO DEVICES' CLOCKS ARE COMPARED. The age is two spans, each read on one
+	/// clock: birth to the errand's stamp on the sender's (`ts - birth`), then the post
+	/// to now on the relay's (`relayNow - rowTs`). A constant offset cancels inside each,
+	/// so a sender five days fast still reads its five-day-old turn as five days old and
+	/// one an hour slow still reads a fresh turn as fresh; the collector's own clock
+	/// would get both wrong. Each span is floored at zero, so a clock that went
+	/// backwards can never take age away.
+	///
+	/// `opts` is `{ rowTs, relayNow, births, now }`: the relay's arrival stamp for the
+	/// row, in Unix seconds; the relay's clock now, in ms (`DaimondPresence.relayNow`);
+	/// the birth stamps this device holds itself (`turnBirthHints`); and the local clock.
+	/// With no row -- a device recovering its own turn -- the second span is read on the
+	/// local clock, which is then the sender's own; with a row but no relay clock yet it
+	/// is read on the local clock too, and `clock` says so.
+	///
+	/// Answers `{ ok, why, age, birth, until, clock }`, `until` being the local moment
+	/// the turn ages out. `why` on a refusal: `unaged` (no plausible birth, or no stamp
+	/// to age it by), `clock-back` (born more than the window after it was sent: the
+	/// sender's clock stepped back between the two, as audit F4 reads a future stamp)
+	/// or `stale`.
+	function turnAgeVerdict(errand, opts) {
+		var e = errand || {}, o = opts || {};
+		var n = o.now == null ? Date.now() : leaseMs(o.now);
+		var birth = errandBirth(e, o.births);
+		var sent = plausibleMs(e.ts);
+		if (!birth || !sent) return { ok: false, why: 'unaged', age: 0, birth: birth, until: 0, clock: '' };
+		if (birth > sent + DISPATCH_DEADLINE_MS) {
+			return { ok: false, why: 'clock-back', age: 0, birth: birth, until: 0, clock: '' };
+		}
+		var span = Math.max(0, sent - birth);
+		// The relay stamps a row in Unix SECONDS (schema.rs `PostRow.ts`). A value already
+		// in milliseconds is taken as it is, so a change of unit can never read a row that
+		// sat for days as posted this instant.
+		var rowTs = leaseMs(o.rowTs);
+		var rowMs = rowTs >= 1e11 ? rowTs : rowTs * 1000;
+		var rel = (o.relayNow != null) ? plausibleMs(o.relayNow) : 0;
+		var since, clock;
+		if (rowMs > 0) {
+			clock = rel ? 'relay' : 'local';
+			since = Math.max(0, (rel || n) - rowMs);
+		} else {
+			clock = 'sender';
+			since = Math.max(0, n - sent);
+		}
+		var age = span + since;
+		if (age >= DISPATCH_DEADLINE_MS) return { ok: false, why: 'stale', age: age, birth: birth, until: 0, clock: clock };
+		return { ok: true, why: '', age: age, birth: birth, until: n + (DISPATCH_DEADLINE_MS - age), clock: clock };
+	}
+
+	/// The sentence a refused turn's `aborted` report carries home.
+	var STALE_TURN_WHY = 'This turn was sent more than ' + Math.round(DISPATCH_DEADLINE_MS / 60000)
+		+ ' minutes ago, so no device will start it unattended. Run it here if it is still wanted.';
+
+	/// Could a handed-off turn still send this device progress frames, so that it is
+	/// worth watching? Pure, and the bound on the watch set in daimond.js.
+	///
+	/// Written 2026-09-23 because nothing bounded it. A dispatched placeholder that no
+	/// peer ever answered was re-watched after every reload, with no age limit and no
+	/// check that any device held the turn, and each watch held a read open at the
+	/// gateway -- gilgamesh held two for twelve hours and its pulls slowed fifty-fold.
+	///
+	/// Frames come only from a device RUNNING the turn, so the answer is read off the
+	/// lease, which is the one record of who that is:
+	///  - finished (a done report, or the answer merged): nothing more is coming;
+	///  - a live lease held by ANOTHER device: that device is running it -- watch;
+	///  - a live lease held by THIS device: it runs here, and draws itself;
+	///  - a lease taken for this seat and no longer live: the runner stopped or handed
+	///    it back, and no device holds the turn;
+	///  - no claim yet: watch only while a peer may still claim it, which is the
+	///    errand's own deadline (`DISPATCH_DEADLINE_MS` from the dispatch). No peer
+	///    starts a turn past it (`leaseTakeFrom` refuses), so a placeholder older than
+	///    that with no live lease can never produce another frame.
+	/// A placeholder with no stamp at all cannot be aged, and is not watched.
+	function watchDecision(turn, lease, finished, selfId, now) {
+		if (!turn || turn.why !== REASON_DISPATCHED) return false;
+		if (finished) return false;
+		var n = now == null ? Date.now() : now;
+		if (liveLease(lease, n)) return lease.holder !== String(selfId);
+		// A claim made AFTER this seat was set (`renewedAt` is stamped at the take) that
+		// has since lapsed or been released: the runner is gone. A record older than the
+		// seat belongs to an earlier seating that a re-dispatch has superseded.
+		var ts = leaseMs(turn.ts);
+		if (lease && ts && leaseMs(lease.renewedAt) >= ts) return false;
+		return !handoffExpired(turn, n);
 	}
 
 	// ── Presence (dev/PEER_DESIGN.md §4.2, §7 step 7) ──────────
@@ -1170,6 +1431,10 @@
 	var DISPATCH_FRESH_MS = 90000;		// a peer beat older than this is not dispatched to (≈ 1.5 min)
 
 	var _presence = {};					// deviceId -> { name, lastSeen }
+	// How far the relay's clock leads this one, from the last presence answer that
+	// carried the server's `now`; null until one has. The relay's clock is the one an
+	// errand's arrival is stamped on, so it is what a collector ages the post by.
+	var _relaySkew = null;
 
 	/// The freshest peer in a presence map that is NOT this device and whose beat is
 	/// within the window, or null. The one pure helper both the UI and the
@@ -1366,6 +1631,9 @@
 	function presenceIngest(serverMap, serverNow) {
 		var recv = Date.now();
 		var skew = leaseMs(serverNow) - recv;	// how far the server clock leads ours
+		// Kept, for the age of a handed-off turn (`relayNow`): only from an answer that
+		// carried a real server clock, so an absent `now` never reads as a vast lead.
+		if (plausibleMs(serverNow)) _relaySkew = skew;
 		var next = {}, map = serverMap || {};
 		for (var id in map) {
 			if (!Object.prototype.hasOwnProperty.call(map, id)) continue;
@@ -1446,7 +1714,11 @@
 		return (r && r.name) || '';
 	}
 
-	function presenceForget() { _presence = {}; }
+	function presenceForget() { _presence = {}; _relaySkew = null; }
+
+	/// The relay's clock now, in ms, as the last presence answer measured it; null until
+	/// one has. What `turnAgeVerdict` reads the time since an errand's post on.
+	function relayNow() { return _relaySkew == null ? null : Date.now() + _relaySkew; }
 
 	/// Say that the presence view MOVED, so a surface drawn from it redraws at once
 	/// rather than on its own next timer. The seat line under the composer reads this:
@@ -1485,6 +1757,7 @@
 		awake:    presenceAwake,
 		name:     presenceName,
 		forget:   presenceForget,
+		relayNow: relayNow,
 	};
 
 	// ── Remote consent — attention, routing, the park bound ────
@@ -2641,8 +2914,9 @@
 	}
 
 	/// The arbitration. Stands down -- never runs -- when a live foreign lease
-	/// exists (the merge drops the claim), when the deadline has passed, or when
-	/// the CAS could not be won in bounds.
+	/// exists (the merge drops the claim), when the turn has aged out (`opts.until`,
+	/// or the deadline where no age verdict was passed), or when the CAS could not be
+	/// won in bounds.
 	///
 	/// The fold is `mergeLeases(MY claim /*local*/, server leases /*incoming*/)`:
 	/// the server's existing foreign lease is the INCOMING that beats my fresh
@@ -2655,8 +2929,27 @@
 		var tid    = String(turnId);
 		for (var attempt = 0; attempt < MAX_TAKE_TRIES; attempt++) {
 			var now = leaseNow(nowFn);
-			var deadline = leaseMs(o.deadline);
-			if (deadline && now > deadline) {
+			// A MISSING OR ZERO DEADLINE IS NOT "NO DEADLINE" (S6-2). Only an old build
+			// (or a hand-crafted envelope) posts an errand with no `deadline`; this build
+			// always stamps one (`buildDispatch`, above). Falling back to
+			// `ts + DISPATCH_DEADLINE_MS`, the same age `handoffDeadline` gives a
+			// deadline-less placeholder, ages a deadline-less errand exactly as it ages
+			// one that carries a real deadline, rather than letting a fresh runner accept
+			// it however stale.
+			var deadline = leaseMs(o.deadline) || (leaseMs(o.ts) ? leaseMs(o.ts) + DISPATCH_DEADLINE_MS : 0);
+			// A TURN IS JUDGED BY ITS BIRTH, NOT BY THE SENDER'S DEADLINE (E-R1). `until` is
+			// when `turnAgeVerdict` says the turn ages out, on THIS device's clock. The
+			// deadline the sender wrote is no judge: a re-hand refreshes it, and a sender
+			// more than the window slow had every fresh hand-off refused on it. The claim is
+			// held to the later of the two, because with the refusal gone a slow sender's
+			// deadline can already be past here, and a claim held to one TTL would read
+			// expired on every other device while the turn still ran (the >TTL double-run).
+			// A caller with no verdict -- a compile, a direct take -- keeps the old refusal.
+			var until = leaseMs(o.until);
+			if (until) {
+				if (now > until) return { won: false, why: 'stale-turn' };
+				if (until > deadline) deadline = until;
+			} else if (deadline && now > deadline) {
 				return { won: false, why: 'deadline' };
 			}
 			// A SETTLED lease is the tombstone of a turn a peer already finished
@@ -2667,12 +2960,14 @@
 			// reads before it takes, so it stands down here on the snapshot in hand.
 			var settledCur = snap && snap.leases ? snap.leases[tid] : null;
 			if (settledCur && settledCur.settled) return { won: false, why: 'settled' };
-			// The claim expiry is the errand's DEADLINE, not now + TTL, so the lease
-			// stays live for the whole turn WITHOUT a renew -- a busy turn cannot push a
-			// renew (sync.js:1077), so a TTL-capped claim would read expired elsewhere
-			// after 90s and be re-run (the >TTL double-run). A recovery errand carries
-			// no deadline (deadline 0), so it falls back to a single TTL, which is right:
-			// recovery is the owner running its own orphan, not a peer holding for long.
+			// The claim expiry is the errand's DEADLINE (real or derived above), not
+			// now + TTL, so the lease stays live for the whole turn WITHOUT a renew -- a
+			// busy turn cannot push a renew (sync.js:1077), so a TTL-capped claim would
+			// read expired elsewhere after 90s and be re-run (the >TTL double-run). An
+			// errand with neither a deadline nor a `ts` falls back to a single TTL. A
+			// recovery errand carries the placeholder's own deadline (`errandForRecovery`,
+			// 2026-09-23), so the refusal above stops a recovery of a hand-off that has
+			// expired, as it stops any other taker.
 			// The record carries `deadline` so every merge/clamp honours the same bound.
 			var claim = {
 				turnId: tid, eid: String(o.eid || ''), holder: holder,
@@ -3338,6 +3633,16 @@
 			diag('collect stand-down', 'turn=' + turnId + ' own dispatch');
 			return { ran: false, why: 'self-dispatched', trace: trace };
 		}
+		// AND A RECOVERY IS ONLY EVER OF THIS DEVICE'S OWN DISPATCH (2026-09-23).
+		// `allowSelf` lifts the refusal above for the device that sent the turn; it is
+		// not a licence to run somebody else's. The recovery errand carries the
+		// placeholder's real sender (`errandForRecovery`), so an orphan synced from
+		// another device stops here -- the path by which gilgamesh ran argonaut's.
+		if (d.allowSelf && String(e.dispatchedBy || '') !== String(d.selfId)) {
+			trace.push('not-own-recovery');
+			diag('collect stand-down', 'turn=' + turnId + ' recovery of a turn another device sent');
+			return { ran: false, why: 'not-own-recovery', trace: trace };
+		}
 
 		// D1(b) — a COMPLETED turn is not vacant-for-rerun. A released lease reads
 		// vacant (`liveLease` false), and `done` is transient before `released`, so a
@@ -3354,6 +3659,34 @@
 				diag('collect stand-down', 'turn=' + turnId + ' already done');
 				return { ran: false, why: 'already-done', trace: trace };
 			}
+		}
+
+		// THE AGE RULE (E-R1, 2026-09-23). A turn older than the window is never started,
+		// however fresh the errand that carries it: it is judged by its birth
+		// (`turnAgeVerdict`), never by the deadline a sender wrote. Asked after the three
+		// checks above, which post nothing -- so a sender is never told its own errand
+		// was refused, and a turn already answered is not reported aborted -- and before
+		// the nominee and the take, so nothing that could start a turn comes first. The
+		// refusal is ANSWERED with an `aborted` report, which every device counts as
+		// settled (`dispatchedTurnSettled`), so the sender stops re-handing it; the
+		// collector lets the row go, and the relay drops it.
+		var age = turnAgeVerdict(e, {
+			rowTs:    d.rowTs,
+			relayNow: (typeof d.relayNow === 'function') ? d.relayNow() : d.relayNow,
+			births:   (typeof d.births === 'function') ? d.births(e) : d.births,
+			now:      leaseNow(d.now),
+		});
+		diag('collect age', 'turn=' + turnId + ' age=' + Math.round(age.age / 1000) + 's'
+			+ ' born=' + (age.birth ? new Date(age.birth).toISOString() : 'none')
+			+ ' clock=' + (age.clock || 'none') + ' -> ' + (age.ok ? 'start' : 'REFUSE ' + age.why));
+		if (!age.ok) {
+			trace.push('stale-turn');
+			try {
+				if (d.post) await d.post(makeReport({ eid: e.eid, turnId: turnId, chatId: e.chatId,
+					status: 'aborted', why: STALE_TURN_WHY }));
+				trace.push('report');
+			} catch (err) { /* refused either way; the sender's own window ends it too */ }
+			return { ran: false, why: 'stale-turn', age: age, trace: trace };
 		}
 
 		// D1(c) — DEFER TO THE NOMINATED RUNNER. When the account has named an always-on
@@ -3400,7 +3733,7 @@
 		// 1. TAKE. Stand down -- never run -- if a peer already holds it.
 		var tTake = leaseNow(d.now);
 		var took = await leaseTake(turnId,
-			{ holder: d.selfId, eid: e.eid, deadline: e.deadline }, d.cas, d.now);
+			{ holder: d.selfId, eid: e.eid, deadline: e.deadline, ts: e.ts, until: age.until }, d.cas, d.now);
 		trace.push('take');
 		if (!took.won) {
 			diag('collect stand-down', 'turn=' + turnId + ' peer holds ('
@@ -3695,7 +4028,7 @@
 		// 1. TAKE. The same take-if-vacant CAS a turn uses, on the compile's own key, so
 		// two awake runners cannot each lay the book out and each grow a heap for it.
 		var took = await leaseTake(cid,
-			{ holder: d.selfId, eid: e.eid, deadline: e.deadline }, d.cas, d.now);
+			{ holder: d.selfId, eid: e.eid, deadline: e.deadline, ts: e.ts }, d.cas, d.now);
 		trace.push('take');
 		if (!took.won) {
 			return { ran: false, why: took.why || 'stood-down', holder: took.holder, trace: trace };
@@ -3871,6 +4204,10 @@
 		var n = now == null ? Date.now() : now;
 		var dl = leaseMs(env && env.deadline);
 		if (dl && n > dl + LEASE_TTL_MS) return false;		// past the last moment any peer may start it
+		// Or past the window from the turn's birth, which is where every collector now
+		// refuses it (`turnAgeVerdict`); one clock, since the errand is this device's own.
+		var born = errandBirth(env);
+		if (born && n > born + DISPATCH_DEADLINE_MS + LEASE_TTL_MS) return false;
 		if (_settled) {
 			try { if (await _settled(env)) return false; } catch (e) { /* on doubt, hold */ }
 		}
@@ -4114,9 +4451,18 @@
 		done:               '',			// the answer draws itself
 	};
 	/// The one control a dispatched turn's footer offers for a §5 state, or '' for none.
-	function dispatchControl(state) {
+	///
+	/// AN ANSWER IS NEVER SENT WITHOUT ITS QUESTION, NOT EVEN ON A CLICK. Where `turn`'s
+	/// prompt is an ask-card answer (`isAskAnswer`), a control that would send it after
+	/// the fact -- [Run here], a re-run -- becomes 'answeragain': the question it answered
+	/// is opened again and the person answers it fresh, beside its options. "Chose:
+	/// Detach the paths" run days later as a bare prompt is an instruction nobody gave
+	/// (the 2026-09-22 delete). Take-back stays: it is pre-claim, in the same sitting.
+	function dispatchControl(state, turn) {
 		var s = String(state || '');
-		return Object.prototype.hasOwnProperty.call(DISPATCH_CONTROLS, s) ? DISPATCH_CONTROLS[s] : '';
+		var c = Object.prototype.hasOwnProperty.call(DISPATCH_CONTROLS, s) ? DISPATCH_CONTROLS[s] : '';
+		if ((c === 'runhere' || c === 'rerun') && turn && isAskAnswer(turn.itext)) return 'answeragain';
+		return c;
 	}
 
 	window.DaimondPeer = {
@@ -4147,6 +4493,10 @@
 		/// (`peek`), then verify-and-run it (`absorb`). `takeRow` calls these.
 		peek:    peek,
 		absorb:  absorb,
+		/// Which envelopes are work, started after the collector lets go of the mailbox
+		/// lock, and the key a device runs one of at a time.
+		isWork:  isWork,
+		workKey: workKey,
 		/// Whether an errand is THIS device's own dispatch -- so the sender's collect
 		/// leaves it on the relay for the peer rather than acking it away.
 		isOwnDispatch: isOwnDispatch,
@@ -4183,6 +4533,19 @@
 		/// The §5 display state of a dispatched turn (dispatched/no-peer-awake/
 		/// claimed/running/done/failed). Pure; daimond.js only renders it.
 		uiState:       uiState,
+		watchDecision: watchDecision,
+		handoffDeadline: handoffDeadline,
+		handoffExpired:  handoffExpired,
+		isAskAnswer:   isAskAnswer,
+		/// THE AGE OF A HANDED-OFF TURN (E-R1): whether a device may start it now, judged
+		/// from its birth (`turnAgeVerdict`); the birth itself (`turnBirth`, `midMs`); the
+		/// stamps a device holds for it in its own copy of the chat (`turnBirthHints`); and
+		/// whether a sender may still hand it on at all (`turnInWindow`).
+		turnAgeVerdict: turnAgeVerdict,
+		turnBirth:      turnBirth,
+		turnBirthHints: turnBirthHints,
+		turnInWindow:   turnInWindow,
+		midMs:          midMs,
 		/// Should this turn be auto-handed to a peer, and which one? Pure; daimond.js
 		/// acts on it at send-time. And the shared "which peer is awake" answer.
 		autoDispatchDecision: autoDispatchDecision,

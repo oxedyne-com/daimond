@@ -94,7 +94,7 @@ if (!await stat(ROOT).then(s => s.isDirectory(), () => false)) {
 {
 	const want = (process.env.DAIMOND_FE2O3_REV || '').trim();
 	const man  = await readFile(join(ROOT, 'Cargo.toml'), 'utf8');
-	const revs = [...new Set((man.match(/^\s*oxedyne_fe2o3_[a-z_]+\s*=.*$/gm) || [])
+	const revs = [...new Set((man.match(/^\s*oxedyne_fe2o3_[a-z0-9_]+\s*=.*$/gm) || [])
 		.map(l => (/\brev\s*=\s*"([0-9a-f]+)"/.exec(l) || [])[1] || '')
 		.filter(Boolean))];
 	if (want && (revs.length !== 1 || revs[0] !== want)) {

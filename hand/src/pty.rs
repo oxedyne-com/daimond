@@ -523,6 +523,7 @@ impl PtySessions {
             plan: plan.clone(),
             tty:  true,
             act:  Act::Exec,
+            meter: false,
         }));
 
         let mut cmd = Command::new(res!(self.launcher.prog()));

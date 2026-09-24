@@ -1901,6 +1901,7 @@ async fn world_up(job: &Job, tx: &Sender<Resp>) -> Result<WorldUp, String> {
             net:  true,
         },
         toolkits:   Vec::new(),
+        meter:    None,
     }, &[
         fmt!("fence:none"),
         fmt!("verify:world"),
@@ -2179,6 +2180,7 @@ async fn once(
             net:  true,
         },
         toolkits:   Vec::new(),
+        meter:    None,
     }, &[
         fmt!("fence:none"),
         fmt!("verify:tracked-script"),

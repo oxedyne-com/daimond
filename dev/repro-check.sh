@@ -61,7 +61,7 @@ set -e
 
 # Every fe2o3 revision a manifest pins, one per line, however many crates name it.
 manifest_revs() {
-	grep -E '^[[:space:]]*oxedyne_fe2o3_[a-z_]+[[:space:]]*=' "$1" 2>/dev/null \
+	grep -E '^[[:space:]]*oxedyne_fe2o3_[a-z0-9_]+[[:space:]]*=' "$1" 2>/dev/null \
 		| sed -n 's/.*\brev[[:space:]]*=[[:space:]]*"\([0-9a-f]*\)".*/\1/p' | sort -u
 }
 
@@ -155,15 +155,14 @@ if [ "$HERE_BUILD" != "$CLONE_BUILD" ]; then
 fi
 echo "   both manifests name build $HERE_BUILD"
 
-# …and WHICH fe2o3 the clone is pinned to, when the run has settled one. The hand's
-# manifest is the one the carve derives, so it is the one that can have been carved
-# against a moved HEAD; the root manifest is the mirror's own hand-maintained file
-# and is reported rather than refused, since it is the wasm's pin and moves on a
-# human's say-so.
+# …and WHICH fe2o3 the clone is pinned to, when the run has settled one. Both
+# manifests. The root one is the wasm's, and until 2026-09-24 it was only REPORTED
+# here, as the mirror's own file moved on a human's say-so -- which is how every
+# bundle sealed from 2026-09-15 was built against ccf9c2c while the runs that sealed
+# them pinned something else. The carve writes its revisions now, so a clone pinned
+# anywhere but here is a carve that did not run, and it is refused like the hand.
 pin_matches_or_die "the clone's hand" hand/Cargo.toml
-if [ -n "${DAIMOND_FE2O3_REV:-}" ]; then
-	printf '   the clone'"'"'s root Cargo.toml pins: %s\n' $(manifest_revs Cargo.toml)
-fi
+pin_matches_or_die "the clone's client" Cargo.toml
 if [ "$STATIC_ONLY" = 1 ]; then
 	# The www-only fast path: reuse the wasm rather than rebuild it. The clone is a
 	# fresh checkout of the committed mirror, so it carries the new static www and

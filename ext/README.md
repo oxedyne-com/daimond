@@ -226,5 +226,7 @@ own — so it is a noun phrase in every language, never a sentence.
 
 `dev/verify_ext_i18n.mjs` holds all of this to account.
 
-The signing key lives outside the repository, at
-`../../daimond-hands-key.pem`, and belongs in no commit.
+The signing key lives outside the `~/usr` tree, at
+`~/.config/oxedyne/daimond/daimond-hands-key.pem` (700 folder, 600 file), and
+belongs in no commit. It was moved there on 2026-09-23 because a key inside
+`~/usr` is one `ore init` away from being captured.

@@ -502,17 +502,19 @@
 		return out;
 	}
 
-	/// Verify an Ed25519 signature under a raw public key.
+	/// Verify a signature this account's key made, under that key as hex.
 	///
-	/// Here rather than in identity.js because identity.js has no such call: its
-	/// `verify` takes a passphrase and answers whether the wrapping key derives,
-	/// which is a different question entirely. A public-key signature check needs
-	/// no unlock and no secret, so it is safe to do from anywhere — but it is
-	/// generic, and it should be lifted into identity.js beside `sign`.
+	/// Through `DaimondIdentity.verifySig`, the counterpart `sign` has had since
+	/// this was written, and not by a WebCrypto call of this file's own: that one
+	/// knew only WebCrypto Ed25519, so on a browser without it every edge failed
+	/// the replay and a matched person was drawn "new" -- on exactly the browsers
+	/// the pure-JS fallback lets an account be created and opened on. One engine
+	/// split, in the file that holds the signing key, serves both.
 	async function verifySig(pubHex, sigB64, data) {
+		var id = window.DaimondIdentity;
+		if (!id || typeof id.verifySig !== 'function') return false;
 		try {
-			var key = await crypto.subtle.importKey('raw', unhex(pubHex), { name: 'Ed25519' }, false, ['verify']);
-			return await crypto.subtle.verify({ name: 'Ed25519' }, key, b64dec(sigB64), data);
+			return await id.verifySig(unhex(pubHex), String(sigB64 || ''), data);
 		} catch (e) {
 			return false;
 		}

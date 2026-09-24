@@ -42,7 +42,13 @@ async fn run() -> Outcome<()> {
     let ctx = ToolContext { workspace: ws, executor: Executor::local_default(), cwd: String::new(), path_prefix: String::new(), root: oxedyne_daimond::tools::FileRoot::Workspace, read_seen: oxedyne_daimond::tools::new_read_cache(), no_write: Vec::new(),
         // The Diamond this turn belongs to. A smoke run belongs to none, which is
         // the same thing an ordinary chat says.
-        daimon_of: String::new() };
+        daimon_of: String::new(),
+        // Whose store keeps what a turn replaces or removes. None here, as for the
+        // Files panel: the version store is the browser's, and this workspace is the
+        // run's own scratch directory.
+        keeper: String::new(),
+        // Marked places not yet in force on this device: there are no marks at all.
+        unconfirmed: Vec::new() };
     let registry = ToolRegistry::new(Tool::defaults(), ctx);
 
     let mut session = Session::new("smoke".to_string(), "Smoke".to_string(),
@@ -64,9 +70,12 @@ async fn run() -> Outcome<()> {
             // whose tool was refused prints the same 200 characters as one that
             // worked, and telling them apart by reading the prose is the defect the
             // outcome field was added to end.
-            AgentEvent::ToolResult { name, result, outcome } => {
+            // And where a destructive call's path sat (`PathClass::wire`), empty for any
+            // other call: a delete refused in a mark reads differently from one in scratch.
+            AgentEvent::ToolResult { name, result, outcome, class } => {
                 let r = if result.len() > 200 { &result[..200] } else { &result };
-                println!("[tool_result] {} {} -> {}", name, outcome.wire(), r);
+                let at = if class.is_empty() { String::new() } else { format!(" [{}]", class) };
+                println!("[tool_result] {} {}{} -> {}", name, outcome.wire(), at, r);
             }
             AgentEvent::Done => println!("\n[done]"),
             AgentEvent::Error(e) => println!("\n[error] {}", e),
@@ -105,6 +114,11 @@ async fn run() -> Outcome<()> {
             // The working, not the answer.  Printed whole, because a smoke run is read
             // by a person deciding whether the turn went the way they meant.
             AgentEvent::Thinking(text) => println!("\n[thinking] {}", text),
+            // What the provider said about the round it just ended, for tracing a cut or a
+            // silent stop to its own logs; `stalled` is a round the stream went quiet on.
+            AgentEvent::RoundMeta { gen_id, finish_reason, native_finish_reason, provider, stalled } =>
+                println!("\n[round] {} finish={} native={} provider={}{}", gen_id, finish_reason,
+                    native_finish_reason, provider, if stalled { " (stalled)" } else { "" }),
             // How the turn ended, and what it did.  Printed rather than dropped for the
             // reason every other arm here is: a smoke run is read by somebody deciding
             // whether the turn went the way they meant, and "answered with 4 calls, 1
@@ -112,10 +126,12 @@ async fn run() -> Outcome<()> {
             // `malformed` counts rounds re-sent because a tool call arrived as text
             // rather than a real call -- a wire fault, not a refusal, and a smoke run
             // that hid it would read a leaked call as an ordinary answer.
-            AgentEvent::Ended { how, offered, rounds, calls, refused, failed, missing, malformed } =>
+            // `reasoned` counts rounds re-sent because a reply reasoned and answered nothing.
+            AgentEvent::Ended { how, offered, rounds, calls, refused, failed, missing, malformed,
+                reasoned } =>
                 println!("\n[ended] {} — {} tool(s) offered, {} round(s), {} call(s), \
-                    {} refused, {} failed, {} malformed{}",
-                    how, offered, rounds, calls, refused, failed, malformed,
+                    {} refused, {} failed, {} malformed, {} reasoned{}",
+                    how, offered, rounds, calls, refused, failed, malformed, reasoned,
                     if missing.is_empty() { String::new() }
                     else { format!(", missing: {}", missing.join(" ")) }),
         }

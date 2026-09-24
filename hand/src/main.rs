@@ -939,6 +939,9 @@ fn id_of(resp: &Resp) -> Option<String> {
         Resp::Output  { id, .. }	=> Some(id.clone()),
         Resp::Closed  { id, .. }	=> Some(id.clone()),
         Resp::Filed   { id, .. }	=> Some(id.clone()),
+        Resp::Held    { id, .. }	=> Some(id.clone()),
+        Resp::Metered { id, .. }	=> Some(id.clone()),
+        Resp::Restored { id, .. }	=> Some(id.clone()),
         // A listing is about every run at once, so it is about no single one.
         Resp::Runs    { .. }		=> None,
         // A folder listing is about no run at all.
@@ -1160,6 +1163,8 @@ fn cut(resp: &Resp) -> Outcome<Option<(Resp, String)>> {
         },
         Resp::Hello { .. } | Resp::Started { .. } | Resp::Ended { .. }
         | Resp::Opened { .. } | Resp::Closed { .. } => Ok(None),
+        // Bounded by construction: five paths at most, and two numbers.
+        Resp::Held { .. } | Resp::Metered { .. } | Resp::Restored { .. } => Ok(None),
         // Composed by this binary from its own refusal, so it is a sentence and not a
         // transcript. Nothing here is long enough to need cutting, and a cut one would be
         // the reason a hand will not start, truncated.
@@ -1216,6 +1221,9 @@ fn kind_of(resp: &Resp) -> &'static str {
         Resp::Dirs    { .. }	=> "dirs",
         Resp::Granted { .. }	=> "granted",
         Resp::Filed   { .. }	=> "filed",
+        Resp::Held    { .. }	=> "held",
+        Resp::Metered { .. }	=> "metered",
+        Resp::Restored { .. }	=> "restored",
         Resp::Fault   { .. }	=> "fault",
     }
 }
@@ -1532,6 +1540,12 @@ impl Desk {
         // this cap falls back to the two-item choice, which is what every build before this one
         // had.
         caps.push(fmt!("browse:dirs"));
+        // A daimon's command is held after `meter::BUDGET` removals of files that existed
+        // before the turn, and each is kept in the trash first. Or it does not run: a
+        // launcher that cannot install the meter refuses the command.
+        if cfg!(target_os = "linux") {
+            caps.push(fmt!("meter:deletes"));
+        }
         for c in &self.term_ceilings {
             if c != &self.root {
                 caps.push(fmt!("terminal-ceiling:{}", c.display()));
@@ -2264,6 +2278,40 @@ impl Desk {
                     },
                     Req::Verify { .. } => res!(self.verify(req).await),
                     Req::Signal { .. } => res!(self.signal(&req).await),
+                    Req::Release { ref id, allow } => {
+                        let reached = match self.runner.release(id, allow) {
+                            Ok(r)  => r,
+                            Err(_) => false,
+                        };
+                        if !reached && !self.say(Resp::Error {
+                            id:      Some(id.clone()),
+                            message: fmt!(
+                                "Nothing is being held under '{}': the command has ended, or it \
+                                was never metered.", id),
+                        }) {
+                            return Ok(Ending::Stopped(fmt!("the page stopped listening")));
+                        }
+                    },
+                    Req::Restore { ref id, since_ms } => {
+                        let ctl = self.ctl.clone();
+                        let id = id.clone();
+                        tokio::spawn(async move {
+                            let done = tokio::task::spawn_blocking(move || {
+                                match daimond_hand::meter::trash_root() {
+                                    Ok(root) => daimond_hand::meter::restore(&root, since_ms),
+                                    Err(e)   => Err(e),
+                                }
+                            }).await;
+                            let resp = match done {
+                                Ok(Ok((restored, skipped))) => Resp::Restored {
+                                    id, restored, skipped,
+                                },
+                                Ok(Err(e)) => Resp::Error { id: Some(id), message: e.msgs().join(" ") },
+                                Err(e)     => Resp::Error { id: Some(id), message: fmt!("{}", e) },
+                            };
+                            let _ = ctl.send(resp).await;
+                        });
+                    },
                     Req::Runs => res!(self.runs().await),
                     Req::Dirs { path } => res!(self.dirs(&path).await),
                     Req::Grant { path } => res!(self.grant(&path).await),
@@ -2317,7 +2365,8 @@ impl Desk {
 /// * `spec` - The fence to carry instead.
 fn with_fence(req: Req, spec: daimond_hand::wire::FenceSpec) -> Req {
     match req {
-        Req::Exec { id, argv, cwd, env, stdin, timeout_ms, capture, toolkits, .. } => Req::Exec {
+        Req::Exec { id, argv, cwd, env, stdin, timeout_ms, capture, toolkits, meter, .. } => Req::Exec {
+            meter,
             id,
             argv,
             cwd,
@@ -3008,6 +3057,7 @@ mod tests {
             capture:    Capture::Both,
             fence:      arrived,
             toolkits:   Vec::new(),
+            meter:    None,
         };
         match with_fence(exec, guarded.clone()) {
             Req::Exec { fence, .. } => assert_eq!(guarded, fence),
@@ -3305,6 +3355,7 @@ mod tests {
                 net:  true,
             },
             toolkits: Vec::new(),
+            meter:    None,
         }
     }
 

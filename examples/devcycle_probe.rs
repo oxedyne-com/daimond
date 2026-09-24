@@ -1521,6 +1521,10 @@ fn one_task(
         read_seen:   oxedyne_daimond::tools::new_read_cache(),
         no_write:    bounds,
         daimon_of:   String::new(),
+        // Nobody's store keeps copies on a native run: the version store is the browser's.
+        keeper:      String::new(),
+        // The one mark is made here and now, so nothing waits to be confirmed.
+        unconfirmed: Vec::new(),
     };
     let registry = ToolRegistry::new(Tool::defaults(), ctx);
 
@@ -1548,7 +1552,8 @@ fn one_task(
                 AgentEvent::Text(text) => reply.push_str(&text),
                 AgentEvent::ToolCall { .. } => s.calls += 1,
                 // The OUTCOME, never the prose. `CONTRACT_OUTCOME.md` §3.
-                AgentEvent::ToolResult { name, result, outcome } => {
+                // Where a destructive call's path sat is not what this probe measures.
+                AgentEvent::ToolResult { name, result, outcome, class: _ } => {
                     let (name2, result2) = (name.clone(), result.clone());
                     s.bytes += result.len();
                     if result.len() > s.worst.1 {

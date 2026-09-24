@@ -66,13 +66,22 @@ landlock = "0.4.7"
 # crate, at the prctl and syscall; Daimond's own code keeps none.
 seccompiler = "0.5.0"
 
+# The deletion meter (src/meter.rs). Seccomp user notification needs the NEW_LISTENER
+# install and three ioctls; `seccompiler` has no notify action, rustix does not wrap
+# seccomp, and doing it by hand means `unsafe`. This is a safe binding over the system's
+# `libseccomp.so.2`, present wherever systemd is. Approved by the owner on 2026-09-23.
+# Three packages reach the binary (libseccomp, libseccomp-sys, cfg-if); bitflags and
+# libc were already here. `build.rs` lets it link where only the runtime library is
+# installed, which is the common case.
+libseccomp = "0.4.0"
+
 # The terminal. A controlling terminal needs setsid + TIOCSCTTY and a resize needs
 # TIOCSWINSZ; `nix` 0.31 wraps none of the three, offering only ioctl macros that
 # generate `unsafe fn`, so the choice was this crate or breaking the no-unsafe rule.
 # Four packages reach the binary (rustix, linux-raw-sys, bitflags, and socket2 via
 # tokio's `net`, which AsyncFd needs).
 [target.'cfg(unix)'.dependencies]
-rustix = { version = "1.1", features = ["fs", "process", "pty", "termios"] }
+rustix = { version = "1.1", features = ["event", "fs", "process", "pty", "termios"] }
 
 [profile.release]
 opt-level = "z"

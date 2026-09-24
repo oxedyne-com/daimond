@@ -758,6 +758,10 @@ export function clearChats(s) {
 }
 
 /// Get past the passphrase gate, creating the identity on first run.
+/// How long `signInAs` waits for the identity gate, or an already-open tab, before calling the
+/// boot stuck. `DAIMOND_SIGNIN_WAIT_MS` moves it.
+const SIGN_IN_WAIT_MS = Number(process.env.DAIMOND_SIGNIN_WAIT_MS) || 120000;
+
 export async function signInAs(s, name) {
 	const { page } = s;
 	// ALREADY IN, AND NOTHING TO SIGN. Since the stay-unlocked-across-reload work
@@ -794,8 +798,13 @@ export async function signInAs(s, name) {
 		try { return DaimondIdentity.isUnlocked() ? 'open' : 'drawn-but-locked'; }
 		catch (e) { return 'drawn-but-locked'; }
 	}).catch(() => 'booting');
+	// TWO MINUTES, NOT FIFTEEN SECONDS. A debug bundle (`build-wasm.sh --dev`, 23 MB) on a
+	// machine at load 40 put its gate up 45 seconds after the app was drawn, on 2026-09-23,
+	// and four runs of a verifier against the deployed build reported a stuck boot that was
+	// only a slow one. The wait ends the moment the gate or an open tab appears, so a fast
+	// boot pays nothing for it; only a boot that really is stuck takes longer to say so.
 	let state = 'booting';
-	for (const t0 = Date.now(); Date.now() - t0 < 15000; ) {
+	for (const t0 = Date.now(); Date.now() - t0 < SIGN_IN_WAIT_MS; ) {
 		state = await look();
 		if (state === 'gate' || state === 'open') break;
 		await page.waitForTimeout(250);
@@ -805,7 +814,7 @@ export async function signInAs(s, name) {
 		return;										// the tab never left; there is nothing to unlock
 	}
 	if (state !== 'gate') {
-		throw new Error('sign-in: after 15s there is no gate to drive and no unlocked identity either'
+		throw new Error('sign-in: after ' + Math.round(SIGN_IN_WAIT_MS / 1000) + 's there is no gate to drive and no unlocked identity either'
 			+ ' (state: ' + state + ').'
 			+ (state === 'drawn-but-locked'
 				? ' The app is drawn and marked ready while DaimondIdentity.isUnlocked() is false, so'
@@ -838,7 +847,7 @@ export async function signInAs(s, name) {
 	// worry about (verified), so bypassing actionability is safe here.
 	await page.evaluate(() => document.getElementById('id-primary').click());
 	// The identity modal closes when it takes; if it does not, say why.
-	await page.waitForSelector('#identity-modal', { state: 'hidden', timeout: 15000 })
+	await page.waitForSelector('#identity-modal', { state: 'hidden', timeout: SIGN_IN_WAIT_MS })
 		.catch(async () => {
 			const why = await page.evaluate(() =>
 				(document.getElementById('id-error') || {}).textContent || '(no message)');

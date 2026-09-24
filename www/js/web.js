@@ -1354,5 +1354,13 @@
 			if (o && o.late > 0) LATE_WAIT = o.late;
 			return { open: OPEN_WAIT, late: LATE_WAIT };
 		},
+		/// Test only. Raises the real "Yes, do it" dialog through the app's own
+		/// wired `confirm` -- the same function `confirmAndRetry` calls when the
+		/// extension flags a consequential act -- without a real extension to flag
+		/// one. Driving it from here exercises the production callback daimond.js
+		/// installed at boot, not a second copy of it.
+		_confirmForTest: function (reason) {
+			return deps.confirm ? deps.confirm(String(reason || '')) : Promise.resolve(false);
+		},
 	};
 })();

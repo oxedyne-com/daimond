@@ -796,6 +796,13 @@
 				     here only until the first render, so the frame does not flash on a
 				     page with no chat open. -->
 				<div class="arte-list chat-attach-strip" id="chat-attachments" style="display:none"></div>
+				<!-- MARKS NOT IN FORCE ON THIS DEVICE, above the composer on both faces of a
+				     Diamond and on a chat. A mark applies only on the device it was made or
+				     confirmed on (2026-09-23), so at that deploy every existing mark went
+				     inactive at once, and the only sign was a paperclip tooltip a touch screen
+				     never shows. Said here, in ink, with the press that puts each one back.
+				     Filled by `renderMarkNotice`; hidden while there is nothing to confirm. -->
+				<div class="mark-notice" id="mark-notice" aria-live="polite" hidden></div>
 				<div class="chat-input-bar">
 					<textarea id="chat-input" placeholder="Type a message…" rows="1" data-i18n-placeholder="chat.input_ph"></textarea>
 					<button id="chat-send" title="Send" data-i18n-title="chat.send" aria-label="Send" data-i18n-aria-label="chat.send">➤</button>
@@ -1790,8 +1797,9 @@
      before any identity exists to hold it. -->
 <script src="js/wordlist.js"></script>
 <!-- The pure-JS Ed25519/X25519 fallback, before identity.js so it is present
-     when an unlock on an engine without WebCrypto for those curves needs it.
-     Vendored noble-curves loads first; curvefallback.js wraps it. -->
+     when creating or unlocking an account on an engine without WebCrypto for
+     those curves needs it. Vendored noble-curves loads first; curvefallback.js
+     wraps it. -->
 <script src="js/vendor/noble-curves.min.js"></script>
 <script src="js/curvefallback.js"></script>
 <script src="js/identity.js"></script>

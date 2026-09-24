@@ -9,9 +9,18 @@
    instead of in plaintext.
 
    Everything here uses the browser-native WebCrypto API
-   (`crypto.subtle`) only — no external dependencies, no CDN, no
-   bundler. The single global `window.DaimondIdentity` is attached at
-   the bottom, matching the IIFE-module convention of daimond.js.
+   (`crypto.subtle`), and the vendored pure-JS Ed25519/X25519 in
+   curvefallback.js only where an engine's WebCrypto lacks those
+   curves — no CDN, no bundler. The single global
+   `window.DaimondIdentity` is attached at the bottom, matching the
+   IIFE-module convention of daimond.js.
+
+   THE SIGNING KEY IS Ed25519 ON EVERY ENGINE (the owner's ruling of
+   2026-09-23, D-20260923-46). No account is created on another
+   curve: an engine without WebCrypto Ed25519 gets the same key from
+   the pure-JS fallback, and a failure that is not a missing feature
+   is raised rather than answered with a different key. See
+   `generateSigningKey`.
 
    THREAT MODEL
    ------------
@@ -71,7 +80,7 @@
 	var K_SALT = 'daimond-id-salt';		// base64 PBKDF2 salt.
 	var K_PUB  = 'daimond-id-pub';		// base64 raw public key (device identity).
 	var K_PRIV = 'daimond-id-priv';		// base64 wrapped (encrypted) pkcs8 private key.
-	var K_ALG  = 'daimond-id-alg';		// 'Ed25519' | 'ECDSA-P256'.
+	var K_ALG  = 'daimond-id-alg';		// 'Ed25519'. 'ECDSA-P256' is still read, never minted.
 	var K_FP   = 'daimond-id-fp';		// CACHED fingerprint rendering. See fingerprint().
 	var K_NAME = 'daimond-id-name';		// the user's chosen display name.
 	var K_HDL  = 'daimond-id-handle';	// the ACCOUNT's public handle: {h, t}. See below.
@@ -195,6 +204,14 @@
 		return out;
 	}
 
+	/// Overwrite key material that is finished with. Best effort: the engine may
+	/// have copied it, but this shortens the time it sits readable.
+	function wipe(bytes) {
+		if (bytes && typeof bytes.fill === 'function') {
+			try { bytes.fill(0); } catch (e) { /* frozen or detached */ }
+		}
+	}
+
 	// ── Capability probe ───────────────────────────────────────
 
 	/// True when the browser exposes the WebCrypto surface this
@@ -212,6 +229,18 @@
 	function curveFallback() {
 		var f = (typeof window !== 'undefined' && window.DaimondCurveFallback) || null;
 		return (f && f.available()) ? f : null;
+	}
+
+	/// Is this rejection WebCrypto saying the engine does not implement the
+	/// algorithm, rather than the call failing?
+	///
+	/// The spec's algorithm normalisation answers a name the engine does not know
+	/// with NotSupportedError, and that is exactly what Chrome before 137, Firefox
+	/// before 129 and Safari before 17 answer for Ed25519. It is the one answer
+	/// that means "missing feature". Every other rejection is a genuine failure,
+	/// which is raised as it is and never answered with a different key.
+	function notSupported(e) {
+		return !!e && e.name === 'NotSupportedError';
 	}
 
 	/// Does this engine implement Ed25519 signing in WebCrypto? Probed by
@@ -455,31 +484,62 @@
 		]);
 	}
 
-	/// Generate the device signing keypair. Ed25519 is preferred;
-	/// browsers that do not implement it throw, and we fall back to
-	/// ECDSA over P-256. Returns `{ pair, alg }` where `alg` is the
-	/// tag stored in localStorage and consulted on every sign/import.
-	async function generatePair() {
+	/// Make the account's signing key: Ed25519, on every engine. Answers
+	/// `{ pkcs8, pub }`, the 48-byte pkcs8 private key and the 32-byte raw public
+	/// key, which are the same bytes whichever of the two paths below made them.
+	///
+	/// WebCrypto makes it wherever the engine implements Ed25519. Where it answers
+	/// NotSupportedError, the pure-JS fallback makes it from 32 random bytes, in
+	/// the pkcs8 WebCrypto emits, so a modern browser later opens the account
+	/// natively. Nothing else falls back. Until 2026-09-23 ANY rejection here,
+	/// a missing feature or not, silently made an ECDSA P-256 key instead, and
+	/// that account signed P-256 for good on every device later linked to it.
+	/// Now a rejection that is not a missing feature is thrown as it is, and an
+	/// engine that has neither WebCrypto Ed25519 nor the fallback throws the
+	/// error `unsupportedError` makes.
+	async function generateSigningKey() {
 		try {
 			var pair = await crypto.subtle.generateKey(
 				{ name: 'Ed25519' },
-				true,					// extractable so we can wrap the private key.
+				true,					// extractable, so the private key can be wrapped.
 				['sign', 'verify'],
 			);
-			return { pair: pair, alg: 'Ed25519' };
+			return {
+				pkcs8: new Uint8Array(await crypto.subtle.exportKey('pkcs8', pair.privateKey)),
+				pub:   new Uint8Array(await crypto.subtle.exportKey('raw', pair.publicKey)),
+			};
 		} catch (e) {
-			// Ed25519 unsupported on this engine — fall back to P-256.
-			var p = await crypto.subtle.generateKey(
-				{ name: 'ECDSA', namedCurve: 'P-256' },
-				true,
-				['sign', 'verify'],
-			);
-			return { pair: p, alg: 'ECDSA-P256' };
+			if (!notSupported(e)) throw e;
+		}
+		var fb = curveFallback();
+		if (!fb) throw unsupportedError();
+		var seed = fb.randomEdSeed();
+		try {
+			return {
+				pkcs8: fb.edPkcs8FromSeed(seed),
+				pub:   new Uint8Array(fb.edPublicKey(seed)),
+			};
+		} finally {
+			wipe(seed);			// the pkcs8 holds its own copy.
 		}
 	}
 
+	/// The error for an engine that can make no Ed25519 key, having neither
+	/// WebCrypto Ed25519 nor the pure-JS fallback, or cannot hold the one it made.
+	/// `reason` is what the create screen reads to say so, rather than a bare
+	/// "could not create".
+	function unsupportedError() {
+		var e = new Error(tOr('identity.err_create_unsupported',
+			'This browser cannot do the cryptography a Daimond account needs (Ed25519). '
+			+ 'Update your browser, or create the account in a newer one.'));
+		e.reason = 'unsupported';
+		return e;
+	}
+
 	/// The WebCrypto algorithm descriptor for importing a private key
-	/// of the stored algorithm from its pkcs8 encoding.
+	/// of the stored algorithm from its pkcs8 encoding. 'ECDSA-P256' is
+	/// still read, for an account minted before every account was
+	/// Ed25519; none is minted now.
 	function importAlg(alg) {
 		return alg === 'Ed25519'
 			? { name: 'Ed25519' }
@@ -504,13 +564,13 @@
 	// One key doing both jobs cannot be retired for the first without abandoning
 	// the second.
 	//
-	// X25519 AND NOTHING ELSE. The signing pair falls back to ECDSA P-256 on an
-	// engine without Ed25519, and this one deliberately does not fall back at all.
-	// An identity card fixes the sealing key at EXACTLY 32 bytes; a raw P-256
-	// public key is 65. A fallback key would therefore be a key that works until
-	// the moment somebody tries to put it in a card, which is worse than not
-	// having one: this way `sealingKeyRaw()` answers null and the reason can be
-	// said out loud.
+	// X25519 AND NOTHING ELSE, as the signing pair is Ed25519 and nothing else:
+	// neither falls back to another curve. An identity card fixes the sealing key
+	// at EXACTLY 32 bytes, where a raw P-256 public key is 65, so a key of another
+	// curve would work until the moment somebody tried to put it in a card. An
+	// engine without WebCrypto X25519 makes the SAME curve's key in pure JS
+	// instead (the fallback branch below), and only an engine with neither
+	// answers null from `sealingKeyRaw()`, so the reason can be said out loud.
 	//
 	// It is generated LAZILY, by `ensureSealingKey`, and not only at creation.
 	// Every identity that already exists on a device was made before this key did,
@@ -882,30 +942,52 @@
 	}
 
 	/// Create a fresh identity from a passphrase. Generates the salt
-	/// and signing keypair, wraps the private key under the derived
-	/// AES-GCM key, and persists salt, public key, wrapped private
-	/// key, algorithm tag and fingerprint. Leaves the identity
+	/// and the Ed25519 signing keypair, wraps the private key under the
+	/// derived AES-GCM key, and persists salt, public key, wrapped
+	/// private key, algorithm tag and fingerprint. Leaves the identity
 	/// UNLOCKED (wrapping key and signing key in memory) and returns
 	/// `{ fingerprint }`. Any pre-existing identity is overwritten, so
 	/// callers should confirm with the user or call reset() first.
+	///
+	/// Throws, writing nothing, when no key can be made: an error with
+	/// `reason: 'unsupported'` on an engine that can do no Ed25519 at all,
+	/// and WebCrypto's own error for any other failure.
 	async function create(name, passphrase) {
 		if (!available()) {
 			throw new Error(t('identity.err_no_webcrypto'));
 		}
 
+		// The signing key comes first, ahead of the costly derivation, so an engine
+		// that can make no Ed25519 key spends no PBKDF2 and writes nothing.
+		var gen = await generateSigningKey();
+		var alg = 'Ed25519';
+
+		// Held for this session exactly as `unlock` holds it: a non-extractable
+		// WebCrypto key where the engine has Ed25519, and the pure-JS seed where it
+		// has not. The extractable key generateKey answered never outlives this
+		// function. An engine that made the key but cannot hold it could never
+		// unlock the account either, so that is refused before anything is written.
+		var sk = await signKeyFrom(gen.pkcs8, alg);
+		if (!sk) {
+			wipe(gen.pkcs8);
+			throw unsupportedError();
+		}
+
 		// Fresh per-install salt.
 		var salt = crypto.getRandomValues(new Uint8Array(SALT_BYTES));
-		var bits = await deriveWrapBits(passphrase, salt);
-		var wrapKey = await wrapKeyFromBits(bits);
-
-		// Device keypair (Ed25519, else ECDSA P-256).
-		var gen = await generatePair();
-		var alg = gen.alg;
-
-		// Export and wrap the private key; export the public identity.
-		var pkcs8 = new Uint8Array(await crypto.subtle.exportKey('pkcs8', gen.pair.privateKey));
-		var wrapped = await seal(wrapKey, pkcs8);
-		var pubBytes = new Uint8Array(await crypto.subtle.exportKey('raw', gen.pair.publicKey));
+		var bits, wrapKey, wrapped;
+		try {
+			bits    = await deriveWrapBits(passphrase, salt);
+			wrapKey = await wrapKeyFromBits(bits);
+			wrapped = await seal(wrapKey, gen.pkcs8);
+		} catch (e) {
+			wipe(bits);
+			wipe(sk.seed);
+			throw e;
+		} finally {
+			wipe(gen.pkcs8);		// wrapped now, and read nowhere else.
+		}
+		var pubBytes = gen.pub;
 
 		// Persist. No secret and no derived key is ever written. Written as a group,
 		// and rolled back if the group cannot complete: a quota failure partway
@@ -926,6 +1008,8 @@
 			[K_SALT, K_PUB, K_PRIV, K_ALG, K_NAME, K_EVER].forEach(function (k) {
 				try { localStorage.removeItem(k); } catch (e2) { /* best effort */ }
 			});
+			wipe(bits);
+			wipe(sk.seed);
 			throw new Error(tOr('identity.err_storage_full',
 				'This device is out of storage, so the new identity could not be saved. '
 				+ 'Free some space in this browser and try again.'));
@@ -948,11 +1032,20 @@
 		localStorage.removeItem(K_EPOCH);
 		localStorage.removeItem(K_REKEY);
 
-		// Leave unlocked: keep the wrapping key and the signing key.
-		_wrapKey = wrapKey;
-		_signKey = gen.pair.privateKey;
+		// Leave unlocked, on THIS identity's keys. Every in-memory key is set, not
+		// only the two just made: a create over an identity that was unlocked here
+		// must not leave that one's pure-JS seed, which `signWith` prefers, signing
+		// for the new account, nor its sealing key or previous epoch's key standing.
+		wipe(_signSeed);
+		wipe(_sealScalar);
+		_wrapKey     = wrapKey;
+		_signKey     = sk.key;
+		_signSeed    = sk.seed;
+		_sealKey     = null;
+		_sealScalar  = null;
+		_prevWrapKey = null;
 		rememberSession(bits, alg);
-		try { bits.fill(0); } catch (e) { /* best effort, as in lock() */ }
+		wipe(bits);
 		announce('unlock');
 		share('unlock', { via: 'typed' });
 

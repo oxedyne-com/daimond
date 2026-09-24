@@ -116,9 +116,12 @@ const MODEL = 'accounts/fireworks/models/glm-5p2';
 const require = createRequire(import.meta.url);
 // `allowed` asks the pause tree at the moment of firing, and the tree lives on
 // `window`. Node has none, so it gets one holding whatever `held` says -- which
-// is how a check below can pause a timer and watch what its clock does.
+// is how a check below can pause a timer and watch what its clock does. The
+// leaf's name is the real module's: required before `window` exists, it
+// attaches nothing and hands back its API.
 const held = {};
-globalThis.window = { DaimondPause: { isPaused: (nodeId) => !!held[nodeId] } };
+const { triggerLeaf } = require('../www/js/pause.js');
+globalThis.window = { DaimondPause: { isPaused: (nodeId) => !!held[nodeId], triggerLeaf } };
 const T = require('../www/js/triggers.js');
 
 if (BREAK === 'sharedclock') {

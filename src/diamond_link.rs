@@ -14,7 +14,7 @@
 //! is tested -- the parse in particular, because a link written by a hand or by
 //! an older build must still open.
 
-use crate::llm::{extract_json_number, extract_json_string, json_escape};
+use crate::llm::{extract_json_bool, extract_json_number, extract_json_string, json_escape};
 
 use oxedyne_fe2o3_core::prelude::*;
 
@@ -24,6 +24,9 @@ const MAX_REL_LEN: usize = 32;
 
 /// The most characters a note may carry; the excess is truncated.
 const MAX_NOTE_LEN: usize = 2_000;
+
+// The note a user's share flag was written as before it had a field of its own.
+const LEGACY_SHARE_NOTE: &str = "share";
 
 /// The node-reference kinds this build knows how to name.
 ///
@@ -103,18 +106,23 @@ pub struct Link {
 	pub note: String,
 	/// Who asserted it: `user`, or `agent:<name>`.
 	pub by:   String,
+	pub share: bool,	// the user's copy grant on their own mark; see `share_link_in`
 }
 
 impl Link {
 
 	/// Serialise to a compact single-line JSON object.
+	///
+	/// `share` is written only when it is on, so a link that was never flagged is the same bytes
+	/// it was before the field existed.
 	pub fn to_json(&self) -> String {
 		fmt!(
 			"{{\"id\":\"{}\",\"ts\":{},\"from\":\"{}\",\"to\":\"{}\",\
-			  \"rel\":\"{}\",\"note\":\"{}\",\"by\":\"{}\"}}",
+			  \"rel\":\"{}\",\"note\":\"{}\",\"by\":\"{}\"{}}}",
 			json_escape(&self.id), self.ts,
 			json_escape(&self.from.to_ref()), json_escape(&self.to.to_ref()),
 			json_escape(&self.rel), json_escape(&self.note), json_escape(&self.by),
+			if self.share { ",\"share\":true" } else { "" },
 		)
 	}
 
@@ -123,18 +131,40 @@ impl Link {
 	/// A line missing either end is not a link and is dropped; everything else
 	/// is tolerated and defaulted, so a record written before a field existed
 	/// still opens rather than taking the whole sidecar down with it.
+	///
+	/// **A user's link whose note is the word `share`, and that has no `share` of its own, is
+	/// read as flagged with the note empty.**  That is how the flag was written from 2026-09-14
+	/// until the re-check of 2026-09-23 (R3) moved it out of the note, which a model writes; the
+	/// user's own flags keep working, and a model's note saying the same word is only a note.
 	pub fn from_json(s: &str) -> Option<Self> {
 		let from = res_opt(extract_json_string(s, "from"))?;
 		let to   = res_opt(extract_json_string(s, "to"))?;
+		let mut note = extract_json_string(s, "note").unwrap_or_default();
+		let by = extract_json_string(s, "by").unwrap_or_default();
+		let share = match extract_json_bool(s, "share") {
+			Some(on) => on,
+			None if by == "user" && note == LEGACY_SHARE_NOTE => {
+				note.clear();
+				true
+			},
+			None => false,
+		};
 		Some(Self {
 			id:   extract_json_string(s, "id").unwrap_or_default(),
 			ts:   extract_json_number(s, "ts").unwrap_or(0),
 			from: Node::parse(&from)?,
 			to:   Node::parse(&to)?,
 			rel:  normalise_rel(&extract_json_string(s, "rel").unwrap_or_default()),
-			note: extract_json_string(s, "note").unwrap_or_default(),
-			by:   extract_json_string(s, "by").unwrap_or_default(),
+			note,
+			by,
+			share,
 		})
+	}
+
+	/// Is this a mark the user made -- their own `holds` or `consulted` link, which is the only
+	/// kind a share flag may stand on?
+	pub fn is_users_mark(&self) -> bool {
+		self.by == "user" && (self.rel == "holds" || self.rel == "consulted")
 	}
 
 	/// Whether either end of this link names `node`.
@@ -246,6 +276,44 @@ pub fn update_link_in(links: &mut [Link], id: &str, rel: &str, note: &str) -> bo
 	false
 }
 
+/// Turn the share flag of the link with `id` on or off.  True when one was found and it moved.
+///
+/// **The copy grant is the user's, on the user's own mark, and nothing else writes it** (re-check
+/// of 2026-09-23, R3).  It lived in the link's free-text `note`, which `link_add` passes through
+/// from whatever a model wrote, and the share roots counted it on any row -- so a daimon could
+/// flag a folder of its choosing, and sync would then write into it, and delete from it on
+/// another device's word, with no copy kept here.  It is a field now, which no link tool reads
+/// from its arguments, and this refuses it on any link that is not the user's mark.  Whether it
+/// counts on THIS device is the page's to say, since only the page knows where a mark is in force.
+///
+/// # Arguments
+/// * `links` - The owner's sidecar, edited in place.
+/// * `id` - The link to flag.
+/// * `on` - True to share it, false to stop.
+pub fn share_link_in(links: &mut [Link], id: &str, on: bool) -> Outcome<bool> {
+	// A blank id names no link, as in [`update_link_in`].
+	if id.trim().is_empty() {
+		return Ok(false);
+	}
+	for l in links.iter_mut() {
+		if l.id != id {
+			continue;
+		}
+		if on && !l.is_users_mark() {
+			return Err(err!(
+				"Link '{}' is not a mark the user made (it is '{}' by '{}'), so it cannot be \
+				shared: only a folder or file the user marked in may be copied to other devices.",
+				id, l.rel, l.by; Invalid, Input));
+		}
+		if l.share == on {
+			return Ok(false);
+		}
+		l.share = on;
+		return Ok(true);
+	}
+	Ok(false)
+}
+
 /// Parse a whole sidecar, skipping blank and unreadable lines.
 ///
 /// A line that will not parse is dropped rather than failing the read: a
@@ -292,8 +360,8 @@ pub fn fix_legacy_kinds(text: &str) -> String {
 fn identity(l: &Link) -> String {
 	let id = l.id.trim();
 	if id.is_empty() {
-		fmt!("k:{}\u{1f}{}\u{1f}{}\u{1f}{}\u{1f}{}",
-			l.from.to_ref(), l.to.to_ref(), l.rel, l.note, l.by)
+		fmt!("k:{}\u{1f}{}\u{1f}{}\u{1f}{}\u{1f}{}\u{1f}{}",
+			l.from.to_ref(), l.to.to_ref(), l.rel, l.note, l.by, l.share)
 	} else {
 		fmt!("i:{}", id)
 	}
@@ -351,6 +419,7 @@ mod tests {
 			rel:  normalise_rel(rel),
 			note: fmt!(""),
 			by:   fmt!("user"),
+			share: false,
 		}
 	}
 
@@ -458,6 +527,92 @@ mod tests {
 		l.note = fmt!("\"rel\":\"fake\"");
 		let back = Link::from_json(&l.to_json()).expect("must parse back");
 		assert_eq!("", back.rel, "the real field is the one that follows a comma");
+	}
+
+	// ── The share flag: the user's copy grant, and nobody else's ─────
+
+	#[test]
+	fn test_a_models_note_saying_share_is_only_a_note_00() {
+		// Re-check of 2026-09-23, R3: `link_add` passes `note` through, and the share roots
+		// counted `note == "share"` on any row -- so a daimon could flag a folder to be copied,
+		// and synced into and deleted from on another device's word.
+		let line = r#"{"id":"m1","ts":1,"from":"diamond:d","to":"dir:secret","rel":"holds","note":"share","by":"agent:daimon"}"#;
+		let l = Link::from_json(line).expect("a model's link is a link");
+		assert!(!l.share, "a model's note is never the flag");
+		assert_eq!("share", l.note, "and it stays what the model wrote");
+		// Nor does a model's link claiming the field itself count as a mark it could stand on.
+		let forged = r#"{"id":"m2","ts":1,"from":"diamond:d","to":"dir:secret","rel":"holds","note":"","by":"agent:daimon","share":true}"#;
+		let f = Link::from_json(forged).expect("still a link");
+		assert!(!f.is_users_mark(), "a model's link is not the user's mark");
+	}
+
+	#[test]
+	fn test_a_users_share_note_from_before_the_field_reads_as_the_flag_00() {
+		// The owner's own flags, written as the note until the field existed, keep working.
+		let line = r#"{"id":"u1","ts":1,"from":"diamond:d","to":"dir:book","rel":"holds","note":"share","by":"user"}"#;
+		let l = Link::from_json(line).expect("the user's link");
+		assert!(l.share);
+		assert_eq!("", l.note, "the word was the flag, not a note");
+		let back = Link::from_json(&l.to_json()).expect("round trip");
+		assert!(back.share && back.note.is_empty());
+		// A field present wins over the note, whatever the note says.
+		let explicit = r#"{"id":"u2","ts":1,"from":"diamond:d","to":"dir:book","rel":"holds","note":"share","by":"user","share":false}"#;
+		let e = Link::from_json(explicit).expect("the user's link");
+		assert!(!e.share);
+		assert_eq!("share", e.note);
+		// A row from before rows said who made them is nobody's, so its note is only a note.
+		let old = r#"{"id":"o1","ts":1,"from":"diamond:d","to":"dir:book","rel":"holds","note":"share"}"#;
+		assert!(!Link::from_json(old).expect("a link").share);
+	}
+
+	#[test]
+	fn test_a_link_never_flagged_is_the_same_bytes_as_before_the_field_00() {
+		let l = link("diamond:a", "dir:x", "holds");
+		assert!(!l.to_json().contains("share"), "an unflagged link writes no field");
+		let mut on = l.clone();
+		on.share = true;
+		assert!(on.to_json().ends_with(",\"share\":true}"));
+	}
+
+	#[test]
+	fn test_only_the_users_own_mark_can_be_flagged_00() {
+		let mut links = vec![
+			link("diamond:a", "dir:mine", "holds"),
+			link("diamond:a", "dir:read", "consulted"),
+			link("diamond:a", "file:out.md", "produced"),
+			link("diamond:a", "dir:model", "holds"),
+			link("diamond:a", "dir:old", "holds"),
+		];
+		for (i, l) in links.iter_mut().enumerate() {
+			l.id = fmt!("l{}", i);
+		}
+		links[3].by = fmt!("agent:daimon");
+		links[4].by = String::new();
+		assert!(share_link_in(&mut links, "l0", true).expect("the user's holds"));
+		assert!(!share_link_in(&mut links, "l0", true).expect("already on"), "a no-op says so");
+		assert!(share_link_in(&mut links, "l1", true).expect("the user's consulted"));
+		assert!(share_link_in(&mut links, "l2", true).is_err(), "provenance is not a mark");
+		assert!(share_link_in(&mut links, "l3", true).is_err(), "a model's link is not the user's");
+		assert!(share_link_in(&mut links, "l4", true).is_err(), "nor is a row nobody signed");
+		assert!(!links[2].share && !links[3].share && !links[4].share);
+		// Off is always allowed: taking a grant back never needs the grant to be sound.
+		links[3].share = true;
+		assert!(share_link_in(&mut links, "l3", false).expect("off"));
+		assert!(!share_link_in(&mut links, "nosuch", true).expect("no such link"));
+		assert!(!share_link_in(&mut links, "", true).expect("a blank id names none"));
+	}
+
+	#[test]
+	fn test_revising_a_relation_leaves_the_share_flag_alone_00() {
+		let mut links = vec![link("diamond:a", "dir:mine", "holds")];
+		links[0].id = fmt!("east");
+		links[0].share = true;
+		assert!(update_link_in(&mut links, "east", "consulted", "only to read"));
+		assert!(links[0].share, "the note and the relation are not the flag");
+		// And the note can no longer set it: the word is prose now.
+		links[0].share = false;
+		assert!(update_link_in(&mut links, "east", "holds", "share"));
+		assert!(!links[0].share);
 	}
 
 	// ── Two-way: one record, found from both ends ────────────────────

@@ -709,15 +709,22 @@ note(`seeded ${seeded.n} files, ${(seeded.bytes / 1048576).toFixed(1)} MiB, in $
 // THE MARK IS A READ GRANT AND NOT A COPY GRANT (owner's ruling, 2026-09-14). Marking a
 // folder into a Diamond says its daimon may open it (dev/ATTACH_CONTRACT.md §2); it says
 // nothing about replicating the folder to the account's other devices, and reading the
-// two as one put twenty-six gigabytes of the owner's marks up for copying. The reference
-// is written WITHOUT a root -- `dir:TheOrder/Onthearche` rather than
-// `dir:[machine:mounted]TheOrder/Onthearche` -- which is the grandfathered form every
-// link made before roots were recorded carries, and is reachable from either workspace.
+// two as one put twenty-six gigabytes of the owner's marks up for copying.
+//
+// THE REFERENCE NAMES THIS DEVICE (owner ruling, 2026-09-23): a mark is per-machine now,
+// and a rootless reference -- `dir:TheOrder/Onthearche`, the grandfathered form every
+// link made before roots were recorded carries -- is no longer in force on a mounted
+// folder; it sits inactive until confirmed here, which this fixture is not testing.
+// `DaimondAttach.ref` writes the rooted, device-tagged form
+// (`dir:[machine:mounted@<device>]TheOrder/Onthearche`) that IS in force from the moment
+// it is written, on the device that wrote it -- exactly what the folder picker itself
+// writes for a mark made through the UI.
 const marked = await A.page.evaluate(async (scope) => {
 	const mod = await import('/pkg/oxedyne_daimond.js');
 	const app = new mod.DaimondApp('http://127.0.0.1/v1/chat/completions', '', 'none', 4096, '', true);
 	const id = await app.create_diamond('Onthearche');
-	const linkId = await app.add_link(id, 'diamond:' + id, 'dir:' + scope, 'holds', '', 'user');
+	const linkId = await app.add_link(id, 'diamond:' + id, window.DaimondAttach.ref('dir', scope),
+		'holds', '', 'user');
 	await window.DaimondCore.loadDiamonds();
 	return { id, linkId };
 }, SCOPE);
@@ -767,7 +774,7 @@ check('the census carries none of it, calls itself incomplete, and complains abo
 await A.page.evaluate(async (a) => {
 	const mod = await import('/pkg/oxedyne_daimond.js');
 	const app = new mod.DaimondApp('http://127.0.0.1/v1/chat/completions', '', 'none', 4096, '', true);
-	await app.update_link(a.id, a.linkId, 'holds', 'share');
+	await app.set_link_share(a.id, a.linkId, true);
 	await window.DaimondCore.loadDiamonds();
 	window.DaimondCore.syncClearWalkCache();
 }, { id: did, linkId: marked.linkId });
@@ -800,9 +807,12 @@ await A.page.evaluate(async ({ id, p }) => {
 	const mod = await import('/pkg/oxedyne_daimond.js');
 	const app = new mod.DaimondApp('http://127.0.0.1/v1/chat/completions', '', 'none', 4096, '', true);
 	// Marked and flagged in one go: a lone file may be shared exactly as a folder may,
-	// and this one is the second flagged root the per-root ceiling is measured on.
-	const linkId = await app.add_link(id, 'diamond:' + id, 'file:' + p, 'holds', '', 'user');
-	await app.update_link(id, linkId, 'holds', 'share');
+	// and this one is the second flagged root the per-root ceiling is measured on. The
+	// reference names this device (see the note on `marked` above), so the mark is in
+	// force without a separate confirm step.
+	const linkId = await app.add_link(id, 'diamond:' + id, window.DaimondAttach.ref('file', p),
+		'holds', '', 'user');
+	await app.set_link_share(id, linkId, true);
 	await window.DaimondCore.loadDiamonds();
 	window.DaimondCore.syncClearWalkCache();
 }, { id: did, p: DEEP_FILE });
@@ -849,9 +859,11 @@ const skillLinkId = await A.page.evaluate(async ({ id, p }) => {
 	// when a mark was itself the copy grant; it is not one any more (`Files.shareRoots`
 	// reads `a.share`, not the mark), so a manifest marked and left unflagged is
 	// correctly shared with nobody and this cell would be asserting the rule that
-	// was replaced rather than the fallback it exists to test.
-	const linkId = await app.add_link(id, 'diamond:' + id, 'file:' + p, 'holds', '', 'user');
-	await app.update_link(id, linkId, 'holds', 'share');
+	// was replaced rather than the fallback it exists to test. The reference names
+	// this device, exactly as DEEP_FILE's does.
+	const linkId = await app.add_link(id, 'diamond:' + id, window.DaimondAttach.ref('file', p),
+		'holds', '', 'user');
+	await app.set_link_share(id, linkId, true);
 	await window.DaimondCore.loadDiamonds();
 	// The memo is keyed on the flagged roots, but the walk this cell is about is the
 	// one the NEXT line triggers -- so it is dropped outright rather than raced.
@@ -1033,7 +1045,9 @@ const flagLink = await A.page.evaluate(async (a) => {
 	await w.close();
 	const mod = await import('/pkg/oxedyne_daimond.js');
 	const app = new mod.DaimondApp('http://127.0.0.1/v1/chat/completions', '', 'none', 4096, '', true);
-	const linkId = await app.add_link(a.id, 'diamond:' + a.id, 'dir:' + a.dir, 'holds', '', 'user');
+	// The reference names this device, exactly as the marks above do.
+	const linkId = await app.add_link(a.id, 'diamond:' + a.id, window.DaimondAttach.ref('dir', a.dir),
+		'holds', '', 'user');
 	await window.DaimondCore.loadDiamonds();
 	window.DaimondCore.syncClearWalkCache();
 	return linkId;
@@ -1078,7 +1092,7 @@ check('B draws the Diamond\'s attachments and says which of them are shared',
 await A.page.evaluate(async (a) => {
 	const mod = await import('/pkg/oxedyne_daimond.js');
 	const app = new mod.DaimondApp('http://127.0.0.1/v1/chat/completions', '', 'none', 4096, '', true);
-	await app.update_link(a.id, a.linkId, 'holds', 'share');
+	await app.set_link_share(a.id, a.linkId, true);
 	await window.DaimondCore.loadDiamonds();
 	window.DaimondCore.syncClearWalkCache();
 }, { id: did, linkId: flagLink });
@@ -1097,7 +1111,7 @@ check('and B\'s panel redraws on its own: the attachment nobody touched here now
 await A.page.evaluate(async (a) => {
 	const mod = await import('/pkg/oxedyne_daimond.js');
 	const app = new mod.DaimondApp('http://127.0.0.1/v1/chat/completions', '', 'none', 4096, '', true);
-	await app.update_link(a.id, a.linkId, 'holds', '');
+	await app.set_link_share(a.id, a.linkId, false);
 	await window.DaimondCore.loadDiamonds();
 	window.DaimondCore.syncClearWalkCache();
 }, { id: did, linkId: flagLink });

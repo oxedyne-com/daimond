@@ -72,6 +72,34 @@ function asyncFuncBody(name) {
 
 const AsyncFunction = Object.getPrototypeOf(async function () {}).constructor;
 
+// The body of a plain (non-async) `function NAME(args) { ... }`, brace-matched
+// the same way `asyncFuncBody` matches an async one -- `markWaiting` carries
+// no brace-bearing string or regex literal either.
+function funcBody(name) {
+	const head = new RegExp('function\\s+' + name + '\\s*\\(([^)]*)\\)\\s*\\{');
+	const m = head.exec(SRC);
+	if (!m) throw new Error('function not found: ' + name);
+	let i = m.index + m[0].length - 1, depth = 0, start = i;
+	for (; i < SRC.length; i++) {
+		const c = SRC[i];
+		if (c === '{') depth++;
+		else if (c === '}') { depth--; if (depth === 0) break; }
+	}
+	return { args: m[1], body: SRC.slice(start + 1, i) };
+}
+
+// The REAL `markWaiting`, added by `fix/delete-open-paths` to gate the
+// `toggleAttachHold` click on a mark not yet in force here. It reaches
+// `parseRef`/`refConfirmable`/`refReachable` only past its own early `rel`
+// guard, and every link this suite hands it fails that guard (none carries
+// `rel: 'holds'|'consulted'`) -- exactly the plain, already-in-force links
+// CASE A/B model -- so those three are never actually called and need no
+// stand-in; only `link` is a free name.
+function buildMarkWaiting() {
+	const { args, body } = funcBody('markWaiting');
+	return new Function(args, body);
+}
+
 // The BREAK: put the pre-root-fix code back -- the cache record `rec` decides
 // the link when present, guarded only by the diamond-id check seq 291 added.
 // `rec` and `attachedOf` are supplied as extra free variables, reached only
@@ -94,7 +122,8 @@ function toggleBody() {
 // the only path that ever calls it.
 function buildToggle() {
 	const args = asyncFuncBody('toggleAttachHold').args;
-	const freeNames = ['currentDiamond', 'rootedRef', 'linkTo', 'diamondApp', 'signalLinksChanged', 'attachedOf'];
+	const freeNames = ['currentDiamond', 'rootedRef', 'linkTo', 'diamondApp', 'signalLinksChanged', 'attachedOf',
+		'markWaiting', 'confirmMarkHere'];
 	const params = freeNames.concat(args.split(',').map(s => s.trim()).filter(Boolean));
 	return new AsyncFunction(...params, toggleBody());
 }
@@ -126,9 +155,17 @@ async function toggle(diamondId, links, attachedOfImpl, path, dir) {
 	const app = makeApp(state);
 	let signalled = false;
 	let attachedOfCalls = 0;
+	let confirmMarkHereCalls = 0;
 	const attachedOf = (ref) => { attachedOfCalls++; return attachedOfImpl ? attachedOfImpl(ref) : null; };
 	const linkTo = async (id, ref) => links[id] || null;
 	const rootedRef = (kind, p) => kind + ':' + p;
+	// The REAL markWaiting -- see buildMarkWaiting -- so `toggleAttachHold`'s own
+	// gate is exercised, not stubbed away. `confirmMarkHere` is never expected to
+	// run for any link this suite hands it (markWaiting fails its `rel` guard
+	// first), so it is a spy rather than the real door-opening act; a call to it
+	// would mean markWaiting answered YES for a plain, already-in-force link.
+	const markWaiting = buildMarkWaiting();
+	const confirmMarkHere = async () => { confirmMarkHereCalls++; return false; };
 	await run(
 		{ id: diamondId },		// currentDiamond
 		rootedRef,
@@ -136,8 +173,10 @@ async function toggle(diamondId, links, attachedOfImpl, path, dir) {
 		app,
 		() => { signalled = true; },	// signalLinksChanged
 		attachedOf,
+		markWaiting,
+		confirmMarkHere,
 		path, dir);
-	return { state, signalled, attachedOfCalls };
+	return { state, signalled, attachedOfCalls, confirmMarkHereCalls };
 }
 
 // ── CASE A: a stale cache row for another Diamond must not steer this one ──
@@ -150,7 +189,7 @@ async function toggle(diamondId, links, attachedOfImpl, path, dir) {
 	// naming the SAME reference -- exactly what a missed reload leaves.
 	const staleRec = () => ({ link: { owner: 'D-B', id: 'link-B1' } });
 
-	const { state, signalled, attachedOfCalls } =
+	const { state, signalled, attachedOfCalls, confirmMarkHereCalls } =
 		await toggle('D-A', links, staleRec, 'notes', true);
 
 	if (BREAK === 'stale') {
@@ -172,6 +211,11 @@ async function toggle(diamondId, links, attachedOfImpl, path, dir) {
 		check('CASE A: nothing is added (A already held a link, so this is a remove)',
 			state.added.length === 0);
 		check('CASE A: the repaint signal still fires', signalled === true);
+		// The REAL markWaiting correctly reads a plain, already-in-force link as
+		// not waiting -- the toggle goes straight to remove_link, never through
+		// confirmMarkHere's door.
+		check('CASE A: markWaiting never routes a plain link to confirmMarkHere',
+			confirmMarkHereCalls === 0);
 	}
 }
 
@@ -191,12 +235,14 @@ if (BREAK !== 'stale') {
 	// Remove: the store now holds A's link from the add above.
 	{
 		const links = { 'D-A': { owner: 'D-A', id: 'link-A9' } };
-		const { state, signalled } = await toggle('D-A', links, () => null, 'plans', true);
+		const { state, signalled, confirmMarkHereCalls } = await toggle('D-A', links, () => null, 'plans', true);
 		check('CASE B remove: remove_link is called with the store\'s own link',
 			state.removed.length === 1 && state.removed[0].owner === 'D-A'
 				&& state.removed[0].id === 'link-A9', JSON.stringify(state.removed));
 		check('CASE B remove: nothing is added', state.added.length === 0);
 		check('CASE B remove: the repaint signal fires', signalled === true);
+		check('CASE B remove: markWaiting never routes a plain link to confirmMarkHere',
+			confirmMarkHereCalls === 0);
 	}
 }
 

@@ -30,7 +30,9 @@
 //! parses is not.
 
 use crate::tools::{
-	fence_spec,
+	command_fence,
+	deletes_metered,
+	fence_enforced,
 	Bound,
 	Kit,
 	Machine,
@@ -944,7 +946,7 @@ pub const DEFAULT_DAIMON: &str =
 	 unrelated, and record a relation you establish with `link_add`, in a word \
 	 or two, so the next daimon does not have to work it out again. \
 	 `link_remove` takes one back out; a link the user drew themselves is \
-	 theirs, so ask before removing it.\n\n\
+	 theirs, and only they take it out.\n\n\
 	 Before any of that, know what you are looking at. A Diamond is usually \
 	 ABOUT something — a book, a codebase, a body of research — and what the user \
 	 attached to it is that thing. When you are asked about attached work you have \
@@ -1058,7 +1060,11 @@ pub fn machine_note(m: &Machine, bounds: &[Bound], step: NetStep, mode: Mode) ->
 	// The network arrives as the STEP and not as the taint, exactly as `Tool::run` builds it, so
 	// the fence described here is the fence built there. Deriving it from the flag would have
 	// described a network the rung -- or the user's own answer -- had put back.
-	let fence = fence_spec(bounds, m, !step.gives_net());
+	//
+	// And `command_fence`, which is what `Tool::run` sends: on a hand that does not meter removals
+	// every folder is read-only to a command, and a briefing listing them as writable would be a
+	// promise the fence breaks on the first build.
+	let fence = command_fence(bounds, m, !step.gives_net());
 	if fence.rw.is_empty() && fence.ro.is_empty() {
 		return String::new();
 	}
@@ -1135,6 +1141,23 @@ pub fn machine_note(m: &Machine, bounds: &[Bound], step: NetStep, mode: Mode) ->
 	}
 	if !fence.ro.is_empty() {
 		s.push_str(&fmt!("\nRead only: {}", fence.ro.join(", ")));
+	}
+	// WHY IT IS ALL READ-ONLY, where it is. A daimon handed only "Read only" for the folder it was
+	// asked to build in reads the task as impossible and says so in words the user cannot act on;
+	// the cause is a hand they have not updated yet, which is a sentence they can.
+	//
+	// Only for a hand that fences at all. `fence:none` already refuses every command outright --
+	// nothing here is "read only", there is no fence to have gone read-only -- so a hand that says
+	// so is not told about a meter it could not use, the same guard `fencesWithoutMeter` in
+	// www/js/hand.js applies to the relay's own notice.
+	//
+	// And not to a file tool either, since the re-check of 2026-09-23 (H1): the file tools' door
+	// is fenced by `command_fence` as well, so the sentence that said they were not affected
+	// would now send a daimon to write through the one door that refuses it.
+	if fence_enforced(&m.caps) && !deletes_metered(&m.caps) {
+		s.push_str("\nNothing is writable here: this computer's machine hand is older than the \
+			deletion meter, so until the user updates it neither a command nor the file tools can \
+			write, create, remove or rename anything on it. Both can still read.");
 	}
 	// Only the denials that carve a hole in something the model has just been told it may use. A
 	// toolkit denies `~/.netrc` and the crates.io token, neither of which sits inside a granted
@@ -1515,7 +1538,7 @@ pub const FOLD_SHAPE_NOTE: &str =
 mod tests {
 	use super::*;
 
-	use crate::tools::{diamond_bounds, set_push_cred, PushCred, Verdict};
+	use crate::tools::{diamond_bounds, fence_spec, set_push_cred, PushCred, Verdict};
 
 	#[test]
 	fn test_every_role_round_trips_through_its_name() {
@@ -2493,11 +2516,20 @@ mod tests {
 	// claims a fence tighter than the code enforces.
 
 	/// A hand that reported a granted root, a home directory and a fence it can enforce.
+	/// A current hand: it fences, and it meters what a command removes.
 	fn machine() -> Machine {
 		let mut m = Machine::at("/home/u/ws");
 		m.os   = fmt!("linux");
 		m.home = Some(fmt!("/home/u"));
-		m.caps = vec![fmt!("fence:linux"), fmt!("root:/home/u/ws"), fmt!("home:/home/u")];
+		m.caps = vec![fmt!("fence:linux"), fmt!("root:/home/u/ws"), fmt!("home:/home/u"),
+			fmt!("meter:deletes")];
+		m
+	}
+
+	/// A hand built before the deletion meter: it fences and says nothing about removals.
+	fn old_machine() -> Machine {
+		let mut m = machine();
+		m.caps.retain(|c| c != "meter:deletes");
 		m
 	}
 
@@ -2954,7 +2986,7 @@ mod tests {
 				for said in [None, Some(Verdict::Allow), Some(Verdict::Deny)] {
 					let step = crate::tools::net_step(rung, risk, false, said);
 					let s = machine_note(&machine(), &b, step, rung);
-					let real = fence_spec(&b, &machine(), !step.gives_net());
+					let real = command_fence(&b, &machine(), !step.gives_net());
 					for p in real.rw.iter().chain(real.ro.iter()) {
 						assert!(s.contains(p.as_str()),
 							"the {} rung's fence grants {} and the briefing does not say so",
@@ -2971,6 +3003,61 @@ mod tests {
 						rung.name(), s.len(), s);
 				}
 			}
+		}
+	}
+
+	/// **An old hand's briefing lists nothing as writable to a command, and says why (audit F2).**
+	///
+	/// Read off `command_fence` like every other line of the briefing, so the one hand whose fence
+	/// differs from `fence_spec` is not described by the fence it is not sent.  Every place the
+	/// full fence names must still be listed -- for reading -- or a daimon would stop looking at
+	/// the folder it was asked about.
+	#[test]
+	fn test_an_old_hand_is_briefed_that_nothing_is_writable_and_why() {
+		let mut b = diamond_bounds("diamonds/d1", &[fmt!("notes")], &[fmt!("refs")]);
+		b.push(Toolkit::Rust.bound());
+		for rung in Mode::all() {
+			for risk in [false, true] {
+				let step = crate::tools::net_step(rung, risk, false, None);
+				let s = machine_note(&old_machine(), &b, step, rung);
+				assert!(!s.contains("Read and write:"),
+					"an old hand's briefing offers a command somewhere to write: {}", s);
+				let full = fence_spec(&b, &old_machine(), !step.gives_net());
+				for p in full.rw.iter().chain(full.ro.iter()) {
+					assert!(s.contains(p.as_str()), "{} is not in the briefing at all: {}", p, s);
+				}
+				// Nor to a file tool, whose door is fenced the same way since H1: a briefing that
+				// said the file tools were not affected sent a daimon to the door that refuses.
+				assert!(s.contains("older than the deletion meter")
+					&& s.contains("neither a command nor the file tools can") && s.contains("can still read"),
+					"the briefing does not say why nothing is writable, by any door, or what still works: {}", s);
+				// A hand this old is a machine mid-update, not a steady state, so its briefing
+				// is allowed the one sentence over the ceiling a current hand is held to.
+				assert!(s.len() < 1500, "the {} rung's old-hand briefing is {} bytes:\n{}",
+					rung.name(), s.len(), s);
+			}
+		}
+		assert!(!machine_note(&machine(), &b, NetStep::Give, Mode::default())
+			.contains("deletion meter"), "a current hand was told it is out of date");
+	}
+
+	/// **A hand that fences nothing at all is not told about a meter it could never use** (G2,
+	/// 2026-09-23).
+	///
+	/// `fence:none` already refuses every command outright -- there is no fence gone read-only
+	/// here for the briefing to explain, unlike [`old_machine`], which fences and only lacks the
+	/// meter. The twin guard is `fencesWithoutMeter` in `www/js/hand.js`, over the same caps.
+	#[test]
+	fn test_a_hand_with_no_fence_is_not_told_about_the_deletion_meter() {
+		let mut b = diamond_bounds("diamonds/d1", &[fmt!("notes")], &[fmt!("refs")]);
+		b.push(Toolkit::Rust.bound());
+		let mut m = machine();
+		m.caps = vec![fmt!("fence:none"), fmt!("root:/home/u/ws"), fmt!("home:/home/u")];
+		for rung in Mode::all() {
+			let step = crate::tools::net_step(rung, false, false, None);
+			let s = machine_note(&m, &b, step, rung);
+			assert!(!s.contains("older than the deletion meter"),
+				"a hand with no fence at all was told about a meter it could never enforce: {}", s);
 		}
 	}
 

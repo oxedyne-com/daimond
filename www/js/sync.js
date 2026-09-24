@@ -180,6 +180,10 @@
 	// carry it, so the full-parcel poll is bounded to the window a live hand-off needs and
 	// a stuck one no longer floods. A GET only -- the single-runner lease is untouched.
 	var EXPEDITE_MAX_MS = 120000;
+	// How often a page following progress frames reads them itself, while its wake
+	// channel has not been heard to tap it: no channel at all, or a gateway older than
+	// the tap, which never sends one. See `progressTick`.
+	var PROGRESS_TICK_MS = 4000;
 	// ── The streaming progress push ────────────────────────────
 	// The minimum spacing between the OLD-gateway whole-parcel progress pushes. On a
 	// current gateway a hand-off streams through the lightweight frame door
@@ -197,10 +201,6 @@
 	// the END of the transcript, so trimming it loses the oldest lines, which the
 	// watching device already has from the frame before.
 	var PROGRESS_TAIL_MAX = 48 * 1024;
-	// How long a watching device asks the progress door to hold its read. The frame
-	// then arrives within a moment of being stored rather than at the next poll, and
-	// the gateway clamps this to its own maximum anyway.
-	var PROGRESS_WAIT_MS  = 25000;
 	// ── Wake channel ───────────────────────────────────────────
 	// A wake is EVIDENCE that the mailbox moved, which the speculative triggers
 	// above are not, so it has a throttle of its own and a much shorter one: the
@@ -406,6 +406,20 @@
 	// what it must not talk over. See `wakeVia` and `catchUp`.
 	var wakeShut    = false;
 	var wakes       = 0;		// Wakes acted on, for the verifier and for debugging.
+	// The park the poll transport is holding, so a change in what it must listen for
+	// can end it at once rather than wait out forty-five seconds. See `wakePoll`.
+	var wakeHold    = { ac: null };
+	var wakeKicked  = false;	// The held park was ended on purpose, not by a fault.
+
+	// ── Progress watch state ───────────────────────────────────
+	// Every stream of progress frames this page follows, by key -> { since, onFrame }.
+	// A key is a handed-off turn or a compile. See `watchProgress`.
+	var progWatch   = Object.create(null);
+	var progSweeping = false;	// A sweep is reading the door.
+	var progAgain    = false;	// A tap arrived during the sweep: read once more after it.
+	var progTaps     = 0;		// Taps heard, for the verifier and for debugging.
+	var progTapGen   = -1;		// The wake generation the gateway last tapped, -1 for none.
+	var progTimer    = null;	// The tick that reads the frames where no tap comes.
 
 	function log(/* ...args */) {
 		try { if (window.console && console.debug) console.debug.apply(console, ['[sync]'].concat([].slice.call(arguments))); }
@@ -499,6 +513,9 @@
 	///            given a signal and never aborted, because a cancelled POST is the
 	///            user's work silently not travelling -- the seq-228 regression. The
 	///            two callers that set these are the content pull and nothing else.
+	///            `hold`, an object, is handed the GET's controller as `hold.ac` for as
+	///            long as it is in flight; the wake park uses it to end itself when
+	///            what it must listen for changes.
 	async function call(method, body, query, xtra) {
 		xtra = xtra || {};
 		var opts = {
@@ -515,12 +532,15 @@
 		// no signal is attached to it here, so a push cannot be aborted by any path.
 		var ac = null, timer = null;
 		var budget = (xtra.timeoutMs !== undefined) ? xtra.timeoutMs : PULL_TIMEOUT_MS;
-		if (method === 'GET' && (xtra.timeoutMs !== undefined || xtra.track)) {
+		if (method === 'GET' && (xtra.timeoutMs !== undefined || xtra.track || xtra.hold)) {
 			try { ac = new AbortController(); } catch (e) { ac = null; }
 			if (ac) {
 				opts.signal = ac.signal;
 				if (budget > 0) timer = setTimeout(function () { try { ac.abort(); } catch (e) {} }, budget);
 				if (xtra.track) pullAbort = ac;
+				// `hold` hands the controller to the caller, so the wake park can be
+				// ended when what it listens for changes. See `setProgressWanted`.
+				if (xtra.hold) xtra.hold.ac = ac;
 			}
 		}
 		try {
@@ -538,6 +558,7 @@
 		} finally {
 			if (timer) clearTimeout(timer);
 			if (ac && xtra.track && pullAbort === ac) pullAbort = null;
+			if (ac && xtra.hold && xtra.hold.ac === ac) xtra.hold.ac = null;
 		}
 	}
 
@@ -2790,26 +2811,127 @@
 		return out;
 	}
 
-	/// Read `turnId`'s latest frame, newer than `since`. `waitMs > 0` asks the door
-	/// to PARK rather than answer "nothing" at once, so the frame arrives within a
-	/// moment of being stored. Answers `{ seq, tail }`, or null where there is
-	/// nothing newer (the door's 204) or it could not be opened.
-	async function getProgressFrame(turnId, since, waitMs) {
+	/// Read `turnId`'s latest frame, newer than `since`: `{ seq, tail, final }`, or null
+	/// where there is nothing newer (the door's 204) or it could not be opened.
+	///
+	/// NEVER PARKED, and that is the fix of 2026-09-23. A watcher used to hold one read
+	/// per watched turn at the door for 25 s at a time. The front door is HTTP/1.1, so
+	/// the browser allows six connections to the origin, and two such reads held for
+	/// twelve hours queued every pull behind them: 2,534 aborts on gilgamesh and pulls
+	/// fifty times slower. News of a frame now arrives on the wake channel, which is
+	/// held once per page however many turns are watched, and this read answers at once.
+	async function getProgressFrame(turnId, since) {
 		if (!ready() || !entitled || sessionGone || !turnId) return null;
 		var q = '?progress=' + encodeURIComponent(String(turnId))
 			+ '&since=' + (since | 0) + '&w=' + encodeURIComponent(WAKE_ID);
-		if (waitMs > 0) q += '&wait=' + (waitMs | 0);
 		var res;
-		// A parked read is held by the gateway on purpose, so it is given a budget
-		// past the park rather than the ordinary pull timeout.
-		try {
-			res = await call('GET', undefined, q,
-				{ timeoutMs: (waitMs > 0) ? (waitMs + 10000) : 0 });
-		} catch (e) { return null; }
+		try { res = await call('GET', undefined, q, { timeoutMs: PULL_TIMEOUT_MS }); }
+		catch (e) { return null; }
 		if (!res || res.status !== 200 || !res.json || !res.json.blob) return null;
 		var frame = await progUnseal(res.json.blob);
 		if (!frame || String(frame.turn || '') !== String(turnId)) return null;
 		return { seq: res.json.seq | 0, tail: String(frame.tail || ''), final: !!frame.final };
+	}
+
+	/// Follow `key`'s progress frames: `onFrame(frame)` is called with each frame newer
+	/// than the last one seen, until `unwatchProgress(key)`. Watching again replaces the
+	/// callback and keeps the place.
+	///
+	/// ONE READER FOR EVERY STREAM. The gateway taps the account's wake channel whenever
+	/// any device stores a frame (`p<seq>` on the socket, `progress:true` on a park), and
+	/// a tap reads each watched key once, one short request after another. So the page
+	/// holds the one wake channel it holds anyway, whatever it watches, and a frame is
+	/// read within a moment of being stored. A new watch is read at once, because a
+	/// frame stored before it began is not going to be tapped again.
+	function watchProgress(key, onFrame) {
+		key = String(key || '');
+		if (!key || typeof onFrame !== 'function') return;
+		var had = !!progWatch[key];
+		progWatch[key] = { since: had ? progWatch[key].since : 0, onFrame: onFrame };
+		if (!had) {
+			setProgressWanted();
+			progressSweep();
+		}
+	}
+
+	function unwatchProgress(key) {
+		key = String(key || '');
+		if (!progWatch[key]) return;
+		delete progWatch[key];
+		setProgressWanted();
+	}
+
+	/// The keys being followed, for the verifier and for debugging.
+	function progressWatched() { return Object.keys(progWatch); }
+
+	/// The gateway says a frame was stored for one of the account's turns. The tap
+	/// carries no turn -- a frame's seq counts per turn and names nothing -- so each
+	/// watched key is read once, and a key with nothing newer answers 204 at once.
+	function progressTap() {
+		progTaps++;
+		progressSweep();
+	}
+
+	/// The gateway itself tapped this generation of the channel: from here on the taps
+	/// carry the stream and the tick stands down.
+	function progressTapped() {
+		progTapGen = wakeGen;
+		if (Object.keys(progWatch).length) progressTap();
+	}
+
+	/// Read the watched frames on a timer, WHERE NO TAP WILL COME. A gateway older than
+	/// the tap sends only parcel versions, so a page that trusted the channel alone read
+	/// a hand-off's first frame and nothing after it until the answer merged (2026-09-23
+	/// audit F1: a page can be deployed ahead of its gateway). So the tick reads while
+	/// the channel is shut, or open but not yet heard to tap in this generation; once
+	/// the gateway has tapped, the tick costs nothing. Owned by the watch set, not by
+	/// the hand-off poll, because a compile is watched with no hand-off out.
+	function progressTick() {
+		if (!Object.keys(progWatch).length) return;
+		if (wakeOpen() && progTapGen === wakeGen) return;
+		progressSweep();
+	}
+
+	/// Read every watched key once, in turn. Coalesced: a tap during a sweep asks for
+	/// one more pass after it rather than a second sweep beside it, so there is never
+	/// more than one progress read in flight.
+	async function progressSweep() {
+		if (progSweeping) { progAgain = true; return; }
+		progSweeping = true;
+		try {
+			do {
+				progAgain = false;
+				var keys = Object.keys(progWatch);
+				for (var i = 0; i < keys.length; i++) {
+					var w = progWatch[keys[i]];
+					if (!w) continue;					// unwatched while the sweep ran
+					var frame = null;
+					try { frame = await getProgressFrame(keys[i], w.since); } catch (e) { frame = null; }
+					if (!frame || progWatch[keys[i]] !== w) continue;
+					if ((frame.seq | 0) > w.since) w.since = frame.seq | 0;
+					try { w.onFrame(frame); } catch (e) { /* a watcher's fault stays its own */ }
+				}
+			} while (progAgain && Object.keys(progWatch).length);
+		} finally {
+			progSweeping = false;
+		}
+	}
+
+	/// Tell the wake channel whether this page wants progress taps. The socket carries
+	/// them always and costs nothing to ignore; a PARK is answered by each one, so it
+	/// asks for them (`&prog=1`) only while something is watched. When that changes,
+	/// the held park is ended so the next one asks the right question.
+	var wakeProgWanted = false;
+	function setProgressWanted() {
+		var on = Object.keys(progWatch).length > 0;
+		if (on && !progTimer) progTimer = setInterval(progressTick, PROGRESS_TICK_MS);
+		if (!on && progTimer) { clearInterval(progTimer); progTimer = null; }
+		if (on === wakeProgWanted) return;
+		wakeProgWanted = on;
+		if (wakeMode === 'poll' && wakeHold.ac) {
+			wakeKicked = true;
+			try { wakeHold.ac.abort(); } catch (e) { /* already answered */ }
+		}
 	}
 
 	/// Report a frame to the debug-share feed: how big it was and how long it took,
@@ -2985,10 +3107,16 @@
 			wakeWorked  = true;
 			wakeBackoff = WAKE_RETRY_MIN_MS;
 			log('wake channel open (ws)');
+			// Frames stored while there was no socket were tapped to nobody: read once.
+			if (Object.keys(progWatch).length) progressTap();
 		};
 		sock.onmessage = function (ev) {
 			if (gen !== wakeGen) return;
-			var v = parseInt(ev.data, 10);
+			// `p<seq>`: a progress frame was stored for one of the account's turns. A bare
+			// integer is the parcel version, as it always was.
+			var d = String(ev.data);
+			if (d.charAt(0) === 'p') { progressTapped(); return; }
+			var v = parseInt(d, 10);
 			if (isFinite(v)) wakeTo(v);
 		};
 		sock.onerror = function () { /* a close always follows; handled there. */ };
@@ -3055,16 +3183,27 @@
 			while (gen === wakeGen && wakeWanted() && wakeMode === 'poll') {
 				var began = Date.now();
 				var res;
+				// Progress taps are asked for only while something is watched: each one
+				// answers the park, so a device watching nothing is not woken by them.
+				var prog = wakeProgWanted;
 				try {
 					// A stale loop stops here rather than sleeping and asking
 					// again: the backoff it would grow belongs to the live one.
 					if (gen !== wakeGen) break;
+					wakeKicked = false;
 					res = await call('GET', undefined,
-						'?above=' + (serverVersion | 0) + '&ms=' + WAKE_POLL_MS + '&w=' + encodeURIComponent(WAKE_ID));
+						'?above=' + (serverVersion | 0) + '&ms=' + WAKE_POLL_MS + '&w=' + encodeURIComponent(WAKE_ID)
+						+ (prog ? '&prog=1' : ''), { timeoutMs: 0, hold: wakeHold });
 				} catch (e) {
-					// The gateway is down or the network went. Wait, growing,
-					// rather than spinning against a closed door.
 					if (gen !== wakeGen) break;
+					// Ended on purpose (`setProgressWanted`): park again at once, asking
+					// the new question. Anything else is the gateway down or the network
+					// gone -- wait, growing, rather than spinning against a closed door.
+					if (wakeKicked) {
+						wakeKicked = false;
+						if (prog && Object.keys(progWatch).length) progressTap();
+						continue;
+					}
 					await wakeSleep(Math.min(WAKE_RETRY_MAX_MS, wakeBackoff) * (0.5 + Math.random()));
 					wakeBackoff = Math.min(WAKE_RETRY_MAX_MS, wakeBackoff * 2);
 					continue;
@@ -3077,6 +3216,10 @@
 				if (res.status === 200 && res.json && res.json.waited === true
 					&& res.json.changed && wakeWanted()) {
 					wakeTo(res.json.version | 0);
+				}
+				if (res.status === 200 && res.json && res.json.progress === true
+					&& gen === wakeGen) {
+					progressTapped();
 				}
 				if (gen !== wakeGen) break;
 				if (res.status !== 200) {
@@ -3651,15 +3794,16 @@
 		/// second charge. See pushProgress.
 		pushProgress: pushProgress,
 		/// The streaming progress door, off the content parcel: `pushProgressFrame(turnId,
-		/// tail)` PUTs one small sealed frame of a running turn's rendered tail and
-		/// `getProgressFrame(turnId, since, waitMs)` reads the latest one (parking for
-		/// `waitMs` so it arrives promptly). This is what streams a hand-off; the whole
-		/// parcel travels only at the turn's end. See the progress door above.
-		/// `pushProgressFrame(turnId, tail, final)` -- `final` says the turn has ENDED
+		/// tail, final)` PUTs one small sealed frame of a running turn's rendered tail,
+		/// and `watchProgress(key, onFrame)` follows a turn's frames as the wake channel
+		/// taps them, until `unwatchProgress(key)`. This is what streams a hand-off; the
+		/// whole parcel travels only at the turn's end. `final` says the turn has ENDED
 		/// and this tail is the whole of it, so a watcher can show the finished answer
 		/// without the account parcel.
 		pushProgressFrame: pushProgressFrame,
-		getProgressFrame:  getProgressFrame,
+		watchProgress:     watchProgress,
+		unwatchProgress:   unwatchProgress,
+		progressWatched:   progressWatched,
 		/// Turn the in-flight poll on/off. daimond.js calls `expedite(true)` while a
 		/// hand-off's dispatched placeholder is outstanding and `expedite(false)` when
 		/// it clears, so the watching devices pull promptly (EXPEDITE_PULL_MS) for the
@@ -3750,6 +3894,8 @@
 				probing:   wakeProbing && wakeProbeGen === wakeGen,
 				heard:     wakeTarget,				// highest version the channel reported
 				wakes:     wakes,					// pulls this channel has caused
+				progTaps:  progTaps,				// progress taps it has carried
+				progTapped: progTapGen === wakeGen,	// the gateway has tapped this channel
 			};
 		},
 		/// Force the channel onto one transport, or shut it.
