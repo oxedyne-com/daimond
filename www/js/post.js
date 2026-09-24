@@ -1042,8 +1042,31 @@
 		// the parcel -- syncing it would push the parcel every time a held row is folded,
 		// a new amplifier, and `adopt` has no rule for it. It persists locally through
 		// `save` (which serialises `_st` directly), not through here.
+		return stripLocal(rec);
+	}
+
+	/// Whether this device's relay keeps a row for the device it names (gateway release
+	/// 5), as the last collect answer said, or the record says where none has yet.
+	function cursorsLocal() {
+		return _deviceAcks || !!(_st && _st.devAcks);
+	}
+
+	/// Take off a parcel copy of the record what belongs to this device alone.
+	///
+	/// THE CURSORS ARE PER DEVICE ON A RELAY THAT ACKS PER DEVICE (2026-09-25). There a
+	/// device folds a row addressed to another device and acks past it, and the relay
+	/// keeps the row for its device. `through` and `acked` then say where THIS device
+	/// is, not the account: a sibling that adopted them from the parcel started its next
+	/// collect above a grant or a report addressed to it, never folded it, and thought it
+	/// had acked it, so the relay held it until its `ttl` (the Q4 probe on world 27, one
+	/// run in two). So they leave the parcel, and `adopt` takes none from a page that
+	/// still sends them. On an older relay an ack takes the row for the whole account,
+	/// the cursors are the account's, and they travel as before.
+	function stripLocal(rec) {
 		delete rec.seen;
 		delete rec.holds;		// per-device view of the shared box, never on the parcel -- see `seen`.
+		if (cursorsLocal()) { delete rec.through; delete rec.acked; }
+		delete rec.devAcks;		// what this device's relay last said, see `cursorsLocal`.
 		return rec;
 	}
 
@@ -1161,8 +1184,11 @@
 				moved = true;
 			}
 		});
-		if ((rec.through | 0) > _st.through) { _st.through = rec.through | 0; moved = true; }
-		if ((rec.acked   | 0) > _st.acked)   { _st.acked   = rec.acked   | 0; moved = true; }
+		// A sibling's cursors only where they are the account's (`stripLocal`).
+		if (!cursorsLocal()) {
+			if ((rec.through | 0) > _st.through) { _st.through = rec.through | 0; moved = true; }
+			if ((rec.acked   | 0) > _st.acked)   { _st.acked   = rec.acked   | 0; moved = true; }
+		}
 		// AND WRITTEN DOWN. Nothing else here saves a merge: a device that adopted
 		// the other one's read marks and was then closed came back not having
 		// adopted them, and would re-ack and re-draw what the other device had
@@ -1224,9 +1250,7 @@
 	/// parcel is byte-for-byte what it was.
 	async function snapshotRefs() {
 		if (!_st) return null;
-		var rec = JSON.parse(JSON.stringify(_st));
-		delete rec.seen;		// a local park cursor, never on the parcel -- see `snapshot`.
-		delete rec.holds;		// a local view of the box's held rows, never on the parcel.
+		var rec = stripLocal(JSON.parse(JSON.stringify(_st)));	// see `snapshot`
 		// ...and whether this device may DECLARE what it uploads. The gateway sweeps
 		// every held chunk the committed index does not name, and only a device that
 		// merged that index may commit it, so a message tail offloaded from a device
@@ -1625,7 +1649,13 @@
 				'A post needs a recipient, an address and a sealed body.') };
 		}
 		var r;
-		try { r = await call('POST', { to: String(b.to), addr: String(b.addr), envelope: String(b.envelope) }); }
+		var req = { to: String(b.to), addr: String(b.addr), envelope: String(b.envelope) };
+		// A post to our own account may say whose it is, how long it matters and which
+		// turn it belongs to (`DaimondPeer.relayMeta`). An older relay ignores them.
+		if (b['for']) req['for'] = String(b['for']);
+		if (+b.ttl > 0) req.ttl = Math.round(+b.ttl);
+		if (b.turn) req.turn = String(b.turn);
+		try { r = await call('POST', req); }
 		catch (e) { return { ok: false, status: 0, why: whyRefused(0) }; }
 		if (r.status !== 200 || !r.json || !r.json.ok) {
 			return { ok: false, status: r.status | 0, why: whyRefused(r.status) };
@@ -1949,6 +1979,11 @@
 				// HELD, as an own errand is, until that device acks it or its window passes
 				// (`noteHeldFor`). Only a verified one: a forgery must not pin the cursor. The
 				// hold keeps what its window is read from, so it is never folded again.
+				// A ROW THE RELAY ADDRESSED IS NEVER HELD (gateway release 5): a relay that
+				// acks per device keeps it for its device whoever collects it, so no cursor
+				// need wait on it. A row with no `for` -- an older runner's, or any row on an
+				// older relay -- is held as before.
+				if (_deviceAcks && row['for']) return NOTHING;
 				if (noted && noted.verified && DaimondPeer.noteHeldFor) {
 					var rn = relayNowOrNull();
 					var forDev = DaimondPeer.noteHeldFor(peer, row, selfDeviceIdForPark(), rn);
@@ -2140,6 +2175,9 @@
 		st.holds = keep;
 	}
 
+	/// Whether the relay's last collect answer said it acks per device (`acks:"device"`).
+	var _deviceAcks = false;
+
 	/// The relay's clock, from the offset presence answers carry, or null before one has.
 	function relayNowOrNull() {
 		try { return (window.DaimondPresence && DaimondPresence.relayNow) ? DaimondPresence.relayNow() : null; }
@@ -2260,10 +2298,21 @@
 			// A request the network black-holes answers nothing for as long as the
 			// operating system keeps the socket, which is the park's forty-one minutes.
 			var r;
-			try { r = await call('GET', undefined, '?since=' + from, RELAY_DEADLINE_MS); }
+			// The collecting device is named, as the park names it, so a relay that acks
+			// per device can refuse a removed one here too. An older relay ignores it.
+			var dev = selfDeviceIdForPark();
+			try { r = await call('GET', undefined, '?since=' + from + (dev ? '&device=' + encodeURIComponent(dev) : ''), RELAY_DEADLINE_MS); }
 			catch (e) { return { ok: false, why: (e && e.timedOut) ? 'timeout' : 'offline', got: got }; }
 			if (r.status !== 200 || !r.json || !r.json.ok) {
 				return { ok: false, why: 'status_' + r.status, got: got };
+			}
+			// WHETHER THIS RELAY KEEPS A ROW FOR ITS DEVICE (gateway release 5). Read off
+			// every answer, so a rollback to a relay that does not is noticed at once and
+			// the note holds come back with it.
+			_deviceAcks = r.json.acks === 'device';
+			st.devAcks  = _deviceAcks ? 1 : 0;
+			if (r.json.now != null && window.DaimondPresence && DaimondPresence.learnRelayNow) {
+				try { DaimondPresence.learnRelayNow(+r.json.now); } catch (e) { /* the presence clock stands */ }
 			}
 			// Phase B: the collect answer carries the post-door caps, which is how
 			// `post`/`post_rows`/`collect` reach the client for the later findings. A
@@ -2441,7 +2490,13 @@
 	/// The ack request itself, and the only place it is made.
 	async function tellRelay(want) {
 		var r;
-		try { r = await call('POST', { through: want }, '?op=ack', RELAY_DEADLINE_MS); }
+		// The acking device is named: a relay that acks per device then takes only the
+		// account's rows and this device's, and keeps a row addressed to another device
+		// for it. An older relay ignores the name and acks as it always did.
+		var body = { through: want };
+		var dev = selfDeviceIdForPark();
+		if (dev) body.device = dev;
+		try { r = await call('POST', body, '?op=ack', RELAY_DEADLINE_MS); }
 		catch (e) { return { acked: 0, why: (e && e.timedOut) ? 'timeout' : 'offline' }; }
 		if (r.status !== 200 || !r.json || !r.json.ok) {
 			return { acked: 0, why: 'status_' + r.status };

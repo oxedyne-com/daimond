@@ -523,7 +523,11 @@
 			choice:  String(o.choice == null ? '' : o.choice),
 			// THE RUNNER THAT ASKED (the ask's `dispatchedBy`). Without it a third device that
 			// collected the grant took it and acked it off the relay before the runner saw it,
-			// and the turn parked at its deadline (R3 QA Q4, D126). Held for it, briefly.
+			// and the turn parked at its deadline (R3 QA Q4, D126). The answer is addressed to
+			// it: a relay that acks per device keeps the grant for the runner whichever device
+			// collects it first, and an older relay has it held for it, briefly. '' when the
+			// caller names none: `sealForSelf` fills it from the ask this device saw, or from
+			// the turn's live lease.
 			to:      String(o.to || ''),
 			ts:      o.ts || Date.now(),
 		};
@@ -550,6 +554,12 @@
 		if (window.DaimondIdentity.isUnlocked && !window.DaimondIdentity.isUnlocked()) {
 			throw new Error('peer: Daimond is locked, so nothing can be sealed for a peer.');
 		}
+		// A grant names the runner it answers before it is signed, so the addressee is
+		// covered by the signature like every other field.
+		if (obj && obj.t === T_GRANT && !obj.to && !obj.sig) {
+			var addressee = grantAddressee(obj);
+			if (addressee) obj.to = addressee;
+		}
 		// Signed BEFORE sealing, so the signature is inside the seal and the gateway
 		// -- which cannot open the seal -- never sees author or sig. An envelope
 		// already carrying a `sig` (a re-seal) is not signed twice.
@@ -566,11 +576,80 @@
 		// hex `to` matches no account and every post 404s ("No account holds that key").
 		var to = window.DaimondIdentity.publicKeyB64url
 			? window.DaimondIdentity.publicKeyB64url() : '';
-		return {
+		var body = {
 			to:       to || '',
 			addr:     await addressOf(sealed),
 			envelope: b64enc(sealed),
 		};
+		// What the relay may know in the clear about a post to our own account: whose
+		// it is, how long it matters, and which turn it belongs to (`relayMeta`). A
+		// relay that does not read them ignores them.
+		var meta = relayMeta(signed);
+		for (var k in meta) if (Object.prototype.hasOwnProperty.call(meta, k)) body[k] = meta[k];
+		return body;
+	}
+
+	// ── What the relay is told in the clear, about our own posts ─
+	//
+	// A relay that acks per device (gateway release 5, `acks: "device"` on a collect)
+	// drops a row addressed to one device only on that device's ack, and forgets any
+	// row at its `ttl`. So a note names the device it is for, and every row says how
+	// long it is worth keeping; an errand names its turn, and the relay answers with
+	// the turn's first post on its own clock (`first`), which the age rule reads. A
+	// device id and a turn id are already in the clear on a presence beat and a
+	// progress read, so nothing new is revealed, and only to our own account's relay.
+
+	/// The asks this device has seen, `cid -> { by, deadline }`, so the answer to one
+	/// can be addressed to the runner that asked. Bounded; the oldest goes first.
+	var _askFrom = {}, _askOrder = [], ASK_FROM_MAX = 64;
+
+	/// Remember who asked `ask`, and until when it can be answered.
+	function noteAskFrom(ask) {
+		if (!ask || ask.t !== T_ASK || !ask.cid) return;
+		var cid = String(ask.cid);
+		if (!_askFrom[cid]) _askOrder.push(cid);
+		_askFrom[cid] = { by: String(ask.dispatchedBy || ''), deadline: +ask.deadline || 0 };
+		while (_askOrder.length > ASK_FROM_MAX) delete _askFrom[_askOrder.shift()];
+	}
+
+	/// The runner a grant answers: the ask's `dispatchedBy` where this device saw the
+	/// ask, else the holder of the turn's live lease (a blocker read off the lease), else
+	/// '' and the grant goes to the account as it did.
+	function grantAddressee(grant) {
+		var a = _askFrom[String(grant.cid || '')];
+		if (a && a.by) return a.by;
+		var r = _leases[String(grant.turnId || '')];
+		if (r && r.holder && liveLease(r, Date.now())) return String(r.holder);
+		return '';
+	}
+
+	/// `{ for?, ttl?, turn? }` for a sealed post to our own account. Pure but for the
+	/// ask memory and the clock. `ttl` is seconds and every span is read on the sender's
+	/// own clock, so no two clocks are compared.
+	function relayMeta(env, now) {
+		var n = now == null ? Date.now() : now, out = {};
+		if (!env) return out;
+		var secs = function (ms) { return Math.max(30, Math.min(86400, Math.ceil(ms / 1000))); };
+		if (env.t === T_REPORT || env.t === T_BUILT) {
+			if (env.to) { out['for'] = String(env.to); out.ttl = secs(NOTE_HOLD_MS); }
+		} else if (env.t === T_GRANT) {
+			if (env.to) {
+				var a = _askFrom[String(env.cid || '')];
+				out['for'] = String(env.to);
+				out.ttl = secs(a && a.deadline ? a.deadline - n + 30000 : NOTE_HOLD_MS);
+			}
+		} else if (env.t === T_ASK) {
+			if (env.target) {
+				out['for'] = String(env.target);
+				out.ttl = secs(env.deadline ? env.deadline - n + 30000 : NOTE_HOLD_MS);
+			}
+		} else if (env.t === T_ERRAND) {
+			// No `for`: an errand is claimed by whichever device may run it. It is kept
+			// until no device may start it (the lease refuses a take past the deadline).
+			if (env.turnId) out.turn = String(env.turnId);
+			if (+env.deadline) out.ttl = secs(+env.deadline + LEASE_TTL_MS - n);
+		}
+		return out;
 	}
 
 	/// Open a sealed peer body to its plaintext bytes, whichever scheme sealed it:
@@ -689,7 +768,7 @@
 		var result = null;
 		if (obj.t === T_ERRAND && _onErrand) result = await _onErrand(obj, row);
 		else if (obj.t === T_REPORT && _onReport) await _onReport(obj, row);
-		else if (obj.t === T_ASK    && _onAsk)    await _onAsk(obj, row);
+		else if (obj.t === T_ASK    && _onAsk)    { noteAskFrom(obj); await _onAsk(obj, row); }
 		else if (obj.t === T_GRANT  && _onGrant)  await _onGrant(obj, row);
 		// A compile stands down the same way an errand does -- the result is propagated
 		// so takeRow can HOLD the errand on the relay for a runner that deferred.
@@ -1397,6 +1476,17 @@
 			since = Math.max(0, n - sent);
 		}
 		var age = span + since;
+		// THE TURN'S FIRST POST ON THE RELAY (gateway release 5): the arrival stamp of
+		// the first post that named this turn, read on the relay's clock alone. Every
+		// birth above is some device's clock, so a sender whose clock stepped back by
+		// the turn's age between birth and re-hand passed them all; this cannot be
+		// moved by any device. The older of the two ages stands.
+		var first = leaseMs(o.rowFirst);
+		var firstMs = first >= 1e11 ? first : first * 1000;
+		if (firstMs > 0 && rowMs > 0) {
+			var byRelay = Math.max(0, (rel || n) - firstMs);
+			if (byRelay > age) { age = byRelay; clock = rel ? 'relay-first' : 'local-first'; }
+		}
 		if (age >= DISPATCH_DEADLINE_MS) return { ok: false, why: 'stale', age: age, birth: birth, until: 0, clock: clock };
 		return { ok: true, why: '', age: age, birth: birth, until: n + (DISPATCH_DEADLINE_MS - age), clock: clock };
 	}
@@ -1747,6 +1837,12 @@
 
 	function presenceForget() { _presence = {}; _relaySkew = null; }
 
+	/// Take the relay's clock from any answer that carries one (a collect's `now`),
+	/// without touching the presence view. The same offset a presence answer sets.
+	function learnRelayNow(serverNow) {
+		if (plausibleMs(serverNow)) _relaySkew = leaseMs(serverNow) - Date.now();
+	}
+
 	/// The relay's clock now, in ms, as the last presence answer measured it; null until
 	/// one has. What `turnAgeVerdict` reads the time since an errand's post on.
 	function relayNow() { return _relaySkew == null ? null : Date.now() + _relaySkew; }
@@ -1789,6 +1885,7 @@
 		name:     presenceName,
 		forget:   presenceForget,
 		relayNow: relayNow,
+		learnRelayNow: learnRelayNow,
 	};
 
 	// ── Remote consent — attention, routing, the park bound ────
@@ -3747,6 +3844,7 @@
 		// collector lets the row go, and the relay drops it.
 		var age = turnAgeVerdict(e, {
 			rowTs:    d.rowTs,
+			rowFirst: d.rowFirst,
 			relayNow: (typeof d.relayNow === 'function') ? d.relayNow() : d.relayNow,
 			births:   (typeof d.births === 'function') ? d.births(e) : d.births,
 			now:      leaseNow(leaseClock),
@@ -4732,6 +4830,7 @@
 		/// post body. Reuses `DaimondPost.seal`; no server is involved, which is
 		/// also how it is tested.
 		sealForSelf: sealForSelf,
+		relayMeta:   relayMeta,
 		/// Open a sealed envelope, or throw if it is not this account's OR was not
 		/// signed by this account. The same-account-only property lives here.
 		openEnvelope: openEnvelope,

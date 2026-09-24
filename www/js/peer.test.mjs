@@ -552,8 +552,12 @@ async function main() {
 		phone.DaimondPeer.makeErrand({ turnId: 'turn-2', chatId: 'chat-1', prompt: 'again?' }));
 	const putRes = await phone.DaimondPost.post(errandBody);
 	check('the raw put reports ok', putRes.ok === true && putRes.status === 200);
-	check('the posted body is exactly {to, addr, envelope}',
-		!!lastPostBody && Object.keys(lastPostBody).sort().join(',') === 'addr,envelope,to');
+	// Gateway release 5: an errand also tells our own relay its turn id in the clear
+	// (`relayMeta`), so the relay can stamp the turn's first post. Nothing of the sealed
+	// errand itself -- the prompt, the chat -- ever rides beside the envelope.
+	check('the posted body is exactly {to, addr, envelope} and the errand\'s turn',
+		!!lastPostBody && Object.keys(lastPostBody).sort().join(',') === 'addr,envelope,to,turn'
+		&& lastPostBody.turn === 'turn-2' && !JSON.stringify(lastPostBody).includes('again?'));
 	check('the posted `to` is the account\'s OWN b64url public address', lastPostBody.to === phonePubB64url);
 	check('the posted addr and envelope are the sealed artefact\'s',
 		lastPostBody.addr === errandBody.addr && lastPostBody.envelope === errandBody.envelope);

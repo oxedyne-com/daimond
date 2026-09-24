@@ -21794,6 +21794,9 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			// recovery, which ages its own turn on this device's clock -- the relay's clock
 			// now, and the birth stamps this device holds for the turn itself.
 			rowTs:     (o.row && +o.row.ts) || 0,
+			// The relay's stamp of the turn's FIRST post (gateway release 5), 0 from an
+			// older relay: an age no device's clock can move.
+			rowFirst:  (o.row && +o.row.first) || 0,
 			relayNow:  function () {
 				try { return (window.DaimondPresence && DaimondPresence.relayNow) ? DaimondPresence.relayNow() : null; }
 				catch (e) { return null; }
