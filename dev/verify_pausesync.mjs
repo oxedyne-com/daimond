@@ -152,31 +152,59 @@ try {
 	check(fixed.length === 0, 'and leaves the next parcel unchanged (the fixed point)',
 		fixed.join(' '));
 
-	// A parcel that IS news, from a device whose stamp is later. The record wins
-	// whole -- and this device must then send back exactly what it received, not
-	// a restamped copy of it. A restamp here is the `touchSelfDevice` bug.
-	// `Number(...)`, never `| 0`: a millisecond stamp is well past 2^31, and
-	// truncating it to 32 bits makes the "later" record the earlier one. The
-	// check below caught that when this file did it.
-	const NEWS = { paused: [LEAF_B, 'root/mail/someone%40example.com/INBOX'].sort(),
-		stamp: Number(p3.pause.stamp) + 60000 };
+	// THE OTHER DEVICE, played in this page: a second copy of this build's pause.js
+	// over storage of its own, with a clock `__pOff` ms ahead of this one. Its record
+	// is what that device's parcel would carry. Until the R3 QA of 2026-09-24 this
+	// file wrote the other device's record by hand, in the one shape there was; the
+	// record now merges id by id (`www/js/pause.js`, "The record"), so a record made
+	// by hand would test a shape and not a device.
+	await page.evaluate(async () => {
+		const body = await (await fetch('/js/pause.js', { cache: 'no-store' })).text();
+		const m = new Map();
+		const ls = { getItem: (k) => (m.has(k) ? m.get(k) : null), setItem: (k, v) => { m.set(k, String(v)); },
+			removeItem: (k) => { m.delete(k); } };
+		const win = { localStorage: ls, addEventListener() {}, dispatchEvent() { return true; },
+			DaimondIdentity: { deviceId: () => 'pausesync-other' } };
+		window.__pOff = 0;
+		new Function('window', 'localStorage', 'CustomEvent', 'Date', body)(win, ls,
+			function CustomEvent(t) { this.type = t; }, { now: () => Date.now() + window.__pOff });
+		window.__other = win.DaimondPause;
+	});
+
+	// A parcel that IS news, from a device whose clock is later: it had this
+	// device's record and then paused a mail folder. This device must then send
+	// back exactly what that device holds, not a restamped copy of it. A restamp
+	// here is the `touchSelfDevice` bug. `Number(...)`, never `| 0`: a millisecond
+	// stamp is well past 2^31, and truncating it to 32 bits makes the "later"
+	// record the earlier one. The check below caught that when this file did it.
+	const NEWS = await page.evaluate((base) => {
+		window.__pOff = 60000;
+		window.__other.adopt(base);
+		window.__other.set('root/mail/someone%40example.com/INBOX', false);
+		return window.__other.snapshot();
+	}, p3.pause);
 	await page.evaluate(async (arg) => {
 		const p = await DaimondSync.parcel();
 		p.pause = arg.news;
 		await DaimondSync.apply(p);
 	}, { news: NEWS });
 	const p4 = await parcel();
-	check(JSON.stringify(p4.pause) === JSON.stringify(NEWS),
-		'a later record is adopted whole, and sent back unrestamped', JSON.stringify(p4.pause));
+	check(JSON.stringify(p4.pause) === JSON.stringify(NEWS) && Number(NEWS.stamp) > Number(p3.pause.stamp),
+		'a later record is adopted, and sent back unrestamped', JSON.stringify(p4.pause));
 	await page.waitForTimeout(1200);
 	const p5 = await parcel();
 	check(differences(p4, p5).length === 0, 'and the parcel is still a fixed point after adopting news',
 		differences(p4, p5).join(' '));
 
 	// A resume, which is the direction a union merge gets wrong. The other
-	// device un-paused everything at a later stamp; a merge that unioned would
-	// keep this device's leaves paused for ever and no resume would ever travel.
-	const RESUMED = { paused: [], stamp: NEWS.stamp + 60000 };
+	// device un-paused both leaves later; a merge that unioned would keep this
+	// device's leaves paused for ever and no resume would ever travel.
+	const RESUMED = await page.evaluate((ids) => {
+		window.__pOff = 120000;
+		window.__other.set(ids.a, true);
+		window.__other.set(ids.b, true);
+		return window.__other.snapshot();
+	}, { a: LEAF_A, b: LEAF_B });
 	await page.evaluate(async (arg) => {
 		const p = await DaimondSync.parcel();
 		p.pause = arg.rec;
@@ -200,7 +228,8 @@ try {
 		await DaimondSync.apply(p);
 	}, { rec: EQUAL });
 	const p6 = await parcel();
-	check(JSON.stringify(p6.pause.paused) === JSON.stringify([LEAF_A, LEAF_B].sort()),
+	const union = [...new Set(eqBase.pause.paused.concat([LEAF_B]))].sort();
+	check(JSON.stringify(p6.pause.paused) === JSON.stringify(union) && union.includes(LEAF_A),
 		'two records at the same stamp merge to the union', JSON.stringify(p6.pause.paused));
 	await page.evaluate(p => DaimondSync.apply(p), p6);
 	await page.waitForTimeout(600);

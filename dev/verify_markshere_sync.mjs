@@ -224,6 +224,7 @@ const standIn = (s) => s.page.evaluate(async ([folder, subs]) => {
 		tx.oncomplete = res;
 		tx.onerror = () => rej(tx.error);
 	});
+	db.close();
 }, [FOLDER, SUBS]);
 const ready = (s) => s.page.waitForFunction(() => !!(window.DaimondSync && window.DaimondCore && window.DaimondGateway
 	&& DaimondGateway.state().authed), null, { timeout: 30000 }).catch(() => {});

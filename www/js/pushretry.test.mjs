@@ -35,6 +35,38 @@
      SYNC_JS=<d3283a04's sync.js> node www/js/pushretry.test.mjs
      node www/js/pushretry.test.mjs                    # ALL PASS
 
+   S2 (R3 sync QA, 2026-09-24): a retry whose own pull fails climbs the
+   wire's ladder to UNSENT_WIRE_MAX_MS, not the conflict's 8 s, and a
+   device the browser knows is offline sends nothing until `online`.
+
+     W. owed, then every content pull fails for an hour: about twenty
+        GETs, not 450, and the gap grows to 300 s +-50%.
+     O. owed and offline: no request at all, and `online` starts it.
+
+   S5, S6 (R3 sync QA, 2026-09-24): work is owed from the moment a push
+   has news until one lands, so every exit that did not land is retried.
+   Before, only a 409 whose pull failed, or eight 409s, owed it.
+
+     Q6. one POST fails -- thrown, 502, 503, 500, 429 -- and the wire is
+         healthy after: the chip says 'unsent', and one retry lands it.
+     Q7. a 409 whose reconciling merge fails once or three times: it
+         lands after the clean re-pull, and the retry does not pull
+         again while the merge is failing.
+     Q8. flush() through eight 502s: 'not_confirmed', then the ladder
+         lands it once the outage ends.
+     P.  the POST fails on the wire for an hour: about twenty POSTs and
+         twenty GETs, the gap grows to 300 s, one success pays it.
+     R.  a 429 or 503 with Retry-After: no POST before it.
+
+   Q6, Q7 and Q8 fail with the mark, the `finally` arm and the jam-only
+   chip reverted (steps 1-3 of the S5 brief).
+
+   S3 (R3 sync QA, 2026-09-24): the re-pull of a version that will not
+   merge gives up after REAPPLY_MAX_TRIES; owed work then went nowhere.
+
+     M. owed, pulls land but will not merge for five minutes, then they
+        do: the owed parcel lands on its own, the retry at its ceiling.
+
    Run:  node www/js/pushretry.test.mjs
    ============================================================ */
 import { readFileSync } from 'node:fs';
@@ -53,6 +85,7 @@ function check(name, cond, detail) {
 const SELF = '00112233445566aa';
 const realSleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const drain = () => new Promise((r) => setImmediate(r));
+const BASE = Date.UTC(2026, 8, 24, 12, 0, 0);
 
 function makeTab() {
 	const store = new Map();
@@ -62,7 +95,8 @@ function makeTab() {
 		removeItem: (k) => store.delete(k),
 	};
 	const win = {};
-	win.addEventListener = () => {};
+	const listeners = {};
+	win.addEventListener = (type, f) => { (listeners[type] = listeners[type] || []).push(f); };
 	win.dispatchEvent = () => true;
 	const noEl = {
 		addEventListener: () => {}, appendChild: () => {}, setAttribute: () => {},
@@ -84,6 +118,9 @@ function makeTab() {
 		moveOnRead: 0,				// the mailbox moves under this many more pushes (another device)
 		posts: [],					// every POST: { base, ok }
 		gets: 0,
+		getAt: [],					// the virtual time of every content GET
+		postAt: [],					// and of every parcel POST, landed, refused or failed
+		fire: (type) => (listeners[type] || []).forEach((f) => f({ type })),
 		mailbox: { version: 4, blob: 'sealed:' + JSON.stringify({ v: 3, chats: [], note: 'phone v4' }) },
 		// A virtual clock: every timer the page sets waits here until the test runs it.
 		vnow: 0,
@@ -107,10 +144,12 @@ function makeTab() {
 			if (q.has('presence') || q.has('lease') || q.has('progress')) return answer(200, { ok: true });
 			if (!opts || opts.method === 'GET') {
 				tab.gets++;
+				tab.getAt.push(tab.vnow);
 				if (tab.withhold) throw new TypeError('Failed to fetch');
 				return answer(200, { present: true, version: tab.mailbox.version, blob: tab.mailbox.blob,
 					device: 'Phone' });
 			}
+			tab.postAt.push(tab.vnow);
 			const body = JSON.parse(opts.body);
 			// Another device's push lands first, as the phone's did behind the runner's.
 			if (tab.moveOnRead > 0) {
@@ -143,12 +182,21 @@ function makeTab() {
 		},
 	};
 
+	// A virtual `Date` alongside the virtual timers (F-S5-5 / R): `holdUntil` is
+	// compared against `Date.now()` inside sync.js, and a real Date barely moves
+	// while `advance()` below fires timers on the virtual clock, so a Retry-After
+	// wait that virtual time has cleared would still read as standing.
+	class VDate extends Date {
+		constructor(...a) { if (a.length) super(...a); else super(BASE + tab.vnow); }
+		static now() { return BASE + tab.vnow; }
+	}
+
 	const body = readFileSync(process.env.SYNC_JS || join(HERE, 'sync.js'), 'utf8');
 	const fn = new Function(
 		'window', 'document', 'crypto', 'localStorage',
 		'TextEncoder', 'TextDecoder',
 		'setTimeout', 'clearTimeout', 'setInterval', 'clearInterval',
-		'console',
+		'console', 'Date',
 		'with (window) {\n' + body + '\n}');
 	let nextId = 1;
 	fn(win, document, webcrypto, localStorage,
@@ -156,7 +204,7 @@ function makeTab() {
 		(f, ms) => { const id = nextId++; tab.timers.push({ id, f, due: tab.vnow + (ms | 0) }); return id; },
 		(id) => { tab.timers = tab.timers.filter((t) => t.id !== id); },
 		() => 0, () => {},
-		{ log: () => {}, debug: () => {}, warn: () => {}, error: () => {} });
+		{ log: () => {}, debug: () => {}, warn: () => {}, error: () => {} }, VDate);
 	return tab;
 }
 
@@ -188,6 +236,15 @@ async function advance(tab, ms) {
 	tab.vnow = end;
 	await quiet(tab);
 }
+
+/// Pin the page's jitter, so a count over an hour is the ladder's and not the dice's.
+/// 0.5 is the middle of every jittered wait (x1.0), 0 the shortest (x0.5).
+function pinJitter(tab, r) {
+	tab.win.Math = Object.create(Math, { random: { value: () => r } });
+}
+
+/// The gaps between successive times.
+const gaps = (at) => at.slice(1).map((t, i) => t - at[i]);
 
 const landed = (tab) => tab.posts.filter((p) => p.ok).length;
 const holds = (tab, note) => {
@@ -237,7 +294,10 @@ console.log('\nB. the pull lands: the owed parcel is committed with no further c
 {
 	const { tab, S } = a;
 	tab.withhold = false;
-	await advance(tab, 13000);		// longer than the backoff's widest step (UNSENT_RETRY_MAX_MS x 1.5)
+	// Longer than the widest step the ladder can have reached. A's twenty seconds of
+	// failed pulls climb the WIRE's ladder (S2), whose fifth step is 16 s and sixth
+	// 32 s, so the retry already armed is due within 32 s x 1.5 of A's end.
+	await advance(tab, 60000);
 	check('B1. THE RUNNER\'S ANSWER LANDS, with nothing changed since the refusal',
 		landed(tab) === 2 && holds(tab, 'runner answer'),
 		JSON.stringify({ posts: tab.posts, v: tab.mailbox.version }));
@@ -285,6 +345,238 @@ console.log('\nD. a pull on another trigger lands first: the owed parcel goes on
 	await advance(tab, 3000);		// the push debounce, not the backoff
 	check('D1. the landed pull sends the owed parcel', landed(tab) === 2 && holds(tab, 'runner answer'),
 		JSON.stringify(tab.posts));
+}
+
+/// A runner whose push was refused and whose reconcile could not pull: owed.
+async function owed() {
+	const { tab, S } = await runnerBehindThePhone();
+	tab.parcel = { v: 3, chats: [], note: 'runner answer' };
+	tab.withhold = true;
+	await S.push();
+	await quiet(tab);
+	return { tab, S };
+}
+
+console.log('\nW. owed, then every content pull fails on the wire for an hour (S2)\n');
+{
+	const { tab, S } = await owed();
+	pinJitter(tab, 0.5);
+	const g0 = tab.gets;
+	await advance(tab, 3600000);
+	const at = tab.getAt.slice(g0);
+	const gp = gaps(at);
+	check('W1. an hour of failed pulls costs about twenty GETs, not one every 8 s', at.length <= 20,
+		at.length + ' GETs in 60 min (450 at the old 8 s ceiling)');
+	check('W2. the gap grows to the wire\'s ceiling, 300 s', gp.length > 0 && gp[gp.length - 1] === 300000,
+		'last gaps ' + gp.slice(-3).map((g) => g / 1000 + 's').join(', '));
+	check('W3. and no parcel is sent while the pull cannot land', tab.posts.length === 2,
+		(tab.posts.length - 2) + ' POST(s)');
+	pinJitter(tab, 0);
+	const g1 = tab.gets;
+	await advance(tab, 3600000);
+	const gw = gaps(tab.getAt.slice(g1));
+	check('W4. with every wait at its shortest the gap is still half the ceiling, 150 s',
+		gw.length > 0 && Math.min(...gw) >= 150000, 'shortest ' + Math.min(...gw) / 1000 + 's');
+	tab.withhold = false;
+	await advance(tab, 450000);	// the ceiling x 1.5
+	check('W5. once the pull lands, one round sends the owed parcel', landed(tab) === 2 && holds(tab, 'runner answer'),
+		JSON.stringify(tab.posts.slice(-2)));
+	// Paid off: the ladder is back at the bottom, so the next owed work goes in ~1 s.
+	pinJitter(tab, 1);
+	tab.mailbox = { version: tab.mailbox.version + 1,
+		blob: 'sealed:' + JSON.stringify({ v: 3, chats: [], note: 'phone moved again' }) };
+	tab.parcel = { v: 3, chats: [], note: 'runner second answer' };
+	tab.withhold = true;
+	await S.push();
+	await quiet(tab);
+	const g2 = tab.gets;
+	await advance(tab, 1500);		// the first step, UNSENT_RETRY_MIN_MS x 1.5
+	check('W6. and a landed push resets the ladder: the next owed work is retried within the first step',
+		tab.gets === g2 + 1, (tab.gets - g2) + ' GET(s) in 1.5 s');
+}
+
+console.log('\nO. owed, and the browser knows it is offline\n');
+{
+	const { tab, S } = await owed();
+	tab.win.navigator = { onLine: false };
+	tab.withhold = false;				// the gateway is fine; this device cannot reach it
+	const g0 = tab.gets, p0 = tab.posts.length;
+	await advance(tab, 600000);
+	check('O1. no request leaves a device with no link', tab.gets === g0 && tab.posts.length === p0,
+		(tab.gets - g0) + ' GET(s), ' + (tab.posts.length - p0) + ' POST(s) in 10 min');
+	check('O2. and no retry is left ticking', tab.timers.length === 0, tab.timers.length + ' timer(s)');
+	tab.win.navigator = { onLine: true };
+	tab.fire('online');
+	await advance(tab, 1500);			// the ladder is reset: the first step
+	check('O3. the link coming back sends the owed parcel at once', landed(tab) === 2 && holds(tab, 'runner answer'),
+		JSON.stringify(tab.posts.slice(-2)));
+}
+
+/// A tab that has pulled once and holds the runner's answer, not yet pushed.
+async function holdingTheAnswer() {
+	const tab = makeTab();
+	tab.unlocked = true;
+	const S = tab.win.DaimondSync;
+	await S.pull();
+	await quiet(tab);
+	tab.parcel = { v: 3, chats: [], note: 'runner answer' };
+	return { tab, S };
+}
+
+/// Answer the parcel POSTs with `fail` while `on()` holds; everything else goes to the mailbox.
+function failPosts(tab, on, fail) {
+	const orig = tab.win.DaimondGateway.gwFetch;
+	tab.failedPosts = 0;
+	tab.win.DaimondGateway.gwFetch = async (path, opts) => {
+		const parcelPost = opts && opts.method === 'POST' && !/presence|lease|progress/.test(path);
+		if (parcelPost && on()) {
+			tab.failedPosts++;
+			tab.postAt.push(tab.vnow);
+			return fail();
+		}
+		return orig(path, opts);
+	};
+}
+
+const failWith = (mode, retryAfter) => () => {
+	if (mode === 'throw') throw new TypeError('network error');
+	return { status: mode, headers: { get: (k) => (k === 'retry-after' && retryAfter) ? retryAfter : null },
+		json: async () => ({ ok: false }) };
+};
+
+for (const mode of ['throw', 502, 503, 500, 429]) {
+	console.log('\nQ6 ' + mode + '. the answer\'s one POST fails, then the wire is healthy, and nothing else happens\n');
+	const { tab, S } = await holdingTheAnswer();
+	pinJitter(tab, 1);				// every wait at its longest: one step is 1.5 s
+	let once = true;
+	failPosts(tab, () => { const f = once; once = false; return f; }, failWith(mode));
+	await S.push();
+	await quiet(tab);
+	const st = S.state();
+	check('Q6 ' + mode + '. the POST failed, and the chip says the work has not been sent',
+		tab.failedPosts === 1 && st.stalled && st.stalledWhy === 'unsent',
+		JSON.stringify({ failed: tab.failedPosts, stalled: st.stalled, why: st.stalledWhy }));
+	const g0 = tab.gets, p0 = tab.posts.length;
+	await advance(tab, 1500);		// one ladder step
+	check('Q6 ' + mode + '. THE ANSWER LANDS within one step of the ladder, with no further change',
+		holds(tab, 'runner answer'), JSON.stringify(tab.posts));
+	check('Q6 ' + mode + '. with exactly one retry GET and one retry POST',
+		tab.gets - g0 === 1 && tab.posts.length - p0 === 1,
+		(tab.gets - g0) + ' GET(s), ' + (tab.posts.length - p0) + ' POST(s)');
+	check('Q6 ' + mode + '. and the chip is clear again', !S.state().stalled, S.state().stalledWhy);
+	await advance(tab, 600000);
+	check('Q6 ' + mode + '. and nothing more is sent or fetched', tab.gets - g0 === 1 && tab.posts.length - p0 === 1,
+		(tab.gets - g0) + ' GET(s), ' + (tab.posts.length - p0) + ' POST(s) in 10 min');
+}
+
+for (const fails of [1, 3]) {
+	console.log('\nQ7 x' + fails + '. a 409, then the reconciling merge fails ' + fails + ' time(s) before it takes\n');
+	const { tab, S } = await runnerBehindThePhone();
+	tab.parcel = { v: 3, chats: [], note: 'runner answer' };
+	let left = fails;
+	tab.win.DaimondGraph = { adopt: () => { if (left > 0) { left--; throw new Error('transient merge fault'); } } };
+	const g0 = tab.gets;
+	await S.push();
+	await quiet(tab);
+	check('Q7 x' + fails + '. the push is refused and the merge did not finish, and the chip says so',
+		S.state().stalled && S.state().stalledWhy === 'merge', S.state().stalledWhy);
+	await advance(tab, 600000);
+	check('Q7 x' + fails + '. THE ANSWER LANDS once the merge takes, with no further change',
+		holds(tab, 'runner answer') && left === 0, JSON.stringify(tab.posts.slice(-2)) + ' left=' + left);
+	// One reconciling pull, one per failed re-pull, one clean one: fails + 1. The owed retry
+	// may add one pull of its own, which finds the merge failing and leaves it to the re-pull.
+	check('Q7 x' + fails + '. and the retry does not keep pulling while the merge fails',
+		tab.gets - g0 <= fails + 2, (tab.gets - g0) + ' GET(s)');
+	check('Q7 x' + fails + '. and the chip is clear', !S.state().stalled, S.state().stalledWhy);
+}
+
+for (const n of [3, 8]) {
+	console.log('\nQ8 ' + n + 'x502. the runner\'s report path: flush() while the next ' + n + ' POSTs are 502s\n');
+	const { tab, S } = await holdingTheAnswer();
+	pinJitter(tab, 0.5);
+	let left = n;
+	failPosts(tab, () => left-- > 0, failWith(502));
+	let res = null;
+	S.flush().then((r) => { res = r; });
+	await advance(tab, 3000);		// flush's six rounds, 300 ms apart
+	if (n > 6) {
+		check('Q8 ' + n + 'x502. flush gives up with the outage still running', !!res && res.ok === false
+			&& res.why === 'not_confirmed', JSON.stringify(res));
+	} else {
+		check('Q8 ' + n + 'x502. flush lands it inside its own rounds', !!res && res.ok === true, JSON.stringify(res));
+	}
+	await advance(tab, 600000);
+	check('Q8 ' + n + 'x502. THE ANSWER LANDS once the outage ends, with no further change',
+		holds(tab, 'runner answer'), 'failed=' + tab.failedPosts + ' ' + JSON.stringify(tab.posts));
+	check('Q8 ' + n + 'x502. and the chip is clear', !S.state().stalled, S.state().stalledWhy);
+}
+
+console.log('\nP. the POST fails on the wire for an hour, then the wire is healthy\n');
+{
+	const { tab, S } = await holdingTheAnswer();
+	pinJitter(tab, 0.5);
+	let broken = true;
+	failPosts(tab, () => broken, failWith('throw'));
+	await S.push();
+	await quiet(tab);
+	const g0 = tab.gets;
+	await advance(tab, 3600000);
+	const gp = gaps(tab.postAt);
+	check('P1. an hour of failed uploads costs about twenty POSTs', tab.failedPosts <= 20,
+		tab.failedPosts + ' POSTs in 60 min');
+	check('P2. and about twenty GETs', tab.gets - g0 <= 20, (tab.gets - g0) + ' GETs in 60 min');
+	check('P3. the gap grows to the wire\'s ceiling, 300 s', gp.length > 0 && gp[gp.length - 1] === 300000,
+		'last gaps ' + gp.slice(-3).map((g) => g / 1000 + 's').join(', '));
+	check('P4. and the work is still owed, and says so', S.state().stalledWhy === 'unsent', S.state().stalledWhy);
+	broken = false;
+	await advance(tab, 450000);		// the ceiling x 1.5
+	check('P5. one round that gets through lands it', holds(tab, 'runner answer') && landed(tab) === 1,
+		JSON.stringify(tab.posts));
+	pinJitter(tab, 1);
+	tab.parcel = { v: 3, chats: [], note: 'runner second answer' };
+	let once = true;
+	failPosts(tab, () => { const f = once; once = false; return f; }, failWith('throw'));
+	await S.push();
+	await quiet(tab);
+	await advance(tab, 1500);
+	check('P6. and the landing reset the ladder: the next failure is retried within the first step',
+		holds(tab, 'runner second answer'), JSON.stringify(tab.posts.slice(-1)));
+}
+
+for (const [mode, ra] of [[429, '120'], [503, '120'], [503, 'date']]) {
+	console.log('\nR ' + mode + ' ' + ra + '. the POST is answered ' + mode + ' with Retry-After: ' + ra + '\n');
+	const { tab, S } = await holdingTheAnswer();
+	pinJitter(tab, 0);				// the ladder at its shortest: 0.5 s on its own
+	const header = ra === 'date' ? new Date(BASE + tab.vnow + 120000).toUTCString() : ra;
+	let once = true;
+	failPosts(tab, () => { const f = once; once = false; return f; }, failWith(mode, header));
+	await S.push();
+	await quiet(tab);
+	const t0 = tab.vnow, g0 = tab.gets;
+	await advance(tab, 119000);		// an HTTP date is whole seconds, so a hair under 120
+	check('R ' + mode + ' ' + ra + '. nothing is sent or fetched before the gateway said to come back',
+		tab.posts.length === 0 && tab.gets === g0 && tab.failedPosts === 1,
+		tab.posts.length + ' POST(s), ' + (tab.gets - g0) + ' GET(s) in 119 s');
+	await advance(tab, 61000);		// Retry-After x 1.5, its jitter's top
+	check('R ' + mode + ' ' + ra + '. and then it lands', holds(tab, 'runner answer'),
+		'at ' + ((tab.postAt[tab.postAt.length - 1] - t0) / 1000) + ' s');
+}
+
+console.log('\nM. owed, then the pulls land but will not merge until the re-pull has given up (S3)\n');
+{
+	const { tab, S } = await owed();
+	tab.withhold = false;
+	let broken = true;
+	tab.win.DaimondGraph = { adopt: () => { if (broken) throw new Error('a section that will not merge yet'); } };
+	await advance(tab, 300000);		// the re-pull's six tries take ~95 s (x1.5 at most)
+	check('M1. the re-pull has given up and the work is still owed', !holds(tab, 'runner answer')
+		&& S.state().stalled, JSON.stringify({ why: S.state().stalledWhy, posts: tab.posts.length }));
+	broken = false;					// a new build, or a parcel from the other device that merges
+	const g0 = tab.gets;
+	await advance(tab, 450000);		// UNSENT_WIRE_MAX_MS x 1.5
+	check('M2. THE OWED PARCEL LANDS with no further change, on the retry\'s own clock',
+		holds(tab, 'runner answer'), (tab.gets - g0) + ' GET(s); ' + JSON.stringify(tab.posts.slice(-1)));
+	check('M3. and the chip is clear', !S.state().stalled, S.state().stalledWhy);
 }
 
 console.log('\n' + (failures ? failures + ' FAILED' : 'ALL PASS'));

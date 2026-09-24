@@ -97,9 +97,11 @@ const spendNode = (page, id) =>
 const setPaused = (page, node, playing) =>
 	page.evaluate(({ n, p }) => window.DaimondPause.set(n, p), { n: node, p: playing });
 
-/// The last error line on screen, or '' when none is there.
+/// The last refusal line on screen, or '' when none is there. A pause's refusal is said in
+/// the app's neutral voice and an error in the danger colour (`appendFailure`, R3 QA Q6-3),
+/// so both registers are read; `verify_q6` holds which one a refusal is drawn in.
 const lastRefusal = (page) => page.evaluate(() => {
-	const rows = [...document.querySelectorAll('.chat-msg-error .chat-msg-content')];
+	const rows = [...document.querySelectorAll('.chat-msg-error .chat-msg-content, .chat-msg-compacted .chat-msg-content')];
 	return rows.length ? rows[rows.length - 1].textContent : '';
 });
 

@@ -17,7 +17,10 @@
 //   * a Diamond with nothing attached is refused in words that name the thing to
 //     do about it, and the hand is never asked;
 //   * an explicit `cwd` from the model is still honoured;
-//   * an ordinary, unscoped turn still starts at the granted root.
+//   * an ordinary, unscoped turn still starts at the granted root;
+//   * a mark pressed in one machine folder does not reach another folder of the
+//     same name: there the command is refused before the hand is asked, until the
+//     user presses "Use here" in it (M2, 2026-09-24).
 //
 // The hand is a stand-in that records what it was sent — the question here is
 // which `cwd` the ENGINE composes, and a real hand would answer it by refusing
@@ -27,7 +30,7 @@
 // Run with dev/serve.mjs (DAIMOND_PORT, default 8777) up.
 //
 //	node dev/verify_diamondcwd.mjs
-import { open } from './harness.mjs';
+import { open, markHere, standInFolders } from './harness.mjs';
 
 const ok = [], bad = [];
 const check = (name, pass, detail) => {
@@ -64,7 +67,8 @@ await p.evaluate(async (root) => {
 			'http://127.0.0.1/v1/chat/completions', '', 'none', 256, '', true);
 		if (scope) {
 			app.set_diamond_scope(scope.own, JSON.stringify(scope.attached || []),
-				JSON.stringify(scope.read_only || []), JSON.stringify(scope.toolkits || []));
+				JSON.stringify(scope.read_only || []), JSON.stringify(scope.toolkits || []),
+				JSON.stringify(scope.unconfirmed || []));
 		}
 		return app;
 	};
@@ -170,6 +174,58 @@ const plain = await run(null, { argv: ['ls'] });
 check('an unscoped turn still starts at the granted root',
 	plain.sent.length === 1 && plain.sent[0].cwd === ROOT,
 	JSON.stringify(plain.sent.map((x) => x.cwd)) + ' | ' + plain.said.slice(0, 80));
+
+// ── Two machine folders of one name (M2) ────────────────────────────────
+//
+// The fence the hand is given is built from `Files.bounds`, which lists only the
+// marks in force on this device -- and the record of those keyed a machine folder
+// by its name, so a mark pressed in `/home/j/usr` put `code/` inside the fence in
+// `/media/usb/usr` too. The scope here is the page's own bounds, exactly what
+// `scopeAgentTo` hands the engine, taken in two real folders both called `usr`.
+
+const F = await standInFolders(s, { tag: 'm2cwd', dirs: ['code'] });
+const bounds = (id) => p.evaluate((id) => DaimondDiamond.bounds(id), id);
+const scopeOf = (b) => ({ own: b.own_dir, attached: b.attached, read_only: b.read_only,
+	toolkits: b.toolkits, unconfirmed: b.unconfirmed });
+const inCode = { argv: ['ls'], cwd: 'code' };
+
+const pA = await F.pick('a');
+const did = await p.evaluate(async () => {
+	const d = await DaimondCore.diamondApp().create_diamond('M2 fence');
+	await DaimondCore.loadDiamonds();
+	return d;
+});
+const ref = await p.evaluate(() => DaimondAttach.ref('dir', 'code'));
+const pressed = await markHere(s, did, ref);
+const bA = await bounds(did);
+const inA = await run(scopeOf(bA), inCode);
+check('M2: in folder A, where code was marked, a command in code runs there',
+	pA.landed && pressed.confirmed && inA.sent.length === 1 && inA.sent[0].cwd === ROOT + '/code',
+	JSON.stringify({ pick: pA, pressed: pressed.confirmed, at: bA.attached, sent: inA.sent.map((x) => x.cwd) })
+		+ ' | ' + inA.said.slice(0, 80));
+check('M2: and the fence the hand is given holds code',
+	inA.sent.length === 1 && JSON.stringify(inA.sent[0]).includes(ROOT + '/code'),
+	JSON.stringify(inA.sent[0] || null).slice(0, 300));
+
+const pB = await F.pick('b');
+const bB = await bounds(did);
+const inB = await run(scopeOf(bB), inCode);
+check('M2: folder B, also called usr, is open', pB.landed, JSON.stringify(pB));
+check('M2: in B, before "Use here", code is not in the bounds',
+	!bB.attached.includes('code') && bB.unconfirmed.includes('code'), JSON.stringify(bB));
+check('M2: and a command in code is refused before the hand is asked',
+	/^Refused/.test(inB.said) && /not in this Diamond's workspace/.test(inB.said) && inB.sent.length === 0,
+	inB.said.slice(0, 160) + ' | sent ' + inB.sent.length);
+check('M2: and the refusal says the mark waits for a press here',
+	/IS marked in/.test(inB.said), inB.said.slice(0, 400));
+
+await p.evaluate(({ did, ref }) => DaimondAttach.confirmHere(did, ref), { did, ref });
+const bB2 = await bounds(did);
+const inB2 = await run(scopeOf(bB2), inCode);
+check('M2: after "Use here" in B, the command runs in B\'s code',
+	bB2.attached.includes('code') && inB2.sent.length === 1 && inB2.sent[0].cwd === ROOT + '/code',
+	JSON.stringify({ at: bB2.attached, sent: inB2.sent.map((x) => x.cwd) }) + ' | ' + inB2.said.slice(0, 80));
+await F.tidy();
 
 const noise = s.errs.filter((e) =>
 	!/favicon|ERR_ABORTED|net::ERR|Failed to load resource/i.test(e));

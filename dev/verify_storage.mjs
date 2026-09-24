@@ -96,6 +96,7 @@ await p.evaluate(async () => {
 		t.objectStore('handles').put(dir, 'workspace');
 		t.oncomplete = res; t.onerror = () => rej(t.error);
 	});
+	db.close();
 });
 await p.reload({ waitUntil: 'domcontentloaded' });
 await signInAs(s, 'storage');

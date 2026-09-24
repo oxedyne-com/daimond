@@ -15184,6 +15184,22 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		pinBottom();
 	}
 
+	/// Say in the thread why a turn did not run: a pause's refusal in the app's own
+	/// neutral voice (`appendNote`), anything else as the error it is. `failRole` is the
+	/// role the same line is stored under, so a reload draws it the same way.
+	///
+	/// A person's own pause is not a fault (R3 QA, Q6-3). Drawn by `appendError`, the
+	/// refusal at dispatch wore the danger colour and a "Report this" that armed a support
+	/// report for a turn that had done exactly what the person asked -- held. A turn a
+	/// pause catches part way is handed back as paused, not as an error (FB), and a turn
+	/// a pause refused before it began is said the same way. `pauseError` marks it.
+	function appendFailure(e) {
+		if (e && e.paused) appendNote(friendlyError(e));
+		else appendError(e);
+	}
+
+	function failRole(e) { return (e && e.paused) ? 'note_log' : 'error_log'; }
+
 	/// The app's own neutral voice in a thread — a status line, not a failure.
 	///
 	/// A fan-out's handover ("Worker w34 finished") is a STATUS, and `appendError`
@@ -21549,9 +21565,11 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			// A PERSON'S PAUSE, AS THE SENDER HAD IT (R2 QA, F2). The errand carries the
 			// sender's pause set at dispatch and nothing here read it, so a runner whose own
 			// copy lagged -- the parcel follows the errand -- ran a turn the person had
-			// stopped. It is merged as the parcel will merge it, by stamp, so this device
-			// never answers from an older set than the sender's; then the question every
-			// other door asks is asked here. `{ node, why }` refuses the turn before the take.
+			// stopped. It is merged as the parcel will merge it, id by id, so this device
+			// never answers from an older view than the sender's, and a sender's press
+			// on one leaf cannot lift a hold of this device's elsewhere (R3 QA, M-merge);
+			// then the question every other door asks is asked here. `{ node, why }`
+			// refuses the turn before the take.
 			pauseHold: function (er) {
 				try { if (er && er.pause && window.DaimondPause) DaimondPause.adopt(er.pause); }
 				catch (e) { /* this device's own set still answers */ }
@@ -26171,8 +26189,8 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		var node = g.dataset.pauseNode;
 		var st = 'play';
 		try { st = DaimondPause.state(node) || 'play'; } catch (e) { /* module not up */ }
-		// Has a PERSON held every leaf under here? The paused set alone, which is
-		// what the pause verb writes and so what it can still add to.
+		// Has a PERSON held every leaf under here? The record alone, which is what
+		// the pause verb writes and so what it can still add to.
 		var held = false;
 		try { held = DaimondPause.heldByHand(node); } catch (e) { /* module not up */ }
 		// A leaf that arms nothing but can still be held BY HAND -- see the verbs
@@ -26230,7 +26248,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		// greyed while its chats and the web could still spend. The only way to
 		// pause them was play first, which released every held action here (D3 of
 		// the delta re-check, 2026-09-24). So pause is live wherever a leaf under
-		// the node is not in the paused set, and the light stays the answer about
+		// the node is not held by the record, and the light stays the answer about
 		// automation. `idle` keeps the owner's rule: nothing set up, only play.
 		var acts = g.querySelectorAll('.pptw-act');
 		for (var i = 0; i < acts.length; i++) {
@@ -26424,10 +26442,18 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 
 	/// Bring the pump into line with the tree, for a hold set from somewhere
 	/// else — the global control, another device's parcel, the root going red.
+	///
+	/// It carries the hold to the runs and WRITES NOTHING: the record already says
+	/// what it says. Through `pauseAll` it wrote a press, which was always a no-op
+	/// while the record was a set; on the record kept per node it is not, because a
+	/// hold the app or an older build made is not a person's, and arriving here it
+	/// came back out as this device's person pausing the workers -- a hold that only
+	/// a person could then end, made by nobody (the per-node record, R3 QA M-merge).
 	function reconcileWorkers() {
 		var want = workersHeld();
 		if (want === lastHold) return;
-		if (want) Workers.pauseAll(); else Workers.resumeAll();
+		lastHold = want;
+		if (want) Workers.holdRuns(); else Workers.releaseRuns();
 	}
 
 	/// Carry an old worker hold onto the leaf, once.
@@ -26435,12 +26461,20 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 	/// A user who paused their workers yesterday must not find them running
 	/// today: dropping the flag rather than migrating it is a silent resume, and
 	/// a wrong resume costs money where a wrong pause costs a click.
+	///
+	/// WRITTEN AS THE PRESS IT STANDS FOR. The flag was set by a person pressing
+	/// pause on the workers, on this device, and has held them here ever since. It
+	/// was carried as a seed, the app's own write, which any press on the workers
+	/// or the global light made elsewhere since outranks (PQA, 2026-09-24); a hold
+	/// the person made is one only a person ends. The flag goes only once the leaf
+	/// holds, so a store that would not take the write asks again next load.
 	function migrateWorkerHold() {
 		var old;
 		try { old = localStorage.getItem(WORKERS_PAUSED_KEY); } catch (e) { return; }
-		if (old === null) return;
+		if (old === null || !window.DaimondPause) return;
 		if (old === '1') {
-			try { if (window.DaimondPause) DaimondPause.seedPaused(PAUSE_WORKERS); } catch (e) { /* ignore */ }
+			try { DaimondPause.set(PAUSE_WORKERS, false); } catch (e) { return; }
+			if (!workersHeld()) return;
 		}
 		// And nothing writes it again, so this runs at most once per account.
 		try { localStorage.removeItem(WORKERS_PAUSED_KEY); } catch (e) { /* already gone */ }
@@ -31807,9 +31841,9 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 					persistChats();
 				} else {
 					if (!sawError) {
-						chat.messages.push({ role: 'error_log', content: friendlyError(e), mid: newMid(), ts: Date.now() });
+						chat.messages.push({ role: failRole(e), content: friendlyError(e), mid: newMid(), ts: Date.now() });
 						if (J) J.turnError(umid, chat.id, friendlyError(e));
-						appendError(e);
+						appendFailure(e);
 					}
 					// An errored turn has reached a terminal state — it is not interrupted work to be
 					// recovered, so its journal is pruned too.
@@ -34120,6 +34154,13 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		/// fan-out at a stroke: latent work stops spending immediately.
 		pauseAll: function () {
 			setWorkersHeld(true);
+			this.holdRuns();
+		},
+
+		/// Pause every run in flight or waiting, under a hold on the pool that is
+		/// already in force: the person's (`pauseAll`) or one that arrived
+		/// (`reconcileWorkers`).
+		holdRuns: function () {
 			var self = this;
 			this.runs.slice().forEach(function (r) {
 				if (r.status === 'running' || r.status === 'queued') self.pause(r);
@@ -34130,6 +34171,11 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		/// Resume every paused worker and release the pool.
 		resumeAll: function () {
 			setWorkersHeld(false);
+			this.releaseRuns();
+		},
+
+		/// Resume every paused run, and pump, for a pool the hold has let go.
+		releaseRuns: function () {
 			var self = this;
 			this.runs.slice().forEach(function (r) {
 				if (r.status === 'paused') self.resume(r);
@@ -35377,11 +35423,29 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 				Pending.drop(it.id);
 				return;
 			}
-			Pending.drop(it.id);
+			if (Pending.heldFor(f)) return;
 			await selectDiamond(f, 'chat');
+			if (Pending.heldFor(f)) return;
+			Pending.drop(it.id);
 			var text = t('pending.proposal_do', { headline: it.headline })
 				+ (it.detail ? '\n' + it.detail : '');
 			await doSteer(text);
+		},
+
+		/// Is this Diamond held, so that a tile sending it a turn would be refused? Says
+		/// so by name where it is, and the tile stays.
+		///
+		/// Asked BEFORE the tile goes (R3 QA, Q6-2). The tick dropped the tile and then
+		/// steered, and the steer's own pause check refused the turn: the refusal was
+		/// shown, the tile was gone, and after play there was nothing left to tick. This is
+		/// the question that check asks (`turnHold`), so the two cannot disagree, and it is
+		/// asked again after the Diamond opens, for a pause pressed while it did.
+		heldFor: function (f) {
+			var hold = turnHold({ diamondId: f.id });
+			// In the neutral voice, as the refusal in the thread is (Q6-3): a pause is
+			// the person's, not a fault.
+			if (hold) toast(DaimondModels.pauseError(hold).message);
+			return !!hold;
 		},
 
 		// There was a `sweep` here, which took off the tiles whose action had
@@ -35395,12 +35459,15 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		/// sent. Phase E is what gave this somewhere to land -- before it there was
 		/// no conversation to return the user TO.
 		discuss: async function (it) {
+			var f = (diamonds || []).find(function (x) { return x.id === it.diamondId; });
+			// Where the conversation it would open is held, the discussion cannot start:
+			// nothing is declined and the tile stays, for once play is pressed (Q6-2).
+			if (f && Pending.heldFor(f)) return;
 			// Discussing an ACT is declining it. The worker cannot wait on a
 			// conversation — it is holding a tool call open — and a yes arrived at
 			// three messages later would be a yes to a turn that had already been
 			// told no. So it is refused first, and the talking happens afterwards.
 			if (it.kind === 'consent') settleConsent(it.id, 'deny');
-			var f = (diamonds || []).find(function (x) { return x.id === it.diamondId; });
 			if (!f) {
 				// A consent tile often has no Diamond on it: the engine's payload
 				// carries no actor, so the app only names one when exactly one
@@ -35940,6 +36007,10 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		// single-threaded), so every DaimondApp instance follows this handle;
 		// this variable only mirrors it for the UI.
 		var folderHandle = null;
+		// That folder's id on this device (`FsaDB.folderId`), set in the same step as the handle
+		// and empty on the sandbox. The record of marks keys a machine folder by it, so it is
+		// never stale for a moment: a mark of one folder must not be read under another.
+		var folderFid = '';
 		// The last real folder this account used, remembered ACROSS a switch to the browser
 		// sandbox. Switching to the sandbox used to delete the stored handle outright, so going
 		// back meant picking the folder again from a native dialog -- every single time. A user
@@ -37798,6 +37869,9 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			// Daimond forget a folder, which is worse than the dialog the change removed.
 			var forget = modeBtn(t('files.forget_root'), t('files.forget_root_help'), async function () {
 				try { await FsaDB.clear(); } catch (e) { /* nothing stored */ }
+				// The kept handle goes too (M2-F4): otherwise "Forget" only forgot the
+				// reconnect slot, and a folder picked again kept its old id and its marks.
+				try { await FsaDB.forget(folderFid); } catch (e) { /* nothing stored */ }
 				rootHandle = null;
 				renderMode();
 				showModeMsg(t('files.root_forgotten'));
@@ -37891,6 +37965,13 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		// the root that is now active, optionally persist the handle for reconnect, and
 		// refresh the tree.
 		async function activateFolder(handle, persist) {
+			// WHICH FOLDER THIS IS, before anything moves, on every caller: a pick, a return and
+			// the boot reconnect alike. The record of marks keys a machine folder by this id
+			// (M2), so the root and its id change in one step and no reader ever sees the new
+			// folder under the old id. An id that cannot be had leaves it empty, which grants
+			// nothing: every mark in the folder waits, and a press there is refused.
+			var fid = '';
+			try { fid = await FsaDB.folderId(handle); } catch (e) { fid = ''; }
 			try {
 				set_workspace_dir(handle);
 			} catch (e) {
@@ -37898,6 +37979,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 				return;
 			}
 			folderHandle = handle;
+			folderFid = typeof fid === 'string' ? fid : '';
 			rootHandle = handle;            // the folder to offer after a trip to the sandbox
 			if (persist) { try { await FsaDB.save(handle); } catch (e) { /* non-fatal */ } }
 			renderMode();
@@ -38004,6 +38086,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			try { use_opfs_workspace(); } catch (e) { /* ignore */ }
 			rootHandle = folderHandle || rootHandle;
 			folderHandle = null;
+			folderFid = '';
 			renderMode();
 			attachChanged();			// the footer names the root, and reachability just moved
 			await rereadRootRules();		// the sandbox has its own DAIMOND.md and its own prompts
@@ -38071,6 +38154,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			var lost = folderHandle;
 			try { use_opfs_workspace(); } catch (e) { /* ignore */ }
 			folderHandle = null;
+			folderFid = '';
 			renderMode(lost);
 			attachChanged();			// the footer names the root, and reachability just moved
 			showModeMsg('Lost access to the folder. Reconnect to continue.', true);
@@ -40971,6 +41055,8 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			clear:         clear,
 			// The open folder, for the status row that reports on it. Null on the sandbox.
 			folder:        function () { return folderHandle; },
+			// Its id on this device, which the record of marks keys it by. Empty on the sandbox.
+			folderId:      function () { return folderFid; },
 			// ── What the `+` picker borrows ────────────────────────────
 			//
 			// The picker in the attachment footer browses the SAME tree this
@@ -41259,6 +41345,8 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 	/// answers is the engine's own view and not the tree's copy of it.
 	window.DaimondFiles = {
 		folder:  function () { try { return Files.folder(); } catch (e) { return null; } },
+		// The open folder's id on this device, for `dev/verify_m2_samename.mjs`.
+		folderId: function () { try { return Files.folderId(); } catch (e) { return ''; } },
 		entries: function (dir) { return Files.entries(dir || ''); },
 		// What sync may write into and delete from on another device's word: the
 		// folders shared AND in force here (R2), for the verifiers of marks.
@@ -41833,34 +41921,115 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 	// Persist an FSA FileSystemDirectoryHandle across reloads.  Handles are
 	// structured-cloneable, so IndexedDB can store them where localStorage
 	// cannot.  A single "workspace" slot is kept (MVP: one active root).
+	//
+	// FOLDER IDS (M2, 2026-09-24) live in their OWN database, `daimond-folders[-ns]`, and NOT
+	// in `daimond-fsa`. A version-2 `daimond-fsa` with a `folders` store was tried first and
+	// reverted (QA finding F1): a tab on the old bundle holds a v1 connection open for as long
+	// as it is open, the v1->v2 upgrade blocks behind it, and `tryReconnect` has nowhere to put
+	// an error the user would see -- so a NEW tab booting while the OLD one is still up landed
+	// in the browser sandbox, silently, with no Reconnect button. A tab can block an upgrade of
+	// a database it already has open; it can never block one it has never opened. Each machine
+	// folder this account has opened here gets a random id, minted the first time it is picked,
+	// kept beside its handle in `daimond-folders`. The record of the marks pressed on this
+	// device keys a machine workspace by that id (markshere.js `rootKey`), because by its name
+	// alone `/home/j/usr` and `/media/usb/usr` were one place, and a mark pressed in one was in
+	// force, shared, in the other. The id is kept HERE and not in the folder: a USB copy, a
+	// clone, a restore or a replica of the folder's bytes would carry it, and so could anything
+	// with write access to the folder, a daimon included.
 	var FsaDB = (function () {
-		// The stored real-folder handle is per account: a second person at this browser must not
-		// reconnect to the first person's folder. The primary account keeps the plain name.
-		var DB = 'daimond-fsa' + (window.DaimondAccounts ? (DaimondAccounts.opfsNs() ? '-' + DaimondAccounts.opfsNs() : '') : '');
-		var STORE = 'handles', KEY = 'workspace';
-		function open() {
+		// The stored real-folder handle, and the folder ids, are per account: a second person
+		// at this browser must not reconnect to the first person's folder. The primary account
+		// keeps the plain names.
+		var NS = window.DaimondAccounts ? (DaimondAccounts.opfsNs() ? '-' + DaimondAccounts.opfsNs() : '') : '';
+		var DB = 'daimond-fsa' + NS, FDB = 'daimond-folders' + NS;
+		var STORE = 'handles', KEY = 'workspace', FOLDERS = 'folders';
+		var ID_RE = /^[0-9a-f]{32}$/;
+		// Both databases are version 1 and stay that way: a second store never needs a schema
+		// bump here, only a database of its own.
+		function open(name, store) {
 			return new Promise(function (resolve, reject) {
-				var req = indexedDB.open(DB, 1);
-				req.onupgradeneeded = function () { req.result.createObjectStore(STORE); };
-				req.onsuccess = function () { resolve(req.result); };
+				var req = indexedDB.open(name, 1);
+				req.onupgradeneeded = function () {
+					var db = req.result;
+					if (!db.objectStoreNames.contains(store)) db.createObjectStore(store);
+				};
+				req.onsuccess = function () {
+					var db = req.result;
+					// The account's deletion must not wait on this tab.
+					db.onversionchange = function () { db.close(); };
+					resolve(db);
+				};
 				req.onerror = function () { reject(req.error); };
 			});
 		}
-		function tx(mode, fn) {
-			return open().then(function (db) {
+		// One transaction, and the connection closed after it: a connection left open is
+		// one that blocks the account's deletion, silently.
+		function tx(name, store, mode, fn) {
+			return open(name, store).then(function (db) {
 				return new Promise(function (resolve, reject) {
-					var t = db.transaction(STORE, mode);
-					var store = t.objectStore(STORE);
-					var out = fn(store);
-					t.oncomplete = function () { resolve(out && out.result !== undefined ? out.result : undefined); };
-					t.onerror = function () { reject(t.error); };
+					var t;
+					try { t = db.transaction(store, mode); }
+					catch (e) { db.close(); reject(e); return; }
+					var out = fn(t.objectStore(store));
+					t.oncomplete = function () {
+						var v = out && out.result !== undefined ? out.result : undefined;
+						db.close();
+						resolve(v);
+					};
+					t.onerror = function () { db.close(); reject(t.error); };
+					t.onabort = function () { db.close(); reject(t.error); };
 				});
 			});
 		}
+		function mint() {
+			var b = new Uint8Array(16);
+			crypto.getRandomValues(b);
+			return Array.prototype.map.call(b, function (x) { return (x < 16 ? '0' : '') + x.toString(16); }).join('');
+		}
+		async function resolveId(handle) {
+			var ids = [], known = [];
+			await tx(FDB, FOLDERS, 'readonly', function (s) {
+				var q = s.openCursor();
+				q.onsuccess = function () {
+					var c = q.result;
+					if (!c) return;
+					if (typeof c.key === 'string' && ID_RE.test(c.key)) { ids.push(c.key); known.push(c.value); }
+					c.continue();
+				};
+			});
+			// Awaited one by one outside the transaction, which would not outlive the wait.
+			for (var i = 0; i < ids.length; i++) {
+				var same = false;
+				try { same = !!known[i] && await known[i].isSameEntry(handle); } catch (e) { same = false; }
+				if (same) return ids[i];
+			}
+			var id = mint();
+			await tx(FDB, FOLDERS, 'readwrite', function (s) { s.put(handle, id); });
+			return id;
+		}
+		// One resolution at a time in this tab, so two activations of a new folder at once
+		// cannot mint it two ids.
+		var chain = Promise.resolve();
 		return {
-			save:  function (h) { return tx('readwrite', function (s) { s.put(h, KEY); }); },
-			load:  function ()  { return tx('readonly',  function (s) { return s.get(KEY); }); },
-			clear: function ()  { return tx('readwrite', function (s) { s.delete(KEY); }); },
+			save:  function (h) { return tx(DB, STORE, 'readwrite', function (s) { s.put(h, KEY); }); },
+			load:  function ()  { return tx(DB, STORE, 'readonly',  function (s) { return s.get(KEY); }); },
+			clear: function ()  { return tx(DB, STORE, 'readwrite', function (s) { s.delete(KEY); }); },
+			/// The id of the folder `handle` names on this device: the one it was given the
+			/// first time it was picked, found with `isSameEntry`, or a new one kept for it.
+			/// Asked once, when a folder becomes the workspace, so that every reader of a
+			/// grant compares a string and stays synchronous.
+			folderId: function (handle) {
+				var run = chain.then(function () { return resolveId(handle); });
+				chain = run.catch(function () { /* the caller hears it */ });
+				return run;
+			},
+			/// Forget `id`: "Forget" (`showMachineInfo`) drops the folder's kept handle too, so
+			/// a folder picked again after it gets a fresh id and its marks wait for "Use here"
+			/// (M2-F4). A no-op where `id` is empty, which nothing was ever kept under.
+			forget: function (id) {
+				if (!id) return Promise.resolve();
+				return tx(FDB, FOLDERS, 'readwrite', function (s) { s.delete(id); });
+			},
 		};
 	})();
 
@@ -42256,8 +42425,8 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 	//
 	// Since 2026-09-24 a triggered action runs only where a person released it
 	// (`releasedHereOnly` in pause.js). The stored state from before cannot prove
-	// where an action was released -- the paused set travels between devices, so a
-	// leaf absent from it may have been released here, released elsewhere, or never
+	// where an action was released -- the pause record travels between devices, so a
+	// leaf it does not hold may have been released here, released elsewhere, or never
 	// seeded at all -- so every action that was live before arrives held, as marks
 	// went out of force at the deploy of 2026-09-23. This says so ONCE per device,
 	// naming them, rather than leaving a timer that simply stopped.
@@ -42265,11 +42434,11 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 	// ONLY ON A DEVICE THAT RAN THE OLD RULE. A device on its first boot of the
 	// account has run nothing, so there is nothing to tell it, and it is marked told
 	// on its first walk, before a pull or a seed can bring it a Diamond. Asked of the
-	// synced paused set, as it was until the P6 regression of 2026-09-24, a device
-	// that joined later was told its actions "ran here before" whenever the seed's
-	// hold on a default's action had lost the merge -- which it now may, being stamped
-	// one past the record held and not with the clock (FA, `follow` in pause.js) --
-	// and the modal that told it took the person's next click (`verify_markshere_sync`,
+	// synced record, as it was until the P6 regression of 2026-09-24, a device that
+	// joined later was told its actions "ran here before" whenever the seed's hold on
+	// a default's action had lost the merge -- which it may, a seed made before the
+	// first pull being stamped below any press made elsewhere (FA, `seedEntry` in
+	// pause.js) -- and the modal that told it took the person's next click (`verify_markshere_sync`,
 	// P6). `DEFAULTS_KEY` is the mark of a boot that has finished reading the rail:
 	// every device writes it on its first, after the walk that asks this -- with an
 	// account or before one, since a browser that is paired later has booted too.
@@ -42804,7 +42973,8 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		if (kept) toast(t('rail.dupes_kept', { n: kept }), true);
 	}
 
-	/// Play the seeded default Diamonds' own conversation, once per account.
+	/// Play the seeded default Diamonds' own conversation, on a device that ran the old
+	/// seed, once.
 	///
 	/// Until 2026-09-24 the seed held `self` beside the Optimiser's action, and a typed
 	/// turn asks `self` at dispatch, so on every account seeded before then the app's own
@@ -42812,37 +42982,56 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 	/// turns a person types and the work sent from them, so playing it arms nothing: the
 	/// action keeps its own hold and still waits for a release on this device.
 	///
-	/// Only the Diamonds the seed held -- those that ship with actions, found by the fixed
-	/// id or, on an account seeded before the fixed ids, by name -- and NOT under a person's
-	/// "Pause all", which covers `self` as a hold of theirs: play on the global light is
-	/// what lets that go.
+	/// ONLY ON A DEVICE THAT RAN THE OLD SEED (R3 QA, Q6-1). The flag below is per device
+	/// and does not travel, so the repair ran once on every device new to an account --
+	/// whose seed had never held `self` -- and took back a pause the person had made on
+	/// another device, one past its stamp, which then won on every device. A device whose
+	/// `DEFAULTS_KEY` was unset when this page loaded has never seeded, so it has nothing
+	/// to repair and is marked done: the rule the held-actions notice keeps (P6,
+	/// `noteTriggersHeldHere`). The key is read at load (`_seededBeforeLoad`), not here,
+	/// because the seed below writes it and a reorder of the boot would otherwise break
+	/// this without a sound.
 	///
-	/// AFTER THE FIRST PULL, AND NOT AS A PRESS (FU QA, FA). It ran at boot and played
-	/// `self` with `set`, which stamps the whole record with the clock: a device that had
-	/// not yet pulled a Pause all pressed on another one wrote a record later than it, its
-	/// pull lost to that record, and its next push undid the Pause all on every device.
-	/// Now the "Pause all" question is asked once this device has heard from the others,
-	/// and the leaf is taken back by `unseed`, one past the stamp held here, so a press
-	/// made elsewhere since still wins -- including one that arrives after the wait for
-	/// the pull ran out. Where one does, the Optimiser stays held and says so when typed
-	/// into.
+	/// Only the Diamonds the seed held -- those that ship with actions, found by the fixed
+	/// id or, on an account seeded before the fixed ids, by name -- and never a hold that
+	/// is a person's. `unseed` refuses one on its own, pressed on this build in any tab or
+	/// on any device: on `self`, on its Diamond's light, on the Diamonds branch or on the
+	/// global light (see `unseedEntry` in pause.js). A hold carried over from a record an
+	/// older build wrote says nothing of who made it, so a "Pause all" or a Diamonds-branch
+	/// pause made there is asked for here, as every leaf under that light held: the old
+	/// seed held the Optimiser's `self` and its action and nothing else, so it can never
+	/// hold either of those lights whole. The Optimiser's own light it did hold whole, so
+	/// a pause of that light carried over from an older build is taken for the seed (FC,
+	/// accepted: the action stays held, and the turn is one the person typed).
+	///
+	/// AFTER THE FIRST PULL, AND NOT AS A PRESS (FU QA, FA). The leaf is taken back by
+	/// `unseed`, one past its own entry and never by the clock, so a press made elsewhere
+	/// since still wins -- including one that arrives after the wait for the pull ran
+	/// out. Where one does, the Optimiser stays held and says so when typed into.
 	var SELF_PLAYED_KEY = 'daimond-default-self-played';
 	var _selfRepairArmed = false;
+	var _seededBeforeLoad = (function () {
+		try { return localStorage.getItem(DEFAULTS_KEY) === '1'; }
+		catch (e) { return false; }
+	})();
 	function releaseSeededSelf() {
 		try { if (localStorage.getItem(SELF_PLAYED_KEY) === '1') return; }
 		catch (e) { return; }
+		if (!_seededBeforeLoad) {
+			try { localStorage.setItem(SELF_PLAYED_KEY, '1'); } catch (e) { /* asked again next boot */ }
+			return;
+		}
 		if (!window.DaimondPause || _selfRepairArmed) return;	// asked again on the next boot
 		_selfRepairArmed = true;
 		afterFirstPull(function () {
 			try {
-				if (!DaimondPause.heldByHand(DaimondPause.ROOT)) {
+				var P = DaimondPause;
+				if (!P.heldByHand(P.ROOT) && !P.heldByHand(P.id('root', 'diamonds'))) {
 					DEFAULT_DIAMONDS.forEach(function (d) {
 						if (!d.triggers.length) return;
 						(diamonds || []).forEach(function (f) {
 							if (!f || (f.id !== DEFAULT_IDS[d.name] && f.name !== d.name)) return;
-							// Not one a person held while this waited: that hold is theirs.
-							var self = DaimondPause.id('root', 'diamonds', f.id, 'self');
-							if (!DaimondPause.pressedHere(self)) DaimondPause.unseed(self);
+							P.unseed(P.id('root', 'diamonds', f.id, 'self'));
 						});
 					});
 				}
@@ -48220,11 +48409,13 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 	// is broken". `dev/ROOT_SEPARATION.md` §2.1 says a single tree spanning two
 	// roots is the confusion to prevent; this is that confusion in the links.
 
-	/// Which workspace is open, as an attachment records it.
+	/// Which workspace is open, as an attachment records it. `fid` is a machine folder's
+	/// id on this device, which only the record of marks reads (`rootHere`); a reference
+	/// syncs to other devices, where it would mean nothing, so `rootedRef` leaves it out.
 	function currentRoot() {
-		var h = null;
-		try { h = Files.folder(); } catch (e) { /* the panel has not started yet */ }
-		return h ? { kind: 'machine', name: String(h.name || '') }
+		var h = null, fid = '';
+		try { h = Files.folder(); fid = Files.folderId(); } catch (e) { /* the panel has not started yet */ }
+		return h ? { kind: 'machine', name: String(h.name || ''), fid: String(fid || '') }
 			: { kind: 'browser', name: '' };
 	}
 
@@ -48275,7 +48466,8 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 	// of the row and this device's own record of what was pressed on it
 	// (markshere.js), and `markForce` below is the only test of it.
 
-	/// The workspace that is open, as the record names it.
+	/// The workspace that is open, as the record names it: `browser`, or
+	/// `machine:<name>#<folder id>`, so two folders of one name are two places (M2).
 	function rootHere() {
 		return DaimondMarksHere.rootKey(currentRoot());
 	}
@@ -48289,9 +48481,10 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		var r = currentRoot();
 		if (!p.root) return true;
 		if (p.root !== r.kind) return false;
-		// A different folder on the same machine is a different place. Comparing the
-		// name is weak -- two folders can share one -- but it catches the ordinary
-		// case, and the grant is bound to the name by the record in any case.
+		// A different folder on the same machine is a different place, and a reference
+		// carries only the folder's name, so two folders of one name both fit. That is
+		// reachability only: the record binds a grant to the folder's id on this device
+		// (`rootHere`), so a mark pressed in one of them waits in the other (M2).
 		return p.root !== 'machine' || !p.name || p.name === r.name;
 	}
 
@@ -49783,6 +49976,8 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		ref:          rootedRef,
 		reachable:    refReachable,
 		where:        refWhere,
+		// The workspace as this device's record of marks names it, id and all.
+		root:         rootHere,
 		confirmHere:  async function (diamondId, ref) {
 			return confirmMarkHere(diamondId, await linkTo(diamondId, ref));
 		},
@@ -51405,7 +51600,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			// conversation whatever happened, and reports the failure through the event
 			// sink, so the daimon does not forget a turn it was already billed for.
 			if (onCrystal()) hideCrystalSpinner();
-			if (onScreen()) { finalizeAssistant(); appendError(friendlyError(e)); }
+			if (onScreen()) { finalizeAssistant(); appendFailure(e); }
 			// An ending the engine had already named is not lost to the throw that
 			// followed it.
 			if (pendingSteerEnd) {
@@ -51413,7 +51608,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 				if (onScreen()) appendEnding(pendingSteerEnd);
 				pendingSteerEnd = null;
 			}
-			rec.messages.push({ role: 'error_log', content: friendlyError(e),
+			rec.messages.push({ role: failRole(e), content: friendlyError(e),
 				mid: newMid(), ts: Date.now() });
 			persistChats();
 			crystalSay(friendlyError(e));
@@ -53373,9 +53568,11 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			}
 		} catch (e) { /* OPFS may be unavailable */ }
 
-		// The FSA reconnect handle and the write-ahead journal for this account, and — for a
-		// non-primary account — the registry entry and any keys not caught above.
+		// The FSA reconnect handle, the machine folder ids it keys marks by (M2), and the
+		// write-ahead journal for this account, and — for a non-primary account — the registry
+		// entry and any keys not caught above.
 		try { indexedDB.deleteDatabase('daimond-fsa' + (ns ? '-' + ns : '')); } catch (e) { /* ignore */ }
+		try { indexedDB.deleteDatabase('daimond-folders' + (ns ? '-' + ns : '')); } catch (e) { /* ignore */ }
 		try { indexedDB.deleteDatabase('daimond-journal' + (ns ? '-' + ns : '')); } catch (e) { /* ignore */ }
 		// The transcripts, which are the whole point of forgetting an account. Closed
 		// first: a live connection blocks the delete, and a blocked delete is silent.

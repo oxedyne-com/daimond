@@ -73,9 +73,10 @@
    freely on the other is the control not working. pause.js holds
    that state and answers for it, so it is attached here, at the
    wire, rather than reached for from the collector. Its snapshot is
-   a SORTED list and a stamp that moves only when the set does --
-   which is the whole of what keeps two collects byte-identical, and
-   the reason nothing in this file may stamp on the way in.
+   one entry per node, SORTED by id, that moves only when a press or
+   the app's own write does -- which is the whole of what keeps two
+   collects byte-identical, and the reason nothing in this file may
+   stamp on the way in.
 
    AND NOW THE GATEWAY SAYS WHEN. Every trigger above is something
    that happened on THIS device, so a window left open and unfocused
@@ -112,8 +113,10 @@
 	var PUSH_DEBOUNCE_MS = 2500;	// Coalesce a flurry of changes into one push.
 	var MAX_CONFLICT_RETRIES = 8;	// Bound the pull-merge-retry loop (was 4): more headroom under 3-device churn.
 	var CONFLICT_BACKOFF_MS  = 200;	// Jittered wait between conflict retries so busy devices do not collide every attempt.
-	var UNSENT_RETRY_MIN_MS  = 1000;	// First retry of work a refused push left unsent (`owe`).
-	var UNSENT_RETRY_MAX_MS  = 8000;	// Its backoff never grows past this, and has no try limit.
+	var UNSENT_RETRY_MIN_MS  = 1000;	// First retry of work a push left unsent (`unsent`).
+	var UNSENT_RETRY_MAX_MS  = 8000;	// Its backoff never grows past this after a conflict, and has no try limit.
+	var UNSENT_WIRE_MAX_MS   = 300000;	// Nor past this after any other failure. See armUnsent.
+	var RETRY_AFTER_MAX_MS   = 3600000;	// A gateway's Retry-After past this is read as this.
 	var FLUSH_MAX_ROUNDS     = 6;	// Bound flush()'s push-and-confirm loop.
 	var FLUSH_RETRY_MS       = 300;	// Wait between flush() rounds while a push is in flight elsewhere.
 	// Focus arrives in bursts -- a click into the window raises focus on the
@@ -317,11 +320,21 @@
 	// work did NOT leave, and both are cleared by the next round that works.
 	var jammed        = '';
 	var lastFailed    = [];		// Sections the last merge could not apply.
-	// Work a refused push left unsent, and its retry. Unlike `jammed`, which a clean pull
-	// clears, this stands until a push lands, because a pull is not a send. See `owe`.
-	var unsent        = false;
-	var unsentTimer   = null;
-	var unsentTries   = 0;
+	// Work that has not reached the mailbox, and its retry. OWED FROM THE MOMENT A PUSH
+	// HAS SOMETHING NEW TO SEND, and paid only when one lands (`paid`). It used to be owed
+	// only by the failure branches that remembered to (a 409 whose pull failed, and
+	// running out of conflict tries), so a POST that threw, any 5xx or 429, and a 409
+	// whose merge was incomplete all left the work in this device's store with no retry
+	// and a chip that said nothing was wrong (R3 sync QA S5, S6, 2026-09-24). Unlike
+	// `jammed`, which a clean pull clears, this stands until a push lands, because a pull
+	// is not a send.
+	var unsent            = false;
+	var unsentTimer       = null;
+	var unsentDue         = 0;	// when the armed retry fires, so a Retry-After can move it
+	var unsentFailVersion = 0;	// the mailbox version when an owed push last failed
+	var unsentTries       = 0;
+	var failKind          = '';	// 'conflict', 'merge', or anything else: which ladder the retry climbs. See armUnsent.
+	var holdUntil         = 0;	// the time a gateway's 429 or 503 asked this device not to return before
 	// A passphrase was changed on another device and this one is BEHIND the epoch chain
 	// -- it could not walk the links to the account's current key (a missing link, or a
 	// chain longer than this build kept). It cannot read the account and must NOT push
@@ -553,6 +566,7 @@
 		try {
 			var r = await DaimondGateway.gwFetch(PATH + (query || ''), opts);
 			if (r.status === 426) return { status: 426, json: null };
+			if (r.status === 429 || r.status === 503) noteRetryAfter(r);
 			var j = null;
 			try { j = await r.json(); } catch (e) { j = null; }
 			var res = { status: r.status, json: j };
@@ -896,9 +910,13 @@
 		// on a good one it costs a line nobody has to read.
 		c.title = [title || '', lastSyncedLine()].filter(Boolean).join('\n');
 		c.style.display = 'flex';
+		// The hold's expiry must not blank the chip outright: a stall (owed work, a
+		// standing refusal) can arrive during the hold and must still be shown once it
+		// ends, rather than being painted over by a transient "Synced" fading to nothing
+		// (F-S5-3). restStatus() blanks on its own when nothing stands.
 		if (holdMs) _statusTimer = setTimeout(function () {
-			c.style.display = 'none';
-			paintRest(true);
+			_statusTimer = null;
+			restStatus();
 		}, holdMs);
 	}
 
@@ -940,36 +958,81 @@
 	/// had just put there. A device whose work never left looked exactly like a
 	/// device that had just saved, which is the one thing this chip exists to
 	/// prevent.
+	///
+	/// Only the chip. Owing the work is `push()`'s, from the moment it has news to send,
+	/// so every exit that did not land is retried whether or not it came through here.
 	function jam(why) {
 		jammed = why;
-		if (why === 'busy') owe();
 		restStatus();
 	}
 
-	/// This device's work did not leave: the mailbox refused the push and nothing could
-	/// reconcile it -- the pull after a 409 failed, or the retries ran out while it kept
-	/// moving. Try again on our own, on a backoff, until a push lands.
+	/// Arm the one retry of owed work, on a ladder whose ceiling is set by what failed.
 	///
 	/// IT USED TO WAIT FOR "THE NEXT CHANGE", and on a device that has just finished a
 	/// hand-off there is none: the runner's answer sat in its store while the phone that
 	/// sent the turn waited for a parcel that was never retried (2026-09-24,
 	/// `verify_handoff_slowparcel` CASE 1). A retry that pulls first cannot spin two
-	/// busy devices against each other: it sends nothing until it has read the mailbox,
-	/// and it backs off to `UNSENT_RETRY_MAX_MS` between rounds.
-	function owe() {
-		unsent = true;
-		armUnsent();
+	/// busy devices against each other: it sends nothing until it has read the mailbox.
+	///
+	/// ONE LADDER, TWO CEILINGS (S2, 2026-09-24). A conflict clears in seconds, once the
+	/// other device stops moving the mailbox, so it keeps `UNSENT_RETRY_MAX_MS`. Nothing
+	/// else does: a link too slow to finish the pull fails the same way every time, and at
+	/// an 8 s ceiling the retry downloaded the whole parcel for up to `PULL_TIMEOUT_MS`,
+	/// waited 4-12 s and began again from byte 0, for as long as the tab was open -- 450
+	/// attempts an hour. So every other failure, the wire's and any exit nobody classified,
+	/// climbs on to `UNSENT_WIRE_MAX_MS`, about twenty rounds in the first hour. The tries
+	/// are shared, so a device that has been failing for a while is not sent back to the
+	/// bottom by a change of kind, and only `paid()` and a link coming back (`onOnline`)
+	/// reset them. A pull that lands is not a reset: a pull that lands followed by an
+	/// upload that fails is the other half of the same slow link.
+	///
+	/// A GATEWAY THAT SAID WHEN TO COME BACK IS OBEYED. A 429 or 503 carrying Retry-After
+	/// (`noteRetryAfter`) is a floor under the wait, jittered above it so a fleet told the
+	/// same number does not return in the same second, and it moves a retry already armed
+	/// sooner than it.
+	///
+	/// With no kind, the ladder keeps the one it was last armed for. 'merge' is a version the
+	/// re-pull gave up on: the long ceiling, from the first wait.
+	function armUnsent(kind) {
+		if (kind) failKind = kind;
+		if (!unsent) return;
+		var now   = Date.now();
+		var floor = Math.max(0, holdUntil - now);
+		var wait  = 0;
+		if (unsentTimer) {
+			// One is coming. Only a Retry-After that reaches past it moves it.
+			if (!floor || unsentDue >= now + floor) return;
+			clearTimeout(unsentTimer);
+			unsentTimer = null;
+		} else {
+			var cap  = (failKind === 'conflict') ? UNSENT_RETRY_MAX_MS : UNSENT_WIRE_MAX_MS;
+			// A version the re-pull gave up on has had its quick tries (`scheduleReapply`),
+			// so it goes straight to the ceiling rather than back to the bottom (S3).
+			var grow = (failKind === 'merge') ? cap
+				: Math.min(cap, UNSENT_RETRY_MIN_MS * Math.pow(2, unsentTries));
+			unsentTries++;
+			// Jittered, as the conflict backoff is, so devices that failed together do not
+			// retry together.
+			wait = Math.round(grow * (0.5 + Math.random()));
+		}
+		if (floor > 0) wait = Math.max(wait, Math.round(floor * (1 + 0.5 * Math.random())));
+		diag('push retry armed', 'try=' + unsentTries + ' ' + (failKind || 'unclassified')
+			+ (floor > 0 ? ' retry-after=' + floor + 'ms' : '') + ' in ' + wait + 'ms');
+		unsentDue   = now + wait;
+		unsentTimer = setTimeout(function () { unsentTimer = null; retryUnsent(); }, wait);
 	}
 
-	function armUnsent() {
-		if (unsentTimer || !unsent) return;
-		var grow = Math.min(UNSENT_RETRY_MAX_MS, UNSENT_RETRY_MIN_MS * Math.pow(2, unsentTries));
-		unsentTries++;
-		// Jittered, as the conflict backoff is, so devices that failed together do not
-		// retry together.
-		var wait = Math.round(grow * (0.5 + Math.random()));
-		diag('push retry armed', 'try=' + unsentTries + ' in ' + wait + 'ms');
-		unsentTimer = setTimeout(function () { unsentTimer = null; retryUnsent(); }, wait);
+	/// Note a gateway's Retry-After on a 429 or 503, in seconds or as an HTTP date. Kept as
+	/// a time rather than a wait, so whichever retry is armed next reads what is left of it.
+	/// The latest answer stands, longer or shorter: it is the gateway's newest word.
+	function noteRetryAfter(r) {
+		var h = '';
+		try { h = String((r.headers && r.headers.get && r.headers.get('retry-after')) || '').trim(); }
+		catch (e) { h = ''; }
+		if (!h) return;
+		var ms = /^\d+$/.test(h) ? Number(h) * 1000 : Date.parse(h) - Date.now();
+		if (!isFinite(ms) || ms <= 0) return;
+		holdUntil = Date.now() + Math.min(ms, RETRY_AFTER_MAX_MS);
 	}
 
 	/// A push landed, or found the mailbox already holding this device's state.
@@ -977,7 +1040,27 @@
 		if (unsent && unsentTries) diag('push retry settled', 'after ' + unsentTries + ' tries');
 		unsent      = false;
 		unsentTries = 0;
+		failKind    = '';
 		if (unsentTimer) { clearTimeout(unsentTimer); unsentTimer = null; }
+	}
+
+	/// Does the browser know there is no link at all?
+	///
+	/// Only `false` is believed. `navigator.onLine === true` means an interface is up, not
+	/// that the gateway can be reached, so it proves nothing and the retry still runs.
+	function offline() {
+		return !!(window.navigator && window.navigator.onLine === false);
+	}
+
+	/// The link is back. A retry that stood down while there was no link (`retryUnsent`)
+	/// re-arms at its own due time; one already armed is left alone. A link that flaps
+	/// while the upload keeps failing must not restart the ladder at its 1 s bottom on
+	/// every flap -- only `paid()` resets it.
+	function onOnline() {
+		if (!unsent || unsentTimer) return;
+		var wait = Math.max(UNSENT_RETRY_MIN_MS, unsentDue - Date.now());
+		unsentDue = Date.now() + wait;
+		unsentTimer = setTimeout(function () { unsentTimer = null; retryUnsent(); }, wait);
 	}
 
 	/// Why a push must wait rather than send, or ''. 'busy' over this device's own live
@@ -1005,6 +1088,10 @@
 		// A standing refusal outranks the retry, and its own triggers take over: an unlock,
 		// a re-check of the licence, a link, a smaller parcel.
 		if (!ready() || !entitled || rekeyBehind || tooLarge || sessionGone) return;
+		// NO LINK, NO REQUEST. A device the browser knows is offline would spend each round
+		// on a request that cannot leave it, so the retry stands down and `onOnline` starts
+		// it again when the link returns. A landed pull on any other trigger still sends it.
+		if (offline()) { diag('push retry', 'offline; waiting for the link'); return; }
 		if (inFlight) { armUnsent(); return; }
 		// A PUSH THAT WOULD WAIT IS NOT RETRIED BY PULLING (QA 2026-09-24). Over a live turn
 		// here, or another device's hand-off, `push()` defers and re-arms itself on its own
@@ -1017,12 +1104,19 @@
 		catch (e) { v = -1; }
 		finally { inFlight = false; }
 		// A merge that could not finish is the re-pull's (`scheduleReapply`), which is
-		// bounded; a clean re-pull that lands sends the owed parcel (`pullOnce`).
+		// bounded; a clean re-pull that lands sends the owed parcel (`pullOnce`), and one
+		// that gives up hands the version back to this retry, at its ceiling.
 		if (v >= 0 && lastFailed.length) { restStatus(); return; }
-		if (v < 0) { restStatus(); armUnsent(); return; }
-		await push();
+		// The mailbox could not be read: the wire's ladder, not the conflict's (S2).
+		if (v < 0) { restStatus(); armUnsent('wire'); return; }
+		// A throw here (F-S5-4) must not escape as an unhandled rejection: a collect that
+		// keeps throwing would otherwise leave every retry rejecting silently, and on
+		// this harness kills the process outright. The work stays owed; `push()`'s own
+		// `finally` has already armed the next retry.
+		try { await push(); } catch (e) { log('owed push threw', e); }
 		// Deferred rather than refused (over a live turn, or a push already in flight):
-		// still owed, so the backoff goes on. A push refused again re-armed through `jam`.
+		// still owed, so the backoff goes on. A push that went and did not land has
+		// already re-armed, in its own `finally`.
 		armUnsent();
 	}
 
@@ -1037,6 +1131,10 @@
 	function jamReason() {
 		return jammed === 'merge' ? t('sync.merge_reason') : t('sync.busy_reason');
 	}
+
+	/// Is work owed with no push running to send it? The chip's test and `state()`'s, so
+	/// the two cannot disagree; an account not entitled shows "Sync off" instead.
+	function owedNow() { return unsent && !inFlight && entitled; }
 
 	/// Put the chip back to what is TRUE when nothing is in flight.
 	///
@@ -1087,6 +1185,9 @@
 		// And above nothing at all: a jam is this round's failure rather than a
 		// state of this device, so all three standing refusals outrank it.
 		if (jammed)        { setStatus('stalled', t('sync.paused'), 0, jamReason()); return; }
+		// Below a jam, which names why. Not while a push is running: a push in flight is
+		// owed until it lands, and that is "Syncing", not a stall.
+		if (owedNow())     { setStatus('stalled', t('sync.unsent'), 0, t('sync.unsent_reason')); return; }
 		setStatus('');
 	}
 
@@ -1873,8 +1974,16 @@
 		unjam();
 		// THE PULL LANDED, and work a refused push left unsent can go now, on the next
 		// push rather than at the end of its backoff. Not from inside a push (`quiet`),
-		// whose own retry is about to send.
-		if (unsent && !quiet) schedule();
+		// whose own retry is about to send. But a pull only proves GETs work, and says
+		// nothing about the write path an armed ladder is already climbing (F-S5-1), so
+		// it must not send wire-owed work straight past that retry. The one exception is
+		// a pull whose version moved since the failure: another device's push got
+		// through, so the write path is back and the ladder's wait is over.
+		var ladderOwns = !!unsentTimer && failKind !== 'conflict' && failKind !== 'merge';
+		if (unsent && !quiet && ladderOwns && serverVersion > unsentFailVersion) {
+			clearTimeout(unsentTimer); unsentTimer = null; ladderOwns = false;
+		}
+		if (unsent && !quiet && !ladderOwns) schedule();
 		// TRAINING WHEELS — remove with the DEBUG_SHARE module. The debug feed's
 		// `sync`, pull half: direction, the version this device moved to, and the
 		// round trip. Counts and versions only -- never a section's contents, which
@@ -1890,7 +1999,10 @@
 		// EVER leave -- a GET is served to everyone, a push is not -- so a standing
 		// refusal stays on the chip rather than being painted over with "Synced".
 		if (quiet) { /* the push that called this is still running */ }
-		else if (!entitled || tooLarge) restStatus();
+		// F-S5-3: work owed at this point (a failed push whose retry has not yet
+		// re-sent) must not be painted over as "Synced", which then fades to a clear
+		// chip and a green "Last synced just now" while the state is still `unsent`.
+		else if (!entitled || tooLarge || owedNow()) restStatus();
 		else setStatus('synced', t('sync.synced'), 1800);
 		log('pulled version', serverVersion, 'from', j.device || '?');
 		return serverVersion;
@@ -1918,6 +2030,14 @@
 			return;
 		}
 		inFlight = true;
+		// OWED FROM HERE (F-S5-4). A throw anywhere below -- collectParcel, sigOf, the
+		// encryption -- must not leave the work looking paid: a push that could not even
+		// tell what it would send is owed, not clear. `known` (below) already calls
+		// paid() when there is nothing new, so this mark is undone at once when it is
+		// wrong. The flag only: a timer armed now would fire during a slow upload, find
+		// `inFlight` and climb the ladder for nothing.
+		unsent   = true;
+		failKind = '';
 		try {
 			// The collectors record manifests in the cloud index; wait for it to have
 			// loaded out of IndexedDB before collecting, so `index()` is authoritative.
@@ -1959,6 +2079,13 @@
 					// against a fresh collect, exactly as before.
 					return { committed: true };
 				}
+
+				// A GATEWAY'S Retry-After IS A FLOOR ON EVERY PUSH, NOT ONLY THE
+				// LADDER'S OWN TIMER (F-S5-5). `holdUntil` is otherwise read only in
+				// `armUnsent`, so a landed pull or a local change could still fire a push
+				// straight through a 429 or 503's asked-for wait. The work stays owed;
+				// `finally` re-arms it at the floor.
+				if (Date.now() < holdUntil) { log('push held by Retry-After'); return; }
 
 				// WHAT THIS WILL WEIGH, BEFORE A BYTE OF IT IS ENCRYPTED. Counted
 				// here rather than inferred from a 413: the refusal comes back after
@@ -2034,7 +2161,7 @@
 				// account's OTHER devices and not this one: a device that pulled
 				// in answer to its own push would double every round.
 				try { res = await call('POST', body); }
-				catch (e) { log('push network error', e); restStatus(); return; }
+				catch (e) { log('push network error', e); failKind = 'wire'; restStatus(); return; }
 
 				if (res.status === 200 && res.json && res.json.ok) {
 					serverVersion = res.json.version | 0;
@@ -2145,7 +2272,7 @@
 					// push that has not landed.
 					log('conflict at base', serverVersion, '— pulling and retrying');
 					var v = await pull(true);
-					if (v < 0) { jam('busy'); return; }		// could not reconcile; say so.
+					if (v < 0) { failKind = 'conflict'; jam('busy'); return; }		// could not reconcile; say so.
 					// A merge that did not finish must NOT be pushed over. The
 					// retry sends what this device holds, and what this device
 					// holds is precisely the state that failed to take the other
@@ -2153,6 +2280,9 @@
 					// mailbox with one that never saw it.
 					if (lastFailed.length) {
 						log('merge incomplete (', lastFailed.join(','), ') — not pushing over it');
+						// Owed like every other exit (S6). The bounded re-pull owns the
+						// version that would not merge, and its clean landing sends this.
+						failKind = 'conflict';
 						jam('merge');
 						return;
 					}
@@ -2191,22 +2321,28 @@
 					log('blob too large (413); not retrying this payload');
 					return;
 				}
-				// Anything else: the round is over, so the chip stops claiming to be
-				// syncing and goes back to whatever is standing.
-				log('push status', res.status, '— giving up this round');
+				// Anything else -- a 5xx, a 429, a gateway restarting -- is not this
+				// parcel's fault and is not permanent: owed, and retried on the wire's
+				// ladder, no sooner than any Retry-After it carried (`noteRetryAfter`).
+				log('push status', res.status, '— retrying on the backoff');
+				failKind = 'wire';
 				restStatus();
 				return;
 			}
 			// Out of attempts. The mailbox moved under every one of them, so this
 			// device's work is still only here -- which is exactly the state the
-			// chip exists to report. `jam('busy')` owes it (`owe`): it is tried
+			// chip exists to report. It is owed, so `finally` arms the retry: tried
 			// again on a backoff that reads the mailbox before it sends anything,
 			// so two busy devices do not spin against each other, and it is never
 			// left for a next change that may not come.
 			log('conflict retries exhausted; this device’s work has not been sent');
+			failKind = 'conflict';
 			jam('busy');
 		} finally {
 			inFlight = false;
+			// Whatever did not land is owed; `paid()` has already cleared the flag on
+			// both paths that did. The chip is told now that the round has stopped.
+			if (unsent) { unsentFailVersion = serverVersion; armUnsent(failKind); restStatus(); }
 		}
 	}
 
@@ -3445,6 +3581,8 @@
 			diag('re-pull GAVE UP', 'after ' + reapplyTries + ' tries; version left un-adopted');
 			log('re-apply: gave up auto-retrying after', reapplyTries,
 				'tries; version left un-adopted, ordinary triggers will retry');
+			// Owed work is not left behind with it (S3): the owed retry takes it over.
+			if (unsent) armUnsent('merge');
 			return;
 		}
 		var grow = Math.min(REAPPLY_MAX_MS, REAPPLY_BASE_MS * Math.pow(2, reapplyTries));
@@ -3833,6 +3971,8 @@
 		// a page restored from the back/forward cache raises `pageshow`, and the
 		// supervisor opens it again on its next tick.
 		window.addEventListener('pagehide', function () { hiddenAt = Date.now(); wakeStop(); });
+		// Owed work waits out an offline spell rather than retrying into it. See onOnline.
+		window.addEventListener('online', onOnline);
 		// Keep the channel matching the app. See wakeWatch.
 		wakeWatcher = setInterval(wakeWatch, WAKE_WATCH_MS);
 		// And the one trigger that needs neither this device nor the gateway to
@@ -4011,10 +4151,11 @@
 				// parcel that will not fit, a session that has gone, or a reconcile
 				// that gave up. Ordered as the chip orders them, so what this says
 				// and what the chip shows can never disagree.
-				stalled:      tooLarge || sessionGone || rekeyBehind || !!jammed,
+				stalled:      tooLarge || sessionGone || rekeyBehind || !!jammed || owedNow(),
 				stalledWhy:   tooLarge ? 'too_big'
 					: (sessionGone ? 'signed_out'
-						: (rekeyBehind ? 'rekey' : (jammed || ''))),
+						: (rekeyBehind ? 'rekey'
+							: (jammed || (owedNow() ? 'unsent' : '')))),
 				/// A passphrase was changed elsewhere and this device is too far behind
 				/// the epoch chain to catch up on its own; it must be linked again.
 				rekeyBehind:  rekeyBehind,

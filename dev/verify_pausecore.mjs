@@ -26,9 +26,10 @@
 //     rule in `stateOf` could never fire.
 //
 // The sorted-record and equal-stamp checks are here for the other reason: the
-// sync parcel has to be a FIXED POINT, and a set serialised in hash order is not
-// one. Two devices then push at each other for ever. See
-// `dev/verify_parcelstable.mjs`.
+// sync parcel has to be a FIXED POINT, and a record serialised in hash order is
+// not one. Two devices then push at each other for ever. See
+// `dev/verify_parcelstable.mjs`. The record's own merge is proved at length in
+// `www/js/pause.test.mjs`.
 //
 //   node dev/verify_pausecore.mjs
 //
@@ -121,8 +122,8 @@ check(core.stateOf(mixedArm, { 'k/hand': true }) === 'play',
 	'and pausing the manual one changes nothing the light says');
 check(core.stateOf(mixedArm, { 'k/auto': true }) === 'pause',
 	'while pausing the armed one turns it red');
-check(core.leavesUnder(mixedArm).length === 2 && core.applySet(mixedArm, {}, false)['k/hand'],
-	'and the manual leaf is STILL WRITTEN by a click, so the global control reaches it');
+check(core.leavesUnder(mixedArm).length === 2 && core.resolve(core.press({}, 'k', 1, 1, 'x'), 'k/hand'),
+	'and the manual leaf is STILL HELD by a click on its branch, so the global control reaches it');
 
 // The light can never count a leaf that is not in the tree. Written as a subset
 // test over every node rather than as one example, because the failure this
@@ -151,50 +152,67 @@ check(core.stateOf(dia(ta(1, true)), { 'd/triggers/1': true }) === 'pause',
 	'and the only armed trigger held is red');
 
 console.log('clicking');
+// A press is one entry at the node pressed (see `www/js/pause.test.mjs` for the
+// record itself); what a light reads is the held set of the leaves under it.
+const heldOf = (E) => {
+	const out = {};
+	for (const l of core.leavesUnder(tree)) if (core.resolve(E, l)) out[l] = true;
+	return out;
+};
 const a = core.findNode(tree, 'root/diamonds/a');
-const paused = core.applySet(a, {}, false);
+const onA = core.press({}, 'root/diamonds/a', 1, 1, 'x');
+const paused = heldOf(onA);
 check(paused['root/diamonds/a/self'] && paused['root/diamonds/a/triggers/t1'],
-	'pausing a branch writes every leaf under it');
+	'pausing a branch holds every leaf under it');
 check(!paused['root/diamonds/b/self'] && !paused['root/workers'],
 	'and touches nothing outside it');
+check(Object.keys(onA).join() === 'root/diamonds/a', 'with one entry, at the branch', Object.keys(onA).join());
 check(core.stateOf(a, paused) === 'pause', 'the branch then reads red');
 check(core.clickWould(a, {}) === 'pause', 'a green branch clicks to paused');
 check(core.clickWould(a, { 'root/diamonds/a/self': true }) === 'play',
 	'an AMBER branch clicks to playing — the alternative fights the user');
-check(core.stateOf(a, core.applySet(a, { 'root/diamonds/a/self': true }, true)) === 'play',
+const amber = core.press({}, 'root/diamonds/a/self', 1, 1, 'x');
+check(core.stateOf(a, heldOf(core.press(amber, 'root/diamonds/a', 0, 2, 'x'))) === 'play',
 	'resuming an amber branch clears every leaf under it');
 // The property, stated as a property: no single click ever lands on amber.
 let amberReachable = false;
-for (const start of [{}, ALL, { 'root/diamonds/a/self': true }, { 'root/workers': true }]) {
+const starts = [{}, core.press({}, 'root', 1, 1, 'x'), amber, core.press({}, 'root/workers', 1, 1, 'x')];
+for (const start of starts) {
 	for (const nodeId of ['root', 'root/diamonds', 'root/diamonds/a', 'root/workers']) {
 		const node = core.findNode(tree, nodeId);
-		const next = core.applySet(node, start, core.clickWould(node, start) === 'play');
-		if (core.stateOf(node, next) === 'mixed') amberReachable = true;
+		const p = core.clickWould(node, heldOf(start)) === 'play' ? 0 : 1;
+		if (core.stateOf(node, heldOf(core.press(start, nodeId, p, 5, 'x'))) === 'mixed') amberReachable = true;
 	}
 }
 check(!amberReachable, 'no click on any node, from any state, leaves that node amber');
 
 console.log('the stored record');
-const r = core.toRecord({ z: true, a: true, m: true }, 7);
-check(JSON.stringify(r.paused) === '["a","m","z"]', 'the record is sorted', JSON.stringify(r));
-check(JSON.stringify(core.toRecord({ m: true, z: true, a: true }, 7)) === JSON.stringify(r),
+const E = { 'z': [1, 3, 'h:x'], 'a': [0, 2, 'h:x'], 'm': [1, 1, 'a:x'] };
+const r = core.toRecord(E, 7, null);
+check(JSON.stringify(Object.keys(r.leaves)) === '["a","m","z"]' && JSON.stringify(r.paused) === '["m","z"]',
+	'the record is sorted', JSON.stringify(r));
+check(JSON.stringify(core.toRecord({ m: E.m, z: E.z, a: E.a }, 7, null)) === JSON.stringify(r),
 	'and independent of insertion order — the parcel must be a fixed point');
-check(JSON.stringify(core.toRecord(core.fromRecord(r), 7)) === JSON.stringify(r),
+check(JSON.stringify(core.toRecord(core.mergeEntries({}, r.leaves), 7, null)) === JSON.stringify(r),
 	'a record round trips unchanged');
-check(JSON.stringify(core.fromRecord({ paused: [null, '', 3, 'ok'] })) === '{"ok":true}',
-	'junk in a record is dropped rather than stored');
-check(JSON.stringify(core.fromRecord(null)) === '{}', 'no record at all is everything playing');
+check(JSON.stringify(core.mergeEntries({}, { a: [1, 1], b: 'x', c: [2, 1, 'h:x'], ok: [1, 1, 'h:x'] }))
+	=== '{"ok":[1,1,"h:x"]}', 'junk in a record is dropped rather than stored');
+check(core.heldLeaves(core.mergeEntries({}, null), tree).length === 0, 'no record at all is everything playing');
 
 console.log('merging two devices');
-check(JSON.stringify(core.mergeRecords({ paused: ['a'], stamp: 1 }, { paused: ['b'], stamp: 2 }).paused)
-	=== '["b"]', 'the later stamp wins whole, so a resume propagates');
-const eqA = core.mergeRecords({ paused: ['a'], stamp: 5 }, { paused: ['b'], stamp: 5 });
-const eqB = core.mergeRecords({ paused: ['b'], stamp: 5 }, { paused: ['a'], stamp: 5 });
-check(JSON.stringify(eqA.paused) === '["a","b"]',
-	'equal stamps take the union — erring towards paused, because a wrong pause costs a click and a wrong resume costs money');
-check(JSON.stringify(eqA) === JSON.stringify(eqB), 'and the merge is order-independent');
-check(JSON.stringify(core.mergeRecords(r, r)) === JSON.stringify(r),
+const later = core.mergeEntries({ a: [1, 1, 'h:x'] }, { a: [0, 2, 'h:y'] });
+check(!core.resolve(later, 'a'), 'the later entry wins for its id, so a resume propagates');
+const eqA = core.mergeEntries({ a: [1, 5, 'h:x'] }, { a: [0, 5, 'h:y'], b: [1, 5, 'h:y'] });
+const eqB = core.mergeEntries({ a: [0, 5, 'h:y'], b: [1, 5, 'h:y'] }, { a: [1, 5, 'h:x'] });
+check(core.resolve(eqA, 'a') && core.resolve(eqA, 'b'),
+	'an equal stamp errs towards paused, because a wrong pause costs a click and a wrong resume costs money');
+check(JSON.stringify(core.toRecord(eqA, 0, null)) === JSON.stringify(core.toRecord(eqB, 0, null)),
+	'and the merge is order-independent');
+check(JSON.stringify(core.toRecord(core.mergeEntries(r.leaves, r.leaves), 7, null)) === JSON.stringify(r),
 	'merging a record with itself changes nothing');
+const whole = core.mergeEntries(core.press({}, 'root', 1, 10, 'x'), core.press({}, 'root/chats/c1', 1, 20, 'y'));
+check(core.leavesUnder(tree).every((l) => core.resolve(whole, l)),
+	'and a later press on one leaf elsewhere no longer undoes a Pause all (R3 QA, M-merge)');
 
 console.log('node ids');
 check(Pause.id('root', 'mail', 'a@b.com', 'INBOX/Sub') === 'root/mail/a@b.com/INBOX%2FSub',

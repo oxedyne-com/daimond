@@ -697,6 +697,8 @@
 	'sync.paused': 'Sincronização pausada',
 	'sync.busy_reason': 'Outro dispositivo está salvando nesta conta ao mesmo tempo, então o trabalho deste dispositivo ainda não foi enviado. Ele é enviado de novo a cada poucos segundos até ir.',
 	'sync.merge_reason': 'Parte do que chegou do outro dispositivo não deu para juntar aqui, então este dispositivo não escreveu por cima. Recarregar a página costuma resolver.',
+	'sync.unsent': 'Ainda não enviado',
+	'sync.unsent_reason': 'O último envio deste dispositivo não passou, então o trabalho dele ainda não chegou à conta. Ele é enviado de novo sozinho, com menos frequência quanto mais isso durar, até ir.',
 	'sync.last_synced': 'Última sincronização {when}.',
 	'sync.last_never': 'Nada foi sincronizado deste dispositivo ainda.',
 	'sync.when_just_now': 'agora mesmo',

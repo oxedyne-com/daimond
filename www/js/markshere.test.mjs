@@ -62,7 +62,9 @@ function tab(ls) {
 const A = 'a1b2c3d4e5f6';
 const row = (o) => Object.assign({ owner: A, id: 'L1', from: 'diamond:' + A, to: 'dir:[browser]secret',
 	rel: 'holds', by: 'user', share: false }, o || {});
-const BR = 'browser', MU = 'machine:usr';
+// A machine folder is keyed by its name and its id on this device (M2).
+const FA = 'a'.repeat(32), FB = 'b'.repeat(32);
+const BR = 'browser', MU = 'machine:usr#' + FA;
 
 // ── The parse mirrors Link::from_json ──────────────────────────────
 {
@@ -171,6 +173,65 @@ const BR = 'browser', MU = 'machine:usr';
 	check('taken off elsewhere: the entry goes', !r.c.c1);
 	C.putChat(rec, 'c1', h, BR, { ws: false, read: false });
 	check('an entry granting nothing is not kept', !rec.c.c1);
+}
+
+// ── M2: two machine folders of one name are two places ─────────────
+//
+// R3 QA 2026-09-24: the record keyed a machine folder by its name alone, so a mark pressed in
+// `/home/j/usr` was in force, held and shared, in `/media/usb/usr`. It keys by the folder's
+// id on this device now.
+{
+	const { _core: C, rootKey, fits } = tab(storage()).M;
+	const MA = 'machine:usr#' + FA, MB = 'machine:usr#' + FB;
+	const mrow = (o) => row(Object.assign({ to: 'dir:[machine:usr@0123456789abcdef]code', share: true }, o || {}));
+	check('the key carries the folder\'s id', rootKey({ kind: 'machine', name: 'usr', fid: FA }) === MA
+		&& rootKey({ kind: 'browser' }) === BR, rootKey({ kind: 'machine', name: 'usr', fid: FA }));
+	const rec = { v: 1, d: {}, c: {} };
+	C.putEntry(rec, A, mrow(), MA, 'holds', true);
+	const fa = C.force(rec, A, mrow(), MA, []);
+	check('a mark pressed and shared in folder A is held and shared there', fa && fa.rel === 'holds' && fa.share === true, JSON.stringify(fa));
+	check('in folder B, of the same name, it is not in force', C.force(rec, A, mrow(), MB, []) === null);
+	check('and waits there for a press', C.waiting(rec, A, mrow(), MB, []) === true && C.waiting(rec, A, mrow(), MA, []) === false);
+	const h = { ref: 'dir:[machine:usr@0123456789abcdef]code', path: 'code', dir: true, ws: true, state: 'read' };
+	C.putChat(rec, 'c1', h, MA, { ws: true, read: true });
+	const ca = C.chatForce(rec, 'c1', h, MA);
+	check('a chat holding pressed in A is in force in A', !!ca && ca.ws === true && ca.read === true, JSON.stringify(ca));
+	check('and not in B, where it waits', C.chatForce(rec, 'c1', h, MB) === null && C.chatWaiting(rec, 'c1', h, MB) === true
+		&& C.chatWaiting(rec, 'c1', h, MA) === false);
+
+	// An entry from before M2: `machine:usr`, with no id.
+	const legacy = { v: 1, d: { [A]: [{ id: 'L1', to: mrow().to, rel: 'holds', share: true, root: 'machine:usr' }] },
+		c: { c1: [{ ref: h.ref, path: 'code', ws: true, read: true, root: 'machine:usr' }] } };
+	check('a legacy entry with no id is not in force under a keyed root', C.force(legacy, A, mrow(), MA, []) === null
+		&& C.chatForce(legacy, 'c1', h, MA) === null);
+	check('so its mark waits for one "Use here"', C.waiting(legacy, A, mrow(), MA, []) === true && C.chatWaiting(legacy, 'c1', h, MA) === true);
+	const kept = C.readRecord(JSON.stringify(Object.assign({}, legacy, {
+		d: { [A]: legacy.d[A].concat([{ id: 'L2', to: 'dir:[browser]b', rel: 'holds', share: false, root: BR },
+			{ id: 'L3', to: mrow().to, rel: 'holds', share: false, root: MA }]) } })));
+	check('readRecord drops the legacy entries and keeps the rest', !!kept && kept.d[A].length === 2
+		&& kept.d[A].every((e) => e.root !== 'machine:usr') && !kept.c.c1, JSON.stringify(kept));
+
+	check('rootOf splits at the last # before an id', JSON.stringify(C.rootOf('machine:a#b#' + FA)) === JSON.stringify({ kind: 'machine', name: 'a#b', fid: FA }),
+		JSON.stringify(C.rootOf('machine:a#b#' + FA)));
+	check('a # that is not before an id, and not trailing, is part of the name', C.rootOf('machine:a#b').name === 'a#b' && C.rootOf('machine:a#b').fid === '');
+	// M2-F2: a trailing '#' with an empty id (the database refused it) used to be read as part
+	// of the name -- 'usr#' -- so the row showed under a name nobody typed, in force nowhere
+	// and waiting nowhere. Stripped, it keeps the folder's own name and an empty id.
+	check('a trailing # with an empty id keeps the folder\'s own name', C.rootOf('machine:usr#').name === 'usr' && C.rootOf('machine:usr#').fid === '',
+		JSON.stringify(C.rootOf('machine:usr#')));
+	check('and its row still fits and waits, rather than showing nowhere', fits(mrow().to, 'machine:usr#') === true
+		&& C.waiting({ v: 1, d: {}, c: {} }, A, mrow(), 'machine:usr#', []) === true);
+	check('a reference fits a folder of its name, whatever the id', C.waiting({ v: 1, d: {}, c: {} }, A, mrow(), 'machine:usr#' + FB, []) === true
+		&& C.waiting({ v: 1, d: {}, c: {} }, A, mrow({ to: 'dir:[machine:a#b@0123456789abcdef]code' }), 'machine:a#b#' + FA, []) === true);
+
+	// The doors refuse a key with no id, so nothing is ever written under one.
+	const ls = storage(), M = tab(ls).M;
+	check('grant refuses a machine key with an empty id', M.grant(A, mrow(), 'machine:usr#') === false
+		&& M.grant(A, mrow(), 'machine:usr') === false && ls.writes.length === 0, JSON.stringify(ls.writes));
+	check('chatGrant refuses one too', M.chatGrant('c1', h, 'machine:usr#', { ws: true }) === false && ls.writes.length === 0);
+	check('and a keyed grant lands', M.grant(A, mrow(), MA) === true && !!M.force(A, mrow(), MA) && M.force(A, mrow(), MB) === null);
+	check('setShare refuses a machine key with an empty id', M.setShare(A, mrow(), 'machine:usr#', true) === false
+		&& M.setShare(A, mrow(), MA, true) === true && M.force(A, mrow(), MA).share === true && M.force(A, mrow(), MB) === null);
 }
 
 // ── P11: the storage shell over two tabs of one account ─────────────

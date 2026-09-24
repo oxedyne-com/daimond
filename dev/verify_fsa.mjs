@@ -166,6 +166,7 @@ await p.evaluate(async ({ folder }) => {
 		t.oncomplete = res;
 		t.onerror = () => rej(t.error);
 	});
+	db.close();
 }, { folder: FOLDER });
 
 await p.reload({ waitUntil: 'domcontentloaded' });

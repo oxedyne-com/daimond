@@ -216,12 +216,15 @@ const kept = await p.evaluate(async () => {
 			r.onupgradeneeded = () => { /* absent is an answer */ };
 		});
 		const names = [...db.objectStoreNames];
-		if (!names.length) return { stores: names, count: 0 };
+		// The folder ids live in their own database now (M2-F1), so `daimond-fsa` again holds
+		// only the one store.
+		if (!names.length) { db.close(); return { stores: names, count: 0 }; }
 		const tx = db.transaction(names[0], 'readonly');
 		const n = await new Promise((res) => {
 			const rq = tx.objectStore(names[0]).count();
 			rq.onsuccess = () => res(rq.result); rq.onerror = () => res(-1);
 		});
+		db.close();
 		return { stores: names, count: n };
 	} catch (e) { return { stores: [], count: -1, err: String(e) }; }
 });

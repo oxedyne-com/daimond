@@ -50,6 +50,7 @@
 	// No DOM, no storage. A record is
 	//   { v: 1, d: { <diamond>: [ { id, to, rel, share, root } ] },
 	//           c: { <chat>:    [ { ref, path, ws, read, root } ] } }
+	// and `root` is a `rootKey`.
 
 	/// The devices a machine reference was made on, after the folder's name:
 	/// `usr@<id>` or `usr@<id>,<id>`. Hex ids only, so a folder whose own name
@@ -76,14 +77,39 @@
 		return { kind: kind, root: m[1], name: name, devices: devices, path: rest.slice(m[0].length).trim() };
 	}
 
-	/// The workspace as the record names it: `browser`, or `machine:<folder name>`.
+	/// A machine folder's id on this device: 128 random bits, hex (`FsaDB.folderId`).
+	var FOLDER_ID_RE = /^[0-9a-f]{32}$/;
+
+	/// The workspace as the record names it: `browser`, or `machine:<folder name>#<folder id>`.
+	///
+	/// THE ID, NOT THE NAME, IS THE PLACE (M2, 2026-09-24). Keyed by the name alone, a mark
+	/// pressed in `/home/j/usr` was in force in `/media/usb/usr` -- held, fenced and shared --
+	/// with no press there. The id is minted when the folder is first picked and kept beside
+	/// its handle on this device, so a copy of the folder never carries it. A key written
+	/// before it has no id, so it never equals one and its marks wait for "Use here".
 	function rootKey(r) {
-		return (r && r.kind === 'machine') ? 'machine:' + String(r.name || '') : 'browser';
+		return (r && r.kind === 'machine') ? 'machine:' + String(r.name || '') + '#' + String(r.fid || '') : 'browser';
 	}
 
+	/// A key taken apart. Split at the LAST `#` and only before an id, since a folder's own
+	/// name may hold a `#`; a machine key with no id comes back with `fid: ''`.
 	function rootOf(key) {
 		var s = String(key || '');
-		return s.indexOf('machine:') === 0 ? { kind: 'machine', name: s.slice(8) } : { kind: 'browser', name: '' };
+		if (s.indexOf('machine:') !== 0) return { kind: 'browser', name: '', fid: '' };
+		var rest = s.slice(8), j = rest.lastIndexOf('#');
+		if (j >= 0 && FOLDER_ID_RE.test(rest.slice(j + 1))) return { kind: 'machine', name: rest.slice(0, j), fid: rest.slice(j + 1) };
+		// A trailing '#' with nothing after it is an EMPTY id (the database refused it, M2-F2),
+		// not part of the name: stripped, so the row still reads as waiting rather than under a
+		// name nobody typed.
+		if (j === rest.length - 1) return { kind: 'machine', name: rest.slice(0, j), fid: '' };
+		return { kind: 'machine', name: rest, fid: '' };
+	}
+
+	/// May a grant be written under this key? The browser, or a machine folder with its id: a
+	/// grant under a key with none would be in force in every folder of that name again.
+	function keyed(key) {
+		var r = rootOf(key);
+		return r.kind === 'browser' ? key === 'browser' : !!r.fid;
 	}
 
 	/// Can a reference be opened from the workspace named by `key`? The same root
@@ -180,7 +206,9 @@
 
 	/// A stored record, normalised; null where it does not parse. An entry that
 	/// is not well formed is dropped, and so is every entry under a key that is not
-	/// an id, which errs towards waiting.
+	/// an id, which errs towards waiting. So is an entry for a machine folder with no
+	/// folder id, written before M2: it can never be in force again, and would only
+	/// build up.
 	function readRecord(raw) {
 		var j = null;
 		try { j = JSON.parse(raw); } catch (e) { return null; }
@@ -194,6 +222,7 @@
 				var e = list[i];
 				if (!e || typeof e.id !== 'string' || typeof e.to !== 'string' || typeof e.root !== 'string') continue;
 				if (e.rel !== 'holds' && e.rel !== 'consulted') continue;
+				if (!keyed(e.root)) continue;
 				(own(rec.d, k) || (rec.d[k] = [])).push({ id: e.id, to: e.to, rel: e.rel, share: e.share === true, root: e.root });
 			}
 		}
@@ -205,6 +234,7 @@
 				var c = list[i];
 				if (!c || typeof c.ref !== 'string' || typeof c.path !== 'string' || typeof c.root !== 'string') continue;
 				if (c.ws !== true && c.read !== true) continue;
+				if (!keyed(c.root)) continue;
 				(own(rec.c, k) || (rec.c[k] = [])).push({ ref: c.ref, path: c.path, ws: c.ws === true, read: c.read === true, root: c.root });
 			}
 		}
@@ -469,6 +499,7 @@
 		/// from the row as stored and with the share off unless `opts.share` says
 		/// otherwise: a confirmation never carries the share flag.
 		grant: function (owner, row, root, opts) {
+			if (!keyed(here(root))) return false;
 			if (!isDiamondId(owner) || !isMark(row) || !ownedBy(owner, row) || !fits(row.to, here(root))) return false;
 			return change(function (rec) {
 				return putEntry(rec, owner, row, here(root), row.rel, !!(opts && opts.share));
@@ -477,6 +508,7 @@
 		/// ⇄ here, on a mark this device already holds. Never touches `rel`.
 		setShare: function (owner, row, root, on) {
 			var r = here(root);
+			if (!keyed(r)) return false;
 			if (on && !force(read().rec, owner, row, r, [])) return false;
 			return change(function (rec) {
 				var list = own(rec.d, owner) || [];
@@ -490,6 +522,7 @@
 		/// row written once as the user's), never wider than it was.
 		carry: function (owner, from, to, root, share) {
 			var r = here(root);
+			if (!keyed(r)) return false;
 			var was = force(read().rec, owner, from, r, []);
 			if (!isDiamondId(owner) || !was || !isMark(to) || !ownedBy(owner, to)) return false;
 			return change(function (rec) {
@@ -518,6 +551,7 @@
 		/// Record a press here on a chat holding: `opts.ws` and `opts.read`, each
 		/// where given. An entry left granting neither is dropped.
 		chatGrant: function (chatId, a, root, opts) {
+			if (!keyed(here(root))) return false;
 			if (!isChatId(chatId) || !a || typeof a.ref !== 'string' || !a.path || parseRef(a.ref).path !== a.path) return false;
 			if (!fits(a.ref, here(root))) return false;
 			return change(function (rec) { return putChat(rec, chatId, a, here(root), opts || {}); }).ok;
@@ -545,6 +579,8 @@
 			canonRef: canonRef,
 			normRel: normRel,
 			readRecord: readRecord,
+			rootOf: rootOf,
+			keyed: keyed,
 			force: force,
 			waiting: waiting,
 			chatForce: chatForce,

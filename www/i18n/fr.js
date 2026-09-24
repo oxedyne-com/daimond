@@ -702,6 +702,8 @@
 	'sync.paused': 'Synchronisation en pause',
 	'sync.busy_reason': 'Un autre appareil enregistre dans ce compte en même temps, le travail de cet appareil n’est donc pas encore parti. Il est renvoyé toutes les quelques secondes jusqu’à ce qu’il parte.',
 	'sync.merge_reason': 'Une partie de ce qui est arrivé de l’autre appareil n’a pas pu être fusionnée ici, cet appareil n’a donc rien écrit par-dessus. Recharger la page suffit en général.',
+	'sync.unsent': 'Pas encore envoyé',
+	'sync.unsent_reason': 'Le dernier envoi de cet appareil n’est pas passé, son travail n’a donc pas encore atteint le compte. Il est renvoyé de lui-même, de moins en moins souvent tant que cela dure, jusqu’à ce qu’il parte.',
 	'sync.last_synced': 'Dernière synchronisation {when}.',
 	'sync.last_never': 'Rien n’a encore été synchronisé depuis cet appareil.',
 	'sync.when_just_now': 'à l’instant',

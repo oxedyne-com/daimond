@@ -963,6 +963,89 @@ export async function newChat(s, { reuse = false } = {}) {
 	return after;
 }
 
+/// Machine folders of one name, picked through the panel's own door (M2, 2026-09-24).
+///
+/// A `showDirectoryPicker` grant cannot be answered under automation, so real OPFS
+/// directories stand in: `<tag>-<w>/<name>` for each `w` in `which`, made afresh, each
+/// holding the folders in `dirs` with a `keep.md` in each. Under different parents, so
+/// `isSameEntry` on any two of them is false.
+///
+/// `pick(w)` stubs the picker to hand over a NEWLY FETCHED handle to folder `w`, as a
+/// second pick of the same folder does, and presses the Machine chip while no folder is
+/// open or "Change folder…" once one is: both are the real `openFolder` ->
+/// `activateFolder`. It resolves `{ how, landed }` once the panel holds that directory,
+/// or after twelve seconds without. `tidy()` removes the directories.
+export async function standInFolders(s, { tag, name = 'usr', which = ['a', 'b'], dirs = [] }) {
+	const { page } = s;
+	await page.evaluate(async ({ tag, name, which, dirs }) => {
+		const root = await navigator.storage.getDirectory();
+		for (const w of which) {
+			try { await root.removeEntry(tag + '-' + w, { recursive: true }); } catch (e) { /* first run */ }
+			const top = await (await root.getDirectoryHandle(tag + '-' + w, { create: true }))
+				.getDirectoryHandle(name, { create: true });
+			for (const d of dirs) {
+				const sub = await top.getDirectoryHandle(d, { create: true });
+				const wr = await (await sub.getFileHandle('keep.md', { create: true })).createWritable();
+				await wr.write('kept in ' + w + '/' + d);
+				await wr.close();
+			}
+		}
+	}, { tag, name, which, dirs });
+	// Installed afresh on every pick, since a reload takes the stub with it.
+	const stub = () => page.evaluate(({ tag, name }) => {
+		const S = window.__standIn = window.__standIn || { picks: 0, next: '' };
+		S.dir = async (w) => (await (await navigator.storage.getDirectory()).getDirectoryHandle(tag + '-' + w))
+			.getDirectoryHandle(name);
+		window.showDirectoryPicker = async () => {
+			S.picks++;
+			const h = await S.dir(S.next);
+			h.queryPermission   = async () => 'granted';
+			h.requestPermission = async () => 'granted';
+			return h;
+		};
+	}, { tag, name });
+	const pick = async (w) => {
+		await stub();
+		await page.evaluate(() => window.DaimondPanels
+			&& (DaimondPanels.open ? DaimondPanels.open('work') : DaimondPanels.show('work')));
+		await page.waitForTimeout(600);
+		const how = await page.evaluate((w) => {
+			window.__standIn.next = w;
+			const row = document.querySelector('#panel-work .files-mode') || document;
+			if (window.DaimondFiles && DaimondFiles.folder()) {
+				const want = DaimondI18n.t('files.change_root');
+				const b = [...row.querySelectorAll('.files-mode-btn')].find((x) => x.textContent.trim() === want);
+				if (!b) return 'no change-folder button';
+				b.click();
+				return 'change';
+			}
+			const chips = [...row.querySelectorAll('.files-mode-chip')];
+			const chip = chips.find((c) => c.querySelector('[data-icon="machine"]')) || chips[1];
+			if (!chip) return 'no machine chip';
+			chip.click();
+			return 'chip';
+		}, w);
+		const landed = await page.evaluate(async (w) => {
+			const want = await window.__standIn.dir(w);
+			for (let i = 0; i < 60; i++) {
+				const h = window.DaimondFiles && DaimondFiles.folder();
+				if (h && await h.isSameEntry(want)) return true;
+				await new Promise((r) => setTimeout(r, 200));
+			}
+			return false;
+		}, w);
+		await page.waitForTimeout(1200);
+		return { how, landed };
+	};
+	const tidy = () => page.evaluate(async ({ tag, which }) => {
+		const root = await navigator.storage.getDirectory();
+		for (const w of which) {
+			try { await root.removeEntry(tag + '-' + w, { recursive: true }); } catch (e) { /* tidy */ }
+		}
+	}, { tag, which }).catch(() => {});
+	return { pick, tidy };
+}
+
 /// Seed a mark -- a Diamond's or a chat's -- and press it into force on THIS
 /// device: what a person does through the paperclip, a chat's mark-in, or the
 /// notice's "Use here", and, where asked, the ⇄ -- without driving the DOM.
@@ -1022,9 +1105,9 @@ export async function markHere(s, diamondId, ref, opts = {}) {
 				.find((l) => l.id === id);
 			if (!row) return false;
 			try { await app.set_link_share(diamondId, id, true); } catch (e) { /* not this row's to flag */ }
-			const h = DaimondFiles.folder();
-			const root = DaimondMarksHere.rootKey(h ? { kind: 'machine', name: h.name } : { kind: 'browser' });
-			return DaimondMarksHere.setShare(diamondId, row, root, true);
+			// The page's own name for the open workspace, folder id and all (M2): a key
+			// composed here from the folder's name would be one no grant is written under.
+			return DaimondMarksHere.setShare(diamondId, row, DaimondAttach.root(), true);
 		}, { diamondId, id });
 	}
 	return { id, confirmed: !!confirmed, shared };

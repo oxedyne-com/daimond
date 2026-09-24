@@ -68,6 +68,8 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const FOLDER = 'markshere-folder';
 const OTHER  = 'fedcba9876543210';      // another device's id, as a mark made there names it
 const KEY    = 'daimond-marks-here';    // the record's key, written here to remove and seed it
+// Another machine folder, as the record keys one since M2: a name and this device's id for it.
+const ELSEWHERE = 'machine:elsewhere#' + 'e'.repeat(32);
 const BODY   = 'MARKSHERE-READ-BODY-7f3a';
 
 let step = 'boot';
@@ -411,7 +413,9 @@ function rule(row, entry, root, owner) {
 	const kind = String(row.to).split(':')[0];
 	const m = /^[a-z]+:\[(browser|machine)(?::([^\]@]*)(?:@[^\]]*)?)?\]/.exec(row.to);
 	const refRoot = m ? (m[1] === 'machine' ? 'machine:' + (m[2] || '') : 'browser') : null;
-	const fits = !refRoot || refRoot === root || (m[1] === 'machine' && !m[2] && root.startsWith('machine:'));
+	// A machine root is the folder's name and its id here (M2); a reference carries the name.
+	const k = /^(machine:.*)#[0-9a-f]{32}$/.exec(root);
+	const fits = !refRoot || refRoot === (k ? k[1] : root) || (m[1] === 'machine' && !m[2] && root.startsWith('machine:'));
 	const mark = (row.rel === 'holds' || row.rel === 'consulted') && (kind === 'dir' || kind === 'file')
 		&& (row.by === 'user' || row.by === '') && row.owner === owner && row.from === 'diamond:' + owner;
 	const inForce = mark && fits && !!entry && entry.id === row.id && entry.to === row.to && entry.root === root;
@@ -458,7 +462,7 @@ async function buildGrid(name, cells, root) {
 	const seeds = cells.filter((c) => c.entry === 'seed' || c.entry === 'root');
 	if (seeds.length) {
 		await p.evaluate(([g, list]) => window.__mh.recSeed(g, list), [g, seeds.map((c) => ({ id: c.row.id,
-			to: c.row.to, rel: c.row.rel, share: c.row.share, root: c.entry === 'root' ? (root === 'browser' ? 'machine:elsewhere' : 'browser') : root }))]);
+			to: c.row.to, rel: c.row.rel, share: c.row.share, root: c.entry === 'root' ? (root === 'browser' ? ELSEWHERE : 'browser') : root }))]);
 		await H('refresh');
 	}
 	// What this device's record now says, so each cell is judged against the entry it has.
@@ -467,7 +471,7 @@ async function buildGrid(name, cells, root) {
 		const rel0 = c.entry === 'narrow-rel' ? 'consulted' : c.row.rel;
 		c.expect = rule(c.row, pressed ? { id: c.row.id, to: c.row.to, rel: rel0, share: false, root: root }
 			: seeds.includes(c) ? { id: c.row.id, to: c.row.to, rel: c.row.rel, share: c.row.share,
-				root: c.entry === 'root' ? (root === 'browser' ? 'machine:elsewhere' : 'browser') : root } : null, root, g);
+				root: c.entry === 'root' ? (root === 'browser' ? ELSEWHERE : 'browser') : root } : null, root, g);
 		// The path a reader names this cell by.
 		c.name = c.path;
 	}
@@ -586,7 +590,7 @@ await H('chatParcel', cg, [
 await p.evaluate(([cg, r]) => { if (DaimondAttach.chatConfirm) DaimondAttach.chatConfirm(cg, r); }, [cg, B('c-press')]);
 await p.evaluate(([cg, list]) => window.__mh.recSeedChat(cg, list), [cg, [
 	{ ref: B('c-path'), path: 'c-else', ws: true, read: false, root: 'browser' },
-	{ ref: B('c-root'), path: 'c-root', ws: true, read: false, root: 'machine:elsewhere' },
+	{ ref: B('c-root'), path: 'c-root', ws: true, read: false, root: ELSEWHERE },
 ]]);
 const scopeG = (await p.evaluate((cid) => DaimondAttach.chatScope(cid), cg)).slice().sort();
 check('P9 chat: the scope is exactly the holding pressed here', J(scopeG) === J(['c-press']), J(scopeG));
@@ -738,6 +742,7 @@ await p.evaluate(async (folder) => {
 		tx.oncomplete = res;
 		tx.onerror = () => rej(tx.error);
 	});
+	db.close();
 }, FOLDER);
 // A rootless mark pressed in the browser workspace: under the folder it fits, and its entry is
 // for the browser, so it waits there.
@@ -908,7 +913,8 @@ control('P7. its ⇄ shares it again', has(s7d, 'lostshare'), J(s7d));
 // ── P9 (machine) ──────────────────────────────────────────────────────────────
 step = 'P9m';
 const cellsB = gridCells((x) => M(x), B('x-other'));
-const gB = await buildGrid('MH grid machine', cellsB, 'machine:' + FOLDER);
+// The page's own key for the folder, id and all.
+const gB = await buildGrid('MH grid machine', cellsB, await p.evaluate(() => DaimondAttach.root()));
 await readGrid(gB, cellsB, 'P9 machine', true);
 
 // ── Tidy ──────────────────────────────────────────────────────────────────────

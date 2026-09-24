@@ -69,6 +69,7 @@ await p.evaluate(async (folder) => {
 		tx.oncomplete = res;
 		tx.onerror = () => rej(tx.error);
 	});
+	db.close();
 }, FOLDER);
 await p.reload({ waitUntil: 'domcontentloaded' });
 await signInAs(s, 'sharemark');

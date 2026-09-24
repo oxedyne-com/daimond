@@ -855,6 +855,8 @@
 	'sync.paused':         '同步已暂停',
 	'sync.busy_reason':    '另一台设备正同时往这个账户里写，所以这台设备做的事还没发出去。会每隔几秒重发一次，直到发出去为止。',
 	'sync.merge_reason':   '从另一台设备来的东西有一部分在这里合不上，所以这台设备没有覆盖它。刷新页面通常就好了。',
+	'sync.unsent':         '尚未发出',
+	'sync.unsent_reason':  '这台设备上一次发送没有成功，所以它做的事还没到账户里。会自动重发，失败越久间隔越长，直到发出去为止。',
 	'sync.last_synced':    '上次同步：{when}。',
 	'sync.last_never':     '这台设备还没有同步过任何东西。',
 	'sync.when_just_now':  '刚刚',

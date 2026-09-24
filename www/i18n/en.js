@@ -1602,6 +1602,8 @@
 	'sync.paused':         'Sync paused',
 	'sync.busy_reason':    'Another device is saving to this account at the same time, so this device’s work has not been sent yet. It is tried again every few seconds until it goes.',
 	'sync.merge_reason':   'Some of what arrived from the other device could not be merged here, so this device has not sent over the top of it. Reloading the page usually clears it.',
+	'sync.unsent':         'Not sent yet',
+	'sync.unsent_reason':  'The last send from this device did not get through, so its work has not reached the account yet. It is tried again on its own, less often the longer that lasts, until it goes.',
 	'sync.last_synced':    'Last synced {when}.',
 	'sync.last_never':     'Nothing has synced from this device yet.',
 	'sync.when_just_now':  'just now',

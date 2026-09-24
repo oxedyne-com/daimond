@@ -358,6 +358,7 @@ await p.evaluate(async ({ folder, d, crystalD }) => {
 		tx.oncomplete = res;
 		tx.onerror = () => rej(tx.error);
 	});
+	db.close();
 	void folder;
 }, { folder: FOLDER, d: D, crystalD: crystalOf('crystal of D') });
 

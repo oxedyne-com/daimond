@@ -22,6 +22,11 @@
    G ~75 GETs (the backoff is jittered). Here: 0, 7, 0, and the owed
    parcel lands once the wait ends (E2, G2).
 
+   S3 (R3 sync QA, 2026-09-24): once the re-pull gives up, the owed
+   retry takes the version over at its ceiling (300 s +-50%), so owed
+   work is not stranded on a version that merges later. F is still 7
+   GETs up to the give-up, then one per 150-450 s: about 12 in 30 min.
+
    Drives the REAL sync.js on a virtual clock, on pushretry.test.mjs's
    harness.
 
@@ -76,6 +81,7 @@ function makeTab() {
 		moveOnRead: 0,				// the mailbox moves under this many more pushes (another device)
 		posts: [],					// every POST: { base, ok }
 		gets: 0,
+		getAt: [],					// the virtual time of every content GET
 		mailbox: { version: 4, blob: 'sealed:' + JSON.stringify({ v: 3, chats: [], note: 'phone v4' }) },
 		// A virtual clock: every timer the page sets waits here until the test runs it.
 		vnow: 0,
@@ -99,6 +105,7 @@ function makeTab() {
 			if (q.has('presence') || q.has('lease') || q.has('progress')) return answer(200, { ok: true });
 			if (!opts || opts.method === 'GET') {
 				tab.gets++;
+				tab.getAt.push(tab.vnow);
 				if (tab.withhold) throw new TypeError('Failed to fetch');
 				return answer(200, { present: true, version: tab.mailbox.version, blob: tab.mailbox.blob,
 					device: 'Phone' });
@@ -234,11 +241,24 @@ console.log('\nF. owed, then a pull that lands but will not merge, for 30 minute
 	const { tab, S } = await owed();
 	tab.withhold = false;
 	tab.win.DaimondGraph = { adopt: () => { throw new Error('a section this build cannot merge'); } };
-	const g0 = tab.gets;
+	const g0 = tab.gets, t0 = tab.vnow;
 	await advance(tab, 1800000);
-	const n = tab.gets - g0;
-	check('F1. the re-pull of an unmergeable version stays bounded (REAPPLY_MAX_TRIES = 6)', n <= 8,
-		n + ' whole-parcel GETs in 30 min');
+	const at = tab.getAt.slice(g0).map((t) => t - t0);
+	const n = at.length;
+	// The owed retry's pull, then the re-pull's six, all inside REAPPLY_MAX_MS x 1.5 of each
+	// other; the owed retry's next pull is at least half its ceiling (150 s) after that.
+	const quick = at.filter((t) => t < 150000).length;
+	check('F1. the re-pull of an unmergeable version stays bounded (REAPPLY_MAX_TRIES = 6)', quick <= 7,
+		quick + ' whole-parcel GETs before it gives up');
+	// S3: once it has given up, the owed work is not stranded -- the owed retry pulls the
+	// version again, at the wire's ceiling (UNSENT_WIRE_MAX_MS, 300 s +-50%), never sooner.
+	const after = at.slice(7);
+	const gp = after.slice(1).map((t, i) => t - after[i]);
+	check('F2. then the owed retry takes it over, at its ceiling and never sooner',
+		after.length > 0 && gp.every((g) => g >= 150000) && (after[0] - at[6]) >= 150000,
+		after.length + ' more GETs, gaps ' + [after[0] - at[6]].concat(gp).map((g) => Math.round(g / 1000) + 's').join(', '));
+	check('F3. about a dozen whole-parcel GETs in 30 min, not one every 8 s', n <= 19,
+		n + ' whole-parcel GETs in 30 min (7 before S3, ~230 before F2)');
 }
 
 console.log('\nG. owed, then another device runs a hand-off for 10 minutes\n');
