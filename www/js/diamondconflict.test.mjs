@@ -172,6 +172,9 @@ function build(harness) {
 		'async function unionDiamondLinks() { return false; }\n' +
 		'async function diamondData(r) { return r.data != null ? r.data : null; }\n' +
 		'var ChatStore = { putTombs: async function () {} };\n' +
+		// This device's record of the marks pressed on it (R2): settled from the copy
+		// before the import, which this suite does not assert on (markshere.test.mjs does).
+		'var DaimondMarksHere = { settle: function () { return false; }, dropAll: function () { return false; } };\n' +
 		'var DIAMOND_TOMBS_KEY = \'daimond-diamond-tombs\';\n' +
 		// the fork-store, and — on `nobase` — a base that is always empty
 		'function readDiamondBase() { return ctx.readBase(); }\n' +

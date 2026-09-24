@@ -86,7 +86,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
 import { fileURLToPath } from 'node:url';
-import { open, signInAs, scratch, BROWSER } from './harness.mjs';
+import { open, signInAs, scratch, BROWSER, markHere } from './harness.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const WWW  = path.join(HERE, '..', 'www');
@@ -714,21 +714,24 @@ note(`seeded ${seeded.n} files, ${(seeded.bytes / 1048576).toFixed(1)} MiB, in $
 // THE REFERENCE NAMES THIS DEVICE (owner ruling, 2026-09-23): a mark is per-machine now,
 // and a rootless reference -- `dir:TheOrder/Onthearche`, the grandfathered form every
 // link made before roots were recorded carries -- is no longer in force on a mounted
-// folder; it sits inactive until confirmed here, which this fixture is not testing.
+// folder; it sits inactive until confirmed here.
 // `DaimondAttach.ref` writes the rooted, device-tagged form
-// (`dir:[machine:mounted@<device>]TheOrder/Onthearche`) that IS in force from the moment
-// it is written, on the device that wrote it -- exactly what the folder picker itself
-// writes for a mark made through the UI.
+// (`dir:[machine:mounted@<device>]TheOrder/Onthearche`), which names where the mark
+// was made but is no longer itself the grant (R2, 2026-09-24): a row is only a claim
+// until this device's own record says it was pressed, exactly as the paperclip does,
+// which is what `markHere` below presses -- the ADD alone, as this fixture asserted
+// before R2, is no longer enough.
 const marked = await A.page.evaluate(async (scope) => {
 	const mod = await import('/pkg/oxedyne_daimond.js');
 	const app = new mod.DaimondApp('http://127.0.0.1/v1/chat/completions', '', 'none', 4096, '', true);
 	const id = await app.create_diamond('Onthearche');
-	const linkId = await app.add_link(id, 'diamond:' + id, window.DaimondAttach.ref('dir', scope),
-		'holds', '', 'user');
+	const ref = window.DaimondAttach.ref('dir', scope);
+	const linkId = await app.add_link(id, 'diamond:' + id, ref, 'holds', '', 'user');
 	await window.DaimondCore.loadDiamonds();
-	return { id, linkId };
+	return { id, linkId, ref };
 }, SCOPE);
 const did = marked.id;
+await markHere(A, did, marked.ref, { linkId: marked.linkId });
 note(`Diamond ${did.slice(0, 12)}… holds ${SCOPE}`);
 
 // ═══════════════════════════════════════════════════════════════════════
@@ -771,13 +774,14 @@ check('the census carries none of it, calls itself incomplete, and complains abo
 	+ `banner ${unflaggedCol.msg ? JSON.stringify(unflaggedCol.msg.slice(0, 70)) : 'none'}`);
 
 // ── and now the second grant, given explicitly ───────────────────────
-await A.page.evaluate(async (a) => {
-	const mod = await import('/pkg/oxedyne_daimond.js');
-	const app = new mod.DaimondApp('http://127.0.0.1/v1/chat/completions', '', 'none', 4096, '', true);
-	await app.set_link_share(a.id, a.linkId, true);
+// R2/O2: ⇄ writes the row's flag (`set_link_share`) AND this device's own entry
+// (`DaimondMarksHere.setShare`), both at once -- `markHere`'s job, since the mark
+// is already in force here (pressed above) and needs only the second grant.
+await markHere(A, did, marked.ref, { linkId: marked.linkId, press: false, share: true });
+await A.page.evaluate(async () => {
 	await window.DaimondCore.loadDiamonds();
 	window.DaimondCore.syncClearWalkCache();
-}, { id: did, linkId: marked.linkId });
+});
 
 const share = await A.page.evaluate(() => window.DaimondCore.syncFolderShare());
 check('a FLAGGED folder shares exactly itself, and the ceiling is 200 MiB per folder',
@@ -803,19 +807,23 @@ await A.page.evaluate(async (p) => {
 	await w.write(new TextEncoder().encode('# a file attached on its own\n'));
 	await w.close();
 }, DEEP_FILE);
-await A.page.evaluate(async ({ id, p }) => {
+const deepLink = await A.page.evaluate(async ({ id, p }) => {
 	const mod = await import('/pkg/oxedyne_daimond.js');
 	const app = new mod.DaimondApp('http://127.0.0.1/v1/chat/completions', '', 'none', 4096, '', true);
-	// Marked and flagged in one go: a lone file may be shared exactly as a folder may,
-	// and this one is the second flagged root the per-root ceiling is measured on. The
-	// reference names this device (see the note on `marked` above), so the mark is in
-	// force without a separate confirm step.
-	const linkId = await app.add_link(id, 'diamond:' + id, window.DaimondAttach.ref('file', p),
-		'holds', '', 'user');
-	await app.set_link_share(id, linkId, true);
+	// A lone file may be marked and flagged exactly as a folder may, and this one is
+	// the second flagged root the per-root ceiling is measured on. The reference names
+	// this device (see the note on `marked` above), but naming it is no longer the
+	// grant (R2) -- `markHere` below presses it and ⇄'s it, in the two writes O2 asks
+	// for, rather than in the one `add_link` this fixture asserted before R2.
+	const ref = window.DaimondAttach.ref('file', p);
+	const linkId = await app.add_link(id, 'diamond:' + id, ref, 'holds', '', 'user');
+	return { linkId, ref };
+}, { id: did, p: DEEP_FILE });
+await markHere(A, did, deepLink.ref, { linkId: deepLink.linkId, share: true });
+await A.page.evaluate(async () => {
 	await window.DaimondCore.loadDiamonds();
 	window.DaimondCore.syncClearWalkCache();
-}, { id: did, p: DEEP_FILE });
+});
 
 A.logs.length = 0;		// only the census the next line triggers is under test
 const deepShare = await A.page.evaluate(() => window.DaimondCore.syncFolderShare());
@@ -852,24 +860,27 @@ await A.page.evaluate(async (p) => {
 	await w.write(new TextEncoder().encode('# a shipped skill, marked in on its own\n'));
 	await w.close();
 }, SKILL_FILE);
-const skillLinkId = await A.page.evaluate(async ({ id, p }) => {
+const skillLink = await A.page.evaluate(async ({ id, p }) => {
 	const mod = await import('/pkg/oxedyne_daimond.js');
 	const app = new mod.DaimondApp('http://127.0.0.1/v1/chat/completions', '', 'none', 4096, '', true);
-	// MARKED AND FLAGGED, exactly as DEEP_FILE above is. This fixture was written
-	// when a mark was itself the copy grant; it is not one any more (`Files.shareRoots`
-	// reads `a.share`, not the mark), so a manifest marked and left unflagged is
-	// correctly shared with nobody and this cell would be asserting the rule that
-	// was replaced rather than the fallback it exists to test. The reference names
-	// this device, exactly as DEEP_FILE's does.
-	const linkId = await app.add_link(id, 'diamond:' + id, window.DaimondAttach.ref('file', p),
-		'holds', '', 'user');
-	await app.set_link_share(id, linkId, true);
+	// MARKED AND FLAGGED, exactly as DEEP_FILE above is. This fixture was written when a
+	// mark was itself the copy grant; it is not one any more (`Files.shareRoots` reads
+	// `a.share`, not the mark), so a manifest marked and left unflagged is correctly
+	// shared with nobody and this cell would be asserting the rule that was replaced
+	// rather than the fallback it exists to test. Naming this device in the reference
+	// is not the grant either, since R2 -- `markHere` below presses and ⇄'s it.
+	const ref = window.DaimondAttach.ref('file', p);
+	const linkId = await app.add_link(id, 'diamond:' + id, ref, 'holds', '', 'user');
+	return { linkId, ref };
+}, { id: did, p: SKILL_FILE });
+const skillLinkId = skillLink.linkId;
+await markHere(A, did, skillLink.ref, { linkId: skillLinkId, share: true });
+await A.page.evaluate(async () => {
 	await window.DaimondCore.loadDiamonds();
 	// The memo is keyed on the flagged roots, but the walk this cell is about is the
 	// one the NEXT line triggers -- so it is dropped outright rather than raced.
 	window.DaimondCore.syncClearWalkCache();
-	return linkId;
-}, { id: did, p: SKILL_FILE });
+});
 
 A.logs.length = 0;		// only the census the next line triggers is under test
 const skillShare = await A.page.evaluate(async (parent) => {
@@ -1045,22 +1056,33 @@ const flagLink = await A.page.evaluate(async (a) => {
 	await w.close();
 	const mod = await import('/pkg/oxedyne_daimond.js');
 	const app = new mod.DaimondApp('http://127.0.0.1/v1/chat/completions', '', 'none', 4096, '', true);
-	// The reference names this device, exactly as the marks above do.
-	const linkId = await app.add_link(a.id, 'diamond:' + a.id, window.DaimondAttach.ref('dir', a.dir),
-		'holds', '', 'user');
+	// The reference names this device, exactly as the marks above do, which since R2
+	// is not itself the grant -- `markHere` below presses it on A.
+	const ref = window.DaimondAttach.ref('dir', a.dir);
+	const linkId = await app.add_link(a.id, 'diamond:' + a.id, ref, 'holds', '', 'user');
+	return { linkId, ref };
+}, { id: did, dir: FLAGTEST });
+await markHere(A, did, flagLink.ref, { linkId: flagLink.linkId });
+await A.page.evaluate(async () => {
 	await window.DaimondCore.loadDiamonds();
 	window.DaimondCore.syncClearWalkCache();
-	return linkId;
-}, { id: did, dir: FLAGTEST });
+});
 
-/// The attachment rows B is DRAWING, with the two things the flag shows on them.
+/// The attachment rows B is DRAWING, with the three things the flag shows on them.
+///
+/// `pressed` is `aria-pressed` on the ⇄ button, which since R2 is `a.share` -- the
+/// ROW'S flag AND this device's OWN entry, together (O2). B has no native access to
+/// the folder at all, so it can never hold an entry and its button can never read
+/// pressed, whatever A's row says; `shared` (the badge, from `rowShare`) is what
+/// still tells B the folder is shared FROM elsewhere, titled `dws.shared_there`.
 const bRows = async () => B.page.evaluate(() => Array.from(
 	document.querySelectorAll('#panel-work .files-row.attached')).map((e) => {
 		const btn = e.querySelector('.files-share');
 		return {
-			path:    e.dataset.path || '',
-			shared:  !!e.querySelector('.files-badge.files-shared'),
-			pressed: btn ? btn.getAttribute('aria-pressed') : '',
+			path:     e.dataset.path || '',
+			shared:   !!e.querySelector('.files-badge.files-shared'),
+			pressed:  btn ? btn.getAttribute('aria-pressed') : '',
+			disabled: btn ? !!btn.disabled : null,
 		};
 	}));
 const said = (rs) => rs.map(r => `${r.path}=${r.pressed}${r.shared ? '+badge' : ''}`).join(' | ')
@@ -1083,19 +1105,24 @@ await B.page.waitForTimeout(1500);
 
 let rows = await bRows();
 const rowFor = (rs, p) => rs.find(r => r.path === p) || {};
-check('B draws the Diamond\'s attachments and says which of them are shared',
-	rowFor(rows, SCOPE).shared === true && rowFor(rows, SCOPE).pressed === 'true'
+// R2/O2: B can never press ⇄ itself (it has no native folder to hold), so its own
+// button reads NOT pressed and disabled whatever the row says -- this is the
+// opposite of what this asserted before R2, when B's `pressed` read the row's flag
+// directly. The badge (`shared`) is the property that carries "shared from A" now.
+check("B draws the Diamond's attachments and says which are shared, though it can never press ⇄ itself",
+	rowFor(rows, SCOPE).shared === true && rowFor(rows, SCOPE).pressed === 'false'
+		&& rowFor(rows, SCOPE).disabled === true
 	&& rowFor(rows, FLAGTEST).shared === false && rowFor(rows, FLAGTEST).pressed === 'false',
 	said(rows));
 
 // ── the flag goes on at A, and nobody touches B ──────────────────────
-await A.page.evaluate(async (a) => {
-	const mod = await import('/pkg/oxedyne_daimond.js');
-	const app = new mod.DaimondApp('http://127.0.0.1/v1/chat/completions', '', 'none', 4096, '', true);
-	await app.set_link_share(a.id, a.linkId, true);
+// R2/O2: the row's flag AND this device's (A's) own entry, both -- `markHere`'s job,
+// on a mark already pressed here (above) and needing only the second grant.
+await markHere(A, did, flagLink.ref, { linkId: flagLink.linkId, press: false, share: true });
+await A.page.evaluate(async () => {
 	await window.DaimondCore.loadDiamonds();
 	window.DaimondCore.syncClearWalkCache();
-}, { id: did, linkId: flagLink });
+});
 const onA = await A.page.evaluate(() => window.DaimondCore.syncFolderShare());
 check('flagging a second folder on A puts it in what A shares, beside the first',
 	onA.roots.indexOf(FLAGTEST) >= 0 && onA.roots.indexOf(SCOPE) >= 0 && onA.left.length === 0,
@@ -1103,8 +1130,9 @@ check('flagging a second folder on A puts it in what A shares, beside the first'
 await round(A, B);
 await B.page.waitForTimeout(1200);
 rows = await bRows();
-check('and B\'s panel redraws on its own: the attachment nobody touched here now reads as shared',
-	rowFor(rows, FLAGTEST).pressed === 'true' && rowFor(rows, FLAGTEST).shared === true,
+check("and B's panel redraws on its own: the attachment nobody touched here now reads as shared FROM ANOTHER DEVICE, never as pressed here",
+	rowFor(rows, FLAGTEST).pressed === 'false' && rowFor(rows, FLAGTEST).disabled === true
+		&& rowFor(rows, FLAGTEST).shared === true,
 	said(rows));
 
 // ── and off again, which is the same journey backwards ───────────────
@@ -1114,7 +1142,7 @@ await A.page.evaluate(async (a) => {
 	await app.set_link_share(a.id, a.linkId, false);
 	await window.DaimondCore.loadDiamonds();
 	window.DaimondCore.syncClearWalkCache();
-}, { id: did, linkId: flagLink });
+}, { id: did, linkId: flagLink.linkId });
 const offA = await A.page.evaluate(() => window.DaimondCore.syncFolderShare());
 check('taking the flag off stops A sharing that folder, and leaves the other flagged root alone',
 	offA.roots.indexOf(FLAGTEST) < 0 && offA.roots.indexOf(SCOPE) >= 0,

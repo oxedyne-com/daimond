@@ -183,8 +183,13 @@ await page.evaluate(async (did) => {
 	const app = new m.DaimondApp('http://127.0.0.1/v1/chat/completions', '', 'none', 4096, '', true);
 	await app.add_link(did, 'diamond:' + did, 'dir:[machine:usr]books/elearnity/CheapThinking',
 		'holds', '', 'user');
-	// And one written before roots existed at all, which must keep working.
+	// And one written before roots existed at all, which must keep working -- pressed
+	// here (R2), since a rootless reference fits this workspace but is still only a
+	// claim until this device's own record says it was pressed.
 	await app.add_link(did, 'diamond:' + did, 'dir:legacy/notes', 'holds', '', 'user');
+	if (window.DaimondAttach && DaimondAttach.confirmHere) {
+		await DaimondAttach.confirmHere(did, 'dir:legacy/notes');
+	}
 }, id);
 await page.waitForTimeout(900);
 

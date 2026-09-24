@@ -159,6 +159,13 @@ if (want('F1')) {
 				rel: 'holds', note: '' }) + '\n'
 			+ JSON.stringify({ id: 'user1', ts: 3, from: 'diamond:' + id, to: 'dir:granted',
 				rel: 'holds', note: '', by: 'user' }) + '\n');
+		// R2: a row is only a claim until pressed here, so the user's own mark is
+		// pressed, exactly as Use here does. The row with no `by` is left waiting
+		// on purpose: the contrast this check is about is now between a mark
+		// pressed and one that is not, rather than between the two kinds of row.
+		if (window.DaimondAttach && DaimondAttach.confirmHere) {
+			await DaimondAttach.confirmHere(id, 'dir:granted');
+		}
 		out.bounds2 = (await DaimondDiamond.bounds(id)).attached;
 		// Put the sidecar back as the daimon left it, for the sections after.
 		await mod.write_file(side, after || '');
@@ -356,9 +363,12 @@ if (want('F7')) {
 			{ path: 'diamonds/' + other + '/.daimond/links.jsonl', content: '{}' });
 		out.otherWork     = await turn(id, ['diamonds'], 'file_write',
 			{ path: 'diamonds/' + other + '/notes.md', content: 'a mark covers it' });
-		// CONFIRMING A MARK HERE ADDS BEFORE IT REMOVES: a row from before rows said who made
-		// them (so not in force, and offered for confirmation), confirmed while the store will
-		// not take the new row -- the old one must still be there afterwards.
+		// R2: A CONFIRMATION WRITES ONLY THIS DEVICE'S OWN RECORD -- no add, no remove,
+		// no stamp on the row at all, so "the store refuses the new row" (the OLD
+		// confirm's add-before-remove hazard, from before R2 rewrote the row on every
+		// press) has nothing left to refuse: `confirmHere` never calls `add_link`. What
+		// can still fail is the write to THIS DEVICE'S RECORD itself (quota, or storage
+		// blocked), and the mark must stay waiting, exactly as `marks.not_saved` says.
 		const side = 'diamonds/' + id + '/.daimond/links.jsonl';
 		const had = (await read(side)) || '';
 		await mod.write_file(side, had + JSON.stringify({ id: 'legacy7', ts: 7, from: self,
@@ -367,9 +377,10 @@ if (want('F7')) {
 		const pageApp = window.DaimondCore && DaimondCore.diamondApp && DaimondCore.diamondApp();
 		out.confirmApi = !!(A.confirmHere && pageApp);
 		if (out.confirmApi) {
-			pageApp.add_link = () => Promise.reject(new Error('the store refused the new row'));
+			const realSetItem = window.localStorage.setItem.bind(window.localStorage);
+			window.localStorage.setItem = () => { throw new Error('quota exceeded, or storage blocked'); };
 			try { out.failed = await A.confirmHere(id, 'dir:confirmme'); } catch (e) { out.failed = 'threw'; }
-			delete pageApp.add_link;
+			window.localStorage.setItem = realSetItem;
 			out.kept = JSON.parse(await app.links_touching(self) || '[]')
 				.filter((l) => /confirmme$/.test(l.other)).map((l) => [l.other, l.by || '']);
 			out.bFail = (await DaimondDiamond.bounds(id)).attached;
@@ -395,12 +406,17 @@ if (want('F7')) {
 	check('F7. and its link sidecar', /^Refused/.test(f7.otherSidecar), f7.otherSidecar.slice(0, 200));
 	check('F7. while its ordinary files are the mark\'s to write', /^Wrote /.test(f7.otherWork),
 		f7.otherWork.slice(0, 160));
-	check('F7. a confirmation the store will not take leaves the mark where it was',
+	// R2: the row is untouched either way now (no add, no remove, no stamp), so what
+	// this asks is whether a press whose own record-write fails leaves the mark
+	// waiting -- the opposite of before R2, when a doomed REWRITE had to leave the
+	// OLD row in place. `kept[0][1]` stays `''`: confirming never makes the row the
+	// user's, since it was never rewritten to say so.
+	check('F7. a confirmation whose record-write does not land leaves the mark waiting, row untouched',
 		f7.confirmApi === true && f7.failed === false && Array.isArray(f7.kept) && f7.kept.length === 1
-			&& !(f7.bFail || []).includes('confirmme'),
+			&& f7.kept[0][1] === '' && !(f7.bFail || []).includes('confirmme'),
 		JSON.stringify({ api: f7.confirmApi, failed: f7.failed, kept: f7.kept }));
-	check('F7. and one it takes puts the mark in force, as the user\'s, once',
-		f7.done === true && Array.isArray(f7.after) && f7.after.length === 1 && f7.after[0][1] === 'user'
+	check("F7. and once the record can be written, the same press puts the mark in force -- the row still unrewritten, still nobody's",
+		f7.done === true && Array.isArray(f7.after) && f7.after.length === 1 && f7.after[0][1] === ''
 			&& (f7.bDone || []).includes('confirmme'),
 		JSON.stringify({ done: f7.done, after: f7.after, attached: f7.bDone }));
 }

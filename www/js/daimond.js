@@ -7183,6 +7183,8 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		// they already hold it.
 		var dbase = readDiamondBase(), baseDirty = false;
 		trail('sync tombs', deletions.length + ' tombstone(s), ' + Object.keys(local).length + ' here');
+		// A Diamond deleted anywhere takes what was pressed on it here (R2).
+		if (deletions.length && DaimondMarksHere.dropAll(deletions)) changed = true;
 		for (var j = 0; j < deletions.length; j++) {
 			var dead = deletions[j];
 			if (!local[dead]) continue;
@@ -7291,6 +7293,13 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 				catch (e) { loserLinks = ''; }
 			}
 			var remoteTags = packTags(idata);
+			// A REMOVAL OR A NARROWING MADE ON ANOTHER DEVICE LANDS ON THIS DEVICE'S
+			// RECORD HERE (R2), from the bytes of the copy arriving -- its own sidecar,
+			// and the loser's where the import will union that back -- and never from a
+			// read of the store, which mid-import answers "no links". Before the import,
+			// so a failed import leaves an entry narrowed and a row standing: that errs
+			// closed, and the next pull's retry repairs it. A widening never lands.
+			if (DaimondMarksHere.settle(r.id, packLinks(idata), loserLinks)) changed = true;
 			try { await app.import_diamond(idata, twoSided); changed = true; }
 			catch (e) { idata = null; continue; }
 			idata = null;							// free the export before the next Diamond
@@ -8316,6 +8325,10 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 				// vouched() gate above is what makes that safe. See the refuse note.
 				diag('apply chat NEW', r.id + ' n=' + (Array.isArray(r.messages) ? r.messages.length : 0));
 				byId[r.id] = r;
+				// What this device pressed on it before its record was lost here (an
+				// evicted store keeps localStorage) narrows to the copy arriving, as a
+				// merge's does below (R2; QA 2026-09-24, F1).
+				if (DaimondMarksHere.chatSettle(r.id, r.holds)) dropChatApp(r.id);
 				continue;
 			}
 			// `st` is a SUMMARY since seq 213 -- read the local transcript and session from
@@ -8361,11 +8374,16 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			diag('apply chat merge', r.id + ' local=' + localLen + ' remote=' + remoteLen
 				+ ' -> ' + mergedLen + (mergedLen > Math.max(localLen, remoteLen) ? ' RESURRECT' : ''));
 			byId[r.id] = merged;
+			// A holding taken off, marked out or Read-off on another device narrows what
+			// was pressed on it here (R2), as the merged record now stands.
+			if (DaimondMarksHere.chatSettle(r.id, merged.holds)) dropChatApp(r.id);
 		}
-		Object.keys(tombs).forEach(function (id) {
+		var deadChats = Object.keys(tombs);
+		deadChats.forEach(function (id) {
 			if (byId[id]) diag('apply chat removed', id + ' by tombstone');
 			delete byId[id];
 		});
+		DaimondMarksHere.chatDropAll(deadChats);
 		var out = Object.keys(byId).map(function (id) { return byId[id]; });
 		// A MERGE THAT SHORTENED A TRANSCRIPT, in the durable trail.
 		//
@@ -16140,7 +16158,8 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		// marked in and not in force on this device, named in a refusal so the model asks the
 		// user to confirm it here (audit finding 6).
 		app.set_chat_scope(scratch, JSON.stringify(marked), undefined,
-			JSON.stringify(chatWaiting(chatId).map(function (a) { return a.path; })));
+			JSON.stringify(chatWaiting(chatId).filter(function (a) { return !!a.ws; })
+				.map(function (a) { return a.path; })));
 
 		var got = {};
 		try { got = JSON.parse(app.diamond_scope() || '{}') || {}; }
@@ -21063,6 +21082,8 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			};
 			chat._loaded = true;					// its transcript is what we are about to write
 			chats.push(chat);
+			// Its holdings arrive whole, so what was pressed on it here narrows to them.
+			DaimondMarksHere.chatSettle(chat.id, chat.holds);
 			diag('seed chat', 'chat=' + chat.id + ' from the errand (never synced here)');
 		}
 		if (!chat._loaded) {
@@ -29749,7 +29770,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 				// load ever going to fill it in on THIS device, so the old read took
 				// a thread with turns for one with none at every boot and switch.
 				var hasTurns = threadStarted(next);
-				var curPrefix = (next && !next.diamondId) ? attachPrefixText(chatAttachList(next.id)) : '';
+				var curPrefix = (next && !next.diamondId) ? attachPrefixText(chatAttachList(next.id), next.id) : '';
 				var cleaned = scrubAttachPrefixDup(chatInput.value, curPrefix, hasTurns);
 				if (cleaned !== chatInput.value) chatInput.value = cleaned;
 			}
@@ -35889,16 +35910,18 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 				// they put right by restoring the Diamond, in the panel that lists
 				// it. See `underTrashedDiamond`.
 				if (underTrashedDiamond(path)) return;
+				// A row claiming to be a mark that is not stored as THIS Diamond's own
+				// -- kept in another Diamond's sidecar, or with its ends reversed -- is
+				// never this Diamond's mark (R2), and is not drawn as one.
+				if (isUsersMark(l) && !(l.owner === id && l.from === 'diamond:' + id)) return;
 				// Keyed on the THING, so one folder attached before roots were
 				// recorded and again after does not draw two rows -- and of two rows
-				// for one thing, the one IN FORCE here is kept. A mark confirmed on
-				// this device is added before the row it replaces is removed
-				// (`confirmMarkHere`), so the two can stand together, and the older
-				// one, first in the sidecar, must not hide the grant.
+				// for one thing, the one IN FORCE here is kept, so an older row first
+				// in the sidecar cannot hide the grant this device has.
 				var key = kind + ':' + path;
 				var at = seen[key];
 				if (at !== undefined) {
-					if (!markInForce(out[at].link) && markInForce(l)) out[at] = attachmentRow(l, ref, kind, path);
+					if (!out[at].force && markForce(id, l)) out[at] = attachmentRow(l, ref, kind, path);
 					return;
 				}
 				seen[key] = out.length;
@@ -35906,6 +35929,9 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			});
 			/// One attachment as the panel, the fence and the notice read it.
 			function attachmentRow(l, ref, kind, path) {
+				// The one test, asked once per row: `{ rel, share }` where this is a mark
+				// in force on this device, null where it is not (R2).
+				var fz = markForce(id, l);
 				return {
 					link: l,
 					ref:  ref,
@@ -35923,6 +35949,8 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 					// `by` -- one written before the field existed -- is shown and asks
 					// to be confirmed before it is in force (`markWaiting`).
 					by:   l.by || '',
+					// The grant here, `{ rel, share }`, or null: see `markForce`.
+					force: fz,
 					// Whether this attachment can be opened from the workspace that
 					// is open now. An unreachable one is still SHOWN -- it is the
 					// user's own decision and they may simply have the other
@@ -35931,7 +35959,10 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 					where: refWhere(ref),
 					// Attached to be consulted rather than worked on. The tool door
 					// spells this as an allow plus a write fence; here it is a badge.
-					ro:   l.rel === 'consulted',
+					// In force, it is what the row AND this device's record say
+					// together; waiting, what the row asks for, so the press shows
+					// what it would grant.
+					ro:   fz ? fz.rel === 'consulted' : l.rel === 'consulted',
 					// Flagged to be REPLICATED to the devices of this account that
 					// cannot open it themselves. A mark is the daimon's grant to READ
 					// this thing and never a grant to copy it about, so the second
@@ -35946,7 +35977,13 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 					// in force, so a device that cannot open the folder still shows it
 					// is expected to arrive; COUNTED only where the mark is in force on
 					// this device (`shareRoots`).
-					share: l.share === true && isUsersMark(l),
+					//
+					// Since R2 these are two facts. `rowShare` is what the row says, and
+					// is drawn; `share` is whether the share counts HERE, which needs this
+					// device's own ⇄ as well (decision O2) and is what `shareRoots` and
+					// the button read.
+					rowShare: l.share === true && isUsersMark(l),
+					share: !!(fz && fz.share),
 					// A mark NOT in force on this device that one press here brings into
 					// force: made on another device, or before marks said who made them.
 					// Shown, named on the notice above the composer, and never handed to
@@ -35968,8 +36005,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			// the fence as well as off the screen.
 			out = out.filter(function (a, i2) {
 				for (var j = 0; j < i2; j++) {
-					if (underPath(a.path, out[j].path)
-						&& (markInForce(out[j].link) || !markInForce(a.link))) return false;
+					if (underPath(a.path, out[j].path) && (out[j].force || !a.force)) return false;
 				}
 				return true;
 			});
@@ -36089,8 +36125,10 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 				return;
 			}
 			try {
-				if (link) await diamondApp().remove_link(link.owner, link.id);
-				else await diamondApp().add_link(id, 'diamond:' + id, ref, 'holds', '', 'user');
+				// A removal takes this device's entry with the row; an add records the
+				// press here, from the row read back as the store holds it (R2).
+				if (link) await removeLinkHere(link);
+				else await markHere(id, await diamondApp().add_link(id, 'diamond:' + id, ref, 'holds', '', 'user'));
 			} catch (e) { /* already gone, or already there: the repaint tells the truth */ }
 			// One signal, and everything that draws links redraws: this tree through
 			// refreshAttached, the strip above the steer box, and the graph.
@@ -36113,14 +36151,44 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		///
 		/// THE USER'S OWN, AND ONLY ON THEIR MARK. The flag is the link's own field and
 		/// this is the one door that writes it (`set_link_share`); no link tool can.
+		///
+		/// TWO WRITES SINCE R2: the row's flag, which travels, and this device's own
+		/// entry, which does not. A share counts here only where both say so, so each
+		/// computer that holds the folder presses ⇄ itself (decision O2), and a row
+		/// that arrives shared grants nothing until it does. On writes the row's flag
+		/// only where it is off, and the entry always; off turns both off, so sharing
+		/// stops on every device as the unshared row arrives there.
 		async function toggleAttachShare(a) {
 			if (!a || !a.link) return;
-			// Only the user's own mark, in force here, is theirs to flag from here: the store
-			// refuses anything else, and this does not ask it to.
-			if (!a.share && !markInForce(a.link)) return;
-			try {
-				await diamondApp().set_link_share(a.link.owner, a.link.id, !a.share);
-			} catch (e) { /* already gone, or not a mark: the repaint tells the truth */ }
+			var l = a.link, root = rootHere();
+			// Only a mark in force here is this device's to share or stop sharing.
+			var fz = markForce(l.owner, l);
+			if (!fz) return;
+			if (fz.share) {
+				// Here first: a row write that fails still leaves this device unshared.
+				DaimondMarksHere.setShare(l.owner, l, root, false);
+				try { await diamondApp().set_link_share(l.owner, l.id, false); }
+				catch (e) { /* already gone: the repaint tells the truth */ }
+			} else {
+				var row = l;
+				try {
+					if (l.share !== true && (l.by || '') === 'user') {
+						await diamondApp().set_link_share(l.owner, l.id, true);
+					} else if (l.share !== true) {
+						// A row from before rows said who wrote them cannot carry the flag
+						// (`share_link_in`), so it is written once as the user's, shared, and
+						// this device's entry is carried to it. Other devices see a new row,
+						// which waits there for Use here and their own ⇄. A row with no id
+						// is left standing, since removing by a blank id would take every
+						// hand-written row in the sidecar with it.
+						row = await ownLinkById(l.owner, await diamondApp().add_link(l.owner, 'diamond:' + l.owner,
+							l.to, l.rel, l.note || '', 'user', true));
+						if (!row || !DaimondMarksHere.carry(l.owner, l, row, root, true)) { marksNotSaved(); row = null; }
+						else if (l.id) await diamondApp().remove_link(l.owner, l.id);
+					}
+				} catch (e) { row = null; /* not a mark, or gone: the repaint tells the truth */ }
+				if (row && row === l && !DaimondMarksHere.setShare(l.owner, l, root, true)) marksNotSaved();
+			}
 			// The memoised walk is keyed on the FLAGGED roots, which have just moved.
 			// The key would miss on its own; this says so at the moment it moved
 			// rather than leaving a plan to be recognised as stale a round later.
@@ -36153,7 +36221,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 				// NOT IN FORCE is away as well as out of reach: a row from before marks
 				// said who made them is reachable and grants nothing until confirmed, and a
 				// paperclip lit as "on" for it would claim a grant the fence does not hold.
-				return { on: !!rec, away: !!(rec && (rec.here === false || rec.waiting)),
+				return { on: !!rec, away: !!(rec && (rec.here === false || !rec.force)),
 					where: rec ? rec.where : '', confirm: !!rec && !!rec.waiting,
 					old: !!rec && !!rec.waiting && !rec.by };
 			}
@@ -36161,8 +36229,10 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			// The STORED reference, not the one this press would write: whether the mark is in
 			// force here is a fact about what was recorded, and the fresh one always is.
 			var held = rec2 ? rec2.ref : ref;
-			return { on: !!rec2, away: !!rec2 && !refReachable(held),
-				where: rec2 ? refWhere(held) : '', confirm: !!rec2 && refConfirmable(held) };
+			// A holding that claims a mark or a Read nobody pressed here waits (R2).
+			var wait = !!rec2 && DaimondMarksHere.chatWaiting(f.id, rec2, rootHere());
+			return { on: !!rec2, away: !!rec2 && (!refReachable(held) || wait),
+				where: rec2 ? refWhere(held) : '', confirm: wait };
 		}
 
 		/// Is this path attached to whatever is in focus, asked of the store
@@ -36701,11 +36771,13 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			// Standing information, the way `Read only` is: a device that cannot open
 			// this folder itself still shows that the folder is expected to arrive,
 			// and the device it was flagged on shows what it is sending.
-			if (a.share) {
+			if (a.rowShare) {
 				var shared = document.createElement('span');
 				shared.className = 'files-badge files-shared';
 				shared.textContent = t('dws.shared');
-				shared.title = t('dws.shared');
+				// Shared by the row and not here: another device's ⇄, which counts for
+				// nothing on this one until it is pressed here too (decision O2).
+				shared.title = a.share ? t('dws.shared') : t('dws.shared_there');
 				row.appendChild(shared);
 			}
 
@@ -36720,7 +36792,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			// why, as the paperclip beside it does.
 			var sh = null;
 			if (isUsersMark(a.link)) {
-				var inForce = markInForce(a.link);
+				var inForce = !!a.force;
 				sh = document.createElement('button');
 				sh.type = 'button';
 				sh.className = 'files-res files-share' + (a.share ? ' on' : '');
@@ -36734,6 +36806,8 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 				} else if (!inForce) {
 					sh.disabled = true;
 					sh.title = a.by ? t('dws.confirm_here', { where: a.where }) : t('dws.confirm_old');
+				} else if (a.rowShare && !a.share) {
+					sh.title = t('dws.shared_there') + '\n' + t('dws.share_here_help');
 				} else {
 					sh.title = t('dws.share') + '\n'
 						+ t('dws.share_help', { max: fmtSyncBytes(SYNC_FOLDER_SHARE_MAX) });
@@ -36757,7 +36831,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			off.setAttribute('aria-label', off.title);
 			off.addEventListener('click', async function (ev) {
 				ev.stopPropagation();
-				try { await diamondApp().remove_link(a.link.owner, a.link.id); }
+				try { await removeLinkHere(a.link); }
 				catch (e) { /* already gone */ }
 				signalLinksChanged();
 			});
@@ -36809,7 +36883,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 				// never in this group (only a non-`user` `by` lands here), so
 				// there is nothing to spare a check for.
 				for (var i = 0; i < rows.length; i++) {
-					try { await diamondApp().remove_link(rows[i].link.owner, rows[i].link.id); }
+					try { await removeLinkHere(rows[i].link); }
 					catch (e) { /* already gone */ }
 				}
 				signalLinksChanged();
@@ -38176,6 +38250,13 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 				if (f.kind === 'diamond') {
 					var link = await heldLink(f.id, path);
 					on = !!link;
+					// Not in force here: the press confirms it, and the button says so.
+					if (link && !markInForce(link)) {
+						away = true;
+						where = markWaiting(link)
+							? (link.by ? t('dws.confirm_here', { where: refWhere(link.other) }) : t('dws.confirm_old'))
+							: t('dws.not_here', { where: refWhere(link.other) });
+					}
 				} else {
 					var rec = chatAttachFind(f.id, rootedRef('file', path));
 					on = !!rec;
@@ -38184,7 +38265,8 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 				}
 				holdBtn.classList.toggle('on', on);
 				holdBtn.classList.toggle('away', away);
-				holdBtn.title = away ? t('dws.not_here', { where: where }) : t('attach.to_focus');
+				holdBtn.title = away ? (f.kind === 'diamond' ? where : t('dws.not_here', { where: where }))
+					: t('attach.to_focus');
 				holdBtn.setAttribute('aria-pressed', on ? 'true' : 'false');
 				holdBtn.setAttribute('aria-label', holdBtn.title);
 			}
@@ -38192,14 +38274,9 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 				var f = attachFocus();
 				if (!f) return;
 				if (f.kind === 'diamond') {
-					var id = f.id, self = 'diamond:' + id;
-					var ref = rootedRef('file', path);
-					var link = await heldLink(id, path);
-					try {
-						if (link) await diamondApp().remove_link(link.owner, link.id);
-						else await diamondApp().add_link(id, self, ref, 'holds', '', 'user');
-					} catch (e) { /* already gone, or already there: repaint tells the truth */ }
-					signalLinksChanged();
+					// The paperclip's own door, so a mark waiting here is confirmed by the
+					// press rather than taken off, and every add and removal records it here.
+					await toggleAttachHold(path, false);
 					renderArtefacts();
 				} else {
 					chatAttachToggle(f.id, rootedRef('file', path), false, path);
@@ -40838,22 +40915,18 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 				// harvested, or one a model asserted with `link_add` (`agent:<name>`), is a
 				// record of what an agent did and never a door it may write through next
 				// time -- or a daimon could widen its own reach with one call and a fold.
-				var marks = list.filter(function (a) {
-					var rel = a.link && a.link.rel;
-					return (rel === 'holds' || rel === 'consulted') && a.by === 'user';
-				});
-				// ONLY what is reachable from the workspace that is open. An
-				// attachment recorded against the other root is a path that would be
-				// allowed and absent: `diamond_bounds` would put it in the scope, the
-				// tool door would let the daimon reach for it, and the store would
-				// answer NotFoundError -- which reads as an empty folder rather than
-				// as a folder that is somewhere else. Leaving it out means the daimon
-				// never sees a door that opens onto nothing.
-				var here = marks.filter(function (a) { return a.here !== false; });
+				//
+				// AND ONLY WHERE IT WAS PRESSED ON THIS DEVICE (R2). A row is bytes in a
+				// sidecar that syncs whole, and `by:"user"` is a string anybody writing
+				// the sidecar can write. `markForce` asks the row and this device's own
+				// record together, and a mark in force here is on the workspace that is
+				// open, so a path allowed and absent -- which reads to the daimon as an
+				// empty folder -- never reaches the fence.
+				var here = list.filter(function (a) { return !!a.force; });
 				return {
 					own_dir:   'diamonds/' + did,
 					attached:  here.map(function (a) { return a.path; }),
-					read_only: here.filter(function (a) { return a.ro; })
+					read_only: here.filter(function (a) { return a.force.rel === 'consulted'; })
 						.map(function (a) { return a.path; }),
 					// The toolchains the USER granted this Diamond, from the store. Never
 					// inferred from anything a model asked to run — see `Toolkit` in
@@ -40892,6 +40965,9 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 	window.DaimondFiles = {
 		folder:  function () { try { return Files.folder(); } catch (e) { return null; } },
 		entries: function (dir) { return Files.entries(dir || ''); },
+		// What sync may write into and delete from on another device's word: the
+		// folders shared AND in force here (R2), for the verifiers of marks.
+		shareRoots: function () { return Files.shareRoots(); },
 		// The Typst seams, for `dev/verify_typedit_loop.mjs`: which file a chapter's
 		// Compile actually builds, what that compile writes, where a jump lands, and
 		// the command Publish would send to the machine.
@@ -42058,6 +42134,17 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		'Daimond Help':      '0da1000000e1',
 		'Daimond Optimiser': '0da1000000f2',
 	};
+
+	// THEIR SIGHT OF THEIR FOLDERS, AS BUILT-IN ENTRIES (R2). `grantConsulted` writes
+	// each grant once per account, and it reaches every other device by sync -- where
+	// no press was ever made, so a stored entry would leave Help and the Optimiser
+	// blind on every device but the first. These two are in force wherever their row
+	// is, under any root, and read-only and unshared whatever the row says, so a forged
+	// row on either can turn it into neither a write nor a share.
+	DaimondMarksHere.seeds([
+		{ owner: DEFAULT_IDS['Daimond Help'],      path: 'system/guide' },	// GUIDE_DIR
+		{ owner: DEFAULT_IDS['Daimond Optimiser'], path: 'system/usage' },	// USAGE_DIR
+	]);
 
 	// ── WHAT THE OPTIMISER MAY NOT DO ───────────────────────────────
 	//
@@ -43738,6 +43825,9 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		// and travels in every sync parcel for the life of the account.
 		try { DaimondPause.forget(DaimondPause.id('root', 'diamonds', id)); }
 		catch (e) { /* module not up */ }
+		// And what was pressed on it here. Trashing keeps them, since a restore brings
+		// the scope back; destroying is for good.
+		DaimondMarksHere.dropAll(id);
 		forgetTilePrefs(id);
 		forgetDiamondView(id);
 		// The daimon's conversation goes with its daimon. Left behind it would be a
@@ -47646,7 +47736,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 					box.style.height = Math.min(box.scrollHeight, 120) + 'px';
 				},
 				onDrop: async function () {
-					try { await diamondApp().remove_link(l.owner, l.id); } catch (e) { /* already gone */ }
+					try { await removeLinkHere(l); } catch (e) { /* already gone */ }
 					// Dropping an artefact removes a link, so it is a link change too.
 					signalLinksChanged();
 					renderArtefacts();
@@ -47681,7 +47771,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			drop.title = t('dws.drop_all_help');
 			drop.addEventListener('click', async function () {
 				for (var i = 0; i < daimonLinks.length; i++) {
-					try { await diamondApp().remove_link(daimonLinks[i].owner, daimonLinks[i].id); }
+					try { await removeLinkHere(daimonLinks[i]); }
 					catch (e) { /* already gone */ }
 				}
 				signalLinksChanged();
@@ -47705,7 +47795,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 						state:  '',			// never `holds`: nothing here is Note/Read
 						onOpen: function () { openArtefact(kind, path); },
 						onDrop: async function () {
-							try { await diamondApp().remove_link(l.owner, l.id); } catch (e) { /* already gone */ }
+							try { await removeLinkHere(l); } catch (e) { /* already gone */ }
 							signalLinksChanged();
 							renderArtefacts();
 						},
@@ -47771,38 +47861,11 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			+ ']' + path;
 	}
 
-	/// The devices a machine reference is in force on, spelled after the folder's
-	/// name: `usr@<id>` or `usr@<id>,<id>`. Hex ids only, so a folder whose own
-	/// name has an `@` in it keeps it.
-	var REF_DEVICES_RE = /@((?:[0-9a-f]{16}|[0-9a-f]{32})(?:,(?:[0-9a-f]{16}|[0-9a-f]{32}))*)$/;
-
 	/// Split a reference into its kind, its workspace, and its path -- and, for a
-	/// machine reference, the folder's name and the devices it is in force on.
-	///
-	/// A reference written before roots were recorded carries no workspace, and
-	/// comes back with `root: null`. One written before devices were recorded
-	/// comes back with no devices, and is in force on none until the user
-	/// confirms it on the device in front of them.
+	/// machine reference, the folder's name and the devices it was made on. The
+	/// parse lives in markshere.js, which needs it for the same grant.
 	function parseRef(ref) {
-		var s = String(ref || '');
-		var i = s.indexOf(':');
-		if (i <= 0) return { kind: '', root: null, name: '', devices: [], path: '' };
-		var kind = s.slice(0, i), rest = s.slice(i + 1);
-		var m = /^\[(browser|machine)(?::([^\]]*))?\]/.exec(rest);
-		if (!m) return { kind: kind, root: null, name: '', devices: [], path: rest.trim() };
-		var name = m[2] || '', devices = [];
-		var d = REF_DEVICES_RE.exec(name);
-		if (d) {
-			devices = d[1].split(',');
-			name = name.slice(0, d.index);
-		}
-		return {
-			kind:    kind,
-			root:    m[1],
-			name:    name,
-			devices: devices,
-			path:    rest.slice(m[0].length).trim(),
-		};
+		return DaimondMarksHere.parseRef(ref);
 	}
 
 	/// Two references name the same thing when their kind and path agree.
@@ -47816,109 +47879,130 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		return x.kind === y.kind && x.path === y.path;
 	}
 
-	/// Whether an attachment can be reached from the workspace open right now --
-	/// and so, for a mark, whether it is in force here.
-	///
-	/// A MACHINE REFERENCE IS IN FORCE ONLY ON A DEVICE IT NAMES. It was matched on
-	/// the folder's name alone, which is how a mark made on argonaut's `usr` came
-	/// to govern gilgamesh's `usr` on 2026-09-22. A reference with no device list,
-	/// or one this device is not in, is shown and inactive until the user confirms
-	/// it here (`confirmMarkHere`). A file or folder reference written before roots
-	/// were recorded says nothing about where it was made either, so with a folder
-	/// on this machine open it is inactive in the same way; in the browser sandbox,
-	/// which is this browser's own, it still resolves as it always did.
+	// ── A mark counts only on a device where it was pressed (R2) ─────────
+	//
+	// Until the re-check of 2026-09-23 a row that said `by:"user"` and carried this
+	// device's id in its reference was in force here -- and a row is bytes in a
+	// sidecar that syncs whole, so anything that could write those bytes could
+	// write a grant. The device list in a machine reference stays, as a record of
+	// where the mark was made, and grants nothing. The grant is the intersection
+	// of the row and this device's own record of what was pressed on it
+	// (markshere.js), and `markForce` below is the only test of it.
+
+	/// The workspace that is open, as the record names it.
+	function rootHere() {
+		return DaimondMarksHere.rootKey(currentRoot());
+	}
+
+	/// Can this reference be opened from the workspace that is open? Reachability
+	/// only -- whether a mark is IN FORCE here is `markForce`'s question. The same
+	/// root, and for a machine folder the same name where the reference carries
+	/// one; a reference written before roots were recorded fits either.
 	function refReachable(ref) {
 		var p = parseRef(ref);
 		var r = currentRoot();
-		if (!p.root) return r.kind !== 'machine' || (p.kind !== 'file' && p.kind !== 'dir');
+		if (!p.root) return true;
 		if (p.root !== r.kind) return false;
-		if (p.root !== 'machine') return true;
 		// A different folder on the same machine is a different place. Comparing the
 		// name is weak -- two folders can share one -- but it catches the ordinary
-		// case, and being wrong here costs a warning rather than access.
-		if (p.name && p.name !== r.name) return false;
-		return p.devices.indexOf(deviceId()) >= 0;
+		// case, and the grant is bound to the name by the record in any case.
+		return p.root !== 'machine' || !p.name || p.name === r.name;
 	}
 
-	/// Is this unreachable reference one the user can bring into force HERE by
-	/// confirming it -- a mark on a folder of the same name, made on another device
-	/// or before devices were recorded?
-	function refConfirmable(ref) {
-		var p = parseRef(ref);
-		var r = currentRoot();
-		if (r.kind !== 'machine' || refReachable(ref)) return false;
-		if (!p.root) return p.kind === 'file' || p.kind === 'dir';
-		return p.root === 'machine' && (!p.name || p.name === r.name);
-	}
-
-	/// The same reference, in force on this device as well as the ones it named --
-	/// or, in the browser's own workspace, written with the root it lives in.
-	function refConfirmedHere(ref) {
-		var p = parseRef(ref);
-		var r = currentRoot();
-		if (r.kind !== 'machine') return p.kind + ':[browser]' + p.path;
-		var devs = (p.root === 'machine') ? p.devices.slice() : [];
-		if (devs.indexOf(deviceId()) < 0) devs.push(deviceId());
-		return p.kind + ':[machine:' + r.name + '@' + devs.join(',') + ']' + p.path;
-	}
-
-	/// Is this stored link one of the user's own marks -- their `holds` or `consulted`
-	/// link -- wherever it is in force? The only kind a share flag may stand on.
+	/// Is this stored link a mark at all -- the user's `holds` or `consulted` on a
+	/// file or folder, or one from before rows said who wrote them? The only kind a
+	/// share flag may stand on.
 	function isUsersMark(link) {
-		if (!link || (link.by || '') !== 'user') return false;
-		return link.rel === 'holds' || link.rel === 'consulted';
+		return DaimondMarksHere.isMark(link);
 	}
 
-	/// Is this stored link a mark in force on this device -- the user's own, and
-	/// made or confirmed here?
+	/// THE ONE TEST OF A DIAMOND'S GRANT ON THIS DEVICE: `{ rel, share }` where
+	/// `link` is `owner`'s mark in force here, null where it is not. Every reader
+	/// of a grant -- the fence, the share roots, the panel, the notice, the prefix
+	/// -- asks this and nothing else. A trashed Diamond grants nothing.
+	function markForce(owner, link) {
+		if (!owner || !link || trashed(owner)) return null;
+		return DaimondMarksHere.force(owner, link, rootHere());
+	}
+
+	/// Is this stored link a mark in force on this device, for the Diamond whose
+	/// sidecar holds it?
 	function markInForce(link) {
-		return !!link && (link.by || '') === 'user' && refReachable(link.other);
+		return !!link && !!markForce(link.owner, link);
 	}
 
-	/// Is this stored link a mark that is NOT in force on this device, and that the
-	/// user can bring into force here with one press?
-	///
-	/// Two kinds, and at the deploy of 2026-09-23 every existing mark is one of
-	/// them (audit finding 6): a mark made on another device, or before devices were
-	/// recorded, on a folder of the name open here (`refConfirmable`); and a row
-	/// written before rows said who wrote them, which is in force nowhere since a row
-	/// with no `by` stopped counting as the user's. A row a model or a fold wrote is
-	/// never offered: confirming it would be the user rubber-stamping an agent's
-	/// grant, and it was never a mark to begin with.
+	/// Is this stored link a mark NOT in force on this device, that the user can
+	/// bring into force here with one press? Its Diamond's own, on a root that fits
+	/// the one open, and with no entry here: made on another device, before R2, or
+	/// arriving in a copy nobody pressed on this device. A row a model or a fold
+	/// wrote is never offered: confirming it would be the user rubber-stamping an
+	/// agent's grant, and it was never a mark to begin with.
 	function markWaiting(link) {
 		if (!link) return false;
 		var rel = link.rel || '';
 		if (rel !== 'holds' && rel !== 'consulted') return false;
-		var by = link.by || '';
-		if (by !== 'user' && by !== '') return false;
-		var kind = parseRef(link.other).kind;
-		if (kind !== 'file' && kind !== 'dir') return false;
-		if (refConfirmable(link.other)) return true;
-		return by === '' && refReachable(link.other);
+		if (trashed(link.owner)) return false;
+		return DaimondMarksHere.waiting(link.owner, link, rootHere());
+	}
+
+	/// A press here whose record did not land: the mark stays waiting, and says so.
+	function marksNotSaved() {
+		toast(t('marks.not_saved'), true);
 	}
 
 	/// Bring a mark that is not in force here into force on this device: the user's
-	/// own act, from the notice above the composer or the paperclip. The link is
-	/// written again with this device added -- and as the user's -- and everything
-	/// else it said, read-only or not and the share flag, kept.
+	/// own act, from the notice above the composer or the paperclip.
 	///
-	/// ADDED BEFORE THE OLD ROW GOES (audit finding 7). It was removed first, so an
-	/// add that failed left the user's mark simply gone. Now a failed add changes
-	/// nothing, and a failed removal leaves both rows, of which `attachmentsOf` keeps
-	/// the one in force.
+	/// THIS DEVICE'S RECORD ONLY. It used to write the row again with this device
+	/// added and remove the old one, which moved the Diamond's stamp, cost a sync
+	/// round, and left two rows where two devices confirmed one between syncs --
+	/// after which a removal on one of them took one row and the other came back as
+	/// waiting. The row is left exactly as it is, and the entry is written with the
+	/// share off whatever the row says: sharing is its own press (`toggleAttachShare`),
+	/// the grant that lets other devices change and delete files on this disk, and a
+	/// confirmation, one at a time or all at once, must not give it as a side effect.
 	async function confirmMarkHere(diamondId, link) {
-		if (!diamondId || !link || !markWaiting(link)) return false;
-		try {
-			// The share flag travels with the mark, in the same write: a flag the user set
-			// on another device is theirs, and the store takes it only onto their own mark.
-			await diamondApp().add_link(diamondId, 'diamond:' + diamondId,
-				refConfirmedHere(link.other), link.rel || 'holds', link.note || '', 'user',
-				link.share === true && (link.by || '') === 'user');
-		} catch (e) { return false; }
-		try { await diamondApp().remove_link(link.owner, link.id); }
-		catch (e) { /* both rows stand, and the one in force is the one kept */ }
+		if (!diamondId || !link || link.owner !== diamondId || !markWaiting(link)) return false;
+		if (!DaimondMarksHere.grant(diamondId, link, rootHere(), { share: false })) {
+			marksNotSaved();
+			return false;
+		}
 		signalLinksChanged();
 		return true;
+	}
+
+	/// One of this Diamond's own rows, as the store holds it, by id.
+	async function ownLinkById(diamondId, id) {
+		if (!diamondId || !id) return null;
+		try {
+			var links = JSON.parse(await diamondApp().links_touching('diamond:' + diamondId) || '[]');
+			for (var i = 0; i < links.length; i++) {
+				var l = links[i];
+				if (l.id === id && l.owner === diamondId && l.from === 'diamond:' + diamondId) return l;
+			}
+		} catch (e) { /* unreadable: nothing to record */ }
+		return null;
+	}
+
+	/// Record a mark just written here, from the row as the store holds it, read
+	/// back by the id the add returned -- never from the reference the page passed
+	/// in, which the store may have spelt otherwise.
+	async function markHere(diamondId, id) {
+		var row = await ownLinkById(diamondId, id);
+		if (!row || !DaimondMarksHere.grant(diamondId, row, rootHere(), { share: false })) {
+			marksNotSaved();
+			return false;
+		}
+		return true;
+	}
+
+	/// Take a link off, made here: the row, and this device's entry for it. The one
+	/// door every removal on this device goes through. The entry goes first, so a
+	/// removal that fails leaves a mark waiting rather than in force.
+	async function removeLinkHere(link) {
+		if (!link) return false;
+		DaimondMarksHere.drop(link.owner, link.id || '', link.to || link.other || '');
+		return await diamondApp().remove_link(link.owner, link.id);
 	}
 
 	/// How to say where an unreachable attachment actually lives -- and, for a
@@ -47944,6 +48028,9 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		try {
 			var links = JSON.parse(await diamondApp().links_touching('diamond:' + diamondId) || '[]');
 			for (var i = 0; i < links.length; i++) {
+				// This Diamond's own rows only: one kept in another Diamond's sidecar,
+				// or with its ends reversed, is not this Diamond's to take off (R2).
+				if (links[i].owner !== diamondId || links[i].from !== 'diamond:' + diamondId) continue;
 				// Matched on what it names, not on the string: an attachment made
 				// before roots were recorded must still be found by a button that
 				// now writes one.
@@ -48071,48 +48158,79 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		return null;
 	}
 
-	/// The places marked into a chat's workspace that are NOT in force on this device
-	/// -- marked on another device, or before devices were recorded -- and that one
-	/// press here brings into force (audit finding 6).
+	/// A chat's holdings that claim a workspace mark or a Read NOT in force on this
+	/// device, and that one press here brings into force: pressed on another device,
+	/// before R2, or arriving in a record nobody pressed here. The chat record rides
+	/// the sync parcel, so what it claims is only a claim (R2).
 	function chatWaiting(chatId) {
 		if (!chatId || trashed(chatId)) return [];
+		var root = rootHere();
 		return chatAttachList(chatId).filter(function (a) {
-			return !!a.ws && refConfirmable(a.ref) && !underTrashedDiamond(a.path);
+			return DaimondMarksHere.chatWaiting(chatId, a, root) && !underTrashedDiamond(a.path);
 		});
 	}
 
-	/// Bring one of a chat's marks into force on this device: the user's own press.
+	/// Record a press here on one of a chat's holdings (`opts.ws`, `opts.read`).
+	function chatGrantHere(chatId, a, opts) {
+		if (DaimondMarksHere.chatGrant(chatId, a, rootHere(), opts)) return true;
+		marksNotSaved();
+		return false;
+	}
+
+	/// Bring one of a chat's holdings into force on this device: the user's own press.
+	/// This device's record only -- the reference is not rewritten and `metaAt` does
+	/// not move, so a confirmation is not a change that travels.
 	function chatConfirmHere(chatId, ref) {
 		var rec = chatAttachFind(chatId, ref);
-		if (!rec || !refConfirmable(rec.ref)) return false;
-		rec.ref = refConfirmedHere(rec.ref);
-		touchChatMeta(chats.find(function (x) { return x.id === chatId; }));   // holds is metadata (S-SYNC #5)
-		persistChats(); attachChanged();
+		if (!rec || !DaimondMarksHere.chatWaiting(chatId, rec, rootHere())) return false;
+		if (!chatGrantHere(chatId, rec, { ws: !!rec.ws, read: rec.state === 'read' })) return false;
+		attachChanged();
 		dropChatApp(chatId);
 		return true;
 	}
 
-	/// Add or remove one, from whichever control was pressed — a row's, or the
-	/// Doc header's. Persisted, because a chat's scope is now as durable as the
-	/// chat: attaching is a decision the user makes once.
-	function chatAttachToggle(chatId, ref, dir, path) {
+	/// Take one holding off a chat: the record's claim and this device's entry.
+	/// Never a confirmation, whatever it waits for here: the × means remove, and a
+	/// person taking off a folder they do not recognise must not grant it instead
+	/// (QA 2026-09-24, F7). The Diamond's × has the same door, `removeLinkHere`.
+	function chatAttachRemove(chatId, ref) {
 		var list = chatAttachList(chatId);
-		// The chat's `holds` are a METADATA scalar (S-SYNC #5): stamp `metaAt` so an
-		// attachment made here is not reverted when a later turn lands from another
+		// The chat's `holds` are a METADATA scalar (S-SYNC #5): stamp `metaAt` so a
+		// change made here is not reverted when a later turn lands from another
 		// device. Found on the live rail rather than through `chatAttachList` so the
 		// same object the list belongs to is stamped.
 		var _hc = chats.find(function (x) { return x.id === chatId; });
 		for (var i = 0; i < list.length; i++) {
-			if (sameThing(list[i].ref, ref)) {
-				// Another device's mark, confirmed on this one rather than dropped: the
-				// same press as a Diamond's (`toggleAttachHold`).
-				if (refConfirmable(list[i].ref)) list[i].ref = refConfirmedHere(list[i].ref);
-				else list.splice(i, 1);
-				touchChatMeta(_hc);
-				persistChats(); attachChanged();
+			if (!sameThing(list[i].ref, ref)) continue;
+			DaimondMarksHere.chatDrop(chatId, list[i]);
+			list.splice(i, 1);
+			touchChatMeta(_hc);
+			persistChats(); attachChanged();
+			dropChatApp(chatId);
+			return true;
+		}
+		return false;
+	}
+
+	/// Add or remove one, from the paperclip -- a row's, or the Doc header's.
+	/// Persisted, because a chat's scope is now as durable as the chat: attaching
+	/// is a decision the user makes once.
+	function chatAttachToggle(chatId, ref, dir, path) {
+		var list = chatAttachList(chatId);
+		var _hc = chats.find(function (x) { return x.id === chatId; });
+		var had = chatAttachFind(chatId, ref);
+		if (had) {
+			// A holding not in force here is confirmed on this device rather than
+			// dropped: the same press as a Diamond's paperclip (`toggleAttachHold`),
+			// and this device's record only. The paperclip alone: a × never gets here.
+			if (DaimondMarksHere.chatWaiting(chatId, had, rootHere())) {
+				chatGrantHere(chatId, had, { ws: !!had.ws, read: had.state === 'read' });
+				attachChanged();
 				dropChatApp(chatId);
 				return;
 			}
+			chatAttachRemove(chatId, ref);
+			return;
 		}
 		// Note is the default — ATTACH_CONTRACT.md §6: the cheaper of the two by
 		// a wide margin, and a default that spends the user's money unasked is
@@ -48141,12 +48259,18 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		dropChatApp(chatId);
 	}
 
+	/// Note or Read. A Read quotes the file into the message, which is a grant, so
+	/// the press is recorded here as well as on the record that travels.
 	function chatAttachSetState(chatId, ref, state) {
 		var rec = chatAttachFind(chatId, ref);
-		if (!rec || rec.state === state) return;
-		rec.state = state;
-		touchChatMeta(chats.find(function (x) { return x.id === chatId; }));   // holds is metadata (S-SYNC #5)
-		persistChats(); attachChanged();
+		if (!rec) return;
+		if (rec.state !== state) {
+			rec.state = state;
+			touchChatMeta(chats.find(function (x) { return x.id === chatId; }));   // holds is metadata (S-SYNC #5)
+			persistChats();
+		}
+		chatGrantHere(chatId, rec, { read: state === 'read' });
+		attachChanged();
 	}
 
 	/// Mark this folder into the chat's workspace, or take it back out.
@@ -48161,10 +48285,15 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 	/// is the defect class this whole surface was rebuilt to end.
 	function chatAttachSetWorkspace(chatId, ref, on) {
 		var rec = chatAttachFind(chatId, ref);
-		if (!rec || !!rec.ws === !!on) return;
-		rec.ws = !!on;
-		touchChatMeta(chats.find(function (x) { return x.id === chatId; }));   // holds is metadata (S-SYNC #5)
-		persistChats(); attachChanged();
+		if (!rec) return;
+		if (!!rec.ws !== !!on) {
+			rec.ws = !!on;
+			touchChatMeta(chats.find(function (x) { return x.id === chatId; }));   // holds is metadata (S-SYNC #5)
+			persistChats();
+		}
+		// The press is the grant on THIS device; the record carries only the claim.
+		chatGrantHere(chatId, rec, { ws: !!on });
+		attachChanged();
 		dropChatApp(chatId);
 	}
 
@@ -48204,11 +48333,15 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		// the half-alive state the trash exists to refuse. It does not come free from
 		// the record being intact — the record is intact precisely so a restore works.
 		if (trashed(chatId)) return [];
+		var root = rootHere();
 		return chatAttachList(chatId)
-			// The MARK, and nothing else, is what widens the fence. First, so that
-			// everything below it is a question about a folder that is already in.
-			.filter(function (a) { return !!a.ws; })
-			.filter(function (a) { return refReachable(a.ref); })
+			// The MARK, and nothing else, is what widens the fence -- and only a mark
+			// pressed on this device (R2): the record is in the sync parcel, so a mark
+			// it claims is a claim until it is pressed here.
+			.filter(function (a) {
+				var f = DaimondMarksHere.chatForce(chatId, a, root);
+				return !!(f && f.ws);
+			})
 			// A door onto a Diamond the user deleted, closed for the same reason
 			// `attachmentsOf` closes it: the path resolves, and reads as an empty
 			// folder rather than as a Diamond that is gone.
@@ -48241,6 +48374,8 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		if (!chatId) return;
 		var c = chats.find(function (x) { return x.id === chatId; });
 		if (c) c.holds = [];
+		// And what was pressed on it here: a chat id is reused from a counter.
+		DaimondMarksHere.chatDropAll(chatId);
 		// Under `chats/<id>/`, which is store state and therefore always in the
 		// browser's own sandbox whatever workspace is open — so this can never
 		// reach into the user's real folder, whichever one they have open.
@@ -48269,11 +48404,21 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 	/// ATTACH_CONTRACT.md §6. An unreachable attachment is left out entirely: a
 	/// path handed to a model that cannot open it produces a turn spent
 	/// apologising (§7).
-	function attachPrefixText(list) {
-		var notes = [], reads = [];
+	///
+	/// With `chatId`, the list is that chat's holdings, and a Read is named only
+	/// where it is in force here (R2): the record travels, and a Read it claims is a
+	/// claim until it is pressed on this device. Without, it is a Diamond's list of
+	/// marks already in force here.
+	function attachPrefixText(list, chatId) {
+		var notes = [], reads = [], root = rootHere();
 		(list || []).forEach(function (a) {
 			if (!refReachable(a.ref)) return;
-			(a.state === 'read' ? reads : notes).push(a.path);
+			if (a.state !== 'read') { notes.push(a.path); return; }
+			if (chatId) {
+				var f = DaimondMarksHere.chatForce(chatId, a, root);
+				if (!f || !f.read) return;
+			}
+			reads.push(a.path);
 		});
 		var out = [];
 		if (notes.length) out.push(t('attach.prefix_note', { paths: notes.join(', ') }));
@@ -48312,11 +48457,19 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 	/// A file that will not read is passed over in silence; it is still named in the
 	/// prefix line above.
 	///
+	/// **Only a Read pressed on this device** (R2). The chat record rides the sync
+	/// parcel, so a record carrying a Read of a file the user never chose would
+	/// otherwise quote it into their message through this unfenced door.
+	///
 	/// # Arguments
 	/// * `list` - A chat's holdings.
-	async function attachReadBodies(list) {
+	/// * `chatId` - The chat they are held by; without it nothing is quoted.
+	async function attachReadBodies(list, chatId) {
+		var root = rootHere();
 		var want = (list || []).filter(function (a) {
-			return a.state === 'read' && a.path && refReachable(a.ref);
+			if (!chatId || a.state !== 'read' || !a.path) return false;
+			var f = DaimondMarksHere.chatForce(chatId, a, root);
+			return !!(f && f.read);
 		});
 		var out = '';
 		for (var i = 0; i < want.length; i++) {
@@ -48458,18 +48611,20 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			pruneAttachState(links.map(function (l) { return l.id; }));
 			list = [];
 			links.forEach(function (l) {
-				if (l.rel !== 'holds') return;
+				// A mark in force here, `holds` once the record has had its say (R2).
+				var fz = markForce(f.id, l);
+				if (!fz || fz.rel !== 'holds') return;
 				var p = parseRef(l.other);
 				if ((p.kind !== 'file' && p.kind !== 'dir') || !p.path) return;
 				list.push({ ref: l.other, path: p.path, state: readAttachState(l.id) });
 			});
 		}
-		var text = attachPrefixText(list);
+		var text = attachPrefixText(list, f.kind === 'chat' ? f.id : '');
 		// A CHAT quotes what it marked Read; a Diamond does not. A daimon may open
 		// everything its Diamond holds, so the instruction there is one it can carry
 		// out, and quoting the same file into a seeded composer would pay for it
 		// twice. Two surfaces, one control, and the difference is the fence.
-		if (text && f.kind === 'chat') text += await attachReadBodies(list);
+		if (text && f.kind === 'chat') text += await attachReadBodies(list, f.id);
 		var val  = input.value;
 		input.value = mergeAttachPrefix(text, val, last);
 		attachPrefixWritten[f.id] = text;
@@ -48855,6 +49010,9 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		/// crystal footer and the Trash panel draw, so the three cannot drift.
 		var toTile = function (a) {
 			var away = !refReachable(a.ref);
+			// Claiming a mark or a Read nobody pressed here (R2): it opens, and says
+			// why it grants nothing yet. The notice above the composer offers the press.
+			var wait = !away && DaimondMarksHere.chatWaiting(f.id, a, rootHere());
 			return {
 				kind:   a.dir ? 'dir' : 'file',
 				path:   a.path,
@@ -48864,7 +49022,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 				// daimon", which named the wrong thing entirely on a surface where
 				// there is no Diamond and no daimon.
 				shut:   away,
-				reason: away ? t('attach.not_here', { where: refWhere(a.ref) }) : '',
+				reason: away ? t('attach.not_here', { where: refWhere(a.ref) }) : (wait ? t('marks.waiting_why') : ''),
 				state:  a.state,
 				// Folders take the chosen view like files do: the icon toggle above
 				// governs the whole list, so a folder gets an icon cell in icon view
@@ -48875,7 +49033,10 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 				// `scopeChatTo`; only the pointless toggle is gone from the row.
 				actions: [],
 				onState: function () { chatAttachSetState(f.id, a.ref, a.state === 'read' ? 'note' : 'read'); },
-				onDrop:  function () { chatAttachToggle(f.id, a.ref, a.dir, a.path); },
+				// The × TAKES IT OFF, and only that. Through the paperclip's toggle it
+				// confirmed a holding waiting here, so a person removing a mark they did
+				// not recognise granted it write reach and a Read instead (QA 2026-09-24, F7).
+				onDrop:  function () { chatAttachRemove(f.id, a.ref); },
 			};
 		};
 
@@ -48996,7 +49157,9 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		box.appendChild(head);
 		var why = document.createElement('p');
 		why.className = 'mark-notice-why';
-		why.textContent = t('marks.waiting_why');
+		// With no record on this device at all -- the first start after R2, or
+		// cleared site data -- that is the reason, and it is said instead.
+		why.textContent = DaimondMarksHere.absent() ? t('marks.no_record') : t('marks.waiting_why');
 		box.appendChild(why);
 
 		// One press at a time: a second press while the first is still writing would
@@ -49013,7 +49176,8 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			} finally {
 				// Redrawn from the store, never from what was pressed. A Diamond's
 				// confirmation also signals the links changed, which repaints the panel
-				// and the fence row; a chat's repaints through `attachChanged`.
+				// and the fence row; a chat's repaints through `attachChanged`. A press
+				// whose record did not land has said so (`marksNotSaved`) and still waits.
 				busy = false;
 				renderMarkNotice();
 			}
@@ -49194,6 +49358,17 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		renderMarkNotice();
 	});
 
+	// ANOTHER TAB OF THIS ACCOUNT PRESSED A MARK, or took one off (markshere.js hears
+	// the `storage` event). Every grant reads the record afresh, so what is left is
+	// what a press here does: redraw everything that draws marks, and let each chat's
+	// engine go, since an app holds the scope it was built with. A chat mid-turn keeps
+	// its app and is re-scoped at its next turn (`dropChatApp`).
+	window.addEventListener('daimond:markshere', function () {
+		signalLinksChanged();
+		chats.forEach(function (c) { if (c && c.id) dropChatApp(c.id); });
+		renderChatAttachments();
+	});
+
 	// A small surface for tests, and for anything that later wants to inspect or
 	// drive an attachment from outside this module — same reason
 	// `window.DaimondArtefacts` exists. `chatToggle` is also the only way to put
@@ -49204,6 +49379,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		focus:        attachFocus,
 		chatList:     chatAttachList,
 		chatToggle:   chatAttachToggle,
+		chatRemove:   chatAttachRemove,
 		chatState:    chatAttachSetState,
 		// The workspace mark: the one thing on a holding that widens the fence.
 		// Published beside `chatState` so a verifier can prove the two are
@@ -49224,7 +49400,18 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		confirmHere:  async function (diamondId, ref) {
 			return confirmMarkHere(diamondId, await linkTo(diamondId, ref));
 		},
+		// THE ONE TEST, for a verifier: the grant this device holds on a Diamond's mark
+		// on this reference, `{ rel, share }`, or null (R2).
+		inForce:      async function (diamondId, ref) {
+			return markForce(diamondId, await linkTo(diamondId, ref));
+		},
+		chatInForce:  function (chatId, ref) {
+			var rec = chatAttachFind(chatId, ref);
+			return rec ? DaimondMarksHere.chatForce(chatId, rec, rootHere()) : null;
+		},
+		chatConfirm:  chatConfirmHere,
 		prefixText:   attachPrefixText,
+		readBodies:   attachReadBodies,
 		syncPrefix:   syncComposerAttachPrefix,
 		render:       renderChatAttachments,
 		// The local, unsynced Note/Read map -- see its own comment above.
@@ -49566,7 +49753,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			var ok = await confirmDialog(t('link.drop_confirm', { rel: rel, name: name }),
 				t('link.drop'), { title: t('link.drop') });
 			if (!ok) return;
-			try { await diamondApp().remove_link(l.owner, l.id); }
+			try { await removeLinkHere(l); }
 			catch (e) { noticeDialog(t('link.drop_failed'), friendlyError(e)); return; }
 			signalLinksChanged();
 			bumpDiamonds();
@@ -52601,6 +52788,9 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		// this device, which an account made here afterwards has not given, and
 		// the one-time notice about them.
 		'daimond-pause', 'daimond-pause-here', 'daimond-trig-here-notice',
+		// The marks pressed on this device (markshere.js). An account made here
+		// afterwards has pressed none of them, and must not inherit the grants.
+		'daimond-marks-here',
 		// The device roster and this device's own id. An account made here
 		// afterwards is a new account, and it must not inherit the erased
 		// one's identity as a device or the devices it used to sync with.
@@ -53549,6 +53739,12 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		setTimeout(function () { URL.revokeObjectURL(a.href); }, 2000);
 	}
 
+	// A Diamond's link sidecar among a backup's files, the Diamond's id captured. The
+	// store's own name only: a `.red/` or `facets/` copy from before the renames is
+	// migrated into place only where the Diamond has no store here, and then this
+	// device holds no entry for it to settle (`migrate` in src/wasm/diamond.rs).
+	var SIDECAR_PATH_RE = /^diamonds\/([^/]+)\/\.daimond\/links\.jsonl$/;
+
 	/// Restore a backup written by `doExport`. Chats and the ledger are merged
 	/// into local storage, diamonds are recreated with their crystals, and every
 	/// workspace file is written back into OPFS. Existing files of the same path
@@ -53655,7 +53851,17 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 					}
 				}
 				if (!fp) continue;
-				try { await writeOpfsBytes(fp, b64ToBytes(files[i].b64)); restored++; wrotePaths.push(fp); }
+				var bytes = b64ToBytes(files[i].b64);
+				// A Diamond's link sidecar is written over whole, so a mark the backup
+				// no longer carries, or carries narrower, is removed or narrowed here --
+				// and this device's record must follow, or a later replay of the row is
+				// in force with no press here (QA 2026-09-24, F1). Settled from the bytes
+				// arriving and before the write, as the sync settles before its import:
+				// a write that fails leaves the entry narrowed and the row standing,
+				// which errs closed. Nothing is unioned back, so there is no loser's text.
+				var sc = SIDECAR_PATH_RE.exec(fp);
+				if (sc) DaimondMarksHere.settle(sc[1], new TextDecoder().decode(bytes), '');
+				try { await writeOpfsBytes(fp, bytes); restored++; wrotePaths.push(fp); }
 				catch (e) { /* skip one bad file, keep going */ }
 			}
 			if (foreign) {
@@ -53678,7 +53884,13 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 					var r = data.chats[di];
 					if (!r || !r.id) continue;
 					var st = byId[r.id];
-					if (!st) { byId[r.id] = r; continue; }
+					if (!st) {
+						// Adopted whole: what was pressed on it here, before its record was
+						// lost, narrows to the copy restored (QA 2026-09-24, F1).
+						byId[r.id] = r;
+						DaimondMarksHere.chatSettle(r.id, r.holds);
+						continue;
+					}
 					// `st` is a SUMMARY since seq 213: union the backup against the real local
 					// transcript read from its authoritative row, not an empty summary. (As in
 					// `applyChats`, `ChatStore.write` also unions against the row on disk, so the
@@ -53701,6 +53913,9 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 						localSession:  localSession, remoteSession: r.session,
 						mtombs:        mtombs });
 					byId[r.id] = merged;
+					// As the sync does (`applyChats`): what the merged record no longer
+					// claims, this device no longer grants (R2).
+					DaimondMarksHere.chatSettle(r.id, merged.holds);
 				}
 				ChatStore.save(Object.keys(byId).map(function (id) { return byId[id]; }));
 			}

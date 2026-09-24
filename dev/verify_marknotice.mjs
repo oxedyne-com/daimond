@@ -31,7 +31,7 @@
 // and OPFS hands out that very type.
 //
 // Needs a world for the mock provider: `eval "$(bash dev/world.sh N --env)"`.
-import { open, signInAs, steerDiamond, newChat, mockLog, clearMockLog, shot, errors } from './harness.mjs';
+import { open, signInAs, steerDiamond, newChat, markHere, mockLog, clearMockLog, shot, errors } from './harness.mjs';
 
 const ok = [], bad = [];
 const check = (name, pass, detail) => {
@@ -113,10 +113,13 @@ check('0. the Diamond is open', !!did, did);
 const dev = await p.evaluate(() => (window.DaimondIdentity && DaimondIdentity.deviceId
 	&& DaimondIdentity.deviceId()) || '');
 const ref = (name, devs) => 'dir:[machine:' + FOLDER + (devs ? '@' + devs : '') + ']' + name;
-await p.evaluate(async ({ did, mine, theirs, older, agentold, nobody }) => {
+// `mine` is pressed here (R2): a row alone, however it names this device, is
+// only a claim, so it is `markHere`'d rather than added and left. The rest are
+// left exactly as `add_link` writes them, so the notice has marks not in force
+// here to list: made elsewhere, before devices were recorded, or by an agent.
+await p.evaluate(async ({ did, theirs, older, agentold, nobody }) => {
 	const app = DaimondCore.diamondApp();
 	const self = 'diamond:' + did;
-	await app.add_link(did, self, mine,     'holds', '', 'user');
 	await app.add_link(did, self, theirs,   'holds', '', 'user');
 	await app.add_link(did, self, older,    'holds', '', 'user');
 	await app.add_link(did, self, agentold, 'holds', '', 'agent:daimon');
@@ -129,8 +132,9 @@ await p.evaluate(async ({ did, mine, theirs, older, agentold, nobody }) => {
 	await M.write_file(side, had + JSON.stringify({ id: 'legacy1', ts: 1, from: self, to: nobody,
 		rel: 'holds', note: '' }) + '\n');
 	if (window.DaimondLinks && DaimondLinks.changed) DaimondLinks.changed();
-}, { did, mine: ref('mine', dev), theirs: ref('theirs', OTHER), older: ref('older', ''),
+}, { did, theirs: ref('theirs', OTHER), older: ref('older', ''),
 	agentold: ref('agentold', ''), nobody: ref('nobody', dev) });
+await markHere(s, did, ref('mine', dev));
 await sleep(1500);
 
 const notice = () => p.evaluate(() => {
@@ -215,18 +219,25 @@ await shot(s, 'marknotice-diamond-chat');
 
 // ── One press, then the rest ──────────────────────────────────────────────────
 step = 'presses';
+const l1 = (await linksOf()).filter((l) => /\]theirs$/.test(l.other));	// before the press, for the byte check below
 await press('#mark-notice .mark-notice-row[data-path="theirs"] [data-act="mark-use-here"]');
 await sleep(1800);
 const n2 = await notice();
 const b2 = await bounds();
 const l2 = (await linksOf()).filter((l) => /\]theirs$/.test(l.other));
+const forced2 = await p.evaluate(({ did, ref }) => DaimondAttach.inForce(did, ref),
+	{ did, ref: ref('theirs', OTHER) });
 check('4. one press brings that mark into force here',
 	JSON.stringify((n2.rows || []).map((r) => r.path).sort()) === JSON.stringify(['nobody', 'older'])
-		&& (b2.attached || []).includes('theirs') && !(b2.unconfirmed || []).includes('theirs'),
-	JSON.stringify({ rows: n2.rows, attached: b2.attached }));
-check('4. written with this device added, still the user\'s, and once',
-	l2.length === 1 && l2[0].other === ref('theirs', OTHER + ',' + dev) && l2[0].by === 'user',
-	JSON.stringify(l2.map((l) => [l.other, l.by])));
+		&& (b2.attached || []).includes('theirs') && !(b2.unconfirmed || []).includes('theirs')
+		&& !!forced2,
+	JSON.stringify({ rows: n2.rows, attached: b2.attached, forced: forced2 }));
+// R2: a confirmation is THIS DEVICE'S RECORD ONLY -- no add, no remove, no stamp.
+// The old row-rewriting confirm moved the mark to a new id with this device added;
+// this checks the opposite property, that the row is byte-for-byte what it was.
+check('4. the record changes; the row does not',
+	JSON.stringify(l2) === JSON.stringify(l1),
+	JSON.stringify({ before: l1, after: l2 }));
 await press('#mark-notice [data-act="mark-use-all"]');
 await sleep(2500);
 const n3 = await notice();
@@ -237,10 +248,16 @@ check('4. "Use all" brings the rest, and the notice goes',
 		=== JSON.stringify(['mine', 'nobody', 'older', 'theirs'])
 		&& (b3.unconfirmed || []).length === 0,
 	JSON.stringify({ shown: n3.shown, attached: b3.attached, unconfirmed: b3.unconfirmed }));
-check("4. the model's own link is still not a mark, and the old row is the user's now",
+// R2: a legacy row is confirmable and in force under this device's entry, and is
+// NEVER rewritten by a confirmation -- only ⇄ on it would carry it to a fresh,
+// user-owned row (dws.share_here_help's O2), which nothing here presses. So the
+// old row now reads in force while still anonymous, which is the opposite of what
+// this asserted before R2, when confirming rewrote it as the user's.
+const nobodyRows3 = l3.filter((l) => /\]nobody$/.test(l.other));
+check("4. the model's own link is still not a mark, and the legacy row is in force unrewritten",
 	!(b3.attached || []).includes('agentold')
-		&& l3.filter((l) => /\]nobody$/.test(l.other)).every((l) => l.by === 'user'),
-	JSON.stringify(l3.map((l) => [l.other, l.by])));
+		&& nobodyRows3.length === 1 && nobodyRows3[0].by === '' && (b3.attached || []).includes('nobody'),
+	JSON.stringify(nobodyRows3.map((l) => [l.other, l.by])));
 
 // ── The crystal face ──────────────────────────────────────────────────────────
 step = 'crystal';
@@ -262,10 +279,12 @@ await shot(s, 'marknotice-crystal');
 step = 'chat';
 const cid = await newChat(s);
 const cref = ref('chatmark', OTHER);
-await p.evaluate(({ cid, cref }) => {
-	DaimondAttach.chatToggle(cid, cref, true, 'chatmark');
-	DaimondAttach.chatWs(cid, cref, true);
-}, { cid, cref });
+// R2: `chatToggle`/`chatWs` now press THIS device the instant they are called,
+// so seeding "a mark from another device" through them would confirm it on the
+// spot. `markHere(..., { press: false })` writes the holding straight into the
+// chat's own record instead -- claimed, and not yet pressed here -- which is
+// what a synced holding actually looks like before anyone has used it.
+await markHere(s, null, cref, { chat: cid, path: 'chatmark', ws: true, press: false });
 await sleep(1200);
 const n5 = await notice();
 const scope5 = await p.evaluate((cid) => DaimondAttach.chatScope(cid), cid);

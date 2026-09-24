@@ -44,7 +44,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { open, errors, scratch, signInAs, storedChats } from './harness.mjs';
+import { open, errors, scratch, signInAs, storedChats, markHere } from './harness.mjs';
 
 const ok = [], bad = [];
 const check = (name, pass, detail) => {
@@ -384,18 +384,24 @@ const marked = await p.evaluate(async (a) => {
 	// MARKED AND FLAGGED. Since 2026-09-14 the mark is the daimon's grant to READ the
 	// folder and nothing more; what travels to devices that cannot open it is what
 	// carries `share` on its attachment. The reference names this device (owner ruling,
-	// 2026-09-23), so the mark is in force here from the moment it is written -- this
-	// fixture is driven on the one device that makes it, and never needs it confirmed.
-	const linkId = await app.add_link(id, 'diamond:' + id, window.DaimondAttach.ref('dir', a.work),
-		'holds', '', 'user');
-	await app.set_link_share(id, linkId, true);
+	// 2026-09-23), but naming it is not itself the grant any more (R2, 2026-09-24): a
+	// row is only a claim until this device's own record says it was pressed, so the
+	// fixture presses and ⇄'s it (`markHere`, from the node side, straight after) rather
+	// than relying on the reference alone, even though it is driven on the one device
+	// that made the mark.
+	const ref = window.DaimondAttach.ref('dir', a.work);
+	const linkId = await app.add_link(id, 'diamond:' + id, ref, 'holds', '', 'user');
+	return { id, linkId, ref };
+}, { work: WORK, note: NOTE, other: OTHER, original: ORIGINAL });
+await markHere(s, marked.id, marked.ref, { linkId: marked.linkId, share: true });
+Object.assign(marked, await p.evaluate(async () => {
 	await window.DaimondCore.loadDiamonds();
 	window.DaimondCore.syncClearWalkCache();
 	const share = await window.DaimondCore.syncFolderShare();
 	await window.DaimondCore.syncCommitBaseline();
 	const st = await window.DaimondCore.collectSync();
 	return { share, paths: Object.keys(st.files || {}).sort(), complete: st.filesComplete };
-}, { work: WORK, note: NOTE, other: OTHER, original: ORIGINAL });
+}));
 check('a folder FLAGGED on a Diamond does travel, and says its census is complete',
 	marked.share.folder === true && marked.share.roots.join() === WORK
 	&& marked.paths.includes(NOTE) && marked.paths.includes(OTHER)

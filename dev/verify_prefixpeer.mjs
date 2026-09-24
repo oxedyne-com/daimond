@@ -210,7 +210,14 @@ try {
 	for (const d of MARKS) {
 		await app(async (app, arg) => {
 			await app.run_tool('file_write', JSON.stringify({ path: arg.d + '/x.md', content: 'x' }));
-			await app.add_link(arg.id, 'diamond:' + arg.id, 'dir:[browser]' + arg.d, 'holds', '', 'user');
+			const ref = 'dir:[browser]' + arg.d;
+			await app.add_link(arg.id, 'diamond:' + arg.id, ref, 'holds', '', 'user');
+			// R2: a row is only a claim until pressed here -- press it, exactly as
+			// the paperclip would, so the REAL composer prefix (built from the
+			// store's own attachments) agrees with `prefixFor`'s synthetic one below.
+			if (window.DaimondAttach && DaimondAttach.confirmHere) {
+				await DaimondAttach.confirmHere(arg.id, ref);
+			}
 		}, { id: dev, d });
 	}
 	await p.evaluate(() => document.dispatchEvent(new Event('daimond-links-changed')));

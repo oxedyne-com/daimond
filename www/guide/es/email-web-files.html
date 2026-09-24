@@ -81,28 +81,31 @@
 	<p>Las filas llevan una antigüedad, <span class="ui">Añadido {when}</span>. Una ruta que ya no está se dibuja como <span class="ui">Desaparecido</span> sin acción de abrir, así que una fila muerta nunca se hace pasar por una viva.</p>
 	<p>Cualquier cosa que un daimon adjuntó por su cuenta, como la cosecha de un pliegue o un archivo que guardó un agente, está bajo un encabezado plegado, <span class="ui">Añadido por el daimon</span>, con un recuento y un <span class="ui">Quitar todos</span>. Tus propios adjuntos se quedan donde están.</p>
 
-	<h3 id="s7">Compartir una carpeta con tus otros dispositivos</h3>
+	<h3 id="s7">Las marcas y tus otros dispositivos</h3>
+	<p>Adjuntar una carpeta o un archivo a un diamond, y marcar uno para el espacio de trabajo de un chat, sincronizan ambos con tus otros dispositivos, pero no tienen efecto allí hasta que los pulses de nuevo en ese dispositivo. Abre el mismo diamond en un segundo dispositivo y una carpeta adjuntada en otro sitio aparece marcada pero aún no activa, con <span class="ui">Usar aquí</span> para activarla allí, o <span class="ui">Usar todas aquí</span> para todo lo que aún no está activo a la vez. Quitar una marca llega a todos los dispositivos por su cuenta; activarla no, así que una marca solo cuenta en el dispositivo en el que se pulsó.</p>
+
+	<h3 id="s8">Compartir una carpeta con tus otros dispositivos</h3>
 	<p>Una carpeta <span class="ui">Equipo</span> vive en un solo ordenador, y tu teléfono no puede abrirla. El botón <span class="ui">⇄</span> control de la fila es cómo llega a él de todas formas, con <span class="ui">Compartir con dispositivos sin acceso nativo</span>.</p>
 	<p>Desactivado, solo los dispositivos que pueden abrir la carpeta por sí mismos la ven. Activado, se copia a tus otros dispositivos, hasta <strong>200&nbsp;MiB</strong> por carpeta. El ajuste es por carpeta, sea cual sea el dispositivo desde el que lo pongas, y solo puede ponerlo un dispositivo que pueda abrir la carpeta.</p>
 	<p>Una carpeta que supera el techo se deja fuera entera, y un aviso dice cuál es y cuánto pesaba. Comparte una carpeta más pequeña, o saca algo de ella.</p>
 
-	<h2 id="s8">Documentos, y libros</h2>
+	<h2 id="s9">Documentos, y libros</h2>
 	<p>Abre un <code>.typ</code> archivo y el panel Doc gana dos botones. <span class="ui">Compilar</span> maqueta el documento en la página y escribe un PDF de vista previa junto a la fuente, y mientras esas páginas están abiertas, cada guardado las reconstruye. Púlsalo en un capítulo y compila el documento que incluye ese capítulo, y luego te lleva a la página de ese capítulo.</p>
 	<p>Los dos paneles tienen que estar en pantalla para que corra el bucle. Donde la ventana es demasiado estrecha, el panel Doc lo dice, y una reconstrucción se pone al día cuando vuelven.</p>
 	<p>El editor no tiene por qué ser el de Daimond. Un guardado desde cualquier editor que escriba en la carpeta concedida se recoge en más o menos un segundo.</p>
 	<p>Un teléfono no puede tener los archivos de un libro ni permitirse la memoria que cuesta una maquetación, así que le pasa la compilación a un equipo emparejado que sí puede, sellada a tu cuenta exactamente igual que un turno, y las páginas maquetadas vuelven.</p>
 
-	<h2 id="s9">Cualquier tipo de archivo</h2>
+	<h2 id="s10">Cualquier tipo de archivo</h2>
 	<p>Cualquier archivo se guarda y viaja, hasta un gigabyte cada uno. Un documento o una hoja de cálculo se abre como una <strong>vista de lectura</strong>, que muestra lo que dice y no cómo se imprime. Los valores son los guardados, las fórmulas no se recalculan, y las macros ni se ejecutan ni se leen. <span class="ui">Guardar una copia</span> escribe una en tu propio dispositivo y deja el archivo de aquí intacto.</p>
 	<p>Donde nada reconoce un archivo, se muestran sus bytes, y el panel lo dice.</p>
 
-	<h2 id="s10">Correo</h2>
+	<h2 id="s11">Correo</h2>
 	<p>Un navegador no puede abrir una conexión de correo, así que Daimond se conecta a través de la pasarela, que devuelve el mensaje en bruto y olvida tu credencial. Tu correo se escribe en el espacio de trabajo como archivos corrientes.</p>
 	<p>Añade un buzón con el <span class="ui">+</span> en el panel Correo. Escribe tu dirección y Daimond adivina los ajustes del servidor, y todos los campos siguen editables. La mayoría de proveedores quieren una contraseña de aplicación en vez de la contraseña de tu cuenta, y el panel dice dónde encontrarla.</p>
 	<p>La credencial se guarda en este dispositivo bajo tu frase de paso, se entrega a la pasarela para una sincronización, y se olvida. Daimond no guarda correo en ningún servidor.</p>
 	<p><strong>Solo tú puedes enviar.</strong> Un daimon puede redactar un mensaje en el panel Redactar. El botón Enviar es lo único que pone correo en el cable, y solo una persona puede pulsarlo. El correo forma parte de Daimond Pro.</p>
 
-	<h2 id="s11">El panel Web</h2>
+	<h2 id="s12">El panel Web</h2>
 	<p>Pídele a Daimond que abra una página, o pega un enlace. Hay tres maneras, y el sitio decide cuál funciona.</p>
 	<ul>
 		<li><strong>Mostrarla.</strong> La página aparece en el panel. La mayoría de los sitios se niegan a incrustarse, así que esto funciona para una minoría.</li>
@@ -111,7 +114,7 @@
 	</ul>
 	<p>Iniciar sesión sigue siendo cosa tuya. Cuando inicias sesión en una página conducida, Daimond deja de mirar por completo, sin tomar texto, ni imagen, ni pulsaciones de teclas, y nunca ve tu contraseña. Devuelves el volante desde la pestaña del navegador y no desde Daimond, así que una página nunca puede quitártelo.</p>
 
-	<h2 id="s12">Herramientas</h2>
+	<h2 id="s13">Herramientas</h2>
 	<p>El botón <span class="ui">Herramientas</span> panel dice lo que Daimond puede hacer. Las herramientas integradas ya son tuyas y gratis, y el panel lista exactamente lo que hay, así que no puede prometer una que no está. Los paquetes son extras, comprados una vez, en dólares.</p>
 
 	<div class="next">

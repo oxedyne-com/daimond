@@ -81,28 +81,31 @@
 	<p>Zeilen tragen ein Alter, <span class="ui">Hinzugefügt {when}</span>. Ein Pfad, der nicht mehr da ist, wird gezeichnet als <span class="ui">Weg</span> ohne Öffnen-Aktion, eine tote Zeile gibt sich also nie als lebende aus.</p>
 	<p>Alles, was ein Daimon von sich aus angehängt hat, etwa der Ertrag eines Einklappens oder eine Datei, die ein Agent behalten hat, sitzt unter einer eingeklappten Überschrift, <span class="ui">Vom Daimon hinzugefügt</span>, mit einer Zählung und einem <span class="ui">Alle entfernen</span>. Ihre eigenen Anhänge bleiben, wo sie sind.</p>
 
-	<h3 id="s7">Einen Ordner mit Ihren anderen Geräten teilen</h3>
+	<h3 id="s7">Markierungen und Ihre anderen Geräte</h3>
+	<p>Einen Ordner oder eine Datei an ein Diamond anzuhängen, und eine Markierung für den Arbeitsbereich eines Chats zu setzen, wird beides zu Ihren anderen Geräten übertragen, wirkt sich dort aber erst aus, wenn Sie es auf diesem Gerät erneut drücken. Öffnen Sie dasselbe Diamond auf einem zweiten Gerät, zeigt sich ein anderswo angehängter Ordner als markiert, aber noch nicht aktiv, mit <span class="ui">Hier verwenden</span>, um ihn dort zu aktivieren, oder <span class="ui">Alle hier verwenden</span> für alles noch nicht Aktive auf einmal. Eine Markierung zu entfernen erreicht jedes Gerät von selbst, sie zu aktivieren tut das nicht: Eine Markierung gilt nur auf dem Gerät, auf dem sie gedrückt wurde.</p>
+
+	<h3 id="s8">Einen Ordner mit Ihren anderen Geräten teilen</h3>
 	<p>Ein <span class="ui">Rechner</span> -Ordner liegt auf einem Rechner, und Ihr Telefon kann ihn nicht öffnen. Die <span class="ui">⇄</span> -Kontrolle in der Zeile ist, wie er ihn trotzdem erreicht, mit <span class="ui">Mit Geräten ohne nativen Zugriff teilen</span>.</p>
 	<p>Aus, sehen ihn nur Geräte, die den Ordner selbst öffnen können. An, wird er auf Ihre anderen Geräte kopiert, bis zu <strong>200&nbsp;MiB</strong> je Ordner. Die Einstellung gilt je Ordner, gleich von welchem Gerät Sie sie setzen, und nur ein Gerät, das den Ordner öffnen kann, kann sie setzen.</p>
 	<p>Ein Ordner über der Obergrenze wird ganz ausgelassen, und ein Banner sagt, welcher und wie viel er wog. Teilen Sie einen kleineren Ordner, oder nehmen Sie etwas daraus heraus.</p>
 
-	<h2 id="s8">Dokumente und Bücher</h2>
+	<h2 id="s9">Dokumente und Bücher</h2>
 	<p>Öffnen Sie eine <code>.typ</code> -Datei, und das Dok-Panel bekommt zwei Schaltflächen. <span class="ui">Kompilieren</span> setzt das Dokument in der Seite und schreibt ein Vorschau-PDF neben die Quelle; solange diese Seiten offen sind, baut jedes Speichern sie neu. Drücken Sie es bei einem Kapitel, kompiliert es das Dokument, das das Kapitel enthält, und bringt Sie dann zur Seite dieses Kapitels.</p>
 	<p>Beide Panels müssen auf dem Bildschirm sein, damit die Schleife läuft. Ist das Fenster zu schmal, sagt das Dok-Panel das, und ein Neubau holt nach, sobald sie zurückkehren.</p>
 	<p>Der Editor muss nicht der von Daimond sein. Ein Speichern aus jedem Editor, der in den gewährten Ordner schreibt, wird innerhalb etwa einer Sekunde aufgenommen.</p>
 	<p>Ein Telefon kann die Dateien eines Buchs nicht halten oder sich den Arbeitsspeicher leisten, den ein Layout kostet, es reicht das Kompilieren also an einen gekoppelten Rechner weiter, der das kann, versiegelt an Ihr Konto genau wie ein Zug, und die gesetzten Seiten kommen zurück.</p>
 
-	<h2 id="s9">Jede Art von Datei</h2>
+	<h2 id="s10">Jede Art von Datei</h2>
 	<p>Jede Datei wird gespeichert und reist mit, bis zu einem Gigabyte je Stück. Ein Dokument oder eine Tabelle öffnet sich als <strong>Leseansicht</strong>, die zeigt, was darin steht, nicht wie es gedruckt aussieht. Werte sind, wie gespeichert, Formeln werden nicht neu berechnet, und Makros werden weder ausgeführt noch gelesen. <span class="ui">Eine Kopie speichern</span> schreibt eine auf Ihr eigenes Gerät und lässt die Datei hier unberührt.</p>
 	<p>Erkennt nichts eine Datei, werden ihre Bytes gezeigt, und das Panel sagt das.</p>
 
-	<h2 id="s10">E-Mail</h2>
+	<h2 id="s11">E-Mail</h2>
 	<p>Ein Browser kann keine Mail-Verbindung öffnen, deshalb verbindet sich Daimond über das Gateway, das die rohe Nachricht zurückgibt und Ihre Zugangsdaten vergisst. Ihre Mail wird als gewöhnliche Dateien in den Arbeitsbereich geschrieben.</p>
 	<p>Fügen Sie ein Postfach hinzu mit dem <span class="ui">+</span> im E-Mail-Panel. Geben Sie Ihre Adresse ein, und Daimond rät die Servereinstellungen, und jedes Feld bleibt änderbar. Die meisten Anbieter wollen ein App-Passwort anstelle Ihres Kontopassworts, und das Panel sagt, wo Sie es finden.</p>
 	<p>Die Zugangsdaten liegen auf diesem Gerät unter Ihrer Passphrase, werden dem Gateway für eine Synchronisierung gereicht und dann vergessen. Daimond legt auf keinem Server Mail ab.</p>
 	<p><strong>Nur Sie können senden.</strong> Ein Daimon kann eine Nachricht in das Verfassen-Panel entwerfen. Die Schaltfläche Senden ist das Einzige, das Mail auf die Leitung bringt, und nur ein Mensch kann sie drücken. E-Mail ist Teil von Daimond Pro.</p>
 
-	<h2 id="s11">Das Web-Panel</h2>
+	<h2 id="s12">Das Web-Panel</h2>
 	<p>Bitten Sie Daimond, eine Seite zu öffnen, oder fügen Sie einen Link ein. Es gibt drei Wege, und die Website entscheidet, welcher funktioniert.</p>
 	<ul>
 		<li><strong>Zeigen.</strong> Die Seite erscheint im Panel. Die meisten Websites lassen sich nicht einbetten, das geht also nur bei einer Minderheit.</li>
@@ -111,7 +114,7 @@
 	</ul>
 	<p>Das Anmelden bleibt Ihre Sache. Wenn Sie sich auf einer bedienten Seite anmelden, hört Daimond ganz auf zuzusehen, nimmt weder Text noch Bild noch Tastenanschläge, und sieht Ihr Passwort nie. Sie geben das Steuer im Browser-Tab zurück, nicht in Daimond, eine Seite kann es Ihnen also nie nehmen.</p>
 
-	<h2 id="s12">Werkzeuge</h2>
+	<h2 id="s13">Werkzeuge</h2>
 	<p>Die Schaltfläche <span class="ui">Werkzeuge</span> -Panel sagt, was Daimond kann. Eingebaute Werkzeuge sind schon Ihres und kostenlos, und das Panel führt genau auf, was gehalten wird, es kann also keines versprechen, das es nicht gibt. Pakete sind Extras, einmal gekauft, in Dollar.</p>
 
 	<div class="next">

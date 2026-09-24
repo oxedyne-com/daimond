@@ -27,7 +27,7 @@
 // reconnected at boot the way a granted folder is.
 //
 // Needs a world for the mock provider: `eval "$(bash dev/world.sh N --env)"`.
-import { open, signInAs } from './harness.mjs';
+import { open, signInAs, markHere } from './harness.mjs';
 
 const ok = [], bad = [];
 const check = (name, pass, detail) => {
@@ -108,10 +108,10 @@ const linksAbout = (id, re) => p.evaluate(async ({ id, re }) => {
 }, { id, re: re.source });
 
 // ── 1. The control: the user's own mark, flagged by the user ─────────────────
-const bookId = await p.evaluate(async ({ id, ref }) =>
-	DaimondCore.diamondApp().add_link(id, 'diamond:' + id, ref, 'holds', '', 'user'),
-	{ id: setup.id, ref: setup.book });
-await flag(setup.id, bookId, true);
+// R2: a row alone grants nothing here, and a confirmation never carries the
+// share flag (O2) -- so the mark is pressed here AND ⇄'d here, both through
+// `markHere`, rather than added and flagged by the wasm call alone.
+const { id: bookId } = await markHere(s, setup.id, setup.book, { share: true });
 const f1 = await flagged();
 check('1. the user\'s own mark, flagged by the user, is shared', f1.folder === true
 	&& f1.flagged.includes('book'), JSON.stringify(f1));
@@ -167,11 +167,25 @@ const c4 = await p.evaluate(async ({ id, ref }) => {
 	if (!window.DaimondAttach || !DaimondAttach.confirmHere) return { api: false };
 	return { api: true, done: await DaimondAttach.confirmHere(id, ref) };
 }, { id: setup.id, ref: away });
-const row4 = (await linksAbout(setup.id, /away$/)).find((l) => l.by === 'user' && l.other.indexOf(setup.dev) >= 0);
+// R2: `confirmHere` never rewrites the row, so it is found by the id `t4`
+// already has, not by searching for this device having joined its reference --
+// the point being that it never does.
+const row4 = (await linksAbout(setup.id, /away$/)).find((l) => l.id === t4) || null;
 const f4b = await flagged();
-check('4. confirmed here, it keeps its flag and is shared from here',
-	c4.done === true && !!row4 && row4.share === true && f4b.flagged.includes('away'),
+// R2/O2: a confirmation NEVER carries the share flag, whatever the row already
+// said -- sharing is its own press, on each device that holds the folder, so
+// that an older copy from before sharing was turned off cannot turn it back on
+// by arriving. This is the opposite of what this asserted before R2, when
+// confirming a flagged row inherited the flag in the same press.
+check("4. confirmed here, it is in force but the flag has NOT travelled with it, and the row is untouched",
+	c4.done === true && !!row4 && row4.share === true && row4.other === away
+		&& !f4b.flagged.includes('away'),
 	JSON.stringify({ confirm: c4, row: row4, flagged: f4b.flagged }));
+const share4 = await markHere(s, setup.id, away, { linkId: t4, press: false, share: true });
+const f4c = await flagged();
+check('4. and pressing ⇄ here shares it, the row keeping its flag and its reference to the other device',
+	share4.shared === true && f4c.flagged.includes('away'),
+	JSON.stringify({ shared: share4, flagged: f4c.flagged }));
 
 // ── 5. The owner's flags written the old way, and taking a flag off ─────────
 const t5 = await p.evaluate(async ({ id, ref }) => {
@@ -183,8 +197,12 @@ const t5 = await p.evaluate(async ({ id, ref }) => {
 		to: ref, rel: 'holds', note: 'share', by: 'user' }) + '\n');
 	return true;
 }, { id: setup.id, ref: setup.older });
+// R2: the row reads as shared from its `note` alone (`Link::from_json`, as ever),
+// but a row is still only a claim -- pressed here and ⇄'d here, exactly as book
+// was, so the OLD FORM of the flag is proven to still share once it is.
+await markHere(s, setup.id, setup.older, { linkId: 'olduser1', share: true });
 const f5 = await flagged();
-check('5. a user\'s flag written the old way, as the note, still shares',
+check('5. a user\'s flag written the old way, as the note, still shares once pressed and ⇄\'d here',
 	t5 === true && f5.flagged.includes('older'), JSON.stringify(f5));
 await flag(setup.id, bookId, false);
 const f5b = await flagged();

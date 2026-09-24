@@ -81,28 +81,31 @@
 	<p>Les lignes portent un âge, <span class="ui">Ajouté {when}</span>. Un chemin qui n’est plus là est dessiné comme <span class="ui">Disparu</span> sans action d’ouverture, si bien qu’une ligne morte ne se fait jamais passer pour une vivante.</p>
 	<p>Tout ce qu’un daimon a joint pour lui-même, comme la récolte d’un repliage ou un fichier qu’un agent a gardé, se tient sous un même en-tête replié, <span class="ui">Ajouté par le daimon</span>, avec un compte et un <span class="ui">Tout retirer</span>. Vos propres pièces jointes restent où elles sont.</p>
 
-	<h3 id="s7">Partager un dossier vers vos autres appareils</h3>
+	<h3 id="s7">Les marques et vos autres appareils</h3>
+	<p>Joindre un dossier ou un fichier à un diamond, et marquer l’un pour l’espace de travail d’un chat, se synchronisent tous deux vers vos autres appareils, mais n’y prennent effet qu’une fois que vous avez appuyé de nouveau sur cet appareil. Ouvrez le même diamond sur un second appareil et un dossier joint ailleurs apparaît marqué mais pas encore actif, avec <span class="ui">Utiliser ici</span> pour l’activer là, ou <span class="ui">Tout utiliser ici</span> pour tout ce qui n’est pas encore actif à la fois. Retirer une marque atteint tous les appareils de lui-même ; l’activer ne le fait pas : une marque ne compte que sur l’appareil sur lequel elle a été appuyée.</p>
+
+	<h3 id="s8">Partager un dossier vers vos autres appareils</h3>
 	<p>Un dossier <span class="ui">Machine</span> vit sur un ordinateur, et votre téléphone ne peut pas l’ouvrir. Le <span class="ui">⇄</span> contrôle sur la ligne est comment il en atteint un quand même, avec <span class="ui">Partager avec les appareils sans accès natif</span>.</p>
 	<p>Désactivé, seuls les appareils qui peuvent ouvrir le dossier eux-mêmes le voient. Activé, il est copié vers vos autres appareils, jusqu’à <strong>200&nbsp;Mio</strong> par dossier. Le réglage est par dossier, quel que soit l’appareil depuis lequel vous le réglez, et seul un appareil qui peut ouvrir le dossier peut le régler.</p>
 	<p>Un dossier au-dessus du plafond est laissé de côté en entier, et une bannière dit lequel et combien il pesait. Partagez un dossier plus petit, ou retirez-en une partie.</p>
 
-	<h2 id="s8">Documents, et livres</h2>
+	<h2 id="s9">Documents, et livres</h2>
 	<p>Ouvrez un <code>.typ</code> fichier et le panneau Doc gagne deux boutons. <span class="ui">Compiler</span> met le document en page et écrit un PDF d’aperçu à côté de la source, et tant que ces pages sont affichées, chaque enregistrement les reconstruit. Appuyez dessus sur un chapitre et cela compile le document qui inclut le chapitre, puis vous mène à la page de ce chapitre.</p>
 	<p>Les deux panneaux doivent être à l’écran pour que la boucle tourne. Là où la fenêtre est trop étroite, le panneau Doc le dit, et une reconstruction rattrape le retard à leur retour.</p>
 	<p>L’éditeur n’a pas besoin d’être celui de Daimond. Un enregistrement depuis n’importe quel éditeur écrivant dans le dossier accordé est repris en environ une seconde.</p>
 	<p>Un téléphone ne peut ni détenir les fichiers d’un livre ni s’offrir la mémoire que coûte une mise en page, alors il confie la compilation à un ordinateur associé qui le peut, scellée sur votre compte exactement comme l’est un tour, et les pages mises en page reviennent.</p>
 
-	<h2 id="s9">N’importe quel type de fichier</h2>
+	<h2 id="s10">N’importe quel type de fichier</h2>
 	<p>N’importe quel fichier est stocké et voyage, jusqu’à un gigaoctet chacun. Un document ou une feuille de calcul s’ouvre comme une <strong>vue de lecture</strong>, qui montre ce qu’il dit et non comment il s’imprime. Les valeurs sont telles que stockées, les formules ne sont pas recalculées, et les macros ne sont ni exécutées ni lues. <span class="ui">Enregistrer une copie</span> en écrit une sur votre propre appareil et laisse le fichier ici intact.</p>
 	<p>Là où rien ne reconnaît un fichier, ses octets sont montrés, et le panneau le dit.</p>
 
-	<h2 id="s10">E-mail</h2>
+	<h2 id="s11">E-mail</h2>
 	<p>Un navigateur ne peut pas ouvrir une connexion de courrier, si bien que Daimond se connecte par la passerelle, qui rend le message brut et oublie votre identifiant. Votre courrier est écrit dans l’espace de travail comme des fichiers ordinaires.</p>
 	<p>Ajoutez une boîte aux lettres avec le <span class="ui">+</span> dans le panneau E-mail. Tapez votre adresse et Daimond devine les réglages du serveur, et chaque champ reste modifiable. La plupart des fournisseurs veulent un mot de passe d’application à la place de votre mot de passe de compte, et le panneau dit où le trouver.</p>
 	<p>L’identifiant est stocké sur cet appareil sous votre phrase secrète, remis à la passerelle pour une synchronisation, puis oublié. Daimond ne stocke aucun courrier sur aucun serveur.</p>
 	<p><strong>Vous seul pouvez envoyer.</strong> Un daimon peut rédiger un message dans le panneau Rédiger. Le bouton Envoyer est la seule chose qui mette du courrier sur le fil, et seule une personne peut l’appuyer. L’e-mail fait partie de Daimond Pro.</p>
 
-	<h2 id="s11">Le panneau Web</h2>
+	<h2 id="s12">Le panneau Web</h2>
 	<p>Demandez à Daimond d’ouvrir une page, ou collez un lien. Il y a trois façons, et le site décide laquelle marche.</p>
 	<ul>
 		<li><strong>La montrer.</strong> La page apparaît dans le panneau. La plupart des sites refusent d’être intégrés, si bien que cela ne marche que pour une minorité.</li>
@@ -111,7 +114,7 @@
 	</ul>
 	<p>Se connecter reste à vous. Quand vous vous connectez sur une page conduite, Daimond arrête complètement de regarder, ne prenant aucun texte, aucune image et aucune frappe, et ne voit jamais votre mot de passe. Vous rendez le volant depuis l’onglet du navigateur et non depuis Daimond, si bien qu’une page ne peut pas vous le prendre.</p>
 
-	<h2 id="s12">Outils</h2>
+	<h2 id="s13">Outils</h2>
 	<p>Le bouton <span class="ui">Outils</span> dit ce que Daimond peut faire. Les outils intégrés sont déjà à vous et gratuits, et le panneau liste exactement ce qui est détenu, si bien qu’il ne peut pas promettre un outil qui n’y est pas. Les packs sont des extras, achetés une fois, en dollars.</p>
 
 	<div class="next">

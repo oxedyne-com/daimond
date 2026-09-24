@@ -963,6 +963,73 @@ export async function newChat(s, { reuse = false } = {}) {
 	return after;
 }
 
+/// Seed a mark -- a Diamond's or a chat's -- and press it into force on THIS
+/// device: what a person does through the paperclip, a chat's mark-in, or the
+/// notice's "Use here", and, where asked, the ⇄ -- without driving the DOM.
+/// Since R2 (2026-09-24) a row or a holding is only a claim until it is pressed
+/// here: `add_link` alone no longer puts anything in `bounds().attached` or
+/// `shareRoots()`, and `chatToggle`/`chatWs` now press the instant they are
+/// called, so a verifier that used to seed with one of those and read the mark
+/// as already in force has to press it here as well, exactly as this does.
+///
+/// A Diamond mark, by default (`opts.chat` unset): `diamondId` names the Diamond.
+///   - `opts.linkId` presses a row already added elsewhere instead of adding
+///     one -- for a legacy or agent-written row a verifier wrote by hand.
+///   - `opts.share` presses ⇄ afterwards: the row's flag (`set_link_share`,
+///     refused silently on a legacy row, as the button itself lets that fail)
+///     and this device's own entry (`DaimondMarksHere.setShare`), the two
+///     writes O2 asks for.
+///
+/// A chat holding, with `opts.chat` set to the chat's id and `opts.path` to the
+/// path inside `ref`: `diamondId` is unused and may be null. The holding is
+/// written straight into the chat's own record, `c.holds[]`, through the live
+/// array `DaimondAttach.chatList` hands back -- since `chatToggle`/`chatWs`
+/// would press it here themselves, and a verifier meaning to stand for one that
+/// arrived by SYNC needs it claimed and not yet pressed. `opts.ws`/`opts.read`
+/// choose what is claimed; both default to marking the folder in.
+///
+/// `opts.press: false`, on either kind, seeds the claim and leaves it waiting --
+/// for a verifier whose own subject is the waiting state, or the press itself.
+///
+/// Returns `{ id, confirmed, shared }`: the row's id (chat holdings have none),
+/// whether the press landed, and whether ⇄ was asked for and landed.
+export async function markHere(s, diamondId, ref, opts = {}) {
+	const { rel = 'holds', note = '', by = 'user', share = false, linkId = null, press = true,
+		chat = null, path = null, dir = true, ws = true, read = false } = opts;
+	const p = s.page;
+	if (chat) {
+		await p.evaluate(({ chat, ref, path, dir, ws, read }) => {
+			DaimondAttach.chatList(chat).push({ ref, dir, path, state: read ? 'read' : 'note', ws });
+			// The push alone reaches no redraw -- `chatToggle`/`chatWs` themselves signal one, but
+			// this bypasses both on purpose. Without it the notice over the composer, and the
+			// paperclip, go on showing what stood before a caller that never presses would see.
+			DaimondAttach.render();
+		}, { chat, ref, path, dir, ws, read });
+		const confirmed = press && await p.evaluate(({ chat, ref }) =>
+			DaimondAttach.chatConfirm(chat, ref), { chat, ref });
+		return { id: null, confirmed: !!confirmed, shared: false };
+	}
+	const id = linkId || await p.evaluate(async ({ diamondId, ref, rel, note, by }) =>
+		DaimondCore.diamondApp().add_link(diamondId, 'diamond:' + diamondId, ref, rel, note, by),
+		{ diamondId, ref, rel, note, by });
+	const confirmed = press && await p.evaluate(({ diamondId, ref }) =>
+		DaimondAttach.confirmHere(diamondId, ref), { diamondId, ref });
+	let shared = false;
+	if (share) {
+		shared = await p.evaluate(async ({ diamondId, id }) => {
+			const app = DaimondCore.diamondApp();
+			const row = JSON.parse(await app.links_touching('diamond:' + diamondId) || '[]')
+				.find((l) => l.id === id);
+			if (!row) return false;
+			try { await app.set_link_share(diamondId, id, true); } catch (e) { /* not this row's to flag */ }
+			const h = DaimondFiles.folder();
+			const root = DaimondMarksHere.rootKey(h ? { kind: 'machine', name: h.name } : { kind: 'browser' });
+			return DaimondMarksHere.setShare(diamondId, row, root, true);
+		}, { diamondId, id });
+	}
+	return { id, confirmed: !!confirmed, shared };
+}
+
 /// Point the app at a provider through the real Settings form.
 ///
 /// `apiKey` is a parameter because `dev/reflux.mjs` drives this whole stack against a

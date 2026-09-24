@@ -81,28 +81,31 @@
 	<p>As linhas trazem uma idade, <span class="ui">Adicionado {when}</span>. Um caminho que não existe mais é desenhado como <span class="ui">Sumiu</span> sem ação de abrir, então uma linha morta nunca se passa por uma viva.</p>
 	<p>Qualquer coisa que um daimon anexou para si mesmo, como a colheita de uma dobra ou um arquivo que um agente guardou, fica sob um único cabeçalho recolhido, <span class="ui">Adicionado pelo daimon</span>, com uma contagem e um <span class="ui">Remover todos</span>. Seus próprios anexos ficam onde estão.</p>
 
-	<h3 id="s7">Compartilhando uma pasta com seus outros dispositivos</h3>
+	<h3 id="s7">Marcas e seus outros dispositivos</h3>
+	<p>Anexar uma pasta ou um arquivo a um diamond, e marcar um para o espaço de trabalho de um chat, ambos sincronizam com seus outros dispositivos, mas não fazem efeito lá até você tocar de novo nesse dispositivo. Abra o mesmo diamond em um segundo dispositivo e uma pasta anexada em outro lugar aparece marcada, mas ainda não ativa, com <span class="ui">Usar aqui</span> para ativá-la lá, ou <span class="ui">Usar todas aqui</span> para tudo o que ainda não está ativo de uma vez. Remover uma marca chega a todos os dispositivos por conta própria; ativá-la não, então uma marca só conta no dispositivo em que foi tocada.</p>
+
+	<h3 id="s8">Compartilhando uma pasta com seus outros dispositivos</h3>
 	<p>Uma pasta <span class="ui">Máquina</span> vive em um computador, e o seu telefone não consegue abri-la. O controle <span class="ui">⇄</span> na linha é como ela chega lá mesmo assim, com <span class="ui">Compartilhar com dispositivos sem acesso nativo</span>.</p>
 	<p>Desligado, só os dispositivos que conseguem abrir a pasta sozinhos a veem. Ligado, ela é copiada para os seus outros dispositivos, até <strong>200&nbsp;MiB</strong> por pasta. O ajuste é por pasta, de qualquer dispositivo que você o defina, e só um dispositivo que consiga abrir a pasta pode defini-lo.</p>
 	<p>Uma pasta acima do teto fica de fora por inteiro, e uma faixa diz qual foi e quanto pesava. Compartilhe uma pasta menor, ou tire parte dela.</p>
 
-	<h2 id="s8">Documentos, e livros</h2>
+	<h2 id="s9">Documentos, e livros</h2>
 	<p>Abra um arquivo <code>.typ</code> e o painel Doc ganha dois botões. <span class="ui">Compilar</span> compõe o documento na página e escreve um PDF de prévia ao lado da fonte, e enquanto essas páginas estão abertas, cada salvamento as reconstrói. Aperte-o em um capítulo, e ele compila o documento que inclui aquele capítulo, e então leva você até a página daquele capítulo.</p>
 	<p>Os dois painéis precisam estar na tela para o ciclo rodar. Onde a janela é estreita demais, o painel Doc avisa isso, e uma reconstrução se atualiza quando eles voltam.</p>
 	<p>O editor não precisa ser o do Daimond. Um salvamento de qualquer editor que escreva na pasta concedida é captado em cerca de um segundo.</p>
 	<p>Um telefone não consegue guardar os arquivos de um livro nem arcar com a memória que uma diagramação custa, então ele entrega a compilação a um computador pareado que consegue, selada para a sua conta exatamente como um turno é, e as páginas diagramadas voltam.</p>
 
-	<h2 id="s9">Qualquer tipo de arquivo</h2>
+	<h2 id="s10">Qualquer tipo de arquivo</h2>
 	<p>Qualquer arquivo é guardado e viaja, até um gigabyte cada. Um documento ou uma planilha abre como uma <strong>visão de leitura</strong>, que mostra o que ele diz e não como ele imprime. Os valores são como estão guardados, as fórmulas não são recalculadas, e as macros não são executadas nem lidas. <span class="ui">Salvar uma cópia</span> grava uma no seu próprio dispositivo e deixa o arquivo aqui intocado.</p>
 	<p>Onde nada reconhece um arquivo, os bytes dele são mostrados, e o painel avisa isso.</p>
 
-	<h2 id="s10">E-mail</h2>
+	<h2 id="s11">E-mail</h2>
 	<p>Um navegador não consegue abrir uma conexão de correio, então o Daimond se conecta pelo gateway, que devolve a mensagem bruta e esquece a sua credencial. Seu correio é escrito no espaço de trabalho como arquivos comuns.</p>
 	<p>Adicione uma caixa de correio com o <span class="ui">+</span> no painel E-mail. Digite seu endereço, e o Daimond adivinha as configurações do servidor, e todo campo continua editável. A maioria dos provedores quer uma senha de app no lugar da senha da sua conta, e o painel diz onde encontrá-la.</p>
 	<p>A credencial fica guardada neste dispositivo sob a sua frase-senha, entregue ao gateway para uma sincronização, e depois esquecida. O Daimond não guarda correio em servidor nenhum.</p>
 	<p><strong>Só você pode enviar.</strong> Um daimon pode rascunhar uma mensagem no painel Escrever. O botão Enviar é a única coisa que põe correio na linha, e só uma pessoa pode apertá-lo. O E-mail faz parte do Daimond Pro.</p>
 
-	<h2 id="s11">O painel Web</h2>
+	<h2 id="s12">O painel Web</h2>
 	<p>Peça ao Daimond que abra uma página, ou cole um link. Há três formas, e o site decide qual funciona.</p>
 	<ul>
 		<li><strong>Mostrá-la.</strong> A página aparece no painel. A maioria dos sites recusa ser incorporada, então isso funciona só para uma minoria.</li>
@@ -111,7 +114,7 @@
 	</ul>
 	<p>O login continua sendo seu. Quando você faz login em uma página dirigida, o Daimond para de observar por completo, sem captar texto, imagem ou teclas digitadas, e nunca vê a sua senha. Você devolve o volante pela aba do navegador e não pelo Daimond, então uma página não pode tomá-lo de você.</p>
 
-	<h2 id="s12">Ferramentas</h2>
+	<h2 id="s13">Ferramentas</h2>
 	<p>O botão <span class="ui">Ferramentas</span> diz o que o Daimond sabe fazer. As ferramentas inclusas já são suas e gratuitas, e o painel lista exatamente o que está disponível, então não pode prometer uma que não está lá. Os pacotes são extras, comprados uma vez, em dólares.</p>
 
 	<div class="next">

@@ -123,7 +123,7 @@ function toggleBody() {
 function buildToggle() {
 	const args = asyncFuncBody('toggleAttachHold').args;
 	const freeNames = ['currentDiamond', 'rootedRef', 'linkTo', 'diamondApp', 'signalLinksChanged', 'attachedOf',
-		'markWaiting', 'confirmMarkHere'];
+		'markWaiting', 'confirmMarkHere', 'removeLinkHere', 'markHere'];
 	const params = freeNames.concat(args.split(',').map(s => s.trim()).filter(Boolean));
 	return new AsyncFunction(...params, toggleBody());
 }
@@ -144,6 +144,7 @@ function makeApp(state) {
 			async remove_link(owner, id) { state.removed.push({ owner, id }); },
 			async add_link(id, self, ref, rel, note, by) {
 				state.added.push({ id, self, ref, rel, note, by });
+				return 'new-' + id;
 			},
 		};
 	};
@@ -151,7 +152,7 @@ function makeApp(state) {
 
 async function toggle(diamondId, links, attachedOfImpl, path, dir) {
 	const run = buildToggle();
-	const state = { removed: [], added: [] };
+	const state = { removed: [], added: [], marked: [] };
 	const app = makeApp(state);
 	let signalled = false;
 	let attachedOfCalls = 0;
@@ -166,6 +167,11 @@ async function toggle(diamondId, links, attachedOfImpl, path, dir) {
 	// would mean markWaiting answered YES for a plain, already-in-force link.
 	const markWaiting = buildMarkWaiting();
 	const confirmMarkHere = async () => { confirmMarkHereCalls++; return false; };
+	// Since R2 every removal on this device goes through `removeLinkHere` (the row
+	// and this device's entry) and every add is recorded by `markHere` from the id
+	// the add returned; the stand-ins keep the store calls this suite spies on.
+	const removeLinkHere = async (l) => app().remove_link(l.owner, l.id);
+	const markHere = async (id, linkId) => { state.marked.push({ id, linkId }); return true; };
 	await run(
 		{ id: diamondId },		// currentDiamond
 		rootedRef,
@@ -175,6 +181,8 @@ async function toggle(diamondId, links, attachedOfImpl, path, dir) {
 		attachedOf,
 		markWaiting,
 		confirmMarkHere,
+		removeLinkHere,
+		markHere,
 		path, dir);
 	return { state, signalled, attachedOfCalls, confirmMarkHereCalls };
 }
@@ -230,6 +238,9 @@ if (BREAK !== 'stale') {
 			state.added[0].self === 'diamond:D-A' && state.added[0].rel === 'holds'
 				&& state.added[0].by === 'user' && state.added[0].ref === 'dir:plans');
 		check('CASE B add: nothing is removed', state.removed.length === 0);
+		check('CASE B add: the press is recorded here from the id the add returned',
+			state.marked.length === 1 && state.marked[0].id === 'D-A' && state.marked[0].linkId === 'new-D-A',
+			JSON.stringify(state.marked));
 		check('CASE B add: the repaint signal fires', signalled === true);
 	}
 	// Remove: the store now holds A's link from the add above.

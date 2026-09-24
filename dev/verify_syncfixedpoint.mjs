@@ -90,7 +90,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { open, signInAs, scratch, clearDiamonds, BROWSER } from './harness.mjs';
+import { open, signInAs, scratch, clearDiamonds, BROWSER, markHere } from './harness.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const WWW  = path.join(HERE, '..', 'www');
@@ -1034,17 +1034,21 @@ check('(vii) the two desktops hold identical bytes at DIFFERENT times — the Sy
 // exactly the state a mark synced from another desktop is in everywhere else -- and
 // brings it into force with the same one-press confirm the notice above the composer
 // offers. Only then do both devices compute the same shared roots.
-const bookId = await A.page.evaluate(async (scope) => {
+const book = await A.page.evaluate(async (scope) => {
 	const mod = await import('/pkg/oxedyne_daimond.js');
 	const app = new mod.DaimondApp('http://127.0.0.1/v1/chat/completions', '', 'none', 4096, '', true);
 	const id = await app.create_diamond('The Book');
-	const linkId = await app.add_link(id, 'diamond:' + id, window.DaimondAttach.ref('dir', scope),
-		'holds', '', 'user');
-	await app.set_link_share(id, linkId, true);
+	const ref = window.DaimondAttach.ref('dir', scope);
+	const linkId = await app.add_link(id, 'diamond:' + id, ref, 'holds', '', 'user');
 	await window.DaimondCore.loadDiamonds();
-	window.DaimondCore.syncClearWalkCache();
-	return id;
+	return { id, linkId, ref };
 }, SCOPE);
+const bookId = book.id;
+// R2/O2: pressed AND ⇄'d here, on A -- the raw wasm `add_link` above does not
+// auto-press the way the paperclip's own door does, and a confirmation never
+// carries the share flag, so both writes are `markHere`'s.
+await markHere(A, bookId, book.ref, { linkId: book.linkId, share: true });
+await A.page.evaluate(() => window.DaimondCore.syncClearWalkCache());
 await push(A); await pull(A2); await pull(B);
 await A2.page.evaluate(() => window.DaimondCore.loadDiamonds());
 const confirmedOnA2 = await A2.page.evaluate(
@@ -1052,6 +1056,9 @@ const confirmedOnA2 = await A2.page.evaluate(
 	{ id: bookId, scope: SCOPE });
 check('(vii) A2 confirms the mark A made, brought in by the ordinary parcel',
 	confirmedOnA2 === true, String(confirmedOnA2));
+// R2/O2: A2's OWN ⇄. The row already carries the flag -- confirming above never
+// inherits it, since sharing does not travel and is its own press per device.
+await markHere(A2, bookId, 'dir:' + SCOPE, { linkId: book.linkId, press: false, share: true });
 await A2.page.evaluate(() => window.DaimondCore.syncClearWalkCache());
 
 const shares = {

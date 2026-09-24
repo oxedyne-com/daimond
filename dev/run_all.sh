@@ -376,6 +376,15 @@ slow_for() {
 		# reasoning as verify_raildialogs, since those waits stretch when the
 		# box is busy and a killed verifier does not say it was killed.
 		verify_syncviews)                 echo 480 ;;
+		# R2's two proofs. One context over both workspaces, three reloads, and a grid of
+		# cells each read through the fence, the census, the Workspace panel and the
+		# composer: MEASURED at 115s on a quiet box (2026-09-24), close enough to the
+		# 180s default that a busy box would kill it, so 420 as for verify_reversible.
+		verify_markshere)                 echo 420 ;;
+		# Three paired devices in turn (a phone, two computers, a WebKit context) over a
+		# real gateway, and some thirty sync rounds each waited out: MEASURED at 155s on
+		# the build and 230s at the base, where the rounds wait out what never arrives.
+		verify_markshere_sync)            echo 600 ;;
 		# Eight reloads, each waited out past the push debounce so that a push
 		# which is coming has come -- and a check that hurried one of them would
 		# report a push as absent when it was merely late, which is the exact

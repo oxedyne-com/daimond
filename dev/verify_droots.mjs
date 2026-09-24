@@ -448,8 +448,12 @@ const marks = await p.evaluate(async () => {
 	await app.add_link(id, self, 'dir:[machine:standin-folder@' + out.dev + ']harvested', 'holds', '',
 		'fold');
 	await app.add_link(id, self, 'dir:[machine:standin-folder]agentold', 'holds', '', 'agent:daimon');
-	out.b1 = (await DaimondDiamond.bounds(id)).attached;
 	out.api = !!(A.ref && A.reachable && A.where && A.confirmHere);
+	// R2: a row alone is only a claim, however it names this device -- `mine` is
+	// pressed here, exactly as the paperclip would, so `b1` below reads the same
+	// as it did before R2 for the mark this device actually made.
+	if (out.api) await A.confirmHere(id, mine);
+	out.b1 = (await DaimondDiamond.bounds(id)).attached;
 	if (out.api) {
 		out.here       = A.ref('dir', 'mine');        // what the paperclip writes on this device
 		out.whereOther = A.where(other);
@@ -478,9 +482,13 @@ check('the paperclip names this device in what it writes',
 check('a mark from elsewhere is shown with the device it was made on',
 	/012345/.test(marks.whereOther || '') && /another device/.test(marks.whereOlder || ''),
 	JSON.stringify([marks.whereOther, marks.whereOlder]));
-check('confirming it here brings it into force, and keeps the device it came from',
+// R2: a confirmation writes only this device's own record; the row it confirms is
+// never rewritten, so the reference still names only the OTHER device, exactly as
+// it did before the press -- the opposite of what this asserted before R2, when
+// confirming rewrote the row with this device added.
+check('confirming it here brings it into force, and the row keeps the device it came from, unrewritten',
 	marks.confirmed === true && has(marks.b2, 'theirs')
-		&& marks.theirs === 'dir:[machine:standin-folder@0123456789abcdef,' + marks.dev + ']theirs',
+		&& marks.theirs === 'dir:[machine:standin-folder@0123456789abcdef]theirs',
 	JSON.stringify({ b2: marks.b2, ref: marks.theirs }));
 
 // A resource the browser could not load is the dev stack, not the page: no
