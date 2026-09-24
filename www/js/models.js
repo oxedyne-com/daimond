@@ -84,12 +84,17 @@
 	/// it again. `paused` marks it so a caller can show a held spend calmly
 	/// rather than as a fault, and `pauseNode` says which control to point at.
 	function pauseError(node) {
-		var s = t('pause.refused.turn', { node: node });
+		// The node BY NAME -- the Diamond's or the chat's, from the tree -- and never the
+		// id, which tells a person nothing (R2 QA, F0b). `pauseNode` keeps the id.
+		var name = node;
+		try { if (window.DaimondPause) name = DaimondPause.label(node) || node; }
+		catch (e) { name = node; }
+		var s = t('pause.refused.turn', { node: name });
 		if (s === 'pause.refused.turn') {
 			// A byte-for-byte copy of the catalogue entry, `{node}` filled in here.
 			// Assembling a second wording is how this drifted from `en.js` unnoticed.
 			s = ('{node} is paused. No turn started, nothing spent. '
-				+ 'Press play on it to resume.').replace(/\{node\}/g, node);
+				+ 'Press play on it to resume.').replace(/\{node\}/g, name);
 		}
 		var e = new Error(s);
 		e.paused    = true;
@@ -2967,5 +2972,12 @@
 		remintSlot:     remintSlot,
 		slotConfig:     slotConfig,
 		forgetSlot:     forgetSlot,
+		// The pause check every dispatch must pass, and the refusal it throws when the
+		// leaf is held -- exported so a turn's OWN dispatch (daimond.js's `runTurn`)
+		// asks this directly rather than only meeting it inside `mintRequest`. A turn
+		// on the user's own key never mints, so that was the one door with no check
+		// behind it; both doors now ask the identical question.
+		held:           held,
+		pauseError:     pauseError,
 	};
 })();

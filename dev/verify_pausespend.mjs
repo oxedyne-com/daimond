@@ -170,17 +170,21 @@ try {
 	// proving only the outer one. This is the inner one on its own: the call the
 	// pump makes at www/js/daimond.js:8453, made here with the pump held.
 	const beforeDirect = net.mint.length;
-	const refusedSlot = await page.evaluate(async () => {
-		try { await window.DaimondModels.mintSlot(1); return { threw: false, msg: '' }; }
-		catch (e) { return { threw: true, msg: String(e && e.message || e), node: e && e.pauseNode }; }
+	const refusedSlot = await page.evaluate(async (node) => {
+		const name = window.DaimondPause.label(node);
+		try { await window.DaimondModels.mintSlot(1); return { threw: false, msg: '', name }; }
+		catch (e) { return { threw: true, msg: String(e && e.message || e), node: e && e.pauseNode, name }; }
 		finally { window.DaimondModels.forgetSlot(1); }
-	});
+	}, WORKERS);
 	check('and a worker key asked for directly is refused at the mint',
 		net.mint.length === beforeDirect && refusedSlot.threw,
 		refusedSlot.msg || ('mints ' + JSON.stringify(net.mint)));
+	// BY NAME, not by id (R2 QA, F0b): the id rides `pauseNode` for the control to point
+	// at, and the sentence a person reads says what the tree calls it.
 	check('and that refusal names the pump and how to resume it',
-		refusedSlot.node === WORKERS && refusedSlot.msg.includes(WORKERS)
-			&& /play/i.test(refusedSlot.msg), refusedSlot.msg);
+		refusedSlot.node === WORKERS && !!refusedSlot.name && refusedSlot.msg.includes(refusedSlot.name)
+			&& !refusedSlot.msg.includes(WORKERS) && /play/i.test(refusedSlot.msg),
+		JSON.stringify({ msg: refusedSlot.msg, name: refusedSlot.name }));
 
 	await playLeaf(page, WORKERS);
 	const afterDirect = await page.evaluate(async () => {
@@ -208,19 +212,21 @@ try {
 	// number makes the paused half silent whatever the guard does — a check that
 	// passes with the guard deleted, which is no check at all.
 	const refusedMint = await page.evaluate(async (node) => {
+		const name = window.DaimondPause.label(node);
 		try {
 			await window.DaimondModels.remint(window.DaimondModels.creditsGen(), node);
-			return { threw: false, msg: '' };
+			return { threw: false, msg: '', name };
 		} catch (e) {
-			return { threw: true, msg: String(e && e.message || e), node: e && e.pauseNode, flag: !!(e && e.paused) };
+			return { threw: true, msg: String(e && e.message || e), node: e && e.pauseNode, flag: !!(e && e.paused), name };
 		}
 	}, CHAT);
 	check('a paused chat mints no key', net.mint.length === n2 && refusedMint.threw,
 		'mints ' + JSON.stringify(net.mint));
-	check('and the refusal names the node and how to resume it',
-		refusedMint.threw && refusedMint.node === CHAT
-			&& /play/i.test(refusedMint.msg) && refusedMint.msg.includes(CHAT),
-		refusedMint.msg);
+	check('and the refusal names the chat and how to resume it',
+		refusedMint.threw && refusedMint.node === CHAT && !!refusedMint.name
+			&& /play/i.test(refusedMint.msg) && refusedMint.msg.includes(refusedMint.name)
+			&& !refusedMint.msg.includes('root/'),
+		JSON.stringify({ msg: refusedMint.msg, name: refusedMint.name }));
 	check('and it is marked a pause rather than a fault', refusedMint.flag === true);
 
 	await playLeaf(page, CHAT);
@@ -243,13 +249,16 @@ try {
 		held: window.DaimondGovernor.assessDispatch(3, node),
 		free: window.DaimondGovernor.assessDispatch(3, 'root/diamonds/d2/self'),
 		none: window.DaimondGovernor.assessDispatch(3),
+		name: window.DaimondPause.label(node),
 	}), DIA);
 	check('a paused node comes back refused through the same decision object',
 		gate.held.refused === true && gate.held.pauseNode === DIA,
 		JSON.stringify({ refused: gate.held.refused, node: gate.held.pauseNode }));
-	check('and its refusal names the node and how to resume it',
-		typeof gate.held.refusal === 'string' && gate.held.refusal.includes(DIA)
-			&& /play/i.test(gate.held.refusal), gate.held.refusal);
+	// By name, not by id (R2 QA, F0b); the id rides `pauseNode`, checked above.
+	check('and its refusal names the Diamond and how to resume it',
+		typeof gate.held.refusal === 'string' && !!gate.name && gate.held.refusal.includes(gate.name)
+			&& !gate.held.refusal.includes('root/') && /play/i.test(gate.held.refusal),
+		JSON.stringify({ refusal: gate.held.refusal, name: gate.name }));
 	check('and it also stops a caller that only reads needsConfirm',
 		gate.held.needsConfirm === true);
 	check('a node that is playing is not refused', gate.free.refused === false);
@@ -260,15 +269,17 @@ try {
 	const WEB = 'root/web';
 	await pauseLeaf(page, WEB);
 	const n4 = net.web.length;
-	const refusedWeb = await page.evaluate(async () => {
-		try { await window.DaimondWeb.fetch('https://example.com/'); return { threw: false, msg: '' }; }
-		catch (e) { return { threw: true, msg: String(e && e.message || e) }; }
-	});
+	const refusedWeb = await page.evaluate(async (node) => {
+		const name = window.DaimondPause.label(node);
+		try { await window.DaimondWeb.fetch('https://example.com/'); return { threw: false, msg: '', name }; }
+		catch (e) { return { threw: true, msg: String(e && e.message || e), name }; }
+	}, WEB);
 	check('a paused Web panel fetches no page', net.web.length === n4,
 		net.web.length + ' fetch(es)');
-	check('and the refusal names the node and how to resume it',
-		refusedWeb.threw && refusedWeb.msg.includes(WEB) && /play/i.test(refusedWeb.msg),
-		refusedWeb.msg);
+	check('and the refusal names the Web leaf and how to resume it',
+		refusedWeb.threw && !!refusedWeb.name && refusedWeb.msg.includes(refusedWeb.name)
+			&& !refusedWeb.msg.includes(WEB) && /play/i.test(refusedWeb.msg),
+		JSON.stringify({ msg: refusedWeb.msg, name: refusedWeb.name }));
 
 	await playLeaf(page, WEB);
 	const gotWeb = await page.evaluate(async () => {

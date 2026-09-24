@@ -166,11 +166,14 @@ const BREAKS = {
 		to:   "\t\t\tawait selectDiamond(f);\n\t\t\treturn { went: true, reply: await doSteer(text) };" },
 	wrongthread: { file: 'js/daimond.js',
 		what: 'the turn writes into the conversation that is ON SCREEN',
-		from: "\t\tvar rec = daimonChat(f);\n\t\tvar onScreen = function () { return daimonOnScreen(rec); };",
-		to:   "\t\tvar rec = daimonChat(currentDiamond || f);\n\t\tvar onScreen = function () { return daimonOnScreen(rec); };" },
+		// `runSteer` has taken the thread from a detached run since d723c9d9; with none,
+		// which is a triggered turn, it is still `daimonChat(f)`, and that is the half broken.
+		from: "\t\tvar rec = detached ? detached.chat : daimonChat(f);\n\t\tvar onScreen = function () { return daimonOnScreen(rec); };",
+		to:   "\t\tvar rec = detached ? detached.chat : daimonChat(currentDiamond || f);\n\t\tvar onScreen = function () { return daimonOnScreen(rec); };" },
 	kindrefused: { file: 'js/daimond.js',
-		what: '`Pending.add` refuses every kind but consent, as it did until today',
-		from: "\t\t\tif (kind !== 'consent' && kind !== 'proposal') return null;",
+		what: '`Pending.add` refuses every kind but consent, as it did until 2026-09-15',
+		// Re-anchored when `notice` joined the kinds (2026-09-24); the break is unchanged.
+		from: "\t\t\tif (kind !== 'consent' && kind !== 'proposal' && kind !== 'notice') return null;",
 		to:   "\t\t\tif (item.kind && item.kind !== 'consent') return null;" },
 	alwaysraise: { file: 'js/daimond.js',
 		what: '"nothing stands out" raises a tile like anything else',

@@ -46,9 +46,10 @@
 // would run unmetered on BOTH binaries and every one of (a)-(c) would read as a
 // false pass. `hand/tests/delete_fence.rs` hit the same wall and moved its
 // fixtures to `~/.cache/daimond-hand-delete-fence` — a SIBLING of `~/.cache/daimond`,
-// not a child of it. This file does the same, slot-scoped so two lanes running it
-// at once do not collide: `~/.cache/daimond-handdelete/$RC_SLOT`. Still not `/tmp`,
-// still never under `~/usr`.
+// not a child of it. This file does the same, scoped to the slot AND the run so no
+// two runs collide: `~/.cache/daimond-handdelete/$RC_SLOT/run-<run>`. Slot-scoped alone
+// was not enough: two runs sharing a slot wiped each other's fixtures mid-run on
+// 2026-09-24. Still not `/tmp`, still never under `~/usr`.
 //
 // ── Running it ────────────────────────────────────────────────────────
 //
@@ -73,11 +74,16 @@
 //	HD_BRANCH_BIN=<path>   drive that binary as the branch side instead — an older
 //	                       build of this branch, to show a check failing before its fix
 //	HD_BASE_BIN=<path>     drive that binary as the base side, rather than building
-//	                       `../lane-bc-base` — which is not beside a worktree that moved
-//	HD_OLD_BINS=<a:b:...>  more hands older than the meter, driven through (k) only —
-//	                       the hand a machine actually has installed, for one
+//	                       `../lane-bc-base`, or, with no such sibling, the one already built
+//	                       in the slot's `lane-bc-base` target. Found by none of the three, the
+//	                       run FAILS rather than skipping the base
+//	HD_OLD_BINS=<a:b:...>  more hands older than the meter, driven through (k) only; default
+//	                       the hand this machine actually has installed
+//	                       (~/.local/share/daimond/hand/bin/daimond-hand). With the base, that is
+//	                       both old hands, and a named one that is not there FAILS the run: on
+//	                       2026-09-24 a run without them read 58/0 where they read 66/0
 //	HD_XDEV_DIR=<path>     where (j) keeps its trash; it must be on a different filesystem
-//	                       from the fixtures. Default /dev/shm/daimond-handdelete-$RC_SLOT
+//	                       from the fixtures. Default /dev/shm/daimond-handdelete-$RC_SLOT-<run>
 //
 // (k) composes its fences with the page's own function, built as a native example into the
 // slot's `lane-hand` target (DEBUG, the app's own profile):
@@ -103,10 +109,13 @@ const NO_BUILD = argv.includes('--no-build');
 const KEEP = argv.includes('--keep');
 
 const SLOT = process.env.RC_SLOT || 'solo';
+const RUN = process.pid.toString(36) + '-' + Date.now().toString(36);
 // A SIBLING of ~/.cache/daimond, never a child of it — see the header.
-const SCRATCH = path.join(os.homedir(), '.cache/daimond-handdelete', SLOT);
+const SCRATCH = path.join(os.homedir(), '.cache/daimond-handdelete', SLOT, 'run-' + RUN);
 // (j)'s trash, on another filesystem so the hard link fails and the copy is what is tried.
-const XDEV = process.env.HD_XDEV_DIR || path.join('/dev/shm', `daimond-handdelete-${SLOT}`);
+const XDEV = process.env.HD_XDEV_DIR || path.join('/dev/shm', `daimond-handdelete-${SLOT}-${RUN}`);
+// The hand this machine actually has installed, which predates the meter.
+const INSTALLED = path.join(os.homedir(), '.local/share/daimond/hand/bin/daimond-hand');
 
 const ok = [], bad = [];
 const check = (name, pass, detail) => {
@@ -935,11 +944,18 @@ if (process.env.HD_BASE_BIN) {
 	base = handBinary(BASE_ROOT, 'lane-bc-base');
 	check('the base hand (../lane-bc-base) builds and is current', !!base.bin, base.why);
 } else {
-	note(`${BASE_ROOT} does not exist and HD_BASE_BIN is not set; the base comparison is NOT RUN`);
+	// No sibling to build from: the base already built in the slot's target, and a FAILED
+	// check where there is none. A base comparison that quietly did not run is how this
+	// suite read 58 where it reads 66 (2026-09-24).
+	const built = path.join(os.homedir(), '.cache/cargo-targets', SLOT, 'lane-bc-base/release/daimond-hand');
+	base = { bin: fs.existsSync(built) ? built : null,
+		why: `${BASE_ROOT} is not there and HD_BASE_BIN is not set; looked for ${built}` };
+	check('the base hand (the slot\'s lane-bc-base build) is there', !!base.bin, base.why);
 }
 
-// More hands older than the meter, for (k) alone: the one a machine really has installed.
-const OLD_BINS = (process.env.HD_OLD_BINS || '').split(':').filter(Boolean);
+// More hands older than the meter, for (k) alone: by default the one this machine has installed.
+const OLD_BINS = (process.env.HD_OLD_BINS !== undefined ? process.env.HD_OLD_BINS : INSTALLED)
+	.split(':').filter(Boolean);
 for (const b of OLD_BINS) check(`the old hand ${b} is there`, fs.existsSync(b), b);
 
 const ex = exampleBinary();

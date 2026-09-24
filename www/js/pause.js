@@ -346,6 +346,7 @@
 	var _here   = null;		// leaf -> the terms it was released on, here
 	var _tree   = null;		// a function returning the live tree
 	var _subs   = [];
+	var _pressed = {};		// leaves a person pressed on in this tab since it loaded
 
 	function now() {
 		return (typeof Date !== 'undefined') ? Date.now() : 0;
@@ -402,6 +403,22 @@
 	/// read as later to every tab's re-read, and to the sync.
 	function bump() {
 		_stamp = Math.max(now(), _stamp + 1);
+	}
+
+	/// Move the stamp for a change NOBODY PRESSED: a seed, a repair, a leaf tidied
+	/// away with its object. One past the record held here, never the clock.
+	///
+	/// The record merges whole and the later stamp wins, so a write stamped `now`
+	/// claims to be later than every record this device has not yet pulled. Until
+	/// the FU QA of 2026-09-24 (FA) the Optimiser's repair was stamped that way at
+	/// boot, before the first pull: it out-dated a Pause all pressed on another
+	/// device, won the merge, and its next push undid the Pause all everywhere.
+	/// One past what is held orders the write after everything this device has
+	/// seen and below any press made elsewhere since, which carries its clock and
+	/// wins. Where one does, the app's own write is what is lost, and a leaf the
+	/// app meant to play stays held -- the safe way to be wrong.
+	function follow() {
+		_stamp = _stamp + 1;
 	}
 
 	function save() {
@@ -533,6 +550,7 @@
 		var leaves = leafNodesUnder(node);
 		for (var i = 0; i < leaves.length; i++) {
 			var l = leaves[i];
+			_pressed[l.id] = true;
 			if (!releasedHereOnly(l.id)) continue;
 			if (playing) {
 				var terms = (typeof l.terms === 'string') ? l.terms : '';
@@ -565,14 +583,38 @@
 	/// Seed a leaf as paused at the moment it is created, without
 	/// touching anything else. Phase H's two default Diamonds start
 	/// paused this way, rather than by a branch that remembers.
+	///
+	/// Not a person's press, so stamped by `follow`: a device new to the account
+	/// seeds before its first pull, and must not out-date the account's own record.
 	function seedPaused(nodeId) {
 		if (!nodeId) return false;
 		current();
 		if (_paused[nodeId]) return false;
 		_paused[nodeId] = true;
-		bump();
+		follow();
 		save();
 		if (settle()) saveHere();
+		announce();
+		return true;
+	}
+
+	/// Has a person pressed play or pause on this leaf, or on a branch over it, in this
+	/// tab since it loaded? A repair that waits for the first pull must not take back a
+	/// hold that was pressed while it waited.
+	function pressedHere(nodeId) {
+		return !!(nodeId && _pressed[nodeId]);
+	}
+
+	/// Take back a leaf the app itself held, for a repair of an earlier seed. The
+	/// mirror of `seedPaused`, and like it stamped by `follow`, never as a press.
+	/// Releases nothing on this device.
+	function unseed(nodeId) {
+		if (!nodeId) return false;
+		current();
+		if (!_paused[nodeId]) return false;
+		delete _paused[nodeId];
+		follow();
+		save();
 		announce();
 		return true;
 	}
@@ -616,6 +658,10 @@
 	/// is harmless to `isPaused` but would keep a branch amber for
 	/// ever and would travel in the parcel for the life of the
 	/// account.
+	///
+	/// Tidying, not a press -- the retention sweep calls it with nobody present --
+	/// so it is stamped by `follow`. Where a newer record wins, the stale id rides
+	/// on in it until that device forgets the object too.
 	function forget(prefix) {
 		current();
 		var hit = false;
@@ -627,7 +673,7 @@
 			if (h === prefix || h.indexOf(prefix + '/') === 0) { delete _here[h]; gone = true; }
 		}
 		if (gone) saveHere();
-		if (hit) { bump(); save(); announce(); }
+		if (hit) { follow(); save(); announce(); }
 		return hit;
 	}
 
@@ -687,7 +733,7 @@
 
 	/// Drop everything held, for an account switch: one account's
 	/// pauses must never colour another's.
-	function reset() { _paused = null; _stamp = 0; _here = null; }
+	function reset() { _paused = null; _stamp = 0; _here = null; _pressed = {}; }
 
 	/// Every paused leaf, for a verifier or a diagnostic.
 	function pausedIds() { load(); return toRecord(_paused, _stamp).paused; }
@@ -723,6 +769,8 @@
 		set:        set,
 		toggle:     toggle,
 		seedPaused: seedPaused,
+		unseed:     unseed,
+		pressedHere: pressedHere,
 		releasedHere: releasedHere,
 		carry:      carry,
 		pruneHere:  pruneHere,

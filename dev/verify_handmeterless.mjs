@@ -13,6 +13,12 @@
 // tree built composes the exec, the relay (www/js/hand.js) carries it, daimond.js draws the
 // dialogs, and a real hand under the real kernel fence answers.
 //
+// THE NOTICE IS A PENDING TILE, NOT A MODAL (2026-09-24). It used to be a dialog raised the
+// moment the hand said hello -- mid-turn as often as not -- whose backdrop stood over whatever
+// the person was about to press next (`~/usr/code/ai/claude/specs/daimond_handrun_fix_20260924.md`,
+// "Left open"). `noteHandStale` in www/js/daimond.js raises it on the Pending panel instead, so
+// this file reads `window.DaimondPendingView.items()` for it rather than a `.modal.dlg` selector.
+//
 //   old hand   the relay's notice is shown, once a page; the exec the engine sends has no
 //              writable root; a command runs, reads and reports, and NOTHING under the granted
 //              root is written, created, removed or renamed; the result says why. And the FILE
@@ -46,15 +52,20 @@
 //    and the stand-in then answers with exactly what the hand reported, marked paired.
 //
 // Every hand gets FIXTURE roots only -- its grant, journal, trash and scratch under
-// ~/.cache/daimond-handdelete/$RC_SLOT/meterless -- never a real folder. Not under
+// ~/.cache/daimond-handdelete/$RC_SLOT/meterless-<run> -- never a real folder. Not under
 // ~/.cache/daimond, which the meter treats as a toolchain cache (see verify_handdelete.mjs).
+// Keyed by the RUN as well as the slot: two runs sharing a slot wiped each other's fixtures
+// mid-run on 2026-09-24, and the retry was part of a fleet OOM at 12:08.
 //
 // ── Running it ──────────────────────────────────────────────────────
 //
 //	DAIMOND_PORT=<a free port> node dev/verify_handmeterless.mjs
 //
-//	  HD_OLD_BINS=<a:b>  hands older than the meter; default the base build in the slot's
-//	                     `lane-bc-base` target. argonaut's installed hand is the one that matters.
+//	  HD_OLD_BINS=<a:b>  hands older than the meter; default BOTH the base build in the slot's
+//	                     `lane-bc-base` target and this machine's installed hand
+//	                     (~/.local/share/daimond/hand/bin/daimond-hand), which is the one that
+//	                     matters. A named hand that is not there FAILS the run: on 2026-09-24 a
+//	                     run that drove one hand read 36/0 where two read 58/0, and nothing said so.
 //	  HD_NEW_BIN=<path>  the hand with the meter; default this tree's release build
 //	  --keep             leave the fixtures behind
 //
@@ -71,6 +82,7 @@ import { fileURLToPath } from 'node:url';
 
 import { open as openApp } from './harness.mjs';
 import { whyStaleBinary, whyStaleWasm, refuse } from './staleguard.mjs';
+import { plant, fakeExtension, bridge } from './handbridge.mjs';
 
 const HERE	= path.dirname(fileURLToPath(import.meta.url));
 const ROOT	= path.join(HERE, '..');
@@ -78,10 +90,13 @@ const SLOT	= process.env.RC_SLOT || 'solo';
 const KEEP	= process.argv.slice(2).includes('--keep');
 const TARGETS	= path.join(os.homedir(), '.cache/cargo-targets', SLOT);
 const NEW_BIN	= process.env.HD_NEW_BIN || path.join(TARGETS, 'lane-hand/release/daimond-hand');
-const OLD_BINS	= (process.env.HD_OLD_BINS || path.join(TARGETS, 'lane-bc-base/release/daimond-hand'))
+const INSTALLED	= path.join(os.homedir(), '.local/share/daimond/hand/bin/daimond-hand');
+const OLD_BINS	= (process.env.HD_OLD_BINS
+	|| [path.join(TARGETS, 'lane-bc-base/release/daimond-hand'), INSTALLED].join(':'))
 	.split(':').filter(Boolean);
 // A SIBLING of ~/.cache/daimond, never a child of it -- see verify_handdelete.mjs.
-const FIX	= path.join(os.homedir(), '.cache/daimond-handdelete', SLOT, 'meterless');
+const RUN	= process.pid.toString(36) + '-' + Date.now().toString(36);
+const FIX	= path.join(os.homedir(), '.cache/daimond-handdelete', SLOT, 'meterless-' + RUN);
 const PORT	= Number(process.env.DAIMOND_PORT || 0);
 const PLANTED	= 100;
 const EXT_ID	= 'fake-ext-verify-handmeterless';
@@ -104,15 +119,13 @@ function listening(port) {
 }
 
 // ── Fixtures ──────────────────────────────────────────────────────────
-
-function plant(mark, n) {
-	fs.mkdirSync(mark, { recursive: true });
-	for (let i = 0; i < n; i++) {
-		const sub = path.join(mark, ['src', 'docs', 'sub/deep'][i % 3]);
-		fs.mkdirSync(sub, { recursive: true });
-		fs.writeFileSync(path.join(sub, `f${String(i).padStart(3, '0')}.txt`), `file ${i}\n`);
-	}
-}
+//
+// `plant`, `fakeExtension` and `bridge` moved out to `dev/handbridge.mjs`
+// (2026-09-24) so `dev/verify_handnotice.mjs` can pair a real, deliberately
+// UNMETERED hand to an ordinary chat page without a second copy of the
+// native-messaging wire: this file's own fixture stays a stand-in that DOES
+// say `meter:deletes` throughout (see the header), so it never raises the
+// notice that other file drives.
 
 function filesUnder(dir) {
 	let n = 0;
@@ -158,130 +171,33 @@ function changed(a, b) {
 	return out;
 }
 
-// ── The bridge: the page's port, carried to a real hand ─────────────
-
-/// The fake extension, installed before any script on the page runs. It has the shape the relay
-/// uses and no more: `connect` for the one port, `sendMessage` answering nothing (which the
-/// relay reads as an extension too old to know the question, its safe reading).
-function fakeExtension(extId) {
-	const ports = [];
-	window.__fromHand = (m) => {
-		for (const p of ports) {
-			if (p.dead) continue;
-			for (const f of p.msg) { try { f(m); } catch (e) { /* the relay's own fault */ } }
-		}
-	};
-	window.__handGone = () => {
-		for (const p of ports) {
-			if (p.dead) continue;
-			p.dead = true;
-			for (const f of p.gone) { try { f(); } catch (e) { /* ditto */ } }
-		}
-	};
-	const runtime = {
-		lastError: null,
-		connect(id, info) {
-			const p = { msg: [], gone: [], dead: false };
-			ports.push(p);
-			window.__toHand(JSON.stringify({ t: '__connect', name: (info && info.name) || '' }));
-			return {
-				name: (info && info.name) || '',
-				postMessage(m) {
-					if (p.dead) throw new Error('Attempting to use a disconnected port object');
-					window.__toHand(JSON.stringify(m));
-				},
-				disconnect() { p.dead = true; window.__toHand(JSON.stringify({ t: '__disconnect' })); },
-				onMessage: { addListener(f) { p.msg.push(f); } },
-				onDisconnect: { addListener(f) { p.gone.push(f); } },
-			};
-		},
-		sendMessage(id, msg, cb) { setTimeout(() => { if (cb) cb(null); }, 0); },
-	};
-	try {
-		if (!window.chrome) window.chrome = {};
-		Object.defineProperty(window.chrome, 'runtime', { value: runtime, configurable: true, writable: true });
-	} catch (e) { /* the relay will say there is no hand, and the checks will fail */ }
-	const stamp = () => { try { document.documentElement.dataset.daimondHands = extId; } catch (e) { /* later */ } };
-	if (document.documentElement) stamp();
-	else document.addEventListener('readystatechange', stamp, { once: true });
-}
-
-/// One page's hand: a process of `bin` per port the page opens, with fixture roots.
-function bridge(page, bin, root) {
-	const b = { sent: [], got: [], procs: 0, child: null };
-	let buf = Buffer.alloc(0);
-	let chain = Promise.resolve();
-	const toPage = (m) => {
-		b.got.push(m);
-		chain = chain.then(() => page.evaluate((x) => window.__fromHand(x), m)).catch(() => {});
-	};
-	const start = () => {
-		const env = {
-			...process.env,
-			DAIMOND_HAND_ROOT:        path.join(root, 'grant'),
-			DAIMOND_HAND_JOURNAL_DIR: path.join(root, 'journal'),
-			DAIMOND_HAND_TRASH_DIR:   path.join(root, 'trash'),
-			DAIMOND_HAND_SCRATCH_DIR: path.join(root, 'scratch'),
-		};
-		for (const k of ['DAIMOND_HAND_JOURNAL_DIR', 'DAIMOND_HAND_TRASH_DIR', 'DAIMOND_HAND_SCRATCH_DIR']) {
-			fs.mkdirSync(env[k], { recursive: true });
-		}
-		const child = spawn(bin, [], { cwd: root, env, stdio: ['pipe', 'pipe', 'pipe'] });
-		b.procs += 1;
-		b.child = child;
-		buf = Buffer.alloc(0);
-		child.stdout.on('data', (d) => {
-			buf = Buffer.concat([buf, d]);
-			for (;;) {
-				if (buf.length < 4) return;
-				const n = LE ? buf.readUInt32LE(0) : buf.readUInt32BE(0);
-				if (buf.length < 4 + n) return;
-				const body = buf.subarray(4, 4 + n).toString('utf8');
-				buf = buf.subarray(4 + n);
-				let m;
-				try { m = JSON.parse(body); } catch (e) { continue; }
-				toPage(m);
-			}
-		});
-		child.stderr.on('data', () => { /* the hand's own log; the checks read the wire */ });
-		child.on('exit', () => {
-			if (b.child === child) {
-				b.child = null;
-				chain = chain.then(() => page.evaluate(() => window.__handGone())).catch(() => {});
-			}
-		});
-	};
-	const write = (m) => {
-		if (!b.child) return;
-		const body = Buffer.from(JSON.stringify(m), 'utf8');
-		const head = Buffer.alloc(4);
-		if (LE) head.writeUInt32LE(body.length, 0); else head.writeUInt32BE(body.length, 0);
-		try { b.child.stdin.write(Buffer.concat([head, body])); } catch (e) { /* gone */ }
-	};
-	b.fromPage = (raw) => {
-		let m;
-		try { m = JSON.parse(raw); } catch (e) { return; }
-		if (m.t === '__connect') { if (b.child) b.child.kill('SIGKILL'); start(); return; }
-		if (m.t === '__disconnect') { const c = b.child; b.child = null; if (c) c.kill('SIGKILL'); return; }
-		b.sent.push(m);
-		write(m);
-		if (m.t === 'bye') { const c = b.child; setTimeout(() => { if (c) c.kill('SIGKILL'); }, 500); }
-	};
-	b.close = () => { const c = b.child; b.child = null; if (c) c.kill('SIGKILL'); };
-	// The next link starts `next` instead, and this one's hand goes as a crashed one does: the
-	// page is told the port died, and asks again when something needs the hand.
-	b.swapTo = (next) => {
-		bin = next;
-		const c = b.child;
-		if (c) c.kill('SIGKILL');
-	};
-	return b;
-}
-
 // ── One hand, through one page ──────────────────────────────────────
 
-const NOTICE = '.modal.dlg[data-kind="notice"]';
 const HELD   = '.modal.dlg[data-ask="hand-held"]';
+
+/// The stale-hand Pending tile, if one is on the panel right now — `{ id, headline, detail }`,
+/// or null. Polled rather than waited-for-a-selector, since a Pending tile mounts no new DOM
+/// under a fixed selector the way a dialog does: `render()` rebuilds `#pending-list` on every
+/// `Pending.save()`, so the tile is read from the model `DaimondPendingView` exposes, which is
+/// the same data the panel draws from and is there the instant `Pending.add` runs.
+async function staleNotice(page) {
+	return page.evaluate(() => {
+		const items = window.DaimondPendingView ? window.DaimondPendingView.items() : [];
+		const title = window.DaimondI18n ? window.DaimondI18n.t('hand.stale_title') : '';
+		const it = items.find((x) => x.kind === 'notice' && x.headline === title);
+		return it ? { id: it.id, headline: it.headline, detail: it.detail } : null;
+	});
+}
+
+/// Wait up to `ms` for `staleNotice` to answer non-null, or give up and return null.
+async function waitStaleNotice(page, ms) {
+	for (const t0 = Date.now(); Date.now() - t0 < ms; ) {
+		const n = await staleNotice(page);
+		if (n) return n;
+		await sleep(200);
+	}
+	return null;
+}
 
 async function drive(label, bin, meters) {
 	console.log(`\n── ${label}: ${bin} (${meters ? 'meters removals' : 'older than the meter'}) ──`);
@@ -296,7 +212,7 @@ async function drive(label, bin, meters) {
 
 	let br = null;
 	const s = await openApp({
-		name: `meterless-${label}-${SLOT}`, connect: false,
+		name: `meterless-${label}-${SLOT}-${RUN}`, connect: false,
 		route: async (page) => {
 			br = bridge(page, bin, root);
 			await page.exposeBinding('__toHand', (src, raw) => br.fromPage(raw));
@@ -329,33 +245,37 @@ async function drive(label, bin, meters) {
 		}
 
 		// ── The notice ────────────────────────────────────────────────
-		const notice = await page.waitForSelector(NOTICE, { timeout: meters ? 3000 : 15000 }).catch(() => null);
+		const notice = await waitStaleNotice(page, meters ? 3000 : 15000);
 		if (!meters) {
-			const txt = notice ? await notice.innerText() : '';
+			const txt = notice ? notice.detail : '';
 			const host = (caps.find((c) => c.startsWith('host:')) || 'host:').slice(5);
 			check(`${label}: the person is told this machine's hand is older than the meter`,
-				!!notice && /needs updating/.test(txt) && /older than the deletion meter/.test(txt),
-				JSON.stringify(txt).slice(0, 200));
+				!!notice && /needs updating/i.test(notice.headline)
+					&& /older than the deletion meter/.test(txt),
+				JSON.stringify(notice).slice(0, 200));
 			check(`${label}: naming the machine and the update, word for word`,
-				txt.includes(host || 'this computer')
+				!!notice
+					&& txt.includes(host || 'this computer')
 					&& txt.includes('cargo build --release --manifest-path hand/Cargo.toml')
 					&& txt.includes('hand/install/install.sh') && /reload this page with nothing running/.test(txt),
 				JSON.stringify(txt).slice(-240));
-			if (notice) await page.click(`${NOTICE} .dlg-ok`, { force: true });
+			// The tick and the `✕` both just take a notice tile down (see `Pending`'s header in
+			// www/js/daimond.js) — dropping it is what a person acting on it does either way.
+			if (notice) await page.evaluate((id) => window.DaimondPendingView.drop(id), notice.id);
 			// Once a page: the link goes, comes back, and the hand says hello again. `status`
 			// would answer from what the relay remembers without reopening anything, so the link
 			// is reopened by a question only the hand can answer.
 			await page.evaluate(() => window.DaimondHand.close());
 			await sleep(300);
 			await page.evaluate(() => window.DaimondHand.runs().catch(() => null));
-			const again = await page.waitForSelector(NOTICE, { timeout: 3000 }).catch(() => null);
+			const again = await waitStaleNotice(page, 3000);
 			// Told at all, first: a page that never says it is not saying it "once", and without
 			// that half this check passed on the page from before the gate.
 			check(`${label}: and told once a page, not on every hello`,
 				!!notice && !again && br.procs >= 2,
 				`${br.procs} hand processes, notice first: ${!!notice}, notice again: ${!!again}`);
 		} else {
-			check(`${label}: a hand that meters brings no notice`, !notice, notice ? await notice.innerText() : '');
+			check(`${label}: a hand that meters brings no notice`, !notice, notice ? JSON.stringify(notice) : '');
 		}
 
 		// ── The stand-in: what the hand reports, marked paired ────────
@@ -513,11 +433,14 @@ async function drive(label, bin, meters) {
 			br.swapTo(OLD_BINS[0]);
 			await sleep(500);
 			// Every question the turn puts from here is answered yes, as a person who did not
-			// notice the swap would answer it; the old hand's notice is dismissed as it comes.
+			// notice the swap would answer it. The old hand's notice is a Pending tile now and
+			// blocks nothing, so it is dropped for tidiness rather than because anything here
+			// waits on it being gone.
 			await page.evaluate(() => { window.__h3done = false; window.__h3.then(() => { window.__h3done = true; }); });
 			for (let i = 0; i < 120 && asked && !(await page.evaluate(() => window.__h3done)); i++) {
 				if (await page.$(ASK + ' .dlg-ok:not([disabled])')) await page.click(ASK + ' .dlg-ok', { force: true });
-				if (await page.$(NOTICE)) await page.click(`${NOTICE} .dlg-ok`, { force: true });
+				const swapNotice = await staleNotice(page);
+				if (swapNotice) await page.evaluate((id) => window.DaimondPendingView.drop(id), swapNotice.id);
 				await sleep(250);
 			}
 			const h3 = await page.evaluate(() => Promise.race([window.__h3,
@@ -533,8 +456,8 @@ async function drive(label, bin, meters) {
 			await page.evaluate(async (m) => (await import('/pkg/oxedyne_daimond.js'))
 				.set_permission_mode(m), was);
 			// The old hand's notice, which its hello brought with it.
-			const late = await page.$(NOTICE);
-			if (late) await page.click(`${NOTICE} .dlg-ok`, { force: true });
+			const late = await staleNotice(page);
+			if (late) await page.evaluate((id) => window.DaimondPendingView.drop(id), late.id);
 		}
 	} finally {
 		if (br) br.close();

@@ -84,6 +84,17 @@ const answersMatching = (cs, needle) => allMsgs(cs).filter((m) =>
 	m.role === 'assistant' && m.content && m.content.trim() && !m.interrupted
 	&& new RegExp(needle, 'i').test(m.content));
 
+// IS THE ANSWER DRAWN, AND THE HAND-OFF CHROME GONE? Found by the answer's own mid, which
+// its tile carries. The words these checks once matched, "Mock reply to:", are never on
+// the screen: the mock answers a Diamond's turn with a crystal, and these chats are a
+// Diamond's, so the old checks read false on every build (2026-09-24).
+const drawnAndCleared = (pg, mid, ms) => !mid ? Promise.resolve(false) : until(pg, (m) => {
+	const out = document.getElementById('chat-output');
+	if (!out) return false;
+	const tile = out.querySelector('[data-mid="' + (window.CSS && CSS.escape ? CSS.escape(m) : m) + '"]');
+	return !!tile && !/sent to your other/i.test(out.innerText);
+}, String(mid), ms);
+
 // A robust new-chat: the rail's new-session control occasionally needs a second go at
 // desktop width (a page animation loses the first click) -- a harness flake unrelated
 // to the hand-off under test.
@@ -226,21 +237,27 @@ try {
 	check('CASE 1: B RAN the turn once the parcel arrived (~' + Math.round((Date.now() - t0) / 1000) + 's)',
 		bAns1.length >= 1, 'B answers: ' + bAns1.length);
 
-	const aStore1 = await untilChats(a, (cs) => answersMatching(cs, 'SLOWSYNC').length >= 1, 30000);
-	// Match the ANSWER bubble, not the prompt echo. The mock answers "Mock reply to:
-	// <prompt>", so "Mock reply to" appears ONLY in the assistant answer (never the
-	// user bubble) -- a stranded turn, whose prompt is still on screen, does not match.
-	const rendered1 = await until(a.page, () => {
-		const out = document.getElementById('chat-output');
-		const txt = out ? out.innerText : '';
-		return /Mock reply to:[^\n]*SLOWSYNC/i.test(txt) && !/sent to your other/i.test(txt);
-	}, null, 30000);
-	check('CASE 1: the answer synced back to A and rendered (spinner cleared)',
-		rendered1 && answersMatching(aStore1, 'SLOWSYNC').length >= 1,
-		'in A store: ' + answersMatching(aStore1, 'SLOWSYNC').length + ' rendered: ' + rendered1);
+	// THE SYNCED COPY, NOT THE STREAMED ONE (2026-09-24). The final frame draws the answer
+	// on A as a provisional row, and that row can reach A's store; it is not the answer
+	// coming home. What comes home is B's parcel, which 409s behind A's push while B's
+	// pull is withheld, so it lands only because B retries once the pull does. Measured
+	// from the send: the parcel is delivered at CASE1_BLOCK_MS, and the answer must be
+	// home within 25 s of that. Before the fix B waited for "the next change" and it never
+	// came; and B acked its report off the relay before A collected it.
+	const syncedBy = t0 + CASE1_BLOCK_MS + 25000;
+	const aStore1 = await untilChats(a, (cs) => answersMatching(cs, 'SLOWSYNC').some((m) => !m.provisional),
+		Math.max(1000, syncedBy - Date.now()));
+	const ans1 = answersMatching(aStore1, 'SLOWSYNC');
+	const synced1 = ans1.filter((m) => !m.provisional);
+	check('CASE 1: the answer synced back to A (its synced copy, not only the streamed one)',
+		synced1.length >= 1, 'in A store: ' + ans1.length + ' (synced ' + synced1.length + ') at +'
+		+ Math.round((Date.now() - t0) / 1000) + 's; ranOn=' + JSON.stringify(ans1.map((m) => m.ranOn || '')));
+	const mid1 = synced1.length ? String(synced1[0].mid) : '';
+	const rendered1 = await drawnAndCleared(a.page, mid1, 15000);
+	check('CASE 1: and A drew it with the hand-off chrome cleared (no "Sent to your other devices")',
+		rendered1, 'answer mid ' + (mid1 || 'none') + ', drawn and cleared: ' + rendered1);
 	check('CASE 1: exactly one answer for the hand-off turn (no double-run through the wait)',
-		answersMatching(aStore1, 'SLOWSYNC').length === 1,
-		'answers: ' + answersMatching(aStore1, 'SLOWSYNC').length);
+		ans1.length === 1, 'answers: ' + ans1.length);
 	await shot(a, 'handoff_slowparcel_case1');
 
 	await a.page.setViewportSize({ width: 1500, height: 950 });
@@ -300,12 +317,8 @@ try {
 		ans2.length >= 1 && elapsed2 < 90, 'elapsed: ' + elapsed2 + 's');
 	check('CASE 2: exactly one answer -- one device ran it, never both',
 		ans2.length === 1, 'answers: ' + ans2.length);
-	// Match the ANSWER bubble ("Mock reply to: …DEADSYNC…"), not the prompt echo.
-	const rendered2 = await until(a.page, () => {
-		const out = document.getElementById('chat-output');
-		const txt = out ? out.innerText : '';
-		return /Mock reply to:[^\n]*DEADSYNC/i.test(txt) && !/sent to your other/i.test(txt);
-	}, null, 20000);
+	// The ANSWER's own tile, not the prompt echo.
+	const rendered2 = await drawnAndCleared(a.page, ans2.length ? ans2[0].mid : '', 20000);
 	check('CASE 2: A rendered the answer with the spinner cleared',
 		rendered2 && ans2.length >= 1, 'answered at ~' + elapsed2 + 's; rendered: ' + rendered2);
 	await shot(a, 'handoff_slowparcel_case2');
@@ -323,10 +336,12 @@ try {
 	const bAll3 = []; const bAll3Listener = (m) => bAll3.push(m.text());
 	b.page.on('console', bAll3Listener);
 
-	const newId3 = await newChatRetry(a);
-	check('A created a brand-new chat (CASE 3)', !!newId3, 'chat id: ' + newId3);
+	// The desktop width FIRST: CASE 2 left A at phone width, where the rail's new-chat
+	// control is off the screen, and the click threw before CASE 3 began (2026-09-24).
 	await a.page.setViewportSize({ width: 1500, height: 950 });
 	await a.page.waitForTimeout(300);
+	const newId3 = await newChatRetry(a);
+	check('A created a brand-new chat (CASE 3)', !!newId3, 'chat id: ' + newId3);
 	// Seed the chat and let B sync it, so B holds a KNOWN, EARLIER thread.
 	await chat(a, 'CASE3 base turn');
 	await settle(a.page);

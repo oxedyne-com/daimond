@@ -302,6 +302,12 @@
 			turnId:  String(o.turnId || ''),
 			chatId:  String(o.chatId || ''),
 			status:  String(o.status || 'done'),	// done | refused-spend | error | aborted | parked | undeliverable
+			// THE DEVICE THIS REPORT IS FOR: the errand's dispatcher. The relay's ack is one
+			// account-wide watermark, so any device that collects the report and acks past it
+			// drops it for every device -- the runner first of all, whose own collect folds
+			// the report it has just posted. A collector that is not `to` leaves the row on
+			// the relay for it (`noteHeldFor`). '' from an older runner, which is acked as before.
+			to:      String(o.to || ''),
 			parcelVersion: o.parcelVersion | 0,	// which version already carries the answer
 			cost:    o.cost || null,
 			why:     o.why ? String(o.why) : '',	// a human sentence for the failure states
@@ -426,6 +432,7 @@
 			status:  String(o.status || 'done'),	// done | error | refused | stale
 			why:     o.why ? String(o.why) : '',	// the compiler's sentence, or the check's
 			by:      String(o.by || ''),			// the lease holder, named by id not by label
+			to:      String(o.to || ''),			// the compile's dispatcher, as a report's `to`
 			ms:      o.ms | 0,						// wall time of the compile alone
 			heap:    o.heap || { before: 0, after: 0, growth: 0, headroom: 0 },
 			pages:   o.pages | 0,
@@ -3419,6 +3426,10 @@
 	///   'lock'      -- Daimond locked under the turn; nothing can be sealed.
 	/// Anything else is `null`: unchanged behaviour, the errand stays on the relay.
 	function runnerErrorKind(err) {
+		// A person's pause, landing on this device between the take and the turn: the
+		// refusal carries `paused` (models.js `pauseError`), and it is theirs, not a crash
+		// to leave pinned to the deadline (R2 QA, F2).
+		if (err && err.paused) return 'paused';
 		var msg = String((err && (err.message || err.why)) || err || '');
 		var code = +((err && (err.status || err.code)) || 0);
 		if (code === 401 || code === 402) return 'provider';
@@ -3433,7 +3444,11 @@
 	/// The sentence a handed-back failure carries home, by kind. One line, for the
 	/// originator's tile -- it is the whole of what they are told, so it says what
 	/// happened, where, and that the turn is theirs again.
-	function runnerErrorWhy(kind, name) {
+	///
+	/// A pause is the one kind that brings its own sentence: the refusal already names the
+	/// Diamond or chat and the play that resumes it, so `err`'s message goes home as it is.
+	function runnerErrorWhy(kind, name, err) {
+		if (kind === 'paused' && err && err.message) return String(err.message);
 		var who = String(name || '') || 'the other device';
 		if (kind === 'provider') return 'The AI provider refused the turn on ' + who
 			+ ' -- its key or its credit. Nothing was spent; run it here or top up.';
@@ -3540,8 +3555,11 @@
 	///                carries home ("The AI provider refused the turn on argonaut");
 	///                absent reads as "the other device";
 	///   cas          the lease CAS (`syncCas` over the real sync);
+	///   pauseHold    optional (errand) -> { node, why } | null: a person's pause holding
+	///                the turn, on this device's set merged with the errand's `pause`;
+	///                answered before the take. Absent -> no pause is asked here;
 	///   reconstruct  async (errand) -> ctx: pull to >= parcelVersion, find the chat,
-	///                `scopeChatTo`, apply `pause`, fetch chunks;
+	///                `scopeChatTo`, fetch chunks;
 	///   runTurn      async (ctx, prompt, { onProgress }): the ordinary turn engine,
 	///                calling `onProgress` on journal events so the lease renews;
 	///   abort        (): hard-stop the in-flight turn (`chat.app.abort`);
@@ -3592,7 +3610,7 @@
 		// GLOBAL count so the re-dispatcher increments from the true total.
 		try {
 			if (d.post) await d.post(makeReport({
-				eid: e.eid, turnId: turnId, chatId: e.chatId,
+				eid: e.eid, to: e.dispatchedBy, turnId: turnId, chatId: e.chatId,
 				status: terminal ? 'aborted' : 'parked', why: why, parkCount: out.next }));
 			trace.push('report');
 		} catch (err) { /* the release below still frees the turn */ }
@@ -3682,11 +3700,31 @@
 		if (!age.ok) {
 			trace.push('stale-turn');
 			try {
-				if (d.post) await d.post(makeReport({ eid: e.eid, turnId: turnId, chatId: e.chatId,
+				if (d.post) await d.post(makeReport({ eid: e.eid, to: e.dispatchedBy, turnId: turnId, chatId: e.chatId,
 					status: 'aborted', why: STALE_TURN_WHY }));
 				trace.push('report');
 			} catch (err) { /* refused either way; the sender's own window ends it too */ }
 			return { ran: false, why: 'stale-turn', age: age, trace: trace };
+		}
+
+		// A PERSON'S PAUSE (R2 QA, F2). `pauseHold` answers `{ node, why }` when a pause
+		// holds this turn, on this device's set merged with the one the errand carries from
+		// dispatch -- the parcel that would tell this device follows the errand, and a
+		// sender on an older build never asked. Here, with the age rule, so nothing that
+		// could start a turn comes first; and before the nominee, since every device refuses
+		// it alike. Answered like a hand-back: an `error` report, which the sender shows with
+		// its [Run here], and there the same pause refuses the turn until play is pressed.
+		var ph = null;
+		try { ph = d.pauseHold ? d.pauseHold(e) : null; } catch (err) { ph = null; }
+		if (ph) {
+			trace.push('paused');
+			diag('collect refuse', 'turn=' + turnId + ' paused at ' + String(ph.node || ''));
+			try {
+				if (d.post) await d.post(makeReport({ eid: e.eid, turnId: turnId, chatId: e.chatId,
+					status: 'error', why: String(ph.why || 'This turn is paused.') }));
+				trace.push('report');
+			} catch (err) { /* refused either way; the sender's deadline ends it too */ }
+			return { ran: false, why: 'paused', node: String(ph.node || ''), trace: trace };
 		}
 
 		// D1(c) — DEFER TO THE NOMINATED RUNNER. When the account has named an always-on
@@ -3815,7 +3853,7 @@
 				trace.push(undeliverable ? 'reconstruct-undeliverable' : 'reconstruct-failed');
 				try { if (typeof console !== 'undefined') console.error('peer: reconstruct '
 					+ (undeliverable ? 'undeliverable' : 'failed') + ' for turn ' + turnId + ' -- ' + rwhy); } catch (e2) {}
-				try { if (d.post) await d.post(makeReport({ eid: e.eid, turnId: turnId, chatId: e.chatId,
+				try { if (d.post) await d.post(makeReport({ eid: e.eid, to: e.dispatchedBy, turnId: turnId, chatId: e.chatId,
 					status: undeliverable ? 'undeliverable' : 'error', why: rwhy })); }
 				catch (e2) { /* the release below still frees the turn */ }
 				try { await leaseSet(turnId, d.selfId, 'released', d.cas, d.now); trace.push('release'); }
@@ -3886,9 +3924,9 @@
 				var ek = runnerErrorKind(err);
 				if (ek) {
 					stopCheck();
-					var ewhy = runnerErrorWhy(ek, d.selfName);
+					var ewhy = runnerErrorWhy(ek, d.selfName, err);
 					trace.push('handback');
-					try { if (d.post) await d.post(makeReport({ eid: e.eid, turnId: turnId,
+					try { if (d.post) await d.post(makeReport({ eid: e.eid, to: e.dispatchedBy, turnId: turnId,
 						chatId: e.chatId, status: 'error', why: ewhy })); trace.push('report'); }
 					catch (e2) { /* the release below still frees the turn */ }
 					try { await leaseSet(turnId, d.selfId, 'released', d.cas, d.now); trace.push('release'); }
@@ -3940,7 +3978,7 @@
 				catch (err) { /* a dropped final frame only means the parcel is the first sight */ }
 			}
 			try {
-				await d.post(makeReport({ eid: e.eid, turnId: turnId, chatId: e.chatId,
+				await d.post(makeReport({ eid: e.eid, to: e.dispatchedBy, turnId: turnId, chatId: e.chatId,
 					status: 'done', parcelVersion: 0, finalTail: finalTail ? 1 : 0 }));
 				trace.push('report');
 			} catch (err) { /* the report is only the nudge; the frame already carried the answer */ }
@@ -4070,7 +4108,7 @@
 		async function report(f) {
 			try {
 				await d.post(makeBuilt(Object.assign({ eid: e.eid, cid: cid, main: e.main,
-					docKey: e.docKey, by: String(d.selfId || '') }, f)));
+					docKey: e.docKey, by: String(d.selfId || ''), to: e.dispatchedBy }, f)));
 				trace.push('report');
 			} catch (err) { /* the release below still frees the compile */ }
 		}
@@ -4212,6 +4250,42 @@
 			try { if (await _settled(env)) return false; } catch (e) { /* on doubt, hold */ }
 		}
 		return true;
+	}
+
+	// How long a collector leaves a note on the relay for the device it names: the span in
+	// which a hand-off can still be live (`holdOwnDispatch` holds an own errand as long).
+	// Past it the parcel carries the answer home, and the row may only freeze the cursor.
+	var NOTE_HOLD_MS = DISPATCH_DEADLINE_MS + LEASE_TTL_MS;
+
+	/// The device a collected note must be left on the relay for, or '' when this device
+	/// may take it and let the ack pass it. Pure.
+	///
+	/// THE RELAY'S ACK IS ONE WATERMARK FOR THE WHOLE ACCOUNT (gateway `ack_posts`): any
+	/// device that acks past a row drops it for every device. A message survives that,
+	/// because the collector folds it into the mailbox record the parcel carries; a note
+	/// does not, because it is folded into page memory on the device that collected it.
+	/// So a report acked off by the runner that posted it never reaches the dispatcher it
+	/// was written for (2026-09-24, `verify_handoff_slowparcel` CASE 1): the runner's own
+	/// collect folds its report, its finished run then lets the errand go and acks through
+	/// both, and the phone sits on "Sent to your other devices" with [Take back] offered
+	/// over a turn that has already run.
+	///
+	/// A note that names its device (`to`: a report's or a built's dispatcher) is held
+	/// by every other collector until that device acks it or `NOTE_HOLD_MS` has passed
+	/// since the relay took it. `row.ts` is the relay's arrival stamp in Unix seconds
+	/// (a value already in milliseconds is read as one); `relayNow` is the relay's clock,
+	/// or null to read the local one.
+	function noteHeldFor(env, row, selfId, relayNow) {
+		var to = String((env && env.to) || '');
+		if (!to || to === String(selfId || '')) return '';
+		if (!env || env.t === T_ERRAND || env.t === T_COMPILE) return '';	// work is claimed, not held for
+		// A row with no stamp cannot be aged, so it is not held: a hold that could never
+		// end would freeze this device's ack cursor for the row's whole life (S-HAND #2).
+		var ts = leaseMs(row && row.ts);
+		var at = ts >= 1e11 ? ts : ts * 1000;
+		if (!(at > 0)) return '';
+		var now = (relayNow != null && plausibleMs(relayNow)) ? plausibleMs(relayNow) : Date.now();
+		return (now - at > NOTE_HOLD_MS) ? '' : to;
 	}
 
 	// ════════════════════════════════════════════════════════════
@@ -4505,6 +4579,9 @@
 		/// registers the "is this turn finished here?" probe daimond.js supplies.
 		holdOwnDispatch: holdOwnDispatch,
 		onSettled:       onSettled,
+		/// The device a collected note is left on the relay for (post.js `takeRow`), or ''.
+		noteHeldFor:     noteHeldFor,
+		NOTE_HOLD_MS:    NOTE_HOLD_MS,
 		/// Register the runners the collector hands a verified envelope to. Set by
 		/// daimond.js; absent, `absorb` verifies and drops.
 		onErrand: onErrand,

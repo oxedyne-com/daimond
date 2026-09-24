@@ -76,6 +76,7 @@
 	<h3 id="s5">Ce qu’un daimon peut ouvrir</h3>
 	<p>Un daimon ne peut ouvrir que ce qui est dans l’espace de travail de son diamond. Rien d’autre n’est lisible ni inscriptible par les outils de fichier, ni par le daimon, ni par un agent qu’il dépêche. La vérification est dans le code compilé, à l’unique porte que traverse chaque outil de fichier, et ce code est dans un paquet qui se construit de façon reproductible depuis une source publique : ce n’est donc pas une consigne dans un prompt.</p>
 	<p>Cette règle règle ce qu’un daimon peut atteindre, et ne dit rien de là où finit ce qu’il lit, car tout ce qu’il ouvre part chez votre fournisseur de modèle avec le reste du tour.</p>
+	<p>Supprimer ou écraser compte de la même façon. Au-delà d’une limite que vous fixez dans <span class="ui">Réglages</span> — huit par tour par défaut —, le tour s’arrête là et demande avant de continuer. Écraser en grande partie, c’est garder moins de la moitié de ce qu’il y avait. Une copie de chaque fichier supprimé ou écrasé est gardée pendant au moins sept jours.</p>
 
 	<h3 id="s6">La liste des pièces jointes</h3>
 	<p>Les lignes portent un âge, <span class="ui">Ajouté {when}</span>. Un chemin qui n’est plus là est dessiné comme <span class="ui">Disparu</span> sans action d’ouverture, si bien qu’une ligne morte ne se fait jamais passer pour une vivante.</p>

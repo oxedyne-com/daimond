@@ -867,10 +867,13 @@
 		// explained reads as the app being broken. The machine is named from
 		// `host:` or not at all: the hello's own `host` is the hand's program
 		// name, and a notice about a computer called "daimond-hand" sends the
-		// person looking for a machine they do not have.
+		// person looking for a machine they do not have. The version rides along
+		// too, so the caller can tell one stale build's notice from the next
+		// one's rather than showing it only once for ever (`state.version` is
+		// this same hello's own field, set just above).
 		if (!meterlessSaid && fencesWithoutMeter(state.caps) && deps.onMeterless) {
 			meterlessSaid = true;
-			try { deps.onMeterless(host || ''); } catch (e) {}
+			try { deps.onMeterless(host || '', state.version || ''); } catch (e) {}
 		}
 	}
 

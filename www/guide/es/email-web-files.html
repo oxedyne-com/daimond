@@ -76,6 +76,7 @@
 	<h3 id="s5">Qué puede abrir un daimon</h3>
 	<p>Un daimon solo puede abrir lo que está en el espacio de trabajo de su diamond. Nada más se puede leer ni escribir con las herramientas de archivos, ni por el daimon ni por ningún ayudante que despache. La comprobación está en código compilado en la única puerta por la que pasa cada herramienta de archivos, y ese código está en un paquete que se compila de forma reproducible a partir de fuente pública, así que no es una instrucción en un prompt.</p>
 	<p>Esa regla decide qué puede alcanzar un daimon y no dice nada sobre dónde termina lo que lee, porque lo que abre va a tu proveedor de modelo junto con el resto del turno.</p>
+	<p>Borrar o sobrescribir cuenta de la misma manera. Pasado un límite que fijas en <span class="ui">Ajustes</span> —ocho en un turno por defecto—, el turno se detiene ahí y pregunta antes de seguir. Sobrescribir en su mayor parte es conservar menos de la mitad de lo que había. Se guarda una copia de cada archivo borrado o sobrescrito durante al menos siete días.</p>
 
 	<h3 id="s6">La lista de adjuntos</h3>
 	<p>Las filas llevan una antigüedad, <span class="ui">Añadido {when}</span>. Una ruta que ya no está se dibuja como <span class="ui">Desaparecido</span> sin acción de abrir, así que una fila muerta nunca se hace pasar por una viva.</p>

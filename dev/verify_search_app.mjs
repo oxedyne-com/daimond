@@ -670,6 +670,10 @@ const trySearch = (q, opts) => p.evaluate(async ({ q, opts }) => {
 	await ask(Q);
 	await p.waitForTimeout(400);
 	check((await dialogNow()).shown, 'a second search asks again rather than riding the first yes');
+	// The affirmative is held for its first second on an unbidden question (R6), so a
+	// click fired before that second is up lands on a disabled `.dlg-ok` and does
+	// nothing. Wait for it to be pressable first, as verify_deletekeep's F8 does.
+	await p.waitForSelector('.modal.dlg .dlg-ok:not([disabled])', { timeout: 2000 }).catch(() => {});
 	await p.evaluate(() => { const b = document.querySelector('.modal.dlg .dlg-ok'); if (b) b.click(); });
 	await p.waitForTimeout(300);
 	check(await p.evaluate(() => window.__settled) === 'allow', 'and allowing lets it through');

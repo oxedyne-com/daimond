@@ -1526,6 +1526,7 @@ function buildS61Sandbox(P, spy) {
 		handoffTargetLabel: () => '',
 		peerUiStateFor:     () => 'no-peer-awake',
 		selfDeviceId:       () => 'SELF',
+		turnHold:           () => '',						// nothing paused here
 		_askCard:           null,
 	};
 	const src = [
@@ -2968,6 +2969,28 @@ async function runRunnerAcceptance(P, L, check) {
 		check('the lease ends released', sync.leases()[TID].mode === 'released');
 	}
 
+	// ── R4b. THE REPORT NAMES THE DEVICE IT IS FOR (2026-09-24): the errand's dispatcher,
+	//    so a collector that is not that device leaves it on the relay (`noteHeldFor`)
+	//    rather than acking it away before the phone has collected it. ──
+	{
+		L.forget();
+		const sync = makeLeaseSync({});
+		let report = null;
+		const e2 = sentErrand(P, { turnId: TID, chatId: 'chat-r', prompt: 'compute', eid: 'e-run2',
+			deadline: 9e15, dispatchedBy: 'PHONE' });
+		const ctxChat = { id: 'chat-r', messages: [{ role: 'user', content: 'compute', mid: TID, ts: 1 }] };
+		const res = await P.runErrand(e2, {
+			selfId: 'peerA', cas: P.syncCas(sync), now: () => 2000,
+			reconstruct: async () => ({ chat: ctxChat }),
+			runTurn: async (ctx) => { P.foldAssistant(ctx.chat, { mid: 'a1', turnId: TID, text: 'ok', ts: 3 }); },
+			abort: () => {}, pushResult: async () => 1,
+			post: async (rep) => { report = rep; }, ack: async () => {},
+		});
+		check('R4b: the done report names the dispatcher it is for',
+			res.done === true && !!report && report.status === 'done' && report.to === 'PHONE',
+			JSON.stringify(report && { status: report.status, to: report.to }));
+	}
+
 	// ── R5. A RUNNER WITH NO FINAL-FRAME DEP (an older build's wiring) still completes,
 	//    and says so in the report, so the originator falls back to the parcel. ──
 	{
@@ -3379,6 +3402,8 @@ async function runElectedTriedAcceptance(P, check) {
 				return Promise.resolve({ ok: true });
 			},
 			scheduleDispatchFallback: () => {}, runDispatchFallback: () => {},
+			// Nothing here is paused: the re-seat is asked the pause first (F2).
+			turnHold: () => '',
 			DISPATCH_RETRY_MAX: 3,
 			_msNum: (x) => +x || 0,
 		};
@@ -3453,6 +3478,36 @@ async function runSettleMoneySafety(P, L, check) {
 		check('holdOwnDispatch DROPS once the settle probe says the turn is finished here',
 			(await P.holdOwnDispatch({ turnId: TID, deadline: now + P.DISPATCH_DEADLINE_MS }, now)) === false);
 		P.onSettled(null);					// leave the module as we found it for later suites
+	}
+
+	// ── noteHeldFor: a note naming another device stays on the relay for it (2026-09-24) ──
+	// The relay's ack is one watermark for the account, so a runner that acked past the
+	// report it had just posted dropped it before the phone collected it.
+	{
+		const has = typeof P.noteHeldFor === 'function';
+		const H = (env, rowTs, self, relayNow) => has ? P.noteHeldFor(env, { ts: rowTs }, self, relayNow) : 'absent';
+		const sec = Math.floor(now / 1000);
+		const rep = (to) => P.makeReport({ eid: 'eN', to: to, turnId: TID, chatId: 'c', status: 'done' });
+		check('noteHeldFor: a report for the PHONE is held by the runner that collects it',
+			H(rep('PHONE'), sec, 'RUNNER', now) === 'PHONE');
+		check('noteHeldFor: and taken by the phone it names',
+			H(rep('PHONE'), sec, 'PHONE', now) === '');
+		check('noteHeldFor: a report that names nobody (an older runner\'s) is taken, as before',
+			H(rep(''), sec, 'RUNNER', now) === '');
+		check('noteHeldFor: held just inside its window, on the relay\'s clock',
+			H(rep('PHONE'), sec, 'RUNNER', now + P.NOTE_HOLD_MS - 2000) === 'PHONE');
+		check('noteHeldFor: let go once the window has passed',
+			H(rep('PHONE'), sec, 'RUNNER', now + P.NOTE_HOLD_MS + 2000) === '');
+		check('noteHeldFor: a stamp already in milliseconds is read as one',
+			H(rep('PHONE'), now, 'RUNNER', now + 1000) === 'PHONE'
+			&& H(rep('PHONE'), now, 'RUNNER', now + P.NOTE_HOLD_MS + 2000) === '');
+		check('noteHeldFor: a row with no stamp cannot be aged, so it is not held',
+			H(rep('PHONE'), 0, 'RUNNER', now) === '');
+		check('noteHeldFor: an errand is work, claimed and never held for a device',
+			H(P.makeErrand({ turnId: TID, dispatchedBy: 'PHONE' }), sec, 'RUNNER', now) === ''
+			&& H(Object.assign(P.makeErrand({ turnId: TID }), { to: 'PHONE' }), sec, 'RUNNER', now) === '');
+		check('noteHeldFor: a compile\'s account names its dispatcher the same way',
+			H(P.makeBuilt({ eid: 'eB', cid: 'k', to: 'PHONE' }), sec, 'RUNNER', now) === 'PHONE');
 	}
 
 	// ── leaseSetCas: done->released stamps settled:1; other releases do not ──
@@ -4494,6 +4549,54 @@ async function runBlockerAcceptance(P, L, check) {
 		check('B9g: an object with NEITHER field is empty -- never the template',
 			P.peerIdOf({ name: 'nameless' }) === ''
 			&& String(P.peerIdOf({ name: 'nameless' })).indexOf('object') === -1);
+	}
+
+	// ── B10. A PERSON'S PAUSE ON THE RUNNER (R2 QA, F2). A turn the pause holds -- on this
+	//    device's set merged with the errand's own `pause` -- takes no lease and runs
+	//    nothing, and the sender is told why; a pause landing mid-turn hands back rather
+	//    than crashing to the deadline. ──
+	console.log('\nA person\'s pause on the runner — refused before the take, or handed back');
+	{
+		L.forget();
+		const cas = makeCas({});
+		const posted = []; let ran = 0; let asked = null;
+		const WHY = 'Paused Diamond is paused. No turn started, nothing spent. Press play on it to resume.';
+		const out = await P.runErrand(
+			sentErrand(P, { eid: 'e10', turnId: 'turn-held', chatId: 'c', prompt: 'p', deadline: 0 }),
+			{
+				selfId: 'RUNNER', selfName: 'argonaut', cas: cas,
+				pauseHold: (e) => { asked = e.turnId; return { node: 'root/diamonds/d1/self', why: WHY }; },
+				reconstruct: async () => ({}),
+				runTurn: async () => { ran++; },
+				post: async (r) => { posted.push(r); },
+				ack: async () => {}, pushResult: async () => 1,
+				now: () => 2000, setTimer: () => null, clearTimer: () => {},
+			});
+		check('B10a: the pause is asked of this errand', asked === 'turn-held');
+		check('B10b: a held turn runs nothing and takes no lease',
+			ran === 0 && out.ran === false && out.why === 'paused' && !cas.peekLeases()['turn-held']);
+		check('B10c: one ERROR report goes home, carrying the refusal as the person reads it',
+			posted.length === 1 && posted[0].status === 'error' && posted[0].why === WHY);
+		// Not held: the same errand is claimed and run, so B10b measured the pause.
+		L.forget();
+		const cas2 = makeCas({});
+		let ran2 = 0;
+		const out2 = await P.runErrand(
+			sentErrand(P, { eid: 'e10b', turnId: 'turn-free', chatId: 'c', prompt: 'p', deadline: 0 }),
+			{
+				selfId: 'RUNNER', cas: cas2, pauseHold: () => null,
+				reconstruct: async () => ({}), runTurn: async () => { ran2++; },
+				post: async () => {}, ack: async () => {}, pushResult: async () => 1,
+				now: () => 2000, setTimer: () => null, clearTimer: () => {},
+			});
+		check('B10d: not held, the same errand is claimed and runs', ran2 === 1 && out2.ran === true);
+		// Held mid-turn: the refusal models.js throws carries `paused`.
+		const mid = Object.assign(new Error(WHY), { paused: true, pauseNode: 'root/diamonds/d1/self' });
+		check('B10e: a pause refusal thrown by the turn is a hand-back, not a crash',
+			P.runnerErrorKind(mid) === 'paused');
+		check('B10f: and it goes home in its own words, naming what is paused',
+			P.runnerErrorWhy('paused', 'argonaut', mid) === WHY);
+		L.forget();
 	}
 }
 

@@ -76,6 +76,7 @@
 	<h3 id="s5">What a daimon can open</h3>
 	<p>A daimon can open only what is in its diamond's workspace. Nothing else is readable or writable through the file tools, by the daimon or by any helper it dispatches. The check is in compiled code at the one door every file tool passes, and that code is in a bundle that builds reproducibly from public source, so it is not an instruction in a prompt.</p>
 	<p>That rule settles what a daimon can reach and says nothing about where what it reads ends up, because whatever it opens goes to your model provider with the rest of the turn.</p>
+	<p>Deleting or wiping counts the same way. Past a limit you set under <span class="ui">Settings</span> — eight in a turn by default — the turn stops there and asks before it goes on. Wiping a file means writing over it so that less than half of it is left. Daimond keeps a copy of anything deleted or wiped for at least seven days.</p>
 
 	<h3 id="s6">The attachment list</h3>
 	<p>Rows carry an age, <span class="ui">Added {when}</span>. A path that is no longer there is drawn as <span class="ui">Gone</span> with no open action, so a dead row never poses as a live one.</p>

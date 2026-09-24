@@ -289,9 +289,15 @@
 	/// copy of the catalogue entry rather than a second assembly of one. A fallback
 	/// stitched together here drifted from `en.js` the first time the wording was
 	/// revised, and nothing noticed because it only shows when the table is absent.
+	///
+	/// `{node}` is the node's NAME from the tree -- the mailbox, the folder, "Web access"
+	/// -- and never its id, which tells a person nothing (R2 QA, F0b).
 	function pauseWords(key, node, english) {
-		var s = t(key, { node: node });
-		return (s === key) ? english.replace(/\{node\}/g, node) : s;
+		var name = node;
+		try { if (window.DaimondPause) name = DaimondPause.label(node) || node; }
+		catch (e) { name = node; }
+		var s = t(key, { node: name });
+		return (s === key) ? english.replace(/\{node\}/g, name) : s;
 	}
 
 	/// Is this node paused? A leaf's own flag, and cheap enough to sit in front

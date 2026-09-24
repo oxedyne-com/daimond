@@ -159,6 +159,16 @@ async function withDialog(fn, answer, arg, quote) {
 		// check reported a refusal for an approval it had just given, and it is the
 		// same shape of mistake as asserting on wording: the DOM says which button
 		// confirms, so ask the DOM.
+		//
+		// The affirmative is held for its first second on an unbidden question (R6),
+		// so a click fired before that second is up lands on a disabled `.dlg-ok` and
+		// does nothing — the worker then waits for an answer that never comes. Wait
+		// for it to be pressable first, as verify_deletekeep's F8 does.
+		if (answer) {
+			await page.waitForSelector(
+				'.dlg .dlg-ok:not([disabled]), dialog[open] .dlg-ok:not([disabled]), .modal-dialog .dlg-ok:not([disabled])',
+				{ timeout: 2000 }).catch(() => {});
+		}
 		await page.evaluate((yes) => {
 			const d = document.querySelector('.dlg, dialog[open], .modal-dialog');
 			const okBtn   = d.querySelector('.dlg-ok');

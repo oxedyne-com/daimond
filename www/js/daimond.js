@@ -4304,6 +4304,34 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		saveDevices(reg);
 	}
 
+	// ── A hand older than the deletion meter, told once per (host, version) ──
+
+	/// The machine hand's hello named a build older than the deletion meter, so
+	/// the engine has made every folder read-only to a command and to a file
+	/// tool (`command_fence` in src/tools.rs) until it updates.
+	///
+	/// A PENDING NOTICE, not the modal this used to raise (until 2026-09-24). The
+	/// hello lands whenever the hand connects, which is as often mid-turn as not,
+	/// and a modal there put its own backdrop under the person's very next click
+	/// -- closing it unread and losing the click with it (traced in
+	/// `dev/verify_handrun.mjs`'s regression; see `~/usr/code/ai/claude/specs/
+	/// daimond_handrun_fix_20260924.md`, "Left open"). A tile in the Pending
+	/// panel covers nothing and blocks nothing, and waits on no answer.
+	///
+	/// TOLD ONCE PER (host, version), by the notice's key: not raised while a tile for
+	/// it is up in this tab or another, and not again once it has been taken down. A
+	/// hand that updates, or reconnects under a different host, is different news.
+	function noteHandStale(host, version) {
+		var key = 'hand-stale|' + String(host || '') + '|' + String(version || '');
+		if (Pending.noticed(key) || Pending.noticeUp(key)) return;
+		Pending.add({
+			kind:     'notice',
+			key:      key,
+			headline: t('hand.stale_title'),
+			detail:   t('hand.stale_body', { host: host || t('hand.stale_here') }),
+		});
+	}
+
 	/// One roster line, cleaned: two names that fit, and stamps that are stamps.
 	///
 	/// A FIXED field order, for the same reason saveDevices sorts the ids: the
@@ -11444,6 +11472,8 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			if (id === 'work') Files.onOpen();
 			if (id === 'doc') Files.onDocOpen();
 			if (id === 'mail' && window.DaimondMail) { DaimondMail.onOpen(); Badge.seen('mail'); }
+			// A notice or a proposal raises no panel, only the chip's count (F4).
+			if (id === 'pending') Badge.seen('pending');
 			if (id === 'spend' && window.DaimondSpend) DaimondSpend.onOpen();
 			if (id === 'modeldash' && window.DaimondModelDash) DaimondModelDash.onOpen();
 			// The terminal is built on the first open and started there: a pty is a
@@ -13769,8 +13799,10 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		// A TURN THE USER STOPPED IS NEWS WHATEVER WAS ON THE TABLE. Rule 2 is about a
 		// tally nobody needs; being stopped is not a tally, and a pure chat with no tools
 		// in it is exactly where a stopped answer looked finished (UX run B05). Every
-		// other ending still obeys the rule, first, so no caller can forget it.
-		if (String(e.how || '') !== 'stopped' && !((e.offered | 0) > 0)) return null;
+		// other ending still obeys the rule, first, so no caller can forget it. A turn a
+		// pause caught part way (`brakeHeld`) is the same news in the person's own word.
+		var halted = e.how === 'stopped' || e.how === 'paused';
+		if (!halted && !((e.offered | 0) > 0)) return null;
 		var calls = e.calls | 0, refused = e.refused | 0, failed = e.failed | 0;
 		var missing = Array.isArray(e.missing) ? e.missing : [];
 		// The wire word, or the word itself where a later engine has learnt a
@@ -13851,7 +13883,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		// missing tail says otherwise (UX run B05, annoyance 1). Everything else here
 		// is unchanged -- a line under a turn that drew its own outcome is the noise
 		// this function exists to withhold.
-		var stopped = e.how === 'stopped';
+		var stopped = e.how === 'stopped' || e.how === 'paused';
 		var bad = stopped || p.notice || e.how === 'failed' || e.how === 'silent'
 			|| e.how === 'reasoned_only';
 		if ((shown && !stopped) || !bad) return;
@@ -20328,9 +20360,12 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		// Four literal calls rather than a key chosen in an expression: `dev/i18ncheck.mjs`
 		// reads the key out of the source, and a key it cannot read is a key nothing can prove
 		// exists in en.js -- where an absence is English for every language, silently.
+		// A turn a pause caught part way (`brakeHeld`) says what to press to carry on.
 		label.textContent = '⚠ ' + (m.why === 'offline'
 			? (m.content ? t('turn.offline')      : t('turn.offline_early'))
-			: (m.content ? t('turn.interrupted')  : t('turn.interrupted_early')));
+			: m.why === 'paused'
+				? (m.content ? t('turn.paused')   : t('turn.paused_early'))
+				: (m.content ? t('turn.interrupted')  : t('turn.interrupted_early')));
 		var btn = document.createElement('button');
 		btn.className = 'ti-continue';
 		btn.textContent = t('turn.continue');
@@ -20814,6 +20849,15 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 	async function dispatchToPeer(chat, turnId, promptText, scopePaths, opts) {
 		diag('dispatch start', 'chat=' + (chat && chat.id) + ' turn=' + turnId
 			+ (opts && opts.toName ? ' to=' + String(opts.toId || '').slice(0, 8) : ''));
+		// A PERSON'S PAUSE HOLDS A HAND-OFF AS IT HOLDS A TURN RUN HERE (R2 QA, F2). This is
+		// the one door every hand-off passes, so it is asked here, before anything is marked
+		// or posted: a held turn leaves no placeholder and no errand. `paused` tells the
+		// caller to answer it where the person is, as the local run would.
+		var hold = turnHold(chat);
+		if (hold) {
+			diag('dispatch refused', 'turn=' + turnId + ' paused at ' + hold);
+			return { ok: false, paused: true, node: hold, why: DaimondModels.pauseError(hold).message };
+		}
 		if (!window.DaimondPeer || !DaimondPeer.buildDispatch
 			|| !window.DaimondPost || !DaimondPost.post
 			|| !window.DaimondSync  || !DaimondSync.push) {
@@ -21502,6 +21546,20 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			// merged into the transcript (a non-empty assistant message under the
 			// turn's iturn). Either means stand down before the take.
 			finished: async function (er) { return dispatchedTurnSettled(er); },
+			// A PERSON'S PAUSE, AS THE SENDER HAD IT (R2 QA, F2). The errand carries the
+			// sender's pause set at dispatch and nothing here read it, so a runner whose own
+			// copy lagged -- the parcel follows the errand -- ran a turn the person had
+			// stopped. It is merged as the parcel will merge it, by stamp, so this device
+			// never answers from an older set than the sender's; then the question every
+			// other door asks is asked here. `{ node, why }` refuses the turn before the take.
+			pauseHold: function (er) {
+				try { if (er && er.pause && window.DaimondPause) DaimondPause.adopt(er.pause); }
+				catch (e) { /* this device's own set still answers */ }
+				var held = errandChat(er);
+				var node = turnHold({ id: String((er && er.chatId) || ''),
+					diamondId: String((er && er.diamondId) || (held && held.diamondId) || '') });
+				return node ? { node: node, why: DaimondModels.pauseError(node).message } : null;
+			},
 			reconstruct: async function (er) { ctx = await peerReconstruct(er); return ctx; },
 			// The ordinary turn engine. No heartbeat is created here: the lease no longer
 			// renews (it is claimed straight to the errand's deadline), and runErrand owns
@@ -22390,9 +22448,12 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		if (window.DaimondPeer && DaimondPeer.turnInWindow
 			&& !DaimondPeer.turnInWindow([tid, ph && ph.mid], [], Date.now())) { continueTurn(chat, tid, text); return; }
 		// A re-dispatch that would hand it to a peer again, carrying the GLOBAL count.
-		// If no peer is awake, dispatchToPeer's caller falls back to a local run.
+		// If no peer is awake, dispatchToPeer's caller falls back to a local run. A turn a
+		// person's pause holds is not handed on (F2): it is continued HERE, where the same
+		// pause refuses it in words, rather than left parked with nothing said.
 		try {
-			dispatchToPeer(chat, tid, text, Array.isArray(chat.holds) ? chat.holds : [], { parkCount: count });
+			dispatchToPeer(chat, tid, text, Array.isArray(chat.holds) ? chat.holds : [], { parkCount: count })
+				.then(function (r) { if (r && r.paused) continueTurn(chat, tid, text); });
 		} catch (e) { continueTurn(chat, tid, text); }
 	}
 
@@ -22910,6 +22971,9 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			var self = selfDeviceId();
 			var tid  = String((m && m.iturn) || '');
 			if (!tid) return false;
+			// Held by a person: no re-seat, whose bookkeeping would name a device nothing
+			// went to. The local recovery the caller falls to refuses it in words (F2).
+			if (turnHold(chat)) return false;
 			// Every device this turn has already been handed to, tried or not.
 			var tried = Array.isArray(m.triedDevices) ? m.triedDevices.slice() : [];
 			var advertised = String(m.toDevice || '');
@@ -23475,6 +23539,10 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			// safety is unchanged: the take-if-vacant lease is still the sole single-runner
 			// arbiter, and the transcript `iturn` finished-guard stops a re-collect re-running.
 			if (!chat) return false;
+			// HELD BY A PERSON, IT IS NOT HANDED ANYWHERE (R2 QA, F2). Asked before the
+			// election, which commits the turn to a hand-off before `dispatchToPeer` is
+			// reached: false here, and the local run refuses it in the person's words.
+			if (turnHold(chat)) return false;
 			if (typeof navigator !== 'undefined' && navigator.onLine === false) return false;
 			if (!window.DaimondPeer || !DaimondPeer.autoDispatchDecision) return false;
 			var self     = selfDeviceId();
@@ -23971,6 +24039,13 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		// so no record can carry the badge without the id and this cannot fire
 		// today. One field away from that is not a margin worth keeping.
 		if (!iturn) return;
+		// ASKED BEFORE ANYTHING MOVES. A turn a pause caught part way comes back with this
+		// button (`brakeHeld`), and Continue is a new dispatch: while the pause holds it is
+		// refused in the words every door uses, and the badge stays for when play is pressed.
+		// Asked below this, the badge came off, or the prompt was tombstoned, before
+		// `runTurn` refused the turn that was to replace it.
+		var held = turnHold(chat);
+		if (held) { toast(DaimondModels.pauseError(held).message, true); return; }
 		// A turn a PEER still holds must not be re-run here (§3.3): that is the
 		// cross-device double bill the lease exists to stop. Only a vacant or expired
 		// lease -- the reclaimable state -- lets a local Continue through. A turn that
@@ -25928,6 +26003,43 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		return DaimondPause.id('root', 'chats', c && c.id);
 	}
 
+	/// The node a person's pause holds this conversation's turns on, or '' when none does.
+	///
+	/// THE ONE QUESTION every door a turn leaves by asks: run here (`runTurn`, `runSteer`),
+	/// handed to another device (`dispatchToPeer`), and run here for another device
+	/// (`peerRunErrandDeps`'s `pauseHold`). Asked door by door, it was asked at the first and
+	/// skipped at the second, so a turn typed into a Diamond paused by hand went to a peer
+	/// whenever one was elected (R2 QA, F2). `held` is the leaf's own flag, so a Diamond held
+	/// only by a triggered action reads free here, as it does at the mint (QA-1).
+	function turnHold(c) {
+		if (!window.DaimondPause || !window.DaimondModels) return '';
+		var node = chatSpendNode(c);
+		return DaimondModels.held(node) ? node : '';
+	}
+
+	/// Stop what a pause has just caught running: every turn `turnHold` now holds, and
+	/// every worker whose node is held.
+	///
+	/// The pause was asked when a turn started and never again. On the person's own key no
+	/// mint refuses a later round and a continuation leg grants itself, so a turn running
+	/// when its chat, its Diamond or everything was paused went on reaching the provider,
+	/// round after round, until it ended (FU QA, FB). Every press arrives here as
+	/// `daimond:pause` -- this tab's, another tab's, a synced one. A chat's turn and a
+	/// daimon's are both on `chats` with the app they run on (`rec.app` is the Diamond's),
+	/// so one abort serves both; the turn ends handed back as paused (`runTurn`) or with a
+	/// paused ending (`runSteer`), and a Continue is refused while the pause holds.
+	function brakeHeld() {
+		(chats || []).forEach(function (c) {
+			if (!c || !c._generating || c._pausedMid) return;
+			var node = turnHold(c);
+			if (!node) return;
+			c._pausedMid = node;
+			try { Workers.cancelAwaits(c.id); } catch (e) { /* no gather waiting */ }
+			try { if (c.app) c.app.abort(); } catch (e) { /* idempotent */ }
+		});
+		try { Workers.pauseHeld(); } catch (e) { /* the pool is not up */ }
+	}
+
 	/// The live tree, as it stands at the moment it is asked.
 	///
 	/// Every branch carries a `children` array even when it is empty. A node with
@@ -26339,6 +26451,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		window.addEventListener('daimond:pause', function () {
 			repaintPause();
 			reconcileWorkers();
+			brakeHeld();
 		});
 	}
 
@@ -30920,6 +31033,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		});
 		// The composer stays live: what is typed while this runs is queued, not lost.
 		chat._aborted = false;
+		chat._pausedMid = '';		// set by `brakeHeld` when a pause catches this turn running
 
 		// PERSIST-FIRST. The prompt is durable the instant it is sent — before a single token comes
 		// back — so a crash in the next moment can never eat what the user just typed.
@@ -30951,6 +31065,8 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		// The road went and the turn was handed back badged, rather than written off.
 		// Read in the `finally`, where it decides whether an ending line is said at all.
 		var handedBack = false;
+		// A pause caught the turn running and it was handed back badged, Continue beside it.
+		var pausedBack = false;
 		var telErr = null;                       // what threw, for the one number that says which class
 		var turnText = '';   // THE CURRENT SEGMENT ONLY — reset on every `tool_call`; see below
 		// The feed's `round`, throttled. A daimon-length turn can run ~150 rounds; sending
@@ -30988,6 +31104,10 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		var owns = function () { return current === chat && chats.indexOf(chat) !== -1; };
 		var onEvent = function (ev) {
 			if (!ev || !ev.type) return;
+			// A PAUSED TURN KEEPS ITS BRAKE ON. An abort reaches only the request in flight,
+			// so one that lands between rounds is lost and the next round goes out; the
+			// first word of that round is where it can be caught. See `brakeHeld`.
+			if (chat._pausedMid) { try { if (chat.app) chat.app.abort(); } catch (e0) { /* idempotent */ } }
 			if (ev.type === 'text') {
 				turnText += (ev.content || '');
 				// THE LIVE ANSWER, WHERE A STREAMED FRAME CAN REACH IT. The assistant
@@ -31409,31 +31529,47 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			// INSIDE the try whose `finally` gives it back, and nowhere else. A turn runs in
 			// the tab, so a screen that locks part way through kills it; see `WakeLock`.
 			WakeLock.hold();
-			// F1 TURN START — raise the credits key to a whole turn's headroom BEFORE the
-			// first round, so a turn worth more than the mint float is not refused at the
-			// cap and re-run on a fresh key (billed once for nothing). This also reconciles
-			// the previous turn's draw, so the balance the rail shows is turn-fresh.
-			// Best-effort: a failure leaves the existing key in place and the turn runs on
-			// it exactly as before. A RAISE is in place and needs no rebuild; only a dead
-			// key the gateway had to re-mint returns a key, and then the app is rebuilt
-			// around it as the `authFail` path does -- the user prompt is already `umid` in
-			// the transcript, so `rebuildAppWithout` seeds the session without it and
-			// `run_turn(text)` sends it exactly once.
-			if (wantMinor && canRemint(chat)) {
-				try {
-					var er = await DaimondModels.ensure(0, wantMinor, chatSpendNode(chat));
-					if (er && er.key) {
-						app = rebuildAppWithout(chat, umid);
-						if (inTurnWorkers) {
-							try { app.set_turn_tag(null, String(umid)); } catch (e1) { /* older engine */ }
-						}
-					}
-				} catch (e0) { /* best-effort; run on the key already held */ }
-				// The baseline the mid-turn top-up measures this turn's draw from, read
-				// from whichever app will actually run (a rebuild reset it to zero).
-				try { ensuredCostUsd = app.live_cost_usd || 0; } catch (e2) { ensuredCostUsd = 0; }
-			}
 			try {
+				// TYPED TURN CONTROL — refused HERE, at dispatch, once, whichever key
+				// this turn is about to run on. Until now the only door with a pause
+				// check behind it was the credits path's own mint (`ensure`, below, via
+				// `mintRequest`'s `held`): a turn on the user's own key never mints and
+				// reached the provider regardless of a real Pause all, or the Diamond
+				// itself being paused. Same leaf, and the same `DaimondPause` query and
+				// refusal text the gateway path throws, so the two can never disagree --
+				// see `DaimondModels.held`/`pauseError`, which this calls directly rather
+				// than duplicate. A Diamond only HELD by a triggered action, and not
+				// paused itself, reads false here exactly as it does there: `held` is
+				// the leaf's own flag, not everything waiting under it. The mint's own
+				// check further down stays as a second guard -- it is still the one
+				// door for a pause landing MID-turn (the `round_meta` top-up, and
+				// `remint` on a key the provider has refused).
+				var hold = turnHold(chat);
+				if (hold) throw DaimondModels.pauseError(hold);
+				// F1 TURN START — raise the credits key to a whole turn's headroom BEFORE the
+				// first round, so a turn worth more than the mint float is not refused at the
+				// cap and re-run on a fresh key (billed once for nothing). This also reconciles
+				// the previous turn's draw, so the balance the rail shows is turn-fresh.
+				// Best-effort: a failure leaves the existing key in place and the turn runs on
+				// it exactly as before. A RAISE is in place and needs no rebuild; only a dead
+				// key the gateway had to re-mint returns a key, and then the app is rebuilt
+				// around it as the `authFail` path does -- the user prompt is already `umid` in
+				// the transcript, so `rebuildAppWithout` seeds the session without it and
+				// `run_turn(text)` sends it exactly once.
+				if (wantMinor && canRemint(chat)) {
+					try {
+						var er = await DaimondModels.ensure(0, wantMinor, chatSpendNode(chat));
+						if (er && er.key) {
+							app = rebuildAppWithout(chat, umid);
+							if (inTurnWorkers) {
+								try { app.set_turn_tag(null, String(umid)); } catch (e1) { /* older engine */ }
+							}
+						}
+					} catch (e0) { /* best-effort; run on the key already held */ }
+					// The baseline the mid-turn top-up measures this turn's draw from, read
+					// from whichever app will actually run (a rebuild reset it to zero).
+					try { ensuredCostUsd = app.live_cost_usd || 0; } catch (e2) { ensuredCostUsd = 0; }
+				}
 				try {
 					await app.run_turn(text, onEvent);
 				} catch (e) {
@@ -31497,7 +31633,26 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 				// here from its own id; it travels on the message in the parcel.
 				if (umid) { delete _liveTurn[String(umid)]; delete _liveMid[String(umid)]; }	// the answer is in `messages` now
 				var ansMsg = null;		// the answer, kept so a hand-off turn can be enriched below
-				if (turnText) {
+				if (chat._pausedMid) {
+					// PAUSED PART WAY, and said as that rather than as an answer or an error
+					// (FU QA, FB). The words that arrived are kept under the badge the road's
+					// hand-back draws, with Continue beside it; Continue asks the pause first,
+					// so it runs only once the person presses play. Every message of the turn
+					// carries its id, from the prompt forward, for the reason the road's
+					// hand-back gives -- and none does where the prompt cannot be found.
+					pausedBack = true;
+					var pFrom = -1;
+					for (var pi = chat.messages.length - 1; pi >= 0; pi--) {
+						var pm = chat.messages[pi];
+						if (pm.role === 'user' && pm.mid === umid) { pFrom = pi; break; }
+					}
+					for (var pj = Math.max(pFrom, 0); pFrom >= 0 && pj < chat.messages.length; pj++) {
+						chat.messages[pj].iturn = umid;
+					}
+					chat.messages.push({ role: 'assistant', content: turnText, mid: amid,
+						interrupted: true, why: 'paused', iturn: umid, itext: text,
+						ranOn: selfDeviceId(), ts: Date.now() });
+				} else if (turnText) {
 				var amsg = { role: 'assistant', content: turnText, mid: amid, ranOn: selfDeviceId(), ts: Date.now() };
 				ansMsg = amsg;
 				// An ERRAND run carries a turnId (the ordinary turn path passes none), so
@@ -31516,6 +31671,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 				stampMessages(chat.messages, chat.id);
 				if (owns()) finalizeAssistant();
 				else { curAsstDiv = null; curAsstText = ''; }
+				if (pausedBack && owns()) renderHistory(chat.messages);	// the badge, over the partial
 				// Four cumulative counters now, not two. The two new ones are the reason a
 				// turn can be billed at what it ACTUALLY cost: `cached_tokens` is the part
 				// of the prompt the provider served from its cache and charged little or
@@ -31695,6 +31851,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 				var turnOutcome = chat._aborted ? 'interrupted'
 					: (threw && _unloading) ? 'interrupted'
 					: (threw && handedBack) ? 'interrupted'
+					: pausedBack ? 'interrupted'
 					: (threw || sawError) ? 'failed'
 					: 'completed';
 				recordTurnOutcome(chat.model, chat.provider, umid, Date.now() - telT0, turnOutcome);
@@ -31707,7 +31864,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 				// line above it was the same event told twice, in two voices that disagreed
 				// -- the louder one calling a lost connection an error (UX run, annoyance 4).
 				// One ending, one sentence.
-				if (pendingEnd && !handedBack) {
+				if (pendingEnd && !handedBack && !pausedBack) {
 					chat.messages.push(pendingEnd);
 					if (owns()) appendEnding(pendingEnd);
 				}
@@ -31754,7 +31911,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 					// screen twice under two devices.
 					m:    String(chat.model || '').slice(0, 48),
 					prov: String(chat.provider || '').slice(0, 24),
-					out:  chat._aborted ? 'stopped'
+					out:  (chat._aborted || pausedBack) ? 'stopped'
 						: (threw || sawError) ? (capFail ? 'cap' : 'error')
 						: (lastHow === 'silent' || lastHow === 'reasoned_only' || lastHow === 'malformed')
 							? lastHow
@@ -31862,7 +32019,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		// Whatever was typed while that turn ran, sent now. OUTSIDE the lock: the
 		// drain starts another turn, which takes the same lock again, and asking for
 		// it from inside would deadlock the tab.
-		drainQueue(chat, sawError || threw);
+		drainQueue(chat, sawError || threw || pausedBack);
 		// A turn that read a page, an email or a command's own output has just cut this
 		// chat off from the network, and nothing else on screen would say so.
 		if (window.DaimondHandMode && DaimondHandMode.refresh) DaimondHandMode.refresh();
@@ -32158,8 +32315,12 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			// hangs under `root/chats`, not under a Diamond that does not exist: the
 			// Diamond node built from an empty id names nothing, so a paused chat would
 			// have been priced and dispatched as though nobody had paused anything.
+			//
+			// A daimon's conversation, reached here through `runTurn` (a retry, a Continue),
+			// is its Diamond's `self` -- `chatSpendNode`, the node its turns are asked on.
+			var gc = chatId ? (chats || []).find(function (x) { return x.id === chatId; }) : null;
 			a = DaimondGovernor.assessDispatch(n, chatId
-				? DaimondPause.id('root', 'chats', chatId)
+				? chatSpendNode(gc || { id: chatId })
 				: DaimondPause.id('root', 'diamonds', diamondId, 'self'));
 		} catch (e) { return yes; }
 		if (!a) return yes;
@@ -33255,6 +33416,19 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 				turn:  String(run.turnId || ''),
 			});
 			var self = this;
+			var runNode = this.nodeOf(run);
+			// HELD BY A PERSON, IT DOES NOT START, on either key (R2 QA, F3). Only the
+			// credits mint asked, so on the person's own key a queued worker, a
+			// continuation, or a spawn from a turn already running when the Diamond was
+			// paused reached the provider. The outcome the mint's refusal gives, for both
+			// keys; `mintSlot` keeps its check for a pause landing between here and there.
+			if (window.DaimondModels && DaimondModels.held(runNode)) {
+				run.status = 'paused';
+				run.text = friendlyError(DaimondModels.pauseError(runNode));
+				this.active--; this.render(); this.pump();
+				closeEarly();
+				return;
+			}
 			// The worker cannot see the conversation that dispatched it, so hand
 			// it what it would otherwise be missing: the house rules, and the
 			// crystal of the Diamond it is working for.
@@ -33354,13 +33528,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			// account cannot afford (its siblings have reserved the balance) fails here
 			// as "no credits" rather than falling back to a shared key.
 			// A worker spends against the daimon that dispatched it, so that is the
-			// node the mint is told about.
-			// Where this worker's spending is charged and paused. A chat's worker hangs
-			// under its chat, so pausing that conversation stops its agents too; a
-			// Diamond's under the Diamond, as before.
-			var runNode = run.chatId
-				? DaimondPause.id('root', 'chats', run.chatId)
-				: DaimondPause.id('root', 'diamonds', run.diamondId, 'self');
+			// node the mint is told about (`runNode`, above).
 			if (onCredits) {
 				run.slot = self.takeSlot();
 				try {
@@ -33783,6 +33951,27 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			try { if (run.app) run.app.abort(); } catch (e) { /* already gone */ }
 			this.persist();
 			this.render();
+		},
+
+		/// Where this worker's spending is charged and paused. A chat's worker hangs under its
+		/// chat, so pausing that conversation stops its agents too; a Diamond's under the
+		/// Diamond. A DAIMON's conversation is its Diamond's `self` (`chatSpendNode`): keyed on
+		/// `root/chats/<id>`, a node no pause writes, its workers ran on under a paused Diamond.
+		nodeOf: function (run) {
+			if (!run.chatId) return DaimondPause.id('root', 'diamonds', run.diamondId, 'self');
+			var c = (chats || []).find(function (x) { return x.id === run.chatId; });
+			return chatSpendNode(c || { id: run.chatId });
+		},
+
+		/// Pause every running or queued worker a person's pause now holds. The pump's own
+		/// hold is `reconcileWorkers`'; this is each run's own node.
+		pauseHeld: function () {
+			var self = this;
+			if (!window.DaimondModels) return;
+			this.runs.slice().forEach(function (r) {
+				if (r.status !== 'running' && r.status !== 'queued') return;
+				if (DaimondModels.held(self.nodeOf(r))) self.pause(r);
+			});
 		},
 
 		/// Hang up a worker's live session but keep its transcript, so it can be
@@ -34818,6 +35007,15 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 	// instead; `✕` drops it. NOTHING IS WAITING on a proposal tile -- no turn is
 	// held open by one -- so it never expires and its tick is never dimmed.
 	//
+	// `notice` is the fourth, and its producer is `DaimondHand`'s own `hello`
+	// (2026-09-24): a hand older than the deletion meter used to raise a MODAL
+	// the moment it said so, mid-turn as often as not, so a person's next click
+	// landed on its backdrop and closed it unread — the click was lost with it.
+	// A notice is exactly the shape `note` was, before it had a producer: nothing
+	// runs and nothing waits, so there is nothing to discuss and no diamond for
+	// `?` to open. `tile` hides that control for it; the tick and `✕` both just
+	// take the tile down, since acknowledging one IS dismissing it.
+	//
 	// The `kind === 'consent'` tests that remain are NOT dead branch selectors, so
 	// please do not report them as such: `items` is read back out of localStorage,
 	// which no build owns, so a record this one did not write can arrive at `tile`,
@@ -34826,20 +35024,35 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 	// asks the register whether anything is actually parked.
 	var PENDING_KEY = 'daimond-pending';
 	var PRIORITIES  = ['high', 'normal', 'low'];
+	// The keys of notices a person has dismissed, so the same news is not told twice.
+	var NOTICED_KEY = 'daimond-pending-noticed';
+	var NOTICED_MAX = 64;						// bounded: a hand's (host, version) pairs, not a log
 
 	var Pending = {
 		items: [],
 
-		load: function () {
-			this.items = readJson(PENDING_KEY, []) || [];
-			if (!Array.isArray(this.items)) this.items = [];
-			// A parked consent request is a PROMISE, and a promise does not
-			// survive a reload. The tile does, because "an agent asked and got no
-			// answer" is worth keeping — but it is marked for what it now is, so
-			// that nothing on it offers to let through an act there is no longer
-			// anything to let through. See `tile` and `execute`.
+		load: function () { this.fresh(); },
+
+		/// Read the stored list again, over what this tab holds.
+		///
+		/// EVERY TAB OF THIS ACCOUNT SHARES THE LIST, and until 2026-09-24 each read it once,
+		/// at boot, and wrote its whole copy back on every change: a proposal raised in one
+		/// tab erased a notice another had raised, and the notice's seen-mark then kept it
+		/// from ever returning (R2 QA, F5; `pause.js` shed the same fault as D2). So every
+		/// change reads the store first and writes in the same synchronous step, and another
+		/// tab's write is read here as it lands (the `storage` listener below).
+		///
+		/// A parked consent request is a PROMISE, held in THIS tab's `_parked`, and a
+		/// promise does not survive a reload or cross to another tab. The tile does,
+		/// because "an agent asked and got no answer" is worth keeping -- but it is marked
+		/// for what it is here, so that nothing on it offers to let through an act this tab
+		/// has nothing behind. See `tile` and `execute`. Worked out on every read, never
+		/// trusted from the store, since the tab that stored it may be the one waiting.
+		fresh: function () {
+			var got = readJson(PENDING_KEY, []);
+			this.items = Array.isArray(got) ? got.filter(function (it) { return it && it.id; }) : [];
 			this.items.forEach(function (it) {
-				if (it && it.kind === 'consent') it.expired = true;
+				if (it.kind === 'consent') it.expired = !_parked[it.id];
 			});
 		},
 		save: function () {
@@ -34847,6 +35060,18 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			catch (e) { /* quota: it holds for this session */ }
 			this.render();
 			nudgeSync();
+		},
+
+		/// Has a notice with this key been dismissed here?
+		noticed: function (key) {
+			var seen = readJson(NOTICED_KEY, []);
+			return !!key && Array.isArray(seen) && seen.indexOf(key) >= 0;
+		},
+
+		/// Is a notice with this key on the panel now, raised by this tab or another?
+		noticeUp: function (key) {
+			this.fresh();
+			return !!key && this.items.some(function (x) { return x.kind === 'notice' && x.key === key; });
 		},
 
 		/// Raise one item. Everything but the kind is the daimon's own words.
@@ -34862,7 +35087,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		add: function (item) {
 			if (!item || !item.headline) return null;
 			var kind = item.kind || 'consent';
-			if (kind !== 'consent' && kind !== 'proposal') return null;
+			if (kind !== 'consent' && kind !== 'proposal' && kind !== 'notice') return null;
 			var rec = {
 				id:        'p' + Date.now().toString(36) + Math.floor(Math.random() * 1e6).toString(36),
 				diamondId: item.diamondId || '',
@@ -34873,12 +35098,24 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 				priority:  PRIORITIES.indexOf(item.priority) >= 0 ? item.priority : 'normal',
 				at:        Date.now(),
 			};
+			// A notice may name the news it carries, so it is told once: `noticed` after
+			// it is dismissed, `noticeUp` while it is on the panel.
+			if (kind === 'notice' && item.key) rec.key = String(item.key);
+			this.fresh();
 			this.items.push(rec);
 			this.save();
-			// Revealed the way a dispatch reveals Agents: the one moment there is
-			// something to answer and nobody has asked to watch for it.
-			try { if (!DaimondPanels.isOpen('pending')) DaimondPanels.show('pending'); }
-			catch (e) { /* the layout engine is not up */ }
+			// ONLY A QUESTION TAKES THE SCREEN. A consent is a turn held open on the answer,
+			// so it is revealed the way a dispatch reveals Agents: the one moment there is
+			// something to answer and nobody has asked to watch for it. A notice or a
+			// proposal waits on nobody, and at 760px or narrower "revealed" is a sheet
+			// risen over the composer -- where a hand's hello, landing mid-turn, took the
+			// next keystrokes and the next Send (R2 QA, F4). Those only count on the chip.
+			if (kind === 'consent') {
+				try { if (!DaimondPanels.isOpen('pending')) DaimondPanels.show('pending'); }
+				catch (e) { /* the layout engine is not up */ }
+			} else {
+				Badge.bump('pending', 1);
+			}
 			return rec.id;
 		},
 
@@ -34889,9 +35126,34 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		/// later — can leave a turn waiting on something that is no longer on the
 		/// panel. `execute` settles its `allow` first, which takes the request out
 		/// of the register, so this deny then finds nothing and does nothing.
+		///
+		/// A notice that names its news is marked told when it is TAKEN DOWN, and not when
+		/// it is raised: marked at raising, a tile lost before anyone saw it could never
+		/// come back (R2 QA, F5).
 		drop: function (id) {
 			settleConsent(id, 'deny');
+			this.fresh();
+			var gone = this.items.filter(function (x) { return x.id === id; })[0];
+			if (gone && gone.kind === 'notice' && gone.key) Pending.markNoticed(gone.key);
 			this.items = this.items.filter(function (x) { return x.id !== id; });
+			this.save();
+		},
+
+		markNoticed: function (key) {
+			var seen = readJson(NOTICED_KEY, []);
+			if (!Array.isArray(seen)) seen = [];
+			if (seen.indexOf(key) >= 0) return;
+			seen.push(key);
+			try { localStorage.setItem(NOTICED_KEY, JSON.stringify(seen.slice(-NOTICED_MAX))); }
+			catch (e) { /* quota: worst case the same news is told again */ }
+		},
+
+		/// Set one tile's priority, by id, onto the list as it is stored now.
+		setPriority: function (id, p) {
+			this.fresh();
+			var it = this.items.filter(function (x) { return x.id === id; })[0];
+			if (!it || PRIORITIES.indexOf(p) < 0 || it.priority === p) return;
+			it.priority = p;
 			this.save();
 		},
 
@@ -34903,6 +35165,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		/// the tile leaves the panel. Called only by `adoptRemoteGrant`.
 		dismiss: function (id) {
 			delete _parked[id];
+			this.fresh();
 			this.items = this.items.filter(function (x) { return x.id !== id; });
 			this.save();
 		},
@@ -34959,10 +35222,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 				prio.appendChild(o);
 			});
 			prio.value = it.priority;
-			prio.addEventListener('change', function () {
-				it.priority = prio.value;
-				Pending.save();
-			});
+			prio.addEventListener('change', function () { Pending.setPriority(it.id, prio.value); });
 			head.appendChild(prio);
 			if (it.diamondName) {
 				var chip = document.createElement('span');
@@ -35023,8 +35283,13 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			acts.className = 'pend-acts';
 			var go = document.createElement('button');
 			go.type = 'button'; go.className = 'pend-act pend-go';
-			go.textContent = '✓'; go.title = t('pending.execute');
-			go.setAttribute('aria-label', t('pending.execute_named', { what: it.headline }));
+			go.textContent = '✓';
+			// A notice's tick does not "do" anything -- there is nothing behind it to
+			// run -- it only takes the tile down, so it wears the word an ordinary OK
+			// button wears rather than `pending.execute`'s "Do it".
+			go.title = it.kind === 'notice' ? t('dlg.ok') : t('pending.execute');
+			go.setAttribute('aria-label', it.kind === 'notice'
+				? t('dlg.ok') : t('pending.execute_named', { what: it.headline }));
 			go.addEventListener('click', function () { Pending.execute(it); });
 			// A tick that cannot do the thing is not offered. The turn this one
 			// belonged to went with the page it was asked on, so "do it" would
@@ -35042,17 +35307,24 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 				go.style.opacity = '0.4';
 				go.style.cursor = 'not-allowed';
 			}
-			var ask = document.createElement('button');
-			ask.type = 'button'; ask.className = 'pend-act pend-ask';
-			ask.textContent = '?'; ask.title = t('pending.discuss');
-			ask.setAttribute('aria-label', t('pending.discuss_named', { what: it.headline }));
-			ask.addEventListener('click', function () { Pending.discuss(it); });
+			acts.appendChild(go);
+			// A NOTICE carries no Diamond and nothing to discuss -- see `add`'s
+			// header -- so the middle control is not drawn for one at all, rather
+			// than drawn and left to fall into `discuss`'s "gone" branch.
+			if (it.kind !== 'notice') {
+				var ask = document.createElement('button');
+				ask.type = 'button'; ask.className = 'pend-act pend-ask';
+				ask.textContent = '?'; ask.title = t('pending.discuss');
+				ask.setAttribute('aria-label', t('pending.discuss_named', { what: it.headline }));
+				ask.addEventListener('click', function () { Pending.discuss(it); });
+				acts.appendChild(ask);
+			}
 			var no = document.createElement('button');
 			no.type = 'button'; no.className = 'pend-act pend-no';
 			no.textContent = '✕'; no.title = t('pending.cancel');
 			no.setAttribute('aria-label', t('pending.cancel_named', { what: it.headline }));
 			no.addEventListener('click', function () { Pending.drop(it.id); });
-			acts.appendChild(go); acts.appendChild(ask); acts.appendChild(no);
+			acts.appendChild(no);
 			box.appendChild(acts);
 			return box;
 		},
@@ -35073,6 +35345,11 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			// nothing and the tile would be dropped with "that agent has gone" over a
 			// question no agent ever asked. It is answered by its own path.
 			if (it.kind === 'proposal') return Pending.doProposal(it);
+			// A NOTICE has nothing parked either, and nothing to report allowing --
+			// the tick is an acknowledgement, not a permission, so it says so with
+			// the wording this panel already had for exactly that (`note`, before it
+			// lost its one producer on 2026-08-15) rather than "Allowed."
+			if (it.kind === 'notice') { toast(t('pending.noted')); this.drop(it.id); return; }
 			if (!settleConsent(it.id, 'allow')) {
 				toast(t('pending.consent.gone'), true);
 				this.drop(it.id);
@@ -35142,6 +35419,24 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		},
 	};
 
+	// ANOTHER TAB'S WRITE, READ HERE AS IT LANDS (F5). The browser raises `storage` in
+	// every tab but the writer, so a tab never answers itself. The key comes as stored,
+	// with this account's prefix, so another account's list is not ours; a null key is
+	// the whole store cleared. What arrived that this tab had not seen counts on the chip
+	// here too, as it did in the tab that raised it.
+	window.addEventListener('storage', function (e) {
+		var pre = '';
+		try { if (window.DaimondAccounts) pre = DaimondAccounts.prefix() || ''; }
+		catch (err) { /* no accounts module: the raw key */ }
+		if (!e || (e.key !== null && e.key !== pre + PENDING_KEY)) return;
+		var had = {};
+		Pending.items.forEach(function (x) { had[x.id] = true; });
+		Pending.fresh();
+		var news = Pending.items.filter(function (x) { return !had[x.id]; }).length;
+		Pending.render();
+		if (news) Badge.bump('pending', news);
+	});
+
 	// One Diamond's triggered actions, read-only. Published so that anything
 	// building a picture of the pause tree -- the widget verifier does exactly
 	// this -- can ask what the leaves ARE rather than assuming a shape.
@@ -35153,11 +35448,11 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 	// the verifiers and for anything later that wants to raise or read a tile
 	// from outside. It is not in the sync parcel, and no daimon tool writes to it.
 	window.DaimondPendingView = {
-		/// Two kinds reach the panel, so `add` takes `kind: 'consent'`,
-		/// `kind: 'proposal'` or no kind at all -- which means consent -- and
-		/// returns null for anything else. See the header.
+		/// Three kinds reach the panel, so `add` takes `kind: 'consent'`,
+		/// `kind: 'proposal'`, `kind: 'notice'`, or no kind at all -- which means
+		/// consent -- and returns null for anything else. See the header.
 		add:   function (item) { return Pending.add(item); },
-		items: function () { return Pending.items.slice(); },
+		items: function () { Pending.fresh(); return Pending.items.slice(); },
 		drop:  function (id) { return Pending.drop(id); },
 	};
 	// The two layers of standing instructions, for the same reason: what reaches
@@ -41966,12 +42261,32 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 	// seeded at all -- so every action that was live before arrives held, as marks
 	// went out of force at the deploy of 2026-09-23. This says so ONCE per device,
 	// naming them, rather than leaving a timer that simply stopped.
+	//
+	// ONLY ON A DEVICE THAT RAN THE OLD RULE. A device on its first boot of the
+	// account has run nothing, so there is nothing to tell it, and it is marked told
+	// on its first walk, before a pull or a seed can bring it a Diamond. Asked of the
+	// synced paused set, as it was until the P6 regression of 2026-09-24, a device
+	// that joined later was told its actions "ran here before" whenever the seed's
+	// hold on a default's action had lost the merge -- which it now may, being stamped
+	// one past the record held and not with the clock (FA, `follow` in pause.js) --
+	// and the modal that told it took the person's next click (`verify_markshere_sync`,
+	// P6). `DEFAULTS_KEY` is the mark of a boot that has finished reading the rail:
+	// every device writes it on its first, after the walk that asks this -- with an
+	// account or before one, since a browser that is paired later has booted too.
 	var TRIG_HERE_NOTICE_KEY = 'daimond-trig-here-notice';
 
 	function noteTriggersHeldHere() {
-		if (!(diamonds || []).length || !window.DaimondPause || !window.DaimondTriggers) return;
-		try { if (localStorage.getItem(TRIG_HERE_NOTICE_KEY)) return; }
-		catch (e) { return; }
+		if (!window.DaimondPause || !window.DaimondTriggers) return;
+		var booted = false;
+		try {
+			if (localStorage.getItem(TRIG_HERE_NOTICE_KEY)) return;
+			booted = localStorage.getItem(DEFAULTS_KEY) === '1';
+		} catch (e) { return; }
+		if (!booted) {
+			try { localStorage.setItem(TRIG_HERE_NOTICE_KEY, '1'); } catch (e) { /* asked again next walk */ }
+			return;
+		}
+		if (!(diamonds || []).length) return;
 		var paused = {};
 		DaimondPause.pausedIds().forEach(function (k) { paused[k] = true; });
 		var lines = [];
@@ -42489,7 +42804,76 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		if (kept) toast(t('rail.dupes_kept', { n: kept }), true);
 	}
 
+	/// Play the seeded default Diamonds' own conversation, once per account.
+	///
+	/// Until 2026-09-24 the seed held `self` beside the Optimiser's action, and a typed
+	/// turn asks `self` at dispatch, so on every account seeded before then the app's own
+	/// hold refused whatever the person typed there (R2 QA, F0). `self` gates only the
+	/// turns a person types and the work sent from them, so playing it arms nothing: the
+	/// action keeps its own hold and still waits for a release on this device.
+	///
+	/// Only the Diamonds the seed held -- those that ship with actions, found by the fixed
+	/// id or, on an account seeded before the fixed ids, by name -- and NOT under a person's
+	/// "Pause all", which covers `self` as a hold of theirs: play on the global light is
+	/// what lets that go.
+	///
+	/// AFTER THE FIRST PULL, AND NOT AS A PRESS (FU QA, FA). It ran at boot and played
+	/// `self` with `set`, which stamps the whole record with the clock: a device that had
+	/// not yet pulled a Pause all pressed on another one wrote a record later than it, its
+	/// pull lost to that record, and its next push undid the Pause all on every device.
+	/// Now the "Pause all" question is asked once this device has heard from the others,
+	/// and the leaf is taken back by `unseed`, one past the stamp held here, so a press
+	/// made elsewhere since still wins -- including one that arrives after the wait for
+	/// the pull ran out. Where one does, the Optimiser stays held and says so when typed
+	/// into.
+	var SELF_PLAYED_KEY = 'daimond-default-self-played';
+	var _selfRepairArmed = false;
+	function releaseSeededSelf() {
+		try { if (localStorage.getItem(SELF_PLAYED_KEY) === '1') return; }
+		catch (e) { return; }
+		if (!window.DaimondPause || _selfRepairArmed) return;	// asked again on the next boot
+		_selfRepairArmed = true;
+		afterFirstPull(function () {
+			try {
+				if (!DaimondPause.heldByHand(DaimondPause.ROOT)) {
+					DEFAULT_DIAMONDS.forEach(function (d) {
+						if (!d.triggers.length) return;
+						(diamonds || []).forEach(function (f) {
+							if (!f || (f.id !== DEFAULT_IDS[d.name] && f.name !== d.name)) return;
+							// Not one a person held while this waited: that hold is theirs.
+							var self = DaimondPause.id('root', 'diamonds', f.id, 'self');
+							if (!DaimondPause.pressedHere(self)) DaimondPause.unseed(self);
+						});
+					});
+				}
+			} catch (e) { return; }					// module not up: asked again next boot
+			try { localStorage.setItem(SELF_PLAYED_KEY, '1'); } catch (e) { /* asked again next boot */ }
+		});
+	}
+
+	/// Run `fn` once this session has heard from the account's other devices: after its
+	/// first pull has run, or at once on a device with nothing to pull from -- no
+	/// identity, or a safe start.
+	///
+	/// Not for ever, for the sweep's reason and after the sweep's wait: a device whose
+	/// gateway is down has no news coming. What runs here must therefore be safe on a
+	/// record older than the account's, which `unseed`'s stamp is.
+	function afterFirstPull(fn) {
+		var syncs = false;
+		try {
+			syncs = !!(window.DaimondSync && window.DaimondIdentity
+				&& !(window.DaimondSafe && DaimondSafe.on())
+				&& (DaimondIdentity.exists() || DaimondIdentity.everExisted()));
+		} catch (e) { syncs = false; }
+		var done = false;
+		function go() { if (done) return; done = true; fn(); }
+		if (!syncs || (DaimondSync.pulled && DaimondSync.pulled())) { go(); return; }
+		window.addEventListener('daimond:pulled', go, { once: true });
+		setTimeout(go, SWEEP_WAIT_MS);
+	}
+
 	async function seedDefaultDiamonds() {
+		releaseSeededSelf();
 		try { if (localStorage.getItem(DEFAULTS_KEY) === '1') return; }
 		catch (e) { return; }                       // private mode: never seed twice
 		// Not on an empty app that has not finished booting: a create against a
@@ -42550,15 +42934,17 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			// same migration a legacy crystal takes, so the two cannot drift apart.
 			try { await diamondApp().write_crystal_data(id, crystalJson(d.crystal)); }
 			catch (e) { /* empty is fine */ }
-			// Held before it can ever run -- but ONLY where there is something to
-			// run unbidden. A Diamond with no triggered actions draws no widget on
-			// its tile, so arriving red would mean a new user's Diamond refusing to
-			// answer with no light in front of them to explain it. It does not need
-			// holding either: with no TA it spends when prompted and at no other
-			// time. (It is still IN the pause tree, so "pause Everything" holds it.)
+			// Its ACTIONS held before they can ever run, and nothing else. A Diamond
+			// with no triggered actions spends when prompted and at no other time, so
+			// there is nothing of its to hold. (It is still IN the pause tree, so
+			// "pause Everything" holds it.)
+			//
+			// NOT `self`, which is the person's own conversation (`armed: false`). It
+			// was seeded held beside the action until 2026-09-24, when a typed turn
+			// began asking `self` at dispatch: the app's own seed then read as a
+			// person's pause and refused everything typed into the Optimiser (R2 QA,
+			// F0). `releaseSeededSelf` plays it on the accounts already seeded.
 			if (d.triggers.length) {
-				try { DaimondPause.seedPaused(DaimondPause.id('root', 'diamonds', id) + '/self'); }
-				catch (e) { /* module not up */ }
 				var rec = DaimondTriggers.defaults();
 				d.triggers.forEach(function (spec, n) {
 					var ta = DaimondTriggers.blank(spec.kind);
@@ -50513,6 +50899,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		// in flight -- counts it. Both read `_generating`, so a daimon turn that did not
 		// set it was a turn the rest of the app could not see was happening.
 		rec._generating = true;
+		rec._pausedMid = '';		// set by `brakeHeld` when a pause catches this turn running
 		// The Stop button aborts `current.app`, and a daimon's turn does not run on its
 		// own app -- it runs on the Diamond's, which is shared by every Diamond on the
 		// same model. Pointing the record at it is what makes Stop reach this turn;
@@ -50684,6 +51071,8 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			// take-back aborts the daimon promptly rather than at the next tick. Cheap and
 			// idempotent; the read-only ticker is still the backstop.
 			if (detached && detached.onProgress) { try { detached.onProgress(); } catch (e) { /* the ticker still catches it */ } }
+			// A paused turn keeps its brake on; see the same line in `runTurn`.
+			if (rec._pausedMid) { try { if (rec.app) rec.app.abort(); } catch (e0) { /* idempotent */ } }
 			if (ev.type === 'text') {
 				// The conductor's own words — a question, a refusal, or an account
 				// of what it did. Kept, so a text-only turn is not silently dropped.
@@ -50908,6 +51297,17 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			}
 		} catch (e) { steerInTurn = false; steerTurn = ''; }
 		try {
+			// TYPED TURN CONTROL — refused HERE, at dispatch, before the daimon's own
+			// client is ever called, whichever key this Diamond runs on. A daimon's
+			// conversation does not go through `runTurn` (it has its own client, `fa`,
+			// shared by every Diamond on the model) so it needed this check as much as
+			// an ordinary chat's turn did, and for the same reason: the credits path's
+			// mint (`mintSlot`, from a dispatched worker's own run) is the only door
+			// that used to ask, and a turn on the user's own key mints nothing. Same
+			// node, same `DaimondPause` query and refusal text `chatSpendNode`'s callers
+			// already throw for this Diamond elsewhere in this file.
+			var hold = turnHold({ diamondId: diamondId });
+			if (hold) throw DaimondModels.pauseError(hold);
 			// The conversation goes out and comes back. It is what makes the daimon
 			// persistent, which is the whole of notes2's "the daimon is meant to be
 			// persistant": it used to build a fresh session per instruction, so it could
@@ -50967,6 +51367,13 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 						ts: tailTs });
 					if (onScreen()) appendUserMessage(tailMsg.content, tailTs);
 				}
+			}
+			// A PAUSE CAUGHT IT PART WAY (FU QA, FB): the engine's ending says stopped, and
+			// the person did not press Stop, so it is said as paused. Not an error.
+			if (rec._pausedMid) {
+				pendingSteerEnd = pendingSteerEnd || { role: 'end_log', offered: 0, rounds: step,
+					calls: 0, refused: 0, failed: 0, missing: [], mid: newMid(), ts: Date.now() };
+				pendingSteerEnd.how = 'paused';
 			}
 			// The ending, last, under whatever the turn managed to say.
 			if (pendingSteerEnd) {
@@ -51115,7 +51522,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		// LAST, so a status line the drain's own turn will overwrite has at least
 		// been written once. `sawError` is how the turn ended, and it decides the
 		// same thing here it decides for a chat: send the next one, or hand it back.
-		drainSteerQueue(rec, diamondId, sawError);
+		drainSteerQueue(rec, diamondId, sawError || !!rec._pausedMid);
 		// NOTHING back from a turn that failed. The prose a half-finished turn
 		// managed before it died is not a finding, and a producer reading it would
 		// raise a tile out of the beginning of a sentence.
@@ -57118,11 +57525,9 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			onHost:  function (host) { applyHandHostname(host); },
 			// This computer's hand is older than the deletion meter, so the engine has made
 			// every folder read-only to a command and to a file tool (`command_fence` in
-			// src/tools.rs). Said once a page, with the update, and nothing waits on the answer.
-			onMeterless: function (host) {
-				noticeDialog(t('hand.stale_title'),
-					t('hand.stale_body', { host: host || t('hand.stale_here') }), { pre: true });
-			},
+			// src/tools.rs). A Pending notice, not a dialog raised over whatever the
+			// person is doing -- see `noteHandStale`.
+			onMeterless: function (host, version) { noteHandStale(host, version); },
 			// What the relay has to say about the hand itself — that it stopped,
 			// that it was never installed — rather than about the command. It is
 			// written for the model, and a person watching the panel is owed it too.

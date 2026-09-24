@@ -513,6 +513,10 @@ try {
 	check(tickable,
 		'THE DIALOG OFFERS A CONTROL THE USER PRESSES to make an answer standing',
 		tickable ? '' : 'no .net-standing-box in the card, or it would not tick');
+	// The affirmative is held for its first second on an unbidden question (R6), so a
+	// click fired before that second is up lands on a disabled `.dlg-ok` and does
+	// nothing. Wait for it to be pressable first, as verify_deletekeep's F8 does.
+	await p.waitForSelector('.dlg-card .dlg-ok:not([disabled])', { timeout: 2000 }).catch(() => {});
 	await p.evaluate(() => {
 		const card = [...document.querySelectorAll('.dlg-card')].filter(c => c.getClientRects().length).pop();
 		card.querySelector('.dlg-ok').click();
@@ -605,6 +609,10 @@ try {
 		return !!card && (!box || box.checked === false);
 	});
 	await shot(s, 'netchip-oneoff');
+	// The affirmative is held for its first second on an unbidden question (R6), so a
+	// click fired before that second is up lands on a disabled `.dlg-ok` and does
+	// nothing. Wait for it to be pressable first, as verify_deletekeep's F8 does.
+	await p.waitForSelector('.dlg-card .dlg-ok:not([disabled])', { timeout: 2000 }).catch(() => {});
 	await p.evaluate(() => {
 		const card = [...document.querySelectorAll('.dlg-card')].filter(c => c.getClientRects().length).pop();
 		card.querySelector('.dlg-ok').click();

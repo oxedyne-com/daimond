@@ -330,10 +330,14 @@
 	/// which control to point at — which is now a control that exists, in the Web panel
 	/// header.
 	function pauseError(id) {
+		// By NAME from the tree ("Web access", "Everything"), never the id (R2 QA, F0b).
+		var name = id;
+		try { if (window.DaimondPause) name = DaimondPause.label(id) || id; }
+		catch (e) { name = id; }
 		var e = new Error(tOr('pause.refused.web',
 			'{node} is paused. The page was not fetched and nothing was spent. Press '
 				+ 'play on it to resume.',
-			{ node: id }));
+			{ node: name }));
 		e.paused    = true;
 		e.pauseNode = id;
 		return e;

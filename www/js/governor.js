@@ -265,13 +265,18 @@
 
 	/// The words for a refusal: what was not done, and where the control
 	/// is. English until the key exists, so nothing shows a bare key.
+	/// `{node}` is the Diamond's or the chat's NAME from the tree, never the id, which
+	/// tells a person nothing (R2 QA, F0b).
 	function pauseWords(node) {
-		var s = tr('pause.refused.dispatch', { node: node });
+		var name = node;
+		try { if (window.DaimondPause) name = DaimondPause.label(node) || node; }
+		catch (e) { name = node; }
+		var s = tr('pause.refused.dispatch', { node: name });
 		if (s === 'pause.refused.dispatch') {
 			// A byte-for-byte copy of the catalogue entry, `{node}` filled in here.
 			// Assembling a second wording is how this drifted from `en.js` unnoticed.
 			s = ('{node} is paused. No agents dispatched, nothing spent. '
-				+ 'Press play on it to resume.').replace(/\{node\}/g, node);
+				+ 'Press play on it to resume.').replace(/\{node\}/g, name);
 		}
 		return s;
 	}

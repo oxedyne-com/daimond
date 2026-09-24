@@ -1088,9 +1088,10 @@
 	// its reader to skip the one that mattered. "Answered · no tools used" is a
 	// statement of what happened, not an accusation — the reader decides whether
 	// the model promised otherwise.
-	// i18n-family: end.how_ = answered stopped capped silent failed malformed reasoned_only
+	// i18n-family: end.how_ = answered stopped paused capped silent failed malformed reasoned_only
 	'end.how_answered': 'Answered',
 	'end.how_stopped':  'Stopped',
+	'end.how_paused':   'Paused',
 	'end.how_capped':   'Step limit reached',
 	'end.how_silent':   'Ended without saying anything',
 	'end.how_failed':   'Ended on an error',
@@ -1599,7 +1600,7 @@
 	// user — this device's work is still only here — so they share a label and
 	// differ in the reason.
 	'sync.paused':         'Sync paused',
-	'sync.busy_reason':    'Another device is saving to this account at the same time, so this device’s work has not been sent yet. It goes on the next change.',
+	'sync.busy_reason':    'Another device is saving to this account at the same time, so this device’s work has not been sent yet. It is tried again every few seconds until it goes.',
 	'sync.merge_reason':   'Some of what arrived from the other device could not be merged here, so this device has not sent over the top of it. Reloading the page usually clears it.',
 	'sync.last_synced':    'Last synced {when}.',
 	'sync.last_never':     'Nothing has synced from this device yet.',
@@ -2137,6 +2138,8 @@
 	'turn.interrupted_early': 'Interrupted before it could answer.',
 	'turn.offline':           'The connection dropped before this finished.',
 	'turn.offline_early':     'The connection dropped before an answer arrived.',
+	'turn.paused':            'Paused before this finished. Press play, then Continue.',
+	'turn.paused_early':      'Paused before an answer arrived. Press play, then Continue.',
 	'turn.peer_sent':         'Sent to your other devices.',
 	'turn.peer_sending_named': 'Sending to {name}…',
 	'turn.peer_none':         'No awake device picked this up.',
@@ -2488,7 +2491,7 @@
 	'deletes.a_daimon': 'A daimon',
 	'deletes.ask_label': 'Files a turn may delete or wipe in your folder before asking',
 	'deletes.ask_every': 'Ask before every one',
-	'deletes.ask_note': 'Past this many in one turn, deleting or wiping files in the folder you opened on this computer stops until you say it may go on. Wiping a file is writing over it so that less than half of it is left. A copy of each is kept for at least seven days.',
+	'deletes.ask_note': 'Past this many deletes or wipes in one turn, Daimond asks first.',
 	'versions.turn_kept':  'Copies kept of the files this turn changed: {n}',
 	'dws.in_browser':      'in the browser workspace',
 	'dws.a_folder':        'a folder',

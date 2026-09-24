@@ -1711,11 +1711,12 @@ async function main() {
 		// somebody typed -- the distinction the whole investigation turned on.
 		check('the start says how deep the hand-back is', /dsEvent\('turn\.start', \{[^}]*d:\s*depth/.test(body));
 
-		// A WORKER THAT DIES BEFORE ITS LOOP. Both early exits in `Workers.start` return
+		// A WORKER THAT DIES BEFORE ITS LOOP. Every early exit in `Workers.start` returns
 		// before the `try` whose `finally` emits the close AND before that `finally`
 		// calls `gather`, so a batch with one such worker was never gathered at all.
+		// Three since 2026-09-24: a Diamond held by hand, a refused mint, a scope not built.
 		check('a worker that dies early is closed and gathered',
-			(src.match(/closeEarly\(\)/g) || []).length === 2);	// the two early exits
+			(src.match(/closeEarly\(\)/g) || []).length === 3);	// the three early exits
 		check('and the early close gathers the batch it leaves behind',
 			/closeEarly = function \(\) \{[\s\S]*?self2\.gather\(run\.batch\)/.test(src));
 	}

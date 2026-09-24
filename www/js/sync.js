@@ -112,6 +112,8 @@
 	var PUSH_DEBOUNCE_MS = 2500;	// Coalesce a flurry of changes into one push.
 	var MAX_CONFLICT_RETRIES = 8;	// Bound the pull-merge-retry loop (was 4): more headroom under 3-device churn.
 	var CONFLICT_BACKOFF_MS  = 200;	// Jittered wait between conflict retries so busy devices do not collide every attempt.
+	var UNSENT_RETRY_MIN_MS  = 1000;	// First retry of work a refused push left unsent (`owe`).
+	var UNSENT_RETRY_MAX_MS  = 8000;	// Its backoff never grows past this, and has no try limit.
 	var FLUSH_MAX_ROUNDS     = 6;	// Bound flush()'s push-and-confirm loop.
 	var FLUSH_RETRY_MS       = 300;	// Wait between flush() rounds while a push is in flight elsewhere.
 	// Focus arrives in bursts -- a click into the window raises focus on the
@@ -315,6 +317,11 @@
 	// work did NOT leave, and both are cleared by the next round that works.
 	var jammed        = '';
 	var lastFailed    = [];		// Sections the last merge could not apply.
+	// Work a refused push left unsent, and its retry. Unlike `jammed`, which a clean pull
+	// clears, this stands until a push lands, because a pull is not a send. See `owe`.
+	var unsent        = false;
+	var unsentTimer   = null;
+	var unsentTries   = 0;
 	// A passphrase was changed on another device and this one is BEHIND the epoch chain
 	// -- it could not walk the links to the account's current key (a missing link, or a
 	// chain longer than this build kept). It cannot read the account and must NOT push
@@ -935,7 +942,88 @@
 	/// prevent.
 	function jam(why) {
 		jammed = why;
+		if (why === 'busy') owe();
 		restStatus();
+	}
+
+	/// This device's work did not leave: the mailbox refused the push and nothing could
+	/// reconcile it -- the pull after a 409 failed, or the retries ran out while it kept
+	/// moving. Try again on our own, on a backoff, until a push lands.
+	///
+	/// IT USED TO WAIT FOR "THE NEXT CHANGE", and on a device that has just finished a
+	/// hand-off there is none: the runner's answer sat in its store while the phone that
+	/// sent the turn waited for a parcel that was never retried (2026-09-24,
+	/// `verify_handoff_slowparcel` CASE 1). A retry that pulls first cannot spin two
+	/// busy devices against each other: it sends nothing until it has read the mailbox,
+	/// and it backs off to `UNSENT_RETRY_MAX_MS` between rounds.
+	function owe() {
+		unsent = true;
+		armUnsent();
+	}
+
+	function armUnsent() {
+		if (unsentTimer || !unsent) return;
+		var grow = Math.min(UNSENT_RETRY_MAX_MS, UNSENT_RETRY_MIN_MS * Math.pow(2, unsentTries));
+		unsentTries++;
+		// Jittered, as the conflict backoff is, so devices that failed together do not
+		// retry together.
+		var wait = Math.round(grow * (0.5 + Math.random()));
+		diag('push retry armed', 'try=' + unsentTries + ' in ' + wait + 'ms');
+		unsentTimer = setTimeout(function () { unsentTimer = null; retryUnsent(); }, wait);
+	}
+
+	/// A push landed, or found the mailbox already holding this device's state.
+	function paid() {
+		if (unsent && unsentTries) diag('push retry settled', 'after ' + unsentTries + ' tries');
+		unsent      = false;
+		unsentTries = 0;
+		if (unsentTimer) { clearTimeout(unsentTimer); unsentTimer = null; }
+	}
+
+	/// Why a push must wait rather than send, or ''. 'busy' over this device's own live
+	/// turn; else the id of another device's live hand-off this device is no part of. A
+	/// third device's push during a hand-off wins the compare-and-set and sends the
+	/// RUNNER's push of the answer into a 409 -> pull -> merge -> retry, which cost the
+	/// owner 20 s of a 58.9 s hand-off and then five more 409s on the phone. Deferred, not
+	/// refused: the caller re-arms, and the bound is the lease's own liveness, so a runner
+	/// that dies holds nobody off past its deadline.
+	function pushWaits() {
+		if (window.DaimondCore && DaimondCore.busy && DaimondCore.busy()) return 'busy';	// never over a live turn.
+		try {
+			if (window.DaimondPeer && DaimondPeer.deferPushFor && window.DaimondLease) {
+				return DaimondPeer.deferPushFor(DaimondLease.snapshot(), selfDeviceId(),
+					Date.now(), ownDispatch) || '';
+			}
+		} catch (e) { /* no stand-off can be read, so none is kept */ }
+		return '';
+	}
+
+	/// One retry of unsent work: read the mailbox, and only once that lands, push. A pull
+	/// that still fails costs a GET and no parcel collect, and re-arms, longer.
+	async function retryUnsent() {
+		if (!unsent) return;
+		// A standing refusal outranks the retry, and its own triggers take over: an unlock,
+		// a re-check of the licence, a link, a smaller parcel.
+		if (!ready() || !entitled || rekeyBehind || tooLarge || sessionGone) return;
+		if (inFlight) { armUnsent(); return; }
+		// A PUSH THAT WOULD WAIT IS NOT RETRIED BY PULLING (QA 2026-09-24). Over a live turn
+		// here, or another device's hand-off, `push()` defers and re-arms itself on its own
+		// cheap timer, and the turn's end (`daimond:idle`) sends it. A pull here would only
+		// fetch the whole parcel every few seconds for the length of the turn.
+		if (pushWaits()) { schedule(); return; }
+		var v = -1;
+		inFlight = true;
+		try { v = await pull(true); }
+		catch (e) { v = -1; }
+		finally { inFlight = false; }
+		// A merge that could not finish is the re-pull's (`scheduleReapply`), which is
+		// bounded; a clean re-pull that lands sends the owed parcel (`pullOnce`).
+		if (v >= 0 && lastFailed.length) { restStatus(); return; }
+		if (v < 0) { restStatus(); armUnsent(); return; }
+		await push();
+		// Deferred rather than refused (over a live turn, or a push already in flight):
+		// still owed, so the backoff goes on. A push refused again re-armed through `jam`.
+		armUnsent();
 	}
 
 	/// Nothing is standing in the way any more: the round that just worked
@@ -1783,6 +1871,10 @@
 		adoptVersion(j.version | 0, preRead);
 		reapplyDone();				// a clean apply settles any re-pull that was armed.
 		unjam();
+		// THE PULL LANDED, and work a refused push left unsent can go now, on the next
+		// push rather than at the end of its backoff. Not from inside a push (`quiet`),
+		// whose own retry is about to send.
+		if (unsent && !quiet) schedule();
 		// TRAINING WHEELS — remove with the DEBUG_SHARE module. The debug feed's
 		// `sync`, pull half: direction, the version this device moved to, and the
 		// round trip. Counts and versions only -- never a section's contents, which
@@ -1818,23 +1910,10 @@
 		// linked again first, which brings its epoch forward and clears this on the next
 		// pull. See the `re > le` branch in pullOnce.
 		if (rekeyBehind) { restStatus(); return; }
-		if (window.DaimondCore.busy && DaimondCore.busy()) { schedule(); return; }	// never over a live turn.
 		if (inFlight) { schedule(); return; }
-		// NOR OVER SOMEBODY ELSE'S LIVE TURN, on a device that is no part of it. A
-		// third device's push during a hand-off wins the compare-and-set and sends the
-		// RUNNER's push of the answer into a 409 -> pull -> merge -> retry, which cost
-		// the owner 20 s of a 58.9 s hand-off and then five more 409s on the phone.
-		// Deferred, not refused: `schedule()` re-arms, and the bound is the lease's own
-		// liveness, so a runner that dies holds nobody off past its deadline.
-		var standOff = '';
-		try {
-			if (window.DaimondPeer && DaimondPeer.deferPushFor && window.DaimondLease) {
-				standOff = DaimondPeer.deferPushFor(DaimondLease.snapshot(), selfDeviceId(),
-					Date.now(), ownDispatch);
-			}
-		} catch (e) { standOff = ''; }
+		var standOff = pushWaits();
 		if (standOff) {
-			diag('push deferred', 'turn=' + standOff.slice(0, 12) + ' is running on another device');
+			if (standOff !== 'busy') diag('push deferred', 'turn=' + standOff.slice(0, 12) + ' is running on another device');
 			schedule();
 			return;
 		}
@@ -1871,6 +1950,7 @@
 					// device that is quiet is quiet for a long time and this
 					// must not become a poll -- nor a second GET on the heels
 					// of the one a focus just made.
+					paid();			// the mailbox already holds what this device has
 					if (Date.now() - lastPullAt >= IDLE_PULL_MIN_MS) await pull();
 					// TELL flush() the live parcel is already what the mailbox holds, so it
 					// need not pay a second whole-parcel collect to find that out (the ~40 MB
@@ -2037,6 +2117,7 @@
 					}
 					tooLarge = false;					// whatever would not fit, fits now
 					unjam();							// and whatever would not reconcile, has
+					paid();								// and nothing is owed
 					noteSynced();
 					setStatus('synced', t('sync.synced'), 2200);
 					// TRAINING WHEELS — the debug feed's `sync`, push half. The parcel's
@@ -2118,10 +2199,10 @@
 			}
 			// Out of attempts. The mailbox moved under every one of them, so this
 			// device's work is still only here -- which is exactly the state the
-			// chip exists to report. It is not re-armed from here: the next
-			// change, the next turn ending, the next focus and the next tab
-			// switch all try again, and a loop that retried on its own would
-			// spin two busy devices against each other with nobody the wiser.
+			// chip exists to report. `jam('busy')` owes it (`owe`): it is tried
+			// again on a backoff that reads the mailbox before it sends anything,
+			// so two busy devices do not spin against each other, and it is never
+			// left for a next change that may not come.
 			log('conflict retries exhausted; this device’s work has not been sent');
 			jam('busy');
 		} finally {
@@ -3782,6 +3863,10 @@
 
 	window.DaimondSync = {
 		pull:    pull,
+		/// Has a pull run this session -- landed, found nothing, or failed on the wire?
+		/// The same once-per-boot fact `daimond:pulled` announces, for a caller that
+		/// arrives after it fired.
+		pulled:  function () { return announcedPull; },
 		push:    function () { return push(); },
 		/// Push and CONFIRM the current parcel is committed, answering the version it
 		/// committed at -- `{ ok, version, why? }`. Used by the hand-off dispatcher so

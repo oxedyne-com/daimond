@@ -1853,7 +1853,7 @@
 						var keep = true;
 						try { if (DaimondPeer.holdOwnDispatch) keep = await DaimondPeer.holdOwnDispatch(peer); }
 						catch (e) { keep = true; }
-						if (keep) return hold(peer.turnId);
+						if (keep) return ownHold(peer);
 						// Settled or dead: fall through to absorb, which answers
 						// 'self-dispatched' and routes nothing; takeRow then answers NOTHING and
 						// the cursor passes the row, so the relay drops it and no peer re-runs it.
@@ -1889,8 +1889,20 @@
 				// is folded here, under the lock, as a message is: each handler records it in
 				// page memory and returns. Nothing folded here may call a locked verb of this
 				// module or wait on the network.
-				try { await DaimondPeer.absorb(peer, row); }
+				var noted = null;
+				try { noted = await DaimondPeer.absorb(peer, row); }
 				catch (e) { log('a peer envelope would not apply', e); }
+				// A NOTE FOR ANOTHER DEVICE STAYS ON THE RELAY FOR IT (2026-09-24). Page
+				// memory is not the mailbox record, so a note this device folds reaches no
+				// other device through the parcel, and the ack is one watermark for the whole
+				// account: acking past a runner's report took it off the relay before the phone
+				// that sent the turn had collected it. So a note naming another device is
+				// HELD, as an own errand is, until that device acks it or its window passes
+				// (`noteHeldFor`). Only a verified one: a forgery must not pin the cursor.
+				if (noted && noted.verified && DaimondPeer.noteHeldFor) {
+					var forDev = DaimondPeer.noteHeldFor(peer, row, selfDeviceIdForPark(), relayNowOrNull());
+					if (forDev) return holdFor(forDev);
+				}
 				return NOTHING;			// routed, and never a message on the list
 			}
 		}
@@ -2029,6 +2041,19 @@
 	// `settle` can later drop exactly this hold -- without a network round -- the moment
 	// the turn is settled here. Only the peer that runs it may otherwise ack it away.
 	function hold(turnId) { return { got: 0, notes: 0, unreadable: 0, hold: true, turnId: String(turnId || '') }; }
+	/// Our own live errand, held with its envelope so `collect` can decide it again once
+	/// the rest of the batch -- the runner's report, most often -- has been folded.
+	function ownHold(env) { var h = hold(env && env.turnId); h.own = env; return h; }
+	/// A note held for the device it names. No turn: `settle`, which lets a turn's own
+	/// holds go when the turn is over here, must never let go of a note another device
+	/// has still to collect.
+	function holdFor(deviceId) { var h = hold(''); h.forDevice = String(deviceId || ''); return h; }
+
+	/// The relay's clock, from the offset presence answers carry, or null before one has.
+	function relayNowOrNull() {
+		try { return (window.DaimondPresence && DaimondPresence.relayNow) ? DaimondPresence.relayNow() : null; }
+		catch (e) { return null; }
+	}
 
 	// ── Arrival ────────────────────────────────────────────────
 	//
@@ -2095,13 +2120,31 @@
 		// here would hide it from `announce` below.
 		var got = 0, notes = 0, badRows = 0, more = false;
 		var arrived = [];
+		// A ROW IS WORKED ONCE ON A DEVICE (2026-09-24). The re-fetch from a pinned
+		// `through` exists to decide the HELD rows again, and nothing else. A row this
+		// device already folded and let go -- a message, a note it took, an errand whose
+		// run is over -- is at or below `seen` and was not held, so it is passed by
+		// here, not folded, claimed or run a second time. A note held for another
+		// device (`noteHeldFor`) pins `through` on the always-on runner for as long as
+		// the phone is away, and every errand above it used to be claimed again on each
+		// collect: a `parked`, `undeliverable` or crashed turn, which `finished` does
+		// not settle, ran again on every park wake (QA `rerun_above_held.test.mjs`).
+		var prevSeen = st.seen | 0, wasHeld = {}, decided = {}, whole = false;
+		var ph = Array.isArray(st.holds) ? st.holds : [];
+		for (var wi = 0; wi < ph.length; wi++) wasHeld[ph[wi].seq | 0] = 1;
+		// THE PAGE CURSOR IS THIS PASS'S OWN, not `through`. A held row pins `through`,
+		// and a second page asked from it is the first page again, so a device holding
+		// anything read one page and stopped: past it, a new errand went unseen for as
+		// long as the hold stood (QA `page_starve.test.mjs`). Each page now starts
+		// after the last row the one before it carried.
+		var from = st.through | 0;
 
 		for (var round = 0; round < 8; round++) {
 			// BOUNDED, because everything else waits on the lock this read is made under.
 			// A request the network black-holes answers nothing for as long as the
 			// operating system keeps the socket, which is the park's forty-one minutes.
 			var r;
-			try { r = await call('GET', undefined, '?since=' + st.through, RELAY_DEADLINE_MS); }
+			try { r = await call('GET', undefined, '?since=' + from, RELAY_DEADLINE_MS); }
 			catch (e) { return { ok: false, why: (e && e.timedOut) ? 'timeout' : 'offline', got: got }; }
 			if (r.status !== 200 || !r.json || !r.json.ok) {
 				return { ok: false, why: 'status_' + r.status, got: got };
@@ -2116,20 +2159,39 @@
 			// RE-DECIDE EVERY HOLD THIS PASS. `through` is pinned below the lowest live
 			// hold, so `?since=through` re-fetches every held row and `takeRow` re-runs
 			// `holdOwnDispatch` on each -- a turn settled since the last pass no longer holds,
-			// so the cursor passes it here (S-HAND #1/#2) even without a `settle` call. The
-			// set is rebuilt from scratch, never carried, so a stale hold cannot linger.
-			st.holds = [];
+			// so the cursor passes it here (S-HAND #1/#2) even without a `settle` call.
+			//
+			// A HOLD STANDS UNTIL ITS ROW IS DECIDED AGAIN, never emptied ahead of that.
+			// The pass above works a row only if the last pass held it, so it must know
+			// every hold the last one kept: a set emptied here and cut short by the wire
+			// left the next pass to pass R1 as worked and ack it off before the phone had
+			// it. And a cursor raised over a half-rebuilt set passed a later hold on the
+			// way to deciding it -- R1's window over, R2 acked away. A hold whose row the
+			// relay no longer has goes once a pass has read to the end, so none lingers.
+			var owned = [];		// this page's holds on our own errands, with their envelopes
 			var rows = r.json.rows || [];
 			for (var i = 0; i < rows.length; i++) {
 				var row  = rows[i];
+				var seq  = row.seq | 0;
+				if (seq <= prevSeen && !wasHeld[seq]) continue;
 				var took = await takeRow(st, row, work);
+				if (wasHeld[seq]) {
+					decided[seq] = 1;
+					st.holds = st.holds.filter(function (x) { return (x.seq | 0) !== seq; });
+				}
 				got     += took.got;
 				notes   += took.notes;
 				badRows += took.unreadable;
 				if (took.got) arrived.push(String(row.addr));
-				// A HELD row (our own live errand, or a stand-down for the nominee) is
-				// recorded with its turnId, so `settle` can drop exactly it later.
-				if (took.hold) st.holds.push({ seq: row.seq | 0, turnId: String(took.turnId || '') });
+				// A HELD row (our own live errand, a stand-down for the nominee, work being
+				// run, or a note for another device) is recorded with its turnId, so `settle`
+				// can drop exactly a turn's own holds later; a note's hold has none.
+				if (took.hold) {
+					var h = { seq: row.seq | 0, turnId: String(took.turnId || '') };
+					if (took.forDevice) h.forDevice = took.forDevice;
+					st.holds.push(h);
+					if (took.own) owned.push({ seq: row.seq | 0, env: took.own });
+				}
 				// EVERY folded row moves `seen`, a HELD one included -- this is the whole
 				// spin fix. `through` -- what ackThrough acks through -- is clipped just below
 				// the LOWEST live hold (watermark), so the relay keeps every held row for its
@@ -2139,9 +2201,30 @@
 				if ((row.seq | 0) > (st.seen | 0)) st.seen = row.seq | 0;
 				st.through = Math.max(st.through | 0, watermark(st));
 			}
+			// OUR OWN ERRAND, DECIDED AGAIN ONCE THE BATCH IS FOLDED. Its row always comes
+			// before the report that settles it, so it was held before the report was read;
+			// held on, it pinned the ack until some later row woke a later collect, and with
+			// the report now left on the relay for us (`noteHeldFor`) the runner's cursor
+			// stayed pinned beside ours. `holdOwnDispatch` is the one rule, asked again.
+			if (owned.length && window.DaimondPeer && DaimondPeer.holdOwnDispatch) {
+				var freed = {};
+				for (var oi = 0; oi < owned.length; oi++) {
+					var keep = true;
+					try { keep = await DaimondPeer.holdOwnDispatch(owned[oi].env); } catch (e) { keep = true; }
+					if (!keep) freed[owned[oi].seq] = 1;
+				}
+				st.holds = st.holds.filter(function (x) { return !freed[x.seq | 0]; });
+				st.through = Math.max(st.through | 0, watermark(st));
+			}
 			parkAgain();			// a request that was served proves the session is back
 			more = !!r.json.more;
-			if (!more || st.holds.length) break;	// once holding, stop fetching further batches this pass
+			if (!more) { whole = true; break; }
+			if (!rows.length) break;
+			from = Math.max(from, rows[rows.length - 1].seq | 0);
+		}
+		if (whole) {
+			st.holds = st.holds.filter(function (x) { return !wasHeld[x.seq | 0] || decided[x.seq | 0]; });
+			st.through = Math.max(st.through | 0, watermark(st));
 		}
 		await save();
 		render();

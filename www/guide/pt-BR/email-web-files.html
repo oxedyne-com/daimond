@@ -76,6 +76,7 @@
 	<h3 id="s5">O que um daimon pode abrir</h3>
 	<p>Um daimon só pode abrir o que está no espaço de trabalho do diamond dele. Mais nada é legível ou gravável pelas ferramentas de arquivo, nem pelo daimon nem por qualquer ajudante que ele despache. A verificação está em código compilado na única porta por onde toda ferramenta de arquivo passa, e esse código está em um pacote que compila de forma reproduzível a partir de fonte pública, então não é uma instrução em um prompt.</p>
 	<p>Essa regra decide o que um daimon pode alcançar e não diz nada sobre onde vai parar o que ele lê, porque o que quer que ele abra vai para o seu provedor de modelos junto com o resto do turno.</p>
+	<p>Apagar ou sobrescrever conta da mesma forma. Passado um limite que você define em <span class="ui">Configurações</span> — oito por turno por padrão —, o turno para ali e pergunta antes de continuar. Sobrescrever em grande parte é guardar menos da metade do que havia. Uma cópia de cada arquivo apagado ou sobrescrito é guardada por pelo menos sete dias.</p>
 
 	<h3 id="s6">A lista de anexos</h3>
 	<p>As linhas trazem uma idade, <span class="ui">Adicionado {when}</span>. Um caminho que não existe mais é desenhado como <span class="ui">Sumiu</span> sem ação de abrir, então uma linha morta nunca se passa por uma viva.</p>
