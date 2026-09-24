@@ -29,6 +29,9 @@ const TREE_DIR = path.dirname(HERE);
 const BASE = process.env.BASE || '81309ed6';
 const OLD = execFileSync('git', ['-C', TREE_DIR, 'show', BASE + ':www/js/pause.js'], { maxBuffer: 1 << 26 }).toString();
 const NEW = readFileSync(process.env.NEW || path.join(TREE_DIR, 'www/js/pause.js'), 'utf8');
+// store.js, which index.html loads before pause.js; absent from a tree before release 5.
+let STORE = '';
+try { STORE = readFileSync(path.join(TREE_DIR, 'www/js/store.js'), 'utf8'); } catch (e) { STORE = ''; }
 
 let bad = 0, n = 0;
 const check = (name, fn, detail) => {
@@ -73,6 +76,7 @@ function device(src, dev, ls, clock, chats) {
 		dispatchEvent: () => true,
 		DaimondIdentity: { deviceId: () => dev },
 	};
+	if (STORE) new Function('window', 'localStorage', STORE)(win, ls);
 	new Function('window', 'localStorage', 'CustomEvent', 'Date', src)(win, ls,
 		function CustomEvent(type) { this.type = type; }, { now: clock });
 	const P = win.DaimondPause;

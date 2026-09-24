@@ -35,6 +35,7 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 import { webcrypto } from 'node:crypto';
+import { loadStore } from './storefixture.mjs';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 let failures = 0, passes = 0;
@@ -80,6 +81,7 @@ function load(opts) {
 	if (o.mobile !== undefined) win.DaimondShell = { isMobileDevice: () => !!o.mobile };
 	if (tab) win.sessionStorage = mkStore(tab);
 	const localStorage = mkStore(disk);
+	loadStore(win, localStorage);
 	const fn = new Function(
 		'window', 'crypto', 'localStorage', 'btoa', 'atob',
 		'TextEncoder', 'TextDecoder', 'Event', 'console', 'globalThis',

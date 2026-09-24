@@ -50,6 +50,7 @@
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
+import { loadStore } from './storefixture.mjs';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const MODELS_SRC  = join(HERE, 'models.js');
@@ -145,6 +146,7 @@ function loadModels() {
 	// `fetch` finds the stub.
 	let body = readFileSync(MODELS_SRC, 'utf8');
 	body = patchModels(body);
+	loadStore(win, localStorage);
 	const fn = new Function('window', 'document', 'localStorage', 'fetch', 'console', 'globalThis', body);
 	fn(win, documentShim, localStorage, fetchStub, console, g);
 	return { M: win.DaimondModels, gw };

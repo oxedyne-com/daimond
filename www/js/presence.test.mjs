@@ -90,6 +90,7 @@ function makeTab() {
 			setTimeout, clearTimeout, setInterval, clearInterval,
 			quiet, globalThis, { storage: {} });
 	}
+	loadScript('store.js');
 	loadScript('chunks.js');
 	loadScript('cloud.js');
 	win.__localStorage = localStorage;

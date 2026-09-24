@@ -457,7 +457,8 @@
 		// scheduled but never opened would otherwise have no leaf, and pausing
 		// the mailbox would walk straight past it.
 		fld(a, name);
-		a.touched = Math.max(Date.now(), ms(a.touched) + 1);
+		if (a.pass) a.passAt = passAt(a);	// pinned: the password did not move with the schedule
+		a.touched = DaimondStamp.next(a.touched);
 		save();
 		arm();
 		render();
@@ -624,6 +625,18 @@
 		return out;
 	}
 
+	/// When a mailbox's password was stated: its own `passAt`, or, on a record from
+	/// before the field, the configuration's stamp it used to ride.
+	function passAt(a) { return ms(a && a.passAt) || ms(a && a.touched); }
+
+	/// A mailbox's configuration as the merge compares it at an equal `touched`:
+	/// everything that travels but the password, which is merged on its own.
+	function config(a) {
+		return { host: String(a.host || ''), port: a.port | 0, smtpHost: String(a.smtpHost || ''),
+			smtpPort: a.smtpPort | 0, user: String(a.user || ''), refresh: cleanRefresh(a.refresh),
+			security: String(a.security || '') };
+	}
+
 	/// The mailboxes deleted on purpose, by address, with anything past its TTL
 	/// pruned. The map, the TTL and the union rule are DaimondCore's — one deletion
 	/// policy for chats, Diamonds, providers and mailboxes rather than four.
@@ -672,6 +685,7 @@
 			// connection in the clear and upgrades, so losing it would change how
 			// the mailbox is dialled on the other device.
 			if (a.security) row.security = String(a.security);
+			if (a.pass) row.passAt = passAt(a);
 			out.accounts.push(row);
 		});
 		return out;
@@ -681,8 +695,16 @@
 	///
 	/// A union, never a replacement: a mailbox only this device has is left alone,
 	/// one only the other device has arrives whole and working, and where both have
-	/// the same address the later `touched` decides — strictly, so an unchanged
-	/// account is not rewritten on every pull.
+	/// the same address the later `touched` decides, and at an equal `touched` the
+	/// canonically greater configuration, the same on every device. The same
+	/// configuration twice moves nothing, so an unchanged account is not rewritten on
+	/// every pull.
+	///
+	/// THE PASSWORD IS A REGISTER OF ITS OWN, stamped `passAt`. An empty password is
+	/// no statement -- that device never had one -- so it neither clears one held
+	/// here nor wins a tie; among real ones the later `passAt` wins. It used to ride
+	/// the configuration's stamp, so the device holding the later row with no password
+	/// never took the other device's (BM-2).
 	///
 	/// A deletion travels as a tombstone, and beats any copy of the account stamped
 	/// before it; an account re-added after the deletion carries a later stamp and
@@ -695,9 +717,16 @@
 		if (!remote || typeof remote !== 'object') return { added: 0, updated: 0, removed: 0 };
 		var added = 0, updated = 0, removed = 0;
 		var dead = mergeTombs(remote.tombs);
+		// A password stated before the mailbox was deleted goes with it, even where the
+		// mailbox itself comes back: the re-add is judged on its own stamp, and the
+		// password on its own.
+		var passLive = function (addr, at) { return !(dead[addr] && at <= ms(dead[addr])); };
 		state.accounts = state.accounts.filter(function (a) {
 			if (!dead[a.address]) return true;
-			if (ms(a.touched) > ms(dead[a.address])) return true;	// re-added here since
+			if (ms(a.touched) > ms(dead[a.address])) {				// re-added here since
+				if (a.pass && !passLive(a.address, passAt(a))) { a.pass = ''; a.passAt = 0; updated++; }
+				return true;
+			}
 			removed++;
 			delete state.folders[a.address];
 			return false;
@@ -705,6 +734,8 @@
 		(Array.isArray(remote.accounts) ? remote.accounts : []).forEach(function (r) {
 			if (!r || !r.address) return;
 			if (dead[r.address] && !(ms(r.touched) > ms(dead[r.address]))) return;	// buried
+			var rp = String(r.pass || ''), rpAt = ms(r.passAt) || ms(r.touched);
+			if (!passLive(r.address, rpAt)) rp = '';
 			var mine = acct(r.address);
 			if (!mine) {
 				var fresh = {
@@ -714,7 +745,8 @@
 					smtpHost: String(r.smtpHost || ''),
 					smtpPort: r.smtpPort | 0,
 					user:     String(r.user || r.address),
-					pass:     String(r.pass || ''),
+					pass:     rp,
+					passAt:   rp ? rpAt : 0,
 					touched:  ms(r.touched),
 					refresh:  cleanRefresh(r.refresh),
 					// This device's own view of the mailbox, built fresh: the mail
@@ -728,15 +760,18 @@
 				added++;
 				return;
 			}
-			if (!(ms(r.touched) > ms(mine.touched))) return;		// ours is newer, or the same
+			if (mine.pass) mine.passAt = passAt(mine);		// pinned before `touched` can move below
+			if (rp && (!mine.pass || DaimondStamp.beats(rpAt, rp, passAt(mine), mine.pass))) {
+				mine.pass   = rp;
+				mine.passAt = rpAt;
+				updated++;
+			}
+			if (!DaimondStamp.beats(r.touched, config(r), mine.touched, config(mine))) return;	// ours is newer, or the same
 			mine.host     = String(r.host || mine.host || '');
 			mine.port     = (r.port | 0) || mine.port;
 			mine.smtpHost = String(r.smtpHost || mine.smtpHost || '');
 			mine.smtpPort = (r.smtpPort | 0) || mine.smtpPort;
 			mine.user     = String(r.user || mine.user || r.address);
-			// An empty password on the other side is not an instruction to forget
-			// the one that works here: it means that device never had one.
-			if (r.pass) mine.pass = String(r.pass);
 			if (r.security) mine.security = String(r.security);
 			// Absent means the other device predates the setting and has nothing
 			// to say about it; an empty map is a real answer and clears ours.
@@ -3458,6 +3493,7 @@
 			return;
 		}
 		var wrapped = await DaimondIdentity.wrap(v.password);
+		var at = DaimondStamp.next(tombs()[v.address]);
 		state.accounts.push({
 			address:     v.address,
 			host:        v.host,
@@ -3480,7 +3516,8 @@
 			// mailbox and adding it straight back is one action to the user and two
 			// to the store, and a re-add stamped in the same millisecond as its own
 			// deletion would lose to it and vanish again on the next pull.
-			touched:     Math.max(Date.now(), ms(tombs()[v.address]) + 1),
+			touched:     at,
+			passAt:      at,
 		});
 		state.sel = v.address;
 		save();

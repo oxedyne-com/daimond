@@ -179,8 +179,7 @@
 	// ── The store ───────────────────────────────────────────────────
 
 	function load() {
-		var raw = null;
-		try { raw = JSON.parse(localStorage.getItem(KEY) || 'null'); } catch (e) { raw = null; }
+		var raw = window.DaimondStore.get(KEY, null);
 		if (raw && raw.v === 2 && raw.providers) {
 			store = raw;
 			if (!store.def) store.def = { provider: '', model: '' };
@@ -223,9 +222,14 @@
 		save();
 	}
 
+	/// Store the store. True when it landed; one the box refuses is held owed by
+	/// `DaimondStore`, retried and said on screen, and this tab goes on with it
+	/// (SIM-11). This tab's copy is the whole of it, so it is retried as it stands.
 	function save() {
-		try { localStorage.setItem(KEY, JSON.stringify(store)); } catch (e) { /* quota */ }
+		noteRunnable();
+		var landed = window.DaimondStore.put(KEY, store);
 		if (deps && deps.onChange) deps.onChange();
+		return landed;
 	}
 
 	/// The retry budget for `loadSettled`, mirroring identity.js's `existsSettled`.
@@ -274,7 +278,13 @@
 	/// questions and a single stamp answers neither well.
 	function touch(id) {
 		var p = store.providers[id];
-		if (p) p.touched = Date.now();
+		if (p) p.touched = DaimondStamp.next(p.touched);	// past the stamp it replaces, whatever the clocks
+	}
+
+	/// A provider row's configuration as the merge compares it at an equal `touched`:
+	/// what that stamp decides, as it travels.
+	function configOf(p) {
+		return { name: String(p.name || ''), url: String(p.url || ''), keyEnc: String(p.keyEnc || '') };
 	}
 
 	/// Which known provider a base URL belongs to, or '' when it is nobody's.
@@ -1429,7 +1439,7 @@
 			remainingUsd: null,
 			asOf:         null,
 			baseUsd:      n,
-			baseAt:       Date.now(),
+			baseAt:       DaimondStamp.next(prev.baseAt),
 		};
 		if (prev.mode === 'auto') p.credit.mode = 'manual';
 		touch(id);
@@ -1600,12 +1610,49 @@
 
 	// ── The default, and resolving a chat's model ───────────────────
 
-	function getDefault() {
-		return { provider: store.def.provider || '', model: store.def.model || '' };
+	function getDefault() { return standing(store.def, store.defAt, 'def'); }
+
+	/// A choice -- the default, the drafting model -- as it stands here.
+	///
+	/// The stored choice is a register merged on its own stamp and nothing else, so
+	/// every device holds the same one whatever order the parcels came in (SIM-18).
+	/// What it SAYS is read from it and the provider tombstones, which merge just as
+	/// surely: a choice whose provider was deleted after it was made reads as cleared
+	/// -- the tombstone is the stamped write that clears it -- and a choice made after
+	/// the deletion stands. One whose provider is not on this device at all is not
+	/// run here: a default pointing at nothing is worse than an older default that
+	/// works, so this device goes on with the last choice it could run (`lastRun`,
+	/// its own and never sent) until that provider arrives.
+	function standing(choice, at, slot) {
+		var p = (choice && choice.provider) || '';
+		if (!p) return { provider: '', model: (choice && choice.model) || '' };
+		if (ms(tombs()[p]) > ms(at)) return { provider: '', model: '' };
+		if (store.providers[p]) return { provider: p, model: (choice && choice.model) || '' };
+		var last = store.lastRun && store.lastRun[slot];
+		if (last && runnable(last, last.at)) return { provider: last.provider, model: last.model || '' };
+		return { provider: '', model: '' };
+	}
+
+	/// Can this device run a choice stamped `at`: its provider here, and not deleted since?
+	function runnable(choice, at) {
+		var p = choice && choice.provider;
+		return !!p && !!store.providers[p] && !(ms(tombs()[p]) > ms(at));
+	}
+
+	/// Remember each choice this device can run as it stands, for `standing`. Asked on
+	/// every store write, so a merge, a press and a provider arriving all count.
+	function noteRunnable() {
+		var last = store.lastRun || (store.lastRun = {});
+		if (runnable(store.def, store.defAt)) {
+			last.def = { provider: store.def.provider, model: store.def.model || '', at: ms(store.defAt) };
+		}
+		if (store.draft && runnable(store.draft, store.draftAt)) {
+			last.draft = { provider: store.draft.provider, model: store.draft.model || '', at: ms(store.draftAt) };
+		}
 	}
 	function setDefault(provider, model) {
 		store.def = { provider: provider, model: model };
-		store.defAt = Date.now();			// which device chose last, for the merge
+		store.defAt = DaimondStamp.next(store.defAt);		// which device chose last, for the merge
 		save();
 	}
 
@@ -1615,15 +1662,12 @@
 	// way a Diamond's vision and worker already are per Diamond. UNSET means "same as
 	// chat", so the whole feature is exactly as it was until somebody chooses.
 
-	function getDraft() {
-		var dr = store.draft || {};
-		return { provider: dr.provider || '', model: dr.model || '' };
-	}
+	function getDraft() { return standing(store.draft, store.draftAt, 'draft'); }
 	/// Empty model clears the setting: drafting falls back to the chat default. The
 	/// provider is dropped with it, since a provider with no model names nothing.
 	function setDraft(provider, model) {
 		store.draft   = { provider: model ? (provider || '') : '', model: model || '' };
-		store.draftAt = Date.now();			// which device chose last, for the merge
+		store.draftAt = DaimondStamp.next(store.draftAt);	// which device chose last, for the merge
 		save();
 	}
 
@@ -1687,16 +1731,25 @@
 		delete store.providers[id];
 		delete plain[id];
 		delete probes[id];					// no floor to hold back a key that is gone
-		if (store.def.provider === id) store.def = { provider: '', model: '' };
-		// A drafting model on the removed provider falls back to the chat model, the
-		// same way the default does rather than pointing at nothing.
-		if (store.draft && store.draft.provider === id) store.draft = { provider: '', model: '' };
 		// Before the store is written, so the very next push carries the deletion:
 		// there is one way into this function and every delete in the panel comes
 		// through it, which is what keeps the tombstone from being forgotten at one
 		// of several call sites.
+		// The tombstone also clears a default or drafting model on this provider:
+		// see `standing`. Not a write to the choice itself, so a choice another
+		// device made meanwhile is not undone by this deletion (SIM-18).
 		tombstone(id);
 		save();
+	}
+
+	/// Does an incoming choice `{ value, at }` win over this one? The later stamp,
+	/// and at an equal stamp the greater value, so two devices reach one answer
+	/// whichever parcel arrives first (A3). Never on the provider being here: that
+	/// made the merge depend on arrival order, and is asked when the choice is read.
+	function choiceWins(rv, rAt, mv, mAt) {
+		if (rAt !== mAt) return rAt > mAt;
+		var r = (rv.provider || '') + '\n' + (rv.model || ''), m = (mv.provider || '') + '\n' + (mv.model || '');
+		return r > m;
 	}
 
 	/// The providers deleted on purpose, by id, with anything past its TTL pruned.
@@ -1889,8 +1942,6 @@
 			if (ms(p.touched) > ms(dead[id])) return;	// re-added here since: the re-add wins
 			delete store.providers[id];
 			delete plain[id];
-			if (store.def.provider === id) store.def = { provider: '', model: '' };
-			if (store.draft && store.draft.provider === id) store.draft = { provider: '', model: '' };
 			updated++;
 		});
 		Object.keys(remote.providers).sort().forEach(function (id) {
@@ -1919,7 +1970,9 @@
 				added++;
 				if (mine.keyEnc) adopt.push(id);
 			} else {
-				if (stamp > ms(mine.touched)) {
+				// The later configuration, and at an equal stamp the canonically greater
+				// one, the same on every device.
+				if (DaimondStamp.beats(stamp, configOf(r), mine.touched, configOf(mine))) {
 					mine.name = String(r.name || mine.name || '');
 					mine.url  = String(r.url  || mine.url  || '');
 					// An empty `keyEnc` on the other side is not an instruction to forget this
@@ -1941,7 +1994,8 @@
 					mine.touched = stamp;
 					updated++;
 				}
-				if (fetched > ms(mine.fetched)) {
+				if (DaimondStamp.beats(fetched, [models, rates || null], mine.fetched,
+						[(Array.isArray(mine.models) ? mine.models.slice() : []).sort(), sortedRates(mine.rates) || null])) {
 					mine.models  = models;
 					if (rates) mine.rates = rates;
 					mine.fetched = fetched;
@@ -1953,7 +2007,8 @@
 			// about the key, whichever device happens to have been configured more recently.
 			if (r.credit && typeof r.credit.baseUsd === 'number' && typeof r.credit.baseAt === 'number') {
 				var c = mine.credit || {};
-				if (!(typeof c.baseAt === 'number') || r.credit.baseAt > c.baseAt) {
+				if (!(typeof c.baseAt === 'number')
+					|| DaimondStamp.beats(r.credit.baseAt, r.credit.baseUsd, c.baseAt, c.baseUsd)) {
 					mine.credit = {
 						mode:         c.mode === 'auto' ? 'auto' : 'manual',
 						remainingUsd: (typeof c.remainingUsd === 'number') ? c.remainingUsd : null,
@@ -1965,25 +2020,19 @@
 				}
 			}
 		});
-		// The default follows the freshest side — but only to a provider that exists here after
-		// the merge. A default pointing at nothing is worse than an older default that works,
-		// and the stamp is NOT advanced when the choice is refused, so the device that does hold
-		// that provider can still win with it later.
+		// The default and the drafting model are each ONE choice with its stamp, and the
+		// later choice wins -- a cleared one included, since clearing is stamped too. Taken
+		// whole and on nothing else, so the merge is the same in any order (SIM-18); a
+		// choice whose provider is not here reads as unset until it is (`resolve`).
 		var rAt = ms(remote.defAt);
-		if (rAt > ms(store.defAt) && remote.def && remote.def.provider
-			&& store.providers[remote.def.provider]) {
-			store.def   = { provider: remote.def.provider, model: remote.def.model || '' };
+		if (remote.def && typeof remote.def === 'object' && choiceWins(remote.def, rAt, store.def, ms(store.defAt))) {
+			store.def   = { provider: String(remote.def.provider || ''), model: String(remote.def.model || '') };
 			store.defAt = rAt;
 			updated++;
 		}
-		// The drafting model travels on the same rule as the default, with one added
-		// case: an UNSET draft (empty model, empty provider) is a real choice — "use
-		// the chat model" — and adopts freely, since it points at no provider to be
-		// missing after the merge.
-		var drAt = ms(remote.draftAt);
-		if (drAt > ms(store.draftAt) && remote.draft
-			&& (!remote.draft.provider || store.providers[remote.draft.provider])) {
-			store.draft   = { provider: remote.draft.provider || '', model: remote.draft.model || '' };
+		var drAt = ms(remote.draftAt), dr = store.draft || { provider: '', model: '' };
+		if (remote.draft && typeof remote.draft === 'object' && choiceWins(remote.draft, drAt, dr, ms(store.draftAt))) {
+			store.draft   = { provider: String(remote.draft.provider || ''), model: String(remote.draft.model || '') };
 			store.draftAt = drAt;
 			updated++;
 		}
@@ -2014,8 +2063,11 @@
 			}
 		}
 		if (added || updated) {
-			save();
+			var landed = save();
 			if (document.getElementById('models-list')) render();
+			// Merged here and held owed, but not stored: the section is re-pulled
+			// rather than read as applied (SIM-16, A5).
+			if (!landed) throw window.DaimondStore.refusal(KEY);
 		}
 		return { added: added, updated: updated };
 	}

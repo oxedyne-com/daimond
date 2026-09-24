@@ -314,6 +314,42 @@ pub fn share_link_in(links: &mut [Link], id: &str, on: bool) -> Outcome<bool> {
 	Ok(false)
 }
 
+/// What a model's removal of one link from a sidecar comes to; see [`model_unlink`].
+#[derive(Clone, Debug)]
+pub enum Unlink {
+	Missing,			// no link has that id, and a blank id names none
+	Users,				// a row the id names is the user's, so nothing goes
+	Removed(Vec<Link>),	// the sidecar without it
+}
+
+/// Take the link `id` out of `links` for a MODEL's tool: never a row the user drew.
+///
+/// **Every row the id names is asked, in every turn** (signed-marks design §11).  The refusal
+/// was asked only of a turn with a daimon or a write fence, so an ordinary chat's model could
+/// take the user's mark out; and it asked the FIRST row the id named, while the removal took
+/// every row, so a blank id -- which is what a hand-written row carries -- named the user's rows
+/// along with the rest.  A blank id names no link here, as in [`update_link_in`].
+///
+/// # Arguments
+/// * `links` - The owner's sidecar, as read.
+/// * `id` - The link the model named.
+pub fn model_unlink(links: &[Link], id: &str) -> Unlink {
+	if id.trim().is_empty() {
+		return Unlink::Missing;
+	}
+	let mut named = false;
+	for l in links.iter().filter(|l| l.id == id) {
+		named = true;
+		if crate::tools::is_users_link(&l.by) {
+			return Unlink::Users;
+		}
+	}
+	if !named {
+		return Unlink::Missing;
+	}
+	Unlink::Removed(links.iter().filter(|l| l.id != id).cloned().collect())
+}
+
 /// Parse a whole sidecar, skipping blank and unreadable lines.
 ///
 /// A line that will not parse is dropped rather than failing the read: a
@@ -421,6 +457,52 @@ mod tests {
 			by:   fmt!("user"),
 			share: false,
 		}
+	}
+
+	// ── A model never takes the user's mark out ───────────────────────
+
+	fn by(id: &str, who: &str) -> Link {
+		let mut l = link("diamond:d1", "file:/home/u/books", "holds");
+		l.id = fmt!("{}", id);
+		l.by = fmt!("{}", who);
+		l
+	}
+
+	#[test]
+	fn test_a_model_cannot_remove_the_users_mark() {
+		let links = vec![by("m1", "user"), by("a1", "agent:chat")];
+		assert!(matches!(model_unlink(&links, "m1"), Unlink::Users), "the user's mark went");
+		// A row from before `by` existed is the user's to confirm, not a model's to tidy.
+		let old = vec![by("m2", "")];
+		assert!(matches!(model_unlink(&old, "m2"), Unlink::Users), "an unsigned row went");
+	}
+
+	#[test]
+	fn test_a_blank_id_names_no_link_and_so_none_of_the_users_rows() {
+		// Hand-written rows carry no id: a blank id used to name every one of them.
+		let links = vec![by("", "agent:daimon"), by("", "user"), by("a1", "agent:chat")];
+		assert!(matches!(model_unlink(&links, ""), Unlink::Missing));
+		assert!(matches!(model_unlink(&links, "  "), Unlink::Missing));
+	}
+
+	#[test]
+	fn test_every_row_an_id_names_is_asked_not_only_the_first() {
+		// Two rows under one id, the model's first: the removal would take both.
+		let links = vec![by("x", "agent:chat"), by("x", "user")];
+		assert!(matches!(model_unlink(&links, "x"), Unlink::Users), "the second row was not asked");
+	}
+
+	#[test]
+	fn test_a_models_own_link_is_removed_and_the_rest_kept() {
+		let links = vec![by("m1", "user"), by("a1", "agent:chat"), by("a2", "agent:daimon")];
+		match model_unlink(&links, "a1") {
+			Unlink::Removed(kept) => {
+				let ids: Vec<&str> = kept.iter().map(|l| l.id.as_str()).collect();
+				assert_eq!(vec!["m1", "a2"], ids);
+			}
+			other => panic!("a model's own link was not removed: {:?}", other),
+		}
+		assert!(matches!(model_unlink(&links, "zz"), Unlink::Missing));
 	}
 
 	// ── Node references: what keeps the substrate general ────────────

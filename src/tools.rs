@@ -29,6 +29,8 @@ use crate::llm::{
 };
 #[cfg(any(target_arch = "wasm32", test))]
 use crate::llm::extract_json_i64;
+#[cfg(target_arch = "wasm32")]
+use crate::diamond_versions::Found;
 use crate::protocol::{ContentPart, ImageMedia, ImagePart, MessageContent};
 
 use oxedyne_fe2o3_jdat::Dat;
@@ -1144,6 +1146,16 @@ pub const STORE_ROOT: &str = "diamonds";
 /// lives rather than out of a rule written twice.
 pub const CHAT_ROOT: &str = "chats";
 
+/// What the app writes for itself to be read, under `system/`: the agents' transcripts, the
+/// guide's mirror for Help and the usage digest for the Optimiser.
+///
+/// **The app's own state, so it never follows the folder** (engine follow-ups, 2026-09-25).  With a
+/// folder open, all three were written onto the person's own disk at `<folder>/system/...`, the
+/// digest after every metered turn.  Only these three and not the whole of `system/`: a folder of
+/// the person's called `system` is common in a project, and pinning all of it to the sandbox would
+/// hide their own files from every tool.
+pub const APP_STATE_DIRS: [&str; 3] = ["system/agents", "system/guide", "system/usage"];
+
 /// The folder under `chats/<id>/` a chat and its workers work in.
 pub const CHAT_WORK_DIR: &str = "work";
 
@@ -1235,6 +1247,7 @@ pub fn is_store_path(path: &str) -> bool {
     under(&p, STORE_ROOT)
         || under(&p, MAIL_ROOT)
         || under(&p, CHAT_ROOT)
+        || APP_STATE_DIRS.iter().any(|r| under(&p, r))
         || STORE_ROOTS_LEGACY.iter().any(|r| under(&p, r))
 }
 
@@ -5337,6 +5350,67 @@ pub fn road_failed(e: &Error<ErrTag>) -> bool {
     e.plain().contains(ROAD_MARK)
 }
 
+
+// ┌───────────────────────────────────────────────────────────────┐
+// │ A person's pause, which is a refusal and not a fault           │
+// └───────────────────────────────────────────────────────────────┘
+
+/// The mark a door's refusal crosses the JavaScript edge with when a person's PAUSE holds the
+/// spend it was asked for, the node it names in brackets after it: `daimond-paused[root/web]`.
+///
+/// **A pause is a refusal, never a fault.**  Every door that asks the pause tree -- `search.js`,
+/// the gateway's 423 through `web.js`, `models.js` -- throws an `Error` carrying `paused` and
+/// `pauseNode`, and the wasm edge read only its `message`: the registry dressed it as a failure,
+/// and the page had nothing but the translated sentence to learn which control held it (QA-1).
+/// The edge now writes this mark ([`paused_mark`]), the registry turns it into [`paused_line`],
+/// and the tool-result event carries the node ([`paused_node`]).  It rides in the MESSAGE for
+/// the reason [`ROAD_MARK`] does, and no model ever reads the mark itself.
+pub const PAUSE_MARK: &str = "daimond-paused";
+
+/// How a pause's refusal opens as a tool result: a refusal, and the node that holds it.
+const PAUSED_AT: &str = "Refused (paused at ";
+
+/// The message a door's pause refusal crosses the edge as: the mark, the node, the sentence.
+pub fn paused_mark(node: &str, said: &str) -> String {
+    fmt!("{}[{}] {}", PAUSE_MARK, node, said)
+}
+
+/// The node and the sentence of a refusal a pause made, where `e` carries one ([`paused_mark`]).
+pub fn paused_refusal(e: &Error<ErrTag>) -> Option<(String, String)> {
+    let plain = e.plain();
+    let from = match plain.find(PAUSE_MARK) {
+        Some(at) => at + PAUSE_MARK.len(),
+        None     => return None,
+    };
+    let rest = match plain[from..].strip_prefix('[') {
+        Some(r) => r,
+        None    => return None,
+    };
+    match rest.split_once(']') {
+        Some((node, said)) if !node.trim().is_empty() =>
+            Some((node.trim().to_string(), said.trim().to_string())),
+        _ => None,
+    }
+}
+
+/// A pause's refusal as the model reads it.  It opens as a refusal, so [`call_outcome`] books it
+/// as one, and it names the node, so [`paused_node`] can hand the page the control to point at.
+pub fn paused_line(node: &str, said: &str) -> String {
+    fmt!("{}{}): {}", PAUSED_AT, node, said)
+}
+
+/// The pause node a tool result names, where [`paused_line`] composed it.
+pub fn paused_node(reply: &str) -> Option<String> {
+    let rest = match reply.trim_start().strip_prefix(PAUSED_AT) {
+        Some(r) => r,
+        None    => return None,
+    };
+    match rest.split_once("): ") {
+        Some((node, _)) if !node.is_empty() => Some(node.to_string()),
+        _                                   => None,
+    }
+}
+
 /// What became of one tool call.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum CallOutcome {
@@ -5630,18 +5704,20 @@ fn delete_cloud_refusal(raw: &str) -> String {
         Files panel.", raw)
 }
 
-/// The refusal a turn's delete or overwrite of an existing file meets once the turn has changed
-/// as many files as one version keeps.
+/// The refusal a turn's overwrite, delete or move of an existing file meets once the turn keeps
+/// as many copies as one version holds rows.
 ///
 /// **A bound tied to what can be put back, not to a guess at intent.**  A manifest keeps
 /// [`crate::diamond_versions::TURN_FILES_MAX`] rows and counts the rest; past that, a change is
 /// recorded as a number and cannot be restored.  The incident's own shape -- a batch of
 /// destructive calls in one response -- is what this stops, file by file, before the store runs
-/// out of room to keep what goes.
+/// out of room to keep what goes.  What it counts is copies, so every word of it is true where it
+/// fires: files that were there before the turn changed, moved or deleted them, and never the
+/// files the turn made ([`crate::diamond_versions::claim_room`]).
 pub fn turn_cap_refusal(raw: &str) -> String {
-    fmt!("Refused: this turn has already changed or deleted {} existing files, which is as many \
-        as Daimond keeps copies of in one turn, so '{}' was left as it is. Stop here and ask the \
-        user before changing any more; if they say go on, the next turn starts a fresh count.",
+    fmt!("Refused: this turn has already changed, moved or deleted {} existing files, which is as \
+        many as Daimond keeps copies of in one turn, so '{}' was left as it is. Stop here and ask \
+        the user before changing any more; if they say go on, the next turn starts a fresh count.",
         crate::diamond_versions::TURN_FILES_MAX, raw)
 }
 
@@ -5696,6 +5772,21 @@ pub fn turn_room_refusal(raw: &str, room: u64) -> String {
         crate::diamond_versions::DELETE_HOLD_MS / (24 * 60 * 60 * 1000), raw, room, raw)
 }
 
+/// The refusal a turn's act meets on a file that something outside the turn has saved over, between
+/// its acts, as many times as a turn may keep a version for ([`crate::diamond_versions::TURN_SEALS_MAX`]).
+///
+/// Every such save ends a run of the turn's changes, and the run is kept as a version of its own so
+/// both copies have rows -- which spends one of the Diamond's versions each time (R2-4).  The file
+/// is being written by something else: the user's editor, an autosave or a sync.  The sentence sends
+/// the model to the person rather than to another write.
+pub fn seal_cap_refusal(raw: &str) -> String {
+    fmt!("Refused: '{}' keeps changing under this turn. Something outside it -- the user's editor, \
+        an autosave or a sync -- has saved over files this turn was working on {} times, and Daimond \
+        keeps a version each time, so '{}' was left as it is. Stop here and ask the user to close \
+        or stop editing it; the next turn starts a fresh count.",
+        raw, crate::diamond_versions::TURN_SEALS_MAX, raw)
+}
+
 /// The refusal for a turn's delete or overwrite whose copy could not be written into the store
 /// before the act, so the act could not be undone.
 #[cfg(target_arch = "wasm32")]
@@ -5711,8 +5802,27 @@ fn copy_unwritten_refusal(raw: &str, why: &str) -> String {
 struct Hold {
     dia:      String,
     key:      String,   // as the capture names it
+    kept:     bool,     // a path the store keeps, so a copy and its note are owed
     reserved: bool,     // this hold reserved the slot, so a failed act releases it
     noted:    bool,     // this hold wrote the note, so a failed act withdraws it
+}
+
+/// One file a turn's move carries, as the move read it before it went: where it is and where it
+/// goes, each as the capture names it and as the model wrote it.
+#[cfg(target_arch = "wasm32")]
+struct MoveRead {
+    from:     String,
+    from_raw: String,
+    to:       String,
+    to_raw:   String,
+    read:     Result<Vec<u8>, (crate::wasm::diamond::Body, String)>, // its bytes, or why not
+}
+
+/// What a turn's move captures once it lands, and the room it reserved ([`Tool::move_ends`]).
+#[cfg(target_arch = "wasm32")]
+struct MoveHold {
+    ends:     Vec<(String, crate::wasm::diamond::Change)>, // (the path the model wrote, the capture)
+    reserved: Vec<String>,  // the paths this move reserved, which a move that fails gives back
 }
 
 /// A turn's claim on one write over a file that is there, taken by [`Tool::before_overwrite`]
@@ -5720,7 +5830,7 @@ struct Hold {
 #[cfg(target_arch = "wasm32")]
 struct Overwrite {
     held:    Option<Hold>,
-    counted: Option<(String, String)>,  // (keeper, path) the open folder's tally counted
+    counted: Option<(String, String)>,  // (keeper, file) the open folder's tally counted
     wiped:   bool,                      // under half of the file left: a delete by another verb
     copy:    Option<Vec<u8>>,           // a wipe's copy: the file as the turns found it
 }
@@ -7454,6 +7564,24 @@ fn hand_said_absent(said: &str) -> bool {
         None         => said.trim(),
     };
     rest.starts_with("There is no '") && rest.ends_with("' on this machine.")
+}
+
+/// Did the hand answer a read with "that is a folder"?  The sentence is the hand's own for
+/// `IsADirectory` (`fs_said` in `hand/src/exec.rs`), as [`machine_before`] passes it on.
+#[cfg(any(target_arch = "wasm32", test))]
+fn hand_said_directory(said: &str) -> bool {
+    said.contains("' is a directory, not a file.")
+}
+
+/// What a machine arm's read before its act found there, for the capture's merge
+/// ([`crate::diamond_versions::capture_into`]): the bytes, nothing, or a file it could not read.
+#[cfg(target_arch = "wasm32")]
+fn machine_found(before: &Option<Vec<u8>>, refused: &Option<String>) -> Found {
+    match (before, refused) {
+        (Some(b), _)    => Found::of(Some(b)),
+        (None, None)    => Found::Nothing,
+        (None, Some(_)) => Found::Unread,
+    }
 }
 
 /// The refusal a model's overwrite meets where what the file holds now could not be kept, so
@@ -10581,6 +10709,10 @@ pub struct ToolContext {
     /// refused one of them is told why ([`ToolContext::refusal`]) and asks the user to confirm
     /// it, rather than concluding the folder is not its to use or hunting another way in.
     pub unconfirmed: Vec<String>,
+    // Answering a MODEL's call rather than the user's own door (a panel): see `may_write`.
+    // Set by `ToolRegistry::try_dispatch`, the door a turn's calls come through, and by no one
+    // else.
+    pub by_model: bool,
 }
 
 impl ToolContext {
@@ -10599,8 +10731,19 @@ impl ToolContext {
     /// # Arguments
     /// * `path` - The workspace-relative path a tool is about to write, move or delete.
     pub fn may_write(&self, path: &str) -> bool {
+        // AN UNBOUNDED TURN IS THE USER'S OWN DOOR, and a MODEL'S CALL NEVER IS.  The record --
+        // every keeper's versions, log and links -- is refused to every call a model makes,
+        // bounded or not: a Diamond's own thread run as a chat (a Continue, a gather round) runs
+        // on an app nobody scoped, and its `file_delete` of the link sidecar took every mark the
+        // user had pressed with it.
+        //
+        // AND DAIMOND'S OWN DIRECTORY, the skills and their search path, which every bounded turn
+        // is fenced out of already ([`diamond_bounds`]): whoever writes it decides what counts as
+        // the user's own words (`src/skills.rs`).  The page confines every turn it runs now, so
+        // this is the belt for any model call that reaches here unbounded (engine QA, open item 1).
         if self.no_write.is_empty() {
-            return true;
+            return !(self.by_model && (is_keeper_record(&normalise(path))
+                || under(&fold(path), &normalise(DAIMOND_DIR))));
         }
         let p = normalise(path);
         // The both-verb allow-list, which nothing in this build declares and which every rule here
@@ -10688,6 +10831,14 @@ impl ToolContext {
                 version history, its log or its links -- which Daimond keeps itself, so no tool \
                 writes, moves or deletes it. Nothing was changed. To undo a change, use \
                 file_revert; to relate two things, use link_add.", path);
+        }
+        // Daimond's own directory, which a model's call never writes, bounded or not (see
+        // [`ToolContext::may_write`]): told as that, and never as a mark attached for reading.
+        if writing && under(&fold(path), &normalise(DAIMOND_DIR)) {
+            return fmt!(
+                "Refused: '{}' is inside Daimond's own directory, which holds the skills and the \
+                rules about what agents may do, so no tool call writes, moves or deletes it. \
+                Nothing was changed.", path);
         }
         if writing {
             return fmt!(
@@ -11295,7 +11446,13 @@ impl ToolContext {
 
     /// Which turn of this conversation the page is running, as the page named it.
     pub fn turn_tag(&self) -> String {
-        lock_cache(&self.read_seen).workers.get(&self.daimon_of)
+        self.turn_tag_for(&self.daimon_of)
+    }
+
+    /// Which turn of a named conversation the page is running: the Diamond, or the empty
+    /// string for this client's own conversation.  See [`Self::set_turn_tag_for`].
+    pub fn turn_tag_for(&self, who: &str) -> String {
+        lock_cache(&self.read_seen).workers.get(who)
             .map(|w| w.turn_tag.clone())
             .unwrap_or_default()
     }
@@ -11457,7 +11614,9 @@ mod licence {
         /// a keeper's home -- so a path holds one exactly when it is the workspace root, a store
         /// root, or a keeper's home.  An unbounded turn is the user's own door and has neither.
         fn fenced_beneath(&self, path: &str) -> Option<String> {
-            if self.no_write.is_empty() {
+            // The user's own door has no fence; a model's call has the record's, bounded or not
+            // (see [`ToolContext::may_write`]).
+            if self.no_write.is_empty() && !self.by_model {
                 return None;
             }
             let p = normalise(path);
@@ -16232,9 +16391,12 @@ impl Tool {
         if let Some(refusal) = Self::link_owner_refusal(self, args_json, ctx) {
             return Ok(Some(refusal_line(&refusal)));
         }
+        // THE LICENCE'S OWN QUESTION, asked early: `may_write` of the path, and whether anything
+        // beneath it is fenced -- so a move of a folder holding the record is refused before it is
+        // tried, on either transport, in the fence's own words.
         for path in &writes {
-            if !ctx.may_write(path) {
-                return Ok(Some(refusal_line(&ctx.refusal(path, true))));
+            if let Err(why) = ctx.licence(path) {
+                return Ok(Some(why));
             }
         }
         if let Some(path) = &read {
@@ -17418,9 +17580,16 @@ impl Tool {
         if !extract_json_bool(&answered, "started").unwrap_or(false) {
             let why = extract_json_string(&answered, "why")
                 .unwrap_or_else(|| fmt!("the app stopped the fan-out"));
-            return Ok(MessageContent::text(refusal_line(&fmt!(
+            let said = fmt!(
                 "the worker '{}' was NOT started, because {}. Nothing is running and nothing was \
-                 spent. Do the work yourself.", name, why))));
+                 spent. Do the work yourself.", name, why);
+            // A person's pause held it: said as the pause's refusal, naming the node.
+            return Ok(MessageContent::text(match extract_json_string(&answered, "paused")
+                .filter(|n| !n.trim().is_empty())
+            {
+                Some(node) => paused_line(&node, &said),
+                None       => refusal_line(&said),
+            }));
         }
         let id = extract_json_string(&answered, "id").unwrap_or_default();
         ctx.note_spawned(&id, &name);
@@ -17489,215 +17658,7 @@ impl Tool {
             return Ok(MessageContent::text(refusal));
         }
         let text = res!(match self {
-            Tool::FileWrite => {
-                let raw = res!(Self::arg(args_json, "path"));
-                let path = res!(Self::scoped(ctx, &raw));
-                let content = res!(Self::arg(args_json, "content"));
-                // THE WRITE FENCE, before anything is read or held: the only way this arm can name
-                // a path to a door that changes one (see `Licence`).
-                let lic = match ctx.licence(&path) {
-                    Ok(l)    => l,
-                    Err(why) => return Ok(MessageContent::text(why)),
-                };
-                // THE MACHINE, WHERE THE PATH IS UNDER A MARK. Above `write_place`, which is the
-                // sentence that exists BECAUSE there was no door: it refuses a write that would
-                // invent a folder in browser storage while the daimon believed it had changed a
-                // file on disk. Where the write can reach the disk, that is not the question any
-                // more.
-                match reach_of(ctx, &raw, &path, Door::Change).await {
-                    Reach::Refuse(why) => return Ok(MessageContent::text(refusal_line(&why))),
-                    Reach::Machine { abs, cwd, root, spec } => {
-                        // THE BYTES THAT ARE ABOUT TO BE GONE. A Diamond's history can put a
-                        // machine file back only where the app took a copy at the instant it was
-                        // changed, because the hand returns no prior content and keeps no
-                        // journal. See `machine_before`, which can refuse nothing.
-                        let keep = match ctx.keeper() {
-                            Some(d) => Some((d,
-                                machine_before(&abs, &cwd, &spec, &ctx.no_write).await)),
-                            None    => None,
-                        };
-                        // A FILE THAT IS THERE AND COULD NOT BE KEPT is not overwritten: the
-                        // delete's rule, at the write door (audit of 2026-09-23, finding 5).
-                        if let Some((_, (None, Some(why)))) = &keep {
-                            return Ok(MessageContent::text(overwrite_unkept_refusal(&raw, why)));
-                        }
-                        // AN OVERWRITE OF A FILE THAT WAS THERE counts against the turn's bound,
-                        // and its copy is on disk before the write -- held as a delete's is where
-                        // the write wipes it (`Tool::before_overwrite`).
-                        let mut over: Option<Overwrite> = None;
-                        if let Some((dia, (Some(before), _))) = &keep {
-                            match Self::before_overwrite(ctx, dia, &abs, &raw, Some(before),
-                                Some(content.as_bytes()), true).await
-                            {
-                                Ok(o)    => over = Some(o),
-                                Err(why) => return Ok(MessageContent::text(why)),
-                            }
-                        }
-                        let got = match machine_change("file_write",
-                            MachineChange::Write(&lic, &content), &root, &cwd, &spec,
-                            &ctx.no_write).await
-                        {
-                            Ok(g)  => g,
-                            Err(e) => { Self::overwrite_failed(&over).await; return Err(e); },
-                        };
-                        if got.is_err() {
-                            Self::overwrite_failed(&over).await;
-                        }
-                        return match got {
-                            Ok(_)    => {
-                                if let Some((dia, (before, refused))) = keep {
-                                    let (before, wiped) = Overwrite::prior(&over, before);
-                                    crate::wasm::diamond::capture(&dia, &raw,
-                                        crate::wasm::diamond::Change {
-                                            path:  abs.clone(),
-                                            after: crate::wasm::diamond::Body::Held(
-                                                content.as_bytes().to_vec()),
-                                            before,
-                                            mark:  true,
-                                            refused,
-                                            wiped,
-                                        });
-                                }
-                                Ok(MessageContent::text(
-                                    fmt!("Wrote {} bytes to {}.{}", content.len(), abs,
-                                        Self::file_write_nudge(content.len()))))
-                            },
-                            Err(why) => Err(err!("{}", why; IO, File, Write)),
-                        };
-                    },
-                    Reach::Storage => (),
-                }
-                // WHICH FILESYSTEM THIS IS ABOUT TO LAND IN, asked before it lands and not
-                // after.  A write that would invent a folder in browser storage is refused
-                // outright; one that lands says where.  See the section above `Tool::run`'s
-                // script rules for why this one arm refuses where the other seven annotate.
-                let place = res!(write_place(ctx, &raw, &path).await);
-                if let WritePlace::Inventing(dir) = &place {
-                    return Ok(MessageContent::text(
-                        refusal_line(&would_invent_said(&raw, dir,
-                            &marks_of(&ctx.no_write).join(", ")))));
-                }
-                let place_line = match place {
-                    WritePlace::Storage => fmt!("\n{}", landed_in_storage()),
-                    _                   => String::new(),
-                };
-                // If this agent has seen the file before, refuse to overwrite it
-                // when the bytes on disk no longer match what it last saw -- that
-                // means another agent changed it underneath, and a blind write
-                // would erase their work with no error. A new file, or one this
-                // agent never read, has nothing to conflict with.
-                let seen = {
-                    let st = lock_cache(&ctx.read_seen);
-                    st.seen.get(&path).copied()
-                };
-                if let Some(prev) = seen {
-                    if let Ok(disk) = crate::wasm::opfs::read_file(ctx.root, &path).await {
-                        if content_hash(&disk) != prev {
-                            return Err(err!(
-                                "file_write: '{}' changed on disk since you read it -- \
-                                another agent edited it. Re-read the file and reapply \
-                                your change so theirs is not lost.", path;
-                                Invalid, Input, Mismatch));
-                        }
-                    }
-                }
-                // THE BYTES THAT ARE ABOUT TO BE GONE, in browser storage as the machine arm
-                // above takes them off the disk.  Without this the FIRST change to any file kept
-                // no `was` at all: `versions_record` falls back to what the store last recorded,
-                // and for a file no version has ever named that is nothing -- so the one change a
-                // person is likeliest to regret was the one with nowhere to go back to, and a
-                // delete of such a file was dropped from the manifest entirely.
-                //
-                // Read here rather than at the write, because `standing_retired` below may rewrite
-                // the file's own content before it lands, and what is wanted is what stood there
-                // when the turn arrived.
-                let keep = match ctx.keeper() {
-                    Some(d) => match Self::before_bytes(ctx, &path).await {
-                        Ok(b)    => Some((d, b)),
-                        Err(why) => return Ok(MessageContent::text(
-                            overwrite_unkept_refusal(&raw, &why))),
-                    },
-                    None    => None,
-                };
-                // THE THREE MARKDOWN FILES RETIRE BEFORE THEY ARE MEASURED, so the ceiling the
-                // refusal below reports is on what is LIVE. The arithmetic is the app's; a model
-                // asked to prune its own record prunes what it judges unimportant, which is the
-                // judgement the record exists to survive.
-                let (content, retired) = res!(crate::wasm::diamond::standing_retired(
-                    ctx.root, &path, content).await);
-                // A Diamond has a ceiling on five of its files, and this is the door a daimon
-                // uses: it edits them with the ordinary file tools, and the store only sees the
-                // result afterwards, when `record_steer` snapshots whatever is on disk. Refusing
-                // there would be refusing a write that already happened.
-                if is_crystal_data_path(&path) || is_crystal_page_path(&path)
-                    || standing_leaf(&path).is_some()
-                {
-                    // The TEXT and not its length: the hot ceiling has to split each side
-                    // before it can measure it. Lossy where the file is not UTF-8, which a
-                    // crystal and a page both are; the total ceiling's arithmetic is on bytes
-                    // either way, and `from_utf8_lossy` does not change a byte of valid text.
-                    let old = crate::wasm::opfs::read_file(ctx.root, &path).await
-                        .map(|b| String::from_utf8_lossy(&b).into_owned())
-                        .unwrap_or_default();
-                    if let Some(msg) = diamond_cap_refusal(
-                        &path, &content, &old, Self::standing_hot(ctx, &path).await)
-                    {
-                        return Err(err!("file_write: {}", msg; Invalid, Input, Size));
-                    }
-                }
-                // A path naming an Office document means the content is MARKDOWN and the file is a
-                // real document. The name decides, not the bytes: `.docx` is what the user will
-                // double-click, and it is the same rule `file_read` uses to decide to unpack one.
-                let office = match office_kind(&path) {
-                    Some(media) => Some(res!(office_written(&path, media, &content))),
-                    None        => None,
-                };
-                // AN OVERWRITE OF A FILE THAT WAS THERE counts against the turn's bound, and its
-                // copy is on disk before the write -- held as a delete's is, and asked about in the
-                // open folder as one is, where the write wipes it.
-                let over = {
-                    let after: &[u8] = match &office {
-                        Some((bytes, _)) => bytes,
-                        None             => content.as_bytes(),
-                    };
-                    match &keep {
-                        Some((dia, Some(b))) => match Self::before_overwrite(ctx, dia, &path, &raw,
-                            Some(b), Some(after), true).await
-                        {
-                            Ok(o)    => Some(o),
-                            Err(why) => return Ok(MessageContent::text(why)),
-                        },
-                        _ => None,
-                    }
-                };
-                if let Some((bytes, note)) = office {
-                    if let Err(e) = crate::wasm::opfs::write_licensed(ctx.root, &lic, &bytes).await {
-                        Self::overwrite_failed(&over).await;
-                        return Err(e);
-                    }
-                    if let Some((dia, before)) = keep {
-                        let (before, wiped) = Overwrite::prior(&over, before);
-                        Self::captured_write(&dia, &path, bytes.clone(), before, wiped);
-                    }
-                    let mut st = lock_cache(&ctx.read_seen);
-                    st.seen.insert(path.clone(), content_hash(&bytes));
-                    return Ok(MessageContent::text(
-                        fmt!("Wrote {} bytes to {}.{}{}{}", bytes.len(), path, note, place_line,
-                            Self::file_write_nudge(content.len()))));
-                }
-                if let Err(e) = crate::wasm::opfs::write_licensed(ctx.root, &lic, content.as_bytes()).await {
-                    Self::overwrite_failed(&over).await;
-                    return Err(e);
-                }
-                if let Some((dia, before)) = keep {
-                    let (before, wiped) = Overwrite::prior(&over, before);
-                    Self::captured_write(&dia, &path, content.as_bytes().to_vec(), before, wiped);
-                }
-                let mut st = lock_cache(&ctx.read_seen);
-                st.seen.insert(path.clone(), content_hash(content.as_bytes()));
-                Ok(fmt!("Wrote {} bytes to {}.{}{}{}", content.len(), path, place_line, retired,
-                    Self::file_write_nudge(content.len())))
-            }
+            Tool::FileWrite => return Self::file_write_page(args_json, ctx).await,
             Tool::DocEdit => {
                 let raw = res!(Self::arg(args_json, "path"));
                 let path = res!(Self::scoped(ctx, &raw));
@@ -17731,8 +17692,9 @@ impl Tool {
                     return Err(e);
                 }
                 if let Some(dia) = ctx.keeper() {
+                    let found = Found::of(Some(&bytes));
                     let (before, wiped) = Overwrite::prior(&over, Some(bytes));
-                    Self::captured_write(&dia, &path, out.clone(), before, wiped);
+                    Self::captured_write(&dia, &path, out.clone(), found, before, wiped);
                 }
                 // The file on disk is now this, so a later `file_write` is anchored to what the
                 // edit left rather than to what the agent last read.
@@ -17773,8 +17735,9 @@ impl Tool {
                     return Err(e);
                 }
                 if let Some(dia) = ctx.keeper() {
+                    let found = Found::of(Some(&bytes));
                     let (before, wiped) = Overwrite::prior(&over, Some(bytes));
-                    Self::captured_write(&dia, &path, out.clone(), before, wiped);
+                    Self::captured_write(&dia, &path, out.clone(), found, before, wiped);
                 }
                 let mut st = lock_cache(&ctx.read_seen);
                 st.seen.insert(path.clone(), content_hash(&out));
@@ -17989,227 +17952,7 @@ impl Tool {
                     None    => view,
                 })
             }
-            Tool::FileEdit => {
-                let raw = res!(Self::arg(args_json, "path"));
-                let path = res!(Self::scoped(ctx, &raw));
-                let hunks = res!(edit_hunks(args_json, &raw));
-                let lic = match ctx.licence(&path) {
-                    Ok(l)    => l,
-                    Err(why) => return Ok(MessageContent::text(why)),
-                };
-                // THE MACHINE, WHERE THE PATH IS UNDER A MARK. This arm is the one
-                // `dev/BLOCKERS.md` B2 is measured on: exact-string replacement, applied by
-                // the hand behind the same fence a command runs behind, with no shell, no `sed`
-                // and nothing to escape. The count comes back as a refusal naming the number
-                // found, which is the partial-apply signal B2 says is absent.
-                match reach_of(ctx, &raw, &path, Door::Change).await {
-                    Reach::Refuse(why) => return Ok(MessageContent::text(refusal_line(&why))),
-                    Reach::Machine { abs, cwd, root, spec } => {
-                        // THE BYTES THAT ARE ABOUT TO BE GONE, for the same reason and by the
-                        // same means as at the write door above. Taken before the dry run rather
-                        // than out of it: the dry run happens only for a multi-hunk call, and a
-                        // single hunk is the commonest edit there is.
-                        let keep = match ctx.keeper() {
-                            Some(d) => Some((d,
-                                machine_before(&abs, &cwd, &spec, &ctx.no_write).await)),
-                            None    => None,
-                        };
-                        // ALL-OR-NOTHING OVER A HAND THAT TAKES ONE HUNK AT A TIME.
-                        //
-                        // The relay's `edit` op carries a single `text`/`text2` pair, and the
-                        // hand is a separate program with its own release cycle, so the list
-                        // cannot be pushed down to it.  What CAN be done here is to read the
-                        // file once and place every hunk against that text before any of them is
-                        // sent: a hunk that would fail is then found before the first write,
-                        // which is the whole of what the contract promises.  A single hunk skips
-                        // the read and is byte for byte the call this tool has always made.
-                        //
-                        // The dry run is skipped where the read came back WINDOWED -- a whole
-                        // file read is cut at 512 KiB -- because validating against part of a
-                        // file would refuse hunks that are perfectly placeable in the rest of
-                        // it.  There the hunks go one at a time and the refusal says which
-                        // landed, which is honest about a guarantee that could not be kept.
-                        let mut checked = hunks.len() == 1;
-                        if !checked {
-                            let got = res!(machine_op("file_read", "read", &abs, &cwd, &spec,
-                                &ctx.no_write, "").await);
-                            if let Ok(t) = got {
-                                let read = res!(machine_read(&t));
-                                if read.held >= read.lines {
-                                    let _ = res!(file_edited(&raw, read.body, &hunks));
-                                    checked = true;
-                                }
-                            }
-                        }
-                        if let Some((_, (None, Some(why)))) = &keep {
-                            return Ok(MessageContent::text(overwrite_unkept_refusal(&raw, why)));
-                        }
-                        // WHAT THE FILE WILL BE, worked out from the bytes in hand by the same
-                        // placement the hand applies, so the turn knows before the first hunk goes
-                        // whether the edit keeps anything of it.
-                        let after: Option<Vec<u8>> = match &keep {
-                            Some((_, (Some(b), _))) => std::str::from_utf8(b).ok()
-                                .and_then(|t| file_edited(&raw, t, &hunks).ok())
-                                .map(|(updated, _)| updated.into_bytes()),
-                            _ => None,
-                        };
-                        // The turn's bound, and the copy on disk, after the dry run and before
-                        // the first hunk is sent.
-                        let mut over: Option<Overwrite> = None;
-                        if let Some((dia, (before, _))) = &keep {
-                            match Self::before_overwrite(ctx, dia, &abs, &raw, before.as_deref(),
-                                after.as_deref(), true).await
-                            {
-                                Ok(o)    => over = Some(o),
-                                Err(why) => return Ok(MessageContent::text(why)),
-                            }
-                        }
-                        for (i, (old, new)) in hunks.iter().enumerate() {
-                            let got = match machine_change("file_edit",
-                                MachineChange::Edit(&lic, old, new), &root, &cwd, &spec,
-                                &ctx.no_write).await
-                            {
-                                Ok(g)  => g,
-                                // The road failed: whether the hunk landed is not known, which
-                                // is the same case as the hand refusing it, said the same way.
-                                Err(e) => Err(fmt!("file_edit: {}", e.plain())),
-                            };
-                            if let Err(why) = got {
-                                // Nothing landed, so nothing is kept; or some did, and the file
-                                // has changed, so what stood before is recorded as the turn's.
-                                if i == 0 {
-                                    Self::overwrite_failed(&over).await;
-                                } else if let Some((dia, (before, refused))) = &keep {
-                                    let (before, wiped) = Overwrite::prior(&over, before.clone());
-                                    crate::wasm::diamond::capture(dia, &raw,
-                                        crate::wasm::diamond::Change {
-                                            path:    abs.clone(),
-                                            after:   crate::wasm::diamond::Body::Unseen,
-                                            before,
-                                            mark:    true,
-                                            refused: refused.clone(),
-                                            wiped,
-                                        });
-                                }
-                                // What is already on disk is said plainly. A model told only
-                                // that the call failed would re-send every hunk, and the ones
-                                // that landed would no longer match.
-                                return Err(if i == 0 {
-                                    err!("{}", why; IO, File, Write)
-                                } else {
-                                    err!("{} -- edit(s) 1 to {} of {} ARE ALREADY WRITTEN to \
-                                        '{}'{}. Read the file before you send anything again.",
-                                        why, i, hunks.len(), abs,
-                                        if checked {
-                                            ", which the file changed under this call"
-                                        } else {
-                                            " (the file was too large to check the edits first)"
-                                        };
-                                        IO, File, Write)
-                                });
-                            }
-                        }
-                        // WHAT THE FILE NOW IS, worked out rather than read back: the hand has
-                        // just applied these hunks to the bytes above, and `file_edited` is the
-                        // same placement it applied them by. A second fenced read would cost a
-                        // round trip to learn what is already in hand.
-                        if let Some((dia, (before, refused))) = keep {
-                            let after = match after {
-                                Some(b) => crate::wasm::diamond::Body::Held(b),
-                                None    => crate::wasm::diamond::Body::Unseen,
-                            };
-                            let (before, wiped) = Overwrite::prior(&over, before);
-                            crate::wasm::diamond::capture(&dia, &raw,
-                                crate::wasm::diamond::Change {
-                                    path: abs.clone(), after, before, mark: true, refused, wiped });
-                        }
-                        return Ok(MessageContent::text(Self::edit_said(&abs, hunks.len())));
-                    },
-                    Reach::Storage => (),
-                }
-                // WHICH FILESYSTEM WAS LOOKED IN, as `file_read` says it. Lane H fixed the two
-                // tools it was measured on and left this one deliberately; a daimon that edits
-                // rather than rewrites met the browser's `JsValue(NotFoundError: …)` instead.
-                // A cloud-only file is fetched here as `file_read` fetches one, and for the
-                // same reason: an edit refused for want of bytes this device could have had costs
-                // three rounds to do what one would.
-                if let Some(size) = crate::wasm::cloud::size_of(&path) {
-                    if size <= AUTO_FETCH_MAX {
-                        res!(crate::wasm::cloud::fetch(&path).await);
-                    } else {
-                        return Err(err!(
-                            "file_edit: '{}' is in cloud storage, not on this device. It is {} \
-                            bytes, above the {} KiB an edit fetches for itself. Use file_fetch to \
-                            bring it here first.", path, size, AUTO_FETCH_MAX / 1024;
-                            IO, File, Read, Missing));
-                    }
-                }
-                let bytes = match crate::wasm::opfs::read_file(ctx.root, &path).await {
-                    Ok(b)  => b,
-                    Err(e) => match absent_here(ctx, &raw, &path).await {
-                        Some(note) => return Err(err!("file_edit: {}", note;
-                            IO, File, Read, Missing)),
-                        None       => match wrong_root_note(ctx, &raw, &path).await {
-                            Some(note) => return Err(err!("file_edit: {}", note;
-                                IO, File, Read, Missing)),
-                            None       => return Err(e),
-                        },
-                    },
-                };
-                let data = String::from_utf8_lossy(&bytes).to_string();
-                let (updated, relaxed) = res!(file_edited(&path, &data, &hunks));
-                // THE CRYSTAL'S THIRD DOOR, and it answers for both of its files.
-                //
-                // `Tool::FileWrite` has carried this check since the ceiling was built, and
-                // the store's own door catches a hand edit and a fold.  This one was missed,
-                // and a daimon that EDITS rather than rewrites walked straight past it.  The
-                // store's door does then fire -- but it reads the old length from disk, and
-                // by then the edit has landed, so `old == new` and the refusal arrives after
-                // the fact: `record_steer` errors, the turn fails, and an oversized crystal
-                // is left on disk with no version snapshot and no log record.  Refusing here
-                // means the file is never written at all, which is the only place the
-                // asymmetry below can still be honoured.
-                //
-                // `data` is the content BEFORE the replacement, so an edit that shrinks an
-                // already-oversized crystal is still allowed, exactly as at the other doors.
-                // Retired first, exactly as at the write door and by the same function, so an
-                // edit that tips one of the three over its ceiling is relieved rather than
-                // refused -- and a daimon that appends a decision a day never meets the limit.
-                let (updated, retired) = res!(crate::wasm::diamond::standing_retired(
-                    ctx.root, &path, updated).await);
-                if let Some(msg) = diamond_cap_refusal(
-                    &path, &updated, &data, Self::standing_hot(ctx, &path).await)
-                {
-                    return Err(err!("file_edit: {}", msg; Invalid, Input, Size));
-                }
-                // THE BYTES IT REPLACES, kept as the write door keeps them -- this arm kept none,
-                // so a turn's first edit of a file no version had named had nowhere to go back to.
-                // An edit whose hunks leave less than half of the file is a wipe like any other
-                // write's.
-                let over = match ctx.keeper() {
-                    Some(dia) => match Self::before_overwrite(ctx, &dia, &path, &raw, Some(&bytes),
-                        Some(updated.as_bytes()), true).await
-                    {
-                        Ok(o)    => Some(o),
-                        Err(why) => return Ok(MessageContent::text(why)),
-                    },
-                    None      => None,
-                };
-                if let Err(e) = crate::wasm::opfs::write_licensed(ctx.root, &lic, updated.as_bytes()).await {
-                    Self::overwrite_failed(&over).await;
-                    return Err(e);
-                }
-                if let Some(dia) = ctx.keeper() {
-                    let (before, wiped) = Overwrite::prior(&over, Some(bytes));
-                    Self::captured_write(&dia, &path, updated.as_bytes().to_vec(), before, wiped);
-                }
-                // The edit is anchored to current on-disk content, so it merges
-                // safely; record the new state as this agent's latest view.
-                let mut st = lock_cache(&ctx.read_seen);
-                st.seen.insert(path.clone(), content_hash(updated.as_bytes()));
-                Ok(fmt!("{}{}{}", Self::edit_said(&path, hunks.len()),
-                    relaxed_said(&relaxed), retired))
-            }
+            Tool::FileEdit => return Self::file_edit_page(args_json, ctx).await,
             Tool::FileRevert => {
                 let raw  = res!(Self::arg(args_json, "path"));
                 let path = res!(Self::scoped(ctx, &raw));
@@ -18325,11 +18068,13 @@ impl Tool {
                 };
                 let note = fmt!("file_revert {}", raw);
                 let recorded = crate::wasm::diamond::versions_record(
-                    &dia, None, crate::diamond_versions::Cause::Restore, "", &note,
+                    &dia, crate::diamond_versions::Cause::Restore, "", &note,
                     vec![crate::wasm::diamond::Change {
                         path:    landed.clone(),
                         after:   crate::wasm::diamond::Body::Held(body.clone()),
                         before,
+                        found:   crate::wasm::diamond::Found::Unread,
+                        carried: None,
                         mark,
                         refused,
                         wiped,
@@ -18925,127 +18670,7 @@ impl Tool {
                 out.push_str(&residue);
                 Ok(out)
             }
-            Tool::FileDelete => {
-                let raw = res!(Self::arg(args_json, "path"));
-                if let Some(why) = delete_path_refusal(&raw) {
-                    return Ok(MessageContent::text(refusal_line(&why)));
-                }
-                // ONE SPELLING, BEFORE ANYTHING ELSE. `./x`, `a//x`, `a/z/../x` and `x/` all name
-                // `x`, and the version store keeps a copy only under the canonical form -- on
-                // 2026-09-23 an audit deleted four files spelled those ways and none of them was
-                // kept, because `versionable` turned each spelling away after the file was gone.
-                let raw = normalise(&raw);
-                let path = res!(Self::scoped(ctx, &raw));
-                let lic = match ctx.licence(&path) {
-                    Ok(l)    => l,
-                    Err(why) => return Ok(MessageContent::text(why)),
-                };
-                // ONE FILE, NEVER A FOLDER.  This took a `recursive` argument and handed it to
-                // `removeEntry`, which on a folder-mounted Diamond is the user's own disk: on
-                // 2026-09-22 a daimon whose moves had been refused used it on whole folders and
-                // Syncthing carried ~4,900 deletions off the machine.  A folder is refused here in
-                // words, and `delete_file` below cannot remove one whatever it is asked.
-                if let Ok(true) = crate::wasm::opfs::is_directory(ctx.root, &path).await {
-                    return Ok(MessageContent::text(refusal_line(&delete_dir_refusal(&raw))));
-                }
-                // A TURN'S DELETES FROM THE USER'S OWN FOLDER ARE HELD FOR THE PERSON past a
-                // handful (decision review of 2026-09-23, decision 2; items b and c of the delete
-                // unit): the file is on their disk, and whatever syncs that folder carries each
-                // delete off the machine at once.  The store's own bound, below, still holds
-                // after they say go on.  Asked BEFORE the copy is read, so a turn waiting on the
-                // person holds no bytes while it waits.
-                let open = ctx.root == FileRoot::Workspace && crate::wasm::opfs::folder_open()
-                    && !is_store_path(&path);
-                let counted = match ctx.keeper() {
-                    Some(d) if open => match Self::open_delete_gate(&d, &path, &raw, OpenAct::Delete).await {
-                        Ok(true)  => Some(d),
-                        Ok(false) => None,
-                        Err(why)  => return Ok(MessageContent::text(why)),
-                    },
-                    _ => None,
-                };
-                // What the gate counted is given back wherever the delete does not happen.
-                let give_back = || {
-                    if let Some(d) = &counted {
-                        crate::wasm::diamond::open_delete_release(d, &path);
-                    }
-                };
-                // A TURN'S DELETE GOES AHEAD ONLY ONCE A COPY IS HELD -- a daimon's, a worker's
-                // or a chat's, since 2026-09-23, because the risk is the folder and not which
-                // model is in it.  Fail closed: every
-                // reason no copy could be taken -- too large, unreadable though present, only in
-                // cloud storage, or a path the store will not keep -- is a refusal in words, and
-                // the file stays.  A delete nothing can put back is the one this guard exists to
-                // stop, and on a folder-mounted Diamond the file is on the user's own disk.
-                let keep = match ctx.keeper() {
-                    Some(d) => match Self::delete_copy(ctx, &d, &raw, &path).await {
-                        Ok(Ok(before)) => Some((d, before)),
-                        Ok(Err(why))   => {
-                            give_back();
-                            return Ok(MessageContent::text(refusal_line(&why)));
-                        },
-                        Err(e) => {
-                            give_back();
-                            return Err(e);
-                        },
-                    },
-                    None    => None,
-                };
-                // AS THE TURNS FOUND IT (R4's follow-on, 2026-09-23). A delete is a destruction as
-                // a wipe is, and keeps what a wipe keeps: the oldest copy of the unbroken run of
-                // turns' changes that led here, not the file as this delete found it. Two trims
-                // that each left over half and then a delete held only the trimmed file, and the
-                // whole one sat in ordinary rows a prune may take. Only a user's file: a keeper's
-                // own home is its working state. A file this turn made keeps what it holds.
-                let keep = match keep {
-                    Some((d, before)) if stored_is_mark(&d, &path) => {
-                        let copy = crate::wasm::diamond::turns_found(&d, &normalise(&path), &before)
-                            .await.unwrap_or(before);
-                        Some((d, copy))
-                    },
-                    other => other,
-                };
-                // PAST WHAT THE TURN MAY KEEP, the turn stops and asks; and the copy is on disk,
-                // with a note naming it, BEFORE the file goes -- a page that dies between here
-                // and the turn's end leaves the note for the next turn end to adopt.
-                let held = match &keep {
-                    Some((dia, before)) => match Self::hold(dia, &path, &raw, Some(before), true).await {
-                        Ok(h)    => Some(h),
-                        Err(why) => {
-                            give_back();
-                            return Ok(MessageContent::text(why));
-                        },
-                    },
-                    None => None,
-                };
-                // Absence from this device means "not here"; removal from the cloud index means
-                // "gone". Those are different things, and only an explicit delete does the
-                // second. The user's own door may do it for a file that is not resident; a
-                // turn never reaches here for one, because `delete_copy` refused it.
-                if let Err(e) = crate::wasm::opfs::delete_licensed(ctx.root, &lic).await {
-                    Self::let_go(&held).await;
-                    give_back();
-                    if keep.is_none() && crate::wasm::cloud::size_of(&path).is_some() {
-                        res!(crate::wasm::cloud::forget_licensed(&lic).await);
-                        return Ok(MessageContent::text(fmt!("Deleted {} from cloud storage.", path)));
-                    }
-                    return Err(e);
-                }
-                if let Some((dia, before)) = keep {
-                    Self::captured_delete(&dia, &path, before);
-                }
-                let mut msg = fmt!("Deleted {}.", path);
-                // The index lists only what is NOT on this device, so a resident file's cloud
-                // copy is invisible to it; forget unconditionally, or deleting a file that was
-                // synced would leave the copy behind to reappear.
-                match crate::wasm::cloud::forget_licensed(&lic).await {
-                    Ok(s) if s.starts_with("Error") =>
-                        msg.push_str(&fmt!(" Its cloud copy was not removed: {}", s)),
-                    Ok(_)  => {},
-                    Err(e) => msg.push_str(&fmt!(" Its cloud copy was not removed: {}", e)),
-                }
-                Ok(msg)
-            }
+            Tool::FileDelete => return Self::file_delete(args_json, ctx).await,
             Tool::FileFetch => {
                 let path = res!(Self::scoped(ctx, &res!(Self::arg(args_json, "path"))));
                 crate::wasm::cloud::fetch(&path).await
@@ -19058,68 +18683,7 @@ impl Tool {
             Tool::Ask      => return Self::ask(args_json, ctx).await,
             Tool::SocialRead => Self::social_read(args_json, ctx).await,
             Tool::SocialSend => Self::social_send(args_json, ctx).await,
-            Tool::FileMove => {
-                let raw  = res!(Self::arg(args_json, "path"));
-                let from = res!(Self::scoped(ctx, &raw));
-                let to   = res!(Self::scoped(ctx, &res!(Self::arg(args_json, "to"))));
-                // BOTH ENDS through the fence: a move removes one path and writes the other, and
-                // the source's licence covers everything a folder carries with it.
-                let (from_lic, to_lic) = match (ctx.licence(&from), ctx.licence(&to)) {
-                    (Ok(f), Ok(t)) => (f, t),
-                    (Err(why), _) | (_, Err(why)) => return Ok(MessageContent::text(why)),
-                };
-                // THE MACHINE, WHERE THE SOURCE IS UNDER A MARK. The destination is made
-                // absolute against the same root: a move that crossed the two filesystems would
-                // be a copy and a delete wearing one name, and neither half would be visible in
-                // the other place.
-                match reach_of(ctx, &raw, &from, Door::Change).await {
-                    Reach::Refuse(why) => return Ok(MessageContent::text(refusal_line(&why))),
-                    Reach::Machine { abs, cwd, root, spec } => {
-                        let dest = match mark_over(&ctx.no_write, &normalise(&to)) {
-                            Some(_) => fmt!("{}/{}", root, normalise(&to)),
-                            None => return Ok(MessageContent::text(refusal_line(&fmt!(
-                                "file_move: '{}' is a folder on this computer and '{}' is not in \
-                                one, so this would move a file out of the filesystem it is in. \
-                                Move it to a path inside a folder the user marked in.",
-                                raw, to)))),
-                        };
-                        let got = res!(machine_change("file_move",
-                            MachineChange::Move(&from_lic, &to_lic), &root, &cwd, &spec,
-                            &ctx.no_write).await);
-                        return match got {
-                            Ok(_)    => Ok(MessageContent::text(
-                                fmt!("Moved {} to {}.", abs, dest))),
-                            Err(why) => Err(err!("{}", why; IO, File, Write)),
-                        };
-                    },
-                    Reach::Storage => (),
-                }
-                // A MOVE BETWEEN THE USER'S FOLDER AND DAIMOND'S STORE IS A DELETE FROM THEIR DISK.
-                // `resolve_root` sends a store path to the browser sandbox whatever folder is
-                // open, so a folder moved to `diamonds/<id>/...` leaves the machine -- and every
-                // device its sync reaches -- while its bytes sit where only this browser can see
-                // them.  The machine arm above refuses the same crossing for the same reason.
-                if ctx.root == FileRoot::Workspace && crate::wasm::opfs::folder_open()
-                    && is_store_path(&from) != is_store_path(&to)
-                {
-                    return Ok(MessageContent::text(refusal_line(&fmt!(
-                        "file_move: '{}' and '{}' are on different filesystems -- one is in the \
-                        folder the user opened on this computer, the other in Daimond's own \
-                        storage -- so this would take it off the user's disk. Nothing was moved. \
-                        Move it to a path in the same place, or ask the user.", raw, to))));
-                }
-                if under(&normalise(&to), &normalise(&from)) {
-                    return Ok(MessageContent::text(refusal_line(
-                        &move_into_itself_refusal(&raw, &to))));
-                }
-                // The SOURCE only. `move_entry` refuses an existing destination in its own words,
-                // and those are about this filesystem and correct.
-                if let Some(note) = absent_here(ctx, &raw, &from).await {
-                    return Err(err!("file_move: {}", note; IO, File, Read, Missing));
-                }
-                res!(crate::wasm::opfs::move_licensed(ctx.root, &from_lic, &to_lic).await);
-                Ok(fmt!("Moved {} to {}.", from, to))
-            }
+            Tool::FileMove => return Self::file_move(args_json, ctx).await,
             Tool::DirCreate => {
                 let raw = res!(Self::arg(args_json, "path"));
                 let path = res!(Self::scoped(ctx, &raw));
@@ -19258,14 +18822,17 @@ impl Tool {
                             return match got {
                                 Ok(_) => {
                                     if let Some((dia, (before, refused))) = keep {
+                                        let found = machine_found(&before, &refused);
                                         let (before, wiped) = Overwrite::prior(&over, before);
                                         crate::wasm::diamond::capture(&dia, &to,
                                             crate::wasm::diamond::Change {
-                                                path:  abs.clone(),
-                                                after: crate::wasm::diamond::Body::Held(
+                                                path:    abs.clone(),
+                                                after:   crate::wasm::diamond::Body::Held(
                                                     text.as_bytes().to_vec()),
                                                 before,
-                                                mark:  true,
+                                                found,
+                                                carried: None,
+                                                mark:    true,
                                                 refused,
                                                 wiped,
                                             });
@@ -19317,8 +18884,9 @@ impl Tool {
                                 return Err(e);
                             }
                             if let Some((dia, before)) = keep {
+                                let found = Found::of(before.as_deref());
                                 let (before, wiped) = Overwrite::prior(&over, before);
-                                Self::captured_write(&dia, &path, raw.bytes, before, wiped);
+                                Self::captured_write(&dia, &path, raw.bytes, found, before, wiped);
                             }
                             {
                                 let mut st = lock_cache(&ctx.read_seen);
@@ -19440,8 +19008,9 @@ impl Tool {
                     return Err(e);
                 }
                 if let Some((dia, before)) = kept {
+                    let found = Found::of(Some(&before));
                     let (before, wiped) = Overwrite::prior(&over, Some(before));
-                    Self::captured_write(&dia, &out, pdf.clone(), before, wiped);
+                    Self::captured_write(&dia, &out, pdf.clone(), found, before, wiped);
                 }
                 Self::output_made(ctx, tool, &out, &pdf).await;
                 Ok(fmt!("Compiled {} to {} ({} bytes).", src, out, pdf.len()))
@@ -19550,24 +19119,20 @@ impl Tool {
                         "Missing 'owner': name the Diamond whose sidecar holds the link, exactly \
                         as link_list reported it."))),
                 };
-                // A LINK THE USER DREW IS THEIRS TO TAKE BACK, whichever model's turn this is
-                // (see [`user_link_refusal`]).  The user's own doors remove links through the
-                // store, never through this tool, so an unbounded turn is the only one passed.
-                if ctx.daimon().is_some() || !ctx.no_write.is_empty() {
-                    if let Some(by) = res!(crate::wasm::diamond::link_by(&owner, &link_id).await) {
-                        if is_users_link(&by) {
-                            return Ok(MessageContent::text(user_link_refusal(&link_id)));
-                        }
-                    }
-                }
-                if res!(crate::wasm::diamond::remove_link(&owner, &link_id).await) {
-                    Ok(fmt!("Removed link {} from Diamond {}.", link_id, owner))
-                } else {
-                    Ok(fmt!(
+                // A LINK THE USER DREW IS THEIRS TO TAKE BACK, in EVERY turn (see
+                // [`user_link_refusal`]).  The user's own doors remove links through the store and
+                // never through this tool, so there is no turn this refusal may skip; it was asked
+                // of a daimon's or a fenced turn alone, and a chat's model could take a mark out.
+                match res!(crate::wasm::diamond::remove_link_by_model(&owner, &link_id).await) {
+                    crate::diamond_link::Unlink::Users =>
+                        return Ok(MessageContent::text(user_link_refusal(&link_id))),
+                    crate::diamond_link::Unlink::Removed(_) =>
+                        Ok(fmt!("Removed link {} from Diamond {}.", link_id, owner)),
+                    crate::diamond_link::Unlink::Missing => Ok(fmt!(
                         "No link {} on Diamond {}, so nothing was removed. The record is kept on \
                         ONE Diamond and found from both ends, so check 'owner' against what \
                         link_list returned rather than assuming the end you came from.",
-                        link_id, owner))
+                        link_id, owner)),
                 }
             }
             Tool::MailList   => Self::mail_list(args_json).await,
@@ -20349,6 +19914,729 @@ impl Tool {
         out
     }
 
+    /// `file_write` in the browser.  Its own function rather than an arm of `execute`, for the
+    /// reason [`Self::file_delete`] is: a debug build of the wasm keeps every local of
+    /// `execute`'s one future, and the format's limit is 50,000 (Q5-1 open item 2).
+    #[cfg(target_arch = "wasm32")]
+    async fn file_write_page(args_json: &str, ctx: &ToolContext) -> Outcome<MessageContent> {
+        let text: Outcome<String> = {
+            let raw = res!(Self::arg(args_json, "path"));
+            let path = res!(Self::scoped(ctx, &raw));
+            let content = res!(Self::arg(args_json, "content"));
+            // THE WRITE FENCE, before anything is read or held: the only way this arm can name
+            // a path to a door that changes one (see `Licence`).
+            let lic = match ctx.licence(&path) {
+                Ok(l)    => l,
+                Err(why) => return Ok(MessageContent::text(why)),
+        };
+        // THE MACHINE, WHERE THE PATH IS UNDER A MARK. Above `write_place`, which is the
+        // sentence that exists BECAUSE there was no door: it refuses a write that would
+        // invent a folder in browser storage while the daimon believed it had changed a
+        // file on disk. Where the write can reach the disk, that is not the question any
+        // more.
+        match reach_of(ctx, &raw, &path, Door::Change).await {
+            Reach::Refuse(why) => return Ok(MessageContent::text(refusal_line(&why))),
+            Reach::Machine { abs, cwd, root, spec } => {
+                // THE BYTES THAT ARE ABOUT TO BE GONE. A Diamond's history can put a
+                // machine file back only where the app took a copy at the instant it was
+                // changed, because the hand returns no prior content and keeps no
+                // journal. See `machine_before`, which can refuse nothing.
+                let keep = match ctx.keeper() {
+                    Some(d) => Some((d,
+                        machine_before(&abs, &cwd, &spec, &ctx.no_write).await)),
+                    None    => None,
+                };
+                // A FILE THAT IS THERE AND COULD NOT BE KEPT is not overwritten: the
+                // delete's rule, at the write door (audit of 2026-09-23, finding 5).
+                if let Some((_, (None, Some(why)))) = &keep {
+                    return Ok(MessageContent::text(overwrite_unkept_refusal(&raw, why)));
+                }
+                // AN OVERWRITE OF A FILE THAT WAS THERE counts against the turn's bound,
+                // and its copy is on disk before the write -- held as a delete's is where
+                // the write wipes it (`Tool::before_overwrite`).
+                let mut over: Option<Overwrite> = None;
+                if let Some((dia, (Some(before), _))) = &keep {
+                    match Self::before_overwrite(ctx, dia, &abs, &raw, Some(before),
+                        Some(content.as_bytes()), true).await
+                    {
+                        Ok(o)    => over = Some(o),
+                        Err(why) => return Ok(MessageContent::text(why)),
+                    }
+                }
+                let got = match machine_change("file_write",
+                    MachineChange::Write(&lic, &content), &root, &cwd, &spec,
+                    &ctx.no_write).await
+                {
+                    Ok(g)  => g,
+                    Err(e) => { Self::overwrite_failed(&over).await; return Err(e); },
+                };
+                if got.is_err() {
+                    Self::overwrite_failed(&over).await;
+                }
+                return match got {
+                    Ok(_)    => {
+                        if let Some((dia, (before, refused))) = keep {
+                            let found = machine_found(&before, &refused);
+                            let (before, wiped) = Overwrite::prior(&over, before);
+                            crate::wasm::diamond::capture(&dia, &raw,
+                                crate::wasm::diamond::Change {
+                                    path:    abs.clone(),
+                                    after:   crate::wasm::diamond::Body::Held(
+                                        content.as_bytes().to_vec()),
+                                    before,
+                                    found,
+                                    carried: None,
+                                    mark:    true,
+                                    refused,
+                                    wiped,
+                                });
+                        }
+                        Ok(MessageContent::text(
+                            fmt!("Wrote {} bytes to {}.{}", content.len(), abs,
+                                Self::file_write_nudge(content.len()))))
+                    },
+                    Err(why) => Err(err!("{}", why; IO, File, Write)),
+                };
+            },
+            Reach::Storage => (),
+        }
+        // WHICH FILESYSTEM THIS IS ABOUT TO LAND IN, asked before it lands and not
+        // after.  A write that would invent a folder in browser storage is refused
+        // outright; one that lands says where.  See the section above `Tool::run`'s
+        // script rules for why this one arm refuses where the other seven annotate.
+        let place = res!(write_place(ctx, &raw, &path).await);
+        if let WritePlace::Inventing(dir) = &place {
+            return Ok(MessageContent::text(
+                refusal_line(&would_invent_said(&raw, dir,
+                    &marks_of(&ctx.no_write).join(", ")))));
+        }
+        let place_line = match place {
+            WritePlace::Storage => fmt!("\n{}", landed_in_storage()),
+            _                   => String::new(),
+        };
+        // If this agent has seen the file before, refuse to overwrite it
+        // when the bytes on disk no longer match what it last saw -- that
+        // means another agent changed it underneath, and a blind write
+        // would erase their work with no error. A new file, or one this
+        // agent never read, has nothing to conflict with.
+        let seen = {
+            let st = lock_cache(&ctx.read_seen);
+            st.seen.get(&path).copied()
+        };
+        if let Some(prev) = seen {
+            if let Ok(disk) = crate::wasm::opfs::read_file(ctx.root, &path).await {
+                if content_hash(&disk) != prev {
+                    return Err(err!(
+                        "file_write: '{}' changed on disk since you read it -- \
+                        another agent edited it. Re-read the file and reapply \
+                        your change so theirs is not lost.", path;
+                        Invalid, Input, Mismatch));
+                }
+            }
+        }
+        // THE BYTES THAT ARE ABOUT TO BE GONE, in browser storage as the machine arm
+        // above takes them off the disk.  Without this the FIRST change to any file kept
+        // no `was` at all: `versions_record` falls back to what the store last recorded,
+        // and for a file no version has ever named that is nothing -- so the one change a
+        // person is likeliest to regret was the one with nowhere to go back to, and a
+        // delete of such a file was dropped from the manifest entirely.
+        //
+        // Read here rather than at the write, because `standing_retired` below may rewrite
+        // the file's own content before it lands, and what is wanted is what stood there
+        // when the turn arrived.
+        let keep = match ctx.keeper() {
+            Some(d) => match Self::before_bytes(ctx, &path).await {
+                Ok(b)    => Some((d, b)),
+                Err(why) => return Ok(MessageContent::text(
+                    overwrite_unkept_refusal(&raw, &why))),
+            },
+            None    => None,
+        };
+        // THE THREE MARKDOWN FILES RETIRE BEFORE THEY ARE MEASURED, so the ceiling the
+        // refusal below reports is on what is LIVE. The arithmetic is the app's; a model
+        // asked to prune its own record prunes what it judges unimportant, which is the
+        // judgement the record exists to survive.
+        let (content, retired) = res!(crate::wasm::diamond::standing_retired(
+            ctx.root, &path, content).await);
+        // A Diamond has a ceiling on five of its files, and this is the door a daimon
+        // uses: it edits them with the ordinary file tools, and the store only sees the
+        // result afterwards, when `record_steer` snapshots whatever is on disk. Refusing
+        // there would be refusing a write that already happened.
+        if is_crystal_data_path(&path) || is_crystal_page_path(&path)
+            || standing_leaf(&path).is_some()
+        {
+            // The TEXT and not its length: the hot ceiling has to split each side
+            // before it can measure it. Lossy where the file is not UTF-8, which a
+            // crystal and a page both are; the total ceiling's arithmetic is on bytes
+            // either way, and `from_utf8_lossy` does not change a byte of valid text.
+            let old = crate::wasm::opfs::read_file(ctx.root, &path).await
+                .map(|b| String::from_utf8_lossy(&b).into_owned())
+                .unwrap_or_default();
+            if let Some(msg) = diamond_cap_refusal(
+                &path, &content, &old, Self::standing_hot(ctx, &path).await)
+            {
+                return Err(err!("file_write: {}", msg; Invalid, Input, Size));
+            }
+        }
+        // A path naming an Office document means the content is MARKDOWN and the file is a
+        // real document. The name decides, not the bytes: `.docx` is what the user will
+        // double-click, and it is the same rule `file_read` uses to decide to unpack one.
+        let office = match office_kind(&path) {
+            Some(media) => Some(res!(office_written(&path, media, &content))),
+            None        => None,
+        };
+        // AN OVERWRITE OF A FILE THAT WAS THERE counts against the turn's bound, and its
+        // copy is on disk before the write -- held as a delete's is, and asked about in the
+        // open folder as one is, where the write wipes it.
+        let over = {
+            let after: &[u8] = match &office {
+                Some((bytes, _)) => bytes,
+                None             => content.as_bytes(),
+            };
+            match &keep {
+                Some((dia, Some(b))) => match Self::before_overwrite(ctx, dia, &path, &raw,
+                    Some(b), Some(after), true).await
+                {
+                    Ok(o)    => Some(o),
+                    Err(why) => return Ok(MessageContent::text(why)),
+                },
+                _ => None,
+            }
+        };
+        if let Some((bytes, note)) = office {
+            if let Err(e) = crate::wasm::opfs::write_licensed(ctx.root, &lic, &bytes).await {
+                Self::overwrite_failed(&over).await;
+                return Err(e);
+            }
+            if let Some((dia, before)) = keep {
+                let found = Found::of(before.as_deref());
+                let (before, wiped) = Overwrite::prior(&over, before);
+                Self::captured_write(&dia, &path, bytes.clone(), found, before, wiped);
+            }
+            let mut st = lock_cache(&ctx.read_seen);
+            st.seen.insert(path.clone(), content_hash(&bytes));
+            return Ok(MessageContent::text(
+                fmt!("Wrote {} bytes to {}.{}{}{}", bytes.len(), path, note, place_line,
+                    Self::file_write_nudge(content.len()))));
+        }
+        if let Err(e) = crate::wasm::opfs::write_licensed(ctx.root, &lic, content.as_bytes()).await {
+            Self::overwrite_failed(&over).await;
+            return Err(e);
+        }
+        if let Some((dia, before)) = keep {
+            let found = Found::of(before.as_deref());
+            let (before, wiped) = Overwrite::prior(&over, before);
+            Self::captured_write(&dia, &path, content.as_bytes().to_vec(), found, before,
+                wiped);
+        }
+        let mut st = lock_cache(&ctx.read_seen);
+        st.seen.insert(path.clone(), content_hash(content.as_bytes()));
+        Ok(fmt!("Wrote {} bytes to {}.{}{}{}", content.len(), path, place_line, retired,
+            Self::file_write_nudge(content.len())))
+        };
+        Ok(MessageContent::text(res!(text)))
+    }
+
+    /// `file_edit` in the browser; its own function for the reason [`Self::file_write_page`] is.
+    #[cfg(target_arch = "wasm32")]
+    async fn file_edit_page(args_json: &str, ctx: &ToolContext) -> Outcome<MessageContent> {
+        let text: Outcome<String> = {
+            let raw = res!(Self::arg(args_json, "path"));
+            let path = res!(Self::scoped(ctx, &raw));
+            let hunks = res!(edit_hunks(args_json, &raw));
+            let lic = match ctx.licence(&path) {
+                Ok(l)    => l,
+                Err(why) => return Ok(MessageContent::text(why)),
+        };
+        // THE MACHINE, WHERE THE PATH IS UNDER A MARK. This arm is the one
+        // `dev/BLOCKERS.md` B2 is measured on: exact-string replacement, applied by
+        // the hand behind the same fence a command runs behind, with no shell, no `sed`
+        // and nothing to escape. The count comes back as a refusal naming the number
+        // found, which is the partial-apply signal B2 says is absent.
+        match reach_of(ctx, &raw, &path, Door::Change).await {
+            Reach::Refuse(why) => return Ok(MessageContent::text(refusal_line(&why))),
+            Reach::Machine { abs, cwd, root, spec } => {
+                // THE BYTES THAT ARE ABOUT TO BE GONE, for the same reason and by the
+                // same means as at the write door above. Taken before the dry run rather
+                // than out of it: the dry run happens only for a multi-hunk call, and a
+                // single hunk is the commonest edit there is.
+                let keep = match ctx.keeper() {
+                    Some(d) => Some((d,
+                        machine_before(&abs, &cwd, &spec, &ctx.no_write).await)),
+                    None    => None,
+                };
+                // ALL-OR-NOTHING OVER A HAND THAT TAKES ONE HUNK AT A TIME.
+                //
+                // The relay's `edit` op carries a single `text`/`text2` pair, and the
+                // hand is a separate program with its own release cycle, so the list
+                // cannot be pushed down to it.  What CAN be done here is to read the
+                // file once and place every hunk against that text before any of them is
+                // sent: a hunk that would fail is then found before the first write,
+                // which is the whole of what the contract promises.  A single hunk skips
+                // the read and is byte for byte the call this tool has always made.
+                //
+                // The dry run is skipped where the read came back WINDOWED -- a whole
+                // file read is cut at 512 KiB -- because validating against part of a
+                // file would refuse hunks that are perfectly placeable in the rest of
+                // it.  There the hunks go one at a time and the refusal says which
+                // landed, which is honest about a guarantee that could not be kept.
+                let mut checked = hunks.len() == 1;
+                if !checked {
+                    let got = res!(machine_op("file_read", "read", &abs, &cwd, &spec,
+                        &ctx.no_write, "").await);
+                    if let Ok(t) = got {
+                        let read = res!(machine_read(&t));
+                        if read.held >= read.lines {
+                            let _ = res!(file_edited(&raw, read.body, &hunks));
+                            checked = true;
+                        }
+                    }
+                }
+                if let Some((_, (None, Some(why)))) = &keep {
+                    return Ok(MessageContent::text(overwrite_unkept_refusal(&raw, why)));
+                }
+                // WHAT THE FILE WILL BE, worked out from the bytes in hand by the same
+                // placement the hand applies, so the turn knows before the first hunk goes
+                // whether the edit keeps anything of it.
+                let after: Option<Vec<u8>> = match &keep {
+                    Some((_, (Some(b), _))) => std::str::from_utf8(b).ok()
+                        .and_then(|t| file_edited(&raw, t, &hunks).ok())
+                        .map(|(updated, _)| updated.into_bytes()),
+                    _ => None,
+                };
+                // The turn's bound, and the copy on disk, after the dry run and before
+                // the first hunk is sent.
+                let mut over: Option<Overwrite> = None;
+                if let Some((dia, (before, _))) = &keep {
+                    match Self::before_overwrite(ctx, dia, &abs, &raw, before.as_deref(),
+                        after.as_deref(), true).await
+                    {
+                        Ok(o)    => over = Some(o),
+                        Err(why) => return Ok(MessageContent::text(why)),
+                    }
+                }
+                for (i, (old, new)) in hunks.iter().enumerate() {
+                    let got = match machine_change("file_edit",
+                        MachineChange::Edit(&lic, old, new), &root, &cwd, &spec,
+                        &ctx.no_write).await
+                    {
+                        Ok(g)  => g,
+                        // The road failed: whether the hunk landed is not known, which
+                        // is the same case as the hand refusing it, said the same way.
+                        Err(e) => Err(fmt!("file_edit: {}", e.plain())),
+                    };
+                    if let Err(why) = got {
+                        // Nothing landed, so nothing is kept; or some did, and the file
+                        // has changed, so what stood before is recorded as the turn's.
+                        if i == 0 {
+                            Self::overwrite_failed(&over).await;
+                        } else if let Some((dia, (before, refused))) = &keep {
+                            let found = machine_found(before, refused);
+                            let (before, wiped) = Overwrite::prior(&over, before.clone());
+                            crate::wasm::diamond::capture(dia, &raw,
+                                crate::wasm::diamond::Change {
+                                    path:    abs.clone(),
+                                    after:   crate::wasm::diamond::Body::Unseen,
+                                    before,
+                                    found,
+                                    carried: None,
+                                    mark:    true,
+                                    refused: refused.clone(),
+                                    wiped,
+                                });
+                        }
+                        // What is already on disk is said plainly. A model told only
+                        // that the call failed would re-send every hunk, and the ones
+                        // that landed would no longer match.
+                        return Err(if i == 0 {
+                            err!("{}", why; IO, File, Write)
+                        } else {
+                            err!("{} -- edit(s) 1 to {} of {} ARE ALREADY WRITTEN to \
+                                '{}'{}. Read the file before you send anything again.",
+                                why, i, hunks.len(), abs,
+                                if checked {
+                                    ", which the file changed under this call"
+                                } else {
+                                    " (the file was too large to check the edits first)"
+                                };
+                                IO, File, Write)
+                        });
+                    }
+                }
+                // WHAT THE FILE NOW IS, worked out rather than read back: the hand has
+                // just applied these hunks to the bytes above, and `file_edited` is the
+                // same placement it applied them by. A second fenced read would cost a
+                // round trip to learn what is already in hand.
+                if let Some((dia, (before, refused))) = keep {
+                    let after = match after {
+                        Some(b) => crate::wasm::diamond::Body::Held(b),
+                        None    => crate::wasm::diamond::Body::Unseen,
+                    };
+                    let found = machine_found(&before, &refused);
+                    let (before, wiped) = Overwrite::prior(&over, before);
+                    crate::wasm::diamond::capture(&dia, &raw,
+                        crate::wasm::diamond::Change {
+                            path: abs.clone(), after, before, found, carried: None,
+                            mark: true, refused, wiped });
+                }
+                return Ok(MessageContent::text(Self::edit_said(&abs, hunks.len())));
+            },
+            Reach::Storage => (),
+        }
+        // WHICH FILESYSTEM WAS LOOKED IN, as `file_read` says it. Lane H fixed the two
+        // tools it was measured on and left this one deliberately; a daimon that edits
+        // rather than rewrites met the browser's `JsValue(NotFoundError: …)` instead.
+        // A cloud-only file is fetched here as `file_read` fetches one, and for the
+        // same reason: an edit refused for want of bytes this device could have had costs
+        // three rounds to do what one would.
+        if let Some(size) = crate::wasm::cloud::size_of(&path) {
+            if size <= AUTO_FETCH_MAX {
+                res!(crate::wasm::cloud::fetch(&path).await);
+            } else {
+                return Err(err!(
+                    "file_edit: '{}' is in cloud storage, not on this device. It is {} \
+                    bytes, above the {} KiB an edit fetches for itself. Use file_fetch to \
+                    bring it here first.", path, size, AUTO_FETCH_MAX / 1024;
+                    IO, File, Read, Missing));
+            }
+        }
+        let bytes = match crate::wasm::opfs::read_file(ctx.root, &path).await {
+            Ok(b)  => b,
+            Err(e) => match absent_here(ctx, &raw, &path).await {
+                Some(note) => return Err(err!("file_edit: {}", note;
+                    IO, File, Read, Missing)),
+                None       => match wrong_root_note(ctx, &raw, &path).await {
+                    Some(note) => return Err(err!("file_edit: {}", note;
+                        IO, File, Read, Missing)),
+                    None       => return Err(e),
+                },
+            },
+        };
+        let data = String::from_utf8_lossy(&bytes).to_string();
+        let (updated, relaxed) = res!(file_edited(&path, &data, &hunks));
+        // THE CRYSTAL'S THIRD DOOR, and it answers for both of its files.
+        //
+        // `Tool::FileWrite` has carried this check since the ceiling was built, and
+        // the store's own door catches a hand edit and a fold.  This one was missed,
+        // and a daimon that EDITS rather than rewrites walked straight past it.  The
+        // store's door does then fire -- but it reads the old length from disk, and
+        // by then the edit has landed, so `old == new` and the refusal arrives after
+        // the fact: `record_steer` errors, the turn fails, and an oversized crystal
+        // is left on disk with no version snapshot and no log record.  Refusing here
+        // means the file is never written at all, which is the only place the
+        // asymmetry below can still be honoured.
+        //
+        // `data` is the content BEFORE the replacement, so an edit that shrinks an
+        // already-oversized crystal is still allowed, exactly as at the other doors.
+        // Retired first, exactly as at the write door and by the same function, so an
+        // edit that tips one of the three over its ceiling is relieved rather than
+        // refused -- and a daimon that appends a decision a day never meets the limit.
+        let (updated, retired) = res!(crate::wasm::diamond::standing_retired(
+            ctx.root, &path, updated).await);
+        if let Some(msg) = diamond_cap_refusal(
+            &path, &updated, &data, Self::standing_hot(ctx, &path).await)
+        {
+            return Err(err!("file_edit: {}", msg; Invalid, Input, Size));
+        }
+        // THE BYTES IT REPLACES, kept as the write door keeps them -- this arm kept none,
+        // so a turn's first edit of a file no version had named had nowhere to go back to.
+        // An edit whose hunks leave less than half of the file is a wipe like any other
+        // write's.
+        let over = match ctx.keeper() {
+            Some(dia) => match Self::before_overwrite(ctx, &dia, &path, &raw, Some(&bytes),
+                Some(updated.as_bytes()), true).await
+            {
+                Ok(o)    => Some(o),
+                Err(why) => return Ok(MessageContent::text(why)),
+            },
+            None      => None,
+        };
+        if let Err(e) = crate::wasm::opfs::write_licensed(ctx.root, &lic, updated.as_bytes()).await {
+            Self::overwrite_failed(&over).await;
+            return Err(e);
+        }
+        if let Some(dia) = ctx.keeper() {
+            let found = Found::of(Some(&bytes));
+            let (before, wiped) = Overwrite::prior(&over, Some(bytes));
+            Self::captured_write(&dia, &path, updated.as_bytes().to_vec(), found, before,
+                wiped);
+        }
+        // The edit is anchored to current on-disk content, so it merges
+        // safely; record the new state as this agent's latest view.
+        let mut st = lock_cache(&ctx.read_seen);
+        st.seen.insert(path.clone(), content_hash(updated.as_bytes()));
+        Ok(fmt!("{}{}{}", Self::edit_said(&path, hunks.len()),
+            relaxed_said(&relaxed), retired))
+        };
+        Ok(MessageContent::text(res!(text)))
+    }
+
+    /// `file_delete` in the browser: one file, never a folder, and only once a copy is held.
+    /// Its own function rather than an arm of `execute`, whose one future a debug build of
+    /// the wasm keeps every local of, up to the format's limit.
+    #[cfg(target_arch = "wasm32")]
+    async fn file_delete(args_json: &str, ctx: &ToolContext) -> Outcome<MessageContent> {
+        let raw = res!(Self::arg(args_json, "path"));
+        if let Some(why) = delete_path_refusal(&raw) {
+            return Ok(MessageContent::text(refusal_line(&why)));
+        }
+        // ONE SPELLING, BEFORE ANYTHING ELSE. `./x`, `a//x`, `a/z/../x` and `x/` all name
+        // `x`, and the version store keeps a copy only under the canonical form -- on
+        // 2026-09-23 an audit deleted four files spelled those ways and none of them was
+        // kept, because `versionable` turned each spelling away after the file was gone.
+        let raw = normalise(&raw);
+        let path = res!(Self::scoped(ctx, &raw));
+        let lic = match ctx.licence(&path) {
+            Ok(l)    => l,
+            Err(why) => return Ok(MessageContent::text(why)),
+        };
+        // ONE FILE, NEVER A FOLDER.  This took a `recursive` argument and handed it to
+        // `removeEntry`, which on a folder-mounted Diamond is the user's own disk: on
+        // 2026-09-22 a daimon whose moves had been refused used it on whole folders and
+        // Syncthing carried ~4,900 deletions off the machine.  A folder is refused here in
+        // words, and `delete_file` below cannot remove one whatever it is asked.
+        if let Ok(true) = crate::wasm::opfs::is_directory(ctx.root, &path).await {
+            return Ok(MessageContent::text(refusal_line(&delete_dir_refusal(&raw))));
+        }
+        // A TURN'S DELETE GOES AHEAD ONLY ONCE A COPY IS HELD -- a daimon's, a worker's
+        // or a chat's, since 2026-09-23, because the risk is the folder and not which
+        // model is in it.  Fail closed: every
+        // reason no copy could be taken -- too large, unreadable though present, only in
+        // cloud storage, or a path the store will not keep -- is a refusal in words, and
+        // the file stays.  A delete nothing can put back is the one this guard exists to
+        // stop, and on a folder-mounted Diamond the file is on the user's own disk.
+        let keep = match ctx.keeper() {
+            Some(d) => match Self::delete_copy(ctx, &d, &raw, &path).await {
+                Ok(Ok(before)) => Some((d, before)),
+                Ok(Err(why))   => return Ok(MessageContent::text(refusal_line(&why))),
+                Err(e)         => return Err(e),
+            },
+            None    => None,
+        };
+        // AS THE TURNS FOUND IT (R4's follow-on, 2026-09-23). A delete is a destruction as
+        // a wipe is, and keeps what a wipe keeps: the oldest copy of the unbroken run of
+        // turns' changes that led here, not the file as this delete found it. Two trims
+        // that each left over half and then a delete held only the trimmed file, and the
+        // whole one sat in ordinary rows a prune may take. Only a user's file: a keeper's
+        // own home is its working state. A file this turn made keeps what it holds.
+        let keep = match keep {
+            Some((d, before)) if stored_is_mark(&d, &path) => {
+                let copy = crate::wasm::diamond::turns_found(&d, &normalise(&path), &before)
+                    .await.unwrap_or_else(|| before.clone());
+                Some((d, before, copy))
+            },
+            Some((d, before)) => {
+                let copy = before.clone();
+                Some((d, before, copy))
+            },
+            None => None,
+        };
+        // A TURN'S DELETES FROM THE USER'S OWN FOLDER ARE HELD FOR THE PERSON past a
+        // handful (decision review of 2026-09-23, decision 2; items b and c of the delete
+        // unit): the file is on their disk, and whatever syncs that folder carries each
+        // delete off the machine at once.  The store's own bound, below, still holds
+        // after they say go on.  Asked about the FILE, which only its bytes say (Q5-1,
+        // 2026-09-24): asked before the copy was read, the tally knew only the path, and
+        // a yes to deleting the turn's own file there let a user's file moved onto the
+        // path be emptied unasked.  So the copy is read first, which also means a delete
+        // the store could not keep is refused before the person is asked about it.
+        let open = ctx.root == FileRoot::Workspace && crate::wasm::opfs::folder_open()
+            && !is_store_path(&path);
+        // PAST WHAT THE TURN MAY KEEP, the turn stops and asks -- and that is asked FIRST,
+        // before the person is asked anything (R2-5): a delete the bound would refuse is
+        // never put to them.
+        let claimed = match &keep {
+            Some((dia, now, copy)) => match Self::claim(dia, &path, &raw, Some(now), Some(copy),
+                true).await
+            {
+                Ok(h)    => Some(h),
+                Err(why) => return Ok(MessageContent::text(why)),
+            },
+            None => None,
+        };
+        let counted = match &keep {
+            Some((d, _, copy)) if open => {
+                let file = crate::diamond_versions::open_file_key(&path, copy);
+                match Self::open_delete_gate(d, &path, &file, &raw, OpenAct::Delete).await {
+                    Ok(true)  => Some((d.clone(), file)),
+                    Ok(false) => None,
+                    Err(why)  => {
+                        Self::let_go(&claimed).await;
+                        return Ok(MessageContent::text(why));
+                    },
+                }
+            },
+            _ => None,
+        };
+        // What the gate counted is given back wherever the delete does not happen.
+        let give_back = || {
+            if let Some((d, file)) = &counted {
+                crate::wasm::diamond::open_delete_release(d, file);
+            }
+        };
+        // The copy is on disk, with a note naming it, BEFORE the file goes -- a page that
+        // dies between here and the turn's end leaves the note for the next turn end to adopt.
+        let held = match (claimed, &keep) {
+            (Some(h), Some((_, now, copy))) => match Self::keep(h, &raw, Some(now), Some(copy),
+                true).await
+            {
+                Ok(h)    => Some(h),
+                Err(why) => {
+                    give_back();
+                    return Ok(MessageContent::text(why));
+                },
+            },
+            _ => None,
+        };
+        // Absence from this device means "not here"; removal from the cloud index means
+        // "gone". Those are different things, and only an explicit delete does the
+        // second. The user's own door may do it for a file that is not resident; a
+        // turn never reaches here for one, because `delete_copy` refused it.
+        if let Err(e) = crate::wasm::opfs::delete_licensed(ctx.root, &lic).await {
+            Self::let_go(&held).await;
+            give_back();
+            if keep.is_none() && crate::wasm::cloud::size_of(&path).is_some() {
+                res!(crate::wasm::cloud::forget_licensed(&lic).await);
+                return Ok(MessageContent::text(fmt!("Deleted {} from cloud storage.", path)));
+            }
+            return Err(e);
+        }
+        if let Some((dia, now, copy)) = keep {
+            Self::captured_delete(&dia, &path, Found::of(Some(&now)), copy);
+        }
+        let mut msg = fmt!("Deleted {}.", path);
+        // The index lists only what is NOT on this device, so a resident file's cloud
+        // copy is invisible to it; forget unconditionally, or deleting a file that was
+        // synced would leave the copy behind to reappear.
+        match crate::wasm::cloud::forget_licensed(&lic).await {
+            Ok(s) if s.starts_with("Error") =>
+                msg.push_str(&fmt!(" Its cloud copy was not removed: {}", s)),
+            Ok(_)  => {},
+            Err(e) => msg.push_str(&fmt!(" Its cloud copy was not removed: {}", e)),
+        }
+        Ok(MessageContent::text(msg))
+    }
+
+    /// `file_move` in the browser, on this computer where the source is under a mark, and its
+    /// record of both ends ([`Self::move_ends`]).  Its own function for the reason
+    /// [`Self::file_delete`] is.
+    #[cfg(target_arch = "wasm32")]
+    async fn file_move(args_json: &str, ctx: &ToolContext) -> Outcome<MessageContent> {
+        let raw    = res!(Self::arg(args_json, "path"));
+        let to_raw = res!(Self::arg(args_json, "to"));
+        let from   = res!(Self::scoped(ctx, &raw));
+        let to     = res!(Self::scoped(ctx, &to_raw));
+        // BOTH ENDS through the fence: a move removes one path and writes the other, and
+        // the source's licence covers everything a folder carries with it.
+        let (from_lic, to_lic) = match (ctx.licence(&from), ctx.licence(&to)) {
+            (Ok(f), Ok(t)) => (f, t),
+            (Err(why), _) | (_, Err(why)) => return Ok(MessageContent::text(why)),
+        };
+        // THE MACHINE, WHERE THE SOURCE IS UNDER A MARK. The destination is made
+        // absolute against the same root: a move that crossed the two filesystems would
+        // be a copy and a delete wearing one name, and neither half would be visible in
+        // the other place.
+        match reach_of(ctx, &raw, &from, Door::Change).await {
+            Reach::Refuse(why) => return Ok(MessageContent::text(refusal_line(&why))),
+            Reach::Machine { abs, cwd, root, spec } => {
+                let dest = match mark_over(&ctx.no_write, &normalise(&to)) {
+                    Some(_) => fmt!("{}/{}", root, normalise(&to)),
+                    None => return Ok(MessageContent::text(refusal_line(&fmt!(
+                        "file_move: '{}' is a folder on this computer and '{}' is not in \
+                        one, so this would move a file out of the filesystem it is in. \
+                        Move it to a path inside a folder the user marked in.",
+                        raw, to)))),
+                };
+                // WHAT THE MOVE CARRIES, read through the hand and its room reserved before
+                // it goes, so both of its ends are recorded (`Tool::move_ends`).
+                let hold = match ctx.keeper() {
+                    Some(d) => {
+                        let files = Self::machine_move_read(&d, (&abs, &raw),
+                            (&dest, &to_raw), &cwd, &spec, &ctx.no_write).await;
+                        match Self::move_ends(&d, &raw, files).await {
+                            Ok(h)    => Some((d, h)),
+                            Err(why) => return Ok(MessageContent::text(why)),
+                        }
+                    },
+                    None => None,
+                };
+                let got = match machine_change("file_move",
+                    MachineChange::Move(&from_lic, &to_lic), &root, &cwd, &spec,
+                    &ctx.no_write).await
+                {
+                    Ok(g)  => g,
+                    Err(e) => {
+                        if let Some((d, h)) = &hold {
+                            Self::move_failed(d, h);
+                        }
+                        return Err(e);
+                    },
+                };
+                return match got {
+                    Ok(_)    => {
+                        if let Some((d, h)) = hold {
+                            Self::captured_move(&d, h);
+                        }
+                        Ok(MessageContent::text(fmt!("Moved {} to {}.", abs, dest)))
+                    },
+                    Err(why) => {
+                        if let Some((d, h)) = &hold {
+                            Self::move_failed(d, h);
+                        }
+                        Err(err!("{}", why; IO, File, Write))
+                    },
+                };
+            },
+            Reach::Storage => (),
+        }
+        // A MOVE BETWEEN THE USER'S FOLDER AND DAIMOND'S STORE IS A DELETE FROM THEIR DISK.
+        // `resolve_root` sends a store path to the browser sandbox whatever folder is
+        // open, so a folder moved to `diamonds/<id>/...` leaves the machine -- and every
+        // device its sync reaches -- while its bytes sit where only this browser can see
+        // them.  The machine arm above refuses the same crossing for the same reason.
+        if ctx.root == FileRoot::Workspace && crate::wasm::opfs::folder_open()
+            && is_store_path(&from) != is_store_path(&to)
+        {
+            return Ok(MessageContent::text(refusal_line(&fmt!(
+                "file_move: '{}' and '{}' are on different filesystems -- one is in the \
+                folder the user opened on this computer, the other in Daimond's own \
+                storage -- so this would take it off the user's disk. Nothing was moved. \
+                Move it to a path in the same place, or ask the user.", raw, to))));
+        }
+        if under(&normalise(&to), &normalise(&from)) {
+            return Ok(MessageContent::text(refusal_line(
+                &move_into_itself_refusal(&raw, &to))));
+        }
+        // The SOURCE only. `move_entry` refuses an existing destination in its own words,
+        // and those are about this filesystem and correct.
+        if let Some(note) = absent_here(ctx, &raw, &from).await {
+            return Err(err!("file_move: {}", note; IO, File, Read, Missing));
+        }
+        // WHAT THE MOVE CARRIES, read and its room reserved before it goes, so both of its
+        // ends are recorded (`Tool::move_ends`).  Keyed on the scoped paths, as
+        // `Tool::captured_write` keys a write.
+        let hold = match ctx.keeper() {
+            Some(d) => {
+                let files = Self::store_move_read(ctx, &d, &from, &to).await;
+                match Self::move_ends(&d, &raw, files).await {
+                    Ok(h)    => Some((d, h)),
+                    Err(why) => return Ok(MessageContent::text(why)),
+                }
+            },
+            None => None,
+        };
+        if let Err(e) = crate::wasm::opfs::move_licensed(ctx.root, &from_lic, &to_lic).await {
+            if let Some((d, h)) = &hold {
+                Self::move_failed(d, h);
+            }
+            return Err(e);
+        }
+        if let Some((d, h)) = hold {
+            Self::captured_move(&d, h);
+        }
+        Ok(MessageContent::text(fmt!("Moved {} to {}.", from, to)))
+    }
+
     #[cfg(target_arch = "wasm32")]
     async fn file_show(args_json: &str, ctx: &ToolContext) -> Outcome<MessageContent> {
         // A DISPATCHED WORKER MAY NOT TAKE THE SCREEN.  Nobody is reading its transcript, several
@@ -20432,8 +20720,9 @@ impl Tool {
             return Err(e);
         }
         if let Some((dia, before)) = kept {
+            let found = Found::of(Some(&before));
             let (before, wiped) = Overwrite::prior(&over, Some(before));
-            Self::captured_write(&dia, &path, shot.png.clone(), before, wiped);
+            Self::captured_write(&dia, &path, shot.png.clone(), found, before, wiped);
         }
         Self::output_made(ctx, tool, &path, &shot.png).await;
         {
@@ -20713,43 +21002,95 @@ impl Tool {
     }
 
     /// Take a turn's hold on the copy of `kept` before the act that replaces or removes it: the
-    /// turn's bounds are asked, and the bytes it held go into the store with a note naming them,
-    /// ON DISK AND BEFORE THE ACT (see [`crate::wasm::diamond::pend`]).  The refusal is the answer
-    /// where the bounds say no or the copy could not be written, and then nothing may change.
+    /// turn's bounds are asked, a run of the turn's the act ends is sealed as its own version
+    /// ([`crate::wasm::diamond::seal_run`]), and the copy goes into the store with a note naming
+    /// it, ON DISK AND BEFORE THE ACT (see [`crate::wasm::diamond::pend`]).  The refusal is the
+    /// answer where the bounds say no or either could not be written, and then nothing may change.
     ///
     /// # Arguments
     /// * `dia` - The keeper whose store keeps the copy.
     /// * `kept` - The path as the capture will name it: the scoped path, or absolute for a file
     ///   on the machine.
     /// * `raw` - The path as the model wrote it, for the sentence.
-    /// * `before` - What stood at `kept`, or `None` where nothing could be read.
+    /// * `now` - What stands at `kept` as the act found it, or `None` where nothing does.
+    /// * `copy` - What the act keeps of it: `now`, or the file as the turns found it where the act
+    ///   wipes it; `None` where there is nothing to keep.
     /// * `destroying` - Is this a delete, or a write that wipes the file? Its copy is then held
     ///   as a delete's is, and bound by the room the store has for one.
     #[cfg(target_arch = "wasm32")]
-    async fn hold(dia: &str, kept: &str, raw: &str, before: Option<&[u8]>, destroying: bool)
+    async fn hold(dia: &str, kept: &str, raw: &str, now: Option<&[u8]>, copy: Option<&[u8]>,
+        destroying: bool)
+        -> Result<Hold, String>
+    {
+        match Self::claim(dia, kept, raw, now, copy, destroying).await {
+            Ok(held) => Self::keep(held, raw, now, copy, destroying).await,
+            Err(why) => Err(why),
+        }
+    }
+
+    /// The first half of [`Tool::hold`]: the turn's bounds are asked, and the slot reserved.
+    /// Nothing is written.  Asked BEFORE the person is asked anything about the act
+    /// ([`Tool::open_delete_gate`]), so a turn past its bound is refused before a question it
+    /// could never act on (R2-5 of the Q5-1 fix's QA, 2026-09-24).
+    #[cfg(target_arch = "wasm32")]
+    async fn claim(dia: &str, kept: &str, raw: &str, now: Option<&[u8]>, copy: Option<&[u8]>,
+        destroying: bool)
         -> Result<Hold, String>
     {
         let machine = kept.starts_with('/');
         let key = if machine { kept.to_string() } else { normalise(kept) };
-        let mut held = Hold { dia: dia.to_string(), key: key.clone(), reserved: false,
-            noted: false };
+        let mut held = Hold { dia: dia.to_string(), key: key.clone(), kept: false,
+            reserved: false, noted: false };
         // A path the store does not keep -- the crystal, the store's own record -- is recorded by
         // its own chain, as it always was, and bound by nothing here.
         if !machine && !crate::wasm::diamond::versionable(dia, &key) {
             return Ok(held);
         }
-        let bytes = before.map(|b| b.len() as u64).unwrap_or(0);
+        held.kept = true;
         let room = crate::wasm::diamond::keep_room(dia).await;
         // Checked and RESERVED in one synchronous step, before the first await below, so agents
         // sharing this store cannot all pass the check at once.
-        match crate::wasm::diamond::captured_room(dia, &key, bytes, destroying, room) {
+        match crate::wasm::diamond::captured_room(dia, &key, &Found::of(now),
+            copy.map(|b| b.len() as u64), destroying, room)
+        {
             Ok(r)                                         => held.reserved = r,
             Err(crate::wasm::diamond::Short::Count)       => return Err(turn_cap_refusal(raw)),
             Err(crate::wasm::diamond::Short::Bytes(room)) => return Err(turn_room_refusal(raw, room)),
         }
-        if let Some(b) = before {
-            let mark = machine || stored_is_mark(dia, &key);
-            match crate::wasm::diamond::pend(dia, &key, b, destroying, mark).await {
+        Ok(held)
+    }
+
+    /// The second half of [`Tool::hold`], on a hold [`Tool::claim`] took: a run the act ends is
+    /// sealed, and the copy goes into the store with its note.  A refusal gives the claim back.
+    #[cfg(target_arch = "wasm32")]
+    async fn keep(mut held: Hold, raw: &str, now: Option<&[u8]>, copy: Option<&[u8]>,
+        destroying: bool)
+        -> Result<Hold, String>
+    {
+        if !held.kept {
+            return Ok(held);
+        }
+        let dia = held.dia.clone();
+        let key = held.key.clone();
+        let machine = key.starts_with('/');
+        // BYTES FROM OUTSIDE THE TURN END ITS RUN on this path (QF2 of the Q5-1 fix's QA): the run
+        // so far is its own version before this act, so the copy it holds and the one this act
+        // keeps each have a row.
+        if let Some(n) = now {
+            // PAST THE SEALS A TURN MAY SPEND, refused rather than sealed (R2-4). Asked with no
+            // await before the seal, which counts itself in the same step.
+            if crate::wasm::diamond::seals_spent(&dia, &key, n) {
+                Self::let_go(&Some(held)).await;
+                return Err(seal_cap_refusal(raw));
+            }
+            if let Err(e) = crate::wasm::diamond::seal_run(&dia, &key, n).await {
+                Self::let_go(&Some(held)).await;
+                return Err(copy_unwritten_refusal(raw, &e.plain()));
+            }
+        }
+        if let Some(b) = copy {
+            let mark = machine || stored_is_mark(&dia, &key);
+            match crate::wasm::diamond::pend(&dia, &key, b, destroying, mark).await {
                 Ok(n)  => held.noted = n,
                 Err(e) => {
                     Self::let_go(&Some(held)).await;
@@ -20770,16 +21111,17 @@ impl Tool {
     ///
     /// # Arguments
     /// * `dia` - The keeper whose turn this is.
-    /// * `path` - The scoped path, normalised, as the tally counts it.
+    /// * `path` - The scoped path, normalised, which the question names.
+    /// * `file` - The file, as the tally counts it ([`crate::diamond_versions::open_file_key`]).
     /// * `raw` - The path as the model wrote it, for the sentence.
     /// * `act` - What the call is about to do to it, which the question names.
     #[cfg(target_arch = "wasm32")]
-    async fn open_delete_gate(dia: &str, path: &str, raw: &str, act: OpenAct)
+    async fn open_delete_gate(dia: &str, path: &str, file: &str, raw: &str, act: OpenAct)
         -> Result<bool, String>
     {
         use crate::diamond_versions::OpenDelete;
         loop {
-            match crate::wasm::diamond::open_delete_room(dia, path) {
+            match crate::wasm::diamond::open_delete_room(dia, file) {
                 OpenDelete::Go(counted)   => return Ok(counted),
                 OpenDelete::Stopped(n)    => return Err(open_delete_stopped_refusal(raw, n,
                     crate::diamond_versions::open_deletes_ask())),
@@ -20863,19 +21205,34 @@ impl Tool {
         };
         // IN THE FOLDER THE USER OPENED, a wipe is asked about as a delete there is, in the same
         // count: the question is about their disk and whatever syncs it, not about the verb.
+        let copy = if wiped { against.clone() } else { None };
+        // THE BOUND IS ASKED BEFORE THE PERSON IS (R2-5): a wipe the turn has no room to keep a
+        // copy of is refused, and never put to them first.
+        let claimed = if take_hold {
+            match Self::claim(dia, kept, raw, before, copy.as_deref().or(before), wiped).await {
+                Ok(h)    => Some(h),
+                Err(why) => return Err(why),
+            }
+        } else {
+            None
+        };
         let mut counted: Option<(String, String)> = None;
         if wiped && !machine && ctx.root == FileRoot::Workspace
             && crate::wasm::opfs::folder_open() && !is_store_path(kept)
         {
-            match Self::open_delete_gate(dia, &key, raw, OpenAct::Wipe).await {
-                Ok(true)  => counted = Some((dia.to_string(), key.clone())),
+            let file = crate::diamond_versions::open_file_key(&key,
+                against.as_deref().unwrap_or_default());
+            match Self::open_delete_gate(dia, &key, &file, raw, OpenAct::Wipe).await {
+                Ok(true)  => counted = Some((dia.to_string(), file)),
                 Ok(false) => {},
-                Err(why)  => return Err(why),
+                Err(why)  => {
+                    Self::let_go(&claimed).await;
+                    return Err(why);
+                },
             }
         }
-        let copy = if wiped { against } else { None };
-        let held = if take_hold {
-            match Self::hold(dia, kept, raw, copy.as_deref().or(before), wiped).await {
+        let held = match claimed {
+            Some(h) => match Self::keep(h, raw, before, copy.as_deref().or(before), wiped).await {
                 Ok(h)    => Some(h),
                 Err(why) => {
                     if let Some((d, p)) = &counted {
@@ -20883,9 +21240,8 @@ impl Tool {
                     }
                     return Err(why);
                 },
-            }
-        } else {
-            None
+            },
+            None => None,
         };
         Ok(Overwrite { held, counted, wiped, copy })
     }
@@ -20969,10 +21325,14 @@ impl Tool {
     /// * `dia` - The Diamond the turn acts for.
     /// * `path` - The scoped path, which is the key and the manifest's own spelling.
     /// * `after` - The bytes now on disk.
-    /// * `before` - The bytes that were, or `None` for a file that was not there.
+    /// * `found` - What the write replaced, which tells the capture whether the turn's run on the
+    ///   path is unbroken ([`crate::diamond_versions::capture_into`]).
+    /// * `before` - The copy kept of what it replaced, or `None` for a file that was not there.
     /// * `wiped` - Did the write wipe them ([`Tool::before_overwrite`])?
     #[cfg(target_arch = "wasm32")]
-    fn captured_write(dia: &str, path: &str, after: Vec<u8>, before: Option<Vec<u8>>, wiped: bool) {
+    fn captured_write(dia: &str, path: &str, after: Vec<u8>, found: Found, before: Option<Vec<u8>>,
+        wiped: bool)
+    {
         // ONE SPELLING in the manifest, whatever the model wrote: `./x` and `x` are one file, and
         // `versionable` refuses the first, so an overwrite spelled that way kept nothing.  The
         // ledger's own spelling stays the capture's key, which is what the turn end matches on.
@@ -20987,6 +21347,8 @@ impl Tool {
             path:    kept,
             after:   crate::wasm::diamond::Body::Held(after),
             before,
+            found,
+            carried: None,
             mark:    stored_is_mark(dia, path),
             refused: None,
             wiped,
@@ -20997,9 +21359,10 @@ impl Tool {
     /// `file_revert` and the History can put it back. The delete's twin of [`Self::captured_write`].
     ///
     /// The caller has already asked [`Self::delete_copy`], which refuses the delete of any path
-    /// this would pass over, so nothing reaches here that is not kept.
+    /// this would pass over, so nothing reaches here that is not kept.  `found` is what the delete
+    /// removed, and `before` the copy kept of it: the file as the turns found it.
     #[cfg(target_arch = "wasm32")]
-    fn captured_delete(dia: &str, path: &str, before: Vec<u8>) {
+    fn captured_delete(dia: &str, path: &str, found: Found, before: Vec<u8>) {
         let kept = normalise(path);
         if !crate::wasm::diamond::versionable(dia, &kept) {
             return;
@@ -21009,9 +21372,206 @@ impl Tool {
             path:    kept,
             after:   crate::wasm::diamond::Body::Gone,
             before:  Some(before),
+            found,
+            carried: None,
             refused: None,
             wiped:   false,
         });
+    }
+
+    /// Hold what a turn's `file_move` did, once it has landed, for the turn-end hook to record:
+    /// each file it carried gone from where it was and standing where it went.  See
+    /// [`Self::move_ends`], which worked them out before the move.
+    #[cfg(target_arch = "wasm32")]
+    fn captured_move(dia: &str, hold: MoveHold) {
+        for (raw, change) in hold.ends.into_iter() {
+            crate::wasm::diamond::capture(dia, &raw, change);
+        }
+    }
+
+    /// Give back what [`Self::move_ends`] reserved for a move that did not happen.
+    #[cfg(target_arch = "wasm32")]
+    fn move_failed(dia: &str, hold: &MoveHold) {
+        for key in hold.reserved.iter() {
+            crate::wasm::diamond::release(dia, key);
+        }
+    }
+
+    /// What a turn's move of `files` will capture at both ends, worked out BEFORE the move from
+    /// what each held as it was read, with the room for the copies it keeps reserved and any run
+    /// of the turn's it ends sealed, as a hold's are ([`Self::hold`]); or the refusal where the
+    /// turn may not keep them.
+    ///
+    /// **A move records both of its ends** (Q5-1, 2026-09-24).  It recorded neither, so a file the
+    /// turn made and moved away left its "made here" at the path it left, a user's file moved onto
+    /// that path took it on, and emptying the user's file there was measured against nothing.  The
+    /// source is a destruction of its path and keeps what a delete there would keep; the bytes at
+    /// the destination carry the file as the turns found it wherever they came from
+    /// ([`crate::diamond_versions::moved`]).  Nothing is copied into the store before the move, as
+    /// a delete's copy is: the bytes are not lost, only moved.
+    ///
+    /// # Arguments
+    /// * `raw` - The path as the model wrote it, for the sentences.
+    #[cfg(target_arch = "wasm32")]
+    async fn move_ends(dia: &str, raw: &str, files: Vec<MoveRead>) -> Result<MoveHold, String> {
+        use crate::wasm::diamond::TurnFound;
+        let room = crate::wasm::diamond::keep_room(dia).await;
+        let mut hold = MoveHold { ends: Vec::new(), reserved: Vec::new() };
+        for f in files.into_iter() {
+            let machine = f.from.starts_with('/');
+            let mark = |p: &str| machine || stored_is_mark(dia, p);
+            let keeps = |p: &str| machine || crate::wasm::diamond::versionable(dia, p);
+            let what = match f.read {
+                // A USER'S FILE KEEPS WHAT A DELETE OF IT KEEPS, the file as the turns found it;
+                // a keeper's own, what it holds -- `Tool::FileDelete`'s rule, on the other verb.
+                Ok(bytes) => {
+                    let first = if mark(&f.from) {
+                        crate::wasm::diamond::turns_found(dia, &f.from, &bytes).await
+                    } else {
+                        match crate::wasm::diamond::this_turn_found(dia, &f.from, &bytes) {
+                            TurnFound::Made       => None,
+                            TurnFound::Carried(k) => Some(k),
+                            TurnFound::Was(w)     => Some(w),
+                        }
+                    };
+                    crate::diamond_versions::Moving::Read(bytes, first)
+                },
+                Err((body, why)) => crate::diamond_versions::Moving::Unread(body, why),
+            };
+            let (src, dst) = crate::diamond_versions::moved(
+                (&f.from, mark(&f.from)), (&f.to, mark(&f.to)), what);
+            if keeps(&f.from) {
+                // THE SOURCE IS A DESTRUCTION OF ITS PATH, and a copy it keeps counts as a
+                // delete's does, reserved in one synchronous step as a hold's is.  A file the turn
+                // made keeps nothing there, and neither does a destination: those are captured and
+                // bound by nothing (QF1 of the Q5-1 fix's QA -- each cost a slot of the turn's 64,
+                // so a folder of 33 files the turn wrote could not be renamed).
+                if let Some(copy) = &src.before {
+                    match crate::wasm::diamond::captured_room(dia, &src.path, &src.found,
+                        Some(copy.len() as u64), true, room)
+                    {
+                        Ok(true)   => hold.reserved.push(src.path.clone()),
+                        Ok(false)  => {},
+                        Err(short) => {
+                            Self::move_failed(dia, &hold);
+                            return Err(match short {
+                                crate::wasm::diamond::Short::Count       => turn_cap_refusal(raw),
+                                crate::wasm::diamond::Short::Bytes(room) =>
+                                    turn_room_refusal(raw, room),
+                            });
+                        },
+                    }
+                }
+                // A run of the turn's the move ends is its own version before it goes, as a
+                // hold's is ([`Self::hold`]); the moved bytes are what the source held.
+                if let crate::wasm::diamond::Body::Held(now) = &dst.after {
+                    if crate::wasm::diamond::seals_spent(dia, &src.path, now) {
+                        Self::move_failed(dia, &hold);
+                        return Err(seal_cap_refusal(raw));
+                    }
+                    if let Err(e) = crate::wasm::diamond::seal_run(dia, &src.path, now).await {
+                        Self::move_failed(dia, &hold);
+                        return Err(copy_unwritten_refusal(raw, &e.plain()));
+                    }
+                }
+                hold.ends.push((f.from_raw, src));
+            }
+            if keeps(&f.to) {
+                hold.ends.push((f.to_raw, dst));
+            }
+        }
+        Ok(hold)
+    }
+
+    /// What a move in browser storage or the open folder carries, read before it goes: the file at
+    /// `from`, or where `from` is a folder, each file the turn holds under it
+    /// ([`crate::wasm::diamond::held_under`]).  A folder's other files the turn neither made nor
+    /// destroys, and where they land they are measured as they stand.
+    ///
+    /// # Arguments
+    /// * `from`, `to` - The scoped paths, which are also what the captures are keyed on.
+    #[cfg(target_arch = "wasm32")]
+    async fn store_move_read(ctx: &ToolContext, dia: &str, from: &str, to: &str) -> Vec<MoveRead> {
+        let (src, dst) = (normalise(from), normalise(to));
+        if let Ok(true) = crate::wasm::opfs::is_directory(ctx.root, from).await {
+            let mut out = Vec::new();
+            for (path, rest, path_raw) in crate::wasm::diamond::held_under(dia, &src) {
+                // The turn's capture of a file no longer there -- one it deleted -- stays as it is.
+                if let Some(read) = Self::store_move_one(ctx, &path).await {
+                    out.push(MoveRead { from: path, from_raw: path_raw,
+                        to: fmt!("{}/{}", dst, rest), to_raw: fmt!("{}/{}", dst, rest), read });
+                }
+            }
+            return out;
+        }
+        match Self::store_move_one(ctx, from).await {
+            Some(read) => vec![MoveRead { from: src, from_raw: from.to_string(), to: dst,
+                to_raw: to.to_string(), read }],
+            None       => Vec::new(),   // nothing there, and the move will say so
+        }
+    }
+
+    /// One file a move in browser storage carries: its bytes, up to what a version holds; why it
+    /// was not read; or nothing where there is no file.
+    #[cfg(target_arch = "wasm32")]
+    async fn store_move_one(ctx: &ToolContext, path: &str)
+        -> Option<Result<Vec<u8>, (crate::wasm::diamond::Body, String)>>
+    {
+        let max = crate::diamond_versions::VERSION_FILE_MAX;
+        match crate::wasm::opfs::read_file_capped(ctx.root, path, max as u32).await {
+            Ok((b, total)) if total as usize <= max => Some(Ok(b)),
+            Ok((_, total)) => Some(Err((crate::wasm::diamond::Body::TooLarge(total as u64),
+                "size".to_string()))),
+            Err(_) => match crate::wasm::opfs::exists(ctx.root, path).await {
+                Ok(false) => None,
+                _         => Some(Err((crate::wasm::diamond::Body::Unseen,
+                    "unreadable".to_string()))),
+            },
+        }
+    }
+
+    /// What a move on this computer carries, read through the hand before it goes: the file at
+    /// `from`, or where `from` is a folder, each file the turn holds under it.  See
+    /// [`Self::store_move_read`].
+    ///
+    /// # Arguments
+    /// * `from`, `to` - Each absolute, as the captures name it, and as the model wrote it.
+    #[cfg(target_arch = "wasm32")]
+    async fn machine_move_read(
+        dia:  &str,
+        from: (&str, &str),
+        to:   (&str, &str),
+        cwd:  &str,
+        spec: &LinkedFence,
+        kits: &[Bound],
+    )
+        -> Vec<MoveRead>
+    {
+        let one = |path: &str, path_raw: &str, dst: String, dst_raw: String,
+            read: Result<Vec<u8>, (crate::wasm::diamond::Body, String)>|
+            MoveRead { from: path.to_string(), from_raw: path_raw.to_string(), to: dst,
+                to_raw: dst_raw, read };
+        match machine_before(from.0, cwd, spec, kits).await {
+            (Some(b), _)                                 =>
+                vec![one(from.0, from.1, to.0.to_string(), to.1.to_string(), Ok(b))],
+            (None, None)                                 => Vec::new(),
+            (None, Some(why)) if !hand_said_directory(&why) =>
+                vec![one(from.0, from.1, to.0.to_string(), to.1.to_string(),
+                    Err((crate::wasm::diamond::Body::Unseen, why)))],
+            (None, Some(_))                              => {
+                let mut out = Vec::new();
+                for (path, rest, path_raw) in crate::wasm::diamond::held_under(dia, from.0) {
+                    let read = match machine_before(&path, cwd, spec, kits).await {
+                        (Some(b), _)      => Ok(b),
+                        (None, None)      => continue,  // a file the turn deleted stays so
+                        (None, Some(why)) => Err((crate::wasm::diamond::Body::Unseen, why)),
+                    };
+                    out.push(one(&path, &path_raw, fmt!("{}/{}", to.0, rest),
+                        fmt!("{}/{}", to.1.trim_end_matches('/'), rest), read));
+                }
+                out
+            },
+        }
     }
 
     /// What a model's overwrite of `path` in browser storage is about to replace: its bytes,
@@ -24658,7 +25218,10 @@ impl ToolRegistry {
     pub async fn try_dispatch(&self, name: &str, args_json: &str)
         -> Outcome<MessageContent>
     {
-        let out = self.try_dispatch_unbilled(name, args_json).await;
+        // A MODEL IS CALLING, so the call is answered as a model's and never as the user's own
+        // door: the record's fence holds whatever the turn's bounds (`ToolContext::may_write`).
+        let ctx = ToolContext { by_model: true, ..self.ctx.clone() };
+        let out = self.dispatch_in(name, args_json, &ctx).await;
         // Charged only on the answer.  A road failure carried nothing into the conversation --
         // it is about to be retried, and a turn that paid for each attempt would run out of
         // budget for having been on a train.
@@ -24717,6 +25280,14 @@ impl ToolRegistry {
     pub async fn try_dispatch_unbilled(&self, name: &str, args_json: &str)
         -> Outcome<MessageContent>
     {
+        self.dispatch_in(name, args_json, &self.ctx).await
+    }
+
+    /// One call, answered in `ctx`: this registry's own for a panel, a model's for a turn
+    /// ([`Self::try_dispatch`]).
+    async fn dispatch_in(&self, name: &str, args_json: &str, ctx: &ToolContext)
+        -> Outcome<MessageContent>
+    {
         // THE ONE TOOL THAT IS NOT A TOOL CALL, intercepted before the name is resolved.  Its
         // ops are dispatched through `dispatch_op` -- everything below this line, factored out
         // -- so each is normalised, belt-checked, guarded and executed exactly as it would be
@@ -24726,9 +25297,9 @@ impl ToolRegistry {
             && self.tools.contains(&Tool::Compound)
         {
             let args = self.family.get().normalise_args(name, args_json);
-            return self.compound(args.as_ref()).await;
+            return self.compound(args.as_ref(), ctx).await;
         }
-        self.dispatch_op(name, args_json).await
+        self.dispatch_op(name, args_json, ctx).await
     }
 
     /// One tool call, through every door a tool call goes through, charged to nobody.
@@ -24740,7 +25311,7 @@ impl ToolRegistry {
     /// # Arguments
     /// * `name` - The tool's wire name.
     /// * `args_json` - The raw argument object.
-    async fn dispatch_op(&self, name: &str, args_json: &str)
+    async fn dispatch_op(&self, name: &str, args_json: &str, ctx: &ToolContext)
         -> Outcome<MessageContent>
     {
         // THE ARGUMENTS AS THE TOOL SHOULD SEE THEM, read generously before anything acts on
@@ -24759,14 +25330,18 @@ impl ToolRegistry {
             // named `spawn_agent` was answered "Dispatched agent …" while
             // nothing was dispatched, because only the conductor's registry
             // carries it.
-            Some(t) if self.tools.contains(&t) => match t.execute(args_json, &self.ctx).await {
+            Some(t) if self.tools.contains(&t) => match t.execute(args_json, ctx).await {
                 Ok(c)  => c,
                 // THE ONE FAILURE THAT DOES NOT BECOME A SENTENCE. Everything else -- a bad
                 // path, a refusal, a 500 from a host that answered -- is a fact about the world
                 // and the model is entitled to read it.
                 Err(e) if road_failed(&e) => return Err(e),
-                // `plain()`, NEVER `Display`. See `error_line`.
-                Err(e) => MessageContent::text(error_line(&e.plain())),
+                // A PERSON'S PAUSE REFUSED IT, which is a refusal and not a fault: see
+                // `PAUSE_MARK`. `plain()`, NEVER `Display`, otherwise. See `error_line`.
+                Err(e) => match paused_refusal(&e) {
+                    Some((node, said)) => MessageContent::text(paused_line(&node, &said)),
+                    None               => MessageContent::text(error_line(&e.plain())),
+                },
             },
             Some(_) => MessageContent::text(
                 error_line(&fmt!("tool '{}' is not available here.", name))),
@@ -24814,7 +25389,7 @@ impl ToolRegistry {
     ///
     /// # Arguments
     /// * `args_json` - The call's arguments, after the dialect pre-pass.
-    async fn compound(&self, args_json: &str) -> Outcome<MessageContent> {
+    async fn compound(&self, args_json: &str, ctx: &ToolContext) -> Outcome<MessageContent> {
         let asks = match crate::llm::extract_json_objects(args_json, "ops") {
             Some(a) => a,
             None    => return Ok(MessageContent::text(refusal_line(&fmt!(
@@ -24865,7 +25440,7 @@ impl ToolRegistry {
                     // reported back as an unknown argument by `guided`, naming a key the model
                     // was told to write.
                     let op_args = crate::llm::json_without_key(one, "op");
-                    match self.dispatch_op(t.name(), &op_args).await {
+                    match self.dispatch_op(t.name(), &op_args, ctx).await {
                         Ok(c) => c.as_text().into_owned(),
                         // THE ROAD, WHICH IS NOT AN ANSWER. Written into an op's slot it would
                         // become text, and by then nothing can tell a request that never left
@@ -25713,7 +26288,7 @@ mod tests {
             Err(e) => panic!("a scratch directory: {}", e),
         };
         let ws = Workspace::new(dir).expect("ws");
-        ToolContext { workspace: ws, executor: Executor::local_default(), cwd: String::new(), path_prefix: String::new(), root: FileRoot::Workspace, read_seen: new_read_cache(), no_write: Vec::new(), daimon_of: String::new(), keeper: String::new(), unconfirmed: Vec::new() }
+        ToolContext { workspace: ws, executor: Executor::local_default(), cwd: String::new(), path_prefix: String::new(), root: FileRoot::Workspace, read_seen: new_read_cache(), no_write: Vec::new(), daimon_of: String::new(), keeper: String::new(), unconfirmed: Vec::new(), by_model: false }
     }
 
     /// A context scoped to a Diamond, as `diamond_bounds` builds it.
@@ -26604,6 +27179,46 @@ mod tests {
         assert_eq!(None, extract_json_number(r#"{"paired":true,"caps":["link:9"]}"#, "link"));
     }
 
+    /// **A model's call is never the user's own door**, bounded or not.  A Diamond's own thread
+    /// run as a chat -- a Continue, a gather round -- runs on an app nobody scoped, and a model's
+    /// `file_delete` of the link sidecar there took every mark the user had pressed.
+    #[tokio::test]
+    async fn test_no_model_call_writes_the_record_however_unbounded_its_turn() {
+        let c = ctx();
+        let root = c.workspace.root().to_path_buf();
+        let side = root.join("diamonds/d1/.daimond/links.jsonl");
+        std::fs::create_dir_all(side.parent().expect("a parent")).expect("mkdir");
+        std::fs::write(&side, b"{\"id\":\"m1\",\"by\":\"user\"}\n").expect("seed");
+        let reg = ToolRegistry::new(vec![Tool::FileWrite, Tool::FileDelete, Tool::FileMove], c);
+        for (name, args) in [
+            ("file_write",  r#"{"path":"diamonds/d1/.daimond/links.jsonl","content":""}"#),
+            ("file_delete", r#"{"path":"diamonds/d1/.daimond/links.jsonl"}"#),
+            ("file_move",   r#"{"path":"diamonds/d1","to":"elsewhere/d1"}"#),
+        ] {
+            let said = match reg.try_dispatch(name, args).await {
+                Ok(m)  => m.as_text().into_owned(),
+                Err(e) => panic!("{}: {}", name, e),
+            };
+            assert!(said.starts_with(REFUSAL_OPENING), "a model's {} reached the record: {}",
+                name, said);
+            assert_eq!(CallOutcome::Refused, call_outcome(&said));
+        }
+        assert!(std::fs::read(&side).map(|b| b.starts_with(b"{\"id\":\"m1\"")).unwrap_or(false),
+            "the user's mark is gone from the sidecar");
+        // The user's own door is still fenced by nothing: the same write through the panel's.
+        let said = reg.dispatch_unbilled("file_write",
+            r#"{"path":"diamonds/d1/.daimond/links.jsonl","content":"hand"}"#).await;
+        assert!(!said.as_text().starts_with(REFUSAL_OPENING), "the user's door was fenced: {}",
+            said.as_text());
+        assert_eq!(b"hand".to_vec(), std::fs::read(&side).expect("read"));
+        // And an ordinary file is the model's to write in an unbounded turn, as it always was.
+        let said = match reg.try_dispatch("file_write", r#"{"path":"notes.md","content":"x"}"#).await {
+            Ok(m)  => m.as_text().into_owned(),
+            Err(e) => panic!("{}", e),
+        };
+        assert!(!said.starts_with(REFUSAL_OPENING), "{}", said);
+    }
+
     /// **The licence is the write fence, and a licence for a folder is one for what is in it.**
     #[test]
     fn test_the_licence_is_the_write_fence_and_covers_what_is_beneath_00() {
@@ -26787,6 +27402,28 @@ mod tests {
         assert!(!wiped("vault/m0.md", b"keep me 0\nand more", b"keep me 0\n"));
         assert_eq!(("delete", "wipe"), (OpenAct::Delete.wire(), OpenAct::Wipe.wire()),
             "the page chooses its question by these two words");
+        Ok(())
+    }
+
+    /// **A folder on this computer is told from a file by the hand's own sentence** (Q5-1): a
+    /// move of a folder carries the files the turn holds under it, and a move of a file its bytes.
+    /// Pinned to the hand's source, so a change to the sentence there fails here.
+    #[test]
+    fn test_a_folder_on_the_machine_is_told_by_the_hands_own_sentence_00() -> Outcome<()> {
+        let hand = res!(std::fs::read_to_string(
+            concat!(env!("CARGO_MANIFEST_DIR"), "/hand/src/exec.rs")));
+        assert!(hand.contains("\"'{}' is a directory, not a file. file_list answers what is in it"),
+            "the hand's sentence for a directory moved");
+        assert!(hand_said_directory("unreadable: file_read: '/home/u/notes' is a directory, not a \
+            file. file_list answers what is in it, and file_search looks inside everything under it."));
+        for said in [
+            "unreadable: file_read: Could not read '/home/u/a.md': Resource busy (os error 16).",
+            "unreadable: file_read: There is no '/home/u/a.md' on this machine.",
+            "binary",
+            "size",
+        ] {
+            assert!(!hand_said_directory(said), "read as a folder: {:?}", said);
+        }
         Ok(())
     }
 
@@ -27565,6 +28202,42 @@ mod tests {
         assert!(!is_store_path("mail-old/keep.eml"));
         assert!(!is_store_path("src/mail/client.rs"));
         assert!(!is_store_path("mail/../notes.md"), "a path that climbs out is not in it");
+    }
+
+    #[test]
+    fn test_a_models_unbounded_call_never_writes_daimonds_own_directory_00() {
+        let mut c = ctx();
+        c.by_model = true;
+        assert!(!c.may_write(".daimond/skills.path"));
+        assert!(!c.may_write(".daimond/skills/x/SKILL.md"));
+        assert!(!c.may_write("./a/../.DAIMOND/skills.path"), "normalised and folded before it is measured");
+        assert!(c.may_write("notes.md"), "an ordinary file is still the turn's to write");
+        assert!(c.may_write(".daimond-old/x.md"), "whole segments only");
+        // Told as what it is, never as a mark attached for reading.
+        let said = c.refusal(".daimond/skills.path", true);
+        assert!(said.contains("Daimond's own directory") && !said.contains("attached"), "{}", said);
+        // The user's own door is unchanged.
+        c.by_model = false;
+        assert!(c.may_write(".daimond/skills.path"));
+    }
+
+    #[test]
+    fn test_the_apps_own_system_files_never_follow_the_folder_00() {
+        // The transcripts, the guide's mirror and the usage digest are the app's, and were written
+        // onto the person's disk whenever a folder was open.
+        assert!(is_store_path("system/agents/r1.md"));
+        assert!(is_store_path("system/guide"), "the guide's root, which Help consults");
+        assert!(is_store_path("system/guide/en/index.md"));
+        assert!(is_store_path("./system//usage/digest.md"), "normalised before it is measured");
+        // Only those three: a folder of the person's called `system`, and anything else in it,
+        // still follows the folder.
+        assert!(!is_store_path("system"));
+        assert!(!is_store_path("system/nixos/configuration.nix"));
+        assert!(!is_store_path("system/agentsx/a.md"));
+        assert!(!is_store_path("src/system/guide/a.md"));
+        assert!(!is_store_path("system/guide/../../notes.md"), "a path that climbs out is not in it");
+        // And a stranger's words are still only mail's.
+        assert!(!is_untrusted_path("system/usage/digest.md"));
     }
 
     #[test]
@@ -34503,6 +35176,47 @@ CLEAN            27 passed, 0 failed, exit 0, 900 ms
         // And the browser's own sentence is still in there, because a person reading the app's
         // log needs to know WHICH failure it was, not only that it was one.
         assert!(e.plain().contains("Load failed"), "the browser's wording was lost: {}", e.plain());
+    }
+
+    /// QA-1's second half: a refusal a person's PAUSE made crosses the edge marked, survives the
+    /// `res!` wrapping, and becomes a refusal naming its node -- booked `refused`, never `failed`,
+    /// with nobody reading the translated sentence back.
+    #[test]
+    fn test_a_pause_refusal_is_a_refusal_naming_its_node() {
+        let said = "Web access is paused. The page was not fetched and nothing was spent. Press \
+            play on it to resume.";
+        let e = wrapped(&paused_mark("root/web", said));
+        assert!(!road_failed(&e), "a pause was read as the road");
+        let (node, back) = match paused_refusal(&e) {
+            Some(p) => p,
+            None    => panic!("the pause did not survive the chain; plain() said: {}", e.plain()),
+        };
+        assert_eq!(("root/web", said), (node.as_str(), back.as_str()));
+        let line = paused_line(&node, &back);
+        assert!(PAUSED_AT.starts_with(REFUSAL_OPENING), "the pause's opening is not a refusal's");
+        assert_eq!(CallOutcome::Refused, call_outcome(&line), "a pause was booked as {:?}",
+            call_outcome(&line));
+        assert!(line.contains(said), "the sentence for the model was lost: {}", line);
+        assert!(!line.contains(PAUSE_MARK), "the edge's mark reached the model: {}", line);
+        assert_eq!(Some(fmt!("root/web")), paused_node(&line));
+        // A node with slashes and an id in it, as a Diamond's is.
+        let d = paused_line("root/diamonds/d-1a2b/self", "Book is paused.");
+        assert_eq!(Some(fmt!("root/diamonds/d-1a2b/self")), paused_node(&d));
+    }
+
+    #[test]
+    fn test_nothing_but_a_pause_names_a_pause_node() {
+        for said in [
+            "Refused: the path is outside the folder.",
+            "Error: web_search failed.",
+            "Web access is paused. Press play on it to resume.",     // the sentence alone
+            "Refused (paused at ): nothing",
+        ] {
+            assert_eq!(None, paused_node(said), "{}", said);
+        }
+        assert!(paused_refusal(&wrapped("Web access is paused.")).is_none());
+        assert!(paused_refusal(&wrapped(&fmt!("{} no brackets", PAUSE_MARK))).is_none());
+        assert!(paused_refusal(&wrapped(&paused_mark("", "x"))).is_none());
     }
 
     #[test]

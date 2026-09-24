@@ -32,6 +32,7 @@
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
+import { loadStore } from './storefixture.mjs';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 
@@ -100,6 +101,11 @@ function loadScript(rel, transform) {
 	fn(win, documentShim, localStorage, console, globalThis);
 }
 
+loadStore(win, localStorage);
+// The shared stamp rule, loaded first as index.html does. This loader runs a module
+// without `with (window)`, so the name its callers use bare is made global as well.
+loadScript('stamp.js');
+globalThis.DaimondStamp = win.DaimondStamp;
 loadScript('models.js', patchModels);
 loadScript('triage.js');
 

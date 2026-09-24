@@ -1102,13 +1102,17 @@
 	/// the gateway -- Daimond runs on a BYOK key with no account at all, and
 	/// such an account has no public name because there is no namespace to have
 	/// one in.
+	///
+	/// Read through `DaimondStore`, so a record this tab could not store is held
+	/// owed and read back here.
 	function handleRecord() {
-		try {
-			var raw = localStorage.getItem(K_HDL);
-			if (!raw) return null;
-			var rec = JSON.parse(raw);
-			return saneHandle(rec);
-		} catch (e) { return null; }
+		return saneHandle(window.DaimondStore.get(K_HDL, null));
+	}
+
+	/// The record that wins of two, by `handleBeats`: the merge's law, and the one an
+	/// owed record is retried under.
+	function handleLaw(a, b) {
+		return handleBeats(saneHandle(b), saneHandle(a)) ? b : a;
 	}
 
 	/// What is a handle record, and nothing else. A hand-edited or half-written
@@ -1169,8 +1173,9 @@
 		var mine     = handleRecord();
 		if (!incoming) return false;
 		if (mine && mine.h === incoming.h && mine.t === incoming.t) return false;
-		try { localStorage.setItem(K_HDL, JSON.stringify({ h: incoming.h, t: incoming.t })); }
-		catch (e) { return false; }			// private mode: nothing was stored, nothing moved
+		// One the box refuses is held owed in this tab, and retried under the merge's
+		// law, so it cannot land over a later rename another tab has stored since.
+		window.DaimondStore.put(K_HDL, { h: incoming.h, t: incoming.t }, handleLaw);
 		try { window.dispatchEvent(new Event('daimond:handle')); } catch (e) { /* no window */ }
 		return true;
 	}
@@ -1182,13 +1187,16 @@
 	/// record this device already agrees with writes nothing at all, so the next
 	/// parcel is byte-identical to the one that arrived -- which is what makes
 	/// the field a fixed point and keeps the two devices quiet.
+	///
+	/// A record the box refuses is held owed and still announced; then it THROWS,
+	/// so the section is re-pulled rather than read as applied (SIM-16, A5).
 	function adoptHandle(rec) {
 		var incoming = saneHandle(rec);
 		var mine     = handleRecord();
 		if (!handleBeats(incoming, mine)) return false;
-		try { localStorage.setItem(K_HDL, JSON.stringify({ h: incoming.h, t: incoming.t })); }
-		catch (e) { return false; }			// private mode: nothing was stored, nothing moved
+		var landed = window.DaimondStore.put(K_HDL, { h: incoming.h, t: incoming.t }, handleLaw);
 		try { window.dispatchEvent(new Event('daimond:handle')); } catch (e) { /* no window */ }
+		if (!landed) throw window.DaimondStore.refusal(K_HDL);
 		return true;
 	}
 
@@ -1818,7 +1826,7 @@
 		localStorage.removeItem(K_ALG);
 		localStorage.removeItem(K_FP);
 		localStorage.removeItem(K_NAME);
-		localStorage.removeItem(K_HDL);
+		window.DaimondStore.remove(K_HDL);
 		localStorage.removeItem(K_SEALP);
 		localStorage.removeItem(K_SEALK);
 		localStorage.removeItem(K_SEALA);
@@ -2208,8 +2216,8 @@
 		// keep whichever record had the later stamp and leave this device
 		// showing a name that is not its account's.
 		var hdl = saneHandle(b.hdl);
+		window.DaimondStore.remove(K_HDL);
 		if (hdl) localStorage.setItem(K_HDL, JSON.stringify({ h: hdl.h, t: hdl.t }));
-		else     localStorage.removeItem(K_HDL);
 		// The account's epoch and rekey record, when the bundle carries them. Taken
 		// together or cleared together: an epoch with no record could not carry a change
 		// onward, and a record with no epoch would have this device read as behind its

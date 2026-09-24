@@ -327,11 +327,11 @@
 	/// canvas grows to the right and downwards, so a box at -40 would be off the
 	/// only edge that cannot be scrolled to.
 	function putPos(id, x, y, stamp) {
-		var l = loadLayout();
+		var l = loadLayout(), was = l.pos[id];
 		l.pos[id] = {
 			x: Math.max(0, Math.round(x)),
 			y: Math.max(0, Math.round(y)),
-			t: stamp || Date.now(),
+			t: stamp || DaimondStamp.next(was && was.t),
 		};
 	}
 
@@ -377,17 +377,21 @@
 	/// Take a layout record from the sync, merged against what is held here.
 	/// Returns true when something local moved.
 	///
-	/// Per Diamond, the later stamp wins; on an equal stamp what is here is kept,
-	/// so applying a parcel this device already agrees with changes nothing and
-	/// the next parcel is unchanged. A section that restamped itself on apply is
-	/// the loop that had a freshly paired phone always holding news.
+	/// Per Diamond, the later stamp wins, and an equal stamp goes to the greater
+	/// position, on every device alike; the same record twice changes nothing, so
+	/// applying a parcel this device already agrees with leaves the next parcel
+	/// unchanged. A section that restamped itself on apply is the loop that had a
+	/// freshly paired phone always holding news.
+	///
+	/// A LATER STAMP AT THE SAME POSITION IS TAKEN TOO. Refusing it kept the older
+	/// stamp here, so a third position stamped between the two was taken by one
+	/// device and refused by the other (BM-1).
 	function adopt(rec) {
 		var incoming = sanePos(rec && rec.pos);
 		var l = loadLayout(), moved = false;
 		Object.keys(incoming).forEach(function (id) {
 			var mine = l.pos[id], theirs = incoming[id];
-			if (mine && (mine.t || 0) >= (theirs.t || 0)) return;
-			if (mine && mine.x === theirs.x && mine.y === theirs.y) return;
+			if (mine && !DaimondStamp.beats(theirs.t, [theirs.x, theirs.y], mine.t, [mine.x, mine.y])) return;
 			l.pos[id] = theirs;
 			moved = true;
 		});
@@ -1355,7 +1359,10 @@
 		var auto = autoLayout(ids, isolates, c.edges, cyc.back);
 		// One stamp for the whole arrangement: organising is one act, and giving
 		// each box its own millisecond would let a sync interleave two of them.
-		var now = Date.now();
+		// Past every position it replaces, as any single move is.
+		var held = loadLayout().pos, top = 0;
+		Object.keys(auto.pos).forEach(function (id) { if (held[id] && held[id].t > top) top = held[id].t; });
+		var now = DaimondStamp.next(top);
 		Object.keys(auto.pos).forEach(function (id) {
 			putPos(id, auto.pos[id].x, auto.pos[id].y, now);
 		});

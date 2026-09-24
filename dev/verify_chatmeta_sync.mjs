@@ -60,7 +60,7 @@ if (BREAK && BROWSER !== 'chromium') {
 // ── The seam must be present, or a green run would prove nothing ──────
 const SEAM = [
 	{ want: 'out.name           = metaNewer.name;', why: 'the metadata scalar resolution is missing' },
-	{ want: 'var metaNewer = am >= bm ? a : b;',     why: 'the metaAt merge winner is missing' },
+	{ want: 'var metaNewer = DaimondStamp.beats(am, ', why: 'the metaAt merge winner is missing' },
 ];
 {
 	const src = fs.readFileSync(path.join(WWW, 'js/daimond.js'), 'utf8');

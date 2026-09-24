@@ -938,6 +938,7 @@
 	'store.alarm_download': 'Télécharger une copie',
 	'store.alarm_retry': 'Réessayer',
 	'store.full': 'il ne reste plus de place dans le stockage de ce navigateur pour ce site',
+	'store.records_owed': 'Cet appareil n’a plus d’espace de stockage dans le navigateur : une modification faite ici n’est pas encore enregistrée. Cette page la conserve et l’enregistre dès qu’il y a de la place.',
 	'identity.err_no_sealing_key': 'Cet appareil n’a pas de clé de scellement, il ne peut donc pas ouvrir un message scellé. Déverrouillez l’identité une fois et une clé sera créée.',
 	'store.empty_read': 'ce navigateur n’a rendu aucune des {n} conversations qu’il détient',
 	// ── L’échelle des permissions ──────────────────────────────
@@ -1751,6 +1752,7 @@
 	'marks.use_here': 'Utiliser ici',
 	'marks.use_all': 'Tout utiliser ici',
 	'marks.use_help': 'Activer aussi cette marque sur cet appareil',
+	'marks.use_ask': 'Utiliser cette marque sur cet appareil ?',
 	'deletes.held_title': 'Continuer à supprimer ou écraser en grande partie des fichiers dans votre dossier ?',
 	'deletes.held_body.one': '{who} a supprimé ou écrasé en grande partie pendant ce tour {n} fichier dans le dossier que vous avez ouvert sur cet ordinateur, soit autant qu’un tour peut le faire là sans vous demander. Il veut ensuite {next}. Daimond garde une copie de chaque fichier ainsi supprimé ou écrasé pendant au moins sept jours. Le laisser continuer pendant ce tour ?',
 	'deletes.held_body.other': '{who} a supprimé ou écrasé en grande partie pendant ce tour {n} fichiers dans le dossier que vous avez ouvert sur cet ordinateur, soit autant qu’un tour peut le faire là sans vous demander. Il veut ensuite {next}. Daimond garde une copie de chaque fichier ainsi supprimé ou écrasé pendant au moins sept jours. Le laisser continuer pendant ce tour ?',
@@ -1789,6 +1791,7 @@
 	'dws.drop_all_help': 'Retire tous ceux-ci de l\'espace de travail ; les fichiers restent intacts.',
 	'dws.elsewhere': 'Vit dans l’espace de travail',
 	'dws.readonly': 'Lecture seule',
+	'dws.readwrite': 'Lecture et modification',
 	'dws.share': 'Partager avec les appareils qui n’y ont pas accès eux-mêmes',
 	'dws.share_help': 'Désactivé : cet appareil seul. Activé : copié sur les autres, jusqu\'à {max}.',
 	'dws.shared': 'Partagé',
@@ -2177,6 +2180,7 @@
 	'backup.n_diamonds.one': '{n} diamond',
 	'backup.n_diamonds.other': '{n} diamonds',
 	'backup.restored_body': '{files} et {diamonds} restaurés. Daimond va recharger pour ouvrir votre espace de travail restauré.',
+	'backup.restored_owed': 'Cet appareil n’a plus d’espace de stockage dans le navigateur : une partie de ce qui a été restauré n’est pas encore enregistrée. La page se recharge dès que c’est fait ; libérer un peu d’espace le permet.',
 	'backup.n_foreign.one': '{n} fichier de cette sauvegarde appartient à un autre compte de ce navigateur : il n’a pas été restauré et ne reste que dans la sauvegarde.',
 	'backup.n_foreign.other': '{n} fichiers de cette sauvegarde appartiennent à un autre compte de ce navigateur : ils n’ont pas été restaurés et ne restent que dans la sauvegarde.',
 

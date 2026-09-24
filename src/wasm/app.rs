@@ -14,7 +14,7 @@
 //! tools are backed by the OPFS edge (see [`crate::tools`]).
 
 use crate::agent::Agent;
-use crate::llm::{LlmClient, parse_json_string_array};
+use crate::llm::{Halt, LlmClient, parse_json_string_array};
 use crate::prompts::Role;
 use crate::protocol::{AgentEvent, ChatMessage, Session, ToolCall, generate_session_id};
 use crate::tools::{Tool, ToolContext, ToolRegistry};
@@ -77,7 +77,39 @@ pub struct DaimondApp {
     daimon_prompt: RefCell<String>,
     /// The same, for the reducer (`prompts/reducer.md`).
     reducer_prompt: RefCell<String>,
+    // The turns running on this app, by the tag the page gave each (see `set_turn_tag`), so a
+    // Stop or a pause reaches the one turn it is about.  A Diamond's app is shared by every
+    // Diamond on one model; see [`DaimondApp::abort_turn`].
+    turns:          RefCell<Vec<(String, Halt)>>,
+    early:          RefCell<Vec<String>>,       // stopped before their turn had begun
+    ended:          RefCell<Vec<String>>,       // lately ended, so a late stop is not kept
 }
+
+/// A turn's place in its app's list of running turns, given up when the turn ends -- however it
+/// ends, a future the page dropped included.
+struct Running<'a> {
+    app:  &'a DaimondApp,
+    tag:  String,
+    halt: Halt,
+}
+
+impl Drop for Running<'_> {
+    fn drop(&mut self) {
+        if let Ok(mut turns) = self.app.turns.try_borrow_mut() {
+            turns.retain(|(_, h)| !h.same(&self.halt));
+        }
+        if !self.tag.is_empty() {
+            if let Ok(mut ended) = self.app.ended.try_borrow_mut() {
+                ended.push(self.tag.clone());
+                let over = ended.len().saturating_sub(STOP_TAGS_KEPT);
+                ended.drain(..over);
+            }
+        }
+    }
+}
+
+/// How many tags [`DaimondApp`] remembers as stopped early, or as lately ended.
+const STOP_TAGS_KEPT: usize = 32;
 
 #[wasm_bindgen]
 impl DaimondApp {
@@ -151,6 +183,7 @@ impl DaimondApp {
             daimon_of:   String::new(),
             keeper:      String::new(),
             unconfirmed: Vec::new(),
+            by_model:    false,
         };
         // The whole file toolset is OPFS-backed in the browser; only the
         // shell tool has no in-browser executor, so it is left out.
@@ -179,6 +212,9 @@ impl DaimondApp {
             instructions:     RefCell::new(String::new()),
             daimon_prompt: RefCell::new(String::new()),
             reducer_prompt:   RefCell::new(String::new()),
+            turns:            RefCell::new(Vec::new()),
+            early:            RefCell::new(Vec::new()),
+            ended:            RefCell::new(Vec::new()),
         })
     }
 
@@ -193,6 +229,17 @@ impl DaimondApp {
     )
         -> Result<(), JsValue>
     {
+        // ONE TURN AT A TIME ON THIS APP'S OWN CONVERSATION, asked before the halt is cleared:
+        // clearing it under a turn still running would release that turn's Stop.
+        if self.session.try_borrow_mut().is_err() {
+            return Err(to_js_err(err!(
+                "This conversation is in the middle of a turn, so another cannot start on it.";
+                Invalid, Conflict)));
+        }
+        // THIS TURN'S STOP, cleared of the last turn's and held under the page's tag before
+        // anything awaits, so a Stop or a pause pressed from here on reaches it; see [`Halt`].
+        self.agent.llm.halt().rearm();
+        let _running = self.hold_turn(self.registry.ctx.turn_tag_for(""), self.agent.llm.halt());
         // A `/name` the user typed, resolved to the file's own text BEFORE the turn starts.
         // Deterministic, and it either happens or is refused out loud -- unlike telling the model
         // to go and read the file, where a model that does not bother produces a plausible session
@@ -228,12 +275,40 @@ impl DaimondApp {
         ran.map_err(to_js_err)
     }
 
-    /// Cancel the in-flight turn.  Fires the transport's abort signal, so
-    /// the streaming `fetch` errors out, the current round ends, and
-    /// [`DaimondApp::run_turn`] resolves with the partial answer kept.  Safe
-    /// to call when idle: with no request in flight it is a no-op.
+    /// Stop every turn running on this app.  The request in flight is cancelled, the round
+    /// ends with its partial answer kept, and no further request of any of them goes out, so a
+    /// Stop that lands while a round's tools run still stops the turn.  Safe to call when idle.
+    ///
+    /// **A Diamond's app is shared by every Diamond on one model**, so this stops all of them:
+    /// a caller that means one turn calls [`DaimondApp::abort_turn`].
     pub fn abort(&self) {
         self.agent.llm.abort();
+        for halt in self.halts_where(|_| true) {
+            halt.fire();
+        }
+    }
+
+    /// Stop the one turn the page tagged `tag` (see [`DaimondApp::set_turn_tag`]), and no
+    /// other turn sharing this app.  A tag whose turn has not begun yet is remembered, and the
+    /// turn stops as it begins.
+    ///
+    /// Answers whether a running turn was reached.
+    pub fn abort_turn(&self, tag: String) -> bool {
+        let hit = self.halts_where(|t| t == tag);
+        for halt in hit.iter() {
+            halt.fire();
+        }
+        if hit.is_empty() && !tag.is_empty()
+            && !self.ended.borrow().iter().any(|t| *t == tag)
+        {
+            let mut early = self.early.borrow_mut();
+            if !early.iter().any(|t| *t == tag) {
+                early.push(tag);
+                let over = early.len().saturating_sub(STOP_TAGS_KEPT);
+                early.drain(..over);
+            }
+        }
+        !hit.is_empty()
     }
 
     // ── Speaking into a turn that is already running ─────────────────────
@@ -1347,6 +1422,10 @@ impl DaimondApp {
                 "This chat is in the middle of a turn; wait for it to finish before \
                  folding by hand."; Invalid, Conflict))),
         };
+        // The fold's request is a request of this conversation's, so it takes the conversation's
+        // stop, cleared of the last turn's, as a turn does.
+        self.agent.llm.halt().rearm();
+        let _running = self.hold_turn(String::new(), self.agent.llm.halt());
         let mut sink = |ev: AgentEvent| {
             let js = event_to_js(&ev);
             let _ = on_event.call1(&JsValue::NULL, &js);
@@ -1525,6 +1604,7 @@ impl DaimondApp {
             daimon_of:   String::new(),
             keeper:      String::new(),
             unconfirmed: Vec::new(),
+            by_model:    false,
         };
         let registry = ToolRegistry::new(Tool::daimon(), ctx);
         let text = registry.dispatch_unbilled(&name, &args_json).await.as_text().into_owned();
@@ -2466,14 +2546,27 @@ impl DaimondApp {
     /// history could not be written, and the console says so.
     async fn record_chat_turn(&self, key: &str, on_event: &js_sys::Function) {
         // With the copies noted on disk before each act, including any an earlier life of the
-        // page left unrecorded.
-        let (captured, notes) = diamond::drain_turn(key).await;
+        // page left unrecorded -- which are recorded under the same hold, as versions of their own,
+        // before this turn's (R2-2).
+        let hold = match diamond::hold_versions(key).await {
+            Ok(h)  => h,
+            Err(e) => {
+                // Left for the next turn end: the captures stay in memory and the notes on disk.
+                web_sys::console::warn_1(&JsValue::from_str(&fmt!(
+                    "the files the turn in {} changed could not be recorded: {}", key, e)));
+                return;
+            },
+        };
+        let (captured, notes) = diamond::drain_turn(&hold, key).await;
         if captured.is_empty() {
+            drop(hold);
             diamond::settle(key, &notes).await;
             return;
         }
         let changes = captured.into_iter().map(|(_, ch)| ch).collect();
-        let recorded = diamond::versions_record(key, None, Cause::Turn, "", "", changes).await;
+        let recorded = diamond::versions_record_held(&hold, key, None, Cause::Turn, "", "", changes)
+            .await;
+        drop(hold);
         if recorded.is_ok() {
             diamond::settle(key, &notes).await;
         }
@@ -2591,6 +2684,29 @@ impl DaimondApp {
     ///   `Files.bounds` reports them.
     /// * `unconfirmed` - JSON array of the places marked into this Diamond that are not in force
     ///   on this device until the user confirms them here, as `Files.bounds` reports them.
+    /// The stops of the running turns whose tag `pick` accepts, cloned out so none is fired
+    /// under the borrow.
+    fn halts_where(&self, pick: impl Fn(&str) -> bool) -> Vec<Halt> {
+        self.turns.borrow().iter()
+            .filter(|(t, _)| pick(t))
+            .map(|(_, h)| h.clone())
+            .collect()
+    }
+
+    /// Hold a turn's stop under its tag until the answer is dropped, firing it at once where
+    /// the page stopped that tag before the turn began.
+    fn hold_turn(&self, tag: String, halt: Halt) -> Running<'_> {
+        if !tag.is_empty() {
+            let mut early = self.early.borrow_mut();
+            if let Some(at) = early.iter().position(|t| *t == tag) {
+                early.remove(at);
+                halt.fire();
+            }
+        }
+        self.turns.borrow_mut().push((tag.clone(), halt.clone()));
+        Running { app: self, tag, halt }
+    }
+
     async fn compose_daimon(
         &self,
         id:          &str,
@@ -2783,10 +2899,15 @@ impl DaimondApp {
             daimon_of:   id.to_string(),
             keeper:      id.to_string(),
             unconfirmed: waiting,
+            by_model:    false,
         };
         let registry = ToolRegistry::new(Tool::daimon(), ctx)
             .with_family(self.registry.family());
-        let agent = Agent::new(self.agent.llm.clone(), &self.with_instructions(&system));
+        // A STOP OF ITS OWN: this app is shared by every Diamond on one model, and a daimon
+        // stopped with the app's halt would stop them all.  `steer_inner` holds it under the
+        // page's tag.
+        let agent = Agent::new(self.agent.llm.with_halt(Halt::new()),
+            &self.with_instructions(&system));
         // A fresh agent starts from the default limits, so without this a Diamond's
         // daimon would fold the same model's conversation at a different size from
         // the chat that dispatched it.
@@ -2837,6 +2958,11 @@ impl DaimondApp {
         // What the user TYPED is kept for the log below. The record of why a crystal changed should
         // read `/pickup daimond`, which is what they did; the skill's whole text is in the skill.
         let typed = instruction.clone();
+        // THIS TURN'S STOP, held under the tag the page gave this Diamond's turn before anything
+        // awaits, so pausing or stopping this Diamond reaches this turn and no other Diamond's
+        // sharing the app; see [`DaimondApp::abort_turn`].
+        let halt = Halt::new();
+        let _running = self.hold_turn(self.registry.ctx.turn_tag_for(id), halt.clone());
         let instruction = match open_command(instruction).await {
             Opened::Send(text)  => text,
             Opened::Refuse(msg) => return Err(refuse(&msg)),
@@ -2849,8 +2975,9 @@ impl DaimondApp {
         // `local` is dropped here and taken only by the Wire: the turn wants the joined message,
         // which the agent already holds, and a second copy of half of it would be one more thing
         // able to disagree with the first.
-        let DaimonTurn { agent, registry, crystal: before, standing: standing_before, .. } =
+        let DaimonTurn { mut agent, registry, crystal: before, standing: standing_before, .. } =
             self.compose_daimon(id, &attached, &read_only, &toolkits, &unconfirmed).await;
+        agent.llm = agent.llm.with_halt(halt);
         // THE USER'S OWN EDITS BECOME A VERSION BEFORE THE TURN CAN WRITE OVER THEM.
         //
         // The Files panel, a capp's Save and a landed Diamond each marked the path they wrote,
@@ -2864,7 +2991,7 @@ impl DaimondApp {
         let dirty = diamond::drain_dirty(id);
         if !dirty.is_empty() {
             let changes = diamond::versions_changes(id, &dirty).await;
-            if let Err(e) = diamond::versions_record(id, None, Cause::User, "", "", changes).await {
+            if let Err(e) = diamond::versions_record(id, Cause::User, "", "", changes).await {
                 web_sys::console::warn_1(&JsValue::from_str(&fmt!(
                     "the state of {} before this turn could not be recorded: {}", id, e)));
             }
@@ -2935,86 +3062,102 @@ impl DaimondApp {
         // `before` to do it.
         let standing_after = diamond::read_standing(id).await;
         let tune = agent.limits();
-        let mut minted: Option<u64> = None;
-        if after != before || page_after != page_before || standing_after != standing_before {
-            let version = res!(diamond::record_steer(id, &after, &typed).await);
-            minted = Some(version);
-            // ONE `kind:"task"` RECORD PER TICK, carrying what the ledger shows behind it. A
-            // task that went from `- [ ]` to `- [x]` in `before`/`after` earns one whether or not
-            // anything else changed in the same turn -- ticking three tasks with one file write
-            // between them is still three claims, each its own line. Gated on `task_log` alone:
-            // the version above is still minted with it off, so a Diamond still gets one, and
-            // only the per-task record and its flag disappear.
-            if tune.task_log {
-                let parent = version as i64 - 1;
-                // THE TICK'S OWN WRITE DOES NOT COUNT AS ITS BACKING. Ticking a task is ITSELF a
-                // `file_edit` of `REQUIREMENTS.md`, so `ledger.wrote` always holds that one path
-                // however the tick was arrived at -- checking for "anything written" would make
-                // the flag fire on nothing a bare tick could ever trigger it on, which is exactly
-                // the never-forget file's own failure mode. What counts is a write to something
-                // ELSE: the file the work actually landed in, or `STATE.md`/`DECISIONS.md`
-                // alongside it.
-                let backed = if ledger.wrote.iter().any(|w|
-                    crate::tools::standing_leaf(w) != Some(crate::tools::REQUIREMENTS_FILE))
-                {
-                    Some("an edit")
-                } else if !ledger.reported.is_empty() {
-                    Some("a worker report")
-                } else {
-                    None
-                };
-                for task_id in crate::tools::ticked_tasks(
-                    &standing_before.requirements, &standing_after.requirements)
-                {
-                    res!(diamond::record_task_tick(id, version, parent, &task_id, backed).await);
+        // THE VERSION STORE IS HELD FROM THE CRYSTAL'S MINT TO THE FILES' MANIFEST, so no seal, no
+        // revert and no other tab mints between them (R2-1; see `diamond::VersionHold`).
+        // A STORE ANOTHER ACT HOLDS PAST THE WAIT IS NOT WAITED ON FOR EVER (the engine unit's open
+        // item 2): the turn's changes stay on disk as it left them, its captures and notes stay for
+        // the next turn end to adopt, and the daimon is told below.
+        let recorded = match diamond::hold_versions(id).await {
+            Ok(hold) => {
+                let mut minted: Option<u64> = None;
+                // THE COPIES AN EARLIER LIFE OF THE PAGE LEFT ARE RECORDED FIRST (R2-2), each run
+                // it began on a path this life then changed again as a version of its own, below
+                // the one this turn takes -- the older copy under the older number.
+                let (captured, notes) = diamond::drain_turn(&hold, id).await;
+                if after != before || page_after != page_before || standing_after != standing_before {
+                    let version = res!(diamond::record_steer(&hold, id, &after, &typed).await);
+                    minted = Some(version);
+                    // ONE `kind:"task"` RECORD PER TICK, carrying what the ledger shows behind it. A
+                    // task that went from `- [ ]` to `- [x]` in `before`/`after` earns one whether or not
+                    // anything else changed in the same turn -- ticking three tasks with one file write
+                    // between them is still three claims, each its own line. Gated on `task_log` alone:
+                    // the version above is still minted with it off, so a Diamond still gets one, and
+                    // only the per-task record and its flag disappear.
+                    if tune.task_log {
+                        let parent = version as i64 - 1;
+                        // THE TICK'S OWN WRITE DOES NOT COUNT AS ITS BACKING. Ticking a task is ITSELF a
+                        // `file_edit` of `REQUIREMENTS.md`, so `ledger.wrote` always holds that one path
+                        // however the tick was arrived at -- checking for "anything written" would make
+                        // the flag fire on nothing a bare tick could ever trigger it on, which is exactly
+                        // the never-forget file's own failure mode. What counts is a write to something
+                        // ELSE: the file the work actually landed in, or `STATE.md`/`DECISIONS.md`
+                        // alongside it.
+                        let backed = if ledger.wrote.iter().any(|w|
+                            crate::tools::standing_leaf(w) != Some(crate::tools::REQUIREMENTS_FILE))
+                        {
+                            Some("an edit")
+                        } else if !ledger.reported.is_empty() {
+                            Some("a worker report")
+                        } else {
+                            None
+                        };
+                        for task_id in crate::tools::ticked_tasks(
+                            &standing_before.requirements, &standing_after.requirements)
+                        {
+                            res!(diamond::record_task_tick(id, version, parent, &task_id, backed).await);
+                        }
+                    }
                 }
-            }
-        }
-        // WHAT THIS TURN CHANGED IN FILES, against the same version the crystal took.
-        //
-        // The ledger is arithmetic and not judgement -- it holds the paths the tool layer says
-        // were actually written -- so this records what happened rather than what the model said
-        // it did.  Three sources join here and each covers what the others cannot:
-        //
-        // * the ledger's own paths, for everything written through a named door;
-        // * what the file tools captured mid-turn, which is the only account there will ever be
-        //   of a machine file's bytes before the daimon overwrote them (see `diamond::capture`);
-        // * and, only where the turn ran something OPAQUE, a walk of the Diamond's own directory
-        //   -- a command, a verifier or a worker names no path at all, and the honest answer to
-        //   "what did it change" is to look.
-        //
-        // Attempted even when the turn ended badly, for the reason the version above is: a turn
-        // that wrote a file and then died has still changed it.
-        // The copies were noted on disk before each act (`diamond::pend`), so a turn that died
-        // mid-way, or a page reloaded under a worker, left them for this turn end to adopt.
-        let (captured, notes) = diamond::drain_turn(id).await;
-        let covered: std::collections::BTreeSet<&str> =
-            captured.iter().map(|(raw, _)| raw.as_str()).collect();
-        let mut named: Vec<String> = Vec::new();
-        for wrote in ledger.wrote.iter() {
-            // A move is one ledger line naming two paths, and both of them moved.
-            for half in wrote.split(" -> ") {
-                let half = half.trim();
-                if !half.is_empty() && !covered.contains(half) {
-                    named.push(half.to_string());
+                // WHAT THIS TURN CHANGED IN FILES, against the same version the crystal took.
+                //
+                // The ledger is arithmetic and not judgement -- it holds the paths the tool layer says
+                // were actually written -- so this records what happened rather than what the model said
+                // it did.  Three sources join here and each covers what the others cannot:
+                //
+                // * the ledger's own paths, for everything written through a named door;
+                // * what the file tools captured mid-turn, which is the only account there will ever be
+                //   of a machine file's bytes before the daimon overwrote them (see `diamond::capture`);
+                // * and, only where the turn ran something OPAQUE, a walk of the Diamond's own directory
+                //   -- a command, a verifier or a worker names no path at all, and the honest answer to
+                //   "what did it change" is to look.
+                //
+                // Attempted even when the turn ended badly, for the reason the version above is: a turn
+                // that wrote a file and then died has still changed it.
+                // The copies were noted on disk before each act (`diamond::pend`), so a turn that died
+                // mid-way, or a page reloaded under a worker, left them for this turn end to adopt.
+                let covered: std::collections::BTreeSet<&str> =
+                    captured.iter().map(|(raw, _)| raw.as_str()).collect();
+                let mut named: Vec<String> = Vec::new();
+                for wrote in ledger.wrote.iter() {
+                    // A move is one ledger line naming two paths, and both of them moved.
+                    for half in wrote.split(" -> ") {
+                        let half = half.trim();
+                        if !half.is_empty() && !covered.contains(half) {
+                            named.push(half.to_string());
+                        }
+                    }
                 }
-            }
-        }
-        let mut changes = diamond::versions_changes(id, &named).await;
-        changes.extend(captured.into_iter().map(|(_, ch)| ch));
-        if !ledger.ran.is_empty() || !ledger.spawned.is_empty() {
-            changes.extend(diamond::versions_walk(id).await);
-        }
-        // The turn's own id is the browser's (`iturn`, the user message's `mid`) and does not
-        // cross the wasm boundary today, so the manifest is joined to its History row by VERSION
-        // NUMBER, which is what `showCrystalHistory` joins on anyway. The field stays, for the
-        // caller that will one day have the id.
-        let recorded = diamond::versions_record(id, minted, Cause::Turn, "", &typed, changes).await;
-        // Settled only once the manifest is written: a note outliving a failed record is adopted
-        // by the next turn end instead of lost.
-        if recorded.is_ok() {
-            diamond::settle(id, &notes).await;
-        }
+                let mut changes = diamond::versions_changes(id, &named).await;
+                changes.extend(captured.into_iter().map(|(_, ch)| ch));
+                if !ledger.ran.is_empty() || !ledger.spawned.is_empty() {
+                    changes.extend(diamond::versions_walk(id).await);
+                }
+                // The turn's own id is the browser's (`iturn`, the user message's `mid`) and does not
+                // cross the wasm boundary today, so the manifest is joined to its History row by VERSION
+                // NUMBER, which is what `showCrystalHistory` joins on anyway. The field stays, for the
+                // caller that will one day have the id.
+                let recorded = diamond::versions_record_held(&hold, id, minted, Cause::Turn, "", &typed,
+                    changes).await;
+                drop(hold);
+                // Settled only once the manifest is written: a note outliving a failed record is adopted
+                // by the next turn end instead of lost.
+                if recorded.is_ok() {
+                    diamond::settle(id, &notes).await;
+                }
+                recorded
+            },
+            Err(e) => Err(e),
+        };
         match recorded {
             // THE DAIMON IS TOLD, in one sentence, and only where a manifest was actually
             // written. A model with no way to undo its own work does not merely fail to undo it:
@@ -3023,8 +3166,14 @@ impl DaimondApp {
             Ok(Some((v, files))) => session.messages.push(
                 ChatMessage::user(versions::tail_note(v, &files))),
             Ok(None) => {},         // nothing moved, so there is nothing to say
-            Err(e)   => web_sys::console::warn_1(&JsValue::from_str(&fmt!(
-                "the files {} changed this turn could not be recorded: {}", id, e))),
+            Err(e)   => {
+                web_sys::console::warn_1(&JsValue::from_str(&fmt!(
+                    "the files {} changed this turn could not be recorded: {}", id, e)));
+                // Told, so the daimon does not report a way back the History does not hold.
+                session.messages.push(ChatMessage::user(fmt!(
+                    "What this turn changed is on disk as you left it, but it could not be \
+                     recorded as a version: {}", e.plain())));
+            },
         }
         // THE TAIL NOTE, said once and never twice running: a turn that edited a file or read a
         // worker's report and left `REQUIREMENTS.md` and `STATE.md` exactly as they were is a
@@ -3076,7 +3225,7 @@ impl DaimondApp {
         let dirty = diamond::drain_dirty(id);
         if !dirty.is_empty() {
             let changes = diamond::versions_changes(id, &dirty).await;
-            if let Err(e) = diamond::versions_record(id, None, Cause::Fold, "", note, changes).await
+            if let Err(e) = diamond::versions_record(id, Cause::Fold, "", note, changes).await
             {
                 web_sys::console::warn_1(&JsValue::from_str(&fmt!(
                     "the state of {} before this fold could not be recorded: {}", id, e)));
@@ -3247,10 +3396,14 @@ impl DaimondApp {
             daimon_of:   String::new(),
             keeper:      String::new(),
             unconfirmed: Vec::new(),
+            by_model:    false,
         };
         let registry = ToolRegistry::new(Vec::new(), ctx);
         let reducer = Role::Reducer.compose(&self.reducer_prompt.borrow());
-        let agent = Agent::new(self.agent.llm.clone(), &self.with_instructions(&reducer));
+        // Its own stop, reached by `abort` and by no other turn's.
+        let agent = Agent::new(self.agent.llm.with_halt(Halt::new()),
+            &self.with_instructions(&reducer));
+        let _running = self.hold_turn(String::new(), agent.llm.halt());
         // The reducer folds by the same figures as the chat, for the same reason the
         // daimon does.
         agent.adopt_limits(&self.agent);
@@ -3596,7 +3749,7 @@ fn event_to_js(ev: &AgentEvent) -> JsValue {
             set("name", &JsValue::from_str(name));
             set("args", &JsValue::from_str(args));
         }
-        AgentEvent::ToolResult { name, result, outcome, class } => {
+        AgentEvent::ToolResult { name, result, outcome, class, paused } => {
             set("type", &JsValue::from_str("tool_result"));
             set("name", &JsValue::from_str(name));
             set("content", &JsValue::from_str(result));
@@ -3606,6 +3759,10 @@ fn event_to_js(ev: &AgentEvent) -> JsValue {
             // A destructive call's path class, a JSON object carrying no path; absent otherwise.
             if !class.is_empty() {
                 set("class", &JsValue::from_str(class));
+            }
+            // The pause node that refused it, absent otherwise; see `crate::tools::PAUSE_MARK`.
+            if !paused.is_empty() {
+                set("paused", &JsValue::from_str(paused));
             }
         }
         AgentEvent::Interjected(text) => {

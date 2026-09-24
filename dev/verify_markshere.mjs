@@ -134,6 +134,13 @@ const install = () => p.evaluate(() => {
 			const k = side(e);
 			const rows = String(e.files[k] || '').split('\n').filter(Boolean).map((l) => JSON.parse(l));
 			e.files[k] = H.patch(rows, x).map((r) => JSON.stringify(r)).join('\n') + '\n';
+			// Both stamps, in both places a real copy carries them: the entry the merge compares
+			// and the `meta.json` the import lays down. A real device's two always agree; a parcel
+			// whose two disagree leaves this device's copy off the fork point it records, and the
+			// next arrival then reads as a two-sided change (verify_sync's otherDeviceShifts).
+			const meta = JSON.parse(e.files['.daimond/meta.json']);
+			meta.touched = T; meta.updated = T;
+			e.files['.daimond/meta.json'] = JSON.stringify(meta);
 			return { diamonds: [{ id: id, touched: T, updated: T, data: JSON.stringify(e) }] };
 		},
 		async apply(parcel) { await DaimondCore.applySync(parcel); await H.refresh(); },

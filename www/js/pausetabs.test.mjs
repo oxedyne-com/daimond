@@ -18,6 +18,7 @@
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
+import { loadStore } from './storefixture.mjs';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 
@@ -51,6 +52,7 @@ function tab(ls, prefix) {
 		dispatchEvent: () => true,
 	};
 	if (prefix) win.DaimondAccounts = { prefix: () => prefix };
+	loadStore(win, ls);
 	for (const f of ['pause.js', 'triggers.js']) {
 		new Function('window', 'localStorage', 'CustomEvent', readFileSync(join(HERE, f), 'utf8'))(win, ls,
 			function CustomEvent(type) { this.type = type; });

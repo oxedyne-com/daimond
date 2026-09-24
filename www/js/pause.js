@@ -713,18 +713,17 @@
 	/// store is kept. A store an older build wrote is read as its record would be.
 	/// The releases carry no stamp and are read whole, so one this tab could not
 	/// store is lost to the next read, which errs held.
+	///
+	/// Both are read through `DaimondStore`, so a record this tab could not store is
+	/// held owed and read back here rather than lost to the next read (SIM-11).
 	function fresh() {
-		try {
-			var raw = localStorage.getItem(STORE_KEY);
-			if (raw) take(JSON.parse(raw));
-		} catch (e) { /* storage blocked or corrupt: what this tab holds stands */ }
-		var got = {};
-		try {
-			var here = JSON.parse(localStorage.getItem(HERE_KEY) || '{}') || {};
+		take(window.DaimondStore.get(STORE_KEY, null));
+		var got = {}, here = window.DaimondStore.get(HERE_KEY, {});
+		if (here && typeof here === 'object') {
 			for (var k in here) {
 				if (releasedHereOnly(k) && typeof here[k] === 'string' && here[k]) got[k] = here[k];
 			}
-		} catch (e) { /* storage blocked or corrupt: every triggered action is held */ }
+		}
 		_here = got;
 		if (settle()) saveHere();
 	}
@@ -739,14 +738,27 @@
 		return toRecord(_leaves, _stamp, tree());
 	}
 
+	/// Store the record. True when it landed; a record the box refuses is held owed
+	/// by `DaimondStore`, retried under `law` and said on screen, never dropped.
 	function save() {
-		try { localStorage.setItem(STORE_KEY, JSON.stringify(record())); }
-		catch (e) { /* quota */ }
+		return window.DaimondStore.put(STORE_KEY, record(), law);
+	}
+
+	/// Two stored records as one, id by id, as the sync merges them.
+	function law(a, b) {
+		var map = Object.create(null), stamp = 0;
+		[a, b].forEach(function (rec) {
+			if (!rec || typeof rec !== 'object') return;
+			if (isV2(rec)) map = mergeEntries(map, rec.leaves);
+			else if (Array.isArray(rec.paused)) map = adoptLegacy(map, rec);
+			else return;
+			stamp = Math.max(stamp, stampOf(rec));
+		});
+		return toRecord(map, stamp, tree());
 	}
 
 	function saveHere() {
-		try { localStorage.setItem(HERE_KEY, JSON.stringify(_here)); }
-		catch (e) { /* quota: the release lasts this session, and errs held after */ }
+		return window.DaimondStore.put(HERE_KEY, _here);
 	}
 
 	/// A hold, from this device or another, ends the release given here. Returns
@@ -994,16 +1006,21 @@
 	/// Take a record from the sync or an errand, merged id by id against what is
 	/// held here, so it can add only what is newer. Returns true when the local
 	/// state moved.
+	///
+	/// A merged record the box refuses still holds here, owed, and still reaches the
+	/// lights; then it THROWS, so the sync section is re-pulled rather than read as
+	/// applied (SIM-16, A5).
 	function adopt(rec) {
 		current();
 		var before = stateKey();
 		take(rec);
 		if (stateKey() === before) return false;
-		save();
+		var landed = save();
 		// A hold that arrived ends the release given here. A leaf that arrives
 		// UNPAUSED gains nothing: what another device released is not released here.
 		if (settle()) saveHere();
 		announce();
+		if (!landed) throw window.DaimondStore.refusal(STORE_KEY);
 		return true;
 	}
 

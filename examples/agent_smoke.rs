@@ -48,7 +48,7 @@ async fn run() -> Outcome<()> {
         // run's own scratch directory.
         keeper: String::new(),
         // Marked places not yet in force on this device: there are no marks at all.
-        unconfirmed: Vec::new() };
+        unconfirmed: Vec::new(), by_model: false };
     let registry = ToolRegistry::new(Tool::defaults(), ctx);
 
     let mut session = Session::new("smoke".to_string(), "Smoke".to_string(),
@@ -72,7 +72,7 @@ async fn run() -> Outcome<()> {
             // outcome field was added to end.
             // And where a destructive call's path sat (`PathClass::wire`), empty for any
             // other call: a delete refused in a mark reads differently from one in scratch.
-            AgentEvent::ToolResult { name, result, outcome, class } => {
+            AgentEvent::ToolResult { name, result, outcome, class, paused: _ } => {
                 let r = if result.len() > 200 { &result[..200] } else { &result };
                 let at = if class.is_empty() { String::new() } else { format!(" [{}]", class) };
                 println!("[tool_result] {} {}{} -> {}", name, outcome.wire(), at, r);

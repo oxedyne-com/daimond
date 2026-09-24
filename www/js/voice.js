@@ -126,12 +126,10 @@
 	// ── At rest ────────────────────────────────────────────────
 
 	/// The stored record, or null where there is none or it is not one.
+	/// Read through `DaimondStore`, so one this tab merged and could not store is
+	/// held owed and read back here.
 	function rec() {
-		var raw = null;
-		try { raw = localStorage.getItem(LS); } catch (e) { return null; }
-		if (!raw) return null;
-		var r = null;
-		try { r = JSON.parse(raw); } catch (e) { return null; }
+		var r = window.DaimondStore.get(LS, null);
 		if (!r || r.v !== REC_V || typeof r.s !== 'string' || !r.s) return null;
 		return r;
 	}
@@ -255,7 +253,9 @@
 		// sentence the user can read, the way this function's other failures do,
 		// rather than let a raw quota exception reach the caller unrecognised.
 		try {
-			localStorage.setItem(LS, JSON.stringify({ v: REC_V, s: wrapped, at: Date.now() }));
+			// Past the record it replaces, whatever the clocks (A1).
+			var held = rec();
+			localStorage.setItem(LS, JSON.stringify({ v: REC_V, s: wrapped, at: DaimondStamp.next(held && held.at) }));
 		} catch (e) {
 			throw new Error(tOr('voice.err.storage_full',
 				'This device is out of storage, so your voice could not be saved. '
@@ -272,7 +272,7 @@
 	/// separate act and this cannot do it; what this can promise is that the copy
 	/// on this device is gone.
 	function clear() {
-		try { localStorage.removeItem(LS); } catch (e) { /* private mode: nothing was stored */ }
+		window.DaimondStore.remove(LS);
 	}
 
 	// ── Surviving a passphrase change ──────────────────────────
@@ -373,25 +373,31 @@
 
 	/// Merge a record from another device. True when this device took it.
 	///
-	/// NEWER `at` WINS, and that is the whole merge. A re-issued voice is set
-	/// with a fresh `Date.now()`, so it is newer everywhere and propagates; an
+	/// NEWER `at` WINS, and that is the whole merge. A re-issued voice is stamped
+	/// past the one it replaces, so it is newer everywhere and propagates; an
 	/// older incoming record never buries a voice this device set more recently.
-	/// A tie keeps what is already here, since the two are the same wrapped
-	/// secret under the same identity. Nothing stamps on the way in -- a device
+	/// A tie goes the same way on every device (`DaimondStamp.beats`, A3), and the
+	/// same record on both sides is no win. Nothing stamps on the way in -- a device
 	/// that restamped what it adopted would push it straight back for ever.
+	///
+	/// A record the box refuses THROWS, so the section is re-pulled rather than read
+	/// as applied (SIM-16, A5); it is held owed in this tab meanwhile.
 	function adopt(incoming) {
 		if (!incoming || typeof incoming !== 'object') return false;
 		if (incoming.v !== REC_V || typeof incoming.s !== 'string' || !incoming.s) return false;
-		var inAt = (typeof incoming.at === 'number') ? incoming.at : 0;
-		var mine = rec();
-		if (mine) {
-			var myAt = (typeof mine.at === 'number') ? mine.at : 0;
-			if (inAt <= myAt) return false;		// ours is newer or the same; keep it
-		}
-		try {
-			localStorage.setItem(LS, JSON.stringify({ v: REC_V, s: incoming.s, at: inAt }));
-		} catch (e) { return false; }			// private mode: nothing to store into
+		var next = { v: REC_V, s: incoming.s, at: (typeof incoming.at === 'number') ? incoming.at : 0 };
+		if (fresher(rec(), next) !== next) return false;		// ours is newer or the same; keep it
+		window.DaimondStore.putMerged(LS, next, fresher);
 		return true;
+	}
+
+	/// The fresher of two records, `b` only when it beats `a`: the merge's law, and
+	/// the one an owed record is retried under.
+	function fresher(a, b) {
+		if (!b || typeof b.at !== 'number') return a || b;
+		if (!a) return b;
+		var aAt = (typeof a.at === 'number') ? a.at : 0;
+		return DaimondStamp.beats(b.at, b.s, aAt, a.s) ? b : a;
 	}
 
 	// ── For the moment of a request ────────────────────────────

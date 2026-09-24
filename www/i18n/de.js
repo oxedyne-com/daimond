@@ -937,6 +937,7 @@
 	'store.alarm_download': 'Kopie herunterladen',
 	'store.alarm_retry': 'Erneut versuchen',
 	'store.full': 'im Speicher dieses Browsers ist für diese Seite kein Platz mehr',
+	'store.records_owed': 'Auf diesem Gerät ist der Browserspeicher voll, daher ist eine hier vorgenommene Änderung noch nicht gespeichert. Diese Seite behält sie und speichert sie, sobald wieder Platz ist.',
 	'identity.err_no_sealing_key': 'Dieses Gerät hat keinen Versiegelungsschlüssel und kann eine versiegelte Nachricht deshalb nicht öffnen. Entsperre die Identität einmal, dann wird einer erzeugt.',
 	'store.empty_read': 'dieser Browser hat keine der {n} Unterhaltungen zurückgegeben, die er hält',
 	// ── Die Berechtigungsstufen ────────────────────────────────
@@ -1744,6 +1745,7 @@
 	'marks.use_here': 'Hier verwenden',
 	'marks.use_all': 'Alle hier verwenden',
 	'marks.use_help': 'Diese Markierung auch auf diesem Gerät aktivieren',
+	'marks.use_ask': 'Diese Markierung auf diesem Gerät verwenden?',
 	'deletes.held_title': 'Weiter Dateien in deinem Ordner löschen oder großteils überschreiben?',
 	'deletes.held_body.one': '{who} hat in diesem Zug {n} Datei in dem Ordner, den du auf diesem Computer geöffnet hast, gelöscht oder großteils überschrieben, so viele, wie ein Zug dort ohne Nachfrage darf. Als Nächstes möchte es {next}. Daimond bewahrt von jeder so gelöschten oder überschriebenen Datei mindestens sieben Tage lang eine Kopie auf. Darf es in diesem Zug weitermachen?',
 	'deletes.held_body.other': '{who} hat in diesem Zug {n} Dateien in dem Ordner, den du auf diesem Computer geöffnet hast, gelöscht oder großteils überschrieben, so viele, wie ein Zug dort ohne Nachfrage darf. Als Nächstes möchte es {next}. Daimond bewahrt von jeder so gelöschten oder überschriebenen Datei mindestens sieben Tage lang eine Kopie auf. Darf es in diesem Zug weitermachen?',
@@ -1782,6 +1784,7 @@
 	'dws.drop_all_help': 'Entfernt alle diese aus dem Arbeitsbereich; die Dateien bleiben unberührt.',
 	'dws.elsewhere': 'Liegt im Arbeitsbereich',
 	'dws.readonly': 'Nur lesen',
+	'dws.readwrite': 'Lesen und ändern',
 	'dws.share': 'Mit Geräten teilen, die keinen eigenen Zugriff darauf haben',
 	'dws.share_help': 'Aus: nur dieses Gerät. An: auf andere kopiert, bis zu {max}.',
 	'dws.shared': 'Geteilt',
@@ -2170,6 +2173,7 @@
 	'backup.n_diamonds.one': '{n} Diamond',
 	'backup.n_diamonds.other': '{n} Diamonds',
 	'backup.restored_body': '{files} und {diamonds} wiederhergestellt. Daimond lädt neu, um deinen wiederhergestellten Arbeitsbereich zu öffnen.',
+	'backup.restored_owed': 'Auf diesem Gerät ist der Browserspeicher voll, daher ist ein Teil der Wiederherstellung noch nicht gespeichert. Die Seite lädt neu, sobald er es ist; etwas freier Platz macht es möglich.',
 	'backup.n_foreign.one': '{n} Datei in dieser Sicherung gehört einem anderen Konto in jenem Browser, wurde also nicht wiederhergestellt und bleibt nur in der Sicherung.',
 	'backup.n_foreign.other': '{n} Dateien in dieser Sicherung gehören einem anderen Konto in jenem Browser, wurden also nicht wiederhergestellt und bleiben nur in der Sicherung.',
 

@@ -1882,8 +1882,10 @@
 	function setEnabled(v) {
 		var on = !!v;
 		// Stamp BEFORE applying, so a snapshot the effect kicks off already carries the
-		// new decision when `collectSync` reads `syncSnapshot()`.
-		write(STAMP_KEY, String(Date.now()));
+		// new decision when `collectSync` reads `syncSnapshot()`. Past the stamp it
+		// replaces, so turning it off on a device whose clock is behind the one that
+		// turned it on still wins (CLK-3).
+		write(STAMP_KEY, String(DaimondStamp.next(ms(read(STAMP_KEY)))));
 		applyState(on);
 		nudgeSync();
 	}
@@ -1899,9 +1901,10 @@
 		return { on: enabled, at: at };
 	}
 
-	/// Adopt a flag that arrived from another device: the fresher `at` wins, STRICTLY,
-	/// and is written VERBATIM, so a record this device already holds moves nothing and
-	/// the next parcel is byte-identical. When the fresher value differs from what this
+	/// Adopt a flag that arrived from another device: the fresher `at` wins, and at an
+	/// equal `at` OFF wins, on every device alike, so a tie never leaves collection
+	/// running anywhere. Written VERBATIM, so a record this device already holds moves
+	/// nothing and the next parcel is byte-identical. When the fresher value differs from what this
 	/// device shows, the effect is applied through `applyState` -- the indicator mounts
 	/// or unmounts and collection starts or stops -- so the eye and the collection match
 	/// the fleet. Only the boolean and its stamp are touched; no key or secret is read
@@ -1912,11 +1915,14 @@
 		if (!at) return;
 		var on = !!rec.on;
 		var mineAt = ms(read(STAMP_KEY));
-		if (at > mineAt) {
+		if (DaimondStamp.beats(at, on, mineAt, enabled, offFirst)) {
 			write(STAMP_KEY, String(at));		// verbatim: no restamp, so no ping-pong
 			if (on !== enabled) applyState(on);
 		}
 	}
+
+	/// The flag's rank for a tie: off above on.
+	function offFirst(on) { return on ? 0 : 1; }
 
 	/// Register the provider daimond.js supplies: a function returning (or
 	/// resolving to) the decrypted private-scope state. Called once at boot.

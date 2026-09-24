@@ -81,7 +81,18 @@ function sentErrand(P, fields) {
 // and the real WebCrypto. Each context loads the four app scripts as the classic
 // IIFEs they are and attaches their globals onto its own `window`, so two
 // contexts are two independent devices with independent storage.
-function makeTab() {
+function makeTab(clockOffsetMs) {
+	// A per-tab RAW clock offset (SIM-4): 0 by default, so every existing caller
+	// keeps running on the real clock unchanged. A device more than the lease TTL
+	// out from another's is exactly the pre-fix failure -- so the lease-clock test
+	// below is the one caller that sets it. Precedent: pushretry.test.mjs's `VDate`
+	// (F-S5-5), same technique for the same reason (a device's `Date.now()` is not
+	// the clock a lease may be aged on).
+	const offset = clockOffsetMs || 0;
+	class TDate extends Date {
+		constructor(...a) { if (a.length) super(...a); else super(Date.now() + offset); }
+		static now() { return Date.now() + offset; }
+	}
 	const store = new Map();
 	const localStorage = {
 		getItem: (k) => (store.has(k) ? store.get(k) : null),
@@ -126,16 +137,17 @@ function makeTab() {
 			'window', 'document', 'crypto', 'localStorage', 'btoa', 'atob',
 			'TextEncoder', 'TextDecoder', 'Event',
 			'setTimeout', 'clearTimeout', 'setInterval', 'clearInterval',
-			'console', 'globalThis',
+			'console', 'globalThis', 'Date',
 			'with (window) {\n' + body + '\n}');
 		fn(win, document, real, localStorage, btoa, atob,
 			TextEncoder, TextDecoder, EventShim,
 			setTimeout, clearTimeout, setInterval, clearInterval,
-			console, globalThis);
+			console, globalThis, TDate);
 	}
 	// The vendored bundle's top-level `var DaimondNoble` is wrapper-local here (a
 	// browser turns it into a window property), so publish it explicitly, exactly
 	// as curvefallback.test.mjs does.
+	loadScript('store.js');
 	loadScript('vendor/noble-curves.min.js', '\n;window.DaimondNoble = DaimondNoble;');
 	loadScript('curvefallback.js');
 	loadScript('identity.js');
@@ -603,6 +615,7 @@ async function main() {
 	const L = phone.DaimondLease;		// the real implementation under test
 
 	await runLeaseAcceptance(L, check);
+	await runLeaseClockAcceptance(check);
 
 	// ══════════════════════════════════════════════════════════
 	// STEP 4 — the dispatcher: the STRICT ORDER and the full errand.
@@ -3508,6 +3521,71 @@ async function runSettleMoneySafety(P, L, check) {
 			&& H(Object.assign(P.makeErrand({ turnId: TID }), { to: 'PHONE' }), sec, 'RUNNER', now) === '');
 		check('noteHeldFor: a compile\'s account names its dispatcher the same way',
 			H(P.makeBuilt({ eid: 'eB', cid: 'k', to: 'PHONE' }), sec, 'RUNNER', now) === 'PHONE');
+		// R3 QA Q1: the stamp is the relay's, so with no relay clock known the age is not
+		// read at all, and the report is held rather than aged on this device's clock.
+		check('noteHeldFor: with no relay clock, a report is held however old the local clock reads it',
+			H(rep('PHONE'), sec - 3600, 'RUNNER', null) === 'PHONE');
+	}
+
+	// ── A held note is decided from what its hold kept (R3 QA Q1, Q2, Q5) ──
+	{
+		const sec = Math.floor(now / 1000);
+		const W = P.NOTE_HOLD_MS;
+		const f = P.noteHoldFacts({ ts: sec }, now + 1000, now);
+		check('noteHoldFacts: the stamp, the first sight on this clock, the age then on the relay\'s',
+			f.ts === sec && f.seenAt === now && f.age0 === (now + 1000) - sec * 1000, JSON.stringify(f));
+		check('noteHoldOpen: on the relay\'s clock where one is known',
+			P.noteHoldOpen(f, sec * 1000 + W - 1000, 0) && !P.noteHoldOpen(f, sec * 1000 + W + 1000, 0));
+		const g = P.noteHoldFacts({ ts: sec }, null, now);
+		check('noteHoldFacts: with no relay clock the age at first sight is taken as none', g.age0 === 0);
+		check('noteHoldOpen: with none, counted on this device\'s clock from first sight',
+			P.noteHoldOpen(g, null, now + W - 1000) && !P.noteHoldOpen(g, null, now + W + 1000));
+		const F = P.PRESENCE_FRESH_MS || 120000;
+		check('noteLookAgain: a device the view has not got, or has not heard beat lately, is not looked for',
+			!P.noteLookAgain('PHONE', {}, now) && !P.noteLookAgain('PHONE', null, now)
+			&& !P.noteLookAgain('PHONE', { PHONE: { lastSeen: now - F - 1000 } }, now));
+		check('noteLookAgain: an awake one is',
+			P.noteLookAgain('PHONE', { PHONE: { lastSeen: now - 1000 } }, now));
+		check('noteHoldOpen: which a clock twenty minutes out does not move',
+			P.noteHoldOpen(P.noteHoldFacts({ ts: sec }, null, now + 1200000), null, now + 1200000 + 60000));
+	}
+
+	// ── Every report a runner posts names the device it is for (R3 QA Q3, Q6) ──
+	{
+		const e = { eid: 'eR', turnId: TID, chatId: 'chat-r', dispatchedBy: 'PHONE' };
+		const r = P.reportFor(e, { status: 'error', why: 'This chat is paused.', to: 'NOBODY', turnId: 'x' });
+		check('reportFor: the errand\'s turn, chat, id and dispatcher, whatever the fields say',
+			r.t === 'report' && r.to === 'PHONE' && r.turnId === TID && r.chatId === 'chat-r' && r.eid === 'eR'
+			&& r.status === 'error' && r.why === 'This chat is paused.', JSON.stringify(r));
+		const l = P.reportFor({ turnId: TID, eid: 'eR', holder: 'RUNNER', dispatchedBy: 'PHONE', mode: 'running' },
+			{ status: 'error', why: 'runner-restarted' });
+		check('reportFor: from a lease, for a hand-back with no errand in hand',
+			l.to === 'PHONE' && l.turnId === TID && l.eid === 'eR' && l.why === 'runner-restarted', JSON.stringify(l));
+		check('reportFor: a lease an older build took names nobody, and the report is taken as before',
+			P.reportFor({ turnId: TID }, { status: 'error' }).to === '');
+	}
+
+	// ── An own errand's hold keeps what `holdOwnDispatch` reads ──
+	{
+		const born = now - 60000;
+		const tid = born.toString(36) + '-1-own';
+		const env = P.makeErrand({ turnId: tid, chatId: 'c', eid: 'eO', dispatchedBy: 'PHONE', deadline: born + 900000,
+			seed: { msgs: [{ role: 'user', mid: tid, ts: born }] } });
+		const k = P.ownHoldFacts(env);
+		check('ownHoldFacts: small, and the birth read once',
+			!k.seed && k.turnId === tid && k.chatId === 'c' && k.born > 0 && k.deadline === born + 900000, JSON.stringify(k));
+		// Live; past its deadline; and past its birth's window with a deadline far off.
+		const far = P.makeErrand({ turnId: tid, chatId: 'c', eid: 'eO', dispatchedBy: 'PHONE', deadline: 9e15,
+			seed: { msgs: [{ role: 'user', mid: tid, ts: born }] } });
+		const TTL = L.LEASE_TTL_MS;
+		const cases = [[env, now, true], [env, born + 900000 + TTL + 1000, false],
+			[far, born + P.DISPATCH_DEADLINE_MS + TTL + 1000, false]];
+		const got = [];
+		for (const [e1, at, want] of cases) {
+			got.push([await P.holdOwnDispatch(e1, at), await P.holdOwnDispatch(P.ownHoldFacts(e1), at), want]);
+		}
+		check('ownHoldFacts: holdOwnDispatch answers the same from the facts as from the envelope (hold, deadline, birth)',
+			got.every(([a1, b1, w]) => a1 === w && b1 === w), JSON.stringify(got));
 	}
 
 	// ── leaseSetCas: done->released stamps settled:1; other releases do not ──
@@ -3663,6 +3741,69 @@ async function runLeaseAcceptance(L, check) {
 		check('equal renewedAt: released beats running (local released)',
 			L.mergeOne(released, running, 100).mode === 'released');
 	}
+}
+
+// SIM-4 (CLK, high: a turn run and billed twice). A lease aged on each device's
+// OWN raw clock lets a device far enough ahead read a peer's still-live lease as
+// dead and take it out from under the peer -- both then run, and bill, the same
+// turn. R and T here are two REAL, independent `peer.js` instances (their own
+// `DaimondPresence`/`DaimondLease`, as two devices are) with raw clocks 120s
+// apart -- past the 90s TTL -- sharing one fake gateway CAS door. The fix is
+// `DaimondLease.authorityNow`: each corrects its raw clock by the offset its own
+// `DaimondPresence.ingest` last learned from the gateway, so the two converge on
+// one clock regardless of how far their raw ones have drifted.
+async function runLeaseClockAcceptance(check) {
+	console.log('\nSIM-4 — a lease is aged on the AUTHORITY clock, not each device\'s raw one');
+	const TID = 'turn-clock-skew';
+	const TRUE_NOW = Date.now();			// the gateway's (true) clock, shared by both
+
+	// R's raw clock reads true; T's reads 120s FAST -- past the 90s TTL, as the
+	// brief's acceptance case asks for two devices 120s apart.
+	const R = makeTab(0);
+	const T = makeTab(120000);
+	await R.DaimondPresence.ingest({}, TRUE_NOW);	// R learns the gateway clock: skew ~0
+	await T.DaimondPresence.ingest({}, TRUE_NOW);	// T learns it too: skew ~ -120000
+
+	check('R\'s corrected clock reads close to the TRUE gateway time',
+		Math.abs(R.DaimondLease.authorityNow() - TRUE_NOW) < 2000);
+	check('T\'s corrected clock ALSO reads close to the TRUE gateway time, despite its raw clock running 120s fast',
+		Math.abs(T.DaimondLease.authorityNow() - TRUE_NOW) < 2000);
+	check('T\'s RAW clock genuinely is ~120s ahead of R\'s (the skew this test relies on is real)',
+		Date.now() + 120000 - Date.now() >= 119000);
+
+	// R takes and holds the lease -- a turn dispatched to it and now running. NO
+	// `deadline` is given, so this is the bare 90s-TTL claim (`expiryCap`'s longer,
+	// deadline-bounded expiry is a SEPARATE defence for a turn still running past
+	// its TTL; this proves the clock fix on the TTL path underneath it).
+	const cas = makeCas({});
+	const held = await R.DaimondLease.take(TID, { holder: 'R', eid: 'eR' }, cas, R.DaimondLease.authorityNow);
+	check('R takes the lease', held.won === true);
+
+	// T, moments later (in real time), reads the SAME gateway state and judges
+	// whether to also take TID -- exactly what a second device does before
+	// running a handed-off turn. On the AUTHORITY clock, R's lease is still live
+	// (no real time of consequence has passed), so T must stand down.
+	const snapT = await cas.read();
+	const race = await T.DaimondLease.takeFrom(snapT, TID,
+		{ holder: 'T', eid: 'eT' }, cas, T.DaimondLease.authorityNow);
+	check('T STANDS DOWN: the fix reads R\'s lease as live despite T\'s 120s-fast raw clock',
+		race.won === false);
+	check('T was told R still holds it', race.holder === 'R');
+	check('EXACTLY ONE device holds the lease -- no double run, no double bill',
+		cas.peekLeases()[TID].holder === 'R');
+	check('the version advanced exactly once (T\'s claim never committed)', cas.peekVersion() === 6);
+
+	// The counter-proof: T's OWN RAW clock (uncorrected), 120s past R's TTL-bound
+	// claim, reads R's still-live lease as already dead -- the exact SIM-4 failure
+	// the fix closes -- run against a throwaway CAS so it cannot affect the
+	// assertions above.
+	const casBug = makeCas({});
+	await R.DaimondLease.take(TID, { holder: 'R', eid: 'eR2' }, casBug, R.DaimondLease.authorityNow);
+	const snapBug = await casBug.read();
+	const rawNowT = () => Date.now() + 120000;	// T's raw, UNCORRECTED clock
+	const bugRace = await T.DaimondLease.takeFrom(snapBug, TID, { holder: 'T', eid: 'eBug' }, casBug, rawNowT);
+	check('WITHOUT the fix (T\'s raw clock): T wrongly reads R\'s live lease as dead and takes it -- the bug this closes',
+		bugRace.won === true);
 }
 
 // ── Remote consent for a handed-off turn ───────────────────

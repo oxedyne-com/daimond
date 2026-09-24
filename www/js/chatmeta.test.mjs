@@ -107,17 +107,27 @@ function sourceGuards() {
 		'in-memory chats lack an explicit metaAt');
 
 	console.log('\nchatmeta: source -- two stamps, two touch functions');
-	check('touchChat moves updatedAt ONLY',
-		/function touchChat\(c\) \{ if \(c\) c\.updatedAt = Date\.now\(\); \}/.test(d), 'touchChat changed shape');
-	check('touchChatMeta moves BOTH stamps',
-		/function touchChatMeta\(c\) \{ if \(c\) \{ var now = Date\.now\(\); c\.updatedAt = now; c\.metaAt = now; \} \}/.test(d),
-		'touchChatMeta missing or wrong');
+	// Both stamp through `DaimondStamp.next`, past the stamp they replace (the D-28
+	// review's A1): an edit made after adopting a faster clock's copy outranks it.
+	check('touchChat moves updatedAt ONLY, past its own stamp',
+		/function touchChat\(c\) \{ if \(c\) c\.updatedAt = DaimondStamp\.next\(c\.updatedAt\); \}/.test(d), 'touchChat changed shape');
+	{
+		const tm = funcBody(d, 'function touchChatMeta(c) {');
+		check('touchChatMeta moves BOTH stamps, past both',
+			tm.includes('DaimondStamp.next(Math.max(c.updatedAt || 0, c.metaAt || 0))')
+			&& tm.includes('c.updatedAt = now; c.metaAt = now;'),
+			'touchChatMeta missing or wrong');
+	}
 
 	console.log('\nchatmeta: source -- one field-appropriate merge, used everywhere');
 	{
 		const m = funcBody(d, 'function mergeChatRecords(a, b, opts) {');
-		check('the turn winner is the newer updatedAt', m.includes('var turnNewer = au >= bu ? a : b;'));
-		check('the metadata winner is the newer metaAt', m.includes('var metaNewer = am >= bm ? a : b;'));
+		// A tie on either stamp goes to the canonically greater fields that stamp
+		// decides, the same on every device (the D-28 review's A3).
+		check('the turn winner is the newer updatedAt, a tie by the turn fields',
+			m.includes('var turnNewer = DaimondStamp.beats(au, chatFields(a, CHAT_TURN_FIELDS), bu, chatFields(b, CHAT_TURN_FIELDS)) ? a : b;'));
+		check('the metadata winner is the newer metaAt, a tie by the metadata fields',
+			m.includes('var metaNewer = DaimondStamp.beats(am, chatFields(a, CHAT_META_FIELDS), bm, chatFields(b, CHAT_META_FIELDS)) ? a : b;'));
 		check('metaAt falls back to updatedAt when a side predates the field',
 			m.includes("var am = (typeof a.metaAt === 'number') ? a.metaAt : au;")
 			&& m.includes("var bm = (typeof b.metaAt === 'number') ? b.metaAt : bu;"));

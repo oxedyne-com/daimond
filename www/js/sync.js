@@ -114,7 +114,8 @@
 	var MAX_CONFLICT_RETRIES = 8;	// Bound the pull-merge-retry loop (was 4): more headroom under 3-device churn.
 	var CONFLICT_BACKOFF_MS  = 200;	// Jittered wait between conflict retries so busy devices do not collide every attempt.
 	var UNSENT_RETRY_MIN_MS  = 1000;	// First retry of work a push left unsent (`unsent`).
-	var UNSENT_RETRY_MAX_MS  = 8000;	// Its backoff never grows past this after a conflict, and has no try limit.
+	var UNSENT_RETRY_MAX_MS  = 60000;	// Its backoff never grows past this after a conflict, and has no try limit (was 8 s: D110).
+	var UNSENT_RETRY_TRIES   = 2;	// An owed retry's conflict tries: the one it sends, and one rebased on the pull that answers it.
 	var UNSENT_WIRE_MAX_MS   = 300000;	// Nor past this after any other failure. See armUnsent.
 	var RETRY_AFTER_MAX_MS   = 3600000;	// A gateway's Retry-After past this is read as this.
 	var FLUSH_MAX_ROUNDS     = 6;	// Bound flush()'s push-and-confirm loop.
@@ -155,12 +156,25 @@
 	// A GET iOS suspended on a backgrounded tab never rejects until the socket
 	// resolves on resume, and while it hangs it pins `inFlight` so every re-open
 	// trigger stands down behind it. So a content PULL carries a budget: an abort
-	// after this frees the gate whether or not the socket ever answers. THIS IS
-	// PULL-ONLY. A push is NEVER given a signal and NEVER aborted -- a cancelled
-	// POST is a piece of the user's work that silently did not travel, which is the
-	// seq-228 hand-off-non-delivery regression this file was reverted for. The wake
-	// poll parks far longer on purpose and passes its own budget; see wakePoll.
+	// after this frees the gate whether or not the socket ever answers. Every other
+	// read gets the same budget unless it names its own; the wake poll parks far
+	// longer on purpose and passes 0; see wakePoll.
 	var PULL_TIMEOUT_MS = 18000;
+	var GATE_WAIT_MS    = 250;		// how often a caller outside the engine looks for the gate to free
+	// ── The write deadline ─────────────────────────────────────
+	// EVERY WRITE HAS A DEADLINE: this long, plus its body at the slowest upload
+	// that still counts as a link, and never more than the ceiling. A push used to
+	// have none, because an aborted POST was the user's work silently not travelling
+	// (the seq-228 regression). Since release 4 a push that does not land is OWED and
+	// retried on the wire's ladder (`armUnsent`), so an abort loses nothing. What had
+	// no deadline did lose something: a POST the network black-holed, or iOS froze at
+	// suspension, held `inFlight` for as long as the OS kept the socket, so every pull
+	// stood down behind it and the chip said "Syncing…" throughout (P1a H3,
+	// 2026-09-25). A write is still never registered as `pullAbort`, so a resume
+	// cannot cancel one: only its own deadline ends it.
+	var WRITE_DEADLINE_MS     = 60000;
+	var WRITE_FLOOR_BPS       = 65536;		// 64 KiB/s
+	var WRITE_DEADLINE_MAX_MS = 300000;
 	// A hidden spell shorter than this is an alt-tab glance, not a re-open: it keeps
 	// the ordinary throttled focus pull, so flipping between tabs does not become a
 	// GET storm. Longer -- or a bfcache restore, or a pull left frozen -- is a
@@ -320,6 +334,13 @@
 	// work did NOT leave, and both are cleared by the next round that works.
 	var jammed        = '';
 	var lastFailed    = [];		// Sections the last merge could not apply.
+	// THE NEWEST VERSION THIS DEVICE PULLED AND COULD NOT MERGE, or 0. That version is
+	// the bounded re-pull's (`scheduleReapply`), never the wake channel's: the channel
+	// used to park `?above=serverVersion`, which a failed merge deliberately leaves
+	// behind, so the gateway answered every park at once and the channel pulled the
+	// same whole parcel about once a second for as long as the merge kept failing --
+	// 565 GETs and 772 MB in ten minutes (P1a H2, 2026-09-25). See `heardUpTo`.
+	var failedVersion = 0;
 	// Work that has not reached the mailbox, and its retry. OWED FROM THE MOMENT A PUSH
 	// HAS SOMETHING NEW TO SEND, and paid only when one lands (`paid`). It used to be owed
 	// only by the failure branches that remembered to (a 409 whose pull failed, and
@@ -361,10 +382,15 @@
 	// second thing to know.
 	var lastPullAt    = 0;
 	var inFlight      = false;	// One sync operation at a time.
+	// A PARCEL WRITE is what holds the gate: push() or a progress frame. Owed work is
+	// "Syncing…" only while one of these is sending it; a PULL round is not a send, and
+	// reading "a round is running" as "the work is going" is what let the chip rest
+	// with work owed (SIM-8). See owedNow and endRound.
+	var pushing       = false;
 	// The AbortController of a content PULL in flight, so a resume can break a frozen
 	// GET at once rather than wait out its budget. Set by `call` ONLY when the caller
-	// asks (the content pull does; the push NEVER does). Read by onResume. A push is
-	// never registered here, so a resume can never cancel one.
+	// asks (the content pull does; a write NEVER is). Read by onResume. A push is
+	// never registered here, so a resume can never cancel one; its deadline can.
 	var pullAbort     = null;
 	// ms the tab last went hidden (0 = visible, or never hidden this page). Used by
 	// onResume to tell a genuine re-open from an alt-tab glance.
@@ -523,19 +549,20 @@
 	/// the reply itself. The version contract is honoured on the way past, by
 	/// `gwFetch`: a tab too old for the gateway is told to reload rather than go
 	/// on talking to it.
+	/// EVERY REQUEST HERE HAS A DEADLINE. A write's is `writeDeadline` of its body,
+	/// whoever sends it; a read's is `PULL_TIMEOUT_MS` unless it names its own.
+	///
 	/// # Arguments
-	/// * `xtra` - `{ timeoutMs, track }`, and BOTH are for a PULL alone. `timeoutMs`
-	///            bounds a GET iOS may have suspended on a backgrounded socket, so its
-	///            `finally` frees the gate whether or not the socket ever answers (0 or
-	///            absent disables it -- the wake poll parks far longer and passes its
-	///            own). `track` registers the GET's controller as `pullAbort` so a
-	///            resume can break it at once. A POST passes NEITHER: a push is never
-	///            given a signal and never aborted, because a cancelled POST is the
-	///            user's work silently not travelling -- the seq-228 regression. The
-	///            two callers that set these are the content pull and nothing else.
-	///            `hold`, an object, is handed the GET's controller as `hold.ac` for as
-	///            long as it is in flight; the wake park uses it to end itself when
-	///            what it must listen for changes.
+	/// * `xtra` - `{ timeoutMs, track, hold }`, and all three are for a READ alone.
+	///            `timeoutMs` replaces a GET's budget (0 disables it -- the wake poll
+	///            parks far longer and passes 0). `track` registers the GET's
+	///            controller as `pullAbort` so a resume can break it at once; only the
+	///            content pull sets it. `hold`, an object, is handed the GET's
+	///            controller as `hold.ac` for as long as it is in flight; the wake park
+	///            uses it to end itself when what it must listen for changes. A write
+	///            reads none of them: its deadline is its size's, and nothing but that
+	///            deadline can abort it -- never a resume, which is the seq-228
+	///            regression (a dispatch push cancelled on resume never reached peers).
 	async function call(method, body, query, xtra) {
 		xtra = xtra || {};
 		var opts = {
@@ -547,20 +574,21 @@
 			opts.headers['content-type'] = 'application/json';
 			opts.body = JSON.stringify(body);
 		}
-		// Bound and track a PULL, never a push. `method === 'GET'` is the belt to the
-		// braces of "only the pull passes xtra": even if a POST caller ever passed one,
-		// no signal is attached to it here, so a push cannot be aborted by any path.
+		// Bound every request; track and hand out a READ's controller only, so a push
+		// can be ended by its own deadline and by nothing else.
 		var ac = null, timer = null;
-		var budget = (xtra.timeoutMs !== undefined) ? xtra.timeoutMs : PULL_TIMEOUT_MS;
-		if (method === 'GET' && (xtra.timeoutMs !== undefined || xtra.track || xtra.hold)) {
+		var read   = method === 'GET';
+		var budget = !read ? writeDeadline(opts.body ? opts.body.length : 0)
+			: ((xtra.timeoutMs !== undefined) ? xtra.timeoutMs : PULL_TIMEOUT_MS);
+		if (budget > 0 || (read && (xtra.track || xtra.hold))) {
 			try { ac = new AbortController(); } catch (e) { ac = null; }
 			if (ac) {
 				opts.signal = ac.signal;
 				if (budget > 0) timer = setTimeout(function () { try { ac.abort(); } catch (e) {} }, budget);
-				if (xtra.track) pullAbort = ac;
+				if (read && xtra.track) pullAbort = ac;
 				// `hold` hands the controller to the caller, so the wake park can be
 				// ended when what it listens for changes. See `setProgressWanted`.
-				if (xtra.hold) xtra.hold.ac = ac;
+				if (read && xtra.hold) xtra.hold.ac = ac;
 			}
 		}
 		try {
@@ -581,6 +609,13 @@
 			if (ac && xtra.track && pullAbort === ac) pullAbort = null;
 			if (ac && xtra.hold && xtra.hold.ac === ac) xtra.hold.ac = null;
 		}
+	}
+
+	/// How long a write of `chars` body characters may take before it is a failure.
+	/// The body is JSON around base64, so characters are bytes.
+	function writeDeadline(chars) {
+		return Math.min(WRITE_DEADLINE_MAX_MS,
+			WRITE_DEADLINE_MS + Math.ceil((chars | 0) / WRITE_FLOOR_BPS) * 1000);
 	}
 
 	/// A request that was served is proof the session is back. Only a round that
@@ -900,7 +935,7 @@
 		// `style.display` still carries "is the chip saying anything", because that
 		// is what six verifiers read and what `restStatus` means by an empty state.
 		// What is new is the other half of the row taking over when it is not.
-		if (!state) { c.style.display = 'none'; paintRest(true); return; }
+		if (!state) { c.style.display = 'none'; paintRest(true); announceChip(); return; }
 		paintRest(false);
 		c.dataset.state = state;
 		c.querySelector('.stext').textContent = text;
@@ -910,6 +945,7 @@
 		// on a good one it costs a line nobody has to read.
 		c.title = [title || '', lastSyncedLine()].filter(Boolean).join('\n');
 		c.style.display = 'flex';
+		announceChip();
 		// The hold's expiry must not blank the chip outright: a stall (owed work, a
 		// standing refusal) can arrive during the hold and must still be shown once it
 		// ends, rather than being painted over by a transient "Synced" fading to nothing
@@ -918,6 +954,30 @@
 			_statusTimer = null;
 			restStatus();
 		}, holdMs);
+	}
+
+	/// What the chip stands at, in one word, for the rail's one-line summary.
+	///
+	/// 'syncing', 'synced', 'stalled' or 'off' while the chip is saying something;
+	/// 'synced' when it is silent and a round has worked at some point; '' when it
+	/// is silent and none ever has. It reports what is ON SCREEN rather than
+	/// re-deriving it, so the line and the chip can never disagree -- which is the
+	/// whole failure `restStatus` was written against, one level up.
+	function chipState() {
+		var c = document.getElementById('sync-chip');
+		if (c && c.style.display !== 'none') return String(c.dataset.state || '');
+		return lastSynced ? 'synced' : '';
+	}
+
+	/// Tell the rail when that word changes, so its summary is redrawn with the chip
+	/// rather than whenever something else happens to repaint it. Once per change.
+	var _announcedChip = null;
+	function announceChip() {
+		var now = chipState();
+		if (now === _announcedChip) return;
+		_announcedChip = now;
+		try { window.dispatchEvent(new CustomEvent('daimond:sync-chip', { detail: { state: now } })); }
+		catch (e) { /* no window to tell */ }
 	}
 
 	/// A short relative age, in the app's own language.
@@ -974,8 +1034,11 @@
 	/// `verify_handoff_slowparcel` CASE 1). A retry that pulls first cannot spin two
 	/// busy devices against each other: it sends nothing until it has read the mailbox.
 	///
-	/// ONE LADDER, TWO CEILINGS (S2, 2026-09-24). A conflict clears in seconds, once the
-	/// other device stops moving the mailbox, so it keeps `UNSENT_RETRY_MAX_MS`. Nothing
+	/// ONE LADDER, TWO CEILINGS (S2, 2026-09-24). A conflict clears once the other device
+	/// stops moving the mailbox, so it keeps the shorter `UNSENT_RETRY_MAX_MS` -- a minute
+	/// since P1a M2 (D110): at 8 s, a device that kept losing to a busy one spent a
+	/// whole-parcel round every few seconds for as long as the other kept landing, and a
+	/// landed pull on any trigger still sends conflict-owed work at once. Nothing
 	/// else does: a link too slow to finish the pull fails the same way every time, and at
 	/// an 8 s ceiling the retry downloaded the whole parcel for up to `PULL_TIMEOUT_MS`,
 	/// waited 4-12 s and began again from byte 0, for as long as the tab was open -- 450
@@ -1102,7 +1165,7 @@
 		inFlight = true;
 		try { v = await pull(true); }
 		catch (e) { v = -1; }
-		finally { inFlight = false; }
+		finally { endRound(); }
 		// A merge that could not finish is the re-pull's (`scheduleReapply`), which is
 		// bounded; a clean re-pull that lands sends the owed parcel (`pullOnce`), and one
 		// that gives up hands the version back to this retry, at its ceiling.
@@ -1113,6 +1176,10 @@
 		// keeps throwing would otherwise leave every retry rejecting silently, and on
 		// this harness kills the process outright. The work stays owed; `push()`'s own
 		// `finally` has already armed the next retry.
+		//
+		// The work is owed, so push() spends one rebased attempt, not eight (P1a M2): this
+		// retry has just read the mailbox, and the ladder, not a burst, is what waits
+		// for another device to stop landing.
 		try { await push(); } catch (e) { log('owed push threw', e); }
 		// Deferred rather than refused (over a live turn, or a push already in flight):
 		// still owed, so the backoff goes on. A push that went and did not land has
@@ -1134,7 +1201,23 @@
 
 	/// Is work owed with no push running to send it? The chip's test and `state()`'s, so
 	/// the two cannot disagree; an account not entitled shows "Sync off" instead.
-	function owedNow() { return unsent && !inFlight && entitled; }
+	///
+	/// NOT "NO ROUND RUNNING". It read `!inFlight`, and a pull round holds the gate as
+	/// well: a pull that ended inside an owed wait -- the catch-up asks every few seconds
+	/// while the link is down -- painted its own ending while the work read as not owed,
+	/// and the round then freed the gate without painting again, so the chip rested on
+	/// "Last synced" with the work stranded (SIM-8, 2026-09-25).
+	function owedNow() { return unsent && !pushing && entitled; }
+
+	/// A round is over: free the gate, and put the chip back to what is true where the
+	/// round left it saying what no longer is -- "Syncing…" with nothing running, or a
+	/// resting line over owed work. Every round ends here.
+	function endRound() {
+		inFlight = false;
+		var c = document.getElementById('sync-chip');
+		var busyShown = !!(c && c.style.display !== 'none' && c.dataset.state === 'syncing');
+		if (owedNow() || busyShown) restStatus();
+	}
 
 	/// Put the chip back to what is TRUE when nothing is in flight.
 	///
@@ -1670,6 +1753,27 @@
 		finally { notePulled(); }
 	}
 
+	/// The pull other modules call: through the one-round gate, as every round here is.
+	///
+	/// `DaimondSync.pull` WAS THE RAW `pull`. Every internal caller takes `inFlight`
+	/// first; the hand-off waits and the return recovery (daimond.js) did not, so a
+	/// pull of theirs ran beside a push reconciling a 409, and two merges of one parcel
+	/// interleaved their read-modify-writes -- the Diamond import, which rewrites a
+	/// Diamond's directory with no transaction, among them (P1a M4, 2026-09-25). This
+	/// waits for the gate, which no round can now hold past its deadline, and answers
+	/// -1, as a pull that could not reach the mailbox does, if it has not freed within
+	/// `PULL_TIMEOUT_MS`.
+	async function gatedPull(quiet) {
+		var until = Date.now() + PULL_TIMEOUT_MS;
+		while (inFlight) {
+			if (Date.now() >= until) return -1;
+			await new Promise(function (r) { setTimeout(r, GATE_WAIT_MS); });
+		}
+		inFlight = true;
+		try { return await pull(quiet); }
+		finally { endRound(); }
+	}
+
 	async function pullOnce(quiet) {
 		lastFailed = [];		// what follows is the only merge this answers for.
 		setStatus('syncing', t('sync.syncing'));
@@ -1680,8 +1784,8 @@
 		var res;
 		var tGet = Date.now();		// the /api/sync GET round-trip, for the sync-latency picture
 		// Tracked and budgeted: a GET iOS froze on a backgrounded socket aborts at the
-		// budget (freeing the gate) or the instant a resume breaks it. PULL ONLY -- the
-		// push below is never given a signal.
+		// budget (freeing the gate) or the instant a resume breaks it. Only a pull is
+		// tracked; the push below ends at its own deadline and never on a resume.
 		try { res = await call('GET', undefined, undefined, { track: true }); }
 		catch (e) { diag('pull GET error', (Date.now() - tGet) + 'ms'); log('pull network error', e); restStatus(); return -1; }
 		if (res.status !== 200 || !res.json) { diag('pull GET status', res.status + ' after ' + (Date.now() - tGet) + 'ms'); log('pull status', res.status); restStatus(); return -1; }
@@ -1965,6 +2069,7 @@
 				+ ' -> re-pull scheduled (not adopting)');
 			log('pulled version', j.version | 0, 'but could not merge', lastFailed.join(','),
 				'- not adopting; scheduling a re-pull of the same version');
+			if ((j.version | 0) > failedVersion) failedVersion = j.version | 0;
 			scheduleReapply();
 			if (!quiet) jam('merge');
 			return serverVersion;		// the last FULLY-applied version, deliberately not j.version.
@@ -1979,8 +2084,16 @@
 		// it must not send wire-owed work straight past that retry. The one exception is
 		// a pull whose version moved since the failure: another device's push got
 		// through, so the write path is back and the ladder's wait is over.
-		var ladderOwns = !!unsentTimer && failKind !== 'conflict' && failKind !== 'merge';
-		if (unsent && !quiet && ladderOwns && serverVersion > unsentFailVersion) {
+		//
+		// CONFLICT-OWED WORK IS THE LADDER'S TOO, WITH NO EXCEPTION (P1a M2, D110). A
+		// pull that lands after a conflict is, nearly always, the other device landing
+		// again -- the wake channel pulls on every one -- so sending at once raced it on
+		// every landing: 2,896 whole-parcel POSTs in half an hour against a device landing
+		// every 5 s, the ladder never consulted. Its version always moves, so the
+		// exception above cannot apply to it. Only a version that would not merge, and
+		// now has, is sent at once.
+		var ladderOwns = !!unsentTimer && failKind !== 'merge';
+		if (unsent && !quiet && ladderOwns && failKind !== 'conflict' && serverVersion > unsentFailVersion) {
 			clearTimeout(unsentTimer); unsentTimer = null; ladderOwns = false;
 		}
 		if (unsent && !quiet && !ladderOwns) schedule();
@@ -2013,7 +2126,19 @@
 	/// Encrypt and push local state under compare-and-set, reconciling a
 	/// conflict by pulling, merging and retrying. A no-op when nothing has
 	/// changed since the last push, so an idle app is quiet on the wire.
-	async function push() {
+	///
+	/// WORK THAT ALREADY FAILED TO LAND GETS ONE REBASED ATTEMPT A ROUND (P1a M2,
+	/// D110): `UNSENT_RETRY_TRIES` rather than `MAX_CONFLICT_RETRIES`, whatever
+	/// started the round, and the ladder (`armUnsent`) paces the rounds. Eight
+	/// whole-parcel POST+GET pairs per round against a device that keeps landing was
+	/// 1,552 POSTs and 1,745 GETs in half an hour. Fresh work keeps the eight, which
+	/// is what gets a hand-off's answer past a brief race.
+	///
+	/// # Arguments
+	/// * `opts.tries` - conflict tries this round may spend, in place of the rule above.
+	async function push(opts) {
+		var tries = (opts && opts.tries > 0) ? opts.tries
+			: (unsent ? UNSENT_RETRY_TRIES : MAX_CONFLICT_RETRIES);
 		if (!ready() || !entitled) return;
 		// BEHIND THE EPOCH CHAIN: never overwrite the account. A device that could not
 		// walk the chain to the account's current key (rekeyBehind, set in pullOnce)
@@ -2030,6 +2155,7 @@
 			return;
 		}
 		inFlight = true;
+		pushing  = true;
 		// OWED FROM HERE (F-S5-4). A throw anywhere below -- collectParcel, sigOf, the
 		// encryption -- must not leave the work looking paid: a push that could not even
 		// tell what it would send is owed, not clear. `known` (below) already calls
@@ -2042,7 +2168,7 @@
 			// The collectors record manifests in the cloud index; wait for it to have
 			// loaded out of IndexedDB before collecting, so `index()` is authoritative.
 			if (window.DaimondCloud && DaimondCloud.ready) { try { await DaimondCloud.ready(); } catch (e) { /* fallback path stays active */ } }
-			for (var attempt = 0; attempt < MAX_CONFLICT_RETRIES; attempt++) {
+			for (var attempt = 0; attempt < tries; attempt++) {
 				var state = await collectParcel();
 				var plain = JSON.stringify(state);
 				// What is SENT is `plain`; what is COMPARED is the key. See compareKey.
@@ -2160,6 +2286,11 @@
 				// `w` names this tab's wake channel, so the gateway taps the
 				// account's OTHER devices and not this one: a device that pulled
 				// in answer to its own push would double every round.
+				//
+				// A throw is the wire, and so is the deadline (`writeDeadline`): owed,
+				// and retried on the wire's ladder. A POST the gateway stored but whose
+				// answer never came back costs one redundant version: the retry pulls
+				// that version, finds its own parcel in it, and sends again.
 				try { res = await call('POST', body); }
 				catch (e) { log('push network error', e); failKind = 'wire'; restStatus(); return; }
 
@@ -2291,7 +2422,7 @@
 					// not collide on every attempt and exhaust in a burst ("work has not
 					// been sent"). Same shape as the lease-take fix: only the retry cadence
 					// changes; the pull-merge that converges is untouched.
-					if (attempt + 1 < MAX_CONFLICT_RETRIES) {
+					if (attempt + 1 < tries) {
 						await new Promise(function (r) {
 							setTimeout(r, Math.round(CONFLICT_BACKOFF_MS * (0.5 + Math.random())));
 						});
@@ -2339,10 +2470,11 @@
 			failKind = 'conflict';
 			jam('busy');
 		} finally {
-			inFlight = false;
+			pushing = false;
 			// Whatever did not land is owed; `paid()` has already cleared the flag on
 			// both paths that did. The chip is told now that the round has stopped.
-			if (unsent) { unsentFailVersion = serverVersion; armUnsent(failKind); restStatus(); }
+			if (unsent) { unsentFailVersion = serverVersion; armUnsent(failKind); }
+			endRound();
 		}
 	}
 
@@ -2382,15 +2514,22 @@
 			// that predates the state it just added.
 			var r;
 			try { r = await push(); } catch (e) { return { ok: false, version: serverVersion, why: 'push_failed' }; }
+			// A REFUSAL FOR SIZE IS NOT A LANDING. Both refusals (the front door here, a 413
+			// from the gateway) set `lastPushed` to the live parcel so that push() does not
+			// spin on it, and the confirm below read that as committed: `ok:true` at the
+			// version the mailbox already had, and a dispatcher stamped its errand with a
+			// version that does not hold the chat it had just added (P1a M1, 2026-09-25).
+			if (tooLarge) return { ok: false, version: serverVersion, why: 'too_large' };
 			if (r && r.committed && serverVersion > 0) return { ok: true, version: serverVersion };
 			// Confirm against the live parcel: a change under us forces another round.
 			// Through compareKey, like push(): a `seen` stamp that moved between the
 			// collect and this comparison is not a parcel the mailbox is missing, and
-			// reading it as one would spin every round of this loop.
+			// reading it as one would spin every round of this loop. And never while the
+			// work is owed: owed is exactly "has not landed", whatever `lastPushed` says.
 			var after = null;
 			try { after = compareKey(await collectParcel()); }
 			catch (e) { after = null; }
-			if (after !== null && after === lastPushed && serverVersion > 0) return { ok: true, version: serverVersion };
+			if (after !== null && after === lastPushed && serverVersion > 0 && !unsent) return { ok: true, version: serverVersion };
 			await new Promise(function (r2) { setTimeout(r2, FLUSH_RETRY_MS); });
 		}
 		return { ok: false, version: serverVersion, why: 'not_confirmed' };
@@ -2430,6 +2569,7 @@
 		if (inFlight) return;			// a round is running; the next tick tries again
 		lastProgressAt = Date.now();
 		inFlight = true;
+		pushing  = true;
 		try {
 			var state = await collectParcel();
 			var plain = JSON.stringify(state);
@@ -2447,8 +2587,9 @@
 			blob = wrapEnvelope(blob);		// D3: carry the record on the progress path too
 			var res;
 			// `w` names this tab's wake channel, so the gateway taps the OTHER devices --
-			// the ones watching the hand-off -- and not this runner. NO xtra: this is a
-			// POST and is never given an abort signal.
+			// the ones watching the hand-off -- and not this runner. Bounded by its
+			// size's deadline, like every write: a frame that hangs must not hold the
+			// gate the final push needs.
 			try { res = await call('POST', { base_version: serverVersion, device: deviceLabel(), blob: blob, w: WAKE_ID }); }
 			catch (e) { log('progress push network error', e); return; }
 			if (res.status === 200 && res.json && res.json.ok) {
@@ -2466,7 +2607,8 @@
 			// final push, which is the safe direction to fail.
 			diag('progress push skipped', 'status=' + res.status);
 		} finally {
-			inFlight = false;
+			pushing = false;
+			endRound();
 		}
 	}
 
@@ -3192,12 +3334,20 @@
 	// If neither works the channel turns itself off and the app is exactly what
 	// it was before -- focus, settling, and the throttled catch-up in push().
 
+	/// The newest version the wake channel has nothing to pull for: the one this device
+	/// merged, or a newer one it pulled and could not merge. The second belongs to the
+	/// bounded re-pull, which already has it on a backoff, so the channel parks above it
+	/// and wakes only for a version genuinely newer (P1a H2).
+	function heardUpTo() {
+		return Math.max(serverVersion | 0, failedVersion | 0);
+	}
+
 	/// Note a version the channel heard about, and pull for it -- once, soon, and
 	/// not on the heels of a pull that has just asked the same question.
 	function wakeTo(v) {
 		v = v | 0;
 		if (v > wakeTarget) wakeTarget = v;
-		if (v <= serverVersion) return;			// already have it.
+		if (v <= heardUpTo()) return;			// already have it, or the re-pull owns it.
 		if (wakeSoon) return;					// a pull is already coming.
 		var wait = Math.max(0, WAKE_PULL_MIN_MS - (Date.now() - lastPullAt));
 		wakeSoon = setTimeout(function () { wakeSoon = null; wakePull(); }, wait);
@@ -3208,7 +3358,7 @@
 	/// news is real, so it must not be lost to a coincidence of timing.
 	async function wakePull() {
 		if (!ready()) return;
-		if (wakeTarget <= serverVersion) return;
+		if (wakeTarget <= heardUpTo()) return;
 		if (inFlight) {
 			if (!wakeSoon) wakeSoon = setTimeout(function () { wakeSoon = null; wakePull(); }, 500);
 			return;
@@ -3216,7 +3366,7 @@
 		wakes++;
 		inFlight = true;
 		try { await pull(); }
-		finally { inFlight = false; }
+		finally { endRound(); }
 	}
 
 	/// Whether the channel should be running at all: sync can run, and this
@@ -3260,7 +3410,7 @@
 			var res;
 			try {
 				res = await call('GET', undefined,
-					'?above=' + (serverVersion | 0) + '&ms=' + WAKE_PROBE_MS + '&w=' + encodeURIComponent(WAKE_ID));
+					'?above=' + heardUpTo() + '&ms=' + WAKE_PROBE_MS + '&w=' + encodeURIComponent(WAKE_ID));
 			} catch (e) {
 				if (gen === wakeGen) wakeRetry();		// nothing answering; try again later.
 				return;
@@ -3409,7 +3559,7 @@
 					if (gen !== wakeGen) break;
 					wakeKicked = false;
 					res = await call('GET', undefined,
-						'?above=' + (serverVersion | 0) + '&ms=' + WAKE_POLL_MS + '&w=' + encodeURIComponent(WAKE_ID)
+						'?above=' + heardUpTo() + '&ms=' + WAKE_POLL_MS + '&w=' + encodeURIComponent(WAKE_ID)
 						+ (prog ? '&prog=1' : ''), { timeoutMs: 0, hold: wakeHold });
 				} catch (e) {
 					if (gen !== wakeGen) break;
@@ -3614,7 +3764,7 @@
 		if (inFlight) { scheduleReapply(); return; }	// a round is running; re-arm, do not drop.
 		inFlight = true;
 		try { await pull(); }				// success clears the backoff; another failure re-arms it.
-		finally { inFlight = false; }
+		finally { endRound(); }
 	}
 
 	async function focusPull() {
@@ -3626,7 +3776,7 @@
 		// than sending state that is halfway through being replaced.
 		inFlight = true;
 		try { await pull(); }
-		finally { inFlight = false; }
+		finally { endRound(); }
 	}
 
 	/// Coming back to a tab that was backgrounded, by whichever signal fired --
@@ -3665,7 +3815,8 @@
 		if (!reopen) { scheduleFocusPull(); return; }		// glance: ordinary cadence.
 		// Break a PULL iOS froze on the backgrounded socket, so the gate frees now
 		// rather than at the 18s budget. A push is never tracked here, so this can
-		// only ever abort a GET -- never the user's work in flight.
+		// only ever abort a GET -- never the user's work in flight, which ends only
+		// at its own deadline and is then owed.
 		if (pullAbort) { try { pullAbort.abort(); } catch (e) {} pullAbort = null; }
 		// Re-arm the channel rather than trust it: an iOS-frozen park is replaced,
 		// which closes the `wakeLive()===true`-but-dead gap catchUp falls into.
@@ -3695,7 +3846,7 @@
 		if (Date.now() - lastPullAt < EXPEDITE_PULL_MS) return;	// the channel already asked
 		inFlight = true;
 		try { await pull(); }
-		finally { inFlight = false; }
+		finally { endRound(); }
 	}
 
 	/// Turn the in-flight poll on or off. daimond.js calls this as a hand-off's
@@ -3739,7 +3890,7 @@
 		// halfway through being replaced.
 		inFlight = true;
 		try { await pull(); }
-		finally { inFlight = false; }
+		finally { endRound(); }
 	}
 
 	/// A stored thing changed outside a turn: push it soon.
@@ -3831,6 +3982,11 @@
 	/// lowers the version with no push behind it, so `preRead` still equals the
 	/// cursor and the lower version is taken as it must be.
 	function adoptVersion(v, preRead) {
+		// Whatever this adopts, the mailbox was read and taken, so no version is left
+		// over for the re-pull: it merged, the mailbox moved on past it, or the mailbox
+		// was reset below it. Cleared before the race check, which only keeps the push's
+		// newer cursor.
+		failedVersion = 0;
 		if (v < serverVersion && serverVersion > preRead) return;	// a stale read raced a push; keep the push's cursor.
 		serverVersion = v;
 		saveVersion();
@@ -4002,7 +4158,7 @@
 	}
 
 	window.DaimondSync = {
-		pull:    pull,
+		pull:    gatedPull,
 		/// Has a pull run this session -- landed, found nothing, or failed on the wire?
 		/// The same once-per-boot fact `daimond:pulled` announces, for a caller that
 		/// arrives after it fired.
@@ -4036,18 +4192,14 @@
 		expedite: setExpedite,
 		nudge:   nudge,
 		recheck: recheck,
-		/// What the chip stands at, for the rail's one-line summary.
+		/// What the chip stands at, in one word, for the rail's one-line summary; see
+		/// `chipState`. `daimond:sync-chip` fires when it changes.
 		///
-		/// 'syncing', 'synced', 'stalled' or 'off' while the chip is saying something;
-		/// 'synced' when it is silent and a round has worked at some point; '' when it
-		/// is silent and none ever has. It reports what is ON SCREEN rather than
-		/// re-deriving it, so the line and the chip can never disagree -- which is the
-		/// whole failure `restStatus` was written against, one level up.
-		state: function () {
-			var c = document.getElementById('sync-chip');
-			if (c && c.style.display !== 'none') return String(c.dataset.state || '');
-			return lastSynced ? 'synced' : '';
-		},
+		/// IT WAS A SECOND `state` KEY in this literal (D072). The later `state`, the
+		/// engine's facts as an object, silently replaced it, so the rail's summary was
+		/// handed an object, matched none of its words and said "This device only"
+		/// through every stall (P1a M7, 2026-09-25).
+		chip: chipState,
 		/// The presence path, off the content parcel: `beatPresence(deviceId, name)`
 		/// writes this device's last_seen and adopts the account's fresh map (bumping
 		/// no version and waking nobody); `refreshPresence()` reads that map without a

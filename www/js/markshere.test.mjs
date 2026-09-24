@@ -123,11 +123,72 @@ const BR = 'browser', MU = 'machine:usr#' + FA;
 	const none = { v: 1, d: {}, c: {} };
 	const f = C.force(none, '0da1000000e1', help(), BR, seeds);
 	check('Help sees the guide with no entry, read-only', f && f.rel === 'consulted' && f.share === false);
-	check('under any root', !!C.force(none, '0da1000000e1', help({ to: 'dir:[machine:usr@0123456789abcdef]system/guide' }), MU, seeds));
+	// M4: the seed is pinned to the browser workspace. This check asserted the finding itself
+	// ("under any root") until 2026-09-25; it now asserts the fix.
+	const onDisk = help({ to: 'dir:[machine:usr@0123456789abcdef]system/guide' });
+	check('not under a machine root: a seed row naming a machine folder grants nothing there',
+		C.force(none, '0da1000000e1', onDisk, MU, seeds) === null);
 	check('a forged holds row on the seed is still read-only', C.force(none, '0da1000000e1', help({ rel: 'holds', share: true }), BR, seeds).rel === 'consulted');
 	check('a forged share on the seed is not a share', C.force(none, '0da1000000e1', help({ share: true }), BR, seeds).share === false);
 	check('the seed covers no other folder', C.force(none, '0da1000000e1', help({ to: 'dir:[browser]secret' }), BR, seeds) === null);
 	check('and no other Diamond', C.force(none, A, row({ to: 'dir:[browser]system/guide' }), BR, seeds) === null);
+	// M4, 2026-09-25: a grant is scoped to the workspace it was given in.
+	check('M4. the machine seed row waits there for Use here, as any mark on a disk does',
+		C.waiting(none, '0da1000000e1', onDisk, MU, seeds) === true);
+	check('M4. nor is a machine seed row covered in the browser workspace',
+		C.force(none, '0da1000000e1', onDisk, BR, seeds) === null);
+	const bare = help({ to: 'dir:system/guide' });
+	check('M4. a seed row naming no workspace is covered in the browser and not in a machine folder',
+		!!C.force(none, '0da1000000e1', bare, BR, seeds) && C.force(none, '0da1000000e1', bare, MU, seeds) === null
+			&& C.waiting(none, '0da1000000e1', bare, MU, seeds) === true);
+	const pressed = C.putEntry({ v: 1, d: {}, c: {} }, '0da1000000e1', onDisk, MU, 'consulted', false);
+	check('M4. pressed in that folder, the machine seed row is in force there, read-only',
+		(C.force(pressed, '0da1000000e1', onDisk, MU, seeds) || {}).rel === 'consulted'
+			&& C.force(pressed, '0da1000000e1', onDisk, 'machine:usr#' + FB, seeds) === null);
+	check('M4. seeded() asks the workspace first', typeof C.seeded === 'function' && C.seeded('0da1000000e1', help(), MU, seeds) === false
+		&& C.seeded('0da1000000e1', help(), BR, seeds) === true);
+}
+
+// ── A Diamond's own directory is never a mark (M1) ─────────────────
+{
+	const ls = storage();
+	const { M } = tab(ls);
+	const C = M._core;
+	const own = (to) => row({ id: 'T1', to: to });
+	const kept = own('file:[browser]diamonds/' + A + '/transcript.md');
+	const rec = C.putEntry({ v: 1, d: {}, c: {} }, A, kept, BR, 'holds', false);
+	check('M1. a row on a file in its own Diamond\'s directory is not a mark', M.isMark(kept) === false);
+	check('M1. an entry for it grants nothing, and it never waits',
+		C.force(rec, A, kept, BR, []) === null && C.waiting({ v: 1, d: {}, c: {} }, A, kept, BR, []) === false
+			&& C.waiting({ v: 1, d: {}, c: {} }, A, kept, MU, []) === false);
+	check('M1. nor is a row on the directory itself, or one naming no workspace',
+		M.isMark(own('dir:[browser]diamonds/' + A)) === false && M.isMark(own('file:diamonds/' + A + '/transcript.md')) === false
+			&& M.isMark(own('file:[machine:usr@0123456789abcdef]diamonds/' + A + '/x.md')) === false);
+	check('M1. another Diamond\'s directory, or a name that only begins with this one\'s, is still a mark',
+		M.isMark(own('file:[browser]diamonds/ffff/x.md')) === true && M.isMark(own('dir:[browser]diamonds/' + A + '-old')) === true
+			&& M.isMark(own('dir:[browser]src/diamonds/' + A)) === true);
+	check('M1. a press refuses to record it, and writes nothing', M.grant(A, kept, BR, {}) === false
+		&& ls.getItem('daimond-marks-here') === null);
+}
+
+// ── F3: a store path is reachable from any workspace ────────────────
+//
+// A reference to `diamonds/`, `mail/` or `chats/` follows no folder (`is_store_path`,
+// `src/tools.rs`), whatever root it was written under -- a legacy Keep transcript row,
+// written `file:[machine:usr@…]diamonds/<id>/transcript.md` by a build before this fix,
+// used to read as living on another workspace, and one press on it added a second row
+// rather than finding the one already held.
+{
+	const { isStorePath, fits } = tab(storage()).M;
+	check('isStorePath knows the three store roots and nothing that only starts with one',
+		isStorePath('diamonds/' + A + '/x.md') && isStorePath('mail/a@b/inbox') && isStorePath('chats/c1/work/x')
+			&& !isStorePath('diamonds-old/x') && !isStorePath('src/diamonds/x') && !isStorePath(''));
+	const legacy = 'file:[machine:usr@0123456789abcdef]diamonds/' + A + '/transcript.md';
+	check('a legacy machine-rooted store-path reference fits the browser workspace', fits(legacy, BR) === true);
+	check('and fits a machine folder of a different name too', fits(legacy, 'machine:home#' + FA) === true);
+	check('a browser-rooted one fits a machine folder the same way', fits('file:[browser]diamonds/' + A + '/x.md', MU) === true);
+	check('control: an ordinary machine reference still does not fit another workspace',
+		fits('dir:[machine:usr@0123456789abcdef]code', BR) === false);
 }
 
 // ── settle: a removal or a narrowing crosses, a widening never does ──
@@ -232,6 +293,24 @@ const BR = 'browser', MU = 'machine:usr#' + FA;
 	check('and a keyed grant lands', M.grant(A, mrow(), MA) === true && !!M.force(A, mrow(), MA) && M.force(A, mrow(), MB) === null);
 	check('setShare refuses a machine key with an empty id', M.setShare(A, mrow(), 'machine:usr#', true) === false
 		&& M.setShare(A, mrow(), MA, true) === true && M.force(A, mrow(), MA).share === true && M.force(A, mrow(), MB) === null);
+
+	// ── item 4 (M2-R2-1): Forget drops a folder's entries at once ──────
+	const { _core: C2 } = tab(storage()).M;
+	const drec = { v: 1, d: {}, c: {} };
+	C2.putEntry(drec, A, mrow(), MA, 'holds', true);
+	C2.putEntry(drec, A, mrow({ id: 'other' }), MB, 'holds', false);
+	C2.putChat(drec, 'c1', h, MA, { ws: true, read: true });
+	check('dropRoot. control: a mark and a chat holding are in force in folder A',
+		!!C2.force(drec, A, mrow(), MA, []) && !!C2.chatForce(drec, 'c1', h, MA));
+	C2.dropRoot(drec, MA);
+	check('dropRoot. drops both under the forgotten root, and leaves folder B\'s',
+		C2.force(drec, A, mrow(), MA, []) === null && C2.chatForce(drec, 'c1', h, MA) === null
+			&& !!C2.force(drec, A, mrow({ id: 'other' }), MB, []), JSON.stringify(drec));
+	const ls2 = storage(), M3 = tab(ls2).M;
+	M3.grant(A, mrow(), MA, {});
+	check('forgetRoot. control: the grant landed', !!M3.force(A, mrow(), MA));
+	M3.forgetRoot(MA);
+	check('forgetRoot. the door writes the same thing', M3.force(A, mrow(), MA) === null);
 }
 
 // ── P11: the storage shell over two tabs of one account ─────────────

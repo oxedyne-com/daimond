@@ -50,6 +50,20 @@ pub struct Meta {
 
 impl Meta {
 
+	/// Stamp a local change at `now`, and never at or below the stamp it replaces.
+	///
+	/// **A copy adopted from a device whose clock runs ahead carries a `touched` above this
+	/// device's clock** (CLK-1, the state review of 2026-09-25).  Stamped with `now` alone, the
+	/// next edit here went backwards; the merge compares stamps, so that edit read as older than
+	/// the copy it was made on and the next pull imported over it.  The floor keeps every local
+	/// change strictly above what it changed.
+	///
+	/// # Arguments
+	/// * `now` - Wall clock, whole milliseconds.
+	pub fn bump_touched(&mut self, now: u64) {
+		self.touched = now.max(self.touched.saturating_add(1));
+	}
+
 	/// Serialise to a compact single-line JSON object.
 	pub fn to_json(&self) -> String {
 		fmt!(
@@ -203,6 +217,32 @@ pub fn normalise_tags(tags: &[String]) -> Vec<String> {
 #[cfg(test)]
 mod tests {
 	use super::*;
+
+	// ── The stamp floor (CLK-1) ────────────────────────────────────────
+
+	#[test]
+	fn test_bump_touched_is_strictly_monotone() {
+		let mut m = Meta::from_json(r#"{"name":"S","touched":1000}"#);
+		// A clock ahead of the stamp: the clock is taken.
+		m.bump_touched(5000);
+		assert_eq!(5000, m.touched);
+		// A copy from a faster device was adopted; this clock is 300 s behind it. Every edit made
+		// here still stands above the one before it.
+		m.touched = 300_000 + 5000;
+		let mut prev = m.touched;
+		for now in [5000u64, 5001, 60_000, 60_000, 0] {
+			m.bump_touched(now);
+			assert!(m.touched > prev, "{} not above {}", m.touched, prev);
+			prev = m.touched;
+		}
+		// Once the clock passes the stamp, it is the clock again.
+		m.bump_touched(10_000_000);
+		assert_eq!(10_000_000, m.touched);
+		// And the floor never wraps.
+		m.touched = u64::MAX;
+		m.bump_touched(1);
+		assert_eq!(u64::MAX, m.touched);
+	}
 
 	// ── The parse: what an existing Diamond depends on ─────────────────
 

@@ -161,6 +161,8 @@ function makeEnv(cfg) {
 			'with (window) {\n' + bodyText + '\n}');
 		fn(win, document, localStorage, fetchImpl, setTimeoutImpl, clearTimeout, console);
 	}
+	loadScript('store.js');
+	loadScript('stamp.js');		// index.html loads it before every register writer
 	loadScript('support.js');
 
 	return {

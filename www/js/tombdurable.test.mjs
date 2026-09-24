@@ -151,8 +151,27 @@ function sourceGuards() {
 	{
 		const ts = readFileSync(TRASH_SRC, 'utf8');
 		const save = funcBody(ts, 'function save() {');
+		// Since release 5 through DaimondStore, whose `put` answers whether it landed
+		// and holds a refused record owed rather than dropping it.
 		check('trash save() returns whether the write landed',
-			save.includes('return true;') && save.includes('return false;'), 'save() still swallows');
+			save.includes('return window.DaimondStore.put(KEY,'), 'save() still swallows');
+	}
+
+	console.log('\ntombdurable: source -- file tombstones are durable in the tomb store too (A5)');
+	{
+		const nf = funcBody(d, 'function noteFileTombs(col, complete) {');
+		check('noteFileTombs lands new file tombs in IndexedDB', nf.includes('ChatStore.putTombs(SYNC_FILE_TOMBS_KEY, fresh)'),
+			'file tombs are localStorage only');
+		check('noteFileTombs raises the alarm on a lost write', nf.includes("storageAlarm(tOr('store.delete_unrecorded'"),
+			'a lost file tomb is silent');
+		check('noteFileTombs no longer swallows the write as best effort',
+			!/setItem\(SYNC_FILE_TOMBS_KEY[^;]*\); ?\n?\s*catch \(e\) \{ \/\* best effort/.test(nf), 'the swallow remains');
+		check('the carried map reads the overlay', funcBody(d, 'function fileTombsHeld() {').includes('tombMem[SYNC_FILE_TOMBS_KEY]'),
+			'fileTombs reads localStorage alone');
+		check('bootTombs migrates the file tombs into the store',
+			funcBody(d, 'async function bootTombs() {').includes('migrate.push({ map: SYNC_FILE_TOMBS_KEY'), 'no migration');
+		check('every tomb map is carried in id order (SIM-7)',
+			funcBody(d, 'function tombMapNow(key) {').includes('Object.keys(out).sort()'), 'insertion order');
 	}
 }
 

@@ -84,11 +84,23 @@ pub const MANIFESTS_MAX: usize = 200;
 /// refused rather than silently absent.
 pub const VERSION_FILE_MAX: usize = 512 * 1024;
 
-/// The most entries one manifest carries.
+/// The most entries one manifest carries, and the most copies one turn keeps ([`claim_room`]).
 ///
-/// A turn that wrote more records the first [`TURN_FILES_MAX`] and says how many it did not,
-/// rather than growing a manifest without limit on the one turn that ran a build.
+/// A turn that wrote more records [`TURN_FILES_MAX`] rows, those holding copies first
+/// ([`cut_order`]), and says how many it did not, rather than growing a manifest without limit on
+/// the one turn that ran a build.
 pub const TURN_FILES_MAX: usize = 64;
+
+/// The most runs one turn may seal as versions of their own ([`seal_broken`]) before an act that
+/// would seal another is refused.
+///
+/// **Each seal is one of the Diamond's [`MANIFESTS_MAX`] versions** (R2-4 of the Q5-1 fix's QA,
+/// 2026-09-24).  An editor autosaving a file the daimon keeps editing seals a run at every act, and
+/// the history older than the turn that is not held as a destruction is pruned that much sooner.  A
+/// person saving between a turn's acts is worth a version each time; a file that has changed under
+/// the turn this many times is being written by something else, and the turn is told to stop and
+/// ask rather than spend a twelfth of the history on it.
+pub const TURN_SEALS_MAX: usize = 16;
 
 /// How long a version recording a destruction is kept whatever the ceiling says, in milliseconds:
 /// a file deleted, or a user's file written over with less than half of it left ([`wipes`]).
@@ -170,8 +182,11 @@ pub enum OpenDelete {
 const TALLY_TICKETS: u64 = 1 << 32;
 
 /// One turn's deletes from the folder the user opened on this computer, in one store, and its
-/// writes there that leave less than half of a file ([`wipes`]): one count, keyed by path, so a
-/// file emptied and then deleted is one file.
+/// writes there that leave less than half of a file ([`wipes`]): one count, keyed by FILE
+/// ([`open_file_key`]), so a file emptied and then deleted is one file -- and a user's file moved
+/// onto a path the turn has already deleted a file from is another, asked about in its own right
+/// (Q5-1, 2026-09-24: keyed by path, the person's yes to deleting the turn's own one-byte file
+/// there let the user's file be emptied unasked).
 ///
 /// **Past the limit the PERSON is asked** ([`open_deletes_ask`]) -- once a turn, and the answer
 /// holds for the rest of it, as the machine hand's own meter does: go on, still inside the store's
@@ -202,8 +217,9 @@ impl OpenTally {
 		self.epoch.saturating_mul(TALLY_TICKETS)
 	}
 
-	/// May `path` be deleted now, `limit` being how many a turn may delete before asking?  An
-	/// answer of [`OpenDelete::Go`] counts it; a path already counted costs nothing more.
+	/// May `path` -- a file, as [`open_file_key`] names it -- be deleted now, `limit` being how
+	/// many a turn may delete before asking?  An answer of [`OpenDelete::Go`] counts it; a file
+	/// already counted costs nothing more.
 	///
 	/// A limit of [`TURN_FILES_MAX`] or more never asks: the store's own bound stops the turn
 	/// there first, in words that send the model to the user, and a question the person could
@@ -265,6 +281,14 @@ impl OpenTally {
 	pub fn release(&mut self, path: &str) {
 		self.paths.remove(path);
 	}
+}
+
+/// The file a turn's delete or wipe destroys, as the open folder's tally counts it: its path, and
+/// the file as the turns found it there -- the copy the destruction keeps.  A file wiped and then
+/// deleted is the one file, since both keep the same copy; bytes that came to the path from
+/// anywhere else are another.
+pub fn open_file_key(path: &str, copy: &[u8]) -> String {
+	fmt!("{}\n{}", path, hash_of(copy))
 }
 
 /// The body ceiling in force, in bytes.
@@ -687,6 +711,72 @@ impl Manifest {
 	}
 }
 
+/// A turn's rows in the order [`truncate`] keeps them, where there are more than it keeps: every
+/// row whose `was` is a copy this record took before any other, destructions first.
+///
+/// **A row the cut leaves out is a change with no way back only where it held a copy** (QF1 of the
+/// Q5-1 fix's QA, 2026-09-24).  The copies a turn takes are bounded at [`TURN_FILES_MAX`]
+/// ([`claim_room`]); the files it makes are not, since a made file keeps nothing, so their rows are
+/// the ones to go -- its bytes still stand where the turn left them.  Stable, and the rows are left
+/// as they came where nothing is cut.
+///
+/// # Arguments
+/// * `rows` - Each row, and whether its `was` names a copy this record keeps.
+pub fn cut_order(rows: Vec<(Entry, bool)>) -> Vec<Entry> {
+	ranked(rows).into_iter().map(|(e, _)| e).collect()
+}
+
+/// The rows in [`cut_order`], each still carrying whether it holds a copy.
+fn ranked(mut rows: Vec<(Entry, bool)>) -> Vec<(Entry, bool)> {
+	if rows.len() > TURN_FILES_MAX {
+		rows.sort_by_key(|(e, kept)| match (*kept, e.gone || e.wiped) {
+			(true, true)	=> 0u8,
+			(true, false)	=> 1,
+			(false, true)	=> 2,
+			(false, false)	=> 3,
+		});
+	}
+	rows
+}
+
+/// A turn's rows as the versions that record them, first to last, and how many rows were cut.
+///
+/// The first version holds [`TURN_FILES_MAX`] rows in [`cut_order`].  **A row past it that holds a
+/// copy this record keeps goes into a further version, [`TURN_FILES_MAX`] at a time, and is never
+/// cut** (R2-3 of the Q5-1 fix's QA, 2026-09-24).  The copies a turn takes are bounded by
+/// [`claim_room`], but the notes a turn end adopts from an earlier life of the page are bounded by
+/// nothing: 64 adopted copies and one new one made 65 copy rows, and the cut dropped an original.
+/// Only a row of a file the turn made is cut, and counted -- its bytes still stand where the turn
+/// left them.  There is always a first version, empty where there are no rows.
+///
+/// # Arguments
+/// * `rows` - Each row, and whether its `was` names a copy this record keeps.
+pub fn split_rows(rows: Vec<(Entry, bool)>) -> (Vec<Vec<Entry>>, usize) {
+	let mut groups: Vec<Vec<Entry>> = vec![Vec::new()];
+	let mut cut = 0usize;
+	for (i, (e, copy)) in ranked(rows).into_iter().enumerate() {
+		if i < TURN_FILES_MAX {
+			groups[0].push(e);
+			continue;
+		}
+		if !copy {
+			cut += 1;
+			continue;
+		}
+		let fits = match groups.last() {
+			Some(g) => groups.len() > 1 && g.len() < TURN_FILES_MAX,
+			None    => false,
+		};
+		if !fits {
+			groups.push(Vec::new());
+		}
+		if let Some(g) = groups.last_mut() {
+			g.push(e);
+		}
+	}
+	(groups, cut)
+}
+
 /// The first [`TURN_FILES_MAX`] entries, and how many were left behind.
 pub fn truncate(files: Vec<Entry>) -> (Vec<Entry>, usize) {
 	let had = files.len();
@@ -889,6 +979,459 @@ pub fn run_copies(manifests: &[(u64, Manifest)], path: &str, found: &str) -> Vec
 		}
 	}
 	out
+}
+
+
+// ┌───────────────────────────────────────────────────────────────┐
+// │ What a turn captured                                           │
+// └───────────────────────────────────────────────────────────────┘
+//
+// "THIS TURN MADE IT" IS A FACT ABOUT BYTES, NOT ABOUT A PATH (Q5-1, 2026-09-24).  A turn's capture
+// of a path said what the turn left there, and the write guard took it for the truth about
+// whatever stood at that path afterwards.  So a file the turn wrote and then moved away left its
+// "made here" behind; a user's file moved onto the path took it on; and emptying that file was
+// measured against nothing -- no question, no count, and its copy held as an ordinary edit.  Four
+// model calls, no person, and the user's file was gone from their folder.
+//
+// Three rules close it, each at the one place it is decided.  A capture speaks for a path only
+// while exactly the bytes it left are there ([`this_turn_found`], [`capture_into`]).  A move
+// records both of its ends ([`moved`]).  And bytes a move carries keep their own history
+// ([`Carried`]): what they are measured against travels with them, while the path they land on
+// keeps what it held when the turn came to it.
+//
+// A fourth follows from the first (QF2 of the fix's QA, 2026-09-24).  Bytes from outside the turn
+// arriving between two of its acts END the run its capture records, and the run so far becomes a
+// version of its own before the next act, which starts the path's run again ([`seal_broken`]).  A
+// manifest holds one row a path, and a run the turn had already begun holds a copy the next act
+// must not drop -- nor may it drop its own.
+//
+// Here rather than beside the callers in `crate::wasm::diamond`, which only a wasm build compiles,
+// so the rules are tested natively.
+
+/// What a path holds now, as the caller found it.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum Body {
+	Held(Vec<u8>),		// the bytes, read whole
+	TooLarge(u64),		// it is there, it is this long, and it was not read
+	Unseen,			// it changed and the app never saw what it became
+	Gone,			// there is nothing at the path
+}
+
+/// What an act found at the path it changed, which [`capture_into`] compares with what the turn's
+/// capture says it left there.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum Found {
+	Nothing,		// no file stood there
+	Hash(String),		// the hash of the bytes that stood there
+	Unread,			// a file stood there and its bytes were not read
+}
+
+impl Found {
+
+	/// What an act that read `bytes` found: nothing, where there was no file.
+	pub fn of(bytes: Option<&[u8]>) -> Self {
+		match bytes {
+			Some(b)	=> Self::Hash(hash_of(b)),
+			None	=> Self::Nothing,
+		}
+	}
+}
+
+/// Where the bytes a move left at a path came from: what a write over them is measured against,
+/// and what a destruction of them keeps.  The path itself keeps its own `before`, which is what a
+/// restore of it puts back.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum Carried {
+	Made,			// this turn made them, wherever it did
+	Kept(Vec<u8>),		// the file as the turns found it where the move took it from
+	Unread,			// the move could not read them: they are measured as they stand
+}
+
+/// One path as a caller found it, before anything has been decided about it.
+///
+/// `before` is filled in only where the caller CAPTURED the prior bytes itself: a file tool, the
+/// moment before its act.  Everywhere else it is `None` and `crate::wasm::diamond::versions_record`
+/// answers "what stood there" from the history instead, which costs no read at all.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct Change {
+	pub path:    String,		// workspace-relative, or absolute where `mark`
+	pub after:   Body,
+	pub before:  Option<Vec<u8>>,	// the prior bytes, where the caller captured them
+	pub found:   Found,		// what the act found at `path`, which the merge compares
+	pub carried: Option<Carried>,	// where a move brought `after` from
+	pub mark:    bool,		// a file on this computer, under a folder the user marked in
+	pub refused: Option<String>,	// why the prior bytes could not be read, in the hand's words
+	pub wiped:   bool,		// a write in this turn left under half: see `wipes`
+}
+
+impl Change {
+
+	/// A path the caller has just read off the disk.
+	pub fn of(path: &str, body: Vec<u8>) -> Self {
+		Self { path: path.to_string(), after: Body::Held(body), before: None,
+			found: Found::Unread, carried: None, mark: false, refused: None, wiped: false }
+	}
+
+	/// A path that is no longer there.
+	pub fn gone(path: &str) -> Self {
+		Self { path: path.to_string(), after: Body::Gone, before: None,
+			found: Found::Unread, carried: None, mark: false, refused: None, wiped: false }
+	}
+}
+
+/// Did the turn leave exactly what an act `found` at a path, where the turn's capture of the path
+/// says it left `after`?  `None` where either side was never read, so it cannot be told.
+pub fn left_there(after: &Body, found: &Found) -> Option<bool> {
+	match (after, found) {
+		(_, Found::Unread)				=> None,
+		(Body::Held(b), Found::Hash(h))			=> Some(hash_of(b) == *h),
+		(Body::Held(_), Found::Nothing)			=> Some(false),
+		(Body::Gone, Found::Nothing)			=> Some(true),
+		(Body::Gone, Found::Hash(_))			=> Some(false),
+		(Body::TooLarge(_), _) | (Body::Unseen, _)	=> None,
+	}
+}
+
+/// The file at a path as THIS turn found it, from its captures: what [`run_copies`] starts from.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum TurnFound {
+	Made,			// the turn made what stands there, so nothing of anyone else's is in it
+	Carried(Vec<u8>),	// a move brought it here, and this is the file as the turns found it there
+	Was(Vec<u8>),		// what the turn found at this path: where its run of turns' changes begins
+}
+
+/// What the file at `path` was when this turn came to it, as the turn's own captures `held` say
+/// -- **and they say it only while the bytes at the path are the ones the turn left there.**  A
+/// path holding anything else (a file moved onto it, a copy the hand made, the user's own editor,
+/// a sync) is measured as it stands, `now`, and never as the turn's own.
+///
+/// A capture that was never read back -- an edit on the machine whose result the app did not see
+/// -- is trusted for a first the turn found, which is a real copy, and never for "made here".
+///
+/// # Arguments
+/// * `held` - The turn's captures, `(the path the model wrote, the capture)`.
+/// * `path` - As the captures name it: normalised, or absolute for a machine file.
+/// * `now` - The bytes at `path` as the act found them.
+pub fn this_turn_found(held: &[(String, Change)], path: &str, now: &[u8]) -> TurnFound {
+	let h = match held.iter().find(|(_, h)| h.path == path) {
+		Some((_, h))	=> h,
+		None		=> return TurnFound::Was(now.to_vec()),
+	};
+	// `left_there`'s rule, on the bytes themselves rather than on two hashes of them.
+	let theirs = match &h.after {
+		Body::Held(b)	=> Some(b.as_slice() == now),
+		Body::Gone	=> Some(false),
+		_		=> None,
+	};
+	match (theirs, &h.carried, &h.before) {
+		(Some(true), Some(Carried::Made), _)		=> TurnFound::Made,
+		(Some(true), None, None)			=> TurnFound::Made,
+		(Some(true), None, Some(first))			=> TurnFound::Was(first.clone()),
+		(Some(true), Some(Carried::Kept(k)), _)
+			| (None, Some(Carried::Kept(k)), _)	=> TurnFound::Carried(k.clone()),
+		(None, None, Some(first))			=> TurnFound::Was(first.clone()),
+		_						=> TurnFound::Was(now.to_vec()),
+	}
+}
+
+/// Fold one capture into what a turn holds, one entry a path.
+///
+/// A turn that changed one file six times records the bytes it STARTED with and the bytes it
+/// ENDED with and nothing between: the newest content wins, and the prior bytes stay those of the
+/// first capture, because that is the state the row has to go back to -- which is also why a file
+/// wiped and then deleted in one turn keeps what stood before the wipe, not the empty file.  A
+/// wipe anywhere in the turn marks the row, whatever the turn wrote after it.
+///
+/// Three exceptions, and each is the same question -- which bytes does the row's first copy
+/// describe?
+///
+/// * **The turn's first destruction of a path brings its own prior bytes**: the file as the turns
+///   found it, the copy a wipe was measured against and a delete keeps -- never newer than what
+///   this turn first captured, and older where earlier turns had already cut it down.
+/// * **"Made here" lasts only while the run is unbroken** (Q5-1).  Where what the act `found` is
+///   not what the entry says the turn left there, something else put those bytes at the path.  An
+///   act that read bytes there has already had the run it ended sealed as a version of its own
+///   ([`seal_broken`]), so what still reaches here broken is a path the act found empty, and it
+///   brings no copy: an entry that says the turn made the path is replaced, and one holding a first
+///   copy keeps it.  What the entry said of the bytes it left goes.
+/// * **Bytes a move carried in keep their own history** ([`Carried`]), and the path keeps its
+///   first: a restore of it puts back what it held when the turn came, while a write over the
+///   bytes is measured against where they came from.
+pub fn capture_into(held: &mut Vec<(String, Change)>, raw: &str, change: Change) {
+	let at = match held.iter().position(|(_, h)| h.path == change.path) {
+		Some(at)	=> at,
+		None		=> {
+			held.push((raw.to_string(), change));
+			return;
+		},
+	};
+	let destroys = |c: &Change| c.wiped || matches!(c.after, Body::Gone);
+	let h = &held[at].1;
+	// A MOVE'S DESTINATION is new bytes by construction, so it never breaks the path's run.  Where
+	// the act could not read what it found, a first the turn found stands and "made here" does not.
+	let unbroken = change.carried.is_some() || match left_there(&h.after, &change.found) {
+		Some(t)	=> t,
+		None	=> h.before.is_some(),
+	};
+	let first_destruction = unbroken && change.carried.is_none() && h.carried.is_none()
+		&& destroys(&change) && !destroys(h) && h.before.is_some() && change.before.is_some();
+	if (!unbroken && h.before.is_none()) || first_destruction {
+		held[at] = (raw.to_string(), change);
+		return;
+	}
+	let Change { path, after, found, carried, mark, wiped, .. } = change;
+	let slot = &mut held[at];
+	let carried = match (carried, &after) {
+		(Some(c), _)			=> Some(c),
+		(None, Body::Gone)		=> None,	// nothing stands there to have come from anywhere
+		(None, _) if !unbroken		=> None,	// what the entry said came here is not there
+		(None, _)			=> slot.1.carried.take(),
+	};
+	slot.0 = raw.to_string();
+	slot.1 = Change {
+		path,
+		after,
+		before:  slot.1.before.take(),
+		found,
+		carried,
+		mark,
+		refused: slot.1.refused.take(),
+		wiped:   slot.1.wiped || wiped,
+	};
+}
+
+/// Does an act that `found` those bytes at the path end the run of this turn's changes that `h`
+/// describes?  Where it read bytes the turn did not leave there, something outside the turn -- the
+/// user's editor, a sync, a hand's shell -- changed the file between two of the turn's acts.  A path
+/// found empty, and bytes never read, end no run a copy is owed for: such an act brings none.
+pub fn run_broken(h: &Change, found: &Found) -> bool {
+	matches!(found, Found::Hash(_)) && left_there(&h.after, found) == Some(false)
+}
+
+/// Take out of `held` the run of this turn's changes to `path` that an act finding `now` there has
+/// ended ([`run_broken`]), for the caller to record as a version of its own, and start the path's
+/// run again from `now`.  `None` where the run goes on, or the turn holds none on `path`.
+///
+/// **One row a path, and two copies to keep** (QF2 of the Q5-1 fix's QA, 2026-09-24).  A turn
+/// edited the user's `e.md`, the user's editor saved over it, and the turn wrote its first text
+/// back: a wipe, so the person was asked, and the question said a copy is kept.  The entry kept the
+/// copy of what the turn first found and dropped the one the question promised; the run's net
+/// change was then nothing, and the turn ended with no row at all.  Dropping the other copy loses
+/// as much -- it is what the file was when the turn came.  A manifest holds one row a path, so the
+/// run so far is its own version, sealed BEFORE the act, and the act's capture folds into a run
+/// that starts at what it found: each copy has its row, and the notes of copies on disk
+/// ([`crate::wasm::diamond::pend`]) never have to name two for one path.
+///
+/// The run begins again as the bytes the act found, before and after alike, so an act that never
+/// lands leaves it recording no change.
+pub fn seal_broken(held: &mut Vec<(String, Change)>, path: &str, now: &[u8])
+	-> Option<(String, Change)>
+{
+	let found = Found::of(Some(now));
+	let at = match held.iter().position(|(_, h)| h.path == path && run_broken(h, &found)) {
+		Some(at)	=> at,
+		None		=> return None,
+	};
+	let again = restarted(path, now, held[at].1.mark);
+	let raw = held[at].0.clone();
+	let run = std::mem::replace(&mut held[at].1, again);
+	Some((raw, run))
+}
+
+/// Would an act finding `now` at `path` seal a run of the turn's ([`seal_broken`])?  Asked of the
+/// captures alone, before the act, so a turn past [`TURN_SEALS_MAX`] is refused rather than seal.
+pub fn seal_due(held: &[(String, Change)], path: &str, now: &[u8]) -> bool {
+	let found = Found::of(Some(now));
+	held.iter().any(|(_, h)| h.path == path && run_broken(h, &found))
+}
+
+/// Put back a run [`seal_broken`] took out whose version could not be recorded, where the path's
+/// entry is still the run it began again and nothing has folded into it since.
+pub fn unseal(held: &mut Vec<(String, Change)>, sealed: (String, Change), now: &[u8]) {
+	let again = restarted(&sealed.1.path, now, sealed.1.mark);
+	if let Some(slot) = held.iter_mut().find(|(_, h)| h.path == sealed.1.path) {
+		if slot.1 == again {
+			*slot = sealed;
+		}
+	}
+}
+
+/// The run of `path` begun again at `now`, as [`seal_broken`] leaves it.
+fn restarted(path: &str, now: &[u8], mark: bool) -> Change {
+	Change {
+		path:    path.to_string(),
+		after:   Body::Held(now.to_vec()),
+		before:  Some(now.to_vec()),
+		found:   Found::of(Some(now)),
+		carried: None,
+		mark,
+		refused: None,
+		wiped:   false,
+	}
+}
+
+/// Why a turn may not keep one more copy, as [`claim_room`] answers it.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum Short {
+	Count,		// the turn keeps as many copies as one manifest holds rows
+	Bytes(u64),	// the turn holds a destruction, and its copies would pass the room left: the room
+}
+
+/// An act a turn has been allowed and has not yet captured.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct Reserved {
+	pub path:       String,		// as the capture will name it
+	pub copy:       Option<u64>,	// the length of the copy it keeps; none where it keeps none
+	pub destroying: bool,		// a delete, or a write that wipes the file
+}
+
+/// May a turn holding `held`, with the acts `reserved` in flight, replace or remove `path` and
+/// still keep what it owes?  A yes reserves the act: `Ok(true)` where this call did, `Ok(false)`
+/// where the path was already held or reserved.
+///
+/// Two bounds, each about what can be put back, and so **each about copies**:
+///
+/// * **Copies.**  A manifest keeps [`TURN_FILES_MAX`] rows, and a row the cut leaves out is a
+///   change with no way back only where it held a copy ([`cut_order`]).  So a turn keeps that many
+///   copies -- of files that were there before it changed, moved or deleted them -- and no more.
+///   Until the fix's QA (QF1, 2026-09-24) every entry counted, the files the turn made and the
+///   destinations of its moves included: renaming a folder of 33 files the turn had just written
+///   was refused as "64 existing files", and so was an edit of the user's file after 64 new ones.
+/// * **Bytes, once the turn holds a destruction** -- a delete, or a write that left less than half
+///   of a user's file ([`wipes`]).  A version recording one is kept through its hold whatever the
+///   ceiling says ([`DELETE_HOLD_MS`]), so what the turn keeps -- every copy in it, since the whole
+///   manifest is held -- must fit in `room`, the ceiling less what the held versions already weigh.
+///   Past it, the store could keep the copy only by letting the ceiling go.
+///
+/// A path the turn already holds costs nothing more -- its first copy stands -- but a destruction of
+/// it still makes the turn one that holds a destruction.  **Except a run the act ends**
+/// ([`run_broken`]): that run leaves for a version of its own ([`seal_broken`]) and the path starts
+/// again with a copy of what the act found, so it counts as a path the turn does not yet hold.  An
+/// act that keeps no copy is bound by neither.
+///
+/// # Arguments
+/// * `path` - As the capture names it: normalised, or absolute for a machine file.
+/// * `found` - What the act found at `path`.
+/// * `copy` - The length of the copy the act keeps, or `None` where it keeps none.
+/// * `destroying` - Is the act a delete, or a write that leaves less than half of the file?
+/// * `room` - The ceiling less what held destructions weigh.
+pub fn claim_room(
+	held:       &[(String, Change)],
+	reserved:   &mut Vec<Reserved>,
+	path:       &str,
+	found:      &Found,
+	copy:       Option<u64>,
+	destroying: bool,
+	room:       u64,
+)
+	-> Result<bool, Short>
+{
+	let ends = |h: &Change| h.path == path && run_broken(h, found);
+	let at = reserved.iter().position(|r| r.path == path);
+	let known = at.is_some() || held.iter().any(|(_, h)| h.path == path && !ends(h));
+	if let Some(bytes) = copy {
+		if !known {
+			let kept = held.iter().filter(|(_, h)| h.before.is_some() && !ends(h)).count()
+				+ reserved.iter().filter(|r| r.copy.is_some()).count();
+			if kept >= TURN_FILES_MAX {
+				return Err(Short::Count);
+			}
+		}
+		let destroys = destroying
+			|| held.iter().any(|(_, h)| matches!(h.after, Body::Gone) || h.wiped)
+			|| reserved.iter().any(|r| r.destroying);
+		if destroys {
+			// A run the act ends still counts here: its version is held as long as this one.
+			let total = held.iter()
+				.map(|(_, h)| h.before.as_ref().map(|b| b.len() as u64).unwrap_or(0))
+				.chain(reserved.iter().map(|r| r.copy.unwrap_or(0)))
+				.fold(if known { 0u64 } else { bytes }, |a, b| a.saturating_add(b));
+			if total > room {
+				return Err(Short::Bytes(room));
+			}
+		}
+	}
+	match at {
+		Some(i) => {
+			// A destruction of a path the turn has so far only edited makes it a turn holding a
+			// destruction, which the reservation has to say for the next caller's sum.
+			if destroying {
+				reserved[i].destroying = true;
+			}
+			Ok(false)
+		},
+		None if known	=> Ok(false),
+		None		=> {
+			reserved.push(Reserved { path: path.to_string(), copy, destroying });
+			Ok(true)
+		},
+	}
+}
+
+/// One file a move carries, as the move found it.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum Moving {
+	Read(Vec<u8>, Option<Vec<u8>>),	// its bytes, and the file as the turns found it (none: made here)
+	Unread(Body, String),		// `TooLarge` or `Unseen`, and why its bytes were not read
+}
+
+/// What a move of one file captures at its two ends, source first: the source gone, keeping the
+/// file as the turns found it there, and the destination holding what the move carried.
+///
+/// Both go through [`capture_into`].  The source's is a destruction of that path, as a delete's is,
+/// and brings the same copy a delete there would keep; the destination's carries the bytes' own
+/// history, so a user's file moved onto a path this turn made is still the user's file, and a path
+/// the turn emptied earlier still goes back to what it held.
+///
+/// # Arguments
+/// * `from`, `to` - As the captures name them, each with whether it is a file of the user's.
+pub fn moved(from: (&str, bool), to: (&str, bool), what: Moving) -> (Change, Change) {
+	let (after, before, found, carried, refused) = match what {
+		Moving::Read(bytes, first) => {
+			let found = Found::of(Some(&bytes));
+			let carried = match &first {
+				Some(k)	=> Carried::Kept(k.clone()),
+				None	=> Carried::Made,
+			};
+			(Body::Held(bytes), first, found, carried, None)
+		},
+		Moving::Unread(body, why) => (body, None, Found::Unread, Carried::Unread, Some(why)),
+	};
+	let src = Change {
+		path:    from.0.to_string(),
+		after:   Body::Gone,
+		before,
+		found,
+		carried: None,
+		mark:    from.1,
+		refused: refused.clone(),
+		wiped:   false,
+	};
+	let dst = Change {
+		path:    to.0.to_string(),
+		after,
+		before:  None,
+		found:   Found::Nothing,
+		carried: Some(carried),
+		mark:    to.1,
+		refused,
+		wiped:   false,
+	};
+	(src, dst)
+}
+
+/// Each file the turn holds under the folder `from`: `(the capture's path, the rest of it below
+/// `from`, the path the model wrote)`.  Nothing where `from` is a file, or a folder the turn holds
+/// nothing under.
+///
+/// A folder's move carries only these.  The rest of what it holds the turn neither destroys nor
+/// made, and where it lands it is measured as it stands ([`this_turn_found`]).
+pub fn held_under(held: &[(String, Change)], from: &str) -> Vec<(String, String, String)> {
+	let dir = fmt!("{}/", from.trim_end_matches('/'));
+	held.iter()
+		.filter_map(|(raw, h)| h.path.strip_prefix(dir.as_str())
+			.map(|rest| (h.path.clone(), rest.to_string(), raw.clone())))
+		.collect()
 }
 
 
@@ -2485,5 +3028,464 @@ Garden: order two bags of bark for a bed.
 		let arr = array_inside(json, "files").unwrap_or_default();
 		assert_eq!(2, objects_in(arr).len());
 		assert_eq!(None, array_inside(json, "note"));
+	}
+
+	// ── What a turn captured (Q5-1) ──────────────────────────────────────────
+	//
+	// The page's glue around these rules -- `before_overwrite`, `Overwrite::prior`, the file tools'
+	// captures -- is wasm and is driven live by `dev/q5probe_launder.mjs`.  `wrote` and `moving`
+	// below are that glue reduced to what it decides, with no history held, so `run_copies` has
+	// nothing to add to what `this_turn_found` says.
+
+	const USERS: &str = "The user's own notes, which no turn wrote.\n";
+
+	/// The turn's capture of `path`, where it holds one.
+	fn entry<'a>(held: &'a [(String, Change)], path: &str) -> Option<&'a Change> {
+		held.iter().find(|(_, h)| h.path == path).map(|(_, h)| h)
+	}
+
+	/// What a wipe over `path` holding `now` is measured against: `measured_against`, with no
+	/// history held.
+	fn against(held: &[(String, Change)], path: &str, now: &[u8]) -> Vec<u8> {
+		match this_turn_found(held, path, now) {
+			TurnFound::Made		=> Vec::new(),
+			TurnFound::Carried(k)	=> k,
+			TurnFound::Was(w)	=> w,
+		}
+	}
+
+	/// A turn's write of `after` over `path`, a file of the user's, where it `found` those bytes:
+	/// measured, and captured with the copy a wipe keeps.  Answers whether it wiped.
+	fn wrote(held: &mut Vec<(String, Change)>, path: &str, found: Option<&[u8]>, after: &[u8])
+		-> bool
+	{
+		let copy = found.map(|now| against(held, path, now));
+		let wiped = match &copy {
+			Some(c)	=> wipes(c, after),
+			None	=> false,
+		};
+		let before = if wiped { copy } else { found.map(|b| b.to_vec()) };
+		capture_into(held, path, Change { path: path.to_string(), after: Body::Held(after.to_vec()),
+			before, found: Found::of(found), carried: None, mark: true, refused: None, wiped });
+		wiped
+	}
+
+	/// A turn's move of `from`, holding `bytes`, to `to`: both ends captured.
+	fn moving(held: &mut Vec<(String, Change)>, from: &str, to: &str, bytes: &[u8]) {
+		let first = match this_turn_found(held, from, bytes) {
+			TurnFound::Made		=> None,
+			TurnFound::Carried(k)	=> Some(k),
+			TurnFound::Was(w)	=> Some(w),
+		};
+		let (src, dst) = moved((from, true), (to, true), Moving::Read(bytes.to_vec(), first));
+		capture_into(held, from, src);
+		capture_into(held, to, dst);
+	}
+
+	/// **A user's file on a path the turn made is still the user's file** (Q5-1, brief test 1 and
+	/// its control).  The turn wrote `b.md`, the file moved on without a capture -- a hand's `mv`,
+	/// the user's own editor, a sync -- and the user's file now stands there: emptying it is
+	/// measured against their bytes and is a wipe.  The turn's own file, still as it left it, is
+	/// emptied without asking, as it always was.
+	#[test]
+	fn test_a_users_file_on_a_path_the_turn_made_is_measured_as_theirs_00() {
+		let mut held: Vec<(String, Change)> = Vec::new();
+		assert!(!wrote(&mut held, "vault/q/b.md", None, b"x"), "a new file was a wipe");
+		// The control: the turn's own bytes, still there.
+		assert_eq!(TurnFound::Made, this_turn_found(&held, "vault/q/b.md", b"x"));
+		assert!(!wipes(&against(&held, "vault/q/b.md", b"x"), b""),
+			"emptying the turn's own file was a wipe");
+		// The user's bytes where the turn's were: measured as they stand, and emptying them wipes.
+		assert_eq!(TurnFound::Was(USERS.as_bytes().to_vec()),
+			this_turn_found(&held, "vault/q/b.md", USERS.as_bytes()),
+			"a user's file on a path the turn made was taken for the turn's own");
+		assert!(wipes(&against(&held, "vault/q/b.md", USERS.as_bytes()), b""),
+			"emptying the user's file there was not a wipe");
+		// A path the turn made and then removed says nothing of what stands there now.
+		capture_into(&mut held, "vault/q/b.md", Change {
+			found: Found::of(Some(b"x")), ..Change::gone("vault/q/b.md") });
+		assert_eq!(TurnFound::Was(USERS.as_bytes().to_vec()),
+			this_turn_found(&held, "vault/q/b.md", USERS.as_bytes()));
+		// An edit on the machine the app never read back is trusted for a first copy, never for
+		// "made here".
+		let unseen = vec![("n.md".to_string(), Change { after: Body::Unseen, ..Change::gone("n.md") })];
+		assert_eq!(TurnFound::Was(b"now".to_vec()), this_turn_found(&unseen, "n.md", b"now"));
+	}
+
+	/// **A write over bytes the turn did not leave starts the run again** (Q5-1, brief test 1b).
+	/// The capture of the write that empties the user's file on a path the turn made keeps the
+	/// user's bytes as the path's first copy -- not the turn's "made here", which a restore would
+	/// have put back as nothing.  An entry that already holds a first copy is sealed with its run
+	/// first, and the path's run begins again with the bytes the act found.
+	#[test]
+	fn test_a_write_over_bytes_the_turn_did_not_leave_starts_the_run_again_00() {
+		let mut held: Vec<(String, Change)> = Vec::new();
+		wrote(&mut held, "vault/q/b.md", None, b"x");
+		assert!(wrote(&mut held, "vault/q/b.md", Some(USERS.as_bytes()), b""),
+			"emptying the user's file was not a wipe");
+		match entry(&held, "vault/q/b.md") {
+			Some(b)	=> {
+				assert_eq!(Some(USERS.as_bytes().to_vec()), b.before,
+					"the row keeps the turn's \"made here\", not the user's bytes");
+				assert!(b.wiped);
+			},
+			None	=> panic!("the write was not captured"),
+		}
+		// Unbroken, the turn's own file stays its own however often it is written.
+		let mut own: Vec<(String, Change)> = Vec::new();
+		wrote(&mut own, "vault/q/o.md", None, b"one");
+		assert!(!wrote(&mut own, "vault/q/o.md", Some(b"one"), b""));
+		assert_eq!(Some(None), entry(&own, "vault/q/o.md").map(|h| h.before.clone()));
+		// A first copy goes with its run at a break, and so does the stale history of the bytes.
+		let mut edited: Vec<(String, Change)> = Vec::new();
+		let orig = "The user's report, as it was before the turn began.\n";
+		let edit = "The user's report, as it was before the turn began, edited.\n";
+		wrote(&mut edited, "vault/r.md", Some(orig.as_bytes()), edit.as_bytes());
+		if let Some((_, h)) = edited.iter_mut().find(|(_, h)| h.path == "vault/r.md") {
+			h.carried = Some(Carried::Kept(b"stale".to_vec()));
+		}
+		assert_eq!(TurnFound::Was(USERS.as_bytes().to_vec()),
+			this_turn_found(&edited, "vault/r.md", USERS.as_bytes()),
+			"bytes the turn did not leave were measured as the turn's");
+		match seal_broken(&mut edited, "vault/r.md", USERS.as_bytes()) {
+			Some((_, run))	=> assert_eq!(
+				(Some(orig.as_bytes().to_vec()), Some(Carried::Kept(b"stale".to_vec()))),
+				(run.before, run.carried), "the run sealed was not the turn's"),
+			None		=> panic!("the run the user's bytes ended was not sealed"),
+		}
+		wrote(&mut edited, "vault/r.md", Some(USERS.as_bytes()), b"new");
+		match entry(&edited, "vault/r.md") {
+			Some(r)	=> {
+				assert_eq!(Some(USERS.as_bytes().to_vec()), r.before,
+					"the path did not start again from the bytes the write found");
+				assert_eq!(None, r.carried, "a history of bytes no longer there was kept");
+			},
+			None	=> panic!("the write was not captured"),
+		}
+	}
+
+	/// **Bytes from outside the turn end its run, and each copy keeps a row** (QF2 of the Q5-1
+	/// fix's QA, 2026-09-24).  The turn edits the user's `e.md`, the user's editor saves over it,
+	/// and the turn writes its first text back.  On b21e5a74 the entry kept the first copy and
+	/// dropped the one the wipe's question promised, and a net change of nothing wrote no row.
+	/// Now the run so far is sealed before the write, and the write's run keeps the user's save.
+	#[test]
+	fn test_bytes_from_outside_end_the_run_and_each_copy_keeps_a_row_00() {
+		let first = "hello world\n";
+		let edit = "hello world!\n";
+		let later = "the user saved this later, line\n".repeat(300);
+		let mut held: Vec<(String, Change)> = Vec::new();
+		assert!(!wrote(&mut held, "vault/e.md", Some(first.as_bytes()), edit.as_bytes()));
+		// Unbroken, nothing is sealed.
+		assert_eq!(None, seal_broken(&mut held, "vault/e.md", edit.as_bytes()));
+		match entry(&held, "vault/e.md") {
+			Some(h)	=> assert!(run_broken(h, &Found::of(Some(later.as_bytes())))),
+			None	=> panic!("the edit was not captured"),
+		}
+		let (raw, run) = match seal_broken(&mut held, "vault/e.md", later.as_bytes()) {
+			Some(s)	=> s,
+			None	=> panic!("the user's save did not end the turn's run"),
+		};
+		assert_eq!(("vault/e.md", Some(first.as_bytes().to_vec()), Body::Held(edit.as_bytes().to_vec())),
+			(raw.as_str(), run.before.clone(), run.after.clone()), "the sealed run is not the turn's edit");
+		// The path begins again at the user's save, and the write back is a wipe of it.
+		assert_eq!(TurnFound::Was(later.as_bytes().to_vec()),
+			this_turn_found(&held, "vault/e.md", later.as_bytes()));
+		assert!(wrote(&mut held, "vault/e.md", Some(later.as_bytes()), first.as_bytes()),
+			"writing the first text back over the user's save was not a wipe");
+		match entry(&held, "vault/e.md") {
+			Some(e)	=> assert_eq!((Some(later.as_bytes().to_vec()), true), (e.before.clone(), e.wiped),
+				"the row does not keep the user's save as the copy the wipe promised"),
+			None	=> panic!("the write was not captured"),
+		}
+		assert_eq!(1, held.len());
+		// A path found empty ends no run a copy is owed for, and nothing is sealed.
+		let mut gone: Vec<(String, Change)> = Vec::new();
+		wrote(&mut gone, "vault/g.md", Some(first.as_bytes()), edit.as_bytes());
+		assert!(!run_broken(&gone[0].1, &Found::Nothing));
+		assert!(!run_broken(&gone[0].1, &Found::Unread));
+		// The builder's own open case: deleted (copy B0), a hand's `cp` onto the path, then written.
+		let b0 = "The user's b.md, which the turn deleted.\n";
+		let cp = "What a hand's cp put there afterwards, which is not the turn's.\n";
+		let mut del: Vec<(String, Change)> = Vec::new();
+		capture_into(&mut del, "vault/b.md", Change { before: Some(b0.as_bytes().to_vec()),
+			found: Found::of(Some(b0.as_bytes())), mark: true, ..Change::gone("vault/b.md") });
+		match seal_broken(&mut del, "vault/b.md", cp.as_bytes()) {
+			Some((_, run))	=> assert_eq!((Body::Gone, Some(b0.as_bytes().to_vec())),
+				(run.after, run.before), "the delete's copy was not sealed with its run"),
+			None		=> panic!("bytes on a path the turn deleted did not end its run"),
+		}
+		assert!(wrote(&mut del, "vault/b.md", Some(cp.as_bytes()), b""));
+		assert_eq!(Some(Some(cp.as_bytes().to_vec())), entry(&del, "vault/b.md").map(|b| b.before.clone()));
+	}
+
+	/// **A run whose version could not be written goes back as it was** -- unless the path has moved
+	/// on since, and then what stands is left.
+	#[test]
+	fn test_a_seal_that_was_not_recorded_is_put_back_00() {
+		let mut held: Vec<(String, Change)> = Vec::new();
+		wrote(&mut held, "vault/p.md", Some(b"one"), b"two");
+		let before = held.clone();
+		let sealed = match seal_broken(&mut held, "vault/p.md", b"three") {
+			Some(s)	=> s,
+			None	=> panic!("not sealed"),
+		};
+		unseal(&mut held, sealed.clone(), b"three");
+		assert_eq!(before, held, "the run was not put back");
+		let again = match seal_broken(&mut held, "vault/p.md", b"three") {
+			Some(s)	=> s,
+			None	=> panic!("not sealed"),
+		};
+		wrote(&mut held, "vault/p.md", Some(b"three"), b"three and four");
+		let now = held.clone();
+		unseal(&mut held, again, b"three");
+		assert_eq!(now, held, "a run the path had moved on from was put back over it");
+	}
+
+	/// **The turn's bound counts copies, not files** (QF1 of the Q5-1 fix's QA, 2026-09-24).  On
+	/// b21e5a74 every entry counted, a move's two ends included, so 64 files the turn made refused
+	/// the next move or edit of anything, and a folder of 33 of them could not be renamed.
+	#[test]
+	fn test_the_turn_bound_counts_copies_not_the_files_the_turn_made_00() {
+		let mut held: Vec<(String, Change)> = Vec::new();
+		for i in 0..TURN_FILES_MAX {
+			wrote(&mut held, &fmt!("vault/new/f{}.md", i), None, b"made");
+		}
+		let mut reserved: Vec<Reserved> = Vec::new();
+		// An edit of a user file, and a move's source, each keep a copy, and there is room.
+		assert_eq!(Ok(true), claim_room(&held, &mut reserved, "vault/u.md",
+			&Found::of(Some(USERS.as_bytes())), Some(USERS.len() as u64), false, u64::MAX));
+		// A file the turn made keeps nothing, however many there are.
+		assert_eq!(Ok(false), claim_room(&held, &mut reserved, "vault/new/f0.md",
+			&Found::of(Some(b"made")), Some(4), true, u64::MAX));
+		assert_eq!(Ok(true), claim_room(&held, &mut reserved, "vault/elsewhere.md",
+			&Found::Nothing, None, false, 0));
+		// Sixty-four copies, and the sixty-fifth is refused; one already held costs nothing more.
+		let mut copies: Vec<(String, Change)> = Vec::new();
+		for i in 0..TURN_FILES_MAX {
+			let p = fmt!("vault/u{}.md", i);
+			wrote(&mut copies, &p, Some(USERS.as_bytes()), b"edited, most of it kept? no");
+		}
+		let mut none: Vec<Reserved> = Vec::new();
+		assert_eq!(Err(Short::Count), claim_room(&copies, &mut none, "vault/u64.md",
+			&Found::of(Some(USERS.as_bytes())), Some(1), false, u64::MAX));
+		assert_eq!(Ok(false), claim_room(&copies, &mut none, "vault/u3.md",
+			&Found::of(Some(b"edited, most of it kept? no")), Some(1), false, u64::MAX));
+		// A run bytes from outside end is a copy the turn does not yet hold: a path it made, once the
+		// user's editor saved over it, counts; one holding a copy trades it for the new one.
+		let mut made = copies.clone();
+		wrote(&mut made, "vault/mine.md", None, b"made");
+		assert_eq!(Err(Short::Count), claim_room(&made, &mut none, "vault/mine.md",
+			&Found::of(Some(USERS.as_bytes())), Some(1), false, u64::MAX),
+			"a made path the user saved over took a 65th copy");
+		assert_eq!(Ok(true), claim_room(&copies, &mut none, "vault/u3.md",
+			&Found::of(Some(b"the user's later save")), Some(1), false, u64::MAX));
+		// Reservations in flight count as copies, and an act keeping none is never refused.
+		let mut in_flight: Vec<Reserved> = (0..TURN_FILES_MAX)
+			.map(|i| Reserved { path: fmt!("vault/r{}.md", i), copy: Some(1), destroying: false })
+			.collect();
+		assert_eq!(Err(Short::Count), claim_room(&[], &mut in_flight, "vault/x.md",
+			&Found::of(Some(b"x")), Some(1), false, u64::MAX));
+		assert_eq!(Ok(true), claim_room(&[], &mut in_flight, "vault/x.md", &Found::Nothing, None,
+			true, 0));
+		// The byte bound still holds once the turn holds a destruction.
+		let mut small: Vec<Reserved> = Vec::new();
+		assert_eq!(Err(Short::Bytes(10)), claim_room(&[], &mut small, "vault/big.md",
+			&Found::of(Some(b"x")), Some(11), true, 10));
+	}
+
+	/// **Past the rows one version keeps, the rows holding copies stay** (QF1, the cut): a turn of
+	/// 70 made files that also moved and edited a user's file keeps both copies.
+	#[test]
+	fn test_the_cut_keeps_the_rows_that_hold_copies_00() {
+		let row = |p: &str, was: Option<&str>, gone: bool| Entry { path: p.to_string(),
+			hash: if gone { String::new() } else { hash_of(p.as_bytes()) }, bytes: 1,
+			was: was.map(|w| w.to_string()), gone, wiped: false, mark: true, skipped: None };
+		let mut rows: Vec<(Entry, bool)> = (0..70)
+			.map(|i| (row(&fmt!("vault/new/f{}.md", i), None, false), false)).collect();
+		rows.push((row("vault/u.md", Some(&hash_of(b"u")), true), true));
+		rows.push((row("vault/w.md", Some(&hash_of(b"w")), false), true));
+		let (kept, cut) = truncate(cut_order(rows));
+		assert_eq!((TURN_FILES_MAX, 8), (kept.len(), cut));
+		assert_eq!(("vault/u.md", "vault/w.md"), (kept[0].path.as_str(), kept[1].path.as_str()));
+		// Where nothing is cut, the rows stay as they came.
+		let few: Vec<(Entry, bool)> = vec![(row("a", None, false), false), (row("b", Some("h"), true), true)];
+		assert_eq!(vec!["a", "b"], cut_order(few).iter().map(|e| e.path.as_str()).collect::<Vec<_>>());
+	}
+
+	/// **No row holding a copy is ever cut** (R2-3): 64 adopted copies, one more the turn took and
+	/// ten made files.  The copies fill the first version and the one over goes into a second; only
+	/// the made files are cut.
+	#[test]
+	fn test_rows_holding_copies_past_the_bound_go_into_a_further_version_00() {
+		let row = |p: &str, was: Option<&str>| Entry { path: p.to_string(),
+			hash: hash_of(p.as_bytes()), bytes: 1, was: was.map(|w| w.to_string()), gone: false,
+			wiped: false, mark: true, skipped: None };
+		let mut rows: Vec<(Entry, bool)> = (0..10)
+			.map(|i| (row(&fmt!("vault/new/f{}.md", i), None), false)).collect();
+		for i in 0..65 {
+			let p = fmt!("vault/u{:02}.md", i);
+			rows.push((row(&p, Some(&hash_of(p.as_bytes()))), true));
+		}
+		let (groups, cut) = split_rows(rows);
+		assert_eq!((2, 10), (groups.len(), cut));
+		assert_eq!((TURN_FILES_MAX, 1), (groups[0].len(), groups[1].len()));
+		let copies = groups.iter().flatten().filter(|e| e.path.starts_with("vault/u")).count();
+		assert_eq!(65, copies);
+		// 130 copies: two full versions and a third, nothing cut.
+		let many: Vec<(Entry, bool)> = (0..130).map(|i| {
+			let p = fmt!("vault/m{:03}.md", i);
+			(row(&p, Some(&hash_of(p.as_bytes()))), true)
+		}).collect();
+		let (g, c) = split_rows(many);
+		assert_eq!((vec![64, 64, 2], 0), (g.iter().map(|x| x.len()).collect::<Vec<_>>(), c));
+		// Under the bound: one version, as it came.
+		let (g, c) = split_rows(vec![(row("a", None), false), (row("b", Some("h")), true)]);
+		assert_eq!((1, 2, 0), (g.len(), g[0].len(), c));
+		// Nothing at all: one empty version.
+		let (g, c) = split_rows(Vec::new());
+		assert_eq!((1, 0, 0), (g.len(), g[0].len(), c));
+	}
+
+	/// **A move records both of its ends, and the bytes keep their own history** (Q5-1, brief
+	/// test 3): the probe's four calls.  The turn's `b.md` goes to `c.md` still its own; the user's
+	/// `victim.md` is gone from its path with its copy kept, and at `b.md` it is still theirs, so
+	/// emptying it there is a wipe.  `b.md` itself goes back to what it held when the turn came to
+	/// it, which was nothing.
+	#[test]
+	fn test_a_move_records_both_ends_and_the_bytes_keep_their_history_00() {
+		let mut held: Vec<(String, Change)> = Vec::new();
+		wrote(&mut held, "vault/q/b.md", None, b"x");
+		moving(&mut held, "vault/q/b.md", "vault/q/c.md", b"x");
+		moving(&mut held, "vault/q/victim.md", "vault/q/b.md", USERS.as_bytes());
+		// c.md: the turn's own file, moved.
+		match entry(&held, "vault/q/c.md") {
+			Some(c)	=> {
+				assert_eq!((None, Body::Held(b"x".to_vec()), Some(Carried::Made)),
+					(c.before.clone(), c.after.clone(), c.carried.clone()));
+			},
+			None	=> panic!("the destination of the first move was not captured"),
+		}
+		assert_eq!(TurnFound::Made, this_turn_found(&held, "vault/q/c.md", b"x"));
+		// victim.md: gone, and what a restore puts back is the user's file.
+		match entry(&held, "vault/q/victim.md") {
+			Some(v)	=> assert_eq!((Body::Gone, Some(USERS.as_bytes().to_vec())),
+				(v.after.clone(), v.before.clone())),
+			None	=> panic!("the source of the second move was not captured"),
+		}
+		// b.md: the user's bytes, carried, on a path that held nothing when the turn came.
+		match entry(&held, "vault/q/b.md") {
+			Some(b)	=> assert_eq!(
+				(None, Body::Held(USERS.as_bytes().to_vec()), Some(Carried::Kept(USERS.as_bytes().to_vec()))),
+				(b.before.clone(), b.after.clone(), b.carried.clone())),
+			None	=> panic!("the destination of the second move was not captured"),
+		}
+		assert_eq!(TurnFound::Carried(USERS.as_bytes().to_vec()),
+			this_turn_found(&held, "vault/q/b.md", USERS.as_bytes()));
+		// The last call: a wipe, and the user's copy is still the one victim.md keeps.
+		assert!(wrote(&mut held, "vault/q/b.md", Some(USERS.as_bytes()), b""),
+			"emptying the user's file after it was moved was not a wipe");
+		assert_eq!(Some(Some(USERS.as_bytes().to_vec())),
+			entry(&held, "vault/q/victim.md").map(|v| v.before.clone()));
+		assert_eq!(Some(true), entry(&held, "vault/q/b.md").map(|b| b.wiped));
+		assert_eq!(3, held.len());
+	}
+
+	/// **A move onto a path the turn emptied keeps that path's first copy**, and a destruction of
+	/// the bytes it brought does not take the path's first for theirs: a restore of `b.md` puts
+	/// back the user's `b.md`, and the moved file's copy is where it came from.
+	#[test]
+	fn test_a_move_onto_a_path_the_turn_emptied_keeps_that_paths_first_00() {
+		let mut held: Vec<(String, Change)> = Vec::new();
+		let theirs_b = "The user's b.md, which the turn deleted.\n";
+		capture_into(&mut held, "vault/b.md", Change { before: Some(theirs_b.as_bytes().to_vec()),
+			found: Found::of(Some(theirs_b.as_bytes())), mark: true, ..Change::gone("vault/b.md") });
+		moving(&mut held, "vault/a.md", "vault/b.md", USERS.as_bytes());
+		assert!(wrote(&mut held, "vault/b.md", Some(USERS.as_bytes()), b""));
+		match entry(&held, "vault/b.md") {
+			Some(b)	=> assert_eq!((Some(theirs_b.as_bytes().to_vec()), true),
+				(b.before.clone(), b.wiped), "the deleted b.md's copy was taken for a.md's"),
+			None	=> panic!("b.md was not captured"),
+		}
+		assert_eq!(Some(Some(USERS.as_bytes().to_vec())),
+			entry(&held, "vault/a.md").map(|a| a.before.clone()));
+	}
+
+	/// **Bytes a move could not read are measured as they stand**, never as the turn's own, and a
+	/// folder's move carries exactly the files the turn holds under it.
+	#[test]
+	fn test_an_unread_move_is_never_made_here_and_a_folder_carries_its_captures_00() {
+		let mut held: Vec<(String, Change)> = Vec::new();
+		wrote(&mut held, "vault/big.bin", None, b"x");
+		let (src, dst) = moved(("vault/big.bin", true), ("vault/moved.bin", true),
+			Moving::Unread(Body::TooLarge(1 << 30), "size".to_string()));
+		capture_into(&mut held, "vault/big.bin", src);
+		capture_into(&mut held, "vault/moved.bin", dst);
+		assert_eq!(TurnFound::Was(b"now".to_vec()), this_turn_found(&held, "vault/moved.bin", b"now"));
+		assert_eq!(Some(Some("size".to_string())),
+			entry(&held, "vault/moved.bin").map(|m| m.refused.clone()));
+		wrote(&mut held, "vault/d/one.md", None, b"1");
+		wrote(&mut held, "vault/d/sub/two.md", None, b"2");
+		wrote(&mut held, "vault/dx/three.md", None, b"3");
+		let mut under = held_under(&held, "vault/d/");
+		under.sort();
+		assert_eq!(vec![
+			("vault/d/one.md".to_string(), "one.md".to_string(), "vault/d/one.md".to_string()),
+			("vault/d/sub/two.md".to_string(), "sub/two.md".to_string(),
+				"vault/d/sub/two.md".to_string()),
+		], under);
+		assert!(held_under(&held, "vault/d/one.md").is_empty(), "a file was taken for a folder");
+	}
+
+	/// **An unbroken run keeps the turn's first copy, and the first destruction brings its own**
+	/// -- the rule the capture always had, now tested where it lives.
+	#[test]
+	fn test_an_unbroken_run_keeps_its_first_and_a_first_destruction_brings_its_own_00() {
+		let p0 = "The plan, first draft, with every section the user wrote.\n".to_string();
+		let p1 = fmt!("{}One more line.\n", p0);
+		let p2 = fmt!("{}And another.\n", p1);
+		let mut held: Vec<(String, Change)> = Vec::new();
+		assert!(!wrote(&mut held, "vault/p.md", Some(p0.as_bytes()), p1.as_bytes()));
+		assert!(!wrote(&mut held, "vault/p.md", Some(p1.as_bytes()), p2.as_bytes()));
+		assert_eq!(Some(Some(p0.as_bytes().to_vec())),
+			entry(&held, "vault/p.md").map(|p| p.before.clone()));
+		// A delete keeping the file as earlier turns found it: older than this turn's first.
+		capture_into(&mut held, "vault/p.md", Change { before: Some(b"R, before earlier trims".to_vec()),
+			found: Found::of(Some(p2.as_bytes())), mark: true, ..Change::gone("vault/p.md") });
+		assert_eq!(Some(Some(b"R, before earlier trims".to_vec())),
+			entry(&held, "vault/p.md").map(|p| p.before.clone()));
+	}
+
+	/// **The open folder's tally counts files, not paths** (Q5-1, the delete variant).  A yes to
+	/// deleting the turn's own file at `b2.md`, asking before every one, is not a yes to emptying
+	/// the user's file moved there after it; a file wiped and then deleted is still one file.
+	#[test]
+	fn test_the_open_folder_tally_counts_a_file_by_its_bytes_not_its_path_00() {
+		let mut held: Vec<(String, Change)> = Vec::new();
+		let mut t = OpenTally::new(3);
+		let own = open_file_key("vault/q/b2.md", b"x");
+		let q = match t.room(&own, 0) {
+			OpenDelete::Ask(0, q)	=> q,
+			other			=> panic!("the delete of the turn's own file was not asked: {:?}", other),
+		};
+		t.answer(q, true);
+		assert_eq!(OpenDelete::Go(true), t.room(&own, 0));
+		wrote(&mut held, "vault/q/b2.md", None, b"x");
+		capture_into(&mut held, "vault/q/b2.md", Change { before: Some(b"x".to_vec()),
+			found: Found::of(Some(b"x")), mark: true, ..Change::gone("vault/q/b2.md") });
+		moving(&mut held, "vault/q/victim2.md", "vault/q/b2.md", USERS.as_bytes());
+		let theirs = open_file_key("vault/q/b2.md", &against(&held, "vault/q/b2.md", USERS.as_bytes()));
+		assert_ne!(own, theirs);
+		assert!(matches!(t.room(&theirs, 0), OpenDelete::Ask(1, _)),
+			"the user's file at a path already counted was not asked about");
+		// One file, wiped and then deleted: both keep the same copy, and it is counted once.
+		let mut one = OpenTally::new(4);
+		let mut p: Vec<(String, Change)> = Vec::new();
+		assert!(wrote(&mut p, "vault/p.md", Some(USERS.as_bytes()), b"."));
+		let wipe = open_file_key("vault/p.md", USERS.as_bytes());
+		assert_eq!(OpenDelete::Go(true), one.room(&wipe, 8));
+		let delete = open_file_key("vault/p.md", &against(&p, "vault/p.md", b"."));
+		assert_eq!(wipe, delete);
+		assert_eq!(OpenDelete::Go(false), one.room(&delete, 8));
 	}
 }

@@ -151,7 +151,7 @@
 //!   cetz-plot's `src/lib.typ` is the case that proves this is not optional.
 
 use crate::tools::{FileRoot, ToolContext};
-use crate::wasm::{js_str, opfs};
+use crate::wasm::{js_str, opfs, refusal};
 
 use oxedyne_fe2o3_core::prelude::*;
 
@@ -1901,15 +1901,6 @@ fn driver() -> Outcome<Driver> {
             System, Missing));
     }
     Ok(obj.unchecked_into::<Driver>())
-}
-
-/// The `message` of a rejected JS `Error`, verbatim, falling back to the
-/// value's own rendering when it is not an `Error`.
-fn refusal(e: &JsValue) -> String {
-    match js_sys::Reflect::get(e, &JsValue::from_str("message")) {
-        Ok(m)  => m.as_string().unwrap_or_else(|| js_str(e)),
-        Err(_) => js_str(e),
-    }
 }
 
 /// The driver's own `error` string, when it reported one.

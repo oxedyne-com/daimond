@@ -3874,6 +3874,7 @@ mod tests {
 			daimon_of:   String::new(),
 			keeper:      String::new(),
 			unconfirmed: Vec::new(),
+			by_model:    false,
 		}
 	}
 

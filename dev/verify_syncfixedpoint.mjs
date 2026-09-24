@@ -169,8 +169,8 @@ const BREAKS = {
 	// (viii) reddens on the sweep.
 	nopeerfile: [{
 		file: 'js/cloud.js',
-		find: '		unadopted.forEach(function (e) { notePeerFile(out, e[0], e[1], e[2], fromDev, selfDev); });',
-		with: '		if (0) unadopted.forEach(function (e) { notePeerFile(out, e[0], e[1], e[2], fromDev, selfDev); });',
+		find: '			if (!Object.prototype.hasOwnProperty.call(conflicts, e[0])) notePeerFile(out, e[0], e[1], e[2], fromDev, selfDev);',
+		with: '			if (0) notePeerFile(out, e[0], e[1], e[2], fromDev, selfDev);',
 	}],
 	// A file manifest whose file is in the mounted folder is classed `reoffload`
 	// and forgotten, on a device whose `collectFiles` returns nothing -- so it is

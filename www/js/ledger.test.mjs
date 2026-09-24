@@ -33,11 +33,13 @@
      node www/js/ledger.test.mjs --break nomergeprune   # merge unions, never prunes
      node www/js/ledger.test.mjs --break noanchor       # cutoff is `now - 90d`, unanchored
      node www/js/ledger.test.mjs --break nodelegate     # daimond.js keeps its own union
+     node www/js/ledger.test.mjs --break swallow        # a refused write is swallowed (SIM-10)
      node www/js/ledger.test.mjs                        # and then, clean
    ============================================================ */
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
+import { loadStore } from './storefixture.mjs';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const LEDGER_SRC = join(HERE, 'ledger.js');
@@ -54,7 +56,7 @@ const BREAK = (() => {
 	const i = process.argv.indexOf('--break');
 	return i >= 0 ? (process.argv[i + 1] || '') : '';
 })();
-const KNOWN = ['nomergeprune', 'noanchor', 'nodelegate'];
+const KNOWN = ['nomergeprune', 'noanchor', 'nodelegate', 'swallow'];
 if (BREAK && !KNOWN.includes(BREAK)) {
 	console.error('unknown break ' + JSON.stringify(BREAK) + '; known: ' + KNOWN.join(', '));
 	process.exit(2);
@@ -68,9 +70,13 @@ const RETENTION = 90 * DAY;
 /// the real one and never share state with each other.
 function load() {
 	const store = new Map();
+	const box = { full: false };			// a box with no room: every write refused
 	const localStorage = {
 		getItem: (k) => (store.has(k) ? store.get(k) : null),
-		setItem: (k, v) => { store.set(k, String(v)); },
+		setItem: (k, v) => {
+			if (box.full) { const e = new Error('The quota has been exceeded.'); e.name = 'QuotaExceededError'; throw e; }
+			store.set(k, String(v));
+		},
 		removeItem: (k) => { store.delete(k); },
 	};
 	const win = {};
@@ -92,9 +98,17 @@ function load() {
 		src = src.replace(needle, 'var cutoff = now - PRUNE_MS; // BROKEN: unanchored');
 	}
 
+	if (BREAK === 'swallow') {
+		// The save goes back to swallowing a refused write: the spend is gone.
+		const needle = 'var ok = window.DaimondStore.put(KEY, entries, law);';
+		if (!src.includes(needle)) throw new Error('break target not found: ' + needle);
+		src = src.replace(needle, 'var ok = false; try { localStorage.setItem(KEY, JSON.stringify(entries)); ok = true; } catch (e) { /* BROKEN: swallowed */ }');
+	}
+
 	// eslint-disable-next-line no-new-func
+	const S = loadStore(win, localStorage);
 	new Function('window', 'localStorage', src)(win, localStorage);
-	return { L: win.DaimondLedger, store, localStorage };
+	return { L: win.DaimondLedger, store, localStorage, box, S };
 }
 
 /// A minimal ledger entry. Distinct `(t, m, p, c, ca, pv)` gives a distinct
@@ -214,6 +228,47 @@ function main() {
 			'len=' + stored.length);
 	}
 
+	console.log('\nledger: a spend the box refuses is held owed, read back, and lands when there is room (SIM-10)');
+	{
+		const { L, store, box, S } = load();
+		box.full = true;
+		const rec = L.record({ ts: 1000 * DAY, model: 'm', promptTokens: 3, completionTokens: 4,
+			cachedTokens: 0, costUsd: 0.02, provider: 'p' });
+		check('record answers the entry', !!rec && rec.u === 0.02);
+		check('the box holds nothing', !store.has('daimond-ledger'));
+		check('the ledger still holds the spend, owed', L.entries().length === 1 && S.owed().join() === 'daimond-ledger',
+			'entries=' + L.entries().length + ' owed=' + S.owed().join());
+		box.full = false;
+		S.retry();
+		const landed = store.has('daimond-ledger') ? JSON.parse(store.get('daimond-ledger')) : [];
+		check('it lands when there is room, and nothing is owed', landed.length === 1 && S.owed().length === 0,
+			'stored=' + landed.length + ' owed=' + S.owed().join());
+	}
+
+	console.log('\nledger: a merge the box refuses THROWS, and the union is held owed (SIM-16, A5)');
+	{
+		const { L, box, S } = load();
+		box.full = true;
+		let threw = false;
+		try { L.adopt([entry(1000 * DAY, 'theirs')]); } catch (e) { threw = S.isRefused(e); }
+		check('adopt throws a refusal, so the section is reported failed', threw);
+		check('the union is held here meanwhile', L.entries().length === 1);
+	}
+
+	console.log('\nledger: stored in merge order, so adopting its own ledger moves nothing (SIM-7)');
+	{
+		const { L, store } = load();
+		for (const t of [300, 100, 200]) {
+			L.record({ ts: 1000 * DAY + t, model: 'm', promptTokens: t, completionTokens: 1,
+				cachedTokens: 0, costUsd: 0.01, provider: 'p' });
+		}
+		const before = store.get('daimond-ledger');
+		const moved = L.adopt(JSON.parse(before));
+		check('the stored order is the merge order', JSON.parse(before).map((e) => e.t - 1000 * DAY).join() === '100,200,300',
+			JSON.parse(before).map((e) => e.t - 1000 * DAY).join());
+		check('adopting its own ledger moves nothing', !moved && store.get('daimond-ledger') === before);
+	}
+
 	console.log('\nledger: source guard -- daimond.js routes every merge point through DaimondLedger.merge');
 	{
 		let src = readFileSync(DAIMOND_SRC, 'utf8');
@@ -225,13 +280,16 @@ function main() {
 		const delegates = src.includes('DaimondLedger.merge(mine, theirs, Date.now());');
 		check('mergeLedgers delegates to DaimondLedger.merge', delegates);
 
+		// Since release 5 the apply and the restore go through `DaimondLedger.adopt`,
+		// which merges with `merge` and stores through `DaimondStore` (a refusal throws),
+		// and the collect reads `DaimondLedger.entries`, which holds an owed spend.
 		const sites = [
-			["collect (the parcel this device sends)", /ledger:\s*mergeLedgers\(readJson\('daimond-ledger', \[\]\), \[\]\)/],
-			["apply (a pulled parcel)", /mergeLedgers\(readJson\('daimond-ledger', \[\]\), remote\.ledger\)/],
-			["backup restore", /mergeLedgers\(readJson\('daimond-ledger', \[\]\), data\.ledger\)/],
+			["collect (the parcel this device sends)", /ledger:\s*mergeLedgers\(DaimondLedger\.entries\(\), \[\]\)/],
+			["apply (a pulled parcel)", /DaimondLedger\.adopt\(remote\.ledger\)/],
+			["backup restore", /DaimondLedger\.adopt\(data\.ledger\)/],
 		];
 		for (const [label, re] of sites) {
-			check(label + ' calls mergeLedgers', re.test(src));
+			check(label + ' merges through DaimondLedger', re.test(src));
 		}
 	}
 

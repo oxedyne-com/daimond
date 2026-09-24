@@ -65,6 +65,7 @@
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
+import { loadStore } from './storefixture.mjs';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 let failures = 0;
@@ -115,16 +116,17 @@ function makeCloudTab(storageApi) {
 	if (BREAK === 'ignorequota') {
 		// The bug: `setIndex` never remembers a write it could not land, so
 		// `contentSet` always answers true and `indexDurable()` never goes false.
-		const needle = 'var ok = writeJson(IX_KEY, ix || {});\n\t\tif (ok) indexDirty = null;'
+		const needle = 'var ok = window.DaimondStore.put(IX_KEY, ix || {});\n\t\tif (ok) indexDirty = null;'
 			+ '\n\t\telse indexDirty = indexDirty || { at: Date.now() };\n\t\treturn ok;';
 		if (!body.includes(needle)) throw new Error('break target not found: setIndex tracking');
 		body = body.replace(needle,
-			'writeJson(IX_KEY, ix || {});\n\t\treturn true; // BROKEN: quota forgotten');
+			'window.DaimondStore.put(IX_KEY, ix || {});\n\t\treturn true; // BROKEN: quota forgotten');
 	}
 	const win = { addEventListener: () => {}, dispatchEvent: () => true };
 	const fn = new Function(
 		'window', 'localStorage', 'navigator', 'setTimeout', 'clearTimeout', 'console',
 		'with (window) {\n' + body + '\n}');
+	loadStore(win, storageApi);
 	fn(win, storageApi, { storage: {} }, setTimeout, clearTimeout,
 		{ log: () => {}, debug: () => {}, warn: () => {}, error: () => {} });
 	return win.DaimondCloud;
@@ -309,6 +311,7 @@ function makeDurableCloudTab(storage, idbApi, core) {
 			'with (window) {\n' + src + '\n}');
 		fn(win, storage.api, nav, setTimeout, clearTimeout, QUIET);
 	};
+	run(readFileSync(join(HERE, 'store.js'), 'utf8'));
 	run(patchDurable(readFileSync(join(HERE, 'durable.js'), 'utf8')));
 	run(patchCloud(readFileSync(join(HERE, 'cloud.js'), 'utf8')));
 	return win.DaimondCloud;
@@ -336,9 +339,12 @@ async function main() {
 		chunks: [{ addr: ADDR_STRANDED, size: 4 }], fp: 'f2' });
 	check('1c. contentSet reports the lost write', landed === false);
 	check('1d. indexDurable() goes false', C.indexDurable() === false);
-	check('1e. the index does NOT name the un-written manifest',
-		C.index()['@c/strand'] === undefined,
-		'@c/strand ' + (C.index()['@c/strand'] ? 'present (leaked)' : 'absent'));
+	// Since release 5 the refused index is held owed in the tab (store.js), so this
+	// tab still names the manifest -- and the box does not, and the commit stays gated
+	// on `indexDurable()` until the write lands (1d).
+	check('1e. the un-written manifest is held owed here, not in the box',
+		!!C.index()['@c/strand'] && !String(s.api.getItem('daimond-cloud-index') || '').includes('@c/strand'),
+		'@c/strand ' + (C.index()['@c/strand'] ? 'held' : 'absent') + ', box ' + (String(s.api.getItem('daimond-cloud-index') || '').includes('@c/strand') ? 'has it' : 'has not'));
 
 	// Space is freed: the collector retries, the write lands, durability returns.
 	s.setFull(false);

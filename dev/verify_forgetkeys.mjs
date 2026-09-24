@@ -126,6 +126,14 @@ const BREAKS = {
 		find: "\t\t'daimond-approvelist',\n",
 		with: "",
 	},
+	// M2-R2-2, 2026-09-25: the cloud index (durable.js `daimond-kv`) is an IndexedDB
+	// database, not a `FORGET_CLEARS` entry, so this is its own patch rather than a
+	// line out of the array above.
+	kv: {
+		file: 'js/daimond.js',
+		find: "\t\ttry { indexedDB.deleteDatabase('daimond-kv' + (ns ? '-' + ns : '')); } catch (e) { /* ignore */ }\n",
+		with: "",
+	},
 };
 if (BREAK && !BREAKS[BREAK]) {
 	console.error(`unknown break '${BREAK}'; one of: ${Object.keys(BREAKS).join(', ')}`);
@@ -218,6 +226,24 @@ try {
 		'and every setting under test is really present before the forget',
 		seeded.length ? `missing: ${JSON.stringify(seeded)}` : '');
 
+	// ── The cloud index (M2-R2-2) ─────────────────────────────────
+	//
+	// `daimond-kv` is an IndexedDB database (durable.js), not a localStorage key,
+	// so it needs its own seed and its own check: `FORGET_CLEARS` can only ever
+	// sweep localStorage, and this store was left out of the sweep entirely --
+	// left behind, it is the erased account's file map, readable by the next
+	// identity made in this browser.
+	await p.evaluate(async () => {
+		if (window.DaimondDurable) {
+			await DaimondDurable.ready();
+			await DaimondDurable.set('daimond-kv-probe', { x: 1 });
+		}
+	});
+	const kvBefore = await p.evaluate(() => DaimondDurable.get('daimond-kv-probe'));
+	check(kvBefore && kvBefore.x === 1,
+		'the cloud index (daimond-kv) holds the seeded row before the forget',
+		JSON.stringify(kvBefore));
+
 	// ── Forget, the way a person does it ─────────────────────────
 	await p.evaluate(() => document.getElementById('user-row').click());
 	await p.waitForTimeout(400);
@@ -300,6 +326,18 @@ try {
 	check(after.standing === '',
 		'and the network is put to the user in each chat again',
 		`standing=${JSON.stringify(after.standing)}`);
+
+	// ── 7. And the cloud index is gone too (M2-R2-2) ──────────────
+	//
+	// NOT `indexedDB.databases()`: the fresh boot after the reload calls
+	// `DaimondDurable.ready()` itself and recreates `daimond-kv` empty, so the
+	// NAME exists again within the same tick and says nothing about whether the
+	// erased account's rows survived in it. The seeded row is what has to be gone.
+	await p.evaluate(() => DaimondDurable.ready());
+	const kvAfter = await p.evaluate(() => DaimondDurable.get('daimond-kv-probe'));
+	check(kvAfter === null,
+		'AND THE CLOUD INDEX (daimond-kv) IS GONE, not left as the erased account’s file map',
+		`still there: ${JSON.stringify(kvAfter)}`);
 } finally {
 	await s.close();
 }

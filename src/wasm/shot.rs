@@ -24,6 +24,7 @@ use crate::llm::{
     extract_json_string,
 };
 use crate::wasm::js_str;
+use crate::wasm::refusal;
 
 use oxedyne_fe2o3_core::prelude::*;
 use oxedyne_fe2o3_text::base64;
@@ -59,15 +60,6 @@ fn shooter() -> Outcome<Shooter> {
             worker that can render the page another way."; System, Missing));
     }
     Ok(obj.unchecked_into::<Shooter>())
-}
-
-/// The `message` of a rejected JS `Error`, verbatim.  A refusal from the driver is written for
-/// the model to read and act on, so nothing here rewords it.
-fn refusal(e: &JsValue) -> String {
-    match js_sys::Reflect::get(e, &JsValue::from_str("message")) {
-        Ok(m)  => m.as_string().unwrap_or_else(|| js_str(e)),
-        Err(_) => js_str(e),
-    }
 }
 
 /// One photograph of the current view: the PNG bytes and the pixel size drawn.

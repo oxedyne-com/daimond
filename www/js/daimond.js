@@ -1055,7 +1055,11 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			var ts = m[id];
 			if (typeof ts === 'number' && now - ts < ttl && (!out[id] || ts > out[id])) out[id] = ts;
 		});
-		return out;
+		// In id order, so two devices holding one set send one set of bytes, whatever
+		// order each learnt it in (SIM-7).
+		var sorted = {};
+		Object.keys(out).sort().forEach(function (id) { sorted[id] = out[id]; });
+		return sorted;
 	}
 	/// Rewrite the localStorage read-cache for `key` from the merged truth. Best
 	/// effort: a cache write lost to quota is harmless, because the truth is in
@@ -1954,6 +1958,14 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 						if (!m[id] || ts > m[id]) m[id] = ts;
 						migrate.push({ map: key, id: id, at: ts });
 					});
+				});
+				// And the file tombstones, whose value is the hash the deleting device held
+				// rather than a time (A5): the cache's rows the store has not got go in.
+				var fls = readJson(SYNC_FILE_TOMBS_KEY, {}), fm = tombMemMap(SYNC_FILE_TOMBS_KEY);
+				Object.keys(fls || {}).forEach(function (p) {
+					if (typeof fls[p] !== 'string' || fm[p]) return;
+					fm[p] = fls[p];
+					migrate.push({ map: SYNC_FILE_TOMBS_KEY, id: p, at: fls[p] });
 				});
 				if (migrate.length) {
 					try { await writeTombRows(migrate); }
@@ -3109,12 +3121,23 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 	// that it said nothing at the moment the user could still act. This stays up until
 	// a save lands, and it carries the one move that rescues the work now — writing it
 	// to a file.
+	//
+	// ONE WARNING, SEVERAL REASONS, EACH CLEARED ONLY BY ITS OWN SOURCE (F-S1). The chat
+	// store's IndexedDB (`store`, the default), the records `DaimondStore` holds owed
+	// (`owed`) and the cloud index (`index`) fail and recover apart: a chat save landing
+	// in IndexedDB says nothing about a localStorage record still owed, and taking the
+	// warning down on it left a full box with no warning one turn later. The line shown
+	// is the latest reason still standing.
 	var storageAlarmEl = null;
 	var storageAlarmWhy = '';
+	var storageAlarmWhys = {};		// source -> reason, in the order raised
 
 	/// Raise the standing warning that conversations are not being saved.
-	function storageAlarm(why) {
-		storageAlarmWhy = String(why || '');
+	function storageAlarm(why, src) {
+		src = src || 'store';
+		delete storageAlarmWhys[src];
+		storageAlarmWhys[src] = String(why || '');
+		storageAlarmWhy = storageAlarmWhys[src];
 		try { console.error('Daimond: conversations are not being saved — ' + storageAlarmWhy); } catch (e) {}
 		if (storageAlarmEl) {
 			var line = storageAlarmEl.querySelector('.storage-alarm-why');
@@ -3159,13 +3182,44 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		storageAlarmEl = box;
 	}
 
-	/// Take the warning down, because a save has landed.
-	function storageAlarmClear() {
+	/// Clear one source's reason, because its own save has landed; the warning
+	/// comes down only when no reason is left.
+	function storageAlarmClear(src) {
+		src = src || 'store';
+		if (!Object.prototype.hasOwnProperty.call(storageAlarmWhys, src)) return;
+		delete storageAlarmWhys[src];
+		var left = Object.keys(storageAlarmWhys);
+		if (left.length) {
+			storageAlarmWhy = storageAlarmWhys[left[left.length - 1]];
+			var line = storageAlarmEl && storageAlarmEl.querySelector('.storage-alarm-why');
+			if (line) line.textContent = storageAlarmWhy;
+			return;
+		}
+		storageAlarmWhy = '';
 		if (!storageAlarmEl) return;
 		if (storageAlarmEl.parentNode) storageAlarmEl.parentNode.removeChild(storageAlarmEl);
 		storageAlarmEl = null;
-		storageAlarmWhy = '';
 	}
+
+	// A synced record the box refused is held owed on this page (`DaimondStore`), so
+	// the same warning stands until every one has landed, under its own reason.
+	//
+	// AND WHEN THE LAST ONE LANDS THERE IS ROOM AGAIN, which is the moment a sync
+	// section refused for want of it can be merged: pull now rather than wait for the
+	// re-pull ladder, which may have stood down, or the next focus.
+	var storeOwedBefore = false;
+	DaimondStore.subscribe(function (owed) {
+		var why = tOr('store.records_owed',
+			'This device is out of browser storage, so a change made here is not saved yet. '
+			+ 'This page is keeping it, and saves it as soon as there is room.');
+		if (owed.length) { storeOwedBefore = true; storageAlarm(why, 'owed'); return; }
+		storageAlarmClear('owed');
+		if (storeOwedBefore && window.DaimondSync && DaimondSync.pull) {
+			try { DaimondSync.pull().catch(function () { /* offline: the ordinary triggers retry */ }); }
+			catch (e) { /* not started yet: its own first pull merges */ }
+		}
+		storeOwedBefore = false;
+	});
 
 	/// Raise the standing warning that this device's cloud index cannot be saved.
 	///
@@ -3177,7 +3231,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 	function noteCloudIndexStuck() {
 		storageAlarm(tOr('store.cloud_index_full',
 			'This device is out of browser storage, so cross-device sync is paused. '
-			+ 'Free some space, and your work will travel again.'));
+			+ 'Free some space, and your work will travel again.'), 'index');
 	}
 
 	/// Write every chat this tab holds to a file, right now.
@@ -3619,14 +3673,32 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 	/// Stamp a chat as touched by a TURN, so the merge can order concurrent writes
 	/// by transcript recency. Moves `updatedAt` ONLY -- the metadata stamp `metaAt`
 	/// is left where it is, so a turn landing later from the runner cannot revert a
-	/// rename made here first (S-SYNC #5).
-	function touchChat(c) { if (c) c.updatedAt = Date.now(); }
+	/// rename made here first (S-SYNC #5). Past the stamp it replaces, as every
+	/// stamp is (`DaimondStamp.next`): an edit made after adopting a copy from a
+	/// faster clock must outrank that copy (D112).
+	function touchChat(c) { if (c) c.updatedAt = DaimondStamp.next(c.updatedAt); }
 	/// Stamp a chat as touched by a METADATA edit -- a rename, a model or worker
 	/// change, a status/fold/holds change. Moves BOTH stamps: `metaAt` so the edit
 	/// survives a merge against a later turn (which moves only `updatedAt`), and
 	/// `updatedAt` so the record re-saves, re-pushes and resurfaces on the rail as
 	/// any edit does.
-	function touchChatMeta(c) { if (c) { var now = Date.now(); c.updatedAt = now; c.metaAt = now; } }
+	function touchChatMeta(c) {
+		if (!c) return;
+		var now = DaimondStamp.next(Math.max(c.updatedAt || 0, c.metaAt || 0));
+		c.updatedAt = now; c.metaAt = now;
+	}
+
+	/// The fields a chat's TURN stamp (`updatedAt`) decides, and those its METADATA
+	/// stamp (`metaAt`) decides, as `mergeChatRecords` splits them. Each list is the
+	/// canonical value that breaks a tie at an equal stamp.
+	var CHAT_TURN_FIELDS = ['promptTokens', 'completionTokens', 'cachedTokens', 'costUsd',
+		'prevPrompt', 'prevCompletion', 'lastPrompt', 'prevCached', 'prevCost'];
+	var CHAT_META_FIELDS = ['name', 'model', 'provider', 'workerModel', 'workerProvider',
+		'status', 'foldedInto', 'holds', 'diamondId'];
+	function chatFields(c, names) {
+		var s = slimChat(c);
+		return names.map(function (k) { return s[k]; });
+	}
 
 	/// Merge two chat records FIELD-appropriately -- the ONE rule every apply, merge,
 	/// restore and cross-tab reconcile shares, so the three cannot drift apart again
@@ -3639,7 +3711,10 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 	/// `diamondId`) resolve by `metaAt`: a newer rename survives an older turn
 	/// landing from the runner, and a newer turn does not revert an older rename. A
 	/// side that predates `metaAt` falls back to its `updatedAt`, so a record from an
-	/// old build merges exactly as it did before this split existed.
+	/// old build merges exactly as it did before this split existed. AN EQUAL STAMP
+	/// goes to the canonically greater set of the fields it decides
+	/// (`DaimondStamp.beats`), the same on every device; it used to go to the
+	/// incoming side, so two devices meeting at a tie each took the other's.
 	///
 	/// The transcript is append-only and is ALWAYS unioned (`mergeMessages`), so no
 	/// message is lost whichever side wins the stamps. The union keeps the
@@ -3653,8 +3728,8 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		var au = a.updatedAt || 0, bu = b.updatedAt || 0;
 		var am = (typeof a.metaAt === 'number') ? a.metaAt : au;
 		var bm = (typeof b.metaAt === 'number') ? b.metaAt : bu;
-		var turnNewer = au >= bu ? a : b;			// the turn/transcript winner
-		var metaNewer = am >= bm ? a : b;			// the metadata winner
+		var turnNewer = DaimondStamp.beats(au, chatFields(a, CHAT_TURN_FIELDS), bu, chatFields(b, CHAT_TURN_FIELDS)) ? a : b;
+		var metaNewer = DaimondStamp.beats(am, chatFields(a, CHAT_META_FIELDS), bm, chatFields(b, CHAT_META_FIELDS)) ? a : b;
 		var out = slimChat(turnNewer);
 		// The user-facing scalars come from the metadata winner, overriding the turn
 		// winner's copies of them. This is the whole of the fix: record-level LWW took
@@ -4426,7 +4501,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 	/// The stored roster, with anything that is not a device dropped, and
 	/// anything removed on purpose left out.
 	function loadDevices() {
-		var raw = readJson(DEVICES_KEY, {}), out = {};
+		var raw = DaimondStore.get(DEVICES_KEY, {}), out = {};
 		if (!raw || typeof raw !== 'object') return out;
 		var tombs = loadTombMap(DEVICE_TOMBS_KEY);
 		Object.keys(raw).forEach(function (id) {
@@ -4463,6 +4538,14 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 	/// enumeration order would look like a change on every collect and push for
 	/// ever — the same trap the provider export above is written to avoid.
 	function saveDevices(reg) {
+		var out = rosterRecord(reg);
+		DaimondStore.put(DEVICES_KEY, out, mergeRosters);
+		return out;
+	}
+
+	/// The roster as it is stored: bounded, sorted by id, each line in its fixed
+	/// field order.
+	function rosterRecord(reg) {
 		var ids = Object.keys(reg);
 		if (ids.length > DEVICE_ROSTER_MAX) {
 			// Bounded, dropping the least recently seen — but never this device,
@@ -4475,7 +4558,6 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		}
 		var out = {};
 		ids.sort().forEach(function (id) { out[id] = deviceEntry(reg[id]); });
-		try { localStorage.setItem(DEVICES_KEY, JSON.stringify(out)); } catch (e) { /* best effort */ }
 		return out;
 	}
 
@@ -4565,7 +4647,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		// that are both behaving correctly, and it can only start on a device that has just
 		// redeemed a pairing code -- which is where it was reported from.
 		var chosen = pendingDeviceLabel();
-		if (chosen && chosen !== me.label) { me.label = chosen; me.namedAt = now; }
+		if (chosen && chosen !== me.label) { me.label = chosen; me.namedAt = DaimondStamp.next(me.namedAt); }
 		return reg;
 	}
 
@@ -4594,7 +4676,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		var next = String(label == null ? '' : label).trim().slice(0, DEVICE_NAME_MAX);
 		if (next === d.label) return reg;			// nothing changed, nothing to push
 		d.label   = next;
-		d.namedAt = Date.now();
+		d.namedAt = DaimondStamp.next(d.namedAt);	// past the name it replaces, whatever the clocks
 		return saveDevices(reg);
 	}
 
@@ -4639,33 +4721,51 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 	///
 	/// A removal is honoured here as well as in `loadDevices`, or the union would
 	/// hand the line straight back on the pull that carried it.
+	///
+	/// The same answer whichever side is here (SIM-17): see `mergeDeviceLine`. A
+	/// merged roster the box refuses THROWS, so the section is re-pulled (A5).
 	function mergeDevices(incoming) {
 		if (!incoming || typeof incoming !== 'object') return;
-		var reg = loadDevices(), changed = false;
+		var reg = loadDevices(), live = {};
 		var tombs = loadTombMap(DEVICE_TOMBS_KEY);
 		Object.keys(incoming).forEach(function (id) {
-			if (!DEVICE_ID_RE.test(id) || !incoming[id] || typeof incoming[id] !== 'object') return;
-			if (deviceRemoved(tombs, id, incoming[id].seen)) return;
-			var r = deviceEntry(incoming[id]), mine = reg[id];
-			if (!mine) { reg[id] = r; changed = true; return; }
-			// Strictly newer, like `seen`, and for the same reason: an equal stamp
-			// keeps what is here rather than rewriting a line for nothing.
-			var namedWins = r.namedAt > mine.namedAt;
-			if (!namedWins) { r.label = mine.label; r.namedAt = mine.namedAt; }
-			if (r.seen > mine.seen) {
-				// A device is created once, so the EARLIER stamp is the true one: a
-				// copy that reached us later cannot have been created later.
-				if (mine.created && (!r.created || mine.created < r.created)) r.created = mine.created;
-				reg[id] = r;
-				changed = true;
-			} else if (namedWins) {
-				// The line itself is older than ours, but the naming of it is not.
-				mine.label   = r.label;
-				mine.namedAt = r.namedAt;
-				changed = true;
-			}
+			if (!incoming[id] || typeof incoming[id] !== 'object') return;
+			if (!deviceRemoved(tombs, id, incoming[id].seen)) live[id] = incoming[id];
 		});
-		if (changed) saveDevices(reg);
+		var before = rosterRecord(reg), next = mergeRosters(reg, live);
+		if (JSON.stringify(next) !== JSON.stringify(before)) DaimondStore.putMerged(DEVICES_KEY, next, mergeRosters);
+	}
+
+	/// Two rosters as one, line by line: the law `mergeDevices` applies and the one
+	/// an owed roster is retried under.
+	function mergeRosters(a, b) {
+		var out = {};
+		[a, b].forEach(function (reg) {
+			if (!reg || typeof reg !== 'object') return;
+			Object.keys(reg).forEach(function (id) {
+				if (!DEVICE_ID_RE.test(id) || !reg[id] || typeof reg[id] !== 'object') return;
+				var r = deviceEntry(reg[id]);
+				out[id] = out[id] ? mergeDeviceLine(out[id], r) : r;
+			});
+		});
+		return rosterRecord(out);
+	}
+
+	/// One device's line, merged from two copies, the same whichever copy is here.
+	///
+	/// The line follows the later `seen`, and an equal `seen` the canonically greater
+	/// line. A device is created once, so the EARLIEST `created` either copy holds is
+	/// the true one: a copy that reached us later cannot have been created later. The
+	/// name follows its own later `namedAt`, and an equal one the smaller label.
+	function mergeDeviceLine(a, b) {
+		var key = function (d) { return JSON.stringify([d.name, d.build, typeof d.mobile === 'boolean' ? d.mobile : null]); };
+		var line  = (b.seen > a.seen || (b.seen === a.seen && key(b) > key(a))) ? b : a;
+		var named = (b.namedAt > a.namedAt || (b.namedAt === a.namedAt && b.label < a.label)) ? b : a;
+		var out = deviceEntry(line);
+		out.created = (a.created && b.created) ? Math.min(a.created, b.created) : (a.created || b.created);
+		out.label   = named.label;
+		out.namedAt = named.namedAt;
+		return deviceEntry(out);
 	}
 
 	// ── The nominated always-on runner ─────────────────────────
@@ -4687,7 +4787,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 	/// agrees with serialises to the same bytes and the push still skips. A fixed
 	/// field order, for that same byte-stability.
 	function nominationSnapshot() {
-		var rec = readJson(NOMINATED_KEY, null);
+		var rec = DaimondStore.get(NOMINATED_KEY, null);
 		if (!rec || typeof rec !== 'object') return null;
 		var id = String(rec.id || '');
 		if (id && !DEVICE_ID_RE.test(id)) return null;
@@ -4702,13 +4802,17 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 
 	/// Name ONE device the always-on runner, or clear the nomination with ''. Exactly
 	/// one per account: this is a single scalar, so naming a device replaces any prior
-	/// nominee outright. Stamps `at` with the clock, which is how the choice wins over
-	/// an older one on every device (adoptNomination).
+	/// nominee outright. Stamped past the nomination it replaces, whatever the clocks
+	/// (`DaimondStamp.next`, A1), which is how the choice wins over an older one on
+	/// every device (adoptNomination).
 	function nominateDevice(id) {
 		var next = String(id || '');
 		if (next && !DEVICE_ID_RE.test(next)) return null;
-		var rec = { id: next, at: Date.now() };
-		try { localStorage.setItem(NOMINATED_KEY, JSON.stringify(rec)); } catch (e) { /* best effort */ }
+		var prev = DaimondStore.get(NOMINATED_KEY, null);
+		var rec = { id: next, at: DaimondStamp.next(prev && typeof prev === 'object' ? prev.at : 0) };
+		// A box too full to store it holds the choice owed in this tab, where it
+		// stands, travels and is retried (SIM-10b).
+		DaimondStore.put(NOMINATED_KEY, rec, fresherNomination);
 		// Naming (or clearing) the runner changes where the next turn goes, so the line
 		// under the composer says so at once rather than at the next beat.
 		try { renderSeatLine(); } catch (e) { /* the next presence beat redraws it */ }
@@ -4716,21 +4820,37 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 	}
 
 	/// Merge a nomination that arrived from another device: the fresher `at` wins,
-	/// STRICTLY, and is written VERBATIM -- no restamp -- so a record this device
-	/// already holds moves nothing and the next parcel is unchanged. An equal or older
-	/// stamp is ignored, which is what stops two devices pushing at each other over a
+	/// and is written VERBATIM -- no restamp -- so a record this device already holds
+	/// moves nothing and the next parcel is unchanged. An equal stamp is broken the
+	/// same way on every device (the smaller id, A3), and the same record on both
+	/// sides is no win, which is what stops two devices pushing at each other over a
 	/// nomination they already agree on.
+	///
+	/// A merged nomination the box refuses THROWS, so the roster section is reported
+	/// failed and re-pulled rather than read as applied (SIM-16, A5).
 	function adoptNomination(rec) {
 		if (!rec || typeof rec !== 'object') return;
 		var id = String(rec.id || '');
 		if (id && !DEVICE_ID_RE.test(id)) return;
-		var at = ms(rec.at);
-		var mine = readJson(NOMINATED_KEY, null);
-		var mineAt = (mine && typeof mine === 'object') ? ms(mine.at) : -1;
-		if (at > mineAt) {
-			try { localStorage.setItem(NOMINATED_KEY, JSON.stringify({ id: id, at: at })); }
-			catch (e) { /* best effort */ }
-		}
+		var mine = DaimondStore.get(NOMINATED_KEY, null), next = { id: id, at: ms(rec.at) };
+		if (fresherNomination(mine, next) === next) DaimondStore.putMerged(NOMINATED_KEY, next, fresherNomination);
+	}
+
+	/// The fresher of two nominations, `b` only when it beats `a`: the law the merge
+	/// applies and the one an owed nomination is retried under.
+	function fresherNomination(a, b) {
+		if (!b || typeof b !== 'object') return a;
+		if (!a || typeof a !== 'object') return b;
+		return DaimondStamp.beats(b.at, b, a.at, a, nominationRank) ? b : a;
+	}
+
+	/// A nomination's tie rank: the SMALLER id ranks higher, so a tie goes the same
+	/// way on every device and a clearing ('') wins it. Each code unit complemented,
+	/// and a top unit closing it so a prefix outranks what it prefixes.
+	function nominationRank(r) {
+		var id = String((r && r.id) || ''), out = '';
+		for (var i = 0; i < id.length; i++) out += String.fromCharCode(0xffff - id.charCodeAt(i));
+		return out + '\uffff';
 	}
 
 	// ── Reconciling the roster against who is actually here ────
@@ -5469,8 +5589,28 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		return dir + stem + '.conflict-' + String(device || 'peer').slice(0, 8) + '-' + stamp + ext;
 	}
 
-	/// The file tombstones this device is carrying.
-	function fileTombs() { return readJson(SYNC_FILE_TOMBS_KEY, {}); }
+	/// The file tombstones this device is carrying, in path order, so two devices
+	/// carrying the same set send the same bytes (SIM-7).
+	function fileTombs() {
+		var t = fileTombsHeld(), out = {};
+		Object.keys(t).sort().forEach(function (p) { out[p] = t[p]; });
+		return out;
+	}
+
+	/// The file tombstones as held, oldest first: the localStorage read-cache, with
+	/// this session's overlay over it. DURABLE IN INDEXEDDB like every other tomb map
+	/// (A5): `bootTombs` seeds the overlay from the `tombs` store, so a tombstone the
+	/// cache lost to a full box still travels and is still here after a reload.
+	function fileTombsHeld() {
+		var t = readJson(SYNC_FILE_TOMBS_KEY, {}), m = tombMem[SYNC_FILE_TOMBS_KEY];
+		if (!t || typeof t !== 'object') t = {};
+		if (m) Object.keys(m).forEach(function (p) { if (typeof m[p] === 'string') t[p] = m[p]; });
+		var keys = Object.keys(t);
+		if (keys.length <= SYNC_FILE_TOMBS_MAX) return t;
+		var out = {};
+		keys.slice(keys.length - SYNC_FILE_TOMBS_MAX).forEach(function (k) { out[k] = t[k]; });
+		return out;
+	}
 
 	/// Write a tombstone for every path the fork point holds that a COMPLETE census no
 	/// longer carries, and take those paths out of the fork point.
@@ -5502,12 +5642,12 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		if (complete !== true) return;
 		var local = col.files || {}, large = col.large || {}, away = col.away || {};
 		var base = readJson(SYNC_FILEBASE_KEY, {});
-		var tombs = fileTombs(), next = {}, changed = false, kept = 0;
+		var tombs = fileTombsHeld(), next = {}, fresh = {}, changed = false, kept = 0;
 		Object.keys(base).forEach(function (p) {
 			if (Object.prototype.hasOwnProperty.call(local, p)
 				|| Object.prototype.hasOwnProperty.call(large, p)
 				|| Object.prototype.hasOwnProperty.call(away, p)) { next[p] = base[p]; kept++; return; }
-			if (tombs[p] !== base[p]) { tombs[p] = base[p]; changed = true; }
+			if (tombs[p] !== base[p]) { tombs[p] = fresh[p] = base[p]; changed = true; }
 		});
 		if (kept !== Object.keys(base).length) writeFilebase(next);
 		if (!changed) return;
@@ -5517,8 +5657,18 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			keys.slice(keys.length - SYNC_FILE_TOMBS_MAX).forEach(function (k) { trimmed[k] = tombs[k]; });
 			tombs = trimmed;
 		}
+		// The overlay first, so the parcel carries the deletion whatever the box says;
+		// then the read-cache; then IndexedDB, and a write that does not land there is
+		// said, never swallowed (A5, DEL-4).
+		var m = tombMemMap(SYNC_FILE_TOMBS_KEY);
+		Object.keys(m).forEach(function (p) { if (!Object.prototype.hasOwnProperty.call(tombs, p)) delete m[p]; });
+		Object.keys(fresh).forEach(function (p) { if (Object.prototype.hasOwnProperty.call(tombs, p)) m[p] = fresh[p]; });
 		try { localStorage.setItem(SYNC_FILE_TOMBS_KEY, JSON.stringify(tombs)); }
-		catch (e) { /* best effort: the file simply stays at the far end */ }
+		catch (e) { /* the read-cache: the tombs are in the overlay and IndexedDB */ }
+		ChatStore.putTombs(SYNC_FILE_TOMBS_KEY, fresh).then(function (ok) {
+			if (!ok) storageAlarm(tOr('store.delete_unrecorded',
+				'a deletion could not be recorded — this browser’s storage is full'));
+		});
 	}
 
 	/// Say which flagged folders are too big to travel, BY NAME.
@@ -6071,6 +6221,10 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		// What landed beside a file rather than over it, so a caller (and a verifier)
 		// can say so without reading the console.
 		var out_conflicts = [];
+		// The sandbox's `<path>.synced` copies, written AFTER the pass: written during it,
+		// the loop reaching the `.synced` key a stored copy already held put the old copy
+		// back over the fresh one (SIM-5, as in cloud.js `merge`).
+		var sidecars = {};
 		var paths = {};
 		Object.keys(local).forEach(function (p) { paths[p] = 1; });
 		Object.keys(remoteFiles).forEach(function (p) { paths[p] = 1; });
@@ -6112,7 +6266,12 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 					out_conflicts.push({ path: p, copy: cname });
 				}
 			}
-			else { await writeSyncFile(app, p + '.synced', r); }	// both diverged: preserve both.
+			else if (!/\.synced$/.test(p)) sidecars[p + '.synced'] = r;	// both diverged: preserve both.
+		}
+		for (var sk in sidecars) {
+			if (!Object.prototype.hasOwnProperty.call(sidecars, sk)) continue;
+			delete agreed[sk];
+			await writeSyncFile(app, sk, sidecars[sk]);
 		}
 		// Deletions: a file both devices once agreed on (in the baseline) that the
 		// remote no longer has was deleted there. Propagate it here ONLY if it is
@@ -6820,6 +6979,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 				}
 				try { data = await diamondApp().export_diamond(d.id); }
 				catch (e) { out.complete = false; continue; }  // one unreadable Diamond must not hold up the rest
+				stamp = packHeadStamp(data) || stamp;	// what the bytes carry (B1)
 				// `continue`, not `break`: one Diamond must not stop the fresh ones behind it.
 				if (used + data.length > budget) {
 					strand(d.id, d.name, false);
@@ -6854,6 +7014,9 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 				var text;
 				try { text = await diamondApp().export_diamond(d.id); }
 				catch (e) { out.complete = false; continue; }
+				// The manifest and the entry are stamped with what the bytes carry (B1),
+				// so the reuse check above compares like with like on the next collect.
+				stamp = packHeadStamp(text) || stamp;
 				var mani = null;
 				try { mani = await DaimondChunks.offloadBytes('d:' + d.id, new TextEncoder().encode(text)); }
 				catch (e) { mani = null; }        // gateway unreachable, store full: fall back to inline
@@ -7065,6 +7228,37 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 	/// did.
 	function diamondStamp(d) {
 		return (d && (d.touched || d.updated)) || 0;
+	}
+
+	/// The stamp in a pack's own head, `{"id":"…","touched":N,`, which the engine
+	/// writes first, or 0 for a pack without one.
+	///
+	/// THE STAMP OF THE BYTES THAT TRAVEL (B1). A collect lists every Diamond and
+	/// exports each one afterwards, so an edit landing in between (a tag, a rename,
+	/// a mark removed) ships a pack newer than the list said. The parcel entry must
+	/// carry the pack's stamp, or the receiver records a fork point its stored copy
+	/// never had and a later removal is taken as a two-sided change and unioned
+	/// away. A match on the head, not a parse, because an inline Diamond is
+	/// exported on every collect.
+	function packHeadStamp(data) {
+		if (typeof data !== 'string') return 0;
+		var m = /^\{"id":"(?:[^"\\]|\\.)*","touched":(\d+)/.exec(data.slice(0, 1024));
+		var t = m ? Number(m[1]) : 0;
+		return (isFinite(t) && t > 0) ? t : 0;
+	}
+
+	/// The stamp of the copy a pack lays down, read from its own
+	/// `.daimond/meta.json`, which an import writes verbatim; 0 for a pack
+	/// without one. A receiver's fork point is what it STORED (B1), whatever
+	/// stamp the parcel entry says, so a sender from before the fix above cannot
+	/// leave it pointing at a copy it never held.
+	function packStamp(data) {
+		try {
+			var files = (JSON.parse(data) || {}).files || {};
+			var meta  = JSON.parse(files['.daimond/meta.json'] || files['.red/meta.json'] || '{}');
+			var t = Number(meta.touched || meta.updated || 0);
+			return (isFinite(t) && t > 0) ? t : 0;
+		} catch (e) { return 0; }
 	}
 
 	/// The tags a Diamond export is carrying, read out of the packed metadata.
@@ -7311,7 +7505,10 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			// push and every import. A Diamond this device never had (`!mine`) is a
 			// one-sided arrival, never a conflict.
 			var known = Object.prototype.hasOwnProperty.call(dbase, r.id);
-			var twoSided = !!mine && (!known || diamondStamp(mine) > (dbase[r.id] || 0));
+			// MOVED, NOT MOVED FORWARD: an edit made here after adopting a copy from a
+			// faster clock is stamped below the fork point, and reading only a rise as a
+			// change imported over that edit and kept nothing (CLK-1).
+			var twoSided = !!mine && (!known || diamondStamp(mine) !== (dbase[r.id] || 0));
 			var loserTags = (mine && Array.isArray(mine.tags)) ? mine.tags.slice() : [];
 			var loserLinks = '';
 			if (twoSided) {
@@ -7328,6 +7525,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			// so a failed import leaves an entry narrowed and a row standing: that errs
 			// closed, and the next pull's retry repairs it. A widening never lands.
 			if (DaimondMarksHere.settle(r.id, packLinks(idata), loserLinks)) changed = true;
+			var storedAt = packStamp(idata) || diamondStamp(r);	// the stamp the import lays down
 			try { await app.import_diamond(idata, twoSided); changed = true; }
 			catch (e) { idata = null; continue; }
 			idata = null;							// free the export before the next Diamond
@@ -7351,8 +7549,8 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 				trail('sync diamond CONFLICT', r.id + ' both sides moved — local edit kept as a version');
 			}
 			// The import laid both sides on the remote's copy: it is now the agreed
-			// fork point (S-SYNC #4).
-			dbase[r.id] = diamondStamp(r); baseDirty = true;
+			// fork point (S-SYNC #4), at the stamp that copy carries, not the entry's.
+			dbase[r.id] = storedAt; baseDirty = true;
 			// RECORD THE SENDER'S MANIFEST, so this device names the SAME chunks the
 			// sender does instead of re-offloading the identical Diamond to fresh
 			// addresses on its next collect. Two things follow: no second upload of a
@@ -7370,7 +7568,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 						size:    r.dataRef.size,
 						key:     r.dataRef.key,
 						chunks:  r.dataRef.chunks,
-						touched: diamondStamp(r),
+						touched: storedAt,
 					});
 					// Our own manifest now names the sender's addresses exactly, so the
 					// peer slot beside it is a second record of one address set. Dropped,
@@ -7744,6 +7942,11 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			var reason = 'unrestorable';
 			if (kind === '@c/')       reason = (msgs[id] | 0) > 0 ? 'reoffload' : 'no-local-text';
 			else if (kind === '@d/')  reason = (!dHeld || dHeld[id]) ? 'reoffload' : 'no-local-text';
+			// A message tail: offloaded again if the post record still holds its heavy
+			// half, which it does on the device that offloaded it (REF-1). It used to
+			// read as unrestorable, so a swept tail was never put back.
+			else if (kind === '@m/')  reason = (window.DaimondPost && DaimondPost.holdsHeavy
+				&& DaimondPost.holdsHeavy(id)) ? 'reoffload' : 'no-local-text';
 			else if (kind === 'file') {
 				var f = null;
 				try { f = await syncFileAt(_sharePlan, key); } catch (e) { f = null; }
@@ -8078,7 +8281,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			// duplicate: the parcel is compared byte-for-byte against the last one
 			// pushed, so an order that depended on how storage enumerated would push
 			// for ever.
-			ledger:       mergeLedgers(readJson('daimond-ledger', []), []),
+			ledger:       mergeLedgers(DaimondLedger.entries(), []),
 		};
 	}
 
@@ -8162,6 +8365,28 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 				dev:    dev || '',	// whose addresses these are, for the log and the eye.
 			});
 		} catch (e) { /* an index that would not write is retried next pull */ }
+	}
+
+	/// Name the message tails a peer's parcel carries (`@m/<addr>`) in that peer's
+	/// slot, as the chat and Diamond arms name theirs, so this device's commit
+	/// declares them live. Without it a committing device swept every tail another
+	/// device had offloaded, the next time it committed (REF-1).
+	///
+	/// A slot the sender no longer backs -- its row rides inline again, or is gone --
+	/// is dropped, found by one pass over the index rather than one lookup per
+	/// message: a heavy account's record holds thousands, most of them inline.
+	function notePeerMsgRefs(post, from) {
+		var msgs = (post && post.msgs && typeof post.msgs === 'object') ? post.msgs : {};
+		var refd = function (addr) { return !!(msgs[addr] && msgs[addr].msgRef); };
+		Object.keys(msgs).forEach(function (addr) {
+			if (refd(addr)) notePeerRef('@m/' + addr, msgs[addr].msgRef, false, from);
+		});
+		if (!window.DaimondCloud || !DaimondCloud.peerKeyFor || !DaimondCloud.contentForget) return;
+		var tail = DaimondCloud.peerKeyFor('', from), ix = DaimondCloud.index();
+		Object.keys(ix).forEach(function (k) {
+			if (k.slice(0, 3) !== '@m/' || k.slice(-tail.length) !== tail) return;
+			if (!refd(k.slice(3, k.length - tail.length))) DaimondCloud.contentForget(k);
+		});
 	}
 
 	/// Which device SENT this parcel, or `''` when it does not say.
@@ -8568,6 +8793,8 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		await section('chunked',  function () {
 			return applyChunked(remote.chunked, cloudBase, parcelSender(remote));
 		});
+		// The message tails the sender offloaded, named in its slot (REF-1).
+		await section('msgrefs',  function () { notePeerMsgRefs(remote.post, from); });
 		// The providers, their model lists and their sealed keys. A parcel without
 		// the field is a device that predates it, so a v1 parcel still applies.
 		await section('models',   function () {
@@ -8578,19 +8805,11 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		// would take money out of the account's history — and each device is the
 		// only witness to its own turns.
 		await section('ledger',   function () {
-			if (!Array.isArray(remote.ledger) || !remote.ledger.length) return;
-			var merged = mergeLedgers(readJson('daimond-ledger', []), remote.ledger);
-			// Quota here must not throw uncaught during a sync merge. The merge is
-			// idempotent — the same parcel replayed on the next sync re-unions the
-			// same rows — so a failed write costs nothing but a retry.
-			try { localStorage.setItem('daimond-ledger', JSON.stringify(merged)); }
-			catch (e) { /* quota: the merge re-runs on the next sync */ }
+			// A merge the box refuses THROWS here, so the section is reported failed
+			// and the version re-pulled; the union is held owed in the meantime (A5).
+			if (!DaimondLedger.adopt(remote.ledger)) return;
 			// The meters are showing a total that just changed.
 			try { updateSpend(); } catch (e) { /* nothing is drawn yet */ }
-			// This write bypasses `DaimondLedger.save` (the merged array already
-			// carries the prune), so it raises the same signal by hand -- the
-			// Model-stats panel, if it is open, redraws on this too.
-			try { if (window.DaimondLedger) DaimondLedger.notifyChanged(); } catch (e) { /* best-effort */ }
 		});
 		// The mailboxes. A second device that holds the account holds the
 		// entitlement too, so an account that arrives here is an account that can
@@ -15005,8 +15224,9 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 	/// `refused` or `failed` -- and the result text is never asked about it. An
 	/// outcome that is none of the three is drawn as a failure rather than quietly
 	/// as a success, so a build whose engine has stopped sending one says so on the
-	/// first tool call instead of going green.
-	function renderToolResult(name, result, outcome) {
+	/// first tool call instead of going green. `paused` is the pause node that
+	/// refused the call, the event's own field, and '' for any other call.
+	function renderToolResult(name, result, outcome, paused) {
 		if (name === 'say' && _saidJust) { _saidJust = false; return; }
 		// The result of a question is a sentence written for the model about what it
 		// has just done, so it is not drawn under the card the user is reading.
@@ -15036,7 +15256,8 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			// against red is the one distinction a red-green reader cannot make, and
 			// until this seam landed there were not two states to tell apart at all.
 			lastToolBlock.classList.toggle('refused', refused);
-			markOutcome(lastToolBlock, refused ? 'refused' : failed ? 'failed' : 'done');
+			markOutcome(lastToolBlock, refused ? 'refused' : failed ? 'failed' : 'done',
+				refused ? paused : '');
 			if (lastToolBlock._resWrap) lastToolBlock._resWrap.style.display = '';
 			var resPre = lastToolBlock.querySelector('.tool-result');
 			// A tool that SUCCEEDS can be colourful too, so the plain path is stripped
@@ -15119,12 +15340,25 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 	///
 	/// Amber against red is the one distinction a red-green reader cannot make, so
 	/// the state is a WORD as well as a hue: "web_search · ok", "· refused", "· failed".
-	function markOutcome(block, outcome) {
+	///
+	/// A refusal a PAUSE made says so, and names the control by its label --
+	/// "web_search · Paused — Web access" -- because the sentence saying what to press
+	/// is otherwise only in the collapsed body (QA-1). The node is the engine's
+	/// `paused` field on the event, never read back out of the translated sentence.
+	function markOutcome(block, outcome, paused) {
 		if (!block._meta) return;
-		var word = outcome === 'refused' ? tOr('chat.tool_refused', 'refused')
+		var word = paused                ? tOr('pause.refused_title', 'Paused')
+			: outcome === 'refused' ? tOr('chat.tool_refused', 'refused')
 			: outcome === 'failed'   ? tOr('chat.tool_failed', 'failed')
 			:                          tOr('chat.tool_ok', 'ok');
-		block._meta.textContent = (block._toolName || '') + ' · ' + word;
+		var label = (block._toolName || '') + ' · ' + word;
+		if (paused) {
+			var name = paused;
+			try { if (window.DaimondPause) name = DaimondPause.label(paused) || paused; } catch (e) { name = paused; }
+			label += ' — ' + name;
+			block.dataset.pauseNode = paused;
+		}
+		block._meta.textContent = label;
 	}
 
 	/// The most a live command's output may occupy in the chat.
@@ -15469,9 +15703,11 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 	// `armAskIdleBound`.
 	var ASK_SILENT_MAX_MS = 2 * DIALOG_IDLE_MS;
 
-	// How long an unbidden question ignores Enter, Space and a press of its yes: the
-	// usual guard against a keystroke or a click meant for something else. See `dialog`.
-	var UNBIDDEN_GUARD_MS = 1000;
+	// How long a guarded question ignores Enter, Space and a press of its yes: the
+	// usual defence against a keystroke or a click meant for something else, whether
+	// the question was raised unbidden or is a person's own press whose yes grants
+	// more than the one thing they meant to touch. See `dialog`.
+	var GUARD_MS = 1000;
 	function dialogIdleMs() {
 		var n = Number(window.__daimondDialogIdleMs);
 		return (n > 0) ? Math.min(n, DIALOG_IDLE_MS) : DIALOG_IDLE_MS;
@@ -15516,8 +15752,12 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 	/// dialog somebody is reading must not be withdrawn from under them -- and only a
 	/// question whose unanswered outcome is the SAFE one may ask for one. Every
 	/// dialog, deadline or not, ALSO gets `armIdleBound`'s half-hour backstop below.
-	/// `opts.unbidden` marks a question a running turn raised on its own, which is
-	/// focused on its safe button and guarded against a stray key; see `guardUntil`.
+	/// `opts.guard` marks a question whose yes must not fire from a stray or a held
+	/// key: a running turn's own question (R6), raised while the person may be
+	/// typing elsewhere, or a person's own press whose yes grants more than the row
+	/// on screen (F1, 2026-09-25: "Use here" opened focused on itself, and a held
+	/// Enter granted a mark nobody meant to confirm). It is focused on its safe
+	/// button and guarded against a stray key; see `guardUntil`.
 	function dialog(opts) {
 		return new Promise(function (resolve) {
 			var back = document.createElement('div');
@@ -15628,16 +15868,20 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			// there. `close` is the single exit, so one line covers all of them.
 			var deadline = null;
 			var idleTimer = null;
-			// A QUESTION THAT ARRIVES UNBIDDEN -- raised by a running turn rather than by
-			// anything the person just did -- lands while they may be typing somewhere else,
-			// and the next key they press was meant for that (re-check of 2026-09-23, R6: the
-			// held delete took focus onto "Let it go on", and one Space in the composer let a
-			// turn delete ten files). So such a card takes focus onto the SAFE button, and for
-			// `UNBIDDEN_GUARD_MS` after it appears neither Enter nor Space answers it and its
-			// yes cannot be pressed: nobody has read a question that has been up for less
-			// than a second, so no key or click in that time is an answer to it. Escape, the
-			// cross and the backdrop still close it, because each of those is the safe answer.
-			var guardUntil = opts.unbidden ? Date.now() + UNBIDDEN_GUARD_MS : 0;
+			// A GUARDED QUESTION lands while the person may still be moving toward
+			// something else -- a running turn's own question, raised by nothing the
+			// person just did (re-check of 2026-09-23, R6: the held delete took focus
+			// onto "Let it go on", and one Space in the composer let a turn delete ten
+			// files); or a person's own press whose yes reaches wider than what is on
+			// screen, where the OS's own key-repeat can fire it before they have read
+			// the question (F1, 2026-09-25: one held Enter opened and then granted
+			// "Use here" in the same stroke). So such a card takes focus onto the SAFE
+			// button, and for `GUARD_MS` after it appears neither Enter nor Space
+			// answers it and its yes cannot be pressed: nobody has read a question that
+			// has been up for less than a second, so no key or click in that time is an
+			// answer to it. Escape, the cross and the backdrop still close it, because
+			// each of those is the safe answer.
+			var guardUntil = opts.guard ? Date.now() + GUARD_MS : 0;
 			var guardTimer = null;
 			function guarded(e) {
 				return Date.now() < guardUntil
@@ -15692,11 +15936,11 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 				else if (e.key === 'Tab') keepFocusIn(card, e);
 			}
 			document.addEventListener('keydown', onKey, true);
-			if (opts.unbidden) {
+			if (opts.guard) {
 				document.addEventListener('keyup', onKeyUp, true);
 				ok.disabled = true;
 				guardTimer = setTimeout(function () { guardTimer = null; ok.disabled = false; },
-					UNBIDDEN_GUARD_MS);
+					GUARD_MS);
 			}
 			back.addEventListener('mousedown', function (e) {
 				if (e.target === back) close(nothing());
@@ -15704,7 +15948,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			if (cancel) cancel.addEventListener('click', function () { close(nothing()); });
 			ok.addEventListener('click', submit);
 
-			(input || (opts.unbidden && cancel) || ok).focus();
+			(input || (opts.guard && cancel) || ok).focus();
 			if (input) input.select();
 			// The self-answer, wired LAST so nothing above it can fire early. It closes
 			// with `nothing()` -- the value Escape, Cancel, the cross and the backdrop all
@@ -15753,7 +15997,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			deadlineMs: opts.deadlineMs,
 			onDeadline: opts.onDeadline,
 			ask: opts.ask,
-			unbidden: opts.unbidden,
+			guard: opts.guard,
 		});
 	}
 
@@ -15837,7 +16081,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			deadlineMs: 110000,
 			onDeadline: function () { return false; },
 			ask: 'delete-held',
-			unbidden: true,
+			guard: true,
 		}).then(function (yes) { return yes === true; }, function () { return false; });
 	}
 
@@ -16085,7 +16329,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 	/// # Arguments
 	/// * `app` - The freshly built DaimondApp.
 	/// * `diamondId` - The Diamond this agent works for.
-	async function scopeAgentTo(app, diamondId) {
+	async function scopeAgentTo(app, diamondId, given) {
 		if (!app || typeof app.set_diamond_scope !== 'function'
 			|| typeof app.diamond_scope !== 'function') {
 			throw new Error('This build of the engine cannot confine an agent to a diamond.');
@@ -16093,7 +16337,8 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		if (!diamondId) {
 			throw new Error('An agent was dispatched without a diamond to work in.');
 		}
-		var b = await Files.bounds(diamondId);
+		// `given` is the bounds a caller has just read and will compare against later.
+		var b = given || await Files.bounds(diamondId);
 		if (!b.own_dir) {
 			throw new Error('That diamond has no directory, so there is nothing to confine it to.');
 		}
@@ -16785,10 +17030,15 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			try { await answerAskHere(turnId, choice); } catch (e) { /* the grant still goes */ }
 		}
 		try {
+			// Addressed to the runner holding the turn, so no other device's ack takes it
+			// off the relay before the runner has it (D126).
+			var runner = '';
+			try { runner = (window.DaimondLease && DaimondLease.holder) ? (DaimondLease.holder(String(turnId)) || '') : ''; }
+			catch (e) { runner = ''; }
 			var grant = DaimondPeer.makeGrant({
 				cid: b.cid || '', turnId: String(turnId), kind: String(b.kind || 'consent'),
 				verdict: verdict === 'allow' ? 'allow' : 'deny',
-				choice: String(choice == null ? '' : choice), by: selfDeviceId(),
+				choice: String(choice == null ? '' : choice), by: selfDeviceId(), to: runner,
 			});
 			var body = await DaimondPeer.sealForSelf(grant);
 			await DaimondPost.post(body);
@@ -16901,8 +17151,11 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 	/// double-charge risk: the runner times out and parks, and the turn re-runs bounded.
 	async function sealAndPostGrant(ask, verdict) {
 		try {
+			// To the runner that asked: a third device that collected an unaddressed grant took
+			// it and acked it away before the runner saw it (R3 QA Q4, D126).
 			var grant = DaimondPeer.makeGrant({
 				cid: ask.cid, eid: ask.eid, turnId: ask.turnId, verdict: verdict, by: selfDeviceId(),
+				to: String(ask.dispatchedBy || ''),
 			});
 			var body = await DaimondPeer.sealForSelf(grant);
 			await DaimondPost.post(body);
@@ -17038,7 +17291,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 				t('permmode.run_ok'),
 				// Re-check of 2026-09-23: this question is raised by the running turn, not
 				// by anything the person just did, so it takes R6's guard (see `dialog`).
-				{ title: t('permmode.run_title'), danger: false, unbidden: true });
+				{ title: t('permmode.run_title'), danger: false, guard: true });
 			return okRun ? 'allow' : 'deny';    // never remembered: every time means every time.
 		}
 		// MAY THIS TURN REACH THE NETWORK AT ALL — a different question from "may
@@ -17136,7 +17389,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 				okLabel: t('permmode.net_ok'),
 				danger:  true,
 				// Re-check of 2026-09-23: raised by the running turn: R6's guard applies.
-				unbidden: true,
+				guard: true,
 				build:   function (card) {
 					var row = document.createElement('label');
 					row.className = 'dlg-tick';
@@ -17241,7 +17494,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 					deadlineMs: pubWaitMs,
 					onDeadline: function () { pubTimedOut = true; },
 					// Re-check of 2026-09-23: raised by the running turn: R6's guard applies.
-					unbidden: true });
+					guard: true });
 			if (pubTimedOut) {
 				trail('publish consent', 'nobody answered within '
 					+ Math.round(pubWaitMs / 1000) + 's on a screen nobody was at, so nothing '
@@ -17351,7 +17604,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 				okLabel: tOr('egress.search_ok', 'Run this search'),
 				danger:  true,
 				// Re-check of 2026-09-23: raised by the running turn: R6's guard applies.
-				unbidden: true,
+				guard: true,
 				build:   function (card) {
 					var row = document.createElement('label');
 					row.className = 'dlg-tick';
@@ -17450,7 +17703,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 					: t('egress.type_title', { host: host }),
 					danger: true,
 					// Re-check of 2026-09-23: raised by the running turn: R6's guard applies.
-					unbidden: true });
+					guard: true });
 			return okType ? 'allow' : 'deny';		// never remembered.
 		}
 		// Clicking navigates, and a link's address is written by whoever wrote the
@@ -17477,7 +17730,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 					: t('egress.act_title', { host: host }),
 					danger: true,
 					// Re-check of 2026-09-23: raised by the running turn: R6's guard applies.
-					unbidden: true });
+					guard: true });
 			if (!okAct) return 'deny';
 			if (!req.alone) _egressAct[host] = 1;
 			return 'allow';
@@ -17502,7 +17755,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 				// Re-check of 2026-09-23: R6's guard, but only for the turn's own address --
 				// under `strict` this is the crystal page's own link, raised by the click
 				// that just happened, not by a turn while the person is elsewhere.
-				{ title: t('egress.heavy_title', { host: host }), danger: true, unbidden: !strict });
+				{ title: t('egress.heavy_title', { host: host }), danger: true, guard: !strict });
 			// SPENT ON THIS ONE ADDRESS, in words the engine cannot file as the
 			// conversation's answer — in either direction. A yes here is not a yes to
 			// the web, and a no here is not a no to it: declining one overlong address
@@ -17513,7 +17766,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		// The crystal page's own link, which no standing answer covers and which is
 		// asked about one address at a time, for ever. See the note on `strict` above.
 		//
-		// NOT `unbidden`. Unlike every other dialog this door raises, this one follows
+		// NOT `guard`. Unlike every other dialog this door raises, this one follows
 		// directly from a click the person just made inside the page -- it is not the
 		// running turn interrupting them elsewhere, which is what R6's guard is for.
 		if (strict) {
@@ -17553,7 +17806,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			t('egress.any_ok'),
 			// Re-check of 2026-09-23: raised by the running turn (never reached under
 			// `strict`, which returns above at `reach`): R6's guard applies.
-			{ title: t('egress.any_title'), danger: true, unbidden: true });
+			{ title: t('egress.any_title'), danger: true, guard: true });
 		return ok ? 'allow' : 'deny';
 	}
 
@@ -19055,8 +19308,11 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			var dot = 'ok', text = '';
 			var devices = 0;
 			try { devices = Object.keys(collectDevices() || {}).length; } catch (e) { devices = 0; }
+			// The chip's one word (`DaimondSync.chip`). `DaimondSync.state()` is the engine's
+			// facts as an object, and reading it here matched none of the words below: the
+			// line said "This device only" through every stall (D072).
 			var sync = '';
-			try { sync = (window.DaimondSync && DaimondSync.state) ? DaimondSync.state() : ''; }
+			try { sync = (window.DaimondSync && DaimondSync.chip) ? String(DaimondSync.chip() || '') : ''; }
 			catch (e) { sync = ''; }
 			var M = window.DaimondModels;
 			if (locked) {
@@ -19667,10 +19923,18 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			release: release, push: push,
 			toggle: toggleSettings,
 			home: home, homeContent: homeContent, form: form, closeModal: closeModal,
-			clear: clear, status: status,
+			clear: clear, status: status, summary: renderStatusSummary,
 			close: closeAdmin,
 		};
 	})();
+
+	// THE SUMMARY FOLLOWS THE CHIP. The rail's one line reads the sync chip, and the
+	// chip changes on its own -- a round starting, landing, or stalling -- with nothing
+	// else on the strip moving, so the line was only as fresh as the last repaint
+	// something unrelated caused. sync.js says when the chip's word changes.
+	window.addEventListener('daimond:sync-chip', function () {
+		try { DaimondAdmin.summary(); } catch (e) { /* the panel is not up yet */ }
+	});
 
 	// Published on purpose. Two other modules already ask for `window.DaimondAdmin`
 	// before sending the user to the Pro offer in Credits -- mail.js when its pitch
@@ -20081,7 +20345,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			// THE ONE PLACE PROSE IS STILL READ. A tool log stored before the outcome
 			// was a field has the text and nothing else; one stored since carries it.
 			renderToolResult(m.name || '', m.content || '',
-				m.outcome || outcomeOfStoredText(m.content || ''));
+				m.outcome || outcomeOfStoredText(m.content || ''), m.paused || '');
 		}
 	}
 
@@ -21534,6 +21798,14 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 				try { return (window.DaimondPresence && DaimondPresence.relayNow) ? DaimondPresence.relayNow() : null; }
 				catch (e) { return null; }
 			},
+			// THE CLOCK EVERY LEASE AGE AND EXPIRY IS MEASURED ON (SIM-4). Named
+			// explicitly here, not left to `DaimondLease`'s own fallback, because this
+			// is the deps object the census's money-critical path (`runErrand`'s take,
+			// renew, complete, release) reads `now` from: the gateway-corrected clock,
+			// never this device's raw one, so a device whose clock has drifted past
+			// the 90s TTL from a still-running peer's still reads that peer's lease as
+			// live rather than re-running -- and re-billing -- its turn.
+			now:       leaseClockNow,
 			births:    turnBirthsHeld,
 			selfId:    selfDeviceId(),
 			// This machine's label, for the sentence a HANDED-BACK failure carries home
@@ -21630,7 +21902,8 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 					if (tid && _runnerCtx[tid]) {
 						_runnerCtx[tid].abort = function () {
 							try { if (c && c.chat) Workers.cancelAwaits(c.chat.id); } catch (e) { /* best effort */ }
-							try { var da = diamondApp(did); if (da) da.abort(); } catch (e) { /* idempotent */ }
+							// THIS turn, by its tag: the Diamond's app is shared (`abortTurn`).
+							if (c && c.chat) abortTurn(c.chat);
 						};
 					}
 					// The crystal-agent turn, streamed to the dispatcher through the same
@@ -21646,7 +21919,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 				if (tid && _runnerCtx[tid]) {
 					_runnerCtx[tid].abort = function () {
 						try { if (c && c.chat) Workers.cancelAwaits(c.chat.id); } catch (e) { /* best effort */ }
-						try { if (c && c.chat && c.chat.app) c.chat.app.abort(); } catch (e) { /* idempotent */ }
+						if (c && c.chat) abortTurn(c.chat);
 					};
 				}
 				// D3 — the prompt is already in the reconstructed transcript, so tell
@@ -21664,7 +21937,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			},
 			abort: function () {
 				try { if (ctx && ctx.chat) Workers.cancelAwaits(ctx.chat.id); } catch (e) { /* best effort */ }
-				try { if (ctx && ctx.chat && ctx.chat.app) ctx.chat.app.abort(); } catch (e) { /* idempotent */ }
+				if (ctx && ctx.chat) abortTurn(ctx.chat);
 			},
 			pushResult: async function () {
 				// A DAIMON'S session is written by `runSteer` itself, straight from
@@ -22386,6 +22659,19 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		catch (e) { return ''; }
 	}
 
+	/// THE CLOCK EVERY LEASE-LIVENESS CHECK READS (SIM-4). A device's raw
+	/// `Date.now()` disagrees with a peer's by however far the two clocks have
+	/// drifted, so a call site that judged a lease's liveness against it could read
+	/// a peer's still-running lease as dead once that drift passed the 90s TTL, and
+	/// re-run -- and re-bill -- the turn. `DaimondLease.authorityNow` corrects for
+	/// the drift with the offset learned from the gateway's own answers; this is
+	/// the one place a lease-facing call site falls back to the raw clock, only
+	/// before any gateway round trip has taught that offset.
+	function leaseClockNow() {
+		try { return (window.DaimondLease && DaimondLease.authorityNow) ? DaimondLease.authorityNow() : Date.now(); }
+		catch (e) { return Date.now(); }
+	}
+
 	/// A readable name for a device id, for the per-turn "ran on <device>"
 	/// indicator. The presence beat carries each awake device's own label, so it
 	/// is asked first; the roster is the durable fallback for a device not
@@ -22764,18 +23050,20 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			var snap = {};
 			try { snap = (await DaimondSync.leaseGet()).leases || {}; } catch (e) { return 0; }
 			var self = selfDeviceId();
-			var stale = DaimondPeer.staleOwnLeaseDecision(snap, self, _runnerCtx, Date.now());
+			var stale = DaimondPeer.staleOwnLeaseDecision(snap, self, _runnerCtx, leaseClockNow());
 			var cas = DaimondPeer.syncCas(peerSyncShim());
 			for (var i = 0; i < stale.length; i++) {
 				var tid = stale[i];
 				diag('lease self-release', 'turn=' + tid + ' by=' + String(self).slice(0, 8));
 				// REPORT then RELEASE, the order every other hand-back keeps, so the
 				// account of the stop is on its way before the turn becomes claimable.
+				// Built from the LEASE, which names the device the turn was run for: with
+				// no `to` the report was this runner's own to collect and ack off the relay
+				// before the phone had it (R3 QA Q6). A lease an older build took names
+				// nobody, and its report is taken as before.
 				try {
-					await DaimondPost.post(await DaimondPeer.sealForSelf(DaimondPeer.makeReport({
-						turnId: tid, status: 'error',
-						why: 'runner-restarted',
-					})));
+					await DaimondPost.post(await DaimondPeer.sealForSelf(DaimondPeer.reportFor(
+						snap[tid] || { turnId: tid }, { status: 'error', why: 'runner-restarted' })));
 				} catch (e) { /* the release below still frees the turn */ }
 				try { await DaimondLease.release(tid, self, cas); }
 				catch (e) { /* an unreleased lease still expires at its deadline */ }
@@ -24078,7 +24366,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 				}
 				if (dm) {
 					var lease = (window.DaimondLease && DaimondLease.record) ? DaimondLease.record(iturn) : null;
-					if (DaimondPeer.dispatchState(dm, lease, selfDeviceId(), Date.now()) === 'peer-held') return;
+					if (DaimondPeer.dispatchState(dm, lease, selfDeviceId(), leaseClockNow()) === 'peer-held') return;
 				}
 			}
 		} catch (e) { /* fall through to the ordinary continue */ }
@@ -24171,7 +24459,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 					var dm = chat.messages[di];
 					if (dm.iturn !== iturn || dm.why !== 'dispatched') continue;
 					var lease = (window.DaimondLease && DaimondLease.record) ? DaimondLease.record(iturn) : null;
-					if (DaimondPeer.dispatchState(dm, lease, selfDeviceId(), Date.now()) === 'peer-held') return;
+					if (DaimondPeer.dispatchState(dm, lease, selfDeviceId(), leaseClockNow()) === 'peer-held') return;
 					break;
 				}
 			}
@@ -24227,7 +24515,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		try {
 			if (dm && window.DaimondPeer && DaimondPeer.dispatchState) {
 				var lease = (window.DaimondLease && DaimondLease.record) ? DaimondLease.record(iturn) : null;
-				if (DaimondPeer.dispatchState(dm, lease, selfDeviceId(), Date.now()) === 'peer-held') return;
+				if (DaimondPeer.dispatchState(dm, lease, selfDeviceId(), leaseClockNow()) === 'peer-held') return;
 			}
 		} catch (e) { /* fall through to the ordinary retry */ }
 		// NOR IS AN ANSWER RE-SENT BARE FROM HERE (replay site 4). Where the turn is a hand-off
@@ -24316,7 +24604,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 				}
 				if (dm) {
 					var lease = (window.DaimondLease && DaimondLease.record) ? DaimondLease.record(last.iturn) : null;
-					if (DaimondPeer.dispatchState(dm, lease, selfDeviceId(), Date.now()) === 'peer-held') return;
+					if (DaimondPeer.dispatchState(dm, lease, selfDeviceId(), leaseClockNow()) === 'peer-held') return;
 				}
 			}
 		} catch (e) { /* draw them */ }
@@ -24386,7 +24674,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 					if (chat.messages[pj].iturn === iturn && chat.messages[pj].why === 'dispatched') { pm = chat.messages[pj]; break; }
 				}
 				if (pm && window.DaimondPeer && DaimondPeer.dispatchState
-					&& DaimondPeer.dispatchState(pm, (window.DaimondLease && DaimondLease.record) ? DaimondLease.record(iturn) : null, selfDeviceId(), Date.now()) === 'peer-held') {
+					&& DaimondPeer.dispatchState(pm, (window.DaimondLease && DaimondLease.record) ? DaimondLease.record(iturn) : null, selfDeviceId(), leaseClockNow()) === 'peer-held') {
 					return;			// the peer has it; do not recover locally
 				}
 			} catch (e) { /* fall through to ordinary recovery */ }
@@ -24782,7 +25070,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		// screen — billed to a chat that no longer exists. This holds for any
 		// chat, not only the current one, now that each generates on its own.
 		if (chat._generating) {
-			try { if (chat.app) chat.app.abort(); } catch (e) { /* already gone */ }
+			abortTurn(chat);
 			chat._generating = false;
 			if (current === chat) { hideSpinner(); setSendMode('send'); chatInput.disabled = false; }
 		}
@@ -25277,8 +25565,16 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 				// it. Same relation an attachment carries, and the same word
 				// `ARTEFACT_TOOLS` gives `artefact_add`, so the artefact strip
 				// lists it without being taught anything new.
+				//
+				// NOT A MARK, AND NAMING NO WORKSPACE (M1, 2026-09-25). The file is in the
+				// Diamond's own directory, which every fence holds on every device, so the
+				// row lists it and grants nothing (`isMark` in markshere.js): there is no
+				// press here to record and nothing for "Use here" to confirm anywhere. And
+				// `diamonds/` is the store, which follows no folder (`is_store_path`), so a
+				// reference rooted in the folder open at the moment of Keep drew the tile
+				// shut, "in the folder usr", from every other workspace.
 				await diamondApp().add_link(id, 'diamond:' + id,
-					rootedRef('file', transcriptPath(id)), 'holds', '', 'user');
+					'file:' + transcriptPath(id), 'holds', '', 'user');
 				signalLinksChanged();
 			} catch (e) {
 				try { console.warn('[keep] could not link the transcript', e); } catch (e2) {}
@@ -26035,6 +26331,28 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		return DaimondModels.held(node) ? node : '';
 	}
 
+	/// Stop the turn a conversation is running, and no other.
+	///
+	/// A daimon's record runs on its Diamond's app, which every Diamond on the same model
+	/// shares, so `app.abort()` stopped whichever of them happened to be running as well
+	/// (PQA D). The engine's `abort_turn` stops the one turn the page tagged at its start
+	/// (`set_turn_tag`), and holds that stop across rounds, so a Stop or a pause that lands
+	/// while a round's tools run still ends the turn (PQA W, WD). `abort()` remains for an
+	/// app nobody shares.
+	function abortTurn(c) {
+		if (!c || !c.app) return;
+		// THE SHARED DAIMON CLIENT IS NEVER STOPPED WHOLE (engine QA E1): it carries every Diamond
+		// on its model, so a record on it is stopped by its tag or not at all.
+		var shared = _sharedClients.has(c.app);
+		try {
+			var hit = false;
+			if (c._turnTag && typeof c.app.abort_turn === 'function') hit = c.app.abort_turn(String(c._turnTag));
+			// A tag that reached no running turn, on an app that is this record's own: the whole
+			// app, which is only this turn (E2's belt). An early tag is remembered all the same.
+			if (!hit && !shared) c.app.abort();
+		} catch (e) { /* idempotent */ }
+	}
+
 	/// Stop what a pause has just caught running: every turn `turnHold` now holds, and
 	/// every worker whose node is held.
 	///
@@ -26053,7 +26371,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			if (!node) return;
 			c._pausedMid = node;
 			try { Workers.cancelAwaits(c.id); } catch (e) { /* no gather waiting */ }
-			try { if (c.app) c.app.abort(); } catch (e) { /* idempotent */ }
+			abortTurn(c);
 		});
 		try { Workers.pauseHeld(); } catch (e) { /* the pool is not up */ }
 	}
@@ -29327,12 +29645,72 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 	/// the new session AND handing it to `run_turn` again would ask the model the same question
 	/// twice, so it is held out of the restore and left to `run_turn`, which is where it was
 	/// always going.
-	function rebuildAppWithout(chat, mid) {
+	///
+	/// **A rebuilt app is a new app and carries no scope and no tag**, so it is confined and
+	/// tagged here exactly as the turn's first app was (`scopeTurnApp`). Until 2026-09-25 it was not: a turn whose
+	/// provider refused the reply length, or whose key was re-minted, ran its retry with the
+	/// reach of the whole workspace.
+	async function rebuildAppWithout(chat, mid) {
 		var keep = chat.messages;
 		chat.messages = keep.filter(function (m) { return m.mid !== mid; });
 		chat.app = null;
-		try { return ensureApp(chat); }
+		var app;
+		try { app = ensureApp(chat); }
 		finally { chat.messages = keep; }
+		// AND IT CARRIES NO TAG, so a Stop naming this turn would reach nothing (engine QA E2).
+		// Tagged whatever the turn can dispatch, as the first app was; and a Stop or a pause that
+		// already landed on the old app is carried over, so the retry stops as it begins.
+		if (chat._turnTag) {
+			try {
+				if (app.set_turn_tag) app.set_turn_tag(null, String(chat._turnTag));
+				if ((chat._aborted || chat._pausedMid) && app.abort_turn) app.abort_turn(String(chat._turnTag));
+			} catch (e) { /* older engine */ }
+		}
+		await scopeTurnApp(chat, app, null);
+		return app;
+	}
+
+	// The bounds each Diamond thread's own app was confined to, by app: `runTurn` builds a
+	// fresh one where the Diamond's bounds have moved since (`set_diamond_scope` composes).
+	var _threadScope = new WeakMap();
+	// Every shared daimon client `diamondApp` ever built, a reset's included: an app still held
+	// by a record after `resetDiamondApps` serves the Diamonds it served before.
+	var _sharedClients = new WeakSet();
+
+	/// What a Diamond's bounds are compared by, so a thread's app is rebuilt when they move.
+	function threadScopeKey(b) {
+		b = b || {};
+		var sorted = function (a) { return (Array.isArray(a) ? a : []).slice().sort(); };
+		return JSON.stringify([b.own_dir || '', sorted(b.attached), sorted(b.read_only),
+			sorted(b.toolkits), sorted(b.unconfirmed)]);
+	}
+
+	/// Confine the app a turn of `chat` runs on, as the record's reach says: an ordinary chat to
+	/// its workspace (`scopeChatTo`), a Diamond's own thread to its Diamond (`scopeAgentTo`).
+	/// Throws where the scope did not take, and the caller does not run the turn.
+	///
+	/// # Arguments
+	/// * `bounds` - The Diamond's bounds, where the caller has just read them; else read here.
+	async function scopeTurnApp(chat, app, bounds) {
+		if (!chat.diamondId) {
+			await scopeChatTo(app, chat.id);
+			return;
+		}
+		// The shared daimon client is scoped by `steer_crystal` per call and must never be
+		// confined to one Diamond: every Diamond on its model would then refuse to start.
+		if (_sharedClients.has(app)) {
+			throw new Error('A Diamond\'s thread was about to run on the shared daimon client, '
+				+ 'which no scope confines; nothing was run.');
+		}
+		var b = bounds || await Files.bounds(chat.diamondId);
+		var key = threadScopeKey(b);
+		if (_threadScope.has(app)) {
+			if (_threadScope.get(app) === key) return;
+			throw new Error('This Diamond\'s marks changed while its thread was being set up; '
+				+ 'nothing was run. Send it again.');
+		}
+		await scopeAgentTo(app, chat.diamondId, b);
+		_threadScope.set(app, key);
 	}
 
 	/// Is the CURRENT chat mid-turn? Generation is per-chat now, so a turn
@@ -29433,9 +29811,10 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		/// those characters is held in Rust by
 		/// `test_the_no_network_mark_opens_the_note_and_finds_it_in_a_result`, and
 		/// the whole path end to end by `dev/verify_handrun.mjs`.
-		drawToolResult:  function (name, result, outcome) {
+		drawToolResult:  function (name, result, outcome, paused) {
 			renderToolCall(String(name || ''), '{}', 'probe', Date.now());
-			renderToolResult(String(name || ''), String(result || ''), String(outcome || 'done'));
+			renderToolResult(String(name || ''), String(result || ''), String(outcome || 'done'),
+				String(paused || ''));
 		},
 		/// What this chat's commands may do about the network, from the ENGINE.
 		///
@@ -30942,19 +31321,30 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		// `compose` INTERSECTS, so a live app cannot be widened -- and the mark is applied here
 		// instead, at the first moment there is no turn to disturb.
 		if (chat._scopeStale) { chat.app = null; chat._scopeStale = false; }
+		// A DIAMOND'S OWN THREAD RUN AS A CHAT -- a Continue, or a gather round on the daimon's
+		// record -- RUNS ON AN APP OF ITS OWN, confined to its Diamond (the engine unit's open
+		// item 1). Its record's `app` is the shared daimon client after any steer (`runSteer`
+		// points it there so Stop reaches the turn), and that client is scoped per call by
+		// `steer_crystal` alone: `run_turn` on it reached every file in the workspace. Never
+		// that client, and never an app scoped to other bounds -- `set_diamond_scope` composes,
+		// so a changed set of marks needs a fresh app, not a narrower old one.
+		var threadBounds = null;
+		if (chat.diamondId) {
+			try { threadBounds = await Files.bounds(chat.diamondId); }
+			catch (e) { appendError(friendlyError(e)); return; }
+			if (!chat.app || _threadScope.get(chat.app) !== threadScopeKey(threadBounds)) chat.app = null;
+		}
 		try { app = ensureApp(chat); }
 		catch (e) { appendError('Could not start agent: ' + String(e)); return; }
 		// THE CONVERSATION IS FENCED, not only the workers it dispatches. The incident this
 		// answers had no worker in it at all. Fails the turn rather than running it unfenced:
 		// a scope that did not take is the one failure here that matters.
 		//
-		// An ORDINARY chat only. A Diamond's own thread is a chat record with a `diamondId`,
-		// and its reach is its Diamond's -- `diamond_bounds`, from the links -- so handing it a
-		// chat's workspace would fence a daimon to a set nobody marked for it.
-		if (!chat.diamondId) {
-			try { await scopeChatTo(app, chat.id); }
-			catch (e) { appendError(friendlyError(e)); return; }
-		}
+		// An ordinary chat is fenced to its workspace; a Diamond's own thread to its Diamond --
+		// `diamond_bounds`, from the links -- since handing it a chat's workspace would fence a
+		// daimon to a set nobody marked for it.
+		try { await scopeTurnApp(chat, app, threadBounds); }
+		catch (e) { appendError(friendlyError(e)); return; }
 
 		// What the user has open right now, so the payload matches their screen. See `_openFolds`.
 		pushOpenFolds(app);
@@ -31008,12 +31398,15 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 				&& typeof Workers.spawn === 'function'
 				&& typeof Workers.awaitReports === 'function');
 		} catch (e) { inTurnWorkers = false; }
+		// THE TURN IS TAGGED BEFORE IT GOES OUT, whatever it can dispatch: the tag is what a Stop
+		// or a pause names to stop THIS turn (`abortTurn`), and a daimon conversation's app is
+		// shared with every Diamond on its model. `null` is this client's own conversation.
+		chat._turnTag = String(umid);
+		try { if (app.set_turn_tag) app.set_turn_tag(null, chat._turnTag); } catch (e) { /* older engine */ }
 		if (inTurnWorkers) {
 			try {
 				// The engine cannot work out which conversation it is: one pump serves the whole
-				// page and several turns run at once. `null` is this client's own conversation --
-				// a chat holds an app of its own, so there is only ever one.
-				app.set_turn_tag(null, String(umid));
+				// page and several turns run at once. Tagged above.
 				Workers.holdTurn(umid, {
 					chatId:   chat.id,
 					chatName: chat.name || '',
@@ -31138,10 +31531,6 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		var owns = function () { return current === chat && chats.indexOf(chat) !== -1; };
 		var onEvent = function (ev) {
 			if (!ev || !ev.type) return;
-			// A PAUSED TURN KEEPS ITS BRAKE ON. An abort reaches only the request in flight,
-			// so one that lands between rounds is lost and the next round goes out; the
-			// first word of that round is where it can be caught. See `brakeHeld`.
-			if (chat._pausedMid) { try { if (chat.app) chat.app.abort(); } catch (e0) { /* idempotent */ } }
 			if (ev.type === 'text') {
 				turnText += (ev.content || '');
 				// THE LIVE ANSWER, WHERE A STREAMED FRAME CAN REACH IT. The assistant
@@ -31254,6 +31643,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 				if (pendingTool) {
 					pendingTool.content = ev.content || '';
 					pendingTool.outcome = ev.outcome || '';
+					if (ev.paused) pendingTool.paused = String(ev.paused);
 					pendingTool = null;
 				}
 				// THE ENGINE'S WORD, not a boolean made from it. `toolDone` took
@@ -31282,7 +31672,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 				// that stopped on the tool it last named.
 				busySay(chat, tOr('chat.busy_next', 'Step {n} done, thinking…', { n: step }));
 				if (!owns()) return;
-				renderToolResult(ev.name || '', ev.content || '', ev.outcome);
+				renderToolResult(ev.name || '', ev.content || '', ev.outcome, ev.paused || '');
 			} else if (ev.type === 'versions') {
 				// The chat's own store kept what this turn replaced or removed. Offered
 				// back at once, and `file_revert` does the same whenever the user asks.
@@ -31594,10 +31984,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 					try {
 						var er = await DaimondModels.ensure(0, wantMinor, chatSpendNode(chat));
 						if (er && er.key) {
-							app = rebuildAppWithout(chat, umid);
-							if (inTurnWorkers) {
-								try { app.set_turn_tag(null, String(umid)); } catch (e1) { /* older engine */ }
-							}
+							app = await rebuildAppWithout(chat, umid);
 						}
 					} catch (e0) { /* best-effort; run on the key already held */ }
 					// The baseline the mid-turn top-up measures this turn's draw from, read
@@ -31618,13 +32005,8 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 						var asked = maxOutFor(chat.model, chat.provider);
 						var half  = Math.max(MIN_MAX, Math.floor(asked / 2));
 						chat._capTry = half;
-						app = rebuildAppWithout(chat, umid);
-						// A REBUILT APP IS A NEW APP AND CARRIES NO TAG. Without this the rest
-						// of the turn could not attribute a worker to anything, and the spawn
-						// would be refused for a reason the user never caused.
-						if (inTurnWorkers) {
-							try { app.set_turn_tag(null, String(umid)); } catch (e) { /* older engine */ }
-						}
+						app = await rebuildAppWithout(chat, umid);
+						// Tagged, and confined, inside `rebuildAppWithout`.
 						await app.run_turn(text, onEvent);
 						// Only NOW is the smaller ask believed. Recording the cap before
 						// the retry would teach the app a ceiling from any unrelated 400 —
@@ -31648,13 +32030,8 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 							throw new Error('Your Daimond credits have run out. Top up in Credits, or '
 								+ 'switch this chat to a provider key of your own.');
 						}
-						app = rebuildAppWithout(chat, umid);
-						// A REBUILT APP IS A NEW APP AND CARRIES NO TAG. Without this the rest
-						// of the turn could not attribute a worker to anything, and the spawn
-						// would be refused for a reason the user never caused.
-						if (inTurnWorkers) {
-							try { app.set_turn_tag(null, String(umid)); } catch (e) { /* older engine */ }
-						}
+						app = await rebuildAppWithout(chat, umid);
+						// Tagged, and confined, inside `rebuildAppWithout`.
 						await app.run_turn(text, onEvent);
 					} else {
 						throw e;
@@ -32270,7 +32647,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		// during a gather there is none -- so without this Stop would do nothing at all until
 		// the wait ran out, which is up to ten minutes of a button that looks broken.
 		try { Workers.cancelAwaits(current.id); } catch (e) { /* best effort */ }
-		try { current.app.abort(); } catch (e) { /* idempotent; ignore */ }
+		abortTurn(current);
 	}
 
 	// ── Agents: real, dispatched workers ───────────────────────
@@ -32365,7 +32742,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		if (a.refused) {
 			noticeDialog(t('pause.refused_title'), a.refusal || t('pause.refused.dispatch',
 				{ node: DaimondPause.label(a.node || '') }));
-			return { ok: false, why: 'the user has paused spending on it' };
+			return { ok: false, why: 'the user has paused spending on it', paused: a.pauseNode || '' };
 		}
 		if (!a.needsConfirm) return yes;
 		var msg = tn('gov.fanout_body', n,
@@ -32523,7 +32900,9 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 					live.chatId || ''))
 				.then(function (gate) {
 					if (!gate.ok) {
-						return JSON.stringify({ started: false, why: gate.why });
+						// `paused` names the node a person's pause holds it on, so the engine
+						// says the refusal as a pause's (`paused_line`).
+						return JSON.stringify({ started: false, why: gate.why, paused: gate.paused || '' });
 					}
 					var pick = live.chatId
 						? (chat ? chatWorkerModel(chat) : null)
@@ -33535,7 +33914,11 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 				// Which fence, decided by which surface sent it. A Diamond's worker is
 				// confined to the Diamond, both verbs. A chat's reads freely and writes
 				// only where the user said — see `scopeChatTo`.
-				if (run.chatId) await scopeChatTo(run.app, run.chatId);
+				// A worker a Diamond's own thread sent, run as a chat, is that Diamond's:
+				// confined to it, as the thread's own app is (`scopeTurnApp`).
+				var sent = run.chatId ? chats.find(function (x) { return x.id === run.chatId; }) : null;
+				if (sent && sent.diamondId) await scopeAgentTo(run.app, sent.diamondId);
+				else if (run.chatId) await scopeChatTo(run.app, run.chatId);
 				else await scopeAgentTo(run.app, run.diamondId);
 			};
 			var build = function () {
@@ -36041,6 +36424,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		var reachSeq = 0;			// so a slow store read cannot repaint over a newer one
 		var kitsEl  = null;			// the row of toolchain grants, built in bind()
 		var attached = [];			// the open Diamond's attachments; see loadAttached
+		var ownHeld = [];			// its rows inside its own directory, `{ ref }`; see loadAttached
 		var lastDiamondId = null;		// so a re-read of the SAME Diamond does not relist
 		var daimonGroupOpen = false;		// collapsed by default; see daimonGroupRow
 
@@ -36239,9 +36623,29 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		/// dropped, because that directory is listed in full anyway and a thing
 		/// shown twice reads as two things.
 		async function loadAttached() {
-			attached = await attachmentsOf(currentDiamond ? currentDiamond.id : '');
+			var id = currentDiamond ? currentDiamond.id : '';
+			attached = await attachmentsOf(id);
+			ownHeld = await ownDirRows(id);
 			labelAttached(attached);
 			return attached;
+		}
+
+		/// The open Diamond's rows on files and folders inside its own directory, which
+		/// `attachmentsOf` leaves out. Kept for the paperclip's paint alone: such a row is
+		/// no mark (M1) and is never drawn as a tile, but the press on its file acts on it,
+		/// so the button must show it held rather than unpressed.
+		async function ownDirRows(id) {
+			if (!id) return [];
+			var own = 'diamonds/' + id;
+			try {
+				return JSON.parse(await diamondApp().links_touching('diamond:' + id) || '[]')
+					.filter(function (l) {
+						var p = parseRef(l.other || '');
+						return l.owner === id && l.from === 'diamond:' + id
+							&& (p.kind === 'file' || p.kind === 'dir') && underPath(p.path, own);
+					})
+					.map(function (l) { return { ref: l.other }; });
+			} catch (e) { return []; }
 		}
 
 		/// The same, for ANY Diamond rather than the one on screen.
@@ -36283,16 +36687,22 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 				// Keyed on the THING, so one folder attached before roots were
 				// recorded and again after does not draw two rows -- and of two rows
 				// for one thing, the one IN FORCE here is kept, so an older row first
-				// in the sidecar cannot hide the grant this device has.
+				// in the sidecar cannot hide the grant this device has; failing that,
+				// one this workspace can open, so another workspace's row cannot hide
+				// a mark waiting here (M3: the paperclip now adds this workspace's own
+				// row beside another's, rather than taking that one off).
 				var key = kind + ':' + path;
 				var at = seen[key];
 				if (at !== undefined) {
-					if (!out[at].force && markForce(id, l)) out[at] = attachmentRow(l, ref, kind, path);
+					var cand = attachmentRow(l, ref, kind, path);
+					if (placeRank(cand) > placeRank(out[at])) out[at] = cand;
 					return;
 				}
 				seen[key] = out.length;
 				out.push(attachmentRow(l, ref, kind, path));
 			});
+			/// How much of this row is here: in force, or reachable, or neither.
+			function placeRank(a) { return a.force ? 2 : (a.here ? 1 : 0); }
 			/// One attachment as the panel, the fence and the notice read it.
 			function attachmentRow(l, ref, kind, path) {
 				// The one test, asked once per row: `{ rel, share }` where this is a mark
@@ -36453,13 +36863,15 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		}
 
 		/// The attachment record for a reference, or nothing.
+		///
+		/// By what it names, so a link written before roots were recorded still lights
+		/// its own row up; and by the same rule as the press (`samePlace`, ranked as
+		/// `linkTo` ranks it, F2), so a row is drawn from the mark a press on it would
+		/// act on, never from another workspace's and never from a twin the press
+		/// would leave alone.
 		function attachedOf(ref) {
-			for (var i = 0; i < attached.length; i++) {
-				// By what it names: a link written before roots were recorded still
-				// has to light its own row up.
-				if (sameThing(attached[i].ref, ref)) return attached[i];
-			}
-			return null;
+			return samePlace(attached, ref, function (a) { return a.ref; },
+				function (a) { return a.force ? 2 : (a.waiting ? 1 : (a.here ? 0 : -1)); });
 		}
 
 		/// Put a folder or file into the open Diamond's workspace, or take it out
@@ -36471,7 +36883,11 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		/// Taking it out removes the link and NOTHING else: the folder or file
 		/// stays exactly where it is, and any other Diamond holding it goes on
 		/// holding it.
-		async function toggleAttachHold(path, dir) {
+		///
+		/// `now` is for a control that says what it does ("Mark here"): a waiting mark is
+		/// confirmed at once rather than asked about, since the button's own words are the
+		/// question. The paperclip never passes it.
+		async function toggleAttachHold(path, dir, now) {
 			if (!currentDiamond) return;
 			var id = currentDiamond.id, ref = rootedRef(dir ? 'dir' : 'file', path);
 			// The remove/add decision is never taken from `attached` (the on-screen
@@ -36483,11 +36899,16 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			// `signalLinksChanged` regardless.
 			var link = await linkTo(id, ref);
 			// A MARK NOT IN FORCE HERE -- another device's on a folder of this name, or
-			// one from before marks said who made them -- is brought into force by the
-			// press, not taken off: it is shown inactive and says why, and the paperclip
-			// is how the user says "on this machine too".
+			// one from before marks said who made them -- is never taken off by the
+			// press: it is shown inactive and says why, and the paperclip is how the user
+			// says "on this machine too". Asked, not granted, on the press itself: see
+			// `askUseHere`. The row is read again after the answer, since a sync may have
+			// moved it while the question stood.
 			if (link && markWaiting(link)) {
-				await confirmMarkHere(id, link);
+				if (!now && !(await askUseHere(path, link.by ? refWhere(link.other) : t('marks.made_before'),
+						link.rel === 'consulted'))) return;
+				link = await linkTo(id, ref);
+				if (link && markWaiting(link)) await confirmMarkHere(id, link);
 				return;
 			}
 			try {
@@ -36584,6 +37005,12 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			var ref = rootedRef(dir ? 'dir' : 'file', path);
 			if (f.kind === 'diamond') {
 				var rec = attachedOf(ref);
+				// A row inside the Diamond's own directory -- Keep's transcript among them -- is
+				// held and never away: it lists a file and grants nothing, so there is nothing
+				// here to be in force or to wait (M1).
+				if (!rec && samePlace(ownHeld, ref, function (a) { return a.ref; })) {
+					return { on: true, away: false, where: '', confirm: false, old: false };
+				}
 				// NOT IN FORCE is away as well as out of reach: a row from before marks
 				// said who made them is reachable and grants nothing until confirmed, and a
 				// paperclip lit as "on" for it would claim a grant the fence does not hold.
@@ -36779,7 +37206,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			b.setAttribute('aria-label', b.title);
 			b.addEventListener('click', function (ev) {
 				ev.stopPropagation();
-				toggleAttachHold(curDir, true);
+				toggleAttachHold(curDir, true, true);
 			});
 			return b;
 		}
@@ -37872,9 +38299,19 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 				// The kept handle goes too (M2-F4): otherwise "Forget" only forgot the
 				// reconnect slot, and a folder picked again kept its old id and its marks.
 				try { await FsaDB.forget(folderFid); } catch (e) { /* nothing stored */ }
+				// THIS DEVICE'S OWN MARKS ON THE FOLDER (M2-R2-1, 2026-09-25). Without
+				// this a mark pressed in the folder stayed in force -- and its fence
+				// with it -- until the page reloaded, so the toast below was not true
+				// until then. Repainted at once (`signalLinksChanged`) rather than left
+				// for the next redraw to happen to catch.
+				try {
+					DaimondMarksHere.forgetRoot(
+						DaimondMarksHere.rootKey({ kind: 'machine', name: folderHandle.name, fid: folderFid }));
+				} catch (e) { /* nothing recorded */ }
 				rootHandle = null;
 				renderMode();
 				showModeMsg(t('files.root_forgotten'));
+				signalLinksChanged();
 			});
 			forget.classList.add('files-mode-forget');
 			modeEl.appendChild(forget);
@@ -38625,26 +39062,38 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 				var f = attachFocus();
 				if (!f) { holdBtn.style.display = 'none'; return; }
 				holdBtn.style.display = '';
-				var on = false, away = false, where = '';
+				var on = false, away = false, where = '', confirm = false, old = false;
 				if (f.kind === 'diamond') {
+					// A FRESH READ (`heldLink`), never `attachStateOf`: this button can be
+					// painted before the tree has ever been listed for this Diamond, and
+					// `attachStateOf` reads the tree's own cache (`attached`/`ownHeld`),
+					// which is empty until then.
 					var link = await heldLink(f.id, path);
 					on = !!link;
-					// Not in force here: the press confirms it, and the button says so.
-					if (link && !markInForce(link)) {
+					// A MARK not in force here: the press asks to confirm it, and the button says
+					// so. Only a mark: a row that grants nothing -- one on a file in the Diamond's
+					// own directory, Keep's transcript among them (M1) -- is held, not away.
+					if (link && isUsersMark(link) && !markInForce(link)) {
 						away = true;
-						where = markWaiting(link)
-							? (link.by ? t('dws.confirm_here', { where: refWhere(link.other) }) : t('dws.confirm_old'))
-							: t('dws.not_here', { where: refWhere(link.other) });
+						confirm = markWaiting(link);
+						old = confirm && !link.by;
+						where = refWhere(link.other);
 					}
 				} else {
-					var rec = chatAttachFind(f.id, rootedRef('file', path));
-					on = !!rec;
-					away = on && !refReachable(rootedRef('file', path));
-					where = on ? refWhere(rootedRef('file', path)) : '';
+					// THE TREE'S OWN TEST (open item 4, 2026-09-25). This used to work `away`
+					// out from the FRESH reference (`refReachable(rootedRef(...))`) rather
+					// than the STORED one, so a holding pressed on another device, or never
+					// confirmed here, never drew as waiting -- only as held. `attachStateOf`
+					// asks `DaimondMarksHere.chatWaiting` of the stored row, as the tree does,
+					// and carries no staleness risk here: a chat's holdings live on the chat
+					// record itself, with no separate cache to be behind.
+					var cst = attachStateOf(path, false);
+					on = cst.on; away = cst.away; where = cst.where; confirm = !!cst.confirm;
 				}
 				holdBtn.classList.toggle('on', on);
 				holdBtn.classList.toggle('away', away);
-				holdBtn.title = away ? (f.kind === 'diamond' ? where : t('dws.not_here', { where: where }))
+				holdBtn.title = away
+					? (old ? t('dws.confirm_old') : confirm ? t('dws.confirm_here', { where: where }) : t('dws.not_here', { where: where }))
 					: t('attach.to_focus');
 				holdBtn.setAttribute('aria-pressed', on ? 'true' : 'false');
 				holdBtn.setAttribute('aria-label', holdBtn.title);
@@ -39659,7 +40108,11 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		async function onBuiltReport(report) {
 			var r = report || {};
 			var cid = String(r.cid || '');
-			_builtFor[cid] = r;
+			_builtFor[cid] = r;				// every device: a runner's `finished` reads it
+			// ONLY THE DEVICE THAT ASKED DRAWS IT (R3 QA Q2). Everything below -- the
+			// download, the preview that replaces whatever document was being watched, the
+			// sheet pulled to Preview, the sidecar and the push -- is the dispatcher's.
+			if (!DaimondPeer.builtIsOurs(r, selfDeviceId(), _placing[cid])) return;
 			delete _placing[cid];
 			try { DaimondSync.unwatchProgress(cid); } catch (e) { /* sync gone with the page */ }
 			var msgEl = viewEl && viewEl.querySelector('.files-view-msg');
@@ -42808,6 +43261,17 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 	///
 	/// Called after a turn and on demand. Cheap: the index is counters, and the
 	/// digest is built from them rather than from any transcript.
+	///
+	/// THROUGH `Wasm.store_write`, NEVER `Files.writeBytes` (2026-09-25). The
+	/// latter is `tools().write_bytes`, which lands in whatever workspace is
+	/// open -- so with a machine folder open the digest was rewritten onto the
+	/// person's own disk after every metered turn, at `<folder>/system/usage/
+	/// digest.md`. `system/` names none of `diamonds/`, `mail/` or `chats/`
+	/// (`is_store_path`, `src/tools.rs`), so nothing on the Rust side pinned it
+	/// to the sandbox the way a Diamond's own state is pinned; `Wasm.store_write`
+	/// is that pin, applied here directly. `grantConsulted`'s seed now always
+	/// names `dir:[browser]…`, which is in force only in the browser workspace
+	/// (M4) -- the one place this write and that grant now agree.
 	async function writeUsageDigest() {
 		if (!window.DaimondSignals) return;
 		var md;
@@ -42817,7 +43281,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			}));
 		} catch (e) { return; }
 		try {
-			await Files.writeBytes(USAGE_DIR + '/digest.md', new TextEncoder().encode(md));
+			await Wasm.store_write(USAGE_DIR + '/digest.md', md);
 		} catch (e) { /* no store yet, or no room; the next turn tries again */ }
 	}
 
@@ -42841,6 +43305,14 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 	///
 	/// Keyed by build id: the guide changes with the app, so a copy made by an
 	/// older build is a copy that describes an app the user is no longer running.
+	/// Called at seeding and again on every unlock (`afterUnlock`), so an account
+	/// already seeded still picks up a newer build's guide; the stamp check above
+	/// makes every call after the first a no-op until the build changes.
+	///
+	/// THROUGH `Wasm.store_write`, NEVER `Files.writeBytes` (2026-09-25), for the
+	/// same reason `writeUsageDigest` is: `system/` follows the open workspace on
+	/// the Rust side, so a mirror written with a machine folder open landed on
+	/// the person's own disk at `<folder>/system/guide/`, one file per page.
 	async function writeGuideMirror() {
 		// Read from `build.json` rather than from whatever updater.js last
 		// noticed: this has to be right on a first boot too, and on a first boot
@@ -42871,7 +43343,6 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			pages[p].push(s);
 		});
 
-		var enc = new TextEncoder();
 		var contents = ['# The Daimond user guide',
 			'',
 			'A plain-text mirror of the guide that ships with this build (' + (build || 'unstamped') + ').',
@@ -42886,11 +43357,11 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 				if (s.b) { out.push(''); out.push(s.b); }
 				out.push('');
 			});
-			try { await Files.writeBytes(GUIDE_DIR + '/' + name + '.md', enc.encode(out.join('\n'))); }
+			try { await Wasm.store_write(GUIDE_DIR + '/' + name + '.md', out.join('\n')); }
 			catch (e) { return; }           // no store, or no room: leave the stamp unset
 			contents.push('- `' + name + '.md` — ' + (rows[0].t || name));
 		}
-		try { await Files.writeBytes(GUIDE_DIR + '/README.md', enc.encode(contents.join('\n'))); }
+		try { await Wasm.store_write(GUIDE_DIR + '/README.md', contents.join('\n')); }
 		catch (e) { return; }
 		try { if (build) localStorage.setItem(GUIDE_STAMP, build); } catch (e) {}
 	}
@@ -42900,10 +43371,17 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 	/// `consulted` is the relation `attachmentsOf` reads as read-only, so this
 	/// is the same grant a user makes by attaching a folder and marking it so --
 	/// not a private back door with different rules.
+	///
+	/// ALWAYS `dir:[browser]…`, NEVER `rootedRef` (2026-09-25). `system/guide` and
+	/// `system/usage` are written with `Wasm.store_write` now, always the app's
+	/// own store, so the row that grants sight of them must always name the
+	/// browser workspace too -- not whichever machine folder happened to be open
+	/// when the account was seeded. `DaimondMarksHere.seeded` already narrows the
+	/// grant to the browser root (M4); this is what makes the row itself agree.
 	async function grantConsulted(diamondId, path) {
 		try {
 			await diamondApp().add_link(diamondId, 'diamond:' + diamondId,
-				rootedRef('dir', path), 'consulted', '', 'user');
+				'dir:[browser]' + path, 'consulted', '', 'user');
 		} catch (e) { /* the Diamond simply will not see it; nothing else breaks */ }
 	}
 
@@ -43381,6 +43859,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		applyProviderRouting(app, a.provider || '', a.model || '');
 		applyCrystalCap(app);
 		_diamondApps[k] = app;
+		_sharedClients.add(app);
 		_diamondAppModel.set(app, a.model || '');
 		_diamondAppProvider.set(app, a.provider || '');
 		return app;
@@ -48447,13 +48926,66 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 
 	/// Two references name the same thing when their kind and path agree.
 	///
-	/// The workspace is deliberately NOT part of the identity. The control is a
+	/// The workspace is deliberately NOT part of this test. The control is a
 	/// toggle, and pressing it on a file an older rootless link already holds must
 	/// take that link off rather than add a second one beside it that the button
-	/// cannot see.
+	/// cannot see. Which of several rows the control acts on is `samePlace`'s answer.
 	function sameThing(a, b) {
 		var x = parseRef(a), y = parseRef(b);
 		return x.kind === y.kind && x.path === y.path;
+	}
+
+	/// Of the stored references in `list` (read through `refOf`), the one a press on
+	/// `ref` acts on: an exact spelling always answers first, whatever `rankOf` says
+	/// of it -- the caller already has that row's own words, and reachability is a
+	/// question about a DIFFERENT spelling's workspace, not about the row itself.
+	/// Failing an exact spelling, the highest-ranked candidate naming the same thing.
+	///
+	/// THE PLACE, NOT THE PATH (M3, 2026-09-24). Matched on kind and path alone, the
+	/// paperclip on `books` in the browser found a mark on `books` in a machine folder
+	/// on another device, which waits nowhere here and is in force nowhere here, so
+	/// the press took that mark off -- a removal, which travels and drops the other
+	/// device's entry -- and added nothing. A row of another workspace is left alone,
+	/// and the press adds this workspace's own.
+	///
+	/// RANKED, NOT MERELY REACHABLE (F2, 2026-09-25). `rankOf`, where given, scores a
+	/// candidate as `placeRank` (`attachmentsOf`) does: 2 in force here, 1 waiting, 0
+	/// merely reachable, and below 0 for one this press must never touch. Left out,
+	/// every reachable candidate ranks 0, the old rule. A Diamond with two rows for
+	/// one folder -- this device's, in force, and another device's, waiting, BOTH
+	/// spelt identically -- used to have the paperclip DRAW the row in force
+	/// (`attachedOf`, which reads the already force-ranked `attached`) while a PRESS,
+	/// unranked, took the first row in sidecar order: "Use here" then granted a twin
+	/// nobody meant to touch, and a read-only mark became read-and-change. Ranking is
+	/// the one resolver both paint (`attachedOf`) and press (`linkTo`) call now, so
+	/// they can no longer disagree -- and it is what breaks the tie BETWEEN two exact
+	/// spellings, never what excludes the only one there is: the M4 seed's browser
+	/// row, asked about by its own exact words from a machine folder where it is
+	/// unreachable, still answers -- reachability there is the QUESTION, not a
+	/// reason to skip the one row that answers it.
+	function samePlace(list, ref, refOf, rankOf) {
+		var rank = rankOf || function (item, r) { return refReachable(r) ? 0 : -1; };
+		// `exactRank` starts BELOW every real rank, `rankOf` included: a rank of -1
+		// means "never touch this as a NEAR candidate", and the M4 seed's own row,
+		// asked about from a machine folder, ranks exactly -1 there (unreachable) --
+		// an exact match on -1 must still win over no exact match at all, or the
+		// one row that answers the question is skipped for the same reason a near
+		// one would have been.
+		var exact = null, exactRank = -Infinity;
+		var near = null, nearRank = -1;
+		for (var i = 0; i < list.length; i++) {
+			var item = list[i], r = refOf(item);
+			if (r === ref) {
+				var re = rank(item, r);
+				if (re > exactRank) { exact = item; exactRank = re; }
+				continue;
+			}
+			if (exact !== null || !sameThing(r, ref)) continue;
+			var rn = rank(item, r);
+			if (rn < 0) continue;
+			if (rn > nearRank) { near = item; nearRank = rn; }
+		}
+		return exact !== null ? exact : near;
 	}
 
 	// ── A mark counts only on a device where it was pressed (R2) ─────────
@@ -48475,11 +49007,18 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 	/// Can this reference be opened from the workspace that is open? Reachability
 	/// only -- whether a mark is IN FORCE here is `markForce`'s question. The same
 	/// root, and for a machine folder the same name where the reference carries
-	/// one; a reference written before roots were recorded fits either.
+	/// one; a reference written before roots were recorded fits either, and so
+	/// does one naming a store path (`diamonds/`, `mail/`, `chats/`), whatever
+	/// root it was written under (F3, 2026-09-25: a legacy Keep transcript row,
+	/// written `file:[machine:…]diamonds/<id>/transcript.md` before this build
+	/// named store paths as such, read as living on another workspace, and one
+	/// press from here added a second row rather than finding the one already
+	/// held). Mirrors `DaimondMarksHere.fits`, which asks the same question of
+	/// `markshere.js`'s own callers.
 	function refReachable(ref) {
 		var p = parseRef(ref);
 		var r = currentRoot();
-		if (!p.root) return true;
+		if (!p.root || DaimondMarksHere.isStorePath(p.path)) return true;
 		if (p.root !== r.kind) return false;
 		// A different folder on the same machine is a different place, and a reference
 		// carries only the folder's name, so two folders of one name both fit. That is
@@ -48550,6 +49089,27 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		return true;
 	}
 
+	/// Ask before a paperclip brings a waiting mark into force: the notice's own "Use here",
+	/// naming the mark, where it was made, and -- where `ro` is given -- whether the press
+	/// grants read only or read and change. Resolves true where it is pressed.
+	///
+	/// ONE TAP NEVER GRANTS (R2 QA, 2026-09-24). The paperclip is a toggle, drawn pressed
+	/// on a waiting mark, and it confirmed that mark on one press -- which a touch screen
+	/// gives no title to warn of, so a tap meant to take a folder off granted it instead.
+	/// Now the press opens the question and the grant is a second, labelled press. Taking
+	/// a mark off is the ◈ or the ×, as it is for every mark.
+	///
+	/// GUARDED (F1, QA 2026-09-25). One held Enter used to open this question AND answer
+	/// it: focus landed on "Use here" and the OS's own key-repeat pressed it before the
+	/// person could read the question. It takes R6's guard now -- focus on Cancel, and the
+	/// yes disabled for its first second -- exactly as the held delete does, through the
+	/// one door `dialog` owns rather than a copy of its own.
+	function askUseHere(path, where, ro) {
+		var kind = ro === undefined ? '' : ('\n' + t(ro ? 'dws.readonly' : 'dws.readwrite'));
+		return confirmDialog('\u25c8 ' + path + (where ? '\n' + where : '') + kind + '\n\n' + t('marks.waiting_why'),
+			t('marks.use_here'), { title: t('marks.use_ask'), danger: false, guard: true, ask: 'mark-use-here' });
+	}
+
 	/// One of this Diamond's own rows, as the store holds it, by id.
 	async function ownLinkById(diamondId, id) {
 		if (!diamondId || !id) return null;
@@ -48568,6 +49128,9 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 	/// in, which the store may have spelt otherwise.
 	async function markHere(diamondId, id) {
 		var row = await ownLinkById(diamondId, id);
+		// A row that is not a mark has no grant to record: one on a file in the Diamond's
+		// own directory lists it and nothing more (M1).
+		if (row && !DaimondMarksHere.isMark(row)) return true;
 		if (!row || !DaimondMarksHere.grant(diamondId, row, rootHere(), { share: false })) {
 			marksNotSaved();
 			return false;
@@ -48594,11 +49157,17 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 				: '';
 		}
 		if (p.root !== 'machine') return t('dws.in_browser');
+		// A reference that names its devices, none of them this one, lives on one of them,
+		// whichever workspace is open here. It said "on this machine" from the browser
+		// workspace, of a mark made on another device (M3, 2026-09-24).
+		if (p.devices.length && p.devices.indexOf(deviceId()) < 0) {
+			return t('dws.on_device', { name: p.name || t('dws.a_folder'), device: deviceLabelFor(p.devices[0]) });
+		}
+		// One from before references named devices: another device, where a folder of its
+		// name is open here and it is still not in force.
 		var r = currentRoot();
-		if (r.kind === 'machine' && (!p.name || p.name === r.name)
-			&& p.devices.indexOf(deviceId()) < 0) {
-			var dev = p.devices.length ? deviceLabelFor(p.devices[0]) : t('dws.another_device');
-			return t('dws.on_device', { name: p.name || t('dws.a_folder'), device: dev });
+		if (!p.devices.length && r.kind === 'machine' && (!p.name || p.name === r.name)) {
+			return t('dws.on_device', { name: p.name || t('dws.a_folder'), device: t('dws.another_device') });
 		}
 		return t('dws.in_machine', { name: p.name || t('dws.a_folder') });
 	}
@@ -48606,15 +49175,36 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 	async function linkTo(diamondId, ref) {
 		try {
 			var links = JSON.parse(await diamondApp().links_touching('diamond:' + diamondId) || '[]');
-			for (var i = 0; i < links.length; i++) {
-				// This Diamond's own rows only: one kept in another Diamond's sidecar,
-				// or with its ends reversed, is not this Diamond's to take off (R2).
-				if (links[i].owner !== diamondId || links[i].from !== 'diamond:' + diamondId) continue;
-				// Matched on what it names, not on the string: an attachment made
-				// before roots were recorded must still be found by a button that
-				// now writes one.
-				if (sameThing(links[i].other, ref)) return links[i];
-			}
+			// This Diamond's own rows, by a PERSON, only: one kept in another Diamond's
+			// sidecar, or with its ends reversed, is not this Diamond's to take off
+			// (R2); one written by a fold, never the person, is not the paperclip's
+			// either (open item 3 / item 7, 2026-09-25). A `produced` row used to
+			// match here just the same, so a press on a file a fold had harvested
+			// deleted the fold's own record and granted nothing; that row is the
+			// daimon group's Drop to remove now, never a paperclip meant for a
+			// person's mark.
+			//
+			// BY `by`, NOT `isUsersMark`. A row in the Diamond's own directory --
+			// Keep's transcript among them -- is `by:"user"` and is not a mark
+			// either (M1), but `linkTo` must still find it, to draw it held and to
+			// let the paperclip toggle it off: `isUsersMark` folds both exclusions
+			// into one test, and filtering by it here took M1's own rows out of
+			// reach along with fold's.
+			var own = links.filter(function (l) {
+				return l.owner === diamondId && l.from === 'diamond:' + diamondId && (l.by === 'user' || !l.by);
+			});
+			// Matched on what it names, not on the string, so an attachment made before
+			// roots were recorded is still found by a button that now writes one -- but
+			// only in a reference this workspace can open (M3), and ranked exactly as
+			// the paint does (F2, `attachedOf`): in force here, then waiting, then
+			// merely reachable, so a press can never land on a twin the paperclip drew
+			// as something else.
+			return samePlace(own, ref, function (l) { return l.other; },
+				function (l) {
+					if (markForce(diamondId, l)) return 2;
+					if (markWaiting(l)) return 1;
+					return refReachable(l.other) ? 0 : -1;
+				});
 		} catch (e) { /* unreadable: treat as not held */ }
 		return null;
 	}
@@ -48731,10 +49321,11 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		return c.holds;
 	}
 
+	/// The holding a press on `ref` acts on: that reference, or the same thing in one this
+	/// workspace can open (`samePlace`, M3). Another workspace's holding of the same path is
+	/// left alone, so the paperclip adds this workspace's own rather than taking it off.
 	function chatAttachFind(chatId, ref) {
-		var list = chatAttachList(chatId);
-		for (var i = 0; i < list.length; i++) if (sameThing(list[i].ref, ref)) return list[i];
-		return null;
+		return samePlace(chatAttachList(chatId), ref, function (a) { return a.ref; });
 	}
 
 	/// A chat's holdings that claim a workspace mark or a Read NOT in force on this
@@ -48779,16 +49370,15 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		// device. Found on the live rail rather than through `chatAttachList` so the
 		// same object the list belongs to is stamped.
 		var _hc = chats.find(function (x) { return x.id === chatId; });
-		for (var i = 0; i < list.length; i++) {
-			if (!sameThing(list[i].ref, ref)) continue;
-			DaimondMarksHere.chatDrop(chatId, list[i]);
-			list.splice(i, 1);
-			touchChatMeta(_hc);
-			persistChats(); attachChanged();
-			dropChatApp(chatId);
-			return true;
-		}
-		return false;
+		// The holding the press names, by the same rule as every other door (M3).
+		var i = list.indexOf(chatAttachFind(chatId, ref));
+		if (i < 0) return false;
+		DaimondMarksHere.chatDrop(chatId, list[i]);
+		list.splice(i, 1);
+		touchChatMeta(_hc);
+		persistChats(); attachChanged();
+		dropChatApp(chatId);
+		return true;
 	}
 
 	/// Add or remove one, from the paperclip -- a row's, or the Doc header's.
@@ -48799,13 +49389,15 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		var _hc = chats.find(function (x) { return x.id === chatId; });
 		var had = chatAttachFind(chatId, ref);
 		if (had) {
-			// A holding not in force here is confirmed on this device rather than
-			// dropped: the same press as a Diamond's paperclip (`toggleAttachHold`),
-			// and this device's record only. The paperclip alone: a × never gets here.
+			// A holding not in force here is never dropped by the paperclip: it asks to
+			// confirm it on this device, the same question as a Diamond's paperclip
+			// (`askUseHere`), and the answer writes this device's record only. The
+			// paperclip alone: a × never gets here.
 			if (DaimondMarksHere.chatWaiting(chatId, had, rootHere())) {
-				chatGrantHere(chatId, had, { ws: !!had.ws, read: had.state === 'read' });
-				attachChanged();
-				dropChatApp(chatId);
+				var heldRef = had.ref;
+				askUseHere(had.path, refWhere(heldRef)).then(function (yes) {
+					if (yes) chatConfirmHere(chatId, heldRef);
+				});
 				return;
 			}
 			chatAttachRemove(chatId, ref);
@@ -51095,6 +51687,13 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		// set it was a turn the rest of the app could not see was happening.
 		rec._generating = true;
 		rec._pausedMid = '';		// set by `brakeHeld` when a pause catches this turn running
+		// THE TURN'S TAG IS MINTED THE MOMENT IT GOES BUSY (engine QA E1), before the first
+		// await below. A Stop or a pause landing in between names it (`abortTurn`); the engine
+		// remembers a tag stopped before its turn began, so the turn stops as it begins. Minted
+		// later, that press named the last turn's tag and was lost -- or, on a Diamond's first
+		// steer since load, named none and stopped every other Diamond on the model.
+		steerTurn = 'dt' + newMid();
+		rec._turnTag = steerTurn;
 		// The Stop button aborts `current.app`, and a daimon's turn does not run on its
 		// own app -- it runs on the Diamond's, which is shared by every Diamond on the
 		// same model. Pointing the record at it is what makes Stop reach this turn;
@@ -51266,8 +51865,6 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			// take-back aborts the daimon promptly rather than at the next tick. Cheap and
 			// idempotent; the read-only ticker is still the backstop.
 			if (detached && detached.onProgress) { try { detached.onProgress(); } catch (e) { /* the ticker still catches it */ } }
-			// A paused turn keeps its brake on; see the same line in `runTurn`.
-			if (rec._pausedMid) { try { if (rec.app) rec.app.abort(); } catch (e0) { /* idempotent */ } }
 			if (ev.type === 'text') {
 				// The conductor's own words — a question, a refusal, or an account
 				// of what it did. Kept, so a text-only turn is not silently dropped.
@@ -51338,9 +51935,10 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 				if (last && last.role === 'tool_log' && !last.content) {
 					last.content = ev.content || '';
 					last.outcome = ev.outcome || '';
+					if (ev.paused) last.paused = String(ev.paused);
 				}
 				busySay(rec, tOr('chat.busy_next', 'Step {n} done, thinking…', { n: step }));
-				if (onScreen()) renderToolResult(ev.name || '', ev.content || '', ev.outcome);
+				if (onScreen()) renderToolResult(ev.name || '', ev.content || '', ev.outcome, ev.paused || '');
 			} else if (ev.type === 'thinking') {
 				// Persisted like a fold, and for the same reason: a reload that dropped it
 				// would leave the answer with no working behind it and no sign there had
@@ -51475,6 +52073,9 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		// id and is the same for every turn it ever runs, so it cannot say which one is live.
 		// `who` is the Diamond, because a daimon client is shared by every Diamond on one model
 		// -- the reason `is_tainted` takes one too.
+		// AND IT IS TAGGED WHATEVER IT CAN DISPATCH: the tag is what a Stop or a pause names to
+		// stop THIS Diamond's turn and no other Diamond's on the same app (`abortTurn`).
+		try { if (fa.set_turn_tag) fa.set_turn_tag(diamondId, steerTurn); } catch (e) { /* older engine */ }
 		try {
 			// `daimon_can_gather`, NOT `can_gather`: this turn runs on a registry
 			// `compose_daimon` builds fresh from the daimon belt, and the app's own belt --
@@ -51482,8 +52083,6 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			if (fa.daimon_can_gather && fa.daimon_can_gather() && fa.set_turn_tag
 				&& typeof Workers.spawn === 'function'
 				&& typeof Workers.awaitReports === 'function') {
-				steerTurn = 'dt' + newMid();
-				fa.set_turn_tag(diamondId, steerTurn);
 				Workers.holdTurn(steerTurn, {
 					diamondId: diamondId, diamondName: diamondName,
 					depth: (depth | 0),
@@ -52218,7 +52817,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		// Every chat that is still spending is stopped, not just the visible one.
 		chats.forEach(function (c) {
 			if (c._generating) {
-				try { if (c.app) c.app.abort(); } catch (e) { /* already gone */ }
+				abortTurn(c);
 				c._generating = false;
 			}
 			// And with the turn goes what the indicator was saying about it, or
@@ -52342,6 +52941,9 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		// And the trash, for the same reason and with the same guard: one
 		// account's deleted chats must never show in another's panel.
 		try { if (window.DaimondTrash) DaimondTrash.reset(); } catch (e) { /* ignore */ }
+		// And whatever this tab still owes the box: an owed record retried after the
+		// switch would land under the next account's namespace.
+		DaimondStore.reset();
 		// And the cached policy, whose localStorage key is namespaced like the
 		// rest. The figures are the operator's and the same for every account,
 		// so this costs one refetch -- but a cache left pointing at another
@@ -52871,6 +53473,20 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		// run now. It is fire-and-forget: a gateway that is down must not hold up
 		// a user who only ever wanted their own key.
 		step('connectGateway', function () { return connectGateway(); });
+		// Help's mirror of the guide, refreshed on every unlock rather than only at
+		// first seeding (QA 2026-09-25): nothing else called it again, so a copy made
+		// on the account's first boot went on describing that build for ever. The
+		// build-id stamp inside `writeGuideMirror` makes every call after the first
+		// for one build a no-op, so this costs nothing on the ordinary unlock.
+		//
+		// DEFERRED, not run inline with the rest of `afterUnlock` (verify_share,
+		// 2026-09-25). Its own fetch and up to nine `Wasm.store_write` calls share
+		// the wasm module's one queue with whatever the person does in the first
+		// moment after unlock -- landing a share among them -- and running it
+		// inline pushed that past a fixed wait a verifier held it to. A few
+		// seconds' delay costs nothing a person would notice; contending with
+		// their first action does.
+		setTimeout(function () { step('guideMirror', function () { return writeGuideMirror(); }); }, 5000);
 	}
 
 	async function idPrimary() {
@@ -53532,6 +54148,9 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		// And the trash, for the same reason and with the same guard: one
 		// account's deleted chats must never show in another's panel.
 		try { if (window.DaimondTrash) DaimondTrash.reset(); } catch (e) { /* ignore */ }
+		// And whatever this tab still owes the box: an owed record retried after the
+		// switch would land under the next account's namespace.
+		DaimondStore.reset();
 		// And the cached policy, whose localStorage key is namespaced like the
 		// rest. The figures are the operator's and the same for every account,
 		// so this costs one refetch -- but a cache left pointing at another
@@ -53574,6 +54193,12 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		try { indexedDB.deleteDatabase('daimond-fsa' + (ns ? '-' + ns : '')); } catch (e) { /* ignore */ }
 		try { indexedDB.deleteDatabase('daimond-folders' + (ns ? '-' + ns : '')); } catch (e) { /* ignore */ }
 		try { indexedDB.deleteDatabase('daimond-journal' + (ns ? '-' + ns : '')); } catch (e) { /* ignore */ }
+		// The cloud index (durable.js `daimond-kv`), namespaced the same way (M2-R2-2).
+		// Left behind, it is the erased account's file map, readable by the next identity
+		// made in this browser -- the same class of leftover the three lines above exist
+		// to sweep, just missed because the store is a namespaced IndexedDB database
+		// rather than a localStorage key `FORGET_CLEARS` could name.
+		try { indexedDB.deleteDatabase('daimond-kv' + (ns ? '-' + ns : '')); } catch (e) { /* ignore */ }
 		// The transcripts, which are the whole point of forgetting an account. Closed
 		// first: a live connection blocks the delete, and a blocked delete is silent.
 		try { await ChatStore.wipe(); } catch (e) { /* ignore */ }
@@ -54298,7 +54923,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			// Whole transcripts, loaded from the authoritative rows -- the mirror holds
 			// only summaries since seq 213, so a backup built from it alone would be empty.
 			chats: await chatsWithTranscripts(storedChats()),
-			ledger: readJson('daimond-ledger', []),
+			ledger: DaimondLedger.entries(),
 			diamonds: [],
 			workspace: await collectOpfsFiles(),
 			// Says that `workspace` holds ONE account's files, at paths relative to
@@ -54444,6 +55069,12 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			var scoped = data.workspaceScope === 'account';
 			var mineNs = (window.DaimondAccounts && DaimondAccounts.opfsNs()) || '';
 			var restored = 0, foreign = 0;
+			// WHAT WAS DELETED SINCE STAYS DELETED (DEL-5). A restore is a merge, and
+			// every merge on this device honours the live tombstones: a Diamond, a chat
+			// or a file deleted here or on another device after the backup was taken is
+			// not brought back by it. Written back raw, it came back until the next pull
+			// deleted it again -- and on every device for good once its tomb aged out.
+			var dTombs = loadDiamondTombs(), cTombs = loadTombs(), fTombs = fileTombs();
 			var wrotePaths = [];        // what actually reached this account's OPFS
 			for (var i = 0; i < files.length; i++) {
 				var fp = String((files[i] && files[i].path) || '');
@@ -54455,7 +55086,10 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 					}
 				}
 				if (!fp) continue;
+				var dm = /(?:^|\/)diamonds\/([^/]+)\//.exec(fp);
+				if (dm && dTombs[dm[1]]) continue;
 				var bytes = b64ToBytes(files[i].b64);
+				if (fTombs[fp] && fileHash(new TextDecoder().decode(bytes)) === fTombs[fp]) continue;
 				// A Diamond's link sidecar is written over whole, so a mark the backup
 				// no longer carries, or carries narrower, is removed or narrowed here --
 				// and this device's record must follow, or a later replay of the row is
@@ -54486,7 +55120,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 				storedChats().forEach(function (c) { if (c && c.id) byId[c.id] = c; });
 				for (var di = 0; di < data.chats.length; di++) {
 					var r = data.chats[di];
-					if (!r || !r.id) continue;
+					if (!r || !r.id || cTombs[r.id]) continue;
 					var st = byId[r.id];
 					if (!st) {
 						// Adopted whole: what was pressed on it here, before its record was
@@ -54536,13 +55170,10 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 				// a restore that replaced it erased every turn since the backup was
 				// taken -- so restoring last week's backup billed the account for last
 				// week and told the user the days between had cost nothing.
-				try {
-					localStorage.setItem('daimond-ledger',
-						JSON.stringify(mergeLedgers(readJson('daimond-ledger', []), data.ledger)));
-					// Same bypass as the sync-apply merge above -- raise the change
-					// signal by hand so an open Model-stats panel redraws.
-					if (window.DaimondLedger) DaimondLedger.notifyChanged();
-				} catch (e) { /* keep */ }
+				// A box too full to store it holds the union owed and raises the
+				// alarm (`DaimondStore`); the restore goes on with the rest.
+				try { DaimondLedger.adopt(data.ledger); }
+				catch (e) { if (!DaimondStore.isRefused(e)) throw e; }
 			}
 			// A Diamond is stored in full under `diamonds/<id>/` -- the crystal, every
 			// version, the append-only log, and `.daimond/meta.json` (its name and
@@ -54560,9 +55191,19 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 				var m = /(?:^|\/)diamonds\/([^/]+)\//.exec(wrotePaths[w]);
 				if (m) restoredIds[m[1]] = true;
 			}
+			// AT THE BACKUP'S OWN ID, so a second restore finds it here rather than
+			// making another, and a tombstone can reach it. `create_diamond` mints a
+			// fresh id, so the Diamond is made under that one and then moved to the
+			// backup's through the engine's own export and import. One that is here
+			// already, or deleted since, is left alone.
+			var heldIds = {};
+			try {
+				JSON.parse(await diamondApp().list_diamonds()).forEach(function (d) { if (d && d.id) heldIds[d.id] = 1; });
+			} catch (e) { /* an unlisted store: nothing is known to be here */ }
 			for (var j = 0; j < (data.diamonds || []).length; j++) {
 				var f = data.diamonds[j];
 				if (f.id && restoredIds[f.id]) continue;    // already restored, history and all.
+				if (f.id && (heldIds[f.id] || dTombs[f.id])) continue;
 				try {
 					var id = await diamondApp().create_diamond(f.name || 'Restored diamond');
 					// A backup written before the crystal became two files carries markdown
@@ -54582,6 +55223,12 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 					}
 					// A backup written before tags existed simply has none.
 					if (f.tags && f.tags.length) await diamondApp().set_tags(id, JSON.stringify(f.tags));
+					if (f.id && f.id !== id) {
+						var pack = JSON.parse(await diamondApp().export_diamond(id));
+						pack.id = f.id;
+						await diamondApp().import_diamond(JSON.stringify(pack), false);
+						await diamondApp().delete_diamond(id);
+					}
 				} catch (e) { /* skip one diamond */ }
 			}
 			bumpDiamonds();
@@ -54604,7 +55251,13 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			// to fix: those files are another account's, and the backup file is still the
 			// only place they exist.
 			if (foreign) restoredBody += ' ' + tn('backup.n_foreign', foreign);
+			// A box too full for the ledger or the trash holds them owed in this tab
+			// (above), and a reload would discard them (F-S2): the reload waits until
+			// they have landed, and the user is told why it has not happened yet.
+			var owedNow = DaimondStore.owed().length > 0;
+			if (owedNow) restoredBody += ' ' + t('backup.restored_owed');
 			await noticeDialog(t('backup.restored'), restoredBody);
+			if (owedNow) await DaimondStore.settled();
 			location.reload();
 		});
 		inp.click();
@@ -57664,7 +58317,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 					// Re-check of 2026-09-23, R6: raised by the running turn while the
 					// person may be typing elsewhere, so it takes the same guard as the
 					// held delete -- focus on Cancel, and no stray key for a second.
-					unbidden: true,
+					guard: true,
 				});
 			},
 			// Read a file from the active workspace (OPFS or a real folder), so the
@@ -57705,7 +58358,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 						deadlineMs: 110000,
 						onDeadline: function () { return false; },
 						ask: 'hand-held',
-						unbidden: true,
+						guard: true,
 					}).then(function (allow) {
 						if (allow) return true;
 						// Stopped: put back what it took. The hand refuses every removal from

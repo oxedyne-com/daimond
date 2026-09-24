@@ -69,6 +69,7 @@ const SRC = readFileSync(join(HERE, 'daimond.js'), 'utf8');
 const liftedStamp   = lift(SRC, '\tfunction diamondStamp(d) {');
 const liftedTags    = lift(SRC, '\tfunction packTags(data) {');
 const liftedLinks   = lift(SRC, '\tfunction packLinks(data) {');
+const liftedPackAt  = lift(SRC, '\tfunction packStamp(data) {');
 const liftedApply   = lift(SRC, '\tasync function applyDiamonds(remote, from) {');
 
 // ── A fake wasm app modelling the import contract ─────────────────
@@ -80,7 +81,7 @@ function pack(id, d) {
 	return JSON.stringify({
 		id: id, touched: d.touched,
 		files: {
-			'.daimond/meta.json':   JSON.stringify({ tags: d.tags || [] }),
+			'.daimond/meta.json':   JSON.stringify(d.metaAt ? { tags: d.tags || [], touched: d.metaAt } : { tags: d.tags || [] }),
 			'.daimond/links.jsonl': d.links || '',
 			'crystal.json':         d.memory || '',
 		},
@@ -157,7 +158,7 @@ function build(harness) {
 	const baseStore = harness.baseStore;
 	const src =
 		'var window = ctx.window;\n' +
-		liftedStamp + '\n' + liftedTags + '\n' + liftedLinks + '\n' +
+		liftedStamp + '\n' + liftedTags + '\n' + liftedLinks + '\n' + liftedPackAt + '\n' +
 		// deps applyDiamonds reaches for, stubbed to the harness
 		'function diamondApp() { return ctx.app; }\n' +
 		'function trail() {}\n' +
@@ -262,11 +263,28 @@ async function freshAdopt() {
 	check('the fork point records it', baseStore.map['Y'] === 30);
 }
 
+// ══ Case 4 — the fork point is the copy STORED (B1) ═══════════════
+// A sender lists a Diamond (stamp 30) and exports it after an edit lands (its pack,
+// and so the copy an import lays down, carries 31). The fork point must be 31: at
+// 30, the next arrival reads this device as having moved and unions back a mark
+// the sender has since removed.
+async function storedStamp() {
+	console.log('\nfork point from the stored copy (entry 30, pack 31):');
+	const h = makeApp();
+	h.seed('X', { touched: 10, tags: ['a'], links: 'L', memory: 'MEM_T10' });
+	const baseStore = { map: { X: 10 } };
+	const apply = build({ app: h.app, baseStore });
+	const r = { id: 'X', touched: 30, updated: 30, data: pack('X', { touched: 31, metaAt: 31, tags: ['a', 'b'], links: 'L', memory: 'MEM_T31' }) };
+	await apply({ diamonds: [ r ] }, 'desktop');
+	check('the fork point is the stamp the stored copy carries', baseStore.map['X'] === 31, JSON.stringify(baseStore.map));
+}
+
 async function main() {
 	if (BREAK) console.log('BREAK = ' + BREAK + ' (the two-sided assertions must FAIL)');
 	await twoSided();
 	await oneSided();
 	await freshAdopt();
+	await storedStamp();
 
 	console.log('');
 	if (BREAK) {

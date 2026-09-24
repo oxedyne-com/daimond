@@ -1143,13 +1143,19 @@ export async function connectMock(s, { baseUrl = MOCK, model = MODEL, apiKey = '
 			|| document.querySelector('[data-admin="settings"]')
 			|| document.querySelector('#admin-settings-btn');
 		if (open) open.click();
-		await new Promise(r => setTimeout(r, 200));
+		// Each step waits for the form to be ready for it rather than sleeping a fixed 200 ms:
+		// under load the provider's change had not re-drawn the form when the address was typed
+		// into it, the save stored no model, and a verifier's first Diamond was refused.
+		const shown = (id) => { const e = document.getElementById(id); return e && e.getClientRects().length ? e : null; };
+		const until = async (f) => { for (let i = 0; i < 50 && !f(); i++) await new Promise(r => setTimeout(r, 100)); };
+		await until(() => shown('cfg-provider'));
 		const prov = document.getElementById('cfg-provider');
 		if (prov) {
 			prov.value = 'custom';
 			prov.dispatchEvent(new Event('change', { bubbles: true }));
 		}
 		await new Promise(r => setTimeout(r, 200));
+		await until(() => shown('cfg-base-url'));
 		const url = document.getElementById('cfg-base-url');
 		if (url) {
 			url.value = baseUrl;
@@ -1162,7 +1168,14 @@ export async function connectMock(s, { baseUrl = MOCK, model = MODEL, apiKey = '
 			key.dispatchEvent(new Event('input', { bubbles: true }));
 			key.dispatchEvent(new Event('change', { bubbles: true }));
 		}
-		await new Promise(r => setTimeout(r, 600));	// the model list is fetched
+		// THE MODEL LIST IS FETCHED, and waited for rather than slept on: a fixed 600 ms was
+		// too short under load, the form then saved no model, and a verifier's first Diamond
+		// was refused "Choose a model for this diamond to think with" (Q5-1 open item 3).
+		for (let i = 0; i < 60; i++) {
+			const s0 = document.getElementById('cfg-model');
+			if (s0 && [...s0.options].some(o => o.value === model)) break;
+			await new Promise(r => setTimeout(r, 100));
+		}
 		const sel = document.getElementById('cfg-model');
 		const cus = document.getElementById('cfg-model-custom');
 		if (sel && [...sel.options].some(o => o.value === model)) {
@@ -1177,7 +1190,15 @@ export async function connectMock(s, { baseUrl = MOCK, model = MODEL, apiKey = '
 		const save = document.getElementById('byok-save');
 		if (save) save.click();
 	}, { baseUrl, model, apiKey });
-	await s.page.waitForTimeout(1200);
+	// Until the app has STORED the model, rather than for a fixed 1.2 s; the same reading as
+	// `ready` below, and never longer than six seconds.
+	await s.page.waitForFunction((model) => {
+		try {
+			const j = JSON.parse(localStorage.getItem('daimond-models-v2') || 'null');
+			return !!(j && j.def && j.def.model === model);
+		} catch { return false; }
+	}, model, { timeout: 6000 }).catch(() => {});
+	await s.page.waitForTimeout(200);
 
 	// Whatever the form did, the app is only connected if it says it is.
 	//

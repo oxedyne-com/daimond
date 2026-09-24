@@ -22,6 +22,7 @@
 
 use crate::llm::extract_json_bool;
 use crate::wasm::js_str;
+use crate::wasm::refusal;
 
 use oxedyne_fe2o3_core::prelude::*;
 
@@ -56,15 +57,6 @@ fn asker() -> Outcome<Asker> {
             System, Missing));
     }
     Ok(obj.unchecked_into::<Asker>())
-}
-
-/// The `message` of a rejected JS `Error`, verbatim.  A refusal from the driver is written for
-/// the model to read and act on, so nothing here rewords it.
-fn refusal(e: &JsValue) -> String {
-    match js_sys::Reflect::get(e, &JsValue::from_str("message")) {
-        Ok(m)  => m.as_string().unwrap_or_else(|| js_str(e)),
-        Err(_) => js_str(e),
-    }
 }
 
 /// Put one question on the screen, and say nothing about the answer.

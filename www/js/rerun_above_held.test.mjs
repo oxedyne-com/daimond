@@ -123,7 +123,6 @@ function makeTab(relay, name) {
 			return ok({ ok: true });
 		},
 	};
-	win.DaimondPresence = { relayNow: () => relay.clock() };
 	function loadScript(rel, extra) {
 		let body = readFileSync(join(WWW, rel), 'utf8');
 		if (extra) body += extra;
@@ -138,14 +137,20 @@ function makeTab(relay, name) {
 			setTimeout, clearTimeout, () => 0, () => {},
 			{ log: () => {}, debug: () => {}, warn: () => {}, error: () => {} }, globalThis);
 	}
+	loadScript('store.js');
 	loadScript('vendor/noble-curves.min.js', '\n;window.DaimondNoble = DaimondNoble;');
 	loadScript('curvefallback.js');
 	loadScript('identity.js');
 	loadScript('post.js');
 	loadScript('peer.js');
 	if (PREFIX) win.DaimondPeer.noteHeldFor = () => '';		// the collector before e6a99334
+	teach(win, relay);
 	return win;
 }
+
+/// A presence answer: the relay's clock as `relay.clock` reads it now. peer.js defines
+/// `DaimondPresence` itself, so this is how a tab learns the relay's clock (`relayNow`).
+function teach(win, relay) { win.DaimondPresence.ingest({}, relay.clock()); }
 
 /// One lease record for the account, as the parcel carries it: every take and release
 /// by any run goes through the same CAS.
@@ -313,10 +318,14 @@ async function lapse() {
 	const { phone, runner, phoneDev } = await pair(relay);
 	const cas = makeCas();
 	wireRunner(runner, cas, () => 'done');
+	// T1 and its report R1 reach the relay ten minutes before T2 and R2 do.
+	const EARLIER = 10 * 60000;
+	relay.clock = () => Date.now() - EARLIER;
 	await dispatch(phone, phoneDev, 'one');				// row 1; R1 row 2
 	await runner.DaimondPost.round();
 	await until(() => runner.runs.length >= 1);
 	await ticks(80);
+	relay.clock = () => Date.now();
 	await dispatch(phone, phoneDev, 'two');				// row 3; R2 row 4
 	await runner.DaimondPost.round();
 	await until(() => runner.runs.length >= 2);
@@ -326,8 +335,11 @@ async function lapse() {
 	const held = ((await runner.DaimondPost.read()).holds || []).map((h) => h.seq);
 	check('the runner holds R1 and R2 for the phone', held.includes(2) && held.includes(4),
 		'holds ' + JSON.stringify(held) + ', relay rows ' + JSON.stringify(relay.seqs()));
-	// R1 arrived longer ago than its window (16.5 min).
-	relay.rows.find((r) => r.seq === 2).ts -= 20 * 60;
+	// Seven and a half minutes on: R1 is 17.5 min old, past its window (16.5 min), and R2
+	// 7.5 min, inside it. The relay's clock moves on, as the runner's next presence answer
+	// tells it; a stamp the relay wrote never changes, and the runner does not read R1 again.
+	relay.clock = () => Date.now() + 7.5 * 60000;
+	teach(runner, relay);
 	await runner.DaimondPost.round();
 	await ticks(80);
 	check('R1 is let go once its window has passed', !relay.has(2),

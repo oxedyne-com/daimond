@@ -1525,6 +1525,7 @@ fn one_task(
         keeper:      String::new(),
         // The one mark is made here and now, so nothing waits to be confirmed.
         unconfirmed: Vec::new(),
+        by_model:    false,
     };
     let registry = ToolRegistry::new(Tool::defaults(), ctx);
 
@@ -1553,7 +1554,7 @@ fn one_task(
                 AgentEvent::ToolCall { .. } => s.calls += 1,
                 // The OUTCOME, never the prose. `CONTRACT_OUTCOME.md` §3.
                 // Where a destructive call's path sat is not what this probe measures.
-                AgentEvent::ToolResult { name, result, outcome, class: _ } => {
+                AgentEvent::ToolResult { name, result, outcome, class: _, paused: _ } => {
                     let (name2, result2) = (name.clone(), result.clone());
                     s.bytes += result.len();
                     if result.len() > s.worst.1 {

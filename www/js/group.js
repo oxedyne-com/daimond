@@ -945,7 +945,7 @@
 		if (isClosed(rec)) return false;
 		if (rec.state === STATE.JOINED) return true;
 		rec.state   = STATE.JOINED;
-		rec.stateAt = Date.now();
+		rec.stateAt = DaimondStamp.next(rec.stateAt);	// past the decision it replaces
 		await put(gid, rec);
 		// Messages that arrived while the invitation was open were sealed to this
 		// device and are its own; the tray was holding them until the invitation
@@ -976,7 +976,7 @@
 		if (isClosed(rec)) return false;
 		if (authoredBy(rec, await whoAmI())) return false;
 		rec.state   = STATE.LEFT;
-		rec.stateAt = Date.now();
+		rec.stateAt = DaimondStamp.next(rec.stateAt);	// past the decision it replaces
 		await put(gid, rec);
 		await draw();
 		return true;

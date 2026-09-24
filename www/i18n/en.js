@@ -2476,6 +2476,7 @@
 	'marks.use_here': 'Use here',
 	'marks.use_all': 'Use all here',
 	'marks.use_help': 'Bring this mark into force on this device as well',
+	'marks.use_ask': 'Use this mark on this device?',
 	'deletes.held_title': 'Keep deleting or wiping files in your folder?',
 	'deletes.held_body.one': '{who} has deleted or wiped {n} file in the folder you opened on this computer in this turn, as many as a turn may there without asking you. It wants to {next} next. Daimond keeps a copy of each file it deletes or wipes for at least seven days. Let it go on in this turn?',
 	'deletes.held_body.other': '{who} has deleted or wiped {n} files in the folder you opened on this computer in this turn, as many as a turn may there without asking you. It wants to {next} next. Daimond keeps a copy of each file it deletes or wipes for at least seven days. Let it go on in this turn?',
@@ -2501,6 +2502,7 @@
 	'dws.detach_dir':      'Stop keeping this folder with {name}',
 	'dws.elsewhere':       'Lives in the workspace',
 	'dws.readonly':        'Read only',
+	'dws.readwrite':       'Read and change',
 	'dws.share':           'Share with devices that lack native access',
 	'dws.share_help':      'Off: only this device. On: copied to others, up to {max}.',
 	'dws.shared':          'Shared',
@@ -3078,6 +3080,7 @@
 	'backup.n_diamonds.one':  '{n} diamond',
 	'backup.n_diamonds.other': '{n} diamonds',
 	'backup.restored_body':   'Restored {files} and {diamonds}. Daimond will reload to open your restored workspace.',
+	'backup.restored_owed':   'This device is out of browser storage, so part of what was restored is not saved yet. The page reloads once it is; freeing some space lets it.',
 	// Appended to the line above when a backup held another account's files. There are
 	// only two places they could go — a folder named after a stranger inside this
 	// workspace, or into that account's private storage — and neither is a restore, so
@@ -3315,6 +3318,7 @@
 	// A deletion whose tombstone could not be recorded, so it was refused rather
 	// than left to resurrect from disk or from the other device (S-SYNC #6).
 	'store.delete_unrecorded': 'a deletion could not be recorded — this browser’s storage is full',
+	'store.records_owed': 'This device is out of browser storage, so a change made here is not saved yet. This page is keeping it, and saves it as soon as there is room.',
 	// A read that returned nothing where the last good write left {n}. The
 	// number is the count, so keep the placeholder.
 	'store.empty_read':     'this browser returned none of the {n} conversations it is holding',

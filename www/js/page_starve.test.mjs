@@ -120,6 +120,7 @@ function makeTab(relay, name) {
 			setTimeout, clearTimeout, () => 0, () => {},
 			{ log: () => {}, debug: () => {}, warn: () => {}, error: () => {} }, globalThis);
 	}
+	loadScript('store.js');
 	loadScript('vendor/noble-curves.min.js', '\n;window.DaimondNoble = DaimondNoble;');
 	loadScript('curvefallback.js');
 	loadScript('identity.js');

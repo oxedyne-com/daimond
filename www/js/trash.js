@@ -365,27 +365,32 @@
 		return { k: k, at: at, back: back, a: r.a ? 1 : 0, r: days };
 	}
 
+	/// Read through `DaimondStore`, so a record this tab could not store is held
+	/// owed and read back here, not lost to a sibling tab's write (SIM-11).
 	function load() {
 		if (_items) return _items;
 		_items = {};
-		try {
-			var raw = JSON.parse(localStorage.getItem(KEY) || '{}') || {};
-			var items = raw.items || {};
-			Object.keys(items).forEach(function (id) {
-				var r = clean(items[id]);
-				if (r) _items[id] = r;
-			});
-		} catch (e) { _items = {}; }
+		var raw = window.DaimondStore.get(KEY, {});
+		var items = (raw && raw.items) || {};
+		Object.keys(items).forEach(function (id) {
+			var r = clean(items[id]);
+			if (r) _items[id] = r;
+		});
 		return _items;
 	}
 
-	/// Returns whether the write landed. A quota failure used to be swallowed here,
-	/// so a chat "moved to trash" left the rail while nothing recorded it -- the
-	/// caller now surfaces a false so the loss is not silent (S-SYNC #6, sibling of
-	/// the tombstone durability fix).
+	/// Returns whether the write landed. One the box refuses is held owed by
+	/// `DaimondStore`, retried under `law` and said on screen; the caller still
+	/// hears the false, so a trashing is never reported as stored when it is not.
 	function save() {
-		try { localStorage.setItem(KEY, JSON.stringify({ v: 1, items: sorted(load()) })); return true; }
-		catch (e) { log('could not write the trash record', e); return false; }
+		return window.DaimondStore.put(KEY, { v: 1, items: sorted(load()) }, law);
+	}
+
+	/// Two stored records as one, by the rule `adopt` merges with.
+	function law(a, b) {
+		var items = {};
+		[a, b].forEach(function (rec) { mergeItems(items, (rec && rec.items) || {}); });
+		return { v: 1, items: sorted(items) };
 	}
 
 	/// The map with its ids in order and each record's fields in a fixed order.
@@ -571,10 +576,23 @@
 	/// order the parcels arrive in. Nothing here stamps on the way in: a device
 	/// that restamped what it adopted would push it straight back, and two
 	/// devices would tell each other about the same trashing for ever.
+	///
+	/// A merged record the box refuses still holds here, owed, and is still drawn;
+	/// then it THROWS, so the sync section is re-pulled rather than read as applied
+	/// (SIM-16, A5).
 	function adopt(rec) {
 		if (!rec || typeof rec !== 'object') return false;
-		var incoming = rec.items || {};
-		var items = load(), moved = false;
+		var moved = mergeItems(load(), rec.items || {});
+		if (!moved) return false;
+		var landed = save();
+		announce();
+		if (!landed) throw window.DaimondStore.refusal(KEY);
+		return true;
+	}
+
+	/// Merge `incoming` records into `items`, in place. True when `items` moved.
+	function mergeItems(items, incoming) {
+		var moved = false;
 		Object.keys(incoming).forEach(function (id) {
 			var r = clean(incoming[id]);
 			if (!r) return;
@@ -589,7 +607,7 @@
 			// taken exactly when it is. Taken independently they would describe a
 			// stamp that lost, which is how a record comes to say it was expired
 			// by a clock on a date somebody pressed a button.
-			if (r.at   > mine.at)   { mine.at = r.at; mine.a = r.a; mine.r = r.r; moved = true; }
+			if (r.at   > mine.at)   { mine.at = r.at; mine.a = r.a; mine.r = r.r; mine.k = r.k; moved = true; }
 			else if (r.at === mine.at) {
 				// The same trashing reached here twice. Two devices can only
 				// disagree about it if one was a person and the other the clock --
@@ -604,16 +622,19 @@
 				// something past its date costs a few bytes, destroying it before
 				// its date costs the work. It settles as soon as both refresh.
 				if (r.r > mine.r) { mine.r = r.r; moved = true; }
+				// And a Diamond over a chat, for the kind -- see below.
+				if (r.k !== mine.k && r.k === 'd') { mine.k = 'd'; moved = true; }
 			}
 			if (r.back > mine.back) { mine.back = r.back; moved = true; }
 			// A record that arrived naming a Diamond where this device thinks a
 			// chat is disagrees about the thing itself, not about its state. The
-			// far end is as likely to be right as this one, and the kind is only
-			// used to decide which store to look in — so the arriving one is taken
-			// and the lookup, which asks both stores anyway, settles it.
-			if (r.k !== mine.k) { mine.k = r.k; moved = true; }
+			// kind is only used to decide which store to look in, and the lookup
+			// asks both stores anyway, so any one answer will do -- but it has to
+			// be the SAME one on every device, whichever parcel arrived first. So
+			// the kind travels with the trashing (`at`, above), and a tie at one
+			// `at` goes to the Diamond. Taking the arriving kind was a merge whose
+			// answer depended on the order (BM-5).
 		});
-		if (moved) { save(); announce(); }
 		return moved;
 	}
 

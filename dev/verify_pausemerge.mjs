@@ -62,6 +62,8 @@ const peer = (p, name, src, off) => p.evaluate(async ({ name, src, off }) => {
 		removeItem: (k) => { m.delete(k); } };
 	const win = { localStorage: ls, addEventListener() {}, dispatchEvent() { return true; },
 		DaimondIdentity: { deviceId: () => name } };
+	// store.js first, as index.html loads it: pause.js stores through it.
+	new Function('window', 'localStorage', await (await fetch('/js/store.js', { cache: 'no-store' })).text())(win, ls);
 	new Function('window', 'localStorage', 'CustomEvent', 'Date', body)(win, ls,
 		function CustomEvent(t) { this.type = t; }, { now: () => Date.now() + off });
 	(window.__peers = window.__peers || {})[name] = win.DaimondPause;

@@ -118,6 +118,59 @@ check('IMPORT RESTORES WORKSPACE — the file is on disk in session B, with its 
 const everInB = await b.page.evaluate(() => localStorage.getItem('daimond-id-ever'));
 check('K_EVER is set in session B after the restore', everInB === '1', 'daimond-id-ever=' + everInB);
 
+// ── A restore is a merge, and honours what was deleted since (the D-28 state
+//    review, A6: DEL-5). ─────────────────────────────────────────────────────
+// Three things the backup carries were deleted HERE before the restore, as a
+// delete made on another device arrives: a Diamond it has only as a summary (so
+// it would be rebuilt), a Diamond whose raw store it carries as workspace files,
+// and a chat. None may come back. And a Diamond rebuilt from its summary lands at
+// the backup's own id, so a second restore finds it rather than making another.
+const TWIN = 'a6a6a6a6a6a6', GONE = 'b6b6b6b6b6b6', GONE_DIR = 'c6c6c6c6c6c6', GONE_CHAT = 'chat-a6-deleted';
+const GONE_FILE = 'diamonds/' + GONE_DIR + '/crystal.json';
+const extra = JSON.parse(JSON.stringify(backup));
+extra.diamonds = (extra.diamonds || []).concat([
+	{ id: TWIN, name: 'A6 twin', crystal: '# A6 twin\n\nrestored once' },
+	{ id: GONE, name: 'A6 gone', crystal: '# A6 gone' },
+]);
+extra.workspace = (extra.workspace || []).concat([{ path: GONE_FILE, b64: Buffer.from('{}').toString('base64') }]);
+extra.chats = (extra.chats || []).concat([{ id: GONE_CHAT, name: 'A6 deleted chat', messages: [], updatedAt: 1, metaAt: 1 }]);
+const path2 = scratch('backup-a6.json');
+fs.writeFileSync(path2, JSON.stringify(extra));
+await b.page.evaluate(async ([g, d, c]) => {
+	await DaimondCore.tombstone('daimond-diamond-tombs', g);
+	await DaimondCore.tombstone('daimond-diamond-tombs', d);
+	await DaimondCore.tombstone('daimond-chats-deleted', c);
+}, [GONE, GONE_DIR, GONE_CHAT]);
+async function restoreFrom(s, file) {
+	await s.page.click('#user-row');
+	await s.page.waitForTimeout(400);
+	const ch = s.page.waitForEvent('filechooser', { timeout: 15000 });
+	await s.page.click('button.admin-item:has-text("Import a backup")');
+	await (await ch).setFiles(file);
+	await s.page.waitForSelector('.dlg-ok', { timeout: 15000 });
+	await s.page.click('.dlg-ok');
+	await signInAs(s, 'backupB');
+}
+const diamondsNamed = (s, name) => s.page.evaluate(async (n) => {
+	const m = await import('/pkg/oxedyne_daimond.js');
+	const app = new m.DaimondApp('http://127.0.0.1/v1/chat/completions', '', 'none', 4096, '', true);
+	return JSON.parse(await app.list_diamonds()).filter((d) => d.name === n).map((d) => d.id);
+}, name);
+await restoreFrom(b, path2);
+const once = await diamondsNamed(b, 'A6 twin');
+check('a Diamond the backup holds only as a summary is rebuilt at the backup\'s own id',
+	once.length === 1 && once[0] === TWIN, JSON.stringify(once));
+await restoreFrom(b, path2);
+const twice = await diamondsNamed(b, 'A6 twin');
+check('TWO RESTORES LEAVE ONE COPY of it', twice.length === 1 && twice[0] === TWIN, JSON.stringify(twice));
+check('A RESTORE AFTER A DELETE BRINGS NOTHING BACK: not the rebuilt Diamond',
+	(await diamondsNamed(b, 'A6 gone')).length === 0);
+check('nor a Diamond\'s raw store', /^\(/.test(await opfsRead(b, GONE_FILE)), JSON.stringify(await opfsRead(b, GONE_FILE)));
+await b.page.waitForTimeout(500);
+const chatBack = await b.page.evaluate((c) => (DaimondCore.chatStore().stored() || []).some((x) => x && x.id === c), GONE_CHAT);
+check('nor the chat', chatBack === false);
+check('and the file this backup is for is still restored', await opfsRead(b, WS_PATH) === MARKER);
+
 const errs = errors(b).filter(e => !/502|Bad Gateway/.test(e));
 check('nothing threw in session B', errs.length === 0, errs.slice(0, 2).join(' | '));
 await b.close();

@@ -1096,6 +1096,7 @@
 	'store.alarm_download': '下载副本',
 	'store.alarm_retry':    '重试',
 	'store.full':           '这个浏览器为本站点留的存储空间已经满了',
+	'store.records_owed': '此设备的浏览器存储空间已满，因此在这里所做的更改尚未保存。此页面会保留它，并在有空间时立即保存。',
 	'identity.err_no_sealing_key': '此设备没有封装密钥，因此无法打开已封装的消息。解锁一次身份后就会生成一个。',
 	'store.empty_read': '这个浏览器持有 {n} 段对话，却一段也没有返回',
 	// ── 权限阶梯 ───────────────────────────────────────────────
@@ -1772,6 +1773,7 @@
 	'marks.use_here': '在这里使用',
 	'marks.use_all': '全部在这里使用',
 	'marks.use_help': '让这个标记在这台设备上也生效',
+	'marks.use_ask': '在这台设备上使用这个标记吗？',
 	'deletes.held_title': '继续删除或大部分覆盖你文件夹里的文件吗？',
 	'deletes.held_body.one': '{who} 在本轮已在你于这台电脑上打开的文件夹里删除或大部分覆盖了 {n} 个文件，这是一轮不经询问可在那里做到的上限。它接下来想{next}。Daimond 会把每个这样删除或覆盖的文件的副本保留至少七天。要让它在本轮继续吗？',
 	'deletes.held_body.other': '{who} 在本轮已在你于这台电脑上打开的文件夹里删除或大部分覆盖了 {n} 个文件，这是一轮不经询问可在那里做到的上限。它接下来想{next}。Daimond 会把每个这样删除或覆盖的文件的副本保留至少七天。要让它在本轮继续吗？',
@@ -1810,6 +1812,7 @@
 	'dws.drop_all_help':   '把这些全部移出工作区；文件本身不受影响。',
 	'dws.elsewhere':       '在工作区里',
 	'dws.readonly':        '只读',
+	'dws.readwrite':       '读取和修改',
 	'dws.share':           '共享给无法自己打开它的设备',
 	'dws.share_help':      '关闭：仅此设备。开启：复制到其他设备，最多 {max} 个。',
 	'dws.shared':          '已共享',
@@ -2178,6 +2181,7 @@
 	'backup.n_diamonds.one':  '{n} 个 diamond',
 	'backup.n_diamonds.other': '{n} 个 diamond',
 	'backup.restored_body':   '已恢复 {files} 和 {diamonds}。Daimond 会重新加载，打开恢复好的工作区。',
+	'backup.restored_owed':   '此设备的浏览器存储空间已满，恢复的部分内容尚未保存。保存后页面会重新加载；释放一些空间即可。',
 	'backup.n_foreign.one':   '那份备份里有 {n} 个文件属于那台浏览器上的另一个账户，因此没有恢复，只留在备份里。',
 	'backup.n_foreign.other': '那份备份里有 {n} 个文件属于那台浏览器上的另一个账户，因此没有恢复，只留在备份里。',
 

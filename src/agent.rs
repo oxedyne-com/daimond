@@ -1194,6 +1194,10 @@ impl Agent {
         let mut refolded = false;
         let mut rounds = 0usize;
         loop {
+            // A STOPPED TURN SENDS NOTHING, the fold's request included; see `Halt`.
+            if self.llm.halted() {
+                return self.stop_halted(rounds, &Claims::default(), None, on_event).await;
+            }
             self.fold_if_needed(session, &mut working, 0, Fold::IfNeeded, on_event).await;
             let sent = compact::conversation_bytes(&working, &self.llm.open_folds());
             let mut full = String::new();
@@ -1237,7 +1241,7 @@ impl Agent {
                     // strictly better than saying nothing.
                     let silent = content.trim().is_empty();
                     session.messages.push(ChatMessage::assistant(content));
-                    if silent {
+                    if silent && !resp.aborted {
                         on_event(AgentEvent::Error(
                             "The model ended its turn without saying anything.".to_string()));
                         session.messages.push(compact::empty_turn_note());
@@ -1257,8 +1261,11 @@ impl Agent {
                     self.live_cached.set(session.cached_tokens);
                     self.live_cost.set(session.cost_usd);
                     // A pure chat holds no tools, so it can claim nothing about the store and
-                    // its ending is the shape of the turn and nothing else.
-                    let how = if silent { TurnEnd::Silent } else { TurnEnd::Answered };
+                    // its ending is the shape of the turn and nothing else.  A Stop is its own
+                    // ending whatever it cut off, as it is on the tool path.
+                    let how = if resp.aborted { TurnEnd::Stopped }
+                        else if silent        { TurnEnd::Silent }
+                        else                  { TurnEnd::Answered };
                     let ending = self.audit(how, rounds, &Claims::default(), None).await;
                     self.ended(ending, on_event);
                     on_event(AgentEvent::Done);
@@ -1507,6 +1514,25 @@ impl Agent {
         *working = crate::protocol::pair_up(work);
     }
 
+    /// End a turn its halt has stopped, at a seam: nothing more is sent and nothing is said.
+    ///
+    /// The ending is `Stopped`, the one a Stop that lands mid-stream gives, so the page hands
+    /// the turn back the same way whichever moment the Stop or the pause landed in.
+    async fn stop_halted(
+        &self,
+        rounds:     usize,
+        claims:     &Claims,
+        registry:   Option<&ToolRegistry>,
+        on_event:   &mut impl FnMut(AgentEvent),
+    )
+        -> Outcome<()>
+    {
+        let ending = self.audit(TurnEnd::Stopped, rounds, claims, registry).await;
+        self.ended(ending, on_event);
+        on_event(AgentEvent::Done);
+        Ok(())
+    }
+
     async fn run_tool_loop(
         &self,
         session:    &mut Session,
@@ -1572,6 +1598,12 @@ impl Agent {
         // see the seam below and `compact::ORPHAN_GRACE_ROUNDS`.
         let mut orphan_from: Option<usize> = None;
         loop {
+            // A STOPPED TURN GOES NO FURTHER, asked before anything of the next round -- the
+            // cap's fold, the proactive fold, the request -- can spend.  The seam below asks it
+            // too; this is the top of a round a nudge `continue`s straight into, and of the first.
+            if self.llm.halted() {
+                return self.stop_halted(rounds, &claims, Some(registry), on_event).await;
+            }
             // THE CAP IS MET AT THE TOP OF A ROUND and not after the loop, because what happens
             // there is no longer one thing: either the turn carries on into another leg or it
             // ends, and both want the same forced fold in front of them.
@@ -1733,8 +1765,10 @@ impl Agent {
             }
 
             // Cancelled mid-stream: keep the partial answer already
-            // streamed and end the turn cleanly, without an error.
-            if resp.aborted {
+            // streamed and end the turn cleanly, without an error.  STOPPED AFTER THE STREAM
+            // ENDED is the same ending: a halt set as the round's last bytes arrived, or by the
+            // round's own trace event, leaves tool calls this turn must not run.
+            if resp.aborted || self.llm.halted() {
                 session.messages.push(ChatMessage::Assistant {
                     content: MessageContent::text(crate::llm::seamed(resp.content)),
                     tool_calls: Vec::new(),
@@ -1904,6 +1938,13 @@ impl Agent {
             // a result it does in the model's own order, whatever ran together underneath.
             let names: Vec<&str> = resp.tool_calls.iter().map(|t| t.name.as_str()).collect();
             for span in batch::batches(&names) {
+                // A HALT SET WHILE AN EARLIER CALL OF THIS ROUND RAN stops the calls after it.
+                // Their assistant turn is already in the session, so the calls left unanswered
+                // are paired off as a road failure's are (`abandon_round`).
+                if self.llm.halted() {
+                    self.abandon_round(session, &mut working);
+                    return self.stop_halted(rounds, &claims, Some(registry), on_event).await;
+                }
                 let group = &resp.tool_calls[span];
                 // THE EVENTS STAY STRICTLY ALTERNATING: one `ToolCall`, then its `ToolResult`,
                 // then the next.  `www/js/daimond.js` keeps ONE `pendingTool` and ONE
@@ -2033,6 +2074,9 @@ impl Agent {
                         name:   tc.name.clone(),
                         result: text.clone(),
                         outcome,
+                        // Which pause node refused it, read from the line the registry composed
+                        // for it (`crate::tools::paused_line`), never from the sentence.
+                        paused: crate::tools::paused_node(&text).unwrap_or_default(),
                         // Only the first of a group can be destructive: `batch` runs nothing
                         // beside a call that writes.
                         class:  match (&class, n) {
@@ -2093,6 +2137,14 @@ impl Agent {
                 self.ended(ending, on_event);
                 on_event(AgentEvent::Done);
                 return Ok(());
+            }
+
+            // STOPPED WHILE THE TOOLS RAN, which is where a slow tool's turn spends its time:
+            // every call is answered, so the conversation is whole, and the next request is
+            // never sent.  Asked before the interjections, which stay queued for the page to
+            // take back rather than being written into a turn that is over.
+            if self.llm.halted() {
+                return self.stop_halted(rounds, &claims, Some(registry), on_event).await;
             }
 
             // THE SEAM. The tool replies are in, and the next request has not gone out,
@@ -3330,6 +3382,57 @@ mod tests {
         assert!(!Fold::IfNeeded.forces());
     }
 
+    /// A Stop or a pause that lands while a round's tool runs -- the moment a slow tool spends
+    /// its time in -- ends the turn at the seam, with every call answered and no further request
+    /// (PQA W, WD: twelve more requests of a fourteen-round turn went out).
+    #[tokio::test]
+    async fn test_a_stop_between_rounds_ends_the_turn_before_another_request() {
+        let registry = one_tool();
+        let (port, seen) = crate::llm::tests::start_stub(vec![
+            tool_round(&[("file_write", r#"{"path":"a.txt","content":"1"}"#)]),
+            tool_round(&[("file_write", r#"{"path":"b.txt","content":"2"}"#)]),
+            tool_round(&[("file_write", r#"{"path":"c.txt","content":"3"}"#)]),
+        ]).await;
+        let mut llm = crate::llm::tests::stub_client(port);
+        llm.retry.max_attempts = 1;
+        let a = Agent::new(llm, "You are Daimond.");
+        let halt = a.llm.halt();
+        let mut session = Session::new(fmt!("s1"), fmt!("stop"), fmt!("model"));
+        let mut events: Vec<AgentEvent> = Vec::new();
+        // Pressed as the page presses it: in the tool call's own event, after the round's
+        // request has finished and before the tool runs.
+        let ran = a.run_turn(&mut session, fmt!("go"), &registry, &mut |ev| {
+            if matches!(ev, AgentEvent::ToolCall { .. }) { halt.fire(); }
+            events.push(ev);
+        }).await;
+        assert!(ran.is_ok(), "a stopped turn is a clean stop: {:?}", ran.err());
+        assert_eq!(Some(TurnEnd::Stopped), a.ending().map(|e| e.how));
+        assert_eq!(1, crate::llm::tests::connections(&seen),
+            "a request went out after the Stop landed between rounds");
+        // Every call the turn made is answered, so the conversation a Continue sends is whole.
+        let asked = session.messages.iter().filter(|m| matches!(m,
+            ChatMessage::Assistant { tool_calls, .. } if !tool_calls.is_empty())).count();
+        let answered = session.messages.iter().filter(|m| matches!(m, ChatMessage::Tool { .. }))
+            .count();
+        assert_eq!((1, 1), (asked, answered));
+        assert!(matches!(events.last(), Some(AgentEvent::Done)));
+    }
+
+    /// A turn stopped before its first request sends none at all.
+    #[tokio::test]
+    async fn test_a_turn_stopped_before_it_began_sends_nothing() {
+        let registry = one_tool();
+        let (port, seen) = crate::llm::tests::start_stub(vec![
+            tool_round(&[("file_write", r#"{"path":"a.txt","content":"1"}"#)]),
+        ]).await;
+        let a = Agent::new(crate::llm::tests::stub_client(port), "You are Daimond.");
+        a.llm.abort();
+        let mut session = Session::new(fmt!("s1"), fmt!("stop"), fmt!("model"));
+        let _ = a.run_turn(&mut session, fmt!("go"), &registry, &mut |_| {}).await;
+        assert_eq!(Some(TurnEnd::Stopped), a.ending().map(|e| e.how));
+        assert_eq!(0, crate::llm::tests::connections(&seen));
+    }
+
     #[tokio::test]
     async fn test_a_hand_fold_leaves_the_window_where_it_was_00() {
         // The property stated as the user would see it, rather than as the enum states
@@ -3862,6 +3965,7 @@ mod tests {
             daimon_of:   String::new(),
             keeper:      String::new(),
             unconfirmed: Vec::new(),
+            by_model:    false,
         })
     }
 
@@ -3910,6 +4014,7 @@ mod tests {
                 daimon_of:   String::new(),
                 keeper:      String::new(),
                 unconfirmed: Vec::new(),
+                by_model:    false,
             })
     }
 
@@ -4502,6 +4607,7 @@ mod tests {
             daimon_of:   String::new(),
             keeper:      String::new(),
             unconfirmed: Vec::new(),
+            by_model:    false,
         });
         r.tools = vec![crate::tools::Tool::FileRead, crate::tools::Tool::FileWrite];
         r

@@ -18,6 +18,7 @@
 //! gets about what to do next.
 
 use crate::wasm::js_str;
+use crate::wasm::refusal;
 
 use oxedyne_fe2o3_core::prelude::*;
 
@@ -80,15 +81,6 @@ fn relay() -> Outcome<Relay> {
             System, Missing));
     }
     Ok(obj.unchecked_into::<Relay>())
-}
-
-/// The `message` of a rejected JS `Error`, verbatim, falling back to the
-/// value's own rendering when it is not an `Error`.
-fn refusal(e: &JsValue) -> String {
-    match js_sys::Reflect::get(e, &JsValue::from_str("message")) {
-        Ok(m)  => m.as_string().unwrap_or_else(|| js_str(e)),
-        Err(_) => js_str(e),
-    }
 }
 
 /// Render a resolved JS value as the JSON string the tool result carries.

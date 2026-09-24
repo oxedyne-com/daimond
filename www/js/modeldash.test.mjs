@@ -26,6 +26,7 @@
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
+import { loadStore } from './storefixture.mjs';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const LEDGER_SRC    = join(HERE, 'ledger.js');
@@ -74,6 +75,7 @@ function load(store) {
 			.replace('by[m].prompt += e.p || 0;\n\t\t\tby[m].completion += e.c || 0;\n', '');
 	}
 	// eslint-disable-next-line no-new-func
+	loadStore(win, localStorage);
 	new Function('window', 'localStorage', ledgerSrc)(win, localStorage);
 
 	let modeldashSrc = readFileSync(MODELDASH_SRC, 'utf8');
@@ -139,6 +141,7 @@ function loadDom(store) {
 	};
 
 	const ledgerSrc = readFileSync(LEDGER_SRC, 'utf8');
+	loadStore(win, localStorage);
 	new Function('window', 'localStorage', ledgerSrc)(win, localStorage);
 	const modeldashSrc = readFileSync(MODELDASH_SRC, 'utf8');
 	new Function('window', 'document', 'localStorage', modeldashSrc)(win, document_, localStorage);

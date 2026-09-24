@@ -17,6 +17,7 @@
 
 use crate::llm::extract_json_string;
 use crate::wasm::js_str;
+use crate::wasm::refusal;
 
 use oxedyne_fe2o3_core::prelude::*;
 use oxedyne_fe2o3_text::base64;
@@ -80,15 +81,6 @@ fn panel() -> Outcome<Panel> {
             read or draft there, and carry on without it."; System, Missing));
     }
     Ok(obj.unchecked_into::<Panel>())
-}
-
-/// The `message` of a rejected JS `Error`, verbatim.  A refusal from the driver is written
-/// for the model to read, so nothing here rewords it.
-fn refusal(e: &JsValue) -> String {
-    match js_sys::Reflect::get(e, &JsValue::from_str("message")) {
-        Ok(m)  => m.as_string().unwrap_or_else(|| js_str(e)),
-        Err(_) => js_str(e),
-    }
 }
 
 /// Settle a driver promise that answers with a string.

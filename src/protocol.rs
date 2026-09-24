@@ -956,7 +956,9 @@ pub enum AgentEvent {
     ///
     /// `class` is where a destructive call's path sat -- [`crate::tools::PathClass::wire`], empty
     /// for any other call -- so the lens can say how far a delete reached without the path.
-    ToolResult { name: String, result: String, outcome: CallOutcome, class: String },
+    /// `paused` is the pause node that refused the call ([`crate::tools::paused_node`]), empty
+    /// for any other call, so the page names the control without reading the sentence back.
+    ToolResult { name: String, result: String, outcome: CallOutcome, class: String, paused: String },
     /// The user said something while the turn was running, and it has now been put
     /// into the conversation at the seam between two rounds.
     ///
@@ -1157,13 +1159,16 @@ impl AgentEvent {
                 m.insert(dat!("name"), dat!(name.clone()));
                 m.insert(dat!("args"), dat!(args.clone()));
             }
-            Self::ToolResult { name, result, outcome, class } => {
+            Self::ToolResult { name, result, outcome, class, paused } => {
                 m.insert(dat!("type"), dat!("tool_result"));
                 m.insert(dat!("name"), dat!(name.clone()));
                 m.insert(dat!("content"), dat!(result.clone()));
                 m.insert(dat!("outcome"), dat!(outcome.wire()));
                 if !class.is_empty() {
                     m.insert(dat!("class"), dat!(class.clone()));
+                }
+                if !paused.is_empty() {
+                    m.insert(dat!("paused"), dat!(paused.clone()));
                 }
             }
             Self::Interjected(text) => {

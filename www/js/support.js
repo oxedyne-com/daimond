@@ -70,7 +70,13 @@
 	// Same shape and merge rule as debugshare.js's `debugShare: {on, at}`:
 	// freshest-`at`-wins, written verbatim so a value both devices already
 	// agree on serialises to the same bytes and the sync push-skip holds.
-	var CONSENT_KEY       = 'daimond-support-consent';      // '1' once THIS device has agreed
+	//
+	// ONE record, `{ on, at }`, written in one `setItem` through `DaimondStore`: as
+	// two keys, a box that took the stamp and refused the value kept a new stamp on
+	// an old answer, and never adopted or sent again (SIM-13).
+	var CONSENT_REC_KEY   = 'daimond-support-consent-rec';
+	// The pair it replaces, read only while the record has never been written.
+	var CONSENT_KEY       = 'daimond-support-consent';
 	var CONSENT_STAMP_KEY = 'daimond-support-consent-at';
 
 	function read(k)     { try { return localStorage.getItem(k); } catch (e) { return null; } }
@@ -98,14 +104,32 @@
 
 	// ── Consent: local read/write, and the sync parcel pair ───────────
 
-	function consented() { return read(CONSENT_KEY) === '1'; }
+	/// This device's decision, `{ on, at }`, or null when it has never made one.
+	function consentRec() {
+		var r = window.DaimondStore.get(CONSENT_REC_KEY, null);
+		if (r && typeof r === 'object') return { on: !!r.on, at: ms(r.at) };
+		var v = read(CONSENT_KEY), at = ms(read(CONSENT_STAMP_KEY));
+		return (v !== null || at) ? { on: v === '1', at: at } : null;
+	}
+
+	/// The fresher of two decisions, `b` only when it beats `a`: the merge's law, and
+	/// the one an owed decision is retried under. A tie goes the same way on every
+	/// device, and to OFF: sharing diagnostics is consent, so withholding wins (A3).
+	function fresherConsent(a, b) {
+		if (!b) return a;
+		return window.DaimondStamp.beats(b.at, !!b.on, a ? a.at : 0, a ? !!a.on : false, offFirst) ? b : a;
+	}
+	function offFirst(on) { return on ? 0 : 1; }
+
+	function consented() { var r = consentRec(); return !!(r && r.on); }
 
 	/// Record THIS device's own consent decision, stamped so it can win (or
 	/// lose to) another device's answer for the same account over the next
 	/// sync round.
 	function setConsented(v) {
-		write(CONSENT_KEY, v ? '1' : '0');
-		write(CONSENT_STAMP_KEY, String(Date.now()));
+		// Past the decision it replaces, whatever the clocks (A1).
+		var prev = consentRec();
+		window.DaimondStore.put(CONSENT_REC_KEY, { on: !!v, at: window.DaimondStamp.next(prev && prev.at) }, fresherConsent);
 		nudgeSync();
 	}
 
@@ -114,9 +138,8 @@
 	/// "nothing to say", so a fresh device cannot clear a decision another
 	/// device already made. See `collectSync` in daimond.js.
 	function syncSnapshot() {
-		var at = ms(read(CONSENT_STAMP_KEY));
-		if (!at) return null;
-		return { on: consented(), at: at };
+		var r = consentRec();
+		return (r && r.at) ? { on: r.on, at: r.at } : null;
 	}
 
 	/// Adopt a consent decision that arrived from another linked device: the
@@ -124,14 +147,15 @@
 	/// record this device already holds moves nothing and the next parcel is
 	/// byte-identical (the push-skip this app relies on everywhere else).
 	/// See `applySync` in daimond.js.
+	///
+	/// A decision the box refuses THROWS, so the section is re-pulled rather than
+	/// read as applied (SIM-16, A5).
 	function adoptSync(rec) {
 		if (!rec || typeof rec !== 'object') return;
 		var at = ms(rec.at);
 		if (!at) return;
-		if (at > ms(read(CONSENT_STAMP_KEY))) {
-			write(CONSENT_STAMP_KEY, String(at));
-			write(CONSENT_KEY, rec.on ? '1' : '0');
-		}
+		var mine = consentRec(), next = { on: !!rec.on, at: at };
+		if (fresherConsent(mine, next) === next) window.DaimondStore.putMerged(CONSENT_REC_KEY, next, fresherConsent);
 	}
 
 	// ── Auto-arm ────────────────────────────────────────────────────

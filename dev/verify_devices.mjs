@@ -347,10 +347,12 @@ try {
 				label: 'Work desktop', namedAt: now + 5e3 },
 		} });
 		out.afterRemoteRename = roster()[A];
-		// An EQUAL namedAt keeps what is here, exactly as an equal `seen` does.
+		// An EQUAL namedAt is settled by the names themselves -- the smaller wins -- so
+		// every device reaches the same one whichever parcel came first (P0-3, A3). The
+		// name arriving here is the larger, so what is here stands.
 		await DaimondCore.applySync({ v: 2, devices: {
 			[A]: { name: 'Firefox on Windows', created: now - 9e6, seen: now - 9e5,
-				label: 'Somebody else\'s idea', namedAt: now + 5e3 },
+				label: 'Yet another idea', namedAt: now + 5e3 },
 		} });
 		out.afterEqualNamedAt = roster()[A];
 		// And an OLDER rename loses.
@@ -409,7 +411,7 @@ try {
 	check('a rename from another device arrives even though its seen is older — the label merges on namedAt',
 		!!named.afterRemoteRename && named.afterRemoteRename.label === 'Work desktop',
 		JSON.stringify(named.afterRemoteRename));
-	check('an EQUAL namedAt keeps the name that is here — strictly newer, or nothing',
+	check('an EQUAL namedAt goes to the smaller name, the same on every device — here, the one already here',
 		!!named.afterEqualNamedAt && named.afterEqualNamedAt.label === 'Work desktop',
 		JSON.stringify(named.afterEqualNamedAt));
 	check('an OLDER rename loses', !!named.afterOlderRename && named.afterOlderRename.label === 'Work desktop',

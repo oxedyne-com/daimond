@@ -324,7 +324,12 @@
 		var j = null;
 		try { j = await r.json(); } catch (e) { /* not JSON */ }
 		if (!r.ok) {
-			throw new Error((j && j.error) || 'The web service could not reach that page.');
+			var e = new Error((j && j.error) || 'The web service could not reach that page.');
+			// 423 is the gateway's door saying a person's pause holds this spend. It names the
+			// node, which rides on the error so the engine books the call as refused and the
+			// page can point at the control, exactly as `search.js` does.
+			if (r.status === 423 && j && j.paused && j.node) { e.paused = true; e.pauseNode = String(j.node); }
+			throw e;
 		}
 		// Fetching a page costs credits, and the reply says what is left. One place owns that
 		// number; this hands it over rather than letting the header go stale.

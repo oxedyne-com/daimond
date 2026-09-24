@@ -112,14 +112,37 @@
 		return r.kind === 'browser' ? key === 'browser' : !!r.fid;
 	}
 
+	/// Store paths -- `diamonds/`, `mail/`, `chats/` -- which follow no folder
+	/// (`is_store_path`, `src/tools.rs`), mirrored here so a reference naming one
+	/// is reachable from every workspace whatever root it was written with.
+	///
+	/// F3, 2026-09-25. A legacy Keep transcript row, written with a folder open
+	/// before this build named store paths as such, reads `file:[machine:usr@…]
+	/// diamonds/<id>/transcript.md`. Judged by its written root, it fit no other
+	/// workspace: the Doc header drew it away, and one press there added a SECOND
+	/// row rather than finding the one already held. The row itself is never a
+	/// mark (`isMark`/`inOwnDir`), so nothing is granted either way; this is
+	/// reachability, the same question `fits` and `refReachable` already ask.
+	///
+	/// Release 5: the engine's `is_store_path` also pins the app's own
+	/// `system/agents`, `system/guide` and `system/usage` (`APP_STATE_DIRS`) to the
+	/// browser store, and, like its `under`, counts the directory itself as well as
+	/// what is beneath it. Mirrored here, so Help's `dir:[browser]system/guide` row
+	/// is reachable wherever the engine will read it from.
+	var STORE_PATH_RE = /^(?:diamonds|mail|chats|system\/(?:agents|guide|usage))(?:\/|$)/;
+	function isStorePath(path) {
+		return STORE_PATH_RE.test(String(path || ''));
+	}
+
 	/// Can a reference be opened from the workspace named by `key`? The same root
 	/// kind, and for a machine folder the same name where the reference carries
-	/// one. A reference from before roots were recorded fits either. Whether it is
+	/// one. A reference from before roots were recorded fits either, and so does
+	/// one naming a store path, whatever root it was written under. Whether it is
 	/// IN FORCE there is `force`'s question, not this one's.
 	function fits(ref, key) {
 		var p = parseRef(ref), r = rootOf(key);
 		if (p.kind !== 'file' && p.kind !== 'dir') return false;
-		if (!p.root) return true;
+		if (!p.root || isStorePath(p.path)) return true;
 		if (p.root !== r.kind) return false;
 		return p.root !== 'machine' || !p.name || p.name === r.name;
 	}
@@ -169,13 +192,27 @@
 	/// Is this row a mark at all: `holds` or `consulted`, on a file or a folder,
 	/// and the user's or from before rows said who wrote them? A row a model or a
 	/// fold wrote is a record and never a grant.
+	///
+	/// NOR IS A ROW INSIDE ITS OWN DIAMOND'S DIRECTORY (M1, 2026-09-25). Every fence
+	/// holds that directory on every device (`own_dir`), so a row naming a file in it
+	/// lists the file and grants nothing, and there is nothing for "Use here" to bring
+	/// into force. Keep's transcript is such a row, and it waited for a press on the
+	/// very device that kept it, and on every other.
 	function isMark(row) {
 		if (!row) return false;
 		var rel = row.rel || '', by = row.by || '';
 		if (rel !== 'holds' && rel !== 'consulted') return false;
 		if (by !== 'user' && by !== '') return false;
-		var kind = parseRef(row.to).kind;
-		return kind === 'file' || kind === 'dir';
+		var p = parseRef(row.to);
+		if (p.kind !== 'file' && p.kind !== 'dir') return false;
+		return !inOwnDir(row.owner, p.path);
+	}
+
+	/// Is `path` the Diamond `owner`'s own directory, or inside it?
+	function inOwnDir(owner, path) {
+		if (!owner || typeof owner !== 'string') return false;
+		var d = 'diamonds/' + owner;
+		return path === d || String(path || '').indexOf(d + '/') === 0;
 	}
 
 	/// Is this row stored as `owner`'s own? `links_touching` hands back a row
@@ -249,11 +286,20 @@
 	/// The two default Diamonds' read-only sight of their folders (`grantConsulted`
 	/// in daimond.js). Seeded once per account and synced to every device, so a
 	/// stored entry would leave them blind on every device but the first; covered
-	/// here instead, `consulted` only and never shared, under any root.
-	function seeded(owner, row, seeds) {
+	/// here instead, `consulted` only and never shared.
+	///
+	/// IN THE BROWSER WORKSPACE ONLY, on a row that names it or no workspace at all
+	/// (M4, 2026-09-25). Covered under any root, a Help row naming a machine folder --
+	/// seeded while one was open, or arriving by sync -- was in force read-only in
+	/// every folder of that name on every device, a grant nobody pressed. The browser
+	/// workspace is this device's own store; a machine folder is a person's disk, and
+	/// a seed row naming one is an ordinary mark there, waiting for "Use here".
+	function seeded(owner, row, root, seeds) {
+		if (root !== 'browser') return false;
 		var p = parseRef(row.to);
+		if (p.kind !== 'dir' || (p.root !== null && p.root !== 'browser')) return false;
 		for (var i = 0; i < (seeds || []).length; i++) {
-			if (seeds[i].owner === owner && p.kind === 'dir' && p.path === seeds[i].path) return true;
+			if (seeds[i].owner === owner && p.path === seeds[i].path) return true;
 		}
 		return false;
 	}
@@ -270,7 +316,7 @@
 			if (e.id !== (row.id || '') || e.to !== row.to || e.root !== root) continue;
 			return { rel: (e.rel === 'holds' && row.rel === 'holds') ? 'holds' : 'consulted', share: shareHere(e, row) };
 		}
-		if (seeded(owner, row, seeds)) return { rel: 'consulted', share: false };
+		if (seeded(owner, row, root, seeds)) return { rel: 'consulted', share: false };
 		return null;
 	}
 
@@ -329,6 +375,31 @@
 
 	function dropOwner(rec, owner) {
 		if (own(rec.d, owner)) delete rec.d[owner];
+		return rec;
+	}
+
+	/// Drop every entry -- Diamond and chat alike -- recorded under this
+	/// workspace key: the rows themselves are untouched, but nothing on them is
+	/// in force or waiting FROM THIS DEVICE for that folder until it is pressed
+	/// again.
+	///
+	/// M2-R2-1, 2026-09-25. Forgetting a machine folder used to clear `FsaDB`
+	/// alone, so a mark pressed there stayed in force -- and its fence with it --
+	/// until the page reloaded, and the toast saying Daimond held no record of
+	/// the folder was not true until then.
+	function dropRoot(rec, key) {
+		var dKeys = Object.keys(rec.d);
+		for (var i = 0; i < dKeys.length; i++) {
+			var k = dKeys[i];
+			var kept = rec.d[k].filter(function (e) { return e.root !== key; });
+			if (kept.length) rec.d[k] = kept; else delete rec.d[k];
+		}
+		var cKeys = Object.keys(rec.c);
+		for (var j = 0; j < cKeys.length; j++) {
+			var ck = cKeys[j];
+			var keptC = rec.c[ck].filter(function (e) { return e.root !== key; });
+			if (keptC.length) rec.c[ck] = keptC; else delete rec.c[ck];
+		}
 		return rec;
 	}
 
@@ -484,6 +555,7 @@
 		parseRef: parseRef,
 		rootKey: rootKey,
 		fits: fits,
+		isStorePath: isStorePath,
 		isMark: isMark,
 		parseSidecar: parseSidecar,
 		/// The built-in entries, given once by daimond.js beside `DEFAULT_IDS`.
@@ -532,6 +604,12 @@
 		},
 		drop: function (owner, id, to) {
 			return change(function (rec) { return dropEntry(rec, owner, id, to); }).moved;
+		},
+		/// Forget every entry recorded under this workspace key (M2-R2-1): the
+		/// Diamond and chat marks pressed in a machine folder, called when the
+		/// folder itself is forgotten.
+		forgetRoot: function (key) {
+			return change(function (rec) { return dropRoot(rec, key); }).moved;
 		},
 		dropAll: function (owners) {
 			var list = Array.isArray(owners) ? owners : [owners];
@@ -587,11 +665,13 @@
 			chatWaiting: chatWaiting,
 			putEntry: putEntry,
 			dropEntry: dropEntry,
+			dropRoot: dropRoot,
 			settleRows: settleRows,
 			putChat: putChat,
 			dropChat: dropChat,
 			isDiamondId: isDiamondId,
 			isChatId: isChatId,
+			seeded: seeded,
 			settleChatHolds: settleChatHolds,
 			consts: { KEY: KEY, SHARE_NEEDS_PRESS_HERE: SHARE_NEEDS_PRESS_HERE },
 		},

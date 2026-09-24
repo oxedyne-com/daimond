@@ -464,6 +464,7 @@ pub async fn handle_chat_websocket<
                                 daimon_of:   String::new(),
                                 keeper:      String::new(),
                                 unconfirmed: Vec::new(),
+                                by_model:    false,
                             };
                             ToolRegistry::new(Tool::defaults(), ctx)
                         }

@@ -134,19 +134,43 @@
 	// one. `clientApi()` is read the same way: this file used to carry its own
 	// copy of the number, and two constants that have to match are two constants
 	// that will eventually not.
+	//
+	// AND EVERY OP HAS A DEADLINE: `CALL_DEADLINE_MS`, plus its body at 64 KiB/s,
+	// capped, as sync.js gives every write. A chunk op runs inside the parcel collect,
+	// so inside the push and its one-round gate; with no deadline a put the network
+	// black-holed held that gate for as long as the OS kept the socket, and every pull
+	// stood down behind it (P1a H3, 2026-09-25). An abort throws like any failed
+	// request, which every caller already reads as the network: the collect keeps
+	// the index as it was, and the next push offloads again.
+	var CALL_DEADLINE_MS     = 60000;
+	var CALL_FLOOR_BPS       = 65536;
+	var CALL_DEADLINE_MAX_MS = 300000;
 	async function call(body) {
-		var r = await DaimondGateway.gwFetch(PATH, {
+		var text = JSON.stringify(body);
+		var opts = {
 			method:      'POST',
 			credentials: 'same-origin',
 			headers:     {
 				'content-type':  'application/json',
 				'x-daimond-api': String(DaimondGateway.clientApi()),
 			},
-			body:        JSON.stringify(body),
-		});
-		var j = null;
-		try { j = await r.json(); } catch (e) { j = null; }
-		return { status: r.status, json: j };
+			body:        text,
+		};
+		var ac = null, timer = null;
+		try { ac = new AbortController(); } catch (e) { ac = null; }
+		if (ac) {
+			opts.signal = ac.signal;
+			timer = setTimeout(function () { try { ac.abort(); } catch (e) { /* already gone */ } },
+				Math.min(CALL_DEADLINE_MAX_MS, CALL_DEADLINE_MS + Math.ceil(text.length / CALL_FLOOR_BPS) * 1000));
+		}
+		try {
+			var r = await DaimondGateway.gwFetch(PATH, opts);
+			var j = null;
+			try { j = await r.json(); } catch (e) { j = null; }
+			return { status: r.status, json: j };
+		} finally {
+			if (timer) clearTimeout(timer);
+		}
 	}
 
 	/// Of the given addresses, those the gateway does not hold, and whether it

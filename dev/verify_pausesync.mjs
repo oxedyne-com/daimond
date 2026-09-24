@@ -166,6 +166,8 @@ try {
 		const win = { localStorage: ls, addEventListener() {}, dispatchEvent() { return true; },
 			DaimondIdentity: { deviceId: () => 'pausesync-other' } };
 		window.__pOff = 0;
+		// store.js first, as index.html loads it: pause.js stores through it.
+		new Function('window', 'localStorage', await (await fetch('/js/store.js', { cache: 'no-store' })).text())(win, ls);
 		new Function('window', 'localStorage', 'CustomEvent', 'Date', body)(win, ls,
 			function CustomEvent(t) { this.type = t; }, { now: () => Date.now() + window.__pOff });
 		window.__other = win.DaimondPause;

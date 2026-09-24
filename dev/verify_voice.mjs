@@ -125,13 +125,13 @@ const BREAKS = {
 		},
 		{
 			file: 'js/voice.js',
-			find: "\t\tvar raw = null;\n\t\ttry { raw = localStorage.getItem(LS); } catch (e) { return null; }",
-			with: "\t\tvar raw = window.__voiceMem ? JSON.stringify(window.__voiceMem) : null;",
+			find: "\t\tvar r = window.DaimondStore.get(LS, null);",
+			with: "\t\tvar r = window.__voiceMem ? JSON.parse(JSON.stringify(window.__voiceMem)) : null;",
 		},
 		{
 			file: 'js/voice.js',
-			find: "\t\ttry { localStorage.removeItem(LS); } catch (e) { /* private mode: nothing was stored */ }",
-			with: "\t\ttry { delete window.__voiceMem; localStorage.removeItem(LS); } catch (e) {}",
+			find: "\t\twindow.DaimondStore.remove(LS);",
+			with: "\t\ttry { delete window.__voiceMem; window.DaimondStore.remove(LS); } catch (e) {}",
 		},
 	],
 	// `clear()` keeps the ciphertext beside a flag that makes `has()` answer false. The kindest
@@ -139,7 +139,7 @@ const BREAKS = {
 	// device that nothing will ever offer to remove again.
 	sticky: {
 		file: 'js/voice.js',
-		find: "\t\ttry { localStorage.removeItem(LS); } catch (e) { /* private mode: nothing was stored */ }",
+		find: "\t\twindow.DaimondStore.remove(LS);",
 		with: "\t\ttry { var k = rec(); localStorage.setItem(LS, JSON.stringify({ v: 0, keep: k ? k.s : '' })); } catch (e) {}",
 	},
 	// Stored unwrapped, and read back unwrapped, so that everything else still works. BOTH sites,

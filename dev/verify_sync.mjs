@@ -722,6 +722,14 @@ try {
 	// A second device: it has never seen these Diamonds, holds no per-Diamond
 	// model choice, and has no version cursor. Wiping all three is what "another
 	// device" means here.
+	//
+	// AND ONLY ONCE THIS ONE HAS NOTHING LEFT TO SEND. `DaimondSync.pull()` now waits for the
+	// engine's one-round gate (P1a M4), so a push still armed from `pushLanded` could take
+	// the gate first and publish the wiped store as this device's work; the raw pull used
+	// to run beside it and happened to win. Waiting for `quiet` (no round running, none
+	// armed) is the fixture's own premise stated: the first device is done before it
+	// becomes the second.
+	await page.waitForFunction(() => window.DaimondSync.state().quiet, null, { timeout: 30000 }).catch(() => {});
 	const arrived = await page.evaluate(async (id) => {
 		const m = await import('/pkg/oxedyne_daimond.js');
 		const app = new m.DaimondApp('http://127.0.0.1/v1/chat/completions', '', 'none', 4096, '', true);
@@ -944,11 +952,22 @@ try {
 		return out;
 	});
 
-	/// Make the browser BE the device that disk came from.
+	/// Make the browser BE the device that disk came from: its Diamonds, and its
+	/// fork point at rest on them, as a device that has pushed what it holds.
+	///
+	/// ONE BROWSER PLAYS BOTH DEVICES, so the fork point (`daimond-diamond-base`) is
+	/// otherwise the one the OTHER device's last pull left, which can sit above
+	/// every stamp this device holds. `applyDiamonds` reads a local stamp that has
+	/// MOVED from its fork point as an edit made here (D-28 CLK-1: an edit on a slow
+	/// clock is stamped below it), so a borrowed fork point turned a clean pull into
+	/// a conflict whose union put the other device's deleted link back (4g).
 	const becomeDevice = (disk) => wasm(async (app, disk) => {
 		for (const d of JSON.parse(await app.list_diamonds())) await app.delete_diamond(d.id);
 		for (const pack of disk) await app.import_diamond(pack);
-		return JSON.parse(await app.list_diamonds()).length;
+		const rows = JSON.parse(await app.list_diamonds()), base = {};
+		rows.forEach((d) => { base[d.id] = d.touched || d.updated || 0; });
+		localStorage.setItem('daimond-diamond-base', JSON.stringify(base));
+		return rows.length;
 	}, disk);
 
 	/// What this device would push, and what a pull does with what arrives.

@@ -700,6 +700,14 @@
 	/// A write that has not landed yet, so two writes in a row do not race.
 	var _writing = null;
 
+	/// The wrapped record as this tab last read or wrote it, so a mailbox-locked section
+	/// can tell at its door whether another tab has written since (`fresh`).
+	var _raw = null;
+	/// Mailbox-locked sections running in this tab, and whether another tab wrote while
+	/// one ran. See the `storage` handler.
+	var _locked = 0;
+	var _stale  = false;
+
 	/// A fresh, empty record.
 	function blank() {
 		return { v: REC_V, through: 0, seen: 0, acked: 0, tries: 0, holds: [], msgs: {}, notes: {}, groups: {},
@@ -742,6 +750,7 @@
 		if (!window.DaimondIdentity || !DaimondIdentity.isUnlocked()) return null;
 		var raw = null;
 		try { raw = localStorage.getItem(LS); } catch (e) { raw = null; }
+		_raw = raw;
 		if (!raw) { _st = blank(); return _st; }
 		var plain;
 		try { plain = await DaimondIdentity.unwrap(raw); }
@@ -782,8 +791,13 @@
 	/// that bites). `ackThrough` reads this before it acks -- a swallowed failure would
 	/// let the relay drop the only copy of a message this device never actually stored.
 	/// The other `await save()` call sites ignore the value, so this is additive.
-	async function save() {
-		if (!_st) return false;
+	///
+	/// `rec`, where given, is the record to write: a mailbox-locked section passes the
+	/// one it read under the lock and folded into, so what it writes is what it did
+	/// (SIM-1). Otherwise the cached record.
+	async function save(rec) {
+		var obj = rec || _st;
+		if (!obj) return false;
 		// Captured HERE, not inside the queued `.then` below. This call can sit behind
 		// an earlier write on `_writing` for a tick or more, and the `storage` handler
 		// (below) nulls `_st` the moment ANOTHER tab writes -- so reading `_st` inside
@@ -791,10 +805,12 @@
 		// bytes "null". `read()` then unwraps "null" into a record that fails the
 		// version check and answers `blank()`, discarding the store. The snapshot at
 		// the door is what this device actually had when `save()` was called.
-		var snapshot = JSON.stringify(_st);
+		var snapshot = JSON.stringify(obj);
 		var mine = _writing = (_writing || Promise.resolve()).then(async function () {
 			try {
-				localStorage.setItem(LS, await DaimondIdentity.wrap(snapshot));
+				var wrapped = await DaimondIdentity.wrap(snapshot);
+				localStorage.setItem(LS, wrapped);
+				_raw = wrapped;
 				return true;
 			} catch (e) { log('store write failed', e); return false; }
 		});
@@ -1040,6 +1056,11 @@
 	/// false, and the two sequences take the higher.
 	function adopt(rec) {
 		if (!rec || typeof rec !== 'object') return false;	// no section on the parcel
+		// AN OLDER RECORD IS WALKED UP AND MERGED, by the same `upgrade` a stored one
+		// takes: refusing it stopped a fleet on two builds merging read, tray and
+		// delete flags while both kept pushing (MIG-1). A copy, since the parcel is
+		// the caller's.
+		if (typeof rec.v === 'number' && rec.v < REC_V) rec = upgrade(JSON.parse(JSON.stringify(rec))) || rec;
 		if (rec.v !== REC_V) {
 			// A record from a build this one cannot read. Not a merge failure --
 			// there is nothing this version could correctly do with it -- but it is
@@ -1068,10 +1089,14 @@
 			if (r.read && !mine.read)     { mine.read = 1; moved = true; }
 			if (mine.tray && !r.tray)     { mine.tray = 0; moved = true; }
 			if (r.hidden && !mine.hidden) { mine.hidden = 1; moved = true; }
-			if (r.del && !mine.del)       { mine.del = r.del; moved = true; }
+			// The later deletion stamp, where two devices each recorded one.
+			if (r.del && !(+mine.del >= +r.del)) { mine.del = r.del; moved = true; }
 		});
+		// A note's key is its relay address, so two notes under one key are not
+		// expected; should they differ, the canonically greater stands on every device.
 		Object.keys(rec.notes || {}).forEach(function (k) {
-			if (!_st.notes[k]) { _st.notes[k] = rec.notes[k]; moved = true; }
+			var n = rec.notes[k], held = _st.notes[k];
+			if (!held || DaimondStamp.canon(n) > DaimondStamp.canon(held)) { _st.notes[k] = n; moved = true; }
 		});
 		// SHARES MERGE LIKE MESSAGES, and for the same reason: a share is immutable
 		// -- its address is its content -- so only the flags move, and each of them
@@ -1110,9 +1135,11 @@
 			if (!r || typeof r !== 'object' || !r.gid || !Array.isArray(r.members)) return;
 			var mine = _st.groups[gid];
 			if (!mine) { _st.groups[gid] = r; moved = true; return; }
-			if (ms(r.at) > ms(mine.at)
-				|| (ms(r.at) === ms(mine.at)
-					&& String(r.addr || '') > String(mine.addr || ''))) {
+			// The later roster; at an equal `at` the higher address, and past that the
+			// canonically greater roster, so even two copies that disagree under one
+			// address settle the same way on every device.
+			var roster = function (g) { return [String(g.addr || ''), g.salt, g.name, g.creator, g.members]; };
+			if (DaimondStamp.beats(r.at, roster(r), mine.at, roster(mine))) {
 				mine.at      = ms(r.at);
 				mine.addr    = String(r.addr || '');
 				mine.salt    = r.salt;
@@ -1127,7 +1154,8 @@
 				if (r.art) mine.art = String(r.art);
 				moved = true;
 			}
-			if (ms(r.stateAt) > ms(mine.stateAt)) {
+			// An equal `stateAt` goes to the greater state, the same on every device.
+			if (DaimondStamp.beats(r.stateAt, String(r.state || ''), mine.stateAt, String(mine.state || ''))) {
 				mine.state   = r.state;
 				mine.stateAt = ms(r.stateAt);
 				moved = true;
@@ -1203,10 +1231,14 @@
 		// every held chunk the committed index does not name, and only a device that
 		// merged that index may commit it, so a message tail offloaded from a device
 		// that cannot commit is deleted a day later with the parcel still pointing at
-		// it. Same seam the Diamond and chat collectors use (`offloadAllowed`).
+		// it. So the commit gate itself is asked (`syncMayCommitChunks`); this used to
+		// ask only whether a chunk store was there, and a folder-mounted desktop that
+		// never commits offloaded every round (REF-1). A build that cannot answer
+		// keeps the tail inline, the safe direction.
 		var canOffload = !!(window.DaimondChunks && DaimondChunks.offloadBytes
 			&& window.DaimondCloud && DaimondCloud.available && DaimondCloud.available()
-			&& DaimondCloud.contentGet && DaimondCloud.contentSet);
+			&& DaimondCloud.contentGet && DaimondCloud.contentSet
+			&& window.DaimondCore && DaimondCore.syncMayCommitChunks && DaimondCore.syncMayCommitChunks());
 		if (!canOffload) return rec;
 		var msgs = rec.msgs || {};
 		var addrs = Object.keys(msgs);
@@ -1299,6 +1331,14 @@
 			m.msgRef = null;
 		}
 		return adopt(rec);
+	}
+
+	/// Does this device still hold the heavy half of a message, so a tail whose
+	/// chunks the gateway no longer has can be offloaded again? Asked by the
+	/// presence check (daimond.js `verifyManifestPresence`) for an `@m/` manifest.
+	function holdsHeavy(addr) {
+		var m = _st && _st.msgs && _st.msgs[addr];
+		return !!(m && !m.msgRef && (m.body != null || m.art != null || m.env != null));
 	}
 
 	// ── People ─────────────────────────────────────────────────
@@ -1403,12 +1443,18 @@
 	/// of the session rule -- renew once, retry once -- so nothing here carries a
 	/// second version of it.
 	///
-	/// `timeoutMs`, where given, is a CLIENT-SIDE DEADLINE: the request is aborted
-	/// when it passes and the error thrown carries `timedOut`. `fetch` has no
-	/// timeout of its own, and a GET nothing ever answers hangs for as long as the
-	/// operating system keeps the socket -- a phone once sat forty-one minutes on a
-	/// dead `/api/post`, servicing nothing and beating presence the whole time. See
-	/// `PARK_DEADLINE_MS`.
+	/// EVERY REQUEST HAS A CLIENT-SIDE DEADLINE: `timeoutMs` where the caller names
+	/// one (the park's is its window plus slack), and otherwise `RELAY_DEADLINE_MS`
+	/// plus the body at 64 KiB/s. The request is aborted when it passes and the error
+	/// thrown carries `timedOut`. `fetch` has no timeout of its own, and a request
+	/// nothing ever answers hangs for as long as the operating system keeps the
+	/// socket -- a phone once sat forty-one minutes on a dead `/api/post`, servicing
+	/// nothing and beating presence the whole time. The park, the collect and the ack
+	/// had deadlines; the puts did not, so an errand, a report or a message the
+	/// network black-holed held its dispatcher for as long (P1a H3, 2026-09-25). A put
+	/// that passes its deadline answers as the network failing, and a caller that
+	/// sends it again at worst stores a second row under the same address, which
+	/// every reader keys on.
 	async function call(method, body, query, timeoutMs) {
 		var opts = {
 			method:      method,
@@ -1418,6 +1464,9 @@
 		if (body !== undefined) {
 			opts.headers['content-type'] = 'application/json';
 			opts.body = JSON.stringify(body);
+		}
+		if (timeoutMs === undefined) {
+			timeoutMs = RELAY_DEADLINE_MS + Math.ceil((opts.body ? opts.body.length : 0) / RELAY_FLOOR_BPS) * 1000;
 		}
 		var ctl = null, timer = null, fired = false;
 		if (timeoutMs > 0) {
@@ -1898,10 +1947,12 @@
 				// account: acking past a runner's report took it off the relay before the phone
 				// that sent the turn had collected it. So a note naming another device is
 				// HELD, as an own errand is, until that device acks it or its window passes
-				// (`noteHeldFor`). Only a verified one: a forgery must not pin the cursor.
+				// (`noteHeldFor`). Only a verified one: a forgery must not pin the cursor. The
+				// hold keeps what its window is read from, so it is never folded again.
 				if (noted && noted.verified && DaimondPeer.noteHeldFor) {
-					var forDev = DaimondPeer.noteHeldFor(peer, row, selfDeviceIdForPark(), relayNowOrNull());
-					if (forDev) return holdFor(forDev);
+					var rn = relayNowOrNull();
+					var forDev = DaimondPeer.noteHeldFor(peer, row, selfDeviceIdForPark(), rn);
+					if (forDev) return holdFor(forDev, DaimondPeer.noteHoldFacts(row, rn, null, peer));
 				}
 				return NOTHING;			// routed, and never a message on the list
 			}
@@ -2041,13 +2092,53 @@
 	// `settle` can later drop exactly this hold -- without a network round -- the moment
 	// the turn is settled here. Only the peer that runs it may otherwise ack it away.
 	function hold(turnId) { return { got: 0, notes: 0, unreadable: 0, hold: true, turnId: String(turnId || '') }; }
-	/// Our own live errand, held with its envelope so `collect` can decide it again once
-	/// the rest of the batch -- the runner's report, most often -- has been folded.
-	function ownHold(env) { var h = hold(env && env.turnId); h.own = env; return h; }
-	/// A note held for the device it names. No turn: `settle`, which lets a turn's own
-	/// holds go when the turn is over here, must never let go of a note another device
-	/// has still to collect.
-	function holdFor(deviceId) { var h = hold(''); h.forDevice = String(deviceId || ''); return h; }
+	/// Our own live errand, held with what `holdOwnDispatch` reads (`ownHoldFacts`), so
+	/// `collect` decides it again once the rest of the batch -- the runner's report, most
+	/// often -- has been folded, and on every later pass, without reading the row again.
+	/// A peer seam that cannot say keeps nothing, and the row is read again each pass.
+	function ownHold(env) {
+		var h = hold(env && env.turnId);
+		if (DaimondPeer.ownHoldFacts) h.own = DaimondPeer.ownHoldFacts(env);
+		return h;
+	}
+	/// A note held for the device it names, with what its window is read from
+	/// (`noteHoldFacts`). No turn: `settle`, which lets a turn's own holds go when the turn
+	/// is over here, must never let go of a note another device has still to collect.
+	function holdFor(deviceId, note) {
+		var h = hold('');
+		h.forDevice = String(deviceId || '');
+		h.note = note;
+		return h;
+	}
+
+	/// Is a hold decided from what it kept, rather than by reading its row again? A note
+	/// for another device and our own errand are; work -- a turn being run, or one stood
+	/// down for the nominee -- is not, because whether its errand is still on the relay is
+	/// part of whether it may be run. A hold an older build wrote kept nothing, and is read
+	/// again once, which keeps it anew.
+	function keptByFacts(h) { return !!h && ((!!h.forDevice && !!h.note) || !!h.own); }
+
+	/// Decide again every hold that kept its facts. Once a pass's rows are folded, since a
+	/// report among them settles our own errand held from an earlier pass.
+	async function decideKept(st) {
+		var rn = relayNowOrNull(), keep = [], list = Array.isArray(st.holds) ? st.holds : [];
+		for (var i = 0; i < list.length; i++) {
+			var h = list[i];
+			if (h.forDevice && h.note) {
+				if (DaimondPeer.noteHoldOpen(h.note, rn)) keep.push(h);
+				continue;
+			}
+			if (h.own) {
+				var k = true;
+				try { if (DaimondPeer.holdOwnDispatch) k = await DaimondPeer.holdOwnDispatch(h.own); }
+				catch (e) { k = true; }
+				if (k) keep.push(h);
+				continue;
+			}
+			keep.push(h);
+		}
+		st.holds = keep;
+	}
 
 	/// The relay's clock, from the offset presence answers carry, or null before one has.
 	function relayNowOrNull() {
@@ -2120,24 +2211,49 @@
 		// here would hide it from `announce` below.
 		var got = 0, notes = 0, badRows = 0, more = false;
 		var arrived = [];
-		// A ROW IS WORKED ONCE ON A DEVICE (2026-09-24). The re-fetch from a pinned
-		// `through` exists to decide the HELD rows again, and nothing else. A row this
-		// device already folded and let go -- a message, a note it took, an errand whose
-		// run is over -- is at or below `seen` and was not held, so it is passed by
-		// here, not folded, claimed or run a second time. A note held for another
-		// device (`noteHeldFor`) pins `through` on the always-on runner for as long as
-		// the phone is away, and every errand above it used to be claimed again on each
-		// collect: a `parked`, `undeliverable` or crashed turn, which `finished` does
-		// not settle, ran again on every park wake (QA `rerun_above_held.test.mjs`).
-		var prevSeen = st.seen | 0, wasHeld = {}, decided = {}, whole = false;
+		// A ROW IS WORKED ONCE ON A DEVICE (2026-09-24). A row this device already folded
+		// and let go -- a message, a note it took, an errand whose run is over -- is at or
+		// below `seen` and is not held, so it is never folded, claimed or run a second
+		// time. A note held for another device (`noteHeldFor`) pins `through` on the
+		// always-on runner for as long as the phone is away, and every errand above it used
+		// to be claimed again on each collect: a `parked`, `undeliverable` or crashed turn,
+		// which `finished` does not settle, ran again on every park wake (QA
+		// `rerun_above_held.test.mjs`).
+		//
+		// AND A HOLD IS DECIDED FROM WHAT IT KEPT, NOT BY READING ITS ROW AGAIN (R3 QA Q2,
+		// Q5). The pass used to start at the pinned `through`, so every row above a held
+		// note was downloaded again on every park wake for the note's whole window -- 860
+		// rows served for 40 new ones -- and the note itself was folded again each time: a
+		// runner re-downloaded a `built` note's artifact and re-drew it on every row. A note
+		// and our own errand now keep what their rules read (`keptByFacts`), and the pass
+		// starts at `seen`. Only a hold that kept nothing is read again: work, whose errand
+		// must still be on the relay to be run again, and a hold an older build wrote. A
+		// note's row is looked for again -- never folded -- only while its device is awake
+		// (`noteLookAgain`), which is when it can take it: a row gone is a note taken.
+		var prevSeen = st.seen | 0, reread = {}, recheck = {}, present = {}, whole = false;
+		var hiSeq = 0;		// the box's high-water, as the collect answers it
 		var ph = Array.isArray(st.holds) ? st.holds : [];
-		for (var wi = 0; wi < ph.length; wi++) wasHeld[ph[wi].seq | 0] = 1;
-		// THE PAGE CURSOR IS THIS PASS'S OWN, not `through`. A held row pins `through`,
-		// and a second page asked from it is the first page again, so a device holding
-		// anything read one page and stopped: past it, a new errand went unseen for as
-		// long as the hold stood (QA `page_starve.test.mjs`). Each page now starts
-		// after the last row the one before it carried.
-		var from = st.through | 0;
+		var presenceView = null;
+		try { presenceView = (window.DaimondPresence && DaimondPresence.snapshot) ? DaimondPresence.snapshot() : null; }
+		catch (e) { presenceView = null; }
+		// THE PAGE CURSOR IS THIS PASS'S OWN, not `through`. A second page asked from a
+		// pinned `through` is the first page again, so a device holding anything read one
+		// page and stopped: past it, a new errand went unseen for as long as the hold stood
+		// (QA `page_starve.test.mjs`). Each page starts after the last row the one before
+		// it carried.
+		var from = prevSeen;
+		for (var wi = 0; wi < ph.length; wi++) {
+			var hw = ph[wi];
+			if (keptByFacts(hw)) {
+				if (!(hw.forDevice && hw.note && DaimondPeer.noteLookAgain
+					&& DaimondPeer.noteLookAgain(hw.forDevice, presenceView))) continue;
+				recheck[hw.seq | 0] = 1;
+			} else {
+				reread[hw.seq | 0] = 1;
+			}
+			from = Math.min(from, (hw.seq | 0) - 1);
+		}
+		var from0 = from;
 
 		for (var round = 0; round < 8; round++) {
 			// BOUNDED, because everything else waits on the lock this read is made under.
@@ -2156,27 +2272,22 @@
 				DaimondWire.learn({ post: r.json.limits.max_bytes, post_rows: r.json.limits.max_rows,
 					collect: r.json.limits.max_collect_bytes });
 			}
-			// RE-DECIDE EVERY HOLD THIS PASS. `through` is pinned below the lowest live
-			// hold, so `?since=through` re-fetches every held row and `takeRow` re-runs
-			// `holdOwnDispatch` on each -- a turn settled since the last pass no longer holds,
-			// so the cursor passes it here (S-HAND #1/#2) even without a `settle` call.
-			//
-			// A HOLD STANDS UNTIL ITS ROW IS DECIDED AGAIN, never emptied ahead of that.
-			// The pass above works a row only if the last pass held it, so it must know
-			// every hold the last one kept: a set emptied here and cut short by the wire
-			// left the next pass to pass R1 as worked and ack it off before the phone had
-			// it. And a cursor raised over a half-rebuilt set passed a later hold on the
-			// way to deciding it -- R1's window over, R2 acked away. A hold whose row the
-			// relay no longer has goes once a pass has read to the end, so none lingers.
-			var owned = [];		// this page's holds on our own errands, with their envelopes
+			// A HOLD STANDS UNTIL IT IS DECIDED AGAIN, never emptied ahead of that. A hold
+			// read again here is replaced by what its row decides now; one kept by its facts
+			// is decided below, once the pass's rows are folded. So a pass the wire cuts
+			// short leaves every hold as it was, and the next pass does not pass a report
+			// as worked and ack it off before the phone has it; and a cursor never rises
+			// over a hold on the way to deciding it -- R1's window over, R2 acked away.
 			var rows = r.json.rows || [];
 			for (var i = 0; i < rows.length; i++) {
 				var row  = rows[i];
 				var seq  = row.seq | 0;
-				if (seq <= prevSeen && !wasHeld[seq]) continue;
+				present[seq] = 1;
+				if (recheck[seq]) continue;		// still there: not taken yet. Looked at, not folded.
+				if (seq <= prevSeen && !reread[seq]) continue;
 				var took = await takeRow(st, row, work);
-				if (wasHeld[seq]) {
-					decided[seq] = 1;
+				if (reread[seq]) {
+					delete reread[seq];
 					st.holds = st.holds.filter(function (x) { return (x.seq | 0) !== seq; });
 				}
 				got     += took.got;
@@ -2185,12 +2296,13 @@
 				if (took.got) arrived.push(String(row.addr));
 				// A HELD row (our own live errand, a stand-down for the nominee, work being
 				// run, or a note for another device) is recorded with its turnId, so `settle`
-				// can drop exactly a turn's own holds later; a note's hold has none.
+				// can drop exactly a turn's own holds later (a note's hold has none), and
+				// with the facts it is decided from on later passes.
 				if (took.hold) {
-					var h = { seq: row.seq | 0, turnId: String(took.turnId || '') };
-					if (took.forDevice) h.forDevice = took.forDevice;
+					var h = { seq: seq, turnId: String(took.turnId || '') };
+					if (took.forDevice) { h.forDevice = took.forDevice; if (took.note) h.note = took.note; }
+					if (took.own) h.own = took.own;
 					st.holds.push(h);
-					if (took.own) owned.push({ seq: row.seq | 0, env: took.own });
 				}
 				// EVERY folded row moves `seen`, a HELD one included -- this is the whole
 				// spin fix. `through` -- what ackThrough acks through -- is clipped just below
@@ -2198,35 +2310,38 @@
 				// peer; but the park is keyed on `seen`, which climbs past the held row so the
 				// next park waits rather than re-answering at once against the box's own
 				// high-water.
-				if ((row.seq | 0) > (st.seen | 0)) st.seen = row.seq | 0;
-				st.through = Math.max(st.through | 0, watermark(st));
-			}
-			// OUR OWN ERRAND, DECIDED AGAIN ONCE THE BATCH IS FOLDED. Its row always comes
-			// before the report that settles it, so it was held before the report was read;
-			// held on, it pinned the ack until some later row woke a later collect, and with
-			// the report now left on the relay for us (`noteHeldFor`) the runner's cursor
-			// stayed pinned beside ours. `holdOwnDispatch` is the one rule, asked again.
-			if (owned.length && window.DaimondPeer && DaimondPeer.holdOwnDispatch) {
-				var freed = {};
-				for (var oi = 0; oi < owned.length; oi++) {
-					var keep = true;
-					try { keep = await DaimondPeer.holdOwnDispatch(owned[oi].env); } catch (e) { keep = true; }
-					if (!keep) freed[owned[oi].seq] = 1;
-				}
-				st.holds = st.holds.filter(function (x) { return !freed[x.seq | 0]; });
+				if (seq > (st.seen | 0)) st.seen = seq;
 				st.through = Math.max(st.through | 0, watermark(st));
 			}
 			parkAgain();			// a request that was served proves the session is back
 			more = !!r.json.more;
+			hiSeq = Math.max(hiSeq, r.json.seq | 0);
 			if (!more) { whole = true; break; }
 			if (!rows.length) break;
 			from = Math.max(from, rows[rows.length - 1].seq | 0);
 		}
+		// THE HOLDS KEPT BY THEIR FACTS, decided once the batch is folded. Our own errand's
+		// row always comes before the report that settles it, so the report is read after
+		// the errand was held; `holdOwnDispatch` is the one rule, asked again here, so the
+		// report and the errand go in the same round. A note's window is read off the clock.
+		await decideKept(st);
+		// A hold whose row this pass read past and did not find is gone from the relay:
+		// its device acked it, or it was run and let go elsewhere. Only a pass that read to
+		// the end can say so, and only of a row above where it began.
 		if (whole) {
-			st.holds = st.holds.filter(function (x) { return !wasHeld[x.seq | 0] || decided[x.seq | 0]; });
-			st.through = Math.max(st.through | 0, watermark(st));
+			st.holds = st.holds.filter(function (x) { var q = x.seq | 0; return q <= from0 || present[q]; });
+			// A PASS THAT READ TO THE END HAS SEEN THE BOX'S HIGH-WATER (P1a H1). The answer's
+			// rows and its `seq` come from one read of the box, so every row at or below that
+			// seq which the pass did not carry is gone -- another device acked it -- and
+			// there is nothing left to fold there. The box keeps `next_seq` across acks, so a
+			// park keyed below it is answered at once, and a device returning to a box the
+			// runner had acked empty parked and collected nothing once a second until the
+			// next row arrived: 300 parks and 300 collects in five minutes. `through` stays
+			// clipped below every hold by `watermark`.
+			if (hiSeq > (st.seen | 0)) st.seen = hiSeq;
 		}
-		await save();
+		st.through = Math.max(st.through | 0, watermark(st));
+		await save(st);
 		render();
 		_servicedAt = Date.now();		// a collect completed: this device is servicing the channel
 		announce(got, arrived);
@@ -2259,7 +2374,7 @@
 		st.holds = st.holds.filter(function (h) { return String(h.turnId || '') !== id; });
 		if (st.holds.length === before) return { settled: false };
 		st.through = Math.max(st.through | 0, watermark(st));
-		await save();
+		await save(st);
 		return { settled: true, through: st.through };
 	}
 
@@ -2316,7 +2431,7 @@
 		// The local durable commit. `save()` answers false on a write throw (a quota
 		// over-run), and the read-back proves the row actually reached the disk -- a
 		// swallowed failure here is how the relay would drop the only copy.
-		if (!(await save())) return { acked: 0, why: 'not_saved' };
+		if (!(await save(st))) return { acked: 0, why: 'not_saved' };
 		if ((await storedThrough()) < want) return { acked: 0, why: 'not_saved' };
 		var r = await tellRelay(want);
 		r.solo = !syncReady();			// one copy in one place, as state() reports it
@@ -2332,7 +2447,7 @@
 			return { acked: 0, why: 'status_' + r.status };
 		}
 		var st = await read();
-		if (st) { st.acked = want; await save(); }
+		if (st) { st.acked = want; await save(st); }
 		return { acked: want, dropped: (r.json.dropped | 0) };
 	}
 
@@ -2350,16 +2465,57 @@
 	/// `ack`, `settle`): the request queues behind the lock its own caller holds, and
 	/// neither ever settles. That is what stopped a desktop collecting after its first
 	/// hand-off (E-R4), and why work is started after the lock (`startWork`).
+	///
+	/// ONE RECORD PER SECTION (SIM-1, 2026-09-25). A section works on the record it reads
+	/// under the lock and saves that record; two things used to break that. The lock is
+	/// taken as the previous holder -- another tab -- lets go, and that tab's `storage`
+	/// event arrives a task later, so this tab could begin on its cached copy from before
+	/// the other's write (`fresh` reads the disk at the door instead). And when that event
+	/// did arrive, mid-section, the handler swapped `_st` for a fresh read, so `save()`
+	/// wrote a record without this section's folds: the next pass folded the rows again
+	/// and ran their side effects twice -- a consent grant posted twice. While a section
+	/// runs, the handler now only marks the cache stale (`_stale`), and the cache is
+	/// refreshed when the last section here ends.
 	function withMailboxLock(fn) {
+		var run = async function () {
+			_locked++;
+			try {
+				fresh();
+				return await fn();
+			} finally {
+				_locked--;
+				if (!_locked && _stale) { _stale = false; otherTabWrote(); }
+			}
+		};
 		if (window.navigator && navigator.locks && navigator.locks.request) {
-			return navigator.locks.request('daimond-post-mailbox', { mode: 'exclusive' }, fn);
+			return navigator.locks.request('daimond-post-mailbox', { mode: 'exclusive' }, run);
 		}
-		return fn();
+		return run();
+	}
+
+	/// At a locked section's door: drop the cached record if the disk holds a write this
+	/// tab has not read, so the section begins from it.
+	function fresh() {
+		if (!_st) return;
+		var raw = null;
+		try { raw = localStorage.getItem(LS); } catch (e) { return; }
+		if (raw !== _raw) _st = null;
+	}
+
+	/// Another tab wrote the record: re-read it, unless this tab already holds that write.
+	function otherTabWrote() {
+		var raw = null;
+		try { raw = localStorage.getItem(LS); } catch (e) { raw = null; }
+		if (_st && raw === _raw) return;
+		_st = null;
+		read().then(render, function () { render(); });
 	}
 
 	/// The longest a relay read or an ack may take while it holds the mailbox lock.
-	/// A collect carries up to the relay's 1 MiB batch, so this is generous.
+	/// A collect carries up to the relay's 1 MiB batch, so this is generous. A put
+	/// is given this plus its body at `RELAY_FLOOR_BPS`; see `call`.
 	var RELAY_DEADLINE_MS = 60000;
+	var RELAY_FLOOR_BPS   = 65536;		// 64 KiB/s
 
 	/// Collect, fold and ack, in that order, under the mailbox lock; then start the
 	/// work the collect claimed. The one routine anything else calls.
@@ -2648,6 +2804,7 @@
 	var _parkGen  = 0;			// torn down and restarted, so a stale park is ignored
 	var _parks    = 0;			// parks made, for a verifier
 	var _parkFails = 0;			// consecutive failed parks, which is what the backoff reads
+	var _roundFails = 0;		// consecutive rounds a park woke that did not read the box
 	var _parkTimeouts = 0;		// parks the watchdog cut, for a verifier
 	var _servicedAt = 0;		// last time a park long-poll round or a collect actually completed
 
@@ -2680,6 +2837,7 @@
 		_parking = true;
 		_parkGen++;
 		_parkFails = 0;			// a deliberate start is not a continuation of an old outage
+		_roundFails = 0;
 		parkOnce(_parkGen);
 		return true;
 	}
@@ -2758,7 +2916,9 @@
 				catch (e) { /* the beat says the same thing */ }
 				return;
 			}
-			if (r.status !== 200 || !r.json) { await sleep(5000); continue; }
+			// A refused park waits on the same doubling ladder a thrown one does, not a flat
+			// five seconds: a door answering 429 is not helped by being asked every 5 s.
+			if (r.status !== 200 || !r.json) { await sleep(parkBackoff(++_parkFails)); continue; }
 			// THE CHECK THIS WHOLE BLOCK EXISTS FOR.
 			if (r.json.waited !== true) {
 				parkStop('no_park');
@@ -2775,9 +2935,23 @@
 			// this loop with `_parking` still true, and `parkStart` refuses while it is:
 			// the device went on beating presence and never parked again. The next park
 			// asks again from the same cursor, so a failed round costs one round.
+			//
+			// AND A ROUND THAT COULD NOT READ THE BOX WAITS ON THAT LADDER TOO (P1a M3). The
+			// park answers at once while the box is above `seen`, and `seen` moves only when a
+			// collect reads the box, so a park that works over a collect that does not was a
+			// loop at PARK_FLOOR_MS: 301 parks and 301 collects in five minutes against a
+			// collect answering 502, or 429 -- which is how a home NAT got blocked (D073). A
+			// locked record is not a failure of the door: `round` has nothing to do, and the
+			// park that follows waits on its own.
 			if (r.json.changed) {
-				try { await round(); }
+				var rr = null;
+				try { rr = await round(); }
 				catch (e) { log('a round failed; the next park asks again', e); }
+				if (!rr || (rr.ok === false && rr.why !== 'locked')) {
+					await sleep(parkBackoff(++_roundFails));
+					continue;
+				}
+				_roundFails = 0;
 			}
 			var spent = Date.now() - began;
 			if (spent < PARK_FLOOR_MS) await sleep(PARK_FLOOR_MS - spent);
@@ -3686,11 +3860,13 @@
 		if (act === 'post-ignore') { e.preventDefault(); hide(row.dataset.addr);  return; }
 	});
 
-	// Another tab wrote, or an account switch emptied the store.
+	// Another tab wrote, or an account switch emptied the store. Never under a section
+	// that holds the lock here: it has the record it read under the lock, and swapping
+	// the cache beneath it dropped its fold (SIM-1). It is re-read when the section ends.
 	window.addEventListener('storage', function (e) {
 		if (!e.key || e.key.indexOf(LS) === -1) return;
-		_st = null;
-		read().then(render, function () { render(); });
+		if (_locked) { _stale = true; return; }
+		otherTabWrote();
 	});
 
 	// Say the panel's own words again in a new language. Every string on a row is
@@ -3812,6 +3988,7 @@
 		/// a build without them; see the offload note beside `snapshotRefs`.
 		snapshotRefs: snapshotRefs,
 		adoptRefs:    adoptRefs,
+		holdsHeavy:   holdsHeavy,
 		/// Read the store out from under the passphrase. Idempotent, and answers
 		/// null while the identity is locked. Fired for you at `daimond:unlock`;
 		/// published so a caller that needs the record NOW -- the badge, a

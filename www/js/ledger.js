@@ -30,16 +30,17 @@
 	// ── Store I/O ──────────────────────────────────────────────
 	// Read the whole log. Any parse failure or non-array value
 	// yields an empty log so a corrupt store never propagates.
+	//
+	// Through `DaimondStore`, so a turn's spend the box refused is still here: held
+	// owed in this tab, merged over what is stored, retried and said (SIM-10).
 	function load() {
-		try {
-			var raw = localStorage.getItem(KEY);
-			if (!raw) return [];
-			var arr = JSON.parse(raw);
-			return Array.isArray(arr) ? arr : [];
-		} catch (e) {
-			return [];
-		}
+		var arr = window.DaimondStore.get(KEY, []);
+		return Array.isArray(arr) ? arr : [];
 	}
+
+	/// The owed ledger merged over the stored one, the owed side winning a clash: it
+	/// is this tab's later word on a turn both hold (a patched outcome, a reprice).
+	function law(stored, owed) { return merge(owed, stored, Date.now()); }
 
 	// ── One-time repricing of historical guesses ───────────────
 	// Entries priced before 2026-07-31 were guessed from a rate table that ran
@@ -75,35 +76,23 @@
 		return entries;
 	}
 
-	// Persist the log, swallowing quota/availability errors: a
-	// failed write must never break the turn that triggered it.
+	// Persist the log. A write the box refuses never breaks the turn that made
+	// it, and is never dropped either: `DaimondStore` holds it owed and says so.
+	// True when it landed.
 	function save(entries) {
-		try {
-			localStorage.setItem(KEY, JSON.stringify(entries));
-		} catch (e) {
-			/* quota or unavailable — spend stays in-memory this session */
-		}
+		var ok = window.DaimondStore.put(KEY, entries, law);
 		notifyChanged();
+		return ok;
 	}
 
 	/// Tell whoever is on screen that the ledger moved -- a panel sitting open
 	/// in the dock (`modeldash.js`) redraws on this rather than only on its own
-	/// Refresh button. The one event name, so a live merge (`daimond.js`'s
-	/// `mergeLedgers` call sites, which write the store directly and cannot
-	/// call `save` above) fires the exact same signal rather than a second one
-	/// nothing listens for. Best-effort: no `window` (a node test harness) or
+	/// Refresh button. `adopt` below fires it too, so a sync merge or a backup
+	/// restore raises the one signal a panel listens for. Best-effort: no `window` (a node test harness) or
 	/// no `CustomEvent`/`Event` is the ordinary case for most callers of this
 	/// file, not a fault.
 	function notifyChanged() {
 		try { window.dispatchEvent(new Event('daimond:ledger')); } catch (e) { /* no window */ }
-	}
-
-	// Drop entries older than the retention window, bounding
-	// storage. `now` is supplied so pruning shares the caller's
-	// clock with the write that triggered it.
-	function prune(entries, now) {
-		var cutoff = now - PRUNE_MS;
-		return entries.filter(function (e) { return e && typeof e.t === 'number' && e.t >= cutoff; });
 	}
 
 	/// The retention window in ms (~90 days), for a caller that needs to
@@ -264,10 +253,9 @@
 			entry.out = turn.outcome;
 		}
 		if (turn.outcomeOnly) entry.ol = 1;
-		var entries = load();
-		entries.push(entry);
-		entries = prune(entries, turn.ts);
-		save(entries);
+		// Through the merge, so the store holds the order every merge makes and
+		// adopting this device's own ledger moves nothing (SIM-7).
+		save(merge(load(), [entry], turn.ts));
 		return entry;
 	}
 
@@ -566,7 +554,23 @@
 
 	/// Erase the entire ledger (e.g. a user "clear spend" action).
 	function clear() {
-		try { localStorage.removeItem(KEY); } catch (e) { /* ignore */ }
+		window.DaimondStore.remove(KEY);
+	}
+
+	/// The ledger as this tab holds it, owed spend included: what the parcel and a
+	/// backup carry.
+	function entries() { return load(); }
+
+	/// Merge a ledger that arrived -- another device's, or a backup's -- and store
+	/// the union. Throws when the box refuses it, so the sync section that called
+	/// it is reported failed and re-pulled rather than counted as merged (A5).
+	function adopt(theirs) {
+		if (!Array.isArray(theirs) || !theirs.length) return false;
+		var mine = load(), next = merge(mine, theirs, Date.now());
+		if (JSON.stringify(next) === JSON.stringify(mine)) return false;
+		window.DaimondStore.putMerged(KEY, next, law);
+		notifyChanged();
+		return true;
 	}
 
 	/// The raw priced turns, `[{ t, u }]` (epoch-ms and USD), for a
@@ -588,8 +592,10 @@
 		series:      series,
 		samples:     samples,
 		clear:       clear,
+		entries:     entries,
+		adopt:       adopt,
 		merge:       merge,
-		notifyChanged: notifyChanged,	// for a caller that writes the store directly (a sync merge, a backup restore)
+		notifyChanged: notifyChanged,
 		ledgerKey:   ledgerKey,
 		retentionMs: retentionMs,
 	};

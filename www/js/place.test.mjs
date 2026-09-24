@@ -62,7 +62,7 @@ function makeTab(scripts) {
 	};
 	function CustomEventShim(t, o) { this.type = t; this.detail = o && o.detail; }
 	const quiet = { debug: () => {}, log: () => {}, warn: console.warn, error: console.error };
-	for (const rel of scripts) {
+	for (const rel of ['stamp.js'].concat(scripts)) {		// the shared stamp rule first, as index.html
 		const body = readFileSync(join(HERE, rel), 'utf8');
 		const fn = new Function(
 			'window', 'document', 'crypto', 'localStorage',
@@ -152,7 +152,7 @@ console.log('\n— A: `hand` and `folder` are tri-state end to end —');
 
 console.log('\n— B: a `@p/` preview is the one content key that crosses —');
 {
-	const win = makeTab(['chunks.js', 'cloud.js']);
+	const win = makeTab(['store.js', 'chunks.js', 'cloud.js']);
 	const C = win.DaimondCloud;
 	const KEY = '@p/' + 'd'.repeat(32);
 	const chunk = (a) => [{ addr: String(a).padStart(64, '0'), size: 16 }];

@@ -12,6 +12,7 @@
 
 use crate::llm::extract_json_string;
 use crate::wasm::js_str;
+use crate::wasm::refusal;
 
 use oxedyne_fe2o3_core::prelude::*;
 
@@ -50,15 +51,6 @@ fn driver() -> Outcome<Driver> {
             cannot be read here. Tell the user, and describe the file instead."; System, Missing));
     }
     Ok(obj.unchecked_into::<Driver>())
-}
-
-/// The `message` of a rejected JS `Error`, verbatim: the driver writes its refusals for the
-/// model to read and act on, so nothing here rewords one.
-fn refusal(e: &JsValue) -> String {
-    match js_sys::Reflect::get(e, &JsValue::from_str("message")) {
-        Ok(m)  => m.as_string().unwrap_or_else(|| js_str(e)),
-        Err(_) => js_str(e),
-    }
 }
 
 /// POST a `file-parser` chat body to OpenRouter and return the raw response body.

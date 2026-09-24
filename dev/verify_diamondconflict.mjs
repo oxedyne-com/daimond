@@ -68,7 +68,7 @@ if (BREAK && BROWSER !== 'chromium') {
 
 // ── The seam must be present, or a green run would prove nothing ──────
 const SEAM = [
-	{ file: 'js/daimond.js', want: 'var twoSided = !!mine && (!known || diamondStamp(mine) > (dbase[r.id] || 0));',
+	{ file: 'js/daimond.js', want: 'var twoSided = !!mine && (!known || diamondStamp(mine) !== (dbase[r.id] || 0));',
 	  why: 'the two-sided fork-stamp detection is missing, so this run would prove nothing' },
 	{ file: 'js/daimond.js', want: "trail('sync diamond CONFLICT',",
 	  why: 'the conflict path is absent' },
@@ -83,7 +83,7 @@ const PATCHED = new Map();
 if (BREAK === 'lww') {
 	const file = 'js/daimond.js';
 	const src = fs.readFileSync(path.join(WWW, file), 'utf8');
-	const find = 'var twoSided = !!mine && (!known || diamondStamp(mine) > (dbase[r.id] || 0));';
+	const find = 'var twoSided = !!mine && (!known || diamondStamp(mine) !== (dbase[r.id] || 0));';
 	const n = src.split(find).length - 1;
 	if (n !== 1) { console.error(`break anchor appears ${n} times (expected 1)`); process.exit(2); }
 	PATCHED.set(file, src.replace(find,

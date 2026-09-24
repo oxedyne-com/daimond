@@ -110,7 +110,23 @@
 	/// cache is not lost with the connection and durable.js reopens on the next write.
 	/// Falling back to the emptied box here would rebuild the index from nothing and sweep
 	/// every cloud-only file (S-SYNC #2 follow-up).
-	function index() { return _durableMode ? _ix : readJson(IX_KEY, {}); }
+	///
+	/// Without IndexedDB (private mode, an old WebKit) the index is a synced record in
+	/// the box like any other, read and written through `DaimondStore`: one the box
+	/// refuses is held owed here, so a merge's conflict copy or a new manifest is not
+	/// lost with the write (SIM-5, A5).
+	function index() { return _durableMode ? _ix : window.DaimondStore.get(IX_KEY, {}); }
+
+	/// An index this tab owes, laid over the one in the box path by path, so a sibling
+	/// tab's manifest stored meanwhile is kept rather than written over. A path this
+	/// tab dropped comes back from the box until its next collect: a manifest kept a
+	/// round too long costs a few bytes, one lost costs the file.
+	function ownedOver(stored, owed) {
+		var out = {}, k;
+		for (k in (stored || {})) out[k] = stored[k];
+		for (k in (owed || {})) out[k] = owed[k];
+		return out;
+	}
 
 	/// Load the index cache from the durable store, migrating it out of the box on
 	/// the first boot after deploy. Awaited by the sync boot before any collect, so
@@ -147,7 +163,7 @@
 	// The alarm lives in daimond.js; cloud.js reaches it defensively, because the
 	// durable path clears it on a landed write and raises it on a lost one — the one
 	// the collector used to raise itself when `contentSet` answered false.
-	function alarmClear() { try { if (window.DaimondCore && DaimondCore.clearStorageAlarm) DaimondCore.clearStorageAlarm(); } catch (e) { /* no core */ } }
+	function alarmClear() { try { if (window.DaimondCore && DaimondCore.clearStorageAlarm) DaimondCore.clearStorageAlarm('index'); } catch (e) { /* no core */ } }
 	function alarmRaise() { try { if (window.DaimondCore && DaimondCore.noteCloudIndexStuck) DaimondCore.noteCloudIndexStuck(); } catch (e) { /* no core */ } }
 
 	// ── Is this device's index durably written? ────────────────────
@@ -187,7 +203,7 @@
 			}, function () { return null; });
 			return true;
 		}
-		var ok = writeJson(IX_KEY, ix || {});
+		var ok = window.DaimondStore.put(IX_KEY, ix || {}, ownedOver);
 		if (ok) indexDirty = null;
 		else indexDirty = indexDirty || { at: Date.now() };
 		return ok;
@@ -826,6 +842,12 @@
 		// named beside ours. Gathered here and written after the pass, because a slot
 		// written during it would be overwritten when the loop reached its own key.
 		var unadopted = [];
+		// The conflict copies this merge files, `<path>.synced -> their manifest`, for
+		// the same reason: written during the pass, a fresh copy was overwritten when the
+		// loop reached the `.synced` key a stored copy already held, and the newer edit
+		// was lost on every device (SIM-5). A fresh conflict copy is always the newer
+		// word on that key, so it is written last and nothing overwrites it.
+		var conflicts = {};
 
 		Object.keys(local).forEach(function (p) { seen[p] = 1; });
 		Object.keys(remoteIx).forEach(function (p) { seen[p] = 1; });
@@ -841,12 +863,13 @@
 				// THE LIVE PREVIEW CROSSES ON ITS STAMP. Whichever device laid the document
 				// out last holds the true answer about it, and that device is often exactly
 				// the one that cannot commit the index (a folder-mounted runner). Freshest
-				// `ts` wins; equal stamps keep what is here, so a quiet round rewrites
-				// nothing.
+				// `ts` wins, and an equal `ts` the canonically greater record, the same on
+				// every device; the record this device holds already moves nothing, so a
+				// quiet round rewrites nothing.
 				if (isPreviewKey(p) && !peerOwner(p)) {
 					var lp = local[p], rp = remoteIx[p];
 					if (!rp) { out[p] = lp; return; }
-					if (!lp || (+rp.ts || 0) > (+lp.ts || 0)) out[p] = rp;
+					if (!lp || DaimondStamp.beats(rp.ts, rp, lp.ts, lp)) out[p] = rp;
 					else out[p] = lp;
 					return;
 				}
@@ -901,10 +924,14 @@
 			// and preserve theirs beside it -- but never chain sidecars onto
 			// sidecars, or a path that keeps diverging grows a tail of
 			// `.synced.synced.synced` that nobody will ever read.
-			if (!/\.synced$/.test(p)) out[p + '.synced'] = r;
+			if (!/\.synced$/.test(p)) conflicts[p + '.synced'] = r;
 		});
-		// Their addresses for the files we kept our own manifest of.
-		unadopted.forEach(function (e) { notePeerFile(out, e[0], e[1], e[2], fromDev, selfDev); });
+		Object.keys(conflicts).forEach(function (k) { out[k] = conflicts[k]; });
+		// Their addresses for the files we kept our own manifest of -- not for a key a
+		// fresh conflict copy now holds, which is their manifest itself.
+		unadopted.forEach(function (e) {
+			if (!Object.prototype.hasOwnProperty.call(conflicts, e[0])) notePeerFile(out, e[0], e[1], e[2], fromDev, selfDev);
+		});
 		// Drop a sidecar whose original is gone: it was only ever meaningful as
 		// "the other version of that file", and on its own it is landfill the
 		// user is paying to store. A peer slot goes the same way and for the same
@@ -914,10 +941,12 @@
 			var m = /^(.*)\.synced$/.exec(p);
 			if (m && !out[m[1]]) { delete out[p]; return; }
 			if (!isPeerSlot(out[p])) return;
-			var q = /^(.*)\.peer(?:\.[0-9a-f]{16}|\.[0-9a-f]{32})?$/.exec(p);
-			if (q && q[1] && !isContentKey(q[1]) && !out[q[1]]) delete out[p];
+			var q = PEER_RE.exec(p), item = q ? p.slice(0, q.index) : '';
+			if (item && !isContentKey(item) && !out[item]) delete out[p];
 		});
-		setIndex(out);
+		// A merged index the box refuses is held owed and still read here, and the
+		// merge THROWS, so the section is re-pulled rather than read as applied (A5).
+		if (!setIndex(out)) throw window.DaimondStore.refusal(IX_KEY);
 		return out;
 	}
 

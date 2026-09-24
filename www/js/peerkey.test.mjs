@@ -34,6 +34,7 @@
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
+import { loadStore } from './storefixture.mjs';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 let failures = 0;
@@ -64,6 +65,7 @@ function makeTab() {
 	const fn = new Function(
 		'window', 'localStorage', 'navigator', 'setTimeout', 'clearTimeout', 'console',
 		'with (window) {\n' + body + '\n}');
+	loadStore(win, localStorage);
 	fn(win, localStorage, { storage: {} }, setTimeout, clearTimeout,
 		{ log: () => {}, debug: () => {}, warn: () => {}, error: () => {} });
 	return { win, store, C: win.DaimondCloud, localStorage };

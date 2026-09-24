@@ -324,6 +324,22 @@
 		};
 	}
 
+	/// A runner's report on errand `e`: `f`'s status and sentence, with the errand's turn,
+	/// chat, id and addressee (`to` = its `dispatchedBy`) always taken from `e`.
+	///
+	/// EVERY REPORT A RUNNER POSTS IS BUILT HERE (R3 QA Q3, Q6). A report with no `to` is
+	/// taken off the relay by the runner's own next collect before the device that sent the
+	/// turn has it, and each place that built its own report was a place to forget the
+	/// addressee: the pause refusal did, and the restarted runner's hand-back had no errand
+	/// to name one from. `e` may be a lease record, which carries the turn, the errand id and
+	/// the dispatcher (`leaseTakeFromCas`), for a hand-back made with no errand in hand.
+	function reportFor(e, f) {
+		var o = e || {};
+		return makeReport(Object.assign({}, f, {
+			eid: o.eid, to: o.dispatchedBy, turnId: o.turnId, chatId: o.chatId,
+		}));
+	}
+
 	// ── The compile errand's bounds ────────────────────────────
 	//
 	// The post door takes 64 KiB per sealed envelope (gateway post.rs), and the
@@ -474,6 +490,10 @@
 			deadline:     +o.deadline || 0,		// epoch-ms (NOT |0: ms overflows 32 bits)
 			dispatchedBy: String(o.dispatchedBy || ''),	// the runner, so the grant routes home
 			target:  String(o.target || ''),	// the device that should raise/answer this ask
+			// THE ONE ADDRESSEE FIELD every note carries (`to`), read by `noteHeldFor`: an ask
+			// that names its device is held for it. `target` stays for the raise rule that
+			// reads it. Empty is the broadcast, which every collector holds for its life.
+			to:      String(o.target || ''),
 			ts:      o.ts || Date.now(),
 		};
 	}
@@ -501,6 +521,10 @@
 			// answer to one question can never resolve another.
 			kind:    String(o.kind || 'consent'),
 			choice:  String(o.choice == null ? '' : o.choice),
+			// THE RUNNER THAT ASKED (the ask's `dispatchedBy`). Without it a third device that
+			// collected the grant took it and acked it off the relay before the runner saw it,
+			// and the turn parked at its deadline (R3 QA Q4, D126). Held for it, briefly.
+			to:      String(o.to || ''),
 			ts:      o.ts || Date.now(),
 		};
 	}
@@ -2758,7 +2782,17 @@
 		return out;
 	}
 
-	function leaseNow(nowFn) { return (typeof nowFn === 'function') ? nowFn() : Date.now(); }
+	/// The clock every lease age and expiry is measured on when a caller passes none:
+	/// this device's own clock, corrected by the offset the gateway's answers have
+	/// taught it (`relayNow`, learned from `presenceIngest`'s pull/presence `now`),
+	/// never this device's raw, uncorrected clock. Two devices whose raw clocks
+	/// disagree by more than the 90s TTL both correct toward the SAME gateway time and
+	/// so agree on whether a lease is live (SIM-4: a device far enough ahead read a
+	/// still-running peer's lease as dead and re-ran, and re-billed, the turn). Falls
+	/// back to the raw clock only before any gateway round trip has taught the offset.
+	function authorityNow() { var r = relayNow(); return r == null ? Date.now() : r; }
+
+	function leaseNow(nowFn) { return (typeof nowFn === 'function') ? nowFn() : authorityNow(); }
 
 	/// The section as it rides the parcel, or null when empty (a null section is
 	/// one the other device leaves untouched, the same contract pause.js keeps).
@@ -2795,7 +2829,7 @@
 	/// The live holder of a turn's lease at `now`, or null when it is vacant.
 	function leaseHolder(turnId, now) {
 		var r = _leases[String(turnId)];
-		return liveLease(r, now == null ? Date.now() : now) ? r.holder : null;
+		return liveLease(r, now == null ? authorityNow() : now) ? r.holder : null;
 	}
 
 	/// The full lease record for a turn, or null. What the guards and the UI state
@@ -2847,7 +2881,7 @@
 	/// are how its half of the conversation travels.
 	function deferPushFor(leases, selfId, now, isOriginatorOf) {
 		var me = String(selfId || '');
-		var n  = now == null ? Date.now() : now;
+		var n  = now == null ? authorityNow() : now;
 		var ls = leases || {};
 		for (var id in ls) {
 			if (!Object.prototype.hasOwnProperty.call(ls, id)) continue;
@@ -2870,7 +2904,7 @@
 	function leaseHeldBy(holder, now) {
 		var who = String(holder || '');
 		if (!who) return false;
-		var n = now == null ? Date.now() : now;
+		var n = now == null ? authorityNow() : now;
 		for (var id in _leases) {
 			if (!Object.prototype.hasOwnProperty.call(_leases, id)) continue;
 			var r = _leases[id];
@@ -2975,9 +3009,13 @@
 			// recovery errand carries the placeholder's own deadline (`errandForRecovery`,
 			// 2026-09-23), so the refusal above stops a recovery of a hand-off that has
 			// expired, as it stops any other taker.
-			// The record carries `deadline` so every merge/clamp honours the same bound.
+			// The record carries `deadline` so every merge/clamp honours the same bound, and
+			// the device the turn is being run FOR (`dispatchedBy`), so a runner that comes
+			// back from a reload with the lease and no errand can still address the report
+			// that hands it back (`reportFor`, R3 QA Q6). Every later write carries it on.
 			var claim = {
 				turnId: tid, eid: String(o.eid || ''), holder: holder,
+				dispatchedBy: String(o.dispatchedBy || ''),
 				mode: 'claimed', deadline: deadline || 0,
 				expiry: (deadline && deadline > now) ? deadline : (now + LEASE_TTL_MS),
 				renewedAt: now,
@@ -3066,7 +3104,7 @@
 			// stays correct for a direct DaimondLease.renew of a TTL-only (no-deadline)
 			// lease, where it is the old `now + TTL`.
 			var bumped = {
-				turnId: tid, eid: cur.eid, holder: h,
+				turnId: tid, eid: cur.eid, holder: h, dispatchedBy: String(cur.dispatchedBy || ''),
 				mode: cur.mode === 'claimed' ? 'running' : cur.mode,
 				deadline: leaseMs(cur.deadline),
 				expiry: Math.max(now + LEASE_TTL_MS, leaseMs(cur.deadline)), renewedAt: now,
@@ -3115,8 +3153,8 @@
 			// it is preserved (`cur.settled | 0`), and it survives every merge because
 			// `pickLease`/`clampExpiry` carry whole records rather than rebuilding fields.
 			var next = {
-				turnId: tid, eid: cur.eid, holder: h, mode: mode,
-				deadline: leaseMs(cur.deadline),
+				turnId: tid, eid: cur.eid, holder: h, dispatchedBy: String(cur.dispatchedBy || ''),
+				mode: mode, deadline: leaseMs(cur.deadline),
 				expiry: mode === 'released' ? 0 : cur.expiry, renewedAt: now,
 				settled: (mode === 'released' && cur.mode === 'done') ? 1 : (cur.settled | 0),
 			};
@@ -3157,7 +3195,7 @@
 			// released-wins tie-break (or a strictly-greater renew) always keeps this
 			// over the peer's live running record -- a fast-clock peer cannot outbid it.
 			var revoked = {
-				turnId: tid, eid: cur.eid, holder: cur.holder,
+				turnId: tid, eid: cur.eid, holder: cur.holder, dispatchedBy: String(cur.dispatchedBy || ''),
 				mode: 'released', expiry: 0, deadline: leaseMs(cur.deadline),
 				renewedAt: Math.max(now, leaseMs(cur.renewedAt)),
 			};
@@ -3294,7 +3332,7 @@
 	/// live grants nothing and is not shown: the question died with the turn.
 	function blockerOf(turnId, now) {
 		var r = _leases[String(turnId)];
-		if (!liveLease(r, now == null ? Date.now() : now)) return null;
+		if (!liveLease(r, now == null ? authorityNow() : now)) return null;
 		return (r && r.blocker && blockerKind(r.blocker.kind)) ? r.blocker : null;
 	}
 
@@ -3318,8 +3356,8 @@
 				return { ok: false, why: 'not_ours' };
 			}
 			var next = {
-				turnId: tid, eid: cur.eid, holder: h, mode: cur.mode,
-				deadline: leaseMs(cur.deadline), expiry: cur.expiry,
+				turnId: tid, eid: cur.eid, holder: h, dispatchedBy: String(cur.dispatchedBy || ''),
+				mode: cur.mode, deadline: leaseMs(cur.deadline), expiry: cur.expiry,
 				renewedAt: Math.max(now, leaseMs(cur.renewedAt) + 1),
 			};
 			if (blocker) next.blocker = makeBlocker(blocker);
@@ -3472,6 +3510,11 @@
 		LEASE_TTL_MS:      LEASE_TTL_MS,
 		RENEW_EVERY_MS:    RENEW_EVERY_MS,
 		MAX_LEASE_LIFE_MS: MAX_LEASE_LIFE_MS,
+		/// The gateway-corrected clock every lease age/expiry check must use in place
+		/// of a raw `Date.now()` (SIM-4). Published so a caller that judges liveness
+		/// directly, rather than through a `nowFn` a lease call takes, can still reach
+		/// the authority clock rather than reaching for its own raw one.
+		authorityNow: authorityNow,
 		/// The named take-if-vacant merge for one turnId and for the whole section.
 		/// Published so sync.js and a verifier drive the ONE implementation.
 		mergeOne:  mergeOneLease,
@@ -3609,8 +3652,7 @@
 		// report (no re-dispatch); a survivable one is `parked`, carrying the bumped
 		// GLOBAL count so the re-dispatcher increments from the true total.
 		try {
-			if (d.post) await d.post(makeReport({
-				eid: e.eid, to: e.dispatchedBy, turnId: turnId, chatId: e.chatId,
+			if (d.post) await d.post(reportFor(e, {
 				status: terminal ? 'aborted' : 'parked', why: why, parkCount: out.next }));
 			trace.push('report');
 		} catch (err) { /* the release below still frees the turn */ }
@@ -3623,6 +3665,21 @@
 		var d = deps || {}, e = errand || {};
 		var turnId = String(e.turnId);
 		var trace = [];
+		// THE LEASE CLOCK (SIM-4). Every take, renew, complete and release below
+		// reads THIS, never a raw `Date.now()`: two devices whose raw clocks
+		// disagree by more than the 90s TTL must still agree on whether a lease is
+		// live, or the one further ahead reads a peer's still-running lease as dead
+		// and re-runs -- and re-bills -- the turn. `d.relayNow` is the SAME
+		// gateway-corrected clock the age verdict below reads (the deps already
+		// carry it for that, so a lease call is not asking every caller for a
+		// second, separate clock); `authorityNow` (this device's own
+		// `DaimondPresence`-corrected clock) is the fallback while a caller (a
+		// direct take-if-vacant test, `runCompileErrand`'s sibling) supplies none.
+		function leaseClock() {
+			var r = (typeof d.relayNow === 'function') ? d.relayNow() : d.relayNow;
+			if (r != null) return r;
+			return (typeof d.now === 'function') ? d.now() : authorityNow();
+		}
 		diag('collect errand', 'turn=' + turnId
 			+ ' by=' + String(e.dispatchedBy || '').slice(0, 8)
 			+ ' self=' + String(d.selfId || '').slice(0, 8)
@@ -3692,7 +3749,7 @@
 			rowTs:    d.rowTs,
 			relayNow: (typeof d.relayNow === 'function') ? d.relayNow() : d.relayNow,
 			births:   (typeof d.births === 'function') ? d.births(e) : d.births,
-			now:      leaseNow(d.now),
+			now:      leaseNow(leaseClock),
 		});
 		diag('collect age', 'turn=' + turnId + ' age=' + Math.round(age.age / 1000) + 's'
 			+ ' born=' + (age.birth ? new Date(age.birth).toISOString() : 'none')
@@ -3700,8 +3757,7 @@
 		if (!age.ok) {
 			trace.push('stale-turn');
 			try {
-				if (d.post) await d.post(makeReport({ eid: e.eid, to: e.dispatchedBy, turnId: turnId, chatId: e.chatId,
-					status: 'aborted', why: STALE_TURN_WHY }));
+				if (d.post) await d.post(reportFor(e, { status: 'aborted', why: STALE_TURN_WHY }));
 				trace.push('report');
 			} catch (err) { /* refused either way; the sender's own window ends it too */ }
 			return { ran: false, why: 'stale-turn', age: age, trace: trace };
@@ -3720,8 +3776,7 @@
 			trace.push('paused');
 			diag('collect refuse', 'turn=' + turnId + ' paused at ' + String(ph.node || ''));
 			try {
-				if (d.post) await d.post(makeReport({ eid: e.eid, turnId: turnId, chatId: e.chatId,
-					status: 'error', why: String(ph.why || 'This turn is paused.') }));
+				if (d.post) await d.post(reportFor(e, { status: 'error', why: String(ph.why || 'This turn is paused.') }));
 				trace.push('report');
 			} catch (err) { /* refused either way; the sender's deadline ends it too */ }
 			return { ran: false, why: 'paused', node: String(ph.node || ''), trace: trace };
@@ -3747,14 +3802,14 @@
 		if (window.DaimondDiag && DaimondDiag.on()) {
 			var _nom = String(d.nominatedId || '');
 			var _rec = _nom ? ((d.presence || {})[_nom]) : null;
-			var _beat = _rec ? Math.round((leaseNow(d.now) - leaseMs(_rec.lastSeen)) / 1000) + 's' : 'absent';
-			var _stand = !d.allowSelf && nominationStandDown(d.nominatedId, d.selfId, d.presence, leaseNow(d.now), d.freshWindowMs);
+			var _beat = _rec ? Math.round((leaseNow(leaseClock) - leaseMs(_rec.lastSeen)) / 1000) + 's' : 'absent';
+			var _stand = !d.allowSelf && nominationStandDown(d.nominatedId, d.selfId, d.presence, leaseNow(leaseClock), d.freshWindowMs);
 			diag('collect nominee check', 'turn=' + turnId
 				+ ' nominee=' + (_nom ? _nom.slice(0, 8) : 'none')
 				+ ' present=' + (_rec ? 'Y' : 'N') + ' beat=' + _beat
 				+ ' -> ' + (_stand ? 'STAND DOWN for nominee' : 'proceed to claim'));
 		}
-		if (!d.allowSelf && nominationStandDown(d.nominatedId, d.selfId, d.presence, leaseNow(d.now), d.freshWindowMs)) {
+		if (!d.allowSelf && nominationStandDown(d.nominatedId, d.selfId, d.presence, leaseNow(leaseClock), d.freshWindowMs)) {
 			trace.push('stood-down-for-nominee');
 			return { ran: false, why: 'nominee', trace: trace };
 		}
@@ -3769,9 +3824,9 @@
 		}
 
 		// 1. TAKE. Stand down -- never run -- if a peer already holds it.
-		var tTake = leaseNow(d.now);
-		var took = await leaseTake(turnId,
-			{ holder: d.selfId, eid: e.eid, deadline: e.deadline, ts: e.ts, until: age.until }, d.cas, d.now);
+		var tTake = leaseNow(leaseClock);
+		var took = await leaseTake(turnId, { holder: d.selfId, eid: e.eid, dispatchedBy: e.dispatchedBy,
+			deadline: e.deadline, ts: e.ts, until: age.until }, d.cas, leaseClock);
 		trace.push('take');
 		if (!took.won) {
 			diag('collect stand-down', 'turn=' + turnId + ' peer holds ('
@@ -3779,7 +3834,7 @@
 			return { ran: false, why: took.why || 'stood-down', holder: took.holder, trace: trace };
 		}
 		diag('collect CLAIMED', 'turn=' + turnId + ' by ' + String(d.selfId || '').slice(0, 8)
-			+ ' take=' + (leaseNow(d.now) - tTake) + 'ms');
+			+ ' take=' + (leaseNow(leaseClock) - tTake) + 'ms');
 
 		// THE LEASE DOES NOT RENEW. It is claimed straight to the errand's DEADLINE
 		// (leaseTakeFrom), so it stays live for the whole turn with no periodic write --
@@ -3793,7 +3848,7 @@
 		// churn. The check is owned HERE (not in the injected runTurn) and stopped on
 		// EVERY exit (the finally), so it can neither outlive the errand nor leak a timer.
 		var revoked = false, checkStopped = false, checkTimer = null, progressTimer = null;
-		var checkStart = leaseNow(d.now);
+		var checkStart = leaseNow(leaseClock);
 		var maxLife = (d.maxLeaseLifeMs != null) ? d.maxLeaseLifeMs : MAX_LEASE_LIFE_MS;
 		var setT = d.setTimer   || (typeof setInterval   === 'function' ? setInterval   : null);
 		var clrT = d.clearTimer || (typeof clearInterval === 'function' ? clearInterval : null);
@@ -3812,7 +3867,7 @@
 		// whose promise never settles, after which the lease is simply left to expire.
 		async function liveness() {
 			if (checkStopped || revoked) return;
-			if (leaseNow(d.now) - checkStart > maxLife) {
+			if (leaseNow(leaseClock) - checkStart > maxLife) {
 				trace.push('renew-capped');
 				stopCheck();
 				revoked = true;
@@ -3853,10 +3908,10 @@
 				trace.push(undeliverable ? 'reconstruct-undeliverable' : 'reconstruct-failed');
 				try { if (typeof console !== 'undefined') console.error('peer: reconstruct '
 					+ (undeliverable ? 'undeliverable' : 'failed') + ' for turn ' + turnId + ' -- ' + rwhy); } catch (e2) {}
-				try { if (d.post) await d.post(makeReport({ eid: e.eid, to: e.dispatchedBy, turnId: turnId, chatId: e.chatId,
+				try { if (d.post) await d.post(reportFor(e, {
 					status: undeliverable ? 'undeliverable' : 'error', why: rwhy })); }
 				catch (e2) { /* the release below still frees the turn */ }
-				try { await leaseSet(turnId, d.selfId, 'released', d.cas, d.now); trace.push('release'); }
+				try { await leaseSet(turnId, d.selfId, 'released', d.cas, leaseClock); trace.push('release'); }
 				catch (e2) { /* an unreleased lease still expires at its deadline */ }
 				if (undeliverable) {
 					try { if (d.ack) { await d.ack(e); trace.push('ack'); } }
@@ -3869,7 +3924,7 @@
 			// footer ("running" vs "picking this up"), one write, before the turn goes
 			// busy. This keeps the deadline expiry (leaseRenew never shrinks it); it does
 			// NOT start a heartbeat. A lease already revoked between take and here aborts.
-			var mk = await leaseRenew(turnId, d.selfId, d.cas, d.now);
+			var mk = await leaseRenew(turnId, d.selfId, d.cas, leaseClock);
 			if (!mk.ok && mk.why === 'revoked') {
 				revoked = true;
 				trace.push('abort');
@@ -3926,10 +3981,9 @@
 					stopCheck();
 					var ewhy = runnerErrorWhy(ek, d.selfName, err);
 					trace.push('handback');
-					try { if (d.post) await d.post(makeReport({ eid: e.eid, to: e.dispatchedBy, turnId: turnId,
-						chatId: e.chatId, status: 'error', why: ewhy })); trace.push('report'); }
+					try { if (d.post) await d.post(reportFor(e, { status: 'error', why: ewhy })); trace.push('report'); }
 					catch (e2) { /* the release below still frees the turn */ }
-					try { await leaseSet(turnId, d.selfId, 'released', d.cas, d.now); trace.push('release'); }
+					try { await leaseSet(turnId, d.selfId, 'released', d.cas, leaseClock); trace.push('release'); }
 					catch (e2) { /* an unreleased lease still expires at its deadline */ }
 					return { ran: true, error: true, handback: ek, why: ewhy, trace: trace };
 				}
@@ -3978,14 +4032,13 @@
 				catch (err) { /* a dropped final frame only means the parcel is the first sight */ }
 			}
 			try {
-				await d.post(makeReport({ eid: e.eid, to: e.dispatchedBy, turnId: turnId, chatId: e.chatId,
-					status: 'done', parcelVersion: 0, finalTail: finalTail ? 1 : 0 }));
+				await d.post(reportFor(e, { status: 'done', parcelVersion: 0, finalTail: finalTail ? 1 : 0 }));
 				trace.push('report');
 			} catch (err) { /* the report is only the nudge; the frame already carried the answer */ }
-			await leaseSet(turnId, d.selfId, 'done', d.cas, d.now); trace.push('complete');
+			await leaseSet(turnId, d.selfId, 'done', d.cas, leaseClock); trace.push('complete');
 			try { if (d.ack) { await d.ack(e); trace.push('ack'); } }
 			catch (err) { /* a missed ack costs one idempotent re-collect, never a drop */ }
-			await leaseSet(turnId, d.selfId, 'released', d.cas, d.now); trace.push('release');
+			await leaseSet(turnId, d.selfId, 'released', d.cas, leaseClock); trace.push('release');
 			// THE PARCEL, AFTER THE LEASE IS FREE. Awaited only where the caller asked
 			// for it (`awaitPush`, which the tests do so the sequence is assertable);
 			// otherwise started and left to land, because the originator is no longer
@@ -4065,8 +4118,8 @@
 
 		// 1. TAKE. The same take-if-vacant CAS a turn uses, on the compile's own key, so
 		// two awake runners cannot each lay the book out and each grow a heap for it.
-		var took = await leaseTake(cid,
-			{ holder: d.selfId, eid: e.eid, deadline: e.deadline, ts: e.ts }, d.cas, d.now);
+		var took = await leaseTake(cid, { holder: d.selfId, eid: e.eid, dispatchedBy: e.dispatchedBy,
+			deadline: e.deadline, ts: e.ts }, d.cas, d.now);
 		trace.push('take');
 		if (!took.won) {
 			return { ran: false, why: took.why || 'stood-down', holder: took.holder, trace: trace };
@@ -4244,7 +4297,8 @@
 		if (dl && n > dl + LEASE_TTL_MS) return false;		// past the last moment any peer may start it
 		// Or past the window from the turn's birth, which is where every collector now
 		// refuses it (`turnAgeVerdict`); one clock, since the errand is this device's own.
-		var born = errandBirth(env);
+		// A hold's kept facts carry the birth already read (`ownHoldFacts`).
+		var born = leaseMs(env && env.born) || errandBirth(env);
 		if (born && n > born + DISPATCH_DEADLINE_MS + LEASE_TTL_MS) return false;
 		if (_settled) {
 			try { if (await _settled(env)) return false; } catch (e) { /* on doubt, hold */ }
@@ -4256,6 +4310,26 @@
 	// which a hand-off can still be live (`holdOwnDispatch` holds an own errand as long).
 	// Past it the parcel carries the answer home, and the row may only freeze the cursor.
 	var NOTE_HOLD_MS = DISPATCH_DEADLINE_MS + LEASE_TTL_MS;
+	// A consent question and its answer live only as long as the question can be answered:
+	// its deadline, and this much after it for the answer on its way.
+	var ANSWER_SLACK_MS = 30000;
+
+	/// How long a note is held for its device: a question for as long as it stands, its
+	/// answer for as long as a question can, and anything else `NOTE_HOLD_MS`. Pure.
+	///
+	/// A QUESTION'S LIFE IS ITS OWN SPAN, `deadline - ts`: two readings of the asker's one
+	/// clock, which no skew moves, laid on the relay's stamp by `noteHoldOpen`. A hold that
+	/// outlived its question would only pin every collector's cursor for nothing.
+	function noteWindowMs(env) {
+		var t = env && env.t;
+		if (t === T_ASK) {
+			var span = leaseMs(env.deadline) - leaseMs(env.ts);
+			if (!(span > 0)) span = CONSENT_DEADLINE_MS;
+			return Math.min(NOTE_HOLD_MS, span + ANSWER_SLACK_MS);
+		}
+		if (t === T_GRANT) return CONSENT_DEADLINE_MS + ANSWER_SLACK_MS;
+		return NOTE_HOLD_MS;
+	}
 
 	/// The device a collected note must be left on the relay for, or '' when this device
 	/// may take it and let the ack pass it. Pure.
@@ -4274,18 +4348,119 @@
 	/// by every other collector until that device acks it or `NOTE_HOLD_MS` has passed
 	/// since the relay took it. `row.ts` is the relay's arrival stamp in Unix seconds
 	/// (a value already in milliseconds is read as one); `relayNow` is the relay's clock,
-	/// or null to read the local one.
+	/// or null where none is known yet.
+	///
+	/// AGED ON THE RELAY'S CLOCK OR NOT AT ALL (R3 QA Q1). The stamp is the relay's, and
+	/// this device's clock is not: one running twenty minutes ahead, collecting before its
+	/// first presence answer taught it the relay's, read a report posted a second ago as
+	/// older than its window, took it and acked it away from the phone. With no relay clock
+	/// the note is held, and the hold ends on this device's own count from here
+	/// (`noteHoldOpen`), which a skewed clock does not move.
+	///
+	/// EVERY NOTE WITH AN ADDRESSEE IS HELD FOR IT, and one field names it: `to` (SIM-3,
+	/// 2026-09-25). A consent question named its device only in `target`, which this did
+	/// not read, so the runner that asked folded its own question and acked it away before
+	/// the phone saw it. A question with no addressee is the owner's broadcast (every
+	/// attended device raises it), so it is held for every device -- `'*'` -- for as long
+	/// as it can be answered, including by the runner that asked it. Each note's window is
+	/// `noteWindowMs`.
 	function noteHeldFor(env, row, selfId, relayNow) {
-		var to = String((env && env.to) || '');
-		if (!to || to === String(selfId || '')) return '';
 		if (!env || env.t === T_ERRAND || env.t === T_COMPILE) return '';	// work is claimed, not held for
+		var to = String(env.to || '');
+		if (!to && env.t === T_ASK) to = '*';
+		if (!to || to === String(selfId || '')) return '';
 		// A row with no stamp cannot be aged, so it is not held: a hold that could never
 		// end would freeze this device's ack cursor for the row's whole life (S-HAND #2).
-		var ts = leaseMs(row && row.ts);
-		var at = ts >= 1e11 ? ts : ts * 1000;
-		if (!(at > 0)) return '';
-		var now = (relayNow != null && plausibleMs(relayNow)) ? plausibleMs(relayNow) : Date.now();
-		return (now - at > NOTE_HOLD_MS) ? '' : to;
+		if (!(noteStampMs(row && row.ts) > 0)) return '';
+		return (noteAge(row && row.ts, relayNow) > noteWindowMs(env)) ? '' : to;
+	}
+
+	/// A relay stamp in milliseconds: Unix seconds, or a value already in milliseconds.
+	function noteStampMs(ts) {
+		var t = leaseMs(ts);
+		return t >= 1e11 ? t : t * 1000;
+	}
+
+	/// A note's age in milliseconds on the relay's clock, or -1 when no relay clock is known.
+	function noteAge(ts, relayNow) {
+		var rn = plausibleMs(relayNow), at = noteStampMs(ts);
+		return (rn && at > 0) ? rn - at : -1;
+	}
+
+	/// What a note's hold keeps, so a later pass decides it without reading the row again
+	/// (`noteHoldOpen`): the relay's stamp, this device's clock when it was first taken, and
+	/// the note's age then on the relay's clock -- 0 where none was known, so the count
+	/// from here is the whole of it and the hold can only run long, never short.
+	///
+	/// And the note's window (`noteWindowMs` of `env`), where the envelope is given.
+	function noteHoldFacts(row, relayNow, now, env) {
+		var n = now == null ? Date.now() : now;
+		var f = { ts: leaseMs(row && row.ts), seenAt: n, age0: Math.max(0, noteAge(row && row.ts, relayNow)) };
+		if (env) f.win = noteWindowMs(env);
+		return f;
+	}
+
+	/// Should a held note's row be looked for on the relay again? Only while the device it is
+	/// held for is awake (a beat inside `PRESENCE_FRESH_MS` in the presence view). Pure.
+	///
+	/// A LOOK IS THE ONLY WAY TO LEARN THE NOTE HAS BEEN TAKEN -- the relay says so by not
+	/// having it -- and it costs every row above it (R3 QA Q5): read on every collect while
+	/// the phone was away, it grew with the square of the rows that arrived meanwhile. An
+	/// awake device can take the note at any moment, and its own collects keep the relay
+	/// drained, so a look then costs little and finds the note gone on the pass after it is
+	/// taken: a runner that refused a replayed turn fifteen seconds after the phone took its
+	/// last report must see that at once, or its ack stays pinned below the refused errand.
+	/// A device that is not awake cannot take it, and a look would only download again what
+	/// is above it. A take the view has not heard of yet is found once the device's beat is.
+	function noteLookAgain(deviceId, presence, now) {
+		var rec = presence ? presence[String(deviceId || '')] : null;
+		if (!rec) return false;
+		var n = now == null ? Date.now() : now;
+		return (n - leaseMs(rec.lastSeen)) <= PRESENCE_FRESH_MS;
+	}
+
+	/// Is a note held for another device still inside its window? Pure, over the facts its
+	/// hold kept (`noteHoldFacts`).
+	///
+	/// DECIDED FROM THOSE, NEVER FROM THE ROW AGAIN (R3 QA Q2, Q5). Re-reading a held note
+	/// to decide it re-downloaded every row above it on every collect for the length of the
+	/// window, and folded it again each time: a runner re-ran a `built` note's download and
+	/// preview on every park wake. The age is read on the relay's clock where it is known,
+	/// and otherwise as the age at first sight plus what this device has counted since --
+	/// the difference of two readings of one clock, which no skew moves.
+	function noteHoldOpen(h, relayNow, now) {
+		var age = noteAge(h && h.ts, relayNow);
+		if (age < 0) {
+			var n = now == null ? Date.now() : now;
+			age = (+(h && h.age0) || 0) + Math.max(0, n - leaseMs(h && h.seenAt));
+		}
+		return age <= ((+(h && h.win) > 0) ? +h.win : NOTE_HOLD_MS);
+	}
+
+	/// What an own errand's hold keeps, so a later pass asks `holdOwnDispatch` without
+	/// reading the row again: the fields that rule and the settled probe read, with the
+	/// turn's birth read once here. Small, where the envelope carries the thread's seed.
+	function ownHoldFacts(env) {
+		var e = env || {};
+		return {
+			t: T_ERRAND, eid: String(e.eid || ''), turnId: String(e.turnId || ''),
+			chatId: String(e.chatId || ''), dispatchedBy: String(e.dispatchedBy || ''),
+			deadline: leaseMs(e.deadline), born: errandBirth(e),
+		};
+	}
+
+	/// Is a compile's account this device's to draw? Where it names its device (`to`), only
+	/// that one; an older runner's names none, and the device with the compile in flight
+	/// takes it, as before.
+	///
+	/// A NOTE IS FOLDED ON EVERY DEVICE THAT COLLECTS IT, and a `built` drawn wherever it
+	/// was folded took over a third device's preview: it downloaded the artifact, stopped
+	/// the document that device was watching, pulled its sheet to Preview and rewrote the
+	/// sidecar (R3 QA Q2). Every device still records it, since a runner's `finished` reads
+	/// it; only the one that asked draws it.
+	function builtIsOurs(r, selfId, inFlight) {
+		var to = String((r && r.to) || '');
+		return to ? to === String(selfId || '') : !!inFlight;
 	}
 
 	// ════════════════════════════════════════════════════════════
@@ -4579,9 +4754,20 @@
 		/// registers the "is this turn finished here?" probe daimond.js supplies.
 		holdOwnDispatch: holdOwnDispatch,
 		onSettled:       onSettled,
-		/// The device a collected note is left on the relay for (post.js `takeRow`), or ''.
+		/// The device a collected note is left on the relay for (post.js `takeRow`), or '';
+		/// what its hold keeps, and whether it still stands, decided from that alone.
 		noteHeldFor:     noteHeldFor,
+		noteHoldFacts:   noteHoldFacts,
+		noteHoldOpen:    noteHoldOpen,
+		noteLookAgain:   noteLookAgain,
 		NOTE_HOLD_MS:    NOTE_HOLD_MS,
+		noteWindowMs:    noteWindowMs,
+		/// What an own errand's hold keeps for `holdOwnDispatch` to be asked again.
+		ownHoldFacts:    ownHoldFacts,
+		/// Whether a compile's account is this device's to draw (daimond.js `onBuiltReport`).
+		builtIsOurs:     builtIsOurs,
+		/// Every report a runner posts, built from its errand or its lease.
+		reportFor:       reportFor,
 		/// Register the runners the collector hands a verified envelope to. Set by
 		/// daimond.js; absent, `absorb` verifies and drops.
 		onErrand: onErrand,

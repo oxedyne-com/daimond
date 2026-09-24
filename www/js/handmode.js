@@ -143,10 +143,10 @@
 	function grantScope(id, on) {
 		if (ACCOUNT_SCOPES.indexOf(id) < 0) return false;
 		var map = scopes();
-		// Strictly forward, even inside one millisecond: the stamp is the whole of
-		// what the freshest-wins merge compares, so two grants a tick apart must not
-		// read as equal and let the wrong one stand.
-		var at  = Math.max(Date.now(), ms(map[id] && map[id].at) + 1);
+		// Strictly past the grant it replaces, even inside one millisecond and on a
+		// clock behind the device that made it: the stamp is the whole of what the
+		// freshest-wins merge compares.
+		var at  = DaimondStamp.next(map[id] && map[id].at);
 		map[id] = { at: at, on: on === false ? 0 : 1 };
 		writeScopes(map);
 		nudge();
@@ -170,15 +170,17 @@
 	/// Merge an account policy from another device.
 	///
 	/// Freshest-wins PER FACT: the rung moves only when the arriving `mode_at` is
-	/// strictly later than ours, and each scope moves only when its own `at` is.
-	/// Nothing here stamps -- a policy this device already agrees with moves
+	/// later than ours, and each scope moves only when its own `at` is. AT AN EQUAL
+	/// STAMP THE STRICTER SIDE WINS -- the stricter rung, a scope withheld -- on
+	/// every device alike, so a tie can neither leave two devices on different rungs
+	/// for ever nor open a door either device had closed. Nothing here stamps -- a policy this device already agrees with moves
 	/// nothing, so the next parcel it packs is unchanged (the `touchSelfDevice`
 	/// trap that had two devices pushing at each other). A parcel with no `perms`
 	/// -- a device that predates this -- is a no-op.
 	function adoptPolicy(remote) {
 		if (!remote || typeof remote !== 'object') return;
 		var rmAt = ms(remote.mode_at);
-		if (rmAt > modeAt()) {
+		if (rmAt > 0 && DaimondStamp.beats(rmAt, remote.mode, modeAt(), current, strictness)) {
 			// A rung this build knows, later than ours, and actually different: push
 			// it into the engine (the only copy that decides anything) and, only if
 			// that took, record it. A stamp taken forward without the rung going in
@@ -204,8 +206,8 @@
 		ACCOUNT_SCOPES.forEach(function (id) {
 			var r = rem[id];
 			if (!r || typeof r !== 'object') return;
-			var rAt = ms(r.at);
-			if (rAt > 0 && rAt > ms(mine[id] && mine[id].at)) {
+			var rAt = ms(r.at), held = mine[id];
+			if (rAt > 0 && DaimondStamp.beats(rAt, r.on ? 1 : 0, held && held.at, held ? held.on : 0, withheld)) {
 				mine[id] = { at: rAt, on: r.on ? 1 : 0 };
 				moved = true;
 			}
@@ -217,6 +219,16 @@
 	/// reads as a ladder and the last row is the one that gives most away.
 	var MODES = ['ask', 'guarded', 'bypass'];
 	var FALLBACK = 'guarded';
+
+	/// How strict a rung is, for a tie: the higher, the less it gives away. A name
+	/// this build does not know ranks below every rung, so it never wins one.
+	function strictness(mode) {
+		var i = MODES.indexOf(mode);
+		return i < 0 ? -1 : MODES.length - i;
+	}
+
+	/// A scope grant's rank for a tie: withheld above granted.
+	function withheld(on) { return on ? 0 : 1; }
 
 	var cfg = {};				// { apply, confirm, notice, onChange }
 	var current = FALLBACK;
@@ -426,8 +438,10 @@
 		save(name);
 		// Stamp WHEN this rung was chosen, so the account policy can travel and a
 		// later choice on either device wins the merge. Written here, where a real
-		// choice is made, and never in `snapshotPolicy` -- see the note there.
-		try { localStorage.setItem(LS_MODE_AT, String(Date.now())); } catch (e) { /* private mode */ }
+		// choice is made, and never in `snapshotPolicy` -- see the note there. Past
+		// the stamp it replaces: a phone whose clock is behind the desktop that chose
+		// `bypass` must still be able to take it back (CLK-2).
+		try { localStorage.setItem(LS_MODE_AT, String(DaimondStamp.next(modeAt()))); } catch (e) { /* private mode */ }
 		draw();
 		close();
 		nudge();

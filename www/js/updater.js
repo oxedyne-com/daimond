@@ -217,6 +217,14 @@
 		} catch (e) { return true; }
 	}
 
+	/// Does this tab still owe the box a record it refused? What is owed lives
+	/// only in this tab's memory (`DaimondStore`), so a reload discards it (F-S2):
+	/// unlike a sync round, that loses work, and the build waits for the box.
+	function recordsOwed() {
+		try { return !!(window.DaimondStore && DaimondStore.owed().length); }
+		catch (e) { return false; }
+	}
+
 	/// Is Daimond's one modal standing open right now? `busy()` usually says yes
 	/// too -- the turn that raised it is still running -- but not always: a
 	/// dialog `dialog()` opened for a reason of its own (an unlock prompt, the
@@ -243,6 +251,7 @@
 		if (dialogOpen()) return false;
 		if (busy()) return false;
 		if (composerHasUnsavedText()) return false;
+		if (recordsOwed()) return false;
 		if (syncQuiet()) return true;
 		// Sync is not quiet. Unlike the three above, that loses no work -- a reload
 		// mid-push throws the round away but the parcel re-sends, the device only
@@ -383,6 +392,7 @@
 		if (dialogOpen()) return 'dialog';
 		if (busy()) return 'turn';
 		if (composerHasUnsavedText()) return 'typed';
+		if (recordsOwed()) return 'owed';
 		if (!syncQuiet()) return 'sync:' + syncBusyWith();
 		try {
 			// Split from one bare 'lease': `idleUnlocked` refuses for two different

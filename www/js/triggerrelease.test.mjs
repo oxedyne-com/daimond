@@ -18,6 +18,7 @@
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
+import { loadStore } from './storefixture.mjs';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 
@@ -42,6 +43,7 @@ function storage() {
 /// One page load: both modules, fresh, over `ls`.
 function boot(ls) {
 	const win = { localStorage: ls };
+	loadStore(win, ls);
 	for (const f of ['pause.js', 'triggers.js']) {
 		new Function('window', 'localStorage', readFileSync(join(HERE, f), 'utf8'))(win, ls);
 	}

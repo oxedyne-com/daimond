@@ -1688,6 +1688,10 @@
 <!-- accounts.js FIRST: it installs the per-account storage namespace before any
      module reads or writes localStorage. -->
 <script src="js/accounts.js"></script>
+<!-- store.js next: the one checked write every synced record goes through
+     (a refused write is held owed, retried and said, never swallowed), so it is
+     in place before the first module below stores anything. -->
+<script src="js/store.js"></script>
 <!-- breadcrumb.js immediately after: it records the boot itself, and an error
      thrown by anything below has to land in the trail rather than in a console
      nobody on a phone can open. -->
@@ -1696,6 +1700,9 @@
      early so its no-op log() is defined before any seam that calls it, and its
      stored on/off switch is read before the first pull. -->
 <script src="js/diag.js"></script>
+<!-- stamp.js before every module that writes a synced register: the one rule
+     for a write's stamp and for a tie (window.DaimondStamp). -->
+<script src="js/stamp.js"></script>
 <!-- support.js beside diag.js and breadcrumb.js: the "Something went wrong"
      one-tap report (D-20260920-02). Reads both their rings, so it loads after
      both and before anything that could report an error. -->

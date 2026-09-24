@@ -26,19 +26,27 @@
    on the runner. Every step is sequenced by the test, so the result
    does not depend on load.
 
+   R3 QA (2026-09-25) added three cases: the pause refusal names the
+   phone, as every report does (Q3); a runner that has not yet learned
+   the relay's clock does not age a report on its own (Q1); and the
+   runner decides its hold from what it kept, so it folds the report
+   once and looks for its row again only while the phone is awake
+   (Q2, Q5).
+
    Proven able to fail:
      node www/js/postreply.test.mjs --break noteack   # the runner acks the report away
      node www/js/postreply.test.mjs --break batch     # the phone's own hold is not re-decided
      node www/js/postreply.test.mjs                   # clean
 
    Run:  node www/js/postreply.test.mjs
+         WWW=<tree>/www/js node www/js/postreply.test.mjs
    ============================================================ */
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 import { webcrypto } from 'node:crypto';
 
-const HERE = dirname(fileURLToPath(import.meta.url));
+const HERE = process.env.WWW || dirname(fileURLToPath(import.meta.url));
 let failures = 0, checks = 0;
 function check(name, cond, detail) {
 	checks++;
@@ -79,6 +87,7 @@ function makeRelay() {
 	const relay = {
 		rows: [],
 		acks: [],						// [{ by, through }]
+		reads: [],						// [{ by, since }], every collect GET
 		clock: () => Date.now(),		// the relay's own clock, in ms
 		put(b) {
 			if (relay.rows.some((r) => r.addr === b.addr)) return;
@@ -131,14 +140,13 @@ function makeTab(relay, name, opts) {
 			if (o && o.method === 'POST') { relay.put(JSON.parse(o.body)); return ok({ ok: true }); }
 			if (q.has('since')) {
 				const since = Number(q.get('since'));
+				relay.reads.push({ by: name, since });
 				return ok({ ok: true, rows: relay.rows.filter((r) => r.seq > since), more: false });
 			}
 			if (q.has('above')) return new Promise(() => {});		// a park: the test collects by hand
 			return ok({ ok: true });
 		},
 	};
-	// The relay's clock as presence would teach it (`DaimondPresence.relayNow`).
-	win.DaimondPresence = { relayNow: () => relay.clock() };
 
 	function loadScript(rel, extra, edit) {
 		let body = readFileSync(join(HERE, rel), 'utf8');
@@ -155,13 +163,24 @@ function makeTab(relay, name, opts) {
 			setTimeout, clearTimeout, () => 0, () => {},
 			{ log: () => {}, debug: () => {}, warn: () => {}, error: console.error }, globalThis);
 	}
+	loadScript('store.js');
 	loadScript('vendor/noble-curves.min.js', '\n;window.DaimondNoble = DaimondNoble;');
 	loadScript('curvefallback.js');
 	loadScript('identity.js');
 	loadScript('post.js', '', opts.editPost);
 	loadScript('peer.js');
 	if (opts.noteAck) win.DaimondPeer.noteHeldFor = () => '';	// the pre-fix collector
+	// THE RELAY'S CLOCK, taught as a presence answer teaches it (peer.js `ingest`), so
+	// `relayNow` reads it. peer.js defines `DaimondPresence` itself, so a stub set before
+	// it loads is replaced, and a tab that has had no answer reads null. `opts.noClock`
+	// is that tab.
+	if (!opts.noClock) teach(win, relay);
 	return win;
+}
+
+/// A presence answer: the relay's clock as `relay.clock` reads it now.
+function teach(win, relay) {
+	win.DaimondPresence.ingest({}, relay.clock());
 }
 
 function makeCas() {
@@ -187,23 +206,24 @@ function makeGate() {
 /// Two tabs of one account over one relay. The phone's report handler and settle
 /// probe are daimond.js's in shape: a report is stashed by turn, and a turn is
 /// settled here once a terminal report for it has been collected.
-async function pair(relay) {
+async function pair(relay, opts) {
 	const editPost = BREAK === 'batch'
 		? (src) => {
-			const at = 'if (owned.length && window.DaimondPeer && DaimondPeer.holdOwnDispatch) {';
+			const at = 'if (h.own) {';
 			if (src.indexOf(at) < 0) throw new Error('postreply: the batch re-decision was not found to revert');
 			return src.replace(at, 'if (false) {');
 		}
 		: null;
 	const phone  = makeTab(relay, 'phone',  { editPost });
-	const runner = makeTab(relay, 'runner', { editPost, noteAck: BREAK === 'noteack' });
+	const runner = makeTab(relay, 'runner', { editPost, noteAck: BREAK === 'noteack', noClock: !!(opts && opts.runnerNoClock) });
 	const PASS = 'correct horse battery staple frigate';
 	await phone.DaimondIdentity.create('Phone', PASS);
 	runner.DaimondIdentity.importBundle(phone.DaimondIdentity.exportBundle());
 	await runner.DaimondIdentity.unlock(PASS);
 	for (const t of [phone, runner]) {
 		t.reports = {};
-		t.DaimondPeer.onReport(async (r) => { t.reports[r.turnId] = r; });
+		t.folds = {};					// turnId -> times the report was folded here
+		t.DaimondPeer.onReport(async (r) => { t.reports[r.turnId] = r; t.folds[r.turnId] = (t.folds[r.turnId] | 0) + 1; });
 		t.DaimondPeer.onSettled(async (env) => {
 			const r = t.reports[String(env && env.turnId)];
 			return !!r && r.status !== 'parked' && r.status !== 'undeliverable';
@@ -215,7 +235,7 @@ async function pair(relay) {
 /// The runner's errand handler: the REAL `runErrand`, its turn held on `gate`, its
 /// report posted and its ack made as daimond.js's deps make them. `beforeAck` runs
 /// between the report and the ack: the runner's park, woken by its own report row.
-function wireRunner(runner, gate, beforeAck) {
+function wireRunner(runner, gate, beforeAck, pauseHold) {
 	runner.runs = [];
 	runner.DaimondPeer.onErrand(async (errand, row) => {
 		const cas = makeCas();
@@ -223,6 +243,7 @@ function wireRunner(runner, gate, beforeAck) {
 			selfId: runner.DaimondIdentity.deviceId(), selfName: 'runner', cas,
 			rowTs: row && row.ts, relayNow: () => Date.now(),
 			reconstruct: async () => ({}),
+			pauseHold: pauseHold || null,
 			runTurn: async () => { await gate.wait(); return { text: 'four' }; },
 			post: async (report) => {
 				await runner.DaimondPost.post(await runner.DaimondPeer.sealForSelf(report));
@@ -302,10 +323,32 @@ async function main() {
 		const pst = await phone.DaimondPost.read();
 		check('no hold is left on the phone', (pst.holds || []).length === 0 && pst.through === 2,
 			'through ' + pst.through + ', holds ' + JSON.stringify(pst.holds));
+		// THE RUNNER DOES NOT READ THE REPORT AGAIN WHILE THE PHONE IS AWAY (R3 QA Q2, Q5):
+		// its hold keeps what its window is read from, so its collects ask only for rows
+		// above what it has worked, and it folds the report once. Looking for the row is the
+		// only way to learn the phone has taken it, and costs every row above it, so it is
+		// looked for only while the phone is awake.
+		const folds = runner.folds[turnId] | 0;
+		const readsBefore = relay.reads.length;
+		await runner.DaimondPost.round();
+		await runner.DaimondPost.round();
+		const rreads = relay.reads.slice(readsBefore).filter((x) => x.by === 'runner');
+		check('THE RUNNER ASKS ONLY FOR ROWS ABOVE WHAT IT HAS WORKED while the phone is away',
+			rreads.length === 2 && rreads.every((x) => x.since >= 2), 'reads ' + JSON.stringify(rreads));
+		check('and it folded the report once', folds === 1 && (runner.folds[turnId] | 0) === 1,
+			'folds ' + folds + ' then ' + (runner.folds[turnId] | 0));
+		// The phone's beat reaches the runner: it is awake, so the runner looks for the
+		// report again, finds it gone, and lets it go.
+		await new Promise((r) => setTimeout(r, 5));
+		runner.DaimondPresence.ingest({ [phoneDev]: { name: 'Phone', last_seen: relay.clock() } }, relay.clock());
+		const readsHeard = relay.reads.length;
 		await runner.DaimondPost.round();
 		const rst2 = await runner.DaimondPost.read();
-		check('and none on the runner once the phone has taken it', (rst2.holds || []).length === 0,
-			'holds ' + JSON.stringify(rst2.holds));
+		const hreads = relay.reads.slice(readsHeard).filter((x) => x.by === 'runner');
+		check('ONCE THE PHONE IS AWAKE, THE RUNNER LOOKS AGAIN AND LETS THE TAKEN REPORT GO',
+			(rst2.holds || []).length === 0 && rst2.through === 2 && hreads.length === 1 && hreads[0].since === 1,
+			'through ' + rst2.through + ', holds ' + JSON.stringify(rst2.holds) + ', reads ' + JSON.stringify(hreads));
+		check('and still folded it once', (runner.folds[turnId] | 0) === 1, 'folds ' + (runner.folds[turnId] | 0));
 	}
 
 	// ── (2) one batch: the phone's own errand and the report that settles it ──
@@ -382,6 +425,62 @@ async function main() {
 			eid: 'e6', turnId: 'turn-six', chatId: 'c', status: 'done' })));
 		await runner.DaimondPost.round();
 		check('it is not held', relay.rows.length === 0, 'rows ' + JSON.stringify(relay.seqs()));
+	}
+
+	// ── (6) a paused chat's refusal names the phone, as every report does (R3 QA Q3) ──
+	console.log('\na runner that refuses a paused chat leaves the refusal on the relay for the phone');
+	{
+		const relay = makeRelay();
+		const { phone, runner, phoneDev } = await pair(relay);
+		const gate = makeGate();
+		gate.open();
+		wireRunner(runner, gate, null, () => ({ node: 'chat', why: 'This chat is paused.' }));
+		const turnId = await dispatch(phone, phoneDev, 'six');
+		await runner.DaimondPost.round();
+		check('the runner refused the turn for the pause', await runOver(runner)
+			&& runner.runs[0].why === 'paused', 'runs ' + JSON.stringify(runner.runs));
+		await ticks(80);
+		for (let i = 0; i < 3; i++) { await runner.DaimondPost.round(); await ticks(40); }
+		check('THE REFUSAL NAMES THE PHONE', !!runner.reports[turnId] && runner.reports[turnId].to === phoneDev,
+			'report ' + JSON.stringify(runner.reports[turnId] || null));
+		check('and it is still on the relay after the runner\'s collects', relay.has(2),
+			'rows ' + JSON.stringify(relay.seqs()) + ', acks ' + JSON.stringify(relay.acks));
+		await phone.DaimondPost.round();
+		const r = phone.reports[turnId];
+		check('THE PHONE GETS THE RUNNER\'S SENTENCE', !!r && r.status === 'error' && r.why === 'This chat is paused.',
+			'phone report ' + JSON.stringify(r || null));
+	}
+
+	// ── (7) a runner with no relay clock yet does not age a report on its own (R3 QA Q1) ──
+	console.log('\na runner that has not learned the relay\'s clock holds the report, whatever its own clock says');
+	{
+		const relay = makeRelay();
+		const { phone, runner, phoneDev } = await pair(relay, { runnerNoClock: true });
+		const gate = makeGate();
+		wireRunner(runner, gate, null);
+		check('the runner has no relay clock', runner.DaimondPresence.relayNow() == null);
+		const turnId = await dispatch(phone, phoneDev, 'seven');
+		await runner.DaimondPost.round();
+		gate.open();
+		check('the runner ran the turn', await runOver(runner), 'runs ' + runner.runs.length);
+		await ticks(80);
+		// Its own clock twenty minutes ahead of the relay's, past the window.
+		const realNow = Date.now, AHEAD = 20 * 60000;
+		globalThis.Date.now = () => realNow() + AHEAD;
+		try {
+			for (let i = 0; i < 2; i++) { await runner.DaimondPost.round(); await ticks(40); }
+		} finally { globalThis.Date.now = realNow; }
+		check('THE REPORT IS STILL ON THE RELAY FOR THE PHONE', relay.has(2),
+			'rows ' + JSON.stringify(relay.seqs()) + ', acks ' + JSON.stringify(relay.acks));
+		await phone.DaimondPost.round();
+		check('and the phone takes it', !!phone.reports[turnId] && phone.reports[turnId].status === 'done');
+		// The hold still ends without a relay clock: counted on the runner's own clock
+		// from when it first took the report, which no offset between the two moves.
+		globalThis.Date.now = () => realNow() + AHEAD + runner.DaimondPeer.NOTE_HOLD_MS + 60000;
+		try { await runner.DaimondPost.round(); } finally { globalThis.Date.now = realNow; }
+		const rst = await runner.DaimondPost.read();
+		check('and the runner\'s hold ends a window after it first took it, on its own count',
+			(rst.holds || []).length === 0, 'holds ' + JSON.stringify(rst.holds));
 	}
 
 	console.log('\n' + checks + ' checks, ' + failures + ' failed');

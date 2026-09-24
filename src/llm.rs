@@ -362,6 +362,81 @@ pub enum Delta<'a> {
 }
 
 // ┌───────────────────────────────────────────────────────────────┐
+// │ Halt: one turn's stop                                          │
+// └───────────────────────────────────────────────────────────────┘
+
+/// One turn's stop, which a Stop or a pause sets and the turn obeys at its next seam.
+///
+/// **STICKY, AND THE TURN'S OWN.**  The client used to hold one abort slot, the controller of
+/// whichever request had been armed LAST, shared by every clone.  An abort that landed while a
+/// round's tools ran fired a controller whose request had already finished, and the next round
+/// armed a fresh one, so the rest of the turn ran (PQA W, WD).  And every Diamond on one model
+/// shares one client, so pausing one Diamond fired whichever Diamond's request was armed last
+/// (PQA D).  A halt is made per turn and stays set: the loop asks it before every request and at
+/// every round boundary ([`LlmClient::halted`], `Agent::run_tool_loop`), and a clone of the
+/// client made for another turn carries a halt of its own ([`LlmClient::with_halt`]).
+///
+/// The controller of the request in flight is held here too and fired with the flag, so a turn
+/// that is mid-stream stops at once rather than at the end of its round.
+#[derive(Clone, Debug, Default)]
+pub struct Halt(std::rc::Rc<HaltInner>);
+
+#[derive(Debug, Default)]
+struct HaltInner {
+    set:  std::cell::Cell<bool>,
+    #[cfg(target_arch = "wasm32")]
+    ctrl: std::cell::RefCell<Option<web_sys::AbortController>>,    // the request in flight
+}
+
+impl Halt {
+
+    pub fn new() -> Self { Self::default() }
+
+    /// Stop the turn: the flag, which every later request and seam reads, and then the request
+    /// in flight.
+    pub fn fire(&self) {
+        self.0.set.set(true);
+        self.tear_down();
+    }
+
+    /// Has this turn been stopped?
+    pub fn is_set(&self) -> bool { self.0.set.get() }
+
+    /// Clear a stop, for the turn about to start on a client that ran the one before it.
+    ///
+    /// Only the owner of a client that runs one turn at a time calls this -- a chat's own agent,
+    /// at the top of its turn -- and only before anything of the new turn has gone out.
+    pub fn rearm(&self) {
+        self.0.set.set(false);
+        #[cfg(target_arch = "wasm32")]
+        {
+            *self.0.ctrl.borrow_mut() = None;
+        }
+    }
+
+    /// Is this the same turn's stop as `other`?
+    pub fn same(&self, other: &Halt) -> bool { std::rc::Rc::ptr_eq(&self.0, &other.0) }
+
+    /// Cancel the request in flight WITHOUT stopping the turn: what a stalled stream's watchdog
+    /// does to a `fetch` it has stopped reading.  A stall is not a Stop, and the turn decides
+    /// what to do about one.
+    fn tear_down(&self) {
+        #[cfg(target_arch = "wasm32")]
+        {
+            if let Some(ctrl) = self.0.ctrl.borrow().as_ref() {
+                ctrl.abort();
+            }
+        }
+    }
+
+    /// Hold the controller of the request about to go out, so [`fire`](Self::fire) reaches it.
+    #[cfg(target_arch = "wasm32")]
+    fn arm(&self, ctrl: web_sys::AbortController) {
+        *self.0.ctrl.borrow_mut() = Some(ctrl);
+    }
+}
+
+// ┌───────────────────────────────────────────────────────────────┐
 // │ LlmClient                                                      │
 // └───────────────────────────────────────────────────────────────┘
 
@@ -417,15 +492,9 @@ pub struct LlmClient {
     /// is native-only.
     #[cfg(not(target_arch = "wasm32"))]
     pub tls_config: Arc<ClientConfig>,
-    /// Abort authority for the native transport.  The wasm build takes this from its
-    /// browser [`AbortController`](Self::abort); the native transport has no browser Stop,
-    /// so it backs [`abort`](Self::abort) and `abort_signalled` onto a shared flag.  This
-    /// keeps the retry loop's top-of-attempt abort check compiling on both targets and lets
-    /// the tests drive an abort.  Set once and left set -- native production never aborts
-    /// (the only real caller is the wasm `app.rs`).  `Rc<Cell<…>>`, shared across clones for
-    /// the reason `stream_idle_ms` is.
-    #[cfg(not(target_arch = "wasm32"))]
-    aborted: std::rc::Rc<std::cell::Cell<bool>>,
+    // This turn's stop (see [`Halt`]): shared by a clone made inside the turn, such as the
+    // fold's compactor, and replaced by `with_halt` for a clone that runs a turn of its own.
+    halt:           Halt,
     /// Wasm transport URL scheme selector: `true` builds `https://…`,
     /// `false` builds `http://…`.  Defaults to `https` (all real
     /// providers are TLS-only); an `http` client targets a local mock
@@ -433,13 +502,6 @@ pub struct LlmClient {
     /// treats the origin as a secure context.
     #[cfg(target_arch = "wasm32")]
     pub secure: bool,
-    /// Shared abort slot for the browser transport.  Each `fetch` installs
-    /// a fresh [`web_sys::AbortController`] here and wires its signal into
-    /// the request; [`abort`](Self::abort) fires it to cancel the in-flight
-    /// turn.  An `Rc<RefCell<…>>` (never `unsafe`), shared across clones so
-    /// a sub-agent built from a cloned client aborts on the same signal.
-    #[cfg(target_arch = "wasm32")]
-    abort: std::rc::Rc<std::cell::RefCell<Option<web_sys::AbortController>>>,
 }
 
 /// The `usage` block a provider reports for a call.
@@ -1071,7 +1133,7 @@ impl LlmClient {
             stream_idle_ms: std::rc::Rc::new(std::cell::Cell::new(DEFAULT_STREAM_IDLE_MS)),
             provider_routing: std::rc::Rc::new(std::cell::RefCell::new(ProviderRouting::default())),
             tls_config,
-            aborted:    std::rc::Rc::new(std::cell::Cell::new(false)),
+            halt:       Halt::new(),
         }
     }
 
@@ -1123,7 +1185,7 @@ impl LlmClient {
             stream_idle_ms: std::rc::Rc::new(std::cell::Cell::new(DEFAULT_STREAM_IDLE_MS)),
             provider_routing: std::rc::Rc::new(std::cell::RefCell::new(ProviderRouting::default())),
             secure,
-            abort:      std::rc::Rc::new(std::cell::RefCell::new(None)),
+            halt:       Halt::new(),
         }
     }
 
@@ -1212,16 +1274,14 @@ impl LlmClient {
         let mut waited = 0u64;
         let mut retries = 0u32;
         loop {
-            // ABORT IS AUTHORITATIVE ACROSS ATTEMPTS. A Stop, or the 540 s wall clock in
-            // `www/js/daimond.js`, may fire `abort()` during the backoff sleep between
-            // attempts. On the browser that abort tore down the previous attempt's fetch, but a
-            // fresh `AbortController` is armed per attempt, so without this check the loop would
-            // launch another request and the abort would be lost. Consulted only once a retry is
-            // in hand (`retries > 0`): the flag is read from the previous attempt's controller,
-            // which was armed by THIS turn -- a stale controller from an earlier turn is never
-            // read as this turn's Stop. An abort is a clean stop, so the round returns aborted,
-            // never an error.
-            if retries > 0 && self.abort_signalled() {
+            // A STOPPED TURN SENDS NOTHING MORE, asked at the top of EVERY attempt.  A Stop, a
+            // pause or the 540 s wall clock in `www/js/daimond.js` may land during the backoff
+            // between attempts or between two rounds, where there is no request to cancel; the
+            // halt is the turn's and stays set, so it is read here before anything goes out.  It
+            // was read only once a retry was in hand, from the last controller armed, and an
+            // abort landing between rounds was lost (PQA W).  A clean stop, so the round returns
+            // aborted, never an error.
+            if self.halted() {
                 return Ok(Acc::new(self.dialect).into_response(true, retries));
             }
             let mut acc = Acc::new(self.dialect);
@@ -1344,13 +1404,10 @@ impl LlmClient {
         let mut waited = 0u64;
         let mut retries = 0u32;
         let raw = loop {
-            // Abort is authoritative across attempts, as in `stream_turn`: a Stop or the 540 s
-            // wall clock that lands during the backoff between attempts halts the ladder at the
-            // top of the next attempt rather than opening another request. Only once a retry is
-            // in hand, so a stale abort from an earlier turn is never read here. The fold has no
-            // partial to preserve, so the aborted response is returned as itself (its empty
-            // content ends the fold upstream).
-            if retries > 0 && self.abort_signalled() {
+            // A stopped turn sends nothing more, as in `stream_turn`. The fold has no partial to
+            // preserve, so the aborted response is returned as itself (its empty content ends
+            // the fold upstream).
+            if self.halted() {
                 return Ok(Acc::new(self.dialect).into_response(true, retries));
             }
             match self.do_request_full(&body).await {
@@ -2359,19 +2416,19 @@ impl LlmClient {
         let resp = match self.wasm_fetch_raw(body, wait_ms).await {
             Ok(r) => r,
             // The first-byte watchdog fired: the provider accepted the connection and then
-            // never answered.  Checked BEFORE `abort_signalled` -- abort-first would read
+            // never answered.  Checked BEFORE `halted` -- abort-first would read
             // this as a user cancel and mislabel a stall as a Stop -- and the tear-down is
             // fired HERE (as the stream idle watchdog does) so a dropped future does not
             // leave the `fetch` running.  TERMINAL, not transient: a stall is not fixed by
             // retrying it, so `classify` ends the round rather than re-entering the ladder.
             Err(e) if e.tags().contains(&ErrTag::Timeout) => {
-                self.abort();
+                self.halt.tear_down();
                 return Err(TransportErr::classify(
                     "no response from the provider".to_string(), e));
             }
             // A rejected `fetch` is a network or CORS failure; an armed abort is
             // the caller cancelling, and must not be retried.
-            Err(e) => return Err(if self.abort_signalled() {
+            Err(e) => return Err(if self.halted() {
                 TransportErr::fatal("the turn was cancelled".to_string(), e)
             } else {
                 TransportErr::transient("could not reach the provider".to_string(), e)
@@ -2467,7 +2524,7 @@ impl LlmClient {
         // uncancellable rather than failing the turn.
         if let Ok(ctrl) = web_sys::AbortController::new() {
             opts.set_signal(Some(&ctrl.signal()));
-            *self.abort.borrow_mut() = Some(ctrl);
+            self.halt.arm(ctrl);
         }
 
         let url = self.wasm_url();
@@ -2541,8 +2598,8 @@ impl LlmClient {
                 // way TERMINAL -- `classify` on the timeout tag, and an abort is never
                 // retryable -- so the body wait no longer re-enters the ladder (was the hole
                 // that retried an abort landing between the headers and the text).
-                let cancelled = self.abort_signalled();
-                self.abort();
+                let cancelled = self.halted();
+                self.halt.tear_down();
                 return Err(if cancelled {
                     TransportErr::fatal("the turn was cancelled".to_string(), err!(
                         "LLM: aborted awaiting the response body."; IO, Network))
@@ -2582,7 +2639,7 @@ impl LlmClient {
         let resp = match self.wasm_fetch(body, self.stream_idle_ms.get()).await {
             Ok(r) => r,
             Err(e) => {
-                if self.abort_signalled() {
+                if self.halted() {
                     return Ok(StreamOutcome { aborted: true, stalled: false });
                 }
                 return Err(e);
@@ -2625,15 +2682,16 @@ impl LlmClient {
             ).await;
             let result = match raced {
                 Raced::Idle => {
-                    // Fire the same abort signal a user's Stop would: nothing else tears
-                    // down a `fetch` this client has stopped reading from, and a
-                    // dropped `JsFuture` does not reach the connection at all.
-                    self.abort();
+                    // Tear the `fetch` down, as a Stop would, but leave the turn's halt alone: a
+                    // stall is not a Stop.  Nothing else tears down a `fetch` this client has
+                    // stopped reading from, and a dropped `JsFuture` does not reach the
+                    // connection at all.
+                    self.halt.tear_down();
                     return Ok(StreamOutcome { aborted: false, stalled: true });
                 }
                 Raced::Data(Ok(r)) => r,
                 Raced::Data(Err(e)) => {
-                    if self.abort_signalled() {
+                    if self.halted() {
                         return Ok(StreamOutcome { aborted: true, stalled: false });
                     }
                     // A stream that broke mid-flight; whether it is safe to try
@@ -2681,42 +2739,38 @@ impl LlmClient {
 
         Ok(StreamOutcome::default())
     }
-
-    /// Fire the abort signal for the in-flight request, if any.  Safe to
-    /// call when idle: with no armed controller it is a no-op.
-    pub fn abort(&self) {
-        if let Some(ctrl) = self.abort.borrow().as_ref() {
-            ctrl.abort();
-        }
-    }
-
-    /// Whether the armed abort controller's signal has fired.  Used to
-    /// tell a cancelled fetch/stream apart from a genuine failure.
-    fn abort_signalled(&self) -> bool {
-        self.abort
-            .borrow()
-            .as_ref()
-            .map(|ctrl| ctrl.signal().aborted())
-            .unwrap_or(false)
-    }
 }
 
-// Native abort authority.  The wasm build's `abort`/`abort_signalled` (above) ride on the
-// browser `AbortController`; the native transport has no browser Stop, so it backs the same
-// two methods onto the shared `aborted` flag.  This keeps the retry loop's top-of-attempt
-// abort check compiling on both targets and lets the tests drive an abort.
-#[cfg(not(target_arch = "wasm32"))]
+// ┌───────────────────────────────────────────────────────────────┐
+// │ Stopping a turn                                                │
+// └───────────────────────────────────────────────────────────────┘
+
 impl LlmClient {
-    /// Set the abort flag for the current turn.  It stays set across retry attempts, so the
-    /// ladder halts at the top of the next attempt rather than opening another request.  Safe
-    /// to call when idle.
+
+    /// Stop the turn this client is running: every later request of it is refused before it
+    /// goes out, and the one in flight is cancelled.  Safe to call when idle.  See [`Halt`].
     pub fn abort(&self) {
-        self.aborted.set(true);
+        self.halt.fire();
     }
 
-    /// Whether the current turn has been aborted; see [`abort`](Self::abort).
-    fn abort_signalled(&self) -> bool {
-        self.aborted.get()
+    /// Has the turn this client is running been stopped?  Also what tells a fetch or a stream a
+    /// Stop cancelled apart from one that failed: a stall's tear-down fires the controller too,
+    /// and is not a Stop.
+    pub fn halted(&self) -> bool {
+        self.halt.is_set()
+    }
+
+    /// This client's stop, for whoever has to fire it from outside the turn.
+    pub fn halt(&self) -> Halt {
+        self.halt.clone()
+    }
+
+    /// A clone of this client that stops only with `halt`: what a turn of its own runs on,
+    /// when the client it came from is shared by several turns at once.
+    pub fn with_halt(&self, halt: Halt) -> Self {
+        let mut llm = self.clone();
+        llm.halt = halt;
+        llm
     }
 }
 
@@ -8515,6 +8569,57 @@ pub mod tests {
             "an aborted round must not carry the answer it never fetched: {:?}", resp.content);
         assert!(elapsed < std::time::Duration::from_millis(2_000),
             "the aborted ladder did not stop promptly: waited {:?}", elapsed);
+    }
+
+    /// A turn stopped between two requests sends nothing more: the halt is read at the top of
+    /// EVERY attempt, not only once a retry is in hand (PQA W).
+    #[tokio::test]
+    async fn test_a_halt_set_before_a_request_sends_nothing() {
+        let (port, seen) = start_stub(vec![Reply::answer()]).await;
+        let client = stub_client(port);
+        client.abort();
+        let msgs = [ChatMessage::user("hello".to_string())];
+        let mut tokens = Vec::new();
+        let resp = match client.chat_stream_tools(&msgs, None, &mut text_sink(&mut tokens)).await {
+            Ok(r)  => r,
+            Err(e) => panic!("a stopped turn is a clean stop, not an error: {}", e),
+        };
+        assert!(resp.aborted, "the stopped round did not say it was stopped");
+        assert_eq!(connections(&seen), 0, "a request went out after the turn was stopped");
+        let once = match client.chat_once(&msgs, None).await {
+            Ok(r)  => r,
+            Err(e) => panic!("a stopped fold is a clean stop, not an error: {}", e),
+        };
+        assert!(once.aborted && once.content.is_empty());
+        assert_eq!(connections(&seen), 0, "the fold's request went out after the stop");
+    }
+
+    /// A clone made for a turn of its own stops with its own halt and with no other: every
+    /// Diamond on one model shares one client, and pausing one stopped another (PQA D).
+    #[tokio::test]
+    async fn test_a_turn_of_its_own_is_not_stopped_by_another_turns_halt() {
+        let (port, seen) = start_stub(vec![Reply::answer()]).await;
+        let shared = stub_client(port);
+        let mine = shared.with_halt(Halt::new());
+        let theirs = shared.with_halt(Halt::new());
+        theirs.abort();
+        assert!(theirs.halted() && !mine.halted() && !shared.halted(),
+            "one turn's stop reached a turn beside it");
+        let msgs = [ChatMessage::user("hello".to_string())];
+        let mut tokens = Vec::new();
+        let resp = match mine.chat_stream_tools(&msgs, None, &mut text_sink(&mut tokens)).await {
+            Ok(r)  => r,
+            Err(e) => panic!("the unstopped turn failed: {}", e),
+        };
+        assert!(!resp.aborted, "the unstopped turn was stopped");
+        assert_eq!(connections(&seen), 1);
+        // A clone INSIDE a turn -- the fold's compactor -- shares its stop.
+        let inside = mine.clone();
+        mine.abort();
+        assert!(inside.halted(), "a clone inside the turn did not share its stop");
+        // And a client that runs one turn at a time clears it for the next.
+        mine.halt().rearm();
+        assert!(!mine.halted() && !inside.halted());
     }
 
     #[tokio::test]

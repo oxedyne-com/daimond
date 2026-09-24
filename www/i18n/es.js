@@ -934,6 +934,7 @@
 	'store.alarm_download': 'Descargar una copia',
 	'store.alarm_retry': 'Reintentar',
 	'store.full': 'no queda espacio en el almacenamiento de este navegador para este sitio',
+	'store.records_owed': 'Este dispositivo se ha quedado sin almacenamiento del navegador, así que un cambio hecho aquí aún no está guardado. Esta página lo conserva y lo guarda en cuanto haya espacio.',
 	'identity.err_no_sealing_key': 'Este dispositivo no tiene clave de sellado, así que no puede abrir un mensaje sellado. Desbloquea la identidad una vez y se creará una.',
 	'store.empty_read': 'este navegador no devolvió ninguna de las {n} conversaciones que guarda',
 	// ── La escalera de permisos ────────────────────────────────
@@ -1740,6 +1741,7 @@
 	'marks.use_here': 'Usar aquí',
 	'marks.use_all': 'Usar todas aquí',
 	'marks.use_help': 'Activar esta marca también en este dispositivo',
+	'marks.use_ask': '¿Usar esta marca en este dispositivo?',
 	'deletes.held_title': '¿Seguir borrando o sobrescribiendo en su mayor parte archivos de tu carpeta?',
 	'deletes.held_body.one': '{who} ha borrado o sobrescrito en su mayor parte en este turno {n} archivo de la carpeta que abriste en este ordenador, tantos como un turno puede ahí sin preguntarte. Lo siguiente que quiere es {next}. Daimond guarda una copia de cada archivo que borra o sobrescribe así durante al menos siete días. ¿Le dejas seguir en este turno?',
 	'deletes.held_body.other': '{who} ha borrado o sobrescrito en su mayor parte en este turno {n} archivos de la carpeta que abriste en este ordenador, tantos como un turno puede ahí sin preguntarte. Lo siguiente que quiere es {next}. Daimond guarda una copia de cada archivo que borra o sobrescribe así durante al menos siete días. ¿Le dejas seguir en este turno?',
@@ -1778,6 +1780,7 @@
 	'dws.drop_all_help': 'Saca todos estos del espacio de trabajo; los archivos quedan intactos.',
 	'dws.elsewhere': 'Vive en el espacio de trabajo',
 	'dws.readonly': 'Solo lectura',
+	'dws.readwrite': 'Lectura y cambio',
 	'dws.share': 'Compartir con dispositivos que no tienen acceso propio',
 	'dws.share_help': 'Apagado: solo este dispositivo. Encendido: copiado a otros, hasta {max}.',
 	'dws.shared': 'Compartida',
@@ -2164,6 +2167,7 @@
 	'backup.n_diamonds.one': '{n} diamond',
 	'backup.n_diamonds.other': '{n} diamonds',
 	'backup.restored_body': 'Restaurados {files} y {diamonds}. Daimond se recargará para abrir tu espacio de trabajo restaurado.',
+	'backup.restored_owed': 'Este dispositivo no tiene espacio de almacenamiento del navegador, así que parte de lo restaurado aún no está guardado. La página se recargará en cuanto lo esté; liberar algo de espacio lo permite.',
 	'backup.n_foreign.one': '{n} archivo de esa copia pertenece a otra cuenta de ese navegador, así que no se restauró y solo queda en la copia.',
 	'backup.n_foreign.other': '{n} archivos de esa copia pertenecen a otra cuenta de ese navegador, así que no se restauraron y solo quedan en la copia.',
 

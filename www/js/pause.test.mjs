@@ -21,6 +21,7 @@
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
+import { loadStore } from './storefixture.mjs';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const FILE = process.env.PAUSE_JS || join(HERE, 'pause.js');
@@ -50,6 +51,7 @@ function load(ls, dev, clock) {
 		on: {},
 	};
 	const D = { now: clock || (() => Date.now()) };
+	loadStore(win, ls);
 	new Function('window', 'localStorage', 'CustomEvent', 'Date', SRC)(win, ls,
 		function CustomEvent(type) { this.type = type; }, D);
 	return win;

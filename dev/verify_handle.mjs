@@ -89,15 +89,17 @@ const BREAKS = {
 	restamp: [{
 		file: 'js/identity.js',
 		find: '\t\tif (!handleBeats(incoming, mine)) return false;\n'
-			+ '\t\ttry { localStorage.setItem(K_HDL, JSON.stringify({ h: incoming.h, t: incoming.t })); }',
+			+ '\t\tvar landed = window.DaimondStore.put(K_HDL, { h: incoming.h, t: incoming.t }, handleLaw);',
 		with: '\t\tif (!handleBeats(incoming, mine)) return false;\n'
-			+ '\t\ttry { localStorage.setItem(K_HDL, JSON.stringify({ h: incoming.h, t: Date.now() })); }',
+			+ '\t\tvar landed = window.DaimondStore.put(K_HDL, { h: incoming.h, t: Date.now() }, handleLaw);',
 	}, {
 		file: 'js/identity.js',
 		find: '\t\tif (mine && mine.h === incoming.h && mine.t === incoming.t) return false;\n'
-			+ '\t\ttry { localStorage.setItem(K_HDL, JSON.stringify({ h: incoming.h, t: incoming.t })); }',
+			+ '\t\t// One the box refuses is held owed in this tab, and retried under the merge\'s\n'
+			+ '\t\t// law, so it cannot land over a later rename another tab has stored since.\n'
+			+ '\t\twindow.DaimondStore.put(K_HDL, { h: incoming.h, t: incoming.t }, handleLaw);',
 		with: '\t\tif (mine && mine.h === incoming.h && mine.t === incoming.t) return false;\n'
-			+ '\t\ttry { localStorage.setItem(K_HDL, JSON.stringify({ h: incoming.h, t: Date.now() })); }',
+			+ '\t\twindow.DaimondStore.put(K_HDL, { h: incoming.h, t: Date.now() }, handleLaw);',
 	}],
 	// The section restamps itself ON APPLY: it takes every record it is handed,
 	// including one it already holds, and writes the clock over the stamp. This
@@ -107,9 +109,9 @@ const BREAKS = {
 	applystamps: [{
 		file: 'js/identity.js',
 		find: '\t\tif (!handleBeats(incoming, mine)) return false;\n'
-			+ '\t\ttry { localStorage.setItem(K_HDL, JSON.stringify({ h: incoming.h, t: incoming.t })); }',
+			+ '\t\tvar landed = window.DaimondStore.put(K_HDL, { h: incoming.h, t: incoming.t }, handleLaw);',
 		with: '\t\tif (!incoming) return false;\n'
-			+ '\t\ttry { localStorage.setItem(K_HDL, JSON.stringify({ h: incoming.h, t: Date.now() })); }',
+			+ '\t\tvar landed = window.DaimondStore.put(K_HDL, { h: incoming.h, t: Date.now() }, handleLaw);',
 	}],
 	// The parcel does not carry the handle at all, so a second device of the
 	// same account never hears the name.
@@ -145,17 +147,15 @@ const BREAKS = {
 	devicename: [{
 		file: 'js/identity.js',
 		find: '\t\tif (!handleBeats(incoming, mine)) return false;\n'
-			+ '\t\ttry { localStorage.setItem(K_HDL, JSON.stringify({ h: incoming.h, t: incoming.t })); }',
+			+ '\t\tvar landed = window.DaimondStore.put(K_HDL, { h: incoming.h, t: incoming.t }, handleLaw);',
 		with: '\t\tif (!handleBeats(incoming, mine)) return false;\n'
 			+ '\t\tlocalStorage.setItem(K_NAME, incoming.h);\n'
-			+ '\t\ttry { localStorage.setItem(K_HDL, JSON.stringify({ h: incoming.h, t: incoming.t })); }',
+			+ '\t\tvar landed = window.DaimondStore.put(K_HDL, { h: incoming.h, t: incoming.t }, handleLaw);',
 	}, {
 		file: 'js/identity.js',
-		find: '\t\tif (mine && mine.h === incoming.h && mine.t === incoming.t) return false;\n'
-			+ '\t\ttry { localStorage.setItem(K_HDL, JSON.stringify({ h: incoming.h, t: incoming.t })); }',
+		find: '\t\tif (mine && mine.h === incoming.h && mine.t === incoming.t) return false;\n',
 		with: '\t\tif (mine && mine.h === incoming.h && mine.t === incoming.t) return false;\n'
-			+ '\t\tlocalStorage.setItem(K_NAME, incoming.h);\n'
-			+ '\t\ttry { localStorage.setItem(K_HDL, JSON.stringify({ h: incoming.h, t: incoming.t })); }',
+			+ '\t\tlocalStorage.setItem(K_NAME, incoming.h);\n',
 	}],
 	// Nobody else's name can be resolved, so nothing can be attributed to one.
 	nolookup: [{

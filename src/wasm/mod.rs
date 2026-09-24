@@ -91,6 +91,41 @@ pub(crate) fn js_prop(obj: &JsValue, key: &str) -> Option<String> {
     }
 }
 
+/// The pause node a rejected JS `Error` names, where a person's pause refused the call.
+///
+/// The doors that ask the pause tree throw an `Error` with `paused: true` and `pauseNode` set
+/// (`search.js`, `web.js` on the gateway's 423, `models.js`).  Read here, where the edge still
+/// holds the object, so the refusal crosses marked ([`crate::tools::paused_mark`]) rather than
+/// as bare prose.
+pub(crate) fn paused_node_of(e: &JsValue) -> Option<String> {
+    let paused = js_sys::Reflect::get(e, &JsValue::from_str("paused"))
+        .map(|v| v.as_bool() == Some(true))
+        .unwrap_or(false);
+    if !paused {
+        return None;
+    }
+    js_prop(e, "pauseNode").filter(|n| !n.trim().is_empty())
+}
+
+/// The `message` of a rejected JS `Error`, verbatim, falling back to the value's own rendering
+/// when it is not an `Error` -- and MARKED with the node a person's pause names, where it carries
+/// one ([`paused_node_of`], [`crate::tools::paused_mark`]).
+///
+/// **One for every edge** (the engine unit's open item 5).  Each driver edge had its own copy,
+/// and only the web one read a pause: a pause refusal arriving by any other door crossed as bare
+/// prose, was booked a failure, and drew no "Paused" on its row.  A refusal from a driver is
+/// written for the model to read and act on, so nothing here rewords it.
+pub(crate) fn refusal(e: &JsValue) -> String {
+    let said = match js_sys::Reflect::get(e, &JsValue::from_str("message")) {
+        Ok(m)  => m.as_string().unwrap_or_else(|| js_str(e)),
+        Err(_) => js_str(e),
+    };
+    match paused_node_of(e) {
+        Some(node) => crate::tools::paused_mark(&node, &said),
+        None       => said,
+    }
+}
+
 /// Map a Daimond [`Error`] into a `JsValue` suitable for rejecting a
 /// `Promise`, stringifying the full error (message plus tags) so the
 /// browser console and the harness DOM see the real cause.

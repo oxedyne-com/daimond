@@ -211,6 +211,7 @@ function makeEnv(cfg) {
 			TextEncoder, TextDecoder, CustomEventShim,
 			setTimeoutImpl, clearTimeout, noInterval, noClear, consoleShim);
 	}
+	loadScript('stamp.js');			// the shared stamp rule, loaded first as index.html does
 	loadScript('debugshare.js');
 	// Release every gated POST currently in flight, let the microtasks and the (fast)
 	// pacing timer run, and repeat until nothing new is queued -- so a gated drain runs
@@ -617,7 +618,7 @@ async function main() {
 		check('the OFF now rides this device’s own parcel', DS.syncSnapshot().on === false);
 	}
 
-	console.log('debugshare: cross-device — freshest-at-wins; a stale or equal parcel is ignored');
+	console.log('debugshare: cross-device — freshest-at-wins; a stale parcel is ignored, a tie goes to off');
 	{
 		const env = makeEnv();
 		const DS = env.win.DEBUG_SHARE;
@@ -627,15 +628,21 @@ async function main() {
 		// An OLDER parcel must NOT override the local decision.
 		DS.adoptSync({ on: false, at: T - 5000 });
 		check('a STALE OFF does not override a newer local ON', DS.isOn() === true);
-		// An EQUAL stamp must not flip either (strictly-fresher wins).
+		// AN EQUAL STAMP GOES TO OFF, on every device alike (the D-28 state review's
+		// A3): which side a device held must not decide it, or two devices meeting at
+		// a tie keep different values for ever, and collection runs on one of them.
+		DS.adoptSync({ on: true, at: T });
+		check('an EQUAL-stamp ON over ON changes nothing', DS.isOn() === true);
 		DS.adoptSync({ on: false, at: T });
-		check('an EQUAL-stamp OFF does not flip the flag', DS.isOn() === true);
+		check('an EQUAL-stamp OFF wins the tie', DS.isOn() === false);
+		DS.adoptSync({ on: true, at: T });
+		check('an EQUAL-stamp ON does not undo an OFF', DS.isOn() === false);
 		// A malformed parcel is a no-op, never a throw.
-		DS.adoptSync(null); DS.adoptSync({}); DS.adoptSync({ on: false });		// missing at
-		check('a malformed or at-less parcel is a no-op', DS.isOn() === true);
+		DS.adoptSync(null); DS.adoptSync({}); DS.adoptSync({ on: true });		// missing at
+		check('a malformed or at-less parcel is a no-op', DS.isOn() === false);
 		// A genuinely FRESHER value does win.
-		DS.adoptSync({ on: false, at: T + 1 });
-		check('a strictly-fresher OFF wins', DS.isOn() === false);
+		DS.adoptSync({ on: true, at: T + 1 });
+		check('a strictly-fresher ON wins', DS.isOn() === true);
 	}
 
 	console.log('debugshare: cross-device — a local flip stamps and nudges the sync engine');
