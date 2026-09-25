@@ -33,7 +33,13 @@
 #
 #   LOG=/tmp/suite.log bash dev/run_all.sh          # everything
 #   bash dev/run_all.sh verify_tags verify_doc      # just these
-cd "$(dirname "$0")/.."
+#
+# `${BASH_SOURCE[0]}`, not `$0`: this file is also SOURCED (RUN_ALL_FUNCTIONS_ONLY=1,
+# below), and a sourced file's `$0` is its caller's. The nightly gate's rerun script
+# sources it from ~/usr/code/ai/claude/notes/daimond_nightly/tools, so on 2026-09-25
+# every one of its 14 automatic reruns started in the notes directory, found no
+# `dev/verify_*.mjs` there and ran nothing -- and an "ENV 0" bucket read as a finding.
+cd "$(dirname "${BASH_SOURCE[0]}")/.."
 ROOT=$(pwd)
 
 # Scratch root for logs, profiles and artefacts.  NOT /tmp: it is a tmpfs, so
@@ -229,6 +235,14 @@ needs_input() {                 # name -> prints why it cannot run, or nothing
 		verify_handmeterless|verify_handdelete)
 			[ -n "${HD_OLD_BINS:-}" ] \
 				|| echo "needs a hand older than the deletion meter: HD_OLD_BINS=<a:b> (it would otherwise report red on binaries this tree does not have)" ;;
+		# The same pre-meter hand, read from HD_OLD_BIN or the slot's `lane-bc-base`
+		# build, exactly as the verifier resolves it. It was missing from this guard, so
+		# the 2026-09-25 nightly, whose slot has no such build, reported a red for a
+		# binary it was never given; handed one, it passes 16/0.
+		verify_handnotice)
+			local old_bin="${HD_OLD_BIN:-$HOME/.cache/cargo-targets/${RC_SLOT:-solo}/lane-bc-base/release/daimond-hand}"
+			[ -x "$old_bin" ] \
+				|| echo "needs a hand older than the deletion meter: HD_OLD_BIN=<path> (none at $old_bin; it would otherwise report red on a binary this tree does not have)" ;;
 		# ASKED OF THE VERIFIER, not answered here. `verify_conformance` measures a
 		# LIVE Oregami forge, and where that forge is meant to be is resolved from
 		# ORE_FORGE or gateway/app.jdat by the same lines that will do the asking.
@@ -339,7 +353,9 @@ fi
 # accident.
 slow_for() {
 	case "$1" in
-		verify_style)                     echo 600 ;;
+		# MEASURED at 633s and 657s alone on release 5 (2026-09-25 triage), against 477s
+		# on release 4: over the 600 it had, so the release-5 nightly would read exit 124.
+		verify_style)                     echo 900 ;;
 		verify_scope|verify_kitfence)     echo 600 ;;
 		verify_reversible)                echo 420 ;;
 		verify_sweep_mobile)              echo 900 ;;
@@ -447,6 +463,13 @@ slow_for() {
 		# the result as six ordinary-looking failures (see verify_sync above). 480
 		# is the sum of those timeouts, which is what the file can honestly cost.
 		verify_sweep_used)                echo 480 ;;
+		# Three sessions, each paused and typed into. MEASURED at 168s (release 4) and
+		# 184s (release 5) alone, 2026-09-25: the 180s default killed it in the nightly
+		# with exit 124, so 420 as for verify_markshere.
+		verify_typedpause)                echo 420 ;;
+		# Steers a diamond through its versions. MEASURED at 133s and 134s alone on
+		# release 5 (2026-09-25), too near the 180s default for a busy box.
+		verify_versions)                  echo 300 ;;
 		*)                                echo 180 ;;
 	esac
 }
@@ -522,13 +545,6 @@ declared_flight() {             # name -> prints the count, or nothing
 reported_failures() {           # log file -> prints the count, or nothing
 	grep -oE '[0-9]+ failed' "$1" | tail -1 | grep -oE '^[0-9]+'
 }
-: > "$LOG"
-# Truncated ONCE here, appended to thereafter: phase 2 stops and restarts the
-# gateway to take the store lock for a grant, and what the first process said on
-# its way out is exactly the part a `>` on each start would erase.  Named
-# SUITE_GW_LOG in dev/gwbin.mjs, which is where the verifier that starts no
-# gateway of its own goes looking for it.
-: > "$SCRATCH/suite-gw.log"
 say() { echo "$1" | tee -a "$LOG"; }
 
 # The hand binary neither hand-delete verifier should be left to guess at.
@@ -815,6 +831,17 @@ stop_gateway() {
 # against is precisely one that looked harmless for months.
 if [ "${RUN_ALL_FUNCTIONS_ONLY:-}" = 1 ]; then return 0; fi
 
+# The run's own logs are truncated only by a RUN, never by a file that merely sources
+# the functions above: the nightly's rerun script sources this after the suite, and a
+# truncation here then erased the suite's gateway log that the report points at.
+: > "$LOG"
+# Truncated ONCE here, appended to thereafter: phase 2 stops and restarts the
+# gateway to take the store lock for a grant, and what the first process said on
+# its way out is exactly the part a `>` on each start would erase.  Named
+# SUITE_GW_LOG in dev/gwbin.mjs, which is where the verifier that starts no
+# gateway of its own goes looking for it.
+: > "$SCRATCH/suite-gw.log"
+
 # ── Which verifiers to run, and in which phase ──────────────────────────
 # `refluxduo` IS IN A DEFAULT RUN, and it is not a `verify_*.mjs`, so it is named.
 #
@@ -866,7 +893,22 @@ wants_gateway() {              # does anything in this run touch the binary?
 	done
 	return 1
 }
-if wants_gateway; then
+# A PREBUILT GATEWAY, when the caller hands one over and says so. The nightly gate runs
+# its shards against the ONE binary live on jarrah, copied into every shard's
+# gateway/target/release, rather than building a gateway per shard: four builds of one
+# commit, into four target directories, cost a gigabyte of disk each and measured four
+# artefacts where the gate means to measure one. With DAIMOND_GW_PREBUILT=1 nothing is
+# built, and a missing binary is fatal rather than quietly built from this tree.
+if [ "${DAIMOND_GW_PREBUILT:-}" = 1 ] && wants_gateway; then
+	if [ -x "$GW_BIN" ] && [ -x "$CTL_BIN" ]; then
+		say "── The gateway is prebuilt (DAIMOND_GW_PREBUILT=1), not built from this tree ──"
+		say "   $GW_BIN  ($(date -r "$GW_BIN" '+%Y-%m-%d %H:%M:%S'), sha256 $(sha256sum "$GW_BIN" | cut -c1-16))"
+	else
+		say "FATAL DAIMOND_GW_PREBUILT=1 but $GW_BIN or $CTL_BIN is not there: nothing below"
+		say "      could be measured against the gateway the caller meant."
+		exit 2
+	fi
+elif wants_gateway; then
 	say "── Building the gateway, so every verifier measures one artefact ──"
 	if ( cd gateway && env -u CARGO_TARGET_DIR cargo build --release ) >>"$LOG" 2>&1; then
 		[ -f "$GW_BIN" ] && say "   $GW_BIN  ($(date -r "$GW_BIN" '+%Y-%m-%d %H:%M:%S'))"

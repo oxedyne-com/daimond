@@ -10,10 +10,34 @@
 //
 // The subjective half — spacing rhythm, alignment, "does it read as one system" —
 // is not here; that is the screenshot + vision pass (shots_matrix.mjs).
-import { openCell, defaultCells, VIEWS, cellLabel, enginesAvailable, resetView } from './matrix.mjs';
+//
+//   node dev/verify_style.mjs --break openfail   # a cell that cannot open still counts HARD
+//   node dev/verify_style.mjs                    # and then, clean
+import { openCell as realOpenCell, defaultCells, VIEWS, cellLabel, enginesAvailable, resetView } from './matrix.mjs';
 
 const CONTRAST_HARD = 3.0;	// below this, text is effectively unreadable — a fail
 const TAP_MIN       = 40;	// px; a touch target smaller than this is flagged
+
+const BREAK = (() => {
+	const i = process.argv.indexOf('--break');
+	return i > 0 ? String(process.argv[i + 1] || '') : '';
+})();
+if (BREAK && BREAK !== 'openfail') {
+	console.error(`unknown break '${BREAK}'; the only one is 'openfail'`);
+	process.exit(2);
+}
+// Forces the FIRST signed-in open to fail, the way a dead gateway or a wedged
+// boot does for real — proving `hardTotal` counts an unopenable cell rather
+// than only printing it (triage 20260925, line ~143).
+let openFailSpent = false;
+async function openCell(cell, opts) {
+	if (BREAK === 'openfail' && opts && opts.signIn && !openFailSpent) {
+		openFailSpent = true;
+		throw new Error('BREAK openfail: forced — this cell never actually opened');
+	}
+	return realOpenCell(cell, opts);
+}
+if (BREAK) console.log(`\n*** RUNNING UNDER --break ${BREAK}: the HARD count below is the point ***\n`);
 
 // The in-page audit: returns { hScroll, overflow[], contrast[], tap[] } for the
 // current state. Pure DOM + getComputedStyle, so it runs on any engine. All
@@ -124,6 +148,7 @@ for (const cell of cells) {
 		if (!bag.has(key)) bag.set(key, { msg, views: new Set() });
 		bag.get(key).views.add(view);
 	};
+	const show = (bag, kind) => { for (const { msg, views } of bag.values()) console.log(`  ${kind}  ${msg}  [${[...views].join(',')}]`); };
 
 	// The first screen a new user sees is the signed-OUT create-account modal,
 	// which the signed-in views below never show. Audit it on its own pass — a
@@ -140,7 +165,21 @@ for (const cell of cells) {
 
 	let s;
 	try { s = await openCell(cell, { signIn: true, connect: true }); }
-	catch (e) { console.log(`\n■ ${label}\n  HARD  could not open cell — ${e.message}`); hardTotal += hard.size; continue; }
+	catch (e) {
+		// A cell that cannot even be opened is the worst finding this file can make
+		// about it, not the absence of one — COUNTED into hardTotal, the same as any
+		// other hard fault, not only printed. Until this fix it was added through
+		// `hard.size`, which at this point holds only the signed-out pass's findings
+		// (usually empty), so an open failure exited 0 (triage 20260925: r5's second
+		// `verify_style` run printed "HARD could not open cell" for
+		// ipad.webkit.lollypop and still reported 0 hard).
+		add(hard, 'open-failed', `could not open cell — ${e.message}`, 'open');
+		hardTotal += hard.size; reviewTotal += review.size;
+		console.log(`\n■ ${label}`);
+		show(hard, 'HARD ');
+		show(review, 'review');
+		continue;
+	}
 	try {
 		for (const view of VIEWS) {
 			if (view.needsAuth === false && view.name !== 'locked') continue;
@@ -163,7 +202,6 @@ for (const cell of cells) {
 	hardTotal += hard.size; reviewTotal += review.size;
 	if (!hard.size && !review.size) { console.log(`\n■ ${label}  — clean`); continue; }
 	console.log(`\n■ ${label}`);
-	const show = (bag, kind) => { for (const { msg, views } of bag.values()) console.log(`  ${kind}  ${msg}  [${[...views].join(',')}]`); };
 	show(hard, 'HARD ');
 	show(review, 'review');
 }

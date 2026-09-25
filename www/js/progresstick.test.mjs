@@ -237,5 +237,30 @@ await settle();
 check('D1. the tick is gone with the last watch, and nothing reads the door',
 	fired === 0 && tab.reads.length === r3, fired + ' tick(s) left, ' + (tab.reads.length - r3) + ' read(s)');
 
+// E. A WATCH ENDS WITH ONE LAST READ (2026-09-25). The runner stores its final frame
+// before its report and its lease release, and either of those ends the watch, so on
+// a gateway that does not tap the frame is on the door and unread when the watch ends.
+// Fails on 82a0e52f's sync.js, whose unwatch takes no last read: E1 and E2.
+console.log('\nE. the watch ends between a frame and the tick that would read it\n');
+const got2 = [];
+tab.frames.push({ seq: 7, tail: 'the watched turn again' });
+S.watchProgress(TURN, (f) => got2.push(f.seq));
+await settle();
+tab.frames.push({ seq: 8, tail: 'the finished answer' });		// stored; no tick has run
+const last = [];
+S.unwatchProgress(TURN, (f) => last.push(f.seq));
+await settle();
+check('E1. the unwatch reads the door once more, from the last frame seen',
+	tab.reads[tab.reads.length - 1] === 7, 'last read since=' + tab.reads[tab.reads.length - 1]);
+check('E2. and hands the frame stored after it to the last-read callback, not the watcher',
+	last.join() === '8' && got2.join() === '7', 'last: [' + last.join(',') + '], watcher: [' + got2.join(',') + ']');
+const r4 = tab.reads.length;
+S.watchProgress(TURN, () => {});
+await settle();
+S.unwatchProgress(TURN);
+await settle();
+check('E3. an unwatch with no callback reads nothing more', tab.reads.length - r4 === 1,
+	(tab.reads.length - r4) + ' read(s): the new watch\'s own, and none at the unwatch');
+
 console.log(failures ? '\n' + failures + ' FAILURE(S)' : '\nALL PASS');
 process.exit(failures ? 1 : 0);

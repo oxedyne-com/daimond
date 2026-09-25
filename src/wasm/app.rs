@@ -184,6 +184,7 @@ impl DaimondApp {
             keeper:      String::new(),
             unconfirmed: Vec::new(),
             by_model:    false,
+            restoring:   0,
         };
         // The whole file toolset is OPFS-backed in the browser; only the
         // shell tool has no in-browser executor, so it is left out.
@@ -266,13 +267,31 @@ impl DaimondApp {
         };
         // WHAT A CHAT'S TURN REPLACED OR REMOVED BECOMES A VERSION OF THE CHAT'S STORE, whichever
         // way the turn went -- a turn that deleted a file and then died has still deleted it.  A
-        // Diamond's worker keeps into its Diamond, whose daimon's turn end records it.
+        // Diamond's worker keeps into its Diamond, whose daimon's turn end records it; a Diamond's
+        // own thread is ended by the page, through [`DaimondApp::end_keeper_turn`].
         if let Some(key) = self.registry.ctx.keeper() {
             if key.starts_with(crate::tools::CHAT_KEEPER) {
-                self.record_chat_turn(&key, &on_event).await;
+                self.record_keeper_turn(&key, &on_event).await;
             }
         }
         ran.map_err(to_js_err)
+    }
+
+    /// End the store's turn for a Diamond's own conversation run on this app: record what the
+    /// turn kept as one version of the Diamond's store, and end its counts, as a steer's turn end
+    /// does.  A no-op for an app with no Diamond keeper.
+    ///
+    /// **The page's call and not [`DaimondApp::run_turn`]'s** (F6, 2026-09-25), because only the
+    /// page knows this app is the thread's and not a worker's.  A worker keeps into its Diamond
+    /// and its daimon's turn end records it; a thread's Continue, Run here, Re-run or gather round
+    /// has no daimon's turn end, so without this it wrote no version of its own, and its seal count
+    /// and the person's "go on" to deletes carried into the next steer.
+    pub async fn end_keeper_turn(&self, on_event: js_sys::Function) {
+        if let Some(key) = self.registry.ctx.keeper() {
+            if !key.starts_with(crate::tools::CHAT_KEEPER) {
+                self.record_keeper_turn(&key, &on_event).await;
+            }
+        }
     }
 
     /// Stop every turn running on this app.  The request in flight is cancelled, the round
@@ -1553,6 +1572,20 @@ impl DaimondApp {
         obj
     }
 
+    /// Write `bytes` at `path` through this app's own tool door, byte for byte: the Files panel's
+    /// Undo of a delete, which wrote the file back as text through `file_write` and so corrupted
+    /// anything that was not (release 5.1 QA round 3, FP).  `{text, outcome}`, as
+    /// [`Self::run_tool_outcome`] answers.
+    pub async fn write_file_bytes(&self, path: String, bytes: Vec<u8>) -> js_sys::Object {
+        let text = self.registry.write_bytes_door(&path, bytes).await.as_text().into_owned();
+        let outcome = crate::tools::call_outcome(&text);
+        let obj = js_sys::Object::new();
+        let _ = js_sys::Reflect::set(&obj, &JsValue::from_str("text"), &JsValue::from_str(&text));
+        let _ = js_sys::Reflect::set(&obj, &JsValue::from_str("outcome"),
+            &JsValue::from_str(outcome.wire()));
+        obj
+    }
+
     /// The same call as [`Self::run_tool_outcome`], fenced by ONE Diamond's bounds and leaving
     /// this app's own unchanged.
     ///
@@ -1569,10 +1602,34 @@ impl DaimondApp {
     /// unfenced, the restore wrote the old bytes into a folder the Diamond no longer reaches,
     /// which is the one thing `dev/VERSIONS_CONTRACT.md` §6 says it must not do.
     ///
+    /// **And what makes it keep what it replaces** (R1-R3 of the release 5.1 fix's QA,
+    /// 2026-09-25).  A write or a delete here is a restore's act: once the fence has passed and
+    /// immediately before the act, it keeps what stands there -- the person's own save since the
+    /// version, or one made while the restore's question was open -- into the restore's record
+    /// ([`DaimondApp::versions_restore_open`]).  A call with no restore open is a restore of its
+    /// own, recorded as it lands.  This door reads, puts back, writes and deletes, and does
+    /// nothing else: no other verb here keeps a copy.
+    ///
+    /// **A restore's write is `file_put_back`, `{path, hash}`** (release 5.1's restore follow-ups,
+    /// 2026-09-25): the body the store holds under `hash`, byte for byte, so a person's PNG, PDF or
+    /// Word file comes back as it was ([`crate::tools::ToolRegistry::put_back`]).  `file_write`'s
+    /// `content` is text, and wrote such a file back corrupt.
+    ///
+    /// **The door is the person's, not an agent's** (U2 of the release 5.1 fix's second QA,
+    /// 2026-09-25).  It carries a read cache of its own, so it neither answers to what the
+    /// Diamond's daimon last read nor tells the daimon it has read anything.  It shared the app's
+    /// until then -- the one a steer on this page writes into -- so once a steer had touched a
+    /// file and the person had saved it, the door's write met the daimon's stale-read guard and no
+    /// Restore could put that file back.  What the daimon read stays in the app's cache, so its
+    /// next write from that read is refused and it reads the file again; what an act left is noted
+    /// beside it, so the refusal says the person restored the file ([`crate::tools::note_restored`]).
+    ///
     /// # Arguments
     /// * `id` - The Diamond whose reach this call gets.
     /// * `attached` - JSON array of the paths marked into it, as `Files.bounds` reports them.
     /// * `read_only` - JSON array of those that may be read but not written.
+    /// * `ticket` - The restore this act belongs to, from `versions_restore_open`; absent for a
+    ///   lone act.
     pub async fn run_diamond_tool(
         &self,
         id:        String,
@@ -1580,9 +1637,34 @@ impl DaimondApp {
         read_only: String,
         name:      String,
         args_json: String,
+        ticket:    Option<f64>,
     )
         -> js_sys::Object
     {
+        let obj = js_sys::Object::new();
+        let set = |k: &str, v: &JsValue| {
+            let _ = js_sys::Reflect::set(&obj, &JsValue::from_str(k), v);
+        };
+        let acts = match name.as_str() {
+            "file_put_back" | "file_write" | "file_delete" => true,
+            "file_read" | "file_list"                      => false,
+            _ => {
+                let text = crate::tools::refusal_line(&fmt!(
+                    "{} is not a restore's verb: this door reads, puts back, writes and deletes, \
+                    and keeps a copy of what it replaces. Nothing was done.", name));
+                set("outcome", &JsValue::from_str(crate::tools::call_outcome(&text).wire()));
+                set("text",    &JsValue::from_str(&text));
+                return obj;
+            },
+        };
+        // The restore this act keeps into: the one named, where it is open for this Diamond, or
+        // one of its own.
+        let (restoring, lone) = match ticket {
+            Some(t) if t >= 1.0 && diamond::restore_store(t as u64).as_deref() == Some(id.as_str())
+                => (t as u64, false),
+            _ if acts => (diamond::restore_lone(&id).await, true),
+            _         => (0, false),
+        };
         let bounds = crate::tools::diamond_bounds(
             &diamond::diamond_dir(&id),
             &parse_path_array(&attached),
@@ -1593,9 +1675,8 @@ impl DaimondApp {
             cwd:         String::new(),
             path_prefix: String::new(),
             root:        crate::tools::FileRoot::Workspace,
-            // Shared with this app's own, so a write through this door leaves the same mark on
-            // the read cache an ordinary one would.
-            read_seen:   self.registry.ctx.read_seen.clone(),
+            // ITS OWN, and thrown away with the call: see above.
+            read_seen:   crate::tools::new_read_cache(),
             no_write:    bounds,
             // EMPTY, both, and that is not an oversight. `ctx.keeper()` is what makes the write
             // door keep the bytes it is replacing for the TURN to record -- and this is not a
@@ -1605,14 +1686,31 @@ impl DaimondApp {
             keeper:      String::new(),
             unconfirmed: Vec::new(),
             by_model:    false,
+            restoring,
         };
         let registry = ToolRegistry::new(Tool::daimon(), ctx);
-        let text = registry.dispatch_unbilled(&name, &args_json).await.as_text().into_owned();
+        let text = match name.as_str() {
+            "file_put_back" => registry.put_back(&args_json).await,
+            _               => registry.dispatch_unbilled(&name, &args_json).await,
+        }.as_text().into_owned();
+        // A lone act is recorded as it lands; a refused one recorded nothing and writes nothing.
+        if lone {
+            if let Err(e) = diamond::versions_restore_close(&id, restoring).await {
+                web_sys::console::warn_1(&JsValue::from_str(&fmt!(
+                    "the restore of a file in {} could not be recorded (its copy is noted for the \
+                    next turn end): {}", id, e)));
+            }
+        }
         let outcome = crate::tools::call_outcome(&text);
-        let obj = js_sys::Object::new();
-        let set = |k: &str, v: &JsValue| {
-            let _ = js_sys::Reflect::set(&obj, &JsValue::from_str(k), v);
-        };
+        // WHAT THE ACT LEFT, beside what the daimon read, as the engine's own restore writes are
+        // ([`DaimondApp::versions_restore_close`]).
+        if acts && outcome == crate::tools::CallOutcome::Done {
+            if let Some(path) = crate::llm::extract_json_string(&args_json, "path") {
+                note_restores(&self.registry.ctx.read_seen, &[path]).await;
+            }
+            // A machine file's, noted at the act through the hand (fix/r51e).
+            crate::tools::carry_restored(&registry.ctx.read_seen, &self.registry.ctx.read_seen);
+        }
         set("text",    &JsValue::from_str(&text));
         set("outcome", &JsValue::from_str(outcome.wire()));
         obj
@@ -2126,14 +2224,64 @@ impl DaimondApp {
         let want = if one.is_empty() { None } else { Some(one) };
         let (said, wrote) = ok!(diamond::versions_restore(&id, version as u64, want).await
             .map_err(to_js_err));
-        // WHAT THE AGENT LAST SAW OF THESE FILES IS NO LONGER TRUE. The write guard in
-        // `Tool::FileWrite` refuses a write whose file has moved since this agent read it, which
-        // is how one agent stops erasing another's work -- and a Restore moves it from outside the
-        // turn altogether. Without this the daimon's next write to a file the user has just
-        // restored comes back "changed on disk since you read it -- another agent edited it",
-        // naming an agent that does not exist. `Tool::FileRevert` does the same for its own path.
-        crate::tools::forget_seen(&self.registry.ctx.read_seen, &wrote);
+        // WHAT THE RESTORE LEFT, noted beside what the agent last read of these files, which
+        // stays. The write guard in `Tool::FileWrite` refuses a write whose file has moved since
+        // this agent read it, and a Restore moves it from outside the turn: the daimon's next
+        // write from its old read is refused, in words that say the person restored the file,
+        // and it reads the file again. Forgetting the read instead, as this did until RD of the
+        // release 5.1 fix's third QA, let that write put the daimon's text back over the restore.
+        note_restores(&self.registry.ctx.read_seen, &wrote).await;
         Ok(said)
+    }
+
+    /// Open a restore of the Diamond's files to `version`: `{version, ticket, machine}`, and
+    /// nothing written.  The page's two-part Restore: each file under `machine` is the person's,
+    /// written or deleted through [`DaimondApp::run_diamond_tool`] with the ticket, and
+    /// [`DaimondApp::versions_restore_close`] then puts the Diamond's own files back and records
+    /// the whole restore as one version.
+    ///
+    /// # Arguments
+    /// * `path` - One path, or empty for the whole version.
+    pub async fn versions_restore_open(&self, id: String, version: f64, path: String)
+        -> Result<String, JsValue>
+    {
+        let one = path.trim();
+        let want = if one.is_empty() { None } else { Some(one) };
+        let plan = diamond::Plan::At(version as u64, want.map(|p| p.to_string()));
+        let opened = ok!(diamond::versions_restore_open(&id, plan).await.map_err(to_js_err));
+        Ok(opened.said(version as u64))
+    }
+
+    /// Open the undo of `version`: `{version, ticket, machine}`, acted on and closed as
+    /// [`DaimondApp::versions_restore_open`]'s restore is, and recorded as one version.
+    ///
+    /// **Each path goes back to what the version replaced there**, its own row's `was` (U1 of the
+    /// release 5.1 fix's second QA, 2026-09-25).  The Undo was a restore of each path to the
+    /// version BEFORE, one restore a file: where the person had saved the file between the two,
+    /// that put back the older text over their save, and a Restore's own Undo minted a version a
+    /// file (U4).  A path the version made is handed out `gone`, for the person's yes.
+    ///
+    /// # Arguments
+    /// * `paths` - JSON array of the paths to undo, as the store names them; empty for every path
+    ///   the version changed.
+    pub async fn versions_undo_open(&self, id: String, version: f64, paths: String)
+        -> Result<String, JsValue>
+    {
+        let plan = diamond::Plan::Undo(version as u64,
+            crate::llm::parse_json_string_array(&paths));
+        let opened = ok!(diamond::versions_restore_open(&id, plan).await.map_err(to_js_err));
+        Ok(opened.said(version as u64))
+    }
+
+    /// Close the restore `ticket` opened: `{version, recorded, restored, missing, refused}`.
+    /// Called whatever became of its acts, so the copies they kept are recorded.
+    pub async fn versions_restore_close(&self, id: String, ticket: f64) -> Result<String, JsValue> {
+        let closed = ok!(diamond::versions_restore_close(&id, ticket as u64).await
+            .map_err(to_js_err));
+        // What the engine's own writes left, beside what the agent last read; see
+        // [`DaimondApp::versions_restore`].
+        note_restores(&self.registry.ctx.read_seen, &closed.wrote).await;
+        Ok(closed.said(None))
     }
 
     /// Bring the store back inside its ceilings now, rather than at the next write:
@@ -2167,6 +2315,14 @@ impl DaimondApp {
     /// edit and a version is not minted per keystroke-adjacent save.
     pub fn versions_mark_dirty(&self, id: String, path: String) {
         diamond::mark_dirty(&id, &path);
+    }
+
+    /// [`Self::versions_mark_dirty`] for a door that marks BEFORE it writes, as the Doc panel's
+    /// save and the Files panel's delete do: what the file holds now is kept as the row's `was`
+    /// ([`diamond::mark_dirty_before`]).  Awaited before the write, so the bytes are the ones it
+    /// replaces.
+    pub async fn versions_mark_before(&self, id: String, path: String) {
+        diamond::mark_dirty_before(&id, &path).await;
     }
 
     /// What all of one Diamond's stored bodies may weigh, in bytes; zero restores the default.
@@ -2489,6 +2645,16 @@ fn wire_json(
             .collect::<Vec<_>>().join(",")))
 }
 
+/// Note in `cache` what a restore left at each of `paths`, read back off the disk: a file it
+/// deleted, or one this door cannot read, notes nothing ([`crate::tools::note_restored`]).
+async fn note_restores(cache: &crate::tools::ReadCache, paths: &[String]) {
+    for p in paths.iter() {
+        if let Ok(b) = crate::wasm::opfs::read_file(crate::tools::FileRoot::Workspace, p).await {
+            crate::tools::note_restored(cache, p, &b);
+        }
+    }
+}
+
 /// Read a JSON array of plain strings, dropping anything blank.
 ///
 /// A small reader rather than a JSON dependency: the input is written by our own caller, and the
@@ -2539,12 +2705,21 @@ struct DaimonTurn {
 /// wrappers above map the result to the JS boundary.
 impl DaimondApp {
 
-    /// Record what a chat's turn captured as one version of the chat's store, and tell the page
-    /// with a `versions` event: `{type, keeper, version, files}`, so it can offer the way back.
+    /// Record what a turn keeping into `key`'s store captured as one version of it -- a chat's,
+    /// or a Diamond's own thread's -- and tell the page with a `versions` event:
+    /// `{type, keeper, version, files}`, so it can offer the way back.
     ///
     /// Best effort, like the daimon's: a turn the user asked for is not failed because its
     /// history could not be written, and the console says so.
-    async fn record_chat_turn(&self, key: &str, on_event: &js_sys::Function) {
+    async fn record_keeper_turn(&self, key: &str, on_event: &js_sys::Function) {
+        // A STEER RUNNING ON THE SAME DIAMOND ENDS THE STORE'S TURN ITSELF, and a thread's turn
+        // end must not take its captures, its seal count or the person's "go on" from under it.
+        // Asked again once the store is held (R4 of the release 5.1 fix's QA, 2026-09-25): the page
+        // asked once, before the wait, and a steer that started during the wait -- an import holding
+        // the store -- had its first captures filed under the thread's version.
+        if diamond::is_steering(key) {
+            return;
+        }
         // With the copies noted on disk before each act, including any an earlier life of the
         // page left unrecorded -- which are recorded under the same hold, as versions of their own,
         // before this turn's (R2-2).
@@ -2552,12 +2727,17 @@ impl DaimondApp {
             Ok(h)  => h,
             Err(e) => {
                 // Left for the next turn end: the captures stay in memory and the notes on disk.
+                // The turn's counts end here all the same (F4).
+                diamond::end_turn_counts(key);
                 web_sys::console::warn_1(&JsValue::from_str(&fmt!(
                     "the files the turn in {} changed could not be recorded: {}", key, e)));
                 return;
             },
         };
-        let (captured, notes) = diamond::drain_turn(&hold, key).await;
+        if diamond::is_steering(key) {
+            return;
+        }
+        let (captured, notes, _) = diamond::drain_turn(&hold, key, &self.registry.ctx).await;
         if captured.is_empty() {
             drop(hold);
             diamond::settle(key, &notes).await;
@@ -2900,6 +3080,7 @@ impl DaimondApp {
             keeper:      id.to_string(),
             unconfirmed: waiting,
             by_model:    false,
+            restoring:   0,
         };
         let registry = ToolRegistry::new(Tool::daimon(), ctx)
             .with_family(self.registry.family());
@@ -2963,6 +3144,10 @@ impl DaimondApp {
         // sharing the app; see [`DaimondApp::abort_turn`].
         let halt = Halt::new();
         let _running = self.hold_turn(self.registry.ctx.turn_tag_for(id), halt.clone());
+        // THIS DIAMOND IS STEERING, counted before anything awaits and until this turn's end has
+        // drained the captures, so a thread's turn end that waited on the store and then finds it
+        // counted leaves the store's turn to this one (R4 of the release 5.1 fix's QA).
+        let mut steering = Some(diamond::steering(id));
         let instruction = match open_command(instruction).await {
             Opened::Send(text)  => text,
             Opened::Refuse(msg) => return Err(refuse(&msg)),
@@ -2990,7 +3175,7 @@ impl DaimondApp {
         // because the history could not be written.
         let dirty = diamond::drain_dirty(id);
         if !dirty.is_empty() {
-            let changes = diamond::versions_changes(id, &dirty).await;
+            let changes = diamond::dirty_changes(id, dirty).await;
             if let Err(e) = diamond::versions_record(id, Cause::User, "", "", changes).await {
                 web_sys::console::warn_1(&JsValue::from_str(&fmt!(
                     "the state of {} before this turn could not be recorded: {}", id, e)));
@@ -3073,7 +3258,10 @@ impl DaimondApp {
                 // THE COPIES AN EARLIER LIFE OF THE PAGE LEFT ARE RECORDED FIRST (R2-2), each run
                 // it began on a path this life then changed again as a version of its own, below
                 // the one this turn takes -- the older copy under the older number.
-                let (captured, notes) = diamond::drain_turn(&hold, id).await;
+                let (captured, notes, left) = diamond::drain_turn(&hold, id, &registry.ctx).await;
+                // The captures are this turn's now: a thread's turn end from here takes only what
+                // lands after them.
+                steering.take();
                 if after != before || page_after != page_before || standing_after != standing_before {
                     let version = res!(diamond::record_steer(&hold, id, &after, &typed).await);
                     minted = Some(version);
@@ -3125,8 +3313,12 @@ impl DaimondApp {
                 // that wrote a file and then died has still changed it.
                 // The copies were noted on disk before each act (`diamond::pend`), so a turn that died
                 // mid-way, or a page reloaded under a worker, left them for this turn end to adopt.
+                // A capture sealed because its file changed after the turn's last act is covered
+                // too: read again from the ledger, it would be the turn's row once more.
                 let covered: std::collections::BTreeSet<&str> =
-                    captured.iter().map(|(raw, _)| raw.as_str()).collect();
+                    captured.iter().map(|(raw, _)| raw.as_str())
+                        .chain(left.iter().map(|raw| raw.as_str()))
+                        .collect();
                 let mut named: Vec<String> = Vec::new();
                 for wrote in ledger.wrote.iter() {
                     // A move is one ledger line naming two paths, and both of them moved.
@@ -3156,7 +3348,11 @@ impl DaimondApp {
                 }
                 recorded
             },
-            Err(e) => Err(e),
+            Err(e) => {
+                // The turn is over even though its record is not: its counts end with it (F4).
+                diamond::end_turn_counts(id);
+                Err(e)
+            },
         };
         match recorded {
             // THE DAIMON IS TOLD, in one sentence, and only where a manifest was actually
@@ -3224,7 +3420,7 @@ impl DaimondApp {
         // edit writes no manifest at all.
         let dirty = diamond::drain_dirty(id);
         if !dirty.is_empty() {
-            let changes = diamond::versions_changes(id, &dirty).await;
+            let changes = diamond::dirty_changes(id, dirty).await;
             if let Err(e) = diamond::versions_record(id, Cause::Fold, "", note, changes).await
             {
                 web_sys::console::warn_1(&JsValue::from_str(&fmt!(
@@ -3397,6 +3593,7 @@ impl DaimondApp {
             keeper:      String::new(),
             unconfirmed: Vec::new(),
             by_model:    false,
+            restoring:   0,
         };
         let registry = ToolRegistry::new(Vec::new(), ctx);
         let reducer = Role::Reducer.compose(&self.reducer_prompt.borrow());

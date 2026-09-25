@@ -410,6 +410,10 @@
 	// nobody has told it, which at the moment means the look and nothing else.
 	// See collectParcel.
 	var pulledOk      = false;
+	// The file store came back (cloud.js `daimond:file-store`), so the version this device
+	// already adopted is merged once more: the rounds that ran without a store merged every
+	// section but the files'. pullOnce's already-adopted skip would decline it until the mailbox moved.
+	var remergeOwed   = false;
 	// Whether this device had already synced THIS account when the page loaded.
 	// Read once, at start, before this session's own rounds move the cursor, and
 	// it is the only honest evidence that a device is not new to the account:
@@ -1056,19 +1060,30 @@
 	///
 	/// With no kind, the ladder keeps the one it was last armed for. 'merge' is a version the
 	/// re-pull gave up on: the long ceiling, from the first wait.
+	///
+	/// THE CEILING IS WHAT FAILED LAST. A retry armed on the wire's ceiling (a partition, a
+	/// link down) and then beaten by a conflict on another trigger was left where it was:
+	/// the conflict is a POST the gateway answered, so the write path is back, yet the
+	/// work waited out the wire's five minutes, reading 'unsent' over a mailbox that had
+	/// long since taken it through a sibling tab, and landed a redundant version at quiet
+	/// (the simulator's seed p-fmufx0w9y6t90as; SIM-14's chip). So a failure whose ceiling
+	/// is shorter than the wait left re-arms on its own ladder.
 	function armUnsent(kind) {
 		if (kind) failKind = kind;
 		if (!unsent) return;
 		var now   = Date.now();
 		var floor = Math.max(0, holdUntil - now);
+		var cap   = (failKind === 'conflict') ? UNSENT_RETRY_MAX_MS : UNSENT_WIRE_MAX_MS;
 		var wait  = 0;
-		if (unsentTimer) {
+		// Armed beyond the longest jittered wait this kind's ceiling allows.
+		var stale = !!unsentTimer && unsentDue - now > cap * 1.5;
+		if (unsentTimer && !stale) {
 			// One is coming. Only a Retry-After that reaches past it moves it.
 			if (!floor || unsentDue >= now + floor) return;
 			clearTimeout(unsentTimer);
 			unsentTimer = null;
 		} else {
-			var cap  = (failKind === 'conflict') ? UNSENT_RETRY_MAX_MS : UNSENT_WIRE_MAX_MS;
+			if (unsentTimer) { clearTimeout(unsentTimer); unsentTimer = null; }
 			// A version the re-pull gave up on has had its quick tries (`scheduleReapply`),
 			// so it goes straight to the ceiling rather than back to the bottom (S3).
 			var grow = (failKind === 'merge') ? cap
@@ -1271,7 +1286,26 @@
 		// Below a jam, which names why. Not while a push is running: a push in flight is
 		// owed until it lands, and that is "Syncing", not a stall.
 		if (owedNow())     { setStatus('stalled', t('sync.unsent'), 0, t('sync.unsent_reason')); return; }
+		// And below everything: sync is working, but not for files. A browser that keeps
+		// no files (cloud.js `fileStore`) stands down on the workspace while its chats,
+		// hand-offs and settings travel, and the person is told so rather than shown a
+		// "Synced" that leaves the files out. Not a stall, which would say nothing moves.
+		var noFiles = filesNotHeld();
+		if (noFiles && ready()) {
+			setStatus('partial', t('sync.files_not_here'), 0,
+				t(noFiles === 'none' ? 'sync.files_none_reason' : 'sync.files_refused_reason'));
+			return;
+		}
 		setStatus('');
+	}
+
+	/// Why this browser keeps no files: 'none' (it has no file store), 'refused' (it
+	/// has one and refuses it), or '' when it keeps them or has not been asked yet.
+	function filesNotHeld() {
+		try {
+			var s = (window.DaimondCloud && DaimondCloud.fileStore) ? DaimondCloud.fileStore().state : '';
+			return (s === 'none' || s === 'refused') ? s : '';
+		} catch (e) { return ''; }
 	}
 
 	/// Why sync is off, and what to do about it -- the chip is clickable in this
@@ -2033,7 +2067,8 @@
 			var rawV = localStorage.getItem(K_VERSION);
 			noted = rawV === null ? -1 : (parseInt(rawV, 10) || 0);
 		} catch (e) { /* cannot tell; leave the claim standing */ }
-		if (j.version === serverVersion && noted === serverVersion && pulledOk && reapplyTries === 0) {
+		if (j.version === serverVersion && noted === serverVersion && pulledOk && reapplyTries === 0
+			&& !remergeOwed) {
 			// ONE TRAIL LINE STANDS IN FOR THE SECTION THIS PULL DID NOT RUN. Skipping
 			// `applyParcel` outright means `applySync`'s own `section('files', …)` never
 			// fires, and a trail that goes silent here is exactly the failure mode its own
@@ -2043,6 +2078,7 @@
 			trail('sync files', 'v' + (j.version | 0) + ' already adopted, no walk');
 			lastFailed = [];
 		} else {
+			remergeOwed = false;		// this apply is the one it was owed
 			lastFailed = await applyParcel(state);
 		}
 		pulledOk   = true;			// a parcel was read; see `pulledOk`.
@@ -2153,6 +2189,23 @@
 			if (standOff !== 'busy') diag('push deferred', 'turn=' + standOff.slice(0, 12) + ' is running on another device');
 			schedule();
 			return;
+		}
+		// A VERSION THIS DEVICE COULD NOT MERGE IS NOT KNOCKED ON. The mailbox stands at or
+		// past `failedVersion` and this device's base is below it, so a POST can only come
+		// back 409, and the 409's pull re-reads the same parcel, fails the same section and
+		// returns with nothing sent. That was the loop the reopen rehearsal measured on a
+		// browser with no OPFS (2026-09-25): every trigger -- a turn ending, the tab hiding,
+		// each of a hand-off flush's six rounds -- paid a POST, a whole-parcel GET and the
+		// chunk reads of a merge, up to 48 refusals a minute. The version is the bounded
+		// re-pull's (`scheduleReapply`) and then the ladder's at its ceiling, and a re-pull
+		// that merges sends this work at once (pullOnce). Owed meanwhile, under the merge's
+		// reason on the chip.
+		if (failedVersion > serverVersion) {
+			unsent   = true;
+			failKind = 'merge';
+			if (!reapplyTimer) armUnsent('merge');
+			jam('merge');
+			return { held: 'merge' };
 		}
 		inFlight = true;
 		pushing  = true;
@@ -2487,22 +2540,25 @@
 	/// `version()` would stamp the errand with a version that predates the new chat, and
 	/// the peer would reach that version holding no chat. This loops -- push, then
 	/// confirm the live parcel equals what last committed -- until the parcel is on the
-	/// server or it gives up. Answers `{ ok, version, why? }`; `ok:false` (not entitled,
-	/// too large, over a live turn, or the mailbox kept moving) lets the caller fall
-	/// back to what a bare push()+version() would have given, and the receiver's own
-	/// progress-based catch-up is the further net.
+	/// server or it gives up. Answers `{ ok, version, why? }`. `version` is only ever
+	/// one that holds the state: on `ok:false` (not entitled, behind the epoch chain,
+	/// too large, over a live turn, the push threw, or the mailbox kept moving) it is
+	/// 0, the errand's "no target version", and the receiver's progress-based
+	/// catch-up is the net. The version the mailbox stood at does not hold what the
+	/// caller just added, and a runner handed it pulled once, read `have >= want`,
+	/// and stopped pulling for the chat it was waiting on.
 	async function flush() {
-		if (!ready() || !entitled) return { ok: false, version: serverVersion, why: 'not_entitled' };
+		if (!ready() || !entitled) return { ok: false, version: 0, why: 'not_entitled' };
 		// Behind the epoch chain: never overwrite the account (see push()).
-		if (rekeyBehind) return { ok: false, version: serverVersion, why: 'rekey' };
+		if (rekeyBehind) return { ok: false, version: 0, why: 'rekey' };
 		// Over a live turn push() will not send (it must not churn the parcel while a
 		// turn runs), so do not spin: one best-effort attempt and report it unconfirmed.
 		if (window.DaimondCore.busy && DaimondCore.busy()) {
 			try { await push(); } catch (e) { /* best effort */ }
-			return { ok: false, version: serverVersion, why: 'busy' };
+			return { ok: false, version: 0, why: 'busy' };
 		}
 		for (var i = 0; i < FLUSH_MAX_ROUNDS; i++) {
-			if (tooLarge) return { ok: false, version: serverVersion, why: 'too_large' };
+			if (tooLarge) return { ok: false, version: 0, why: 'too_large' };
 			// ONE collect per round, not three. push() already collects the parcel and
 			// compares it against lastPushed; a pre-push collect here just paid for a
 			// second whole-parcel collect of the same state, and this loop ran a third to
@@ -2513,13 +2569,16 @@
 			// change that landed DURING the push, so a caller is never handed a version
 			// that predates the state it just added.
 			var r;
-			try { r = await push(); } catch (e) { return { ok: false, version: serverVersion, why: 'push_failed' }; }
+			try { r = await push(); } catch (e) { return { ok: false, version: 0, why: 'push_failed' }; }
+			// Held over a version that would not merge: another round would be held the
+			// same way, and its confirming collect costs chunk queries for nothing.
+			if (r && r.held) return { ok: false, version: 0, why: r.held };
 			// A REFUSAL FOR SIZE IS NOT A LANDING. Both refusals (the front door here, a 413
 			// from the gateway) set `lastPushed` to the live parcel so that push() does not
 			// spin on it, and the confirm below read that as committed: `ok:true` at the
 			// version the mailbox already had, and a dispatcher stamped its errand with a
 			// version that does not hold the chat it had just added (P1a M1, 2026-09-25).
-			if (tooLarge) return { ok: false, version: serverVersion, why: 'too_large' };
+			if (tooLarge) return { ok: false, version: 0, why: 'too_large' };
 			if (r && r.committed && serverVersion > 0) return { ok: true, version: serverVersion };
 			// Confirm against the live parcel: a change under us forces another round.
 			// Through compareKey, like push(): a `seen` stamp that moved between the
@@ -2532,7 +2591,7 @@
 			if (after !== null && after === lastPushed && serverVersion > 0 && !unsent) return { ok: true, version: serverVersion };
 			await new Promise(function (r2) { setTimeout(r2, FLUSH_RETRY_MS); });
 		}
-		return { ok: false, version: serverVersion, why: 'not_confirmed' };
+		return { ok: false, version: 0, why: 'not_confirmed' };
 	}
 
 	// ── The streaming progress push ────────────────────────────
@@ -2565,6 +2624,7 @@
 		if (!ready() || !entitled) return;
 		if (rekeyBehind) return;			// behind the epoch chain: never overwrite the account (see push())
 		if (tooLarge || sessionGone) return;
+		if (failedVersion > serverVersion) return;	// a sure 409 over a version that would not merge (see push())
 		if (Date.now() - lastProgressAt < PROGRESS_PUSH_MIN_MS) return;	// throttle the trickle
 		if (inFlight) return;			// a round is running; the next tick tries again
 		lastProgressAt = Date.now();
@@ -3213,11 +3273,25 @@
 		}
 	}
 
-	function unwatchProgress(key) {
+	/// Stop following `key`. With `onLast`, the door is read once more first and
+	/// `onLast(frame)` is called with anything newer than the last frame seen.
+	///
+	/// A WATCH ENDS ON NEWS THAT COMES AFTER ITS LAST FRAME (2026-09-25). A runner
+	/// stores its final frame, then posts its report, then releases the lease, and
+	/// either of the last two ends the watch. Where no tap comes, the frame is read
+	/// on a 4 s tick, so the watch usually ended before the tick read it, and the
+	/// finished answer on the door was never read: with the runner's parcel held
+	/// up, the sender was left with no answer at all (slowparcel CASE 2).
+	function unwatchProgress(key, onLast) {
 		key = String(key || '');
-		if (!progWatch[key]) return;
+		var w = progWatch[key];
+		if (!w) return;
 		delete progWatch[key];
 		setProgressWanted();
+		if (typeof onLast !== 'function') return;
+		getProgressFrame(key, w.since).then(function (frame) {
+			if (frame) { try { onLast(frame); } catch (e) { /* a watcher's fault stays its own */ } }
+		}, function () { /* the parcel still carries the answer */ });
 	}
 
 	/// The keys being followed, for the verifier and for debugging.
@@ -4093,6 +4167,15 @@
 		// The app settling (a turn or agent run just ended) is the moment to
 		// push: state is consistent and the user is between actions.
 		window.addEventListener('daimond:idle', schedule);
+		// The browser's file store changed (cloud.js `fileStore`): the chip says what is
+		// true now, and a store that came back merges the files this device stood down on.
+		window.addEventListener('daimond:file-store', function (e) {
+			var d = (e && e.detail) || {};
+			if (!inFlight) restStatus();
+			if (d.state !== 'held' || !d.was || d.was === 'held') return;
+			remergeOwed = true;
+			if (ready()) setTimeout(function () { gatedPull().catch(function () { /* the next round merges */ }); }, 0);
+		});
 		// Leaving the tab is a natural save point; coming back to it is a natural
 		// moment to catch up. The one listener covers both directions: hiding stamps
 		// `hiddenAt` (so a return can tell a re-open from a glance) and schedules the
@@ -4312,6 +4395,10 @@
 				/// the epoch chain to catch up on its own; it must be linked again.
 				rekeyBehind:  rekeyBehind,
 				failedParts:  lastFailed.slice(),
+				/// Does this browser keep the workspace's files? When it does not, every
+				/// other kind still travels and `filesWhy` says why ('none' or 'refused').
+				filesHeld:    !filesNotHeld(),
+				filesWhy:     filesNotHeld(),
 				entitled:     entitled,
 				/// Whether a 401 is standing that a fresh session could not clear.
 				sessionGone:  sessionGone,

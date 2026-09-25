@@ -1192,6 +1192,31 @@ await clearDiamonds(C);
 await ready(C);
 await wireCloud(C, 'C');
 
+// C'S SIGN-IN ROUND FINISHES BEFORE ANYTHING IS SEEDED. Wired in, C completes its unlock
+// against this cloud, and three things in that nudge sync: the models store opening, the
+// `daimond:authed` round (`onAuthed`: a pull, then `schedule()`), and the pulled rail's
+// `bumpDiamonds`. Together they arm one push on the 2.5 s debounce, and no step of this
+// file sends it. Left armed, it fires wherever the steps below have reached. On a quiet
+// machine that was about half a second after the scripted push(C), where it did nothing.
+// On a loaded one it lands inside the sequence. Between pull(C) and the slot read, its
+// collect re-offloads C's swept copy, so C's own addresses are no longer the ones seeded.
+// Before push(B), its commit sweeps B's upload before B has declared it: the
+// upload-vs-commit race, which this cloud leaves ungraced on purpose. Both read as a
+// sweep of a seen index and neither is one (2026-09-25: red only under load, and red
+// every time the slot read is held back 1.5 s). So this waits for C's
+// first pull and then for `quiet`, which is also the premise verify_sync's second device
+// states: a device with a round armed is not yet the device the section is about.
+for (const [label, s_] of [['B', B], ['C', C]]) {
+	const settled = await s_.page.waitForFunction(() => {
+		const st = window.DaimondSync.state();
+		return (st.version | 0) > 0 && st.quiet;
+	}, null, { timeout: 30000 }).then(() => true, () => false);
+	if (!settled) {
+		const why = await s_.page.evaluate(() => window.DaimondSync.state().busyWith || 'no pull landed');
+		throw new Error(`${label} never went quiet before (viii) was seeded: ${why}`);
+	}
+}
+
 const devC = await C.page.evaluate(() => window.DaimondCore.syncSelfDeviceId());
 const mayBoth = {
 	b: await B.page.evaluate(() => window.DaimondCore.syncMayCommitChunks()),
@@ -1221,7 +1246,8 @@ check('(viii) one file, the same content key on both devices, at DIFFERENT addre
 		: `key ${String(mB.key).slice(0, 10)}…, ${mB.addrs.length} vs ${mC.addrs.length} addresses, `
 		+ (mB.addrs.filter(a => mC.addrs.indexOf(a) >= 0).length || 'no') + ' in common');
 
-// B PUSHES AND COMMITS FIRST, and C has never sent a parcel. Nothing of C's is
+// B PUSHES AND COMMITS FIRST, and C has never declared this file: its one parcel so far
+// is its sign-in round's, sent before the file was written. Nothing of C's copy is
 // declared, so this commit sweeps C's upload -- and no peer slot could have stopped
 // it: a device cannot name addresses it has never been told about. It is taken first
 // deliberately, because what is under test is the OTHER sweep, by a device that HAS

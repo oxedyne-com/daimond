@@ -671,7 +671,12 @@ try {
 		window.DaimondCloud.contentSet('@c/lostchat-aaaabbbbcccc', {
 			v: 2, size: 900, key: 'lostkey', fp: 'lostfp',
 			chunks: [{ addr: 'dead0'.padEnd(64, '0'), size: 900 }] });
-		// And a mail manifest, which no collect could ever rebuild from here.
+		// And a message tail (`@m/<addr>`, post.js) whose heavy half no post record
+		// here holds. It reads `no-local-text`, as a chat with no text does: since
+		// b7dafd7c (REF-1) an `@m/` manifest has its own arm, which re-offloads while
+		// `DaimondPost.holdsHeavy` says the half is still here (www/js/msgtail.test.mjs
+		// checks that arm) and reads `no-local-text` when it is not. Before that every
+		// `@m/` read `unrestorable`, and this check pinned that word.
 		window.DaimondCloud.contentSet('@m/deadmail', {
 			v: 2, size: 10, key: 'mk', chunks: [{ addr: 'dead1'.padEnd(64, '1'), size: 10 }] });
 
@@ -699,7 +704,7 @@ try {
 	const evc  = (census.first.ds.find(e => e.kind === 'sync' && e.payload && e.payload.refs_missing) || { payload: {} }).payload;
 	note(line);
 	check('A4. the line breaks the missing refs down by kind AND restorability',
-		/@m\/ \d+ unrestorable/.test(line) && /@c\/ \d+ no-local-text/.test(line), line || 'no line');
+		/@m\/ \d+ no-local-text/.test(line) && /@c\/ \d+ no-local-text/.test(line), line || 'no line');
 	check('A4. and the parts sum to the total it opens with',
 		(() => {
 			const total = Number((/refs missing: (\d+)/.exec(line) || [])[1]);

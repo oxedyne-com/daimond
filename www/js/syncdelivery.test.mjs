@@ -24,6 +24,9 @@
      FLUSHDOOR M1. flush() over a parcel refused at the 8 MiB front
                door: ok:false, 'too_large' (ok:true at the old version).
      FLUSH413  M1. The same for a parcel the gateway answers 413.
+     WIRECONFLICT  owed on the wire's ladder at its ceiling, then two conflicts on another
+               trigger: the retry follows the conflict's ceiling (a minute), not the
+               wire's five (the simulator's seed p-fmufx0w9y6t90as).
      FLUSHOK   [ctl] flush() over a push that lands: ok:true at the
                version it landed at.
      CONTEND   M2 (D110). Another device lands before every POST, for
@@ -38,6 +41,14 @@
      OWEDPULL  SIM-8. Owed work, then focus pulls every 3 s through 2 min
                with the link down, and a landed pull after: the chip shows
                the stall after every round (it rested on "Last synced").
+     MERGEHOLD A version that will not merge, owed work, a turn every 20 s and a
+               hand-off flush every 30 s for 10 min: no POST at all (release 5.1:
+               a 409 per trigger and six per flush, the reopen rehearsal's storm),
+               the bounded re-pull and the ladder re-read it, and the work lands
+               once it merges.
+     FILESTORE A browser that keeps no files (cloud.js `fileStore`): the chip reads
+               'partial' with the reason, `state()` says so, pushes land, and a store
+               that comes back re-merges the adopted version once.
      CHIP      M7 (D072). `DaimondSync.chip()` is the chip's one word and
                `state()` the engine's object, and the rail is told when
                the word changes: through a failed push it reads 'stalled'
@@ -194,16 +205,16 @@ function makeTab(cfg) {
 				return hangOn(opts);
 			}
 			if (tab.postMode === '413') { tab.posts.push({ ok: false, s: 413 }); return answer(413, { ok: false }); }
-			if (tab.postMode === '502') { tab.posts.push({ ok: false, s: 502 }); return answer(502, { ok: false }); }
+			if (tab.postMode === '502') { tab.posts.push({ ok: false, s: 502, at: tab.vnow }); return answer(502, { ok: false }); }
 			if (tab.moveOnRead > 0) {
 				tab.moveOnRead--;
 				tab.land(tab.mailbox.version + 1, { v: 3, chats: [], note: 'other v' + (tab.mailbox.version + 1), pad: cfg.pad || '' });
 			}
 			if ((body.base_version | 0) !== tab.mailbox.version) {
-				tab.posts.push({ base: body.base_version | 0, ok: false });
+				tab.posts.push({ base: body.base_version | 0, ok: false, at: tab.vnow });
 				return answer(409, { ok: false, version: tab.mailbox.version });
 			}
-			tab.posts.push({ base: body.base_version | 0, ok: true });
+			tab.posts.push({ base: body.base_version | 0, ok: true, at: tab.vnow });
 			tab.mailbox = { version: tab.mailbox.version + 1, blob: body.blob };
 			return answer(200, { ok: true, version: tab.mailbox.version });
 		},
@@ -420,6 +431,8 @@ if (want('FLUSHDOOR')) {
 	check('flush() does not claim the parcel committed (release 4: ok:true at v4)',
 		!!res && res.ok === false && res.why === 'too_large',
 		JSON.stringify(res) + ' with the mailbox at v' + tab.mailbox.version);
+	check('flush() names no version it cannot vouch for: 0 (1640b9a0: the mailbox\'s v4)',
+		!!res && res.version === 0, JSON.stringify(res));
 }
 
 if (want('FLUSH413')) {
@@ -434,6 +447,8 @@ if (want('FLUSH413')) {
 	check('flush() does not claim the parcel committed (release 4: ok:true at v4)',
 		!!res && res.ok === false && res.why === 'too_large',
 		JSON.stringify(res) + ' with the mailbox at v' + tab.mailbox.version);
+	check('flush() names no version it cannot vouch for: 0 (1640b9a0: the mailbox\'s v4)',
+		!!res && res.version === 0, JSON.stringify(res));
 }
 
 if (want('FLUSHOK')) {
@@ -576,6 +591,120 @@ if (want('CHIP')) {
 	const after = typeof S.chip === 'function' ? S.chip() : '(none)';
 	check('once it lands the rail reads "synced", and was told', after === 'synced' && heard[heard.length - 1] === 'synced',
 		JSON.stringify({ after, heard }));
+}
+
+// ── The ladder's ceiling follows the latest failure ────────────
+if (want('WIRECONFLICT')) {
+	console.log('\nWIRECONFLICT: owed on the wire\'s long ceiling, then beaten by conflicts on another trigger\n');
+	const { tab, S } = await booted({ dom: true });
+	tab.parcel = { v: 3, chats: [], note: 'answer' };
+	tab.postMode = '502';
+	S.push();
+	// The wire's ladder climbs towards its five-minute ceiling (jitter pinned to its
+	// mean); stop a second after a failure, with the next wire retry minutes away.
+	for (let t = 0; t < 1800 && tab.posts.length < 9; t++) await advance(tab, 1000);
+	const wired = tab.posts.length, failedAt = tab.posts[wired - 1].at;
+	await advance(tab, 1000);
+	check('[ctl] the wire failures climbed the ladder', wired === 9 && S.state().stalledWhy === 'unsent',
+		wired + ' POSTs, the last at ' + Math.round(failedAt / 1000) + ' s');
+	// The link is back; another device lands before each of this device's next two
+	// POSTs, and a new trigger sends: two conflicts, the owed round's two tries.
+	tab.postMode = 'normal';
+	tab.moveOnRead = 2;
+	await advance(tab, 1000);
+	S.push();
+	await advance(tab, 1000);
+	const conflictAt = tab.vnow;
+	check('[ctl] the new round met two conflicts', tab.posts.slice(wired).filter((p) => p.ok === false).length === 2,
+		JSON.stringify(tab.posts.slice(wired)));
+	let landedAt = -1;
+	for (let t = 0; t < 400 && landedAt < 0; t++) {
+		await advance(tab, 1000);
+		if (tab.posts.slice(wired).some((p) => p.ok)) landedAt = tab.vnow;
+	}
+	const waited = landedAt < 0 ? -1 : Math.round((landedAt - conflictAt) / 1000);
+	// The conflict's longest jittered wait is 90 s; its retry reads the mailbox first.
+	check('the owed work goes on the conflict\'s ladder: lands within 95 s (1640b9a0: the wire\'s, 256 s)',
+		waited >= 0 && waited <= 95, waited + ' s; ' + JSON.stringify(tab.posts.slice(wired - 1).map((p) => [p.ok, Math.round(p.at / 1000)])));
+	check('and lands, owing nothing', S.state().stalledWhy === '' && chipOf(tab) !== 'stalled',
+		JSON.stringify({ why: S.state().stalledWhy, chip: chipOf(tab) }));
+}
+
+// ── A version that will not merge is not knocked on ────────────
+if (want('MERGEHOLD')) {
+	console.log('\nMERGEHOLD: a version that will not merge, owed work, a turn every 20 s and a hand-off flush every 30 s, 10 min\n');
+	const { tab, S } = await booted({ dom: true });
+	// Another device lands a version whose merge fails here, for good (the reopen
+	// rehearsal's WebKit iPhone: the chunk index's merge threw on a browser with no OPFS).
+	tab.mergeFails = true;
+	tab.land(5, { v: 3, chats: [1], note: 'other v5' });
+	await S.pull();
+	await quiet(tab);
+	check('[ctl] the version was pulled and not adopted', S.state().version === 4 && S.state().stalledWhy === 'merge',
+		JSON.stringify({ v: S.state().version, why: S.state().stalledWhy }));
+	tab.parcel = { v: 3, chats: [], note: 'this device\'s own work' };
+	const p0 = tab.posts.length, g0 = tab.gets;
+	let tick = 0;
+	await advance(tab, 600000, { ms: 10000, fn: () => {
+		tick++;
+		if (tick % 2 === 0) tab.fire('daimond:idle');		// a turn ending, every 20 s
+		if (tick % 3 === 0) S.flush().catch(() => {});		// a hand-off's flush, every 30 s
+	} });
+	const posts = tab.posts.length - p0, gets = tab.gets - g0;
+	const refused = tab.posts.slice(p0).filter((p) => !p.ok).length;
+	console.log('  note 10 min: ' + posts + ' POSTs (' + refused + ' refused 409), ' + gets + ' whole-parcel GETs');
+	check('no POST over a version it could not merge: 0 in 10 min (release 5.1: one 409 a trigger, six a flush)',
+		posts === 0, posts + ' POSTs, ' + refused + ' refused');
+	check('and the version is re-read on the bounded re-pull, then the ladder: at most 9 GETs in 10 min',
+		gets <= 9, gets + ' GETs');
+	check('the chip says why the work waits', chipOf(tab) === 'stalled' && S.state().stalledWhy === 'merge',
+		JSON.stringify({ chip: chipOf(tab), why: S.state().stalledWhy }));
+	const fl = await S.flush();
+	check('a flush over it answers at once, ok:false and why', fl && fl.ok === false && fl.why === 'merge', JSON.stringify(fl));
+	// The cause clears: the next re-read merges, adopts and sends the owed work.
+	tab.mergeFails = false;
+	const clearAt = tab.vnow, p1 = tab.posts.length;
+	let landed = -1;
+	for (let t = 0; t < 480 && landed < 0; t++) {
+		await advance(tab, 1000);
+		if (tab.posts.slice(p1).some((p) => p.ok)) landed = tab.vnow;
+	}
+	const waited = landed < 0 ? -1 : Math.round((landed - clearAt) / 1000);
+	check('once it merges, the owed work lands within the ladder\'s wait (at most 460 s)', waited >= 0 && waited <= 460,
+		waited + ' s; ' + JSON.stringify(tab.posts.slice(p1)));
+	check('and nothing is owed or stalled after', S.state().stalled === false && S.state().version >= 6,
+		JSON.stringify({ v: S.state().version, why: S.state().stalledWhy }));
+}
+
+// ── A browser that keeps no files says so, and still syncs ─────
+if (want('FILESTORE')) {
+	console.log('\nFILESTORE: a browser that keeps no files: the chip says so and everything else travels\n');
+	const { tab, S } = await booted({ dom: true });
+	tab.fileStore = 'none';
+	tab.win.DaimondCloud.fileStore = () => ({ state: tab.fileStore, why: '' });
+	tab.parcel = { v: 3, chats: [], note: 'a chat on the device with no files' };
+	S.push();
+	await advance(tab, 5000);
+	check('[ctl] the push landed', tab.posts.length > 0 && tab.posts[tab.posts.length - 1].ok === true, JSON.stringify(tab.posts));
+	const c = tab.win.__doc.getElementById('sync-chip');
+	check('the chip reads "partial", not synced and not stalled', chipOf(tab) === 'partial', chipOf(tab));
+	check('and names the reason in words', !!c && /sync\.files_none_reason/.test(c.title) && c.querySelector('.stext').textContent === 'sync.files_not_here',
+		JSON.stringify(c && { text: c.querySelector('.stext').textContent, title: c.title }));
+	check('state() says files are not held, and why, and nothing is stalled',
+		S.state().filesHeld === false && S.state().filesWhy === 'none' && S.state().stalled === false,
+		JSON.stringify({ held: S.state().filesHeld, why: S.state().filesWhy, stalled: S.state().stalled }));
+	tab.fileStore = 'refused';
+	tab.win.dispatchEvent(new tab.win.CustomEvent('daimond:file-store', { detail: { state: 'refused', was: 'none' } }));
+	await advance(tab, 500);
+	check('a refusal has its own reason', !!c && /sync\.files_refused_reason/.test(c.title), c && c.title);
+	// The store comes back: the version already adopted is merged again, for the files.
+	const a0 = tab.applies || 0, g0 = tab.gets;
+	tab.fileStore = 'held';
+	tab.win.dispatchEvent(new tab.win.CustomEvent('daimond:file-store', { detail: { state: 'held', was: 'refused' } }));
+	await advance(tab, 3000);
+	check('a store that comes back re-merges the adopted version once', tab.gets - g0 === 1 && (tab.applies || 0) - a0 === 1,
+		(tab.gets - g0) + ' GETs, ' + ((tab.applies || 0) - a0) + ' merges');
+	check('and the chip rests', chipOf(tab) === 'rest' && S.state().filesHeld === true, chipOf(tab));
 }
 
 console.log('\n' + checks + ' checks, ' + (failures ? failures + ' FAILED' : 'ALL PASS'));

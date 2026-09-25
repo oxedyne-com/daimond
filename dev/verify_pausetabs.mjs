@@ -9,8 +9,8 @@
 // re-reads before it writes, so a stale tab never writes back a set it did not load
 // (`www/js/pausetabs.test.mjs` drives that half without a browser).
 //
-//   A. Tab A releases a daimon-written action by a person's play; tab B, opened after,
-//      sees it live.
+//   A. Tab A releases a daimon-written action by a person's play on its own light; tab B,
+//      opened after, sees it live.
 //   B. Tab A presses Pause all. A second later tab B holds the action, the web and every
 //      leaf a person could hold, and its own rail's light says so -- with no reload.
 //   C. In tab B a mail arrival starts no turn, and the web's doors -- a search and a page
@@ -22,6 +22,8 @@
 // gateway cannot tell a stale tab from a current one by it. The mint reads `isPaused`, which
 // is what B asks below.
 //   D. The other direction: the Web panel's play in tab B lets the web go in tab A.
+//   E. The resume in tab A: tab B's action is live again, its release suspended by the
+//      pause and not ended by it (the reopen rehearsal of 2026-09-25).
 //
 //   eval "$(bash dev/world.sh N --up)"
 //   node dev/verify_pausetabs.mjs                    # the fix: every check passes
@@ -136,13 +138,21 @@ try {
 		folder: 'Tabs', instruction: '@text ' + NT, offScreen: true }] }), 'm-tabs');
 
 	// ── A. released in tab A, seen in tab B ─────────────────────────────
-	const play = `#diamond-list .diamond-box[data-id="${id}"] .pptw .pptw-play`;
-	await p.evaluate((id) => { const b = document.querySelector(`#diamond-list .diamond-box[data-id="${id}"]`); if (b) b.scrollIntoView(); }, id);
+	// Play on the action's OWN light, the control the Diamond's dialog mounts beside its
+	// pulldown: a play on a branch releases no action (the reopen rehearsal, 2026-09-25).
+	await p.evaluate((id) => {
+		const w = window.DaimondUI && DaimondUI.pauseWidget(DaimondTriggers.node(id, 'm-tabs'), 'probe');
+		if (!w) return;
+		w.dataset.tabsprobe = '1';
+		w.style.cssText = 'position:fixed;top:8px;left:8px;z-index:2147483647';
+		document.body.appendChild(w);
+	}, id);
 	let pressed = true;
-	try { await p.click(play, { timeout: 8000 }); } catch (e) { pressed = false; }
+	try { await p.click('[data-tabsprobe] .pptw-play', { timeout: 8000 }); } catch (e) { pressed = false; }
+	await p.evaluate(() => { for (const x of document.querySelectorAll('[data-tabsprobe]')) x.remove(); });
 	await sleep(800);
 	const a0 = await where(p, id, 'm-tabs');
-	check('A. tab A: a person\'s play releases the daimon-written action', pressed && a0.allowed === true, JSON.stringify(a0));
+	check('A. tab A: a person\'s play on the action\'s own light releases the daimon-written action', pressed && a0.allowed === true, JSON.stringify(a0));
 
 	pB = await s.browser.newPage();
 	await pB.goto(APP, { waitUntil: 'domcontentloaded' });
@@ -207,6 +217,16 @@ try {
 	const a2 = await where(p, id, 'm-tabs');
 	check('D. play on the web in tab B lets the web go in tab A, and nothing else',
 		a2.web === false && a2.allowed === false, webPlay + ' | ' + JSON.stringify(a2));
+
+	// ── E. the resume in tab A, seen in tab B ──────────────────────────
+	await p.bringToFront();
+	await p.click('#pptw-global .pptw-act[data-act="play"]', { timeout: 8000 });
+	await sleep(1000);
+	await pB.bringToFront();
+	await sleep(1500);
+	const b2 = await where(pB, id, 'm-tabs');
+	check('E. tab B: the resume in tab A puts back the release the pause suspended', b2.allowed === true,
+		JSON.stringify(b2));
 } catch (err) {
 	check('the run finished', false, String(err && err.stack || err));
 } finally {

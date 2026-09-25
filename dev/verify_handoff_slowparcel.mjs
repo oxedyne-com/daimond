@@ -39,7 +39,7 @@
 // Needs the dev stack: app (DAIMOND_PORT), mock (DAIMOND_MOCK), gateway
 // (DAIMOND_GW_PORT). Pro-gated via pro.mjs.
 
-import { open, chat, signInAs, newChat, connectMock, shot, storedChats } from './harness.mjs';
+import { open, chat, signInAs, newChat, connectMock, shot, storedChats, mockLog, contentText } from './harness.mjs';
 import { makePagePro } from './pro.mjs';
 import { GW_URL } from './ports.mjs';
 
@@ -244,11 +244,19 @@ try {
 	// from the send: the parcel is delivered at CASE1_BLOCK_MS, and the answer must be
 	// home within 25 s of that. Before the fix B waited for "the next change" and it never
 	// came; and B acked its report off the relay before A collected it.
+	// THE ANSWER IS REAL ON A AS SOON AS THE TURN IS DONE (owner, queue item 7): the
+	// runner's whole final frame is adopted, marked `framed`, and the synced copy then
+	// replaces it by mid. So "home" below is a copy neither provisional nor framed.
+	const real1 = answersMatching(await untilChats(a, (cs) => answersMatching(cs, 'SLOWSYNC').some((m) => !m.provisional), 20000), 'SLOWSYNC');
+	check('CASE 1: A holds the answer real, not provisional, once the turn is done',
+		real1.length === 1 && !real1[0].provisional,
+		JSON.stringify(real1.map((m) => ({ mid: m.mid, prov: !!m.provisional, framed: !!m.framed }))) + ' at +' + Math.round((Date.now() - t0) / 1000) + 's');
+	const home = (m) => !m.provisional && !m.framed;
 	const syncedBy = t0 + CASE1_BLOCK_MS + 25000;
-	const aStore1 = await untilChats(a, (cs) => answersMatching(cs, 'SLOWSYNC').some((m) => !m.provisional),
+	const aStore1 = await untilChats(a, (cs) => answersMatching(cs, 'SLOWSYNC').some(home),
 		Math.max(1000, syncedBy - Date.now()));
 	const ans1 = answersMatching(aStore1, 'SLOWSYNC');
-	const synced1 = ans1.filter((m) => !m.provisional);
+	const synced1 = ans1.filter(home);
 	check('CASE 1: the answer synced back to A (its synced copy, not only the streamed one)',
 		synced1.length >= 1, 'in A store: ' + ans1.length + ' (synced ' + synced1.length + ') at +'
 		+ Math.round((Date.now() - t0) / 1000) + 's; ranOn=' + JSON.stringify(ans1.map((m) => m.ranOn || '')));
@@ -317,6 +325,11 @@ try {
 		ans2.length >= 1 && elapsed2 < 90, 'elapsed: ' + elapsed2 + 's');
 	check('CASE 2: exactly one answer -- one device ran it, never both',
 		ans2.length === 1, 'answers: ' + ans2.length);
+	// With no parcel from B, A's answer is the final frame, made real once done (item 7).
+	const real2 = answersMatching(await untilChats(a, (cs) => answersMatching(cs, 'DEADSYNC').some((m) => !m.provisional), 20000), 'DEADSYNC');
+	check('CASE 2: A holds the answer real, not provisional (the whole final frame, adopted on done)',
+		real2.length === 1 && !real2[0].provisional,
+		JSON.stringify(real2.map((m) => ({ mid: m.mid, prov: !!m.provisional, framed: !!m.framed, ranOn: String(m.ranOn || '').slice(0, 6) }))));
 	// The ANSWER's own tile, not the prompt echo.
 	const rendered2 = await drawnAndCleared(a.page, ans2.length ? ans2[0].mid : '', 20000);
 	check('CASE 2: A rendered the answer with the spinner cleared',
@@ -326,15 +339,30 @@ try {
 	b.page.off('console', bAllListener);
 
 	// ═══════════════════════════════════════════════════════════════════════════
-	// CASE 3 — STALE RUNNER (WS-HAND #3). B is synced, then A's chat gains extra
-	// messages (three ~20 KiB tool rows among them) while B's content pull is HELD.
-	// A dispatches: the seed is CLIPPED (fits the door), but B's copy of the thread is
-	// behind, so B's readiness (`holdsThread`) FAILS -- B hands the turn back
+	// CASE 3 — STALE RUNNER (WS-HAND #3). B is synced, then A's chat gains six rows
+	// B does not see (its content pull is HELD), two of them pastes too long for the
+	// errand's seed to carry together. A dispatches: the seed cannot bring B the whole
+	// thread, so B's readiness (`holdsThread`) FAILS -- B hands the turn back
 	// UNDELIVERABLE and never runs the model against the stale thread; A runs it.
+	//
+	// UNTIL 2026-09-25 this grew the thread by three 20 KiB `tool` rows, meant to
+	// overflow the seed. They never did: the seed cut each message to 16 KiB and so
+	// carried all of them, and a `tool` row is never fed to a model anyway, so B held
+	// every model-facing row and ran the turn correctly -- red on every build since
+	// the case was written. The same cut on a paste the model DOES read was the real
+	// fault (B ran on the first 16 KiB of it; seeds now carry whole messages or none).
+	// So the rows are now pastes sized from the page's own seed budget, the premise is
+	// checked before B is judged, and what the model was sent is read back.
 	// ═══════════════════════════════════════════════════════════════════════════
 	console.log('\nCASE 3 — a runner whose thread is behind hands back UNDELIVERABLE (does not run stale)');
+	// The mock's log is the world's, kept across every run the world has served (`world.sh --up`
+	// appends to it), so what this case sent is read from its own start: a stale run left by an
+	// earlier build's CASE 3 is not this one's (2026-09-25: 3 of 4 "cut" requests were hours old).
+	const since3 = Date.now();
 	const bAll3 = []; const bAll3Listener = (m) => bAll3.push(m.text());
 	b.page.on('console', bAll3Listener);
+	// Two pastes of 0.6 of the seed budget each, so no seed carries both whole.
+	const pasteLen = Math.floor(0.6 * await a.page.evaluate(() => window.DaimondPeer.SEED_MAX_CHARS || 65536));
 
 	// The desktop width FIRST: CASE 2 left A at phone width, where the rail's new-chat
 	// control is off the screen, and the click threw before CASE 3 began (2026-09-24).
@@ -349,10 +377,10 @@ try {
 	await b.page.waitForTimeout(2500);
 	await settle(b.page);
 
-	// HOLD B's content pull, then grow A's thread by six model-facing rows (three of
-	// them ~20 KiB tool outputs) that B will not see while gated.
+	// HOLD B's content pull, then grow A's thread by six model-facing rows (two of
+	// them long pastes, each marked at both ends) that B will not see while gated.
 	gate.blocking = true;
-	await a.page.evaluate(async () => {
+	await a.page.evaluate(async (pasteLen) => {
 		await new Promise((res) => {
 			const req = indexedDB.open('daimond-chats');
 			req.onsuccess = () => {
@@ -364,11 +392,11 @@ try {
 					const c = cs[0];
 					if (c) {
 						c.messages = c.messages || [];
-						const big = 'T'.repeat(20 * 1024);
 						for (let i = 0; i < 6; i++) {
-							const isTool = i % 2 === 1;
-							c.messages.push({ role: isTool ? 'tool' : 'assistant',
-								content: isTool ? big : ('row ' + i), mid: 'grow-' + i, ts: Date.now() + i });
+							const isPaste = i === 1 || i === 3;
+							const body = 'PASTE' + i + ' ' + 'lorem ipsum '.repeat(Math.ceil(pasteLen / 12)).slice(0, pasteLen) + ' ENDPASTE' + i;
+							c.messages.push({ role: isPaste ? 'user' : 'assistant',
+								content: isPaste ? body : ('row ' + i), mid: 'grow-' + i, ts: Date.now() + i });
 						}
 						c.updatedAt = Date.now(); store.put(c);
 					}
@@ -377,15 +405,41 @@ try {
 			};
 			req.onerror = () => res();
 		});
-	});
+	}, pasteLen);
 	// Reload A so the grown thread is the live one it dispatches from.
 	await a.page.reload({ waitUntil: 'domcontentloaded' });
 	await a.page.waitForFunction(() => !!window.DaimondSync && !!window.DaimondPeer, null, { timeout: 20000 }).catch(() => {});
 	await a.page.waitForTimeout(1500);
 	await a.page.setViewportSize({ width: 420, height: 860 });
 	await a.page.waitForTimeout(300);
+	// A reloaded page knows no peer until presence is read again, and with none awake
+	// it runs the turn itself: nothing is handed off and nothing below is tested.
+	await wakeB();
+	const aSeesB3 = await until(a.page, (self) => (window.DaimondPresence.awake(self, Date.now()) || []).length >= 1, idA, 15000);
+	check('CASE 3: A sees B awake before the send (the turn is handed off, not run here)', aSeesB3);
 
 	const PROMPT3 = 'STALERUN answer against the whole thread';
+	// THE PREMISE, CHECKED. B is only "behind" if the errand cannot bring it the whole
+	// thread: the seed A would send for this turn, set against the chat A holds.
+	const premise = await a.page.evaluate(({ id, prompt }) => new Promise((res) => {
+		const req = indexedDB.open('daimond-chats');
+		req.onsuccess = () => {
+			const all = req.result.transaction('chats', 'readonly').objectStore('chats').getAll();
+			all.onsuccess = () => {
+				const c = (all.result || []).find((x) => x.id === id);
+				if (!c) { res({ err: 'no chat' }); return; }
+				const probe = { id: c.id, messages: (c.messages || []).concat([{ role: 'user', content: prompt, mid: 'sp-premise' }]) };
+				const P = window.DaimondPeer, seed = P.seedFrom(probe, 'sp-premise'), n = P.threadSig(probe, 'sp-premise').n;
+				const byMid = {}; for (const m of probe.messages) byMid[m.mid] = m;
+				const whole = ((seed && seed.msgs) || []).filter((m) => m.mid !== 'sp-premise' && byMid[m.mid] && byMid[m.mid].content === m.content).length;
+				res({ n, whole });
+			};
+			all.onerror = () => res({ err: 'read' });
+		};
+		req.onerror = () => res({ err: 'open' });
+	}), { id: newId3, prompt: PROMPT3 });
+	check('CASE 3: the errand cannot bring B the whole thread (the premise: B is behind)',
+		premise && premise.n > 0 && premise.whole < premise.n, JSON.stringify(premise));
 	await a.page.fill('#chat-input', PROMPT3);
 	await a.page.click('#chat-send', { force: true });
 
@@ -394,11 +448,21 @@ try {
 	const ranA3 = ans3.filter((m) => String(m.ranOn) === String(idA)).length;
 	const ranB3 = ans3.filter((m) => String(m.ranOn) === String(idB)).length;
 	const undeliverable3 = bAll3.filter((e) => /reconstruct undeliverable/i.test(e) && /incomplete/i.test(e));
-	const stalePromptRun = bAll3.filter((e) => /reconstruct prompt from errand/i.test(e));
 	check('CASE 3: B logged reconstruct UNDELIVERABLE … incomplete (refused the stale thread)',
 		undeliverable3.length >= 1, 'undeliverable-incomplete lines: ' + undeliverable3.length);
-	check('CASE 3: B NEVER ran the stale prompt-from-errand', stalePromptRun.length === 0,
-		'prompt-from-errand lines: ' + stalePromptRun.length);
+	// WHAT THE MODEL WAS SENT. Every request for this turn must carry both pastes whole,
+	// end markers and all: a cut paste, or a missing one, is the stale run itself. (The
+	// check this replaces looked for a diagnostics line on B's console, where
+	// diagnostics never print, so it passed on every build.)
+	const turnReqs = mockLog().filter((e) => Date.parse(e.at) >= since3
+		&& (e.messages || []).some((m) => /STALERUN/.test(contentText(m.content))));
+	const cutReqs = turnReqs.filter((e) => {
+		const all = (e.messages || []).map((m) => contentText(m.content)).join('\n');
+		return !/ENDPASTE1/.test(all) || !/ENDPASTE3/.test(all);
+	});
+	check('CASE 3: the model never ran the turn on a cut or partial thread (both pastes whole in every request)',
+		turnReqs.length >= 1 && cutReqs.length === 0,
+		'requests: ' + turnReqs.length + ', cut or partial: ' + cutReqs.length);
 	check('CASE 3: the turn was answered exactly once, on A (B did not run the stale thread)',
 		ans3.length === 1 && ranA3 === 1 && ranB3 === 0,
 		'answers: ' + ans3.length + ' onA: ' + ranA3 + ' onB: ' + ranB3);

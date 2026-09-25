@@ -3875,6 +3875,7 @@ mod tests {
 			keeper:      String::new(),
 			unconfirmed: Vec::new(),
 			by_model:    false,
+			restoring:   0,
 		}
 	}
 

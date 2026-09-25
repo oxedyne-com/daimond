@@ -30,7 +30,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { open, signInAs, connectMock, shot } from './harness.mjs';
+import { open, signInAs, connectMock, shot, markHere } from './harness.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const WWW  = path.join(HERE, '..', 'www');
@@ -158,11 +158,15 @@ check('a Diamond to work in', !!diamondId, diamondId);
 const self = 'diamond:' + diamondId;
 
 // The user's own mark: `code/`, `holds`, `by: user` — the one thing every
-// break above must leave standing.
-await call('add_link', [diamondId, self, 'dir:[browser]code', 'holds', '', 'user']);
+// break above must leave standing. Pressed through the device's own record
+// (R2, `f43d15e7`), as a real press does: a raw `add_link` alone is a claim,
+// never a grant, and `bounds().attached` reads only what is in force here.
+await markHere(s, diamondId, 'dir:[browser]code');
 // A dangling reference: attached the way a person's own ◈ would, but nothing
-// is at this path — as if the daimon had since deleted the file.
-await call('add_link', [diamondId, self, 'file:[browser]misc/ghost.txt', 'holds', '', 'user']);
+// is at this path — as if the daimon had since deleted the file. Pressed too,
+// so the "gone" row below is a real in-force mark whose file vanished, not an
+// unconfirmed one that was never in force to begin with.
+await markHere(s, diamondId, 'file:[browser]misc/ghost.txt');
 
 // The fold's own harvest: two files under the mark, one outside it, one a
 // dotfile outside it — `harvestArtefacts` itself, not a re-implementation of it.
@@ -197,7 +201,10 @@ check('the `produced` file never reaches the fence', !(bounds.attached || []).in
 
 // ── 2. Nested paths draw once ────────────────────────────────────────────
 // A file the USER attaches by hand, directly under the already-marked folder.
-await call('add_link', [diamondId, self, 'file:[browser]code/nested.rs', 'holds', '', 'user']);
+// Pressed as well, so the dedupe below is proved on two marks both in force —
+// otherwise an unpressed nested.rs would never reach the fence regardless of
+// the dedupe, and check 2 would prove nothing.
+await markHere(s, diamondId, 'file:[browser]code/nested.rs');
 await page.waitForTimeout(200);
 const bounds2 = await page.evaluate((id) => DaimondDiamond.bounds(id), diamondId);
 check('a path under an attached folder is not a second entry in the fence',

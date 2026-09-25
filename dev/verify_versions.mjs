@@ -729,6 +729,10 @@ try {
 
 	// ── 6. Restore creates a version ────────────────────────────────
 	console.log('\n6. restore is never destructive');
+	// READ AGAIN FIRST. Section 5 restored a.md, and since RD of release 5.1's third QA a
+	// restore keeps what the daimon last read: a write from its read before the restore is
+	// refused ("the person restored it from its History"), so the daimon reads, then writes.
+	await steer(s, `@tool file_read {"path":"${D}/notes/a.md"}`);
 	await steer(s, `@tool file_write {"path":"${D}/notes/a.md","content":"alpha moved again"}`);
 	const preHash = sha('alpha moved again');
 	// What the turn above actually left on disk. A restore that finds the file already at

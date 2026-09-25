@@ -222,14 +222,159 @@
 		save();
 	}
 
-	/// Store the store. True when it landed; one the box refuses is held owed by
-	/// `DaimondStore`, retried and said on screen, and this tab goes on with it
-	/// (SIM-11). This tab's copy is the whole of it, so it is retried as it stands.
+	/// Store the store: what the disk holds now (a sibling tab's save) is merged in
+	/// first, by the store's law, and the result written. True when it landed; one the
+	/// box refuses is held owed by `DaimondStore`, merged over the disk by the same law
+	/// on every retry, and said on screen (SIM-11).
 	function save() {
+		takeDisk();
 		noteRunnable();
-		var landed = window.DaimondStore.put(KEY, store);
+		var landed = window.DaimondStore.put(KEY, store, storeLaw);
 		if (deps && deps.onChange) deps.onChange();
 		return landed;
+	}
+
+	// ── Two tabs, one store ─────────────────────────────────────────
+	// Every tab of a device holds the whole store in memory, and a write in one tab
+	// reaches the others as a `storage` event. Replacing this tab's copy with the
+	// disk's lost whichever change this tab was making across an await (a key being
+	// sealed, a parcel's key being opened): the mutator went on writing to the object
+	// that had been swapped out, and its save wrote the sibling's copy back (r52d QA
+	// F1). So the disk's copy is MERGED into this one, in place, fact by fact on the
+	// same stamps the parcel merge decides on, and every save reads, merges and
+	// writes. Two tabs' saves then converge whatever order they land in, and a
+	// mutator that re-reads its row after an await sees the other tab's change.
+	//
+	// The law, per provider row, each fact on its own stamp:
+	//   - the configuration (name, URL, key, sealed key) on `touched`, the later one
+	//     whole, and its credit record with it: a probed balance or a base is about
+	//     the key the row held when it was taken;
+	//   - the catalogue (models and rates) on `fetched`;
+	//   - each model's routing text on its own `routedAt`;
+	//   - at an equal configuration, the credit base on `baseAt` and the probed
+	//     figure on `asOf`.
+	// A row the provider tombstones name is gone from both sides unless it was
+	// re-added since, exactly as `applySync` rules. The default and the drafting
+	// model are one stamped choice each; `lastRun` keeps the later runnable choice.
+
+	/// A deep copy, for a record taken from the other side.
+	function copy(v) { return (v === undefined) ? undefined : JSON.parse(JSON.stringify(v)); }
+
+	/// The facts `touched` decides, as the tie between two equal stamps compares them.
+	function localConfig(p) {
+		return { name: String(p.name || ''), url: String(p.url || ''),
+			key: String(p.key || ''), keyEnc: String(p.keyEnc || '') };
+	}
+
+	/// Merge the credit records of two rows that hold one configuration: the base on
+	/// its own stamp, the probed figure on when it was asked.
+	function mergeCredit(mine, r) {
+		if (!r) return mine;
+		if (!mine) return copy(r);
+		var out = copy(mine);
+		if (DaimondStamp.beats(r.baseAt, r.baseUsd == null ? null : r.baseUsd,
+				mine.baseAt, mine.baseUsd == null ? null : mine.baseUsd)) {
+			out.baseUsd = r.baseUsd;
+			out.baseAt  = r.baseAt;
+		}
+		if (DaimondStamp.beats(r.asOf, [r.mode || '', r.remainingUsd == null ? null : r.remainingUsd],
+				mine.asOf, [mine.mode || '', mine.remainingUsd == null ? null : mine.remainingUsd])) {
+			out.mode         = r.mode;
+			out.remainingUsd = r.remainingUsd;
+			out.asOf         = r.asOf;
+		}
+		return out;
+	}
+
+	/// Merge one provider row `r` into `mine`, in place. Does the key change?
+	function mergeRow(mine, r) {
+		var keyWas = mine.keyEnc + '\n' + mine.key;
+		var cm = localConfig(mine), cr = localConfig(r);
+		if (DaimondStamp.beats(r.touched, cr, mine.touched, cm)) {
+			mine.name = cr.name; mine.url = cr.url; mine.key = cr.key; mine.keyEnc = cr.keyEnc;
+			mine.touched = r.touched;
+			if (r.credit) mine.credit = copy(r.credit); else delete mine.credit;
+		} else if (ms(r.touched) === ms(mine.touched) && DaimondStamp.canon(cr) === DaimondStamp.canon(cm)) {
+			var c = mergeCredit(mine.credit, r.credit);
+			if (c) mine.credit = c;
+		}
+		var mModels = (Array.isArray(mine.models) ? mine.models.slice() : []).sort();
+		var rModels = (Array.isArray(r.models) ? r.models.slice() : []).sort();
+		if (DaimondStamp.beats(r.fetched, [rModels, sortedRates(r.rates) || null],
+				mine.fetched, [mModels, sortedRates(mine.rates) || null])) {
+			mine.models  = rModels;
+			if (r.rates) mine.rates = copy(r.rates); else delete mine.rates;
+			mine.fetched = r.fetched;
+		}
+		var rr = r.routing || {}, ra = r.routedAt || {};
+		Object.keys(rr).concat(Object.keys(ra)).forEach(function (m) {
+			var mr = mine.routing || {}, ma = mine.routedAt || {};
+			if (!DaimondStamp.beats(ra[m], rr[m] || '', ma[m], mr[m] || '')) return;
+			mine.routing  = mr;
+			mine.routedAt = ma;
+			if (rr[m]) mr[m] = rr[m]; else delete mr[m];
+			if (ra[m]) ma[m] = ra[m];
+		});
+		return mine.keyEnc + '\n' + mine.key !== keyWas;
+	}
+
+	/// Merge the store `from` into `into`, in place, by the law above. The ids whose key
+	/// moved in `into`, a row gone included, so the opened keys can follow.
+	function absorb(into, from) {
+		var moved = [], dead = tombs();
+		var gone = function (id, p) { return id !== CREDITS && dead[id] && !(ms(p.touched) > ms(dead[id])); };
+		Object.keys(into.providers).forEach(function (id) {
+			if (gone(id, into.providers[id])) { delete into.providers[id]; moved.push(id); }
+		});
+		Object.keys(from.providers || {}).sort().forEach(function (id) {
+			var r = from.providers[id];
+			if (!r || typeof r !== 'object' || gone(id, r)) return;
+			var mine = into.providers[id];
+			if (!mine) { into.providers[id] = copy(r); moved.push(id); return; }
+			if (mergeRow(mine, r)) moved.push(id);
+		});
+		if (from.def && choiceWins(from.def, ms(from.defAt), into.def || {}, ms(into.defAt))) {
+			into.def   = { provider: String(from.def.provider || ''), model: String(from.def.model || '') };
+			into.defAt = ms(from.defAt);
+		}
+		if (from.draft && choiceWins(from.draft, ms(from.draftAt), into.draft || { provider: '', model: '' }, ms(into.draftAt))) {
+			into.draft   = { provider: String(from.draft.provider || ''), model: String(from.draft.model || '') };
+			into.draftAt = ms(from.draftAt);
+		}
+		['def', 'draft'].forEach(function (slot) {
+			var r = from.lastRun && from.lastRun[slot];
+			if (!r) return;
+			var mine = into.lastRun && into.lastRun[slot];
+			if (mine && !DaimondStamp.beats(r.at, [r.provider, r.model], mine.at, [mine.provider, mine.model])) return;
+			(into.lastRun = into.lastRun || {})[slot] = copy(r);
+		});
+		return moved;
+	}
+
+	/// `DaimondStore`'s law for this record: what this tab owes, merged over what the
+	/// box holds, so a retried write never undoes a sibling's.
+	function storeLaw(stored, owed) {
+		if (!stored || stored.v !== 2 || !stored.providers) return owed;
+		var out = copy(owed);
+		absorb(out, stored);
+		return out;
+	}
+
+	/// Merge the disk's copy into this tab's, in place. The opened keys follow the stored
+	/// ones: a key another tab set, changed or removed is dropped here and opened again,
+	/// as a boot opens it (`unseal` answers its own onChange once they are open). The
+	/// minted credits key is memory only, so it stays. Did anything move?
+	function takeDisk() {
+		var disk = window.DaimondStore.get(KEY, null);
+		if (!disk || disk.v !== 2 || !disk.providers) return false;
+		var moved = absorb(store, disk), reopen = [];
+		moved.forEach(function (id) {
+			if (id === CREDITS) return;
+			delete plain[id];
+			if (store.providers[id]) reopen.push(id);
+		});
+		if (reopen.length) unseal(reopen);
+		return moved.length > 0;
 	}
 
 	/// The retry budget for `loadSettled`, mirroring identity.js's `existsSettled`.
@@ -352,15 +497,22 @@
 
 	// ── Keys ────────────────────────────────────────────────────────
 
-	/// Decrypt every stored key into memory. Called once the user unlocks: a sealed key is
-	/// unreadable until then, which is the point of sealing it.
-	async function unseal() {
+	/// Decrypt every stored key into memory, or only the rows `only` names (the keys another
+	/// tab moved). Called once the user unlocks: a sealed key is unreadable until then,
+	/// which is the point of sealing it.
+	async function unseal(only) {
 		if (!window.DaimondIdentity || !DaimondIdentity.isUnlocked()) return;
-		for (var id in store.providers) {
-			var p = store.providers[id];
+		var ids = Array.isArray(only) ? only : Object.keys(store.providers);
+		for (var i = 0; i < ids.length; i++) {
+			var id = ids[i], p = store.providers[id];
+			if (!p) continue;
 			if (p.keyEnc) {
-				try { plain[id] = await DaimondIdentity.unwrap(p.keyEnc); }
-				catch (e) { plain[id] = ''; }
+				var enc = p.keyEnc, k = '';
+				try { k = await DaimondIdentity.unwrap(enc); }
+				catch (e) { k = ''; }
+				// Opened for the row as it was: a key another tab set meanwhile is opened
+				// by the unseal its merge started.
+				if (store.providers[id] && store.providers[id].keyEnc === enc) plain[id] = k;
 			} else if (p.key) {
 				plain[id] = p.key;
 			}
@@ -380,17 +532,22 @@
 	/// kept -- nothing is dropped that the identity can still open.
 	async function dropUnreadableKeys() {
 		if (!window.DaimondIdentity || !DaimondIdentity.isUnlocked()) return [];
-		var cleared = [];
-		for (var id in store.providers) {
-			var p = store.providers[id];
-			if (!p.keyEnc) continue;
-			try { plain[id] = await DaimondIdentity.unwrap(p.keyEnc); }
-			catch (e) {
-				cleared.push(labelOf(id));
-				p.keyEnc = '';
-				p.key    = '';
-				delete plain[id];
-			}
+		var cleared = [], ids = Object.keys(store.providers);
+		for (var i = 0; i < ids.length; i++) {
+			var id = ids[i], p = store.providers[id];
+			if (!p || !p.keyEnc) continue;
+			var enc = p.keyEnc, k = null;
+			try { k = await DaimondIdentity.unwrap(enc); } catch (e) { k = null; }
+			// The row as it stands after the await, and only while it still holds the seal
+			// that was tried: another tab may have set a key since.
+			p = store.providers[id];
+			if (!p || p.keyEnc !== enc) continue;
+			if (k !== null) { plain[id] = k; continue; }
+			cleared.push(labelOf(id));
+			touch(id);						// a stamped clear, so a sibling's copy cannot put it back
+			p.keyEnc = '';
+			p.key    = '';
+			delete plain[id];
 		}
 		if (cleared.length) {
 			save();
@@ -431,9 +588,10 @@
 	}
 
 	async function resealAfterRekey() {
-		var failed = [], unread = [];
-		for (var id in store.providers) {
-			var p = store.providers[id];
+		var failed = [], unread = [], sealed = {}, ids = Object.keys(store.providers);
+		for (var i = 0; i < ids.length; i++) {
+			var id = ids[i], p = store.providers[id];
+			if (!p) continue;
 			var key = plain[id];
 			if (!key) {
 				// Sealed, and `unseal` could not open it — it turns a failed unwrap
@@ -445,11 +603,19 @@
 				if (p.keyEnc) unread.push(labelOf(id));
 				continue;
 			}
-			try {
-				p.keyEnc = await DaimondIdentity.wrap(key);
-				p.key    = '';					// never leave a plaintext copy behind
-			} catch (e) { failed.push(labelOf(id)); }
+			var was = p.keyEnc + '\n' + p.key;
+			try { sealed[id] = { enc: await DaimondIdentity.wrap(key), was: was }; }
+			catch (e) { failed.push(labelOf(id)); }
 		}
+		// Written after the last await, onto the rows as they stand now: a row another tab
+		// removed stays removed, and a key another tab set meanwhile is newer than this one.
+		Object.keys(sealed).forEach(function (id) {
+			var p = store.providers[id];
+			if (!p || p.keyEnc + '\n' + p.key !== sealed[id].was) return;
+			touch(id);						// the new seal outranks every copy of the old one
+			p.keyEnc = sealed[id].enc;
+			p.key    = '';					// never leave a plaintext copy behind
+		});
 		save();
 		return { ok: !failed.length && !unread.length, failed: failed, unread: unread };
 	}
@@ -474,18 +640,21 @@
 
 	/// Store a key for a provider, sealed under the passphrase where there is one.
 	async function setKey(id, key) {
+		if (!store.providers[id]) return;
+		// Sealed first, and the row written after the await, in one step: another tab may
+		// save the store meanwhile, and its copy is merged into this one, so the row is read
+		// again here rather than held across the await (r52d QA F1).
+		var sealed = '';
+		if (window.DaimondIdentity && DaimondIdentity.isUnlocked()) {
+			try { sealed = await DaimondIdentity.wrap(key); }
+			catch (e) { sealed = ''; }             // no identity to seal under: the old trade
+		}
 		var p = store.providers[id];
-		if (!p) return;
+		if (!p) return;						// removed meanwhile: the removal is the later word
 		touch(id);							// a configuration change the other device must see
 		plain[id] = key;
-		p.key = '';
-		p.keyEnc = '';
-		if (window.DaimondIdentity && DaimondIdentity.isUnlocked()) {
-			try { p.keyEnc = await DaimondIdentity.wrap(key); }
-			catch (e) { p.key = key; }             // no identity to seal under: the old trade
-		} else {
-			p.key = key;
-		}
+		p.keyEnc = sealed;
+		p.key    = sealed ? '' : key;
 		// A key that was just pasted is a key whose balance nobody has asked about. A stale
 		// figure from the PREVIOUS key would be worse than none, so any credit record goes —
 		// and with it the gate's memory of the OLD key's probes, whose floor and whose backoff
@@ -983,9 +1152,11 @@
 			var rr = ratesOf(m);
 			if (mid && rr) rates[mid] = rr;
 		});
-		store.providers[id].models  = ids;
-		store.providers[id].rates   = rates;
-		store.providers[id].fetched = Date.now();
+		var p = store.providers[id];
+		if (!p) return ids;					// removed while it was asked
+		p.models  = ids;
+		p.rates   = rates;
+		p.fetched = Date.now();
 		save();
 		return ids;
 	}
@@ -1030,9 +1201,11 @@
 		var p = store.providers[providerId];
 		if (!p) return;
 		if (!p.routing) p.routing = {};
+		if (!p.routedAt) p.routedAt = {};
 		text = String(text || '').trim();
 		if (text) p.routing[model] = text;
 		else delete p.routing[model];
+		p.routedAt[model] = DaimondStamp.next(p.routedAt[model]);	// a clear is stamped too
 		save();
 	}
 
@@ -1407,6 +1580,10 @@
 		}
 		if (typeof remaining !== 'number' || !isFinite(remaining)) return null;
 
+		// The row as it stands after the awaits: a figure about a key the row no longer
+		// holds is not kept.
+		p = store.providers[id];
+		if (!p || keyFor(id) !== key) return null;
 		var asOf = Date.now();
 		p.credit = {
 			mode:         'auto',
@@ -1728,6 +1905,7 @@
 	}
 
 	function removeProvider(id) {
+		var gone = store.providers[id];
 		delete store.providers[id];
 		delete plain[id];
 		delete probes[id];					// no floor to hold back a key that is gone
@@ -1738,7 +1916,10 @@
 		// The tombstone also clears a default or drafting model on this provider:
 		// see `standing`. Not a write to the choice itself, so a choice another
 		// device made meanwhile is not undone by this deletion (SIM-18).
-		tombstone(id);
+		// Stamped past the row it removes, so the deletion outranks every copy of that
+		// row whatever the clocks: a row touched by a device whose clock runs ahead, or a
+		// millisecond ago, would otherwise outrank the removal and come back on the save.
+		tombstone(id, gone ? DaimondStamp.next(gone.touched) : 0);
 		save();
 	}
 
@@ -1760,8 +1941,8 @@
 	function tombs() {
 		return (window.DaimondCore && DaimondCore.tombs) ? DaimondCore.tombs(TOMBS) : {};
 	}
-	function tombstone(id) {
-		if (window.DaimondCore && DaimondCore.tombstone) DaimondCore.tombstone(TOMBS, id);
+	function tombstone(id, at) {
+		if (window.DaimondCore && DaimondCore.tombstone) DaimondCore.tombstone(TOMBS, id, at);
 	}
 	function mergeTombs(incoming) {
 		return (window.DaimondCore && DaimondCore.mergeTombs)
@@ -2046,20 +2227,28 @@
 				// read must never bury a working one. When it DOES open (an ordinary key
 				// rotation on the shared identity) nothing is restored and the in-memory
 				// key is still left alone this session, exactly as the gap-fill below.
+				// Each row is read again after its await, and acted on only while it still
+				// holds the sealed key that was adopted: another tab may have saved meanwhile.
+				var row = store.providers[pid], enc = row ? row.keyEnc : '';
+				if (!row) continue;
 				if (guard[pid]) {
 					var opens = true;
-					try { await DaimondIdentity.unwrap(store.providers[pid].keyEnc); }
+					try { await DaimondIdentity.unwrap(enc); }
 					catch (e) { opens = false; }
-					if (!opens) {
-						store.providers[pid].keyEnc = guard[pid].keyEnc;
-						store.providers[pid].key    = guard[pid].key;
+					row = store.providers[pid];
+					if (!opens && row && row.keyEnc === enc) {
+						row.keyEnc = guard[pid].keyEnc;
+						row.key    = guard[pid].key;
 						if (!plain[pid]) plain[pid] = guard[pid].plain;
 					}
 					continue;							// this session's key stays this session's
 				}
 				if (plain[pid]) continue;				// this session's key stays this session's
-				try { plain[pid] = await DaimondIdentity.unwrap(store.providers[pid].keyEnc); }
-				catch (e) { /* sealed under something this device cannot open; leave it keyless */ }
+				var opened = '';
+				try { opened = await DaimondIdentity.unwrap(enc); }
+				catch (e) { opened = ''; }				// sealed under something this device cannot open; leave it keyless
+				row = store.providers[pid];
+				if (opened && row && row.keyEnc === enc && !plain[pid]) plain[pid] = opened;
 			}
 		}
 		if (added || updated) {
@@ -2887,6 +3076,31 @@
 	function init(d) {
 		deps = d || {};
 		load();
+	}
+
+	/// Take up the store another tab of this device wrote: merged into this tab's copy in
+	/// place (see "Two tabs, one store"), never swapped for it.
+	function reloadFromDisk(e) {
+		if (e && e.newValue === null && window.DaimondStore.get(KEY, null) === null) {
+			// Erased (a Forget, a sign-out): the erasure is the later word, so this tab's
+			// copy goes with it rather than a merge writing it back.
+			load();
+			Object.keys(plain).forEach(function (id) { if (id !== CREDITS) delete plain[id]; });
+		} else {
+			takeDisk();
+		}
+		if (deps.onChange) deps.onChange();	// redraw, and let sync carry what this tab now holds
+	}
+
+	// Another tab of this device wrote the store. A tab that never took it up would carry
+	// the sibling's change in no parcel it collects: a provider added in a tab that closed
+	// before its push landed was lost with that tab.
+	// The browser fires this in the OTHER tabs only; a null key is the whole box cleared.
+	if (typeof window !== 'undefined' && window.addEventListener) {
+		window.addEventListener('storage', function (e) {
+			if (!deps || !e || (e.key !== null && !(e.key && e.key.indexOf(KEY) !== -1))) return;
+			reloadFromDisk(e);
+		});
 	}
 
 	// The panel stays mounted, so a language change redraws it where it stands.

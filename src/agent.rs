@@ -3966,6 +3966,7 @@ mod tests {
             keeper:      String::new(),
             unconfirmed: Vec::new(),
             by_model:    false,
+            restoring:   0,
         })
     }
 
@@ -4015,6 +4016,7 @@ mod tests {
                 keeper:      String::new(),
                 unconfirmed: Vec::new(),
                 by_model:    false,
+                restoring:   0,
             })
     }
 
@@ -4608,6 +4610,7 @@ mod tests {
             keeper:      String::new(),
             unconfirmed: Vec::new(),
             by_model:    false,
+            restoring:   0,
         });
         r.tools = vec![crate::tools::Tool::FileRead, crate::tools::Tool::FileWrite];
         r

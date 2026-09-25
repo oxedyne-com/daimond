@@ -12,10 +12,10 @@
    log so History is ONE list, and the one thing Rust deliberately
    does not do: writing a restored MACHINE file back. A file in a
    folder marked into the diamond does not live in the store, so
-   `versions_restore` names it in `machine[]` and leaves it to the
-   fenced `file_write` door -- the same door `writeOpenFile` uses,
-   under the diamond's own bounds. The engine never writes outside
-   the store, and this is where that rule is kept.
+   `versions_restore_open` names it in `machine[]` and leaves it to
+   the fenced door's `file_put_back`, which writes the stored body
+   byte for byte under the diamond's own bounds. The engine never
+   writes outside the store, and this is where that rule is kept.
 
    IT ANSWERS ON A BUILD THAT HAS NONE OF IT. `ready()` asks the
    engine whether the exports are there, and every call answers
@@ -76,6 +76,19 @@
 		if (!id || !path || !ready()) return;
 		try { app().versions_mark_dirty(String(id), String(path)); }
 		catch (e) { /* the walk at turn start still catches it */ }
+	}
+
+	/// Mark a path the user's door is ABOUT TO write, keeping what it holds now as the
+	/// row's `was` (2026-09-25): a file the store had never seen was recorded as
+	/// created, so a Restore to before the edit offered to delete it as "older than
+	/// your file". Awaited before the write; it never rejects, and on an engine
+	/// without the export it is the plain mark.
+	async function dirtyBefore(id, path) {
+		if (!id || !path || !ready()) return;
+		var a = app();
+		if (typeof a.versions_mark_before !== 'function') { dirty(id, path); return; }
+		try { await a.versions_mark_before(String(id), String(path)); }
+		catch (e) { dirty(id, path); }
 	}
 
 	/// Everything a share just landed is a change the user made (cause `share`).
@@ -193,16 +206,21 @@
 
 	// ── Restore ──────────────────────────────────────────────────
 	//
-	// The engine writes the store half and records the `restore` manifest first, so
-	// what was there is one row up and a restore can itself be restored. What it
-	// does NOT write is a file on the user's own machine: those are named in
-	// `machine[]` and go back through the fenced `file_write` door, under the
-	// diamond's current bounds. A mark since withdrawn is refused there, in the
-	// fence's own sentence, and the file on disk is untouched.
+	// A restore is OPENED, ACTED ON and CLOSED (2026-09-25, release 5.1's F5 fix
+	// and its QA). `versions_restore_open` writes nothing: it names the person's own
+	// files -- in the folder they opened, or on the machine -- in `machine[]`, with a
+	// ticket. Each goes back through the fenced door under the diamond's current
+	// bounds, carrying that ticket, and the door keeps what it replaces or removes AT
+	// THE ACT: the person's save since the version, and one made while the question
+	// below was open. A mark since withdrawn is refused there, in the fence's own
+	// sentence, and the file on disk is untouched. `versions_restore_close` then puts
+	// the diamond's own files back and records everything that landed as ONE
+	// `restore` version, so what was there is one row up and a restore can itself be
+	// restored.
 
-	/// Write back the machine half of a restore. Answers the paths it refused, to
-	/// be added to the engine's own list.
-	async function writeMachine(id, entries) {
+	/// Write back the machine half of a restore, under its ticket. Answers the paths
+	/// it refused, to be added to the engine's own list.
+	async function writeMachine(id, entries, ticket) {
 		var refused = [];
 		if (!(entries || []).length) return refused;
 		// THE DIAMOND'S REACH AS IT IS NOW, and not as it was when the file was
@@ -234,27 +252,42 @@
 		var run = function (tool, args) {
 			return eng.run_diamond_tool(String(id),
 				JSON.stringify(marks.attached || []), JSON.stringify(marks.read_only || []),
-				tool, JSON.stringify(args));
+				tool, JSON.stringify(args), ticket);
 		};
+		// A FILE IN THE PERSON'S OWN FOLDER IS NEVER TAKEN AWAY UNASKED (F5, 2026-09-25).
+		// A whole-version restore once deleted marked files straight off the open folder
+		// under a question that said only "Today's state is kept". A path here that is
+		// `gone` is one the store saw being CREATED after the version, so putting the
+		// version back would delete it: the person is asked once, naming the files, and
+		// nothing is deleted without their yes. Only a file the door can keep a copy of
+		// (`kept`: in the open folder, under the size ceiling) is put to them, and the
+		// copy is taken as it goes, after their yes -- so a yes is undoable too. One the
+		// door could not keep (a hand's path, or past the ceiling) is left where it is
+		// and said so.
+		var gone = (entries || []).filter(function (e) { return e && e.gone && e.kept === true; });
+		var takeGone = gone.length ? await askGone(gone) : false;
 		for (var i = 0; i < (entries || []).length; i++) {
 			var e = entries[i];
 			var r = null;
 			try {
 				if (e.gone) {
+					if (!takeGone || e.kept !== true) {
+						refused.push({ path: e.path, why: tOr('versions.gone_kept', 'Left in your folder') });
+						continue;
+					}
 					// The path did not exist at that version, so restoring TO it means
-					// taking it away again. Recorded in the `restore` manifest first by
-					// the engine, so the bytes are one row up.
+					// taking it away again, through the Diamond's fence.
 					r = await run('file_delete', { path: e.path });
 				} else if (e.skipped) {
 					refused.push({ path: e.path, why: tOr('versions.too_big', 'Too large to keep') });
 					continue;
 				} else {
-					var text = await body(id, e.hash);
-					if (text === null) {
-						refused.push({ path: e.path, why: tOr('versions.not_here', 'Not on this device') });
-						continue;
-					}
-					r = await run('file_write', { path: e.path, content: text });
+					// THE STORED BYTES, BY THEIR HASH, and never the text of them (2026-09-25).
+					// `file_write` took the body as lossy UTF-8, and turned it into a new document
+					// for a `.docx` path, so a person's PNG, PDF or Word file came back corrupt.
+					// The door reads the body out of the store and writes it byte for byte; on the
+					// machine, whose hand carries text only, bytes that are not text are left.
+					r = await run('file_put_back', { path: e.path, hash: e.hash });
 				}
 			} catch (err) { r = null; }
 			// A refused tool call RESOLVES, like every other one, so the outcome is
@@ -268,64 +301,111 @@
 			// four words each; this is the same shape, with the whole of it a hover
 			// away. A call that FAILED rather than being refused keeps its own words:
 			// that is not a reach at all, and calling it one would misname a fault.
+			// A file too large to keep a copy of is LEFT by the door, which says so in its
+			// own sentence; the row names it as the other size refusal does.
+			// Bytes the machine hand cannot carry, the kept copy's or today's, leave the file where it
+			// is, and the row says so in the words a file left behind is given.
 			if (!r || r.outcome !== 'done') {
+				var said = (r && r.text) ? String(r.text) : '';
 				var why = (r && r.outcome === 'failed' && r.text)
-					? String(r.text)
-					: tOr('versions.refused', 'Outside this diamond’s reach');
-				refused.push({ path: e.path, why: why, said: (r && r.text) ? String(r.text) : '' });
+					? said
+					: /bytes Daimond keeps a copy of|larger than the machine hand returns whole/.test(said)
+						? tOr('versions.too_big', 'Too large to keep')
+						: /carries text only/.test(said)
+							? tOr('versions.gone_kept', 'Left in your folder')
+							: /is not on this device/.test(said)
+								? tOr('versions.not_here', 'Not on this device')
+								: tOr('versions.refused', 'Outside this diamond’s reach');
+				refused.push({ path: e.path, why: why, said: said });
 			}
 		}
 		return refused;
 	}
 
+	/// Ask the person whether a restore may delete files from their own folder that
+	/// did not exist at the version. Resolves true only on their yes; with no dialog
+	/// to ask through, the answer is no.
+	async function askGone(gone) {
+		var names = gone.map(function (e) { return String(e.path); });
+		var shown = names.slice(0, 8).join(', ') + (names.length > 8 ? ', …' : '');
+		try {
+			if (!core() || !DaimondCore.confirm) return false;
+			var yes = await DaimondCore.confirm(
+				tOr('versions.gone_ask',
+					'This version is older than {n} of your files: {paths}. Restoring it would delete them from your folder. Their current contents are kept in History. Delete them?',
+					{ n: names.length, paths: shown }),
+				tOr('versions.gone_allow', 'Delete them'),
+				{ title: tOr('versions.gone_title', 'Delete files from your folder?'), danger: true,
+					cancelLabel: tOr('versions.gone_keep', 'Keep them'),
+					// Named for a reader that cannot match a translated title, and no key
+					// answers it for a second: it can arrive while the person is typing.
+					ask: 'restore-gone', guard: true });
+			return yes === true;
+		} catch (e) { return false; }
+	}
+
 	/// The undo window a restore opens.
 	///
-	/// A restore writes its own `restore` manifest FIRST, so the way back is simply
-	/// to restore THAT: the state before the press is one row up, and the revert is
-	/// the same call pointed at the version the restore itself recorded. Nothing to
-	/// commit -- the restore is already on disk.
+	/// A restore records its own `restore` version, each row carrying what stood
+	/// there before it as `was`, so the way back is to put back what THAT version
+	/// changed, file by file -- `undoVersion` over the version the restore recorded
+	/// and the paths it restored. It restored `res.version` again until 2026-09-25,
+	/// which changed nothing. Nothing to commit -- the restore is already on disk.
 	function offerUndo(id, res, text) {
 		if (!res || !window.DaimondUndo) return;
-		if (!(res.restored || []).length) return;
-		var back = res.version;
+		if (!(res.restored || []).length || !(Number(res.recorded) > 0)) return;
+		var back = Number(res.recorded), paths = (res.restored || []).slice();
 		DaimondUndo.able({
 			text: text,
 			revert: function () {
-				if (back === undefined || back === null || !ready()) return;
-				restoreAt(id, back, '');
+				if (!ready()) return;
+				undoVersion(id, back, paths);
 			},
 		});
 	}
 
-	/// The call itself, both halves, with no confirm and no toast: the two doors
-	/// below add what each of them owes.
-	async function restoreAt(id, n, path) {
-		var out;
-		try { out = await app(id).versions_restore(String(id), Number(n), String(path || '')); }
+	/// The call itself, both halves, with no confirm and no toast: the doors below
+	/// add what each of them owes. The restore is CLOSED whatever became of its acts,
+	/// so every copy they kept is recorded.
+	/// # Arguments
+	/// * `undo` - The paths of version `n` to undo, which opens its undo instead:
+	///   each path back to what `n` replaced there.
+	async function restoreAt(id, n, path, undo) {
+		var eng = app(id), opened;
+		try {
+			opened = parse(undo
+				? await eng.versions_undo_open(String(id), Number(n), JSON.stringify(undo.map(String)))
+				: await eng.versions_restore_open(String(id), Number(n), String(path || '')), null);
+		}
 		catch (e) { return null; }
-		var res = parse(out, null);
-		if (!res) return null;
-		res.refused = (res.refused || []).concat(await writeMachine(id, res.machine || []));
+		if (!opened) return null;
+		var refused = [], res = null;
+		try { refused = await writeMachine(id, opened.machine || [], opened.ticket); }
+		finally {
+			try { res = parse(await eng.versions_restore_close(String(id), opened.ticket), null); }
+			catch (e) { res = null; }
+		}
+		res = res || { version: Number(n), recorded: -1, restored: [], missing: [], refused: [] };
+		res.machine = opened.machine || [];
+		res.refused = (res.refused || []).concat(refused);
 		return res;
 	}
 
-	/// Put back what one recorded version changed, each file to how it stood just
-	/// before it: the undo a chat's turn offers (`offerTurnUndo` in daimond.js).
+	/// Put back what one recorded version changed, each file to what that version
+	/// replaced: the undo a chat's turn offers (`offerTurnUndo` in daimond.js), and a
+	/// restore's toast.
 	///
-	/// File by file and never the whole version at `n - 1`, because a whole-version
-	/// restore takes a path the store first met at `n` to have been absent before
-	/// it -- which for a file the turn deleted is the opposite of the truth. A
-	/// per-path restore reads the row's own `was`.
+	/// ONE RESTORE, and each path to its own row's `was` (U1 and U4 of the release
+	/// 5.1 fix's second QA, 2026-09-25). This restored each path to the version
+	/// before, one restore a file: where the person saved a file between two turns,
+	/// the Undo of the second put back the FIRST turn's text over their save, and the
+	/// Undo of a restore of ten files minted ten versions. A file the version made is
+	/// put to the person before it goes, as a whole-version restore's is.
 	async function undoVersion(id, n, paths) {
-		if (!id || !ready() || !(Number(n) > 0)) return null;
-		var restored = [], refused = [];
-		for (var i = 0; i < (paths || []).length; i++) {
-			var res = await restoreAt(id, Number(n) - 1, String(paths[i]));
-			if (!res) continue;
-			restored = restored.concat(res.restored || []);
-			refused = refused.concat(res.refused || []);
-		}
-		return { restored: restored, refused: refused };
+		if (!id || !ready() || !(Number(n) > 0) || !(paths || []).length) return null;
+		var res = await restoreAt(id, Number(n), '', paths);
+		if (!res) return null;
+		return { restored: res.restored || [], refused: res.refused || [], recorded: res.recorded };
 	}
 
 	/// Restore the WHOLE version: the crystal as it stood, and every file to its
@@ -426,6 +506,7 @@
 	window.DaimondVersions = {
 		ready:       ready,
 		dirty:       dirty,
+		dirtyBefore: dirtyBefore,
 		landed:      landed,
 		rows:        rows,
 		manifests:   manifests,

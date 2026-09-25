@@ -50,13 +50,14 @@ const BREAKS = {
 	// not. Restoring that is the defect the reporter saw on the forge (#14).
 	staleanchor: [{
 		file: 'js/daimond.js',
-		find: '\t\t\treturn tools().run_tool_outcome(\'file_read\',\n'
-			+ '\t\t\t\tJSON.stringify({ path: path })).then(function () {\n'
-			+ '\t\t\t\treturn tools().run_tool_outcome(\'file_write\',\n'
-			+ '\t\t\t\t\tJSON.stringify({ path: path, content: content }));\n'
-			+ '\t\t\t});',
-		with: '\t\t\treturn tools().run_tool_outcome(\'file_write\',\n'
-			+ '\t\t\t\tJSON.stringify({ path: path, content: content }));',
+		// The door waits on the version mark first (2026-09-25), one level deeper.
+		find: '\t\t\t\treturn tools().run_tool_outcome(\'file_read\',\n'
+			+ '\t\t\t\t\tJSON.stringify({ path: path })).then(function () {\n'
+			+ '\t\t\t\t\treturn tools().run_tool_outcome(\'file_write\',\n'
+			+ '\t\t\t\t\t\tJSON.stringify({ path: path, content: content }));\n'
+			+ '\t\t\t\t});',
+		with: '\t\t\t\treturn tools().run_tool_outcome(\'file_write\',\n'
+			+ '\t\t\t\t\tJSON.stringify({ path: path, content: content }));',
 	}],
 };
 

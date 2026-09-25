@@ -538,6 +538,9 @@ body.resizing-v { cursor: row-resize; user-select: none; -webkit-user-select: no
 /* A stall is not an error and not a success: something is wrong that the user
    can fix, which is what --warn is for in the rest of the app. */
 #sync-chip[data-state="stalled"] { color: var(--warn); }
+/* Partial: sync works, but this browser keeps no files, so the workspace stays on the
+   other devices. Something to know rather than to fix here, in the stall's colour. */
+#sync-chip[data-state="partial"] { color: var(--warn); }
 /* The dot is the strip's dot, taking its colour from the state above it rather
    than from a class, since the state is already on the element. */
 #sync-chip .sdot { flex: none; width: 7px; height: 7px; border-radius: 50%; background: currentColor; }

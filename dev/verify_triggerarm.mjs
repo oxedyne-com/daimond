@@ -16,8 +16,9 @@
 //      wrote is HELD: its light reads held, `allowed` refuses, and a mail arrival
 //      starts no turn. So is one whose id carries a slash (D1 of the delta
 //      re-check, 2026-09-24): its leaf was joined raw and read as no trigger's.
-//   B. A person's press of play on the Diamond's light arms it, and the same
-//      arrival then does start the turn.
+//   B. A person's press of play on the action's own light arms it, and the same
+//      arrival then does start the turn. Play on the Diamond's light, or on the
+//      global one, arms nothing (the reopen rehearsal of 2026-09-25).
 //   C. The release persists across a reload on this device.
 //   D. A daimon rewriting the released action's instruction holds it again.
 //   E. The app's own editor carries a release across the person's own edit.
@@ -109,6 +110,26 @@ const where = (id, aid) => p.evaluate(({ id, aid }) => {
 		tile: tile ? tile.dataset.state : '(no light)',
 	};
 }, { id, aid });
+
+/// Press play or pause on ONE action's own light: the control the Diamond's
+/// dialog mounts beside its pulldown, drawn by the same `DaimondUI.pauseWidget`,
+/// placed on the page and clicked as a person clicks it.
+async function pressOwn(id, aid, act) {
+	await p.evaluate(({ id, aid }) => {
+		for (const x of document.querySelectorAll('[data-armprobe]')) x.remove();
+		const leaf = DaimondTriggers.node(id, aid);
+		const w = window.DaimondUI && DaimondUI.pauseWidget(leaf, 'probe');
+		if (!w) return;
+		w.dataset.armprobe = '1';
+		w.style.cssText = 'position:fixed;top:8px;left:8px;z-index:2147483647';
+		document.body.appendChild(w);
+	}, { id, aid });
+	let ok = true;
+	try { await p.click('[data-armprobe] .pptw-' + act, { timeout: 8000 }); } catch (e) { ok = false; }
+	await p.evaluate(() => { for (const x of document.querySelectorAll('[data-armprobe]')) x.remove(); });
+	await sleep(800);
+	return ok;
+}
 
 /// A turn the daimon takes because the person typed it: here, a `file_write`.
 async function daimonWrites(id, content, marker) {
@@ -212,19 +233,30 @@ try {
 		const b = document.querySelector(`#diamond-list .diamond-box[data-id="${id}"]`);
 		if (b) b.scrollIntoView();
 	}, id);
+	// Play on the Diamond's light, and on the global one, releases no action: each
+	// waits for play on its own light (the reopen rehearsal of 2026-09-25).
 	const play = `#diamond-list .diamond-box[data-id="${id}"] .pptw .pptw-play`;
-	let pressed = true;
-	try { await p.click(play, { timeout: 8000 }); } catch (e) { pressed = false; }
+	let onTile = true;
+	try { await p.click(play, { timeout: 8000 }); } catch (e) { onTile = false; }
 	await sleep(800);
+	let onRoot = true;
+	try { await p.click('#pptw-global .pptw-play', { timeout: 8000 }); } catch (e) { onRoot = false; }
+	await sleep(800);
+	const b0 = await where(id, 'm-arm'), b0s = await where(id, 'm/slash');
+	check('B. play pressed on the Diamond\'s light, and on the global one, releases neither action',
+		onTile && onRoot && b0.held === true && b0.allowed === false && b0s.held === true && b0s.allowed === false,
+		JSON.stringify({ onTile, onRoot, b0, b0s }));
+	const pressed = await pressOwn(id, 'm-arm', 'play');
 	const b = await where(id, 'm-arm');
-	check('B. play pressed on the Diamond\'s light releases it here', pressed && b.held === false && b.allowed === true,
+	check('B. play pressed on the action\'s own light releases it here', pressed && b.held === false && b.allowed === true,
 		JSON.stringify(b));
 	const firedB = await mailArrives('INBOX', NA, 30000);
 	check('B. and the same arrival now starts its turn', firedB,
 		firedB ? 'the provider was sent ' + NA : 'nothing in 30 s');
+	const pressedS = await pressOwn(id, 'm/slash', 'play');
 	const bs = await where(id, 'm/slash');
-	check('B. the same press releases the slash-id action too: a person can still arm it',
-		bs.held === false && bs.allowed === true, JSON.stringify(bs));
+	check('B. play on the slash-id action\'s own light releases it too: a person can still arm it',
+		pressedS && bs.held === false && bs.allowed === true, JSON.stringify(bs));
 
 	// ── C. the release persists on this device ─────────────────────────
 	await reload();
@@ -243,8 +275,7 @@ try {
 		firedD ? 'the provider was sent ' + ND : 'nothing in 20 s');
 
 	// ── E. the app's own editor carries the person's release ───────────
-	try { await p.click(play, { timeout: 8000 }); } catch (e) { /* judged below */ }
-	await sleep(800);
+	await pressOwn(id, 'm-arm', 'play');	// judged below
 	const NE = 'ARM-E-' + RUN;
 	await p.evaluate(async ({ id, ne }) => {
 		const t = (window.DaimondTriggersOf(id) || []).find((x) => x.id === 'm-arm');

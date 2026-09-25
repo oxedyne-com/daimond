@@ -29,15 +29,20 @@
 //      state the user reported.
 //   4. AND THE COMPOSER HAS ROOM. The text box takes more than half the bar,
 //      which it did not: 170 of 372 is 46%.
-//   5. AND IT NEVER SAYS YOU CANNOT TYPE WHEN YOU CAN. The box used to read
+//   5. AND THE PLACEHOLDER NEVER CLAIMS YOU CANNOT TYPE. The box used to read
 //      "Paused. Press play on its tile" whenever the Diamond's `/self` leaf was
-//      held — which nothing enforces: that leaf's only reader in the whole app
-//      was the placeholder, so a held Diamond answered a typed message exactly as
-//      a running one does. It arrived unasked, too: any Diamond shipping with a
-//      triggered action is seeded held, and pausing Everything writes the flag
-//      onto every leaf. Asserted as the PAIR — the ordinary placeholder AND a
-//      message that actually goes through — because changing the wording alone
-//      would satisfy either half on its own.
+//      held — which nothing enforced at the time: that leaf's only reader in the
+//      whole app was the placeholder, so a held Diamond answered a typed message
+//      exactly as a running one does. It arrived unasked, too: any Diamond
+//      shipping with a triggered action is seeded held, and pausing Everything
+//      writes the flag onto every leaf. `17bcfec8` then made a held Diamond
+//      refuse a typed turn AT DISPATCH, on purpose (release 3), which
+//      `verify_typedpause` asserts on its own. So this is now asserted as a
+//      PAIR of a different shape: the ordinary placeholder (the box invites
+//      typing) AND the turn refused with the same pause sentence `pauseError`
+//      throws — because changing the wording alone, with the turn still
+//      silently swallowed or still answered, would satisfy either half on its
+//      own.
 //
 // PROVED AGAINST BROKEN CODE FIRST:
 //
@@ -57,7 +62,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { open, newChat, scratch, shot } from './harness.mjs';
+import { open, newChat, scratch, shot, mockLog } from './harness.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const WWW  = path.join(HERE, '..', 'www');
@@ -241,16 +246,34 @@ try {
 	check(!/pause/i.test(ph),
 		'A HELD DIAMOND DOES NOT TELL YOU THE BOX WILL NOT WORK',
 		JSON.stringify(ph));
-	// The other half, and the one that makes the first mean something: it works.
+	// The other half, and the one that makes the first mean something: a typed
+	// turn on a held Diamond is REFUSED, not silently swallowed and not answered.
+	// `17bcfec8` (release 3) moved that refusal to dispatch, on purpose;
+	// `verify_typedpause` proves the mechanism end to end, and this checks that
+	// the box which promises you can type stays honest about what typing does.
+	const heldId = await p.evaluate(async () => {
+		const app = DaimondCore.diamondApp();
+		const rows = JSON.parse(await app.list_diamonds());
+		const d = rows.find((r) => r.name === 'Held');
+		return d ? d.id : '';
+	});
+	const node = await p.evaluate((i) => window.DaimondPause.id('root', 'diamonds', i, 'self'), heldId);
+	const wording = await p.evaluate((n) => {
+		const e = window.DaimondModels.pauseError(n);
+		return String((e && e.message) || e);
+	}, node);
+	const before = mockLog().length;
 	await p.fill('#chat-input', '@text held and answered');
 	await p.click('#chat-send');
-	await p.waitForTimeout(5000);
-	const answered = await p.evaluate(() =>
-		[...document.querySelectorAll('#chat-output .chat-msg-assistant .chat-msg-content')]
-			.some(e => /held and answered/.test(e.textContent)));
-	check(answered,
-		'and it answers, which is why saying otherwise was wrong rather than merely unhelpful',
-		answered ? '' : 'the turn did not answer while held');
+	await p.waitForTimeout(3000);
+	const requests = mockLog().length - before;
+	const refusal = await p.evaluate(() => {
+		const rows = [...document.querySelectorAll('.chat-msg-error .chat-msg-content, .chat-msg-compacted .chat-msg-content')];
+		return rows.length ? rows[rows.length - 1].textContent : '';
+	});
+	check(requests === 0 && !!wording && refusal.toLowerCase() === wording.toLowerCase(),
+		'and a typed turn is refused with the pause sentence, spending nothing',
+		JSON.stringify({ requests, refusal, wording }));
 } finally {
 	await s.close();
 }

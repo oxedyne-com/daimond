@@ -102,6 +102,23 @@ const modeMsg = () => p.evaluate(() => {
 	return m ? m.textContent : '';
 });
 
+/// Wait for the mode row to say a save landed, rather than sleeping a fixed span.
+/// Under load the write can still be running at a guessed mark, and by then the
+/// same slot can be showing something else — the browser's storage estimate, in
+/// place of "Saved N files to …" — which a fixed sleep then reads as the answer
+/// (triage 20260925: `gatediff` read "This browser has granted 10240.1 MB …"
+/// where "Saved 1 file" was expected).
+async function waitForSaved(timeoutMs = 15000) {
+	const deadline = Date.now() + timeoutMs;
+	let last = '';
+	while (Date.now() < deadline) {
+		last = await modeMsg();
+		if (/^Saved \d+ files? to/i.test(last)) return last;
+		await p.waitForTimeout(150);
+	}
+	return last;
+}
+
 // ── The sandbox, a real folder, and a destination ────────────────────────
 
 await p.evaluate(async () => {
@@ -174,7 +191,7 @@ await p.evaluate(() => {
 	window.showDirectoryPicker = window.__reconnectThenPick('savedest');
 });
 await transfer('save a copy');
-await p.waitForTimeout(2500);
+await waitForSaved();
 
 check('the reconnect really did land mid-transfer', (await mode()) === 'folder', await mode());
 const saved = await listDir('.savedest');

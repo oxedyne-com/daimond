@@ -47,6 +47,13 @@ pub struct TurnState {
     /// Content hash of what this agent last saw at each path, so a whole-file write can tell
     /// whether the file changed underneath it.
     pub seen: HashMap<String, u64>,
+    // What a restore left
+    //
+    // The content hash a Restore left at each path it changed, by the normalised path.  A Restore
+    // changes a file from outside the turn and leaves `seen` alone, so the write guard refuses the
+    // daimon's next write to it; this is what lets the refusal say the person restored the file,
+    // rather than blame another agent (see [`note_restored`]).
+    pub restored: HashMap<String, u64>,
     // Who has read a stranger's words
     //
     // Set the moment a conversation is handed content from outside the user -- a web page, or a
@@ -5690,6 +5697,18 @@ fn delete_unread_refusal(raw: &str) -> String {
         and let them delete it themselves from the Files panel.", raw)
 }
 
+/// The refusal for a `file_delete` of a file in a folder reached through the machine hand.
+///
+/// The hand has no delete verb (`FileOp` in `hand/src/wire.rs`), so no copy could be kept and
+/// the file could not be removed. The sentence sends the model to the user, never to `run`.
+#[cfg(any(target_arch = "wasm32", test))]
+fn delete_machine_refusal(raw: &str) -> String {
+    fmt!("'{}' is in a folder on this computer that Daimond reaches through the machine hand, and \
+        the hand does not delete files, so file_delete cannot remove it. Nothing was deleted. Do \
+        not look for another way to remove it -- not a move, not emptying it, not a command. If \
+        it should go, tell the user which file and why, and let them delete it themselves.", raw)
+}
+
 /// The refusal for a turn's `file_delete` of a file held only in cloud storage.
 ///
 /// Refused rather than fetched and kept: the forget reaches every device at once, and fetching
@@ -5833,6 +5852,40 @@ struct Overwrite {
     counted: Option<(String, String)>,  // (keeper, file) the open folder's tally counted
     wiped:   bool,                      // under half of the file left: a delete by another verb
     copy:    Option<Vec<u8>>,           // a wipe's copy: the file as the turns found it
+}
+
+/// A restore's hold on the copy its act keeps: see `Tool::restore_hold`.
+#[cfg(target_arch = "wasm32")]
+struct RestoreHold {
+    ticket: u64,                    // the restore
+    key:    String,                 // as the store names the path
+    mark:   bool,                   // the person's file rather than the keeper's own
+    before: Option<Vec<u8>>,        // what the act found there; `None` where nothing stood
+}
+
+/// The refusal a restore's act meets where what stands at the path is larger than a version keeps
+/// a copy of, so replacing or removing it could not be undone.
+#[cfg(any(target_arch = "wasm32", test))]
+fn restore_size_refusal(raw: &str, bytes: u64) -> String {
+    refusal_line(&fmt!("'{}' is {} bytes, more than the {} bytes Daimond keeps a copy of, so the \
+        restore left it as it is rather than replace what it could not keep.",
+        raw, bytes, crate::diamond_versions::VERSION_FILE_MAX))
+}
+
+/// The refusal a restore's put-back meets where the stored bytes are not text and the file is on
+/// this computer: the machine hand's `write` carries text only, so the file is left as it stands.
+#[cfg(any(target_arch = "wasm32", test))]
+fn put_back_binary_refusal(raw: &str) -> String {
+    refusal_line(&fmt!("The kept copy of '{}' is not text, and a file on this computer is written \
+        through the machine hand, which carries text only. Written as text it would be corrupt, so \
+        the restore left the file as it is.", raw))
+}
+
+/// The refusal a restore's put-back meets where the stored bytes are not on this device.
+#[cfg(any(target_arch = "wasm32", test))]
+fn put_back_absent_refusal(raw: &str) -> String {
+    refusal_line(&fmt!("The kept copy of '{}' is not on this device, so the restore left the file \
+        as it is. The next full sync from the device that made it brings it.", raw))
 }
 
 #[cfg(target_arch = "wasm32")]
@@ -7361,6 +7414,66 @@ async fn reach_of(ctx: &ToolContext, raw: &str, path: &str, door: Door) -> Reach
     }
 }
 
+/// The folder the machine hand was granted, where a path under a mark spelled relative to it
+/// reaches the machine through [`reach_of`]: a hand present, paired and rooted, and no folder open
+/// in the browser, which would take the same path instead.  `None` otherwise.
+///
+/// What a restore strips from a machine file's recorded absolute path to hand it to the fenced
+/// door, which takes a workspace-relative path and routes it to the hand (R6 of the release 5.1
+/// fix's QA).
+#[cfg(target_arch = "wasm32")]
+pub(crate) async fn machine_door_root() -> Option<String> {
+    if crate::wasm::opfs::folder_open() || !crate::wasm::hand::present() {
+        return None;
+    }
+    match crate::wasm::hand::status().await {
+        Ok(st) => Machine::paired(&st).map(|m| m.root.trim_end_matches('/').to_string()),
+        Err(_) => None,
+    }
+}
+
+/// What stands at `path` now, as a turn's capture names it -- normalised, or absolute on this
+/// computer -- for the turn end's question whether the turn's bytes are still there
+/// ([`crate::wasm::diamond::drain_turn`]).  `None` where it cannot be told: a file that is there
+/// and would not read, or a machine file with no hand that reaches it.
+#[cfg(target_arch = "wasm32")]
+pub(crate) async fn standing_now(ctx: &ToolContext, path: &str)
+    -> Option<crate::wasm::diamond::Body>
+{
+    use crate::wasm::diamond::Body;
+    if !path.starts_with('/') {
+        let ceiling = crate::diamond_versions::VERSION_FILE_MAX as u32;
+        return match crate::wasm::opfs::read_file_capped(FileRoot::Workspace, path, ceiling).await {
+            Ok((b, total)) if total as usize <= crate::diamond_versions::VERSION_FILE_MAX =>
+                Some(Body::Held(b)),
+            Ok((_, total)) => Some(Body::TooLarge(total as u64)),
+            Err(_)         => match crate::wasm::opfs::exists(FileRoot::Workspace, path).await {
+                Ok(false) => Some(Body::Gone),
+                _         => None,
+            },
+        };
+    }
+    // A machine file, read through the hand as the turn's own acts read it: by its spelling under
+    // the granted folder, behind the turn's fence.
+    let root = match machine_door_root().await {
+        Some(r) => r,
+        None    => return None,
+    };
+    let rel = match path.strip_prefix(&fmt!("{}/", root)) {
+        Some(r) => r.to_string(),
+        None    => return None,
+    };
+    match reach_of(ctx, &rel, &rel, Door::Look).await {
+        Reach::Machine { abs, cwd, spec, .. } =>
+            match machine_before(&abs, &cwd, &spec, &ctx.no_write).await {
+                (Some(b), _)    => Some(Body::Held(b)),
+                (None, None)    => Some(Body::Gone),
+                (None, Some(_)) => None,
+            },
+        _ => None,
+    }
+}
+
 /// Where a WALK is about to happen, for a call that names several starting points.
 ///
 /// [`reach_of`] answers about one path and a walk has a list, and the two must not be allowed to
@@ -7647,7 +7760,7 @@ fn machine_body(read: &MachineRead<'_>) -> (Option<Vec<u8>>, Option<String>) {
 /// * `dia` - The keeper whose store records the change.
 /// * `path` - The SCOPED path, as the write door resolved it.
 #[cfg(any(target_arch = "wasm32", test))]
-fn stored_is_mark(dia: &str, path: &str) -> bool {
+pub(crate) fn stored_is_mark(dia: &str, path: &str) -> bool {
     !path.starts_with(&fmt!("{}/", keeper_home(dia)))
 }
 
@@ -7674,21 +7787,71 @@ pub(crate) fn wiped(path: &str, before: &[u8], after: &[u8]) -> bool {
     crate::diamond_versions::wipes(&view(before), &view(after))
 }
 
-/// Forget what this agent last saw of each of `paths`.
+/// Note what a restore left at `path`, and keep what this agent last read of it.
 ///
-/// The write guard in [`Tool::FileWrite`] refuses a write to a file whose bytes no longer match
-/// what this agent read, which is how one agent stops erasing another's work.  A Restore changes
-/// those bytes from OUTSIDE the turn, so without this the daimon's next write to a file the user
-/// has just restored is refused as somebody else's edit -- the file the user most wants written
-/// being the one that cannot be.  `Tool::FileRevert` does the same thing for its own path.
+/// **The daimon reads a restored file again before it writes it** (RD of the release 5.1 fix's
+/// third QA, 2026-09-25).  A Restore changes a file from outside the turn.  It forgot the path
+/// here until then, so the guard in `Tool::FileWrite` had nothing to compare, and the daimon's
+/// next write -- made from what it read before the Restore -- silently put its own text back over
+/// what the person restored.  The anchor now stays, so that write is refused.  This note is what
+/// lets the refusal say the person restored the file: the path was forgotten in the first place
+/// because the refusal blamed "another agent", naming one that does not exist.
 ///
-/// Targeted rather than a clear: every other file the turn read is still anchored to what it
-/// read, and dropping those anchors would be dropping the guard.
-pub fn forget_seen(cache: &ReadCache, paths: &[String]) {
-    let mut st = lock_cache(cache);
-    for path in paths.iter() {
-        st.seen.remove(path);
+/// Keyed by the normalised spelling, because the cache keys a file by the path as the model wrote
+/// it (`./notes/a.md`) and a restore names it as the store does.
+pub fn note_restored(cache: &ReadCache, path: &str, bytes: &[u8]) {
+    lock_cache(cache).restored.insert(normalise(path), content_hash(bytes));
+}
+
+/// Does `path` hold exactly what a restore left there, `now` being its bytes?
+pub fn holds_restored(cache: &ReadCache, path: &str, now: &[u8]) -> bool {
+    lock_cache(cache).restored.get(&normalise(path)) == Some(&content_hash(now))
+}
+
+/// Carry what a restore's door noted it left into `into`, the cache whose reads the write guard
+/// answers to.  The door keeps a cache of its own (U2), so a note taken at its act, which is the
+/// only moment a machine file's restored bytes are in hand, would otherwise go with it.
+pub fn carry_restored(from: &ReadCache, into: &ReadCache) {
+    let noted: Vec<(String, u64)> = lock_cache(from).restored.iter()
+        .map(|(p, h)| (p.clone(), *h)).collect();
+    let mut c = lock_cache(into);
+    for (p, h) in noted {
+        c.restored.insert(p, h);
     }
+}
+
+/// The stale-read guard of a whole-file write: the refusal where this agent last read `path` as
+/// something other than `now`, the bytes the file holds at the write.
+///
+/// **One sentence for every door** (fix/r51e, 2026-09-25).  Only browser storage asked this until
+/// then.  A write through the machine hand went ahead over whatever the file held, so a daimon
+/// that read a file the person then edited in their own editor wrote its old read back over their
+/// edit; the turn kept their bytes, but nothing told the daimon it had missed them.
+///
+/// # Arguments
+/// * `path` - The path as this agent's reads are filed, the scoped spelling.
+/// * `also` - Another spelling a restore may have noted the file under: the absolute path, where
+///   the file is on the machine.
+pub fn stale_write(cache: &ReadCache, path: &str, also: Option<&str>, now: &[u8])
+    -> Option<String>
+{
+    let prev = match lock_cache(cache).seen.get(path).copied() {
+        Some(h) => h,
+        None    => return None,
+    };
+    if content_hash(now) == prev {
+        return None;
+    }
+    let restored = holds_restored(cache, path, now)
+        || also.map_or(false, |a| holds_restored(cache, a, now));
+    Some(if restored {
+        fmt!("file_write: '{}' changed on disk since you read it -- the person restored it \
+            from its History. Read it again and apply your change to what they restored, so the \
+            restore is not undone.", path)
+    } else {
+        fmt!("file_write: '{}' changed on disk since you read it -- another agent edited it. \
+            Re-read the file and reapply your change so theirs is not lost.", path)
+    })
 }
 
 /// The header every walk's answer opens with, as the page reads it back.
@@ -10713,6 +10876,11 @@ pub struct ToolContext {
     // Set by `ToolRegistry::try_dispatch`, the door a turn's calls come through, and by no one
     // else.
     pub by_model: bool,
+    // The restore this call acts for, by its ticket, or 0 for every other call.  Set by the
+    // History's own door alone (`DaimondApp::run_diamond_tool`): its write and delete keep what
+    // they replace or remove at the act, into the restore's record rather than a turn's (see
+    // `crate::wasm::diamond::versions_restore_open`).
+    pub restoring: u64,
 }
 
 impl ToolContext {
@@ -17790,9 +17958,16 @@ impl Tool {
                         // page of a file and filed under the file's name is what would later
                         // tell a `file_write` that "another agent changed it" about a file
                         // nobody had touched.
+                        //
+                        // The file's own bytes, as `machine_before` gives them to the write
+                        // guard, not the body as the wire carried it: the hand ends a last line
+                        // that has no newline with one, and a hash of that would refuse every
+                        // write to such a file as changed.
                         if from == 1 && read.held >= read.lines {
-                            let mut st = lock_cache(&ctx.read_seen);
-                            st.seen.insert(path.clone(), content_hash(read.body.as_bytes()));
+                            if let (Some(b), _) = machine_body(&read) {
+                                let mut st = lock_cache(&ctx.read_seen);
+                                st.seen.insert(path.clone(), content_hash(&b));
+                            }
                         }
                         let win = Window { lines: read.lines, bytes: read.bytes, from };
                         return Ok(MessageContent::text(Self::mark_if_untrusted(ctx, &raw,
@@ -18048,6 +18223,8 @@ impl Tool {
                             Self::overwrite_failed(&over).await;
                             return Err(err!("{}", why; IO, File, Write));
                         }
+                        // What this agent last saw is what it just wrote, as in storage below.
+                        lock_cache(&ctx.read_seen).seen.insert(path.clone(), content_hash(&body));
                         (abs, true)
                     },
                     Reach::Storage => {
@@ -18821,6 +18998,9 @@ impl Tool {
                             }
                             return match got {
                                 Ok(_) => {
+                                    // What this agent last saw, as the storage door records it.
+                                    lock_cache(&ctx.read_seen).seen.insert(path.clone(),
+                                        content_hash(text.as_bytes()));
                                     if let Some((dia, (before, refused))) = keep {
                                         let found = machine_found(&before, &refused);
                                         let (before, wiped) = Overwrite::prior(&over, before);
@@ -19951,6 +20131,26 @@ impl Tool {
                 if let Some((_, (None, Some(why)))) = &keep {
                     return Ok(MessageContent::text(overwrite_unkept_refusal(&raw, why)));
                 }
+                // THE STALE-READ GUARD, as the storage door below asks it and in its words
+                // (fix/r51e, 2026-09-25): a file this agent read and the person has since
+                // edited in their own editor, or restored from its History, is not written
+                // over from the old read.  The bytes are the ones kept above; a turn with no
+                // keeper reads them only where there is a read to compare.
+                if ctx.restoring == 0 && lock_cache(&ctx.read_seen).seen.contains_key(&path) {
+                    let fresh;
+                    let now: Option<&[u8]> = match &keep {
+                        Some((_, (b, _))) => b.as_deref(),
+                        None              => {
+                            fresh = machine_before(&abs, &cwd, &spec, &ctx.no_write).await.0;
+                            fresh.as_deref()
+                        },
+                    };
+                    if let Some(now) = now {
+                        if let Some(why) = stale_write(&ctx.read_seen, &path, Some(&abs), now) {
+                            return Err(err!("{}", why; Invalid, Input, Mismatch));
+                        }
+                    }
+                }
                 // AN OVERWRITE OF A FILE THAT WAS THERE counts against the turn's bound,
                 // and its copy is on disk before the write -- held as a delete's is where
                 // the write wipes it (`Tool::before_overwrite`).
@@ -19963,18 +20163,48 @@ impl Tool {
                         Err(why) => return Ok(MessageContent::text(why)),
                     }
                 }
+                // A RESTORE'S WRITE KEEPS WHAT IT REPLACES, read through the hand at the act:
+                // the person's own save since the version is the file's newest state, and the
+                // restore is the one thing that would otherwise write over it with no copy.
+                let rest = if ctx.restoring != 0 {
+                    let now = match machine_before(&abs, &cwd, &spec, &ctx.no_write).await {
+                        (None, Some(why)) => return Ok(MessageContent::text(
+                            overwrite_unkept_refusal(&raw, &why))),
+                        (b, _)            => b,
+                    };
+                    match Self::restore_hold(ctx, &raw, &abs, now.as_deref(), false).await {
+                        Ok(h)    => h,
+                        Err(why) => return Ok(MessageContent::text(why)),
+                    }
+                } else {
+                    None
+                };
                 let got = match machine_change("file_write",
                     MachineChange::Write(&lic, &content), &root, &cwd, &spec,
                     &ctx.no_write).await
                 {
                     Ok(g)  => g,
-                    Err(e) => { Self::overwrite_failed(&over).await; return Err(e); },
+                    Err(e) => {
+                        Self::overwrite_failed(&over).await;
+                        Self::restore_failed(&rest).await;
+                        return Err(e);
+                    },
                 };
                 if got.is_err() {
                     Self::overwrite_failed(&over).await;
+                    Self::restore_failed(&rest).await;
                 }
                 return match got {
                     Ok(_)    => {
+                        // What this agent now knows the file holds, as the storage door
+                        // records it; and under a restore, what the restore left.
+                        lock_cache(&ctx.read_seen).seen.insert(path.clone(),
+                            content_hash(content.as_bytes()));
+                        if ctx.restoring != 0 {
+                            note_restored(&ctx.read_seen, &abs, content.as_bytes());
+                        }
+                        Self::restore_landed(rest, crate::wasm::diamond::Body::Held(
+                            content.as_bytes().to_vec()));
                         if let Some((dia, (before, refused))) = keep {
                             let found = machine_found(&before, &refused);
                             let (before, wiped) = Overwrite::prior(&over, before);
@@ -20019,18 +20249,20 @@ impl Tool {
         // means another agent changed it underneath, and a blind write
         // would erase their work with no error. A new file, or one this
         // agent never read, has nothing to conflict with.
-        let seen = {
-            let st = lock_cache(&ctx.read_seen);
-            st.seen.get(&path).copied()
+        //
+        // NOT A RESTORE'S QUESTION (U2 of the release 5.1 fix's second QA, 2026-09-25). A
+        // restore's act keeps whatever stands there at the act (`restore_hold` below), which is
+        // what this guard protects, and it is no agent's edit. Asked of the restore door, the
+        // guard refused to put back any file a steer on the page had touched and the person had
+        // saved since, in a sentence addressed to a model.
+        let seen = match ctx.restoring {
+            0 => lock_cache(&ctx.read_seen).seen.contains_key(&path),
+            _ => false,
         };
-        if let Some(prev) = seen {
+        if seen {
             if let Ok(disk) = crate::wasm::opfs::read_file(ctx.root, &path).await {
-                if content_hash(&disk) != prev {
-                    return Err(err!(
-                        "file_write: '{}' changed on disk since you read it -- \
-                        another agent edited it. Re-read the file and reapply \
-                        your change so theirs is not lost.", path;
-                        Invalid, Input, Mismatch));
+                if let Some(why) = stale_write(&ctx.read_seen, &path, None, &disk) {
+                    return Err(err!("{}", why; Invalid, Input, Mismatch));
                 }
             }
         }
@@ -20103,11 +20335,27 @@ impl Tool {
                 _ => None,
             }
         };
+        // A RESTORE'S WRITE KEEPS WHAT IT REPLACES, read the moment before it lands: what the
+        // person saved while the restore's question was open included.
+        let rest = if ctx.restoring != 0 {
+            let now = match Self::before_bytes(ctx, &path).await {
+                Ok(b)    => b,
+                Err(why) => return Ok(MessageContent::text(overwrite_unkept_refusal(&raw, &why))),
+            };
+            match Self::restore_hold(ctx, &raw, &normalise(&path), now.as_deref(), false).await {
+                Ok(h)    => h,
+                Err(why) => return Ok(MessageContent::text(why)),
+            }
+        } else {
+            None
+        };
         if let Some((bytes, note)) = office {
             if let Err(e) = crate::wasm::opfs::write_licensed(ctx.root, &lic, &bytes).await {
                 Self::overwrite_failed(&over).await;
+                Self::restore_failed(&rest).await;
                 return Err(e);
             }
+            Self::restore_landed(rest, crate::wasm::diamond::Body::Held(bytes.clone()));
             if let Some((dia, before)) = keep {
                 let found = Found::of(before.as_deref());
                 let (before, wiped) = Overwrite::prior(&over, before);
@@ -20121,8 +20369,10 @@ impl Tool {
         }
         if let Err(e) = crate::wasm::opfs::write_licensed(ctx.root, &lic, content.as_bytes()).await {
             Self::overwrite_failed(&over).await;
+            Self::restore_failed(&rest).await;
             return Err(e);
         }
+        Self::restore_landed(rest, crate::wasm::diamond::Body::Held(content.as_bytes().to_vec()));
         if let Some((dia, before)) = keep {
             let found = Found::of(before.as_deref());
             let (before, wiped) = Overwrite::prior(&over, before);
@@ -20135,6 +20385,143 @@ impl Tool {
             Self::file_write_nudge(content.len())))
         };
         Ok(MessageContent::text(res!(text)))
+    }
+
+    /// A restore's write: put the body the store holds under `hash` back at `path`, BYTE FOR BYTE,
+    /// through the Diamond's fence ([`ToolRegistry::put_back`]).  `{path, hash}`; no model holds it.
+    ///
+    /// **Why this is not `file_write`** (release 5.1's restore follow-ups, 2026-09-25).  The
+    /// History's Restore and a turn's Undo wrote a person's file back through `file_write`, whose
+    /// `content` is text: the page read the body as lossy UTF-8, and a `.docx` path turned that
+    /// text, as markdown, into a new document.  A restored PNG, PDF or Word file came back
+    /// corrupt, while today's bytes were kept.  Here the bytes go from the store to the file
+    /// unread by anything that could change them: no text, no office conversion, no retirement.
+    ///
+    /// **The machine hand's `write` carries text** (`hand/src/codec.rs`), so on this computer a
+    /// body that is not UTF-8 is refused and the file left, as `file_revert` refuses it.  Its act
+    /// keeps what it replaces as every restore's act does ([`Self::restore_hold`]), and a refused
+    /// one keeps, records and notes nothing.  The model's stale-read guard is not asked, since the
+    /// act keeps what it replaces; nor is the read cache changed, so a daimon that read the file
+    /// before the restore is refused its next blind write.
+    #[cfg(target_arch = "wasm32")]
+    async fn put_back_page(args_json: &str, ctx: &ToolContext) -> Outcome<MessageContent> {
+        let raw = res!(Self::arg(args_json, "path"));
+        let hash = res!(Self::arg(args_json, "hash"));
+        let path = res!(Self::scoped(ctx, &raw));
+        let lic = match ctx.licence(&path) {
+            Ok(l)    => l,
+            Err(why) => return Ok(MessageContent::text(why)),
+        };
+        let id = match crate::wasm::diamond::restore_store(ctx.restoring) {
+            Some(id) => id,
+            None     => return Ok(MessageContent::text(refusal_line(&fmt!(
+                "The restore '{}' was part of has ended, so nothing was changed.", raw)))),
+        };
+        let body = match res!(crate::wasm::diamond::versions_body(&id, &hash).await) {
+            Some(b) => b,
+            None    => return Ok(MessageContent::text(put_back_absent_refusal(&raw))),
+        };
+        Self::put_bytes(ctx, &raw, &path, &lic, body).await
+    }
+
+    /// A page door's write of `bytes` at `raw`, byte for byte, through this context's fence: the
+    /// Files panel's Undo of a delete ([`ToolRegistry::write_bytes_door`]).  No model holds it.
+    ///
+    /// **The Undo wrote a deleted file back as text** (release 5.1 QA round 3, FP): the panel read
+    /// it with `read_file`, lossily, and wrote it with `file_write`, so a PNG or a PDF came back
+    /// corrupt and a `.docx` became a new document of its text.
+    #[cfg(target_arch = "wasm32")]
+    async fn write_bytes_page(raw: &str, bytes: Vec<u8>, ctx: &ToolContext)
+        -> Outcome<MessageContent>
+    {
+        let path = res!(Self::scoped(ctx, raw));
+        let lic = match ctx.licence(&path) {
+            Ok(l)    => l,
+            Err(why) => return Ok(MessageContent::text(why)),
+        };
+        Self::put_bytes(ctx, raw, &path, &lic, bytes).await
+    }
+
+    /// Write `body` at the licensed `path`, byte for byte: through the hand where the path is
+    /// under a mark on the machine, which carries text only, else into storage.  Under a restore
+    /// the act keeps what it replaces ([`Self::restore_hold`]); for any other caller it keeps
+    /// nothing, as `file_write` for the same caller keeps nothing.
+    #[cfg(target_arch = "wasm32")]
+    async fn put_bytes(ctx: &ToolContext, raw: &str, path: &str, lic: &Licence, body: Vec<u8>)
+        -> Outcome<MessageContent>
+    {
+        let raw = raw.to_string();
+        let path = path.to_string();
+        match reach_of(ctx, &raw, &path, Door::Change).await {
+            Reach::Refuse(why) => return Ok(MessageContent::text(refusal_line(&why))),
+            Reach::Machine { abs, cwd, root, spec } => {
+                // Checked before anything is read or held, so a refusal keeps nothing.
+                let text = match std::str::from_utf8(&body) {
+                    Ok(t)  => t.to_string(),
+                    Err(_) => return Ok(MessageContent::text(put_back_binary_refusal(&raw))),
+                };
+                let now = match machine_before(&abs, &cwd, &spec, &ctx.no_write).await {
+                    (None, Some(why)) => return Ok(MessageContent::text(
+                        overwrite_unkept_refusal(&raw, &why))),
+                    (b, _)            => b,
+                };
+                let rest = match Self::restore_hold(ctx, &raw, &abs, now.as_deref(), false).await {
+                    Ok(h)    => h,
+                    Err(why) => return Ok(MessageContent::text(why)),
+                };
+                let got = match machine_change("file_write", MachineChange::Write(lic, &text),
+                    &root, &cwd, &spec, &ctx.no_write).await
+                {
+                    Ok(g)  => g,
+                    Err(e) => {
+                        Self::restore_failed(&rest).await;
+                        return Err(e);
+                    },
+                };
+                return match got {
+                    Ok(_)    => {
+                        let n = body.len();
+                        // WHAT THE RESTORE LEFT, noted here because this is the one moment its
+                        // bytes are in hand: the door's notes read storage, which does not hold
+                        // a machine file (fix/r51e, 2026-09-25).
+                        if ctx.restoring != 0 {
+                            note_restored(&ctx.read_seen, &abs, &body);
+                        }
+                        Self::restore_landed(rest, crate::wasm::diamond::Body::Held(body));
+                        Ok(MessageContent::text(fmt!("Put back {} bytes at {}.", n, abs)))
+                    },
+                    Err(why) => {
+                        Self::restore_failed(&rest).await;
+                        Err(err!("{}", why; IO, File, Write))
+                    },
+                };
+            },
+            Reach::Storage => (),
+        }
+        let place = res!(write_place(ctx, &raw, &path).await);
+        if let WritePlace::Inventing(dir) = &place {
+            return Ok(MessageContent::text(
+                refusal_line(&would_invent_said(&raw, dir, &marks_of(&ctx.no_write).join(", ")))));
+        }
+        let now = match Self::before_bytes(ctx, &path).await {
+            Ok(b)    => b,
+            Err(why) => return Ok(MessageContent::text(overwrite_unkept_refusal(&raw, &why))),
+        };
+        let rest = match Self::restore_hold(ctx, &raw, &normalise(&path), now.as_deref(), false)
+            .await
+        {
+            Ok(h)    => h,
+            Err(why) => return Ok(MessageContent::text(why)),
+        };
+        if let Err(e) = crate::wasm::opfs::write_licensed(ctx.root, lic, &body).await {
+            Self::restore_failed(&rest).await;
+            return Err(e);
+        }
+        // The read cache is left as it stands: a daimon whose last read was before the restore is
+        // refused its next blind write, rather than writing over what was put back.
+        let n = body.len();
+        Self::restore_landed(rest, crate::wasm::diamond::Body::Held(body));
+        Ok(MessageContent::text(fmt!("Put back {} bytes at {}.", n, path)))
     }
 
     /// `file_edit` in the browser; its own function for the reason [`Self::file_write_page`] is.
@@ -20267,6 +20654,17 @@ impl Tool {
                 // just applied these hunks to the bytes above, and `file_edited` is the
                 // same placement it applied them by. A second fenced read would cost a
                 // round trip to learn what is already in hand.
+                //
+                // It is also this agent's latest view, as the storage door records it, so its
+                // next write is not refused over its own edit.  Where it could not be worked
+                // out the old read is dropped instead, which leaves that write unguarded.
+                {
+                    let mut st = lock_cache(&ctx.read_seen);
+                    match &after {
+                        Some(b) => { st.seen.insert(path.clone(), content_hash(b)); },
+                        None    => { st.seen.remove(&path); },
+                    }
+                }
                 if let Some((dia, (before, refused))) = keep {
                     let after = match after {
                         Some(b) => crate::wasm::diamond::Body::Held(b),
@@ -20390,6 +20788,18 @@ impl Tool {
             Ok(l)    => l,
             Err(why) => return Ok(MessageContent::text(why)),
         };
+        // WHICH FILESYSTEM, ASKED FIRST, as every other file tool asks it. A path under a mark
+        // reached through the machine hand is a file on this computer, and the hand has no
+        // delete, so it is refused here in words. Until 2026-09-25 this was never asked, and
+        // everything below read browser storage for the machine's path: the file on the machine
+        // was "not there", and a file at the same path in browser storage, which every device
+        // syncs, was deleted in its place (the reopen rehearsal's U3).
+        match reach_of(ctx, &raw, &path, Door::Change).await {
+            Reach::Storage        => {},
+            Reach::Refuse(why)    => return Ok(MessageContent::text(refusal_line(&why))),
+            Reach::Machine { .. } =>
+                return Ok(MessageContent::text(refusal_line(&delete_machine_refusal(&raw)))),
+        }
         // ONE FILE, NEVER A FOLDER.  This took a `recursive` argument and handed it to
         // `removeEntry`, which on a folder-mounted Diamond is the user's own disk: on
         // 2026-09-22 a daimon whose moves had been refused used it on whole folders and
@@ -20488,12 +20898,31 @@ impl Tool {
             },
             _ => None,
         };
+        // A RESTORE'S DELETE KEEPS WHAT IT REMOVES, read at the act and after the person's
+        // yes: a save made while the question was open is what goes, so it is what is kept.
+        // Every reason a turn's delete could keep no copy refuses this one too.
+        let rest = if ctx.restoring != 0 {
+            let store = crate::wasm::diamond::restore_store(ctx.restoring).unwrap_or_default();
+            match Self::delete_copy(ctx, &store, &raw, &path).await {
+                Ok(Ok(now)) => match Self::restore_hold(ctx, &raw, &normalise(&path), Some(&now),
+                    true).await
+                {
+                    Ok(h)    => h,
+                    Err(why) => return Ok(MessageContent::text(why)),
+                },
+                Ok(Err(why)) => return Ok(MessageContent::text(refusal_line(&why))),
+                Err(e)       => return Err(e),
+            }
+        } else {
+            None
+        };
         // Absence from this device means "not here"; removal from the cloud index means
         // "gone". Those are different things, and only an explicit delete does the
         // second. The user's own door may do it for a file that is not resident; a
         // turn never reaches here for one, because `delete_copy` refused it.
         if let Err(e) = crate::wasm::opfs::delete_licensed(ctx.root, &lic).await {
             Self::let_go(&held).await;
+            Self::restore_failed(&rest).await;
             give_back();
             if keep.is_none() && crate::wasm::cloud::size_of(&path).is_some() {
                 res!(crate::wasm::cloud::forget_licensed(&lic).await);
@@ -20501,6 +20930,7 @@ impl Tool {
             }
             return Err(e);
         }
+        Self::restore_landed(rest, crate::wasm::diamond::Body::Gone);
         if let Some((dia, now, copy)) = keep {
             Self::captured_delete(&dia, &path, Found::of(Some(&now)), copy);
         }
@@ -21571,6 +22001,80 @@ impl Tool {
                 }
                 out
             },
+        }
+    }
+
+    /// A restore's hold on what its act replaces or removes at `key`, taken once the fence has
+    /// passed and immediately before the act (see [`ToolContext::restoring`]); `Ok(None)` for every
+    /// call that is not a restore's.  The copy of `now` goes into the store with a note, and any
+    /// turn's run on the path is ended ([`crate::wasm::diamond::restore_keep`]).
+    ///
+    /// **A restore never replaces or removes what it cannot keep**: a path the store does not
+    /// keep, bytes past the size a version holds, or a copy that could not be written, is the
+    /// act's refusal, and the file stays as it is.
+    ///
+    /// # Arguments
+    /// * `raw` - The path as the caller wrote it, for the sentences.
+    /// * `key` - As the store names it: the scoped path normalised, or absolute on the machine.
+    /// * `now` - What stands there as the act found it, or `None` where nothing does.
+    /// * `deleting` - Is the act a delete?
+    #[cfg(target_arch = "wasm32")]
+    async fn restore_hold(ctx: &ToolContext, raw: &str, key: &str, now: Option<&[u8]>,
+        deleting: bool)
+        -> Result<Option<RestoreHold>, String>
+    {
+        if ctx.restoring == 0 {
+            return Ok(None);
+        }
+        let id = match crate::wasm::diamond::restore_store(ctx.restoring) {
+            Some(id) => id,
+            None     => return Err(refusal_line(&fmt!(
+                "The restore '{}' was part of has ended, so nothing was changed.", raw))),
+        };
+        if !key.starts_with('/') && !crate::wasm::diamond::versionable(&id, key) {
+            return Err(refusal_line(&fmt!(
+                "'{}' is part of Daimond's own record, which keeps its own history, so a restore \
+                does not change it here. Nothing was changed.", raw)));
+        }
+        if let Some(b) = now {
+            if b.len() > crate::diamond_versions::VERSION_FILE_MAX {
+                return Err(restore_size_refusal(raw, b.len() as u64));
+            }
+        }
+        match crate::wasm::diamond::restore_keep(ctx.restoring, key, now, deleting).await {
+            Ok(())  => Ok(Some(RestoreHold {
+                ticket: ctx.restoring,
+                mark:   crate::wasm::diamond::theirs(&id, key),
+                key:    key.to_string(),
+                before: now.map(|b| b.to_vec()),
+            })),
+            Err(e)  => Err(copy_unwritten_refusal(raw, &e.plain())),
+        }
+    }
+
+    /// Hold what a restore's act left at its path, once it landed, for the restore's record.
+    #[cfg(target_arch = "wasm32")]
+    fn restore_landed(held: Option<RestoreHold>, after: crate::wasm::diamond::Body) {
+        if let Some(h) = held {
+            let found = Found::of(h.before.as_deref());
+            crate::wasm::diamond::restore_landed(h.ticket, crate::wasm::diamond::Change {
+                path:    h.key,
+                after,
+                before:  h.before,
+                found,
+                carried: None,
+                mark:    h.mark,
+                refused: None,
+                wiped:   false,
+            });
+        }
+    }
+
+    /// Give back a restore's hold whose act did not land.
+    #[cfg(target_arch = "wasm32")]
+    async fn restore_failed(held: &Option<RestoreHold>) {
+        if let Some(h) = held {
+            crate::wasm::diamond::restore_let_go(h.ticket, &h.key).await;
         }
     }
 
@@ -25269,6 +25773,43 @@ impl ToolRegistry {
         Self::flatten(self.try_dispatch_unbilled(name, args_json).await)
     }
 
+    /// A page door's write of `bytes` at `path`, byte for byte ([`Tool::write_bytes_page`]),
+    /// answered as [`Self::put_back`] is.  The Files panel's Undo of a delete; in no model's roster.
+    #[cfg(target_arch = "wasm32")]
+    pub async fn write_bytes_door(&self, path: &str, bytes: Vec<u8>) -> MessageContent {
+        crate::wasm::opfs::arm_folder_watch();
+        let out = match Tool::write_bytes_page(path, bytes, &self.ctx).await {
+            Ok(c)  => c,
+            Err(e) => MessageContent::text(error_line(&e.plain())),
+        };
+        let thrown = crate::wasm::opfs::take_thrown();
+        if crate::wasm::opfs::folder_open()
+            && folder_loss_reported(call_outcome(&out.as_text()), &thrown)
+        {
+            crate::wasm::opfs::notify_folder_lost();
+        }
+        out
+    }
+
+    /// A restore's put-back of a stored body, byte for byte ([`Tool::put_back_page`]), answered as
+    /// [`Self::dispatch_op`] answers a tool call: a failure as its sentence, and a lost folder
+    /// reported.  A verb of the restore door alone, so it is in no model's roster.
+    #[cfg(target_arch = "wasm32")]
+    pub async fn put_back(&self, args_json: &str) -> MessageContent {
+        crate::wasm::opfs::arm_folder_watch();
+        let out = match Tool::put_back_page(args_json, &self.ctx).await {
+            Ok(c)  => c,
+            Err(e) => MessageContent::text(error_line(&e.plain())),
+        };
+        let thrown = crate::wasm::opfs::take_thrown();
+        if crate::wasm::opfs::folder_open()
+            && folder_loss_reported(call_outcome(&out.as_text()), &thrown)
+        {
+            crate::wasm::opfs::notify_folder_lost();
+        }
+        out
+    }
+
     /// The panel's door, with a ROAD failure kept as an error.
     ///
     /// The counterpart of [`Self::try_dispatch`] for a caller that pays nothing, and the place
@@ -25330,7 +25871,17 @@ impl ToolRegistry {
             // named `spawn_agent` was answered "Dispatched agent …" while
             // nothing was dispatched, because only the conductor's registry
             // carries it.
-            Some(t) if self.tools.contains(&t) => match t.execute(args_json, ctx).await {
+            Some(t) if self.tools.contains(&t) => match {
+                // A COMMAND OR A WORKER CHANGES FILES NO CAPTURE SEES, so the turn end cannot
+                // tell its bytes from another tab's or the person's ([`crate::wasm::diamond::drain_turn`]).
+                #[cfg(target_arch = "wasm32")]
+                if t.opaque() {
+                    if let Some(k) = ctx.keeper() {
+                        crate::wasm::diamond::ran_opaque(&k);
+                    }
+                }
+                t.execute(args_json, ctx).await
+            } {
                 Ok(c)  => c,
                 // THE ONE FAILURE THAT DOES NOT BECOME A SENTENCE. Everything else -- a bad
                 // path, a refusal, a 500 from a host that answered -- is a fact about the world
@@ -26288,7 +26839,7 @@ mod tests {
             Err(e) => panic!("a scratch directory: {}", e),
         };
         let ws = Workspace::new(dir).expect("ws");
-        ToolContext { workspace: ws, executor: Executor::local_default(), cwd: String::new(), path_prefix: String::new(), root: FileRoot::Workspace, read_seen: new_read_cache(), no_write: Vec::new(), daimon_of: String::new(), keeper: String::new(), unconfirmed: Vec::new(), by_model: false }
+        ToolContext { workspace: ws, executor: Executor::local_default(), cwd: String::new(), path_prefix: String::new(), root: FileRoot::Workspace, read_seen: new_read_cache(), no_write: Vec::new(), daimon_of: String::new(), keeper: String::new(), unconfirmed: Vec::new(), by_model: false, restoring: 0 }
     }
 
     /// A context scoped to a Diamond, as `diamond_bounds` builds it.
@@ -26407,6 +26958,21 @@ mod tests {
         // is the incident's own shape.
         assert!(!d.contains("with run") && !d.contains("NO DOOR ONTO THIS COMPUTER"),
             "file_delete's description still sends the model to run: {}", d);
+    }
+
+    /// A delete that reaches a hand's folder is refused as a refusal the ledger reads, says
+    /// nothing was deleted and why, and sends the model to the user rather than to `run`. It had
+    /// said the file was "not there" (the reopen rehearsal's U3, 2026-09-25).
+    #[test]
+    fn test_a_delete_through_the_hand_is_refused_in_words_00() {
+        let said = refusal_line(&delete_machine_refusal("docs/diagram.png"));
+        assert!(said.starts_with(REFUSAL_OPENING), "not read as a refusal: {}", said);
+        for want in ["'docs/diagram.png'", "machine hand", "Nothing was deleted", "tell the user"] {
+            assert!(said.contains(want), "the refusal does not say {:?}: {}", want, said);
+        }
+        for never in ["not there", "with run", "use run"] {
+            assert!(!said.contains(never), "the refusal says {:?}: {}", never, said);
+        }
     }
 
     /// **An absolute path is FOLLOWED, and the description said it was refused.**
@@ -27494,6 +28060,35 @@ mod tests {
         assert!(stored_is_mark("chat:c1", "vault/a.md"));
         assert!(!stored_is_mark("d1", "diamonds/d1/notes.md"));
         assert!(stored_is_mark("d1", "vault/a.md"));
+        // A machine file, recorded by its absolute path, is the person's too.
+        assert!(stored_is_mark("d1", "/home/u/proj/a.md"));
+    }
+
+    /// A restore's act over a file too large to keep a copy of is REFUSED, so the page reports it
+    /// as left rather than done, and it says so in the words the History's row reads it by
+    /// (`www/js/versions.js`, `writeMachine`).
+    #[test]
+    fn test_a_restore_leaves_what_it_cannot_keep_00() {
+        let said = restore_size_refusal("vault/big.md", 600_000);
+        assert_eq!(call_outcome(&said), CallOutcome::Refused, "{}", said);
+        assert!(said.contains("bytes Daimond keeps a copy of"), "{}", said);
+        assert!(said.contains("vault/big.md") && said.contains("600000"), "{}", said);
+    }
+
+    /// A restore's put-back that cannot carry the bytes, or does not have them, is REFUSED and
+    /// says so in the words the History's row reads it by (`www/js/versions.js`, `writeMachine`):
+    /// "carries text only" is "Left in your folder", and "not on this device" is its own row.
+    #[test]
+    fn test_a_put_back_leaves_what_it_cannot_carry_00() {
+        let said = put_back_binary_refusal("proj/pic.png");
+        assert_eq!(call_outcome(&said), CallOutcome::Refused, "{}", said);
+        assert!(said.contains("carries text only") && said.contains("proj/pic.png"), "{}", said);
+        // Today's file is not text: the same words, from the act's own copy.
+        let said = overwrite_unkept_refusal("proj/pic.png", "binary");
+        assert!(said.contains("carries text only"), "{}", said);
+        let said = put_back_absent_refusal("vault/a.pdf");
+        assert_eq!(call_outcome(&said), CallOutcome::Refused, "{}", said);
+        assert!(said.contains("is not on this device"), "{}", said);
     }
 
     #[test]
@@ -37249,32 +37844,65 @@ CLEAN            27 passed, 0 failed, exit 0, 900 ms
         assert!(stored_is_mark("alpha", "diamonds/alpha"));
     }
 
-    /// **A restore that leaves the read cache alone refuses the next write to what it restored.**
+    /// **A restore keeps what the daimon last read, and notes what it left** (RD of the release
+    /// 5.1 fix's third QA).
     ///
-    /// The guard in `Tool::FileWrite` compares the bytes on disk with what this agent last read,
-    /// and answers "another agent edited it" when they differ. A Restore differs them from
-    /// outside the turn, so the entry has to go -- and only that entry: every other file the turn
-    /// read is still anchored to what it read, and clearing the map would be clearing the guard.
+    /// The write guard in `Tool::FileWrite` compares the bytes on disk with what this agent last
+    /// read.  A Restore forgot that entry until then, and the daimon's next write, made from its
+    /// read before the Restore, silently undid the person's restore.  The entry stays; the note
+    /// says what the restore left, so the refusal can name the restore, and only while the file
+    /// still holds exactly that.
     #[test]
-    fn test_a_restored_path_is_dropped_from_what_this_agent_last_saw() {
+    fn test_a_restored_path_keeps_what_this_agent_last_saw_and_notes_what_the_restore_left() {
         let cache = new_read_cache();
         {
             let mut st = lock_cache(&cache);
             st.seen.insert(fmt!("diamonds/alpha/notes/a.md"), content_hash(b"alpha one"));
-            st.seen.insert(fmt!("diamonds/alpha/notes/b.md"), content_hash(b"beta one"));
-            st.seen.insert(fmt!("live/site.txt"), content_hash(b"v2 by the daimon"));
+            // As the model spelled it, which is how the cache keys it.
+            st.seen.insert(fmt!("./live/site.txt"), content_hash(b"v2 by the daimon"));
         }
-        forget_seen(&cache, &[fmt!("diamonds/alpha/notes/a.md"), fmt!("live/site.txt")]);
+        note_restored(&cache, "diamonds/alpha/notes/a.md", b"alpha, as restored");
+        note_restored(&cache, "live/site.txt", b"v1, as restored");
         let st = lock_cache(&cache);
-        assert!(!st.seen.contains_key("diamonds/alpha/notes/a.md"),
-            "the restored file is still anchored to bytes that are no longer on disk");
-        assert!(!st.seen.contains_key("live/site.txt"));
-        assert_eq!(Some(&content_hash(b"beta one")), st.seen.get("diamonds/alpha/notes/b.md"),
-            "a file the restore never touched lost its guard");
-        // A path nothing was ever read at is not an error, and takes nothing with it.
+        assert_eq!(Some(&content_hash(b"alpha one")), st.seen.get("diamonds/alpha/notes/a.md"),
+            "the restore dropped what the daimon read, so its stale write would land");
+        assert_eq!(Some(&content_hash(b"v2 by the daimon")), st.seen.get("./live/site.txt"));
         drop(st);
-        forget_seen(&cache, &[fmt!("diamonds/alpha/notes/never.md")]);
-        assert_eq!(1, lock_cache(&cache).seen.len());
+        assert!(holds_restored(&cache, "diamonds/alpha/notes/a.md", b"alpha, as restored"));
+        assert!(holds_restored(&cache, "./live/site.txt", b"v1, as restored"),
+            "a restored file the model named in another spelling is not recognised");
+        // Changed again since the restore: somebody else's edit, not the restore's.
+        assert!(!holds_restored(&cache, "live/site.txt", b"v3, after the restore"));
+        assert!(!holds_restored(&cache, "diamonds/alpha/notes/never.md", b"x"));
+    }
+
+    /// The stale-read guard every whole-file write door asks (fix/r51e, 2026-09-25): the machine's
+    /// through the hand as well as browser storage's.  A machine file's restore is noted by its
+    /// absolute path, at the restore door's own cache, and carried to the daimon's.
+    #[test]
+    fn test_the_stale_read_guard_names_the_person_restore_under_either_spelling() {
+        let cache = new_read_cache();
+        let abs = "/home/p/grant/proj/a.md";
+        lock_cache(&cache).seen.insert(fmt!("proj/a.md"), content_hash(b"what the daimon read"));
+        // Nothing read, or the file as read: no refusal.
+        assert_eq!(None, stale_write(&cache, "proj/never.md", Some("/x/never.md"), b"anything"));
+        assert_eq!(None, stale_write(&cache, "proj/a.md", Some(abs), b"what the daimon read"));
+        // The person's own edit, outside Daimond.
+        let why = stale_write(&cache, "proj/a.md", Some(abs), b"the person's edit");
+        assert!(why.as_deref().map_or(false, |w| w.contains("changed on disk since you read it")
+            && w.contains("another agent")), "{:?}", why);
+        // A restore, noted at the door by the absolute path, then carried to the daimon's cache.
+        let door = new_read_cache();
+        note_restored(&door, abs, b"as restored");
+        assert_eq!(None, stale_write(&door, "proj/a.md", Some(abs), b"as restored"),
+            "the door's own cache holds no read, so it refuses nothing");
+        carry_restored(&door, &cache);
+        let why = stale_write(&cache, "proj/a.md", Some(abs), b"as restored");
+        assert!(why.as_deref().map_or(false, |w| w.contains("the person restored it")
+            && !w.contains("another agent")), "{:?}", why);
+        // Without the second spelling the restore is not recognised, and the sentence is the old one.
+        let why = stale_write(&cache, "proj/a.md", None, b"as restored");
+        assert!(why.as_deref().map_or(false, |w| w.contains("another agent")), "{:?}", why);
     }
 
     /// Offered wherever a turn keeps what it changes -- a daimon and a chat alike -- and
@@ -40841,9 +41469,13 @@ CLEAN            27 passed, 0 failed, exit 0, 900 ms
             r#"{"path":"www/js/daimond.js","name":"^dispatch$","depth":3}"#);
         assert!(nested.iter().any(|r| r.contains("method\tdispatch")),
             "Workers.dispatch is not in the map: {:?}", nested);
-        // The header names the file as it is, so a reader knows what it is a map OF.
-        assert!(text.contains("46827 lines") || text.contains(" lines, 2"),
-            "the header does not say how big the file is: {}",
+        // The header names the file as it is, so a reader knows what it is a map OF.  Measured
+        // from the file rather than spelled as a number: it matched a leading "2" of the byte
+        // count, and failed the day `daimond.js` passed 3,000,000 bytes.
+        let bytes = std::fs::metadata(std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("www/js/daimond.js")).map(|m| m.len()).unwrap_or(0);
+        assert!(bytes > 0 && text.contains(&fmt!(" lines, {} bytes", bytes)),
+            "the header does not say how big the file is ({} bytes): {}", bytes,
             text.lines().next().unwrap_or_default());
     }
 

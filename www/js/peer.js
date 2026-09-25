@@ -749,8 +749,14 @@
 	/// turn already running here waits for that run, or the compile.
 	function workKey(env) {
 		if (!env) return '';
-		return env.t === T_COMPILE ? 'compile:' + String(env.cid || '') : 'turn:' + String(env.turnId || '');
+		return env.t === T_COMPILE ? 'compile:' + String(env.cid || '') : turnWorkKey(env.turnId);
 	}
+
+	/// The work key of one turn, whoever runs it here. A runner's collect claims it
+	/// (post.js `claimWork`) and so does every local run of a dispatched turn
+	/// (daimond.js `recoverOneLocally`): the lease arbitrates between devices, and this
+	/// claim between the tabs of one device, which share its id and so its lease.
+	function turnWorkKey(turnId) { return 'turn:' + String(turnId || ''); }
 
 	/// Verify a peeked envelope and, if it was authored by this account, hand it to
 	/// the registered runner. An envelope that does not verify is DROPPED with a
@@ -879,17 +885,19 @@
 	var STEP_POST_ERRAND   = 'post-errand';		// seal + post the errand, carrying the thread seed
 
 	// WHAT A SEED CARRIES. Enough of the thread for the runner to run the turn, and
-	// no more: a tail of messages, each clipped, under a total budget, so the errand
-	// stays a small sealed envelope on the post door rather than a second parcel.
-	// Measured against the live fault it exists to remove -- a 7.86 MB parcel flushed
-	// BEFORE the errand was posted -- these are three orders of magnitude smaller.
+	// no more: a tail of WHOLE messages under a total budget, so the errand stays a
+	// small sealed envelope on the post door rather than a second parcel. Measured
+	// against the live fault it exists to remove -- a 7.86 MB parcel flushed BEFORE the
+	// errand was posted -- these are three orders of magnitude smaller.
 	var SEED_MAX_MSGS  = 24;				// the thread's tail, newest-last
 	var SEED_MAX_CHARS = 64 * 1024;			// the whole seed's content budget
-	var SEED_MSG_CHARS = 16 * 1024;			// any one message's share of it
+	// What a seed from before whole-message seeds cut each message to. Such a seed says
+	// nothing of which rows it cut, so a row this long in one is taken as cut.
+	var LEGACY_SEED_MSG_CHARS = 16 * 1024;
 
 	/// THE THREAD THE ERRAND CARRIES. Pure over a chat's `messages`: the tail, ending
-	/// at the turn's own user message, each message clipped to `SEED_MSG_CHARS` and
-	/// the whole under `SEED_MAX_CHARS`, oldest dropped first.
+	/// at the turn's own user message, whole messages only, the whole under
+	/// `SEED_MAX_CHARS`, oldest dropped first.
 	///
 	/// This is the whole of why the errand no longer waits for the parcel. The order
 	/// was push-then-post because a peer must never claim an errand whose prompt it
@@ -921,10 +929,25 @@
 			var mm = msgs[j];
 			if (!mm || !mm.role) continue;
 			if (mm.role !== 'user' && mm.role !== 'assistant' && mm.role !== 'tool') continue;
-			if (mm.interrupted) continue;			// a half turn is not history
+			// A half turn is not history, and nor is a provisional row: a final frame the
+			// runner cut at the door (`progressRow`) is held provisional here until the
+			// runner's own copy lands, and a seed marked `whole` must not carry it, or a
+			// runner lacking the answer grafts the cut copy as the real one (F4). Skipped,
+			// as `threadSig` skips it, so a runner that lacks it is never ready on it.
+			if (mm.interrupted || mm.provisional) continue;
 			var body = String(mm.content == null ? '' : mm.content);
-			if (body.length > SEED_MSG_CHARS) body = body.slice(0, SEED_MSG_CHARS);
-			if (used + body.length > cMax && keep.length) break;	// the budget, oldest dropped first
+			// WHOLE OR NOT AT ALL (slowparcel CASE 3). A cut copy carries the message's
+			// mid, so the runner's graft takes it for the message and `holdsThread`,
+			// which reads roles and mids and never content, passes it: the runner then
+			// fed the model the first 16 KiB of a 20 KiB paste and said nothing. A
+			// message that does not fit ENDS the tail instead, so a runner that lacks it
+			// fails `holdsThread` and pulls the parcel or hands the turn back. The turn's
+			// own message is the exception: it is skipped, not an end, because the prompt
+			// rides the errand whole and the reconstruct writes it from there.
+			if (used + body.length > cMax) {
+				if (mm.role === 'user' && String(mm.mid || '') === id) continue;
+				break;
+			}
 			used += body.length;
 			keep.unshift({ role: mm.role, content: body, mid: String(mm.mid || ''), ts: +mm.ts || 0 });
 		}
@@ -934,6 +957,7 @@
 			title:    String(c.title || ''),
 			provider: String(c.provider || ''),
 			model:    String(c.model || ''),
+			whole:    1,				// no message in `msgs` is cut; see seedGraft
 			msgs:     keep,
 		};
 	}
@@ -946,6 +970,11 @@
 	/// it build the thread and run, rather than block for the parcel and hand the turn
 	/// back `undeliverable`. A chat already holding every message answers nothing, so
 	/// a runner whose pull landed first does no work.
+	///
+	/// A seed from a dispatcher older than whole-message seeds (no `whole`) may hold
+	/// cut copies, and a cut copy grafted under its mid would pass `holdsThread`. So
+	/// in such a seed a row at the old cut length is not taken: the graft keeps only
+	/// the tail after it, and a runner lacking it pulls the parcel or hands back.
 	function seedGraft(chat, errand) {
 		var e = errand || {}, seed = e.seed;
 		if (!seed || !Array.isArray(seed.msgs) || !seed.msgs.length) return [];
@@ -954,10 +983,21 @@
 			var m = msgs[i];
 			if (m && m.mid) have[String(m.mid)] = 1;
 		}
+		var from = 0, skip = {};
+		if (!seed.whole) {
+			for (var k = seed.msgs.length - 1; k >= 0; k--) {
+				var cm = seed.msgs[k];
+				if (!cm || String(cm.content == null ? '' : cm.content).length < LEGACY_SEED_MSG_CHARS) continue;
+				// The turn's own message: the prompt rides the errand whole.
+				if (cm.role === 'user' && String(cm.mid || '') === String(e.turnId || '')) { skip[k] = 1; continue; }
+				from = k + 1;
+				break;
+			}
+		}
 		var out = [];
-		for (var j = 0; j < seed.msgs.length; j++) {
+		for (var j = from; j < seed.msgs.length; j++) {
 			var sm = seed.msgs[j];
-			if (!sm || !sm.mid || have[String(sm.mid)]) continue;
+			if (skip[j] || !sm || !sm.mid || have[String(sm.mid)]) continue;
 			out.push(sm);
 		}
 		return out;
@@ -1228,6 +1268,12 @@
 			}
 			return 'failed';									// aborted / error / refused-spend: terminal
 		}
+		// A LEASE THAT SAYS THE TURN FINISHED, with no report here (r52d QA F2). The report
+		// lives only in the memory of the tab that collected it, so a second tab of the
+		// sending device, or this one after a reload, read the released lease as
+		// "dispatched" beside the finished answer. The lease is read by every tab and every
+		// device: `done`, or released from done (`settled`, stamped by `leaseSetCas`).
+		if (settledLease(lease)) return 'done';
 		// A BLOCKER ON THE LEASE outranks everything the lease mode could say (it
 		// reads 'running' throughout the wait) and outranks the relayed ask, because
 		// it is the authoritative copy: the runner wrote it through the same CAS that
@@ -1253,6 +1299,11 @@
 		// aged at all, and reads as expired, as it does to `watchDecision`.
 		if (handoffExpired(turn, n)) return 'no-peer-awake';
 		return 'dispatched';
+	}
+
+	/// Does a lease record say its turn ran to completion: `done`, or released from done?
+	function settledLease(r) {
+		return !!r && (r.mode === 'done' || (r.mode === 'released' && !!r.settled));
 	}
 
 	/// Should the DISPATCHING device RECOVER this turn locally now (on its return to
@@ -3530,8 +3581,9 @@
 	/// and no turn of that id is running here -- which on a fresh page load is every
 	/// lease this device holds, because a turn is memory and the page has just
 	/// started. `running` names the set: `running[turnId]` truthy means the turn is
-	/// genuinely in flight here, so a second tab of the same device cannot release
-	/// the lease out from under the tab that is actually working.
+	/// genuinely in flight here. It is one tab's memory, so it cannot see a turn a
+	/// sibling tab is running (F2): daimond.js `releaseOwnStaleLeases` takes the turn's
+	/// work claim (`turnWorkKey`) before it frees anything this answers.
 	function staleOwnLeaseDecision(leases, selfId, running, now) {
 		var out = [], map = leases || {}, live = running || {};
 		var self = String(selfId || ''), n = now == null ? Date.now() : now;
@@ -4611,28 +4663,36 @@
 		// Gather from the tail backwards under the total budget, so the OLDEST row is
 		// the one dropped (the watcher already saw it), then restore document order.
 		var picked = [];
-		var used = 0;
+		var used = 0, dropped = false;
 		for (var j = msgs.length - 1; j > at; j--) {
 			var row = progressRow(msgs[j]);
 			if (!row) continue;
 			var len = row.content ? row.content.length : 0;
-			if (used + len > cap && picked.length) break;	// budget spent, oldest dropped first
+			if (used + len > cap && picked.length) { dropped = true; break; }	// budget spent, oldest dropped first
 			used += len;
 			picked.push(row);
 		}
+		// A frame that left rows out is not the whole turn, so no row of it says so.
+		if (dropped) for (var w = 0; w < picked.length; w++) delete picked[w].whole;
 		picked.reverse();
 		return picked;
 	}
 
 	/// One transcript message as a streamed structured row, or null for a view-only
 	/// row a watcher does not draw. Content is kept in full up to `PROGRESS_MSG_CHARS`.
+	///
+	/// `whole: 1` says nothing was cut from it. The sender makes a final frame's rows its
+	/// real answer only when every row says so (`adoptFinalFrame`); a cut row would be a
+	/// truncated answer kept for good if the runner's own copy never arrived.
 	function progressRow(m) {
 		if (!m || !m.role || !PROGRESS_ROLES[m.role]) return null;
 		var c = String(m.content == null ? '' : m.content);
-		if (c.length > PROGRESS_MSG_CHARS) c = c.slice(0, PROGRESS_MSG_CHARS);
+		var cut = c.length > PROGRESS_MSG_CHARS;
+		if (cut) c = c.slice(0, PROGRESS_MSG_CHARS);
 		var row = { mid: String(m.mid || ''), role: m.role, content: c, ts: +m.ts || 0 };
 		if (m.name)        row.name    = String(m.name);
 		if (m.outcome)     row.outcome = String(m.outcome);
+		if (m.args && String(m.args).length > PROGRESS_MSG_CHARS) cut = true;
 		if (m.args)        row.args    = String(m.args).length > PROGRESS_MSG_CHARS
 			? String(m.args).slice(0, PROGRESS_MSG_CHARS) : String(m.args);
 		if (m.callId)      row.callId  = String(m.callId);
@@ -4643,7 +4703,17 @@
 		// streaming it means the FINAL provisional row byte-matches the parcel copy's
 		// `msgSig`, so the merge is a no-op redraw rather than a rebuild.
 		if (m.ranOn)       row.ranOn   = String(m.ranOn);
+		if (!cut)          row.whole   = 1;
 		return row;
+	}
+
+	/// Is a frame the whole of what it streams: rows, every one marked `whole` by
+	/// `progressRow`, none cut and none left out? A frame from a build that marks
+	/// nothing never is.
+	function frameWhole(rows) {
+		if (!Array.isArray(rows) || !rows.length) return false;
+		for (var i = 0; i < rows.length; i++) if (!rows[i] || rows[i].whole !== 1) return false;
+		return true;
 	}
 
 	/// Fold an arriving frame into what a watcher is showing: answers the new state,
@@ -4845,6 +4915,7 @@
 		/// lock, and the key a device runs one of at a time.
 		isWork:  isWork,
 		workKey: workKey,
+		turnWorkKey: turnWorkKey,
 		/// Whether an errand is THIS device's own dispatch -- so the sender's collect
 		/// leaves it on the relay for the peer rather than acking it away.
 		isOwnDispatch: isOwnDispatch,
@@ -4895,6 +4966,8 @@
 		/// The §5 display state of a dispatched turn (dispatched/no-peer-awake/
 		/// claimed/running/done/failed). Pure; daimond.js only renders it.
 		uiState:       uiState,
+		settledLease:  settledLease,
+		frameWhole:    frameWhole,
 		watchDecision: watchDecision,
 		handoffDeadline: handoffDeadline,
 		handoffExpired:  handoffExpired,

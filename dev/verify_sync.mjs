@@ -2740,9 +2740,12 @@ try {
 			{ credentials: 'same-origin', headers: { 'x-daimond-api': '2' } });
 		return { status: r.status, json: await r.json(), above: v };
 	});
-	check('a wake answer carries a version and nothing else — no blob, no device, no account',
+	// Gateway release 1 adds `now` to every sync answer (item B4, the gateway's time that
+	// feeds the offset clock). It is a number and names nothing, so it may be there or not.
+	const wakeKeys = Object.keys(bare.json).filter((k) => !(k === 'now' && typeof bare.json.now === 'number'));
+	check('a wake answer carries a version (and the gateway\'s time) and nothing else — no blob, no device, no account',
 		bare.status === 200 && bare.json.waited === true
-			&& Object.keys(bare.json).sort().join(',') === 'changed,ok,version,waited',
+			&& wakeKeys.sort().join(',') === 'changed,ok,version,waited',
 		JSON.stringify(bare.json).slice(0, 160));
 	check('and a wait that nothing moved under says so rather than inventing a change',
 		bare.json.changed === false, 'parked above ' + bare.above + ' — ' + JSON.stringify(bare.json));

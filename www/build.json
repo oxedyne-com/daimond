@@ -1,1 +1,1 @@
-{"build":"56e352a3eb06","note":"Hand-off notes now reach the device they are meant for; synced files keep their parts; the gateway checks it can write"}
+{"build":"3e40e6c0a2d2","note":"Restore keeps your files and asks; hand-offs never run twice; held actions stay held; no-storage browsers stop retrying"}

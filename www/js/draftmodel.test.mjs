@@ -102,6 +102,15 @@ function loadScript(rel, transform) {
 }
 
 loadStore(win, localStorage);
+// The provider tombstones, which daimond.js keeps (`DaimondCore.tombs`/`.tombstone`).
+// models.js merges the disk's copy into its own on every save, so a removal holds
+// only by its tombstone, as it does on the page.
+const tombMap = {};
+win.DaimondCore = {
+	tombs:      () => Object.assign({}, tombMap),
+	tombstone:  (k, id, at) => { tombMap[id] = at || Date.now(); },
+	mergeTombs: (k, inc) => { for (const id in (inc || {})) if (!tombMap[id] || inc[id] > tombMap[id]) tombMap[id] = inc[id]; return Object.assign({}, tombMap); },
+};
 // The shared stamp rule, loaded first as index.html does. This loader runs a module
 // without `with (window)`, so the name its callers use bare is made global as well.
 loadScript('stamp.js');

@@ -168,7 +168,10 @@ try {
 	await page.setViewportSize({ width: 390, height: 844 });
 	await page.goto(process.env.DAIMOND_APP || 'http://localhost:8777',
 		{ waitUntil: 'domcontentloaded' });
-	await page.waitForTimeout(2500);
+	// The sign-in screen, waited FOR rather than a fixed 2.5s guessed at: under load
+	// the gate can still be drawing at that mark, and the checks below then read
+	// doors/title/Create at 0 — not absent, just not yet there (triage 20260925).
+	await page.waitForSelector('#id-primary', { state: 'visible', timeout: 30000 });
 	await snap('before-after-gate-390');
 	const gate = await page.evaluate(() => {
 		const vis = e => !!e && !!(e.offsetWidth || e.offsetHeight || e.getClientRects().length);

@@ -123,17 +123,27 @@
 	// import did not, and could not be made to.
 	//
 	// So for this one kind of leaf the default is reversed. It is held until a
-	// person on THIS device releases it -- play on its light, its Diamond's or the
-	// global one -- and the release is kept here and never travels in the parcel:
-	// a release on the phone does not arm the desktop, as a folder marked on one
-	// device is not in force on another. The release is bound to the action's
-	// TERMS, the text of what it does, which the tree node carries. An action
-	// changed anywhere but the app's own editor is therefore held again, and a
-	// daimon cannot keep a released leaf while rewriting its instruction.
+	// person on THIS device releases it -- play on ITS OWN light -- and the release
+	// is kept here and never travels in the parcel: a release on the phone does not
+	// arm the desktop, as a folder marked on one device is not in force on another.
+	// The release is bound to the action's TERMS, the text of what it does, which
+	// the tree node carries. An action changed anywhere but the app's own editor is
+	// therefore held again, and a daimon cannot keep a released leaf while
+	// rewriting its instruction.
 	//
-	// Pausing is untouched and still travels: a hold from any device holds here,
-	// and ends the release given here (`settle`), so resuming it is a new decision
-	// made on this device.
+	// Pausing is untouched and still travels: a hold from any device holds here.
+	// A hold on the action's own light, pressed on any device, also ends the
+	// release given here (`settle`), so resuming it is a new decision made on this
+	// device. A hold on a branch above it -- its Diamond's light, the Diamonds
+	// section's, Pause all -- only SUSPENDS the release, and a play there ends the
+	// hold and releases nothing.
+	//
+	// UNTIL THE REOPEN REHEARSAL OF 2026-09-25 A PLAY ON ANY BRANCH RELEASED EVERY
+	// ACTION UNDER IT, and every hold ended the releases under it. So Pause all
+	// then its resume released every action on the device, including ones the
+	// person had never pressed: a reopen's "press play on the ones wanted" was
+	// undone by the first Pause all. A resume now ends the pause and puts back
+	// exactly the releases that stood before it.
 	//
 	// THE SHAPE AND THE TEST THAT KNOWS IT LIVE HERE TOGETHER. Until the delta
 	// re-check of 2026-09-24 (D1) the leaf was joined in triggers.js with the id
@@ -418,6 +428,13 @@
 	function heldAbove(map, id) {
 		var path = pathOf(id);
 		var e = latest(map, path, path.length - 1, true);
+		return !!e && e[0] === 1;
+	}
+
+	/// Is `id`'s own entry a hold? Whether or not a later press on a branch above
+	/// now decides it, so the answer does not hang on which states a device saw.
+	function heldAt(map, id) {
+		var e = own(map, id);
 		return !!e && e[0] === 1;
 	}
 
@@ -761,12 +778,13 @@
 		return window.DaimondStore.put(HERE_KEY, _here);
 	}
 
-	/// A hold, from this device or another, ends the release given here. Returns
-	/// true when one was ended.
+	/// A hold on the action's own light, from this device or another, ends the
+	/// release given here; a hold on a branch above it does not (see "A leaf only
+	/// this device can release"). Returns true when one was ended.
 	function settle() {
 		var hit = false;
 		for (var k in _here) {
-			if (resolve(_leaves, k)) { delete _here[k]; hit = true; }
+			if (heldAt(_leaves, k)) { delete _here[k]; hit = true; }
 		}
 		return hit;
 	}
@@ -864,10 +882,13 @@
 	/// which is what keeps the sync parcel a fixed point.
 	///
 	/// This is the one door a release on this device comes through, and every
-	/// caller of it is a person pressing play or pause. Playing a node releases
-	/// each triggered action under it on the terms its tree node carries; a leaf
+	/// caller of it is a person pressing play or pause. Play on a triggered
+	/// action's OWN light releases it on the terms its tree node carries; a leaf
 	/// the tree does not know, or one with no terms, is not released, because
-	/// nothing can be released that the app cannot show. Pausing ends the release.
+	/// nothing can be released that the app cannot show. Pause on its own light
+	/// ends the release. A branch's press releases and ends nothing here: a hold
+	/// there suspends the releases under it, and its play puts them back as they
+	/// stood.
 	function set(nodeId, playing) {
 		if (!nodeId) return false;
 		current();
@@ -876,15 +897,15 @@
 		var p      = playing ? 0 : 1;
 		var moved  = !settled(_leaves, nodeId, p);
 		var here   = false;
-		var leaves = leafNodesUnder(node);
-		for (var i = 0; i < leaves.length; i++) {
-			var l = leaves[i];
-			if (!releasedHereOnly(l.id)) continue;
+		if (releasedHereOnly(nodeId) && !node.children) {
 			if (playing) {
-				var terms = (typeof l.terms === 'string') ? l.terms : '';
-				if (terms && _here[l.id] !== terms) { _here[l.id] = terms; here = true; }
-			} else if (_here[l.id]) {
-				delete _here[l.id];
+				var terms = (typeof node.terms === 'string') ? node.terms : '';
+				if (terms && _here[nodeId] !== terms) { _here[nodeId] = terms; here = true; }
+				// Its own hold, outranked by a later branch play, would end this
+				// release at the next `settle`: the play is written over it.
+				if (terms && heldAt(_leaves, nodeId)) moved = true;
+			} else if (_here[nodeId]) {
+				delete _here[nodeId];
 				here = true;
 			}
 		}
@@ -1130,6 +1151,7 @@
 			settled:       settled,
 			press:         press,
 			heldAbove:     heldAbove,
+			heldAt:        heldAt,
 			seedEntry:     seedEntry,
 			unseedEntry:   unseedEntry,
 			forgetEntries: forgetEntries,

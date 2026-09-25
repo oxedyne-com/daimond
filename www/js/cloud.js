@@ -419,6 +419,87 @@
 		return out;
 	}
 
+	// ── Whether this browser holds files at all ────────────────
+	//
+	// A BROWSER WITH NO FILE STORE IS A STANDING FACT, NOT A FAILED MERGE. OPFS is
+	// where a device keeps the workspace's bytes, and a browser can lack it outright
+	// (an older Safari, iOS Private Browsing, Playwright's WebKit: no `getDirectory`)
+	// or refuse it (a private window elsewhere, site data blocked, a store evicted).
+	// Until 2026-09-25 nothing asked. `opfsRoot` threw from inside the pull's
+	// `chunked` section, the merge was reported unfinished, the version was never
+	// adopted, and every push after it met a 409 over a base it could not move: up
+	// to 48 refusals and 365 requests a minute from the reopen rehearsal's WebKit
+	// iPhone, whose own chats never left it while the chip blamed "what arrived from
+	// the other device" (specs/daimond_fixbrief_r52_noopfs_20260925.md).
+	//
+	// So it is asked here, once, and answered in one of three words: `held`; `none`,
+	// the API absent, for the life of the page; or `refused`, present and saying no,
+	// asked again at most once a minute because a store can come back. What needs
+	// OPFS reads this rather than meeting its absence as a throw, and the sync chip
+	// says it in words (sync.js `restStatus`). A change is announced as
+	// `daimond:file-store`, so the engine can merge the files it stood down on.
+	var STORE_REPROBE_MS = 60000;
+	var storeState = '';		// '' until asked, then 'held', 'none' or 'refused'
+	var storeWhy   = '';		// the browser's own word for a refusal
+	var storeAt    = 0;			// when it was last asked
+	var storeProbe = null;		// the question in flight
+
+	function noteStore(state, why) {
+		var was = storeState;
+		storeState = state;
+		storeWhy   = why || '';
+		storeAt    = Date.now();
+		if (was === state) return;
+		log('file store', was || '(unasked)', '->', state, storeWhy);
+		try { window.dispatchEvent(new CustomEvent('daimond:file-store', { detail: { state: state, was: was, why: storeWhy } })); }
+		catch (e) { /* no window to tell */ }
+	}
+
+	/// Ask the browser for its file store, one question at a time; answers the word.
+	function probeStore() {
+		if (storeProbe) return storeProbe;
+		storeProbe = (async function () {
+			var sm = (typeof navigator !== 'undefined' && navigator && navigator.storage) || null;
+			if (!sm || typeof sm.getDirectory !== 'function') { noteStore('none', 'getDirectory'); return storeState; }
+			try { await sm.getDirectory(); noteStore('held', ''); }
+			catch (e) { noteStore('refused', (e && (e.name || e.message)) || 'refused'); }
+			return storeState;
+		})();
+		storeProbe.then(function () { storeProbe = null; }, function () { storeProbe = null; });
+		return storeProbe;
+	}
+
+	/// The file store as last seen, `{ state, why }`, with `state` '' until the first
+	/// answer. A refusal a minute old is asked again in the background.
+	function fileStore() {
+		if (!storeState || (storeState === 'refused' && Date.now() - storeAt >= STORE_REPROBE_MS)) probeStore();
+		return { state: storeState, why: storeWhy };
+	}
+
+	/// The store's word, asking first when nothing has been asked yet.
+	async function storeWord() {
+		return storeState || await probeStore();
+	}
+
+	/// The error a caller meets when there is no store to open, told apart from a
+	/// missing file by `code`.
+	function noStoreError(cause) {
+		var e = new Error('This browser keeps no files here (' + (storeState || 'unknown')
+			+ (storeWhy ? ': ' + storeWhy : '') + ').');
+		e.code  = 'no-file-store';
+		e.cause = cause;
+		return e;
+	}
+
+	/// What a file door answers when there is no store: the one sentence the person
+	/// and the agent both read, rather than a stack from deep inside a directory walk.
+	function noStoreSentence(path) {
+		return 'Error: this browser cannot keep files ('
+			+ (storeState === 'none' ? 'it has no file storage: an older Safari, or Private Browsing'
+				: 'it refused file storage just now: Private Browsing, or site data blocked or cleared')
+			+ '), so ' + path + ' stays in cloud storage and on your other devices.';
+	}
+
 	// ── OPFS, honouring the account namespace ──────────────────
 	// A non-primary account lives in an OPFS subdirectory, exactly as the wasm
 	// file tools resolve it. Reading the raw root instead would look in the
@@ -428,8 +509,16 @@
 	/// primary account, its own `d~<id>` subdirectory for every other. Published,
 	/// because the backup path in daimond.js needs the same answer and a second
 	/// implementation of it is a second chance to walk the wrong root.
+	///
+	/// A browser with no store, or one that refuses it, throws `noStoreError` and
+	/// the store's word moves to match, so the next caller asks `fileStore` instead.
 	async function opfsRoot() {
-		var root = await navigator.storage.getDirectory();
+		var sm = (typeof navigator !== 'undefined' && navigator && navigator.storage) || null;
+		if (!sm || typeof sm.getDirectory !== 'function') { noteStore('none', 'getDirectory'); throw noStoreError(); }
+		var root;
+		try { root = await sm.getDirectory(); }
+		catch (e) { noteStore('refused', (e && (e.name || e.message)) || 'refused'); throw noStoreError(e); }
+		if (storeState !== 'held') noteStore('held', '');
 		var ns = '';
 		try { ns = (window.DaimondAccounts && DaimondAccounts.opfsNs()) || ''; } catch (e) { ns = ''; }
 		if (!ns) return root;
@@ -754,6 +843,13 @@
 	async function refreshPaths() {
 		var ix = index(), out = {}, root = activeRoot();
 		var keys = Object.keys(ix);
+		// A BROWSER THAT HOLDS NO FILES HOLDS NONE OF THESE, so with no store every path
+		// is away and no directory is opened to find that out. Away is also the safe
+		// answer for a path whose holding cannot be read: `noteFileTombs` keeps an away
+		// path in the fork point, where a path merely missing from the census would be
+		// read as deleted here. This walk used to throw instead, from inside the pull's
+		// merge, and a device with no OPFS never adopted another version.
+		var held = !!root || (await storeWord()) === 'held';
 		for (var i = 0; i < keys.length; i++) {
 			var p = keys[i];
 			// A content manifest is not a workspace file: the agent's file tools
@@ -764,7 +860,11 @@
 			// called `chap_one.typ.peer.6f2a…` in the workspace listing would be a
 			// file the user could try to open and the agent could try to read.
 			if (ix[p] && ix[p].peer) continue;
-			var here = root ? !!(await fileUnderRoot(root, p)) : await isHeld(p);
+			var here = false;
+			if (held) {
+				try { here = root ? !!(await fileUnderRoot(root, p)) : await isHeld(p); }
+				catch (e) { here = false; }		// the store went from under the walk: away
+			}
 			if (!here) out[p] = (ix[p] && ix[p].size) | 0;
 		}
 		writeJson(PATHS_KEY, out);
@@ -1136,6 +1236,7 @@
 	async function fetchDown(path, viaAgent) {
 		var m = manifest(path);
 		if (!m) return 'Error: ' + path + ' is not in cloud storage.';
+		if ((await storeWord()) !== 'held') return noStoreSentence(path);
 		if (await isHeld(path)) { touch(path); return 'OK: ' + path + ' is already on this device.'; }
 		if (!window.DaimondChunks) return 'Error: the chunk transport is not loaded.';
 		// An agent asking is not the same as a person asking. A person clicking a
@@ -1204,6 +1305,8 @@
 		var m = manifest(path);
 		if (!m) return 'Error: ' + path + ' is not in cloud storage, so it cannot be freed.';
 		if (isPinned(path)) return 'Error: ' + path + ' is pinned to this device.';
+		// Nothing is kept here, so there is nothing to free.
+		if ((await storeWord()) !== 'held') return 'OK: ' + path + ' was already not on this device.';
 
 		var file = await fileAt(path);
 		if (!file) return 'OK: ' + path + ' was already not on this device.';
@@ -1262,6 +1365,8 @@
 	/// comfortably under its quota again. Does nothing when there is no
 	/// pressure, and never touches a file cloud storage does not hold.
 	async function reclaim(force) {
+		// A browser that keeps no files has none to free.
+		if ((await storeWord()) !== 'held') return { freed: 0, evicted: [], ratio: 0 };
 		var pr = await pressure();
 		if (!pr.quota) return { freed: 0, evicted: [], ratio: pr.ratio };
 		if (!force && pr.ratio < PRESSURE_HIGH) return { freed: 0, evicted: [], ratio: pr.ratio };
@@ -1427,6 +1532,9 @@
 		// And the root those resolve against, for the backup path, which walks
 		// the whole tree rather than one named file.
 		opfsRoot:     opfsRoot,
+		// Whether this browser holds files at all: `{ state, why }`, state 'held',
+		// 'none' or 'refused' ('' until asked). The sync chip reads it.
+		fileStore:    fileStore,
 		// The filesystem-name codec, published for the same reason `opfsRoot` is: the workspace
 		// walkers in daimond.js reach the same handles, and a second implementation of the
 		// spelling rule is a second chance to look in the wrong place.

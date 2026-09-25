@@ -104,7 +104,16 @@ const tree = (T, P, actions) => () => ({ id: 'root', children: [
 	check('and the web, and everything a person could hold', B.P.isPaused('root/web') === true
 		&& B.P.heldByHand('root') === true);
 	check('and the other tab says so, so its lights and pump follow', B.heard() > heard, (B.heard() - heard) + ' announcement(s)');
-	check('the pause there also ends the release given there', B.P.releasedHere(B.T.node(D, 'm1')) === '');
+	check('the pause there suspends the release given there, and does not end it',
+		B.P.releasedHere(B.T.node(D, 'm1')) === B.T.terms(acts[0]));
+	mark = ls.writes.length;
+	A.P.set('root', true);							// its resume, in tab A
+	deliver(B, ls, mark);
+	check('so its resume in one tab puts the release back in the other, and releases nothing else',
+		B.T.allowed(D, acts[0]) === true && B.T.allowed(D, acts[1]) === false);
+	mark = ls.writes.length;
+	A.P.set('root', false);
+	deliver(B, ls, mark);
 
 	mark = ls.writes.length;
 	B.P.set('root/web', true);						// play on the Web leaf, in tab B

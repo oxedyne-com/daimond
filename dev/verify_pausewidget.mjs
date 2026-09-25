@@ -411,6 +411,14 @@ await p.waitForTimeout(900);
 const tree   = await expectedTree(p);
 const nodes  = [...walk(tree)];
 const leaves = nodes.filter((n) => !n.children).map((n) => n.id);
+// A TRIGGERED ACTION'S OWN LIGHT IS SPECIAL SINCE THE REOPEN REHEARSAL OF 2026-09-25. Only
+// its own play releases it on this device, and its own pause ends that release, so no
+// branch's play makes it play again (pause.js `releasedHereOnly`). Every reset below
+// therefore releases each action by its own play as well, so the leaf state is exactly
+// the pattern enumerated; and a branch's play over an action whose own light that pattern
+// paused leaves the action held, which the sweep asserts rather than excludes.
+const isTrig = (l) => /\/triggers\//.test(l);
+const trig = leaves.filter(isTrig);
 const byId   = new Map(nodes.map((n) => [n.id, n]));
 
 check(leaves.length >= 5, `the page carries enough leaves to search (${leaves.length}: ${leaves.join(', ')})`,
@@ -602,7 +610,7 @@ check(lamps.length > 0 && lamps.every((l) => l && l.kids === 0 && l.inside === '
 // A disabled button is pressed too, and is expected to do nothing: `click()` on
 // a disabled <button> dispatches no event, and that IS the guard against the
 // state changing under a verb the page said was unavailable.
-const sweep = await p.evaluate(({ leaves, nodeIds }) => {
+const sweep = await p.evaluate(({ leaves, trig, nodeIds }) => {
 	const rows = [];
 	if (!window.DaimondPause) return rows;
 	const grpFor = (n) => document.querySelector(`.pptw[data-pause-node="${n}"]`);
@@ -611,6 +619,7 @@ const sweep = await p.evaluate(({ leaves, nodeIds }) => {
 		for (const node of live) {
 			for (const act of ['pause', 'play']) {
 				DaimondPause.set('root', true);
+				for (const l of trig) DaimondPause.set(l, true);
 				for (let i = 0; i < leaves.length; i++) if (m & (1 << i)) DaimondPause.set(leaves[i], false);
 				const before = leaves.map((l) => DaimondPause.isPaused(l));
 				const g = grpFor(node);
@@ -635,7 +644,7 @@ const sweep = await p.evaluate(({ leaves, nodeIds }) => {
 		}
 	}
 	return rows;
-}, { leaves, nodeIds: nodes.map((n) => n.id) });
+}, { leaves, trig, nodeIds: nodes.map((n) => n.id) });
 
 check(sweep.length > 0, `the sweep ran (${sweep.length} presses over ${1 << leaves.length} leaf states)`);
 
@@ -644,9 +653,20 @@ check(sweep.length > 0, `the sweep ran (${sweep.length} presses over ${1 << leav
 	// controls on it makes "no press reaches amber" true and meaningless, and a
 	// check that cannot fail is not evidence.
 	const ran = sweep.length > 0;
-	const amber = sweep.filter((r) => r.after === 'mixed' || r.said === 'mixed');
+	// The actions a play on this node leaves held: each one under it, other than the
+	// node itself, whose own light this row's pattern paused. Its release here ended
+	// with that pause, and only its own play gives one back (see `trig` above).
+	const waits = (r) => r.act !== 'play' ? [] : leavesOf(byId.get(r.node))
+		.filter((l) => isTrig(l) && l !== r.node && (r.m & (1 << leaves.indexOf(l))));
+	const waited = sweep.filter((r) => !r.wasDisabled && waits(r).length);
+	const waitWrong = waited.filter((r) => leavesOf(byId.get(r.node)).some((l) =>
+		r.afterL[leaves.indexOf(l)] !== waits(r).includes(l)));
+	check(ran && waited.length > 0 && waitWrong.length === 0,
+		`a play on a branch leaves an action whose own light was paused held, and plays the rest (${waited.length} presses)`,
+		waitWrong.length ? JSON.stringify(waitWrong[0]) : null);
+	const amber = sweep.filter((r) => (r.after === 'mixed' || r.said === 'mixed') && !waits(r).length);
 	check(ran && amber.length === 0,
-		'NO press of either verb, from any of the leaf states, leaves that control amber',
+		'NO press of either verb, from any of the leaf states, leaves that control amber, but for that play',
 		amber.length ? `${amber.length} did, e.g. ${JSON.stringify(amber[0])}` : null);
 
 	const disagree = sweep.filter((r) => r.after !== colourOf(r.said));
@@ -683,7 +703,8 @@ check(sweep.length > 0, `the sweep ran (${sweep.length} presses over ${1 << leav
 	const smeared = [], bled = [];
 	for (const r of sweep.filter((x) => !x.wasDisabled)) {
 		const under = new Set(leavesOf(byId.get(r.node)));
-		const inSet  = leaves.filter((l) => under.has(l));
+		const held  = new Set(waits(r));		// asserted above
+		const inSet  = leaves.filter((l) => under.has(l) && !held.has(l));
 		const outSet = leaves.map((l, i) => [l, i]).filter(([l]) => !under.has(l));
 		const vals = inSet.map((l) => r.afterL[leaves.indexOf(l)]);
 		if (new Set(vals).size > 1) smeared.push(r);
@@ -705,7 +726,7 @@ check(sweep.length > 0, `the sweep ran (${sweep.length} presses over ${1 << leav
 	// than excluded, because "play sometimes leaves it red" is the kind of licence
 	// that swallows a real regression: the press is still asserted to have RELEASED
 	// its leaves, by `smeared`/`bled` above, which is the property that matters.
-	const wrongWay = sweep.filter((r) => r.said !== 'idle'
+	const wrongWay = sweep.filter((r) => r.said !== 'idle' && !waits(r).length
 		&& r.after !== (r.act === 'pause' ? 'pause' : 'play'));
 	check(ran && wrongWay.length === 0,
 		'pause always ends paused and play always ends playing, from every state',
@@ -733,13 +754,14 @@ check(sweep.length > 0, `the sweep ran (${sweep.length} presses over ${1 << leav
 // is available. Running offers pause. Paused offers play. Amber offers BOTH —
 // with one button a mixed branch had to guess, and it guessed silently.
 {
-	const offered = await p.evaluate(({ leaves, nodeIds }) => {
+	const offered = await p.evaluate(({ leaves, trig, nodeIds }) => {
 		const rows = [];
 		if (!window.DaimondPause) return rows;
 		const grpFor = (n) => document.querySelector(`.pptw[data-pause-node="${n}"]`);
 		const live = nodeIds.filter(grpFor);
 		for (let m = 0; m < (1 << leaves.length); m++) {
 			DaimondPause.set('root', true);
+			for (const l of trig) DaimondPause.set(l, true);
 			for (let i = 0; i < leaves.length; i++) if (m & (1 << i)) DaimondPause.set(leaves[i], false);
 			for (const node of live) {
 				const g = grpFor(node);
@@ -750,7 +772,7 @@ check(sweep.length > 0, `the sweep ran (${sweep.length} presses over ${1 << leav
 			}
 		}
 		return rows;
-	}, { leaves, nodeIds: nodes.map((n) => n.id) });
+	}, { leaves, trig, nodeIds: nodes.map((n) => n.id) });
 
 	// Judged against THIS file's tree and THIS file's rule, not against the state
 	// the widget painted on itself: a light and a verb drawn from one wrong answer
@@ -806,11 +828,12 @@ check(sweep.length > 0, `the sweep ran (${sweep.length} presses over ${1 << leav
 //
 // Same enumeration, judged against this file's rule rather than the module's.
 {
-	const asked = await p.evaluate(({ leaves, all }) => {
+	const asked = await p.evaluate(({ leaves, trig, all }) => {
 		const rows = [];
 		if (!window.DaimondPause) return rows;
 		for (let m = 0; m < (1 << leaves.length); m++) {
 			DaimondPause.set('root', true);
+			for (const l of trig) DaimondPause.set(l, true);
 			for (let i = 0; i < leaves.length; i++) if (m & (1 << i)) DaimondPause.set(leaves[i], false);
 			const said = {};
 			for (const id of all) said[id] = DaimondPause.state(id);
@@ -819,7 +842,7 @@ check(sweep.length > 0, `the sweep ran (${sweep.length} presses over ${1 << leav
 			rows.push({ m, said, painted });
 		}
 		return rows;
-	}, { leaves, all: nodes.map((n) => n.id) });
+	}, { leaves, trig, all: nodes.map((n) => n.id) });
 
 	let wrongSaid = null, wrongPainted = null, cases = 0, mixedSeen = 0;
 	for (const row of asked) {

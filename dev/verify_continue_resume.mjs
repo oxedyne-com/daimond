@@ -14,8 +14,10 @@
 // WHAT THIS FILE PROVES, without a browser or a model: that `continueTurn` builds a RESUME payload
 // carrying the partial (the partial kept, not tombstoned, and the continuation dispatched rather
 // than the original prompt), that the empty case still re-runs, and that the idempotency guards
-// hold. The real function is LIFTED from www/js/daimond.js and run against stubbed dependencies, so
-// a change to the shipped logic is what this measures.
+// hold, INCLUDING a person's pause (`a450d2ce`, release 3): Continue is refused exactly as a fresh
+// turn would be, in the door's own pause sentence, and the partial is never touched. The real
+// function is LIFTED from www/js/daimond.js and run against stubbed dependencies, so a change to
+// the shipped logic is what this measures.
 //
 // The visible append itself — the continuation text landing after the retained partial — is
 // runTurn's job and is covered in a real page by dev/verify_dropped.mjs and dev/verify_predrop.mjs.
@@ -119,8 +121,13 @@ function makeContinueTurn(stubs) {
 	// idiom -- `if (window.DaimondJournal) DaimondJournal.clearTurn(...)` -- so the
 	// bare name has to be supplied too, or it is a ReferenceError the function's own
 	// try/catch swallows and this file proves nothing.
+	//
+	// `turnHold`, `toast` and `DaimondModels` are `a450d2ce`'s (release 3): a person's
+	// pause now holds Continue exactly as it holds a fresh turn, asked with
+	// `var held = turnHold(chat);` before anything else moves, unconditionally --
+	// so a lift missing the stand-in threw ReferenceError on every case, held or not.
 	const names = ['loadMsgTombs', 'msgTombstone', 'touchChat', 'persistChats', 'renderHistory',
-		'runTurn', 'window', 'DaimondJournal'];
+		'runTurn', 'window', 'DaimondJournal', 'turnHold', 'toast', 'DaimondModels'];
 	const f = new Function(
 		...names,
 		NUDGE_STMT + '\n' + CT_SRC + '\nreturn continueTurn;');
@@ -129,7 +136,7 @@ function makeContinueTurn(stubs) {
 
 /// A spy set with sensible defaults; a test overrides `loadMsgTombs` where it needs to.
 function spies(over) {
-	const calls = { runTurn: [], msgTombstone: [], clearTurn: [] };
+	const calls = { runTurn: [], msgTombstone: [], clearTurn: [], toast: [] };
 	const s = {
 		loadMsgTombs:  () => ({}),
 		msgTombstone:  (mids) => { calls.msgTombstone.push(mids); },
@@ -137,6 +144,11 @@ function spies(over) {
 		persistChats:  () => {},
 		renderHistory: () => {},
 		runTurn:       (chat, text) => { calls.runTurn.push({ chat, text }); },
+		// Not held by default: an ordinary interruption, which is what sections A-F
+		// are. A case testing the held path overrides this.
+		turnHold:      () => '',
+		toast:         (msg) => { calls.toast.push(msg); },
+		DaimondModels: { pauseError: (node) => ({ message: 'Paused at ' + node }) },
 		// The page's own globals, as the function reaches for them. Only the journal is
 		// here: `DaimondPeer` absent is an ordinary interruption, which is what these
 		// cases are.
@@ -257,9 +269,24 @@ console.log('\nthe guards that stop a double-run or a wipe');
 	ct(freshChat('The capital of France is'), 'T1', '');
 	check(calls.runTurn.length === 0, 'F: an empty prompt argument is refused');
 }
+{
+	// G (a450d2ce, release 3). A person's pause holds this chat's turn: Continue is
+	// refused exactly as a fresh turn would be, before the partial is touched, and
+	// the refusal is said in the door's own pause sentence.
+	const node = 'root/diamonds/d1/self';
+	const { stubs, calls } = spies({ turnHold: () => node });
+	const ct = makeContinueTurn(stubs);
+	const chat = freshChat('The capital of France is');
+	ct(chat, 'T1', 'What is the capital of France?');
+	check(calls.runTurn.length === 0,
+		'G: a chat a pause holds is not continued');
+	check(calls.toast.length === 1 && calls.toast[0] === 'Paused at ' + node,
+		'G: and the refusal is said in the door\'s own pause sentence',
+		JSON.stringify(calls.toast));
+}
 
 // ── The count is pinned ──────────────────────────────────────
-const EXPECTED = 21;
+const EXPECTED = 23;
 const ranBefore = ran;
 check(ranBefore === EXPECTED,
 	`exactly ${EXPECTED} checks ran — a displaced case trips this`,

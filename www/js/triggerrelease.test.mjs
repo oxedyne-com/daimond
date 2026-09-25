@@ -127,13 +127,59 @@ check('gone from the file, its release goes too: written back identically, it ar
 
 // ── A branch, and what the tree cannot show ─────────────────────────
 P.set('root/diamonds/' + D, true);
-check('play on the Diamond releases each action under it on its own terms',
+check('play on the Diamond releases none of the actions under it: each waits for its own play',
+	T.allowed(D, edited) === false && T.allowed(D, other) === false
+	&& P.releasedHere(leaf) === '' && P.releasedHere(T.node(D, 'm2')) === '');
+P.set('root', true);
+check('nor does play on the global light', T.allowed(D, edited) === false && T.allowed(D, other) === false);
+P.set(leaf, true);
+P.set(T.node(D, 'm2'), true);
+check('play on each action\'s own light releases it on its own terms',
 	T.allowed(D, edited) === true && T.allowed(D, other) === true);
 P.set('root/diamonds/' + D + '/triggers/ghost', true);
 check('a leaf the tree does not show cannot be released',
 	P.isPaused('root/diamonds/' + D + '/triggers/ghost') === true);
 P.set(leaf, false);
 check('pause ends the release', P.releasedHere(leaf) === '' && T.allowed(D, edited) === false);
+
+// ── Pause all, and its resume: the reopen rehearsal of 2026-09-25 ────
+//
+// m1 is held by its own pause above; m2 is released here. Until the rehearsal a
+// resume released every action under the light pressed, including m1, which the
+// person had never played again.
+P.set('root', false);
+check('Pause all holds the released action', T.allowed(D, other) === false);
+check('and suspends its release rather than ending it', P.releasedHere(T.node(D, 'm2')) === T.terms(other));
+P.set('root', true);
+check('its resume puts back the release that stood before it', T.allowed(D, other) === true);
+check('and releases nothing that was not released: m1 waits for its own play',
+	T.allowed(D, edited) === false && P.releasedHere(leaf) === '');
+P.set('root/diamonds/' + D, false);
+P.set('root/diamonds/' + D, true);
+check('the same for a pause and a play on the Diamond\'s light',
+	T.allowed(D, other) === true && T.allowed(D, edited) === false);
+P.adopt({ v: 2, leaves: { root: [1, Date.now() + 10000, 'h:phone'] } });
+P.adopt({ v: 2, leaves: { root: [0, Date.now() + 20000, 'h:phone'] } });
+check('and for a Pause all and its resume pressed on another device',
+	T.allowed(D, other) === true && T.allowed(D, edited) === false);
+P.adopt({ v: 2, leaves: { [T.node(D, 'm2')]: [1, Date.now() + 30000, 'h:phone'] } });
+P.adopt({ v: 2, leaves: { [T.node(D, 'm2')]: [0, Date.now() + 40000, 'h:phone'] } });
+check('but a pause of the action\'s own light on another device ends the release here',
+	T.allowed(D, other) === false && P.releasedHere(T.node(D, 'm2')) === '');
+P.set(T.node(D, 'm2'), true);
+check('(released again, here, by its own play)', T.allowed(D, other) === true);
+P.set('root', false);
+P.set(leaf, false);
+P.set(T.node(D, 'm2'), false);
+P.set('root', true);
+check('a pause on an action\'s own light under Pause all ends its release: the resume does not bring it back',
+	T.allowed(D, other) === false && P.releasedHere(T.node(D, 'm2')) === '');
+P.adopt({ v: 2, leaves: { [leaf]: [1, 1, 'a:old'] } });
+check('(an old hold of m1\'s own light, outranked by the resume)', P.entry(leaf)[0] === 1 && T.allowed(D, edited) === false);
+P.set(leaf, true);
+P.adopt({ v: 2, leaves: { 'root/web': [0, 2, 'a:other'] } });	// any read settles
+check('a release given over it writes the play there, so the next read does not end it',
+	T.allowed(D, edited) === true && P.entry(leaf)[0] === 0, JSON.stringify(P.entry(leaf)));
 P.forget('root/diamonds/' + D);
 check('forgetting the Diamond forgets its releases', P.releasedHere(T.node(D, 'm2')) === '');
 
@@ -265,7 +311,8 @@ check('gone from the file, its release goes too', T4.allowed(D, slash) === false
 	&& P4.releasedHere(T4.node(D, 'm/arm')) === '');
 
 // A Diamond whose own id holds a slash: its branch in the tree and its actions'
-// leaves agree, so play on the Diamond releases them and nothing arms without it.
+// leaves agree, so play on the action's own light releases it, play on the
+// Diamond does not, and nothing arms without it.
 const DX = 'd/x';
 const dxAct = T4.normalise({ actions: [mail('watch it', { id: 'mx' })] }).actions[0];
 P4.setTree(() => ({ id: 'root', children: [{ id: 'root/diamonds', children: [{
@@ -273,7 +320,9 @@ P4.setTree(() => ({ id: 'root', children: [{ id: 'root/diamonds', children: [{
 		{ id: T4.node(DX, 'mx'), kind: 'trigger', armed: true, terms: T4.terms(dxAct) }] }] }] }));
 check('an action of a Diamond with a slash in its id is held', T4.allowed(DX, dxAct) === false);
 P4.set(P4.id('root', 'diamonds', DX), true);
-check('and play on that Diamond releases it', T4.allowed(DX, dxAct) === true);
+check('and play on that Diamond does not release it', T4.allowed(DX, dxAct) === false);
+P4.set(T4.node(DX, 'mx'), true);
+check('play on its own light does', T4.allowed(DX, dxAct) === true);
 
 // ── Plain ids map exactly as before ─────────────────────────────────
 //

@@ -1200,6 +1200,28 @@ pub fn capture_into(held: &mut Vec<(String, Change)>, raw: &str, change: Change)
 	};
 }
 
+/// Does the path still hold what the turn left there, `after`, where the turn end found `now`?
+/// Only a difference that can be seen says no: where either side was never read whole, it cannot
+/// be told, and the capture is recorded as it stands.
+///
+/// **A turn end records its captures as the newest rows** (release 5.1's restore follow-ups,
+/// 2026-09-25), and a write from outside the turn after its last act -- a Restore in another tab,
+/// which cannot end this page's run, or the person's own editor -- left the History naming the
+/// turn's bytes over what was on disk, and the turn's Undo putting its first bytes back over them.
+/// A capture this says no to is sealed as a version of its own, and what stands is recorded after
+/// it.
+pub fn stands_as_left(after: &Body, now: &Body) -> bool {
+	match (after, now) {
+		(Body::Held(a), Body::Held(b))		=> a == b,
+		(Body::Held(a), Body::TooLarge(n))	=> a.len() as u64 == *n,
+		(Body::Held(_), Body::Gone)		=> false,
+		(Body::Gone, Body::Gone)		=> true,
+		(Body::Gone, Body::Held(_))
+			| (Body::Gone, Body::TooLarge(_))	=> false,
+		_					=> true,
+	}
+}
+
 /// Does an act that `found` those bytes at the path end the run of this turn's changes that `h`
 /// describes?  Where it read bytes the turn did not leave there, something outside the turn -- the
 /// user's editor, a sync, a hand's shell -- changed the file between two of the turn's acts.  A path
@@ -1481,7 +1503,9 @@ pub enum At {
 		mark:    bool,
 		skipped: Option<String>,
 	},
-	Gone,
+	Gone {
+		mark:    bool,		// the path is in a folder the user marked in, so only a fenced door removes it
+	},
 }
 
 impl At {
@@ -1495,8 +1519,41 @@ impl At {
 	}
 
 	/// Is this a file on the user's computer rather than in browser storage?
+	///
+	/// Asked of a `Gone` state as well (F5, 2026-09-25): a marked path that was not there at the
+	/// version is still the user's file NOW, and removing it is the fenced door's to do, not the
+	/// store's.
 	pub fn mark(&self) -> bool {
-		matches!(self, Self::Held { mark: true, .. })
+		match self {
+			Self::Held { mark, .. }	=> *mark,
+			Self::Gone { mark }	=> *mark,
+		}
+	}
+
+	/// What an entry says stood at its path once its version was recorded.
+	fn after(e: &Entry) -> Self {
+		match e.gone {
+			true	=> Self::Gone { mark: e.mark },
+			false	=> Self::Held {
+				hash:    e.hash.clone(),
+				bytes:   e.bytes,
+				mark:    e.mark,
+				skipped: e.skipped.clone(),
+			},
+		}
+	}
+
+	/// What stood at a path BEFORE an entry, where the entry says: its `was`.  `None` for an entry
+	/// with no `was`, a file the store saw being created.  The size is not recoverable from a
+	/// `was` (a manifest records the hash alone), so the row answers `bytes: 0`; nothing restores
+	/// from the length, and the hash is exact.
+	fn before(e: &Entry) -> Option<Self> {
+		e.was.as_ref().map(|w| Self::Held {
+			hash:    w.clone(),
+			bytes:   0,
+			mark:    e.mark,
+			skipped: None,
+		})
 	}
 }
 
@@ -1504,12 +1561,16 @@ impl At {
 ///
 /// **The union and not the survivors**, because that is what a whole-version restore needs: a
 /// file created AFTER `want` has to be removed to put the Diamond back, and a resolver that
-/// answered only about paths known by `want` would leave it standing and report success. A path
-/// with no entry at or before `want` is therefore [`At::Gone`], exactly as one whose newest entry
-/// at or before it says the file was deleted.
+/// answered only about paths known by `want` would leave it standing and report success.
 ///
-/// Sparse, so the answer for a path is its newest entry at or before `want` and nothing is walked
-/// twice. Ordered by path, so two calls over the same store answer in the same order.
+/// **A path with no entry at or before `want` answers what its EARLIEST later entry says stood
+/// there** -- that entry's `was` -- exactly as [`path_at`] does.  Only an earliest later entry
+/// with no `was`, a file the store saw being created, makes the path [`At::Gone`].  Until
+/// 2026-09-25 (F5) every such path was `Gone`, so a whole-version restore took a file the store
+/// first met AFTER `want` -- a marked file a turn edited, most commonly -- to have been absent,
+/// and deleted it straight off the user's open folder.  Its `was` said otherwise all along.
+///
+/// Ordered by path, so two calls over the same store answer in the same order.
 ///
 /// # Arguments
 /// * `manifests` - Every manifest held, by version, in any order.
@@ -1518,25 +1579,17 @@ pub fn state_at(manifests: &[(u64, Manifest)], want: u64) -> Vec<(String, At)> {
 	let mut sorted: Vec<&(u64, Manifest)> = manifests.iter().collect();
 	sorted.sort_by_key(|(n, _)| *n);
 	let mut out: BTreeMap<String, At> = BTreeMap::new();
+	// Ascending, so every entry at or before `want` is seen before any later one: a path already
+	// answered is answered by its newest entry there, and the first later entry met for a path
+	// that is not is its EARLIEST.
 	for (n, m) in sorted.iter() {
 		for e in m.files.iter() {
-			// Every path is admitted whatever its version, so the union holds; only the
-			// STATE is taken from the entries at or before `want`.
-			out.entry(e.path.clone()).or_insert(At::Gone);
-			if *n > want {
-				continue;
-			}
-			let at = if e.gone {
-				At::Gone
+			if *n <= want {
+				out.insert(e.path.clone(), At::after(e));
 			} else {
-				At::Held {
-					hash:    e.hash.clone(),
-					bytes:   e.bytes,
-					mark:    e.mark,
-					skipped: e.skipped.clone(),
-				}
-			};
-			out.insert(e.path.clone(), at);
+				out.entry(e.path.clone())
+					.or_insert_with(|| At::before(e).unwrap_or(At::Gone { mark: e.mark }));
+			}
 		}
 	}
 	out.into_iter().collect()
@@ -1547,55 +1600,69 @@ pub fn state_at(manifests: &[(u64, Manifest)], want: u64) -> Vec<(String, At)> {
 /// **A file the store met part-way through its life still held something before it.**  The first
 /// entry naming a path that already existed carries its prior bytes as `was`, so "what did this
 /// hold at a version before that entry" has an answer, and it is that hash -- which is the whole
-/// of what makes the FIRST change to a file undoable rather than only the second.  Without the
-/// fallback below, the one change a person is likeliest to regret answered "no record of it at
-/// that version" while the bytes sat in the store under the hash the manifest names.
+/// of what makes the FIRST change to a file undoable rather than only the second.
 ///
 /// `None` is kept for the two cases where there really is nothing: a path no manifest names, and
-/// one whose earliest entry carries no `was` -- a file this store first saw being CREATED did not
-/// exist before it, and an older version is not an answer to a question about a state the user
-/// never saw.  The size is not recoverable from a `was` (a manifest records the hash alone), so
-/// the row answers `bytes: 0`; nothing restores from the length, and the hash is exact.
-///
-/// [`state_at`] is deliberately NOT changed to match.  It composes a whole SNAPSHOT out of the
-/// rows at or before `want`, and a path with no row there was not in that snapshot -- which is
-/// what lets a whole-version restore remove a file made since.
+/// one whose earliest later entry carries no `was` -- a file this store first saw being CREATED
+/// did not exist before it, and a later entry's `was` is not an answer to a question about a
+/// state the user never saw.  [`state_at`] answers every path by the same rule.
 pub fn path_at(manifests: &[(u64, Manifest)], path: &str, want: u64) -> Option<At> {
-	let held = |e: &Entry| -> At {
-		if e.gone {
-			At::Gone
-		} else {
-			At::Held {
-				hash:    e.hash.clone(),
-				bytes:   e.bytes,
-				mark:    e.mark,
-				skipped: e.skipped.clone(),
-			}
-		}
-	};
-	let mut best:   Option<(u64, At)> = None;
-	let mut before: Option<(u64, At)> = None;      // what the earliest LATER entry says stood here
+	let mut best:  Option<(u64, &Entry)> = None;	// the newest entry at or before `want`
+	let mut first: Option<(u64, &Entry)> = None;	// the earliest entry after it
 	for (n, m) in manifests.iter() {
 		for e in m.files.iter().filter(|e| e.path == path) {
 			if *n > want {
-				let was = match &e.was {
-					Some(w) => w.clone(),
-					None    => continue,           // created here, so there was nothing before
-				};
-				let stood = At::Held { hash: was, bytes: 0, mark: e.mark, skipped: None };
-				match &before {
-					Some((seen, _)) if *seen <= *n	=> {},
-					_				=> before = Some((*n, stood)),
+				match first {
+					Some((seen, _)) if seen <= *n	=> {},
+					_				=> first = Some((*n, e)),
 				}
-				continue;
-			}
-			match &best {
-				Some((seen, _)) if *seen >= *n	=> {},
-				_				=> best = Some((*n, held(e))),
+			} else {
+				match best {
+					Some((seen, _)) if seen >= *n	=> {},
+					_				=> best = Some((*n, e)),
+				}
 			}
 		}
 	}
-	best.or(before).map(|(_, at)| at)
+	match best {
+		Some((_, e))	=> Some(At::after(e)),
+		None		=> first.and_then(|(_, e)| At::before(e)),
+	}
+}
+
+/// What each path version `of` changed held just before it: the undo of that version, which puts
+/// back what it replaced and nothing older.
+///
+/// **Its own row's `was`, never the state at `of - 1`** (U1 of the release 5.1 fix's second QA,
+/// 2026-09-25).  The Undo asked [`path_at`] for `of - 1`, which answers the newest entry at or
+/// before it.  Where anything changed the file between that entry and `of` -- the person's own
+/// save, most often -- that older entry's text went back, and the save was left as a `was` that
+/// no button restores.  A row with no `was` made its file, so undoing it takes the file away:
+/// [`At::Gone`] with the row's mark, which the caller puts to the person where the file is theirs.
+///
+/// A record past the rows one version holds goes on into the versions after it ([`split_rows`]),
+/// so a path named and not at `of` answers its earliest entry after `of`.  A path no entry at or
+/// after `of` names is left out, because there is nothing to put back.
+///
+/// # Arguments
+/// * `paths` - The paths to undo, as the store names them; empty for every path `of` names.
+pub fn undo_of(manifests: &[(u64, Manifest)], of: u64, paths: &[String]) -> Vec<(String, At)> {
+	let mut sorted: Vec<&(u64, Manifest)> = manifests.iter()
+		.filter(|(n, _)| *n == of || (*n > of && !paths.is_empty()))
+		.collect();
+	sorted.sort_by_key(|(n, _)| *n);
+	let mut out: BTreeMap<String, At> = BTreeMap::new();
+	// Ascending, so the first entry met for a path is its row at `of`, or its earliest after.
+	for (_, m) in sorted.iter() {
+		for e in m.files.iter() {
+			if !paths.is_empty() && !paths.iter().any(|p| *p == e.path) {
+				continue;
+			}
+			out.entry(e.path.clone())
+				.or_insert_with(|| At::before(e).unwrap_or(At::Gone { mark: e.mark }));
+		}
+	}
+	out.into_iter().collect()
 }
 
 /// The version to undo one path to when nobody said which: what it held before the newest change
@@ -2639,7 +2706,7 @@ Garden: order two bags of bark for a bed.
 		// Named at 5 and so present in the union, and Gone as at 3 -- which is what makes a
 		// whole-version restore able to REMOVE it.
 		let b = at3.iter().find(|(p, _)| p == "b.md").map(|(_, s)| s.clone());
-		assert_eq!(Some(At::Gone), b);
+		assert_eq!(Some(At::Gone { mark: false }), b);
 	}
 
 	#[test]
@@ -2654,7 +2721,7 @@ Garden: order two bags of bark for a bed.
 			(4, m(Cause::User, vec![e("a.md", "three", None)])),
 		];
 		assert!(matches!(path_at(&ms, "a.md", 1), Some(At::Held { .. })));
-		assert_eq!(Some(At::Gone), path_at(&ms, "a.md", 3));
+		assert_eq!(Some(At::Gone { mark: false }), path_at(&ms, "a.md", 3));
 		assert_eq!(Some(hash_of(b"three")),
 			path_at(&ms, "a.md", 9).and_then(|s| s.hash().map(|h| h.to_string())));
 		assert_eq!(None, path_at(&ms, "never.md", 9));
@@ -2687,10 +2754,52 @@ Garden: order two bags of bark for a bed.
 		assert_eq!(None, path_at(&made, "notes/new.md", 3));
 		// A path no manifest has ever named is still nothing at all.
 		assert_eq!(None, path_at(&ms, "never.md", 3));
-		// THE SNAPSHOT IS NOT CHANGED WITH IT: a whole-version restore composes what the rows at
-		// or before N say, which is what lets it remove a file made since.
+		// THE SNAPSHOT ANSWERS THE SAME (F5, 2026-09-25): a whole-version restore to 3 puts the
+		// file back as it stood, and does not take it to have been absent.
 		let at3 = state_at(&ms, 3);
-		assert_eq!(Some(At::Gone), at3.iter().find(|(p, _)| p == "live/site.txt").map(|(_, s)| s.clone()));
+		assert_eq!(Some(hash_of(b"v1 on the site")), at3.iter().find(|(p, _)| p == "live/site.txt")
+			.and_then(|(_, s)| s.hash().map(|h| h.to_string())));
+	}
+
+	/// **A whole-version restore never takes a marked file the store met later to be absent.**
+	///
+	/// F5 (2026-09-25): two files in the user's open folder, marked in, edited by a turn after a
+	/// version that never named them.  `state_at` answered both `Gone`, and the restore deleted
+	/// them off the folder.  Their earliest later entries carry `was`, so they stood, and a marked
+	/// path that really was created later is `Gone` WITH its mark, for the fenced door to take.
+	#[test]
+	fn test_state_at_seeds_a_path_from_its_earliest_later_entry() {
+		let mut one = e("vault/w/one.md", "turn one", Some("orig one"));
+		one.mark = true;
+		let mut two = e("vault/w/two.md", "turn two", Some("orig two"));
+		two.mark = true;
+		let mut born = e("vault/w/born.md", "born", None);
+		born.mark = true;
+		let mut born2 = e("vault/w/born.md", "born again", Some("born"));
+		born2.mark = true;
+		let ms = vec![
+			(1, m(Cause::Save, vec![e("diamonds/d/notes.md", "notes", None)])),
+			(2, m(Cause::Turn, vec![one, two, born])),
+			(3, m(Cause::Turn, vec![born2])),
+		];
+		let at1 = state_at(&ms, 1);
+		let get = |p: &str| at1.iter().find(|(q, _)| q == p).map(|(_, s)| s.clone());
+		for (p, was) in [("vault/w/one.md", "orig one"), ("vault/w/two.md", "orig two")] {
+			let s = get(p);
+			assert_eq!(Some(hash_of(was.as_bytes())), s.as_ref().and_then(|s| s.hash().map(|h| h.to_string())), "{}", p);
+			assert!(s.map(|s| s.mark()).unwrap_or(false), "{} keeps its mark", p);
+		}
+		// Created at 2, so absent at 1 -- and marked, so the caller's fenced door removes it.
+		// v3's `was` is v2's body, a state that did exist, but not at 1.
+		assert_eq!(Some(At::Gone { mark: true }), get("vault/w/born.md"));
+		assert_eq!(None, path_at(&ms, "vault/w/born.md", 1));
+		// And the per-path answer is the snapshot's answer, path for path.
+		for (p, s) in at1.iter() {
+			match path_at(&ms, p, 1) {
+				Some(q) => assert_eq!(&q, s, "{}", p),
+				None    => assert!(matches!(s, At::Gone { .. }), "{}", p),
+			}
+		}
 	}
 
 	#[test]
@@ -2704,6 +2813,55 @@ Garden: order two bags of bark for a bed.
 		// version is not an answer to a question about a state the user never saw.
 		let fresh = vec![(1, m(Cause::Turn, vec![e("new.md", "x", None)]))];
 		assert_eq!(None, undo_target(&fresh, "new.md"));
+	}
+
+	/// **The Undo of a version puts back what that version replaced, not the version before it.**
+	///
+	/// U1 of the release 5.1 fix's second QA (2026-09-25): turn one writes a.md, the person saves
+	/// it, turn two edits it.  The Undo of turn two answered `path_at(1)`, turn one's text, and the
+	/// person's save was left as a `was` nothing restores.  Row two's own `was` is their save.
+	#[test]
+	fn test_the_undo_of_a_version_puts_back_its_own_rows_was() {
+		let mut born = e("vault/u/born.md", "born", None);
+		born.mark = true;
+		let mut edited = e("vault/u/a.md", "turn two", Some("the person's save"));
+		edited.mark = true;
+		// The person's save between the turns is no row of its own: turn two's capture of what it
+		// found is the only place it is kept.
+		let ms = vec![
+			(1, m(Cause::Turn, vec![e("vault/u/a.md", "turn one", Some("orig"))])),
+			(3, m(Cause::Turn, vec![edited, born, gone("diamonds/d/old.md", "old notes")])),
+			(4, m(Cause::Turn, vec![e("vault/u/a.md", "turn three", Some("turn two"))])),
+		];
+		let all = undo_of(&ms, 3, &[]);
+		let get = |p: &str| all.iter().find(|(q, _)| q == p).map(|(_, s)| s.clone());
+		assert_eq!(Some(hash_of(b"the person's save")),
+			get("vault/u/a.md").and_then(|s| s.hash().map(|h| h.to_string())),
+			"the undo went back past the person's save");
+		// The old answer, for the record: the state at the version before, turn one's text.
+		assert_eq!(Some(hash_of(b"turn one")),
+			path_at(&ms, "vault/u/a.md", 3 - 1).and_then(|s| s.hash().map(|h| h.to_string())));
+		// A file the version made is taken away again, with its mark, for the person's yes.
+		assert_eq!(Some(At::Gone { mark: true }), get("vault/u/born.md"));
+		// A file it deleted comes back.
+		assert_eq!(Some(hash_of(b"old notes")),
+			get("diamonds/d/old.md").and_then(|s| s.hash().map(|h| h.to_string())));
+		assert_eq!(3, all.len(), "only the paths version 3 changed");
+		// Named paths: only those.
+		let one = undo_of(&ms, 3, &["vault/u/born.md".to_string()]);
+		assert_eq!(vec![("vault/u/born.md".to_string(), At::Gone { mark: true })], one);
+		// A record split past one version: a named path met first after `of` answers that row.
+		let split = vec![
+			(5, m(Cause::Turn, vec![e("x.md", "x after", Some("x before"))])),
+			(6, m(Cause::Turn, vec![e("y.md", "y after", Some("y before"))])),
+		];
+		let both = undo_of(&split, 5, &["x.md".to_string(), "y.md".to_string()]);
+		assert_eq!(Some(hash_of(b"y before")), both.iter().find(|(p, _)| p == "y.md")
+			.and_then(|(_, s)| s.hash().map(|h| h.to_string())));
+		// Unnamed, the version alone.
+		assert_eq!(1, undo_of(&split, 5, &[]).len());
+		// Nothing at or after `of` names it: nothing to put back.
+		assert!(undo_of(&ms, 5, &["vault/u/a.md".to_string()]).is_empty());
 	}
 
 	#[test]
@@ -3454,6 +3612,25 @@ Garden: order two bags of bark for a bed.
 			found: Found::of(Some(p2.as_bytes())), mark: true, ..Change::gone("vault/p.md") });
 		assert_eq!(Some(Some(b"R, before earlier trims".to_vec())),
 			entry(&held, "vault/p.md").map(|p| p.before.clone()));
+	}
+
+	/// A turn end tells its own bytes from a write that came after its last act.
+	#[test]
+	fn test_a_turn_end_sees_bytes_that_are_not_its_own_00() {
+		let t = Body::Held(b"the turn's".to_vec());
+		// Still what the turn left: recorded as ever.
+		assert!(stands_as_left(&t, &Body::Held(b"the turn's".to_vec())));
+		assert!(stands_as_left(&Body::Gone, &Body::Gone));
+		// A restore in another tab, or the person's editor, wrote after the turn's last act.
+		assert!(!stands_as_left(&t, &Body::Held(b"put back".to_vec())));
+		assert!(!stands_as_left(&t, &Body::Gone));
+		assert!(!stands_as_left(&Body::Gone, &Body::Held(b"put back".to_vec())));
+		assert!(!stands_as_left(&Body::Gone, &Body::TooLarge(600_000)));
+		assert!(!stands_as_left(&t, &Body::TooLarge(600_000)));
+		// What cannot be told is left as the capture says.
+		assert!(stands_as_left(&Body::Held(vec![b'x'; 10]), &Body::TooLarge(10)));
+		assert!(stands_as_left(&Body::Unseen, &Body::Held(b"x".to_vec())));
+		assert!(stands_as_left(&Body::TooLarge(700_000), &Body::Gone));
 	}
 
 	/// **The open folder's tally counts files, not paths** (Q5-1, the delete variant).  A yes to

@@ -2086,8 +2086,12 @@ thread_local! {
     /// rather than on disk on purpose: a mark that did not survive a reload would describe a
     /// change the next turn cannot attribute anyway, and the change itself is still on disk for
     /// the next Save a version to find.
+    ///
+    /// Each path carries the bytes it held before the first of those doors wrote it, where the
+    /// door marked it first ([`mark_dirty_before`]): the row's `was`, so a file the store had never
+    /// seen is recorded as changed, never as created.
     static DIRTY: std::cell::RefCell<
-        std::collections::BTreeMap<String, std::collections::BTreeSet<String>>> =
+        std::collections::BTreeMap<String, std::collections::BTreeMap<String, Option<Vec<u8>>>>> =
         std::cell::RefCell::new(std::collections::BTreeMap::new());
 
     /// What the file tools captured mid-turn, per Diamond, waiting for the turn to end.
@@ -2154,6 +2158,72 @@ thread_local! {
     /// [`versions::TURN_SEALS_MAX`] bounds.  Drained with `CAPTURED`, at the turn's end.
     static SEALED: std::cell::RefCell<std::collections::BTreeMap<String, usize>> =
         std::cell::RefCell::new(std::collections::BTreeMap::new());
+
+    /// The stores whose running turn has run a command or a worker, whose writes no capture sees:
+    /// its turn end cannot tell them from another tab's ([`drain_turn`]).  Ended with the captures.
+    static OPAQUE: std::cell::RefCell<std::collections::BTreeSet<String>> =
+        std::cell::RefCell::new(std::collections::BTreeSet::new());
+
+    /// The restores this page has open, by ticket, from [`versions_restore_open`] to
+    /// [`versions_restore_close`].
+    static RESTORES: std::cell::RefCell<std::collections::BTreeMap<u64, Restoring>> =
+        std::cell::RefCell::new(std::collections::BTreeMap::new());
+
+    /// The next restore's ticket.  Never 0, which is "no restore" on a tool call.
+    static RESTORE_NEXT: std::cell::Cell<u64> = const { std::cell::Cell::new(1) };
+
+    /// The steers running on this page, per Diamond, from their start to the drain of their
+    /// captures.  See [`steering`].
+    static STEERING: std::cell::RefCell<std::collections::BTreeMap<String, usize>> =
+        std::cell::RefCell::new(std::collections::BTreeMap::new());
+}
+
+/// Is `path` a file of the person's in `id`'s store, rather than the keeper's own working state?
+///
+/// **Decided by the path, never by a row's flag**, with the rule a turn's captures record by
+/// ([`crate::tools::stored_is_mark`]): anything outside the keeper's home, a file on the machine
+/// included.  Until 2026-09-25 (B1 of the release 5.1 fix's QA) a file the person saved through
+/// the Doc or Files panel was recorded from the dirty set as the Diamond's own, and a
+/// whole-version Restore deleted it straight off their open folder, unasked.  Stores written
+/// before then still hold such rows, which is why a restore asks this of the path and not of the
+/// row.
+pub fn theirs(id: &str, path: &str) -> bool {
+    crate::tools::stored_is_mark(id, path)
+}
+
+/// A steer running on a Diamond, counted until this is dropped: at its turn end's drain, or when
+/// the steer's future ends without one.
+pub struct Steering {
+    id: String,
+}
+
+impl Drop for Steering {
+    fn drop(&mut self) {
+        STEERING.with(|s| {
+            if let Ok(mut all) = s.try_borrow_mut() {
+                let gone = match all.get_mut(&self.id) {
+                    Some(n) => { *n = n.saturating_sub(1); *n == 0 },
+                    None    => false,
+                };
+                if gone {
+                    all.remove(&self.id);
+                }
+            }
+        });
+    }
+}
+
+/// Count a steer as running on `id` until the answer is dropped.  Taken before the steer's first
+/// await, so a thread's turn end that waited on the store and then finds a steer running leaves
+/// the store's turn to that steer's turn end ([`is_steering`]).
+pub fn steering(id: &str) -> Steering {
+    STEERING.with(|s| { *s.borrow_mut().entry(id.to_string()).or_insert(0) += 1; });
+    Steering { id: id.to_string() }
+}
+
+/// Is a steer running on `id` whose turn end has not yet drained the captures?
+pub fn is_steering(id: &str) -> bool {
+    STEERING.with(|s| s.borrow().get(id).copied().unwrap_or(0) > 0)
 }
 
 /// Would an act finding `now` at `path` seal a run of this turn's, where the turn has sealed as
@@ -2210,22 +2280,89 @@ pub fn open_delete_release(id: &str, file: &str) {
     });
 }
 
-/// Note that one of the user's own doors changed `path` in this Diamond.
+/// Note that one of the user's own doors changed `path` in this Diamond, after its write: what
+/// it held before is answered from the history at the record.
 pub fn mark_dirty(id: &str, path: &str) {
     if path.trim().is_empty() {
         return;
     }
     DIRTY.with(|d| {
-        d.borrow_mut().entry(id.to_string()).or_default().insert(path.to_string());
+        d.borrow_mut().entry(id.to_string()).or_default().entry(path.to_string()).or_insert(None);
     });
 }
 
-/// Take the dirty set for this Diamond, leaving it empty.
-pub fn drain_dirty(id: &str) -> Vec<String> {
+/// Note that one of the user's own doors is ABOUT TO write `path` in this Diamond, and keep what it
+/// holds now as the row's `was`.
+///
+/// **A file the store had never seen was recorded as created** (release 5.1's restore follow-ups,
+/// 2026-09-25).  The Doc panel's save marked the path, and the dirty set's record had no `was` for
+/// it but the history's, which had none: so a Restore to before the edit took the file to have
+/// been absent, and asked the person to delete it as "older than your file".  The panel marks
+/// before it writes, so the bytes are read here, first, and the Restore puts them back.
+///
+/// The first mark since the last record wins, as a turn's first copy does: the row goes from the
+/// file before the first write to the file after the last.  Nothing past the size a version
+/// keeps is read, and a file that is not there carries nothing, which is a creation.
+pub async fn mark_dirty_before(id: &str, path: &str) {
+    if path.trim().is_empty() {
+        return;
+    }
+    let marked = DIRTY.with(|d| d.borrow().get(id).map(|m| m.contains_key(path)).unwrap_or(false));
+    if marked {
+        return;
+    }
+    let was = if versionable(id, path) {
+        let ceiling = versions::VERSION_FILE_MAX as u32;
+        match opfs::read_file_capped(FileRoot::Workspace, path, ceiling).await {
+            Ok((b, total)) if total as usize <= versions::VERSION_FILE_MAX => Some(b),
+            _                                                               => None,
+        }
+    } else {
+        None
+    };
+    DIRTY.with(|d| {
+        d.borrow_mut().entry(id.to_string()).or_default().entry(path.to_string()).or_insert(was);
+    });
+}
+
+/// Note that a turn keeping into `id`'s store has run a command or a worker ([`OPAQUE`]).
+pub fn ran_opaque(id: &str) {
+    OPAQUE.with(|o| { o.borrow_mut().insert(id.to_string()); });
+}
+
+/// Take the dirty set for this Diamond, leaving it empty: each path, with what it held before the
+/// first door wrote it where that was kept.
+pub fn drain_dirty(id: &str) -> Vec<(String, Option<Vec<u8>>)> {
     DIRTY.with(|d| match d.borrow_mut().remove(id) {
         Some(set) => set.into_iter().collect(),
         None      => Vec::new(),
     })
+}
+
+/// Put back a dirty set whose record could not be written, keeping any mark made since.
+pub fn undrain_dirty(id: &str, dirty: Vec<(String, Option<Vec<u8>>)>) {
+    DIRTY.with(|d| {
+        let mut all = d.borrow_mut();
+        let set = all.entry(id.to_string()).or_default();
+        for (path, was) in dirty.into_iter() {
+            set.entry(path).or_insert(was);
+        }
+    });
+}
+
+/// What the dirty set `dirty` names, read as it stands, each row's `was` the bytes its door kept
+/// before it wrote ([`mark_dirty_before`]), else the history's.
+pub async fn dirty_changes(id: &str, dirty: Vec<(String, Option<Vec<u8>>)>) -> Vec<Change> {
+    let paths: Vec<String> = dirty.iter().map(|(p, _)| p.clone()).collect();
+    let mut was: std::collections::BTreeMap<String, Vec<u8>> = dirty.into_iter()
+        .filter_map(|(p, b)| b.map(|b| (p, b)))
+        .collect();
+    versions_changes(id, &paths).await.into_iter()
+        .map(|ch| match was.remove(&ch.path) {
+            Some(b) => Change { before: Some(b), ..ch },
+            None    => ch,
+        })
+        .collect()
 }
 
 /// Hold what a file tool captured about a file it has just changed, for the turn-end hook to
@@ -2435,11 +2572,21 @@ fn forget_room(id: &str) {
 /// both names travel.  Drained at the END of a turn and not at the start, so a turn that died with files
 /// already written still records them -- which is the one outcome with no way back.
 fn drain_captured(id: &str) -> Vec<(String, Change)> {
-    // The turn's open-folder deletes end with it, and the person's answer with them; and so does
-    // its count of seals.
+    end_turn_counts(id);
+    CAPTURED.with(|c| c.borrow_mut().remove(id).unwrap_or_default())
+}
+
+/// End the counts that belong to a turn keeping into `id`'s store: its open-folder deletes, with
+/// the person's answer, and its seals.
+///
+/// **They end with the turn whether or not its record could be written** (F4, 2026-09-25).  A turn
+/// end refused because another act held the store past the wait used to leave both standing, so
+/// the next turn began on the old count -- its first seal refused as the seventeenth, against the
+/// refusal's own promise that the next turn starts a fresh one.  The captures and notes are NOT
+/// ended here: they stay for the next turn end to adopt.
+pub fn end_turn_counts(id: &str) {
     OPEN_DELETES.with(|o| { o.borrow_mut().remove(id); });
     SEALED.with(|s| { s.borrow_mut().remove(id); });
-    CAPTURED.with(|c| c.borrow_mut().remove(id).unwrap_or_default())
 }
 
 // ── The copy on disk before the act ──────────────────────────────────────
@@ -2470,13 +2617,14 @@ fn pending_path(id: &str, path: &str) -> String {
     fmt!("{}/{}-{}.json", pending_dir(id), page, &tag[..16])
 }
 
-/// A copy noted mid-turn, as its note says.
+/// A copy noted mid-turn, or by a restore's act, as its note says.
 struct Pending {
-    name:     String,   // the note's file name
-    page:     String,   // the page life that took it
-    path:     String,   // as the capture names it
-    was:      String,   // the body's hash
+    name:     String,       // the note's file name
+    page:     String,       // the page life that took it
+    path:     String,       // as the capture names it
+    was:      String,       // the body's hash
     mark:     bool,
+    restore:  Option<u64>,  // the restore whose act took it; `None` for a turn's
 }
 
 /// Every note in `id`'s store.  A note that will not parse is passed over, never an error.
@@ -2508,6 +2656,7 @@ async fn pending_notes(id: &str) -> Vec<Pending> {
             path,
             was,
             mark:     extract_json_bool(&text, "mark").unwrap_or(false),
+            restore:  crate::llm::extract_json_number(&text, "restore"),
         });
     }
     out
@@ -2588,15 +2737,61 @@ pub async fn unpend(id: &str, path: &str) {
 /// cause, from the noted copy to what this life found, under the caller's hold and before the
 /// turn's own record, so both copies have rows.  A note whose version could not be written is
 /// left on disk, still pinning its body, for the next turn end to adopt.
-pub async fn drain_turn(hold: &VersionHold, id: &str) -> (Vec<(String, Change)>, Vec<String>) {
+///
+/// **And a capture whose file no longer holds what the turn left is sealed, not recorded over**
+/// (release 5.1's restore follow-ups, 2026-09-25).  A write from outside the turn after its last
+/// act -- a Restore in another tab, which cannot end this page's run as a Restore here does
+/// ([`end_run`]), or the person's own editor -- would otherwise be buried under the turn's row:
+/// the History naming the turn's bytes over what is on disk, and the turn's Undo putting its first
+/// bytes back over them.  So each of this page's captures is read again here, under the hold.  One
+/// that no longer stands as the turn left it ([`versions::stands_as_left`]) is recorded as a
+/// version of its own, the turn's by cause, as a run the person's editor ended mid-turn is
+/// ([`seal_run`]); what stands now is recorded after it, as the person's; and it leaves the
+/// turn's own version.  Where the store's newest row already says what stands -- another tab's
+/// restore recorded it -- and every byte of the run is named by some row, nothing more is recorded.  Its path is answered in the third list, so the turn end does not record
+/// it again from its ledger.  Where either version cannot be written, the capture is recorded with
+/// the turn as it always was -- and so is every capture of a turn that ran a command or a worker
+/// ([`ran_opaque`]), whose own writes no capture sees and so cannot be told from anyone else's.
+///
+/// # Arguments
+/// * `ctx` - The turn's own tool context: what a machine file is read again through.
+pub async fn drain_turn(hold: &VersionHold, id: &str, ctx: &crate::tools::ToolContext)
+    -> (Vec<(String, Change)>, Vec<String>, Vec<String>)
+{
     let mut captured = drain_captured(id);
+    // A turn that ran a command or a worker may have changed its own files where no capture saw,
+    // so it records them as it always did.
+    let opaque = OPAQUE.with(|o| o.borrow_mut().remove(id));
+    let own = if opaque { 0 } else { captured.len() };
     let notes = pending_notes(id).await;
     let page = PAGE.with(|p| p.clone());
     let mut settle_list: Vec<String> = Vec::new();
     let mut broken: Vec<(String, Change)> = Vec::new();    // (the note, the run it began)
     for note in notes.into_iter() {
-        if let Some((_, ch)) = captured.iter().find(|(_, ch)| ch.path == note.path) {
+        // A RESTORE'S COPY IS ITS OWN RECORD'S while the restore is open on this page: its close
+        // records it under the restore.  One whose restore is gone -- a page that died between the
+        // act and the close, or a close that could not write -- is adopted here as any other
+        // life's note is, so the copy is a row whoever records it.
+        let restoring = note.restore.is_some();
+        if let Some(t) = note.restore {
+            if note.page == page && restore_is_open(t) {
+                continue;
+            }
+            // Another tab's restore, still open while it holds its lock (U3): its close records it.
+            // A close settles its notes before it lets the lock go, so a note that is gone by the
+            // time the lock reads free was the close's, and is not adopted either.
             if note.page != page {
+                if lock_held(&restore_lock_name(&note.page, t)).await == Some(true) {
+                    continue;
+                }
+                let at = fmt!("{}/{}", pending_dir(id), note.name);
+                if !opfs::exists(FileRoot::Opfs, &at).await.unwrap_or(false) {
+                    continue;
+                }
+            }
+        }
+        if let Some((_, ch)) = captured.iter().find(|(_, ch)| ch.path == note.path) {
+            if note.page != page || restoring {
                 // What this life found at the path is where the earlier life's run ended.
                 let ended = match &ch.before {
                     Some(b) => Body::Held(b.clone()),
@@ -2621,7 +2816,7 @@ pub async fn drain_turn(hold: &VersionHold, id: &str) -> (Vec<(String, Change)>,
             settle_list.push(note.name);
             continue;
         }
-        let live = note.page == page && reserved(id, &note.path);
+        let live = note.page == page && !restoring && reserved(id, &note.path);
         if live {
             continue;
         }
@@ -2666,7 +2861,94 @@ pub async fn drain_turn(hold: &VersionHold, id: &str) -> (Vec<(String, Change)>,
                 took could not be recorded ({}); their notes stay for the next turn end.", id, e)),
         }
     }
-    (captured, settle_list)
+    // THE TURN'S BYTES, READ AGAIN: this page's captures only, since an adopted note's `after` is
+    // the path as it stands already.  Nothing is read where the capture's own bytes were not.
+    let mut kept: Vec<(String, Change)> = Vec::new();
+    let mut moved: Vec<((String, Change), Body)> = Vec::new();
+    for (i, (raw, ch)) in captured.into_iter().enumerate() {
+        let now = match (&ch.after, i < own) {
+            (Body::Held(_), true) | (Body::Gone, true) =>
+                crate::tools::standing_now(ctx, &ch.path).await,
+            _ => None,
+        };
+        match now {
+            Some(now) if !versions::stands_as_left(&ch.after, &now) => moved.push(((raw, ch), now)),
+            _ => kept.push((raw, ch)),
+        }
+    }
+    let mut left: Vec<String> = Vec::new();
+    let mut runs: Vec<(String, Change)> = Vec::new();
+    let mut nows: Vec<Change> = Vec::new();
+    if !moved.is_empty() {
+        // WHAT A RESTORE IN ANOTHER TAB ALREADY RECORDED STANDS ALONE (release 5.1 QA round 3, TW).
+        // Its row says what is on disk, and its `was` is the turn's bytes, so where the store's
+        // newest row for the path already says what stands, and every byte of the turn's run is
+        // named by some row, nothing more is recorded.  A second row would repeat the restore's
+        // under the person's name.
+        let held = versions_manifests(id).await;
+        let index = versions::index_of(&held);
+        let mut named: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
+        for (_, m) in held.iter() {
+            for e in m.files.iter() {
+                if !e.hash.is_empty() {
+                    named.insert(e.hash.clone());
+                }
+                if let Some(w) = &e.was {
+                    named.insert(w.clone());
+                }
+            }
+        }
+        let recorded = |p: &str| held.iter().any(|(_, m)| m.files.iter().any(|e| e.path == p));
+        for ((raw, ch), now) in moved.into_iter() {
+            let told = match &now {
+                Body::Held(b) => index.get(&ch.path) == Some(&versions::hash_of(b)),
+                Body::Gone    => !index.contains_key(&ch.path) && recorded(&ch.path),
+                _             => false,
+            };
+            let in_rows = |b: &Option<Vec<u8>>| match b {
+                Some(b) => named.contains(&versions::hash_of(b)),
+                None    => true,
+            };
+            let after = match &ch.after {
+                Body::Held(b) => Some(b.clone()),
+                _             => None,
+            };
+            if told && in_rows(&after) && in_rows(&ch.before) {
+                left.push(raw);
+                continue;
+            }
+            nows.push(Change {
+                path:    ch.path.clone(),
+                after:   now,
+                before:  None,     // the sealed run's bytes, from the history
+                found:   Found::Unread,
+                carried: None,
+                mark:    ch.mark,
+                refused: None,
+                wiped:   false,
+            });
+            runs.push((raw, ch));
+        }
+    }
+    if !runs.is_empty() {
+        let sealed: Vec<Change> = runs.iter().map(|(_, ch)| ch.clone()).collect();
+        match versions_record_held(hold, id, None, Cause::Turn, "", "", sealed).await {
+            Ok(_)  => {
+                if let Err(e) = versions_record_held(hold, id, None, Cause::User, "", "", nows).await {
+                    console_log(&fmt!("Diamond '{}': what stands at the files changed after this \
+                        turn's last act could not be recorded ({}); the turn's own bytes are.",
+                        id, e));
+                }
+                left.extend(runs.into_iter().map(|(raw, _)| raw));
+            },
+            Err(e) => {
+                console_log(&fmt!("Diamond '{}': the files changed after this turn's last act \
+                    could not be sealed ({}), so they are recorded with the turn.", id, e));
+                kept.extend(runs);
+            },
+        }
+    }
+    (kept, settle_list, left)
 }
 
 /// Remove the notes a turn end has recorded.  Best effort: a note left behind names a body the
@@ -3128,6 +3410,10 @@ pub async fn versions_record_held(
         if !seen.insert(ch.path.clone()) {
             continue;
         }
+        // THE PERSON'S FILE BY ITS PATH, whatever the caller said ([`theirs`]): the dirty set of
+        // the Doc and Files panels recorded a person's file as the Diamond's own until B1 of the
+        // release 5.1 fix's QA, and a whole-version Restore then deleted it off their folder.
+        let ch = Change { mark: ch.mark || theirs(id, &ch.path), ..ch };
         // WHETHER IT WAS WIPED: a write in the turn said so, or the turn's net change says so --
         // what stood first against what stands last, which is also how a file emptied in two
         // steps, or by a page that died before its turn ended, is still seen for what it was.
@@ -3396,14 +3682,17 @@ pub async fn versions_changes(id: &str, paths: &[String]) -> Vec<Change> {
         if !versionable(id, path) {
             continue;
         }
+        // The person's file by its path ([`theirs`]), as a turn's capture of it would say.
+        let mark = theirs(id, path);
         match opfs::read_file_capped(FileRoot::Workspace, path, ceiling).await {
             Ok((body, total)) if total as usize <= versions::VERSION_FILE_MAX =>
-                out.push(Change::of(path, body)),
+                out.push(Change { mark, ..Change::of(path, body) }),
             Ok((_, total)) => out.push(Change {
                 after: Body::TooLarge(total as u64),
+                mark,
                 ..Change::gone(path)
             }),
-            Err(_) => out.push(Change::gone(path)),
+            Err(_) => out.push(Change { mark, ..Change::gone(path) }),
         }
     }
     out
@@ -3482,7 +3771,8 @@ pub async fn versions_undo_target(id: &str, path: &str, at: Option<u64>)
     -> Outcome<Option<(u64, String, bool)>>
 {
     let held = versions_manifests(id).await;
-    let mark = held.iter().rev()
+    // By the path, as a restore routes it ([`theirs`]), and never by a row's flag alone.
+    let mark = theirs(id, path) || held.iter().rev()
         .flat_map(|(_, m)| m.files.iter())
         .find(|e| e.path == path)
         .map(|e| e.mark)
@@ -3494,129 +3784,605 @@ pub async fn versions_undo_target(id: &str, path: &str, at: Option<u64>)
     }
 }
 
-/// Put the Diamond's files back as they stood at `at`, and say what became of each.
+// ── A restore, from its opening to its record ────────────────────────────
+//
+// **A restore never destroys bytes that exist only on the person's disk** (release 5.1's F5 and
+// its fix's QA, B1 and R1-R6, 2026-09-25).  A restore has two halves.  The Diamond's own files are
+// written here, by the engine.  The person's files -- in the folder they opened, or on the machine
+// behind the hand -- are handed to the page, which writes or deletes them through the Diamond's
+// fenced door, and deletes only on the person's yes.  That door kept nothing until 2026-09-25: a
+// Restore wrote old bytes over whatever the person had saved since, with no copy.  The first fix
+// copied a file BEFORE the question and deleted it after, so a save made while the question was
+// open went unkept, and it copied only the files it would delete.
+//
+// So a restore is now opened ([`versions_restore_open`]), which hands out the person's files under
+// a ticket and writes none of them; a file it would take away is recorded as it stands when the
+// person is asked about it.  Each act of the door under that ticket keeps what it replaces or
+// removes AT THE ACT, once the fence has passed: the copy goes into the store with a note, as a
+// turn's does ([`restore_keep`]).  Closing it ([`versions_restore_close`]) writes the Diamond's own
+// files and records everything that landed as the restore's one `restore` version.  A door act
+// with no restore open is a restore of its own, recorded as it lands.  An act the fence refuses
+// keeps nothing and records nothing.
+
+/// What a restore puts back.
+#[derive(Clone, Debug)]
+pub enum Plan {
+    At(u64, Option<String>),                    // every path, or one, as it stood at a version
+    Undo(u64, Vec<String>),                     // what a version replaced, at the paths named, or all it changed
+}
+
+impl Plan {
+
+    pub fn version(&self) -> u64 {
+        match self {
+            Self::At(n, _) | Self::Undo(n, _) => *n,
+        }
+    }
+
+    /// The note the restore's own version carries: `restore v3`, or `undo v5`.
+    fn note(&self) -> String {
+        match self {
+            Self::At(n, _)   => fmt!("restore v{}", n),
+            Self::Undo(n, _) => fmt!("undo v{}", n),
+        }
+    }
+}
+
+/// A restore from [`versions_restore_open`] to [`versions_restore_close`].
+struct Restoring {
+    id:    String,                              // the store
+    plan:  Option<Plan>,                        // what the engine puts back; none for a lone act
+    done:  Vec<Change>,                         // what each act on the person's files kept and left
+    notes: Vec<String>,                         // the notes of the copies those acts took
+    _lock: RestoreLock,                         // held while open, so another tab leaves its notes
+}
+
+/// The web lock an open restore holds, given back when the restore is dropped: at its close, after
+/// its notes are settled, or with the page.
 ///
-/// **Never destructive.**  What is on disk now is recorded as a `restore` version BEFORE anything
-/// is written, so the state a restore replaced is one row up in the same history -- which is what
-/// makes the restore itself undoable, and why no confirmation stands between the user and one
-/// file.
+/// **A turn end in another tab adopted an open restore's copy** (U3 of the release 5.1 fix's QA,
+/// round 2, 2026-09-25): a note is the restore's own record only while the restore is open, and
+/// another tab could not tell open from abandoned, so it recorded the copy as a `turn` row and the
+/// close recorded it again as `restore`.  The lock is what another tab can see: a note whose
+/// restore still holds it is left for the close ([`drain_turn`]), and one whose page has gone,
+/// taking the lock with it, is adopted.
+struct RestoreLock(Option<js_sys::Function>);
+
+impl Drop for RestoreLock {
+    fn drop(&mut self) {
+        if let Some(release) = self.0.take() {
+            let _ = release.call0(&JsValue::NULL);
+        }
+    }
+}
+
+/// How long a restore waits for its own lock, in ms: nothing else takes it, so only a lock manager
+/// that is not answering waits at all.
+const RESTORE_LOCK_WAIT_MS: u64 = 5_000;
+
+/// The web lock the restore `ticket` of the page life `page` holds while it is open.
+fn restore_lock_name(page: &str, ticket: u64) -> String {
+    fmt!("daimond-restore-{}-{}", page, ticket)
+}
+
+/// Is the web lock `name` held by any tab of this origin?  `None` where the browser cannot say.
+async fn lock_held(name: &str) -> Option<bool> {
+    let got = |obj: &JsValue, key: &str| match js_sys::Reflect::get(obj, &JsValue::from_str(key)) {
+        Ok(v) if !v.is_undefined() && !v.is_null() => Some(v),
+        _                                          => None,
+    };
+    let locks = match got(&js_sys::global(), "navigator").and_then(|n| got(&n, "locks")) {
+        Some(l) => l,
+        None    => return None,
+    };
+    let query = match got(&locks, "query").map(|f| f.dyn_into::<js_sys::Function>()) {
+        Some(Ok(f)) => f,
+        _           => return None,
+    };
+    let asked = match query.call0(&locks).map(|p| p.dyn_into::<js_sys::Promise>()) {
+        Ok(Ok(p)) => p,
+        _         => return None,
+    };
+    let snapshot = match wasm_bindgen_futures::JsFuture::from(asked).await {
+        Ok(s)  => s,
+        Err(_) => return None,
+    };
+    let held = match got(&snapshot, "held") {
+        Some(h) => js_sys::Array::from(&h),
+        None    => return Some(false),
+    };
+    Some(held.iter().any(|l| got(&l, "name").and_then(|n| n.as_string()).as_deref() == Some(name)))
+}
+
+/// What a restore's opening hands the caller: its ticket, and the person's files for its door.
+pub struct Opened {
+    pub ticket:  u64,
+    pub machine: Vec<String>,                   // one JSON object a file
+}
+
+impl Opened {
+
+    /// `{version, ticket, machine}`.
+    pub fn said(&self, at: u64) -> String {
+        fmt!("{{\"version\":{},\"ticket\":{},\"machine\":[{}]}}", at, self.ticket,
+            self.machine.join(","))
+    }
+}
+
+/// What a restore's close did: what landed, what could not be put back, and the version recording
+/// it.
+pub struct Closed {
+    pub at:       u64,
+    pub recorded: Option<u64>,
+    pub restored: Vec<String>,                  // as the store names them: absolute for a machine file
+    pub missing:  Vec<String>,
+    pub refused:  Vec<String>,                  // one JSON object a file
+    pub wrote:    Vec<String>,                  // the engine's own writes, which the read cache forgets
+}
+
+impl Closed {
+
+    /// `{version, recorded, restored, missing, refused}`, with `machine` where the caller acts on
+    /// the person's files itself.
+    pub fn said(&self, machine: Option<&[String]>) -> String {
+        let quote = |v: &[String]| -> String {
+            let items: Vec<String> = v.iter().map(|s| fmt!("\"{}\"", json_escape(s))).collect();
+            items.join(",")
+        };
+        fmt!("{{\"version\":{},\"recorded\":{},\"restored\":[{}],\"missing\":[{}],\"refused\":[{}]{}}}",
+            self.at, match self.recorded { Some(v) => v as i64, None => -1 },
+            quote(&self.restored), quote(&self.missing), self.refused.join(","),
+            match machine {
+                Some(m) => fmt!(",\"machine\":[{}]", m.join(",")),
+                None    => String::new(),
+            })
+    }
+}
+
+/// Open a restore of `id`'s store, holding its lock ([`RestoreLock`]), and answer its ticket.
 ///
-/// **The machine half is the caller's.**  A file in a folder the user marked in is reached only
-/// through the hand, behind the turn's own fence, and nothing in this module has either.  Those
-/// paths come back under `machine`, with the body to write, for the caller that does have a fence
-/// -- the page's own write door, or [`crate::tools::Tool::FileRevert`] inside a turn.
+/// The lock's name is new, so nothing waits for it.  Where the browser has no lock manager, or
+/// will not grant it, the restore is open without one, as every restore was before.
+async fn restore_begin(id: &str, plan: Option<Plan>) -> u64 {
+    let ticket = RESTORE_NEXT.with(|n| { let t = n.get(); n.set(t + 1); t });
+    // Registered before the await, so the ticket is open from the moment it is handed out.
+    RESTORES.with(|r| {
+        r.borrow_mut().insert(ticket, Restoring {
+            id:    id.to_string(),
+            plan,
+            done:  Vec::new(),
+            notes: Vec::new(),
+            _lock: RestoreLock(None),
+        });
+    });
+    let page = PAGE.with(|p| p.clone());
+    let lock = match web_lock(&restore_lock_name(&page, ticket), RESTORE_LOCK_WAIT_MS).await {
+        Lock::Held(release) => Some(release),
+        _                   => None,
+    };
+    let orphan = RESTORES.with(|r| match r.borrow_mut().get_mut(&ticket) {
+        Some(x) => { x._lock = RestoreLock(lock); None },
+        None    => Some(RestoreLock(lock)),     // closed while the lock was asked for
+    });
+    drop(orphan);
+    ticket
+}
+
+/// Is `ticket` a restore still open on this page?
+fn restore_is_open(ticket: u64) -> bool {
+    RESTORES.with(|r| r.borrow().contains_key(&ticket))
+}
+
+/// The store the open restore `ticket` puts back, or `None` where it is not open.
+pub fn restore_store(ticket: u64) -> Option<String> {
+    RESTORES.with(|r| r.borrow().get(&ticket).map(|x| x.id.clone()))
+}
+
+/// A restore's own act on the person's `path`, with no restore open: the act is a restore of its
+/// own, and [`versions_restore_close`] records it as it lands.
+pub async fn restore_lone(id: &str) -> u64 {
+    restore_begin(id, None).await
+}
+
+/// Keep what a restore's act is about to replace or remove at `path`: the act's hold, taken once
+/// the fence has passed and immediately before the act.
 ///
-/// The answer is `(what the caller is owed, the paths this function itself wrote)`.  The second
-/// is not in the JSON's gift: a Restore changes bytes underneath an agent that may have read
-/// them, and the caller has to tell the read cache so before the daimon's next write to one of
-/// them is refused as another agent's edit.
+/// A turn still running with a capture of `path` has its run ended first, as its own version (see
+/// [`end_run`]).  Then the bytes the act found, `now`, go into the store with a note naming them,
+/// on disk BEFORE the act -- so a page that dies between the act and the close leaves the note for
+/// the next turn end to adopt.  An error is the act's refusal: nothing may change.
 ///
 /// # Arguments
-/// * `at` - The version to put the files back to.
-/// * `path` - One path, or `None` for every path the history names -- which includes REMOVING a
-///   file that did not exist at `at`.
-pub async fn versions_restore(id: &str, at: u64, path: Option<&str>)
-    -> Outcome<(String, Vec<String>)>
+/// * `path` - As the store names it: normalised, or absolute for a machine file.
+/// * `now` - What stands at `path` as the act found it, or `None` where nothing does.
+/// * `deleting` - Is the act a delete?
+pub async fn restore_keep(ticket: u64, path: &str, now: Option<&[u8]>, deleting: bool)
+    -> Outcome<()>
 {
-    let held = versions_manifests(id).await;
-    let want: Vec<(String, At)> = match path {
-        Some(p) => match versions::path_at(&held, p, at) {
-            Some(s) => vec![(p.to_string(), s)],
-            None    => return Err(err!(
+    let id = match restore_store(ticket) {
+        Some(id) => id,
+        None     => return Err(err!(
+            "The restore that '{}' belonged to has ended, so nothing was changed.", path;
+            Missing, Data)),
+    };
+    res!(end_run(None, &id, path).await);
+    let before = match now {
+        Some(b) => b,
+        None    => return Ok(()),           // nothing stands there, so nothing is lost
+    };
+    let tag = versions::hash_of(path.as_bytes());
+    let page = PAGE.with(|p| p.clone());
+    let name = fmt!("{}-r{}-{}.json", page, ticket, &tag[..16]);
+    let note = fmt!("{}/{}", pending_dir(&id), name);
+    let hash = versions::hash_of(before);
+    let body = body_path(&id, &hash);
+    // The body first, as `pend` writes it: a failure half way leaves a body nothing names.
+    if !res!(opfs::exists(FileRoot::Opfs, &body).await) {
+        res!(opfs::write_file(FileRoot::Opfs, &body, before).await);
+    }
+    let text = fmt!(
+        r#"{{"page":"{}","path":"{}","was":"{}","deleting":{},"mark":{},"restore":{},"ts":{}}}"#,
+        json_escape(&page), json_escape(path), hash, deleting, theirs(&id, path), ticket,
+        now_ms() as u64);
+    res!(opfs::write_file(FileRoot::Opfs, &note, text.as_bytes()).await);
+    RESTORES.with(|r| {
+        if let Some(x) = r.borrow_mut().get_mut(&ticket) {
+            x.notes.push(name);
+        }
+    });
+    Ok(())
+}
+
+/// Give back what [`restore_keep`] noted for an act that did not happen.  Best effort: a note left
+/// behind is adopted at a turn end, where the path reads as it stands and an unchanged row is not
+/// written.
+pub async fn restore_let_go(ticket: u64, path: &str) {
+    let id = match restore_store(ticket) {
+        Some(id) => id,
+        None     => return,
+    };
+    let tag = versions::hash_of(path.as_bytes());
+    let page = PAGE.with(|p| p.clone());
+    let name = fmt!("{}-r{}-{}.json", page, ticket, &tag[..16]);
+    let _ = opfs::delete_entry(FileRoot::Opfs, &fmt!("{}/{}", pending_dir(&id), name), false).await;
+    RESTORES.with(|r| {
+        if let Some(x) = r.borrow_mut().get_mut(&ticket) {
+            x.notes.retain(|n| *n != name);
+        }
+    });
+}
+
+/// Hold what a restore's act left at its path, with the copy it kept, for the restore's record.
+pub fn restore_landed(ticket: u64, change: Change) {
+    RESTORES.with(|r| {
+        if let Some(x) = r.borrow_mut().get_mut(&ticket) {
+            x.done.push(change);
+        }
+    });
+}
+
+/// End a running turn's run on `path`, which a restore is about to change from outside the turn:
+/// the run so far becomes a version of its own, and the path's capture goes.
+///
+/// **So the History's newest row says what is on disk** (R5 of the release 5.1 fix's QA).  A
+/// Diamond's thread turn is not a steer, so nothing stopped a Restore while one ran; the turn's end
+/// then recorded its captures AFTER the restore's rows, and the History said a file held the
+/// turn's text, or was deleted, while the disk held what the restore put back.  A restore is bytes
+/// from outside the turn, and those end a turn's run as the person's own editor does
+/// ([`seal_run`]): what the turn did is a row now, before the restore's, and its next act on the
+/// path begins a run of its own from what the restore left.  Not the turn's seal to count.
+///
+/// # Arguments
+/// * `hold` - The store's hold, where the caller holds it already.
+/// * `path` - As the capture names it: normalised, or absolute for a machine file.
+async fn end_run(hold: Option<&VersionHold>, id: &str, path: &str) -> Outcome<()> {
+    let run = CAPTURED.with(|c| {
+        let mut all = c.borrow_mut();
+        match all.get_mut(id) {
+            Some(held) => match held.iter().position(|(_, h)| h.path == path) {
+                Some(at) => Some(held.remove(at)),
+                None     => None,
+            },
+            None => None,
+        }
+    });
+    let (raw, run) = match run {
+        Some(r) => r,
+        None    => return Ok(()),
+    };
+    let recorded = match hold {
+        Some(h) => versions_record_held(h, id, None, Cause::Turn, "", "", vec![run.clone()]).await,
+        None    => versions_record(id, Cause::Turn, "", "", vec![run.clone()]).await,
+    };
+    match recorded {
+        Ok(_)  => {
+            // The run's copy is named by that version's row, so its note goes.
+            unpend(id, path).await;
+            Ok(())
+        },
+        Err(e) => {
+            // Put back for the turn end, and the act that asked is refused.
+            CAPTURED.with(|c| {
+                c.borrow_mut().entry(id.to_string()).or_default().push((raw, run));
+            });
+            Err(e)
+        },
+    }
+}
+
+/// What every path a restore of `id` puts back: for a restore to a version, what one path or
+/// every path the history names held then; for an undo, what the version replaced
+/// ([`versions::undo_of`]).
+fn restore_plan(id: &str, held: &[(u64, Manifest)], plan: &Plan) -> Outcome<Vec<(String, At)>> {
+    match plan {
+        Plan::At(at, Some(p)) => match versions::path_at(held, p, *at) {
+            Some(s) => Ok(vec![(p.to_string(), s)]),
+            None    => Err(err!(
                 "Diamond '{}' has no record of '{}' at version {}, so there is nothing to put \
                 back.", id, p, at; Missing, Data)),
         },
-        None => versions::state_at(&held, at),
-    };
-    // A machine path is absolute and a stored one is not, which is what tells the two apart for a
-    // path whose state at `at` is GONE and so carries no flag of its own.
-    let here = |p: &str| -> bool { is_safe_rel(p) };
+        Plan::At(at, None) => Ok(versions::state_at(held, *at)),
+        Plan::Undo(of, paths) => {
+            let want = versions::undo_of(held, *of, paths);
+            if want.is_empty() {
+                return Err(err!(
+                    "Diamond '{}' has no record of what version {} changed, so there is nothing \
+                    to undo.", id, of; Missing, Data));
+            }
+            Ok(want)
+        },
+    }
+}
 
-    // WHAT IS THERE NOW, read before a byte is written.  These bytes become the `was` of the
-    // version this leaves behind, which is what "today's state is kept" means and what makes a
-    // restore itself undoable -- and they have to be taken now, because in a moment they are
-    // what was overwritten.
-    let mine: Vec<String> = want.iter()
-        .filter(|(p, s)| here(p) && !s.mark())
+/// Open a restore of the Diamond's files to how they stood at `at`: the person's files, for the
+/// caller's fenced door, and the ticket its acts and [`versions_restore_close`] carry.  **No file
+/// is written here**, and every act keeps its own copy as it goes.
+///
+/// **Which files are the person's is asked of the path** ([`theirs`]).  A file that did not exist
+/// at `at` is handed out as `gone`, and `kept` says what it holds now is recorded here, first --
+/// it is in the open folder and under the size ceiling -- so the page may put it to the person.
+/// One with no such copy, a machine file or one past the ceiling, is left.  One that is not there
+/// now is not handed out at all.
+///
+/// **A machine file is handed out as the door spells it** (R6 of the release 5.1 fix's QA): under
+/// the folder the hand was granted, relative to it, which the fenced door routes to the hand.  The
+/// store names it by its absolute path, as the turn's capture recorded it, and the door's record of
+/// the act does too, so the identity is one from the row to the act and back.  The absolute path
+/// was handed out until 2026-09-25, and the door refuses every absolute path, so no restore or undo
+/// could put a machine file back.  Handed out as recorded where the door would not reach the
+/// machine with the relative spelling: no hand, another root, or a folder open in the browser,
+/// which would take that path instead.
+///
+/// **An undo is a restore too** ([`Plan::Undo`]): what the version replaced, each path to its own
+/// row's `was`, opened, acted on and closed as one, and recorded as one version.  A path the
+/// version made is `gone`, as a file made after a restore's version is.
+///
+/// # Arguments
+/// * `plan` - A version, and one path or `None` for every path the history names -- which
+///   includes REMOVING a file that did not exist at it; or the version to undo.
+pub async fn versions_restore_open(id: &str, plan: Plan) -> Outcome<Opened> {
+    // THE PERSON'S OWN SAVES SINCE THE LAST RECORD ARE RECORDED FIRST (release 5.1 QA round 3,
+    // DP4): a Restore straight after a Doc panel save found no row for it, so it put nothing back
+    // and the save stayed.  As the next steer would record them, under the store's hold.
+    let dirty = drain_dirty(id);
+    if !dirty.is_empty() {
+        let back = dirty.clone();
+        let changes = dirty_changes(id, dirty).await;
+        let hold = match hold_versions(id).await {
+            Ok(h)  => h,
+            Err(e) => { undrain_dirty(id, back); return Err(e); },
+        };
+        if let Err(e) = versions_record_held(&hold, id, None, Cause::User, "", "", changes).await {
+            undrain_dirty(id, back);
+            return Err(e);
+        }
+    }
+    let held = versions_manifests(id).await;
+    let want = res!(restore_plan(id, &held, &plan));
+    let here = |p: &str| -> bool { is_safe_rel(p) };
+    // Which of the files a restore would take away are there now, and which of them the door can
+    // keep a copy of: read by length alone, so the ceiling costs nothing to ask.
+    let gone_here: Vec<String> = want.iter()
+        .filter(|(p, s)| here(p) && theirs(id, p) && matches!(s, At::Gone { .. }))
         .map(|(p, _)| p.clone())
         .collect();
-    let mut today: std::collections::BTreeMap<String, Option<Vec<u8>>> =
-        std::collections::BTreeMap::new();
-    for ch in versions_changes(id, &mine).await.into_iter() {
-        let bytes = match ch.after {
-            Body::Held(b) => Some(b),
-            _             => None,      // absent, or past the ceiling: no body to keep
-        };
-        today.insert(ch.path, bytes);
+    let mut present: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
+    let mut kept:    std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
+    let mut firsts:  Vec<Change> = Vec::new();
+    for ch in versions_changes(id, &gone_here).await.into_iter() {
+        match ch.after {
+            Body::Held(_) => { present.insert(ch.path.clone()); firsts.push(ch); },
+            Body::Gone    => {},
+            _             => { present.insert(ch.path); },
+        }
     }
+    // A FILE OF THE PERSON'S THAT THE RESTORE WOULD TAKE AWAY IS KEPT AS IT STANDS WHEN THEY ARE
+    // ASKED ABOUT IT, as a `restore` version of its own: the file the question names.  Its delete
+    // keeps it again at the act, which is what keeps a save made while the question is open.  A
+    // turn's run on the path is ended first, so its rows come before this one.
+    if !firsts.is_empty() {
+        let hold = res!(hold_versions(id).await);
+        let mut now: Vec<Change> = Vec::new();
+        for ch in firsts.into_iter() {
+            if end_run(Some(&hold), id, &ch.path).await.is_ok() {
+                kept.insert(ch.path.clone());
+                now.push(ch);
+            }
+        }
+        res!(versions_record_held(&hold, id, None, Cause::Restore, "",
+            &fmt!("before {}", plan.note()), now).await);
+    }
+    let root = if want.iter().any(|(p, _)| !here(p)) {
+        crate::tools::machine_door_root().await
+    } else {
+        None
+    };
+    let door = |p: &str| -> String {
+        match &root {
+            Some(r) => match p.strip_prefix(&fmt!("{}/", r)) {
+                Some(rel) if is_safe_rel(rel) => rel.to_string(),
+                _                             => p.to_string(),
+            },
+            None => p.to_string(),
+        }
+    };
+    let mut machine: Vec<String> = Vec::new();
+    for (p, state) in want.iter() {
+        if !theirs(id, p) {
+            continue;                   // the Diamond's own: written at the close
+        }
+        machine.push(match state {
+            At::Held { hash, bytes, skipped, .. } => fmt!(
+                "{{\"path\":\"{}\",\"hash\":\"{}\",\"bytes\":{}{}}}",
+                json_escape(&door(p)), json_escape(hash), bytes, match skipped {
+                    Some(w) => fmt!(",\"skipped\":\"{}\"", json_escape(w)),
+                    None    => String::new(),
+                }),
+            At::Gone { .. } => {
+                if here(p) && !present.contains(p) {
+                    continue;           // not there then, not there now: nothing to do
+                }
+                fmt!("{{\"path\":\"{}\",\"gone\":true,\"kept\":{}}}",
+                    json_escape(&door(p)), kept.contains(p))
+            },
+        });
+    }
+    let ticket = restore_begin(id, Some(plan)).await;
+    Ok(Opened { ticket, machine })
+}
 
-    let mut done:    Vec<Change> = Vec::new();
+/// Close the restore `ticket`: put the Diamond's own files back, and record what landed -- those,
+/// and every act of the door on the person's files, each with the copy it kept -- as the
+/// restore's one `restore` version.
+///
+/// **Never destructive.**  Each row's `was` is what stood there when the restore reached it, read
+/// at its act, so the state a restore replaced is one row up and the restore is itself undoable.
+/// A restore that changed nothing writes nothing.
+///
+/// Under the store's hold from the first read of the Diamond's own files to the record, so nothing
+/// mints between them.  Where the store stays held past the wait, the Diamond's own files are left
+/// and the error is the answer; the copies the door's acts took stay noted, and the next turn end
+/// adopts them.
+pub async fn versions_restore_close(id: &str, ticket: u64) -> Outcome<Closed> {
+    let r = match RESTORES.with(|r| {
+        let mut all = r.borrow_mut();
+        match all.get(&ticket) {
+            Some(x) if x.id == id => all.remove(&ticket),
+            _                     => None,
+        }
+    }) {
+        Some(r) => r,
+        None    => return Err(err!(
+            "Diamond '{}' has no restore {} open on this page, so there is nothing to finish.",
+            id, ticket; Missing, Data)),
+    };
+    let hold = res!(hold_versions(id).await);
+    let mut changes:  Vec<Change> = Vec::new();
     let mut restored: Vec<String> = Vec::new();
     let mut missing:  Vec<String> = Vec::new();
     let mut refused:  Vec<String> = Vec::new();
-    let mut machine:  Vec<String> = Vec::new();
-    for (p, state) in want.iter() {
-        // A file on this computer is reached only through the hand, behind a turn's own fence,
-        // and this module has neither.  It comes back for the caller that does.
-        if state.mark() || !here(p) {
-            machine.push(match state {
-                At::Held { hash, bytes, skipped, .. } => fmt!(
-                    "{{\"path\":\"{}\",\"hash\":\"{}\",\"bytes\":{}{}}}",
-                    json_escape(p), json_escape(hash), bytes, match skipped {
-                        Some(w) => fmt!(",\"skipped\":\"{}\"", json_escape(w)),
-                        None    => String::new(),
-                    }),
-                At::Gone => fmt!("{{\"path\":\"{}\",\"gone\":true}}", json_escape(p)),
-            });
-            continue;
+    let mut wrote:    Vec<String> = Vec::new();
+    if let Some(plan) = &r.plan {
+        let held = versions_manifests(id).await;
+        let want = match restore_plan(id, &held, plan) {
+            Ok(w)  => w,
+            Err(_) => Vec::new(),       // its record was pruned since it opened: nothing to put back
+        };
+        let mine: Vec<String> = want.iter()
+            .filter(|(p, _)| is_safe_rel(p) && !theirs(id, p))
+            .map(|(p, _)| p.clone())
+            .collect();
+        // WHAT IS THERE NOW, read before a byte is written: the `was` of each row, which is what
+        // "today's state is kept" means.
+        let mut today: std::collections::BTreeMap<String, Option<Vec<u8>>> =
+            std::collections::BTreeMap::new();
+        for ch in versions_changes(id, &mine).await.into_iter() {
+            let bytes = match ch.after {
+                Body::Held(b) => Some(b),
+                _             => None,  // absent, or past the ceiling: no body to keep
+            };
+            today.insert(ch.path, bytes);
         }
-        let before = today.get(p).cloned().unwrap_or_default();
-        match state {
-            At::Gone => {
-                if before.is_none() {
-                    continue;           // not there then, not there now: nothing to do
-                }
-                // A file made AFTER `at` is removed, which is the half of "put it back" that a
-                // per-path restore never needs and a whole-version one cannot do without.
-                match opfs::delete_entry(FileRoot::Workspace, p, false).await {
+        for (p, state) in want.iter() {
+            if !mine.contains(p) {
+                continue;
+            }
+            let before = today.get(p).cloned().unwrap_or_default();
+            let body = match state {
+                At::Gone { .. } => {
+                    if before.is_none() {
+                        continue;       // not there then, not there now: nothing to do
+                    }
+                    None
+                },
+                At::Held { skipped: Some(why), .. } => {
+                    refused.push(fmt!("{{\"path\":\"{}\",\"why\":\"{}\"}}", json_escape(p),
+                        json_escape(why)));
+                    continue;
+                },
+                At::Held { hash, .. } => match res!(versions_body(id, hash).await) {
+                    Some(b) => Some(b),
+                    None    => { missing.push(p.clone()); continue; },
+                },
+            };
+            if let Err(e) = end_run(Some(&hold), id, p).await {
+                refused.push(fmt!("{{\"path\":\"{}\",\"why\":\"{}\"}}", json_escape(p),
+                    json_escape(&e.plain())));
+                continue;
+            }
+            match body {
+                // A file made AFTER `at` is removed, which is the half of "put it back" a per-path
+                // restore never needs and a whole-version one cannot do without.
+                None => match opfs::delete_entry(FileRoot::Workspace, p, false).await {
                     Ok(()) => {
                         restored.push(p.clone());
-                        done.push(Change { before, ..Change::gone(p) });
+                        wrote.push(p.clone());
+                        changes.push(Change { before, ..Change::gone(p) });
                     },
                     Err(_) => {},       // already gone, which is the state that was asked for
-                }
-            },
-            At::Held { skipped: Some(why), .. } => refused.push(fmt!(
-                "{{\"path\":\"{}\",\"why\":\"{}\"}}", json_escape(p), json_escape(why))),
-            At::Held { hash, .. } => match res!(versions_body(id, hash).await) {
-                Some(body) => {
-                    res!(opfs::write_file(FileRoot::Workspace, p, &body).await);
-                    restored.push(p.clone());
-                    done.push(Change { before, ..Change::of(p, body) });
                 },
-                None => missing.push(p.clone()),
-            },
+                Some(b) => {
+                    res!(opfs::write_file(FileRoot::Workspace, p, &b).await);
+                    restored.push(p.clone());
+                    wrote.push(p.clone());
+                    changes.push(Change { before, ..Change::of(p, b) });
+                },
+            }
         }
     }
-
-    // THE VERSION THE RESTORE ITSELF IS.  Written after the files, so it describes what actually
-    // landed rather than what was intended, and carrying today's bytes as each row's `was` -- so
-    // the state a restore replaced is one row up in the same history and Undo is a Restore of the
-    // row above.  A restore that changed nothing writes nothing, by the same rule every other
-    // cause lives under.
-    let at_now = res!(versions_record(id, Cause::Restore, "", &fmt!("restore v{}", at),
-        done).await);
-
-    let quote = |v: &[String]| -> String {
-        let items: Vec<String> = v.iter().map(|s| fmt!("\"{}\"", json_escape(s))).collect();
-        items.join(",")
+    // WHAT THE DOOR'S ACTS ON THE PERSON'S FILES LANDED, each with the copy it kept at the act.
+    for ch in r.done.into_iter() {
+        restored.push(ch.path.clone());
+        changes.push(ch);
+    }
+    let note = match &r.plan {
+        Some(plan) => plan.note(),
+        None       => "restore".to_string(),
     };
-    let said = fmt!(
-        "{{\"version\":{},\"recorded\":{},\"restored\":[{}],\"missing\":[{}],\
-          \"refused\":[{}],\"machine\":[{}]}}",
-        at, match at_now { Some((v, _)) => v as i64, None => -1 },
-        quote(&restored), quote(&missing), refused.join(","), machine.join(","));
-    Ok((said, restored))
+    let recorded = versions_record_held(&hold, id, None, Cause::Restore, "", &note, changes).await;
+    drop(hold);
+    let recorded = res!(recorded);
+    settle(id, &r.notes).await;
+    Ok(Closed {
+        at:       match &r.plan { Some(plan) => plan.version(), None => 0 },
+        recorded: recorded.map(|(v, _)| v),
+        restored,
+        missing,
+        refused,
+        wrote,
+    })
+}
+
+/// A restore with nothing asked of the person: opened and closed in one call, so the Diamond's own
+/// files are back and recorded, and the person's files come back under `machine` for the caller.
+/// Each act the caller then makes on one of them through the fenced door is a restore of its own,
+/// with its copy kept at the act ([`restore_lone`]).
+pub async fn versions_restore(id: &str, at: u64, path: Option<&str>)
+    -> Outcome<(String, Vec<String>)>
+{
+    let opened = res!(versions_restore_open(id, Plan::At(at, path.map(|p| p.to_string()))).await);
+    let closed = res!(versions_restore_close(id, opened.ticket).await);
+    Ok((closed.said(Some(&opened.machine)), closed.wrote))
 }
 
 
@@ -3630,9 +4396,18 @@ pub async fn versions_restore(id: &str, at: u64, path: Option<&str>)
 /// # Arguments
 /// * `note` - What the user called this version, or empty.
 pub async fn versions_save(id: &str, note: &str) -> Outcome<Option<(u64, Vec<String>)>> {
-    let _ = drain_dirty(id);
-    let changes = versions_walk(id).await;
-    versions_record(id, Cause::Save, "", note, changes).await
+    // THE DIRTY SET IS RECORDED, not dropped (release 5.1 QA round 3, DP): a file of the person's
+    // saved through the Doc panel is outside the Diamond's own directory, so the walk never sees
+    // it, and dropping the set lost the bytes that save replaced.  First, so its `was` is the row's.
+    let dirty = drain_dirty(id);
+    let back = dirty.clone();
+    let mut changes = dirty_changes(id, dirty).await;
+    changes.extend(versions_walk(id).await);
+    let recorded = versions_record(id, Cause::Save, "", note, changes).await;
+    if recorded.is_err() {
+        undrain_dirty(id, back);
+    }
+    recorded
 }
 
 /// Record what a Diamond arrived holding, so a share that later goes wrong has somewhere to go

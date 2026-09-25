@@ -465,6 +465,7 @@ pub async fn handle_chat_websocket<
                                 keeper:      String::new(),
                                 unconfirmed: Vec::new(),
                                 by_model:    false,
+                                restoring:   0,
                             };
                             ToolRegistry::new(Tool::defaults(), ctx)
                         }

@@ -2608,6 +2608,11 @@
 	/// same turn is already claimed on this device -- in this tab, or in another tab of
 	/// this browser, which shares the device id and so would win the same lease.
 	///
+	/// NOT ONLY A COLLECT'S (F1, F2, 2026-09-25). A sender's local run of its own
+	/// dispatched turn takes the same claim for its whole run, and a lease self-release
+	/// takes it while it frees the lease, so no tab runs, re-seats or frees a turn that
+	/// another tab of this device is running. `DaimondPeer.turnWorkKey` names the key.
+	///
 	/// NEVER WAITS (`ifAvailable`): it is asked for under the mailbox lock, and a wait
 	/// there is the deadlock this exists to prevent.
 	function claimWork(key) {
@@ -4000,6 +4005,11 @@
 		/// as `collect`/`ack`; the ack dep (daimond.js) calls it before `ack` on a done turn.
 		settle:  function (turnId) { return withMailboxLock(function () { return settle(turnId); }); },
 		round:   round,
+		/// The per-turn claim a collect takes before it runs an errand, for the other
+		/// runs of a turn on this device: a local recovery holds it for its whole run,
+		/// and a lease self-release holds it while it frees the lease. `claimWork(key)`
+		/// answers `{ release }`, or null at once when any tab holds it.
+		claimWork: claimWork,
 		connect: connect,
 		/// Ask to follow, answer somebody who asked, or let go. The same door
 		/// `connect` takes, with the feed's four verbs on it.

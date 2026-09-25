@@ -728,13 +728,45 @@ async function main() {
 			big.msgs.length + ' msgs, ' + chars + ' chars');
 		check('S9: and the NEWEST end is what survives -- the turn itself is always in it',
 			big.msgs[big.msgs.length - 1].mid === 'TURN');
-		// ONE HUGE MESSAGE is clipped rather than dropped: a seed of nothing would
-		// hand the turn back for want of a prompt.
+		// ONE HUGE TURN MESSAGE is left out, never cut: the prompt rides the errand whole
+		// (`errand.prompt`), and the reconstruct writes the turn's message from there.
 		const huge = { id: 'c', messages: [{ role: 'user', content: 'x'.repeat(400 * 1024), mid: 'TURN' }] };
-		const hs = P.seedFrom(huge, 'TURN');
-		check('S10: a single oversized message is CLIPPED, never dropped -- the prompt always travels',
-			hs && hs.msgs.length === 1 && hs.msgs[0].mid === 'TURN'
-			&& hs.msgs[0].content.length > 0 && hs.msgs[0].content.length <= P.SEED_MAX_CHARS);
+		check('S10: a single oversized turn message is left out of the seed, never cut',
+			P.seedFrom(huge, 'TURN') === null);
+		const hugeTail = { id: 'c', messages: [
+			{ role: 'user', content: 'q', mid: 'u1' },
+			{ role: 'assistant', content: 'a', mid: 'a1' },
+			{ role: 'user', content: 'x'.repeat(400 * 1024), mid: 'TURN' },
+		] };
+		const ht = P.seedFrom(hugeTail, 'TURN');
+		check('S10b: and the history before it still rides, so a runner can prove the prefix',
+			!!ht && ht.msgs.map((m) => m.mid).join(',') === 'u1,a1');
+		// SLOWPARCEL CASE 3. A message longer than the budget allows is NEVER CUT: a cut
+		// copy carries the message's mid, the runner's graft takes it for the message, and
+		// `holdsThread` (roles and mids, never content) passes it, so the model was fed a
+		// truncated paste. The tail ENDS at such a message instead.
+		const pastes = { id: 'c', messages: [
+			{ role: 'user', content: 'base', mid: 'u0' },
+			{ role: 'assistant', content: 'ok', mid: 'a0' },
+			{ role: 'user', content: 'p'.repeat(40 * 1024), mid: 'p1' },
+			{ role: 'assistant', content: 'noted', mid: 'a1' },
+			{ role: 'user', content: 'q'.repeat(40 * 1024), mid: 'p2' },
+			{ role: 'assistant', content: 'noted', mid: 'a2' },
+			{ role: 'user', content: 'the prompt', mid: 'TURN' },
+		] };
+		const ps = P.seedFrom(pastes, 'TURN');
+		check('S17: every message a seed carries is WHOLE -- byte for byte the chat\'s own',
+			!!ps && ps.whole === 1 && ps.msgs.every((m) => m.content === pastes.messages.find((x) => x.mid === m.mid).content),
+			ps && ps.msgs.map((m) => m.mid + ':' + m.content.length).join(' '));
+		check('S18: a message that does not fit ENDS the tail -- no cut copy, no gap',
+			!!ps && ps.msgs.map((m) => m.mid).join(',') === 'a1,p2,a2,TURN',
+			ps && ps.msgs.map((m) => m.mid).join(','));
+		const behind = { messages: pastes.messages.slice(0, 2).map((m) => ({ ...m })) };
+		P.seedGraft(behind, { seed: ps, turnId: 'TURN' }).forEach((m) => behind.messages.push({ ...m }));
+		const thr = P.threadSig(pastes, 'TURN');
+		check('S19: a runner holding only the base, grafted from that seed, does NOT hold the thread',
+			P.holdsThread(behind, { turnId: 'TURN', thread: thr }) === false
+			&& P.holdsThread(pastes, { turnId: 'TURN', thread: thr }) === true);
 	}
 	{
 		// ── THE GRAFT, on the runner. ──
@@ -761,6 +793,20 @@ async function main() {
 		check('S16: and TRUE once the prompt is in it, by mid and role',
 			P.holdsTurn(all, 'TURN') === true
 			&& P.holdsTurn({ messages: [{ role: 'assistant', content: 'x', mid: 'TURN' }] }, 'TURN') === false);
+		// A SEED FROM AN OLDER DISPATCHER (no `whole`) cut every message to 16 KiB and
+		// says nothing of which. A row at that length is not grafted, nor anything older
+		// than it; a cut turn message is left for the reconstruct to write from the prompt.
+		const cut = 'c'.repeat(16 * 1024);
+		const legacy = { turnId: 'TURN', seed: { chatId: 'c', msgs: [
+			{ role: 'user', content: 'q', mid: 'u1' },
+			{ role: 'user', content: cut, mid: 'p1' },
+			{ role: 'assistant', content: 'a', mid: 'a1' },
+			{ role: 'user', content: cut, mid: 'TURN' },
+		] } };
+		check('S20: an older seed\'s row at the old cut length is not grafted, nor anything before it',
+			P.seedGraft(null, legacy).map((m) => m.mid).join(',') === 'a1');
+		check('S21: an older seed with no row at that length grafts whole, as before',
+			P.seedGraft(null, seeded).map((m) => m.mid).join(',') === 'u1,a1,TURN');
 	}
 
 	// ══════════════════════════════════════════════════════════
@@ -1040,6 +1086,20 @@ async function main() {
 		U.uiState(dt, uExpired, null, 'devPHONE', S) === 'failed');
 	check('an ordinary (non-dispatched) turn -> "not-dispatched"',
 		U.uiState({ why: 'offline' }, running, null, 'devPHONE', S) === 'not-dispatched');
+	// r52d QA F2: a tab that did not collect the report reads the lease. Released FROM
+	// done carries `settled:1` (leaseSetCas), and that is the turn done, report or none.
+	const settled = Object.assign({}, released, { settled: 1 });
+	const doneMode = { turnId: 'turn-u', holder: 'devLAP', mode: 'done', expiry: S + 60000, renewedAt: S };
+	check('a lease released from done, no report here -> "done" (7ca624dd: "dispatched")',
+		U.uiState(dt, settled, null, 'devPHONE', S) === 'done');
+	check('and past the deadline it is still "done", never "no-peer-awake"',
+		U.uiState(dt, settled, null, 'devPHONE', S + U.DISPATCH_DEADLINE_MS + 1) === 'done');
+	check('a lease in mode done -> "done" (7ca624dd: "claimed")',
+		U.uiState(dt, doneMode, null, 'devPHONE', S) === 'done');
+	check('[ctl] a lease released with no settle (a take-back, a park) -> still "dispatched"',
+		U.uiState(dt, released, null, 'devPHONE', S) === 'dispatched');
+	check('[ctl] a failure report outranks a settled lease',
+		U.uiState(dt, settled, repFail, 'devPHONE', S) === 'failed');
 	// The thin lease-record lookup the guards/renderer use.
 	phone.DaimondLease.forget();
 	check('DaimondLease.record is null for an unknown turn',
