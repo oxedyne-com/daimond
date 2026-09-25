@@ -1,1 +1,1 @@
-{"build":"3e40e6c0a2d2","note":"Restore keeps your files and asks; hand-offs never run twice; held actions stay held; no-storage browsers stop retrying"}
+{"build":"961ae5603b59","note":"A file deleted while offline stays deleted on every device"}

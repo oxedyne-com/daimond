@@ -299,7 +299,7 @@ needs_input() {                 # name -> prints why it cannot run, or nothing
 # is the seat's own it is the seat's own screen.
 HEADED="verify_ext verify_grant verify_hand verify_ext_i18n verify_handrun verify_handreal \
 verify_scope verify_kitfence verify_pty verify_ptyedge verify_sweep_mobile \
-verify_consolenav verify_interfacediagram verify_search_console verify_vocabulary"
+verify_consolenav verify_interfacediagram verify_search_console verify_vocabulary verify_noopfs"
 
 # AND THE LIST IS ASKED OF THE FILES, at the one thing a file can be asked.
 #
@@ -356,6 +356,7 @@ slow_for() {
 		# MEASURED at 633s and 657s alone on release 5 (2026-09-25 triage), against 477s
 		# on release 4: over the 600 it had, so the release-5 nightly would read exit 124.
 		verify_style)                     echo 900 ;;
+		verify_handoff_noresurrect|verify_syncfixedpoint) echo 600 ;;
 		verify_scope|verify_kitfence)     echo 600 ;;
 		verify_reversible)                echo 420 ;;
 		verify_sweep_mobile)              echo 900 ;;

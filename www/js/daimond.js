@@ -5625,15 +5625,25 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 	}
 
 	/// Write a tombstone for every path the fork point holds that a COMPLETE census no
-	/// longer carries, and take those paths out of the fork point.
+	/// longer carries.
 	///
 	/// THIS IS WHERE A DELETION BECOMES NEWS, on the device that made it, rather than
 	/// being inferred at the far end from a gap in somebody else's parcel. The gap has
 	/// four innocent causes and the far end cannot tell them apart; the device that
 	/// deleted the file knows it held the file, and says so.
 	///
-	/// Stable across collects by construction: the second collect finds the path gone
-	/// from the fork point and writes nothing, so the parcel is a fixed point.
+	/// THE FORK POINT IS LEFT WHERE IT IS. It is what both devices last agreed on, and a
+	/// deletion made here is not an agreement until a push carrying it has landed --
+	/// `commitFileBaseline` moves it then, as it does for every other local change. Until
+	/// 2026-09-25 this took the path out on the spot, and the merge that answers a 409
+	/// was then left not knowing both devices had ever held the file: the phone that
+	/// deleted a synced file offline read the account's copy, still exactly the bytes it
+	/// deleted, as a new file, wrote it back, and pushed it to everyone (the soak's R1,
+	/// `specs/daimond_offline_tomb_20260925.md`).
+	///
+	/// Stable across collects by construction: the second collect finds the tombstone
+	/// already holding the fork point's hash and writes nothing, so the parcel is a
+	/// fixed point.
 	///
 	/// A FILE THAT MOVED TO CHUNKS IS NOT A FILE THAT WENT, and this is the trap the
 	/// fork point has set before. The soft cap demotes a file out of the inline section
@@ -5654,14 +5664,13 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		if (complete !== true) return;
 		var local = col.files || {}, large = col.large || {}, away = col.away || {};
 		var base = readJson(SYNC_FILEBASE_KEY, {});
-		var tombs = fileTombsHeld(), next = {}, fresh = {}, changed = false, kept = 0;
+		var tombs = fileTombsHeld(), fresh = {}, changed = false;
 		Object.keys(base).forEach(function (p) {
 			if (Object.prototype.hasOwnProperty.call(local, p)
 				|| Object.prototype.hasOwnProperty.call(large, p)
-				|| Object.prototype.hasOwnProperty.call(away, p)) { next[p] = base[p]; kept++; return; }
+				|| Object.prototype.hasOwnProperty.call(away, p)) return;
 			if (tombs[p] !== base[p]) { tombs[p] = fresh[p] = base[p]; changed = true; }
 		});
-		if (kept !== Object.keys(base).length) writeFilebase(next);
 		if (!changed) return;
 		var keys = Object.keys(tombs);
 		if (keys.length > SYNC_FILE_TOMBS_MAX) {
@@ -6254,10 +6263,22 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			// Agreed only if the write LANDED. A refused or failed write leaves this
 			// device without the file, and a fork point that says both devices hold it
 			// is a fork point that will read its absence here as a deletion there.
-			if (l == null) { if (await writeSyncFile(app, p, r)) agreed[p] = fileHash(r); continue; }	// only remote: adopt.
-			var lh = fileHash(l), rh = fileHash(r);
+			var rh = fileHash(r), bh = base[p] || null;
+			// NOT HERE IS NOT NEVER HEARD OF. A path in the fork point was held here, so a
+			// copy arriving exactly as both devices last agreed on it carries no news, and
+			// this device's state stands: deleted here, with the deletion still to land, or
+			// held off the inline section as a large or freed file. Writing it back was the
+			// soak's R1 -- a file deleted offline, answered by the pull of a 409, returned
+			// to every device (`specs/daimond_offline_tomb_20260925.md`). A copy CHANGED
+			// since the fork point is adopted, because an edit beats a delete, as it does in
+			// the deletion branch below; and a path the fork point never held is new.
+			if (l == null) {
+				if (bh !== null && rh === bh) continue;				// unchanged there: ours stands.
+				if (await writeSyncFile(app, p, r)) agreed[p] = rh;	// new, or changed there: adopt.
+				continue;
+			}
+			var lh = fileHash(l);
 			if (lh === rh) { agreed[p] = lh; continue; }			// identical: genuinely shared.
-			var bh = base[p] || null;
 			var localChanged  = (lh !== bh);
 			var remoteChanged = (rh !== bh);
 			if (remoteChanged && !localChanged) { if (await writeSyncFile(app, p, r)) agreed[p] = rh; }
