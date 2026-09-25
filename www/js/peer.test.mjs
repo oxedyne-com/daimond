@@ -1324,6 +1324,137 @@ async function runRecoveryAcceptance(P, L, check) {
 			&& res.trace.indexOf('ack') > res.trace.indexOf('release'));
 	}
 
+	// ── THE SENDER RELEASES A HANDED-BACK CLAIM ITSELF (hand-off QA F7). The report names
+	//    its runner (`by`), and `DaimondLease.reclaim` vacates that runner's claim for that
+	//    errand, only while it never started -- so a runner that died between its report and
+	//    its release does not hold the turn to the deadline. Anything else is left alone. ──
+	{
+		console.log('\nReclaim — the sender vacates the claim a hand-back names, and nothing else');
+		L.forget();
+		const sync = makeLeaseSync({});
+		let report = null;
+		const errand = sentErrand(P, { turnId: 't-recl', chatId: 'c', prompt: 'p', eid: 'e-recl', deadline: 0, dispatchedBy: 'DESK' });
+		// The runner dies between its report and its release: the release never lands.
+		const dead = { read: () => P.syncCas(sync).read(), write: async (b, l) => {
+			if (report) return { ok: false, why: 'dead' };
+			return P.syncCas(sync).write(b, l);
+		} };
+		await P.runErrand(errand, {
+			selfId: 'PEER', cas: dead, finished: async () => false,
+			reconstruct: async () => { const e = new Error('could not sync in time'); e.undeliverable = true; throw e; },
+			runTurn: async () => {}, abort: () => {}, pushResult: async () => 1,
+			post: async (r) => { report = r; }, ack: async () => {}, now: () => NOW,
+		});
+		check('reclaim: the hand-back report names its runner (by)', !!report && report.by === 'PEER', JSON.stringify(report && report.by));
+		check('reclaim: the dead runner left its claim live', sync.leases()['t-recl'].mode === 'claimed' && sync.leases()['t-recl'].holder === 'PEER');
+		const cas = P.syncCas(sync);
+		const other = await L.reclaim('t-recl', 'OTHER', 'e-recl', cas, () => NOW);
+		check('reclaim: a report from another device does not vacate the claim', other.ok === false && other.why === 'holder'
+			&& sync.leases()['t-recl'].mode === 'claimed', JSON.stringify(other));
+		const stale = await L.reclaim('t-recl', 'PEER', 'e-old', cas, () => NOW);
+		check('reclaim: a report for another errand does not vacate the claim', stale.ok === false && stale.why === 'eid'
+			&& sync.leases()['t-recl'].mode === 'claimed', JSON.stringify(stale));
+		const got = await L.reclaim('t-recl', report.by, report.eid, cas, () => NOW + 1);
+		const rec = sync.leases()['t-recl'];
+		check('reclaim: the named claim is vacated, unsettled, and the sender may run it',
+			got.ok === true && rec.mode === 'released' && !rec.settled
+			&& P.recoverDecision({ why: P.REASON_DISPATCHED, dispatchedBy: 'DESK', ts: NOW, iturn: 't-recl', itext: 'p' }, rec, false, 'DESK', NOW + 2),
+			JSON.stringify(rec));
+		const again = await L.reclaim('t-recl', 'PEER', 'e-recl', cas, () => NOW + 3);
+		check('reclaim: a second reclaim of a vacant lease is a no-op', again.ok === true);
+		// A claim that started is never reclaimed: `undeliverable` comes before anything runs.
+		L.forget();
+		const sync2 = makeLeaseSync({});
+		const cas2 = P.syncCas(sync2);
+		await L.take('t-run', { holder: 'PEER', eid: 'e-run', deadline: NOW + 60000 }, cas2, () => NOW);
+		await L.renew('t-run', 'PEER', cas2, () => NOW + 1);
+		const run = await L.reclaim('t-run', 'PEER', 'e-run', cas2, () => NOW + 2);
+		check('reclaim: a running claim is left alone', run.ok === false && run.why === 'running'
+			&& sync2.leases()['t-run'].mode === 'running', JSON.stringify(run));
+	}
+
+	// ── A FRAME FITS THE DOOR, BY WHOLE ROWS (r52d Open 1). The door's guard slices the
+	//    string and its 413 halves it, and either cuts the JSON; tool arguments are not in
+	//    the content budget. `frameJson` leaves out whole rows from the oldest end, and a
+	//    frame that left one out is not whole. The run's figures ride the rows (QA F5). ──
+	{
+		console.log('\nFrames — fitted to the door by whole rows, oldest first; the run\'s figures ride along');
+		const enc = new TextEncoder();
+		const weigh = (t) => { const e = JSON.stringify(String(t)); return { chars: String(t).length, bytes: enc.encode(e).length - 2 }; };
+		const budget = { chars: 48 * 1024, bytes: 63 * 1024 };
+		const q = '"k":"v",'.repeat(1900);				// 15,200 characters of quote-dense arguments
+		const msgs = [{ role: 'user', mid: 'T', content: 'go' }];
+		for (let i = 0; i < 4; i++) msgs.push({ role: 'tool_log', mid: 'tl' + i, name: 'file_read', content: 'ok', args: '{' + q + '}', ts: i + 1 });
+		msgs.push({ role: 'assistant', mid: 'ans', content: 'done', ts: 9, ranOn: 'PEER', ranModel: 'm-1', ranMs: 1234, ranTokIn: 10, ranTokOut: 5, ranCost: 0.01 });
+		const rows = P.progressTail(msgs, 'T', 36 * 1024);
+		check('frames: every row is whole before the fit (content is under the budget)', rows.length === 5 && P.frameWhole(rows));
+		const raw = JSON.stringify({ v: 1, msgs: rows });
+		check('frames: unfitted, the frame is over the door (the loss the fit prevents)', raw.length > budget.chars, raw.length + ' chars');
+		const fit = P.frameJson(rows, budget, weigh);
+		let parsed = null; try { parsed = JSON.parse(fit); } catch (e) { parsed = null; }
+		const w = weigh(fit);
+		check('frames: the fitted frame is under both limits and parses', !!parsed && w.chars <= budget.chars && w.bytes <= budget.bytes,
+			JSON.stringify(w));
+		check('frames: rows were left out whole, from the oldest end',
+			!!parsed && parsed.msgs.length < rows.length && parsed.msgs[parsed.msgs.length - 1].mid === 'ans'
+			&& parsed.msgs.every((r) => rows.some((o) => o.mid === r.mid && o.args === r.args && o.content === r.content)),
+			parsed ? parsed.msgs.map((r) => r.mid).join(',') : 'none');
+		check('frames: and the frame that left rows out is not whole', !!parsed && !P.frameWhole(parsed.msgs));
+		check('frames: a frame that fits is sent as it was, whole', P.frameJson(rows, { chars: 1e6, bytes: 1e6 }, weigh) === raw);
+		check('frames: a row nothing can fit leaves no frame at all, never a cut one', P.frameJson(rows.slice(0, 1), { chars: 100, bytes: 100 }, weigh) === '');
+		const ans = rows[rows.length - 1];
+		check('frames: the answer row carries the run\'s figures', ans.ranModel === 'm-1' && ans.ranMs === 1234 && ans.ranTokIn === 10
+			&& ans.ranTokOut === 5 && ans.ranCost === 0.01, JSON.stringify(ans));
+		const folded = P.foldProvisional(msgs.slice(0, 1), 'T', rows) || [];
+		const fa = folded.find((m) => m.mid === 'ans');
+		check('frames: and the sender\'s provisional copy keeps them', !!fa && fa.ranModel === 'm-1' && fa.ranCost === 0.01, JSON.stringify(fa));
+	}
+
+	// ── A FINAL FRAME CARRIES EVERY ROW WHOLE (hand-off QA F4, round 2). The door keeps one
+	//    frame, so the rows over it ride as chunks the frame names: `turnRows` cuts nothing,
+	//    `frameJson` fits the view beside the manifest, and `refRows` takes only this turn's
+	//    rows, all of them, all whole. ──
+	{
+		console.log('\nFinal frame over the door — every row whole in the chunks, the view beside them');
+		const enc = new TextEncoder();
+		const weigh = (t) => { const e = JSON.stringify(String(t)); return { chars: String(t).length, bytes: enc.encode(e).length - 2 }; };
+		const budget = { chars: 48 * 1024, bytes: 63 * 1024 };
+		const big = 'x'.repeat(60000);
+		const msgs = [{ role: 'user', mid: 'T', content: 'go' },
+			{ role: 'tool_log', mid: 'tl', name: 'file_read', content: 'ok', args: '{"p":"a"}', ts: 1 },
+			{ role: 'assistant', mid: 'ans', content: big, ts: 2, ranOn: 'PEER', ranMs: 9 },
+			{ role: 'user', mid: 'T2', content: 'next turn', ts: 3 }];
+		const whole = P.turnRows(msgs, 'T');
+		check('final: turnRows keeps every row of the turn, the 60 000-character answer uncut, and stops at the next turn',
+			whole.length === 2 && whole[1].content.length === 60000 && P.frameWhole(whole),
+			whole.map((r) => r.mid + ':' + (r.content || '').length).join(','));
+		const own = P.turnRows(msgs.slice(0, 3), 'T');
+		check('final: and marks each whole', own.length === 2 && P.frameWhole(own) && own[1].ranMs === 9);
+		check('final: the tail the door streams cuts the same answer at 16 KiB, so it is not whole',
+			!P.frameWhole(P.progressTail(msgs.slice(0, 3), 'T', 36 * 1024)));
+		check('final: every row whole does not fit the door, so it is not sent there', P.frameJson(own, budget, weigh) === ''
+			|| JSON.parse(P.frameJson(own, budget, weigh)).msgs.length < own.length);
+		const view = P.progressTail(msgs.slice(0, 3), 'T', 36 * 1024);
+		const man = { v: 2, size: 60123, key: 'k'.repeat(64), chunks: [{ addr: 'a'.repeat(64), size: 60200 }] };
+		const fr = P.frameJson(view, budget, weigh, { ref: man, n: own.length });
+		let pf = null; try { pf = JSON.parse(fr); } catch (e) { pf = null; }
+		const fw = weigh(fr);
+		check('final: the view and the manifest fit the door together and parse',
+			!!pf && fw.chars <= budget.chars && fw.bytes <= budget.bytes && pf.v === 1 && pf.n === 2 && pf.ref && pf.ref.chunks.length === 1,
+			JSON.stringify(fw));
+		check('final: the view beside the manifest is never whole, so only the chunks are adopted', !!pf && !P.frameWhole(pf.msgs));
+		const body = JSON.parse(JSON.stringify({ v: 1, turn: 'T', msgs: own }));
+		check('final: refRows takes the whole rows of this turn', (P.refRows(body, 'T', 2) || []).length === 2);
+		check('final: refRows refuses another turn\'s chunk', P.refRows(body, 'T9', 2) === null);
+		check('final: refRows refuses a count that does not match', P.refRows(body, 'T', 3) === null);
+		const cutBody = { v: 1, turn: 'T', msgs: view };
+		check('final: refRows refuses rows that are not all whole', P.refRows(cutBody, 'T', view.length) === null);
+		const folded = P.foldProvisional(P.foldProvisional(msgs.slice(0, 1), 'T', view), 'T', own) || [];
+		const fa = folded.find((m) => m.mid === 'ans');
+		check('final: the whole rows grow the provisional view in place, the answer uncut', !!fa && fa.content.length === 60000
+			&& folded.filter((m) => m.mid === 'ans').length === 1, fa ? String(fa.content.length) : 'none');
+	}
+
 	// ── A NON-undeliverable reconstruct error (a surprise this device could be alone in
 	//    hitting) is still handed back, but NOT acked — left on the relay for another
 	//    peer or the deadline, exactly as before the undeliverable split. ──

@@ -364,6 +364,7 @@
 	'devices.remove_body': '“{name}” ({tail}) is removed from this account. It stops syncing, stops being offered your turns, and locks itself the next time it asks. To use it again you pair it again.',
 	'devices.remove':      'Remove',
 	'devices.remove_title':'Remove this device',
+	'devices.remove_self_body': 'You cannot remove the device you are using.',
 	'devices.remove_failed': 'That device could not be removed — the gateway did not answer. It is still on the account; try again when you are online.',
 	'devices.removed_self_title': 'This device was removed',
 	'devices.removed_self_body': 'This device was removed from the account. Pair again to use it.',
@@ -1534,6 +1535,7 @@
 	'identity.lead_unlock':        'Enter your passphrase.',
 	'identity.lead_linked':        'This device is linked to your account. Enter the SAME passphrase you use on your other device, not a new one, to bring your chats and files here.',
 	'identity.lead_linked_named':  'This device is linked to your account “{name}”. Enter the SAME passphrase you use on your other device, not a new one, to bring your chats and files here.',
+	'identity.lead_removed':       'This device was removed from the account. Link it again with a pairing code, or start a new account.',
 	// {bits} is a number read off the shipped wordlist, not a constant.
 	'identity.gen_note':           'Eight random words. Nobody can reset them — write them down.',
 
@@ -1872,6 +1874,7 @@
 	'modeldash.hint':         'this device only',
 	'modeldash.preview_note': 'These are your own figures, kept on this device. Nothing here is sent anywhere. If Daimond later offers to share model figures anonymously with other people, this table — to the integer — is what that would send.',
 	'modeldash.no_usage':     'No model usage recorded yet.',
+	// i18n-family: modeldash.period_ = week month
 	'modeldash.period_week':  'Week',
 	'modeldash.period_month': 'Month',
 	'modeldash.col_model':    'Model',
@@ -2154,6 +2157,7 @@
 	'turn.peer_running_named': '{name} is doing this.',
 	'turn.peer_failed':        'Your other device couldn’t finish this.',
 	'turn.peer_takeback':      'Take back',
+	'turn.peer_takingback':    'Taking back…',
 	'turn.peer_runhere':       'Run here',
 	'turn.peer_answeragain':   'Answer again',
 	'turn.peer_consent':       'Your other device needs your permission to {act}.',
@@ -2255,6 +2259,7 @@
 	'fold.no_key':           'That diamond’s provider has no readable key. Unlock, or add one, to fold into it.',
 	'fold.nothing_new':      'Nothing new to fold',
 	'fold.nothing_new_body': '"{chat}" has not changed since it was folded into "{diamond}".',
+	// i18n-family: fold.stage_ = read propose commit failed
 	'fold.stage_read':       'Fold: reading the crystal',
 	'fold.stage_propose':    'Fold: reducing',
 		'fold.stage_commit':    'Fold: writing the crystal',
@@ -3323,6 +3328,9 @@
 	// than left to resurrect from disk or from the other device (S-SYNC #6).
 	'store.delete_unrecorded': 'a deletion could not be recorded — this browser’s storage is full',
 	'store.records_owed': 'This device is out of browser storage, so a change made here is not saved yet. This page is keeping it, and saves it as soon as there is room.',
+	// The cloud index (`contentSet`/`setIndex`) lost to quota: an offloaded chat, Diamond
+	// or message tail rides inline, and a deletion or ledger merge cannot be recorded.
+	'store.cloud_index_full': 'This device is out of browser storage, so cross-device sync is paused. Free some space, and your work will travel again.',
 	// A read that returned nothing where the last good write left {n}. The
 	// number is the count, so keep the placeholder.
 	'store.empty_read':     'this browser returned none of the {n} conversations it is holding',

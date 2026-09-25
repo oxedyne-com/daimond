@@ -112,6 +112,44 @@
 		});
 	}
 
+	/// Read `key`, hand it to `fn` and store what `fn` answers, in ONE readwrite
+	/// transaction, resolving `{ ok, value }` with `ok` true only once it has committed.
+	///
+	/// A map written whole from each tab's own copy is a map in which the last tab to
+	/// write erases what its siblings wrote since it last read: that was SIM-24, a file
+	/// written in one tab and gone after the leader tab's next index write. IndexedDB
+	/// runs readwrite transactions on one store one at a time, so a change joined into
+	/// the stored map here cannot be lost to a sibling's (dev/SYNC_CONTRACT.md §6: "a
+	/// local write is a merge too"). `fn` must be synchronous. In the localStorage
+	/// fallback the read and the write are one synchronous step, which is the same thing.
+	async function update(key, fn) {
+		await ready();
+		if (!durable()) {
+			var v = fn(readJson(key));
+			return { ok: writeJson(key, v), value: v };
+		}
+		return new Promise(function (resolve) {
+			var done = false, ok = false, next = null;
+			function settle(v) { if (!done) { done = true; resolve({ ok: v, value: v ? next : null }); } }
+			try {
+				var tx = db.transaction(STORE, 'readwrite');
+				var st = tx.objectStore(STORE);
+				tx.oncomplete = function () { settle(ok); };
+				tx.onerror    = function () { settle(false); };
+				tx.onabort    = function () { settle(false); };
+				var rq = st.get(key);
+				rq.onsuccess = function () {
+					try { next = fn(rq.result === undefined ? null : rq.result); }
+					catch (e) { try { tx.abort(); } catch (e2) { /* already over */ } return; }
+					var wq = st.put(next, key);
+					wq.onsuccess = function () { ok = true; };
+					wq.onerror   = function () { ok = false; };
+				};
+				rq.onerror = function () { try { tx.abort(); } catch (e) { /* already over */ } };
+			} catch (e) { settle(false); }
+		});
+	}
+
 	async function del(key) {
 		await ready();
 		if (!durable()) { try { localStorage.removeItem(key); } catch (e) { /* best effort */ } return true; }
@@ -168,6 +206,7 @@
 		durable: durable,
 		get:     get,
 		set:     set,
+		update:  update,
 		del:     del,
 		migrate: migrate,
 	};

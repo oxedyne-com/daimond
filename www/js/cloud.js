@@ -34,6 +34,8 @@
 	var PIN_KEY   = 'daimond-cloud-pins';		// path -> 1, device-local
 	var ATIME_KEY = 'daimond-cloud-atime';		// path -> ms, for least-recently-used reclaim
 	var PATHS_KEY = 'daimond-cloud-paths';		// path -> size, DERIVED: in cloud, not on this device
+	var TOMB_KEY  = 'daimond-cloud-tombs';		// path -> {d, h, s}: deletions of index paths, stamped
+	var TOMBS_MAX = 2000;						// bounded like the file tombstones; the newest kept
 
 	// Reclaim thresholds, as a fraction of the storage the browser grants us.
 	// Reclaiming to a little under the trigger stops it running on every write.
@@ -83,31 +85,152 @@
 	// for the box that jammed (S-SYNC #2). A synchronous in-memory cache sits in
 	// front, because `index()` is read from many synchronous sites (`merge`,
 	// `contentGet`, `tierPlan`, `refreshPaths`), and IndexedDB is async: `ready()`
-	// loads the cache once, `setIndex` writes it through, and `settle()` lets the
+	// loads the cache once, `writeIx` writes it through, and `settle()` lets the
 	// commit gate wait for the write to land.
 	//
-	// The cache is authoritative in the durable path, so `setIndex` reports the
+	// The cache is authoritative in the durable path, so `writeIx` reports the
 	// write as landed and the collector rides its content BY REFERENCE — the relief
-	// a full box denied. Durability is not dropped, only moved: `indexDirty` stays
-	// set until the IndexedDB transaction commits, and the commit is gated on
+	// a full box denied. Durability is not dropped, only moved: the write stays
+	// dirty until the IndexedDB transaction commits, and the commit is gated on
 	// `indexDurable()` after `settle()`, so a write that never lands still declares
 	// no live set.
 	//
 	// When IndexedDB will not open (private mode, old WebKit) the durable path is
 	// not active and the old localStorage path stands unchanged — the same quota
-	// semantics, `setIndex` answering false on a lost write, so no device regresses.
-	var _ix     = readJson(IX_KEY, {});		// the in-memory cache, seeded from the box
+	// semantics, `writeIx` answering false on a lost write, so no device regresses.
 	var _ready  = false;
 	var _readyP = null;
-	var _durableMode = false;				// sticky: the index has moved to IndexedDB, so read _ix, never the emptied box
-	var _writeSeq  = 0;						// the latest requested write-through
-	var _writeTail = Promise.resolve();		// the tail of the coalesced write chain
+	var _durableMode = false;				// sticky: the index has moved to IndexedDB, so read the mirror, never the emptied box
 
-	/// The index this device serves. Once the durable store is live the in-memory cache
-	/// is authoritative and is the ONLY truth: `migrate()` has removed the localStorage
-	/// copy, so reading the box back would return an empty index — and it stays the truth
+	// ── A map kept in the durable store, one key at a time ─────────
+	//
+	// SIM-24 (dev/syncsim/known.mjs), fixed 2026-09-25: each tab kept its own copy of the
+	// index and wrote it WHOLE, so the tab that wrote last erased every manifest a sibling
+	// tab had recorded since it last read. A file written in a tab that then died was gone
+	// from the device at the leader's next index write, having reached no parcel. The
+	// contract's rules for a write are the fix (dev/SYNC_CONTRACT.md §3.4, §6, §7.3): the
+	// grain is what one intent writes, here one path; a write is joined into the stored map
+	// in one transaction (`DaimondDurable.update`); and every tab's copy follows the other
+	// tabs' writes, announced on a `BroadcastChannel` and read again from the store at the
+	// start of each round (`refresh`), so a tab that died between its commit and its
+	// announcement is still heard.
+	//
+	// `m` is the mirror every synchronous reader reads. A write lands in it at once -- the
+	// collector rides a manifest by reference the moment it is recorded (S-SYNC #2) -- and is
+	// held `dirty` until its transaction commits, which is what the commit gate waits on
+	// (`settle`, `indexDurable`). A write that does not commit stays queued and goes with the
+	// next write, or the next `settle`.
+	function keptMap(key) {
+		return { key: key, m: {}, pend: {}, fly: null, tail: Promise.resolve(), dirty: null };
+	}
+	var IXM = keptMap(IX_KEY);		// the index, once IndexedDB is live
+	var TBM = keptMap(TOMB_KEY);	// the index paths' tombstones
+	IXM.m = readJson(IX_KEY, {});	// seeded from the box until `ready` loads the store
+
+	/// Ops on keys: `{ v }` holds a value, `{ del: 1 }` drops the key.
+	function opsOf(sets, dels) {
+		var ops = {};
+		Object.keys(sets || {}).forEach(function (k) { if (sets[k] !== undefined) ops[k] = { v: sets[k] }; });
+		(dels || []).forEach(function (k) { ops[k] = { del: 1 }; });
+		return ops;
+	}
+	function applyOps(map, ops) {
+		Object.keys(ops || {}).forEach(function (k) {
+			if (ops[k].del) delete map[k]; else map[k] = ops[k].v;
+		});
+		return map;
+	}
+
+	/// Bring a mirror to `stored`, with the ops in flight and queued laid over it. In place,
+	/// so a reader already holding the map sees the change.
+	function mirrorTo(km, stored) {
+		var want = applyOps(applyOps(Object.assign({}, stored || {}), km.fly), km.pend), k;
+		for (k in km.m) if (!Object.prototype.hasOwnProperty.call(want, k)) delete km.m[k];
+		for (k in want) if (km.m[k] !== want[k]) km.m[k] = want[k];
+	}
+
+	var chan = null;				// the device's tabs, told of each committed write
+	function channel() {
+		if (chan !== null) return chan;
+		chan = false;
+		try {
+			var ns = (window.DaimondAccounts && DaimondAccounts.opfsNs()) || '';
+			// The window's own, as synccore.js takes it: a host without one (a test) has no tabs to tell.
+			if (typeof window.BroadcastChannel === 'function') {
+				chan = new window.BroadcastChannel('daimond-cloud' + (ns ? '-' + ns : ''));
+				chan.onmessage = function (ev) { heard(ev && ev.data); };
+			}
+		} catch (e) { chan = false; }
+		return chan;
+	}
+
+	/// A sibling tab's committed write. A key this tab has queued or sent itself is left as
+	/// it is: its own transaction commits after the sibling's, so its value is the store's.
+	function heard(msg) {
+		if (!msg || typeof msg !== 'object' || !msg.ops || typeof msg.ops !== 'object') return;
+		var km = msg.key === IX_KEY ? IXM : (msg.key === TOMB_KEY ? TBM : null);
+		if (!km || (km === IXM && !_durableMode)) return;
+		Object.keys(msg.ops).forEach(function (k) {
+			if (Object.prototype.hasOwnProperty.call(km.pend, k)) return;
+			if (km.fly && Object.prototype.hasOwnProperty.call(km.fly, k)) return;
+			var o = msg.ops[k] || {};
+			if (o.del) delete km.m[k]; else if (o.v !== undefined) km.m[k] = o.v;
+		});
+	}
+
+	/// Write ops into a kept map: into the mirror now, and into the store in one transaction
+	/// that joins them with whatever the store holds.
+	function keep(km, ops) {
+		applyOps(km.m, ops);
+		Object.keys(ops || {}).forEach(function (k) { km.pend[k] = ops[k]; });
+		if (Object.keys(km.pend).length) km.dirty = km.dirty || { at: Date.now() };
+		km.tail = km.tail.then(function () { return flush(km); }, function () { return flush(km); });
+		return km.tail;
+	}
+
+	async function flush(km) {
+		var ops = km.pend;
+		if (!Object.keys(ops).length) return true;
+		if (!window.DaimondDurable || !DaimondDurable.update) return false;
+		km.pend = {};
+		km.fly  = ops;
+		var res = null;
+		try {
+			res = await DaimondDurable.update(km.key, function (stored) {
+				return applyOps((stored && typeof stored === 'object') ? stored : {}, ops);
+			});
+		} catch (e) { res = null; }
+		km.fly = null;
+		var ok = !!(res && res.ok);
+		if (ok) {
+			mirrorTo(km, res.value);
+			try { var c = channel(); if (c) c.postMessage({ key: km.key, ops: ops }); }
+			catch (e) { /* no sibling to tell */ }
+			if (!Object.keys(km.pend).length) km.dirty = null;
+		} else {
+			// Not stored: queued again beneath anything written since, for the next write.
+			Object.keys(ops).forEach(function (k) {
+				if (!Object.prototype.hasOwnProperty.call(km.pend, k)) km.pend[k] = ops[k];
+			});
+		}
+		if (km === IXM) { if (!ok) alarmRaise(); else if (!km.dirty) alarmClear(); }
+		return ok;
+	}
+
+	/// Read a kept map again from the store: what a sibling tab wrote and did not live to
+	/// announce.
+	async function refreshKept(km) {
+		if (!window.DaimondDurable || !DaimondDurable.get) return;
+		var v = null;
+		try { v = await DaimondDurable.get(km.key); } catch (e) { return; }
+		if (v && typeof v === 'object') mirrorTo(km, v);
+	}
+
+	/// The index this device serves. Once the durable store is live the mirror is
+	/// authoritative and is the ONLY truth: `migrate()` has removed the localStorage
+	/// copy, so reading the box back would return an empty index -- and it stays the truth
 	/// even after a mid-session IndexedDB drop (Safari under memory pressure), because the
-	/// cache is not lost with the connection and durable.js reopens on the next write.
+	/// mirror is not lost with the connection and durable.js reopens on the next write.
 	/// Falling back to the emptied box here would rebuild the index from nothing and sweep
 	/// every cloud-only file (S-SYNC #2 follow-up).
 	///
@@ -115,7 +238,7 @@
 	/// the box like any other, read and written through `DaimondStore`: one the box
 	/// refuses is held owed here, so a merge's conflict copy or a new manifest is not
 	/// lost with the write (SIM-5, A5).
-	function index() { return _durableMode ? _ix : window.DaimondStore.get(IX_KEY, {}); }
+	function index() { return _durableMode ? IXM.m : window.DaimondStore.get(IX_KEY, {}); }
 
 	/// An index this tab owes, laid over the one in the box path by path, so a sibling
 	/// tab's manifest stored meanwhile is kept rather than written over. A path this
@@ -128,9 +251,10 @@
 		return out;
 	}
 
-	/// Load the index cache from the durable store, migrating it out of the box on
-	/// the first boot after deploy. Awaited by the sync boot before any collect, so
-	/// a synchronous `index()` read never precedes the load. Idempotent.
+	/// Load the index mirror from the durable store, migrating it out of the box on
+	/// the first boot after deploy, and the tombstones beside it. Awaited by the sync
+	/// boot before any collect, so a synchronous `index()` read never precedes the load.
+	/// Idempotent.
 	function ready() {
 		if (_ready) return Promise.resolve();
 		if (_readyP) return _readyP;
@@ -140,25 +264,41 @@
 					await DaimondDurable.ready();
 					var live = !!(DaimondDurable.durable && DaimondDurable.durable());
 					if (live) {
-						// The index now lives in IndexedDB; from here the cache is the sole truth
+						// The index now lives in IndexedDB; from here the mirror is the sole truth
 						// and the box copy is migrated away (see `index()`). Sticky, so a later
 						// connection drop cannot send a read back to the emptied box.
 						_durableMode = true;
 						await DaimondDurable.migrate(IX_KEY);
 						var v = await DaimondDurable.get(IX_KEY);
-						if (v && typeof v === 'object') _ix = v;
+						if (v && typeof v === 'object') mirrorTo(IXM, v);
 					}
-				} catch (e) { /* keep the box-seeded cache; the fallback path stays active */ }
+					var t = await DaimondDurable.get(TOMB_KEY);
+					if (t && typeof t === 'object') mirrorTo(TBM, t);
+				} catch (e) { /* keep the box-seeded mirror; the fallback path stays active */ }
 			}
+			channel();
 			_ready = true;
 		})();
 		return _readyP;
 	}
 
-	/// Resolves when no index write-through is pending, so the commit gate asks
-	/// `indexDurable()` AFTER the write has landed rather than during it. A no-op in
-	/// the localStorage path, where a write is synchronous.
-	function settle() { return Promise.resolve(_writeTail); }
+	/// Read the index and its tombstones again from the store, so this tab carries what a
+	/// sibling tab wrote and did not live to announce (SIM-24). The start of a round's
+	/// collect and of its merge call it.
+	async function refresh() {
+		await ready();
+		if (_durableMode) await refreshKept(IXM);
+		await refreshKept(TBM);
+	}
+
+	/// Resolves when no write is pending, so the commit gate asks `indexDurable()` AFTER
+	/// the writes have landed rather than during them. A write that did not commit is
+	/// tried again here first.
+	function settle() {
+		if (Object.keys(IXM.pend).length) keep(IXM, {});
+		if (Object.keys(TBM.pend).length) keep(TBM, {});
+		return Promise.all([IXM.tail, TBM.tail]).then(function () { return undefined; });
+	}
 
 	// The alarm lives in daimond.js; cloud.js reaches it defensively, because the
 	// durable path clears it on a landed write and raises it on a lost one — the one
@@ -175,45 +315,32 @@
 	// live set MISSING those addresses and sweeps the chunks the parcel it just
 	// pushed points at. The far device then gets an empty chat, re-swept every round.
 	//
-	// So `setIndex` remembers a write it could not land, and `indexDurable()` is what
-	// gates the commit: a device whose index is not durable declares no live set at
-	// all (see `syncMayCommitChunks` in daimond.js). Sticky until the next write
-	// succeeds -- exactly like `chunks.js`'s refusal, and re-derived by the next
-	// collect, which retries the write every round until localStorage has room.
-	var indexDirty = null;		// { at } while the last index write did not land.
+	// So a write that has not landed is remembered, and `indexDurable()` is what gates
+	// the commit: a device whose index is not durable declares no live set at all (see
+	// `syncMayCommitChunks` in daimond.js). Sticky until a write lands -- exactly like
+	// `chunks.js`'s refusal. In the durable path that is the kept map's `dirty`; in the
+	// box path, this.
+	var indexDirty = null;		// { at } while the last box write did not land.
 
-	function setIndex(ix) {
-		if (_durableMode) {
-			// The cache is authoritative: the manifest is recorded the moment this
-			// returns, so the collector rides its content by reference. The write is
-			// held dirty until the transaction commits; the commit gate waits for it
-			// via `settle()`, so a write lost to a full DISK still declares no live set.
-			_ix = ix || {};
-			indexDirty = indexDirty || { at: Date.now() };
-			var mySeq = ++_writeSeq;
-			_writeTail = _writeTail.then(function () {
-				// Coalesce: a newer write superseded this one, so let it carry the cache.
-				if (mySeq !== _writeSeq) return null;
-				return DaimondDurable.set(IX_KEY, _ix).then(function (landed) {
-					if (mySeq !== _writeSeq) return landed;	// a newer write queued while we ran
-					if (landed) { indexDirty = null; alarmClear(); }
-					else { indexDirty = indexDirty || { at: Date.now() }; alarmRaise(); }
-					return landed;
-				});
-			}, function () { return null; });
-			return true;
-		}
-		var ok = window.DaimondStore.put(IX_KEY, ix || {}, ownedOver);
+	/// Write ops on some paths of the index: `sets` (path -> record) and `dels` (paths).
+	/// A write carries only the paths it changes, so it cannot erase a sibling tab's
+	/// (SIM-24). Answers whether it is recorded: in the durable path at once, the mirror
+	/// being authoritative and the commit gated on `settle`; in the box path, whether the
+	/// box took it.
+	function writeIx(sets, dels) {
+		var ops = opsOf(sets, dels);
+		if (!Object.keys(ops).length) return true;
+		if (_durableMode) { keep(IXM, ops); return true; }
+		var ok = window.DaimondStore.put(IX_KEY, applyOps(window.DaimondStore.get(IX_KEY, {}), ops), ownedOver);
 		if (ok) indexDirty = null;
 		else indexDirty = indexDirty || { at: Date.now() };
 		return ok;
 	}
 
-	/// Did this device's index write land, so a commit may declare a live set from
-	/// it? False while a `setIndex` has been lost to quota and no later one has
-	/// succeeded -- the state in which committing would sweep the parcel's own
-	/// chunks.
-	function indexDurable() { return !indexDirty; }
+	/// Did this device's index writes land, so a commit may declare a live set from the
+	/// index? False while a write has not committed, or was lost to quota and no later one
+	/// has landed -- the state in which committing would sweep the parcel's own chunks.
+	function indexDurable() { return _durableMode ? !IXM.dirty : !indexDirty; }
 
 	function pins()       { return readJson(PIN_KEY, {}); }
 	function atimes()     { return readJson(ATIME_KEY, {}); }
@@ -271,19 +398,17 @@
 	/// frozen-index committer: content offloaded, reference on the parcel, address
 	/// absent from the committed live set, chunk swept.
 	function contentSet(key, rec) {
-		var ix = index();
-		ix[key] = rec;
-		return setIndex(ix);
+		var sets = {};
+		sets[key] = rec;
+		return writeIx(sets, null);
 	}
 
 	/// Drop the content manifest at `key`, so its chunks stop being named live
 	/// and the next commit sweeps them. Used when a Diamond or chat drops below
 	/// the inline threshold and no longer needs a reference at all.
 	function contentForget(key) {
-		var ix = index();
-		if (!Object.prototype.hasOwnProperty.call(ix, key)) return false;
-		delete ix[key];
-		setIndex(ix);
+		if (!Object.prototype.hasOwnProperty.call(index(), key)) return false;
+		writeIx(null, [key]);
 		return true;
 	}
 
@@ -318,14 +443,13 @@
 	/// peer entry on the very collect that was meant to commit it, which is the
 	/// whole of what the entry exists to stop.
 	function contentReap(prefix, live) {
-		var ix = index(), changed = false;
-		Object.keys(ix).forEach(function (k) {
-			if (k.slice(0, prefix.length) !== prefix) return;
+		var gone = Object.keys(index()).filter(function (k) {
+			if (k.slice(0, prefix.length) !== prefix) return false;
 			var id = k.slice(prefix.length).replace(PEER_RE, '');
-			if (!live || !live[id]) { delete ix[k]; changed = true; }
+			return !live || !live[id];
 		});
-		if (changed) setIndex(ix);
-		return changed;
+		if (gone.length) writeIx(null, gone);
+		return gone.length > 0;
 	}
 
 	// ── A peer device's refs ────────────────────────────────────
@@ -377,14 +501,12 @@
 	/// one way the per-device scheme could grow without bound. The UNATTRIBUTED
 	/// slot is never reaped here: there is no device named on it to judge.
 	function peerReap(live) {
-		var ix = index(), changed = false;
-		Object.keys(ix).forEach(function (k) {
+		var gone = Object.keys(index()).filter(function (k) {
 			var dev = peerOwner(k);
-			if (!dev || (live && live[dev])) return;
-			delete ix[k]; changed = true;
+			return !!dev && !(live && live[dev]);
 		});
-		if (changed) setIndex(ix);
-		return changed;
+		if (gone.length) writeIx(null, gone);
+		return gone.length > 0;
 	}
 
 	/// The manifest for a path, or null if cloud storage does not hold it.
@@ -758,9 +880,9 @@
 		var ix = index();
 		if (!Object.prototype.hasOwnProperty.call(ix, from)) return false;
 		if (from === to) return false;
-		ix[to] = ix[from];
-		delete ix[from];
-		setIndex(ix);
+		var sets = {};
+		sets[to] = ix[from];
+		writeIx(sets, [from]);
 		return true;
 	}
 
@@ -935,7 +1057,12 @@
 	/// Is this index entry a peer device's record rather than a manifest of our own?
 	function isPeerSlot(m) { return !!(m && m.peer); }
 
-	function merge(remoteIx, baseline, selfDev, fromDev) {
+	///
+	/// `remoteTombs` is the parcel's `chunkedTombs`, joined here first: a manifest of the
+	/// content a path was deleted at is no news from either side (see "Deletions of index
+	/// paths"). One here is kept until `honourChunkTombs` has dealt with the bytes behind it.
+	function merge(remoteIx, baseline, selfDev, fromDev, remoteTombs) {
+		joinTombs(remoteTombs);
 		var local = index(), base = baseline || {}, out = {}, seen = {};
 		remoteIx = (remoteIx && typeof remoteIx === 'object') ? remoteIx : {};
 		// Paths where THEIR manifest was not adopted, so their addresses have to be
@@ -1007,7 +1134,11 @@
 				return;
 			}
 			var l = local[p], r = remoteIx[p];
-			if (!r) { out[p] = l; return; }							// only here: keep, it will push.
+			// A COPY OF WHAT WAS DELETED IS NO NEWS. Their manifest of the content a path was
+			// deleted at is from a device that has not heard of the deletion, and adopting it
+			// was how the deletion came back.
+			if (r && isDead(p, r.hash)) r = null;
+			if (!r) { if (l !== undefined) out[p] = l; return; }	// only here: keep, it will push.
 			if (!l) { out[p] = r; return; }							// only there: adopt the reference.
 			// SAME FILE, AND NOT NECESSARILY THE SAME CHUNKS. `hash` is the content key,
 			// so this arm is two devices agreeing about every byte -- and each of them
@@ -1044,9 +1175,17 @@
 			var q = PEER_RE.exec(p), item = q ? p.slice(0, q.index) : '';
 			if (item && !isContentKey(item) && !out[item]) delete out[p];
 		});
+		// WRITTEN AS WHAT CHANGED, path by path, so a manifest a sibling tab recorded while
+		// this merge ran is not erased by it (SIM-24).
+		var sets = {}, dels = [];
+		Object.keys(out).forEach(function (k) {
+			if (out[k] === undefined) { if (Object.prototype.hasOwnProperty.call(local, k)) dels.push(k); return; }
+			if (!Object.prototype.hasOwnProperty.call(local, k) || out[k] !== local[k]) sets[k] = out[k];
+		});
+		Object.keys(local).forEach(function (k) { if (!Object.prototype.hasOwnProperty.call(out, k)) dels.push(k); });
 		// A merged index the box refuses is held owed and still read here, and the
 		// merge THROWS, so the section is re-pulled rather than read as applied (A5).
-		if (!setIndex(out)) throw window.DaimondStore.refusal(IX_KEY);
+		if (!writeIx(sets, dels)) throw window.DaimondStore.refusal(IX_KEY);
 		return out;
 	}
 
@@ -1077,9 +1216,9 @@
 	/// js/daimond.js).
 	async function put(path, mani, h, opts) {
 		var o = opts || {};
-		var ix = index();
 		var f = o.file || (await fileAt(path));
-		ix[path] = {
+		var sets = {};
+		sets[path] = {
 			v:      mani.v || 1,
 			size:   mani.size,				// plaintext bytes on disk.
 			bytes:  f ? f.size : mani.size,
@@ -1089,10 +1228,15 @@
 			chunks: mani.chunks,
 			at:     o.timeless ? 0 : Date.now(),
 		};
+		// A WRITE HERE AFTER A DELETION BRINGS THE PATH BACK, on every device: the
+		// tombstone is add-wins, and this upload is this device's own write of the path
+		// -- a restore from History, or the file made again. Stamped past the deletion,
+		// so it beats it wherever the two meet (see "Deletions of index paths").
+		if (deadAt(path) !== null) stampTomb(path, 0, '');
 		// The boolean, for the same reason `contentSet` returns it: a file manifest
 		// lost to quota leaves the parcel naming chunks the index does not, and the
 		// caller may want to know. `indexDurable()` catches it regardless.
-		return setIndex(ix);
+		return writeIx(sets, null);
 	}
 
 	// ── Manifests this device cannot heal ──────────────────────
@@ -1135,9 +1279,112 @@
 	}
 
 
-	/// Drop a path from the index, and every path beneath it — the file is GONE,
-	/// not merely absent. Its chunks are swept on the next commit. Only an
-	/// explicit delete does this.
+	// ── Deletions of index paths, as records ───────────────────
+	//
+	// A LARGE FILE DELETED ON ONE DEVICE NEVER DELETED ON ANOTHER (fix/r52-del, 2026-09-25).
+	// A delete took the path out of this device's index and said nothing more, and absence
+	// is not news: `merge` keeps a path only one side holds, in both directions, so the other
+	// device kept its manifest, pushed it, and the deleting device adopted it back as a file
+	// in cloud storage. Absence cannot be made news here either. A folder-mounted device's
+	// index holds only its shared paths and a device that has not merged yet holds nothing,
+	// so a gap read as a deletion would delete everything those devices happen not to carry.
+	//
+	// So a deletion is a record (dev/SYNC_CONTRACT.md §8), in the shape step 8 gives every
+	// workspace path: `path -> { d, h, s }`, add-wins.
+	//   `d`  1 dead, 0 brought back.
+	//   `h`  the content key the deleting device held. A copy CHANGED since is not what was
+	//        deleted and stands: an edit beats a delete, as in the inline merge.
+	//   `s`  the stamp, so a later write brings the path back: this device's own upload of
+	//        the path (`put`) writes `d: 0` past the deletion.
+	// Joined on every pull, by the later stamp and then the canonical form, and carried in
+	// every parcel (`chunkedTombs`), so the news reaches a device whichever parcel it pulls.
+	// Kept until gateway release 2 gives stable versions (§8); bounded meanwhile, newest kept.
+
+	function validTomb(t) {
+		return !!t && typeof t === 'object' && (t.d === 0 || t.d === 1) && typeof t.h === 'string'
+			&& !!window.DaimondStamp && DaimondStamp.ms(t.s) > 0;
+	}
+	function tombOf(p) { var t = TBM.m[p]; return validTomb(t) ? t : null; }
+
+	/// The content key `p` was deleted at, or null while it is live.
+	function deadAt(p) { var t = tombOf(p); return (t && t.d === 1) ? t.h : null; }
+
+	/// Is a manifest of `hash` at `p` a copy of what was deleted there?
+	function isDead(p, hash) { var h = deadAt(p); return h !== null && !!hash && h === hash; }
+
+	/// The tombstones in path order, for the parcel: two devices holding the same set send
+	/// the same bytes (SIM-7).
+	function tombs() {
+		var out = {};
+		Object.keys(TBM.m).sort().forEach(function (p) {
+			var t = tombOf(p);
+			if (t) out[p] = { d: t.d, h: t.h, s: t.s };
+		});
+		return out;
+	}
+
+	/// `ops` with the oldest tombstones dropped once the map would pass its bound.
+	function tombTrim(ops) {
+		var all = applyOps(Object.assign({}, TBM.m), ops), keys = Object.keys(all);
+		if (keys.length <= TOMBS_MAX) return ops;
+		keys.sort(function (a, b) { return ((all[a].s || 0) - (all[b].s || 0)) || (a < b ? -1 : 1); });
+		keys.slice(0, keys.length - TOMBS_MAX).forEach(function (k) { ops[k] = { del: 1 }; });
+		return ops;
+	}
+
+	var _freshDead = {};		// paths a join has made dead here since the last `honourList`
+
+	/// Join a parcel's tombstones into this device's. Answers how many moved.
+	function joinTombs(remote) {
+		if (!remote || typeof remote !== 'object' || !window.DaimondStamp) return 0;
+		var ops = {}, n = 0;
+		Object.keys(remote).forEach(function (p) {
+			var r = remote[p];
+			if (!validTomb(r) || isContentKey(p)) return;
+			var rec = { d: r.d, h: r.h, s: DaimondStamp.ms(r.s) }, l = tombOf(p);
+			if (l && !DaimondStamp.beats(rec.s, rec, l.s, l)) return;
+			ops[p] = { v: rec };
+			n++;
+			if (rec.d === 1) _freshDead[p] = 1; else delete _freshDead[p];
+		});
+		if (n) keep(TBM, tombTrim(ops));
+		return n;
+	}
+
+	/// This device's own word on a path: `d` 1 for a deletion of content `h`, 0 for a write
+	/// that brings it back. Stamped past what is held, so it beats it (§5).
+	function stampTomb(p, d, h) {
+		var t = tombOf(p), ops = {};
+		ops[p] = { v: { d: d, h: h || '', s: DaimondStamp.next(t ? t.s : 0) } };
+		keep(TBM, tombTrim(ops));
+	}
+
+	/// The paths whose deletion this device has still to carry out: a manifest here of the
+	/// content that was deleted, and every path a join has made dead since the last call.
+	/// daimond.js `honourChunkTombs` does the carrying out, because only it can reach the
+	/// file tools and the open folder.
+	function honourList() {
+		var out = {}, ix = index();
+		Object.keys(TBM.m).forEach(function (p) {
+			var m = ix[p];
+			if (m && Array.isArray(m.chunks) && !m.peer && isDead(p, m.hash)) out[p] = 1;
+		});
+		Object.keys(_freshDead).forEach(function (p) { if (deadAt(p) !== null) out[p] = 1; });
+		_freshDead = {};
+		return Object.keys(out).sort();
+	}
+
+	/// The content key of `text`, as an offload of it as a file would compute it: what an
+	/// inline copy of a path is compared with, against a deletion recorded here.
+	async function textKey(text) {
+		var b = new Blob([String(text)]);
+		return fileKey(b, window.DaimondChunks ? DaimondChunks.chunkSizeFor(b.size) : 0);
+	}
+
+	/// Drop a path from this device's index, and every path beneath it. Says nothing to
+	/// any other device: it is for a reference that has stopped meaning anything here (a
+	/// manifest the gateway no longer holds, a deletion already recorded). The person's
+	/// delete is `remove`.
 	///
 	/// BENEATH IT TOO, because a folder the user deletes is the path of every
 	/// cloud-only file inside it: those were not on this device to go with the
@@ -1152,12 +1399,42 @@
 		});
 		if (!gone.length) return false;
 		var a = atimes(), p = pins();
-		gone.forEach(function (k) { delete ix[k]; delete a[k]; delete p[k]; });
-		setIndex(ix);
+		gone.forEach(function (k) { delete a[k]; delete p[k]; });
+		writeIx(null, gone);
 		writeJson(ATIME_KEY, a);
 		writeJson(PIN_KEY, p);
 		refreshPaths();
 		return true;
+	}
+
+	var _carrying = {};		// path -> n: deletes the sync merge is carrying out, not the person's
+
+	/// Mark `path` as deleted by the sync merge (daimond.js `deleteSyncFile`) for the
+	/// length of that delete, so the file door's call back here drops the reference
+	/// quietly rather than recording the person's deletion.
+	function carrying(path, on) {
+		var p = String(path || '').replace(/\/+$/, '');
+		if (on) _carrying[p] = (_carrying[p] | 0) + 1;
+		else if ((_carrying[p] | 0) > 1) _carrying[p]--;
+		else delete _carrying[p];
+	}
+
+	/// The person's delete: the file is GONE, not merely absent, on every device. Drops the
+	/// path and every path beneath it here, as `forget` does, and records a tombstone for
+	/// each file that goes, so the deletion travels. `file_delete` and the confirmed folder
+	/// delete reach this through `__daimondCloudForget`. Its chunks are swept on the commit
+	/// after every device has dropped its reference.
+	function remove(path) {
+		var ix = index();
+		var want = String(path || '').replace(/\/+$/, '');
+		if (!want || !window.DaimondStamp) return forget(path);
+		Object.keys(ix).forEach(function (k) {
+			if (k !== want && k.indexOf(want + '/') !== 0) return;
+			var m = ix[k];
+			if (!m || !Array.isArray(m.chunks) || m.peer || !m.hash || isContentKey(k)) return;
+			if (!isDead(k, m.hash)) stampTomb(k, 1, m.hash);		// already said at this content: once
+		});
+		return forget(path);
 	}
 
 	// ── Residency actions ──────────────────────────────────────
@@ -1446,7 +1723,13 @@
 	// The agent's own fetches come through here, and are budgeted as such.
 	window.__daimondCloudFetch  = function (path) { return fetchDown(String(path), true); };
 	window.__daimondCloudForget = function (path) {
-		return Promise.resolve(forget(String(path))
+		var p = String(path);
+		// A delete the sync merge is carrying out (`carrying`) drops the reference here and
+		// says nothing: the deletion it carries is already news, and one the merge makes on
+		// its own inference (the inline census's absence) must never become a tombstone that
+		// deletes the file on the device that still has it.
+		var quiet = Object.prototype.hasOwnProperty.call(_carrying, p.replace(/\/+$/, ''));
+		return Promise.resolve((quiet ? forget(p) : remove(p))
 			? 'OK: ' + path + ' removed from cloud storage.'
 			: 'OK: ' + path + ' was not in cloud storage.');
 	};
@@ -1457,6 +1740,8 @@
 		// Load the index cache from the durable store (IndexedDB), migrating it out
 		// of the localStorage box on first boot. Awaited by the sync boot.
 		ready:        ready,
+		// Read the index and its tombstones again from the store: a sibling tab's writes.
+		refresh:      refresh,
 		// Resolves when the last index write-through has committed, so the commit
 		// gate asks `indexDurable()` after the write rather than during it.
 		settle:       settle,
@@ -1464,6 +1749,17 @@
 		merge:        merge,
 		put:          put,
 		forget:       forget,
+		// The person's delete, which travels as a tombstone; `forget` only drops here;
+		// `carrying` marks a delete the sync merge makes, which must not travel.
+		remove:       remove,
+		carrying:     carrying,
+		// The index paths' tombstones: the parcel's `chunkedTombs`, their join, and
+		// what this device has still to delete because of them.
+		tombs:        tombs,
+		joinTombs:    joinTombs,
+		deadAt:       deadAt,
+		honourList:   honourList,
+		textKey:      textKey,
 		// Content manifests (Diamonds, chats) co-located under a reserved prefix.
 		// Owned by the sync collectors, skipped by every file mechanism.
 		isContentKey: isContentKey,

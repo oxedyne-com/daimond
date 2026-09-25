@@ -133,11 +133,19 @@ async function launch(d) {
 	if (d.opfs === 'absent') {
 		await d.ctx.addInitScript(() => { try { delete StorageManager.prototype.getDirectory; } catch (e) { /* none */ } });
 	} else if (d.opfs === 'quota') {
-		// The store opens, and every write into it is refused as a full disk refuses it.
+		// The store opens, and every write into it is refused as a full disk refuses it --
+		// until `window.__DAIMOND_QUOTA_FULL__` is set false, as freeing space on the real
+		// disk would. Re-run on every document this context loads (the reload below
+		// included), so it starts full again each time and the toggle is the test's own.
 		await d.ctx.addInitScript(() => {
 			try {
+				window.__DAIMOND_QUOTA_FULL__ = true;
+				const orig = FileSystemFileHandle.prototype.createWritable;
 				FileSystemFileHandle.prototype.createWritable = function () {
-					return Promise.reject(new DOMException('The quota has been exceeded.', 'QuotaExceededError'));
+					if (window.__DAIMOND_QUOTA_FULL__) {
+						return Promise.reject(new DOMException('The quota has been exceeded.', 'QuotaExceededError'));
+					}
+					return orig.apply(this, arguments);
 				};
 			} catch (e) { /* none */ }
 		});
@@ -268,10 +276,13 @@ try {
 	await typeTurn(A, '@text NOOPFS-A-1 from the desktop');
 	check('A holds its own chat', await holds(A, 'NOOPFS-A-1'));
 	// Over the inline ceiling (128 KiB), so it travels as chunks and the index names its path.
+	// A small one too (well under the ceiling), which travels inline in `remote.files` and is
+	// what a quota-refused P must adopt through `writeSyncFile` (see the QUOTA section below).
 	const big = await E(A, async () => {
 		const M = await import('/pkg/oxedyne_daimond.js');
 		const line = 'The large workspace file that travels as chunks. ';
 		await M.store_write('notes/big.txt', line.repeat(Math.ceil(200 * 1024 / line.length)));
+		await M.store_write('notes/small.txt', 'NOOPFS-SMALL-1 an inline file synced from the desktop');
 		return true;
 	}).catch((e) => String(e));
 	for (let i = 0; i < 3; i++) await syncRound([A]);
@@ -298,6 +309,69 @@ try {
 	await newChat(P.s);
 	await typeTurn(P, '@text NOOPFS-P-1 from the device without OPFS');
 	check('P holds its own chat', await holds(P, 'NOOPFS-P-1'));
+
+	// ═══ QUOTA only: a refused OPFS write is not silent, and it clears (reopen rehearsal, ════
+	// "Left" item 1). A's small inline file must travel to P through `writeSyncFile`, which
+	// `--phone chromium-quota`'s every `createWritable` refuses with `QuotaExceededError`
+	// while `window.__DAIMOND_QUOTA_FULL__` stands: on the base page the file is silently
+	// dropped and the chip goes on reading "Synced"; on the fix the standing files alarm
+	// names it, and it clears once space frees and a write lands.
+	//
+	// A REFUSED `createWritable` still leaves an empty file behind: `getFileHandle(…,
+	// {create:true})` is not what this test overrides, so the write's failed FIRST attempt at
+	// `notes/small.txt` can itself leave a 0-byte file there -- a real quota refusal can do the
+	// same. `applyFiles` then reads that path as changed on both sides and files the real bytes
+	// beside it as `notes/small.txt.synced` rather than overwriting it (the same-path conflict
+	// rule, `www/js/daimond.js`), so a second, UNTOUCHED path (`notes/small2.txt`, written only
+	// once quota clears) is what proves a write "lands" here -- not a re-check of the first path.
+	if (PHONE === 'chromium-quota') {
+		const readFile = (d, p) => E(d, async (path) => {
+			try { const M = await import('/pkg/oxedyne_daimond.js'); return await M.store_read(path); }
+			catch (e) { return null; }
+		}, p).catch(() => null);
+		const alarmBox = (d) => E(d, () => {
+			const box = document.querySelector('.storage-alarm');
+			const why = box ? (box.querySelector('.storage-alarm-why') || {}).textContent || '' : '';
+			return { shown: !!box, why: why };
+		}).catch((e) => ({ error: String(e) }));
+
+		await E(P, () => DaimondSync.pull()).catch(() => {});
+		await sleep(2000);
+		const beforeWrite = await readFile(P, 'notes/small.txt');
+		check('QUOTA: the small synced file\'s real bytes are NOT written while storage reads full',
+			!(typeof beforeWrite === 'string' && beforeWrite.indexOf('NOOPFS-SMALL-1') >= 0), J(beforeWrite));
+		const raised = await alarmBox(P);
+		record.quotaAlarmRaised = raised;
+		note('P\'s storage alarm while full: ' + J(raised));
+		// Round 2 (lane K, 2026-09-25): the files source now falls back to `store.full`,
+		// the app's existing storage-full wording (owner ruling: one message for one
+		// condition, not lane H's bespoke `store.files_full` prose) -- "no room left",
+		// not the word "full" itself.
+		check('QUOTA: the storage alarm is raised, naming this browser\'s storage out of room',
+			raised.shown && /storage/i.test(raised.why) && /no room left/i.test(raised.why), J(raised));
+
+		// Space frees up, as it would on a real device: the next write that lands clears it.
+		// `pullOnce` skips `applyParcel` outright at an unchanged, already-adopted version
+		// (`www/js/sync.js` ~2070), so a bare re-pull would not retry the write; a genuine new
+		// version from A is what a real pull earns, same as any other retry here.
+		await E(P, () => { window.__DAIMOND_QUOTA_FULL__ = false; return true; });
+		await E(A, async () => {
+			const M = await import('/pkg/oxedyne_daimond.js');
+			await M.store_write('notes/small2.txt', 'NOOPFS-SMALL-2 a second inline file, untouched by the first refusal');
+			return true;
+		}).catch(() => {});
+		await syncRound([A]);
+		await E(P, () => DaimondSync.pull()).catch(() => {});
+		await sleep(2000);
+		const afterWrite = await readFile(P, 'notes/small2.txt');
+		check('QUOTA: a file synced once storage has room lands with its real bytes',
+			typeof afterWrite === 'string' && afterWrite.indexOf('NOOPFS-SMALL-2') >= 0, J(afterWrite));
+		const cleared = await alarmBox(P);
+		record.quotaAlarmCleared = cleared;
+		note('P\'s storage alarm after the write landed: ' + J(cleared));
+		check('QUOTA: the alarm clears once the write lands',
+			!cleared.shown || !/storage/i.test(cleared.why) || !/full/i.test(cleared.why), J(cleared));
+	}
 
 	// ═══ In use: P sends a turn every 15 s, each followed by the flush a hand-off's ════
 	// dispatcher makes (daimond.js `dispatchTurn` flushes the parcel on every hand-off), for

@@ -207,26 +207,31 @@ function makeIndexedDB() {
 			transaction: (sname) => {
 				const data = stores.get(sname);
 				const tx = { oncomplete: null, onerror: null, onabort: null, objectStore: null };
+				// A transaction completes once its LAST request has, as IndexedDB's does: a
+				// request issued from another's onsuccess (durable.js `update` reads, then
+				// writes) belongs to the same transaction.
+				let open = 0, over = false;
+				const request = (work) => {
+					const rq = { onsuccess: null, onerror: null, result: undefined };
+					open++;
+					soon(() => {
+						if (over) return;
+						open--;
+						if (work(rq) === false) {
+							over = true;
+							if (rq.onerror) rq.onerror();
+							if (tx.onabort) tx.onabort();
+							return;
+						}
+						if (rq.onsuccess) rq.onsuccess();
+						soon(() => { if (!over && open === 0) { over = true; if (tx.oncomplete) tx.oncomplete(); } });
+					});
+					return rq;
+				};
 				const os = {
-					get: (k) => {
-						const rq = { onsuccess: null, onerror: null, result: undefined };
-						soon(() => { rq.result = data.has(k) ? data.get(k) : undefined;
-							if (rq.onsuccess) rq.onsuccess(); if (tx.oncomplete) tx.oncomplete(); });
-						return rq;
-					},
-					put: (v, k) => {
-						const rq = { onsuccess: null, onerror: null };
-						soon(() => {
-							if (failWrites) { if (rq.onerror) rq.onerror(); if (tx.onabort) tx.onabort(); return; }
-							data.set(k, v); if (rq.onsuccess) rq.onsuccess(); if (tx.oncomplete) tx.oncomplete();
-						});
-						return rq;
-					},
-					delete: (k) => {
-						const rq = { onsuccess: null, onerror: null };
-						soon(() => { data.delete(k); if (rq.onsuccess) rq.onsuccess(); if (tx.oncomplete) tx.oncomplete(); });
-						return rq;
-					},
+					get: (k) => request((rq) => { rq.result = data.has(k) ? data.get(k) : undefined; }),
+					put: (v, k) => request(() => { if (failWrites) return false; data.set(k, v); }),
+					delete: (k) => request(() => { data.delete(k); }),
 				};
 				tx.objectStore = () => os;
 				return tx;
@@ -497,6 +502,8 @@ async function main() {
 	}
 	if (failures) { console.log(failures + ' FAILED'); process.exit(1); }
 	console.log('all ok');
+	// cloud.js opens its tabs' BroadcastChannel at `ready`, which in node would hold the process open.
+	process.exit(0);
 }
 
 main().catch((e) => { console.error(e); process.exit(1); });

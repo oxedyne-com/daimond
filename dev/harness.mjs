@@ -1300,6 +1300,27 @@ export async function transcript(s) {
 	});
 }
 
+/// The visible conversation, as text, with every collapsed Tool/Thinking/System tile and
+/// rollup opened first.
+///
+/// `www/js/daimond.js` `buildTile` renders every Tool tile `expanded: false` -- collapsed by
+/// default, "expanding to Sent → Result" as the UI's own comment puts it -- and `makeRollup`
+/// on top of that collapses a run of two or more consecutive same-type tiles into one
+/// `.crollup`, also closed by default. `app.css` hides a collapsed tile's own body
+/// (`.ctile.collapsed > .ctile-body { display: none; }`) and a closed rollup's the same way
+/// (`.crollup.collapsed > .crollup-body { display: none; }`). `innerText`, which plain
+/// `transcript` reads, excludes anything `display: none` -- so a verifier reading `chat()`'s
+/// return for a tool's own wording, such as a refusal, reads nothing of it: not the rollup's
+/// short one-line peek either, since a SOLO tool tile starts collapsed too. `verify_writeguard`
+/// mismeasured on exactly this (a verifier fault, not a product fault: the guard refused
+/// correctly and "changed on disk" was on the page, just not in `innerText`).
+export async function transcriptExpanded(s) {
+	await s.page.evaluate(() => {
+		document.querySelectorAll('#chat-output .collapsed').forEach((el) => el.classList.remove('collapsed'));
+	});
+	return transcript(s);
+}
+
 /// A screenshot, kept in dev/shots.
 export async function shot(s, label) {
 	fs.mkdirSync(SHOTS, { recursive: true });

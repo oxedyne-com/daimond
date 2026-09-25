@@ -117,6 +117,8 @@
 	var UNSENT_RETRY_MAX_MS  = 60000;	// Its backoff never grows past this after a conflict, and has no try limit (was 8 s: D110).
 	var UNSENT_RETRY_TRIES   = 2;	// An owed retry's conflict tries: the one it sends, and one rebased on the pull that answers it.
 	var UNSENT_WIRE_MAX_MS   = 300000;	// Nor past this after any other failure. See armUnsent.
+	var UNSENT_READ_MAX_MS   = 4000;	// Owed work waiting on a read is read at least this often (EXPEDITE_PULL_MS)...
+	var UNSENT_READ_TRIES    = 8;		// ...for its first this-many tries, then on the wire's ladder. See armUnsent.
 	var RETRY_AFTER_MAX_MS   = 3600000;	// A gateway's Retry-After past this is read as this.
 	var FLUSH_MAX_ROUNDS     = 6;	// Bound flush()'s push-and-confirm loop.
 	var FLUSH_RETRY_MS       = 300;	// Wait between flush() rounds while a push is in flight elsewhere.
@@ -220,6 +222,12 @@
 	// the END of the transcript, so trimming it loses the oldest lines, which the
 	// watching device already has from the frame before.
 	var PROGRESS_TAIL_MAX = 48 * 1024;
+	// And the gateway's ceiling as a frame meets it: 64 KiB of sealed bytes (gateway
+	// `PROGRESS_MAX_BYTES`), less a kilobyte for the envelope the tail rides in, the IV and
+	// tag, and base64's rounding. A structured frame is fitted to both (`progressWeight`),
+	// because this door's slice and its halving on a 413 cut the JSON (r52d Open 1).
+	var PROGRESS_SEAL_MAX = 64 * 1024 - 1024;
+	var _progEnc = null;
 	// ── Wake channel ───────────────────────────────────────────
 	// A wake is EVIDENCE that the mailbox moved, which the speculative triggers
 	// above are not, so it has a throttle of its own and a much shorter one: the
@@ -354,7 +362,14 @@
 	var unsentDue         = 0;	// when the armed retry fires, so a Retry-After can move it
 	var unsentFailVersion = 0;	// the mailbox version when an owed push last failed
 	var unsentTries       = 0;
-	var failKind          = '';	// 'conflict', 'merge', or anything else: which ladder the retry climbs. See armUnsent.
+	var failKind          = '';	// 'conflict', 'merge', 'read', or anything else: which ladder the retry climbs. See armUnsent.
+	// OWED WORK THAT WAITS ON A READ (CASE 1, 2026-09-25). A 409 says this device's base is
+	// stale, and when the pull that would rebase it fails, every push until a pull lands is
+	// a whole parcel sent to be refused: seven 133 KiB POSTs in three seconds on the runner,
+	// each 409. So nothing is sent over it (`push` reads first), a read that lands clears it,
+	// and that read, whoever made it, sends the work at once (`pullOnce`).
+	var readOwed          = false;
+	var retryOnFree       = false;	// a retry found the gate held: it runs when the round ends (`endRound`)
 	var holdUntil         = 0;	// the time a gateway's 429 or 503 asked this device not to return before
 	// A passphrase was changed on another device and this one is BEHIND the epoch chain
 	// -- it could not walk the links to the account's current key (a missing link, or a
@@ -1061,6 +1076,15 @@
 	/// With no kind, the ladder keeps the one it was last armed for. 'merge' is a version the
 	/// re-pull gave up on: the long ceiling, from the first wait.
 	///
+	/// 'READ' IS THE MAILBOX THAT COULD NOT BE READ (CASE 1, 2026-09-25). A failed read
+	/// costs a GET and no parcel, and the work cannot move until one lands, so its first
+	/// `UNSENT_READ_TRIES` are at most `UNSENT_READ_MAX_MS` apart: the expedite cadence a
+	/// hand-off's sender already pulls at, for the half-minute a hand-off's answer is
+	/// awaited. Then the wire's ladder, so an hour of failed reads still costs about twenty
+	/// GETs. It was the wire's ladder from the first failure, and a runner whose pull was
+	/// withheld 15 s had climbed to a 9-17 s wait by the time it could read: its answer
+	/// came home at +33 s against CASE 1's 40 s.
+	///
 	/// THE CEILING IS WHAT FAILED LAST. A retry armed on the wire's ceiling (a partition, a
 	/// link down) and then beaten by a conflict on another trigger was left where it was:
 	/// the conflict is a POST the gateway answered, so the write path is back, yet the
@@ -1073,7 +1097,9 @@
 		if (!unsent) return;
 		var now   = Date.now();
 		var floor = Math.max(0, holdUntil - now);
-		var cap   = (failKind === 'conflict') ? UNSENT_RETRY_MAX_MS : UNSENT_WIRE_MAX_MS;
+		var cap   = (failKind === 'conflict') ? UNSENT_RETRY_MAX_MS
+			: (failKind === 'read' && unsentTries < UNSENT_READ_TRIES) ? UNSENT_READ_MAX_MS
+			: UNSENT_WIRE_MAX_MS;
 		var wait  = 0;
 		// Armed beyond the longest jittered wait this kind's ceiling allows.
 		var stale = !!unsentTimer && unsentDue - now > cap * 1.5;
@@ -1119,6 +1145,7 @@
 		unsent      = false;
 		unsentTries = 0;
 		failKind    = '';
+		readOwed    = false;
 		if (unsentTimer) { clearTimeout(unsentTimer); unsentTimer = null; }
 	}
 
@@ -1170,7 +1197,9 @@
 		// on a request that cannot leave it, so the retry stands down and `onOnline` starts
 		// it again when the link returns. A landed pull on any other trigger still sends it.
 		if (offline()) { diag('push retry', 'offline; waiting for the link'); return; }
-		if (inFlight) { armUnsent(); return; }
+		// A ROUND HOLDS THE GATE: this retry tried nothing, so it does not climb the ladder.
+		// It runs the moment the round ends (`endRound`), which is the soonest it could.
+		if (inFlight) { retryOnFree = true; return; }
 		// A PUSH THAT WOULD WAIT IS NOT RETRIED BY PULLING (QA 2026-09-24). Over a live turn
 		// here, or another device's hand-off, `push()` defers and re-arms itself on its own
 		// cheap timer, and the turn's end (`daimond:idle`) sends it. A pull here would only
@@ -1185,8 +1214,9 @@
 		// bounded; a clean re-pull that lands sends the owed parcel (`pullOnce`), and one
 		// that gives up hands the version back to this retry, at its ceiling.
 		if (v >= 0 && lastFailed.length) { restStatus(); return; }
-		// The mailbox could not be read: the wire's ladder, not the conflict's (S2).
-		if (v < 0) { restStatus(); armUnsent('wire'); return; }
+		// The mailbox could not be read: the read's ladder, not the conflict's (S2), and no
+		// push sends over it until a read lands.
+		if (v < 0) { readOwed = true; restStatus(); armUnsent('read'); return; }
 		// A throw here (F-S5-4) must not escape as an unhandled rejection: a collect that
 		// keeps throwing would otherwise leave every retry rejecting silently, and on
 		// this harness kills the process outright. The work stays owed; `push()`'s own
@@ -1229,6 +1259,13 @@
 	/// resting line over owed work. Every round ends here.
 	function endRound() {
 		inFlight = false;
+		if (retryOnFree) {
+			retryOnFree = false;
+			if (unsent && !unsentTimer) {
+				unsentDue   = Date.now();
+				unsentTimer = setTimeout(function () { unsentTimer = null; retryUnsent(); }, 0);
+			}
+		}
 		var c = document.getElementById('sync-chip');
 		var busyShown = !!(c && c.style.display !== 'none' && c.dataset.state === 'syncing');
 		if (owedNow() || busyShown) restStatus();
@@ -1824,6 +1861,8 @@
 		catch (e) { diag('pull GET error', (Date.now() - tGet) + 'ms'); log('pull network error', e); restStatus(); return -1; }
 		if (res.status !== 200 || !res.json) { diag('pull GET status', res.status + ' after ' + (Date.now() - tGet) + 'ms'); log('pull status', res.status); restStatus(); return -1; }
 		lastPullAt = Date.now();		// asked, and answered: see the catch-up in push().
+		var readWasOwed = readOwed;		// the read owed work was waiting on: see the end
+		readOwed = false;
 		var j = res.json;
 		// The round-trip and the sealed parcel size -- bytes only, no content. A slow
 		// GET or a large parcel is the first thing the "sync is slow" question asks.
@@ -2128,8 +2167,18 @@
 		// every 5 s, the ladder never consulted. Its version always moves, so the
 		// exception above cannot apply to it. Only a version that would not merge, and
 		// now has, is sent at once.
+		//
+		// WORK THAT WAITED ON A READ GOES NOW (CASE 1, 2026-09-25). Its ladder was climbing
+		// because the mailbox could not be read, and this read is the one it waited for, so
+		// the wait is over whoever made it: sent now, not at the end of a backoff built while
+		// the pull was blocked, and not after the push debounce either.
 		var ladderOwns = !!unsentTimer && failKind !== 'merge';
-		if (unsent && !quiet && ladderOwns && failKind !== 'conflict' && serverVersion > unsentFailVersion) {
+		if (unsent && !quiet && readWasOwed) {
+			if (unsentTimer) { clearTimeout(unsentTimer); unsentTimer = null; }
+			setTimeout(function () { push(); }, 0);
+			ladderOwns = true;			// sent above; not scheduled again below
+		}
+		else if (unsent && !quiet && ladderOwns && failKind !== 'conflict' && serverVersion > unsentFailVersion) {
 			clearTimeout(unsentTimer); unsentTimer = null; ladderOwns = false;
 		}
 		if (unsent && !quiet && !ladderOwns) schedule();
@@ -2218,6 +2267,13 @@
 		unsent   = true;
 		failKind = '';
 		try {
+			// NOTHING OVER A BASE A 409 PROVED STALE. The work waits on a read (`readOwed`),
+			// so this round reads first, as the owed retry does, and sends only once it lands.
+			if (readOwed) {
+				var r0 = await pull(true);
+				if (r0 < 0) { failKind = 'read'; restStatus(); return; }
+				if (lastFailed.length) { failKind = 'conflict'; jam('merge'); return; }
+			}
 			// The collectors record manifests in the cloud index; wait for it to have
 			// loaded out of IndexedDB before collecting, so `index()` is authoritative.
 			if (window.DaimondCloud && DaimondCloud.ready) { try { await DaimondCloud.ready(); } catch (e) { /* fallback path stays active */ } }
@@ -2226,6 +2282,10 @@
 				var plain = JSON.stringify(state);
 				// What is SENT is `plain`; what is COMPARED is the key. See compareKey.
 				var cmp   = compareKey(state);
+				// THE FORK POINT THIS PARCEL SETS IF IT LANDS, taken in the tick it is serialised:
+				// what lands is this parcel, and a file deleted or edited while it flies is not in
+				// it (fix/r52-del). The index is one mirror written in place, so later is too late.
+				var fork = DaimondCore.syncForkPoint ? DaimondCore.syncForkPoint(state) : null;
 				// `lastPushed === null` is "this page has not sent anything yet",
 				// which is the only moment the carried digest is asked about. Note
 				// the short-circuit: on every push after the first, `sigOf` is
@@ -2359,7 +2419,7 @@
 					// happened.
 					saveSig(await sigOf(cmp));
 					// The pushed state is now the shared fork point for the file merge.
-					try { if (DaimondCore.syncCommitBaseline) await DaimondCore.syncCommitBaseline(); }
+					try { if (DaimondCore.syncCommitBaseline) await DaimondCore.syncCommitBaseline(fork); }
 					catch (e) { /* baseline advances next time */ }
 					// Declare the live chunk set that this state references and let
 					// the gateway sweep everything it no longer does. The version
@@ -2456,7 +2516,9 @@
 					// push that has not landed.
 					log('conflict at base', serverVersion, '— pulling and retrying');
 					var v = await pull(true);
-					if (v < 0) { failKind = 'conflict'; jam('busy'); return; }		// could not reconcile; say so.
+					// Could not reconcile; say so. The mailbox could not be read, so the work
+					// waits on a read (`readOwed`), and nothing more is sent over this base.
+					if (v < 0) { readOwed = true; failKind = 'read'; jam('busy'); return; }
 					// A merge that did not finish must NOT be pushed over. The
 					// retry sends what this device holds, and what this device
 					// holds is precisely the state that failed to take the other
@@ -3174,6 +3236,17 @@
 	// gateway's seq is what a watcher orders by; this is what the runner can say
 	// about its own sending, and what the feed event reports.
 	var _progSeq = {};
+
+	/// What `text` adds to a progress frame, the two ways the road weighs it: its characters
+	/// (this door's guard) and its UTF-8 bytes once JSON-escaped into the sealed envelope
+	/// (the gateway's ceiling). Additive over a concatenation of whole strings, so a frame's
+	/// parts are weighed once each and summed (`DaimondPeer.frameJson`).
+	function progressWeight(text) {
+		var s = String(text == null ? '' : text);
+		var esc = JSON.stringify(s);
+		if (!_progEnc && typeof TextEncoder !== 'undefined') _progEnc = new TextEncoder();
+		return { chars: s.length, bytes: _progEnc ? _progEnc.encode(esc).length - 2 : 3 * esc.length };
+	}
 
 	/// PUT one frame of `turnId`'s transcript tail. Answers
 	/// `{ ok, seq, bytes, ms, why? }` -- never throws, because a dropped frame is a
@@ -4265,6 +4338,8 @@
 		/// and this tail is the whole of it, so a watcher can show the finished answer
 		/// without the account parcel.
 		pushProgressFrame: pushProgressFrame,
+		progressWeight:    progressWeight,
+		progressBudget:    { chars: PROGRESS_TAIL_MAX, bytes: PROGRESS_SEAL_MAX },
 		watchProgress:     watchProgress,
 		unwatchProgress:   unwatchProgress,
 		progressWatched:   progressWatched,

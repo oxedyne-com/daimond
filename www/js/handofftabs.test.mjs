@@ -118,7 +118,8 @@ const LIFTED = [
 	extractFn(APP, 'releaseOwnStaleLeases'),
 	extractFn(APP, 'ensureApp'),
 	extractFn(APP, 'tailAfter'),
-	'return { claimWork, recoverOneLocally, releaseOwnStaleLeases, ensureApp, _localRecovering };',
+	extractFn(APP, 'dedupeSession'),
+	'return { claimWork, recoverOneLocally, releaseOwnStaleLeases, ensureApp, dedupeSession, _localRecovering };',
 ].join('\n');
 
 /// One tab of the device `SELF`: the lifted functions over this tab's own memory, the
@@ -301,6 +302,63 @@ check('the local run claims the key a runner\'s collect claims',
 	const rc = { messages: [{ role: 'user', content: 'q1', mid: 'u1', ts: 1 }] };
 	check('F4: so a runner lacking the answer grafts no cut copy of it',
 		P.seedGraft(rc, { turnId: 'TURN', seed }).every((m) => m.mid !== 'ans1'));
+}
+
+// ── The saved duplicates (lane C, round 2). A session stored before 5.1 holds a handed-off
+//    turn's prompt twice; the restore takes out the copies the screen does not hold, and
+//    never a prompt the person really sent twice. ──
+{
+	const w = world(), locks = makeLocks();
+	const T = makeTab('Tdup', locks, w);
+	const u = (c) => ({ role: 'user', content: c }), a = (c) => ({ role: 'assistant', content: c });
+	const S = (...m) => [{ role: 'system', content: 'sys' }].concat(m);
+	const scr = (rows) => rows.map((r, i) => Object.assign({ mid: r.mid || ('m' + i), ts: i + 1 }, r));
+	const said = (ms) => ms.map((m) => m.role.charAt(0) + ':' + m.content).join(' ');
+	// 1. A handed-off turn 2: the prompt twice in the session, once on screen.
+	const screen1 = scr([{ role: 'user', content: 'q1' }, { role: 'assistant', content: 'a1' },
+		{ role: 'user', content: 'q2' }, { role: 'assistant', content: 'a2', mid: 'A2' }]);
+	const s1 = S(u('q1'), a('a1'), u('q2'), u('q2'), a('a2'));
+	check('dup: a handed-off turn\'s second copy goes', said(T.dedupeSession(s1, screen1, 'A2', 0)) === 's:sys u:q1 a:a1 u:q2 a:a2',
+		said(T.dedupeSession(s1, screen1, 'A2', 0)));
+	// 2. Turns 2 and 3 both handed off (QA's `suauuauu`).
+	const screen2 = scr([{ role: 'user', content: 'q1' }, { role: 'assistant', content: 'a1' }, { role: 'user', content: 'q2' },
+		{ role: 'assistant', content: 'a2' }, { role: 'user', content: 'q3' }, { role: 'assistant', content: 'a3', mid: 'A3' }]);
+	const s2 = S(u('q1'), a('a1'), u('q2'), u('q2'), a('a2'), u('q3'), u('q3'), a('a3'));
+	check('dup: every handed-off turn\'s copy goes, newest to oldest', said(T.dedupeSession(s2, screen2, 'A3', 0))
+		=== 's:sys u:q1 a:a1 u:q2 a:a2 u:q3 a:a3', said(T.dedupeSession(s2, screen2, 'A3', 0)));
+	// 3. The person sent it twice: a failed turn (no reply in the session, a half one on screen), then the same words again.
+	const screen3 = scr([{ role: 'user', content: 'go on' }, { role: 'assistant', content: 'par', interrupted: 1 },
+		{ role: 'user', content: 'go on' }, { role: 'assistant', content: 'done', mid: 'D' }]);
+	const s3 = S(u('go on'), u('go on'), a('done'));
+	check('dup: a prompt really sent twice stays twice (the same array back)', T.dedupeSession(s3, screen3, 'D', 0) === s3);
+	// 4. Sent twice AND handed off: one copy goes, the person's two stay.
+	const s4 = S(u('go on'), u('go on'), u('go on'), a('done'));
+	check('dup: sent twice and handed off, only the hand-off\'s copy goes', said(T.dedupeSession(s4, screen3, 'D', 0)) === 's:sys u:go on u:go on a:done');
+	// 5. The same word on two turns, each answered: not adjacent, not a duplicate.
+	const screen5 = scr([{ role: 'user', content: 'continue' }, { role: 'assistant', content: 'x' },
+		{ role: 'user', content: 'continue' }, { role: 'assistant', content: 'y', mid: 'Y' }]);
+	const s5 = S(u('continue'), a('x'), u('continue'), a('y'));
+	check('dup: the same prompt on two answered turns is left alone', T.dedupeSession(s5, screen5, 'Y', 0) === s5);
+	// 6. A disagreement stops the walk: an older pair past it is not touched on a guess.
+	const screen6 = scr([{ role: 'user', content: 'old' }, { role: 'assistant', content: 'ao' },
+		{ role: 'user', content: 'q2' }, { role: 'assistant', content: 'a2', mid: 'A2' }]);
+	const s6 = S(u('old'), u('old'), a('ao'), u('not on screen'), a('z'), u('q2'), u('q2'), a('a2'));
+	check('dup: the walk stops where session and screen disagree; the newer copy still goes',
+		said(T.dedupeSession(s6, screen6, 'A2', 0)) === 's:sys u:old u:old a:ao u:not on screen a:z u:q2 a:a2', said(T.dedupeSession(s6, screen6, 'A2', 0)));
+	// 7. Turns after the marker (another tab's, not in the session) are not part of the walk.
+	const screen7 = screen1.concat(scr([{ role: 'user', content: 'q3' }, { role: 'assistant', content: 'a3' }]).map((m) => Object.assign(m, { mid: 'late' + m.mid, ts: 90 + m.ts })));
+	check('dup: rows past the session\'s marker are left to the tail', said(T.dedupeSession(s1, screen7, 'A2', 0)) === 's:sys u:q1 a:a1 u:q2 a:a2');
+	// 8. The marker gone: by the clock.
+	check('dup: with the marker gone, the clock places it', said(T.dedupeSession(s1, screen7, 'gone', 4)) === 's:sys u:q1 a:a1 u:q2 a:a2');
+	// 9. A provisional row on screen is not a message the agent saw.
+	const screen9 = screen1.concat([{ role: 'user', content: 'q2', mid: 'p', ts: 3.5, provisional: 1 }]);
+	check('dup: a provisional row does not count as the person\'s second send', said(T.dedupeSession(s1, screen9, 'A2', 0)) === 's:sys u:q1 a:a1 u:q2 a:a2');
+	// 10. Through the restore: the model is given the clean session, and it is kept for the next save.
+	const chat = { id: 'c', messages: screen1, session: { v: 1, msgs: s1, upto: 'A2', uptoTs: 4 } };
+	T.ensureApp(chat, '');
+	check('dup: the restore hands the model the session without the copy', T.stat.restored && T.stat.restored.session.join() === 'sys,q1,a1,q2,a2',
+		T.stat.restored);
+	check('dup: and the chat keeps the clean session for its next save', chat.session.msgs.length === 5 && chat.session.upto === 'A2');
 }
 
 console.log('\n' + checks + ' checks, ' + failures + ' failed');

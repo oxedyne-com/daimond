@@ -56,6 +56,7 @@ const lifted = new Function('env', [
 	'var window = env.window, DaimondPeer = env.window.DaimondPeer, DaimondLease = env.window.DaimondLease;',
 	'var peerReports = env.peerReports, _finalMids = env.finalMids;',
 	'function dispatchedChat(t) { return env.chatFor(t); }',
+	'function chatHoldingTurn(t) { return env.holding ? env.holding(t) : null; }',
 	'function touchChat() {}',
 	'function persistChats() { env.persisted++; }',
 	'function diag() {}',
@@ -68,6 +69,7 @@ const lifted = new Function('env', [
 	extractFn(src, 'dispatchedPlaceholderIn'),
 	extractFn(src, 'handoffLeaseSettled'),
 	extractFn(src, 'handoffDone'),
+	extractFn(src, 'finalFrameChat'),
 	extractFn(src, 'adoptFinalFrame'),
 	'return { mergeMessages: mergeMessages, adoptFinalFrame: adoptFinalFrame };',
 ].join('\n'));
@@ -181,6 +183,26 @@ console.log('\nWHOLE: only a frame the runner marked whole may become the answer
 		over.length + ' rows; whole ' + over.filter((r) => r.whole).length);
 	check('[ctl] a frame from a build that marks nothing is not whole', !P.frameWhole([{ mid: 'AN', role: 'assistant', content: 'six' }]));
 	check('[ctl] nor is an empty one', !P.frameWhole([]));
+}
+
+console.log('\nLATE: a final frame whose placeholder has already gone (hand-off QA F4, round 2)\n');
+{
+	// A settled lease dropped the placeholder before the final frame was folded, fetched whole
+	// from the chunks or read on the watch's last read: the chat is found by the turn itself.
+	const w = world();
+	const held = { id: 'c1', messages: [user(), prov('a1', 'six')] };
+	w.chat = null;						// no placeholder index for the turn any more
+	w.holding = (t) => (t === 'u1' ? held : null);
+	w.finalMids.u1 = { a1: 1 };
+	w.peerReports.u1 = { t: 'report', turnId: 'u1', status: 'done' };
+	check('the whole frame is still adopted in the chat holding the turn', w.adoptFinalFrame('u1') === true
+		&& held.messages[1].framed === 1 && !held.messages[1].provisional, JSON.stringify(held.messages[1]));
+	const w2 = world();
+	w2.chat = null;
+	w2.holding = () => null;
+	w2.finalMids.u1 = { a1: 1 };
+	w2.peerReports.u1 = { t: 'report', turnId: 'u1', status: 'done' };
+	check('[ctl] and nothing moves where no chat holds it', w2.adoptFinalFrame('u1') === false);
 }
 
 console.log(failures ? '\n' + failures + ' FAILURE(S)' : '\nALL PASS');

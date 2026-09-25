@@ -43,6 +43,13 @@
         GETs, not 450, and the gap grows to 300 s +-50%.
      O. owed and offline: no request at all, and `online` starts it.
 
+   R, S (CASE 1, 2026-09-25): owed work whose read failed waits on a read.
+
+     R. the runner's answer is refused and its pull fails for 15 s while it keeps
+        pushing: no POST until a read lands, and it lands within the read cadence
+        (4 s x1.5) of the release, not the wire's 9-17 s.
+     S. a pull on another trigger lands between two retries: sent at once.
+
    S5, S6 (R3 sync QA, 2026-09-24): work is owed from the moment a push
    has news until one lands, so every exit that did not land is retried.
    Before, only a 409 whose pull failed, or eight 409s, owed it.
@@ -577,6 +584,41 @@ console.log('\nM. owed, then the pulls land but will not merge until the re-pull
 	check('M2. THE OWED PARCEL LANDS with no further change, on the retry\'s own clock',
 		holds(tab, 'runner answer'), (tab.gets - g0) + ' GET(s); ' + JSON.stringify(tab.posts.slice(-1)));
 	check('M3. and the chip is clear', !S.state().stalled, S.state().stalledWhy);
+}
+
+console.log('\nR. CASE 1: owed on a read that fails for 15 s, while the runner keeps pushing\n');
+{
+	// The runner's answer, refused behind the phone's push, with the content pull failing:
+	// verify_handoff_slowparcel CASE 1. Every wait at its longest (x1.5), the worst case.
+	const { tab, S } = await owed();
+	pinJitter(tab, 0.9999);
+	const p0 = tab.posts.length, g0 = tab.gets;
+	// The runner's flush and the store's own saves keep asking for pushes meanwhile.
+	for (let i = 0; i < 6; i++) { await S.push(); await advance(tab, 300); }
+	check('R1. no parcel is sent over a base a 409 proved stale: those pushes read instead',
+		tab.posts.length === p0 && tab.gets > g0, (tab.posts.length - p0) + ' POST(s), ' + (tab.gets - g0) + ' GET(s)');
+	await advance(tab, 15000 - 1800);
+	const gRel = tab.gets, tRel = tab.vnow;
+	tab.withhold = false;			// the pull is let through, 15 s in
+	await advance(tab, 8000);
+	const landedAt = landed(tab) === 2 ? tab.postAt[tab.postAt.length - 1] - tRel : -1;
+	check('R2. the owed parcel lands within the read cadence of the release, not a wire backoff',
+		holds(tab, 'runner answer') && landedAt >= 0 && landedAt <= 6000,
+		'landed ' + (landedAt / 1000) + ' s after the release; ' + (tab.gets - g0) + ' GETs, '
+		+ (tab.posts.length - p0) + ' POST(s) in all');
+	check('R3. and it took one POST once the read landed', tab.posts.length - p0 === 1, JSON.stringify(tab.posts.slice(p0)));
+}
+
+console.log('\nS. owed on a failed read: a pull on another trigger sends it at once, not after the debounce\n');
+{
+	const { tab, S } = await owed();
+	pinJitter(tab, 0.9999);
+	await advance(tab, 20000);			// the read ladder is on a 6 s wait now
+	tab.withhold = false;
+	await S.pull();					// a wake or a focus pull, between two retries
+	await advance(tab, 200);
+	check('S1. the landed pull sent the owed parcel inside 200 ms', holds(tab, 'runner answer'),
+		JSON.stringify(tab.posts.slice(-1)));
 }
 
 console.log('\n' + (failures ? failures + ' FAILED' : 'ALL PASS'));

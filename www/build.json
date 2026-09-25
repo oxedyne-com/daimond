@@ -1,1 +1,1 @@
-{"build":"961ae5603b59","note":"A file deleted while offline stays deleted on every device"}
+{"build":"f155c474a3f4","note":"Deleted files, large ones too, stay deleted on every device; full storage now says so; hand-offs survive a reload"}

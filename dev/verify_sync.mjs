@@ -123,6 +123,19 @@ async function pushLanded(pg, where) {
 
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 
+/// Wait until the engine has no round running and none armed.
+///
+/// A FIXTURE THAT SWAPS WHAT THIS BROWSER HOLDS must not be overtaken by a round that began before
+/// the swap. `pushLanded` leaves one armed more often than not (its pushes pull, and a pull arms
+/// the catch-up), and that round lands after the swap and writes back the very cursor the fixture
+/// has just removed; the pull the fixture then asks for reads the version as already adopted and
+/// merges nothing (`pullOnce`'s skip). Measured 2026-09-25 on both gateways: the engine was not
+/// quiet at the swap in every one of seven runs, so whether the roster block passed was the race.
+async function engineQuiet(pg, ms = 20000) {
+	return pg.waitForFunction(() => window.DaimondSync.state().quiet, null, { timeout: ms })
+		.then(() => true, () => false);
+}
+
 /// Put `window.__bump(tag)` on the page: one genuine local change, so the push
 /// that follows is not skipped as a no-op.
 ///
@@ -402,6 +415,7 @@ try {
 	// check asserts TWO things -- a chat arrived, and the words in it did -- and
 	// reporting only the count says "chats=1" for both a pass and the failure
 	// where the transcript is empty. That reads as a passing check that failed.
+	await engineQuiet(page);			// a stand-in device: no round of this one's may land after the swap
 	const restored = await page.evaluate(async () => {
 		const store = window.DaimondCore.chatStore();
 		await store.wipe();
@@ -506,6 +520,7 @@ try {
 	check('a workspace file is sealed in the pushed blob (content absent from ciphertext)',
 		!filePush.blob.includes(FILEMARK));
 
+	await engineQuiet(page);			// a stand-in device: no round of this one's may land after the swap
 	const fileRestore = await page.evaluate(async () => {
 		const mod = await import('../pkg/oxedyne_daimond.js');
 		const app = new mod.DaimondApp('http://127.0.0.1/v1/chat/completions', '', 'none', 256, '', true);
@@ -1606,6 +1621,9 @@ try {
 	// "Synced" on a device whose pushes were paused by a 402, and a pull FAILING
 	// used to blank a refusal that was still perfectly true. And the chip has to
 	// lead somewhere: "Sync off" names Pro, and Pro is bought in Credits.
+	// No armed round of this device's may land inside the stubbed refusals below: one that does
+	// sends a parcel that fits through the real door and clears the stall under test.
+	await engineQuiet(page);
 	const gate = await page.evaluate(async () => {
 		const chip = () => {
 			const c = document.getElementById('sync-chip');
@@ -1839,6 +1857,7 @@ try {
 	// The receiving half, end to end: a device that has never seen the rename
 	// pulls it. (Pull-on-focus is proved in section 7; what is proved here is
 	// that there is now something on the mailbox for it to find.)
+	await engineQuiet(page);			// a stand-in device: no round of this one's may land after the swap
 	const second = await page.evaluate(async () => {
 		const m = await import('/pkg/oxedyne_daimond.js');
 		const app = new m.DaimondApp('http://127.0.0.1/v1/chat/completions', '', 'none', 4096, '', true);
@@ -2001,6 +2020,8 @@ try {
 		'blob ' + sealed.length + ' bytes');
 
 	// Device B: another install of the app, which has never seen this roster.
+	check('the engine is quiet before the second device is stood in', await engineQuiet(page),
+		JSON.stringify(await page.evaluate(() => window.DaimondSync.state())));
 	const bSaw = await page.evaluate(async (b) => {
 		localStorage.setItem('daimond-id-device', b);
 		localStorage.setItem('daimond-devices', '{}');
@@ -2018,6 +2039,7 @@ try {
 	await pushLanded(page, 'device B line');
 
 	// Device A again, knowing only itself, exactly as it was left.
+	await engineQuiet(page);
 	const aSaw = await page.evaluate(async (r) => {
 		localStorage.setItem('daimond-id-device', r.self);
 		localStorage.setItem('daimond-devices', r.reg);
@@ -2082,9 +2104,13 @@ try {
 
 	// Back to device A, with the roster it had before any of this: its own line
 	// is the FRESHER one, and it still has to take the name.
+	await engineQuiet(page);
 	const aNamed = await page.evaluate(async (r) => {
 		localStorage.setItem('daimond-id-device', r.self);
 		localStorage.setItem('daimond-devices', r.reg);
+		// As at every swap above: device A has no note of merging the version device B just
+		// pushed, and a cursor left at B's would have this pull decline to merge it at all.
+		localStorage.removeItem('daimond-sync-version');
 		const before = JSON.parse(r.reg)[r.self];
 		await window.DaimondSync.pull();
 		const after = JSON.parse(localStorage.getItem('daimond-devices') || '{}')[r.self];
@@ -2445,6 +2471,9 @@ try {
 	check('opening the channel catches the device up on what it missed while it was shut',
 		(await nameSettles(child.page, shared, 'Unheard-Over-There')) === 'Unheard-Over-There',
 		'version ' + blind.v1 + ' -> ' + (await child.page.evaluate(() => window.DaimondSync.state().version)));
+	// The catch-up just merged a rename, and a merge arms this device's own echo push: let it
+	// land before the push it is to be woken for, as the parked route below does.
+	await engineQuiet(child.page);
 	const chan = await child.page.evaluate(() => {
 		window.__wakeProbe = { focus: 0, vis: 0, idle: 0 };
 		window.addEventListener('focus', () => window.__wakeProbe.focus++, true);
@@ -2578,6 +2607,15 @@ try {
 	check('the channel can be put onto parked requests instead of a socket', pollOn === 'poll', pollOn);
 	await child.page.waitForFunction(
 		() => window.DaimondSync.wake().open === true, null, { timeout: 15000 }).catch(() => {});
+	// NOTHING OF THE DEVICE'S OWN MAY BE IN FLIGHT when the push it is to be woken for is made. The
+	// check below asks WHICH pull brought the version in, and a push of this device's own that
+	// meets that push comes back 409 and pulls the version itself. This device has just merged two
+	// renames and restarted its channel after the gateway's own restart, and it pushes three
+	// times on either gateway; on the release-1 gateway the last of them fell inside this window in
+	// six runs of six, on the old one in none, and the line failed in four of the six
+	// (specs/daimond_diag_r52_20260925.md).
+	check('the second device is quiet before the push it is to be woken for', await engineQuiet(child.page),
+		JSON.stringify(await child.page.evaluate(() => window.DaimondSync.state())));
 	const pollChan = await child.page.evaluate(() => {
 		window.__wakeProbe = { focus: 0, vis: 0, idle: 0 };
 		return { wake: window.DaimondSync.wake(), version: window.DaimondSync.state().version };

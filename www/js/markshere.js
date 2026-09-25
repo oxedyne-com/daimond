@@ -134,6 +134,19 @@
 		return STORE_PATH_RE.test(String(path || ''));
 	}
 
+	/// Is this path the app's own state under `system/` (`APP_STATE_DIRS`): the agents'
+	/// transcripts, the guide's mirror or the usage digest?
+	///
+	/// Each is made on the device from something that never travels -- the run list in
+	/// the tab, the build's own guide, the `local` signal counters -- so none is a
+	/// workspace file, and the sync census, the merge and the fork point all ask this
+	/// (soak R2, 2026-09-25: each device's digest rode the `files` section and none ever
+	/// agreed). The directory itself counts, as the engine's `under` does.
+	var APP_STATE_RE = /^system\/(?:agents|guide|usage)(?:\/|$)/;
+	function isAppStatePath(path) {
+		return APP_STATE_RE.test(String(path || ''));
+	}
+
 	/// Can a reference be opened from the workspace named by `key`? The same root
 	/// kind, and for a machine folder the same name where the reference carries
 	/// one. A reference from before roots were recorded fits either, and so does
@@ -556,6 +569,7 @@
 		rootKey: rootKey,
 		fits: fits,
 		isStorePath: isStorePath,
+		isAppStatePath: isAppStatePath,
 		isMark: isMark,
 		parseSidecar: parseSidecar,
 		/// The built-in entries, given once by daimond.js beside `DEFAULT_IDS`.

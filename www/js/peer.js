@@ -320,6 +320,9 @@
 			// now and need not wait for a version; 0 is the old behaviour (a runner on an
 			// older build), where the parcel is the first sight of it.
 			finalTail: o.finalTail | 0,
+			// THE RUNNER THAT SENT IT, on a hand-back: the claim `leaseReclaim` may vacate.
+			// '' from an older runner, whose hand-back waits for its own release.
+			by:      String(o.by || ''),
 			ts:      o.ts || Date.now(),
 		};
 	}
@@ -3331,14 +3334,42 @@
 		return res;
 	}
 
-	/// The write itself.
-	async function leaseRevokeCas(turnId, cas, nowFn) {
+	/// VACATE the claim `holder` took for errand `eid`, and only that claim, only while it has
+	/// not started: the sender's half of a hand-back (hand-off QA F7, 2026-09-25). A runner
+	/// reports `undeliverable` from its reconstruct, before anything runs, and releases its
+	/// lease after; one that died between the two held the turn to the errand's deadline, and
+	/// [Run here] with it. The report is the runner's word that it stopped, so the sender
+	/// does the release itself. A claim that moved on -- another holder, another errand, or
+	/// `running` -- is left alone and answered `{ ok: false, why }`.
+	async function leaseReclaim(turnId, holder, eid, cas, nowFn) {
+		var h = String(holder || ''), id = String(eid || '');
+		var res = await leaseRevokeCas(turnId, cas, nowFn, function (cur) {
+			if (!h || cur.holder !== h) return 'holder';
+			if (String(cur.eid || '') !== id) return 'eid';
+			return cur.mode === 'claimed' ? '' : cur.mode;
+		});
+		dsHandoff({
+			act:  'reclaim',
+			turn: String(turnId).slice(0, 24),
+			ok:   res && res.ok ? 1 : 0,
+			why:  String((res && res.why) || '').slice(0, 16),
+		});
+		return res;
+	}
+
+	/// The write itself. `guard(cur)` answers '' to go on, or why to stand down.
+	async function leaseRevokeCas(turnId, cas, nowFn, guard) {
 		var tid = String(turnId);
 		for (var attempt = 0; attempt < MAX_TAKE_TRIES; attempt++) {
 			var snap = await cas.read();
 			var now  = leaseNow(nowFn);
 			var cur  = snap.leases[tid];
 			if (!cur || cur.mode === 'released') return { ok: true };	// already vacant
+			var stop = guard ? guard(cur) : '';
+			if (stop) {
+				_leases = mergeLeases(_leases, snap.leases, now);
+				return { ok: false, why: stop };
+			}
 			// `renewedAt` at least the current record's, so the same-holder merge's
 			// released-wins tie-break (or a strictly-greater renew) always keeps this
 			// over the peer's live running record -- a fast-clock peer cannot outbid it.
@@ -3695,6 +3726,7 @@
 		release:   function (turnId, holder, cas, nowFn) { return leaseSet(turnId, holder, 'released', cas, nowFn); },
 		/// The phone's take-back: revoke whoever holds the lease (§3.3).
 		revoke:    leaseRevoke,
+		reclaim:   leaseReclaim,
 		/// THE BLOCKER: raise what is stopping the runner onto its own lease record,
 		/// clear it when it is answered, and read the live one off a turn. Only the
 		/// holder may write; every device reads.
@@ -4059,7 +4091,7 @@
 				try { if (typeof console !== 'undefined') console.error('peer: reconstruct '
 					+ (undeliverable ? 'undeliverable' : 'failed') + ' for turn ' + turnId + ' -- ' + rwhy); } catch (e2) {}
 				try { if (d.post) await d.post(reportFor(e, {
-					status: undeliverable ? 'undeliverable' : 'error', why: rwhy })); }
+					status: undeliverable ? 'undeliverable' : 'error', why: rwhy, by: d.selfId })); }
 				catch (e2) { /* the release below still frees the turn */ }
 				try { await leaseSet(turnId, d.selfId, 'released', d.cas, leaseClock); trace.push('release'); }
 				catch (e2) { /* an unreleased lease still expires at its deadline */ }
@@ -4679,22 +4711,24 @@
 	}
 
 	/// One transcript message as a streamed structured row, or null for a view-only
-	/// row a watcher does not draw. Content is kept in full up to `PROGRESS_MSG_CHARS`.
+	/// row a watcher does not draw. Content is kept in full up to `PROGRESS_MSG_CHARS`,
+	/// and in full whatever its length when `full` is set (`turnRows`).
 	///
 	/// `whole: 1` says nothing was cut from it. The sender makes a final frame's rows its
 	/// real answer only when every row says so (`adoptFinalFrame`); a cut row would be a
 	/// truncated answer kept for good if the runner's own copy never arrived.
-	function progressRow(m) {
+	function progressRow(m, full) {
 		if (!m || !m.role || !PROGRESS_ROLES[m.role]) return null;
+		var lim = full ? Infinity : PROGRESS_MSG_CHARS;
 		var c = String(m.content == null ? '' : m.content);
-		var cut = c.length > PROGRESS_MSG_CHARS;
-		if (cut) c = c.slice(0, PROGRESS_MSG_CHARS);
+		var cut = c.length > lim;
+		if (cut) c = c.slice(0, lim);
 		var row = { mid: String(m.mid || ''), role: m.role, content: c, ts: +m.ts || 0 };
 		if (m.name)        row.name    = String(m.name);
 		if (m.outcome)     row.outcome = String(m.outcome);
-		if (m.args && String(m.args).length > PROGRESS_MSG_CHARS) cut = true;
-		if (m.args)        row.args    = String(m.args).length > PROGRESS_MSG_CHARS
-			? String(m.args).slice(0, PROGRESS_MSG_CHARS) : String(m.args);
+		if (m.args && String(m.args).length > lim) cut = true;
+		if (m.args)        row.args    = String(m.args).length > lim
+			? String(m.args).slice(0, lim) : String(m.args);
 		if (m.callId)      row.callId  = String(m.callId);
 		if (m.folded)      row.folded  = m.folded | 0;
 		if (m.kept)        row.kept    = m.kept | 0;
@@ -4703,8 +4737,104 @@
 		// streaming it means the FINAL provisional row byte-matches the parcel copy's
 		// `msgSig`, so the merge is a no-op redraw rather than a rebuild.
 		if (m.ranOn)       row.ranOn   = String(m.ranOn);
+		// And the run's own figures (hand-off QA F5): an adopted final frame is the answer
+		// on the sender, so it carries what the runner's copy would, or its tile says
+		// nothing of the model, time, tokens or cost when that copy never replaces it.
+		RAN_FACTS.forEach(function (k) { if (m[k] != null && m[k] !== '') row[k] = ranFact(k, m[k]); });
 		if (!cut)          row.whole   = 1;
 		return row;
+	}
+
+	// The figures `runTurn` stamps on a handed-off answer, and their types off the door.
+	var RAN_FACTS = ['ranMs', 'ranModel', 'ranTokIn', 'ranTokOut', 'ranCost'];
+	function ranFact(k, v) { return k === 'ranModel' ? String(v) : (+v || 0); }
+
+	/// A frame's rows as the door's payload, `{v:1, msgs:[...]}` JSON, fitted to the door:
+	/// `budget` is `{chars, bytes}` and `weigh(text)` what a text adds (sync.js
+	/// `progressBudget`, `progressWeight`). Whole rows are left out from the OLDEST end, as
+	/// `progressTail` leaves them, and none is ever cut: the door's own guard slices the
+	/// string and its 413 halves it, and either cuts the JSON, so an unfitted frame over the
+	/// line was lost (r52d Open 1: `whole: 1` adds ten bytes a row, and tool arguments are
+	/// not in the content budget at all). A frame that left rows out is not the whole turn,
+	/// so no row of it says so. '' when not even the newest row fits. Without a budget, the
+	/// rows as they are.
+	///
+	/// `extra` adds fields beside `msgs` (a final frame's `ref` and `n`, `finalRef`), weighed
+	/// with the shell so the rows are fitted to what is left.
+	function frameJson(rows, budget, weigh, extra) {
+		if (!Array.isArray(rows) || !rows.length) return '';
+		var parts, head = '{"v":1,';
+		try {
+			parts = rows.map(function (r) { return JSON.stringify(r); });
+			if (extra) Object.keys(extra).forEach(function (k) {
+				if (k !== 'v' && k !== 'msgs') head += JSON.stringify(k) + ':' + JSON.stringify(extra[k]) + ',';
+			});
+		}
+		catch (e) { return ''; }
+		head += '"msgs":[';
+		var all = head + parts.join(',') + ']}';		// JSON.stringify({ v: 1, ...extra, msgs: rows })
+		if (!budget || typeof weigh !== 'function') return all;
+		var shell = weigh(head + ']}');
+		var chars = shell.chars, bytes = shell.bytes, keep = 0;
+		for (var i = parts.length - 1; i >= 0; i--) {
+			var w = weigh(parts[i]), sep = keep ? 1 : 0;		// the comma between two rows
+			if (chars + w.chars + sep > budget.chars || bytes + w.bytes + sep > budget.bytes) break;
+			chars += w.chars + sep;
+			bytes += w.bytes + sep;
+			keep++;
+		}
+		if (!keep) return '';
+		if (keep === rows.length) return all;
+		var out = rows.slice(rows.length - keep).map(function (r) {
+			var c = Object.assign({}, r);
+			delete c.whole;
+			return JSON.stringify(c);
+		});
+		return head + out.join(',') + ']}';
+	}
+
+	/// EVERY row of the turn, each whole (`progressRow(m, true)`), in document order up to
+	/// the next user message: what a final frame stands for. `progressTail` is the view of it that fits one frame; these
+	/// are the rows a watcher may make its answer (`adoptFinalFrame`), so nothing is cut or
+	/// left out. [] when the turn's user message is not held.
+	function turnRows(messages, turnId) {
+		var msgs = Array.isArray(messages) ? messages : [];
+		var id   = String(turnId || '');
+		if (!id) return [];
+		var at = -1;
+		for (var i = 0; i < msgs.length; i++) {
+			var m = msgs[i];
+			if (m && m.role === 'user' && (String(m.mid || '') === id || String(m.iturn || '') === id)) { at = i; break; }
+		}
+		if (at < 0) return [];
+		var out = [];
+		for (var j = at + 1; j < msgs.length; j++) {
+			if (msgs[j] && msgs[j].role === 'user') break;		// the next turn's, not this one's
+			var row = progressRow(msgs[j], true);
+			if (row) out.push(row);
+		}
+		return out;
+	}
+
+	// ── A final frame larger than the door (hand-off QA F4, 2026-09-25) ──
+	//
+	// The door keeps ONE frame per account (gateway `put_progress`: a frame for any other
+	// turn id reclaims the last), newest wins, so a final frame cannot be paged across
+	// several frames: a watcher reading on a tap or a 4 s tick sees only the last page. So
+	// the whole rows travel as content chunks, the door the Diamonds' bytes and a compile's
+	// files already take, and the final frame names them: `{v:1, ref, n, msgs}`, where
+	// `msgs` is the view that fits (`progressTail`, cut, never adopted) and `ref` the
+	// manifest of `{v:1, turn, msgs}` holding every row whole. A chunk nobody commits is
+	// swept after the gateway's day of grace, long past any hand-off's deadline.
+
+	/// The rows a final frame's chunk holds, checked: `obj` is the parsed chunk body, and
+	/// the answer is its rows when it is this turn's, carries `n` rows, and every one is
+	/// whole, or null. Untrusted until then, as everything off the door is.
+	function refRows(obj, turnId, n) {
+		if (!obj || obj.v !== 1 || String(obj.turn || '') !== String(turnId || '')) return null;
+		if (!Array.isArray(obj.msgs) || !obj.msgs.length) return null;
+		if ((n | 0) && obj.msgs.length !== (n | 0)) return null;
+		return frameWhole(obj.msgs) ? obj.msgs : null;
 	}
 
 	/// Is a frame the whole of what it streams: rows, every one marked `whole` by
@@ -4801,10 +4931,16 @@
 		}
 		if (!changed) return null;
 		if (!add.length) return msgs.slice();			// in-place growth only: same order, new content
-		// AFTER the placeholder (or at the tail when there is none), in the frame's
+		// AFTER the placeholder (or, when there is none, after the turn's own last row, so a
+		// final frame folded once a later turn has begun stays with its turn), in the frame's
 		// order -- so while the placeholder is the last message an add is a pure append.
 		var out = msgs.slice();
-		var insAt = placeAt >= 0 ? placeAt + 1 : out.length;
+		var endAt = userAt;
+		for (var e = userAt + 1; e < out.length; e++) {
+			if (out[e] && out[e].role === 'user' && String(out[e].iturn || '') !== id) break;
+			endAt = e;
+		}
+		var insAt = placeAt >= 0 ? placeAt + 1 : endAt + 1;
 		out.splice.apply(out, [insAt, 0].concat(add));
 		return out;
 	}
@@ -4824,6 +4960,7 @@
 		if (r.kept)        m.kept    = r.kept | 0;
 		if (r.interrupted) m.interrupted = 1;
 		if (r.ranOn)       m.ranOn   = String(r.ranOn);
+		RAN_FACTS.forEach(function (k) { if (r[k] != null && r[k] !== '') m[k] = ranFact(k, r[k]); });
 		return m;
 	}
 	/// Copy a provisional row's drawable fields onto an existing one, in place, so the
@@ -4833,6 +4970,7 @@
 		dst.name = src.name; dst.outcome = src.outcome; dst.args = src.args;
 		dst.callId = src.callId; dst.folded = src.folded; dst.kept = src.kept;
 		dst.interrupted = src.interrupted; dst.ranOn = src.ranOn;
+		RAN_FACTS.forEach(function (k) { if (src[k] != null) dst[k] = src[k]; else delete dst[k]; });
 	}
 	/// The drawable signature of a provisional row -- what a redraw or the transcript's
 	/// own `msgSig` would read, so an unchanged frame folds to null AND the final frame's
@@ -4842,7 +4980,7 @@
 		var c = m.content == null ? '' : String(m.content);
 		return m.role + '#' + c.length + '#' + (m.outcome || '') + '#' + (m.name || '')
 			+ '#' + (m.folded || 0) + '#' + (m.kept || 0) + '#' + (m.interrupted ? 1 : 0)
-			+ '#' + (m.ranOn || '');
+			+ '#' + (m.ranOn || '') + '#' + (m.ranMs || 0);
 	}
 
 	// The control a dispatched turn's footer offers, given its §5 display state. The
@@ -4968,6 +5106,10 @@
 		uiState:       uiState,
 		settledLease:  settledLease,
 		frameWhole:    frameWhole,
+		frameJson:     frameJson,
+		turnRows:      turnRows,
+		refRows:       refRows,
+		PROGRESS_MSG_CHARS: PROGRESS_MSG_CHARS,
 		watchDecision: watchDecision,
 		handoffDeadline: handoffDeadline,
 		handoffExpired:  handoffExpired,

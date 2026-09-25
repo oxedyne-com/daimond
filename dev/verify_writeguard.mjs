@@ -11,7 +11,17 @@
 // was true for the wrong reason: it passed with the entire stale-write guard deleted,
 // because the write never reached it. Seeded and written inside the scratch, the guard
 // is reachable again and the check has a subject.
-import { open, chat, newChat, errors } from './harness.mjs';
+//
+// READ THE TRANSCRIPT EXPANDED (2026-09-25, D-28 overnight plan 10:33). Every Tool tile
+// (`www/js/daimond.js` `buildTile('tool', { expanded: false, … })`) starts collapsed, and
+// `app.css` hides a collapsed tile's body (`display:none`), which `chat()`'s plain
+// `transcript()` (`.innerText`) then cannot see -- true of the very first `@tool
+// file_read` alone, and doubly true once two or more in a row (no user bubble between
+// them) also roll up into one closed `.crollup`. The product refuses the stale write
+// correctly; the verifier's `out` held no "changed on disk" because that text was
+// collapsed out of `innerText`, not because it was not there. `transcriptExpanded` opens
+// every tile and rollup first, so the checks below read what the page actually says.
+import { open, chat, newChat, errors, transcriptExpanded } from './harness.mjs';
 
 const ok = [], bad = [];
 const check = (name, pass, detail) => {
@@ -53,7 +63,8 @@ const readFile = (p) => s.page.evaluate(async (p) => {
 
 // Seed g.txt = v1, then have the agent READ it (records its hash in read_seen).
 await putFile(G, 'ORIGINAL-v1');
-const readOut = await chat(s, `@tool file_read {"path":"${G}"}`);
+await chat(s, `@tool file_read {"path":"${G}"}`);
+const readOut = await transcriptExpanded(s);
 // THE READ HAS TO LAND. Nothing below means anything if the agent never saw the
 // file: with no entry in `read_seen` a whole-file write is not stale, it is simply
 // a write, and the refusal this test is about could not arise however broken the
@@ -66,7 +77,8 @@ check('the agent really read the file, so the guard has something to compare aga
 await putFile(G, 'AGENT-B-WROTE-THIS');
 
 // The first agent now writes a stale whole-file over it.
-const out = await chat(s, `@tool file_write {"path":"${G}","content":"STALE-CLOBBER"}`);
+await chat(s, `@tool file_write {"path":"${G}","content":"STALE-CLOBBER"}`);
+const out = await transcriptExpanded(s);
 const after = await readFile(G);
 console.log('--- write-turn transcript tail ---\n' + out.slice(-300));
 console.log('file after stale write:', JSON.stringify(after));
@@ -77,7 +89,8 @@ check('AGENT B WORK PRESERVED — the other agent\'s bytes are still on disk',
 	after === 'AGENT-B-WROTE-THIS', JSON.stringify(after));
 // The other half, and the reason a refusal is not enough on its own: the guard
 // must refuse THIS write and not writing in general.
-const fresh = await chat(s, `@tool file_write {"path":"${dir}/h.txt","content":"UNRELATED"}`);
+await chat(s, `@tool file_write {"path":"${dir}/h.txt","content":"UNRELATED"}`);
+const fresh = await transcriptExpanded(s);
 check('and a file this agent never read is still written — the guard refuses staleness, not writing',
 	await readFile(dir + '/h.txt') === 'UNRELATED', fresh.slice(-140).replace(/\n/g, ' | '));
 

@@ -905,6 +905,69 @@ check('a SKILL.md marked in on its own is walked as a file, even when its own fo
 	skillBadLogs.length === 0 && skillShare.complete === true && skillShare.roots.indexOf(SKILL_FILE) >= 0,
 	skillBadLogs.join(' | ') || `roots ${skillShare.roots.join(', ')}, complete=${skillShare.complete}`);
 
+// ═══════════════════════════════════════════════════════════════════════
+// TOMB GUARD — fix/r53-tombguard (D-open-2, `specs/daimond_fixbrief_r52_del_
+// 20260925.md`, "Open items" §2): unshare a marked SKILL.md and it drops out
+// of every walk this device makes -- a dotfile no ordinary traversal opens,
+// and no longer a root of its own -- so a census over the OTHER roots is
+// honestly complete while saying nothing whatever about this path. Before
+// the guard, `noteFileTombs` read that silence as a deletion; the file has
+// not moved.
+// ═══════════════════════════════════════════════════════════════════════
+console.log('\n— tomb guard: unsharing a SKILL.md must never tomb it while it sits on disk —');
+
+// An honest fork point first, taken the way a landed push leaves one
+// (`syncCommitBaseline` with no argument: the parcel this device would
+// collect now). The skill is still shared at this point.
+await A.page.evaluate(() => window.DaimondCore.syncCommitBaseline());
+const tombBefore = await A.page.evaluate((p) => window.DaimondCore.syncFileTombs()[p], SKILL_FILE);
+check('the shared skill starts with no tombstone',
+	tombBefore === undefined, 'tombBefore ' + JSON.stringify(tombBefore));
+
+// The person turns sharing off for the skill alone -- the same two writes
+// `toggleAttachShare`'s "on" branch makes, in reverse. Not a delete: the
+// bytes never move, and `remove_link`/the folder removal below have not run.
+const unshared = await A.page.evaluate(async ({ id, linkId }) => {
+	const app = DaimondCore.diamondApp();
+	const rows = JSON.parse(await app.links_touching('diamond:' + id) || '[]');
+	const row = rows.find((l) => l.id === linkId);
+	if (!row) return false;
+	try { await app.set_link_share(id, linkId, false); } catch (e) { /* legacy row */ }
+	return DaimondMarksHere.setShare(id, row, DaimondAttach.root(), false);
+}, { id: did, linkId: skillLinkId });
+check('sharing came off cleanly', unshared === true, 'setShare returned ' + unshared);
+await A.page.evaluate(() => window.DaimondCore.syncClearWalkCache());
+
+const afterUnshare = await A.page.evaluate(async (p) => {
+	const s   = await window.DaimondCore.syncFolderShare();
+	const col = await window.DaimondCore.collectSync();
+	return { roots: s.roots, complete: col.filesComplete, hasFile: p in col.files,
+		tomb: window.DaimondCore.syncFileTombs()[p] };
+}, SKILL_FILE);
+check('the census over what remains still calls itself complete, and no longer visits the skill',
+	afterUnshare.complete === true && afterUnshare.roots.indexOf(SKILL_FILE) < 0 && afterUnshare.hasFile === false,
+	`complete=${afterUnshare.complete}, roots [${afterUnshare.roots.join(', ')}], carried=${afterUnshare.hasFile}`);
+check('yet the unshared SKILL.md — untouched on disk — raises no tombstone',
+	afterUnshare.tomb === undefined,
+	afterUnshare.tomb === undefined ? 'none' : 'WRONGLY tombed: ' + JSON.stringify(afterUnshare.tomb));
+
+const stillOnDisk = await A.page.evaluate(async (p) =>
+	!!(await window.DaimondCloud.fileUnderRoot(window.DaimondFiles.folder(), p)), SKILL_FILE);
+check('and the bytes really are still there — read straight off the folder, never through the walk',
+	stillOnDisk === true, 'fileUnderRoot found nothing at ' + SKILL_FILE);
+
+// Sharing goes back on, so the cleanup below is the only deletion this
+// fixture is taken to mean, and nothing later reads a stale unshared root.
+await A.page.evaluate(async ({ id, linkId }) => {
+	const app = DaimondCore.diamondApp();
+	const rows = JSON.parse(await app.links_touching('diamond:' + id) || '[]');
+	const row = rows.find((l) => l.id === linkId);
+	if (!row) return;
+	try { await app.set_link_share(id, linkId, true); } catch (e) { /* legacy row */ }
+	DaimondMarksHere.setShare(id, row, DaimondAttach.root(), true);
+}, { id: did, linkId: skillLinkId });
+await A.page.evaluate(() => window.DaimondCore.syncClearWalkCache());
+
 // UNMARKED AND REMOVED, rather than left to ride through every later guard: this
 // fixture proves only the one narrow thing above, and a `.daimond/` path lingering
 // in the Diamond's marks for the rest of the run is untested territory for every
