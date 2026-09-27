@@ -1,3 +1,4 @@
+// gateway: none
 // The stale-write guard: an agent that read a file, then finds it changed on
 // disk (another agent), must have its whole-file write REFUSED, not clobber.
 //

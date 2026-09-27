@@ -1,3 +1,4 @@
+// gateway: none
 // verify_terminal.mjs — the terminal draws what it was sent, and sends what was typed.
 //
 // The panel has two boundaries and both of them are testable. On the way in, bytes become a

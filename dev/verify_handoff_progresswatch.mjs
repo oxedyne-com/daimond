@@ -1,3 +1,4 @@
+// gateway: live
 // verify_handoff_progresswatch.mjs — watching handed-off turns holds no connection
 // per turn, and stops for a turn nothing can answer.
 //

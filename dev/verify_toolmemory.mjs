@@ -1,3 +1,4 @@
+// gateway: none
 // Does the agent remember its own tool calls across turns?
 // Turn 1 makes a tool call. Turn 2 asks a follow-up. What does the model see
 // on turn 2 — the earlier assistant tool_call + tool result, or nothing?

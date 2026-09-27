@@ -1,3 +1,4 @@
+// gateway: live
 // verify_pauseunseed.mjs — a pause stands however it reaches a device, and catches a turn
 // that is already running.
 //

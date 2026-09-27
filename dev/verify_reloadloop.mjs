@@ -1,3 +1,4 @@
+// gateway: none
 // verify_reloadloop.mjs — a tab the gateway keeps refusing must not reload for ever.
 //
 // THE BUG THIS IS FOR. An iPhone reported, three times across three sessions:

@@ -1,3 +1,4 @@
+// gateway: none
 // verify_attachroot.mjs — an attachment remembers which workspace it was made in.
 //
 // THE DEFECT THIS PINS. An attachment was recorded as a bare path. A folder

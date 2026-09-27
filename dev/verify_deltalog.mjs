@@ -1,3 +1,4 @@
+// gateway: none
 // verify_deltalog.mjs — crystal version history is a delta log, and every
 // version in it still comes back byte for byte.
 //

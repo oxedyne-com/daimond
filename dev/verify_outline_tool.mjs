@@ -1,3 +1,4 @@
+// gateway: none
 // verify_outline_tool.mjs -- `outline` maps a file, in the browser, for each language it reads.
 //
 // WHAT THIS FILE IS ABOUT. A model that does not know a file had two ways in and neither answered

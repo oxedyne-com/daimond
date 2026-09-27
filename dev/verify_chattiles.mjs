@@ -1,3 +1,4 @@
+// gateway: none
 // verify_chattiles.mjs — notes4 "= Chats", items 1 and 2, plus the ordering fix.
 //
 // Three properties, each traced to a real complaint in notes4:

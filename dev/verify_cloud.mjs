@@ -1,3 +1,4 @@
+// gateway: own
 // verify_cloud.mjs — cloud storage is where the workspace lives, and the device
 // holds as much of it as it can.
 //

@@ -1,3 +1,4 @@
+// gateway: none
 // verify_toolleak.mjs — a tool call that arrives as PROSE never ends a turn as an answer.
 //
 // ── WHY ──────────────────────────────────────────────────────────────────────

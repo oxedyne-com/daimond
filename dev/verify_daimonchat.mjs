@@ -1,3 +1,4 @@
+// gateway: none
 // verify_daimonchat.mjs — phase E: a Diamond has a chat, and the daimon remembers.
 //
 // Notes2, in the user's own words: *"The idea of just having a prompt box and

@@ -1,3 +1,4 @@
+// gateway: none
 // verify_system.mjs — phase F: Daimond's own store is visible, and the rules
 // come in two layers.
 //

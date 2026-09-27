@@ -1,3 +1,4 @@
+// gateway: none
 // verify_streammerge.mjs — the mergeMessages streamed-growth rule, in isolation.
 //
 // The streaming hand-off relies on a peer's IN-PROGRESS transcript converging as

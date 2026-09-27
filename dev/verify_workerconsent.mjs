@@ -1,3 +1,4 @@
+// gateway: none
 // verify_workerconsent.mjs — a worker cannot ask, so the APP asks for it.
 //
 // `SAFETY_CLAUSE` (src/prompts.rs) tells every tool-holding role: "Never take an

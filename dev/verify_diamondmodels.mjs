@@ -1,3 +1,4 @@
+// gateway: none
 // verify_diamondmodels.mjs — phase D: the models a Diamond runs on, and the fold.
 //
 // Five properties, each one a thing notes2 asks for and none of which could be

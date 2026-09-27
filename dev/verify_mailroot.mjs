@@ -1,3 +1,4 @@
+// gateway: none
 // verify_mailroot.mjs — a mailbox belongs to the account, not to whichever folder is open.
 //
 // `mail/<address>/…` was NOT one of Daimond's own roots, so every path the mail

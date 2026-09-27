@@ -1,3 +1,4 @@
+// gateway: none
 // verify_migration.mjs — a workspace written before the rename must open with everything in it.
 //
 // The Red → Daimond rename moved two things a user's workspace actually holds: the per-Diamond

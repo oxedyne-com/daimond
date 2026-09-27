@@ -1,3 +1,4 @@
+// gateway: none
 // verify_railkeys.mjs — a Diamond and a chat can be opened from the keyboard.
 //
 // Both were severity-1 findings (dev/a11y_report.md §1 and §2) and both were

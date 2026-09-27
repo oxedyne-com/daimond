@@ -1,3 +1,4 @@
+// gateway: none
 // Can a first-time visitor SEE the button they came here to press?
 //
 // The question is asked the way a person meets the screen: the card at the top

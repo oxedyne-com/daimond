@@ -1,3 +1,4 @@
+// gateway: none
 // verify_gitcred.mjs — the push credential, from the box it is typed into to the
 // engine that holds it, across a reload.
 //

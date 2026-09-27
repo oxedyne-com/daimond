@@ -1,3 +1,4 @@
+// gateway: none
 // verify_pickers.mjs — a chat and a Diamond each run on the model they were started with.
 //
 // With one provider, "which model" and "whose key" were the same question. With a key per

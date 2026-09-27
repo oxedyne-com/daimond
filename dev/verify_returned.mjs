@@ -1,3 +1,4 @@
+// gateway: none
 // verify_returned.mjs — the proposer's RETURNED-NOTES inbox (js/improve.js).
 //
 // A proposal this device raised may be DECLINED by an operator, and the decline carries a one-line

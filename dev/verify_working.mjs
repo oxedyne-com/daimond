@@ -1,3 +1,4 @@
+// gateway: none
 // The model's own working, after it has been demoted — note 05 of the 2026-08-27 round.
 //
 // Verbatim: *"Chats are losing responses from models. I see some response text from a model,

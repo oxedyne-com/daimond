@@ -1,3 +1,4 @@
+// gateway: none
 // verify_workerdrop.mjs — an interrupted worker gets the Continue the chat already has.
 //
 // THE ASYMMETRY. A chat turn cut off by a dead road or a dying tab comes back badged, with a

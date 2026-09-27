@@ -1,3 +1,4 @@
+// gateway: none
 // dev/verify_feed.mjs -- the followers-only feed, client side: the wire it speaks,
 // the screens it draws, and the three things it must never say.
 //
@@ -680,12 +681,20 @@ wireA.st.followAnswer = { ok: true };
 // ── 11. What never leaves the browser ────────────────────────────────
 
 console.log('\n11. nothing on the wire but a body, a key and a reason');
-const fields = [...wireA.log, ...wireB.log]
+const bodies = [...wireA.log, ...wireB.log]
 	.filter(r => r.body && typeof r.body === 'object' && r.what !== 'report')
-	.flatMap(r => Object.keys(r.body));
+	.map(r => r.body);
+// Since 5.1 (5ee0d31e, D126) the relay acks per device, so an ack -- the one body
+// that carries `through` -- names the acking device (`post.js` `tellRelay`). That
+// is the only place a device id may ride: on any other request it is a leak.
+const fields = bodies.flatMap(b => Object.keys(b).filter(k => !(k === 'device' && 'through' in b)));
 const allowed = ['body', 'id', 'peer', 'action', 'to', 'addr', 'envelope', 'seq', 'through'];
 check('every feed request carries only the fields the contract names',
 	fields.every(f => allowed.includes(f)), [...new Set(fields)]);
+const devNamed = bodies.filter(b => 'device' in b);
+check('and a device is named only on an ack, as this device\'s own id',
+	devNamed.every(b => 'through' in b && /^[0-9a-f]{32}$/.test(String(b.device))),
+	devNamed.map(b => Object.keys(b).join('+') + '=' + b.device));
 const reportFields = wireB.log.filter(r => r.what === 'report').flatMap(r => Object.keys(r.body));
 check('and a report carries only the post and the reason',
 	reportFields.every(f => ['post', 'reason'].includes(f)), [...new Set(reportFields)]);

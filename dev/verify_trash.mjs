@@ -1,3 +1,4 @@
+// gateway: none
 // verify_trash.mjs — deleting is reversible, and the reversal travels.
 //
 // WHY THIS FILE EXISTS. "Delete all chats" shipped with a dialog and no trash.

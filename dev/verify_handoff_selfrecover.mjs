@@ -1,3 +1,4 @@
+// gateway: live
 // verify_handoff_selfrecover.mjs — WS-HAND #1/#2 (the MONEY defect), #5 (one tile on
 // a re-seat) and #6 (a refused hand-off is rendered), end to end in REAL contexts.
 //
@@ -70,7 +71,7 @@
 //   node dev/verify_handoff_selfrecover.mjs --break   # revert holdOwnDispatch AND the
 //                                                      # lease's settled-stamp
 
-import { open, chat, signInAs, newChat, connectMock, shot, storedChats, mockLog, clearMockLog, contentText } from './harness.mjs';
+import { open, chat, signInAs, newChat, connectMock, shot, servedChats, mockLog, clearMockLog, contentText } from './harness.mjs';
 import { makePagePro } from './pro.mjs';
 import { GW_URL } from './ports.mjs';
 
@@ -96,11 +97,11 @@ async function until(pg, fn, arg, ms = 30000, step = 500) {
 async function untilChats(s, pred, ms = 30000, step = 500) {
 	const t0 = Date.now();
 	while (Date.now() - t0 < ms) {
-		let cs = []; try { cs = await storedChats(s); } catch (e) { cs = []; }
+		let cs = []; try { cs = await servedChats(s); } catch (e) { cs = []; }
 		try { if (pred(cs)) return cs; } catch (e) {}
 		await s.page.waitForTimeout(step);
 	}
-	try { return await storedChats(s); } catch (e) { return []; }
+	try { return await servedChats(s); } catch (e) { return []; }
 }
 const allMsgs = (cs) => (cs || []).flatMap((c) => (c.messages || []));
 const dispatchedRows = (cs, needle) => allMsgs(cs).filter((m) => m.why === 'dispatched' && new RegExp(needle, 'i').test(m.itext || ''));
@@ -316,7 +317,7 @@ try {
 	// ever touched the peer/lease machinery. A row on B is not evidence of a re-run;
 	// see the header for the run this was measured on.
 	await b.page.unroute('**/api/sync');
-	const bChats = await storedChats(b);
+	const bChats = await servedChats(b);
 	const bAns = tid ? allMsgs(bChats).filter((m) => m.role === 'assistant' && String(m.iturn) === String(tid) && m.content && m.content.trim()).length : 0;
 	console.log('  note  B holds ' + bAns + ' assistant row(s) for the turn (via ordinary sync, once unblocked -- not asserted on)');
 
@@ -384,7 +385,7 @@ try {
 			completions.length >= 2, 'completions for this turn: ' + completions.length);
 	}
 
-	const aChats = await storedChats(a);
+	const aChats = await servedChats(a);
 	const aAns = tid ? answersFor(aChats, 'selfrec').filter((m) => String(m.iturn) === String(tid)).length : answersFor(aChats, 'selfrec').length;
 	check('#1: A has (at least) one assistant row for the turn', aAns >= 1, 'A answers for iturn: ' + aAns);
 
@@ -461,7 +462,7 @@ try {
 	// and re-beating B's presence and waiting 5s longer before sending did not change it --
 	// so this is not a timing race this file's own waits can close. Left asserting (not
 	// silenced) so a fix or a further regression both show up here.
-	const bigDispatched = dispatchedRows(await storedChats(a), 'bigprompt').length;
+	const bigDispatched = dispatchedRows(await servedChats(a), 'bigprompt').length;
 	if (!bigDispatched) console.log('  note  quarantined: A never attempted a peer for this prompt (0 dispatched rows) -- '
 		+ 'the size-refusal path the two checks above are about was never reached; see the note above them');
 	await a.page.unroute('**/api/post');
@@ -508,7 +509,7 @@ try {
 		const n = await a.page.evaluate((t) => document.querySelectorAll('.ctile[data-t="handoff"][data-handoff-turn="' + t + '"]').length, tid5);
 		if (n > tiles) tiles = n;
 		if (n > 0) tilesEverSeen = true;
-		const r = tid5 ? dispatchedRows(await storedChats(a), 'reseat').filter((m) => String(m.iturn) === String(tid5)).length : 0;
+		const r = tid5 ? dispatchedRows(await servedChats(a), 'reseat').filter((m) => String(m.iturn) === String(tid5)).length : 0;
 		if (r > rows) rows = r;
 		if (r > 0) rowsEverSeen = true;
 		if (n > 1 || r > 1) break;			// already failing; no need to keep polling

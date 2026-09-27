@@ -1,3 +1,4 @@
+// gateway: none
 // The stale-write guard must not get in the way of ordinary work: a new file, a
 // read, and then the agent's own update of what it read, all in one chat.
 //

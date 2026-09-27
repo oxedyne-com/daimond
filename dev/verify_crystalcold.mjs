@@ -1,3 +1,4 @@
+// gateway: none
 // verify_crystalcold.mjs — a Diamond's memory is bigger than what rides in the prompt,
 // and what is not in the prompt is still reachable.
 //

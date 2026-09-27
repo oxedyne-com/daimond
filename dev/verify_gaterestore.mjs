@@ -1,3 +1,4 @@
+// gateway: none
 // verify_gaterestore.mjs — restoring a backup at the gate makes the account FROM
 // the backup's own identity, in a browser that has never held one.
 //

@@ -1,3 +1,4 @@
+// gateway: none
 // verify_reflux.mjs — the door a daimon reaches `dev/reflux.mjs` through.
 //
 // `dev/BLOCKERS.md` B13, in the two sentences two lanes wrote it in:

@@ -1,3 +1,4 @@
+// gateway: none
 // verify_nogutter.mjs — no zone reserves room for nothing.
 //
 // The fifth property search, after reversible, escapable, focus and errnames.

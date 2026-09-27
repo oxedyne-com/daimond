@@ -1,3 +1,4 @@
+// gateway: none
 // verify_snapshotmix.mjs — two devices record crystal versions in one Diamond, sync both ways, and
 // every version number still reads as one device's memory.
 //

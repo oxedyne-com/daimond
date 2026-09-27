@@ -1,3 +1,4 @@
+// gateway: none
 // verify_drafts.mjs — what somebody is half-way through typing survives a
 // reload, and does NOT thereby become a send queue.
 //

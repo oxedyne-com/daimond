@@ -1,3 +1,4 @@
+// gateway: none
 // verify_wasmpanic.mjs — a Rust panic must say where it happened.
 //
 // WHY. There was no panic hook in this app at all, and a wasm panic without one

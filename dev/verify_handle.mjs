@@ -1,3 +1,4 @@
+// gateway: none
 // verify_handle.mjs — the account has a public name, every device of it agrees,
 // and the name never restamps itself on the way through.
 //

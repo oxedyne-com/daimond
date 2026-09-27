@@ -1,3 +1,4 @@
+// gateway: none
 // verify_safemode.mjs — the app can be asked to start without the sync engine,
 // and it never does so quietly.
 //

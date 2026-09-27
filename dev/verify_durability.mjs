@@ -1,3 +1,4 @@
+// gateway: none
 // verify_durability.mjs — a turn cut off by the tab dying loses nothing but the split-second in
 // flight, and can be continued.
 //

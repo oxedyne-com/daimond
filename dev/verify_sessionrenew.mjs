@@ -1,3 +1,4 @@
+// gateway: live
 // verify_sessionrenew.mjs — a gateway session that ends mid-sitting is taken
 // again, without a reload; and when it cannot be, the user is told and the
 // device stops hammering the door.

@@ -1,3 +1,4 @@
+// gateway: none
 // verify_collectheap.mjs — S-SYNC #1, the collect-heap gate (the arm-B S1 gate).
 //
 // THE BUG. Until seq 213/214 the sync collector read and held EVERY chat

@@ -1,3 +1,4 @@
+// gateway: none
 // verify_harness.mjs — the harness's own rules about where a browser is allowed
 // to paint, put to it without launching one.
 //

@@ -1,3 +1,4 @@
+// gateway: none
 // verify_prefixpeer.mjs — the attach prefix on a SECOND device's copy of a
 // daimon chat that already has turns (owner report, 2026-09-15, gilgamesh).
 //

@@ -1,3 +1,4 @@
+// gateway: live
 // verify_rekey_devices.mjs — a passphrase change on ONE device is adopted by the
 // OTHER, rather than forking the account.
 //

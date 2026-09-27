@@ -1,3 +1,4 @@
+// gateway: none
 // verify_autofill.mjs — the passphrase box and a password manager's fill.
 //
 // The gate is a real login form (see verify_genpass.mjs), so a browser or OS

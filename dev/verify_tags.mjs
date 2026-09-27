@@ -1,3 +1,4 @@
+// gateway: none
 // Verify Diamond tags: chips, search, the standing tag pool, the tag editor,
 // persistence, and the backup round trip -- against the real wasm, no stubs.
 //

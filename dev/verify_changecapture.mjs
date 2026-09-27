@@ -1,3 +1,4 @@
+// gateway: none
 // verify_changecapture.mjs — --capture then --from builds the same three trees as a
 // direct run, so the answer can be kept out of the tree that builds the engine.
 //

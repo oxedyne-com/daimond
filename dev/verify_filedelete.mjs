@@ -1,3 +1,4 @@
+// gateway: none
 // verify_filedelete.mjs — `file_delete` removes one file, on a folder-mounted Diamond as in the sandbox.
 //
 // 2026-09-22 13:38Z: a daimon on a folder-mounted Diamond (qwen3-coder), its eight `file_move`s

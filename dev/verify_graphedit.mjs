@@ -1,3 +1,4 @@
+// gateway: none
 // verify_graphedit.mjs — the Graph pane as an EDITOR, without losing the
 // instrument.
 //
@@ -473,7 +474,10 @@ await page.waitForTimeout(300);
 check(await menuUp(), `right-clicking a Diamond opens a menu`);
 const items = await page.evaluate(() =>
 	[...document.querySelectorAll('#graph-menu .graph-menu-item')].map(x => x.textContent));
-check(items.some(x => /organise/i.test(x)), `and it carries Organise: ${JSON.stringify(items)}`);
+// By the catalogue's own word for organise, which 8b6fd13b (2026-09-15) made "Tidy up".
+const organiseWord = await page.evaluate(() => window.DaimondI18n.t('graph.organise'));
+check(items.some(x => x.trim() === organiseWord.trim()),
+	`and it carries Organise (${JSON.stringify(organiseWord)}): ${JSON.stringify(items)}`);
 await shot(s, 'graphedit-4-menu');
 await page.keyboard.press('Escape');
 await page.waitForTimeout(300);

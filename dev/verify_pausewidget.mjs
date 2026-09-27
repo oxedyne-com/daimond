@@ -1,3 +1,4 @@
+// gateway: none
 // verify_pausewidget.mjs — the PPTW, searched for its properties rather than
 // walked down a happy path.
 //

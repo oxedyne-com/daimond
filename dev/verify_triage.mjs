@@ -1,3 +1,4 @@
+// gateway: none
 // verify_triage.mjs — one verb whose object is the whole list of notes.
 //
 // `www/js/triage.js` reads every kept note and the public proposal list, asks a

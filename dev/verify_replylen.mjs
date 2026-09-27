@@ -1,3 +1,4 @@
+// gateway: none
 // verify_replylen.mjs — the reply-length cap, and the context meter.
 //
 // Two defects, one file, and both of them are about a number the app believed

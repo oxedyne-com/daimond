@@ -1,3 +1,4 @@
+// gateway: none
 // verify_optimiser.mjs — the Daimond Optimiser, end to end, from a real signal to
 // a tile you can answer.
 //

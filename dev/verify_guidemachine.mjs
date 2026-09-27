@@ -1,3 +1,4 @@
+// gateway: none
 // verify_guidemachine.mjs — the Machine Operations page, rendered.
 //
 // Three questions a static read of the markup cannot answer, and one that a

@@ -1,3 +1,4 @@
+// gateway: none
 // verify_marknotice.mjs — a mark not in force on this device is said over the composer, and one
 // press puts it back.
 //

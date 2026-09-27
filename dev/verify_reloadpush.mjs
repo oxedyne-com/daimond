@@ -1,3 +1,4 @@
+// gateway: live
 // verify_reloadpush.mjs — a reload with nothing to say sends nothing.
 //
 // The sync chip cycles twice after a hard refresh, a couple of seconds apart.

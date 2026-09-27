@@ -1,3 +1,4 @@
+// gateway: none
 // verify_tapulldown.mjs -- triggered actions are chosen from a pulldown.
 //
 // notes2, verbatim: "new triggered actions (TAs) can be added with a + icon,

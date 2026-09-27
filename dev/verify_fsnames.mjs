@@ -1,3 +1,4 @@
+// gateway: none
 // verify_fsnames.mjs — a name the workspace uses, and the name the filesystem will take.
 //
 // A Maildir message is called `<uid>.<uidvalidity>.daimond:2,<flags>`. The `:2,` is the Maildir

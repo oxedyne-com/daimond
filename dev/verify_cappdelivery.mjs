@@ -1,3 +1,4 @@
+// gateway: none
 // verify_cappdelivery.mjs — the guide's capp delivery button, and the update path
 // that keeps what it delivered current.
 //

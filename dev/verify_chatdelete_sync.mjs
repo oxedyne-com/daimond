@@ -1,3 +1,4 @@
+// gateway: live
 // verify_chatdelete_sync.mjs — S-SYNC #6, the two-device delete-sync gate.
 //
 // Promoted from probe_chatdelete_sync.mjs. It proves a DELETION does not

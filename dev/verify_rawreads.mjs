@@ -1,3 +1,4 @@
+// gateway: none
 // verify_rawreads.mjs — nothing user-facing reads a file through the model's eyes.
 //
 // `run_tool('file_read')` renders a file FOR A MODEL: every line is prefixed with

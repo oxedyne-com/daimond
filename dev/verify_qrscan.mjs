@@ -1,3 +1,4 @@
+// gateway: none
 // verify_qrscan.mjs — the QR reader is held to the QR writer, at every version.
 //
 // THE WRITER IS THE ORACLE. `fe2o3_graphics::qr` is a from-scratch ISO 18004

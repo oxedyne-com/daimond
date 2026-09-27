@@ -1,3 +1,4 @@
+// gateway: none
 // verify_docroundtrip.mjs — the Doc panel shows the FILE, and saving it changes nothing.
 //
 // `file_read` is a tool that renders a file FOR A MODEL. It numbers every line

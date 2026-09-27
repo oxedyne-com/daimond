@@ -1,3 +1,4 @@
+// gateway: none
 // verify_askdrawn.mjs — the honesty of the ask ack: an `ask` the page never
 // painted must answer drawn:false, and one it did must still end the turn.
 //

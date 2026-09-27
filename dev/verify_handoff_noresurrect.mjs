@@ -1,3 +1,4 @@
+// gateway: live
 // verify_handoff_noresurrect.mjs — a handed-off turn nobody ran is never run later by
 // itself: not on another device, not on the one that sent it.
 //

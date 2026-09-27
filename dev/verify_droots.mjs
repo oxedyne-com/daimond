@@ -1,3 +1,4 @@
+// gateway: none
 // verify_droots.mjs — a Diamond is the same Diamond in either workspace mode.
 //
 // The Workspace panel switches the agent's root between the browser sandbox

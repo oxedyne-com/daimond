@@ -1,3 +1,4 @@
+// gateway: none
 // verify_daimon_selfheal.mjs — an unclaimed DAIMON dispatch self-heals, instead of
 // hanging forever.
 //

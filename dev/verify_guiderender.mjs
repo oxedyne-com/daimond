@@ -1,3 +1,4 @@
+// gateway: none
 // The translated guide pages, rendered: does any text spill out of the box it
 // was drawn for? The French translator flagged the interface diagram -- its
 // labels are longer in every language than in English, and arithmetic on a font

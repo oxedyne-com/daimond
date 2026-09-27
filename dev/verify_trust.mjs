@@ -1,3 +1,4 @@
+// gateway: none
 // verify_trust.mjs — first contact, with no server in the path at all.
 //
 // This is the phase's own proof and it is shaped like the claim: two devices,

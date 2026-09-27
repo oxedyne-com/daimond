@@ -1,3 +1,4 @@
+// gateway: none
 // verify_typedpause.mjs — a paused Diamond refuses a TYPED TURN alike, whichever key
 // it runs on.
 //

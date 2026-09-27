@@ -1,3 +1,4 @@
+// gateway: none
 // verify_artefacts.mjs — what a Diamond produced, derived rather than declared.
 //
 // Nobody maintains this list. Every tool call is already recorded on the turn as a

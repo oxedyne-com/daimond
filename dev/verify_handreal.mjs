@@ -1,3 +1,4 @@
+// gateway: none
 // verify_handreal.mjs — the whole chain, with nothing mocked.
 //
 // Every other test of the machine hand stops one link short of the join:

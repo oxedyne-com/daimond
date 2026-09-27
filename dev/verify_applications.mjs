@@ -1,3 +1,4 @@
+// gateway: own
 // verify_applications.mjs — the Applications panel, against a real gateway.
 //
 // `/api/admin?view=applications` has been served since the beta form was

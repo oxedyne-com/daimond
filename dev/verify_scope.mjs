@@ -1,3 +1,4 @@
+// gateway: none
 // verify_scope.mjs — a worker is confined to its own Diamond, proved by running a command.
 //
 // `DaimondApp::set_diamond_scope` existed for a day with no caller anywhere in

@@ -1,3 +1,4 @@
+// gateway: none
 // verify_mailkeys.mjs — the Email panel answers the keyboard.
 //
 // Every choice in the panel used to be a <div> with a click handler: the mailbox

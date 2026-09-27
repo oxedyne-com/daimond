@@ -1,3 +1,4 @@
+// gateway: none
 // verify_release.mjs — which Daimond you are running, and what came before it.
 //
 // The guarantees worth holding, rather than the pixels:

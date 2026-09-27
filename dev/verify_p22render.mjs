@@ -1,3 +1,4 @@
+// gateway: none
 // p22 render: the end-of-turn tail note ("[Daimond: this turn changed N files
 // (vV): …]") must reach the transcript as a TOOL tile carrying the changed-files
 // table — driven through the REAL app: harness open, mock provider, a real

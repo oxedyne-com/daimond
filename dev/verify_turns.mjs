@@ -1,3 +1,4 @@
+// gateway: none
 // verify_turns.mjs — a turn as a thing you can close, choose, fold and walk back to.
 //
 // The thread was a flat list of messages: an answer had no attachment to the question that

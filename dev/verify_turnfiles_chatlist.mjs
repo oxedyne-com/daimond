@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+// gateway: none
 // verify_turnfiles_chatlist.mjs — the changed-files tile from a daimon chat opened
 // via the CHAT LIST (WS-HAND S-HAND #4 / #6-tile, the owner-hit bug), AND the
 // render gap #22 found by driving: an ORDINARY turn (edits code, leaves

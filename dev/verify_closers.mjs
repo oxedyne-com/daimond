@@ -1,3 +1,4 @@
+// gateway: none
 // verify_closers.mjs — everything that covers the app carries a way out you can
 // reach with a thumb.
 //

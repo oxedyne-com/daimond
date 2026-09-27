@@ -1,3 +1,4 @@
+// gateway: none
 // The read-only text copy must be torn down when a new page opens, and the
 // panel must refuse to frame a loopback address. Both exercised via the real
 // DaimondWeb driver in the loaded page — no network needed.

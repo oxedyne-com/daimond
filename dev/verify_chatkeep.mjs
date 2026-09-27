@@ -1,3 +1,4 @@
+// gateway: none
 // verify_chatkeep.mjs — a chat leaves the store on a tombstone, and on nothing
 // else; and a read never overtakes a write of this tab's own.
 //

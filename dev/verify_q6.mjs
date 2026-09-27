@@ -1,3 +1,4 @@
+// gateway: none
 // verify_q6.mjs — the Optimiser's repair leaves a person's pause alone, and a pause's refusal
 // is said as a pause (R3 QA, `~/usr/code/ai/claude/specs/daimond_r3_qa_optimiser_20260924.md`).
 //

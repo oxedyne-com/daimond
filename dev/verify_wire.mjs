@@ -1,3 +1,4 @@
+// gateway: none
 // verify_wire.mjs — the Wire band says what actually goes to the model, on BOTH
 // threads.
 //
@@ -249,8 +250,11 @@ const wireDom = (p) => p.evaluate(() => {
 
 // The schema band's heading carries its count -- `Tool schemas (17)` -- so a name
 // is matched whole or up to its bracket.
+// Case-blind: 50c65295 (the 2026-09-15 diamond-case sweep) made `wire.diamond` "This
+// diamond", and a band is the same band whichever case its label is in.
 const band = (w, name) => (w
-	? w.bands.find(b => b.name === name || b.name.startsWith(name + ' ('))
+	? w.bands.find(b => b.name.toLowerCase() === name.toLowerCase()
+		|| b.name.toLowerCase().startsWith(name.toLowerCase() + ' ('))
 	: null);
 
 /// The tool names the band draws, read out of the schema band it shows.

@@ -1,3 +1,4 @@
+// gateway: none
 // Verify the transcript-storage rework STAGE 0 (seq 212): the append-only chunk
 // shadow, additive and behaviour-inert.
 //

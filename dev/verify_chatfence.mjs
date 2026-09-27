@@ -1,3 +1,4 @@
+// gateway: none
 // verify_chatfence.mjs — a chat's worker reads freely, writes where it was told,
 // and runs commands only where the user deliberately put something.
 //

@@ -1,3 +1,4 @@
+// gateway: live
 // verify_qr.mjs — device pairing shows a scannable QR, and a scanned #pair=
 // deep link lands on the redeem dialog with the code filled in.
 //

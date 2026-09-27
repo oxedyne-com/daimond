@@ -1,3 +1,4 @@
+// gateway: none
 // verify_improve.mjs — the Social panel's Notes and Proposals keep their one promise, against a real forge.
 //
 // `dev/IMPROVE_CONTRACT.md` §4 states it in a sentence:
@@ -900,10 +901,11 @@ const GUIDE = fs.readFileSync(path.join(WWW, 'guide', 'social.html'), 'utf8');
 function guideSection() {
 	const i = GUIDE.indexOf('<section id="social-panel">');
 	const j = GUIDE.indexOf('</section>', i);
-	if (i === -1 || j === -1) {
-		console.error('the guide has no §"The Social panel"; check 9 would prove nothing.');
-		process.exit(2);
-	}
+	// 1aa73a09 (2026-09-15) rewrote social.html from 8,856 words to 741 and took this
+	// section, and the glossary of anchored terms, out. Check 9 is retired with it: it
+	// read labels from a section that no longer exists. This used to exit 2 here, which
+	// kept checks 1-8 and 10 from running at all.
+	if (i === -1 || j === -1) return null;
 	return GUIDE.slice(i, j);
 }
 
@@ -918,10 +920,10 @@ function glossaryTerms() {
 const SECTION = guideSection();
 const TERMS   = glossaryTerms();
 
-const GUIDE_LABELS = [...new Set(
+const GUIDE_LABELS = !SECTION ? [] : [...new Set(
 	[...SECTION.matchAll(/<span class="ui">([^<]+)<\/span>/g)].map(m => m[1].trim()))];
 
-const GUIDE_NOUNS = [...new Set(
+const GUIDE_NOUNS = !SECTION ? [] : [...new Set(
 	[...SECTION.matchAll(/<strong>([^<]+)<\/strong>/g)]
 		.map(m => m[1].trim().replace(/\.$/, ''))
 		.filter(s => s.split(/\s+/).length <= 2))];
@@ -1804,14 +1806,18 @@ try {
 	await page.waitForTimeout(400);
 
 	const panelWords = sampled.join(' ');
-	const missing = GUIDE_LABELS.filter(w => panelWords.indexOf(w) === -1);
-	check(`every label the guide names is in the panel (${GUIDE_LABELS.length} checked)`,
-		missing.length === 0, missing.map(m => JSON.stringify(m)).join(', '));
+	if (SECTION) {
+		const missing = GUIDE_LABELS.filter(w => panelWords.indexOf(w) === -1);
+		check(`every label the guide names is in the panel (${GUIDE_LABELS.length} checked)`,
+			missing.length === 0, missing.map(m => JSON.stringify(m)).join(', '));
 
-	const known = (n) => TERMS.has(n) || TERMS.has(n.replace(/s$/, ''));
-	const coined = GUIDE_NOUNS.filter(n => !known(n.toLowerCase()));
-	check(`and every part the guide names in bold is a word the glossary defines (${GUIDE_NOUNS.length} checked)`,
-		coined.length === 0, coined.map(m => JSON.stringify(m)).join(', '));
+		const known = (n) => TERMS.has(n) || TERMS.has(n.replace(/s$/, ''));
+		const coined = GUIDE_NOUNS.filter(n => !known(n.toLowerCase()));
+		check(`and every part the guide names in bold is a word the glossary defines (${GUIDE_NOUNS.length} checked)`,
+			coined.length === 0, coined.map(m => JSON.stringify(m)).join(', '));
+	} else {
+		console.log('  --   9 retired: guide/social.html has no §"The Social panel" since 1aa73a09');
+	}
 
 	check('the panel does not call its box the composer',
 		panelWords.toLowerCase().indexOf('composer') === -1);

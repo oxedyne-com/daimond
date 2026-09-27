@@ -1,3 +1,4 @@
+// gateway: none
 // Does the Home drawer show the console link to an account that holds a role?
 // The network path is the gateway's and is already proven by the console page
 // itself; what is under test here is the drawer's own logic.

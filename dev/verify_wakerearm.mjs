@@ -1,3 +1,4 @@
+// gateway: live
 // verify_wakerearm.mjs — re-arming the wake channel must not cost the news it
 // was holding, nor the channel itself.
 //
@@ -232,6 +233,17 @@ try {
 	const pushedAt = Date.now();
 	check('the first device gets the rename into the mailbox', await pushLanded(page));
 	const arrived = await nameSettles(child.page, renamed, 8000);
+	// THE PULL THAT CARRIED THE NAME IS LET FINISH before its version is read. The name
+	// lands in the merge's Diamonds section, and the version is adopted only after the
+	// last section (sync.js `pullOnce`, "AND THE VERSION IS NOT ADOPTED"), so a read the
+	// moment the name shows can fall inside that merge. The 2026-09-27 nightly read
+	// "version 4 -> 4" beside the new name that way, once, under six shards' load. Bounded,
+	// and only ever waiting for the version to pass the one held before the re-arm: news
+	// thrown away never brings the name, so this cannot turn a red green.
+	for (const t0 = Date.now(); arrived === renamed && Date.now() - t0 < 8000; ) {
+		if (await child.page.evaluate((v) => window.DaimondSync.state().version > v, wakesBefore.version)) break;
+		await sleep(100);
+	}
 	const after = await child.page.evaluate(() => ({
 		wake:    window.DaimondSync.wake(),
 		version: window.DaimondSync.state().version,

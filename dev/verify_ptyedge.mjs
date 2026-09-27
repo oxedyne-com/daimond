@@ -1,3 +1,4 @@
+// gateway: none
 // verify_ptyedge.mjs — the three rungs under the Terminal panel, proved on the
 // real thing.
 //
@@ -508,8 +509,10 @@ const WASM_PATCHES = {
 	// guard above then skipped the rebuild for ever. Same intent, current shape.
 	'w-tainted': [PTY_RS, 'let tainted = extract_json_bool(ask, "tainted") == Some(true);',
 		'let tainted = false;'],
-	'w-argvkit': [PTY_RS, 'bounds.extend(toolkit_bounds(&extract_json_string_array(ask, "toolkits").unwrap_or_default()));',
-		'bounds.extend(toolkit_bounds(&extract_json_string_array(ask, "argv").unwrap_or_default()));'],
+	// d752a277 (2026-08-26) moved the terminal onto `terminal_toolkit_bounds(names,
+	// machine.remote)`; the break is the same substitution, of argv for the grant.
+	'w-argvkit': [PTY_RS, '&extract_json_string_array(ask, "toolkits").unwrap_or_default(),',
+		'&extract_json_string_array(ask, "argv").unwrap_or_default(),'],
 };
 
 /// Builds one wasm package, patching the file the break names first where `name`

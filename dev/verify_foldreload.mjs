@@ -1,3 +1,4 @@
+// gateway: none
 // verify_foldreload.mjs — does a folded conversation stay folded across a reload?
 //
 // Compaction replaces the earlier part of a conversation with one notice when it

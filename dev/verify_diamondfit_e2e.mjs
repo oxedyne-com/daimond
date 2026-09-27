@@ -1,3 +1,4 @@
+// gateway: live
 // verify_diamondfit_e2e.mjs — the owner's "33 diamonds did not fit" failure, proven
 // end-to-end over a REAL gateway and a REAL second device.
 //

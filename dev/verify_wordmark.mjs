@@ -1,3 +1,4 @@
+// gateway: none
 // verify_wordmark.mjs -- the brand lockup, everywhere it is drawn, at every
 // width the app is drawn at.
 //

@@ -1,3 +1,4 @@
+// gateway: none
 // The translated guide page: does it wear the app's palette (which it now gets
 // from the app's own stylesheet rather than a copy), and does a change of
 // language actually move the reader to the translated page?

@@ -1,3 +1,4 @@
+// gateway: none
 // dev/verify_group.mjs -- groups: a membership list with no group key.
 //
 // EVERY SECTION BELOW RUNS WITH NO GATEWAY IN THE PATH AT ALL. Three browsers,
@@ -960,7 +961,12 @@ async function theMergeConverges() {
 			later.groups[gid].name    = 'Second name';
 			later.groups[gid].members = base.groups[gid].members.concat(
 				[{ k: 'aa'.repeat(32), e: 'bb'.repeat(32), n: 'Late' }]);
-			later.groups[gid].state   = 'left';		// must be ignored: older stateAt
+			// Must be ignored: an OLDER stateAt. Strictly older, not equal -- since
+			// eeb71bf9 (D-28 A3) an equal stamp is a tie, broken the same way on
+			// every device to the canonically greater value, so an equal-stamped
+			// 'left' rightly beats 'joined' and would prove nothing here.
+			later.groups[gid].state   = 'left';
+			later.groups[gid].stateAt = base.groups[gid].stateAt - 1000;
 
 			// This account's own later decision, from another of its devices: the
 			// local half moves, and the roster half must not.
@@ -974,6 +980,7 @@ async function theMergeConverges() {
 			decided.groups[gid].stateAt = base.groups[gid].stateAt + 1000;
 			decided.groups[gid].state   = 'left';
 			decided.groups[gid].name    = 'Never this';	// must be ignored: older at
+			decided.groups[gid].at      = base.groups[gid].at - 1000;
 
 			// And a record whose roster is not a list at all. `at` is a REAL
 			// millisecond stamp: an earlier draft of this used 1e12, which `| 0`
@@ -1025,6 +1032,21 @@ async function theMergeConverges() {
 			window.DaimondPost.adopt(older);
 			const stale = after();
 
+			// A TIE on the local half: another device's decision at the SAME
+			// stateAt. It breaks to the canonically greater value, in either
+			// order, so every device lands on the same answer (eeb71bf9).
+			await reset();
+			const tie = clone();
+			tie.groups[gid].state = 'left';
+			window.DaimondPost.adopt(tie);
+			const tieIn = after();
+			const heldLeft = await window.DaimondGroup.get(gid);
+			const tieBack = clone();
+			tieBack.groups[gid].state = 'joined';
+			tieBack.groups[gid].stateAt = heldLeft.stateAt;
+			window.DaimondPost.adopt(tieBack);
+			const tieOut = after();
+
 			await reset();
 			let threw = '';
 			try { window.DaimondPost.adopt(broken); }
@@ -1034,7 +1056,8 @@ async function theMergeConverges() {
 			// The stamps themselves, so a truncation shows up as the wrong number
 			// rather than as ordering that happens to still work this month.
 			const whole = { at: base.groups[gid].at, past32: base.groups[gid].at > 2 ** 31 };
-			return { rosterOnly, localOnly, forwards, backwards, stale, guarded, threw, whole };
+			return { rosterOnly, localOnly, forwards, backwards, stale, guarded, threw, whole,
+				tieIn, tieOut };
 		}, made.gid);
 
 		eq(out.rosterOnly.name, 'Second name', 'a later roster brings the new name');
@@ -1048,6 +1071,8 @@ async function theMergeConverges() {
 
 		eq(out.forwards, out.backwards,
 			'and the two arriving in either order give the same record');
+		eq([out.tieIn.state, out.tieOut.state], ['left', 'left'],
+			'an equal-stamped decision breaks the same way whichever device holds which');
 		eq(out.forwards.name, 'Second name', 'with the later roster');
 		eq(out.forwards.state, 'left', 'and the later decision');
 

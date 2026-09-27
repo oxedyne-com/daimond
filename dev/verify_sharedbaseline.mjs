@@ -1,3 +1,4 @@
+// gateway: none
 // verify_sharedbaseline.mjs — the sync fork point records only what was SHARED.
 //
 // The baseline is the state both devices agreed on, and `applyFiles` reads it as
@@ -114,8 +115,9 @@ try {
 		'and it survives a SECOND complete census, which is when it used to go');
 
 	// ── 3. A real deletion is still honoured ────────────────────────
-	// The fix must not turn the delete-by-absence rule off: a file that WAS
-	// shared, and that a complete census no longer carries, is still gone.
+	// Absence alone deletes nothing (fault B, 5.3): a folder device's census is
+	// complete only for its shared roots. A file that WAS shared is deleted by the
+	// tombstone the deleting device writes, carrying the hash it held.
 	await page.evaluate(async () => {
 		await DaimondCore.applySync({
 			v: 2, chats: [], tombs: {}, msgTombs: {},
@@ -123,8 +125,19 @@ try {
 		});
 	});
 	await page.waitForTimeout(400);
+	check(await exists('shared.md'),
+		'a complete census that merely lacks a shared file does not delete it');
+	const heldShared = (await baseline())['shared.md'];
+	await page.evaluate(async (h) => {
+		await DaimondCore.applySync({
+			v: 2, chats: [], tombs: {}, msgTombs: {},
+			files: {}, filesComplete: true, fileTombs: { 'shared.md': h },
+			diamonds: [], diamondTombs: {}, chunked: {},
+		});
+	}, heldShared);
+	await page.waitForTimeout(400);
 	check(!(await exists('shared.md')),
-		'a file that WAS shared and is now absent from a complete census is deleted');
+		'a file that WAS shared and is tombstoned by the device that deleted it is deleted');
 	check(await exists('mine-only.md'),
 		'and the never-sent file is still not collateral');
 	const base2 = await baseline();

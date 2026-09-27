@@ -1,3 +1,4 @@
+// gateway: none
 // verify_chatscope.mjs — an ordinary chat has a WORKSPACE, and it is a real
 // boundary that never interrupts anybody.
 //

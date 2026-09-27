@@ -1,3 +1,4 @@
+// gateway: none
 // verify_journal.mjs — the write-ahead log reconstructs exactly what was in flight.
 //
 // verify_durability.mjs drives a real turn to a real crash; this drives the JOURNAL directly, so

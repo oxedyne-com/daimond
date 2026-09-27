@@ -1,3 +1,4 @@
+// gateway: live
 // verify_pairing.mjs — an identity travels to a second device through a one-time
 // gateway code, so the new device becomes the SAME account.
 //

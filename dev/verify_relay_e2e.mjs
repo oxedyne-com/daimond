@@ -1,3 +1,4 @@
+// gateway: own
 // dev/verify_relay_e2e.mjs -- the two halves meeting: a message sealed in one
 // browser, carried by a RUNNING GATEWAY, and opened in another.
 //

@@ -1,3 +1,4 @@
+// gateway: none
 // verify_pausemigrate.mjs — the pause record crosses the upgrade to per-id merge losslessly.
 //
 // The record was one set and one stamp until the R3 QA of 2026-09-24 (M-merge); it is now

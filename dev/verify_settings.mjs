@@ -1,3 +1,4 @@
+// gateway: none
 // A key the provider rejects must not be reported "Saved."/connected: the BYOK
 // form fetches /models with the key it was given, and a 401 there has to reach
 // the user as a refusal rather than as a saved setting.

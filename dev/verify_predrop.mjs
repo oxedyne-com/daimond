@@ -1,3 +1,4 @@
+// gateway: none
 // verify_predrop.mjs — a turn that dies BEFORE THE FIRST TOKEN is handed back, whatever
 // the browser calls a dead fetch.
 //

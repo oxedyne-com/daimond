@@ -1,3 +1,4 @@
+// gateway: live
 // verify_look.mjs — a device that joins an account by any route arrives wearing
 // the account's look, once, and never argues about it afterwards.
 //

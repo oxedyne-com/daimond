@@ -1,3 +1,4 @@
+// gateway: none
 // A worker starts at the call, and its report comes back INSIDE the same turn.
 //
 // What this measures, and why it is measured off the wire. A worker's report used

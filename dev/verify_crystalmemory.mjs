@@ -1,3 +1,4 @@
+// gateway: none
 // verify_crystalmemory.mjs — a Diamond's MEMORY is visible and editable, and an edit
 // reaches the next daimon's system message.
 //

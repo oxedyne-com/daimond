@@ -1,3 +1,4 @@
+// gateway: none
 // verify_markshere.mjs — a mark grants on this device only where the synced row AND this
 // device's own record of what was pressed on it both allow it (R2, and R3's remainder).
 //

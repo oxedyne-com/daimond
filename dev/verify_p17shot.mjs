@@ -1,3 +1,4 @@
+// gateway: none
 // #17 vision pass — screenshot the fold running on the chat face.
 // Reuses world 4 (app :8781, mock :9103). Delays the reducer round so the
 // "Fold: reducing" stage is visible, then screenshots.

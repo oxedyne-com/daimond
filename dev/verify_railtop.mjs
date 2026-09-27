@@ -1,3 +1,4 @@
+// gateway: none
 // verify_railtop.mjs — the top of the rail, as somebody meets it on day one.
 //
 // Six rows of the 2026-09-15 UI audit land on the first 120 pixels of the rail
@@ -164,6 +165,17 @@ try {
 	check(pause.title !== '' && titleWords <= 6,
 		'and a title of six words or fewer', `${titleWords}: ${JSON.stringify(pause.title)}`);
 	// It moves. A word painted once at boot is a label, not a reading.
+	//
+	// Since c480fabf a play on a branch releases no triggered action: only a play on
+	// the action's own light does, and a hold on the root suspends that release
+	// rather than ending it. The seeded built-in's action is held from birth, so on a
+	// fresh rail the root's play leaves it held and the word truthfully stays
+	// "paused". Release each held action on its own light first, as a person would;
+	// then a hold on the root pauses everything and its play puts it all back.
+	const actions = await p.evaluate(() => DaimondPause.pausedIds()
+		.filter((k) => k.indexOf('/triggers/') > 0));
+	await p.evaluate((ids) => ids.forEach((k) => DaimondPause.set(k, true)), actions);
+	await sleep(300);
 	await p.evaluate(() => DaimondPause.set(DaimondPause.ROOT, false));
 	await sleep(300);
 	const held = await p.evaluate(() => document.getElementById('pptw-global-state').textContent.trim());
@@ -172,7 +184,7 @@ try {
 	const runs = await p.evaluate(() => document.getElementById('pptw-global-state').textContent.trim());
 	check(held !== runs && held === STATES[1] && runs === STATES[0],
 		'the word follows the root rather than being painted once',
-		`paused=${JSON.stringify(held)} running=${JSON.stringify(runs)}`);
+		`paused=${JSON.stringify(held)} running=${JSON.stringify(runs)} actions=${actions.length}`);
 
 	// ── RAIL-02. Nothing is said about tags until there are some ──────────
 	const tags = await p.evaluate(() => ({

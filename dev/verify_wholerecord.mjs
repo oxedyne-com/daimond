@@ -1,3 +1,4 @@
+// gateway: none
 // An answer shortened to fit the model's window stays whole in the user's record.
 //
 // The owner's ruling of 2026-08-28: *the model gets the shortened version, his transcript

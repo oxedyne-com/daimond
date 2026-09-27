@@ -1,3 +1,4 @@
+// gateway: none
 // verify_ending.mjs — every turn says how it ended, and it reads as furniture.
 //
 // ── WHY ──────────────────────────────────────────────────────────────────────

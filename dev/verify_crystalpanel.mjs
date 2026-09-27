@@ -1,3 +1,4 @@
+// gateway: none
 // verify_crystalpanel.mjs — opening or closing a panel does not take the crystal's page down.
 //
 // THE DEFECT THIS IS WRITTEN FROM, in the owner's words (notes6, item 3): "adding or removing a

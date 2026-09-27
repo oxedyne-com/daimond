@@ -1,3 +1,4 @@
+// gateway: none
 // verify_wsident.mjs — the hand's folder and the page's folder are the SAME
 // folder, or nothing runs.
 //

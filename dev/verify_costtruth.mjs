@@ -1,3 +1,4 @@
+// gateway: none
 // verify_costtruth.mjs — what a turn cost, said by the only party that knows.
 //
 // Daimond priced every turn from a table it carries: tokens times a surveyed rate. That is the

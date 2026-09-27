@@ -1,3 +1,4 @@
+// gateway: none
 // verify_concise.mjs — the chip changes what the MODEL is sent.
 //
 // The chip in the chat header is a standing toggle that puts the `/concise`

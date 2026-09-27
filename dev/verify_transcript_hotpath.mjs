@@ -1,3 +1,4 @@
+// gateway: none
 // Verify the transcript-storage + render hot-path rework (audit #4b, #5-render, #5-merge).
 //
 // Three proofs, all on the real page, all headless:

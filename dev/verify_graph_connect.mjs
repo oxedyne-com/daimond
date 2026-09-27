@@ -1,3 +1,4 @@
+// gateway: none
 // verify_graph_connect.mjs — joining two Diamonds is ONE gesture, and the picture
 // is still a function of the store.
 //

@@ -1,3 +1,4 @@
+// gateway: live
 // verify_compose.mjs — drive the compose path end to end, against real servers.
 //
 // The IMAP fixture (fe2o3's imap_test_server, 127.0.0.1:1143) puts real mail in the

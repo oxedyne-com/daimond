@@ -1,3 +1,4 @@
+// gateway: none
 // The starter tags in a language that is not English: are they offered, and
 // does adopting one file the word the chip showed?
 import { open, shot } from './harness.mjs';

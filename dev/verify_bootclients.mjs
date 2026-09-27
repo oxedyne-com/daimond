@@ -1,3 +1,4 @@
+// gateway: none
 // verify_bootclients.mjs — building the engine's client builds one client, not thousands.
 //
 // ── WHY ──────────────────────────────────────────────────────────────────────

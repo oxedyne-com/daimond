@@ -1,3 +1,4 @@
+// gateway: none
 // verify_typstwatch.mjs — the watched live document: it follows the file, it keeps
 // the reader's place, it never blanks, and it refuses rather than bricking.
 //

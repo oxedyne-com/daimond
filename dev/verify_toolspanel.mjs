@@ -1,3 +1,4 @@
+// gateway: none
 // verify_toolspanel.mjs — the Tools panel presents CAPABILITIES, and the shelf is real.
 //
 // The panel used to be a manifest: twenty-two rows, each the wire name of a function in

@@ -1,3 +1,4 @@
+// gateway: none
 // A file open in the Workspace viewer must not go stale when an agent edits it.
 // Open a file, have the agent rewrite it on the next turn, and confirm the
 // viewer reloads to the agent's new content rather than showing the old.
@@ -15,7 +16,7 @@
 // into the chat with the paperclip (`chatToggle` + `chatWs`, the mark being the
 // permission) -- and the folder is then both writable by the agent and visible in
 // the tree. Moving the path back to the root makes every check below vacuous.
-import { open, chat, newChat, shot, errors } from './harness.mjs';
+import { open, chat, newChat, shot, errors, transcriptExpanded } from './harness.mjs';
 
 const ok = [], bad = [];
 const check = (name, pass, detail) => {
@@ -45,7 +46,11 @@ check('the folder is marked into the chat\'s workspace, which is what lets the a
 	(marked.scope || []).includes(FOLDER), JSON.stringify(marked));
 
 // 1. Agent creates a file.
-const wrote = await chat(s, `@tool file_write {"path":"${FILE}","content":"ORIGINAL CONTENT"}`);
+// Read expanded: a Tool tile draws collapsed (`buildTile`, expanded: false), and plain
+// `innerText` cannot see a collapsed tile's "Wrote N bytes" -- the verify_writeguard
+// mismeasure f836c4e3 fixed. The tool said it; the transcript was read with it folded away.
+await chat(s, `@tool file_write {"path":"${FILE}","content":"ORIGINAL CONTENT"}`);
+const wrote = await transcriptExpanded(s);
 check('the agent really wrote it — a refused write leaves nothing to open',
 	!/Refused/.test(wrote) && /Wrote \d+ bytes/.test(wrote),
 	wrote.slice(-140).replace(/\n/g, ' | '));

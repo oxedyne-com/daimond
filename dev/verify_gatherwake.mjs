@@ -1,3 +1,4 @@
+// gateway: none
 // verify_gatherwake.mjs — a worker ending WAKES a blocking `gather`, rather than
 // the wait having to notice on its own timer.
 //

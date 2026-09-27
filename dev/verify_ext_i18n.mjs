@@ -1,3 +1,4 @@
+// gateway: none
 // verify_ext_i18n.mjs — Daimond Hands in the eight languages the app speaks.
 //
 // The extension is where the user is asked to GRANT a page to an agent. A

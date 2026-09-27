@@ -1,3 +1,4 @@
+// gateway: none
 // verify_fleetbuild.mjs — the fleet's build spread is VISIBLE and self-correcting.
 //
 // A mixed-build fleet (some devices silently on a days-old build behind a stale

@@ -1,3 +1,4 @@
+// gateway: none
 // verify_offlinedelete.mjs — a file deleted on a device whose push has not landed stays deleted.
 //
 // The three-device soak of 2026-09-25 (seed t1, `specs/daimond_sync_soak_20260925.md`, R1): the

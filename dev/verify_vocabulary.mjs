@@ -1,3 +1,4 @@
+// gateway: none
 // verify_vocabulary.mjs — the guide's Social page says true things, in words the
 // app itself uses, and lands where a deep link points it.
 //

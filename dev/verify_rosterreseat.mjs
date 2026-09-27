@@ -1,3 +1,4 @@
+// gateway: none
 // verify_rosterreseat.mjs — the ghost-roster / dead-nominee fix, WIRED (owner task,
 // 2026-09-09; live build 8eeef65c27fe carried the reconcile logic but the roster was
 // STILL all ghosts and the star STILL on a dead id in the gateway trace). The 7cc8

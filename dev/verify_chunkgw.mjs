@@ -1,3 +1,4 @@
+// gateway: own
 // verify_chunkgw.mjs — the chunk transport survives a lapsed session, and a
 // deletion the gateway will not carry out is NOTICED rather than swallowed.
 //

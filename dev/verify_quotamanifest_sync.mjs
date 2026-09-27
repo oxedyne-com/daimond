@@ -1,3 +1,4 @@
+// gateway: none
 // verify_quotamanifest_sync.mjs — S-SYNC #2, the two-device frozen-index driver.
 //
 // THE BUG. `cloud.js writeJson` returns false on quota and every index writer
@@ -19,21 +20,36 @@
 //     UNION every `messagesRef`/`dataRef`/`msgRef` the parcel names (arm 4), so the
 //     declared set can never omit an address the pushed parcel points at.
 //
+// WHERE THE INDEX LIVES NOW (2026-09-27, release 5.2 triage). The index left the
+// localStorage box for IndexedDB on 2026-09-21 (531d38e4), and fix/r52-del (98134aa5,
+// SIM-24) made a write ops on paths, joined into the stored map in one transaction
+// (`DaimondDurable.update`) and held `dirty` until that transaction commits. A full box
+// therefore no longer touches the index: Phase B's old `setItem` block stopped biting
+// on 2026-09-21, so its two arm-3 checks read "indexDurable=true" through release
+// 5.1.1, and 5.2's two-path `indexDurable` broke the seam this file matched, so it exited
+// 2 before it ran. The loss is now injected at the door the index is really written
+// through: the index key's put in the `kv` store aborts its transaction, which is how a
+// QuotaExceededError arrives. The box is blocked as well, for a device on the fallback.
+//
 // THE PROPERTY:
 //   Phase A (durable): a large chat offloads; the commit-declared live set names
-//     every chunk the parcel's `messagesRef` points at (arm 4, read live), and the
+//     every chunk the parcel's `messagesRef` points at (arm 4, read live), and still
+//     names them from an index that lost the chat's manifest (arm 4, alone); the
 //     chunks survive the commit.
-//   Phase B (quota): with A's localStorage FULL, a large chat's index write is
-//     lost — A refuses to commit (arm 3) and rides the transcript inline — the chat
-//     PROPAGATES to B with its whole body, and HOLDS across a second sync round
-//     (never re-swept to empty).
+//   Phase B (a lost write): with A's index write refused, the write is held dirty,
+//     not forgotten (arm 3), A refuses to commit, the chat PROPAGATES to B with its
+//     whole body and HOLDS across a second sync round (never re-swept to empty), and
+//     once the door opens the held write lands in the store.
 //
-// --break reverts BOTH belts (cloud.js forgets the lost write; daimond.js commits
-// the bare index): A then commits a frozen index that omits the stranded chunk and
-// sweeps it, so B's chat arrives EMPTY — the pre-fix stranding, driven from here.
+// --break reverts BOTH belts (cloud.js answers every index durable; daimond.js commits
+// the bare index), and the checks that read each belt redden: Phase A's lost-manifest
+// check and Phase B's arm-3 pair. B's copy no longer goes EMPTY under it: the durable
+// path's mirror names the manifest the store refused, so the live set carries it
+// anyway. The empty chat needed the box path, which a browser with IndexedDB does not
+// take; `www/js/quotamanifest.test.mjs` drives that path.
 //
 //   node dev/verify_quotamanifest_sync.mjs           # the gate (must be green)
-//   node dev/verify_quotamanifest_sync.mjs --break    # pre-fix stranding (must redden)
+//   node dev/verify_quotamanifest_sync.mjs --break    # both belts undone (must redden)
 //
 // Chromium only for --break (page.route). Needs dev/serve.mjs; no gateway, no mock.
 import fs from 'node:fs';
@@ -59,8 +75,9 @@ if (BREAK && BROWSER !== 'chromium') {
 
 // ── The seams must be present, or a green run would prove nothing ─────
 const SEAM = [
-	{ file: 'js/cloud.js',   want: 'else indexDirty = indexDirty || { at: Date.now() };', why: 'setIndex does not remember a lost write (arm 3)' },
-	{ file: 'js/cloud.js',   want: 'function indexDurable() { return !indexDirty; }',     why: 'indexDurable is missing' },
+	{ file: 'js/cloud.js',   want: 'else indexDirty = indexDirty || { at: Date.now() };', why: 'the box path does not remember a lost write (arm 3)' },
+	{ file: 'js/cloud.js',   want: 'if (!Object.keys(km.pend).length) km.dirty = null;', why: 'the durable path does not hold a write dirty until it commits (arm 3)' },
+	{ file: 'js/cloud.js',   want: 'function indexDurable() { return _durableMode ? !IXM.dirty : !indexDirty; }', why: 'indexDurable is missing, or does not read the path the index is on' },
 	{ file: 'js/daimond.js', want: 'function parcelRefs(state) {',                         why: 'parcelRefs is missing (arm 4)' },
 	{ file: 'js/daimond.js', want: 'DaimondCloud.indexDurable && !DaimondCloud.indexDurable()', why: 'the commit gate does not consult indexDurable' },
 ];
@@ -78,12 +95,11 @@ function patchOnce(file, find, repl) {
 	PATCHED.set(file, cur.replace(find, repl));
 }
 if (BREAK) {
-	// Arm 3 undone: setIndex forgets a write it could not land, so `contentSet`
-	// always answers true and `indexDurable()` never goes false -> the device
-	// commits a frozen index and rides the transcript as a REF, not inline.
+	// Arm 3 undone: a write that did not land is forgotten, so `indexDurable()` never
+	// goes false on either path and the device commits over an index the store lacks.
 	patchOnce('js/cloud.js',
-		'var ok = writeJson(IX_KEY, ix || {});\n\t\tif (ok) indexDirty = null;\n\t\telse indexDirty = indexDirty || { at: Date.now() };\n\t\treturn ok;',
-		'writeJson(IX_KEY, ix || {});\n\t\treturn true;   // --break: quota forgotten (arm 3 undone)');
+		'function indexDurable() { return _durableMode ? !IXM.dirty : !indexDirty; }',
+		'function indexDurable() { return true; }   // --break: a lost write forgotten (arm 3 undone)');
 	// Arm 4 undone: the commit declares the bare index, not the parcel's refs, so a
 	// ref the frozen index never recorded is omitted from the live set and swept.
 	patchOnce('js/daimond.js',
@@ -210,12 +226,26 @@ try {
 		const prAddrs = new Set();
 		Object.keys(pr).forEach(k => ((pr[k] || {}).chunks || []).forEach(c => prAddrs.add(c.addr)));
 		const refAddrs = ref ? (ref.chunks || []).map(c => c.addr) : [];
+		// The belt on its own. The durable index names the manifest, so the check above
+		// passes on the index alone; the index this parcel was collected with, less the
+		// chat's manifest, is the index a lost write leaves, and the ref must still be
+		// declared from it.
+		const lost = Object.assign({}, state.chunked || {});
+		const hadKey = Object.prototype.hasOwnProperty.call(lost, '@c/' + cid);
+		delete lost['@c/' + cid];
+		const pl = window.DaimondCore.parcelRefs(Object.assign({}, state, { chunked: lost }));
+		const plAddrs = new Set();
+		Object.keys(pl).forEach(k => ((pl[k] || {}).chunks || []).forEach(c => plAddrs.add(c.addr)));
 		return { hasRef: !!ref, refAddrs, allNamed: refAddrs.length > 0 && refAddrs.every(a => prAddrs.has(a)),
+			hadKey, lostNamed: refAddrs.length > 0 && refAddrs.every(a => plAddrs.has(a)),
 			indexDurable: window.DaimondCloud.indexDurable() };
 	}, C1);
 	check('Phase A: the large chat offloaded to a messagesRef', invA.hasRef === true, `${invA.refAddrs.length} chunk(s)`);
 	check('Phase A: parcelRefs names every chunk the parcel\'s messagesRef points at (arm 4)',
 		invA.allNamed === true, `${invA.refAddrs.length} ref chunk(s), all named=${invA.allNamed}`);
+	check('Phase A: and names them from an index that lost the chat\'s manifest (arm 4, alone)',
+		invA.hadKey === true && invA.lostNamed === true,
+		`the index held the manifest=${invA.hadKey}, named without it=${invA.lostNamed}`);
 
 	await push(A); await pull(B);
 	const b1 = await bChat(B.page, C1, MK1);
@@ -228,8 +258,8 @@ try {
 	check('Phase A: the commit did NOT sweep the chunks the parcel referenced', survived.ok === true && survived.missing === 0,
 		`${survived.missing} of ${invA.refAddrs.length} missing`);
 
-	// ═══ PHASE B — the quota path: a stranded write does not lose the transcript ═══
-	console.log('\n— Phase B: A\'s localStorage is full; the chat still reaches B —');
+	// ═══ PHASE B — a lost index write does not lose the transcript ═══
+	console.log('\n— Phase B: A\'s index write is lost; the chat still reaches B —');
 
 	// Seed the second large chat while there is still room to hold it in IndexedDB.
 	await A.page.evaluate(({ cid, body }) => {
@@ -241,15 +271,28 @@ try {
 		store.save(list);
 	}, { cid: C2, body: BIG(MK2) });
 
-	// The quota moment, made deterministic and scoped: the index key
-	// (`daimond-cloud-index`, whatever the per-account prefix) can no longer be
-	// written, while every other write — the sync cursors, the chat's own store —
-	// still lands. This is precisely "a manifest write lost to quota": the growing
-	// index is the one key that no longer fits, which is the frozen-index committer's
-	// exact condition and what the fill in verify_chatdelete_sync's quota arm models
-	// for a smaller key. A blanket-full localStorage frees a slice big enough for the
-	// tiny index and never reproduces it.
-	const armed = await A.page.evaluate(() => {
+	// The lost write, made deterministic and scoped: the index key
+	// (`daimond-cloud-index`) can no longer be written, while every other write -- the
+	// sync cursors, the tombstones beside it in the same store, the chat's own store --
+	// still lands. The growing index is the one key that no longer fits, which is the
+	// frozen-index committer's exact condition.
+	//
+	// AT THE DOOR THE INDEX IS ON. In IndexedDB (durable.js `update`) the put is issued
+	// and its transaction aborted, which is how a quota refusal arrives there: the
+	// request fails, the transaction aborts, nothing throws in the page. In the box
+	// (the fallback, no IndexedDB) the instance's `setItem` throws, as before.
+	const armed = await A.page.evaluate(async () => {
+		window.__blockIndex = true;
+		window.__ixRefused  = 0;
+		if (!window.__idbRealPut) window.__idbRealPut = IDBObjectStore.prototype.put;
+		IDBObjectStore.prototype.put = function (val, key) {
+			const rq = window.__idbRealPut.apply(this, arguments);
+			if (window.__blockIndex && this.name === 'kv' && String(key).indexOf('daimond-cloud-index') !== -1) {
+				window.__ixRefused++;
+				try { this.transaction.abort(); } catch (e) { /* already over */ }
+			}
+			return rq;
+		};
 		// accounts.js installs an INSTANCE-OWN setItem (the per-account namespacer) and
 		// calls the raw prototype method it captured earlier, so a prototype patch is
 		// bypassed. Wrap the instance method the app actually calls; the key here is the
@@ -260,42 +303,58 @@ try {
 		// setItem is kept in `window`, not on the instance. Assigning `setItem` itself
 		// DOES shadow the method (accounts.js relies on the same).
 		if (!window.__lsRealSet) window.__lsRealSet = inst.setItem.bind(inst);
-		window.__blockIndex = true;
 		inst.setItem = function (k, v) {
 			if (window.__blockIndex && String(k).indexOf('daimond-cloud-index') !== -1) {
 				const e = new Error('QuotaExceededError'); e.name = 'QuotaExceededError'; throw e;
 			}
 			return window.__lsRealSet(k, v);
 		};
-		// Prove the block bites: a direct write of the index key must throw now.
-		let threw = '';
-		try { localStorage.setItem('daimond-cloud-index', '{}'); }
-		catch (e) { threw = e.name || String(e); }
-		return { threw };
+		// Prove the block bites at the door this device's index is written through. The
+		// write is the stored map unchanged, so nothing moves if it does land.
+		const durable = !!(window.DaimondDurable && DaimondDurable.durable && DaimondDurable.durable());
+		let bit = '';
+		if (durable) {
+			const r = await DaimondDurable.update('daimond-cloud-index', (v) => v || {});
+			bit = (r && r.ok === false) ? 'refused' : 'landed';
+		} else {
+			try { localStorage.setItem('daimond-cloud-index', '{}'); bit = 'landed'; }
+			catch (e) { bit = (e.name === 'QuotaExceededError') ? 'refused' : (e.name || String(e)); }
+		}
+		return { durable, bit };
 	});
-	check('Phase B: the index key can no longer be written (quota on the growing index)',
-		armed.threw === 'QuotaExceededError', 'setItem(index) -> ' + armed.threw);
+	note(`A keeps its index in ${armed.durable ? 'IndexedDB (the durable path)' : 'the localStorage box (the fallback)'}`);
+	check('Phase B: the index key can no longer be written, at the door it is written through',
+		armed.bit === 'refused', `${armed.durable ? 'DaimondDurable.update' : 'setItem'}(index) -> ${armed.bit}`);
 
 	// The push: the collector offloads C2 but the index write is lost.
-	await A.page.evaluate(() => { window.__ds = []; });
+	await A.page.evaluate(() => { window.__ds = []; window.__ixRefused = 0; });
 	await push(A);
-	const aState = await A.page.evaluate(() => {
+	const aState = await A.page.evaluate(async (cid) => {
 		const ds = (window.__ds || []).filter(e => e.kind === 'sync' && e.payload && e.payload.commit);
+		let stored = null;
+		try { stored = window.DaimondDurable ? await DaimondDurable.get('daimond-cloud-index') : null; } catch (e) { stored = null; }
 		return { indexDurable: window.DaimondCloud.indexDurable(), mayCommit: window.DaimondCore.syncMayCommitChunks(),
 			reason: (window.DaimondCore.syncCommitBlockedReason && window.DaimondCore.syncCommitBlockedReason()) || '',
-			commitEvents: ds.map(e => ({ commit: e.payload.commit, why: e.payload.why || '' })) };
-	});
-	note(`A after quota push: indexDurable=${aState.indexDurable} mayCommit=${aState.mayCommit} reason=${aState.reason} events=${JSON.stringify(aState.commitEvents)}`);
-	check('Phase B: A\'s index went non-durable — the lost write is remembered (arm 3)', aState.indexDurable === false, 'indexDurable=' + aState.indexDurable);
+			commitEvents: ds.map(e => ({ commit: e.payload.commit, why: e.payload.why || '' })),
+			refused: window.__ixRefused | 0,
+			mirrorHas: !!(window.DaimondCloud.index() || {})['@c/' + cid],
+			storeHas:  !!(stored && stored['@c/' + cid]) };
+	}, C2);
+	note(`A after the lost write: indexDurable=${aState.indexDurable} mayCommit=${aState.mayCommit} reason=${aState.reason} refused=${aState.refused} mirror=${aState.mirrorHas} store=${aState.storeHas} events=${JSON.stringify(aState.commitEvents)}`);
+	check('Phase B: the push\'s index write really was refused, so the checks below are not vacuous',
+		armed.durable ? (aState.refused > 0 && aState.mirrorHas && !aState.storeHas) : true,
+		armed.durable ? `${aState.refused} refused, C2's manifest in the mirror=${aState.mirrorHas}, in the store=${aState.storeHas}` : 'the box path');
+	check('Phase B: A\'s index went non-durable — the lost write is held, not forgotten (arm 3)',
+		aState.indexDurable === false, 'indexDurable=' + aState.indexDurable);
 	check('Phase B: A REFUSES to commit a live set from a non-durable index (arm 3)',
 		aState.mayCommit === false && aState.commitEvents.some(e => e.commit === 'refused' && e.why === 'index-not-durable'),
 		`mayCommit=${aState.mayCommit} reason=${aState.reason}`);
 
-	// The chat must still have reached B — the transcript rode inline rather than
-	// being declared as a swept-away reference.
+	// The chat must still have reached B: by reference on the durable path, whose chunks
+	// no commit has swept, or inline on the box path, whose collector gave up the ref.
 	await pull(B);
 	const b2 = await bChat(B.page, C2, MK2);
-	check('Phase B: the chat PROPAGATED to B with its body despite the full localStorage',
+	check('Phase B: the chat PROPAGATED to B with its body despite the lost index write',
 		b2.present && b2.count >= 1 && b2.body === true, `present=${b2.present} count=${b2.count} body=${b2.body}`);
 
 	// And it HOLDS across a further round — never re-offloaded to a ref the next
@@ -305,14 +364,23 @@ try {
 	check('Phase B: and it HOLDS across a second sync round (not re-swept to empty)',
 		b3.present && b3.count >= 1 && b3.body === true, `present=${b3.present} count=${b3.count} body=${b3.body}`);
 
-	// Lift the block; the next collect records the manifest it could not, and
-	// durability recovers (indexDirty is sticky until a setIndex lands).
-	const recovered = await A.page.evaluate(async () => {
+	// Lift the block. The write the store refused is still queued (cloud.js `flush`
+	// queues it again), so it lands with the next write or the next `settle`, and
+	// durability recovers; on the box path the next collect records it again.
+	const recovered = await A.page.evaluate(async (cid) => {
 		window.__blockIndex = false;
-		await window.DaimondCore.collectSync();   // re-offloads C2 -> contentSet -> setIndex lands
-		return window.DaimondCloud.indexDurable();
-	});
-	check('Phase B: with the index writable again, the write lands and durability recovers', recovered === true, 'indexDurable=' + recovered);
+		await window.DaimondCore.collectSync();
+		if (window.DaimondCloud.settle) await window.DaimondCloud.settle();
+		let stored = null;
+		try { stored = window.DaimondDurable ? await DaimondDurable.get('daimond-cloud-index') : null; } catch (e) { stored = null; }
+		return { durable: window.DaimondCloud.indexDurable(), storeHas: !!(stored && stored['@c/' + cid]) };
+	}, C2);
+	check('Phase B: with the index writable again, the write lands and durability recovers',
+		recovered.durable === true, 'indexDurable=' + recovered.durable);
+	if (armed.durable) {
+		check('Phase B: and the manifest the refused write held is in the store now, not lost with it',
+			recovered.storeHas === true, 'in the store=' + recovered.storeHas);
+	}
 
 } catch (e) {
 	console.log('VERIFY THREW:', e && (e.stack || e.message || e));

@@ -1,3 +1,4 @@
+// gateway: none
 // verify_view.mjs -- Max and Simple, and the two rules that make them safe.
 //
 // The user's words: "Max is the current Compact view but with more important

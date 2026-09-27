@@ -1,3 +1,4 @@
+// gateway: none
 // verify_agentroute.mjs — where agents are dispatched from, and whether two of
 // them really run at once.
 //

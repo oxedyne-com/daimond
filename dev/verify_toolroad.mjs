@@ -1,3 +1,4 @@
+// gateway: none
 // verify_toolroad.mjs — a TOOL call that dies on the road never reaches the model.
 //
 // THE DEFECT, as the owner met it on a real iPhone on 2026-08-28:

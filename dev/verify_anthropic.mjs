@@ -1,3 +1,4 @@
+// gateway: none
 // verify_anthropic.mjs — is Anthropic actually selectable, and does the request it
 // produces have the shape Anthropic accepts?
 //

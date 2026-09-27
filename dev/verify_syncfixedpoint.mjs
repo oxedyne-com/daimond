@@ -1,3 +1,4 @@
+// gateway: none
 // verify_syncfixedpoint.mjs — two devices that are both up to date send nothing.
 //
 // The reported fault was "the phone and the desktops sync every two minutes all

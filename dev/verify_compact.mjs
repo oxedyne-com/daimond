@@ -1,3 +1,4 @@
+// gateway: none
 // Does a long session die?
 //
 // The failure being fixed is not subtle: the provider refuses the request for being

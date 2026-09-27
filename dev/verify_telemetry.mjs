@@ -1,3 +1,4 @@
+// gateway: none
 // verify_telemetry.mjs — beta telemetry carries numbers, and never a word of anybody's.
 //
 // The promise this file defends is the one Daimond is sold on: your content does

@@ -1,3 +1,4 @@
+// gateway: none
 // verify_tracker.mjs — the Tracker BOARD reads Daimond's proposals, settles them, and stamps ships.
 //
 // The Tracker (www/js/tracker.js) is a DECISION-QUEUE BOARD onto Daimond's own development, which

@@ -1,3 +1,4 @@
+// gateway: none
 // verify_accounts.mjs — several people, one browser, and none of them sees the others.
 //
 // The promise is isolation: account B must not see account A's chats, provider keys, credits

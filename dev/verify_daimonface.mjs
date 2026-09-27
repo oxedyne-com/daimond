@@ -1,3 +1,4 @@
+// gateway: none
 // verify_daimonface.mjs — the Centre knows which face it is showing, and says so once.
 //
 // WHAT THIS IS FOR. The Centre has three faces and one variable that names the one it is
@@ -184,11 +185,21 @@ if (BREAK) {
 // COMMENTS ARE STRIPPED FIRST, and they have to be: the declaration of `CENTRE_FACES` carries
 // a paragraph about the day this went wrong, and that paragraph quotes `centreMode ===
 // 'daimon'`. Scanned raw, the check reads its own explanation as code. This is a line-and-block
-// stripper that respects quotes; it does not understand regex literals, which is stated rather
-// than hidden — `centreMode` never appears in one, and if it ever does, this comment is the
-// place the next reader will look.
+// stripper that respects quotes AND regex literals. It once did not, and "`centreMode` never
+// appears in one" was not the condition that mattered: `esc()`'s `.replace(/"/g, …)` near the
+// top of daimond.js opened a phantom string, every quote after it was read out of phase, and
+// by the thousands of lines 4a-4e read, comments were code and code was string (2026-09-27).
+// A `/` opens a regex where an operand is expected: after an operator, an opening bracket, a
+// comma or semicolon, or a keyword such as `return`; after a name, a number or a closing
+// bracket it divides.
 function stripComments(s) {
 	let out = '', i = 0, n = s.length;
+	const regexMayOpen = () => {
+		const t = out.replace(/\s+$/, '');
+		if (!t) return true;
+		if (/(^|[^\w$])(return|typeof|case|in|of|delete|void|throw|new|else|do|yield|await)$/.test(t)) return true;
+		return /[(,=:\[!&|?{};+\-*%<>~^]$/.test(t);
+	};
 	while (i < n) {
 		const c = s[i], d = s[i + 1];
 		if (c === '/' && d === '/') { while (i < n && s[i] !== '\n') i++; continue; }
@@ -197,6 +208,17 @@ function stripComments(s) {
 			out += c; i++;
 			while (i < n && s[i] !== c) { if (s[i] === '\\') { out += s[i]; i++; } out += s[i]; i++; }
 			out += s[i]; i++; continue;
+		}
+		if (c === '/' && regexMayOpen()) {
+			let cls = false;
+			out += c; i++;
+			while (i < n && s[i] !== '\n' && (cls || s[i] !== '/')) {
+				if (s[i] === '\\') { out += s[i]; i++; }
+				else if (s[i] === '[') cls = true;
+				else if (s[i] === ']') cls = false;
+				out += s[i]; i++;
+			}
+			out += s[i] || ''; i++; continue;
 		}
 		out += c; i++;
 	}
@@ -223,7 +245,8 @@ check('4d. EVERY `showCentre` CALL NAMES A FACE OUTRIGHT, so the set can be read
 const entered = [...new Set(calls.filter(a => /^'[^']*'$/.test(a)).map(a => a.slice(1, -1)))];
 
 // What anything compares against.
-const compared = [...new Set([...code.matchAll(/centreMode\s*[=!]==\s*'([^']*)'/g)].map(m => m[1]))];
+// `typeof centreMode !== 'undefined'` compares a TYPE, not a face; it is left for 4e to judge.
+const compared = [...new Set([...code.matchAll(/(?<!typeof\s+)centreMode\s*[=!]==\s*'([^']*)'/g)].map(m => m[1]))];
 check('the checks found real comparisons to judge', compared.length > 0, compared.join(', '));
 
 // 4a. Nothing compares against a face the list does not name.
@@ -263,7 +286,7 @@ check('and `showCentre` refuses a face the list does not name',
 const residue = code
 	.replace(/var centreMode = '[^']*';/g, '')
 	.replace(/centreMode\s*=\s*mode;/g, '')
-	.replace(/centreMode\s*[=!]==\s*'[^']*'/g, '');
+	.replace(/(?<!typeof\s+)centreMode\s*[=!]==\s*'[^']*'/g, '');
 const stray = [...residue.matchAll(/.{0,34}\bcentreMode\b.{0,34}/g)]
 	.map(m => m[0].replace(/\s+/g, ' ').trim());
 check('4e. `centreMode` IS ONLY DECLARED, SET BY `showCentre`, OR COMPARED TO A LITERAL FACE',

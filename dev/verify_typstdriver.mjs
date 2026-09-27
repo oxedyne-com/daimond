@@ -1,3 +1,4 @@
+// gateway: none
 // verify_typstdriver.mjs — the Typst tool can be reached, and what it writes lands in the right root.
 //
 // The compiler was wired to a human's Compile button and to nothing else. `window.DaimondTypst` is

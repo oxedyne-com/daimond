@@ -1,3 +1,4 @@
+// gateway: none
 // verify_parcelbudget.mjs — the sync parcel's ceiling is set by the door it has to
 // go through, and the sections spent against it add up to no more than it.
 //

@@ -1,3 +1,4 @@
+// gateway: own
 // verify_pro.mjs -- the Pro tier, end to end through the REAL gateway.
 //
 // Pro is a one-time licence that unlocks cross-device sync, cloud storage and

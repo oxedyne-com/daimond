@@ -1,3 +1,4 @@
+// gateway: none
 // verify_attachtidy.mjs — tidying the Workspace panel's attachment chips.
 //
 // The owner looked at a Diamond's workspace and asked "are all these chips

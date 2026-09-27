@@ -1,1 +1,1 @@
-{"build":"f155c474a3f4","note":"Deleted files, large ones too, stay deleted on every device; full storage now says so; hand-offs survive a reload"}
+{"build":"6911be85c0f7","note":"A file one device lacks is no longer deleted on the others; undoing a chat turn keeps what you saved after it"}

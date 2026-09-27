@@ -1,3 +1,4 @@
+// gateway: none
 // verify_pending.mjs — the Pending panel is where a worker's question waits.
 //
 // The panel was built for notes2 ("a new Dock panel, say 'Pending' with tiles

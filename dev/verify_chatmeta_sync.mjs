@@ -1,3 +1,4 @@
+// gateway: none
 // verify_chatmeta_sync.mjs — S-SYNC #5, the two-device rename-vs-turn live driver.
 //
 // THE BUG. Chat scalars were record-level last-writer-wins on ONE stamp,

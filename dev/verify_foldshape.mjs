@@ -1,3 +1,4 @@
+// gateway: none
 // verify_foldshape.mjs — a fold comes back in a shape, and a fold that does not still folds.
 //
 // WHAT THIS IS WRITTEN FROM. A fold's note used to be whatever prose the compactor wrote, and

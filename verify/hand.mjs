@@ -16,7 +16,7 @@
 //
 //   node verify/hand.mjs                 # seal ../daimond-oss/hand
 //   node verify/hand.mjs --root DIR      # some other tree
-//   node verify/hand.mjs --no-lock       # do not regenerate the lock first
+//   node verify/hand.mjs --no-lock       # do not check the lock first
 //
 // **It reads the PUBLIC tree, not this one**, for the same reason the bundle is built there: the
 // two differ where it matters. This tree's `hand/Cargo.toml` depends on fe2o3 by path, into a
@@ -25,10 +25,20 @@
 // check would fail against an honest tree. So the order at release time is: carve, seal the hand
 // from what the carve produced, carve again to carry `hand.json` across.
 //
-// Regenerating `Cargo.lock` is part of sealing rather than part of carving. The lock is the
-// mirror's own file — it follows from the mirror's git pin, not from this tree's paths — and it
-// records the exact dependency versions this release resolved to, which is the difference between
-// "the same source" and "the same build inputs".
+// Checking `Cargo.lock` is part of sealing rather than part of carving. The lock is the mirror's
+// own file — it follows from the mirror's git pin, not from this tree's paths — and it records the
+// exact dependency versions the hand is built from, which is the difference between "the same
+// source" and "the same build inputs".
+//
+// 2026-09-27, release 5.2.1: the lock is CHECKED with `--locked`, never regenerated. Until then
+// this ran `cargo generate-lockfile`, which re-resolves every registry dependency to the newest
+// published version: release 5.2's seal moved js-sys and wasm-bindgen (0.3.105/0.2.128 ->
+// 0.3.106/0.2.129) though no hand source had changed, so a crates.io publish between two
+// releases rewrote a sealed source. Now a lock that no longer resolves the manifest as it stands
+// refuses the seal, and the recipe builds `--locked`, so what a reader builds is what was sealed.
+// A release that moves the fe2o3 pin must change this lock on purpose (the refusal says how);
+// deriving it from this tree's lock, as the root lock is, is the fuller fix (the gate tools
+// record, step 10).
 
 import { readFile, writeFile, stat } from 'node:fs/promises';
 import { join, normalize, resolve } from 'node:path';
@@ -53,7 +63,7 @@ const EXCLUDE_DIRS = ['target/'];
 /// `--manifest-path`, never `-p`: the hand is its own cargo workspace, so `-p daimond-hand` from
 /// the repository root fails with "package not found" — which reads like a missing crate rather
 /// than like the workspace boundary it is.
-const BUILD = 'cargo build --release --manifest-path hand/Cargo.toml';
+const BUILD = 'cargo build --release --locked --manifest-path hand/Cargo.toml';
 const BINARY = 'hand/target/release/daimond-hand';
 
 /// The toolchain the repository pins, which is what `rustup` will select for the build above.
@@ -110,15 +120,21 @@ if (!await stat(ROOT).then(s => s.isDirectory(), () => false)) {
 }
 
 if (!NO_LOCK) {
-	const r = spawnSync('cargo', ['generate-lockfile', '--manifest-path', join(ROOT, 'Cargo.toml')],
-		{ encoding: 'utf8' });
+	// `cargo metadata --locked` resolves the whole graph against the lock and exits non-zero if
+	// the lock would have to change; it writes nothing either way. Not `--no-deps`: that skips
+	// the resolution, and a lock missing a package then passes.
+	const r = spawnSync('cargo', ['metadata', '--locked', '--format-version', '1',
+		'--manifest-path', join(ROOT, 'Cargo.toml')], { encoding: 'utf8', maxBuffer: 64 << 20 });
 	if (r.status !== 0) {
-		console.error(`could not resolve the hand's dependencies, so there is nothing honest to seal:`);
+		console.error(`REFUSING TO SEAL: ${ROOT}/Cargo.lock does not resolve the manifest as it stands:`);
 		console.error((r.stderr || '').trim().split('\n').slice(-8).join('\n'));
-		console.error(`\n(--no-lock seals the lock already there, if that is what you meant.)`);
+		console.error(`\nThe seal checks the lock (--locked); it never re-resolves it, so no registry publish`);
+		console.error(`can move a sealed source between two releases. If the manifest changed on purpose (a new`);
+		console.error(`fe2o3 pin, a new dependency), update the lock deliberately in the mirror -- e.g.`);
+		console.error(`\`cargo update --manifest-path ${ROOT}/Cargo.toml -p <crate>\` -- read what moved, and seal again.`);
 		process.exit(1);
 	}
-	console.log(`Cargo.lock  resolved against ${ROOT}/Cargo.toml`);
+	console.log(`Cargo.lock  checked against ${ROOT}/Cargo.toml (--locked: unchanged)`);
 }
 
 const files	= await hashTree(ROOT, { exclude: new Set(), excludeDirs: EXCLUDE_DIRS, excludeSuffixes: [] });

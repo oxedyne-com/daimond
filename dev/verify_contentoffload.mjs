@@ -1,3 +1,4 @@
+// gateway: none
 // verify_contentoffload.mjs — the v3 content offload: large Diamonds and chat
 // transcripts move out to content-addressed chunks and leave a `dataRef` /
 // `messagesRef` inline, under reserved `@d/<id>` / `@c/<id>` manifests co-located

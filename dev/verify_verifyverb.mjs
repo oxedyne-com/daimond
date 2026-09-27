@@ -1,3 +1,4 @@
+// gateway: none
 // verify_verifyverb.mjs — the `verify` verb, against the real hand binary.
 //
 // The verb exists because a daimon cannot produce browser evidence: `listen()` is

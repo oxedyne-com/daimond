@@ -1,3 +1,4 @@
+// gateway: none
 // verify_ooxml.mjs — a THIRD instrument over the Office writers, because two
 // were not enough and one of the two has never read a Microsoft format.
 //

@@ -1,3 +1,4 @@
+// gateway: none
 // verify_crystalcap.mjs — a crystal is a summary and its page is a page, and
 // each has a ceiling that says so.
 //

@@ -1,3 +1,4 @@
+// gateway: none
 // verify_typedit_phone.mjs — editing a `.typ` with live pages ON A PHONE.
 //
 // The loop this checks is the author's own: open a chapter of a 48-page book, edit

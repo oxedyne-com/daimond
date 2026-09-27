@@ -1,3 +1,4 @@
+// gateway: none
 // verify_devices_mobile.mjs — the Devices panel on a PHONE, and the same list on a
 // desktop beside it (owner trace, 2026-09-13, iPhone PWA on build ea8174ff76f6:
 // a red skew box "Your devices are on 2 different builds" over "an indecipherable

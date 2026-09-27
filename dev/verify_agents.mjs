@@ -1,3 +1,4 @@
+// gateway: none
 // The conductor dispatches workers; a finished worker folds in ONCE (not
 // repeatedly), and finished tiles can be cleared.
 //

@@ -1,3 +1,4 @@
+// gateway: own
 // verify_search_console.mjs -- the operator console's Providers card, and what
 // the console shows of what search costs.
 //

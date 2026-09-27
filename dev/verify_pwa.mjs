@@ -1,3 +1,4 @@
+// gateway: none
 // verify_pwa.mjs — Daimond is installable, and the cache that makes it possible
 // cannot serve a build the server has moved past.
 //

@@ -1,3 +1,4 @@
+// gateway: none
 // verify_crystalmigrate.mjs — `crystal.md` becomes `crystal.json`, and NOTHING
 // IS LOST DOING IT.
 //

@@ -1,3 +1,4 @@
+// gateway: none
 // verify_parcelstable.mjs — the sync parcel is a fixed point, or two devices push for ever.
 //
 // `push()` skips the wire when the parcel stringifies to what it last sent

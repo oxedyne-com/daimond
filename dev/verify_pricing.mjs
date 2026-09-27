@@ -1,3 +1,4 @@
+// gateway: none
 // verify_pricing.mjs — the cost pipeline's pure core, under Node.
 //
 // "This session" overstated real OpenRouter spend about six-fold, and not one
@@ -30,6 +31,7 @@
 //   node dev/verify_pricing.mjs --break neartable   # a borrowed rate called surveyed
 //   node dev/verify_pricing.mjs                     # and then, clean
 import { readFileSync } from 'fs';
+import { loadStore } from '../www/js/storefixture.mjs';
 
 const ok = [], bad = [];
 const check = (name, pass, detail) => {
@@ -81,6 +83,11 @@ function loadModule(rel, extra = {}) {
 		if (out === src) die(`the "${BREAK}" break no longer matches www/${rel}`);
 		src = out;
 	}
+	// index.html loads store.js (and stamp.js) before any module that keeps a synced
+	// record, and ledger.js has read and written through `window.DaimondStore` since
+	// release 5 (1f2a8ae3); a module handed a localStorage gets the store first, as
+	// every www/js/*.test.mjs harness does through storefixture.mjs.
+	if (extra.localStorage && !extra.window.DaimondStore) loadStore(extra.window, extra.localStorage);
 	const names = ['window', ...Object.keys(extra)];
 	const vals  = [extra.window, ...Object.keys(extra).map(k => extra[k])];
 	// eslint-disable-next-line no-new-func

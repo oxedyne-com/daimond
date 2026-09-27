@@ -1,3 +1,4 @@
+// gateway: none
 // verify_droots_real.mjs — the adoption migration, over a REAL store rather than a fixture.
 //
 // dev/verify_droots.mjs proves the rules of the migration against data that

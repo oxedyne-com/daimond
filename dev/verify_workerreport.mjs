@@ -1,3 +1,4 @@
+// gateway: none
 // verify_workerreport.mjs — the Ontheism WORKER-REPORT fix, page half.
 //
 // A finished worker's report must reach its daimon, and must never be mistaken for
@@ -133,7 +134,10 @@ function slice(name) {
 		+ ' + " with a narrower task if the work still matters."); return; }';
 	const es = (BREAK === 'emitter') ? preFix : real;
 	check('(1) the empty-batch note switches on whether the workers ran tools (`ended.calls > 0`)',
-		/ended && r\.ended\.calls > 0/.test(es) && /check its files/i.test(es),
+		// The words the daimon reads when the batch did tool work: its work is in its
+		// files, and it is not to be re-dispatched. (It said "check its files" first.)
+		/ended && r\.ended\.calls > 0/.test(es) && /work is in its files/i.test(es)
+			&& /do not re-dispatch/i.test(es),
 		'still invites a re-dispatch of finished work');
 }
 

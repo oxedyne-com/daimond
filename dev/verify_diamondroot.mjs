@@ -1,3 +1,4 @@
+// gateway: none
 // verify_diamondroot.mjs — a workspace written before the Focus → Diamond rename must open whole.
 //
 // The rename moved the root every pursuit lives under: `foci/` → `diamonds/`. That is the whole

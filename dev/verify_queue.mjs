@@ -1,3 +1,4 @@
+// gateway: none
 // verify_queue.mjs — you may type while the answer is still arriving.
 //
 // The composer used to be disabled for the whole turn, so the next thing you
@@ -125,8 +126,9 @@ check('the queue sits at the bottom of the thread, under what has happened',
 check('a queue on its own counts as work in flight (the updater must not reload it away)',
 	after.busy === true);
 const qhead = await p.$eval('.chat-queued-head', e => e.textContent).catch(() => '');
+// "…next step or turn's end" since c8afa2fa (the 2026-09-15 terseness sweep); it said "finish".
 check('and the queue says when what is in it will be sent',
-	/finish/i.test(qhead), qhead || '(no head line)');
+	/finish|turn.s end/i.test(qhead), qhead || '(no head line)');
 await shot(s, 'queue-waiting');
 
 // ── 4. A second one queues behind the first, in order ────────────────

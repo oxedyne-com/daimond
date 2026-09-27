@@ -1,3 +1,4 @@
+// gateway: live
 // verify_presence.mjs — a presence beat travels off the content parcel, on a
 // path that wakes nobody.
 //

@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+// gateway: none
 // #17 -- the fold shows its stages as a transcript tile, not an opaque spinner.
 // Pure Node: it reads source structure and lifts the stage helpers to run them
 // against stubs. Print in the verify-verb format ('  ok   '/'  FAIL ').
@@ -72,12 +73,14 @@ doneFn(run);
 check(removed, 'done takes the running mark off');
 removed = false; body = '';
 let peeked = '';
-const run2 = { classList: { remove: () => { removed = true; } }, _body: { set textContent(v) { body = v; } }, _peek: (x) => { peeked = String(x); } };
-const failFn = new Function('run', 'friendlyError', 't',
+const run2 = { classList: { remove: () => { removed = true; } }, _body: { set textContent(v) { body = v; } } };
+// The error goes out through the transcript's own peek door, `tilePeek(tile, text)`
+// (08bb2150), not a `_peek` on the tile; the stub records what it was handed.
+const failFn = new Function('run', 'friendlyError', 't', 'tilePeek',
 	src.slice(src.indexOf('function foldStageFail('),
 		src.indexOf('\n\n', src.indexOf('function foldStageFail(')))
 	+ '\nfoldStageFail(run, new Error("boom"));');
-failFn(run2, friendlyError, t);
+failFn(run2, friendlyError, t, (tile, text) => { if (tile === run2) peeked = String(text); });
 check(removed && /boom/.test(peeked), 'fail settles the tile and says the error');
 
 // 3. every catalogue carries the five keys, and none carries a dotted one

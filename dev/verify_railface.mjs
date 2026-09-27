@@ -1,3 +1,4 @@
+// gateway: none
 // verify_railface.mjs — the rail's second divider, and the crystal's own face.
 //
 // Two small things the user asked for, both of them about a boundary being

@@ -1,3 +1,4 @@
+// gateway: none
 // verify_checkreach -- every runnable file in `dev/` is either in the gate or says why not.
 //
 // WHY THIS EXISTS. `dev/run_all.sh` built its work list as `ls verify_*.mjs`, and a list built
@@ -87,7 +88,13 @@ const INERT	= new Set(['md', 'json', 'jsonl', 'txt', 'bin', 'typ', 'xlsx', 'ttf'
 			// A diff is data. `git apply` runs it, in the sense that a `.json` is run by
 			// whatever reads it, but nothing in dev/ can be reached THROUGH one, so it is
 			// no more a check than a fixture is.
-			'patch']);
+			'patch',
+			// systemd units (`lens-pull.service`, `lens-pull.timer`): systemd reads them on
+			// an operator's machine, and nothing in dev/ is reached through one.
+			'service', 'timer',
+			// `dev/budgets.tsv`: the measured time budgets `dev/run_all.sh` reads per verifier
+			// (qa/gate-tools); a table, reached by nothing.
+			'tsv']);
 
 const fails	= [];
 const oks	= [];

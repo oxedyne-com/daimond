@@ -1,3 +1,4 @@
+// gateway: none
 // verify_triggerarm.mjs -- only a person on this device makes a triggered action live.
 //
 // The final re-check of Deploy 1 (F1, 2026-09-24) found a daimon could arm a LIVE

@@ -1,3 +1,4 @@
+// gateway: none
 // verify_gatheronrunner.mjs — a handed-off agentic turn's GATHER round runs ON THE
 // RUNNER, and the errand reports `done` only AFTER it has settled.
 //

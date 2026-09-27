@@ -1,3 +1,4 @@
+// gateway: none
 // The switch called Steps hides the STEPS, and not the model's own sentences.
 //
 // The owner's ruling of 2026-08-28, reversing a decision taken on 2026-08-23.  A run of prose

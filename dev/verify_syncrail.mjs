@@ -1,3 +1,4 @@
+// gateway: live
 // verify_syncrail.mjs -- the rail's one-line status summary follows the sync chip through a stall
 // (D072, P1a M7, 2026-09-25).
 //

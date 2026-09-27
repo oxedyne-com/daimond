@@ -1,3 +1,4 @@
+// gateway: none
 // verify_workspace.mjs — the controls that arrange Daimond.
 //
 // What is checked here is not the pixels but the guarantees the design rests on,

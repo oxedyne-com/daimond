@@ -1,3 +1,4 @@
+// gateway: none
 // Verify the push configuration against the real `git` binary.
 //
 // The Rust tests in `src/tools.rs` prove that Daimond builds the strings it means to build.  They

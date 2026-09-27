@@ -1,3 +1,4 @@
+// gateway: none
 // verify_passkey.mjs — enrol a passkey and unlock with it, end to end.
 //
 // Drives the REAL unlock and Settings UI in Chromium, with a CDP *virtual

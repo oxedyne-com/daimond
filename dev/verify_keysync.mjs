@@ -1,3 +1,4 @@
+// gateway: none
 // verify_keysync.mjs — provider keys and model config travel between linked
 // devices, so a user never re-enters a key per device; and a device that CANNOT
 // read a synced key is never left silently broken and never loses a working one.

@@ -1,3 +1,4 @@
+// gateway: none
 // verify_genpass.mjs — the generated passphrase, and the login form a password
 // manager can actually see.
 //

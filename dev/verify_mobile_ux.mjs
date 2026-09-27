@@ -1,3 +1,4 @@
+// gateway: none
 // verify_mobile_ux.mjs — walk the real mobile UX pathways, not just geometry.
 //
 // This exists because a headless "it renders" pass shipped bugs a human hit in

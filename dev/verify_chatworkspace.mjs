@@ -1,3 +1,4 @@
+// gateway: none
 // verify_chatworkspace.mjs — a chat's footer says two different things, and only
 // one of them is a permission.
 //

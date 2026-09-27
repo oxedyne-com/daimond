@@ -1,3 +1,4 @@
+// gateway: none
 /* ============================================================
    verify_presenceseating.mjs — PRESENT-DERIVED hand-off seating
    (owner redesign, Phase A, 2026-09-09).

@@ -1,3 +1,4 @@
+// gateway: none
 // verify_money.mjs -- whose money the rail is talking about.
 //
 // The rail carried one row, labelled "Credits", showing the balance held with

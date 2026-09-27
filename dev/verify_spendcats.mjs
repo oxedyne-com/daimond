@@ -1,3 +1,4 @@
+// gateway: none
 // verify_spendcats.mjs — the Spending page can name every category the gateway
 // can charge under, in every language.
 //

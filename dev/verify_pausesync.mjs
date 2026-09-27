@@ -1,3 +1,4 @@
+// gateway: live
 // verify_pausesync.mjs — the pause tree travels between devices, and carrying it
 // does not turn the sync into a loop.
 //

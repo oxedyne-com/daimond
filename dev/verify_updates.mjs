@@ -1,3 +1,4 @@
+// gateway: none
 // verify_updates.mjs — a running tab notices a new build and applies it safely.
 //
 // The contract: the tab reads build.json at boot to learn its own version, re-reads it to notice

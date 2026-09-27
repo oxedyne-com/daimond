@@ -1,3 +1,4 @@
+// gateway: none
 // The starter tags, in every language.
 //
 // They are the one place the interface puts a word INTO the user's data. A tag

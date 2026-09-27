@@ -1,3 +1,4 @@
+// gateway: none
 // verify_sweep_seen.mjs — is it on the screen, in the corner, and pressable?
 //
 // The owner exported eighteen defects from an ordinary day of using Daimond and

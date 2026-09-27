@@ -1,3 +1,4 @@
+// gateway: none
 // verify_voice.mjs — a voice is held encrypted, and leaves only as a header.
 //
 // WHAT THIS IS FOR. To write a proposal on the Oregami forge a tester presents a VOICE: a

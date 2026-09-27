@@ -1,3 +1,4 @@
+// gateway: none
 // verify_midtool.mjs — a tool called BETWEEN two reasoning steps draws its Tool
 // tile, in the flow, in BOTH Steps states.
 //

@@ -1,3 +1,4 @@
+// gateway: none
 // verify_handmeterless.mjs — the page's gate for a hand older than the deletion meter, in a
 // headless browser, against real hand binaries.
 //

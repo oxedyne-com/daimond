@@ -1,3 +1,4 @@
+// gateway: none
 // The Diamond's workspace: the set of files and folders its daimon may open.
 //
 // It is a VIEW, not a container. The files live in the one workspace and the

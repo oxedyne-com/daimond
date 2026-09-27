@@ -1,3 +1,4 @@
+// gateway: none
 // verify_tagkill.mjs — a tag can be got rid of, and says who it will affect.
 //
 // The tag editor's upper box takes a tag OFF this Diamond. Nothing anywhere could

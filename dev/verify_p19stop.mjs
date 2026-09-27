@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+// gateway: none
 // Verifier for proposal #19 (superfluous stop button beside the enter button).
 //
 // Declared breaks:

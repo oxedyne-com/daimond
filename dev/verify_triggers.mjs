@@ -1,3 +1,4 @@
+// gateway: none
 // verify_triggers.mjs — phase H: automation you can see, pause and read.
 //
 // Notes2 §Diamonds asks for triggered actions, a Pending panel and two default

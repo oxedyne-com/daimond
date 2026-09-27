@@ -1,3 +1,4 @@
+// gateway: none
 // verify_refusedpath.mjs — a refused tool call is not a call that did nothing wrong.
 //
 // THE DEFECT, ONE DOOR ALONG FROM `dev/CONTRACT_OUTCOME.md`. That contract put the

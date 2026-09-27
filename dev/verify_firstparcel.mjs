@@ -1,3 +1,4 @@
+// gateway: none
 // verify_firstparcel.mjs — THE FIRST PARCEL AFTER A BOOT, which on the owner's
 // iPhone carried the whole workspace inline and was refused by the front door.
 //

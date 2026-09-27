@@ -1,3 +1,4 @@
+// gateway: none
 // verify_defaults.mjs — Help and the Optimiser are FEATURES, so everybody gets
 // them; but a Diamond somebody deletes stays deleted.
 //

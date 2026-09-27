@@ -1,3 +1,4 @@
+// gateway: none
 /* ============================================================
    verify_seatline.mjs — WHERE THE NEXT TURN WILL RUN, stated
    before the send (owner spec, 2026-09-12).

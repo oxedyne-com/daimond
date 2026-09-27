@@ -1,3 +1,4 @@
+// gateway: none
 // verify_chatid.mjs — a new chat is not born in the trash.
 //
 // WHY THIS FILE EXISTS. Build 664d9f47bd1d could not start an ordinary chat on any

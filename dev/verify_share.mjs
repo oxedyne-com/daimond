@@ -1,3 +1,4 @@
+// gateway: none
 // verify_share.mjs — a share that is too big for the relay has somewhere to go.
 //
 // THE DEFECT THIS CLOSES IS A DEAD END, NOT A BUG. `www/js/share.js` composed a

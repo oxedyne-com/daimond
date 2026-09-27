@@ -1,3 +1,4 @@
+// gateway: none
 // verify_lifelog.mjs — drive the lifelog capp in a real Diamond and hold it to its numbers.
 //
 // WHERE THIS FILE BELONGS, and it is now there. It lives in `dev/` and must stay: `dev/run_all.sh`

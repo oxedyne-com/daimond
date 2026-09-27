@@ -1,3 +1,4 @@
+// gateway: none
 // You must be able to work in a second chat while the first is still running.
 //
 // THE HEADER USED TO SAY "and Stop must hit the chat you are looking at -- not

@@ -1,3 +1,4 @@
+// gateway: none
 // verify_backupns.mjs — a backup belongs to ONE account, and a restore adds to
 // what is already here.
 //

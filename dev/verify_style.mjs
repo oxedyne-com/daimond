@@ -1,3 +1,4 @@
+// gateway: none
 // verify_style.mjs — the objective half of style coherence: the things a machine
 // can judge without an eye. Run per cell (engine × device × theme) and per view.
 //

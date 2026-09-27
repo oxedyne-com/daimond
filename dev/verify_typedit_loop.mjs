@@ -1,3 +1,4 @@
+// gateway: none
 // verify_typedit_loop.mjs — editing a `.typ` beside its live pages, on a desktop.
 //
 // The loop itself is `dev/verify_typstwatch.mjs`'s: a save rebuilds, the reader keeps

@@ -1,3 +1,4 @@
+// gateway: none
 // verify_dataloss.mjs — the four ways a sync round used to destroy a user's
 // work, each asserted where it was destroyed.
 //
@@ -184,11 +185,20 @@ check('and neither does one from a device too old to say (no flag at all)',
 	old.paths.includes('keep-a.md') && old.paths.includes('keep-b.md'),
 	old.paths.join(' ') || '(workspace emptied)');
 
-// The other half of the property: a COMPLETE census still propagates a real
-// deletion, or the guard has simply switched deletions off.
-const real = await applyAndList({ v: 2, chats: [], files: { 'keep-a.md': 'alpha' }, filesComplete: true });
-check('a complete census still deletes what the other device really deleted',
-	real.paths.includes('keep-a.md') && !real.paths.includes('keep-b.md'),
+// NOR A COMPLETE ONE THAT MERELY LACKS A FILE (fault B, 5.3): a folder device's census is
+// complete only for its shared roots, so absence is never a deletion, in the sandbox either.
+const lacks = await applyAndList({ v: 2, chats: [], files: { 'keep-a.md': 'alpha' }, filesComplete: true });
+check('nor does a COMPLETE census that merely lacks a file (no tombstone)',
+	lacks.paths.includes('keep-a.md') && lacks.paths.includes('keep-b.md'),
+	lacks.paths.join(' ') || '(workspace emptied)');
+
+// The other half of the property: a real deletion still lands, as the tombstone the
+// deleting device writes with the hash it held, or the guard has simply switched deletions off.
+const heldB = await p.evaluate(() => JSON.parse(localStorage.getItem('daimond-sync-filebase') || '{}')['keep-b.md']);
+const real = await applyAndList({ v: 2, chats: [], files: { 'keep-a.md': 'alpha' }, filesComplete: true,
+	fileTombs: { 'keep-b.md': heldB } });
+check('a tombstone still deletes what the other device really deleted',
+	!!heldB && real.paths.includes('keep-a.md') && !real.paths.includes('keep-b.md'),
 	real.paths.join(' '));
 
 // ── 3. The backup carries the identity, and the string is honest ─────────

@@ -1,3 +1,4 @@
+// gateway: live
 // verify_handoff_staleturn.mjs -- a desktop never starts a handed-off turn older than the
 // window, however fresh the errand that carries it, and still starts a fresh one.
 //

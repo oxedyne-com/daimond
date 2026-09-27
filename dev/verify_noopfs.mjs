@@ -1,3 +1,4 @@
+// gateway: own
 // verify_noopfs.mjs -- a device whose browser cannot hold files (no OPFS, or an OPFS that throws)
 // still syncs what it holds, says plainly what it cannot, and does not loop against the gateway.
 //

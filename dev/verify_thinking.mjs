@@ -1,3 +1,4 @@
+// gateway: none
 // The model's working, shown while it is being done — 2026-08-28.
 //
 // The finding this is built on, measured against OpenRouter that morning: Daimond read

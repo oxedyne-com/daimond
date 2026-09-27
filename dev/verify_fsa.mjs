@@ -1,3 +1,4 @@
+// gateway: none
 // verify_fsa.mjs — real-folder mode: the root swap, and the state that must not follow it.
 //
 // FSA lets the owner point Daimond at a real directory, so the agents edit actual files instead

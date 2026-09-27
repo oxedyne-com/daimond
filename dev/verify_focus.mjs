@@ -1,3 +1,4 @@
+// gateway: none
 // verify_focus.mjs — the keyboard can always find where it is, and cannot fall
 // out of a dialog that is covering the app.
 //

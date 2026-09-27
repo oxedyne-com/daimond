@@ -1,3 +1,4 @@
+// gateway: none
 // dev/verify_post.mjs -- the messaging client: the seal, the five verbs, and the
 // ordering that is the whole safety property.
 //
@@ -7,13 +8,16 @@
 //      Two browsers, two profiles, two identities. The bytes are carried between
 //      them by this file. A third identity must NOT be able to open the same
 //      envelope, or the seal is decoration.
-//   2. ACK AFTER COMMIT. The `?op=ack` request must be made AFTER the sync push
-//      that carried the message came back 200, and never before.
-//   3. NO COMMIT, NO ACK. A push that 409s is not a commit, and nothing may be
-//      acked on the back of it.
-//   4. NOT IN THE PARCEL, NO ACK. Where the parcel does not carry the message
-//      record, the relay must not be told to let go: the message would be
-//      dropped from the only place it exists.
+//   2. ACK AFTER THE LOCAL COMMIT. The `?op=ack` request leaves only once this
+//      device's wrapped record, READ BACK from disk, holds the folded sequence,
+//      and it names that sequence and this device (per-device acks, 5ee0d31e).
+//   3. NOT ON DISK, NO ACK. A record write that throws (a quota over-run) acks
+//      nothing: the relay would drop the only copy of the message.
+//   4. THE PARCEL HOLDS NOTHING UP. Since 6de55e13 the ack rests on the local
+//      commit, never on the sync parcel: an ack gated on the parcel push let a
+//      parcel over Steel's door stop every ack, fill the relay box and refuse every
+//      sender to the account (the S1). A refused push, or a parcel that leaves the
+//      record off, still acks what is durably folded here.
 //   5. A ROW THE RELAY WROTE IS NEVER DRAWN AS A PERSON. `kind != "post"` goes
 //      to the notices and never to the message list, in the record AND on screen.
 //   6. A FULL BOX IS DRAWN HONESTLY. 507 means the message did not arrive, and
@@ -375,141 +379,123 @@ async function selfRow(s, seq = 1, { kind = 'post', tray = false } = {}) {
 	}, [seq, kind, tray]);
 }
 
-async function ackAfterCommit() {
-	console.log('\n2. the ack is made AFTER the push that carried it committed');
+/// Watch the order in the page itself: every ack request, and what the record on
+/// disk held at the moment it left. The ack goes through `window.fetch` (post.js
+/// `call`, via `DaimondGateway.gwFetch`), so the wrapper sees it before the wire does.
+async function watchAcks(s) {
+	await s.page.evaluate(() => {
+		window.__postOrder = [];
+		if (window.__fetchReal) return;
+		window.__fetchReal = window.fetch;
+		window.fetch = async function (input, init) {
+			const url = String((input && input.url) || input);
+			if (/\/api\/post/.test(url) && /[?&]op=ack\b/.test(url)) {
+				let onDisk = -1;
+				try {
+					const raw = localStorage.getItem('daimond-post');
+					onDisk = raw ? (JSON.parse(await window.DaimondIdentity.unwrap(raw)).through | 0) : -1;
+				} catch (e) { onDisk = -2; }
+				window.__postOrder.push('ack@' + onDisk);
+			}
+			return window.__fetchReal.apply(this, arguments);
+		};
+	});
+}
+
+async function ackAfterLocalCommit() {
+	console.log('\n2. the ack is made AFTER the fold is durably on this device');
 	const s = await open({ name: 'post-ack', connect: false });
 	try {
 		await ready(s);
 		const row = await selfRow(s, 1);
-		const cfg = { rows: [row] };
-		const log = await mockServer(s, cfg);
+		const log = await mockServer(s, { rows: [row] });
 		await entitle(s);
+		await watchAcks(s);
 		log.length = 0;					// forget the traffic entitling made
 
 		const r = await s.page.evaluate(() => window.DaimondPost.round());
 		ok(r.ok && r.got === 1, 'one message was collected', r);
 		eq(r.acked, 1, 'the relay was told it may let go through sequence 1');
-
-		const order = log.map(e => e.what);
-		const iPush = order.lastIndexOf('sync-push');
-		const iAck  = order.indexOf('ack');
-		ok(iAck >= 0, 'an ack was sent', order);
-		ok(iPush >= 0 && iAck > iPush,
-			'the ack came AFTER the parcel push, not before', order);
-		const ackBody = (log.find(e => e.what === 'ack') || {}).body;
-		eq(ackBody, { through: 1 }, 'the ack names exactly the sequence that was folded');
+		ok(log.some(e => e.what === 'ack'), 'an ack was sent', log.map(e => e.what));
+		const order = await s.page.evaluate(() => window.__postOrder);
+		ok(order.length === 1 && order[0] === 'ack@1',
+			'the ack left only once the record ON DISK already held sequence 1', order);
+		// Since 5.1 (5ee0d31e, D126) the relay acks per device, so the ack names the
+		// acking device; `through` is still exactly the folded sequence.
+		const ackBody = (log.find(e => e.what === 'ack') || {}).body || {};
+		const dev = await s.page.evaluate(() => String(window.DaimondIdentity.deviceId() || ''));
+		eq(ackBody.through, 1, 'the ack names exactly the sequence that was folded');
+		ok(Object.keys(ackBody).every(k => k === 'through' || k === 'device')
+			&& (dev ? ackBody.device === dev : !('device' in ackBody)),
+			'and names this device and nothing else', { ackBody, dev });
 	} finally { await s.close(); }
 }
 
-async function noCommitNoAck() {
-	console.log('\n3. a push that did not commit acks nothing');
-	const s = await open({ name: 'post-nocommit', connect: false });
+async function notSavedNoAck() {
+	console.log('\n3. a fold that did not reach the disk acks nothing');
+	const s = await open({ name: 'post-nosave', connect: false });
 	try {
 		await ready(s);
 		const row = await selfRow(s, 1);
-		const cfg = { rows: [row] };
-		const log = await mockServer(s, cfg);
-		// Entitled while the push still works, so this test cannot pass because a
-		// push never happened -- which is the trap. THEN the mailbox starts
-		// answering 409: another device moved it on, and that is not a commit.
+		const log = await mockServer(s, { rows: [row] });
 		await entitle(s);
-		cfg.pushStatus = 409;
+		// The write the ack rests on fails the way a full origin fails it: setItem
+		// throws. The relay then holds the only copy, and must keep it.
+		// On the instance, not `Storage.prototype`: accounts.js hangs its own per-account
+		// `setItem` on `localStorage` itself, over the prototype's.
+		await s.page.evaluate(() => {
+			window.__setItemReal = localStorage.setItem;
+			localStorage.setItem = function (k, v) {
+				if (k === 'daimond-post') throw new DOMException('quota', 'QuotaExceededError');
+				return window.__setItemReal.call(this, k, v);
+			};
+		});
 		log.length = 0;
 
 		const r = await s.page.evaluate(() => window.DaimondPost.round());
 		ok(r.got === 1, 'the message was still collected', r);
 		eq(r.acked, 0, 'nothing was acked');
-		eq(r.why, 'not_committed', 'and the reason given is that the push did not commit');
+		eq(r.why, 'not_saved', 'and the reason given is that the record did not reach the disk');
 		ok(!log.some(e => e.what === 'ack'), 'no ack request left the browser at all',
 			log.map(e => e.what));
-		ok(log.some(e => e.what === 'sync-push'),
-			'and a push WAS attempted, so this is a refused commit and not an absent one',
-			log.map(e => e.what));
-		const st = await s.page.evaluate(() => window.DaimondPost.state());
-		ok(st.through === 1 && st.acked === 0,
-			'the message is folded and unacked, so the relay still holds it', st);
+		// The control: the same fixture acks once the write lands, so the refusal
+		// above is the failed write and not a fixture that cannot ack.
+		await s.page.evaluate(() => { localStorage.setItem = window.__setItemReal; });
+		const back = await s.page.evaluate(() => window.DaimondPost.ack());
+		ok(back.acked === 1 && !back.why,
+			'and with the write working again the very same fixture acks', back);
 	} finally { await s.close(); }
 }
 
-async function notInParcelNoAck() {
-	console.log('\n4. a parcel that does not carry the record acks nothing');
+async function parcelDoesNotHoldTheAck() {
+	console.log('\n4. a parcel that cannot commit, or does not carry the record, holds nothing up');
 	const s = await open({ name: 'post-noparcel', connect: false });
 	try {
 		await ready(s);
 		const row = await selfRow(s, 1);
-		const log = await mockServer(s, { rows: [row] });
+		const row2 = await selfRow(s, 2);
+		const cfg = { rows: [row] };
+		const log = await mockServer(s, cfg);
 		await entitle(s);
-		// STRIPPED DELIBERATELY, and only now -- after `entitle` has proved a push
-		// reaches the wire against a parcel that DID carry the record. This section
-		// used to rely on the record simply not being there, which was true of the
-		// tree it was written in; when sync.js:715 landed the section stopped
-		// simulating anything and the ack correctly fired. A test whose premise the
-		// code has since fixed does not become a bug report, it becomes a stale
-		// test, and it read as seven failures in post.js for a month.
-		await stripPostFromParcel(s);
+		// 6de55e13 (the S1 account-bricker): the ack once waited for the parcel push
+		// to commit, so a parcel over Steel's door never acked, the relay box filled
+		// and every sender to the account was refused. The mailbox must not wait on
+		// the parcel: a refused push (413) still acks what is durably folded here.
+		cfg.pushStatus = 413;
 		log.length = 0;
-
 		const r = await s.page.evaluate(() => window.DaimondPost.round());
 		ok(r.got === 1, 'the message was collected', r);
-		eq(r.acked, 0, 'nothing was acked');
-		eq(r.why, 'not_in_parcel', 'and the reason names the section the parcel is missing');
-		ok(!log.some(e => e.what === 'ack'), 'no ack request left the browser at all',
-			log.map(e => e.what));
-		// The control: without the strip, this same fixture DOES ack. Otherwise
-		// every assertion above would pass on a fixture that never collects.
+		eq(r.acked, 1, 'and acked though the parcel push is refused as too large');
+		ok(log.some(e => e.what === 'ack'), 'the ack reached the relay', log.map(e => e.what));
+		// And a parcel that does not carry the record (a locked identity leaves the
+		// section off) is no reason to hold the relay's copy either.
+		await stripPostFromParcel(s);
+		cfg.pushStatus = 200;
+		cfg.rows = [row, row2];
+		log.length = 0;
+		const r2 = await s.page.evaluate(() => window.DaimondPost.round());
+		eq(r2.acked, 2, 'nor is the parcel leaving the record off: sequence 2 is acked too');
 		await restorePostToParcel(s);
-		const back = await s.page.evaluate(() => window.DaimondPost.ack());
-		ok(back.acked === 1 && !back.why,
-			'and with the record back on the parcel the very same fixture acks -- '
-			+ 'so the refusal above is the strip and not a fixture that cannot ack', back);
-	} finally { await s.close(); }
-}
-
-async function committedButNotCarriedNoAck() {
-	console.log('\n4b. a push that DID commit, carrying everything but the record, acks nothing');
-	const s = await open({ name: 'post-carried', connect: false });
-	try {
-		await ready(s);
-		// The parcel changes on every collect and commits every time -- but it does
-		// not carry the message record. Without the parcel read-back this is the
-		// case that acks messages sitting on no parcel anywhere and loses them:
-		// the version check alone cannot see it, because the version really did
-		// move. It is the state a locked identity produces, since `snapshot()`
-		// answers null and the section is left off.
-		await s.page.evaluate(() => {
-			const orig = window.DaimondCore.collectSync;
-			window.DaimondCore.collectSync = async function () {
-				const state = await orig.call(window.DaimondCore);
-				state.__churn = Date.now() + Math.random();
-				return state;
-			};
-		});
-		const row = await selfRow(s, 1);
-		const log = await mockServer(s, { rows: [row] });
-		await entitle(s);
-		// The churn alone no longer strips the record, and `delete state.post`
-		// inside that wrapper would not either: `collectParcel` calls `collectSync`
-		// and adds the section AFTERWARDS (www/js/sync.js:657, :715), so a wrapper
-		// underneath it is deleting a key that has not been written yet. The strip
-		// has to be where sync.js reads from, which is `snapshot()`.
-		await stripPostFromParcel(s);
-		log.length = 0;
-
-		const r = await s.page.evaluate(() => window.DaimondPost.round());
-		ok(r.got === 1, 'the message was collected', r);
-		// The push in `entitle` already committed against this same churning
-		// parcel, so a commit is demonstrably available here and the version has
-		// demonstrably moved. Remove the parcel read-back and the ack fires on it.
-		const version = await s.page.evaluate(() => window.DaimondSync.version());
-		ok(version > 1, 'a commit against this parcel is available -- the version has moved',
-			version);
-		eq(r.acked, 0, 'and still nothing was acked');
-		eq(r.why, 'not_in_parcel', 'because the parcel does not carry the record');
-		ok(!log.some(e => e.what === 'sync-push'),
-			'the refusal came before the push, so no round was spent on it',
-			log.map(e => e.what));
-		ok(!log.some(e => e.what === 'ack'), 'no ack request left the browser at all',
-			log.map(e => e.what));
 	} finally { await s.close(); }
 }
 
@@ -962,10 +948,9 @@ const all = [
 	// is measured through them.
 	['seams',   seamsAreReal],
 	['seal',    sealBetweenTwoIdentities],
-	['ack',     ackAfterCommit],
-	['nocommit', noCommitNoAck],
-	['noparcel', notInParcelNoAck],
-	['carried',  committedButNotCarriedNoAck],
+	['ack',     ackAfterLocalCommit],
+	['nosave',  notSavedNoAck],
+	['noparcel', parcelDoesNotHoldTheAck],
 	['kind',    relayRowIsNeverAMessage],
 	['full',    fullBoxIsHonest],
 	['park',    parkWithoutWaitedStops],

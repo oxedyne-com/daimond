@@ -1,3 +1,4 @@
+// gateway: none
 // verify_reqfiles.mjs — every Diamond has REQUIREMENTS.md, DECISIONS.md and STATE.md,
 // they are in the prompt, they are capped, and they travel.
 //
@@ -297,8 +298,14 @@ try {
 		window.__vf.export_template(i, false), fresh));
 	const names = Object.keys(shape.files || shape.text || shape || {});
 	const packHas = (leaf) => JSON.stringify(shape).includes(leaf);
-	check('a template carries the three files',
-		packHas(REQ) && packHas(DEC) && packHas(STATE), names.slice(0, 8).join(' '));
+	// Two of the three: since 1d389456 (2026-09-15) the share format refuses STATE.md,
+	// the Diamond's own state, and a template refuses what a share refuses
+	// (`template_carries`, src/protocol.rs), so a template is the shape and not the state.
+	check('a template carries the requirements and the decisions',
+		packHas(REQ) && packHas(DEC), names.slice(0, 8).join(' '));
+	check('and NOT the state, which the share format refuses',
+		names.length > 0 && !names.some((n) => n === STATE || n.endsWith('/' + STATE)),
+		names.slice(0, 8).join(' '));
 	check('and NOT the crystal, which is the memory rather than the shape',
 		!packHas('crystal.json"') || !JSON.stringify(shape).includes('MARKER-CRYSTAL-NONE'),
 		'crystal.json is on template_carries\' drop list');

@@ -1,3 +1,4 @@
+// gateway: live
 // verify_handoff_slowparcel.mjs — the LIVE production hand-off failure (build 221):
 // a hand-off to a peer whose parcel is still SYNCING past the old fixed 8 s
 // reconstruct window. This is the blind spot verify_handoff_newchat missed: it
@@ -39,7 +40,7 @@
 // Needs the dev stack: app (DAIMOND_PORT), mock (DAIMOND_MOCK), gateway
 // (DAIMOND_GW_PORT). Pro-gated via pro.mjs.
 
-import { open, chat, signInAs, newChat, connectMock, shot, storedChats, mockLog, contentText } from './harness.mjs';
+import { open, chat, signInAs, newChat, connectMock, shot, servedChats, mockLog, contentText } from './harness.mjs';
 import { makePagePro } from './pro.mjs';
 import { GW_URL } from './ports.mjs';
 
@@ -73,11 +74,11 @@ async function untilChats(s, pred, ms = 30000, step = 500) {
 	const t0 = Date.now();
 	while (Date.now() - t0 < ms) {
 		let cs = [];
-		try { cs = await storedChats(s); } catch (e) { cs = []; }
+		try { cs = await servedChats(s); } catch (e) { cs = []; }
 		try { if (pred(cs)) return cs; } catch (e) { /* keep polling */ }
 		await s.page.waitForTimeout(step);
 	}
-	try { return await storedChats(s); } catch (e) { return []; }
+	try { return await servedChats(s); } catch (e) { return []; }
 }
 const allMsgs = (cs) => (cs || []).flatMap((c) => (c.messages || []));
 const answersMatching = (cs, needle) => allMsgs(cs).filter((m) =>

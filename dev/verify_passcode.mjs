@@ -1,3 +1,4 @@
+// gateway: own
 // verify_passcode.mjs — the beta passcode, proved at the network rather than in
 // the source.
 //

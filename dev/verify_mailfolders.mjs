@@ -1,3 +1,4 @@
+// gateway: live
 // verify_mailfolders.mjs — a mailbox is not an inbox.
 //
 // Until now the client asked the server for INBOX and nothing else, so every

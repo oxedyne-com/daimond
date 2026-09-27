@@ -1,3 +1,4 @@
+// gateway: none
 // verify_mailtrigger.mjs — the mail-arrival trigger fires on mail that arrived,
 // and on nothing else.
 //

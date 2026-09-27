@@ -1,3 +1,4 @@
+// gateway: none
 // verify_template.mjs — a Diamond saved as a template, and one opened.
 //
 // ── WHY ──────────────────────────────────────────────────────────────────────

@@ -1,3 +1,4 @@
+// gateway: none
 // verify_models.mjs — a key per provider, and one model starred as the default.
 //
 // Daimond used to hold ONE provider: a base URL, a key, a model. The model you want for a cheap

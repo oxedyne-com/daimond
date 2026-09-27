@@ -1,3 +1,4 @@
+// gateway: none
 // verify_lease_parcelstable.mjs — the LEASE must NOT ride the content parcel, so a
 // held, renewing lease can never make the parcel churn.
 //

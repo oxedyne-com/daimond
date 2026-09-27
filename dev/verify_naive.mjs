@@ -1,3 +1,4 @@
+// gateway: none
 // dev/verify_naive.mjs -- does dev/naive.mjs actually drive a Diamond the way a naive user
 // would, and refuse the way the plan says it must?
 //

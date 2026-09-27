@@ -1,3 +1,4 @@
+// gateway: none
 // verify_chatagents.mjs — the user's own scenario, end to end.
 //
 //   "From an ordinary chat: give two agents this list of 100 words and have

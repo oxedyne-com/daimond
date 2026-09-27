@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+// gateway: none
 // forge #16 -- worker reports: the fallback when a run ends on a tool result is
 // the LAST SPOKEN SEGMENT, never the whole narration. Pure-Node: lifts the
 // report-assembly expression out of www/js/daimond.js and runs it against a

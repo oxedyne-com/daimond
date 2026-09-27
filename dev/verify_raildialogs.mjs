@@ -1,3 +1,4 @@
+// gateway: none
 // verify_raildialogs.mjs — photograph and MEASURE every dialog the rail opens.
 //
 // The user's complaint, verbatim: *"I saw obvious button and chip misalignment

@@ -1,3 +1,4 @@
+// gateway: none
 // verify_dispatchindex.mjs — the dispatched-placeholder index gives the SAME
 // placeholders the old all-chats × all-messages scan did.
 //

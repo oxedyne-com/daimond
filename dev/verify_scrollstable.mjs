@@ -1,3 +1,4 @@
+// gateway: none
 // verify_scrollstable.mjs — a sync must not move the reader's place in the chat.
 //
 // The owner, 2026-09-14: "syncs often cause chat content to scroll slightly up or

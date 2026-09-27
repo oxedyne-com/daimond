@@ -1,3 +1,4 @@
+// gateway: none
 // verify_p14save.mjs — the false "changed on disk" save conflict (forge #14), in isolation.
 //
 // node dev/verify_p14save.mjs --break staleanchor   restore the shipped defect and run

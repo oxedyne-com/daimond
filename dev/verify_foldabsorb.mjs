@@ -1,3 +1,4 @@
+// gateway: none
 // verify_foldabsorb.mjs — a fold writes into the three files, and a fold that would
 // delete them is refused.
 //

@@ -1,3 +1,4 @@
+// gateway: live
 // verify_devices.mjs — "is my account on more than one device?", answered.
 //
 // Pairing moves the identity WHOLE, so both devices then hold one keypair and

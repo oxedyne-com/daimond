@@ -1,3 +1,4 @@
+// gateway: none
 // verify_frame.mjs — A TRANSIENT ELEMENT MUST NEVER SIT IN THE FLOW OF CLICKABLE
 // TARGETS. Either it lives outside that flow, or the space it occupies is
 // reserved whether or not it is showing.

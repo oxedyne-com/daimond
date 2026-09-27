@@ -1,3 +1,4 @@
+// gateway: none
 // verify_crystalfull.mjs — the crystal face's full-screen toggle (piece b).
 //
 // The lane that wrote the toggle died mid-verification, so for a while nothing

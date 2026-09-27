@@ -1,3 +1,4 @@
+// gateway: none
 // verify_burger.mjs — the phone hamburger still opens the drawer after the
 // phone has been turned on its side and back.
 //

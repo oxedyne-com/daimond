@@ -1,3 +1,4 @@
+// gateway: live
 // verify_gwretry.mjs — the four files that hold their own gateway `fetch` meet a
 // 401 with one re-authentication and one retry, and the two that must NOT do
 // that still do not.

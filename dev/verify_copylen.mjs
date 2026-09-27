@@ -1,3 +1,4 @@
+// gateway: none
 // verify_copylen.mjs — the terseness census: word counts over en.js's UI copy.
 //
 // Two things this checks, both from `~/.claude-b/…/feedback_ui_copy_terse.md`: a label

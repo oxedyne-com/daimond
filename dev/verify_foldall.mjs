@@ -1,3 +1,4 @@
+// gateway: none
 // verify_foldall.mjs — the fold never fails in silence.
 //
 // The bug this exists for: a user selected every turn of a chat, pressed Fold,

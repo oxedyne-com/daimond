@@ -1,3 +1,4 @@
+// gateway: none
 // verify_workermodel.mjs — a Diamond's workers run on the model the USER chose.
 //
 // The defect this is built around: a worker was constructed on `cfg.model` — a

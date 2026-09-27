@@ -1,3 +1,4 @@
+// gateway: none
 // verify_chatlife.mjs — what a chat is called, and how it leaves.
 //
 // The record half of this feature — the merge, the two clocks, the operator

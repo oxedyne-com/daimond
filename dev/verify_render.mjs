@@ -1,3 +1,4 @@
+// gateway: none
 // verify_render.mjs — a model's own fold, and what is allowed to ride inside it.
 //
 // `DaimondRender.md` is the one door model text comes through: `marked` first,

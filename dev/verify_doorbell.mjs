@@ -1,3 +1,4 @@
+// gateway: none
 // dev/verify_doorbell.mjs -- the email doorbell: the switch that three published
 // texts promised and the app did not have.
 //
@@ -190,8 +191,10 @@ const noticeAll = await page.evaluate(() => {
 });
 check('a notice is on screen before any doorbell could ring',
 	noticeAll.live >= 1, JSON.stringify({ cards: noticeAll.cards, live: noticeAll.live }));
-check('it says what will happen: one email, and no sender or subject',
-	/one email/i.test(noticeAll.text) && /no sender/i.test(noticeAll.text),
+// The words since c8afa2fa (the 2026-09-15 terseness sweep): "One email a day at most,
+// with no message details." -- the same two facts in fewer words.
+check('it says what will happen: one email, and nothing of the message in it',
+	/one email/i.test(noticeAll.text) && /no message details/i.test(noticeAll.text),
 	noticeAll.text.slice(0, 160));
 check('and it says how to stop it, naming Settings and the row',
 	/Settings/i.test(noticeAll.text) && /Email doorbell/i.test(noticeAll.text),
@@ -274,7 +277,7 @@ check('and drew the state the server sent: on, so it offers OFF',
 
 const note1 = await onScreen(page, '#doorbell-note');
 check('the default is drawn AS a default, not as somebody\'s choice',
-	/default for a beta account/i.test(note1.text), note1.text.slice(0, 200));
+	/beta account default/i.test(note1.text), note1.text.slice(0, 200));
 const reach1 = await onScreen(page, '#doorbell-reach');
 check('and with a bell that CAN ring, the reach line says nothing twice',
 	reach1.found && reach1.text === '', JSON.stringify(reach1).slice(0, 160));
@@ -323,9 +326,9 @@ check('and the row now offers to turn it back ON, which is the server\'s answer'
 	/turn the email doorbell on/i.test(after.text), after.text);
 const note2 = await onScreen(page, '#doorbell-note');
 check('and says plainly that no email will be sent',
-	/no email will be sent/i.test(note2.text), note2.text.slice(0, 160));
+	/no email sent/i.test(note2.text), note2.text.slice(0, 160));
 check('and no longer calls it a default, because it is now a choice',
-	!/default for a beta account/i.test(note2.text), note2.text.slice(0, 160));
+	!/beta account default/i.test(note2.text), note2.text.slice(0, 160));
 
 // A write that does not land must not leave the switch showing the state it
 // failed to reach. This is the check that a fixture which cannot fail would miss.

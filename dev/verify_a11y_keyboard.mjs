@@ -1,3 +1,4 @@
+// gateway: none
 // verify_a11y_keyboard.mjs — the app can be driven, and left, without a mouse.
 //
 // WHAT THIS FILE LOCKS DOWN. Each of these is a property that holds RIGHT NOW

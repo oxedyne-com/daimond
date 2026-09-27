@@ -1,3 +1,4 @@
+// gateway: none
 // Two classes of defect, measured in the page rather than read off a stylesheet.
 //
 //   FOCUS. A ring drawn with `:focus` paints for a MOUSE click as well as a Tab.

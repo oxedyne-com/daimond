@@ -1,3 +1,4 @@
+// gateway: none
 // verify_reachlegible.mjs — the Workspace panel says what a daimon may reach, and
 // the control that widens it says so in a word.
 //
@@ -356,9 +357,9 @@ const zeroWords = await T('dws.reach_none', { name: 'Ship a CSV parser' });
 check('3b THE PANEL SAYS SO, IN INK, WITH NOTHING HOVERED',
 	!!r0 && r0.saysNone === true && r0.saysShown === true && (r0.says || '').trim().length > 0,
 	r0 ? `none=${r0.saysNone} laid out=${r0.saysShown} text=${JSON.stringify((r0.says || '').slice(0, 60))}` : '');
-check('3c and it names the Diamond, so it is about the thing in front of him',
-	!!r0 && (r0.says || '').indexOf('Ship a CSV parser') !== -1,
-	r0 ? JSON.stringify((r0.says || '').slice(0, 90)) : '');
+// 3c ("and it names the Diamond") is retired: 69384d1b, the owner's 2026-09-15 copy cut,
+// made `dws.reach_none` "This folder only." on purpose, and the panel it sits in already
+// carries the Diamond's name. 3b and 3d still hold the sentence to being there and the app's.
 check('3d it is the app’s own sentence for the state, not one this test invented',
 	!!r0 && (r0.says || '').trim() === (zeroWords || '').trim(),
 	JSON.stringify((zeroWords || '').slice(0, 60)));

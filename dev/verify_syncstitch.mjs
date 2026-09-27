@@ -1,3 +1,4 @@
+// gateway: none
 // verify_syncstitch.mjs — the providers ride in the parcel, through the core.
 //
 // `models.js` grew `exportSync`/`applySync` and they are tested hard next door (verify_sync drives

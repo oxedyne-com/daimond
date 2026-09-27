@@ -1,3 +1,4 @@
+// gateway: none
 // The selected chat tile under the Breathe spacing: is its ring inside the box
 // the list is entitled to clip?
 //

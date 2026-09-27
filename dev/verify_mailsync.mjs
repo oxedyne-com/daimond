@@ -1,3 +1,4 @@
+// gateway: live
 // verify_mailsync.mjs — a mailbox configured on one device works on the other.
 //
 // Sync carried the chats, the Diamonds, the workspace and the provider keys, and

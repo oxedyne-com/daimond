@@ -1,3 +1,4 @@
+// gateway: none
 // verify_pausetabs.mjs -- a pause pressed in one tab holds every other open tab of the
 // same account on the same device, at the wire.
 //

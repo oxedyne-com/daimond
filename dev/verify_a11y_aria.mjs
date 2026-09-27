@@ -1,3 +1,4 @@
+// gateway: none
 // verify_a11y_aria.mjs — what the app tells a screen reader is what is on screen.
 //
 // The accessible name of every control is read out of CHROME'S OWN accessibility

@@ -1,3 +1,4 @@
+// gateway: none
 // verify_reversible.mjs — every step a user can take, they can take back.
 //
 // This exists because of a defect no other verifier could have found. On the

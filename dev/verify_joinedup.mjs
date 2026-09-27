@@ -1,3 +1,4 @@
+// gateway: none
 // verify_joinedup.mjs — five things that were built and then never joined up,
 // and the one dead thing left behind by a sixth.
 //

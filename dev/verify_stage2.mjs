@@ -1,3 +1,4 @@
+// gateway: none
 // Verify the transcript-storage rework STAGE 2 (seq 214): the chunks become the
 // SOURCE OF TRUTH, the save path APPENDS the new tail rather than rewriting the row,
 // and a tombstone's dead weight is physically dropped by compaction.

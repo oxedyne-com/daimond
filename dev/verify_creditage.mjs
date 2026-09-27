@@ -1,3 +1,4 @@
+// gateway: none
 // verify_creditage.mjs — the provider credit figure, kept honest instead of stale.
 //
 // THE COMPLAINT. The author added $100 to his OpenRouter account and Daimond went on showing

@@ -1,3 +1,4 @@
+// gateway: live
 // verify_trashpurge.mjs — PERMANENT VERIFIER for the empty-trash / purge strand
 // (seq 224). A companion to verify/probe_chatdelete_*: delete-to-trash travels as a
 // trash-snapshot record and works; EMPTYING the trash (destroyChat -> tombstone +

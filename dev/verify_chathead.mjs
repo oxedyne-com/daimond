@@ -1,3 +1,4 @@
+// gateway: none
 // verify_chathead.mjs — the conversation can be taken out whole, and on a phone
 // the header's controls can be reached and the box you type in has room.
 //

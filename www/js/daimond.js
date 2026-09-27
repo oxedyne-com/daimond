@@ -1943,6 +1943,23 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			return true;
 		}
 
+		/// Take `ids` of map `map` out of the `tombs` store in one transaction. Resolves
+		/// true only when the transaction committed; throws otherwise.
+		async function dropTombRows(map, ids) {
+			if (!ids || !ids.length) return true;
+			if (!db || dbOpen !== dbName()) await conn();
+			if (!db.objectStoreNames.contains(TOMBS_STORE)) return true;
+			var t = db.transaction(TOMBS_STORE, 'readwrite'), st = t.objectStore(TOMBS_STORE);
+			var done = new Promise(function (res, rej) {
+				t.oncomplete = res;
+				t.onerror    = function () { rej(t.error || new Error('the tomb drop failed')); };
+				t.onabort    = function () { rej(t.error || new Error('the tomb drop was aborted')); };
+			});
+			ids.forEach(function (id) { st.delete([map, id]); });
+			await done;
+			return true;
+		}
+
 		/// Seed `tombMem` from IndexedDB, migrate the pre-fix localStorage maps in,
 		/// and rewrite the localStorage cache from the merged truth. Runs once at
 		/// boot, BEFORE the first `write`, so a deletion recorded yesterday is not
@@ -2001,53 +2018,25 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			// Stringified rather than counted, because Note to Read changes no length;
 			// cheap for the same reason the transcript is not stringified here, in
 			// reverse -- a handful of short records against a megabyte of turns.
-			// The message and session counts come from the SUMMARY fields when the
-			// transcript is not resident (seq 213, Stage 1): a summary row and a chat
-			// whose messages have not been loaded both carry `msgCount`/`sessionMsgs`
-			// rather than the arrays, and taking the count off an empty `messages: []`
-			// would make every un-opened chat's stamp read as zero -- so the store would
-			// think each had shrunk and rewrite it on every save. `_loaded === false` is
-			// checked first, because a non-resident chat carries an EMPTY `messages`
-			// array beside the true `msgCount`.
-			var mc = (c._loaded === false && typeof c.msgCount === 'number') ? c.msgCount
-				: (Array.isArray(c.messages) ? c.messages.length : (c.msgCount || 0));
-			var sc = (c.session && c.session.msgs) ? c.session.msgs.length
-				: (typeof c.sessionMsgs === 'number' ? c.sessionMsgs : 0);
+			// The message and session counts, and the standing string, come off the
+			// SUMMARY fields when the transcript is not resident (seq 213, Stage 1;
+			// standing since QA F5, 2026-09-25): a summary row and a chat whose messages
+			// have not been loaded both carry `msgCount`/`sessionMsgs`/`standing` rather
+			// than the arrays, and reading an empty `messages: []` instead would make
+			// every un-opened chat's stamp read as changed and rewrite it on every save.
+			// `chatMsgCount`/`chatSessionMsgs`/`standingOf` are the ONE place that
+			// residency check is made, and `persistChats` carries a non-resident merge's
+			// stamp off the very same three functions -- so what this stamp reads and
+			// what gets carried can never drift apart the way `standing` and (latently)
+			// `sessionMsgs` once did, each carried by its own hand-copied line.
+			var mc = chatMsgCount(c);
+			var sc = chatSessionMsgs(c);
 			// `metaAt` is in the stamp so a metadata edit that leaves the counts and
 			// holds unchanged (a rename, a model switch) still reads as a change and is
 			// written, rather than being found "unchanged" and skipped.
 			var ma = (typeof c.metaAt === 'number') ? c.metaAt : (c.updatedAt || 0);
 			return String(c.updatedAt || 0) + ':' + mc + ':' + sc + ':' + JSON.stringify(c.holds || []) + ':m' + ma
 				+ ':' + standingOf(c);
-		}
-
-		/// How many of a transcript's rows stand provisional, framed or interrupted, as one
-		/// short string: `p<n>f<n>i<n>`.
-		///
-		/// IN THE STAMP BECAUSE A MERGE UPGRADES A ROW IN PLACE (hand-off QA F5, 2026-09-25).
-		/// The runner's own copy replacing one taken from its final frame (`framed`), a real
-		/// copy replacing a streamed one, a badge taken off: none moves a count or
-		/// `updatedAt`, so the merged record was found unchanged and never written. The
-		/// asker kept the framed copy on disk, and its next read put it back in memory, for
-		/// good. Flags only: `slimMessages` changes content and `elided` on the way in, so
-		/// neither can be compared between a resident chat and its row.
-		function msgStanding(msgs) {
-			var np = 0, nf = 0, ni = 0;
-			for (var i = 0; i < msgs.length; i++) {
-				var m = msgs[i];
-				if (!m) continue;
-				if (m.provisional) np++;
-				if (m.framed) nf++;
-				if (m.interrupted) ni++;
-			}
-			return 'p' + np + 'f' + nf + 'i' + ni;
-		}
-		/// A chat's standing: counted where its transcript is resident, and read off its
-		/// summary where it is not, so the two agree for an unchanged chat.
-		function standingOf(c) {
-			var resident = c._loaded !== false && Array.isArray(c.messages)
-				&& !(c.messages.length === 0 && (c.msgCount | 0) > 0);
-			return resident ? msgStanding(c.messages) : String(c.standing || '');
 		}
 
 		/// Can the rows a read just handed back be believed?
@@ -3121,6 +3110,12 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 				try { return await writeTombRows(rows); }
 				catch (e) { diag('tomb write FAILED', storeReason(e)); return false; }
 			},
+			/// Withdraw tombstones durably: a deleted file that is back. Never throws.
+			dropTombs: async function (mapKey, ids) {
+				if (!mapKey || !ids || !ids.length) return true;
+				try { return await dropTombRows(mapKey, ids); }
+				catch (e) { diag('tomb drop FAILED', storeReason(e)); return false; }
+			},
 			// ── Transcript shadow (seq 212, Stage 0) ────────────────────────────
 			// Read by the probe only; none of these is on any behaviour path yet.
 			/// Rebuild a chat's transcript from its chunks, byte-for-byte as a reload of
@@ -3621,10 +3616,20 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 				// transcript, and the model's own session is kept when either side has one.
 				var merged = mergeChatRecords(c, st, { mtombs: mtombs });
 				// Carry the residency markers onto the out entry so `stampOf` reads a
-				// non-resident chat's TRUE count from its summary, not the empty array it
-				// contributes here -- otherwise every un-opened chat would stamp as zero,
-				// mismatch the disk, and be needlessly re-written on every save (seq 213).
-				if (c._loaded === false) { merged._loaded = false; merged.msgCount = chatMsgCount(c); }
+				// non-resident chat's TRUE count, session count and standing from its
+				// summary, not the empty array `mergeChatRecords`/`slimChat` contribute
+				// here -- otherwise every un-opened chat would stamp as changed, mismatch
+				// the disk, and be needlessly re-written on every save (seq 213; standing
+				// and sessionMsgs, QA F5 follow-up, 2026-09-27). Read off the SAME three
+				// functions `stampOf` itself calls (`chatMsgCount`/`chatSessionMsgs`/
+				// `standingOf`), so a field neither of them yet knows about cannot be
+				// added to one side and forgotten on the other.
+				if (c._loaded === false) {
+					merged._loaded     = false;
+					merged.msgCount    = chatMsgCount(c);
+					merged.sessionMsgs = chatSessionMsgs(c);
+					merged.standing    = standingOf(c);
+				}
 				byId[c.id] = merged;
 			});
 			var tombs = loadTombs();
@@ -3816,6 +3821,51 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		if (c._loaded === false && typeof c.msgCount === 'number') return c.msgCount;
 		if (Array.isArray(c.messages)) return c.messages.length;
 		return c.msgCount || 0;
+	}
+
+	/// How many messages a chat's tool SESSION has, whether or not the transcript is
+	/// resident. The session object itself is never carried onto a non-resident chat
+	/// (Stage 1 keeps its bytes in the legacy row only), so a non-resident chat's count
+	/// has to come off the summary's `sessionMsgs` -- the same shape of read as
+	/// `chatMsgCount`, and for the same reason: an empty/absent session would otherwise
+	/// read as "the session shrank" and rewrite the chat on every save.
+	function chatSessionMsgs(c) {
+		if (!c) return 0;
+		if (c._loaded === false && typeof c.sessionMsgs === 'number') return c.sessionMsgs;
+		if (c.session && c.session.msgs) return c.session.msgs.length;
+		return c.sessionMsgs || 0;
+	}
+
+	/// How many of a transcript's rows stand provisional, framed or interrupted, as one
+	/// short string: `p<n>f<n>i<n>`.
+	///
+	/// IN THE CHANGE STAMP (`stampOf`) BECAUSE A MERGE UPGRADES A ROW IN PLACE (hand-off
+	/// QA F5, 2026-09-25). The runner's own copy replacing one taken from its final frame
+	/// (`framed`), a real copy replacing a streamed one, a badge taken off: none moves a
+	/// count or `updatedAt`, so the merged record was found unchanged and never written.
+	/// The asker kept the framed copy on disk, and its next read put it back in memory,
+	/// for good. Flags only: `slimMessages` changes content and `elided` on the way in,
+	/// so neither can be compared between a resident chat and its row.
+	function msgStanding(msgs) {
+		var np = 0, nf = 0, ni = 0;
+		for (var i = 0; i < msgs.length; i++) {
+			var m = msgs[i];
+			if (!m) continue;
+			if (m.provisional) np++;
+			if (m.framed) nf++;
+			if (m.interrupted) ni++;
+		}
+		return 'p' + np + 'f' + nf + 'i' + ni;
+	}
+	/// A chat's standing: counted where its transcript is resident, and read off its
+	/// summary where it is not, so the two agree for an unchanged chat. Kept beside
+	/// `chatMsgCount`/`chatSessionMsgs` -- the three residency-aware reads `stampOf`
+	/// makes, and the three `persistChats` carries onto a non-resident merge by calling
+	/// these same functions, so the read and the carry cannot fall out of step again.
+	function standingOf(c) {
+		var resident = c._loaded !== false && Array.isArray(c.messages)
+			&& !(c.messages.length === 0 && (c.msgCount | 0) > 0);
+		return resident ? msgStanding(c.messages) : String(c.standing || '');
 	}
 
 	/// Has this thread had a turn spent on it, whether or not the transcript that
@@ -5191,6 +5241,10 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 	// five, so a heavy chat store cannot take the whole remainder either.
 	var SYNC_CHATS_INLINE_MAX = 2 * 1024 * 1024;
 	var SYNC_FILEBASE_KEY    = 'daimond-sync-filebase';
+	// WHICH STORAGE LOCATION THE FORK POINT ABOVE DESCRIBES, and the one location last left
+	// with its fork point, so a Browser <-> Machine toggle comes back to what it agreed (QFB-1).
+	var SYNC_FILEBASE_LOC_KEY   = 'daimond-sync-filebase-loc';
+	var SYNC_FILEBASE_STASH_KEY = 'daimond-sync-filebase-stash';
 	// The fork point is one `path -> hash` entry per file both devices agree on, and
 	// `commitAgreedFiles` carries entries FORWARD, so a renamed-away path lingers
 	// until a merge deletes it -- growth the chunk map bounds (chunks.js `MAP_MAX`)
@@ -5214,9 +5268,17 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 	/// or deleted by a merge, is never tombed and never stands in the fork point: each
 	/// device makes its own copy from something that does not travel. See
 	/// `DaimondMarksHere.isAppStatePath`, the one mirror of the engine's `APP_STATE_DIRS`.
+	///
+	/// AND A KEEPER'S RECORD (`DaimondMarksHere.isKeeperRecordPath`): a chat's version store
+	/// is this device's record of the files its turns changed here, and the copies it kept of
+	/// them. It rode the census from a device in the browser sandbox until 2026-09-25, and a
+	/// peer's census without it deleted it by absence, the copy of the person's save a chat's
+	/// Undo had just kept included (U5 of the reopen rehearsal).
 	function syncAppState(p) {
-		return !!(window.DaimondMarksHere && DaimondMarksHere.isAppStatePath
-			&& DaimondMarksHere.isAppStatePath(p));
+		var m = window.DaimondMarksHere;
+		if (!m) return false;
+		return !!((m.isAppStatePath && m.isAppStatePath(p))
+			|| (m.isKeeperRecordPath && m.isKeeperRecordPath(p)));
 	}
 
 	/// A path map without the app's own state, as the fork point and the tombstones hold it.
@@ -5730,26 +5792,39 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 	/// did not SEE a path is not evidence the path is gone, only that the walk did not
 	/// look, and asking directly is the only way to tell the two apart.
 	async function noteFileTombs(col, complete) {
-		if (complete !== true) return;
 		var local = col.files || {}, large = col.large || {}, away = col.away || {};
-		// The app's own state is not in the census, so its absence says nothing: a fork
-		// point written by an older build still names it, and tombing it would delete
-		// every other device's own copy.
-		var base = withoutAppState(readJson(SYNC_FILEBASE_KEY, {}));
-		var tombs = fileTombsHeld(), fresh = {}, changed = false;
-		var candidates = Object.keys(base).filter(function (p) {
-			return !Object.prototype.hasOwnProperty.call(local, p)
-				&& !Object.prototype.hasOwnProperty.call(large, p)
-				&& !Object.prototype.hasOwnProperty.call(away, p);
+		var here = function (p) {
+			return Object.prototype.hasOwnProperty.call(local, p)
+				|| Object.prototype.hasOwnProperty.call(large, p)
+				|| Object.prototype.hasOwnProperty.call(away, p);
+		};
+		var tombs = fileTombsHeld(), fresh = {}, back = [], changed = false;
+		// A FILE THAT IS BACK IS NOT DELETED. A tomb says "deleted now", so it is withdrawn
+		// the moment its path is in any census again, complete or not: presence is positive
+		// evidence. Kept, a restored file's tomb rode every parcel and deleted the file again
+		// on every peer whenever a parcel of ours left it out (QFB-2).
+		Object.keys(tombs).forEach(function (p) {
+			if (here(p)) { delete tombs[p]; back.push(p); changed = true; }
 		});
-		for (var i = 0; i < candidates.length; i++) {
-			var p = candidates[i], onDisk = null;
-			// A THROW READS AS "NOT THERE", the same answer `collectFiles` gives a
-			// failed read -- the check that could not run is not a reason to trust
-			// the census any less than before this guard existed.
-			try { onDisk = await syncFileAt(col.plan, p); } catch (e) { onDisk = null; }
-			if (onDisk) continue;			// the walk missed it; this device did not delete it
-			if (tombs[p] !== base[p]) { tombs[p] = fresh[p] = base[p]; changed = true; }
+		if (complete === true) {
+			// The app's own state is not in the census, so its absence says nothing: a fork
+			// point written by an older build still names it, and tombing it would delete
+			// every other device's own copy.
+			var base = withoutAppState(readFilebase(col.plan));
+			// A DEVICE CAN SAY IT DELETED A FILE ONLY FROM THE STORAGE IT IS LOOKING AT: in
+			// a folder, only inside the share (an unshared path is not a deleted one).
+			var candidates = Object.keys(base).filter(function (p) {
+				return !here(p) && !(col.plan && col.plan.folder && !withinShare(col.plan, p));
+			});
+			for (var i = 0; i < candidates.length; i++) {
+				var p = candidates[i], onDisk = null;
+				// A THROW READS AS "NOT THERE", the same answer `collectFiles` gives a
+				// failed read -- the check that could not run is not a reason to trust
+				// the census any less than before this guard existed.
+				try { onDisk = await syncFileAt(col.plan, p); } catch (e) { onDisk = null; }
+				if (onDisk) continue;			// the walk missed it; this device did not delete it
+				if (tombs[p] !== base[p]) { tombs[p] = fresh[p] = base[p]; changed = true; }
+			}
 		}
 		if (!changed) return;
 		var keys = Object.keys(tombs);
@@ -5766,6 +5841,8 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		Object.keys(fresh).forEach(function (p) { if (Object.prototype.hasOwnProperty.call(tombs, p)) m[p] = fresh[p]; });
 		try { localStorage.setItem(SYNC_FILE_TOMBS_KEY, JSON.stringify(tombs)); }
 		catch (e) { /* the read-cache: the tombs are in the overlay and IndexedDB */ }
+		// Out of IndexedDB too, or the next boot's `bootTombs` would bring them back.
+		if (back.length) ChatStore.dropTombs(SYNC_FILE_TOMBS_KEY, back);
 		ChatStore.putTombs(SYNC_FILE_TOMBS_KEY, fresh).then(function (ok) {
 			if (!ok) storageAlarm(tOr('store.delete_unrecorded',
 				'a deletion could not be recorded — this browser’s storage is full'));
@@ -6255,6 +6332,47 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 	/// Write the file baseline, bounded like the chunk map: past the cap, the oldest
 	/// insertions (object key order) are dropped. A dropped path reads as new on both
 	/// sides next merge -- a sidecar at worst, which is why it is safe to drop.
+	/// The storage location a walk plan is of: the browser's own, or a machine folder by
+	/// its id on this device and the shares flagged in it.
+	function syncFileLoc(plan) {
+		if (!plan || !plan.folder) return 'browser';
+		var fid = '';
+		try { fid = Files.folderId() || ''; } catch (e) { fid = ''; }
+		return 'folder:' + fid + ':' + (plan.flagged || plan.roots || []).slice().sort().join('|');
+	}
+
+	/// The fork point of the location `plan` is of.
+	///
+	/// ONE PER STORAGE LOCATION, NOT ONE PER DEVICE. The fork point says which files this
+	/// device and the others agreed on IN THE STORAGE IT IS LOOKING AT, and `noteFileTombs`
+	/// reads a path in it that the census lacks as a deletion made here. Kept one per
+	/// device, a switch from the Browser to a machine folder (or back, or to another
+	/// folder) read every file of the storage just left as deleted, and tombed it at the
+	/// hash every other device still held: each of them then deleted it (QFB-1,
+	/// `specs/daimond_fixqa_r53_faultb_20260925.md`). So when the location changes, the
+	/// map is set aside under the location it was of, and the new location's -- the one
+	/// last left, or empty -- takes its place. An empty fork point costs one round in
+	/// which every file reads as new, which the merge answers without deleting anything.
+	/// A build before this one recorded no location: its map is taken as this location's.
+	function readFilebase(plan) {
+		var loc = syncFileLoc(plan), was = null;
+		try { was = localStorage.getItem(SYNC_FILEBASE_LOC_KEY); } catch (e) { was = null; }
+		if (was !== null && was !== loc) {
+			var stash = readJson(SYNC_FILEBASE_STASH_KEY, null);
+			var next = (stash && stash.loc === loc && stash.map && typeof stash.map === 'object') ? stash.map : {};
+			try {
+				localStorage.setItem(SYNC_FILEBASE_STASH_KEY,
+					JSON.stringify({ loc: was, map: readJson(SYNC_FILEBASE_KEY, {}) }));
+			} catch (e) { /* best effort: a location coming back without it starts empty */ }
+			try { localStorage.setItem(SYNC_FILEBASE_KEY, JSON.stringify(next)); }
+			catch (e) { try { localStorage.removeItem(SYNC_FILEBASE_KEY); } catch (e2) { /* nothing held */ } }
+		}
+		if (was !== loc) {
+			try { localStorage.setItem(SYNC_FILEBASE_LOC_KEY, loc); } catch (e) { /* asked again next read */ }
+		}
+		return readJson(SYNC_FILEBASE_KEY, {});
+	}
+
 	function writeFilebase(map) {
 		map = withoutAppState(map);					// never agreed on: see `syncAppState`.
 		var keys = Object.keys(map);
@@ -6304,6 +6422,8 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		// re-adopts every file it already has on every round.
 		var plan = await syncWalkPlan();
 		if (!plan) return;
+		// This location's fork point is the one written below; a switch sets the last aside.
+		readFilebase(plan);
 		// The SAME inline budget the parcel uses, so a file that overflows and offloads
 		// is out of `files` here too and never enters the inline baseline — which is
 		// what keeps a later complete census from reading its absence as a deletion.
@@ -6319,7 +6439,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		// copy beside itself. What was agreed under a left-out root is carried forward
 		// untouched; everything else is what this census found.
 		if (plan.left && plan.left.length) {
-			var had = readJson(SYNC_FILEBASE_KEY, {});
+			var had = readFilebase(plan);
 			Object.keys(had).forEach(function (hp) {
 				for (var li = 0; li < plan.left.length; li++) {
 					var lr = plan.left[li].root;
@@ -6345,15 +6465,22 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 	/// copy and lands the remote one beside it as `<path>.synced`, so nothing is
 	/// ever silently overwritten.
 	///
-	/// `remoteComplete` is the sender's word that its census enumerated the whole
-	/// workspace, and NOTHING is deleted without it. Every other store in this app
-	/// deletes on a tombstone; files delete on absence, and absence has four
-	/// innocent causes -- the sender had a real folder open, its tools were not up,
-	/// a directory would not list, or a file was left out for budget. Each of those
-	/// used to arrive as `files: {}` and read as "the user deleted everything",
-	/// which is how a workspace was lost account-wide. A parcel that does not say
-	/// its census was complete is no news, never a deletion; a device too old to
-	/// say so is treated the same way.
+	/// A FILE IS DELETED ONLY ON A TOMBSTONE, on every device, as every other store in
+	/// this app deletes (contract §8: "Absence never deletes, and a forget travels").
+	/// Absence has innocent causes the receiver cannot tell apart -- the sender had a
+	/// real folder open, its tools were not up, a directory would not list, a file was
+	/// left out for budget -- and each of them used to read as "the user deleted this".
+	/// The last to go was the sandbox's delete by absence from a census that called
+	/// itself complete: a folder device's census is complete only for its shared roots,
+	/// so every file a phone made in its own storage, once in the fork point, was
+	/// deleted by the next parcel from a desktop with a folder open (fault B,
+	/// `specs/daimond_fixbrief_r53_faultb_20260925.md`). The device that deleted a file
+	/// knows it held it and says so (`noteFileTombs`, in every build since 2026-09-14).
+	///
+	/// AND ONLY FROM A SENDER THAT COULD SEE ITS OWN ROOT: `remoteComplete` is the sender's
+	/// word that its census enumerated what it shares. A sender whose tools were not up, or
+	/// whose listing was refused, cannot vouch that a path it once deleted is still gone, so
+	/// its tombstones are no news (QFB-2).
 	async function applyFiles(remoteFiles, remoteComplete, remoteTombs, fromDevice, chunkTombs) {
 		if (!remoteFiles || typeof remoteFiles !== 'object') return;
 		var plan = await syncWalkPlan();
@@ -6365,7 +6492,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		// ceiling -- stays in that device's own workspace and is never written to this
 		// disk; a tombstone from under such a root is likewise ignored here.
 		var app = plan.app;
-		var base  = withoutAppState(readJson(SYNC_FILEBASE_KEY, {}));
+		var base  = withoutAppState(readFilebase(plan));
 		// The same inline budget the parcel and the baseline use, so `local` classifies
 		// files inline-vs-offloaded exactly as they did — the merge and its delete branch
 		// then reason about the same set of inline files everywhere.
@@ -6451,48 +6578,36 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			delete agreed[sk];
 			await writeSyncFile(app, sk, sidecars[sk]);
 		}
-		// Deletions: a file both devices once agreed on (in the baseline) that the
-		// remote no longer has was deleted there. Propagate it here ONLY if it is
-		// unchanged locally since that fork — a local edit after the remote delete
-		// keeps the file, because an edit must never be lost to a delete.
-		if (plan.folder) {
-			// A FILE ON SOMEBODY'S DISK IS DELETED ONLY ON A TOMBSTONE, never on absence.
-			// Absence has four innocent causes in the sandbox and five here -- the fifth
-			// being a device that was never sent the file at all, for budget or for an
-			// ignore rule -- and none of them is the user asking for a deletion. The
-			// tombstone is written by the device that HELD the file and no longer does
-			// (`noteFileTombs`), and it carries the hash it held: the delete is honoured
-			// only while the bytes on this disk are still those bytes, so a file edited
-			// here since the deletion travelled is kept.
-			var tombs = (remoteTombs && typeof remoteTombs === 'object') ? remoteTombs : {};
-			for (var tp in tombs) {
-				if (!Object.prototype.hasOwnProperty.call(tombs, tp)) continue;
-				if (!withinShare(plan, tp) || syncAppState(tp)) continue;
-				if (Object.prototype.hasOwnProperty.call(remoteFiles, tp)) continue;	// they have it after all.
-				var tv = local[tp];
-				if (tv == null) continue;							// already gone here.
-				if (fileHash(tv) !== tombs[tp]) {
-					console.warn('sync: ' + tp + ' was deleted elsewhere but has changed on this '
-						+ 'disk since, so it is kept');
-					continue;
-				}
-				if (await deleteSyncFile(app, tp)) gone[tp] = 1;
+		// Deletions, ON A TOMBSTONE ONLY, in the sandbox as on somebody's disk. The
+		// tombstone is written by the device that HELD the file and no longer does
+		// (`noteFileTombs`), and it carries the hash it held: the delete is honoured only
+		// while the bytes here are still those bytes, so a file edited here since the
+		// deletion travelled is kept -- an edit is never lost to a delete. A path the
+		// sender's census merely lacks is no news: a folder device's census is complete
+		// only for its shared roots, so the sandbox's old delete by absence took every
+		// file a phone had made in its own storage (fault B). In a folder, only paths
+		// inside the share; the sandbox's whole workspace is the share.
+		var tombs = (remoteComplete === true && remoteTombs && typeof remoteTombs === 'object') ? remoteTombs : {};
+		for (var tp in tombs) {
+			if (!Object.prototype.hasOwnProperty.call(tombs, tp)) continue;
+			if (syncAppState(tp) || (plan.folder && !withinShare(plan, tp))) continue;
+			if (Object.prototype.hasOwnProperty.call(remoteFiles, tp)) continue;	// they have it after all.
+			var tv = local[tp];
+			if (tv == null) continue;							// already gone here.
+			if (fileHash(tv) !== tombs[tp]) {
+				console.warn('sync: ' + tp + ' was deleted elsewhere but has changed here '
+					+ 'since, so it is kept');
+				continue;
 			}
-		} else if (remoteComplete === true) {
-			for (var bp in base) {
-				if (!Object.prototype.hasOwnProperty.call(base, bp)) continue;
-				if (Object.prototype.hasOwnProperty.call(remoteFiles, bp)) continue;	// remote still has it.
-				var lv = local[bp];
-				if (lv == null) continue;							// already gone here.
-				// And gone only if the delete LANDED, for the same reason in reverse.
-				if (fileHash(lv) === base[bp] && await deleteSyncFile(app, bp)) gone[bp] = 1;	// unchanged: honour the delete.
-			}
+			// And gone only if the delete LANDED: a fork point without a file still here
+			// reads it as new at the next round.
+			if (await deleteSyncFile(app, tp)) gone[tp] = 1;
 		}
 		// ONLY what was shared. This used to be `commitFileBaseline()`, which records every file
 		// this device is holding -- including one created here and never yet sent anywhere. The
-		// baseline means "the state both devices agreed on", and the deletion branch above reads
-		// it as exactly that: a path in the baseline that a COMPLETE remote census does not carry
-		// is treated as deleted there and removed here. So a file that had never left this device
+		// baseline means "the state both devices agreed on", and the deletion branch above read
+		// it as exactly that (until fault B, a path in the baseline that a COMPLETE remote census
+		// did not carry was treated as deleted there and removed here). So a file that had never left this device
 		// was entered as agreed by the pull that carried no news of it, and the next complete
 		// census from the other device deleted it. A file cannot be agreed until it has been sent,
 		// and the moment it has is a successful push -- which is what `commitFileBaseline` is for
@@ -8433,8 +8548,9 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			tombs:        loadTombs(),
 			msgTombs:     loadMsgTombs(),
 			files:        fileCol.files,
-			// Whether `files` above is the WHOLE workspace. Only a complete census
-			// entitles the receiver to delete by absence; see applyFiles.
+			// Whether `files` above is the WHOLE workspace. This build deletes only on a
+			// tombstone (applyFiles); a build before 5.3 in the browser sandbox still
+			// deletes by absence from a census that says it is complete.
 			filesComplete: fileCol.complete === true,
 			// The files this device HELD and deleted, `path -> the hash it held`. The
 			// only thing that deletes a file out of somebody's real folder, and the

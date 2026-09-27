@@ -1,3 +1,4 @@
+// gateway: none
 // verify_manifestmerge.mjs — two devices each delete in one Diamond, sync both ways, and both
 // deletes still revert.
 //

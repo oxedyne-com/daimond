@@ -1,3 +1,4 @@
+// gateway: none
 // verify_version.mjs — the browser notices when the gateway declares it too old.
 //
 // Phase-2 compatibility contract, client half: gateway.js sends `X-Daimond-Api` on every call and
@@ -48,9 +49,13 @@ try {
 	});
 	check('a 426 from the gateway fires daimond:stale', on426);
 
+	// ABOVE THIS BUILD, read off the build rather than written in: the fixture said '2'
+	// while the client was v1, and went on saying it after the client became v2, when a
+	// min-api of 2 is this build's own level and rightly fires nothing.
+	const api = await page.evaluate(() => window.DaimondGateway.clientApi());
 	const onHeader = await firesStaleWhen({
 		status: 200, contentType: 'application/json',
-		headers: { 'x-daimond-min-api': '2', 'x-daimond-api': '2' },
+		headers: { 'x-daimond-min-api': String(api + 1), 'x-daimond-api': String(api + 1) },
 		body: JSON.stringify({ ok: true }),
 	});
 	check('an advertised min-api above this build fires daimond:stale', onHeader);

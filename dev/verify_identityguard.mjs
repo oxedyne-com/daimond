@@ -1,3 +1,4 @@
+// gateway: none
 // verify_identityguard.mjs — the boot identity gate must NEVER re-mint over a
 // stored identity because a cold tab read its keys as empty.
 //

@@ -1,3 +1,4 @@
+// gateway: none
 // verify_daimonconc.mjs — two daimons at once, and the Agents panel that shows up
 // when work starts.
 //

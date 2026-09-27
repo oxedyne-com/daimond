@@ -1,3 +1,4 @@
+// gateway: none
 // verify_delivery.mjs — the in-page delivery check, in a real browser.
 //
 // verify/lib.mjs + verify/check.mjs are unit-tested (verify/verify.test.mjs),

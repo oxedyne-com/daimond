@@ -1,3 +1,4 @@
+// gateway: none
 // verify_typstproject.mjs — a book is a project, and every file it names must arrive.
 //
 // The author tried to compile a 17-chapter book by the Doc panel's Compile button and

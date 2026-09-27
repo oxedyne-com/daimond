@@ -1,3 +1,4 @@
+// gateway: none
 // verify_chatstore.mjs — where a transcript lives, and what happens when it cannot be saved.
 //
 // Chats were persisted to localStorage, which holds about five megabytes for the

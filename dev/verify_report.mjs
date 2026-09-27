@@ -1,3 +1,4 @@
+// gateway: own
 // dev/verify_report.mjs -- reporting a GROUP message, end to end, through a
 // running gateway and into the operator's queue.
 //

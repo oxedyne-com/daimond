@@ -1,3 +1,4 @@
+// gateway: none
 // verify_about.mjs — the About dialog, and the button that opens it.
 //
 // The header's maker's badge has become an About button, and the badge's two

@@ -1,3 +1,4 @@
+// gateway: none
 // verify_unbidden.mjs -- every yes-question a running turn raises takes R6's guard: focus
 // on the safe answer, and no stray key for about a second (re-check of 2026-09-23, R6;
 // this bc3 follow-up carries the same fix to the door's other dialogs).

@@ -1,3 +1,4 @@
+// gateway: none
 // verify_office.mjs — a Word document opens as what it SAYS, and never as a hex dump.
 //
 // THE DEFECT THIS CLOSES WAS LIVE, NOT MISSING. `oxedyne_fe2o3_stds::media` has

@@ -1,3 +1,4 @@
+// gateway: none
 // verify_report_cap.mjs — a worker's report to the daimon, capped, byte-exact, without a
 // browser.
 //

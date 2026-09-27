@@ -1,3 +1,4 @@
+// gateway: none
 /* ============================================================
    verify_place.mjs — WHERE A TASK OTHER THAN A TURN RUNS
    (owner design, 2026-09-14).

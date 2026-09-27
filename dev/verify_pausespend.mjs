@@ -1,3 +1,4 @@
+// gateway: none
 // verify_pausespend.mjs — a pause is refused where the money is committed.
 //
 // The PPTW of NOTES2_PLAN §1.1 is one control with three states, and §1.1 says

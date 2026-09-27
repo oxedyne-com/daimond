@@ -734,6 +734,31 @@ export function storedChats(s) {
 	}));
 }
 
+/// The chats with the transcript the app SERVES: each stored row, its messages replaced
+/// by what the app's own reader returns (`ChatStore.loadMessages`).
+///
+/// Since seq 214 a transcript's truth is its `msgchunks` rows, and the `chats` row that
+/// `storedChats` returns is a fallback shadow that only fills a mid the chunks lack. A
+/// tab writes its own resident copy over that row, so with two tabs open the row can
+/// hold a copy the chunks have superseded until a read heals it (F4, 2026-09-25). Asking
+/// the app rather than re-deriving its reduce keeps a check honest about what it serves.
+/// Falls back to the row where the page has no reader.
+export async function servedChats(s) {
+	const rows = await storedChats(s);
+	return s.page.evaluate(async (list) => {
+		let store = null;
+		try { store = window.DaimondCore && window.DaimondCore.chatStore(); } catch (e) { store = null; }
+		if (!store || !store.loadMessages) return list;
+		const out = [];
+		for (const c of list) {
+			let got = null;
+			try { got = await store.loadMessages(c.id); } catch (e) { got = null; }
+			out.push(got && Array.isArray(got.messages) && got.messages.length ? Object.assign({}, c, { messages: got.messages }) : c);
+		}
+		return out;
+	}, rows);
+}
+
 /// Empty the chat store, for a test that wants a clean rail.
 ///
 /// Both places: the store itself, and the old localStorage key, which the app

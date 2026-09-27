@@ -1,3 +1,4 @@
+// gateway: none
 // verify_naming.mjs — two Diamonds must never be offered the same name.
 //
 // THIS FILE USED TO BE ABOUT CHATS, and the change is worth recording rather
@@ -70,13 +71,14 @@ const makeDiamond = (name) => p.evaluate(async (n) => {
 }, name);
 
 try {
-	check('a fresh rail offers the first number', (await offered()) === 'Diamond-0001',
+	// Lower case since 50c65295, the 2026-09-15 diamond-case sweep ("diamond-0001").
+	check('a fresh rail offers the first number', (await offered()) === 'diamond-0001',
 		await offered());
 
-	await makeDiamond('Diamond-0001');
+	await makeDiamond('diamond-0001');
 	await p.evaluate(() => window.DaimondCore.loadDiamonds());
 	await p.waitForTimeout(600);
-	check('the first Diamond is in the rail', (await names()).includes('Diamond-0001'),
+	check('the first Diamond is in the rail', (await names()).includes('diamond-0001'),
 		JSON.stringify(await names()));
 
 	const counterAfterFirst = await p.evaluate(() =>
@@ -88,7 +90,7 @@ try {
 	// Created WITHOUT touching the counter, which is exactly what a sync pull
 	// does: the parcel carries the Diamonds and the counter is not in it.
 	await p.evaluate(async () => {
-		await window.DaimondCore.diamondApp().create_diamond('Diamond-0002');
+		await window.DaimondCore.diamondApp().create_diamond('diamond-0002');
 	});
 	await p.reload();
 	// A reload lands on the lock gate: boot stops there and nothing behind it
@@ -100,7 +102,7 @@ try {
 
 	const both = await names();
 	check('both Diamonds are in the rail',
-		both.includes('Diamond-0001') && both.includes('Diamond-0002'), JSON.stringify(both));
+		both.includes('diamond-0001') && both.includes('diamond-0002'), JSON.stringify(both));
 	const counterStill = await p.evaluate(() => localStorage.getItem('daimond-diamond-counter'));
 	check('and the counter did NOT move when the second one arrived', counterStill === '1',
 		String(counterStill));
@@ -109,7 +111,7 @@ try {
 	const next = await offered();
 	check('the next Diamond is not offered a name already in use',
 		!both.includes(next), `offered ${next}, rail ${JSON.stringify(both)}`);
-	check('it is offered the next free number', next === 'Diamond-0003', next);
+	check('it is offered the next free number', next === 'diamond-0003', next);
 
 	// ── Proved red ──────────────────────────────────────────────────
 	//
@@ -122,7 +124,7 @@ try {
 			.map((e) => ((e.querySelector('.session-box-name') || {}).textContent || '').trim());
 		// The counter as it stands, incremented — which is what the old rule did.
 		const n = parseInt(localStorage.getItem('daimond-diamond-counter') || '0', 10) || 0;
-		const oldWay = 'Diamond-' + ('000' + (n + 1)).slice(-4);
+		const oldWay = 'diamond-' + ('000' + (n + 1)).slice(-4);
 		return { oldWay, collides: used.includes(oldWay) };
 	});
 	check(`self-test: counter-only naming would have offered ${wouldCollide.oldWay}, `

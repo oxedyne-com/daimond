@@ -1,3 +1,4 @@
+// gateway: none
 // verify_continue_resume.mjs — Continue RESUMES a turn, it does not re-run the prompt.
 //
 // THE DEFECT (dev/PERSISTENCE_STUDY.md §1.3 and §4.4 item 2). `continueTurn` used to tombstone

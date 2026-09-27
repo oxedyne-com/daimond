@@ -1,3 +1,4 @@
+// gateway: none
 // verify_spendowner.mjs — spend is billed to the thing that SPENT it, not to
 // whatever the rail happens to be showing when the money is counted.
 //

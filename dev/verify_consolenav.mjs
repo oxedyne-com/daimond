@@ -1,3 +1,4 @@
+// gateway: none
 // verify_consolenav.mjs -- the operator console's section rail.
 //
 // The console was one column of nine cards and the reader scrolled past eight

@@ -1,3 +1,4 @@
+// gateway: none
 // verify_sharemark.mjs — only the user's own mark, in force on this device, is shared.
 //
 // ── WHY ──────────────────────────────────────────────────────────────────────

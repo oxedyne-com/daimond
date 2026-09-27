@@ -1,3 +1,4 @@
+// gateway: own
 // verify_search_gateway.mjs — /api/web/search, and the refusals that are most
 // of its behaviour.
 //

@@ -1,3 +1,4 @@
+// gateway: none
 // verify_guidefacts.mjs — the guide says the things a first install cost an hour.
 //
 // dev/verify_guidemachine.mjs already asks whether the Machine Operations page

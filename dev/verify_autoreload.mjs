@@ -1,3 +1,4 @@
+// gateway: live
 // verify_autoreload.mjs — the standing instruction to buy your own credits.
 //
 // This one is driven against the REAL gateway on :9002, not a stub, because the thing worth

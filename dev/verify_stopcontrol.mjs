@@ -1,3 +1,4 @@
+// gateway: none
 // verify_stopcontrol.mjs — can a turn be stopped, and does a stopped turn say so?
 //
 // Three claims now, all about the one control and what it leaves behind.

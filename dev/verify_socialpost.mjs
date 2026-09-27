@@ -1,3 +1,4 @@
+// gateway: none
 // verify_socialpost.mjs — the Social panel's compose box, in a real browser, with
 // the forge stood in for.
 //

@@ -1,3 +1,4 @@
+// gateway: live
 // verify_passkey_blob.mjs — the /api/passkey-blob contract, from node.
 //
 // The sealed-bundle endpoint has an unusual shape: reading needs NO session,

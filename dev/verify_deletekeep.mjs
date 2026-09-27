@@ -1,3 +1,4 @@
+// gateway: none
 // verify_deletekeep.mjs — what a turn deletes or replaces stays kept, and only the user grants reach.
 //
 // The audit of 2026-09-23 (`~/usr/code/ai/claude/specs/daimond_delete_open_paths_audit_20260923.md`)

@@ -1,3 +1,4 @@
+// gateway: none
 // verify_doc.mjs — where a document goes when you open it.
 //
 // The rule this asserts, which was decided rather than inherited:

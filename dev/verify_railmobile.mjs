@@ -1,3 +1,4 @@
+// gateway: none
 // verify_railmobile.mjs — the rail drawer's SECTIONS on a phone, and the desktop
 // rail proving it paid nothing for them.
 //

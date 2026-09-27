@@ -1,3 +1,4 @@
+// gateway: none
 // verify_neverforget.mjs — reliability for the longest time: a Diamond's objectives and
 // open tasks survive forty turns, five forced context folds and two daimon Folds, with
 // nothing but REQUIREMENTS.md, DECISIONS.md and STATE.md to remember them by.

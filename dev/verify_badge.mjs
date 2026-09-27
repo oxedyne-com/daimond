@@ -1,3 +1,4 @@
+// gateway: none
 // The maker's badge: two claims, two hit areas, and the split between them.
 //
 // The badge is one artwork carrying two separate statements -- the Oxedyne

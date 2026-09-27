@@ -1,3 +1,4 @@
+// gateway: none
 // A backup must contain the workspace, and must restore it. Session A puts a file
 // in the workspace, exports a backup, and we read the download. Session B (a fresh
 // profile) imports it and we confirm the file is back.

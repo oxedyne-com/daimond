@@ -1,3 +1,4 @@
+// gateway: live
 // verify_peerrescue.mjs — the persistent-peer errand round-trip, and the
 // orphan-recovery that rescues a turn no peer ran. Two REAL paired contexts and
 // the REAL gateway, so the hops the node tests can only model (the Channel::Post
@@ -17,7 +18,7 @@
 // Needs the dev stack: app (DAIMOND_PORT), mock (DAIMOND_MOCK), gateway
 // (DAIMOND_GW_PORT). Pro-gated, granted the one way the gateway trusts (pro.mjs).
 
-import { open, chat, signInAs, newChat, connectMock, shot, storedChats } from './harness.mjs';
+import { open, chat, signInAs, newChat, connectMock, shot, servedChats } from './harness.mjs';
 import { makePagePro } from './pro.mjs';
 import { GW_URL } from './ports.mjs';
 
@@ -58,11 +59,11 @@ async function untilChats(s, pred, ms = 30000, step = 500) {
 	const t0 = Date.now();
 	while (Date.now() - t0 < ms) {
 		let cs = [];
-		try { cs = await storedChats(s); } catch (e) { cs = []; }
+		try { cs = await servedChats(s); } catch (e) { cs = []; }
 		try { if (pred(cs)) return cs; } catch (e) { /* keep polling */ }
 		await s.page.waitForTimeout(step);
 	}
-	try { return await storedChats(s); } catch (e) { return []; }
+	try { return await servedChats(s); } catch (e) { return []; }
 }
 const allMsgs = (cs) => (cs || []).flatMap((c) => (c.messages || []));
 const countDispatched = (cs) => allMsgs(cs).filter((m) => m.why === 'dispatched').length;
@@ -247,7 +248,7 @@ try {
 	// second answer (the lease/finished guards + ack stand it down).
 	await b.page.evaluate(() => { try { delete window.DaimondPost.collect; window.DaimondPost.parkStart && window.DaimondPost.parkStart(); } catch (e) {} });
 	await a.page.waitForTimeout(6000);		// give B a chance to (wrongly) re-run
-	const finalA = await storedChats(a);
+	const finalA = await servedChats(a);
 	const oneAnswer = answersFor(finalA, 'orphan');
 	check('exactly one answer exists for the recovered turn (no double-run)', oneAnswer === 1,
 		'answers for the orphan turn: ' + oneAnswer);

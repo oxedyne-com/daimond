@@ -1,3 +1,4 @@
+// gateway: none
 // verify_writeplace.mjs — a write that landed in browser storage never reads as a write to disk.
 //
 // THE DEFECT, AND IT IS THE WORST SHAPE THE OPFS/DISK SPLIT TAKES. Daimond has two

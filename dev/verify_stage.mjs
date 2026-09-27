@@ -1,3 +1,4 @@
+// gateway: none
 // verify_stage.mjs — the stage seats as many panels as it has room for, and a
 // document sits beside its own preview.
 //

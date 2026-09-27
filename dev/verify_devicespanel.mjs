@@ -1,3 +1,4 @@
+// gateway: none
 // verify_devicespanel.mjs — the Devices panel display/UX fixes (owner trace,
 // 2026-09-10, live build fbc1c7cf6cb1). Three defects, all panel-only:
 //

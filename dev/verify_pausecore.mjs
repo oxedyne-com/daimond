@@ -1,3 +1,4 @@
+// gateway: none
 // verify_pausecore.mjs — the pause tree's rule, proved without a browser.
 //
 // The rule the whole PPTW rests on: a leaf is binary, a branch is green when

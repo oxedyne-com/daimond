@@ -1,3 +1,4 @@
+// gateway: none
 // verify_dropped.mjs — a turn the ROAD killed is handed back; a turn the PROVIDER
 // refused is not.
 //

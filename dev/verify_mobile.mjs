@@ -1,3 +1,4 @@
+// gateway: none
 // verify_mobile.mjs — the phone shell: chat floor, left drawer, thing-sheet.
 //
 // Drives the real page at a phone viewport (390×844) and checks the paradigm:

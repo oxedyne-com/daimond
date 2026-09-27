@@ -1,3 +1,4 @@
+// gateway: none
 // verify_hand.mjs — the machine hand's relay, end to end, without the Rust
 // binary.
 //

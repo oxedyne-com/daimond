@@ -1,3 +1,4 @@
+// gateway: none
 // verify_machine.mjs — Machine mode: the file tools really move to the folder.
 //
 // ── WHY, AND WHAT NOBODY HAD WATCHED HAPPEN ──────────────────────────────────

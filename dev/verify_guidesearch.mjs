@@ -1,3 +1,4 @@
+// gateway: none
 // verify_guidesearch.mjs — the guide's search box, driven rather than read.
 //
 // notes2.txt line 96: "Maybe we should have a search box in the help guide?"
@@ -305,9 +306,12 @@ const ALIAS_ASKS = [
 
 // ── E. A heading beats a passing mention ────────────────────────────
 {
-	const r = await ask('passkey');
+	// 'passphrase', not 'passkey': f5148860 (2026-09-15) took the guide's passkey section
+	// out, so no section is ABOUT passkeys any more and every hit is a passing mention.
+	// "Your account is a passphrase" is a heading; five other pages mention the word.
+	const r = await ask('passphrase');
 	const first = r.hits[0] || {};
-	check(/passkey/i.test(first.title || ''),
+	check(/passphrase/i.test(first.title || ''),
 		'the top answer is a section ABOUT the word, not one that merely says it',
 		JSON.stringify((r.hits.slice(0, 3)).map((h) => h.title)));
 	check((first.marks || []).length > 0,

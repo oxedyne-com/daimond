@@ -1,6 +1,8 @@
 /* ============================================================
    Test — the chat store's change stamp sees a row upgraded in
-   place (www/js/daimond.js `stampOf`, hand-off QA F5, 2026-09-25).
+   place (www/js/daimond.js `stampOf`, hand-off QA F5, 2026-09-25),
+   and persistChats carries every field that stamp reads onto a
+   non-resident merge (QA F5 follow-up, 2026-09-27).
    ------------------------------------------------------------
    The runner's own copy of a handed-off answer replaces the one
    the asker took from its final frame (`framed`) by mid, with the
@@ -12,8 +14,20 @@
    where the transcript is resident and read off the summary where
    it is not, so an unchanged chat still stamps the same both ways.
 
-   `stampOf`, `msgStanding` and `standingOf` are lifted from the
-   REAL daimond.js by a brace-balanced scan.
+   F5 added `standing` to the stamp but `persistChats` carried only
+   `msgCount` onto a non-resident merge, so a summary's `standing`
+   (and, found by the same sweep, its `sessionMsgs`) never matched
+   and every un-opened chat with either was rewritten on every save.
+   `stampOf` and the carry now read the SAME three residency-aware
+   functions (`chatMsgCount`/`chatSessionMsgs`/`standingOf`), so the
+   two cannot drift apart again by construction.
+
+   `stampOf`, `msgStanding`, `standingOf`, `chatMsgCount`,
+   `chatSessionMsgs`, `slimChat`, and the exact residency-carry
+   block inside `persistChats`, are all lifted from the REAL
+   daimond.js by a brace-balanced scan -- nothing here is a
+   reimplementation, so a future edit that drops a field from
+   either side is caught here, not just described here.
 
    Run:  node www/js/chatstamp.test.mjs
    ============================================================ */
@@ -45,11 +59,32 @@ function extractFn(src, name) {
 	return src.slice(start, i);
 }
 
-const { stampOf, msgStanding } = new Function([
+/// Lifts one brace-balanced `{ ... }` block starting at the first `{` at or after
+/// `marker` inside `src` -- for a snippet that is not its own named function, such
+/// as `persistChats`'s residency-carry `if`.
+function extractBlock(src, marker) {
+	const idx = src.indexOf(marker);
+	if (idx < 0) throw new Error('block not found: ' + marker);
+	const brace = src.indexOf('{', idx);
+	let depth = 0, i = brace;
+	for (; i < src.length; i++) {
+		if (src[i] === '{') depth++;
+		else if (src[i] === '}') { depth--; if (depth === 0) { i++; break; } }
+	}
+	return src.slice(idx, i);
+}
+
+const carryBlock = extractBlock(extractFn(APP, 'persistChats'), 'if (c._loaded === false)');
+
+const { stampOf, msgStanding, standingOf, chatMsgCount, chatSessionMsgs, slimChat, applyCarry } = new Function([
 	extractFn(APP, 'stampOf'),
 	extractFn(APP, 'msgStanding'),
 	extractFn(APP, 'standingOf'),
-	'return { stampOf, msgStanding };',
+	extractFn(APP, 'chatMsgCount'),
+	extractFn(APP, 'chatSessionMsgs'),
+	extractFn(APP, 'slimChat'),
+	'function applyCarry(merged, c) { ' + carryBlock + ' }',
+	'return { stampOf, msgStanding, standingOf, chatMsgCount, chatSessionMsgs, slimChat, applyCarry };',
 ].join('\n'))();
 
 const rows = (framed) => [
@@ -76,6 +111,27 @@ check('a summary from an older build (no standing) stamps as a non-resident chat
 const slim = rows(false).concat([{ role: 'tool_log', content: 'x'.repeat(10), mid: 't', elided: 900 }]);
 const full = rows(false).concat([{ role: 'tool_log', content: 'x'.repeat(910), mid: 't' }]);
 check('a tool result shortened by the store stamps as the full one (no rewrite on every save)', stampOf(chat(slim)) === stampOf(chat(full)));
+
+// ── persistChats's residency carry (QA F5 follow-up, 2026-09-27) ───────────────
+//
+// An OLD-FORMAT stored chat: migrated from before summaries existed, never opened
+// this session, with real standing (an interrupted row) and a real tool session --
+// exactly the shape that rewrote on every save before the fix (triage's "c9001").
+const oldRows = rows(false).concat([{ role: 'assistant', content: 'y', mid: 'z', interrupted: 1 }]);
+const diskRow = { id: 'c9001', updatedAt: 500, metaAt: 500, holds: [{ ref: 'a' }],
+	msgCount: oldRows.length, sessionMsgs: 3, standing: msgStanding(oldRows) };
+// The live copy is hydrated from that same row and never loaded -- nothing about
+// THIS chat changed, only some OTHER chat had a turn that triggered persistChats.
+const liveCopy = { id: 'c9001', updatedAt: 500, metaAt: 500, holds: [{ ref: 'a' }], messages: [],
+	_loaded: false, msgCount: diskRow.msgCount, sessionMsgs: diskRow.sessionMsgs, standing: diskRow.standing };
+// `mergeChatRecords`'s `out = slimChat(turnNewer)`, degenerately either side here
+// since nothing about this chat changed; the residency carry is what runs next.
+const merged = slimChat(diskRow);
+applyCarry(merged, liveCopy);
+check('an unloaded, old-format chat is not rewritten by an unrelated save',
+	stampOf(merged) === stampOf(diskRow), [stampOf(merged), stampOf(diskRow)]);
+check('...specifically because its sessionMsgs was carried', chatSessionMsgs(merged) === chatSessionMsgs(diskRow));
+check('...and its standing was carried', standingOf(merged) === standingOf(diskRow));
 
 console.log('\n' + checks + ' checks, ' + failures + ' failed');
 if (failures) process.exitCode = 1;

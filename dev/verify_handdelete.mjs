@@ -1,3 +1,4 @@
+// gateway: none
 // verify_handdelete.mjs — the deletion fence, against the real hand binary, no browser.
 //
 // `daimond_hand_delete_fence_design_20260923.md`, step 8. The same device

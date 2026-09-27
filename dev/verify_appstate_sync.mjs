@@ -1,3 +1,4 @@
+// gateway: none
 // verify_appstate_sync.mjs — the app's own state under `system/` is not a workspace file.
 //
 // The three-device soak of 2026-09-25 (R2, `specs/daimond_diag_r52_20260925.md`): every device's

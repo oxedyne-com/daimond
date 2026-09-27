@@ -1,3 +1,4 @@
+// gateway: live
 // verify_handoff_spinner_ui.mjs — ISSUE 2 (owner, seq 222 live): during the
 // "Sent to your other devices" spinner, BEFORE any peer claims the lease, the
 // hand-off tile shows NO device hint and offers NO take-back/cancel control. Both
@@ -26,7 +27,7 @@
 //
 // Needs the dev stack (app, mock, gateway). Pro-gated via pro.mjs.
 
-import { open, chat, signInAs, newChat, connectMock, shot, storedChats } from './harness.mjs';
+import { open, chat, signInAs, newChat, connectMock, shot, servedChats } from './harness.mjs';
 import { makePagePro } from './pro.mjs';
 import { GW_URL } from './ports.mjs';
 
@@ -190,7 +191,7 @@ try {
 	{
 		const t0 = Date.now();
 		while (Date.now() - t0 < 15000) {
-			let cs = []; try { cs = await storedChats(a); } catch (e) { cs = []; }
+			let cs = []; try { cs = await servedChats(a); } catch (e) { cs = []; }
 			if ((cs || []).some((c) => (c.messages || []).some((mm) => mm.why === 'dispatched'))) break;
 			await a.page.waitForTimeout(400);
 		}
@@ -239,9 +240,9 @@ try {
 	await b.page.waitForTimeout(3000);
 	// Settle A and count answers on BOTH sides for this turn.
 	await settle(a.page);
-	const aAns = answersMatching(await storedChats(a)).length;
-	const bAns = answersMatching(await storedChats(b)).length;
-	const ranOnA = answersMatching(await storedChats(a)).filter((m) => String(m.ranOn) === String(idA)).length;
+	const aAns = answersMatching(await servedChats(a)).length;
+	const bAns = answersMatching(await servedChats(b)).length;
+	const ranOnA = answersMatching(await servedChats(a)).filter((m) => String(m.ranOn) === String(idA)).length;
 	check('exactly one answer for the turn after take-back (no double-run vs the peer)',
 		aAns === 1, 'A answers: ' + aAns + '  B answers: ' + bAns);
 	check('the one answer ran on THIS device (the take-back landed here)', ranOnA >= 1,

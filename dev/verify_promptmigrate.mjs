@@ -1,3 +1,4 @@
+// gateway: none
 // A renamed role carries its old prompt file across.
 //
 // `prompts/conductor.md` was the daimon's before the rename, and it is a file a

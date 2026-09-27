@@ -1,3 +1,4 @@
+// gateway: none
 // verify_toolreload.mjs — does the model still know what it did, after a reload?
 //
 // A page reload used to amputate the agent's memory of its own tool use.
@@ -25,7 +26,7 @@
 //
 // Needs dev/serve.mjs (DAIMOND_PORT, default 8777) and dev/mockllm.mjs
 // (DAIMOND_MOCK_PORT, default 9099).
-import { open, chat, newChat, signInAs, clearMockLog, mockLog, errors } from './harness.mjs';
+import { open, chat, newChat, signInAs, clearMockLog, mockLog, errors, transcriptExpanded } from './harness.mjs';
 
 const ok = [], bad = [];
 const check = (name, pass, detail) => {
@@ -103,7 +104,11 @@ const NOTE = await s.page.evaluate(() => {
 	return f && f.id ? window.DaimondAttach.chatScratch(f.id) + '/reload-note.txt' : '';
 });
 check('the chat has a scratch folder to work in', !!NOTE, NOTE || '(no chat in focus)');
-const wrote = await chat(s, `@tool file_write {"path":"${NOTE}","content":"the number is 4711"}`);
+// Read expanded: a Tool tile draws collapsed (`buildTile`, expanded: false), and plain
+// `innerText` cannot see a collapsed tile's "Wrote N bytes" -- the verify_writeguard
+// mismeasure f836c4e3 fixed. The tool said it; the transcript was read with it folded away.
+await chat(s, `@tool file_write {"path":"${NOTE}","content":"the number is 4711"}`);
+const wrote = await transcriptExpanded(s);
 check('the file was really written, so there is a tool call worth remembering',
 	!/Refused/.test(wrote) && /Wrote \d+ bytes/.test(wrote), wrote.slice(-140).replace(/\n/g, ' | '));
 await chat(s, `@tool file_read {"path":"${NOTE}"}`);

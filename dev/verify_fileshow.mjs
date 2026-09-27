@@ -1,3 +1,4 @@
+// gateway: none
 // verify_fileshow.mjs — the daimon can put a file in front of the user, and it
 // is told the truth about what they are now looking at.
 //

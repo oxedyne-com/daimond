@@ -1,3 +1,4 @@
+// gateway: none
 // verify_composeresilience.mjs — a new chat must NEVER be a dead-end.
 //
 // SEV-1 (recurred on the owner's iPhone): after a refresh a new chat showed NO

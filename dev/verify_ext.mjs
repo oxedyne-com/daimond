@@ -1,3 +1,4 @@
+// gateway: none
 // verify_ext.mjs — the Daimond Verify extension, in a real browser.
 //
 // verify/ext/fingerprint.js is proven identical to verify/lib.mjs by

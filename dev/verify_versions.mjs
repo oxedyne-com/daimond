@@ -1,3 +1,4 @@
+// gateway: none
 // verify_versions.mjs — every change to a diamond's files can be walked back, and the
 // small acts a user regrets in a second have five seconds and a button.
 //

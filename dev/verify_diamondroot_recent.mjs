@@ -1,3 +1,4 @@
+// gateway: none
 // verify_diamondroot_recent.mjs — the migration EVERY current user will take.
 //
 // verify_diamondroot.mjs seeds the oldest shape a workspace can have, `foci/`

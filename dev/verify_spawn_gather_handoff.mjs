@@ -1,3 +1,4 @@
+// gateway: live
 // verify_spawn_gather_handoff.mjs — workers started INSIDE a handed-off turn.
 //
 // The house rule for any cross-device feature: two real contexts on a dev world,
@@ -32,7 +33,7 @@
 // (DAIMOND_GW_PORT). Pro-gated via pro.mjs. Run under WebKit:
 //   DAIMOND_BROWSER=webkit node dev/verify_spawn_gather_handoff.mjs
 //   DAIMOND_BROWSER=webkit node dev/verify_spawn_gather_handoff.mjs --break noline
-import { open, chat, signInAs, newChat, connectMock, storedChats } from './harness.mjs';
+import { open, chat, signInAs, newChat, connectMock, servedChats } from './harness.mjs';
 import { makePagePro } from './pro.mjs';
 import { GW_URL } from './ports.mjs';
 
@@ -196,7 +197,7 @@ try {
 				await applyBreak();
 			}
 		}
-		let cs = []; try { cs = await storedChats(a); } catch (e) { cs = []; }
+		let cs = []; try { cs = await servedChats(a); } catch (e) { cs = []; }
 		if (carrying(cs, '### alpha') > 0) break;
 		await a.page.waitForTimeout(250);
 	}
@@ -231,7 +232,7 @@ try {
 	}, null, 500);
 	let cs = [];
 	for (let i = 0; i < 200; i++) {
-		try { cs = await storedChats(a); } catch (e) { cs = []; }
+		try { cs = await servedChats(a); } catch (e) { cs = []; }
 		if (carrying(cs, '### alpha') > 0) break;
 		await a.page.waitForTimeout(300);
 	}

@@ -1,3 +1,4 @@
+// gateway: none
 // verify_folderloss.mjs — a search that NAMES a withdrawn grant is not a withdrawn grant.
 //
 // THE DEFECT, turn 53, 2026-09-13. The daimon ran `file_search` for

@@ -1,3 +1,4 @@
+// gateway: none
 // verify_linktools.mjs — can a daimon actually read and write the world model?
 //
 // The Diamond graph exists "to give all daimons access to a Daimond world model with

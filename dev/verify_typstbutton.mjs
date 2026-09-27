@@ -1,3 +1,4 @@
+// gateway: none
 // verify_typstbutton.mjs — the ⚙ Compile button compiles the PROJECT.
 //
 // `typst_compile` shipped a whole multi-file gatherer in seq 116 and NOTHING IN

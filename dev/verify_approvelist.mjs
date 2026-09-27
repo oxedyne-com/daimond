@@ -1,3 +1,4 @@
+// gateway: none
 // verify_approvelist.mjs — the approve-list: a local review queue, batch-sent.
 //
 // `www/js/approvelist.js` takes drafts (js/triage.js's own shape), holds them in

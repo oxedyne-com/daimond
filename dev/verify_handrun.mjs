@@ -1,3 +1,4 @@
+// gateway: none
 // verify_handrun.mjs — a daimon runs a command on the machine, end to end.
 //
 // `dev/verify_hand.mjs` drives the EXTENSION's relay from a stub page: it proves

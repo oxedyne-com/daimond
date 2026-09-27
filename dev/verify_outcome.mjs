@@ -1,3 +1,4 @@
+// gateway: none
 // verify_outcome.mjs — a tool's outcome travels as DATA, and four consumers read it.
 //
 // THE DEFECT. `toolFailed` was `/^\s*Error\b/i` over a tool result's TEXT. It missed

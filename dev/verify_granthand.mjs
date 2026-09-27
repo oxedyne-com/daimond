@@ -1,3 +1,4 @@
+// gateway: none
 // verify_granthand.mjs — the Daimond Hands consent window, rendered.
 //
 // The window was too long to read at the moment it matters, so it now has two

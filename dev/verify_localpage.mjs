@@ -1,3 +1,4 @@
+// gateway: none
 // The agent builds a page in the workspace and opens it: it must render in the
 // sandboxed local driver (operable), not become a dead https://page.html frame.
 //
@@ -10,7 +11,7 @@
 // The scratch is chosen over an out-of-band seed BECAUSE THE AGENT BUILDING THE PAGE
 // IS HALF THE PROPERTY -- "drive the page you made" is what the local driver is for,
 // and a page seeded from outside would not prove the agent could produce one.
-import { open, chat, newChat, shot, errors } from './harness.mjs';
+import { open, chat, newChat, shot, errors, transcriptExpanded } from './harness.mjs';
 
 const ok = [], bad = [];
 const check = (name, pass, detail) => {
@@ -29,7 +30,11 @@ check('the chat has a scratch folder to build in', !!dir, dir || '(no chat in fo
 const PAGE = dir + '/built.html';
 
 // Agent writes an HTML page, then opens it.
-const wrote = await chat(s, `@tool file_write {"path":"${PAGE}","content":"<html><body><h1 id=hi>Hello from the agent</h1><button id=go>Go</button></body></html>"}`);
+// Read expanded: a Tool tile draws collapsed (`buildTile`, expanded: false), and plain
+// `innerText` cannot see a collapsed tile's "Wrote N bytes" -- the verify_writeguard
+// mismeasure f836c4e3 fixed. The tool said it; the transcript was read with it folded away.
+await chat(s, `@tool file_write {"path":"${PAGE}","content":"<html><body><h1 id=hi>Hello from the agent</h1><button id=go>Go</button></body></html>"}`);
+const wrote = await transcriptExpanded(s);
 check('the agent really built the page — a refused write leaves nothing to open',
 	!/Refused/.test(wrote) && /Wrote \d+ bytes/.test(wrote),
 	wrote.slice(-160).replace(/\n/g, ' | '));

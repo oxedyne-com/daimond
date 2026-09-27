@@ -1,3 +1,4 @@
+// gateway: none
 // verify_pausemerge.mjs — a press speaks for the node pressed, and no other (R3 QA, M-merge).
 //
 // Until the R3 QA of 2026-09-24 the pause record was one set and one stamp, merged whole with

@@ -1,3 +1,4 @@
+// gateway: none
 // verify_handnotice.mjs — with an old Hand paired, the notice is a tile and the
 // attach picker's + still reaches it.
 //

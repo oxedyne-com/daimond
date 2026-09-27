@@ -1,3 +1,4 @@
+// gateway: none
 // verify_draftdup.mjs — the junk-draft-duplicate bug (2026-09-13), in isolation.
 //
 // node dev/verify_draftdup.mjs --break gateless   restore the shipped defect and run

@@ -1,3 +1,4 @@
+// gateway: none
 // verify_injection.mjs — a stranger's words are marked, and cannot reach back out.
 //
 // Two halves of one defence. Marking tells the model what it is reading; the

@@ -1,3 +1,4 @@
+// gateway: live
 // verify_syncviews.mjs — two views of one account, and whether they agree.
 //
 // Sync converging is not the same question as a PERSON seeing it converge. Every

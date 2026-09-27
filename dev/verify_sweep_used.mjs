@@ -1,3 +1,4 @@
+// gateway: none
 // verify_sweep_used.mjs — the same questions, asked of an app that has been used.
 //
 // THIS IS THE HALF THE SUITE DID NOT HAVE, and it is the half that would have

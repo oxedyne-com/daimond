@@ -1,3 +1,4 @@
+// gateway: none
 // verify_guiderunner.mjs — the User Guide's runner page, rendered rather than read.
 //
 // The runner is the one feature whose failure modes are things a person has to
@@ -72,11 +73,15 @@ for (const vp of [{ width: 1200, height: 900 }, { width: 390, height: 844 }]) {
 			text: (document.querySelector('main') || {}).textContent || '',
 		};
 	});
-	check(st.h1 === 'The runner', `${w}: the heading is the page`, st.h1);
+	// The page's name since 1041fcd6 (2026-09-15, "Helpers, and the machine that picks a
+	// turn up"), which rewrote it round helpers and hand-off.
+	const TITLE = 'Helpers & where turns run';
+	check(st.h1 === TITLE, `${w}: the heading is the page`, st.h1);
 	check(!!st.theme && !!st.ink, `${w}: frame.js dressed it standalone (${st.theme}/${st.ink})`);
 	check(st.bg !== 'rgba(0, 0, 0, 0)', `${w}: it wears a real palette from the app's stylesheet`, st.bg);
-	check(st.navCurrent === 'The runner', `${w}: the nav marks this page current`, st.navCurrent);
-	check(st.h2s.length >= 6 && st.h2s[0] === 's1',
+	check(st.navCurrent === TITLE, `${w}: the nav marks this page current`, st.navCurrent);
+	// Two sections since the rewrite (s1, s3; s2 is an h3), each still a positional id.
+	check(st.h2s.length >= 2 && st.h2s[0] === 's1' && st.h2s.every((x) => /^s\d+$/.test(x)),
 		`${w}: the sections carry positional ids`, st.h2s.join(','));
 	check(!st.hscroll, `${w}: the page does not scroll sideways`);
 	check(st.overflow === 0, `${w}: nothing overflows its box`, 'n=' + st.overflow);
@@ -85,16 +90,10 @@ for (const vp of [{ width: 1200, height: 900 }, { width: 390, height: 844 }]) {
 	check(/folder permission/i.test(st.text), `${w}: it names the folder-permission blocker`);
 	check(/locked/i.test(st.text) && /reload/i.test(st.text),
 		`${w}: it names the locked-after-reload blocker`);
-	// And the three-step fallback, in order.
-	const iRunner = st.text.indexOf('The runner'), iDesk = st.text.indexOf('Another awake desktop');
-	const iLocal = st.text.indexOf('The device you are on');
-	check(iRunner >= 0 && iDesk > iRunner && iLocal > iDesk,
-		`${w}: the fallback order reads runner, other desktop, here`,
-		`${iRunner}/${iDesk}/${iLocal}`);
+	// The three-step fallback order ("runner, other desktop, here") and the launcher's
+	// systemd service are retired: 1041fcd6 took both passages out of the page.
 	check(/Memory Saver/.test(st.text) && /minimised/.test(st.text),
 		`${w}: it says Memory Saver must be off and the window not minimised`);
-	check(/daimond-runner/.test(st.text) && /systemd/.test(st.text),
-		`${w}: it names the service the launcher installs`);
 
 	if (vp.width === 1200) {
 		const local = [...new Set(st.links.filter((h) => h && !/^(https?:|mailto:|#)/.test(h)))];

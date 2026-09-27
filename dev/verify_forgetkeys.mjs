@@ -1,3 +1,4 @@
+// gateway: none
 // verify_forgetkeys.mjs — "Forget this identity" forgets the security settings too.
 //
 // THE DEFECT. The sweep in `forgetIdentity` (www/js/daimond.js) is a NAMED LIST, and

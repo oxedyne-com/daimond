@@ -1,3 +1,4 @@
+// gateway: none
 // A worker's report reaches the daimon that dispatched it.
 //
 // Fan-out existed and gather did not. `spawn_agent` dispatched a worker, the

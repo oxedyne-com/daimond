@@ -1,3 +1,4 @@
+// gateway: live
 // verify_compile_handoff.mjs — A PHONE THAT CANNOT LAY A BOOK OUT HANDS IT
 // TO A MACHINE THAT CAN, AND GETS THE PAGES BACK.
 //

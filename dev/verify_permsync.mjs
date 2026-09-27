@@ -1,3 +1,4 @@
+// gateway: none
 // verify_permsync.mjs — the account-level PERMISSION POLICY travels between
 // devices; machine-local trust does NOT.
 //

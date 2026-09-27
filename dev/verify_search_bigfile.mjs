@@ -1,3 +1,4 @@
+// gateway: none
 // verify_search_bigfile.mjs -- file_search reaches a file past the old 2 MB ceiling.
 //
 // WHAT THIS FILE IS ABOUT. `file_search` used to skip any file over 2,000,000 bytes and say so

@@ -1,3 +1,4 @@
+// gateway: none
 // verify_announce.mjs — a screen reader is told when an answer arrives, once.
 //
 // dev/a11y_report.md §8: nothing that changes on its own is announced. The chat

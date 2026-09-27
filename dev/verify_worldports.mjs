@@ -1,3 +1,4 @@
+// gateway: none
 // verify_worldports.mjs — two worlds at once, and neither one can answer for the
 // other.
 //

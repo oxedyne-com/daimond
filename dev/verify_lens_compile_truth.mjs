@@ -1,3 +1,4 @@
+// gateway: none
 // verify_lens_compile_truth.mjs — `ev compile` says what actually happened.
 //
 // THE DEFECT (found reading the lens against a live archive): three ways `ev

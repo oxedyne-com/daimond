@@ -1,3 +1,4 @@
+// gateway: none
 // verify_signals.mjs -- the local usage index, and the rule it is built around.
 //
 // notes2 #51 asks for the Optimiser to be given a scope over "a lot of things,

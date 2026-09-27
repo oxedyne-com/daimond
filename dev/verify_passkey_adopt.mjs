@@ -1,3 +1,4 @@
+// gateway: live
 // verify_passkey_adopt.mjs — a passkey brings the whole account to a device
 // that holds nothing.
 //

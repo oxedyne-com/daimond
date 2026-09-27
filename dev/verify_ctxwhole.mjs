@@ -1,3 +1,4 @@
+// gateway: none
 // Is the whole conversation fed back to the model, and is the user told when it is not?
 //
 // Note 06 of the 2026-08-27 tester round, verbatim: *"Serious: all of a conversation is not

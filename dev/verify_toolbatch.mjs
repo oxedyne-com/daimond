@@ -1,3 +1,4 @@
+// gateway: none
 // verify_toolbatch.mjs — a round of reads takes ONE read's time, and still answers
 // in the order the model asked.
 //

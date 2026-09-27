@@ -1,3 +1,4 @@
+// gateway: none
 // verify_rosterghost.mjs — superseded roster lines and a stranded nominee, on the
 // iOS engine (WebKit / JavaScriptCore). The measured state (owner trace, 2026-09-08,
 // live build e9f7f9b5edbc) was a synced roster holding only SUPERSEDED ids, disjoint

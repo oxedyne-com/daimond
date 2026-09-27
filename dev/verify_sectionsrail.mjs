@@ -1,3 +1,4 @@
+// gateway: none
 // verify_sectionsrail.mjs — the section rail's consumer, against both engines'
 // `queryProject('heading')` shapes, without a browser or a wasm build.
 //

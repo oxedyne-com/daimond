@@ -1,3 +1,4 @@
+// gateway: none
 // verify_silentround.mjs — a round that REASONS and says nothing never ends a
 // turn as a plain success.
 //

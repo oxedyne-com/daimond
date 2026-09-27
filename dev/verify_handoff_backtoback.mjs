@@ -1,3 +1,4 @@
+// gateway: live
 // verify_handoff_backtoback.mjs — a desktop that has run one hand-off collects the next.
 //
 // WHAT HAPPENED (re-check finding E-R4, 2026-09-23). A desktop ran the first turn a phone

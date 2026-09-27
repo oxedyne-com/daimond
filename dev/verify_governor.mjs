@@ -1,3 +1,4 @@
+// gateway: none
 // verify_governor.mjs — the spend governor's pure decision core.
 //
 // The governor watches the RATE of spend, not the total, so that a fan-out of

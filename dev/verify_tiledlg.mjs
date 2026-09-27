@@ -1,3 +1,4 @@
+// gateway: none
 // verify_tiledlg.mjs — the cog, the dialog, and Delete at its foot.
 //
 // Phase C put a cog in the top right of every Diamond and chat tile and moved

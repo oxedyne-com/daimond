@@ -1,3 +1,4 @@
+// gateway: none
 // verify_coldread.mjs -- the client-only fix bundle for the iOS/desktop cold-read
 // family (transcript loss, permanent data loss, updater login-on-focus, release
 // "not published" false alarm).

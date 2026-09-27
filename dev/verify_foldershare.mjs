@@ -1,3 +1,4 @@
+// gateway: none
 // verify_foldershare.mjs — a flagged folder reaches the devices that cannot open it.
 //
 // THE GAP THIS CLOSES. Sync carried the OPFS sandbox only -- "a real folder is the

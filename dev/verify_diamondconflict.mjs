@@ -1,3 +1,4 @@
+// gateway: none
 // verify_diamondconflict.mjs — S-SYNC #4, the two-device OPFS live driver.
 //
 // THE BUG. Diamond merge was whole-directory last-writer-wins: `import_diamond`

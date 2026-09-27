@@ -1,3 +1,4 @@
+// gateway: none
 // verify_grant.mjs — the Daimond Hands grant flow, driven under the real
 // extension (xvfb, headed).
 //

@@ -1,3 +1,4 @@
+// gateway: none
 // verify_diamonds.mjs — a Diamond made in one window must appear in the other.
 //
 // Chats have carried a cross-tab signal for a long time: they live in

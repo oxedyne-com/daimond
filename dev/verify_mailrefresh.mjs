@@ -1,3 +1,4 @@
+// gateway: none
 // verify_mailrefresh.mjs — folders refresh themselves, say how much they hold,
 // and stop dead when they are paused.
 //

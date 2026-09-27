@@ -1,3 +1,4 @@
+// gateway: none
 // verify_escapable.mjs — nothing the app puts over the top of itself can trap you.
 //
 // A sibling of verify_reversible: same method, different property. That one asks

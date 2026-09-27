@@ -1,3 +1,4 @@
+// gateway: live
 // verify_handoff_newchat.mjs — the hand-off of a turn in a BRAND-NEW chat, which
 // verify_peerrescue does not exercise and which was the shipped failure.
 //
@@ -25,7 +26,7 @@
 // Needs the dev stack: app (DAIMOND_PORT), mock (DAIMOND_MOCK), gateway
 // (DAIMOND_GW_PORT). Pro-gated, granted the one way the gateway trusts (pro.mjs).
 
-import { open, chat, signInAs, newChat, connectMock, shot, storedChats } from './harness.mjs';
+import { open, chat, signInAs, newChat, connectMock, shot, servedChats } from './harness.mjs';
 import { makePagePro } from './pro.mjs';
 import { GW_URL } from './ports.mjs';
 
@@ -57,11 +58,11 @@ async function untilChats(s, pred, ms = 30000, step = 500) {
 	const t0 = Date.now();
 	while (Date.now() - t0 < ms) {
 		let cs = [];
-		try { cs = await storedChats(s); } catch (e) { cs = []; }
+		try { cs = await servedChats(s); } catch (e) { cs = []; }
 		try { if (pred(cs)) return cs; } catch (e) { /* keep polling */ }
 		await s.page.waitForTimeout(step);
 	}
-	try { return await storedChats(s); } catch (e) { return []; }
+	try { return await servedChats(s); } catch (e) { return []; }
 }
 const allMsgs = (cs) => (cs || []).flatMap((c) => (c.messages || []));
 const countDispatched = (cs) => allMsgs(cs).filter((m) => m.why === 'dispatched').length;
@@ -202,7 +203,7 @@ try {
 	await shot(a, 'handoff_newchat');
 
 	// Money-safety: exactly one answer for the turn, no double-run.
-	const finalA = await storedChats(a);
+	const finalA = await servedChats(a);
 	const oneAnswer = answersMatching(finalA, 'NEWCHAT').length;
 	check('exactly one answer exists for the hand-off turn (no double-run)', oneAnswer === 1,
 		'answers: ' + oneAnswer);

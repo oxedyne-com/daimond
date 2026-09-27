@@ -1,3 +1,4 @@
+// gateway: none
 // verify_workspace_nav.mjs — getting back out of a folder in the Workspace
 // dock panel.
 //

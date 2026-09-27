@@ -1,3 +1,4 @@
+// gateway: none
 // verify_classifier_phrases.mjs — the two Safari phrases through the real classifier, without a
 // browser.
 //

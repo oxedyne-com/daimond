@@ -1,3 +1,4 @@
+// gateway: none
 // verify_lens.mjs — the archive reader, against logs whose every awkward case is
 // deliberate.
 //

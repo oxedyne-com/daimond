@@ -1,3 +1,4 @@
+// gateway: none
 // p18: the empty-transcript blank ("No conversation yet. Ask below.") must
 // appear ONCE, no matter how many times the daimon's chat face is re-opened.
 //

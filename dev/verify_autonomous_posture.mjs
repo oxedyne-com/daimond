@@ -1,3 +1,4 @@
+// gateway: none
 // verify_autonomous_posture.mjs — the per-computer "autonomous" posture, the
 // device-local switch that lets THIS machine finish work dispatched to it
 // without asking, reaching the web and running commands on its own. The bound is

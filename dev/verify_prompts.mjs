@@ -1,3 +1,4 @@
+// gateway: none
 // verify_prompts.mjs — the prompt each agent runs under is the user's to change.
 //
 // Four roles, four files in the workspace (prompts/<role>.md). What has to be

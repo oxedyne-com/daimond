@@ -1,3 +1,4 @@
+// gateway: none
 // verify_tiledatetime.mjs — local Holocene datetime on every chat transcript tile header.
 //
 // The owner, 2026-09-15: "we should have local datetime in format e.g.

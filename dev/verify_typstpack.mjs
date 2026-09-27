@@ -1,3 +1,4 @@
+// gateway: none
 // verify_typstpack.mjs — typesetting is bought, and every door to it knows.
 //
 // Typst typesetting moved from the free belt to a purchasable pack. THE CAPABILITY IS THE

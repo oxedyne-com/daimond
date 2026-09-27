@@ -1,3 +1,4 @@
+// gateway: none
 // verify_steerqueue.mjs — a steer typed while the daimon is working is kept.
 //
 // ── WHY ──────────────────────────────────────────────────────────────────────

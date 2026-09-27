@@ -1,3 +1,4 @@
+// gateway: none
 // verify_worker_status.mjs — a worker's tile status, and what `gather` says about it,
 // honestly, without a browser.
 //

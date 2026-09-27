@@ -1,3 +1,4 @@
+// gateway: none
 // verify_search_app.mjs — the browser half of the search tool: the setting, the
 // key, and the pause control the Web panel never had.
 //

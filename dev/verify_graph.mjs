@@ -1,3 +1,4 @@
+// gateway: none
 // verify_graph.mjs — the Graph pane: what is stored is what is drawn, both ways.
 //
 // The pane's whole claim is that it is a verification instrument: a person looks at it to

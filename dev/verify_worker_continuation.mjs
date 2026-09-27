@@ -1,3 +1,4 @@
+// gateway: none
 // verify_worker_continuation.mjs — a worker dispatched to carry on a prior one's work
 // picks up its actual conversation, not a blank slate, without a browser.
 //

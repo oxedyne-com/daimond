@@ -1,3 +1,4 @@
+// gateway: none
 // verify_dockdrag.mjs — a panel is carried into a slot of the Dock, and the
 // indicators say where it will land before it is let go.
 //

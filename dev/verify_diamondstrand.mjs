@@ -1,3 +1,4 @@
+// gateway: none
 // verify_diamondstrand.mjs — a small Diamond must not be NAMED as stranded when a
 // large one only rode inline because offload was unavailable this round.
 //

@@ -1,3 +1,4 @@
+// gateway: live
 // verify_markshere_sync.mjs — a mark pressed on one device is not a grant on another, over a
 // real sync, and what a change on one device does on the other (R2, the design's P6 and P12).
 //

@@ -1,3 +1,4 @@
+// gateway: none
 // verify_chatexpiry.mjs — the algebra a chat's lifetime rests on.
 //
 // A chat is throw-away: untouched for the operator's few days it goes to the

@@ -1,3 +1,4 @@
+// gateway: none
 // verify_i18n.mjs — every locale is whole, and every surface follows a switch.
 //
 // Three halves, and the third exists because the first two were blind in the

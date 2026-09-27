@@ -1,3 +1,4 @@
+// gateway: none
 // verify_diamondwalk.mjs — the store is never walked twice at once.
 //
 // WHY. `list_diamonds` walks the whole Diamond root and reads each Diamond's

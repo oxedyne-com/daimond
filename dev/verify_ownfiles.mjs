@@ -1,3 +1,4 @@
+// gateway: none
 // verify_ownfiles.mjs — the Workspace panel conceals nothing, and is still tidy.
 //
 // ── WHY ──────────────────────────────────────────────────────────────────────

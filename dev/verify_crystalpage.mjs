@@ -1,3 +1,4 @@
+// gateway: none
 // verify_crystalpage.mjs — a Diamond's crystal is rendered by a page a MODEL
 // wrote, and that page is a stranger in the house.
 //

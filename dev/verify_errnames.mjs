@@ -1,3 +1,4 @@
+// gateway: none
 // verify_errnames.mjs — when a form refuses, it says WHICH box is wrong.
 //
 // The fourth property search, after reversible, escapable and focus. A form that

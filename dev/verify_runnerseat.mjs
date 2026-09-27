@@ -1,3 +1,4 @@
+// gateway: live
 // verify_runnerseat.mjs — AN ARMED RUNNER IS THE SEAT, WITH NOTHING STORED ON THE
 // PHONE (owner, 2026-09-13).
 //

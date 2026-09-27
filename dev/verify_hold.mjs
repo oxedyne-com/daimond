@@ -1,3 +1,4 @@
+// gateway: none
 // Keeping a file with a Diamond: the user's own way in.
 //
 // Artefacts are otherwise harvested at a fold, from what a turn WROTE. That is

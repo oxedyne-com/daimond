@@ -1,3 +1,4 @@
+// gateway: none
 // verify_capp.mjs — a crystal page can keep what you tell it, and nothing else.
 //
 // WHAT THIS IS FOR. A crystal page is HTML, CSS and JavaScript in a frame that is

@@ -1,3 +1,4 @@
+// gateway: none
 // verify_diamondfit.mjs — the owner's real "N diamonds did not fit" failure, and
 // its fix.  Distinct from verify_diamondstrand, which is about offload being
 // UNAVAILABLE (canOffload false, or the gateway refusing).  This one is the case

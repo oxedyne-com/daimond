@@ -1,3 +1,4 @@
+// gateway: none
 // verify_daimonfold.mjs — the daimon-chat Fold button: absorb into the crystal,
 // commit it, and start a fresh session. One click, no accept/reject.
 //

@@ -1,3 +1,4 @@
+// gateway: none
 // A steer turn that answers in words (no crystal edit, no dispatch) must SHOW those
 // words, not silently bill and vanish.
 //

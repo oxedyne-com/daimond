@@ -1,3 +1,4 @@
+// gateway: none
 // verify_interject.mjs — you can speak into a turn that is already running.
 //
 // A turn is not one request; it is a round of them, each carrying the last
@@ -261,7 +262,8 @@ check('pressing it sends rather than killing the turn it was steering',
 check('a message not yet delivered is drawn as waiting, not as part of the thread',
 	waiting.cuts.length === 1, `${waiting.cuts.length} landed so far`);
 check('and the line above it says both when it goes in and that it may have to wait',
-	waiting.heads.some(h => /step/i.test(h) && /finish/i.test(h)),
+	// "…next step or turn's end" since c8afa2fa (the 2026-09-15 terseness sweep).
+	waiting.heads.some(h => /step/i.test(h) && /finish|turn.s end/i.test(h)),
 	JSON.stringify(waiting.heads));
 check('the composer is cleared, as it is on an ordinary send',
 	waiting.composer === '', JSON.stringify(waiting.composer));

@@ -1,3 +1,4 @@
+// gateway: none
 // verify_social.mjs — Phase 1 of the Social panel: the panel, the badge, the chip.
 //
 // Three things landed together and each has its own way of looking finished

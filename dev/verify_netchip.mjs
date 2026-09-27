@@ -1,3 +1,4 @@
+// gateway: none
 // verify_netchip.mjs — the permissions button says what it governs, shows whether
 // THIS chat's commands have the network, and lets that be granted and taken back.
 //

@@ -1,3 +1,4 @@
+// gateway: none
 // verify_kitfence.mjs — the toolchain clamp, end to end, through the relay.
 //
 // The two clamps on a fence disagreed with each other, and the disagreement was

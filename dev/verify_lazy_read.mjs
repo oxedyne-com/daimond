@@ -1,3 +1,4 @@
+// gateway: none
 // Verify the transcript-storage rework STAGE 1 (seq 213): the lazy read path.
 //
 // Boot no longer loads every chat's whole transcript into RAM. `readAll` loads chatsum

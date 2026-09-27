@@ -1,3 +1,4 @@
+// gateway: none
 // verify_attachfocus.mjs — the paperclip: one control, two behaviours, decided
 // by what is in focus and never by which row it sits on.
 //

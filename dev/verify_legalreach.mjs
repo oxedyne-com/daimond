@@ -1,3 +1,4 @@
+// gateway: none
 // verify_legalreach.mjs — the two promises the legal pages make about the app.
 //
 // PROMISE ONE: the documents exist where the user is. Daimond published its

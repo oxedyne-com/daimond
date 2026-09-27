@@ -1,3 +1,4 @@
+// gateway: none
 // verify_twodepth.mjs — the two-depth answer, and the streaming that is the whole
 // point of it.
 //
@@ -430,12 +431,22 @@ try {
 		const lines = js.split('\n');
 		const starts = [], missing = [];
 		lines.forEach((ln, i) => { if (/_generating\s*=\s*true/.test(ln)) starts.push(i); });
+		// IN THE SAME FUNCTION: from the enclosing function's own header -- the
+		// nearest line above, indented less than the flag, that opens a function --
+		// to its closing brace. It was a sixty-line window, which read the property
+		// as "nearby" and went red when `doSteer` grew 130 lines between its push
+		// (daimond.js:32083) and its flag, the push still in place.
+		const indent = (ln) => (/^\s*/.exec(ln)[0]).replace(/ {4}/g, '\t').length;
 		for (const i of starts) {
-			// The push sits beside the app the turn will run on, which is within a
-			// few lines of the flag in both existing paths. Sixty lines is wide
-			// enough for a commented one and far narrower than a function.
-			const near = lines.slice(Math.max(0, i - 60), i + 60).join('\n');
-			if (!/pushOpenFolds\s*\(/.test(near)) missing.push(`daimond.js:${i + 1}`);
+			const own = indent(lines[i]);
+			let j = i - 1;
+			while (j >= 0 && !(indent(lines[j]) < own && /\bfunction\b/.test(lines[j])
+				&& !/^\s*\/\//.test(lines[j]))) j--;
+			let k = i + 1;
+			const top = j >= 0 ? indent(lines[j]) : 0;
+			while (k < lines.length && !(indent(lines[k]) <= top && /^\s*\}/.test(lines[k]))) k++;
+			const body = lines.slice(Math.max(0, j), k).join('\n');
+			if (j < 0 || !/^\s*pushOpenFolds\s*\(/m.test(body)) missing.push(`daimond.js:${i + 1}`);
 		}
 		check(`0c every turn pushes what is open on screen (${starts.length} turn path(s))`,
 			starts.length >= 2 && missing.length === 0,

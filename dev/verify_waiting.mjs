@@ -1,3 +1,4 @@
+// gateway: none
 // verify_waiting.mjs — the waiting indicator means "this turn is still running".
 //
 // The complaint, against the live app: the dots cleared when the FIRST thing came

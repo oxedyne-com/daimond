@@ -1,3 +1,4 @@
+// gateway: live
 // verify_handoff_streaming.mjs — the incremental-streaming + cadence hand-off.
 //
 // The owner's two live complaints:
@@ -38,7 +39,7 @@
 // (DAIMOND_GW_PORT). Pro-gated via pro.mjs. Run under WebKit:
 //   DAIMOND_BROWSER=webkit node dev/verify_handoff_streaming.mjs
 
-import { open, chat, signInAs, newChat, connectMock, storedChats } from './harness.mjs';
+import { open, chat, signInAs, newChat, connectMock, servedChats } from './harness.mjs';
 import { makePagePro } from './pro.mjs';
 import { GW_URL } from './ports.mjs';
 
@@ -200,7 +201,7 @@ try {
 	let sawWorkBeforeAnswer = false, tFirstWork = 0, grew = false, prevLen = 0;
 	let screened = '';
 	for (let i = 0; i < 260; i++) {									// generous budget
-		let cs = []; try { cs = await storedChats(a); } catch (e) { cs = []; }
+		let cs = []; try { cs = await servedChats(a); } catch (e) { cs = []; }
 		const tl = thinkLen(cs), ans = answerText(cs).length;
 		let shot = ''; try { shot = await streamedOf(a.page); } catch (e) { shot = ''; }
 		if (shot) {
@@ -303,7 +304,7 @@ try {
 		const txt = out ? out.innerText : '';
 		return /ANSWERWORD/i.test(txt) && !/sent to your other/i.test(txt);
 	}, null, RTMS);
-	const finalCs = await storedChats(a);
+	const finalCs = await servedChats(a);
 	// AND THE READ WAS CAPABLE OF SEEING SOMETHING. A screen assertion on an empty box
 	// proves nothing either way, so the box is asserted to have a line in it: a future
 	// layout that collapses the thread again fails HERE, naming the height, instead of
@@ -357,7 +358,7 @@ try {
 	// displaying the chat it ran, so its thread text says nothing. A's is checked on
 	// screen as well, because the reader's thread is where it has to be true.
 	const aAnswers = answerText(finalCs).map((m) => String(m.content || '').replace(/\s+/g, ' ').trim());
-	let bCs = []; try { bCs = await storedChats(b); } catch (e) { bCs = []; }
+	let bCs = []; try { bCs = await servedChats(b); } catch (e) { bCs = []; }
 	const bAnswers = answerText(bCs).map((m) => String(m.content || '').replace(/\s+/g, ' ').trim());
 	const same = aAnswers.length === 1 && bAnswers.length === 1 && aAnswers[0] === bAnswers[0];
 	check('SAME TEXT: A\'s transcript holds the runner\'s answer, character for character',

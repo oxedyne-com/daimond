@@ -1,3 +1,4 @@
+// gateway: none
 // verify_storage.mjs — what the workspace costs, and the one figure the browser will not give.
 //
 // The sandbox row used to say "Workspace · evictable  2.0 MB", which is a number with nothing to

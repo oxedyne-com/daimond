@@ -1,3 +1,4 @@
+// gateway: none
 // verify_lockkeys.mjs — a locked Daimond holds no readable key.
 //
 // That is the contract, and it used to be kept by one line: `cfg.apiKey = ''`, because there was

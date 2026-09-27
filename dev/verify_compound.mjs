@@ -1,3 +1,4 @@
+// gateway: none
 // verify_compound.mjs — one call reads a list of files, and every answer is
 // where the model asked for it.
 //

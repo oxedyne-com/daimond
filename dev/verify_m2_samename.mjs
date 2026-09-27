@@ -1,3 +1,4 @@
+// gateway: none
 // verify_m2_samename.mjs — two machine folders of one name are two places (M2, 2026-09-24).
 //
 // ── WHY ──────────────────────────────────────────────────────────────────────

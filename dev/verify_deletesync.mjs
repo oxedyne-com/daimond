@@ -1,3 +1,4 @@
+// gateway: live
 // verify_deletesync.mjs — a file deleted on one device is deleted on the other, over a real sync.
 //
 // Two faults of the same class as the soak's R1 (`specs/daimond_offline_tomb_20260925.md`), each

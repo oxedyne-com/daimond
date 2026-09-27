@@ -1,3 +1,4 @@
+// gateway: none
 // verify_fileview.mjs — a file is shown as what it IS, and never as characters
 // it is not.
 //

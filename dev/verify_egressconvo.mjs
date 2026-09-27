@@ -1,3 +1,4 @@
+// gateway: none
 // verify_egressconvo.mjs — one ask per conversation, and it covers every website.
 //
 // THE DEFECT, reported by a tester on 2026-08-26 and ruled on by the owner the

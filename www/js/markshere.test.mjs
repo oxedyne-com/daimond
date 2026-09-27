@@ -191,6 +191,22 @@ const BR = 'browser', MU = 'machine:usr#' + FA;
 		fits('dir:[machine:usr@0123456789abcdef]code', BR) === false);
 }
 
+// A KEEPER'S RECORD IS NOT A WORKSPACE FILE (U5 of the reopen rehearsal, 2026-09-25): the sync census,
+// the merge and the fork point skip exactly what the engine's `is_keeper_record` names, and nothing a
+// person's own folder could be called.
+{
+	const { isKeeperRecordPath } = tab(storage()).M;
+	check('isKeeperRecordPath knows a chat\'s and a Diamond\'s version store, log and links, at any depth',
+		isKeeperRecordPath('chats/c1/versions') && isKeeperRecordPath('chats/c1/versions/0002.files.json')
+			&& isKeeperRecordPath('chats/c1/versions/b/' + 'a'.repeat(64)) && isKeeperRecordPath('chats/c1/versions/pending/x.json')
+			&& isKeeperRecordPath('diamonds/' + A + '/versions/0001.files.json') && isKeeperRecordPath('chats/c1/.daimond/log.jsonl')
+			&& isKeeperRecordPath('chats/c1/.red/x') && isKeeperRecordPath('Chats/C1/Versions/x'));
+	check('and nothing else: a chat\'s own work, a folder of the person\'s called versions, a chats root of theirs',
+		!isKeeperRecordPath('chats/c1/work/versions/x.md') && !isKeeperRecordPath('notes/versions/x.md')
+			&& !isKeeperRecordPath('vault/chats/c1/versions/x') && !isKeeperRecordPath('chats/versions') && !isKeeperRecordPath('chats//versions/x')
+			&& !isKeeperRecordPath('chats/c1/versionsx/y') && !isKeeperRecordPath(''));
+}
+
 // ── settle: a removal or a narrowing crosses, a widening never does ──
 {
 	const { _core: C } = tab(storage()).M;

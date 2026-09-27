@@ -1,3 +1,4 @@
+// gateway: none
 // verify_valuea.mjs — the presentation redesign of 2026-09-15: what a first-time user
 // meets, on the surfaces the naive-user audit ranked batch A.
 //

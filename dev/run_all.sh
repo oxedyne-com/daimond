@@ -78,67 +78,79 @@ export SMTPD_PORT=$SMTP_PORT
 IMAP_FIXTURE=${IMAP_FIXTURE:-$HOME/usr/code/rust/fe2o3/target/debug/examples/imap_test_server}
 SMTPD=${SMTPD:-dev/smtpd.mjs}
 
-# Which verifiers need a gateway ALREADY up (group C) -- ASKED OF THE FILES.
+# Which gateway each verifier needs -- DECLARED BY THE VERIFIER, one header line:
 #
-# This was a hand-kept list of thirteen names, and a hand-kept list is the thing
-# that goes stale: `verify_look` and `verify_wakerearm` each STATE the
-# requirement in their own header ("Needs dev/serve.mjs (DAIMOND_PORT) AND the
-# gateway on :9002") and neither was ever added to it. Both landed on 2026-08-12
-# and both have failed identically in every gate since -- `webhook 0, pro=false`,
-# which is a fetch that never connected -- while every browser-only check in
-# verify_look passed. Two days of red that said nothing about the app. The same
-# accident had already cost verify_gwretry and verify_sessionrenew, which exit 0
-# with a SKIP line when :9002 is clear and so were reported as PASSING for every
-# run in which they refused to do anything at all.
+#   // gateway: none    no gateway, and the port clear (group A)             phase 1
+#   // gateway: own     starts its own and refuses one already up (group B)  phase 1
+#   // gateway: live    this run's gateway, already up (group C)             phase 2
 #
-# So it is derived, on the same reasoning `wants_gateway` already applies below:
-# ask the verifier, not a list somebody has to remember to edit. What is asked is
-# the header comment, because that is where every one of these declares itself,
-# and the answer is checked in two directions:
+# The line is the first of the file (the second, after a `#!`). Exactly one, and one of
+# those three words; anything else and the verifier is NOT RUN and is reported as a FAIL
+# that names the line to write.
 #
-#   IT MUST ASK FOR ONE. A sentence in the header naming the gateway together
-#   with the thing that has to be there -- :9002, or the `dev_insecure` mail
-#   config phase 2 generates. A mention is not a requirement: "No gateway on
-#   :9002" and "It does NOT need ... the gateway on :9002" are NINE other files
-#   saying the opposite, and are excluded by the words that make them opposite.
+# THIS WAS INFERRED FROM THE HEADER'S WORDING, and the inference went wrong in the one
+# direction that hides things. A header sentence naming the gateway together with `:9002`,
+# `daimond_gw_port` or `dev_insecure`, and not negated, put a verifier in phase 2; a header
+# that said the same thing in other words -- "In a REAL page on the REAL gateway",
+# "the world's env, one gateway on its port", "Needs the dev stack (app/mock/gateway)" --
+# left it in phase 1 with the port clear. On the 2026-09-26 and 09-27 nightlies that ran
+# ten verifiers with no gateway, among them the hand-off core: `daimon_handoff`,
+# `handoff_q4grant`, `handoff_spinner_ui`, `compile_handoff`, `chatdelete_sync`,
+# `trashpurge` and `settle_orphans` each died on "No gateway is running on 127.0.0.1:97NN"
+# and were carried as known reds, `syncrail` timed out waiting for a push that could not
+# happen, and `pauseunseed` printed "G. skipped: this world has no gateway up" and passed
+# with its two-device section unrun. A wording rule cannot be exact in either direction,
+# so the declaration replaces it, and a missing one is loud rather than a guess.
 #
-#   AND IT MUST NOT BRING ITS OWN. Group B spawns a gateway and REFUSES to run
-#   with one already up, so it belongs in phase 1. `procLog` is gwbin's "I am
-#   about to spawn a server and need somewhere to log it" helper, and importing
-#   it is what tells the two groups apart -- verify_passkey_blob talks to a live
-#   gateway and imports SUITE_GW_LOG instead, saying in its own comment that it
-#   "starts no gateway of its own".
-#
-# Checked against the list it replaces (2026-08-14): it reproduces all thirteen
-# names exactly, and adds exactly verify_look and verify_wakerearm. The phase
-# lines this script prints are the audit -- every run says which verifiers it put
-# in which phase, which is what a list in a file never did.
-needs_live_gateway() {          # name -> 0 if it needs a gateway ALREADY up
+# THE DECLARATION IS CHECKED AGAINST THE SOURCE where the source can answer exactly (see
+# `decl_problem`): a file that calls `procLog(` starts a gateway of its own, so it is `own`;
+# one that reads `SUITE_GW_LOG` reads this run's gateway, so it is `live`; one that grants
+# Pro or a pack (`pro.mjs`) or pairs devices (`handoffpair.mjs`) needs a gateway of some
+# kind, so it is not `none`. Every other direction is the author's word, which is the point:
+# the author knows, and a script reading prose does not.
+VERIFIER_GATEWAYS="none own live"
+gateway_decl() {                # name -> none|own|live, or nothing when the file declares none legally
 	local f="dev/$1.mjs"
-	[ -f "$f" ] || return 1
-	grep -q 'procLog(' "$f" && return 1           # it starts one of its own
+	[ -f "$f" ] || return 0
 	awk '
-		/^[[:space:]]*\/\// { sub(/^[[:space:]]*\/\/[[:space:]]?/, ""); h = h " " $0; next }
-		/^[[:space:]]*$/    { next }
-		{ exit }                                  # the header ends at the first code
-		END {
-			n = split(h, s, /\. /)
-			for (i = 1; i <= n; i++) {
-				t = tolower(s[i])
-				if (t !~ /gateway/)             continue
-				# The port token, in either spelling. `:9002` is what every header
-				# in the tree says today; `daimond_gw_port` is what a header
-				# written since the gateway became per-world should say, and
-				# accepting it now means the first file to be reworded does not
-				# silently change phase.
-				if (t !~ /:9002|daimond_gw_port|dev_insecure/)  continue
-				if (t ~ /no gateway|not need|free :9002|starts its own|start its own|spawns/) continue
-				exit 0
-			}
-			exit 1
-		}
+		NR == 1 && /^#!/ { next }
+		!first { first = 1; if ($0 ~ /^\/\/ gateway: /) { v = $3; n++ }; next }
+		/^\/\/ gateway: / { n++ }                 # a second one anywhere is a second answer
+		END { if (n == 1 && v ~ /^(none|own|live)$/) print v }
 	' "$f"
 }
+decl_problem() {                # name -> why its declaration cannot be used, or nothing
+	local f="dev/$1.mjs" d
+	[ -f "$f" ] || return 0     # a missing file is run_one's to report, as it always was
+	d=$(gateway_decl "$1")
+	if [ -z "$d" ]; then
+		echo "declares no gateway need: its first line (after any #!) must be exactly one of \`// gateway: none\`, \`// gateway: own\` or \`// gateway: live\` (see dev/run_all.sh, \"Which gateway each verifier needs\")"
+		return
+	fi
+	if grep -q 'procLog(' "$f" && [ "$d" != own ]; then
+		echo "declares \`gateway: $d\` but calls procLog(, which starts a gateway of its own: declare \`gateway: own\`"
+	elif grep -q 'SUITE_GW_LOG' "$f" && [ "$d" != live ]; then
+		echo "declares \`gateway: $d\` but reads SUITE_GW_LOG, this run's gateway: declare \`gateway: live\`"
+	elif [ "$d" = none ] && grep -qE 'makePagePro\(|makePagePack\(|grantPro\(|grantPack\(|handoffpair\.mjs' "$f"; then
+		echo "declares \`gateway: none\` but grants Pro or a pack, or pairs devices, which only a gateway can do: declare \`gateway: live\` or \`own\`"
+	fi
+}
+needs_live_gateway() {          # name -> 0 if it declares a gateway ALREADY up
+	[ "$(gateway_decl "$1")" = live ]
+}
+# Every verifier's declaration and any problem with it; exit 1 if any has one. Phase 0 runs it
+# over the whole tree, and it is the one command to run after writing a verifier.
+declarations_all() {
+	local f n d why bad=0
+	for f in dev/verify_*.mjs dev/refluxduo.mjs; do
+		n=$(basename "$f" .mjs)
+		d=$(gateway_decl "$n"); why=$(decl_problem "$n")
+		if [ -n "$why" ]; then bad=$((bad+1)); echo "BAD   $n  — $why"; fi
+	done
+	echo "gateway declarations: $(ls dev/verify_*.mjs | wc -l) verifiers and refluxduo, $bad with a problem"
+	[ "$bad" = 0 ]
+}
+
 # Of those, the ones that also need an entitled account (and, for compose, mail).
 # Still a list: an entitlement is not something a header declares, and these are
 # named again by the provisioning block below in any case.
@@ -351,7 +363,31 @@ fi
 # same shape of matrix verify_sweep_mobile already gets 900s for. A budget is a
 # claim about how long a thing takes; an unlisted verifier makes that claim by
 # accident.
-slow_for() {
+# THE BUDGET IS THE LARGER OF TWO NUMBERS, and the second is measured.
+#
+#   budget_floor  the case below: a budget argued from what the file does -- its declared
+#                 waits, its matrix, a measurement somebody wrote down -- each with its reason.
+#   dev/budgets.tsv  twice the longest run that FINISHED, in a nightly shard or alone in its
+#                 rerun, rounded up to a minute. A budget is a hang detector, not a speed
+#                 target: at twice the longest finish, a verifier killed by it was hung or
+#                 twice as slow as it has ever been, and either is worth a red of its own.
+#
+# The 180 s default went unmeasured for most of the tree, and on the 2026-09-26 and 09-27
+# nightlies eleven verifiers were killed by it in the suite -- `dataloss` (453 s alone),
+# `pausewidget` (414 s), `noopfs` (407 s), `escapable`, `ed25519_forall`, `telemetry`,
+# `group`, `diamondfit`, `syncrail`, `q6`, `updates` -- every one of which takes longer
+# than 180 s even alone. The suite then held no verdict on them at all, and the rerun
+# alone, under a different budget, gave the only one: an exit 124 was being read as "the
+# box was busy" when the budget was simply wrong. The nightly report now lists every run
+# over half its budget with the line to write here (NEAR-BUDGET), and every 124 apart from
+# the buckets (TIMED OUT), so a budget cannot drift below the rule without a report saying so.
+slow_for() {                    # name -> seconds: the larger of its floor and its measured budget
+	local floor measured
+	floor=$(budget_floor "$1")
+	measured=$(awk -F'\t' -v n="$1" '$1 == n { print $2; exit }' "${ROOT:-.}/dev/budgets.tsv" 2>/dev/null)
+	if [ -n "$measured" ] && [ "$measured" -gt "$floor" ]; then echo "$measured"; else echo "$floor"; fi
+}
+budget_floor() {
 	case "$1" in
 		# MEASURED at 633s and 657s alone on release 5 (2026-09-25 triage), against 477s
 		# on release 4: over the 600 it had, so the release-5 nightly would read exit 124.
@@ -858,9 +894,10 @@ else
 	ALL=$(cd dev && ls verify_*.mjs | sed 's/\.mjs$//')
 	ALL="$ALL refluxduo"
 fi
-PHASE1=""; PHASE2=""
+PHASE1=""; PHASE2=""; UNDECLARED=""
 for name in $ALL; do
-	if needs_live_gateway "$name"; then PHASE2="$PHASE2 $name"; else PHASE1="$PHASE1 $name"; fi
+	if [ -n "$(decl_problem "$name")" ]; then UNDECLARED="$UNDECLARED $name"
+	elif needs_live_gateway "$name"; then PHASE2="$PHASE2 $name"; else PHASE1="$PHASE1 $name"; fi
 done
 
 # ── The gateway binary, built once for the whole run ────────────────────
@@ -890,6 +927,7 @@ wants_gateway() {              # does anything in this run touch the binary?
 	# have, and each time it did the suite drew a wrong conclusion quietly.
 	local n
 	for n in $ALL; do
+		[ "$(gateway_decl "$n")" = own ] && return 0
 		grep -q 'gwbin\.mjs\|daimond_gateway' "dev/$n.mjs" 2>/dev/null && return 0
 	done
 	return 1
@@ -1007,6 +1045,10 @@ if [ $# -eq 0 ]; then
 	# reports as started, which is how a suite came to drive a stranger's gateway
 	# over a store its own processes were writing.
 	static_one startgateway bash dev/breakproof_startgateway.sh
+	# Every verifier's gateway declaration, over the whole tree rather than this run's list,
+	# and the check itself shown red on each way a declaration can be wrong: a verifier
+	# written without one is caught here the first time anybody runs the suite.
+	static_one gatewaydecl  bash dev/breakproof_gatewaydecl.sh
 fi
 
 # ── Phase 0b: the Rust tests, counted ───────────────────────────────────────
@@ -1095,6 +1137,19 @@ if [ $# -eq 0 ]; then
 fi
 
 # ── Phase 1: the gateway port clear ─────────────────────────────────────
+# A verifier whose gateway declaration is missing, illegal or contradicted by its own source
+# is NOT RUN: which phase it belongs in is the one question it has not answered, and a guess
+# is how ten of them ran with no gateway. A FAIL rather than a SKIP, because the fix is one
+# line in the verifier and a skip reads as "not applicable here". Its log says the same, so a
+# gate that diffs logs sees the reason and not an empty file.
+for name in $UNDECLARED; do
+	why=$(decl_problem "$name")
+	mkdir -p "$SCRATCH/out"
+	printf 'FAIL gateway declaration: %s\n' "$why" > "$SCRATCH/out/$name.log"
+	fail=$((fail+1)); failed="$failed $name"
+	say "FAIL  $name (undeclared)  — not run: $why"
+done
+
 if [ -n "$PHASE1" ]; then
 	if gateway_up; then
 		say "Stopping the gateway on :$GW_PORT — phase 1 needs it clear."

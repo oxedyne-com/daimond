@@ -1,3 +1,4 @@
+// gateway: none
 // verify_webkit.mjs — the mobile UX walk, on the real Safari (WebKit) engine.
 //
 // iPhones run WebKit, not Chromium; "Chrome for iOS" is Safari underneath. This

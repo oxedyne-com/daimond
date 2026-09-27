@@ -147,6 +147,23 @@
 		return APP_STATE_RE.test(String(path || ''));
 	}
 
+	/// Is this path part of a keeper's RECORD -- a Diamond's or a chat's version store, its
+	/// log, its links (`versions/`, `.daimond/`, `.red/` under `diamonds/<id>/` or
+	/// `chats/<id>/`)? The mirror of the engine's `is_keeper_record` (src/tools.rs), folded
+	/// to lower case as that one is.
+	///
+	/// Daimond's own record of THIS device's files, so none of it is a workspace file: a
+	/// chat's rows name the paths it changed here -- a machine path absolutely -- and its
+	/// bodies are the copies it kept of them. Diamonds travel whole in their own section;
+	/// a chat's record never leaves the device (U5 of the reopen rehearsal, 2026-09-25: it
+	/// rode the files section from a device in the browser sandbox, and a peer's census
+	/// without it deleted every manifest and body of the chat's store, the copy a chat's
+	/// Undo had just kept of the person's save among them).
+	var KEEPER_RECORD_RE = /^(?:diamonds|chats)\/[^/]+\/(?:versions|\.daimond|\.red)(?:\/|$)/;
+	function isKeeperRecordPath(path) {
+		return KEEPER_RECORD_RE.test(String(path || '').toLowerCase());
+	}
+
 	/// Can a reference be opened from the workspace named by `key`? The same root
 	/// kind, and for a machine folder the same name where the reference carries
 	/// one. A reference from before roots were recorded fits either, and so does
@@ -570,6 +587,7 @@
 		fits: fits,
 		isStorePath: isStorePath,
 		isAppStatePath: isAppStatePath,
+		isKeeperRecordPath: isKeeperRecordPath,
 		isMark: isMark,
 		parseSidecar: parseSidecar,
 		/// The built-in entries, given once by daimond.js beside `DEFAULT_IDS`.

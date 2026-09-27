@@ -1,3 +1,4 @@
+// gateway: none
 // verify_termpanel.mjs — the Terminal panel: the joint between the screen and
 // the pty, driven in the real app.
 //

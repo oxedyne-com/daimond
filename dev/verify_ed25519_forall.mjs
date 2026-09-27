@@ -1,3 +1,4 @@
+// gateway: live
 // verify_ed25519_forall.mjs — every Daimond account is Ed25519, on every browser.
 //
 // The owner's ruling of 2026-09-23 (D-20260923-46, "Ed25519 for all"). Until it,

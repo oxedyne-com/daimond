@@ -1,3 +1,4 @@
+// gateway: own
 // verify_admin.mjs — the operator console: token auth, the /api/admin data
 // feed, and the dashboard (KPIs, revenue + consumption charts, world map,
 // tables) rendering end to end.

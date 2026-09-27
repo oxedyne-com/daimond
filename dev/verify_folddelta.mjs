@@ -1,3 +1,4 @@
+// gateway: none
 // A fold retains its raw delta; the History must let you read it back.
 //
 // This used to type a delta straight into the crystal's own `#fold-delta` box

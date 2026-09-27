@@ -211,7 +211,7 @@ echo "── the machine hand: does the published source build"
 # target directory of its own under $WORK, because /tmp is a tmpfs and a cargo
 # target there is held in RAM.
 export CARGO_TARGET_DIR="$WORK/hand-target"
-if ! cargo build --release --manifest-path hand/Cargo.toml >"$WORK/hand-build.log" 2>&1; then
+if ! cargo build --release --locked --manifest-path hand/Cargo.toml >"$WORK/hand-build.log" 2>&1; then
 	echo "FAILED — the published hand does not build. Last lines:"
 	tail -20 "$WORK/hand-build.log"
 	exit 1

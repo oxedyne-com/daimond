@@ -1,3 +1,4 @@
+// gateway: none
 // verify_vision.mjs — a worker that is shown a picture ends up on a model that can
 // see it, is billed for both halves, and says so on screen.
 //

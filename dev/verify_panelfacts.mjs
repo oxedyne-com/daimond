@@ -1,3 +1,4 @@
+// gateway: none
 // verify_panelfacts.mjs — a panel that states a fact must state the true one.
 //
 // Three defects of one shape, found by the reachability audit of 2026-08-12. In

@@ -1,3 +1,4 @@
+// gateway: none
 // verify_runner_launcher.mjs — dev/runner-chrome.sh, driven rather than read.
 //
 // The launcher is the half of the runner that lives outside the browser: a

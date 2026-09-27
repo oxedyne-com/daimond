@@ -1,3 +1,4 @@
+// gateway: none
 // verify_queuebadge.mjs — the queue badge on a DIAMOND tile: that it is drawn,
 // that it updates in place, and that a message typed into a busy daimon is held
 // rather than swallowed.

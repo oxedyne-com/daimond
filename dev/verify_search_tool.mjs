@@ -1,3 +1,4 @@
+// gateway: none
 // verify_search_tool.mjs — the browser half of `web_search`, from the wasm's side.
 //
 // WHAT THIS FILE IS ABOUT. There is no search tool, so when the model wants to

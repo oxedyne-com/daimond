@@ -1,3 +1,4 @@
+// gateway: live
 // verify_daimon_handoff.mjs — a DAIMON turn hands off, and runs on the peer.
 //
 // The owner's #1 launch roadblock: a Diamond's daimon turn never handed off. It

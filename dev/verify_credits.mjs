@@ -1,3 +1,4 @@
+// gateway: none
 // verify_credits.mjs — credits buy inference: a balance is a provider row, and its key is minted.
 //
 // Daimond had two halves that did not touch. BYOK inference ran in the browser against a key the

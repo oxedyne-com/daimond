@@ -1,3 +1,4 @@
+// gateway: none
 // verify_reopen.mjs — a reload comes back where you were, whichever it was.
 //
 // ── WHY ──────────────────────────────────────────────────────────────────────

@@ -1,3 +1,4 @@
+// gateway: none
 // verify_savecopy.mjs — the two folder transfers must read and write the root
 // the agent is actually on.
 //

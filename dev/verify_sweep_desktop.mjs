@@ -1,3 +1,4 @@
+// gateway: none
 // verify_sweep_desktop.mjs — every palette against every spacing, on the desktop
 // shell, checked MECHANICALLY rather than by eye.
 //

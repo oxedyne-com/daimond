@@ -1,3 +1,4 @@
+// gateway: live
 // verify_sync.mjs — a user's work travels between devices through the gateway's
 // encrypted mailbox, and two devices editing at once converge rather than clobber.
 //
@@ -547,6 +548,13 @@ try {
 	// The agreeing push is driven by the helper for the same reason as (3b): the
 	// deletion below is only meaningful against a mailbox that HELD the file, and
 	// a bare push() that stood aside left there being nothing to delete.
+	//
+	// A DELETION IS A TOMBSTONE, NEVER AN ABSENCE (fault B, 5.2.1). The stand-in device
+	// first sends a complete census that merely lacks the file, which deletes nothing: a
+	// folder device's census is complete only for its shared roots, and reading its
+	// absence as a deletion took every file a phone had made in its own storage. Then it
+	// sends what a device that really deleted the file sends, the tombstone at the hash it
+	// held (`fileTombs`, written by `noteFileTombs`), and that is what removes it here.
 	await page.evaluate(async () => {
 		const mod = await import('../pkg/oxedyne_daimond.js');
 		const app = new mod.DaimondApp('http://127.0.0.1/v1/chat/completions', '', 'none', 256, '', true);
@@ -558,23 +566,35 @@ try {
 		const mod = await import('../pkg/oxedyne_daimond.js');
 		const app = new mod.DaimondApp('http://127.0.0.1/v1/chat/completions', '', 'none', 256, '', true);
 		const present = await app.run_tool('file_read', JSON.stringify({ path: 'DELME.txt' }));
-		// The OTHER device deletes DELME.txt and pushes the reduced state.
-		const state = await window.DaimondCore.collectSync();
-		delete state.files['DELME.txt'];
-		const blob = await window.DaimondIdentity.wrap(JSON.stringify(state));
-		const ver = window.DaimondSync.version();
-		await fetch('/api/sync', {
-			method: 'POST', credentials: 'same-origin',
-			headers: { 'content-type': 'application/json', 'x-daimond-api': '2' },
-			body: JSON.stringify({ base_version: ver, device: 'other', blob: blob }),
-		});
-		await window.DaimondSync.pull();							// honour the remote deletion.
+		const held = JSON.parse(localStorage.getItem('daimond-sync-filebase') || '{}')['DELME.txt'] || '';
+		// The OTHER device's parcel without DELME.txt, as its own complete census.
+		const send = async (tombs) => {
+			const state = await window.DaimondCore.collectSync();
+			delete state.files['DELME.txt'];
+			state.filesComplete = true;
+			state.fileTombs = Object.assign({}, state.fileTombs || {}, tombs);
+			const blob = await window.DaimondIdentity.wrap(JSON.stringify(state));
+			const ver = window.DaimondSync.version();
+			const r = await fetch('/api/sync', {
+				method: 'POST', credentials: 'same-origin',
+				headers: { 'content-type': 'application/json', 'x-daimond-api': '2' },
+				body: JSON.stringify({ base_version: ver, device: 'other', blob: blob }),
+			});
+			await window.DaimondSync.pull();
+			return r.status;
+		};
+		const s1 = await send({});								// absent, no tombstone
+		const absent = await app.run_tool('file_read', JSON.stringify({ path: 'DELME.txt' }));
+		const s2 = await send({ 'DELME.txt': held });			// the tombstone at the hash it held
 		const after = await app.run_tool('file_read', JSON.stringify({ path: 'DELME.txt' }));
-		return { present: String(present), after: String(after) };
+		return { present: String(present), absent: String(absent), after: String(after), held: !!held, s1, s2 };
 	});
+	check('a complete census from another device that merely lacks a file deletes nothing here',
+		delProp.present.includes('delete me') && delProp.absent.includes('delete me') && delProp.s1 === 200,
+		'absent=' + delProp.absent.slice(0, 40) + ' post ' + delProp.s1);
 	check('a file deleted on another device is removed here',
-		delProp.present.includes('delete me') && /error|not found|no such/i.test(delProp.after),
-		'after=' + delProp.after.slice(0, 40));
+		delProp.held && delProp.s2 === 200 && /error|not found|no such/i.test(delProp.after),
+		'after=' + delProp.after.slice(0, 40) + ' post ' + delProp.s2 + ' held ' + delProp.held);
 
 	// ── (4) Diamonds ───────────────────────────────────────────────────
 	// A Diamond is a directory in OPFS, so "it synced" means the whole directory

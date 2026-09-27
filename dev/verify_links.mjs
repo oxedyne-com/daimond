@@ -1,3 +1,4 @@
+// gateway: none
 // verify_links.mjs — the link substrate: one stored record, found from both ends.
 //
 // Links are the layer under whatever gets built on them, so what matters here is not a

@@ -1,3 +1,4 @@
+// gateway: none
 // Does signing in leave the Admin drawer alone?
 //
 // It did not. `afterUnlock` called `DaimondAdmin.home()` to bring the account's

@@ -1,3 +1,4 @@
+// gateway: none
 // verify_changepass.mjs — changing the passphrase now GENERATES the new one.
 //
 // The create screen already generates the passphrase (verify_genpass.mjs). The

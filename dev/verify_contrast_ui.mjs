@@ -1,3 +1,4 @@
+// gateway: none
 // Verify, from the pixels the browser actually paints, the parts of the palette
 // that the declared hex cannot settle.
 //

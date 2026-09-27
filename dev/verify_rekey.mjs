@@ -1,3 +1,4 @@
+// gateway: none
 // verify_rekey.mjs — a passphrase change carries EVERY secret across, and leaves
 // none of them lying in memory afterwards.
 //

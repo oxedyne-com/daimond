@@ -1,3 +1,4 @@
+// gateway: none
 // verify_clipmarks.mjs -- the paperclip acts on this workspace's mark, and asks before a grant.
 //
 // Four findings of the marks QA (specs/daimond_r3_qa_marks_20260924.md, R2 QA 2026-09-24),

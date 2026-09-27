@@ -1,3 +1,4 @@
+// gateway: none
 // verify_fsview.mjs — the workspace is one tree, and every entry says where it is.
 //
 // THE DEFECT. A path a file tool was given could be in any of four places — browser storage, a

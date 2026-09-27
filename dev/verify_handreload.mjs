@@ -1,3 +1,4 @@
+// gateway: none
 // verify_handreload.mjs — what a daimon left running, after the page is reloaded.
 //
 // WHY THIS FILE EXISTS. `dev/verify_handstop.mjs` proved that a command which

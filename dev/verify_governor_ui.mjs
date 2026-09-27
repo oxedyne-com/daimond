@@ -1,3 +1,4 @@
+// gateway: none
 // verify_governor_ui.mjs — the spend governor, wired into the real page.
 //
 // The pure decision core is covered by verify_governor.mjs under Node. This

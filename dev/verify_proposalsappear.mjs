@@ -1,3 +1,4 @@
+// gateway: none
 // verify_proposalsappear.mjs — the meta-bug: a batch-sent proposal must APPEAR.
 //
 // The owner sent eight queued drafts as proposals. All eight reached the forge,

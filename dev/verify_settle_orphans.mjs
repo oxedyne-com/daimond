@@ -1,3 +1,4 @@
+// gateway: live
 // verify_settle_orphans.mjs — `dev/settle_stale_orphans.js` closes a stale orphan
 // hand-off on a build that would otherwise replay it, in every tab its report reaches,
 // and this measures which tabs those are.

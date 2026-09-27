@@ -1,3 +1,4 @@
+// gateway: none
 // verify_handstop.mjs — a daimon can stop what it started, through the real chain.
 //
 // WHY THIS FILE EXISTS. On 2026-08-23 a daimon started two servers in front of

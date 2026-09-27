@@ -1,3 +1,4 @@
+// gateway: none
 // verify_permmode.mjs — is the permission mode visible, changeable, and honest?
 //
 // The user's requirement, in their words: "the permission level should be visible

@@ -1,3 +1,4 @@
+// gateway: none
 // verify_crystalgap.mjs — a Diamond that LISTS must OPEN.
 //
 // `list()` admits a Diamond on its metadata alone, deliberately: a Diamond the
@@ -175,7 +176,8 @@ const half = await p.evaluate(async (arg) => {
 	files['a.md/b.md'] = 'a file inside a file, which cannot be written';
 	files['crystal.json'] = arg.crystal;
 	const pack = JSON.stringify({ id: arg.id, touched: 1, files: files });
-	const err = await __d.app.import_diamond(pack).then(() => null).catch((e) => String(e));
+	// `false`: a one-sided pull. The dev wasm asserts the boolean the release build coerced.
+	const err = await __d.app.import_diamond(pack, false).then(() => null).catch((e) => String(e));
 	return { err };
 }, { id: HALF, crystal: json('the crystal that never arrived') });
 
@@ -196,7 +198,7 @@ await p.evaluate(async (arg) => {
 	files['.daimond/meta.json'] = JSON.stringify(
 		{ name: 'Arrived whole', crystal_version: 0, updated: 2, touched: 2 });
 	files['crystal.json'] = arg.crystal;
-	await __d.app.import_diamond(JSON.stringify({ id: arg.id, touched: 2, files: files }));
+	await __d.app.import_diamond(JSON.stringify({ id: arg.id, touched: 2, files: files }), false);
 }, { id: WHOLE, crystal: json('the whole crystal') });
 
 const wholeRows = await listed();

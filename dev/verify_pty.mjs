@@ -1,3 +1,4 @@
+// gateway: none
 // verify_pty.mjs — the terminal relay, bytes and all, against a real host
 // process.
 //

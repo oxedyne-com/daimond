@@ -95,7 +95,8 @@ sealed for this release, and this is how it is built.*
 
 - **Nothing about a binary.** No hand binary is published, signed or hashed. You
   build your own from the source you just checked, with `cargo build --release
-  --manifest-path hand/Cargo.toml`. If somebody hands you a `daimond-hand`
+  --locked --manifest-path hand/Cargo.toml` (`--locked`: exactly the dependency
+  versions the sealed `Cargo.lock` names). If somebody hands you a `daimond-hand`
   binary, nothing here says anything whatever about it.
 - **Not reproducible.** A Rust release binary is not byte-identical across
   toolchain versions, and this project has not demonstrated that it is identical

@@ -1,3 +1,4 @@
+// gateway: none
 // verify_conformance.mjs — does the live Oregami forge answer the Improve-panel
 // contract, on the repository the product actually names?
 //

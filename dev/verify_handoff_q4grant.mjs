@@ -1,3 +1,4 @@
+// gateway: live
 // verify_handoff_q4grant.mjs -- a consent grant answered on one device reaches the runner
 // that asked, however many other devices collect it first (R3 QA Q4, D126).
 //

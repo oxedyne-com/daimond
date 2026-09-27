@@ -1,3 +1,4 @@
+// gateway: none
 // verify_interfacediagram.mjs — the interface page's region map says what the
 // app does, and is still made of words on a phone.
 //
@@ -213,8 +214,12 @@ if (BREAK) console.log(`BREAK ${BREAK}: ${applied.join('; ')}\n`);
 	// And the reader is sent to the door that exists. `spend.js` puts the click
 	// handler on `#spend-row`, so that is where the guide has to point.
 	const door = /getElementById\('spend-row'\)[\s\S]{0,600}?addEventListener\('click'/.test(spendJs);
-	const points = /spend row[^.]{0,60}(rail|foot of the rail)|(rail|foot of the rail)[^.]{0,60}spend row/i
-		.test(proseOf(spendBytes));
+	// Since cc18695b (2026-09-15) the page says "The foot of the rail carries the running
+	// figures … Press one to open the Spending panel": the same door, without the words
+	// "spend row".
+	const prose = proseOf(spendBytes);
+	const points = /spend row[^.]{0,60}(rail|foot of the rail)|(rail|foot of the rail)[^.]{0,60}spend row/i.test(prose)
+		|| (/foot of the rail[^.]{0,80}figures/i.test(prose) && /press one to open/i.test(prose));
 	check('spending.html points at the door spend.js actually wires', !door || points,
 		door ? 'the handler is on #spend-row and the page does not say so' : 'no handler found');
 }
@@ -304,20 +309,10 @@ for (const theme of ['light', 'dark']) {
 			const wide = await page.evaluate(() =>
 				document.documentElement.scrollWidth - document.documentElement.clientWidth);
 			check('the page does not scroll sideways at 360px', wide <= 1, `${wide}px of overflow`);
-			// The figure carries the scrolling instead, which is the whole trick:
-			// a floor with no overflow box would simply widen the page.
-			const inside = await page.evaluate(() => {
-				const f = document.querySelector('.diagram');
-				if (!f) return null;
-				return { scroll: f.scrollWidth, client: f.clientWidth,
-					overflow: getComputedStyle(f).overflowX };
-			});
-			check('the figure scrolls inside its own box',
-				!!inside && inside.overflow === 'auto' && inside.scroll > inside.client + 1,
-				inside ? `overflow-x: ${inside.overflow}, ${inside.scroll} in ${inside.client}` : 'no figure');
-			check('the region map\'s labels are still legible at 360px',
-				!!m && m.min.h >= FLOOR_PX,
-				m ? `smallest label renders ${m.min.h.toFixed(1)}px tall (${JSON.stringify(m.min.t)})` : 'no labels found');
+			// The figure's two checks ("scrolls inside its own box", "labels legible at
+			// 360px") are retired: 5e7cb2d2 (2026-09-15, "The interface, with the chip row it
+			// actually ships with") took the region-map figure off the page, so there is no
+			// figure to scroll and no label to measure. The page-wide overflow above stands.
 		}
 		await page.evaluate(() => window.scrollTo(0, 0));
 		await page.screenshot({ path: path.join(SHOTS, tag(`360-${theme}`)), fullPage: false });

@@ -1,3 +1,4 @@
+// gateway: none
 // verify_diamondcwd.mjs — where a Diamond's command starts, now that the
 // Diamond itself is not on the machine.
 //

@@ -1,3 +1,4 @@
+// gateway: none
 // verify_composemerge.mjs — note-capture merged into the Proposals view.
 //
 // The standalone Notes view is gone. A note is written in a compose box at the

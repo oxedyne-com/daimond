@@ -1,3 +1,4 @@
+// gateway: none
 // verify_crystaltheme — a page written before the palette fix is brought up to date,
 // and a page nobody recognises is not touched.
 //

@@ -1,3 +1,4 @@
+// gateway: none
 // verify_lane4.mjs — four controls that were drawn and did not work.
 //
 // Each of the four is a surface that LOOKS finished. Nothing here can be proved

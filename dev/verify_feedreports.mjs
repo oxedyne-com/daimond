@@ -1,3 +1,4 @@
+// gateway: none
 // verify_feedreports.mjs — the operator console's report queue drawing a FEED
 // report: the post id, the words, and the one act that differs from a message
 // report -- "Remove post" instead of a bare "Uphold", because the only way this

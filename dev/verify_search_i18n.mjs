@@ -1,3 +1,4 @@
+// gateway: none
 // verify_search_i18n.mjs — the search tool's strings, in all eight languages.
 //
 // `verify_i18n.mjs` already diffs whole key sets against en.js. This one is

@@ -1,3 +1,4 @@
+// gateway: own
 // verify_redeem.mjs — the beta passcode, from the browser, against a real
 // gateway with the beta really shut.
 //
@@ -596,7 +597,10 @@ async function startServer() {
 		// survive into what the user reads, in whatever words the catalogue uses.
 		const honesty = await says('beta.lead_beta_only');
 		check('2. and says only the ACCOUNT is closed, not the app',
-			dialogText.indexOf(honesty) >= 0 && honesty.indexOf('no account at all') >= 0,
+			// The two halves of that meaning in the words since 69384d1b (the
+			// 2026-09-15 copy cut): accounts are what is closed, and the app still works.
+			dialogText.indexOf(honesty) >= 0 && /account/i.test(honesty)
+				&& /still works/i.test(honesty),
 			null, 'the refusal reads as the app being shut');
 		const hasField = await page.$('#beta-code-input');
 		const hasGo    = await page.evaluate(() => {

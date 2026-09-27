@@ -1,3 +1,4 @@
+// gateway: none
 // Verify the palettes: every one declares every token, every text rung clears
 // its contrast floor on every surface it is drawn on, and the pre-paint table in
 // index.html says the same thing as the registry in daimond.js.

@@ -2,7 +2,7 @@
 	"algo": "sha-256",
 	"source": "a98528055fd49892094e8a9f310c67678a579b8eabdde031357adf066a9862b6",
 	"toolchain": "1.90.0",
-	"build": "cargo build --release --manifest-path hand/Cargo.toml",
+	"build": "cargo build --release --locked --manifest-path hand/Cargo.toml",
 	"binary": "hand/target/release/daimond-hand",
 	"files": {
 		"Cargo.lock": "9a4f6103798b26ec1f62b5c4516cf4169812bedcecc62ccf546309b14dfc615b",

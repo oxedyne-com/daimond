@@ -1,3 +1,4 @@
+// gateway: none
 // verify_slots.mjs — parallel workers each run on their OWN minted key.
 //
 // The overspend the multi-key work fixes is caused by parallel workers SHARING

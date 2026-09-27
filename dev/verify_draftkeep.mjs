@@ -1,3 +1,4 @@
+// gateway: none
 // A DRAFT BELONGS TO THE DIAMOND, NOT TO THE FACE IT WAS TYPED ON.
 //
 // Reported by the owner, 2026-08-21, using the app: he began typing a reply to a

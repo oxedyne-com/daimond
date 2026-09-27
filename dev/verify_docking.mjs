@@ -1,3 +1,4 @@
+// gateway: none
 // verify_docking.mjs — the dock survives a change of tiling and a change back.
 //
 // The dock is one width (`widths.dock`) times however many columns the grid

@@ -1,3 +1,4 @@
+// gateway: none
 // verify_daimonreach.mjs — a daimon reaches what its Diamond holds.
 //
 // THE DEFECT THIS PINS, and it is the one a user hit on 2026-08-13. A 281-page

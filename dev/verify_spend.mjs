@@ -1,3 +1,4 @@
+// gateway: live
 // verify_spend.mjs — the Spending view shows where the money goes: inference
 // (the client per-turn ledger) and credits (the gateway ledger), each as a
 // graph, a breakdown and a table.

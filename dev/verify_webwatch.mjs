@@ -1,3 +1,4 @@
+// gateway: none
 // verify_webwatch.mjs — a slow human's approval still lands in the panel.
 //
 // Opening an unapproved site puts a question to a person, and the panel stops

@@ -1,3 +1,4 @@
+// gateway: none
 // verify_sweep_mobile.mjs — the phone/narrow sweep.
 //
 // Eleven palettes and a second spacing ("Breathe") went in without anyone

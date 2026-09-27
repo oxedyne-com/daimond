@@ -1,3 +1,4 @@
+// gateway: none
 // verify_mailtunnel.mjs — the blind mail tunnel, from the browser's end.
 //
 // TLS terminates in the page (`src/wasm/mailtls.rs`) and the gateway forwards
@@ -85,7 +86,15 @@ fs.mkdirSync(WORK, { recursive: true });
 /// because it is a real refusal class too and it must still reach a sentence.
 function badCerts() {
 	const f = (n) => path.join(WORK, n);
-	if (!fs.existsSync(f('leaf.crt'))) {
+	// Minted for thirty days and kept in the world's scratch, so on the thirty-first
+	// day every refusal below became `Expired` and not the class each check names
+	// (the 2026-09-16 expiry, red every night after). A kept pair is reused only while
+	// both have more than a day to run.
+	const fresh = (n) => {
+		try { execFileSync('openssl', ['x509', '-checkend', '86400', '-noout', '-in', f(n)], { stdio: 'ignore' }); return true; }
+		catch (e) { return false; }
+	};
+	if (!fs.existsSync(f('leaf.crt')) || !fresh('leaf.crt') || !fresh('ca.crt')) {
 		const ext = f('leaf.ext');
 		fs.writeFileSync(ext, 'subjectAltName=DNS:localhost\nbasicConstraints=CA:FALSE\n');
 		execFileSync('openssl', ['req', '-x509', '-newkey', 'rsa:2048', '-nodes',

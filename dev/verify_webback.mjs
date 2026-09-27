@@ -1,3 +1,4 @@
+// gateway: none
 // verify_webback.mjs — the Web panel's Back control is on screen only when
 // pressing it does something.
 //

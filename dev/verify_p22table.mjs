@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+// gateway: none
 // #22 — the changed-files table under a turn. Proof of the parse (given the
 // engine's own tail-note shape from diamond_versions.rs tail_note) and the
 // 6-plus-fold behaviour, red-first: `--break` restores the shipped defect
