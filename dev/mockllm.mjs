@@ -883,6 +883,15 @@ const plan = (messages) => {
 
 		default:
 			if (rounds > 0) return { text: 'Done.' };
+			{
+				// Scripted replies, keyed by the user's exact words, for a shot that
+				// wants a real-looking answer (dev/shot_daylight.mjs). Read per turn,
+				// so the script can be written after the mock is up.
+				let map = {};
+				try { map = JSON.parse(fs.readFileSync(process.env.DAIMOND_MOCK_SCRIPT || '', 'utf8')); } catch (e) { /* no script */ }
+				const k = String(d.text || '').trim();
+				if (map[k]) return { text: map[k] };
+			}
 			return { text: `Mock reply to: ${d.text || d.rest || '(empty)'}` };
 	}
 };

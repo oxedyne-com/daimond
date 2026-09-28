@@ -69,7 +69,7 @@
 	'about.verify': 'Verificar este build',
 
 	// ── Panel names ────────────────────────────────────────────
-	'panel.rail': 'diamonds',
+	'panel.rail': 'Diamonds',
 	'panel.ai': 'IA',
 	'panel.web': 'Web',
 	'panel.doc': 'Doc',
@@ -112,7 +112,7 @@
 	'pal.hint_current': 'atual',
 
 	// ── The rail ───────────────────────────────────────────────
-	'rail.diamonds': 'diamonds',
+	'rail.diamonds': 'Diamonds',
 	'rail.diamonds_help': 'Seus projetos salvos',
 	'rail.new_diamond': 'Novo diamond',
 	'rail.unnamed_diamond': 'diamond sem nome',
@@ -770,6 +770,9 @@
 	'menu.view_max': 'Detalhado',
 	'menu.view_simple_help': 'Só nomes',
 	'menu.view_max_help': 'Detalhes em cada bloco',
+	'menu.look':            'Estilo',
+	'menu.look_classic':    'Clássico',
+	'menu.look_daylight':   'Daylight',
 	'menu.theme':         'Tema',
 	'menu.tone_light':    'Claro',
 	'menu.tone_mid':      'Intermediário',
@@ -786,6 +789,8 @@
 	'menu.theme_midnight':  'Meia-noite',
 	'menu.theme_forest':    'Floresta',
 	'menu.theme_plum':      'Ameixa',
+	'menu.theme_porcelain': 'Porcelana',
+	'menu.theme_obsidian':  'Obsidiana',
 	'menu.text_size': 'Tamanho do texto',
 	'menu.smaller': 'Texto menor',
 	'menu.larger': 'Texto maior',
@@ -1525,9 +1530,9 @@
 	'pause.everything_help': 'Pausa tudo o que gasta.',
 	'pause.act_pause':       'Pausar {name}',
 	'pause.act_play':        'Retomar {name}',
-	'pause.state_play':      'em execução',
-	'pause.state_pause':     'pausado',
-	'pause.state_mixed':     'parcialmente pausado',
+	'pause.state_play':      'Em execução',
+	'pause.state_pause':     'Pausado',
+	'pause.state_mixed':     'Parcialmente pausado',
 	'pause.this':            'isto',
 	'pause.workers':         'Workers',
 	'pause.mail':            'E-mail',
@@ -1539,7 +1544,7 @@
 	'pause.refused.dispatch': '{node} está em pausa. Nenhum agente despachado, nada gasto. Pressione play nesse item para retomar.',
 	'pause.refused.web':      '{node} está em pausa. A página não foi buscada e nada foi gasto. Pressione play nesse item para retomar.',
 	'pause.refused.mail':     '{node} está em pausa. A caixa de correio não foi contatada e nada foi gasto. Pressione play nesse item para retomar.',
-	'pause.state_idle': 'ocioso',
+	'pause.state_idle': 'Ocioso',
 
 	// ── Tags ───────────────────────────────────────────────────
 	'tag.only_agents': 'Mostrar só os agentes com a etiqueta “{tag}”',
@@ -1819,7 +1824,7 @@
 	'dws.showing': 'Mostrando',
 	'dws.reach': 'Alcance',
 	'dws.reach_help': 'Pastas editáveis',
-	'dws.reach_own': 'a pasta dele',
+	'dws.reach_own': 'A pasta dele',
 	'dws.reach_search': 'Uma busca que não nomeia caminho nenhum olha aqui e em nenhum outro lugar.',
 	'dws.reach_none': 'Só esta pasta.',
 	'dws.mark_here': 'Marcar “{name}”',

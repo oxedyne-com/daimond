@@ -315,7 +315,7 @@ check(att.filter(x => x.path === 'loose/other.md')[0].readonly === '',
 // ── The strip above the steer box counts the workspace ─────────────────
 const strip = await page.$eval('#arte-strip', e => ({ shown: e.style.display !== 'none', text: e.textContent, title: e.title }));
 check(strip.shown, 'the strip above the steer box is showing');
-check(strip.text === '◈ ' + await TN('dws.count', 5),
+check(strip.text === await TN('dws.count', 5),
 	`it counts what is in this Diamond’s workspace: ${JSON.stringify(strip.text)}`);
 check(strip.title === await T('dws.title'), `and calls it that: ${JSON.stringify(strip.title)}`);
 
@@ -367,7 +367,7 @@ const fileLives = await page.evaluate(async () => {
 	return String(await app.run_tool('file_read', JSON.stringify({ path: 'loose/other.md' })));
 });
 check(/# other/.test(fileLives), 'and is still on disk afterwards');
-check((await page.$eval('#arte-strip', e => e.textContent)) === '◈ ' + await TN('dws.count', 3),
+check((await page.$eval('#arte-strip', e => e.textContent)) === await TN('dws.count', 3),
 	'the strip counts down with it');
 
 // ── Closing the Diamond closes the second tree ─────────────────────────

@@ -62,6 +62,7 @@ const PALETTES = {
 	lollypop: ['mid', 'dark'], sage: ['mid', 'dark'], dusk: ['mid', 'light'],
 	dark: ['dark', 'light'], amber: ['dark', 'light'], midnight: ['dark', 'light'],
 	forest: ['dark', 'light'], plum: ['dark', 'light'],
+	porcelain: ['light', 'dark'], obsidian: ['dark', 'light'],
 };
 
 let bad = 0, ran = 0;

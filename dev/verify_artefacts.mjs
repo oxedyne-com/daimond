@@ -137,7 +137,7 @@ check('the strip is shown once there are artefacts', strip.shown === true, Strin
 // languages. What this check is really about is that the strip carries a COUNT
 // rather than a list, and that survives the rename.
 const wantCount = await p.evaluate(() => {
-	try { return '◈ ' + window.DaimondI18n.tn('dws.count', 5); } catch (e) { return null; }
+	try { return window.DaimondI18n.tn('dws.count', 5); } catch (e) { return null; }
 });
 check('it is a count, not a list', strip.text === wantCount, `${strip.text} vs ${wantCount}`);
 check('the list stays closed until it is clicked', strip.listShown === false,

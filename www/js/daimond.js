@@ -73,6 +73,53 @@ async function readBytes(path) {
 // then the predicate lives in two languages and can drift; `dev/verify_joinedup.mjs`
 // compares them to the character so that it cannot drift quietly.
 
+/// A file, folder or cloud copy, drawn as an outline icon rather than an emoji.
+///
+/// The emoji were a colour picture each platform drew its own way, and the one
+/// thing in a list of names that was not type. The icon carries no text, so a
+/// row's `textContent` is its name alone -- what the file filter and every
+/// verifier that reads a row match against.
+var KIND_PATHS = {
+	dir:   '<path d="M3 7a2 2 0 012-2h4l2 2h8a2 2 0 012 2v8a2 2 0 01-2 2H5a2 2 0 01-2-2z"/>',
+	file:  '<path d="M13 3H6a2 2 0 00-2 2v14a2 2 0 002 2h12a2 2 0 002-2V10z"/><path d="M13 3v6h6"/>',
+	cloud: '<path d="M7 18a4 4 0 01-.6-7.96A6 6 0 0118 9a4.5 4.5 0 01-.5 9z"/>',
+};
+function kindIcon(kind) {
+	var span = document.createElement('span');
+	span.className = 'kind-ic kind-' + kind;
+	span.setAttribute('aria-hidden', 'true');
+	span.innerHTML = '<svg class="ic" viewBox="0 0 24 24">' + (KIND_PATHS[kind] || KIND_PATHS.file) + '</svg>';
+	return span;
+}
+/// The same treatment for a file row's ACTIONS, not its kind: the paperclip
+/// that attaches a row to the open focus, and the pencil that renames one.
+/// Drawn as outline icons for the reason `KIND_PATHS` was -- a coloured
+/// picture each platform drew its own way, on a row otherwise typed in the
+/// theme's own ink (QA round 2, minor 7). Every skin, like the kind icons.
+var ACTION_ICONS = {
+	attach: '<svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M21.44 11.05l-9.19 9.19a5 5 0 01-7.07-7.07l9.19-9.19a3 3 0 014.24 4.24l-9.19 9.19a1 1 0 01-1.41-1.41l8.48-8.49"/></svg>',
+	edit:   '<svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M17 3a2.83 2.83 0 114 4L7.5 20.5 2 22l1.5-5.5L17 3z"/></svg>',
+};
+/// Fill `el` with the diamond mark and then `text`. The mark was `◈`, a glyph
+/// each face drew differently and none drew as the mark; the image is the mark.
+function markName(el, text) {
+	el.textContent = '';
+	var img = document.createElement('img');
+	img.className = 'mark-ic';
+	img.src = 'assets/daimond_mark.svg';
+	img.alt = '';
+	el.appendChild(img);
+	el.appendChild(document.createTextNode(text));
+	return el;
+}
+/// Fill `el` with a kind's icon and then the name, as text.
+function kindName(el, kind, name) {
+	el.textContent = '';
+	el.appendChild(kindIcon(kind));
+	el.appendChild(document.createTextNode(name));
+	return el;
+}
+
 /// Whether a failed direct file call failed BECAUSE the open folder was taken away.
 ///
 /// The mirror of `folder_loss_reported` in `src/tools.rs`: the workspace root is a
@@ -11096,6 +11143,9 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 	var chatInput     = document.getElementById('chat-input');
 	var chatSend      = document.getElementById('chat-send');
 	var chatStop      = null; // removed (proposal #19): the second ■ beside the arrow
+	// Send's arrow, drawn rather than typed: `➤` sat off the button's centre in
+	// most faces and in none of them matched the stroke of the icons beside it.
+	var SEND_ARROW    = '<svg class="ic send-arrow" viewBox="0 -2 24 24" aria-hidden="true"><path d="M12 16V4M8 8l4-4 4 4"/></svg>';
 	var sessionNameEl = document.getElementById('current-session-name');
 	var settingsBtn   = document.getElementById('settings-btn');
 	// The word logo on the identity gate. It was looked up by `.brand-logo`, a
@@ -11144,6 +11194,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		light:    { tone: 'light', ink: 'dark'  },
 		mist:     { tone: 'light', ink: 'dark'  },
 		linen:    { tone: 'light', ink: 'dark'  },
+		porcelain: { tone: 'light', ink: 'dark'  },
 		// Intermediate: colour or midtone, either way of ink.
 		lollypop: { tone: 'mid',   ink: 'dark'  },
 		sage:     { tone: 'mid',   ink: 'dark'  },
@@ -11154,6 +11205,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		midnight: { tone: 'dark',  ink: 'light' },
 		forest:   { tone: 'dark',  ink: 'light' },
 		plum:     { tone: 'dark',  ink: 'light' },
+		obsidian: { tone: 'dark',  ink: 'light' },
 	};
 	/// The bands, in the order they are offered. Named here rather than derived
 	/// from THEMES so the order is a decision and not a side effect of insertion.
@@ -11177,15 +11229,27 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		catch (e) { /* quota: theme is applied; only reload-survival is lost */ }
 		// A word logo drawn for a dark background needs its dark-ink twin on any
 		// surface that takes dark lettering.
-		var lightBg = spec.ink === 'dark';
-		if (brandLogo && brandLogo.dataset.dark) {
-			brandLogo.src = lightBg ? brandLogo.dataset.light : brandLogo.dataset.dark;
-		}
+		paintGateLogo();
+		// A palette can change the composer's own metrics (Daylight's padding and
+		// size differ from Sharp/Warm's), and `fitComposer` wrote its height from
+		// the OLD ones. Refit rather than leave the field clipped until the next
+		// keystroke -- QA round 2, M1.
+		try { fitComposer(); } catch (e) { /* not bound yet, at boot */ }
 		// The empty chat's own wordmark was swapped here too. `renderEmptyState`
 		// stopped drawing one when the welcome copy went -- the panel opens straight
 		// on its one action -- and nothing has produced `.empty-logo` since, so this
 		// was a query that could never match and three CSS rules nothing could
 		// select. Gone with them.
+	}
+	/// The gate's word logo, on whichever ground the palette and skin give it:
+	/// the light-lettered mark on a dark palette, the rose one on a light
+	/// palette, and the ink one when that light palette is worn by Daylight.
+	function paintGateLogo() {
+		if (!brandLogo || !brandLogo.dataset.dark) return;
+		var root = document.documentElement;
+		var lightBg = root.getAttribute('data-ink') === 'dark';
+		var inked = lightBg && root.getAttribute('data-skin') === 'daylight' && brandLogo.dataset.inked;
+		brandLogo.src = inked ? brandLogo.dataset.inked : lightBg ? brandLogo.dataset.light : brandLogo.dataset.dark;
 	}
 	// The theme used to be a pulldown of its own in the header. It is now one
 	// setting among several in the appearance menu, so it is published as a
@@ -11207,7 +11271,10 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 	// shape -- corners, typeface, spacing, how loud the furniture is. "sharp" is
 	// the original precise, dense look; "warm" is the approachable one, all of it
 	// in skin-warm.css and dormant until chosen (see that file's header).
-	var SKINS = { sharp: 1, warm: 1 };
+	// "daylight" is the line-free look in skin-daylight.css. Sharp and Warm are
+	// the view's own pair (see VIEWS); Daylight is chosen on its own and serves
+	// both views.
+	var SKINS = { sharp: 1, warm: 1, daylight: 1 };
 	function initSkin() {
 		var saved = localStorage.getItem('daimond-skin');
 		if (saved === 'soft') saved = 'warm';   // the warm skin was briefly called "soft".
@@ -11216,8 +11283,14 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 	function setSkin(skin) {
 		if (!SKINS[skin]) skin = 'sharp';
 		document.documentElement.setAttribute('data-skin', skin);
+		paintGateLogo();
 		try { localStorage.setItem('daimond-skin', skin); }
 		catch (e) { /* quota: skin is applied; only reload-survival is lost */ }
+		// Same reason as `setTheme`'s call: a skin change is the other way the
+		// composer's type metrics move (Daylight's padding/size vs Sharp/Warm's),
+		// and `setView` reaches here too, so this one call covers skin, palette and
+		// view together (QA round 2, M1).
+		try { fitComposer(); } catch (e) { /* not bound yet, at boot */ }
 	}
 	window.DaimondSkin = {
 		list: function () { return Object.keys(SKINS); },
@@ -11266,8 +11339,17 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 	// most on screen at once", which is Max; `warm` meant calm, which is Simple.
 	// An UNSET skin is not a choice, so it becomes Simple -- the quiet default
 	// notes2 asks for.
+	//
+	// DAYLIGHT IS NOT A VIEW'S SKIN. It is a look of its own that serves both
+	// views, so a view change keeps it: the view still decides the detail
+	// (`data-view`, `tileDetail`), and only the classic pair follows the view.
 	var VIEWS = { max: 'sharp', simple: 'warm' };
 	var VIEW_KEY = 'daimond-view';
+	/// The skin a view is drawn in: Daylight, if that is the look, else the
+	/// view's own classic skin.
+	function skinFor(view) {
+		return document.documentElement.getAttribute('data-skin') === 'daylight' ? 'daylight' : VIEWS[view];
+	}
 
 	/// The skin as STORED, read before `initSkin` runs.
 	///
@@ -11303,7 +11385,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		if (!VIEWS[view]) view = 'simple';
 		document.documentElement.setAttribute('data-view', view);
 		try { localStorage.setItem(VIEW_KEY, view); } catch (e) { /* private mode */ }
-		setSkin(VIEWS[view]);
+		setSkin(skinFor(view));
 		// Every tile that is FOLLOWING the view has to be repainted. The ones
 		// that are not must not be touched -- see `tileDetail`.
 		try { repaintTileDetail(); } catch (e) { /* the rail is not up yet */ }
@@ -11318,6 +11400,38 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		list: function () { return Object.keys(VIEWS); },
 		get:  viewNow,
 		set:  setView,
+	};
+
+	// ── Look: Classic or Daylight ──────────────────────────────
+	//
+	// Classic is the view's own pair, Sharp for Max and Warm for Simple.
+	// Daylight keeps itself under either view. Choosing Daylight from a palette
+	// it was not drawn for moves to its own pair, Porcelain or Obsidian, by the
+	// palette's ink, the way Warm once nudged a dark palette to light: the look
+	// is the skin and its palette together. The palette stays free afterwards.
+	var LOOK_PALETTE = { dark: 'porcelain', light: 'obsidian' };
+	function lookNow() {
+		return document.documentElement.getAttribute('data-skin') === 'daylight' ? 'daylight' : 'classic';
+	}
+	function setLook(look) {
+		if (look === 'daylight') {
+			if (lookNow() !== 'daylight') {
+				var th = window.DaimondTheme ? DaimondTheme.get() : 'dark';
+				if (th !== 'porcelain' && th !== 'obsidian') {
+					var spec = THEMES[th] || THEMES.dark;
+					setTheme(LOOK_PALETTE[spec.ink] || 'porcelain');
+				}
+			}
+			setSkin('daylight');
+		} else {
+			setSkin(VIEWS[viewNow()]);
+		}
+		try { window.dispatchEvent(new Event('daimond:view')); } catch (e) {}
+	}
+	window.DaimondLook = {
+		list: function () { return ['classic', 'daylight']; },
+		get:  lookNow,
+		set:  setLook,
 	};
 
 	// ── Repainting after a language or currency change ─────────
@@ -11853,16 +11967,16 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 
 	// ── The dock count badge ───────────────────────────────────
 	//
-	// ONE NUMBER ON A PANEL'S CHIP, and with Web Push declined (messaging_plan
-	// §10) this is the whole of what this app does to say that something arrived
-	// while you were looking somewhere else. It is drawn in three places at once,
-	// because a chip is not always on screen:
+	// ONE NUMBER PER PANEL, and with Web Push declined (messaging_plan §10) this
+	// is the whole of what this app does to say that something arrived while you
+	// were looking somewhere else. It is said in these places:
 	//
-	//   the chip row         `#panel-tags .ptag[data-panel]` -- the top bar on a
-	//                        desktop, the bottom strip on a phone, ONE row either
-	//                        way (js/mobile.js moves it rather than copying it),
-	//                        so this marks both by marking one
+	//   a panel's own head   `.rail-count-host`, where a panel offers one
 	//   the document title   `(3) Daimond`, when the tab is not the one in front
+	//
+	// NOT ON THE CHIP ROW. It was drawn over each chip until 2026-09-29, when
+	// the owner asked for the counters on the header's tabs to go: a chip is a
+	// word, and a number over Email and Social was the header's loudest mark.
 	//
 	// and `navigator.setAppBadge`, which an installed app shows on its icon and
 	// which needs no push subscription and no permission prompt. Where it is not
@@ -11933,11 +12047,6 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		/// again after the chip row is rebuilt, since that throws the chips away.
 		function paint() {
 			var ids = Object.keys(counts);
-			// Chips that no longer carry a count still have to be cleaned, so the
-			// sweep is over what is ON SCREEN and not over what is counted.
-			document.querySelectorAll('#panel-tags .ptag[data-panel]').forEach(function (c) {
-				mark(c, counts[c.dataset.panel] | 0);
-			});
 			ids.forEach(function (id) {
 				// A panel's own head, where one has been given a place for it.
 				mark(document.querySelector('#panel-' + id + ' .rail-count-host'), counts[id] | 0);
@@ -16862,7 +16971,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		var go = document.createElement('button');
 		go.type = 'button';
 		go.className = 'ask-other-go';
-		go.textContent = '➤';
+		go.innerHTML = SEND_ARROW;
 		go.title = t('ask.send');
 		go.setAttribute('aria-label', t('ask.send'));
 		var send = function () {
@@ -27190,7 +27299,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			:                              t('chat.send');
 		if (mode === 'stop') { chatSend.innerHTML = '■'; chatSend.classList.add('stop'); }
 		else {
-			chatSend.innerHTML = '➤';
+			chatSend.innerHTML = SEND_ARROW;
 			chatSend.classList.remove('stop');
 		}
 		chatSend.title = words;
@@ -30938,7 +31047,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		// artwork and would vanish on the wrong ground.
 		var id = document.createElement('div');
 		id.className = 'about-id';
-		[['wm-on-dark', 'daimond_word.svg'], ['wm-on-light', 'daimond_word_dark.svg']].forEach(function (w) {
+		[['wm-on-dark', 'daimond_word.svg'], ['wm-on-light', 'daimond_word_dark.svg'], ['wm-on-ink', 'daimond_word_ink.svg']].forEach(function (w) {
 			var wm = document.createElement('img');
 			wm.className = 'about-word brand-wordmark ' + w[0];
 			wm.src = 'assets/' + w[1];
@@ -32602,10 +32711,24 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		},
 	};
 	/// The composer, refitted to what is in it.
+	///
+	/// Skips a HIDDEN box (QA round 2, M1a): a `display:none` field reports
+	/// `scrollHeight` 0, and writing that got remembered as the field's own
+	/// height until the next keystroke -- so a chat hidden by its header tab
+	/// and shown again under a different skin came back 24px for 47px of
+	/// placeholder. Reads the border back into what it sets (M1b): the field
+	/// is border-box, so `scrollHeight` is the CONTENT height alone and left
+	/// the box a border's width short of it -- which is what put a hover
+	/// scrollbar under an EMPTY field too, an unclipped one-line box
+	/// scrolling by exactly its own border (M1d). `fitComposer`'s own
+	/// `ResizeObserver`, below, covers M1c: a hidden field's box goes from
+	/// empty to real the moment it is shown, which is a resize like any
+	/// other.
 	function fitComposer() {
-		if (!chatInput) return;
+		if (!chatInput || !chatInput.getClientRects().length) return;
 		chatInput.style.height = 'auto';
-		chatInput.style.height = Math.min(chatInput.scrollHeight, 263) + 'px';
+		var border = chatInput.offsetHeight - chatInput.clientHeight;
+		chatInput.style.height = Math.min(chatInput.scrollHeight + border, 263) + 'px';
 	}
 
 	/// Park what is typed on the conversation being left, and put the incoming
@@ -33688,8 +33811,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 	function putInComposer(text) {
 		if (!text) return;
 		chatInput.value = chatInput.value.trim() ? chatInput.value + '\n\n' + text : text;
-		chatInput.style.height = 'auto';
-		chatInput.style.height = Math.min(chatInput.scrollHeight, 263) + 'px';
+		fitComposer();
 		chatInput.focus();
 		syncSendMode();
 	}
@@ -33830,8 +33952,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		if (current !== chat) return;
 		chat._queue = [];
 		chatInput.value = chatInput.value.trim() ? text + '\n\n' + chatInput.value : text;
-		chatInput.style.height = 'auto';
-		chatInput.style.height = Math.min(chatInput.scrollHeight, 263) + 'px';
+		fitComposer();
 		renderQueue();
 		toast(t('chat.queue_returned'), true);
 	}
@@ -39188,7 +39309,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			hits.forEach(function (e) {
 				var row = document.createElement('div');
 				row.className = 'files-row';
-				var ic = document.createElement('span'); ic.className = 'files-ic'; ic.textContent = '📄';
+				var ic = document.createElement('span'); ic.className = 'files-ic'; ic.appendChild(kindIcon('file'));
 				var nm = document.createElement('span'); nm.className = 'files-name'; nm.textContent = e.name;
 				row.appendChild(ic); row.appendChild(nm);
 				sysRowAsButton(row, e.name, function () { openFile(e.name); });
@@ -39769,7 +39890,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			// Read-only is spelled out rather than left to a tint. It is the
 			// difference between a folder a daimon may rewrite and one it may only
 			// consult, and nobody hovers a chip to find that out.
-			c.textContent = '\u25c8 ' + label + (ro ? ' \u00b7 ' + t('dws.readonly') : '');
+			markName(c, label + (ro ? ' \u00b7 ' + t('dws.readonly') : ''));
 			c.title = path;
 			return c;
 		}
@@ -39793,7 +39914,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			b.className = 'files-mark-here';
 			b.dataset.act = 'mark-here';
 			b.dataset.path = curDir;
-			b.textContent = '\u25c8 ' + t('dws.mark_here', { name: tailOf(curDir, 1) || curDir });
+			markName(b, t('dws.mark_here', { name: tailOf(curDir, 1) || curDir }));
 			b.title = t('dws.mark_here_help', { name: currentDiamond.name });
 			b.setAttribute('aria-label', b.title);
 			b.addEventListener('click', function (ev) {
@@ -39901,7 +40022,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			b.className = 'files-scope-chip' + (on ? ' active' : '');
 			b.type = 'button';
 			b.dataset.scope = which;
-			b.textContent = (which === 'diamond' ? '◈ ' : '') + label;
+			if (which === 'diamond') markName(b, label); else b.textContent = label;
 			b.title = title;
 			b.setAttribute('aria-pressed', on ? 'true' : 'false');
 			b.addEventListener('click', function () { setScope(which); });
@@ -40082,7 +40203,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			row.dataset.path = full;
 			var name = document.createElement('span');
 			name.className = 'files-name';
-			name.textContent = (e.dir ? '📁 ' : (e.cloud ? '☁ ' : '📄 ')) + e.name;
+			kindName(name, e.dir ? 'dir' : e.cloud ? 'cloud' : 'file', e.name);
 			row.appendChild(name);
 			if (!e.dir) {
 				var size = document.createElement('span');
@@ -40121,7 +40242,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 				+ (a.by && a.by !== 'user' ? '\n' + a.link.rel + ' · ' + a.by : '');
 			var name = document.createElement('span');
 			name.className = 'files-name';
-			name.textContent = (a.dir ? '📁 ' : '📄 ') + a.label;
+			kindName(name, a.dir ? 'dir' : 'file', a.label);
 			row.appendChild(name);
 
 			if (a.gone) {
@@ -40826,7 +40947,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 				r.className = 'cloud-row' + (isAway ? ' away' : '');
 				var n = document.createElement('span');
 				n.className = 'cloud-path';
-				n.textContent = (isAway ? '☁ ' : '📄 ') + p;
+				kindName(n, isAway ? 'cloud' : 'file', p);
 				var z = document.createElement('span');
 				z.className = 'cloud-size';
 				z.textContent = fmtBytes(ix[p].size | 0);
@@ -41435,7 +41556,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			row.dataset.path = full;
 			var name = document.createElement('span');
 			name.className = 'files-name';
-			name.textContent = (e.dir ? '📁 ' : (e.cloud ? '☁ ' : '📄 ')) + e.name;   // escaped
+			kindName(name, e.dir ? 'dir' : e.cloud ? 'cloud' : 'file', e.name);   // escaped
 			row.appendChild(name);
 			if (!e.dir) {
 				var size = document.createElement('span');
@@ -41622,7 +41743,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			attach.dataset.act = 'attach';
 			attach.dataset.path = full;
 			attach.dataset.dir = e.dir ? '1' : '';
-			attach.textContent = '📎';
+			attach.innerHTML = ACTION_ICONS.attach;
 			attach.addEventListener('click', function (ev) {
 				ev.stopPropagation();
 				toggleAttach(full, !!e.dir);
@@ -41632,7 +41753,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			row.appendChild(attach);
 			if (!manage) return;
 			var ren = document.createElement('button');
-			ren.className = 'files-del files-ren'; ren.textContent = '✎'; ren.title = t('files.rename_move');
+			ren.className = 'files-del files-ren'; ren.innerHTML = ACTION_ICONS.edit; ren.title = t('files.rename_move');
 			ren.addEventListener('click', function (ev) { ev.stopPropagation(); renameEntry(e, full); });
 			row.appendChild(ren);
 			var del = document.createElement('button');
@@ -41762,7 +41883,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			if (!holdBtn) return;
 			holdBtn.classList.add('attach-btn');
 			holdBtn.dataset.act = 'attach';
-			holdBtn.textContent = '📎';
+			holdBtn.innerHTML = ACTION_ICONS.attach;
 			async function paint() {
 				var f = attachFocus();
 				if (!f) { holdBtn.style.display = 'none'; return; }
@@ -44070,7 +44191,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 				row.dataset.path = full;
 				var nm = document.createElement('span');
 				nm.className = 'files-name';
-				nm.textContent = (e.dir ? '📁 ' : '📄 ') + e.name;   // escaped
+				kindName(nm, e.dir ? 'dir' : 'file', e.name);   // escaped
 				row.appendChild(nm);
 				if (!e.dir) {
 					var sz = document.createElement('span');
@@ -49017,11 +49138,11 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		bar.className = 'crystal-bar';
 		var edit = document.createElement('button');
 		edit.className = 'crystal-act';
-		edit.textContent = '✎ ' + t('files.edit');
+		edit.textContent = t('files.edit');
 		edit.addEventListener('click', function () { editCrystal(data); });
 		var hist = document.createElement('button');
 		hist.className = 'crystal-act';
-		hist.textContent = '↺ ' + t('crystal.history');
+		hist.textContent = t('crystal.history');
 		hist.addEventListener('click', showCrystalHistory);
 		// ✎ Page, beside ✎ Edit, because they are the two halves of the same
 		// question and belong in the same place: Edit changes what the crystal
@@ -49041,7 +49162,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		// read and edit before sending, instead of prepending something invisible.
 		var pageBtn = document.createElement('button');
 		pageBtn.className = 'crystal-act';
-		pageBtn.textContent = '✎ ' + tOr('crystal.page', 'Page');
+		pageBtn.textContent = tOr('crystal.page', 'Page');
 		pageBtn.title = tOr('crystal.page_help',
 			'Ask the daimon to change how this crystal looks, not what it says');
 		pageBtn.addEventListener('click', askAboutPage);
@@ -49253,7 +49374,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 
 		var edit = document.createElement('button');
 		edit.className = 'crystal-act';
-		edit.textContent = '✎ ' + t('files.edit');
+		edit.textContent = t('files.edit');
 		edit.addEventListener('click', function () { editCrystal(d); });
 		acts.appendChild(edit);
 
@@ -51500,7 +51621,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		// pages that are part of this pursuit -- which is the same set the Workspace
 		// panel draws as a tree, and the same set its daimon may open. It used to
 		// call them artefacts, which named only how most of them got here.
-		strip.textContent = '\u25c8 ' + (links.length
+		markName(strip, links.length
 			? tn('dws.count', links.length)
 			: t('dws.none_yet'));
 		strip.title = t('dws.title');
@@ -52652,7 +52773,8 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 
 		var tag = document.createElement('span');
 		tag.className = 'arte-kind';
-		tag.textContent = icons ? (item.kind === 'dir' ? '📁' : '📄') : item.kind;
+		if (icons) tag.appendChild(kindIcon(item.kind === 'dir' ? 'dir' : 'file'));
+		else tag.textContent = item.kind;
 		if (icons) tag.setAttribute('aria-hidden', 'true');
 		row.appendChild(tag);
 
@@ -53138,7 +53260,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			row.dataset.path = it.path;
 			var name = document.createElement('span');
 			name.className = 'mark-notice-path';
-			name.textContent = '\u25c8 ' + it.path;
+			markName(name, it.path);
 			name.title = it.path;
 			row.appendChild(name);
 			var where = document.createElement('span');
@@ -53259,7 +53381,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 						// first, the name does the second.
 						var nameEl = document.createElement(e.dir ? 'button' : 'label');
 						nameEl.className = 'attach-pick-name' + (e.dir ? ' dir' : '');
-						nameEl.textContent = (e.dir ? '📁 ' : '📄 ') + e.name;
+						kindName(nameEl, e.dir ? 'dir' : 'file', e.name);
 						if (e.dir) {
 							nameEl.type = 'button';
 							nameEl.addEventListener('click', function () { show(full); });
@@ -58088,7 +58210,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		if (window.DaimondIdentity && DaimondIdentity.exists() && DaimondIdentity.isUnlocked()) {
 			info.textContent = DaimondIdentity.displayName() || t('admin.local_identity');
 			info.title = t('admin.account_help');
-			if (av) av.textContent = '◈';
+			if (av) markName(av, '');
 		} else if (window.DaimondIdentity && DaimondIdentity.exists()) {
 			info.textContent = t('admin.locked');
 			info.title = t('admin.locked_help');
@@ -60418,12 +60540,23 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 	// Grow with the content up to ~12 lines (the CSS max-height); past that it
 	// scrolls, with a hover-only scrollbar.
 	chatInput.addEventListener('input', function () {
-		chatInput.style.height = 'auto';
-		chatInput.style.height = Math.min(chatInput.scrollHeight, 263) + 'px';
+		fitComposer();
 		// Mid-turn the button's meaning follows the box: empty it means Stop, with
 		// a correction in it it means send that correction into the turn.
 		syncSendMode();
 	});
+	// QA round 2, M1c: refit the moment the box itself changes shape, not only
+	// on the next keystroke. A hidden composer's content box is empty, so this
+	// fires exactly when a hidden chat is shown again -- the case a click
+	// handler at every one of its show paths would have to be found for --
+	// and it fires again when a panel resize narrows the field enough to wrap
+	// another line. `fitComposer` is idempotent once the box has actually
+	// settled, so the extra call the WRITE below causes is one cheap no-op,
+	// never a loop: the box does not change size a second time for the same
+	// content, and ResizeObserver only re-fires when it does.
+	if (typeof ResizeObserver !== 'undefined') {
+		new ResizeObserver(fitComposer).observe(chatInput);
+	}
 	chatInput.addEventListener('keydown', function (e) {
 		if (e.key === 'Escape' && _skillMenu) { e.preventDefault(); closeSkillMenu(); return; }
 		if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); closeSkillMenu(); sendUserMessage(); }
@@ -60955,6 +61088,16 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		initSkin();
 		// After the skin: the view inherits from it on a first run.
 		initView();
+		// A face's metrics are not final until it has actually loaded -- the
+		// composer is fit against the fallback face's line-height until then, on
+		// whatever skin is current at that moment. One refit once every `@font-face`
+		// in use has resolved (QA round 2, M1); a browser with no Font Loading API
+		// just keeps the fit `initSkin`/`initTheme` already gave it.
+		if (document.fonts && document.fonts.ready) {
+			document.fonts.ready.then(function () {
+				try { fitComposer(); } catch (e) { /* the composer is not bound yet */ }
+			}).catch(function () { /* nothing to refit against */ });
+		}
 		// Only the provider API key is masked as text-with-bullets now. It is
 		// somebody else's bearer credential against somebody else's billing, so
 		// there is no reason for it to reach a personal keychain. The passphrase

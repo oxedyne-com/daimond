@@ -262,11 +262,13 @@
 
 /* The paperclip: "Attach to current focus" (ATTACH_CONTRACT.md §4), on a
    folder row, a file row, and the Doc header. Its own class rather than a
-   `.files-res` modifier for the reason `.files-pin` already has one -- '📎' is
-   an emoji, drawn at full size in a colour font, so the size bump `.files-res`
-   gives its thin dingbats would only inflate it. Lit and away are standing
-   information, exactly as the pin's `.on` is, and must not hide until the
-   pointer finds them. */
+   `.files-res` modifier for the reason `.files-pin` already has one -- it was
+   '📎', an emoji drawn at full size in a colour font, so the size bump
+   `.files-res` gives its thin dingbats would only have inflated it; it is
+   `ACTION_ICONS.attach` now (daimond.js), an outline `.ic` the same weight as
+   the row's kind icons, and `font-size` here still sets the button's box.
+   Lit and away are standing information, exactly as the pin's `.on` is, and
+   must not hide until the pointer finds them. */
 .attach-btn {
 	background: transparent; border: none; color: var(--text-secondary);
 	cursor: pointer; padding: 0 3px; visibility: hidden; font-size: var(--fs-sm);
@@ -394,11 +396,10 @@
    keyboard -- `verify_a11y_keyboard` presses Tab before it focuses anything, so
    modality is established and a script focus matches this too. */
 .files-row:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
-/* The rename pencil borrows `.files-del` for its shape and needs a size of its
-   own: '✎' is drawn well inside its em box where '×' fills it, so at the same
-   nominal 15px the pencil carried about half the ink of the cross beside it and
-   looked like a fleck. It is not a delete either, so it keeps the neutral
-   hover. */
+/* The rename pencil borrows `.files-del` for its shape. It draws
+   `ACTION_ICONS.edit` now (daimond.js), an outline `.ic` at its own fixed
+   16px rather than the glyph '✎' the bumped `font-size` here used to carry;
+   it is not a delete either, so it keeps the neutral hover. */
 .files-ren { font-size: var(--fs-2xl); }
 .files-ren:hover { color: var(--text-primary); }
 

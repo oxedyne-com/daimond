@@ -79,8 +79,13 @@ function main() {
 	check('app.css styles `.dock-count`',
 		css.indexOf('.dock-count {') !== -1,
 		'the mark is unstyled');
-	check('and lifts it out of the chip\'s flow, so an arrival moves no chip',
-		css.indexOf('.ptag .dock-count') !== -1 && css.indexOf('position: absolute;') !== -1);
+	check('and draws none on the chip row, which carries no counters (owner, 2026-09-29)',
+		js.indexOf("#panel-tags .ptag[data-panel]').forEach(function (c) {\n\t\t\t\tmark(") === -1
+		&& css.indexOf('.ptag .dock-count') === -1,
+		'a count is drawn on a header chip again');
+	check('while the title still says it',
+		js.indexOf("document.title = n ? '(' + n + ') ' + BASE : BASE;") !== -1,
+		'an arrival would go unsaid');
 
 	// ── it does not mark what is in front of the reader ────────
 	console.log('(b) it counts only what the reader is not looking at');
@@ -99,7 +104,7 @@ function main() {
 		&& js.indexOf("Badge.bump('mail', d.count)") !== -1);
 	check('messages set it from the honest tally',
 		js.indexOf('function postBadge()') !== -1
-		&& js.indexOf("Badge.set('social', DaimondPost.unread())") !== -1);
+		&& js.indexOf("Badge.set('social', socialUnread())") !== -1);
 	check('and the tally is recomputed when a message lands',
 		js.indexOf("window.addEventListener('daimond:post-arrived'") !== -1,
 		'an arrival would raise no mark');

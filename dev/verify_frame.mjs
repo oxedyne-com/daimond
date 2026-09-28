@@ -150,9 +150,11 @@ const still = async (what, before) => {
 	const before = await bar();
 	await page.evaluate(() => window.dispatchEvent(new CustomEvent('daimond:mail-arrived', { detail: { count: 3 } })));
 	await sleep(450);
-	check('three messages arriving draws a count on the Email chip', await page.evaluate(() => {
+	// The header carries no counters (owner, 2026-09-29): the count goes to the
+	// tab's title and the app icon, and the chip stays a word.
+	check('three messages arriving put no count on the Email chip, and one in the title', await page.evaluate(() => {
 		const b = document.querySelector('#panel-tags .ptag[data-panel="mail"] .dock-count');
-		return !!b && (b.textContent || '').trim() === '3';
+		return !b && /^\(3\) /.test(document.title);
 	}));
 	await still('a count arriving moves nothing — not even the chip it is on', before);
 }

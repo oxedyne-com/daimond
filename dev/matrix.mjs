@@ -139,6 +139,17 @@ export async function openCell(cell, opts = {}) {
 		try { localStorage.setItem('daimond-theme', t); } catch (e) {}
 		document.documentElement.setAttribute('data-theme', t);
 	}, cell.theme);
+	// The skin, when a run asks for one: DAIMOND_SKIN=sharp|warm|daylight. The
+	// view is seeded with it, because choosing a view sets the classic skin:
+	// sharp is Max, warm is Simple, and Daylight keeps itself under either
+	// (DAIMOND_VIEW, default max). Unset, the app's own default stands.
+	if (process.env.DAIMOND_SKIN) {
+		const sk = process.env.DAIMOND_SKIN;
+		const vw = process.env.DAIMOND_VIEW || (sk === 'warm' ? 'simple' : 'max');
+		await context.addInitScript(a => {
+			try { localStorage.setItem('daimond-skin', a.sk); localStorage.setItem('daimond-view', a.vw); } catch (e) {}
+		}, { sk, vw });
+	}
 
 	const page = context.pages()[0] || await context.newPage();
 	const errs = [], logs = [];

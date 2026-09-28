@@ -98,7 +98,7 @@
 	// same call the appearance menu makes and writes the same key this reads.
 	var LOOK_KEYS = [
 		'daimond-theme',		// dark | light | lollypop
-		'daimond-skin',			// sharp | warm
+		'daimond-skin',			// sharp | warm | daylight
 		'daimond-locale',		// the interface language
 		'daimond-currency',		// the display currency (billing is unaffected)
 		'daimond-fs-scale',		// the reading size (workspace.js)

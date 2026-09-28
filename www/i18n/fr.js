@@ -69,7 +69,7 @@
 	'about.verify': 'Vérifier ce build',
 
 	// ── Panel names ────────────────────────────────────────────
-	'panel.rail': 'diamonds',
+	'panel.rail': 'Diamonds',
 	'panel.ai': 'IA',
 	'panel.web': 'Web',
 	'panel.doc': 'Doc',
@@ -112,7 +112,7 @@
 	'pal.hint_current': 'actuel',
 
 	// ── The rail ───────────────────────────────────────────────
-	'rail.diamonds': 'diamonds',
+	'rail.diamonds': 'Diamonds',
 	'rail.diamonds_help': 'Tes projets enregistrés',
 	'rail.new_diamond': 'Nouveau diamond',
 	'rail.unnamed_diamond': 'diamond sans nom',
@@ -775,6 +775,9 @@
 	'menu.view_max': 'Détaillé',
 	'menu.view_simple_help': 'Noms seulement',
 	'menu.view_max_help': 'Détails sur chaque tuile',
+	'menu.look':            'Style',
+	'menu.look_classic':    'Classique',
+	'menu.look_daylight':   'Daylight',
 	'menu.theme':         'Thème',
 	'menu.tone_light':    'Clair',
 	'menu.tone_mid':      'Intermédiaire',
@@ -791,6 +794,8 @@
 	'menu.theme_midnight':  'Minuit',
 	'menu.theme_forest':    'Forêt',
 	'menu.theme_plum':      'Prune',
+	'menu.theme_porcelain': 'Porcelaine',
+	'menu.theme_obsidian':  'Obsidienne',
 	'menu.text_size': 'Taille du texte',
 	'menu.smaller': 'Texte plus petit',
 	'menu.larger': 'Texte plus grand',
@@ -1537,9 +1542,9 @@
 	'pause.everything_help': 'Met en pause tout ce qui dépense.',
 	'pause.act_pause':       'Mettre {name} en pause',
 	'pause.act_play':        'Reprendre {name}',
-	'pause.state_play':      'en cours',
-	'pause.state_pause':     'en pause',
-	'pause.state_mixed':     'partiellement en pause',
+	'pause.state_play':      'En cours',
+	'pause.state_pause':     'En pause',
+	'pause.state_mixed':     'Partiellement en pause',
 	'pause.this':            'ceci',
 	'pause.workers':         'Workers',
 	'pause.mail':            'Courrier',
@@ -1551,7 +1556,7 @@
 	'pause.refused.dispatch': '{node} est en pause. Aucun agent envoyé, rien de dépensé. Appuyez sur lecture dessus pour reprendre.',
 	'pause.refused.web':      '{node} est en pause. La page n’a pas été chargée et rien n’a été dépensé. Appuyez sur lecture dessus pour reprendre.',
 	'pause.refused.mail':     '{node} est en pause. La boîte aux lettres n’a pas été contactée et rien n’a été dépensé. Appuyez sur lecture dessus pour reprendre.',
-	'pause.state_idle': 'inactif',
+	'pause.state_idle': 'Inactif',
 
 	// ── Tags ───────────────────────────────────────────────────
 	'tag.only_agents': 'N’afficher que les agents étiquetés « {tag} »',
@@ -1831,7 +1836,7 @@
 	'dws.showing': 'Affiché',
 	'dws.reach': 'Portée',
 	'dws.reach_help': 'Dossiers modifiables',
-	'dws.reach_own': 'son propre dossier',
+	'dws.reach_own': 'Son propre dossier',
 	'dws.reach_search': 'Une recherche qui ne nomme aucun chemin regarde ici et nulle part ailleurs.',
 	'dws.reach_none': 'Ce dossier seulement.',
 	'dws.mark_here': 'Marquer « {name} »',

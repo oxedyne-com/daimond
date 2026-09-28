@@ -518,19 +518,22 @@ await sleep(400);
 /// top bar on a desktop and the bottom strip on a phone, and it is ONE row
 /// either way (js/mobile.js moves it rather than copying it), so this reads
 /// whichever is on screen.
+///
+/// THE HEADER CARRIES NO COUNTERS (owner, 2026-09-29): the count is kept and
+/// said in the tab title and on the app icon, and the chip stays a word. So the
+/// number is read from the badge's own record, and `chipMark` says whether any
+/// mark was drawn on the chip -- which must now always be false.
 const countOn = (id) => page.evaluate((p) => {
-	const b = document.querySelector('#panel-tags .ptag[data-panel="' + p + '"] .dock-count');
-	if (!b) return { there: false };
-	const r = b.getBoundingClientRect();
-	return { there: true, t: (b.textContent || '').trim(), hidden: b.hidden,
-		w: r.width, h: r.height, x: r.x, y: r.y };
+	const n = window.DaimondBadge.count(p);
+	const chipMark = !!document.querySelector('#panel-tags .ptag[data-panel="' + p + '"] .dock-count');
+	return { there: n > 0, t: n ? String(n) : '', hidden: !n, chipMark };
 }, id);
 
 const mailMark = await countOn('mail');
-check('three messages arriving draws the number three on the Email chip',
+check('three messages arriving count three for Email',
 	mailMark.there && mailMark.t === '3' && !mailMark.hidden, JSON.stringify(mailMark));
-check('and the mark has real area on the screen, not merely an element',
-	onScreen(mailMark), JSON.stringify(mailMark));
+check('and nothing is drawn on the Email chip, which stays a word',
+	!mailMark.chipMark, JSON.stringify(mailMark));
 check('and the tab title says how many are waiting',
 	/^\(3\)/.test(await page.evaluate(() => document.title)),
 	await page.evaluate(() => document.title));
@@ -607,9 +610,9 @@ await page.evaluate(() => {
 });
 await sleep(400);
 const social = await countOn('social');
-check('the Social chip draws the number of unread messages',
+check('Social counts the unread messages',
 	social.there && social.t === '2' && !social.hidden, JSON.stringify(social));
-check('and that mark has real area too', onScreen(social), JSON.stringify(social));
+check('and nothing is drawn on the Social chip either', !social.chipMark, JSON.stringify(social));
 
 // PERSISTENCE. The record is wrapped under the identity key in the same
 // `daimond-` store post.js already writes, so a reload finds it — and a count

@@ -76,7 +76,7 @@
 
 	// ── 패널 이름 ──────────────────────────────────────────────
 	// 짧게. 칩 줄과 휴대폰 탭 바에 들어가요.
-	'panel.rail':    'diamonds',
+	'panel.rail':    'Diamonds',
 	'panel.ai':      'AI',
 	'panel.web':     '웹',
 	'panel.doc':     '문서',
@@ -120,7 +120,7 @@
 	'pal.hint_current': '현재',
 
 	// ── 레일 ───────────────────────────────────────────────────
-	'rail.diamonds':             'diamonds',
+	'rail.diamonds':             'Diamonds',
 	'rail.diamonds_help': '저장한 프로젝트',
 	'rail.new_diamond':          '새 diamond',
 	'rail.unnamed_diamond': '이름 없는 diamond',
@@ -935,6 +935,9 @@
 	'menu.view_max': '상세',
 	'menu.view_simple_help': '이름만',
 	'menu.view_max_help': '모든 타일에 세부 정보 표시',
+	'menu.look':            '스타일',
+	'menu.look_classic':    '클래식',
+	'menu.look_daylight':   'Daylight',
 	'menu.theme':         '테마',
 	'menu.tone_light':    '밝게',
 	'menu.tone_mid':      '중간',
@@ -951,6 +954,8 @@
 	'menu.theme_midnight':  '자정',
 	'menu.theme_forest':    '숲',
 	'menu.theme_plum':      '자두',
+	'menu.theme_porcelain': '자기',
+	'menu.theme_obsidian':  '흑요석',
 	'menu.text_size':     '글자 크기',
 	'menu.smaller':       '글자 작게',
 	'menu.larger':        '글자 크게',

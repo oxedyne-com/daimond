@@ -63,7 +63,8 @@ const sendState = (p) => p.evaluate(() => {
 		there:   true,
 		shown:   b.getClientRects().length > 0,
 		stop:    b.classList.contains('stop'),
-		glyph:   (b.textContent || '').trim(),
+		// The send face is the drawn arrow, the stop face the ■ mark.
+		glyph:   b.querySelector('svg.send-arrow') ? 'arrow' : (b.textContent || '').trim(),
 		title:   b.title || '',
 		enabled: !b.disabled,
 	};
@@ -154,7 +155,7 @@ try {
 
 	await p.waitForTimeout(600);
 	const after = await sendState(p);
-	check(after.there && !after.stop && after.glyph === '➤',
+	check(after.there && !after.stop && after.glyph === 'arrow',
 		'and the button goes back to Send', JSON.stringify(after));
 
 	await p.screenshot({ path: scratch('stopprobe-' + (BROKEN ? 'broken' : 'fixed') + '.png') });

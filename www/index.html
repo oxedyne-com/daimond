@@ -16,10 +16,12 @@
 		// verify_theme asserts the two tables agree, so the copy cannot drift.
 		var P = {
 			light:    ['light', 'dark'],  mist:  ['light', 'dark'],  linen: ['light', 'dark'],
+			porcelain: ['light', 'dark'],
 			lollypop: ['mid',   'dark'],  sage:  ['mid',   'dark'],  dusk:  ['mid',   'light'],
 			dark:     ['dark',  'light'], amber:    ['dark', 'light'],
 			midnight: ['dark',  'light'],
 			forest:   ['dark',  'light'], plum:     ['dark', 'light'],
+			obsidian: ['dark',  'light'],
 		};
 		var t = localStorage.getItem('daimond-theme');
 		var spec = P[t] || P.dark;
@@ -28,7 +30,7 @@
 		document.documentElement.setAttribute('data-ink', spec[1]);
 		var s = localStorage.getItem('daimond-skin');
 		if (s === 'soft') s = 'warm';   // the warm skin was briefly called "soft".
-		if (s === 'warm' || s === 'sharp') document.documentElement.setAttribute('data-skin', s);
+		if (s === 'warm' || s === 'sharp' || s === 'daylight') document.documentElement.setAttribute('data-skin', s);
 		// The language too, so the document declares itself before a screen
 		// reader or the browser's own translation offer looks at it.
 		var l = localStorage.getItem('daimond-locale');
@@ -101,6 +103,7 @@
 <!-- Full-screen toggle (phone only) -- just the two icon faces; see js/fullscreen.js. -->
 <link rel="stylesheet" href="css/fullscreen.css">
 <link rel="stylesheet" href="css/skin-warm.css">
+<link rel="stylesheet" href="css/skin-daylight.css">
 </head>
 <body data-mpanel="ai">
 
@@ -123,6 +126,7 @@
 		<a class="brand" href="https://daimond.app" target="_blank" rel="noopener noreferrer" aria-label="Daimond, the daimond.app home page" data-i18n-aria-label="topbar.brand">
 			<img class="brand-wordmark wm-on-dark" src="assets/daimond_word.svg" alt="Daimond">
 			<img class="brand-wordmark wm-on-light" src="assets/daimond_word_dark.svg" alt="" aria-hidden="true">
+			<img class="brand-wordmark wm-on-ink" src="assets/daimond_word_ink.svg" alt="" aria-hidden="true">
 		</a>
 		</div>
 		<div class="top-actions">
@@ -277,7 +281,7 @@
 				     is cut and polished above it. The order is not decoration --
 				     a chat is raw and a Diamond is worked, and the rail says so
 				     without needing a word of explanation. -->
-				<div class="railhead"><span role="heading" aria-level="2" title="Your saved projects" data-i18n="rail.diamonds" data-i18n-title="rail.diamonds_help">diamonds</span>
+				<div class="railhead"><span role="heading" aria-level="2" title="Your saved projects" data-i18n="rail.diamonds" data-i18n-title="rail.diamonds_help">Diamonds</span>
 					<!-- IT SAYS WHAT IT MAKES. The Diamonds head and the Chats head
 					     each carried the same 22px "+" and the same plus glyph, so the
 					     rail's two most-used controls were indistinguishable at a
@@ -358,7 +362,7 @@
 				<div class="admin-status" id="admin-status">
 					<div class="astat-row astat-id">
 						<button class="user-row" id="user-row" title="Your Daimond identity" data-i18n-title="admin.identity">
-							<span class="user-avatar" id="user-avatar" aria-hidden="true">◈</span>
+							<span class="user-avatar" id="user-avatar" aria-hidden="true"><img class="mark-ic" src="assets/daimond_mark.svg" alt=""></span>
 							<span class="user-info" id="user-info">Browser-only</span>
 						</button>
 						<!-- The same cog every Diamond tile and every mailbox row wears,
@@ -805,7 +809,7 @@
 				<div class="mark-notice" id="mark-notice" aria-live="polite" hidden></div>
 				<div class="chat-input-bar">
 					<textarea id="chat-input" placeholder="Type a message…" rows="1" data-i18n-placeholder="chat.input_ph"></textarea>
-					<button id="chat-send" title="Send" data-i18n-title="chat.send" aria-label="Send" data-i18n-aria-label="chat.send">➤</button>
+					<button id="chat-send" title="Send" data-i18n-title="chat.send" aria-label="Send" data-i18n-aria-label="chat.send"><svg class="ic send-arrow" viewBox="0 -2 24 24" aria-hidden="true"><path d="M12 16V4M8 8l4-4 4 4"/></svg></button>
 					<!-- The second stop that lived here is gone (proposal #19): the send
 					     button itself is ■ while a turn runs and the box is empty, and a box
 					     with text mid-turn is a correction to send, not a turn to kill.
@@ -1551,7 +1555,7 @@
 	<div class="msheet-scroll" id="msheet-body"></div>
 	<div class="msheet-ask" id="msheet-ask">
 		<input id="msheet-ask-input" type="text" placeholder="Ask about this…" autocomplete="off" autocapitalize="sentences" spellcheck="true" data-i18n-placeholder="sheet.ask_ph">
-		<button id="msheet-ask-send" title="Ask" aria-label="Ask" data-i18n-title="sheet.ask" data-i18n-aria-label="sheet.ask">➤</button>
+		<button id="msheet-ask-send" title="Ask" aria-label="Ask" data-i18n-title="sheet.ask" data-i18n-aria-label="sheet.ask"><svg class="ic send-arrow" viewBox="0 -2 24 24" aria-hidden="true"><path d="M12 16V4M8 8l4-4 4 4"/></svg></button>
 	</div>
 </div>
 
@@ -1574,7 +1578,7 @@
      passphrase encrypts the stored API key and is the on-device Daimond identity. -->
 <div id="identity-modal" class="modal" style="display:none;">
 	<div class="modal-card">
-		<img class="login-logo" id="id-logo" src="assets/daimond_word.svg" alt="Daimond" data-light="assets/daimond_word_dark.svg" data-dark="assets/daimond_word.svg">
+		<img class="login-logo" id="id-logo" src="assets/daimond_word.svg" alt="Daimond" data-light="assets/daimond_word_dark.svg" data-dark="assets/daimond_word.svg" data-inked="assets/daimond_word_ink.svg">
 		<!-- THE FRONT DOOR, for somebody who arrived from daimond.app and has never
 		     seen this app.
 

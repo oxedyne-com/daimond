@@ -80,7 +80,6 @@
 .ptag.on:hover { color: var(--text-primary); }
 
 .ptag-more { flex: none; font-family: var(--font); letter-spacing: 0.08em; padding: 4px 9px; }
-.ptag-more .n { font-size: var(--fs-4xs); opacity: 0.8; margin-left: 3px; letter-spacing: 0; }
 
 /* ── Popover furniture, shared by the gallery and the settings menu ───────── */
 .pop {

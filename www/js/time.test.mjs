@@ -50,41 +50,42 @@ console.log('\n— the ordinary case —');
 {
 	const ts = epoch(2026, 9, 15, 13, 12);
 	check('the Gregorian year is offset by ten thousand',
-		T.fmtHolocene(ts) === '12026-09-15 13:12', T.fmtHolocene(ts));
+		T.fmtHolocene(ts) === '12026-09-15 13:12:00', T.fmtHolocene(ts));
 	check('and the short form keeps only the last two digits of it',
-		T.fmtHoloceneShort(ts) === '26-09-15 13:12', T.fmtHoloceneShort(ts));
+		T.fmtHoloceneShort(ts) === '26-09-15 13:12:00', T.fmtHoloceneShort(ts));
 }
 
 console.log('\n— zero-padding, single-digit month/day/hour/minute —');
 {
 	const ts = epoch(2026, 1, 5, 9, 3);
 	check('every field pads to its width',
-		T.fmtHolocene(ts) === '12026-01-05 09:03', T.fmtHolocene(ts));
+		T.fmtHolocene(ts) === '12026-01-05 09:03:00', T.fmtHolocene(ts));
 }
 
 console.log('\n— midnight and noon —');
 {
-	check('midnight is 00:00, not 24:00 or 12:00',
-		T.fmtHolocene(epoch(2026, 3, 1, 0, 0)) === '12026-03-01 00:00');
-	check('noon is 12:00',
-		T.fmtHolocene(epoch(2026, 3, 1, 12, 0)) === '12026-03-01 12:00');
+	check('midnight is 00:00:00, not 24:00 or 12:00',
+		T.fmtHolocene(epoch(2026, 3, 1, 0, 0)) === '12026-03-01 00:00:00');
+	check('noon is 12:00:00',
+		T.fmtHolocene(epoch(2026, 3, 1, 12, 0)) === '12026-03-01 12:00:00');
 }
 
 console.log('\n— a year boundary, both reckonings —');
 {
 	check('the last minute of a Gregorian year lands on 12026, not 12027',
-		T.fmtHolocene(epoch(2026, 12, 31, 23, 59)) === '12026-12-31 23:59');
+		T.fmtHolocene(epoch(2026, 12, 31, 23, 59)) === '12026-12-31 23:59:00');
 	check('the first minute of the next Gregorian year lands on 12027',
-		T.fmtHolocene(epoch(2027, 1, 1, 0, 0)) === '12027-01-01 00:00');
+		T.fmtHolocene(epoch(2027, 1, 1, 0, 0)) === '12027-01-01 00:00:00');
 }
 
-console.log('\n— no seconds on the tile, ever —');
+console.log('\n— seconds on the tile, milliseconds never (owner, 2026-09-29) —');
 {
-	// A ts carrying a live seconds/ms component must not leak into the string --
-	// only date-and-minute is drawn on the tile itself.
+	// The tile reads to the second; a live millisecond component must not leak.
 	const withSeconds = new Date(2026, 8, 15, 13, 12, 47, 500).getTime();
-	check('seconds and milliseconds are truncated away',
-		T.fmtHolocene(withSeconds) === '12026-09-15 13:12', T.fmtHolocene(withSeconds));
+	check('seconds are drawn and milliseconds truncated away',
+		T.fmtHolocene(withSeconds) === '12026-09-15 13:12:47', T.fmtHolocene(withSeconds));
+	check('and the short form carries the seconds too',
+		T.fmtHoloceneShort(withSeconds) === '26-09-15 13:12:47', T.fmtHoloceneShort(withSeconds));
 }
 
 console.log('\n— a tile with no timestamp shows nothing —');

@@ -75,7 +75,7 @@
 
 	// ── パネル名 ───────────────────────────────────────────────
 	// 短く。チップの列とスマートフォンのタブバーに並びます。
-	'panel.rail':    'diamonds',
+	'panel.rail':    'Diamonds',
 	'panel.ai':      'AI',
 	'panel.web':     'ウェブ',
 	'panel.doc':     '文書',
@@ -119,7 +119,7 @@
 	'pal.hint_current': '現在',
 
 	// ── レール ─────────────────────────────────────────────────
-	'rail.diamonds':             'diamonds',
+	'rail.diamonds':             'Diamonds',
 	'rail.diamonds_help': '保存したプロジェクト',
 	'rail.new_diamond':          '新しい diamond',
 	'rail.unnamed_diamond': '名前のない diamond',
@@ -934,6 +934,9 @@
 	'menu.view_max': '詳細',
 	'menu.view_simple_help': '名前のみ',
 	'menu.view_max_help': '各タイルに詳細を表示',
+	'menu.look':            'スタイル',
+	'menu.look_classic':    'クラシック',
+	'menu.look_daylight':   'Daylight',
 	'menu.theme':         'テーマ',
 	'menu.tone_light':    '明るい',
 	'menu.tone_mid':      '中間',
@@ -950,6 +953,8 @@
 	'menu.theme_midnight':  '真夜中',
 	'menu.theme_forest':    '森',
 	'menu.theme_plum':      'すもも',
+	'menu.theme_porcelain': '磁器',
+	'menu.theme_obsidian':  '黒曜石',
 	'menu.text_size':     '文字サイズ',
 	'menu.smaller':       '文字を小さく',
 	'menu.larger':        '文字を大きく',

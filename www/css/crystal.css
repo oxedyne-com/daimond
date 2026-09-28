@@ -474,3 +474,46 @@
 	border-color: transparent;
 	box-shadow: var(--shadow-1);
 }
+
+/* ── The Daylight skin ───────────────────────────────────────────
+   The built-in view as a page of type: the name in the condensed face at the
+   largest step, the summary as a lead line, section heads small and quiet, and
+   no boxes round the fields. */
+
+:root[data-skin="daylight"] .crystal-fb-title {
+	font-family: var(--font-display);
+	font-size: var(--dl-2xl);
+	font-weight: 520;
+	line-height: 1.08;
+	letter-spacing: -0.015em;
+}
+
+:root[data-skin="daylight"] .crystal-fb-summary {
+	font-size: var(--dl-lg);
+	line-height: 1.38;
+	color: var(--text-secondary);
+}
+
+:root[data-skin="daylight"] .crystal-fb-sec > h3,
+:root[data-skin="daylight"] .crystal-fb-field-head {
+	font-family: var(--font);
+	font-size: var(--dl-xs);
+	font-weight: 680;
+	letter-spacing: 0;
+	text-transform: none;
+	color: var(--text-muted);
+}
+
+:root[data-skin="daylight"] .crystal-fb-key,
+:root[data-skin="daylight"] .crystal-fb-map > dt {
+	font-family: var(--font);
+	letter-spacing: 0;
+}
+
+:root[data-skin="daylight"] .crystal-fb-field,
+:root[data-skin="daylight"] .crystal-fb-json,
+:root[data-skin="daylight"] .crystal-form-extra,
+:root[data-skin="daylight"] .crystal-form-row.crystal-form-group,
+:root[data-skin="daylight"] .crystal-reset {
+	border-color: transparent;
+}

@@ -132,6 +132,7 @@ svg { display: block; }
    which the button in its old slot opens. Its rules are down with the dialog's,
    because that is the only place it is drawn now. */
 .brand-wordmark.wm-on-light { display: none; }
+.brand-wordmark.wm-on-ink { display: none; }
 :root[data-ink="dark"] .brand-wordmark.wm-on-dark { display: none; }
 :root[data-ink="dark"] .brand-wordmark.wm-on-light { display: block; }
 .top-meter { display: flex; align-items: center; gap: 8px; font-family: var(--font-mono); font-size: var(--fs-xs); color: var(--text-secondary); overflow: hidden; white-space: nowrap; }
@@ -309,21 +310,8 @@ body.dragging { cursor: col-resize; user-select: none; -webkit-user-select: none
 	font-variant-numeric: tabular-nums;
 }
 .dock-count[hidden] { display: none; }
-/* ON A CHIP IT IS OVER THE CHIP, NOT ON THE LINE. It followed the label with a
-   5px margin, so a chip grew by ~21px the moment something arrived for it and
-   every chip left of it moved -- measured 2026-08-28 at 1440px, nine of thirteen
-   shifted 21px when three messages landed in the mailbox, which is the least
-   predictable moment there is to be reaching for one. Out of the chip's flow
-   instead, over its top-right corner, which is where a badge is looked for and
-   what `.mnav button .dock-count` (responsive.css) has always done. */
+/* A chip is the anchor for what dockdrag.js draws over it. */
 .ptag { position: relative; }
-.ptag .dock-count {
-	position: absolute;
-	top: -6px;
-	right: -4px;
-	pointer-events: none;
-}
-
 .addbtn { width: 22px; height: 22px; padding: 0; display: flex; align-items: center; justify-content: center; border: 1px solid var(--border-strong); border-radius: 6px; background: var(--bg-secondary); color: var(--text-secondary); font-size: var(--fs-sm); line-height: 1; }
 .addbtn:hover { color: var(--text-primary); }
 .addbtn:disabled { opacity: 0.4; cursor: default; }
@@ -1013,6 +1001,19 @@ body.resizing-v { cursor: row-resize; user-select: none; -webkit-user-select: no
 #chat-send:hover { background: var(--accent-hover); }
 #chat-send:disabled { opacity: 0.4; cursor: default; }
 #chat-send.stop { background: var(--danger); }
+/* The drawn arrow sits at the size of the words around it, and heavier than a
+   plain icon, since it is the one filled control on the row. */
+.send-arrow { width: 1.15em; height: 1.15em; stroke-width: 2.1; }
+/* A file's kind, drawn: see `kindIcon` in daimond.js. It scales with the name
+   it stands before, and a folder takes the accent so a tree reads at a glance. */
+.kind-ic { display: inline-flex; vertical-align: -0.16em; margin-right: 0.42em; color: var(--text-muted); }
+.kind-ic .ic { width: 1.1em; height: 1.1em; }
+.kind-ic.kind-dir { color: var(--accent-text); }
+.arte-kind > .kind-ic { margin-right: 0; }
+.arte-kind > .kind-ic .ic { width: 1em; height: 1em; }
+/* The diamond mark before a name, where `◈` used to stand. */
+.mark-ic { display: inline-block; width: 0.8em; height: 0.8em; object-fit: contain; vertical-align: -0.05em; margin-right: 0.4em; }
+.user-avatar > .mark-ic { width: 1em; height: 1em; margin: 0; vertical-align: middle; }
 #chat-send.stop:hover { filter: brightness(1.1); }
 /* The separate Stop, shown only while the send button is a Send arrow mid-turn.
    Same ink as the send button in stop mode, so the one control the user has

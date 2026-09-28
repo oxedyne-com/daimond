@@ -150,7 +150,7 @@
 
 	// ── Panel names ────────────────────────────────────────────
 	// Short: they ride in a chip row and a phone tab bar.
-	'panel.rail':    'diamonds',
+	'panel.rail':    'Diamonds',
 	'panel.ai':      'AI',
 	'panel.web':     'Web',
 	'panel.doc':     'Doc',
@@ -205,7 +205,7 @@
 	'pal.hint_current': 'current',
 
 	// ── The rail ───────────────────────────────────────────────
-	'rail.diamonds':             'diamonds',
+	'rail.diamonds':             'Diamonds',
 	'rail.diamonds_help':        'Your saved projects',
 	'rail.new_diamond':          'New diamond',
 	'rail.unnamed_diamond': 'Unnamed diamond',
@@ -1696,13 +1696,17 @@
 	'menu.view_max':        'Detailed',
 	'menu.view_simple_help': 'Names only',
 	'menu.view_max_help':   'Details on every tile',
+	// i18n-family: menu.look_ = classic daylight
+	'menu.look':            'Look',
+	'menu.look_classic':    'Classic',
+	'menu.look_daylight':   'Daylight',
 	'menu.theme':         'Theme',
 	// The bands and the palettes, both from `DaimondTheme` in daimond.js, which
 	// this app owns. `_help` is optional and only Amber has one: `workspace.js`
 	// forms the name and asks `t` for it, and the key coming back unchanged is
 	// how it learns there is no note.
 	// i18n-family: menu.tone_ = light mid dark
-	// i18n-family: menu.theme_ = light mist linen lollypop sage dusk dark amber midnight forest plum
+	// i18n-family: menu.theme_ = light mist linen lollypop sage dusk dark amber midnight forest plum porcelain obsidian
 	// i18n-family: menu.theme_ = amber_help
 	// i18n-indirect: workspace.js help = open -- the probe above: `menu.theme_<name>_help` is formed for all eleven palettes and ten of them are absent on purpose
 	'menu.tone_light':    'Light',
@@ -1720,6 +1724,8 @@
 	'menu.theme_midnight':  'Midnight',
 	'menu.theme_forest':    'Forest',
 	'menu.theme_plum':      'Plum',
+	'menu.theme_porcelain': 'Porcelain',
+	'menu.theme_obsidian':  'Obsidian',
 	'menu.text_size':     'Text size',
 	'menu.smaller':       'Smaller text',
 	'menu.larger':        'Larger text',
@@ -2044,9 +2050,9 @@
 	// without being asked -- and not over every leaf: a control whose subject is
 	// entirely manual has nothing to be running, and used to read green.
 	// i18n-family: pause.state_ = play pause mixed idle
-	'pause.state_play':      'running',
-	'pause.state_pause':     'paused',
-	'pause.state_mixed':     'partly paused',
+	'pause.state_play':      'Running',
+	'pause.state_pause':     'Paused',
+	'pause.state_mixed':     'Partly paused',
 	// The fourth, and it is RED like `pause` while meaning something else. It
 	// covers both "you have set nothing up" and "what is here cannot fire" -- an
 	// action switched off, or one missing its mailbox or its instruction -- so the
@@ -2054,7 +2060,7 @@
 	// ships WITH an action, switched off, and that light would have said there was
 	// none. The colour cannot make the distinction and this does not pretend to;
 	// what it states is the question the light answers.
-	'pause.state_idle':      'idle',
+	'pause.state_idle':      'Idle',
 	'pause.this':            'this',
 	'pause.workers':         'Workers',
 	'pause.mail':            'Mail',
@@ -2522,7 +2528,7 @@
 	'dws.showing':         'Showing',
 	'dws.reach':           'Reach',
 	'dws.reach_help':      'Editable folders',
-	'dws.reach_own':       'its own folder',
+	'dws.reach_own':       'Its own folder',
 	'dws.reach_search':    'A search that names no path looks in these and nowhere else.',
 	'dws.reach_none':      'This folder only.',
 	'dws.mark_here':       'Add “{name}”',

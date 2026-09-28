@@ -214,17 +214,16 @@
 			more.setAttribute('aria-haspopup', 'dialog');
 			more.setAttribute('aria-expanded', 'false');
 			// A bare "⋯4" named a count and nothing else (TOP-04): the word is
-			// what makes it a control rather than a stray character. Set after
-			// the second fit, below, once the true count is known.
-			more.innerHTML = t('chip.more_word') + '<span class="n">' + hidden + '</span>';
+			// what makes it a control rather than a stray character. The count
+			// itself is in the title only: the header carries no counters (owner,
+			// 2026-09-29).
+			more.textContent = t('chip.more_word');
 			more.addEventListener('click', function (e) { e.stopPropagation(); toggleGallery(more); });
 			tagsEl.appendChild(more);
 			// Adding the button costs width of its own, so anything it pushed out
 			// has to leave as well. Not on a phone, where nothing was pushed out.
 			if (!shell()) squeezed += fitRow();
 			var total = spare.length + squeezed;
-			var n = more.querySelector('.n');
-			if (n) n.textContent = String(total);
 			more.title = tn('chip.more', total);
 		}
 		watchRow();
@@ -469,6 +468,25 @@
 			});
 			menuEl.appendChild(vseg);
 		}
+		// The look: Classic, which is the view's own pair, or Daylight, which
+		// serves both views. Separate from the view because Daylight is not a
+		// density; see `DaimondLook` in daimond.js.
+		if (window.DaimondLook) {
+			menuEl.appendChild(el('div', 'pop-head', t('menu.look')));
+			var lookNow = DaimondLook.get();
+			var lseg = el('div', 'seg');
+			DaimondLook.list().forEach(function (id) {
+				var lb = el('button', null, t('menu.look_' + id));
+				lb.setAttribute('aria-pressed', id === lookNow ? 'true' : 'false');
+				lb.addEventListener('click', function () {
+					DaimondLook.set(id);
+					renderMenu();
+				});
+				lseg.appendChild(lb);
+			});
+			menuEl.appendChild(lseg);
+		}
+
 
 		// Theme. A pulldown rather than a row of buttons: ten palettes in three
 		// bands is a list to look down, and a segmented control of ten would eat

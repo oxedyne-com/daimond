@@ -241,6 +241,57 @@
 	--shadow-2:          0 2px 6px rgba(17, 12, 8, 0.06), 0 12px 30px rgba(17, 12, 8, 0.10);
 }
 
+/* The Daylight skin's tokens (2026-09-29, D-20260928-09). Its rules are in
+   skin-daylight.css under the same selector. Three faces with three jobs:
+   Sofia Sans Condensed names things, Sofia Sans carries the working text,
+   Sometype Mono the figures.
+
+   THE TYPE SCALE COLLAPSES HERE, and only here. The eighteen size tokens
+   above fall onto seven steps -- 10.5, 12, 14, 17, 22, 30, 44 -- each token
+   to its nearest, so size, weight and ink do the work that borders did. Scoped
+   to this skin, so Sharp and Warm are drawn exactly as before. The user's
+   reading size still moves every step through --fs-scale. */
+:root[data-skin="daylight"] {
+	--radius:            7px;
+	--radius-sm:         6px;
+	--radius-lg:         10px;
+	--font:              'Sofia Sans', system-ui, -apple-system, 'Segoe UI', Roboto, var(--font-cjk, sans-serif), sans-serif;
+	--font-display:      'Sofia Sans Condensed', 'Sofia Sans', system-ui, var(--font-cjk, sans-serif), sans-serif;
+	--font-mono:         'Sometype Mono', ui-monospace, 'SF Mono', 'Cascadia Code', Consolas, monospace;
+	--dl-2xs:            calc(10.5px * var(--fs-scale));	/* stamps, sizes, meters */
+	--dl-xs:             calc(12px * var(--fs-scale));	/* meta, labels, previews */
+	--dl-sm:             calc(14px * var(--fs-scale));	/* names, files, tabs, cells */
+	--dl-md:             calc(17px * var(--fs-scale));	/* reading */
+	--dl-lg:             calc(22px * var(--fs-scale));	/* titles, your turn, a lead */
+	--dl-xl:             calc(30px * var(--fs-scale));	/* section heads */
+	--dl-2xl:            calc(44px * var(--fs-scale));	/* a diamond's name */
+	--fs-4xs:            var(--dl-2xs);
+	--fs-3xs:            var(--dl-2xs);
+	--fs-3xs-2xs:        var(--dl-2xs);
+	--fs-2xs:            var(--dl-2xs);
+	--fs-2xs-xs:         var(--dl-xs);
+	--fs-xs:             var(--dl-xs);
+	--fs-xs-sm:          var(--dl-xs);
+	--fs-sm:             var(--dl-sm);
+	--fs-sm-base:        var(--dl-sm);
+	--fs-base:           var(--dl-sm);
+	--fs-lg:             var(--dl-sm);
+	--fs-xl:             var(--dl-md);
+	--fs-xl-2xl:         var(--dl-md);
+	--fs-2xl:            var(--dl-md);
+	--fs-3xl:            var(--dl-lg);
+	--fs-4xl:            var(--dl-lg);
+	--fs-5xl:            var(--dl-xl);
+	--fs-6xl:            var(--dl-xl);
+	/* The one gesture for "current" and for "under the pointer": a light fill
+	   of the palette's own ink, so it reads on every palette without a line. */
+	--dl-on:             color-mix(in srgb, var(--text-primary) 8%, transparent);
+	--dl-hover:          color-mix(in srgb, var(--text-primary) 4.5%, transparent);
+	--rail-w:            288px;
+	--work-w:            300px;
+	--header-h:          56px;
+}
+
 /* Light theme */
 :root[data-theme="light"] {
 	--bg-primary:        #FBF9F5;
@@ -494,6 +545,58 @@
 	--warn-bg:           #33280F;
 	--danger:            #DC7B55;
 	--success:           #A8B457;
+}
+
+/* Porcelain and Obsidian -- the Daylight pair (2026-09-29, D-20260928-09).
+   Drawn for the Daylight skin and offered to every skin. Porcelain is a neutral
+   ground with the faintest rose cast, not a cream: round 2's #F4F1EC read as
+   Anthropic's ivory. Obsidian is designed rather than inverted: three steps of
+   near-black by elevation and the mark's own rose at full strength. The one
+   hue in either is the mark's rose; green says "synced". */
+:root[data-theme="porcelain"] {
+	--bg-primary:        #F4F2F3;
+	--bg-secondary:      #FFFFFF;
+	--bg-tertiary:       #EBE7E9;
+	--bg-hover:          #E4DFE1;
+	--border:            #E6E1E3;
+	--border-2:          #D7D0D3;
+	--border-strong:     #7F7679;
+	--text-primary:      #1E1A1B;
+	--text-secondary:    #4B4445;
+	--text-muted:        #675F5F;
+	--accent:            #C3364B;
+	--accent-hover:      #A62A3E;
+	--accent-soft:       #F8E6E9;
+	--accent-text:       #A62A3E;
+	--ok:                #2B7350;
+	--ok-bg:             #E3F1E8;
+	--warn:              #8F5C0E;
+	--warn-bg:           #F6EBD6;
+	--danger:            #B0283C;
+	--success:           #2B7350;
+}
+
+:root[data-theme="obsidian"] {
+	--bg-primary:        #0F0E10;
+	--bg-secondary:      #1A181B;
+	--bg-tertiary:       #232026;
+	--bg-hover:          #2A272D;
+	--border:            #29262B;
+	--border-2:          #3B373D;
+	--border-strong:     #7A7379;
+	--text-primary:      #EEE9E5;
+	--text-secondary:    #BDB5B1;
+	--text-muted:        #9A928F;
+	--accent:            #F98596;
+	--accent-hover:      #FB9DAA;
+	--accent-soft:       #3A1C23;
+	--accent-text:       #FF9DAC;
+	--ok:                #5CC48A;
+	--ok-bg:             #15301F;
+	--warn:              #E59A3A;
+	--warn-bg:           #33260F;
+	--danger:            #F08A7E;
+	--success:           #5CC48A;
 }
 
 /* Dark grounds take the selected chip the other way up: light block, dark

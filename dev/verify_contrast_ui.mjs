@@ -77,6 +77,9 @@ const KNOWN = {
 	'midnight/chip-no-text': 4.17,
 	'mist/chip-no-text': 3.08,
 	'plum/chip-no-text': 4.27,
+	// The Daylight pair (2026-09-29): the same refused-tag debt as their neighbours.
+	'obsidian/chip-no-text': 4.35,
+	'porcelain/chip-no-text': 2.89,
 	'sage/chip-no-text': 2.65,
 };
 
@@ -112,7 +115,7 @@ const WORD = 4.5;
 /// colour as its neighbour. Anything at 1.0 is the bug this catches: a disabled
 /// rule that some later selector has already overridden.
 const OFF = 1.2;
-const NAMES = ['light', 'mist', 'linen', 'lollypop', 'sage', 'dusk', 'dark', 'amber', 'midnight', 'forest', 'plum'];
+const NAMES = ['light', 'mist', 'linen', 'lollypop', 'sage', 'dusk', 'dark', 'amber', 'midnight', 'forest', 'plum', 'porcelain', 'obsidian'];
 
 /// The pixels inside a clip rectangle, as the browser painted them.
 ///

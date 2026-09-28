@@ -946,7 +946,7 @@ try {
 	};
 
 	const wasStored = await stored(ids.extra);
-	if (await clickByText('✎', 'the ✎ editor')) {
+	if (await clickByText('Edit', 'the Edit form')) {
 		const form = await p.evaluate(() => {
 			const f2 = document.querySelector('.crystal-form');
 			const extra = document.querySelector('.crystal-form-extra');
@@ -1014,7 +1014,7 @@ try {
 
 	// ══ 9. The editor refuses unparseable JSON ══════════════════
 	const beforeJson = await stored(ids.extra);
-	if (await clickByText('✎', 'the ✎ editor a second time')) {
+	if (await clickByText('Edit', 'the Edit form a second time')) {
 		if (await clickByText(wantJson, 'raw JSON behind a second click')) {
 			const put = await p.evaluate(() => {
 				const ta = document.querySelector('.crystal-json');

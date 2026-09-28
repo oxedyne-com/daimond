@@ -176,6 +176,20 @@ const KNOWN = {
 	'mist/ok-on-ok-bg': 4.44,
 	'mist/white-on-accent-hover': 3.92,
 	'motion/infinite-uncovered': 8.00,
+	// The Daylight pair (2026-09-29). The same divider and tag-chip debts every
+	// light and dark palette carries, recorded at birth rather than excused.
+	'obsidian/border-2-vs-surface': 1.26,
+	'obsidian/border-vs-surface': 1.01,
+	'obsidian/border2-vs-border': 1.27,
+	'obsidian/chip-edge': 1.75,
+	'obsidian/chip-no-text': 4.35,
+	'obsidian/tag-on-vs-surface': 1.66,
+	'porcelain/border-2-vs-surface': 1.15,
+	'porcelain/border-vs-surface': 1.01,
+	'porcelain/border2-vs-border': 1.17,
+	'porcelain/chip-edge': 1.10,
+	'porcelain/chip-no-text': 2.89,
+	'porcelain/chip-text-hover': 4.47,
 	'plum/border-2-vs-surface': 1.26,
 	'plum/border-vs-surface': 1.03,
 	'plum/border2-vs-border': 1.22,
@@ -219,7 +233,7 @@ const declared = blocks(css);
 
 // A palette inherits everything it does not restate from the bare :root block.
 const base = declared.dark || {};
-const NAMES = ['light', 'mist', 'linen', 'lollypop', 'sage', 'dusk', 'dark', 'amber', 'midnight', 'forest', 'plum'];
+const NAMES = ['light', 'mist', 'linen', 'lollypop', 'sage', 'dusk', 'dark', 'amber', 'midnight', 'forest', 'plum', 'porcelain', 'obsidian'];
 const palette = (n) => Object.assign({}, base, declared[n] || {});
 
 /// Each palette's band and ink, read from the registry in daimond.js. Needed

@@ -44,8 +44,8 @@ const check = (name, pass, detail) => {
 const SEAM = [
 	{ file: 'js/time.js', want: "function holoceneYear(d) { return d.getFullYear() + 10000; }",
 	  why: 'the Holocene offset is no longer on the local year' },
-	{ file: 'js/time.js', want: "pad2(d.getHours()) + ':' + pad2(d.getMinutes());",
-	  why: 'the tile string no longer reads the LOCAL hour and minute' },
+	{ file: 'js/time.js', want: "pad2(d.getHours()) + ':' + pad2(d.getMinutes()) + ':' + pad2(d.getSeconds());",
+	  why: 'the tile string no longer reads the LOCAL hour, minute and second' },
 	{ file: 'js/daimond.js', want: 'if (!ts || !window.DaimondTime) return null;',
 	  why: 'a tile with no timestamp would no longer draw nothing' },
 ];
@@ -63,8 +63,8 @@ const BREAKS = {
 	// two-zone comparison) reddens for whichever session's zone is not UTC's.
 	utc: [{
 		file: 'js/time.js',
-		find: "return holoceneYear(d) + '-' + pad2(d.getMonth() + 1) + '-' + pad2(d.getDate())\n\t\t\t+ ' ' + pad2(d.getHours()) + ':' + pad2(d.getMinutes());\n\t}\n\n\t/// The same instant",
-		with: "return holoceneYear(d) + '-' + pad2(d.getUTCMonth() + 1) + '-' + pad2(d.getUTCDate())\n\t\t\t+ ' ' + pad2(d.getUTCHours()) + ':' + pad2(d.getUTCMinutes());\n\t}\n\n\t/// The same instant",
+		find: "return holoceneYear(d) + '-' + pad2(d.getMonth() + 1) + '-' + pad2(d.getDate())\n\t\t\t+ ' ' + clock(d);\n\t}\n\n\t/// `13:12:47`",
+		with: "return holoceneYear(d) + '-' + pad2(d.getUTCMonth() + 1) + '-' + pad2(d.getUTCDate())\n\t\t\t+ ' ' + pad2(d.getUTCHours()) + ':' + pad2(d.getUTCMinutes()) + ':' + pad2(d.getUTCSeconds());\n\t}\n\n\t/// `13:12:47`",
 	}, {
 		// `holoceneYear` itself stays local -- only fmtHolocene's OWN getters are
 		// broken, isolating the break to the one function the tiles actually call.
@@ -72,11 +72,12 @@ const BREAKS = {
 		find: 'function fmtHolocene(ts) {\n\t\tif (!isInstant(ts)) return \'\';\n\t\tvar d = new Date(ts);\n\t\treturn holoceneYear(d)',
 		with: 'function fmtHolocene(ts) {\n\t\tif (!isInstant(ts)) return \'\';\n\t\tvar d = new Date(ts);\n\t\tvar holoceneYear = function (dd) { return dd.getUTCFullYear() + 10000; };\n\t\treturn holoceneYear(d)',
 	}],
-	// Seconds put back on the tile string — check C reddens.
+	// Seconds taken back off the tile string (they are drawn since 2026-09-29)
+	// — check C reddens.
 	seconds: [{
 		file: 'js/time.js',
-		find: "return holoceneYear(d) + '-' + pad2(d.getMonth() + 1) + '-' + pad2(d.getDate())\n\t\t\t+ ' ' + pad2(d.getHours()) + ':' + pad2(d.getMinutes());\n\t}\n\n\t/// The same instant",
-		with: "return holoceneYear(d) + '-' + pad2(d.getMonth() + 1) + '-' + pad2(d.getDate())\n\t\t\t+ ' ' + pad2(d.getHours()) + ':' + pad2(d.getMinutes()) + ':' + pad2(d.getSeconds());\n\t}\n\n\t/// The same instant",
+		find: "function clock(d) { return pad2(d.getHours()) + ':' + pad2(d.getMinutes()) + ':' + pad2(d.getSeconds()); }",
+		with: "function clock(d) { return pad2(d.getHours()) + ':' + pad2(d.getMinutes()); }",
 	}],
 	// A message with no `ts` gets one invented at draw time — check D reddens.
 	missingts: [{
@@ -134,7 +135,7 @@ async function serveBroken(page) {
 function localParts(epochMs, timeZone) {
 	const dtf = new Intl.DateTimeFormat('en-US', {
 		timeZone, hour12: false,
-		year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit',
+		year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit',
 	});
 	const p = {};
 	for (const part of dtf.formatToParts(epochMs)) p[part.type] = part.value;
@@ -144,7 +145,7 @@ function localParts(epochMs, timeZone) {
 }
 function expectHolocene(epochMs, timeZone) {
 	const p = localParts(epochMs, timeZone);
-	return String(Number(p.year) + 10000) + '-' + p.month + '-' + p.day + ' ' + p.hour + ':' + p.minute;
+	return String(Number(p.year) + 10000) + '-' + p.month + '-' + p.day + ' ' + p.hour + ':' + p.minute + ':' + p.second;
 }
 
 // ── The fixture: one chat, four messages, one of them with no `ts` at all ──
@@ -277,7 +278,7 @@ try {
 	await b.page.waitForTimeout(500);
 
 	// ── (A) Headers show the string — user, assistant, tool ────────────
-	const FMT_RE = /^\d{4,}-\d\d-\d\d \d\d:\d\d$/;
+	const FMT_RE = /^\d{4,}-\d\d-\d\d \d\d:\d\d:\d\d$/;
 	const userT = await tileTimeByText(a.page, 'MARK_USER');
 	const asstT = await tileTimeByText(a.page, 'MARK_ASST');
 	const toolT = await tileTimeByText(a.page, 'MARK_TOOL');
@@ -303,10 +304,9 @@ try {
 		yearA === (new Date(FIXED_TS).getUTCFullYear() + 10000) || yearA === (new Date(FIXED_TS).getUTCFullYear() + 1 + 10000),
 		'holocene year ' + yearA);
 
-	// ── (C) No seconds, ever ────────────────────────────────────────────
-	check('(C) the tile string carries no seconds field',
-		!!(userT.time && /^\d{4,}-\d\d-\d\d \d\d:\d\d$/.test(userT.time.full)
-			&& !/:\d\d:\d\d$/.test(userT.time.full)),
+	// ── (C) Seconds, since 2026-09-29 (owner) ──────────────────────────
+	check('(C) the tile string carries the seconds field, and nothing finer',
+		!!(userT.time && /^\d{4,}-\d\d-\d\d \d\d:\d\d:\d\d$/.test(userT.time.full)),
 		userT.time && userT.time.full);
 	check('(C) the hover title DOES carry seconds and a zone (the one place a full instant belongs)',
 		!!(userT.time && /^\d{4,}-\d\d-\d\dT\d\d:\d\d:\d\d([Z]|[+-]\d\d:\d\d)$/.test(userT.time.title)),
@@ -334,12 +334,12 @@ try {
 	const liveTool  = await lastTileTime(live.page, 'tool');
 	const inWindow = (full) => {
 		if (!full || !FMT_RE.test(full)) return false;
-		// Rebuild the epoch this minute string names in THIS process's own zone
+		// Rebuild the epoch this string names in THIS process's own zone
 		// (the live session was opened with no timezoneId override, so it kept
 		// the host's) and check it falls inside the turn's own wall-clock window.
-		const mm = full.match(/^(\d+)-(\d\d)-(\d\d) (\d\d):(\d\d)$/);
+		const mm = full.match(/^(\d+)-(\d\d)-(\d\d) (\d\d):(\d\d):(\d\d)$/);
 		if (!mm) return false;
-		const t = new Date(Number(mm[1]) - 10000, Number(mm[2]) - 1, Number(mm[3]), Number(mm[4]), Number(mm[5])).getTime();
+		const t = new Date(Number(mm[1]) - 10000, Number(mm[2]) - 1, Number(mm[3]), Number(mm[4]), Number(mm[5]), Number(mm[6])).getTime();
 		return t >= beforeLive - 60000 && t <= afterLive + 60000;
 	};
 	check('(E) a LIVE user tile (drawn as it happened, not on reload) carries a time',

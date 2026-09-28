@@ -5,11 +5,11 @@
    short, unambiguous "when" beside each message (owner, 2026-09-15):
    the LOCAL calendar date in the Holocene reckoning — the Gregorian
    year plus ten thousand, so a chat from this year reads 12026 rather
-   than 2026 — and the LOCAL clock time to the minute. No seconds, no
-   zone suffix on the tile itself: the reader is looking at their own
-   device's clock, and the one place a full instant is warranted is
-   the hover title, which `fmtHoloceneFull` gives with the offset
-   spelled out.
+   than 2026 — and the LOCAL clock time to the second (owner,
+   2026-09-29; it was to the minute until then). No zone suffix on the
+   tile itself: the reader is looking at their own device's clock, and
+   the one place a full instant is warranted is the hover title, which
+   `fmtHoloceneFull` gives with the offset spelled out.
 
    Pure functions, no DOM: `dev/time.test.mjs` drives this module
    directly under `node --test`.
@@ -33,18 +33,21 @@
 	/// rather than inventing one.
 	function isInstant(ts) { return typeof ts === 'number' && isFinite(ts); }
 
-	/// `12026-09-15 13:12` -- the LOCAL date and time to the minute, in
+	/// `12026-09-15 13:12:47` -- the LOCAL date and time to the second, in
 	/// the Holocene year. `ts` is an epoch-ms instant; anything else (in
 	/// particular `undefined`, a message with no `ts` field) answers ''.
 	function fmtHolocene(ts) {
 		if (!isInstant(ts)) return '';
 		var d = new Date(ts);
 		return holoceneYear(d) + '-' + pad2(d.getMonth() + 1) + '-' + pad2(d.getDate())
-			+ ' ' + pad2(d.getHours()) + ':' + pad2(d.getMinutes());
+			+ ' ' + clock(d);
 	}
 
+	/// `13:12:47`, the local wall clock to the second.
+	function clock(d) { return pad2(d.getHours()) + ':' + pad2(d.getMinutes()) + ':' + pad2(d.getSeconds()); }
+
 	/// The same instant with the year cut to its last two digits --
-	/// `26-09-15 13:12` -- for a header too narrow for the full
+	/// `26-09-15 13:12:47` -- for a header too narrow for the full
 	/// five-digit Holocene year (see css/responsive.css's narrow-phone
 	/// swap). The two digits read the same whichever reckoning is asked
 	/// for: ten thousand is a multiple of a hundred, so the Holocene
@@ -53,7 +56,7 @@
 		if (!isInstant(ts)) return '';
 		var d = new Date(ts);
 		return pad2(holoceneYear(d) % 100) + '-' + pad2(d.getMonth() + 1) + '-' + pad2(d.getDate())
-			+ ' ' + pad2(d.getHours()) + ':' + pad2(d.getMinutes());
+			+ ' ' + clock(d);
 	}
 
 	/// The full instant for a hover title: seconds included and the

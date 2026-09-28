@@ -27,6 +27,7 @@
 		dark:     ['dark',  'light'], amber:    ['dark',  'light'],
 		midnight: ['dark',  'light'],
 		forest:   ['dark',  'light'], plum:     ['dark',  'light'],
+		porcelain: ['light', 'dark'],  obsidian: ['dark',  'light'],
 	};
 
 	var root = document.documentElement;

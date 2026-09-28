@@ -39,7 +39,7 @@ const QUICK = process.argv.includes('--quick');
 const SELF  = process.argv.includes('--self');
 const PALETTES = QUICK
 	? ['light', 'dark']
-	: ['light', 'mist', 'linen', 'lollypop', 'sage', 'dusk', 'dark', 'amber', 'midnight', 'forest', 'plum'];
+	: ['light', 'mist', 'linen', 'lollypop', 'sage', 'dusk', 'dark', 'amber', 'midnight', 'forest', 'plum', 'porcelain', 'obsidian'];
 const SPACINGS = ['sharp', 'warm'];
 
 const log = (...a) => console.log(...a);

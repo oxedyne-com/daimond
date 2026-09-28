@@ -74,7 +74,7 @@
 
 	// ── 面板名称 ───────────────────────────────────────────────
 	// 要短：它们排在一行标签里，也排在手机的底部标签栏里。
-	'panel.rail':    'diamonds',
+	'panel.rail':    'Diamonds',
 	'panel.ai':      'AI',
 	'panel.web':     '网页',
 	'panel.doc':     '文档',
@@ -118,7 +118,7 @@
 	'pal.hint_current': '当前',
 
 	// ── 侧栏 ───────────────────────────────────────────────────
-	'rail.diamonds':             'diamonds',
+	'rail.diamonds':             'Diamonds',
 	'rail.diamonds_help': '你保存的项目',
 	'rail.new_diamond':          '新建 diamond',
 	'rail.unnamed_diamond': '未命名的 diamond',
@@ -930,6 +930,9 @@
 	'menu.view_max': '详细',
 	'menu.view_simple_help': '只显示名称',
 	'menu.view_max_help': '每个卡片都显示详情',
+	'menu.look':            '风格',
+	'menu.look_classic':    '经典',
+	'menu.look_daylight':   'Daylight',
 	'menu.theme':         '主题',
 	'menu.tone_light':    '浅色',
 	'menu.tone_mid':      '中间色',
@@ -946,6 +949,8 @@
 	'menu.theme_midnight':  '午夜',
 	'menu.theme_forest':    '森林',
 	'menu.theme_plum':      '李子',
+	'menu.theme_porcelain': '瓷白',
+	'menu.theme_obsidian':  '黑曜石',
 	'menu.text_size':     '字号',
 	'menu.smaller':       '缩小文字',
 	'menu.larger':        '放大文字',

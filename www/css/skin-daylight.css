@@ -1,0 +1,831 @@
+/* ============================================================
+   skin-daylight.css — the "Daylight" skin.
+   ------------------------------------------------------------
+   2026-09-29, D-20260928-09: the owner's pick from the UI
+   redesign (round 3, P3 Column), with his amendments. The
+   design is in ~/usr/code/ai/claude/daimond/ui_redesign_20260928/.
+
+   Everything here is scoped to :root[data-skin="daylight"], so
+   Sharp and Warm are not touched by a single rule. The tokens
+   (faces, the seven-step type scale, the light fill) are in
+   variables.css under the same selector; this file spends them.
+
+   THE CALM IS TAKEN AWAY, NOT ADDED. Rules, outlines and filled
+   chips are the exception here: the stage is the one raised
+   sheet, the rail and the dock sit on the desk, and size, weight
+   and ink do the work borders did. Where something needs to say
+   "current" or "under the pointer" it takes one light fill of the
+   palette's own ink (--dl-on, --dl-hover), never a line: the
+   header's tabs, the selected chat and diamond, a transcript
+   tile's extent on hover. The coloured tag chips keep their
+   colours and lose their outlines.
+   ============================================================ */
+
+/* The three faces, Latin subsets (OFL, beside them in fonts/). Fetched only
+   when something renders in them, which is only under this skin. */
+@font-face {
+	font-family: 'Sofia Sans Condensed';
+	font-style: normal;
+	font-weight: 1 1000;
+	font-display: swap;
+	src: url('../fonts/sofia-sans-condensed-latin.woff2') format('woff2');
+}
+@font-face {
+	font-family: 'Sofia Sans';
+	font-style: normal;
+	font-weight: 1 1000;
+	font-display: swap;
+	src: url('../fonts/sofia-sans-latin.woff2') format('woff2');
+}
+@font-face {
+	font-family: 'Sometype Mono';
+	font-style: normal;
+	font-weight: 400 700;
+	font-display: swap;
+	src: url('../fonts/sometype-mono-latin.woff2') format('woff2');
+}
+
+/* Weights by role. Light type on a dark ground reads a step heavier, so every
+   weight eases back on a light-ink palette. */
+:root[data-skin="daylight"] {
+	--w-text:   400;
+	--w-med:    520;
+	--w-strong: 680;
+	--w-head:   430;
+	--w-title:  560;
+	--w-you:    430;
+}
+:root[data-skin="daylight"][data-ink="light"] {
+	--w-text:   375;
+	--w-med:    495;
+	--w-strong: 655;
+	--w-head:   405;
+	--w-title:  535;
+	--w-you:    405;
+}
+
+/* ── Base ──────────────────────────────────────────────────── */
+:root[data-skin="daylight"] body {
+	font-family: var(--font);
+	font-weight: var(--w-text);
+	line-height: 1.35;
+	-webkit-font-smoothing: antialiased;
+	font-optical-sizing: auto;
+}
+/* Figures in the mono, level with the words. */
+:root[data-skin="daylight"] .tile-model-chip,
+:root[data-skin="daylight"] .session-box-time,
+:root[data-skin="daylight"] .session-box-ctx,
+:root[data-skin="daylight"] .session-box-cost,
+:root[data-skin="daylight"] .tile-meter,
+:root[data-skin="daylight"] .ctile-time,
+:root[data-skin="daylight"] .crollup-count,
+:root[data-skin="daylight"] .spend-amt,
+:root[data-skin="daylight"] .files-size,
+:root[data-skin="daylight"] .cmeter {
+	font-family: var(--font-mono);
+	font-variant-numeric: tabular-nums;
+	letter-spacing: -0.01em;
+}
+
+/* ── Top bar and its tabs ──────────────────────────────────── */
+:root[data-skin="daylight"] .topbar { min-height: var(--header-h); padding: 0 12px 0 20px; gap: 8px; }
+:root[data-skin="daylight"] .brand-wordmark { height: 20px; }
+:root[data-skin="daylight"] .ptag-group { gap: 2px; }
+/* The group divider becomes space: three groups read by where they stand. */
+:root[data-skin="daylight"] .ptag-div { background: transparent; margin: 0 8px; }
+/* A tab is a word; the one on screen is a light chip. No outline, no
+   underline, and no weight change, so a tab never moves its neighbours. */
+:root[data-skin="daylight"] .ptag {
+	font-family: var(--font);
+	font-size: var(--dl-sm);
+	font-weight: var(--w-text);
+	letter-spacing: 0;
+	padding: 6px 11px;
+	border: 1px solid transparent;
+	border-radius: var(--radius);
+	background: transparent;
+	color: var(--text-secondary);
+}
+:root[data-skin="daylight"] .ptag:hover { background: var(--dl-hover); border-color: transparent; color: var(--text-primary); }
+:root[data-skin="daylight"] .ptag.on { background: var(--dl-on); border-color: transparent; color: var(--text-primary); }
+:root[data-skin="daylight"] .ptag.on:hover { background: var(--dl-on); }
+:root[data-skin="daylight"] .ptag-more { letter-spacing: 0; padding: 6px 11px; }
+:root[data-skin="daylight"] .ptag:disabled:hover,
+:root[data-skin="daylight"] .ptag.full:hover { border-color: transparent; }
+:root[data-skin="daylight"] .icon-btn { border-radius: var(--radius); color: var(--text-secondary); }
+:root[data-skin="daylight"] .icon-btn:hover { background: var(--dl-hover); }
+:root[data-skin="daylight"] .update-chip { border-color: transparent; }
+
+/* The wordmark: on a light palette Daylight letters the word in ink rather
+   than in the rose, which on white read as a second accent. */
+:root[data-skin="daylight"][data-ink="dark"] .brand-wordmark.wm-on-light { display: none; }
+:root[data-skin="daylight"][data-ink="dark"] .brand-wordmark.wm-on-ink { display: block; }
+
+/* ── Panels: one raised sheet, the rest on the desk ────────── */
+:root[data-skin="daylight"] .ai,
+:root[data-skin="daylight"] .web,
+:root[data-skin="daylight"] .doc,
+:root[data-skin="daylight"] .msg,
+:root[data-skin="daylight"] .compose,
+:root[data-skin="daylight"] .tools {
+	border-color: transparent;
+	border-radius: var(--radius-lg);
+	box-shadow: 0 0 0 1px var(--border);
+}
+:root[data-skin="daylight"] .rail,
+:root[data-skin="daylight"] .agents,
+:root[data-skin="daylight"] .work,
+:root[data-skin="daylight"] .mail,
+:root[data-skin="daylight"] .spend,
+:root[data-skin="daylight"] .social,
+:root[data-skin="daylight"] .tracker {
+	border-color: transparent;
+	box-shadow: none;
+}
+/* On the desk they take the desk's own ground. On a phone they are drawers
+   and sheets, which mobile.css makes opaque, and that stands. */
+@media (min-width: 761px) {
+	:root[data-skin="daylight"] .rail,
+	:root[data-skin="daylight"] .agents,
+	:root[data-skin="daylight"] .work,
+	:root[data-skin="daylight"] .mail,
+	:root[data-skin="daylight"] .spend,
+	:root[data-skin="daylight"] .social,
+	:root[data-skin="daylight"] .tracker { background: transparent; }
+}
+
+/* ── Heads ─────────────────────────────────────────────────── */
+/* A section head is a word in the condensed face at the section size, in
+   sentence case. What was an all-caps label becomes a name. */
+:root[data-skin="daylight"] .railhead { padding: 16px 2px 8px 4px; gap: 4px; }
+:root[data-skin="daylight"] .railhead > span:first-child {
+	font-family: var(--font-display);
+	font-size: var(--dl-xl);
+	font-weight: var(--w-head);
+	line-height: 1;
+	letter-spacing: -0.005em;
+	text-transform: none;
+	color: var(--text-primary);
+	overflow: hidden;
+	text-overflow: ellipsis;
+}
+:root[data-skin="daylight"] .rail-count { font-size: var(--dl-2xs); align-self: center; }
+:root[data-skin="daylight"] .addbtn {
+	width: 30px;
+	height: 30px;
+	border: 1px solid transparent;
+	border-radius: var(--radius);
+	background: transparent;
+	color: var(--text-muted);
+}
+:root[data-skin="daylight"] .addbtn:hover { background: var(--dl-hover); color: var(--text-primary); }
+:root[data-skin="daylight"] .addbtn:disabled:hover { border-color: transparent; background: transparent; }
+:root[data-skin="daylight"] .addbtn[aria-pressed="true"] { background: var(--dl-on); border-color: transparent; color: var(--text-primary); }
+/* A head's word button ("New diamond") is a word in the accent, not a box. */
+:root[data-skin="daylight"] .railbtn {
+	width: auto;
+	padding: 0 8px;
+	font-size: var(--dl-xs);
+	font-weight: var(--w-strong);
+	color: var(--accent-text);
+}
+
+/* ── The pause row ─────────────────────────────────────────── */
+:root[data-skin="daylight"] .pptw { border-color: transparent; background: transparent; }
+:root[data-skin="daylight"] .pptw-act { border-radius: var(--radius-sm); }
+:root[data-skin="daylight"] .pptw-head-label { font-size: var(--dl-sm); color: var(--text-primary); }
+:root[data-skin="daylight"] .pptw-head-state { font-size: var(--dl-xs); color: var(--text-muted); text-transform: none; letter-spacing: 0; }
+
+/* ── Rail tiles: diamonds and chats ────────────────────────── */
+:root[data-skin="daylight"] .diamond-list,
+:root[data-skin="daylight"] .session-list { gap: 2px; }
+:root[data-skin="daylight"] .session-box {
+	padding: 7px 10px 8px;
+	border: 1px solid transparent;
+	border-radius: var(--radius);
+	background: transparent;
+	box-shadow: none;
+}
+:root[data-skin="daylight"] .session-box:hover { background: var(--dl-hover); border-color: transparent; }
+/* The selected chat or diamond: the same light fill as the header's chip, and
+   nothing else -- no side bar, no outline. */
+:root[data-skin="daylight"] .session-box.active,
+:root[data-skin="daylight"] .session-box.active:hover {
+	background: var(--dl-on);
+	border-color: transparent;
+	box-shadow: none;
+}
+:root[data-skin="daylight"] .session-box.active::before { content: none; }
+:root[data-skin="daylight"] .session-box-name,
+:root[data-skin="daylight"] .tile-label {
+	font-size: var(--dl-sm);
+	font-weight: var(--w-med);
+	color: var(--text-primary);
+}
+:root[data-skin="daylight"] .session-box.active .session-box-name,
+:root[data-skin="daylight"] .session-box.active .tile-label { color: var(--text-primary); font-weight: var(--w-strong); }
+:root[data-skin="daylight"] .tile-when-sub { font-size: var(--dl-2xs); color: var(--text-muted); font-weight: var(--w-text); }
+:root[data-skin="daylight"] .tile-preview { font-size: var(--dl-xs); color: var(--text-secondary); margin-top: 1px; }
+/* Max detail is quiet type, not pills: the model is a word in the mono. */
+:root[data-skin="daylight"] .tile-model-chip {
+	background: transparent;
+	border: 0;
+	border-radius: 0;
+	padding: 0;
+	font-size: var(--dl-2xs);
+	color: var(--text-muted);
+}
+:root[data-skin="daylight"] .session-box-meta { gap: 2px 10px; margin-top: 1px; }
+:root[data-skin="daylight"] .session-box-time,
+:root[data-skin="daylight"] .session-box-ctx,
+:root[data-skin="daylight"] .session-box-cost,
+:root[data-skin="daylight"] .tile-meter { font-size: var(--dl-2xs); color: var(--text-muted); }
+:root[data-skin="daylight"] .rail-day {
+	font-size: var(--dl-xs);
+	font-weight: var(--w-strong);
+	text-transform: none;
+	letter-spacing: 0;
+	color: var(--text-muted);
+	padding: 8px 10px 4px;
+}
+:root[data-skin="daylight"] .tile-cog,
+:root[data-skin="daylight"] .tile-x { border-radius: var(--radius-sm); color: var(--text-muted); }
+:root[data-skin="daylight"] .rail-builtin > summary { text-transform: none; letter-spacing: 0; font-size: var(--dl-xs); }
+
+/* ── The account, at the rail's foot ───────────────────────── */
+/* The one rule the rail keeps: it says the list has ended. */
+:root[data-skin="daylight"] .admin-status { border-top: 1px solid var(--border); padding-top: 10px; gap: 2px; }
+:root[data-skin="daylight"] .astat-detail { border-left: 0; margin-left: 0; }
+:root[data-skin="daylight"] .user-info { font-size: var(--dl-sm); font-weight: var(--w-strong); color: var(--text-primary); }
+:root[data-skin="daylight"] .astat-row { font-size: var(--dl-xs); }
+:root[data-skin="daylight"] .astat-btn:hover { background: var(--dl-hover); }
+:root[data-skin="daylight"] .spend-row { border-top: 0; padding: 6px 0 2px; }
+:root[data-skin="daylight"] .spend-cell { align-items: flex-start; }
+:root[data-skin="daylight"] .spend-label { font-size: var(--dl-2xs); text-transform: none; letter-spacing: 0; }
+:root[data-skin="daylight"] .spend-amt { font-size: var(--dl-sm); color: var(--text-primary); }
+
+/* ── The stage: the chat's head ────────────────────────────── */
+:root[data-skin="daylight"] .chead { border-bottom: 0; padding: 12px 14px 6px 28px; min-height: 64px; gap: 10px; }
+:root[data-skin="daylight"] .ctitle {
+	font-family: var(--font-display);
+	font-size: var(--dl-lg);
+	font-weight: var(--w-title);
+	letter-spacing: 0;
+}
+:root[data-skin="daylight"] .chead-when { font-size: var(--dl-xs); }
+:root[data-skin="daylight"] .chead-right { gap: 2px; }
+:root[data-skin="daylight"] .chip-btn {
+	border-color: transparent;
+	background: transparent;
+	color: var(--text-muted);
+	border-radius: var(--radius);
+}
+:root[data-skin="daylight"] .chip-btn:hover { background: var(--dl-hover); color: var(--text-primary); }
+:root[data-skin="daylight"] .chip-btn.on,
+:root[data-skin="daylight"] .chip-btn.icon-chip[aria-pressed="true"] { background: var(--dl-on); border-color: transparent; color: var(--text-primary); }
+:root[data-skin="daylight"] .chip-btn.accent { border-color: transparent; color: var(--accent-text); }
+:root[data-skin="daylight"] .mode-chip { font-size: var(--dl-xs); color: var(--text-secondary); padding-right: 10px; }
+:root[data-skin="daylight"] .mode-chip.net-cut { border-color: transparent; background: var(--warn-bg); }
+:root[data-skin="daylight"] .cmeter { font-size: var(--dl-2xs); color: var(--text-muted); }
+/* Crystal / Chat: two words, the one on screen in the light chip. */
+:root[data-skin="daylight"] .dview { border: 0; gap: 2px; }
+:root[data-skin="daylight"] .dview-btn {
+	border: 0;
+	background: transparent;
+	border-radius: var(--radius-sm);
+	font-size: var(--dl-xs);
+	color: var(--text-muted);
+}
+:root[data-skin="daylight"] .dview-btn + .dview-btn { border-left: 0; }
+:root[data-skin="daylight"] .dview-btn[aria-pressed="true"] { background: var(--dl-on); color: var(--text-primary); }
+
+/* ── The transcript ────────────────────────────────────────── */
+/* A reading column on the sheet. Every tile is flush: the speaker shows in the
+   type, not in an indent or a box. */
+:root[data-skin="daylight"] .chat-output { --ct-indent: 0px; padding: 4px 28px 12px; line-height: 1.5; }
+:root[data-skin="daylight"] .chat-output > * { max-width: 760px; }
+:root[data-skin="daylight"] .ctile,
+:root[data-skin="daylight"] .crollup {
+	background: transparent;
+	border-color: transparent;
+	border-radius: var(--radius);
+	margin: 6px 0;
+	transition: background-color 0.12s;
+}
+/* A tile shows its extent under the pointer, as a fill in its own hue: the
+   structure is there when asked for, and no line draws it. */
+:root[data-skin="daylight"] .ctile:hover,
+:root[data-skin="daylight"] .crollup:hover {
+	background: color-mix(in srgb, var(--ct-edge) 6%, transparent);
+	border-color: transparent;
+}
+:root[data-skin="daylight"] .ctile .ctile:hover { background: color-mix(in srgb, var(--ct-edge) 8%, transparent); }
+/* A solo Tool step -- one call, no rollup drawn round it -- nests its `.ctile`
+   three and four selectors deep (`.crollup[data-t="tool"] > .crollup-body >
+   .ctile`, `.crollup.solo[...]`), which out-specifies the two rules above and
+   kept its green fill at rest under them (QA round 2, minor 6). Named
+   explicitly here rather than raised generically, so it drops to transparent
+   like every other tile and takes the same hover fill. */
+:root[data-skin="daylight"] .crollup[data-t="tool"] > .crollup-body > .ctile,
+:root[data-skin="daylight"] .crollup.solo[data-t="tool"] > .crollup-body > .ctile {
+	background: transparent;
+}
+:root[data-skin="daylight"] .crollup[data-t="tool"] > .crollup-body > .ctile:hover,
+:root[data-skin="daylight"] .crollup.solo[data-t="tool"] > .crollup-body > .ctile:hover {
+	background: color-mix(in srgb, var(--ct-edge) 6%, transparent);
+}
+:root[data-skin="daylight"] .ctile-lbl,
+:root[data-skin="daylight"] .crollup-lbl {
+	padding: 6px 12px 4px;
+	gap: 8px;
+	font-size: var(--dl-xs);
+	font-weight: var(--w-strong);
+}
+:root[data-skin="daylight"] .ctile-lbl:hover,
+:root[data-skin="daylight"] .crollup-lbl:hover { background: transparent; }
+:root[data-skin="daylight"] .ctile-dot { width: 8px; height: 8px; }
+:root[data-skin="daylight"] .ctile[data-t="user"] .ctile-dot { display: none; }
+:root[data-skin="daylight"] .ctile[data-t="user"] .ctile-who { color: var(--text-secondary); }
+:root[data-skin="daylight"] .ctile-meta { font-weight: var(--w-text); font-size: var(--dl-xs); }
+:root[data-skin="daylight"] .ctile-time { font-size: var(--dl-2xs); }
+:root[data-skin="daylight"] .ctile-body { padding: 0 12px 10px; font-size: var(--dl-md); line-height: 1.56; }
+/* Your turn is a lead line in the condensed face; the daimon's answer is text.
+   The difference is type, not a bubble. */
+:root[data-skin="daylight"] .chat-msg-user { text-align: left; }
+:root[data-skin="daylight"] .chat-msg-user .chat-msg-content {
+	display: block;
+	background: transparent;
+	color: var(--text-primary);
+	border-radius: 0;
+	padding: 0;
+	max-width: none;
+}
+:root[data-skin="daylight"] .ctile[data-t="user"] .ctile-body {
+	font-family: var(--font-display);
+	font-size: var(--dl-lg);
+	font-weight: var(--w-you);
+	line-height: 1.32;
+	color: var(--text-primary);
+}
+:root[data-skin="daylight"] .ctile-body strong { font-weight: var(--w-strong); }
+:root[data-skin="daylight"] .ctile-body code {
+	font-size: 0.86em;
+	background: transparent;
+	padding: 0;
+	color: var(--accent-text);
+}
+:root[data-skin="daylight"] .ctile-body pre { border: 0; }
+:root[data-skin="daylight"] .ctile-body li::marker { color: var(--text-muted); }
+/* Tables: a rule under the head and between rows, nothing round them. */
+:root[data-skin="daylight"] .chat-msg-content .tbl-wrap,
+:root[data-skin="daylight"] .chat-msg-content .md-table,
+:root[data-skin="daylight"] .chat-msg-content table { border: 0; box-shadow: none; background: transparent; }
+:root[data-skin="daylight"] .chat-msg-content table { border-collapse: collapse; font-size: var(--dl-sm); }
+:root[data-skin="daylight"] .chat-msg-content th,
+:root[data-skin="daylight"] .chat-msg-content td {
+	border: 0;
+	border-bottom: 1px solid var(--border);
+	background: transparent;
+	padding: 7px 28px 7px 0;
+	text-align: left;
+}
+:root[data-skin="daylight"] .chat-msg-content th {
+	font-size: var(--dl-xs);
+	font-weight: var(--w-med);
+	color: var(--text-muted);
+	border-bottom-color: var(--border-2);
+}
+:root[data-skin="daylight"] .chat-msg-content tbody tr:last-child td { border-bottom: 0; }
+:root[data-skin="daylight"] .chat-msg-content tr:nth-child(even) td { background: transparent; }
+
+/* ── The composer ──────────────────────────────────────────── */
+:root[data-skin="daylight"] .chat-input-bar { border-top: 0; padding: 8px 14px 16px 28px; gap: 6px; }
+:root[data-skin="daylight"] #chat-input {
+	background: var(--bg-secondary);
+	border: 1px solid var(--border-2);
+	border-radius: var(--radius);
+	font-size: calc(15px * var(--fs-scale));
+	padding: 12px 14px;
+}
+:root[data-skin="daylight"] #chat-input:focus { border-color: var(--accent); }
+:root[data-skin="daylight"] #chat-send { width: 46px; height: 46px; border-radius: var(--radius); }
+:root[data-skin="daylight"] #chat-jump,
+:root[data-skin="daylight"] #chat-end {
+	height: 46px;
+	width: 34px;
+	border: 0;
+	background: transparent;
+	color: var(--text-muted);
+}
+:root[data-skin="daylight"] #chat-jump:hover,
+:root[data-skin="daylight"] #chat-end:hover { background: var(--dl-hover); color: var(--text-primary); }
+:root[data-skin="daylight"] .chat-attach-strip { padding: 0 14px 0 28px; margin: 0; }
+:root[data-skin="daylight"] .attach-head { border: 0; background: transparent; font-size: var(--dl-xs); color: var(--text-muted); }
+:root[data-skin="daylight"] .arte-list,
+:root[data-skin="daylight"] .arte-row { border-color: transparent; }
+:root[data-skin="daylight"] .mark-notice { border-color: transparent; }
+
+/* ── The Workspace, in the dock ────────────────────────────── */
+:root[data-skin="daylight"] .files-card,
+:root[data-skin="daylight"] .files-mode,
+:root[data-skin="daylight"] .files-scope,
+:root[data-skin="daylight"] .files-reach,
+:root[data-skin="daylight"] .files-kits,
+:root[data-skin="daylight"] .files-path,
+:root[data-skin="daylight"] .files-rest,
+:root[data-skin="daylight"] .sys-sec,
+:root[data-skin="daylight"] .files-view-head,
+:root[data-skin="daylight"] .files-view-msg,
+:root[data-skin="daylight"] .files-view-note,
+:root[data-skin="daylight"] .files-row.attached-group,
+:root[data-skin="daylight"] .cloud-row {
+	border-color: transparent;
+	background: transparent;
+	box-shadow: none;
+}
+:root[data-skin="daylight"] .files-mode-chip,
+:root[data-skin="daylight"] .files-scope-chip,
+:root[data-skin="daylight"] .files-mark-here,
+:root[data-skin="daylight"] .files-badge {
+	border-color: transparent;
+	background: transparent;
+	border-radius: var(--radius-sm);
+	color: var(--text-secondary);
+}
+:root[data-skin="daylight"] .files-mode-chip:hover,
+:root[data-skin="daylight"] .files-scope-chip:hover,
+:root[data-skin="daylight"] .files-mark-here:hover { background: var(--dl-hover); border-color: transparent; }
+:root[data-skin="daylight"] .files-mode-chip.active,
+:root[data-skin="daylight"] .files-mode-chip[aria-pressed="true"],
+:root[data-skin="daylight"] .files-scope-chip.active {
+	background: var(--dl-on);
+	border-color: transparent;
+	color: var(--text-primary);
+}
+/* A Toolchains toggle keeps a faint rest fill rather than going fully bare
+   (QA round 2, minor 2): "Showing" always has a member on to read as a
+   control, but a Diamond with no toolchain granted has FIVE off chips and
+   nothing to contrast them against words -- they read as a sentence, not
+   five buttons.
+
+   RE-CHECK (regression): `--bg-tertiary` at rest sat within a point of
+   `--dl-hover`'s own fill on Porcelain (235 vs 234) and read DARKER than
+   hover on Obsidian, so rest and hover were the same control at two names;
+   and a GRANTED chip's `--dl-on` (8% of the ink) was barely a shade off
+   ungranted's rest, so only the text said a toolchain was on. Rest now
+   takes `--dl-hover`'s fill (still faint, but a genuine step below hover),
+   hover takes `--dl-on`, and granted takes the accent fill base's own
+   granted chip uses -- clearly a third, different thing from either. */
+:root[data-skin="daylight"] .files-kit-chip {
+	border-color: transparent;
+	background: var(--dl-hover);
+	border-radius: var(--radius-sm);
+	color: var(--text-secondary);
+}
+:root[data-skin="daylight"] .files-kit-chip:hover { background: var(--dl-on); border-color: transparent; }
+:root[data-skin="daylight"] .files-kit-chip.active,
+:root[data-skin="daylight"] .files-kit-chip[aria-pressed="true"] {
+	background: var(--accent-soft);
+	border-color: transparent;
+	color: var(--accent-text);
+}
+:root[data-skin="daylight"] .files-row { font-size: var(--dl-sm); border-color: transparent; border-radius: var(--radius-sm); }
+:root[data-skin="daylight"] .files-size { font-size: var(--dl-2xs); color: var(--text-muted); }
+:root[data-skin="daylight"] .cloud-bar { border-color: transparent; }
+
+/* ── Tag chips: the colours stay, the outlines go ──────────── */
+:root[data-skin="daylight"] .tag-chip { border-color: transparent; }
+:root[data-skin="daylight"] button.tag-chip:hover { border-color: transparent; }
+:root[data-skin="daylight"] .tag-more { border-color: transparent; }
+/* A refused tag was a dashed outline round nothing; without the line it takes
+   a faint fill of its own hue, and the ¬ says the rest. */
+:root[data-skin="daylight"] .tag-no { border-color: transparent; background: hsl(var(--tag-h, 0) 30% 20% / 0.35); }
+:root[data-skin="daylight"][data-ink="dark"] .tag-no { background: hsl(var(--tag-h, 0) 60% 95%); }
+:root[data-skin="daylight"] .tag-mode { border-color: transparent; background: var(--dl-hover); }
+/* On a light palette (data-ink="dark") the border was carrying the pale
+   fills' shape; without it hsl(h 70% 94%) read as coloured TEXT rather than
+   a chip for a high-lightness hue such as yellow ("tax"), against the desk's
+   near-white (QA round 2, minor 5). One step down keeps every hue's own
+   colour -- pink, green and blue already read fine at 94% -- and gives
+   yellow the shape back too.
+
+   NOT `.tag-inc` and NOT `.tag-no` (QA round 2 re-check, regression): both
+   tie this rule's specificity in app.css and lose to it on source order
+   alone, so a tag the rail is filtering ON went white-on-pale-yellow, and a
+   refused tag took the full fill it is deliberately kept off. Excluded
+   rather than out-specified, so their own rules -- `--accent-soft`'s fill
+   for `.tag-inc`, the faint one for `.tag-no` -- are simply never reached
+   here and read exactly as every other skin's. */
+:root[data-skin="daylight"][data-ink="dark"] .tag-chip:not(.tag-inc):not(.tag-no) { background: hsl(var(--tag-h, 0) 70% 90%); }
+
+/* ── Pop-ups and dialogs: lifted, not ruled ────────────────── */
+:root[data-skin="daylight"] .pop,
+:root[data-skin="daylight"] .dlg-card,
+:root[data-skin="daylight"] .modal-card,
+:root[data-skin="daylight"] .pal-box {
+	border-color: transparent;
+	box-shadow: 0 0 0 1px var(--border), 0 18px 48px rgba(20, 12, 16, 0.18);
+}
+:root[data-skin="daylight"] .pop-head { text-transform: none; letter-spacing: 0; font-size: var(--dl-xs); font-weight: var(--w-strong); }
+
+/* ── Secondary controls: the header's chip, not a ruled pill ──
+   Three spots kept the pill-on-a-border style every other control in the
+   look had already lost: Social's sub-tabs, Spending's Week | Month, and a
+   dialog's Cancel (QA round 2, minor 1). Same gesture as the header tabs --
+   a light fill of the palette's own ink for "current" or "under the
+   pointer", never a line. */
+:root[data-skin="daylight"] .imp-chip {
+	border-color: transparent;
+	background: transparent;
+	color: var(--text-secondary);
+}
+:root[data-skin="daylight"] .imp-chip:hover:not(:disabled) {
+	background: var(--dl-hover);
+	border-color: transparent;
+	color: var(--text-primary);
+}
+:root[data-skin="daylight"] .imp-chip.on {
+	background: var(--dl-on);
+	border-color: transparent;
+	color: var(--text-primary);
+}
+/* `.imp-chip:hover:not(:disabled)` above out-specifies `.imp-chip.on` (three
+   class-level selectors against two), so hovering the CURRENT chip faded it
+   from --dl-on's 8% to --dl-hover's 4.5% (QA round 2 re-check, regression).
+   Matched at the same specificity `.ptag.on:hover` already keeps it at.  */
+:root[data-skin="daylight"] .imp-chip.on:hover { background: var(--dl-on); }
+/* PHONE (QA round 2 re-check, still open): mobile.css's own
+   `#msheet #panel-social > .railhead .imp-chip` carries two ids, which the
+   desk rule above cannot out-specify at any width. Repeated at that
+   selector so it wins under Daylight without touching Sharp or Warm's. */
+@media (max-width: 760px) {
+	:root[data-skin="daylight"] #msheet #panel-social > .railhead .imp-chip {
+		border-color: transparent;
+		background: transparent;
+		color: var(--text-secondary);
+	}
+	:root[data-skin="daylight"] #msheet #panel-social > .railhead .imp-chip:hover:not(:disabled) {
+		background: var(--dl-hover);
+		border-color: transparent;
+		color: var(--text-primary);
+	}
+	:root[data-skin="daylight"] #msheet #panel-social > .railhead .imp-chip.on {
+		background: var(--dl-on);
+		border-color: transparent;
+		color: var(--text-primary);
+	}
+	:root[data-skin="daylight"] #msheet #panel-social > .railhead .imp-chip.on:hover { background: var(--dl-on); }
+}
+:root[data-skin="daylight"] .spend-toggle {
+	background: transparent;
+	border-color: transparent;
+	padding: 0;
+}
+:root[data-skin="daylight"] .spend-toggle-btn {
+	border-radius: var(--radius-sm);
+	color: var(--text-secondary);
+}
+:root[data-skin="daylight"] .spend-toggle-btn:hover { background: var(--dl-hover); color: var(--text-primary); }
+:root[data-skin="daylight"] .spend-toggle-btn.on {
+	background: var(--dl-on);
+	color: var(--text-primary);
+	box-shadow: none;
+}
+:root[data-skin="daylight"] .modal-close.dlg-cancel {
+	background: transparent;
+	border-color: transparent;
+	color: var(--text-secondary);
+}
+:root[data-skin="daylight"] .modal-close.dlg-cancel:hover {
+	background: var(--dl-hover);
+	border-color: transparent;
+	color: var(--text-primary);
+}
+
+/* ── A diamond's page ──────────────────────────────────────── */
+/* Edit, History and Page are words; the primary one keeps its fill. */
+:root[data-skin="daylight"] .crystal-bar { gap: 4px; }
+:root[data-skin="daylight"] .crystal-act {
+	border-color: transparent;
+	background: transparent;
+	font-size: var(--dl-xs);
+	font-weight: var(--w-med);
+	color: var(--text-secondary);
+	border-radius: var(--radius-sm);
+}
+:root[data-skin="daylight"] .crystal-act:hover { background: var(--dl-hover); color: var(--text-primary); }
+:root[data-skin="daylight"] .crystal-act.primary { background: var(--accent); color: var(--on-fill); }
+
+
+/* ── Sentence case throughout ─────────────────────────────── */
+/* Every label the other skins set in capitals is set as written here, so a
+   head reads as a name rather than a shout. Collected from every sheet that
+   says `uppercase`; a new one belongs in this list. */
+:root[data-skin="daylight"] .admin-sec,
+:root[data-skin="daylight"] .admin-body .settings-section h3,
+:root[data-skin="daylight"] .rail-builtin > summary,
+:root[data-skin="daylight"] .arte-kind,
+:root[data-skin="daylight"] .attach-group-title,
+:root[data-skin="daylight"] .link-self,
+:root[data-skin="daylight"] .link-label,
+:root[data-skin="daylight"] .rail-day,
+:root[data-skin="daylight"] .fold-menu-head,
+:root[data-skin="daylight"] .spend-label,
+:root[data-skin="daylight"] .tile-dlg-head,
+:root[data-skin="daylight"] .device-nominee,
+:root[data-skin="daylight"] .device-ghost,
+:root[data-skin="daylight"] .device-oldbuild,
+:root[data-skin="daylight"] .tag-box-label,
+:root[data-skin="daylight"] .models-econ,
+:root[data-skin="daylight"] .web-mode,
+:root[data-skin="daylight"] .trig-label,
+:root[data-skin="daylight"] .ask-count,
+:root[data-skin="daylight"] .ask-rec,
+:root[data-skin="daylight"] .ctile-io .cap,
+:root[data-skin="daylight"] .files-rest-head,
+:root[data-skin="daylight"] .sys-head,
+:root[data-skin="daylight"] .graph-band,
+:root[data-skin="daylight"] .graph-edit-lab,
+:root[data-skin="daylight"] .graph-rel-pool-lab,
+:root[data-skin="daylight"] .brand-sub,
+:root[data-skin="daylight"] .post-tray h3,
+:root[data-skin="daylight"] .ref-kind,
+:root[data-skin="daylight"] .imp-with-label,
+:root[data-skin="daylight"] .feed-followers h3,
+:root[data-skin="daylight"] .split .col-tag,
+:root[data-skin="daylight"] .mail-drafts-head,
+:root[data-skin="daylight"] .mail-folders-head,
+:root[data-skin="daylight"] .rel-tag,
+:root[data-skin="daylight"] .code-block-lang,
+:root[data-skin="daylight"] .tools-sec,
+:root[data-skin="daylight"] .pop-head,
+:root[data-skin="daylight"] .pal-item .kind {
+	text-transform: none;
+	letter-spacing: 0;
+}
+
+/* ── Remaining furniture, found on the first shots ─────────── */
+/* The rail's split handle is a place to grab, not a rule: it shows on hover. */
+:root[data-skin="daylight"] .rhandle::after { background: transparent; }
+:root[data-skin="daylight"] .rhandle:hover::after,
+:root[data-skin="daylight"] .rhandle.dragging::after { background: var(--accent); }
+/* The composer's attach row: a quiet line of words over the field. */
+:root[data-skin="daylight"] .ws-group { border-color: transparent; background: transparent; }
+:root[data-skin="daylight"] .attach-view-btn,
+:root[data-skin="daylight"] .attach-add,
+:root[data-skin="daylight"] .attach-add.grants {
+	border-color: transparent;
+	background: transparent;
+	border-radius: var(--radius-sm);
+}
+:root[data-skin="daylight"] .attach-add.grants { color: var(--accent-text); }
+:root[data-skin="daylight"] .attach-view-btn:hover,
+:root[data-skin="daylight"] .attach-add:hover,
+:root[data-skin="daylight"] .attach-add.grants:hover { background: var(--dl-hover); color: var(--text-primary); border-color: transparent; }
+/* A diamond's foot: its links and what it keeps, in the text face. */
+:root[data-skin="daylight"] .crystal-controls { border-top: 0; padding: 8px 28px 4px; }
+:root[data-skin="daylight"] .link-strip,
+:root[data-skin="daylight"] .arte-strip { font-family: var(--font); font-size: var(--dl-xs); }
+/* The Workspace's word buttons and its field. */
+:root[data-skin="daylight"] .files-mode-btn {
+	border-color: transparent;
+	background: transparent;
+	font-size: var(--dl-xs);
+	font-weight: var(--w-strong);
+	color: var(--accent-text);
+	padding-left: 0;
+}
+:root[data-skin="daylight"] .files-mode-btn:hover { background: transparent; text-decoration: underline; }
+:root[data-skin="daylight"] .files-mode-btn.accent { background: var(--accent); color: var(--on-fill); padding-left: 10px; }
+:root[data-skin="daylight"] .files-reach-chip,
+:root[data-skin="daylight"] .files-reach-chip.ro { border-color: transparent; background: transparent; }
+:root[data-skin="daylight"] .instructions-chip { border-color: transparent; background: transparent; justify-content: flex-start; padding-left: 0; }
+/* A search field is a well set into the ground, not a ruled box. */
+:root[data-skin="daylight"] .files-filter-input,
+:root[data-skin="daylight"] .diamond-search,
+:root[data-skin="daylight"] .gal-search {
+	background: var(--bg-tertiary);
+	border-color: transparent;
+	border-radius: var(--radius);
+}
+:root[data-skin="daylight"] .files-filter-input:focus,
+:root[data-skin="daylight"] .diamond-search:focus,
+:root[data-skin="daylight"] .gal-search:focus { border-color: var(--accent); }
+:root[data-skin="daylight"] .files-rest-head,
+:root[data-skin="daylight"] .sys-head { font-family: var(--font); font-size: var(--dl-xs); }
+
+/* ── Max detail on one quiet line ──────────────────────────── */
+/* The model, the time, the tokens and the cost run on one line after the
+   name, parted by a middle dot, rather than a row each. The markup keeps its
+   rows; the skin sets them inline, and anything more wraps. */
+:root[data-skin="daylight"] .diamond-box[data-detail="max"],
+:root[data-skin="daylight"] .chat-box[data-detail="max"] .tile-active {
+	display: flex;
+	flex-direction: row;
+	flex-wrap: wrap;
+	align-items: baseline;
+	column-gap: 0;
+	row-gap: 2px;
+	margin-top: 2px;
+}
+:root[data-skin="daylight"] .diamond-box[data-detail="max"] > * { flex: 0 1 auto; min-width: 0; }
+:root[data-skin="daylight"] .diamond-box[data-detail="max"] > .session-box-header { flex: 1 0 100%; }
+:root[data-skin="daylight"] .session-box[data-detail="max"] .session-box-meta,
+:root[data-skin="daylight"] .session-box[data-detail="max"] .diamond-meter,
+:root[data-skin="daylight"] .session-box[data-detail="max"] .tile-active-top,
+:root[data-skin="daylight"] .session-box[data-detail="max"] .tile-meter {
+	display: inline-flex;
+	align-items: baseline;
+	flex-wrap: wrap;
+	margin-top: 0;
+	gap: 0;
+}
+:root[data-skin="daylight"] .session-box[data-detail="max"] .diamond-meter > *::before,
+:root[data-skin="daylight"] .session-box[data-detail="max"] .tile-meter > *::before {
+	content: '\00b7';
+	margin: 0 6px;
+	color: var(--text-muted);
+	font-family: var(--font);
+}
+
+/* ── Phone ─────────────────────────────────────────────────── */
+@media (max-width: 760px) {
+	/* The drawer is the one raised surface on a phone: the page's white, a
+	   shadow for its edge, and no rule. */
+	:root[data-skin="daylight"] .panel.rail {
+		background: var(--bg-secondary);
+		border-right-color: transparent;
+		box-shadow: 0 0 0 1px var(--border), 0 24px 64px rgba(20, 12, 16, 0.22);
+	}
+	:root[data-skin="daylight"] .railhead > span:first-child { font-size: var(--dl-lg); }
+	:root[data-skin="daylight"] .railhead { padding: 12px 0 4px 4px; }
+	:root[data-skin="daylight"] .chead { padding: 8px 4px 4px 16px; min-height: 52px; }
+	:root[data-skin="daylight"] .ctitle { font-size: var(--dl-md); font-weight: 600; }
+	:root[data-skin="daylight"] .chat-output { padding: 4px 12px 12px; }
+	:root[data-skin="daylight"] .ctile[data-t="user"] .ctile-body { font-size: calc(19px * var(--fs-scale)); }
+	:root[data-skin="daylight"] .ctile-body { font-size: calc(16px * var(--fs-scale)); }
+	/* QA round 2, M2 (still open after the first fix): the row was two lines,
+	   but Daylight's flat strip still centred "Icons +" inside the floating
+	   #chat-jump/#chat-end buttons' own band. 24px of bottom padding lifts
+	   the row's centre clear of them; re-proved with elementFromPoint at the
+	   "+" button's own centre, not by eye. */
+	:root[data-skin="daylight"] .chat-attach-strip { padding: 0 8px 24px 16px; }
+	:root[data-skin="daylight"] .chat-input-bar { padding: 4px 8px 12px 12px; }
+	:root[data-skin="daylight"] .ai,
+	:root[data-skin="daylight"] .web,
+	:root[data-skin="daylight"] .doc,
+	:root[data-skin="daylight"] .msg,
+	:root[data-skin="daylight"] .compose,
+	:root[data-skin="daylight"] .tools { box-shadow: none; border-radius: 0; }
+}
+
+/* The attach row, while it holds nothing: its note and its two controls on
+   one line over the field.
+
+   DESK ONLY (QA round 2, M2). Folded onto one line at any width, "Icons +"
+   sat at the row's right edge, directly under the phone's floating jump
+   buttons (`#chat-jump`/`#chat-end`), so the "+" was the one control in the
+   app a thumb could not reach. Below the phone breakpoint the row keeps
+   base's two lines, which is what leaves those buttons clear. */
+@media (min-width: 761px) {
+	:root[data-skin="daylight"] .ws-group:has(> .ws-body > .ws-empty:only-child) {
+		display: flex;
+		flex-direction: row-reverse;
+		align-items: center;
+	}
+	:root[data-skin="daylight"] .ws-group:has(> .ws-body > .ws-empty:only-child) > .ws-body { flex: 1 1 auto; min-width: 0; }
+}
+:root[data-skin="daylight"] .ws-empty { font-size: var(--dl-xs); color: var(--text-muted); padding-left: 0; }
+:root[data-skin="daylight"] .instructions-chip { text-align: left; width: auto; align-self: flex-start; font-size: var(--dl-xs); }
+:root[data-skin="daylight"] .files-path,
+:root[data-skin="daylight"] .path-crumb { font-family: var(--font); font-size: var(--dl-sm); }
+
+/* ── The appearance menu and its kind ──────────────────────── */
+/* A segmented control is a row of words; the chosen one takes the light chip,
+   the same gesture as the header's tabs. */
+:root[data-skin="daylight"] .seg { gap: 2px; }
+:root[data-skin="daylight"] .seg button,
+:root[data-skin="daylight"] .size-row button {
+	border-color: transparent;
+	background: transparent;
+	border-radius: var(--radius-sm);
+	color: var(--text-secondary);
+}
+:root[data-skin="daylight"] .seg button:hover,
+:root[data-skin="daylight"] .size-row button:hover:not(:disabled) { background: var(--dl-hover); border-color: transparent; color: var(--text-primary); }
+:root[data-skin="daylight"] .seg button[aria-pressed="true"] {
+	background: var(--dl-on);
+	border-color: transparent;
+	color: var(--text-primary);
+}
+:root[data-skin="daylight"] .theme-pick,
+:root[data-skin="daylight"] .pop select {
+	background-color: var(--bg-tertiary);
+	border-color: transparent;
+	border-radius: var(--radius-sm);
+}
+:root[data-skin="daylight"] .theme-pick:hover,
+:root[data-skin="daylight"] .pop select:hover { border-color: transparent; background-color: var(--bg-hover); }
+/* A chat tile's name sits on the same edge as a diamond's. */
+:root[data-skin="daylight"] .tile-label { padding-left: 0; }

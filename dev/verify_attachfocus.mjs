@@ -418,7 +418,7 @@ for (const b of await page.$$('.attach-pick-name.dir')) {
 }
 await page.waitForTimeout(700);
 const stalePick = await page.$$eval('.attach-pick-row', rows => rows.map(r => ({
-	name:   r.querySelector('.attach-pick-name').textContent.replace(/^\S+\s/, ''),
+	name:   r.querySelector('.attach-pick-name').textContent.trim(),
 	ticked: r.querySelector('input').checked,
 	fixed:  r.querySelector('input').disabled,
 })));
@@ -628,7 +628,7 @@ for (const b of await page.$$('.attach-pick-name.dir')) {
 }
 await page.waitForTimeout(700);
 const pickRows = await page.$$eval('.attach-pick-row', rows => rows.map(r => ({
-	name: r.querySelector('.attach-pick-name').textContent.replace(/^\S+\s/, ''),
+	name: r.querySelector('.attach-pick-name').textContent.trim(),
 	fixed: r.querySelector('input').disabled,
 })));
 check('the picker walks into a folder and lists what is in it',
