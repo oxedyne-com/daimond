@@ -80,8 +80,12 @@ function toolsApp(disk, { seen = {}, cloud = {}, fail = [] } = {}) {
 /// One pull's file merge. `disk` what this device holds (the census is all of it, inline);
 /// `base` the fork point by content; `remote` the parcel's files; `appear` a file that lands on
 /// the disk between the merge's census and its write (another app, or the person).
-async function merge({ disk: d0 = {}, base = {}, remote, folder = false, seen, cloud, fail, appear }) {
+async function merge({ disk: d0 = {}, base = {}, remote, folder = false, seen, cloud, fail, appear, store }) {
 	const w = makeWindow({});
+	// `store` is cloud.js `fileStore`'s word: `{ now, asked }`, the state as last seen and what asking says.
+	const joined = [];
+	if (store) w.DaimondCloud = { joinTombs: (t) => joined.push(t), fileStore: () => ({ state: store.now, why: '' }),
+		storeWord: async () => store.asked };
 	const disk = new Map(Object.entries(d0));
 	const app = toolsApp(disk, { seen, cloud, fail });
 	const plan = { folder, roots: [''], flagged: [''], app, loc: folder ? 'folder:f:' : 'browser' };
@@ -120,7 +124,7 @@ async function merge({ disk: d0 = {}, base = {}, remote, folder = false, seen, c
 	let threw = null;
 	try { await fns.applyFiles(remote, true, {}, 'phone', {}, true, {}); }
 	catch (e) { threw = String(e && e.message || e); }
-	return { threw, disk: Object.fromEntries(disk), agreed: committed[0] || [], calls: app.calls };
+	return { threw, disk: Object.fromEntries(disk), agreed: committed[0] || [], calls: app.calls, committed, joined };
 }
 
 console.log('createrefused: a merge\'s create is written, or the version is not adopted\n');
@@ -134,6 +138,25 @@ console.log('createrefused: a merge\'s create is written, or the version is not 
 		r.disk['soak/log.md'] === 'made again on the other device\n', J(r));
 	check('and the version merges: nothing fails, and the path is agreed',
 		r.threw === null && r.agreed.includes('soak/log.md'), J({ threw: r.threw, agreed: r.agreed }));
+}
+// ── CRF2 (1): a browser that keeps no files takes no part in the files merge (`## SAFEDX`). Every
+//    write there is refused, so a merge that ran failed every round and held the whole push. ──
+for (const st of [{ now: 'none', asked: 'none' }, { now: 'refused', asked: 'refused' }, { now: '', asked: 'none' }]) {
+	const r = await merge({ remote: { 'DAIMOND.md': 'the desktop\'s\n', 'notes/small.txt': 'small\n' },
+		fail: ['DAIMOND.md', 'notes/small.txt'], store: st });
+	const tag = 'no file store (' + (st.now || 'unasked, then ' + st.asked) + ')';
+	check(tag + ': the files merge stands down, failing nothing', r.threw === null, J(r.threw));
+	check(tag + ': and writes nothing, agrees nothing', !r.calls.some((c) => /^file_write/.test(c)) && !r.committed.length,
+		J({ calls: r.calls, committed: r.committed }));
+	check(tag + ': the deletion records still relay', r.joined.length === 1, J(r.joined));
+}
+// Controls: a store that is held keeps CRF's rule (a refused create holds the version back), and a
+// folder's files are on the disk, so it merges whatever the browser's store says.
+{
+	const r = await merge({ remote: { 'n.md': 'new there\n' }, fail: ['n.md'], store: { now: 'held', asked: 'held' } });
+	check('[ctl] a store that is held: a refused create still fails the section (CRF stands)', /could not write 1 file/.test(r.threw || ''), J(r.threw));
+	const f = await merge({ remote: { 'n.md': 'new there\n' }, folder: true, store: { now: 'none', asked: 'none' } });
+	check('[ctl] a folder with no browser store still merges', f.threw === null && f.disk['n.md'] === 'new there\n', J(f));
 }
 // ── A create the storage refuses: never passed over ──
 {

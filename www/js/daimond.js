@@ -7074,6 +7074,18 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 	/// only from a complete census, for a path it lacks, at the bytes here; and a copy it
 	/// carries of deleted content is a write, adopted and returned, because it cannot say
 	/// whether it wrote the path again or never heard.
+	/// Does this browser keep no files at all (cloud.js `fileStore`), asking first when nothing
+	/// has been asked yet?
+	async function noFileStore() {
+		if (!window.DaimondCloud || !DaimondCloud.fileStore) return false;
+		var s = '';
+		try {
+			s = DaimondCloud.fileStore().state;
+			if (!s && DaimondCloud.storeWord) s = await DaimondCloud.storeWord();
+		} catch (e) { s = ''; }
+		return s === 'none' || s === 'refused';
+	}
+
 	async function applyFiles(remoteFiles, remoteComplete, remoteTombs, fromDevice, chunkTombs, stamped, remoteChunked) {
 		// The records first and whatever else happens: a device that relays nothing it heard
 		// breaks the chain for every device that reads its parcel next (QFB2-3).
@@ -7081,6 +7093,14 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		if (!remoteFiles || typeof remoteFiles !== 'object') remoteFiles = {};
 		var plan = await syncWalkPlan();
 		if (!plan) return;
+		// A BROWSER THAT KEEPS NO FILES TAKES NO PART IN THE FILES MERGE (CRF2). With no file store
+		// (cloud.js `fileStore`: 'none', or 'refused') every write is refused, so since CRF each round
+		// failed the section, the version was never adopted, and the whole push was held: the
+		// phone's own chats never left it (`## SAFEDX`). It adopts no file version, writes nothing,
+		// agrees nothing and fails nothing; the chip already says so, and a store that comes back
+		// merges again (sync.js `daimond:file-store`). The test is sync.js `filesNotHeld`'s. Not a
+		// folder, whose files are on the disk and not in the browser's store.
+		if (!plan.folder && await noFileStore()) return;
 		var loc = syncFileLoc(plan);
 		// SCOPED BY `withinShare`, whose roots are the flagged folders that FIT. An edit
 		// the far end made under a root this device left out -- unflagged, or over the

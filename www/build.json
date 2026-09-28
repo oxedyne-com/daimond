@@ -1,1 +1,1 @@
-{"build":"d5d184115bde","note":"Restore works across renamed folders; a re-created file reaches every device again; hand-off no longer repeats"}
+{"build":"f9a33c412c63","note":"A phone with no file storage (private browsing, a cleared cache) now syncs its chats normally instead of losing them."}

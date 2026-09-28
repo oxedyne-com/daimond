@@ -2263,6 +2263,8 @@
 		// Whether this browser holds files at all: `{ state, why }`, state 'held',
 		// 'none' or 'refused' ('' until asked). The sync chip reads it.
 		fileStore:    fileStore,
+		// The same word, asked first when nothing has been asked yet (the files merge's stand-down).
+		storeWord:    storeWord,
 		// The filesystem-name codec, published for the same reason `opfsRoot` is: the workspace
 		// walkers in daimond.js reach the same handles, and a second implementation of the
 		// spelling rule is a second chance to look in the wrong place.
