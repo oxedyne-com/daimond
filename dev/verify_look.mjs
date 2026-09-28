@@ -243,7 +243,7 @@ try {
 		return localStorage.getItem('daimond-sync-version');
 	});
 	check('the established device still has the one thing that says it was here',
-		(cursor | 0) > 0, `sync cursor ${cursor}`);
+		(parseInt(cursor, 10) || 0) > 0, `sync cursor ${cursor}`);		// `c:f` since 5.3 (sync.js K_VERSION)
 	await child.page.reload({ waitUntil: 'domcontentloaded' });
 	await signInAs(child, 'look');
 	await child.page.waitForFunction(

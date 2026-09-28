@@ -1063,6 +1063,7 @@
 	// finishes -- because a promise of "shortly" that a quiet turn cannot keep is
 	// worse than no promise.
 	'chat.send_into':         'Send into this answer',
+	'chat.sending':           'Sending…',
 	'chat.interject_help':    'Waiting; goes in at the model\'s next step or turn\'s end.',
 	'chat.interject_pending': 'Not delivered yet. Click to edit it.',
 	'chat.interjected':       'You cut in here',
@@ -2771,6 +2772,8 @@
 	'files.pinned_help':     'Pinned: always kept on this device. Click to release.',
 	'files.pin_help':        'Pin: never free this one to make room.',
 	'files.free_help':       'Keep it in cloud storage; drop the copy here',
+	'files.free_undeclared': 'Kept on this device for now: this device can\'t yet confirm cloud storage will keep it.',
+	'files.reclaim_undeclared': 'Nothing freed yet: this device can\'t yet confirm cloud storage will keep these files.',
 	'files.fetch':           'Fetch',
 	'files.fetch_body':      'Bring "{path}" onto this device? That downloads {size}.',
 	'files.fetching':        'Fetching {path}…',
@@ -3096,6 +3099,8 @@
 	// they are left out and the user is told rather than left to notice.
 	'backup.n_foreign.one':   '{n} file in that backup belongs to another account at that browser, so it was not restored and stays only in the backup.',
 	'backup.n_foreign.other': '{n} files in that backup belong to another account at that browser, so they were not restored and stay only in the backup.',
+	'backup.n_unreadable.one':   '{n} conversation in that backup could not be read, so it was not restored and stays only in the backup.',
+	'backup.n_unreadable.other': '{n} conversations in that backup could not be read, so they were not restored and stay only in the backup.',
 
 	// ── The provider form ──────────────────────────────────────
 	'models.other':            'Other (type manually)…',
@@ -4788,10 +4793,16 @@
 	'versions.too_big':        'Too large to keep',
 	'versions.refused':        'Outside this diamond\u2019s reach',
 	'versions.gone_ask':       'This version is older than {n} of your files: {paths}. Restoring it would delete them from your folder. Their current contents are kept in History. Delete them?',
+	'versions.undo_gone_ask':  'Undoing this would delete {n} of your files: {paths}. Their current contents are kept in History. Delete them?',
 	'versions.gone_allow':     'Delete them',
 	'versions.gone_keep':      'Keep them',
 	'versions.gone_title':     'Delete files from your folder?',
 	'versions.gone_kept':      'Left in your folder',
+	'versions.over_ask':       'Daimond kept {n} of these files before it recorded which folder each came from: {paths}. The files there now may be different ones. Restoring would replace them, and their current contents are kept in History. Replace them?',
+	'versions.over_ask_unknown': '{n} of these files were recorded in a folder on another device, or one Daimond no longer knows: {paths}. The files here may be different ones. Restoring would replace them, and their current contents are kept in History. Replace them?',
+	'versions.other_folder':   'Saved in another folder; no copy here',
+	'versions.over_allow':     'Replace them',
+	'versions.over_title':     'Replace files in your folder?',
 	'versions.save':           'Save a version',
 	'versions.save_name':      'Name it',
 	'versions.gauge':          'Versions {used} / {cap}',

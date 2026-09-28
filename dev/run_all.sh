@@ -507,6 +507,11 @@ budget_floor() {
 		# Steers a diamond through its versions. MEASURED at 133s and 134s alone on
 		# release 5 (2026-09-25), too near the 180s default for a busy box.
 		verify_versions)                  echo 300 ;;
+		# A phone and a desktop, paired, through ten sections that each wait out a
+		# pause, a delayed mailbox read or a hand-off (R53-U8b, 2026-09-27). Its own
+		# waits come to about 420 s before two browser launches; 1200 until a measured
+		# run replaces it in dev/budgets.tsv.
+		verify_pausehandoff)              echo 1200 ;;
 		*)                                echo 180 ;;
 	esac
 }
@@ -787,7 +792,14 @@ start_gateway() {
 	fi
 	# The pid is written down because the only safe way to stop a process is to stop
 	# the one you started.  See `stop_gateway`.
-	( cd "$GW_CWD" && APP_MODE=sandbox nohup "$ROOT/$GW_BIN" >>"$SCRATCH/suite-gw.log" 2>&1 &
+	#
+	# `exec`, SO THE PID WRITTEN DOWN IS THE GATEWAY ON EVERY PATH, a failed start included.
+	# Without it `$!` is the subshell that runs `cd && nohup`, which waits on the gateway as
+	# its child. The correction below runs only when the start succeeds, so a start that
+	# failed left the wrapper's pid alone in the file, and `stop_gateway` stopped the wrapper
+	# and orphaned the gateway. Found on 2026-09-27: a nightly rerun's gateway (pid 1957255,
+	# under wrapper 1957254) had held :9002 on a deleted worktree's store since 09-25.
+	( cd "$GW_CWD" && APP_MODE=sandbox exec nohup "$ROOT/$GW_BIN" >>"$SCRATCH/suite-gw.log" 2>&1 &
 		echo $! > "$SCRATCH/suite-gw.pid" )
 	wait_gateway 25 || return 1
 	# AND THE PID THAT SERVES IS NOT THE PID THAT WAS SPAWNED, which is the whole
@@ -857,6 +869,36 @@ stop_gateway() {
 	local i=0
 	while gateway_up && [ $i -lt 15 ]; do sleep 1; i=$((i+1)); done
 	! gateway_up
+}
+
+# WHICH CWD THE GATEWAY RUNS FROM, for the verifiers named: `dev/devgw` when the port is not
+# 9002 (`gateway/app.jdat` is the deployed config and listens on 9002 only) or when compose
+# or mailfolders need the loopback mail fixtures; `gateway/` otherwise. Returns 1 when no CWD
+# can put a gateway on this run's port, and then nothing should be started.
+#
+# A function, not phase 2's inline block, so the nightly gate's rerun script (which sources
+# this file) asks the same rule. It could not before, and its reruns started the gateway from
+# `gateway/`: the gateway bound :9002 while `start_gateway` waited on the world's port, so the
+# start failed, the verifier ran with no gateway, and the process was never stopped (2026-09-27).
+prepare_gateway_cwd() {         # names…
+	GW_CWD=gateway
+	local need=no
+	case " $* " in *" verify_compose "*|*" verify_mailfolders "*) need=yes ;; esac
+	[ "$GW_PORT" = 9002 ] || need=yes
+	[ "$need" = yes ] || return 0
+	if bash dev/devgw.sh >>"$SCRATCH/suite-devgw.log" 2>&1; then
+		GW_CWD=dev/devgw
+		return 0
+	fi
+	if [ "$GW_PORT" != 9002 ]; then
+		say "   dev/devgw.sh failed, and \`gateway/app.jdat\` listens on :9002, not :$GW_PORT,"
+		say "   so no gateway is started: $SCRATCH/suite-devgw.log"
+		return 1
+	fi
+	# Said rather than swallowed: without the generated CWD the mail routes refuse
+	# loopback, and compose then fails for a reason this script chose.
+	say "   dev/devgw.sh failed — running from $GW_CWD, whose config refuses the"
+	say "   loopback mail fixtures: $SCRATCH/suite-devgw.log"
 }
 
 # A check may want these functions and none of the run.  `dev/breakproof_stopgateway.sh`
@@ -1162,30 +1204,21 @@ fi
 # ── Phase 2: a gateway, and what the entitled tests need ────────────────
 if [ -n "$PHASE2" ]; then
 	say ""
-	# compose and mailfolders talk to loopback mail fixtures, which the shipped config refuses.
-	# Run the gateway from the generated dev CWD for the whole of phase 2: it is
-	# the same binary over the same store, one flag different.
-	# A run on a port of its own needs the generated CWD too, whatever it is running:
-	# `gateway/app.jdat` is the deployed config and holds :9002, and moving a port in
-	# it is the temporary edit `devgw.sh`'s own header refuses to make.
-	NEED_DEVGW=no
-	case " $PHASE2 " in *" verify_compose "*|*" verify_mailfolders "*) NEED_DEVGW=yes ;; esac
-	[ "$GW_PORT" = 9002 ] || NEED_DEVGW=yes
-	case " $NEED_DEVGW " in *" yes "*)
-		# Said rather than swallowed: without the generated CWD the mail routes
-		# refuse loopback, and compose then fails for a reason this script chose.
-		if bash dev/devgw.sh >>"$SCRATCH/suite-devgw.log" 2>&1; then
-			GW_CWD=dev/devgw
-		else
-			say "   dev/devgw.sh failed — running from $GW_CWD, whose config refuses the"
-			say "   loopback mail fixtures: $SCRATCH/suite-devgw.log"
-		fi ;;
-	esac
-	if ! start_gateway; then
+	# compose and mailfolders talk to loopback mail fixtures, which the shipped config refuses,
+	# and a run on a port of its own needs the generated CWD whatever it runs: `gateway/app.jdat`
+	# is the deployed config and holds :9002. The rule is `prepare_gateway_cwd`'s, above, where
+	# the nightly gate's reruns ask it too. The whole of phase 2 runs from the one CWD: the same
+	# binary over the same store, one flag different.
+	GW_WHY=""
+	prepare_gateway_cwd $PHASE2 \
+		|| GW_WHY="no CWD puts a gateway on :$GW_PORT (dev/devgw.sh failed) — $SCRATCH/suite-devgw.log"
+	[ -z "$GW_WHY" ] && ! start_gateway \
+		&& GW_WHY="the gateway would not start on :$GW_PORT — $SCRATCH/suite-gw.log"
+	if [ -n "$GW_WHY" ]; then
 		for name in $PHASE2; do
 			# Not "build it" any more: the build happened above, so a gateway that
 			# will not start has a reason, and the reason is in its own log.
-			skip_one "$name" "the gateway would not start on :$GW_PORT — $SCRATCH/suite-gw.log"
+			skip_one "$name" "$GW_WHY"
 		done
 	else
 		say "── Phase 2 (gateway up on :$GW_PORT):$PHASE2"

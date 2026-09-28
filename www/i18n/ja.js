@@ -457,6 +457,7 @@
 	// 機械翻訳。走っている最中のやり取りに割り込んで話す。限界も書いてある --
 	// 道具を使わない回答には割り込む継ぎ目がない。
 	'chat.send_into':         'この回答に割り込んで送る',
+	'chat.sending':           '送信中…',
 	'chat.interject_help':    '待機中です。モデルの次のステップか、回答の終わりで入ります。',
 	'chat.interject_pending': 'まだ届いていません。クリックすると直せます。',
 	'chat.interjected':       'ここで割り込みました',
@@ -2010,6 +2011,8 @@
 	'files.pinned_help':     '留め置き中：いつもこの端末に置きます。クリックで解除します。',
 	'files.pin_help':        '留め置き：空きを作るためにこれを外しません。',
 	'files.free_help':       'クラウド保存には残し、手元の写しを外します',
+	'files.free_undeclared': 'ひとまずこの端末に残します。クラウド保存がこのファイルを保持することを、この端末ではまだ確認できません。',
+	'files.reclaim_undeclared': 'まだ何も空けていません。クラウド保存がこれらのファイルを保持することを、この端末ではまだ確認できません。',
 	'files.fetch':           '取得',
 	'files.fetch_body':      '「{path}」をこの端末に持ってきますか。{size} をダウンロードします。',
 	'files.fetching':        '{path} を取得しています…',
@@ -2220,6 +2223,8 @@
 	'backup.restored_owed':   'この端末のブラウザの保存領域がいっぱいのため、復元した内容の一部がまだ保存されていません。保存され次第ページを再読み込みします。空き容量を作ると進みます。',
 	'backup.n_foreign.one':   'そのバックアップにある {n} 件のファイルは、あちらのブラウザの別のアカウントのものです。復元されず、バックアップの中にだけ残ります。',
 	'backup.n_foreign.other': 'そのバックアップにある {n} 件のファイルは、あちらのブラウザの別のアカウントのものです。復元されず、バックアップの中にだけ残ります。',
+	'backup.n_unreadable.one':   'そのバックアップにある {n} 件の会話は読み取れませんでした。復元されず、バックアップの中にだけ残ります。',
+	'backup.n_unreadable.other': 'そのバックアップにある {n} 件の会話は読み取れませんでした。復元されず、バックアップの中にだけ残ります。',
 
 	// ── プロバイダーの入力欄 ───────────────────────────────────
 	'models.other':            'その他（手入力）…',
@@ -3634,10 +3639,16 @@
 	'versions.snapshot': 'スナップショット',
 	'versions.too_big': '\u5927\u304d\u3059\u304e\u3066\u4fdd\u6301\u3067\u304d\u307e\u305b\u3093',
 	'versions.gone_ask': '\u3053\u306e\u30d0\u30fc\u30b8\u30e7\u30f3\u306f {n} \u500b\u306e\u30d5\u30a1\u30a4\u30eb\u3088\u308a\u53e4\u3044\u3067\u3059: {paths}\u3002\u5fa9\u5143\u3059\u308b\u3068\u30d5\u30a9\u30eb\u30c0\u30fc\u304b\u3089\u524a\u9664\u3055\u308c\u307e\u3059\u3002\u73fe\u5728\u306e\u5185\u5bb9\u306f\u5c65\u6b74\u306b\u4fdd\u5b58\u3055\u308c\u307e\u3059\u3002\u524a\u9664\u3057\u307e\u3059\u304b?',
+	'versions.undo_gone_ask': '\u5143\u306b\u623b\u3059\u3068 {n} \u500b\u306e\u30d5\u30a1\u30a4\u30eb\u304c\u524a\u9664\u3055\u308c\u307e\u3059: {paths}\u3002\u73fe\u5728\u306e\u5185\u5bb9\u306f\u5c65\u6b74\u306b\u4fdd\u5b58\u3055\u308c\u307e\u3059\u3002\u524a\u9664\u3057\u307e\u3059\u304b?',
 	'versions.gone_allow': '\u524a\u9664\u3059\u308b',
 	'versions.gone_keep': '\u6b8b\u3059',
 	'versions.gone_title': '\u30d5\u30a9\u30eb\u30c0\u30fc\u304b\u3089\u30d5\u30a1\u30a4\u30eb\u3092\u524a\u9664\u3057\u307e\u3059\u304b?',
 	'versions.gone_kept': '\u30d5\u30a9\u30eb\u30c0\u30fc\u306b\u6b8b\u3057\u307e\u3057\u305f',
+	'versions.over_ask': 'Daimond \u306f\u3001\u5404\u30d5\u30a1\u30a4\u30eb\u304c\u3069\u306e\u30d5\u30a9\u30eb\u30c0\u30fc\u306e\u3082\u306e\u304b\u3092\u8a18\u9332\u3059\u308b\u524d\u306b\u3001\u3053\u308c\u3089\u306e\u3046\u3061 {n} \u500b\u306e\u30d5\u30a1\u30a4\u30eb\u3092\u4fdd\u5b58\u3057\u307e\u3057\u305f: {paths}\u3002\u73fe\u5728\u305d\u3053\u306b\u3042\u308b\u30d5\u30a1\u30a4\u30eb\u306f\u5225\u306e\u3082\u306e\u304b\u3082\u3057\u308c\u307e\u305b\u3093\u3002\u5fa9\u5143\u3059\u308b\u3068\u7f6e\u304d\u63db\u3048\u3089\u308c\u307e\u3059\u3002\u73fe\u5728\u306e\u5185\u5bb9\u306f\u5c65\u6b74\u306b\u4fdd\u5b58\u3055\u308c\u307e\u3059\u3002\u7f6e\u304d\u63db\u3048\u307e\u3059\u304b?',
+	'versions.over_ask_unknown': '\u3053\u308c\u3089\u306e\u30d5\u30a1\u30a4\u30eb\u306e\u3046\u3061 {n} \u500b\u306f\u3001\u5225\u306e\u30c7\u30d0\u30a4\u30b9\u306e\u30d5\u30a9\u30eb\u30c0\u30fc\u3001\u307e\u305f\u306f Daimond \u304c\u3082\u3046\u628a\u63e1\u3057\u3066\u3044\u306a\u3044\u30d5\u30a9\u30eb\u30c0\u30fc\u3067\u8a18\u9332\u3055\u308c\u307e\u3057\u305f: {paths}\u3002\u3053\u3053\u306b\u3042\u308b\u30d5\u30a1\u30a4\u30eb\u306f\u5225\u306e\u3082\u306e\u304b\u3082\u3057\u308c\u307e\u305b\u3093\u3002\u5fa9\u5143\u3059\u308b\u3068\u7f6e\u304d\u63db\u3048\u3089\u308c\u307e\u3059\u3002\u73fe\u5728\u306e\u5185\u5bb9\u306f\u5c65\u6b74\u306b\u4fdd\u5b58\u3055\u308c\u307e\u3059\u3002\u7f6e\u304d\u63db\u3048\u307e\u3059\u304b?',
+	'versions.other_folder': '\u5225\u306e\u30d5\u30a9\u30eb\u30c0\u30fc\u306b\u4fdd\u5b58\u6e08\u307f\u3002\u3053\u3053\u306b\u30b3\u30d4\u30fc\u306f\u3042\u308a\u307e\u305b\u3093',
+	'versions.over_allow': '\u7f6e\u304d\u63db\u3048\u308b',
+	'versions.over_title': '\u30d5\u30a9\u30eb\u30c0\u30fc\u5185\u306e\u30d5\u30a1\u30a4\u30eb\u3092\u7f6e\u304d\u63db\u3048\u307e\u3059\u304b?',
 	'versions.refused': '\u3053\u306e diamond \u306e\u7bc4\u56f2\u5916',
 	'versions.save': '\u30d0\u30fc\u30b8\u30e7\u30f3\u3092\u4fdd\u5b58',
 	'versions.save_name': '\u540d\u524d\u3092\u3064\u3051\u308b',

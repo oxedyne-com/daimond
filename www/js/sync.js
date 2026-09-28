@@ -293,7 +293,11 @@
 	var REAPPLY_BASE_MS  = 1500;	// First re-pull this soon after a failed merge.
 	var REAPPLY_MAX_MS   = 60000;	// The backoff never grows past this.
 	var REAPPLY_MAX_TRIES = 6;		// Auto-retries for one un-adopted version before standing down.
-	var K_VERSION = 'daimond-sync-version';		// Per-account (accounts.js prefixes it).
+	// Per-account (accounts.js prefixes it). This build writes `c:f`, the cursor and `foreignAt`; a build
+	// before read it with `parseInt` and wrote a bare `c`, so a bare cursor is the build before's (`loadVersion`).
+	var K_VERSION = 'daimond-sync-version';
+	var K_MERGED_AT = 'daimond-sync-merged-at';	// storage location -> the version merged or pushed there
+	var MERGED_AT_MAX = 8;						// locations remembered; a forgotten one merges once more
 	var K_LAST    = 'daimond-sync-last';		// When a sync last succeeded, for the chip.
 	// The digest of the parcel this device last got into the mailbox, so the FIRST
 	// push of a new page can tell that it has nothing to say. Same `daimond-`
@@ -309,9 +313,30 @@
 	// direction or push once for nothing in the other. One push on the first boot
 	// after the update, and never again.
 	var SIG_V     = 2;
+	// `oldAt` (below): the cursor this device stood at when it last loaded this build over a cursor the
+	// build before wrote, shared by its tabs.
+	var K_OLD     = 'daimond-sync-old';
 
 	// ── State ──────────────────────────────────────────────────
 	var serverVersion = 0;		// The version this device last saw on the server.
+	// THE LAST VERSION THIS PAGE TOOK FROM ANOTHER WRITER (a pull that moved the cursor): every
+	// version after it up to the cursor is one of this page's own pushes. The parcel carries it as
+	// `chunkedFrom`, so a device that was whole at any version from it on is whole after merging
+	// this parcel, however many of those versions it slept through (daimond.js `syncIndexAt`).
+	// Too high only costs that device a wait; too low would vouch for versions another device
+	// wrote, so every doubt reads as the cursor itself.
+	var foreignAt     = 0;
+	// THE CURSOR THIS DEVICE STOOD AT WHEN IT LAST LOADED THIS BUILD OVER THE BUILD BEFORE'S CURSOR (QCMG2's
+	// G4; QCMG3b's R for a rollback and re-upgrade), or -1. A build before kept no `foreignAt`, so the
+	// versions up to here may be an old page's that a reader slept through, and this device's
+	// `chunkedFrom` cannot vouch for them. The parcel carries it as `chunkedOld` until this page takes a
+	// foreign version past it, and a reader whose chain cannot reach `chunkedFrom` treats such a parcel
+	// as an old page's (daimond.js `syncIndexAt`, the transition rule).
+	var oldAt         = -1;
+	// THE CURSOR OF AN UPGRADE LOAD: this page found the cursor last written by the build before (a first
+	// upgrade, or a re-upgrade after a rollback), or -1. The upgrade seed runs on it whatever mark is
+	// left from an earlier run of this build (daimond.js `syncIndexOwed`).
+	var upgradedAt    = -1;
 	var lastPushed    = null;	// comparison key of the state last pushed (see compareKey).
 	// THE SAME FACT, CARRIED ACROSS A RELOAD, and consulted by the first push of a
 	// page and by nothing else.
@@ -342,6 +367,10 @@
 	// work did NOT leave, and both are cleared by the next round that works.
 	var jammed        = '';
 	var lastFailed    = [];		// Sections the last merge could not apply.
+	// Chats the last merge REFUSED, by id: carried unreadable, so left out while the rest of
+	// their section merged. Not a failed section -- the version is adopted, since a re-pull
+	// reads the same bytes -- but a fact to say (DL-2, 2026-09-27; see applyChats).
+	var lastRefused   = [];
 	// THE NEWEST VERSION THIS DEVICE PULLED AND COULD NOT MERGE, or 0. That version is
 	// the bounded re-pull's (`scheduleReapply`), never the wake channel's: the channel
 	// used to park `?above=serverVersion`, which a failed merge deliberately leaves
@@ -370,6 +399,7 @@
 	// and that read, whoever made it, sends the work at once (`pullOnce`).
 	var readOwed          = false;
 	var retryOnFree       = false;	// a retry found the gate held: it runs when the round ends (`endRound`)
+	var pressOwed         = false;	// a pause press found the gate held: it is sent when the round ends (`sendPress`)
 	var holdUntil         = 0;	// the time a gateway's 429 or 503 asked this device not to return before
 	// A passphrase was changed on another device and this one is BEHIND the epoch chain
 	// -- it could not walk the links to the account's current key (a missing link, or a
@@ -429,6 +459,9 @@
 	// already adopted is merged once more: the rounds that ran without a store merged every
 	// section but the files'. pullOnce's already-adopted skip would decline it until the mailbox moved.
 	var remergeOwed   = false;
+	// The version this session last merged again because the index was not known whole
+	// (push()), so a device that stays so pays one extra read per version, never per round.
+	var wholeTriedAt  = -1;
 	// Whether this device had already synced THIS account when the page loaded.
 	// Read once, at start, before this session's own rounds move the cursor, and
 	// it is the only honest evidence that a device is not new to the account:
@@ -1259,6 +1292,9 @@
 	/// resting line over owed work. Every round ends here.
 	function endRound() {
 		inFlight = false;
+		// A press that found the gate held goes now (`sendPress`); a push that already
+		// carried it finds nothing new to send.
+		if (pressOwed) { pressOwed = false; setTimeout(sendPress, 0); }
 		if (retryOnFree) {
 			retryOnFree = false;
 			if (unsent && !unsentTimer) {
@@ -1409,23 +1445,35 @@
 	/// anything is slowed by this, and a live device is still live within
 	/// DISPATCH_FRESH_MS.
 	///
+	/// AND `chunkedFrom` IS NOT NEWS EITHER (2026-09-27). It is the last version this page took
+	/// from another writer (`foreignAt`), so it moves on every pull that takes a peer's push: in
+	/// the key, each device would answer the other's push with one of its own, the echo above
+	/// again. The parcel in the mailbox already says it truly for the version it is at.
+	///
 	/// The key is built preserving every field and key order, so two collects of an
 	/// otherwise unchanged account still give byte-identical keys -- which is the
-	/// whole point of having one. A parcel with no roster in it is its own key:
-	/// there is nothing to mask and nothing to throw.
+	/// whole point of having one. A parcel with no roster and no `chunkedFrom` in it is
+	/// its own key: there is nothing to mask and nothing to throw.
 	function compareKey(state) {
-		var plain = JSON.stringify(state);
-		if (!state || !state.devices || typeof state.devices !== 'object') return plain;
-		var src = state.devices, devs = {};
-		Object.keys(src).forEach(function (k) {
-			var line = src[k];
-			if (!line || typeof line !== 'object') { devs[k] = line; return; }
-			var copy = {};
-			Object.keys(line).forEach(function (f) { copy[f] = (f === 'seen' ? 0 : line[f]); });
-			devs[k] = copy;
-		});
+		if (!state || typeof state !== 'object') return JSON.stringify(state);
+		var roster = !!state.devices && typeof state.devices === 'object';
+		if (!roster && !Object.prototype.hasOwnProperty.call(state, 'chunkedFrom')) return JSON.stringify(state);
+		var devs = {};
+		if (roster) {
+			var src = state.devices;
+			Object.keys(src).forEach(function (k) {
+				var line = src[k];
+				if (!line || typeof line !== 'object') { devs[k] = line; return; }
+				var copy = {};
+				Object.keys(line).forEach(function (f) { copy[f] = (f === 'seen' ? 0 : line[f]); });
+				devs[k] = copy;
+			});
+		}
 		var out = {};
-		Object.keys(state).forEach(function (k) { out[k] = (k === 'devices' ? devs : state[k]); });
+		Object.keys(state).forEach(function (k) {
+			if (k === 'chunkedFrom') return;
+			out[k] = (k === 'devices' && roster) ? devs : state[k];
+		});
 		return JSON.stringify(out);
 	}
 
@@ -1782,6 +1830,13 @@
 		try { report = await DaimondCore.applySync(state); }
 		catch (e) { log('applySync threw', e); report = { failed: ['all'] }; }
 		var core = (report && Array.isArray(report.failed)) ? report.failed : [];
+		lastRefused = (report && report.refused && Array.isArray(report.refused.chats))
+			? report.refused.chats.slice() : [];
+		if (lastRefused.length) {
+			diag('pull chats REFUSED', lastRefused.length + ' chat(s) could not be read and were left out: '
+				+ lastRefused.join(','));
+			log('left out', lastRefused.length, 'chat(s) that could not be read:', lastRefused.join(','));
+		}
 		return failed.concat(core);
 	}
 
@@ -1883,7 +1938,7 @@
 		catch (e) { log('lease door adopt failed', e); }
 		// An empty mailbox is an answer: this device has heard, and there was
 		// nothing to hear. See `pulledOk`.
-		if (!j.present) { diag('pull', 'v' + (j.version | 0) + ' empty mailbox'); adoptVersion(0, preRead); reapplyDone(); pulledOk = true; restStatus(); return serverVersion; }
+		if (!j.present) { diag('pull', 'v' + (j.version | 0) + ' empty mailbox'); adoptAt(0, preRead, 'empty', null); reapplyDone(); pulledOk = true; restStatus(); return serverVersion; }
 		var state;
 		// ── Read the parcel, EPOCH-AWARE ──────────────────────────
 		//
@@ -1951,7 +2006,7 @@
 				// key, so a parcel that still will not open under it is genuine
 				// corruption of THIS blob, not an epoch mismatch. Today's recovery.
 				log('pull: adopted the new epoch but the parcel would not open; keeping local state');
-				adoptVersion(j.version | 0, preRead);
+				adoptAt(j.version | 0, preRead, 'adopted', null);
 				reapplyDone();
 				if (!quiet) restStatus();
 				return serverVersion;
@@ -2000,7 +2055,7 @@
 								// open under the now-proven key: genuine corruption of that
 								// blob. Keep local state and let our own go over it.
 								log('pull: yielded to the diverged branch but the parcel would not open; keeping local state');
-								adoptVersion(j.version | 0, preRead);
+								adoptAt(j.version | 0, preRead, 'adopted', null);
 								reapplyDone();
 								if (!quiet) restStatus();
 								return serverVersion;
@@ -2021,7 +2076,7 @@
 						// yields to us on its next pull. Not corruption -- but the mechanics
 						// (adopt the version, push our own) are the same and are right here.
 						log('pull: diverged at the same epoch; holding our branch (smaller salt wins)');
-						adoptVersion(j.version | 0, preRead);
+						adoptAt(j.version | 0, preRead, 'adopted', null);
 						reapplyDone();
 						if (!quiet) restStatus();
 						return serverVersion;
@@ -2032,7 +2087,7 @@
 					// it -- how an account recovers from a bad blob at all. `lastFailed`
 					// is for sections that ARRIVED and could not be merged; this is not one.
 					log('pull decrypt/parse failed; keeping local state');
-					adoptVersion(j.version | 0, preRead);
+					adoptAt(j.version | 0, preRead, 'adopted', null);
 					reapplyDone();
 					if (!quiet) restStatus();
 					return serverVersion;
@@ -2060,7 +2115,7 @@
 				// Older than the previous key we hold, or none held (a fresh page): carry
 				// our record over it. Finite -- the lagging device adopts on its next pull.
 				log('pull sealed under an older epoch; carrying our record over it');
-				adoptVersion(j.version | 0, preRead);
+				adoptAt(j.version | 0, preRead, 'adopted', null);
 				reapplyDone();
 				if (!quiet) restStatus();
 				return serverVersion;
@@ -2101,13 +2156,15 @@
 		// is only made where it can still be shown. A read that THROWS is not evidence
 		// of loss (a browser with no storage at all never had a note to lose), so only a
 		// read that succeeds and disagrees defeats the skip.
+		var applied = false;		// this pull merged the parcel, rather than finding it already adopted
 		var noted = serverVersion;
 		try {
 			var rawV = localStorage.getItem(K_VERSION);
 			noted = rawV === null ? -1 : (parseInt(rawV, 10) || 0);
 		} catch (e) { /* cannot tell; leave the claim standing */ }
+		var mergeLoc = await fileLoc();
 		if (j.version === serverVersion && noted === serverVersion && pulledOk && reapplyTries === 0
-			&& !remergeOwed) {
+			&& !remergeOwed && locMerged(mergeLoc)) {
 			// ONE TRAIL LINE STANDS IN FOR THE SECTION THIS PULL DID NOT RUN. Skipping
 			// `applyParcel` outright means `applySync`'s own `section('files', …)` never
 			// fires, and a trail that goes silent here is exactly the failure mode its own
@@ -2119,6 +2176,7 @@
 		} else {
 			remergeOwed = false;		// this apply is the one it was owed
 			lastFailed = await applyParcel(state);
+			applied = true;
 		}
 		pulledOk   = true;			// a parcel was read; see `pulledOk`.
 		noteSynced();
@@ -2149,7 +2207,9 @@
 			if (!quiet) jam('merge');
 			return serverVersion;		// the last FULLY-applied version, deliberately not j.version.
 		}
-		adoptVersion(j.version | 0, preRead);
+		adoptAt(j.version | 0, preRead, applied ? 'merged' : 'kept', state);
+		// Merged HERE, in the location the apply ran in -- unless the device moved during it.
+		if ((await fileLoc()) === mergeLoc) noteMergedAt(mergeLoc, j.version | 0);
 		reapplyDone();				// a clean apply settles any re-pull that was armed.
 		unjam();
 		// THE PULL LANDED, and work a refused push left unsent can go now, on the next
@@ -2277,8 +2337,36 @@
 			// The collectors record manifests in the cloud index; wait for it to have
 			// loaded out of IndexedDB before collecting, so `index()` is authoritative.
 			if (window.DaimondCloud && DaimondCloud.ready) { try { await DaimondCloud.ready(); } catch (e) { /* fallback path stays active */ } }
+			// NOT FROM A LOCATION THAT HAS NOT MERGED THIS VERSION: its census would land at it
+			// carrying older copies as edits (QFB4-1). It merges here first.
+			var pushLoc = await fileLoc();
+			if (serverVersion > 0 && !locMerged(pushLoc)) {
+				remergeOwed = true;
+				var r1 = await pull(true);
+				if (r1 < 0) { failKind = 'read'; restStatus(); return; }
+				if (lastFailed.length) { failKind = 'conflict'; jam('merge'); return; }
+				if (!locMerged(pushLoc)) { schedule(); return; }		// moved meanwhile: the next round
+			}
+			// AN INDEX NOT KNOWN WHOLE IS MERGED AGAIN BEFORE THIS ROUND COLLECTS, once per
+			// version. The version may have been adopted while the merge could not take it whole
+			// (in a folder, before the folder was lost), and the already-adopted skip would never
+			// look again while the mailbox stands still. If the parcel there says its writer was
+			// whole, this device is whole after merging it, the parcel below says so and its
+			// commit may run; if not, nothing is committed until a whole device's parcel arrives
+			// (daimond.js "A commit declares only an index merged in full").
+			if (wholeTriedAt !== serverVersion && DaimondCore.syncIndexOwed) {
+				var owedAt = serverVersion, owed = false;
+				try { owed = await DaimondCore.syncIndexOwed(knownDevice); } catch (e) { owed = false; }
+				if (owed) {
+					wholeTriedAt = owedAt;
+					remergeOwed  = true;
+					diag('index not whole', 'v' + owedAt + ' -> merging it again before collecting');
+					await pull(true);
+				}
+			}
 			for (var attempt = 0; attempt < tries; attempt++) {
 				var state = await collectParcel();
+				if ((await fileLoc()) !== pushLoc) { schedule(); return; }	// moved while collecting
 				var plain = JSON.stringify(state);
 				// What is SENT is `plain`; what is COMPARED is the key. See compareKey.
 				var cmp   = compareKey(state);
@@ -2411,6 +2499,12 @@
 					serverVersion = res.json.version | 0;
 					lastPushed = cmp;
 					saveVersion();
+					// This device's own parcel is the mailbox now: whole at this version if it
+					// was whole at the base it was collected over (its `chunkedFull`). Before the
+					// commit gate below reads it.
+					try { if (DaimondCore.syncIndexAt) DaimondCore.syncIndexAt(serverVersion, 'pushed', state); }
+					catch (e) { log('index mark failed', e); }
+					noteMergedAt(pushLoc, serverVersion);	// this location's census IS the version
 					// Beside the version, and only here: this is the one place a
 					// parcel is known to have reached the mailbox. A parcel the
 					// gateway refused is not one this device has sent, so the 413
@@ -2689,11 +2783,15 @@
 		if (failedVersion > serverVersion) return;	// a sure 409 over a version that would not merge (see push())
 		if (Date.now() - lastProgressAt < PROGRESS_PUSH_MIN_MS) return;	// throttle the trickle
 		if (inFlight) return;			// a round is running; the next tick tries again
+		var progLoc = await fileLoc();
+		if (serverVersion > 0 && !locMerged(progLoc)) { schedule(); return; }	// merges first (QFB4-1)
+		if (inFlight) return;
 		lastProgressAt = Date.now();
 		inFlight = true;
 		pushing  = true;
 		try {
 			var state = await collectParcel();
+			if ((await fileLoc()) !== progLoc) return;			// moved while collecting
 			var plain = JSON.stringify(state);
 			var cmp   = compareKey(state);
 			// Nothing new since the last send (progress OR ordinary): quiet frame.
@@ -2718,6 +2816,10 @@
 				serverVersion = res.json.version | 0;
 				lastPushed    = cmp;
 				saveVersion();
+				// The frame is the mailbox now: the same mark as a push (see push()).
+				try { if (DaimondCore.syncIndexAt) DaimondCore.syncIndexAt(serverVersion, 'pushed', state); }
+				catch (e) { log('index mark failed', e); }
+				noteMergedAt(progLoc, serverVersion);
 				noteSynced();
 				diag('progress push', 'v' + serverVersion);
 				return;
@@ -4062,6 +4164,22 @@
 		schedule();
 	}
 
+	/// A PERSON'S PRESS ON A PAUSE LIGHT IS SENT NOW (R53-U8, 2026-09-25). A pause or a play is
+	/// an instruction to every device, and it waited here like any other change: the coalescing
+	/// debounce, then the push, then the other device's wake. In the reopen rehearsal the phone
+	/// read a play pressed on argonaut 3.8-4.0 s after the press, and a turn typed there inside
+	/// that time was refused for the pause just ended (U8, 2 runs in 3 on 5.1.1). So a press is
+	/// sent at once, and one made while a round holds the gate is sent the moment that round
+	/// ends (`endRound`). The push's stand-offs -- a live turn here, another device's hand-off
+	/// -- still defer it to their end; whether a press should pass them is the pause kind's to
+	/// settle on the sync core (D-28 step 2, P3).
+	function sendPress() {
+		if (!ready() || !entitled) return;
+		if (pushTimer) { clearTimeout(pushTimer); pushTimer = null; }
+		if (inFlight) { pressOwed = true; schedule(); return; }
+		push();
+	}
+
 	// ── Surviving a passphrase change ──────────────────────────
 	//
 	// THE PARCEL IS SEALED AT REST TOO, so this file takes part — but it is the
@@ -4109,7 +4227,7 @@
 	}
 
 	function saveVersion() {
-		try { localStorage.setItem(K_VERSION, String(serverVersion)); } catch (e) { /* ignore */ }
+		try { localStorage.setItem(K_VERSION, serverVersion + ':' + foreignAt); } catch (e) { /* ignore */ }
 	}
 
 	/// Take the version a pull read off the mailbox, unless a push moved the cursor
@@ -4128,18 +4246,107 @@
 	/// advanced the cursor during this read (`serverVersion > preRead`); a reset
 	/// lowers the version with no push behind it, so `preRead` still equals the
 	/// cursor and the lower version is taken as it must be.
-	function adoptVersion(v, preRead) {
+	// ── The version each storage location has merged (QFB4-1) ──
+	//
+	// THE FILES LIVE IN A LOCATION, AND THE VERSION WAS NOTED PER DEVICE. A parcel's files are
+	// merged into whichever storage the device is using -- its Browser storage, or a machine
+	// folder's shares -- and `pullOnce` declines to merge a version it has already merged. So a
+	// device that took version v in its folder and then went back to its Browser storage never
+	// merged v there: its next push carried the Browser's older copies at v, every other device
+	// read them as edits made here, and an edit made elsewhere was reverted on all of them with
+	// no copy kept (`specs/daimond_fixqa_r53_faultb_20260925.md`, QFB4-1). The same trip
+	// leaves a folder's disk behind the chunk index.
+	//
+	// So the claim "this version is merged" is kept per location (`DaimondCore.syncLoc`, the
+	// name `syncFileLoc` gives the fork point), the skip holds only where it is true, and no
+	// push -- ordinary or progress -- sends a census from a location that has not merged the
+	// version it would land on: it pulls and merges there first, as the 409 path does.
+	// An empty note merges once more; a location with no name ('') keeps the old rule.
+
+	function mergedAt() {
+		try { var m = JSON.parse(localStorage.getItem(K_MERGED_AT) || '{}'); return (m && typeof m === 'object') ? m : {}; }
+		catch (e) { return {}; }
+	}
+
+	function noteMergedAt(loc, v) {
+		if (!loc) return;
+		var m = mergedAt();
+		if (m[loc] === v) return;
+		delete m[loc];
+		m[loc] = v;								// the newest last, so the bound drops the oldest
+		var keys = Object.keys(m);
+		for (var i = 0; i < keys.length - MERGED_AT_MAX; i++) delete m[keys[i]];
+		try { localStorage.setItem(K_MERGED_AT, JSON.stringify(m)); } catch (e) { /* merged once more */ }
+	}
+
+	/// Has the location `loc` merged the version this device is at?
+	function locMerged(loc) { return !loc || mergedAt()[loc] === serverVersion; }
+
+	async function fileLoc() {
+		try { return (window.DaimondCore && DaimondCore.syncLoc) ? String(await DaimondCore.syncLoc()) : ''; }
+		catch (e) { return ''; }
+	}
+
+	function adoptVersion(v, preRead, floor) {
 		// Whatever this adopts, the mailbox was read and taken, so no version is left
 		// over for the re-pull: it merged, the mailbox moved on past it, or the mailbox
 		// was reset below it. Cleared before the race check, which only keeps the push's
 		// newer cursor.
 		failedVersion = 0;
 		if (v < serverVersion && serverVersion > preRead) return;	// a stale read raced a push; keep the push's cursor.
+		// A pull that MOVES the cursor took another writer's version. This device's own parcel from
+		// a sibling tab, merged here, is not another writer's -- but the sibling may have taken one
+		// before it pushed, and says so in the parcel: `floor` is that parcel's `chunkedFrom` (`adoptAt`),
+		// and this page's claim is raised to it (QCMG's S6: kept per page and read as per device, a
+		// tab that never took a foreign version vouched for the one its sibling took). One that
+		// finds the cursor where it stands (the already-adopted skip, a merge owed again) changes
+		// nothing: whatever put it there already said whose it was, and it is often this page's own push.
+		if (v !== serverVersion) foreignAt = (typeof floor === 'number') ? Math.max(foreignAt, Math.min(floor, v)) : v;
 		serverVersion = v;
+		// A mailbox reset below the upgrade's cursor: nothing it said is about this mailbox now.
+		if (oldAt > serverVersion) { oldAt = -1; try { localStorage.removeItem(K_OLD); } catch (e) { /* read as gone */ } }
+		if (upgradedAt > serverVersion) upgradedAt = -1;
 		saveVersion();
 	}
+	/// Adopt a version, and tell the commit gate how this device came to stand at it: `merged`
+	/// (the parcel was applied), `kept` (already adopted, not merged again), `adopted` (taken
+	/// without being opened) or `empty`. Only when the cursor really moved to it: a stale read
+	/// that raced a push leaves the push's version, and the push has already said.
+	function adoptAt(v, preRead, how, state) {
+		// This device's own parcel, from a sibling tab, merged into this tab's index: its versions
+		// are this device's, bar what the sibling took from another device before it pushed, which
+		// its `chunkedFrom` states (no field: the version itself). Anything else taken off the
+		// mailbox is another writer's.
+		var self = '';
+		try { self = (window.DaimondCore && DaimondCore.syncSelfDeviceId) ? DaimondCore.syncSelfDeviceId() : ''; } catch (e) { self = ''; }
+		var own = how === 'merged' && !!self && !!state && !!state.devices && typeof state.devices === 'object'
+			&& !!state.devices[self] && !!state.devices[self].self;
+		var floor = own ? ((typeof state.chunkedFrom === 'number' && state.chunkedFrom >= 0) ? state.chunkedFrom : (v | 0)) : undefined;
+		adoptVersion(v, preRead, floor);
+		if (serverVersion !== (v | 0)) return;
+		try { if (window.DaimondCore && DaimondCore.syncIndexAt) DaimondCore.syncIndexAt(v | 0, how, state); }
+		catch (e) { log('index mark failed', e); }
+	}
 	function loadVersion() {
-		serverVersion = parseInt(localStorage.getItem(K_VERSION) || '0', 10) || 0;
+		var raw = localStorage.getItem(K_VERSION);
+		serverVersion = parseInt(raw || '0', 10) || 0;
+		// `foreignAt` is believed only as this build wrote it, beside its cursor; anything else is the cursor.
+		foreignAt = serverVersion;
+		var fc = /^(\d+):(\d+)$/.exec(raw || '');
+		if (fc && (+fc[2]) <= serverVersion) foreignAt = +fc[2];
+		// AN UPGRADE LOAD: a bare cursor is the build before's, whether this is the first load of this build
+		// or a re-upgrade after a rollback (QCMG3b's R). Every write of this build is `c:f`, so neither a torn
+		// write nor two tabs can make this build's own cursor read as one. The old marker is raised to this
+		// cursor, and the seed runs on it. A later load, or a sibling tab after this page saves, reads `c:f`.
+		oldAt = -1;
+		try {
+			var ro = localStorage.getItem(K_OLD);
+			if (ro !== null && /^\d+$/.test(ro) && (+ro) <= serverVersion) oldAt = +ro;
+			if (serverVersion > 0 && /^\d+$/.test(raw || '')) {
+				upgradedAt = oldAt = serverVersion;
+				localStorage.setItem(K_OLD, String(oldAt));
+			}
+		} catch (e) { /* unrecorded: a reader waits for a whole parcel, as before G4 */ }
 		lastSynced    = parseInt(localStorage.getItem(K_LAST) || '0', 10) || 0;
 		loadSig();
 	}
@@ -4271,7 +4478,9 @@
 		// returns false and stays quiet when the set is unchanged, and so does an
 		// `adopt` that took nothing new -- so a pull that agreed with us schedules
 		// no push, which is what stops the two devices telling each other.
-		try { if (window.DaimondPause) DaimondPause.subscribe(nudge); }
+		try {
+			if (window.DaimondPause) DaimondPause.subscribe(function (why) { if (why === 'press') sendPress(); else nudge(); });
+		}
 		catch (e) { /* no pause module in this build */ }
 		// A session becoming available (unlock → gateway bootstrap) starts it all.
 		// The handle is asked for separately, and on the event rather than inside
@@ -4413,6 +4622,13 @@
 		/// Published so a verifier can drive the same door `refreshHandle` uses.
 		publishCard:   publishCard,
 		version: function () { return serverVersion; },
+		// The last version this page took from another writer; see `foreignAt`.
+		foreignAt: function () { return foreignAt; },
+		// The cursor this device stood at when it last loaded this build over the build before's, or -1;
+		// see `oldAt`.
+		oldAt: function () { return oldAt; },
+		// The cursor of this page's upgrade load, or -1; see `upgradedAt`.
+		upgradedAt: function () { return upgradedAt; },
 		entitled: function () { return entitled; },
 		/// The wake channel, as it stands. Nothing in the app turns on this; it
 		/// is what a verifier reads to tell "converged because it was told" from
@@ -4470,6 +4686,8 @@
 				/// the epoch chain to catch up on its own; it must be linked again.
 				rekeyBehind:  rekeyBehind,
 				failedParts:  lastFailed.slice(),
+				/// The chats the last merge left out because they could not be read.
+				refusedChats: lastRefused.slice(),
 				/// Does this browser keep the workspace's files? When it does not, every
 				/// other kind still travels and `filesWhy` says why ('none' or 'refused').
 				filesHeld:    !filesNotHeld(),

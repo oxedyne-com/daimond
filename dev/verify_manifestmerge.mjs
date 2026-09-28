@@ -49,7 +49,9 @@ const device = async (name) => {
 		const root = await navigator.storage.getDirectory();
 		try { await root.removeEntry(folder, { recursive: true }); } catch (e) { /* first run */ }
 		const dir = await root.getDirectoryHandle(folder, { create: true });
-		mod.set_workspace_dir(dir);
+		// Named as the page names every folder it opens (FsaDB.folderId): a folder opened with no id
+		// names no folder, so its rows are asked about before they go back over different bytes (HX2).
+		mod.set_workspace_dir(dir, '0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f');
 		const app = new mod.DaimondApp('http://127.0.0.1/v1/chat/completions', '', 'none', 256, '', true);
 		const read = async (path) => { try { return await mod.read_file(path); } catch (e) { return null; } };
 		// A daimon's turn: the mock answers `@tool` with that call.

@@ -448,16 +448,41 @@ check('deleting a file the fork point held writes a tombstone carrying the hash 
 check('and a tombstone for bytes the disk no longer holds is NOT honoured',
 	(await onDisk(OTHER)) !== null, 'the edit was deleted by a stale tombstone');
 
+// A RESTORE OF THIS DEVICE'S OWN DELETION IS A WRITE (the one tombstone law, fix/r53-faultb3):
+// the census that sees it back says so with a return stamped past the deletion, and an older
+// page's unstamped tombstone for those bytes cannot say it came later still, so it does not
+// delete it. The collect is made here rather than left to the timer, so the check does not
+// turn on whether one happened to land between the write and the pull (QFB3-10).
 const restored = await p.evaluate(async (a) => {
 	const mod = await import('../pkg/oxedyne_daimond.js');
 	const app = new mod.DaimondApp('http://127.0.0.1/v1/chat/completions', '', 'none', 4096, '', true);
 	await app.run_tool_outcome('file_write', JSON.stringify({ path: a.other, content: a.original }));
+	window.DaimondCore.syncClearWalkCache();
+	await window.DaimondCore.collectSync();
+	const rec = window.DaimondCloud.recordOf ? window.DaimondCloud.recordOf(a.other) : null;
 	await window.DaimondCore.applySync({ v: 3, chats: [], files: { [a.note]: 'the note\n' },
 		filesComplete: true, fileTombs: { [a.other]: a.tomb } });
-	return true;
+	return { rec };
 }, { other: OTHER, original: ORIGINAL, note: NOTE, tomb: tomb.tomb });
-check('while a tombstone for the bytes that ARE there does delete — a deletion still travels',
-	restored === true && (await onDisk(OTHER)) === null, 'the file survived its own tombstone');
+check('a restore of this device\'s own deletion is a return, and an older page\'s tombstone for those bytes does not delete it',
+	!!restored.rec && restored.rec.d === 0 && (await onDisk(OTHER)) === ORIGINAL,
+	JSON.stringify({ rec: restored.rec, disk: (await onDisk(OTHER)) === null ? 'GONE' : 'stands' }));
+
+// WHILE A DELETION STILL TRAVELS: another device's tombstone for bytes this device holds as its
+// agreed copy, and never restored, deletes it. The same bytes at a path of their own, so the
+// fingerprint is the one the census above really made, not one computed here.
+const THIRD = WORK + '/third.md';
+await p.evaluate(async (a) => {
+	const mod = await import('../pkg/oxedyne_daimond.js');
+	const app = new mod.DaimondApp('http://127.0.0.1/v1/chat/completions', '', 'none', 4096, '', true);
+	await app.run_tool_outcome('file_write', JSON.stringify({ path: a.third, content: a.original }));
+	window.DaimondCore.syncClearWalkCache();
+	await window.DaimondCore.syncCommitBaseline();
+	await window.DaimondCore.applySync({ v: 3, chats: [], files: { [a.note]: 'the note\n' },
+		filesComplete: true, fileTombs: { [a.third]: a.tomb } });
+}, { third: THIRD, original: ORIGINAL, note: NOTE, tomb: tomb.tomb });
+check('while an older page\'s tombstone for bytes held here as agreed does delete — a deletion still travels',
+	(await onDisk(THIRD)) === null, 'the agreed copy survived the tombstone for its bytes');
 check('and the file nobody deleted is untouched throughout',
 	(await onDisk(NOTE)) !== null);
 

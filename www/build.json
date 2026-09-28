@@ -1,1 +1,1 @@
-{"build":"02bcea02604f","note":"Server: space from deleted files comes back within 7 days, and the storage-full message says so"}
+{"build":"d5d184115bde","note":"Restore works across renamed folders; a re-created file reaches every device again; hand-off no longer repeats"}

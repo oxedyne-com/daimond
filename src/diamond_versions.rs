@@ -532,6 +532,7 @@ pub struct Entry {
 	pub wiped:   bool,		// written over with less than half of `was` left: see `wipes`
 	pub mark:    bool,		// a file on this computer, in a folder the user marked in
 	pub skipped: Option<String>,	// why no body was kept: "size", or the hand's own reason
+	pub folder:  Option<String>,	// which folder a workspace-relative path was in: see `needs_folder`
 }
 
 impl Entry {
@@ -547,6 +548,7 @@ impl Entry {
 			wiped:   false,
 			mark:    false,
 			skipped: None,
+			folder:  None,
 		}
 	}
 
@@ -583,6 +585,11 @@ impl Entry {
 		if let Some(why) = &self.skipped {
 			out.push_str(&fmt!(",\"skipped\":\"{}\"", json_escape(why)));
 		}
+		// Written only where a folder holds the path: a build that has never heard of it reads the
+		// row as one from before folders were recorded, which is what it was to that build.
+		if let Some(f) = &self.folder {
+			out.push_str(&fmt!(",\"folder\":\"{}\"", json_escape(f)));
+		}
 		out.push('}');
 		out
 	}
@@ -602,6 +609,7 @@ impl Entry {
 			wiped:   extract_json_bool(s, "wiped").unwrap_or(false),
 			mark:    extract_json_bool(s, "mark").unwrap_or(false),
 			skipped: extract_json_string(s, "skipped"),
+			folder:  extract_json_string(s, "folder").filter(|f| !f.is_empty()),
 		})
 	}
 }
@@ -1062,6 +1070,7 @@ pub struct Change {
 	pub mark:    bool,		// a file on this computer, under a folder the user marked in
 	pub refused: Option<String>,	// why the prior bytes could not be read, in the hand's words
 	pub wiped:   bool,		// a write in this turn left under half: see `wipes`
+	pub folder:  Option<String>,	// the folder it was made in, where known at the act: see `needs_folder`
 }
 
 impl Change {
@@ -1069,13 +1078,15 @@ impl Change {
 	/// A path the caller has just read off the disk.
 	pub fn of(path: &str, body: Vec<u8>) -> Self {
 		Self { path: path.to_string(), after: Body::Held(body), before: None,
-			found: Found::Unread, carried: None, mark: false, refused: None, wiped: false }
+			found: Found::Unread, carried: None, mark: false, refused: None, wiped: false,
+			folder: None }
 	}
 
 	/// A path that is no longer there.
 	pub fn gone(path: &str) -> Self {
 		Self { path: path.to_string(), after: Body::Gone, before: None,
-			found: Found::Unread, carried: None, mark: false, refused: None, wiped: false }
+			found: Found::Unread, carried: None, mark: false, refused: None, wiped: false,
+			folder: None }
 	}
 }
 
@@ -1179,7 +1190,7 @@ pub fn capture_into(held: &mut Vec<(String, Change)>, raw: &str, change: Change)
 		held[at] = (raw.to_string(), change);
 		return;
 	}
-	let Change { path, after, found, carried, mark, wiped, .. } = change;
+	let Change { path, after, found, carried, mark, wiped, folder, .. } = change;
 	let slot = &mut held[at];
 	let carried = match (carried, &after) {
 		(Some(c), _)			=> Some(c),
@@ -1197,6 +1208,7 @@ pub fn capture_into(held: &mut Vec<(String, Change)>, raw: &str, change: Change)
 		mark,
 		refused: slot.1.refused.take(),
 		wiped:   slot.1.wiped || wiped,
+		folder:  slot.1.folder.take().or(folder),
 	};
 }
 
@@ -1254,7 +1266,7 @@ pub fn seal_broken(held: &mut Vec<(String, Change)>, path: &str, now: &[u8])
 		Some(at)	=> at,
 		None		=> return None,
 	};
-	let again = restarted(path, now, held[at].1.mark);
+	let again = restarted(path, now, held[at].1.mark, held[at].1.folder.clone());
 	let raw = held[at].0.clone();
 	let run = std::mem::replace(&mut held[at].1, again);
 	Some((raw, run))
@@ -1270,7 +1282,7 @@ pub fn seal_due(held: &[(String, Change)], path: &str, now: &[u8]) -> bool {
 /// Put back a run [`seal_broken`] took out whose version could not be recorded, where the path's
 /// entry is still the run it began again and nothing has folded into it since.
 pub fn unseal(held: &mut Vec<(String, Change)>, sealed: (String, Change), now: &[u8]) {
-	let again = restarted(&sealed.1.path, now, sealed.1.mark);
+	let again = restarted(&sealed.1.path, now, sealed.1.mark, sealed.1.folder.clone());
 	if let Some(slot) = held.iter_mut().find(|(_, h)| h.path == sealed.1.path) {
 		if slot.1 == again {
 			*slot = sealed;
@@ -1279,7 +1291,7 @@ pub fn unseal(held: &mut Vec<(String, Change)>, sealed: (String, Change), now: &
 }
 
 /// The run of `path` begun again at `now`, as [`seal_broken`] leaves it.
-fn restarted(path: &str, now: &[u8], mark: bool) -> Change {
+fn restarted(path: &str, now: &[u8], mark: bool, folder: Option<String>) -> Change {
 	Change {
 		path:    path.to_string(),
 		after:   Body::Held(now.to_vec()),
@@ -1289,6 +1301,7 @@ fn restarted(path: &str, now: &[u8], mark: bool) -> Change {
 		mark,
 		refused: None,
 		wiped:   false,
+		folder,
 	}
 }
 
@@ -1428,6 +1441,7 @@ pub fn moved(from: (&str, bool), to: (&str, bool), what: Moving) -> (Change, Cha
 		mark:    from.1,
 		refused: refused.clone(),
 		wiped:   false,
+		folder:  None,
 	};
 	let dst = Change {
 		path:    to.0.to_string(),
@@ -1438,6 +1452,7 @@ pub fn moved(from: (&str, bool), to: (&str, bool), what: Moving) -> (Change, Cha
 		mark:    to.1,
 		refused,
 		wiped:   false,
+		folder:  None,
 	};
 	(src, dst)
 }
@@ -1491,6 +1506,127 @@ pub fn output_note_says(note: &str, tool: &str, path: &str, bytes: &[u8]) -> boo
 
 
 // ┌───────────────────────────────────────────────────────────────┐
+// │ Which folder a row was written in                              │
+// └───────────────────────────────────────────────────────────────┘
+//
+// **A workspace-relative path names a file only together with the folder it is in** (HR of the
+// release 5.1 fix's third QA, built for release 5.2, 2026-09-25).  `notes/x.md` is one file in the
+// browser's own storage, another in a folder opened on this computer, and a third on the machine
+// behind a hand, and which of them a path reaches depends on what is open at the moment it is
+// used.  A row recorded while one was open was put back through whichever reached the path at the
+// restore: a Restore through a hand whose folder held a different `notes/x.md` wrote over it, and
+// asked nothing.  The row kept what it replaced, so nothing was lost, but the person's file was
+// replaced by a stranger's.
+//
+// So a row of a relative path records the folder it was written in, and a restore puts it back
+// only where the path reaches that same folder ([`route`]).  The folder is named by an id, never
+// a path, since a manifest travels with the Diamond and a machine path names its owner: the
+// browser's storage is [`BROWSER_FOLDER`], one workspace the account's devices share, and a
+// folder opened on this computer is the id this device gave it when it was first picked (M2 of
+// 2026-09-24, `FsaDB.folderId` in the page).  A machine file is recorded by its absolute path,
+// which names its place already, and the store's own paths are the same place from every folder.
+
+/// The folder name a row carries for the browser's own storage.
+pub const BROWSER_FOLDER: &str = "browser";
+
+/// What a folder opened with no id of its own is called in a row: the device's record of folders
+/// refused one, or the caller gave none.  **It names no folder**: two such folders cannot be told
+/// apart, so a row of one is never taken to be a file of another, nor of itself (HX2 of HR's QA).
+pub const UNNAMED_FOLDER: &str = "opened";
+
+/// Does a row of `path` need the folder it was written in to say which file it is?  A
+/// workspace-relative path does; an absolute machine path and one of the store's own do not.
+pub fn needs_folder(path: &str) -> bool {
+	!path.starts_with('/') && !crate::tools::is_store_path(path)
+}
+
+/// Why a restore cannot tell whether a row's file is the one its path reaches now.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum Unplaced {
+	Unrecorded,	// written before rows recorded their folder
+	Unknown,	// written in a folder this device does not know, or in one opened unnamed
+}
+
+/// What a restore's act may do at the place its path reaches now.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum Route {
+	Go,		// the row's own file: put it back
+	Left,		// another place's file of the same name: leave it as it stands
+	Ask(Unplaced),	// over different bytes, and whose file it is cannot be told: the person decides
+}
+
+/// Where a row of `row` written in `row_folder` may be put back, now that its path reaches
+/// `landed` in `landed_folder`.
+///
+/// **Only into the file it was written from, where that can be told.**  A machine row lands only
+/// at its own absolute path, and a relative row never lands on the machine.  A relative row lands
+/// in its own folder, and is left where the path reaches another place this device can name:
+/// browser storage from a folder or a folder from it, or another folder this device knows.
+///
+/// **A row whose folder cannot be named here is not left for good** (HX1 and HX2 of HR's QA,
+/// 2026-09-25).  A folder's id belongs to the device that picked it, so a row from a folder on
+/// another device, from one moved or renamed, from one picked again after "Forget", or from
+/// before the site's data was cleared, names a folder this device does not know; and a folder
+/// opened unnamed names none.  Leaving such rows left them by every route, silently, on every
+/// device but the one that wrote them.  They are placed as a row from before folders were
+/// recorded is: put back where nothing stands or the same bytes do, and over different bytes the
+/// person is asked first.  No row lands over different bytes unasked.
+///
+/// # Arguments
+/// * `row` - The path as the row names it: workspace-relative, or absolute on the machine.
+/// * `landed` - Where the act reaches: normalised, or absolute where it goes through the hand.
+/// * `known` - Is `row_folder` a folder this device knows ([`crate::wasm::opfs::folder_known`])?
+/// * `overwrites` - Would the act replace bytes other than the ones it puts back?
+pub fn route(
+	row:		&str,
+	row_folder:	Option<&str>,
+	landed:		&str,
+	landed_folder:	Option<&str>,
+	known:		bool,
+	overwrites:	bool,
+)
+	-> Route
+{
+	if row.starts_with('/') || landed.starts_with('/') || row != landed {
+		return if row == landed { Route::Go } else { Route::Left };
+	}
+	if !needs_folder(row) {
+		return Route::Go;
+	}
+	if elsewhere(row_folder, landed_folder, known) {
+		return Route::Left;
+	}
+	let unplaced = |why| if overwrites { Route::Ask(why) } else { Route::Go };
+	match (row_folder, landed_folder) {
+		(None, _)						=> unplaced(Unplaced::Unrecorded),
+		(Some(r), Some(l)) if r == l && r != UNNAMED_FOLDER	=> Route::Go,
+		(Some(_), _)						=> unplaced(Unplaced::Unknown),
+	}
+}
+
+/// Is a row of a relative path, written in `row_folder`, another place's file where the path
+/// reaches `here`: a place this device can name, and not this one?  Browser storage from a folder
+/// or a folder from it, or a folder this device knows with another named folder open.  A row from
+/// before folders were recorded, from this folder, or from a folder this device cannot name is not.
+///
+/// **The one question the restore's route and the history's resolvers both ask** (HQ1 of HR's QA
+/// round 2, 2026-09-27).  [`route`] leaves exactly these rows, and [`answering`] drops exactly
+/// these; any other row may be this folder's file, and answers for it.
+///
+/// # Arguments
+/// * `known` - Is `row_folder` a folder this device knows ([`crate::wasm::opfs::folder_known`])?
+pub fn elsewhere(row_folder: Option<&str>, here: Option<&str>, known: bool) -> bool {
+	match (row_folder, here) {
+		(None, _)						=> false,
+		(Some(r), Some(l)) if r == l && r != UNNAMED_FOLDER	=> false,
+		(Some(BROWSER_FOLDER), _) | (_, Some(BROWSER_FOLDER))	=> true,
+		(Some(_), Some(l))					=> known && l != UNNAMED_FOLDER,
+		(Some(_), None)						=> false,
+	}
+}
+
+
+// ┌───────────────────────────────────────────────────────────────┐
 // │ What a path held at a version                                  │
 // └───────────────────────────────────────────────────────────────┘
 
@@ -1502,9 +1638,11 @@ pub enum At {
 		bytes:   u64,
 		mark:    bool,
 		skipped: Option<String>,
+		folder:  Option<String>,	// the folder the answering row was written in
 	},
 	Gone {
 		mark:    bool,		// the path is in a folder the user marked in, so only a fenced door removes it
+		folder:  Option<String>,
 	},
 }
 
@@ -1526,19 +1664,32 @@ impl At {
 	pub fn mark(&self) -> bool {
 		match self {
 			Self::Held { mark, .. }	=> *mark,
-			Self::Gone { mark }	=> *mark,
+			Self::Gone { mark, .. }	=> *mark,
 		}
+	}
+
+	/// The folder the row this state comes from was written in ([`needs_folder`]).
+	pub fn folder(&self) -> Option<&str> {
+		match self {
+			Self::Held { folder, .. } | Self::Gone { folder, .. }	=> folder.as_deref(),
+		}
+	}
+
+	/// The state an entry's creation leaves before it: nothing, in the entry's own folder.
+	fn made(e: &Entry) -> Self {
+		Self::Gone { mark: e.mark, folder: e.folder.clone() }
 	}
 
 	/// What an entry says stood at its path once its version was recorded.
 	fn after(e: &Entry) -> Self {
 		match e.gone {
-			true	=> Self::Gone { mark: e.mark },
+			true	=> Self::made(e),
 			false	=> Self::Held {
 				hash:    e.hash.clone(),
 				bytes:   e.bytes,
 				mark:    e.mark,
 				skipped: e.skipped.clone(),
+				folder:  e.folder.clone(),
 			},
 		}
 	}
@@ -1553,11 +1704,83 @@ impl At {
 			bytes:   0,
 			mark:    e.mark,
 			skipped: None,
+			folder:  e.folder.clone(),
 		})
 	}
 }
 
-/// Every path these manifests have ever named, as it stood at `want`.
+// **A relative path's history is its history in one folder** (HX3 of HR's QA, 2026-09-25).  Every
+// resolver below read a path's rows alone, so where one path had rows from two places -- browser
+// storage and an opened folder, or two folders -- one place's newer row shadowed the other's: a
+// whole-version Restore in F1 took browser storage's row and left F1's own, and a change in F1
+// that kept no bytes took no `was` because the newest row was F2's, so a delete went unrecorded.
+// So each asks for the rows of the folder its path reaches ([`answering`]), and a row from before
+// folders were recorded answers for every folder, as it did before.
+//
+// **And "the folder it reaches" is decided by the route's own question** (HQ1 of HR's QA round 2,
+// 2026-09-27).  HX3 kept only the open folder's rows and the rows from before folders, so a row
+// from a folder this device cannot name -- another device's, the same folder under its id from
+// before a "Forget" -- stopped answering the moment the open folder had a row of the path.  A
+// whole Restore then put back the open folder's own older row, or its first row's `was`, and
+// `route` let it go unasked: another version's bytes, reported as success.  Such a row is placed
+// as a row from before folders is ([`route`]), so it answers as one: only a row of a place this
+// device can name as another ([`elsewhere`]) is dropped.  The `was` of a change that kept no bytes
+// is not a resolver's answer but a claim filed under the folder, and keeps to the folder's own rows
+// ([`indexed_was`]).
+
+/// Every row naming each path, with its version, oldest first (a version's rows in their order).
+fn rows_by_path(manifests: &[(u64, Manifest)]) -> BTreeMap<&str, Vec<(u64, &Entry)>> {
+	let mut sorted: Vec<&(u64, Manifest)> = manifests.iter().collect();
+	sorted.sort_by_key(|(n, _)| *n);
+	let mut out: BTreeMap<&str, Vec<(u64, &Entry)>> = BTreeMap::new();
+	for (n, m) in sorted.into_iter() {
+		for e in m.files.iter() {
+			out.entry(e.path.as_str()).or_default().push((*n, e));
+		}
+	}
+	out
+}
+
+/// The rows of one path that answer for it in the folder `here`: every row but those of a place
+/// this device can name as another ([`elsewhere`]), where any is left; else every row, which the
+/// restore then leaves ([`route`]) and says so.  Every row where `here` names no folder: the path
+/// is absolute on the machine or one of the store's own, whose rows carry none.
+fn answering<'a, K>(rows: Vec<(u64, &'a Entry)>, here: Option<&str>, known: K) -> Vec<(u64, &'a Entry)>
+	where K: Fn(&str) -> bool
+{
+	if here.is_none() {
+		return rows;
+	}
+	let own: Vec<(u64, &Entry)> = rows.iter()
+		.filter(|(_, e)| !elsewhere(e.folder.as_deref(), here, e.folder.as_deref().map(&known).unwrap_or(false)))
+		.cloned()
+		.collect();
+	match own.is_empty() {
+		true	=> rows,
+		false	=> own,
+	}
+}
+
+/// Of the rows at version `n`, the one written in `prefer`, else the first.
+fn pick<'a>(rows: &[(u64, &'a Entry)], n: u64, prefer: Option<&str>) -> Option<&'a Entry> {
+	let at: Vec<&Entry> = rows.iter().filter(|(v, _)| *v == n).map(|(_, e)| *e).collect();
+	at.iter().find(|e| prefer.is_some() && e.folder.as_deref() == prefer)
+		.or_else(|| at.first())
+		.copied()
+}
+
+/// The row answering for `rows` (oldest first) at `want`: the newest at or before it, `true`; or
+/// else the earliest after it, `false`.
+fn answer<'a>(rows: &[(u64, &'a Entry)], want: u64, prefer: Option<&str>) -> Option<(&'a Entry, bool)> {
+	match rows.iter().map(|(n, _)| *n).filter(|n| *n <= want).max() {
+		Some(n)	=> pick(rows, n, prefer).map(|e| (e, true)),
+		None	=> rows.iter().map(|(n, _)| *n).filter(|n| *n > want).min()
+			.and_then(|n| pick(rows, n, prefer))
+			.map(|e| (e, false)),
+	}
+}
+
+/// Every path these manifests have ever named, as it stood at `want` in the folder each reaches.
 ///
 /// **The union and not the survivors**, because that is what a whole-version restore needs: a
 /// file created AFTER `want` has to be removed to put the Diamond back, and a resolver that
@@ -1570,29 +1793,32 @@ impl At {
 /// first met AFTER `want` -- a marked file a turn edited, most commonly -- to have been absent,
 /// and deleted it straight off the user's open folder.  Its `was` said otherwise all along.
 ///
+/// **In the folder the path reaches** ([`answering`]): every row but another nameable place's
+/// answers for it, and another place's only where no other row does.
+///
 /// Ordered by path, so two calls over the same store answer in the same order.
 ///
 /// # Arguments
 /// * `manifests` - Every manifest held, by version, in any order.
 /// * `want` - The version to resolve as at.
-pub fn state_at(manifests: &[(u64, Manifest)], want: u64) -> Vec<(String, At)> {
-	let mut sorted: Vec<&(u64, Manifest)> = manifests.iter().collect();
-	sorted.sort_by_key(|(n, _)| *n);
-	let mut out: BTreeMap<String, At> = BTreeMap::new();
-	// Ascending, so every entry at or before `want` is seen before any later one: a path already
-	// answered is answered by its newest entry there, and the first later entry met for a path
-	// that is not is its EARLIEST.
-	for (n, m) in sorted.iter() {
-		for e in m.files.iter() {
-			if *n <= want {
-				out.insert(e.path.clone(), At::after(e));
-			} else {
-				out.entry(e.path.clone())
-					.or_insert_with(|| At::before(e).unwrap_or(At::Gone { mark: e.mark }));
-			}
+/// * `here` - The folder each path reaches now ([`crate::wasm::diamond::folder_of`]).
+/// * `known` - Is a folder one this device knows ([`crate::wasm::opfs::folder_known`])?
+pub fn state_at<F, K>(manifests: &[(u64, Manifest)], want: u64, here: F, known: K) -> Vec<(String, At)>
+	where
+		F: Fn(&str) -> Option<String>,
+		K: Fn(&str) -> bool,
+{
+	let mut out: Vec<(String, At)> = Vec::new();
+	for (path, rows) in rows_by_path(manifests).into_iter() {
+		let h = here(path);
+		let rows = answering(rows, h.as_deref(), &known);
+		match answer(&rows, want, h.as_deref()) {
+			Some((e, true))		=> out.push((path.to_string(), At::after(e))),
+			Some((e, false))	=> out.push((path.to_string(), At::before(e).unwrap_or_else(|| At::made(e)))),
+			None			=> {},
 		}
 	}
-	out.into_iter().collect()
+	out
 }
 
 /// What one path held as at `want`, or `None` where the store cannot say.
@@ -1606,27 +1832,35 @@ pub fn state_at(manifests: &[(u64, Manifest)], want: u64) -> Vec<(String, At)> {
 /// one whose earliest later entry carries no `was` -- a file this store first saw being CREATED
 /// did not exist before it, and a later entry's `was` is not an answer to a question about a
 /// state the user never saw.  [`state_at`] answers every path by the same rule.
-pub fn path_at(manifests: &[(u64, Manifest)], path: &str, want: u64) -> Option<At> {
-	let mut best:  Option<(u64, &Entry)> = None;	// the newest entry at or before `want`
-	let mut first: Option<(u64, &Entry)> = None;	// the earliest entry after it
-	for (n, m) in manifests.iter() {
-		for e in m.files.iter().filter(|e| e.path == path) {
-			if *n > want {
-				match first {
-					Some((seen, _)) if seen <= *n	=> {},
-					_				=> first = Some((*n, e)),
-				}
-			} else {
-				match best {
-					Some((seen, _)) if seen >= *n	=> {},
-					_				=> best = Some((*n, e)),
-				}
-			}
-		}
-	}
-	match best {
-		Some((_, e))	=> Some(At::after(e)),
-		None		=> first.and_then(|(_, e)| At::before(e)),
+///
+/// **One row, the one named**: a row's own Restore puts back that row, so of two rows of the path
+/// at the version -- two folders' -- the one written in `prefer` answers.
+///
+/// # Arguments
+/// * `prefer` - The folder of the row the person chose, else the folder the path reaches now.
+pub fn path_at(manifests: &[(u64, Manifest)], path: &str, want: u64, prefer: Option<&str>)
+	-> Option<At>
+{
+	held_at(&rows_by_path(manifests).remove(path).unwrap_or_default(), want, prefer)
+}
+
+/// What one path held as at `want` in the folder `here` it reaches now, by [`path_at`]'s rule over
+/// the rows that answer there ([`answering`]): the daimon's `file_revert` to a version, which names
+/// no row.  Another nameable place's newer row does not shadow this folder's own (HQ1's sweep).
+pub fn path_here<K>(manifests: &[(u64, Manifest)], path: &str, want: u64, here: Option<&str>, known: K)
+	-> Option<At>
+	where K: Fn(&str) -> bool
+{
+	let rows = answering(rows_by_path(manifests).remove(path).unwrap_or_default(), here, known);
+	held_at(&rows, want, here)
+}
+
+/// [`path_at`]'s answer from `rows`, oldest first.
+fn held_at(rows: &[(u64, &Entry)], want: u64, prefer: Option<&str>) -> Option<At> {
+	match answer(rows, want, prefer) {
+		Some((e, true))		=> Some(At::after(e)),
+		Some((e, false))	=> At::before(e),
+		None			=> None,
 	}
 }
 
@@ -1642,69 +1876,101 @@ pub fn path_at(manifests: &[(u64, Manifest)], path: &str, want: u64) -> Option<A
 ///
 /// A record past the rows one version holds goes on into the versions after it ([`split_rows`]),
 /// so a path named and not at `of` answers its earliest entry after `of`.  A path no entry at or
-/// after `of` names is left out, because there is nothing to put back.
+/// after `of` names is left out, because there is nothing to put back.  Of two rows of a path at
+/// that version, the one written in the folder the path reaches answers.
 ///
 /// # Arguments
 /// * `paths` - The paths to undo, as the store names them; empty for every path `of` names.
-pub fn undo_of(manifests: &[(u64, Manifest)], of: u64, paths: &[String]) -> Vec<(String, At)> {
-	let mut sorted: Vec<&(u64, Manifest)> = manifests.iter()
-		.filter(|(n, _)| *n == of || (*n > of && !paths.is_empty()))
-		.collect();
-	sorted.sort_by_key(|(n, _)| *n);
-	let mut out: BTreeMap<String, At> = BTreeMap::new();
-	// Ascending, so the first entry met for a path is its row at `of`, or its earliest after.
-	for (_, m) in sorted.iter() {
-		for e in m.files.iter() {
-			if !paths.is_empty() && !paths.iter().any(|p| *p == e.path) {
-				continue;
-			}
-			out.entry(e.path.clone())
-				.or_insert_with(|| At::before(e).unwrap_or(At::Gone { mark: e.mark }));
+/// * `here` - The folder each path reaches now.
+pub fn undo_of<F>(manifests: &[(u64, Manifest)], of: u64, paths: &[String], here: F)
+	-> Vec<(String, At)>
+	where F: Fn(&str) -> Option<String>
+{
+	let mut out: Vec<(String, At)> = Vec::new();
+	for (path, rows) in rows_by_path(manifests).into_iter() {
+		if !paths.is_empty() && !paths.iter().any(|p| p == path) {
+			continue;
+		}
+		let first = rows.iter().map(|(n, _)| *n)
+			.filter(|n| *n == of || (*n > of && !paths.is_empty()))
+			.min();
+		let h = here(path);
+		if let Some(e) = first.and_then(|n| pick(&rows, n, h.as_deref())) {
+			out.push((path.to_string(), At::before(e).unwrap_or_else(|| At::made(e))));
 		}
 	}
-	out.into_iter().collect()
+	out
 }
 
 /// The version to undo one path to when nobody said which: what it held before the newest change
-/// to it, and the version that change was recorded at.
+/// to it in the folder it reaches now, and the version that change was recorded at.
 ///
 /// `None` where the path has no history here at all, and where its newest entry carries no `was`
 /// -- a file whose prior bytes were never captured has nothing to go back to, and answering with
 /// an older version would restore a state the user never saw.
-pub fn undo_target(manifests: &[(u64, Manifest)], path: &str) -> Option<(u64, String)> {
-	let mut best: Option<(u64, Option<String>)> = None;
-	for (n, m) in manifests.iter() {
-		for e in m.files.iter().filter(|e| e.path == path) {
-			match &best {
-				Some((seen, _)) if *seen >= *n	=> {},
-				_				=> best = Some((*n, e.was.clone())),
-			}
-		}
-	}
-	match best {
-		Some((n, Some(was)))	=> Some((n, was)),
-		_			=> None,
-	}
+///
+/// Answered with the folder that entry was written in ([`needs_folder`]), which decides where
+/// the bytes may go back.  The newest change is the newest of the rows that answer here
+/// ([`answering`]): another device's change counts, and another folder of this device's does not.
+pub fn undo_target<K>(manifests: &[(u64, Manifest)], path: &str, here: Option<&str>, known: K)
+	-> Option<(u64, String, Option<String>)>
+	where K: Fn(&str) -> bool
+{
+	let rows = answering(rows_by_path(manifests).remove(path).unwrap_or_default(), here, known);
+	let n = rows.iter().map(|(n, _)| *n).max()?;
+	let e = pick(&rows, n, here)?;
+	e.was.clone().map(|was| (n, was, e.folder.clone()))
 }
 
-/// The last-known hash of every path the manifests name, which is what a fresh change is compared
-/// against.
+/// The newest row of every path in every folder: `(path, folder)` to the version and the hash it
+/// left, `None` where it left no body -- a deletion, or a change kept without its bytes.
 ///
 /// **This is the index, derived rather than stored.** The launch plan kept it in a
 /// `versions/index.json`; a second copy of a fact the manifests already carry is a second thing
 /// for a prune to leave behind, and the store is small enough that reading it costs one directory
 /// walk either way. A path whose whole history has been pruned falls out of this and its next
 /// change records `was: null`, which is honest -- the body it would have named is gone too.
-pub fn index_of(manifests: &[(u64, Manifest)]) -> BTreeMap<String, String> {
+pub fn index_placed(manifests: &[(u64, Manifest)])
+	-> BTreeMap<(String, Option<String>), (u64, Option<String>)>
+{
 	let mut out = BTreeMap::new();
-	for (path, at) in state_at(manifests, u64::MAX) {
-		if let At::Held { hash, .. } = at {
-			if !hash.is_empty() {
-				out.insert(path, hash);
-			}
+	for (path, rows) in rows_by_path(manifests).into_iter() {
+		for (n, e) in rows.into_iter() {
+			// Oldest first, so each place ends on its newest row.
+			let hash = match At::after(e) {
+				At::Held { hash, skipped: None, .. } if !hash.is_empty()	=> Some(hash),
+				_								=> None,
+			};
+			out.insert((path.to_string(), e.folder.clone()), (n, hash));
 		}
 	}
 	out
+}
+
+/// What stood at `path` before a change made in `folder` that captured no bytes of its own: the
+/// hash its newest row in that folder left, a row from before folders were recorded counting as
+/// every folder's, and that folder's own row first at a tie.  A change that names no folder takes
+/// the path's newest row anywhere.  Never another folder's, whose file of the same name this is
+/// not.
+///
+/// **This folder's own knowledge only, unlike the resolvers** (HQ1 of HR's QA round 2, 2026-09-27).
+/// The answer becomes the `was` of a row filed under `folder`, so its Undo puts it back as this
+/// folder's own, unasked; a hash borrowed from a folder this device cannot name would lose where
+/// it came from, and go back over the folder's file as though the folder had held it.  The
+/// resolvers ([`answering`]) may offer such a row, because it reaches [`route`] with its own
+/// folder and is asked about there; this answer never does.
+pub fn indexed_was(
+	index:	&BTreeMap<(String, Option<String>), (u64, Option<String>)>,
+	path:	&str,
+	folder:	Option<&str>,
+)
+	-> Option<String>
+{
+	index.range((path.to_string(), None)..)
+		.take_while(|((p, _), _)| p == path)
+		.filter(|((_, f), _)| folder.is_none() || f.is_none() || f.as_deref() == folder)
+		.max_by_key(|((_, f), (n, _))| (*n, folder.is_some() && f.as_deref() == folder))
+		.and_then(|(_, (_, h))| h.clone())
 }
 
 
@@ -2700,13 +2966,13 @@ Garden: order two bags of bark for a bed.
 			(3, m(Cause::Turn, vec![e("a.md", "two", Some("one"))])),
 			(5, m(Cause::Turn, vec![e("b.md", "bee", None)])),
 		];
-		let at3 = state_at(&ms, 3);
+		let at3 = state_at(&ms, 3, |_| None, |_| false);
 		let a = at3.iter().find(|(p, _)| p == "a.md").map(|(_, s)| s.clone());
 		assert_eq!(Some(hash_of(b"two")), a.and_then(|s| s.hash().map(|h| h.to_string())));
 		// Named at 5 and so present in the union, and Gone as at 3 -- which is what makes a
 		// whole-version restore able to REMOVE it.
 		let b = at3.iter().find(|(p, _)| p == "b.md").map(|(_, s)| s.clone());
-		assert_eq!(Some(At::Gone { mark: false }), b);
+		assert_eq!(Some(At::Gone { mark: false, folder: None }), b);
 	}
 
 	#[test]
@@ -2720,11 +2986,11 @@ Garden: order two bags of bark for a bed.
 			(2, m(Cause::Turn, vec![gone])),
 			(4, m(Cause::User, vec![e("a.md", "three", None)])),
 		];
-		assert!(matches!(path_at(&ms, "a.md", 1), Some(At::Held { .. })));
-		assert_eq!(Some(At::Gone { mark: false }), path_at(&ms, "a.md", 3));
+		assert!(matches!(path_at(&ms, "a.md", 1, None), Some(At::Held { .. })));
+		assert_eq!(Some(At::Gone { mark: false, folder: None }), path_at(&ms, "a.md", 3, None));
 		assert_eq!(Some(hash_of(b"three")),
-			path_at(&ms, "a.md", 9).and_then(|s| s.hash().map(|h| h.to_string())));
-		assert_eq!(None, path_at(&ms, "never.md", 9));
+			path_at(&ms, "a.md", 9, None).and_then(|s| s.hash().map(|h| h.to_string())));
+		assert_eq!(None, path_at(&ms, "never.md", 9, None));
 	}
 
 	/// **The FIRST change to a file is undoable, not only the second.**
@@ -2743,20 +3009,20 @@ Garden: order two bags of bark for a bed.
 		];
 		// Before the store had ever named it: what the earliest entry says stood there.
 		assert_eq!(Some(hash_of(b"v1 on the site")),
-			path_at(&ms, "live/site.txt", 3).and_then(|s| s.hash().map(|h| h.to_string())));
+			path_at(&ms, "live/site.txt", 3, None).and_then(|s| s.hash().map(|h| h.to_string())));
 		// And the EARLIEST later entry, not whichever one came to hand: v6's `was` is v2, which
 		// is a state that did exist -- but not at 3.
 		assert_eq!(Some(hash_of(b"v2 by the daimon")),
-			path_at(&ms, "live/site.txt", 4).and_then(|s| s.hash().map(|h| h.to_string())));
+			path_at(&ms, "live/site.txt", 4, None).and_then(|s| s.hash().map(|h| h.to_string())));
 		// A file this store first saw being CREATED did not exist before it, and answering with
 		// an older version would restore a state the user never saw.
 		let made = vec![(4, m(Cause::Turn, vec![e("notes/new.md", "born here", None)]))];
-		assert_eq!(None, path_at(&made, "notes/new.md", 3));
+		assert_eq!(None, path_at(&made, "notes/new.md", 3, None));
 		// A path no manifest has ever named is still nothing at all.
-		assert_eq!(None, path_at(&ms, "never.md", 3));
+		assert_eq!(None, path_at(&ms, "never.md", 3, None));
 		// THE SNAPSHOT ANSWERS THE SAME (F5, 2026-09-25): a whole-version restore to 3 puts the
 		// file back as it stood, and does not take it to have been absent.
-		let at3 = state_at(&ms, 3);
+		let at3 = state_at(&ms, 3, |_| None, |_| false);
 		assert_eq!(Some(hash_of(b"v1 on the site")), at3.iter().find(|(p, _)| p == "live/site.txt")
 			.and_then(|(_, s)| s.hash().map(|h| h.to_string())));
 	}
@@ -2782,7 +3048,7 @@ Garden: order two bags of bark for a bed.
 			(2, m(Cause::Turn, vec![one, two, born])),
 			(3, m(Cause::Turn, vec![born2])),
 		];
-		let at1 = state_at(&ms, 1);
+		let at1 = state_at(&ms, 1, |_| None, |_| false);
 		let get = |p: &str| at1.iter().find(|(q, _)| q == p).map(|(_, s)| s.clone());
 		for (p, was) in [("vault/w/one.md", "orig one"), ("vault/w/two.md", "orig two")] {
 			let s = get(p);
@@ -2791,11 +3057,11 @@ Garden: order two bags of bark for a bed.
 		}
 		// Created at 2, so absent at 1 -- and marked, so the caller's fenced door removes it.
 		// v3's `was` is v2's body, a state that did exist, but not at 1.
-		assert_eq!(Some(At::Gone { mark: true }), get("vault/w/born.md"));
-		assert_eq!(None, path_at(&ms, "vault/w/born.md", 1));
+		assert_eq!(Some(At::Gone { mark: true, folder: None }), get("vault/w/born.md"));
+		assert_eq!(None, path_at(&ms, "vault/w/born.md", 1, None));
 		// And the per-path answer is the snapshot's answer, path for path.
 		for (p, s) in at1.iter() {
-			match path_at(&ms, p, 1) {
+			match path_at(&ms, p, 1, None) {
 				Some(q) => assert_eq!(&q, s, "{}", p),
 				None    => assert!(matches!(s, At::Gone { .. }), "{}", p),
 			}
@@ -2808,11 +3074,11 @@ Garden: order two bags of bark for a bed.
 			(1, m(Cause::Turn, vec![e("a.md", "one", None)])),
 			(3, m(Cause::Turn, vec![e("a.md", "two", Some("one"))])),
 		];
-		assert_eq!(Some((3, hash_of(b"one"))), undo_target(&ms, "a.md"));
+		assert_eq!(Some((3, hash_of(b"one"), None)), undo_target(&ms, "a.md", None, |_| false));
 		// A file this store first saw as a creation has nothing to go back to, and an older
 		// version is not an answer to a question about a state the user never saw.
 		let fresh = vec![(1, m(Cause::Turn, vec![e("new.md", "x", None)]))];
-		assert_eq!(None, undo_target(&fresh, "new.md"));
+		assert_eq!(None, undo_target(&fresh, "new.md", None, |_| false));
 	}
 
 	/// **The Undo of a version puts back what that version replaced, not the version before it.**
@@ -2833,35 +3099,35 @@ Garden: order two bags of bark for a bed.
 			(3, m(Cause::Turn, vec![edited, born, gone("diamonds/d/old.md", "old notes")])),
 			(4, m(Cause::Turn, vec![e("vault/u/a.md", "turn three", Some("turn two"))])),
 		];
-		let all = undo_of(&ms, 3, &[]);
+		let all = undo_of(&ms, 3, &[], |_| None);
 		let get = |p: &str| all.iter().find(|(q, _)| q == p).map(|(_, s)| s.clone());
 		assert_eq!(Some(hash_of(b"the person's save")),
 			get("vault/u/a.md").and_then(|s| s.hash().map(|h| h.to_string())),
 			"the undo went back past the person's save");
 		// The old answer, for the record: the state at the version before, turn one's text.
 		assert_eq!(Some(hash_of(b"turn one")),
-			path_at(&ms, "vault/u/a.md", 3 - 1).and_then(|s| s.hash().map(|h| h.to_string())));
+			path_at(&ms, "vault/u/a.md", 3 - 1, None).and_then(|s| s.hash().map(|h| h.to_string())));
 		// A file the version made is taken away again, with its mark, for the person's yes.
-		assert_eq!(Some(At::Gone { mark: true }), get("vault/u/born.md"));
+		assert_eq!(Some(At::Gone { mark: true, folder: None }), get("vault/u/born.md"));
 		// A file it deleted comes back.
 		assert_eq!(Some(hash_of(b"old notes")),
 			get("diamonds/d/old.md").and_then(|s| s.hash().map(|h| h.to_string())));
 		assert_eq!(3, all.len(), "only the paths version 3 changed");
 		// Named paths: only those.
-		let one = undo_of(&ms, 3, &["vault/u/born.md".to_string()]);
-		assert_eq!(vec![("vault/u/born.md".to_string(), At::Gone { mark: true })], one);
+		let one = undo_of(&ms, 3, &["vault/u/born.md".to_string()], |_| None);
+		assert_eq!(vec![("vault/u/born.md".to_string(), At::Gone { mark: true, folder: None })], one);
 		// A record split past one version: a named path met first after `of` answers that row.
 		let split = vec![
 			(5, m(Cause::Turn, vec![e("x.md", "x after", Some("x before"))])),
 			(6, m(Cause::Turn, vec![e("y.md", "y after", Some("y before"))])),
 		];
-		let both = undo_of(&split, 5, &["x.md".to_string(), "y.md".to_string()]);
+		let both = undo_of(&split, 5, &["x.md".to_string(), "y.md".to_string()], |_| None);
 		assert_eq!(Some(hash_of(b"y before")), both.iter().find(|(p, _)| p == "y.md")
 			.and_then(|(_, s)| s.hash().map(|h| h.to_string())));
 		// Unnamed, the version alone.
-		assert_eq!(1, undo_of(&split, 5, &[]).len());
+		assert_eq!(1, undo_of(&split, 5, &[], |_| None).len());
 		// Nothing at or after `of` names it: nothing to put back.
-		assert!(undo_of(&ms, 5, &["vault/u/a.md".to_string()]).is_empty());
+		assert!(undo_of(&ms, 5, &["vault/u/a.md".to_string()], |_| None).is_empty());
 	}
 
 	#[test]
@@ -2870,9 +3136,268 @@ Garden: order two bags of bark for a bed.
 			(1, m(Cause::Turn, vec![e("a.md", "one", None), e("b.md", "bee", None)])),
 			(3, m(Cause::User, vec![e("a.md", "two", Some("one"))])),
 		];
-		let ix = index_of(&ms);
-		assert_eq!(Some(&hash_of(b"two")), ix.get("a.md"));
-		assert_eq!(Some(&hash_of(b"bee")), ix.get("b.md"));
+		let ix = index_placed(&ms);
+		assert_eq!(Some(hash_of(b"two")), indexed_was(&ix, "a.md", None));
+		assert_eq!(Some(hash_of(b"bee")), indexed_was(&ix, "b.md", None));
+		assert_eq!(None, indexed_was(&ix, "c.md", None));
+	}
+
+	/// A row in a folder, as a record stamps it (HR).
+	fn e_in(path: &str, body: &str, was: Option<&str>, folder: Option<&str>) -> Entry {
+		let mut x = e(path, body, was);
+		x.folder = folder.map(|f| f.to_string());
+		x
+	}
+
+	/// **A relative row goes back only into the folder it was written in** (HR, 2026-09-25).  A row
+	/// written in browser storage, or in one opened folder, was put back through whatever the path
+	/// reached at the restore -- a hand's folder, another opened folder -- over a different file of
+	/// the same name.  A machine row lands only at its own absolute path; a row from before folders
+	/// were recorded is asked about wherever it would replace other bytes.
+	#[test]
+	fn test_a_row_goes_back_only_into_the_folder_it_was_written_in_00() {
+		let f1 = "0123456789abcdef0123456789abcdef";
+		let f2 = "fedcba9876543210fedcba9876543210";
+		// The same folder: go.
+		assert_eq!(Route::Go, route("proj/x.md", Some(BROWSER_FOLDER), "proj/x.md", Some(BROWSER_FOLDER), false, true));
+		assert_eq!(Route::Go, route("proj/x.md", Some(f1), "proj/x.md", Some(f1), true, true));
+		// Another folder this device knows, whatever stands there: left.
+		assert_eq!(Route::Left, route("proj/x.md", Some(f1), "proj/x.md", Some(f2), true, false));
+		assert_eq!(Route::Left, route("proj/x.md", Some(f1), "proj/x.md", Some(f2), true, true));
+		// Browser storage and a folder, known or not: left, both ways.
+		assert_eq!(Route::Left, route("proj/x.md", Some(BROWSER_FOLDER), "proj/x.md", Some(f1), false, false));
+		assert_eq!(Route::Left, route("proj/x.md", Some(f1), "proj/x.md", Some(BROWSER_FOLDER), true, true));
+		assert_eq!(Route::Left, route("proj/x.md", Some(f1), "proj/x.md", Some(BROWSER_FOLDER), false, true));
+		// A relative row reaching the machine through a hand: left, folder recorded or not.
+		assert_eq!(Route::Left, route("proj/x.md", Some(BROWSER_FOLDER), "/home/u/g/proj/x.md", None, false, false));
+		assert_eq!(Route::Left, route("proj/x.md", None, "/home/u/g/proj/x.md", None, false, false));
+		// A machine row lands at its own absolute path and nowhere else.
+		assert_eq!(Route::Go, route("/home/u/g/proj/x.md", None, "/home/u/g/proj/x.md", None, false, true));
+		assert_eq!(Route::Left, route("/home/u/g/proj/x.md", None, "/home/u/g2/proj/x.md", None, false, false));
+		assert_eq!(Route::Left, route("/home/u/g/proj/x.md", None, "proj/x.md", Some(f1), false, false));
+		// From before folders were recorded: asked only over different bytes.
+		assert_eq!(Route::Ask(Unplaced::Unrecorded), route("proj/x.md", None, "proj/x.md", Some(f1), true, true));
+		assert_eq!(Route::Go, route("proj/x.md", None, "proj/x.md", Some(f1), true, false));
+		// The store's own paths are one place from every folder.
+		assert!(!needs_folder("diamonds/abc/notes.md"));
+		assert!(!needs_folder("/home/u/g/x.md"));
+		assert!(needs_folder("proj/x.md"));
+		assert_eq!(Route::Go, route("diamonds/abc/notes.md", None, "diamonds/abc/notes.md", None, false, true));
+	}
+
+	/// The folder travels with the row, and a build that has never heard of it reads the row as one
+	/// from before folders were recorded.
+	#[test]
+	fn test_a_rows_folder_round_trips_and_answers_with_its_state_00() {
+		let f1 = "0123456789abcdef0123456789abcdef";
+		let row = e_in("proj/x.md", "one", None, Some(f1));
+		let mf = Manifest::new(Cause::User, TS, "", "", vec![row.clone(), e("a.md", "a", None)]);
+		let back = res_ok(Manifest::from_json(&mf.to_json()));
+		assert_eq!(Some(f1.to_string()), back.files[0].folder);
+		assert_eq!(None, back.files[1].folder);
+		assert!(!mf.to_json().contains("\"folder\":\"\""), "an empty folder is never written");
+		let ms = vec![
+			(1, Manifest::new(Cause::User, TS, "", "", vec![row])),
+			(2, Manifest::new(Cause::Turn, TS, "", "", vec![e_in("proj/x.md", "two", Some("one"), Some(f1))])),
+		];
+		let at1 = path_at(&ms, "proj/x.md", 1, None);
+		assert_eq!(Some(f1), at1.as_ref().and_then(|a| a.folder()));
+		assert_eq!(Some(f1), undo_of(&ms, 2, &[], |_| None)[0].1.folder());
+		assert_eq!(Some((2, hash_of(b"one"), Some(f1.to_string()))), undo_target(&ms, "proj/x.md", None, |_| true));
+		// A change in another folder takes no `was` from this folder's row; one in the same folder,
+		// or one that does not say, does.
+		let ix = index_placed(&ms);
+		assert_eq!(None, indexed_was(&ix, "proj/x.md", Some(BROWSER_FOLDER)));
+		assert_eq!(Some(hash_of(b"two")), indexed_was(&ix, "proj/x.md", Some(f1)));
+		assert_eq!(Some(hash_of(b"two")), indexed_was(&ix, "proj/x.md", None));
+	}
+
+	/// **A row whose folder this device cannot name is placed as a row from before folders**
+	/// (HX1 and HX2 of HR's QA, 2026-09-25).  A folder's id is the picking device's own, so a row
+	/// from another device's folder, a moved or renamed one, or one picked again after "Forget",
+	/// was left by every route, silently, for good.  Two folders opened with no id were one place,
+	/// and a row of one went over a different file in the other unasked.  Both now go back where
+	/// nothing stands or the same bytes do, and ask over different bytes; a folder this device
+	/// knows is still left.
+	#[test]
+	fn test_a_row_from_a_folder_this_device_cannot_name_is_asked_about_not_left_00() {
+		let theirs = "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1";	// picked on another device
+		let here = "b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2";
+		// Not known here: asked over different bytes, and put back where it replaces nothing.
+		assert_eq!(Route::Ask(Unplaced::Unknown), route("proj/x.md", Some(theirs), "proj/x.md", Some(here), false, true));
+		assert_eq!(Route::Go, route("proj/x.md", Some(theirs), "proj/x.md", Some(here), false, false));
+		// Known here: another folder's file, left.
+		assert_eq!(Route::Left, route("proj/x.md", Some(theirs), "proj/x.md", Some(here), true, true));
+		// Still never into browser storage, nor onto the machine.
+		assert_eq!(Route::Left, route("proj/x.md", Some(theirs), "proj/x.md", Some(BROWSER_FOLDER), false, true));
+		assert_eq!(Route::Left, route("proj/x.md", Some(theirs), "/home/u/proj/x.md", None, false, false));
+		// Two folders with no id are not one place: asked, never assumed the same.
+		assert_eq!(Route::Ask(Unplaced::Unknown), route("proj/x.md", Some(UNNAMED_FOLDER), "proj/x.md", Some(UNNAMED_FOLDER), false, true));
+		assert_eq!(Route::Go, route("proj/x.md", Some(UNNAMED_FOLDER), "proj/x.md", Some(UNNAMED_FOLDER), false, false));
+		// A known folder's row, with a folder open that has no id (it may be that very folder).
+		assert_eq!(Route::Ask(Unplaced::Unknown), route("proj/x.md", Some(here), "proj/x.md", Some(UNNAMED_FOLDER), true, true));
+		// And an unnamed folder's row in a named one.
+		assert_eq!(Route::Ask(Unplaced::Unknown), route("proj/x.md", Some(UNNAMED_FOLDER), "proj/x.md", Some(here), false, true));
+	}
+
+	/// **A path's history is read in the folder it reaches** (HX3 of HR's QA, 2026-09-25).  One
+	/// path with rows from browser storage and from F1: a whole-version Restore in F1 resolved the
+	/// later row, browser storage's, and left F1's own; and a delete in F1 that kept no bytes found
+	/// F2's newer row, refused its hash, and was never recorded.
+	#[test]
+	fn test_each_folder_resolves_its_own_rows_of_a_path_00() {
+		let f1 = "0123456789abcdef0123456789abcdef";
+		let f2 = "fedcba9876543210fedcba9876543210";
+		let mut browser_row = e_in("proj/x.md", "", Some("browser before"), Some(BROWSER_FOLDER));
+		browser_row.hash = String::new();
+		browser_row.skipped = Some("folder".to_string());
+		// PF: one record took F1's row and browser storage's, browser storage's second.
+		let ms = vec![
+			(2, Manifest::new(Cause::User, TS, "", "", vec![e_in("proj/x.md", "f1 save", None, Some(f1)), browser_row])),
+			(3, Manifest::new(Cause::User, TS, "", "", vec![e_in("proj/x.md", "f1 later", Some("f1 save"), Some(f1))])),
+		];
+		let in_f1 = |_: &str| Some(f1.to_string());
+		let mine = |_: &str| true;	// this device picked both folders
+		let whole = state_at(&ms, 2, in_f1, mine);
+		assert_eq!(Some(hash_of(b"f1 save")), whole[0].1.hash().map(String::from), "F1's own row at v2");
+		assert_eq!(Some(f1), whole[0].1.folder());
+		// Browser storage's own row at v2, from browser storage.
+		let whole_b = state_at(&ms, 2, |_| Some(BROWSER_FOLDER.to_string()), mine);
+		assert_eq!(Some(BROWSER_FOLDER), whole_b[0].1.folder());
+		// A row's own Restore puts back the row named, whichever folder is open.
+		assert_eq!(Some(f1), path_at(&ms, "proj/x.md", 2, Some(f1)).as_ref().and_then(|a| a.folder()));
+		assert_eq!(Some(BROWSER_FOLDER), path_at(&ms, "proj/x.md", 2, Some(BROWSER_FOLDER)).as_ref().and_then(|a| a.folder()));
+		// The Undo of v2 in F1 is F1's row's.
+		let undo = undo_of(&ms, 2, &[], in_f1);
+		assert_eq!(Some(f1), undo[0].1.folder());
+		// A folder with no rows of the path resolves another's, which the restore then routes.
+		assert_eq!(Some(f1), state_at(&ms, 3, |_| Some(f2.to_string()), mine)[0].1.folder());
+		// IX: F1's row, then F2's; a change in F1 with no bytes takes F1's newest as its `was`.
+		let ix_ms = vec![
+			(2, Manifest::new(Cause::User, TS, "", "", vec![e_in("proj/y.md", "in f1", None, Some(f1))])),
+			(3, Manifest::new(Cause::User, TS, "", "", vec![e_in("proj/y.md", "in f2", None, Some(f2))])),
+		];
+		let ix = index_placed(&ix_ms);
+		assert_eq!(Some(hash_of(b"in f1")), indexed_was(&ix, "proj/y.md", Some(f1)));
+		assert_eq!(Some(hash_of(b"in f2")), indexed_was(&ix, "proj/y.md", Some(f2)));
+		assert_eq!(None, indexed_was(&ix, "proj/y.md", Some(BROWSER_FOLDER)));
+		assert_eq!(Some(hash_of(b"in f2")), indexed_was(&ix, "proj/y.md", None), "no folder: the newest anywhere");
+		// A row from before folders counts as every folder's, and a newer delete in F1 ends it.
+		let mut gone_f1 = e_in("proj/z.md", "", Some("old"), Some(f1));
+		gone_f1.gone = true;
+		gone_f1.hash = String::new();
+		let old = vec![
+			(1, Manifest::new(Cause::User, TS, "", "", vec![e("proj/z.md", "old", None)])),
+			(4, Manifest::new(Cause::User, TS, "", "", vec![gone_f1])),
+		];
+		let ix = index_placed(&old);
+		assert_eq!(Some(hash_of(b"old")), indexed_was(&ix, "proj/z.md", Some(f2)));
+		assert_eq!(None, indexed_was(&ix, "proj/z.md", Some(f1)));
+		// The file-revert target is the newest change in the folder the path reaches.
+		assert_eq!(Some((3, hash_of(b"f1 save"), Some(f1.to_string()))), undo_target(&ms, "proj/x.md", Some(f1), mine));
+		assert_eq!(Some((2, hash_of(b"browser before"), Some(BROWSER_FOLDER.to_string()))),
+			undo_target(&ms, "proj/x.md", Some(BROWSER_FOLDER), mine));
+	}
+
+	/// **A row from a folder this device cannot name answers beside the open folder's own** (HQ1 of
+	/// HR's QA round 2, 2026-09-27).  HX3 kept only the open folder's rows once it had any, so over
+	/// the sync a whole Restore on A to B's version put back A's own older row, and on B to A's
+	/// newer version B's own; after "Forget" and a re-pick, the Restore of a version recorded under
+	/// the old id put back the new id's first `was`.  Each went back unasked, since the route saw
+	/// the open folder's own row.  Now the rows that answer are exactly those the route does not
+	/// leave, and a folder this device knows is still another folder.
+	#[test]
+	fn test_a_row_from_a_folder_this_device_cannot_name_answers_beside_its_own_00() {
+		let fa = "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1";	// A's folder
+		let fb = "b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2";	// B's folder
+		let on = |f: &'static str| move |_: &str| Some(f.to_string());
+		let knows = |f: &'static str| move |id: &str| id == f;
+		// TS: A saves A1 (v2), B saves B1 over it (v3), A saves A2 (v4); one project, two devices.
+		let ts = vec![
+			(2, Manifest::new(Cause::User, TS, "", "", vec![e_in("proj/x.md", "A1", None, Some(fa))])),
+			(3, Manifest::new(Cause::User, TS, "", "", vec![e_in("proj/x.md", "B1", Some("A1"), Some(fb))])),
+			(4, Manifest::new(Cause::User, TS, "", "", vec![e_in("proj/x.md", "A2", Some("B1"), Some(fa))])),
+		];
+		// TS1: on A, the whole Restore to v3 is B's row, asked about over A2.
+		let a3 = state_at(&ts, 3, on(fa), knows(fa));
+		assert_eq!(Some(hash_of(b"B1")), a3[0].1.hash().map(String::from), "TS1: B1, not A's own A1");
+		assert_eq!(Some(fb), a3[0].1.folder());
+		assert_eq!(Route::Ask(Unplaced::Unknown), route("proj/x.md", a3[0].1.folder(), "proj/x.md", Some(fa), false, true));
+		// TS3: on B, the whole Restore to v4 is A's A2, not B's own older B1.
+		let b4 = state_at(&ts, 4, on(fb), knows(fb));
+		assert_eq!(Some(hash_of(b"A2")), b4[0].1.hash().map(String::from), "TS3: A2, not B's own B1");
+		// Control: were B's folder one A knows, it would be another folder's file, and A's own
+		// rows would answer (HX3 holds).
+		let known_other = state_at(&ts, 3, on(fa), |_| true);
+		assert_eq!(Some(hash_of(b"A1")), known_other[0].1.hash().map(String::from));
+		assert_eq!(Some(fa), known_other[0].1.folder());
+		// The file-revert target reads the same rows: on A after v3, the newest change here is B's,
+		// handed on with B's folder, so the revert asks rather than writes.
+		let upto3 = ts[..2].to_vec();
+		assert_eq!(Some((3, hash_of(b"A1"), Some(fb.to_string()))), undo_target(&upto3, "proj/x.md", Some(fa), knows(fa)));
+		assert_eq!(None, undo_target(&upto3, "proj/x.md", Some(fa), |_| true), "a known other folder's change is not this folder's");
+		// A no-bytes change's `was` is filed under this folder and goes back unasked, so it takes this
+		// folder's own row, never B's, known or not (IX of round 1, with the folder unknown).
+		let ix = index_placed(&upto3);
+		assert_eq!(Some(hash_of(b"A1")), indexed_was(&ix, "proj/x.md", Some(fa)));
+		assert_eq!(None, indexed_was(&ix, "proj/x.md", Some(BROWSER_FOLDER)));
+		// A version to revert to reads them too: on A, the path as at v3 is B1.
+		assert_eq!(Some(hash_of(b"B1")), path_here(&upto3, "proj/x.md", 3, Some(fa), knows(fa)).as_ref().and_then(|a| a.hash().map(String::from)));
+		// FG: F1 records One (v2) and Two (v3) under id `old`; "Forget", a re-pick gives `new`; a
+		// Restore of v2 (v4, over Two) and a save of Three (v5, `was` Two) are filed under `new`.
+		let old = "c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3";
+		let new = "d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4";
+		let fg = vec![
+			(2, Manifest::new(Cause::User,    TS, "", "", vec![e_in("proj/x.md", "One", None, Some(old))])),
+			(3, Manifest::new(Cause::User,    TS, "", "", vec![e_in("proj/x.md", "Two", Some("One"), Some(old))])),
+			(4, Manifest::new(Cause::Restore, TS, "", "", vec![e_in("proj/x.md", "One", Some("Two"), Some(new))])),
+			(5, Manifest::new(Cause::User,    TS, "", "", vec![e_in("proj/x.md", "Three", Some("Two"), Some(new))])),
+		];
+		let fg2 = state_at(&fg, 2, on(new), knows(new));
+		assert_eq!(Some(hash_of(b"One")), fg2[0].1.hash().map(String::from), "FG (2): One, not the new id's first `was`");
+		assert_eq!(Some(old), fg2[0].1.folder());
+		// A tie at one version goes to the open folder's own row, in the resolver and the index.
+		let tie = vec![
+			(2, Manifest::new(Cause::User, TS, "", "", vec![
+				e_in("proj/x.md", "theirs", None, Some(fb)),
+				e_in("proj/x.md", "mine", None, Some(fa)),
+			])),
+		];
+		assert_eq!(Some(fa), state_at(&tie, 2, on(fa), knows(fa))[0].1.folder());
+		assert_eq!(Some(hash_of(b"mine")), indexed_was(&index_placed(&tie), "proj/x.md", Some(fa)));
+		// A tie between this folder's row and one from before folders goes to this folder's.
+		let mut legacy = e("proj/x.md", "legacy", None);
+		legacy.folder = None;
+		let tie_old = vec![(2, Manifest::new(Cause::User, TS, "", "", vec![e_in("proj/x.md", "mine", None, Some(fa)), legacy]))];
+		assert_eq!(Some(hash_of(b"mine")), indexed_was(&index_placed(&tie_old), "proj/x.md", Some(fa)));
+		// A row's own Restore still puts back the row pressed, whichever folder is open.
+		assert_eq!(Some(fb), path_at(&tie, "proj/x.md", 2, Some(fb)).as_ref().and_then(|a| a.folder()));
+	}
+
+	/// **The resolvers drop exactly the rows the route leaves** (HQ1).  One question, [`elsewhere`],
+	/// asked of every pair of places a row and its path can be in, known or not.
+	#[test]
+	fn test_the_resolvers_and_the_route_ask_one_question_00() {
+		let places = [None, Some(BROWSER_FOLDER), Some(UNNAMED_FOLDER),
+			Some("0123456789abcdef0123456789abcdef"), Some("fedcba9876543210fedcba9876543210")];
+		let mut asked = 0;
+		for row in places.iter() {
+			for here in places.iter().filter(|h| h.is_some()) {
+				for known in [false, true] {
+					let left = route("proj/x.md", *row, "proj/x.md", *here, known, true) == Route::Left;
+					assert_eq!(left, elsewhere(*row, *here, known), "row {:?} here {:?} known {}", row, here, known);
+					asked += 1;
+				}
+			}
+		}
+		assert_eq!(40, asked);
+	}
+
+	fn res_ok<T>(r: Outcome<T>) -> T {
+		match r {
+			Ok(v)  => v,
+			Err(e) => panic!("{}", e),
+		}
 	}
 
 	#[test]
@@ -3224,7 +3749,8 @@ Garden: order two bags of bark for a bed.
 		};
 		let before = if wiped { copy } else { found.map(|b| b.to_vec()) };
 		capture_into(held, path, Change { path: path.to_string(), after: Body::Held(after.to_vec()),
-			before, found: Found::of(found), carried: None, mark: true, refused: None, wiped });
+			before, found: Found::of(found), carried: None, mark: true, refused: None, wiped,
+			folder: None });
 		wiped
 	}
 
@@ -3458,7 +3984,8 @@ Garden: order two bags of bark for a bed.
 	fn test_the_cut_keeps_the_rows_that_hold_copies_00() {
 		let row = |p: &str, was: Option<&str>, gone: bool| Entry { path: p.to_string(),
 			hash: if gone { String::new() } else { hash_of(p.as_bytes()) }, bytes: 1,
-			was: was.map(|w| w.to_string()), gone, wiped: false, mark: true, skipped: None };
+			was: was.map(|w| w.to_string()), gone, wiped: false, mark: true, skipped: None,
+			folder: None };
 		let mut rows: Vec<(Entry, bool)> = (0..70)
 			.map(|i| (row(&fmt!("vault/new/f{}.md", i), None, false), false)).collect();
 		rows.push((row("vault/u.md", Some(&hash_of(b"u")), true), true));
@@ -3478,7 +4005,7 @@ Garden: order two bags of bark for a bed.
 	fn test_rows_holding_copies_past_the_bound_go_into_a_further_version_00() {
 		let row = |p: &str, was: Option<&str>| Entry { path: p.to_string(),
 			hash: hash_of(p.as_bytes()), bytes: 1, was: was.map(|w| w.to_string()), gone: false,
-			wiped: false, mark: true, skipped: None };
+			wiped: false, mark: true, skipped: None, folder: None };
 		let mut rows: Vec<(Entry, bool)> = (0..10)
 			.map(|i| (row(&fmt!("vault/new/f{}.md", i), None), false)).collect();
 		for i in 0..65 {

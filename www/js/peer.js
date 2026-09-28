@@ -311,6 +311,10 @@
 			parcelVersion: o.parcelVersion | 0,	// which version already carries the answer
 			cost:    o.cost || null,
 			why:     o.why ? String(o.why) : '',	// a human sentence for the failure states
+			// THE PAUSE NODE a runner refused the turn for, on an `error` report (R53-U8b, QU8
+			// Q3), so the sender says "paused" where it said "couldn't finish". '' otherwise,
+			// and from an older runner, whose refusal still reads as a failure.
+			paused:  o.paused ? String(o.paused) : '',
 			// The GLOBAL park counter carried home so a re-dispatcher (any device that
 			// collects this report) bumps from the true total, never from a device-local
 			// zero. Only meaningful on a `parked` report; 0 elsewhere.
@@ -3958,7 +3962,8 @@
 			trace.push('paused');
 			diag('collect refuse', 'turn=' + turnId + ' paused at ' + String(ph.node || ''));
 			try {
-				if (d.post) await d.post(reportFor(e, { status: 'error', why: String(ph.why || 'This turn is paused.') }));
+				if (d.post) await d.post(reportFor(e, { status: 'error', why: String(ph.why || 'This turn is paused.'),
+					paused: String(ph.node || 'root') }));
 				trace.push('report');
 			} catch (err) { /* refused either way; the sender's deadline ends it too */ }
 			return { ran: false, why: 'paused', node: String(ph.node || ''), trace: trace };

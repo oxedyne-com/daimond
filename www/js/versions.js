@@ -220,7 +220,7 @@
 
 	/// Write back the machine half of a restore, under its ticket. Answers the paths
 	/// it refused, to be added to the engine's own list.
-	async function writeMachine(id, entries, ticket) {
+	async function writeMachine(id, entries, ticket, isUndo) {
 		var refused = [];
 		if (!(entries || []).length) return refused;
 		// THE DIAMOND'S REACH AS IT IS NOW, and not as it was when the file was
@@ -264,11 +264,26 @@
 		// copy is taken as it goes, after their yes -- so a yes is undoable too. One the
 		// door could not keep (a hand's path, or past the ceiling) is left where it is
 		// and said so.
-		var gone = (entries || []).filter(function (e) { return e && e.gone && e.kept === true; });
-		var takeGone = gone.length ? await askGone(gone) : false;
+		var gone = (entries || []).filter(function (e) { return e && e.gone && e.kept === true && e.left !== true; });
+		var takeGone = gone.length ? await askGone(gone, isUndo) : false;
+		// A ROW FROM A FOLDER THE ENGINE CANNOT PLACE HERE IS PUT TO THE PERSON (release
+		// 5.2's HR, 2026-09-25): one kept before Daimond recorded which folder a file came
+		// from, or one recorded in a folder this device does not know -- on another device,
+		// moved, or forgotten (HX1) -- whose path holds different bytes now. The door refuses
+		// its put-back in the first pass, and the person is asked once for each of the two,
+		// after the rest have landed.
+		var unplaced = [];
 		for (var i = 0; i < (entries || []).length; i++) {
 			var e = entries[i];
 			var r = null;
+			// ANOTHER FOLDER'S FILE IS NOT THIS ONE (HR). The row was written in a folder
+			// other than the one its path reaches now -- the browser's storage, a folder
+			// opened on this computer, or the machine through a hand -- so the file there
+			// is a different file of the same name, and it is left as it stands.
+			if (e.left === true) {
+				refused.push({ path: e.path, why: tOr('versions.gone_kept', 'Left in your folder') });
+				continue;
+			}
 			try {
 				if (e.gone) {
 					if (!takeGone || e.kept !== true) {
@@ -279,7 +294,11 @@
 					// taking it away again, through the Diamond's fence.
 					r = await run('file_delete', { path: e.path });
 				} else if (e.skipped) {
-					refused.push({ path: e.path, why: tOr('versions.too_big', 'Too large to keep') });
+					// A save recorded after its folder closed kept no bytes (HX4): it is in
+					// that folder, not too large, and the row says which.
+					refused.push({ path: e.path, why: e.skipped === 'folder'
+						? tOr('versions.other_folder', 'Saved in another folder; no copy here')
+						: tOr('versions.too_big', 'Too large to keep') });
 					continue;
 				} else {
 					// THE STORED BYTES, BY THEIR HASH, and never the text of them (2026-09-25).
@@ -290,50 +309,119 @@
 					r = await run('file_put_back', { path: e.path, hash: e.hash });
 				}
 			} catch (err) { r = null; }
-			// A refused tool call RESOLVES, like every other one, so the outcome is
-			// what says whether the bytes went anywhere. Taking the promise for an
-			// answer is the mistake `writeOpenFile`'s own comment records.
-			//
-			// THE ROW GETS THE SHORT SENTENCE and the tooltip gets the fence's own.
-			// A fence refusal is a paragraph addressed to a MODEL -- what it may read
-			// instead, what to ask the user for -- and a muted span beside a path is
-			// not where a person reads that. The two other refusals here are already
-			// four words each; this is the same shape, with the whole of it a hover
-			// away. A call that FAILED rather than being refused keeps its own words:
-			// that is not a reach at all, and calling it one would misname a fault.
-			// A file too large to keep a copy of is LEFT by the door, which says so in its
-			// own sentence; the row names it as the other size refusal does.
-			// Bytes the machine hand cannot carry, the kept copy's or today's, leave the file where it
-			// is, and the row says so in the words a file left behind is given.
-			if (!r || r.outcome !== 'done') {
-				var said = (r && r.text) ? String(r.text) : '';
-				var why = (r && r.outcome === 'failed' && r.text)
-					? said
-					: /bytes Daimond keeps a copy of|larger than the machine hand returns whole/.test(said)
-						? tOr('versions.too_big', 'Too large to keep')
-						: /carries text only/.test(said)
-							? tOr('versions.gone_kept', 'Left in your folder')
-							: /is not on this device/.test(said)
-								? tOr('versions.not_here', 'Not on this device')
-								: tOr('versions.refused', 'Outside this diamond’s reach');
-				refused.push({ path: e.path, why: why, said: said });
+			if (r && r.outcome !== 'done' && UNPLACED.test(String(r.text || ''))) {
+				unplaced.push(Object.assign({}, e, { unknown: UNKNOWN.test(String(r.text || '')) }));
+				continue;
+			}
+			settled(e, r, refused);
+		}
+		var unknown = unplaced.filter(function (u) { return u.unknown; });
+		var unrecorded = unplaced.filter(function (u) { return !u.unknown; });
+		var overUnknown = unknown.length ? await askOver(unknown, true) : false;
+		var overUnrecorded = unrecorded.length ? await askOver(unrecorded, false) : false;
+		if (unplaced.length) {
+			for (var k = 0; k < unplaced.length; k++) {
+				var u = unplaced[k];
+				var over = u.unknown ? overUnknown : overUnrecorded;
+				if (!over) {
+					refused.push({ path: u.path, why: tOr('versions.gone_kept', 'Left in your folder') });
+					continue;
+				}
+				var ru = null;
+				try { ru = await run('file_put_back', { path: u.path, hash: u.hash, over: true }); }
+				catch (err) { ru = null; }
+				settled(u, ru, refused);
 			}
 		}
 		return refused;
 	}
 
+	/// The door's refusal of a row it cannot place, over different bytes
+	/// (`restore_unplaced_refusal` in src/tools.rs): kept before Daimond recorded
+	/// which folder a file came from, or recorded in a folder this device does not
+	/// know (`UNKNOWN`).
+	var UNPLACED = /recorded which folder it came from|in a folder this device does not know/;
+	var UNKNOWN = /in a folder this device does not know/;
+
+	/// What one act left, added to `refused` where it did not land.
+	///
+	/// A refused tool call RESOLVES, like every other one, so the outcome is what
+	/// says whether the bytes went anywhere. Taking the promise for an answer is the
+	/// mistake `writeOpenFile`'s own comment records.
+	///
+	/// THE ROW GETS THE SHORT SENTENCE and the tooltip gets the fence's own. A fence
+	/// refusal is a paragraph addressed to a MODEL -- what it may read instead, what
+	/// to ask the user for -- and a muted span beside a path is not where a person
+	/// reads that. A call that FAILED rather than being refused keeps its own words:
+	/// that is not a reach at all, and calling it one would misname a fault. A file
+	/// too large to keep a copy of is LEFT by the door, which says so in its own
+	/// sentence; the row names it as the other size refusal does. Bytes the machine
+	/// hand cannot carry, and a row from another folder than the one its path reaches
+	/// now, leave the file where it is, and the row says so in the words a file left
+	/// behind is given.
+	function settled(e, r, refused) {
+		if (r && r.outcome === 'done') return;
+		var said = (r && r.text) ? String(r.text) : '';
+		var why = (r && r.outcome === 'failed' && r.text)
+			? said
+			: /bytes Daimond keeps a copy of|larger than the machine hand returns whole/.test(said)
+				? tOr('versions.too_big', 'Too large to keep')
+				: /carries text only|was written in a different folder/.test(said) || UNPLACED.test(said)
+					? tOr('versions.gone_kept', 'Left in your folder')
+					: /is not on this device/.test(said)
+						? tOr('versions.not_here', 'Not on this device')
+						: tOr('versions.refused', 'Outside this diamond’s reach');
+		refused.push({ path: e.path, why: why, said: said });
+	}
+
+	/// Ask the person whether a restore may put back files whose rows cannot be
+	/// placed here, over what their paths hold now: kept before Daimond recorded
+	/// which folder each came from, or, with `unknown`, recorded in a folder this
+	/// device does not know (HX1). Resolves true only on their yes; with no dialog,
+	/// the answer is no.
+	async function askOver(list, unknown) {
+		var names = list.map(function (e) { return String(e.path); });
+		var shown = names.slice(0, 8).join(', ') + (names.length > 8 ? ', …' : '');
+		try {
+			if (!core() || !DaimondCore.confirm) return false;
+			var yes = await DaimondCore.confirm(
+				unknown
+					? tOr('versions.over_ask_unknown',
+						'{n} of these files were recorded in a folder on another device, or one Daimond no longer knows: {paths}. The files here may be different ones. Restoring would replace them, and their current contents are kept in History. Replace them?',
+						{ n: names.length, paths: shown })
+					: tOr('versions.over_ask',
+						'Daimond kept {n} of these files before it recorded which folder each came from: {paths}. The files there now may be different ones. Restoring would replace them, and their current contents are kept in History. Replace them?',
+						{ n: names.length, paths: shown }),
+				tOr('versions.over_allow', 'Replace them'),
+				{ title: tOr('versions.over_title', 'Replace files in your folder?'), danger: true,
+					cancelLabel: tOr('versions.gone_keep', 'Keep them'),
+					ask: 'restore-over', guard: true });
+			return yes === true;
+		} catch (e) { return false; }
+	}
+
 	/// Ask the person whether a restore may delete files from their own folder that
 	/// did not exist at the version. Resolves true only on their yes; with no dialog
 	/// to ask through, the answer is no.
-	async function askGone(gone) {
+	///
+	/// `isUndo` gives the question its own sentence (UQ, 2026-09-25): an Undo's
+	/// question used to borrow the Restore's wording, which says "Restoring it
+	/// would delete them" for an act that is not a restore in the person's own
+	/// terms. The dialog's `ask` tag and title stay shared -- only the sentence
+	/// naming the act differs.
+	async function askGone(gone, isUndo) {
 		var names = gone.map(function (e) { return String(e.path); });
 		var shown = names.slice(0, 8).join(', ') + (names.length > 8 ? ', …' : '');
 		try {
 			if (!core() || !DaimondCore.confirm) return false;
 			var yes = await DaimondCore.confirm(
-				tOr('versions.gone_ask',
-					'This version is older than {n} of your files: {paths}. Restoring it would delete them from your folder. Their current contents are kept in History. Delete them?',
-					{ n: names.length, paths: shown }),
+				isUndo
+					? tOr('versions.undo_gone_ask',
+						'Undoing this would delete {n} of your files: {paths}. Their current contents are kept in History. Delete them?',
+						{ n: names.length, paths: shown })
+					: tOr('versions.gone_ask',
+						'This version is older than {n} of your files: {paths}. Restoring it would delete them from your folder. Their current contents are kept in History. Delete them?',
+						{ n: names.length, paths: shown }),
 				tOr('versions.gone_allow', 'Delete them'),
 				{ title: tOr('versions.gone_title', 'Delete files from your folder?'), danger: true,
 					cancelLabel: tOr('versions.gone_keep', 'Keep them'),
@@ -370,17 +458,25 @@
 	/// # Arguments
 	/// * `undo` - The paths of version `n` to undo, which opens its undo instead:
 	///   each path back to what `n` replaced there.
-	async function restoreAt(id, n, path, undo) {
+	async function restoreAt(id, n, path, undo, folder) {
 		var eng = app(id), opened;
+		// THE FOLDERS THIS DEVICE KNOWS, AS ITS RECORD STANDS NOW (HK1 of HR's QA round 3,
+		// 2026-09-27). The open, its acts and its close ask the engine which rows are another
+		// folder's, and the engine held the list from when this tab last opened a folder: a
+		// folder picked since in another tab was "one this device cannot name", so its file
+		// was offered here under a false sentence and "Replace them" wrote it into this folder.
+		try { if (window.DaimondFiles && DaimondFiles.reknow) await DaimondFiles.reknow(); }
+		catch (e) { /* the list the engine holds */ }
 		try {
 			opened = parse(undo
 				? await eng.versions_undo_open(String(id), Number(n), JSON.stringify(undo.map(String)))
-				: await eng.versions_restore_open(String(id), Number(n), String(path || '')), null);
+				: await eng.versions_restore_open(String(id), Number(n), String(path || ''),
+					folder ? String(folder) : undefined), null);
 		}
 		catch (e) { return null; }
 		if (!opened) return null;
 		var refused = [], res = null;
-		try { refused = await writeMachine(id, opened.machine || [], opened.ticket); }
+		try { refused = await writeMachine(id, opened.machine || [], opened.ticket, !!undo); }
 		finally {
 			try { res = parse(await eng.versions_restore_close(String(id), opened.ticket), null); }
 			catch (e) { res = null; }
@@ -436,9 +532,12 @@
 
 	/// Restore ONE path. No confirm: the toast is the confirm, and it comes with
 	/// the way back.
-	async function restoreFile(id, path, n) {
+	/// # Arguments
+	/// * `folder` - The folder the chosen row was written in (its `folder`), so
+	///   that of two rows of the path at `n` the one pressed is the one put back.
+	async function restoreFile(id, path, n, folder) {
 		if (!id || !path || !ready()) return null;
-		var res = await restoreAt(id, n, String(path));
+		var res = await restoreAt(id, n, String(path), undefined, folder);
 		var name = String(path).split('/').pop();
 		offerUndo(id, res, tOr('undo.restored', 'Restored {name}', { name: name }));
 		return res;

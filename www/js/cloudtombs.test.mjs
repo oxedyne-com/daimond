@@ -176,5 +176,59 @@ console.log('\nfix/r52-del: a large file\'s deletion travels\n');
 	check('a maintenance drop (`forget`) records no tombstone', (() => { A.C.forget('big/kept.bin'); return !A.C.tombs()['big/kept.bin']; })());
 }
 
+// ── One set for every workspace path (fix/r53-faultb3) ──────────
+console.log('\nfix/r53-faultb3: inline files\' deletions in the same set, relayed, returned, and the floor\n');
+{
+	const devT = device(), devQ = device(), devP = device();
+	const T = tab(devT), Q = tab(devQ), P = tab(devP);
+	await T.C.ready(); await Q.C.ready(); await P.C.ready();
+	// T deletes an inline file (the inline fingerprint, `<base36>:<len>`) and one more.
+	const w = T.C.mark([{ path: 'r/x.md', d: 1, h: '1a2b3c:12' }, { path: 'r/z.md', d: 1, h: '9zz:3' }]);
+	await T.C.settle();
+	check('`mark` writes a batch, each stamped past the one before it',
+		w['r/x.md'] > 0 && w['r/z.md'] > w['r/x.md'], JSON.stringify(w));
+	check('`recordOf` reads it back', JSON.stringify(T.C.recordOf('r/x.md')) === JSON.stringify({ d: 1, h: '1a2b3c:12', s: w['r/x.md'] }));
+	check('the record is durable in the store', !!(devT.kv.get('daimond-cloud-tombs') || {})['r/x.md']);
+	check('a content key cannot be marked', Object.keys(T.C.mark([{ path: '@c/chat1', d: 1, h: 'k' }])).length === 0 && !T.C.recordOf('@c/chat1'));
+	// QFB2-3: Q hears it from T and relays it; P hears it from Q alone.
+	Q.C.joinTombs(T.C.tombs());
+	P.C.joinTombs(Q.C.tombs());
+	check('a device that reads only the relaying device\'s parcel holds the inline deletion',
+		P.C.deadAt('r/x.md') === '1a2b3c:12', JSON.stringify(P.C.tombs()));
+	check('and lists it once for the honour step, as a fresh deletion', P.C.honourList().includes('r/x.md'));
+	// An inline fingerprint is never taken for a manifest's content key.
+	await P.C.put('r/big.bin', mani('big'), 'h-big', FILE);
+	P.C.joinTombs({ 'r/big.bin': { d: 1, h: 'h-big-inline:10', s: Date.now() + 5 } });
+	P.C.merge({ 'r/big.bin': { ...mani('big'), hash: 'h-big' } }, {}, 'devP', 'devQ', {});
+	check('a manifest is not taken for the bytes an inline-form record names', !!P.C.index()['r/big.bin']);
+	// QFB2-1: a return, stamped past the deletion, overrules it everywhere.
+	const dead = P.C.recordOf('r/x.md').s;
+	const r = P.C.mark([{ path: 'r/x.md', d: 0 }]);
+	check('a return is stamped past the deletion it overrules', r['r/x.md'] > dead && P.C.recordOf('r/x.md').d === 0 && P.C.recordOf('r/x.md').h === '');
+	Q.C.joinTombs(P.C.tombs());
+	T.C.joinTombs(Q.C.tombs());
+	check('the return reaches the deleter through the relay', T.C.recordOf('r/x.md').d === 0);
+	check('a stale copy of the deletion, relayed late, moves nothing', T.C.joinTombs({ 'r/x.md': { d: 1, h: '1a2b3c:12', s: dead } }) === 0
+		&& T.C.recordOf('r/x.md').d === 0);
+}
+{
+	// The floor: past the bound the oldest go, and a record at or under the highest stamp
+	// trimmed is no news for a path this device holds nothing for.
+	const dev = device(), A = tab(dev);
+	await A.C.ready();
+	const list = [];
+	for (let i = 0; i < 2010; i++) list.push({ path: 'cap/c' + String(i).padStart(5, '0') + '.md', d: 1, h: 'h' + i + ':1' });
+	const st = A.C.mark(list);
+	await A.C.settle();
+	const held = Object.keys(A.C.tombs());
+	check('the set is bounded at 2000, newest kept', held.length === 2000 && !held.includes('cap/c00000.md') && held.includes('cap/c02009.md'), held.length);
+	const trimmedTop = st['cap/c00009.md'];
+	check('a trimmed deletion relayed back at its old stamp is no news', A.C.joinTombs({ 'cap/c00005.md': { d: 1, h: 'h5:1', s: st['cap/c00005.md'] } }) === 0
+		&& !A.C.recordOf('cap/c00005.md'));
+	check('[ctl] nor is a return at such a stamp', A.C.joinTombs({ 'cap/c00001.md': { d: 0, h: '', s: trimmedTop } }) === 0);
+	check('a record past the floor is news', A.C.joinTombs({ 'cap/new.md': { d: 1, h: 'hn:1', s: st['cap/c02009.md'] + 10 } }) === 1);
+	check('[ctl] a later record for a path held is joined as ever', A.C.joinTombs({ 'cap/c02009.md': { d: 0, h: '', s: st['cap/c02009.md'] + 11 } }) === 1);
+}
+
 console.log('\n' + (failures ? failures + ' FAILED' : 'ALL PASS'));
 process.exit(failures ? 1 : 0);

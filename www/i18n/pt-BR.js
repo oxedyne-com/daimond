@@ -367,6 +367,7 @@
 	// Tradução automática: falar dentro de um turno que já está rodando. A linha
 	// também diz o limite -- uma resposta sem ferramenta não tem costura.
 	'chat.send_into': 'Enviar dentro desta resposta',
+	'chat.sending': 'Enviando…',
 	'chat.interject_help': 'Aguardando; entra no próximo passo do modelo ou no fim da resposta.',
 	'chat.interject_pending': 'Ainda não foi entregue. Clique para editá-la.',
 	'chat.interjected': 'Você interveio aqui',
@@ -1980,6 +1981,8 @@
 	'files.pinned_help': 'Fixado: sempre mantido neste dispositivo. Clique para soltar.',
 	'files.pin_help': 'Fixar: nunca liberar este para abrir espaço.',
 	'files.free_help': 'Manter na nuvem; soltar a cópia daqui',
+	'files.free_undeclared': 'Mantido neste dispositivo por enquanto: este dispositivo ainda não consegue confirmar que a nuvem vai guardá-lo.',
+	'files.reclaim_undeclared': 'Nada liberado por enquanto: este dispositivo ainda não consegue confirmar que a nuvem vai guardar estes arquivos.',
 	'files.fetch': 'Buscar',
 	'files.fetch_body': 'Trazer “{path}” para este dispositivo? Isso baixa {size}.',
 	'files.fetching': 'Buscando {path}…',
@@ -2198,6 +2201,8 @@
 	'backup.restored_owed': 'Este dispositivo está sem armazenamento no navegador, então parte do que foi restaurado ainda não foi salva. A página recarrega assim que for; liberar algum espaço permite isso.',
 	'backup.n_foreign.one': '{n} arquivo desse backup pertence a outra conta naquele navegador, então não foi restaurado e fica só no backup.',
 	'backup.n_foreign.other': '{n} arquivos desse backup pertencem a outra conta naquele navegador, então não foram restaurados e ficam só no backup.',
+	'backup.n_unreadable.one': '{n} conversa desse backup não pôde ser lida, então não foi restaurada e fica só no backup.',
+	'backup.n_unreadable.other': '{n} conversas desse backup não puderam ser lidas, então não foram restauradas e ficam só no backup.',
 
 	// ── The provider form ──────────────────────────────────────
 	'models.other': 'Outro (digite manualmente)…',
@@ -3591,10 +3596,16 @@
 	'versions.snapshot': 'instantâneo',
 	'versions.too_big': 'Grande demais para guardar',
 	'versions.gone_ask': 'Esta vers\u00e3o \u00e9 anterior a {n} dos seus arquivos: {paths}. Restaur\u00e1-la os apagaria da sua pasta. O conte\u00fado atual deles fica guardado no Hist\u00f3rico. Apag\u00e1-los?',
+	'versions.undo_gone_ask': 'Desfazer isso apagaria {n} dos seus arquivos: {paths}. O conte\u00fado atual deles fica guardado no Hist\u00f3rico. Apag\u00e1-los?',
 	'versions.gone_allow': 'Apagar',
 	'versions.gone_keep': 'Manter',
 	'versions.gone_title': 'Apagar arquivos da sua pasta?',
 	'versions.gone_kept': 'Mantido na sua pasta',
+	'versions.over_ask': 'O Daimond guardou {n} destes arquivos antes de registrar de qual pasta cada um veio: {paths}. Os arquivos que est\u00e3o l\u00e1 agora podem ser outros. Restaurar os substituiria; o conte\u00fado atual deles fica guardado no Hist\u00f3rico. Substitu\u00ed-los?',
+	'versions.over_ask_unknown': '{n} destes arquivos foram registrados em uma pasta de outro dispositivo, ou em uma que o Daimond n\u00e3o conhece mais: {paths}. Os arquivos daqui podem ser outros. Restaurar os substituiria; o conte\u00fado atual deles fica guardado no Hist\u00f3rico. Substitu\u00ed-los?',
+	'versions.other_folder': 'Salvo em outra pasta; nenhuma c\u00f3pia aqui',
+	'versions.over_allow': 'Substituir',
+	'versions.over_title': 'Substituir arquivos da sua pasta?',
 	'versions.refused': 'Fora do alcance deste diamond',
 	'versions.save': 'Salvar uma vers\u00e3o',
 	'versions.save_name': 'D\u00ea um nome',

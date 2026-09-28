@@ -324,8 +324,9 @@ async function main() {
 		await C.ready();
 		const out = C.merge({ 'a.md': m('h3'), 'a.md.synced': m('h9') }, { 'a.md': 'h1', 'a.md.synced': 'h0' }, 'me', 'them');
 		check('ours stands at the path', out['a.md'] && out['a.md'].hash === 'h2');
-		check('THEIRS, the newer edit, is the conflict copy -- not a stored one', out['a.md.synced'] && out['a.md.synced'].hash === 'h3',
-			out['a.md.synced'] && out['a.md.synced'].hash);
+		const cp = C.copyPath('a.md', m('h3'));
+		check('THEIRS, the newer edit, is filed beside under a name of its own -- no stored copy takes its place',
+			out[cp] && out[cp].hash === 'h3', JSON.stringify(Object.keys(out)));
 	}
 
 	console.log('\n' + checks + ' checks, ' + failures + ' failed' + (BREAK ? ' (--break ' + BREAK + ')' : ''));

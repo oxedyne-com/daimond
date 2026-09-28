@@ -67,7 +67,7 @@ const BREAKS = {
 	swallow: {
 		what: 'a message typed into a busy daimon is dropped, as it was before',
 		edit: (src) => src.replace(
-			'\t\t\tif (diamondBusy(current.diamondId)) { enqueueMessage(current, text); return; }',
+			'\t\t\tif (diamondBusy(current.diamondId)) { enqueueMessage(current, text, words); return; }',
 			'\t\t\tif (diamondBusy(current.diamondId)) return;'),
 	},
 	meterrow: {

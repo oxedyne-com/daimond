@@ -62,6 +62,7 @@
 use crate::fsname;
 use crate::tools::FileRoot;
 use crate::tools::Licence;
+use crate::tools::Storage;
 use crate::wasm::js_str;
 
 use oxedyne_fe2o3_core::prelude::*;
@@ -95,6 +96,24 @@ thread_local! {
     static WORKSPACE_OVERRIDE: RefCell<Option<FileSystemDirectoryHandle>> =
         const { RefCell::new(None) };
 
+    /// Which folder [`WORKSPACE_OVERRIDE`] is, as a version row names it: the id this device gave
+    /// the folder when it was first picked, set in the same step as the handle ([`set_override`]).
+    static WORKSPACE_ID: RefCell<String> = const { RefCell::new(String::new()) };
+
+    /// The ids of the folders this device knows ([`folder_known`]), as the page hands them over
+    /// with a folder ([`set_known`]).  Empty until it does: then no folder but the open one is known.
+    static KNOWN_FOLDERS: RefCell<std::collections::BTreeSet<String>> =
+        const { RefCell::new(std::collections::BTreeSet::new()) };
+
+    /// This page's number for the open folder's handle ([`folder_number`]): the storage a file
+    /// tool's read of the folder is filed under ([`storage_of`]).
+    static FOLDER_NO: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
+
+    /// The folder handles this page has opened, with their numbers, newest last, and the next
+    /// number to give.  See [`folder_number`].
+    static FOLDERS: RefCell<Vec<(FileSystemDirectoryHandle, u64)>> = const { RefCell::new(Vec::new()) };
+    static FOLDER_NEXT: std::cell::Cell<u64> = const { std::cell::Cell::new(1) };
+
     /// The current account's OPFS subdirectory, or empty for the primary account.
     ///
     /// Several people may share one browser, one at a time; each account's workspace and Daimond's
@@ -124,14 +143,108 @@ pub fn set_account_ns(ns: String) {
 /// Install `handle` as the FSA real-folder root for the file tools /
 /// Workspace.  Subsequent [`FileRoot::Workspace`] operations resolve
 /// against it until [`clear_override`] is called.
-pub fn set_override(handle: FileSystemDirectoryHandle) {
+///
+/// **The folder and its id change in one step** (HR, 2026-09-25): a version row of a relative path
+/// records which folder it was written in ([`folder_id`]), so no reader may see the new folder
+/// under the old id.  A folder opened with no id -- the device's record of folders refused one, or
+/// a caller with none to give -- is [`UNNAMED_FOLDER`], which names no folder: a row written in
+/// one is asked about before it goes back over different bytes anywhere, that folder included.
+/// The page names each folder it opens.
+///
+/// # Arguments
+/// * `id` - The id this device keeps for the folder (`FsaDB.folderId` in the page), or empty.
+pub fn set_override(handle: FileSystemDirectoryHandle, id: &str) {
+    let id = match id.trim() {
+        ""  => UNNAMED_FOLDER.to_string(),
+        one => one.to_string(),
+    };
+    let n = folder_number(&handle);
     WORKSPACE_OVERRIDE.with(|c| *c.borrow_mut() = Some(handle));
+    WORKSPACE_ID.with(|c| *c.borrow_mut() = id);
+    FOLDER_NO.with(|c| c.set(n));
+}
+
+/// How many folder handles [`folder_number`] remembers.  One forgotten costs only its reads.
+const FOLDERS_MAX: usize = 32;
+
+/// This page's number for `handle`: the one it had if this page has opened it before, else a new
+/// one.
+///
+/// **The same handle handed again keeps its number** (E2b, 2026-09-27).  The page hands the open
+/// folder again, unchanged, at moments that switch nothing (every turn start and restore, to pass
+/// the folders it knows), and a number per call would forget every read at each.  A handle is
+/// matched by identity (`===`), which is what the page keeps for a folder while it lives; the same
+/// directory picked again is a new handle and a new number, which forgets its reads -- a write
+/// then goes unguarded, never refused over a read of something else.
+fn folder_number(handle: &FileSystemDirectoryHandle) -> u64 {
+    let seen = FOLDERS.with(|f| f.borrow().iter()
+        .find(|(h, _)| AsRef::<JsValue>::as_ref(h) == AsRef::<JsValue>::as_ref(handle))
+        .map(|(_, n)| *n));
+    if let Some(n) = seen {
+        return n;
+    }
+    let n = FOLDER_NEXT.with(|c| { let n = c.get(); c.set(n + 1); n });
+    FOLDERS.with(|f| {
+        let mut f = f.borrow_mut();
+        if f.len() >= FOLDERS_MAX {
+            f.remove(0);
+        }
+        f.push((handle.clone(), n));
+    });
+    n
+}
+
+/// Where a file tool's `path`, spelled against `root`, resolves now: the storage its read is
+/// filed under by the stale-read guard, from the same decision [`resolve_root`] takes the bytes
+/// by ([`crate::tools::storage_for`]).
+pub fn storage_of(root: FileRoot, path: &str) -> Storage {
+    let folder = match folder_open() {
+        true  => Some(FOLDER_NO.with(|c| c.get())),
+        false => None,
+    };
+    let ns = ACCOUNT_NS.with(|c| c.borrow().clone());
+    crate::tools::storage_for(root, path, folder, &ns)
 }
 
 /// Clear any FSA override, returning the file tools / Workspace to the
 /// OPFS sandbox root.
 pub fn clear_override() {
     WORKSPACE_OVERRIDE.with(|c| *c.borrow_mut() = None);
+    WORKSPACE_ID.with(|c| c.borrow_mut().clear());
+}
+
+/// What a real folder opened with no id of its own is called in a version row ([`set_override`]).
+pub use crate::diamond_versions::UNNAMED_FOLDER;
+
+/// Replace the folders this device knows with `ids`: the ids its record of folders holds for
+/// folders still where they were picked (`FsaDB.known` in the page).
+///
+/// **Which folder a row was written in is only worth knowing where this device can name it**
+/// (HX1 of HR's QA, 2026-09-25).  A row from a folder this device knows, other than the open one,
+/// is another folder's file and is left; a row from any other folder -- another device's, a moved
+/// or renamed one, one picked again after "Forget" -- is placed as a row from before folders were
+/// recorded, and asked about over different bytes ([`crate::diamond_versions::route`]).  The
+/// unnamed folder and browser storage are never among them.
+pub fn set_known<I: IntoIterator<Item = String>>(ids: I) {
+    let ids: std::collections::BTreeSet<String> = ids.into_iter()
+        .map(|id| id.trim().to_string())
+        .filter(|id| !id.is_empty() && id != UNNAMED_FOLDER
+            && id != crate::diamond_versions::BROWSER_FOLDER)
+        .collect();
+    KNOWN_FOLDERS.with(|k| *k.borrow_mut() = ids);
+}
+
+/// Is `id` a folder this device knows ([`set_known`])?
+pub fn folder_known(id: &str) -> bool {
+    KNOWN_FOLDERS.with(|k| k.borrow().contains(id))
+}
+
+/// The id of the real folder open now, or `None` where the file tools are on browser storage.
+pub fn folder_id() -> Option<String> {
+    match folder_open() {
+        true  => Some(WORKSPACE_ID.with(|c| c.borrow().clone())),
+        false => None,
+    }
 }
 
 /// Whether a real folder is open at all.
@@ -392,29 +505,27 @@ async fn opfs_root() -> Outcome<FileSystemDirectoryHandle> {
 /// a third, and the day one of them stops agreeing with the others is the day an agent reads an
 /// empty crystal and writes over work it never saw.
 ///
+/// **The decision is [`crate::tools::storage_for`]'s**, taken through [`storage_of`], which is also
+/// what the stale-read guard files a read under (E2b, 2026-09-27): the root the bytes go to and the
+/// storage a read is remembered in cannot disagree.  Daimond's own store never follows the folder,
+/// whoever asked; and [`FileRoot::Machine`] with no folder open is `Nowhere`, never a fallback to
+/// the sandbox -- the one caller is a copy OUT of the folder, and a fallback would copy the sandbox
+/// onto itself and call it a migration.
+///
 /// # Arguments
 /// * `root` - Which root the caller asked for.
 /// * `path` - The workspace-relative path the call addresses; empty addresses the root itself.
 async fn resolve_root(root: FileRoot, path: &str) -> Outcome<FileSystemDirectoryHandle> {
-    match root {
-        FileRoot::Workspace => {
-            // Daimond's own store never follows the folder, whoever asked.
-            if !crate::tools::is_store_path(path) {
-                if let Some(h) = WORKSPACE_OVERRIDE.with(|c| c.borrow().clone()) {
-                    return Ok(h);
-                }
-            }
-            opfs_root().await
-        }
-        FileRoot::Opfs => opfs_root().await,
-        // Never a fallback to the sandbox: the one caller is a copy OUT of the folder, and a
-        // fallback would copy the sandbox onto itself and call it a migration.
-        FileRoot::Machine => match WORKSPACE_OVERRIDE.with(|c| c.borrow().clone()) {
-            Some(h) => Ok(h),
-            None    => Err(err!(
-                "OPFS: '{}' was addressed on the machine folder, and no folder is open.", path;
-                IO, File, Missing)),
-        },
+    // Both read in one synchronous step, so the number and the handle are the same folder's.
+    let open = WORKSPACE_OVERRIDE.with(|c| c.borrow().clone());
+    match (storage_of(root, path), open) {
+        (Storage::Sandbox(_), _)        => opfs_root().await,
+        (Storage::Folder(_), Some(h))   => Ok(h),
+        (Storage::Folder(_), None)
+        | (Storage::Machine(_), _)
+        | (Storage::Nowhere, _)         => Err(err!(
+            "OPFS: '{}' was addressed on the machine folder, and no folder is open.", path;
+            IO, File, Missing)),
     }
 }
 

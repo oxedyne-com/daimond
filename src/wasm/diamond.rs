@@ -2090,8 +2090,12 @@ thread_local! {
     /// Each path carries the bytes it held before the first of those doors wrote it, where the
     /// door marked it first ([`mark_dirty_before`]): the row's `was`, so a file the store had never
     /// seen is recorded as changed, never as created.
+    ///
+    /// Keyed by the path AND the folder it was marked in ([`folder_of`]): a folder opened or
+    /// closed before the set is recorded leaves the path naming another folder's file (HR).
     static DIRTY: std::cell::RefCell<
-        std::collections::BTreeMap<String, std::collections::BTreeMap<String, Option<Vec<u8>>>>> =
+        std::collections::BTreeMap<String, std::collections::BTreeMap<(String, Option<String>),
+            Option<Vec<u8>>>>> =
         std::cell::RefCell::new(std::collections::BTreeMap::new());
 
     /// What the file tools captured mid-turn, per Diamond, waiting for the turn to end.
@@ -2191,6 +2195,29 @@ pub fn theirs(id: &str, path: &str) -> bool {
     crate::tools::stored_is_mark(id, path)
 }
 
+/// Which folder `path` is in now, as a version row records it ([`versions::needs_folder`]): the id
+/// of the folder open on this computer ([`opfs::folder_id`]), else the browser's own storage.
+/// `None` for a path no folder holds: absolute on the machine, or one of the store's own.
+///
+/// A workspace-relative path is read and written through [`FileRoot::Workspace`], which is the open
+/// folder where there is one and browser storage where there is not, and a row of one is recorded
+/// from there alone: a turn's act on the machine through a hand records the absolute path.
+pub fn folder_of(path: &str) -> Option<String> {
+    if !versions::needs_folder(path) {
+        return None;
+    }
+    Some(opfs::folder_id().unwrap_or_else(|| versions::BROWSER_FOLDER.to_string()))
+}
+
+/// [`versions::route`] for an act that reaches `landed` now: into the folder it reaches, and
+/// asking this device whether it knows the folder the row was written in ([`opfs::folder_known`]).
+pub fn route_here(row: &str, row_folder: Option<&str>, landed: &str, overwrites: bool)
+    -> versions::Route
+{
+    let known = row_folder.map(opfs::folder_known).unwrap_or(false);
+    versions::route(row, row_folder, landed, folder_of(landed).as_deref(), known, overwrites)
+}
+
 /// A steer running on a Diamond, counted until this is dropped: at its turn end's drain, or when
 /// the steer's future ends without one.
 pub struct Steering {
@@ -2286,8 +2313,9 @@ pub fn mark_dirty(id: &str, path: &str) {
     if path.trim().is_empty() {
         return;
     }
+    let key = (path.to_string(), folder_of(path));
     DIRTY.with(|d| {
-        d.borrow_mut().entry(id.to_string()).or_default().entry(path.to_string()).or_insert(None);
+        d.borrow_mut().entry(id.to_string()).or_default().entry(key).or_insert(None);
     });
 }
 
@@ -2307,7 +2335,8 @@ pub async fn mark_dirty_before(id: &str, path: &str) {
     if path.trim().is_empty() {
         return;
     }
-    let marked = DIRTY.with(|d| d.borrow().get(id).map(|m| m.contains_key(path)).unwrap_or(false));
+    let key = (path.to_string(), folder_of(path));
+    let marked = DIRTY.with(|d| d.borrow().get(id).map(|m| m.contains_key(&key)).unwrap_or(false));
     if marked {
         return;
     }
@@ -2321,7 +2350,7 @@ pub async fn mark_dirty_before(id: &str, path: &str) {
         None
     };
     DIRTY.with(|d| {
-        d.borrow_mut().entry(id.to_string()).or_default().entry(path.to_string()).or_insert(was);
+        d.borrow_mut().entry(id.to_string()).or_default().entry(key).or_insert(was);
     });
 }
 
@@ -2330,39 +2359,81 @@ pub fn ran_opaque(id: &str) {
     OPAQUE.with(|o| { o.borrow_mut().insert(id.to_string()); });
 }
 
-/// Take the dirty set for this Diamond, leaving it empty: each path, with what it held before the
-/// first door wrote it where that was kept.
-pub fn drain_dirty(id: &str) -> Vec<(String, Option<Vec<u8>>)> {
+/// One path a person's door marked ([`DIRTY`]): the folder it was marked in, and what it held
+/// before the first door wrote it where that door kept it.
+#[derive(Clone, Debug)]
+pub struct Marked {
+    path:   String,
+    folder: Option<String>,
+    was:    Option<Vec<u8>>,
+}
+
+/// Take the dirty set for this Diamond, leaving it empty.
+pub fn drain_dirty(id: &str) -> Vec<Marked> {
     DIRTY.with(|d| match d.borrow_mut().remove(id) {
-        Some(set) => set.into_iter().collect(),
+        Some(set) => set.into_iter()
+            .map(|((path, folder), was)| Marked { path, folder, was })
+            .collect(),
         None      => Vec::new(),
     })
 }
 
 /// Put back a dirty set whose record could not be written, keeping any mark made since.
-pub fn undrain_dirty(id: &str, dirty: Vec<(String, Option<Vec<u8>>)>) {
+pub fn undrain_dirty(id: &str, dirty: Vec<Marked>) {
     DIRTY.with(|d| {
         let mut all = d.borrow_mut();
         let set = all.entry(id.to_string()).or_default();
-        for (path, was) in dirty.into_iter() {
-            set.entry(path).or_insert(was);
+        for m in dirty.into_iter() {
+            set.entry((m.path, m.folder)).or_insert(m.was);
         }
     });
 }
 
+/// Why a row has no bytes of what its file became: it was changed in a folder that was not open
+/// when the change was recorded, so what stands at its path now is another folder's file (HR).
+/// The page words it as such ("Saved in another folder"), never as a file too large to keep.
+pub const IN_ANOTHER_FOLDER: &str = "folder";
+
 /// What the dirty set `dirty` names, read as it stands, each row's `was` the bytes its door kept
 /// before it wrote ([`mark_dirty_before`]), else the history's.
-pub async fn dirty_changes(id: &str, dirty: Vec<(String, Option<Vec<u8>>)>) -> Vec<Change> {
-    let paths: Vec<String> = dirty.iter().map(|(p, _)| p.clone()).collect();
-    let mut was: std::collections::BTreeMap<String, Vec<u8>> = dirty.into_iter()
-        .filter_map(|(p, b)| b.map(|b| (p, b)))
-        .collect();
-    versions_changes(id, &paths).await.into_iter()
-        .map(|ch| match was.remove(&ch.path) {
-            Some(b) => Change { before: Some(b), ..ch },
-            None    => ch,
-        })
-        .collect()
+///
+/// **A path marked in another folder than the one open now is not read there** (HR, 2026-09-25):
+/// what stands there is another folder's file of the same name.  **A path marked in browser
+/// storage is read from browser storage**, which is there whatever folder is open (HX4 of HR's QA,
+/// 2026-09-25): until then a Doc panel save recorded after a folder opened kept no bytes, and its
+/// Restore called it too large to keep.  A path marked in a folder that is closed now keeps no
+/// bytes: its row says the file changed, in that folder, and keeps what its door kept, which that
+/// folder's Undo puts back.
+pub async fn dirty_changes(id: &str, dirty: Vec<Marked>) -> Vec<Change> {
+    let (here, away): (Vec<Marked>, Vec<Marked>) = dirty.into_iter()
+        .partition(|m| m.folder == folder_of(&m.path));
+    let (browser, away): (Vec<Marked>, Vec<Marked>) = away.into_iter()
+        .partition(|m| m.folder.as_deref() == Some(versions::BROWSER_FOLDER));
+    let mut out: Vec<Change> = Vec::new();
+    for (marks, root) in [(here, FileRoot::Workspace), (browser, FileRoot::Opfs)] {
+        let paths: Vec<String> = marks.iter().map(|m| m.path.clone()).collect();
+        let mut was: std::collections::BTreeMap<String, (Option<String>, Option<Vec<u8>>)> =
+            marks.into_iter().map(|m| (m.path, (m.folder, m.was))).collect();
+        for ch in versions_changes_in(id, &paths, root).await.into_iter() {
+            let (folder, before) = was.remove(&ch.path).unwrap_or((None, None));
+            out.push(Change {
+                before: before.or(ch.before.clone()),
+                folder: folder.or(ch.folder.clone()),
+                ..ch
+            });
+        }
+    }
+    for m in away.into_iter() {
+        out.push(Change {
+            after:   Body::Unseen,
+            before:  m.was,
+            mark:    theirs(id, &m.path),
+            refused: Some(IN_ANOTHER_FOLDER.to_string()),
+            folder:  m.folder,
+            ..Change::gone(&m.path)
+        });
+    }
+    out
 }
 
 /// Hold what a file tool captured about a file it has just changed, for the turn-end hook to
@@ -2374,6 +2445,8 @@ pub async fn dirty_changes(id: &str, dirty: Vec<(String, Option<Vec<u8>>)>) -> V
 /// * `change` - The capture, whose own `path` is absolute on the machine.
 pub fn capture(id: &str, raw: &str, change: Change) {
     release(id, &change.path);
+    // THE FOLDER THE ACT WAS IN, taken at the act (HR): the turn's end records it later.
+    let change = Change { folder: change.folder.clone().or_else(|| folder_of(&change.path)), ..change };
     CAPTURED.with(|c| {
         let mut all = c.borrow_mut();
         versions::capture_into(all.entry(id.to_string()).or_default(), raw, change);
@@ -2625,6 +2698,15 @@ struct Pending {
     was:      String,       // the body's hash
     mark:     bool,
     restore:  Option<u64>,  // the restore whose act took it; `None` for a turn's
+    folder:   Option<String>,   // the folder the act was in ([`folder_of`]); `None` where none holds it
+}
+
+/// A note's `"folder"` field, where [`folder_of`] names one for `path` now: empty otherwise.
+fn folder_field(path: &str) -> String {
+    match folder_of(path) {
+        Some(f) => fmt!(r#","folder":"{}""#, json_escape(&f)),
+        None    => String::new(),
+    }
 }
 
 /// Every note in `id`'s store.  A note that will not parse is passed over, never an error.
@@ -2657,6 +2739,7 @@ async fn pending_notes(id: &str) -> Vec<Pending> {
             was,
             mark:     extract_json_bool(&text, "mark").unwrap_or(false),
             restore:  crate::llm::extract_json_number(&text, "restore"),
+            folder:   extract_json_string(&text, "folder").filter(|f| !f.is_empty()),
         });
     }
     out
@@ -2698,8 +2781,9 @@ pub async fn pend(id: &str, path: &str, before: &[u8], deleting: bool, mark: boo
         res!(opfs::write_file(FileRoot::Opfs, &body, before).await);
     }
     let page = PAGE.with(|p| p.clone());
-    let text = fmt!(r#"{{"page":"{}","path":"{}","was":"{}","deleting":{},"mark":{},"ts":{}}}"#,
-        json_escape(&page), json_escape(path), hash, deleting, mark, now_ms() as u64);
+    let text = fmt!(r#"{{"page":"{}","path":"{}","was":"{}","deleting":{},"mark":{}{},"ts":{}}}"#,
+        json_escape(&page), json_escape(path), hash, deleting, mark, folder_field(path),
+        now_ms() as u64);
     res!(opfs::write_file(FileRoot::Opfs, &note, text.as_bytes()).await);
     Ok(!replaced)
 }
@@ -2790,7 +2874,11 @@ pub async fn drain_turn(hold: &VersionHold, id: &str, ctx: &crate::tools::ToolCo
                 }
             }
         }
-        if let Some((_, ch)) = captured.iter().find(|(_, ch)| ch.path == note.path) {
+        // The same file is the same path in the same folder: another folder's note on the path is
+        // a file of its own, adopted below (HR).
+        if let Some((_, ch)) = captured.iter().find(|(_, ch)| ch.path == note.path
+            && (note.folder.is_none() || ch.folder == note.folder))
+        {
             if note.page != page || restoring {
                 // What this life found at the path is where the earlier life's run ended.
                 let ended = match &ch.before {
@@ -2807,6 +2895,7 @@ pub async fn drain_turn(hold: &VersionHold, id: &str, ctx: &crate::tools::ToolCo
                         mark:    note.mark,
                         refused: None,
                         wiped:   false,
+                        folder:  note.folder,
                     })),
                     // The body is gone, so the note names nothing to restore.
                     Err(_) => settle_list.push(note.name),
@@ -2828,7 +2917,10 @@ pub async fn drain_turn(hold: &VersionHold, id: &str, ctx: &crate::tools::ToolCo
                 continue;
             },
         };
-        let after = if note.path.starts_with('/') {
+        // A NOTE TAKEN IN ANOTHER FOLDER is not read in this one (HR): what stands at its path now
+        // is another folder's file, and the row keeps what stood before in its own.
+        let away = note.folder.is_some() && note.folder != folder_of(&note.path);
+        let after = if note.path.starts_with('/') || away {
             // A machine file, which only the hand can read: the row keeps what stood before.
             Body::Unseen
         } else {
@@ -2848,8 +2940,9 @@ pub async fn drain_turn(hold: &VersionHold, id: &str, ctx: &crate::tools::ToolCo
             found:   Found::Unread,
             carried: None,
             mark:    note.mark,
-            refused: None,
+            refused: if away { Some(IN_ANOTHER_FOLDER.to_string()) } else { None },
             wiped:   false,
+            folder:  note.folder,
         }));
         settle_list.push(note.name);
     }
@@ -2886,7 +2979,7 @@ pub async fn drain_turn(hold: &VersionHold, id: &str, ctx: &crate::tools::ToolCo
         // named by some row, nothing more is recorded.  A second row would repeat the restore's
         // under the person's name.
         let held = versions_manifests(id).await;
-        let index = versions::index_of(&held);
+        let index = versions::index_placed(&held);
         let mut named: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
         for (_, m) in held.iter() {
             for e in m.files.iter() {
@@ -2900,9 +2993,11 @@ pub async fn drain_turn(hold: &VersionHold, id: &str, ctx: &crate::tools::ToolCo
         }
         let recorded = |p: &str| held.iter().any(|(_, m)| m.files.iter().any(|e| e.path == p));
         for ((raw, ch), now) in moved.into_iter() {
+            // In the folder the turn's act was in (HX3): another folder's row says nothing here.
+            let said = versions::indexed_was(&index, &ch.path, ch.folder.as_deref());
             let told = match &now {
-                Body::Held(b) => index.get(&ch.path) == Some(&versions::hash_of(b)),
-                Body::Gone    => !index.contains_key(&ch.path) && recorded(&ch.path),
+                Body::Held(b) => said == Some(versions::hash_of(b)),
+                Body::Gone    => said.is_none() && recorded(&ch.path),
                 _             => false,
             };
             let in_rows = |b: &Option<Vec<u8>>| match b {
@@ -2926,6 +3021,7 @@ pub async fn drain_turn(hold: &VersionHold, id: &str, ctx: &crate::tools::ToolCo
                 mark:    ch.mark,
                 refused: None,
                 wiped:   false,
+                folder:  ch.folder.clone(),
             });
             runs.push((raw, ch));
         }
@@ -3398,16 +3494,25 @@ pub async fn versions_record_held(
         return Ok(None);
     }
     let held  = versions_manifests(id).await;
-    let index = versions::index_of(&held);
+    let index = versions::index_placed(&held);
     // Each row, and whether its `was` is a copy this record keeps: what the cut ranks first.
     let mut entries: Vec<(Entry, bool)> = Vec::new();
     let mut bodies: Vec<(String, Vec<u8>)> = Vec::new();
-    let mut seen: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
+    let mut seen: std::collections::BTreeSet<(String, Option<String>)> =
+        std::collections::BTreeSet::new();
     for ch in changes.into_iter() {
-        // ONE ROW PER PATH.  A turn's ledger and the walk that follows an opaque tool both name
+        // THE FOLDER IT WAS WRITTEN IN (HR, 2026-09-25): the one its act was in where the act
+        // said, else the one open now, which is where a change read at the record was read from.
+        // A relative path is one file only together with its folder, and a restore puts the row
+        // back into that folder and no other ([`versions::route`]).
+        let folder = match versions::needs_folder(&ch.path) {
+            true  => ch.folder.clone().or_else(|| folder_of(&ch.path)),
+            false => None,
+        };
+        // ONE ROW PER FILE.  A turn's ledger and the walk that follows an opaque tool both name
         // the same file, and two rows for one change would double the entry, double the `was` and
         // make the restore of one of them a no-op against the other.
-        if !seen.insert(ch.path.clone()) {
+        if !seen.insert((ch.path.clone(), folder.clone())) {
             continue;
         }
         // THE PERSON'S FILE BY ITS PATH, whatever the caller said ([`theirs`]): the dirty set of
@@ -3430,7 +3535,7 @@ pub async fn versions_record_held(
                 bodies.push((h.clone(), b.clone()));
                 Some(h)
             },
-            None => index.get(&ch.path).cloned(),
+            None => versions::indexed_was(&index, &ch.path, folder.as_deref()),
         };
         match ch.after {
             Body::Gone => {
@@ -3447,6 +3552,7 @@ pub async fn versions_record_held(
                     wiped:   false,
                     mark:    ch.mark,
                     skipped: ch.refused,
+                    folder,
                 }, kept));
             },
             Body::TooLarge(size) => {
@@ -3459,6 +3565,7 @@ pub async fn versions_record_held(
                     wiped,
                     mark:    ch.mark,
                     skipped: Some("size".to_string()),
+                    folder,
                 }, kept));
             },
             // A ROW WITH NO BODY IS STILL A ROW. A file the daimon changed and the app could not
@@ -3475,6 +3582,7 @@ pub async fn versions_record_held(
                     wiped,
                     mark:    ch.mark,
                     skipped: Some(ch.refused.unwrap_or_else(|| "unreadable".to_string())),
+                    folder,
                 }, kept));
             },
             Body::Held(body) => {
@@ -3492,7 +3600,7 @@ pub async fn versions_record_held(
                     bodies.push((hash.clone(), body));
                 }
                 entries.push((Entry { path: ch.path, hash, bytes, was, gone: false, wiped,
-                    mark: ch.mark, skipped }, kept));
+                    mark: ch.mark, skipped, folder }, kept));
             },
         }
     }
@@ -3676,6 +3784,11 @@ async fn prune_held(_hold: &VersionHold, id: &str) -> Outcome<(usize, usize)> {
 /// # Arguments
 /// * `id` - The Diamond, for the paths of its own that are not versioned at all.
 pub async fn versions_changes(id: &str, paths: &[String]) -> Vec<Change> {
+    versions_changes_in(id, paths, FileRoot::Workspace).await
+}
+
+/// [`versions_changes`], read under `root`.
+async fn versions_changes_in(id: &str, paths: &[String], root: FileRoot) -> Vec<Change> {
     let ceiling = versions::VERSION_FILE_MAX as u32;
     let mut out: Vec<Change> = Vec::new();
     for path in paths.iter() {
@@ -3684,7 +3797,7 @@ pub async fn versions_changes(id: &str, paths: &[String]) -> Vec<Change> {
         }
         // The person's file by its path ([`theirs`]), as a turn's capture of it would say.
         let mark = theirs(id, path);
-        match opfs::read_file_capped(FileRoot::Workspace, path, ceiling).await {
+        match opfs::read_file_capped(root, path, ceiling).await {
             Ok((body, total)) if total as usize <= versions::VERSION_FILE_MAX =>
                 out.push(Change { mark, ..Change::of(path, body) }),
             Ok((_, total)) => out.push(Change {
@@ -3767,8 +3880,11 @@ pub fn versionable(id: &str, path: &str) -> bool {
 /// naming the path, and the content that stood under it.  A path whose newest entry carries no
 /// `was` answers `None` -- there is nothing to go back to, and an older version is not an answer
 /// to a question about a state the user never saw.
+///
+/// Answered with the folder the row was written in ([`versions::needs_folder`]), which decides
+/// where it may go back ([`versions::route`]).
 pub async fn versions_undo_target(id: &str, path: &str, at: Option<u64>)
-    -> Outcome<Option<(u64, String, bool)>>
+    -> Outcome<Option<(u64, String, bool, Option<String>)>>
 {
     let held = versions_manifests(id).await;
     // By the path, as a restore routes it ([`theirs`]), and never by a row's flag alone.
@@ -3777,10 +3893,15 @@ pub async fn versions_undo_target(id: &str, path: &str, at: Option<u64>)
         .find(|e| e.path == path)
         .map(|e| e.mark)
         .unwrap_or(false);
+    // In the folder the path reaches now (HX3), by the rows that answer there (HQ1): its own,
+    // those from before folders and those of a folder this device cannot name; never another
+    // place's this device can name.
+    let here = folder_of(path);
     match at {
-        Some(n) => Ok(versions::path_at(&held, path, n)
-            .and_then(|s| s.hash().map(|h| (n, h.to_string(), mark)))),
-        None    => Ok(versions::undo_target(&held, path).map(|(n, h)| (n, h, mark))),
+        Some(n) => Ok(versions::path_here(&held, path, n, here.as_deref(), opfs::folder_known)
+            .and_then(|s| s.hash().map(|h| (n, h.to_string(), mark, s.folder().map(String::from))))),
+        None    => Ok(versions::undo_target(&held, path, here.as_deref(), opfs::folder_known)
+            .map(|(n, h, f)| (n, h, mark, f))),
     }
 }
 
@@ -3807,7 +3928,7 @@ pub async fn versions_undo_target(id: &str, path: &str, at: Option<u64>)
 /// What a restore puts back.
 #[derive(Clone, Debug)]
 pub enum Plan {
-    At(u64, Option<String>),                    // every path, or one, as it stood at a version
+    At(u64, Option<String>, Option<String>),    // every path, or one (and the folder of the row chosen), as at a version
     Undo(u64, Vec<String>),                     // what a version replaced, at the paths named, or all it changed
 }
 
@@ -3815,27 +3936,38 @@ impl Plan {
 
     pub fn version(&self) -> u64 {
         match self {
-            Self::At(n, _) | Self::Undo(n, _) => *n,
+            Self::At(n, _, _) | Self::Undo(n, _) => *n,
         }
     }
 
     /// The note the restore's own version carries: `restore v3`, or `undo v5`.
     fn note(&self) -> String {
         match self {
-            Self::At(n, _)   => fmt!("restore v{}", n),
-            Self::Undo(n, _) => fmt!("undo v{}", n),
+            Self::At(n, _, _) => fmt!("restore v{}", n),
+            Self::Undo(n, _)  => fmt!("undo v{}", n),
         }
     }
 }
 
 /// A restore from [`versions_restore_open`] to [`versions_restore_close`].
 struct Restoring {
-    id:    String,                              // the store
-    plan:  Option<Plan>,                        // what the engine puts back; none for a lone act
-    done:  Vec<Change>,                         // what each act on the person's files kept and left
-    notes: Vec<String>,                         // the notes of the copies those acts took
-    _lock: RestoreLock,                         // held while open, so another tab leaves its notes
+    id:     String,                             // the store
+    plan:   Option<Plan>,                       // what the engine puts back; none for a lone act
+    routes: Routes,                             // the person's files handed out, and whose rows they are
+    done:   Vec<Change>,                        // what each act on the person's files kept and left
+    notes:  Vec<String>,                        // the notes of the copies those acts took
+    _lock:  RestoreLock,                        // held while open, so another tab leaves its notes
 }
+
+/// The person's files a restore handed out, by the spelling each was handed out under
+/// (normalised): the path as its row names it, and the folder the row was written in.
+///
+/// **The path's identity from the row to the act and back, kept in one place** (HR, 2026-09-25).
+/// The open decides the spelling the fenced door is asked for ([`versions_restore_open`]); the act
+/// asks this which row it is putting back and where that row was written ([`restore_route`]), and
+/// is refused where the spelling now reaches another file; and what landed is recorded under the
+/// place the act reached ([`restore_landed`]).
+type Routes = std::collections::BTreeMap<String, (String, Option<String>)>;
 
 /// The web lock an open restore holds, given back when the restore is dropped: at its close, after
 /// its notes are settled, or with the page.
@@ -3943,16 +4075,17 @@ impl Closed {
 ///
 /// The lock's name is new, so nothing waits for it.  Where the browser has no lock manager, or
 /// will not grant it, the restore is open without one, as every restore was before.
-async fn restore_begin(id: &str, plan: Option<Plan>) -> u64 {
+async fn restore_begin(id: &str, plan: Option<Plan>, routes: Routes) -> u64 {
     let ticket = RESTORE_NEXT.with(|n| { let t = n.get(); n.set(t + 1); t });
     // Registered before the await, so the ticket is open from the moment it is handed out.
     RESTORES.with(|r| {
         r.borrow_mut().insert(ticket, Restoring {
-            id:    id.to_string(),
+            id:     id.to_string(),
             plan,
-            done:  Vec::new(),
-            notes: Vec::new(),
-            _lock: RestoreLock(None),
+            routes,
+            done:   Vec::new(),
+            notes:  Vec::new(),
+            _lock:  RestoreLock(None),
         });
     });
     let page = PAGE.with(|p| p.clone());
@@ -3981,7 +4114,41 @@ pub fn restore_store(ticket: u64) -> Option<String> {
 /// A restore's own act on the person's `path`, with no restore open: the act is a restore of its
 /// own, and [`versions_restore_close`] records it as it lands.
 pub async fn restore_lone(id: &str) -> u64 {
-    restore_begin(id, None).await
+    restore_begin(id, None, Routes::new()).await
+}
+
+/// May the act of the open restore `ticket` at `spelled`, which reaches `landed` now, put back the
+/// row it was handed out for ([`versions::route`])?  An act at a spelling the open did not hand out
+/// -- a lone act, with no row behind it -- is the caller's own write, and goes as it always did.
+///
+/// # Arguments
+/// * `spelled` - The path the act was asked for, as the open handed it out.
+/// * `landed` - Where it reaches now: normalised, or absolute through the hand.
+/// * `now` - What stands there as the act found it, or `None` where nothing does.
+/// * `puts` - The bytes the act puts there, or `None` for a delete.
+/// * `over` - Has the person said the row may go back over what stands there?
+pub fn restore_route(
+    ticket:  u64,
+    spelled: &str,
+    landed:  &str,
+    now:     Option<&[u8]>,
+    puts:    Option<&[u8]>,
+    over:    bool,
+)
+    -> versions::Route
+{
+    let row = RESTORES.with(|r| r.borrow().get(&ticket)
+        .and_then(|x| x.routes.get(&crate::tools::normalise(spelled)).cloned()));
+    let (path, folder) = match row {
+        Some(r) => r,
+        None    => return versions::Route::Go,
+    };
+    let overwrites = !over && match (now, puts) {
+        (Some(n), Some(p)) => n != p,
+        _                  => false,
+    };
+    let row = if path.starts_with('/') { path } else { crate::tools::normalise(&path) };
+    route_here(&row, folder.as_deref(), landed, overwrites)
 }
 
 /// Keep what a restore's act is about to replace or remove at `path`: the act's hold, taken once
@@ -4021,9 +4188,9 @@ pub async fn restore_keep(ticket: u64, path: &str, now: Option<&[u8]>, deleting:
         res!(opfs::write_file(FileRoot::Opfs, &body, before).await);
     }
     let text = fmt!(
-        r#"{{"page":"{}","path":"{}","was":"{}","deleting":{},"mark":{},"restore":{},"ts":{}}}"#,
-        json_escape(&page), json_escape(path), hash, deleting, theirs(&id, path), ticket,
-        now_ms() as u64);
+        r#"{{"page":"{}","path":"{}","was":"{}","deleting":{},"mark":{}{},"restore":{},"ts":{}}}"#,
+        json_escape(&page), json_escape(path), hash, deleting, theirs(&id, path),
+        folder_field(path), ticket, now_ms() as u64);
     res!(opfs::write_file(FileRoot::Opfs, &note, text.as_bytes()).await);
     RESTORES.with(|r| {
         if let Some(x) = r.borrow_mut().get_mut(&ticket) {
@@ -4113,17 +4280,27 @@ async fn end_run(hold: Option<&VersionHold>, id: &str, path: &str) -> Outcome<()
 /// What every path a restore of `id` puts back: for a restore to a version, what one path or
 /// every path the history names held then; for an undo, what the version replaced
 /// ([`versions::undo_of`]).
-fn restore_plan(id: &str, held: &[(u64, Manifest)], plan: &Plan) -> Outcome<Vec<(String, At)>> {
+///
+/// Each path is resolved in the folder `here` says it reaches, asking this device which folders
+/// it knows ([`versions::state_at`], [`opfs::folder_known`]), and a row the person chose by the
+/// folder it was written in.
+fn restore_plan<F>(id: &str, held: &[(u64, Manifest)], plan: &Plan, here: F)
+    -> Outcome<Vec<(String, At)>>
+    where F: Fn(&str) -> Option<String>
+{
     match plan {
-        Plan::At(at, Some(p)) => match versions::path_at(held, p, *at) {
-            Some(s) => Ok(vec![(p.to_string(), s)]),
-            None    => Err(err!(
-                "Diamond '{}' has no record of '{}' at version {}, so there is nothing to put \
-                back.", id, p, at; Missing, Data)),
+        Plan::At(at, Some(p), chose) => {
+            let prefer = chose.clone().filter(|f| !f.is_empty()).or_else(|| here(p));
+            match versions::path_at(held, p, *at, prefer.as_deref()) {
+                Some(s) => Ok(vec![(p.to_string(), s)]),
+                None    => Err(err!(
+                    "Diamond '{}' has no record of '{}' at version {}, so there is nothing to put \
+                    back.", id, p, at; Missing, Data)),
+            }
         },
-        Plan::At(at, None) => Ok(versions::state_at(held, *at)),
+        Plan::At(at, None, _) => Ok(versions::state_at(held, *at, here, opfs::folder_known)),
         Plan::Undo(of, paths) => {
-            let want = versions::undo_of(held, *of, paths);
+            let want = versions::undo_of(held, *of, paths, here);
             if want.is_empty() {
                 return Err(err!(
                     "Diamond '{}' has no record of what version {} changed, so there is nothing \
@@ -4178,12 +4355,49 @@ pub async fn versions_restore_open(id: &str, plan: Plan) -> Outcome<Opened> {
         }
     }
     let held = versions_manifests(id).await;
-    let want = res!(restore_plan(id, &held, &plan));
+    let named = res!(restore_plan(id, &held, &plan, |_| None));
     let here = |p: &str| -> bool { is_safe_rel(p) };
+    // WHERE EACH OF THE PERSON'S FILES WOULD LAND NOW, and whether that is where its row was
+    // written (HR, 2026-09-25).  A machine file is handed out relative to the hand's granted root,
+    // the spelling the fenced door routes to the hand (R6); a relative path reaches the machine too
+    // where a hand holds its mark and no folder is open, which a relative row was never written on.
+    let root = if named.iter().any(|(p, _)| theirs(id, p) && (!here(p) || versions::needs_folder(p))) {
+        crate::tools::machine_door_root().await
+    } else {
+        None
+    };
+    let door = |p: &str| -> String {
+        match &root {
+            Some(r) => match p.strip_prefix(&fmt!("{}/", r)) {
+                Some(rel) if is_safe_rel(rel) => rel.to_string(),
+                _                             => p.to_string(),
+            },
+            None => p.to_string(),
+        }
+    };
+    let lands = |spelled: &str| -> String {
+        match &root {
+            Some(r) if !spelled.starts_with('/') && versions::needs_folder(spelled) =>
+                fmt!("{}/{}", r, spelled),
+            _ => spelled.to_string(),
+        }
+    };
+    // EACH PATH'S ROW IN THE FOLDER IT REACHES NOW (HX3, HQ1): every row but another place's this
+    // device can name answers for it -- the open folder's own, those from before folders, and those
+    // of a folder this device cannot name, which the act then asks about -- and another place's
+    // only where no other row does, which the act leaves and says.
+    let want = res!(restore_plan(id, &held, &plan, |p| folder_of(&lands(&door(p)))));
+    // A ROW FROM ANOTHER FOLDER IS LEFT: its path reaches a different file of the same name now.
+    // Put to nobody, deleted by nobody, and said.  The act checks again ([`restore_route`]), since
+    // a folder can be opened or closed between this and it.
+    let placed = |p: &str, state: &At| -> bool {
+        let row = if p.starts_with('/') { p.to_string() } else { crate::tools::normalise(p) };
+        route_here(&row, state.folder(), &lands(&door(p)), false) != versions::Route::Left
+    };
     // Which of the files a restore would take away are there now, and which of them the door can
     // keep a copy of: read by length alone, so the ceiling costs nothing to ask.
     let gone_here: Vec<String> = want.iter()
-        .filter(|(p, s)| here(p) && theirs(id, p) && matches!(s, At::Gone { .. }))
+        .filter(|(p, s)| here(p) && theirs(id, p) && matches!(s, At::Gone { .. }) && placed(p, s))
         .map(|(p, _)| p.clone())
         .collect();
     let mut present: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
@@ -4212,29 +4426,25 @@ pub async fn versions_restore_open(id: &str, plan: Plan) -> Outcome<Opened> {
         res!(versions_record_held(&hold, id, None, Cause::Restore, "",
             &fmt!("before {}", plan.note()), now).await);
     }
-    let root = if want.iter().any(|(p, _)| !here(p)) {
-        crate::tools::machine_door_root().await
-    } else {
-        None
-    };
-    let door = |p: &str| -> String {
-        match &root {
-            Some(r) => match p.strip_prefix(&fmt!("{}/", r)) {
-                Some(rel) if is_safe_rel(rel) => rel.to_string(),
-                _                             => p.to_string(),
-            },
-            None => p.to_string(),
-        }
-    };
     let mut machine: Vec<String> = Vec::new();
+    let mut routes: Routes = Routes::new();
     for (p, state) in want.iter() {
         if !theirs(id, p) {
             continue;                   // the Diamond's own: written at the close
         }
+        let spelled = door(p);
+        if !placed(p, state) {
+            machine.push(fmt!("{{\"path\":\"{}\",\"left\":true{}}}", json_escape(&spelled),
+                match state {
+                    At::Gone { .. } => ",\"gone\":true",
+                    _               => "",
+                }));
+            continue;
+        }
         machine.push(match state {
             At::Held { hash, bytes, skipped, .. } => fmt!(
                 "{{\"path\":\"{}\",\"hash\":\"{}\",\"bytes\":{}{}}}",
-                json_escape(&door(p)), json_escape(hash), bytes, match skipped {
+                json_escape(&spelled), json_escape(hash), bytes, match skipped {
                     Some(w) => fmt!(",\"skipped\":\"{}\"", json_escape(w)),
                     None    => String::new(),
                 }),
@@ -4243,11 +4453,13 @@ pub async fn versions_restore_open(id: &str, plan: Plan) -> Outcome<Opened> {
                     continue;           // not there then, not there now: nothing to do
                 }
                 fmt!("{{\"path\":\"{}\",\"gone\":true,\"kept\":{}}}",
-                    json_escape(&door(p)), kept.contains(p))
+                    json_escape(&spelled), kept.contains(p))
             },
         });
+        routes.insert(crate::tools::normalise(&spelled),
+            (p.clone(), state.folder().map(String::from)));
     }
-    let ticket = restore_begin(id, Some(plan)).await;
+    let ticket = restore_begin(id, Some(plan), routes).await;
     Ok(Opened { ticket, machine })
 }
 
@@ -4284,7 +4496,7 @@ pub async fn versions_restore_close(id: &str, ticket: u64) -> Outcome<Closed> {
     let mut wrote:    Vec<String> = Vec::new();
     if let Some(plan) = &r.plan {
         let held = versions_manifests(id).await;
-        let want = match restore_plan(id, &held, plan) {
+        let want = match restore_plan(id, &held, plan, folder_of) {
             Ok(w)  => w,
             Err(_) => Vec::new(),       // its record was pruned since it opened: nothing to put back
         };
@@ -4380,7 +4592,7 @@ pub async fn versions_restore_close(id: &str, ticket: u64) -> Outcome<Closed> {
 pub async fn versions_restore(id: &str, at: u64, path: Option<&str>)
     -> Outcome<(String, Vec<String>)>
 {
-    let opened = res!(versions_restore_open(id, Plan::At(at, path.map(|p| p.to_string()))).await);
+    let opened = res!(versions_restore_open(id, Plan::At(at, path.map(|p| p.to_string()), None)).await);
     let closed = res!(versions_restore_close(id, opened.ticket).await);
     Ok((closed.said(Some(&opened.machine)), closed.wrote))
 }

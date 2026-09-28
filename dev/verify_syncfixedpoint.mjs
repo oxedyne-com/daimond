@@ -1218,6 +1218,17 @@ for (const [label, s_] of [['B', B], ['C', C]]) {
 	}
 }
 
+// TWO COMMITTERS, BY PREMISE. Since COMMIT-MERGED (2026-09-27) a device commits only an index known to
+// be the account's whole one at the version it stands at (daimond.js "A commit declares only an index
+// merged in full"). This account has two folder desktops beside the phone, and their parcels are never
+// whole, so after (vii) neither B nor the new C can be known whole: that is the gate's own corner
+// (specs/daimond_fixbrief_r53_commitmerged_20260927.md, decision 1; QCMG's two-desktop fleet), and
+// the gate holding here is its subject, not this section's. This section is about what two devices
+// that DO commit do with one file at two sets of addresses, so both are stated whole where they stand,
+// which is the topology the rule before COMMIT-MERGED gave every sandbox device.
+for (const s_ of [B, C]) {
+	await s_.page.evaluate(() => window.DaimondCloud.noteWhole(window.DaimondSync.version() | 0));
+}
 const devC = await C.page.evaluate(() => window.DaimondCore.syncSelfDeviceId());
 const mayBoth = {
 	b: await B.page.evaluate(() => window.DaimondCore.syncMayCommitChunks()),

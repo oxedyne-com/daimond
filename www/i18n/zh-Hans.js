@@ -454,6 +454,7 @@
 	// 机器翻译。往正在跑的这一轮里插话。这行也说清了限制 --
 	// 不调用工具的回答没有可以插进去的接缝。
 	'chat.send_into':         '插入到这条回答里发送',
+	'chat.sending':           '正在发送…',
 	'chat.interject_help':    '等待中；会在模型下一步或本次回答结束时插入。',
 	'chat.interject_pending': '还没送到。点一下可以改。',
 	'chat.interjected':       '你在这里插了话',
@@ -2003,6 +2004,8 @@
 	'files.pinned_help':     '已钉住：始终留在这台设备上。点击可取消。',
 	'files.pin_help':        '钉住：绝不为腾地方而释放这一个。',
 	'files.free_help':       '留在云端存储里，删掉这里的副本',
+	'files.free_undeclared': '暂时留在这台设备上：这台设备还无法确认云端存储会保留它。',
+	'files.reclaim_undeclared': '还没有释放任何空间：这台设备还无法确认云端存储会保留这些文件。',
 	'files.fetch':           '取回',
 	'files.fetch_body':      '把“{path}”取到这台设备上？这会下载 {size}。',
 	'files.fetching':        '正在取回 {path}…',
@@ -2213,6 +2216,8 @@
 	'backup.restored_owed':   '此设备的浏览器存储空间已满，恢复的部分内容尚未保存。保存后页面会重新加载；释放一些空间即可。',
 	'backup.n_foreign.one':   '那份备份里有 {n} 个文件属于那台浏览器上的另一个账户，因此没有恢复，只留在备份里。',
 	'backup.n_foreign.other': '那份备份里有 {n} 个文件属于那台浏览器上的另一个账户，因此没有恢复，只留在备份里。',
+	'backup.n_unreadable.one':   '那份备份里有 {n} 个对话无法读取，因此没有恢复，只留在备份里。',
+	'backup.n_unreadable.other': '那份备份里有 {n} 个对话无法读取，因此没有恢复，只留在备份里。',
 
 	// ── 提供商表单 ─────────────────────────────────────────────
 	'models.other':            '其他（手动输入）…',
@@ -3622,10 +3627,16 @@
 	'versions.snapshot': '快照',
 	'versions.too_big': '\u592a\u5927\u65e0\u6cd5\u4fdd\u7559',
 	'versions.gone_ask': '\u6b64\u7248\u672c\u65e9\u4e8e\u4f60\u7684 {n} \u4e2a\u6587\u4ef6\uff1a{paths}\u3002\u6062\u590d\u5b83\u4f1a\u5c06\u8fd9\u4e9b\u6587\u4ef6\u4ece\u4f60\u7684\u6587\u4ef6\u5939\u4e2d\u5220\u9664\u3002\u5b83\u4eec\u5f53\u524d\u7684\u5185\u5bb9\u4f1a\u4fdd\u7559\u5728\u5386\u53f2\u8bb0\u5f55\u4e2d\u3002\u8981\u5220\u9664\u5417\uff1f',
+	'versions.undo_gone_ask': '\u64a4\u9500\u6b64\u64cd\u4f5c\u4f1a\u5220\u9664\u4f60\u7684 {n} \u4e2a\u6587\u4ef6\uff1a{paths}\u3002\u5b83\u4eec\u5f53\u524d\u7684\u5185\u5bb9\u4f1a\u4fdd\u7559\u5728\u5386\u53f2\u8bb0\u5f55\u4e2d\u3002\u8981\u5220\u9664\u5417\uff1f',
 	'versions.gone_allow': '\u5220\u9664',
 	'versions.gone_keep': '\u4fdd\u7559',
 	'versions.gone_title': '\u8981\u4ece\u4f60\u7684\u6587\u4ef6\u5939\u4e2d\u5220\u9664\u6587\u4ef6\u5417\uff1f',
 	'versions.gone_kept': '\u5df2\u7559\u5728\u4f60\u7684\u6587\u4ef6\u5939\u4e2d',
+	'versions.over_ask': 'Daimond \u5728\u8bb0\u5f55\u6bcf\u4e2a\u6587\u4ef6\u6765\u81ea\u54ea\u4e2a\u6587\u4ef6\u5939\u4e4b\u524d\u4fdd\u5b58\u4e86\u5176\u4e2d {n} \u4e2a\u6587\u4ef6\uff1a{paths}\u3002\u90a3\u91cc\u73b0\u5728\u7684\u6587\u4ef6\u53ef\u80fd\u662f\u522b\u7684\u6587\u4ef6\u3002\u6062\u590d\u4f1a\u66ff\u6362\u5b83\u4eec\uff0c\u5b83\u4eec\u5f53\u524d\u7684\u5185\u5bb9\u4f1a\u4fdd\u7559\u5728\u5386\u53f2\u8bb0\u5f55\u4e2d\u3002\u8981\u66ff\u6362\u5417\uff1f',
+	'versions.over_ask_unknown': '\u5176\u4e2d {n} \u4e2a\u6587\u4ef6\u8bb0\u5f55\u4e8e\u53e6\u4e00\u53f0\u8bbe\u5907\u4e0a\u7684\u6587\u4ef6\u5939\uff0c\u6216 Daimond \u5df2\u4e0d\u518d\u8ba4\u8bc6\u7684\u6587\u4ef6\u5939\uff1a{paths}\u3002\u8fd9\u91cc\u7684\u6587\u4ef6\u53ef\u80fd\u662f\u522b\u7684\u6587\u4ef6\u3002\u6062\u590d\u4f1a\u66ff\u6362\u5b83\u4eec\uff0c\u5b83\u4eec\u5f53\u524d\u7684\u5185\u5bb9\u4f1a\u4fdd\u7559\u5728\u5386\u53f2\u8bb0\u5f55\u4e2d\u3002\u8981\u66ff\u6362\u5417\uff1f',
+	'versions.other_folder': '\u5df2\u4fdd\u5b58\u5728\u53e6\u4e00\u4e2a\u6587\u4ef6\u5939\u4e2d\uff1b\u6b64\u5904\u6ca1\u6709\u526f\u672c',
+	'versions.over_allow': '\u66ff\u6362',
+	'versions.over_title': '\u8981\u66ff\u6362\u4f60\u6587\u4ef6\u5939\u4e2d\u7684\u6587\u4ef6\u5417\uff1f',
 	'versions.refused': '\u8d85\u51fa\u8fd9\u4e2a diamond \u7684\u8303\u56f4',
 	'versions.save': '\u4fdd\u5b58\u4e00\u4e2a\u7248\u672c',
 	'versions.save_name': '\u53d6\u4e2a\u540d\u5b57',

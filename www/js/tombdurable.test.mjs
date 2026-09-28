@@ -157,15 +157,26 @@ function sourceGuards() {
 			save.includes('return window.DaimondStore.put(KEY,'), 'save() still swallows');
 	}
 
-	console.log('\ntombdurable: source -- file tombstones are durable in the tomb store too (A5)');
+	console.log('\ntombdurable: source -- file deletions are durable records, and the old field is too (A5)');
 	{
+		// fix/r53-faultb3: a file's deletion is a stamped record in cloud.js's one set (kept in
+		// IndexedDB through DaimondDurable, a lost write said by `noteDeletionUnrecorded`); the
+		// old `fileTombs` field is written through to the tomb store for 5.2.1 and a rollback.
 		const nf = funcBody(d, 'function noteFileTombs(col, complete) {');
-		check('noteFileTombs lands new file tombs in IndexedDB', nf.includes('ChatStore.putTombs(SYNC_FILE_TOMBS_KEY, fresh)'),
-			'file tombs are localStorage only');
-		check('noteFileTombs raises the alarm on a lost write', nf.includes("storageAlarm(tOr('store.delete_unrecorded'"),
-			'a lost file tomb is silent');
-		check('noteFileTombs no longer swallows the write as best effort',
-			!/setItem\(SYNC_FILE_TOMBS_KEY[^;]*\); ?\n?\s*catch \(e\) \{ \/\* best effort/.test(nf), 'the swallow remains');
+		const ow = funcBody(d, 'function writeOldFileTombs(want) {');
+		const cj = readFileSync(join(HERE, 'cloud.js'), 'utf8');
+		check('noteFileTombs writes deletions and returns into the record set', nf.includes('DaimondCloud.mark(marks)'),
+			'file deletions are not records');
+		check('the record set is kept through the durable store', funcBody(cj, 'async function flush(km) {').includes('DaimondDurable.update(km.key'),
+			'records are memory only');
+		check('a record lost to the store raises the alarm', funcBody(cj, 'async function flush(km) {').includes('if (km === TBM && !ok) tombAlarm();')
+			&& d.includes("noteDeletionUnrecorded: function () {"), 'a lost record is silent');
+		check('the old field lands in IndexedDB', ow.includes('ChatStore.putTombs(SYNC_FILE_TOMBS_KEY, fresh)')
+			&& ow.includes('ChatStore.dropTombs(SYNC_FILE_TOMBS_KEY, back)'), 'the old field is localStorage only');
+		check('the old field raises the alarm on a lost write', ow.includes("storageAlarm(tOr('store.delete_unrecorded'"),
+			'a lost old-field write is silent');
+		check('the old field no longer swallows the write as best effort',
+			!/setItem\(SYNC_FILE_TOMBS_KEY[^;]*\); ?\n?\s*catch \(e\) \{ \/\* best effort/.test(ow), 'the swallow remains');
 		check('the carried map reads the overlay', funcBody(d, 'function fileTombsHeld() {').includes('tombMem[SYNC_FILE_TOMBS_KEY]'),
 			'fileTombs reads localStorage alone');
 		check('bootTombs migrates the file tombs into the store',

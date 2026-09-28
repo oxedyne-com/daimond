@@ -1350,6 +1350,12 @@
 			var heavy;
 			try { heavy = JSON.parse(new TextDecoder().decode(bytes)); }
 			catch (e) { delete rec.msgs[addr]; continue; }
+			// Bytes that parse to something other than a record (`null`, a list, a
+			// number) are as unreadable as bytes that do not parse: this message is left
+			// out, as a missing chunk leaves it, rather than the dereference below
+			// throwing and failing the whole section, which held back every push of this
+			// device's while the sender kept it (DL-2's sweep, 2026-09-27).
+			if (!heavy || typeof heavy !== 'object' || Array.isArray(heavy)) { delete rec.msgs[addr]; continue; }
 			m.body = heavy.body; m.art = heavy.art; m.env = heavy.env;
 			m.ck = heavy.ck; m.refs = heavy.refs; m.replyTo = heavy.replyTo;
 			m.msgRef = null;

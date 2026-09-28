@@ -1119,6 +1119,50 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		midSeq += 1;
 		return Date.now().toString(36) + '-' + midSeq.toString(36) + '-' + Math.random().toString(36).slice(2, 7);
 	}
+	/// Is `msgs` a transcript this device can hold: absent, or a list whose every entry
+	/// is a message record (an object, neither null nor a list)?
+	///
+	/// ONE LAW, AT EVERY DOOR (DL-2, 2026-09-27). Everything below the doors reads a
+	/// transcript as a list of records: `stampMessages` sets `m.mid` on each entry,
+	/// `appendChunks` walks it with `forEach`, and `ChatStore.write` unions the stored
+	/// copy inside an IndexedDB request handler, where one exception aborts the whole
+	/// transaction and every chat in it. So a transcript that is not one is refused
+	/// where it comes in -- a pulled parcel (`applyChats`), a restored backup, the old
+	/// localStorage store (`mergeInto`) -- and the store refuses to write or union one
+	/// that got past a door anyway. A chat this device already held was refused only by
+	/// accident of `forEach`; a chat it had never held was stored as sent, so `[null]`
+	/// sat in the store until the chat was opened and then stopped every save.
+	function transcriptOk(msgs) {
+		if (msgs === undefined || msgs === null) return true;
+		if (!Array.isArray(msgs)) return false;
+		for (var i = 0; i < msgs.length; i++) {
+			var m = msgs[i];
+			if (!m || typeof m !== 'object' || Array.isArray(m)) return false;
+		}
+		return true;
+	}
+	/// What a refused transcript was, in a few words, for the trail. Never its content.
+	function transcriptShape(msgs) {
+		if (msgs === null) return 'null';
+		if (!Array.isArray(msgs)) return typeof msgs;
+		for (var i = 0; i < msgs.length; i++) {
+			var m = msgs[i];
+			if (!m || typeof m !== 'object' || Array.isArray(m)) {
+				return 'a list with ' + (m === null ? 'null' : (Array.isArray(m) ? 'a list' : typeof m))
+					+ ' at ' + i + ' of ' + msgs.length;
+			}
+		}
+		return 'a list of ' + msgs.length;
+	}
+	/// Is `id` one a chat record can be kept under: a plain id as the engine takes one
+	/// for `chats/<id>/` (`remove_dir`: no `/`, no `\`, no `..`), and without the `#`
+	/// that separates a chat's id from its chunk rows' sequence? A chat named `a#b`
+	/// falls inside chat `a`'s key range (`readChunks`), so its messages would read as
+	/// `a`'s and a deletion of `a` would take them.
+	function chatIdOk(id) {
+		return typeof id === 'string' && id.length > 0 && !/[#\/\\]/.test(id) && id.indexOf('..') < 0;
+	}
+
 	/// Give every stored message an id, minting one from its POSITION WITHIN ITS OWN CHAT
 	/// for anything written before mids existed. The position is stable across loads, so
 	/// the same record stamps identically every time and the append-only union does not
@@ -1797,6 +1841,19 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		var vouched = false;     // and what it read can be believed -- see CHATS_COUNT
 		var bootPromise = null;  // the one-and-only first read, memoised; see boot/booted
 		var shadowDone = Promise.resolve();   // resolves when the last transcript-shadow pass settled
+		var skipNoted = {};      // id|why of each chat a write left alone, trailed once per page
+
+		/// Say that a write left one chat as it was on disk, and why. Once per chat and
+		/// reason in the durable trail, so a chat skipped on every save does not flood it.
+		function noteSkipped(id, why) {
+			diag('store chat SKIPPED', id + ': ' + why);
+			var k = id + '|' + why;
+			if (skipNoted[k]) return;
+			skipNoted[k] = 1;
+			trail('store chat SKIPPED', id + ': ' + why);
+			try { console.warn('Daimond: chat ' + id + ' was left as it is on disk (' + why + '); every other chat was saved.'); }
+			catch (e) { /* no console */ }
+		}
 
 		// ── The append cursor (seq 214, Stage 2) ────────────────────────────────
 		//
@@ -2082,84 +2139,130 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 				});
 				var seen = {}, put = {}, compactIds = [];
 				var mtombs = loadMsgTombs();		// parse the message tombstones once for this pass
+				// ONE CHAT THAT CANNOT BE WRITTEN IS LEFT AS IT IS ON DISK, and the rest of
+				// the list is written (DL-2, 2026-09-27). A throw here used to end the loop,
+				// so every chat after it went unsaved; a throw inside the `get` handler below
+				// aborted the transaction, so NONE were. What was on disk for a chat left
+				// out keeps its stamp, so a later save of it is tried again.
+				//
+				// TWO KINDS, and only one is quiet. A transcript that is not one
+				// (`transcriptOk`) is that chat's fault: it is skipped and trailed, and the
+				// store is fine. Anything else that throws is the STORE refusing (a full box,
+				// a record it cannot clone): the other chats are still written, and the alarm
+				// is raised as it always was, because this write did not all land.
+				var failure = null;
+				var skip = function (id, why) {
+					noteSkipped(id, why);
+					if (disk[id] !== undefined) put[id] = disk[id]; else delete put[id];
+				};
+				var fail = function (id, e) {
+					failure = failure || e;
+					diag('store chat FAILED', id + ': ' + storeReason(e));
+					if (disk[id] !== undefined) put[id] = disk[id]; else delete put[id];
+				};
 				list.forEach(function (c) {
 					if (!c || !c.id) return;
 					seen[c.id] = true;
-					// STAMPED AS IT IS AT THIS MOMENT. For a non-resident chat the stamp
-					// comes from its summary counts, not its empty `messages` array -- see
-					// `stampOf` -- so an un-opened chat's stamp matches what is on disk and
-					// it is SKIPPED here rather than needlessly rewritten.
-					var stamp = stampOf(c);
-					put[c.id] = stamp;
-					if (disk[c.id] !== undefined && disk[c.id] === stamp) return;
-					// A WRITE NEVER SHORTENS OR EMPTIES A TRANSCRIPT (audit B1), now under
-					// append (seq 214, Stage 2). The msgchunks are the source of truth and
-					// only ever GROW here -- and only for THIS chat -- so a save of one chat
-					// cannot touch another, and transcripts shrink only via tombstone
-					// (dropped on read, removed from disk by compaction below).
-					//
-					//   - A RESIDENT chat carries its authoritative transcript. Its NEW TAIL
-					//     is appended to the chunks (`appendChunks` skips any mid already on
-					//     disk, so a re-save appends nothing); the whole is written to the
-					//     legacy `chats` row as a FALLBACK SHADOW (a direct put -- the read
-					//     Stage 1 paid to union is gone, because the chunks, not this row,
-					//     are now read back). If a tombstone has left dead weight in the
-					//     chunks, this chat is queued for compaction after the commit.
-					//   - A NON-RESIDENT chat contributes an EMPTY transcript, so it appends
-					//     nothing and its chunks are left exactly as they are. Its rare
-					//     scalar change (a rename, a fold, an attachment) still has to reach
-					//     the legacy shadow WITHOUT shortening it, so that one row is unioned
-					//     against disk the way Stage 1 did -- the cost that path saved is on
-					//     the resident hot path, not here.
-					//
-					// The chatsum SUMMARY is refreshed alongside either way, so the rail
-					// (built from summaries at the next boot) does not go stale.
-					//
-					// THE APPEND RUNS FOR EVERY SAVE, resident or not. The chunks are the
-					// source of truth, so any transcript a save carries must reach them --
-					// `appendChunks` is idempotent (it fingerprint-skips a copy already on
-					// disk) and never shortens, so it is a no-op for the empty transcript a
-					// non-resident scalar change carries and appends the tail for a merge
-					// (e.g. a sync into a chat this tab has never opened) that carries one.
-					// `_loaded` then governs ONLY the legacy shadow: a direct put of the
-					// resident-full transcript, or a union against disk that cannot shorten
-					// the row when the transcript in hand is empty.
-					appendChunks(mcS, c.id, c.messages);
-					if (c._loaded === false || !(c.messages || []).length) {
-						// UNIONED AGAINST DISK, so a short transcript in hand cannot shorten the
-						// legacy shadow or its summary. Two callers land here:
-						//   - a NON-RESIDENT save (`_loaded === false`) carries an empty
-						//     transcript for a scalar change (a rename, a fold, an attachment),
-						//     which must reach the shadow WITHOUT touching the messages it holds;
-						//   - a RESIDENT save whose transcript is EMPTY (Fix, same family as the
-						//     tag-loss incident): a cold IndexedDB read can leave a chat marked
-						//     resident yet empty, and the blind put below would then BLANK a
-						//     legacy row that is the sole home of a pre-seq-214 transcript. The
-						//     union honours the tombstones, so a chat whose messages were
-						//     genuinely all deleted still empties (its mids are tombstoned and
-						//     dropped), while a cold-empty read cannot shorten a row whose mids
-						//     are NOT tombstoned.
-						(function (rec, id) {
-							var g = csS.get(id);
-							g.onsuccess = function () {
-								var old = g.result;
-								rec = slimChat(rec);
-								if (old && ((old.messages || []).length || old.session)) {
-									rec.messages = slimMessages(mergeMessages(old.messages, rec.messages, id, mtombs));
-									if (!rec.session && old.session) rec.session = old.session;
-									put[id] = stampOf(rec);         // the stamp of what ACTUALLY lands
-								}
-								csS.put(rec);
-								suS.put(summaryLite(rec));
-							};
-						})(c, c.id);
-					} else {
-						var rec = slimChat(c);
-						csS.put(rec);
-						suS.put(summaryLite(rec));
-						// Dead weight is gauged against the RESIDENT transcript only -- a
-						// non-resident save carries an empty one, which is no measure of it.
-						if ((chunkPhysical[c.id] || 0) > (c.messages || []).length) compactIds.push(c.id);
+					try {
+						// STAMPED AS IT IS AT THIS MOMENT. For a non-resident chat the stamp
+						// comes from its summary counts, not its empty `messages` array -- see
+						// `stampOf` -- so an un-opened chat's stamp matches what is on disk and
+						// it is SKIPPED here rather than needlessly rewritten.
+						var stamp = stampOf(c);
+						put[c.id] = stamp;
+						if (disk[c.id] !== undefined && disk[c.id] === stamp) return;
+						// A WRITE NEVER SHORTENS OR EMPTIES A TRANSCRIPT (audit B1), now under
+						// append (seq 214, Stage 2). The msgchunks are the source of truth and
+						// only ever GROW here -- and only for THIS chat -- so a save of one chat
+						// cannot touch another, and transcripts shrink only via tombstone
+						// (dropped on read, removed from disk by compaction below).
+						//
+						//   - A RESIDENT chat carries its authoritative transcript. Its NEW TAIL
+						//     is appended to the chunks (`appendChunks` skips any mid already on
+						//     disk, so a re-save appends nothing); the whole is written to the
+						//     legacy `chats` row as a FALLBACK SHADOW (a direct put -- the read
+						//     Stage 1 paid to union is gone, because the chunks, not this row,
+						//     are now read back). If a tombstone has left dead weight in the
+						//     chunks, this chat is queued for compaction after the commit.
+						//   - A NON-RESIDENT chat contributes an EMPTY transcript, so it appends
+						//     nothing and its chunks are left exactly as they are. Its rare
+						//     scalar change (a rename, a fold, an attachment) still has to reach
+						//     the legacy shadow WITHOUT shortening it, so that one row is unioned
+						//     against disk the way Stage 1 did -- the cost that path saved is on
+						//     the resident hot path, not here.
+						//
+						// The chatsum SUMMARY is refreshed alongside either way, so the rail
+						// (built from summaries at the next boot) does not go stale.
+						//
+						// THE APPEND RUNS FOR EVERY SAVE, resident or not. The chunks are the
+						// source of truth, so any transcript a save carries must reach them --
+						// `appendChunks` is idempotent (it fingerprint-skips a copy already on
+						// disk) and never shortens, so it is a no-op for the empty transcript a
+						// non-resident scalar change carries and appends the tail for a merge
+						// (e.g. a sync into a chat this tab has never opened) that carries one.
+						// `_loaded` then governs ONLY the legacy shadow: a direct put of the
+						// resident-full transcript, or a union against disk that cannot shorten
+						// the row when the transcript in hand is empty.
+						appendChunks(mcS, c.id, c.messages);
+						// A transcript in hand that is not one (`transcriptOk`) never reaches the
+						// row or the summary. Its readable messages went to the chunks just now
+						// (`appendChunks` takes only records with a mid), which is where the reader
+						// looks; what is not a message is not stored anywhere.
+						if (!transcriptOk(c.messages)) {
+							skip(c.id, 'its transcript is ' + transcriptShape(c.messages));
+							return;
+						}
+						if (c._loaded === false || !(c.messages || []).length) {
+							// UNIONED AGAINST DISK, so a short transcript in hand cannot shorten the
+							// legacy shadow or its summary. Two callers land here:
+							//   - a NON-RESIDENT save (`_loaded === false`) carries an empty
+							//     transcript for a scalar change (a rename, a fold, an attachment),
+							//     which must reach the shadow WITHOUT touching the messages it holds;
+							//   - a RESIDENT save whose transcript is EMPTY (Fix, same family as the
+							//     tag-loss incident): a cold IndexedDB read can leave a chat marked
+							//     resident yet empty, and the blind put below would then BLANK a
+							//     legacy row that is the sole home of a pre-seq-214 transcript. The
+							//     union honours the tombstones, so a chat whose messages were
+							//     genuinely all deleted still empties (its mids are tombstoned and
+							//     dropped), while a cold-empty read cannot shorten a row whose mids
+							//     are NOT tombstoned.
+							(function (rec, id) {
+								var g = csS.get(id);
+								// NOTHING MAY LEAVE THIS HANDLER BY A THROW: an exception out of an
+								// IndexedDB request handler aborts the transaction, and this one
+								// carries every chat in the save. A stored row whose transcript is
+								// not one is not unioned and not overwritten -- the union would
+								// throw on it, and a put would drop whatever of it is readable.
+								g.onsuccess = function () {
+									try {
+										var old = g.result;
+										if (old && !transcriptOk(old.messages)) {
+											skip(id, 'the stored transcript is ' + transcriptShape(old.messages));
+											return;
+										}
+										rec = slimChat(rec);
+										if (old && ((old.messages || []).length || old.session)) {
+											rec.messages = slimMessages(mergeMessages(old.messages, rec.messages, id, mtombs));
+											if (!rec.session && old.session) rec.session = old.session;
+											put[id] = stampOf(rec);         // the stamp of what ACTUALLY lands
+										}
+										csS.put(rec);
+										suS.put(summaryLite(rec));
+									} catch (e) {
+										fail(id, e);
+									}
+								};
+							})(c, c.id);
+						} else {
+							var rec = slimChat(c);
+							csS.put(rec);
+							suS.put(summaryLite(rec));
+							// Dead weight is gauged against the RESIDENT transcript only -- a
+							// non-resident save carries an empty one, which is no measure of it.
+							if ((chunkPhysical[c.id] || 0) > (c.messages || []).length) compactIds.push(c.id);
+						}
+					} catch (e) {
+						fail(c.id, e);
 					}
 				});
 				// A DELETION IS A TOMBSTONE, NOT AN ABSENCE.
@@ -2216,7 +2319,13 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 				// the count an empty read is judged against.
 				vouched = true;
 				setWatermark(Object.keys(disk).length);
-				storageAlarmClear();          // a save landed: whatever it said is over
+				if (failure) {
+					// The rest landed; this chat did not, and the person is told so.
+					diag('store write FAILED', storeReason(failure));
+					storageAlarm(storeReason(failure));
+				} else {
+					storageAlarmClear();      // a save landed: whatever it said is over
+				}
 				// Compact any chat a tombstone or a duplicate append left carrying dead
 				// weight, AFTER the save has committed and each in its own transaction.
 				// Bounded by construction: an append never makes the physical count exceed
@@ -2227,7 +2336,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 					try { await compactChunks(compactIds[ci]); }
 					catch (e) { /* dead weight kept; the reader still drops it */ }
 				}
-				return true;
+				return !failure;
 			} catch (e) {
 				diag('store write FAILED', storeReason(e));
 				storageAlarm(storeReason(e));
@@ -2271,8 +2380,20 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			(base || []).forEach(function (c) { if (c && c.id) byId[c.id] = c; });
 			(incoming || []).forEach(function (c) {
 				if (!c || !c.id) return;
+				// The transcript law, on the way in and against what is here: a copy that
+				// is not one is left out (the old store is archived whole, so it keeps it),
+				// and one that cannot be unioned leaves the stored row as it is.
+				if (!chatIdOk(c.id) || !transcriptOk(c.messages)) {
+					noteSkipped(String(c.id).slice(0, 64), 'the copy coming in is not a chat that can be read ('
+						+ (chatIdOk(c.id) ? 'its transcript is ' + transcriptShape(c.messages) : 'its id') + ')');
+					return;
+				}
 				var st = byId[c.id];
 				if (!st) { byId[c.id] = c; return; }
+				if (!transcriptOk(st.messages)) {
+					noteSkipped(c.id, 'the stored transcript is ' + transcriptShape(st.messages));
+					return;
+				}
 				// Field-appropriate, so migrating an old localStorage array cannot let one
 				// copy's turn revert the other copy's rename (S-SYNC #5). `st` and `c` both
 				// carry full transcripts here, so the defaults union them.
@@ -2405,8 +2526,8 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		function appendChunks(store, chatId, msgs) {
 			var fps = chunkedMids[chatId] || (chunkedMids[chatId] = {});
 			var fresh = [];
-			(msgs || []).forEach(function (m) {
-				if (!m || !m.mid) return;
+			(Array.isArray(msgs) ? msgs : []).forEach(function (m) {
+				if (!m || typeof m !== 'object' || !m.mid) return;
 				var fp = msgFp(m);
 				if (fps[m.mid] === fp) return;      // this exact copy is already the newest on disk
 				fps[m.mid] = fp;
@@ -2641,8 +2762,18 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 				if (byId[id]) { out.push(byId[id]); continue; }
 				var row = await getRow(id);
 				if (!row || !row.id) continue;
-				out.push(summaryOf(row, JSON.stringify(row.messages || []),
-					Math.max(1, Math.ceil((row.messages || []).length / CHUNK_MSGS))));
+				// Summarised from the records the row holds and nothing else: a row whose
+				// transcript is not one (`transcriptOk`) would otherwise throw here
+				// (`dispatchedIturns` walks it) and take the whole boot, and so every chat,
+				// down with it. The row itself is left as it is.
+				var rm = row.messages;
+				if (!transcriptOk(rm)) {
+					noteSkipped(id, 'the stored transcript is ' + transcriptShape(rm) + '; summarised from its records');
+					rm = Array.isArray(rm) ? rm.filter(function (m) { return transcriptOk([m]); }) : [];
+					row = Object.assign({}, row, { messages: rm });
+				}
+				out.push(summaryOf(row, JSON.stringify(rm || []),
+					Math.max(1, Math.ceil((rm || []).length / CHUNK_MSGS))));
 				missingRows.push(row);
 			}
 			if (missingRows.length) { shadowDone = writeShadow(missingRows); }
@@ -5241,10 +5372,15 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 	// five, so a heavy chat store cannot take the whole remainder either.
 	var SYNC_CHATS_INLINE_MAX = 2 * 1024 * 1024;
 	var SYNC_FILEBASE_KEY    = 'daimond-sync-filebase';
-	// WHICH STORAGE LOCATION THE FORK POINT ABOVE DESCRIBES, and the one location last left
-	// with its fork point, so a Browser <-> Machine toggle comes back to what it agreed (QFB-1).
+	// THE FORK POINT IS KEPT PER STORAGE LOCATION (QFB-1), each under its own key
+	// (`SYNC_FILEBASE_KEY + '@' + loc`), the locations listed least recently used first
+	// and bounded. One location keeps the plain key and names itself in `-loc`, so a
+	// rolled-back 5.2.1 page reads a map and the location it is of; the 5.2.1 `-stash`
+	// (one location set aside) is folded in once and removed (QFB2-2).
 	var SYNC_FILEBASE_LOC_KEY   = 'daimond-sync-filebase-loc';
 	var SYNC_FILEBASE_STASH_KEY = 'daimond-sync-filebase-stash';
+	var SYNC_FILEBASE_LOCS_KEY  = 'daimond-sync-filebase-locs';
+	var SYNC_FILEBASE_LOCS_MAX  = 4;		// the Browser and a few folders; the fifth evicts the coldest
 	// The fork point is one `path -> hash` entry per file both devices agree on, and
 	// `commitAgreedFiles` carries entries FORWARD, so a renamed-away path lingers
 	// until a merge deletes it -- growth the chunk map bounds (chunks.js `MAP_MAX`)
@@ -5414,6 +5550,10 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 	// what lets two desktops agree byte for byte about a folder they hold at different
 	// times.
 	var SYNC_FOLDER_SEEN_KEY = 'daimond-foldershare-seen';
+	// THAT THIS DEVICE EVER COLLECTED A MACHINE FOLDER, never removed once written: the seed's
+	// refusal reads it (`syncFolderHistory`). Its own record since 5.2.2 made the two it used to read
+	// caches (the seen note per location, evicted with it; the stash folded away).
+	var SYNC_FOLDER_EVER_KEY = 'daimond-sync-folder-ever';
 
 	/// The handle of the real folder the user has open, or null for the sandbox.
 	///
@@ -5613,7 +5753,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		if (!handle) {
 			if (!filesSyncable()) return null;
 			_sharePlan = { folder: false, roots: [''], flagged: [''], left: [], perRoot: {},
-				rules: null, app: app, max: SYNC_FOLDER_SHARE_MAX };
+				rules: null, app: app, max: SYNC_FOLDER_SHARE_MAX, loc: 'browser' };
 			return _sharePlan;
 		}
 		var roots = [];
@@ -5624,7 +5764,12 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		// the links. It is also the state of every device on the day this ships, since
 		// nothing carries the flag yet.
 		if (!roots.length) { _sharePlan = null; _walkPlanCache = null; return null; }
-		var key = roots.slice().sort().join('\n');
+		// THE FOLDER IS PART OF THE KEY, not only its flagged roots: two folders sharing a
+		// root of the same name are two storage locations, and a plan memoised for one must
+		// never be the census of the other.
+		var fid = '';
+		try { fid = Files.folderId() || ''; } catch (e) { fid = ''; }
+		var key = fid + '\n' + roots.slice().sort().join('\n');
 		var now = Date.now();
 		if (_walkPlanCache && _walkPlanCache.key === key
 			&& (now - _walkPlanCache.at) < SYNC_WALKPLAN_TTL_MS) {
@@ -5668,7 +5813,8 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		// anywhere reads the silence under that root as a deletion.
 		if (left.length) walk.complete = false;
 		_sharePlan = { folder: true, roots: kept, flagged: roots, left: left, perRoot: perRoot,
-			rules: rules, app: app, walk: walk, max: SYNC_FOLDER_SHARE_MAX };
+			rules: rules, app: app, walk: walk, max: SYNC_FOLDER_SHARE_MAX,
+			loc: 'folder:' + fid + ':' + roots.slice().sort().join('|') };
 		_walkPlanCache = { key: key, at: now, plan: _sharePlan };
 		return _sharePlan;
 	}
@@ -5698,8 +5844,9 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 	/// landed, so two devices conflicting on one file do not overwrite each other's
 	/// conflict copy either. The extension is kept last, because the tools that open
 	/// these files read it -- a `.typ` that became `.typ.conflict-…` would stop being
-	/// a document to every one of them.
-	function conflictName(path, device, at) {
+	/// a document to every one of them. `tag`, where given, stands in for the moment: a name
+	/// derived from the content, so the same arrival met on several pulls lands once (S13).
+	function conflictName(path, device, at, tag) {
 		var cut = String(path).lastIndexOf('/');
 		var dir = cut < 0 ? '' : path.slice(0, cut + 1);
 		var name = cut < 0 ? String(path) : path.slice(cut + 1);
@@ -5708,23 +5855,23 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		var ext  = dot > 0 ? name.slice(dot) : '';
 		var d = new Date(at == null ? Date.now() : at);
 		var two = function (n) { return (n < 10 ? '0' : '') + n; };
-		var stamp = d.getUTCFullYear() + two(d.getUTCMonth() + 1) + two(d.getUTCDate())
-			+ 'T' + two(d.getUTCHours()) + two(d.getUTCMinutes()) + two(d.getUTCSeconds());
+		var stamp = tag ? String(tag).replace(/[^A-Za-z0-9-]/g, '-')
+			: d.getUTCFullYear() + two(d.getUTCMonth() + 1) + two(d.getUTCDate())
+				+ 'T' + two(d.getUTCHours()) + two(d.getUTCMinutes()) + two(d.getUTCSeconds());
 		return dir + stem + '.conflict-' + String(device || 'peer').slice(0, 8) + '-' + stamp + ext;
 	}
 
-	/// The file tombstones this device is carrying, in path order, so two devices
-	/// carrying the same set send the same bytes (SIM-7).
+	/// The old field, `fileTombs`, for 5.2 and 5.2.1 receivers: this device's own
+	/// deletions in the storage it is looking at, in path order, so two devices carrying the
+	/// same set send the same bytes (SIM-7). Derived and written through by `noteFileTombs`.
 	function fileTombs() {
 		var t = fileTombsHeld(), out = {};
 		Object.keys(t).sort().forEach(function (p) { out[p] = t[p]; });
 		return out;
 	}
 
-	/// The file tombstones as held, oldest first: the localStorage read-cache, with
-	/// this session's overlay over it. DURABLE IN INDEXEDDB like every other tomb map
-	/// (A5): `bootTombs` seeds the overlay from the `tombs` store, so a tombstone the
-	/// cache lost to a full box still travels and is still here after a reload.
+	/// The old field as held: the localStorage read-cache, with this session's overlay over
+	/// it, both mirrored into IndexedDB (A5) so a page rolled back to 5.2.1 reads the same set.
 	function fileTombsHeld() {
 		var t = readJson(SYNC_FILE_TOMBS_KEY, {}), m = tombMem[SYNC_FILE_TOMBS_KEY];
 		if (!t || typeof t !== 'object') t = {};
@@ -5736,8 +5883,90 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		return out;
 	}
 
-	/// Write a tombstone for every path the fork point holds that a COMPLETE census no
-	/// longer carries.
+	/// Make the old field `want`, in the overlay, the read-cache and IndexedDB alike: what
+	/// leaves it is dropped from all three, or the next boot's `bootTombs` brings it back.
+	function writeOldFileTombs(want) {
+		var held = fileTombsHeld(), fresh = {}, back = [];
+		Object.keys(held).forEach(function (p) { if (!Object.prototype.hasOwnProperty.call(want, p)) back.push(p); });
+		Object.keys(want).forEach(function (p) { if (held[p] !== want[p]) fresh[p] = want[p]; });
+		if (!back.length && !Object.keys(fresh).length) return;
+		var m = tombMemMap(SYNC_FILE_TOMBS_KEY);
+		back.forEach(function (p) { delete m[p]; });
+		Object.keys(fresh).forEach(function (p) { m[p] = fresh[p]; });
+		try { localStorage.setItem(SYNC_FILE_TOMBS_KEY, JSON.stringify(want)); }
+		catch (e) { /* the read-cache: the set is in the overlay and IndexedDB */ }
+		if (back.length) ChatStore.dropTombs(SYNC_FILE_TOMBS_KEY, back);
+		if (Object.keys(fresh).length) ChatStore.putTombs(SYNC_FILE_TOMBS_KEY, fresh).then(function (ok) {
+			if (!ok) storageAlarm(tOr('store.delete_unrecorded',
+				'a deletion could not be recorded — this browser’s storage is full'));
+		});
+	}
+
+	// ── One law for every file's deletion (fix/r53-faultb3, 2026-09-27) ─────────
+	//
+	// A deletion or a return of a workspace path is ONE STAMPED RECORD, `path -> { d, h, s }`,
+	// in the set js/cloud.js keeps for offloaded files ("Deletions of index paths"), relayed
+	// in every parcel as `chunkedTombs` and joined from every parcel by stamp. Until this
+	// build an inline file's deletion was an unstamped `path -> hash` that travelled only in
+	// its author's parcel: a second device's push before a third read it lost the news, and
+	// the third brought the file back everywhere (QFB2-3); and nothing could overrule it, so a
+	// deletion made in the Browser went on travelling from a folder and deleted the file again
+	// wherever the person restored it (QFB2-1). The law
+	// (`specs/daimond_fixbrief_r53_faultb3_20260927.md`):
+	//   1. every deletion or return is one stamped record, joined and carried by every device;
+	//   2. a record is written only by a device looking at the path: a deletion by the device
+	//      that held it (`noteFileTombs`, the file door's `remove`), a return by any device
+	//      whose location holds the path again when it does not still owe that deletion;
+	//   3. a device carries a deletion out only on its own agreed copy of exactly the bytes
+	//      the record names, inside the location it is looking at (`honourFileRecords`).
+	var SYNC_FILE_MINE_KEY = 'daimond-file-tombs-mine';		// { loc -> { path -> stamp } }: deletions this device made there
+
+	/// Is `h` an inline fingerprint (`fileHash`, `<base36>:<len>`) rather than a content key?
+	function inlinePrint(h) { return typeof h === 'string' && h.indexOf(':') > 0; }
+
+	/// Does `text` hold exactly the bytes `h` names, in whichever form `h` is?
+	async function textIs(text, h) {
+		if (typeof h !== 'string' || !h || typeof text !== 'string') return false;
+		if (inlinePrint(h)) return fileHash(text) === h;
+		if (!window.DaimondCloud || !DaimondCloud.textKey) return false;
+		try { return (await DaimondCloud.textKey(text)) === h; } catch (e) { return false; }
+	}
+
+	/// The record held for `path`, or null.
+	function fileRecord(path) {
+		return (window.DaimondCloud && DaimondCloud.recordOf) ? DaimondCloud.recordOf(path) : null;
+	}
+
+	function readMine() {
+		var m = readJson(SYNC_FILE_MINE_KEY, {});
+		return (m && typeof m === 'object' && !Array.isArray(m)) ? m : {};
+	}
+
+	/// Does this device still owe the deletion `rec`, for its inline copy `text` of `path`?
+	///
+	/// ONLY ITS AGREED COPY OF EXACTLY THOSE BYTES, AND NOT ITS OWN DELETION. The copy must be
+	/// what `base`, this location's fork point, says both devices agreed on, and must be the
+	/// bytes the record names. Anything else here is a write made since, and a write returns
+	/// the path: an edit (other bytes); a restore after this device carried the deletion out
+	/// (which took the path out of the fork point); a restore after this device's own deletion,
+	/// before the push that carried it landed (`mineHere`, the one window the fork point still
+	/// names the path); a copy in a location that never agreed it.
+	async function owesDeletion(path, text, rec, base, mineHere) {
+		if (!rec || rec.d !== 1) return false;
+		if (mineHere && mineHere[path] === rec.s) return false;
+		if (!Object.prototype.hasOwnProperty.call(base, path) || base[path] !== fileHash(text)) return false;
+		return textIs(text, rec.h);
+	}
+
+	/// Write this location's news into the record set: a deletion for every path the fork
+	/// point holds that a COMPLETE census no longer carries, and a return for every path the
+	/// census carries while its record says deleted and this device does not owe it. And keep
+	/// `mine` and the old field.
+	///
+	/// A RETURN IS THE OTHER HALF (fix/r53-faultb3). A record is only as good as the chance
+	/// to overrule it: the device that writes the path again says so, stamped past the
+	/// deletion, and every device that hears either hears which came last. Presence is
+	/// positive evidence, so a return is written from any census, complete or not.
 	///
 	/// THIS IS WHERE A DELETION BECOMES NEWS, on the device that made it, rather than
 	/// being inferred at the far end from a gap in somebody else's parcel. The gap has
@@ -5792,61 +6021,80 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 	/// did not SEE a path is not evidence the path is gone, only that the walk did not
 	/// look, and asking directly is the only way to tell the two apart.
 	async function noteFileTombs(col, complete) {
+		var plan = col.plan;
+		if (!plan || !window.DaimondCloud || !DaimondCloud.mark || !DaimondCloud.recordOf) return;
+		var loc = syncFileLoc(plan);
 		var local = col.files || {}, large = col.large || {}, away = col.away || {};
 		var here = function (p) {
 			return Object.prototype.hasOwnProperty.call(local, p)
 				|| Object.prototype.hasOwnProperty.call(large, p)
 				|| Object.prototype.hasOwnProperty.call(away, p);
 		};
-		var tombs = fileTombsHeld(), fresh = {}, back = [], changed = false;
-		// A FILE THAT IS BACK IS NOT DELETED. A tomb says "deleted now", so it is withdrawn
-		// the moment its path is in any census again, complete or not: presence is positive
-		// evidence. Kept, a restored file's tomb rode every parcel and deleted the file again
-		// on every peer whenever a parcel of ours left it out (QFB-2).
-		Object.keys(tombs).forEach(function (p) {
-			if (here(p)) { delete tombs[p]; back.push(p); changed = true; }
-		});
+		// The app's own state is not in the census, so its absence says nothing: a fork
+		// point written by an older build still names it, and tombing it would delete every
+		// other device's own copy.
+		var base = withoutAppState(readFilebaseAt(loc));
+		var mine = readMine(), mineHere = mine[loc] || {};
+		var marks = [], made = [];
+		// RETURNS: an inline copy here while the record says deleted, that this device does not owe.
+		var paths = Object.keys(local);
+		for (var ri = 0; ri < paths.length; ri++) {
+			var rp = paths[ri];
+			if (syncAppState(rp)) continue;
+			var rr = fileRecord(rp);
+			if (!rr || rr.d !== 1) continue;
+			if (await owesDeletion(rp, local[rp], rr, base, mineHere)) continue;
+			marks.push({ path: rp, d: 0 });
+		}
 		if (complete === true) {
-			// The app's own state is not in the census, so its absence says nothing: a fork
-			// point written by an older build still names it, and tombing it would delete
-			// every other device's own copy.
-			var base = withoutAppState(readFilebase(col.plan));
 			// A DEVICE CAN SAY IT DELETED A FILE ONLY FROM THE STORAGE IT IS LOOKING AT: in
 			// a folder, only inside the share (an unshared path is not a deleted one).
 			var candidates = Object.keys(base).filter(function (p) {
-				return !here(p) && !(col.plan && col.plan.folder && !withinShare(col.plan, p));
+				return !here(p) && !(plan.folder && !withinShare(plan, p));
 			});
 			for (var i = 0; i < candidates.length; i++) {
 				var p = candidates[i], onDisk = null;
 				// A THROW READS AS "NOT THERE", the same answer `collectFiles` gives a
 				// failed read -- the check that could not run is not a reason to trust
 				// the census any less than before this guard existed.
-				try { onDisk = await syncFileAt(col.plan, p); } catch (e) { onDisk = null; }
+				try { onDisk = await syncFileAt(plan, p); } catch (e) { onDisk = null; }
 				if (onDisk) continue;			// the walk missed it; this device did not delete it
-				if (tombs[p] !== base[p]) { tombs[p] = fresh[p] = base[p]; changed = true; }
+				var rec = fileRecord(p);
+				// ALREADY SAID: the file door's own record (`remove`, at the content key), or one
+				// joined and not yet carried out here. The copy went here, so it is this device's
+				// deletion too, and a restore before the landing must not read as owed.
+				if (rec && rec.d === 1) { mineHere[p] = rec.s; continue; }
+				marks.push({ path: p, d: 1, h: base[p] });
+				made.push(p);
 			}
 		}
-		if (!changed) return;
-		var keys = Object.keys(tombs);
-		if (keys.length > SYNC_FILE_TOMBS_MAX) {
-			var trimmed = {};
-			keys.slice(keys.length - SYNC_FILE_TOMBS_MAX).forEach(function (k) { trimmed[k] = tombs[k]; });
-			tombs = trimmed;
-		}
-		// The overlay first, so the parcel carries the deletion whatever the box says;
-		// then the read-cache; then IndexedDB, and a write that does not land there is
-		// said, never swallowed (A5, DEL-4).
-		var m = tombMemMap(SYNC_FILE_TOMBS_KEY);
-		Object.keys(m).forEach(function (p) { if (!Object.prototype.hasOwnProperty.call(tombs, p)) delete m[p]; });
-		Object.keys(fresh).forEach(function (p) { if (Object.prototype.hasOwnProperty.call(tombs, p)) m[p] = fresh[p]; });
-		try { localStorage.setItem(SYNC_FILE_TOMBS_KEY, JSON.stringify(tombs)); }
-		catch (e) { /* the read-cache: the tombs are in the overlay and IndexedDB */ }
-		// Out of IndexedDB too, or the next boot's `bootTombs` would bring them back.
-		if (back.length) ChatStore.dropTombs(SYNC_FILE_TOMBS_KEY, back);
-		ChatStore.putTombs(SYNC_FILE_TOMBS_KEY, fresh).then(function (ok) {
-			if (!ok) storageAlarm(tOr('store.delete_unrecorded',
-				'a deletion could not be recorded — this browser’s storage is full'));
+		var stamps = marks.length ? DaimondCloud.mark(marks) : {};
+		made.forEach(function (p) { if (stamps[p]) mineHere[p] = stamps[p]; });
+		marks.forEach(function (m) { if (m.d === 0) delete mineHere[m.path]; });
+		mine[loc] = mineHere;
+		// `mine` keeps only what is still true: a deletion the record set still holds dead at
+		// the stamp this device wrote, in a location this device still keeps a fork point for.
+		var locs = filebaseLocs(loc);
+		Object.keys(mine).forEach(function (l) {
+			if (l !== loc && locs.indexOf(l) < 0) { delete mine[l]; return; }
+			var mh = mine[l] || {};
+			Object.keys(mh).forEach(function (mp) {
+				var mr = fileRecord(mp);
+				if (!mr || mr.d !== 1 || mr.s !== mh[mp]) delete mh[mp];
+			});
+			if (!Object.keys(mh).length) delete mine[l];
 		});
+		try { localStorage.setItem(SYNC_FILE_MINE_KEY, JSON.stringify(mine)); } catch (e) { /* the fork point still covers most */ }
+		// THE OLD FIELD, for 5.2 and 5.2.1 receivers: this device's own deletions HERE, in the
+		// inline form they can compare. Not a relayed one (an old page cannot hear a return, so
+		// it must hear no more than 5.2.1 told it), and not one made in a location this device
+		// is not looking at (QFB2-1 on an old receiver).
+		var old = {};
+		Object.keys(mine[loc] || {}).forEach(function (op) {
+			var or = fileRecord(op);
+			if (or && or.d === 1 && inlinePrint(or.h) && !syncAppState(op)) old[op] = or.h;
+		});
+		writeOldFileTombs(old);
 	}
 
 	/// Say which flagged folders are too big to travel, BY NAME.
@@ -5983,13 +6231,16 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		// The durability gate is ADDITIVE: an older cloud.js without `indexDurable`
 		// commits as it always did (the index was assumed durable). Only a present
 		// method answering false -- an index write lost to quota -- blocks the commit.
-		return !(window.DaimondCloud && DaimondCloud.indexDurable && !DaimondCloud.indexDurable());
+		if (window.DaimondCloud && DaimondCloud.indexDurable && !DaimondCloud.indexDurable()) return false;
+		// AND THE INDEX IS THE ACCOUNT'S WHOLE INDEX AT THE VERSION THIS COMMITS AT. Not
+		// additive: a cloud.js that cannot say so has not said so.
+		return indexWhole();
 	}
 
 	/// Why this device may not commit, in one word for the log: `tools-missing`,
-	/// `folder-mounted`, `cloud-missing`, `index-not-durable`, or '' when it may.
-	/// Derived from the same parts `mayCommitChunks` composes, so an empty answer
-	/// and a true predicate cannot drift apart.
+	/// `folder-mounted`, `cloud-missing`, `index-not-durable`, `index-not-merged`, or ''
+	/// when it may. Derived from the same parts `mayCommitChunks` composes, so an empty
+	/// answer and a true predicate cannot drift apart.
 	function offloadBlockedReason() {
 		if (!filesSyncable()) {
 			if (!window.DaimondTools) return 'tools-missing';
@@ -5997,7 +6248,192 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		}
 		if (!window.DaimondCloud) return 'cloud-missing';
 		if (DaimondCloud.indexDurable && !DaimondCloud.indexDurable()) return 'index-not-durable';
+		if (!indexWhole()) return 'index-not-merged';
 		return '';
+	}
+
+	// ── A commit declares only an index merged in full (2026-09-27) ──
+	//
+	// THE INVARIANT: a device commits a chunk index only if it has merged the account's
+	// index in full at the version it commits at. On 2026-09-13 argonaut, folder-mounted,
+	// had only ever merged its shared folder's paths out of the phone's index; it lost the
+	// folder's handle mid-turn, `filesSyncable` turned it into a committer, and its first
+	// commit declared its own view at the current version. The version guard passed and
+	// the gateway swept 611 of the phone's chunks (222 files).
+	//
+	// A LOCATION SWITCH DOES NOT MAKE AN INDEX PARTIAL; A PARTIAL MERGE DOES. The index is
+	// the same object in the sandbox and in a folder. What leaves it short is a merge that
+	// dropped entries: a folder-mounted merge takes only the shared paths of another
+	// device's index. So "whole" is kept as a chain over mailbox versions, and it breaks
+	// exactly where information was dropped, whatever the location:
+	//   - a WHOLE merge of the parcel at v keeps it whole at v when it was whole at v - 1
+	//     (every version between is either merged or its own push), or at any version from
+	//     the parcel's `chunkedFrom` on: its writer took nothing from another device after
+	//     that version, so every version since is the writer's own and its index holds them
+	//     all. A phone asleep while a folder device pushed twice is still whole on waking;
+	//     one that slept through a third device's push, which the folder device merged by its
+	//     shares, is not (2026-09-27, lane CMG2);
+	//   - a whole merge of a parcel whose writer was whole when it wrote it
+	//     (`chunkedFull`) makes it whole at v whatever it was before: that parcel's index
+	//     is the account's, and it now holds all of it. This is how a device that was not
+	//     whole comes back;
+	//   - its own push at v, of a parcel collected while whole at the base, keeps it whole;
+	//   - a folder merge that left entries out, a parcel adopted without being opened, or a
+	//     version this device skipped leaves it at the older version, so not whole now;
+	//   - the mailbox going BACK below the mark (a reset) clears it.
+	//
+	// WHY NOT "MERGE THE CURRENT VERSION, THEN COMMIT". The parcel at the current version
+	// may itself be partial: the device's OWN folder-era parcel (argonaut had pushed during
+	// that turn), or another folder-mounted device's. A whole merge of a partial index is
+	// still partial, so the parcel has to say whether its writer was whole.
+	//
+	// AND WHY NOT CLEAR IT ON EVERY LOCATION SWITCH. A device alone on its account, or one
+	// whose peers have not pushed since, is whole across a switch, and clearing it there
+	// leaves it with nobody to learn wholeness back from: its own later parcels would say
+	// they are not whole, for ever. The chain breaks at the partial merge instead.
+
+	/// Is this device's index known to be the account's whole index at the mailbox version
+	/// it stands at, the version its next push is based on?
+	function indexWhole() {
+		if (!window.DaimondCloud || !DaimondCloud.wholeAt) return false;
+		var at = DaimondCloud.wholeAt();
+		if (typeof at !== 'number' || at < 0) return false;
+		var v = (window.DaimondSync && DaimondSync.version) ? (DaimondSync.version() | 0) : -1;
+		return at === v;
+	}
+
+	// Whether the last `applySync` merged the parcel's chunk index WHOLE: in the sandbox, or
+	// in a folder where no entry of it fell outside the share. Read by `syncIndexAt` when the
+	// version that apply was of is adopted.
+	var _chunkedWhole = false;
+	// The mailbox version this device stands on whose parcel is of the old era (an old page wrote it,
+	// or its writer's `chunkedFrom` reaches back to before it loaded this build) and which it merged
+	// whole, or -1. Read by `syncIndexOwed`'s transition rule (QCMG's G3, QCMG2's G4).
+	var _oldHeadAt = -1;
+
+	/// Move this device's "whole at" mark on a mailbox version it now stands at.
+	///
+	/// # Arguments
+	/// * `how` - `'merged'` (the parcel at `v` was applied), `'adopted'` (taken without
+	///   being opened: corrupt, or sealed under an epoch this device cannot open), `'empty'`
+	///   (the mailbox holds nothing), or `'pushed'` (this device's own parcel landed at `v`).
+	/// * `state` - the parcel, for its `chunkedFull`.
+	function syncIndexAt(v, how, state) {
+		if (!window.DaimondCloud || !DaimondCloud.wholeAt || !DaimondCloud.noteWhole) return;
+		v = v | 0;
+		var at = DaimondCloud.wholeAt();
+		var whole = _chunkedWhole;
+		_chunkedWhole = false;
+		// Whether the device now stands on an old-era parcel that it merged whole: one an old page
+		// wrote (no `chunkedFull` field), or one whose writer has taken nothing foreign since it first
+		// loaded this build (`chunkedFrom <= chunkedOld`), so the versions it vouches for reach back to
+		// the build before (QCMG2's G4). A merge by shares, a push, an unopened parcel, an empty mailbox
+		// and any other parcel all say not; the already-adopted skip at the same version leaves the
+		// answer its merge gave.
+		if (how !== 'kept' || _oldHeadAt !== v) {
+			var oldEra = !!state && typeof state === 'object'
+				&& (!Object.prototype.hasOwnProperty.call(state, 'chunkedFull')
+					|| (typeof state.chunkedOld === 'number' && typeof state.chunkedFrom === 'number'
+						&& state.chunkedFrom <= state.chunkedOld));
+			_oldHeadAt = (how === 'merged' && whole && oldEra) ? v : -1;
+		}
+		// The mailbox went back below the mark: the account was reset, and nothing it said
+		// before is about the mailbox now.
+		if (typeof at === 'number' && at > v) { DaimondCloud.noteWhole(-1); at = -1; }
+		var full = !!(state && state.chunkedFull === true);
+		var was  = (typeof at === 'number') ? at : -1;
+		// The last version the parcel's writer took from another device (`DaimondSync.foreignAt`);
+		// a build before this one sends none, and then only the next version chains.
+		var from = (state && typeof state.chunkedFrom === 'number' && state.chunkedFrom >= 0) ? state.chunkedFrom : v - 1;
+		if (how === 'empty') { DaimondCloud.noteWhole(v); return; }
+		if (how === 'pushed') { if (full) DaimondCloud.noteWhole(v); return; }
+		if (how !== 'merged' || !whole || was === v) return;
+		if (full || (was >= 0 && was >= Math.min(from, v - 1))) DaimondCloud.noteWhole(v);
+	}
+
+	/// Whether this round should merge the current version again before it collects, because
+	/// this device could commit but for its index not being known whole. Seeds the mark once,
+	/// on the first round of this build, for a device that already committed under the rule
+	/// before it (see below), so an upgraded account is not left with nobody whole; and again
+	/// on any version an old page wrote, while one is left on the account (the transition rule).
+	///
+	/// # Arguments
+	/// * `known` - whether this device had synced the account before this page loaded.
+	async function syncIndexOwed(known) {
+		if (!window.DaimondCloud || !DaimondCloud.wholeAt || !DaimondCloud.noteWhole) return false;
+		if (!offloadAllowed()) return false;
+		if (DaimondCloud.indexDurable && !DaimondCloud.indexDurable()) return false;
+		if (indexWhole()) return false;
+		var v = (window.DaimondSync && DaimondSync.version) ? (DaimondSync.version() | 0) : 0;
+		var never = DaimondCloud.wholeAt() === null;
+		// THE UPGRADE WINDOW (QCMG's G3). An old page's parcel carries neither `chunkedFull` nor
+		// `chunkedFrom`, so a device that slept through two of them cannot prove its way across the
+		// gap, and when that page then loads this build its `chunkedFrom` is already past the
+		// device's stale mark: nothing ever bridges it, and the account never commits again. So
+		// while the device stands on an old-era parcel (an old page's, or one whose `chunkedFrom`
+		// reaches back before its writer loaded this build: G4) it keeps the old rule, re-seeded exactly
+		// as the upgrade seed below seeds it. No weaker than the build before: the old page on the
+		// account commits by that rule anyway, and the device re-seeded is the one that rule called
+		// a committer. It ends by itself at the first parcel after the last old page upgrades.
+		var oldHead = _oldHeadAt >= 0 && _oldHeadAt === v;
+		// ONE OF THE ACCOUNT'S DEVICES, not one new to it: it had synced the account before this page
+		// loaded, or, for the transition rule, it was whole on it before the gap (a real mark). A
+		// device whose only knowledge of the account is the old page's parcel it just merged is not
+		// re-seeded until it has been one (a reload makes it known).
+		var at = DaimondCloud.wholeAt();
+		var member = known || (oldHead && typeof at === 'number' && at >= 0);
+		// AN UPGRADE LOAD WITH A MARK LEFT OVER (QCMG3b's R): this page found its cursor last written by the
+		// build before, so the account has run by that rule since this build's earlier run -- a rollback and
+		// re-upgrade. A mark from before the rollback proves nothing across it, so the load is seeded as the
+		// first upgrade is. Once: after the seed the mark stands at or above that cursor.
+		var up = (window.DaimondSync && DaimondSync.upgradedAt) ? DaimondSync.upgradedAt() : -1;
+		var upgraded = up > 0 && !(typeof at === 'number' && at >= up);
+		if (never || upgraded || oldHead) {
+			// THE UPGRADE. No device has a mark on the first load of this build, and a mark is
+			// learned only from a whole device, so with no seed nobody would ever commit again.
+			// A device that already synced this account in the browser sandbox, with no machine
+			// folder behind it, is what the rule before this one called a committer, and every
+			// parcel it merged was merged whole: it is seeded at the version it stands at, which
+			// is exactly what that rule would have let it commit. One with a folder behind it may
+			// have merged only the shares (argonaut on 09-13) and is not: it learns wholeness from
+			// a whole peer's parcel like any other.
+			if (member && v > 0 && !(await syncFolderBehind())) { await DaimondCloud.noteWhole(v); return false; }
+			if (never) DaimondCloud.noteWhole(-1);
+		}
+		return true;
+	}
+
+	/// Is there a machine folder behind this device: one remembered, open or not (the sandbox after a
+	/// lost grant keeps it to reconnect to), or one it collected and then forgot? The upgrade seed
+	/// and the transition rule refuse such a device.
+	async function syncFolderBehind() {
+		var folder = false;
+		try { folder = !!(Files && Files.remembersFolder && Files.remembersFolder()); } catch (e) { folder = true; }
+		if (!folder) { try { folder = !!(await FsaDB.load()); } catch (e) { folder = false; } }
+		return folder || syncFolderHistory();
+	}
+
+	/// Did this device ever collect a machine folder? FORGET CLEARS THE HANDLE AND NOTHING ELSE (QCMG's
+	/// W), so "remembers no folder" cannot tell a device that never had one from one that pressed
+	/// Forget after merging only its shares. Its own record says so (`SYNC_FOLDER_EVER_KEY`, written at
+	/// every folder collect and when the 5.2.1 records are folded away); a device whose folder ran
+	/// under 5.2.2, which wrote none, still has a folder among its fork-point locations; and a page
+	/// before the fold still has the 5.2.1 records: the stash or the location in use naming a folder,
+	/// or the shared folder's change record.
+	function syncFolderHistory() {
+		var isFolder = function (loc) { return typeof loc === 'string' && loc.indexOf('folder:') === 0; };
+		var ever = null;
+		try { ever = localStorage.getItem(SYNC_FOLDER_EVER_KEY); } catch (e) { return true; }
+		if (ever !== null) return true;
+		var locs = readJson(SYNC_FILEBASE_LOCS_KEY, null);
+		if (Array.isArray(locs) && locs.some(isFolder)) return true;
+		var stash = readJson(SYNC_FILEBASE_STASH_KEY, null);
+		if (stash && isFolder(stash.loc)) return true;
+		var loc = null;
+		try { loc = localStorage.getItem(SYNC_FILEBASE_LOC_KEY); } catch (e) { loc = null; }
+		if (isFolder(loc)) return true;
+		var seen = readJson(SYNC_FOLDER_SEEN_KEY, null);
+		return !!(seen && typeof seen === 'object' && Object.keys(seen).length);
 	}
 
 	/// The chunk manifests the pushed parcel declares live: the committed index
@@ -6280,8 +6716,38 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 	/// a per-path one; `fileStore`'s state is untouched, since the files this device already
 	/// holds are still held. Retried on the next pull like any other failed write, so a
 	/// write that then lands is what clears it (`storageAlarmClear`, not a timer).
-	async function writeSyncFile(app, path, content) {
+	///
+	/// A MERGE'S WRITE OVER A COPY HELD HERE IS A COMPARE-AND-SWAP ON THE MERGE'S OWN READ.
+	/// `was` is the text the merge placed at `path` and decided to replace. The file tools'
+	/// stale-read guard answers to the app's memory of its last read or write of the path,
+	/// and `tools()` is one app for the page: the sync's own earlier write, then a daimon's
+	/// edit in its own chat app, agreed by both devices, left every later merge write of the
+	/// path refused until a reload (QREV-11, RG; `verify_foldershare` guard 4). The app reads
+	/// the path first, so the guard's memory is the disk as it now stands; the write goes only
+	/// where that is still `was`, and the guard itself refuses it if anything writes between.
+	///
+	/// `was === null` IS "NOTHING HERE", AND IT IS ASKED THE SAME WAY (CRF, 2026-09-28). Since RD2
+	/// the guard refuses a write to a missing file it remembers, and it remembers this app's own
+	/// sync write of the path after another app carried out the delete -- a second tab, a daimon's
+	/// chat, or anything outside Daimond. So a file made again on another device never arrived,
+	/// and the device's next push took it off the account (`## LOSTW2`, soak seed 023424a4). A
+	/// read that finds nothing clears the view; the disk must still hold nothing; then it is
+	/// written. The multi-file form reads only what is on this device: the single one fetches a
+	/// small file held only in cloud storage, which would put an older copy where the merge saw
+	/// none. `undefined` writes with no read, for a caller outside the merge.
+	async function writeSyncFile(app, path, content, was, plan) {
 		try {
+			if (typeof was === 'string' || was === null) {
+				var ask = was === null ? { paths: [path] } : { path: path };
+				try { await app.run_tool_outcome('file_read', JSON.stringify(ask)); }
+				catch (e) { /* the write's own guard still stands */ }
+				var fn = null;
+				try { fn = await syncFileAt(plan, path); } catch (e) { fn = undefined; }
+				if (fn === undefined) return false;		// the disk could not be asked
+				var now = null;
+				try { now = fn ? await fn.text() : null; } catch (e) { now = undefined; }
+				if (now !== was) return false;			// moved since the merge placed it
+			}
 			// The folder first, and ASKED FOR rather than relied upon. `file_write` refuses a
 			// write that would invent a folder in browser storage while a hand is paired and no
 			// folder is open (`write_place`, src/tools.rs), because a daimon in that state
@@ -6329,19 +6795,43 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		finally { if (mark) DaimondCloud.carrying(path, false); }
 	}
 
-	/// Write the file baseline, bounded like the chunk map: past the cap, the oldest
-	/// insertions (object key order) are dropped. A dropped path reads as new on both
-	/// sides next merge -- a sidecar at worst, which is why it is safe to drop.
 	/// The storage location a walk plan is of: the browser's own, or a machine folder by
 	/// its id on this device and the shares flagged in it.
 	function syncFileLoc(plan) {
 		if (!plan || !plan.folder) return 'browser';
+		// Named when the plan was made, so a census and everything read against it agree on
+		// the location even if the folder moves while they run.
+		if (typeof plan.loc === 'string') return plan.loc;
 		var fid = '';
 		try { fid = Files.folderId() || ''; } catch (e) { fid = ''; }
 		return 'folder:' + fid + ':' + (plan.flagged || plan.roots || []).slice().sort().join('|');
 	}
 
-	/// The fork point of the location `plan` is of.
+	/// Which note of held bytes (`DaimondCloud.localState`) a plan's files are under: the
+	/// sandbox's, or the open folder's by its id on this device.
+	function heldLoc(plan) {
+		if (!plan || !plan.folder) return false;
+		var fid = '';
+		// Through the window's door rather than `Files`, so a test lifting this out of the
+		// file (dev/syncprobe.mjs `sliceDaimond`) is not handed the whole file browser.
+		try { fid = (window.DaimondFiles && DaimondFiles.folderId && DaimondFiles.folderId()) || ''; }
+		catch (e) { fid = ''; }
+		return 'f:' + fid;
+	}
+
+	/// The location `syncFileLoc` would name for the plan a walk would make now, without the
+	/// walk: the folder handle and its flagged shares are all it reads. A folder with nothing
+	/// flagged syncs no files and is named as a folder, never as the Browser, so leaving it for
+	/// the Browser is still a change of location.
+	async function syncLocNow() {
+		if (!sharedFolderHandle()) return filesSyncable() ? 'browser' : 'none';
+		var roots = [];
+		try { roots = await Files.shareRoots(); } catch (e) { roots = []; }
+		return syncFileLoc({ folder: true, flagged: roots });
+	}
+
+
+	/// The fork point of location `loc` (`syncFileLoc` of a walk plan).
 	///
 	/// ONE PER STORAGE LOCATION, NOT ONE PER DEVICE. The fork point says which files this
 	/// device and the others agreed on IN THE STORAGE IT IS LOOKING AT, and `noteFileTombs`
@@ -6349,31 +6839,26 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 	/// device, a switch from the Browser to a machine folder (or back, or to another
 	/// folder) read every file of the storage just left as deleted, and tombed it at the
 	/// hash every other device still held: each of them then deleted it (QFB-1,
-	/// `specs/daimond_fixqa_r53_faultb_20260925.md`). So when the location changes, the
-	/// map is set aside under the location it was of, and the new location's -- the one
-	/// last left, or empty -- takes its place. An empty fork point costs one round in
-	/// which every file reads as new, which the merge answers without deleting anything.
-	/// A build before this one recorded no location: its map is taken as this location's.
-	function readFilebase(plan) {
-		var loc = syncFileLoc(plan), was = null;
-		try { was = localStorage.getItem(SYNC_FILEBASE_LOC_KEY); } catch (e) { was = null; }
-		if (was !== null && was !== loc) {
-			var stash = readJson(SYNC_FILEBASE_STASH_KEY, null);
-			var next = (stash && stash.loc === loc && stash.map && typeof stash.map === 'object') ? stash.map : {};
-			try {
-				localStorage.setItem(SYNC_FILEBASE_STASH_KEY,
-					JSON.stringify({ loc: was, map: readJson(SYNC_FILEBASE_KEY, {}) }));
-			} catch (e) { /* best effort: a location coming back without it starts empty */ }
-			try { localStorage.setItem(SYNC_FILEBASE_KEY, JSON.stringify(next)); }
-			catch (e) { try { localStorage.removeItem(SYNC_FILEBASE_KEY); } catch (e2) { /* nothing held */ } }
-		}
-		if (was !== loc) {
-			try { localStorage.setItem(SYNC_FILEBASE_LOC_KEY, loc); } catch (e) { /* asked again next read */ }
-		}
-		return readJson(SYNC_FILEBASE_KEY, {});
+	/// `specs/daimond_fixqa_r53_faultb_20260925.md`). A location this device has not
+	/// agreed anything in starts empty, which costs one round in which every file reads as
+	/// new: the merge answers that without deleting anything.
+	///
+	/// STORED BY LOCATION, NEVER MOVED. The 5.2.1 fork point kept "the current location's
+	/// map" under one key and swapped it with a stash on every switch, and its writers wrote
+	/// whatever was current when they ran: a push collected in the Browser and landing after
+	/// a click to the Machine chip wrote the Browser's agreed files as the folder's, and the
+	/// folder's next complete census then tombed, on every peer, shared files it had never
+	/// held (QFB2-2, `specs/daimond_fixqa_r53_faultb_20260925.md`). Each location now has its
+	/// own key and every writer names the location it writes (`writeFilebaseAt`).
+	function readFilebaseAt(loc) {
+		var key = filebaseKeyOf(loc, false);
+		return key ? readJson(key, {}) : {};
 	}
 
-	function writeFilebase(map) {
+	/// Write `map` as the fork point of `loc`, bounded like the chunk map: past the cap, the
+	/// oldest insertions (object key order) are dropped. A dropped path reads as new on both
+	/// sides next merge -- a sidecar at worst, which is why it is safe to drop.
+	function writeFilebaseAt(loc, map) {
 		map = withoutAppState(map);					// never agreed on: see `syncAppState`.
 		var keys = Object.keys(map);
 		if (keys.length > SYNC_FILEBASE_MAX) {
@@ -6381,20 +6866,109 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			keys.slice(keys.length - SYNC_FILEBASE_MAX).forEach(function (k) { trimmed[k] = map[k]; });
 			map = trimmed;
 		}
-		try { localStorage.setItem(SYNC_FILEBASE_KEY, JSON.stringify(map)); } catch (e) { /* best effort */ }
+		var key = filebaseKeyOf(loc, true);
+		try { localStorage.setItem(key, JSON.stringify(map)); } catch (e) { /* best effort */ }
+	}
+
+	/// The localStorage key holding `loc`'s fork point, or null when there is none and
+	/// `make` is false. Reading or writing a location makes it the most recently used; a
+	/// new one past the bound evicts the least recently used, whose map goes with it.
+	function filebaseKeyOf(loc, make) {
+		var locs = filebaseLocs(loc);
+		var slot = null;
+		try { slot = localStorage.getItem(SYNC_FILEBASE_LOC_KEY); } catch (e) { slot = null; }
+		var at = locs.indexOf(loc);
+		if (at < 0 && !make) return null;
+		if (at >= 0) locs.splice(at, 1);
+		locs.push(loc);
+		while (locs.length > SYNC_FILEBASE_LOCS_MAX) {
+			var old = locs.shift();
+			try { localStorage.removeItem(old === slot ? SYNC_FILEBASE_KEY : SYNC_FILEBASE_KEY + '@' + old); }
+			catch (e) { /* the map is simply left */ }
+			try { localStorage.removeItem(SYNC_FOLDER_SEEN_KEY + '@' + old); } catch (e) { /* re-derived if it returns */ }
+			if (old === slot) {
+				try { localStorage.removeItem(SYNC_FILEBASE_LOC_KEY); } catch (e) { /* see below */ }
+				slot = null;
+			}
+		}
+		try { localStorage.setItem(SYNC_FILEBASE_LOCS_KEY, JSON.stringify(locs)); } catch (e) { /* asked again */ }
+		// The plain key goes to a NEW location while it is free; one already stored under its
+		// own key stays there, so no map is ever read from a key it was not written to.
+		if (slot === null && at < 0) {
+			try { localStorage.setItem(SYNC_FILEBASE_LOC_KEY, loc); slot = loc; } catch (e) { /* the @ key */ }
+		}
+		return loc === slot ? SYNC_FILEBASE_KEY : SYNC_FILEBASE_KEY + '@' + loc;
+	}
+
+	/// The locations with a fork point, least recently used first, the 5.2.1 layout folded
+	/// in on the first call: its current map stays under the plain key for the location
+	/// `-loc` names (or `here`, for a build older still, which named none), and its stash
+	/// moves to the stashed location's own key.
+	function filebaseLocs(here) {
+		var locs = readJson(SYNC_FILEBASE_LOCS_KEY, null);
+		if (Array.isArray(locs)) return locs.filter(function (l) { return typeof l === 'string'; });
+		locs = [];
+		var slot = null, plain = null, stash = null;
+		try { slot = localStorage.getItem(SYNC_FILEBASE_LOC_KEY); } catch (e) { slot = null; }
+		try { plain = localStorage.getItem(SYNC_FILEBASE_KEY); } catch (e) { plain = null; }
+		stash = readJson(SYNC_FILEBASE_STASH_KEY, null);
+		if (plain !== null && slot === null && here) {
+			slot = here;
+			try { localStorage.setItem(SYNC_FILEBASE_LOC_KEY, slot); } catch (e) { /* taken as `here` again */ }
+		}
+		if (stash && typeof stash.loc === 'string' && stash.map && typeof stash.map === 'object' && stash.loc !== slot) {
+			try {
+				localStorage.setItem(SYNC_FILEBASE_KEY + '@' + stash.loc, JSON.stringify(stash.map));
+				locs.push(stash.loc);
+			} catch (e) { /* a stashed location coming back starts empty */ }
+		}
+		if (slot !== null) locs.push(slot);
+		// The folder history the seed's refusal reads outlives the records folded away here.
+		var seenOld = readJson(SYNC_FOLDER_SEEN_KEY, null);
+		if (locs.some(function (l) { return l.indexOf('folder:') === 0; })
+			|| (seenOld && typeof seenOld === 'object' && Object.keys(seenOld).length)) {
+			try { localStorage.setItem(SYNC_FOLDER_EVER_KEY, '1'); } catch (e) { /* read as a folder: see syncFolderHistory */ }
+		}
+		try { localStorage.removeItem(SYNC_FILEBASE_STASH_KEY); } catch (e) { /* ignored by this build */ }
+		// The per-device folder note is per location now (`collectChunked`): the old one could
+		// be any folder's, so it goes, and each location re-derives its own once.
+		try { localStorage.removeItem(SYNC_FOLDER_SEEN_KEY); } catch (e) { /* ignored by this build */ }
+		try { localStorage.setItem(SYNC_FILEBASE_LOCS_KEY, JSON.stringify(locs)); } catch (e) { /* folded again next call */ }
+		return locs;
 	}
 
 	/// The fork point a parcel would set if it landed: `path -> hash` of its inline files
 	/// and of its index. Taken when the parcel is collected, because a push that lands
 	/// says the gateway now holds THAT parcel, not whatever this device holds by the
 	/// time the answer comes back.
+	///
+	/// AND THE LOCATION IT WAS TAKEN IN, which the collector knew (`_parcelPlace`): the files
+	/// are what that location's census found, so they are that location's agreement and no
+	/// other's. A parcel collected with no census at all names no location, and its landing
+	/// then agrees nothing about files.
 	function syncForkPoint(state) {
-		var files = {}, cloud = {};
+		var files = {}, cloud = {}, diamonds = {}, dtombs = {};
 		var fs = (state && state.files) || {}, ix = (state && state.chunked) || {};
 		Object.keys(fs).forEach(function (p) { if (typeof fs[p] === 'string') files[p] = fileHash(fs[p]); });
 		Object.keys(ix).forEach(function (p) { if (ix[p] && ix[p].hash) cloud[p] = ix[p].hash; });
-		return { files: files, cloud: cloud };
+		// The Diamonds at the stamps their entries carry (unit DAF): a Diamond edited while
+		// the parcel flies is not in it, so its fork point must not say it is. NOT BY
+		// LOCATION: a Diamond lives in the browser's own store whatever folder is open, so
+		// its fork point, receipt and lineage are the device's, and a landing records them
+		// whether or not the parcel's census named a location (lanes DIA2, FB4).
+		((state && state.diamonds) || []).forEach(function (d) {
+			if (d && d.id) diamonds[d.id] = diamondStamp(d);
+		});
+		Object.keys((state && state.diamondTombs) || {}).forEach(function (id) { dtombs[id] = 1; });
+		var at = (state && typeof state === 'object') ? _parcelPlace.get(state) : null;
+		return { files: files, cloud: cloud, loc: at ? at.loc : null, left: at ? at.left : [],
+			taken: !!at, diamonds: diamonds, diamondTombs: dtombs };
 	}
+
+	// The storage location each collected parcel's census was of, `parcel -> { loc, left }`,
+	// set by `collectSync` and read by `syncForkPoint`. sync.js hands the fork point the very
+	// object it serialised, so nothing needs to travel in the parcel for this.
+	var _parcelPlace = new WeakMap();
 
 	/// Set the fork point to what a landed push carried: "what both devices agree on
 	/// now", which the next 3-way merge measures from. `fork` is `syncForkPoint` of that
@@ -6413,41 +6987,52 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		// The per-Diamond fork point advances on this same push hook (S-SYNC #4), and
 		// FIRST -- it does not depend on the file plan, and a device with no workspace
 		// to walk must still record which Diamonds it just agreed on, or its next
-		// resume-pull reads a one-sided edit as two-sided.
-		try { await commitDiamondBaseline(); } catch (e) { /* best effort */ }
-		// THE SAME TEST `collectFiles` MAKES, not `filesSyncable`. A folder-mounted device
-		// shares files now and still may not commit the chunk index, so the two questions
-		// have come apart: gating the baseline on the commit predicate would leave a
-		// desktop's fork point permanently empty, and an empty fork point is a merge that
-		// re-adopts every file it already has on every round.
+		// resume-pull reads a one-sided edit as two-sided. From the same parcel, at the
+		// stamps it carried (unit DAF), whatever location its census was taken in: the
+		// Diamonds are not files of a location (see `syncForkPoint`).
+		try { await commitDiamondBaseline(fork); } catch (e) { /* best effort */ }
+		// THE LOCATION THE PARCEL WAS COLLECTED IN, not the one this device is in now: a
+		// switch between the collect and the answer must not write one location's
+		// agreement as another's (QFB2-2). With no fork (a verifier standing in for a
+		// landing) the parcel is the one this device would collect now, in the location it
+		// is in now. THE SAME TEST `collectFiles` MAKES, not `filesSyncable`: a
+		// folder-mounted device shares files and still may not commit the chunk index.
 		var plan = await syncWalkPlan();
 		if (!plan) return;
-		// This location's fork point is the one written below; a switch sets the last aside.
-		readFilebase(plan);
-		// The SAME inline budget the parcel uses, so a file that overflows and offloads
-		// is out of `files` here too and never enters the inline baseline — which is
-		// what keeps a later complete census from reading its absence as a deletion.
-		if (!fork) fork = syncForkPoint({ files: (await collectFiles(await syncFilesBudget())).files,
-			chunked: window.DaimondCloud ? DaimondCloud.index() : {} });
-		var base = {};
-		Object.keys(fork.files || {}).forEach(function (p) { base[p] = fork.files[p]; });
-		// A FLAGGED ROOT OVER THE CEILING LEAVES THE FORK POINT UNDER IT WHERE IT IS.
-		// The census carries nothing from such a root while the refusal stands, so
-		// writing the census as the whole agreement would record "the two devices agree
-		// about no file under here at all" -- and the day the root fits again every one
-		// of its files would read as changed on both sides at once and grow a conflict
-		// copy beside itself. What was agreed under a left-out root is carried forward
-		// untouched; everything else is what this census found.
-		if (plan.left && plan.left.length) {
-			var had = readFilebase(plan);
-			Object.keys(had).forEach(function (hp) {
-				for (var li = 0; li < plan.left.length; li++) {
-					var lr = plan.left[li].root;
-					if (hp === lr || hp.indexOf(lr + '/') === 0) { base[hp] = had[hp]; return; }
-				}
-			});
+		var loc = null, left = [];
+		if (fork) {
+			loc = fork.taken ? fork.loc : null;
+			left = fork.left || [];
+		} else {
+			// The SAME inline budget the parcel uses, so a file that overflows and offloads
+			// is out of `files` here too and never enters the inline baseline — which is
+			// what keeps a later complete census from reading its absence as a deletion.
+			fork = syncForkPoint({ files: (await collectFiles(await syncFilesBudget())).files,
+				chunked: window.DaimondCloud ? DaimondCloud.index() : {} });
+			loc = syncFileLoc(plan);
+			left = (plan.left || []).map(function (r) { return r.root; });
 		}
-		writeFilebase(base);
+		if (loc !== null) {
+			var base = {};
+			Object.keys(fork.files || {}).forEach(function (p) { base[p] = fork.files[p]; });
+			// A FLAGGED ROOT OVER THE CEILING LEAVES THE FORK POINT UNDER IT WHERE IT IS.
+			// The census carries nothing from such a root while the refusal stands, so
+			// writing the census as the whole agreement would record "the two devices agree
+			// about no file under here at all" -- and the day the root fits again every one
+			// of its files would read as changed on both sides at once and grow a conflict
+			// copy beside itself. What was agreed under a left-out root is carried forward
+			// untouched; everything else is what this census found.
+			if (left.length) {
+				var had = readFilebaseAt(loc);
+				Object.keys(had).forEach(function (hp) {
+					for (var li = 0; li < left.length; li++) {
+						var lr = left[li];
+						if (hp === lr || hp.indexOf(lr + '/') === 0) { base[hp] = had[hp]; return; }
+					}
+				});
+			}
+			writeFilebaseAt(loc, base);
+		}
 		// The cloud index forked at the same moment, and its residency list is
 		// only true once the push that carried it has landed.
 		commitCloudBaseline(fork.cloud);
@@ -6477,30 +7062,55 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 	/// `specs/daimond_fixbrief_r53_faultb_20260925.md`). The device that deleted a file
 	/// knows it held it and says so (`noteFileTombs`, in every build since 2026-09-14).
 	///
-	/// AND ONLY FROM A SENDER THAT COULD SEE ITS OWN ROOT: `remoteComplete` is the sender's
-	/// word that its census enumerated what it shares. A sender whose tools were not up, or
-	/// whose listing was refused, cannot vouch that a path it once deleted is still gone, so
-	/// its tombstones are no news (QFB-2).
-	async function applyFiles(remoteFiles, remoteComplete, remoteTombs, fromDevice, chunkTombs) {
-		if (!remoteFiles || typeof remoteFiles !== 'object') return;
+	/// ONE LAW FOR THE DELETION ITSELF (fix/r53-faultb3). The records are joined first, from
+	/// every parcel whatever its census: each is its author's word, not the sender's current
+	/// view (QFB2-5). A copy arriving at content a record says is deleted is not written where
+	/// this device holds nothing, from a sender that keeps the law (`stamped`): such a sender
+	/// either still owes the deletion or has not heard it, and neither is a write. Then every
+	/// deletion this device owes is carried out (`honourFileRecords`), and absence deletes
+	/// nothing.
+	///
+	/// AN OLDER PAGE (no `stamped`) is read as 5.2.1 read it: its own tombstones (`remoteTombs`)
+	/// only from a complete census, for a path it lacks, at the bytes here; and a copy it
+	/// carries of deleted content is a write, adopted and returned, because it cannot say
+	/// whether it wrote the path again or never heard.
+	async function applyFiles(remoteFiles, remoteComplete, remoteTombs, fromDevice, chunkTombs, stamped, remoteChunked) {
+		// The records first and whatever else happens: a device that relays nothing it heard
+		// breaks the chain for every device that reads its parcel next (QFB2-3).
+		if (window.DaimondCloud && DaimondCloud.joinTombs) DaimondCloud.joinTombs(chunkTombs);
+		if (!remoteFiles || typeof remoteFiles !== 'object') remoteFiles = {};
 		var plan = await syncWalkPlan();
 		if (!plan) return;
-		// The index paths' deletions first, so the test below knows of one this parcel brings.
-		if (window.DaimondCloud && DaimondCloud.joinTombs) DaimondCloud.joinTombs(chunkTombs);
+		var loc = syncFileLoc(plan);
 		// SCOPED BY `withinShare`, whose roots are the flagged folders that FIT. An edit
 		// the far end made under a root this device left out -- unflagged, or over the
 		// ceiling -- stays in that device's own workspace and is never written to this
 		// disk; a tombstone from under such a root is likewise ignored here.
 		var app = plan.app;
-		var base  = withoutAppState(readFilebase(plan));
+		var base  = withoutAppState(readFilebaseAt(loc));
 		// The same inline budget the parcel and the baseline use, so `local` classifies
 		// files inline-vs-offloaded exactly as they did — the merge and its delete branch
 		// then reason about the same set of inline files everywhere.
-		var local = (await collectFiles(await syncFilesBudget())).files;
+		var col = await collectFiles(await syncFilesBudget());
+		// ONE LOCATION FOR THE WHOLE MERGE. A switch between the plan above and this census
+		// would compare one location's files with another's fork point; the round merges
+		// nothing, and the next pull asks again.
+		if (!col.plan || syncFileLoc(col.plan) !== loc) return;
+		var local = col.files;
 		// What this round establishes the two devices actually HOLD IN COMMON, path by path.
 		// It is not "everything local", which is what the baseline used to be set to on the way
 		// out of here -- see the commit below.
 		var agreed = {}, gone = {};
+		// Every write this merge decided on that did not land, by the path it was for: a newer
+		// version over a copy held here (E2), a path new here, or theirs kept beside ours (CRF).
+		var unwritten = [];
+		// What this merge wrote, and the copies of deleted content it took from an older page.
+		var wrote = {}, returned = [];
+		// Is `text` at `p` the content a record here says was deleted?
+		var dead = async function (p, text) {
+			var rec = fileRecord(p);
+			return !!(rec && rec.d === 1 && await textIs(text, rec.h));
+		};
 		// What landed beside a file rather than over it, so a caller (and a verifier)
 		// can say so without reading the console.
 		var out_conflicts = [];
@@ -6508,6 +7118,52 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		// the loop reaching the `.synced` key a stored copy already held put the old copy
 		// back over the fresh one (SIM-5, as in cloud.js `merge`).
 		var sidecars = {};
+		// Both moved: ours stands at the path and theirs is kept beside it. A copy that could not
+		// be kept holds the version back (CRF): adopted without it, this device's next push reaches
+		// the sender as the newer version of the path -- its fork point is its own edit -- and
+		// theirs is written over there too.
+		var fileBeside = async function (p, r) {
+			if (plan.folder) {
+				// BOTH MOVED, AND ONE OF THEM IS A FILE ON SOMEBODY'S DISK. The disk wins
+				// and is not touched: the version that arrived lands beside it, named for
+				// the device that sent it and the moment it arrived, and the person
+				// decides. A `.synced` sidecar would do for a sandbox path nothing else
+				// reads; in a folder under version control it would be a file `git status`
+				// reports and a compiler may try to open, so it keeps the real extension
+				// and says in its name what it is.
+				var cname = conflictName(p, fromDevice, Date.now());
+				if (await writeSyncFile(app, cname, r, null, plan)) {
+					console.warn('sync: ' + p + ' changed on this device and on '
+						+ (fromDevice || 'another device') + '; the disk copy stands and '
+						+ 'theirs is beside it at ' + cname);
+					out_conflicts.push({ path: p, copy: cname });
+				}
+				else unwritten.push(p);
+			}
+			else if (!/\.synced$/.test(p)) sidecars[p + '.synced'] = { of: p, text: r };
+		};
+		// Theirs kept beside a file held here off the inline section (S13), in either storage, under
+		// a name of its own. A `.synced` sidecar of such a file is offloaded too, under the key the
+		// chunk index keeps its conflict copy of the path at, where the other device files ITS
+		// other version; one of the two was then dropped. Named for the sender and the content, so
+		// the same arrival met on several pulls lands once.
+		var fileAside = async function (p, r, rh) {
+			var cname = conflictName(p, fromDevice, null, rh);
+			var had = null;
+			try { had = await syncFileAt(plan, cname); } catch (e) { had = null; }
+			if (had) {
+				var hh = null;
+				try { hh = fileHash(await had.text()); } catch (e) { hh = null; }
+				if (hh === rh) return;							// already beside it
+				cname = conflictName(p, fromDevice, Date.now());	// a name taken by other bytes
+			}
+			if (await writeSyncFile(app, cname, r, null, plan)) {
+				console.warn('sync: ' + p + ' changed on this device and on ' + (fromDevice || 'another device')
+					+ '; this device\'s version stands and theirs is beside it at ' + cname);
+				out_conflicts.push({ path: p, copy: cname });
+			}
+			else unwritten.push(p);
+		};
 		var paths = {};
 		Object.keys(local).forEach(function (p) { paths[p] = 1; });
 		Object.keys(remoteFiles).forEach(function (p) { paths[p] = 1; });
@@ -6540,61 +7196,106 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			// the deletion branch below; and a path the fork point never held is new.
 			if (l == null) {
 				if (bh !== null && rh === bh) continue;				// unchanged there: ours stands.
-				// NOR IS IT A FILE DELETED ELSEWHERE. A path over this device's inline ceiling
-				// and under the sender's (a phone's 256 kB against a desktop's 1 MiB) was never
-				// in this fork point, so the test above cannot see its deletion; the index's
-				// tombstone can, by the content key. The same bytes are a copy from a device
-				// that has not heard, and are not written back.
-				if (await deadCopy(p, r)) continue;
-				if (await writeSyncFile(app, p, r)) agreed[p] = rh;	// new, or changed there: adopt.
+				// NOR IS A COPY OF DELETED CONTENT A FILE. From a sender that keeps the law it
+				// is one that sender still owes, or one from a device that has not heard, and
+				// writing it here is the resurrection the relay exists to stop (QFB2-3). This
+				// covers both fingerprints, so a path over this device's inline ceiling and
+				// under the sender's (a phone's 256 kB against a desktop's 1 MiB) is caught
+				// by the content key as before.
+				var isDead = await dead(p, r);
+				if (isDead && stamped) continue;
+				// HELD HERE OFF THE INLINE SECTION IS STILL HELD HERE (S13). A file this device carries
+				// as a manifest -- past its own inline ceiling, under the sender's -- is not in the
+				// census, and its copy was written over with no test of it: a phone's unpushed edit of
+				// such a file went to a desktop's concurrent one, silently. The bytes are placed first;
+				// an older page's copy of deleted content is its write (above) on the same terms.
+				var hf = null;
+				try { hf = await syncFileAt(plan, p); } catch (e) { hf = null; }
+				if (hf) {
+					var pl = await placeHeldCopy(plan, p, hf, r, rh, bh, remoteChunked);
+					if (pl === 'same') {							// identical: genuinely shared.
+						agreed[p] = rh;
+						if (isDead) { wrote[p] = rh; returned.push(p); }
+						continue;
+					}
+					if (pl === 'older') continue;					// theirs is a version ours was made from.
+					if (pl === 'ours') { await fileAside(p, r, rh); continue; }	// both moved: keep both.
+					var hw = null;
+					try { hw = await hf.text(); } catch (e) { hw = null; }
+					if (hw !== null && await writeSyncFile(app, p, r, hw, plan)) { agreed[p] = rh; wrote[p] = rh; if (isDead) returned.push(p); }
+					else unwritten.push(p);
+					continue;
+				}
+				// New, or changed there: adopt (an older page's copy of deleted content, returned).
+				// NOT WRITTEN IS NOT MERGED (CRF). A create passed over was adopted all the same, and
+				// the next push from here replaced the account's head without the file: every device
+				// that pulled it after never received it (`## LOSTW2`). Asked as "nothing here", so the
+				// guard's memory of a path another app deleted does not refuse it.
+				if (await writeSyncFile(app, p, r, null, plan)) { agreed[p] = rh; wrote[p] = rh; if (isDead) returned.push(p); }
+				else unwritten.push(p);
 				continue;
 			}
 			var lh = fileHash(l);
-			if (lh === rh) { agreed[p] = lh; continue; }			// identical: genuinely shared.
+			if (lh === rh) {										// identical: genuinely shared.
+				agreed[p] = lh;
+				// AN OLDER PAGE'S COPY OF DELETED CONTENT IS ITS WRITE IN EVERY BRANCH, this one
+				// included: it cannot say whether it wrote the path again or never heard, and a
+				// page on the law takes it as a write where it holds nothing (below) -- so it
+				// does here too, or this device deletes the copy an older page just wrote back
+				// and then sends the deletion as its own, and the rewrite is lost on every
+				// device (QFB3-1, `qfb3mixed` M3).
+				if (!stamped && await dead(p, r)) { wrote[p] = rh; returned.push(p); }
+				continue;
+			}
 			var localChanged  = (lh !== bh);
 			var remoteChanged = (rh !== bh);
-			if (remoteChanged && !localChanged) { if (await writeSyncFile(app, p, r)) agreed[p] = rh; }
-			else if (localChanged && !remoteChanged) { /* keep local; it will push. */ }
-			else if (plan.folder) {
-				// BOTH MOVED, AND ONE OF THEM IS A FILE ON SOMEBODY'S DISK. The disk wins
-				// and is not touched: the version that arrived lands beside it, named for
-				// the device that sent it and the moment it arrived, and the person
-				// decides. A `.synced` sidecar would do for a sandbox path nothing else
-				// reads; in a folder under version control it would be a file `git status`
-				// reports and a compiler may try to open, so it keeps the real extension
-				// and says in its name what it is.
-				var cname = conflictName(p, fromDevice, Date.now());
-				if (await writeSyncFile(app, cname, r)) {
-					console.warn('sync: ' + p + ' changed on this device and on '
-						+ (fromDevice || 'another device') + '; the disk copy stands and '
-						+ 'theirs is beside it at ' + cname);
-					out_conflicts.push({ path: p, copy: cname });
-				}
+			if (remoteChanged && !localChanged) {
+				// THIS DEVICE'S COPY IS ITS OLD AGREED ONE, and the arriving copy is newer, even
+				// when it is the content a record says was deleted: taken, the honour step
+				// carries the deletion out next round, where keeping the older copy would
+				// return the path at bytes nobody holds any more. From an older page it is
+				// returned, as 5.2.1 took it.
+				var dr = !stamped && await dead(p, r);
+				if (await writeSyncFile(app, p, r, l, plan)) { agreed[p] = rh; wrote[p] = rh; if (dr) returned.push(p); }
+				else unwritten.push(p);
 			}
-			else if (!/\.synced$/.test(p)) sidecars[p + '.synced'] = r;	// both diverged: preserve both.
+			else if (localChanged && !remoteChanged) { /* keep local; it will push. */ }
+			else await fileBeside(p, r);							// both diverged: preserve both.
 		}
 		for (var sk in sidecars) {
 			if (!Object.prototype.hasOwnProperty.call(sidecars, sk)) continue;
 			delete agreed[sk];
-			await writeSyncFile(app, sk, sidecars[sk]);
+			// The `.synced` slot is the sync's own, written over whatever stands in it: the
+			// disk's copy now is the one this write replaces, asked as any merge write is.
+			var sf, sw;
+			try { sf = await syncFileAt(plan, sk); sw = sf ? await sf.text() : null; } catch (e) { sw = undefined; }
+			if (sw !== undefined && await writeSyncFile(app, sk, sidecars[sk].text, sw, plan)) wrote[sk] = fileHash(sidecars[sk].text);
+			else unwritten.push(sidecars[sk].of);
 		}
-		// Deletions, ON A TOMBSTONE ONLY, in the sandbox as on somebody's disk. The
-		// tombstone is written by the device that HELD the file and no longer does
-		// (`noteFileTombs`), and it carries the hash it held: the delete is honoured only
-		// while the bytes here are still those bytes, so a file edited here since the
-		// deletion travelled is kept -- an edit is never lost to a delete. A path the
-		// sender's census merely lacks is no news: a folder device's census is complete
-		// only for its shared roots, so the sandbox's old delete by absence took every
-		// file a phone had made in its own storage (fault B). In a folder, only paths
-		// inside the share; the sandbox's whole workspace is the share.
-		var tombs = (remoteComplete === true && remoteTombs && typeof remoteTombs === 'object') ? remoteTombs : {};
-		for (var tp in tombs) {
-			if (!Object.prototype.hasOwnProperty.call(tombs, tp)) continue;
+		// An older page's copy of deleted content, taken as its write: said so, stamped past
+		// the deletion, so the devices that keep the law take it as a return too.
+		if (returned.length && window.DaimondCloud && DaimondCloud.mark) {
+			DaimondCloud.mark(returned.map(function (rp) { return { path: rp, d: 0 }; }));
+		}
+		// Deletions, ON A RECORD ONLY, in the sandbox as on somebody's disk, for every
+		// copy this device owes, inline or offloaded.
+		var done = await honourFileRecords(plan, loc, local, base, wrote);
+		Object.keys(done).forEach(function (dp) { gone[dp] = 1; });
+		// AN OLDER PAGE'S OWN TOMBSTONES, on the 5.2.1 rule: from a census that saw its own
+		// root, for a path it does not carry, at the bytes here. Not where this device holds a
+		// return for the path: a return is a write it knows came after some deletion, and an
+		// unstamped tomb cannot say it came later still. Not relayed: it has no stamp to carry.
+		var olds = (!stamped && remoteComplete === true && remoteTombs && typeof remoteTombs === 'object') ? remoteTombs : {};
+		for (var tp in olds) {
+			if (!Object.prototype.hasOwnProperty.call(olds, tp)) continue;
 			if (syncAppState(tp) || (plan.folder && !withinShare(plan, tp))) continue;
 			if (Object.prototype.hasOwnProperty.call(remoteFiles, tp)) continue;	// they have it after all.
+			if (Object.prototype.hasOwnProperty.call(wrote, tp) || gone[tp]) continue;
+			var tr = fileRecord(tp);
+			if (tr && tr.d === 0) continue;
 			var tv = local[tp];
 			if (tv == null) continue;							// already gone here.
-			if (fileHash(tv) !== tombs[tp]) {
+			if (fileHash(tv) !== olds[tp]) {
 				console.warn('sync: ' + tp + ' was deleted elsewhere but has changed here '
 					+ 'since, so it is kept');
 				continue;
@@ -6611,56 +7312,505 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		// was entered as agreed by the pull that carried no news of it, and the next complete
 		// census from the other device deleted it. A file cannot be agreed until it has been sent,
 		// and the moment it has is a successful push -- which is what `commitFileBaseline` is for
-		// and where sync.js already calls it.
-		await commitAgreedFiles(agreed, gone);
+		// and where sync.js already calls it. Into THIS merge's location, whatever is current by
+		// the time it ends (QFB2-2).
+		commitAgreedFiles(agreed, gone, loc);
 		_lastConflicts = out_conflicts;
+		// A VERSION THIS STORAGE COULD NOT WRITE IS NOT MERGED HERE. The write of a file another
+		// device changed can be refused -- the storage full, the folder's permission gone, the
+		// file tools' stale-read guard -- and until 2026-09-27 the refusal was swallowed: the
+		// section reported success, the version was noted as merged in this location, and the
+		// next census carried the old bytes as this device's own. Every other device read them
+		// as an edit made here and took them over the newer one (QFB4-1's E2, where the guard
+		// refused the write after a Browser -> folder switch). So the section fails, naming the
+		// paths, once everything else in it is done: the version is not adopted, the re-pull
+		// comes back for it, and no push goes from this location until it has merged.
+		if (unwritten.length) {
+			throw new Error('could not write ' + unwritten.length + ' file(s) another device changed ('
+				+ unwritten.slice(0, 5).join(', ') + (unwritten.length > 5 ? ', ...' : '')
+				+ '), so this version is not merged here');
+		}
 		return out_conflicts;
+	}
+
+	/// Where the bytes `f` held here at `p`, off the inline section, stand against another
+	/// device's inline copy `r` (hash `rh`; `bh` the fork point's): `same` (they are it), `older`
+	/// (the manifest here was made from `r`), `theirs` (ours is the version `r` was made from --
+	/// the one both last agreed inline, or the one the sender's index `theirIx` names), or `ours`
+	/// (neither is shown: both moved, or ours cannot be placed). Only `theirs` is written over.
+	async function placeHeldCopy(plan, p, f, r, rh, bh, theirIx) {
+		var rsz = -1;
+		try { rsz = new TextEncoder().encode(r).length; } catch (e) { rsz = -1; }
+		var oh = null;
+		if (f.size <= SYNC_FILE_MAX || f.size === rsz) {
+			try { oh = fileHash(await f.text()); } catch (e) { oh = null; }
+		}
+		if (oh !== null && oh === rh) return 'same';
+		var cloud = window.DaimondCloud || null;
+		var m = cloud && cloud.manifest ? cloud.manifest(p) : null;
+		if (m && cloud.descends && cloud.descends(m, 'i:' + rh)) return 'older';
+		if (oh !== null && bh !== null && oh === bh) return 'theirs';
+		var mi = (theirIx && typeof theirIx === 'object') ? theirIx[p] : null;
+		if (mi && mi.key && cloud && cloud.localState) {
+			var st = await cloud.localState(p, f, mi, { folder: heldLoc(plan) });
+			if (st.state === 'same') return 'theirs';
+		}
+		return 'ours';
+	}
+
+	/// Carry out, on this device, every deletion the record set says it owes, and answer
+	/// the paths deleted.
+	///
+	/// AN INLINE COPY (`local`) only when this device owes it (`owesDeletion`): its agreed copy
+	/// of exactly the bytes named, and not a deletion it made itself. A copy this merge has just
+	/// written is left to the next round, which sees what was written.
+	///
+	/// AN OFFLOADED COPY on lane D's terms (fix/r52-del): the paths `DaimondCloud.honourList`
+	/// names (a manifest here of the deleted content, or a record joined since the last call).
+	/// THE BYTES GO WITH THE REFERENCE, OR NEITHER DOES. A file held here would otherwise be
+	/// uploaded again by the next collect, and that upload is this device's write of the path,
+	/// which brings it back everywhere. So a held file is deleted through the same door the
+	/// inline merge deletes by (`deleteSyncFile`), and only while it is still the content that
+	/// was deleted: one changed here since is kept, and its upload lifts the record, because an
+	/// edit beats a delete. A path not held here loses its reference and nothing else. A record
+	/// in the inline form (a file its author carried inline and this device holds offloaded:
+	/// the mid-size band) is compared by reading the file when it is no larger than the inline
+	/// ceiling; a copy held only in cloud storage cannot be compared with it and stands.
+	///
+	/// A SHARED FOLDER IS SOMEBODY'S DISK, so there only a path inside the share is touched,
+	/// and never the app's own state or a keeper's record.
+	async function honourFileRecords(plan, loc, local, base, wrote) {
+		var gone = {};
+		if (!window.DaimondCloud || !DaimondCloud.recordOf) return gone;
+		var app = plan && plan.app;
+		if (!app) return gone;
+		var mineHere = readMine()[loc] || {};
+		var inside = function (p) { return !syncAppState(p) && !(plan.folder && !withinShare(plan, p)); };
+		var ps = Object.keys(local || {});
+		for (var i = 0; i < ps.length; i++) {
+			var p = ps[i];
+			if (Object.prototype.hasOwnProperty.call(wrote, p) || !inside(p)) continue;
+			var rec = fileRecord(p);
+			if (!rec || rec.d !== 1) continue;
+			if (!(await owesDeletion(p, local[p], rec, base, mineHere))) {
+				if (!(await textIs(local[p], rec.h))) {
+					console.warn('sync: ' + p + ' was deleted elsewhere but has changed here since, so it is kept');
+				}
+				continue;
+			}
+			// And gone only if the delete LANDED: a fork point without a file still here
+			// reads it as new at the next round.
+			if (await deleteSyncFile(app, p)) gone[p] = 1;
+		}
+		var list = DaimondCloud.honourList ? DaimondCloud.honourList() : [];
+		for (var j = 0; j < list.length; j++) {
+			var q = list[j], h = DaimondCloud.deadAt(q);
+			if (h === null) continue;
+			if (Object.prototype.hasOwnProperty.call(local || {}, q) || Object.prototype.hasOwnProperty.call(wrote, q)) continue;
+			if (!inside(q)) continue;
+			var m = DaimondCloud.manifest(q), f = null, same = false;
+			try { f = await syncFileAt(plan, q); } catch (e) { f = null; }
+			if (inlinePrint(h)) {
+				if (!f) continue;									// only in cloud storage: cannot be compared
+				if (f.size <= SYNC_FILE_MAX) {
+					try { same = fileHash(await f.text()) === h; } catch (e) { same = false; }
+				}
+			} else {
+				if (m && m.hash !== h) continue;					// a different file stands here now
+				if (!f) { if (m) DaimondCloud.forget(q); continue; }	// not held here: the reference goes
+				same = !!(m && !(plan && plan.folder) && m.mtime && m.bytes === f.size && m.mtime === f.lastModified);
+				if (!same && window.DaimondChunks) {
+					try { same = (await DaimondCloud.fileKey(f, DaimondChunks.chunkSizeFor(f.size))) === h; }
+					catch (e) { same = false; }
+				}
+			}
+			if (!same) continue;								// changed here since: kept
+			if (await deleteSyncFile(app, q)) {
+				if (DaimondCloud.manifest(q)) DaimondCloud.forget(q);
+				gone[q] = 1;
+				console.warn('sync: ' + q + ' was deleted on another device, and is deleted here');
+			}
+		}
+		return gone;
 	}
 
 	// The conflict copies the last merge wrote, for the panel and for the verifier.
 	var _lastConflicts = [];
 
-	/// Fold what this round proved the two devices hold in common into the fork point, and drop
-	/// what was deleted. Paths this device kept a newer copy of are deliberately absent: the
-	/// other side has not seen them yet, and recording agreement early is what turned a pull into
-	/// a delete.
+	/// Fold what this round proved the two devices hold in common into the fork point of
+	/// location `loc`, and drop what was deleted. Paths this device kept a newer copy of are
+	/// deliberately absent: the other side has not seen them yet, and recording agreement
+	/// early is what turned a pull into a delete.
 	///
 	/// # Arguments
 	/// * `agreed` - Path to hash, for the paths both devices now hold identically.
 	/// * `gone` - Paths the merge has just deleted here, which leave the fork point with them.
-	function commitAgreedFiles(agreed, gone) {
-		var base = readJson(SYNC_FILEBASE_KEY, {}), next = {};
-		// Carry forward what was already agreed, minus anything the merge just deleted here --
-		// leaving a deleted path in the fork point would put the same question to the next round.
-		Object.keys(base).forEach(function (p) {
-			if (!Object.prototype.hasOwnProperty.call(gone || {}, p)) next[p] = base[p];
-		});
+	/// * `loc` - The location the merge read its fork point and census in.
+	function commitAgreedFiles(agreed, gone, loc) {
+		var base = readFilebaseAt(loc), next = {};
+		Object.keys(base).forEach(function (p) { next[p] = base[p]; });
 		Object.keys(agreed).forEach(function (p) { next[p] = agreed[p]; });
-		writeFilebase(next);
+		// AND WHAT THE MERGE DELETED LEAVES, WHATEVER IT AGREED EARLIER IN THE ROUND. A copy found
+		// identical on both sides is agreed first and may then be deleted by a record (a sender
+		// still carrying bytes it owes, an older page that has not heard): put back, the path
+		// stayed agreed at the deleted bytes, so a later byte-for-byte restore read as
+		// "unchanged there" and was not taken, and the next collect deleted it again past its
+		// return (QFB3-1, `qfb3unit` Y). Leaving a deleted path in the fork point would put the
+		// same question to the next round.
+		Object.keys(gone || {}).forEach(function (p) { delete next[p]; });
+		writeFilebaseAt(loc, next);
 	}
 
 	// ── The per-Diamond fork point (S-SYNC #4) ─────────────────────
 	//
-	// `id -> diamondStamp` of the copy both devices last agreed on, the Diamond
-	// analogue of the file baseline. It exists to answer one question in
-	// `applyDiamonds`: when a strictly newer copy arrives, did THIS device also move
-	// the Diamond since the two last agreed? If it did, the arrival is a two-sided
-	// change and the local edit is kept as a version rather than overwritten in
-	// silence. An unknown base reads as "changed" -- the conservative direction, and
-	// the reason a genuinely one-sided sync still never keeps a spurious copy is that
-	// the base IS advanced on every push and every import below.
+	// `id -> diamondStamp` of the copy the mailbox last took from here or this device
+	// last took from it. It answers the two-sided question only for an entry from a
+	// sender that says nothing of what its copy was built on (a 5.2.1 page, see
+	// `diamondTwoSided`), and it seeds `daimond-diamond-recv` once, on the update. An
+	// unknown base reads as "changed", the conservative direction.
 	function readDiamondBase() { return readJson(SYNC_DIAMONDBASE_KEY, {}); }
 	function writeDiamondBase(map) {
 		try { localStorage.setItem(SYNC_DIAMONDBASE_KEY, JSON.stringify(map || {})); }
 		catch (e) { /* best effort: an unknown base only makes the merge more cautious */ }
 	}
 
-	/// Set the Diamond fork point to what this device holds now: this runs after a
-	/// successful push, so every live Diamond has just been declared to the mailbox
-	/// and is what both sides now agree on. Entries for Diamonds no longer here are
-	/// dropped. Beside `commitFileBaseline`, and called from it, so the one push hook
-	/// advances both fork points.
-	async function commitDiamondBaseline() {
+	// ── The lineage of each Diamond's copy (2026-09-27, lanes DIA and DIA2) ───
+	//
+	// `id -> [s, c, anc]`. `s`: the stamp of the last copy this device RECEIVED from
+	// another device (0 for none, as on the device that made the Diamond). `c`, `anc`:
+	// a copy this device held -- the one it received, or its own last one a parcel
+	// carried -- and that copy's LINEAGE, the stamps of the copies it descends from,
+	// oldest first, at most DIAMOND_ANC_MAX. Every parcel entry carries its copy's
+	// lineage as `anc`, so the merge can ask the one question it needs: was the
+	// arriving copy built, at any depth, on the copy this device holds?
+	//
+	// The fork point above could not answer it: "the mailbox took my copy" was recorded
+	// as "the other device holds it", so the other device's later copy, built on
+	// something older, read as one-sided and replaced this device's edit with nothing
+	// kept (split checks D1, D2). A lineage one hop deep (round 1's `base`) could not
+	// either: a copy two hops down from this device's edit, or reaching the device that
+	// made the Diamond and never received it, read as a conflict, and the conflict's
+	// union brought back what the other devices had taken off (QDIA F1).
+	//
+	// `s` moves ONLY when a copy is received -- never on a landed push, and never on
+	// merely meeting an equal copy: with three devices, the author meeting its own copy
+	// relayed back would stop keeping it against a third device's concurrent edit
+	// arriving through the relay. Absent on the first read after the update, the record
+	// is seeded from the fork point, so a device at rest reads "not moved" rather than
+	// keeping a spurious copy of every Diamond on its first exchange. Lost or unwritable,
+	// an entry reads as "moved" with no lineage; past the bound a lineage forgets its
+	// oldest stamps. Both can only make a copy read as a conflict: a spurious kept copy,
+	// never a loss.
+	var SYNC_DIAMONDRECV_KEY = 'daimond-diamond-recv';
+	var DIAMOND_ANC_MAX      = 16;
+	var DIAMOND_ANC_BYTES    = DIAMOND_ANC_MAX * 15;		// what `anc` can weigh in one entry
+	function readDiamondRecv() {
+		var raw = null;
+		try { raw = localStorage.getItem(SYNC_DIAMONDRECV_KEY); } catch (e) { raw = null; }
+		if (raw === null) {
+			var seed = {}, fork = readDiamondBase();
+			Object.keys(fork).forEach(function (id) {
+				var s = +fork[id] || 0;
+				if (s > 0) seed[id] = [s, s, []];
+			});
+			writeDiamondRecv(seed);
+			return seed;
+		}
+		try {
+			var m = JSON.parse(raw);
+			return (m && typeof m === 'object' && !Array.isArray(m)) ? m : {};
+		} catch (e) { return {}; }
+	}
+	function writeDiamondRecv(map) {
+		try { localStorage.setItem(SYNC_DIAMONDRECV_KEY, JSON.stringify(map || {})); }
+		catch (e) { /* best effort: an unknown record reads as moved, which keeps a copy */ }
+	}
+
+	/// Lay `changes` (`id -> entry`, `id -> null` to drop one) over a record read
+	/// afresh, with nothing awaited between the read and the write. A merge or a collect
+	/// holds its copy of the map across awaits, and writing that copy back whole would
+	/// undo a receipt another round laid down meanwhile.
+	function patchDiamondRecord(read, write, changes) {
+		var ids = Object.keys(changes || {});
+		if (!ids.length) return;
+		var m = read();
+		ids.forEach(function (id) { if (changes[id] === null) delete m[id]; else m[id] = changes[id]; });
+		write(m);
+	}
+
+	/// A lineage as a parcel entry or a record holds it: finite positive stamps, oldest
+	/// first, the newest DIAMOND_ANC_MAX kept. Null where it is not one.
+	function ancList(a) {
+		if (!Array.isArray(a)) return null;
+		for (var i = 0; i < a.length; i++) {
+			if (typeof a[i] !== 'number' || !isFinite(a[i]) || a[i] <= 0) return null;
+		}
+		return a.length > DIAMOND_ANC_MAX ? a.slice(a.length - DIAMOND_ANC_MAX) : a.slice();
+	}
+
+	/// One Diamond's record as `{ s, c, anc }`, or null where none is kept. Round 1's
+	/// `[s, p]`, which never shipped, reads as a receipt of `s` with no lineage.
+	function recvOf(recv, id) {
+		var e = recv && Object.prototype.hasOwnProperty.call(recv, id) ? recv[id] : null;
+		if (!Array.isArray(e)) return null;
+		var s = +e[0] || 0, lin = Array.isArray(e[2]);
+		var c = lin ? (+e[1] || 0) : s;
+		if (s <= 0 && c <= 0) return null;
+		return { s: s, c: c, anc: (lin && ancList(e[2])) || [] };
+	}
+
+	/// The lineage the parcel entry for this device's copy at `stamp` carries.
+	///
+	/// At the recorded copy: that copy's lineage as recorded, so a device passing on a
+	/// copy it received sends what the copy's author sent. A PROPERTY OF THE COPY, THE
+	/// SAME ON EVERY DEVICE THAT HOLDS IT, or two devices that agree would carry parcels
+	/// that never compare equal (the soak's converge check, 5367e879). Moved past it:
+	/// the recorded copy's lineage and that copy. No record: nothing, as on the device
+	/// that made the Diamond, before its first parcel.
+	function diamondAncOf(rv, stamp) {
+		if (!rv) return [];
+		if (stamp === rv.c) return rv.anc.slice();
+		var a = rv.c > 0 ? rv.anc.concat([rv.c]) : rv.anc.slice();
+		return a.length > DIAMOND_ANC_MAX ? a.slice(a.length - DIAMOND_ANC_MAX) : a;
+	}
+
+	/// The lineage a parcel entry carries: null for an entry with none (a 5.2.1 sender,
+	/// which takes the fork point's rule), and nothing -- built on nothing, so a device
+	/// that moved keeps its edit -- for one carrying something that is not a lineage.
+	/// Read as absent, a malformed one fell back to the rule that cannot see D2 (QDIA F5).
+	function sentAnc(r) {
+		if (!r || r.anc === undefined) return null;
+		return ancList(r.anc) || [];
+	}
+
+	/// Is a strictly newer copy `r` arriving over `mine` a change BOTH devices made?
+	///
+	/// With a lineage: only if this device moved the Diamond since it last received a
+	/// copy AND the arrival descends from no copy this device is holding. When it moved,
+	/// the copy it holds is one it made (a received copy is `s`), so this is exactly
+	/// "was the arrival built on my edit?". Without one (a 5.2.1 sender): the fork
+	/// point's rule, which cannot see D2.
+	function diamondTwoSided(r, mine, recv, dbase) {
+		if (!mine) return false;					// a Diamond new here is never a conflict
+		var cur = diamondStamp(mine), anc = sentAnc(r);
+		if (anc !== null) {
+			var rv = recvOf(recv, r.id);
+			// MOVED, NOT MOVED FORWARD: an edit made here after adopting a copy from a
+			// faster clock is stamped below it (CLK-1).
+			var moved = !rv || cur !== rv.s;
+			return moved && anc.indexOf(cur) === -1;
+		}
+		var known = Object.prototype.hasOwnProperty.call(dbase, r.id);
+		return !known || cur !== (dbase[r.id] || 0);
+	}
+
+	// ── What each copy carried outside its versioned files (lane DIA2) ───
+	//
+	// `id -> [[stamp, tags, links, name, kits], …]`, oldest first: for the last few
+	// copies of a Diamond this device held -- each one a parcel of its carried, each one
+	// it received -- the tags, a short hash of each link's identity (`fileHash`), the
+	// name and the toolchain grants. None of the four is in a versioned file, so a
+	// "kept before sync" version cannot hold them, and a two-sided merge settled them by
+	// UNION: a union cannot tell "the other device took it off" from "this device never
+	// had it", so a mark taken off on one device came back, in force on the device that
+	// pressed it (QDIA F2), and a rename in the losing edit survived nowhere (F4). With
+	// the copy both sides last shared the merge is three-way (`diamondMergePlan`).
+	//
+	// Bounded at DIAMOND_SEEN_MAX copies a Diamond, the one last received never evicted,
+	// and pruned with the receipt when the Diamond is tombed. Lost or unwritable, the
+	// merge has no common copy and unions as it did before.
+	var SYNC_DIAMONDSEEN_KEY = 'daimond-diamond-seen';
+	var DIAMOND_SEEN_MAX     = 8;
+	function readDiamondSeen() {
+		var m = readJson(SYNC_DIAMONDSEEN_KEY, {});
+		return (m && typeof m === 'object' && !Array.isArray(m)) ? m : {};
+	}
+	function writeDiamondSeen(map) {
+		try { localStorage.setItem(SYNC_DIAMONDSEEN_KEY, JSON.stringify(map || {})); }
+		catch (e) { /* best effort: no common copy only means the merge unions */ }
+	}
+
+	/// The tags, links, name and grants a pack carries, in one parse; null for a pack
+	/// that cannot be read. As defensive as `packTags`, for the same reason.
+	function packFacets(data) {
+		var strs = function (a) {
+			return Array.isArray(a) ? a.filter(function (x) { return typeof x === 'string' && x; }) : [];
+		};
+		try {
+			var files = (JSON.parse(data) || {}).files || {};
+			var meta  = JSON.parse(files['.daimond/meta.json'] || files['.red/meta.json'] || '{}') || {};
+			var links = files['.daimond/links.jsonl'] || files['.red/links.jsonl'] || '';
+			return {
+				tags:  strs(meta.tags),
+				kits:  strs(meta.toolkits),
+				name:  typeof meta.name === 'string' ? meta.name : '',
+				links: typeof links === 'string' ? links : '',
+			};
+		} catch (e) { return null; }
+	}
+
+	/// A sidecar's rows as `{ key, id, line }`. `key` hashes the identity the store
+	/// unions by: the link's id, or for a row without one, the row itself.
+	function sidecarRows(text) {
+		var out = [];
+		String(text || '').split('\n').forEach(function (line) {
+			var l = line.trim();
+			if (!l) return;
+			var o = null;
+			try { o = JSON.parse(l); } catch (e) { o = null; }
+			var id = (o && typeof o.id === 'string') ? o.id.trim() : '';
+			out.push({ key: fileHash(id ? 'i:' + id : 'k:' + l), id: id, line: l });
+		});
+		return out;
+	}
+
+	/// One copy's record, from its pack facets.
+	function seenEntry(stamp, f) {
+		return [stamp, f.tags.slice().sort(), sidecarRows(f.links).map(function (x) { return x.key; }),
+			f.name, f.kits.slice().sort()];
+	}
+
+	/// The lineage the parcel entry for this device's copy of `id` at `stamp` carries,
+	/// noting in `recvCh` and `seenAdd` what the first parcel to carry a copy records:
+	/// the copy as this device's newest, and its tags, links, name and grants where its
+	/// export `data` was made (a reused reference was recorded when it was made).
+	function entryLineage(recv, seen, id, stamp, data, recvCh, seenAdd) {
+		var rv = recvOf(recv, id), anc = diamondAncOf(rv, stamp);
+		if (!rv || rv.c !== stamp) recvCh[id] = [rv ? rv.s : 0, stamp, anc];
+		var had = Array.isArray(seen[id]) && seen[id].some(function (x) { return Array.isArray(x) && x[0] === stamp; });
+		if (data != null && !had) {
+			var f = packFacets(data);
+			if (f) seenAdd[id] = seenEntry(stamp, f);
+		}
+		return anc;
+	}
+
+	/// Drop the lineage and copy records of Diamonds that are gone, writing only when
+	/// one was held.
+	function dropDiamondRecords(ids) {
+		var rc = {}, sc = {}, recv = readDiamondRecv(), seen = readDiamondSeen();
+		(ids || []).forEach(function (id) {
+			if (Object.prototype.hasOwnProperty.call(recv, id)) rc[id] = null;
+			if (Object.prototype.hasOwnProperty.call(seen, id)) sc[id] = null;
+		});
+		patchDiamondRecord(readDiamondRecv, writeDiamondRecv, rc);
+		patchDiamondRecord(readDiamondSeen, writeDiamondSeen, sc);
+	}
+
+	/// Lay one round's record changes over the records read afresh, with nothing awaited
+	/// between. `recvCh`: `id -> entry`, each laid only where the record still holds what
+	/// `was` held when the change was worked out (none: always), so a collect's stale
+	/// view never undoes a receipt a merge laid down meanwhile. `seenAdd`: `id -> entry`,
+	/// added to that Diamond's copies; `only`: `id -> stamps` narrows them first.
+	function recordDiamondCopies(recvCh, was, seenAdd, only) {
+		var ids = Object.keys(recvCh || {}), sids = Object.keys(seenAdd || {});
+		if (!ids.length && !sids.length) return;
+		var recv = readDiamondRecv(), moved = false;
+		ids.forEach(function (id) {
+			if (was && JSON.stringify(recv[id]) !== JSON.stringify(was[id])) return;
+			recv[id] = recvCh[id]; moved = true;
+		});
+		if (moved) writeDiamondRecv(recv);
+		if (!sids.length) return;
+		var seen = readDiamondSeen();
+		sids.forEach(function (id) {
+			var rv = recvOf(recv, id);
+			seen[id] = noteSeen(seen[id], seenAdd[id], rv ? rv.s : 0, only && only[id]);
+		});
+		writeDiamondSeen(seen);
+	}
+
+	/// A Diamond's records with `entry` added, newest last, at most DIAMOND_SEEN_MAX,
+	/// never evicting the copy last received (`keep`). `only`, where given, first keeps
+	/// just the copies it names: after an import that REPLACED this device's copy, only
+	/// the copies the new one descends from are still common ground.
+	function noteSeen(list, entry, keep, only) {
+		var l = (Array.isArray(list) ? list : []).filter(function (x) {
+			return Array.isArray(x) && x[0] !== entry[0] && (!only || only.indexOf(x[0]) !== -1);
+		});
+		l.push(entry);
+		while (l.length > DIAMOND_SEEN_MAX) l.splice((l[0][0] === keep) ? 1 : 0, 1);
+		return l;
+	}
+
+	/// The record of the newest copy in lineage `anc` this device holds a record of:
+	/// the copy both sides last shared. Null where there is none.
+	function seenAncestor(list, anc) {
+		if (!Array.isArray(list) || !anc) return null;
+		for (var i = anc.length - 1; i >= 0; i--) {
+			for (var j = 0; j < list.length; j++) {
+				if (Array.isArray(list[j]) && list[j][0] === anc[i]) return list[j];
+			}
+		}
+		return null;
+	}
+
+	/// How a two-sided merge settles what lives outside the versioned files: `w` the
+	/// arriving copy's facets, `l` those of the copy this device held (the loser), `a`
+	/// the record of the copy both last shared, or null.
+	///
+	/// THREE-WAY WHERE THE COMMON COPY IS KNOWN: the winner's set, less what the loser
+	/// took off since that copy, plus what the loser added; the loser's name where only
+	/// the loser renamed. A removal made on either side stands, an addition on either side
+	/// stands, and nothing either side did not do is written. Where no common copy is
+	/// held: the union of tags and links this merge always made, the winner's name and
+	/// grants -- a removal the loser made can then come back, which is the residual.
+	///
+	/// `{ tags, kits, name, both, drop, add, rows }`: the tags and grants to write (null:
+	/// the winner's stand), the name to take (null: the winner's), whether both renamed,
+	/// the rows to remove (`{ id, line }`), the rows to union in, and the rows the live copy holds
+	/// afterwards, which the marks-here record settles against.
+	function diamondMergePlan(w, l, a) {
+		// Tags and grants compare as the store normalised them, on every device alike.
+		var set3 = function (win, los, anc) {
+			var out = win.slice();
+			if (anc) out = out.filter(function (x) { return !(anc.indexOf(x) !== -1 && los.indexOf(x) === -1); });
+			los.forEach(function (x) { if ((!anc || anc.indexOf(x) === -1) && out.indexOf(x) === -1) out.push(x); });
+			var same = out.length === win.length && out.every(function (x) { return win.indexOf(x) !== -1; });
+			return same ? null : out;
+		};
+		var plan = { tags: null, kits: null, name: null, both: false, drop: [], add: '', rows: '' };
+		plan.tags = set3(w.tags.slice(), l.tags.slice(), a ? a[1] : null);
+		if (a) plan.kits = set3(w.kits.slice(), l.kits.slice(), a[4]);
+		if (a && l.name !== a[3]) {
+			if (w.name === a[3]) plan.name = l.name;
+			else if (w.name !== l.name) plan.both = true;
+		}
+		var wr = sidecarRows(w.links), lr = sidecarRows(l.links);
+		var ak = a && Array.isArray(a[2]) ? a[2] : null;
+		var lk = lr.map(function (x) { return x.key; }), wk = wr.map(function (x) { return x.key; });
+		var kept = wr.filter(function (x) {
+			var gone = ak && x.id && ak.indexOf(x.key) !== -1 && lk.indexOf(x.key) === -1;
+			if (gone) plan.drop.push({ id: x.id, line: x.line });
+			return !gone;
+		});
+		var added = lr.filter(function (x) { return (!ak || ak.indexOf(x.key) === -1) && wk.indexOf(x.key) === -1; });
+		plan.add  = added.map(function (x) { return x.line; }).join('\n');
+		plan.rows = kept.concat(added).map(function (x) { return x.line; }).join('\n');
+		return plan;
+	}
+
+	/// Set the Diamond fork point to what the push that just landed CARRIED.
+	///
+	/// FROM THE PARCEL THAT LANDED, NOT FROM A FRESH LIST (unit DAF, split checks D1).
+	/// This read `list_diamonds` when the answer came back, so an edit made while the
+	/// push flew was recorded as agreed although it never travelled, and the other
+	/// device's next copy replaced it as one-sided. `fork` is `syncForkPoint` of the
+	/// parcel: a Diamond it carried takes the stamp it carried, one it tombed leaves the
+	/// fork point, and one held out of it (no room, offload down) keeps what it had. With
+	/// no fork -- a verifier standing in for a landed push -- what this device holds now.
+	async function commitDiamondBaseline(fork) {
+		if (fork && fork.diamonds) {
+			var had = readDiamondBase(), next = {}, tombs = fork.diamondTombs || {};
+			Object.keys(had).forEach(function (id) { if (!tombs[id]) next[id] = had[id]; });
+			Object.keys(fork.diamonds).forEach(function (id) { next[id] = fork.diamonds[id]; });
+			writeDiamondBase(next);
+			// A Diamond this parcel tombed takes its lineage and copy records with it, here
+			// on the device that destroyed it as on every device the tombstone reaches
+			// (QDIA F6: the destroyer's receipt stayed for ever).
+			dropDiamondRecords(Object.keys(tombs));
+			return;
+		}
 		var app = diamondApp();
 		if (!app || !app.list_diamonds) return;
 		var base = {};
@@ -6700,7 +7850,12 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		// of them differs between devices that agree about every byte, and two devices
 		// with permanently different parcels push at each other for ever.
 		var shared = !!(plan && plan.folder);
-		var seen = shared ? readJson(SYNC_FOLDER_SEEN_KEY, {}) : null;
+		// PER FOLDER: a note of the size and time this device last looked at a path is a fact
+		// about one folder's file, and a file at the same path, size and time in another folder
+		// is another file (the QFB2 sweep). Keyed by the location the plan is of.
+		var seenKey = shared ? SYNC_FOLDER_SEEN_KEY + '@' + syncFileLoc(plan) : null;
+		if (shared) { try { localStorage.setItem(SYNC_FOLDER_EVER_KEY, '1'); } catch (e) { /* the fork points still say */ } }
+		var seen = shared ? readJson(seenKey, {}) : null;
 		var seenMoved = false;
 		// A passphrase change makes every chunk already in the cloud store
 		// unopenable: they were sealed under the old key and the gateway holds them
@@ -6710,6 +7865,8 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		// again rather than skipped as unchanged for ever. See "Surviving a
 		// passphrase change" in js/chunks.js.
 		var stale = !!(DaimondChunks.staleSinceRekey && DaimondChunks.staleSinceRekey());
+		// What this location last agreed on inline, for a path offloaded here for the first time.
+		var inlineAgreed = plan ? readFilebaseAt(syncFileLoc(plan)) : null;
 		for (var p in (large || {})) {
 			if (!Object.prototype.hasOwnProperty.call(large, p)) continue;
 			var f = null;
@@ -6722,6 +7879,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			// its chunk hashes, which never holds the file) and compared against the
 			// manifest. Same content, no upload, and the note is brought forward.
 			var known = DaimondCloud.manifest(p);
+			var liveKey = null;						// the content key, once this round has hashed it
 			if (shared && !stale && known && known.key && known.bytes === f.size) {
 				var mark = f.size + ':' + f.lastModified;
 				var fresh = seen[p] === mark;
@@ -6729,6 +7887,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 					var live = null;
 					try { live = await DaimondCloud.fileKey(f, DaimondChunks.chunkSizeFor(f.size)); }
 					catch (e) { live = null; }
+					liveKey = live;
 					fresh = (live !== null && live === known.key);
 					if (fresh) { seen[p] = mark; seenMoved = true; }
 				}
@@ -6753,10 +7912,71 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 				if (_presenceAnswered) _offloadConfirmed[p] = known.key;
 				continue;
 			}
+			// WHAT THE BYTES ARE, BEFORE THEY ARE OFFERED AS AN EDIT. A size or content that
+			// differs from the manifest is not by itself an edit: a merge may have adopted
+			// another device's newer manifest over bytes this device never changed, and
+			// uploading those made the older version the account's (QCMG decision 2). So the
+			// bytes are placed against this device's own note of them (`localState`):
+			//   same    -- the manifest's content already: nothing to send (a rekey still
+			//              re-seals it, as the same version);
+			//   stale   -- a version the index has moved past: never uploaded. Settled instead,
+			//              as the merge settles it (`settleAdopted`), for a merge that did not
+			//              finish or a sibling tab's; under a manifest not shown to be made from
+			//              it, ours is offered again as the version it is and theirs kept beside it;
+			//   edit    -- changed here: uploaded as an edit of the version it was made from,
+			//              and where the index moved past that version meanwhile, the index's
+			//              version is kept beside it first (both moved);
+			//   unknown -- this device's first round on this build: uploaded as before, but
+			//              with no version (`ver`), so no device drops its own copy on its word.
+			// `vo` says which version the upload is (`put`): the same one sealed again, an edit
+			// of the version the bytes were made from, a new file, or -- left empty -- unplaced.
+			var vo = known ? {} : { parent: null };
+			// A FIRST MANIFEST NAMES THE INLINE VERSION IT WAS MADE FROM (S10). A path this location
+			// agreed on inline, whose bytes have changed since, is an edit of that version: a desktop
+			// still carrying it inline then knows its copy for the older one (`settleAdopted`).
+			// Bytes past the per-file inline ceiling are no inline version at all, so a file that grew
+			// past it is an edit of the agreed version as surely as one whose text changed; unread
+			// bytes (null) are not placed.
+			if (!known) {
+				var agreedIn = inlineAgreed ? inlineAgreed[p] : null;
+				var ivNow = !agreedIn ? null : (f.size > SYNC_FILE_MAX ? '' : await inlineVerOf(f));
+				if (ivNow !== null && ivNow !== 'i:' + agreedIn) vo = { parent: { ver: 'i:' + agreedIn, anc: [] } };
+			}
+			if (known && known.key) {
+				var ls = await DaimondCloud.localState(p, f, known, { folder: heldLoc(plan), live: liveKey });
+				if (ls.state === 'same') {
+					if (!stale) {
+						if (_presenceAnswered) _offloadConfirmed[p] = known.key;
+						continue;
+					}
+					if (DaimondCloud.trusted(known)) vo = { keep: { ver: known.ver, anc: known.anc, sn: known.sn } };
+				} else if (ls.state === 'stale') {
+					if (DaimondCloud.mayDrop(p, known, ls.baseVer, ls.live)) {
+						if (!shared) await DaimondCloud.settleStale(p);
+						continue;
+					}
+					// Not shown to be newer than what is here: ours is offered again, as a version
+					// that has seen theirs, and theirs is kept beside it (see `keepOurs`). Seen only
+					// where theirs is filed: a claim with no copy behind it would let the device that
+					// holds theirs drop its last home.
+					var kept = await DaimondCloud.keepOurs(p, null, known);
+					vo = { parent: { ver: ls.baseVer, anc: ls.baseAnc, sn: ls.baseSn },
+						seen: kept ? [DaimondCloud.verOf(known)] : [] };
+				} else if (ls.state === 'edit') {
+					// Made from the content the index names: from THAT version, which may be one a
+					// settle re-named as having seen another (`keepOurs`), so the edit has seen it too.
+					var crossed = ls.base !== known.key;
+					var filed = crossed ? await DaimondCloud.keepOurs(p, null, known) : false;
+					vo = crossed
+						? { parent: { ver: ls.baseVer, anc: ls.baseAnc, sn: ls.baseSn }, seen: filed ? [DaimondCloud.verOf(known)] : [] }
+						: { parent: { ver: DaimondCloud.verOf(known), anc: known.anc || [], sn: known.sn }, seen: [] };
+				}
+			}
 			try {
 				var mani = await DaimondChunks.offloadFile(p, f);
 				await DaimondCloud.put(p, mani, mani.key,
-					shared ? { file: f, timeless: true } : null);
+					shared ? { file: f, timeless: true, folder: heldLoc(plan), keep: vo.keep, parent: vo.parent, seen: vo.seen }
+						: { keep: vo.keep, parent: vo.parent, seen: vo.seen });
 				if (shared) { seen[p] = f.size + ':' + f.lastModified; seenMoved = true; }
 				// CONFIRMED BY THE UPLOAD ITSELF. `offloadFile` reuses an address only
 				// after `missing()` said the gateway holds it, and `putChunks` throws on
@@ -6772,57 +7992,88 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		// Cleared only after the pass that owed it, so a round that never ran leaves
 		// the debt standing rather than marking it paid.
 		if (stale && DaimondChunks.clearStale) DaimondChunks.clearStale();
-		if (seenMoved) { try { localStorage.setItem(SYNC_FOLDER_SEEN_KEY, JSON.stringify(seen)); }
+		if (seenMoved) { try { localStorage.setItem(seenKey, JSON.stringify(seen)); }
 			catch (e) { /* quota: one re-derivation next round, never a byte */ } }
 		return DaimondCloud.index();
 	}
 
-	/// Is the text arriving for `path` exactly the content a deletion recorded in the chunk
-	/// index's tombstones was of? Asked only for a path such a deletion names, so a pull
-	/// with none costs nothing.
-	async function deadCopy(path, text) {
-		if (!window.DaimondCloud || !DaimondCloud.deadAt || !DaimondCloud.textKey) return false;
-		var h = DaimondCloud.deadAt(path);
-		if (h === null) return false;
-		try { return (await DaimondCloud.textKey(text)) === h; } catch (e) { return false; }
-	}
-
-	/// Carry out, on this device, the deletions the chunk index's tombstones name
-	/// (`DaimondCloud.honourList`; "Deletions of index paths" in js/cloud.js).
+	/// Settle the bytes held here for every path whose manifest this merge replaced.
 	///
-	/// THE BYTES GO WITH THE REFERENCE, OR NEITHER DOES. A file held here would otherwise be
-	/// uploaded again by the next collect, and that upload is this device's write of the
-	/// path, which brings it back everywhere. So a held file is deleted through the same door
-	/// the inline merge deletes by (`deleteSyncFile`), and only while it is still the content
-	/// that was deleted: one changed here since is kept, and its upload lifts the tombstone,
-	/// because an edit beats a delete. A path not held here loses its reference and nothing
-	/// else. A delete that fails leaves both, and the next pull asks again.
+	/// THE MERGE SWAPS A MANIFEST AND LEAVES THE BYTES, and until 2026-09-27 nothing dealt with
+	/// them: the next collect read the older bytes as an edit, uploaded them, and the account
+	/// settled on the older version (QCMG decision 2; `specs/daimond_fixbrief_r522_rev_20260927.md`).
+	/// So, path by path and by content (`DaimondCloud.localState`, with the manifest the merge
+	/// replaced standing in where this device has no note of its bytes):
+	///   - the bytes are the new version: nothing to do;
+	///   - they are the version the index moved past, and the new manifest was made from it
+	///     (`DaimondCloud.descends`): the sandbox drops its copy (fetched at the new version
+	///     when opened; a pinned one at once), and a folder has `materialiseShared` write the
+	///     new bytes over it;
+	///   - they changed here since, or cannot be placed, or the new manifest cannot be shown to
+	///     have been made from them (an older page's, which may be its stale copy, or a copy
+	///     relayed from a location that never merged ours): ours stands and theirs is filed
+	///     beside it, never lost and never silent.
+	/// No bytes of another version are written here and nothing is uploaded; the collect does
+	/// the same test again, so a settle that did not finish is finished there.
 	///
-	/// A SHARED FOLDER IS SOMEBODY'S DISK, so there only a path inside the share is touched,
-	/// and only on these same terms -- the rule the inline file tombstones keep.
-	async function honourChunkTombs(plan, paths) {
-		if (!paths || !paths.length || !window.DaimondCloud) return;
-		var app = plan && plan.app;
-		for (var i = 0; i < paths.length; i++) {
-			var p = paths[i], h = DaimondCloud.deadAt(p);
-			if (h === null) continue;
-			if (plan && plan.folder && !withinShare(plan, p)) continue;
-			var m = DaimondCloud.manifest(p);
-			if (m && m.hash !== h) continue;					// a different file stands here now
+	/// AND FOR A PATH THE INDEX NAMES FOR THE FIRST TIME, held here inline (S10). A desktop carries
+	/// inline what a phone, with a quarter of its inline ceiling, offloads; the mailbox holds only
+	/// the latest parcel, so a desktop that missed the phone's inline copy of an edit meets it as
+	/// a manifest it has never had, with no replaced manifest to place its bytes against. Its
+	/// older copy then travelled inline as news, and the phone wrote it over the edit. The phone's
+	/// first manifest of a path names the inline version it was made from (`i:` + the text's
+	/// `fileHash`, see `collectChunked`), so bytes here that ARE that version are the older one,
+	/// settled as above; bytes it cannot place stand, and theirs is filed beside them.
+	/// Returns the paths where a folder's own bytes stand (`materialiseShared` leaves them).
+	async function settleAdopted(plan, was, fromDevice) {
+		var stand = {};
+		if (!window.DaimondCloud || !DaimondCloud.localState) return stand;
+		var folder = !!(plan && plan.folder), ix = DaimondCloud.index();
+		var keys = Object.keys(was || {});
+		Object.keys(ix).forEach(function (k) { if (!was || !Object.prototype.hasOwnProperty.call(was, k)) keys.push(k); });
+		keys.sort();
+		for (var i = 0; i < keys.length; i++) {
+			var p = keys[i], l = was ? was[p] : undefined, r = ix[p];
+			var first = !l;										// a path the index names for the first time
+			if (!r || (l && l.hash === r.hash) || !Array.isArray(r.chunks) || (l && l.peer) || r.peer) continue;
+			if (/\.synced$/.test(p) || (DaimondCloud.isContentKey && DaimondCloud.isContentKey(p))) continue;
+			if (folder && !withinShare(plan, p)) continue;
 			var f = null;
 			try { f = await syncFileAt(plan, p); } catch (e) { f = null; }
-			if (!f) { if (m) DaimondCloud.forget(p); continue; }	// not held here: the reference goes
-			var same = !!(m && !(plan && plan.folder) && m.mtime && m.bytes === f.size && m.mtime === f.lastModified);
-			if (!same && window.DaimondChunks) {
-				try { same = (await DaimondCloud.fileKey(f, DaimondChunks.chunkSizeFor(f.size))) === h; }
-				catch (e) { same = false; }
+			if (!f) continue;										// not held here: a reference, nothing to settle
+			var st = await DaimondCloud.localState(p, f, r, { folder: heldLoc(plan), base: l || null });
+			if (st.state === 'same') continue;
+			var bv = st.state === 'stale' ? st.baseVer : null;
+			if (first && st.state === 'unknown') bv = await inlineVerOf(f);
+			if (bv && DaimondCloud.mayDrop(p, r, bv, st.live)) {
+				// A folder's copy is replaced by `materialiseShared`, which runs next.
+				if (!folder) {
+					var res = await DaimondCloud.settleStale(p, first ? inlineVerOf : undefined);
+					if (String(res).indexOf('OK') !== 0) console.warn('sync: ' + p + ': ' + res);
+				}
+				continue;
 			}
-			if (!same) continue;								// changed here since: kept
-			if (app && await deleteSyncFile(app, p)) {
-				if (DaimondCloud.manifest(p)) DaimondCloud.forget(p);
-				console.warn('sync: ' + p + ' was deleted on another device, and is deleted here');
-			}
+			if (folder) stand[p] = 1;
+			// OURS IS RE-NAMED ONLY WHERE IT IS THE REPLACED MANIFEST'S CONTENT (stale). Bytes changed
+			// here are not `l`'s: renaming `l` as having seen theirs offered content nobody holds as the
+			// newest version, and a device holding theirs dropped its copy for it (C2P). Such bytes
+			// travel as they are: the census carries them inline, or the collect uploads them as an
+			// edit that has seen theirs (`collectChunked`, `edit`).
+			await DaimondCloud.keepOurs(p, st.state === 'stale' ? (l || null) : null, r);
+			console.warn('sync: ' + p + (st.state === 'stale'
+				? ' arrived from an older page (' + (fromDevice || 'another device') + ') as a version this '
+					+ 'device had moved past; this device\'s version stands and theirs is kept beside it'
+				: ' changed on this device and on ' + (fromDevice || 'another device')
+					+ '; this device\'s version stands and theirs is kept beside it'));
 		}
+		return stand;
+	}
+
+	/// The inline version the bytes `f` are: `i:` and their text's `fileHash`, the name the inline
+	/// fork point knows them by. Null past the inline ceiling, where no file ever rode inline.
+	async function inlineVerOf(f) {
+		if (!f || f.size > SYNC_FILE_MAX) return null;
+		try { return 'i:' + fileHash(await f.text()); } catch (e) { return null; }
 	}
 
 	/// Merge a pulled cloud index into the local one. Nothing is downloaded: a
@@ -6861,10 +8112,22 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		var folder = !!(plan && plan.folder);
 		if (!folder && !filesSyncable()) return;
 		var incoming = remoteChunked;
+		// WHETHER THIS MERGE TAKES THE PARCEL'S INDEX WHOLE, for the commit gate (see "A commit
+		// declares only an index merged in full"). A folder merge that leaves out an entry the
+		// sandbox merge would have taken -- a file, a sidecar, a peer slot, a preview -- leaves
+		// this index short of the account's. A content manifest of the sender's own is never
+		// taken by either, so leaving it out loses nothing.
+		var dropped = 0;
 		if (folder) {
 			incoming = {};
 			Object.keys(remoteChunked || {}).forEach(function (k) {
-				if (!withinShare(plan, indexPathOf(k))) return;
+				if (!withinShare(plan, indexPathOf(k))) {
+					var content = DaimondCloud.isContentKey && DaimondCloud.isContentKey(k);
+					var shared  = (DaimondCloud.isPreviewKey && DaimondCloud.isPreviewKey(k))
+						|| (DaimondCloud.peerOwner && DaimondCloud.peerOwner(k) !== null);
+					if (!content || shared) dropped++;
+					return;
+				}
 				incoming[k] = timelessManifest(remoteChunked[k]);
 			});
 		}
@@ -6872,7 +8135,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		// manifest this round adopted from one that has been ours all along.
 		// A COPY: the index is one mirror that the merge writes in place (SIM-24), so the
 		// object itself would already hold what the merge adopted.
-		var was = folder ? Object.assign({}, DaimondCloud.index()) : null;
+		var was = Object.assign({}, DaimondCloud.index());
 		// THE RUNNER'S CHUNKS ARE NAMED BY THIS DEVICE'S COMMIT, or nothing names them.
 		// A folder-mounted machine never commits the index (filesSyncable is false
 		// there), so the preview artifact it just uploaded is live only while some
@@ -6899,11 +8162,14 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		// record of OUR OWN addresses: our manifest is the authority on those, and a
 		// second-hand copy would name whatever we uploaded before our last change.
 		DaimondCloud.merge(incoming, base || {}, deviceId(), fromDevice, remoteTombs);
-		// And the deletions the tombstones name, carried out here.
-		if (DaimondCloud.honourList) await honourChunkTombs(plan, DaimondCloud.honourList());
+		// THE BYTES IN THE SAME STEP AS THE MANIFEST, before anything reads the index again.
+		var stand = await settleAdopted(plan, was, fromDevice);
+		_chunkedWhole = !dropped && !!remoteChunked && typeof remoteChunked === 'object';
+		// The deletions the records name were carried out by `applyFiles`, which runs first,
+		// for every copy here, inline or offloaded (`honourFileRecords`): one step, one law.
 		await DaimondCloud.refreshPaths();
 		if (folder) {
-			var made = await materialiseShared(plan, was, fromDevice);
+			var made = await materialiseShared(plan, was, fromDevice, stand);
 			// The panel's conflict list is the merge's, both halves of it: `applyFiles`
 			// runs first in `applySync` and set the inline ones.
 			if (made.length) _lastConflicts = _lastConflicts.concat(made);
@@ -6958,7 +8224,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 	/// cost the disk a modification time for nothing -- which is the one thing the
 	/// shared folder is built not to spend (see `put` in js/cloud.js). The test is the
 	/// content key, re-derived by streaming, so it is affordable at any size.
-	async function materialiseShared(plan, was, fromDevice) {
+	async function materialiseShared(plan, was, fromDevice, stand) {
 		var out = [];
 		if (!window.DaimondCloud || !DaimondCloud.materialiseTo || !window.DaimondChunks) return out;
 		var handle = sharedFolderHandle();
@@ -6988,9 +8254,29 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			var isSynced = /\.synced$/.test(p);
 			var real = isSynced ? p.slice(0, -7) : p;
 			if (!withinShare(plan, real)) continue;
+			// THE DISK'S OWN BYTES STAND where the settle could not place them against a manifest
+			// named here for the first time (S10): theirs lands beside them, as `<path>.synced`.
+			if (!isSynced && stand && stand[p]) continue;
 			// Ours all along: the manifest this device's own offload took of the file
 			// that is on the disk.
-			if (!isSynced && was && was[p] && was[p].hash === m.hash) continue;
+			//
+			// UNLESS THE DISK IS BEHIND IT. The index is one per device and the folder's bytes
+			// are one per folder: a version taken while this device was in its Browser storage
+			// (or another folder) is "ours all along" to the index and still not on this disk.
+			// A disk copy this device's note places at an older version (`stale`) is brought
+			// up to the manifest; one changed here, or one it cannot place, stands, and the
+			// collect sends it.
+			if (!isSynced && was && was[p] && was[p].hash === m.hash) {
+				var fw = null;
+				try { fw = await DaimondCloud.fileUnderRoot(handle, p); } catch (e) { fw = null; }
+				if (!fw || !DaimondCloud.localState) continue;
+				var sw = await DaimondCloud.localState(p, fw, m, { folder: heldLoc(plan) });
+				if (sw.state !== 'stale' || !DaimondCloud.mayDrop(p, m, sw.baseVer, sw.live)) continue;
+			}
+			// A CONFLICT COPY OF CONTENT ALREADY BESIDE THE FILE IS NOT WRITTEN AGAIN. An older
+			// page that re-offers its stale copy on every round would otherwise leave one more
+			// dated copy in the folder each time (`settleAdopted` files it, round after round).
+			if (isSynced && m.key && conflictCopyHeld(ix, real, m.key)) { DaimondCloud.forget(p); continue; }
 			var dest = isSynced ? conflictName(real, fromDevice, Date.now()) : p;
 			var f = null;
 			try { f = await DaimondCloud.fileUnderRoot(handle, dest); } catch (e) { f = null; }
@@ -7008,7 +8294,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 					+ ' one shared folder may take');
 				continue;
 			}
-			var res = await DaimondCloud.materialiseTo(handle, p, dest);
+			var res = await DaimondCloud.materialiseTo(handle, p, dest, heldLoc(plan));
 			if (String(res).indexOf('OK') !== 0) { console.warn('sync: ' + dest + ': ' + res); continue; }
 			if (add > 0 && root !== null) spent[root] = (spent[root] | 0) + add;
 			if (!isSynced) continue;
@@ -7019,6 +8305,21 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			out.push({ path: real, copy: dest });
 		}
 		return out;
+	}
+
+	/// Does the index already name a conflict copy of `real` (a `conflictName` beside it) with
+	/// the content `key`?
+	function conflictCopyHeld(ix, real, key) {
+		var cut = String(real).lastIndexOf('/');
+		var name = cut < 0 ? String(real) : real.slice(cut + 1);
+		var dot = name.lastIndexOf('.');
+		var stem = (cut < 0 ? '' : real.slice(0, cut + 1)) + (dot > 0 ? name.slice(0, dot) : name);
+		var ext = dot > 0 ? name.slice(dot) : '';
+		return Object.keys(ix).some(function (k) {
+			var m = ix[k];
+			if (!m || m.peer || m.key !== key || k.indexOf(stem + '.conflict-') !== 0) return false;
+			return !ext || k.slice(-ext.length) === ext;
+		});
 	}
 
 	/// How long a document's laid-out preview is kept in the cloud after the last
@@ -7095,11 +8396,13 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 	/// `chunks.js` uses (`chunkSizeFor`). The estimate runs deliberately high, so the
 	/// room reserved for a reference is never less than the reference goes on to cost.
 	function estRefBytes(size) {
-		if (size == null) return 256;               // unknown: a small one, measured when it offloads
+		// Every entry carries its lineage (`anc`) as well, inline or not, so its room is
+		// held back with the reference's.
+		if (size == null) return 256 + DIAMOND_ANC_BYTES;	// unknown: a small one, measured when it offloads
 		var ch = size <= 64 * 1024 * 1024 ? 256 * 1024
 			: (size <= 512 * 1024 * 1024 ? 1024 * 1024 : 4 * 1024 * 1024);
 		var n = Math.max(1, Math.ceil(size / ch));
-		return 160 + n * 96;
+		return 160 + n * 96 + DIAMOND_ANC_BYTES;
 	}
 
 	/// Walk the Diamond store ONCE, sort it as the parcel carries it, and size every
@@ -7240,6 +8543,13 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		var refReserve = plan.refReserve;   // bytes held back for the references, 0 when offload is down
 		var liveIds = {};
 		var used = 0;
+		// What each entry's copy descends from (`anc`, see `diamondAncOf`), from the record
+		// read once. A copy this device made is recorded the first time a parcel carries
+		// it: its lineage, and its tags, links, name and grants, so a later two-sided
+		// merge can find the copy both sides last shared. The lineage moves only with the
+		// entry's stamp, so it never pushes alone and the fixed point holds.
+		var recv = readDiamondRecv(), seen = readDiamondSeen(), recvCh = {}, seenAdd = {};
+		var lineage = function (id, stamp, data) { return entryLineage(recv, seen, id, stamp, data, recvCh, seenAdd); };
 		// A Diamond the parcel could not carry falls into two very different cases,
 		// and telling them apart is the whole of the fix here. GENUINE: it is small
 		// enough to ride inline anyway (offload would not have helped) and the parcel
@@ -7337,12 +8647,13 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 				catch (e) { out.complete = false; continue; }  // one unreadable Diamond must not hold up the rest
 				stamp = packHeadStamp(data) || stamp;	// what the bytes carry (B1)
 				// `continue`, not `break`: one Diamond must not stop the fresh ones behind it.
-				if (used + data.length > budget) {
+				if (used + data.length + DIAMOND_ANC_BYTES > budget) {
 					strand(d.id, d.name, false);
 					data = null;                 // let it go before the next one is read
 					continue;
 				}
-				used += data.length;
+				var anc = lineage(d.id, stamp, data);
+				used += data.length + JSON.stringify(anc).length;
 				out.list.push({
 					id:      d.id,
 					updated: d.updated || 0,
@@ -7350,6 +8661,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 					// receiver falls back to `updated` — which is what `touched`
 					// means on such a device anyway.
 					touched: stamp,
+					anc:     anc,
 					model:   models[d.id] || null,
 					data:    data,
 				});
@@ -7363,7 +8675,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			// depends on. `touched` moves on every change (tags and links
 			// included), and an import lays stamps down wholesale, so it is a safe
 			// change-key here.
-			var ref = null;
+			var ref = null, lineageData = null;
 			if (stored && stored.touched === stamp && Array.isArray(stored.chunks)) {
 				ref = { v: stored.v, size: stored.size, key: stored.key, chunks: stored.chunks };
 			} else {
@@ -7393,7 +8705,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 					// The offload could not be recorded this round, so the Diamond rides
 					// inline instead of not travelling at all -- exactly as it did
 					// before offload existed, budget permitting.
-					if (used + text.length > budget) {
+					if (used + text.length + DIAMOND_ANC_BYTES > budget) {
 						// The offload was ATTEMPTED and failed (store full, the network,
 						// or an index that would not write): held, never named "too big".
 						// A store-full refusal has already been said honestly and
@@ -7403,17 +8715,20 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 						strand(d.id, d.name, false);
 						text = null; continue;
 					}
-					used += text.length;
+					var ancI = lineage(d.id, stamp, text);
+					used += text.length + JSON.stringify(ancI).length;
 					out.list.push({
 						id:      d.id,
 						updated: d.updated || 0,
 						touched: stamp,
+						anc:     ancI,
 						model:   models[d.id] || null,
 						data:    text,
 					});
 					text = null;
 					continue;
 				}
+				lineageData = text;              // the bytes that left, read for the record below
 				text = null;                     // freed before the next Diamond is read
 				ref = { v: mani.v, size: mani.size, key: mani.key, chunks: mani.chunks };
 			}
@@ -7421,7 +8736,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			// budget above, so it fits in all but a pathological store. The real ceiling on
 			// offloaded content is the chunk store's, which the commit counts it against
 			// alongside the files.
-			var refBytes = JSON.stringify(ref).length;
+			var refBytes = JSON.stringify(ref).length + DIAMOND_ANC_BYTES;
 			if (used + refBytes > budget) {
 				// The content is offloaded and only a few hundred bytes of reference would
 				// travel, yet even that does not fit: the parcel is genuinely full -- many
@@ -7431,15 +8746,19 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 				strand(d.id, d.name, true);
 				continue;
 			}
-			used += refBytes;
+			var ancR = lineage(d.id, stamp, lineageData);
+			lineageData = null;
+			used += refBytes - DIAMOND_ANC_BYTES + JSON.stringify(ancR).length;
 			out.list.push({
 				id:      d.id,
 				updated: d.updated || 0,
 				touched: stamp,
+				anc:     ancR,
 				model:   models[d.id] || null,
 				dataRef: ref,
 			});
 		}
+		recordDiamondCopies(recvCh, recv, seenAdd, null);
 		// A Diamond that is gone leaves its manifest naming chunks nothing refers
 		// to; drop those so the next commit sweeps them. Writes only on a real
 		// deletion, so a no-op collect leaves the index byte-identical.
@@ -7760,20 +9079,26 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		// an import lays the two sides on the same copy, and an equal-stamp arrival means
 		// they already hold it.
 		var dbase = readDiamondBase(), baseDirty = false;
+		// And each copy's lineage and what this device received (lanes DIA, DIA2): read
+		// once for the decisions, and laid down afresh at each import below, and at an
+		// equal-stamp meeting only where a union then builds on that copy.
+		var recv = readDiamondRecv(), seen = readDiamondSeen(), gone = [];
 		trail('sync tombs', deletions.length + ' tombstone(s), ' + Object.keys(local).length + ' here');
 		// A Diamond deleted anywhere takes what was pressed on it here (R2).
 		if (deletions.length && DaimondMarksHere.dropAll(deletions)) changed = true;
 		for (var j = 0; j < deletions.length; j++) {
 			var dead = deletions[j];
-			if (!local[dead]) continue;
+			// A Diamond no longer here still takes its records with it (QDIA F6).
+			if (!local[dead]) { gone.push(dead); continue; }
 			// LOUD. This used to swallow with "it goes on the next pull", and when it
 			// did not go on the next pull either there was nothing anywhere to say
 			// so: a Diamond deleted on one device stayed on the other for ever, in
 			// silence. A deletion that fails twice is not a hiccup.
 			try {
 				await app.delete_diamond(dead); delete local[dead]; changed = true;
-				// A deleted Diamond has no fork point to keep (S-SYNC #4).
+				// A deleted Diamond has no fork point to keep (S-SYNC #4), and no records.
 				if (Object.prototype.hasOwnProperty.call(dbase, dead)) { delete dbase[dead]; baseDirty = true; }
+				gone.push(dead);
 			}
 			catch (e) {
 				trail('sync delete failed', dead + ': ' + ((e && (e.message || e)) || '?'));
@@ -7781,6 +9106,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 				catch (e2) {}
 			}
 		}
+		dropDiamondRecords(gone);
 		for (var i = 0; i < incoming.length; i++) {
 			var r = incoming[i];
 			// A v3 entry carries a `dataRef` in place of `data`; either is enough
@@ -7840,7 +9166,17 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 						if (udata != null) {
 							var tagged = await unionDiamondTags(app, r, mine, udata);
 							var linked = await unionDiamondLinks(app, r, udata);
-							if (tagged || linked) changed = true;
+							if (tagged || linked) {
+								changed = true;
+								// The union is built on the copy both hold, so that copy is
+								// what the next entry descends from. Only here: a meeting
+								// that writes nothing proves no receipt.
+								var um = recvOf(recv, r.id), ua = sentAnc(r);
+								var uf = packFacets(udata), uc = {}, us = {};
+								uc[r.id] = [diamondStamp(r), diamondStamp(r), ua !== null ? ua : (um ? um.anc : [])];
+								if (uf) us[r.id] = seenEntry(diamondStamp(r), uf);
+								recordDiamondCopies(uc, null, us, null);
+							}
 						}
 						udata = null;
 					}
@@ -7850,63 +9186,85 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			var idata = await diamondData(r);
 			if (idata == null) continue;			// a v3 ref whose chunks are no longer held
 			// TWO-SIDED CHANGE (S-SYNC #4). A strictly newer copy is arriving, but did
-			// THIS device also move the Diamond since the two last agreed? If it did,
-			// the arrival would silently overwrite the local edit -- the phone that
-			// changed the memory, backgrounded before its push and pulled the desktop's
-			// copy on resume. So the loser is kept as a recoverable version inside the
-			// import (`keep_conflict`), and its tags and links -- which live outside the
-			// versioned files -- are unioned onto the winner below. An UNKNOWN base
-			// reads as changed, the conservative direction; a genuinely one-sided pull
-			// does not reach here as two-sided because the base is advanced on every
-			// push and every import. A Diamond this device never had (`!mine`) is a
-			// one-sided arrival, never a conflict.
-			var known = Object.prototype.hasOwnProperty.call(dbase, r.id);
-			// MOVED, NOT MOVED FORWARD: an edit made here after adopting a copy from a
-			// faster clock is stamped below the fork point, and reading only a rise as a
-			// change imported over that edit and kept nothing (CLK-1).
-			var twoSided = !!mine && (!known || diamondStamp(mine) !== (dbase[r.id] || 0));
-			var loserTags = (mine && Array.isArray(mine.tags)) ? mine.tags.slice() : [];
-			var loserLinks = '';
+			// THIS device also move the Diamond, and was the arrival built on something
+			// else? If so, the arrival would silently overwrite the local edit -- the
+			// phone that changed the memory, backgrounded before its push and pulled the
+			// desktop's copy on resume; the edit made while a push flew; the edit that
+			// landed first and was skipped as older by a device that had also moved. So
+			// the loser is kept as a recoverable version inside the import
+			// (`keep_conflict`), and its tags and links -- which live outside the
+			// versioned files -- are unioned onto the winner below. See `diamondTwoSided`.
+			var twoSided = diamondTwoSided(r, mine, recv, dbase);
+			var rAnc = sentAnc(r);
+			var wfOk = packFacets(idata);
+			var wf = wfOk || { tags: packTags(idata), kits: [], name: '', links: packLinks(idata) };
+			var plan = null;
 			if (twoSided) {
-				// The links sidecar is not a versioned file, so read it off the loser's
-				// export before the import replaces it -- only on the rare conflict path.
+				// What lives outside the versioned files -- tags, links, name, grants -- is
+				// settled THREE-WAY against the copy both sides last shared (the newest in
+				// the arrival's lineage this device holds a record of), so what either side
+				// took off stays off and what either added stays on (QDIA F2, F4). The links
+				// sidecar is not a versioned file, so it is read off the loser's export
+				// before the import replaces it -- only on the rare conflict path.
+				var loserLinks = '';
 				try { loserLinks = packLinks(await app.export_diamond(r.id)); }
 				catch (e) { loserLinks = ''; }
+				var lf = {
+					tags:  (mine && Array.isArray(mine.tags)) ? mine.tags.slice() : [],
+					kits:  (mine && Array.isArray(mine.toolkits)) ? mine.toolkits.slice() : [],
+					name:  (mine && typeof mine.name === 'string') ? mine.name : '',
+					links: loserLinks,
+				};
+				plan = diamondMergePlan(wf, lf, wfOk ? seenAncestor(seen[r.id], rAnc) : null);
 			}
-			var remoteTags = packTags(idata);
 			// A REMOVAL OR A NARROWING MADE ON ANOTHER DEVICE LANDS ON THIS DEVICE'S
-			// RECORD HERE (R2), from the bytes of the copy arriving -- its own sidecar,
-			// and the loser's where the import will union that back -- and never from a
-			// read of the store, which mid-import answers "no links". Before the import,
-			// so a failed import leaves an entry narrowed and a row standing: that errs
-			// closed, and the next pull's retry repairs it. A widening never lands.
-			if (DaimondMarksHere.settle(r.id, packLinks(idata), loserLinks)) changed = true;
+			// RECORD HERE (R2), from the rows the live copy will hold -- the arriving
+			// copy's own sidecar, or the merge's rows where a conflict settles them -- and
+			// never from a read of the store, which mid-import answers "no links". Before
+			// the import, so a failed import leaves an entry narrowed and a row standing:
+			// that errs closed, and the next pull's retry repairs it. A widening never lands.
+			if (DaimondMarksHere.settle(r.id, plan ? plan.rows : wf.links, '')) changed = true;
 			var storedAt = packStamp(idata) || diamondStamp(r);	// the stamp the import lays down
 			try { await app.import_diamond(idata, twoSided); changed = true; }
 			catch (e) { idata = null; continue; }
 			idata = null;							// free the export before the next Diamond
-			if (twoSided) {
-				// Preserve the loser's tags and links on the LIVE copy: both are sets,
-				// and a union of two sets is not a judgement about either. The kept
-				// version already holds the loser's memory and files; this keeps what
-				// lives outside them. The union moves `touched`, so it travels back on
-				// the next push and settles in a round or two -- exactly as the
-				// equal-stamp union does.
-				var union = remoteTags.slice();
-				for (var ut = 0; ut < loserTags.length; ut++) {
-					if (union.indexOf(loserTags[ut]) === -1) union.push(loserTags[ut]);
-				}
-				if (union.length > remoteTags.length) {
-					try { await app.set_tags(r.id, JSON.stringify(union)); } catch (e) {}
-				}
-				if (loserLinks.trim()) {
-					try { await app.union_links(r.id, loserLinks); } catch (e) {}
-				}
-				trail('sync diamond CONFLICT', r.id + ' both sides moved — local edit kept as a version');
-			}
 			// The import laid both sides on the remote's copy: it is now the agreed
 			// fork point (S-SYNC #4), at the stamp that copy carries, not the entry's.
 			dbase[r.id] = storedAt; baseDirty = true;
+			// And it is a copy RECEIVED, the one thing that moves the receipt, with the
+			// lineage it came with (lanes DIA, DIA2). Laid down now, before the merge's
+			// writes below move the stamp: a collect between them reads the new copy as
+			// built on this one. A copy that REPLACED this device's copy leaves only the
+			// records of copies it descends from as common ground; a conflict keeps all.
+			var rc = {}, rs = {}, ro = {};
+			rc[r.id] = [storedAt, storedAt, rAnc !== null ? rAnc : []];
+			// Only a copy whose metadata could be read is common ground: a guessed name or
+			// grant list would read as a change the loser made.
+			if (wfOk) rs[r.id] = seenEntry(storedAt, wf);
+			if (!twoSided && rAnc !== null) ro[r.id] = rAnc;
+			recordDiamondCopies(rc, null, rs, ro);
+			if (plan) {
+				// Each write moves `touched`, so the result travels back on the next push
+				// and the other device takes it one-sided: it descends from both copies.
+				if (plan.tags) { try { await app.set_tags(r.id, JSON.stringify(plan.tags)); } catch (e) {} }
+				if (plan.kits && app.set_toolkits) {
+					try { await app.set_toolkits(r.id, JSON.stringify(plan.kits)); } catch (e) {}
+				}
+				if (plan.name !== null) { try { await app.rename_diamond(r.id, plan.name); } catch (e) {} }
+				// A row the merge takes off is a removal this device made since the common
+				// copy, so it goes through the one door every removal here takes: the entry,
+				// then the row. `settle` above left the entry out already; the door keeps it
+				// out should a press have brought the row, stood back up by the import, into
+				// force meanwhile. Read as `settle` reads it, so the two name one entry.
+				for (var pd = 0; pd < plan.drop.length; pd++) {
+					var gr = DaimondMarksHere.parseSidecar(plan.drop[pd].line)[0];
+					try { await removeLinkHere({ owner: r.id, id: plan.drop[pd].id, to: gr ? gr.to : '' }); }
+					catch (e) {}
+				}
+				if (plan.add.trim()) { try { await app.union_links(r.id, plan.add); } catch (e) {} }
+				trail('sync diamond CONFLICT', r.id + ' both sides moved — local edit kept as a version'
+					+ (plan.both ? '; both renamed, "' + wf.name + '" stands over "' + lf.name + '"' : ''));
+			}
 			// RECORD THE SENDER'S MANIFEST, so this device names the SAME chunks the
 			// sender does instead of re-offloading the identical Diamond to fresh
 			// addresses on its next collect. Two things follow: no second upload of a
@@ -8313,6 +9671,13 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 				// manifests drained off the owner's desktop that way in one round on
 				// 2026-09-13, the index falling from 264 KB to 160 KB with no upload
 				// behind it. A device that cannot offload says so rather than promising.
+				// NOR FROM A COPY THE INDEX HAS MOVED PAST: forgetting the manifest so the
+				// collect refills it would upload the older bytes as the file, over the version
+				// whose chunks went missing. The collect settles such a copy instead.
+				if (f && canReoffloadFiles && DaimondCloud.localState) {
+					var fst = await DaimondCloud.localState(key, f, ix[key], { folder: heldLoc(_sharePlan) });
+					if (fst.state === 'stale') f = null;
+				}
 				reason = (f && canReoffloadFiles) ? 'reoffload' : (f ? 'no-file-sync' : 'no-local-file');
 			}
 			reasonOf[key] = reason;
@@ -8534,7 +9899,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		// name and a missing one is a no-op, so a v1, v2 and v3 device all sync in
 		// every direction -- an older side ignores a field it does not know, and a
 		// small Diamond or chat still rides inline so it degrades cleanly.
-		return {
+		var parcel = {
 			v:            3,
 			// Without the model's own conversation: it holds one provider's call ids,
 			// it is this device's copy of what its agent was told, and it would roughly
@@ -8552,17 +9917,40 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			// tombstone (applyFiles); a build before 5.3 in the browser sandbox still
 			// deletes by absence from a census that says it is complete.
 			filesComplete: fileCol.complete === true,
-			// The files this device HELD and deleted, `path -> the hash it held`. The
-			// only thing that deletes a file out of somebody's real folder, and the
-			// reason a device that never received a file cannot cost the device holding
-			// the folder one. A device too old to read this field keeps its copy.
+			// FOR 5.2 AND 5.2.1 RECEIVERS ONLY: this device's own deletions in the storage
+			// it is looking at, `path -> the fingerprint it held`, which is all such a page
+			// can act on (see `noteFileTombs`). A receiver on this build reads the records
+			// below and ignores this field from a sender that says `fileTombsStamped`.
 			fileTombs:    fileTombs(),
 			chunked:      chunked,
-			// The deletions of paths in `chunked`, stamped and joined from every parcel this
-			// device has merged, so a large file deleted anywhere is deleted everywhere (see
-			// "Deletions of index paths" in js/cloud.js). A device too old to read this keeps
-			// its copy, and its copy is no news to one that can.
+			// EVERY WORKSPACE PATH'S DELETIONS AND RETURNS, inline and offloaded, stamped and
+			// joined from every parcel this device has merged, so a file deleted anywhere is
+			// deleted everywhere, whichever parcel a device pulls (see "Deletions of index
+			// paths" in js/cloud.js). Named for the offloaded files it first carried; a
+			// 5.2 page joins and carries the inline records and acts only on content keys.
 			chunkedTombs: window.DaimondCloud && DaimondCloud.tombs ? DaimondCloud.tombs() : {},
+			// Whether `chunked` above is the account's WHOLE index: this device held all of it
+			// at the version this parcel is based on. A device that is not whole learns it back
+			// from a parcel that says so (`syncIndexAt`); a build before 5.3 sends none.
+			chunkedFull:  indexWhole(),
+			// And the last version this device took from another (`DaimondSync.foreignAt`): every
+			// version after it is this device's own push, so a device whole at any of them is
+			// whole after merging this parcel. Masked out of the push's comparison key (sync.js
+			// `compareKey`), since it moves on every pull, so it may depend on nothing else: a
+			// value that flipped with an index write in flight would leave the mailbox holding a
+			// parcel no fresh collect gives. `chunked` is the in-memory index, which holds every
+			// change this page made whether or not its write landed.
+			chunkedFrom:  (window.DaimondSync && DaimondSync.foreignAt) ? (DaimondSync.foreignAt() | 0) : undefined,
+			// And the cursor this device stood at when it last loaded this build over one the build before
+			// wrote, while it has taken nothing foreign since (`DaimondSync.oldAt`): the versions `chunkedFrom` vouches for then
+			// reach back to the build before, and a reader that slept through them keeps the old rule
+			// (QCMG2's G4, `syncIndexAt`).
+			chunkedOld:   (window.DaimondSync && DaimondSync.oldAt && DaimondSync.oldAt() >= 0
+				&& (DaimondSync.foreignAt() | 0) <= DaimondSync.oldAt()) ? DaimondSync.oldAt() : undefined,
+			// This sender keeps the law of those records: it carries every one it holds, and
+			// a path it still carries while its record says deleted is a copy it still owes,
+			// not a write (`applyFiles`). A parcel without it is from an older page.
+			fileTombsStamped: true,
 			diamonds:     dCol.list,
 			// Whether `diamonds` above is the WHOLE store. Nothing reads it today and
 			// nothing needs to: a Diamond is deleted on a tombstone, so absence is not
@@ -8645,6 +10033,10 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			// for ever.
 			ledger:       mergeLedgers(DaimondLedger.entries(), []),
 		};
+		// Which location this parcel's census was of, for the fork point its landing sets.
+		if (fileCol.plan) _parcelPlace.set(parcel, { loc: syncFileLoc(fileCol.plan),
+			left: (fileCol.plan.left || []).map(function (r) { return r.root; }) });
+		return parcel;
 	}
 
 	/// Record, beside our own manifest, the chunk addresses ONE PEER DEVICE's
@@ -8775,6 +10167,8 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		return '';
 	}
 
+	var refusedNoted = {};	// the refusals `applyChats` has put in the trail this page
+
 	/// Merge the chats out of a pulled parcel. Tombstones union first so a
 	/// deletion on either device wins; then remote chats merge into stored chats
 	/// by the same freshest-wins, union-the-transcript rule the cross-tab path
@@ -8854,9 +10248,19 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		// stored truth for exactly these, and a chat the parcel never mentioned cannot
 		// have moved. See item #5-merge.
 		var touched = [];
+		// The chats this parcel carried that could not be read here, by id: refused one by
+		// one, so the rest of the parcel lands. See "ONE CHAT THAT CANNOT BE READ" below.
+		var refused = [];
 		for (var ri = 0; ri < remoteChats.length; ri++) {
 			var src = remoteChats[ri];
 			if (!src || !src.id) continue;
+			if (!chatIdOk(src.id)) {
+				refused.push(String(src.id).slice(0, 64));
+				var inote = 'an id that is not a plain chat id: ' + String(src.id).slice(0, 64);
+				if (!refusedNoted[inote]) { refusedNoted[inote] = 1; trail('sync chat REFUSED', inote); }
+				diag('apply chat REFUSED', 'id not a plain chat id: ' + String(src.id).slice(0, 64));
+				continue;
+			}
 			touched.push(src.id);
 			// WORK ON A SHALLOW COPY. The merge below reassigns this entry's
 			// `messagesRef` and `messages`; mutating the caller's parcel object in
@@ -8910,7 +10314,9 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 					// the Diamond import records. A chat that will UNION with a local
 					// copy is stored as neither side's transcript, so its manifest is
 					// genuinely this device's own and is left for the collector to make.
-					if (!willUnion && Array.isArray(r.messages) && r.messages.length
+					// Only a transcript the law below will let in: a refused one is not
+					// this device's, so neither are the chunks it was read from.
+					if (!willUnion && Array.isArray(r.messages) && r.messages.length && transcriptOk(r.messages)
 						&& incomingRef.key && window.DaimondCloud && DaimondCloud.contentSet) {
 						try {
 							// `adoptedAsOwn` ONLY when the index write landed. If it was
@@ -8934,10 +10340,36 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 				r.messagesRef = null;
 			}
 			notePeerRef('@c/' + r.id, carried, adoptedAsOwn, from);
+			// ONE CHAT THAT CANNOT BE READ COSTS ONLY ITSELF (DL-2, 2026-09-27).
+			//
+			// The transcript law (`transcriptOk`), for a chat this device holds and one it
+			// has never seen alike, on what the parcel carried inline or what its
+			// reference resolved to. A chat that fails it is REFUSED: nothing of it is
+			// stored or merged, this device's own copy (if any) stands, and its sender's
+			// chunks stay declared live (`notePeerRef` above), so nothing is lost here or
+			// in the chunk store. Only that chat: the rest of the parcel merges, and
+			// `applySync` names it in `refused`, not `failed`, so sync.js adopts the
+			// version rather than re-pulling a parcel that will never read differently
+			// and holding this device's work back behind it. Refusing the whole section
+			// held back every good chat behind it and, for as long as the sender kept
+			// that chat, every push of this device's own (the design note is in
+			// specs/daimond_fixbrief_r522_dl2_20260927.md).
+			if (!transcriptOk(r.messages)) {
+				if (!tombs[r.id]) refused.push(r.id);		// a deleted chat is not news either way
+				// In the durable trail once per page for a chat and shape, or a sender that
+				// keeps the chat would write the same line on every pull.
+				var rnote = r.id + ': its transcript is ' + transcriptShape(r.messages)
+					+ (byId[r.id] ? '; this device\'s copy stands' : '; not taken in');
+				if (!refusedNoted[rnote]) { refusedNoted[rnote] = 1; trail('sync chat REFUSED', rnote); }
+				diag('apply chat REFUSED', r.id + ' ' + transcriptShape(r.messages) + (byId[r.id] ? ' held' : ' new'));
+				continue;
+			}
 			var st = byId[r.id];
 			if (!st) {
 				// A chat this device had NO record of. Adopted wholesale -- the
 				// vouched() gate above is what makes that safe. See the refuse note.
+				// Absent is an empty transcript, as a chat whose chunks are gone lands.
+				if (r.messages == null) r.messages = [];
 				diag('apply chat NEW', r.id + ' n=' + (Array.isArray(r.messages) ? r.messages.length : 0));
 				byId[r.id] = r;
 				// What this device pressed on it before its record was lost here (an
@@ -9033,6 +10465,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 				try { await ChatStore.sweepTombs(others[oi]); } catch (e) { /* best effort */ }
 			}
 		}
+		return { refused: refused };
 	}
 
 	/// Merge a pulled remote state into local storage, then refresh the live
@@ -9049,10 +10482,13 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 	/// unless Verbose is on. Two real devices went a week without converging on
 	/// exactly that.
 	///
-	/// Returns `{ failed: [section, …] }`, so the caller can say the merge did
-	/// not finish rather than push its own state over what it could not read.
+	/// Returns `{ failed: [section, …], refused: { chats: [id, …] } }`, so the caller
+	/// can say the merge did not finish rather than push its own state over what it
+	/// could not read. `refused` names the chats that could not be read and were left
+	/// out while the rest of their section merged: that section is not in `failed`.
 	async function applySync(remote) {
 		var failed = [];
+		_chunkedWhole = false;		// set by this apply's chunked section, and only by it
 		if (!remote || typeof remote !== 'object') return { failed: ['parcel'] };
 		// WHOSE PARCEL THIS IS, read before the roster below merges the mark away.
 		// The chat and Diamond sections record this device's chunk refs under its
@@ -9112,7 +10548,13 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		// out, so a later reader gets this round's own state rather than the one both
 		// devices last agreed on.
 		var cloudBase = readJson(SYNC_CLOUDBASE_KEY, {});
-		await section('chats',    function () { return applyChats(remote, from); });
+		// A chat the section REFUSED (it could not be read) is not a section that failed:
+		// the rest merged, and a re-pull would read the same bytes. See `applyChats`.
+		var refused = {};
+		await section('chats',    async function () {
+			var got = await applyChats(remote, from);
+			if (got && got.refused && got.refused.length) refused.chats = got.refused;
+		});
 		await section('diamonds', function () { return applyDiamonds(remote, from); });
 		// EMPTYING THE TRASH HAS TO REACH THE TRASH STORE, not just the chat and
 		// Diamond stores. Destroying a trashed item -- `destroyChat` /
@@ -9149,7 +10591,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		});
 		await section('files',    function () {
 			return applyFiles(remote.files, remote.filesComplete === true,
-				remote.fileTombs, parcelSender(remote), remote.chunkedTombs);
+				remote.fileTombs, parcelSender(remote), remote.chunkedTombs, remote.fileTombsStamped === true, remote.chunked);
 		});
 		// The large files held in the chunk store, reconstructed on demand.
 		await section('chunked',  function () {
@@ -9217,7 +10659,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 				if (Files.refreshResidency) Files.refreshResidency();
 			}
 		} catch (e) {}
-		return { failed: failed };
+		return { failed: failed, refused: refused };
 	}
 
 	/// A fresh chat id, unique against every chat that has ever existed here or on
@@ -15248,11 +16690,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 	function askAnswer(card, text, shown) {
 		if (!card || card.dataset.answered) return;
 		askClose(card, shown);
-		try {
-			chatInput.value = text;
-			chatInput.style.height = 'auto';
-		} catch (e) { /* no composer: the send below will refuse and say nothing */ }
-		sendUserMessage();
+		sendUserMessage(text);
 	}
 
 	/// Mark a card answered: the buttons stop being buttons, and everything stays.
@@ -17464,11 +18902,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		var chat = dispatchedChat(String(turnId));
 		if (!chat) return;
 		try { if (current !== chat) selectChat(chat); } catch (e) { return; }
-		try {
-			chatInput.value = ASK_CHOSE + said;
-			chatInput.style.height = 'auto';
-		} catch (e) { return; }				// no composer: nothing to send through
-		await sendUserMessage();
+		await sendUserMessage(ASK_CHOSE + said);
 	}
 
 	// The one door another module in this file reaches the blocker through. The Files
@@ -21098,7 +22532,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 				: t('turn.peer_consent', { act: act });
 		}
 		else if (st === 'parked')        label.textContent = t('turn.peer_parked');
-		else if (st === 'failed')        label.textContent = t('turn.peer_failed');
+		else if (st === 'failed')        label.textContent = pausedBack(m) || t('turn.peer_failed');
 		else {												// dispatched (pre-claim)
 			// Name the CHOSEN target tentatively while the errand is out but unclaimed,
 			// so the owner sees WHERE it is going -- "Sending to X…", present-progressive,
@@ -21152,6 +22586,18 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			aa.addEventListener('click', function () { answerAgain(current, m.iturn); });
 			foot.appendChild(aa);
 		}
+	}
+
+	/// The pause a runner turned this hand-off away for, in the words every door refuses
+	/// a pause with, or '' when it was not a pause (R53-U8b, QU8 Q3). The runner's report
+	/// names the node (`paused`); the tile said "couldn't finish" and its [Run here] was
+	/// the first anyone heard of a pause. [Run here] stays: it confirms the hold against
+	/// the mailbox, then runs, or says the same words again while the pause holds.
+	function pausedBack(m) {
+		var rep = peerReports[String(m && m.iturn)] || null;
+		if (!rep || rep.status !== 'error' || !rep.paused) return '';
+		try { return DaimondModels.pauseError(String(rep.paused)).message; }
+		catch (e) { return String(rep.why || ''); }
 	}
 
 	/// Draw the footer for a turn whose runner is BLOCKED: what stopped it, and the
@@ -24596,12 +26042,40 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		return id ? [id] : [];
 	}
 
+	/// Say, in the transcript, a hand-off the door turned away before it marked the turn
+	/// (R53-U8, 2026-09-25). `dispatchToPeer` answers a refusal made before its placeholder
+	/// is written -- a person's pause, a transport this build lacks, a throw -- with no row
+	/// behind the prompt, and the send-time caller had already written the prompt and
+	/// cleared the composer: the backstop found no placeholder and let go, so the turn was
+	/// neither run, nor handed on, nor refused in words. A refusal after the mark has its
+	/// own row and its own recovery, and any row of the turn past its prompt means it is
+	/// answered for, so this writes only where nothing else will.
+	function sayIfUnhanded(chat, turnId, r) {
+		try {
+			var tid = String(turnId || '');
+			var msgs = (chat && chat.messages) || [];
+			for (var i = msgs.length - 1; i >= 0; i--) {
+				var m = msgs[i];
+				if (m && String(m.iturn || '') === tid && m.role !== 'user') return;
+			}
+			var paused = !!(r && r.paused);
+			var said = paused ? DaimondModels.pauseError(r.node).message
+				: friendlyError(new Error(String((r && r.why) || 'the hand-off door gave no reason')));
+			chat.messages.push({ role: paused ? 'note_log' : 'error_log', content: said,
+				mid: newMid(), iturn: tid, ts: Date.now() });
+			diag('dispatch unhanded', 'turn=' + tid + ' ' + (paused ? 'paused at ' + r.node : String((r && r.why) || '?')));
+			if (ownsChat(chat)) renderHistory(chat.messages);
+			touchChat(chat);
+			persistChats();
+		} catch (e) { /* the prompt stands in the transcript either way */ }
+	}
+
 	/// At send-time: hand this turn to a peer instead of running it here, when the
 	/// pure policy says so. On a phone with an awake peer that is EVERY turn (the
 	/// answer syncs back); on desktop only a long/agentic turn. Answers whether it
 	/// dispatched; false falls through to the ordinary local run. Guarded, so any
 	/// hiccup runs locally -- the safe default.
-	async function maybeAutoDispatch(chat, text) {
+	async function maybeAutoDispatch(chat, text, words) {
 		try {
 			// A DAIMON DISPATCHES TOO. The election/lease/hand-off is proven for chats and
 			// is switched on for daimons here: the runner services the turn through
@@ -24734,9 +26208,20 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			try { autoLogElection(presence, self, nominee, d, refreshLanded, presumeNomWin, isPhoneViewport()); }
 			catch (e) { /* best-effort */ }
 			if (!d.dispatch) return false;
+			// ASKED AGAIN AT THE COMMIT (R53-U8, 2026-09-25). The question at the top was asked
+			// before the presence refresh, which can hold the send for NOMINEE_REFRESH_CAP_MS,
+			// and a pause that landed in that wait (a pull, another tab's press) was read only by
+			// `dispatchToPeer` -- after the prompt below was written and the composer cleared. It
+			// refused with no placeholder, this caller did not look, and the backstop found no
+			// placeholder to recover: a turn neither run, nor handed on, nor refused in words.
+			// Asked here, in the same synchronous run as `dispatchToPeer`'s own question, so the
+			// two cannot disagree; false, and the local run refuses it in the person's words.
+			if (turnHold(chat)) return false;
 			// Prepared exactly as the explicit path, so the parcel push inside
-			// dispatchToPeer carries the prompt (§4.1).
-			clearComposer();
+			// dispatchToPeer carries the prompt (§4.1). The composer gives up the words
+			// this press sent and nothing typed since (`giveUpSent`), and gives them up
+			// from this conversation's box even when another is on screen now.
+			giveUpSent(chat, words === undefined ? text : words);
 			var umid = newMid();
 			_handoffStart[umid] = tSend;		// origin for the answer-arrival timing
 			// THE IN-FLIGHT TILE MUST ADVERTISE THE DEVICE THE CLAIM ROUTES TO, not the
@@ -24777,7 +26262,11 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 				why:  String((d && d.reason) || '').slice(0, 24),
 			});
 			var uts = Date.now();
-			try { appendUserMessage(text, uts); } catch (e) { /* the record below is the truth */ }
+			// Drawn only into its own thread: the refresh's wait may have taken the person to
+			// another conversation, whose thread this prompt is not.
+			if (ownsChat(chat)) {
+				try { appendUserMessage(text, uts); } catch (e) { /* the record below is the truth */ }
+			}
 			chat.messages.push({ role: 'user', content: text, mid: umid, iturn: umid, ts: uts });
 			touchChat(chat); persistChats();
 			// SHOW THE HAND-OFF THE INSTANT IT IS DECIDED, from the DURABLE record.
@@ -24794,7 +26283,8 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			dispatchToPeer(chat, umid, text, Array.isArray(chat.holds) ? chat.holds : [],
 				{ toId: advId, toName: advName, t0: tSend, diamondId: String(chat.diamondId || ''),
 					tried: electedTried(d) }
-			);
+			).then(function (r) { if (!r || !r.ok) sayIfUnhanded(chat, umid, r); },
+				function (e) { sayIfUnhanded(chat, umid, { ok: false, why: String((e && e.message) || e) }); });
 			// Arm the last-resort recovery backstop: if no peer claims this within ~one
 			// freshness window, run it here rather than let the spinner hang to the
 			// 15-min deadline (Fix B). Money-safe via the take-if-vacant lease. A turn
@@ -25101,7 +26591,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 	/// # Arguments
 	/// * `iturn` - The interrupted turn's id; every message of it carries this.
 	/// * `text` - The prompt the turn was sent with, used only for the empty case above.
-	function continueTurn(chat, iturn, text) {
+	function continueTurn(chat, iturn, text, holdRead) {
 		if (!chat || !text || chat._generating) return;
 		// WITHOUT A TURN ID THERE IS NO TURN TO CONTINUE. The filter below is
 		// `x.iturn === iturn`, and an ordinary message has no `iturn` at all -- so
@@ -25117,6 +26607,18 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		// Asked below this, the badge came off, or the prompt was tombstoned, before
 		// `runTurn` refused the turn that was to replace it.
 		var held = turnHold(chat);
+		// CONFIRMED FIRST, as every person's door is (R53-U8b, QU8 Q4): a play pressed
+		// elsewhere may not have reached this device yet. One read, then asked again; the
+		// chat's in-flight hold (`holdSend`) keeps a second press from a second read.
+		if (held && !holdRead) {
+			if (chat._sending) return;
+			var release = holdSend(chat);
+			confirmHold(chat).then(function () {
+				release();
+				continueTurn(chat, iturn, text, true);
+			});
+			return;
+		}
 		if (held) { toast(DaimondModels.pauseError(held).message, true); return; }
 		// A turn a PEER still holds must not be re-run here (§3.3): that is the
 		// cross-device double bill the lease exists to stop. Only a vacant or expired
@@ -25264,12 +26766,17 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 	/// * `iturn` - The turn to replace; every message of it carries this.
 	/// * `text` - What to send. Retry passes the original prompt back; Edit & resend
 	///   passes what the user rewrote.
-	function retryTurn(chat, iturn, text) {
-		if (!chat || !text || chat._generating) return;
+	/// * `ropts` - `runTurn`'s options for the new turn; a person's retry by default.
+	///
+	/// Answers false where the retry was turned away, so Edit & resend keeps the rewritten
+	/// words; the new turn (`runTurn`'s promise) where one was asked; and true where its
+	/// question was opened again instead, which runs nothing.
+	function retryTurn(chat, iturn, text, ropts) {
+		if (!chat || !text || chat._generating) return false;
 		// The same guard `continueTurn` keeps, and for the same reason: `x.iturn ===
 		// iturn` with an undefined `iturn` matches every ordinary message in the
 		// chat, and the lines below would tombstone the whole transcript.
-		if (!iturn) return;
+		if (!iturn) return false;
 		// A turn a PEER still holds must not be re-run here: that is the cross-device
 		// double bill the lease exists to stop. Only a vacant or expired lease lets a
 		// local retry through.
@@ -25281,7 +26788,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		try {
 			if (dm && window.DaimondPeer && DaimondPeer.dispatchState) {
 				var lease = (window.DaimondLease && DaimondLease.record) ? DaimondLease.record(iturn) : null;
-				if (DaimondPeer.dispatchState(dm, lease, selfDeviceId(), leaseClockNow()) === 'peer-held') return;
+				if (DaimondPeer.dispatchState(dm, lease, selfDeviceId(), leaseClockNow()) === 'peer-held') return false;
 			}
 		} catch (e) { /* fall through to the ordinary retry */ }
 		// NOR IS AN ANSWER RE-SENT BARE FROM HERE (replay site 4). Where the turn is a hand-off
@@ -25292,7 +26799,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		if (dm && window.DaimondPeer && DaimondPeer.dispatchControl
 			&& DaimondPeer.dispatchControl(peerUiStateFor(dm), dm) === 'answeragain') {
 			answerAgain(chat, iturn);
-			return;
+			return true;
 		}
 		// AND THE SAME RULE FOR A TURN THAT NEVER LEFT THIS DEVICE (S6-1). A completed
 		// local ask-answer turn has no dispatched placeholder to key the check above
@@ -25300,14 +26807,14 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		// reopen the question instead, exactly as the dispatched branch just did.
 		if (window.DaimondPeer && DaimondPeer.isAskAnswer && DaimondPeer.isAskAnswer(text)) {
 			answerAgain(chat, iturn);
-			return;
+			return true;
 		}
 		var mine = (chat.messages || []).filter(function (x) { return x.iturn === iturn; });
-		if (!mine.length) return;
+		if (!mine.length) return false;
 		// Idempotent across tabs: a turn another tab has already retracted is not
 		// retracted and billed again here.
 		var tombs = loadMsgTombs();
-		if (mine.every(function (m) { return tombs[m.mid]; })) return;
+		if (mine.every(function (m) { return tombs[m.mid]; })) return false;
 		msgTombstone(mine.map(function (m) { return m.mid; }));
 		chat.messages = (chat.messages || []).filter(function (x) { return x.iturn !== iturn; });
 		chat.app = null;
@@ -25318,7 +26825,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		try { if (window.DaimondJournal) DaimondJournal.clearTurn(iturn); }
 		catch (e) { /* the continuation opens an entry of its own */ }
 		renderHistory(chat.messages);
-		runTurn(chat, text);
+		return runTurn(chat, text, ropts || { person: true });
 	}
 
 	/// Put the last question back in the composer, and run NOTHING.
@@ -25640,20 +27147,26 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 
 	/// What the one button under the composer means right now.
 	///
-	/// Three modes, not two. `stop` is what a turn used to put on the button for its
+	/// Four modes. `stop` is what a turn used to put on the button for its
 	/// whole length; it still does, but only while the box is empty. With something
 	/// typed in it during a turn the button is `interject` — an ordinary Send arrow
 	/// that puts what was written into the turn already running. The two cannot
 	/// share a button honestly: a user who has just typed a correction and presses ■
 	/// has killed the turn they were trying to steer.
 	function setSendMode(mode) {
-		chatSend.disabled = false;
+		// SENDING: a press of this conversation's is still on its way (`holdSend`), so the
+		// button says so and a second press cannot start a second send.
+		chatSend.disabled = mode === 'sending';
+		chatSend.classList.toggle('sending', mode === 'sending');
+		if (mode === 'sending') chatSend.setAttribute('aria-busy', 'true');
+		else chatSend.removeAttribute('aria-busy');
 		// THE LABEL AND THE TITLE ARE ONE SENTENCE. The markup's `aria-label` said
 		// "Send" for the life of the page while the title changed under it, so a
 		// screen reader was told to press Send to stop a turn. Whatever the title
 		// says, the label says.
 		var words = mode === 'stop'      ? t('chat.stop')
 			: mode === 'interject'       ? t('chat.send_into')
+			: mode === 'sending'         ? t('chat.sending')
 			:                              t('chat.send');
 		if (mode === 'stop') { chatSend.innerHTML = '■'; chatSend.classList.add('stop'); }
 		else {
@@ -25668,8 +27181,9 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		if (chatStop) chatStop.hidden = true;
 	}
 
-	/// Which of the three the button should be showing.
+	/// Which of the four the button should be showing.
 	function sendMode() {
+		if (current && current._sending) return 'sending';
 		if (!curGen()) return 'send';
 		return (chatInput && chatInput.value && chatInput.value.trim()) ? 'interject' : 'stop';
 	}
@@ -30816,8 +32330,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		// same send path, so there is still only one way a turn begins.
 		ask: function (text) {
 			if (!chatInput || curGen()) return;
-			chatInput.value = text;
-			sendUserMessage();
+			sendUserMessage(String(text || ''));
 		},
 		// Cross-device sync (driven by sync.js): read the state to push, and
 		// apply what was pulled. Read-only views onto the chat store, so the
@@ -30850,6 +32363,9 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		// The fork point a parcel sets if it lands, taken when it is collected; sync.js
 		// hands it to `syncCommitBaseline` on the landing.
 		syncForkPoint:      syncForkPoint,
+		// The storage location the files would be merged and collected in right now, cheaply
+		// (no walk): sync.js keeps the version each location has merged (QFB4-1).
+		syncLoc:            syncLocNow,
 		/// Whether this device may DECLARE the account's live chunk set.
 		///
 		/// Committing tells the gateway to sweep every chunk the declared index
@@ -30858,6 +32374,10 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		/// applyChunked merges. A device that refused the other device's index and
 		/// then committed its own swept the account's cloud files away.
 		syncMayCommitChunks: mayCommitChunks,
+		// The "whole at" mark the commit gate reads: moved on each version the engine stands
+		// at, and asked before a round collects whether a merge is owed first.
+		syncIndexAt:    syncIndexAt,
+		syncIndexOwed:  syncIndexOwed,
 		/// The live chunk set the pushed parcel declares: the committed index union
 		/// every address the parcel itself references, so the commit can never sweep a
 		/// chunk the parcel it just pushed points at. See `parcelRefs`.
@@ -30915,6 +32435,12 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		// never did, so the banner it raised stood for ever.
 		noteCloudIndexStuck: noteCloudIndexStuck,
 		clearStorageAlarm:   storageAlarmClear,
+		// And when a file's deletion or return could not be recorded durably (cloud.js's
+		// record set): said, never swallowed (A5, DEL-4), as the old file tomb store said it.
+		noteDeletionUnrecorded: function () {
+			storageAlarm(tOr('store.delete_unrecorded',
+				'a deletion could not be recorded — this browser’s storage is full'));
+		},
 		// This device's own line in the roster `devices` section of the parcel.
 		// sync.js masks that line's `seen` stamp out of the push-skip comparison --
 		// `touchSelfDevice` moves it every five minutes whether or not anything else
@@ -31190,6 +32716,46 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		try {
 			var k = chatDraftKey(current);
 			if (k && window.DaimondDrafts) DaimondDrafts.drop(k);
+		} catch (e) { /* storage blocked */ }
+	}
+
+	/// Take out of a conversation's composer the words a send has just committed -- a
+	/// prompt written, a message queued or said into a turn -- and nothing else.
+	///
+	/// NOTHING A PERSON TYPED IS CLEARED UNLESS IT WAS SENT, OR THEY CLEARED IT (R53-U8b,
+	/// 2026-09-27). The send reads the box at the press and may wait seconds before it
+	/// commits (the hold's confirming read, the nominee's refresh). It then cleared the
+	/// box whole, so words typed during the wait went with the words sent, and never
+	/// reached anyone (QU8 Q1). Now the words sent are taken off the front of what is
+	/// there, where they still stand; a box edited since keeps everything, since the
+	/// words that went are in the transcript. A conversation left during the wait keeps
+	/// its text on its record and in the draft store, and is trimmed there.
+	function giveUpSent(chat, words) {
+		var w = String(words || '').trim();
+		if (!w) return;			// the words came from another door: the box gave nothing
+		var trim = function (v) {
+			var s = String(v || '').replace(/^\s+/, '');
+			if (!w || s.indexOf(w) !== 0) return String(v || '');		// edited since: all of it stays
+			return s.slice(w.length).replace(/^\s+/, '');
+		};
+		var k = chatDraftKey(chat);
+		// THE BOX HOLDS THIS CONVERSATION'S WORDS when its draft is the one bound to it
+		// (`composerDraft`), which is the chat on screen, or a Diamond's either face.
+		var onScreen = !!chatInput && (chat === current || (!!k && chatInput.dataset.draftKey === k));
+		if (onScreen) {
+			var left = trim(chatInput.value);
+			if (!left) { clearComposer(); return; }
+			if (left === chatInput.value) return;
+			chatInput.value = left;
+			fitComposer();
+			if (chat) chat._draft = '';
+			try { if (k && window.DaimondDrafts) DaimondDrafts.set(k, left); } catch (e) { /* storage blocked */ }
+			return;
+		}
+		if (!chat) return;
+		chat._draft = trim(chat._draft);
+		try {
+			if (k && window.DaimondDrafts) DaimondDrafts.set(k, trim(DaimondDrafts.get(k)));
 		} catch (e) { /* storage blocked */ }
 	}
 
@@ -31612,14 +33178,107 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		return '/concise ' + text;
 	}
 
-	async function sendUserMessage() {
-		var text = chatInput.value.trim();
+	var HOLD_CONFIRM_CAP_MS = 4000;		// how long that read may hold the send, as a nominee refresh may
+
+	/// Read the mailbox once, bounded, so the pause this device holds is the account's
+	/// latest before a typed turn is refused for it. Never throws; a read that does not
+	/// land in time leaves the hold as this device has it.
+	async function confirmHold(chat) {
+		var t0 = Date.now(), was = turnHold(chat), landed = false;
+		if (!was) return;
+		if (!window.DaimondSync || !DaimondSync.pull) return;
+		if (typeof navigator !== 'undefined' && navigator.onLine === false) return;
+		try {
+			await Promise.race([
+				Promise.resolve(DaimondSync.pull(true)).then(function (v) { landed = v >= 0; }),
+				new Promise(function (r) { setTimeout(r, HOLD_CONFIRM_CAP_MS); }),
+			]);
+		} catch (e) { /* the hold stands as this device has it */ }
+		diag('hold confirm', 'chat=' + (chat && chat.id) + ' held at ' + was + '; read '
+			+ (landed ? 'landed' : 'did not land') + ' in ' + (Date.now() - t0) + 'ms; now '
+			+ (turnHold(chat) || 'free'));
+	}
+
+	/// Hold a conversation's composer while one press is being sent: the Send control reads
+	/// as sending and a second press does nothing. Answers the release, which is idempotent.
+	///
+	/// ONE SEND IN FLIGHT PER CONVERSATION (R53-U8b, 2026-09-27). A press can wait before
+	/// anything is written -- the hold's confirming read, the nominee's presence refresh,
+	/// each up to 4 s -- and the words stay in the box through it. A second press in that
+	/// wait ran a second election on the same words and handed the turn off twice, paid
+	/// twice (QU8 Q2, on 5.2 as well). Per conversation, not per page: a page-wide flag
+	/// also dropped, unsaid, a press in another chat (QU8 Q1's note).
+	function holdSend(chat) {
+		if (!chat) return function () {};
+		var freed;
+		chat._sending = true;
+		chat._sent = new Promise(function (r) { freed = r; });		// what a waiting door awaits
+		syncSendMode();
+		var done = false;
+		return function () {
+			if (done) return;
+			done = true;
+			chat._sending = false;
+			freed();
+			if (current === chat) syncSendMode();
+		};
+	}
+
+	/// The one door a message leaves by. With no argument it sends what the composer holds
+	/// (Send, Enter). Every other door -- an ask card answered, the phone sheet's Ask, a
+	/// question answered from another device -- passes its own words, which are sent as given
+	/// and never written into the box, so what the person is typing there stays theirs.
+	async function sendUserMessage(said) {
+		var own = typeof said === 'string';
+		var text = own ? said.trim() : chatInput.value.trim();
 		if (!text) return;
+		// The conversation this press is for, whichever is on screen by the time it goes.
+		var target = current;
+		if (target && target._sending) {
+			// The composer's own second press does nothing: its control reads "Sending…".
+			if (!own) return;
+			// ANOTHER DOOR WAITS ITS TURN (R53-U8c, QU8b QB1). Turned away here, a card's answer
+			// or a sheet's question went nowhere and nothing on screen said so. It goes once
+			// the press in flight has.
+			while (target._sending) await target._sent;
+		}
+		// `words` is what the box gives up for this press (`giveUpSent`): what it sent, taken
+		// before `conciseText` dresses it, or nothing when another door brought the words.
+		// `handed` is set once the release is passed to a turn that has yet to start, which
+		// releases it itself.
+		var press = { words: own ? '' : text, release: holdSend(target), handed: false };
+		try { await sendPressed(target, text, press); }
+		finally { if (!press.handed) press.release(); }
+	}
+
+	/// The body of one press of Send, held (`holdSend`) until it is sent or given up.
+	///
+	/// SENT TO THE CONVERSATION PRESSED ON, NOT THE ONE ON SCREEN (R53-U8c, QU8b QB2). A press can
+	/// wait seconds (the hold's confirming read, the nominee's refresh), and a person who opened
+	/// another conversation in that wait had their press cancelled, with no row and nothing said.
+	/// Now it goes on: a hand-off commits to its own conversation wherever the person is (drawn
+	/// only where it is on screen, `ownsChat`), and a turn that must run here, which draws into
+	/// the thread on screen, is queued on its conversation instead, badged on its tile, and run
+	/// the moment the person is back (`resumeQueue`), as a message queued behind a turn is.
+	async function sendPressed(target, text, press) {
+		var words = press.words;
+		// A HOLD IS CONFIRMED BEFORE A TYPED TURN IS REFUSED FOR IT (R53-U8, 2026-09-25). The
+		// pause tree is the account's, and a press reaches this device by sync, seconds after
+		// it was made elsewhere: a turn typed here moments after play was pressed on another
+		// device read the hold that play had ended, and was refused for a pause nobody held
+		// any more. So one bounded read of the mailbox first; every door after it asks again
+		// (`maybeAutoDispatch`, `runTurn`, `runSteer`) and refuses, in words, only a hold
+		// that is still the account's.
+		var holdRead = false;
+		if (target && turnHold(target)) {
+			await confirmHold(target);
+			holdRead = true;
+		}
 		// A Diamond's chat view uses this composer and this thread, but not this turn:
 		// a daimon's tools are pinned to its own directory, its fence is the Diamond's
 		// scope, and its turn records a crystal version when it writes one. The two
 		// part here, and only here.
-		if (current && current.diamondId) {
+		if (target && target.diamondId) {
 			// A message typed while the daimon is mid-turn is HELD, not dropped. This
 			// branch used to `return` on the busy flag and do nothing else: the Send
 			// button is enabled and reads "Send" throughout a steer -- `sendMode` asks
@@ -31638,14 +33297,18 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			// app, so a turn running on ANOTHER Diamond queued this one -- tester
 			// note 14. A daimon queues behind its own turn, as a chat queues behind
 			// its own, and behind nobody else's.
-			if (diamondBusy(current.diamondId)) { enqueueMessage(current, text); return; }
+			if (diamondBusy(target.diamondId)) { enqueueMessage(target, text, words); return; }
 			// AUTO-DISPATCH the daimon turn, exactly as a chat does (§4.1). The queue guard
 			// above runs FIRST, so a steer typed during this daimon's own in-flight turn
 			// queues rather than dispatching a second time. `maybeAutoDispatch` pushes the
-			// user message, clears the composer and hands off to the runner (which services
-			// it through `steer_crystal`); false falls through to the ordinary local steer.
-			if (await maybeAutoDispatch(current, text)) return;
-			clearComposer();
+			// user message, gives up the words it sent and hands off to the runner (which
+			// services it through `steer_crystal`); false falls through to the local steer.
+			if (await maybeAutoDispatch(target, text, words)) return;
+			// Queued where it cannot run now: a turn that began on this Diamond in the wait
+			// (where `runSteer` would turn a typed preset away unsaid), or a Diamond left in
+			// the wait, since a steer runs on the one on screen.
+			if (diamondBusy(target.diamondId) || current !== target) { enqueueMessage(target, text, words); return; }
+			giveUpSent(target, words);
 			doSteer(text);
 			return;
 		}
@@ -31656,12 +33319,12 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		// Checked BEFORE anything is queued: a message held behind a turn on a
 		// provider that cannot run would be queued now and refused later, when the
 		// user has moved on and the refusal is a mystery.
-		var can = current
-			? !!(window.DaimondModels && DaimondModels.resolve(current.provider, current.model))
+		var can = target
+			? !!(window.DaimondModels && DaimondModels.resolve(target.provider, target.model))
 			: cfgReady(cfg);
 		if (!can) { openSettings(t('chat.connect_to_chat')); return; }
-		if (!current) { newChat(); }
-		var chat = current;
+		if (!target) { newChat(); target = current; }
+		var chat = target;
 		// A PENDING chat whose composer is on screen only because its keys would not
 		// read (the compose-resilience path): once a key has been re-entered `can` is
 		// true again, so typing and sending is the natural way to begin. Start it here
@@ -31684,9 +33347,15 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		// anything else still waits in the queue, badged on its tile, exactly as it
 		// did. The composer clears either way, so typing then sending feels the same
 		// whether or not an answer happens to be arriving.
+		if (!chat._sending) {
+			// A conversation made by this press is held too, through the election's wait.
+			var releaseFirst = press.release;
+			var releaseNew = holdSend(chat);
+			press.release = function () { releaseFirst(); releaseNew(); };
+		}
 		if (chat._generating) {
-			if (current === chat && interjectMessage(chat, text)) return;
-			enqueueMessage(chat, text);
+			if (current === chat && interjectMessage(chat, text, words)) return;
+			enqueueMessage(chat, text, words);
 			return;
 		}
 		// AUTO-DISPATCH (§4.1): with a fresh awake peer, a phone hands EVERY turn to
@@ -31698,16 +33367,33 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		// have cost nothing. This is where the turn it names is taken out of the
 		// transcript and asked again in the rewritten words -- through `retryTurn`,
 		// so the two controls share one retraction and cannot come to disagree.
+		// The rewritten words leave the box only once the retraction has gone through: a
+		// retry turned away (a peer holds the turn, another tab took it) keeps them there.
 		var replacing = chat._editing;
+		// An edit of a conversation left in the wait stays in its box, still marked as the
+		// edit: the retraction redraws the thread on screen, which is not this one's.
+		if (replacing && current !== chat) return;
 		if (replacing) {
 			chat._editing = null;
-			clearComposer();
-			retryTurn(chat, replacing, text);
+			var went = retryTurn(chat, replacing, text, { person: true, onStart: press.release });
+			if (!went) return;
+			giveUpSent(chat, words);
+			// A turn asked again holds the press until it is under way or ends, as a new turn
+			// does below. A question opened again runs nothing, so the press ends here: held
+			// for a turn that never comes, the Send control read "Sending…" until a reload.
+			if (went !== true) { press.handed = true; Promise.resolve(went).then(press.release, press.release); }
 			return;
 		}
-		if (await maybeAutoDispatch(chat, text)) return;
-		clearComposer();
-		runTurn(chat, text);
+		if (await maybeAutoDispatch(chat, text, words)) return;
+		// Left in the wait: a local turn draws into the thread on screen, which is no longer
+		// this one's, so it waits on its own conversation's queue for the person's return.
+		if (current !== chat) { enqueueMessage(chat, text, words); return; }
+		giveUpSent(chat, words);
+		// HELD UNTIL THE TURN IS UNDER WAY. `runTurn` awaits its scope before it marks the
+		// chat generating, and a second press in that gap started a second turn.
+		press.handed = true;
+		Promise.resolve(runTurn(chat, text, { person: true, holdRead: holdRead, onStart: press.release }))
+			.then(press.release, press.release);
 	}
 
 	// ── What you typed while the answer was still coming ───────
@@ -31732,11 +33418,13 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 	// half-second of intent, not content, and either restored after a crash would
 	// spend money on a turn the user cannot remember asking for.
 
-	/// Hold a message until the turn in flight has finished.
-	function enqueueMessage(chat, text) {
+	/// Hold a message until the turn in flight has finished. `words`, where the box held
+	/// something other than `text` (a `/concise` prefix is added on the way), is what the
+	/// composer gives up for it.
+	function enqueueMessage(chat, text, words) {
 		chat._queue = chat._queue || [];
 		chat._queue.push(text);
-		clearComposer();
+		giveUpSent(chat, words === undefined ? text : words);
 		syncSendMode();
 		renderQueue();
 	}
@@ -31748,13 +33436,13 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 	/// the truth. Returns false when this build's agent cannot take one — an older
 	/// wasm bundle, or a chat whose agent has been thrown away — so the caller falls
 	/// back to the queue rather than dropping what was typed.
-	function interjectMessage(chat, text) {
+	function interjectMessage(chat, text, words) {
 		if (!chat.app || typeof chat.app.interject !== 'function') return false;
 		try { chat.app.interject(text); }
 		catch (e) { return false; }
 		chat._interject = chat._interject || [];
 		chat._interject.push(text);
-		clearComposer();
+		giveUpSent(chat, words === undefined ? text : words);
 		syncSendMode();
 		renderQueue();
 		return true;
@@ -32047,7 +33735,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		chat._queueFailed = false;
 		var next = q.shift();
 		renderQueue();
-		runTurn(chat, next);
+		runTurn(chat, next, { person: true });
 	}
 
 	/// Pick up a queue left on a chat, now the user has come back to it.
@@ -32099,7 +33787,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		rec._queueFailed = false;
 		var next = rec._queue.shift();
 		renderQueue();
-		setTimeout(function () { doSteer(next); }, 0);
+		setTimeout(function () { runSteer(currentDiamond, next, 0, null, { person: true }); }, 0);
 	}
 
 	/// Pick up a queue left on a Diamond, now the user has come back to it.
@@ -32327,6 +34015,8 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		if (J) J.turnOpen(umid, chat.id, text, { model: chat.model, provider: chat.provider });
 
 		chat._generating = true;
+		// The press that asked for this turn is let go now the turn is under way (`holdSend`).
+		if (typeof opts.onStart === 'function') { try { opts.onStart(); } catch (e) { /* the turn goes on */ } }
 		busySay(chat, tOr('chat.busy', 'Thinking…'));
 		syncComposer();               // Stop on the button, and the queue hint in the box
 		chat.app = app;
@@ -32818,7 +34508,21 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 				// door for a pause landing MID-turn (the `round_meta` top-up, and
 				// `remint` on a key the provider has refused).
 				var hold = turnHold(chat);
+				// A PERSON'S TURN IS REFUSED ONLY FOR A HOLD THE ACCOUNT STILL HAS (R53-U8b, QU8 Q4).
+				// The pause this device holds is the account's as of its last read, and a play
+				// pressed elsewhere reaches it seconds later. The composer confirms before its
+				// election (`sendUserMessage`); a retry, an edit and resend and a queued message
+				// reach this door with no read behind them, so they are confirmed here, the one
+				// door they share. A runner's turn and an automated one are not: the errand
+				// carries its own pause record, and a trigger is asked again at its next fire.
+				if (hold && opts.person && !opts.holdRead) {
+					await confirmHold(chat);
+					hold = turnHold(chat);
+				}
 				if (hold) throw DaimondModels.pauseError(hold);
+				// The folders this device knows, as its record stands at the turn's start: the
+				// daimon's `file_revert` asks the engine which rows are another folder's (HK1).
+				await Files.reknow();
 				// F1 TURN START — raise the credits key to a whole turn's headroom BEFORE the
 				// first round, so a turn worth more than the mint float is not refused at the
 				// cap and re-run on a fresh key (billed once for nothing). This also reconciles
@@ -35011,6 +36715,9 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 					if (wer && wer.key) { build(); await scope(); }
 				} catch (ew) { /* best-effort; run on the key just minted */ }
 			}
+			// The folders this device knows, as its record stands at the turn's start: a
+			// worker's `file_revert` asks the engine which rows are another folder's (HK1).
+			await Files.reknow();
 			try {
 				try {
 					// Cleared as it is read, so one re-route buys one vision nudge: a worker
@@ -36666,9 +38373,9 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 				Pending.drop(it.id);
 				return;
 			}
-			if (Pending.heldFor(f)) return;
+			if (await Pending.heldFor(f)) return;
 			await selectDiamond(f, 'chat');
-			if (Pending.heldFor(f)) return;
+			if (await Pending.heldFor(f)) return;
 			Pending.drop(it.id);
 			var text = t('pending.proposal_do', { headline: it.headline })
 				+ (it.detail ? '\n' + it.detail : '');
@@ -36683,8 +38390,13 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		/// shown, the tile was gone, and after play there was nothing left to tick. This is
 		/// the question that check asks (`turnHold`), so the two cannot disagree, and it is
 		/// asked again after the Diamond opens, for a pause pressed while it did.
-		heldFor: function (f) {
+		heldFor: async function (f) {
 			var hold = turnHold({ diamondId: f.id });
+			// Confirmed against the mailbox before the tile is refused (R53-U8b, QU8 Q4).
+			if (hold) {
+				await confirmHold({ diamondId: f.id });
+				hold = turnHold({ diamondId: f.id });
+			}
 			// In the neutral voice, as the refusal in the thread is (Q6-3): a pause is
 			// the person's, not a fault.
 			if (hold) toast(DaimondModels.pauseError(hold).message);
@@ -36705,7 +38417,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			var f = (diamonds || []).find(function (x) { return x.id === it.diamondId; });
 			// Where the conversation it would open is held, the discussion cannot start:
 			// nothing is declined and the tile stays, for once play is pressed (Q6-2).
-			if (f && Pending.heldFor(f)) return;
+			if (f && await Pending.heldFor(f)) return;
 			// Discussing an ACT is declining it. The worker cannot wait on a
 			// conversation — it is holding a tool call open — and a yes arrived at
 			// three messages later would be a yes to a turn that had already been
@@ -38547,6 +40259,8 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		}
 
 		function bind() {
+			// Another tab minted or forgot a folder's id: this tab's engine reads the record again.
+			try { FsaDB.changed(function () { reknow(); }); } catch (e) { /* no record to follow */ }
 			var panel = document.getElementById('panel-work');
 			if (!panel) return;
 			pathEl = panel.querySelector('.files-path');
@@ -39122,7 +40836,9 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 				var r = await DaimondCloud.reclaim(true);
 				showModeMsg(r.evicted.length
 					? ('Freed ' + fmtBytes(r.freed) + ' from ' + r.evicted.length + ' files; they stay in cloud storage.')
-					: 'Nothing to free. Everything here is pinned or not in cloud storage.');
+					: (r.why === 'undeclared'
+						? t('files.reclaim_undeclared')
+						: 'Nothing to free. Everything here is pinned or not in cloud storage.'));
 				showCloudView();
 			});
 		}
@@ -39309,6 +41025,41 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			await activateFolder(handle, true);
 		}
 
+		/// Hand the engine the folders this device knows as its record of folders stands now,
+		/// with the open folder's own handle and id (HK1 of HR's QA round 3, 2026-09-27).
+		///
+		/// The list was handed only when this tab opened a folder, so a folder picked later in
+		/// another tab was one this device "cannot name" here: a Restore asked about its row
+		/// with a sentence that was false, and "Replace them" wrote that folder's file into
+		/// this one. Called before every restore or undo opens (`versions.js` `restoreAt`), at
+		/// every turn's start (a daimon's `file_revert` reads the list too), when another tab
+		/// mints or forgets a folder (`FsaDB.changed`), and after every activation.
+		///
+		/// ONE READ AT A TIME, IN ORDER: two reads can finish out of order, and the older one
+		/// handed last would undo the newer. Answers once the list is handed, or after
+		/// `KNOWN_WAIT_MS`, whichever is first: past that the caller goes on with the list as
+		/// it stood, whose worst is a known folder asked about as unknown -- a question, never
+		/// a write -- and the read is still handed when it finishes.
+		var KNOWN_WAIT_MS = 3000;
+		var knowing = Promise.resolve();
+		function reknow() {
+			var run = knowing.then(handKnown);
+			knowing = run.catch(function () { /* the next call reads again */ });
+			return Promise.race([run.catch(function () {}),
+				new Promise(function (r) { setTimeout(r, KNOWN_WAIT_MS); })]);
+		}
+		async function handKnown() {
+			var h = folderHandle;
+			if (!h) return;                 // browser storage: the engine reads no list there
+			var known;
+			try { known = await FsaDB.known(); } catch (e) { return; }   // keep what it holds
+			// THE SAME FOLDER ONLY. One switched, closed or lost while the record was read has
+			// said what is open itself, and handing this handle back would undo it.
+			if (folderHandle !== h) return;
+			try { set_workspace_dir(h, folderFid, JSON.stringify(known || [])); }
+			catch (e) { /* the engine keeps the list it had */ }
+		}
+
 		// Point the wasm file tools at `handle`, mirror the UI, re-read the rules from
 		// the root that is now active, optionally persist the handle for reconnect, and
 		// refresh the tree.
@@ -39320,14 +41071,24 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			// nothing: every mark in the folder waits, and a press there is refused.
 			var fid = '';
 			try { fid = await FsaDB.folderId(handle); } catch (e) { fid = ''; }
+			// THE FOLDERS THIS DEVICE KNOWS (HX1): a row from one of them is another folder's
+			// file and is left; a row from any other -- another device's folder, a moved one,
+			// one forgotten -- is asked about before it goes back over different bytes.
+			var known = [];
+			try { known = await FsaDB.known(); } catch (e) { known = []; }
 			try {
-				set_workspace_dir(handle);
+				// The engine names the folder by the same id, so a version row of a file in it
+				// goes back into this folder and no other (HR, 2026-09-25).
+				set_workspace_dir(handle, typeof fid === 'string' ? fid : '', JSON.stringify(known || []));
 			} catch (e) {
 				showModeMsg('Failed to switch to the folder: ' + (e && e.message ? e.message : e), true);
 				return;
 			}
 			folderHandle = handle;
 			folderFid = typeof fid === 'string' ? fid : '';
+			// A folder another tab minted while this one read the record would be missing from
+			// the list just handed: read again, in turn behind any read already running.
+			reknow();
 			rootHandle = handle;            // the folder to offer after a trip to the sandbox
 			if (persist) { try { await FsaDB.save(handle); } catch (e) { /* non-fatal */ } }
 			renderMode();
@@ -42441,8 +44202,13 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			clear:         clear,
 			// The open folder, for the status row that reports on it. Null on the sandbox.
 			folder:        function () { return folderHandle; },
+			// Whether a machine folder is remembered here, open or not (the sandbox after a
+			// lost grant keeps it to reconnect to). See `syncIndexOwed`.
+			remembersFolder: function () { return !!(folderHandle || rootHandle); },
 			// Its id on this device, which the record of marks keys it by. Empty on the sandbox.
 			folderId:      function () { return folderFid; },
+			// The engine's list of known folders read again; see `reknow`.
+			reknow:        reknow,
 			// ── What the `+` picker borrows ────────────────────────────
 			//
 			// The picker in the attachment footer browses the SAME tree this
@@ -42733,6 +44499,9 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		folder:  function () { try { return Files.folder(); } catch (e) { return null; } },
 		// The open folder's id on this device, for `dev/verify_m2_samename.mjs`.
 		folderId: function () { try { return Files.folderId(); } catch (e) { return ''; } },
+		// The folders this device knows, handed to the engine again: `versions.js` asks before
+		// every restore or undo opens (HK1).
+		reknow: function () { try { return Files.reknow(); } catch (e) { return Promise.resolve(); } },
 		entries: function (dir) { return Files.entries(dir || ''); },
 		// What sync may write into and delete from on another device's word: the
 		// folders shared AND in force here (R2), for the verifiers of marks.
@@ -43367,6 +45136,17 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 				});
 			});
 		}
+		// ANOTHER TAB'S FOLDERS (HK1 of HR's QA round 3, 2026-09-27). Each tab hands its engine
+		// the ids of the folders this device knows, and an id minted or forgotten in one tab is
+		// news to every other: each hands its engine the list again (`Files` `reknow`). A tab
+		// does not hear its own post; its own mint is read by the activation that made it.
+		var chan = null;
+		try { if (typeof BroadcastChannel === 'function') chan = new BroadcastChannel(FDB); }
+		catch (e) { chan = null; }
+		function told() {
+			try { if (chan) chan.postMessage('folders'); }
+			catch (e) { /* no channel: each tab still reads the record before a restore */ }
+		}
 		function mint() {
 			var b = new Uint8Array(16);
 			crypto.getRandomValues(b);
@@ -43391,7 +45171,20 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			}
 			var id = mint();
 			await tx(FDB, FOLDERS, 'readwrite', function (s) { s.put(handle, id); });
+			told();
 			return id;
+		}
+		// Has the folder `handle` names gone from where it was picked? Only a look inside it
+		// can say, and only with a grant; a refusal of the look says nothing.
+		async function gone(handle) {
+			try {
+				if (!handle || typeof handle.queryPermission !== 'function') return false;
+				if ((await handle.queryPermission({ mode: 'read' })) !== 'granted') return false;
+				await handle.values().next();
+				return false;
+			} catch (e) {
+				return !!(e && e.name === 'NotFoundError');
+			}
 		}
 		// One resolution at a time in this tab, so two activations of a new folder at once
 		// cannot mint it two ids.
@@ -43409,12 +45202,40 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 				chain = run.catch(function () { /* the caller hears it */ });
 				return run;
 			},
+			/// The ids of the folders this device knows, for the engine to tell another
+			/// folder's version row from one it cannot place (HX1 of HR's QA, 2026-09-25).
+			/// A folder whose kept handle says it is no longer there -- moved or renamed
+			/// while its grant held -- is not one: its rows are asked about, not left for
+			/// good. A handle the browser will not let Daimond look into is kept, since
+			/// nothing says it has gone.
+			known: async function () {
+				var ids = [], kept = [];
+				await tx(FDB, FOLDERS, 'readonly', function (s) {
+					var q = s.openCursor();
+					q.onsuccess = function () {
+						var c = q.result;
+						if (!c) return;
+						if (typeof c.key === 'string' && ID_RE.test(c.key)) { ids.push(c.key); kept.push(c.value); }
+						c.continue();
+					};
+				});
+				var out = [];
+				for (var i = 0; i < ids.length; i++) {
+					if (!(await gone(kept[i]))) out.push(ids[i]);
+				}
+				return out;
+			},
 			/// Forget `id`: "Forget" (`showMachineInfo`) drops the folder's kept handle too, so
 			/// a folder picked again after it gets a fresh id and its marks wait for "Use here"
 			/// (M2-F4). A no-op where `id` is empty, which nothing was ever kept under.
 			forget: function (id) {
 				if (!id) return Promise.resolve();
-				return tx(FDB, FOLDERS, 'readwrite', function (s) { s.delete(id); });
+				return tx(FDB, FOLDERS, 'readwrite', function (s) { s.delete(id); })
+					.then(function (v) { told(); return v; });
+			},
+			/// Call `fn` whenever another tab of this account mints a folder's id or forgets one.
+			changed: function (fn) {
+				if (chan && typeof fn === 'function') chan.addEventListener('message', function () { fn(); });
 			},
 		};
 	})();
@@ -49261,6 +51082,8 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		// Too large to have kept a body at all: the manifest says the file changed
 		// and there is nothing to compare or to put back (contract §3).
 		if (e.skipped === 'size') { refuse(t('versions.too_big')); return row; }
+		// Saved in a folder that was closed by the time it was recorded (HX4).
+		if (e.skipped === 'folder') { refuse(t('versions.other_folder')); return row; }
 		if (e.skipped) { refuse(t('versions.not_here')); return row; }
 		// THE BODY THIS ROW DEPENDS ON. A deletion is restored from what the file
 		// WAS; every other change from what it became.
@@ -49299,7 +51122,9 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 				noticeDialog(t('fold.busy_title'), t('fold.busy_body', { diamond: f.name || '' }));
 				return;
 			}
-			var res = await DaimondVersions.restoreFile(id, e.path, v);
+			// This row, by its folder too: one path can have a row from two places at
+			// one version, and the one pressed is the one put back (HX3).
+			var res = await DaimondVersions.restoreFile(id, e.path, v, e.folder || '');
 			// THE FENCE'S OWN WORDS, in the row. A mark since withdrawn, or a path
 			// the fence no longer covers, is refused where the user pressed rather
 			// than in a dialog that says nothing about which file (contract §6).
@@ -52476,7 +54301,9 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 	/// * `detached` - When present (`{ chat, turnId, onProgress }`) this is a runner
 	///   servicing a handed-off errand: use the given chat record, anchor to `turnId`,
 	///   and stream liveness/tail through `onProgress`, rather than the on-screen daimon.
-	async function runSteer(f, presetArg, depthArg, detached) {
+	/// * `how` - `{ person: true }` for a person's queued steer, whose pause is confirmed
+	///   against the mailbox before it is refused.
+	async function runSteer(f, presetArg, depthArg, detached, how) {
 		if (!f) return '';
 		// A STEER TYPED WHILE THIS DIAMOND'S OWN TURN IS IN FLIGHT USED TO VANISH.
 		// This was `if (crystalBusy || !currentDiamond) return;`: Send did nothing,
@@ -53034,7 +54861,16 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			// node, same `DaimondPause` query and refusal text `chatSpendNode`'s callers
 			// already throw for this Diamond elsewhere in this file.
 			var hold = turnHold({ diamondId: diamondId });
+			// A person's queued steer is refused only for a hold the account still has, as
+			// `runTurn` confirms a person's turn (R53-U8b, QU8 Q4).
+			if (hold && how && how.person) {
+				await confirmHold({ diamondId: diamondId });
+				hold = turnHold({ diamondId: diamondId });
+			}
 			if (hold) throw DaimondModels.pauseError(hold);
+			// The folders this device knows, as its record stands at the turn's start: the
+			// daimon's `file_revert` asks the engine which rows are another folder's (HK1).
+			await Files.reknow();
 			// The conversation goes out and comes back. It is what makes the daimon
 			// persistent, which is the whole of notes2's "the daimon is meant to be
 			// persistant": it used to build a fresh session per instruction, so it could
@@ -56002,12 +57838,13 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			var scoped = data.workspaceScope === 'account';
 			var mineNs = (window.DaimondAccounts && DaimondAccounts.opfsNs()) || '';
 			var restored = 0, foreign = 0;
+			var unreadable = 0;         // chats in the backup that could not be read (DL-2)
 			// WHAT WAS DELETED SINCE STAYS DELETED (DEL-5). A restore is a merge, and
 			// every merge on this device honours the live tombstones: a Diamond, a chat
 			// or a file deleted here or on another device after the backup was taken is
 			// not brought back by it. Written back raw, it came back until the next pull
 			// deleted it again -- and on every device for good once its tomb aged out.
-			var dTombs = loadDiamondTombs(), cTombs = loadTombs(), fTombs = fileTombs();
+			var dTombs = loadDiamondTombs(), cTombs = loadTombs();
 			var wrotePaths = [];        // what actually reached this account's OPFS
 			for (var i = 0; i < files.length; i++) {
 				var fp = String((files[i] && files[i].path) || '');
@@ -56022,7 +57859,20 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 				var dm = /(?:^|\/)diamonds\/([^/]+)\//.exec(fp);
 				if (dm && dTombs[dm[1]]) continue;
 				var bytes = b64ToBytes(files[i].b64);
-				if (fTombs[fp] && fileHash(new TextDecoder().decode(bytes)) === fTombs[fp]) continue;
+				// A file's deletion is a record in the one set (`honourFileRecords`), in either
+				// fingerprint: the backup's copy of the deleted bytes stays out.
+				var frec = fileRecord(fp);
+				if (frec && frec.d === 1) {
+					var fdead = false;
+					if (inlinePrint(frec.h)) fdead = fileHash(new TextDecoder().decode(bytes)) === frec.h;
+					else if (window.DaimondCloud && DaimondCloud.fileKey && window.DaimondChunks) {
+						try {
+							var fb = new Blob([bytes]);
+							fdead = (await DaimondCloud.fileKey(fb, DaimondChunks.chunkSizeFor(fb.size))) === frec.h;
+						} catch (e) { fdead = false; }
+					}
+					if (fdead) continue;
+				}
 				// A Diamond's link sidecar is written over whole, so a mark the backup
 				// no longer carries, or carries narrower, is removed or narrowed here --
 				// and this device's record must follow, or a later replay of the row is
@@ -56054,10 +57904,22 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 				for (var di = 0; di < data.chats.length; di++) {
 					var r = data.chats[di];
 					if (!r || !r.id || cTombs[r.id]) continue;
+					// THE TRANSCRIPT LAW, as a pulled parcel meets it (`applyChats`): a chat
+					// that cannot be read is left in the backup, counted and said below, and
+					// this device's own copy of it (if any) stands. Adopted as it was, `[null]`
+					// stopped every save once opened; merged, a string took the whole restore
+					// down half way through.
+					if (!chatIdOk(r.id) || !transcriptOk(r.messages)) {
+						unreadable++;
+						trail('restore chat REFUSED', String(r.id).slice(0, 64) + ': '
+							+ (chatIdOk(r.id) ? 'its transcript is ' + transcriptShape(r.messages) : 'not a plain chat id'));
+						continue;
+					}
 					var st = byId[r.id];
 					if (!st) {
 						// Adopted whole: what was pressed on it here, before its record was
 						// lost, narrows to the copy restored (QA 2026-09-24, F1).
+						if (r.messages == null) r.messages = [];
 						byId[r.id] = r;
 						DaimondMarksHere.chatSettle(r.id, r.holds);
 						continue;
@@ -56184,6 +58046,9 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			// to fix: those files are another account's, and the backup file is still the
 			// only place they exist.
 			if (foreign) restoredBody += ' ' + tn('backup.n_foreign', foreign);
+			// And the chats that could not be read, for the same reason: a restore that
+			// drops one and reports a clean success reads as a backup that lacked it.
+			if (unreadable) restoredBody += ' ' + tn('backup.n_unreadable', unreadable);
 			// A box too full for the ledger or the trash holds them owed in this tab
 			// (above), and a reload would discard them (F-S2): the reload waits until
 			// they have landed, and the user is told why it has not happened yet.

@@ -540,9 +540,20 @@ pub async fn touch_diamond(id: String) -> Result<(), JsValue> {
 /// [`FileRoot::Workspace`] file tool (`file_read`/`write`/`list`/`edit`/
 /// `delete`/`search`) resolves against the real folder.  Daimond's own
 /// Diamond/crystal/`.daimond` storage is unaffected — it pins the OPFS sandbox.
+///
+/// # Arguments
+/// * `fid` - The id this device keeps for the folder (`FsaDB.folderId`), which a version row of a
+///   file in it records so that a restore puts it back into this folder and no other.  Absent or
+///   empty, it is `opfs::UNNAMED_FOLDER`, which names no folder: its rows are asked about.
+/// * `known` - JSON array of the ids of the folders this device knows (`FsaDB.known`): a row from
+///   one of them is another folder's file and is left, and one from any other folder is asked
+///   about ([`opfs::set_known`]).  Absent, the folders known stay as they were.
 #[wasm_bindgen]
-pub fn set_workspace_dir(handle: FileSystemDirectoryHandle) {
-    opfs::set_override(handle);
+pub fn set_workspace_dir(handle: FileSystemDirectoryHandle, fid: Option<String>, known: Option<String>) {
+    if let Some(k) = known {
+        opfs::set_known(crate::llm::parse_json_string_array(&k));
+    }
+    opfs::set_override(handle, fid.as_deref().unwrap_or(""));
 }
 
 /// Clear any FSA override, returning the file tools / Workspace to the

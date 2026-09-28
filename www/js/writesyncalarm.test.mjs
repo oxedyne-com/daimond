@@ -44,6 +44,7 @@ function makeWriteSyncFile() {
 		storageAlarm:      (why, src) => { alarms.push({ why: String(why || ''), src: src || 'store' }); },
 		storageAlarmClear: (src) => { clears.push(src || 'store'); },
 		tOr:               (key, fallback) => fallback,
+		syncFileAt:        async () => null,	// the merge's compare-and-swap read; not asked here (no `was`)
 	};
 	// `--break noquotacheck` reverts to the release 5.1.1 body: answer `!!r && r.outcome ===
 	// 'done'` and nothing else, which is the silent drop this file is about.

@@ -371,6 +371,7 @@
 	// Maschinell entworfen: in einen laufenden Zug hineinsprechen. Die Zeile sagt
 	// auch, was nicht geht -- eine Antwort ohne Werkzeugschritt hat keine Naht.
 	'chat.send_into': 'In diese Antwort hineinsenden',
+	'chat.sending': 'Wird gesendet…',
 	'chat.interject_help': 'Wartend; geht beim nächsten Schritt des Modells ein oder am Ende der Antwort.',
 	'chat.interject_pending': 'Noch nicht zugestellt. Klicke, um sie zu ändern.',
 	'chat.interjected': 'Hier hast du dich eingeschaltet',
@@ -1987,6 +1988,8 @@
 	'files.pinned_help': 'Angeheftet: bleibt immer auf diesem Gerät. Klicke zum Lösen.',
 	'files.pin_help': 'Anheften: diese nie freigeben, um Platz zu schaffen.',
 	'files.free_help': 'Im Cloud-Speicher behalten, die Kopie hier verwerfen',
+	'files.free_undeclared': 'Vorerst auf diesem Gerät behalten: Dieses Gerät kann noch nicht bestätigen, dass der Cloud-Speicher die Datei behält.',
+	'files.reclaim_undeclared': 'Noch kein Platz geschaffen: Dieses Gerät kann noch nicht bestätigen, dass der Cloud-Speicher diese Dateien behält.',
 	'files.fetch': 'Holen',
 	'files.fetch_body': '„{path}“ auf dieses Gerät holen? Das lädt {size} herunter.',
 	'files.fetching': '{path} wird geholt…',
@@ -2205,6 +2208,8 @@
 	'backup.restored_owed': 'Auf diesem Gerät ist der Browserspeicher voll, daher ist ein Teil der Wiederherstellung noch nicht gespeichert. Die Seite lädt neu, sobald er es ist; etwas freier Platz macht es möglich.',
 	'backup.n_foreign.one': '{n} Datei in dieser Sicherung gehört einem anderen Konto in jenem Browser, wurde also nicht wiederhergestellt und bleibt nur in der Sicherung.',
 	'backup.n_foreign.other': '{n} Dateien in dieser Sicherung gehören einem anderen Konto in jenem Browser, wurden also nicht wiederhergestellt und bleiben nur in der Sicherung.',
+	'backup.n_unreadable.one': '{n} Unterhaltung in dieser Sicherung ließ sich nicht lesen, wurde also nicht wiederhergestellt und bleibt nur in der Sicherung.',
+	'backup.n_unreadable.other': '{n} Unterhaltungen in dieser Sicherung ließen sich nicht lesen, wurden also nicht wiederhergestellt und bleiben nur in der Sicherung.',
 
 	// ── The provider form ──────────────────────────────────────
 	'models.other': 'Anderes (von Hand eingeben)…',
@@ -3599,10 +3604,16 @@
 	'versions.snapshot': 'Snapshot',
 	'versions.too_big': 'Zu gro\u00df zum Aufheben',
 	'versions.gone_ask': 'Diese Version ist \u00e4lter als {n} Ihrer Dateien: {paths}. Wenn Sie sie wiederherstellen, werden diese aus Ihrem Ordner gel\u00f6scht. Ihr aktueller Inhalt bleibt im Verlauf erhalten. L\u00f6schen?',
+	'versions.undo_gone_ask': 'Das R\u00fcckg\u00e4ngigmachen w\u00fcrde {n} Ihrer Dateien l\u00f6schen: {paths}. Ihr aktueller Inhalt bleibt im Verlauf erhalten. L\u00f6schen?',
 	'versions.gone_allow': 'L\u00f6schen',
 	'versions.gone_keep': 'Behalten',
 	'versions.gone_title': 'Dateien aus Ihrem Ordner l\u00f6schen?',
 	'versions.gone_kept': 'In Ihrem Ordner belassen',
+	'versions.over_ask': 'Daimond hat {n} dieser Dateien aufbewahrt, bevor es festhielt, aus welchem Ordner jede stammt: {paths}. Die Dateien dort k\u00f6nnen jetzt andere sein. Beim Wiederherstellen werden sie ersetzt; ihr aktueller Inhalt bleibt im Verlauf erhalten. Ersetzen?',
+	'versions.over_ask_unknown': '{n} dieser Dateien wurden in einem Ordner auf einem anderen Ger\u00e4t festgehalten, oder in einem, den Daimond nicht mehr kennt: {paths}. Die Dateien hier k\u00f6nnen andere sein. Beim Wiederherstellen werden sie ersetzt; ihr aktueller Inhalt bleibt im Verlauf erhalten. Ersetzen?',
+	'versions.other_folder': 'In einem anderen Ordner gespeichert; hier keine Kopie',
+	'versions.over_allow': 'Ersetzen',
+	'versions.over_title': 'Dateien in Ihrem Ordner ersetzen?',
 	'versions.refused': 'Au\u00dferhalb dieses Diamond',
 	'versions.save': 'Version speichern',
 	'versions.save_name': 'Benenne sie',

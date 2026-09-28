@@ -1,4 +1,3 @@
-// gateway: own
 // verify_chunkgw.mjs — the chunk transport survives a lapsed session, and a
 // deletion the gateway will not carry out is NOTICED rather than swallowed.
 //
@@ -21,10 +20,13 @@
 // now refuses any sweep over half the chunks an account holds: nothing is
 // deleted, the commit still succeeds, and the reply carries `sweep_held_back`,
 // `sweep_held` and a `sweep_token` that the identical commit may quote to carry
-// the deletion out. No client sent the token, so large deletions were simply
-// never collected — silently, and the storage ceilings are computed from the
-// committed index rather than from chunks held, so held-back chunks are charged
-// to no cap at all.
+// the deletion out. Since 2026-09-27 (DL-1) only a PERSON's confirmation may
+// quote it: the page never answers on its own, and the gateway ignores a token
+// that does not say a person gave it, so a page from before that change,
+// confirming by itself, is refused. The floor is measured against what the
+// account had DECLARED, so young uploads nobody has named (this file's section A
+// leaves five) no longer dilute it; they diluted it here on every gate until
+// then.
 //
 // The checks here are written so that a deletion which silently does not happen
 // CANNOT pass: each one asserts both what the gateway still holds and what the
@@ -299,11 +301,12 @@ try {
 	const trA3 = await trace();
 	check('commit: the refused commit is re-authenticated and sent again',
 		retried(ops(trA3, 'commit')), 'statuses ' + JSON.stringify(ops(trA3, 'commit')));
-	check('commit: and the sweep it authorises actually lands',
-		commitA && commitA.swept === 1, JSON.stringify(commitA && { swept: commitA.swept }));
+	check('commit: and the release it authorises actually lands',
+		commitA && commitA.released === 1 && commitA.swept === 0,
+		JSON.stringify(commitA && { released: commitA.released, swept: commitA.swept }));
 	const goneA = await page.evaluate(() => window.__held([window.__c[3].addr]));
-	check('commit: the gateway no longer holds the chunk the commit dropped',
-		goneA.length === 0, goneA.length + ' still held');
+	check('commit: the chunk the commit dropped is released, still stored for its 7 days',
+		goneA.length === 1, goneA.length + ' held');
 
 	// (A4) LATE-BOUND, NEVER CAPTURED. `DaimondGateway.gwFetch` is replaced at
 	// runtime; a file that captured it into a local at load would sail straight
@@ -379,15 +382,19 @@ try {
 		return { j, st: DaimondChunks.state() };
 	});
 	const trB1 = await trace();
-	check('an ordinary sweep still collects its garbage, on one request',
-		ord.j && ord.j.swept === 1 && ops(trB1, 'commit').length === 1,
-		JSON.stringify({ swept: ord.j && ord.j.swept, requests: ops(trB1, 'commit').length }));
+	check('an ordinary drop is still released, on one request, and nothing deleted',
+		ord.j && ord.j.released === 1 && ord.j.swept === 0 && ops(trB1, 'commit').length === 1,
+		JSON.stringify({ released: ord.j && ord.j.released, swept: ord.j && ord.j.swept,
+			requests: ops(trB1, 'commit').length }));
 	check('and nothing is left standing over it',
 		ord.st.standing === false && ord.st.heldBack === 0, JSON.stringify(ord.st));
 
-	// (B2) A large deletion this client can account for is confirmed, and the
-	// chunks REALLY GO. Two requests that agree, with the gateway's answer in
-	// between — and never a third.
+	// (B2) A large deletion this client CAN account for -- one of four named,
+	// nothing new -- is still not carried out on the engine's word. It used to
+	// be: the client quoted the token back by itself whenever the arithmetic
+	// agreed, which is exactly what a narrow index that is wrong looks like too
+	// (QGW-DL1: one of ten named, nine gone, nobody asked). One commit, and it
+	// stands on the chip for a person.
 	await page.evaluate(() => window.__wipe());
 	await page.evaluate(() => window.__seed(4).then(c => (window.__c = c)));
 	await page.evaluate(async () => {
@@ -399,26 +406,61 @@ try {
 		const before = DaimondChunks.state().confirmed;
 		const v = await window.__version();
 		const j = await DaimondChunks.commit(window.__manifests(window.__c.slice(0, 1)), v, null);
-		return { j, before, st: DaimondChunks.state(), held: await window.__held(window.__c.map(c => c.addr)) };
+		return { j, v, before, st: DaimondChunks.state(), held: await window.__held(window.__c.map(c => c.addr)) };
 	});
 	const trB2 = await trace();
-	check('a large deletion the client can account for is confirmed and runs',
-		conf.j && conf.j.swept === 3, JSON.stringify(conf.j && { swept: conf.j.swept, back: conf.j.sweep_held_back }));
-	check('and the gateway really has stopped holding those chunks',
-		conf.held.length === 1, conf.held.length + ' of 4 still held');
-	check('it cost exactly TWO commits — the interlock was honoured, not bypassed',
-		ops(trB2, 'commit').length === 2, JSON.stringify(ops(trB2, 'commit')));
-	check('and nothing is left standing, with the confirmation counted',
-		conf.st.standing === false && conf.st.confirmed === conf.before + 1, JSON.stringify(conf.st));
+	const heldBody = (await bodies()).filter(b => b && b.op === 'commit')[0] || null;
+	check('a large deletion is NOT carried out on the engine\'s word, however it adds up',
+		conf.held.length === 4 && conf.j && conf.j.swept === 0 && conf.j.sweep_held_back === 3
+		&& conf.j.sweep_held === 4,
+		JSON.stringify(conf.j && { swept: conf.j.swept, back: conf.j.sweep_held_back, held: conf.j.sweep_held }));
+	check('one commit, never a second on its own', ops(trB2, 'commit').length === 1,
+		JSON.stringify(ops(trB2, 'commit')));
+	check('it stands on the chip, waiting for a person',
+		conf.st.standing === true && conf.st.why === 'ask' && conf.st.heldBack === 3,
+		JSON.stringify(conf.st));
 
-	// (B3) The second commit is IDENTICAL bar the token. A rebuilt body would
-	// name a different deletion and the token would not match it.
-	const bs = (await bodies()).filter(b => b && b.op === 'commit');
-	const same = bs.length === 2
-		&& JSON.stringify({ ...bs[0], sweep_token: undefined }) === JSON.stringify({ ...bs[1], sweep_token: undefined })
-		&& !bs[0].sweep_token && !!bs[1].sweep_token;
-	check('the confirmation repeats the identical commit, adding only the token',
-		same, bs.length + ' commit bodies');
+	// (B2b) A page from before this change quotes the token back by itself. The
+	// gateway ignores a token no person gave: held back again, nothing deleted.
+	const alone = await page.evaluate(async ({ v, token }) => {
+		const r = await window.__realFetch('/api/chunk', {
+			method: 'POST', credentials: 'same-origin',
+			headers: { 'content-type': 'application/json', 'x-daimond-api': '2' },
+			body: JSON.stringify({
+				op: 'commit', blob_version: v, sweep_token: token,
+				chunks: [{ addr: window.__c[0].addr, size: window.__c[0].size, tier: 'p' }],
+			}),
+		});
+		return { status: r.status, j: await r.json(), held: await window.__held(window.__c.map(c => c.addr)) };
+	}, { v: conf.v, token: conf.j && conf.j.sweep_token });
+	check('an older page\'s automatic confirmation is refused: held back again, nothing deleted',
+		alone.status === 200 && alone.j.swept === 0 && !!alone.j.sweep_token && alone.held.length === 4,
+		JSON.stringify({ status: alone.status, swept: alone.j.swept, held: alone.held.length }));
+
+	// A person answers it, and the chunks REALLY GO.
+	await clear();
+	const said = await page.evaluate(async () => {
+		const j = await DaimondChunks.confirmHeldSweep();
+		return { j, st: DaimondChunks.state(), held: await window.__held(window.__c.map(c => c.addr)) };
+	});
+	const trB2p = await trace();
+	check('a person confirming it releases them: kept 7 days, nothing deleted',
+		said.j && said.j.released === 3 && said.j.swept === 0 && said.held.length === 4,
+		JSON.stringify({ released: said.j && said.j.released, held: said.held.length }));
+	check('on exactly one request', ops(trB2p, 'commit').length === 1,
+		JSON.stringify(ops(trB2p, 'commit')));
+	check('and nothing is left standing, with the confirmation counted',
+		said.st.standing === false && said.st.confirmed === conf.before + 1, JSON.stringify(said.st));
+
+	// (B3) The person's commit is IDENTICAL to the held-back one bar the token and
+	// the person's mark. A rebuilt body would name a different deletion and the
+	// token would not match it.
+	const personBody = (await bodies()).filter(b => b && b.op === 'commit')[0] || null;
+	const bare = b => JSON.stringify({ ...b, sweep_token: undefined, sweep_confirm: undefined });
+	check('the confirmation repeats the identical commit, adding only the token and the person',
+		!!heldBody && !!personBody && bare(heldBody) === bare(personBody)
+		&& !heldBody.sweep_token && !!personBody.sweep_token && personBody.sweep_confirm === 'person',
+		JSON.stringify({ held: !!heldBody, person: personBody && personBody.sweep_confirm }));
 
 	// (B4) THE ONE THAT MUST BE ABLE TO FAIL. An index naming nothing is the
 	// sharpest form of a client that knows nothing declaring the account empty.
@@ -486,9 +528,9 @@ try {
 			saved: localStorage.getItem('daimond-chunk-held'),
 		};
 	});
-	check('a person confirming it deletes what the client would not on its own',
-		forced.j && forced.j.swept === 4 && forced.held === 0,
-		JSON.stringify({ swept: forced.j && forced.j.swept, held: forced.held }));
+	check('a person confirming it releases what the client would not on its own (kept 7 days)',
+		forced.j && forced.j.released === 4 && forced.j.swept === 0 && forced.held === 4,
+		JSON.stringify({ released: forced.j && forced.j.released, held: forced.held }));
 	check('and the standing notice clears with it',
 		forced.st.standing === false, JSON.stringify(forced.st));
 	check('and what was written down goes too, so it cannot rise again next boot',
@@ -544,17 +586,103 @@ try {
 	check('and that too is one request, not two',
 		ops(trB7, 'commit').length === 1, JSON.stringify(ops(trB7, 'commit')));
 
-	// (B8) The notice is standing, not permanent: the next commit that collects
-	// clears it. Without this the chip would be a scar rather than a state.
+	// (B8) The notice is standing, not permanent: a later commit that comes back
+	// with nothing held back clears it. Without this the chip would be a scar
+	// rather than a state. Since DL-1 a deletion once held back runs only on a
+	// person's token, so the commit that clears it here is the one a device with
+	// the whole view sends: it names the held-back chunks again, and drops only
+	// the phantom, which the gateway never held.
 	const cleared = await page.evaluate(async () => {
 		const v = await window.__version();
-		const j = await DaimondChunks.commit(window.__manifests(window.__c.slice(0, 3)), v, null);
+		const j = await DaimondChunks.commit(window.__manifests(window.__c), v, null);
 		const chip = document.getElementById('chunk-chip');
-		return { j, st: DaimondChunks.state(), shown: chip ? getComputedStyle(chip).display !== 'none' : null };
+		return {
+			j, st: DaimondChunks.state(),
+			shown: chip ? getComputedStyle(chip).display !== 'none' : null,
+			held:  (await window.__held(window.__c.map(c => c.addr))).length,
+		};
 	});
-	check('a later commit that does collect clears the standing notice',
-		cleared.j && cleared.j.swept === 1 && cleared.st.standing === false && cleared.shown === false,
-		JSON.stringify({ swept: cleared.j && cleared.j.swept, standing: cleared.st.standing, shown: cleared.shown }));
+	check('a later commit that holds nothing back clears the standing notice',
+		cleared.j && !cleared.j.sweep_token && cleared.st.standing === false
+		&& cleared.shown === false && cleared.held === 4,
+		JSON.stringify({ swept: cleared.j && cleared.j.swept, standing: cleared.st.standing,
+			shown: cleared.shown, held: cleared.held }));
+
+	// (B10) THE 09-13 SHAPE, OVER TWO SYNC ROUNDS. A device that lost track of
+	// what it held re-offloads under fresh addresses and commits an index naming
+	// only its own. The first round was held back even before DL-1's fix -- but
+	// the held-back commit's index was recorded, so the identical commit on the
+	// next round measured the same deletion against a base holding both, and ran.
+	// On this gate's gateway it ran on the FIRST round: section A's five young
+	// uploads sat in the base.
+	await page.evaluate(() => window.__wipe());
+	await page.evaluate(() => window.__seed(4).then(c => (window.__c = c)));
+	await page.evaluate(async () => {
+		const v = await window.__version();
+		await DaimondChunks.commit(window.__manifests(window.__c), v, null);
+	});
+	await page.evaluate(() => window.__seed(4).then(c => (window.__f = c)));
+	await clear();
+	const rounds = await page.evaluate(async () => {
+		const out = [];
+		for (let i = 0; i < 2; i++) {
+			const v = await window.__version();
+			const j = await DaimondChunks.commit(window.__manifests(window.__f), v, null);
+			out.push({ swept: j && j.swept, back: j && j.sweep_held_back,
+				held: (await window.__held(window.__c.map(c => c.addr))).length });
+		}
+		return { out, st: DaimondChunks.state() };
+	});
+	const trB10 = await trace();
+	check('the 09-13 shape deletes none of what was declared, on either round',
+		rounds.out.length === 2 && rounds.out.every(r => r.swept === 0 && r.back === 4 && r.held === 4),
+		JSON.stringify(rounds.out));
+	check('and each round is one commit that stands, never a confirmation',
+		ops(trB10, 'commit').length === 2 && rounds.st.standing === true,
+		JSON.stringify({ commits: ops(trB10, 'commit'), why: rounds.st.why }));
+	// Settle it the way the right device would, so the run ends clean.
+	await page.evaluate(async () => {
+		const v = await window.__version();
+		await DaimondChunks.commit(window.__manifests(window.__c.concat(window.__f)), v, null);
+	});
+
+	// (B11) A commit declares only what the account holds (F11). An address the
+	// store does not hold used to be recorded and counted as declared, so a later
+	// commit naming only such addresses took every real chunk under the floor. It
+	// is now left out of the recorded index and named back in `missing`.
+	const named = await page.evaluate(async () => {
+		const v = await window.__version();
+		const ghost = 'cd'.repeat(32);
+		const all = window.__c.concat(window.__f).map(c => ({ addr: c.addr, size: c.size, tier: 'p' }));
+		const r = await window.__realFetch('/api/chunk', {
+			method: 'POST', credentials: 'same-origin',
+			headers: { 'content-type': 'application/json', 'x-daimond-api': '2' },
+			body: JSON.stringify({ op: 'commit', blob_version: v,
+				chunks: all.concat([{ addr: ghost, size: 9, tier: 'p' }]) }),
+		});
+		const j = await r.json();
+		// Then only the absent address: nothing the account holds may go.
+		const r2 = await window.__realFetch('/api/chunk', {
+			method: 'POST', credentials: 'same-origin',
+			headers: { 'content-type': 'application/json', 'x-daimond-api': '2' },
+			body: JSON.stringify({ op: 'commit', blob_version: v,
+				chunks: [{ addr: ghost, size: 9, tier: 'p' }] }),
+		});
+		const j2 = await r2.json();
+		return { status: r.status, j, ghost, j2,
+			held: (await window.__held(window.__c.concat(window.__f).map(c => c.addr))).length };
+	});
+	check('a commit naming an address the store does not hold is told so, and records the rest',
+		named.status === 200 && named.j.swept === 0 && Array.isArray(named.j.missing)
+		&& named.j.missing.length === 1 && named.j.missing[0] === named.ghost,
+		JSON.stringify(named.j));
+	check('and a commit naming only that address deletes nothing the account holds',
+		named.j2.swept === 0 && !!named.j2.sweep_token && named.held === 8,
+		JSON.stringify({ swept: named.j2.swept, back: named.j2.sweep_held_back, held: named.held }));
+	await page.evaluate(async () => {
+		const v = await window.__version();
+		await DaimondChunks.commit(window.__manifests(window.__c.concat(window.__f)), v, null);
+	});
 
 	// (B9) Nothing was raised over the app through any of it. A deletion the
 	// gateway declined is a report, not an interruption.

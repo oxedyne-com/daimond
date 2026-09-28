@@ -71,6 +71,18 @@ const liftedTags    = lift(SRC, '\tfunction packTags(data) {');
 const liftedLinks   = lift(SRC, '\tfunction packLinks(data) {');
 const liftedPackAt  = lift(SRC, '\tfunction packStamp(data) {');
 const liftedApply   = lift(SRC, '\tasync function applyDiamonds(remote, from) {');
+// The two-sided rule, the lineage record it reads and the conflict's settling of what
+// lives outside the versioned files (lanes DIA, DIA2). An entry here carries no `anc`,
+// which is a 5.2.1 sender's shape, so these cases exercise the fork point's rule and
+// the conflict with no common copy, which unions as it always did.
+const liftedDia = [
+	'\tfunction ancList(a) {', '\tfunction recvOf(recv, id) {', '\tfunction sentAnc(r) {',
+	'\tfunction diamondTwoSided(r, mine, recv, dbase) {', '\tfunction packFacets(data) {',
+	'\tfunction sidecarRows(text) {', '\tfunction seenEntry(stamp, f) {', '\tfunction noteSeen(list, entry, keep, only) {',
+	'\tfunction seenAncestor(list, anc) {', '\tfunction diamondMergePlan(w, l, a) {',
+	'\tfunction recordDiamondCopies(recvCh, was, seenAdd, only) {', '\tfunction patchDiamondRecord(read, write, changes) {',
+	'\tfunction dropDiamondRecords(ids) {', '\tfunction fileHash(s) {', '\tasync function removeLinkHere(link) {',
+].map((m) => lift(SRC, m)).join('\n');
 
 // ── A fake wasm app modelling the import contract ─────────────────
 //
@@ -159,6 +171,7 @@ function build(harness) {
 	const src =
 		'var window = ctx.window;\n' +
 		liftedStamp + '\n' + liftedTags + '\n' + liftedLinks + '\n' + liftedPackAt + '\n' +
+		liftedDia + '\n' + 'var DIAMOND_ANC_MAX = 16, DIAMOND_SEEN_MAX = 8;\n' +
 		// deps applyDiamonds reaches for, stubbed to the harness
 		'function diamondApp() { return ctx.app; }\n' +
 		'function trail() {}\n' +
@@ -175,11 +188,16 @@ function build(harness) {
 		'var ChatStore = { putTombs: async function () {} };\n' +
 		// This device's record of the marks pressed on it (R2): settled from the copy
 		// before the import, which this suite does not assert on (markshere.test.mjs does).
-		'var DaimondMarksHere = { settle: function () { return false; }, dropAll: function () { return false; } };\n' +
+		'var DaimondMarksHere = { settle: function () { return false; }, dropAll: function () { return false; },\n' +
+		'\tdrop: function () { return false; }, parseSidecar: function () { return []; } };\n' +
 		'var DIAMOND_TOMBS_KEY = \'daimond-diamond-tombs\';\n' +
 		// the fork-store, and — on `nobase` — a base that is always empty
 		'function readDiamondBase() { return ctx.readBase(); }\n' +
 		'function writeDiamondBase(m) { ctx.writeBase(m); }\n' +
+		'function readDiamondRecv() { return ctx.readRecv(); }\n' +
+		'function writeDiamondRecv(m) { ctx.writeRecv(m); }\n' +
+		'function readDiamondSeen() { return ctx.readSeen(); }\n' +
+		'function writeDiamondSeen(m) { ctx.writeSeen(m); }\n' +
 		liftedApply + '\n' +
 		'return applyDiamonds;';
 	const ctx = {
@@ -187,6 +205,10 @@ function build(harness) {
 		window: { DaimondCloud: undefined },
 		readBase: () => (BREAK === 'nobase' ? {} : JSON.parse(JSON.stringify(baseStore.map))),
 		writeBase: (m) => { if (BREAK !== 'nobase') baseStore.map = JSON.parse(JSON.stringify(m || {})); },
+		readRecv: () => JSON.parse(JSON.stringify(baseStore.recv || {})),
+		writeRecv: (m) => { baseStore.recv = JSON.parse(JSON.stringify(m || {})); },
+		readSeen: () => JSON.parse(JSON.stringify(baseStore.seen || {})),
+		writeSeen: (m) => { baseStore.seen = JSON.parse(JSON.stringify(m || {})); },
 	};
 	// eslint-disable-next-line no-new-func
 	return new Function('ctx', src)(ctx);

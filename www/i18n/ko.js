@@ -458,6 +458,7 @@
 	// 기계 번역. 이미 돌고 있는 턴에 말을 끼워 넣기. 한계도 적어 둡니다 --
 	// 도구를 쓰지 않는 답에는 끼어들 이음매가 없습니다.
 	'chat.send_into':         '이 답변에 끼워 보내기',
+	'chat.sending':           '보내는 중…',
 	'chat.interject_help':    '대기 중이에요. 모델의 다음 단계나 답변 끝에서 들어가요.',
 	'chat.interject_pending': '아직 전달되지 않았어요. 눌러서 고치세요.',
 	'chat.interjected':       '여기서 끼어들었어요',
@@ -2009,6 +2010,8 @@
 	'files.pinned_help':     '고정됨: 늘 이 기기에 둬요. 누르면 풀려요.',
 	'files.pin_help':        '고정: 자리를 내려고 이것을 비우지 않아요.',
 	'files.free_help':       '클라우드 저장소에는 두고, 여기 사본은 지워요',
+	'files.free_undeclared': '당분간 이 기기에 둬요. 클라우드 저장소가 이 파일을 보관할지 이 기기에서 아직 확인할 수 없어요.',
+	'files.reclaim_undeclared': '아직 비운 것이 없어요. 클라우드 저장소가 이 파일들을 보관할지 이 기기에서 아직 확인할 수 없어요.',
 	'files.fetch':           '가져오기',
 	'files.fetch_body':      '“{path}”을(를) 이 기기로 가져올까요? {size}만큼 내려받아요.',
 	'files.fetching':        '{path} 가져오는 중…',
@@ -2219,6 +2222,8 @@
 	'backup.restored_owed':   '이 기기의 브라우저 저장 공간이 가득 차서, 되살린 내용 일부가 아직 저장되지 않았어요. 저장되면 페이지를 다시 불러와요. 공간을 조금 비우면 돼요.',
 	'backup.n_foreign.one':   '그 백업에 든 파일 {n}개는 그 브라우저의 다른 계정 것이라서 되살리지 않았고, 백업 안에만 남아 있어요.',
 	'backup.n_foreign.other': '그 백업에 든 파일 {n}개는 그 브라우저의 다른 계정 것이라서 되살리지 않았고, 백업 안에만 남아 있어요.',
+	'backup.n_unreadable.one':   '그 백업에 든 대화 {n}개는 읽을 수 없어서 되살리지 않았고, 백업 안에만 남아 있어요.',
+	'backup.n_unreadable.other': '그 백업에 든 대화 {n}개는 읽을 수 없어서 되살리지 않았고, 백업 안에만 남아 있어요.',
 
 	// ── 제공자 입력 칸 ─────────────────────────────────────────
 	'models.other':            '기타(직접 입력)…',
@@ -3632,10 +3637,16 @@
 	'versions.snapshot': '스냅샷',
 	'versions.too_big': '\ub108\ubb34 \ucee4\uc11c \ubcf4\uad00 \ubd88\uac00',
 	'versions.gone_ask': '\uc774 \ubc84\uc804\uc740 \ud30c\uc77c {n}\uac1c\ubcf4\ub2e4 \uc624\ub798\ub418\uc5c8\uc2b5\ub2c8\ub2e4: {paths}. \ubcf5\uc6d0\ud558\uba74 \ud3f4\ub354\uc5d0\uc11c \uc0ad\uc81c\ub429\ub2c8\ub2e4. \ud604\uc7ac \ub0b4\uc6a9\uc740 \uae30\ub85d\uc5d0 \ubcf4\uad00\ub429\ub2c8\ub2e4. \uc0ad\uc81c\ud560\uae4c\uc694?',
+	'versions.undo_gone_ask': '\uc2e4\ud589 \ucde8\uc18c\ud558\uba74 \ud30c\uc77c {n}\uac1c\uac00 \uc0ad\uc81c\ub429\ub2c8\ub2e4: {paths}. \ud604\uc7ac \ub0b4\uc6a9\uc740 \uae30\ub85d\uc5d0 \ubcf4\uad00\ub429\ub2c8\ub2e4. \uc0ad\uc81c\ud560\uae4c\uc694?',
 	'versions.gone_allow': '\uc0ad\uc81c',
 	'versions.gone_keep': '\uc720\uc9c0',
 	'versions.gone_title': '\ud3f4\ub354\uc5d0\uc11c \ud30c\uc77c\uc744 \uc0ad\uc81c\ud560\uae4c\uc694?',
 	'versions.gone_kept': '\ud3f4\ub354\uc5d0 \ub0a8\uaca8 \ub460',
+	'versions.over_ask': 'Daimond\ub294 \uac01 \ud30c\uc77c\uc774 \uc5b4\ub290 \ud3f4\ub354\uc5d0\uc11c \uc654\ub294\uc9c0 \uae30\ub85d\ud558\uae30 \uc804\uc5d0 \uc774 \uc911 {n}\uac1c \ud30c\uc77c\uc744 \ubcf4\uad00\ud588\uc2b5\ub2c8\ub2e4: {paths}. \uc9c0\uae08 \uadf8 \uc704\uce58\uc758 \ud30c\uc77c\uc740 \ub2e4\ub978 \ud30c\uc77c\uc77c \uc218 \uc788\uc2b5\ub2c8\ub2e4. \ubcf5\uc6d0\ud558\uba74 \uad50\uccb4\ub429\ub2c8\ub2e4. \ud604\uc7ac \ub0b4\uc6a9\uc740 \uae30\ub85d\uc5d0 \ubcf4\uad00\ub429\ub2c8\ub2e4. \uad50\uccb4\ud560\uae4c\uc694?',
+	'versions.over_ask_unknown': '\uc774 \uc911 {n}\uac1c \ud30c\uc77c\uc740 \ub2e4\ub978 \uae30\uae30\uc758 \ud3f4\ub354\ub098 Daimond\uac00 \ub354 \uc774\uc0c1 \uc54c\uc9c0 \ubabb\ud558\ub294 \ud3f4\ub354\uc5d0\uc11c \uae30\ub85d\ub418\uc5c8\uc2b5\ub2c8\ub2e4: {paths}. \uc5ec\uae30 \uc788\ub294 \ud30c\uc77c\uc740 \ub2e4\ub978 \ud30c\uc77c\uc77c \uc218 \uc788\uc2b5\ub2c8\ub2e4. \ubcf5\uc6d0\ud558\uba74 \uad50\uccb4\ub429\ub2c8\ub2e4. \ud604\uc7ac \ub0b4\uc6a9\uc740 \uae30\ub85d\uc5d0 \ubcf4\uad00\ub429\ub2c8\ub2e4. \uad50\uccb4\ud560\uae4c\uc694?',
+	'versions.other_folder': '\ub2e4\ub978 \ud3f4\ub354\uc5d0 \uc800\uc7a5\ub428. \uc5ec\uae30\uc5d0\ub294 \uc0ac\ubcf8 \uc5c6\uc74c',
+	'versions.over_allow': '\uad50\uccb4',
+	'versions.over_title': '\ud3f4\ub354\uc758 \ud30c\uc77c\uc744 \uad50\uccb4\ud560\uae4c\uc694?',
 	'versions.refused': '\uc774 diamond \ubc94\uc704 \ubc16',
 	'versions.save': '\ubc84\uc804 \uc800\uc7a5',
 	'versions.save_name': '\uc774\ub984\uc744 \ubd99\uc5ec\uc694',

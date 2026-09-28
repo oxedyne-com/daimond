@@ -801,9 +801,12 @@
 		return out;
 	}
 
-	function announce() {
+	/// Tell the listeners the tree moved. `why` is 'press' for a person's press that changed
+	/// the record (`set`), which the sync sends at once rather than on its debounce; every
+	/// other move -- an adopted record, another tab, an app write -- announces without one.
+	function announce(why) {
 		for (var i = 0; i < _subs.length; i++) {
-			try { _subs[i](); } catch (e) { /* a listener must not stop the others */ }
+			try { _subs[i](why || ''); } catch (e) { /* a listener must not stop the others */ }
 		}
 		try {
 			if (typeof window !== 'undefined' && window.dispatchEvent) {
@@ -919,7 +922,7 @@
 		if (!moved && !here) return false;
 		if (moved) save();
 		if (here) saveHere();
-		announce();
+		announce(moved ? 'press' : '');
 		return true;
 	}
 

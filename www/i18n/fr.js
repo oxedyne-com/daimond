@@ -371,6 +371,7 @@
 	// Traduction automatique : parler dans un tour déjà en cours. La ligne dit aussi
 	// la limite -- une réponse sans outil n'a pas de couture où glisser un mot.
 	'chat.send_into': 'Envoyer dans cette réponse',
+	'chat.sending': 'Envoi en cours…',
 	'chat.interject_help': 'En attente ; entre à la prochaine étape du modèle ou à la fin de la réponse.',
 	'chat.interject_pending': 'Pas encore transmis. Cliquez pour le modifier.',
 	'chat.interjected': 'Vous êtes intervenu ici',
@@ -1994,6 +1995,8 @@
 	'files.pinned_help': 'Épinglé : toujours gardé sur cet appareil. Cliquez pour le relâcher.',
 	'files.pin_help': 'Épingler : ne jamais libérer celui-ci pour faire de la place.',
 	'files.free_help': 'Le garder en ligne, abandonner la copie d’ici',
+	'files.free_undeclared': 'Gardé sur cet appareil pour l’instant : cet appareil ne peut pas encore confirmer que le stockage en ligne le conservera.',
+	'files.reclaim_undeclared': 'Rien de libéré pour l’instant : cet appareil ne peut pas encore confirmer que le stockage en ligne conservera ces fichiers.',
 	'files.fetch': 'Récupérer',
 	'files.fetch_body': 'Amener « {path} » sur cet appareil ? Cela télécharge {size}.',
 	'files.fetching': 'Récupération de {path}…',
@@ -2212,6 +2215,8 @@
 	'backup.restored_owed': 'Cet appareil n’a plus d’espace de stockage dans le navigateur : une partie de ce qui a été restauré n’est pas encore enregistrée. La page se recharge dès que c’est fait ; libérer un peu d’espace le permet.',
 	'backup.n_foreign.one': '{n} fichier de cette sauvegarde appartient à un autre compte de ce navigateur : il n’a pas été restauré et ne reste que dans la sauvegarde.',
 	'backup.n_foreign.other': '{n} fichiers de cette sauvegarde appartiennent à un autre compte de ce navigateur : ils n’ont pas été restaurés et ne restent que dans la sauvegarde.',
+	'backup.n_unreadable.one': '{n} conversation de cette sauvegarde n’a pas pu être lue : elle n’a pas été restaurée et ne reste que dans la sauvegarde.',
+	'backup.n_unreadable.other': '{n} conversations de cette sauvegarde n’ont pas pu être lues : elles n’ont pas été restaurées et ne restent que dans la sauvegarde.',
 
 	// ── The provider form ──────────────────────────────────────
 	'models.other': 'Autre (saisie manuelle)…',
@@ -3607,10 +3612,16 @@
 	'versions.snapshot': 'instantané',
 	'versions.too_big': 'Trop gros \u00e0 garder',
 	'versions.gone_ask': 'Cette version est ant\u00e9rieure \u00e0 {n} de vos fichiers : {paths}. La restaurer les supprimerait de votre dossier. Leur contenu actuel est conserv\u00e9 dans l\u2019historique. Les supprimer ?',
+	'versions.undo_gone_ask': 'Annuler cette action supprimerait {n} de vos fichiers : {paths}. Leur contenu actuel est conserv\u00e9 dans l\u2019historique. Les supprimer ?',
 	'versions.gone_allow': 'Les supprimer',
 	'versions.gone_keep': 'Les garder',
 	'versions.gone_title': 'Supprimer des fichiers de votre dossier ?',
 	'versions.gone_kept': 'Laiss\u00e9 dans votre dossier',
+	'versions.over_ask': 'Daimond a conserv\u00e9 {n} de ces fichiers avant de noter de quel dossier chacun venait : {paths}. Les fichiers qui s\u2019y trouvent maintenant sont peut-\u00eatre d\u2019autres fichiers. La restauration les remplacerait ; leur contenu actuel est conserv\u00e9 dans l\u2019historique. Les remplacer ?',
+	'versions.over_ask_unknown': '{n} de ces fichiers ont \u00e9t\u00e9 enregistr\u00e9s dans un dossier d\u2019un autre appareil, ou dans un dossier que Daimond ne conna\u00eet plus : {paths}. Les fichiers d\u2019ici sont peut-\u00eatre d\u2019autres fichiers. La restauration les remplacerait ; leur contenu actuel est conserv\u00e9 dans l\u2019historique. Les remplacer ?',
+	'versions.other_folder': 'Enregistr\u00e9 dans un autre dossier ; pas de copie ici',
+	'versions.over_allow': 'Les remplacer',
+	'versions.over_title': 'Remplacer des fichiers de votre dossier ?',
 	'versions.refused': 'Hors de port\u00e9e du diamond',
 	'versions.save': 'Enregistrer une version',
 	'versions.save_name': 'Donne-lui un nom',

@@ -360,6 +360,82 @@ export function whyStaleWasm(wasm, srcDir, { subject, holds = '', quiet = false 
 	return '';
 }
 
+// ── The sealed oracle: the tree's engine, not the tree's manifest ──
+//
+// `whyStaleWasm` above is right for every bundle THIS tree produced: `firstDifference` compares
+// the record against `sourceMap`'s full set -- `src/**`, `Cargo.toml`, `Cargo.lock` -- and for a
+// bundle built here those are trivially the tree's own bytes, so the extra fields cost nothing and
+// catch a manifest edited without a rebuild. A SEALED package is not that bundle. It is built in
+// the MIRROR, from a `Cargo.toml` pinning fe2o3 by git revision and a `Cargo.lock` derived for it --
+// `publish.mjs`'s whole job -- so its record's `Cargo.toml` and `Cargo.lock` are never this tree's
+// raw bytes, by design, seal after seal. `whyStaleWasm` read that as staleness every time, so
+// `dev/q5probe_launder_hand.mjs` -- Q5-1's test on the machine -- had only ever run on a dev
+// bundle, never on what actually ships.
+//
+// `publish.mjs --land-check` already asks the right question of a sealed package: not "is the
+// manifest mine" but "is the ENGINE mine" -- every `src/**` file the record names, hashed here.
+// `whySealedEngineDiffers` is that question, moved here from `--land-check`'s middle link so it
+// exists in exactly one place and a caller with only a sealed package in hand, no mirror, can ask
+// it too. `publish.mjs` now calls this rather than keeping its own copy.
+/// The first `src/**` file whose hash in `rec` disagrees with what is on disk under `srcDir` now,
+/// or '' when every one the record names is byte-identical here.
+///
+/// `Cargo.toml` and `Cargo.lock`, though `rec.files` and `sourceMap` both carry them, take no part
+/// in this comparison -- see the section header above for why a sealed package's are never this
+/// tree's own bytes. Whether that manifest IS the pin it should be is `--land-check`'s remaining,
+/// third link, which needs the mirror tree in hand and answers a different question from this one.
+///
+/// # Returns
+/// `"<path> differs"`, `"<path> is missing from its record"` or `"<path> is in its record and not
+/// in this tree"` for the first (sorted) file that disagrees, else ''.
+export function whySealedEngineDiffers(rec, root, srcDir = path.join(root, SRC_REL)) {
+	const mine = sourceMap(root, srcDir);
+	const srcs = [...new Set([...Object.keys(mine), ...Object.keys(rec.files)])]
+		.filter(r => r.startsWith('src/')).sort();
+	const odd = srcs.find(r => mine[r] !== rec.files[r]);
+	if (!odd) return '';
+	const how = !(odd in rec.files) ? 'is missing from its record'
+		: !(odd in mine) ? 'is in its record and not in this tree' : 'differs';
+	return `${odd} ${how}`;
+}
+
+/// Why a SEALED bundle at `wasm` — one carrying a `source.json` naming the tree it was compiled
+/// from, ordinarily the mirror's rather than this one's — is not `srcDir`'s engine, or '' when it
+/// is. The oracle `dev/q5probe_launder_hand.mjs` asks of the package it was handed to test, in
+/// place of `whyStaleWasm`, which refuses every sealed package on sight for the reason given above.
+///
+/// A bundle with no record at all is refused rather than judged by the clock: a copied file's
+/// mtime says nothing about when or from what it was built, so there is nothing left here to check
+/// a sealed package against. Ask `whyStaleWasm` instead for a bundle this tree built itself.
+///
+/// # Arguments
+/// * `subject` - What cannot be verified, as the head of a sentence.
+/// * `holds` - What lives in the bundle, for the sentence. Optional.
+export function whyStaleSealed(wasm, srcDir, { subject, holds = '' }) {
+	try { fs.statSync(wasm); }
+	catch (e) {
+		return `${subject} cannot be verified, because there is no wasm bundle at `
+			+ `${wasm}${holds ? ` and ${holds} lives in it` : ''}. Seal one and try again.`;
+	}
+	const rec = wasmRecord(wasm);
+	if (!rec) {
+		return `${subject} cannot be verified, because ${wasm} carries no ${WASM_SOURCE_RECORD} `
+			+ `beside it. A sealed bundle writes one naming the engine source it was built from; `
+			+ `without it a sealed package cannot be told from an ordinary dev bundle, and this is `
+			+ `not the mtime-based check that stands in for one on an uncertified dev bundle. Seal `
+			+ `one and try again.`;
+	}
+	const root = path.dirname(srcDir);
+	const diff = whySealedEngineDiffers(rec, root, srcDir);
+	if (diff) {
+		return `${subject} would have been verified against a stale engine, which proves nothing `
+			+ `about it in either direction: the sealed bundle was not compiled from this tree's `
+			+ `engine code: ${diff}. Check out the engine source this seal was built from, or seal `
+			+ `this tree's and try again.`;
+	}
+	return '';
+}
+
 /// Whether `wt` can use `main`'s bundle rather than spend a build on its own.
 ///
 /// Two questions, and both must be answered before a bundle is copied anywhere.

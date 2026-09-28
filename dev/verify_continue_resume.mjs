@@ -127,8 +127,12 @@ function makeContinueTurn(stubs) {
 	// pause now holds Continue exactly as it holds a fresh turn, asked with
 	// `var held = turnHold(chat);` before anything else moves, unconditionally --
 	// so a lift missing the stand-in threw ReferenceError on every case, held or not.
+	//
+	// `holdSend` and `confirmHold` are R53-U8b's: a held Continue reads the mailbox once
+	// (`confirmHold`), under the chat's in-flight hold (`holdSend`), before it is refused.
 	const names = ['loadMsgTombs', 'msgTombstone', 'touchChat', 'persistChats', 'renderHistory',
-		'runTurn', 'window', 'DaimondJournal', 'turnHold', 'toast', 'DaimondModels'];
+		'runTurn', 'window', 'DaimondJournal', 'turnHold', 'toast', 'DaimondModels',
+		'holdSend', 'confirmHold'];
 	const f = new Function(
 		...names,
 		NUDGE_STMT + '\n' + CT_SRC + '\nreturn continueTurn;');
@@ -137,7 +141,7 @@ function makeContinueTurn(stubs) {
 
 /// A spy set with sensible defaults; a test overrides `loadMsgTombs` where it needs to.
 function spies(over) {
-	const calls = { runTurn: [], msgTombstone: [], clearTurn: [], toast: [] };
+	const calls = { runTurn: [], msgTombstone: [], clearTurn: [], toast: [], confirm: [] };
 	const s = {
 		loadMsgTombs:  () => ({}),
 		msgTombstone:  (mids) => { calls.msgTombstone.push(mids); },
@@ -150,6 +154,9 @@ function spies(over) {
 		turnHold:      () => '',
 		toast:         (msg) => { calls.toast.push(msg); },
 		DaimondModels: { pauseError: (node) => ({ message: 'Paused at ' + node }) },
+		// The mailbox read a held Continue makes first; it lifts nothing unless a case says so.
+		holdSend:      () => () => {},
+		confirmHold:   (chat) => { calls.confirm.push(chat); return Promise.resolve(); },
 		// The page's own globals, as the function reaches for them. Only the journal is
 		// here: `DaimondPeer` absent is an ordinary interruption, which is what these
 		// cases are.
@@ -279,15 +286,36 @@ console.log('\nthe guards that stop a double-run or a wipe');
 	const ct = makeContinueTurn(stubs);
 	const chat = freshChat('The capital of France is');
 	ct(chat, 'T1', 'What is the capital of France?');
+	await new Promise((r) => setTimeout(r, 0));
+	check(calls.confirm.length === 1,
+		'G: the hold is confirmed against the mailbox, once, before it is refused (R53-U8b)',
+		'reads ' + calls.confirm.length);
 	check(calls.runTurn.length === 0,
 		'G: a chat a pause holds is not continued');
 	check(calls.toast.length === 1 && calls.toast[0] === 'Paused at ' + node,
 		'G: and the refusal is said in the door\'s own pause sentence',
 		JSON.stringify(calls.toast));
 }
+{
+	// H (R53-U8b, QU8 Q4). The hold this device read was stale: play was pressed elsewhere and
+	// the confirming read brings it in. Continue goes ahead, and nothing is said about a pause.
+	const node = 'root';
+	let lifted = false;
+	const { stubs, calls } = spies({
+		turnHold:    () => (lifted ? '' : node),
+		confirmHold: () => { lifted = true; return Promise.resolve(); },
+	});
+	const ct = makeContinueTurn(stubs);
+	ct(freshChat('The capital of France is'), 'T1', 'What is the capital of France?');
+	await new Promise((r) => setTimeout(r, 0));
+	check(calls.runTurn.length === 1,
+		'H: a stale hold the read lifts: the chat is continued', 'runTurn ' + calls.runTurn.length);
+	check(calls.toast.length === 0,
+		'H: and no pause is said', JSON.stringify(calls.toast));
+}
 
 // ── The count is pinned ──────────────────────────────────────
-const EXPECTED = 23;
+const EXPECTED = 26;
 const ranBefore = ran;
 check(ranBefore === EXPECTED,
 	`exactly ${EXPECTED} checks ran — a displaced case trips this`,

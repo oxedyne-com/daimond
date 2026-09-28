@@ -1706,7 +1706,7 @@ impl DaimondApp {
         // ([`DaimondApp::versions_restore_close`]).
         if acts && outcome == crate::tools::CallOutcome::Done {
             if let Some(path) = crate::llm::extract_json_string(&args_json, "path") {
-                note_restores(&self.registry.ctx.read_seen, &[path]).await;
+                note_restores(&self.registry.ctx.read_seen, &[path], name == "file_delete").await;
             }
             // A machine file's, noted at the act through the hand (fix/r51e).
             crate::tools::carry_restored(&registry.ctx.read_seen, &self.registry.ctx.read_seen);
@@ -2230,7 +2230,9 @@ impl DaimondApp {
         // write from its old read is refused, in words that say the person restored the file,
         // and it reads the file again. Forgetting the read instead, as this did until RD of the
         // release 5.1 fix's third QA, let that write put the daimon's text back over the restore.
-        note_restores(&self.registry.ctx.read_seen, &wrote).await;
+        // The engine's own acts are all in browser storage, so a path with nothing there is one
+        // it deleted.
+        note_restores(&self.registry.ctx.read_seen, &wrote, true).await;
         Ok(said)
     }
 
@@ -2242,12 +2244,15 @@ impl DaimondApp {
     ///
     /// # Arguments
     /// * `path` - One path, or empty for the whole version.
-    pub async fn versions_restore_open(&self, id: String, version: f64, path: String)
+    /// * `folder` - The folder the row of `path` the person chose was written in, where there are
+    ///   two rows of it at the version; absent, the folder the path reaches now answers.
+    pub async fn versions_restore_open(&self, id: String, version: f64, path: String,
+        folder: Option<String>)
         -> Result<String, JsValue>
     {
         let one = path.trim();
         let want = if one.is_empty() { None } else { Some(one) };
-        let plan = diamond::Plan::At(version as u64, want.map(|p| p.to_string()));
+        let plan = diamond::Plan::At(version as u64, want.map(|p| p.to_string()), folder);
         let opened = ok!(diamond::versions_restore_open(&id, plan).await.map_err(to_js_err));
         Ok(opened.said(version as u64))
     }
@@ -2280,7 +2285,7 @@ impl DaimondApp {
             .map_err(to_js_err));
         // What the engine's own writes left, beside what the agent last read; see
         // [`DaimondApp::versions_restore`].
-        note_restores(&self.registry.ctx.read_seen, &closed.wrote).await;
+        note_restores(&self.registry.ctx.read_seen, &closed.wrote, true).await;
         Ok(closed.said(None))
     }
 
@@ -2645,12 +2650,24 @@ fn wire_json(
             .collect::<Vec<_>>().join(",")))
 }
 
-/// Note in `cache` what a restore left at each of `paths`, read back off the disk: a file it
-/// deleted, or one this door cannot read, notes nothing ([`crate::tools::note_restored`]).
-async fn note_restores(cache: &crate::tools::ReadCache, paths: &[String]) {
+/// Note in `cache` what a restore left at each of `paths`, read back off the disk: its bytes
+/// ([`crate::tools::note_restored`]), or, where `deleted` says the acts were deletes and browser
+/// storage has nothing there, that it deleted the file (RD2). One this door cannot read notes
+/// nothing.
+///
+/// # Arguments
+/// * `deleted` - May a path with nothing there be read as the restore's delete? Not after a
+///   write that reached the machine, which browser storage never holds.
+async fn note_restores(cache: &crate::tools::ReadCache, paths: &[String], deleted: bool) {
+    let root = crate::tools::FileRoot::Workspace;
     for p in paths.iter() {
-        if let Ok(b) = crate::wasm::opfs::read_file(crate::tools::FileRoot::Workspace, p).await {
-            crate::tools::note_restored(cache, p, &b);
+        // The storage the restore wrote in, taken before the read that notes it.
+        let at = crate::wasm::opfs::storage_of(root, p);
+        match crate::wasm::opfs::read_file(root, p).await {
+            Ok(b)  => crate::tools::note_restored(cache, &at, p, &b),
+            Err(_) => if deleted && crate::wasm::opfs::exists(root, p).await.ok() == Some(false) {
+                crate::tools::note_restored_gone(cache, &at, p);
+            },
         }
     }
 }

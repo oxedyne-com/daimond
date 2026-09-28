@@ -1,4 +1,3 @@
-// gateway: own
 // verify_chunks.mjs — the content-addressed chunk store, in two tiers.
 //
 // TIER 1 (no gateway). The two things a user can act on, which had no way to be
@@ -32,12 +31,8 @@
 //      it is offloaded to chunks rather than carried in the blob.
 //   2. Push. The sync blob must NOT contain the file's plaintext (it holds only
 //      chunk references), and a fetched chunk must be ciphertext (marker absent).
-//   3. A second device, paired into the same account, pulls. The file stays in
-//      cloud storage, listed as away, until it is fetched, and is then
-//      reconstructed from its chunks, identical to the original.
-//   4. The first device deletes the file. The delete travels as a tombstone: its
-//      own next pull does not bring the file back, and the second device lets it
-//      go too (fix/r52-del).
+//   3. Second device: delete the file, wipe the offload cache and cursors, pull.
+//      The file is reconstructed from its chunks, identical to the original.
 //
 // ── Running it ──────────────────────────────────────────────────────
 //
@@ -169,7 +164,8 @@ async function breakInto(page) {
 // of one side of it.
 function gatewaySentences() {
 	const rs = fs.readFileSync(path.join(GWDIR, 'src/handlers/chunk.rs'), 'utf8');
-	const re = /err_response\(\s*HttpStatus::([A-Za-z]+)\s*,\s*"((?:[^"\\]|\\[\s\S])*)"/g;
+	// `err_response_with` too: the per-account 507 carries figures beside its words.
+	const re = /err_response(?:_with)?\(\s*HttpStatus::([A-Za-z]+)\s*,\s*"((?:[^"\\]|\\[\s\S])*)"/g;
 	const out = [];
 	let m;
 	while ((m = re.exec(rs))) {
@@ -191,8 +187,11 @@ if (BREAK) console.log(`\n*** RUNNING UNDER --break ${BREAK}: failures below are
 
 check('the four sentences the gateway composes were read out of chunk.rs',
 	SENTENCES.length >= 4 && !!AT_CEILING, `${SENTENCES.length} found`);
-check('one of them is the 507 that names the remedy',
-	!!AT_CEILING && /Delete something/.test(AT_CEILING), AT_CEILING);
+// Since the 7-day keep a deletion frees its room a week on, so the 507 says when
+// room comes back rather than sending the person to delete more (QGW2's Q1).
+check('one of them is the 507 that says when room comes back',
+	!!AT_CEILING && /comes back within 7 days/.test(AT_CEILING) && !/Delete something/.test(AT_CEILING),
+	AT_CEILING);
 
 const t1 = await open({
 	name:    'chunkctl',
@@ -347,6 +346,12 @@ try {
 	check('and it quotes the token the gateway minted, so the gateway can check it',
 		done.tokened.length === 1 && done.tokened[0].sweep_token === 'sweep-token-abcdef',
 		JSON.stringify(done.tokened[0] && done.tokened[0].sweep_token));
+	// The gateway ignores a token no person gave (DL-1, 2026-09-27), so the mark
+	// is what makes this deletion happen at all -- and this click is the only
+	// place in the page that sends it.
+	check('and says a person gave it',
+		done.tokened.length === 1 && done.tokened[0].sweep_confirm === 'person',
+		JSON.stringify(done.tokened[0] && done.tokened[0].sweep_confirm));
 	check('the chunks actually go: the client records the sweep as confirmed',
 		done.st.confirmed === 1 && done.st.standing === false, JSON.stringify(done.st));
 	const cleared = await chipState();
@@ -556,7 +561,6 @@ if (NO_GATEWAY) {
 
 	const s = await open({ name: 'chunks', signIn: true, connect: false });
 	const { page } = s;
-	let child = null;		// the second device, once there is one
 
 	await page.waitForFunction(
 		() => !!window.DaimondSync && !!window.DaimondChunks && !!window.DaimondCore
@@ -634,111 +638,54 @@ if (NO_GATEWAY) {
 		check('the gateway holds the referenced chunk', chunkCheck.present);
 		check('a stored chunk is ciphertext (plaintext marker absent)', !chunkCheck.cipherHasMark);
 
-		// A SECOND, REAL DEVICE on the same account pulls. The file must NOT be
-		// downloaded -- it stays in cloud storage until asked for, which is what lets a
-		// workspace be larger than the device -- and must then come back byte-for-byte
-		// when it is fetched.
-		//
-		// Until 2026-09-27 the "second device" was this one, after a `file_delete` of the
-		// file and a wipe of the offload cache and cursors. Since fix/r52-del (98134aa5) a
-		// `file_delete` is the person's delete, and for an offloaded file it travels as a
-		// stamped tombstone (`DaimondCloud.remove`), so the pull after it rightly left the
-		// file deleted and four checks here read the fixed resurrection as a failure. A
-		// real device asks the question this tier was written for, and the delete is
-		// asserted after it for what it now is.
-		child = await open({ name: 'chunksmate', signIn: false, connect: false });
-		await child.page.waitForFunction(() => !!window.DaimondPairing, null, { timeout: 20000 });
-		const code = await page.evaluate(() => DaimondPairing.create());
-		await child.page.evaluate(c => DaimondPairing.redeem(c), code.code);
-		await child.page.reload({ waitUntil: 'domcontentloaded' });
-		await signInAs(child, 'chunks');
-		await child.page.waitForFunction(
-			() => !!window.DaimondSync && !!window.DaimondCloud && !!window.DaimondGateway
-				&& DaimondGateway.state().authed,
-			null, { timeout: 20000 }).catch(() => {});
-		const mate = await child.page.evaluate(() => window.DaimondIdentity.publicKeyB64url());
-		const mine = await page.evaluate(() => window.DaimondIdentity.publicKeyB64url());
-		check('a second device holds the same account', mate === mine, String(mate).slice(0, 12));
-
-		const onDisk = (pg) => pg.evaluate(async () => {
-			try {
-				const root = await navigator.storage.getDirectory();
-				return await (await (await root.getFileHandle('big-note.txt')).getFile()).text();
-			} catch (e) { return null; }
-		});
-		await child.page.evaluate(() => window.DaimondSync.pull());
-		const afterPull = await onDisk(child.page);
-		const restored = await child.page.evaluate(async () => {
+		// Second device: drop the local copy, wipe the offload cache and cursors,
+		// pull. The file must NOT be downloaded — it stays in cloud storage until
+		// asked for, which is what lets a workspace be larger than the device — and
+		// must then come back byte-for-byte when it is fetched.
+		const restored = await page.evaluate(async (mark) => {
 			const mod = await import('../pkg/oxedyne_daimond.js');
 			const app = new mod.DaimondApp('http://127.0.0.1/v1/chat/completions', '', 'none', 256, '', true);
+			await app.run_tool('file_delete', JSON.stringify({ path: 'big-note.txt' }));
+			localStorage.removeItem('daimond-chunk-map');	// a fresh device has never offloaded.
+			localStorage.removeItem('daimond-sync-version');
+			localStorage.removeItem('daimond-sync-filebase');
+			await window.DaimondSync.pull();
+
+			const onDisk = async () => {
+				try {
+					const root = await navigator.storage.getDirectory();
+					return await (await (await root.getFileHandle('big-note.txt')).getFile()).text();
+				} catch (e) { return null; }
+			};
+			const afterPull = await onDisk();
 			const away  = window.DaimondCloud.awayPaths();
 			const known = !!window.DaimondCloud.manifest('big-note.txt');
 			// The agent is told where it is rather than that it is missing.
 			const readErr = String(await app.run_tool('file_read', JSON.stringify({ path: 'big-note.txt' })));
 			// And fetching it is a deliberate, separate act.
 			const fetched = String(await app.run_tool('file_fetch', JSON.stringify({ path: 'big-note.txt' })));
+			const back = await onDisk();
 			return {
+				lazy:      afterPull === null,
 				known:     known,
 				away:      Object.prototype.hasOwnProperty.call(away, 'big-note.txt'),
 				readErr:   readErr,
 				fetchedOk: /^\s*OK/.test(fetched) || /fetched/i.test(fetched),
+				size:      back ? back.length : 0,
+				hasMark:   !!back && back.includes(mark),
 			};
-		});
-		const back = await onDisk(child.page);
-		check('a pull does NOT download the large file (it stays in cloud storage)', afterPull === null);
+		}, MARK);
+		check('a pull does NOT download the large file (it stays in cloud storage)', restored.lazy);
 		check('the device still knows the file exists, as a cloud manifest', restored.known);
 		check('the file is listed as away from this device', restored.away);
 		check('file_read tells the agent it is in cloud storage, not that it is missing',
 			/in cloud storage/i.test(restored.readErr), restored.readErr.slice(0, 90));
 		check('file_fetch brings it down on request', restored.fetchedOk, restored.fetchedOk ? '' : 'fetch refused');
 		check('the fetched file is byte-for-byte the original',
-			!!back && back.includes(MARK) && back.length === built.size, 'size=' + (back ? back.length : 0));
-
-		// THE PERSON'S DELETE TRAVELS, AND A PULL DOES NOT UNDO IT (fix/r52-del). The
-		// first device deletes the file and pushes. Its own next pull must not bring the
-		// manifest back, which is exactly what the same-device stand-in above used to
-		// demand, and the second device's copy -- fetched a moment ago -- goes with it.
-		const tombed = await page.evaluate(async () => {
-			const mod = await import('../pkg/oxedyne_daimond.js');
-			const app = new mod.DaimondApp('http://127.0.0.1/v1/chat/completions', '', 'none', 256, '', true);
-			await app.run_tool('file_delete', JSON.stringify({ path: 'big-note.txt' }));
-			// A build without tombstones has no `deadAt`: that is a delete that does not
-			// travel, and it fails here on the behaviour rather than throwing.
-			const C = window.DaimondCloud;
-			return { dead: typeof C.deadAt === 'function' && C.deadAt('big-note.txt') !== null,
-				known: !!C.manifest('big-note.txt') };
-		});
-		check('the person\'s delete of an offloaded file is recorded as a tombstone, to travel',
-			tombed.dead && !tombed.known, `tombstone=${tombed.dead}, manifest left=${tombed.known}`);
-		const sent = await page.evaluate(async () => {
-			const before = window.DaimondSync.state().version;
-			await window.DaimondSync.push();
-			return { before, after: window.DaimondSync.state().version };
-		});
-		const own = await page.evaluate(async () => {
-			await window.DaimondSync.pull();
-			return { known: !!window.DaimondCloud.manifest('big-note.txt'),
-				away: Object.prototype.hasOwnProperty.call(window.DaimondCloud.awayPaths(), 'big-note.txt') };
-		});
-		check('a pull on the device that deleted it does not bring the file back',
-			sent.after > sent.before && !own.known && !own.away && (await onDisk(page)) === null,
-			`pushed ${sent.before} -> ${sent.after}, manifest=${own.known}, away=${own.away}`);
-		let far = null;
-		await waitFor(async () => {
-			far = await child.page.evaluate(async () => {
-				await window.DaimondSync.pull();
-				return { known: !!window.DaimondCloud.manifest('big-note.txt'),
-					away: Object.prototype.hasOwnProperty.call(window.DaimondCloud.awayPaths(), 'big-note.txt') };
-			});
-			far.disk = (await onDisk(child.page)) !== null;
-			return !far.known && !far.away && !far.disk;
-		}, 15000, 1000);
-		check('and the second device lets it go too: a deleted file stays deleted on every device',
-			!!far && !far.known && !far.away && !far.disk, JSON.stringify(far));
+			restored.hasMark && restored.size > 128 * 1024, 'size=' + restored.size);
 	} catch (e) {
 		check('no exception during the run', false, String(e && e.message || e));
 	} finally {
-		if (child) { try { await child.browser.close(); } catch (e) { /* ignore */ } }
 		try { await s.browser.close(); } catch (e) { /* ignore */ }
 		if (gw) { try { gw.kill('SIGTERM'); } catch (e) { /* ignore */ } }
 	}

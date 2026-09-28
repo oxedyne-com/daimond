@@ -34,8 +34,14 @@
 	var PIN_KEY   = 'daimond-cloud-pins';		// path -> 1, device-local
 	var ATIME_KEY = 'daimond-cloud-atime';		// path -> ms, for least-recently-used reclaim
 	var PATHS_KEY = 'daimond-cloud-paths';		// path -> size, DERIVED: in cloud, not on this device
-	var TOMB_KEY  = 'daimond-cloud-tombs';		// path -> {d, h, s}: deletions of index paths, stamped
-	var TOMBS_MAX = 2000;						// bounded like the file tombstones; the newest kept
+	var TOMB_KEY  = 'daimond-cloud-tombs';		// path -> {d, h, s}: every workspace path's deletions, stamped
+	var TOMBS_MAX = 2000;						// until stable versions (§8); the newest kept
+	var FLOOR_KEY = 'daimond-cloud-tombs-floor';	// the highest stamp this device has trimmed
+	var HELD_KEY  = 'daimond-cloud-held';		// path -> {k, s, t}: what this device's sandbox bytes are, device-local
+	var HELD_FOLDER_KEY = 'daimond-cloud-held-folder';	// the same, for the open folder's bytes
+	var ANC_MAX   = 10;							// versions of one file a manifest remembers it was made from
+	var MERGED_KEY  = 'daimond-cloud-merged';		// { v }: the mailbox version this index is whole at
+	var MERGED_SEEN = 'daimond-cloud-merged-seen';	// 1 once a mark was written, so a lost store reads as lost
 
 	// Reclaim thresholds, as a fraction of the storage the browser grants us.
 	// Reclaiming to a little under the trigger stops it running on every write.
@@ -214,6 +220,9 @@
 			});
 		}
 		if (km === IXM) { if (!ok) alarmRaise(); else if (!km.dirty) alarmClear(); }
+		// A record of a file's deletion or return that did not reach the store is said: it is
+		// in the mirror and every parcel this session, and lost with the session (A5).
+		if (km === TBM && !ok) tombAlarm();
 		return ok;
 	}
 
@@ -276,10 +285,69 @@
 					if (t && typeof t === 'object') mirrorTo(TBM, t);
 				} catch (e) { /* keep the box-seeded mirror; the fallback path stays active */ }
 			}
+			await readWhole();
 			channel();
 			_ready = true;
 		})();
 		return _readyP;
+	}
+
+	// ── Is this index the account's whole index? ───────────────────
+	// THE COMMIT DECLARES THIS INDEX AS THE ACCOUNT'S LIVE SET, and the gateway sweeps what it
+	// does not name. So a device may commit only an index it knows names everything the
+	// account's index named at the version it commits at (daimond.js `mayCommitChunks`). On
+	// 2026-09-13 a desktop that had only ever merged its shared folder's paths lost its handle,
+	// became a committer, and declared its own view: the phone lost 222 files.
+	//
+	// The mark is that knowledge: the mailbox version at which this index was last known whole.
+	// It is advanced by the sync engine (daimond.js `syncIndexAt`) and kept BESIDE the index,
+	// in the same store, written only after the index writes before it have landed, so the
+	// mark can never vouch for an index the store does not hold. `null` is a device that has
+	// never recorded one (a build before this, or a new device); -1 is one that knows it is
+	// not whole. A store that lost the mark while this box remembers writing one (MERGED_SEEN)
+	// lost the index with it, and reads as -1, never as "never recorded".
+	var _whole = null;
+	var _wholeStored = null;	// what the store holds, as far as this tab wrote or read it
+	var _wholePend = 0;			// writes queued: a read meanwhile would bring back the older mark
+
+	async function readWhole() {
+		if (_wholePend) return;
+		var mk = null;
+		try {
+			mk = (window.DaimondDurable && DaimondDurable.get)
+				? await DaimondDurable.get(MERGED_KEY) : readJson(MERGED_KEY, null);
+		} catch (e) { mk = null; }
+		if (_wholePend) return;
+		if (mk && typeof mk.v === 'number') _whole = mk.v;
+		else _whole = readJson(MERGED_SEEN, null) ? -1 : null;
+		_wholeStored = _whole;
+	}
+
+	/// The mailbox version at which this device's index is known to name the account's whole
+	/// index: a version, -1 when it is known not to, or null when this device never recorded it.
+	function wholeAt() { return _whole; }
+
+	/// Record the version this index is whole at (-1: not whole). The write waits for the index
+	/// writes queued before it, and is skipped if they did not land: the mark then stays where
+	/// the store's index is, and the commit gate reads the index as not durable meanwhile.
+	function noteWhole(v) {
+		v = (typeof v === 'number' && v >= 0) ? (v | 0) : -1;
+		if (_whole === v && _wholeStored === v) return Promise.resolve(true);
+		_whole = v;
+		writeJson(MERGED_SEEN, 1);
+		_wholePend++;
+		async function store() {
+			try {
+				if (v >= 0 && !indexDurable()) return false;
+				if (_whole !== v) return false;		// a later note has the word
+				var ok = (window.DaimondDurable && DaimondDurable.set)
+					? await DaimondDurable.set(MERGED_KEY, { v: v }) : writeJson(MERGED_KEY, { v: v });
+				if (ok) _wholeStored = v;
+				return !!ok;
+			} catch (e) { return false; }
+			finally { _wholePend--; }
+		}
+		return IXM.tail.then(store, store);
 	}
 
 	/// Read the index and its tombstones again from the store, so this tab carries what a
@@ -289,6 +357,7 @@
 		await ready();
 		if (_durableMode) await refreshKept(IXM);
 		await refreshKept(TBM);
+		await readWhole();		// a sibling tab's merge or push moves it too
 	}
 
 	/// Resolves when no write is pending, so the commit gate asks `indexDurable()` AFTER
@@ -305,6 +374,7 @@
 	// the collector used to raise itself when `contentSet` answered false.
 	function alarmClear() { try { if (window.DaimondCore && DaimondCore.clearStorageAlarm) DaimondCore.clearStorageAlarm('index'); } catch (e) { /* no core */ } }
 	function alarmRaise() { try { if (window.DaimondCore && DaimondCore.noteCloudIndexStuck) DaimondCore.noteCloudIndexStuck(); } catch (e) { /* no core */ } }
+	function tombAlarm() { try { if (window.DaimondCore && DaimondCore.noteDeletionUnrecorded) DaimondCore.noteDeletionUnrecorded(); } catch (e) { /* no core */ } }
 
 	// ── Is this device's index durably written? ────────────────────
 	// THE INDEX IS WHAT A COMMIT DECLARES LIVE, and a commit sweeps every chunk the
@@ -830,7 +900,7 @@
 	/// `dest` is where the bytes land, which is `path` itself except for a conflict
 	/// copy. A failure leaves nothing behind: a truncated file standing in for a whole
 	/// one, in a folder under version control, would be committed by somebody.
-	async function materialiseTo(root, path, dest) {
+	async function materialiseTo(root, path, dest, folder) {
 		var m = manifest(path);
 		if (!m) return 'Error: ' + path + ' is not in cloud storage.';
 		if (!window.DaimondChunks) return 'Error: the chunk transport is not loaded.';
@@ -866,6 +936,10 @@
 			return 'Error: ' + to + ' could not be written; cloud storage no longer holds all of its parts.';
 		}
 		touch(path);
+		if (to === path) {
+			try { noteHeld(path, m.key, await fileUnderRoot(root, path), folder || true, m); }
+			catch (e) { /* hashed on the next look */ }
+		}
 		log('materialised', to, written);
 		return 'OK: wrote ' + to + ' (' + written + ' bytes) into the open folder.';
 	}
@@ -936,9 +1010,238 @@
 		var p = parts(path);
 		var dir = await dirFor(path, false);
 		if (!dir) return false;
-		try { await dir.removeEntry(p[p.length - 1]); return true; }
+		try { await dir.removeEntry(p[p.length - 1]); dropHeld(path, false); return true; }
 		catch (e) { return false; }
 	}
+
+	// ── What this device's bytes are ───────────────────────────
+	// A MERGE SWAPS THE MANIFEST, NOT THE BYTES. Adopting another device's manifest for a
+	// path held here costs no download, so the bytes on disk stay the version they were,
+	// under a manifest that names another -- and a collect that read "the bytes differ from
+	// the manifest" as "the person edited this" uploaded the OLDER version as the newest
+	// one. The whole account then settled on it, and where the editing device had freed its
+	// copy the edit was gone (decision 2 of QCMG, 2026-09-27; `specs/daimond_fixbrief_r522_rev_20260927.md`).
+	//
+	// So this device keeps its own note of what its bytes ARE: the content key they had when
+	// it last uploaded, fetched, wrote or verified them, with the size and mtime they had
+	// then. It is one device's observation and never travels (the index would carry it to a
+	// peer on a build that merges it away). An old note costs a hash, never a byte: "stale"
+	// needs the bytes to hash to exactly the noted key, so an edit can never read as stale.
+
+	// ONE NOTE PER STORAGE: the sandbox's, and each folder's by the id the caller names it by
+	// (a folder's bytes at a path are not another folder's). `folder` is falsy for the sandbox.
+	function heldKeyOf(folder) {
+		if (!folder) return HELD_KEY;
+		return folder === true ? HELD_FOLDER_KEY : HELD_FOLDER_KEY + '@' + String(folder);
+	}
+
+	function heldMap(folder) { return readJson(heldKeyOf(folder), {}); }
+
+	function heldOf(path, folder) {
+		var h = heldMap(folder)[path];
+		return (h && typeof h.k === 'string' && h.k) ? h : null;
+	}
+
+	/// Note that the bytes at `path` are the content `key`, as `file` stands now, and, where
+	/// the manifest `m` of that content is known, which version of the file they are.
+	function noteHeld(path, key, file, folder, m) {
+		if (!path || !key) return;
+		var all = heldMap(folder), was = all[path];
+		var s = file ? file.size : -1, t = file ? file.lastModified : 0;
+		var v = (m && m.key === key) ? verOf(m) : (was && was.k === key ? was.v : key.slice(0, 12));
+		var a = (m && m.key === key) ? ancOf(m) : (was && was.k === key ? (was.a || []) : []);
+		var n = (m && m.key === key) ? snOf(m) : (was && was.k === key ? (was.n || []) : []);
+		if (was && was.k === key && was.s === s && was.t === t && was.v === v && J(was.a) === J(a)
+			&& J(was.n) === J(n)) return;
+		all[path] = { k: key, s: s, t: t, v: v, a: a };
+		if (n.length) all[path].n = n;
+		writeJson(heldKeyOf(folder), all);
+	}
+
+	function J(x) { return JSON.stringify(x || []); }
+
+	// ── Which version is newer ─────────────────────────────────
+	// A MANIFEST NAMES ITS VERSION AND THE VERSIONS IT WAS MADE FROM. `ver` is the hash of its
+	// content key and its parent's `ver`, so one content reached twice (an edit undone) is two
+	// versions; `anc` is the last ANC_MAX of its ancestors, newest first. With them, "theirs
+	// was made from ours" is a fact read off the manifest, and the merge and the settle need
+	// no clock and no guess: a version made from the one held here is newer, a version this
+	// one was made from is older. A manifest from a build before this has neither; its
+	// version is named by its content key's first twelve hex (`verOf`), which is also how a
+	// new build names such a parent, so an edit of it is still recognised as its descendant.
+
+	function verOf(m) {
+		if (!m) return '';
+		if (typeof m.ver === 'string' && m.ver) return m.ver;
+		return m.key ? String(m.key).slice(0, 12) : (m.hash ? String(m.hash).slice(0, 12) : '');
+	}
+
+	function ancOf(m) { return (m && Array.isArray(m.anc)) ? m.anc.slice(0, ANC_MAX) : []; }
+
+	// SEEN IS NOT MADE FROM (CC2). An edit that crossed another device's version, or a copy kept
+	// against one (`keepOurs`), supersedes it at the path and lists it in `anc`, so the merge takes
+	// the newer; it was not made from it, and says so in `sn`. A device drops its bytes of a
+	// version only where the replacement was made from them, or where that version is filed
+	// somewhere in the index (`mayDrop`): a claim of having seen them never takes their last home.
+	function snOf(m) { return (m && Array.isArray(m.sn)) ? m.sn.slice(0, ANC_MAX) : []; }
+
+	/// Does the version `m` supersede the version `id` (within ANC_MAX steps): made from it, or
+	/// made having seen it?
+	function descends(m, id) { return !!id && ancOf(m).indexOf(id) >= 0; }
+
+	/// Was the version `m` made from the version `id`, rather than only having seen it?
+	function madeFrom(m, id) { return descends(m, id) && snOf(m).indexOf(id) < 0; }
+
+	/// May the bytes at `path` -- content `key`, the version `id` -- go for the version `m`?
+	function mayDrop(path, m, id, key) {
+		if (madeFrom(m, id)) return true;
+		if (!descends(m, id) || !key) return false;
+		var ix = index();
+		return Object.keys(ix).some(function (k) { return k !== path && !!ix[k] && !ix[k].peer && ix[k].key === key; });
+	}
+
+	/// The versions a manifest made from `parent` (and having seen `seen`) only saw: `seen`, and
+	/// what the parent itself only saw, less anything the parent was made from.
+	function seenOnly(parentVer, parent, seen) {
+		var pa = parent ? ancOf(parent) : [], ps = parent ? snOf(parent) : [];
+		var made = [parentVer].concat(pa.filter(function (v) { return ps.indexOf(v) < 0; }));
+		return uniq((seen || []).concat(ps)).filter(function (v) { return made.indexOf(v) < 0; }).slice(0, ANC_MAX);
+	}
+
+	/// Where the index files a version kept beside `path`: a name of its own per content,
+	/// `<stem>.conflict-<content>.<ext>`. The one `<path>.synced` slot took a second conflict's
+	/// losing version over the first's, and nothing named the first any more (CC2); one name per
+	/// content also makes the same version filed by two devices, or on two pulls, one entry.
+	function copyPath(path, m) {
+		var real = String(path).replace(/\.synced$/, '');
+		var cut = real.lastIndexOf('/'), dir = cut < 0 ? '' : real.slice(0, cut + 1), name = real.slice(cut + 1);
+		var dot = name.lastIndexOf('.');
+		var stem = dot > 0 ? name.slice(0, dot) : name, ext = dot > 0 ? name.slice(dot) : '';
+		var tag = String((m && (m.key || m.hash)) || '').replace(/[^A-Za-z0-9]/g, '').slice(0, 12) || 'copy';
+		return dir + stem + '.conflict-' + tag + ext;
+	}
+
+	/// The version id of content `key` made from the version `parentVer` ('' for a new file).
+	async function verFor(key, parentVer) {
+		// A new file is named as an older build's manifest of the same bytes would be, so that
+		// build's copy of it, offered back, is still known for what it is.
+		if (!parentVer) return String(key).slice(0, 12);
+		try { return (await sha256(String(key) + ':' + String(parentVer))).slice(0, 12); }
+		catch (e) { return String(key).slice(0, 12); }
+	}
+
+	/// Forget the note for `path` and, for a folder, everything beneath it.
+	function dropHeld(path, folder) {
+		var all = heldMap(folder), want = String(path || '').replace(/\/+$/, ''), moved = false;
+		if (!want) return;
+		Object.keys(all).forEach(function (k) {
+			if (k === want || k.indexOf(want + '/') === 0) { delete all[k]; moved = true; }
+		});
+		if (moved) writeJson(heldKeyOf(folder), all);
+	}
+
+	/// Does this manifest come from a build that never offers superseded bytes as an edit?
+	/// Such a build names each upload's version (`ver`); 5.2.1 and older never do, and an
+	/// older page is exactly the one that re-uploads a stale copy.
+	function trusted(m) { return !!m && typeof m.ver === 'string' && !!m.ver; }
+
+	/// What the bytes `file` at `path` are, against the manifest `m` the index names:
+	///   `same`    -- they are `m`'s content;
+	///   `stale`   -- they are the content this device last established, and `m` names another:
+	///                an older version, never an edit;
+	///   `edit`    -- they changed here since; `base` is the version they were made from;
+	///   `unknown` -- no note, and not `m`'s content (a device's first round on this build).
+	/// By content: the note's marks, or a manifest's own upload clock, spare the hash; any
+	/// doubt is settled by streaming the file's content key (`fileKey`), never by comparing
+	/// one device's clock with another's. `opts.base` is the manifest a merge just replaced,
+	/// standing in for a missing note; `opts.live` a content key the caller already has.
+	async function localState(path, file, m, opts) {
+		var o = opts || {}, folder = o.folder || false;		// the storage's name, kept: see `heldKeyOf`
+		if (!file) return { state: 'absent' };
+		var h = heldOf(path, folder), b = o.base || null;
+		var markOf = function (x) {
+			return !!(x && x.key && x.mtime && x.bytes === file.size && x.mtime === file.lastModified);
+		};
+		var live = (typeof o.live === 'string' && o.live) ? o.live : null;
+		if (live === null && h && h.s === file.size && h.t === file.lastModified) live = h.k;
+		if (live === null && !h && !folder) {
+			// A manifest this device uploaded carries its own size and mtime (`put`), which is
+			// the cheap test the collect has always made.
+			if (markOf(m)) live = m.key;
+			else if (markOf(b)) live = b.key;
+		}
+		if (live === null) {
+			if (!window.DaimondChunks) return { state: 'unknown' };
+			try { live = await fileKey(file, DaimondChunks.chunkSizeFor(file.size)); }
+			catch (e) { return { state: 'unknown' }; }
+		}
+		if (m && m.key && live === m.key) {
+			noteHeld(path, live, file, folder, m);
+			return { state: 'same', live: live, baseVer: verOf(m), baseAnc: ancOf(m), baseSn: snOf(m) };
+		}
+		var base = h ? h.k : ((b && b.key) || null);
+		var bv = h ? (h.v || h.k.slice(0, 12)) : verOf(b), ba = h ? (h.a || []) : ancOf(b);
+		var bn = h ? (h.n || []) : snOf(b);
+		if (base && live === base) {
+			if (!h) noteHeld(path, live, file, folder, b);
+			return { state: 'stale', live: live, base: base, baseVer: bv, baseAnc: ba, baseSn: bn };
+		}
+		if (h) return { state: 'edit', live: live, base: h.k, baseVer: bv, baseAnc: ba, baseSn: bn };
+		return { state: 'unknown', live: live };
+	}
+
+	/// Settle a sandbox copy the index has moved past: drop it, so the path is in cloud
+	/// storage and is fetched at the version the index names when it is opened; a pinned file
+	/// is fetched again at once. Checked again here, immediately before the removal, as
+	/// `evict` checks: bytes changed since the caller looked are an edit and are kept.
+	/// `inlineVer`, for a copy held here inline with no note of it (S10), names the inline version
+	/// the bytes are (the caller's hash of their text); the drop then needs the manifest to have
+	/// been made from that version.
+	async function settleStale(path, inlineVer) {
+		var m = manifest(path);
+		if (!m) return 'kept: ' + path + ' is not in cloud storage.';
+		var file = await fileAt(path);
+		if (!file) { dropHeld(path, false); return 'OK: ' + path + ' was not on this device.'; }
+		var st = await localState(path, file, m);
+		var bv = st.state === 'stale' ? st.baseVer : null;
+		if (bv === null && st.state === 'unknown' && typeof inlineVer === 'function') bv = await inlineVer(file);
+		if (!bv) return 'kept: ' + path + ' is ' + st.state + ' here.';
+		if (!mayDrop(path, m, bv, st.live)) return 'kept: ' + path + ' is not a version made from the one here.';
+		var pinned = isPinned(path);
+		if (!(await removeLocal(path))) return 'Error: could not drop the older copy of ' + path + '.';
+		log('superseded', path, file.size);
+		if (pinned) { try { await fetchDown(path); } catch (e) { /* fetched when opened */ } }
+		return 'OK: dropped the older copy of ' + path + '.';
+	}
+
+	/// Keep this device's version at `path` and file `theirs` beside it under its own name (`copyPath`),
+	/// the both-diverged arm's shape: for a path whose bytes here changed since, or whose new
+	/// manifest cannot be shown to have been made from them. Either may be absent.
+	///
+	/// OURS BECOMES A VERSION THAT HAS SEEN THEIRS. Kept as it was, the device holding theirs
+	/// would do the same from its side, and the two would each keep their own for ever. So
+	/// ours is re-named as made from both (`anc` holds both), the other device takes it as
+	/// newer and settles its own copy -- which stays in the index beside it, never lost.
+	async function keepOurs(path, ours, theirs) {
+		var sets = {};
+		if (ours) {
+			var o2 = {};
+			Object.keys(ours).forEach(function (k) { o2[k] = ours[k]; });
+			if (theirs && ours.key) {
+				var both = [verOf(ours), verOf(theirs)];
+				o2.ver = await verFor(ours.key, both.join('+'));
+				o2.anc = uniq(both.concat(ancOf(ours), ancOf(theirs))).slice(0, ANC_MAX);
+				// Theirs and its line are seen, not made from: filed beside, under their own name.
+				var sn = seenOnly(verOf(ours), ours, [verOf(theirs)].concat(ancOf(theirs)));
+				if (sn.length) o2.sn = sn; else delete o2.sn;
+			}
+			sets[path] = o2;
+		}
+		if (theirs) sets[copyPath(path, theirs)] = theirs;
+		return writeIx(sets, null);
+	}
+
+	function uniq(a) { var seen = {}; return a.filter(function (x) { if (!x || seen[x]) return false; seen[x] = 1; return true; }); }
 
 	// ── The derived path list the Rust file tools read ─────────
 	// `file_read` and `file_list` in wasm consult `daimond-cloud-paths` to tell
@@ -1004,8 +1307,8 @@
 	/// one costs no bytes.
 	///
 	/// A path changed on BOTH sides differently keeps the local manifest and
-	/// records the remote one at `<path>.synced`, mirroring the sidecar rule for
-	/// inline files. No download is needed to preserve it, because the sidecar
+	/// records the remote one beside it, under a name of its own per content
+	/// (`copyPath`; until CC2 the one `<path>.synced` slot). No download is needed to preserve it, because the sidecar
 	/// is only a second reference to chunks the gateway already holds.
 	/// A FILE NEEDS A PEER SLOT TOO, and until 2026-09-14 only a chat and a Diamond
 	/// had one. The arms below that KEEP our manifest -- the same content at two sets
@@ -1069,7 +1372,7 @@
 		// named beside ours. Gathered here and written after the pass, because a slot
 		// written during it would be overwritten when the loop reached its own key.
 		var unadopted = [];
-		// The conflict copies this merge files, `<path>.synced -> their manifest`, for
+		// The conflict copies this merge files, `copyPath(p, theirs) -> their manifest`, for
 		// the same reason: written during the pass, a fresh copy was overwritten when the
 		// loop reached the `.synced` key a stored copy already held, and the newer edit
 		// was lost on every device (SIM-5). A fresh conflict copy is always the newer
@@ -1146,16 +1449,22 @@
 			// ours and dropping theirs is what let a committer sweep the other device's
 			// copy; their addresses are named below instead.
 			if (l.hash === r.hash) { out[p] = l; unadopted.push([p, l, r]); return; }
+			// WHERE ONE WAS MADE FROM THE OTHER, THAT DECIDES IT, whatever the fork point says:
+			// theirs made from ours is newer, ours made from theirs is newer still. The fork point
+			// is this device's last landed parcel, and a copy relayed by a device that never saw
+			// the newer version -- or re-offered by an older page -- reads against it as news.
+			if (descends(r, verOf(l))) { out[p] = r; return; }
+			if (descends(l, verOf(r))) { out[p] = l; unadopted.push([p, l, r]); return; }
 			var b = base[p] || null;
 			var localChanged  = (l.hash !== b);
 			var remoteChanged = (r.hash !== b);
 			if (remoteChanged && !localChanged) { out[p] = r; return; }
 			if (localChanged && !remoteChanged) { out[p] = l; unadopted.push([p, l, r]); return; }
 			out[p] = l;												// both diverged: keep ours,
-			// and preserve theirs beside it -- but never chain sidecars onto
-			// sidecars, or a path that keeps diverging grows a tail of
-			// `.synced.synced.synced` that nobody will ever read.
-			if (!/\.synced$/.test(p)) conflicts[p + '.synced'] = r;
+			// and preserve theirs beside it, under a name of its own per content (`copyPath`):
+			// never the one `<path>.synced` slot, where a second conflict's copy took the first's
+			// place (CC2), and never a `.synced` of a `.synced` (its copy is the real file's).
+			conflicts[copyPath(p, r)] = r;
 		});
 		Object.keys(conflicts).forEach(function (k) { out[k] = conflicts[k]; });
 		// Their addresses for the files we kept our own manifest of -- not for a key a
@@ -1228,6 +1537,27 @@
 			chunks: mani.chunks,
 			at:     o.timeless ? 0 : Date.now(),
 		};
+		// WHICH VERSION THIS IS, and what it was made from (see "Which version is newer"):
+		// `o.keep` is the same version sealed again, `o.parent` the version an edit was made
+		// from (null for a new file). Neither -- the collect could not place the bytes -- leaves
+		// the upload without a version, as an older build's is, so no device drops its own
+		// copy on its word.
+		if (o.keep && o.keep.ver) {
+			sets[path].ver = o.keep.ver;
+			sets[path].anc = (o.keep.anc || []).slice(0, ANC_MAX);
+			if (Array.isArray(o.keep.sn) && o.keep.sn.length) sets[path].sn = o.keep.sn.slice(0, ANC_MAX);
+		} else if (o.parent !== undefined) {
+			// `o.seen`: versions this one supersedes besides its parent -- the index's version an
+			// edit crossed, filed beside it (`keepOurs`) -- so the device holding that one takes
+			// this as newer instead of keeping its own against it.
+			var pv = o.parent ? (o.parent.ver || '') : '', seen = (o.seen || []).filter(Boolean);
+			var from = [pv].concat(seen).filter(Boolean);
+			sets[path].ver = await verFor(mani.key, from.join('+'));
+			sets[path].anc = uniq(from.concat(o.parent ? (o.parent.anc || []) : [])).slice(0, ANC_MAX);
+			var sno = seenOnly(pv, o.parent, seen);
+			if (sno.length) sets[path].sn = sno;
+		}
+		if (f) noteHeld(path, mani.key, f, o.timeless ? (o.folder || true) : false, sets[path]);
 		// A WRITE HERE AFTER A DELETION BRINGS THE PATH BACK, on every device: the
 		// tombstone is add-wins, and this upload is this device's own write of the path
 		// -- a restore from History, or the file made again. Stamped past the deletion,
@@ -1292,13 +1622,30 @@
 	// So a deletion is a record (dev/SYNC_CONTRACT.md §8), in the shape step 8 gives every
 	// workspace path: `path -> { d, h, s }`, add-wins.
 	//   `d`  1 dead, 0 brought back.
-	//   `h`  the content key the deleting device held. A copy CHANGED since is not what was
-	//        deleted and stands: an edit beats a delete, as in the inline merge.
+	//   `h`  the bytes the deleting device held. A copy CHANGED since is not what was deleted
+	//        and stands: an edit beats a delete, as in the inline merge.
 	//   `s`  the stamp, so a later write brings the path back: this device's own upload of
 	//        the path (`put`) writes `d: 0` past the deletion.
 	// Joined on every pull, by the later stamp and then the canonical form, and carried in
 	// every parcel (`chunkedTombs`), so the news reaches a device whichever parcel it pulls.
 	// Kept until gateway release 2 gives stable versions (§8); bounded meanwhile, newest kept.
+	//
+	// ONE SET FOR EVERY WORKSPACE PATH, INLINE OR OFFLOADED (fix/r53-faultb3, 2026-09-27). An
+	// inline file's deletion used to travel only in the parcel of the device that made it, and
+	// the mailbox holds one parcel: a second device's push before a third had read the
+	// deleter's was enough to lose the news, and the third brought the file back to everyone
+	// (QFB2-3). It lives here now, relayed by every device like the offloaded ones. `h` names
+	// the bytes in the form the deleting device held them: the content key (64 hex) for an
+	// offloaded file, the inline fingerprint (daimond.js `fileHash`, `<base36>:<len>`) for one
+	// its census carried inline. The two cannot be confused, and nothing here compares an
+	// inline fingerprint with a manifest, so a build that knows only content keys carries an
+	// inline record and never acts on it. daimond.js writes the inline records and returns
+	// (`noteFileTombs`) and carries every deletion out (`honourFileRecords`).
+	//
+	// THE FLOOR. Past the bound the oldest records go, and the highest stamp trimmed is kept:
+	// a record for a path this device holds nothing for, at or under it, is no news. It may be
+	// a deletion whose return this device trimmed, and taken as news it would delete the file
+	// that return brought back. Under the floor a trimmed deletion can only resurrect.
 
 	function validTomb(t) {
 		return !!t && typeof t === 'object' && (t.d === 0 || t.d === 1) && typeof t.h === 'string'
@@ -1323,13 +1670,27 @@
 		return out;
 	}
 
-	/// `ops` with the oldest tombstones dropped once the map would pass its bound.
+	/// `ops` with the oldest tombstones dropped once the map would pass its bound, the
+	/// highest stamp dropped raising this device's floor.
 	function tombTrim(ops) {
 		var all = applyOps(Object.assign({}, TBM.m), ops), keys = Object.keys(all);
 		if (keys.length <= TOMBS_MAX) return ops;
 		keys.sort(function (a, b) { return ((all[a].s || 0) - (all[b].s || 0)) || (a < b ? -1 : 1); });
-		keys.slice(0, keys.length - TOMBS_MAX).forEach(function (k) { ops[k] = { del: 1 }; });
+		var gone = keys.slice(0, keys.length - TOMBS_MAX), top = 0;
+		gone.forEach(function (k) {
+			ops[k] = { del: 1 };
+			var st = window.DaimondStamp ? DaimondStamp.ms(all[k] && all[k].s) : 0;
+			if (st > top) top = st;
+		});
+		if (top > tombFloor()) writeJson(FLOOR_KEY, top);
 		return ops;
+	}
+
+	/// The highest stamp this device has trimmed off the set: a record at or under it, for
+	/// a path held here with no record, may be one whose later record was trimmed.
+	function tombFloor() {
+		var f = readJson(FLOOR_KEY, 0);
+		return (typeof f === 'number' && isFinite(f) && f > 0) ? f : 0;
 	}
 
 	var _freshDead = {};		// paths a join has made dead here since the last `honourList`
@@ -1337,11 +1698,12 @@
 	/// Join a parcel's tombstones into this device's. Answers how many moved.
 	function joinTombs(remote) {
 		if (!remote || typeof remote !== 'object' || !window.DaimondStamp) return 0;
-		var ops = {}, n = 0;
+		var ops = {}, n = 0, floor = tombFloor();
 		Object.keys(remote).forEach(function (p) {
 			var r = remote[p];
 			if (!validTomb(r) || isContentKey(p)) return;
 			var rec = { d: r.d, h: r.h, s: DaimondStamp.ms(r.s) }, l = tombOf(p);
+			if (!l && rec.s <= floor) return;					// under what this device has forgotten
 			if (l && !DaimondStamp.beats(rec.s, rec, l.s, l)) return;
 			ops[p] = { v: rec };
 			n++;
@@ -1353,11 +1715,29 @@
 
 	/// This device's own word on a path: `d` 1 for a deletion of content `h`, 0 for a write
 	/// that brings it back. Stamped past what is held, so it beats it (§5).
-	function stampTomb(p, d, h) {
-		var t = tombOf(p), ops = {};
-		ops[p] = { v: { d: d, h: h || '', s: DaimondStamp.next(t ? t.s : 0) } };
-		keep(TBM, tombTrim(ops));
+	function stampTomb(p, d, h) { mark([{ path: p, d: d, h: h }]); }
+
+	/// This device's own words on several paths, in one write: `[{ path, d, h }]`. Each is
+	/// stamped past the record it replaces and past the one written before it in the same
+	/// call, so a batch keeps its order. Answers `path -> stamp` for what was written; a
+	/// content key or an empty path is refused.
+	function mark(list) {
+		var ops = {}, out = {}, last = 0;
+		if (!window.DaimondStamp) return out;
+		(list || []).forEach(function (e) {
+			var p = e && String(e.path || '');
+			if (!p || isContentKey(p) || (e.d !== 0 && e.d !== 1)) return;
+			var t = tombOf(p), st = DaimondStamp.next(Math.max(t ? t.s : 0, last));
+			last = st;
+			ops[p] = { v: { d: e.d, h: e.d === 1 ? String(e.h || '') : '', s: st } };
+			out[p] = st;
+		});
+		if (Object.keys(ops).length) keep(TBM, tombTrim(ops));
+		return out;
 	}
+
+	/// The record held for `p`, `{ d, h, s }`, or null.
+	function recordOf(p) { var t = tombOf(p); return t ? { d: t.d, h: t.h, s: t.s } : null; }
 
 	/// The paths whose deletion this device has still to carry out: a manifest here of the
 	/// content that was deleted, and every path a join has made dead since the last call.
@@ -1400,6 +1780,8 @@
 		if (!gone.length) return false;
 		var a = atimes(), p = pins();
 		gone.forEach(function (k) { delete a[k]; delete p[k]; });
+		dropHeld(want, false);
+		dropHeld(want, true);
 		writeIx(null, gone);
 		writeJson(ATIME_KEY, a);
 		writeJson(PIN_KEY, p);
@@ -1514,7 +1896,17 @@
 		var m = manifest(path);
 		if (!m) return 'Error: ' + path + ' is not in cloud storage.';
 		if ((await storeWord()) !== 'held') return noStoreSentence(path);
-		if (await isHeld(path)) { touch(path); return 'OK: ' + path + ' is already on this device.'; }
+		if (await isHeld(path)) {
+			// NOT IF WHAT IS HERE IS A VERSION THE INDEX HAS MOVED PAST. That copy is not this
+			// file any more, and answering "already on this device" handed the person the older
+			// version of it. One changed here since is theirs, and stands.
+			var here = await fileAt(path);
+			var st = here ? await localState(path, here, m) : { state: 'absent' };
+			if (st.state !== 'stale' || !mayDrop(path, m, st.baseVer, st.live) || !(await removeLocal(path))) {
+				touch(path);
+				return 'OK: ' + path + ' is already on this device.';
+			}
+		}
 		if (!window.DaimondChunks) return 'Error: the chunk transport is not loaded.';
 		// An agent asking is not the same as a person asking. A person clicking a
 		// file has seen its size and been warned if it is large; an agent can ask
@@ -1563,6 +1955,7 @@
 			written = content.length;
 		}
 		touch(path);
+		try { noteHeld(path, m.key, await fileAt(path), false, m); } catch (e) { /* hashed on the next look */ }
 		if (viaAgent) noteAgentFetch(written);
 		await refreshPaths();
 		log('fetched', path, written);
@@ -1587,6 +1980,14 @@
 
 		var file = await fileAt(path);
 		if (!file) return 'OK: ' + path + ' was already not on this device.';
+		// NOT WHILE NOTHING THE GATEWAY KEEPS NAMES IT (QCMG2's E1). Freeing this copy is safe only
+		// because a record the gateway keeps -- the committed index -- names the file's chunks. A
+		// device that may not commit (daimond.js `mayCommitChunks`: its index is not known to be the
+		// account's whole one) has its uploads named only by its own latest push, which the next push
+		// from any other device replaces; seven days later the gateway collects them. So the copy is
+		// kept, and uploaded again from here if that happens. The words are the Files panel's, which
+		// shows this answer (`files.free_undeclared`).
+		if (undeclared()) return 'Error: ' + t('files.free_undeclared');
 
 		// Cheap rejection first: a different length on disk means an edit that has
 		// not been pushed yet.
@@ -1615,6 +2016,16 @@
 	}
 
 	function isPinned(path) { return !!pins()[path]; }
+
+	function t(k, v) { return window.DaimondI18n ? DaimondI18n.t(k, v) : k; }
+
+	/// Are this device's uploads named by nothing the gateway keeps, because it may not commit? An
+	/// older daimond.js without the gate answers no, as before.
+	function undeclared() {
+		try {
+			return !!(window.DaimondCore && DaimondCore.syncMayCommitChunks && !DaimondCore.syncMayCommitChunks());
+		} catch (e) { return true; }
+	}
 
 	/// Pin a file to this device, or release it. A pinned file is never
 	/// reclaimed automatically, which is what makes automatic reclaim safe to
@@ -1647,6 +2058,8 @@
 		var pr = await pressure();
 		if (!pr.quota) return { freed: 0, evicted: [], ratio: pr.ratio };
 		if (!force && pr.ratio < PRESSURE_HIGH) return { freed: 0, evicted: [], ratio: pr.ratio };
+		// Nothing is freed while nothing the gateway keeps names this device's uploads (see `evict`).
+		if (undeclared()) return { freed: 0, evicted: [], ratio: pr.ratio, why: 'undeclared' };
 		// Reclaim rides on the push, and a push can come every few seconds. Left
 		// ungoverned it would free a file the user is still working with, who
 		// opens it again, pays to fetch it, and has it freed once more.
@@ -1748,15 +2161,29 @@
 		manifest:     manifest,
 		merge:        merge,
 		put:          put,
+		// What this device's bytes at a path are against the index (`same`, `stale`, `edit`,
+		// `unknown`), and the two ways a superseded copy is settled. See "What this device's
+		// bytes are".
+		localState:   localState,
+		trusted:      trusted,
+		descends:     descends,
+		verOf:        verOf,
+		settleStale:  settleStale,
+		keepOurs:     keepOurs,
+		mayDrop:      mayDrop,
+		copyPath:     copyPath,
 		forget:       forget,
 		// The person's delete, which travels as a tombstone; `forget` only drops here;
 		// `carrying` marks a delete the sync merge makes, which must not travel.
 		remove:       remove,
 		carrying:     carrying,
-		// The index paths' tombstones: the parcel's `chunkedTombs`, their join, and
-		// what this device has still to delete because of them.
+		// Every workspace path's deletions and returns: the parcel's `chunkedTombs`, their
+		// join, this device's own (`mark`), the one held for a path, and what this device
+		// has still to delete because of them.
 		tombs:        tombs,
 		joinTombs:    joinTombs,
+		mark:         mark,
+		recordOf:     recordOf,
 		deadAt:       deadAt,
 		honourList:   honourList,
 		textKey:      textKey,
@@ -1774,6 +2201,11 @@
 		/// because a commit from an index that lost a manifest to quota sweeps the
 		/// very chunks the parcel it pushed still points at.
 		indexDurable: indexDurable,
+		/// The version this index is known whole at (`wholeAt`: a version, -1, or null for never
+		/// recorded) and its record (`noteWhole`). The commit gate reads it; see "Is this index
+		/// the account's whole index?" above.
+		wholeAt:      wholeAt,
+		noteWhole:    noteWhole,
 		/// A manifest this device cannot heal: record it (`noteUnrestorable`, which
 		/// answers how many rounds it has been seen), read the set (`unrestorable`),
 		/// and forget one (`clearUnrestorable`). The second answered sighting is what

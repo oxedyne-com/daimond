@@ -44,6 +44,7 @@
 import { open, chat, signInAs } from './harness.mjs';
 import { makePagePro } from './pro.mjs';
 import { GW_PORT, GW_URL } from './ports.mjs';
+import { SUITE_GW_PID } from './gwbin.mjs';
 import { spawn, execFileSync } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -220,7 +221,59 @@ async function gatewayUp() {
 	} catch (e) { return false; }
 }
 
-/// Stop the running gateway and start it again exactly as it was.
+/// The gateways this file started and nobody else owns, by pid.
+///
+/// THE ONE IT STARTS OUTLIVED IT. (13b) stops the suite's gateway and starts another on
+/// the same port, detached, so it outlives this process; `dev/run_all.sh` stops only
+/// the pids it wrote down, and refused to touch "a gateway this suite did not start".
+/// So the port stayed held after the suite had finished, and the next run in that world
+/// failed in two seconds at "Could not free the port" -- on 2026-09-27 seven jobs in a
+/// row, and in a nightly shard every later group that needs the port clear.
+///
+/// So each one is OWNED from the moment it is spawned. Under the suite, the suite's pid
+/// file named the gateway it stopped, and the new pid takes its line: the suite owns it
+/// as it owned the first, the verifiers after this one in phase 2 keep their gateway, and
+/// `stop_gateway` stops it at the end of the phase. With no suite (a hand run, or a pid
+/// file that does not name the one stopped), this file stops it itself on every way out:
+/// the end of the run, a throw, an unhandled rejection, and SIGTERM/SIGINT/SIGHUP (which
+/// is how `timeout` ends a verifier past its budget). Only SIGKILL escapes, and under the
+/// suite the pid file has it already.
+const ownGateways = new Set();
+function ownGateway(stopped, started) {
+	let lines = null;
+	try { lines = fs.readFileSync(SUITE_GW_PID, 'utf8').split('\n').filter(Boolean); } catch (e) { lines = null; }
+	if (lines && lines.includes(String(stopped))) {
+		try {
+			const tmp = SUITE_GW_PID + '.verify_sync';
+			fs.writeFileSync(tmp, lines.map(l => l === String(stopped) ? String(started) : l).join('\n') + '\n');
+			fs.renameSync(tmp, SUITE_GW_PID);
+			return;
+		} catch (e) { /* not handed over, so this file stops it */ }
+	}
+	ownGateways.add(started);
+}
+/// Stop every gateway this file still owns. Synchronous, so it can run inside
+/// `process.on('exit')`, where nothing asynchronous is allowed to finish.
+function stopOwnGateways() {
+	for (const p of ownGateways) {
+		try { process.kill(p, 'SIGTERM'); console.log('  (stopped the gateway this run started, pid ' + p + ')'); }
+		catch (e) { /* already gone */ }
+		ownGateways.delete(p);
+	}
+}
+process.on('exit', stopOwnGateways);
+// `exit` does not fire for a signal. Once, so that with no other listener (Playwright's
+// closes the browser and exits) the signal is raised again and the status still says the
+// run was killed.
+for (const sig of ['SIGTERM', 'SIGINT', 'SIGHUP']) {
+	process.once(sig, () => {
+		stopOwnGateways();
+		if (process.listenerCount(sig) === 0) process.kill(process.pid, sig);
+	});
+}
+
+/// Stop the running gateway and start it again exactly as it was, owner included:
+/// see `ownGateways`.
 ///
 /// Exactly as it was matters: the suite may be running it from `gateway/` or
 /// from the generated `dev/devgw/`, and which one decides what config it reads.
@@ -278,6 +331,8 @@ async function restartGateway() {
 	// whole run — see the note on the " (deleted)" suffix above.
 	child.on('error', (e) => { spawnErr = String(e && e.message || e); });
 	child.unref();
+	// Owned from the instant it exists, before anything below can throw or time out.
+	if (child.pid) ownGateway(Number(pid), child.pid);
 	await sleep(200);
 	if (spawnErr) return 'the gateway would not start: ' + spawnErr;
 	for (let i = 0; i < 60; i++) {
@@ -549,12 +604,14 @@ try {
 	// deletion below is only meaningful against a mailbox that HELD the file, and
 	// a bare push() that stood aside left there being nothing to delete.
 	//
-	// A DELETION IS A TOMBSTONE, NEVER AN ABSENCE (fault B, 5.2.1). The stand-in device
-	// first sends a complete census that merely lacks the file, which deletes nothing: a
-	// folder device's census is complete only for its shared roots, and reading its
-	// absence as a deletion took every file a phone had made in its own storage. Then it
-	// sends what a device that really deleted the file sends, the tombstone at the hash it
-	// held (`fileTombs`, written by `noteFileTombs`), and that is what removes it here.
+	// A DELETION IS A RECORD, NEVER AN ABSENCE (fault B, 5.2.1; fix/r53-faultb3). The
+	// stand-in device first sends a complete census that merely lacks the file, which
+	// deletes nothing: a folder device's census is complete only for its shared roots, and
+	// reading its absence as a deletion took every file a phone had made in its own
+	// storage. Then the old field alone (`fileTombs`, which a device on this build keeps
+	// only for 5.2 and 5.2.1 receivers), which is no news from a sender that keeps the law.
+	// Then what a device that really deleted the file sends: the stamped record at the
+	// fingerprint it held, in the one record set (`chunkedTombs`), and that removes it here.
 	await page.evaluate(async () => {
 		const mod = await import('../pkg/oxedyne_daimond.js');
 		const app = new mod.DaimondApp('http://127.0.0.1/v1/chat/completions', '', 'none', 256, '', true);
@@ -568,11 +625,12 @@ try {
 		const present = await app.run_tool('file_read', JSON.stringify({ path: 'DELME.txt' }));
 		const held = JSON.parse(localStorage.getItem('daimond-sync-filebase') || '{}')['DELME.txt'] || '';
 		// The OTHER device's parcel without DELME.txt, as its own complete census.
-		const send = async (tombs) => {
+		const send = async (tombs, recs) => {
 			const state = await window.DaimondCore.collectSync();
 			delete state.files['DELME.txt'];
 			state.filesComplete = true;
 			state.fileTombs = Object.assign({}, state.fileTombs || {}, tombs);
+			state.chunkedTombs = Object.assign({}, state.chunkedTombs || {}, recs || {});
 			const blob = await window.DaimondIdentity.wrap(JSON.stringify(state));
 			const ver = window.DaimondSync.version();
 			const r = await fetch('/api/sync', {
@@ -583,15 +641,21 @@ try {
 			await window.DaimondSync.pull();
 			return r.status;
 		};
-		const s1 = await send({});								// absent, no tombstone
+		const s1 = await send({});								// absent, no record
 		const absent = await app.run_tool('file_read', JSON.stringify({ path: 'DELME.txt' }));
-		const s2 = await send({ 'DELME.txt': held });			// the tombstone at the hash it held
+		const s1b = await send({ 'DELME.txt': held });			// the old field alone, from a sender on the law
+		const oldOnly = await app.run_tool('file_read', JSON.stringify({ path: 'DELME.txt' }));
+		const s2 = await send({}, { 'DELME.txt': { d: 1, h: held, s: Date.now() + 1 } });	// the record
 		const after = await app.run_tool('file_read', JSON.stringify({ path: 'DELME.txt' }));
-		return { present: String(present), absent: String(absent), after: String(after), held: !!held, s1, s2 };
+		return { present: String(present), absent: String(absent), oldOnly: String(oldOnly), after: String(after),
+			held: !!held, s1, s1b, s2 };
 	});
 	check('a complete census from another device that merely lacks a file deletes nothing here',
 		delProp.present.includes('delete me') && delProp.absent.includes('delete me') && delProp.s1 === 200,
 		'absent=' + delProp.absent.slice(0, 40) + ' post ' + delProp.s1);
+	check('the old field alone, from a device that keeps the record law, deletes nothing here',
+		delProp.oldOnly.includes('delete me') && delProp.s1b === 200,
+		'oldOnly=' + delProp.oldOnly.slice(0, 40) + ' post ' + delProp.s1b);
 	check('a file deleted on another device is removed here',
 		delProp.held && delProp.s2 === 200 && /error|not found|no such/i.test(delProp.after),
 		'after=' + delProp.after.slice(0, 40) + ' post ' + delProp.s2 + ' held ' + delProp.held);
@@ -999,9 +1063,14 @@ try {
 	const becomeDevice = (disk) => wasm(async (app, disk) => {
 		for (const d of JSON.parse(await app.list_diamonds())) await app.delete_diamond(d.id);
 		for (const pack of disk) await app.import_diamond(pack);
-		const rows = JSON.parse(await app.list_diamonds()), base = {};
-		rows.forEach((d) => { base[d.id] = d.touched || d.updated || 0; });
+		const rows = JSON.parse(await app.list_diamonds()), base = {}, recv = {};
+		rows.forEach((d) => { base[d.id] = d.touched || d.updated || 0; recv[d.id] = [base[d.id], base[d.id], []]; });
 		localStorage.setItem('daimond-diamond-base', JSON.stringify(base));
+		// And what it has received (lanes DIA, DIA2: `[s, c, anc]`): at rest on the same
+		// copies, as a device that has taken each of them. A receipt borrowed from the other
+		// device's last pull would read an unmoved copy as an edit made here, as the fork
+		// point once did.
+		localStorage.setItem('daimond-diamond-recv', JSON.stringify(recv));
 		return rows.length;
 	}, disk);
 
@@ -2201,26 +2270,47 @@ try {
 		const store   = window.DaimondCore.chatStore();
 		const held    = store.stored();
 		const victim  = held.length ? held[0].id : '';
+		// `messagesRef: null` beside it, or a reference would be resolved in its place
+		// and the transcript the merge reads would be the good one (TRI-1d).
 		parcel.chats  = (parcel.chats || []).map(c =>
-			(c && c.id === victim) ? Object.assign({}, c, { messages: 'not-a-list' }) : c);
+			(c && c.id === victim) ? Object.assign({}, c, { messages: 'not-a-list', messagesRef: null }) : c);
+		// "Intact" is read the way a reload reads it, chat by chat through `loadMessages`,
+		// before and after. The mirror is SUMMARIES once a merge has finished and the
+		// store is re-read, so asking it whether each entry carries a `messages` array
+		// passed only while the merge threw before reaching that re-read.
+		const count = async () => {
+			const o = {};
+			for (const c of store.stored()) {
+				if (c && c.id) o[c.id] = ((await store.loadMessages(c.id)).messages || []).length;
+			}
+			return o;
+		};
+		const was = await count();
 		let threw = '', report = null;
 		try { report = await window.DaimondCore.applySync(parcel); }
 		catch (e) { threw = String(e && e.message || e); }
+		try { await store.settled(); } catch (e) { /* none queued */ }
 		const row  = JSON.parse(await app.list_diamonds()).find(d => d.id === id) || null;
-		const kept = store.stored();
+		const now  = await count();
+		const short = Object.keys(was).filter((k) => !((now[k] || 0) >= was[k]));
 		return { threw, report, victim, name: row ? row.name : '(gone)',
-			chatsIntact: kept.length === held.length
-				&& kept.every(c => Array.isArray(c.messages)) };
+			chatsIntact: short.length === 0 && Object.keys(was).length > 0, short, was: was[victim], now: now[victim] };
 	});
 	check('the poisoned parcel names a chat this device really holds', !!poison.victim, poison.victim);
 	check('a malformed section does not throw out of applySync', poison.threw === '', poison.threw);
 	check('and the Diamond in the same parcel still arrives',
 		poison.name === 'Poison-Survivor', poison.name);
-	check('and the merge SAYS which section it could not apply',
-		!!(poison.report && Array.isArray(poison.report.failed) && poison.report.failed.indexOf('chats') !== -1),
+	// ONE CHAT THAT CANNOT BE READ COSTS ONLY ITSELF (DL-2, 2026-09-27): the merge names
+	// the chat it refused, and fails no section for it, so the rest of the parcel lands
+	// and the version is adopted rather than re-pulled for bytes that will not change.
+	check('and the merge SAYS which chat it could not read, failing no section for it',
+		!!(poison.report && Array.isArray(poison.report.failed) && poison.report.failed.indexOf('chats') === -1
+			&& poison.report.refused && Array.isArray(poison.report.refused.chats)
+			&& poison.report.refused.chats.indexOf(poison.victim) !== -1),
 		JSON.stringify(poison.report));
-	check('and the section that failed left this device’s own chats as they were',
-		poison.chatsIntact === true);
+	check('and the refused chat left this device’s own chats as they were',
+		poison.chatsIntact === true,
+		'shorter: ' + JSON.stringify(poison.short) + ', the refused one ' + poison.was + ' -> ' + poison.now);
 
 	// ── (11) Giving up is said out loud ────────────────────────────────
 	// The pull-merge-retry loop is bounded, and running out of attempts used to
@@ -2807,6 +2897,38 @@ try {
 		JSON.stringify(bare.json).slice(0, 160));
 	check('and a wait that nothing moved under says so rather than inventing a change',
 		bare.json.changed === false, 'parked above ' + bare.above + ' — ' + JSON.stringify(bare.json));
+
+	// ── (10c) A chat nobody here held, carried unreadable, costs only itself ──
+	// DL-2 (2026-09-27). It was adopted as sent: `[null]` stored and reported merged,
+	// every later pull from the sender refused, and once the store unioned it no chat
+	// saved at all. LAST, because on a build without the transcript law it stops this
+	// page saving, and every section after it would be measuring that.
+	const law = await page.evaluate(async () => {
+		const core = window.DaimondCore, store = core.chatStore(), now = Date.now();
+		const parcel = await core.collectSync();
+		parcel.chats = (parcel.chats || []).concat([
+			{ id: 'vs-10c-bad', name: '10c bad', messages: [null], messagesRef: null, updatedAt: now, metaAt: now },
+			{ id: 'vs-10c-good', name: '10c good', messagesRef: null, updatedAt: now, metaAt: now, messages: [
+				{ role: 'user', content: 'from elsewhere', mid: 'vs10c-1', ts: now },
+				{ role: 'assistant', content: 'hi', mid: 'vs10c-2', ts: now + 1 }] },
+		]);
+		const reps = [];
+		for (let i = 0; i < 2; i++) {
+			try { reps.push(await core.applySync(JSON.parse(JSON.stringify(parcel)))); }
+			catch (e) { reps.push({ threw: String(e && e.message || e) }); }
+		}
+		try { await store.settled(); } catch (e) { /* none queued */ }
+		const ids = store.stored().map((c) => c && c.id);
+		const good = ids.indexOf('vs-10c-good') !== -1
+			? ((await store.loadMessages('vs-10c-good')).messages || []).length : -1;
+		return { reps, bad: ids.indexOf('vs-10c-bad') !== -1, good };
+	});
+	check('(10c) a new chat whose transcript is [null] is refused by name on every apply, failing no section',
+		law.reps.length === 2 && law.reps.every((r) => r && Array.isArray(r.failed) && r.failed.indexOf('chats') === -1
+			&& r.refused && Array.isArray(r.refused.chats) && r.refused.chats.indexOf('vs-10c-bad') !== -1),
+		JSON.stringify(law.reps).slice(0, 300));
+	check('(10c) and it is not stored', law.bad === false);
+	check('(10c) and the good chat after it in the same parcel lands whole', law.good === 2, String(law.good));
 
 	// The gateway is deliberately restarted above, so a wake socket that was open
 	// across it reports a failed connection while it is down. That is the reconnect
