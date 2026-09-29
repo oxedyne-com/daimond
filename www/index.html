@@ -297,7 +297,7 @@
 					     A word is shorter to read than a row is to locate, and it
 					     takes the tooltip with it: a button whose label is its own
 					     name needs no second copy of that name on hover. -->
-					<button class="addbtn railbtn" id="new-diamond-btn" data-i18n="rail.new_diamond">New diamond</button>
+					<button class="addbtn railbtn" id="new-diamond-btn" data-i18n="rail.new_diamond">New Diamond</button>
 					<!-- The Diamonds and the links between them, drawn. It belongs on
 					     the rail head because the rail is the list the picture is of.
 					     It TOGGLES the Graph rather than only opening it, so it is a
@@ -337,7 +337,7 @@
 				<div class="rhandle" id="handle-rail-split" title="Drag to resize, double-click to reset" data-i18n-title="layout.handle"></div>
 				<div class="railhead"><span role="heading" aria-level="2" title="Your conversations" data-i18n="rail.chats" data-i18n-title="rail.chats_help">Chats</span>
 					<!-- Its opposite number on the Diamonds head; see the note there. -->
-					<button class="addbtn railbtn" id="new-session-btn" data-i18n="rail.new_chat">New chat</button>
+					<button class="addbtn railbtn" id="new-session-btn" data-i18n="rail.new_chat">New Chat</button>
 					<!-- The section's own overflow, for an act that is about every chat
 					     rather than one -- "Delete all chats" lives behind this, not
 					     beside the "+" above. A cross next to "+" would have been a
@@ -490,7 +490,7 @@
 							     `login-error` line as `byok-note` below rather than a fourth
 							     notice mechanism. -->
 							<div id="models-note" class="login-error" role="status" aria-live="polite"></div>
-							<button type="button" id="models-add" class="models-add" data-i18n="models.add">+ Add provider</button>
+							<button type="button" id="models-add" class="models-add" data-i18n="models.add">+ Add Provider</button>
 
 							<!-- Adding one: the same three questions, whoever the provider is. -->
 							<div id="byok-form" class="byok-form" style="display:none">
@@ -865,14 +865,20 @@
 						     sends you here to find it. -->
 						<span class="pptw-slot" id="web-pause"></span>
 						<button class="icon-btn" id="web-back" title="Back" data-i18n-title="web.back" aria-label="Back" data-i18n-aria-label="web.back">‹</button>
-						<button class="icon-btn" id="web-reload" title="Reload" data-i18n-title="web.reload" aria-label="Reload" data-i18n-aria-label="web.reload">⟳</button>
+						<button class="icon-btn" id="web-reload" title="Reload" data-i18n-title="web.reload" aria-label="Reload" data-i18n-aria-label="web.reload">
+							<svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M23 4v6h-6"/><path d="M1 20v-6h6"/><path d="M3.51 9a9 9 0 0114.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0020.49 15"/></svg>
+						</button>
 						<!-- The persistent, never-covered "Watch in panel" control: shown
 						     only while Daimond Hands is driving a real tab and no live
 						     picture is up yet (js/web.js syncWatchBtn). One tap requests
 						     the opt-in mirror so the agent-operated tab can be watched
 						     INSIDE the panel. -->
-						<button class="icon-btn" id="web-watch" title="Watch this tab in the panel" data-i18n-title="web.watch_in_panel" aria-label="Watch this tab in the panel" data-i18n-aria-label="web.watch_in_panel" hidden>◉</button>
-						<button class="icon-btn" id="web-pop" title="Open in a real tab" data-i18n-title="web.pop_out" aria-label="Open in a real tab" data-i18n-aria-label="web.pop_out">↗</button>
+						<button class="icon-btn" id="web-watch" title="Watch this tab in the panel" data-i18n-title="web.watch_in_panel" aria-label="Watch this tab in the panel" data-i18n-aria-label="web.watch_in_panel" hidden>
+							<svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
+						</button>
+						<button class="icon-btn" id="web-pop" title="Open in a real tab" data-i18n-title="web.pop_out" aria-label="Open in a real tab" data-i18n-aria-label="web.pop_out">
+							<svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M18 13v6a2 2 0 01-2 2H5a2 2 0 01-2-2V8a2 2 0 012-2h6"/><path d="M15 3h6v6"/><path d="M10 14L21 3"/></svg>
+						</button>
 						<button class="addbtn panel-close" data-close="web" title="Close panel" data-i18n-title="common.close_panel">
 							<svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"/></svg>
 						</button>
@@ -992,7 +998,7 @@
 			     can press it. -->
 			<aside class="panel compose" id="panel-compose" data-panel="compose" data-zone="stage" data-label="Compose" data-i18n-label="panel.compose">
 				<div class="chead">
-					<span class="ctitle" id="compose-title" role="heading" aria-level="2">New message</span>
+					<span class="ctitle" id="compose-title" role="heading" aria-level="2">New Message</span>
 					<div class="chead-right">
 						<button class="addbtn panel-close" data-close="compose" title="Close panel" data-i18n-title="common.close_panel">
 							<svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"/></svg>
@@ -1009,7 +1015,7 @@
 				<div class="compose-atts" id="compose-atts"></div>
 				<div class="compose-foot">
 					<button class="compose-send" id="compose-send" data-i18n="compose.send">Send</button>
-					<button class="compose-btn" id="compose-save" data-i18n="compose.save_draft">Save draft</button>
+					<button class="compose-btn" id="compose-save" data-i18n="compose.save_draft">Save Draft</button>
 					<button class="compose-btn" id="compose-attach" data-i18n="compose.attach">Attach…</button>
 					<input type="file" id="compose-file" multiple hidden>
 					<button class="compose-btn danger" id="compose-discard" data-i18n="compose.discard">Discard</button>
@@ -1201,10 +1207,10 @@
 		<aside class="panel work" id="panel-work" data-panel="work" data-zone="dock" data-label="Workspace" data-i18n-label="panel.work">
 			<div class="railhead"><span role="heading" aria-level="2" data-i18n="panel.work">Workspace</span>
 				<span class="files-actions">
-					<button class="addbtn" data-act="new-file" title="New file" aria-label="New file" data-i18n-title="work.new_file" data-i18n-aria-label="work.new_file">
+					<button class="addbtn" data-act="new-file" title="New File" aria-label="New File" data-i18n-title="work.new_file" data-i18n-aria-label="work.new_file">
 						<svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M13 3H6a2 2 0 00-2 2v14a2 2 0 002 2h12a2 2 0 002-2V10z"/><path d="M13 3v6h6"/><path d="M12 12.5v5M9.5 15h5"/></svg>
 					</button>
-					<button class="addbtn" data-act="new-dir" title="New folder" aria-label="New folder" data-i18n-title="work.new_folder" data-i18n-aria-label="work.new_folder">
+					<button class="addbtn" data-act="new-dir" title="New Folder" aria-label="New Folder" data-i18n-title="work.new_folder" data-i18n-aria-label="work.new_folder">
 						<svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M3 7a2 2 0 012-2h4l2 2h8a2 2 0 012 2v8a2 2 0 01-2 2H5a2 2 0 01-2-2z"/><path d="M12 11v5M9.5 13.5h5"/></svg>
 					</button>
 					<button class="addbtn" data-act="upload" title="Upload files" aria-label="Upload files" data-i18n-title="work.upload" data-i18n-aria-label="work.upload">

@@ -41,11 +41,10 @@
 	margin: 0 0 6px;
 }
 
+/* Two block lines, not a wrap (layout_contract.md V7): see modeldash.css's
+   .mdash-sec-head, the identical control. */
 .spend-sec-head {
-	display: flex;
-	align-items: baseline;
-	gap: 8px;
-	flex-wrap: wrap;
+	display: block;
 	margin: 4px 0 10px;
 }
 .spend-sec-title {
@@ -55,32 +54,45 @@
 	letter-spacing: 0.01em;
 }
 .spend-sec-hint {
+	display: block;
+	margin-top: 2px;
 	font-size: var(--fs-2xs-xs);
 	color: var(--text-muted);
 }
 
-/* Headline stats row. */
+/* Headline stats row: a grid of equal columns, not a wrapping flex row
+   (layout_contract.md V8) -- three stats split two-and-one in every desk
+   config, since 18px of gap plus three natural widths never quite fit one
+   line. Three columns always; two on the phone (responsive.css). */
 .spend-totals {
-	display: flex;
-	gap: 18px;
-	flex-wrap: wrap;
+	display: grid;
+	grid-template-columns: repeat(3, minmax(min-content, 1fr));
+	gap: 12px;
 	margin: 0 0 12px;
 }
 .spend-stat {
 	display: flex;
 	flex-direction: column;
 	gap: 2px;
+	min-width: 0;
 }
 .spend-stat-val {
 	font-size: var(--fs-4xl);
 	font-weight: 650;
 	font-variant-numeric: tabular-nums;
 	line-height: 1.1;
+	white-space: nowrap;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	min-width: 0;
 }
 .spend-stat-lbl {
 	font-size: var(--fs-2xs);
 	color: var(--text-muted);
-	text-transform: lowercase;
+	overflow-wrap: break-word;
+}
+@media (max-width: 760px) {
+	.spend-totals { grid-template-columns: repeat(2, minmax(min-content, 1fr)); }
 }
 
 /* Week / Month toggle. */

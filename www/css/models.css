@@ -15,9 +15,8 @@
    name rather than at the line it opens. */
 .settings-section .models-prov-head {
 	display: flex; align-items: flex-start; gap: 8px; width: 100%;
-	padding: 8px 10px; cursor: pointer; text-align: left;
-	background: var(--bg-tertiary); border: 0; color: var(--text-primary);
-	font-size: var(--fs-xs);
+	cursor: pointer; text-align: left;
+	border: 0; color: var(--text-primary);
 }
 .settings-section .models-prov-head:hover { background: var(--bg-hover); }
 .models-caret     { width: 10px; color: var(--text-secondary); }
@@ -55,17 +54,18 @@
 /* The radius is the skin's, not a number: `--radius-sm` is 6px in the sharp skin, so nothing
    moves there, and 10px in the warm one, where a 6px button beside a 10px field was the one
    square corner in a rounded panel. */
-.settings-section .models-refetch, .settings-section .models-remove, .settings-section .models-add {
+.settings-section .models-refetch, .settings-section .models-remove {
 	padding: 6px 10px; border-radius: var(--radius-sm); cursor: pointer; font-size: var(--fs-2xs);
 	background: var(--bg-tertiary); border: 1px solid var(--border-strong);
 	color: var(--text-secondary);
 }
-.settings-section .models-refetch:hover, .settings-section .models-remove:hover, .settings-section .models-add:hover {
+.settings-section .models-refetch:hover, .settings-section .models-remove:hover {
 	background: var(--bg-hover); color: var(--text-primary);
 }
 .settings-section .models-refetch:disabled { opacity: .5; cursor: default; }
 .settings-section .models-remove { align-self: flex-start; margin-top: 4px; }
-.settings-section .models-add    { width: 100%; }
+/* A text button, not the bordered pair above it (D-20260929-03 §4). */
+.settings-section .models-add    { width: 100%; cursor: pointer; }
 
 /* How old the model list is, under the button that asks for it again. A caveat on
    the list above rather than a second heading, so it takes the chip size and the

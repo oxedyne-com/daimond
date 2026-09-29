@@ -31,17 +31,17 @@
 		display: flex;
 		align-items: center;
 		justify-content: center;
-		width: 38px;
-		height: 38px;
+		width: 36px;
+		height: 36px;
 		margin-right: 2px;
 		padding: 0;
 		background: none;
 		border: none;
 		border-radius: var(--radius);
-		color: var(--text-primary);
+		color: var(--text-secondary);
 		cursor: pointer;
 	}
-	#drawer-btn .ic { width: 22px; height: 22px; }
+	#drawer-btn .ic { width: 16px; height: 16px; }
 	#drawer-btn:active { background: var(--accent-soft); }
 
 	/* ── The left drawer: Diamonds + Chats + Admin ─────────────────
@@ -188,10 +188,11 @@
 		align-items: center;
 		justify-content: center;
 		flex: none;
-		/* 34px, the box `.addbtn` takes beside it on a phone, so the row does not
-		   grow a taller control than the ones it already has. */
-		width: 34px;
-		height: 34px;
+		/* 36px, the phone head-tool box every icon-only control in a head row
+		   takes (D-20260929-03, remaining.md cluster 5): so the row does not
+		   grow a taller control than the ones beside it. */
+		width: 36px;
+		height: 36px;
 		padding: 0;
 		background: none;
 		border: none;
@@ -199,6 +200,31 @@
 		color: var(--text-muted);
 		cursor: pointer;
 	}
+	/* One phone head-tool box (D-20260929-03, remaining.md cluster 5): 36px,
+	   icon-only flush square, worded padded like `.files-btn`'s own 0 9px.
+	   Scoped to the skin: unscoped, this lost to the desktop's own
+	   `.pptw-head .pptw-act` (two classes, higher specificity, and no media
+	   query of its own to keep it off the phone). */
+	:root[data-skin="daylight"] .railhead .addbtn:not(.railbtn),
+	:root[data-skin="daylight"] #fullscreen-btn,
+	:root[data-skin="daylight"] #help-btn.is-more,
+	:root[data-skin="daylight"] .pptw-act {
+		height: 36px; min-height: 36px; padding: 0; width: 36px; box-sizing: border-box;
+	}
+	/* The worded "New Diamond"/"New Chat" rail button, not an icon square:
+	   the flush 36px box above clipped its label under the graph icon. */
+	:root[data-skin="daylight"] .railhead .railbtn { width: auto; padding: 0 9px; }
+	:root[data-skin="daylight"] .files-btn,
+	:root[data-skin="daylight"] #pending-sort {
+		height: 36px; min-height: 36px; padding: 8px 10px; box-sizing: border-box;
+	}
+	/* The phone's own toggle-option height (cluster 7): 32px against the
+	   desktop's 30px, matched to the other phone controls beside them. */
+	:root[data-skin="daylight"] :is(.spend-toggle-btn, .mdash-toggle-btn) { height: 32px; }
+	/* The phone's own select and field height (cluster 12): a thumb's target
+	   is taller than a pointer's. */
+	:root[data-skin="daylight"] :where(select) { height: 36px; }
+	:root[data-skin="daylight"] :where(input):not([type=checkbox], [type=radio], [type=range], [type=color], [type=file]) { height: 34px; }
 	.rail-fold .ic { width: 16px; height: 16px; transition: transform .18s; }
 	/* Pointing down when the section is open, at its heading when it is not. */
 	.rail-fold[aria-expanded="false"] .ic { transform: rotate(-90deg); }
@@ -369,9 +395,12 @@
 	.msheet-tab {
 		flex: 1 1 0;
 		min-width: 0;
-		/* 36px: a thumb target, and short enough that the strip costs the document
-		   less than a line of it. */
-		height: 36px;
+		/* 44px, the same floor `#mnav .ptag` keeps (D-20260929-03, remaining.md
+		   allow-list A3, refused): every phone control stays >=44px, so the tab
+		   strip takes the standard tab height rather than an exemption of its
+		   own -- it costs a little more of the document than a bare 36px, but
+		   nothing on a phone is smaller than a thumb. */
+		height: 44px;
 		/* The chip row's own tokens, because a tab IS a chip: a row that says which
 		   of two things is on screen. Two surfaces styling one idea differently is
 		   how an app comes to look like two apps. */
@@ -600,8 +629,8 @@
 	#msheet-ask-input:focus { outline: 2px solid var(--accent); outline-offset: 1px; border-color: var(--accent); }
 	#msheet-ask-send {
 		flex: none;
-		width: 42px;
-		height: 42px;
+		width: 46px;
+		height: 46px;
 		border: none;
 		border-radius: 50%;
 		background: var(--accent);

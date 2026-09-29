@@ -211,8 +211,7 @@
 	   panel's six-button head in a 260px dock column on a tablet. */
 	.top-actions .icon-btn,
 	.top-actions .update-chip,
-	#drawer-btn { min-width: 40px; min-height: 40px; }
-	.railhead .addbtn { width: 40px; height: 40px; }
+	#drawer-btn { min-width: 36px; min-height: 36px; }
 	/* A word cannot live in a 40px square. The thumb target is kept in the
 	   HEIGHT, which is what a finger misses in a row of this shape, and the width
 	   is whatever the word needs. */
@@ -237,7 +236,7 @@
 	.astat-row.astat-btn,
 	.astat-row.astat-sync { padding-top: 9px; padding-bottom: 9px; }
 	.astat-id .user-row { padding: 9px 4px; }
-	.astat-id #settings-btn { min-width: 40px; min-height: 40px; }
+	.astat-id #settings-btn { min-width: 36px; min-height: 36px; }
 	.admin-item { padding-top: 10px; padding-bottom: 10px; }
 	.tile-label { padding-top: 6px; padding-bottom: 6px; }
 	/* Steps / collapse, in the chat header: 26px tall is a pointer's target, not

@@ -271,9 +271,11 @@
 .gal-row {
 	display: flex;
 	align-items: center;
-	gap: 8px;
+	gap: 4px;
 	width: 100%;
 	padding: 7px 8px;
+	height: 31px;
+	box-sizing: border-box;
 	border-radius: var(--radius-sm);
 	background: none;
 	border: 1px solid transparent;
@@ -290,14 +292,16 @@
    header, and nothing reorders itself behind their back. */
 .gal-pin {
 	flex: none;
-	width: 26px; height: 26px;
+	width: 26px; height: 31px;
+	padding: 7px 8px;
+	box-sizing: border-box;
 	display: flex; align-items: center; justify-content: center;
 	background: none; border: none; border-radius: var(--radius-sm);
 	color: var(--text-muted);
 }
 .gal-pin:hover { background: var(--bg-tertiary); color: var(--text-primary); }
 .gal-pin[aria-pressed="true"] { color: var(--accent); }
-.gal-pin .ic { width: 15px; height: 15px; }
+.gal-pin .ic { width: 16px; height: 16px; }
 
 .gal-empty { padding: 14px 8px; font-size: var(--fs-sm); color: var(--text-muted); text-align: center; }
 

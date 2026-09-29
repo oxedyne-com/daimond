@@ -207,14 +207,14 @@
 	// ── The rail ───────────────────────────────────────────────
 	'rail.diamonds':             'Diamonds',
 	'rail.diamonds_help':        'Your saved projects',
-	'rail.new_diamond':          'New diamond',
+	'rail.new_diamond':          'New Diamond',
 	'rail.unnamed_diamond': 'Unnamed diamond',
 	'rail.shared_by': 'From {who}',
 	'rail.chats':                'Chats',
 	'rail.chats_help':           'Your conversations',
 	// What an unnamed chat is called before anything has been said in it. After that
 	// its first line is its title -- see `chatDisplayName`.
-	'rail.new_chat':             'New chat',
+	'rail.new_chat':             'New Chat',
 	'rail.chats_menu':           'More',
 	// i18n-indirect: mobile.js key = rail.fold_section rail.unfold_section
 	'rail.fold_section':           'Fold this section away',
@@ -256,8 +256,8 @@
 
 	// ── The Admin drawer's home menu ───────────────────────────
 	// ── The centre with no chat in it: three steps, in order ───
-	'start.connect':          'Connect a model',
-	'start.say_hello':        'Say hello',
+	'start.connect':          'Connect a Model',
+	'start.say_hello':        'Say Hello',
 	'start.keep':             'Keep what works as a diamond',
 
 	'home.connect_model':     'Connect a model',
@@ -289,7 +289,7 @@
 	'home.prompts_note':      'The editable files each agent runs under.',
 	'home.switch_to':         'Switch to {name}',
 	'home.unnamed_account':   'Unnamed account',
-	'home.add_account':       '＋ Add another account',
+	'home.add_account':       '+ Add another account',
 	'home.accounts_note':     'Separate chats, keys and files.',
 	'home.lock':              'Lock',
 	'home.log_out':           'Log out',
@@ -628,7 +628,7 @@
 	'tile.fold_all_help':  'Turn into a diamond',
 	// The cog dialog's own button (CHAT-15): the internal verb "Fold" moved off
 	// the row, and the word it left with is what the button already does.
-	'tile.turn_into_diamond': 'Turn into a diamond…',
+	'tile.turn_into_diamond': 'Turn into a Diamond…',
 	'tile.dlg_colour':  'Colour',
 	'tile.colour_bg':   'Background',
 	'tile.colour_fg':   'Text',
@@ -650,7 +650,7 @@
 
 	// ── Models and provider keys ───────────────────────────────
 	'models.lead':                  'Your providers and keys.',
-	'models.add':                   '+ Add provider',
+	'models.add':                   '+ Add Provider',
 	'models.provider':              'Provider',
 	'models.choose_provider':       'Choose a provider…',
 	'models.custom_provider':       'Custom (advanced)…',
@@ -854,7 +854,7 @@
 	'beta.redeem':             'Redeem',
 	'beta.redeeming':          'Redeeming…',
 	'beta.try_again':          'Try again',
-	'beta.enter_code':         'Enter a passcode',
+	'beta.enter_code':         'Enter a Passcode',
 	'beta.still_closed':       'Still no account. The server gave the same answer.',
 	'beta.err_enter_code':     'Type the passcode you were sent.',
 	'beta.err_locked':         'Unlock Daimond first: a passcode is redeemed onto this device’s key.',
@@ -1202,7 +1202,7 @@
 	'compose.optional':   'Optional',
 	'compose.body_ph':    'Write your message.',
 	'compose.send':       'Send',
-	'compose.save_draft': 'Save draft',
+	'compose.save_draft': 'Save Draft',
 	'compose.attach':     'Attach…',
 	'compose.discard':    'Discard',
 
@@ -1496,8 +1496,8 @@
 	'mail.tunnel.err.starttls_early': '{host} sent something before the encrypted channel was up, so Daimond dropped the connection rather than trust it. Nothing was sent.',
 
 	// ── Workspace files ────────────────────────────────────────
-	'work.new_file':   'New file',
-	'work.new_folder': 'New folder',
+	'work.new_file':   'New File',
+	'work.new_folder': 'New Folder',
 	'work.upload':     'Upload files',
 	'work.parent':     'Parent folder',
 	'work.filter_ph':  'Filter…',
@@ -1785,9 +1785,9 @@
 
 	// ── Spending ───────────────────────────────────────────────
 	'spend.inference':       'Inference',
-	'spend.inference_hint':  'your key',
+	'spend.inference_hint':  'Your key',
 	'spend.credits':         'Credits',
-	'spend.credits_hint':    'web, mail, sync',
+	'spend.credits_hint':    'Web, mail, sync',
 	'spend.no_usage':        'No usage recorded.',
 	'spend.no_account':      'None yet.',
 	'spend.add_credits':     'Add credits',
@@ -1878,7 +1878,7 @@
 	// Read-only over the local cost ledger and the local rating store; no
 	// network path. See www/js/modeldash.js.
 	'modeldash.title':        'Model stats',
-	'modeldash.hint':         'this device only',
+	'modeldash.hint':         'This device only',
 	'modeldash.preview_note': 'These are your own figures, kept on this device. Nothing here is sent anywhere. If Daimond later offers to share model figures anonymously with other people, this table — to the integer — is what that would send.',
 	'modeldash.no_usage':     'No model usage recorded yet.',
 	// i18n-family: modeldash.period_ = week month
@@ -2260,7 +2260,7 @@
 	'fold.n_turns_into.one':   'Fold {n} turn into…',
 	'fold.n_turns_into.other': 'Fold {n} turns into…',
 	'fold.no_diamonds':      'No diamonds yet.',
-	'fold.new_diamond':      '＋ New diamond…',
+	'fold.new_diamond':      '+ New Diamond…',
 	'fold.connect_first':    'Connect a model first.',
 	'fold.create_and_fold':  'Create and fold',
 	'fold.no_key':           'That diamond’s provider has no readable key. Unlock, or add one, to fold into it.',
@@ -2305,7 +2305,7 @@
 	'fold.keys_lost':         'Accepting this removes: {keys}',
 
 	// ── The crystal ────────────────────────────────────────────
-	'crystal.page':           'Redesign page…',
+	'crystal.page':           'Redesign Page…',
 	'crystal.page_help':      'Redesign this page',
 	// What goes IN the composer when ✎ Page is pressed. `crystal.page_note` below is
 	// what rides with the turn and is never shown: it is the app's contract with the
@@ -2414,7 +2414,7 @@
 	'crystal.field_heading':  'Heading',
 	'crystal.field_body':     'Body',
 	'crystal.field_hot':      'Always present',
-	'crystal.add_section':    'Add a section',
+	'crystal.add_section':    'Add a Section',
 	'crystal.remove':         'Remove',
 	'crystal.other_fields':   'Other fields',
 	'crystal.other_fields_note': 'Kept as they are, and shown here so nothing vanishes.',
@@ -2691,9 +2691,9 @@
 	'files.mode_cloud': 'Cloud',
 	'files.cloud_on_machine': 'Cloud storage carries your browser workspace, not a folder on this machine.',
 	'files.cloud_help': 'Cloud storage',
-	'files.import_folder': 'Import a folder…',
+	'files.import_folder': 'Import a Folder…',
 	'files.import_folder_help': 'Copy a folder in',
-	'files.save_copy': 'Save a copy…',
+	'files.save_copy': 'Save a Copy…',
 	'files.save_copy_help': 'Save a copy to this computer',
 	'files.delete':          'Delete',
 	'files.rename_move':     'Rename or move',
@@ -2962,7 +2962,7 @@
 	'msg.no_text':           '(This message has no readable text part.)',
 
 	// ── Writing one ────────────────────────────────────────────
-	'compose.new_message':       'New message',
+	'compose.new_message':       'New Message',
 	'compose.draft':             'Draft',
 	'compose.remove_attachment': 'Remove this attachment',
 	'compose.err_no_to':         'Say who it is going to.',
@@ -3029,7 +3029,7 @@
 	'forget.credits_body':   'This account holds {amount} on Daimond\'s server, unlocked only by this identity. A backup lets another device take it over with this account\'s passphrase. Losing the passphrase loses the balance. Export now?',
 	'forget.skip':           'Skip',
 	'forget.title':          'Forget this account?',
-	'forget.ok':             'Erase everything',
+	'forget.ok':             'Erase Everything',
 	'forget.body':           'This erases your passphrase, your encrypted API key, and all of your chats, diamonds and spend history on this device.',
 	'forget.tail':           'There is no recovery. Everything is gone.',
 	'forget.body_secondary': 'This removes the account “{name}” from this browser: its passphrase, keys, chats, diamonds, spend and files.',
@@ -3508,9 +3508,9 @@
 	'graph.no_diamonds':        'No diamonds yet, so there is nothing to draw.',
 	'graph.isolated':           'Not linked',
 	'graph.unnamed':            'Untitled',
-	'graph.link_mode': 'Link two diamonds',
+	'graph.link_mode': 'Link Two Diamonds',
 	'graph.link_help': 'Tap the first diamond, then the second.',
-	'graph.organise': 'Tidy up',
+	'graph.organise': 'Tidy Up',
 	'graph.organise_help': 'Lay diamonds out again to cut crossings.',
 	'graph.pick_source': 'Click the source, then the target. Escape cancels.',
 	'graph.pick_target': 'From {name}. Click the target, or press Escape.',
@@ -3526,7 +3526,7 @@
 	'graph.fit': 'All',
 	'graph.fit_help': 'Scale the picture until every diamond is on screen.',
 	'graph.edit_title': 'Link',
-	'graph.new_title': 'New link',
+	'graph.new_title': 'New Link',
 	// A link carries several relations, added one at a time. `graph.rel_pool` heads
 	// the words already used elsewhere in this graph, offered so the same idea is
 	// not written three ways.
@@ -3554,7 +3554,7 @@
 	'graph.linked': 'Linked {from} → {to}',
 	'graph.rel_pick': 'Relation',
 	'graph.rel_pick_ph': 'Relation, or Escape',
-	'graph.new_diamond': 'New diamond',
+	'graph.new_diamond': 'New Diamond',
 	'graph.no_create': 'This build cannot create diamonds.',
 	'graph.reverse': 'Reverse',
 	'graph.menu_reverse': 'Reverse this link',
@@ -3886,7 +3886,7 @@
 	'social.raised_lead':  'Raised — see it in',
 	'social.raised_hub':   'Improve',
 	'social.novoice_set':  'Set a posting name to send.',
-	'social.novoice_get':  'Get one',
+	'social.novoice_get':  'Get One',
 	'social.polish_wait':  'The model could not draft it just now; it is still waiting to send.',
 	'social.waiting_here': 'Waiting to send; it will go when the forge is reachable.',
 	// The queue: notes that could not be sent yet.
@@ -4386,7 +4386,7 @@
 	// `voice_ph`, `voice_help`, `voice_replace` and `voice_save` stay. Detail lives
 	// in guide/social.html, not here.
 	'social.voice_intro':       'A posting name lets you post, reply and vote on the forge; reading needs none.',
-	'social.voice_get':         'Get one',
+	'social.voice_get':         'Get One',
 	'social.voice_get_help':    'Makes your posting name on the forge. One tap.',
 	'social.voice_getting':     'Making your posting name on the forge\u2026',
 	'social.voice_get_failed':  'Could not make your posting name. Try again shortly.',
@@ -4400,7 +4400,7 @@
 	'social.voice_reissue_title': 'Re-issue your posting name',
 	'social.voice_reissue_ask':   'Re-issue your posting name? The old one stops working on every device, and this cannot be undone.',
 	// The unobtrusive fallback: a voice the forge made elsewhere, pasted in.
-	'social.voice_have':        'I already have a posting name',
+	'social.voice_have':        'I Already Have a Posting Name',
 	'social.voice_have_help':   'Paste a posting name the forge already gave you.',
 	// The paste fallback form (see the note above).
 	'social.voice_replace':     'Replace the posting name',
@@ -4810,7 +4810,7 @@
 	'versions.other_folder':   'Saved in another folder; no copy here',
 	'versions.over_allow':     'Replace them',
 	'versions.over_title':     'Replace files in your folder?',
-	'versions.save':           'Save a version',
+	'versions.save':           'Save a Version',
 	'versions.save_name':      'Name it',
 	'versions.gauge':          'Versions {used} / {cap}',
 	'versions.cannot_compare': 'Cannot compare',

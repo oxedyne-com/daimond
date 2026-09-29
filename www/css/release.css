@@ -78,9 +78,7 @@
 .rel-builds { margin-top: 4px; }
 .rel-builds summary {
 	cursor: pointer;
-	font-size: var(--fs-2xs);
 	color: var(--text-muted);
-	padding: 6px 2px;
 	list-style: none;
 }
 .rel-builds summary::-webkit-details-marker { display: none; }

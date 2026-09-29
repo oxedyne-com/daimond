@@ -20844,12 +20844,13 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 				nameEl.title = shown;
 				nameEl.setAttribute('aria-label', shown);
 				r.appendChild(nameEl);
-				// WHERE THE SECOND LINE STARTS on a phone. Empty, zero-height, and
-				// `display: none` above 480px, so the desktop row is the single line it has
-				// always been; at a phone's width it is the flex break that puts the id, the
-				// build and the last-seen words under the name instead of off the edge.
-				r.appendChild(el('span', 'device-break'));
-				r.appendChild(el('span', 'device-id', id.slice(-4)));
+				// V10 (layout_contract.md, D-20260929-03): an explicit grid, "name copy
+				// rename" / "ctl ctl ctl" / "meta meta meta", so the row's shape never
+				// depends on how long the name is. `.device-id`, `.device-when` and
+				// `.device-build` -- and the ghost/nominee/old-build badges beside them
+				// -- share the meta line.
+				var metaWrap = el('div', 'device-meta');
+				metaWrap.appendChild(el('span', 'device-id', id.slice(-4)));
 				// WHEN IT WAS LAST HERE, from the BEAT where there is one -- `whenOf`, which
 				// the ordering above reads as well, so the list cannot be sorted by one stamp
 				// and worded from another. The roster's `seen` travels only on a parcel that
@@ -20858,7 +20859,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 				// awake; the roster stamp is the durable fallback for a device that is not
 				// beating, which is the only row the words are really about.
 				var whenMs = whenOf(id);
-				r.appendChild(el('span', 'device-when',
+				metaWrap.appendChild(el('span', 'device-when',
 					id === self ? t('devices.this_device') : relTime(whenMs)));
 				// The build this device is running, shown on every row so the fleet's
 				// build spread is legible at a glance -- and flagged when it is a KNOWN
@@ -20869,7 +20870,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 					var bEl = el('span', 'device-build', tOr('devices.build', 'build {id}',
 						{ id: rowBuild.slice(0, 7) }));
 					bEl.title = rowBuild;
-					r.appendChild(bEl);
+					metaWrap.appendChild(bEl);
 					if (curBuild && rowBuild !== curBuild) {
 						r.classList.add('is-oldbuild');
 						// Two words, not six: the chip shares a line with a name, an id, a
@@ -20880,7 +20881,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 							tOr('devices.old_build', 'old build'));
 						ob.title = tOr('devices.old_build_aria',
 							'This device is running an older build than yours. Reload it to update.');
-						r.appendChild(ob);
+						metaWrap.appendChild(ob);
 					}
 				}
 				// A ghost is a machine that is here now under a different id, so the owner
@@ -20889,15 +20890,16 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 					var g = el('span', 'device-ghost', tOr('devices.replaced', 'replaced'));
 					g.title = tOr('devices.replaced_aria',
 						'A device that is here now has taken this one’s place. It is safe to remove.');
-					r.appendChild(g);
+					metaWrap.appendChild(g);
 				}
 				// The nominee wears a small badge, so the one always-on runner is plain
 				// at a glance without reading every ✩ button.
 				if (nominee && id === nominee) {
 					var badge = el('span', 'device-nominee', t('devices.nominee'));
 					badge.title = t('devices.nominee_aria', { name: shown });
-					r.appendChild(badge);
+					metaWrap.appendChild(badge);
 				}
+				r.appendChild(metaWrap);
 				// The row shows the last four characters, which is all that is
 				// needed to tell two lines apart; the button copies the WHOLE id,
 				// which is what a support message or a sync question actually
@@ -20906,21 +20908,28 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 				// every paired device holds.
 				r.appendChild(idCopyBtn(tOr('copy.what_device', 'the id of {name}',
 					{ name: shown }), id));
+				// The nominate star and the stay-unlocked switch share the row's
+				// `ctl` line (V10).
+				var ctlWrap = el('div', 'device-ctl');
 				// Nominate this device the always-on runner, or clear it. A single
-				// scalar per account, so nominating one clears any other; ✭ filled = the
-				// nominee, ✩ hollow = not. Every row, this device included -- a desktop
-				// naming itself the runner is the common case.
+				// scalar per account, so nominating one clears any other; filled =
+				// the nominee, hollow = not, the same star drawn two ways rather
+				// than the ✭/✩ glyph pair a size and a colour of their own could
+				// not be brought level with the icon buttons beside it (§10). Every
+				// row, this device included -- a desktop naming itself the runner
+				// is the common case.
 				var nom = document.createElement('button');
 				var isNominee = !!(nominee && id === nominee);
 				nom.className = 'device-nominate' + (isNominee ? ' is-nominee' : '');
 				nom.type = 'button';
-				nom.textContent = isNominee ? '✭' : '✩';
+				nom.innerHTML = '<svg class="ic" viewBox="0 0 24 24" aria-hidden="true"' + (isNominee ? ' fill="currentColor"' : '') +
+					'><path d="M12 3l2.6 5.35 5.9.86-4.27 4.16 1.01 5.88L12 16.9l-5.24 2.75 1.01-5.88L3.5 9.21l5.9-.86L12 3z"/></svg>';
 				nom.title = isNominee ? t('devices.unnominate_aria', { name: shown })
 					: t('devices.nominate_aria', { name: shown });
 				nom.setAttribute('aria-label', nom.title);
 				nom.setAttribute('aria-pressed', isNominee ? 'true' : 'false');
 				nom.addEventListener('click', function () { setNominee(isNominee ? '' : id); });
-				r.appendChild(nom);
+				ctlWrap.appendChild(nom);
 				// This device's own row only -- the setting is per-tab, held in THIS
 				// browser's storage, so a control on any other row would change nothing
 				// there and only look like it worked. Off by default on a phone and on
@@ -20946,18 +20955,26 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 						DaimondIdentity.setStayUnlocked(!isStay);
 						renderHome();
 					});
-					r.appendChild(stay);
+					ctlWrap.appendChild(stay);
 				}
+				r.appendChild(ctlWrap);
+				// The rename pencil and the remove cross share the row's `rename`
+				// line (V10).
+				var actsWrap = el('div', 'device-acts');
 				// Every row, not only this device's: the name carries a stamp of
 				// its own, so one typed here reaches the device it names.
 				var b = document.createElement('button');
 				b.className = 'device-rename';
 				b.type = 'button';
-				b.textContent = '✎';		// a pencil, matching the drawer's line icons
+				// The same outline pencil the file row's Edit action draws
+				// (D-20260929-03 §10), in place of a text glyph a size and a
+				// colour of its own could not be brought level with the icon
+				// buttons beside it.
+				b.innerHTML = ACTION_ICONS.edit;
 				b.title = t('devices.rename_aria', { name: shown });
 				b.setAttribute('aria-label', b.title);
 				b.addEventListener('click', function () { askDeviceName(id, shown); });
-				r.appendChild(b);
+				actsWrap.appendChild(b);
 				// Not on this device's own row. Removing the line the app is
 				// writing would only re-mint it on the next collect, so the
 				// control would do nothing and look broken.
@@ -20969,8 +20986,9 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 					rm.title = tOr('devices.remove_aria', 'Remove {name}', { name: shown });
 					rm.setAttribute('aria-label', rm.title);
 					rm.addEventListener('click', function () { askRemoveDevice(id, shown); });
-					r.appendChild(rm);
+					actsWrap.appendChild(rm);
 				}
+				r.appendChild(actsWrap);
 				homeView.appendChild(r);
 			});
 			// One tap to clear every replaced device at once, shown only when there is a
@@ -22073,9 +22091,9 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			}
 			ol.appendChild(li);
 		};
-		step(1, tOr('start.connect', 'Connect a model'), !connected,
+		step(1, tOr('start.connect', 'Connect a Model'), !connected,
 			function () { openSettings(t('astat.no_model')); });
-		step(2, tOr('start.say_hello', 'Say hello'), connected,
+		step(2, tOr('start.say_hello', 'Say Hello'), connected,
 			function () { newChat(); });
 		step(3, tOr('start.keep', 'Keep what works as a diamond'), false, null);
 		wrap.appendChild(ol);
@@ -29801,7 +29819,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		// internal verb "Fold" (CHAT-15): the row's own tooltip already said
 		// this, and now it is the word itself.
 		fold.textContent = chat.foldedInto ? t('tile.folded')
-			: tOr('tile.turn_into_diamond', 'Turn into a diamond…');
+			: tOr('tile.turn_into_diamond', 'Turn into a Diamond…');
 		fold.title = chat.foldedInto
 			? t('tile.folded_help', { name: chat.foldedInto.name })
 			: t('tile.fold_all_help');
@@ -31322,7 +31340,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			var words = opening.split(' ');
 			return words.length > 6 ? words.slice(0, 6).join(' ') + '…' : opening;
 		}
-		return tOr('rail.new_chat', 'New chat');
+		return tOr('rail.new_chat', 'New Chat');
 	}
 
 	function renderSessionList() {
@@ -40724,9 +40742,17 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			modeEl.innerHTML = '';
 			var onMachine = !!folderHandle;
 			var canPick   = (typeof window.showDirectoryPicker === 'function');
+			// Two rows, not one (layout_contract.md V6): the place chips and the
+			// transfer buttons used to wrap together, so a long locale ("Einen
+			// Ordner importieren …") pushed the row to three lines with a break
+			// that moved with the string. Each group keeps its own row now.
+			var seg = document.createElement('div'); seg.className = 'files-mode-seg';
+			modeEl.appendChild(seg);
+			var acts = document.createElement('div'); acts.className = 'files-mode-acts';
+			modeEl.appendChild(acts);
 
 			// Browser — the in-app sandbox. What syncs, and what cloud storage backs.
-			modeEl.appendChild(modeChip('browser', t('files.mode_browser'), !onMachine,
+			seg.appendChild(modeChip('browser', t('files.mode_browser'), !onMachine,
 				onMachine
 					? t('files.browser_switch')
 					: t('files.browser_help'),
@@ -40762,7 +40788,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 						: openFolder));
 			if (!canPick) machineChip.classList.add('ghost');
 			if (reconnect) setChip(machineChip, 'machine', t('files.machine_reconnect', { name: reconnect.name }));
-			modeEl.appendChild(machineChip);
+			seg.appendChild(machineChip);
 
 			// Cloud — not a place but a residency: where the browser workspace's
 			// bytes live. A real folder is the user's own disk and has none.
@@ -40772,7 +40798,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 					: t('files.cloud_help'),
 				onMachine ? null : showCloudView);
 			cloudChip.classList.add('ghost');
-			modeEl.appendChild(cloudChip);
+			seg.appendChild(cloudChip);
 			// Held so the chip can be repainted when residency changes, without
 			// rebuilding the row and losing a pending reconnect offer.
 			cloudChipEl = onMachine ? null : cloudChip;
@@ -40781,16 +40807,16 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			// The two transfers, which never change where the agent works: a
 			// handle can be read or written without becoming the root.
 			if (canPick && !onMachine) {
-				modeEl.appendChild(modeBtn(t('files.import_folder'),
+				acts.appendChild(modeBtn(t('files.import_folder'),
 					t('files.import_folder_help'), importFolder));
-				modeEl.appendChild(modeBtn(t('files.save_copy'),
+				acts.appendChild(modeBtn(t('files.save_copy'),
 					t('files.save_copy_help'), exportFolder));
 			}
 			// Choosing a DIFFERENT folder is now the only thing that opens a picker, so it needs
 			// somewhere to live. It belongs here, next to the chip that names the folder it would
 			// replace, and only while there is one to replace.
 			if (canPick && onMachine) {
-				modeEl.appendChild(modeBtn(t('files.change_root'), t('files.change_root_help'), openFolder));
+				acts.appendChild(modeBtn(t('files.change_root'), t('files.change_root_help'), openFolder));
 			}
 			modeChanged();
 		}
@@ -41007,6 +41033,8 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			// A second click on the chip must not stack a second Forget button.
 			var old = modeEl.querySelector('.files-mode-forget');
 			if (old) old.remove();
+			var forgetActs = modeEl.querySelector('.files-mode-acts');
+			if (!forgetActs) { forgetActs = document.createElement('div'); forgetActs.className = 'files-mode-acts'; modeEl.appendChild(forgetActs); }
 			showModeMsg(t('files.machine_scope', { name: folderHandle.name }));
 			// Forgetting the folder was a side effect of switching to the sandbox until that stopped
 			// deleting the record. Without a deliberate control there would now be NO way to make
@@ -41031,7 +41059,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 				signalLinksChanged();
 			});
 			forget.classList.add('files-mode-forget');
-			modeEl.appendChild(forget);
+			forgetActs.appendChild(forget);
 		}
 
 		/// The status rows report which files the agent is touching, so they are stale the moment
@@ -50871,7 +50899,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 				var add = document.createElement('button');
 				add.className = 'crystal-act';
 				add.type = 'button';
-				add.textContent = '+ ' + tOr('crystal.add_section', 'Add a section');
+				add.textContent = '+ ' + tOr('crystal.add_section', 'Add a Section');
 				add.addEventListener('click', function () {
 					secs.push({ heading: '', body: '' });
 					paintSecs();
@@ -55916,7 +55944,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 				box.appendChild(b);
 			});
 		}
-		var add = mk('button', 'id-account-add', '＋ Add another account');
+		var add = mk('button', 'id-account-add', '+ Add another account');
 		add.type = 'button';
 		add.addEventListener('click', addAccount);
 		box.appendChild(add);

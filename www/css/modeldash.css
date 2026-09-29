@@ -17,11 +17,11 @@
 
 .mdash-sec { margin: 0 0 6px; }
 
+/* Two block lines, not a wrap (layout_contract.md V7): a wide hint -- French's
+   own -- dropped under the title only in that locale, since flex-wrap decides
+   per string width. The title and its hint now always keep their own line. */
 .mdash-sec-head {
-	display: flex;
-	align-items: baseline;
-	gap: 8px;
-	flex-wrap: wrap;
+	display: block;
 	margin: 4px 0 10px;
 }
 .mdash-sec-title {
@@ -31,6 +31,8 @@
 	letter-spacing: 0.01em;
 }
 .mdash-sec-hint {
+	display: block;
+	margin-top: 2px;
 	font-size: var(--fs-2xs-xs);
 	color: var(--text-muted);
 }
@@ -130,6 +132,16 @@
 .mdash-table th.num + th:not(.num),
 .mdash-table td.num + td:not(.num) {
 	padding-left: 12px;
+}
+/* The last column's flush right edge (above) assumes the table is not
+   scrolling; on the phone it is (this table's own overflow-x: auto), and
+   the last column then sat flush against the SCROLLER's edge, which the
+   panel's own padding then cut by a further few pixels (§11: "Median" and
+   its figure cut 9px). The table's own right padding restores the panel's
+   gutter once scrolling is what "flush" is measured against. */
+@media (max-width: 760px) {
+	.mdash-table th:last-child,
+	.mdash-table td:last-child { padding-right: 12px; }
 }
 .mdash-table td.mdash-model {
 	color: var(--text-primary);

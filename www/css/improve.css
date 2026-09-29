@@ -45,7 +45,7 @@
    of this scope. */
 .imp-chip, .post-btn, .ref-act, .imp-note-send, .imp-note-copy,
 .imp-keep, .imp-send, .imp-vote, .shr-btn, #panel-social .pair-btn {
-	background: none; border: 1px solid var(--border-strong); border-radius: 999px;
+	background: none; border: 1px solid transparent; border-radius: var(--radius-sm);
 	color: var(--text-secondary); cursor: pointer;
 	font-size: var(--fs-3xs-2xs); line-height: 1.7; padding: 0 10px;
 }
@@ -81,27 +81,27 @@
    `.ic` either way. */
 .imp-info { width: 22px; height: 22px; padding: 0; flex: none; }
 
-/* THE HEAD WRAPS, AND NO CHIP SHRINKS. Four chips beside a heading, an
-   information mark and a closer do not fit a 390px dock, and `.railhead` is a
-   flex ROW whose heading takes `flex: 1` — so the chips were squeezed below
-   their own labels and "Messages" and "People" were drawn one on top of the
-   other, each clipped, on a phone. Screenshot: dev/shots/social-phone.png,
-   2026-08-17.
-
-   Scoped to this panel, because every other head in the app carries one control
-   or two and none of them needs a second line. The heading keeps `flex: 1` so
-   it still pushes the chips right when there IS room, but may not shrink; the
-   chips take a line of their own when there is not. */
-#panel-social .railhead { flex-wrap: wrap; row-gap: 2px; }
-#panel-social .railhead > span:first-child { flex: 1 0 auto; }
-/* AND THE CROSS KEEPS THE CORNER WHILE THE CHIPS WRAP. `order` decides which
-   items a flex line takes, so the heading and the head's controls make the
-   first line and the chips -- given a whole line by `flex-basis: 100%` -- make
-   the second. Without it the closer wrapped along with the chips and finished
-   248px in from the panel's right edge and 47px down, which is the one panel in
-   the app whose cross was not in its top-right corner. */
-#panel-social .railhead > .railhead-acts { order: 1; display: flex; align-items: center; gap: 4px; flex: none; }
-#panel-social .imp-chips { order: 2; flex-basis: 100%; }
+/* THE HEAD IS AN EXPLICIT GRID, NOT A WRAP THAT HAPPENS TO BREAK IN TWO
+   (V9, layout_contract.md, D-20260929-03, lead: side A). Four chips beside a
+   heading, an information mark and a closer do not fit a 390px dock, and a
+   flex row whose heading takes `flex: 1` squeezed the chips below their own
+   labels on a phone (screenshot: dev/shots/social-phone.png, 2026-08-17) --
+   the earlier fix here (`flex-wrap` plus `flex-basis: 100%`) made the row
+   break at THIS width, but a wrap is a fact about the content and the
+   container, not a declared rule: a wider window could still share the
+   line. The owner's own diamond-tile rule ("the chip list ... should start
+   on its own line") is unconditional, so the row is unconditional: two grid
+   rows, at every width, title and its tools on the first, the chips on
+   the second, always. */
+#panel-social > .railhead {
+	display: grid;
+	grid-template-columns: minmax(0, 1fr) auto;
+	grid-template-areas: "title acts" "chips chips";
+	row-gap: 2px;
+}
+#panel-social > .railhead > span:first-child { grid-area: title; }
+#panel-social > .railhead > .railhead-acts { grid-area: acts; display: flex; align-items: center; gap: 4px; }
+#panel-social > .railhead > .imp-chips { grid-area: chips; }
 .imp-chips { flex-wrap: wrap; row-gap: 3px; min-width: 0; }
 /* A chip is its label. Below that width it is not a shorter chip, it is an
    unreadable one — the same rule this file keeps for the line under the note

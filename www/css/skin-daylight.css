@@ -68,6 +68,27 @@
 	--w-you:    405;
 }
 
+/* ── V11: the scoped control reset (layout_contract.md, D-20260929-03) ─────
+   123 distinct controls compute `appearance: auto` (census_*.json, ua): the
+   browser draws whatever a class forgot -- line-height, letter-spacing,
+   padding, border, background -- which is how an outlined select or a grey
+   `.models-draft-sel` survived every per-role rule above. `:where()` carries
+   ZERO specificity, so every existing class rule still wins; only a property
+   NO rule sets changes here. Scoped to the skin, not the whole app, so
+   Warm and Sharp's own controls are untouched. */
+:where(:root[data-skin="daylight"] :is(button, input, select, textarea)) {
+	font: inherit; color: inherit; letter-spacing: inherit; line-height: inherit; text-transform: none;
+	margin: 0; padding: 0; border: 1px solid transparent; border-radius: 0; background: none;
+	-webkit-appearance: none; appearance: none;
+}
+:root[data-skin="daylight"] input:is([type=checkbox], [type=radio], [type=range], [type=color], [type=file]) {
+	-webkit-appearance: auto; appearance: auto; border: 0;
+}
+:root[data-skin="daylight"] select {
+	background-image: var(--select-chevron); background-repeat: no-repeat; background-position: right 8px center; padding-right: 24px;
+}
+:where(:root[data-skin="daylight"] button) { cursor: pointer; }
+
 /* ── Base ──────────────────────────────────────────────────── */
 :root[data-skin="daylight"] body {
 	font-family: var(--font);
@@ -160,6 +181,10 @@
 }
 
 /* ── Heads ─────────────────────────────────────────────────── */
+/* One dialog title (D-20260929-03 §8): 14px, --w-strong, --text-primary. A
+   dialog's own h2, a pop's .ui-head-title and Admin's .admin-title each drew
+   at a size, weight or colour of their own. */
+:root[data-skin="daylight"] :is(.ui-head h2, .ui-head-title, .admin-title) { font-size: var(--dl-sm); font-weight: var(--w-strong); color: var(--text-primary); line-height: 19px; }
 /* A section head is a word in the condensed face at the section size, in
    sentence case. What was an all-caps label becomes a name. */
 :root[data-skin="daylight"] .railhead { padding: 16px 2px 8px 4px; gap: 4px; }
@@ -181,7 +206,6 @@
 	border: 1px solid transparent;
 	border-radius: var(--radius);
 	background: transparent;
-	color: var(--text-muted);
 }
 :root[data-skin="daylight"] .addbtn:hover { background: var(--dl-hover); color: var(--text-primary); }
 :root[data-skin="daylight"] .addbtn:disabled:hover { border-color: transparent; background: transparent; }
@@ -197,18 +221,28 @@
 /* Several head rows mixed control heights of their own -- Pending's select
    at 20px beside its ×'s 30px, Social's ⓘ at 22px beside its ×'s 30px, the
    file panel's 26px beside 30px, and more (sweep item 11). One height, one
-   baseline, for every control in a head row. */
-:root[data-skin="daylight"] .railhead-acts > :is(button, select),
-:root[data-skin="daylight"] .pending-actions > :is(button, select),
-:root[data-skin="daylight"] .railhead > .addbtn,
-:root[data-skin="daylight"] .railhead > button,
-:root[data-skin="daylight"] .chead-right > :is(button, .chip-btn, .mode-chip),
-:root[data-skin="daylight"] .astat-id > button {
-	height: 30px;
-	min-height: 30px;
-	box-sizing: border-box;
-	align-self: center;
+   baseline, one colour and one icon size, for every control in a head row
+   (D-20260929-03 §2): 30x30, radius `--radius`, `--text-secondary`, a 16px
+   icon, word labels at `--dl-xs`. */
+:root[data-skin="daylight"] :is(.chead-right, .railhead, .railhead-acts, .files-actions, .mail-actions, .spend-actions,
+	.trash-actions, .pending-actions, .files-view-head, .top-actions, .pptw-head, .astat-id) > :is(button, select, .chip-btn, .mode-chip),
+:root[data-skin="daylight"] .files-view-head > span > button,
+:root[data-skin="daylight"] .pptw-head .pptw-act {
+	height: 30px; min-height: 30px; box-sizing: border-box; align-self: center;
+	border-color: transparent; border-radius: var(--radius); color: var(--text-secondary); font-size: var(--dl-xs);
 }
+:root[data-skin="daylight"] :is(.chead-right, .railhead, .railhead-acts, .files-actions, .mail-actions, .spend-actions,
+	.trash-actions, .pending-actions, .files-view-head, .top-actions, .pptw-head) > button :is(svg, .ic),
+:root[data-skin="daylight"] .files-view-head > span > button :is(svg, .ic),
+:root[data-skin="daylight"] .pptw-head .pptw-act :is(svg, .ic) { width: 16px; height: 16px; }
+/* Every icon-only head tool keeps `.icon-btn`'s own 5px/7px padding; this is
+   the WORDED and select members of the row above, which need their own box
+   (remaining.md cluster 5, points 2-4). */
+:root[data-skin="daylight"] :is(.chead-right, .top-actions, .railhead) > .icon-btn { padding: 0; width: 30px; justify-content: center; }
+:root[data-skin="daylight"] .top-actions > #settings-menu-btn { padding: 0 9px; line-height: 12px; width: auto; }
+:root[data-skin="daylight"] #hand-mode-chip { padding: 0 9px; line-height: 12px; }
+:root[data-skin="daylight"] #settings-menu-btn { gap: 4px; }
+:root[data-skin="daylight"] #pending-sort { background: transparent; padding: 0 9px; }
 
 /* ── The pause row ─────────────────────────────────────────── */
 :root[data-skin="daylight"] .pptw { border-color: transparent; background: transparent; }
@@ -268,17 +302,74 @@
 	color: var(--text-muted);
 	padding: 8px 10px 4px;
 }
-:root[data-skin="daylight"] .tile-cog,
 :root[data-skin="daylight"] .tile-x { border-radius: var(--radius-sm); color: var(--text-muted); }
-:root[data-skin="daylight"] .rail-builtin > summary { text-transform: none; letter-spacing: 0; font-size: var(--dl-xs); }
+:root[data-skin="daylight"] .rail-builtin > summary { text-transform: none; letter-spacing: 0; font-size: var(--dl-xs); padding-left: 4px; }
+
+/* ── Notes and meta (§9) ──────────────────────────────────── */
+/* One note: 12px, --w-text, --text-muted, line-height 1.45. Admin's,
+   Trash's, the capability blurb, Mail's fine print and Settings' own note
+   already draw this way; a pop's own note, six empty-state lines and two
+   filled-box notes each drew a size or a colour of their own. */
+:root[data-skin="daylight"] :is(.admin-note, .rail-note, .trash-note, .cap-blurb, .mail-fine, .pop-note,
+	.chat-msg-empty, .files-empty, .rel-blurb, .agents-empty, .mdash-empty, .hist-note, .mdash-note, .spend-note,
+	.tools-intro, .mode-row-blurb, .shr-note, .cfg-hint, .search-engine-note, .tag-note, .spend-sec-hint,
+	.mdash-sec-hint, .crystal-empty, .graph-empty) {
+	font-size: var(--dl-xs); font-weight: var(--w-text); color: var(--text-muted); line-height: 1.45;
+}
+/* One meta reading: the mono at 10.5px, muted. A tile's own timestamp and
+   size, a device's age and build already draw this way; a tile's OTHER
+   stamp, a phone build's age, a file's size and a history version drew in
+   the sans instead, some a step darker or lighter. */
+:root[data-skin="daylight"] :is(.ctile-meta, .chead-when, .device-when, .fv-size, .hist-ver, .ctile-time-full) {
+	font-family: var(--font-mono); font-size: var(--dl-2xs); font-weight: var(--w-text); color: var(--text-muted);
+}
 
 /* ── The account, at the rail's foot ───────────────────────── */
 /* The one rule the rail keeps: it says the list has ended. */
 :root[data-skin="daylight"] .admin-status { border-top: 1px solid var(--border); padding-top: 10px; gap: 2px; }
 :root[data-skin="daylight"] .astat-detail { border-left: 0; margin-left: 0; }
 :root[data-skin="daylight"] .user-info { font-size: var(--dl-sm); font-weight: var(--w-strong); color: var(--text-primary); }
-:root[data-skin="daylight"] .astat-row { font-size: var(--dl-xs); }
+/* One app table (D-20260929-03, remaining.md cluster 12): Spend's and Model
+   stats' figures shared a head but drew a row a pixel apart, and each table's
+   own numeric column and model name drew a size and colour of its own. */
+:root[data-skin="daylight"] :is(.spend-table, .mdash-table) :is(th, td) { padding: 5px 8px 5px 0; }
+:root[data-skin="daylight"] :is(.spend-table, .mdash-table) :is(th, td):last-child { padding-right: 12px; }
+:root[data-skin="daylight"] :is(.spend-table, .mdash-table) :is(th.num, td.num) {
+	font-family: var(--font-mono); font-size: var(--dl-2xs);
+}
+:root[data-skin="daylight"] :is(.mdash-table td.mdash-model, .spend-table td.spend-model) { color: var(--text-secondary); }
+
+/* One status row (D-20260929-03, remaining.md cluster 10, after G14): 12px,
+   --w-text, --text-secondary, radius --radius-sm, padding 3px 4px, 21px. */
+:root[data-skin="daylight"] :is(.astat-row, #user-row) {
+	font-size: var(--dl-xs); font-weight: var(--w-text); color: var(--text-secondary);
+	border-radius: var(--radius-sm); padding: 3px 4px; min-height: 21px;
+}
 :root[data-skin="daylight"] .astat-btn:hover { background: var(--dl-hover); }
+/* One icon button in a row (D-20260929-03, remaining.md cluster 6): a 20px
+   box, radius --radius-sm, a 16px icon, --text-secondary. Copy, a device's
+   rename/nominate, a tile's cog and a row's own ×/delete/rename each drew a
+   step muted and a step small of their own. */
+/* `.session-box-header .pptw-act` is kept OUT of this `:is()`: a compound
+   selector inside `:is()` sets the specificity of the WHOLE group to its own
+   (two classes), which silently outranked `.files-view-head > span > button`
+   (§2/cluster 5) for the one button -- `.files-btn.attach-btn` -- that wears
+   both a head-tool's and this row's class. */
+:root[data-skin="daylight"] :is(.device-rename, .device-nominate, .copy-id, .ctile-copy, .attach-btn, .files-del,
+	.files-ren, .tag-x, .crystal-form-x, .attach-add, .tile-cog) {
+	height: 20px; min-height: 20px; padding: 0; border-radius: var(--radius-sm); color: var(--text-secondary);
+}
+:root[data-skin="daylight"] .session-box-header .pptw-act {
+	height: 20px; min-height: 20px; padding: 0; border-radius: var(--radius-sm); color: var(--text-secondary);
+}
+:root[data-skin="daylight"] :is(.copy-id, .ctile-copy, .device-rename, .device-nominate) .ic { width: 16px; height: 16px; }
+:root[data-skin="daylight"] .session-box-header .pptw-act :is(svg, .ic) { width: 16px; height: 16px; }
+/* The × keeps its chip's own hue by inheritance, not the row's grey. */
+:root[data-skin="daylight"] .tag-x { color: inherit; }
+/* One inline link: --accent-text, --w-text, underlined. */
+:root[data-skin="daylight"] :is(a.legal-link, .mail-learn-more, .termp-install, .post-link) {
+	color: var(--accent-text); font-weight: var(--w-text); text-decoration: underline;
+}
 :root[data-skin="daylight"] .spend-row { border-top: 0; padding: 6px 0 2px; }
 :root[data-skin="daylight"] .spend-cell { align-items: flex-start; }
 :root[data-skin="daylight"] .spend-label { font-size: var(--dl-2xs); text-transform: none; letter-spacing: 0; }
@@ -287,6 +378,11 @@
    own third line: line 2 was already full, so it wrapped (sweep item 19). */
 @media (max-width: 480px) {
 	:root[data-skin="daylight"] .device-row > .device-rename { order: 3; }
+	/* The icon-button rule (above, .device-rename etc. at 20px) outranks
+	   app.css's own 44px phone tap-target floor for the device row's
+	   controls; restate it here at the same specificity, after it. */
+	:root[data-skin="daylight"] :is(.device-row > .copy-id, .device-ctl .device-nominate, .device-acts .device-rename,
+		.device-acts .device-remove) { width: 44px; height: 44px; min-height: 44px; }
 }
 
 /* ── The stage: the chat's head ────────────────────────────── */
@@ -297,7 +393,6 @@
 	font-weight: var(--w-title);
 	letter-spacing: 0;
 }
-:root[data-skin="daylight"] .chead-when { font-size: var(--dl-xs); }
 :root[data-skin="daylight"] .chead-right { gap: 2px; }
 :root[data-skin="daylight"] .chip-btn {
 	border-color: transparent;
@@ -314,15 +409,7 @@
 :root[data-skin="daylight"] .cmeter { font-size: var(--dl-2xs); color: var(--text-muted); }
 /* Crystal / Chat: two words, the one on screen in the light chip. */
 :root[data-skin="daylight"] .dview { border: 0; gap: 2px; }
-:root[data-skin="daylight"] .dview-btn {
-	border: 0;
-	background: transparent;
-	border-radius: var(--radius-sm);
-	font-size: var(--dl-xs);
-	color: var(--text-muted);
-}
 :root[data-skin="daylight"] .dview-btn + .dview-btn { border-left: 0; }
-:root[data-skin="daylight"] .dview-btn[aria-pressed="true"] { background: var(--dl-on); color: var(--text-primary); }
 
 /* ── The transcript ────────────────────────────────────────── */
 /* A reading column on the sheet. Every tile is flush: the speaker shows in the
@@ -373,7 +460,6 @@
 :root[data-skin="daylight"] .ctile-dot { width: 8px; height: 8px; }
 :root[data-skin="daylight"] .ctile[data-t="user"] .ctile-dot { display: none; }
 :root[data-skin="daylight"] .ctile[data-t="user"] .ctile-who { color: var(--text-secondary); }
-:root[data-skin="daylight"] .ctile-meta { font-weight: var(--w-text); font-size: var(--dl-xs); }
 :root[data-skin="daylight"] .ctile-time { font-size: var(--dl-2xs); }
 :root[data-skin="daylight"] .ctile-body { padding: 0 12px 10px; font-size: var(--dl-md); line-height: 1.56; }
 /* Your turn reads in exactly the daimon's own type -- same face, size, weight
@@ -448,7 +534,7 @@
 /* The daimon's speaker label and a code keyword sat just under 4.5:1 in a
    few palettes (sweep item 21). */
 :root[data-skin="daylight"] .ctile-lbl .ctile-who,
-:root[data-skin="daylight"] .spend-add-credits { color: var(--accent-text); }
+:root[data-skin="daylight"] .spend-add-credits { color: var(--accent-text); font-weight: var(--w-text); }
 :root[data-skin="daylight"] .tok-keyword { color: color-mix(in srgb, var(--accent-text) 80%, var(--text-primary)); }
 
 /* ── The composer ──────────────────────────────────────────── */
@@ -486,6 +572,20 @@
 :root[data-skin="daylight"] .mark-notice { border-color: transparent; }
 
 /* ── The Workspace, in the dock ────────────────────────────── */
+/* One text button (D-20260929-03 §4): 12px, `--w-text`, `--text-secondary`,
+   padding 3px 10px, height 25px, radius `--radius-sm`, no border, a light
+   fill on hover. Crystal's Edit/History/Save-a-version, the Graph bar, a
+   code block's Copy, the Workspace's Import/Save-a-copy and the Social/
+   +Add-provider pills this replaces their own font, weight, padding and
+   colour with it. */
+:root[data-skin="daylight"] :is(.crystal-act, .graph-btn, .attach-view-btn, .code-copy-btn, .files-mode-btn,
+	.imp-keep, .imp-send, .imp-vote, .shr-btn, .models-add, .tag-clear-all, .ti-continue) {
+	font-size: var(--dl-xs); font-weight: var(--w-text); color: var(--text-secondary); background: transparent;
+	border-color: transparent; border-radius: var(--radius-sm); padding: 3px 10px; min-height: 25px; line-height: 19px;
+	text-decoration: none;
+}
+:root[data-skin="daylight"] :is(.crystal-act, .graph-btn, .attach-view-btn, .code-copy-btn, .files-mode-btn,
+	.imp-keep, .imp-send, .imp-vote, .shr-btn, .models-add, .tag-clear-all, .ti-continue):hover { background: var(--dl-hover); color: var(--text-primary); }
 :root[data-skin="daylight"] .files-card,
 :root[data-skin="daylight"] .files-mode,
 :root[data-skin="daylight"] .files-scope,
@@ -516,7 +616,6 @@
 :root[data-skin="daylight"] .files-btn {
 	border-color: transparent;
 	background: transparent;
-	height: 26px;
 	padding: 0 9px;
 	font-size: var(--dl-xs);
 	color: var(--text-secondary);
@@ -538,8 +637,6 @@
    carry `.files-view-name` first (cloud storage, preview) is excluded, so
    its own title is left alone. */
 :root[data-skin="daylight"] .files-view-head > span:first-child:not(.files-view-name) { margin-left: -10px; }
-:root[data-skin="daylight"] .files-mode-chip,
-:root[data-skin="daylight"] .files-scope-chip,
 :root[data-skin="daylight"] .files-mark-here,
 :root[data-skin="daylight"] .files-badge {
 	border-color: transparent;
@@ -547,16 +644,7 @@
 	border-radius: var(--radius-sm);
 	color: var(--text-secondary);
 }
-:root[data-skin="daylight"] .files-mode-chip:hover,
-:root[data-skin="daylight"] .files-scope-chip:hover,
 :root[data-skin="daylight"] .files-mark-here:hover { background: var(--dl-hover); border-color: transparent; }
-:root[data-skin="daylight"] .files-mode-chip.active,
-:root[data-skin="daylight"] .files-mode-chip[aria-pressed="true"],
-:root[data-skin="daylight"] .files-scope-chip.active {
-	background: var(--dl-on);
-	border-color: transparent;
-	color: var(--text-primary);
-}
 /* A Toolchains toggle keeps a faint rest fill rather than going fully bare
    (QA round 2, minor 2): "Showing" always has a member on to read as a
    control, but a Diamond with no toolchain granted has FIVE off chips and
@@ -584,7 +672,7 @@
 	border-color: transparent;
 	color: var(--accent-text);
 }
-:root[data-skin="daylight"] .files-row { font-size: var(--dl-sm); border-color: transparent; border-radius: var(--radius-sm); }
+:root[data-skin="daylight"] .files-row { font-size: var(--dl-sm); border-color: transparent; border-radius: var(--radius-sm); gap: 4px; }
 :root[data-skin="daylight"] .files-size { font-size: var(--dl-2xs); color: var(--text-muted); }
 :root[data-skin="daylight"] .cloud-bar { border-color: transparent; }
 
@@ -636,43 +724,50 @@
 	box-shadow: 0 0 0 1px var(--border), 0 18px 48px rgba(20, 12, 16, 0.18);
 }
 :root[data-skin="daylight"] .pop-head { text-transform: none; letter-spacing: 0; font-size: var(--dl-xs); font-weight: var(--w-strong); }
+/* Help's About/Guide rows read a step quieter than the drawer's own menu
+   items (D-20260929-03 §7): the same primary ink and radius. */
+:root[data-skin="daylight"] #help-menu .icon-btn { color: var(--text-primary); border-radius: var(--radius-sm); }
 
 /* ── Dialogs ───────────────────────────────────────────────── */
 /* New diamond, the chat/diamond cog dialogs and the diamond page's Edit
    form all kept a ruled box for every field and an outlined pill for every
    secondary button (sweep item 4). A fill for the field, the light "current"
    gesture for the pills, one height, one size throughout. */
-:root[data-skin="daylight"] .dlg-input,
-:root[data-skin="daylight"] .tile-model,
-:root[data-skin="daylight"] .crystal-form-input,
-:root[data-skin="daylight"] .crystal-form-area {
-	background: var(--bg-tertiary);
+/* No control keeps an outline anywhere (D-20260929-03): every field and
+   select, whatever class it wears, is one rule -- a tertiary fill with no
+   visible border, so a hand-rolled `.dlg-input`/`.tile-model`/-form pair and
+   a plain, unclassed `<input>` (the Push form's host and token) end up drawn
+   identically rather than one classed and one wearing the browser's own
+   default. */
+:root[data-skin="daylight"] :is(select, input:not([type=checkbox], [type=radio], [type=range], [type=color], [type=file]), textarea) {
+	background-color: var(--bg-tertiary);
 	border-color: transparent;
 	border-radius: var(--radius-sm);
+	color: var(--text-primary);
 }
-:root[data-skin="daylight"] .dlg-input:focus,
-:root[data-skin="daylight"] .dlg-input:focus-visible,
-:root[data-skin="daylight"] .crystal-form-input:focus,
-:root[data-skin="daylight"] .crystal-form-area:focus {
-	outline: none;
-	border-color: var(--accent);
+:root[data-skin="daylight"] :is(select, input, textarea):focus-visible { outline: none; border-color: var(--accent); }
+/* One select, one field (remaining.md cluster 12): 12px, 31px, box-sizing
+   border-box. A `<textarea>` sizes to its content (G12), so it is left out --
+   `#chat-input` and the composer's field grow with what is typed. */
+:root[data-skin="daylight"] :where(select) { padding: 6px 24px 6px 8px; height: 31px; font-size: var(--dl-xs); box-sizing: border-box; }
+:root[data-skin="daylight"] :where(input):not([type=checkbox], [type=radio], [type=range], [type=color], [type=file]) {
+	height: 31px; box-sizing: border-box; padding: 6px 8px;
 }
 :root[data-skin="daylight"] .tile-dlg-swatch { border-color: transparent; border-radius: var(--radius-sm); }
-:root[data-skin="daylight"] .tile-dlg-level,
-:root[data-skin="daylight"] .tile-fold,
-:root[data-skin="daylight"] .tile-keep {
-	border-color: transparent;
-	background: var(--dl-hover);
-	color: var(--text-secondary);
-	border-radius: var(--radius-sm);
-	font-size: var(--dl-xs);
-	padding: 6px 10px;
-	min-height: 30px;
+/* One dialog action (D-20260929-03 §5): 14px, padding 8px 16px, height 35px,
+   radius `--radius-sm`. The cog dialogs' Keep and Turn-into-a-diamond… were a
+   smaller, filled-at-rest pair of their own; they take the rule below and go
+   bare like every other secondary action. */
+:root[data-skin="daylight"] :is(.dlg-actions, .tile-dlg-actions, .compose-foot) > button,
+:root[data-skin="daylight"] :is(#push-save, #beta-open) {
+	font-size: var(--dl-sm); padding: 8px 16px; min-height: 35px; height: auto; border-radius: var(--radius-sm);
 }
+:root[data-skin="daylight"] :is(.tile-keep, .tile-fold) { background: transparent; }
+:root[data-skin="daylight"] .tile-fold,
+:root[data-skin="daylight"] .tile-keep { border-color: transparent; color: var(--text-secondary); }
 :root[data-skin="daylight"] .tile-dlg-level:hover,
 :root[data-skin="daylight"] .tile-fold:hover,
 :root[data-skin="daylight"] .tile-keep:hover { background: var(--dl-on); border-color: transparent; color: var(--text-primary); }
-:root[data-skin="daylight"] .tile-dlg-level[aria-pressed="true"] { background: var(--dl-on); border-color: transparent; color: var(--text-primary); }
 :root[data-skin="daylight"] .tile-fold.folded { border-style: solid; border-color: transparent; }
 
 /* ── Secondary controls: the header's chip, not a ruled pill ──
@@ -681,11 +776,6 @@
    dialog's Cancel (QA round 2, minor 1). Same gesture as the header tabs --
    a light fill of the palette's own ink for "current" or "under the
    pointer", never a line. */
-:root[data-skin="daylight"] .imp-chip {
-	border-color: transparent;
-	background: transparent;
-	color: var(--text-secondary);
-}
 :root[data-skin="daylight"] .imp-chip:hover:not(:disabled) {
 	background: var(--dl-hover);
 	border-color: transparent;
@@ -701,13 +791,14 @@
    from --dl-on's 8% to --dl-hover's 4.5% (QA round 2 re-check, regression).
    Matched at the same specificity `.ptag.on:hover` already keeps it at.  */
 :root[data-skin="daylight"] .imp-chip.on:hover { background: var(--dl-on); }
-/* Social's sub-tabs (Messages, People, Groups, Feed, Share, Feedback) fit
-   one line on the computer; Feedback wrapped onto a line of its own
-   (sweep item 8). */
-@media (min-width: 761px) {
-	:root[data-skin="daylight"] #panel-social > .railhead .imp-chip { padding: 4px 8px; }
-	:root[data-skin="daylight"] #panel-social > .railhead :has(> .imp-chip) { flex-wrap: nowrap; overflow-x: auto; scrollbar-width: none; }
-}
+/* V9, side A (D-20260929-03, remaining.md, lead: side A): the six sub-tabs
+   always sit on their own row, under the title and its tools, at every
+   width -- the owner's own diamond-tile rule ("the chip list ... should
+   start on its own line"), the same shape on the computer and the phone.
+   The r524 sweep item 8 squeeze (padding 4px 8px, wrap-when-it-does-not-fit)
+   is removed: `.imp-chip` keeps the canonical text-button padding, and
+   `#panel-social .imp-chips { flex-basis: 100% }` (improve.css) already
+   gives the row its own line unconditionally. */
 /* PHONE (QA round 2 re-check, still open): mobile.css's own
    `#msheet #panel-social > .railhead .imp-chip` carries two ids, which the
    desk rule above cannot out-specify at any width. Repeated at that
@@ -735,16 +826,8 @@
 	border-color: transparent;
 	padding: 0;
 }
-:root[data-skin="daylight"] .spend-toggle-btn {
-	border-radius: var(--radius-sm);
-	color: var(--text-secondary);
-}
 :root[data-skin="daylight"] .spend-toggle-btn:hover { background: var(--dl-hover); color: var(--text-primary); }
-:root[data-skin="daylight"] .spend-toggle-btn.on {
-	background: var(--dl-on);
-	color: var(--text-primary);
-	box-shadow: none;
-}
+:root[data-skin="daylight"] .spend-toggle-btn.on { box-shadow: none; }
 /* The "Estimated" badge carried the same grey pill fill as the selected
    "Month", so the row read as three choices with the badge looking chosen
    (sweep item 9). */
@@ -752,9 +835,8 @@
 /* Model stats' Week | Month kept a `--border-strong` frame while Spending's
    identical control had none (sweep item 10). */
 :root[data-skin="daylight"] .mdash-toggle { background: transparent; border-color: transparent; padding: 0; gap: 2px; }
-:root[data-skin="daylight"] .mdash-toggle-btn { border-radius: var(--radius-sm); color: var(--text-secondary); }
 :root[data-skin="daylight"] .mdash-toggle-btn:hover { background: var(--dl-hover); color: var(--text-primary); }
-:root[data-skin="daylight"] .mdash-toggle-btn.on { background: var(--dl-on); color: var(--text-primary); box-shadow: none; }
+:root[data-skin="daylight"] .mdash-toggle-btn.on { box-shadow: none; }
 :root[data-skin="daylight"] .modal-close.dlg-cancel {
 	background: transparent;
 	border-color: transparent;
@@ -772,15 +854,29 @@
 :root[data-skin="daylight"] .crystal-act {
 	border-color: transparent;
 	background: transparent;
-	font-size: var(--dl-xs);
-	font-weight: var(--w-med);
-	color: var(--text-secondary);
 	border-radius: var(--radius-sm);
 }
 :root[data-skin="daylight"] .crystal-act:hover { background: var(--dl-hover); color: var(--text-primary); }
 :root[data-skin="daylight"] .crystal-act.primary { background: var(--accent); color: var(--on-fill); }
 
 
+/* One section head (D-20260929-03 §8), the design's own form -- .pop-head:
+   12px, --w-strong, --text-muted, no letter-spacing. Admin's, a tile
+   dialog's, Spending's and Model stats' each drew at their own size,
+   weight, colour or spacing. */
+:root[data-skin="daylight"] :is(.pop-head, .admin-sec, .tile-dlg-head, #search-head, .spend-sec-title, .mdash-sec-title, .cfg-fieldhead,
+	.mem-title, .pptw-head-label, .spend-sub) {
+	font-size: var(--dl-xs); font-weight: var(--w-strong); color: var(--text-muted); letter-spacing: 0;
+}
+/* One field label (§8): 12px, --w-text, --text-secondary. Nine fields each
+   drew at 10.5 or 14px, some bold, some muted, one lower-cased by
+   text-transform. */
+:root[data-skin="daylight"] :is(.files-kits-label, .files-reach-label, .files-scope-label, .tag-box-label,
+	.imp-with-label, .models-draft-lab, .tile-dlg-label, .spend-stat-lbl, .about-ver-label,
+	.cfg-fieldlabel, .crystal-form-hot, .start-label) {
+	font-size: var(--dl-xs); font-weight: var(--w-text); color: var(--text-secondary); text-transform: none;
+	line-height: 16.2px; letter-spacing: 0;
+}
 /* ── Sentence case throughout ─────────────────────────────── */
 /* Every label the other skins set in capitals is set as written here, so a
    head reads as a name rather than a shout. Collected from every sheet that
@@ -799,7 +895,6 @@
 :root[data-skin="daylight"] .device-nominee,
 :root[data-skin="daylight"] .device-ghost,
 :root[data-skin="daylight"] .device-oldbuild,
-:root[data-skin="daylight"] .tag-box-label,
 :root[data-skin="daylight"] .models-econ,
 :root[data-skin="daylight"] .web-mode,
 :root[data-skin="daylight"] .trig-label,
@@ -814,7 +909,6 @@
 :root[data-skin="daylight"] .brand-sub,
 :root[data-skin="daylight"] .post-tray h3,
 :root[data-skin="daylight"] .ref-kind,
-:root[data-skin="daylight"] .imp-with-label,
 :root[data-skin="daylight"] .feed-followers h3,
 :root[data-skin="daylight"] .split .col-tag,
 :root[data-skin="daylight"] .mail-drafts-head,
@@ -828,6 +922,19 @@
 	letter-spacing: 0;
 }
 
+/* One disclosure head (D-20260929-03, remaining.md cluster 4), replacing the
+   partial §10 rule: every fold trigger -- rail Built-in, the release notes'
+   sealed builds, a tag filter toggle, a model provider or memory head, a
+   dialog's advanced section, a diamond's links and artefacts, a file tree's
+   rest and system rows -- is 12px, --w-text, --text-muted, one line height
+   and one hit box. The per-class blocks below keep only what this rule does
+   not set: colour on hover, the fold triangle, focus rings. */
+:root[data-skin="daylight"] :is(.rail-builtin > summary, .rel-builds > summary, .tagf-toggle, .arte-strip,
+	.models-prov-head, .tile-dlg-adv-sum, .dlg-adv-sum, .crystal-memory-sum, .mem-raw-btn, .link-strip,
+	.files-rest-head, .sys-head, .cap-more) {
+	font-size: var(--dl-xs); font-weight: var(--w-text); color: var(--text-muted); line-height: 19px;
+	padding: 4px 8px 4px 4px; min-height: 27px; box-sizing: border-box; background: transparent; border-color: transparent;
+}
 /* ── Remaining furniture, found on the first shots ─────────── */
 /* The rail's split handle is a place to grab, not a rule: it shows on hover. */
 :root[data-skin="daylight"] .rhandle::after { background: transparent; }
@@ -858,23 +965,24 @@
 :root[data-skin="daylight"] .files-mode-btn {
 	border-color: transparent;
 	background: transparent;
-	font-size: var(--dl-xs);
-	font-weight: var(--w-strong);
-	color: var(--accent-text);
-	padding-left: 0;
 }
-:root[data-skin="daylight"] .files-mode-btn:hover { background: transparent; text-decoration: underline; }
-:root[data-skin="daylight"] .files-mode-btn.accent { background: var(--accent); color: var(--on-fill); padding-left: 10px; }
+:root[data-skin="daylight"] .files-mode-btn.accent { background: var(--accent); color: var(--on-fill); font-weight: var(--w-strong); padding-left: 10px; }
 :root[data-skin="daylight"] .files-reach-chip,
 :root[data-skin="daylight"] .files-reach-chip.ro { border-color: transparent; background: transparent; }
 :root[data-skin="daylight"] .instructions-chip { border-color: transparent; background: transparent; justify-content: flex-start; padding-left: 0; }
-/* A search field is a well set into the ground, not a ruled box. */
+/* A search field is a well set into the ground, not a ruled box. Sized as
+   every other field is (§10): 14px, 31px high -- Agents' and the Workspace
+   filter drew a size smaller and 4-6px shorter than a dialog's own fields. */
 :root[data-skin="daylight"] .files-filter-input,
 :root[data-skin="daylight"] .diamond-search,
 :root[data-skin="daylight"] .gal-search {
 	background: var(--bg-tertiary);
 	border-color: transparent;
 	border-radius: var(--radius);
+	font-size: var(--dl-sm);
+	padding: 8px 10px;
+	min-height: 31px;
+	box-sizing: border-box;
 }
 :root[data-skin="daylight"] .files-filter-input:focus,
 :root[data-skin="daylight"] .diamond-search:focus,
@@ -882,39 +990,68 @@
 :root[data-skin="daylight"] .files-rest-head,
 :root[data-skin="daylight"] .sys-head { font-family: var(--font); font-size: var(--dl-xs); }
 
-/* ── Max detail on one quiet line ──────────────────────────── */
-/* The model, the time, the tokens and the cost run on one line after the
-   name, parted by a middle dot, rather than a row each. The markup keeps its
-   rows; the skin sets them inline, and anything more wraps. */
-:root[data-skin="daylight"] .diamond-box[data-detail="max"],
+/* ── Layout contract: explicit rows, never negotiated by wrap ─────── */
+/* V1 (layout_contract.md). The title, the model, the chips and the meter are
+   four rows every diamond tile keeps, in that order, whatever it says (owner:
+   "the chip list in diamond tiles should start on its own line"). The prior
+   fix here only removed the OUTER wrapping flex row; `flex-wrap` was still
+   deciding, per rail width and per locale, whether the model and the meter
+   shared a line -- a rail at 260px showed four different shapes across five
+   tiles (layout_contract.md, census_desk.json). Explicit grid areas fix the
+   shape; the gaps are MARGINS on each area, not `row-gap`, so a tile with no
+   tags or no `.diamond-from` costs nothing for the row it does not draw. */
+:root[data-skin="daylight"] .diamond-box {
+	display: grid;
+	grid-template-columns: minmax(0, max-content) minmax(0, 1fr);
+	grid-template-areas: "head head" "from from" "tags tags" "model meter";
+	row-gap: 0; column-gap: 0;
+}
+:root[data-skin="daylight"] .diamond-box > .session-box-header { grid-area: head; }
+:root[data-skin="daylight"] .diamond-box > .diamond-from       { grid-area: from; margin-top: 2px; }
+:root[data-skin="daylight"] .diamond-box > .session-box-tags   { grid-area: tags; margin-top: 4px; }
+:root[data-skin="daylight"] .diamond-box > .session-box-meta   { grid-area: model; margin-top: 3px; display: flex; flex-wrap: nowrap; min-width: 0; gap: 6px; }
+:root[data-skin="daylight"] .diamond-box > .diamond-meter      { grid-area: meter; margin-top: 3px; display: flex; flex-wrap: nowrap; min-width: auto; gap: 0; white-space: nowrap; }
+:root[data-skin="daylight"] .diamond-box .tile-model-chip      { min-width: 0; }	/* ellipsis already set, app.css */
+/* Every other area shrinks so the meter (min-width above) keeps its own
+   reading whole instead of being squeezed for room the model chip can give
+   up first (its own ellipsis already handles a long name). */
+:root[data-skin="daylight"] .diamond-box > :not(.diamond-meter) { min-width: 0; }
+/* V4. The same shape for a chat tile's model/meter pair (`.tile-active`): a
+   long model name used to wrap `.tile-meter` onto its own line under a short
+   one, which stayed beside the model chip. */
 :root[data-skin="daylight"] .chat-box[data-detail="max"] .tile-active {
-	display: flex;
-	flex-direction: row;
-	flex-wrap: wrap;
-	align-items: baseline;
+	display: grid;
+	grid-template-columns: minmax(0, max-content) minmax(0, 1fr);
+	grid-template-areas: "model meter";
 	column-gap: 0;
-	row-gap: 2px;
-	margin-top: 2px;
 }
-:root[data-skin="daylight"] .diamond-box[data-detail="max"] > * { flex: 0 1 auto; min-width: 0; }
-:root[data-skin="daylight"] .diamond-box[data-detail="max"] > .session-box-header { flex: 1 0 100%; }
-:root[data-skin="daylight"] .session-box[data-detail="max"] .session-box-meta,
-:root[data-skin="daylight"] .session-box[data-detail="max"] .diamond-meter,
-:root[data-skin="daylight"] .session-box[data-detail="max"] .tile-active-top,
-:root[data-skin="daylight"] .session-box[data-detail="max"] .tile-meter {
-	display: inline-flex;
-	align-items: baseline;
-	flex-wrap: wrap;
-	margin-top: 0;
-	gap: 0;
-}
-:root[data-skin="daylight"] .session-box[data-detail="max"] .diamond-meter > *::before,
-:root[data-skin="daylight"] .session-box[data-detail="max"] .tile-meter > *::before {
+:root[data-skin="daylight"] .chat-box[data-detail="max"] .tile-active-top { grid-area: model; min-width: 0; flex-wrap: nowrap; }
+:root[data-skin="daylight"] .chat-box[data-detail="max"] .tile-meter      { grid-area: meter; flex-wrap: nowrap; white-space: nowrap; min-width: auto; }
+:root[data-skin="daylight"] .chat-box .tile-model-chip { min-width: 0; }
+/* V2. The middle dot goes BETWEEN a meter's own readings, never before the
+   first one: `> *::before` put one on every reading including the first, so
+   a meter that wrapped read "· vor 1 Min." with an orphan dot, and a model
+   chip with no meter after it on the old shared line touched the first tag
+   ("gpt-5home"). V1 already keeps the model and the tags on their own rows,
+   so only the meter's internal join is left to state. */
+:root[data-skin="daylight"] :is(.diamond-meter, .tile-meter) > * + *::before {
 	content: '\00b7';
 	margin: 0 6px;
 	color: var(--text-muted);
 	font-family: var(--font);
 }
+/* The same dot between the model chip and the meter's first reading, since
+   V2's rule above only joins the meter's OWN readings to each other. */
+:root[data-skin="daylight"] :is(.session-box-meta, .tile-active-top) ~ :is(.diamond-meter, .tile-meter) > :first-child::before {
+	content: '\00b7';
+	margin: 0 6px;
+	color: var(--text-muted);
+	font-family: var(--font);
+}
+/* With the dot in, a long model name pushed the meter out of the tile
+   (measured: 275px of horizontal scroll) -- the meter now keeps its natural
+   width (min-width: auto above) and every other area gives up room first. */
+:root[data-skin="daylight"] :is(.diamond-box, .chat-box[data-detail="max"] .tile-active) { grid-template-columns: minmax(0, max-content) minmax(auto, 1fr); }
 
 /* ── Phone ─────────────────────────────────────────────────── */
 @media (max-width: 760px) {
@@ -927,6 +1064,10 @@
 	}
 	:root[data-skin="daylight"] .railhead > span:first-child { font-size: var(--dl-lg); }
 	:root[data-skin="daylight"] .railhead { padding: 12px 0 4px 4px; }
+	/* The phone head-tool box (cluster 5) needs the same specificity as the
+	   desktop `.pptw-head .pptw-act` rule above to win it back at this width,
+	   since mobile.css (which cannot match it) loads before this file. */
+	:root[data-skin="daylight"] .pptw-head .pptw-act { height: 36px; min-height: 36px; width: 36px; padding: 0; }
 	:root[data-skin="daylight"] .chead { padding: 8px 4px 4px 16px; min-height: 52px; }
 	:root[data-skin="daylight"] .ctitle { font-size: var(--dl-md); font-weight: 600; }
 	:root[data-skin="daylight"] .chat-output { padding: 4px 12px 12px; }
@@ -982,34 +1123,44 @@
 	:root[data-skin="daylight"] .ws-group:has(> .ws-body > .ws-empty:only-child) > .ws-body { flex: 1 1 auto; min-width: 0; }
 }
 :root[data-skin="daylight"] .ws-empty { font-size: var(--dl-xs); color: var(--text-muted); padding-left: 0; }
-:root[data-skin="daylight"] .instructions-chip { text-align: left; width: auto; align-self: flex-start; font-size: var(--dl-xs); }
+/* The chip role's own form (cluster 13, A4 refused: the chip face, like
+   every other chip -- not the mono DAIMOND.md was set in). */
+:root[data-skin="daylight"] .instructions-chip {
+	text-align: left; width: auto; align-self: flex-start;
+	font-family: var(--font); font-size: var(--dl-2xs); font-weight: 600;
+	background: var(--dl-hover); border-radius: var(--radius-sm); padding: 2px 8px; height: 18px; box-sizing: border-box;
+}
 :root[data-skin="daylight"] .files-path,
-:root[data-skin="daylight"] .path-crumb { font-family: var(--font); font-size: var(--dl-sm); }
+:root[data-skin="daylight"] .path-crumb {
+	font-family: var(--font); font-size: var(--dl-sm);
+	padding: 5px 10px; height: 29px; box-sizing: border-box; border-radius: var(--radius-sm);
+}
 
 /* ── The appearance menu and its kind ──────────────────────── */
 /* A segmented control is a row of words; the chosen one takes the light chip,
    the same gesture as the header's tabs. */
 :root[data-skin="daylight"] .seg { gap: 2px; }
-:root[data-skin="daylight"] .seg button,
-:root[data-skin="daylight"] .size-row button {
-	border-color: transparent;
-	background: transparent;
-	border-radius: var(--radius-sm);
-	color: var(--text-secondary);
+/* One toggle option (D-20260929-03 §6), the design's own: 12px, `--w-text`,
+   `--text-secondary`, padding 6px 8px, height 30px, radius `--radius-sm`, no
+   border. The chosen one takes `--dl-on` with `--text-primary`. */
+:root[data-skin="daylight"] :is(.seg button, .size-row button, .net-opt, .spend-toggle-btn, .mdash-toggle-btn,
+	.files-scope-chip, .files-mode-chip, .imp-chip, .tile-dlg-level, .dview-btn) {
+	font-size: var(--dl-xs); font-weight: var(--w-text); letter-spacing: 0; line-height: 18px;
+	color: var(--text-secondary); background: transparent; border-color: transparent; border-width: 0;
+	border-radius: var(--radius-sm); padding: 6px 8px; height: 30px; min-height: 30px; box-sizing: border-box; gap: 4px;
+}
+:root[data-skin="daylight"] :is(.seg button, .size-row button, .net-opt, .spend-toggle-btn, .mdash-toggle-btn,
+	.files-scope-chip, .files-mode-chip, .imp-chip, .tile-dlg-level, .dview-btn):is([aria-pressed="true"], .on, .active) {
+	background: var(--dl-on); color: var(--text-primary);
 }
 :root[data-skin="daylight"] .seg button:hover,
 :root[data-skin="daylight"] .size-row button:hover:not(:disabled) { background: var(--dl-hover); border-color: transparent; color: var(--text-primary); }
-:root[data-skin="daylight"] .seg button[aria-pressed="true"] {
-	background: var(--dl-on);
-	border-color: transparent;
-	color: var(--text-primary);
-}
-:root[data-skin="daylight"] .theme-pick,
-:root[data-skin="daylight"] .pop select {
-	background-color: var(--bg-tertiary);
-	border-color: transparent;
-	border-radius: var(--radius-sm);
-}
+/* The two-line side-panel options (Auto, 1, 2×2, 2×3, 3×2) keep their own
+   height: the toggle-option rule's fixed 30px squashed their caption away. */
+:root[data-skin="daylight"] .seg .grid-opt { height: auto; }
+/* `.chead-left > #diamond-view .dview-btn` (app.css) outranks the toggle-option
+   rule above on specificity (an id), so its own 30px padding is repeated here. */
+:root[data-skin="daylight"] #diamond-view .dview-btn { padding: 6px 8px; }
 :root[data-skin="daylight"] .theme-pick:hover,
 :root[data-skin="daylight"] .pop select:hover { border-color: transparent; background-color: var(--bg-hover); }
 /* A chat tile's name sits on the same edge as a diamond's. */
@@ -1032,6 +1183,11 @@
 :root[data-skin="daylight"] .compose-btn:hover,
 :root[data-skin="daylight"] .mdash-rate-btn:hover,
 :root[data-skin="daylight"] #msheet .msheet-tab:hover { background: var(--dl-hover); border-color: transparent; color: var(--text-primary); }
+/* A tab (§10): the top bar's own weight and side padding -- the Preview
+   sheet's Source/Pages pair was a step heavier with no side padding. */
+/* The tab role's own size (cluster 12), on top of §10's weight and padding:
+   12px and the tab radius, not the text-button's smaller one above. */
+:root[data-skin="daylight"] #msheet .msheet-tab { font-weight: var(--w-text); padding: 0 14px; font-size: var(--dl-xs); border-radius: var(--radius); }
 :root[data-skin="daylight"] .graph-btn.on,
 :root[data-skin="daylight"] #msheet .msheet-tab.on { background: var(--dl-on); border-color: transparent; color: var(--text-primary); }
 :root[data-skin="daylight"] .graph-btn.primary,

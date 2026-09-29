@@ -118,9 +118,7 @@
 .cap-more {
 	align-self: flex-start;
 	margin: 0 0 2px 8px;
-	padding: 4px 4px 8px;
-	background: none; border: 0;
-	font-size: var(--fs-2xs);
+	border: 0;
 	color: var(--text-muted);
 	cursor: pointer;
 	text-align: left;
@@ -129,7 +127,7 @@
 .cap-more::before {
 	content: '▸';
 	display: inline-block;
-	margin-right: 5px;
+	margin-right: 0.25em;
 	transition: transform 0.12s ease;
 }
 .cap-more[aria-expanded="true"]::before { transform: rotate(90deg); }
