@@ -1,4 +1,17 @@
 // gateway: none
+// SHELVED 2026-09-29 (D-20260929-02): Daylight is the only look now, and this
+// file's whole subject -- the Breathe (Warm) skin's selected-tile ring -- is
+// exactly the Classic style that decision retires. Daylight draws "current"
+// as a light fill (see skin-daylight.css `.session-box.active`), not a ring,
+// so there is no Daylight equivalent to measure and the checks below cannot
+// pass: skin-warm.css is no longer linked, so forcing `data-skin="warm"`
+// dresses nothing. Kept, not deleted, for the day Warm is migrated away
+// properly; run only with --force-shelved.
+if (!process.argv.includes('--force-shelved')) {
+	console.log('verify_tilering: SHELVED -- Warm/Breathe is retired (D-20260929-02); nothing to measure.');
+	process.exit(0);
+}
+//
 // The selected chat tile under the Breathe spacing: is its ring inside the box
 // the list is entitled to clip?
 //

@@ -84,8 +84,11 @@
 	list-style: none;
 }
 .rel-builds summary::-webkit-details-marker { display: none; }
-.rel-builds summary::before { content: "▸ "; }
-.rel-builds[open] summary::before { content: "▾ "; }
+/* The space after the triangle is a margin, not a trailing character in
+   `content` -- the same fragile shape `.sys-head::before` (files.css) carried
+   until 2026-09-29; every fold triangle now uses a margin instead. */
+.rel-builds summary::before { content: "▸"; margin-right: 0.4em; }
+.rel-builds[open] summary::before { content: "▾"; }
 .rel-builds summary:hover { color: var(--text-secondary); }
 
 .rel-build { padding: 6px 8px; border-left: 2px solid var(--border); margin: 2px 0 2px 4px; }

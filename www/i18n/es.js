@@ -1912,6 +1912,7 @@
 	'files.line_numbers': 'Nº de línea',
 	'files.download': 'Descargar',
 	'files.download_help': 'Guardar en esta máquina',
+	'files.attach': 'Adjuntar',
 	'files.hold_add': 'Guardar este archivo con {name}',
 	'files.hold_drop': 'Dejar de guardar este archivo con {name}',
 	'files.mode_browser': 'Navegador',

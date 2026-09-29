@@ -1939,6 +1939,7 @@
 	'files.line_numbers':    '줄 번호',
 	'files.download':        '내려받기',
 	'files.download_help':   '이 기기에 저장해요',
+	'files.attach':          '첨부',
 	'files.hold_add': '이 파일을 {name}에 두기',
 	'files.hold_drop': '이 파일을 {name}에서 빼기',
 	'files.mode_browser': '브라우저',

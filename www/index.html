@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="en" data-theme="dark" data-tone="dark" data-ink="light" data-skin="sharp">
+<html lang="en" data-theme="obsidian" data-tone="dark" data-ink="light" data-skin="daylight">
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
@@ -24,13 +24,19 @@
 			obsidian: ['dark',  'light'],
 		};
 		var t = localStorage.getItem('daimond-theme');
-		var spec = P[t] || P.dark;
+		// No saved palette defaults to Obsidian, not the generic 'dark' entry
+		// above (2026-09-29): the two share a tone/ink pair, so only a device
+		// with never a palette of its own notices, and it now meets the palette
+		// this skin was actually designed against.
+		var spec = P[t] || P.obsidian;
 		if (P[t]) document.documentElement.setAttribute('data-theme', t);
 		document.documentElement.setAttribute('data-tone', spec[0]);
 		document.documentElement.setAttribute('data-ink', spec[1]);
-		var s = localStorage.getItem('daimond-skin');
-		if (s === 'soft') s = 'warm';   // the warm skin was briefly called "soft".
-		if (s === 'warm' || s === 'sharp' || s === 'daylight') document.documentElement.setAttribute('data-skin', s);
+		// Daylight is the only look now (D-20260929-02): Sharp and Warm are
+		// shelved, so a saved 'sharp', 'warm', 'soft' (the warm skin's early
+		// name) or nothing at all all end on the one skin `<html>` already
+		// carries above -- there is nothing left for this to choose.
+		document.documentElement.setAttribute('data-skin', 'daylight');
 		// The language too, so the document declares itself before a screen
 		// reader or the browser's own translation offer looks at it.
 		var l = localStorage.getItem('daimond-locale');
@@ -48,7 +54,7 @@
 <!-- The colour the platform paints its own furniture with in standalone mode.
      js/pwa.js keeps it on whichever of the eleven palettes is in use; this is the
      default, for the moment before any script runs. -->
-<meta name="theme-color" content="#15120F">
+<meta name="theme-color" content="#0F0E10">
 <!-- iOS reads its own tags rather than the manifest. `apple-touch-icon` is the
      home-screen icon (SVG is not honoured, hence the PNG), and "capable" is what
      makes a pinned Daimond open without Safari's chrome.
@@ -102,7 +108,9 @@
 <link rel="stylesheet" href="css/mobile.css">
 <!-- Full-screen toggle (phone only) -- just the two icon faces; see js/fullscreen.js. -->
 <link rel="stylesheet" href="css/fullscreen.css">
-<link rel="stylesheet" href="css/skin-warm.css">
+<!-- skin-warm.css is shelved (D-20260929-02): Daylight is the only look now,
+     so Warm's sheet is kept in the tree, for a future migration, but not
+     linked -- nothing chooses it and nothing should pay to fetch it. -->
 <link rel="stylesheet" href="css/skin-daylight.css">
 </head>
 <body data-mpanel="ai">

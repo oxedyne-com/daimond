@@ -1925,6 +1925,7 @@
 	'files.line_numbers': 'Numéros de ligne',
 	'files.download': 'Télécharger',
 	'files.download_help': 'Enregistrer sur cette machine',
+	'files.attach': 'Joindre',
 	'files.hold_add': 'Garder ce fichier avec {name}',
 	'files.hold_drop': 'Ne plus garder ce fichier avec {name}',
 	'files.mode_browser': 'Navigateur',

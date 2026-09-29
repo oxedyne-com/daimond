@@ -601,9 +601,13 @@
 }
 /* A disclosure triangle the section draws itself, from `aria-expanded` -- the
    one place the state is written, so the picture cannot disagree with what a
-   screen reader is told. */
-.sys-head::before { content: '\25B8 '; display: inline-block; }
-.sys-head[aria-expanded="true"]::before { content: '\25BE '; }
+   screen reader is told. The space after it is a MARGIN, not a trailing
+   character in `content`: that used to be here, and `display: inline-block`
+   silently ate it (2026-09-29, owner). `.id-doors-sum::before` and
+   `.cap-more::before` already give their triangle the same margin rather
+   than a content-string space; every fold triangle now does. */
+.sys-head::before { content: '\25B8'; margin-right: 0.4em; }
+.sys-head[aria-expanded="true"]::before { content: '\25BE'; }
 .sys-head:hover { color: var(--text-primary); }
 .sys-head:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
 .sys-note { padding: 0 12px 6px; font-size: var(--fs-2xs); color: var(--text-muted); line-height: 1.5; }

@@ -1940,6 +1940,7 @@
 	'files.line_numbers':    '行番号',
 	'files.download':        '保存',
 	'files.download_help':   'この端末に保存します',
+	'files.attach':          '添付',
 	'files.hold_add': 'このファイルを {name} に持たせる',
 	'files.hold_drop': 'このファイルを {name} から外す',
 	'files.mode_browser': 'ブラウザ',

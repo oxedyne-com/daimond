@@ -11213,10 +11213,12 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 
 	function initTheme() {
 		var saved = localStorage.getItem('daimond-theme');
-		setTheme(THEMES[saved] ? saved : 'dark');
+		// No saved palette defaults to Obsidian (2026-09-29), not the generic
+		// 'dark' entry: a saved choice, of any palette, stands exactly as before.
+		setTheme(THEMES[saved] ? saved : 'obsidian');
 	}
 	function setTheme(theme) {
-		if (!THEMES[theme]) theme = 'dark';
+		if (!THEMES[theme]) theme = 'obsidian';
 		var spec = THEMES[theme];
 		var root = document.documentElement;
 		root.setAttribute('data-theme', theme);
@@ -11262,39 +11264,38 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			return Object.keys(THEMES).filter(function (k) { return THEMES[k].tone === tone; });
 		},
 		spec: function (name) { return THEMES[name] || null; },
-		get:  function () { return document.documentElement.getAttribute('data-theme') || 'dark'; },
+		get:  function () { return document.documentElement.getAttribute('data-theme') || 'obsidian'; },
 		set:  setTheme,
 	};
 
 	// ── Skin ───────────────────────────────────────────────────
-	// Orthogonal to the theme: the theme picks the palette, the skin picks the
-	// shape -- corners, typeface, spacing, how loud the furniture is. "sharp" is
-	// the original precise, dense look; "warm" is the approachable one, all of it
-	// in skin-warm.css and dormant until chosen (see that file's header).
-	// "daylight" is the line-free look in skin-daylight.css. Sharp and Warm are
-	// the view's own pair (see VIEWS); Daylight is chosen on its own and serves
-	// both views.
+	// Daylight is the only look now (2026-09-29, D-20260929-02): Sharp, the
+	// original precise dense look, and Warm, the approachable one that lived in
+	// skin-warm.css, are both shelved -- their sheets stay in the tree (Warm's
+	// is simply not linked any more; Sharp was never its own sheet) but nothing
+	// chooses them. The two names stay in SKINS below only so a device that
+	// saved one of them, or 'soft' (Warm's early name) before that, still
+	// migrates cleanly rather than needing a special case anywhere else.
 	var SKINS = { sharp: 1, warm: 1, daylight: 1 };
 	function initSkin() {
-		var saved = localStorage.getItem('daimond-skin');
-		if (saved === 'soft') saved = 'warm';   // the warm skin was briefly called "soft".
-		setSkin(SKINS[saved] ? saved : 'sharp');
+		// Every prior value -- Sharp, Warm, Soft, or nothing at all -- ends the
+		// same way: there is only the one skin left to choose.
+		setSkin('daylight');
 	}
 	function setSkin(skin) {
-		if (!SKINS[skin]) skin = 'sharp';
+		skin = 'daylight';
 		document.documentElement.setAttribute('data-skin', skin);
 		paintGateLogo();
 		try { localStorage.setItem('daimond-skin', skin); }
 		catch (e) { /* quota: skin is applied; only reload-survival is lost */ }
 		// Same reason as `setTheme`'s call: a skin change is the other way the
-		// composer's type metrics move (Daylight's padding/size vs Sharp/Warm's),
-		// and `setView` reaches here too, so this one call covers skin, palette and
-		// view together (QA round 2, M1).
+		// composer's type metrics move, and boot reaches here too, so this one
+		// call covers skin and palette together (QA round 2, M1).
 		try { fitComposer(); } catch (e) { /* not bound yet, at boot */ }
 	}
 	window.DaimondSkin = {
 		list: function () { return Object.keys(SKINS); },
-		get:  function () { return document.documentElement.getAttribute('data-skin') || 'sharp'; },
+		get:  function () { return document.documentElement.getAttribute('data-skin') || 'daylight'; },
 		set:  setSkin,
 	};
 
@@ -11340,16 +11341,14 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 	// An UNSET skin is not a choice, so it becomes Simple -- the quiet default
 	// notes2 asks for.
 	//
-	// DAYLIGHT IS NOT A VIEW'S SKIN. It is a look of its own that serves both
-	// views, so a view change keeps it: the view still decides the detail
-	// (`data-view`, `tileDetail`), and only the classic pair follows the view.
+	// DAYLIGHT IS NOT A VIEW'S SKIN, and since 2026-09-29 (D-20260929-02) it is
+	// the ONLY skin: Sharp and Warm are shelved, so the view no longer chooses
+	// one at all. `VIEWS` stays keyed by the old skin names only because
+	// `initView`'s migration below still reads a device's LEGACY skin choice to
+	// decide Simple or Max the first time; the view now decides detail alone
+	// (`data-view`, `tileDetail`).
 	var VIEWS = { max: 'sharp', simple: 'warm' };
 	var VIEW_KEY = 'daimond-view';
-	/// The skin a view is drawn in: Daylight, if that is the look, else the
-	/// view's own classic skin.
-	function skinFor(view) {
-		return document.documentElement.getAttribute('data-skin') === 'daylight' ? 'daylight' : VIEWS[view];
-	}
 
 	/// The skin as STORED, read before `initSkin` runs.
 	///
@@ -11385,7 +11384,8 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		if (!VIEWS[view]) view = 'simple';
 		document.documentElement.setAttribute('data-view', view);
 		try { localStorage.setItem(VIEW_KEY, view); } catch (e) { /* private mode */ }
-		setSkin(skinFor(view));
+		// No `setSkin` call here any more (2026-09-29): Daylight is the only
+		// skin, so the view chooses detail alone.
 		// Every tile that is FOLLOWING the view has to be repainted. The ones
 		// that are not must not be touched -- see `tileDetail`.
 		try { repaintTileDetail(); } catch (e) { /* the rail is not up yet */ }
@@ -41883,7 +41883,11 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			if (!holdBtn) return;
 			holdBtn.classList.add('attach-btn');
 			holdBtn.dataset.act = 'attach';
-			holdBtn.innerHTML = ACTION_ICONS.attach;
+			// A word, not the outline icon `ACTION_ICONS.attach` draws for a file
+			// ROW: this is the Doc/Preview panel's own toolbar, where Edit, Download
+			// and Back all say what they do, and the paperclip carried no visible
+			// label of its own at all (2026-09-29, owner).
+			holdBtn.textContent = t('files.attach');
 			async function paint() {
 				var f = attachFocus();
 				if (!f) { holdBtn.style.display = 'none'; return; }
@@ -41975,9 +41979,9 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 				'<div class="files-view-head">' +
 				'  <span class="files-view-name"></span>' +
 				'  <span>' +
-				'    <button class="files-btn" data-act="download" title="' + esc(t('files.download_help')) + '">⤓ '
+				'    <button class="files-btn" data-act="download" title="' + esc(t('files.download_help')) + '">'
 					+ esc(t('files.download')) + '</button>' +
-				'    <button class="files-btn" data-act="attach" title="">📎</button>' +
+				'    <button class="files-btn" data-act="attach" title="">' + esc(t('files.attach')) + '</button>' +
 				'    <button class="files-btn" data-act="back">← ' + esc(t('files.back')) + '</button>' +
 				'  </span>' +
 				'</div>' +
@@ -42184,18 +42188,22 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 				'<div class="files-view-head">' +
 				'  <span>' +
 				compileBtn +
-				'    <button class="files-btn" data-act="edit" title="' + esc(t('files.edit')) + '">✎ '
+				'    <button class="files-btn" data-act="edit" title="' + esc(t('files.edit')) + '">'
 					+ esc(t('files.edit')) + '</button>' +
 				// Edit used to have no way out but Save. Backing out meant closing the
 				// whole document and opening it again, which threw the edit away
 				// without a word -- a one-way door into a mode that writes.
 				'    <button class="files-btn" data-act="cancel-edit" title="' + esc(t('files.stop_editing'))
-					+ '" style="display:none">✕ ' + esc(t('common.cancel')) + '</button>' +
+					+ '" style="display:none">' + esc(t('common.cancel')) + '</button>' +
 				// Line numbers used to be a `#` in this row. They are now a toggle in
 				// the panel's own header, where the rest of "how this is shown" lives
 				// and where it can be reached without the toolbar in view.
-				'    <button class="files-btn" data-act="download" title="' + esc(t('files.download')) + '">⤓</button>' +
-				'    <button class="files-btn" data-act="attach" title="">📎</button>' +
+				// Words, not glyphs, the whole row through -- Edit/Save, Download and
+				// Attach (the paperclip carried no visible label at all) now say what
+				// they do the same way Back always has (2026-09-29, owner).
+				'    <button class="files-btn" data-act="download" title="' + esc(t('files.download')) + '">'
+					+ esc(t('files.download')) + '</button>' +
+				'    <button class="files-btn" data-act="attach" title="">' + esc(t('files.attach')) + '</button>' +
 				'    <button class="files-btn" data-act="back">← ' + esc(t('files.back')) + '</button>' +
 				'  </span>' +
 				'</div>' +
@@ -42252,8 +42260,8 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			/// One door now, so a seventh caption cannot desync.
 			function sayEditBtn(mode) {
 				var face = mode === 'saving' ? t('files.saving')
-					: mode === 'edit'    ? '✎ ' + t('files.edit')
-					: '✔ ' + t('common.save');
+					: mode === 'edit'    ? t('files.edit')
+					: t('common.save');
 				editBtn.textContent = face;
 				editBtn.title = mode === 'saving' ? t('files.saving')
 					: mode === 'edit'    ? t('files.edit')
@@ -42277,7 +42285,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 				sayEditBtn(editBtn.disabled ? 'saving' : (editing ? 'save' : 'edit'));
 				cancelBtn.title = t('files.stop_editing');
 				cancelBtn.setAttribute('aria-label', t('files.stop_editing'));
-				cancelBtn.textContent = '\u2715 ' + t('common.cancel');
+				cancelBtn.textContent = t('common.cancel');
 				var dl = viewEl.querySelector('[data-act="download"]');
 				if (dl) dl.title = t('files.download');
 				var bk = viewEl.querySelector('[data-act="back"]');

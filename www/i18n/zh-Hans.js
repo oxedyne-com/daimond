@@ -1933,6 +1933,7 @@
 	'files.line_numbers':    '行号',
 	'files.download':        '下载',
 	'files.download_help':   '保存到这台机器上',
+	'files.attach':          '附加',
 	'files.hold_add': '把这个文件留在 {name} 里',
 	'files.hold_drop': '不再把这个文件留在 {name} 里',
 	'files.mode_browser': '浏览器',

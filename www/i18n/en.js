@@ -2677,6 +2677,7 @@
 	'files.line_numbers':    'Line numbers',
 	'files.download':        'Download',
 	'files.download_help':   'Save to this machine',
+	'files.attach':          'Attach',
 	'files.hold_add': 'Keep this file with {name}',
 	'files.hold_drop': 'Stop keeping this file with {name}',
 	'files.mode_browser': 'Browser',

@@ -86,6 +86,11 @@
 	border-collapse: collapse;
 	margin: 4px 0 8px;
 	font-size: var(--fs-xs);
+	/* At dock width the table was crushed to one letter per line -- "moc /
+	   k/fa / st" -- rather than scrolling (sweep item 3, every skin). */
+	display: block;
+	overflow-x: auto;
+	max-width: 100%;
 }
 .mdash-table th {
 	text-align: left;
@@ -101,13 +106,30 @@
 	border-bottom: 1px solid var(--border);
 	color: var(--text-secondary);
 	vertical-align: middle;
+	white-space: nowrap;
 }
 .mdash-table th.num,
 .mdash-table td.num {
 	text-align: right;
 	font-variant-numeric: tabular-nums;
 	padding-right: 0;
+	/* Nowrap alone (sweep item 3) stopped a figure breaking letter by letter,
+	   but every numeric column already carried zero padding on BOTH sides
+	   that face its neighbour -- this one's own left, the previous one's
+	   right, already 0 -- so two short, no-longer-wrapping heads now sat
+	   flush against each other: "TurnsTokens inTokens out". A left gap on
+	   every numeric column gives each the space its neighbour was never
+	   going to provide; the right edge stays 0, flush for the last column. */
+	padding-left: 12px;
 	white-space: nowrap;
+}
+/* A `.num` column's own right padding is 0 (its left gap above already
+   separates it from the PREVIOUS numeric head), so a non-numeric head
+   straight after one -- "Trust" after "Fail %" -- had nothing on either
+   side and read as "Fail %Trust" once the table scrolled right. */
+.mdash-table th.num + th:not(.num),
+.mdash-table td.num + td:not(.num) {
+	padding-left: 12px;
 }
 .mdash-table td.mdash-model {
 	color: var(--text-primary);

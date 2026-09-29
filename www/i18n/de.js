@@ -1918,6 +1918,7 @@
 	'files.line_numbers': 'Zeilennummern',
 	'files.download': 'Download',
 	'files.download_help': 'Auf diesem Rechner speichern',
+	'files.attach': 'Anhängen',
 	'files.hold_add': 'Diese Datei bei {name} behalten',
 	'files.hold_drop': 'Diese Datei nicht mehr bei {name} behalten',
 	'files.mode_browser': 'Browser',

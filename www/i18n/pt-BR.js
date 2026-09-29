@@ -1911,6 +1911,7 @@
 	'files.line_numbers': 'Nº das linhas',
 	'files.download': 'Baixar',
 	'files.download_help': 'Salvar nesta máquina',
+	'files.attach': 'Anexar',
 	'files.hold_add': 'Manter este arquivo com {name}',
 	'files.hold_drop': 'Parar de manter este arquivo com {name}',
 	'files.mode_browser': 'Navegador',

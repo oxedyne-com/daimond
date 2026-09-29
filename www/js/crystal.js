@@ -409,6 +409,8 @@
 			out.mono   = getComputedStyle(probe).fontFamily || '';
 			out.radius = getComputedStyle(document.documentElement)
 				.getPropertyValue('--radius').trim() || '';
+			var faces = facesNamed(out.skin, out.font + ',' + out.mono);
+			if (faces) out.faces = faces;
 		} catch (e) {
 			// A theme we could not read is not a reason to show nothing; the page
 			// carries its own neutral defaults for exactly this.
@@ -443,6 +445,122 @@
 		out._labels = labelsFor(opts);
 		return out;
 	}
+
+
+	// ── The skin's faces, carried into the frame ────────────────────
+	//
+	// The names in `_theme.font` are only names on the far side. The page is in an opaque
+	// origin under `font-src data:`, so a face the app serves as a file (Daylight's
+	// `fonts/*.woff2`) cannot be fetched from there, and before this the page set in the
+	// system sans under a font stack that named Sofia Sans. Neither the sandbox nor the
+	// policy moves for it. The parent reads the bytes it already serves, ONCE per load of
+	// the app, and hands them over in `_theme.faces`; the few lines `FACE_PRELUDE` puts in
+	// the page beside the policy register them with `FontFace` from the ArrayBuffer, which
+	// fetches nothing and so asks nothing of `font-src`.
+	//
+	// It is the parent that puts those lines in, not the shipped page, because a page is the
+	// Diamond's own once it is written: a change to `DEFAULT_PAGE` would reach no existing
+	// Diamond, and a page a model rewrote would never learn it. Any page that dresses itself
+	// from `_theme.font` gets the faces.
+	//
+	// Only a skin named in `FACE_SKINS` carries faces, and the prelude goes in only when the
+	// page is mounted under one. Sharp and Warm are not named, so their pages go into the
+	// frame byte for byte as they did before, and their `_theme` has no `faces` key.
+	//
+	// The faces are read from the skin's own `@font-face` rules, so the sheet stays their
+	// one statement: a face changed there is the face carried here.
+
+	/// The skins whose faces the frame is given, and the sheet that declares them.
+	var FACE_SKINS = { daylight: /(^|\/)skin-daylight\.css(\?|#|$)/ };
+
+	/// Per skin: `{ faces: null | [{ family, weight, style, data }], busy: Promise }`.
+	var faceCache = {};
+
+	/// Does this skin carry its faces into the frame?
+	function faceSkin(skin) { return own(FACE_SKINS, skin); }
+
+	/// The `@font-face` rules of a skin's sheet, as `{ family, weight, style, url }`.
+	function faceRules(skin) {
+		var want = FACE_SKINS[skin], out = [];
+		var sheets = document.styleSheets || [];
+		for (var i = 0; i < sheets.length; i++) {
+			var sh = sheets[i];
+			if (!sh.href || !want.test(sh.href)) continue;
+			var rules;
+			try { rules = sh.cssRules; } catch (e) { continue; }
+			for (var j = 0; j < rules.length; j++) {
+				var r = rules[j];
+				if (typeof CSSFontFaceRule === 'undefined' || !(r instanceof CSSFontFaceRule)) continue;
+				var fam = str(r.style.getPropertyValue('font-family')).trim()
+					.replace(/^["']|["']$/g, '');
+				var src = /url\(\s*["']?([^"')]+)["']?\s*\)/.exec(str(r.style.getPropertyValue('src')));
+				if (!fam || !src) continue;
+				var url;
+				try { url = new URL(src[1], sh.href).href; } catch (e) { continue; }
+				out.push({
+					family: fam,
+					weight: str(r.style.getPropertyValue('font-weight')).trim() || 'normal',
+					style:  str(r.style.getPropertyValue('font-style')).trim() || 'normal',
+					url:    url,
+				});
+			}
+		}
+		return out;
+	}
+
+	/// Start reading a skin's faces, once. A read that fails is forgotten, so the next
+	/// mount tries again rather than the frame going without for the rest of the session.
+	function loadFaces(skin) {
+		if (!faceSkin(skin) || faceCache[skin]) return;
+		var slot = faceCache[skin] = { faces: null, busy: null };
+		var rules = faceRules(skin);
+		slot.busy = Promise.all(rules.map(function (f) {
+			return fetch(f.url).then(function (res) {
+				if (!res.ok) throw new Error(f.url + ': ' + res.status);
+				return res.arrayBuffer();
+			}).then(function (buf) {
+				return { family: f.family, weight: f.weight, style: f.style, data: buf };
+			});
+		})).then(function (faces) {
+			if (!faces.length) throw new Error('no @font-face rules for ' + skin);
+			slot.faces = faces;
+			// The page was sent its theme without them; send it again, now with.
+			if (live && !live.done && live.faces && currentSkin() === skin) sendData();
+		}, function () {
+			if (faceCache[skin] === slot) delete faceCache[skin];
+		});
+	}
+
+	/// The faces read for `skin` whose family `stack` names, or null when there are none
+	/// (a skin without faces, or faces not read yet).
+	function facesNamed(skin, stack) {
+		var slot = faceSkin(skin) ? faceCache[skin] : null;
+		if (!slot || !slot.faces) return null;
+		var names = str(stack).toLowerCase(), out = [];
+		for (var i = 0; i < slot.faces.length; i++) {
+			var f = slot.faces[i];
+			if (names.indexOf(f.family.toLowerCase()) >= 0) out.push(f);
+		}
+		return out.length ? out : null;
+	}
+
+	function currentSkin() {
+		return document.documentElement.getAttribute('data-skin') || 'sharp';
+	}
+
+	/// What the parent puts in a page mounted under a face skin, beside the policy. It
+	/// listens for the `data` reply before the page's own script does, and registers each
+	/// face once. A page carrying a stricter `script-src` of its own blocks it, and then
+	/// sets in the system sans as before: nothing breaks, it only goes without.
+	var FACE_PRELUDE = '<script>(function(){var got={};'
+		+ 'addEventListener("message",function(e){if(e.source!==parent)return;'
+		+ 'var m=e.data;if(!m||m.dc!==1||m.v!==1||m.cmd!=="data")return;'
+		+ 'var t=m.data&&m.data._theme,f=t&&t.faces;'
+		+ 'if(!f||!f.length||!window.FontFace||!document.fonts)return;'
+		+ 'for(var i=0;i<f.length;i++){var x=f[i]||{},k=x.family+"|"+x.weight+"|"+x.style;'
+		+ 'if(got[k]||!x.data)continue;got[k]=1;'
+		+ 'try{var ff=new FontFace(x.family,x.data,{weight:x.weight,style:x.style});'
+		+ 'document.fonts.add(ff);ff.loaded.catch(function(){});}catch(_){}}});})();<\/script>';
 
 
 	// ── The policy every page runs under ────────────────────────────
@@ -510,22 +628,24 @@
 	/// acted on: ours goes in either way and the two intersect.
 	var CSP_HAS = /<meta[^>]+http-equiv\s*=\s*["']?\s*content-security-policy/i;
 
-	/// A page with the policy in it, and where it had to go.
-	function armour(html) {
+	/// A page with the policy in it, and where it had to go. `extra` follows the policy
+	/// at the same place: the face prelude, under a skin that carries faces, else ''.
+	function armour(html, extra) {
 		var s = String(html);
+		var add = CSP_META + (extra || '');
 		var carried = CSP_HAS.test(s);
 		var m = /<head\b[^>]*>/i.exec(s);
-		if (m) return insertCsp(s, m.index + m[0].length, 'head', carried);
+		if (m) return insertCsp(s, m.index + m[0].length, 'head', carried, add);
 		m = /<html\b[^>]*>/i.exec(s);
-		if (m) return insertCsp(s, m.index + m[0].length, 'html', carried);
+		if (m) return insertCsp(s, m.index + m[0].length, 'html', carried, add);
 		m = /^\s*<!doctype\b[^>]*>/i.exec(s);
-		if (m) return insertCsp(s, m[0].length, 'doctype', carried);
-		return insertCsp(s, 0, 'start', carried);
+		if (m) return insertCsp(s, m[0].length, 'doctype', carried, add);
+		return insertCsp(s, 0, 'start', carried, add);
 	}
 
-	function insertCsp(s, at, where, carried) {
+	function insertCsp(s, at, where, carried, add) {
 		return {
-			html:     s.slice(0, at) + CSP_META + s.slice(at),
+			html:     s.slice(0, at) + add + s.slice(at),
 			injected: true,
 			carried:  carried,
 			at:       where,
@@ -567,8 +687,11 @@
 		frame.setAttribute('referrerpolicy', 'no-referrer');
 		frame.setAttribute('title', tr(opts, 'crystal.view_crystal', 'Crystal'));
 
-		// The page cannot reach the network, whoever wrote it. See above.
-		var armed = armour(page);
+		// The page cannot reach the network, whoever wrote it. See above. Under a skin
+		// that carries faces it is also given the lines that register them.
+		var faces = faceSkin(currentSkin());
+		if (faces) loadFaces(currentSkin());
+		var armed = armour(page, faces ? FACE_PRELUDE : '');
 		var url = URL.createObjectURL(new Blob([armed.html], { type: PAGE_TYPE }));
 		frame.src = url;
 		wrap.appendChild(frame);
@@ -579,7 +702,7 @@
 			// The record, not the page: `_state` reports this and nothing holds the
 			// armoured text once the blob has it.
 			csp: { policy: PAGE_CSP, injected: armed.injected, carried: armed.carried, at: armed.at },
-			ready: false, reported: false, done: false, loads: 0, keys: [],
+			ready: false, reported: false, done: false, loads: 0, keys: [], faces: faces,
 			timer: 0, rtimer: 0, watch: null, height: 0, onMsg: null, onLoad: null,
 		};
 
@@ -610,8 +733,18 @@
 		// the app stamps — watching the attribute is watching the actual event
 		// rather than inventing a signal for it. The page is simply sent its data
 		// again, which is the only thing it knows how to be told anything by.
+		//
+		// Except into a skin that carries faces from a page mounted without the prelude:
+		// that page has no way to take them, so it is mounted again, which is a person
+		// choosing a look and not something that happens while they read.
 		if (window.MutationObserver) {
-			live.watch = new MutationObserver(function () { sendData(); });
+			live.watch = new MutationObserver(function () {
+				if (live && !live.done && !live.faces && faceSkin(currentSkin())) {
+					mount(live.el, live.opts);
+					return;
+				}
+				sendData();
+			});
 			live.watch.observe(document.documentElement, {
 				attributes: true,
 				attributeFilter: ['data-theme', 'data-ink', 'data-skin'],
@@ -1431,7 +1564,7 @@
 		/// saying whether the author had already declared one. Never used by the app.
 		_state: function () {
 			if (!live) {
-				return { mode: 'none', ready: false, reason: '', keys: [], height: 0, csp: null };
+				return { mode: 'none', ready: false, reason: '', keys: [], height: 0, csp: null, faces: false };
 			}
 			if (live.done) {
 				return {
@@ -1441,6 +1574,7 @@
 					keys:   (live.keys || []).slice(),
 					height: 0,
 					csp:    live.csp || null,
+					faces:  false,
 				};
 			}
 			return {
@@ -1450,6 +1584,7 @@
 				keys:   (live.keys || []).slice(),
 				height: live.height || 0,
 				csp:    live.csp || null,
+				faces:  !!live.faces,
 			};
 		},
 	};

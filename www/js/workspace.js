@@ -468,25 +468,9 @@
 			});
 			menuEl.appendChild(vseg);
 		}
-		// The look: Classic, which is the view's own pair, or Daylight, which
-		// serves both views. Separate from the view because Daylight is not a
-		// density; see `DaimondLook` in daimond.js.
-		if (window.DaimondLook) {
-			menuEl.appendChild(el('div', 'pop-head', t('menu.look')));
-			var lookNow = DaimondLook.get();
-			var lseg = el('div', 'seg');
-			DaimondLook.list().forEach(function (id) {
-				var lb = el('button', null, t('menu.look_' + id));
-				lb.setAttribute('aria-pressed', id === lookNow ? 'true' : 'false');
-				lb.addEventListener('click', function () {
-					DaimondLook.set(id);
-					renderMenu();
-				});
-				lseg.appendChild(lb);
-			});
-			menuEl.appendChild(lseg);
-		}
-
+		// The Look row (Classic | Daylight) is shelved (2026-09-29, D-20260929-02):
+		// Daylight is the only look now, so there is nothing left to choose here.
+		// `DaimondLook` in daimond.js stays defined, inert, for the old names.
 
 		// Theme. A pulldown rather than a row of buttons: ten palettes in three
 		// bands is a list to look down, and a segmented control of ten would eat

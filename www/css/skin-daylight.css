@@ -54,6 +54,10 @@
 	--w-head:   430;
 	--w-title:  560;
 	--w-you:    430;
+	/* The smallest step (10.5px) in plain `--text-muted` fell under 4.5:1 in
+	   8 of 13 palettes (sweep item 14). Mixed toward each palette's own ink,
+	   so it clears the floor everywhere without a per-palette override. */
+	--dl-faint: color-mix(in srgb, var(--text-muted) 72%, var(--text-primary));
 }
 :root[data-skin="daylight"][data-ink="light"] {
 	--w-text:   375;
@@ -190,6 +194,21 @@
 	font-weight: var(--w-strong);
 	color: var(--accent-text);
 }
+/* Several head rows mixed control heights of their own -- Pending's select
+   at 20px beside its ×'s 30px, Social's ⓘ at 22px beside its ×'s 30px, the
+   file panel's 26px beside 30px, and more (sweep item 11). One height, one
+   baseline, for every control in a head row. */
+:root[data-skin="daylight"] .railhead-acts > :is(button, select),
+:root[data-skin="daylight"] .pending-actions > :is(button, select),
+:root[data-skin="daylight"] .railhead > .addbtn,
+:root[data-skin="daylight"] .railhead > button,
+:root[data-skin="daylight"] .chead-right > :is(button, .chip-btn, .mode-chip),
+:root[data-skin="daylight"] .astat-id > button {
+	height: 30px;
+	min-height: 30px;
+	box-sizing: border-box;
+	align-self: center;
+}
 
 /* ── The pause row ─────────────────────────────────────────── */
 :root[data-skin="daylight"] .pptw { border-color: transparent; background: transparent; }
@@ -264,6 +283,11 @@
 :root[data-skin="daylight"] .spend-cell { align-items: flex-start; }
 :root[data-skin="daylight"] .spend-label { font-size: var(--dl-2xs); text-transform: none; letter-spacing: 0; }
 :root[data-skin="daylight"] .spend-amt { font-size: var(--dl-sm); color: var(--text-primary); }
+/* In Admin, at rail width, the device rename pencil was alone on the row's
+   own third line: line 2 was already full, so it wrapped (sweep item 19). */
+@media (max-width: 480px) {
+	:root[data-skin="daylight"] .device-row > .device-rename { order: 3; }
+}
 
 /* ── The stage: the chat's head ────────────────────────────── */
 :root[data-skin="daylight"] .chead { border-bottom: 0; padding: 12px 14px 6px 28px; min-height: 64px; gap: 10px; }
@@ -304,7 +328,9 @@
 /* A reading column on the sheet. Every tile is flush: the speaker shows in the
    type, not in an indent or a box. */
 :root[data-skin="daylight"] .chat-output { --ct-indent: 0px; padding: 4px 28px 12px; line-height: 1.5; }
-:root[data-skin="daylight"] .chat-output > * { max-width: 760px; }
+/* No reading-column cap (2026-09-29, owner: "a large unnecessary margin on
+   the right"). A tile fills the stage's width less this padding, in both
+   views, rather than stopping at a fixed measure and leaving the rest bare. */
 :root[data-skin="daylight"] .ctile,
 :root[data-skin="daylight"] .crollup {
 	background: transparent;
@@ -350,8 +376,10 @@
 :root[data-skin="daylight"] .ctile-meta { font-weight: var(--w-text); font-size: var(--dl-xs); }
 :root[data-skin="daylight"] .ctile-time { font-size: var(--dl-2xs); }
 :root[data-skin="daylight"] .ctile-body { padding: 0 12px 10px; font-size: var(--dl-md); line-height: 1.56; }
-/* Your turn is a lead line in the condensed face; the daimon's answer is text.
-   The difference is type, not a bubble. */
+/* Your turn reads in exactly the daimon's own type -- same face, size, weight
+   and line-height, from the plain `.ctile-body` rule above. The label line
+   above it (name and stamp, `.ctile-lbl`) is what still tells the speakers
+   apart, not a bigger display face here (2026-09-29, owner). */
 :root[data-skin="daylight"] .chat-msg-user { text-align: left; }
 :root[data-skin="daylight"] .chat-msg-user .chat-msg-content {
 	display: block;
@@ -361,20 +389,16 @@
 	padding: 0;
 	max-width: none;
 }
-:root[data-skin="daylight"] .ctile[data-t="user"] .ctile-body {
-	font-family: var(--font-display);
-	font-size: var(--dl-lg);
-	font-weight: var(--w-you);
-	line-height: 1.32;
-	color: var(--text-primary);
-}
+:root[data-skin="daylight"] .ctile[data-t="user"] .ctile-body { color: var(--text-primary); }
 :root[data-skin="daylight"] .ctile-body strong { font-weight: var(--w-strong); }
 :root[data-skin="daylight"] .ctile-body code {
-	font-size: 0.86em;
+	font-size: var(--dl-sm);
 	background: transparent;
 	padding: 0;
 	color: var(--accent-text);
 }
+:root[data-skin="daylight"] .chat-msg-content td code,
+:root[data-skin="daylight"] .chat-msg-content th code { font-size: var(--dl-xs); }
 :root[data-skin="daylight"] .ctile-body pre { border: 0; }
 :root[data-skin="daylight"] .ctile-body li::marker { color: var(--text-muted); }
 /* Tables: a rule under the head and between rows, nothing round them. */
@@ -398,17 +422,52 @@
 }
 :root[data-skin="daylight"] .chat-msg-content tbody tr:last-child td { border-bottom: 0; }
 :root[data-skin="daylight"] .chat-msg-content tr:nth-child(even) td { background: transparent; }
+/* The last column keeps every other cell's 28px right padding, wider than the
+   phone's own column, so the table scrolled and drew a bar that read as a
+   stray rule (sweep item 12). */
+:root[data-skin="daylight"] .chat-msg-content th:last-child,
+:root[data-skin="daylight"] .chat-msg-content td:last-child { padding-right: 0; }
+/* Fenced code: the fill already shows the block's shape, so no border round
+   it, no rule under its head, and Copy is a bare chip (sweep item 2). */
+:root[data-skin="daylight"] .code-block { border: 0; border-radius: var(--radius); }
+:root[data-skin="daylight"] .code-block-head { border-bottom: 0; background: transparent; }
+:root[data-skin="daylight"] .code-copy-btn {
+	border-color: transparent;
+	background: transparent;
+	color: var(--text-muted);
+	border-radius: var(--radius-sm);
+	font-size: var(--dl-xs);
+}
+:root[data-skin="daylight"] .code-copy-btn:hover { background: var(--dl-hover); color: var(--text-primary); border-color: transparent; }
+/* "Interrupted before it could answer" loses its dashed amber frame; the
+   warn fill and the amber words still say what it is (sweep item 5). */
+:root[data-skin="daylight"] .turn-interrupted { border-color: transparent; border-radius: var(--radius); padding: 8px 12px; }
+/* The expanded System/Tool-schemas band was a stray face; every other figure
+   is Sometype Mono (sweep item 16). */
+:root[data-skin="daylight"] .wire-band-body { font-family: var(--font-mono); font-size: var(--dl-xs); }
+/* The daimon's speaker label and a code keyword sat just under 4.5:1 in a
+   few palettes (sweep item 21). */
+:root[data-skin="daylight"] .ctile-lbl .ctile-who,
+:root[data-skin="daylight"] .spend-add-credits { color: var(--accent-text); }
+:root[data-skin="daylight"] .tok-keyword { color: color-mix(in srgb, var(--accent-text) 80%, var(--text-primary)); }
 
 /* ── The composer ──────────────────────────────────────────── */
 :root[data-skin="daylight"] .chat-input-bar { border-top: 0; padding: 8px 14px 16px 28px; gap: 6px; }
 :root[data-skin="daylight"] #chat-input {
-	background: var(--bg-secondary);
-	border: 1px solid var(--border-2);
+	background: var(--bg-tertiary);
+	border: 1px solid transparent;
 	border-radius: var(--radius);
-	font-size: calc(15px * var(--fs-scale));
-	padding: 12px 14px;
+	font-size: var(--dl-md);
+	line-height: 22px;
+	padding: 11px 14px;
+	min-height: 46px;
+	box-sizing: border-box;
 }
-:root[data-skin="daylight"] #chat-input:focus { border-color: var(--accent); }
+:root[data-skin="daylight"] #chat-input:focus,
+:root[data-skin="daylight"] #chat-input:focus-visible {
+	outline: none;
+	border-color: var(--accent);
+}
 :root[data-skin="daylight"] #chat-send { width: 46px; height: 46px; border-radius: var(--radius); }
 :root[data-skin="daylight"] #chat-jump,
 :root[data-skin="daylight"] #chat-end {
@@ -444,6 +503,41 @@
 	background: transparent;
 	box-shadow: none;
 }
+/* The Doc and Preview panels' own head: their title sits over the file's OWN
+   content (the button row, the body), not over the transcript, so it takes
+   that content's edge rather than the 28px the transcript's `.chead` sets
+   for itself above (2026-09-29, owner: "the gap to the left of the file name
+   title"). */
+:root[data-skin="daylight"] .panel.doc .chead { padding-left: 10px; }
+/* The file panel's action row -- Edit, Download, Attach, Back -- as one bare
+   button: no outline, one height, one baseline, even spacing. Classic left
+   the paperclip a size and a padding of its own (files.css), which is
+   exactly what stood it taller and off the others' line (owner). */
+:root[data-skin="daylight"] .files-btn {
+	border-color: transparent;
+	background: transparent;
+	height: 26px;
+	padding: 0 9px;
+	font-size: var(--dl-xs);
+	color: var(--text-secondary);
+}
+:root[data-skin="daylight"] .files-btn:hover { background: var(--dl-hover); border-color: transparent; color: var(--text-primary); }
+:root[data-skin="daylight"] .files-btn.active { background: var(--dl-on); border-color: transparent; color: var(--text-primary); }
+:root[data-skin="daylight"] .files-btn[data-act="attach"] { font-size: var(--dl-xs); padding: 0 9px; }
+:root[data-skin="daylight"] .files-btn[data-act="attach"].on {
+	border-color: transparent;
+	box-shadow: none;
+	background: var(--dl-on);
+	color: var(--text-primary);
+}
+:root[data-skin="daylight"] .files-view-head > span { display: flex; align-items: center; gap: 4px; flex-wrap: wrap; }
+/* The Doc panel's edit-view head has no `.files-view-name` span of its own --
+   the title lives in `.chead` above -- so its one span, the button row, is
+   this rule's target: pulled left 10px to meet the title's edge (2026-09-29
+   re-check: "Edit"'s ink sat 10px right of the title's). A view that DOES
+   carry `.files-view-name` first (cloud storage, preview) is excluded, so
+   its own title is left alone. */
+:root[data-skin="daylight"] .files-view-head > span:first-child:not(.files-view-name) { margin-left: -10px; }
 :root[data-skin="daylight"] .files-mode-chip,
 :root[data-skin="daylight"] .files-scope-chip,
 :root[data-skin="daylight"] .files-mark-here,
@@ -494,6 +588,20 @@
 :root[data-skin="daylight"] .files-size { font-size: var(--dl-2xs); color: var(--text-muted); }
 :root[data-skin="daylight"] .cloud-bar { border-color: transparent; }
 
+/* Every one of these was set to plain `--text-muted` above, at the same
+   specificity; placed last on purpose so `--dl-faint` (sweep item 14) wins
+   by source order without out-specifying anything. */
+:root[data-skin="daylight"] .tile-when-sub,
+:root[data-skin="daylight"] .tile-model-chip,
+:root[data-skin="daylight"] .tile-meter,
+:root[data-skin="daylight"] .tile-meter > *,
+:root[data-skin="daylight"] .session-box-time,
+:root[data-skin="daylight"] .session-box-ctx,
+:root[data-skin="daylight"] .session-box-cost,
+:root[data-skin="daylight"] .ctile-time,
+:root[data-skin="daylight"] .files-size,
+:root[data-skin="daylight"] .cmeter { color: var(--dl-faint); }
+
 /* ── Tag chips: the colours stay, the outlines go ──────────── */
 :root[data-skin="daylight"] .tag-chip { border-color: transparent; }
 :root[data-skin="daylight"] button.tag-chip:hover { border-color: transparent; }
@@ -529,6 +637,44 @@
 }
 :root[data-skin="daylight"] .pop-head { text-transform: none; letter-spacing: 0; font-size: var(--dl-xs); font-weight: var(--w-strong); }
 
+/* ── Dialogs ───────────────────────────────────────────────── */
+/* New diamond, the chat/diamond cog dialogs and the diamond page's Edit
+   form all kept a ruled box for every field and an outlined pill for every
+   secondary button (sweep item 4). A fill for the field, the light "current"
+   gesture for the pills, one height, one size throughout. */
+:root[data-skin="daylight"] .dlg-input,
+:root[data-skin="daylight"] .tile-model,
+:root[data-skin="daylight"] .crystal-form-input,
+:root[data-skin="daylight"] .crystal-form-area {
+	background: var(--bg-tertiary);
+	border-color: transparent;
+	border-radius: var(--radius-sm);
+}
+:root[data-skin="daylight"] .dlg-input:focus,
+:root[data-skin="daylight"] .dlg-input:focus-visible,
+:root[data-skin="daylight"] .crystal-form-input:focus,
+:root[data-skin="daylight"] .crystal-form-area:focus {
+	outline: none;
+	border-color: var(--accent);
+}
+:root[data-skin="daylight"] .tile-dlg-swatch { border-color: transparent; border-radius: var(--radius-sm); }
+:root[data-skin="daylight"] .tile-dlg-level,
+:root[data-skin="daylight"] .tile-fold,
+:root[data-skin="daylight"] .tile-keep {
+	border-color: transparent;
+	background: var(--dl-hover);
+	color: var(--text-secondary);
+	border-radius: var(--radius-sm);
+	font-size: var(--dl-xs);
+	padding: 6px 10px;
+	min-height: 30px;
+}
+:root[data-skin="daylight"] .tile-dlg-level:hover,
+:root[data-skin="daylight"] .tile-fold:hover,
+:root[data-skin="daylight"] .tile-keep:hover { background: var(--dl-on); border-color: transparent; color: var(--text-primary); }
+:root[data-skin="daylight"] .tile-dlg-level[aria-pressed="true"] { background: var(--dl-on); border-color: transparent; color: var(--text-primary); }
+:root[data-skin="daylight"] .tile-fold.folded { border-style: solid; border-color: transparent; }
+
 /* ── Secondary controls: the header's chip, not a ruled pill ──
    Three spots kept the pill-on-a-border style every other control in the
    look had already lost: Social's sub-tabs, Spending's Week | Month, and a
@@ -555,6 +701,13 @@
    from --dl-on's 8% to --dl-hover's 4.5% (QA round 2 re-check, regression).
    Matched at the same specificity `.ptag.on:hover` already keeps it at.  */
 :root[data-skin="daylight"] .imp-chip.on:hover { background: var(--dl-on); }
+/* Social's sub-tabs (Messages, People, Groups, Feed, Share, Feedback) fit
+   one line on the computer; Feedback wrapped onto a line of its own
+   (sweep item 8). */
+@media (min-width: 761px) {
+	:root[data-skin="daylight"] #panel-social > .railhead .imp-chip { padding: 4px 8px; }
+	:root[data-skin="daylight"] #panel-social > .railhead :has(> .imp-chip) { flex-wrap: nowrap; overflow-x: auto; scrollbar-width: none; }
+}
 /* PHONE (QA round 2 re-check, still open): mobile.css's own
    `#msheet #panel-social > .railhead .imp-chip` carries two ids, which the
    desk rule above cannot out-specify at any width. Repeated at that
@@ -592,6 +745,16 @@
 	color: var(--text-primary);
 	box-shadow: none;
 }
+/* The "Estimated" badge carried the same grey pill fill as the selected
+   "Month", so the row read as three choices with the badge looking chosen
+   (sweep item 9). */
+:root[data-skin="daylight"] .spend-badge { background: transparent; padding: 0; margin-right: 8px; color: var(--text-muted); font-size: var(--dl-xs); }
+/* Model stats' Week | Month kept a `--border-strong` frame while Spending's
+   identical control had none (sweep item 10). */
+:root[data-skin="daylight"] .mdash-toggle { background: transparent; border-color: transparent; padding: 0; gap: 2px; }
+:root[data-skin="daylight"] .mdash-toggle-btn { border-radius: var(--radius-sm); color: var(--text-secondary); }
+:root[data-skin="daylight"] .mdash-toggle-btn:hover { background: var(--dl-hover); color: var(--text-primary); }
+:root[data-skin="daylight"] .mdash-toggle-btn.on { background: var(--dl-on); color: var(--text-primary); box-shadow: none; }
 :root[data-skin="daylight"] .modal-close.dlg-cancel {
 	background: transparent;
 	border-color: transparent;
@@ -683,6 +846,10 @@
 :root[data-skin="daylight"] .attach-view-btn:hover,
 :root[data-skin="daylight"] .attach-add:hover,
 :root[data-skin="daylight"] .attach-add.grants:hover { background: var(--dl-hover); color: var(--text-primary); border-color: transparent; }
+/* The attach row's Note/Read toggles were outlined pills (sweep item 6). */
+:root[data-skin="daylight"] .attach-state { border-color: transparent; background: var(--dl-hover); color: var(--text-secondary); border-radius: var(--radius-sm); }
+:root[data-skin="daylight"] .attach-state:hover { border-color: transparent; background: var(--dl-on); color: var(--text-primary); }
+:root[data-skin="daylight"] .attach-state.read { border-color: transparent; background: var(--accent-soft); color: var(--accent-text); }
 /* A diamond's foot: its links and what it keeps, in the text face. */
 :root[data-skin="daylight"] .crystal-controls { border-top: 0; padding: 8px 28px 4px; }
 :root[data-skin="daylight"] .link-strip,
@@ -763,8 +930,26 @@
 	:root[data-skin="daylight"] .chead { padding: 8px 4px 4px 16px; min-height: 52px; }
 	:root[data-skin="daylight"] .ctitle { font-size: var(--dl-md); font-weight: 600; }
 	:root[data-skin="daylight"] .chat-output { padding: 4px 12px 12px; }
-	:root[data-skin="daylight"] .ctile[data-t="user"] .ctile-body { font-size: calc(19px * var(--fs-scale)); }
-	:root[data-skin="daylight"] .ctile-body { font-size: calc(16px * var(--fs-scale)); }
+	/* Both of these were off the seven-step scale, and the "your turn" one
+	   also put the phone back in the condensed display face batch 1 took the
+	   computer out of. Removed: both tiles now take the shared `.ctile-body`
+	   rule (17px, the daimon's own face) on the phone too (sweep item 13,
+	   completing batch-1 item 2). */
+	:root[data-skin="daylight"] .railhead-acts > :is(button, select),
+	:root[data-skin="daylight"] .pending-actions > :is(button, select),
+	:root[data-skin="daylight"] .railhead > .addbtn,
+	:root[data-skin="daylight"] .railhead > button,
+	:root[data-skin="daylight"] .chead-right > :is(button, .chip-btn, .mode-chip),
+	:root[data-skin="daylight"] .astat-id > button { height: 36px; min-height: 36px; }
+	/* The floating ˄˅ jump buttons kept a grey ring (sweep item 18). */
+	:root[data-skin="daylight"] .chat-input-bar #chat-jump,
+	:root[data-skin="daylight"] .chat-input-bar #chat-end { border-color: transparent; box-shadow: 0 2px 10px rgb(20 12 16 / 0.16); }
+	/* The tab bar's last visible label was cut in half at the screen edge,
+	   reading as clipped text rather than as "scroll for more" (sweep item 20). */
+	:root[data-skin="daylight"] #mnav {
+		-webkit-mask-image: linear-gradient(to right, #000 86%, transparent);
+		mask-image: linear-gradient(to right, #000 86%, transparent);
+	}
 	/* QA round 2, M2 (still open after the first fix): the row was two lines,
 	   but Daylight's flat strip still centred "Icons +" inside the floating
 	   #chat-jump/#chat-end buttons' own band. 24px of bottom padding lifts
@@ -829,3 +1014,35 @@
 :root[data-skin="daylight"] .pop select:hover { border-color: transparent; background-color: var(--bg-hover); }
 /* A chat tile's name sits on the same edge as a diamond's. */
 :root[data-skin="daylight"] .tile-label { padding-left: 0; }
+
+/* ── Remaining controls ───────────────────────────────────── */
+/* The last of the ruled, 1px-bordered controls the sweep found: the Graph
+   bar, Email compose's fields and buttons, Model stats' rating buttons, and
+   the phone's Preview-sheet tabs and Web-sheet ask field (sweep item 7). */
+:root[data-skin="daylight"] .graph-btn,
+:root[data-skin="daylight"] .compose-btn,
+:root[data-skin="daylight"] .mdash-rate-btn,
+:root[data-skin="daylight"] #msheet .msheet-tab {
+	border-color: transparent;
+	background: transparent;
+	border-radius: var(--radius-sm);
+	color: var(--text-secondary);
+}
+:root[data-skin="daylight"] .graph-btn:hover,
+:root[data-skin="daylight"] .compose-btn:hover,
+:root[data-skin="daylight"] .mdash-rate-btn:hover,
+:root[data-skin="daylight"] #msheet .msheet-tab:hover { background: var(--dl-hover); border-color: transparent; color: var(--text-primary); }
+:root[data-skin="daylight"] .graph-btn.on,
+:root[data-skin="daylight"] #msheet .msheet-tab.on { background: var(--dl-on); border-color: transparent; color: var(--text-primary); }
+:root[data-skin="daylight"] .graph-btn.primary,
+:root[data-skin="daylight"] #compose-send { border-color: transparent; }
+:root[data-skin="daylight"] .pending-sort,
+:root[data-skin="daylight"] .compose-row > input,
+:root[data-skin="daylight"] .compose-row > select,
+:root[data-skin="daylight"] #msheet-ask-input {
+	background: var(--bg-tertiary);
+	border-color: transparent;
+	border-radius: var(--radius-sm);
+}
+:root[data-skin="daylight"] .compose-row > input:focus,
+:root[data-skin="daylight"] #msheet-ask-input:focus { outline: none; border-color: var(--accent); }
