@@ -30,16 +30,14 @@
 	border-bottom: 1px solid var(--border);
 	flex: none;
 }
-.files-mode-seg, .files-mode-acts { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
-@media (max-width: 760px) {
-	.files-mode-seg, .files-mode-acts {
-		flex-wrap: nowrap;
-		overflow-x: auto;
-		scrollbar-width: none;
-	}
-	.files-mode-seg::-webkit-scrollbar, .files-mode-acts::-webkit-scrollbar { display: none; }
-	.files-mode-seg > *, .files-mode-acts > * { flex: 0 0 auto; }
+/* One line at every width and in every language (quality bar, rule 3): a long
+   label makes the bar scroll, never wrap and drop the file list below it. */
+.files-mode-seg, .files-mode-acts {
+	display: flex; flex-wrap: nowrap; align-items: center; gap: 6px;
+	overflow-x: auto; scrollbar-width: none;
 }
+.files-mode-seg::-webkit-scrollbar, .files-mode-acts::-webkit-scrollbar { display: none; }
+.files-mode-seg > *, .files-mode-acts > * { flex: 0 0 auto; }
 .files-mode-chip {
 	display: inline-flex; align-items: center; gap: 4px;
 	padding: 2px 8px; border-radius: 999px;
@@ -110,6 +108,10 @@
 	color: var(--text-secondary); background: var(--bg-tertiary);
 	border: 1px solid var(--border-strong); cursor: pointer;
 }
+/* R7: `.mark-ic`'s own `margin-right` (app.css, for inline text usage with no
+   gap of its own) doubled up with this row's flex `gap`, giving 8-9px --
+   flex gap already does the icon's job here. */
+.files-scope-chip .mark-ic { margin-right: 0; }
 .files-scope-chip:hover { background: var(--bg-hover); border-color: var(--accent); }
 .files-scope-chip:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
 /* The lit one is what the tree below is showing, so it has to read as a state
@@ -355,22 +357,10 @@
 }
 .files-row:hover { background: var(--bg-hover); }
 .files-name { flex: 1; color: var(--text-primary); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-/* A folder is named in the accent, and the accent has TWO tokens because it does
-   two jobs. `--accent` is the FILL and the EDGE -- a button's ground, a border,
-   a focus ring -- and SC 1.4.11 asks 3.0 of it. `--accent-text` is the accent as
-   INK, which SC 1.4.3 asks 4.5 of, and every palette carries it a rung further
-   from its own surfaces for exactly that reason.
-   This rule, and the three above it, reached for `--accent`. On the four dark
-   palettes that is a mid-toned accent on a near-black panel: Midnight measured
-   4.19:1 for a folder name on `--bg-secondary` and Amber 4.35, both under the
-   floor for 13px. Nothing about the token's VALUE was wrong -- 4.19 is a
-   perfectly good ring -- so lifting `--accent` would have paled every accent
-   fill in the app to fix four lines of text in one panel. The wrong token was
-   named, and naming the right one moves nothing outside these four rules.
-   Against all four surfaces of its own palette -- primary, secondary, tertiary
-   and hover -- `--accent-text` reads 6.04-10.56 across the dark band and
-   4.98-9.38 across the light. */
-.files-row.dir .files-name { color: var(--accent-text); }
+/* A folder row does NOT name itself in the accent (r526 residual, the lead's
+   ruling): the folder icon beside it already says "this is a folder", so a
+   second, accented signal was the file-row role's own inconsistency, not a
+   feature -- the row reads in the ordinary text colour, like every other. */
 .files-size { color: var(--text-secondary); font-size: var(--fs-2xs); font-family: var(--font-mono); }
 .files-del {
 	background: transparent; border: none; color: var(--text-secondary);

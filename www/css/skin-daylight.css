@@ -188,6 +188,12 @@
 /* A section head is a word in the condensed face at the section size, in
    sentence case. What was an all-caps label becomes a name. */
 :root[data-skin="daylight"] .railhead { padding: 16px 2px 8px 4px; gap: 4px; }
+/* R1 follow-on: Model stats, Improve and Social carry the same body inset as
+   every other dock panel (`--dock-inset`, variables.css) under a `.railhead`
+   built for the rail's own denser 4px -- their own heading sat 6px left of
+   their own body's edge. The other six dock panels' bodies already match
+   the rail's 4px, so only these three are restated. */
+:root[data-skin="daylight"] :is(.panel.modeldash, .panel.tracker, .panel.social) > .railhead { padding-left: var(--dock-inset); }
 :root[data-skin="daylight"] .railhead > span:first-child {
 	font-family: var(--font-display);
 	font-size: var(--dl-xl);
@@ -199,7 +205,38 @@
 	overflow: hidden;
 	text-overflow: ellipsis;
 }
+/* U4 (D-20260929-03 varlen sweep): the heading keeps its own natural width and
+   never gives it up to the button beside it -- at a very long "New …" label
+   the heading was squeezed to 0px and vanished, because both it and the
+   button were letting flex-shrink decide who lost the row.
+   5.2.6 (D-20260929-03 head-row regression): `flex: 0 0 auto` took the
+   heading out of the row's free space entirely, so every tool after it sat
+   right after the heading's own width instead of the row's right edge --
+   flush on 5.2.5, drifting 18-189px on 5.2.5+U4. The heading needs the row's
+   free space back (`flex-grow: 1`), so the fix first tried was `flex: 1 0
+   auto` (grow restored, shrink and basis left as U4 set them). Measured
+   against 5.2.5 (0b5673fc) live on the French dock panel, that reintroduces
+   a DIFFERENT overflow: "Statistiques des modèles" (Model stats) is 25
+   characters, long enough to need to shrink, and `flex-shrink: 0` means it
+   never does -- the row's tools land 29px past the panel's own right edge,
+   which 5.2.5's own `flex: 1 1 0%` never did. `flex-shrink: 0` was never
+   the load-bearing part of U4's fix; the heading vanished under the old
+   `flex-basis: 0` (see 5cc0d093's own message, "flex-basis auto, not 0, was
+   the whole bug"), and an AUTO basis alone -- with shrink put back to 1 --
+   reproduces every one of U4's own passing cases (measured: the "New …"
+   vlong label never squeezes "Diamonds"/"Chats" below a readable width,
+   here or in the independent check's own French/German runs) while also
+   matching 5.2.5 exactly on the French dock case and on every other panel,
+   locale and viewport measured. The buttons beside the heading get their
+   own `flex-shrink: 0` below, so of the two competing for space under a
+   long label, only the heading (which has its own ellipsis) ever gives. */
+:root[data-skin="daylight"] .railhead > [role="heading"] { flex: 1 1 auto; }
+:root[data-skin="daylight"] .railhead > :is(.addbtn:not(.railbtn), .rail-fold) { flex-shrink: 0; }
 :root[data-skin="daylight"] .rail-count { font-size: var(--dl-2xs); align-self: center; }
+/* D-20260929-03 (left bars): the selected mail account/folder takes the same
+   fill the selected chat and diamond use, not the base skin's generic
+   accent-soft -- one drawing for "selected" across the app. */
+:root[data-skin="daylight"] .mail-acct.on { background: var(--dl-on); }
 :root[data-skin="daylight"] .addbtn {
 	width: 30px;
 	height: 30px;
@@ -217,6 +254,13 @@
 	font-size: var(--dl-xs);
 	font-weight: var(--w-strong);
 	color: var(--accent-text);
+	/* U4: with the heading no longer giving up its space, the button is what
+	   shrinks at the very long test value -- so it needs its own floor, rather
+	   than a cut label with no ellipsis. */
+	min-width: 0;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
 }
 /* Several head rows mixed control heights of their own -- Pending's select
    at 20px beside its ×'s 30px, Social's ⓘ at 22px beside its ×'s 30px, the
@@ -238,7 +282,15 @@
 /* Every icon-only head tool keeps `.icon-btn`'s own 5px/7px padding; this is
    the WORDED and select members of the row above, which need their own box
    (remaining.md cluster 5, points 2-4). */
+/* R5: `#collapse-btn` and `.cfull-btn` are icon-only chip tools too, not
+   worded ones -- they carry `.chip-btn`, which the group's selector did not
+   reach. */
 :root[data-skin="daylight"] :is(.chead-right, .top-actions, .railhead) > .icon-btn { padding: 0; width: 30px; justify-content: center; }
+:root[data-skin="daylight"] :is(.panel:not(.ai) .chead-right, .top-actions, .railhead) > :is(#collapse-btn, .cfull-btn) { padding: 0; width: 30px; justify-content: center; }
+/* The phone's chat head keeps 5.2.5's own box for both. */
+@media (min-width: 761px) {
+	:root[data-skin="daylight"] .panel.ai .chead-right > :is(#collapse-btn, .cfull-btn) { padding: 0; width: 30px; justify-content: center; }
+}
 :root[data-skin="daylight"] .top-actions > #settings-menu-btn { padding: 0 9px; line-height: 12px; width: auto; }
 :root[data-skin="daylight"] #hand-mode-chip { padding: 0 9px; line-height: 12px; }
 :root[data-skin="daylight"] #settings-menu-btn { gap: 4px; }
@@ -328,7 +380,6 @@
 /* The one rule the rail keeps: it says the list has ended. */
 :root[data-skin="daylight"] .admin-status { border-top: 1px solid var(--border); padding-top: 10px; gap: 2px; }
 :root[data-skin="daylight"] .astat-detail { border-left: 0; margin-left: 0; }
-:root[data-skin="daylight"] .user-info { font-size: var(--dl-sm); font-weight: var(--w-strong); color: var(--text-primary); }
 /* One app table (D-20260929-03, remaining.md cluster 12): Spend's and Model
    stats' figures shared a head but drew a row a pixel apart, and each table's
    own numeric column and model name drew a size and colour of its own. */
@@ -345,6 +396,10 @@
 	font-size: var(--dl-xs); font-weight: var(--w-text); color: var(--text-secondary);
 	border-radius: var(--radius-sm); padding: 3px 4px; min-height: 21px;
 }
+/* R2: `#user-row` held above 22px even once every part inside it measured
+   under it -- an explicit height, not just the floor every other status-row
+   reaches on its own, closes the gap regardless of the reason. */
+:root[data-skin="daylight"] #user-row { height: 22px; box-sizing: border-box; }
 :root[data-skin="daylight"] .astat-btn:hover { background: var(--dl-hover); }
 /* One icon button in a row (D-20260929-03, remaining.md cluster 6): a 20px
    box, radius --radius-sm, a 16px icon, --text-secondary. Copy, a device's
@@ -356,9 +411,15 @@
    (§2/cluster 5) for the one button -- `.files-btn.attach-btn` -- that wears
    both a head-tool's and this row's class. */
 :root[data-skin="daylight"] :is(.device-rename, .device-nominate, .copy-id, .ctile-copy, .attach-btn, .files-del,
-	.files-ren, .tag-x, .crystal-form-x, .attach-add, .tile-cog) {
+	.files-ren, .crystal-form-x, .attach-add, .tile-cog) {
 	height: 20px; min-height: 20px; padding: 0; border-radius: var(--radius-sm); color: var(--text-secondary);
 }
+/* `.tag-x` kept OUT of the fixed-20px group above (D-20260929-03 residual
+   pass): it is now a normal flex child of its chip (`align-self: stretch`,
+   app.css), sized BY the chip's own height, not to a standalone icon
+   button's own -- a fixed 20px there was growing every closer-bearing chip
+   three pixels taller than a plain one. */
+:root[data-skin="daylight"] .tag-x { padding: 0; border-radius: var(--radius-sm); }
 :root[data-skin="daylight"] .session-box-header .pptw-act {
 	height: 20px; min-height: 20px; padding: 0; border-radius: var(--radius-sm); color: var(--text-secondary);
 }
@@ -381,8 +442,20 @@
 	/* The icon-button rule (above, .device-rename etc. at 20px) outranks
 	   app.css's own 44px phone tap-target floor for the device row's
 	   controls; restate it here at the same specificity, after it. */
-	:root[data-skin="daylight"] :is(.device-row > .copy-id, .device-ctl .device-nominate, .device-acts .device-rename,
-		.device-acts .device-remove) { width: 44px; height: 44px; min-height: 44px; }
+	:root[data-skin="daylight"] :is(.device-row > .copy-id, .device-acts .device-remove) { width: 44px; height: 44px; min-height: 44px; }
+	/* The rename pencil's overlay reaches 4px into the copy button. */
+	:root[data-skin="daylight"] .device-row > .copy-id { margin-right: 4px; }
+	/* R12 (D-20260929-03 r526 residual): nominate and rename take the icon-
+	   button group's own 20px box now, like copy, the tile cog and the rest --
+	   they were the two out of the row at 44px. The TAP target does not follow
+	   the box down, though (the lead's ruling, same day): an invisible ::after
+	   restores it to 44px without moving anything else on the row. */
+	:root[data-skin="daylight"] :is(.device-ctl .device-nominate, .device-acts .device-rename) {
+		width: 20px; height: 20px; min-height: 0; position: relative;
+	}
+	:root[data-skin="daylight"] :is(.device-ctl .device-nominate, .device-acts .device-rename)::after {
+		content: ''; position: absolute; top: 50%; left: 50%; width: 44px; height: 44px; transform: translate(-50%, -50%);
+	}
 }
 
 /* ── The stage: the chat's head ────────────────────────────── */
@@ -572,8 +645,9 @@
 :root[data-skin="daylight"] .mark-notice { border-color: transparent; }
 
 /* ── The Workspace, in the dock ────────────────────────────── */
-/* One text button (D-20260929-03 §4): 12px, `--w-text`, `--text-secondary`,
-   padding 3px 10px, height 25px, radius `--radius-sm`, no border, a light
+/* One text button (D-20260929-03 §4, r526 residual: 25px raised to 27px to
+   match the group's own majority, R4): 12px, `--w-text`, `--text-secondary`,
+   padding 3px 10px, height 27px, radius `--radius-sm`, no border, a light
    fill on hover. Crystal's Edit/History/Save-a-version, the Graph bar, a
    code block's Copy, the Workspace's Import/Save-a-copy and the Social/
    +Add-provider pills this replaces their own font, weight, padding and
@@ -581,7 +655,7 @@
 :root[data-skin="daylight"] :is(.crystal-act, .graph-btn, .attach-view-btn, .code-copy-btn, .files-mode-btn,
 	.imp-keep, .imp-send, .imp-vote, .shr-btn, .models-add, .tag-clear-all, .ti-continue) {
 	font-size: var(--dl-xs); font-weight: var(--w-text); color: var(--text-secondary); background: transparent;
-	border-color: transparent; border-radius: var(--radius-sm); padding: 3px 10px; min-height: 25px; line-height: 19px;
+	border-color: transparent; border-radius: var(--radius-sm); padding: 3px 10px; min-height: 27px; line-height: 19px;
 	text-decoration: none;
 }
 :root[data-skin="daylight"] :is(.crystal-act, .graph-btn, .attach-view-btn, .code-copy-btn, .files-mode-btn,
@@ -754,13 +828,16 @@
 	height: 31px; box-sizing: border-box; padding: 6px 8px;
 }
 :root[data-skin="daylight"] .tile-dlg-swatch { border-color: transparent; border-radius: var(--radius-sm); }
-/* One dialog action (D-20260929-03 §5): 14px, padding 8px 16px, height 35px,
-   radius `--radius-sm`. The cog dialogs' Keep and Turn-into-a-diamond… were a
-   smaller, filled-at-rest pair of their own; they take the rule below and go
-   bare like every other secondary action. */
+/* One dialog action (D-20260929-03 §5, r526 residual: 35px raised to 37px,
+   R13 -- `.dlg-ok`/`.dlg-cancel` were never actually 35, this floor sitting
+   under their own natural height; #push-save and #beta-open, with no taller
+   content to hold them up, were the only two the floor actually set): 14px,
+   padding 8px 16px, height 37px, radius `--radius-sm`. The cog dialogs' Keep
+   and Turn-into-a-diamond… were a smaller, filled-at-rest pair of their own;
+   they take the rule below and go bare like every other secondary action. */
 :root[data-skin="daylight"] :is(.dlg-actions, .tile-dlg-actions, .compose-foot) > button,
 :root[data-skin="daylight"] :is(#push-save, #beta-open) {
-	font-size: var(--dl-sm); padding: 8px 16px; min-height: 35px; height: auto; border-radius: var(--radius-sm);
+	font-size: var(--dl-sm); padding: 8px 16px; min-height: 37px; height: auto; border-radius: var(--radius-sm);
 }
 :root[data-skin="daylight"] :is(.tile-keep, .tile-fold) { background: transparent; }
 :root[data-skin="daylight"] .tile-fold,
@@ -858,15 +935,33 @@
 }
 :root[data-skin="daylight"] .crystal-act:hover { background: var(--dl-hover); color: var(--text-primary); }
 :root[data-skin="daylight"] .crystal-act.primary { background: var(--accent); color: var(--on-fill); }
+/* R10: `.crystal-act.mem-raw-btn` carries both classes, so `.crystal-act`'s
+   own padding (app.css) tied the disclosure group's single-class member for
+   height -- restated at the compound's own specificity. */
+:root[data-skin="daylight"] .crystal-act.mem-raw-btn { height: 27px; min-height: 27px; padding: 4px 8px 4px 4px; }
+/* R11: same story -- `.crystal-act.crystal-form-x` carries both classes,
+   each with a padding of its own in app.css, tying the 20px icon group's
+   single-class member. */
+:root[data-skin="daylight"] .crystal-act.crystal-form-x { padding: 0; height: 20px; min-height: 20px; }
 
 
 /* One section head (D-20260929-03 §8), the design's own form -- .pop-head:
    12px, --w-strong, --text-muted, no letter-spacing. Admin's, a tile
    dialog's, Spending's and Model stats' each drew at their own size,
-   weight, colour or spacing. */
-:root[data-skin="daylight"] :is(.pop-head, .admin-sec, .tile-dlg-head, #search-head, .spend-sec-title, .mdash-sec-title, .cfg-fieldhead,
+   weight, colour or spacing.
+   `#search-head` kept OUT of this `:is()` (D-20260929-03 residual pass): an
+   id anywhere in the group raises the WHOLE group's specificity to an id's,
+   which silently outranked the later disclosure-fold rule below for
+   `.tile-dlg-adv-sum` -- it also carries `.tile-dlg-head` -- and set its
+   weight to `--w-strong` instead of that rule's own `--w-text`. */
+:root[data-skin="daylight"] #search-head {
+	font-size: var(--dl-xs); font-weight: var(--w-strong); color: var(--text-muted); letter-spacing: 0; line-height: 1.6;
+}
+/* R6: one line-height for the group (`.mem-title` was 16.2px against the
+   rest's 19.2, its own rule never having set one). */
+:root[data-skin="daylight"] :is(.pop-head, .admin-sec, .tile-dlg-head, .spend-sec-title, .mdash-sec-title, .cfg-fieldhead,
 	.mem-title, .pptw-head-label, .spend-sub) {
-	font-size: var(--dl-xs); font-weight: var(--w-strong); color: var(--text-muted); letter-spacing: 0;
+	font-size: var(--dl-xs); font-weight: var(--w-strong); color: var(--text-muted); letter-spacing: 0; line-height: 1.6;
 }
 /* One field label (§8): 12px, --w-text, --text-secondary. Nine fields each
    drew at 10.5 or 14px, some bold, some muted, one lower-cased by
@@ -991,7 +1086,7 @@
 :root[data-skin="daylight"] .sys-head { font-family: var(--font); font-size: var(--dl-xs); }
 
 /* ── Layout contract: explicit rows, never negotiated by wrap ─────── */
-/* V1 (layout_contract.md). The title, the model, the chips and the meter are
+/* V1 (layout_contract.md). The title, the tags, the model and the meter are
    four rows every diamond tile keeps, in that order, whatever it says (owner:
    "the chip list in diamond tiles should start on its own line"). The prior
    fix here only removed the OUTER wrapping flex row; `flex-wrap` was still
@@ -999,34 +1094,50 @@
    shared a line -- a rail at 260px showed four different shapes across five
    tiles (layout_contract.md, census_desk.json). Explicit grid areas fix the
    shape; the gaps are MARGINS on each area, not `row-gap`, so a tile with no
-   tags or no `.diamond-from` costs nothing for the row it does not draw. */
+   tags or no `.diamond-from` costs nothing for the row it does not draw.
+   V6 (D-20260929-03, r526 residual pass, owner: "you have now inserted the
+   model name at the start of the diamond tile status line ... if the model
+   name is long, the status line contents get pushed rightward"). V1-V5 put
+   the model and the meter on ONE shared grid row so a short reading sat
+   beside a short name; against a long one the meter's own left edge moved
+   with it, tile to tile -- the same variable-length-before-fixed-content
+   fault the owner named at ~14:30 on this same directive, now in the rule
+   V1 itself introduced. The model is now its own row, ABOVE the meter,
+   never sharing a column with it, so the meter's left edge is the tile's
+   own content edge in every tile whatever the model's name. One column,
+   one area per row. */
 :root[data-skin="daylight"] .diamond-box {
 	display: grid;
-	grid-template-columns: minmax(0, max-content) minmax(0, 1fr);
-	grid-template-areas: "head head" "from from" "tags tags" "model meter";
+	grid-template-columns: minmax(0, 1fr);
+	grid-template-areas: "head" "from" "tags" "model" "meter";
 	row-gap: 0; column-gap: 0;
 }
 :root[data-skin="daylight"] .diamond-box > .session-box-header { grid-area: head; }
 :root[data-skin="daylight"] .diamond-box > .diamond-from       { grid-area: from; margin-top: 2px; }
 :root[data-skin="daylight"] .diamond-box > .session-box-tags   { grid-area: tags; margin-top: 4px; }
-:root[data-skin="daylight"] .diamond-box > .session-box-meta   { grid-area: model; margin-top: 3px; display: flex; flex-wrap: nowrap; min-width: 0; gap: 6px; }
-:root[data-skin="daylight"] .diamond-box > .diamond-meter      { grid-area: meter; margin-top: 3px; display: flex; flex-wrap: nowrap; min-width: auto; gap: 0; white-space: nowrap; }
+/* The model is ONE line: the chip's own ellipsis (app.css) is what a long
+   name gives way to, not the row's height or the meter's position. */
+:root[data-skin="daylight"] .diamond-box > .session-box-meta   { grid-area: model; margin-top: 3px; display: flex; flex-wrap: nowrap; min-width: 0; gap: 6px; overflow: hidden; }
+/* The meter is its own line, starting at the tile's left content edge in
+   every tile. `overflow: hidden` plus the last-reading ellipsis below is
+   the narrowest-width fallback: earlier readings stay whole, only the last
+   one gives up characters, and the row never wraps. */
+:root[data-skin="daylight"] .diamond-box > .diamond-meter      { grid-area: meter; margin-top: 3px; display: flex; flex-wrap: nowrap; min-width: 0; gap: 0; white-space: nowrap; overflow: hidden; }
 :root[data-skin="daylight"] .diamond-box .tile-model-chip      { min-width: 0; }	/* ellipsis already set, app.css */
-/* Every other area shrinks so the meter (min-width above) keeps its own
-   reading whole instead of being squeezed for room the model chip can give
-   up first (its own ellipsis already handles a long name). */
 :root[data-skin="daylight"] .diamond-box > :not(.diamond-meter) { min-width: 0; }
-/* V4. The same shape for a chat tile's model/meter pair (`.tile-active`): a
-   long model name used to wrap `.tile-meter` onto its own line under a short
-   one, which stayed beside the model chip. */
+/* V4/V6. The same shape for a chat tile's model/meter pair (`.tile-active`):
+   a long model name used to wrap `.tile-meter` onto its own line under a
+   short one (V4); sharing a grid row at all (V1-V5) then moved the meter's
+   left edge with the model's own length (V6, as above). Two rows, one
+   column, never sharing a line. */
 :root[data-skin="daylight"] .chat-box[data-detail="max"] .tile-active {
 	display: grid;
-	grid-template-columns: minmax(0, max-content) minmax(0, 1fr);
-	grid-template-areas: "model meter";
-	column-gap: 0;
+	grid-template-columns: minmax(0, 1fr);
+	grid-template-areas: "model" "meter";
+	row-gap: 0; column-gap: 0;
 }
-:root[data-skin="daylight"] .chat-box[data-detail="max"] .tile-active-top { grid-area: model; min-width: 0; flex-wrap: nowrap; }
-:root[data-skin="daylight"] .chat-box[data-detail="max"] .tile-meter      { grid-area: meter; flex-wrap: nowrap; white-space: nowrap; min-width: auto; }
+:root[data-skin="daylight"] .chat-box[data-detail="max"] .tile-active-top { grid-area: model; min-width: 0; flex-wrap: nowrap; overflow: hidden; }
+:root[data-skin="daylight"] .chat-box[data-detail="max"] .tile-meter      { grid-area: meter; flex-wrap: nowrap; white-space: nowrap; min-width: 0; overflow: hidden; }
 :root[data-skin="daylight"] .chat-box .tile-model-chip { min-width: 0; }
 /* V2. The middle dot goes BETWEEN a meter's own readings, never before the
    first one: `> *::before` put one on every reading including the first, so
@@ -1040,18 +1151,33 @@
 	color: var(--text-muted);
 	font-family: var(--font);
 }
-/* The same dot between the model chip and the meter's first reading, since
-   V2's rule above only joins the meter's OWN readings to each other. */
-:root[data-skin="daylight"] :is(.session-box-meta, .tile-active-top) ~ :is(.diamond-meter, .tile-meter) > :first-child::before {
-	content: '\00b7';
-	margin: 0 6px;
-	color: var(--text-muted);
-	font-family: var(--font);
+/* V6: the model and the meter are two separate rows now, not one shared
+   line, so there is no longer a join between them to draw -- the dot V2's
+   sibling rule (`:first-child::before`, D-20260929-03 §earlier) drew there
+   is gone with it. */
+/* The meter's LAST reading only gives way when the row is too narrow to
+   hold it whole (D-20260929-03, r526 residual pass, "does variable length
+   content change the layout in a way that is not desirable?"): earlier
+   readings are fixed width and never shrink, so only the final one
+   ellipsises, and the row itself never wraps (`overflow: hidden` above). */
+:root[data-skin="daylight"] :is(.diamond-meter, .tile-meter) > * { flex: none; }
+:root[data-skin="daylight"] :is(.diamond-meter, .tile-meter) > :last-child {
+	flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis;
 }
-/* With the dot in, a long model name pushed the meter out of the tile
-   (measured: 275px of horizontal scroll) -- the meter now keeps its natural
-   width (min-width: auto above) and every other area gives up room first. */
-:root[data-skin="daylight"] :is(.diamond-box, .chat-box[data-detail="max"] .tile-active) { grid-template-columns: minmax(0, max-content) minmax(auto, 1fr); }
+/* U3 (D-20260929-03 varlen sweep): a reading's own width no longer moves the
+   readings after it. Figures are fixed-width digits, the context percentage
+   is given the room its widest value ("100%") needs and right-aligned within
+   it, and the token count keeps enough room that "12 tok" and "1.2M tok" take
+   the same box -- so a sibling tile's readings land at the same x whatever
+   this one's numbers say. */
+:root[data-skin="daylight"] :is(.diamond-meter, .tile-meter) > * { font-variant-numeric: tabular-nums; }
+:root[data-skin="daylight"] .tile-ctx-pct { min-width: 4ch; text-align: right; }
+/* A FLOOR alone still let an extreme reading ("123,456,789 tok", 15ch) grow
+   past it and push whatever comes after -- a ceiling too, with its own
+   ellipsis for the overflow, same as the row's actual last reading gets. */
+:root[data-skin="daylight"] .tile-meter > .tile-tok {
+	width: 10ch; display: inline-block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; vertical-align: bottom;
+}
 
 /* ── Phone ─────────────────────────────────────────────────── */
 @media (max-width: 760px) {
@@ -1068,6 +1194,61 @@
 	   desktop `.pptw-head .pptw-act` rule above to win it back at this width,
 	   since mobile.css (which cannot match it) loads before this file. */
 	:root[data-skin="daylight"] .pptw-head .pptw-act { height: 36px; min-height: 36px; width: 36px; padding: 0; }
+	/* R3/G16: the Doc panel's Save/Cancel/Back/Attach, and the rail's own
+	   fold (the new `bar-icon` role), share the phone head-tool's 36px --
+	   they were the 30px left over from the desktop size. The touch floor
+	   holds at 44px even so (the lead's ruling, same day): the box may
+	   follow the spec down to 36, the tap target may not follow it. */
+	:root[data-skin="daylight"] :is(.files-view-head > span > .files-btn, .rail-fold) {
+		height: 36px; min-height: 36px; position: relative;
+	}
+	:root[data-skin="daylight"] :is(.files-view-head > span > .files-btn, .rail-fold)::after {
+		content: ''; position: absolute; top: 50%; left: 50%; width: 44px; height: 44px; transform: translate(-50%, -50%);
+	}
+	/* The bar's own icon tools (`#drawer-btn`, `#settings-btn`) are worded-
+	   free already at their group's own padding -- `#settings-btn` still
+	   carries `.icon-btn`'s worded padding from the desktop rule above. */
+	:root[data-skin="daylight"] #settings-btn { padding: 0; }
+	/* R8: the Terminal panel's own Start/Stop are plain `.addbtn`, outside
+	   every named actions row this file already sizes for the phone, so they
+	   were left at the base rule's own colour and (via a still-unfound path)
+	   40px. Restated at the head-tool group's own 36px/`--text-secondary`. */
+	:root[data-skin="daylight"] #panel-term .chead-right > .addbtn {
+		height: 36px; min-height: 36px; color: var(--text-secondary);
+	}
+	/* Tap areas (5.2.6 review, "worse than 5.2.5"): every tool below keeps its
+	   36px box, and its 44px target is an invisible overlay that nothing may
+	   clip or cover. That takes three things: the overlay (one text for all),
+	   a pitch of 44px so neighbours' overlays tile instead of overlapping (8px
+	   between 36px boxes), and room in any scroller or clipping parent. */
+	:root[data-skin="daylight"] :is(.panel:not(.ai) .chead-right > :is(.icon-btn, .icon-chip, #collapse-btn, .addbtn), #help-btn, #fullscreen-btn) {
+		position: relative;
+	}
+	:root[data-skin="daylight"] :is(.panel:not(.ai) .chead-right > :is(.icon-btn, .icon-chip, #collapse-btn, .addbtn), #help-btn, #fullscreen-btn)::after {
+		content: ''; position: absolute; top: 50%; left: 50%; width: 44px; height: 44px; transform: translate(-50%, -50%);
+	}
+	:root[data-skin="daylight"] .panel:not(.ai) .chead-right { gap: 8px; }
+	/* The top bar: the same 44px pitch for Help and Full screen, and a 44px
+	   target for the mark, which stays at the bar's left edge. */
+	:root[data-skin="daylight"] .top-actions { gap: 8px; }
+	:root[data-skin="daylight"] a.brand { min-width: 44px; min-height: 44px; justify-content: flex-start; }
+	:root[data-skin="daylight"] .panel:not(.ai) .chead-right > :is(.icon-btn, .icon-chip, #collapse-btn, .addbtn) { width: 36px; min-width: 36px; }
+	/* The chat head is 5.2.5's, whole: its tools at their own 26-30px boxes on
+	   a 2px gap in the scrolling strip, the title taking what they leave.
+	   Nothing above or in responsive.css reaches `.panel.ai .chead-right`. */
+	/* The rail's fold is clipped by the top half's `overflow: hidden`. */
+	:root[data-skin="daylight"] #rail-top { margin-right: -4px; padding-right: 4px; }
+	/* Every pressable status row is a finger's height, so the drawer's rows agree. */
+	:root[data-skin="daylight"] :is(.astat-row.astat-id, .astat-row > #user-row, .astat-row.astat-btn, .astat-row.astat-sync) { min-height: 44px; }
+	/* Gear beside the fold: a 44px pitch. */
+	:root[data-skin="daylight"] .astat-id #settings-btn { margin-right: 8px; }
+	/* R9: the rail's own closer sits in `.pptw-head`, so the head-tool group
+	   rule above (30px, unscoped, two grouped classes) outranks the plain
+	   `.ui-close` phone rule (responsive.css) for it alone -- restated here at
+	   higher specificity to win its 36px and its hit area back. */
+	:root[data-skin="daylight"] #pptw-global-row .ui-close {
+		height: 36px; min-height: 36px; width: 36px;
+	}
 	:root[data-skin="daylight"] .chead { padding: 8px 4px 4px 16px; min-height: 52px; }
 	:root[data-skin="daylight"] .ctitle { font-size: var(--dl-md); font-weight: 600; }
 	:root[data-skin="daylight"] .chat-output { padding: 4px 12px 12px; }
@@ -1128,7 +1309,7 @@
 :root[data-skin="daylight"] .instructions-chip {
 	text-align: left; width: auto; align-self: flex-start;
 	font-family: var(--font); font-size: var(--dl-2xs); font-weight: 600;
-	background: var(--dl-hover); border-radius: var(--radius-sm); padding: 2px 8px; height: 18px; box-sizing: border-box;
+	background: var(--dl-hover); border-radius: var(--radius-sm); padding: 2px 8px; height: 20px; box-sizing: border-box;
 }
 :root[data-skin="daylight"] .files-path,
 :root[data-skin="daylight"] .path-crumb {
@@ -1202,3 +1383,18 @@
 }
 :root[data-skin="daylight"] .compose-row > input:focus,
 :root[data-skin="daylight"] #msheet-ask-input:focus { outline: none; border-color: var(--accent); }
+
+/* ── Cards: a fill, not a line ─────────────────────────────── */
+/* The left bars became a uniform coloured border, which only moved the line
+   from one side to four (5.2.6 review, F3). A card is a light fill; the state
+   it is in is the fill's colour. */
+:root[data-skin="daylight"] :is(.acard, .pend-card, .ask-card, .models-prov, .termp-gap, .lapse-note) { border-color: transparent; }
+:root[data-skin="daylight"] .acard.done { background: var(--ok-bg); }
+:root[data-skin="daylight"] .acard.error { background: color-mix(in srgb, var(--danger) 12%, transparent); }
+:root[data-skin="daylight"] .ask-card { background: var(--accent-soft); }
+:root[data-skin="daylight"] .ask-card.answered { background: var(--bg-secondary); }
+:root[data-skin="daylight"] .lapse-note { background: var(--warn-bg); }
+
+/* Buttons and chips that kept a 1px outline at rest (5.2.6 review, F2). */
+:root[data-skin="daylight"] .abtn { border-color: transparent; }
+:root[data-skin="daylight"] .acard .achip-model { border-color: transparent; }

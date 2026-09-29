@@ -19,7 +19,10 @@
 	border: 0; color: var(--text-primary);
 }
 .settings-section .models-prov-head:hover { background: var(--bg-hover); }
-.models-caret     { width: 10px; color: var(--text-secondary); }
+/* R10 (D-20260929-03 r526 residual): the disclosure group's own muted, not
+   its own -- the caret is the first thing inside `.models-prov-head` with
+   real text, so its colour is what the row is measured by. */
+.models-caret     { width: 10px; color: var(--text-muted); }
 .models-prov-name { font-weight: 600; flex: 1; }
 .models-prov-key  { font-size: var(--fs-2xs); color: var(--text-secondary); }
 .models-prov-count{ font-size: var(--fs-2xs); color: var(--text-secondary); min-width: 68px; text-align: right; }

@@ -62,6 +62,7 @@
 	'topbar.about':       'Daimond 정보',
 	'topbar.about_label': '정보',
 	'topbar.guide': '가이드',
+	'topbar.link_device': '기기 연결',
 	'topbar.guide_short': '사용 안내',
 	'topbar.appearance': '설정',
 	'topbar.help': '도움말',

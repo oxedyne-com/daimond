@@ -56,7 +56,7 @@
 
 .mail-accounts {
 	display: flex; flex-direction: column; gap: 2px;
-	padding: 0 6px 6px;
+	padding: 0 0 6px;
 	flex: none;
 }
 .mail-accounts .mail-fine { padding: 4px 4px 0; }
@@ -98,16 +98,17 @@
 .mail-refresh:disabled { opacity: 0.5; cursor: default; }
 .mail-acct {
 	display: flex; align-items: center; gap: 6px;
-	padding: 6px 8px;
+	padding: 6px 4px;
 	border-radius: var(--radius-sm);
 	cursor: pointer;
 	font-size: var(--fs-sm);
 }
 .mail-acct:hover { background: var(--bg-hover); }
-.mail-acct.on {
-	background: var(--bg-tertiary);
-	box-shadow: inset 2px 0 0 var(--accent);
-}
+/* D-20260929-03 (left bars): the selected account/folder was a fill PLUS a
+   line -- the same state marked twice. One selected treatment now, the light
+   fill every selected row in the app uses, no bar. `.mail-folder` shares this
+   rule (mail.css:445 area, "borrows .mail-acct's shape and .on"). */
+.mail-acct.on { background: var(--accent-soft); }
 .mail-addr {
 	flex: 1; min-width: 0;
 	overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
@@ -145,7 +146,7 @@
 	flex: 1; min-height: 0; overflow-y: auto;
 	border-top: 1px solid var(--border);
 }
-.mail-list .mail-fine { padding: 10px; }
+.mail-list .mail-fine { padding: 10px 4px; }
 
 /* The foot of the list: what the cap held back, and the way to go and get it.
  * It sits below the last message and belongs to the list, not to the messages,
@@ -184,7 +185,7 @@
 .mail-older:disabled { opacity: 0.5; cursor: default; }
 .mail-older:disabled:hover { border-color: var(--border-strong); color: var(--text-primary); }
 .mail-msg {
-	padding: 8px 10px;
+	padding: 8px 4px;
 	cursor: pointer;
 	border-bottom: 1px solid var(--border);
 }
@@ -422,12 +423,12 @@
    a mailbox, so `.mail-folder` borrows `.mail-acct`'s shape and `.on`; only
    what differs is stated here. Nesting depth arrives as a CSS variable so
    the indent needs no inline style. */
-.mail-folders { flex: none; padding: 0 6px 6px; }
+.mail-folders { flex: none; padding: 0 0 6px; }
 .mail-folders-head {
 	display: flex;
 	align-items: center;
 	gap: 6px;
-	padding: 2px 8px 4px;
+	padding: 2px 4px 4px;
 	font-size: var(--fs-2xs);
 	text-transform: uppercase;
 	letter-spacing: 0.04em;
@@ -442,7 +443,7 @@
 	max-height: 168px;
 	overflow-y: auto;
 }
-.mail-folder { padding-left: calc(8px + var(--folder-depth, 0) * 10px); }
+.mail-folder { padding-left: calc(4px + var(--folder-depth, 0) * 10px); }
 .mail-folder[aria-disabled="true"] { opacity: 0.55; cursor: default; }
 
 /* How much is in a folder. Tabular figures so a column of counts lines up on

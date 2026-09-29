@@ -791,6 +791,11 @@
 				+ '<path d="M15 4.2a6 6 0 015 5M15 8a2.4 2.4 0 012 2"/></svg>';
 			l.id = 'pair-link-btn';
 			l.type = 'button';
+			// The word, for the phone's Help menu, where every other row has one
+			// (`.btn-label` is hidden everywhere else). Title Case in English.
+			var lab = el('span', 'btn-label', 'Link Device');
+			if (window.DaimondI18n && DaimondI18n.bind) DaimondI18n.bind(lab, '', 'topbar.link_device');
+			l.appendChild(lab);
 			// Bound rather than set: a name written once at mount is fixed in
 			// whichever language the button happened to be built in, and stays
 			// there through every later `setLocale`. It is spoken text, so it is

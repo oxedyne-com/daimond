@@ -231,13 +231,13 @@ ol.steps > li::before {
 }
 ol.steps > li h3 { margin-top: 0; }
 
-/* Callout for honest limits and notes. */
+/* Callout for honest limits and notes. A fill and no line (quality bar, rule 1):
+   the background already says "this is a callout"; an edge said it twice. */
 .note {
 	margin: 1rem 0;
 	padding: 0.75rem 1rem;
 	background: var(--bg-tertiary);
-	border: 1px solid var(--border);
-	border-left: 3px solid var(--accent);
+	border: 0;
 	border-radius: var(--radius-sm);
 	color: var(--text-secondary);
 }
@@ -250,8 +250,7 @@ ol.steps > li h3 { margin-top: 0; }
    two are not optional. The palette's own --warn, so every theme carries it. */
 .note.stop {
 	background: var(--warn-bg);
-	border-color: var(--warn);
-	border-left-color: var(--warn);
+	border: 0;
 	color: var(--text-primary);
 }
 .note.stop code { background: var(--bg-tertiary); }

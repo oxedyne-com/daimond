@@ -119,6 +119,7 @@
 	'topbar.about':       'About Daimond',
 	'topbar.about_label': 'About',
 	'topbar.guide':       'Guide',
+	'topbar.link_device': 'Link Device',
 	'topbar.guide_short': 'User guide',
 	'topbar.appearance':  'Settings',
 	// The merged About+Guide control (TOP-03). Its accessible name stays
@@ -1792,9 +1793,9 @@
 	'spend.no_account':      'None yet.',
 	'spend.add_credits':     'Add credits',
 	'spend.estimated_badge': 'Estimated',
-	'spend.this_week':       'this week',
-	'spend.this_month':      'this month',
-	'spend.session':         'this session',
+	'spend.this_week':       'This week',
+	'spend.this_month':      'This month',
+	'spend.session':         'This session',
 	'spend.balance':         'balance',
 	'spend.tok':             'tok',
 	// The three cells of the rail's spend row. Short: they sit under a figure.

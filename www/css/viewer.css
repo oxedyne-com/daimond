@@ -134,8 +134,10 @@
 .fv-md h4 { font-size: var(--fs-lg); }
 .fv-md p, .fv-md ul, .fv-md ol, .fv-md blockquote { margin: 0.55em 0; }
 .fv-md ul, .fv-md ol { padding-left: 1.4em; }
+/* D-20260929-03 (left bars): a quote is indent plus muted colour, not a line
+   -- both were already here; the line was the redundant part. */
 .fv-md blockquote {
-	padding-left: 0.8em; border-left: 2px solid var(--border-2);
+	padding-left: 0.8em;
 	color: var(--text-secondary);
 }
 .fv-md hr { border: 0; border-top: 1px solid var(--border); margin: 1.2em 0; }
@@ -538,10 +540,13 @@
 .tl-toclist li[data-level="5"] .tl-tocgo { padding-left: 58px; }
 .tl-toclist li[data-level="6"] .tl-tocgo { padding-left: 70px; }
 .tl-toclist li[data-level="1"] .tl-tocgo { color: var(--text-primary); }
-/* Where the reader is, marked on the rail rather than announced anywhere. */
+/* Where the reader is, marked on the rail rather than announced anywhere.
+   D-20260929-03 (left bars): a fill, the same "current" treatment as every
+   other current/selected row, not a line. */
 .tl-toclist li[data-here="1"] .tl-tocgo {
 	color: var(--text-primary);
-	box-shadow: inset 2px 0 0 var(--accent);
+	background: var(--accent-soft);
+	border-radius: var(--radius-sm);
 }
 .tl-tocnone {
 	margin: 0; padding: 8px 10px;

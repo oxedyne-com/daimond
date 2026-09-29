@@ -366,10 +366,11 @@
 /* With no screen to protect, the sentence is the whole panel and takes the room:
    this is the refusal case, where there is nothing else to read. */
 .termpanel.no-term .termp-state { height: auto; max-height: 14em; }
+/* D-20260929-03 (left bars): the border is uniform now, not thicker on one
+   side. */
 .termpanel.no-term .termp-state.refused {
 	padding: 8px 10px 8px 10px;
-	border: 1px solid var(--border-strong);
-	border-left: 3px solid var(--warn);
+	border: 1px solid var(--warn);
 	border-radius: var(--radius-sm);
 	background: var(--bg-secondary);
 }
@@ -377,15 +378,15 @@
    reading, so it is marked rather than merely coloured -- a coloured sentence is
    invisible to a reader who cannot see the colour.
 
-   A rule down its left and nothing else, because the mark must not change the
-   BOX: padding and a border would make the state line taller the moment a
-   session was refused or a hole appeared, and the terminal underneath would lose
-   the top of its screen to the reflow. The full frame belongs to the case where
-   there is no screen to protect, below. */
+   D-20260929-03 (left bars): the colour promotion alone marks it now, with no
+   rule down the side -- the mark must not change the BOX (padding and a
+   border would make the state line taller the moment a session was refused
+   or a hole appeared, and the terminal underneath would lose the top of its
+   screen to the reflow), and a rule was never the only way to do that; a
+   colour change costs no space either. The full frame belongs to the case
+   where there is no screen to protect, above. */
 .termp-state.refused {
-	border-left: 3px solid var(--warn);
-	padding-left: 8px;
-	color: var(--text-primary);
+	color: var(--warn);
 }
 
 /* Shown only beside the "not paired" refusal (see js/daimond.js DaimondTerm) --
@@ -427,13 +428,13 @@
 	overflow-y: auto;
 }
 .termp-gaps:empty { display: none; }
+/* D-20260929-03 (left bars): uniform border, not thicker on one side. */
 .termp-gap {
 	display: flex;
 	align-items: flex-start;
 	gap: 6px;
 	padding: 6px 8px;
-	border: 1px solid var(--border-strong);
-	border-left: 3px solid var(--warn);
+	border: 1px solid var(--warn);
 	border-radius: var(--radius-sm);
 	background: var(--bg-secondary);
 	color: var(--text-primary);

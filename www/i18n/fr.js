@@ -56,6 +56,7 @@
 	'topbar.about': 'À propos de Daimond',
 	'topbar.about_label': 'À propos',
 	'topbar.guide': 'Guide',
+	'topbar.link_device': 'Associer un appareil',
 	'topbar.guide_short': 'Guide',
 	'topbar.appearance': 'Réglages',
 	'topbar.help': 'Aide',

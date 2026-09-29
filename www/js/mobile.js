@@ -378,8 +378,17 @@
 		return (el && el.getAttribute('data-label')) || id;
 	}
 
-	// The top bar (~50px) and the bottom bar bound the room the sheet may take.
-	var BAR_FALLBACK = 62, TOPBAR = 50, PEEK = 56;
+	// The top bar and the bottom bar bound the room the sheet may take.
+	var BAR_FALLBACK = 62, TOPBAR = 64, PEEK = 56;
+
+	/// The top bar's real bottom edge. It is 64px on a phone (8px of padding and
+	/// `--header-h`), and the sheet used to be capped against a hard-coded 50, so
+	/// it covered the lower 14px of the bar and clipped the 44px tap overlays of
+	/// the buttons in it.
+	function topH() {
+		var t = document.querySelector('.topbar');
+		return t ? Math.ceil(t.getBoundingClientRect().bottom) : TOPBAR;
+	}
 
 	/// How tall the bottom bar actually is, home indicator included.
 	///
@@ -423,7 +432,7 @@
 
 	/// The most a sheet may grow to: from just under the top bar to just above
 	/// the bottom bar, and above the keyboard when one is up.
-	function maxH() { return Math.max(PEEK, window.innerHeight - TOPBAR - barH() - kbH()); }
+	function maxH() { return Math.max(PEEK, window.innerHeight - topH() - barH() - kbH()); }
 
 	/// The HEIGHT of the sheet at each detent (it is anchored to the bottom, so
 	/// a taller sheet reveals more of the thing and less of the chat).
@@ -811,7 +820,7 @@
 			left:   box.left + mark.offsetLeft - el.scrollLeft,
 			height: line,
 			// What the caller has to fit it into, keyboard and all.
-			seen:   { top: TOPBAR, bottom: window.innerHeight - kbH() },
+			seen:   { top: topH(), bottom: window.innerHeight - kbH() },
 		};
 	}
 

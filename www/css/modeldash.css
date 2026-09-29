@@ -140,6 +140,10 @@
    its figure cut 9px). The table's own right padding restores the panel's
    gutter once scrolling is what "flush" is measured against. */
 @media (max-width: 760px) {
+	/* R14 (D-20260929-03 r526 residual): the view itself clipped 3px off the
+	   last numeric column ("Median", its figure) -- the table's own scroller
+	   (above) was not the only `overflow-x: hidden` in the chain. */
+	.mdash-view { overflow-x: auto; }
 	.mdash-table th:last-child,
 	.mdash-table td:last-child { padding-right: 12px; }
 }

@@ -61,6 +61,7 @@
 	'topbar.about':       'Daimond について',
 	'topbar.about_label': '情報',
 	'topbar.guide': 'ガイド',
+	'topbar.link_device': '端末をリンク',
 	'topbar.guide_short': 'ユーザーガイド',
 	'topbar.appearance': '設定',
 	'topbar.help': 'ヘルプ',

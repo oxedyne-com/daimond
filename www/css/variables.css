@@ -1,4 +1,8 @@
 :root {
+	/* R1 (D-20260929-03 r526 residual): a utility panel's head and its own
+	   body were drawn on two different insets (14px against 10px), so a
+	   title sat 3-8px off the content under it. One token, used by both. */
+	--dock-inset: 10px;
 	/* Dark theme (default) — warm palette from doc/red mockup. */
 	--bg-primary:        #15120F;
 	--bg-secondary:      #1E1A16;

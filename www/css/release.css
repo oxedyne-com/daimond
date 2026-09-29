@@ -85,12 +85,15 @@
 /* The space after the triangle is a margin, not a trailing character in
    `content` -- the same fragile shape `.sys-head::before` (files.css) carried
    until 2026-09-29; every fold triangle now uses a margin instead. */
-.rel-builds summary::before { content: "▸"; margin-right: 0.4em; }
+/* R16: 0.25em, the same gap every other fold triangle keeps -- this one was
+   0.4em, on its own. */
+.rel-builds summary::before { content: "▸"; margin-right: 0.25em; }
 .rel-builds[open] summary::before { content: "▾"; }
 .rel-builds summary:hover { color: var(--text-secondary); }
 
-.rel-build { padding: 6px 8px; border-left: 2px solid var(--border); margin: 2px 0 2px 4px; }
-.rel-build-here { border-left-color: var(--accent); }
+/* D-20260929-03 (left bars): the current build is a fill, not a line. */
+.rel-build { padding: 6px 8px; border-radius: var(--radius-sm); margin: 2px 0 2px 4px; }
+.rel-build-here { background: var(--accent-soft); }
 .rel-build-head { display: flex; align-items: baseline; gap: 8px; }
 .rel-build-head code { font-family: var(--font-mono); font-size: var(--fs-3xs-2xs); color: var(--text-muted); }
 .rel-build-note { font-size: var(--fs-2xs); color: var(--text-secondary); line-height: 1.45; margin-top: 2px; }

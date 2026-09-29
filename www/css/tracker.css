@@ -58,7 +58,7 @@
 }
 .trk-col { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
 .trk-col-head { display: flex; align-items: baseline; gap: 6px; padding: 2px 2px 4px;
-	border-bottom: 2px solid var(--border); }
+	border-bottom: 1px solid var(--border); }
 .trk-col-label { font-weight: 600; font-size: var(--fs-2xs-xs); }
 .trk-col-count { font-size: var(--fs-3xs); color: var(--text-muted);
 	font-variant-numeric: tabular-nums; }

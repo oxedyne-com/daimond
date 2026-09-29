@@ -89,7 +89,10 @@ const CAPTURE = ({ rootSel, surface }) => {
 	}
 	probe.remove();
 	const tok = (c) => { if (!c || c === 'rgba(0, 0, 0, 0)' || c === 'transparent') return 'none'; const t = tokOf.get(c); return t ? t.sort((a, b) => a.length - b.length)[0] : c; };
-	const GLY = /^[▸▾▶▼►◂◀←-⇿✎✕×⟳↺⋯☰✓✔•◈⚙⊕‹›»«⤓⬇⬆↗●○★☆…✏✂⧉⎘⏸■□◆◇≡✖✗✘⚠ℹ❓❗+＋📎🔒📄📁🗑⭐⚡]/u;
+	const GLY = /^[▸▾▶▼►◂◀←-⇿✎✕×⟳↺⋯☰✓✔•◈⚙⊕‹›»«⤓⬇⬆↗●○★☆…✏✂⧉⎘⏸■□◆◇≡✖✗✘⚠ℹ❓❗+＋📎🔒🔓📄📁🗑⭐⚡]/u;
+	// What a person can read on a control: text under a `display: none` label (the phone Help menu's
+	// words, hidden on the desktop bar) is not a word on that control.
+	const visText = (e) => { let t = ''; const w = document.createTreeWalker(e, NodeFilter.SHOW_TEXT, { acceptNode: (n) => n.nodeValue.trim() && n.parentElement && vis(n.parentElement) ? 1 : 3 }); for (let n; (n = w.nextNode());) t += n.nodeValue; return t; };
 	const firstText = (e) => { const w = document.createTreeWalker(e, NodeFilter.SHOW_TEXT, { acceptNode: (n) => n.nodeValue.trim() && n.parentElement && vis(n.parentElement) ? 1 : 3 }); return w.nextNode(); };
 	const charRect = (n, i) => { const rg = document.createRange(); rg.setStart(n, i); rg.setEnd(n, i + 1); return rg.getBoundingClientRect(); };
 	const CTRL = 'button, [role="button"], [role="tab"], [role="menuitem"], [role="option"], [role="switch"], [role="checkbox"], [role="radio"], a[href], input:not([type=hidden]), select, textarea, summary';
@@ -105,7 +108,7 @@ const CAPTURE = ({ rootSel, surface }) => {
 		const s = cs(el), r = el.getBoundingClientRect();
 		const tn = isCtrl ? firstText(el) : [...el.childNodes].find((n) => n.nodeType === 3 && n.nodeValue.trim());
 		const lab = tn ? tn.parentElement : el; const ls = cs(lab);
-		let text = isCtrl ? (el.value && /INPUT|TEXTAREA|SELECT/.test(el.tagName) ? '' : (el.textContent || '')) : own;
+		let text = isCtrl ? (el.value && /INPUT|TEXTAREA|SELECT/.test(el.tagName) ? '' : visText(el)) : own;
 		text = text.trim().replace(/\s+/g, ' ');
 		// Where the first real character starts, and the glyph or icon before it.
 		let tx = null, tcy = null, glyph = null, ggap = null, icon = null;
@@ -141,8 +144,11 @@ const CAPTURE = ({ rootSel, surface }) => {
 			else if (!over && tn) {
 				const rg = document.createRange(); rg.selectNodeContents(tn); const tr = rg.getBoundingClientRect();
 				for (let a = lab.parentElement; a && a !== document.body; a = a.parentElement) {
-					const as = cs(a); if (!/hidden|clip/.test(as.overflowX + as.overflowY)) continue;
-					if (/auto|scroll/.test(as.overflowX)) break;	// a scrolling strip cuts its last item by design
+					const as = cs(a);
+					// A one-line scrolling strip cuts its last item by design; its `overflow-y` computes to `auto`, so test it first.
+					if (/auto|scroll/.test(as.overflowX) && /flex/.test(as.display) && as.flexWrap === 'nowrap') break;
+					if (!/hidden|clip/.test(as.overflowX + as.overflowY)) continue;
+					if (/auto|scroll/.test(as.overflowX)) break;
 					const ar = a.getBoundingClientRect();
 					if (tr.right > ar.right + 1.5 && tr.left < ar.right && as.textOverflow !== 'ellipsis' && ls.textOverflow !== 'ellipsis') clip = 'by ' + sig(a) + ' ' + Math.round(tr.right - ar.right) + 'px';
 					break;
@@ -261,14 +267,19 @@ const CAPTURE = ({ rootSel, surface }) => {
 			if (!vis(box)) continue;
 			const rows = {};
 			for (const [part, selList] of rowSel) {
-				let top = null, bot = null;
+				let top = null, bot = null, left = null;
 				for (const el of box.querySelectorAll(selList)) {
 					if (!vis(el)) continue;
 					const rr = el.getBoundingClientRect();
 					if (top === null || rr.top < top) top = rr.top;
 					if (bot === null || rr.bottom > bot) bot = rr.bottom;
+					if (left === null || rr.left < left) left = rr.left;
 				}
-				if (top !== null) rows[part] = [Math.round(top), Math.round(bot)];
+				// `left` (third) is the row's own left edge -- the meter's first
+				// reading, since a row's children run left to right (V6 invariant,
+				// D-20260929-03 r526 residual pass: the meter starts at the same x
+				// in every tile, whatever the model name above it measures).
+				if (top !== null) rows[part] = [Math.round(top), Math.round(bot), Math.round(left)];
 			}
 			if (Object.keys(rows).length >= 2) tiles.push({ kind, sig: sig(box), text: (box.textContent || '').trim().slice(0, 40), rows, surface, w: Math.round(box.getBoundingClientRect().width) });
 		}
@@ -687,6 +698,10 @@ const ROLES = [
 	['disclosure',      'sentence', (it) => it.ctrl && (has(it, 'tagf-toggle') || has(it, 'models-prov-head'))],
 	['toggle-option',   'sentence', (it) => it.ctrl && (has(it, 'dview-btn') || within(it, /\.seg\b|\.size-row|-toggle\b|\.files-scope|\.imp-chips|\.net-row|\.tile-dlg-seg|\.files-mode\b/) && !has(it, 'files-mode-btn') || has(it, 'grid-opt'))],
 	['composer-button', 'none',     (it) => it.ctrl && (within(it, /chat-input-bar|msheet-ask/) && !/^(input|textarea)$/.test(it.tag))],
+	// G16: the bar's own icon-only tools (hamburger, gear, section fold) are a
+	// role of their own -- 30px on desk, 36px on phone -- ahead of `head-tool`,
+	// whose regex otherwise claims `.rail-fold` for a row it does not belong to.
+	['bar-icon',        'none',     (it) => it.ctrl && (it.id === 'drawer-btn' || it.id === 'settings-btn' || has(it, 'rail-fold'))],
 	['head-tool',       'title',    (it) => it.ctrl && within(it, /chead-right|railhead-acts|(files|mail|spend|trash|pending|agents|top)-actions(\.|$)|files-view-head|^div\.railhead($|\.)|pptw-head/)],
 	// The "Go to a panel" gallery is a padded search-result row, not a plain
 	// text menu entry -- it fell into `menu-item` only through the generic
@@ -704,24 +719,40 @@ const ROLES = [
 	['swatch',          'none',     (it) => has(it, 'tile-dlg-swatch') || it.type === 'color'],
 	['field',           'sentence', (it) => /^(input|textarea)$/.test(it.tag) && !/checkbox|radio|range|color|file/.test(it.type)],
 	['select',          'none',     (it) => it.tag === 'select'],
-	['toggle',          'none',     (it) => /checkbox|radio/.test(it.type) || /switch|checkbox|radio/.test(it.role) || has(it, 'device-stay')],
+	// G19: `.device-stay` carries `role="switch"` honestly, but it is a WORDED
+	// button (an icon and a label), not the icon-only or native control this
+	// role's height and radius are compared against -- excluded by class since
+	// the role check alone would still claim it.
+	['toggle',          'none',     (it) => (/checkbox|radio/.test(it.type) || /switch|checkbox|radio/.test(it.role)) && !has(it, 'device-stay')],
 	['disclosure',      'sentence', (it) => it.tag === 'summary' || ['sys-head', 'files-rest-head', 'link-strip', 'cap-more', 'mem-raw-btn', 'arte-strip'].some((c) => has(it, c))],
 	// G7: a tile's own label button is not the tile that carries it.
 	['rail-tile-label', 'none',     (it) => has(it, 'tile-label')],
 	['rail-tile',       'none',     (it) => has(it, 'session-box') || has(it, 'tile-label') && within(it, /session-box/)],
-	['file-row',        'none',     (it) => has(it, 'files-row') || has(it, 'path-crumb')],
+	// G20: `.path-crumb` is a breadcrumb, not a list row.
+	['file-row',        'none',     (it) => has(it, 'files-row')],
 	// G14: a figures strip is not a status row (L3 lays it out on its own).
 	['stat-strip',      'none',     (it) => has(it, 'spend-row')],
 	['status-row',      'none',     (it) => has(it, 'astat-row') || has(it, 'spend-row') || has(it, 'user-row')],
 	['palette-row',     'none',     (it) => has(it, 'pal-item')],
+	// G20 follow-on: a breadcrumb reads AS a link (files.css: inherited font, no
+	// chrome, underline on hover) but does not carry the padding or the
+	// underline-at-rest a REAL inline-link does -- its own role, checked for
+	// consistency only against its own other instances.
+	['breadcrumb',      'none',     (it) => it.ctrl && has(it, 'path-crumb')],
 	['inline-link',     'none',     (it) => it.tag === 'a' || it.ctrl && /link|learn-more|install|add-credits/.test(it.cls.join(' '))],
 	['icon-button',     'none',     (it) => it.ctrl && !txt(it).replace(/[^\p{L}\p{N}]/gu, '') && (!!it.icon || [...txt(it)].length <= 2)],
+	// G19 follow-on: a labelled toggle (icon + word, `role="switch"`) is
+	// neither the icon-only/native toggle role nor an ordinary text-button --
+	// `.device-stay` is the only one of its kind today, checked for
+	// consistency against its own other instances (on/off, phone/desk).
+	['labelled-toggle', 'sentence', (it) => it.ctrl && has(it, 'device-stay')],
 	['text-button',     'title',    (it) => it.ctrl && !!txt(it).replace(/[^\p{L}]/gu, '')],
 	['other-control',   'none',     (it) => it.ctrl],
 	// Text.
 	['panel-title',     'sentence', (it) => has(it, 'ctitle')],
 	['dialog-title',    'sentence', (it) => /^h[12]$/.test(it.tag) && within(it, /ui-head|dlg|modal/) || has(it, 'ui-head-title') || has(it, 'admin-title') || has(it, 'dlg-title') || has(it, 'modal-title')],
-	['section-head',    'sentence', (it) => ['pop-head', 'admin-sec', 'tile-dlg-head', 'mem-title', 'pptw-head-label', 'rail-title', 'railhead-title'].some((c) => has(it, c)) || it.cls.some((c) => /sec-title$|-sec-head$|section-title$/.test(c)) || /^h[3-6]$/.test(it.tag) && !within(it, /ctile-body|\.md\b/)],
+	// G18: `.spend-sub` is a section head, not meta -- §8 already styles it as one.
+	['section-head',    'sentence', (it) => ['pop-head', 'admin-sec', 'tile-dlg-head', 'mem-title', 'pptw-head-label', 'rail-title', 'railhead-title', 'spend-sub'].some((c) => has(it, c)) || it.cls.some((c) => /sec-title$|-sec-head$|section-title$/.test(c)) || /^h[3-6]$/.test(it.tag) && !within(it, /ctile-body|\.md\b/)],
 	['field-label',     'sentence', (it) => it.tag === 'label' || it.cls.some((c) => /-label$|-lbl$/.test(c)) && !within(it, /ctile/)],
 	// G1: release notes are list data -- 315 `.rel-build-note` lines would
 	// otherwise outvote the 20 real note classes.
@@ -754,11 +785,15 @@ const PROPS_CTRL = ['ff', 'fs', 'fw', 'ls', 'tt', 'col', 'bg', 'bd', 'rad', 'pad
 const FONTP = new Set(['ff', 'fs', 'fw', 'ls', 'tt', 'lh', 'td']);
 const PROPS_TEXT = ['ff', 'fs', 'fw', 'ls', 'tt', 'col', 'lh', 'td'];
 const ROLE_PROPS = {
-	'create-button': PROPS_CTRL.concat('icon'), 'text-button': PROPS_CTRL, 'dialog-action': PROPS_CTRL, 'head-tool': PROPS_CTRL.concat('icon'),
-	'icon-button': ['col', 'bg', 'bd', 'rad', 'pad', 'h', 'sh', 'icon'], 'composer-button': ['rad', 'h', 'icon', 'bd'], 'close-button': ['col', 'bg', 'bd', 'rad', 'pad', 'h', 'sh', 'icon'],
+	// G17: a single-child button's `gap` is invisible, and the icon-gap check
+	// already measures the real gap, so `head-tool` drops it from its props.
+	'create-button': PROPS_CTRL.concat('icon'), 'text-button': PROPS_CTRL, 'dialog-action': PROPS_CTRL, 'head-tool': PROPS_CTRL.filter((p) => p !== 'gap').concat('icon'),
+	'icon-button': ['col', 'bg', 'bd', 'rad', 'pad', 'h', 'sh', 'icon'], 'bar-icon': ['col', 'bg', 'bd', 'rad', 'pad', 'h', 'sh', 'icon'], 'composer-button': ['rad', 'h', 'icon', 'bd'], 'close-button': ['col', 'bg', 'bd', 'rad', 'pad', 'h', 'sh', 'icon'],
 	'tab': PROPS_CTRL, 'toggle-option': PROPS_CTRL, 'menu-item': PROPS_CTRL.concat('icon'), 'chip': PROPS_CTRL, 'filter-chip': PROPS_CTRL,
 	'field': ['ff', 'fs', 'fw', 'col', 'bg', 'bd', 'rad', 'h', 'sh'], 'select': ['ff', 'fs', 'fw', 'col', 'bg', 'bd', 'rad', 'pad', 'h'], 'toggle': ['h', 'bd', 'rad'],
 	'disclosure': PROPS_TEXT.concat('bg', 'bd', 'pad', 'h'), 'inline-link': ['ff', 'fw', 'col', 'td', 'bg', 'bd', 'pad'],
+	'breadcrumb': ['ff', 'fs', 'fw', 'col', 'pad'],
+	'labelled-toggle': ['ff', 'fs', 'fw', 'col', 'bg', 'bd', 'rad', 'pad', 'h', 'gap'],
 	'rail-tile': ['ff', 'fs', 'fw', 'col', 'bg', 'bd', 'rad', 'pad'], 'rail-tile-label': ['ff', 'fs', 'fw', 'col', 'bg', 'bd', 'rad', 'pad'],
 	'file-row': ['ff', 'fs', 'fw', 'col', 'bg', 'bd', 'rad', 'pad', 'h', 'lh'],
 	'status-row': ['ff', 'fs', 'fw', 'col', 'bg', 'bd', 'rad', 'pad', 'h'], 'stat-strip': ['ff', 'fs', 'fw', 'col', 'bg', 'bd', 'rad', 'pad', 'h'],
@@ -786,7 +821,14 @@ const ALLOW = [
 	{ role: 'filter-chip', m: /\.tag-chip\b/, p: ['col', 'bg'], why: 'each tag keeps its own hue' },
 	// cluster 6: `.tag-x` is its own icon-button role now (G6), but its colour
 	// is still the chip's own hue by inheritance, not the icon-button grey.
-	{ role: 'icon-button', m: /\.tag-x\b/, p: ['col'], why: 'the chip’s own × colour is inherited from its tag’s hue' },
+	// r526 residual, approved: its height is the chip's own too (17px), not a
+	// standalone 20px control.
+	{ role: 'icon-button', m: /\.tag-x\b/, p: ['col', 'h'], why: 'the chip’s own × colour is inherited from its tag’s hue, and it is sized by its chip, not a standalone control' },
+	// r526 residual allow-list, all approved by the lead (D-20260929-03):
+	{ role: 'inline-link', m: /^a\.(brand|mb-hit)\b/, p: ['col'], why: 'the wordmark and the About picture’s hotspots keep the brand colour -- they are not text links' },
+	{ role: 'icon-button', m: /\.attach-add\.grants\b/, p: ['col'], why: 'a "+" that widens a fence takes the accent, like every granting control (daimond.js)' },
+	{ role: 'composer-button', m: /#chat-send\b/, p: ['icon'], why: 'the filled send disc carries a 16px arrow for optical balance' },
+	{ role: '*', m: /\.ghost\b/, p: ['col'], why: 'a ghost (unavailable) option is drawn muted' },
 	{ role: 'tile-prose', m: /^(strong|b)\b/, p: ['col'], why: 'bold in a reply may take the ink colour' },
 	{ role: 'field', m: /#chat-input\b|\.pal-input\b|\.compose-text\b|\.files-edit\b/, p: ['fs', 'h', 'bg', 'bd', 'rad', 'ff'], why: 'the composer, the Go to box and the editors are writing surfaces, not form fields' },
 	// A1 (§13, approved): §1 kept "Verify this build" a filled row on purpose;
@@ -804,7 +846,10 @@ const MINOR = new Set(['a', 'an', 'the', 'and', 'or', 'of', 'to', 'in', 'on', 'f
 const PROPER = /^(Chat|Helper|Conversation|Daimond|Daimonds|Crystal|GitHub|OpenRouter|Anthropic|Typst|Obsidian|Porcelain|Daylight|English|Google|Apple|iPhone|Android|Windows|Linux|Mac|macOS|Hobart|Harlow|Oakline|Brandt|Kitchen|Priya|Sam|Alex|Ozone|Oxedyne|Pro|Max|Simple|Classic|I|OK|Git|Ctrl)$/;
 // The user's own words are not UI copy: the seeded names, titles and files.
 const USER = /Kitchen|Thesis|Tax return|Compare the three|Flights to|Outline section|Write a function|^alex$|\.(md|csv|svg|pdf|typ|json)\b|Daimond (Optimiser|Helper)|^[\w-]+\/|^\d/;
-const words = (t) => t.replace(/[“”"'‘’()[\]…:.,!?]/g, ' ').split(/\s+/).filter((w) => /^\p{L}/u.test(w));
+// G23: a leading glyph joined straight to its word ("▸Custom") must not carry
+// the word out with it -- strip glyphs before splitting, not just punctuation.
+const GLY_CHARS = /[▸▾▶▼►◂◀←-⇿✎✕×⟳↺⋯☰✓✔•◈⚙⊕‹›»«⤓⬇⬆↗●○★☆…✏✂⧉⎘⏸■□◆◇≡✖✗✘⚠ℹ❓❗+＋📎🔒🔓📄📁🗑⭐⚡]/gu;
+const words = (t) => t.replace(GLY_CHARS, ' ').replace(/[“”"'‘’()[\]…:.,!?]/g, ' ').split(/\s+/).filter((w) => /^\p{L}/u.test(w));
 function casingOf(t) {
 	// G4(a): a text whose first word character is a figure is data, not copy
 	// ("▸ 0 linked diamonds").
@@ -866,7 +911,10 @@ function report() {
 					&& !(p === 'h' && it.tag === 'textarea') && !(p === 'gap' && !/flex|grid/.test(it.st.disp)));
 				// G9: padding is compared icon with icon, word with word -- a 30×30
 				// icon tool and a worded tool cannot share one canonical padding.
-				const groups = p === 'pad' ? [pool.filter((it) => /\p{L}/u.test(it.text)), pool.filter((it) => !/\p{L}/u.test(it.text))] : [pool];
+				// G21: a `select`'s own text is never captured (its value is read
+				// instead), so it always tested as icon-only; it is worded by its tag.
+				const hasWord = (it) => /\p{L}/u.test(it.text) || it.tag === 'select';
+				const groups = p === 'pad' ? [pool.filter(hasWord), pool.filter((it) => !hasWord(it))] : [pool];
 				for (const gpool of groups) {
 					// The canonical form is counted over the plain instances: a filled primary is not a vote for filling the rest.
 					const plain = gpool.filter((it) => !allowed(role, it, p)); const voters = plain.length ? plain : gpool;
@@ -901,7 +949,8 @@ function report() {
 	}
 	// Layout: glyph and icon gaps, left edges, sibling spacing, clipping, overlap.
 	const layout = [];
-	const ggaps = I.filter((it) => it.ggap != null && !/^tile-/.test(it.roleName) && !/^[+＋]$/.test(it.glyph || '') || it.glyph && /^[＋]$/.test(it.glyph)); const igaps = I.filter((it) => it.icon && it.icon.gap != null && it.text);
+	// G22: an avatar is not an inline icon.
+	const ggaps = I.filter((it) => it.ggap != null && !/^tile-/.test(it.roleName) && !/^[+＋]$/.test(it.glyph || '') || it.glyph && /^[＋]$/.test(it.glyph)); const igaps = I.filter((it) => it.icon && it.icon.gap != null && it.text && !has(it, 'user-avatar'));
 	const modeOf = (xs) => { const c = new Map(); for (const x of xs) c.set(x, (c.get(x) || 0) + 1); return [...c.entries()].sort((a, b) => b[1] - a[1])[0]; };
 	for (const [kind, L, get] of [['glyph-gap', ggaps, (it) => Math.round(it.ggap)], ['icon-gap', igaps, (it) => Math.round(it.icon.gap)]]) {
 		const byCfg = new Map(); for (const it of L) { if (!byCfg.has(it.cfg)) byCfg.set(it.cfg, []); byCfg.get(it.cfg).push(it); }
@@ -935,16 +984,25 @@ function report() {
 	}
 	// Text left edges within one panel: heads, titles, rows and meta that start
 	// within a few pixels of each other but not on the same pixel.
+	// G15: text after a leading glyph (a chevron, dot or ▸) is compared by the
+	// control's own box edge, not by the post-glyph text pixel, which wobbles a
+	// few px with the glyph's own font metrics and reports a difference that
+	// is not there. A right-aligned reading's left edge moves with its own
+	// length by design, so it is never compared at all.
+	const GLYROLE = (it) => /^summary\b|\btagf-toggle\b|#sys-head\b|\barte-strip\b|\bastat-val\b|#sync-rest\b/.test(it.sig);
+	const RIGHTALIGN = (it) => /\bastat-aside\b|\brel-when\b|\bpptw-head-state\b/.test(it.sig);
 	// G13: a text edge inside a card (a transcript tile, a history or tag row) is
 	// that container's own edge, not the panel's -- so it is not compared to it.
 	const byPanel = new Map(); for (const it of items) { if (!it.view || it.tx == null || it.lines !== 1) continue; if (!/panel-title|section-head|list-row|meta|disclosure|body-text|create-button|text-button/.test(it.roleName)) continue;
-		if (within(it, /ctile|crollup|mem-card|hist-row|tag-row|fileview|crystal-bar|link-sec/)) continue;
+		if (RIGHTALIGN(it)) continue;
+		if (within(it, /ctile|crollup|mem-card|hist-row|tag-row|fileview|crystal-bar|link-sec|session-box|pptw-|rel-|mode-pop/)) continue;
+		it.cmpx = GLYROLE(it) ? it.r[0] : it.tx;
 		const k = it.surface + '|' + it.panel; if (!byPanel.has(k)) byPanel.set(k, []); byPanel.get(k).push(it); }
 	for (const [k, L] of byPanel) {
-		const xs = [...new Set(L.map((a) => a.tx))].sort((a, b) => a - b); const cnt = new Map(); for (const a of L) cnt.set(a.tx, (cnt.get(a.tx) || 0) + 1);
+		const xs = [...new Set(L.map((a) => a.cmpx))].sort((a, b) => a - b); const cnt = new Map(); for (const a of L) cnt.set(a.cmpx, (cnt.get(a.cmpx) || 0) + 1);
 		for (const x of xs) { const near = xs.filter((y) => y !== x && Math.abs(y - x) <= 8 && (cnt.get(y) > cnt.get(x) || cnt.get(y) === cnt.get(x) && y < x));
 			if (!near.length) continue; const to = near.sort((a, b) => cnt.get(b) - cnt.get(a))[0];
-			for (const a of L.filter((a) => a.tx === x)) addL({ kind: 'text-edge', cfg: cfgOf(a.surface), canon: 'x ' + to, v: 'x ' + x, sig: a.sig, text: a.text.slice(0, 30), surfaces: [a.surface.split('/')[1]], role: a.roleName, panel: a.panel }); }
+			for (const a of L.filter((a) => a.cmpx === x)) addL({ kind: 'text-edge', cfg: cfgOf(a.surface), canon: 'x ' + to, v: 'x ' + x, sig: a.sig, text: a.text.slice(0, 30), surfaces: [a.surface.split('/')[1]], role: a.roleName, panel: a.panel }); }
 	}
 	for (const it of I) if (it.clip) layout.push({ kind: 'clipped', cfg: it.cfg, canon: 'fits or ellipsis', v: it.clip, sig: it.sig, text: it.text.slice(0, 40), surfaces: it.surfaces.slice(0, 3), role: it.roleName });
 	const ovs = new Map(); for (const f of faults) { const k = cfgOf(f.surface) + '|' + f.a + '|' + f.b; if (!ovs.has(k)) ovs.set(k, { kind: 'overlap', cfg: cfgOf(f.surface), canon: 'apart', v: f.b, sig: f.a, text: '', surfaces: [f.surface.split('/')[1]], role: f.panel }); }
@@ -961,21 +1019,22 @@ function report() {
 	// swallows its own children as items).
 	//
 	// `files-mode` never shares a line between two different parts, in a
-	// fixed order. `tile` is almost the same, except `model` and `meter` are
-	// DELIBERATELY the same grid row (V1: "the model and the meter share the
-	// last line"), in two columns, so the two are allowed, even expected, to
-	// share a line -- only against `title` and `chips`, each its own row
-	// before them, is sharing wrong. `stage-head` is the opposite kind of
-	// rule again: title and tools MUST share one line once the panel has
-	// room (>460px, safely past the 440px container-query breakpoint) -- the
-	// row splitting there with room to spare, keyed to how long the title
-	// happens to be, is V5's bug.
-	const ROWORDER = { tile: { title: 0, chips: 1, model: 2, meter: 2 }, 'files-mode': { chips: 0, acts: 1, msg: 2 },
+	// fixed order. `tile` never shares one either, any more (V6, D-20260929-03
+	// r526 residual pass): `model` and `meter` were DELIBERATELY the same grid
+	// row through V1-V5 ("the model and the meter share the last line"), which
+	// is exactly how a long model name came to push the meter's own left edge
+	// sideways, tile to tile -- variable-length content sharing a line with
+	// fixed content, the fault V1 itself was written to fix in `chips`. `model`
+	// and `meter` are now two rows, never sharing one, like every other part
+	// here. `stage-head` is the opposite kind of rule again: title and tools
+	// MUST share one line once the panel has room (>460px, safely past the
+	// 440px container-query breakpoint) -- the row splitting there with room
+	// to spare, keyed to how long the title happens to be, is V5's bug.
+	const ROWORDER = { tile: { title: 0, chips: 1, model: 2, meter: 3 }, 'files-mode': { chips: 0, acts: 1, msg: 2 },
 		'device-row': { name: 0, copy: 0, rename: 0, ctl: 1, meta: 2 },
 		'files-view-head': { name: 0, acts: 1 }, 'turn-interrupted': { label: 0, go: 1 } };
 	const ROW0 = new Set(['name', 'copy', 'rename']);
-	const SHARELINE = { tile: (a, b) => (a === 'model' && b === 'meter') || (a === 'meter' && b === 'model'),
-		'device-row': (a, b) => ROW0.has(a) && ROW0.has(b) };
+	const SHARELINE = { 'device-row': (a, b) => ROW0.has(a) && ROW0.has(b) };
 	const structure = [];
 	for (const t of tiles) {
 		const rows = Object.entries(t.rows).map(([part, [top, bot]]) => ({ part, top, bot })).sort((a, b) => a.top - b.top);
@@ -998,6 +1057,30 @@ function report() {
 				structure.push({ kind: 'row-order', cfg: cfgOf(t.surface), canon: Object.keys(order).join(', '), v: a.part + ' before ' + b.part, sig: t.sig, text: t.text, surfaces: [t.surface.split('/')[1]], role: t.kind + '-row' });
 			}
 		}
+	}
+	// V6 (D-20260929-03, r526 residual pass): the meter's first reading is
+	// at ONE x across every tile, whatever the model name above it
+	// measures -- the owner's rule generalised ("does variable length
+	// content change the layout in a way that is not desirable?"),
+	// checked here on the one instance this pass was raised over. Diamond
+	// tiles and chat tiles are grouped apart: a diamond tile's own left
+	// inset is not a chat tile's. FAILS on `0b5673fc` (the meter's x moved
+	// with the model chip's length, on the old shared grid row).
+	const meterXByGroup = new Map();
+	for (const t of tiles) {
+		// A phone surface with a chat or a file open keeps the rail's drawer in
+		// the DOM, slid off-canvas by a transform `vis()` (above) does not
+		// follow -- its tiles measure a large negative x, not a real position.
+		if (t.kind !== 'tile' || !t.rows.meter || t.rows.meter[2] < 0) continue;
+		const group = cfgOf(t.surface) + '|' + (/chat-box/.test(t.sig) ? 'chat' : 'diamond');
+		if (!meterXByGroup.has(group)) meterXByGroup.set(group, []);
+		meterXByGroup.get(group).push({ x: t.rows.meter[2], sig: t.sig, text: t.text, surface: t.surface });
+	}
+	for (const [group, L] of meterXByGroup) {
+		if (L.length < 2) continue;
+		const [cfg] = group.split('|');
+		const [mx] = modeOf(L.map((a) => a.x));
+		for (const a of L) if (Math.abs(a.x - mx) > 1) structure.push({ kind: 'meter-x', cfg, canon: 'x ' + mx, v: 'x ' + a.x, sig: a.sig, text: a.text.slice(0, 30), surfaces: [a.surface.split('/')[1]], role: 'tile-row' });
 	}
 	layout.push(...structure);
 	// Merge the same finding across configs.
@@ -1032,7 +1115,278 @@ function report() {
 	return { bad, notCovered };
 }
 
+// ════════════════════════════════════════════════════════════════════════
+// VARLEN (D-20260929-03 ~19:20, owner: "does variable length content change
+// the layout in a way that is not desirable?"). Every slot whose content
+// varies is set short, long and very long, ONE AT A TIME with everything else
+// held, and every change to any OTHER part is recorded: position, size, row,
+// wrapping, clipping, overlap, and alignment against the same part in sibling
+// instances. The slot's own truncation or wrap is recorded, not flagged. The
+// verdict on each change is a person's; this only makes sure none goes unseen.
+//
+//   node dev/verify_consistency.mjs varlen [desk|phone|webkit|report]  (default: seed, desk, phone, webkit, report)
+// ════════════════════════════════════════════════════════════════════════
+const V_NAME  = ['Tax', 'Kitchen renovation for the Leederville house', 'Kitchen renovation for the Leederville house, stage two: joinery-benchtop-splashback-laundry-ensuite'];
+const V_MODEL = ['gpt-5', 'anthropic/claude-opus-5.5', 'anthropic/claude-opus-5.5-extended-context-preview-20260929'];
+const V_CHIP  = ['tax', 'committee-review', 'leederville-kitchen-renovation-stage-two'];
+const V_TIME  = ['1m ago', '3 weeks ago', '2 years, 11 months ago'];
+const V_COST  = ['$0.01', 'A$1,234.56', 'A$1,234,567.89'];
+const V_TOK   = ['12 tok', '1.2M tok', '123,456,789 tok'];
+const V_FILE  = ['a.md', 'kitchen-renovation-quotes-final.md', 'a-very-long-file-name-for-the-kitchen-renovation-final-v3-with-benchtop-and-splashback.md'];
+const V_DIR   = ['q', 'joinery-and-benchtop-quotes', 'joinery-and-benchtop-quotes-from-every-supplier-we-spoke-to-in-2026'];
+const V_ACCT  = ['al', 'Alexandra Montgomery-Whitfield', 'Alexandra Montgomery-Whitfield (Leederville office, second laptop)'];
+const V_SYNC  = ['Synced 2m ago', 'Last synced 3 hours ago on this device', 'Sync paused: the gateway refused the last push (quota exceeded for this account), retrying in 4 minutes'];
+const V_STAT  = ['Local', 'gpt-5 · 12,345 tok · A$1,234.56 today', 'anthropic/claude-opus-5.5-extended-context-preview · 123,456,789 tok · A$1,234,567.89 today'];
+const V_BTN   = ['New', 'Neuer Diamant', 'Nouveau diamant de travail partagé avec toute l’équipe'];
+const V_OK    = ['OK', 'Diamant erstellen', 'Créer le diamant et l’ouvrir dans un nouvel onglet'];
+// [name, ctx, comp, slot, values, pick, setup]. `slot` '' = the comp itself;
+// `pick` chooses the instance by its text; values `{count}` vary a list's length.
+const VSLOTS = [
+	['diamond name',        '#diamond-list', '.diamond-box', '.session-box-name', V_NAME, /Tax return/],
+	['diamond model',       '#diamond-list', '.diamond-box', '.tile-model-chip', V_MODEL, /Tax return/],
+	['diamond chip label',  '#diamond-list', '.diamond-box', '.session-box-tags .tag-chip', V_CHIP, /Kitchen renovation$|home/],
+	['diamond chip count',  '#diamond-list', '.diamond-box', '.session-box-tags', { count: [1, 5, 14] }, /Kitchen renovation$|home/],
+	['diamond meter time',  '#diamond-list', '.diamond-box', '.diamond-meter .session-box-time', V_TIME, /Tax return/],
+	['diamond meter last',  '#diamond-list', '.diamond-box', '.diamond-meter > :last-child', V_COST, /Tax return/],
+	['chat name',           '#session-list', '.chat-box', '.tile-when', V_NAME, /Flights/],
+	['chat model',          '#session-list', '.chat-box', '.tile-model-chip', V_MODEL, /Flights/],
+	['chat meter tokens',   '#session-list', '.chat-box', '.tile-tok', V_TOK, /Flights/],
+	['chat meter last',     '#session-list', '.chat-box', '.tile-meter > :last-child', V_COST, /Flights/],
+	['rail filter chip',    '#panel-rail', '.tagf-row', '.tag-chip', V_CHIP, null, 'filter'],
+	['rail button label',   '#panel-rail', '.railhead', '#new-diamond-btn', V_BTN, null],
+	['account name',        '#admin-status', '.astat-id', '#user-info', V_ACCT, null],
+	['status summary',      '#admin-status', '#admin-status', '#astat-summary', V_STAT, null],
+	['sync line',           '#admin-status', '#astat-detail', '#sync-rest', V_SYNC, null, 'astat'],
+	['chat title',          '#panel-ai', '.chead', '.ctitle', V_NAME, null, 'chat'],
+	['file name',           '#panel-work', '.files-row', '.files-name', V_FILE, /budget\.csv/, 'work'],
+	['folder name',         '#panel-work', '.files-row', '.files-name', V_DIR, /^\W*quotes/, 'work'],
+	['file viewer title',   '#panel-doc', '.chead, .files-view-head', '.ctitle, .files-view-name', V_FILE, null, 'viewer'],
+	['tile dialog title',   'OVERLAY', '.ui-head', 'h2', V_NAME, null, 'cog'],
+	['dialog action label', 'OVERLAY', '.dlg-actions, .modal-actions, .tile-dlg-actions', '.dlg-ok', V_OK, null, 'newdia'],
+];
+// Whole surfaces re-read in each locale: every label at once, en against de and fr.
+const VLOCALE = [['rail', '#panel-rail'], ['chat head', '#panel-ai > .chead'], ['workspace', '#panel-work', 'work'], ['composer', '.chat-input-bar'], ['topbar', '.topbar'], ['new diamond dialog', 'OVERLAY', 'newdia'], ['admin', '#admin', 'admin']];
+
+// In the page: set (or restore) one slot, then read every part's geometry.
+const VMEASURE = ({ ctx, comp, slot, idx, pick, text, count, restore }) => {
+	const W = window.__vl = window.__vl || {};
+	const cs = (e) => getComputedStyle(e);
+	const vis = (e) => { if (!e.getClientRects().length) return false; const s = cs(e); if (s.visibility === 'hidden' || +s.opacity === 0) return false; const r = e.getBoundingClientRect(); return r.width >= 1 && r.height >= 1; };
+	if (restore) { for (const f of (W.undo || []).reverse()) f(); W.undo = []; return { ok: 1 }; }
+	const C = ctx === 'OVERLAY' ? W.ov : document.querySelector(ctx);
+	if (!C || !vis(C)) return { miss: 'ctx ' + ctx };
+	const comps = [...(C.matches(comp) ? [C] : []), ...C.querySelectorAll(comp)].filter(vis);
+	let ti = comps.findIndex((c) => (!slot || c.querySelector(slot) || c.matches(slot)) && (!pick || new RegExp(pick.s, pick.f).test(c.textContent.trim())));
+	if (idx != null) ti = idx;
+	if (ti < 0) return { miss: 'slot ' + slot + (pick ? ' ' + pick.s : '') };
+	const T = comps[ti];
+	if (idx == null && text == null && count == null) T.scrollIntoView({ block: 'center' });
+	const S = slot ? (T.matches(slot) ? T : T.querySelector(slot)) : T;
+	W.undo = W.undo || [];
+	if (text != null) {
+		const tw = document.createTreeWalker(S, NodeFilter.SHOW_TEXT, { acceptNode: (n) => n.nodeValue.trim() ? 1 : 3 });
+		const n = tw.nextNode();
+		if (n) { const o = n.nodeValue; n.nodeValue = text; W.undo.push(() => { n.nodeValue = o; }); }
+		else { const o = S.textContent; S.textContent = text; W.undo.push(() => { S.textContent = o; }); }
+	}
+	if (count != null) {
+		const k = [...S.children]; const proto = k[0]; if (!proto) return { miss: 'no child to count' };
+		const words = ['home', 'research', 'writing', 'citations', 'committee', 'deadline', 'thesis', 'budget', 'joinery', 'tiles', 'power', 'window', 'quotes', 'may'];
+		k.forEach((c) => { c.style.display = 'none'; });
+		const add = []; for (let i = 0; i < count; i++) { const c = proto.cloneNode(true); c.style.display = ''; const tw = document.createTreeWalker(c, NodeFilter.SHOW_TEXT, { acceptNode: (n) => n.nodeValue.trim() ? 1 : 3 }); const n = tw.nextNode(); if (n) n.nodeValue = words[i % words.length]; S.appendChild(c); add.push(c); }
+		W.undo.push(() => { add.forEach((c) => c.remove()); k.forEach((c) => { c.style.display = ''; }); });
+	}
+	void document.body.offsetHeight;
+	const cr = C.getBoundingClientRect();
+	const path = (e, root) => { const p = []; for (let a = e; a && a !== root; a = a.parentElement) { const c = (typeof a.className === 'string' ? a.className : '').trim().split(/\s+/)[0]; const par = a.parentElement; const i = par ? [...par.children].indexOf(a) : 0; p.unshift(a.tagName.toLowerCase() + (a.id ? '#' + a.id : c ? '.' + c : '') + ':' + i); } return p.join('>'); };
+	const cls = (e) => { const c = (typeof e.className === 'string' ? e.className : '').trim().split(/\s+/)[0]; return e.tagName.toLowerCase() + (e.id ? '#' + e.id : c ? '.' + c : ''); };
+	const lines = (e) => { const rg = document.createRange(); rg.selectNodeContents(e); const tops = new Set(); for (const q of rg.getClientRects()) if (q.width > 0.5) tops.add(Math.round(q.top)); return tops.size; };
+	// The part's box cut to every clipping ancestor up to the ctx: how much of it can be seen.
+	const shown = (e) => { const r = e.getBoundingClientRect(); let l = r.left, t = r.top, rr = r.right, b = r.bottom;
+		for (let a = e.parentElement; a && a !== document.documentElement; a = a.parentElement) { const s = cs(a); if (!/hidden|clip|auto|scroll/.test(s.overflowX + s.overflowY)) continue; const q = a.getBoundingClientRect(); l = Math.max(l, q.left); t = Math.max(t, q.top); rr = Math.min(rr, q.right); b = Math.min(b, q.bottom); }
+		const area = Math.max(0, rr - l) * Math.max(0, b - t), full = r.width * r.height; return full ? Math.round(100 * area / full) : 100; };
+	const CTRL = 'button, [role="button"], a[href], input, select, textarea, summary, svg, img, canvas';
+	const leaves = (root, skip, pr) => { const out = []; for (const e of [root, ...root.querySelectorAll('*')]) {
+		if (e.closest('svg') && e.tagName !== 'svg') continue; if (skip && skip(e)) continue; if (!vis(e)) continue;
+		const own = [...e.childNodes].some((n) => n.nodeType === 3 && n.nodeValue.trim());
+		const kids = [...e.children].some(vis);
+		if (!own && kids && !e.matches(CTRL)) continue;
+		const r = e.getBoundingClientRect(), s = cs(e);
+		out.push({ k: path(e, pr || C), c: cls(e), x: Math.round(r.left), y: Math.round(r.top), w: Math.round(r.width), h: Math.round(r.height), ln: own ? lines(e) : 0,
+			ov: e.scrollWidth > e.clientWidth + 1 && /hidden|clip/.test(s.overflowX) ? (s.textOverflow === 'ellipsis' ? 'ellipsis' : 'cut') : '', sh: shown(e), t: own ? e.textContent.trim().slice(0, 24) : '' });
+		if (out.length > 400) break; } return out; };
+	const inSlot = slot ? (e) => S.contains(e) || e.contains(S) : null;
+	const sr = S.getBoundingClientRect(), trr = T.getBoundingClientRect();
+	const sib = comps.filter((c, i) => i !== ti).slice(0, 4);
+	return {
+		ti, n: comps.length, hscroll: document.documentElement.scrollWidth > innerWidth + 1 ? document.documentElement.scrollWidth - innerWidth : 0,
+		ctxOver: C.scrollWidth > C.clientWidth + 1 && !/auto|scroll/.test(cs(C).overflowX) ? C.scrollWidth - C.clientWidth : 0,
+		comp: { x: Math.round(trr.left), y: Math.round(trr.top), w: Math.round(trr.width), h: Math.round(trr.height), over: T.scrollWidth > T.clientWidth + 1 ? T.scrollWidth - T.clientWidth : 0 },
+		slot: { x: Math.round(sr.left), y: Math.round(sr.top), w: Math.round(sr.width), h: Math.round(sr.height), ln: lines(S), ov: S.scrollWidth > S.clientWidth + 1 ? (cs(S).textOverflow === 'ellipsis' ? 'ellipsis' : 'cut') : '', sh: shown(S), past: Math.round(Math.max(0, sr.right - trr.right)) },
+		parts: leaves(T, inSlot, T),
+		sibs: sib.map((c) => leaves(c, null, c)),
+		outside: leaves(C, (e) => comps.some((c) => c.contains(e))).slice(0, 200),
+		clip: [Math.max(0, Math.round(trr.left) - 16), Math.max(0, Math.round(trr.top) - 12), Math.round(trr.width) + 32, Math.round(trr.height) + 24],
+		ctxClip: [Math.max(0, Math.round(cr.left)), Math.max(0, Math.round(cr.top)), Math.round(Math.min(cr.width, innerWidth)), Math.round(Math.min(cr.height, innerHeight))],
+	};
+};
+
+async function vSetup(kind) {
+	await quiet();
+	if (kind === 'astat') { await ev(() => { const d = document.getElementById('astat-detail'); if (d && d.hidden) document.getElementById('astat-summary').click(); }); await wait(300); }
+	if (kind === 'chat') { await mainChat(); }
+	if (kind === 'filter') { await ev(() => { document.querySelectorAll('#panel-rail .tagf-toggle[aria-expanded="false"], #panel-rail .rail-fold[aria-expanded="false"]').forEach((b) => b.click()); document.querySelectorAll('#panel-rail details').forEach((d) => { d.open = true; }); }); await wait(400); }
+	if (kind === 'viewer') {
+		await ev(() => { const row = [...document.querySelectorAll('.files-row')].find((x) => /^\s*notes\.md/.test((x.querySelector('.files-name') || x).textContent)); if (row) (row.querySelector('.files-name') || row).click(); });
+		await wait(1400);
+	}
+	if (kind === 'cog') { await click('#diamond-list .diamond-box .tile-cog'); await wait(700); }
+	if (kind === 'newdia') { await click('#new-diamond-btn'); await wait(700); }
+	if (kind === 'admin') { await click('#settings-btn'); await wait(700); await ev(() => { try { window.DaimondAdmin.home(); } catch (e) {} }); await wait(500); }
+	if (['cog', 'newdia', 'admin'].includes(kind)) { const ov = kind === 'admin' ? '#admin' : await topOverlay(); await ev((q) => { window.__vl = window.__vl || {}; window.__vl.ov = q && document.querySelector(q); }, ov); }
+}
+async function vShot(name, clip) {
+	if (!clip) return '';
+	const f = `${OUT}/varlen_shots/${CFG}_${name.replace(/\W+/g, '_')}.png`;
+	const vp = page.viewportSize();
+	const [x, y, w, h] = clip; const c = { x, y, width: Math.max(8, Math.min(w, vp.width - x)), height: Math.max(8, Math.min(h, vp.height - y)) };
+	await page.screenshot({ path: f, clip: c, animations: 'disabled' }).catch(() => {});
+	return f;
+}
+async function varlenPass(phone) {
+	fs.mkdirSync(`${OUT}/varlen_shots`, { recursive: true });
+	const recs = [];
+	const railOpen = async () => { if (phone) { await ev(() => { if (!document.body.classList.contains('drawer-open')) { const b = document.getElementById('drawer-btn'); if (b) b.click(); } }); await wait(800); } };
+	const place = async (setup, ctx) => {
+		await quiet();
+		if (phone) { await ev(() => { document.body.classList.remove('drawer-open'); }); await wait(300); }
+		if (!phone) await panels(['rail', 'ai', 'work']);
+		if (phone && setup === 'work') { await ev(() => { try { window.DaimondPanels.show('work'); } catch (e) {} }); await wait(700); }
+		else if (phone && setup === 'viewer') { await ev(() => { try { window.DaimondPanels.show('work'); } catch (e) {} }); await wait(700); }
+		else if (phone && (setup === 'chat' || /panel-ai|chat-input/.test(ctx))) { await ev(() => { try { window.DaimondPanels.show('ai'); } catch (e) {} }); await wait(400); }
+		else if (phone && /rail|diamond-list|session-list|admin-status|topbar/.test(ctx) || phone && ['cog', 'newdia'].includes(setup)) await railOpen();
+		if (setup) await vSetup(setup);
+		if (/admin-status/.test(ctx)) await ev(() => { const a = document.getElementById('admin-status'); if (a) a.scrollIntoView({ block: 'end' }); });
+		if (/diamond-list|session-list/.test(ctx)) await ev((q) => { const a = document.querySelector(q); if (a) a.scrollIntoView({ block: 'start' }); }, ctx);
+		await wait(200);
+	};
+	for (const [name, ctx, comp, slot, vals, pick, setup] of VSLOTS) {
+		await place(setup, ctx);
+		const pk = pick ? { s: pick.source, f: pick.flags } : null;
+		const base = await ev(VMEASURE, { ctx, comp, slot, pick: pk });
+		if (!base || base.err || base.miss) { recs.push({ name, cfg: CFG, notCovered: (base && (base.err || base.miss)) || 'no measure' }); log('varlen', CFG, name, 'NOT COVERED', base && (base.miss || base.err)); continue; }
+		const shots = { base: await vShot(name + '_base', base.clip) };
+		const variants = [];
+		const V = Array.isArray(vals) ? vals.map((v, i) => [['short', 'long', 'vlong'][i], { text: v }]) : vals.count.map((n, i) => [['few', 'several', 'many'][i], { count: n }]);
+		for (const [vn, arg] of V) {
+			const m = await ev(VMEASURE, { ctx, comp, slot, idx: base.ti, ...arg });
+			if (m && !m.err && !m.miss) { shots[vn] = await vShot(name + '_' + vn, m.clip); variants.push([vn, m]); }
+			await ev(VMEASURE, { restore: 1 });
+		}
+		recs.push({ name, cfg: CFG, base, variants, shots });
+		log('varlen', CFG, name, 'variants', variants.length);
+	}
+	// Every label at once: en, then de and fr, the same surface re-read.
+	for (const [name, ctx, setup] of VLOCALE) {
+		const by = {};
+		for (const loc of ['en', 'de', 'fr']) {
+			await ev((l) => window.DaimondI18n && window.DaimondI18n.setLocale(l), loc); await wait(900);
+			await place(setup, ctx);
+			const m = await ev(VMEASURE, { ctx, comp: ctx === 'OVERLAY' ? '*' : ctx, slot: '', idx: 0 });
+			if (m && !m.err && !m.miss) { m.shot = await vShot('locale_' + name + '_' + loc, m.ctxClip); by[loc] = m; }
+		}
+		await ev(() => window.DaimondI18n && window.DaimondI18n.setLocale('en')); await wait(700);
+		recs.push({ name: 'locale: ' + name, cfg: CFG, locale: by, notCovered: by.en ? null : 'no surface' });
+		log('varlen', CFG, 'locale', name, Object.keys(by).join(','));
+	}
+	await quiet();
+	return recs;
+}
+async function varlenRun(which) {
+	let s, lead = null;
+	if (which === 'webkit') {
+		try {
+			lead = await open({ name: 'alex', profile: PROF, connect: false });
+			await lead.page.waitForFunction(() => !!window.DaimondPairing, null, { timeout: 15000 });
+			s = await open({ name: 'alex', profile: PROF + '-webkit', signIn: false, connect: false, defaults: false, browser: 'webkit', touch: true, ua: IPHONE_UA });
+			await s.page.waitForFunction(() => !!window.DaimondPairing, null, { timeout: 15000 });
+			const code = await lead.page.evaluate(() => DaimondPairing.create()); if (!code || !code.code) throw new Error('no pairing code');
+			await s.page.evaluate((c) => DaimondPairing.redeem(c), code.code);
+			await s.page.reload({ waitUntil: 'domcontentloaded' }); await signInAs(s, 'alex');
+			await s.page.waitForFunction(() => !!(window.DaimondSync && DaimondGateway.state().authed), null, { timeout: 30000 });
+		} catch (e) {
+			log('varlen webkit: pairing unavailable, NOT COVERED:', e.message.split('\n')[0]);
+			fs.writeFileSync(`${OUT}/varlen_webkit.json`, JSON.stringify([{ name: 'webkit (all slots)', cfg: 'webkit', notCovered: 'pairing/seeding unavailable under this harness: ' + e.message.split('\n')[0] }]));
+			if (s) await s.close().catch(() => {}); if (lead) await lead.close().catch(() => {}); return;
+		}
+	} else s = await open({ name: 'alex', profile: PROF, ...(which === 'phone' ? { touch: true, connect: false, isMobile: true } : {}) });
+	page = s.page;
+	await page.setViewportSize(which === 'desk' ? { width: 1440, height: 900 } : { width: 390, height: 844 });
+	await wait(1200); await view('max');
+	CFG = `varlen-${which}-obsidian`; await wear('obsidian');
+	const recs = await varlenPass(which !== 'desk');
+	fs.writeFileSync(`${OUT}/varlen_${which}.json`, JSON.stringify(recs));
+	await s.close(); if (lead) await lead.close().catch(() => {});
+}
+// Diff each variant against the slot's own baseline and list every change to
+// another part. The `flag` is a first sort for the reader, not the verdict.
+function varlenReport() {
+	const recs = ['desk', 'phone', 'webkit'].map((w) => `${OUT}/varlen_${w}.json`).filter((f) => fs.existsSync(f)).flatMap((f) => JSON.parse(fs.readFileSync(f, 'utf8')));
+	const out = [];
+	const cmp = (a, b, where) => { const m = new Map(a.map((p) => [p.k, p])); const ch = [];
+		for (const q of b) { const p = m.get(q.k); if (!p) continue;
+			const d = { dx: q.x - p.x, dy: q.y - p.y, dw: q.w - p.w, dh: q.h - p.h };
+			const kinds = [];
+			if (Math.abs(d.dx) > 1) kinds.push('x-shift'); if (Math.abs(d.dy) > 1) kinds.push('y-shift');
+			if (d.dw < -1) kinds.push('squeezed'); if (d.dw > 1) kinds.push('widened'); if (Math.abs(d.dh) > 1) kinds.push('height');
+			if (q.ln > p.ln) kinds.push('wraps'); if (q.ov !== p.ov && q.ov) kinds.push(q.ov === 'cut' ? 'clipped' : 'ellipsised');
+			if (q.sh < p.sh - 5) kinds.push('hidden ' + p.sh + '→' + q.sh + '%');
+			if (kinds.length) ch.push({ where, part: q.c, text: q.t || p.t, k: q.k, ...d, kinds });
+		}
+		for (const p of a) if (!b.some((q) => q.k === p.k)) ch.push({ where, part: p.c, text: p.t, k: p.k, kinds: ['vanished'] });
+		return ch; };
+	for (const r of recs) {
+		if (r.notCovered) { out.push({ name: r.name, cfg: r.cfg, notCovered: r.notCovered }); continue; }
+		if (r.locale) {
+			const en = r.locale.en;
+			for (const loc of ['de', 'fr']) { const m = r.locale[loc]; if (!m) continue;
+				const ch = cmp(en.parts, m.parts, 'surface').filter((c) => !(c.kinds.length === 1 && c.kinds[0] === 'x-shift' && Math.abs(c.dx) < 400) && !(c.kinds.every((k) => /widened|squeezed/.test(k))));
+				out.push({ name: r.name, cfg: r.cfg, variant: loc, hscroll: m.hscroll, ctxOver: m.ctxOver, changes: ch, shot: m.shot, base: en.shot }); }
+			continue;
+		}
+		for (const [vn, m] of r.variants) {
+			const inComp = cmp(r.base.parts, m.parts, 'comp');
+			const outside = cmp(r.base.outside, m.outside, 'ctx');
+			// Siblings: the same part's x in every sibling instance, held against the target's.
+			const align = [];
+			for (const p of m.parts) { const bp = r.base.parts.find((z) => z.k === p.k); if (!bp) continue; const rel = p.k;
+				for (const sl of m.sibs) { const q = sl.find((z) => z.k === rel); if (!q) continue; if (Math.abs(bp.x - q.x) <= 1 && Math.abs(p.x - q.x) > 1) { align.push({ part: p.c, text: p.t, sibX: q.x, x: p.x }); break; } } }
+			const own = { ln: [r.base.slot.ln, m.slot.ln], ov: m.slot.ov, sh: m.slot.sh, past: m.slot.past, dh: m.comp.h - r.base.comp.h, dw: m.comp.w - r.base.comp.w, over: m.comp.over };
+			out.push({ name: r.name, cfg: r.cfg, variant: vn, own, hscroll: m.hscroll, ctxOver: m.ctxOver, changes: inComp.concat(outside), align, shot: r.shots[vn], base: r.shots.base });
+		}
+	}
+	fs.writeFileSync(`${OUT}/varlen_report.json`, JSON.stringify(out, null, 1));
+	// A compact table, one line per slot and variant, for the reader's pass.
+	const md = ['# varlen', ''];
+	for (const o of out) {
+		if (o.notCovered) { md.push(`- **${o.name}** (${o.cfg}): NOT COVERED -- ${o.notCovered}`); continue; }
+		const ch = o.changes.map((c) => `${c.where}:${c.part}${c.text ? '"' + c.text.slice(0, 14) + '"' : ''}[${c.kinds.join('+')}${c.dx ? ' dx' + c.dx : ''}${c.dy ? ' dy' + c.dy : ''}${c.dw ? ' dw' + c.dw : ''}${c.dh ? ' dh' + c.dh : ''}]`);
+		md.push(`- **${o.name}** ${o.variant} (${o.cfg})${o.own ? ` own: lines ${o.own.ln.join('→')}${o.own.ov ? ' ' + o.own.ov : ''}${o.own.sh < 100 ? ' shown ' + o.own.sh + '%' : ''}${o.own.past ? ' past-tile ' + o.own.past + 'px' : ''} tile dh${o.own.dh} dw${o.own.dw}${o.own.over ? ' tile-overflow ' + o.own.over : ''}` : ''}${o.hscroll ? ' PAGE-HSCROLL ' + o.hscroll : ''}${o.ctxOver ? ' CTX-OVERFLOW ' + o.ctxOver : ''}`);
+		if (ch.length) md.push('  - ' + ch.slice(0, 14).join(' ') + (ch.length > 14 ? ` (+${ch.length - 14})` : ''));
+		if (o.align && o.align.length) md.push('  - misaligned vs siblings: ' + o.align.map((a) => `${a.part} x${a.x} vs ${a.sibX}`).join(', '));
+	}
+	fs.writeFileSync(`${OUT}/varlen_report.md`, md.join('\n'));
+	log('varlen report', `${OUT}/varlen_report.md`, out.length, 'rows');
+}
+
 // ── Main ────────────────────────────────────────────────────────────────
+if (MODE === 'varlen') {
+	const w = process.argv[3] || 'all';
+	if (w === 'all' && !process.env.CONS_NOSEED) await seed();
+	for (const x of w === 'all' ? ['desk', 'phone', 'webkit'] : w === 'report' ? [] : [w]) await varlenRun(x).catch((e) => log('varlen', x, 'failed', e.message.split('\n')[0]));
+	varlenReport();
+	process.exit(0);
+}
 if (MODE === 'seed') await seed();
 else if (MODE === 'desk') await desk();
 else if (MODE === 'phone') await phone(false);

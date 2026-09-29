@@ -29,8 +29,8 @@
 	position: relative;
 	pointer-events: auto;
 	background: var(--bg-secondary);
+	/* D-20260929-03 (left bars): uniform, not thicker on one side. */
 	border: 1px solid var(--warn);
-	border-left-width: 3px;
 	border-radius: var(--radius);
 	box-shadow: 0 8px 24px rgba(0, 0, 0, 0.28);
 	padding: 12px 34px 12px 14px;

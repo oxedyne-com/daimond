@@ -241,7 +241,7 @@
 }
 .grid-opt[aria-pressed="true"] .cells i { opacity: 1; }
 .grid-opt .cells i.maybe { background: none; box-shadow: inset 0 0 0 1px currentColor; }
-.grid-opt .cap { font-size: var(--fs-4xs); letter-spacing: 0.02em; }
+.grid-opt .grid-lbl { font-size: var(--fs-4xs); letter-spacing: 0.02em; }
 
 /* Keyboard focus, themed. The browser's own ring is drawn in a colour of its
    choosing -- black, on a pale theme -- which on a segmented control reads as a

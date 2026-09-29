@@ -152,8 +152,10 @@
 .post-msg:last-child, .post-req:last-child { border-bottom: 0; }
 
 /* Your own words, set apart by INDENT rather than by colour: a sent message and
-   a received one are the same kind of thing and colour would rank them. */
-.post-out { padding-left: 14px; border-left: 2px solid var(--border-strong); }
+   a received one are the same kind of thing and colour would rank them.
+   D-20260929-03 (left bars): the indent alone was always the mark; the line
+   beside it was one more thing this rule's own comment argued against. */
+.post-out { padding-left: 14px; }
 
 .post-who { display: flex; align-items: baseline; gap: 6px; flex-wrap: wrap; }
 .post-name { font-size: var(--fs-xs); color: var(--text-primary); overflow-wrap: anywhere; }
@@ -192,9 +194,10 @@
    heading. The rule on the left is the same mark `.post-out` uses for your own
    words -- both say "this is not the body", and one grammar is easier to learn
    than two. */
+/* D-20260929-03 (left bars): a quote is indent plus muted colour -- both
+   already here -- not a line. */
 .post-quote {
 	margin: 4px 0 0; padding-left: 7px;
-	border-left: 2px solid var(--border-strong);
 	font-size: var(--fs-3xs-2xs); color: var(--text-muted); line-height: 1.45;
 	white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
@@ -730,7 +733,8 @@
    has read is not more important than one they have, it is merely newer, and
    colour would rank them. It goes as soon as the row is measured on screen,
    which is what `markDrawnRead` means by read. */
-.feed-unread { border-left: 2px solid var(--accent); padding-left: 8px; }
+/* D-20260929-03 (left bars): unread is bold text, not a line. */
+.feed-unread { font-weight: var(--w-strong, 600); }
 
 /* The author's own name on a post, drawn as the press it is: looking somebody up
    is navigation inside the app, so it is a button and never a link. */

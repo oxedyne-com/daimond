@@ -556,7 +556,7 @@
 				cells.appendChild(el('i', (key === 'auto' && i % 2 === 1) ? 'maybe' : null));
 			}
 			b.appendChild(cells);
-			b.appendChild(el('span', 'cap', label));
+			b.appendChild(el('span', 'grid-lbl', label));
 			b.addEventListener('click', function () { P().setGrid(key); renderMenu(); });
 			gseg.appendChild(b);
 		});

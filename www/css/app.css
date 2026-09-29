@@ -166,7 +166,12 @@ svg { display: block; }
    (see `#help-menu .btn-label` below). */
 .btn-label { display: none; }
 @media (min-width: 900px) {
-	#settings-menu-btn .btn-label { display: inline; margin-left: 2px; font-size: var(--fs-sm); }
+	/* `.menu-btn` (workspace.css) already sets the icon-to-label gap shared
+	   with the Help trigger beside it; a margin on the label on top of that
+	   duplicated it (D-20260929-03 residual pass). The label itself takes
+	   the head tool's own size, not the menu-item size its neighbour in the
+	   popup takes. */
+	#settings-menu-btn .btn-label { display: inline; font-size: var(--fs-xs); }
 }
 
 /* ── Help: About and Guide behind one control (TOP-03), and on a phone
@@ -276,6 +281,19 @@ body.dragging { cursor: col-resize; user-select: none; -webkit-user-select: none
 
 /* Rail/agents/work section headers. */
 .railhead { display: flex; align-items: center; gap: 6px; padding: 2px 4px; }
+/* U4 follow-on (D-20260929-03 varlen sweep): the icon row after the "New …"
+   label is pinned to the row's own right edge by an auto margin on its own
+   first member, not by however much width the label happened to leave --
+   `#link-graph-btn` (the Diamonds row's own extra icon) when it is there,
+   `.rail-fold` (every row has one) when it is not; a margin auto with
+   nothing left to claim, on the row that has both, simply does nothing.
+   5.2.6 (D-20260929-03 head-row regression): with the heading's own `flex: 1`
+   restored (skin-daylight.css) it already claims the row's free space, so an
+   auto margin on `#link-graph-btn` had nothing left to distribute except
+   against `.rail-fold` beside it, floating the graph icon halfway into a row
+   that no longer had any free space to give -- squeezed to 19-20px at a long
+   label. `.rail-fold` alone still anchors the row's trailing edge. */
+.railhead .rail-fold { margin-left: auto; }
 /* The Spending header wraps its controls in a span; without this they lay out
    as inline text rather than as the button row every other header has. */
 .spend-actions { display: flex; align-items: center; gap: 6px; }
@@ -452,7 +470,14 @@ label.addbtn { cursor: pointer; }
 /* The closer holds its 22px against a long label. */
 .pptw-head .panel-close { flex: none; }
 
-.user-info { flex: 1; font-size: var(--fs-sm); color: var(--text-secondary); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; padding-left: 4px; }
+/* R2 (D-20260929-03 r526 residual): the row is a status-row like the rest,
+   12px (skin-daylight.css sets `#user-row` itself), but this still won for
+   the label INSIDE it -- the gate reads a control's font from the element
+   wrapping its own text, which for a nested label is this span, not the
+   button. `font-size: inherit` lets the row's own 12px reach it. */
+/* Its own 4px left doubled with `.user-row`'s own flex `gap` (icon-gap, R2
+   follow-on): the row's gap already does the icon's job. */
+.user-info { flex: 1; font-size: inherit; color: var(--text-secondary); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 #logout-btn:hover { color: var(--danger); }
 
 /* ── The rail: work above, the Admin panel below ─────────────────
@@ -495,6 +520,10 @@ body.resizing-v { cursor: row-resize; user-select: none; -webkit-user-select: no
 .astat-btn { width: 100%; background: none; border: none; text-align: left; }
 .astat-btn:hover { background: var(--bg-hover); }
 .astat-label { flex: none; color: var(--text-muted); }
+/* R16: `#astat-release` read `--text-secondary` where every other status-row's
+   label reads `--text-muted` -- restated at the row's own id so nothing
+   between it and `.astat-label` can win the tie by source order. */
+#astat-release .astat-label { color: var(--text-muted); }
 .astat-val { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .astat-aside { flex: none; font-family: var(--font-mono); font-size: var(--fs-2xs); color: var(--text-secondary); white-space: nowrap; }
 /* The dot carries the state, so the row reads at a glance without being read. */
@@ -931,7 +960,12 @@ body.resizing-v { cursor: row-resize; user-select: none; -webkit-user-select: no
    `verify_release` caught it by failing to click a row that had quietly gone. */
 
 /* ── Center panel ────────────────────────────────────────────── */
-.chead { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 9px 14px; border-bottom: 1px solid var(--border); min-height: var(--header-h); }
+/* R1: the utility panels (Tools, Graph, Spending, Model stats, Tracker,
+   Social, Compose, the crystal face) share this head unscoped, and their own
+   bodies now hold the same `--dock-inset`, so a title sits over its content's
+   own left edge in every one of them. The chat and doc panels' heads keep
+   their own insets (skin-daylight.css), unaffected. */
+.chead { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 9px var(--dock-inset); border-bottom: 1px solid var(--border); min-height: var(--header-h); }
 .ctitle { font-size: var(--fs-base); font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 /* ── The crystal face ────────────────────────────────────────────
    The AI panel has two faces: a conversation, and a Diamond's crystal. The
@@ -1002,7 +1036,7 @@ body.resizing-v { cursor: row-resize; user-select: none; -webkit-user-select: no
 .send-arrow { width: 1.15em; height: 1.15em; stroke-width: 2.1; }
 /* A file's kind, drawn: see `kindIcon` in daimond.js. It scales with the name
    it stands before, and a folder takes the accent so a tree reads at a glance. */
-.kind-ic { display: inline-flex; vertical-align: -0.16em; margin-right: 0.42em; color: var(--text-muted); }
+.kind-ic { display: inline-flex; vertical-align: -0.16em; margin-right: 4px; color: var(--text-muted); }
 .kind-ic .ic { width: 1.1em; height: 1.1em; }
 .kind-ic.kind-dir { color: var(--accent-text); }
 .arte-kind > .kind-ic { margin-right: 0; }
@@ -1128,11 +1162,12 @@ body.resizing-v { cursor: row-resize; user-select: none; -webkit-user-select: no
    Tokens throughout, because an inline style does not survive a palette. */
 .chat-msg-compacted { margin: 10px 0; }
 .chat-msg-compacted .chat-queued-head { text-align: left; }
+/* D-20260929-03 (left bars): the dashed border is uniform now, not thicker on
+   one side. */
 .chat-msg-compacted .chat-msg-content {
 	background: var(--bg-tertiary);
 	color: var(--text-secondary);
 	border: 1px dashed var(--border-2);
-	border-left: 3px solid var(--border-2);
 	border-radius: var(--radius-sm);
 	padding: 8px 12px;
 	font-size: var(--fs-xs);
@@ -1164,11 +1199,11 @@ body.resizing-v { cursor: row-resize; user-select: none; -webkit-user-select: no
 	font-size: var(--fs-xs);
 	line-height: 1.5;
 }
-.chat-above-fold {
-	border-left: 2px solid var(--border-2);
-	padding-left: 8px;
-	margin-left: -10px;
-}
+/* D-20260929-03 (left bars): the fold's own top rule (`.chat-fold-line::before`
+   above) already names the boundary; `.chat-above-fold`'s side rule repeated
+   it down every row above the fold, in a line. Removed with the indent and
+   the negative margin that compensated for it -- nothing replaces it, since
+   the boundary is already marked once. */
 
 /* How the turn ended — FURNITURE, and the styling is the whole of the
    not-crying-wolf rule (dev/CONTRACT_CLAIMS.md §3). One quiet line in the
@@ -1192,18 +1227,16 @@ body.resizing-v { cursor: row-resize; user-select: none; -webkit-user-select: no
 	font-family: var(--font-mono, ui-monospace, monospace);
 	word-break: break-all;
 }
+/* D-20260929-03 (left bars): the promotion is the contrast step alone now
+   (--text-muted to --text-secondary), not a line beside it. */
 .chat-msg-ended.ended-notice {
 	color: var(--text-secondary);
-	border-left: 2px solid var(--border-strong);
-	padding-left: 8px;
 }
 /* The same fact on a worker's tile, which is not a thread: it rides with the
    vision note, in the app's own voice rather than the worker's. */
 .acard .anote.aended { color: var(--text-muted); }
 .acard .anote.aended.ended-notice {
 	color: var(--text-secondary);
-	border-left: 2px solid var(--border-strong);
-	padding-left: 6px;
 }
 
 /* Diamonds rail list — reuses .session-box styling via the shared class. A long
@@ -1313,7 +1346,10 @@ button.tag-pool { cursor: pointer; }
 
 /* Crystal view — the Diamond command surface (steer + fold). */
 .crystal-view { flex: 1; display: flex; flex-direction: column; overflow: hidden; }
-.crystal-body { flex: 1; overflow-y: auto; padding: 16px 20px; font-size: var(--fs-base); line-height: 1.6; color: var(--text-primary); word-break: break-word; }
+/* R1: the crystal face shares the AI panel's own chat head (28px left,
+   skin-daylight.css), not a dock panel's -- its body now matches that inset
+   rather than the plain 20px every OTHER `.chead`-headed view used. */
+.crystal-body { flex: 1; overflow-y: auto; padding: 16px 20px 16px 28px; font-size: var(--fs-base); line-height: 1.6; color: var(--text-primary); word-break: break-word; }
 .crystal-body .crystal-empty { color: var(--text-muted); font-style: italic; }
 .crystal-controls { border-top: 1px solid var(--border); padding: 10px 12px; display: flex; flex-direction: column; gap: 8px; }
 
@@ -1679,9 +1715,11 @@ span.arte-open { cursor: default; }
 .link-row { border-bottom: 1px solid var(--border); padding: 3px 2px; }
 .link-row:last-child { border-bottom: none; }
 /* The direction is what a row is FOR, so it is said twice over: by the order of
-   the two ends in the phrase, and by which side the coloured edge sits on. */
-.link-row-out { border-left: 2px solid var(--accent); padding-left: 6px; }
-.link-row-in { border-right: 2px solid var(--border-2); padding-right: 6px; }
+   the two ends in the phrase, and by its own arrow. No line on either side (a
+   sideline is a sideline on the right as much as on the left). */
+.link-row-out { padding-left: 0; }
+.link-row-out::before { content: '\2192'; color: var(--accent); margin-right: 6px; font-weight: 700; }
+.link-row-in::before { content: '\2190'; color: var(--accent); margin-right: 6px; font-weight: 700; }
 .link-line { display: flex; align-items: center; gap: 6px; }
 .link-phrase { flex: 1; min-width: 0; display: flex; flex-wrap: wrap; align-items: center; gap: 4px; }
 .link-self { font-family: var(--font-mono); font-size: var(--fs-2xs); color: var(--text-muted);
@@ -1792,10 +1830,11 @@ span.arte-open { cursor: default; }
 .diff-head { font-size: var(--fs-xs); color: var(--text-secondary); margin-bottom: 10px; }
 /* A key the proposal would drop. Warning colour, not error: this is a thing the user may
    well want, and the point is that they see it rather than that they are stopped. */
+/* D-20260929-03 (left bars): the warn colour and background already carry
+   the meaning; the line beside them was a third copy of the same fact. */
 .diff-lost {
 	font-size: var(--fs-xs);
 	color: var(--warn);
-	border-left: 3px solid var(--warn);
 	padding: 6px 10px;
 	margin-bottom: 10px;
 	background: var(--warn-bg);
@@ -1988,7 +2027,9 @@ span.arte-open { cursor: default; }
 	display: flex; align-items: center; justify-content: center;
 	width: 30px; height: 30px; padding: 0;
 	border: none; border-radius: var(--radius); background: none;
-	color: var(--text-muted);
+	/* `.addbtn`'s own colour (D-20260929-03 residual pass): a panel's closer
+	   and a panel's own icon buttons read as one family, not two. */
+	color: var(--text-secondary);
 	cursor: pointer;
 }
 .ui-close:hover { color: var(--text-primary); background: var(--bg-hover); }
@@ -2004,7 +2045,14 @@ span.arte-open { cursor: default; }
    heading's margin would open a gap under the cross as well as under the
    words. */
 .ui-head > :first-child { flex: 1 1 auto; min-width: 0; }
-.ui-head h2 { margin-bottom: 0; overflow-wrap: anywhere; }
+/* U5 (D-20260929-03 varlen sweep): capped at two lines, so a very long name
+   (a phone, with nothing else to shrink it) cannot run to three and push the
+   form under it further down each time -- the row's height, and so the ×'s
+   position, has only the one further step (one line to two) to take. */
+.ui-head h2 {
+	margin-bottom: 0; overflow-wrap: anywhere;
+	display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
+}
 /* A dialog's own heading keeps its type; a popover's title is a label, so it
    is set like one. Not `.pop-head`, which marks a SECTION inside the popover:
    a second one of those at the top would read as an empty first section. */
@@ -2146,7 +2194,11 @@ span.arte-open { cursor: default; }
 .tile-label:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
 .session-box.active .tile-label { color: var(--accent-text); }
 /* The identity itself: a name if one was set, otherwise the relative time. */
-.tile-when { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* U2 (D-20260929-03 varlen sweep): the name fills the label and the time sits
+   flush right, against the cog, in every tile -- before this `.tile-when` (the
+   name, despite its clock-sounding class) took only its own text width, so a
+   short name pulled `.tile-when-sub` (the age) 147px left of a long one's. */
+.tile-when { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 /* The clock beside a name that WAS set. Quieter than the name and never
    shrinking below its own content, so a long name is what gets clipped -- the
    time is the one thing on this row that is the same width for every tile. */
@@ -2272,10 +2324,22 @@ span.arte-open { cursor: default; }
 .spend-governor.amber { color: var(--warn); background: var(--warn-bg); }
 .spend-governor.tripped { color: var(--danger); background: var(--warn-bg); font-weight: 600; }
 
-/* User identity row (foot of the rail). */
-.user-row { flex: 1; display: flex; align-items: center; gap: 4px; background: none; border: none; padding: 4px; border-radius: var(--radius-sm); overflow: hidden; text-align: left; }
+/* User identity row (foot of the rail). Same vertical padding as `.astat-row`
+   (D-20260929-03 residual pass): its own wrapper (`.astat-row.astat-id`) drops
+   its padding to nought and leaves the row's height to this button alone, so
+   this is where the status row's own rhythm has to be kept. */
+.user-row { flex: 1; display: flex; align-items: center; gap: 4px; background: none; border: none; padding: 3px 4px; border-radius: var(--radius-sm); overflow: hidden; text-align: left; }
 .user-row:hover { background: var(--bg-hover); }
-.user-avatar { color: var(--accent); font-size: var(--fs-sm); flex: none; }
+/* R2: a fixed 16px, not the text scale -- the mark is an icon, not a letter.
+   `inline-flex` + `align-items: center`, not the span's own line box: an
+   inline span's height follows its LINE-HEIGHT at that font-size (~22px)
+   regardless of the icon's own size inside it, which is what kept the row at
+   30px even once every other property here was fixed -- flexing it sizes the
+   span to its icon instead, and the row follows its own 21px floor
+   (skin-daylight.css) like every other status-row, to 22px. */
+.user-avatar { display: inline-flex; align-items: center; color: var(--accent); font-size: 16px; flex: none; }
+/* Same double-gap as R7: `.mark-ic`'s own margin plus `.user-row`'s flex gap. */
+.user-avatar .mark-ic { margin-right: 0; }
 
 /* Message copy button (revealed on hover).
    The gutter is the message's own bottom padding, and it has to hold two things:
@@ -2629,13 +2693,22 @@ span.arte-open { cursor: default; }
    hold (`.admin-scroll` is overflow-x: hidden), so the primary button lost its
    right-hand end. Wrapping costs nothing where the row already fits: the buttons
    only take a line each when the alternative was losing one of them. */
-.dlg-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+.dlg-actions { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
 .dlg-actions .dlg-cancel { margin-top: 0; flex: 1; }
 .dlg-actions .dlg-ok { margin-top: 0; flex: 1; width: auto; }
 .dlg-actions .dlg-ok.danger { background: var(--danger); border-color: var(--danger); color: var(--on-fill, #fff); }
 .dlg-actions .dlg-ok.danger:hover { filter: brightness(1.1); }
 /* An unbidden question's yes, for the second it cannot be pressed (`dialog` in daimond.js). */
 .dlg-actions .dlg-ok:disabled, .dlg-actions .dlg-ok:disabled:hover { opacity: 0.5; cursor: default; filter: none; }
+/* U6 (D-20260929-03 varlen sweep): a long primary label ellipsises in its own
+   box rather than wrapping to three lines and stretching Cancel with it --
+   `align-items: center` above stops the stretch, and this stops the wrap that
+   caused it. The row above still wraps to its own line when the two together
+   do not fit (the comment above `.dlg-actions`); this is the text inside one
+   button, not the row. */
+:is(.dlg-actions, .modal-actions, .tile-dlg-actions) > button {
+	white-space: nowrap; min-width: 0; overflow: hidden; text-overflow: ellipsis;
+}
 .tile-fold.folded { color: var(--text-secondary); border-style: dashed; }
 
 /* ── About ───────────────────────────────────────────────────────
@@ -2759,7 +2832,7 @@ span.arte-open { cursor: default; }
 .tile-dlg-pause { display: flex; align-items: center; gap: 8px; }
 .tile-dlg-pause-words { font-size: var(--fs-sm); color: var(--text-secondary); }
 .tile-dlg-seg { display: flex; gap: 6px; }
-.tile-dlg-actions { display: flex; gap: 8px; margin: 4px 0 14px; flex-wrap: wrap; }
+.tile-dlg-actions { display: flex; gap: 8px; margin: 4px 0 14px; flex-wrap: wrap; align-items: center; }
 /* The colour reset closes the section above it, so it needs the air a section
    break has. Without this it sat directly under the Text swatch and read as a
    third row of the same control. */
@@ -3088,7 +3161,9 @@ body.locked .tile-fold, body.locked .spend-row { display: none; }
 .atask { font-size: var(--fs-2xs); color: var(--text-secondary); line-height: 1.35; margin: 4px 0 2px; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
 .acard.queued { opacity: 0.7; }
 .acard.stopped { opacity: 0.75; }
-.acard.paused { opacity: 0.85; border-color: var(--border-2); border-left: 2px solid var(--accent); }
+/* D-20260929-03 (left bars): paused is the muted card plus the pill's own
+   "Paused" word (daimond.js `tile`), not a line -- both already here. */
+.acard.paused { opacity: 0.85; border-color: var(--border-2); }
 .pill.queued { background: var(--bg-tertiary); color: var(--text-secondary); }
 .pill.stopped { background: var(--bg-tertiary); color: var(--text-secondary); }
 .pill.paused { background: var(--accent-soft); color: var(--accent-text); }
@@ -3307,15 +3382,15 @@ button.tag-chip:hover { background: hsl(var(--tag-h, 0) 34% 27%); border-color: 
 	border: 1px solid var(--border); cursor: default;
 }
 .tag-active { padding-right: 3px; }
-/* The closer owns the pill's right end cap: a full-height square flush with
-   the edge, so its centre falls exactly on the cap's centre (half the chip's
-   height in from the right), whatever size the chip is. The chip's own right
-   padding is dropped when a closer is present -- the square supplies it. */
+/* The closer is a normal flex child of the chip, not an absolutely positioned
+   overlay: `align-self: stretch` makes it a full-height square, and the
+   chip's own flex layout reserves exactly the room it needs, through its
+   existing `gap`. No chip needs a padding-right guess for a closer it may or
+   may not carry, so every filter chip keeps the one base padding (D-20260929-03
+   residual pass: two different guesses, 2em and 18px, neither matching the
+   other nor the plain chip, were both removed rather than reconciled). */
 .tag-x {
-	position: absolute;
-	top: 0;
-	right: 0;
-	bottom: 0;
+	align-self: stretch;
 	aspect-ratio: 1;
 	display: flex;
 	align-items: center;
@@ -3323,7 +3398,7 @@ button.tag-chip:hover { background: hsl(var(--tag-h, 0) 34% 27%); border-color: 
 	/* The flex centring centres the glyph's TEXT BOX, but the × ink rides
 	   between baseline and x-height and hugs the left of its advance --
 	   measured 0.5px low and 0.22px left at 13px. This puts the INK at the
-	   exact centre of the pill's right end cap, in em so it scales. */
+	   exact centre of its own square, in em so it scales. */
 	transform: translate(0.017em, -0.038em);
 	background: none;
 	border: none;
@@ -3340,8 +3415,6 @@ button.tag-chip:hover { background: hsl(var(--tag-h, 0) 34% 27%); border-color: 
    the tag name, and everything that reads a chip reads that. */
 .tag-kill::after { content: '\00d7'; }
 .tag-kill:hover { color: var(--danger); opacity: 1; }
-.tag-chip:has(.tag-x) { position: relative; padding-right: 2em; }
-.tag-editor .tag-chip:has(.tag-x) { padding-right: 18px; }
 
 /* A tag the rail is currently filtering ON, seen on the Diamond boxes that
    survived it. One neutral chip, the same in every palette and for every tag:
@@ -3397,7 +3470,9 @@ button.tag-no:hover { background: hsl(var(--tag-h, 0) 30% 16%); border-color: hs
 .tag-note { font-size: var(--fs-xs); color: var(--text-muted); }
 .tag-row { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; min-height: 20px; }
 .tag-none { font-size: var(--fs-xs); color: var(--text-muted); font-style: italic; }
-.tag-add { display: flex; gap: 6px; }
+/* R4: `align-items: center` -- without it the default `stretch` grew the
+   "+ Add" button (27px) to match the text input beside it (31px). */
+.tag-add { display: flex; gap: 6px; align-items: center; }
 /* No `max-width`. `flex: 1` already sizes it against the "+ Add" beside it, and
    the cap on top of that stopped the row 116px short of a 376px card while every
    chip row above it ran the full width — one row in the editor that did not
@@ -3800,10 +3875,11 @@ body.resizing { cursor: col-resize; user-select: none; }
 .trig-choose { flex: 1 1 auto; min-width: 0; }
 /* The chosen action's own settings, set in from the chooser so it reads as
    belonging to it rather than as the next thing down the dialog. */
+/* D-20260929-03 (left bars): the indent alone shows it belongs to the
+   chooser above it. */
 .trig-panel {
 	display: flex; flex-direction: column; gap: 8px;
 	padding: 8px 0 2px 10px;
-	border-left: 2px solid var(--border);
 }
 /* A long text: what it says, then Edit and Copy. The gist is what stops two
    of these rows being indistinguishable from each other. */
@@ -3837,14 +3913,12 @@ body.resizing { cursor: col-resize; user-select: none; }
 .pending-list { display: flex; flex-direction: column; gap: 6px; padding: 8px; overflow-y: auto; }
 .pend-card {
 	background: var(--bg-tertiary); border: 1px solid var(--border);
-	border-left-width: 3px; border-radius: var(--radius-sm); padding: 8px 10px;
+	border-radius: var(--radius-sm); padding: 8px 10px;
 	display: flex; flex-direction: column; gap: 6px;
 }
-/* Priority as an EDGE, not a fill: the card stays readable and the column of
-   edges down the left is what makes a list scannable at a glance. */
-.pend-card.prio-high   { border-left-color: var(--danger); }
-.pend-card.prio-normal { border-left-color: var(--accent); }
-.pend-card.prio-low    { border-left-color: var(--border-strong); }
+/* D-20260929-03 (left bars): priority was an edge AND the `.pend-prio` select
+   already shows the word ("High"/"Normal"/"Low", daimond.js `tile`) as its
+   own displayed value -- the edge was the same fact said twice, in a line. */
 .pend-head { display: flex; align-items: center; gap: 6px; font-size: var(--fs-2xs); color: var(--text-muted); }
 .pend-prio { background: transparent; border: 1px solid var(--border); border-radius: 20px; color: var(--text-muted); font-size: var(--fs-3xs); padding: 0 4px; }
 .pend-diamond { font-family: var(--font-mono); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -3967,7 +4041,9 @@ body.resizing { cursor: col-resize; user-select: none; }
    The left edge is what marks it as folded rather than merely short. Without
    it, a two-sentence answer with a small control under it looks like an answer
    that got cut off. */
-.chat-msg.said { border-left: 2px solid var(--accent-soft); padding-left: 10px; }
+/* D-20260929-03 (left bars): indent plus muted colour marks the fold now, not
+   a line -- the indent was already here. */
+.chat-msg.said { padding-left: 10px; color: var(--text-secondary); }
 .said-more {
 	display: block;
 	margin: 8px 0 0;
@@ -3995,11 +4071,11 @@ body.resizing { cursor: col-resize; user-select: none; }
    want" -- so it sits IN the thread, in the accent, takes no focus and
    blocks nothing. The two mean opposite things and a reader has to be
    able to tell them apart at a glance. */
+/* D-20260929-03 (left bars): uniform border, not thicker on one side. */
 .ask-card {
 	margin: 12px 0;
 	padding: 12px 14px;
 	border: 1px solid var(--accent);
-	border-left-width: 3px;
 	border-radius: var(--radius);
 	background: var(--bg-secondary);
 }
@@ -4240,10 +4316,10 @@ body.resizing { cursor: col-resize; user-select: none; }
    chat-msg-thinking`, `daimond.js:6782` -- so it inherited this rule and had to
    be given the muted size and colour back by name. A comment here saying it was
    untouched would have been true of the intent and wrong about the screen. */
+/* D-20260929-03 (left bars): the indent alone marks the fold now. */
 details.md-fold {
 	margin: 8px 0;
 	padding-left: 10px;
-	border-left: 2px solid var(--accent-soft);
 }
 details.md-fold > summary {
 	padding: 4px 0;

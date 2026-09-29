@@ -12,7 +12,8 @@
 
 .tools-body {
 	flex: 1; min-height: 0; overflow-y: auto;
-	padding: 12px 14px 18px;
+	/* R1: the panel's own inset, matching its head (variables.css). */
+	padding: 12px var(--dock-inset) 18px;
 	display: flex; flex-direction: column; gap: 8px;
 }
 /* A column flex item shrinks by default, and this column always overflows: the panel is

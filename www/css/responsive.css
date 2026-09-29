@@ -236,12 +236,22 @@
 	.astat-row.astat-btn,
 	.astat-row.astat-sync { padding-top: 9px; padding-bottom: 9px; }
 	.astat-id .user-row { padding: 9px 4px; }
-	.astat-id #settings-btn { min-width: 36px; min-height: 36px; }
-	.admin-item { padding-top: 10px; padding-bottom: 10px; }
+	.astat-id #settings-btn {
+		min-width: 36px; min-height: 36px; position: relative;
+	}
+	/* Bar-icon's own 36px box (G16), touch floor held by an invisible 44px
+	   overlay, the same way as every other shrunk control this pass. */
+	.astat-id #settings-btn::after {
+		content: ''; position: absolute; top: 50%; left: 50%; width: 44px; height: 44px; transform: translate(-50%, -50%);
+	}
+	.admin-item { padding-top: 10px; padding-bottom: 10px; min-height: 44px; box-sizing: border-box; }
 	.tile-label { padding-top: 6px; padding-bottom: 6px; }
 	/* Steps / collapse, in the chat header: 26px tall is a pointer's target, not
-	   a thumb's. */
-	.chead .chip-btn { padding: 8px 10px; }
+	   a thumb's. `.icon-chip` and `.label-chip` are excluded -- they are drawn
+	   at a fixed 26px square, matched to their row's own height on purpose
+	   (app.css), and this padding was growing them past it (D-20260929-03
+	   residual pass). */
+	.chead .chip-btn:not(.icon-chip):not(.label-chip) { padding: 8px 10px; }
 
 	/* ── Full screen, on a phone ──────────────────────────────────────
 	   The desktop rules (app.css, `[data-cfull]`) take the top bar, the rail and
@@ -286,10 +296,14 @@
 	.addbtn { width: 34px; height: 34px; font-size: var(--fs-xl); }
 	.icon-btn { padding: 8px 10px; font-size: var(--fs-2xl); }
 	/* ── The closer's thumb floor ─────────────────────────────────────────────
-	   Every way out of every dialog, popover, drawer and sheet, at 44x44 — the
-	   iOS Human Interface floor, above the 24px WCAG 2.2 AA one, because this is
-	   the control a user reaches for when they are stuck and there is no second
-	   attempt if they miss it.
+	   Every way out of every dialog, popover, drawer and sheet, at ONE size now
+	   (R9, D-20260929-03 r526 residual: 44px was itself the inconsistency --
+	   the drawer's own closer rendered 30px beside every other's 44, both
+	   claiming to be ".ui-close"). The visual box is 36px, the group's own
+	   consistent size; the TAP TARGET stays at the iOS Human Interface floor
+	   regardless (the lead's ruling, same day: the box may follow the spec
+	   down, the target may not follow it), held by an invisible `::after`
+	   rather than the box itself.
 
 	   The BOX grows; the ink does not. `.ic` stays 16px inside it, so a phone
 	   gets a bigger target rather than a bigger cross.
@@ -297,12 +311,13 @@
 	   This is the user's report answered: on a 390px screen the appearance menu
 	   is 359px wide, which leaves 19px either side to tap and no closer at all.
 	   A margin is not a way out. */
-	.ui-close { width: 44px; height: 44px; }
-	/* The two closers written in static markup, which predate `.ui-close` and
-	   carry it now: the phone sheet's and the admin drawer's. Named as well,
-	   because each also carries a size of its own from the block it was tuned
-	   in and the last rule would otherwise win. */
-	.msheet-close, #admin-close, .admin-back { min-width: 44px; min-height: 44px; }
+	.ui-close { width: 36px; height: 36px; position: relative; }
+	.ui-close::after {
+		content: ''; position: absolute; top: 50%; left: 50%; width: 44px; height: 44px; transform: translate(-50%, -50%);
+	}
+	/* The two closers written in static markup, which predate `.ui-close`:
+	   the phone sheet's and the admin drawer's. Both now take its one size
+	   and its hit area with no size of their own to fight it (R9). */
 
 	/* These named classes that do not exist (`.files-row-del`), so on touch the
 	   file buttons stayed hidden and could not be reached at all. The real class

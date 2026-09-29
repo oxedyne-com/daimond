@@ -40,6 +40,13 @@
 		border-radius: var(--radius);
 		color: var(--text-secondary);
 		cursor: pointer;
+		/* Bar-icon's own 36px box (G16), with the touch floor held the same
+		   way as every other shrunk control this pass (R3/R9/R12): an
+		   invisible 44px overlay, not the box itself. */
+		position: relative;
+	}
+	#drawer-btn::after {
+		content: ''; position: absolute; top: 50%; left: 50%; width: 44px; height: 44px; transform: translate(-50%, -50%);
 	}
 	#drawer-btn .ic { width: 16px; height: 16px; }
 	#drawer-btn:active { background: var(--accent-soft); }
@@ -363,13 +370,11 @@
 	}
 	.msheet-close {
 		margin-top: 0;
-		/* 40px, matching the guest's own lifted controls that now sit beside it
-		   (see `#msheet .panel > .railhead`): two icon buttons on one row at two
-		   different sizes read as two different kinds of control. It is also the
-		   larger thumb target of the two, which on a phone is the right way to
-		   settle a tie. */
-		width: 40px;
-		height: 40px;
+		/* R9 (D-20260929-03 r526 residual): its own 40px and its own muted
+		   colour are gone -- `.ui-close` (responsive.css) now sets one size
+		   and `--text-secondary`, the same as every other closer, and this
+		   is the group it belongs to, not a size of its own to settle a tie
+		   with. */
 		flex: none;
 		display: flex;
 		align-items: center;
@@ -377,7 +382,6 @@
 		background: none;
 		border: none;
 		border-radius: var(--radius);
-		color: var(--text-muted);
 		font-size: var(--fs-3xl);
 		line-height: 1;
 		cursor: pointer;
@@ -466,6 +470,10 @@
 		flex-direction: column;
 		overflow: hidden;
 	}
+	/* R14 follow-on: Model stats, raised into the sheet, is clipped a second
+	   time here -- its own `.mdash-view { overflow-x: auto }` (modeldash.css)
+	   cannot be reached through an ancestor that hides everything past it. */
+	.msheet-scroll:has(.mdash-view) { overflow-x: auto; }
 	#msheet .panel {
 		display: flex !important;
 		flex-direction: column;
@@ -591,14 +599,17 @@
 		top: 8px;
 		right: 60px;
 		z-index: 1;
-		gap: 4px;
+		gap: 8px;
 	}
+	/* R8 (D-20260929-03 r526 residual): the head-tool group's own 36px and
+	   `--text-secondary`, not a size and a colour of its own -- the lifted
+	   position is the only thing special about this row. */
 	#msheet .panel.termpanel > .chead > .chead-right button {
-		width: 40px;
-		height: 40px;
+		width: 36px;
+		height: 36px;
 		background: none;
 		border: none;
-		color: var(--text-muted);
+		color: var(--text-secondary);
 	}
 	#msheet .panel.termpanel > .chead > .chead-right button:active { background: var(--accent-soft); }
 	#msheet:has(.panel.termpanel) .msheet-title { padding-right: 96px; }

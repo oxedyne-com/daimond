@@ -48017,12 +48017,12 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		// slightly different things.
 		var bar = dc ? tileCtxBar(dc, daimonWindow(dc)) : null;
 		if (bar) meterRow.appendChild(bar);
-		if (f.updated) {
-			var upd = document.createElement('span');
-			upd.className = 'session-box-time';
-			upd.textContent = relTime(f.updated);
-			meterRow.appendChild(upd);
-		}
+		// U3 (D-20260929-03 varlen sweep): the spend figure comes BEFORE the
+		// relative time now, not after, so the free-text time is the meter's
+		// LAST reading in every tile. A figure ("~A$3.40") ellipsising mid-number
+		// reads as a different amount; the relative time ("22h ago") is the one
+		// reading in this row safe to give way, and V6's `:last-child` rule
+		// (skin-daylight.css) only ever touches whichever one sits last.
 		try {
 			if (window.DaimondSignals) {
 				var ix = DaimondSignals.snapshot();
@@ -48036,6 +48036,12 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 				}
 			}
 	} catch (e) { /* no index yet: the row says nothing about spend */ }
+		if (f.updated) {
+			var upd = document.createElement('span');
+			upd.className = 'session-box-time';
+			upd.textContent = relTime(f.updated);
+			meterRow.appendChild(upd);
+		}
 		// A row with nothing in it still costs its margin-top, so it is not appended
 		// at all rather than appended empty.
 

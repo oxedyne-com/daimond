@@ -60,6 +60,7 @@
 	'topbar.about':       '关于 Daimond',
 	'topbar.about_label': '关于',
 	'topbar.guide': '指南',
+	'topbar.link_device': '关联设备',
 	'topbar.guide_short': '使用指南',
 	'topbar.appearance': '设置',
 	'topbar.help': '帮助',
