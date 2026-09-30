@@ -2543,6 +2543,12 @@ impl Agent {
 
         let mut folded  = 0usize;
         let mut trouble = String::new();
+        // WHO WROTE THE SUMMARY, for the product record its notice carries: the model the fold
+        // actually asked -- the fold model where one is set, else this agent's -- and the
+        // fingerprint of the compactor's instructions.  Both stay empty where no summary was
+        // asked for, since a notice with nothing a model wrote behind it is not a product.
+        let mut by_model = String::new();
+        let mut by_sp    = String::new();
         // Whether the note came back in the layout, which the feed carries and the bank counts.
         let mut structured = false;
         // The hard ceiling is the budget itself: however few messages that leaves, a tail
@@ -2569,6 +2575,9 @@ impl Agent {
             let ledger   = compact::ledger_of(&session.messages[..cut]);
             let rendered = compact::render_for_fold(&session.messages[..cut],
                 compact::FOLD_INPUT_CAP);
+            by_model = if model.trim().is_empty() { self.llm.model.clone() } else {
+                model.trim().to_string() };
+            by_sp = crate::prompts::fingerprint(&self.fold_prompt());
             let raw = match self.summarise(&rendered, &model, session, why, shape).await {
                 Ok(s)  => Ok(s),
                 Err(e) => Err(fmt!("{}", e)),
@@ -2721,6 +2730,8 @@ impl Agent {
             kept: session.messages.len(),
             note: said,
             structured,
+            model: by_model,
+            sp: by_sp,
         });
         true
     }
@@ -3967,6 +3978,7 @@ mod tests {
             unconfirmed: Vec::new(),
             by_model:    false,
             restoring:   0,
+            by:          None,
         })
     }
 
@@ -4017,6 +4029,7 @@ mod tests {
                 unconfirmed: Vec::new(),
                 by_model:    false,
                 restoring:   0,
+                by:          None,
             })
     }
 
@@ -4611,6 +4624,7 @@ mod tests {
             unconfirmed: Vec::new(),
             by_model:    false,
             restoring:   0,
+            by:          None,
         });
         r.tools = vec![crate::tools::Tool::FileRead, crate::tools::Tool::FileWrite];
         r

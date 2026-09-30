@@ -24477,6 +24477,9 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 	var _progressSent = {};
 	var _liveTurn = {};
 	var _liveMid = {};
+	// And the answer's `prod`, stamped at turn start, so the live row carries the record the
+	// final message will: a provisional copy persisted before the parcel lands must not differ.
+	var _liveProd = {};
 	// Watcher side: the streamed view per turn (`DaimondPeer.foldProgress` state), and
 	// which turns are registered with the sync engine's progress watch.
 	var _progressView = {};
@@ -24514,7 +24517,9 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		// Clipped as every streamed row is (`progressRow`), and never `whole`: it is still
 		// arriving. Unclipped, a long answer made the frame too big to send at all.
 		var cap = (DaimondPeer && DaimondPeer.PROGRESS_MSG_CHARS) || 16384;
-		out.push({ mid: amid, role: 'assistant', content: String(text).slice(0, cap), ts: ts });
+		var live = { mid: amid, role: 'assistant', content: String(text).slice(0, cap), ts: ts };
+		if (_liveProd[id]) live.prod = [_liveProd[id]];
+		out.push(live);
 		return out;
 	}
 
@@ -27083,6 +27088,11 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			if (!chat) { DaimondJournal.clearTurn(iturn); return; }   // the chat itself is gone
 			chat.messages = chat.messages || [];
 			if (chat.messages.some(function (m) { return m.iturn === iturn; })) { DaimondJournal.clearTurn(iturn); return; }   // already recovered
+			// The answer the turn was writing, by the mid it was minted under: a local turn's
+			// answer carries no `iturn`, so without this a turn whose answer landed and whose
+			// close did not would be recovered on top of itself.
+			var jmeta = t.meta || {};
+			if (jmeta.amid && chat.messages.some(function (m) { return m && m.mid === jmeta.amid; })) { DaimondJournal.clearTurn(iturn); return; }
 			if (tombs[iturn]) { DaimondJournal.clearTurn(iturn); return; }   // this turn was already continued/dismissed
 			// A turn a peer still holds is NOT recovered locally (§3.3): leave it for
 			// the collector, or the double bill is exactly here. Only a vacant/expired
@@ -27145,8 +27155,12 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			});
 
 			// The partial reply, badged interrupted, carrying the prompt so Continue can re-run it.
-			chat.messages.push({ role: 'assistant', content: t.text || '', mid: newMid(),
-				interrupted: true, iturn: iturn, itext: t.userText || '', ts: nowTs() });
+			// Under the mid and the record the turn stamped at its start, so a recovered answer
+			// is the same product as the one that was streaming.
+			var recAns = { role: 'assistant', content: t.text || '', mid: jmeta.amid || newMid(),
+				interrupted: true, iturn: iturn, itext: t.userText || '', ts: nowTs() };
+			if (jmeta.prod && jmeta.amid) recAns.prod = [jmeta.prod];
+			chat.messages.push(recAns);
 
 			stampMessages(chat.messages, chat.id);
 			// A RECOVERY IS A TOUCH. Without this the chat's stamp can come out
@@ -30152,9 +30166,12 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			// which is the one thing `appendCompacted` exists to prevent.
 			moved = await engineHold(app, app.fold_now(function (ev) {
 				if (!ev || ev.type !== 'compacted') return;
-				var manualFoldTs = Date.now();
-				chat.messages.push({ role: 'fold_log', content: ev.content || '',
-					folded: ev.folded || 0, kept: ev.kept || 0, mid: newMid(), ts: manualFoldTs });
+				var manualFoldTs = Date.now(), manualMid = newMid();
+				var manualRow = { role: 'fold_log', content: ev.content || '',
+					folded: ev.folded || 0, kept: ev.kept || 0, mid: manualMid, ts: manualFoldTs };
+				var mfprod = foldProd(chat, app, ev, manualMid, '');
+				if (mfprod) manualRow.prod = [mfprod];
+				chat.messages.push(manualRow);
 				if (current && current.id === chat.id) {
 					appendCompacted(ev.content || '', ev.folded, ev.kept, manualFoldTs);
 				}
@@ -31854,6 +31871,70 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		return box;
 	}
 
+	// ── Provenance (U1 of the rating design) ───────────────────
+	// Who an app's turns are by: its role, the model it was BUILT with -- the string the
+	// request carries, never `respModel()`, which is a display string -- the provider and
+	// the fingerprint of its instructions. Read when a turn starts, to stamp the answer's
+	// `prod` (provenance.js), and told to the engine so every version entry the app's file
+	// tools capture names its author (`Entry.by`).
+	var _appProv = new WeakMap();
+	function noteAppProv(app, role, model, provider, sp, run) {
+		var p = { role: String(role || ''), m: String(model || ''), pv: String(provider || ''),
+			sp: String(sp || '') };
+		_appProv.set(app, p);
+		try { if (app && app.set_provenance) app.set_provenance(p.role, p.pv, p.sp, String(run || '')); }
+		catch (e) { /* an older engine records no author */ }
+		return p;
+	}
+	/// The fingerprint of a role's INSTRUCTIONS -- the role plus the user's DAIMOND.md, never a
+	/// worker's crystal or anything else true of one turn alone. Empty on an older engine.
+	function promptPrint(text) {
+		try { return Wasm.prompt_fingerprint ? Wasm.prompt_fingerprint(String(text || '')) : ''; }
+		catch (e) { return ''; }
+	}
+	/// A product record, or null where provenance.js is not loaded.
+	function stampProd(o) {
+		if (!window.DaimondProvenance) return null;
+		try { return DaimondProvenance.stamp(o); } catch (e) { return null; }
+	}
+	/// The record of a compactor's fold, carried by its `fold_log`; null where the fold only
+	/// shortened and no model wrote anything (`ev.model` absent).
+	function foldProd(chat, app, ev, foldMid, turnMid) {
+		if (!ev || !ev.model || !window.DaimondProvenance) return null;
+		var ap = (app && _appProv.get(app)) || {};
+		return stampProd({ h: DaimondProvenance.h.fold(chat.id, foldMid), k: 'crystal',
+			m: ev.model, pv: ap.pv || chat.provider || '', role: 'compactor', sp: ev.sp || '',
+			d: chat.diamondId || '', c: chat.id, t: turnMid || '', dev: selfDeviceId(),
+			at: Date.now() });
+	}
+	/// A `mail_draft` row's record, keyed on the draft's path, which the Mail module hands back
+	/// by the exact text it answered with rather than by reading the sentence.
+	function mailProd(result, base) {
+		if (!base || !window.DaimondMail || !DaimondMail.draftOf || !window.DaimondProvenance) return null;
+		var d = null;
+		try { d = DaimondMail.draftOf(result); } catch (e) { d = null; }
+		if (!d || !d.path) return null;
+		return DaimondProvenance.rekind(base, 'mail', DaimondProvenance.h.mail(d.path));
+	}
+
+	/// A worker's provenance: a run id that is unique across devices (`run.id` is a per-page
+	/// counter), the provider it is served by and the fingerprint of the worker role and the
+	/// standing instructions -- WITHOUT the dispatching crystal, which changes every dispatch.
+	/// Kept on the run, so a report relayed after the app is gone still names it.
+	function noteWorkerProv(run, provider) {
+		var rid = (run.prov && run.prov.rid) || ('w-' + newMid());
+		var sp = promptPrint(Instructions.compose(Prompts.role('worker', run.model), ''));
+		run.prov = { rid: rid, pv: String(provider || ''), sp: sp };
+		noteAppProv(run.app, 'worker', run.model, run.prov.pv, sp, rid);
+	}
+	/// A worker report's record, for the relayed message that carries it.
+	function workerProd(r, chatId) {
+		if (!window.DaimondProvenance || !r || !r.prov) return null;
+		return stampProd({ h: DaimondProvenance.h.worker(r.prov.rid), k: 'worker', m: r.model || '',
+			pv: r.prov.pv, role: 'worker', sp: r.prov.sp, d: r.diamondId || '', c: chatId || '',
+			t: r.turnId || '', dev: selfDeviceId(), at: Date.now() });
+	}
+
 	// ── Send a turn ────────────────────────────────────────────
 	function ensureApp(chat, exceptMid) {
 		if (chat.app) return chat.app;
@@ -31869,9 +31950,10 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		// `_capTry` is set only while a turn is mid-backoff, after a provider
 		// refused the length first asked for; it lasts exactly as long as that
 		// retry and is not persisted.
+		var chatSys = Instructions.compose(SYSTEM_PROMPT(a.model), '');
 		chat.app = new DaimondApp(a.baseUrl, a.apiKey, a.model,
 			chat._capTry || maxOutFor(a.model, a.provider),
-			Instructions.compose(SYSTEM_PROMPT(a.model), ''), cfg.tools !== false);
+			chatSys, cfg.tools !== false);
 		// The user's own chat may send workers out; a worker may not. `Tool::browser`
 		// in src/tools.rs is the list BOTH are built from, so the dispatch tool is not
 		// in it and is added here, by the one caller that builds a chat. A worker that
@@ -31884,6 +31966,9 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		}
 		chat.model    = a.model;
 		chat.provider = a.provider || chat.provider || '';
+		// The fingerprint is of the very text the app was built with, which for a chat is the
+		// role and the standing instructions and nothing else.
+		noteAppProv(chat.app, 'chat', a.model, chat.provider, promptPrint(chatSys), '');
 		// A chat freezing its model is a use of it. Recorded here rather than in the
 		// pulldown, because a model picked and never run is not one anybody uses.
 		try { DaimondModels.noteUse(chat.provider, chat.model); } catch (e) { /* never block a turn */ }
@@ -34170,8 +34255,17 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		// row, so a watcher's provisional answer and the message that syncs back share a
 		// mid and the parcel merge converges by mid (no rebuild, no duplicate).
 		if (umid) _liveMid[String(umid)] = amid;
+		// THE ANSWER'S PROVENANCE, STAMPED ONCE, HERE, before a token streams: the live row a
+		// watcher draws, the journal a crash recovers from and the final message all carry
+		// this one object, so every copy of the answer carries the same bytes (design §3.5).
+		var aprov = _appProv.get(app) || { role: 'chat', m: chat.model, pv: chat.provider, sp: '' };
+		var aprod = stampProd({ h: window.DaimondProvenance ? DaimondProvenance.h.answer(chat.id, amid) : '',
+			k: 'answer', m: aprov.m, pv: aprov.pv, role: aprov.role, sp: aprov.sp,
+			d: chat.diamondId || '', c: chat.id, t: umid, dev: selfDeviceId(), at: Date.now() });
+		if (umid && aprod) _liveProd[String(umid)] = aprod;
 		var J = window.DaimondJournal;
-		if (J) J.turnOpen(umid, chat.id, text, { model: chat.model, provider: chat.provider });
+		if (J) J.turnOpen(umid, chat.id, text, { model: chat.model, provider: chat.provider,
+			amid: amid, prod: aprod });
 
 		chat._generating = true;
 		// The press that asked for this turn is let go now the turn is under way (`holdSend`).
@@ -34342,6 +34436,11 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 					pendingTool.content = ev.content || '';
 					pendingTool.outcome = ev.outcome || '';
 					if (ev.paused) pendingTool.paused = String(ev.paused);
+					// A mail draft is a product of its own, named by the draft it filed.
+					if (ev.name === 'mail_draft' && ev.outcome === 'done') {
+						var mprod = mailProd(ev.content || '', aprod);
+						if (mprod) pendingTool.prod = [mprod];
+					}
 					pendingTool = null;
 				}
 				// THE ENGINE'S WORD, not a boolean made from it. `toolDone` took
@@ -34487,9 +34586,12 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 				// otherwise the thread silently loses messages between two visits.
 				// Once per state, though: see `worthSaying`.
 				if (worthSaying(chat, ev)) {
-					var foldTs = Date.now();
-					chat.messages.push({ role: 'fold_log', content: ev.content || '',
-						folded: ev.folded || 0, kept: ev.kept || 0, mid: newMid(), ts: foldTs });
+					var foldTs = Date.now(), foldMid = newMid();
+					var foldRow = { role: 'fold_log', content: ev.content || '',
+						folded: ev.folded || 0, kept: ev.kept || 0, mid: foldMid, ts: foldTs };
+					var fprod = foldProd(chat, app, ev, foldMid, umid);
+					if (fprod) foldRow.prod = [fprod];
+					chat.messages.push(foldRow);
 					if (!owns()) return;
 					appendCompacted(ev.content || '', ev.folded, ev.kept, foldTs);
 				}
@@ -34754,7 +34856,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 				// ran (the answer syncs back onto this record) shows "ran on <that device>"
 				// rather than looking as if this device produced it. The runner writes it
 				// here from its own id; it travels on the message in the parcel.
-				if (umid) { delete _liveTurn[String(umid)]; delete _liveMid[String(umid)]; }	// the answer is in `messages` now
+				if (umid) { delete _liveTurn[String(umid)]; delete _liveMid[String(umid)]; delete _liveProd[String(umid)]; }	// the answer is in `messages` now
 				var ansMsg = null;		// the answer, kept so a hand-off turn can be enriched below
 				if (chat._pausedMid) {
 					// PAUSED PART WAY, and said as that rather than as an answer or an error
@@ -34777,6 +34879,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 						ranOn: selfDeviceId(), ts: Date.now() });
 				} else if (turnText) {
 				var amsg = { role: 'assistant', content: turnText, mid: amid, ranOn: selfDeviceId(), ts: Date.now() };
+				if (aprod) amsg.prod = [aprod];
 				ansMsg = amsg;
 				// An ERRAND run carries a turnId (the ordinary turn path passes none), so
 				// group the answer with its turn. Without this a locally-recovered errand
@@ -35914,6 +36017,8 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 						// it answers -- did this worker actually do anything? -- is asked
 						// after the reload that would otherwise have lost the answer.
 						ended: r.ended || null,
+						// Who the run was, for a report relayed after a reload: see noteWorkerProv.
+						prov: r.prov || null,
 					};
 				});
 			var n = Math.min(all.length, this.KEEP);
@@ -36433,8 +36538,13 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 				// No turn. The reports go in as an assistant message, which is what they
 				// are — the app relaying what the workers said — and the transcript is
 				// saved so a reload keeps them.
-				chat.messages.push({ role: 'assistant', content: heading + '\n\n' + parts.join('\n\n'),
-					mid: newMid(), ts: Date.now() });
+				var relay = { role: 'assistant', content: heading + '\n\n' + parts.join('\n\n'),
+					mid: newMid(), ts: Date.now() };
+				// ONE RECORD PER REPORT, in the order the reports are written above.
+				var wprods = mine.slice().reverse().map(function (r) { return workerProd(r, chat.id); })
+					.filter(Boolean);
+				if (wprods.length) relay.prod = wprods;
+				chat.messages.push(relay);
 				touchChat(chat);
 				persistChats();
 				// Drawn only where the reader is actually looking. `appendAssistantText`
@@ -36651,6 +36761,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 					run._gen = s.gen;
 					run.app = new DaimondApp(s.url, s.key, run.model, maxOutFor(run.model, DaimondModels.CREDITS),
 						Instructions.compose(Prompts.role('worker', run.model), crystal), true);
+					noteWorkerProv(run, DaimondModels.CREDITS);
 					window_(run.model, DaimondModels.CREDITS);
 					try { DaimondModels.noteUse(DaimondModels.CREDITS, run.model); } catch (e) { /* never block a run */ }
 					if (run.tainted && run.app.set_tainted) run.app.set_tainted();
@@ -36659,6 +36770,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 					run._gen = creditsGen();
 					run.app = new DaimondApp(a.baseUrl, a.apiKey, run.model, maxOutFor(run.model, a.provider || run.provider),
 						Instructions.compose(Prompts.role('worker', run.model), crystal), true);
+					noteWorkerProv(run, a.provider || run.provider);
 					window_(run.model, a.provider || run.provider);
 					try { DaimondModels.noteUse(a.provider || run.provider, run.model); } catch (e) { /* never block a run */ }
 					if (run.tainted && run.app.set_tainted) run.app.set_tainted();
@@ -38257,6 +38369,11 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			// it is dismissed, `noticeUp` while it is on the panel.
 			if (kind === 'notice' && item.key) rec.key = String(item.key);
 			this.fresh();
+			// A proposal is the daimon answer it came from, filed under its own handle.
+			if (kind === 'proposal' && item.prod && window.DaimondProvenance) {
+				var pp = DaimondProvenance.rekind(item.prod, 'proposal', DaimondProvenance.h.proposal(rec.id));
+				if (pp) rec.prod = [pp];
+			}
 			this.items.push(rec);
 			this.save();
 			// ONLY A QUESTION TAKES THE SCREEN. A consent is a turn held open on the answer,
@@ -45951,6 +46068,9 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 				// nothing in a triggered instruction asks one for. So: normal, and the
 				// user may override it on the tile.
 				priority:    'normal',
+				// The answer's record, when this reply is the one the turn just gave.
+				prod:        (_lastSteer[f.id] && _lastSteer[f.id].reply === reply)
+					? (_lastSteer[f.id].prod || null) : null,
 			});
 		} catch (e) { /* a panel that will not draw must not fail the turn */ }
 	}
@@ -46793,6 +46913,9 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		_sharedClients.add(app);
 		_diamondAppModel.set(app, a.model || '');
 		_diamondAppProvider.set(app, a.provider || '');
+		// The daimon and the reducer name themselves per turn; the engine needs only the
+		// provider, which nothing but the page knows.
+		noteAppProv(app, 'daimon', a.model || '', a.provider || '', '', '');
 		return app;
 	}
 
@@ -54480,6 +54603,28 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		});
 	}
 
+	/// The records of the file rows a daimon turn's changed-files note shows: one per manifest
+	/// entry of version `v` whose author is known. A row written by a walk after a command or a
+	/// spawn names nobody -- nobody knows who -- and carries no record.
+	async function turnFileProds(diamondId, v, chatId, turnMid) {
+		var out = [];
+		if (!window.DaimondProvenance || !window.DaimondVersions || !(v > 0)) return out;
+		var mv = null;
+		try {
+			var ms = await DaimondVersions.manifests(diamondId);
+			mv = (ms || []).find(function (m) { return m && m.version === v; }) || null;
+		} catch (e) { mv = null; }
+		((mv && mv.files) || []).forEach(function (e) {
+			if (!e || !e.path || !e.by || !e.by.role) return;
+			var p = stampProd({ h: DaimondProvenance.h.file(diamondId, v, e.path), k: 'file',
+				m: e.by.m || '', pv: e.by.pv || '', role: e.by.role, sp: e.by.sp || '',
+				d: diamondId, c: chatId, t: turnMid, dev: selfDeviceId(), at: mv.ts || 0,
+				hash: e.gone ? '' : (e.hash || ''), run: e.by.run || '' });
+			if (p) out.push(p);
+		});
+		return out;
+	}
+
 	/// # Arguments
 	/// * `f` - The Diamond whose daimon runs this turn.
 	/// * `detached` - When present (`{ chat, turnId, onProgress }`) this is a runner
@@ -54576,6 +54721,24 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		// that syncs back share a mid and converge on the parcel merge.
 		var dmid = newMid();
 		if (detached) _liveMid[String(detached.turnId)] = dmid;
+		// The user message's mid, kept so the answer's `prod` can name its turn.
+		var dumid = detached ? String(detached.turnId) : newMid();
+		// THE ANSWER'S PROVENANCE, stamped once and read by every copy. Built at the first
+		// streamed row rather than here, because the daimon's fingerprint is recorded when the
+		// engine composes the turn, which is after this function calls it and before any event.
+		var dprod = null, dAt = Date.now();
+		var daimonProd = function () {
+			if (dprod || !window.DaimondProvenance) return dprod;
+			var dsp = '';
+			try { dsp = fa.last_prompt_fingerprint ? fa.last_prompt_fingerprint('daimon', diamondId) : ''; }
+			catch (e) { dsp = ''; }
+			dprod = stampProd({ h: DaimondProvenance.h.answer(rec.id, dmid), k: 'answer',
+				m: _diamondAppModel.get(fa) || '', pv: _diamondAppProvider.get(fa) || '',
+				role: 'daimon', sp: dsp, d: diamondId, c: rec.id, t: dumid, dev: selfDeviceId(),
+				at: dAt });
+			if (dprod && detached) _liveProd[String(detached.turnId)] = dprod;
+			return dprod;
+		};
 		// CAN THIS ENGINE READ A WORKER BACK INSIDE THE TURN? Set just before the turn goes out,
 		// where the Diamond's app is resolved, and read by the collector below at call time --
 		// so a bundle whose engine has the pair keeps its workers off the post-turn path, and
@@ -54622,7 +54785,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		// the transcript and let `progressTail`/`chatHoldingTurn` disagree on the turn. So
 		// the push -- and the on-screen draw of it -- is the local-caller's alone.
 		if (!detached) {
-			rec.messages.push({ role: 'user', content: instruction, mid: newMid(), ts: its });
+			rec.messages.push({ role: 'user', content: instruction, mid: dumid, ts: its });
 			if (onScreen()) appendUserMessage(instruction, its);
 		}
 		// The composer's Send becomes Stop while a daimon turn runs, and `anyGen()` --
@@ -54817,6 +54980,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 				// in neither the stored transcript nor an on-screen buffer until the turn
 				// ends, so without this the phone's progress frame shows tool tiles and then
 				// nothing until `done`. `_liveTurn` is what `pushProgress` reads for the tail.
+				daimonProd();			// before the live row can leave, so it carries the record
 				if (detached) { try { _liveTurn[String(detached.turnId)] = replyText; } catch (e) { /* a dropped frame only slows the stream */ } }
 				if (!writing) { writing = true; busySay(rec, tOr('chat.busy_writing', 'Writing the answer…')); }
 				if (onScreen()) appendAssistantText(ev.content || '');
@@ -54880,6 +55044,11 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 					last.content = ev.content || '';
 					last.outcome = ev.outcome || '';
 					if (ev.paused) last.paused = String(ev.paused);
+					// A mail draft is a product of its own, named by the draft it filed.
+					if (ev.name === 'mail_draft' && ev.outcome === 'done') {
+						var dmprod = mailProd(ev.content || '', daimonProd());
+						if (dmprod) last.prod = [dmprod];
+					}
 				}
 				busySay(rec, tOr('chat.busy_next', 'Step {n} done, thinking…', { n: step }));
 				if (onScreen()) renderToolResult(ev.name || '', ev.content || '', ev.outcome, ev.paused || '');
@@ -54976,9 +55145,12 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 				// the context threshold"*. Visibly is this line, once per state --
 				// see `worthSaying`.
 				if (worthSaying(rec, ev)) {
-					var dFoldTs = Date.now();
-					rec.messages.push({ role: 'fold_log', content: ev.content || '',
-						folded: ev.folded || 0, kept: ev.kept || 0, mid: newMid(), ts: dFoldTs });
+					var dFoldTs = Date.now(), dFoldMid = newMid();
+					var dFoldRow = { role: 'fold_log', content: ev.content || '',
+						folded: ev.folded || 0, kept: ev.kept || 0, mid: dFoldMid, ts: dFoldTs };
+					var dfprod = foldProd(rec, fa, ev, dFoldMid, dumid);
+					if (dfprod) dFoldRow.prod = [dfprod];
+					rec.messages.push(dFoldRow);
 					if (onScreen()) appendCompacted(ev.content || '', ev.folded, ev.kept, dFoldTs);
 				}
 			} else if (ev.type === 'error') {
@@ -55077,13 +55249,15 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 				// runErrand finished-guard (an assistant message whose `iturn` is the turn,
 				// with content) stands a re-collect down before it can re-take the released
 				// lease and re-bill -- the transcript belt to the `done` report's braces.
-				rec.messages.push({ role: 'assistant', content: replyText,
+				var dAns = { role: 'assistant', content: replyText,
 					mid: dmid, iturn: detached ? String(detached.turnId) : undefined,
-					ranOn: selfDeviceId(), ts: Date.now() });
+					ranOn: selfDeviceId(), ts: Date.now() };
+				if (daimonProd()) dAns.prod = [dprod];
+				rec.messages.push(dAns);
 			}
 			// The live-stream buffer is spent: the answer is in `messages` now, so the next
 			// progress frame reads it from there, not from here.
-			if (detached) { try { delete _liveTurn[String(detached.turnId)]; delete _liveMid[String(detached.turnId)]; } catch (e) { /* bounded map */ } }
+			if (detached) { try { delete _liveTurn[String(detached.turnId)]; delete _liveMid[String(detached.turnId)]; delete _liveProd[String(detached.turnId)]; } catch (e) { /* bounded map */ } }
 			// #22: the engine appends the end-of-turn changed-files note
 			// (diamond_versions.rs `tail_note`, via wasm/app.rs:2877) when the turn wrote
 			// anything. It is USUALLY the last element of `after`, but a turn that left
@@ -55108,10 +55282,16 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 				var tailLast = rec.messages.length ? rec.messages[rec.messages.length - 1] : null;
 				var haveTail = !!tailLast && tailLast.role === 'user' && tailLast.content === tailMsg.content;
 				if (!haveTail) {
+					// ONE RECORD PER FILE ROW, from the manifest the turn just wrote: each names
+					// the agent its entry says wrote it (`Entry.by`), daimon or worker.
+					var tailProds = await turnFileProds(diamondId,
+						_parseTailNote(tailMsg.content).v, rec.id, dumid);
 					var tailTs = Date.now();
-					rec.messages.push({ role: 'user', content: tailMsg.content,
+					var tailRow = { role: 'user', content: tailMsg.content,
 						mid: newMid(), iturn: detached ? String(detached.turnId) : undefined,
-						ts: tailTs });
+						ts: tailTs };
+					if (tailProds.length) tailRow.prod = tailProds;
+					rec.messages.push(tailRow);
 					if (onScreen()) appendUserMessage(tailMsg.content, tailTs);
 				}
 			}
@@ -55166,7 +55346,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			crystalSay(friendlyError(e));
 			rec._generating = false;
 			rec._busy = '';
-			if (detached) { try { delete _liveTurn[String(detached.turnId)]; delete _liveMid[String(detached.turnId)]; } catch (e2) { /* bounded map */ } }
+			if (detached) { try { delete _liveTurn[String(detached.turnId)]; delete _liveMid[String(detached.turnId)]; delete _liveProd[String(detached.turnId)]; } catch (e2) { /* bounded map */ } }
 			// TRAINING WHEELS — a failure BEFORE the turn is still an end of it.
 			closeFeedTurn('error');
 			// `syncComposer` is what takes the dots down, because it is what decides
@@ -55280,6 +55460,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		// and a turn the engine never announced the end of still gets this.
 		var wasR = _lastSteer[diamondId] || (_lastSteer[diamondId] = {});
 		wasR.reply = replyText;
+		wasR.prod  = dprod;		// what a proposal made from this reply is filed with
 		return replyText;
 	}
 

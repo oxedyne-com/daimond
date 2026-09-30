@@ -35,6 +35,7 @@
 //! actually meet.
 
 use crate::llm::{extract_json_bool, extract_json_number, extract_json_string, json_escape};
+use crate::rating::Author;
 
 use oxedyne_fe2o3_core::prelude::*;
 use oxedyne_fe2o3_hash::sha256;
@@ -533,6 +534,7 @@ pub struct Entry {
 	pub mark:    bool,		// a file on this computer, in a folder the user marked in
 	pub skipped: Option<String>,	// why no body was kept: "size", or the hand's own reason
 	pub folder:  Option<String>,	// which folder a workspace-relative path was in: see `needs_folder`
+	pub by:      Option<Author>,	// the agent that wrote it; None for the user's door or a walk
 }
 
 impl Entry {
@@ -549,6 +551,7 @@ impl Entry {
 			mark:    false,
 			skipped: None,
 			folder:  None,
+			by:      None,
 		}
 	}
 
@@ -590,6 +593,11 @@ impl Entry {
 		if let Some(f) = &self.folder {
 			out.push_str(&fmt!(",\"folder\":\"{}\"", json_escape(f)));
 		}
+		// Last and nested, so an older build reads the row it always read: its flat extractors
+		// find `path` and `hash` first, and none of the author's keys is one of an entry's.
+		if let Some(by) = &self.by {
+			out.push_str(&fmt!(",\"by\":{}", by.to_json()));
+		}
 		out.push('}');
 		out
 	}
@@ -610,6 +618,7 @@ impl Entry {
 			mark:    extract_json_bool(s, "mark").unwrap_or(false),
 			skipped: extract_json_string(s, "skipped"),
 			folder:  extract_json_string(s, "folder").filter(|f| !f.is_empty()),
+			by:      object_inside(s, "by").and_then(Author::from_json),
 		})
 	}
 }
@@ -1071,6 +1080,7 @@ pub struct Change {
 	pub refused: Option<String>,	// why the prior bytes could not be read, in the hand's words
 	pub wiped:   bool,		// a write in this turn left under half: see `wipes`
 	pub folder:  Option<String>,	// the folder it was made in, where known at the act: see `needs_folder`
+	pub by:      Option<Author>,	// the agent whose act left `after`, from its `ToolContext`
 }
 
 impl Change {
@@ -1079,14 +1089,14 @@ impl Change {
 	pub fn of(path: &str, body: Vec<u8>) -> Self {
 		Self { path: path.to_string(), after: Body::Held(body), before: None,
 			found: Found::Unread, carried: None, mark: false, refused: None, wiped: false,
-			folder: None }
+			folder: None, by: None }
 	}
 
 	/// A path that is no longer there.
 	pub fn gone(path: &str) -> Self {
 		Self { path: path.to_string(), after: Body::Gone, before: None,
 			found: Found::Unread, carried: None, mark: false, refused: None, wiped: false,
-			folder: None }
+			folder: None, by: None }
 	}
 }
 
@@ -1190,7 +1200,7 @@ pub fn capture_into(held: &mut Vec<(String, Change)>, raw: &str, change: Change)
 		held[at] = (raw.to_string(), change);
 		return;
 	}
-	let Change { path, after, found, carried, mark, wiped, folder, .. } = change;
+	let Change { path, after, found, carried, mark, wiped, folder, by, .. } = change;
 	let slot = &mut held[at];
 	let carried = match (carried, &after) {
 		(Some(c), _)			=> Some(c),
@@ -1209,6 +1219,8 @@ pub fn capture_into(held: &mut Vec<(String, Change)>, raw: &str, change: Change)
 		refused: slot.1.refused.take(),
 		wiped:   slot.1.wiped || wiped,
 		folder:  slot.1.folder.take().or(folder),
+		// The row is a product of whoever left the bytes that stand, so the latest act names it.
+		by,
 	};
 }
 
@@ -1302,6 +1314,7 @@ fn restarted(path: &str, now: &[u8], mark: bool, folder: Option<String>) -> Chan
 		refused: None,
 		wiped:   false,
 		folder,
+		by:      None,		// the bytes found were nobody's in this turn
 	}
 }
 
@@ -1442,6 +1455,7 @@ pub fn moved(from: (&str, bool), to: (&str, bool), what: Moving) -> (Change, Cha
 		refused: refused.clone(),
 		wiped:   false,
 		folder:  None,
+		by:      None,		// the mover names itself, which only its caller knows
 	};
 	let dst = Change {
 		path:    to.0.to_string(),
@@ -1453,6 +1467,7 @@ pub fn moved(from: (&str, bool), to: (&str, bool), what: Moving) -> (Change, Cha
 		refused,
 		wiped:   false,
 		folder:  None,
+		by:      None,
 	};
 	(src, dst)
 }
@@ -2354,6 +2369,26 @@ fn array_inside<'a>(json: &'a str, key: &str) -> Option<&'a str> {
 	None
 }
 
+/// The whole of `"key":{ … }`, braces included, or `None` where the key names no object.
+///
+/// String-aware like [`array_inside`], so a model string or a run id holding a brace does not end
+/// the object early.
+fn object_inside<'a>(json: &'a str, key: &str) -> Option<&'a str> {
+	let needle = fmt!("\"{}\":", key);
+	let mut i = match json.find(&needle) {
+		Some(p)	=> p + needle.len(),
+		None	=> return None,
+	};
+	let bytes = json.as_bytes();
+	while i < bytes.len() && bytes[i].is_ascii_whitespace() {
+		i += 1;
+	}
+	if i >= bytes.len() || bytes[i] != b'{' {
+		return None;
+	}
+	objects_in(&json[i..]).into_iter().next()
+}
+
 /// Each top-level `{ … }` inside an array's body, whole.
 ///
 /// The scan is string-aware, so a path holding a brace or a quote does not end an object early --
@@ -2922,6 +2957,42 @@ Garden: order two bags of bark for a bed.
 			]);
 		let got = res!(Manifest::from_json(&want.to_json()));
 		assert_eq!(want, got);
+		Ok(())
+	}
+
+	/// **A row names the agent that wrote it, and a row written before it could still reads.**  The
+	/// author is nested and last, so an entry without one is the entry an older build wrote, and an
+	/// author whose strings hold braces and quotes does not cut the row short.
+	#[test]
+	fn test_an_entry_carries_its_author_and_one_without_still_parses_00() -> Outcome<()> {
+		let mut worker = e("notes/a.md", "new\n", Some("old\n"));
+		worker.by = Some(Author {
+			role: "worker".to_string(),
+			m:    "accounts/fireworks/models/glm-5p2".to_string(),
+			pv:   "fireworks".to_string(),
+			sp:   "sp1:3f9a0c12".to_string(),
+			run:  "w-{7}\"x\"".to_string(),
+		});
+		let mut daimon = e("crystal.md", "c", None);
+		daimon.by = Some(Author { role: "daimon".to_string(), m: "glm-5".to_string(),
+			..Default::default() });
+		let walked = e("out/log.txt", "ran", None);
+		let want = Manifest::new(Cause::Turn, 17, "m_1", "", vec![worker.clone(), daimon, walked]);
+		let json = want.to_json();
+		let got = res!(Manifest::from_json(&json));
+		assert_eq!(want, got);
+		assert_eq!(got.files[0].by.as_ref().map(|a| a.run.as_str()), Some("w-{7}\"x\""));
+		assert_eq!(got.files[2].by, None);
+		// The author follows every field an older reader looks for.
+		let row = worker.to_json();
+		assert!(row.ends_with(&fmt!(",\"by\":{}}}", worker.by.as_ref().map(|a| a.to_json())
+			.unwrap_or_default())), "{}", row);
+		// A manifest from before authors parses as it always did.
+		let old = r#"{"v":1,"ts":5,"cause":"turn","turn":"","note":"","files":[{"path":"a.md","hash":"h","bytes":1}]}"#;
+		let got = res!(Manifest::from_json(old));
+		assert_eq!(got.files.len(), 1);
+		assert_eq!(got.files[0].by, None);
+		assert_eq!(got.files[0].path, "a.md");
 		Ok(())
 	}
 
@@ -3750,7 +3821,7 @@ Garden: order two bags of bark for a bed.
 		let before = if wiped { copy } else { found.map(|b| b.to_vec()) };
 		capture_into(held, path, Change { path: path.to_string(), after: Body::Held(after.to_vec()),
 			before, found: Found::of(found), carried: None, mark: true, refused: None, wiped,
-			folder: None });
+			folder: None, by: None });
 		wiped
 	}
 
@@ -3985,7 +4056,7 @@ Garden: order two bags of bark for a bed.
 		let row = |p: &str, was: Option<&str>, gone: bool| Entry { path: p.to_string(),
 			hash: if gone { String::new() } else { hash_of(p.as_bytes()) }, bytes: 1,
 			was: was.map(|w| w.to_string()), gone, wiped: false, mark: true, skipped: None,
-			folder: None };
+			folder: None, by: None };
 		let mut rows: Vec<(Entry, bool)> = (0..70)
 			.map(|i| (row(&fmt!("vault/new/f{}.md", i), None, false), false)).collect();
 		rows.push((row("vault/u.md", Some(&hash_of(b"u")), true), true));
@@ -4005,7 +4076,7 @@ Garden: order two bags of bark for a bed.
 	fn test_rows_holding_copies_past_the_bound_go_into_a_further_version_00() {
 		let row = |p: &str, was: Option<&str>| Entry { path: p.to_string(),
 			hash: hash_of(p.as_bytes()), bytes: 1, was: was.map(|w| w.to_string()), gone: false,
-			wiped: false, mark: true, skipped: None, folder: None };
+			wiped: false, mark: true, skipped: None, folder: None, by: None };
 		let mut rows: Vec<(Entry, bool)> = (0..10)
 			.map(|i| (row(&fmt!("vault/new/f{}.md", i), None), false)).collect();
 		for i in 0..65 {
@@ -4139,6 +4210,34 @@ Garden: order two bags of bark for a bed.
 			found: Found::of(Some(p2.as_bytes())), mark: true, ..Change::gone("vault/p.md") });
 		assert_eq!(Some(Some(b"R, before earlier trims".to_vec())),
 			entry(&held, "vault/p.md").map(|p| p.before.clone()));
+	}
+
+	/// **A row names whoever left the bytes that stand** (rating U1, `Entry.by`).  The daimon writes
+	/// a file and a worker writes over it in the same turn: the row is the worker's, and its first
+	/// copy is still what stood when the turn came.  A run begun again at bytes from outside the
+	/// turn names nobody, and the sealed run keeps its own author.
+	#[test]
+	fn test_a_folded_capture_names_the_agent_whose_bytes_stand_00() {
+		let who = |role: &str| Some(Author { role: role.to_string(), m: fmt!("{}-model", role),
+			..Default::default() });
+		let mut held: Vec<(String, Change)> = Vec::new();
+		capture_into(&mut held, "notes/a.md", Change { before: Some(b"old\n".to_vec()),
+			found: Found::of(Some(b"old\n")), by: who("daimon"),
+			..Change::of("notes/a.md", b"daimon's\n".to_vec()) });
+		capture_into(&mut held, "notes/a.md", Change { before: Some(b"daimon's\n".to_vec()),
+			found: Found::of(Some(b"daimon's\n")), by: who("worker"),
+			..Change::of("notes/a.md", b"worker's\n".to_vec()) });
+		assert_eq!(Some((Some(b"old\n".to_vec()), who("worker"))),
+			entry(&held, "notes/a.md").map(|c| (c.before.clone(), c.by.clone())));
+		// The user's editor saves over it: the turn's run is sealed with its author, and the run
+		// begun again at the user's bytes names nobody.
+		let sealed = seal_broken(&mut held, "notes/a.md", b"user's\n");
+		assert_eq!(Some(who("worker")), sealed.map(|(_, c)| c.by));
+		assert_eq!(Some(None), entry(&held, "notes/a.md").map(|c| c.by.clone()));
+		// A move's ends name nobody until the mover's caller says who it is.
+		let (src, dst) = moved(("notes/b.md", false), ("notes/c.md", false),
+			Moving::Read(b"b\n".to_vec(), None));
+		assert_eq!((None, None), (src.by, dst.by));
 	}
 
 	/// A turn end tells its own bytes from a write that came after its last act.

@@ -4747,6 +4747,9 @@
 		// nothing of the model, time, tokens or cost when that copy never replaces it.
 		RAN_FACTS.forEach(function (k) { if (m[k] != null && m[k] !== '') row[k] = ranFact(k, m[k]); });
 		if (!cut)          row.whole   = 1;
+		// THE PRODUCT RECORD, as stamped: the same object on every frame and on the final
+		// copy, so a provisional row persisted before the parcel lands carries the same bytes.
+		if (m.prod)        row.prod    = m.prod;
 		return row;
 	}
 
@@ -4966,6 +4969,7 @@
 		if (r.interrupted) m.interrupted = 1;
 		if (r.ranOn)       m.ranOn   = String(r.ranOn);
 		RAN_FACTS.forEach(function (k) { if (r[k] != null && r[k] !== '') m[k] = ranFact(k, r[k]); });
+		if (r.prod)        m.prod    = r.prod;
 		return m;
 	}
 	/// Copy a provisional row's drawable fields onto an existing one, in place, so the
@@ -4976,6 +4980,8 @@
 		dst.callId = src.callId; dst.folded = src.folded; dst.kept = src.kept;
 		dst.interrupted = src.interrupted; dst.ranOn = src.ranOn;
 		RAN_FACTS.forEach(function (k) { if (src[k] != null) dst[k] = src[k]; else delete dst[k]; });
+		// Never taken away: a record, once a row has one, is the row's for good.
+		if (src.prod) dst.prod = src.prod;
 	}
 	/// The drawable signature of a provisional row -- what a redraw or the transcript's
 	/// own `msgSig` would read, so an unchanged frame folds to null AND the final frame's

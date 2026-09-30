@@ -153,6 +153,8 @@ function makeTab(name, locks, w) {
 		SYSTEM_PROMPT: () => '',
 		cfg: { tools: false },
 		DaimondModels: { noteUse() {} },
+		// Rating U1: ensureApp tells the app who it is by, which nothing here reads.
+		noteAppProv() {}, promptPrint: () => '',
 		applyRoundLimit() {}, applyFoldSettings() {}, applyProviderRouting() {}, applyCrystalCap() {},
 		DaimondApp: class {
 			restore_session(msgs) { stat.restored = { session: msgs.map((m) => m.content) }; return msgs.length; }

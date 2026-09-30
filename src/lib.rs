@@ -60,6 +60,9 @@ pub mod llm;
 pub mod profile;
 pub mod prompts;
 pub mod protocol;
+/// Per-product rating: product handles, the author a version entry names, form `daimond/1` and the
+/// rating record.  Target-agnostic, so the gateway can link the same form it validates against.
+pub mod rating;
 pub mod session;
 /// Named instruction bundles, and the two ways a turn invokes one.
 ///

@@ -3876,6 +3876,7 @@ mod tests {
 			unconfirmed: Vec::new(),
 			by_model:    false,
 			restoring:   0,
+			by:          None,
 		}
 	}
 

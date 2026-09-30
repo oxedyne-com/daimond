@@ -3800,6 +3800,20 @@
 	/// File an already-built draft. The bytes are `oxedyne_fe2o3_mail`'s; this only
 	/// writes them where `sendDraft` and the compose panel read a draft, and never
 	/// sends. Always answers with a sentence, so a refusal reaches the model as words.
+	// Which draft each answer of `putDraftRaw` filed, keyed by the exact text it answered
+	// with. The model's tool result is that text and nothing else, so the page names the
+	// draft a `mail_draft` row made by looking its result up here -- never by reading the
+	// English sentence. Bounded: only a turn's own result is ever asked about.
+	var _drafted = [];
+	var DRAFTED_MAX = 32;
+	/// The draft a `mail_draft` result filed, `{ id, path, address }`, or null.
+	function draftOf(said) {
+		for (var i = _drafted.length - 1; i >= 0; i--) {
+			if (_drafted[i].said === said) return _drafted[i].draft;
+		}
+		return null;
+	}
+
 	async function putDraftRaw(json) {
 		var req = parseReq(json);
 		var addr = req.address || state.sel;
@@ -3815,8 +3829,11 @@
 			if (deps.refreshFiles) deps.refreshFiles();
 			try { await refreshDrafts(); } catch (e) { /* the file is written regardless */ }
 			render();
-			return 'Draft saved to ' + path + ' for ' + addr + '. It is in the Mail panel drafts '
+			var said = 'Draft saved to ' + path + ' for ' + addr + '. It is in the Mail panel drafts '
 				+ 'now, where the user reviews it and presses Send. Nothing has been sent.';
+			_drafted.push({ said: said, draft: { id: id, path: path, address: addr } });
+			if (_drafted.length > DRAFTED_MAX) _drafted.shift();
+			return said;
 		} catch (e) {
 			return 'The draft could not be saved: ' + ((e && e.message) || e);
 		}
@@ -3831,6 +3848,7 @@
 		toolSearch:  toolSearch,
 		toolReadRaw: toolReadRaw,
 		putDraftRaw: putDraftRaw,
+		draftOf:     draftOf,
 		toolSender:  toolSender,
 		/// Whether any account is configured. The Message and Compose panels are
 		/// held off the chip row until one is, since neither means anything

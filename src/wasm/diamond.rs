@@ -2896,6 +2896,7 @@ pub async fn drain_turn(hold: &VersionHold, id: &str, ctx: &crate::tools::ToolCo
                         refused: None,
                         wiped:   false,
                         folder:  note.folder,
+                        by:      None,  // an earlier life of the page made it, and did not say who
                     })),
                     // The body is gone, so the note names nothing to restore.
                     Err(_) => settle_list.push(note.name),
@@ -2943,6 +2944,7 @@ pub async fn drain_turn(hold: &VersionHold, id: &str, ctx: &crate::tools::ToolCo
             refused: if away { Some(IN_ANOTHER_FOLDER.to_string()) } else { None },
             wiped:   false,
             folder:  note.folder,
+            by:      None,          // an earlier life of the page made it, and did not say who
         }));
         settle_list.push(note.name);
     }
@@ -3022,6 +3024,7 @@ pub async fn drain_turn(hold: &VersionHold, id: &str, ctx: &crate::tools::ToolCo
                 refused: None,
                 wiped:   false,
                 folder:  ch.folder.clone(),
+                by:      None,      // written from outside the turn, by nobody it can name
             });
             runs.push((raw, ch));
         }
@@ -3553,6 +3556,7 @@ pub async fn versions_record_held(
                     mark:    ch.mark,
                     skipped: ch.refused,
                     folder,
+                    by:      ch.by,
                 }, kept));
             },
             Body::TooLarge(size) => {
@@ -3566,6 +3570,7 @@ pub async fn versions_record_held(
                     mark:    ch.mark,
                     skipped: Some("size".to_string()),
                     folder,
+                    by:      ch.by,
                 }, kept));
             },
             // A ROW WITH NO BODY IS STILL A ROW. A file the daimon changed and the app could not
@@ -3583,6 +3588,7 @@ pub async fn versions_record_held(
                     mark:    ch.mark,
                     skipped: Some(ch.refused.unwrap_or_else(|| "unreadable".to_string())),
                     folder,
+                    by:      ch.by,
                 }, kept));
             },
             Body::Held(body) => {
@@ -3600,7 +3606,7 @@ pub async fn versions_record_held(
                     bodies.push((hash.clone(), body));
                 }
                 entries.push((Entry { path: ch.path, hash, bytes, was, gone: false, wiped,
-                    mark: ch.mark, skipped, folder }, kept));
+                    mark: ch.mark, skipped, folder, by: ch.by }, kept));
             },
         }
     }

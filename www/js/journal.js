@@ -258,9 +258,11 @@
 			}
 			var tid = e.stream;
 			if (!tid) return;
-			var c = turns[tid] || (turns[tid] = { turnId: tid, chatId: '', userText: '', text: '', tools: [], closed: false });
+			var c = turns[tid] || (turns[tid] = { turnId: tid, chatId: '', userText: '', text: '', tools: [], closed: false, meta: null });
 			if (e.chatId) c.chatId = e.chatId;   // present on every turn event, so placement survives a lost open
-			if (e.type === 'turn_open')       { c.userText = e.text || ''; }
+			// `meta` carries the answer's mid and its `prod`, so a recovered answer is the same
+			// product under the same record as the one the turn was writing.
+			if (e.type === 'turn_open')       { c.userText = e.text || ''; c.meta = e.meta || null; }
 			else if (e.type === 'delta')      { c.text += (e.text || ''); }
 			else if (e.type === 'tool_open')  { c.tools.push({ callId: e.callId, name: e.name, args: e.args, result: null, outcome: '', done: false }); }
 			// `e.outcome` is the engine's word; `e.failed` is what a record written before this

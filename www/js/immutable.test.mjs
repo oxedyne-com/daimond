@@ -363,6 +363,77 @@ async function main() {
 			&& dSrc.split('function applyProvisional')[1].split('function ')[0].indexOf('appendUserMessage') < 0);
 	}
 
+	// ── (h) U1 provenance: a handed-off answer's provisional and final copies carry
+	//    BYTE-IDENTICAL `prod`, stamped once at turn start (rating design §3.5). ──
+	console.log('\n(h) — the answer\'s product record is the same bytes on every copy');
+	{
+		const win = {};
+		new Function('window', readFileSync(join(HERE, 'pricing.js'), 'utf8'))(win);
+		new Function('window', readFileSync(join(HERE, 'provenance.js'), 'utf8'))(win);
+		const V = win.DaimondProvenance;
+		const AMID = 'ans-h';
+		// What runTurn stamps before a token streams, on the RUNNER.
+		const PROD = V.stamp({ h: V.h.answer('cX', AMID), k: 'answer', m: 'accounts/fireworks/models/glm-5p2',
+			pv: 'fireworks', role: 'chat', sp: 'sp1:0badf00d', d: '', c: 'cX', t: 'U', dev: 'dev-runner',
+			at: 1790000000000 });
+		const bytes = JSON.stringify(PROD);
+		// The wire: every frame is JSON (frameJson / parseFrame), so the record crosses as text.
+		const wire = (rows) => JSON.parse(JSON.stringify({ v: 1, msgs: rows })).msgs;
+
+		let t = baseTranscript();
+		// Frame 1: the live row `withLiveAnswer` builds, carrying `_liveProd`.
+		t = P.foldProvisional(t, 'U', wire([{ mid: AMID, role: 'assistant', content: 'Here ', ts: 150, prod: PROD }]));
+		const prov1 = t.filter((m) => m.mid === AMID)[0];
+		check('(h1) the first provisional row carries the record, byte for byte',
+			!!prov1 && prov1.provisional === 1 && JSON.stringify(prov1.prod) === bytes);
+		// Frame 2 grows the answer in place; the record does not move.
+		t = P.foldProvisional(t, 'U', wire([{ mid: AMID, role: 'assistant', content: 'Here is more', ts: 150, prod: PROD }])) || t;
+		check('(h2) a growing frame leaves the record exactly as it was',
+			JSON.stringify(t.filter((m) => m.mid === AMID)[0].prod) === bytes);
+		// A frame from a runner too old to stamp never strips a record already held.
+		t = P.foldProvisional(t, 'U', wire([{ mid: AMID, role: 'assistant', content: 'Here is more still', ts: 150 }])) || t;
+		check('(h3) a frame without a record does not take one away',
+			JSON.stringify(t.filter((m) => m.mid === AMID)[0].prod) === bytes);
+
+		// The FINAL frame: progressTail over the runner's settled transcript, whose answer is
+		// the message runTurn pushed with the same `aprod` object.
+		const settled = runnerSettled(AMID);
+		settled[settled.length - 1].prod = PROD;
+		const fin = wire(P.progressTail(settled, 'U', 36 * 1024));
+		check('(h4) the final frame\'s answer row carries the record (progressRow passes it)',
+			fin.some((r) => r.mid === AMID && JSON.stringify(r.prod) === bytes));
+		t = P.foldProvisional(t, 'U', fin) || t;
+		const provFinal = t.filter((m) => m.mid === AMID)[0];
+		check('(h5) the provisional copy and the final copy carry byte-identical records',
+			JSON.stringify(provFinal.prod) === JSON.stringify(settled[settled.length - 1].prod));
+
+		// A provisional copy PERSISTED before the parcel lands wins its mid on an equal
+		// length (store-first union) -- and still names the same product the same way.
+		const early = [{ role: 'user', content: 'do the thing', mid: 'U', iturn: 'U', ts: 100 },
+			Object.assign({}, provFinal)];
+		const mergedEarly = mergeMessages(early, settled);
+		check('(h6) whichever copy wins the mid, the record is the same bytes',
+			JSON.stringify(mergedEarly.filter((m) => m.mid === AMID)[0].prod) === bytes);
+		// And the record is chrome: `msgSig` does not read it, so it can never force a rebuild.
+		const bare = Object.assign({}, settled[settled.length - 1]); delete bare.prod;
+		check('(h7) the drawing signature ignores the record', msgSig(bare) === msgSig(settled[settled.length - 1]));
+		const dSrc = readFileSync(join(HERE, 'daimond.js'), 'utf8');
+		const sigSrc = dSrc.split('function msgSig(')[1].split('\n\t}')[0];
+		check('(h8) daimond.js msgSig does not read `prod` either', sigSrc.indexOf('prod') < 0);
+		check('(h9) the live row takes the record stamped at turn start (withLiveAnswer reads _liveProd)',
+			/if \(_liveProd\[id\]\) live\.prod = \[_liveProd\[id\]\]/.test(dSrc)
+			&& /_liveProd\[String\(umid\)\] = aprod/.test(dSrc) && /amsg\.prod = \[aprod\]/.test(dSrc));
+
+		// An old transcript, from before records existed, folds and merges as it always did.
+		let old = baseTranscript();
+		old = P.foldProvisional(old, 'U', wire([{ mid: 'ans-old', role: 'assistant', content: 'old answer', ts: 150 }]));
+		const oldRow = old && old.filter((m) => m.mid === 'ans-old')[0];
+		check('(h10) a row with no record folds, draws and merges unchanged',
+			!!oldRow && !('prod' in oldRow)
+			&& mergeMessages(old, [{ role: 'assistant', content: 'old answer', mid: 'ans-old', iturn: 'U', ts: 150 }])
+				.filter((m) => m.mid === 'ans-old').length === 1);
+	}
+
 	console.log(failures ? ('\nFAIL — ' + failures + '/' + checks + ' checks') : '\nALL PASS');
 	if (failures) process.exitCode = 1;
 }

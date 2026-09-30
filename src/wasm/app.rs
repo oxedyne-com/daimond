@@ -83,6 +83,14 @@ pub struct DaimondApp {
     turns:          RefCell<Vec<(String, Halt)>>,
     early:          RefCell<Vec<String>>,       // stopped before their turn had begun
     ended:          RefCell<Vec<String>>,       // lately ended, so a late stop is not kept
+    // WHICH PROVIDER SERVES THIS APP, for the author a version entry records.  Only the page
+    // knows it -- the client holds a host, and a router's host names no provider -- so the page
+    // says it once, through `set_provenance`.
+    provider: RefCell<String>,
+    // The fingerprint of the instructions each role last composed here, keyed by role and
+    // Diamond id: a Diamond app is shared per provider and model, so a second Diamond steering on
+    // the same model must not overwrite the first one's cell.  Read by `last_prompt_fingerprint`.
+    fingerprints: RefCell<std::collections::BTreeMap<(String, String), String>>,
 }
 
 /// A turn's place in its app's list of running turns, given up when the turn ends -- however it
@@ -185,6 +193,7 @@ impl DaimondApp {
             unconfirmed: Vec::new(),
             by_model:    false,
             restoring:   0,
+            by:          None,
         };
         // The whole file toolset is OPFS-backed in the browser; only the
         // shell tool has no in-browser executor, so it is left out.
@@ -216,6 +225,8 @@ impl DaimondApp {
             turns:            RefCell::new(Vec::new()),
             early:            RefCell::new(Vec::new()),
             ended:            RefCell::new(Vec::new()),
+            provider:         RefCell::new(String::new()),
+            fingerprints:     RefCell::new(std::collections::BTreeMap::new()),
         })
     }
 
@@ -848,6 +859,41 @@ impl DaimondApp {
                  constructor instead.", other.name(); Invalid, Input))),
         }
         Ok(())
+    }
+
+    /// Say who this app's writes are by, so every version entry its file tools capture names the
+    /// agent (`Entry.by`).  Called once, after construction, by the page that built it; the model
+    /// is read off the client, which is the string the request carries.
+    ///
+    /// # Arguments
+    /// * `role` - `chat` or `worker` for the app's own turns.  A Diamond app passes `daimon`, and
+    ///   its daimon and reducer name themselves per turn, so only `provider` is kept from it.
+    /// * `provider` - The serving provider's id, as the model catalogue spells it.
+    /// * `sp` - The fingerprint of the prompt the page built the app with ([`prompt_fingerprint`]).
+    /// * `run` - A worker's run id; empty for any other role.
+    pub fn set_provenance(&mut self, role: String, provider: String, sp: String, run: String) {
+        *self.provider.borrow_mut() = provider.clone();
+        self.registry.ctx.by = Some(crate::rating::Author {
+            role,
+            m:  self.agent.llm.model.clone(),
+            pv: provider,
+            sp,
+            run,
+        });
+    }
+
+    /// The fingerprint of the instructions `role` last ran under for Diamond `id` on this app, or
+    /// empty where it has not run.  `daimon` is recorded when a steering turn composes, before any
+    /// of its events streams, so a page reading this at its first row reads that turn's.
+    pub fn last_prompt_fingerprint(&self, role: String, id: String) -> String {
+        self.fingerprints.borrow().get(&(role, id)).cloned().unwrap_or_default()
+    }
+
+    /// Record the fingerprint `role` composed for `id`, and hand it back.
+    fn note_fingerprint(&self, role: &str, id: &str, instructions: &str) -> String {
+        let sp = crate::prompts::fingerprint(instructions);
+        self.fingerprints.borrow_mut().insert((role.to_string(), id.to_string()), sp.clone());
+        sp
     }
 
     /// Compose a system prompt: the role, then the user's standing instructions.
@@ -1687,6 +1733,7 @@ impl DaimondApp {
             unconfirmed: Vec::new(),
             by_model:    false,
             restoring,
+            by:          None,
         };
         let registry = ToolRegistry::new(Tool::daimon(), ctx);
         let text = match name.as_str() {
@@ -3077,6 +3124,15 @@ impl DaimondApp {
         // In send order, and this is the join the turn and the band both depend on: the band is
         // handed `local` to draw apart, and finds it by looking for it in the whole.
         let system = fmt!("{}{}", standing, local);
+        // THE INSTRUCTIONS, NOT THE MESSAGE: the role and the user's standing instructions, and
+        // not `local`, which changes whenever the folder, the marks or the crystal do.
+        let author = crate::rating::Author {
+            role: "daimon".to_string(),
+            m:    self.agent.llm.model.clone(),
+            pv:   self.provider.borrow().clone(),
+            sp:   self.note_fingerprint("daimon", id, &self.with_instructions(&standing)),
+            run:  String::new(),
+        };
         let ctx = ToolContext {
             workspace:   Workspace::unchecked(PathBuf::from("/")),
             executor:    Executor::Wasm,
@@ -3098,6 +3154,7 @@ impl DaimondApp {
             unconfirmed: waiting,
             by_model:    false,
             restoring:   0,
+            by:          Some(author),
         };
         let registry = ToolRegistry::new(Tool::daimon(), ctx)
             .with_family(self.registry.family());
@@ -3346,7 +3403,13 @@ impl DaimondApp {
                         }
                     }
                 }
+                // The paths the daimon's own ledger names are the daimon's; a capture names
+                // whichever agent made it; a walk after a command or a spawn names nobody, because
+                // nobody knows.
                 let mut changes = diamond::versions_changes(id, &named).await;
+                for ch in changes.iter_mut() {
+                    ch.by = registry.ctx.by.clone();
+                }
                 changes.extend(captured.into_iter().map(|(_, ch)| ch));
                 if !ledger.ran.is_empty() || !ledger.spawned.is_empty() {
                     changes.extend(diamond::versions_walk(id).await);
@@ -3611,12 +3674,13 @@ impl DaimondApp {
             unconfirmed: Vec::new(),
             by_model:    false,
             restoring:   0,
+            by:          None,
         };
         let registry = ToolRegistry::new(Vec::new(), ctx);
-        let reducer = Role::Reducer.compose(&self.reducer_prompt.borrow());
+        let reducer = self.with_instructions(&Role::Reducer.compose(&self.reducer_prompt.borrow()));
+        self.note_fingerprint("reducer", id, &reducer);
         // Its own stop, reached by `abort` and by no other turn's.
-        let agent = Agent::new(self.agent.llm.with_halt(Halt::new()),
-            &self.with_instructions(&reducer));
+        let agent = Agent::new(self.agent.llm.with_halt(Halt::new()), &reducer);
         let _running = self.hold_turn(String::new(), agent.llm.halt());
         // The reducer folds by the same figures as the chat, for the same reason the
         // daimon does.
@@ -3983,8 +4047,13 @@ fn event_to_js(ev: &AgentEvent) -> JsValue {
             set("type", &JsValue::from_str("interjected"));
             set("content", &JsValue::from_str(text));
         }
-        AgentEvent::Compacted { folded, kept, note, structured } => {
+        AgentEvent::Compacted { folded, kept, note, structured, model, sp } => {
             set("type", &JsValue::from_str("compacted"));
+            // Who wrote the summary, absent where no model was asked: the fold's product record.
+            if !model.is_empty() {
+                set("model", &JsValue::from_str(model));
+                set("sp",    &JsValue::from_str(sp));
+            }
             set("folded", &JsValue::from_f64(*folded as f64));
             set("kept", &JsValue::from_f64(*kept as f64));
             set("content", &JsValue::from_str(note));

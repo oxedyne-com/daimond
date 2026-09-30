@@ -765,6 +765,23 @@ pub fn compose_prompt_for(role: &str, text: &str, model: &str) -> String {
     }
 }
 
+/// The fingerprint a product records of the instructions it was made under (`sp1:` and eight hex
+/// digits), for the two roles the page composes: pass exactly what the app was built with -- the
+/// role and the user's standing instructions, without a worker's dispatching crystal.  See
+/// [`crate::prompts::fingerprint`].
+#[wasm_bindgen]
+pub fn prompt_fingerprint(text: &str) -> String {
+    crate::prompts::fingerprint(text)
+}
+
+/// Form `daimond/1` as JSON: the scale, the detail dimensions and every base tag with its pooling
+/// code, side, kinds and catalogue key.  One definition, in [`crate::rating`], for the page and
+/// the gateway alike.
+#[wasm_bindgen]
+pub fn rating_form() -> String {
+    crate::rating::form_json()
+}
+
 /// The skills this build carries, one name per line, for the `/` menu to list beside the
 /// workspace's own.
 ///

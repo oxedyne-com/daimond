@@ -972,7 +972,10 @@ pub enum AgentEvent {
     /// Its own variant rather than a line of assistant text: a fold is something the APP
     /// did, it is lossy, and the user is entitled to see it as an act rather than as prose
     /// the model produced.
-    Compacted { folded: usize, kept: usize, note: String, structured: bool },
+    ///
+    /// `model` and `sp` say who wrote the summary -- the model as sent and the fingerprint of the
+    /// compactor's instructions -- and are empty where the fold shortened without summarising.
+    Compacted { folded: usize, kept: usize, note: String, structured: bool, model: String, sp: String },
     /// A picture could not be put in front of this model.
     ///
     /// Its own variant and not an error: the turn goes on without the picture.  The app did
@@ -1175,11 +1178,15 @@ impl AgentEvent {
                 m.insert(dat!("type"), dat!("interjected"));
                 m.insert(dat!("content"), dat!(text.clone()));
             }
-            Self::Compacted { folded, kept, note, .. } => {
+            Self::Compacted { folded, kept, note, model, sp, .. } => {
                 m.insert(dat!("type"), dat!("compacted"));
                 m.insert(dat!("folded"), Dat::U64(*folded as u64));
                 m.insert(dat!("kept"), Dat::U64(*kept as u64));
                 m.insert(dat!("content"), dat!(note.clone()));
+                if !model.is_empty() {
+                    m.insert(dat!("model"), dat!(model.clone()));
+                    m.insert(dat!("sp"), dat!(sp.clone()));
+                }
             }
             Self::Unseeable { images, model } => {
                 m.insert(dat!("type"), dat!("unseeable"));
@@ -2321,13 +2328,16 @@ mod tests {
         // counts beside the sentence so a client need not parse prose to draw it.
         let ev = AgentEvent::Compacted {
             folded: 41, kept: 7, note: fmt!("Folded 41 earlier messages."),
-            structured: true,
+            structured: true, model: fmt!("glm-5"), sp: fmt!("sp1:0123abcd"),
         };
         let dm = ev.to_datmap();
         assert_eq!(dm.get(&dat!("type")), Some(&dat!("compacted")));
         assert_eq!(dm.get(&dat!("folded")), Some(&Dat::U64(41)));
         assert_eq!(dm.get(&dat!("kept")), Some(&Dat::U64(7)));
         assert_eq!(dm.get(&dat!("content")), Some(&dat!("Folded 41 earlier messages.")));
+        // And who wrote the summary, for the product record the notice carries.
+        assert_eq!(dm.get(&dat!("model")), Some(&dat!("glm-5")));
+        assert_eq!(dm.get(&dat!("sp")), Some(&dat!("sp1:0123abcd")));
         // And it is not a tool row: a client keying off `type` must not confuse the
         // two, because one is collapsible machine output and the other is a notice.
         assert_ne!(dm.get(&dat!("type")), Some(&dat!("tool_call")));

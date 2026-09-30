@@ -11044,6 +11044,11 @@ pub struct ToolContext {
     // they replace or remove at the act, into the restore's record rather than a turn's (see
     // `crate::wasm::diamond::versions_restore_open`).
     pub restoring: u64,
+    // WHO IS WRITING, for the version entries this turn's captures become (`Entry.by`): the role,
+    // the model as sent, the provider, the prompt fingerprint and a worker's run id.  `None` for a
+    // door that is the user's own act, which has no model to name, and for a context nobody has
+    // told -- a row then carries no author, which reads as unknown rather than as a wrong one.
+    pub by: Option<crate::rating::Author>,
 }
 
 impl ToolContext {
@@ -18026,7 +18031,7 @@ impl Tool {
                 if let Some(dia) = ctx.keeper() {
                     let found = Found::of(Some(&bytes));
                     let (before, wiped) = Overwrite::prior(&over, Some(bytes));
-                    Self::captured_write(&dia, &path, out.clone(), found, before, wiped);
+                    Self::captured_write(ctx, &dia, &path, out.clone(), found, before, wiped);
                 }
                 // The file on disk is now this, so a later `file_write` is anchored to what the
                 // edit left rather than to what the agent last read.
@@ -18069,7 +18074,7 @@ impl Tool {
                 if let Some(dia) = ctx.keeper() {
                     let found = Found::of(Some(&bytes));
                     let (before, wiped) = Overwrite::prior(&over, Some(bytes));
-                    Self::captured_write(&dia, &path, out.clone(), found, before, wiped);
+                    Self::captured_write(ctx, &dia, &path, out.clone(), found, before, wiped);
                 }
                 lock_cache(&ctx.read_seen).seen.insert(&at, &path, content_hash(&out));
                 Ok(fmt!("Wrote to {}, now {} bytes.{}", raw, out.len(), note))
@@ -18455,6 +18460,7 @@ impl Tool {
                         refused,
                         wiped,
                         folder:  None,
+                        by:      ctx.by.clone(),
                     }]).await;
                 // The record carries the copy now, so the hold's note would be a second one: the
                 // reservation and the note go, and the open folder's count stays with the turn.
@@ -19217,6 +19223,7 @@ impl Tool {
                                                 refused,
                                                 wiped,
                                                 folder:  None,
+                                                by:      ctx.by.clone(),
                                             });
                                     }
                                     Ok(MessageContent::text(
@@ -19269,7 +19276,7 @@ impl Tool {
                             if let Some((dia, before)) = keep {
                                 let found = Found::of(before.as_deref());
                                 let (before, wiped) = Overwrite::prior(&over, before);
-                                Self::captured_write(&dia, &path, raw.bytes, found, before, wiped);
+                                Self::captured_write(ctx, &dia, &path, raw.bytes, found, before, wiped);
                             }
                             lock_cache(&ctx.read_seen).seen.insert(&at, &path, hash);
                             return Ok(MessageContent::text(
@@ -19390,7 +19397,7 @@ impl Tool {
                 if let Some((dia, before)) = kept {
                     let found = Found::of(Some(&before));
                     let (before, wiped) = Overwrite::prior(&over, Some(before));
-                    Self::captured_write(&dia, &out, pdf.clone(), found, before, wiped);
+                    Self::captured_write(ctx, &dia, &out, pdf.clone(), found, before, wiped);
                 }
                 Self::output_made(ctx, tool, &out, &pdf).await;
                 Ok(fmt!("Compiled {} to {} ({} bytes).", src, out, pdf.len()))
@@ -20440,6 +20447,7 @@ impl Tool {
                                     refused,
                                     wiped,
                                     folder:  None,
+                                    by:      ctx.by.clone(),
                                 });
                         }
                         Ok(MessageContent::text(
@@ -20592,7 +20600,7 @@ impl Tool {
             if let Some((dia, before)) = keep {
                 let found = Found::of(before.as_deref());
                 let (before, wiped) = Overwrite::prior(&over, before);
-                Self::captured_write(&dia, &path, bytes.clone(), found, before, wiped);
+                Self::captured_write(ctx, &dia, &path, bytes.clone(), found, before, wiped);
             }
             lock_cache(&ctx.read_seen).seen.insert(&at, &path, content_hash(&bytes));
             return Ok(MessageContent::text(
@@ -20608,7 +20616,7 @@ impl Tool {
         if let Some((dia, before)) = keep {
             let found = Found::of(before.as_deref());
             let (before, wiped) = Overwrite::prior(&over, before);
-            Self::captured_write(&dia, &path, content.as_bytes().to_vec(), found, before,
+            Self::captured_write(ctx, &dia, &path, content.as_bytes().to_vec(), found, before,
                 wiped);
         }
         lock_cache(&ctx.read_seen).seen.insert(&at, &path, content_hash(content.as_bytes()));
@@ -20872,6 +20880,7 @@ impl Tool {
                                     refused: refused.clone(),
                                     wiped,
                                     folder:  None,
+                                    by:      ctx.by.clone(),
                                 });
                         }
                         // What is already on disk is said plainly. A model told only
@@ -20918,7 +20927,7 @@ impl Tool {
                     crate::wasm::diamond::capture(&dia, &raw,
                         crate::wasm::diamond::Change {
                             path: abs.clone(), after, before, found, carried: None,
-                            mark: true, refused, wiped, folder: None });
+                            mark: true, refused, wiped, folder: None, by: ctx.by.clone() });
                 }
                 return Ok(MessageContent::text(Self::edit_said(&abs, hunks.len())));
             },
@@ -21001,7 +21010,7 @@ impl Tool {
         if let Some(dia) = ctx.keeper() {
             let found = Found::of(Some(&bytes));
             let (before, wiped) = Overwrite::prior(&over, Some(bytes));
-            Self::captured_write(&dia, &path, updated.as_bytes().to_vec(), found, before,
+            Self::captured_write(ctx, &dia, &path, updated.as_bytes().to_vec(), found, before,
                 wiped);
         }
         // The edit is anchored to current on-disk content, so it merges
@@ -21182,7 +21191,7 @@ impl Tool {
         lock_cache(&ctx.read_seen).seen.remove(&at, &path);
         Self::restore_landed(rest, crate::wasm::diamond::Body::Gone);
         if let Some((dia, now, copy)) = keep {
-            Self::captured_delete(&dia, &path, Found::of(Some(&now)), copy);
+            Self::captured_delete(ctx, &dia, &path, Found::of(Some(&now)), copy);
         }
         let mut msg = fmt!("Deleted {}.", path);
         // The index lists only what is NOT on this device, so a resident file's cloud
@@ -21259,7 +21268,7 @@ impl Tool {
                         lock_cache(&ctx.read_seen).seen.remove_under(&Storage::Machine(root.clone()),
                             &from);
                         if let Some((d, h)) = hold {
-                            Self::captured_move(&d, h);
+                            Self::captured_move(ctx, &d, h);
                         }
                         Ok(MessageContent::text(fmt!("Moved {} to {}.", abs, dest)))
                     },
@@ -21322,7 +21331,7 @@ impl Tool {
         // since it read it (RD2).
         lock_cache(&ctx.read_seen).seen.remove_under(&at, &from);
         if let Some((d, h)) = hold {
-            Self::captured_move(&d, h);
+            Self::captured_move(ctx, &d, h);
         }
         Ok(MessageContent::text(fmt!("Moved {} to {}.", from, to)))
     }
@@ -21413,7 +21422,7 @@ impl Tool {
         if let Some((dia, before)) = kept {
             let found = Found::of(Some(&before));
             let (before, wiped) = Overwrite::prior(&over, Some(before));
-            Self::captured_write(&dia, &path, shot.png.clone(), found, before, wiped);
+            Self::captured_write(ctx, &dia, &path, shot.png.clone(), found, before, wiped);
         }
         Self::output_made(ctx, tool, &path, &shot.png).await;
         lock_cache(&ctx.read_seen).seen.insert(&at, &path, content_hash(&shot.png));
@@ -22019,9 +22028,15 @@ impl Tool {
     /// * `before` - The copy kept of what it replaced, or `None` for a file that was not there.
     /// * `wiped` - Did the write wipe them ([`Tool::before_overwrite`])?
     #[cfg(target_arch = "wasm32")]
-    fn captured_write(dia: &str, path: &str, after: Vec<u8>, found: Found, before: Option<Vec<u8>>,
-        wiped: bool)
-    {
+    fn captured_write(
+        ctx:    &ToolContext,
+        dia:    &str,
+        path:   &str,
+        after:  Vec<u8>,
+        found:  Found,
+        before: Option<Vec<u8>>,
+        wiped:  bool,
+    ) {
         // ONE SPELLING in the manifest, whatever the model wrote: `./x` and `x` are one file, and
         // `versionable` refuses the first, so an overwrite spelled that way kept nothing.  The
         // ledger's own spelling stays the capture's key, which is what the turn end matches on.
@@ -22042,6 +22057,7 @@ impl Tool {
             refused: None,
             wiped,
             folder:  None,
+            by:      ctx.by.clone(),
         });
     }
 
@@ -22052,7 +22068,7 @@ impl Tool {
     /// this would pass over, so nothing reaches here that is not kept.  `found` is what the delete
     /// removed, and `before` the copy kept of it: the file as the turns found it.
     #[cfg(target_arch = "wasm32")]
-    fn captured_delete(dia: &str, path: &str, found: Found, before: Vec<u8>) {
+    fn captured_delete(ctx: &ToolContext, dia: &str, path: &str, found: Found, before: Vec<u8>) {
         let kept = normalise(path);
         if !crate::wasm::diamond::versionable(dia, &kept) {
             return;
@@ -22067,6 +22083,7 @@ impl Tool {
             refused: None,
             wiped:   false,
             folder:  None,
+            by:      ctx.by.clone(),
         });
     }
 
@@ -22074,8 +22091,9 @@ impl Tool {
     /// each file it carried gone from where it was and standing where it went.  See
     /// [`Self::move_ends`], which worked them out before the move.
     #[cfg(target_arch = "wasm32")]
-    fn captured_move(dia: &str, hold: MoveHold) {
-        for (raw, change) in hold.ends.into_iter() {
+    fn captured_move(ctx: &ToolContext, dia: &str, hold: MoveHold) {
+        for (raw, mut change) in hold.ends.into_iter() {
+            change.by = ctx.by.clone();         // both ends are the mover's act
             crate::wasm::diamond::capture(dia, &raw, change);
         }
     }
@@ -22341,6 +22359,7 @@ impl Tool {
                 refused: None,
                 wiped:   false,
                 folder:  h.folder,
+                by:      None,          // a restore is the person's own act
             });
         }
     }
@@ -27125,7 +27144,7 @@ mod tests {
             Err(e) => panic!("a scratch directory: {}", e),
         };
         let ws = Workspace::new(dir).expect("ws");
-        ToolContext { workspace: ws, executor: Executor::local_default(), cwd: String::new(), path_prefix: String::new(), root: FileRoot::Workspace, read_seen: new_read_cache(), no_write: Vec::new(), daimon_of: String::new(), keeper: String::new(), unconfirmed: Vec::new(), by_model: false, restoring: 0 }
+        ToolContext { workspace: ws, executor: Executor::local_default(), cwd: String::new(), path_prefix: String::new(), root: FileRoot::Workspace, read_seen: new_read_cache(), no_write: Vec::new(), daimon_of: String::new(), keeper: String::new(), unconfirmed: Vec::new(), by_model: false, restoring: 0, by: None }
     }
 
     /// A context scoped to a Diamond, as `diamond_bounds` builds it.

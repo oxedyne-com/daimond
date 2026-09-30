@@ -1306,6 +1306,25 @@ pub fn model_note(model: &str, host: &str, dispatches: bool) -> String {
 		if dispatches { ", and how many workers you dispatch at once," } else { "" })
 }
 
+/// The fingerprint a product records of the instructions it was made under: `sp1:` and the first
+/// eight hex digits of the SHA-256 of `text`.
+///
+/// **Pass the INSTRUCTIONS, never the whole system message.**  The message a turn sends also
+/// carries what is true of that turn alone -- a daimon's folder paragraph and crystal, a worker's
+/// dispatching crystal, the briefing's tree of files -- and a fingerprint over those would change on
+/// every turn, when the point is that it changes when the user's prompt or standing instructions
+/// do and not otherwise.  What each role passes is the role's composition plus the user's
+/// `DAIMOND.md`: `Instructions.compose(role, '')` in the page, `with_instructions(role)` in the
+/// wasm, and the compactor's own prompt.
+pub fn fingerprint(text: &str) -> String {
+	let digest = oxedyne_fe2o3_hash::sha256::digest(text.as_bytes());
+	let mut out = String::from("sp1:");
+	for b in digest.iter().take(4) {
+		out.push_str(&fmt!("{:02x}", b));
+	}
+	out
+}
+
 /// Whether an absolute grant covers an absolute path, comparing whole segments so that
 /// `/home/u/ws-old` is not inside `/home/u/ws`.
 ///
@@ -1539,6 +1558,21 @@ mod tests {
 	use super::*;
 
 	use crate::tools::{diamond_bounds, fence_spec, set_push_cred, PushCred, Verdict};
+
+	/// Same text, same fingerprint; any change of a byte, another -- and the whole of the role's
+	/// composition is what it is taken over, so an edited role prompt moves it.
+	#[test]
+	fn test_a_fingerprint_follows_the_instructions_and_nothing_else_00() {
+		let chat = Role::Chat.compose_for("", "glm-5");
+		let a = fingerprint(&chat);
+		assert!(a.starts_with("sp1:") && a.len() == 12, "{}", a);
+		assert!(a[4..].bytes().all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b)));
+		assert_eq!(a, fingerprint(&Role::Chat.compose_for("", "glm-5")));
+		assert_ne!(a, fingerprint(&Role::Chat.compose_for("Answer in French.", "glm-5")));
+		assert_ne!(a, fingerprint(&fmt!("{} ", chat)));
+		// The empty string's SHA-256 opens e3b0c442, which pins the digest and the hex.
+		assert_eq!(fingerprint(""), "sp1:e3b0c442");
+	}
 
 	#[test]
 	fn test_every_role_round_trips_through_its_name() {

@@ -41,6 +41,9 @@
 
 	// ── Price table ────────────────────────────────────────────
 	// Keyed by a canonical model id. Each entry carries:
+	//   fam    — the model line across versions, for a rating's prior on
+	//            a version nobody has rated yet (vendor line + major).
+	//   cls    — the kind of model, one of CLASSES below.
 	//   in     — input (prompt) USD per 1M tokens.
 	//   out    — output (completion) USD per 1M tokens.
 	//   cached — cached-input USD per 1M tokens, when published.
@@ -49,55 +52,70 @@
 	// Grouped by vendor family. A router may serve the same weights
 	// from several hosts at slightly different rates, so a match
 	// here is a fair estimate rather than a quote.
+	// The classes a model is filed under for ratings: deliberately few,
+	// since a class is the prior for a model nobody has rated at all.
+	var CLASSES = ['frontier', 'fast', 'open-frontier', 'open-fast', 'reasoning', 'coder', 'vision'];
+
 	var TABLE = {
 
 		// ── Z.ai (GLM) ─────────────────────────────────────────
 		'glm-5.2': {
+			fam: 'glm-5', cls: 'open-frontier',
 			in: 0.6153, out: 1.9338, cached: 0.11427, ctx: 1048576,
 			alias: ['z-ai/glm-5.2', 'accounts/fireworks/models/glm-5p2', 'glm-5p2', 'glm5.2'],
 		},
 		'glm-5.1': {
+			fam: 'glm-5', cls: 'open-frontier',
 			in: 0.966, out: 3.036, cached: 0.1794, ctx: 204800,
 			alias: ['z-ai/glm-5.1', 'accounts/fireworks/models/glm-5p1', 'glm-5p1', 'glm5.1'],
 		},
 		'glm-5': {
+			fam: 'glm-5', cls: 'open-frontier',
 			in: 0.95, out: 2.55, cached: 0.20, ctx: 204800,
 			alias: ['z-ai/glm-5'],
 		},
 		'glm-4.7': {
+			fam: 'glm-4', cls: 'open-frontier',
 			in: 0.40, out: 1.75, cached: 0.08, ctx: 204800,
 			alias: ['z-ai/glm-4.7'],
 		},
 		'glm-4.7-flash': {
+			fam: 'glm-4-flash', cls: 'open-fast',
 			in: 0.06, out: 0.40, cached: 0.01, ctx: 202752,
 			alias: ['z-ai/glm-4.7-flash'],
 		},
 		'glm-4.6': {
+			fam: 'glm-4', cls: 'open-frontier',
 			in: 0.50, out: 2.00, cached: 0.10, ctx: 204800,
 			alias: ['z-ai/glm-4.6'],
 		},
 
 		// ── OpenAI open weights ────────────────────────────────
 		'gpt-oss-120b': {
+			fam: 'gpt-oss', cls: 'open-fast',
 			in: 0.037, out: 0.17, cached: null, ctx: 131072,
 			alias: ['accounts/fireworks/models/gpt-oss-120b', 'openai/gpt-oss-120b'],
 		},
 		'gpt-oss-20b': {
+			fam: 'gpt-oss', cls: 'open-fast',
 			in: 0.03, out: 0.13, cached: 0.03, ctx: 131072,
 			alias: ['openai/gpt-oss-20b'],
 		},
 
 		// ── DeepSeek ───────────────────────────────────────────
 		'deepseek-v4-pro': {
+			fam: 'deepseek-v4', cls: 'open-frontier',
 			in: 0.435, out: 0.87, cached: 0.003625, ctx: 1048576,
 			alias: ['deepseek/deepseek-v4-pro', 'accounts/fireworks/models/deepseek-v4-pro',
 				'deepseek-ai/deepseek-v4-pro'],
 		},
 		'deepseek-v4-flash': {
+			fam: 'deepseek-v4-flash', cls: 'open-fast',
 			in: 0.14, out: 0.28, cached: 0.028, ctx: 1048576,
 			alias: ['deepseek/deepseek-v4-flash'],
 		},
 		'deepseek-r1': {
+			fam: 'deepseek-r1', cls: 'reasoning',
 			in: 0.70, out: 2.50, cached: null, ctx: 163840,
 			alias: ['deepseek/deepseek-r1', 'deepseek-ai/deepseek-r1', 'deepseek-reasoner'],
 		},
@@ -105,98 +123,119 @@
 		// keeps its own entry: the substring resolver used to fold
 		// v3.2-exp onto v3.1 and bill it at more than twice its rate.
 		'deepseek-v3.1': {
+			fam: 'deepseek-v3', cls: 'open-frontier',
 			in: 0.25, out: 0.95, cached: 0.13, ctx: 163840,
 			alias: ['deepseek/deepseek-chat-v3.1', 'deepseek-chat-v3.1',
 				'deepseek-ai/deepseek-v3.1', 'deepseek-v3p1'],
 		},
 		'deepseek-v3.1-terminus': {
+			fam: 'deepseek-v3', cls: 'open-frontier',
 			in: 0.27, out: 1.00, cached: 0.135, ctx: 163840,
 			alias: ['deepseek/deepseek-v3.1-terminus'],
 		},
 		'deepseek-v3.2': {
+			fam: 'deepseek-v3', cls: 'open-frontier',
 			in: 0.269, out: 0.40, cached: 0.1345, ctx: 163840,
 			alias: ['deepseek/deepseek-v3.2', 'deepseek-ai/deepseek-v3.2', 'deepseek-v3p2'],
 		},
 		'deepseek-v3.2-exp': {
+			fam: 'deepseek-v3', cls: 'open-frontier',
 			in: 0.27, out: 0.41, cached: null, ctx: 163840,
 			alias: ['deepseek/deepseek-v3.2-exp'],
 		},
 
 		// ── Moonshot (Kimi) ────────────────────────────────────
 		'kimi-k2': {
+			fam: 'kimi-k2', cls: 'open-frontier',
 			in: 0.57, out: 2.30, cached: null, ctx: 131072,
 			alias: ['moonshotai/kimi-k2', 'moonshotai/kimi-k2-instruct', 'kimi-k2-instruct'],
 		},
 		'kimi-k2.5': {
+			fam: 'kimi-k2', cls: 'open-frontier',
 			in: 0.57, out: 2.85, cached: 0.095, ctx: 262144,
 			alias: ['moonshotai/kimi-k2.5'],
 		},
 		'kimi-k2.6': {
+			fam: 'kimi-k2', cls: 'open-frontier',
 			in: 0.646, out: 2.72, cached: 0.1088, ctx: 262144,
 			alias: ['moonshotai/kimi-k2.6', 'accounts/fireworks/models/kimi-k2p6', 'kimi-k2p6',
 				'kimi-k2-6'],
 		},
 		'kimi-k2-thinking': {
+			fam: 'kimi-k2', cls: 'reasoning',
 			in: 0.60, out: 2.50, cached: 0.15, ctx: 262144,
 			alias: ['moonshotai/kimi-k2-thinking'],
 		},
 		'kimi-k3': {
+			fam: 'kimi-k3', cls: 'open-frontier',
 			in: 3.00, out: 15.00, cached: 0.30, ctx: 1048576,
 			alias: ['moonshotai/kimi-k3'],
 		},
 
 		// ── Meta (Llama) ───────────────────────────────────────
 		'llama-3.3-70b': {
+			fam: 'llama-3', cls: 'open-fast',
 			in: 0.13, out: 0.40, cached: null, ctx: 131072,
 			alias: ['llama-3.3-70b-versatile', 'meta-llama/llama-3.3-70b-instruct', 'llama3.3-70b'],
 		},
 		'llama-4-scout': {
+			fam: 'llama-4-scout', cls: 'open-fast',
 			in: 0.10, out: 0.30, cached: null, ctx: 1310720,
 			alias: ['meta-llama/llama-4-scout', 'meta-llama/llama-4-scout-17b-16e-instruct'],
 		},
 		'llama-4-maverick': {
+			fam: 'llama-4-maverick', cls: 'open-fast',
 			in: 0.20, out: 0.80, cached: null, ctx: 1048576,
 			alias: ['meta-llama/llama-4-maverick', 'meta-llama/llama-4-maverick-17b-128e-instruct'],
 		},
 
 		// ── Qwen ───────────────────────────────────────────────
 		'qwen3-235b': {
+			fam: 'qwen3', cls: 'open-frontier',
 			in: 0.455, out: 1.82, cached: null, ctx: 131072,
 			alias: ['qwen/qwen3-235b-a22b', 'qwen3-235b-a22b', 'qwen/qwen3-235b'],
 		},
 		'qwen3-coder': {
+			fam: 'qwen3-coder', cls: 'coder',
 			in: 0.30, out: 1.00, cached: 0.10, ctx: 262144,
 			alias: ['qwen/qwen3-coder'],
 		},
 		'qwen3-max': {
+			fam: 'qwen3-max', cls: 'frontier',
 			in: 0.78, out: 3.90, cached: 0.156, ctx: 262144,
 			alias: ['qwen/qwen3-max'],
 		},
 		'qwen3.7-plus': {
+			fam: 'qwen3-plus', cls: 'fast',
 			in: 0.32, out: 1.28, cached: 0.064, ctx: 1000000,
 			alias: ['qwen/qwen3.7-plus', 'accounts/fireworks/models/qwen3p7-plus', 'qwen3p7-plus'],
 		},
 
 		// ── MiniMax ────────────────────────────────────────────
 		'minimax-m2': {
+			fam: 'minimax-m2', cls: 'open-frontier',
 			in: 0.255, out: 1.02, cached: null, ctx: 204800,
 			alias: ['minimax/minimax-m2'],
 		},
 		'minimax-m2.5': {
+			fam: 'minimax-m2', cls: 'open-frontier',
 			in: 0.15, out: 0.90, cached: 0.05, ctx: 204800,
 			alias: ['minimax/minimax-m2.5'],
 		},
 		'minimax-m3': {
+			fam: 'minimax-m3', cls: 'open-frontier',
 			in: 0.30, out: 1.20, cached: 0.06, ctx: 1048576,
 			alias: ['minimax/minimax-m3'],
 		},
 
 		// ── xAI ────────────────────────────────────────────────
 		'grok-4.5': {
+			fam: 'grok-4', cls: 'frontier',
 			in: 2.00, out: 6.00, cached: 0.30, ctx: 500000,
 			alias: ['x-ai/grok-4.5'],
 		},
 		'grok-4.3': {
+			fam: 'grok-4', cls: 'frontier',
 			in: 1.25, out: 2.50, cached: 0.20, ctx: 1000000,
 			alias: ['x-ai/grok-4.3'],
 		},
@@ -218,26 +257,32 @@
 		// `AnthUsage::into_usage` in src/llm.rs, which folds writes in
 		// with the fresh prompt tokens for the same reason.
 		'claude-fable-5': {
+			fam: 'claude-fable-5', cls: 'frontier',
 			in: 10.00, out: 50.00, cached: 1.00, ctx: 1000000,
 			alias: ['anthropic/claude-fable-5'],
 		},
 		'claude-mythos-5': {
+			fam: 'claude-mythos-5', cls: 'frontier',
 			in: 10.00, out: 50.00, cached: 1.00, ctx: 1000000,
 			alias: ['anthropic/claude-mythos-5'],
 		},
 		'claude-opus-5': {
+			fam: 'claude-opus-5', cls: 'frontier',
 			in: 5.00, out: 25.00, cached: 0.50, ctx: 1000000,
 			alias: ['anthropic/claude-opus-5'],
 		},
 		'claude-opus-4-8': {
+			fam: 'claude-opus-4', cls: 'frontier',
 			in: 5.00, out: 25.00, cached: 0.50, ctx: 1000000,
 			alias: ['anthropic/claude-opus-4-8'],
 		},
 		'claude-opus-4-7': {
+			fam: 'claude-opus-4', cls: 'frontier',
 			in: 5.00, out: 25.00, cached: 0.50, ctx: 1000000,
 			alias: ['anthropic/claude-opus-4-7'],
 		},
 		'claude-opus-4-6': {
+			fam: 'claude-opus-4', cls: 'frontier',
 			in: 5.00, out: 25.00, cached: 0.50, ctx: 1000000,
 			alias: ['anthropic/claude-opus-4-6'],
 		},
@@ -248,14 +293,17 @@
 		// table that quotes list price against a discounted invoice is
 		// the overstatement this file was rewritten to stop.
 		'claude-sonnet-5': {
+			fam: 'claude-sonnet-5', cls: 'frontier',
 			in: 2.00, out: 10.00, cached: 0.20, ctx: 1000000,
 			alias: ['anthropic/claude-sonnet-5'],
 		},
 		'claude-sonnet-4-6': {
+			fam: 'claude-sonnet-4', cls: 'frontier',
 			in: 3.00, out: 15.00, cached: 0.30, ctx: 1000000,
 			alias: ['anthropic/claude-sonnet-4-6'],
 		},
 		'claude-haiku-4.5': {
+			fam: 'claude-haiku-4', cls: 'fast',
 			in: 1.00, out: 5.00, cached: 0.10, ctx: 200000,
 			alias: ['anthropic/claude-haiku-4.5', 'claude-haiku-4-5'],
 		},
@@ -264,14 +312,17 @@
 		// turn at a twelfth of what it costs, and an Opus 4.1 turn at a
 		// fortieth. Understating a bill is not the safe direction either.
 		'claude-opus-4-5': {
+			fam: 'claude-opus-4', cls: 'frontier',
 			in: 5.00, out: 25.00, cached: 0.50, ctx: 200000,
 			alias: ['anthropic/claude-opus-4-5', 'claude-opus-4-5-20251101'],
 		},
 		'claude-sonnet-4-5': {
+			fam: 'claude-sonnet-4', cls: 'frontier',
 			in: 3.00, out: 15.00, cached: 0.30, ctx: 200000,
 			alias: ['anthropic/claude-sonnet-4-5', 'claude-sonnet-4-5-20250929'],
 		},
 		'claude-opus-4-1': {
+			fam: 'claude-opus-4', cls: 'frontier',
 			in: 15.00, out: 75.00, cached: 1.50, ctx: 200000,
 			alias: ['anthropic/claude-opus-4-1', 'claude-opus-4-1-20250805'],
 		},
@@ -280,26 +331,32 @@
 		// Not open weights, but one line away in the picker, and the
 		// fallback priced them at a quarter of what a turn costs.
 		'gpt-5.4': {
+			fam: 'gpt-5', cls: 'frontier',
 			in: 2.50, out: 15.00, cached: 0.25, ctx: 1050000,
 			alias: ['openai/gpt-5.4'],
 		},
 		'gpt-5.4-mini': {
+			fam: 'gpt-5-mini', cls: 'fast',
 			in: 0.75, out: 4.50, cached: 0.075, ctx: 400000,
 			alias: ['openai/gpt-5.4-mini'],
 		},
 		'gpt-5.2': {
+			fam: 'gpt-5', cls: 'frontier',
 			in: 1.75, out: 14.00, cached: 0.175, ctx: 400000,
 			alias: ['openai/gpt-5.2'],
 		},
 		'gemini-3.1-pro': {
+			fam: 'gemini-3-pro', cls: 'frontier',
 			in: 2.00, out: 12.00, cached: 0.20, ctx: 1048576,
 			alias: ['google/gemini-3.1-pro-preview'],
 		},
 		'gemini-3.6-flash': {
+			fam: 'gemini-3-flash', cls: 'fast',
 			in: 1.50, out: 7.50, cached: 0.15, ctx: 1048576,
 			alias: ['google/gemini-3.6-flash'],
 		},
 		'gemini-2.5-flash': {
+			fam: 'gemini-2-flash', cls: 'fast',
 			in: 0.30, out: 2.50, cached: 0.03, ctx: 1048576,
 			alias: ['google/gemini-2.5-flash'],
 		},
@@ -339,6 +396,43 @@
 		var key = norm(model);
 		if (!key) return null;
 		return INDEX[key] ? TABLE[INDEX[key]] : null;
+	}
+
+	// A model string as a person would write it: lower case, the last
+	// path segment, a provider's `NpM` read as `N.M`. What an unknown
+	// model is filed under, so `accounts/x/models/foo-2p1` and
+	// `foo-2.1` rate as one model even with no table entry for either.
+	function spelled(model) {
+		var seg = String(model == null ? '' : model).trim().toLowerCase().split('/').pop();
+		return seg.replace(/(\d)p(\d)/g, '$1.$2');
+	}
+
+	// The family of a model the table does not know, guessed from its
+	// name: a trailing date goes (`-20251001`, `-2025-10-01`), then any
+	// minor version after the first number (`glm-5.3` → `glm-5`,
+	// `claude-opus-4-9` → `claude-opus-4`). A guess, and `identify`
+	// says so.
+	function inferFamily(cm) {
+		var s = cm.replace(/[-_@](19|20)\d{2}-?\d{2}-?\d{2}$/, '');
+		var m = /^(.*?[a-z][a-z0-9]*?-?\d+)(?:[.\-]\d+)+$/.exec(s);
+		return m ? m[1] : s;
+	}
+
+	/// Which model this is, for a product record or a rating: `{ cm,
+	/// fam, cls }`, the canonical id and the table's family and class,
+	/// with `fi: 1` where the family was guessed.
+	///
+	/// **`resolveExact` only.** `resolve`'s containment fallback is kept
+	/// for prices and marked `near` there precisely because it can land
+	/// on a different model, and a rating filed under the wrong model is
+	/// worse than one filed under an unknown one. An unknown model keeps
+	/// its own spelling as `cm`, a guessed family and class `unknown`.
+	function identify(model) {
+		var key = norm(model);
+		var id = key ? INDEX[key] : null;
+		if (id) return { cm: id, fam: TABLE[id].fam, cls: TABLE[id].cls };
+		var cm = spelled(model);
+		return { cm: cm, fam: inferFamily(cm), fi: 1, cls: 'unknown' };
 	}
 
 	// Resolve a caller's model string to a table entry, or null.
@@ -499,6 +593,8 @@
 		priceFor:      priceFor,
 		contextWindow: contextWindow,
 		rate:          rate,
+		identify:      identify,
+		classes:       CLASSES.slice(),
 		/// The fallback rate applied to unknown models, for display.
 		fallback:      { inUsdPerM: FALLBACK.inUsdPerM, outUsdPerM: FALLBACK.outUsdPerM, cachedInUsdPerM: FALLBACK.cachedInUsdPerM },
 		/// The table and both resolvers, for the pure-node hygiene check
@@ -508,6 +604,6 @@
 		/// `resolve` can place must carry no window. Read-only by
 		/// convention.
 		_core: { TABLE: TABLE, INDEX: INDEX, KEYS: KEYS, norm: norm,
-			resolve: resolve, resolveExact: resolveExact },
+			resolve: resolve, resolveExact: resolveExact, CLASSES: CLASSES },
 	};
 })();
