@@ -164,32 +164,6 @@
 	vertical-align: middle;
 }
 
-/* One tap up, one tap down. Plain glyph buttons, not icons -- the same
-   idiom tracker.js uses for a proposal's upvote, so a trust tap on a model
-   reads like the vote it is rather than a different control language. */
-.mdash-rate {
-	display: inline-flex;
-	gap: 4px;
-	align-items: center;
-	white-space: nowrap;
-}
-.mdash-rate-btn {
-	appearance: none;
-	border: 1px solid var(--border-strong);
-	background: var(--bg-tertiary);
-	color: var(--text-secondary);
-	font: inherit;
-	font-size: var(--fs-2xs);
-	line-height: 1;
-	padding: 4px 7px;
-	border-radius: var(--radius-sm);
-	cursor: pointer;
-	font-variant-numeric: tabular-nums;
-}
-.mdash-rate-btn:hover { filter: brightness(1.08); }
-.mdash-rate-up.mdash-has   { color: var(--ok); border-color: var(--ok); }
-.mdash-rate-down.mdash-has { color: var(--danger); border-color: var(--danger); }
-
 .mdash-divider {
 	height: 1px;
 	background: var(--border);

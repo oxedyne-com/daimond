@@ -20,7 +20,9 @@
 //      of outline / box-shadow / background / border / colour. `outline: none`
 //      with nothing put back fails here.
 //   5. A dialog opens focused, keeps Tab inside it, closes on Escape, and gives
-//      the focus back to the control that opened it.
+//      the focus back to the control that opened it. Two dialogs are held to it: the
+//      new-Diamond dialog, and (Rating U2) the popup behind an answer's details control,
+//      with Details shut and open.
 //   6. The appearance menu and the panel gallery each move focus into
 //      themselves, close on Escape, and return focus to their opener.
 //   7. The command palette opens with the caret in its box and swallows Tab, so
@@ -42,7 +44,7 @@
 // (DAIMOND_MOCK_PORT, default 9099). No gateway.
 
 import fs from 'node:fs';
-import { open, newChat, scratch } from './harness.mjs';
+import { open, newChat, chat, scratch } from './harness.mjs';
 
 const out = [];
 let bad = 0;
@@ -398,6 +400,62 @@ check(!(await page.$('.dlg-card')), 'Escape closes the dialog');
 w = await page.evaluate(WHERE, null);
 check(w.id === 'new-diamond-btn', 'closing the dialog gives the focus back to the control that opened it',
 	`focus is on ${w.name}`);
+
+// ── 5b. Rating U2: the popup behind an answer's details control is a dialog too ─
+// It is drawn by `openBodyDialog` (role="dialog", aria-modal, labelled by its heading) with the
+// five steps, the tags, Details and Withdraw inside it, and it must meet the same four properties.
+// An answer is made first (the chat from `newChat` is empty). The control is reached and pressed by the
+// KEYBOARD (focus, then Enter), because this file is about driving the app without a mouse, and because a
+// pointer press on an arrow deliberately leaves the focus where it was (the composer keeps it; widget W5), so
+// the "control that opened it" is only the control when a key opened it.
+await chat(s, '@text A11Y-RATE an answer to rate');
+await page.evaluate(() => window.scrollTo(0, 0));
+const rateFocused = await page.evaluate(() => {
+	const b = [...document.querySelectorAll('#chat-output .ctile-rate-more')].find((x) => x.getClientRects().length);
+	if (!b) return false;
+	b.scrollIntoView({ block: 'center', inline: 'center' });
+	b.focus();
+	return document.activeElement === b;
+});
+check(rateFocused, 'an answer shows a details control that takes keyboard focus', rateFocused ? null : 'none visible, or it would not focus');
+if (rateFocused) {
+	await page.keyboard.press('Enter');
+	await page.waitForSelector('.rate-card', { timeout: 8000 }).catch(() => {});
+	await page.waitForTimeout(400);
+	const dlg = await page.evaluate(() => {
+		const c = document.querySelector('.rate-card');
+		if (!c) return null;
+		const h = c.getAttribute('aria-labelledby') && document.getElementById(c.getAttribute('aria-labelledby'));
+		return { role: c.getAttribute('role'), modal: c.getAttribute('aria-modal'), name: h ? h.textContent.trim() : '' };
+	});
+	check(!!dlg && dlg.role === 'dialog' && dlg.modal === 'true' && dlg.name.length > 0,
+		'the rating popup is a labelled modal dialog', JSON.stringify(dlg));
+	w = await page.evaluate(WHERE, '.rate-card');
+	check(w.inside, 'the rating popup puts the focus inside itself when it opens', w.inside ? w.name : `focus is on ${w.name}`);
+	for (const state of ['Details shut', 'Details open']) {
+		if (state === 'Details open') {
+			await page.click('.rate-card .tile-dlg-adv-sum', { force: true });
+			await page.waitForTimeout(300);
+			w = await page.evaluate(WHERE, '.rate-card');
+		}
+		const rstops = await page.evaluate(COUNT_IN, { sel: '.rate-card', focusSel: FOCUS_SEL });
+		let rEscaped = -1, rTo = '';
+		for (let i = 0; i < rstops + 3; i++) {
+			await page.keyboard.press('Tab');
+			await page.waitForTimeout(50);
+			const x = await page.evaluate(WHERE, '.rate-card');
+			if (!x.inside) { rEscaped = i + 1; rTo = x.name; break; }
+		}
+		check(rstops > 0 && rEscaped === -1, `Tab cannot walk out of the rating popup, ${state} (${rstops} stops, ${rstops + 3} presses)`,
+			rEscaped === -1 ? null : `Tab ${rEscaped} landed on ${rTo}, behind the scrim`);
+	}
+	await page.keyboard.press('Escape');
+	await page.waitForTimeout(400);
+	check(!(await page.$('.rate-card')), 'Escape closes the rating popup');
+	w = await page.evaluate(WHERE, null);
+	check(/ctile-rate-more/.test(w.name), 'closing the rating popup gives the focus back to the details control that opened it',
+		`focus is on ${w.name}`);
+}
 
 // ── 6. The appearance menu ──────────────────────────────────────────
 await press(page, '#settings-menu-btn');

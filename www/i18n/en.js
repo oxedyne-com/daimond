@@ -1875,8 +1875,8 @@
 	// "infer" reached eight languages unnoticed.
 	'spend.cat_unlisted': 'Not accounted for',
 
-	// ── Model stats (private per-model dashboard + one-tap trust rating) ──
-	// Read-only over the local cost ledger and the local rating store; no
+	// ── Model stats (private per-model dashboard) ──
+	// Read-only over the local cost ledger and the old local trust counts; no
 	// network path. See www/js/modeldash.js.
 	'modeldash.title':        'Model stats',
 	'modeldash.hint':         'This device only',
@@ -1895,13 +1895,88 @@
 	'modeldash.col_rating':   'Trust',
 	'modeldash.unknown_model': '(unknown)',
 	'modeldash.default_badge': 'default',
-	'modeldash.rate_up_help':   'I trust this model. Taps add up; they are not a single switch.',
-	'modeldash.rate_down_help': 'I do not trust this model. Taps add up; they are not a single switch.',
 	// D-20260921-01 -- the ledger now carries a duration and an outcome per
 	// turn, so these two are real figures rather than a gap.
 	'modeldash.col_median_help':    'Median time from send to answer, across turns this window recorded a duration for.',
 	'modeldash.col_fail_rate_help': 'Failed or stopped turns as a share of turns with a recorded outcome ({failed} failed, {stopped} stopped).',
 	'modeldash.gap_note': 'Not shown: how turn time is spread out — only the median. Daimond does not record the full spread yet.',
+	'modeldash.rating_counts': '{up} up · {down} down',
+
+	// ── Rating: the arrows, the popup and the Rating tile ──
+	// The tag, scale and dimension keys are the ones src/rating.rs names (`rating.tag.<id>`,
+	// `rating.scale.<word>`, `rating.dim.<id>`), so the form and the words cannot drift.
+	// Budgets, in code points, in every language: scale words 9, tags 20, dimensions 26, title 24.
+	// `{score}` is a signed figure, `{what}` a link to the rated answer, `{time}` its local time.
+	// The words come through the form's own keys, so each call site names a variable, and the list is
+	// written out here for dev/i18ncheck.mjs: `rateTagWord` (`tagKey`), the popup's steps (`sc.key`) and
+	// its dimensions (`d.key`). ratingi18n.test.mjs reads the same ids from src/rating.rs.
+	// i18n-indirect: daimond.js tagKey = rating.tag.wrong rating.tag.ignored rating.tag.long rating.tag.short rating.tag.style rating.tag.tool rating.tag.refused rating.tag.slow rating.tag.correct rating.tag.followed rating.tag.concise rating.tag.style_good rating.tag.broke rating.tag.wrong_change rating.tag.incomplete rating.tag.scope rating.tag.wiped rating.tag.clean rating.tag.complete rating.tag.lost rating.tag.bloated rating.tag.faithful rating.tag.tidy rating.tag.tone rating.tag.ready rating.tag.not_useful rating.tag.already_knew rating.tag.useful
+	// i18n-indirect: daimond.js sc.key = rating.scale.wrong rating.scale.poor rating.scale.fine rating.scale.good rating.scale.great
+	// i18n-indirect: daimond.js d.key = rating.dim.correct rating.dim.followed rating.dim.length rating.dim.style
+	// The control
+	'rating.aria_group':       'Rate this answer',
+	'rating.aria_up':          'Rate up',
+	'rating.aria_down':        'Rate down',
+	'rating.aria_more':        'Rating details',
+	// The popup
+	'rating.title':            'Rate this answer',
+	'rating.sec_score':        'Score',
+	'rating.sec_tags':         'Tags',
+	'rating.details':          'Details',
+	'rating.note_label':       'In your words',
+	'rating.where':            'Saved in this chat, on your devices.',
+	'rating.model':            'Model: {model}',
+	'rating.clear':            'Withdraw',
+	// The Rating tile
+	'rating.who':              'Rating',
+	'rating.log_line':         '{score} on {what}',
+	'rating.log_answer':       'the answer of {time}',
+	'rating.log_cleared':      'Withdrawn from {what}',
+	'rating.log_gone':         'an answer no longer here',
+	'rating.quote':            '“{text}”',
+	// The chip rows
+	'rating.tags_down':        'What was wrong',
+	'rating.tags_up':          'What went well',
+	// The scale, five steps in words
+	'rating.scale.wrong':      'Wrong',
+	'rating.scale.poor':       'Poor',
+	'rating.scale.fine':       'Fine',
+	'rating.scale.good':       'Good',
+	'rating.scale.great':      'Great',
+	// The four dimensions
+	'rating.dim.correct':      'Correct',
+	'rating.dim.followed':     'Followed the instructions',
+	'rating.dim.length':       'Right length',
+	'rating.dim.style':        'Style',
+	// The tags, all 28 of src/rating.rs
+	'rating.tag.wrong':        'Wrong',
+	'rating.tag.ignored':      'Ignored instructions',
+	'rating.tag.long':         'Too long',
+	'rating.tag.short':        'Too short',
+	'rating.tag.style':        'Tone or format',
+	'rating.tag.tool':         'Tool use',
+	'rating.tag.refused':      'Refused or hedged',
+	'rating.tag.slow':         'Slow',
+	'rating.tag.correct':      'Correct',
+	'rating.tag.followed':     'Did as instructed',
+	'rating.tag.concise':      'Concise',
+	'rating.tag.style_good':   'Good style',
+	'rating.tag.broke':        'Broke something',
+	'rating.tag.wrong_change': 'Wrong change',
+	'rating.tag.incomplete':   'Incomplete',
+	'rating.tag.scope':        'Changed too much',
+	'rating.tag.wiped':        'Lost content',
+	'rating.tag.clean':        'Clean',
+	'rating.tag.complete':     'Complete',
+	'rating.tag.lost':         'Lost information',
+	'rating.tag.bloated':      'Bloated',
+	'rating.tag.faithful':     'Faithful',
+	'rating.tag.tidy':         'Tidy',
+	'rating.tag.tone':         'Tone',
+	'rating.tag.ready':        'Ready to send',
+	'rating.tag.not_useful':   'Not useful',
+	'rating.tag.already_knew': 'Already knew',
+	'rating.tag.useful':       'Useful',
 
 	// ── Tools ──────────────────────────────────────────────────
 	// `tools.head` and `tools.shop_fine` are placed inside markup, so any HTML

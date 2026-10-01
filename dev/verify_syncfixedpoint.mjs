@@ -88,6 +88,7 @@
 //   node dev/verify_syncfixedpoint.mjs --break forgetfiles
 //   node dev/verify_syncfixedpoint.mjs --break timekeyed
 //   node dev/verify_syncfixedpoint.mjs --break nopeerfile
+//   node dev/verify_syncfixedpoint.mjs --break nofix      # (ix): collect drops `burst` from a rating
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -202,6 +203,21 @@ const BREAKS = {
 			lastFailed = await applyParcel(state);
 		}`,
 		with: `		lastFailed = await applyParcel(state);		// BROKEN: always re-applies, even when nothing changed`,
+	}],
+	// The collect copies a rating without its `burst`, so the parcel carries a record that is not the one
+	// the chat holds (U2 of the per-product rating, the sync proofs). A rating's bytes are its identity: a
+	// drawn Rating tile is grouped by `burst`, and a record that left the device without it lands on the
+	// other as a different record under the same `mid` (first copy wins, so the loss is permanent).
+	// (ix) reddens.
+	nofix: [{
+		file: 'js/daimond.js',
+		find: '				entryI.messages = gotI.messages || [];',
+		with: `				entryI.messages = (gotI.messages || []).map(function (m) {		// BROKEN: collect drops burst
+					if (!m || m.role !== 'rating_log' || !m.rating) return m;
+					var r = {}; Object.keys(m.rating).forEach(function (k) { if (k !== 'burst') r[k] = m.rating[k]; });
+					var o = {}; Object.keys(m).forEach(function (k) { o[k] = k === 'rating' ? r : m[k]; });
+					return o;
+				});`,
 	}],
 };
 
@@ -1360,6 +1376,91 @@ check('(viii) and after two more rounds every address either device names for th
 await C.close().catch(() => {});
 
 }
+
+// ═══════════════════════════════════════════════════════════════════════
+// (ix) A RATED CHAT IS A FIXED POINT: THE THREE `rating_log` MESSAGES SURVIVE A COLLECT BYTE FOR BYTE
+// ═══════════════════════════════════════════════════════════════════════
+//
+// U2 of the per-product rating writes a rating as a `rating_log` message at the end of its chat and adds no
+// sync path of its own: the legacy `chats` section carries it, by union on `mid`. That is enough only if
+// `collectSync` hands the message over exactly as the chat holds it. A copy that lost or reordered a key
+// would still be a rating the other device could read, but it would not be the SAME record: first copy wins
+// on `mid`, so the difference would stand for ever, and the push-skip would never see it (the parcel is
+// the same bytes on every later round). The fixture is `dev/fixtures/rating_u2.json`, the three records of
+// plan section 2.3: a tap, a popup with tags, dims and a note, and a withdrawal. `burst` is the key a
+// careless copy loses first, which is what `--break nofix` does.
+console.log('\n— (ix) a chat of the three fixture ratings collects byte for byte —');
+
+const FIXTURE = fs.readFileSync(path.join(HERE, 'fixtures', 'rating_u2.json'), 'utf8');
+const RATED   = 'rating-fixture';
+/// Where two strings first differ, with a few characters either side, for a failure line that says what was lost.
+const diffAt = (got, want) => {
+	got = String(got || ''); let i = 0;
+	while (i < got.length && i < want.length && got[i] === want[i]) i++;
+	return got === want ? '' : `first difference at ${i}: got ${JSON.stringify(got.slice(Math.max(0, i - 12), i + 24))}, wanted ${JSON.stringify(want.slice(Math.max(0, i - 12), i + 24))}`;
+};
+const storedOf = (s, id) => s.page.evaluate(async (id) => {
+	const g = await window.DaimondCore.chatStore().loadMessages(id);
+	return JSON.stringify((g && g.messages) || []);
+}, id);
+// A chat the collect has not seen before has no known size, so its first collect offloads it as a ref and
+// records the size; the second carries it inline, which is how every chat but a brand-new one travels.
+// The first is therefore thrown away.
+const collectedOf = (s, id) => s.page.evaluate(async (id) => {
+	await window.DaimondCore.collectSync();
+	const c = await window.DaimondCore.collectSync();
+	const e = (c.chats || []).find((x) => x && x.id === id);
+	return e ? { present: true, inline: Array.isArray(e.messages), messages: Array.isArray(e.messages) ? JSON.stringify(e.messages) : null, ref: !!e.messagesRef } : { present: false };
+}, id);
+
+// BOTH SIDES AT REST FIRST, so that the pushes counted below belong to this chat and to nothing earlier.
+for (let i = 0; i < 3; i++) { await pull(A); await push(A); await pull(B); await push(B); }
+
+await A.page.evaluate(async ({ id, fixture }) => {
+	const store = window.DaimondCore.chatStore();
+	const list = store.stored();
+	list.push({ id: id, name: 'Rated', model: 'mock/fast', updatedAt: Date.now(),
+		messages: JSON.parse(fixture), session: null });
+	store.save(list);
+}, { id: RATED, fixture: FIXTURE });
+
+check('(ix) the fixture is the three messages of plan 2.3, and A\'s store holds them byte for byte',
+	FIXTURE.length > 1500 && JSON.parse(FIXTURE).length === 3 && JSON.parse(FIXTURE).every((m) => m.role === 'rating_log')
+	&& (await storedOf(A, RATED)) === FIXTURE, `${FIXTURE.length} bytes of fixture`);
+const cA = await collectedOf(A, RATED);
+check('(ix) A\'s collect carries the chat inline, its three messages byte-identical to the fixture',
+	cA.present && cA.inline && cA.messages === FIXTURE,
+	cA.present ? (cA.inline ? (cA.messages === FIXTURE ? 'inline, identical' : diffAt(cA.messages, FIXTURE)) : 'carried as a ref') : 'the chat is not in the collect');
+
+await push(A);
+await pull(B);
+let gotB = false;
+for (let i = 0; i < 30 && !gotB; i++) {
+	gotB = await B.page.evaluate((id) => window.DaimondCore.chatStore().stored().some((c) => c.id === id), RATED);
+	if (!gotB) await new Promise((r) => setTimeout(r, 500));
+}
+check('(ix) B applies the parcel and holds the chat', gotB, '');
+check('(ix) B\'s store holds the three messages byte-identical to the fixture', (await storedOf(B, RATED)) === FIXTURE,
+	diffAt(await storedOf(B, RATED), FIXTURE) || 'identical');
+const cB = await collectedOf(B, RATED);
+if (cB.present && cB.inline) {
+	check('(ix) B\'s collect after the apply carries them byte-identical, as A\'s does', cB.messages === FIXTURE && cB.messages === cA.messages, '');
+} else {
+	note('B carries the chat as ' + (cB.ref ? 'a ref (a sealed chunk), so its inline bytes are not compared; the store above is' : 'nothing') + ' (cB ' + JSON.stringify(cB) + ')');
+	check('(ix) B\'s collect names the chat, as a ref it can restore', cB.present && cB.ref, JSON.stringify(cB));
+}
+
+// AND THE PAIR SETTLES. Rounds until both are quiet, then one more of each must send nothing: the
+// push-skip compares the parcel with the last one sent, and a rating that came back from the other
+// device in other bytes would keep it moving.
+for (let i = 0; i < 3; i++) { await pull(A); await push(A); await pull(B); await push(B); }
+const pushedBefore = cloud.pushes.length;
+await new Promise((r) => setTimeout(r, 5500));		// past IDLE_PULL_MIN_MS
+await push(A); await push(B); await push(A); await push(B);
+check('(ix) the pair settles: another round of pushes sends nothing', cloud.pushes.length === pushedBefore,
+	`${cloud.pushes.length - pushedBefore} push(es), mailbox v${cloud.mailbox.version}`);
+check('(ix) and after it A\'s store and B\'s still hold the fixture byte for byte', (await storedOf(A, RATED)) === FIXTURE && (await storedOf(B, RATED)) === FIXTURE,
+	'A ' + (diffAt(await storedOf(A, RATED), FIXTURE) || 'identical') + '; B ' + (diffAt(await storedOf(B, RATED), FIXTURE) || 'identical'));
 
 } catch (e) {
 	console.log('  FAIL the run itself — ' + (e && e.message ? e.message : e));

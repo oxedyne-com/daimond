@@ -365,9 +365,11 @@
 :root[data-skin="daylight"] :is(.admin-note, .rail-note, .trash-note, .cap-blurb, .mail-fine, .pop-note,
 	.chat-msg-empty, .files-empty, .rel-blurb, .agents-empty, .mdash-empty, .hist-note, .mdash-note, .spend-note,
 	.tools-intro, .mode-row-blurb, .shr-note, .cfg-hint, .search-engine-note, .tag-note, .spend-sec-hint,
-	.mdash-sec-hint, .crystal-empty, .graph-empty) {
+	.mdash-sec-hint, .crystal-empty, .graph-empty, .tile-dlg-note) {
 	font-size: var(--dl-xs); font-weight: var(--w-text); color: var(--text-muted); line-height: 1.45;
 }
+/* A dialog's note is the same note; its warning variant keeps the warning colour. */
+:root[data-skin="daylight"] .tile-dlg-note.warn { color: var(--warn); }
 /* One meta reading: the mono at 10.5px, muted. A tile's own timestamp and
    size, a device's age and build already draw this way; a tile's OTHER
    stamp, a phone build's age, a file's size and a history version drew in
@@ -411,7 +413,7 @@
    (§2/cluster 5) for the one button -- `.files-btn.attach-btn` -- that wears
    both a head-tool's and this row's class. */
 :root[data-skin="daylight"] :is(.device-rename, .device-nominate, .copy-id, .ctile-copy, .attach-btn, .files-del,
-	.files-ren, .crystal-form-x, .attach-add, .tile-cog) {
+	.files-ren, .crystal-form-x, .attach-add, .tile-cog, .ctile-rate-up, .ctile-rate-down, .ctile-rate-more) {
 	height: 20px; min-height: 20px; padding: 0; border-radius: var(--radius-sm); color: var(--text-secondary);
 }
 /* `.tag-x` kept OUT of the fixed-20px group above (D-20260929-03 residual
@@ -423,12 +425,17 @@
 :root[data-skin="daylight"] .session-box-header .pptw-act {
 	height: 20px; min-height: 20px; padding: 0; border-radius: var(--radius-sm); color: var(--text-secondary);
 }
-:root[data-skin="daylight"] :is(.copy-id, .ctile-copy, .device-rename, .device-nominate) .ic { width: 16px; height: 16px; }
+:root[data-skin="daylight"] :is(.copy-id, .ctile-copy, .device-rename, .device-nominate,
+	.ctile-rate-up, .ctile-rate-down, .ctile-rate-more) .ic { width: 16px; height: 16px; }
+/* A lit arrow, and a details control holding more than a bare +1 or -1, take the light
+   selected fill, as a chosen row does. No colour: a rating is not a success or an error. */
+:root[data-skin="daylight"] :is(.ctile-rate-up, .ctile-rate-down)[aria-pressed="true"],
+:root[data-skin="daylight"] .ctile-rate-more.on { background: var(--dl-on); color: var(--text-primary); }
 :root[data-skin="daylight"] .session-box-header .pptw-act :is(svg, .ic) { width: 16px; height: 16px; }
 /* The × keeps its chip's own hue by inheritance, not the row's grey. */
 :root[data-skin="daylight"] .tag-x { color: inherit; }
 /* One inline link: --accent-text, --w-text, underlined. */
-:root[data-skin="daylight"] :is(a.legal-link, .mail-learn-more, .termp-install, .post-link) {
+:root[data-skin="daylight"] :is(a.legal-link, .mail-learn-more, .termp-install, .post-link, .rate-jump-link) {
 	color: var(--accent-text); font-weight: var(--w-text); text-decoration: underline;
 }
 :root[data-skin="daylight"] .spend-row { border-top: 0; padding: 6px 0 2px; }
@@ -531,8 +538,10 @@
 :root[data-skin="daylight"] .ctile-lbl:hover,
 :root[data-skin="daylight"] .crollup-lbl:hover { background: transparent; }
 :root[data-skin="daylight"] .ctile-dot { width: 8px; height: 8px; }
-:root[data-skin="daylight"] .ctile[data-t="user"] .ctile-dot { display: none; }
-:root[data-skin="daylight"] .ctile[data-t="user"] .ctile-who { color: var(--text-secondary); }
+:root[data-skin="daylight"] .ctile[data-t="user"] .ctile-dot,
+:root[data-skin="daylight"] .ctile[data-t="rating"] .ctile-dot { display: none; }
+:root[data-skin="daylight"] .ctile[data-t="user"] .ctile-who,
+:root[data-skin="daylight"] .ctile[data-t="rating"] .ctile-who { color: var(--text-secondary); }
 :root[data-skin="daylight"] .ctile-time { font-size: var(--dl-2xs); }
 :root[data-skin="daylight"] .ctile-body { padding: 0 12px 10px; font-size: var(--dl-md); line-height: 1.56; }
 /* Your turn reads in exactly the daimon's own type -- same face, size, weight
@@ -1349,11 +1358,10 @@
 
 /* ── Remaining controls ───────────────────────────────────── */
 /* The last of the ruled, 1px-bordered controls the sweep found: the Graph
-   bar, Email compose's fields and buttons, Model stats' rating buttons, and
+   bar, Email compose's fields and buttons, and
    the phone's Preview-sheet tabs and Web-sheet ask field (sweep item 7). */
 :root[data-skin="daylight"] .graph-btn,
 :root[data-skin="daylight"] .compose-btn,
-:root[data-skin="daylight"] .mdash-rate-btn,
 :root[data-skin="daylight"] #msheet .msheet-tab {
 	border-color: transparent;
 	background: transparent;
@@ -1362,7 +1370,6 @@
 }
 :root[data-skin="daylight"] .graph-btn:hover,
 :root[data-skin="daylight"] .compose-btn:hover,
-:root[data-skin="daylight"] .mdash-rate-btn:hover,
 :root[data-skin="daylight"] #msheet .msheet-tab:hover { background: var(--dl-hover); border-color: transparent; color: var(--text-primary); }
 /* A tab (§10): the top bar's own weight and side padding -- the Preview
    sheet's Source/Pages pair was a step heavier with no side padding. */

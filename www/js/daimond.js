@@ -11742,6 +11742,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 	document.addEventListener('visibilitychange', function () {
 		if (document.visibilityState === 'hidden') {
 			if (window.DaimondJournal) DaimondJournal.flush();
+			rateFlushAll();
 			return;
 		}
 		// Visible again, so whatever this page was doing it is not going away. See the
@@ -11760,6 +11761,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 	window.addEventListener('pagehide', function (e) {
 		_unloading = true;
 		if (window.DaimondJournal) DaimondJournal.flush();
+		rateFlushAll();
 		// A GENUINE unload only, never a bfcache suspend (`e.persisted`): on a
 		// suspend the page — and the turn running on it — is frozen and may thaw
 		// again, so handing the turn off would leave two runners once it did. A real
@@ -14569,6 +14571,10 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 	// the rendered HTML) to the clipboard.
 	var COPY_SVG = '<svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><rect x="9" y="9" width="11" height="11" rx="2"/><path d="M5 15V5a2 2 0 012-2h8"/></svg>';
 	var TICK_SVG = '<svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12l4 4 10-10"/></svg>';
+	// The rating controls, drawn as Copy is: 24 viewBox, stroked by `.ic`, no fill.
+	var RATE_UP_SVG   = '<svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 19V5M6 11l6-6 6 6"/></svg>';
+	var RATE_DOWN_SVG = '<svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M6 13l6 6 6-6"/></svg>';
+	var RATE_MORE_SVG = '<svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 9l6 6 6-6"/></svg>';
 	// The app's closer, drawn rather than typed. The same path the static markup
 	// uses (www/index.html, every panel head), so a dialog built in JS wears the
 	// identical cross to one written in HTML.
@@ -14956,7 +14962,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 	// Every render path in this file builds its content into one of these, so the
 	// streaming turn and a reload draw the identical shape.
 	var TILE_DIR  = { user: 'to', wire: 'to', think: 'from', reply: 'from', tool: 'local', handoff: 'local',
-		leak: 'local' };
+		leak: 'local', rating: 'local' };
 	var TILE_ROLL = { think: 1, tool: 1, wire: 1 };   // consecutive runs of these roll up
 
 	/// The speaker word for a tile type, translated where a key exists.
@@ -15050,7 +15056,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		tile.appendChild(lbl); tile.appendChild(body);
 		tile._lbl = lbl; tile._body = body; tile._peek = peek; tile._meta = meta; tile._who = who; tile._time = time;
 		lbl.addEventListener('click', function (e) {
-			if (e.target.closest('.ctile-copy')) return;
+			if (e.target.closest('.ctile-copy, .ctile-rate')) return;
 			if (chatOutput.classList.contains('selecting')) { toggleSelLeaf(tile); return; }
 			var sel = window.getSelection();
 			if (sel && String(sel).length) return;
@@ -15118,7 +15124,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		box.appendChild(lbl); box.appendChild(rbody);
 		box._body = rbody; box._count = cnt; box._noun = noun; box._peek = peek; box._type = type;
 		lbl.addEventListener('click', function (e) {
-			if (e.target.closest('.ctile-copy')) return;
+			if (e.target.closest('.ctile-copy, .ctile-rate')) return;
 			if (chatOutput.classList.contains('selecting')) { toggleSelContainer(box); return; }
 			box.classList.toggle('collapsed');
 		});
@@ -16539,6 +16545,8 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		// peek, so the run is behind a control that says there is something to open.
 		div.classList.remove('chat-msg-assistant');
 		div.classList.add('chat-msg-working');
+		// No longer the answer, so no longer carrying its mid: two tiles must not answer to one.
+		delete div.dataset.mid;
 		div.dataset.t = 'think';
 		div.dataset.dir = 'from';
 		div._copyText = null;
@@ -22201,6 +22209,569 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		}
 	} catch (e) { /* no ResizeObserver: the thread keeps the behaviour it had */ }
 
+	// ── Rating an answer (Rating U2) ────────────────────────────────────
+	//
+	// The record, the head rule and the burst are pure and live in ratings.js
+	// (`DaimondRatings`); this is the half that touches the page. Plan:
+	// ~/usr/code/ai/claude/specs/daimond_rating_u2_plan_20260930.md.
+	//
+	// THE RATED TILE NEVER CHANGES. The arrows, the chip row and the Rating tile are
+	// chrome (`data-chrome`) set beside the answer, and a rating is appended to the end
+	// of the chat as a `rating_log` message; no message already there is edited. Nothing
+	// here calls `touchChat`, so a rating is not a turn and does not move its chat up the
+	// rail. Nothing is stored beyond the message itself: the lit state is worked out from
+	// the transcript and the burst each time it is drawn.
+	var _rateBurst = new Map();		// chat id -> the ratings not yet committed
+	var _rateTimer = new Map();		// chat id -> the timer that commits them
+	var _rateFormMemo = null;
+
+	/// The rating form from the engine, or null where the build's wasm is too old to
+	/// name one (the arrows then do not appear, and nothing else notices).
+	function rateForm() {
+		if (_rateFormMemo) return _rateFormMemo;
+		try { _rateFormMemo = DaimondRatings.form(Wasm.rating_form()); }
+		catch (e) { _rateFormMemo = null; }
+		return _rateFormMemo;
+	}
+
+	function rateProdOf(m) {
+		var p = (window.DaimondProvenance && m) ? DaimondProvenance.of(m)[0] : null;
+		return p && p.k === 'answer' ? p : null;
+	}
+
+	/// Can this stored message be rated? A final answer that carries its record: not a
+	/// streamed row, not a paused or interrupted partial, not an empty placeholder.
+	function rateQualifies(m) {
+		return !!m && m.role === 'assistant' && !!m.mid && typeof m.content === 'string'
+			&& !!m.content.trim() && !m.provisional && !m.why && !!rateProdOf(m);
+	}
+
+	function rateChatOf(id) {
+		if (current && current.id === id) return current;
+		return chats.find(function (c) { return c.id === id; }) || null;
+	}
+
+	/// Is a turn running in this chat? A burst waits for it: a rating never lands
+	/// among a turn's own messages.
+	function rateInFlight(chat) {
+		if (!chat) return false;
+		if (chat._generating) return true;
+		var ms = chat.messages || [];
+		for (var i = 0; i < ms.length; i++) {
+			var m = ms[i];
+			if (!m) continue;
+			if (m.provisional) return true;
+			if (m.interrupted && m.why === 'dispatched' && !(m.content && String(m.content).trim())) return true;
+		}
+		return false;
+	}
+
+	function rateBurstFor(id) {
+		var b = _rateBurst.get(id);
+		if (!b) { b = DaimondRatings.createBurst(); _rateBurst.set(id, b); }
+		return b;
+	}
+
+	function rateMsgById(msgs, mid) {
+		for (var i = msgs.length - 1; i >= 0; i--) {
+			var m = msgs[i];
+			if (m && m.role === 'assistant' && String(m.mid) === String(mid)) return m;
+		}
+		return null;
+	}
+
+	/// The stored answer behind a tile on screen, its record and the form; null when it
+	/// cannot be rated. Matched on the tile's `data-mid` in the chat on screen, never on
+	/// `prod.c`, which is a daimon's conversation and not the tile.
+	function rateTarget(tile) {
+		var form = rateForm();
+		if (!form || !current || !tile || !tile.dataset.mid) return null;
+		var m = rateMsgById(current.messages || [], tile.dataset.mid);
+		return rateQualifies(m) ? { m: m, prod: rateProdOf(m), form: form } : null;
+	}
+
+	function rateCtx(chat, g) {
+		return {
+			head:  DaimondRatings.headRaw(chat.messages, g.prod.h),
+			prod:  g.prod,
+			tools: DaimondRatings.toolsOf(chat.messages, g.prod, g.m.mid),
+			len:   DaimondProvenance.lenOf(g.m.content),
+			form:  g.form.form,
+		};
+	}
+
+	function rateTap(tile, sign) {
+		var g = rateTarget(tile);
+		if (!g) return;
+		DaimondRatings.tap(rateBurstFor(current.id), rateCtx(current, g), g.prod.h, sign);
+		rateArm(current.id);
+		mountRateControls();
+	}
+
+	function rateChip(tile, id) {
+		var g = rateTarget(tile), b = current ? _rateBurst.get(current.id) : null;
+		if (!g || !b || !DaimondRatings.toggleTag(b, g.prod.h, id)) return;
+		rateArm(current.id);
+		mountRateControls();
+	}
+
+	// ── When a burst commits ───────────────────────────────────
+
+	/// (Re)start the quiet a burst waits for. The timer polls while a turn runs, so
+	/// however the turn ends the burst is written as soon as the chat is free.
+	function rateArm(id) {
+		var old = _rateTimer.get(id);
+		if (old) clearTimeout(old);
+		_rateTimer.delete(id);
+		var b = _rateBurst.get(id);
+		if (!b || !b.drafts.size) return;
+		var wait = Math.max(0, b.last + DaimondRatings.BURST_MS - Date.now()) + 40;
+		_rateTimer.set(id, setTimeout(function () { rateFire(id); }, wait));
+	}
+
+	function rateFire(id) {
+		_rateTimer.delete(id);
+		var b = _rateBurst.get(id), chat = rateChatOf(id);
+		if (!b || !b.drafts.size) return;
+		if (!chat) { _rateBurst.delete(id); return; }
+		if (rateInFlight(chat)) { _rateTimer.set(id, setTimeout(function () { rateFire(id); }, 1000)); return; }
+		if (DaimondRatings.due(b, Date.now(), false)) commitRatings(id, {});
+		else rateArm(id);
+	}
+
+	/// Write a chat's burst now: `take` the messages, append them to the chat, and
+	/// draw them as one tile if the chat is on screen. Refused while a turn runs.
+	/// `o.draw === false` writes without drawing, for a chat about to be left.
+	function commitRatings(id, o) {
+		o = o || {};
+		var b = _rateBurst.get(id), chat = rateChatOf(id);
+		if (!b || !b.drafts.size) return false;
+		if (!chat) { _rateBurst.delete(id); return false; }
+		if (rateInFlight(chat)) return false;
+		var tm = _rateTimer.get(id);
+		if (tm) { clearTimeout(tm); _rateTimer.delete(id); }
+		var list = DaimondRatings.take(b, Date.now());
+		_rateBurst.delete(id);
+		if (list.length) {
+			list.forEach(function (m) { chat.messages.push(m); });
+			persistChats();		// and no touchChat: a rating is not a turn
+		}
+		if (current === chat && o.draw !== false) {
+			if (list.length) rateDraw(chat, list);
+			mountRateControls();
+		}
+		return list.length > 0;
+	}
+
+	/// Draw freshly committed ratings. On a thread `renderHistory` drew itself, the
+	/// append path draws just the tail and keeps every tile standing; on one a live turn
+	/// drew, a rebuild would replace the tile just rated, so the tail is drawn by itself.
+	function rateDraw(chat, list) {
+		if (_renderSynced) { renderHistory(chat.messages); return; }
+		var down = nearBottom();
+		list.forEach(drawHistoryMessage);
+		if (down) pinBottom();
+	}
+
+	function rateFlushAll() {
+		Array.from(_rateBurst.keys()).forEach(function (id) { commitRatings(id, {}); });
+	}
+
+	window.DaimondRatingUI = {
+		flush: function (chatId) { return commitRatings(String(chatId), {}); },
+		pendingCount: function (chatId) {
+			var b = _rateBurst.get(String(chatId));
+			return b ? DaimondRatings.pendingCount(b) : 0;
+		},
+	};
+
+	// ── The controls on an answer ──────────────────────────────
+
+	function rateButton(cls, svg, aria) {
+		var b = document.createElement('button');
+		b.type = 'button'; b.className = cls; b.innerHTML = svg;
+		b.setAttribute('aria-label', aria); b.title = aria;
+		return b;
+	}
+
+	/// One group: up, down, details. Built twice per answer, once for the header and once
+	/// for the row under it; the stylesheet shows one, and `rateDress` keeps both in step.
+	function rateGroup() {
+		var g = document.createElement('span');
+		g.className = 'ctile-rate'; g.dataset.chrome = 'rate';
+		g.setAttribute('role', 'group'); g.setAttribute('aria-label', t('rating.aria_group'));
+		var up = rateButton('ctile-rate-up', RATE_UP_SVG, t('rating.aria_up'));
+		up.setAttribute('aria-pressed', 'false');
+		var dn = rateButton('ctile-rate-down', RATE_DOWN_SVG, t('rating.aria_down'));
+		dn.setAttribute('aria-pressed', 'false');
+		var mo = rateButton('ctile-rate-more', RATE_MORE_SVG, t('rating.aria_more'));
+		mo.setAttribute('aria-haspopup', 'dialog');
+		g.appendChild(up); g.appendChild(dn); g.appendChild(mo);
+		return g;
+	}
+
+	function rateSet(el, name, val) { if (el.getAttribute(name) !== val) el.setAttribute(name, val); }
+
+	/// Put a group, a row and (for a pending down rating) a chip row on one answer tile,
+	/// and set what is lit. Idempotent; it touches only chrome, never the tile's own markup.
+	function rateDress(tile, g, head, burst) {
+		var lbl = tile._lbl, body = tile._body;
+		var hg = lbl.querySelector(':scope > .ctile-rate');
+		if (!hg) { hg = rateGroup(); lbl.insertBefore(hg, tile._time || lbl.querySelector(':scope > .ctile-ctl')); }
+		var row = tile.querySelector(':scope > .ctile-rate-row');
+		if (!row) {
+			row = document.createElement('div');
+			row.className = 'ctile-rate-row'; row.dataset.chrome = 'rate';
+			row.appendChild(rateGroup());
+			body.after(row);
+		}
+		var st = DaimondRatings.stateWith(head, burst, g.prod.h);
+		tile.querySelectorAll('.ctile-rate').forEach(function (grp) {
+			rateSet(grp.querySelector('.ctile-rate-up'), 'aria-pressed', st.lit === 'up' ? 'true' : 'false');
+			rateSet(grp.querySelector('.ctile-rate-down'), 'aria-pressed', st.lit === 'down' ? 'true' : 'false');
+			grp.querySelector('.ctile-rate-more').classList.toggle('on', !!st.detail);
+		});
+		var d = burst && burst.drafts ? burst.drafts.get(g.prod.h) : null;
+		rateDressTags(tile, row, g.form, d && !d.clear && d.s < 0 ? d : null);
+	}
+
+	/// The chip row of a pending down rating; removed when there is none.
+	function rateDressTags(tile, row, form, draft) {
+		var tags = tile.querySelector(':scope > .ctile-rate-tags');
+		if (!draft) { if (tags) tags.remove(); return; }
+		var ids = form.tagsFor('answer', 'down');
+		if (tags && tags.dataset.ids !== ids.join(',')) { tags.remove(); tags = null; }
+		if (!tags) {
+			tags = document.createElement('div');
+			tags.className = 'tile-dlg-seg ctile-rate-tags'; tags.dataset.chrome = 'rate';
+			tags.dataset.ids = ids.join(',');
+			tags.setAttribute('role', 'group'); tags.setAttribute('aria-label', t('rating.tags_down'));
+			ids.forEach(function (id) {
+				var b = document.createElement('button');
+				b.type = 'button'; b.className = 'tile-dlg-level'; b.dataset.tag = id;
+				b.textContent = rateTagWord(form, id);
+				b.setAttribute('aria-pressed', 'false');
+				tags.appendChild(b);
+			});
+			row.after(tags);
+		}
+		tags.querySelectorAll('.tile-dlg-level').forEach(function (b) {
+			rateSet(b, 'aria-pressed', draft.tags.indexOf(b.dataset.tag) >= 0 ? 'true' : 'false');
+		});
+	}
+
+	/// Bring every answer on screen into step with the transcript and the burst: mount the
+	/// group where an answer qualifies, refresh what is lit, and sweep it off any tile that
+	/// no longer does. Runs from `renderHistoryFurniture` and wherever a turn ends.
+	function mountRateControls() {
+		if (!chatOutput || !current || !window.DaimondRatings || !window.DaimondProvenance) return;
+		var form = rateForm(), msgs = current.messages || [], keep = new Set();
+		if (form) {
+			var byMid = new Map();
+			for (var i = 0; i < msgs.length; i++) {
+				var m = msgs[i];
+				if (m && m.role === 'assistant' && m.mid) byMid.set(String(m.mid), m);
+			}
+			var idx = DaimondRatings.index(msgs), burst = _rateBurst.get(current.id) || null;
+			chatOutput.querySelectorAll('.ctile.chat-msg-assistant[data-mid]').forEach(function (tile) {
+				var msg = byMid.get(tile.dataset.mid);
+				if (!rateQualifies(msg) || !tile._lbl) return;
+				var g = { m: msg, prod: rateProdOf(msg), form: form };
+				keep.add(tile);
+				rateDress(tile, g, idx.get(g.prod.h) || null, burst);
+			});
+		}
+		chatOutput.querySelectorAll('.ctile-rate, .ctile-rate-row, .ctile-rate-tags').forEach(function (n) {
+			var tile = n.closest('.ctile');
+			if (!tile || !keep.has(tile)) n.remove();
+		});
+	}
+
+	// Pointer and tap on the chrome. One listener on the thread, so a redraw never
+	// leaves a control without its handler. A press moves no focus (I6): the controls
+	// are set with `mousedown` refused, so a tap on an arrow leaves the composer, or
+	// whatever else was focused, exactly where it was. The details control is the
+	// exception: it opens a dialog that takes focus, and a press that moved none left
+	// the dialog's cross inheriting the focus-visible ring of the text field behind it.
+	try {
+		if (chatOutput && chatOutput.addEventListener) {
+			var RATE_HIT = '.ctile-rate button, .ctile-rate-tags button, .rate-jump-link';
+			chatOutput.addEventListener('mousedown', function (e) {
+				var b = e.target.closest && e.target.closest(RATE_HIT);
+				if (b && !b.classList.contains('ctile-rate-more')) e.preventDefault();
+			});
+			chatOutput.addEventListener('click', function (e) {
+				var b = e.target.closest && e.target.closest(RATE_HIT);
+				if (!b || !chatOutput.contains(b)) return;
+				e.stopPropagation();
+				if (b.classList.contains('rate-jump-link')) { rateJump(b); return; }
+				var tile = b.closest('.ctile');
+				if (b.classList.contains('ctile-rate-up')) rateTap(tile, 1);
+				else if (b.classList.contains('ctile-rate-down')) rateTap(tile, -1);
+				else if (b.classList.contains('ctile-rate-more')) openRatePopup(tile, b);
+				else if (b.dataset.tag) rateChip(tile, b.dataset.tag);
+			});
+		}
+	} catch (e) { /* no thread element in this context */ }
+
+	// ── The rating popup ───────────────────────────────────────
+
+	function rateSnap(st) {
+		return JSON.stringify({ s: st.s, tags: st.tags.slice().sort(), dims: st.dims, note: st.note });
+	}
+
+	/// The details control's popup: five steps, tags, and a collapsed Details holding four
+	/// dimensions and the person's own words. Nothing is written while it is open. Closing it
+	/// (the cross, Escape, the backdrop) sets ONE draft into the burst, which commits as a tap's
+	/// does; Clear sets a withdrawal and closes. It starts from the pending draft, else the head,
+	/// else empty. The words are held in `st`, so nothing is read from a body that has gone.
+	function openRatePopup(tile, opener) {
+		var g = rateTarget(tile);
+		if (!g) return;
+		var chat = current, h = g.prod.h, form = g.form;
+		var burst = _rateBurst.get(chat.id), pend = burst ? burst.drafts.get(h) : null;
+		var head = DaimondRatings.headRaw(chat.messages, h);
+		var live = head && !head.rating.clear ? head.rating : null;
+		var from = pend ? (pend.clear ? null : pend) : live;
+		var st = { s: from ? from.s : null, tags: from ? from.tags.slice() : [], dims: {}, note: from ? String(from.note || '') : '' };
+		form.dims.forEach(function (d) {
+			var v = from && from.dims ? from.dims[d.id] : -1;
+			st.dims[d.id] = (typeof v === 'number' && v >= 0 && v <= d.max) ? v : -1;
+		});
+		var st0 = rateSnap(st), cleared = false;
+
+		var body = document.createElement('div');
+		body.className = 'rate-body';
+
+		// The five steps, in words. Pressing the pressed one leaves the choice as it was.
+		body.appendChild(secHead(t('rating.sec_score')));
+		var scale = document.createElement('div');
+		scale.className = 'tile-dlg-seg rate-scale';
+		scale.setAttribute('role', 'group'); scale.setAttribute('aria-label', t('rating.sec_score'));
+		form.scale.forEach(function (sc) {
+			var b = document.createElement('button');
+			b.type = 'button'; b.className = 'tile-dlg-level'; b.dataset.s = String(sc.s);
+			// The word in a span of its own, so it can ellipsise without clipping the
+			// button's tap overlay.
+			var word = document.createElement('span');
+			word.className = 'rate-step-word'; word.textContent = t(sc.key);
+			b.appendChild(word);
+			b.setAttribute('aria-pressed', 'false');
+			b.addEventListener('click', function () {
+				var next = Number(b.dataset.s);
+				var was = st.s === null ? 0 : Math.sign(st.s), now = Math.sign(next);
+				if (was !== now && was !== 0 && now !== 0) st.tags = [];
+				else if (now < 0) st.tags = st.tags.filter(function (id) { return form.tagsFor('answer', 'down').indexOf(id) >= 0; });
+				else if (now > 0) st.tags = st.tags.filter(function (id) { return form.tagsFor('answer', 'up').indexOf(id) >= 0; });
+				st.s = next;
+				paint();
+			});
+			scale.appendChild(b);
+		});
+		body.appendChild(scale);
+
+		// Tags for the side chosen: down for a minus, up for a plus, both (down first) for 0.
+		var tagHost = document.createElement('div');
+		tagHost.className = 'rate-tagbox';
+		body.appendChild(tagHost);
+
+		// Details: what a reader looks up rather than what they came to change.
+		var adv = advancedBox();
+		adv.querySelector('summary').textContent = t('rating.details');
+		adv.open = form.dims.some(function (d) { return st.dims[d.id] >= 0; }) || !!st.note;
+		form.dims.forEach(function (d) {
+			var row = document.createElement('div');
+			row.className = 'tile-dlg-field rate-dim';
+			var lab = document.createElement('span');
+			lab.className = 'tile-dlg-label'; lab.textContent = t(d.key);
+			var seg = document.createElement('div');
+			seg.className = 'tile-dlg-seg';
+			seg.setAttribute('role', 'group'); seg.setAttribute('aria-label', t(d.key));
+			for (var v = 0; v <= d.max; v++) (function (v) {
+				var b = document.createElement('button');
+				b.type = 'button'; b.className = 'tile-dlg-level'; b.dataset.v = String(v);
+				b.textContent = String(v);
+				b.setAttribute('aria-pressed', st.dims[d.id] === v ? 'true' : 'false');
+				b.addEventListener('click', function () {
+					st.dims[d.id] = st.dims[d.id] === v ? -1 : v;
+					seg.querySelectorAll('.tile-dlg-level').forEach(function (x) {
+						x.setAttribute('aria-pressed', st.dims[d.id] === Number(x.dataset.v) ? 'true' : 'false');
+					});
+				});
+				seg.appendChild(b);
+			})(v);
+			row.appendChild(lab); row.appendChild(seg);
+			adv.appendChild(row);
+		});
+		var noteId = 'rate-said-' + (++_tileDlgSeq);
+		var noteLab = document.createElement('label');
+		noteLab.className = 'tile-dlg-label rate-said-label'; noteLab.htmlFor = noteId;
+		noteLab.textContent = t('rating.note_label');
+		var ta = document.createElement('textarea');
+		ta.id = noteId; ta.className = 'rate-said-input'; ta.rows = 3; ta.value = st.note;
+		var grow = function () { ta.style.height = 'auto'; ta.style.height = ta.scrollHeight + 'px'; };
+		ta.addEventListener('input', function () { st.note = ta.value; grow(); });
+		adv.appendChild(noteLab); adv.appendChild(ta);
+		adv.addEventListener('toggle', function () { if (adv.open) grow(); });
+		body.appendChild(adv);
+
+		// Where it goes, and nothing that is not yet true of it.
+		var where = document.createElement('div');
+		where.className = 'tile-dlg-note rate-where';
+		var mdl = g.prod.cm || g.prod.m || '';
+		where.textContent = t('rating.where') + (mdl ? ' ' + t('rating.model', { model: mdl }) : '');
+		body.appendChild(where);
+
+		var clearBtn = null;
+		if (live) {
+			var acts = document.createElement('div');
+			acts.className = 'tile-dlg-actions';
+			clearBtn = document.createElement('button');
+			clearBtn.type = 'button'; clearBtn.className = 'rate-clear tile-keep';
+			clearBtn.textContent = t('rating.clear');
+			acts.appendChild(clearBtn);
+			body.appendChild(acts);
+		}
+
+		function paint() {
+			scale.querySelectorAll('.tile-dlg-level').forEach(function (b) {
+				b.setAttribute('aria-pressed', st.s !== null && Number(b.dataset.s) === st.s ? 'true' : 'false');
+			});
+			var ids = [];
+			if (st.s !== null && st.s <= 0) ids = ids.concat(form.tagsFor('answer', 'down'));
+			if (st.s !== null && st.s >= 0) ids = ids.concat(form.tagsFor('answer', 'up'));
+			var key = ids.join(',');
+			if (tagHost.dataset.ids !== key) {
+				tagHost.dataset.ids = key;
+				tagHost.textContent = '';
+				if (ids.length) {
+					tagHost.appendChild(secHead(t('rating.sec_tags')));
+					var seg = document.createElement('div');
+					seg.className = 'tile-dlg-seg ctile-rate-tags';
+					seg.setAttribute('role', 'group'); seg.setAttribute('aria-label', t('rating.sec_tags'));
+					ids.forEach(function (id) {
+						var b = document.createElement('button');
+						b.type = 'button'; b.className = 'tile-dlg-level'; b.dataset.tag = id;
+						b.textContent = rateTagWord(form, id);
+						b.addEventListener('click', function () {
+							var i = st.tags.indexOf(id);
+							if (i >= 0) st.tags.splice(i, 1); else st.tags.push(id);
+							paint();
+						});
+						seg.appendChild(b);
+					});
+					tagHost.appendChild(seg);
+				}
+			}
+			tagHost.querySelectorAll('.tile-dlg-level').forEach(function (b) {
+				b.setAttribute('aria-pressed', st.tags.indexOf(b.dataset.tag) >= 0 ? 'true' : 'false');
+			});
+		}
+		paint();
+
+		// Clear finishes the dialog by its own cross, so there is one way out.
+		if (clearBtn) clearBtn.addEventListener('click', function () {
+			cleared = true;
+			var x = body.closest('.modal-card') && body.closest('.modal-card').querySelector('.ui-close');
+			if (x) x.click();
+		});
+
+		var closed = openBodyDialog(t('rating.title'), body, { cardClass: 'rate-card' });
+		if (adv.open) grow();
+		closed.then(function () {
+			var b = rateBurstFor(chat.id), ctx = rateCtx(chat, g);
+			if (cleared) DaimondRatings.setDraft(b, h, { clear: true }, ctx);
+			else if (st.s === null || rateSnap(st) === st0) { if (!b.drafts.size) _rateBurst.delete(chat.id); return; }
+			else DaimondRatings.setDraft(b, h, { s: st.s, tags: st.tags, dims: st.dims, note: st.note }, ctx);
+			rateArm(chat.id);
+			if (current === chat) mountRateControls();
+		});
+	}
+
+	// ── The Rating tile ────────────────────────────────────────
+
+	function hhmm(ts) {
+		if (!ts) return '';
+		var d = new Date(ts);
+		return ('0' + d.getHours()).slice(-2) + ':' + ('0' + d.getMinutes()).slice(-2);
+	}
+
+	/// The jump link: bring the rated answer's top to the top of the thread, moving no focus.
+	function rateJump(btn) {
+		var tile = chatOutput.querySelector('.ctile[data-mid="' + cssEsc(btn.dataset.mid) + '"]');
+		if (!tile) return;
+		// The reader is acting on the thread, so a hold a render left running (it re-asserts
+		// the live end for a second) must not drag them back down.
+		hold(null);
+		setScrollTop(chatOutput.scrollTop + tile.getBoundingClientRect().top - chatOutput.getBoundingClientRect().top);
+	}
+
+	/// The words for a tag id, or the id itself where the catalogue has none (a tag from a newer form).
+	function rateTagWord(form, id) {
+		var tagKey = form ? form.keyOf(id) : 'rating.tag.' + id, word = t(tagKey);
+		return word === tagKey ? id : word;
+	}
+
+	/// One `p.rate-line`: the score and the answer it is for, then the tags and the person's
+	/// own words. All text goes in through `textContent`. The translated sentence is split at
+	/// `{what}` so the link sits where each language puts it.
+	function rateLineEl(m, form) {
+		var r = m.rating, want = DaimondRatings.midOf(r.h);
+		var target = rateMsgById((current && current.messages) || [], want);
+		var L = DaimondRatings.lineOf(m, target);
+		var p = document.createElement('p');
+		p.className = 'rate-line';
+		var what;
+		if (L.targetMid !== null) {
+			what = document.createElement('button');
+			what.type = 'button'; what.className = 'rate-jump-link'; what.dataset.mid = L.targetMid;
+			what.textContent = t('rating.log_answer', { time: hhmm(target.ts) });
+		} else {
+			what = document.createTextNode(t('rating.log_gone'));
+		}
+		// The sentence is split at `{what}` (the link) and `{score}` (a figure, so it is in the mono face),
+		// so each language puts them where it likes. A sentence without `{what}` still gets the link.
+		var SEP = '\u0001', SCO = '\u0002', linked = false;
+		var says = L.cleared ? t('rating.log_cleared', { what: SEP }) : t('rating.log_line', { score: SCO, what: SEP });
+		says.split(/([\u0001\u0002])/).forEach(function (part) {
+			if (part === SEP) { p.appendChild(what); linked = true; }
+			else if (part === SCO) {
+				var sc = document.createElement('span');
+				sc.className = 'rate-score'; sc.textContent = L.score;
+				p.appendChild(sc);
+			}
+			else if (part) p.appendChild(document.createTextNode(part));
+		});
+		if (!linked) p.appendChild(what);
+		var labels = L.tags.map(function (id) { return rateTagWord(form, id); });
+		if (labels.length) p.appendChild(document.createTextNode(' · ' + labels.join(' · ')));
+		if (L.said) {
+			p.appendChild(document.createTextNode(' · '));
+			var q = document.createElement('span');
+			q.className = 'rate-said'; q.textContent = t('rating.quote', { text: L.said });
+			p.appendChild(q);
+		}
+		return p;
+	}
+
+	/// Draw one `rating_log` message: a line in the Rating tile of its burst, which is made
+	/// when the burst's first line arrives.
+	function appendRatingLine(m) {
+		if (!window.DaimondRatings || !DaimondRatings.isRatingMsg(m)) return;
+		var tiles = chatOutput.querySelectorAll('.ctile[data-t="rating"]');
+		var tile = tiles.length ? tiles[tiles.length - 1] : null;
+		if (!tile || tile.dataset.burst !== m.rating.burst || !isLastContent(tile)) {
+			finalizeAssistant();
+			tile = buildTile('rating', { who: t('rating.who'), expanded: true, ts: m.ts });
+			tile.dataset.burst = m.rating.burst;
+			var host = document.createElement('div');
+			host.className = 'chat-msg-content';
+			tile._body.appendChild(host);
+			postToChat(tile);
+		}
+		tile._body.querySelector('.chat-msg-content').appendChild(rateLineEl(m, rateForm()));
+	}
+
 	/// A cheap per-message signature: its id and everything the drawing reads that could
 	/// change WITHOUT the id changing (content length, elision, outcome, the hand-off and
 	/// interruption marks, a fold's counts). Deliberately not a stringify of the whole
@@ -22278,6 +22849,9 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			}
 		}
 		else if (m.role === 'error_log') { appendError(m.content); }
+		// A rating, drawn as one tile for its whole burst. Anything this build cannot read
+		// (`isRatingMsg`) draws nothing, as a role it had never heard of would.
+		else if (m.role === 'rating_log') { appendRatingLine(m); }
 		// The app's own NEUTRAL voice -- a fan-out handover, drawn as a status line
 		// rather than the red of an error. Its own role so a reload draws it that way.
 		else if (m.role === 'note_log') { appendNote(m.content); }
@@ -22416,6 +22990,8 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		// makes -- the rebuild, the append fast path, and the nothing-changed early
 		// return, which still has furniture to put right.
 		mountTurnActions();
+		// The rating arrows on each answer, kept in step with the transcript.
+		mountRateControls();
 	}
 
 	function renderHistory(messages) {
@@ -32867,6 +33443,8 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		// a draft belongs to the Diamond and not to the face; only half of it was
 		// implemented.
 		if (current && current === next) return;
+		// Before `current` moves: a rating made here is written into the chat being left.
+		if (current) commitRatings(current.id, { draw: false });
 		if (current) current._draft = chatInput.value;
 		chatInput.value = (next && next._draft) || '';
 		// AND IT SURVIVES A RELOAD, not merely a switch.
@@ -34081,6 +34659,9 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		// never hears about.
 		try { if (window.DaimondUndo) DaimondUndo.flush(); }
 		catch (e) { /* no module: nothing was held open */ }
+		// THE NEXT MESSAGE COMMITS THE RATINGS MADE SO FAR, ahead of itself, so they sit
+		// before the question they were followed by and never among this turn's messages.
+		commitRatings(chat.id, { });
 		// When this turn began, so a hand-off run can record how long it took. Read only
 		// for a dispatched/errand turn (see the answer enrichment below), whose answer
 		// draws a hand-off tile on the device that dispatched it.
@@ -34340,7 +34921,8 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 				// there to say the turn is not over yet.
 				if (!writing) { writing = true; busySay(chat, tOr('chat.busy_writing', 'Writing the answer…')); }
 				if (!owns()) return;
-				appendAssistantText(ev.content || '');
+				// The answer's mid on its tile as it streams (see `mountRateControls`).
+				appendAssistantText(ev.content || '', undefined, undefined, { mid: amid });
 			} else if (ev.type === 'tool_call') {
 				// PROSE BEFORE THIS CALL IS NOT THE ANSWER — it is the model thinking
 				// on its way to a tool, exactly what `demoteToWorking` draws when the
@@ -35111,7 +35693,8 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 				// The turn is over, so the last question can be asked again. The two
 				// controls are withheld while one runs (`mountTurnActions` tests
 				// `_generating`), so this is the moment they come back.
-				if (owns()) mountTurnActions();
+				if (owns()) { mountTurnActions(); mountRateControls(); }
+				rateArm(chat.id);		// a burst that waited for this turn
 				// HOW THE TURN ENDED, reported here because this is the one place
 				// every ending arrives -- and BEFORE `drainQueue` below, which
 				// reads `_aborted` and then clears it. Giving up early means it
@@ -54785,6 +55368,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		// the transcript and let `progressTail`/`chatHoldingTurn` disagree on the turn. So
 		// the push -- and the on-screen draw of it -- is the local-caller's alone.
 		if (!detached) {
+			commitRatings(rec.id, { });		// as `runTurn` does: ratings first, then the question
 			rec.messages.push({ role: 'user', content: instruction, mid: dumid, ts: its });
 			if (onScreen()) appendUserMessage(instruction, its);
 		}
@@ -54983,7 +55567,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 				daimonProd();			// before the live row can leave, so it carries the record
 				if (detached) { try { _liveTurn[String(detached.turnId)] = replyText; } catch (e) { /* a dropped frame only slows the stream */ } }
 				if (!writing) { writing = true; busySay(rec, tOr('chat.busy_writing', 'Writing the answer…')); }
-				if (onScreen()) appendAssistantText(ev.content || '');
+				if (onScreen()) appendAssistantText(ev.content || '', undefined, undefined, { mid: dmid });
 			} else if (ev.type === 'tool_call') {
 				step += 1;
 				writing = false;
@@ -55364,6 +55948,8 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		}
 		rec._generating = false;
 		rec._busy = '';
+		if (current === rec) mountRateControls();
+		rateArm(rec.id);
 		// TRAINING WHEELS — the turn is over however it went, which is what the comment
 		// below says and what the feed was never told.
 		closeFeedTurn(sawError ? 'error'

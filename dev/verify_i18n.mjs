@@ -35,7 +35,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
 import { fileURLToPath } from 'node:url';
-import { open } from './harness.mjs';
+import { open, chat, signInAs } from './harness.mjs';
 
 const HERE    = path.dirname(fileURLToPath(import.meta.url));
 const I18NDIR = path.join(HERE, '..', 'www', 'i18n');
@@ -327,6 +327,112 @@ const SWEEP = ([sel, outgoing, keys]) => {
 		state.btn + ' — wanted one of ' + startFr.join(' / '));
 	await s2.close();
 }
+
+// ── Rating U2: the open popup and the Rating tile, in every language ─
+// Two surfaces that are drawn by script from `t()` and are on screen for as long as a person
+// leaves them: the popup behind an answer's details control, and the Rating tile a rated
+// answer leaves in the thread. They are found the way a person finds them (a chat, an answer, a
+// tap) and read back against the language's own table, so a string left in English, a key shown
+// raw or a `{placeholder}` left in is a failure by name. Each language is set first and the
+// chat reopened after it (a reload: the remembered language, the history drawn in it), so
+// both are drawn in that language, as the open-after half above draws the drawer.
+//
+// The tile is also left standing through a switch (the switch-while-open half). The thread's
+// own tiles are drawn in the language of the day and keep it until they are drawn again, so
+// the Rating tile is compared with the user's tile beside it: it may not behave worse.
+{
+	const NAME3 = 'i18nrate' + Date.now();
+	// Beside the world's other shots, not in the shared `i18n-shots` folder the older checks write to.
+	const SHOTS3 = path.join(process.env.DAIMOND_SCRATCH || OUT, 'rate2', 'i18n-shots');
+	fs.mkdirSync(SHOTS3, { recursive: true });
+	const s3 = await open({ name: NAME3 });
+	const p3 = s3.page;
+	const missing3 = (mark) => [...new Set(s3.logs.slice(mark).filter(l => /i18n: no string for/.test(l)).map(l => (l.match(/"([^"]+)"/) || [])[1]))].sort();
+	const tables3 = Object.fromEntries(['en'].concat(codes).map(c => [c, loadTable(c + '.js')]));
+	const esc = (x) => x.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+	const unfilled = (x) => x.match(/\{[a-z_]+\}/gi) || [];
+	await chat(s3, '@text RATE-I18N an answer to rate');
+	const cid3 = await p3.evaluate(() => { const f = window.DaimondAttach.focus(); return f && f.kind === 'chat' ? String(f.id) : ''; });
+	let ready = false;
+	try {
+		await p3.locator('#chat-output .ctile.chat-msg-assistant .ctile-rate-up >> visible=true').first().click({ force: true, timeout: 8000 });
+		await p3.evaluate(async (c) => { await window.DaimondRatingUI.flush(c); }, cid3);
+		await p3.waitForSelector('#chat-output .ctile[data-t="rating"]', { timeout: 10000 });
+		ready = true;
+	} catch (e) { /* reported below */ }
+	check(ready, 'rating: an answer was rated, so the Rating tile is on screen to be read', ready ? undefined : 'no tile');
+
+	const READ = () => {
+		const txt = (e) => e ? e.textContent.trim() : null;
+		const tile = document.querySelector('#chat-output .ctile[data-t="rating"]');
+		const user = document.querySelector('#chat-output .ctile[data-t="user"]');
+		const card = document.querySelector('.rate-card');
+		return {
+			tile:  tile ? { who: txt(tile.querySelector('.ctile-who')), link: txt(tile.querySelector('.rate-jump-link')), text: tile.innerText } : null,
+			user:  user ? { who: txt(user.querySelector('.ctile-who')) } : null,
+			popup: card ? { title: txt(card.querySelector('h2')), words: [...card.querySelectorAll('.rate-step-word')].map(txt), details: txt(card.querySelector('.tile-dlg-adv-sum')),
+				where: txt(card.querySelector('.rate-where')), text: card.innerText } : null,
+		};
+	};
+	const reopen = async (code) => {
+		await p3.evaluate(c => window.DaimondI18n.setLocale(c), code);
+		await p3.waitForTimeout(300);
+		await p3.reload({ waitUntil: 'domcontentloaded' });
+		await signInAs(s3, NAME3);
+		try { await p3.waitForSelector('#chat-output .ctile[data-t="rating"]', { timeout: 20000 }); } catch (e) { /* read as null */ }
+		await p3.waitForTimeout(600);
+	};
+	if (ready) {
+		for (const code of ['en'].concat(codes)) {
+			const T = tables3[code], mark = s3.logs.length;
+			await reopen(code);
+			const tileRead = (await p3.evaluate(READ)).tile;
+			let popupRead = null;
+			try {
+				await p3.locator('#chat-output .ctile-rate-more >> visible=true').first().click({ force: true, timeout: 8000 });
+				await p3.waitForSelector('.rate-card', { timeout: 8000 });
+				await p3.waitForTimeout(400);
+				popupRead = (await p3.evaluate(READ)).popup;
+			} catch (e) { /* null */ }
+			const words = ['wrong', 'poor', 'fine', 'good', 'great'].map(k => T['rating.scale.' + k]);
+			const want = new RegExp('^' + esc(T['rating.log_answer']).replace('\\{time\\}', '\\d\\d:\\d\\d') + '$');
+			check(!!popupRead, code + ': the popup opens from the details control', popupRead ? undefined : 'no .rate-card');
+			if (popupRead) {
+				check(popupRead.title === T['rating.title'] && popupRead.details === T['rating.details'] && JSON.stringify(popupRead.words) === JSON.stringify(words) && popupRead.where.startsWith(T['rating.where']),
+					code + ': the popup is in ' + code + ' (title, five steps, Details, the where note)',
+					JSON.stringify({ title: popupRead.title, words: popupRead.words, details: popupRead.details, where: popupRead.where }));
+				check(unfilled(popupRead.text).length === 0, code + ': no literal placeholder in the popup', unfilled(popupRead.text).join(','));
+			}
+			check(!!tileRead && tileRead.who === T['rating.who'] && want.test(tileRead.link || ''),
+				code + ': the Rating tile is in ' + code + ' (speaker and the link to the answer)', JSON.stringify(tileRead && { who: tileRead.who, link: tileRead.link }));
+			if (tileRead) check(unfilled(tileRead.text).length === 0, code + ': no literal placeholder in the Rating tile', unfilled(tileRead.text).join(','));
+			const gone = missing3(mark);
+			check(gone.length === 0, code + ': no missing-key warnings while the popup and the tile were drawn', gone.slice(0, 4).join(' ') || undefined);
+			await p3.screenshot({ path: path.join(SHOTS3, `verify-${code}-rate-popup.png`) });
+			await p3.keyboard.press('Escape');
+			await p3.waitForTimeout(300);
+		}
+		// Switch while open, the tile only: the popup is a modal (the language picker is behind its scrim).
+		await reopen('en');
+		const before = (await p3.evaluate(READ));
+		await p3.evaluate(c => window.DaimondI18n.setLocale(c), 'de');
+		await p3.waitForTimeout(800);
+		const after = (await p3.evaluate(READ));
+		const tileMoved = !!(after.tile && before.tile && after.tile.who !== before.tile.who);
+		const userMoved = !!(after.user && before.user && after.user.who !== before.user.who);
+		console.log('  (switch en to de with the tile standing: Rating tile speaker "' + (before.tile && before.tile.who) + '" to "' + (after.tile && after.tile.who) + '"; the user tile\'s "' + (before.user && before.user.who) + '" to "' + (after.user && after.user.who) + '")');
+		if (!tileMoved && !userMoved) {
+			// Neither repaints: the thread keeps the language it was drawn in, which is the app's rule for every tile. There is nothing here
+			// to compare, so it is NOT COVERED rather than a pass; the open-after checks above are what hold the tile to each language.
+			console.log('  NOT COVERED  rating: a switch with the Rating tile standing (the thread\'s tiles, the user\'s included, keep the language they were drawn in)');
+		} else {
+			check(tileMoved, 'rating: a switch with the Rating tile standing repaints it, as it repaints the user\'s tile beside it', JSON.stringify({ tileMoved, userMoved }));
+		}
+		await p3.evaluate(c => window.DaimondI18n.setLocale(c), 'en');
+	}
+	await s3.close();
+}
+
 await s.close();
 
 console.log(failures === 0

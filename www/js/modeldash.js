@@ -1,9 +1,9 @@
-/* modeldash.js — the private per-model dashboard, and the one-tap trust rating.
+/* modeldash.js — the private per-model dashboard.
  *
  * "Which model has been costing what, which one fails, which one I trust" --
- * answered from records that already exist on this device, plus one new
- * local store this file adds: a one-tap trust rating per model. Nothing
- * here has a network path. There is no fetch, no gateway call, no sync
+ * answered from records that already exist on this device, plus the old
+ * per-model trust counts, which this file only reads. Nothing here has a
+ * network path. There is no fetch, no gateway call, no sync
  * field: this build is the dashboard half of the Leaders design
  * (`daimond_leaderboards_design.md`, "The private dashboard"), not the
  * contribution channel, which does not exist yet.
@@ -28,25 +28,26 @@
  * because a second caller needing that split is exactly the situation
  * "extend the existing machinery" describes.
  *
- * THE RATING STORE. `daimond-model-ratings` in localStorage, `{ model:
- * { up, down } }` -- a tap increments a count, matching the design's
- * contributed shape (`rating up` / `rating down` are counts, not a toggle),
- * so the number on screen is already the number a future contribution would
- * carry. Device-local only; nothing merges or syncs it (yet).
+ * THE TRUST COLUMN, READ ONLY. `daimond-model-ratings` in localStorage,
+ * `{ model: { up, down } }`, was written by two buttons in each row. Since
+ * Rating U2 an answer is rated where it is given (the arrows on the tile), so
+ * two ways to rate would be two drawings of one control, and the buttons are
+ * gone. The counts already given still show, as the cell's own text, and
+ * nothing writes the key again; U5 replaces them with figures from rated
+ * answers, imports what is here and removes the key.
  *
  * TWO HALVES, the pattern `dockdrag.js` and `models.js` use: everything
  * above the `typeof document === 'undefined'` guard is PURE -- ledger joins
  * and localStorage reads/writes, no DOM -- and is what `modeldash.test.mjs`
  * proves against fixture ledger entries with no browser. Below the guard is
- * the panel: a table like Spending's, a week/month toggle, and the two
- * rating buttons.
+ * the panel: a table like Spending's and a week/month toggle.
  */
 (function () {
 	'use strict';
 
 	var RATINGS_KEY = 'daimond-model-ratings';
 
-	// ── Rating store (localStorage) ─────────────────────────────
+	// ── Rating store (localStorage), read only ──────────────────
 	// Shape: `{ "<model>": { up: N, down: N } }`. Corrupt or absent storage
 	// degrades to "no ratings", the same rule `ledger.js` uses for its own
 	// store, rather than throwing and taking the dashboard with it.
@@ -59,12 +60,6 @@
 		} catch (e) { return {}; }
 	}
 
-	// Swallows quota/availability errors, as `ledger.js`'s `save` does: a
-	// failed write must not break the tap that triggered it.
-	function saveRatings(obj) {
-		try { localStorage.setItem(RATINGS_KEY, JSON.stringify(obj)); } catch (e) { /* ignore */ }
-	}
-
 	/// This model's rating counts, `{ up, down }`, zeros when it has never
 	/// been rated.
 	function ratingsFor(model) {
@@ -72,30 +67,10 @@
 		return { up: (r && r.up) || 0, down: (r && r.down) || 0 };
 	}
 
-	/// Record one tap. `dir` is `'up'` or `'down'`; anything else is a no-op
-	/// that just returns the model's current counts, so a caller need not
-	/// validate before calling. Returns the model's new `{ up, down }`.
-	function rate(model, dir) {
-		model = model || '';
-		if (dir !== 'up' && dir !== 'down') return ratingsFor(model);
-		var all = loadRatings();
-		var r = all[model] || { up: 0, down: 0 };
-		r[dir] = (r[dir] || 0) + 1;
-		all[model] = r;
-		saveRatings(all);
-		return { up: r.up || 0, down: r.down || 0 };
-	}
-
-	/// Erase every rating (a user "reset ratings" action, or a test's revert
-	/// check).
-	function clearRatings() {
-		try { localStorage.removeItem(RATINGS_KEY); } catch (e) { /* ignore */ }
-	}
-
 	// ── The dashboard rows ───────────────────────────────────────
 	//
 	// Joins `DaimondLedger.perModel(period)` -- tokens, cost, turns, the
-	// prompt/completion split -- with this file's own rating store. Nothing
+	// prompt/completion split -- with the old rating counts, read as they stand. Nothing
 	// here re-walks the raw ledger: that aggregation belongs to `ledger.js`
 	// and stays owned there, so there is exactly one place a ledger entry is
 	// summed per model.
@@ -157,10 +132,7 @@
 	var PURE = {
 		RATINGS_KEY:   RATINGS_KEY,
 		loadRatings:   loadRatings,
-		saveRatings:   saveRatings,
 		ratingsFor:    ratingsFor,
-		rate:          rate,
-		clearRatings:  clearRatings,
 		dashboardRows: dashboardRows,
 		gapFields:     gapFields,
 	};
@@ -221,30 +193,11 @@
 		try { return (M.getDefault() || {}).model || ''; } catch (e) { return ''; }
 	}
 
-	// One row's rating control: a tap up, a tap down, each showing its own
-	// running count. Tapping redraws just this row's counts in place rather
-	// than the whole table, so a second tap is not spent finding the row
-	// again.
-	function rateCell(model) {
-		var wrap = el('span', 'mdash-rate');
-		var counts = ratingsFor(model);
-
-		function btn(dir, glyph, cls) {
-			var b = el('button', 'mdash-rate-btn ' + cls + (counts[dir] > 0 ? ' mdash-has' : ''),
-				glyph + ' ' + counts[dir]);
-			b.type = 'button';
-			b.title = dir === 'up' ? t('modeldash.rate_up_help') : t('modeldash.rate_down_help');
-			b.addEventListener('click', function () {
-				counts = rate(model, dir);
-				wrap.innerHTML = '';
-				wrap.appendChild(btn('up', '▲', 'mdash-rate-up'));
-				wrap.appendChild(btn('down', '▼', 'mdash-rate-down'));
-			});
-			return b;
-		}
-		wrap.appendChild(btn('up', '▲', 'mdash-rate-up'));
-		wrap.appendChild(btn('down', '▼', 'mdash-rate-down'));
-		return wrap;
+	// The Trust cell's words: the counts the old one-tap rating gave. A model
+	// never rated reads as a dash, as an unrecorded median does.
+	function fmtCounts(up, down) {
+		if (!up && !down) return '—';
+		return t('modeldash.rating_counts', { up: up, down: down });
 	}
 
 	function table() {
@@ -258,7 +211,7 @@
 			t('modeldash.col_tok_out'), t('modeldash.col_cost'), t('modeldash.col_median'),
 			t('modeldash.col_fail_rate'), t('modeldash.col_rating')]
 			.forEach(function (h, i) {
-				thead.appendChild(el('th', i > 0 && i < 7 ? 'num' : null, h));
+				thead.appendChild(el('th', i > 0 ? 'num' : null, h));
 			});
 		var thd = el('thead'); thd.appendChild(thead); tbl.appendChild(thd);
 
@@ -284,8 +237,7 @@
 			var failTd = el('td', 'num', r.outcomeTurns > 0 ? fmtRate(r.failureRate) : '—');
 			failTd.title = t('modeldash.col_fail_rate_help', { failed: r.turnsFailed, stopped: r.turnsStopped });
 			tr.appendChild(failTd);
-			var rateTd = el('td');
-			rateTd.appendChild(rateCell(r.model));
+			var rateTd = el('td', 'num', fmtCounts(r.up, r.down));
 			tr.appendChild(rateTd);
 			tb.appendChild(tr);
 		});
@@ -367,10 +319,7 @@
 		// Pure surface (also on `PURE`, kept in sync for the test file).
 		RATINGS_KEY:   RATINGS_KEY,
 		loadRatings:   loadRatings,
-		saveRatings:   saveRatings,
 		ratingsFor:    ratingsFor,
-		rate:          rate,
-		clearRatings:  clearRatings,
 		dashboardRows: dashboardRows,
 		gapFields:     gapFields,
 		// DOM surface.

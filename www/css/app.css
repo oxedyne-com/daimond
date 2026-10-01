@@ -4448,7 +4448,8 @@ details.md-fold > .md-fold-body > :last-child { margin-bottom: 0; }
 .ctile:hover { border-color: color-mix(in srgb, var(--ct-edge) 45%, var(--border)); }
 
 /* Type → edge colour and body tint. */
-.ctile[data-t="user"]  { --ct-edge: var(--accent-text); background: var(--accent-soft); border-color: transparent; }
+.ctile[data-t="user"],
+.ctile[data-t="rating"] { --ct-edge: var(--accent-text); background: var(--accent-soft); border-color: transparent; }
 .ctile[data-t="think"] { --ct-edge: var(--text-secondary); background: color-mix(in srgb, var(--text-secondary) 7%, var(--bg-secondary)); }
 .ctile[data-t="reply"] { --ct-edge: var(--accent); }
 .ctile[data-t="tool"]  { --ct-edge: var(--ok);   background: color-mix(in srgb, var(--ok) 8%, var(--bg-secondary)); }
@@ -4494,13 +4495,13 @@ details.md-fold > .md-fold-body > :last-child { margin-bottom: 0; }
 .ctile-meta {
 	color: var(--text-muted); font-weight: 500; font-size: var(--fs-2xs);
 	font-variant-numeric: tabular-nums; white-space: nowrap;
-	overflow: hidden; text-overflow: ellipsis; flex: none; max-width: 60%; min-width: 0;
+	overflow: hidden; text-overflow: ellipsis; flex: 0 1 auto; max-width: 60%; min-width: 0;
 }
 .ctile-grow { flex: 1 1 auto; min-width: 4px; }
 .ctile-peek {
 	color: var(--text-muted); font-weight: 400; font-size: var(--fs-xs);
 	white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
-	max-width: 50%; flex: 0 1 auto; min-width: 0; display: none;
+	max-width: 50%; flex: 0 1000 auto; min-width: 0; display: none;	/* the peek gives way first, so a model name keeps its width */
 }
 .ctile.collapsed .ctile-peek { display: block; }
 .ctile[data-t="user"] .ctile-peek { display: none !important; }
@@ -4518,17 +4519,78 @@ details.md-fold > .md-fold-body > :last-child { margin-bottom: 0; }
 .ctile-time-short { display: none; }
 .ctile-ctl { display: flex; align-items: center; flex: none; }
 
-/* Copy — hidden until the tile is hovered, at the right end of the bar. */
-.ctile-copy {
+/* Copy — hidden until the tile is hovered, at the right end of the bar. The rating
+   controls (up, down, details) are drawn as Copy is: the same box, icon and reveal. */
+.ctile-copy,
+.ctile-rate-up, .ctile-rate-down, .ctile-rate-more {
 	background: transparent; border: 0; padding: 2px; margin: -2px -2px -2px 0;
 	cursor: pointer; color: var(--text-muted); border-radius: var(--radius-sm);
 	display: grid; place-items: center; opacity: 0; transition: opacity 0.12s;
 }
 .ctile:hover > .ctile-lbl .ctile-copy,
 .crollup:hover > .crollup-lbl .ctile-copy { opacity: 0.75; }
-.ctile-copy:hover { opacity: 1; color: var(--accent); background: color-mix(in srgb, var(--accent) 12%, transparent); }
+.ctile-copy:hover,
+.ctile-rate button:hover { opacity: 1; color: var(--accent); background: color-mix(in srgb, var(--accent) 12%, transparent); }
 .ctile-copy.done { color: var(--ok); opacity: 1; }
-.ctile-copy .ic { width: 13px; height: 13px; }
+.ctile-copy .ic,
+.ctile-rate .ic { width: 13px; height: 13px; }
+
+/* ── Rating an answer (Rating U2) ─────────────────────────────────────
+   The group sits in the label bar between the peek and the time, so its width comes
+   out of the flexible middle and the time and Copy keep the x they have on every other
+   tile. It shows on hover or focus, as Copy does; a lit arrow, and a details control
+   holding more than a bare +1 or -1, always show.
+
+   Where there is no hover, or the chat panel has no room for three buttons beside a
+   model name, the same group is drawn a second time in a row under the answer
+   (`.ctile-rate-row`) and the header's is dropped. The mount writes both; the rules
+   below show one. There is no script in the choice, so a panel resized across the line
+   changes live, as the chat head does at 440px. */
+.ctile-rate { display: flex; align-items: center; gap: 2px; flex: none; }
+.ctile-rate button { margin: -2px 0; }		/* Copy's vertical margin: each arrow adds 16px to the bar, as Copy does */
+.ctile:is(:hover, :focus-within) > .ctile-lbl .ctile-rate button { opacity: 0.75; }
+.ctile-rate button:hover,
+.ctile-rate button:focus-visible,
+.ctile-rate button[aria-pressed="true"],
+.ctile-rate .ctile-rate-more.on,
+.ctile:is(:hover, :focus-within) > .ctile-lbl .ctile-rate button[aria-pressed="true"],
+.ctile:is(:hover, :focus-within) > .ctile-lbl .ctile-rate .ctile-rate-more.on { opacity: 1; }
+.ctile-rate button[aria-pressed="true"],
+.ctile-rate .ctile-rate-more.on { color: var(--accent); background: color-mix(in srgb, var(--accent) 12%, transparent); }
+.ctile-rate-row { display: none; }
+.ctile-rate-tags { flex-wrap: wrap; gap: 2px; }
+#chat-output .ctile-rate-tags { padding: 2px 12px 8px; }
+.ctile-rate-tags .tile-dlg-level { flex: 0 0 auto; }
+.ctile.collapsed > .ctile-rate-row,
+.ctile.collapsed > .ctile-rate-tags { display: none; }
+.chat-output.selecting .ctile-rate,
+.chat-output.selecting .ctile-rate-row,
+.chat-output.selecting .ctile-rate-tags { display: none; }
+/* The rating popup. Steps in one row, words only; a dimension's label sits over its
+   five figures so a long one is not cut; the words field grows to eight lines. */
+.rate-scale .tile-dlg-level { flex: 1 1 0; min-width: 0; white-space: nowrap; }
+.rate-step-word { display: block; overflow: hidden; text-overflow: ellipsis; }
+.rate-card .ctile-rate-tags { margin-top: 2px; }
+.rate-dim { flex-direction: column; align-items: stretch; gap: 2px; }
+.rate-dim .tile-dlg-label { flex: none; width: auto; }
+.rate-said-label { display: block; flex: none; width: auto; margin-top: 10px; }
+.rate-said-input { display: block; width: 100%; box-sizing: border-box; padding: 6px 8px; margin-top: 4px; resize: none; font: inherit; max-height: 12.5em; overflow-y: auto; }
+.rate-where { margin-top: 12px; }
+/* The popup is a body-level modal, so the viewport and the pointer decide: on a phone or a touch screen
+   every control takes the 44px overlay and the rows stand 14px or more apart. */
+@media (max-width: 760px), (pointer: coarse) {
+	.rate-card :is(.tile-dlg-level, .tile-dlg-adv-sum, .rate-clear) { position: relative; }
+	.rate-card :is(.tile-dlg-level, .tile-dlg-adv-sum, .rate-clear)::after { content: ''; position: absolute; top: 50%; left: 50%; width: max(100%, 44px); height: 44px; transform: translate(-50%, -50%); }
+	.rate-card :is(.rate-dim, .ctile-rate-tags) .tile-dlg-level { min-width: 44px; }
+	.rate-card .ctile-rate-tags { row-gap: 14px; }
+	.rate-card .rate-dim { margin-top: 14px; }
+	.rate-card .tile-dlg-adv { margin-top: 24px; }
+	.rate-card .tile-dlg-actions > button { overflow: visible; }
+}
+/* The rating line: it wraps, an unbroken run included. */
+.rate-line { overflow-wrap: anywhere; }
+.rate-score { font-family: var(--font-mono); font-variant-numeric: tabular-nums; }		/* the signed score is a figure */
+.rate-jump-link { background: none; border: 0; padding: 0; margin: 0; font: inherit; cursor: pointer; }
 
 /* In select mode the copy icon's slot holds a checkbox instead. */
 .ctile-chk {
@@ -4793,6 +4855,43 @@ details.md-fold > .md-fold-body > :last-child { margin-bottom: 0; }
 		.panel.ai .chead-right { margin-left: auto; }
 	}
 }
+/* ── Rating controls: which form an answer wears ─────────────────────
+   The header form needs room for three buttons beside a model name; the row form
+   (`.ctile-rate-row`, under the answer) does not, and is the one a touch screen gets
+   since touch has no hover. Both are written by the mount; exactly one is shown.
+
+   WHERE THE LINE FALLS, measured (Daylight, the Holocene time, `fast` for a model):
+   the label's content is the panel's container width less 96px, and the header holds
+   dot 8, name 46, a 4px spring, the group 52, time 119.7 and Copy 14, with six 8px gaps:
+   291.7px without a model name. The name needs about 52px (eight characters and an
+   ellipsis), so the header form needs a container of 96 + 291.7 + 52, which is 440px.
+   It is the width at which the chat head drops to one row, too. */
+.ctile-rate-row { align-items: center; box-sizing: border-box; height: 34px; padding: 0 8px 12px; }
+/* The row's 8px puts the first glyph (4px inside its 16px box) on the answer text's left edge. The buttons
+   are 16px wide, and the first one's overlay lies inward (its left edge is the tile's) because the tile
+   clips at its edge; a 34px gap then makes the 50px pitch at which no two 44px overlays overlap. The row
+   is tall enough that the tile's own clip does not cut an overlay at the foot. */
+.ctile-rate-row .ctile-rate { gap: 34px; }
+.ctile-rate-row .ctile-rate button { position: relative; opacity: 1; }
+.ctile-rate-row .ctile-rate button::after { content: ''; position: absolute; top: 50%; left: 50%; width: 44px; height: 44px; transform: translate(-50%, -50%); }
+.ctile-rate-row .ctile-rate button:first-child::after { left: -8px; transform: translateY(-50%); }
+@container aipane (max-width: 440px) {
+	.ctile > .ctile-lbl > .ctile-rate { display: none; }
+	.ctile-rate-row { display: flex; }
+	#chat-output .ctile-rate-tags { row-gap: 14px; margin-top: 8px; }
+	#chat-output .ctile-rate-tags .tile-dlg-level { position: relative; min-width: 44px; }
+	#chat-output .ctile-rate-tags .tile-dlg-level::after { content: ''; position: absolute; top: 50%; left: 50%; width: 44px; height: 44px; transform: translate(-50%, -50%); }
+}
+/* A touch screen, which has no hover. `pointer: coarse` and not `hover: none`: a headless browser
+   reports no pointer at all, and a rule keyed on that could never show the header form there. */
+@media (pointer: coarse) {
+	.ctile > .ctile-lbl > .ctile-rate { display: none; }
+	.ctile-rate-row { display: flex; }
+	#chat-output .ctile-rate-tags { row-gap: 14px; margin-top: 8px; }
+	#chat-output .ctile-rate-tags .tile-dlg-level { position: relative; min-width: 44px; }
+	#chat-output .ctile-rate-tags .tile-dlg-level::after { content: ''; position: absolute; top: 50%; left: 50%; width: 44px; height: 44px; transform: translate(-50%, -50%); }
+}
+
 /* THE WRAPPED CONTROL ROW MUST STILL FIT — OR SCROLL. On the tightest shared-stage
    band the AI panel is only ~210px wide (at a 1000px+ VIEWPORT), narrower than the
    ~260px control cluster, so the wrapped control row ran off the panel edge with

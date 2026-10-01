@@ -219,6 +219,8 @@ const CAPTURE = ({ rootSel, surface }) => {
 	// Structure needs every row whether or not it is a control, so it is read
 	// directly here, once per instance of each component.
 	const COMPONENTS = [
+		['rating-tile', '.ctile[data-t="rating"]', [['head', '.ctile-lbl'], ['lines', '.rate-line']]],
+		['rate-popup', '.rate-card', [['scale', '.rate-scale'], ['tags', '.ctile-rate-tags'], ['details', '.tile-dlg-adv'], ['where', '.rate-where']]],
 		['tile', '.session-box', [
 			['title', '.session-box-header'],
 			['model', '.session-box-meta, .tile-active-top'],
@@ -342,6 +344,28 @@ async function overlay(name, opener) {
 	return ov;
 }
 
+/// U2's own surfaces on the main chat: the chip row under a down tap on the last answer (taken back and committed afterwards,
+/// so the chat is as seeded), then the popup on the first answer, collapsed and with Details open. `pre` is '' or 'p_'.
+async function rateSurfaces(pre) {
+	const pick = (first) => ev((first) => { const t = [...document.querySelectorAll('#chat-output .ctile.chat-msg-assistant[data-mid]')].filter((e) => e.querySelector('.ctile-rate')); const x = first ? t[0] : t[t.length - 1]; return x ? x.dataset.mid : ''; }, first);
+	const vis = (mid, cls) => page.locator(`#chat-output .ctile[data-mid="${mid}"] .${cls} >> visible=true`).first();
+	const last = await pick(false), first = await pick(true);
+	const into = (mid) => ev((m) => { const t = document.querySelector(`#chat-output .ctile[data-mid="${m}"]`); if (t) t.scrollIntoView({ block: 'center' }); }, mid);
+	if (!last || !first) { CAP.missing.push(`${CFG}/${pre}rate_tags`, `${CFG}/${pre}dlg_rate`); return; }
+	await into(last); await wait(300);
+	await vis(last, 'ctile-rate-down').click({ force: true }); await wait(400);
+	await grab(pre + 'rate_tags', '#chat-output');
+	await vis(last, 'ctile-rate-down').click({ force: true }); await wait(300);
+	await ev(async () => { await window.DaimondRatingUI.flush(String(window.DaimondAttach.focus().id)); });
+	await into(first); await wait(300);
+	const ov = await overlay(pre + 'dlg_rate', async () => { await vis(first, 'ctile-rate-more').click({ force: true }); return true; });
+	if (ov) {
+		await ev(() => { const d = document.querySelector('.rate-card details'); if (d) d.open = true; }); await wait(400);
+		await grab(pre + 'dlg_rate_details', await topOverlay());
+	}
+	await quiet();
+}
+
 // ── Surfaces: the computer ──────────────────────────────────────────────
 async function deskSurfaces() {
 	await quiet(); await mainChat();
@@ -354,6 +378,7 @@ async function deskSurfaces() {
 	await ev(() => { const b = document.getElementById('expand-all-btn'); if (b) b.click(); });
 	const tiles = page.locator('#chat-output .ctile.chat-msg-assistant');
 	if (await tiles.count()) { await tiles.last().hover({ force: true }).catch(() => {}); await wait(300); await grab('tile_hover', '#chat-output'); await page.mouse.move(5, 5); }
+	await rateSurfaces('');
 	await page.fill('#chat-input', 'A draft that is long enough to wrap onto a second line of the composer, so its height and its buttons show how they sit together.').catch(() => {});
 	await wait(300); await grab('composer', '.chat-input-bar'); await page.fill('#chat-input', '').catch(() => {});
 	// Rail sections, each unfolded, and a filter chip on.
@@ -445,6 +470,7 @@ async function phoneSurfaces(wk) {
 	await grab('p_chat');
 	await ev(() => { const o = document.getElementById('chat-output'); if (o) o.scrollTop = 0; }); await wait(300);
 	await grab('p_chat_top', '#chat-output');
+	await rateSurfaces('p_');
 	await page.fill('#chat-input', 'A draft long enough to wrap onto a second line of the composer on a phone.').catch(() => {});
 	await wait(300); await grab('p_composer', '.chat-input-bar'); await page.fill('#chat-input', '').catch(() => {});
 	await click('#drawer-btn'); await wait(900);
@@ -515,6 +541,26 @@ async function seed() {
 	await newChat(s);
 	await chat(s, Q1);
 	await chat(s, Q2);
+	// U2 (plan unit I): the Q1 answer rated down with the tag Too long and a note, through the popup; the Q2 answer up by a tap; then
+	// committed. The chat holds a lit pair, a details control that is `.on` and a Rating tile of two lines, for every surface after it.
+	{
+		const vis = (mid, cls) => page.locator(`#chat-output .ctile[data-mid="${mid}"] .${cls} >> visible=true`).first();
+		const mids = await ev(async () => [...document.querySelectorAll('#chat-output .ctile.chat-msg-assistant[data-mid]')].map((t) => t.dataset.mid));
+		if (mids.length < 2) { log(`seed: ${mids.length} answers with a mid, want >= 2`); await s.close().catch(() => {}); process.exit(3); }
+		await vis(mids[0], 'ctile-rate-more').click({ force: true });
+		await page.waitForSelector('.rate-card', { timeout: 6000 });
+		await page.locator('.rate-card .rate-scale .tile-dlg-level').first().click({ force: true });
+		await page.locator('.rate-card .ctile-rate-tags .tile-dlg-level').nth(2).click({ force: true });
+		await page.locator('.rate-card details > summary').first().click({ force: true });
+		await page.locator('.rate-card textarea.rate-said-input').fill('Too long for what I asked, and the table was not needed.');
+		await page.locator('.rate-card .ui-close').first().click({ force: true });
+		await wait(300);
+		await vis(mids[1], 'ctile-rate-up').click({ force: true });
+		await ev(async () => { await window.DaimondRatingUI.flush(String(window.DaimondAttach.focus().id)); });
+		await wait(500);
+		const lines = await ev(() => document.querySelectorAll('#chat-output .ctile[data-t="rating"] .rate-line').length);
+		if (lines !== 2) { log(`seed: the ratings did not land (${lines} Rating lines, want 2)`); await s.close().catch(() => {}); process.exit(3); }
+	}
 	await chat(s, '@tool file_read {"path":"notes.md"}').catch((e) => log('tool turn', e.message));
 	await chat(s, '@tools file_read {"path":"budget.csv"} ;; file_read {"path":"quotes/harlow.md"}').catch((e) => log('tools turn', e.message));
 	await chat(s, '@reason I compare the lead times against a May start first. ;; Harlow is the only one that lands in May.').catch((e) => log('reason turn', e.message));
@@ -1128,6 +1174,7 @@ function report() {
 // ════════════════════════════════════════════════════════════════════════
 const V_NAME  = ['Tax', 'Kitchen renovation for the Leederville house', 'Kitchen renovation for the Leederville house, stage two: joinery-benchtop-splashback-laundry-ensuite'];
 const V_MODEL = ['gpt-5', 'anthropic/claude-opus-5.5', 'anthropic/claude-opus-5.5-extended-context-preview-20260929'];
+const V_SAID  = ['Too long.', 'Just give me the command next time, and skip the explanation of every flag it takes.', 'Please keep every answer to what was asked and no more. '.repeat(11) + 'https://example.com/' + 'a'.repeat(80)];
 const V_CHIP  = ['tax', 'committee-review', 'leederville-kitchen-renovation-stage-two'];
 const V_TIME  = ['1m ago', '3 weeks ago', '2 years, 11 months ago'];
 const V_COST  = ['$0.01', 'A$1,234.56', 'A$1,234,567.89'];
@@ -1152,7 +1199,7 @@ const VSLOTS = [
 	['chat model',          '#session-list', '.chat-box', '.tile-model-chip', V_MODEL, /Flights/],
 	['chat meter tokens',   '#session-list', '.chat-box', '.tile-tok', V_TOK, /Flights/],
 	['chat meter last',     '#session-list', '.chat-box', '.tile-meter > :last-child', V_COST, /Flights/],
-	['rail filter chip',    '#panel-rail', '.tagf-row', '.tag-chip', V_CHIP, null, 'filter'],
+	['rail filter chip',    '#panel-rail', '.tagf-pool', '.tag-chip', V_CHIP, null, 'filter'],
 	['rail button label',   '#panel-rail', '.railhead', '#new-diamond-btn', V_BTN, null],
 	['account name',        '#admin-status', '.astat-id', '#user-info', V_ACCT, null],
 	['status summary',      '#admin-status', '#admin-status', '#astat-summary', V_STAT, null],
@@ -1163,9 +1210,16 @@ const VSLOTS = [
 	['file viewer title',   '#panel-doc', '.chead, .files-view-head', '.ctitle, .files-view-name', V_FILE, null, 'viewer'],
 	['tile dialog title',   'OVERLAY', '.ui-head', 'h2', V_NAME, null, 'cog'],
 	['dialog action label', 'OVERLAY', '.dlg-actions, .modal-actions, .tile-dlg-actions', '.dlg-ok', V_OK, null, 'newdia'],
+	// U2 (plan unit I).
+	['answer model, rated', '#chat-output', '.ctile.chat-msg-assistant', '.ctile-meta', V_MODEL, /Harlow/, 'chat'],
+	['rating note',         '#chat-output', '.ctile[data-t="rating"]', '.rate-said', V_SAID, null, 'chat'],
+	['rating tile lines',   '#chat-output', '.ctile[data-t="rating"]', '.chat-msg-content', { count: [1, 5, 14] }, null, 'chat'],
+	['rate chip label',     '#chat-output', '.ctile-rate-tags', '.tile-dlg-level', V_CHIP, null, 'ratetags'],
+	['rate popup chip label', 'OVERLAY', '.ctile-rate-tags', '.tile-dlg-level', V_CHIP, null, 'ratepop'],
+	['rate popup model',    'OVERLAY', '.rate-where', '', V_MODEL, null, 'ratepop'],
 ];
 // Whole surfaces re-read in each locale: every label at once, en against de and fr.
-const VLOCALE = [['rail', '#panel-rail'], ['chat head', '#panel-ai > .chead'], ['workspace', '#panel-work', 'work'], ['composer', '.chat-input-bar'], ['topbar', '.topbar'], ['new diamond dialog', 'OVERLAY', 'newdia'], ['admin', '#admin', 'admin']];
+const VLOCALE = [['rail', '#panel-rail'], ['chat head', '#panel-ai > .chead'], ['workspace', '#panel-work', 'work'], ['composer', '.chat-input-bar'], ['topbar', '.topbar'], ['new diamond dialog', 'OVERLAY', 'newdia'], ['admin', '#admin', 'admin'], ['rate popup', 'OVERLAY', 'ratepop'], ['rate chips', '#chat-output', 'ratetags']];
 
 // In the page: set (or restore) one slot, then read every part's geometry.
 const VMEASURE = ({ ctx, comp, slot, idx, pick, text, count, restore }) => {
@@ -1235,6 +1289,18 @@ async function vSetup(kind) {
 	await quiet();
 	if (kind === 'astat') { await ev(() => { const d = document.getElementById('astat-detail'); if (d && d.hidden) document.getElementById('astat-summary').click(); }); await wait(300); }
 	if (kind === 'chat') { await mainChat(); }
+	if (kind === 'ratetags' || kind === 'ratepop') {
+		await mainChat();
+		const at = (first) => ev((first) => { const t = [...document.querySelectorAll('#chat-output .ctile.chat-msg-assistant[data-mid]')].filter((e) => e.querySelector('.ctile-rate')); const x = first ? t[0] : t[t.length - 1]; if (x) x.scrollIntoView({ block: 'center' }); return x ? x.dataset.mid : ''; }, first);
+		if (kind === 'ratetags') {
+			// A down tap on a down rating takes it back, so tap again if no chip row came (an earlier pass leaves its rating committed).
+			const m = await at(false), down = page.locator(`#chat-output .ctile[data-mid="${m}"] .ctile-rate-down >> visible=true`).first();
+			const row = () => ev(() => [...document.querySelectorAll('#chat-output .ctile-rate-tags')].some((e) => e.getClientRects().length > 0));
+			await down.click({ force: true }); await wait(400);
+			if (!(await row())) { await down.click({ force: true }); await wait(400); }
+		}
+		else { const m = await at(true); await page.locator(`#chat-output .ctile[data-mid="${m}"] .ctile-rate-more >> visible=true`).first().click({ force: true }); await wait(600); }
+	}
 	if (kind === 'filter') { await ev(() => { document.querySelectorAll('#panel-rail .tagf-toggle[aria-expanded="false"], #panel-rail .rail-fold[aria-expanded="false"]').forEach((b) => b.click()); document.querySelectorAll('#panel-rail details').forEach((d) => { d.open = true; }); }); await wait(400); }
 	if (kind === 'viewer') {
 		await ev(() => { const row = [...document.querySelectorAll('.files-row')].find((x) => /^\s*notes\.md/.test((x.querySelector('.files-name') || x).textContent)); if (row) (row.querySelector('.files-name') || row).click(); });
@@ -1243,7 +1309,7 @@ async function vSetup(kind) {
 	if (kind === 'cog') { await click('#diamond-list .diamond-box .tile-cog'); await wait(700); }
 	if (kind === 'newdia') { await click('#new-diamond-btn'); await wait(700); }
 	if (kind === 'admin') { await click('#settings-btn'); await wait(700); await ev(() => { try { window.DaimondAdmin.home(); } catch (e) {} }); await wait(500); }
-	if (['cog', 'newdia', 'admin'].includes(kind)) { const ov = kind === 'admin' ? '#admin' : await topOverlay(); await ev((q) => { window.__vl = window.__vl || {}; window.__vl.ov = q && document.querySelector(q); }, ov); }
+	if (['cog', 'newdia', 'admin', 'ratepop'].includes(kind)) { const ov = kind === 'admin' ? '#admin' : await topOverlay(); await ev((q) => { window.__vl = window.__vl || {}; window.__vl.ov = q && document.querySelector(q); }, ov); }
 }
 async function vShot(name, clip) {
 	if (!clip) return '';
@@ -1263,7 +1329,7 @@ async function varlenPass(phone) {
 		if (!phone) await panels(['rail', 'ai', 'work']);
 		if (phone && setup === 'work') { await ev(() => { try { window.DaimondPanels.show('work'); } catch (e) {} }); await wait(700); }
 		else if (phone && setup === 'viewer') { await ev(() => { try { window.DaimondPanels.show('work'); } catch (e) {} }); await wait(700); }
-		else if (phone && (setup === 'chat' || /panel-ai|chat-input/.test(ctx))) { await ev(() => { try { window.DaimondPanels.show('ai'); } catch (e) {} }); await wait(400); }
+		else if (phone && (['chat', 'ratetags', 'ratepop'].includes(setup) || /panel-ai|chat-input/.test(ctx))) { await ev(() => { try { window.DaimondPanels.show('ai'); } catch (e) {} }); await wait(400); }
 		else if (phone && /rail|diamond-list|session-list|admin-status|topbar/.test(ctx) || phone && ['cog', 'newdia'].includes(setup)) await railOpen();
 		if (setup) await vSetup(setup);
 		if (/admin-status/.test(ctx)) await ev(() => { const a = document.getElementById('admin-status'); if (a) a.scrollIntoView({ block: 'end' }); });
