@@ -261,6 +261,9 @@
 			// runner then falls back to the reconstructed `ctx.chat.diamondId`.
 			diamondId: String(o.diamondId || ''),
 			prompt:  String(o.prompt == null ? '' : o.prompt),
+			// The note ahead of the person's words (U4), composed once on the device that sent the
+			// message and kept apart from `prompt`; '' for none. The runner joins it in the engine.
+			pre:     String(o.pre == null ? '' : o.pre),
 			model:   o.model || null,		// { provider, model, url } -- models.js:127-129
 			scope:   o.scope || null,		// the workspace fence -- scopeChatTo, daimond.js:17553
 			pause:   o.pause || null,		// pause-tree snapshot at dispatch -- §1.1
@@ -943,6 +946,9 @@
 			// as `threadSig` skips it, so a runner that lacks it is never ready on it.
 			if (mm.interrupted || mm.provisional) continue;
 			var body = String(mm.content == null ? '' : mm.content);
+			// A person's message brings the note it took (U4), counted with it: the budget is
+			// the envelope's size, and the note rides the same seal.
+			var note = (mm.role === 'user' && typeof mm.pre === 'string') ? mm.pre : '';
 			// WHOLE OR NOT AT ALL (slowparcel CASE 3). A cut copy carries the message's
 			// mid, so the runner's graft takes it for the message and `holdsThread`,
 			// which reads roles and mids and never content, passes it: the runner then
@@ -951,12 +957,16 @@
 			// fails `holdsThread` and pulls the parcel or hands the turn back. The turn's
 			// own message is the exception: it is skipped, not an end, because the prompt
 			// rides the errand whole and the reconstruct writes it from there.
-			if (used + body.length > cMax) {
+			if (used + body.length + note.length > cMax) {
 				if (mm.role === 'user' && String(mm.mid || '') === id) continue;
 				break;
 			}
-			used += body.length;
-			keep.unshift({ role: mm.role, content: body, mid: String(mm.mid || ''), ts: +mm.ts || 0 });
+			used += body.length + note.length;
+			var sm = { role: mm.role, content: body, mid: String(mm.mid || ''), ts: +mm.ts || 0 };
+			if (note) sm.pre = note;
+			// An app-made record keeps its mark, so a runner's copy of it is the same record.
+			if (mm.role === 'user' && mm.app === true) sm.app = true;
+			keep.unshift(sm);
 		}
 		if (!keep.length) return null;
 		return {
@@ -1084,6 +1094,7 @@
 		var chatId   = String(o.chatId || c.id || '');
 		var eid      = o.eid || newId();
 		var prompt   = String(o.prompt == null ? '' : o.prompt);
+		var pre      = String(o.pre == null ? '' : o.pre);		// the note beside it (U4), '' for none
 		// The peer must run the model the CHAT chose, not the peer's own default.
 		var model    = o.model || { provider: c.provider || '', model: c.model || '', url: String(o.url || '') };
 		// The Diamond the chat belongs to, so the runner services a daimon turn through
@@ -1132,7 +1143,7 @@
 			errand: function (parcelVersion) {
 				return makeErrand({
 					eid: eid, turnId: turnId, chatId: chatId, diamondId: diamondId,
-					prompt: prompt, model: model,
+					prompt: prompt, pre: pre, model: model,
 					scope: scope, pause: pause, parcelVersion: parcelVersion,
 					deadline: deadline, dispatchedBy: by, parkCount: parkCount, ts: now,
 					seed: seed, thread: thread,
@@ -1140,7 +1151,7 @@
 			},
 			// The fully-resolved fields (bar parcelVersion), exposed for inspection.
 			fields: {
-				turnId: turnId, chatId: chatId, diamondId: diamondId, prompt: prompt,
+				turnId: turnId, chatId: chatId, diamondId: diamondId, prompt: prompt, pre: pre,
 				model: model, scope: scope,
 				pause: pause, deadline: deadline, dispatchedBy: by, eid: eid, parkCount: parkCount,
 				seed: seed, thread: thread,
@@ -1200,7 +1211,7 @@
 		// door (WS-BRICK's `daimond_wire_fits_seam_plan` follow-on). Seedless is the last
 		// rung: the runner reconstructs from the parcel it is syncing anyway, and its
 		// readiness is `holdsThread`, so it never runs a truncated thread (S-HAND #3).
-		var cMax0   = Math.min(SEED_MAX_CHARS, Math.floor(lim * 3 / 4) - prompt.length - 4096);
+		var cMax0   = Math.min(SEED_MAX_CHARS, Math.floor(lim * 3 / 4) - prompt.length - String(o.pre == null ? '' : o.pre).length - 4096);
 		var budgets = [cMax0, Math.floor(cMax0 / 2), Math.floor(cMax0 / 4)];
 		for (var b = 0; b < budgets.length; b++) {
 			if (budgets[b] <= 0) break;
@@ -4144,7 +4155,8 @@
 				// a second copy -- otherwise the prompt sits twice in `messages` AND is fed
 				// to the model twice (seeded history + the re-sent turn). `turnId` names the
 				// existing user message (mid === turnId) the runner anchors to.
-				await d.runTurn(ctx, e.prompt, { onProgress: liveness, promptInTranscript: true, turnId: turnId });
+				await d.runTurn(ctx, e.prompt, { onProgress: liveness, promptInTranscript: true, turnId: turnId,
+					pre: (typeof e.pre === 'string') ? e.pre : '' });
 				trace.push('run');
 			} catch (err) {
 				// Revoked -> the lease is already whoever took it back's; touch nothing,

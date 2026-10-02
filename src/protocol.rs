@@ -327,6 +327,29 @@ impl MessageContent {
         Self::Parts(parts)
     }
 
+    /// The same content with `lead` and a blank line in front of its words.
+    ///
+    /// The lead goes before the first text part, so a picture keeps its place among the words.
+    /// Content with no text in it, a picture alone, has no words to be put in front of, so the
+    /// lead becomes a text part of its own at the head.
+    pub fn led_by(&self, lead: &str) -> Self {
+        match self {
+            Self::Text(s) => Self::Text(fmt!("{}\n\n{}", lead, s)),
+            Self::Parts(parts) => {
+                let mut out = parts.clone();
+                let first = out.iter_mut().find_map(|p| match p {
+                    ContentPart::Text(t)  => Some(t),
+                    ContentPart::Image(_) => None,
+                });
+                match first {
+                    Some(t) => *t = fmt!("{}\n\n{}", lead, t),
+                    None    => out.insert(0, ContentPart::Text(lead.to_string())),
+                }
+                Self::Parts(out)
+            },
+        }
+    }
+
     /// The content as text, with each image standing in for itself by name.
     ///
     /// Borrowed in the common case and built only when there are parts, so the panels, the ledger
@@ -496,7 +519,7 @@ impl MessageContent {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum ChatMessage {
     System { content: MessageContent },
-    User { content: MessageContent },
+    User { content: MessageContent, pre: String },	// `pre`: the app's note, empty for none
     /// Assistant turn, with whatever tool calls it asked for.
     ///
     /// The calls are part of the message and are persisted with it.  They used to be
@@ -518,7 +541,12 @@ impl ChatMessage {
 
     /// A user message.
     pub fn user<C: Into<MessageContent>>(content: C) -> Self {
-        Self::User { content: content.into() }
+        Self::User { content: content.into(), pre: String::new() }
+    }
+
+    /// A user message that carries an app note beside the person's words.
+    pub fn user_noted<C: Into<MessageContent>>(content: C, pre: String) -> Self {
+        Self::User { content: content.into(), pre }
     }
 
     /// An assistant message that asked for nothing.
@@ -561,9 +589,16 @@ impl ChatMessage {
                 m.insert(dat!("role"), dat!("system"));
                 m.insert(dat!("content"), content.to_dat());
             }
-            Self::User { content } => {
+            Self::User { content, pre } => {
                 m.insert(dat!("role"), dat!("user"));
                 m.insert(dat!("content"), content.to_dat());
+                // Written only when there is a note, so an ordinary message's map is the shape
+                // it always was and a reader of an older snapshot sees nothing new.  Beside the
+                // words and never in them: that is what keeps the app's note from being read
+                // back later as something the person said.
+                if !pre.is_empty() {
+                    m.insert(dat!("pre"), dat!(pre.clone()));
+                }
             }
             Self::Assistant { content, tool_calls } => {
                 m.insert(dat!("role"), dat!("assistant"));
@@ -598,7 +633,17 @@ impl ChatMessage {
         };
         match role.as_str() {
             "system" => Ok(Self::System { content }),
-            "user" => Ok(Self::User { content }),
+            "user" => {
+                // Absent is a message with no note, and every snapshot written before the field
+                // existed.  A `pre` that is not text is dropped rather than refusing the message,
+                // as an unreadable image part is: half a conversation read back is worth more
+                // than an error, and a lost note is the cheaper of the two losses.
+                let pre = match m.get(&dat!("pre")) {
+                    Some(Dat::Str(s)) => s.clone(),
+                    _                 => String::new(),
+                };
+                Ok(Self::User { content, pre })
+            }
             "assistant" => {
                 // Absent is an assistant turn that asked for nothing, and every snapshot
                 // written before the calls were persisted at all.  A malformed entry is
@@ -637,11 +682,19 @@ impl ChatMessage {
         }
     }
 
+    /// The app's note on a user message: empty for none, and for every other role.
+    pub fn pre(&self) -> &str {
+        match self {
+            Self::User { pre, .. } => pre,
+            _                      => "",
+        }
+    }
+
     /// What this message carries, whole.
     pub fn content(&self) -> &MessageContent {
         match self {
             Self::System { content }
-            | Self::User { content }
+            | Self::User { content, .. }
             | Self::Assistant { content, .. }
             | Self::Tool { content, .. } => content,
         }
@@ -662,13 +715,39 @@ impl ChatMessage {
     pub fn with_content(&self, content: MessageContent) -> Self {
         match self {
             Self::System { .. } => Self::System { content },
-            Self::User { .. }   => Self::User { content },
+            Self::User { pre, .. } => Self::User { content, pre: pre.clone() },
             Self::Assistant { tool_calls, .. } =>
                 Self::Assistant { content, tool_calls: tool_calls.clone() },
             Self::Tool { tool_call_id, .. } =>
                 Self::Tool { tool_call_id: tool_call_id.clone(), content },
         }
     }
+}
+
+
+/// The conversation as a provider is sent it: each user message's app note, a blank line, then
+/// the person's words.
+///
+/// **THE ONE PLACE A NOTE BECOMES TEXT.**  The session keeps `pre` and `content` apart, so the
+/// transcript, the store and an export show only what the person typed, and this is where the two
+/// are put together, once, for the request.  [`crate::llm::LlmClient`] calls it ahead of every
+/// provider's body builder and no builder reads `pre` itself, so a provider cannot be added that
+/// joins it twice or forgets to.
+///
+/// With no note anywhere the slice comes back as it came, uncopied, and the request is the very
+/// bytes it was before notes existed.
+///
+/// # Arguments
+/// * `msgs` - The conversation, oldest first, system message included.
+pub fn join_notes(msgs: &[ChatMessage]) -> std::borrow::Cow<'_, [ChatMessage]> {
+    if msgs.iter().all(|m| m.pre().is_empty()) {
+        return std::borrow::Cow::Borrowed(msgs);
+    }
+    std::borrow::Cow::Owned(msgs.iter().map(|m| match m {
+        ChatMessage::User { content, pre } if !pre.is_empty() =>
+            ChatMessage::User { content: content.led_by(pre), pre: String::new() },
+        other => other.clone(),
+    }).collect())
 }
 
 
@@ -1887,6 +1966,114 @@ mod content_tests {
         assert_eq!(Some(&dat!("hello")), m.get(&dat!("content")),
             "text content is no longer a bare string in the store");
         assert_eq!(msg, ChatMessage::from_datmap(&m).expect("read back"));
+    }
+
+    // ── The app's note on a user message (`pre`) ─────────────────────────────
+
+    const NOTE: &str = "[Daimond: the user rated your answer of 10:04 \u{2212}1 (long): \"just give me the command\".]";
+
+    /// The store keeps the note and the person's words as two things, so a reload cannot turn
+    /// the note into something the person said.
+    #[test]
+    fn test_a_user_message_s_note_stays_apart_from_its_words_in_the_store() {
+        let msg = ChatMessage::user_noted("Now fix the lexer.".to_string(), NOTE.to_string());
+        let m = msg.to_datmap();
+        assert_eq!(Some(&dat!("Now fix the lexer.")), m.get(&dat!("content")),
+            "the note leaked into the words: {:?}", m);
+        assert_eq!(Some(&dat!(NOTE)), m.get(&dat!("pre")), "the note was not stored: {:?}", m);
+        let back = ChatMessage::from_datmap(&m).expect("read back");
+        assert_eq!(msg, back);
+        assert_eq!(NOTE, back.pre());
+        assert_eq!("Now fix the lexer.", back.text());
+    }
+
+    /// A message with no note writes the map it always wrote, and a snapshot from before the
+    /// field existed reads back with none.
+    #[test]
+    fn test_a_user_message_with_no_note_writes_no_pre_and_an_old_one_reads_none() {
+        let plain = ChatMessage::user("hello".to_string());
+        assert!(plain.to_datmap().get(&dat!("pre")).is_none(), "an empty note was written");
+        let noted_empty = ChatMessage::user_noted("hello".to_string(), String::new());
+        assert_eq!(plain.to_datmap(), noted_empty.to_datmap());
+        let mut old = DaticleMap::new();
+        old.insert(dat!("role"), dat!("user"));
+        old.insert(dat!("content"), dat!("hello"));
+        let back = ChatMessage::from_datmap(&old).expect("an older snapshot reads");
+        assert_eq!("", back.pre());
+        assert_eq!(plain, back);
+        // A note on any other role is not a thing: the map's `pre` is read for a user only.
+        let mut odd = DaticleMap::new();
+        odd.insert(dat!("role"), dat!("assistant"));
+        odd.insert(dat!("content"), dat!("hi"));
+        odd.insert(dat!("pre"), dat!(NOTE));
+        assert_eq!("", ChatMessage::from_datmap(&odd).expect("reads").pre());
+    }
+
+    /// The elision a fold makes keeps the note with the message it belongs to.
+    #[test]
+    fn test_replacing_a_user_message_s_content_keeps_its_note() {
+        let msg = ChatMessage::user_noted("words".to_string(), NOTE.to_string());
+        let shorter = msg.with_content(MessageContent::text("w"));
+        assert_eq!(NOTE, shorter.pre());
+        assert_eq!("w", shorter.text());
+    }
+
+    /// The join: the note, a blank line, then the words, for each shape of content, and once.
+    #[test]
+    fn test_a_user_message_s_pre_is_joined_ahead_of_its_words() {
+        let msgs = vec![
+            ChatMessage::system("sys".to_string()),
+            ChatMessage::user("earlier".to_string()),
+            ChatMessage::assistant("ok".to_string()),
+            ChatMessage::user_noted("Now fix the lexer.".to_string(), NOTE.to_string()),
+        ];
+        let sent = join_notes(&msgs);
+        assert_eq!(msgs.len(), sent.len());
+        assert_eq!(fmt!("{}\n\nNow fix the lexer.", NOTE), sent[3].text());
+        assert_eq!("", sent[3].pre(), "the note is joined, so it is not also carried");
+        assert_eq!("earlier", sent[1].text(), "a message with no note is untouched");
+        assert_eq!(msgs[0], sent[0]);
+        assert_eq!(msgs[2], sent[2]);
+        // The conversation the session holds is not changed by sending it.
+        assert_eq!("Now fix the lexer.", msgs[3].text());
+        assert_eq!(NOTE, msgs[3].pre());
+
+        // With an image the note goes in front of the words and the picture stays in place.
+        let img = ImagePart::new(ImageMedia::Png, doc_png(), "shots/a.png".to_string());
+        let pictured = vec![ChatMessage::user_noted(MessageContent::parts(vec![
+            ContentPart::Text("look at this".to_string()),
+            ContentPart::Image(img.clone()),
+        ]), NOTE.to_string())];
+        let sent = join_notes(&pictured);
+        match sent[0].content() {
+            MessageContent::Parts(parts) => {
+                assert_eq!(2, parts.len());
+                assert_eq!(ContentPart::Text(fmt!("{}\n\nlook at this", NOTE)), parts[0]);
+                assert_eq!(ContentPart::Image(img.clone()), parts[1]);
+            },
+            other => panic!("the picture was lost in the join: {:?}", other),
+        }
+        // A picture with no words has nothing to be joined to, so the note leads on its own.
+        let bare = vec![ChatMessage::user_noted(MessageContent::parts(vec![
+            ContentPart::Image(img.clone()),
+        ]), NOTE.to_string())];
+        match join_notes(&bare)[0].content() {
+            MessageContent::Parts(parts) => {
+                assert_eq!(ContentPart::Text(NOTE.to_string()), parts[0]);
+                assert_eq!(ContentPart::Image(img), parts[1]);
+            },
+            other => panic!("the picture was lost in the join: {:?}", other),
+        }
+    }
+
+    /// With no note anywhere the conversation is handed back as it came, not copied.
+    #[test]
+    fn test_a_conversation_with_no_note_is_not_copied_to_send_it() {
+        let msgs = vec![
+            ChatMessage::user("a".to_string()),
+            ChatMessage::user_noted("b".to_string(), String::new()),
+        ];
+        assert!(matches!(join_notes(&msgs), std::borrow::Cow::Borrowed(_)));
     }
 }
 

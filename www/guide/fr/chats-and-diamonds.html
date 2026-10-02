@@ -73,12 +73,18 @@
 	</ul>
 	<p>Aucun de ces cas ne se fait passer pour une réponse.</p>
 
-	<h2 id="s4">Garder un chat</h2>
+	<h2 id="s4">Évaluer une réponse ou un changement</h2>
+	<p>Une réponse finale se termine par une flèche vers le haut, une flèche vers le bas et une commande de détails. Un fichier qu’un tour a changé porte les mêmes trois à l’extrémité droite de sa ligne, dans la tuile <span class="ui">Fichiers</span> sous ce tour.</p>
+	<p>La flèche vers le haut donne un plus et la flèche vers le bas un moins, et un appui sur une flèche allumée retire l’évaluation. Un appui vers le bas ouvre aussi une rangée d’étiquettes, comme <span class="ui">Trop long</span> pour une réponse ou <span class="ui">Quelque chose cassé</span> pour un fichier, afin que l’évaluation puisse dire ce qui n’allait pas. La commande de détails ouvre <span class="ui">Évaluer cette réponse</span> ou <span class="ui">Évaluer ce changement</span>, avec cinq échelons de <span class="ui">Faux</span> à <span class="ui">Super</span>, les étiquettes, quatre notes et une zone pour vos propres mots. <span class="ui">Retirer</span> dans cette fenêtre retire aussi une évaluation.</p>
+	<p>Un fichier ne porte des flèches que là où Daimond peut dire quel modèle l’a changé. Quand deux agents ont travaillé au même endroit en même temps, la ligne n’en porte aucune, car une évaluation classée sous le mauvais modèle est pire que rien.</p>
+	<p>Une évaluation est enregistrée dans le chat où elle a été donnée, dix secondes après le dernier appui, ou plus tôt quand vous envoyez un message ou quittez le chat. Elle figure dans une tuile <span class="ui">Évaluation</span> à la fin du fil, avec un lien vers la réponse ou le fichier. Le modèle la lit une fois, avec votre message suivant dans ce chat, et le fil ne montre que ce que vous avez tapé.</p>
+
+	<h2 id="s5">Garder un chat</h2>
 	<p>Deux boutons se trouvent sur la ligne d’un chat dans la barre latérale. <span class="ui">Garder</span> transforme toute la conversation en diamond. <span class="ui">Tout replier</span> le transforme en diamond en le résumant, en gardant ce qui a été tiré au clair et en abandonnant les allers-retours.</p>
 	<p>Pour n’en garder qu’une partie, repliez les réponses, cochez les tours qui valent d’être gardés, et choisissez <span class="ui">Replier la sélection</span>. Repliez une étape que vous avez adoptée, et laissez une remarque de passage où elle est.</p>
 	<p>Rien n’est absorbé de lui-même. La mémoire d’un diamond ne change que par un repliage ou une modification, et chaque écriture est gardée dans l’Historique.</p>
 
-	<h2 id="s5">À l’intérieur d’un diamond</h2>
+	<h2 id="s6">À l’intérieur d’un diamond</h2>
 	<p>Vos diamonds se tiennent au-dessus de vos chats, et le <span class="ui">+</span> en crée un. Un diamond a deux faces, et un interrupteur dans son en-tête bascule entre elles. <span class="ui">Cristal</span> est ce qu’il sait, et <span class="ui">Chat</span> est sa propre conversation.</p>
 
 	<figure class="shot narrow">
@@ -88,7 +94,7 @@
 
 	<p>La carte liste le titre et le résumé du diamond dans ses propres mots, puis tout le reste qu’il détient, une ligne chacun. <span class="ui">Modifier</span> ouvre un formulaire. <span class="ui">Voir la mémoire brute</span> ouvre le fichier lui-même, pour quand vous préférez travailler directement dedans.</p>
 
-	<h2 id="s6">Les quatre fichiers qu’un diamond garde</h2>
+	<h2 id="s7">Les quatre fichiers qu’un diamond garde</h2>
 	<p>La mémoire est gardée au grand jour. Quatre fichiers se trouvent dans le propre dossier du diamond, lisibles dans le panneau Espace et par le daimon.</p>
 	<ul>
 		<li><code>crystal.json</code> détient ce que ce diamond <em>est</em>, c’est-à-dire son titre, son résumé, ses sections, ses faits et ses liens.</li>
@@ -98,7 +104,7 @@
 	</ul>
 	<p>Les quatre voyagent avec le daimon à chaque manche dans un même budget, si bien que ce qu’un diamond apprend sur lui-même est borné et prévisible. Un cristal trop grand pour tenir en entier garde son surplus lisible et cherchable plutôt que de le laisser tomber. Les comptes sur la carte, <span class="ui">Objectifs</span>, <span class="ui">Tâches ouvertes</span> et <span class="ui">Faites</span>, sont lus depuis <code>REQUIREMENTS.md</code>.</p>
 
-	<h2 id="s7">Deux sortes de repliage</h2>
+	<h2 id="s8">Deux sortes de repliage</h2>
 	<p>Le mot couvre deux actes différents.</p>
 	<ul>
 		<li><strong>Résumer les messages précédents</strong>, dans l’en-tête du chat, est l’application qui compresse une conversation qui ne tient plus. Ses décisions sont classées dans <code>DECISIONS.md</code>, ses points ouverts dans <code>REQUIREMENTS.md</code>, et sa prochaine étape dans <code>STATE.md</code>. Ce qu’elle classe peut être retrouvé ensuite, et ce qu’elle laisse dans un avis ne le peut pas.</li>
@@ -106,15 +112,15 @@
 	</ul>
 	<p>Le classement est répétable : exécuter le même repliage deux fois ne classe rien deux fois, et l’ordre dans lequel deux repliages arrivent ne change pas ce que les fichiers finissent par dire.</p>
 
-	<h2 id="s8">Historique</h2>
+	<h2 id="s9">Historique</h2>
 	<p><span class="ui">Historique</span> liste chaque version, la plus récente d’abord. <span class="ui">Voir</span> en lit une, <span class="ui">Restaurer</span> la rend de nouveau courante, et <span class="ui">Delta</span> montre la matière qu’un repliage a reçue. Restaurer garde d’abord ce qui était courant, si bien qu’une restauration peut elle-même être défaite.</p>
 
-	<h2 id="s9">Agir sans qu’on le lui demande</h2>
+	<h2 id="s10">Agir sans qu’on le lui demande</h2>
 	<p>Un diamond répond quand vous le sollicitez et à aucun autre moment, à moins que vous ne mettiez en place une action déclenchée. Celles-ci vivent sous <span class="ui">Quand ce diamond agit</span> sur la face Cristal, et <span class="ui">Ajouter une action</span> en crée une. Deux choses peuvent en déclencher une : soit des minutes de votre propre activité, comptées seulement pendant que vous travaillez, soit du courrier arrivant dans un dossier que vous nommez.</p>
 	<p>Chaque action porte une instruction, envoyée à chaque fois, et un contexte, envoyé une fois jusqu’à ce que vous le changiez. Ce sont un fichier ordinaire, <code>triggers.json</code>, dans le dossier du diamond.</p>
 	<p>Une nouvelle action est <strong>arrêtée</strong>, et le dit : <em>Arrêtée. Appuyez sur &#9654; sur le voyant à côté du menu déroulant pour laisser cette action tourner.</em> Une pression l’arme.</p>
 
-	<h3 id="s10">Le voyant</h3>
+	<h3 id="s11">Le voyant</h3>
 	<p>Chaque action, chaque diamond et la ligne <span class="ui">Tout</span> portent le même contrôle en trois parties, une lecture, une pause et un voyant rond. Le voyant dit si quelque chose est armé et libre de se déclencher.</p>
 	<ul>
 		<li><strong>Rouge.</strong> Rien ici n’agira de lui-même.</li>
@@ -124,7 +130,7 @@
 	<p>Un compte neuf est rouge partout, ce qui est la réponse honnête à la question de savoir si quoi que ce soit tourne de lui-même. Une action à qui il manque sa boîte aux lettres ou son instruction est laissée hors du compte, parce qu’elle ne pourrait pas se déclencher. L’ambre ne peut qu’être atteint, jamais réglé.</p>
 	<p>Une action retenue ne dépense rien, parce qu’elle est refusée avant que le tour ne commence.</p>
 
-	<h2 id="s11">Étiquettes, liens et la Corbeille</h2>
+	<h2 id="s12">Étiquettes, liens et la Corbeille</h2>
 	<p><span class="ui">Étiquettes</span> sur la face Cristal classe un diamond dans la barre latérale. Jusqu’à huit étiquettes, en minuscules et dédupliquées. <span class="ui">Suggérées</span> en propose quatre pour commencer. Les étiquettes sont inertes. Elles ne sont pas envoyées à un modèle, elles ne font pas partie de la mémoire, et elles ne changent rien à ce que fait un agent. <span class="ui">Filtrer par étiquette</span> dans la barre latérale filtre par elles.</p>
 	<p>Un diamond peut aussi être lié à un autre, et le <a href="interface.html">Graphe</a> en est l’image.</p>
 	<p>Supprimer un chat ou un diamond le met à la corbeille. Il reste stocké et synchronisé, hors de portée de tout daimon, et gardé trente jours avec la date sur la ligne. <span class="ui">Restaurer</span> le ramène sur chaque appareil. <span class="ui">Supprimer définitivement</span> et <span class="ui">Vider la corbeille</span> sont les deux qui demandent.</p>

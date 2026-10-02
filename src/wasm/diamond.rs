@@ -2168,6 +2168,12 @@ thread_local! {
     static OPAQUE: std::cell::RefCell<std::collections::BTreeSet<String>> =
         std::cell::RefCell::new(std::collections::BTreeSet::new());
 
+    /// The windows around the calls whose file effects no capture records, per store, from the
+    /// call that opens one to the turn end that takes it ([`drain_windows`]).  See
+    /// [`open_window`] for why a store looks at its files before and after such a call.
+    static WINDOWS: std::cell::RefCell<std::collections::BTreeMap<String, versions::Windows>> =
+        std::cell::RefCell::new(std::collections::BTreeMap::new());
+
     /// The restores this page has open, by ticket, from [`versions_restore_open`] to
     /// [`versions_restore_close`].
     static RESTORES: std::cell::RefCell<std::collections::BTreeMap<u64, Restoring>> =
@@ -2313,6 +2319,7 @@ pub fn mark_dirty(id: &str, path: &str) {
     if path.trim().is_empty() {
         return;
     }
+    note_act(id);
     let key = (path.to_string(), folder_of(path));
     DIRTY.with(|d| {
         d.borrow_mut().entry(id.to_string()).or_default().entry(key).or_insert(None);
@@ -2335,6 +2342,7 @@ pub async fn mark_dirty_before(id: &str, path: &str) {
     if path.trim().is_empty() {
         return;
     }
+    note_act(id);
     let key = (path.to_string(), folder_of(path));
     let marked = DIRTY.with(|d| d.borrow().get(id).map(|m| m.contains_key(&key)).unwrap_or(false));
     if marked {
@@ -2357,6 +2365,168 @@ pub async fn mark_dirty_before(id: &str, path: &str) {
 /// Note that a turn keeping into `id`'s store has run a command or a worker ([`OPAQUE`]).
 pub fn ran_opaque(id: &str) {
     OPAQUE.with(|o| { o.borrow_mut().insert(id.to_string()); });
+}
+
+/// Note that something outside every window may have changed `id`'s files: a file tool's capture,
+/// a person's own door.  A snapshot taken before it is not reused after it ([`versions::Windows`]).
+pub fn note_act(id: &str) {
+    WINDOWS.with(|w| {
+        if let Some(store) = w.borrow_mut().get_mut(id) {
+            store.act();
+        }
+    });
+}
+
+/// A window open around one call, until it is closed by [`close_window`] or its future is
+/// dropped, which closes it as lost.  Its id is its place in its store's [`versions::Windows`].
+pub struct Around {
+    key:    String,
+    id:     u64,
+    closed: bool,
+}
+
+impl Drop for Around {
+    fn drop(&mut self) {
+        if self.closed {
+            return;
+        }
+        WINDOWS.with(|w| {
+            if let Ok(mut all) = w.try_borrow_mut() {
+                if let Some(store) = all.get_mut(&self.key) {
+                    store.lost(self.id);
+                }
+            }
+        });
+    }
+}
+
+/// Where a store's calls are looked at: a Diamond's own directory, or a chat's working folder
+/// (`chats/<id>/work`).  A command's effect in a marked machine folder is not walked, which was
+/// so before and is a stated limit.
+fn walk_root(id: &str) -> String {
+    match id.strip_prefix(crate::tools::CHAT_KEEPER) {
+        Some(chat) => fmt!("{}/{}/{}", crate::tools::CHAT_ROOT, chat, crate::tools::CHAT_WORK_DIR),
+        None       => diamond_dir(id),
+    }
+}
+
+/// What a walk saw of one file: its length and last-written time where the backend keeps one,
+/// else the hash of its bytes, which is the only way left to tell it moved.
+async fn stamp_of(path: &str, size: u64, when: Option<f64>) -> versions::Stamp {
+    if let Some(ms) = when {
+        return versions::Stamp::Seen(size, Some(ms as u64));
+    }
+    let ceiling = versions::VERSION_FILE_MAX as u32;
+    match opfs::read_file_capped(FileRoot::Opfs, path, ceiling).await {
+        Ok((body, total)) if total as usize <= versions::VERSION_FILE_MAX =>
+            versions::Stamp::Hashed(versions::hash_of(&body)),
+        _ => versions::Stamp::Seen(size, None),
+    }
+}
+
+/// The scope a window looks at, as it stands: each file the store versions, with its stamp.
+/// Nothing is read where the listing already says when the file was last written, which is what
+/// keeps a walk at 85 to 99 ms of the 500-file bound where hashing every file cost 234 to 265.
+async fn walk_stamps(id: &str) -> versions::Snap {
+    let root = walk_root(id);
+    let mut snap = versions::Snap::new();
+    for (path, size, when) in walk_listing(id, &root).await.into_iter() {
+        let stamp = stamp_of(&path, size, when).await;
+        snap.insert(path, stamp);
+    }
+    snap
+}
+
+/// The stamp of one path now, or `None` where there is no file.
+async fn stamp_now(path: &str) -> Option<versions::Stamp> {
+    match opfs::stamp(FileRoot::Opfs, path).await {
+        Ok(Some((ms, size))) => {
+            let when = if ms.is_finite() && ms > 0.0 { Some(ms) } else { None };
+            Some(stamp_of(path, size as u64, when).await)
+        },
+        _ => None,
+    }
+}
+
+/// Open a window around a call whose file effects no capture records: a command, a verifier, a
+/// download.  Such a call names no path, so the only account of what it changed is a look at the
+/// store's files before it and after, credited to `by`, the agent whose context ran it.
+///
+/// Where the last window of the same author closed with nothing since to change the files, its
+/// closing walk serves as this one's opening walk, so N calls cost N+1 walks.
+///
+/// # Arguments
+/// * `id` - The store the calling context keeps into: a Diamond's id, or `chat:<id>`.
+pub async fn open_window(id: &str, by: Option<crate::rating::Author>) -> Around {
+    let (wid, walk) = WINDOWS.with(|w| w.borrow_mut().entry(id.to_string()).or_default().begin(by));
+    // Held before the first await, so a call whose future is dropped in the walk is closed as lost.
+    let around = Around { key: id.to_string(), id: wid, closed: false };
+    if walk {
+        let snap = walk_stamps(id).await;
+        WINDOWS.with(|w| {
+            if let Some(store) = w.borrow_mut().get_mut(id) {
+                store.began(wid, snap);
+            }
+        });
+    }
+    around
+}
+
+/// Close a window: look at the files again, and keep what moved against the author who ran the
+/// call.  Taken at the turn end by [`drain_windows`].
+pub async fn close_window(mut around: Around) {
+    let key = around.key.clone();
+    WINDOWS.with(|w| {
+        if let Some(store) = w.borrow_mut().get_mut(&key) {
+            store.finish(around.id);
+        }
+    });
+    let snap = walk_stamps(&key).await;
+    WINDOWS.with(|w| {
+        if let Some(store) = w.borrow_mut().get_mut(&key) {
+            store.ended(around.id, snap);
+        }
+    });
+    around.closed = true;
+}
+
+/// What this turn's windows found changed in `id`'s files, as changes ready to record, and each
+/// credited to the one agent that can have made it ([`versions::attribute`]) or to nobody.
+///
+/// **Only what a window saw.**  A file that changed outside every window -- a sync arrival, the
+/// person's own edit, a file `ensure_standing` seeded before the turn began -- is not the turn's
+/// and is not here.  A path whose file is no longer as the last window left it has been changed
+/// by something since, and is recorded with no author.
+///
+/// # Arguments
+/// * `held` - What the file tools captured this turn.  A captured path is not read again here:
+///   its change is already among the turn's, under the author of the act that made it.
+pub async fn drain_windows(id: &str, held: &[(String, Change)]) -> Vec<Change> {
+    let windows = WINDOWS.with(|w| match w.borrow_mut().get_mut(id) {
+        Some(store) => store.take(),
+        None        => Vec::new(),
+    });
+    if windows.is_empty() {
+        return Vec::new();
+    }
+    let owners: Vec<(String, Option<crate::rating::Author>)> = held.iter()
+        .map(|(_, ch)| (ch.path.clone(), ch.by.clone()))
+        .collect();
+    let credits = versions::attribute(&windows, &owners);
+    let paths: Vec<String> = credits.iter()
+        .filter(|c| !owners.iter().any(|(p, _)| *p == c.path))
+        .map(|c| c.path.clone())
+        .collect();
+    let mut changes = versions_changes(id, &paths).await;
+    for ch in changes.iter_mut() {
+        let credit = match credits.iter().find(|c| c.path == ch.path) {
+            Some(c) => c,
+            None    => continue,
+        };
+        // Credited only where the file stands as the last window to move it left it.
+        ch.by = if stamp_now(&ch.path).await == credit.left { credit.by.clone() } else { None };
+    }
+    changes
 }
 
 /// One path a person's door marked ([`DIRTY`]): the folder it was marked in, and what it held
@@ -2444,6 +2614,7 @@ pub async fn dirty_changes(id: &str, dirty: Vec<Marked>) -> Vec<Change> {
 /// * `raw` - The path as the model wrote it, which is what the turn's ledger will name.
 /// * `change` - The capture, whose own `path` is absolute on the machine.
 pub fn capture(id: &str, raw: &str, change: Change) {
+    note_act(id);
     release(id, &change.path);
     // THE FOLDER THE ACT WAS IN, taken at the act (HR): the turn's end records it later.
     let change = Change { folder: change.folder.clone().or_else(|| folder_of(&change.path)), ..change };
@@ -3819,24 +3990,33 @@ async fn versions_changes_in(id: &str, paths: &[String], root: FileRoot) -> Vec<
 
 /// Every file in the Diamond's own directory that the store versions, as it stands.
 ///
-/// For Save a version, and for the turn that ran a command: an opaque tool names no paths at all,
-/// so the only honest account of what it changed is to look.  Bounded at [`WALK_FILES_MAX`]
-/// entries, so a capp with a large data directory cannot turn a button press into a minute of
-/// hashing on the device least able to afford it.
+/// For Save a version, and for a Diamond that has just landed.  A turn's commands are looked at
+/// per call instead ([`open_window`]), because a walk at the turn's end cannot say whose call a
+/// change was.  Bounded at [`WALK_FILES_MAX`] entries, so a capp with a large data directory
+/// cannot turn a button press into a minute of hashing on the device least able to afford it.
 pub async fn versions_walk(id: &str) -> Vec<Change> {
-    let root = diamond_dir(id);
-    let mut found: Vec<String> = Vec::new();
+    let found: Vec<String> = walk_listing(id, &diamond_dir(id)).await.into_iter()
+        .map(|(path, _, _)| path)
+        .collect();
+    versions_changes(id, &found).await
+}
+
+/// The files under `root` that the store versions, each with its length and when it was last
+/// written where the listing knows, at most [`WALK_FILES_MAX`] of them: what [`versions_walk`]
+/// reads and what a window looks at ([`walk_stamps`]), so the two cannot disagree about scope.
+async fn walk_listing(id: &str, root: &str) -> Vec<(String, u64, Option<f64>)> {
+    let mut found: Vec<(String, u64, Option<f64>)> = Vec::new();
     let mut todo: Vec<String> = vec![String::new()];
     while let Some(rel) = todo.pop() {
         if found.len() >= WALK_FILES_MAX {
             break;
         }
-        let dir = if rel.is_empty() { root.clone() } else { fmt!("{}/{}", root, rel) };
-        let entries = match opfs::list_dir(FileRoot::Opfs, &dir).await {
+        let dir = if rel.is_empty() { root.to_string() } else { fmt!("{}/{}", root, rel) };
+        let entries = match opfs::list_dir_stamped(FileRoot::Opfs, &dir).await {
             Ok(e)  => e,
             Err(_) => continue,         // a directory that has gone holds nothing
         };
-        for (name, is_dir, _size) in entries {
+        for (name, is_dir, size, when) in entries {
             let child = if rel.is_empty() { name.clone() } else { fmt!("{}/{}", rel, name) };
             let whole = fmt!("{}/{}", root, child);
             if !versionable(id, &whole) {
@@ -3845,11 +4025,11 @@ pub async fn versions_walk(id: &str) -> Vec<Change> {
             if is_dir {
                 todo.push(child);
             } else if found.len() < WALK_FILES_MAX {
-                found.push(whole);
+                found.push((whole, size, when));
             }
         }
     }
-    versions_changes(id, &found).await
+    found
 }
 
 /// Does the version store keep this path?

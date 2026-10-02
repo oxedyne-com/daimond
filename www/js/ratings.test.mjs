@@ -481,6 +481,152 @@ function main() {
 	ln = R.lineOf(msgs[0], null);
 	check('lineOf: a rated message that has gone has no target', ln.targetMid === null && ln.score === '+1');
 
+
+	// ── File products (U3, P1a) ─────────────────────────────
+	const FH = (st, v, path) => 'p1:file:' + st + '/v' + v + '/' + path;
+	const FP = (h, extra) => Object.assign({}, P, { h, k: 'file', role: 'daimon', d: 'd-thesis', hash: 'ab'.repeat(32), run: '', via: '' }, extra || {});
+	same('fileOf reads a Diamond file handle', R.fileOf(FH('d-thesis', 4, 'code/parse.rs')), { store: 'd-thesis', v: 4, path: 'code/parse.rs' });
+	same('fileOf reads a chat store handle, the colon in the store and the slashes in the path', R.fileOf(FH('chat:c7', 12, 'notes/v2/a b.md')),
+		{ store: 'chat:c7', v: 12, path: 'notes/v2/a b.md' });
+	check('fileOf is null for an answer handle, a malformed one and nothing', R.fileOf(H(1)) === null && R.fileOf('p1:file:d-thesis/code/x') === null
+		&& R.fileOf('p1:file:d-thesis/v4/') === null && R.fileOf('') === null && R.fileOf(undefined) === null);
+	check('isFile says which handles are files', R.isFile(FH('d-thesis', 4, 'a.md')) && !R.isFile(H(1)) && !R.isFile(''));
+	const frate = R.build({ prod: FP(FH('d-thesis', 4, 'a.md')), s: -1, tags: ['scope'], src: 'tap', burst: 'r-z0-aaaaa', tools: 'file_read>file_edit', len: 412, form: 'daimond/1' });
+	check('build of a file product has tools empty and len 0, whatever it is given (D6)', frate.tools === '' && frate.len === 0, JSON.stringify([frate.tools, frate.len]));
+	check('build of a file product takes its hash from the record', frate.hash === 'ab'.repeat(32) && frate.h === FH('d-thesis', 4, 'a.md') && frate.prod.hash === frate.hash);
+	check('build of a gone file (hash empty) rates with hash empty', R.build({ prod: FP(FH('d-thesis', 4, 'g.md'), { hash: '' }), s: 1, src: 'tap', burst: 'r-z0-aaaaa' }).hash === '');
+	check('build of an answer still takes its tools and len', R.build({ prod: P, s: 1, src: 'tap', tools: 'file_read', len: 7 }).tools === 'file_read'
+		&& R.build({ prod: P, s: 1, src: 'tap', tools: 'file_read', len: 7 }).len === 7);
+	check('a file rating keeps via in its copy of the product', R.build({ prod: FP(FH('chat:c7', 2, 'n.md'), { via: 'command' }), s: 1, src: 'tap' }).prod.via === 'command');
+	// A head per file handle, withdrawing, and a burst across an answer and a file.
+	const fa = FH('d-thesis', 4, 'a.md'), fb = FH('d-thesis', 4, 'b.md');
+	const fmk = (h, mid, ts, o) => { o = o || {}; return R.message(R.build({ prod: FP(h), s: o.s === undefined ? 1 : o.s, clear: !!o.clear, tags: o.tags || [], src: o.src || 'tap', sup: o.sup || '', burst: mid }), mid, ts); };
+	const fms = [fmk(fa, 'r-z0-aaaaa', 1000), fmk(fb, 'r-z0-bbbbb', 1001, { s: -1, tags: ['scope'] }), fmk(fa, 'r-z0-ccccc', 1002, { s: -1, sup: 'r-z0-aaaaa' })];
+	const fidx = R.index(fms);
+	check('a head per file handle: a file row is rated apart from its neighbour', fidx.get(fa).mid === 'r-z0-ccccc' && fidx.get(fb).mid === 'r-z0-bbbbb' && fidx.size === 2);
+	same('stateOf is by handle, so a file row lights from its own head', [R.stateOf(fms, null, fa).lit, R.stateOf(fms, null, fb).lit, R.stateOf(fms, null, fb).detail], ['down', 'down', true]);
+	const fwd = fms.concat([fmk(fa, 'r-z0-ddddd', 1003, { clear: true, sup: 'r-z0-ccccc' })]);
+	check('withdrawing a file rating clears its head and leaves the neighbour', R.index(fwd).get(fa) === null && R.index(fwd).get(fb).mid === 'r-z0-bbbbb' && R.stateOf(fwd, null, fa).lit === '');
+	const bfile = R.createBurst();
+	const ans = { head: null, prod: Object.assign({}, P, { h: H(5) }), tools: 'file_read', len: 55, form: 'daimond/1' };
+	const fctx = { head: null, prod: FP(fa), tools: '', len: 0, form: 'daimond/1' };
+	R.tap(bfile, ans, H(5), 1, 100); R.tap(bfile, fctx, fa, -1, 101); R.toggleTag(bfile, fa, 'scope', 102);
+	const bmsgs = R.take(bfile, 5000, counter());
+	check('a burst across an answer and a file writes two messages sharing one burst', bmsgs.length === 2 && bmsgs[0].rating.burst === bmsgs[1].rating.burst && bmsgs[0].rating.burst === bmsgs[0].mid
+		&& bmsgs[0].rating.h === H(5) && bmsgs[1].rating.h === fa, JSON.stringify(bmsgs.map((m) => [m.rating.h, m.rating.burst])));
+	check('and the file one has tools empty, len 0 and its tag, the answer one its tools and len', bmsgs[1].rating.tools === '' && bmsgs[1].rating.len === 0
+		&& bmsgs[1].rating.tags.join() === 'scope' && bmsgs[0].rating.tools === 'file_read' && bmsgs[0].rating.len === 55);
+	// lineOf for a file.
+	const fline = R.lineOf(fms[1], { h: fb });
+	check('lineOf names a file rating by its path, with the row as the target', fline.kind === 'file' && fline.path === 'b.md' && fline.targetH === fb && fline.targetMid === null && fline.score === '−1', JSON.stringify(fline));
+	check('lineOf for a file whose row has gone has no target but still the path', R.lineOf(fms[1], null).targetH === null && R.lineOf(fms[1], null).path === 'b.md');
+	check('lineOf for an answer is unchanged in kind', R.lineOf(msgs[0], { mid: 'x' }).kind === 'answer' && R.lineOf(msgs[0], { mid: 'x' }).path === '' && R.lineOf(msgs[0], { mid: 'x' }).targetH === null);
+	// The U3 fixture: a file-row rating, a files_log and a user message carrying `pre`.
+	const u3Text = readFileSync(join(APP, 'dev', 'fixtures', 'rating_u3.json'), 'utf8'), u3 = JSON.parse(u3Text);
+	check('the U3 fixture holds a rating_log, a files_log and a user message', u3.length === 3 && u3[0].role === 'rating_log' && u3[1].role === 'files_log' && u3[2].role === 'user');
+	const M3 = { m: 'accounts/fireworks/models/glm-5p2', pv: 'fireworks', cm: 'glm-5.2', fam: 'glm-5', fi: false, cls: 'open-frontier', sp: 'sp1:3f9a0c12', dev: 'd-4f2a', run: '' };
+	const rec3 = (o) => Object.assign({}, { h: '', k: 'file' }, { m: M3.m, pv: M3.pv, cm: M3.cm, fam: M3.fam, fi: M3.fi, cls: M3.cls, role: o.role, sp: M3.sp, d: o.d, c: o.c, t: o.t, dev: M3.dev, at: o.at, hash: o.hash, run: '', via: o.via }, { h: o.h });
+	const G1 = rec3({ h: FH('d-thesis', 4, 'code/parse.rs'), role: 'daimon', d: 'd-thesis', c: 'c9', t: 'mfq3a-0-fghij', at: 1790000400000, hash: 'ab'.repeat(32), via: '' });
+	const G2 = rec3({ h: FH('chat:c7', 2, 'n.md'), role: 'chat', d: '', c: 'c7', t: 'mfq3b-0-klmno', at: 1790000500000, hash: 'cd'.repeat(32), via: 'command' });
+	const G3 = rec3({ h: FH('chat:c7', 2, 'o.md'), role: 'chat', d: '', c: 'c7', t: 'mfq3b-0-klmno', at: 1790000500000, hash: 'ef'.repeat(32), via: '' });
+	const NOTE3 = 'Only touch parse.rs, not "lex.rs".\nÉtape 2: ✓';
+	const u3rate = R.message(R.build({ prod: G1, s: -1, tags: ['scope'], note: NOTE3, src: 'popup', burst: 'r-mfq3c0d1-s1t2u', tools: '', len: 0 }), 'r-mfq3c0d1-s1t2u', 1790000600000);
+	check('build of the fixture\'s file-row rating is its bytes, byte for byte', JSON.stringify(u3rate) === JSON.stringify(u3[0]), JSON.stringify(u3rate).slice(0, 200));
+	check('the fixture\'s files_log records are the v2 shape, via last, one by a command and one by a file tool',
+		JSON.stringify(u3[1].prod) === JSON.stringify([G2, G3]) && u3[1].prod.every((p) => Object.keys(p).pop() === 'via') && u3[1].prod[0].via === 'command' && u3[1].prod[1].via === '');
+	check('the fixture\'s files_log has no content and its message keys are in the declared order, delta last', Object.keys(u3[1]).join() === 'role,mid,ts,prod,delta');
+	check('its delta is { h, add, del } for rows of the same message\'s prod, whole numbers, once each, as the page\'s turnFileProds writes it',
+		Array.isArray(u3[1].delta) && u3[1].delta.length === 2 && u3[1].delta.every((d) => Object.keys(d).join() === 'h,add,del' && Number.isInteger(d.add) && d.add >= 0 && Number.isInteger(d.del) && d.del >= 0 && u3[1].prod.some((p) => p.h === d.h && p.hash))
+		&& new Set(u3[1].delta.map((d) => d.h)).size === u3[1].delta.length, JSON.stringify(u3[1].delta));
+	check('the fixture\'s user message keeps pre apart from content', Object.keys(u3[2]).join() === 'role,content,mid,ts,pre' && u3[2].content === 'Now fix the lexer.' && u3[2].pre.indexOf('[Daimond: ') === 0);
+	check('the three messages are the fixture file, with no spaces', JSON.stringify([u3rate, u3[1], u3[2]]) === u3Text);
+	check('only the rating_log is a rating to this build (the other two are read by nothing here)', R.isRatingMsg(u3[0]) && !R.isRatingMsg(u3[1]) && !R.isRatingMsg(u3[2]));
+	check('a v2 prod rated by this build is carried whole', JSON.stringify(u3[0].rating.prod) === JSON.stringify(G1));
+
+	// ── noteFor (U4, P2a): the note on the person's next message ─────────
+	{
+		const hh = (ts) => new Date(ts).toISOString().slice(11, 16);		// UTC, so the test does not depend on the zone
+		const B = Date.UTC(2026, 9, 2, 10, 0, 0);
+		const U = (mid, ts, extra) => Object.assign({ role: 'user', content: 'say ' + mid, mid, ts }, extra || {});
+		const A = (n, ts) => ({ role: 'assistant', content: 'answer ' + n, mid: 'm' + n, ts });
+		const rate = (n, mid, ts, o) => mk(win.DaimondRatings, H(n), mid, ts, o);
+		const NF = R.noteFor || (() => '<noteFor missing>'), TW = R.tagWord || (() => '<tagWord missing>');
+		const note = (msgs) => NF(msgs, { hhmm: hh });
+		check('noteFor is exported', typeof R.noteFor === 'function');
+		const T = (m, mm) => B + (m * 60 + (mm || 0)) * 1000;
+		// the plan's own example (section 2): words verbatim, tags by their English words, one withdrawal clause
+		const FILE = 'p1:file:D1/v2/diamonds/D1/src/parse.rs';
+		const mkf = (h, mid, ts, o) => R.message(R.build({ prod: FP(h), s: o.s === undefined ? 1 : o.s, clear: !!o.clear, tags: o.tags || [], dims: {}, note: o.note || '', src: 'tap', sup: o.sup || '', burst: mid, tools: '', len: 0 }), mid, ts);
+		const ex = [U('u0', T(0)), A(1, T(1)), A(2, T(2)), rate(2, 'r-before', T(2, 30), { s: 1 }), U('u1', T(3)),
+			rate(1, 'r-aaaa1', T(4), { s: -1, tags: ['long'], note: 'just give me the command' }),
+			mkf(FILE, 'r-aaaa2', T(4, 1), { s: -1, tags: ['scope'] }),
+			rate(2, 'r-aaaa4', T(4, 2), { clear: true, sup: 'r-before' })];
+		same('noteFor: the plan example, a rating with words, a file, and a withdrawal of one the model already heard of',
+			note(ex),
+			'[Daimond: the user rated your answer of 10:01 −1 (Too long): "just give me the command". They rated the change to diamonds/D1/src/parse.rs −1 (Changed too much). They withdrew their rating of your answer of 10:02.]');
+		// since the last person's message only
+		const m1 = [U('u1', T(0)), A(1, T(1)), rate(1, 'r-b1', T(2), { s: 1 }), U('u2', T(3)), A(2, T(4)), rate(2, 'r-b2', T(5), { s: -1, tags: ['tool'] })];
+		check('noteFor: only ratings made after the last user message are in it', /answer of 10:04/.test(note(m1)) && !/answer of 10:01/.test(note(m1)), note(m1));
+		same('noteFor: nothing after the last user message is nothing', note(m1.slice(0, 5)), '');
+		same('noteFor: no ratings, no messages, junk', [note([]), NF(null), NF(undefined), note([U('u1', T(0))])], ['', '', '', '']);
+		// heads only
+		const m2 = [U('u1', T(0)), A(1, T(1)), rate(1, 'r-c1', T(2), { s: -1, tags: ['long'] }), rate(1, 'r-c2', T(3), { s: 1, sup: 'r-c1' })];
+		same('noteFor: a product rated twice is told once, by its head', note(m2), '[Daimond: the user rated your answer of 10:01 +1.]');
+		// a withdrawal
+		const m3 = [U('u1', T(0)), A(1, T(1)), rate(1, 'r-d1', T(2), { s: 1 }), U('u2', T(3)), rate(1, 'r-d2', T(4), { clear: true, sup: 'r-d1' })];
+		same('noteFor: a withdrawal of a rating the model already heard of is told', note(m3), '[Daimond: the user withdrew their rating of your answer of 10:01.]');
+		const m4 = [U('u1', T(0)), A(1, T(1)), rate(1, 'r-e1', T(2), { s: 1 }), rate(1, 'r-e2', T(3), { clear: true, sup: 'r-e1' })];
+		same('noteFor: a rating given and withdrawn before any note says nothing', note(m4), '');
+		// an app note (the tail note of a turn, user-role with records) is not the person's message
+		const tail = U('u9', T(2), { content: '[Daimond: this turn changed 1 file (v2): diamonds/D1/a.md]', prod: [FP(FILE)] });
+		const m5 = [U('u1', T(0)), A(1, T(1)), rate(1, 'r-f1', T(1, 30), { s: 1 }), tail, rate(2, 'r-f2', T(3), { s: -1 })];
+		check('noteFor: a rating made before the turn\'s own tail note still counts (the note is not a person\'s message)', /answer of 10:01 \+1/.test(note(m5)), note(m5));
+		// words verbatim: quotes, a newline, a non-Latin script
+		const words = 'He said "no".\nÉtape 2: ✓ 日本語 — done';
+		const m6 = [U('u1', T(0)), A(1, T(1)), rate(1, 'r-g1', T(2), { s: -2, tags: ['wrong', 'ignored'], note: words })];
+		same('noteFor: the person\'s words go in verbatim, tags in English', note(m6), '[Daimond: the user rated your answer of 10:01 −2 (Ignored instructions, Wrong): "' + words + '".]');
+		// the 16 KiB bound: newest kept, older heads summarised
+		const big = 'x'.repeat(R.NOTE_MAX - 8);
+		const m7 = [U('u1', T(0))];
+		for (let i = 1; i <= 6; i++) { m7.push(A(i, T(1, i))); m7.push(rate(i, 'r-h' + i, T(2, i), { s: -1, note: big + i })); }
+		const n7 = note(m7), bytes = Buffer.byteLength(n7, 'utf8');
+		check('noteFor: at most 16 KiB', bytes <= 16384 && bytes > 8000, bytes + ' bytes');
+		check('noteFor: the newest ratings are kept, the oldest summarised by a count', n7.includes(big + '6') && !n7.includes(big + '1') && /And \d+ earlier ratings? in this chat\.\]$/.test(n7), n7.slice(-70));
+		const cnt = Number((n7.match(/And (\d+) earlier rating/) || [])[1]), kept = [1, 2, 3, 4, 5, 6].filter((i) => n7.includes(big + i)).length;
+		check('noteFor: kept plus summarised is all six', kept + cnt === 6 && cnt >= 4, kept + ' kept, ' + cnt + ' summarised');
+		// nothing from another chat: a chat is its own messages
+		const chatA = [U('u1', T(0)), A(1, T(1)), rate(1, 'r-i1', T(2), { s: -1 })], chatB = [U('u1', T(0)), A(1, T(1))];
+		same('noteFor: a chat with no ratings of its own has no note, whatever another chat holds', [note(chatA) !== '', note(chatB)], [true, '']);
+		// a rating of a product that has gone from the chat still has words ("an earlier answer")
+		const m8 = [U('u1', T(0)), rate(7, 'r-j1', T(2), { s: 1 })];
+		same('noteFor: a rated answer no longer in the chat is "an earlier answer"', note(m8), '[Daimond: the user rated an earlier answer +1.]');
+		// An app-made user record (a trigger, a preset, a gather-round instruction, the Continue nudge) is marked `app` at
+		// creation, and it is no boundary: a rating made before such a turn is told on the person's next message, once.
+		const ap = (mid, ts) => U(mid, ts, { app: true });
+		const m9 = [U('u1', T(0)), A(1, T(1)), rate(1, 'r-k1', T(2), { s: -1, tags: ['long'] }), ap('p1', T(3)), A(2, T(4))];
+		same('noteFor: a rating made before an app-made record (a preset between) is told on the person\'s next message',
+			note(m9), '[Daimond: the user rated your answer of 10:01 −1 (Too long).]');
+		same('noteFor: an older record with no mark reads as the person\'s, so the same rating is not told',
+			note([U('u1', T(0)), A(1, T(1)), rate(1, 'r-k1', T(2), { s: -1, tags: ['long'] }), U('p1', T(3)), A(2, T(4))]), '');
+		same('noteFor: only the boolean true marks a record (a string, a number or false is the person\'s)',
+			[true, 'yes', 1, false, null].map((v) => note([U('u1', T(0)), A(1, T(1)), rate(1, 'r-k1', T(2), { s: -1 }), U('p1', T(3), { app: v })])),
+			['[Daimond: the user rated your answer of 10:01 −1.]', '', '', '', '']);
+		same('noteFor: told once: after the person\'s own message (which took the note) nothing more is told',
+			note(m9.concat([U('u2', T(5), { pre: note(m9) })])), '');
+		same('noteFor: a rating made after the app-made record is told with the one before it',
+			note(m9.concat([rate(2, 'r-k2', T(5), { s: 1 })])), '[Daimond: the user rated your answer of 10:01 −1 (Too long). They rated your answer of 10:04 +1.]');
+		same('noteFor: several app-made records in a row are all skipped',
+			note([U('u1', T(0)), A(1, T(1)), rate(1, 'r-k1', T(2), { s: 1 }), ap('p1', T(3)), A(2, T(4)), ap('p2', T(5)), A(3, T(6)), ap('p3', T(7))]),
+			'[Daimond: the user rated your answer of 10:01 +1.]');
+		same('noteFor: a chat of app-made records alone has no person\'s message, so everything rated is told',
+			note([ap('p1', T(0)), A(1, T(1)), rate(1, 'r-k1', T(2), { s: 1 })]), '[Daimond: the user rated your answer of 10:01 +1.]');
+		// the English words are the catalogue's own (a drift here means a label was renamed)
+		const en = readFileSync(join(APP, 'www', 'i18n', 'en.js'), 'utf8');
+		const labels = {}; for (const m of en.matchAll(/'rating\.tag\.([a-z_]+)':\s*'([^']*)'/g)) labels[m[1]] = m[2];
+		check('noteFor: its English tag words are the catalogue\'s, all ' + Object.keys(labels).length, Object.keys(labels).length >= 28 && Object.keys(labels).every((k) => TW(k) === labels[k]), Object.keys(labels).filter((k) => TW(k) !== labels[k]).join(','));
+		check('noteFor: an unknown tag from a newer form is named by its id', TW('brand_new') === 'brand_new');
+	}
+
 	console.log(failures ? ('\nFAIL — ' + failures + '/' + checks + ' checks') : '\nALL PASS — ' + checks + ' checks');
 	if (failures) process.exitCode = 1;
 }

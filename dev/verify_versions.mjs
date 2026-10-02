@@ -470,6 +470,7 @@ console.log('10. Retry replaces the last reply; Edit & resend runs nothing until
 {
 	const RT = grabFn('function retryTurn(');			// lane B: contract §9
 	const ER = grabFn('function editResend(');		// lane B: contract §9
+	const TM = grabFn('function turnMessagesOf(');	// the finder retryTurn asks for its turn's messages
 	check('daimond.js defines retryTurn(chat, iturn, text)', !!RT, RT ? '' : 'not found');
 	check('and editResend(chat, iturn, text)', !!ER, ER ? '' : 'not found');
 	const names = ['loadMsgTombs', 'msgTombstone', 'touchChat', 'persistChats', 'renderHistory',
@@ -489,7 +490,7 @@ console.log('10. Retry replaces the last reply; Edit & resend runs nothing until
 		return { stubs, calls };
 	};
 	const build = (fnSrc, name, stubs) => {
-		try { return new Function(...names, fnSrc + '\nreturn ' + name + ';')(...names.map((n) => stubs[n])); }
+		try { return new Function(...names, TM + '\n' + fnSrc + '\nreturn ' + name + ';')(...names.map((n) => stubs[n])); }
 		catch (e) { return null; }
 	};
 	const fresh = () => ({

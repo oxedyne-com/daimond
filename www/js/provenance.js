@@ -64,8 +64,14 @@
 	/// product is not a file row.
 	///
 	/// `o`: { h, k, m (the model as sent), pv, role, sp, d, c, t,
-	/// dev, at }, and for a file row `hash` (the content rated) and
-	/// `run` (the worker that wrote it).
+	/// dev, at }, and for a file row `hash` (the content rated),
+	/// `run` (the worker that wrote it) and `via`.
+	///
+	/// `via` (Prod v2, last): 'command' where the row was found by a
+	/// command or helper window around a call and credited to the agent
+	/// that ran it, '' for everything else -- an answer, a fold, a mail
+	/// row, a proposal, and a file a file tool wrote. Anything but
+	/// 'command' is written as ''.
 	function stamp(o) {
 		o = o || {};
 		var id = identify(o.m);
@@ -87,6 +93,7 @@
 			at:   Math.floor(Number(o.at) || 0),
 			hash: String(o.hash || ''),
 			run:  String(o.run || ''),
+			via:  o.via === 'command' ? 'command' : '',
 		};
 	}
 
@@ -108,6 +115,15 @@
 		out.h = String(handle || '');
 		out.k = String(k || '');
 		return out;
+	}
+
+	/// A file's path as the reader sees it: from its Diamond's root (`id`), or from its chat's work
+	/// folder (`chat:<id>`), so the app's own id is not shown. A path outside that root, or with
+	/// nothing after the prefix, is returned whole.
+	function rel(path, id) {
+		var p = String(path || ''), k = String(id || '');
+		var pre = k.indexOf('chat:') === 0 ? 'chats/' + k.slice(5) + '/work/' : 'diamonds/' + k + '/';
+		return k && k !== 'chat:' && p.length > pre.length && p.indexOf(pre) === 0 ? p.slice(pre.length) : p;
 	}
 
 	/// Is this a product record this build can read?
@@ -154,6 +170,7 @@
 		of:       of,
 		rekind:   rekind,
 		isProd:   isProd,
+		rel:      rel,
 		toolPath: toolPath,
 		lenOf:    lenOf,
 	};

@@ -234,10 +234,19 @@ impl DaimondApp {
     /// streamed [`AgentEvent`] with a plain JS object (see
     /// [`event_to_js`]).  Resolves when the turn completes; rejects with
     /// the stringified error on failure.
+    ///
+    /// # Arguments
+    /// * `user_msg` - What the person said, before `/name` resolution.
+    /// * `on_event` - The event sink.
+    /// * `pre` - The app's note for this message (the ratings given since the last one), joined
+    ///   once ahead of the words where the request is built and never shown as `content`.  Last and
+    ///   optional, so a caller that says nothing starts a turn with none -- which is what a
+    ///   trigger, a preset, a gather round, a Continue and a worker do.
     pub async fn run_turn(
         &self,
         user_msg: String,
         on_event: js_sys::Function,
+        pre:      Option<String>,
     )
         -> Result<(), JsValue>
     {
@@ -274,7 +283,8 @@ impl DaimondApp {
         };
         let ran = {
             let mut session = self.session.borrow_mut();
-            self.agent.run_turn(&mut session, user_msg, &self.registry, &mut sink).await
+            self.agent.run_turn_noted(&mut session, user_msg, pre.unwrap_or_default(),
+                &self.registry, &mut sink).await
         };
         // WHAT A CHAT'S TURN REPLACED OR REMOVED BECOMES A VERSION OF THE CHAT'S STORE, whichever
         // way the turn went -- a turn that deleted a file and then died has still deleted it.  A
@@ -362,8 +372,10 @@ impl DaimondApp {
     ///
     /// # Arguments
     /// * `text` - What the user said while the turn was in flight.
-    pub fn interject(&self, text: String) -> usize {
-        self.agent.interject(&text)
+    /// * `pre` - The app's note for it, joined ahead of the words in the round that carries it
+    ///   and never shown as them.  Optional, so a caller that says nothing queues none.
+    pub fn interject(&self, text: String, pre: Option<String>) -> usize {
+        self.agent.interject_noted(&text, &pre.unwrap_or_default())
     }
 
     /// Take back everything that never made it in, leaving the queue empty.
@@ -378,7 +390,7 @@ impl DaimondApp {
         let out = js_sys::Array::new();
         let mut q = self.agent.interject.borrow_mut();
         for said in std::mem::take(&mut *q) {
-            out.push(&JsValue::from_str(&said));
+            out.push(&JsValue::from_str(&said.text));
         }
         out
     }
@@ -397,7 +409,7 @@ impl DaimondApp {
         if index >= q.len() {
             return None;
         }
-        Some(q.remove(index))
+        Some(q.remove(index).text)
     }
 
     /// Whether one conversation on this client has taken in content from outside the user — a
@@ -879,6 +891,7 @@ impl DaimondApp {
             pv: provider,
             sp,
             run,
+            via: String::new(),
         });
     }
 
@@ -934,7 +947,8 @@ impl DaimondApp {
     /// * `msgs` - A JS array of `{ role, content }` objects, oldest
     ///   first.  Recognised roles are `user`, `assistant` and `system`;
     ///   any other role is skipped, since a tool result cannot be
-    ///   replayed without the call that produced it.
+    ///   replayed without the call that produced it.  A user message may carry
+    ///   `pre`, the app's note, which is kept beside its words.
     /// * `prompt_tokens` - Cumulative prompt tokens to restore.
     /// * `completion_tokens` - Cumulative completion tokens to restore.
     /// * `last_prompt_tokens` - Context-window usage of the last request.
@@ -971,7 +985,10 @@ impl DaimondApp {
             // never stored, so a persisted `system` role is dropped here
             // rather than duplicated into the working conversation.
             match js_prop(&item, "role").unwrap_or_default().as_str() {
-                "user"      => session.messages.push(ChatMessage::user(content)),
+                // A person's message keeps the app's note the page stored beside it, so the model
+                // reads the same history after a reload as before it.
+                "user"      => session.messages.push(ChatMessage::user_noted(
+                    content, js_prop(&item, "pre").unwrap_or_default())),
                 "assistant" => session.messages.push(ChatMessage::assistant(content)),
                 _ => continue,
             }
@@ -1005,7 +1022,8 @@ impl DaimondApp {
     ///
     /// A JS array of plain objects mirroring [`ChatMessage::to_datmap`]:
     /// `{ role, content }`, with `tool_calls: [{ id, name, arguments }]` on an
-    /// assistant turn that asked for tools and `tool_call_id` on a tool reply.
+    /// assistant turn that asked for tools, `tool_call_id` on a tool reply and
+    /// `pre` on a user message that carries an app note.
     /// Objects rather than a JSON string, so the browser can put the array straight
     /// into IndexedDB, which stores structured values and needs no parse.
     ///
@@ -1085,10 +1103,13 @@ impl DaimondApp {
     /// # Arguments
     /// * `role` - `user` or `assistant`; anything else is ignored.
     /// * `content` - What was said.
-    pub fn append_message(&self, role: String, content: String) {
+    /// * `pre` - The app's note stored beside a user message, if it had one.  Ignored for an
+    ///   assistant's.
+    pub fn append_message(&self, role: String, content: String, pre: Option<String>) {
         let mut session = self.session.borrow_mut();
         match role.as_str() {
-            "user"      => session.messages.push(ChatMessage::user(content)),
+            "user"      => session.messages.push(ChatMessage::user_noted(
+                content, pre.unwrap_or_default())),
             "assistant" => session.messages.push(ChatMessage::assistant(content)),
             _ => {},
         }
@@ -2440,8 +2461,12 @@ impl DaimondApp {
     /// * `on_event` - The event sink.
     /// * `unconfirmed` - JSON array of the places marked into this Diamond that are NOT in force
     ///   on this device until the user confirms them here, which the daimon is told so that it
-    ///   asks for the press rather than working around a refusal.  Last and optional, so a caller
-    ///   that says nothing is a turn with none waiting.
+    ///   asks for the press rather than working around a refusal.  Optional, so a caller that
+    ///   says nothing is a turn with none waiting.
+    /// * `pre` - The app's note for what the person said (the ratings given since their last
+    ///   message), joined once ahead of the instruction where the request is built and never
+    ///   part of it.  Last and optional, so a trigger, a preset or a gather round, which no
+    ///   person said, passes none.
     ///
     /// # Returns
     /// The conversation after the turn, to be stored and handed back next time.
@@ -2458,11 +2483,12 @@ impl DaimondApp {
         prior:       js_sys::Array,
         on_event:    js_sys::Function,
         unconfirmed: Option<String>,
+        pre:         Option<String>,
     )
         -> Result<js_sys::Array, JsValue>
     {
-        self.steer_inner(&id, instruction, attached, read_only, toolkits,
-            unconfirmed.unwrap_or_default(), prior, on_event)
+        self.steer_inner(&id, instruction, pre.unwrap_or_default(), attached, read_only,
+            toolkits, unconfirmed.unwrap_or_default(), prior, on_event)
             .await
             .map_err(to_js_err)
     }
@@ -2802,12 +2828,14 @@ impl DaimondApp {
             return;
         }
         let (captured, notes, _) = diamond::drain_turn(&hold, key, &self.registry.ctx).await;
-        if captured.is_empty() {
+        let windowed = diamond::drain_windows(key, &captured).await;
+        if captured.is_empty() && windowed.is_empty() {
             drop(hold);
             diamond::settle(key, &notes).await;
             return;
         }
-        let changes = captured.into_iter().map(|(_, ch)| ch).collect();
+        let mut changes: Vec<diamond::Change> = captured.into_iter().map(|(_, ch)| ch).collect();
+        changes.extend(windowed);
         let recorded = diamond::versions_record_held(&hold, key, None, Cause::Turn, "", "", changes)
             .await;
         drop(hold);
@@ -3132,6 +3160,7 @@ impl DaimondApp {
             pv:   self.provider.borrow().clone(),
             sp:   self.note_fingerprint("daimon", id, &self.with_instructions(&standing)),
             run:  String::new(),
+            via:  String::new(),
         };
         let ctx = ToolContext {
             workspace:   Workspace::unchecked(PathBuf::from("/")),
@@ -3197,6 +3226,7 @@ impl DaimondApp {
         &self,
         id:          &str,
         instruction: String,
+        pre:         String,
         attached:    String,
         read_only:   String,
         toolkits:    String,
@@ -3286,7 +3316,7 @@ impl DaimondApp {
             let js = event_to_js(&ev);
             let _ = on_event.call1(&JsValue::NULL, &js);
         };
-        let ran = agent.run_turn(&mut session, instruction, &registry, &mut sink).await;
+        let ran = agent.run_turn_noted(&mut session, instruction, pre, &registry, &mut sink).await;
         self.absorb_usage(&session);
         // WHERE THIS TURN'S OWN MESSAGES START, so its ledger can be read apart from every turn
         // before it -- `ledger_of` over the whole session would answer the same "files written"
@@ -3379,9 +3409,13 @@ impl DaimondApp {
                 // * the ledger's own paths, for everything written through a named door;
                 // * what the file tools captured mid-turn, which is the only account there will ever be
                 //   of a machine file's bytes before the daimon overwrote them (see `diamond::capture`);
-                // * and, only where the turn ran something OPAQUE, a walk of the Diamond's own directory
-                //   -- a command, a verifier or a worker names no path at all, and the honest answer to
-                //   "what did it change" is to look.
+                // * and the windows round the turn's commands, verifiers and downloads -- such a call
+                //   names no path at all, so each was looked at before and after, and what moved is
+                //   credited to the agent whose context ran it (`diamond::drain_windows`).
+                //
+                // There is no walk of the Diamond at the turn's end any more.  It could not say whose
+                // call a change was, and it filed a sync arrival, the person's own edit and the files
+                // `ensure_standing` seeded as the turn's.
                 //
                 // Attempted even when the turn ended badly, for the reason the version above is: a turn
                 // that wrote a file and then died has still changed it.
@@ -3404,16 +3438,16 @@ impl DaimondApp {
                     }
                 }
                 // The paths the daimon's own ledger names are the daimon's; a capture names
-                // whichever agent made it; a walk after a command or a spawn names nobody, because
-                // nobody knows.
+                // whichever agent made it; a window names the one agent that can have made the change,
+                // or nobody where two could.  A worker's changes arrive through the worker's own
+                // calls, never through the daimon's `spawn_agent`, which returns before it works.
                 let mut changes = diamond::versions_changes(id, &named).await;
                 for ch in changes.iter_mut() {
                     ch.by = registry.ctx.by.clone();
                 }
+                let windowed = diamond::drain_windows(id, &captured).await;
                 changes.extend(captured.into_iter().map(|(_, ch)| ch));
-                if !ledger.ran.is_empty() || !ledger.spawned.is_empty() {
-                    changes.extend(diamond::versions_walk(id).await);
-                }
+                changes.extend(windowed);
                 // The turn's own id is the browser's (`iturn`, the user message's `mid`) and does not
                 // cross the wasm boundary today, so the manifest is joined to its History row by VERSION
                 // NUMBER, which is what `showCrystalHistory` joins on anyway. The field stays, for the
@@ -3911,9 +3945,14 @@ fn message_to_js(msg: &ChatMessage) -> JsValue {
             set("role", &JsValue::from_str("system"));
             set("content", &JsValue::from_str(&content.as_text()));
         }
-        ChatMessage::User { content } => {
+        ChatMessage::User { content, pre } => {
             set("role", &JsValue::from_str("user"));
             set("content", &JsValue::from_str(&content.as_text()));
+            // Beside the words and only when there is one, as the JDAT form does, so the page's
+            // bubble reads `content` alone and an ordinary message keeps the shape it had.
+            if !pre.is_empty() {
+                set("pre", &JsValue::from_str(pre));
+            }
         }
         ChatMessage::Assistant { content, tool_calls } => {
             set("role", &JsValue::from_str("assistant"));
@@ -3955,7 +3994,8 @@ fn js_to_message(item: &JsValue) -> Option<ChatMessage> {
     let content = js_prop(item, "content").unwrap_or_default();
     match js_prop(item, "role").unwrap_or_default().as_str() {
         "system" => Some(ChatMessage::system(content)),
-        "user"   => Some(ChatMessage::user(content)),
+        "user"   => Some(ChatMessage::user_noted(
+            content, js_prop(item, "pre").unwrap_or_default())),
         "tool"   => match js_prop(item, "tool_call_id") {
             Some(id) if !id.is_empty() => Some(ChatMessage::tool(id, content)),
             _ => None,

@@ -73,12 +73,18 @@
 	</ul>
 	<p>Keines davon gibt sich als Antwort aus.</p>
 
-	<h2 id="s4">Einen Chat behalten</h2>
+	<h2 id="s4">Eine Antwort oder eine Änderung bewerten</h2>
+	<p>Eine endgültige Antwort endet mit einem Pfeil nach oben, einem Pfeil nach unten und einem Bedienelement für Details. Eine Datei, die ein Zug geändert hat, trägt dieselben drei am rechten Ende ihrer Zeile, in der Kachel <span class="ui">Dateien</span> unter diesem Zug.</p>
+	<p>Der Pfeil nach oben gibt ein Plus und der Pfeil nach unten ein Minus, und ein Tipp auf einen leuchtenden Pfeil nimmt die Bewertung zurück. Ein Tipp nach unten öffnet außerdem eine Reihe von Tags, etwa <span class="ui">Zu lang</span> bei einer Antwort oder <span class="ui">Etwas kaputtgemacht</span> bei einer Datei, damit die Bewertung sagen kann, was falsch war. Das Bedienelement für Details öffnet <span class="ui">Antwort bewerten</span> oder <span class="ui">Änderung bewerten</span>, mit fünf Stufen von <span class="ui">Falsch</span> bis <span class="ui">Super</span>, den Tags, vier Bewertungen und einem Feld für die eigenen Worte. <span class="ui">Zurücknehmen</span> nimmt in diesem Fenster eine Bewertung ebenfalls zurück.</p>
+	<p>Eine Datei trägt Pfeile nur dort, wo Daimond sagen kann, welches Modell sie geändert hat. Haben zwei Agenten zur selben Zeit am selben Ort gearbeitet, trägt die Zeile keine, denn eine Bewertung, die unter dem falschen Modell abgelegt wird, ist schlimmer als keine.</p>
+	<p>Eine Bewertung wird in dem Chat gespeichert, in dem sie gegeben wurde, zehn Sekunden nach dem letzten Tipp oder früher, wenn Sie eine Nachricht senden oder den Chat verlassen. Sie steht in einer Kachel <span class="ui">Bewertung</span> am Ende des Threads, mit einem Link zurück zur Antwort oder zur Datei. Das Modell liest sie einmal, mit Ihrer nächsten Nachricht in diesem Chat, und der Thread zeigt nur, was Sie getippt haben.</p>
+
+	<h2 id="s5">Einen Chat behalten</h2>
 	<p>Zwei Schaltflächen sitzen auf der Zeile eines Chats in der Leiste. <span class="ui">Behalten</span> macht aus dem ganzen Gespräch ein Diamond. <span class="ui">Alles einklappen</span> macht daraus ein Diamond, indem es zusammengefasst wird: Was herausgearbeitet wurde, bleibt, das Hin und Her fällt weg.</p>
 	<p>Um nur einen Teil zu behalten, klappen Sie die Antworten ein, haken Sie die bewahrenswerten Züge an und wählen Sie <span class="ui">Ausgewählte einklappen</span>. Klappen Sie einen Schritt ein, den Sie übernommen haben, und lassen Sie eine beiläufige Bemerkung, wo sie ist.</p>
 	<p>Nichts wird von selbst aufgenommen. Das Gedächtnis eines Diamond ändert sich nur durch ein Einklappen oder eine Bearbeitung, und jedes Schreiben wird im Verlauf aufbewahrt.</p>
 
-	<h2 id="s5">In einem Diamond</h2>
+	<h2 id="s6">In einem Diamond</h2>
 	<p>Ihre Diamonds sitzen über Ihren Chats, und die <span class="ui">+</span> legt eines an. Ein Diamond hat zwei Seiten, und ein Schalter in seiner Kopfzeile wechselt zwischen ihnen. <span class="ui">Kristall</span> ist, was es weiß, und <span class="ui">Chat</span> ist sein eigenes Gespräch.</p>
 
 	<figure class="shot narrow">
@@ -88,7 +94,7 @@
 
 	<p>Die Karte führt den Titel und die Zusammenfassung des Diamond in seinen eigenen Worten auf, dann alles andere, was es hält, je eine Zeile. <span class="ui">Bearbeiten</span> öffnet ein Formular. <span class="ui">Rohes Gedächtnis anzeigen</span> öffnet die Datei selbst, für wenn Sie lieber direkt darin arbeiten.</p>
 
-	<h2 id="s6">Die vier Dateien, die ein Diamond hält</h2>
+	<h2 id="s7">Die vier Dateien, die ein Diamond hält</h2>
 	<p>Das Gedächtnis wird offen gehalten. Vier Dateien sitzen im eigenen Ordner des Diamond, lesbar im Workspace-Panel und für den Daimon.</p>
 	<ul>
 		<li><code>crystal.json</code> hält, was dieses Diamond <em>ist</em>, also seinen Titel, seine Zusammenfassung, Abschnitte, Fakten und Verknüpfungen.</li>
@@ -98,7 +104,7 @@
 	</ul>
 	<p>Alle vier reisen mit dem Daimon in jeder Runde innerhalb eines Budgets, was einem Diamond über sich selbst gesagt wird, ist also begrenzt und vorhersehbar. Ein Kristall, der zu groß ist, um ganz hineinzupassen, hält seinen Überlauf lesbar und durchsuchbar, statt ihn fallenzulassen. Die Zählungen auf der Karte, <span class="ui">Ziele</span>, <span class="ui">Offene Aufgaben</span> und <span class="ui">Erledigt</span>, werden abgelesen von <code>REQUIREMENTS.md</code>.</p>
 
-	<h2 id="s7">Zwei Arten des Einklappens</h2>
+	<h2 id="s8">Zwei Arten des Einklappens</h2>
 	<p>Das Wort deckt zwei verschiedene Handlungen ab.</p>
 	<ul>
 		<li><strong>Frühere Nachrichten zusammenfassen</strong>, in der Kopfzeile des Chats, ist die App, die ein Gespräch verdichtet, das nicht mehr passt. Ihre Entscheidungen werden abgelegt in <code>DECISIONS.md</code>, ihre offenen Punkte in <code>REQUIREMENTS.md</code>, und ihr nächster Schritt in <code>STATE.md</code>. Was sie ablegt, lässt sich danach finden, was sie in einem Hinweis zurücklässt, nicht.</li>
@@ -106,15 +112,15 @@
 	</ul>
 	<p>Das Ablegen ist wiederholbar, dasselbe Einklappen zweimal auszuführen legt also nichts zweimal ab, und die Reihenfolge, in der zwei Einklappungen ankommen, ändert nicht, was die Dateien am Ende sagen.</p>
 
-	<h2 id="s8">Verlauf</h2>
+	<h2 id="s9">Verlauf</h2>
 	<p><span class="ui">Verlauf</span> führt jede Version auf, die neueste zuerst. <span class="ui">Ansehen</span> liest eine, <span class="ui">Wiederherstellen</span> macht sie wieder zur aktuellen, und <span class="ui">Delta</span> zeigt das Material, das einem Einklappen gegeben wurde. Wiederherstellen behält zuerst, was aktuell war, ein Wiederherstellen lässt sich also selbst rückgängig machen.</p>
 
-	<h2 id="s9">Handeln, ohne gefragt zu werden</h2>
+	<h2 id="s10">Handeln, ohne gefragt zu werden</h2>
 	<p>Ein Diamond antwortet, wenn Sie es dazu auffordern, und zu keinem anderen Zeitpunkt, es sei denn, Sie richten eine ausgelöste Aktion ein. Die wohnen unter <span class="ui">Wann dieses Diamond handelt</span> auf der Kristall-Seite, und <span class="ui">Aktion hinzufügen</span> legt eine an. Zwei Dinge können eine auslösen: entweder Minuten Ihrer eigenen Aktivität, nur gezählt, während Sie arbeiten, oder Mail, die in einem von Ihnen genannten Ordner ankommt.</p>
 	<p>Jede Aktion trägt eine Anweisung, jedes Mal gesendet, und einen Kontext, einmal gesendet, bis Sie ihn ändern. Sie sind eine gewöhnliche Datei, <code>triggers.json</code>, im Ordner des Diamond.</p>
 	<p>Eine neue Aktion ist <strong>angehalten</strong>, und sagt das: <em>Angehalten. Drücken Sie &#9654; auf dem Licht neben dem Ausklapper, damit diese Aktion läuft.</em> Ein Druck schaltet sie scharf.</p>
 
-	<h3 id="s10">Das Licht</h3>
+	<h3 id="s11">Das Licht</h3>
 	<p>Jede Aktion, jedes Diamond und die <span class="ui">Alles</span> -Zeile tragen dasselbe dreiteilige Bedienelement, ein Abspielen, ein Anhalten und ein rundes Licht. Das Licht sagt, ob etwas scharf geschaltet ist und frei auslösen kann.</p>
 	<ul>
 		<li><strong>Rot.</strong> Hier wird nichts von selbst handeln.</li>
@@ -124,7 +130,7 @@
 	<p>Ein frisches Konto ist überall rot, die ehrliche Antwort darauf, ob irgendetwas von selbst läuft. Eine Aktion ohne Postfach oder Anweisung bleibt außen vor, denn sie könnte nicht auslösen. Bernstein lässt sich nur erreichen, nie setzen.</p>
 	<p>Eine angehaltene Aktion gibt nichts aus, denn sie wird abgelehnt, bevor der Zug beginnt.</p>
 
-	<h2 id="s11">Tags, Verknüpfungen und der Papierkorb</h2>
+	<h2 id="s12">Tags, Verknüpfungen und der Papierkorb</h2>
 	<p><span class="ui">Tags</span> auf der Kristall-Seite legt ein Diamond in der Leiste ab. Bis zu acht Tags, klein geschrieben und ohne Duplikate. <span class="ui">Vorgeschlagen</span> bietet vier zum Anfangen an. Tags sind untätig. Sie werden nicht an ein Modell gesendet, sie sind kein Teil des Gedächtnisses, und sie ändern nichts, was ein Agent tut. <span class="ui">Nach Tag filtern</span> in der Leiste engt danach ein.</p>
 	<p>Ein Diamond lässt sich auch mit einem anderen verknüpfen, und der <a href="interface.html">Graph</a> ist das Bild davon.</p>
 	<p>Einen Chat oder ein Diamond zu löschen wirft ihn in den Papierkorb. Er wird weiterhin gespeichert und synchronisiert, außer Reichweite jedes Daimon, und dreißig Tage mit dem Datum auf der Zeile aufbewahrt. <span class="ui">Wiederherstellen</span> bringt ihn auf jedem Gerät zurück. <span class="ui">Endgültig löschen</span> und <span class="ui">Papierkorb leeren</span> sind die beiden, die fragen.</p>

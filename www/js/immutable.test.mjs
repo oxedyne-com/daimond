@@ -434,6 +434,33 @@ async function main() {
 				.filter((m) => m.mid === 'ans-old').length === 1);
 	}
 
+	// ── (i) P1b: a chat's Files row (`files_log`) is appended last, under its answer, so the thread
+	//    already drawn is never rebuilt for it. ──
+	console.log('\n(i) — a chat\'s files_log is an append, and never leaves its answer');
+	{
+		const turn = [
+			{ role: 'user', content: 'write the files', mid: 'U', ts: 100 },
+			{ role: 'tool_log', name: 'file_write', content: 'ok', outcome: 'done', callId: 't1', mid: 'T', ts: 101 },
+			{ role: 'assistant', content: 'Written.', mid: 'AN', ts: 120 },
+		];
+		const FL = { role: 'files_log', mid: 'FL', ts: 121, prod: [{ h: 'p1:file:chat:c1/v2/chats/c1/work/n.md', k: 'file' }] };
+		const END = { role: 'end_log', how: 'done', offered: 1, mid: 'EN', ts: 122 };
+		check('(i1) the row appended after the answer keeps the drawn prefix, so the thread is not rebuilt',
+			noRebuild(sigsOf(turn), sigsOf(turn.concat([FL]))));
+		check('(i2) and the ending after it is one more append',
+			noRebuild(sigsOf(turn.concat([FL])), sigsOf(turn.concat([FL, END]))));
+		check('(i3) a row inserted BEFORE the answer changes the drawn prefix and would force a rebuild (the mutation this guards)',
+			!noRebuild(sigsOf(turn), sigsOf([turn[0], turn[1], FL, turn[2]])));
+		check('(i4) the row\'s signature reads its id and role and no record, so a rating on it never changes it',
+			msgSig(FL) === msgSig(Object.assign({}, FL, { prod: [] })) && /#files_log#0#/.test(msgSig(FL)), msgSig(FL));
+		const merged = mergeMessages(turn, turn.concat([FL]));
+		check('(i5) a parcel that carries the row merges it once, after the answer',
+			merged.map((m) => m.mid).join() === 'U,T,AN,FL', merged.map((m) => m.mid));
+		const again = mergeMessages(merged, merged);
+		check('(i6) and merging it again is a no-op (first copy wins, nothing doubles)',
+			again.length === merged.length && sigsOf(again).join('|') === sigsOf(merged).join('|'));
+	}
+
 	console.log(failures ? ('\nFAIL — ' + failures + '/' + checks + ' checks') : '\nALL PASS');
 	if (failures) process.exitCode = 1;
 }

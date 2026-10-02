@@ -173,6 +173,13 @@
 	.chat-attach-strip .ws-body,
 	.chat-attach-strip .attach-body { padding-right: 100px; }
 
+	/* THE FOOT OF THE THREAD CLEARS THE CHEVRONS. They float 10px above the bar and stand 40px tall, so with no attachment
+	   strip between the thread and the bar (a Diamond's own chat) they lie over the last 56px of the thread, and the last row
+	   of a Files tile, scrolled to the end, had its 44px squares covered by up to 11px (bar rule 8, V's FW5). The thread keeps
+	   that room below its last tile; with the strip showing, the strip is what they float over and the thread ends above them. */
+	.chat-output { padding-bottom: 68px; }
+	.chat-output:has(~ #chat-attachments:not([style*="none"])) { padding-bottom: 12px; }
+
 	/* Give lists a little more row height for touch. */
 	.session-box { padding: 10px 11px; }
 	.files-row { padding: 8px 12px; }

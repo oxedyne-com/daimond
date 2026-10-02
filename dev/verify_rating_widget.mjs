@@ -18,6 +18,9 @@
 //   W8  the popup                     W17 the rail does not move
 //   W9  clear                         L layout   T tap areas   K keyboard
 //   FV  the popup's cross, mouse and key
+//   FW1-FW6  5.3.0 (U3, V1 of the U3+U4 plan, written RED on 5.2.9): the file rows of a Diamond's changed-files tile and the chat's
+//        Files row -- FW1 one tap one record, FW2 the tile never changes, FW3 a row with no record has no group, FW4 the chat's
+//        Files row draws from its records after its store is wiped, FW5 44px squares at 390x844, FW6 selection mode.
 //
 // A section that cannot find the widget fails once, by name, and the rest of the run goes on:
 // on the code before U2 every section is red for that reason and no other.
@@ -62,8 +65,8 @@ const BREAKS = {
 		to:   "var BURST_MS  = 2500;",
 		what: 'a burst commits after 2.5 s of quiet, not 10 s (`due` and the timer both cut short)' },
 	focus:      { section: 'W5',  file: 'js/daimond.js',
-		from: "row.after(tags);",
-		to:   "row.after(tags); tags.querySelector('button').focus();",
+		from: "anchor.after(tags);",
+		to:   "anchor.after(tags); tags.querySelector('button').focus();",
 		what: 'the chip row focuses its first chip' },
 	// F1: the details control is let through the `mousedown` refusal, so its popup's cross takes a pointer's focus state; this
 	// refuses it again, as every rating control was before the fix.
@@ -72,14 +75,14 @@ const BREAKS = {
 		to:   "if (b) e.preventDefault();",
 		what: 'a press on the details control moves no focus, as on the other rating controls' },
 	shape:      { section: 'W2',  file: 'js/ratings.js',
-		from: "\t\t\thash:   String(prod.hash || ''),\t\t\t\t\t// '' for an answer\n",
+		from: "\t\t\thash:   String(prod.hash || ''),\t\t\t\t\t// '' for an answer, and for a file that has gone\n",
 		to:   "",
 		what: '`build` leaves out `hash`' },
-	// No path put the note on the wire, so the break adds one: the newest note is appended to what the agent is sent
-	// (the stored user message is untouched, so only W10's wire check can see it).
+	// U4 puts the note on the wire once, as `pre` ahead of the person's words. The break tells it a second time: the newest note's
+	// words are appended to what the agent is sent (the stored user message is untouched, so only W10's wire check can see it).
 	wire:       { section: 'W10', file: 'js/daimond.js',
-		from: "\t\t\t\ttry {\n\t\t\t\t\tawait app.run_turn(text, onEvent);\n\t\t\t\t} catch (e) {\n\t\t\t\t\tif (capFail) {",
-		to:   "\t\t\t\ttry {\n\t\t\t\t\tawait app.run_turn(text + (function () { var w = chat.messages.filter(function (m) { return m.role === 'rating_log' && m.rating && m.rating.note; }).pop(); return w ? '\\n' + w.rating.note : ''; })(), onEvent);\n\t\t\t\t} catch (e) {\n\t\t\t\t\tif (capFail) {",
+		from: "\t\t\t\t\theldRun(chat, app, umid);\n\t\t\t\t\tawait app.run_turn(text, onEvent, turnPre || undefined);\n\t\t\t\t} catch (e) {\n\t\t\t\t\tif (capFail) {",
+		to:   "\t\t\t\t\theldRun(chat, app, umid);\n\t\t\t\t\tawait app.run_turn(text + (function () { var w = chat.messages.filter(function (m) { return m.role === 'rating_log' && m.rating && m.rating.note; }).pop(); return w ? '\\n' + w.rating.note : ''; })(), onEvent, turnPre || undefined);\n\t\t\t\t} catch (e) {\n\t\t\t\t\tif (capFail) {",
 		what: 'the newest rating note is sent to the model with the next message' },
 	popupdirty: { section: 'W8',  file: 'js/daimond.js',
 		from: "st.s = next;",
@@ -91,6 +94,27 @@ const BREAKS = {
 		from: ".rate-card .ctile-rate-tags { margin-top: 2px; }",
 		to:   ".rate-card .ctile-rate-tags { margin-top: 2px; }\n:root .rate-card .rate-scale .tile-dlg-level { padding-left: 3px; padding-right: 3px; }",
 		what: 'the scale steps draw 3px of side padding, not the toggle option\'s 8px' },
+	// ── U3 (5.3.0). Each anchor exists on 5.2.9 and must survive P1a; own-section-only is proved at the P1a merge. ──
+	wronghash:  { section: 'FW1', file: 'js/ratings.js',
+		from: "\t\t\thash:   String(prod.hash || ''),",		// the comment after it is not part of the anchor: P1a reworded it
+		to:   "\t\t\thash:   String(prod.k === 'file' ? '' : (prod.hash || '')),",
+		what: 'a rating of a file leaves its hash empty' },
+	mutate:     { section: 'FW2', file: 'js/daimond.js',
+		from: "function rateDraw(chat, list) {",
+		to:   "function rateDraw(chat, list) {\n\t\tdocument.querySelectorAll('#chat-output .turn-files').forEach(function (n) { n.setAttribute('data-rated', '1'); });",
+		what: 'the commit writes a non-chrome attribute onto the Files tile' },
+	allrows:    { section: 'FW3', file: 'js/daimond.js',
+		from: "row.className = 'turn-file-row';",
+		to:   "row.className = 'turn-file-row'; setTimeout(function () { if (!row.querySelector('.ctile-rate')) { var g = document.createElement('span'); g.className = 'turn-file-rate ctile-rate'; g.setAttribute('data-chrome', 'rate'); g.setAttribute('role', 'group'); g.innerHTML = '<button class=\"ctile-rate-up\"></button><button class=\"ctile-rate-down\"></button><button class=\"ctile-rate-more\"></button>'; row.appendChild(g); } }, 300);",
+		what: 'every file row gets a group, whether or not it has a record' },
+	storeread:  { section: 'FW4', file: 'js/daimond.js',
+		from: "nm.title = name;",		// P1a split the name into two spans, so the old anchor (nm.textContent = name;) is gone; this one is the row's last line on it
+		to:   "nm.title = name; DaimondVersions.manifests(id).then(function (ms) { if (!(ms || []).length) nm.textContent = ''; });",
+		what: 'a file row blanks its name when the store holds no manifest for it' },
+	tiny:       { section: 'FW5', file: 'css/app.css',
+		from: ".ctile-rate-row .ctile-rate button:first-child::after { left: -8px; transform: translateY(-50%); }",
+		to:   ".ctile-rate-row .ctile-rate button:first-child::after { left: -8px; transform: translateY(-50%); }\n@media (pointer: coarse) { .turn-file-rate button::after { width: 20px !important; height: 20px !important; } }",
+		what: 'the coarse-pointer overlay on file-row buttons shrinks to 20px' },
 	touch:      { section: 'W17', file: 'js/daimond.js',
 		from: "persistChats();\t\t// and no touchChat: a rating is not a turn",
 		to:   "touchChat(chat); persistChats();",
@@ -108,7 +132,7 @@ if (BREAK && !BREAKS[BREAK]) { console.error(`unknown break '${BREAK}'; one of: 
 	}
 	if (stale.length) { console.error('break(s) no longer match exactly once: ' + stale.join(', ')); process.exit(2); }
 }
-const ALL = 'W1,W2,W3,W4,W5,W6,W7,W8,W9,W10,W11,W12,W13,W14,W15,W16,W17,FV,L,LL,T,K';
+const ALL = 'W1,W2,W3,W4,W5,W6,W7,W8,W9,W10,W11,W12,W13,W14,W15,W16,W17,FV,L,LL,T,K,FW1,FW2,FW3,FW4,FW5,FW6';
 const ONLY = new Set((arg('--only') || (BREAK && !process.argv.includes('--full') ? BREAKS[BREAK].section : ALL))
 	.split(',').map((s) => s.trim().toUpperCase()).filter(Boolean));
 if (ONLY.has('L')) { ONLY.add('LD'); ONLY.add('LP'); }	// L is the computer's layout, then the phone's; either can be asked for alone
@@ -263,14 +287,15 @@ await section('W1', async () => {
 		check(`W1: answer ${i + 1}'s group is a labelled group of up, down and details, none lit`,
 			f.role === 'group' && !!f.label && f.up && f.down && f.more && f.popup === 'dialog' && f.lit === '' && !f.detail, J({ role: f.role, label: f.label, popup: f.popup, lit: f.lit }));
 	}
-	const stray = await D.page.evaluate(() => [...document.querySelectorAll('#chat-output .ctile-rate, #chat-output .ctile-rate-row')]
-		.filter((g) => !g.closest('.ctile.chat-msg-assistant')).length + document.querySelectorAll('#chat-output .ctile[data-t="user"] .ctile-rate, #chat-output .ctile[data-t="tool"] .ctile-rate').length);
+	// A changed-files row's own group (`.turn-file-rate`, the chat's Files row since P1b) belongs to its row and not to a tile: FW checks it.
+	const stray = await D.page.evaluate(() => [...document.querySelectorAll('#chat-output .ctile-rate:not(.turn-file-rate), #chat-output .ctile-rate-row')]
+		.filter((g) => !g.closest('.ctile.chat-msg-assistant')).length + document.querySelectorAll('#chat-output .ctile[data-t="user"] .ctile-rate:not(.turn-file-rate), #chat-output .ctile[data-t="tool"] .ctile-rate:not(.turn-file-rate)').length);
 	check('W1: no group on a user tile, a tool tile or anywhere but an answer', stray === 0, stray + ' stray');
 	// Mid-turn: nothing on the streaming answer or the empty placeholder.
 	await D.page.fill('#chat-input', '@slow 3500 STREAMING-W1');
 	await D.page.click('#chat-send', { force: true });
 	await sleep(1200);
-	const mid = await D.page.evaluate(() => ({ groups: document.querySelectorAll('#chat-output .ctile-rate').length,
+	const mid = await D.page.evaluate(() => ({ groups: document.querySelectorAll('#chat-output .ctile-rate:not(.turn-file-rate)').length,
 		tiles: [...document.querySelectorAll('#chat-output .ctile.chat-msg-assistant')].length }));
 	check('W1: nothing is mounted on a streaming answer or its placeholder', mid.groups === 0 || mid.groups === 2 * a.length, `${mid.groups} groups over ${mid.tiles} assistant tiles, ${a.length} answers settled`);
 	await waitFor(async () => (await answersOf(cid)).length > a.length, 20000);
@@ -543,7 +568,20 @@ await section('W8', async () => {
 	await D.page.locator('.rate-card textarea.rate-said-input').fill(NOTE);
 	const where = (await D.page.locator('.rate-card .rate-where').innerText().catch(() => '')).trim();
 	const cm = m.prod[0].cm;
-	check('W8: "where it goes" names the model that answered and says nothing of a model reading it', where.includes(cm) && !/\b(read|reads|reading|sees?|sent|training|private|counts? towards)\b/i.test(where), where);
+	// U4 (D11) makes the line true: the words are sent to the model with the person's next message in this chat. It still claims nothing of training, privacy or any count.
+	check('W8: "where it goes" names the model that answered and says it is sent to the model with the next message (D11)', where.includes(cm) && /\bsent to the model with your next message\b/i.test(where) && !/\b(training|private|counts? towards)\b/i.test(where), where);
+	// "Model: <name>" is one unbreakable unit (5.3.0 F): never split after the colon, and a long name ends in an ellipsis inside the foot.
+	const unit = await D.page.evaluate(() => {
+		const w = document.querySelector('.rate-card .rate-where'), u = w && w.querySelector('.rate-model');
+		if (!u) return null;
+		const lh = parseFloat(getComputedStyle(w).lineHeight) || 18, r0 = u.getBoundingClientRect();
+		const was = u.textContent; u.textContent = 'Model: anthropic/claude-opus-5.5-extended-context-preview-20260929';
+		const r1 = u.getBoundingClientRect(), wr = w.getBoundingClientRect();
+		const out = { one: Math.round(r0.height / lh) === 1, longOne: Math.round(r1.height / lh) === 1, clipped: u.scrollWidth > u.clientWidth + 1, inside: r1.right <= wr.right + 0.5, ws: getComputedStyle(u).whiteSpace + '/' + getComputedStyle(u).textOverflow };
+		u.textContent = was;
+		return out;
+	});
+	check('W8: "Model: <name>" is one unit on one line, and a long name ellipsises inside the foot', !!unit && unit.one && unit.longOne && unit.clipped && unit.inside && unit.ws === 'nowrap/ellipsis', J(unit));
 	check('W8: nothing is written while the popup is open', (await ratings(cid)).length === n0, '');
 	await closePopup('cross');
 	check('W8: closing by the cross removes the popup', !(await has(card())), '');
@@ -606,7 +644,13 @@ await section('W10', async () => {
 	need(req, 'the mock logged no request for the next turn');
 	const wire = J(req);
 	check('W10: no rating field, role or handle in the request (I7)', !/rating_log|"rating"|"burst"|"sup"|p1:answer|"prod"/.test(wire), (wire.match(/rating_log|"rating"|"burst"|"sup"|p1:answer|"prod"/) || [''])[0]);
-	check('W10: the note text is nowhere in the request', !marker || !wire.includes(marker), marker || '(the popup is not built yet, so no note was written)');
+	// U4 tells the model what the person said, once, in the app's note at the head of the person's next message. U2's "the words are
+	// nowhere on the wire" (I7) is reversed on purpose: they are there exactly once, and only there.
+	const lastUserText = (() => { const us = (req.messages || []).filter((x) => x.role === 'user'); return us.length ? contentText(us[us.length - 1].content) : ''; })();
+	const seenN = marker ? wire.split(marker).length - 1 : 0;
+	check('W10: the note\'s words are on the wire exactly once, inside the app\'s note ahead of the typed text (U4 reverses U2\'s I7)',
+		!marker || (seenN === 1 && lastUserText.startsWith('[Daimond: ') && lastUserText.endsWith('\n\n' + text)),
+		marker ? seenN + ' time(s); last user message ' + J(lastUserText.slice(0, 120)) : '(the popup is not built yet, so no note was written)');
 });
 
 // ══ W11 ══════════════════════════════════════════════════════════════════
@@ -1017,17 +1061,22 @@ const squares = (s, sel) => s.page.evaluate((sel) => [...document.querySelectorA
 		return rc[i] > 0 && ox >= 0 && oy >= 0 && ox < rc[i] && oy < rc[i] && Math.hypot(rc[i] - ox, rc[i] - oy) > rc[i];
 	});
 	const pts = [[0, 0], [21, 0], [-21, 0], [0, 21], [0, -21], [21, 21], [21, -21], [-21, 21], [-21, -21]].map(([dx, dy]) => [cx + dx, cy + dy]).filter(([x, y]) => !cut(x, y));
-	const miss = pts.filter(([x, y]) => { const h2 = document.elementFromPoint(x, y); return !(h2 && (h2 === e || e.contains(h2))); }).length;
+	const missed = pts.filter(([x, y]) => { const h2 = document.elementFromPoint(x, y); return !(h2 && (h2 === e || e.contains(h2))); });
+	const miss = missed.length;
+	// What took the first missed point, so a finding names the thing in the way and not only a count.
+	const why = missed.length ? (() => { const [x, y] = missed[0], h2 = document.elementFromPoint(x, y), hr = h2 ? h2.getBoundingClientRect() : null;
+		return 'at (' + Math.round(x - cx) + ',' + Math.round(y - cy) + ') of the square: ' + (h2 ? (h2.className || h2.tagName).toString().split(' ').slice(0, 2).join('.') + ' y ' + Math.round(hr.top) + '-' + Math.round(hr.bottom) : 'nothing')
+			+ '; control x ' + Math.round(r.left) + '-' + Math.round(r.right) + ' y ' + Math.round(r.top) + '-' + Math.round(r.bottom) + ', tile x ' + Math.round(tb.left) + '-' + Math.round(tb.right) + ', square x ' + Math.round(cx - w / 2) + '-' + Math.round(cx + w / 2); })() : '';
 	// Each control is scrolled to the centre of its own scroller before it is measured, so two squares are compared in the scroll state each
 	// was measured in unless the scroll is added back: a card that overflows (the popup, once its steps are 44px) read two rows 15px apart.
 	let sx = 0, sy = 0; for (let a = e.parentElement; a; a = a.parentElement) { sx += a.scrollLeft || 0; sy += a.scrollTop || 0; }
-	return { name: (e.className || e.tagName).toString().split(' ').slice(0, 2).join('.') + ':' + (e.textContent || '').trim().slice(0, 12), l: cx - w / 2 + sx, r: cx + w / 2 + sx, t: cy - h / 2 + sy, b: cy + h / 2 + sy, miss };
+	return { name: (e.className || e.tagName).toString().split(' ').slice(0, 2).join('.') + ':' + (e.textContent || '').trim().slice(0, 12), l: cx - w / 2 + sx, r: cx + w / 2 + sx, t: cy - h / 2 + sy, b: cy + h / 2 + sy, miss, why };
 }), sel);
 async function tapAreas(s, tag, sel) {
 	const sq = await squares(s, sel);
 	check(`T: ${tag}: there are controls to measure`, sq.length > 0, sq.length + ' found');
 	const miss = sq.filter((q) => q.miss > 0);
-	check(`T: ${tag}: every control's 44px square hits it or a descendant`, miss.length === 0, miss.map((q) => q.name + ' x' + q.miss).join(', '));
+	check(`T: ${tag}: every control's 44px square hits it or a descendant`, miss.length === 0, miss.map((q) => q.name + ' x' + q.miss + ' (' + q.why + ')').join(', '));
 	const ov = [];
 	for (let i = 0; i < sq.length; i++) for (let j = i + 1; j < sq.length; j++) {
 		const a = sq[i], b = sq[j];
@@ -1059,6 +1108,144 @@ await section('T', async () => {
 	await stepBtn(0, P).click({ force: true }); await openDetails(P);
 	await tapAreas(P, 'the popup', '.rate-card .rate-scale .tile-dlg-level, .rate-card .ctile-rate-tags .tile-dlg-level, .rate-card .rate-dim .tile-dlg-level, .rate-card details > summary, .rate-card textarea, .rate-card .rate-clear, .rate-card .ui-close');
 	await closePopup('escape', P);
+});
+// ══ FW. The file rows of a changed-files tile (U3; written red on 5.2.9) ═══
+const FWROW = '#chat-output .turn-files .turn-file-row';
+const mkDiamondOn = async (s, label) => {
+	await s.page.evaluate(() => document.getElementById('new-diamond-btn').click());
+	await s.page.waitForSelector('.dlg-card', { timeout: 8000 });
+	await s.page.evaluate((nm) => { const c = [...document.querySelectorAll('.dlg-card')].filter((x) => x.getClientRects().length).pop();
+		const i = c.querySelector('input.dlg-input'); i.value = nm; i.dispatchEvent(new Event('input', { bubbles: true })); c.querySelector('.dlg-ok').click(); }, label + ' ' + Date.now().toString(36));
+	await sleep(1500);
+	const id = await s.page.evaluate(() => { const d = window.DaimondDiamond.current(); return d ? d.id : ''; });
+	await s.page.evaluate((id) => { const all = JSON.parse(localStorage.getItem('daimond-diamond-models') || '{}'); const def = window.DaimondModels.getDefault() || {};
+		all[id] = { provider: def.provider, model: def.model, workerProvider: def.provider, workerModel: def.model, visionProvider: '', visionModel: '' };
+		localStorage.setItem('daimond-diamond-models', JSON.stringify(all)); }, id);
+	return id;
+};
+const steerOn = async (s, id, text) => {
+	await s.page.evaluate(() => { const c = document.getElementById('dview-chat'); if (c) c.click(); }); await sleep(500);
+	await s.page.fill('#chat-input', text); await s.page.click('#chat-send', { force: true });
+	await sleep(800); await waitFor(() => s.page.evaluate((id) => !window.DaimondCore.diamondBusy(id), id), 90000, 500); await sleep(1000);
+	return s.page.evaluate((id) => { const r = window.DaimondDiamond.conversation(id); return r ? { id: r.id, messages: JSON.parse(JSON.stringify(r.messages || [])) } : { id: '', messages: [] }; }, id);
+};
+const isNote = (m) => m.role === 'user' && /^\[Daimond: this turn changed /.test(String(m.content || ''));
+/// The rows of the last Files tile: handle, group, and the group's three controls.
+const fwRows = (s) => s.page.evaluate((sel) => [...document.querySelectorAll(sel)].map((r) => { const g = r.querySelector('.ctile-rate');
+	return { h: r.getAttribute('data-h') || '', name: (r.querySelector('.turn-file-name') || {}).textContent || '', group: !!g, role: g && g.getAttribute('role'), label: g && g.getAttribute('aria-label'),
+		up: !!(g && g.querySelector('.ctile-rate-up')), down: !!(g && g.querySelector('.ctile-rate-down')), more: !!(g && g.querySelector('.ctile-rate-more')),
+		lit: !g ? '' : (g.querySelector('.ctile-rate-up').getAttribute('aria-pressed') === 'true' ? 'up' : (g.querySelector('.ctile-rate-down').getAttribute('aria-pressed') === 'true' ? 'down' : '')) }; }), FWROW);
+/// The rows of the LAST Files tile alone (a chat that has had two file-changing turns holds two tiles).
+const fwRowsLast = (s) => s.page.evaluate((sel) => { const t = [...document.querySelectorAll('#chat-output .turn-files')].pop(); return t ? [...t.querySelectorAll('.turn-file-row')].map((r) => ({ h: r.getAttribute('data-h') || '', name: (r.querySelector('.turn-file-name') || {}).textContent || '', group: !!r.querySelector('.ctile-rate') })) : []; }, FWROW);
+const tileOf = (s) => s.page.evaluate(() => { const t = [...document.querySelectorAll('#chat-output .turn-files')].pop(); if (!t) return null; const c = t.cloneNode(true); c.querySelectorAll('[data-chrome]').forEach((n) => n.remove()); return c.outerHTML; });
+let fw = null;
+async function fwSeed() {
+	if (fw) { if (fw.err) throw new Skip(fw.err); return fw; }
+	try {
+		await boot();
+		const id = await mkDiamondOn(D, 'Filed'); need(id, 'no Diamond was made');
+		const wtask = '@tool file_write ' + J({ path: `diamonds/${id}/code/w.md`, content: '# W\n\nby the worker.\n' });
+		const r = await steerOn(D, id, '@tools file_write ' + J({ path: `diamonds/${id}/code/d.md`, content: '# D\n\nby the daimon.\n' }) + ' ;; spawn_agent ' + J({ name: 'fwwk', task: wtask }) + ' ;; gather ' + J({ names: ['fwwk'], timeout_s: 60 }));
+		const tail = r.messages.find(isNote); need(tail && Array.isArray(tail.prod) && tail.prod.length >= 2, 'the daimon turn left no changed-files note with two records');
+		return fw = { id, cid: r.id, tail };
+	} catch (e) { fw = { err: e.message }; throw e; }
+}
+let fwFlow = null;
+async function fwFlowOne() {
+	if (fwFlow) { if (fwFlow.err) throw new Skip(fwFlow.err); return fwFlow; }
+	try {
+		const { id, cid, tail } = await fwSeed();
+		const rows = await fwRows(D), row = rows.find((r) => r.h && r.group); need(row, 'no file row carries data-h and a rating group: the file-row widget is not there');
+		const rec = tail.prod.find((p) => p.h === row.h); need(rec, 'the row\'s handle ' + row.h + ' matches no record in the note');
+		const html0 = await tileOf(D), n0 = (await D.page.evaluate((id) => window.DaimondDiamond.conversation(id).messages.filter((m) => m.role === 'rating_log').length, id));
+		await D.page.evaluate(() => { [...document.querySelectorAll('#chat-output .turn-files')].pop().__v = 'kept'; });
+		await D.page.locator(`${FWROW}[data-h="${row.h}"] .ctile-rate-down`).first().click({ force: true }); await sleep(200);
+		const lit = (await fwRows(D)).find((r) => r.h === row.h).lit;
+		await flush(cid);
+		const after = await D.page.evaluate((id) => JSON.parse(JSON.stringify(window.DaimondDiamond.conversation(id).messages)), id);
+		const rs = after.filter((m) => m.role === 'rating_log'), kept = await D.page.evaluate(() => [...document.querySelectorAll('#chat-output .turn-files')].pop().__v);
+		return fwFlow = { id, cid, row, rec, html0, html1: await tileOf(D), kept, rs, n0, lit };
+	} catch (e) { fwFlow = { err: e.message }; throw e; }
+}
+await section('FW1', async () => {
+	const f = await fwFlowOne();
+	check('FW1: the arrow is lit at once', f.lit === 'down', J(f.lit));
+	check('FW1: after the commit there is exactly one new rating_log', f.rs.length === f.n0 + 1, (f.rs.length - f.n0) + ' new');
+	const r = f.rs[f.rs.length - 1]; need(r, 'no rating_log was written');
+	check('FW1: its h is the row\'s handle', r.rating.h === f.row.h, r.rating.h + ' vs ' + f.row.h);
+	check('FW1: its hash is the row\'s hash (the record\'s)', f.rec.hash !== '' && r.rating.hash === f.rec.hash, J({ hash: r.rating.hash, want: f.rec.hash }));
+	check('FW1: its prod is byte-equal to the row\'s record', J(r.rating.prod) === J(f.rec), '');
+	check('FW1: it keeps the declared keys, in order, and tools "" and len 0 for a file (D6)', J(Object.keys(r.rating)) === J(KEYS) && r.rating.tools === '' && r.rating.len === 0, J(Object.keys(r.rating)));
+});
+await section('FW2', async () => {
+	const f = await fwFlowOne();
+	check('FW2: the Files tile\'s own bytes (chrome removed) are identical after the commit', f.html0 === f.html1, f.html0 === f.html1 ? '' : 'the tile changed');
+	check('FW2: and it is the same DOM node (I1)', f.kept === 'kept', 'marker: ' + f.kept);
+});
+await section('FW3', async () => {
+	const { id, cid } = await fwSeed();
+	await D.page.evaluate(() => { window.__provSaved = window.DaimondProvenance; window.DaimondProvenance = undefined; });
+	let r; try { r = await steerOn(D, id, '@tools file_write ' + J({ path: `diamonds/${id}/code/e.md`, content: '# E\n\nwritten with no records.\n' })); }
+	finally { await D.page.evaluate(() => { window.DaimondProvenance = window.__provSaved; }); }
+	const tail = r.messages.filter(isNote).pop(); need(tail && !(tail.prod && tail.prod.length), 'the record-less turn\'s note still carries records');
+	// Every row is drawn afresh from the transcript, with the module back: the turn above was drawn while it was away, and that
+	// redraw gave every row in the thread no handle, so only a reload says what the page draws from the notes as they stand.
+	await D.page.reload({ waitUntil: 'domcontentloaded' }); await signInAs(D, NAME);
+	await D.page.evaluate(() => { const c = document.getElementById('dview-chat'); if (c) c.click(); });
+	await waitFor(() => D.page.evaluate((sel) => document.querySelectorAll(sel).length >= 3, FWROW), 25000, 500); await sleep(600);
+	const rows = await fwRows(D), last = rows.filter((x) => /e\.md$/.test(x.name));
+	check('FW3: the record-less turn drew a file row', last.length === 1, rows.map((x) => x.name).join(','));
+	await sleep(600);
+	check('FW3: a row with no record has no group and no data-h', (await fwRows(D)).filter((x) => /e\.md$/.test(x.name)).every((x) => !x.group && !x.h), J(last));
+	check('FW3: while the rows that have records do have a group, so the absence is the rule\'s and not the page\'s', rows.filter((x) => x.h).length >= 2 && rows.filter((x) => x.h).every((x) => x.group), J(rows.map((x) => [x.name, !!x.h, x.group])));
+});
+await section('FW4', async () => {
+	await boot(); const cid = await newChat(D), dir = await D.page.evaluate((c) => window.DaimondAttach.chatScratch(c), cid);
+	await turn('@tools file_write ' + J({ path: dir + '/o.md', content: 'old\n' }));
+	await turn('@tools file_write ' + J({ path: dir + '/n.md', content: 'new file\n' }) + ' ;; file_write ' + J({ path: dir + '/o.md', content: 'new bytes\n' }));
+	await sleep(1500);
+	const log = (await stored(cid)).filter((m) => m.role === 'files_log').pop(); need(log, 'the chat turn appended no files_log: the chat Files row is not there');
+	// Two turns changed files, so the thread holds two Files tiles (1 row, then 2): the last tile's rows are the last log's records.
+	const rows0 = await fwRowsLast(D), html0 = await tileOf(D), tiles0 = await D.page.evaluate(() => document.querySelectorAll('#chat-output .turn-files').length);
+	check('FW4: the chat\'s Files row draws one row per record', rows0.length === log.prod.length && log.prod.length === 2 && tiles0 === 2, rows0.length + ' rows, ' + log.prod.length + ' records, ' + tiles0 + ' tiles');
+	// The OPFS folder itself: `file_delete` refuses a directory ("is not a file"), so the wipe goes through the handle.
+	await D.page.evaluate(async (c) => { const root = await navigator.storage.getDirectory(); let h = root; for (const p of ['chats', c]) h = await h.getDirectoryHandle(p);
+		await h.removeEntry('versions', { recursive: true }); }, cid).catch(() => {});
+	const left = await D.page.evaluate((c) => window.DaimondVersions.manifests('chat:' + c).then((m) => m.length), cid);
+	check('FW4: the chat\'s store is wiped in-page (no manifest left)', left === 0, left + ' manifests left');
+	await D.page.reload({ waitUntil: 'domcontentloaded' }); await signInAs(D, NAME);
+	await D.page.evaluate((c) => { const b = document.querySelector(`.session-box.chat-box[data-id="${c}"]`); if (b) b.click(); }, cid);
+	await waitFor(() => D.page.evaluate(() => !!document.querySelector('#chat-output .turn-files')), 15000);
+	check('FW4: the Files row draws the same from its records alone (J6), byte for byte, chrome removed', (await tileOf(D)) === html0, 'it changed once the store was gone');
+});
+await section('FW5', async () => {
+	// The note the desktop's Diamond holds, opened from the drawer as a finger does: the phone makes no Diamond of its own (a fresh
+	// profile on a phone has no connection to make one with), and the rows it shows are the records the seed left.
+	const { id } = await fwSeed();
+	const P = await phone();
+	await P.page.evaluate(() => { const b = document.getElementById('drawer-btn'); if (b && !document.body.classList.contains('drawer-open')) b.click(); }); await sleep(700);
+	await P.page.evaluate((id) => { const b = document.querySelector(`.session-box[data-id="${id}"]`) || document.querySelector(`[data-diamond-id="${id}"]`); if (b) b.click(); }, id); await sleep(1200);
+	await P.page.evaluate(() => { if (document.body.classList.contains('drawer-open')) document.getElementById('scrim').click(); const c = document.getElementById('dview-chat'); if (c) c.click(); }); await sleep(1000);
+	await waitFor(() => P.page.evaluate((sel) => document.querySelectorAll(sel).length >= 2, FWROW), 25000, 500);
+	need((await fwRows(P)).some((r) => r.group), 'no file-row group on the phone');
+	console.log('  (FW5 rows, y ranges: ' + J(await P.page.evaluate((sel) => [...document.querySelectorAll(sel)].map((r) => { const q = (e) => e ? Math.round(e.getBoundingClientRect().top) + '-' + Math.round(e.getBoundingClientRect().bottom) : '';
+		return { row: q(r), name: q(r.querySelector('.turn-file-name')), delta: q(r.querySelector('.turn-file-delta')), group: q(r.querySelector(':scope > .turn-file-rate')), btns: [...r.querySelectorAll('.turn-file-rate button')].map(q), align: getComputedStyle(r).alignItems, disp: getComputedStyle(r).display }; }), FWROW)) + ')');
+	const ownSel = `${FWROW} .ctile-rate-up, ${FWROW} .ctile-rate-down, ${FWROW} .ctile-rate-more`;
+	// Nothing is hidden: the walk-back chevrons (#chat-jump, #chat-end) are measured with the rest, and P's foot on the thread (68px) clears them.
+	for (const look of ['obsidian', 'porcelain']) { await wear(P, look); await tapAreas(P, 'FW5 ' + look + ' file rows: up, down, details', ownSel); await snap(P, look, '390x844', 'file_rows'); }
+	const h = await P.page.evaluate((sel) => [...document.querySelectorAll(sel)].map((r) => r.getBoundingClientRect().height), FWROW);
+	check('FW5: a file row is at least 44px tall on a coarse pointer, so no two rows\' squares overlap', h.length > 0 && h.every((x) => x >= 43.5), J(h));
+	await letGo(PH); PH = null;
+});
+await section('FW6', async () => {
+	const { id } = await fwSeed(); await boot();
+	await D.page.evaluate((id) => { const c = document.getElementById('dview-chat'); if (c) c.click(); }, id); await sleep(500);
+	const shown = () => D.page.evaluate((sel) => [...document.querySelectorAll(sel)].filter((e) => e.getClientRects().length).length, `${FWROW} .ctile-rate`);
+	need((await shown()) > 0, 'no file-row group shows before selection mode');
+	await D.page.click('#collapse-btn', { force: true }); await sleep(400);
+	check('FW6: selection mode hides every file-row group', (await shown()) === 0, (await shown()) + ' still shown');
+	await D.page.click('#collapse-btn', { force: true }); await sleep(400);
+	check('FW6: and leaving it brings them back', (await shown()) > 0, '');
 });
 // ── The end ─────────────────────────────────────────────────────────────
 await letGo(D); await letGo(PH);

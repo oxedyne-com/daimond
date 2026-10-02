@@ -66,26 +66,40 @@ try {
 		const f = window.DaimondAttach.focus();
 		return window.DaimondAttach.chatScratch(f.id);
 	});
-	const t0 = await chat(sess, `@tool file_write {"path":"${dir}/p22render.txt","content":"hello table\n"}`);
+	// The call is built with JSON.stringify: a raw newline inside the JSON string made the tool call fail to parse.
+	// One line and no final newline: the engine counts lines by splitting on \n, so a trailing newline would add a blank second line (+2).
+	const t0 = await chat(sess, '@tool file_write ' + JSON.stringify({ path: `${dir}/p22render.txt`, content: 'hello table' }));
+	// A chat's turn that changed files leaves a Files tile (5.3.0, P1b): the chat has no daimon tail note, so the tile is found by the
+	// `.turn-files` table it holds and not by the words "this turn changed". Its row is drawn from the record alone, and the record
+	// carries the row's `+N -M` (P3, 6b344ea4), so the file this turn wrote new reads +1 -0 and has no `turn-file-delta-none` dot.
+	// The tile joins in the turn's `finally`, a moment after the answer, so wait for it as a person would.
+	await sess.page.waitForSelector('#chat-output .turn-files', { timeout: 8000 }).catch(() => {});
 	const dom = await sess.page.evaluate(() => {
 		const out = document.getElementById('chat-output');
 		const tiles = out ? Array.from(out.querySelectorAll('.ctile')) : [];
-		const noteTile = tiles.filter(t => (t.innerText || '').includes('this turn changed'));
+		const noteTile = tiles.filter(t => t.querySelector('.turn-files'));
 		const first = noteTile[0] || null;
+		const dl = first ? first.querySelector('.turn-file-delta') : null;
 		return {
 			count: noteTile.length,
 			isTool: first ? first.dataset.t === 'tool' : false,
 			hasTable: first ? !!first.querySelector('.turn-files') : false,
+			head: first ? (first.querySelector('.turn-files-head') || {}).textContent || '' : '',
 			rows: first ? first.querySelectorAll('.turn-file-row').length : 0,
-			delta: first ? (first.querySelector('.turn-file-delta') || {}).textContent || '' : '',
+			add: dl && dl.querySelector('.tf-add') ? dl.querySelector('.tf-add').textContent : '',
+			del: dl && dl.querySelector('.tf-del') ? dl.querySelector('.tf-del').textContent : '',
+			deltaNone: dl ? dl.classList.contains('turn-file-delta-none') : false,
+			rated: first ? first.querySelectorAll('.turn-file-row > .turn-file-rate').length : 0,
 			clickTarget: first ? !!first.querySelector('.turn-file-name') : false,
 		};
 	});
-	ck('exactly one tail-note tile in the transcript', dom.count === 1);
-	ck('tail-note tile is a TOOL tile', dom.isTool);
-	ck('tail-note tile carries the changed-files table', dom.hasTable);
+	ck('exactly one Files tile in the transcript', dom.count === 1);
+	ck('Files tile is a TOOL tile', dom.isTool);
+	ck('Files tile carries the changed-files table', dom.hasTable);
+	ck('table head counts one file', /\b1\b/.test(dom.head));
 	ck('table has one row for the written file', dom.rows === 1);
-	ck('row shows a +N delta (green additions)', /\+\d+/.test(dom.delta));
+	ck('row shows its delta from the record: .tf-add reads +1, .tf-del reads \u22120, and the row is not the dot (no turn-file-delta-none)', dom.add === '+1' && dom.del === '\u22120' && !dom.deltaNone);
+	ck('row carries its rating group', dom.rated === 1);
 	ck('row name is a click target (opens the file)', dom.clickTarget);
 
 	await shot(sess, 'p22-render');

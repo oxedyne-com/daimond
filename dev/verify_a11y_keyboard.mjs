@@ -22,7 +22,8 @@
 //   5. A dialog opens focused, keeps Tab inside it, closes on Escape, and gives
 //      the focus back to the control that opened it. Two dialogs are held to it: the
 //      new-Diamond dialog, and (Rating U2) the popup behind an answer's details control,
-//      with Details shut and open.
+//      with Details shut and open, and (Rating U3) the popup behind a changed file's details control, reached
+//      by Tab from the file's name.
 //   6. The appearance menu and the panel gallery each move focus into
 //      themselves, close on Escape, and return focus to their opener.
 //   7. The command palette opens with the caret in its box and swallows Tab, so
@@ -54,7 +55,7 @@
 // (DAIMOND_MOCK_PORT, default 9099). No gateway.
 
 import fs from 'node:fs';
-import { open, newChat, chat, scratch, signInAs } from './harness.mjs';
+import { open, newChat, chat, scratch, signInAs, connectMock } from './harness.mjs';
 
 const out = [];
 let bad = 0;
@@ -257,7 +258,9 @@ async function press(page, sel) {
 //      is for, and THAT draws its ring (a keyboard user still sees where they are);
 //   D. in a second fresh document, each menu opener that is on screen is pressed by a
 //      pointer and closed by a pointer (the opener again, then a click outside), and the
-//      element the close returns focus to draws no ring.
+//      element the close returns focus to draws no ring;
+//   E. a keyboard-opened menu or dialog closed by a pointer leaves no ring, closed by a key keeps it;
+//   F. (computer) Tab onto a control, press it with a pointer, then press a key: the ring is back on the control that holds the focus.
 const RING_OF = () => {
 	const a = document.activeElement;
 	if (!a || a === document.body) return { onBody: true, name: 'BODY', ring: false };
@@ -386,6 +389,66 @@ async function ringSection() {
 			}
 		}
 		check(tested > 0, `${tag}: at least one pointer-opened menu was exercised`, `${tested} open-close pairs`);
+		// E. The keyboard opens, the pointer closes (P6, 2026-10-02): the opener is given the focus back, and it rings only if the close
+		// was by key. Chrome keeps :focus-visible on a control a key focused and a pointer then pressed (the dialog's own close control,
+		// focused by the Enter that opened it), and a script focus inherits it, so the opener drew a ring after a mouse close.
+		// The rating popup needs an answer to rate, so it is a computer case; the Guarded chip's menu is read on both.
+		await reloadNoInput(pg);
+		if (!cfg.phone) {
+			await connectMock(r);
+			await newChat(r, { reuse: true });
+			await chat(r, '@text RING-E an answer to rate');
+		}
+		const focusOn = (q) => pg.evaluate((sel) => {
+			const e = [...document.querySelectorAll(sel)].filter((x) => x.getClientRects().length).pop();
+			if (!e) return false;
+			e.scrollIntoView({ block: 'center', inline: 'center' });
+			e.focus();
+			return document.activeElement === e;
+		}, q);
+		const E = [['the Guarded chip', '#hand-mode-chip', 'opener']].concat(cfg.phone ? [] : [['the rating details control', '#chat-output .ctile-rate-more', 'focused']]);
+		for (const [name, q, at] of E) for (const how of ['a pointer press', 'Escape']) {
+			if (!(await focusOn(q))) { check(false, `${tag}: ${name} takes keyboard focus`, 'not on screen, or it would not focus'); continue; }
+			await pg.keyboard.press('Enter');
+			await pg.waitForTimeout(500);
+			// A dialog is closed by pressing what holds the focus (its own close control); a menu by pressing its opener again.
+			const held = await pg.evaluate(({ a2, sel }) => { const a = a2 === 'opener' ? document.querySelector(sel) : document.activeElement; if (!a || a === document.body) return null; const b = a.getBoundingClientRect(); return { x: b.left + b.width / 2, y: b.top + b.height / 2 }; }, { a2: at, sel: q });
+			if (how === 'Escape') await pg.keyboard.press('Escape');
+			else if (held) await tap(held.x, held.y);
+			await pg.waitForTimeout(500);
+			const d = await pg.evaluate(RING_OF);
+			if (how === 'Escape') check(d.ring, `${tag}: ${name} opened and closed by the keyboard keeps its ring (the keyboard user keeps their place)`,
+				`${d.name}, :focus-visible ${d.fv}, outline ${d.outline}`);
+			else check(!d.ring, `${tag}: ${name} opened by the keyboard and closed by a pointer leaves no ring`,
+				`${d.name}, :focus-visible ${d.fv}, outline ${d.outline}`);
+		}
+		// F. Tab, a pointer press, then a key (the 5.3.0 QA, surface 5): Chrome sets :focus-visible on the active element after a key, but
+		// the guard's data-nofv stayed from the press, so no ring showed until the focus left. The key must clear it from the control
+		// that holds the focus. A computer case: a touch screen's press moves the drawer's focus on (the account row closes it).
+		if (!cfg.phone) {
+			// From New Chat, the side panel's own order: the chat tiles' controls, then the account row.
+			await pg.evaluate(() => { const b = document.getElementById('new-session-btn'); if (b) b.focus(); });
+			let at = (await pg.evaluate(RING_OF)); const path = [at.name];
+			for (let i = 0; i < 30 && at.id !== 'user-row'; i++) { await pg.keyboard.press('Tab'); at = (await pg.evaluate(RING_OF)); path.push(at.name); }
+			check(at.id === 'user-row', `${tag}: Tab reaches the account row`, `focus path ${path.join(' > ')}`);
+			check(at.ring, `${tag}: the Tab-focused account row draws its ring`, `${at.name}, :focus-visible ${at.fv}, outline ${at.outline}`);
+			const ur = await centre('#user-row');
+			if (ur) {
+				await tap(ur.x, ur.y);
+				await pg.waitForTimeout(300);
+				const p1 = await pg.evaluate(RING_OF);
+				check(p1.id === 'user-row' && !p1.ring, `${tag}: a pointer press on it leaves the focus there, with no ring`,
+					`${p1.name}, :focus-visible ${p1.fv}, outline ${p1.outline}`);
+				for (const key of ['Shift', 'ArrowDown']) {
+					await pg.keyboard.press(key);
+					await pg.waitForTimeout(200);
+					const p2 = await pg.evaluate(RING_OF);
+					check(p2.id !== 'user-row' || p2.ring, `${tag}: then a key (${key}) draws the ring on the control that holds the focus`,
+						`${p2.name}, :focus-visible ${p2.fv}, outline ${p2.outline}, data-nofv ${await pg.evaluate(() => document.activeElement.hasAttribute('data-nofv'))}`);
+					if (p2.id !== 'user-row') break;
+				}
+			} else check(false, `${tag}: the account row is on screen to press`, 'no box');
+		}
 		await r.close();
 		try { fs.rmSync(profile, { recursive: true, force: true }); } catch (e) { /* gone */ }
 	}
@@ -627,6 +690,74 @@ if (rateFocused) {
 	w = await page.evaluate(WHERE, null);
 	check(/ctile-rate-more/.test(w.name), 'closing the rating popup gives the focus back to the details control that opened it',
 		`focus is on ${w.name}`);
+}
+
+// ── 5c. Rating U3: a changed file's arrows and details are reached by Tab, and its popup is a dialog ─
+// A chat turn that writes two files leaves a Files row (`.turn-files`), and each of its rows carries the same three controls as an
+// answer (`.turn-file-rate`: up, down, details). On a computer the group is faded until the row is hovered or holds focus, so a
+// keyboard user must find it by Tab: the row's name, its delta, then the three. The details control opens the "Rate this change"
+// popup, which meets the dialog properties of 5 and 5b, and gives the focus back to the control that opened it.
+{
+	const cdir = await page.evaluate(() => window.DaimondAttach.chatScratch(String(window.DaimondAttach.focus().id)));
+	const cw = (p, c) => JSON.stringify({ path: `${cdir}/${p}`, content: c });
+	await chat(s, '@tools file_write ' + cw('a11y-n.md', 'a new file\n') + ' ;; file_write ' + cw('a11y-o.md', 'another\n'));
+	await page.waitForSelector('#chat-output .turn-files .turn-file-row > .turn-file-rate', { timeout: 10000 }).catch(() => {});
+	await page.waitForTimeout(500);
+	const row = await page.evaluate(() => {
+		const t = [...document.querySelectorAll('#chat-output .turn-files')].pop();
+		const c = t && t.closest('.ctile'); if (c) c.classList.remove('collapsed');
+		const n = t && t.querySelector('.turn-file-row .turn-file-name');
+		if (!n) return false;
+		n.scrollIntoView({ block: 'center', inline: 'center' }); n.focus();
+		return document.activeElement === n;
+	});
+	check(row, 'a changed-files row shows a name that takes keyboard focus', row ? null : 'no Files row, or the name would not focus');
+	if (row) {
+		const seen = [], ops = [];
+		for (let i = 0; i < 5; i++) {
+			await page.keyboard.press('Tab');
+			await page.waitForTimeout(60);
+			seen.push(await page.evaluate(() => { const a = document.activeElement; return a ? (a.className && typeof a.className === 'string' ? a.className.split(/\s+/)[0] : a.tagName.toLowerCase()) : ''; }));
+			// The group's opacity while this control holds focus (a computer fades the group until hover or focus-within).
+			ops.push(await page.evaluate(() => { const a = document.activeElement; const g = a && a.closest('.turn-file-rate'); return g ? +getComputedStyle(g).opacity : -1; }));
+		}
+		const at = (c) => seen.indexOf(c);
+		check(at('turn-file-delta') === 0 && at('ctile-rate-up') === 1 && at('ctile-rate-down') === 2 && at('ctile-rate-more') === 3,
+			'Tab from a file name reaches its delta, then the up arrow, the down arrow and the details control, in that order', JSON.stringify(seen));
+		const inGroup = ops.filter((o) => o >= 0);
+		check(inGroup.length === 3 && inGroup.every((o) => o > 0), 'a file row\'s rating group shows itself while one of its controls holds focus', JSON.stringify(ops));
+		// Back onto the details control, and open it by the keyboard.
+		const onMore = await page.evaluate(() => { const b = document.querySelector('#chat-output .turn-files .turn-file-row .ctile-rate-more'); if (!b) return false; b.focus(); return document.activeElement === b; });
+		if (onMore) {
+			await page.keyboard.press('Enter');
+			await page.waitForSelector('.rate-card', { timeout: 8000 }).catch(() => {});
+			await page.waitForTimeout(400);
+			const fd = await page.evaluate(() => {
+				const c = document.querySelector('.rate-card');
+				if (!c) return null;
+				const h = c.getAttribute('aria-labelledby') && document.getElementById(c.getAttribute('aria-labelledby'));
+				return { role: c.getAttribute('role'), modal: c.getAttribute('aria-modal'), name: h ? h.textContent.trim() : '' };
+			});
+			check(!!fd && fd.role === 'dialog' && fd.modal === 'true' && fd.name.length > 0, 'the popup from a file row is a labelled modal dialog', JSON.stringify(fd));
+			w = await page.evaluate(WHERE, '.rate-card');
+			check(w.inside, 'the file popup puts the focus inside itself when it opens', w.inside ? w.name : `focus is on ${w.name}`);
+			const fstops = await page.evaluate(COUNT_IN, { sel: '.rate-card', focusSel: FOCUS_SEL });
+			let fEsc = -1, fTo = '';
+			for (let i = 0; i < fstops + 3; i++) {
+				await page.keyboard.press('Tab');
+				await page.waitForTimeout(50);
+				const x = await page.evaluate(WHERE, '.rate-card');
+				if (!x.inside) { fEsc = i + 1; fTo = x.name; break; }
+			}
+			check(fstops > 0 && fEsc === -1, `Tab cannot walk out of the file popup (${fstops} stops, ${fstops + 3} presses)`, fEsc === -1 ? null : `Tab ${fEsc} landed on ${fTo}, behind the scrim`);
+			await page.keyboard.press('Escape');
+			await page.waitForTimeout(400);
+			check(!(await page.$('.rate-card')), 'Escape closes the file popup');
+			w = await page.evaluate(WHERE, null);
+			const back = await page.evaluate(() => { const a = document.activeElement; return !!(a && a.classList.contains('ctile-rate-more') && a.closest('.turn-file-rate')); });
+			check(back, 'closing the file popup gives the focus back to the file row\'s details control', `focus is on ${w.name}`);
+		} else check(false, 'a file row\'s details control takes keyboard focus', 'it would not focus');
+	}
 }
 
 // ── 6. The appearance menu ──────────────────────────────────────────

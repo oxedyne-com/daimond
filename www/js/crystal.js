@@ -63,7 +63,7 @@
  * and the built-in view ignores them. A key beginning with `_` is thus reserved
  * on the wire, and everything else — recognised or not — is content.
  *
- *     window.DaimondCrystal = { CORE_KEYS, DEFAULT_PAGE, FALLBACK_MS, PROTOCOL,
+ *     window.DaimondCrystal = { CORE_KEYS, DEFAULT_PAGE, adopt, restyle, soften, draw, isDefault, FALLBACK_MS, PROTOCOL,
  *                               parse, toMarkdown, fromMarkdown,
  *                               mount, unmount, fallback }
  */
@@ -383,7 +383,7 @@
 
 	/// What the app looks like right now, in terms a page in an opaque origin can
 	/// use directly.
-	function themeOf(el) {
+	function themeOf(el, names) {
 		var root = document.documentElement;
 		var out = {
 			ink:    root.getAttribute('data-ink') || 'light',
@@ -409,7 +409,7 @@
 			out.mono   = getComputedStyle(probe).fontFamily || '';
 			out.radius = getComputedStyle(document.documentElement)
 				.getPropertyValue('--radius').trim() || '';
-			var faces = facesNamed(out.skin, out.font + ',' + out.mono);
+			var faces = facesNamed(out.skin, out.font + ',' + out.mono + ',' + names);
 			if (faces) out.faces = faces;
 		} catch (e) {
 			// A theme we could not read is not a reason to show nothing; the page
@@ -435,13 +435,13 @@
 	/// two added, and any `_` key the model happened to write stripped — the
 	/// underscore is reserved on the wire, so a crystal carrying `_theme` cannot
 	/// dress itself up as the parent.
-	function wireData(data, opts, el) {
+	function wireData(data, opts, el, names) {
 		var d = obj(data), out = {};
 		for (var k in d) {
 			if (!own(d, k) || k.charAt(0) === '_') continue;
 			out[k] = d[k];
 		}
-		out._theme  = themeOf(el);
+		out._theme  = themeOf(el, names);
 		out._labels = labelsFor(opts);
 		return out;
 	}
@@ -548,10 +548,12 @@
 		return document.documentElement.getAttribute('data-skin') || 'sharp';
 	}
 
-	/// What the parent puts in a page mounted under a face skin, beside the policy. It
-	/// listens for the `data` reply before the page's own script does, and registers each
-	/// face once. A page carrying a stricter `script-src` of its own blocks it, and then
-	/// sets in the system sans as before: nothing breaks, it only goes without.
+	/// What the parent puts in a page mounted under a face skin, right after the policy
+	/// (`armour` puts both first in the document). It listens for the `data` reply before the
+	/// page's own script does, and registers each face once. A policy the page declares for
+	/// itself comes later in the document and governs only what follows it, so it cannot block
+	/// this. A page that never asks for its data gets no faces and sets in the system sans as
+	/// before: nothing breaks, it only goes without.
 	var FACE_PRELUDE = '<script>(function(){var got={};'
 		+ 'addEventListener("message",function(e){if(e.source!==parent)return;'
 		+ 'var m=e.data;if(!m||m.dc!==1||m.v!==1||m.cmd!=="data")return;'
@@ -699,6 +701,9 @@
 
 		live = {
 			el: el, opts: opts, data: data, frame: frame, url: url,
+			// What the page names, lower-cased: a face it names in its own stack is handed
+			// over with the theme's, so a head set in Sofia Sans Condensed draws in it.
+			names: page.toLowerCase(),
 			// The record, not the page: `_state` reports this and nothing holds the
 			// armoured text once the blob has it.
 			csp: { policy: PAGE_CSP, injected: armed.injected, carried: armed.carried, at: armed.at },
@@ -825,7 +830,7 @@
 
 	function sendData() {
 		if (!live || live.done || !live.ready) return;
-		toFrame({ cmd: 'data', data: wireData(live.data, live.opts, live.el) });
+		toFrame({ cmd: 'data', data: wireData(live.data, live.opts, live.el, live.names) });
 	}
 
 	/// The page is listening. Its data goes out unprompted, and a second clock
@@ -1373,14 +1378,50 @@
 		return s.split(THEME_WAS).join(THEME_NOW);
 	}
 
-	var DEFAULT_PAGE = [
-		'<!doctype html>',
-		'<html><head>',
-		'<meta charset="utf-8">',
-		'<meta name="viewport" content="width=device-width,initial-scale=1">',
-		'<meta http-equiv="Content-Security-Policy" content="default-src \'none\';'
-			+ ' script-src \'unsafe-inline\'; style-src \'unsafe-inline\'; img-src data:; font-src data:">',
-		'<style>',
+	/// The shipped page's style, as it is now. The neutral values live in `var()` fallbacks at
+	/// their use sites and NOT in a `:root` rule, so the theme in `<style id="dc-theme">` (the
+	/// palette the parent sends, first in the head) applies to a page that does not declare a
+	/// variable itself, and a page that does (`:root{--bg:#fff}`) still wins over the theme.
+	/// A `:root{--tx:#777}` after the theme beat it in every look from 2026-08-11 until this.
+	/// A link is drawn in `--ac`, the accent: `--at` is the text ON an accent fill (dark on Obsidian's
+	/// pink), which the old `:root` had hidden by overriding it, and which drew links invisibly once
+	/// the theme applied.
+	var CSS_NOW = [
+		'*{box-sizing:border-box}',
+		'html,body{background:transparent;margin:0;padding:0}',
+		'body{font-family:var(--fo,system-ui,-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif);font-size:var(--fs,14px);line-height:1.6;color:var(--tx,#777);',
+		'word-break:break-word;overflow-wrap:anywhere;padding:0 0 2px}',
+		'h1,h2,h3{font-family:"Sofia Sans Condensed",var(--fo,system-ui,-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif)}',
+		'h1{font-size:1.45em;line-height:1.25;font-weight:650;margin:0 0 .5em}',
+		'h2{font-size:1.08em;line-height:1.35;font-weight:650;margin:1.5em 0 .45em}',
+		'h3{font-size:1em;font-weight:650;margin:1.1em 0 .35em}',
+		'h1:first-child,h2:first-child,h3:first-child{margin-top:0}',
+		'p{margin:0 0 .8em}',
+		'a{color:var(--ac,#4a7fd0);text-decoration:underline;text-underline-offset:2px;cursor:pointer}',
+		'code{font-family:var(--mo,ui-monospace,SFMono-Regular,Consolas,monospace);font-size:.92em;background:color-mix(in srgb,var(--tx,#777) 9%,transparent);',
+		'border-radius:4px;padding:.05em .3em}',
+		'pre{font-family:var(--mo,ui-monospace,SFMono-Regular,Consolas,monospace);font-size:.9em;background:color-mix(in srgb,var(--tx,#777) 9%,transparent);',
+		'border-radius:var(--rd,8px);padding:10px 12px;',
+		'overflow-x:auto;margin:0 0 .85em;line-height:1.5}',
+		'pre code{background:none;border:0;padding:0;font-size:1em}',
+		'ul,ol{margin:0 0 .8em;padding-left:1.25em}',
+		'li{margin:.12em 0}',
+		'blockquote{margin:0 0 .8em;padding:.45em .85em;background:var(--sf,rgba(128,128,128,.10));border-radius:var(--rd,8px);color:var(--mu,#999)}',
+		'img{max-width:100%;height:auto;border-radius:var(--rd,8px)}',
+		'.facts{display:grid;grid-template-columns:auto 1fr;gap:.25em .9em;margin:0 0 .85em}',
+		'.facts .k{color:var(--mu,#999);font-size:.93em}',
+		'.facts .v{min-width:0}',
+		'.field{border-radius:var(--rd,8px);padding:9px 11px;margin:0 0 .7em;background:var(--sf,rgba(128,128,128,.10))}',
+		'.field > .k{color:var(--mu,#999);font-family:var(--mo,ui-monospace,SFMono-Regular,Consolas,monospace);font-size:.85em;margin:0 0 .4em}',
+		'.field > :last-child{margin-bottom:0}',
+		'.note{color:var(--mu,#999);font-size:.9em;margin:0 0 .7em}',
+		'.empty{color:var(--mu,#999);font-style:italic}',
+		'@media (max-width:420px){.facts{grid-template-columns:1fr;gap:0}',
+		'.facts .k{margin-top:.45em}}',
+	];
+
+	/// The style every default page was stored with before the fix above, verbatim.
+	var CSS_WAS = [
 		':root{--bg:transparent;--sf:rgba(128,128,128,.10);--tx:#777;--mu:#999;',
 		'--bd:rgba(128,128,128,.35);--ac:#4a7fd0;--at:#4a7fd0;',
 		'--fo:system-ui,-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif;',
@@ -1415,6 +1456,135 @@
 		'.empty{color:var(--mu);font-style:italic}',
 		'@media (max-width:420px){.facts{grid-template-columns:1fr;gap:0}',
 		'.facts .k{margin-top:.45em}}',
+	];
+
+	/// The `open` key's drawing, which the page carried until 2026-09-15.
+	var OPEN_CORE  = 'var CORE=["title","summary","sections","facts","open","links"];';
+	var OPEN_BLOCK = [
+		'if(has(D.open)){keys.push("open");',
+		'if(L.open)h+="<h2>"+esc(L.open)+"</h2>";h+="<ul>";',
+		'for(i=0;i<D.open.length;i++)h+="<li>"+inl(D.open[i]==null?"":D.open[i])+"</li>";',
+		'h+="</ul>";}',
+	].join('\n');
+	var CSP_NEW = '; img-src data:; font-src data:">';
+	var CSP_WAS = '; img-src data:">';
+
+	/// Every page the shipped default has ever been stored as, rebuilt from today's.
+	///
+	/// Four defaults have shipped (2026-08-10 twice, 08-11, 09-15), differing in the policy
+	/// meta, the theme function and the `open` key, and a page from before 08-11 is brought up
+	/// by `upgrade` into a mix of them. So each of the three differences is a switch, and the
+	/// style block (always the old one) is swapped back; eight pages, of which at most five ever
+	/// existed. Built once, on first use, because `DEFAULT_PAGE` is defined below.
+	var oldDefaults = null;
+	function oldDefaultPages() {
+		if (oldDefaults) return oldDefaults;
+		var base = DEFAULT_PAGE.split(CSS_NOW.join('\n')).join(CSS_WAS.join('\n'));
+		var out = [];
+		for (var m = 0; m < 8; m++) {
+			var pg = base;
+			if (m & 1) pg = pg.split(CSP_NEW).join(CSP_WAS);
+			if (m & 2) pg = pg.split(THEME_NOW).join(THEME_WAS);
+			if (m & 4) {
+				pg = pg.split('var CORE=["title","summary","sections","facts","links"];').join(OPEN_CORE);
+				pg = pg.split('if(has(D.links)){keys.push("links");')
+					.join(OPEN_BLOCK + '\n' + 'if(has(D.links)){keys.push("links");');
+			}
+			out.push(pg);
+		}
+		oldDefaults = out;
+		return out;
+	}
+
+	/// The current default page when `html` is byte for byte a default the app once shipped,
+	/// else `null`. For DRAWING, never for storing.
+	///
+	/// A stored page is the Diamond's own file and it syncs: a Diamond travels whole, the
+	/// fresher `touched` replacing the other copy, and a write on two devices before they meet
+	/// is a two-sided change that the merge keeps as a conflict version. `write_crystal_page`
+	/// is such a write (a version, a log record, `updated` and `touched` moved, the Diamond
+	/// back on the wire and at the top of the rail), so an upgrade that wrote would put every
+	/// default Diamond through it on every device. The substitution is a pure function of the
+	/// stored bytes instead: each device computes the same page, nothing is written and nothing
+	/// travels. A page that has been edited, by anyone, is no default and is left alone.
+	function adopt(html) {
+		var s = String(html == null ? '' : html);
+		if (s === DEFAULT_PAGE) return null;
+		var olds = oldDefaultPages();
+		for (var i = 0; i < olds.length; i++) if (olds[i] === s) return DEFAULT_PAGE;
+		return null;
+	}
+
+	/// The `:root` block every shipped default carried, verbatim, and the same block at no
+	/// specificity: the theme's `:root` (a style element first in the head) outranks it
+	/// wherever it speaks and its values remain as fallbacks where the theme is silent.
+	var ROOT_WAS  = CSS_WAS.slice(0, 4).join('\n');
+	var ROOT_SOFT = ROOT_WAS.replace(/^:root/, ':where(:root)');
+	var LINK_WAS  = 'a{color:var(--at);text-decoration:underline;text-underline-offset:2px;cursor:pointer}';
+	var LINK_NOW  = CSS_NOW.filter(function (l) { return l.indexOf('a{color:var(--ac') === 0; })[0];
+
+	/// An EDITED page with the shipped grey `:root` softened, or `null` when it carries none.
+	///
+	/// A daimon that edits a default page copies the old block verbatim, and a `:root` after
+	/// the theme beats it, so the page would go grey on its first edit. Only a block that is
+	/// byte for byte the shipped one is touched: a page whose `:root` differs by one byte keeps
+	/// it, so a daimon's own value still wins (the 08-11 rule). The shipped link rule goes with
+	/// it, because `--at` was blue only through that block and is the text ON an accent fill
+	/// once the theme speaks. For DRAWING, as `adopt`: pure, never stored.
+	function soften(html) {
+		var s = String(html == null ? '' : html);
+		if (s.indexOf(ROOT_WAS) === -1) return null;
+		return s.split(ROOT_WAS).join(ROOT_SOFT).split(LINK_WAS).join(LINK_NOW);
+	}
+
+	/// The whole `<style>` element of every default the app has shipped, and of today's. All four
+	/// shipped defaults carried the one style block (they differ in the policy meta, the theme
+	/// function and the `open` key), so the list holds one; a release that changes the block
+	/// again adds the old one here.
+	var STYLES_WAS = [ '<style>\n' + CSS_WAS.join('\n') + '\n</style>' ];
+	var STYLE_NOW  = '<style>\n' + CSS_NOW.join('\n') + '\n</style>';
+
+	/// An EDITED page whose style block is still a shipped default's, byte for byte, with that
+	/// block swapped for today's, or `null` when it holds none.
+	///
+	/// The likely edit is a daimon adding a paragraph, a script or a second `<style>`, and
+	/// leaving the shipped block alone. Such a page takes the whole of today's look (fills for
+	/// outlines, no bar on the quote, Condensed heads) and not only the palette that `soften`
+	/// gives it. The match is the whole element, tags included, so a block with a rule added
+	/// inside it, or one byte changed, is a hand edit and is left to `soften`. For DRAWING, as
+	/// `adopt`: pure, never stored.
+	function restyle(html) {
+		var s = String(html == null ? '' : html), hit = false;
+		for (var i = 0; i < STYLES_WAS.length; i++) {
+			if (s.indexOf(STYLES_WAS[i]) === -1) continue;
+			s = s.split(STYLES_WAS[i]).join(STYLE_NOW);
+			hit = true;
+		}
+		return hit ? s : null;
+	}
+
+	/// The page to draw for a stored one: today's default for a shipped default, else the page
+	/// with its intact shipped style block swapped for today's, else the page with its shipped
+	/// `:root` softened, else the page itself.
+	function draw(html) {
+		return adopt(html) || restyle(html) || soften(html) || String(html == null ? '' : html);
+	}
+
+	/// Is this page the shipped default, of today or of any earlier release?
+	function isDefault(html) {
+		var s = String(html == null ? '' : html);
+		return s === DEFAULT_PAGE || adopt(s) !== null;
+	}
+
+	var DEFAULT_PAGE = [
+		'<!doctype html>',
+		'<html><head>',
+		'<meta charset="utf-8">',
+		'<meta name="viewport" content="width=device-width,initial-scale=1">',
+		'<meta http-equiv="Content-Security-Policy" content="default-src \'none\';'
+			+ ' script-src \'unsafe-inline\'; style-src \'unsafe-inline\'; img-src data:; font-src data:">',
+		'<style>',
+		].concat(CSS_NOW, [
 		'</style></head><body><div id="r"></div><script>',
 		'(function(){',
 		'var CORE=["title","summary","sections","facts","links"];',
@@ -1538,7 +1708,7 @@
 		'})();',
 		'<\/script></body></html>',
 		'',
-	].join('\n');
+	]).join('\n');
 
 
 	// ── Export ──────────────────────────────────────────────────────
@@ -1547,6 +1717,11 @@
 		CORE_KEYS:    CORE_KEYS,
 		DEFAULT_PAGE: DEFAULT_PAGE,
 		upgrade:      upgrade,
+		adopt:        adopt,
+		restyle:      restyle,
+		soften:       soften,
+		draw:         draw,
+		isDefault:    isDefault,
 		FALLBACK_MS:  FALLBACK_MS,
 		PROTOCOL:     PROTOCOL,
 		parse:        parse,

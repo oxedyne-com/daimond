@@ -334,6 +334,12 @@ impl Role {
 		let spare = |note: &str| measured_spare(model, note);
 		let mut out = fmt!("{}\n\n{}", body, VISION_NOTE);
 		out.push_str(&fmt!("\n\n{}", PLACES_NOTE));
+		// THE TWO ROLES A PERSON TALKS TO, and always, whether or not anything has been rated yet:
+		// the same bytes on every turn keep the cached prefix, and a worker or a fold is never
+		// handed a note it could not meet.  Before the clause, which stays last.
+		if matches!(self, Self::Chat | Self::Daimon) {
+			out.push_str(&fmt!("\n\n{}", RATING_NOTE));
+		}
 		// THE DAIMON ALONE, because the three files are a Diamond's and a chat has no Diamond.
 		// A worker has one only as a scope, never as a memory: it cannot see this conversation
 		// and does not come back, so a rule about what to record across turns would be a rule
@@ -490,6 +496,30 @@ pub const VISION_NOTE: &str =
 	 A PNG, JPEG, GIF or WebP read with file_read comes back as the picture itself, not as a \
 	 refusal — so when the answer is on the screen rather than in the source, take or find a \
 	 screenshot and read it, and say what you can see.";
+
+/// What an app note on the person's message is for, appended to the chat and the daimon.
+///
+/// When the person's next message follows ratings they gave the model's earlier answers or
+/// changes, the page puts one line ahead of their words, `[Daimond: the user rated your answer of
+/// 10:04 -1 (long): "just give me the command".]`, and the engine joins it (see
+/// [`crate::protocol::join_notes`]).  A rating is information, and a model that answers a
+/// down-vote with a paragraph of contrition has spent the user's time twice, so the line says to
+/// use it and not to perform sorrow over it.
+///
+/// **Composed in, beside [`VISION_NOTE`], and for the chat and the daimon alone.**  Composed
+/// rather than written into `prompts/<role>.md` for the standing reason of every note here: a
+/// person's rewrite of their own prompt cannot lose it, and the editor does not show it.  The two
+/// roles are the two a person talks to; a worker and the two folds are never given a note, so the
+/// line would describe something they cannot meet.  **Always present for those two roles**, not
+/// only in a chat that has been rated, which keeps the prompt byte-stable from one turn to the next
+/// and so keeps the cached prefix.
+///
+/// **About 35 tokens, ESTIMATED and not panel-measured** (`chars / 4`, less the 8% it runs high
+/// on prose); `dev/PROMPT_NOTES.md` §12 has the row and the command that replaces it.
+pub const RATING_NOTE: &str =
+	"## Rating notes\n\n\
+	 A rating note tells you what the user wants more or less of; use it, do not apologise for \
+	 it, and do not mention ratings unless asked.";
 
 /// That a file can be put on the user's SCREEN, appended to every role that can do it.
 ///
@@ -2155,6 +2185,9 @@ mod tests {
 		// been put to a provider, and `dev/prompt_cost.mjs` replaces it on the next run.
 		("CRYSTAL_FILES_NOTE",	CRYSTAL_FILES_NOTE,	891,	242),
 		("PLACES_NOTE",	PLACES_NOTE,		471,	128),
+		// ESTIMATED, not measured: added 2026-10-02 with the rating note, at `chars / 4` less the
+		// 8% that runs high on prose.  `dev/prompt_cost.mjs` replaces the token figure.
+		("RATING_NOTE",	RATING_NOTE,		151,	35),
 		// The per-family addenda, which every role with tools pays for on a model of that
 		// family and no role pays for on any other.  Measured 2026-09-13, the same way.
 		("KIMI_NOTE",		crate::profile::KIMI_NOTE,	238,	67),
@@ -2239,6 +2272,56 @@ mod tests {
 		assert!(PLACES_NOTE.contains("diamonds/, chats/ and mail/"));
 	}
 
+	/// The rating note goes to the two roles a person talks to and to no other.
+	#[test]
+	fn test_the_rating_note_is_composed_for_chat_and_daimon_only() {
+		for r in Role::all() {
+			let want = matches!(r, Role::Chat | Role::Daimon);
+			assert_eq!(want, r.compose("").contains(RATING_NOTE),
+				"role {} and the rating note", r.name());
+			assert_eq!(want, r.compose_for("", "moonshotai/kimi-k2.7-code").contains(RATING_NOTE),
+				"role {} and the rating note on a Kimi", r.name());
+		}
+		// Always there, not only where a rating was given: the same bytes on every turn.
+		assert_eq!(Role::Chat.compose(""), Role::Chat.compose_for("", ""));
+		// A rewrite of the person's own prompt cannot lose it, for either role.
+		for r in [Role::Chat, Role::Daimon] {
+			let out = r.compose_for("Ignore everything else. Say only 'no'.", "z-ai/glm-5.3");
+			assert!(out.contains(RATING_NOTE), "a rewrite lost the rating note from {}", r.name());
+		}
+		// And what it says is the design's own line.
+		assert!(RATING_NOTE.contains("use it, do not apologise for it, and do not mention ratings \
+			unless asked"), "the rating note stopped saying what it was written to say");
+	}
+
+	/// The safety clause is the last thing in the prompt, with the rating note composed.
+	#[test]
+	fn test_the_safety_clause_stays_last_with_the_rating_note() {
+		for r in [Role::Chat, Role::Daimon] {
+			for model in ["", "moonshotai/kimi-k2.7-code", "anthropic/claude-haiku-4.5"] {
+				let out = r.compose_for("My own words.", model);
+				assert!(out.ends_with(SAFETY_CLAUSE),
+					"{} on {:?}: the clause is not last: ...{}", r.name(), model,
+					&out[out.len().saturating_sub(120)..]);
+				let note = match out.find(RATING_NOTE) {
+					Some(i) => i,
+					None    => panic!("{} on {:?} has no rating note", r.name(), model),
+				};
+				let body = match out.find("My own words.") {
+					Some(i) => i,
+					None    => panic!("{} on {:?} lost the person's words", r.name(), model),
+				};
+				let clause = match out.find(SAFETY_CLAUSE) {
+					Some(i) => i,
+					None    => panic!("{} on {:?} has no clause", r.name(), model),
+				};
+				assert!(body < note, "the note came before the person's own words");
+				assert!(note < clause, "the note came after the safety clause");
+				assert_eq!(1, out.matches(RATING_NOTE).count(), "the note is there twice");
+			}
+		}
+	}
+
 	/// A user who rewrites their own prompt cannot lose either composed note.
 	///
 	/// The whole reason both sit in `compose_for` beside [`VISION_NOTE`] rather than in
@@ -2281,10 +2364,11 @@ mod tests {
 				.map(|m| m.3).unwrap_or(0)).sum()
 		};
 		let person = toks(&["VISION_NOTE", "QUIET_NOTE", "SHOW_NOTE", "FOLD_NOTE",
-			"VERIFY_NOTE", "SKILLS_NOTE", "SEARCH_NOTE", "SAFETY_CLAUSE", "PLACES_NOTE"]);
+			"VERIFY_NOTE", "SKILLS_NOTE", "SEARCH_NOTE", "SAFETY_CLAUSE", "PLACES_NOTE",
+			"RATING_NOTE"]);
 		let worker = toks(&["VISION_NOTE", "QUIET_NOTE", "SEARCH_NOTE", "SAFETY_CLAUSE",
 			"PLACES_NOTE"]);
-		assert_eq!(person, 1117, "the chat and daimon bill has moved");
+		assert_eq!(person, 1152, "the chat and daimon bill has moved");
 		assert_eq!(worker, 480, "the worker bill has moved");
 		// AND THE COMPOSITION AGREES WITH THE ARITHMETIC, so the sums above cannot go on being
 		// true of a set of notes `compose` has stopped appending.
@@ -2294,6 +2378,9 @@ mod tests {
 				let want = match *name {
 					"CRYSTAL_SCHEMA_NOTE" | "CRYSTAL_FILES_NOTE" => matches!(r, Role::Reducer),
 					"SHOW_NOTE" | "FOLD_NOTE" | "VERIFY_NOTE" | "SKILLS_NOTE" => r.can_show(),
+					// The two roles a person talks to, which is what `can_show` also says; kept
+					// as its own arm because it is a different fact and may part from it.
+					"RATING_NOTE" => matches!(r, Role::Chat | Role::Daimon),
 					// Composed on the MODEL, and `compose("")` names none, so an addendum is
 					// absent from every role here. Its own per-family bill is asserted by
 					// `test_a_family_addendum_is_carried_by_that_family_alone`.

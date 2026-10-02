@@ -287,8 +287,32 @@ const lookPath = (messages) => {
 // happen again inside the same session however many nudges follow it.
 const hasLooked = (messages) => (messages || []).some(m => m && m.role === 'tool');
 
+// A rating note rides ahead of the person's words: `[Daimond: ...]`, a blank line, then the words (U4's `pre`, joined by
+// the engine). The directive is the words, so it is read after the note. The note's own grammar finds its end, because its
+// words may hold `]` and a blank line: each clause ends `.`, the words sit in `: "..."`, and a clause with words closes
+// `".` then ` They `, ` And N earlier rating` or the final `]`. A note that does not parse is taken whole as plain text.
+const afterNote = (text) => {
+	const t = String(text || '').trim();
+	if (!t.startsWith('[Daimond:')) return t;
+	const NEXT = /^( They (rated|withdrew) | And \d+ earlier rating)/;
+	let i = 0;
+	for (;;) {
+		const q = t.indexOf(': "', i), e = t.indexOf(']\n\n', i);
+		if (e < 0) return t;
+		if (q < 0 || e < q) return t.slice(e + 3).trim();
+		let j = q + 3;
+		for (;;) {
+			j = t.indexOf('"', j);
+			if (j < 0) return t;
+			if (t[j + 1] === '.' && (NEXT.test(t.slice(j + 2)) || t.startsWith(']\n\n', j + 2))) break;
+			j++;
+		}
+		i = j + 2;
+	}
+};
+
 const parseDirective = (text) => {
-	const t = (text || '').trim();
+	const t = afterNote(text);
 	if (!t.startsWith('@')) return { kind: 'plain', text: t };
 	const sp   = t.indexOf(' ');
 	const verb = (sp === -1 ? t : t.slice(0, sp)).slice(1);
@@ -566,7 +590,7 @@ const reasonOnlyMode = (messages) => {
 	for (let i = (messages || []).length - 1; i >= 0; i--) {
 		const m = messages[i];
 		if (!m || m.role !== 'user') continue;
-		const t = String(m.content || '').trim();
+		const t = afterNote(typeof m.content === 'string' ? m.content : '');
 		if (t.startsWith('@reasononce ') || t === '@reasononce')
 			return { mode: 'once', rest: t.slice('@reasononce'.length).trim() };
 		if (t.startsWith('@reasononly ') || t === '@reasononly')
@@ -580,7 +604,7 @@ const leakMode = (messages) => {
 	for (let i = (messages || []).length - 1; i >= 0; i--) {
 		const m = messages[i];
 		if (!m || m.role !== 'user') continue;
-		const t = String(m.content || '').trim();
+		const t = afterNote(typeof m.content === 'string' ? m.content : '');
 		if (t.startsWith('@leakonce'))  return 'once';
 		if (t.startsWith('@leakwhole')) return 'whole';
 		if (t.startsWith('@leak'))      return 'always';

@@ -69,9 +69,9 @@ function grn(msg) { process.stdout.write(msg + '\n'); }
 
 // 2. the tile diverts the tail note into the table, and the tile is TOOL-styled
 (function () {
-	const i = s.indexOf("function appendUserMessage(text, ts)");
+	const i = s.indexOf("function appendUserMessage(");
 	ok('appendUserMessage carries the #22 diversion', i > 0 && /_tailNoteTable\(/.test(s.slice(i, i + 2000)));
-	const j = s.indexOf("function appendUserMessage(text, ts)");
+	const j = s.indexOf("function appendUserMessage(");
 	ok('the tail note renders as a tool tile, not a user tile', j > 0 && /buildTile\('tool'/.test(s.slice(j, j + 600)) && /this turn changed/.test(s.slice(j, j + 600)));
 })();
 

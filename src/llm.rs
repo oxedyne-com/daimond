@@ -1615,10 +1615,15 @@ impl LlmClient {
     /// Anthropic `cache_control` marker.  Providers that cache automatically
     /// ignore it; Claude models, which do not, need it or an agentic session
     /// re-pays full price for the same prompt on every round.
+    ///
+    /// **The one place an app note is joined to the person's words** (see
+    /// [`crate::protocol::join_notes`]), because every request in this client, whichever dialect
+    /// carries it, is built here.  Neither builder below reads a message's `pre`.
     fn build_body(&self, messages: &[ChatMessage], tools: Option<&str>, stream: bool) -> String {
+        let sent = crate::protocol::join_notes(messages);
         match self.dialect {
-            Dialect::OpenAi    => self.build_openai_body(messages, tools, stream),
-            Dialect::Anthropic => self.build_anthropic_body(messages, tools, stream),
+            Dialect::OpenAi    => self.build_openai_body(&sent, tools, stream),
+            Dialect::Anthropic => self.build_anthropic_body(&sent, tools, stream),
         }
     }
 
@@ -1792,7 +1797,7 @@ impl LlmClient {
         for (i, msg) in messages.iter().enumerate() {
             match msg {
                 ChatMessage::System { .. } => {}
-                ChatMessage::User { content } => {
+                ChatMessage::User { content, .. } => {
                     // An empty text block is rejected outright, where the
                     // OpenAI side simply carries the empty string through.
                     pending.extend(anthropic_blocks(content, marks.contains(&i)));
@@ -2389,9 +2394,7 @@ impl LlmClient {
     /// `401` from a real provider with a dummy key proves the full
     /// `fetch` + CORS + transport path end-to-end without a valid key.
     pub async fn probe_status(&self) -> Outcome<u16> {
-        let messages = [crate::protocol::ChatMessage::User {
-            content: MessageContent::text("ping"),
-        }];
+        let messages = [crate::protocol::ChatMessage::user("ping")];
         let body = self.build_body(&messages, None, false);
         let resp = res!(self.wasm_fetch_raw(&body, self.stream_idle_ms.get()).await);
         Ok(resp.status())
@@ -3780,8 +3783,8 @@ fn message_to_json_cached(msg: &ChatMessage, open: &std::collections::HashSet<St
             json_escape(tool_call_id), json_escape(&content.as_text()));
     }
     let (role, content) = match msg {
-        ChatMessage::System { content } => ("system", content),
-        ChatMessage::User { content }   => ("user", content),
+        ChatMessage::System { content }   => ("system", content),
+        ChatMessage::User { content, .. } => ("user", content),
         _ => return message_to_json(msg, open),
     };
     // With an image in it the content is already an array, and the marker goes on the last block
@@ -4421,7 +4424,7 @@ fn message_to_json(msg: &ChatMessage, open: &std::collections::HashSet<String>) 
     match msg {
         ChatMessage::System { content } =>
             fmt!("{{\"role\":\"system\",\"content\":\"{}\"}}", json_escape(&content.as_text())),
-        ChatMessage::User { content } =>
+        ChatMessage::User { content, .. } =>
             fmt!("{{\"role\":\"user\",\"content\":{}}}", openai_content(content)),
         ChatMessage::Assistant { content, tool_calls } => {
             // The assistant's own words are the one role's text that serialisation rewrites: a
@@ -8275,6 +8278,91 @@ pub mod tests {
             max_total_wait_ms: 5_000,
         };
         client
+    }
+
+    // ┌───────────────────────────────────────────────────────────────┐
+    // │ The app's note on a user message joins in one place            │
+    // └───────────────────────────────────────────────────────────────┘
+
+    /// What the user typed in the last message of the recorded conversations below.
+    const PRE_WORDS: &str = "then \"this\"\n\u{C9}tape 2: \u{2713}";
+
+    /// The note the page composes for the person's next message.
+    const PRE_NOTE: &str = "[Daimond: the user rated your answer of 10:04 \u{2212}1 (long): \"just give me the command\". They rated the change to src/parse.rs \u{2212}1 (scope).]";
+
+    /// The conversation the three reference bodies were recorded from.  `sys` is long enough
+    /// to earn a cache breakpoint where the provider takes one.
+    fn pre_convo(sys: String, last: ChatMessage) -> Vec<ChatMessage> {
+        vec![
+            ChatMessage::system(sys),
+            ChatMessage::user("first".to_string()),
+            ChatMessage::assistant_calling("".to_string(),
+                vec![ToolCall { id: "c1".to_string(), name: "file_read".to_string(),
+                    arguments: "{\"path\":\"a.md\"}".to_string() }]),
+            ChatMessage::tool("c1".to_string(), "line one\nline two\n".to_string()),
+            ChatMessage::assistant("ok".to_string()),
+            last,
+        ]
+    }
+
+    /// The three request shapes there are, each with the conversation it was recorded from.
+    /// The bodies were recorded from the 5.2.9 request builders before `pre` existed, with the
+    /// system prompt standing as `<SYS>` where it is long.
+    fn pre_providers() -> Vec<(&'static str, LlmClient, String, &'static str)> {
+        let long = long_system();
+        vec![
+            ("openai",
+                test_client("api.fireworks.ai", 443, "accounts/fireworks/models/glm-5p2"),
+                "Be brief.".to_string(),
+                r#"{"model":"accounts/fireworks/models/glm-5p2","messages":[{"role":"system","content":"Be brief."},{"role":"user","content":"first"},{"role":"assistant","content":"","tool_calls":[{"id":"c1","type":"function","function":{"name":"file_read","arguments":"{\"path\":\"a.md\"}"}}]},{"role":"tool","tool_call_id":"c1","content":"line one\nline two\n"},{"role":"assistant","content":"ok"},{"role":"user","content":"then \"this\"\nÉtape 2: ✓"}],"stream":true,"stream_options":{"include_usage":true},"max_tokens":4096}"#),
+            ("openai-claude",
+                test_client("openrouter.ai", 443, "anthropic/claude-opus-5"),
+                long.clone(),
+                r#"{"model":"anthropic/claude-opus-5","messages":[{"role":"system","content":[{"type":"text","text":"<SYS>","cache_control":{"type":"ephemeral"}}]},{"role":"user","content":"first"},{"role":"assistant","content":"","tool_calls":[{"id":"c1","type":"function","function":{"name":"file_read","arguments":"{\"path\":\"a.md\"}"}}]},{"role":"tool","tool_call_id":"c1","content":"line one\nline two\n"},{"role":"assistant","content":"ok"},{"role":"user","content":[{"type":"text","text":"then \"this\"\nÉtape 2: ✓","cache_control":{"type":"ephemeral"}}]}],"stream":true,"stream_options":{"include_usage":true},"max_tokens":4096}"#),
+            ("anthropic",
+                test_client_at("api.anthropic.com", 443, "/v1/messages", "claude-opus-5"),
+                long,
+                r#"{"model":"claude-opus-5","max_tokens":32000,"system":[{"type":"text","text":"<SYS>","cache_control":{"type":"ephemeral"}}],"messages":[{"role":"user","content":[{"type":"text","text":"first"}]},{"role":"assistant","content":[{"type":"tool_use","id":"c1","name":"file_read","input":{"path":"a.md"}}]},{"role":"user","content":[{"type":"tool_result","tool_use_id":"c1","content":"line one\nline two\n"}]},{"role":"assistant","content":[{"type":"text","text":"ok"}]},{"role":"user","content":[{"type":"text","text":"then \"this\"\nÉtape 2: ✓","cache_control":{"type":"ephemeral"}}]}],"thinking":{"type":"adaptive","display":"summarized"},"output_config":{"effort":"high"},"stream":true}"#),
+        ]
+    }
+
+    /// With no note, every provider's request is the very bytes 5.2.9 sent.
+    #[test]
+    fn test_an_empty_pre_leaves_the_request_byte_identical() {
+        for (name, client, sys, recorded) in pre_providers() {
+            let want = recorded.replace("<SYS>", &json_escape(&sys));
+            for last in [
+                ChatMessage::user(PRE_WORDS.to_string()),
+                ChatMessage::user_noted(PRE_WORDS.to_string(), String::new()),
+            ] {
+                let got = client.build_body(&pre_convo(sys.clone(), last), None, true);
+                assert_eq!(want, got, "{}: an empty note changed the request", name);
+            }
+        }
+    }
+
+    /// With a note, the one thing that changes in the request is the last user message, which
+    /// reads the note, a blank line, then the person's words -- and the note is in it once.
+    #[test]
+    fn test_a_user_message_s_pre_is_joined_ahead_of_its_words_on_every_provider() {
+        for (name, client, sys, _recorded) in pre_providers() {
+            let plain = pre_convo(sys.clone(), ChatMessage::user(PRE_WORDS.to_string()));
+            let noted = pre_convo(sys.clone(),
+                ChatMessage::user_noted(PRE_WORDS.to_string(), PRE_NOTE.to_string()));
+            let before = client.build_body(&plain, None, true);
+            let after = client.build_body(&noted, None, true);
+            let joined = fmt!("{}\n\n{}", PRE_NOTE, PRE_WORDS);
+            assert_eq!(1, after.matches(&json_escape(PRE_NOTE)).count(),
+                "{}: the note is not in the request exactly once: {}", name, after);
+            assert!(after.contains(&json_escape(&joined)),
+                "{}: the note does not lead the words: {}", name, after);
+            assert_eq!(before.replace(&json_escape(PRE_WORDS), &json_escape(&joined)), after,
+                "{}: more than the last user message changed", name);
+            // A second request from the same conversation says the same thing: nothing is
+            // joined into the session itself.
+            assert_eq!(after, client.build_body(&noted, None, true), "{}: not stable", name);
+            assert_eq!(PRE_WORDS, noted[5].text(), "{}: the session's words changed", name);
+        }
     }
 
     /// A client with a certificate verifier that accepts the stub's self-signed

@@ -91,6 +91,17 @@
 		return i < 0 ? '' : s.slice(i + 1);
 	}
 
+	var FILE_RE = /^p1:file:([^\/]+)\/v(\d+)\/(.+)$/;
+
+	/// A file product's handle taken apart: `{ store, v, path }`, or null for anything else. The
+	/// store is a Diamond id or `chat:<id>` and holds no `/`; what follows `/v<N>/` is the path.
+	function fileOf(h) {
+		var m = FILE_RE.exec(String(h == null ? '' : h));
+		return m ? { store: m[1], v: Number(m[2]), path: m[3] } : null;
+	}
+
+	function isFile(h) { return fileOf(h) !== null; }
+
 	// ── The record ─────────────────────────────────────────────
 
 	function normTags(tags) {
@@ -136,9 +147,10 @@
 		if (SRCS.indexOf(o.src) < 0) throw new Error('rating: source ' + o.src + ' is not one the form names');
 		var clear = o.clear === true;
 		var prod = JSON.parse(JSON.stringify(o.prod));
+		var file = prod.k === 'file';		// the bytes are pinned by `hash`; a tool path and a length are an answer's confounds (D6)
 		return {
 			h:      prod.h,
-			hash:   String(prod.hash || ''),					// '' for an answer
+			hash:   String(prod.hash || ''),					// '' for an answer, and for a file that has gone
 			s:      clear ? 0 : o.s,
 			clear:  clear,
 			tags:   clear ? [] : normTags(o.tags),
@@ -150,8 +162,8 @@
 			priv:   false,
 			hx:     'daimond',
 			burst:  String(o.burst || ''),
-			tools:  String(o.tools || ''),
-			len:    Math.max(0, Math.floor(Number(o.len) || 0)),
+			tools:  file ? '' : String(o.tools || ''),
+			len:    file ? 0 : Math.max(0, Math.floor(Number(o.len) || 0)),
 			prod:   prod,
 		};
 	}
@@ -364,7 +376,9 @@
 
 	/// The messages for every draft that differs from its head, in the order first
 	/// touched. All share `ts = now`, their ids ascend in that order, and their `burst`
-	/// is the first one's id. Empties the burst. `rand` gives the five random characters
+	/// is the first one's id. Empties the burst. `now` is the time the records are made
+	/// at: the caller gives the clock's time passed beyond the chat's last message, so a
+	/// slow clock cannot put a rating before the message it follows. `rand` gives the five random characters
 	/// of each id.
 	function take(b, now, rand) {
 		var list = Array.from(b.drafts.values()), used = {};
@@ -389,26 +403,130 @@
 	function signed(s) { return s > 0 ? '+' + s : (s < 0 ? MINUS + (-s) : '0'); }
 
 	/// The words of one Rating tile line, before they are formatted. `target` is
-	/// the rated message, or null where it has gone. A withdrawn record has no figure.
+	/// the rated message (an answer's `{ mid }`) or the rated file row (`{ h }`), or null
+	/// where it has gone. A withdrawn record has no figure. For a file, `path` is the
+	/// file's name from its handle and `targetH` the row it jumps to.
 	function lineOf(msg, target) {
-		var r = msg.rating;
+		var r = msg.rating, f = fileOf(r.h);
 		return {
+			kind:      f ? 'file' : 'answer',
 			score:     r.clear ? '' : signed(r.s),
 			cleared:   r.clear,
-			targetMid: target ? String(target.mid) : null,
+			targetMid: !f && target ? String(target.mid) : null,
+			targetH:   f && target ? String(target.h) : null,
+			path:      f ? f.path : '',
 			tags:      r.tags.slice(),
 			said:      r.note,
 		};
 	}
 
+	// ── The note on the person's next message (U4) ─────────────
+
+	var NOTE_BUDGET = 16384;		// UTF-8 bytes of the whole note (plan D8)
+
+	// The English words for the tags, by id. The note is fixed on the typing device, so a model
+	// in any locale reads the same bytes (plan D7); a test holds this table to `rating.tag.*` in i18n/en.js.
+	var TAG_EN = {
+		wrong: 'Wrong', ignored: 'Ignored instructions', long: 'Too long', short: 'Too short', style: 'Tone or format',
+		tool: 'Tool use', refused: 'Refused or hedged', slow: 'Slow', correct: 'Correct', followed: 'Did as instructed',
+		concise: 'Concise', style_good: 'Good style', broke: 'Broke something', wrong_change: 'Wrong change',
+		incomplete: 'Incomplete', scope: 'Changed too much', wiped: 'Lost content', clean: 'Clean', complete: 'Complete',
+		lost: 'Lost information', bloated: 'Bloated', faithful: 'Faithful', tidy: 'Tidy', tone: 'Tone', ready: 'Ready to send',
+		not_useful: 'Not useful', already_knew: 'Already knew', useful: 'Useful',
+	};
+
+	/// The English word for a tag; a tag from a newer form is named by its id.
+	function tagWord(id) { return Object.prototype.hasOwnProperty.call(TAG_EN, id) ? TAG_EN[id] : String(id); }
+
+	function u8len(s) {
+		var n = 0;
+		for (var i = 0; i < s.length; i++) {
+			var c = s.charCodeAt(i);
+			if (c < 0x80) n += 1;
+			else if (c < 0x800) n += 2;
+			else if (c >= 0xD800 && c < 0xDC00) { n += 4; i++; }
+			else n += 3;
+		}
+		return n;
+	}
+
+	function hhmmLocal(ts) {
+		var d = new Date(ts);
+		return ('0' + d.getHours()).slice(-2) + ':' + ('0' + d.getMinutes()).slice(-2);
+	}
+
+	// A message a person wrote: not an app's note to the model (the tail note carries its records in `prod`), and not a
+	// record the app made itself (a trigger, a preset, a gather round, the Continue nudge: `app` true, set at creation).
+	// A record from before the mark has no `app`, so it reads as the person's.
+	function isOwn(m) {
+		return !!m && m.role === 'user' && !Array.isArray(m.prod) && m.app !== true && String(m.content || '').indexOf('[Daimond:') !== 0;
+	}
+
+	/// The note for the person's next message, or '' when there is nothing to say. It tells the model
+	/// the head of each product rated after the person's last own message, by position (plan D8), and
+	/// reads only `messages`, which is one chat. A rating given and withdrawn since that message,
+	/// which the model never heard of, says nothing. `opts.own` says which messages are a person's,
+	/// `opts.hhmm` formats an answer's time; the defaults are this file's own.
+	function noteFor(messages, opts) {
+		var list = Array.isArray(messages) ? messages : [], o = opts || {};
+		var own = o.own || isOwn, hhmm = o.hhmm || hhmmLocal;
+		var cut = -1, i;
+		for (i = list.length - 1; i >= 0; i--) { if (own(list[i])) { cut = i; break; } }
+		var recs = new Map(), at = new Map(), ans = new Map();
+		for (i = 0; i < list.length; i++) {
+			var m = list[i];
+			if (m && m.role === 'assistant' && typeof m.mid === 'string') ans.set(m.mid, m);
+			if (!isRatingMsg(m)) continue;
+			var h = m.rating.h, rs = recs.get(h);
+			if (!rs) { rs = []; recs.set(h, rs); }
+			rs.push(m);
+			at.set(m, i);
+		}
+		var told = [];		// heads since the boundary, in transcript order, then oldest dropped first by the budget
+		recs.forEach(function (rs, h) {
+			var hd = pick(rs), pos = at.get(hd);
+			if (pos <= cut) return;
+			var before = rs.filter(function (r) { return at.get(r) <= cut; });
+			var heard = before.length > 0 && !pick(before).rating.clear;
+			if (hd.rating.clear && !heard) return;
+			told.push({ pos: pos, h: h, r: hd.rating });
+		});
+		if (!told.length) return '';
+		told.sort(function (a, b) { return a.pos - b.pos; });
+		function what(h) {
+			var f = fileOf(h);
+			if (f) return 'the change to ' + f.path;
+			var a = ans.get(midOf(h));
+			return a && typeof a.ts === 'number' && isFinite(a.ts) ? 'your answer of ' + hhmm(a.ts) : 'an earlier answer';
+		}
+		function render(from) {
+			var rated = [], gone = [];
+			for (var k = from; k < told.length; k++) {
+				var t = told[k], r = t.r;
+				if (r.clear) { gone.push(what(t.h)); continue; }
+				var c = 'rated ' + what(t.h) + ' ' + signed(r.s);
+				if (r.tags.length) c += ' (' + r.tags.map(tagWord).join(', ') + ')';
+				if (r.note) c += ': "' + r.note + '"';
+				rated.push(c);
+			}
+			if (gone.length) rated.push('withdrew their rating of ' + (gone.length > 1 ? gone.slice(0, -1).join(', ') + ' and ' + gone[gone.length - 1] : gone[0]));
+			var out = rated.map(function (c, k) { return (k === 0 ? 'the user ' : 'They ') + c + '.'; }).join(' ');
+			if (from > 0) out += ' And ' + from + ' earlier rating' + (from > 1 ? 's' : '') + ' in this chat.';
+			return '[Daimond: ' + out + ']';
+		}
+		var from = 0, text = render(0);
+		while (u8len(text) > NOTE_BUDGET && from < told.length - 1) { from++; text = render(from); }
+		return text;
+	}
+
 	window.DaimondRatings = {
 		FORM: FORM_ID, NOTE_MAX: NOTE_MAX, BURST_MS: BURST_MS,
-		form: form, newId: newId, midOf: midOf,
+		form: form, newId: newId, midOf: midOf, fileOf: fileOf, isFile: isFile,
 		build: build, message: message, isRatingMsg: isRatingMsg,
 		head: head, headRaw: headRaw, index: index,
 		stateOf: stateOf, stateWith: stateWith, toolsOf: toolsOf,
 		createBurst: createBurst, tap: tap, toggleTag: toggleTag, setDraft: setDraft,
 		pendingCount: pendingCount, due: due, take: take,
-		lineOf: lineOf,
+		lineOf: lineOf, noteFor: noteFor, tagWord: tagWord,
 	};
 })();

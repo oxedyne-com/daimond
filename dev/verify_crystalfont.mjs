@@ -18,12 +18,15 @@
 // an ArrayBuffer (crystal.js, `FACE_PRELUDE`). So the checks here MEASURE glyphs rather than
 // read names, and they hold the sandbox and the policy to their exact old values.
 //
-//   node dev/verify_crystalfont.mjs [--phone] [--shots DIR] [--break prelude]
+//   node dev/verify_crystalfont.mjs [--phone] [--shots DIR] [--break prelude|names]
 //
 // `--phone` runs at 390x844 as a phone (Chromium's client hint, WebKit's iPhone UA);
 // otherwise 1440x900. `--shots DIR` writes one picture per palette. `--break prelude`
 // takes `FontFace` away inside every frame, which is the fault this guards against: the
 // page is told the names and cannot register the faces. The glyph checks must go red.
+// `--break names` makes the parent hand over only the faces `_theme.font` and `_theme.mono`
+// name, not those the page names itself: Sofia Sans Condensed (the shipped heads) is then
+// never registered and the heads draw in the fallback. The Condensed checks must go red.
 import { open, shot } from './harness.mjs';
 import { mkdirSync } from 'node:fs';
 import { join } from 'node:path';
@@ -61,6 +64,12 @@ const s = await open({
 				localStorage.setItem('daimond-theme', 'porcelain');
 			} catch (e) { /* the app's default then; the checks below will say so */ }
 		});
+		if (BREAK === 'names') {
+			await page.route('**/js/crystal.js', async (r) => {
+				const res = await r.fetch(), t = await res.text();
+				await r.fulfill({ response: res, body: t.replace("out.font + ',' + out.mono + ',' + names", "out.font + ',' + out.mono") });
+			});
+		}
 		if (BREAK === 'prelude') {
 			// Every frame, the sandboxed one included: Playwright runs init scripts in
 			// each frame as it is attached.
@@ -177,7 +186,7 @@ async function glyphs() {
 			family: f.family.replace(/["']/g, ''), status: f.status }));
 		const cs = getComputedStyle(document.body);
 		// The page's own title, in the stack the page itself resolved, against the same
-		// words in Sofia Sans alone: equal only when the title really is drawn in it.
+		// words in Sofia Sans Condensed alone: equal only when the title really is drawn in it.
 		const h1 = document.querySelector('h1');
 		const stack = h1 ? getComputedStyle(h1).fontFamily : cs.fontFamily;
 		const t = h1 ? h1.textContent : '';
@@ -187,7 +196,9 @@ async function glyphs() {
 			color:   cs.color,
 			sans:    [w('"Sofia Sans", monospace'), w('monospace')],
 			mono:    [w('"Sometype Mono", serif'), w('serif')],
-			title:   h1 ? [w(stack, t), w('"Sofia Sans", monospace', t), w('monospace', t)] : [0, 0, 0],
+			title:   h1 ? [w(stack, t), w('"Sofia Sans Condensed", monospace', t), w('"Sofia Sans", monospace', t), w('monospace', t)] : [0, 0, 0, 0],
+			cond:    [w('"Sofia Sans Condensed", serif'), w('serif')],
+			body:    [w(cs.fontFamily), w('"Sofia Sans", monospace'), w('monospace')],
 			// `self.origin`, not `location.origin`: a blob: URL names its creator's origin,
 			// while the document it loaded into is opaque.
 			origin:  self.origin,
@@ -279,9 +290,15 @@ for (const pal of ['porcelain', 'obsidian']) {
 		g && !near(g.sans[0], g.sans[1]), g && g.sans.map(Math.round).join(' vs '));
 	check(`${pal}: SOMETYPE MONO DRAWS — its glyphs are not serif's`,
 		g && !near(g.mono[0], g.mono[1]), g && g.mono.map(Math.round).join(' vs '));
-	check(`${pal}: THE PAGE'S OWN TITLE IS DRAWN IN SOFIA SANS, NOT THE SYSTEM SANS`,
-		g && g.title[0] > 0 && near(g.title[0], g.title[1]) && !near(g.title[1], g.title[2]),
-		g && `as drawn ${Math.round(g.title[0])}, Sofia Sans ${Math.round(g.title[1])}, fallback ${Math.round(g.title[2])}`);
+	check(`${pal}: Sofia Sans Condensed is registered and loaded in the frame`,
+		g && g.faces.some(f => f.family === 'Sofia Sans Condensed' && f.status === 'loaded'), g && JSON.stringify(g.faces));
+	check(`${pal}: SOFIA SANS CONDENSED DRAWS — its glyphs are not serif's`,
+		g && !near(g.cond[0], g.cond[1]), g && g.cond.map(Math.round).join(' vs '));
+	check(`${pal}: THE PAGE'S OWN TITLE IS DRAWN IN SOFIA SANS CONDENSED, NOT SOFIA SANS AND NOT THE SYSTEM SANS`,
+		g && g.title[0] > 0 && near(g.title[0], g.title[1]) && !near(g.title[1], g.title[2]) && !near(g.title[1], g.title[3]),
+		g && `as drawn ${Math.round(g.title[0])}, Condensed ${Math.round(g.title[1])}, Sofia Sans ${Math.round(g.title[2])}, fallback ${Math.round(g.title[3])}`);
+	check(`${pal}: THE PAGE'S TEXT IS DRAWN IN SOFIA SANS, NOT THE SYSTEM SANS`,
+		g && near(g.body[0], g.body[1]) && !near(g.body[1], g.body[2]), g && g.body.map(Math.round).join(' / '));
 	if (SHOTS) {
 		mkdirSync(SHOTS, { recursive: true });
 		const f = join(SHOTS, `crystal_daylight_${pal}_${ENGINE}_${vp.width}x${vp.height}${BREAK ? '_break' : ''}.png`);
@@ -387,9 +404,9 @@ for (const pal of ['porcelain', 'obsidian']) {
 	console.log(`\n--- theme-wearing page, ${pal}`);
 	check(`wearing ${pal}: up in its frame with the prelude`, stw.mode === 'frame' && stw.faces === true, stw.mode);
 	check(`wearing ${pal}: the page sets in Sofia Sans`, g && /^"?sofia sans/i.test(g.stack), g && g.stack);
-	check(`wearing ${pal}: THE TITLE IS DRAWN IN SOFIA SANS, NOT THE SYSTEM SANS`,
-		g && g.title[0] > 0 && near(g.title[0], g.title[1]) && !near(g.title[1], g.title[2]),
-		g && `as drawn ${Math.round(g.title[0])}, Sofia Sans ${Math.round(g.title[1])}, fallback ${Math.round(g.title[2])}`);
+	check(`wearing ${pal}: THE TITLE IS DRAWN IN SOFIA SANS CONDENSED, NOT THE SYSTEM SANS`,
+		g && g.title[0] > 0 && near(g.title[0], g.title[1]) && !near(g.title[1], g.title[3]),
+		g && `as drawn ${Math.round(g.title[0])}, Condensed ${Math.round(g.title[1])}, fallback ${Math.round(g.title[3])}`);
 	if (SHOTS) {
 		const f = join(SHOTS, `crystal_wearing_daylight_${pal}_${ENGINE}_${vp.width}x${vp.height}${BREAK ? '_break' : ''}.png`);
 		await page.screenshot({ path: f });

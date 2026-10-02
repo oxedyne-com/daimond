@@ -73,12 +73,18 @@
 	</ul>
 	<p>Ninguno de estos se disfraza de respuesta.</p>
 
-	<h2 id="s4">Guardar un chat</h2>
+	<h2 id="s4">Valorar una respuesta o un cambio</h2>
+	<p>Una respuesta final termina con una flecha hacia arriba, una flecha hacia abajo y un control de detalles. Un archivo que cambió un turno lleva los mismos tres en el extremo derecho de su fila, en el mosaico <span class="ui">Archivos</span> bajo ese turno.</p>
+	<p>La flecha hacia arriba da un más y la flecha hacia abajo un menos, y un toque en una flecha encendida retira la valoración. Un toque hacia abajo abre además una fila de etiquetas, como <span class="ui">Demasiado largo</span> en una respuesta o <span class="ui">Rompió algo</span> en un archivo, para que la valoración pueda decir qué estuvo mal. El control de detalles abre <span class="ui">Valorar esta respuesta</span> o <span class="ui">Valorar este cambio</span>, con cinco pasos de <span class="ui">Erróneo</span> a <span class="ui">Genial</span>, las etiquetas, cuatro puntuaciones y un cuadro para tus propias palabras. <span class="ui">Retirar</span> en esa ventana también retira una valoración.</p>
+	<p>Un archivo lleva flechas solo donde Daimond puede decir qué modelo lo cambió. Si dos agentes trabajaron en el mismo lugar al mismo tiempo, la fila no lleva ninguna, porque una valoración archivada bajo el modelo equivocado es peor que ninguna.</p>
+	<p>Una valoración se guarda en el chat donde se dio, diez segundos después del último toque, o antes si envías un mensaje o sales del chat. Aparece en un mosaico <span class="ui">Valoración</span> al final del hilo, con un enlace de vuelta a la respuesta o al archivo. El modelo la lee una vez, con tu siguiente mensaje en ese chat, y el hilo muestra solo lo que escribiste.</p>
+
+	<h2 id="s5">Guardar un chat</h2>
 	<p>Dos botones están en la fila de un chat en la barra lateral. <span class="ui">Guardar</span> convierte toda la conversación en un diamond. <span class="ui">Plegar todo</span> lo convierte en un diamond resumiéndolo, quedándose con lo que se averiguó y descartando el ir y venir.</p>
 	<p>Para guardar solo parte, pliega las respuestas, marca los turnos que merece la pena guardar, y elige <span class="ui">Plegar lo seleccionado</span>. Pliega un paso que hayas adoptado, y deja un comentario de paso donde está.</p>
 	<p>Nada se absorbe solo. La memoria de un diamond cambia solo por un pliegue o una edición, y cada escritura se guarda en el historial.</p>
 
-	<h2 id="s5">Dentro de un diamond</h2>
+	<h2 id="s6">Dentro de un diamond</h2>
 	<p>Tus diamonds están encima de tus chats, y el <span class="ui">+</span> crea uno. Un diamond tiene dos caras, y un interruptor en su cabecera cambia entre ellas. <span class="ui">Cristal</span> es lo que sabe, y <span class="ui">Chat</span> es su propia conversación.</p>
 
 	<figure class="shot narrow">
@@ -88,7 +94,7 @@
 
 	<p>La tarjeta lista el título y el resumen del diamond con sus propias palabras, y luego todo lo demás que contiene, una línea cada uno. <span class="ui">Editar</span> abre un formulario. <span class="ui">Mostrar memoria en bruto</span> abre el propio archivo, para cuando prefieras trabajar directamente en él.</p>
 
-	<h2 id="s6">Los cuatro archivos que guarda un diamond</h2>
+	<h2 id="s7">Los cuatro archivos que guarda un diamond</h2>
 	<p>La memoria se guarda a la vista. Cuatro archivos están en la carpeta propia del diamond, legibles en el panel Espacio y por el daimon.</p>
 	<ul>
 		<li><code>crystal.json</code> contiene lo que este diamond <em>es</em>, es decir, su título, resumen, secciones, hechos y enlaces.</li>
@@ -98,7 +104,7 @@
 	</ul>
 	<p>Los cuatro viajan con el daimon en cada ronda dentro de un solo presupuesto, así que lo que se le dice a un diamond sobre sí mismo es acotado y predecible. Un cristal demasiado grande para caber entero mantiene su desbordamiento legible y buscable en vez de descartarlo. Los recuentos de la tarjeta, <span class="ui">Objetivos</span>, <span class="ui">Tareas abiertas</span> y <span class="ui">Hechas</span>, se leen de <code>REQUIREMENTS.md</code>.</p>
 
-	<h2 id="s7">Dos tipos de pliegue</h2>
+	<h2 id="s8">Dos tipos de pliegue</h2>
 	<p>La palabra cubre dos actos distintos.</p>
 	<ul>
 		<li><strong>Resumir mensajes anteriores</strong>, en la cabecera del chat, es la aplicación comprimiendo una conversación que ya no cabe. Sus decisiones se archivan en <code>DECISIONS.md</code>, sus asuntos abiertos en <code>REQUIREMENTS.md</code>, y su próximo paso en <code>STATE.md</code>. Lo que archiva se puede encontrar después, y lo que deja en un aviso no.</li>
@@ -106,15 +112,15 @@
 	</ul>
 	<p>Archivar es repetible, así que ejecutar el mismo pliegue dos veces no archiva nada dos veces, y el orden en que llegan dos pliegues no cambia lo que acaban diciendo los archivos.</p>
 
-	<h2 id="s8">Historial</h2>
+	<h2 id="s9">Historial</h2>
 	<p><span class="ui">Historial</span> lista cada versión, de la más nueva a la más vieja. <span class="ui">Ver</span> lee una, <span class="ui">Restaurar</span> vuelve a hacerla la actual, y <span class="ui">Delta</span> muestra el material que se le dio a un pliegue. Restaurar guarda primero lo que era la actual, así que una restauración se puede deshacer a su vez.</p>
 
-	<h2 id="s9">Actuar sin que se le pida</h2>
+	<h2 id="s10">Actuar sin que se le pida</h2>
 	<p>Un diamond responde cuando se lo pides y en ningún otro momento, a menos que configures una acción disparada. Esas viven en <span class="ui">Cuándo actúa este diamond</span> en la cara Cristal, y <span class="ui">Añadir una acción</span> crea una. Dos cosas pueden dispararla: minutos de tu propia actividad, contados solo mientras trabajas, o correo que llega a una carpeta que nombres.</p>
 	<p>Cada acción lleva una instrucción, enviada cada vez, y un contexto, enviado una vez hasta que lo cambias. Son un archivo corriente, <code>triggers.json</code>, en la carpeta del diamond.</p>
 	<p>Una acción nueva está <strong>detenida</strong>, y lo dice: <em>Detenida. Pulsa &#9654; en la luz junto al desplegable para dejar correr esta acción.</em> Un toque la arma.</p>
 
-	<h3 id="s10">La luz</h3>
+	<h3 id="s11">La luz</h3>
 	<p>Cada acción, cada diamond y la fila <span class="ui">Todo</span> llevan el mismo control de tres partes, un play, una pausa y una luz redonda. La luz dice si algo está armado y libre para dispararse.</p>
 	<ul>
 		<li><strong>Roja.</strong> Nada aquí actuará por su cuenta.</li>
@@ -124,7 +130,7 @@
 	<p>Una cuenta nueva está roja en todas partes, que es la respuesta honesta a si algo corre por su cuenta. Una acción a la que le falta su buzón o su instrucción se deja fuera del recuento, porque no podría dispararse. Al ámbar solo se llega, nunca se pone.</p>
 	<p>Una acción retenida no gasta nada, porque se rechaza antes de que empiece el turno.</p>
 
-	<h2 id="s11">Etiquetas, enlaces y la papelera</h2>
+	<h2 id="s12">Etiquetas, enlaces y la papelera</h2>
 	<p><span class="ui">Etiquetas</span> en la cara Cristal archiva un diamond en la barra lateral. Hasta ocho etiquetas, en minúscula y sin duplicados. <span class="ui">Sugeridas</span> ofrece cuatro para empezar. Las etiquetas son inertes. No se envían a ningún modelo, no son parte de la memoria, y no cambian nada de lo que hace un agente. <span class="ui">Filtrar por etiqueta</span> de la barra lateral filtra por ellas.</p>
 	<p>Un diamond también se puede enlazar con otro, y el <a href="interface.html">Grafo</a> es la imagen de eso.</p>
 	<p>Borrar un chat o un diamond lo manda a la papelera. Sigue guardado y sincronizado, fuera del alcance de todo daimon, y se guarda treinta días con la fecha en la fila. <span class="ui">Restaurar</span> lo trae de vuelta en todos los dispositivos. <span class="ui">Borrar para siempre</span> y <span class="ui">Vaciar la papelera</span> son las dos que preguntan.</p>

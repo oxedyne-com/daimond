@@ -37,6 +37,12 @@
 //      loads, renders, syncs and stays record-less: nothing stamps it after the fact.
 //   S  SYNC. B's products reach A carrying byte-identical records, and a reload of B
 //      reads back exactly what it wrote.
+//   X  5.3.0 (U3, V1 of the rating U3+U4 plan, written RED on 5.2.9): X1 a call that writes outside a
+//      capture is credited to its caller with `via: 'command'` (native-only, see the NOT COVERED line);
+//      X2 a daimon turn on a Diamond that predates the seeded files lists none of the three and every
+//      record carries `via`; X3 a chat turn appends one `files_log` whose records are the store's own rows
+//      (hash and body, as on 5.2.9) and the undo toast says 2, as on 5.2.9;
+//      X4 every Prod read anywhere in the run carries the 18 v2 keys in order.
 //
 // EACH CHECK FAMILY IS PROVED AGAINST BROKEN CODE. `--break <name>` serves a damaged
 // `www/js/daimond.js` through `page.route` and runs the one section it damages; the run
@@ -94,7 +100,7 @@ if (BREAK && !BREAKS[BREAK]) {
 	const stale = Object.entries(BREAKS).filter(([, b]) => src.split(b.from).length !== 2).map(([n]) => n);
 	if (stale.length) { console.error('break(s) no longer match www/js/daimond.js once: ' + stale.join(', ')); process.exit(2); }
 }
-const ONLY = new Set((arg('--only') || (BREAK ? BREAKS[BREAK].section : 'H,C,F,M,D,P,R,O,S'))
+const ONLY = new Set((arg('--only') || (BREAK ? BREAKS[BREAK].section : 'H,C,F,M,D,P,R,O,S,X'))
 	.split(',').map((s) => s.trim().toUpperCase()).filter(Boolean));
 const on = (sec) => ONLY.has(sec);
 let ROUTE = null;
@@ -115,6 +121,10 @@ const J = (o) => JSON.stringify(o);
 /// A single product's record: a message's `prod` is a list, and an answer, a fold, a mail row
 /// or a proposal carries exactly one.
 const PROD_KEYS = 'h,k,m,pv,cm,fam,fi,cls,role,sp,d,c,t,dev,at,hash,run';
+/// The v2 record (U3 plan section 2): `via` last, '' or 'command'. checkRec's per-record check uses it (flipped at P1a's
+/// 4b728825, as the lead asked): on 5.2.9 itself every section's declared-shape check is therefore red, and --only X is the
+/// section that reads red there alone; the 135/0 baseline is the commit before this one (954ec67e).
+const PROD_KEYS_V2 = PROD_KEYS + ',via';
 const one = (m) => (m && Array.isArray(m.prod) && m.prod.length === 1) ? m.prod[0] : null;
 /// An answer's words: the mock streams each with a trailing space, so `@text X` lands as "X ".
 const said = (m) => String((m && m.content) || '').trim();
@@ -305,8 +315,8 @@ function checkRec(tag, prod, req, want) {
 	if (!prod) return;
 	// THE DECLARED SHAPE: every field of `Prod`, always, in order (U1 fix brief §3.1), since the
 	// sync contract's record type is exact and has no optional field.
-	check(`${tag}: carries every field of the declared Prod, in order`, Object.keys(p).join(',') === PROD_KEYS
-		&& typeof p.fi === 'boolean', Object.keys(p).join(','));
+	check(`${tag}: carries every field of the declared Prod (v2: via last), in order`, Object.keys(p).join(',') === PROD_KEYS_V2
+		&& typeof p.fi === 'boolean' && (p.via === '' || p.via === 'command'), Object.keys(p).join(','));
 	check(`${tag}: kind ${want.k}, role ${want.role}`, p.k === want.k && p.role === want.role, p.k + '/' + p.role);
 	if (want.h) check(`${tag}: handle ${want.h}`, p.h === want.h, p.h);
 	check(`${tag}: m is the model the request carried`, !!req && p.m === req.model,
@@ -733,6 +743,82 @@ try {
 		if (o.ans) keep.old = { cid: ocid, mid: String(o.ans.mid) };
 	}
 
+	// ══ X. 5.3.0: credit at the source, the chat's Files row, the v2 record (written red on 5.2.9) ═══
+	if (on('X')) {
+		// X1 is native-only. file_write, file_edit, file_delete, file_move, doc_edit, sheet_write, web_fetch, typst_compile and
+		// capture_view all capture; Shell, Run, Verify and SpawnAgent are the opaque set, Shell is refused in the browser, and Run
+		// and Verify need a hand whose mock writes no files (hand/install/mock_host.py:198). E1a's cargo tests carry it.
+		console.log('  NOT COVERED  X1: a command window\'s credit (via "command") has no world-testable caller; E1a\'s native tests carry it');
+		const mkDiamond = async (label) => {
+			await b.page.evaluate(() => document.getElementById('new-diamond-btn').click());
+			await b.page.waitForSelector('.dlg-card', { timeout: 8000 });
+			await b.page.evaluate((nm) => {
+				const card = [...document.querySelectorAll('.dlg-card')].filter((c) => c.getClientRects().length).pop();
+				const inp = card.querySelector('input.dlg-input'); inp.value = nm; inp.dispatchEvent(new Event('input', { bubbles: true }));
+				card.querySelector('.dlg-ok').click();
+			}, label + ' ' + Date.now().toString(36));
+			await b.page.waitForTimeout(1500);
+			return b.page.evaluate(() => { const d = window.DaimondDiamond.current(); return d ? d.id : ''; });
+		};
+		// ── X2. A Diamond that predates the seeded files: a daimon turn lists none of the three ──
+		const XD = await mkDiamond('Seeded');
+		check('X2: a Diamond is made and on screen', !!XD, XD);
+		await b.page.evaluate(({ XD, DEF, THINK, GLM }) => {
+			const all = JSON.parse(localStorage.getItem('daimond-diamond-models') || '{}');
+			all[XD] = { provider: DEF, model: THINK, workerProvider: DEF, workerModel: GLM, visionProvider: '', visionModel: '' };
+			localStorage.setItem('daimond-diamond-models', JSON.stringify(all));
+		}, { XD, DEF, THINK, GLM });
+		const SEEDED = ['STATE.md', 'REQUIREMENTS.md', 'DECISIONS.md'];
+		for (const f of SEEDED) await storeRemove(b, `diamonds/${XD}/${f}`).catch(() => {});	// as a Diamond made before them
+		const xfrom = mockLog().length;
+		await b.page.evaluate(() => { const c = document.getElementById('dview-chat'); if (c) c.click(); });
+		await b.page.waitForTimeout(400);
+		// A turn holding an opaque call (a spawn) is the one the turn-end walk runs after, which is how the seeded files reached the note.
+		const xwk = '@tool file_write ' + J({ path: `diamonds/${XD}/code/xw.md`, content: '# XW\n\nby the worker.\n' });
+		await b.page.fill('#chat-input', '@tools file_write ' + J({ path: `diamonds/${XD}/code/x.md`, content: '# X\n\nwritten by the daimon.\n' })
+			+ ' ;; spawn_agent ' + J({ name: 'xwk', task: xwk }) + ' ;; gather ' + J({ names: ['xwk'], timeout_s: 60 }));
+		await b.page.click('#chat-send', { force: true });
+		await until(b.page, (D) => { try { return window.DaimondCore.diamondBusy(D); } catch (e) { return false; } }, XD, 8000);
+		await until(b.page, (D) => { try { return !window.DaimondCore.diamondBusy(D); } catch (e) { return true; } }, XD, 90000, 500);
+		await b.page.waitForTimeout(800);
+		const xrec = await b.page.evaluate((D) => { const r = window.DaimondDiamond.conversation(D); return r ? JSON.parse(JSON.stringify(r.messages || [])) : []; }, XD);
+		const xtail = xrec.find((m) => m.role === 'user' && /^\[Daimond: this turn changed /.test(String(m.content || ''))) || null;
+		check('X2: the turn left its changed-files note', !!xtail, xtail ? String(xtail.content).slice(0, 100) : 'no note');
+		const listed = xtail ? String(xtail.content) : '';
+		const seen = SEEDED.filter((f) => listed.includes(f));
+		check('X2: the note lists none of STATE.md, REQUIREMENTS.md, DECISIONS.md (J3: seeded files are nobody\'s product)', !!xtail && seen.length === 0, 'listed: ' + (seen.join(', ') || '(none)') + ' in ' + listed.slice(0, 160));
+		const xp = (xtail && Array.isArray(xtail.prod)) ? xtail.prod : [];
+		check('X2: every record in the note carries via, last, and it is empty for a file tool', xp.length > 0 && xp.every((p) => Object.keys(p).join(',') === PROD_KEYS_V2 && p.via === ''), xp.map((p) => Object.keys(p).slice(-2).join('|') + '=' + p.via).join(' ; ') || 'no records');
+
+		// ── X3. A chat turn appends one files_log, its records the store's existing rows (the lead's ruling, Fri ~10:35) ──
+		const xcid = await newChat(b);
+		const scratch = await b.page.evaluate((c) => window.DaimondAttach.chatScratch(c), xcid);
+		await chat(b, '@tools file_write ' + J({ path: scratch + '/o.md', content: 'old bytes\n' }), { timeout: 45000 });
+		await b.page.waitForTimeout(800);
+		const nBefore = (await msgsOf(b, xcid)).filter((m) => m.role === 'files_log').length;
+		await chat(b, '@tools file_write ' + J({ path: scratch + '/n.md', content: 'a new file\n' }) + ' ;; file_write ' + J({ path: scratch + '/o.md', content: 'new bytes\n' }), { timeout: 45000 });
+		await b.page.waitForTimeout(1500);
+		const logs = (await msgsOf(b, xcid)).filter((m) => m.role === 'files_log').slice(nBefore);
+		check('X3: the turn appended exactly one files_log', logs.length === 1, logs.length + ' new');
+		const fl = logs[0] || null;
+		check('X3: it is { role, mid, ts, prod, delta } with no content (P3: the counts ride the message, so the row draws them with no store)', !!fl && J(Object.keys(fl)) === J(['role', 'mid', 'ts', 'prod', 'delta']), fl ? J(Object.keys(fl)) : 'none');
+		const fp = (fl && fl.prod) || [];
+		const rn = fp.find((p) => /\/n\.md$/.test(p.h)), ro = fp.find((p) => /\/o\.md$/.test(p.h));
+		check('X3: two records, n.md and o.md', fp.length === 2 && !!rn && !!ro, fp.map((p) => p.h).join(' ; '));
+		check('X3: handles are p1:file:chat:<chat>/v<N>/<path> and kind file', !!rn && !!ro && [rn, ro].every((p) => p.k === 'file' && p.h.startsWith('p1:file:chat:' + xcid + '/v')), fp.map((p) => p.h).join(' ; '));
+		const mans = await b.page.evaluate((c) => window.DaimondVersions.manifests('chat:' + c), xcid);
+		const ents = (mans || []).flatMap((m) => m.files || []);
+		const en = ents.find((e) => /\/n\.md$/.test(e.path)), eo = ents.find((e) => /\/o\.md$/.test(e.path));			// manifests come newest first
+		check('X3: each record carries its manifest row\'s hash', !!rn && !!ro && !!en && !!eo && rn.hash === en.hash && ro.hash === eo.hash, J({ rn: rn && rn.hash, en: en && en.hash, ro: ro && ro.hash, eo: eo && eo.hash }));
+		const bodyOf = (hash) => b.page.evaluate(({ c, hash }) => window.DaimondVersions.body('chat:' + c, hash), { c: xcid, hash });
+		check('X3: the store holds a body for o.md\'s old bytes', !!eo && !!eo.was && (await bodyOf(eo.was)) !== null, eo ? 'was ' + eo.was : 'no o.md row');
+		// The lead's ruling (Fri ~10:35): 5.2.9's chat store already keeps a new file's body, so the row's record is that existing
+		// row, read as it stands. E1b changes nothing the store holds, and the toast is as on 5.2.9.
+		check('X3: the store still holds n.md\'s body under its hash, as on 5.2.9 (the record is the existing row, not a new kind)', !!en && !!en.hash && (await bodyOf(en.hash)) !== null, en ? 'hash ' + en.hash : 'no n.md row');
+		const toast = await b.page.evaluate(() => { try { return window.DaimondUndo.pending(); } catch (e) { return null; } });
+		check('X3: the undo toast says 2, exactly as on 5.2.9 (J4: o.md\'s copy and n.md\'s)', !!toast && /: 2$/.test(String(toast.text).trim()), J(toast));
+	}
+
 	// ══ S. B's products on A, and B after a reload ══════════════════════
 	if (on('S')) {
 		const bBefore = {};
@@ -786,6 +872,25 @@ try {
 			const drawn = await until(b.page, () => /OLD-SHAPE/.test((document.getElementById('chat-output') || {}).innerText || ''), null, 15000);
 			check('O: the record-less transcript opens and renders after a reload', drawn);
 		}
+	}
+
+	// ══ X4. Every Prod read anywhere in the run is a v2 record: 18 keys, via last ══
+	if (on('X')) {
+		const prods = [];
+		for (const s of [a, b]) {
+			const all = await s.page.evaluate(async () => {
+				const out = [];
+				const take = (m) => { if (m && Array.isArray(m.prod)) m.prod.forEach((p) => out.push(p)); if (m && m.rating && m.rating.prod) out.push(m.rating.prod); };
+				try { for (const c of window.DaimondCore.chatStore().stored()) { const g = await window.DaimondCore.chatStore().loadMessages(c.id); ((g && g.messages) || []).forEach(take); } } catch (e) { /* none */ }
+				try { for (const d of (window.DaimondDiamond.list ? window.DaimondDiamond.list() : [])) { const r = window.DaimondDiamond.conversation(d.id); ((r && r.messages) || []).forEach(take); } } catch (e) { /* none */ }
+				return JSON.parse(JSON.stringify(out));
+			}).catch(() => []);
+			prods.push(...all);
+		}
+		const wrong = prods.filter((p) => Object.keys(p).join(',') !== PROD_KEYS_V2 || (p.via !== '' && p.via !== 'command'));
+		check('X4: records were read (so the sweep looked at some)', prods.length >= 3, prods.length + ' read');
+		check('X4: every Prod read anywhere carries the 18 v2 keys in order, via last', prods.length > 0 && wrong.length === 0,
+			wrong.length + ' of ' + prods.length + ' differ, e.g. ' + (wrong[0] ? Object.keys(wrong[0]).slice(-3).join(',') : ''));
 	}
 
 	await shot(b, 'provenance_' + (bad.length ? 'RED' : 'GREEN'));

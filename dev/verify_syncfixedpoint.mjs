@@ -89,6 +89,8 @@
 //   node dev/verify_syncfixedpoint.mjs --break timekeyed
 //   node dev/verify_syncfixedpoint.mjs --break nopeerfile
 //   node dev/verify_syncfixedpoint.mjs --break nofix      # (ix): collect drops `burst` from a rating
+//   node dev/verify_syncfixedpoint.mjs --break novia      # (x): collect drops `via` from the records of a files_log and a file rating
+//   node dev/verify_syncfixedpoint.mjs --break appfirst   # (xi): collect writes `app` as a user message's first key
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -216,6 +218,35 @@ const BREAKS = {
 					if (!m || m.role !== 'rating_log' || !m.rating) return m;
 					var r = {}; Object.keys(m.rating).forEach(function (k) { if (k !== 'burst') r[k] = m.rating[k]; });
 					var o = {}; Object.keys(m).forEach(function (k) { o[k] = k === 'rating' ? r : m[k]; });
+					return o;
+				});`,
+	}],
+	// U3 (5.3.0, V2 of the U3+U4 plan): the collect copies a message's records without their `via`, so a `files_log` and a
+	// file rating leave the device as v1 records, and the other device holds different bytes under the same `mid` (first
+	// copy wins, so the loss stands). (x) reddens; (ix) does not, because the U2 fixture's records are v1 and have no `via`.
+	novia: [{
+		file: 'js/daimond.js',
+		find: '				entryI.messages = gotI.messages || [];',
+		with: `				entryI.messages = (gotI.messages || []).map(function (m) {		// BROKEN: collect drops via from every record
+					if (!m) return m;
+					var strip = function (p) { if (!p || typeof p !== 'object') return p; var q = {}; Object.keys(p).forEach(function (k) { if (k !== 'via') q[k] = p[k]; }); return q; };
+					var o = {}; Object.keys(m).forEach(function (k) { o[k] = m[k]; });
+					if (Array.isArray(m.prod)) o.prod = m.prod.map(strip);
+					if (m.rating && m.rating.prod) { var r = {}; Object.keys(m.rating).forEach(function (k) { r[k] = k === 'prod' ? strip(m.rating.prod) : m.rating[k]; }); o.rating = r; }
+					return o;
+				});`,
+	}],
+	// U4 (5.3.0, V3c of the U3+U4 plan): the collect writes a preset's `app` mark as the first key of its message, where the
+	// page set it last. The record means the same and a reader would never see the difference, but its bytes are not the
+	// chat's, so first copy wins on `mid` and the other device holds a record that is not the sender's. A parcel that is
+	// not the chat's own bytes is a parcel the push-skip cannot compare. (xi) reddens; (ix) and (x) do not, because their
+	// fixtures hold no `app`.
+	appfirst: [{
+		file: 'js/daimond.js',
+		find: '				entryI.messages = gotI.messages || [];',
+		with: `				entryI.messages = (gotI.messages || []).map(function (m) {		// BROKEN: collect puts app first
+					if (!m || m.app !== true) return m;
+					var o = { app: true }; Object.keys(m).forEach(function (k) { if (k !== 'app') o[k] = m[k]; });
 					return o;
 				});`,
 	}],
@@ -1461,6 +1492,152 @@ check('(ix) the pair settles: another round of pushes sends nothing', cloud.push
 	`${cloud.pushes.length - pushedBefore} push(es), mailbox v${cloud.mailbox.version}`);
 check('(ix) and after it A\'s store and B\'s still hold the fixture byte for byte', (await storedOf(A, RATED)) === FIXTURE && (await storedOf(B, RATED)) === FIXTURE,
 	'A ' + (diffAt(await storedOf(A, RATED), FIXTURE) || 'identical') + '; B ' + (diffAt(await storedOf(B, RATED), FIXTURE) || 'identical'));
+
+// ═══════════════════════════════════════════════════════════════════════
+// (x) A CHAT OF THE U3 FIXTURE IS A FIXED POINT: A FILE RATING, A `files_log` AND A `pre` SURVIVE A COLLECT BYTE FOR BYTE
+// ═══════════════════════════════════════════════════════════════════════
+//
+// 5.3.0 adds four synced fields and no path to carry them (plan section 7): `prod.via`, the `files_log` message, a user
+// message's `pre`, and the manifest's `by.via`. Each rides the legacy `chats` union and is written once, so the one thing
+// to prove here is that `collectSync` hands the chat over exactly as it holds it. `dev/fixtures/rating_u3.json` is the page
+// builder's own bytes: a file `rating_log` whose `prod` is a v2 record, a `files_log` of two records (one credited through a
+// command, `via: 'command'`) and a user message carrying `pre`. `--break novia` strips `via` from every record on the way out.
+console.log('\n— (x) a chat of the U3 fixture collects byte for byte —');
+
+// The fixture lists its rating before the files_log it rates, and a chat is held in time order (ts), so the messages are put in
+// that order here, once, and the chat is seeded and compared in it. The bytes of each message are the fixture's own.
+const FIXTURE3 = JSON.stringify(JSON.parse(fs.readFileSync(path.join(HERE, 'fixtures', 'rating_u3.json'), 'utf8'))
+	.sort((x, y) => (x.ts - y.ts) || (x.mid < y.mid ? -1 : 1)));
+const FILED    = 'rating-u3-fixture';
+const ROLES3   = ['files_log', 'rating_log', 'user'];
+
+for (let i = 0; i < 3; i++) { await pull(A); await push(A); await pull(B); await push(B); }
+
+await A.page.evaluate(async ({ id, fixture }) => {
+	const store = window.DaimondCore.chatStore();
+	const list = store.stored();
+	list.push({ id: id, name: 'Filed', model: 'mock/fast', updatedAt: Date.now(),
+		messages: JSON.parse(fixture), session: null });
+	store.save(list);
+}, { id: FILED, fixture: FIXTURE3 });
+
+check('(x) the fixture is a file rating, a files_log and a user message with pre, and A\'s store holds them byte for byte',
+	JSON.stringify(JSON.parse(FIXTURE3).map((m) => m.role)) === JSON.stringify(ROLES3) && FIXTURE3.includes('"via":"command"') && FIXTURE3.includes('"pre":')
+	&& (await storedOf(A, FILED)) === FIXTURE3, `${FIXTURE3.length} bytes of fixture`);
+const cA3 = await collectedOf(A, FILED);
+check('(x) A\'s collect carries the chat inline, its three messages byte-identical to the fixture',
+	cA3.present && cA3.inline && cA3.messages === FIXTURE3,
+	cA3.present ? (cA3.inline ? (cA3.messages === FIXTURE3 ? 'inline, identical' : diffAt(cA3.messages, FIXTURE3)) : 'carried as a ref') : 'the chat is not in the collect');
+
+await push(A);
+await pull(B);
+let gotB3 = false;
+for (let i = 0; i < 30 && !gotB3; i++) {
+	gotB3 = await B.page.evaluate((id) => window.DaimondCore.chatStore().stored().some((c) => c.id === id), FILED);
+	if (!gotB3) await new Promise((r) => setTimeout(r, 500));
+}
+check('(x) B applies the parcel and holds the chat', gotB3, '');
+check('(x) B\'s store holds the three messages byte-identical to the fixture', (await storedOf(B, FILED)) === FIXTURE3,
+	diffAt(await storedOf(B, FILED), FIXTURE3) || 'identical');
+const cB3 = await collectedOf(B, FILED);
+if (cB3.present && cB3.inline) {
+	check('(x) B\'s collect after the apply carries them byte-identical, as A\'s does', cB3.messages === FIXTURE3 && cB3.messages === cA3.messages, '');
+} else {
+	note('B carries the chat as ' + (cB3.ref ? 'a ref (a sealed chunk), so its inline bytes are not compared; the store above is' : 'nothing') + ' (cB ' + JSON.stringify(cB3) + ')');
+	check('(x) B\'s collect names the chat, as a ref it can restore', cB3.present && cB3.ref, JSON.stringify(cB3));
+}
+
+for (let i = 0; i < 3; i++) { await pull(A); await push(A); await pull(B); await push(B); }
+const pushedBefore3 = cloud.pushes.length;
+await new Promise((r) => setTimeout(r, 5500));		// past IDLE_PULL_MIN_MS
+await push(A); await push(B); await push(A); await push(B);
+check('(x) the pair settles: another round of pushes sends nothing', cloud.pushes.length === pushedBefore3,
+	`${cloud.pushes.length - pushedBefore3} push(es), mailbox v${cloud.mailbox.version}`);
+check('(x) and after it A\'s store and B\'s still hold the fixture byte for byte', (await storedOf(A, FILED)) === FIXTURE3 && (await storedOf(B, FILED)) === FIXTURE3,
+	'A ' + (diffAt(await storedOf(A, FILED), FIXTURE3) || 'identical') + '; B ' + (diffAt(await storedOf(B, FILED), FIXTURE3) || 'identical'));
+
+// ═══════════════════════════════════════════════════════════════════════
+// (xi) THE WHOLE OF 5.3.0'S RECORDS IN ONE CHAT: `files_log` WITH `delta`, `pre`, `app`, AND TWO FILE RATINGS
+// ═══════════════════════════════════════════════════════════════════════
+//
+// (x) holds one of each of the page builder's own records. U4 adds a mark of its own, `app: true` on a user message the app
+// made (a preset, a trigger, a gather round), and a person's message can carry a `pre` beside it in the same chat. So this
+// chat holds the lot: the fixture's `files_log` with its `delta`, a file `rating_log` and the user message with `pre`
+// (all three from `rating_u3.json`, byte for byte), and beside them a second file rating, a second user message whose `pre`
+// carries the kinds of byte the wire has to carry, and a preset with `app: true`, built here in the key order the page
+// writes them (`pushUserRecord` sets `app` and `pre` after `ts`). The chat is collected, applied and settled as (x)'s was,
+// and every byte is compared. `--break appfirst` moves `app` to a message's first key and reddens this section alone.
+console.log('\n— (xi) a chat of every 5.3.0 record collects byte for byte —');
+
+const FIXTURE4 = (() => {
+	const base = JSON.parse(fs.readFileSync(path.join(HERE, 'fixtures', 'rating_u3.json'), 'utf8'));
+	const rate = base.find((m) => m.role === 'rating_log');
+	// A second file rating on another row of the files_log's turn, an up where the fixture's is a down.
+	const rate2 = JSON.parse(JSON.stringify(rate));
+	rate2.mid = 'r-mfq3c0d9-u1v2w'; rate2.ts = rate.ts + 50;
+	rate2.rating.h = 'p1:file:chat:c7/v2/n.md'; rate2.rating.hash = 'cd'.repeat(32);
+	rate2.rating.s = 1; rate2.rating.tags = []; rate2.rating.note = ''; rate2.rating.burst = rate2.mid;
+	rate2.rating.dims = { correct: 1, followed: 1, length: 0, style: 0 };
+	rate2.rating.prod = Object.assign({}, rate.rating.prod, { h: rate2.rating.h, hash: rate2.rating.hash, via: 'command' });
+	// A person's next message, with a note of the kinds of byte the wire has to carry.
+	const said = { role: 'user', content: 'Better. Keep going.', mid: 'mfq3d-1-bcdef', iturn: 'mfq3d-1-bcdef', ts: 1790000900000,
+		pre: '[Daimond: the user rated the file chat:c7/v2/n.md +1.]  Étape ✓ "q" \\ \n tab\there' };
+	// The app's own message, as a preset or a trigger is pushed: no note, and the mark last.
+	const preset = { role: 'user', content: '@text Check the lexer tests.', mid: 'mfq3e-0-cdefg', iturn: 'mfq3e-0-cdefg', ts: 1790001000000, app: true };
+	return JSON.stringify(base.concat([rate2, said, preset]).sort((x, y) => (x.ts - y.ts) || (x.mid < y.mid ? -1 : 1)));
+})();
+const ALLED   = 'rating-u4-fixture';
+const ROLES4  = ['files_log', 'rating_log', 'rating_log', 'user', 'user', 'user'];
+
+for (let i = 0; i < 3; i++) { await pull(A); await push(A); await pull(B); await push(B); }
+
+await A.page.evaluate(async ({ id, fixture }) => {
+	const store = window.DaimondCore.chatStore();
+	const list = store.stored();
+	list.push({ id: id, name: 'Everything', model: 'mock/fast', updatedAt: Date.now(),
+		messages: JSON.parse(fixture), session: null });
+	store.save(list);
+}, { id: ALLED, fixture: FIXTURE4 });
+
+const m4 = JSON.parse(FIXTURE4);
+check('(xi) the fixture holds a files_log with delta, two file ratings, a user message with pre and one with app, and A\'s store holds it byte for byte',
+	JSON.stringify(m4.map((m) => m.role)) === JSON.stringify(ROLES4)
+	&& m4.some((m) => m.role === 'files_log' && Array.isArray(m.delta) && m.delta.length > 0)
+	&& m4.filter((m) => m.role === 'rating_log' && m.rating && m.rating.prod && m.rating.prod.k === 'file').length === 2
+	&& m4.some((m) => m.role === 'user' && typeof m.pre === 'string' && m.pre) && m4.some((m) => m.role === 'user' && m.app === true)
+	&& JSON.stringify(Object.keys(m4.find((m) => m.app === true))) === JSON.stringify(['role', 'content', 'mid', 'iturn', 'ts', 'app'])
+	&& (await storedOf(A, ALLED)) === FIXTURE4, `${FIXTURE4.length} bytes of fixture`);
+const cA4 = await collectedOf(A, ALLED);
+check('(xi) A\'s collect carries the chat inline, its six messages byte-identical to the fixture',
+	cA4.present && cA4.inline && cA4.messages === FIXTURE4,
+	cA4.present ? (cA4.inline ? (cA4.messages === FIXTURE4 ? 'inline, identical' : diffAt(cA4.messages, FIXTURE4)) : 'carried as a ref') : 'the chat is not in the collect');
+
+await push(A);
+await pull(B);
+let gotB4 = false;
+for (let i = 0; i < 30 && !gotB4; i++) {
+	gotB4 = await B.page.evaluate((id) => window.DaimondCore.chatStore().stored().some((c) => c.id === id), ALLED);
+	if (!gotB4) await new Promise((r) => setTimeout(r, 500));
+}
+check('(xi) B applies the parcel and holds the chat', gotB4, '');
+check('(xi) B\'s store holds the six messages byte-identical to the fixture', (await storedOf(B, ALLED)) === FIXTURE4,
+	diffAt(await storedOf(B, ALLED), FIXTURE4) || 'identical');
+const cB4 = await collectedOf(B, ALLED);
+if (cB4.present && cB4.inline) {
+	check('(xi) B\'s collect after the apply carries them byte-identical, as A\'s does', cB4.messages === FIXTURE4 && cB4.messages === cA4.messages, '');
+} else {
+	note('B carries the chat as ' + (cB4.ref ? 'a ref (a sealed chunk), so its inline bytes are not compared; the store above is' : 'nothing') + ' (cB ' + JSON.stringify(cB4) + ')');
+	check('(xi) B\'s collect names the chat, as a ref it can restore', cB4.present && cB4.ref, JSON.stringify(cB4));
+}
+
+for (let i = 0; i < 3; i++) { await pull(A); await push(A); await pull(B); await push(B); }
+const pushedBefore4 = cloud.pushes.length;
+await new Promise((r) => setTimeout(r, 5500));		// past IDLE_PULL_MIN_MS
+await push(A); await push(B); await push(A); await push(B);
+check('(xi) the pair settles: another round of pushes sends nothing', cloud.pushes.length === pushedBefore4,
+	`${cloud.pushes.length - pushedBefore4} push(es), mailbox v${cloud.mailbox.version}`);
+check('(xi) and after it A\'s store and B\'s still hold the fixture byte for byte', (await storedOf(A, ALLED)) === FIXTURE4 && (await storedOf(B, ALLED)) === FIXTURE4,
+	'A ' + (diffAt(await storedOf(A, ALLED), FIXTURE4) || 'identical') + '; B ' + (diffAt(await storedOf(B, ALLED), FIXTURE4) || 'identical'));
 
 } catch (e) {
 	console.log('  FAIL the run itself — ' + (e && e.message ? e.message : e));

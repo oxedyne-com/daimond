@@ -1488,6 +1488,274 @@ pub fn held_under(held: &[(String, Change)], from: &str) -> Vec<(String, String,
 
 
 // ┌───────────────────────────────────────────────────────────────┐
+// │ Who ran a command                                              │
+// └───────────────────────────────────────────────────────────────┘
+
+// A file tool says whose act it was, because it captures the file at the act.  A command, a
+// verifier or a download names no path and captures nothing, so the only account of what it
+// changed is a look at the scope before and after.  That look is a WINDOW around the call, and
+// what it may say is bounded by one rule (J1): a change is credited only where exactly one agent
+// can have made it.  Two agents' windows that overlap on a store cannot tell whose call a change
+// was, so a path both saw change names nobody.
+
+/// What a walk saw of one file, which is enough to tell that it moved and says nothing of how.
+///
+/// A walk that read and hashed every file cost 234 to 265 ms at the 500-file bound (release
+/// 5.3.0, check-first 1), against 85 to 99 ms for the length and the modification time the
+/// listing already carries.  A window takes two walks per call, so it asks the cheap question
+/// and reads only the files that moved.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum Stamp {
+	Seen(u64, Option<u64>),	// its length, and when it was last written in ms
+	Hashed(String),		// the hash of its bytes, for a file whose backend keeps no time
+}
+
+/// A scope as one walk found it: each path with its stamp, and no entry for a path with no file.
+pub type Snap = BTreeMap<String, Stamp>;
+
+/// What a credited author carries in `via` when a command or helper window named it, and what a
+/// file tool's capture never does.
+pub const VIA_COMMAND: &str = "command";
+
+/// The most closed windows one store keeps for its next turn end.  A turn runs a few dozen
+/// commands; a store that is never drained would otherwise grow with every call.
+pub const WINDOWS_MAX: usize = 1000;
+
+/// One call whose file effects no capture records, and what moved while it was in flight.
+///
+/// `from` and `to` are places in one order shared by every window of a store, so two windows
+/// overlap exactly where their intervals do.  `shifted` is `None` for a call that never closed
+/// or has not yet: nothing is known of what it moved, and it can only spoil another's claim.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct Window {
+	pub by:      Option<Author>,
+	pub from:    u64,
+	pub to:      u64,
+	pub shifted: Option<Vec<(String, Option<Stamp>)>>,
+}
+
+impl Window {
+
+	/// Did this window's interval and `other`'s share a place in the order?
+	fn overlaps(&self, other: &Window) -> bool {
+		self.from <= other.to && other.from <= self.to
+	}
+}
+
+/// The paths two walks of one scope disagree about, each with what the later walk saw there, or
+/// `None` where the file has gone.  In path order.
+pub fn shifted(before: &Snap, after: &Snap) -> Vec<(String, Option<Stamp>)> {
+	let mut out: Vec<(String, Option<Stamp>)> = Vec::new();
+	for (path, now) in after.iter() {
+		if before.get(path) != Some(now) {
+			out.push((path.clone(), Some(now.clone())));
+		}
+	}
+	for path in before.keys() {
+		if !after.contains_key(path) {
+			out.push((path.clone(), None));
+		}
+	}
+	out.sort_by(|a, b| a.0.cmp(&b.0));
+	out
+}
+
+/// One changed path and who may be named for it.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct Credit {
+	pub path: String,
+	pub by:   Option<Author>,	// `None` names nobody
+	pub left: Option<Stamp>,	// what the last window to move it left there; `None` where gone
+}
+
+/// Who made each path that a window saw change (J1, J2), in path order.
+///
+/// * A path a file tool captured keeps the capture's author, and its `via` is the capture's own.
+///   A tool knew whose act it was; a window can only infer it.
+/// * A path that windows of one author alone saw change is that author's, with `via` set to
+///   [`VIA_COMMAND`].
+/// * A path that windows of two authors both saw change names nobody, as does one that moved
+///   while a window of another author was in flight and nothing is known of what it moved.
+///
+/// A window that did not see a path change did not change it: a change inside its interval would
+/// have been in its two walks.  So a path that moved in one agent's window alone is that agent's
+/// even where another's window overlapped it.
+///
+/// # Arguments
+/// * `held` - The paths the file tools captured this turn, each with the author of its act.
+pub fn attribute(windows: &[Window], held: &[(String, Option<Author>)]) -> Vec<Credit> {
+	// Every path a closed window moved, with the windows that moved it.
+	let mut seen: BTreeMap<&str, Vec<&Window>> = BTreeMap::new();
+	for w in windows.iter() {
+		if let Some(list) = &w.shifted {
+			for (path, _) in list.iter() {
+				seen.entry(path.as_str()).or_default().push(w);
+			}
+		}
+	}
+	let mut out: Vec<Credit> = Vec::new();
+	for (path, movers) in seen.into_iter() {
+		// The last window to move it, by where it closed, says what the file was left as.
+		let last = movers.iter().copied().max_by_key(|w| w.to);
+		let left = last.and_then(|w| w.shifted.as_ref())
+			.and_then(|list| list.iter().find(|(p, _)| p == path))
+			.and_then(|(_, stamp)| stamp.clone());
+		if let Some((_, cap)) = held.iter().find(|(p, _)| p == path) {
+			out.push(Credit { path: path.to_string(), by: cap.clone(), left });
+			continue;
+		}
+		let first = match movers.first() {
+			Some(w) => w.by.clone(),
+			None    => None,
+		};
+		let alone = movers.iter().all(|w| w.by == first);
+		// A call nothing is known of, by someone else, which was in flight at the same time.
+		let spoilt = windows.iter().any(|lost| lost.shifted.is_none() && lost.by != first
+			&& movers.iter().any(|w| w.overlaps(lost)));
+		let by = match (&first, alone && !spoilt) {
+			(Some(a), true) => Some(Author { via: VIA_COMMAND.to_string(), ..a.clone() }),
+			_               => None,
+		};
+		out.push(Credit { path: path.to_string(), by, left });
+	}
+	out
+}
+
+/// An open window: a call in flight.
+#[derive(Debug)]
+struct Open {
+	by:     Option<Author>,
+	from:   u64,			// where the snapshot it began from was first taken
+	before: Option<Snap>,		// that snapshot, once it is in hand
+	mid:    u64,			// where the call returned and its closing walk began
+	acts:   u64,			// the act count then, which the closing snapshot is stamped with
+}
+
+/// A snapshot a later window of the same author may begin from, so that N calls cost N+1 walks.
+#[derive(Debug)]
+struct Shot {
+	snap: Snap,
+	from: u64,		// where its walk began, which a window that begins from it inherits
+	acts: u64,		// the act count when that walk began
+	by:   Option<Author>,
+}
+
+/// The windows of one store, from the call that opens one to the turn end that takes them.
+///
+/// The walks are the caller's, because they await the disk.  What is here is the order they come
+/// in, whether a walk is needed at all, and what each window saw.  [`Windows::act`] is for
+/// anything that can change the scope behind a window's back and is known to: a file tool's
+/// capture, a person's own door, another agent's call.  A snapshot is reused only where nothing
+/// of the kind has come since it was taken.
+#[derive(Debug, Default)]
+pub struct Windows {
+	tick: u64,		// the order: one place per walk begun or ended
+	acts: u64,		// bumped by every act that may have changed the scope
+	next: u64,
+	last: Option<Shot>,
+	open: BTreeMap<u64, Open>,
+	done: Vec<Window>,
+}
+
+impl Windows {
+
+	fn place(&mut self) -> u64 {
+		self.tick += 1;
+		self.tick
+	}
+
+	/// Open a window for a call by `by`, answering its id and whether the caller walks the scope
+	/// and hands it to [`Windows::began`].  It does not where the last window of the same author
+	/// closed with nothing since to change the scope.
+	pub fn begin(&mut self, by: Option<Author>) -> (u64, bool) {
+		self.next += 1;
+		let id = self.next;
+		let reuse = match &self.last {
+			Some(s) if s.acts == self.acts && s.by == by => Some((s.snap.clone(), s.from)),
+			_                                            => None,
+		};
+		// This call may change the scope, so no snapshot taken before it serves what comes after.
+		self.acts += 1;
+		match reuse {
+			Some((snap, from)) => {
+				self.open.insert(id, Open { by, from, before: Some(snap), mid: 0, acts: 0 });
+				(id, false)
+			},
+			None => {
+				let from = self.place();
+				self.open.insert(id, Open { by, from, before: None, mid: 0, acts: 0 });
+				(id, true)
+			},
+		}
+	}
+
+	/// The scope as the walk `begin` asked for found it.
+	pub fn began(&mut self, id: u64, snap: Snap) {
+		self.place();
+		if let Some(o) = self.open.get_mut(&id) {
+			o.before = Some(snap);
+		}
+	}
+
+	/// The call has returned, and the caller is about to walk the scope for [`Windows::ended`].
+	pub fn finish(&mut self, id: u64) {
+		self.acts += 1;
+		let (acts, mid) = (self.acts, self.place());
+		if let Some(o) = self.open.get_mut(&id) {
+			o.mid = mid;
+			o.acts = acts;
+		}
+	}
+
+	/// The scope as the walk after the call found it: the window closes and says what moved.
+	pub fn ended(&mut self, id: u64, snap: Snap) {
+		let to = self.place();
+		let o = match self.open.remove(&id) {
+			Some(o) => o,
+			None    => return,
+		};
+		let shifted = o.before.as_ref().map(|before| shifted(before, &snap));
+		self.done.push(Window { by: o.by.clone(), from: o.from, to, shifted });
+		if self.done.len() > WINDOWS_MAX {
+			// The oldest go: what they moved is then in no window and is not the turn's.
+			let over = self.done.len() - WINDOWS_MAX;
+			self.done.drain(..over);
+		}
+		self.last = Some(Shot { snap, from: o.mid, acts: o.acts, by: o.by });
+	}
+
+	/// The call never closed: its future was dropped.  Nothing is known of what it moved, and
+	/// nothing it left can be trusted as the scope's last snapshot.
+	pub fn lost(&mut self, id: u64) {
+		let to = self.place();
+		if let Some(o) = self.open.remove(&id) {
+			self.done.push(Window { by: o.by, from: o.from, to, shifted: None });
+		}
+		self.last = None;
+	}
+
+	/// Something outside every window may have changed the scope.
+	pub fn act(&mut self) {
+		self.acts += 1;
+	}
+
+	/// The closed windows, leaving none.  A call still in flight is in the answer as a window
+	/// that moved nothing known, so it can spoil a claim, and stays open to be taken when it
+	/// closes.
+	pub fn take(&mut self) -> Vec<Window> {
+		// A snapshot does not outlive its turn: what changed since, a sync arrival or a person's
+		// edit, would be this turn's first window's.
+		self.last = None;
+		let mut out = std::mem::take(&mut self.done);
+		for o in self.open.values() {
+			out.push(Window { by: o.by.clone(), from: o.from, to: u64::MAX, shifted: None });
+		}
+		out
+	}
+}
+
+
+// ┌───────────────────────────────────────────────────────────────┐
 // │ A generated output, made again                                 │
 // └───────────────────────────────────────────────────────────────┘
 
@@ -2972,6 +3240,7 @@ Garden: order two bags of bark for a bed.
 			pv:   "fireworks".to_string(),
 			sp:   "sp1:3f9a0c12".to_string(),
 			run:  "w-{7}\"x\"".to_string(),
+			via:  String::new(),
 		});
 		let mut daimon = e("crystal.md", "c", None);
 		daimon.by = Some(Author { role: "daimon".to_string(), m: "glm-5".to_string(),
@@ -4290,5 +4559,257 @@ Garden: order two bags of bark for a bed.
 		let delete = open_file_key("vault/p.md", &against(&p, "vault/p.md", b"."));
 		assert_eq!(wipe, delete);
 		assert_eq!(OpenDelete::Go(false), one.room(&delete, 8));
+	}
+
+	// ── Who ran a command (release 5.3.0, E1a) ───────────────────────────────────────────────
+
+	fn seen(n: u64) -> Stamp {
+		Stamp::Seen(n, Some(n))
+	}
+
+	fn agent(role: &str) -> Option<Author> {
+		Some(Author { role: role.to_string(), m: fmt!("{}-model", role), ..Default::default() })
+	}
+
+	/// Run one call by `by` against `scope` the way the executor does: a walk to open it unless
+	/// the last window's will serve, the call's own changes, and a walk to close it.  `walks`
+	/// counts every walk taken.
+	fn call(
+		w:     &mut Windows,
+		scope: &mut Snap,
+		walks: &mut u32,
+		by:    &Option<Author>,
+		work:  impl FnOnce(&mut Snap),
+	) {
+		let (id, walk) = w.begin(by.clone());
+		if walk {
+			*walks += 1;
+			w.began(id, scope.clone());
+		}
+		work(scope);
+		w.finish(id);
+		*walks += 1;
+		w.ended(id, scope.clone());
+	}
+
+	fn credit_of<'a>(credits: &'a [Credit], path: &str) -> Option<&'a Credit> {
+		credits.iter().find(|c| c.path == path)
+	}
+
+	#[test]
+	fn test_a_command_s_change_is_credited_to_the_agent_that_ran_it() {
+		let alice = agent("worker");
+		let mut w = Windows::default();
+		let mut scope = Snap::new();
+		let mut walks = 0;
+		call(&mut w, &mut scope, &mut walks, &alice, |s| { s.insert("out/a.txt".to_string(), seen(1)); });
+		let got = attribute(&w.take(), &[]);
+		let c = credit_of(&got, "out/a.txt").expect("the path the command made was not credited");
+		let by = c.by.as_ref().expect("a command's change named nobody");
+		assert_eq!(by.via, VIA_COMMAND);
+		assert_eq!((by.role.as_str(), by.m.as_str()), ("worker", "worker-model"));
+		assert_eq!(c.left, Some(seen(1)));
+		// What the agent carried in is not altered but for the mark.
+		assert_eq!(Author { via: String::new(), ..by.clone() }, alice.clone().unwrap_or_default());
+	}
+
+	#[test]
+	fn test_changes_inside_overlapping_windows_of_two_agents_name_nobody() {
+		let (alice, bob) = (agent("worker"), agent("daimon"));
+		let mut w = Windows::default();
+		let mut scope = Snap::new();
+		let (a, walk) = w.begin(alice.clone());
+		assert!(walk);
+		w.began(a, scope.clone());
+		scope.insert("h".to_string(), seen(1));			// alice's alone: before bob opens
+		let (b, walk) = w.begin(bob.clone());
+		assert!(walk, "a different author's window must walk for itself");
+		w.began(b, scope.clone());
+		scope.insert("f".to_string(), seen(2));			// inside both windows
+		w.finish(a);
+		w.ended(a, scope.clone());
+		scope.insert("g".to_string(), seen(3));			// bob's alone: after alice has closed
+		w.finish(b);
+		w.ended(b, scope.clone());
+		let got = attribute(&w.take(), &[]);
+		assert_eq!(credit_of(&got, "h").map(|c| c.by.clone().map(|x| x.role)),
+			Some(Some("worker".to_string())), "a change outside the overlap lost its author");
+		assert_eq!(credit_of(&got, "g").map(|c| c.by.clone().map(|x| x.role)),
+			Some(Some("daimon".to_string())), "a change outside the overlap lost its author");
+		assert_eq!(credit_of(&got, "f").map(|c| c.by.clone()), Some(None),
+			"a change inside two agents' overlap was credited to one of them");
+	}
+
+	#[test]
+	fn test_an_unfinished_call_spoils_a_claim_it_overlaps_and_no_other() {
+		let (alice, bob) = (agent("worker"), agent("daimon"));
+		let mut w = Windows::default();
+		let mut scope = Snap::new();
+		let mut walks = 0;
+		call(&mut w, &mut scope, &mut walks, &alice, |s| { s.insert("early".to_string(), seen(1)); });
+		let (b, walk) = w.begin(bob.clone());
+		assert!(walk);
+		w.began(b, scope.clone());
+		call(&mut w, &mut scope, &mut walks, &alice, |s| { s.insert("during".to_string(), seen(2)); });
+		// Bob's call is still running at the turn end, or its future was dropped.
+		let got = attribute(&w.take(), &[]);
+		assert_eq!(credit_of(&got, "early").map(|c| c.by.is_some()), Some(true));
+		assert_eq!(credit_of(&got, "during").map(|c| c.by.clone()), Some(None),
+			"a change while another agent's call was in flight was credited");
+		w.lost(b);
+		let after = attribute(&w.take(), &[]);
+		assert!(credit_of(&after, "early").is_none(), "a taken window was taken twice");
+	}
+
+	#[test]
+	fn test_a_capture_keeps_its_author_inside_another_agent_s_window() {
+		let (alice, bob) = (agent("worker"), agent("daimon"));
+		let mut w = Windows::default();
+		let mut scope = Snap::new();
+		let mut walks = 0;
+		// Alice's command runs while bob's file tool writes `p`, which bob's capture names.
+		call(&mut w, &mut scope, &mut walks, &alice, |s| {
+			s.insert("p".to_string(), seen(1));
+			s.insert("q".to_string(), seen(2));
+		});
+		let held = vec![("p".to_string(), bob.clone())];
+		let got = attribute(&w.take(), &held);
+		let p = credit_of(&got, "p").expect("the captured path was dropped");
+		assert_eq!(p.by, bob, "a capture lost its own author to a window");
+		assert_eq!(p.by.as_ref().map(|a| a.via.as_str()), Some(""), "a capture is marked as a command's");
+		assert_eq!(credit_of(&got, "q").and_then(|c| c.by.clone()).map(|a| a.via), Some(VIA_COMMAND.to_string()));
+	}
+
+	#[test]
+	fn test_a_change_outside_every_window_is_not_the_turn_s() {
+		let alice = agent("worker");
+		let mut w = Windows::default();
+		let mut scope = Snap::new();
+		let mut walks = 0;
+		call(&mut w, &mut scope, &mut walks, &alice, |s| { s.insert("x".to_string(), seen(1)); });
+		// A person's edit, or a sync arrival, between two calls: something the store was told of.
+		scope.insert("theirs".to_string(), seen(7));
+		w.act();
+		call(&mut w, &mut scope, &mut walks, &alice, |s| { s.insert("z".to_string(), seen(2)); });
+		let got = attribute(&w.take(), &[]);
+		let paths: Vec<&str> = got.iter().map(|c| c.path.as_str()).collect();
+		assert_eq!(paths, vec!["x", "z"], "a change no window saw was filed under the turn");
+		assert_eq!(walks, 4, "the second call began from a snapshot that predates the act");
+	}
+
+	#[test]
+	fn test_seeded_files_are_not_in_the_turn_s_version() {
+		let alice = agent("worker");
+		let mut w = Windows::default();
+		// `ensure_standing` ran at composition, before any window opened.
+		let mut scope = Snap::new();
+		for f in ["STATE.md", "REQUIREMENTS.md", "DECISIONS.md"] {
+			scope.insert(format!("diamonds/d1/{}", f), seen(100));
+		}
+		// What a walk at the turn's end sees against a store that has never recorded them.
+		assert_eq!(shifted(&Snap::new(), &scope).len(), 3);
+		let mut walks = 0;
+		call(&mut w, &mut scope, &mut walks, &alice, |s| {
+			s.insert("diamonds/d1/out.txt".to_string(), seen(5));
+		});
+		let got = attribute(&w.take(), &[]);
+		let paths: Vec<&str> = got.iter().map(|c| c.path.as_str()).collect();
+		assert_eq!(paths, vec!["diamonds/d1/out.txt"]);
+	}
+
+	#[test]
+	fn test_consecutive_windows_share_a_snapshot() {
+		let (alice, bob) = (agent("worker"), agent("daimon"));
+		let mut w = Windows::default();
+		let mut scope = Snap::new();
+		let mut walks = 0;
+		for n in 1..=3u64 {
+			call(&mut w, &mut scope, &mut walks, &alice, |s| {
+				s.insert(fmt!("f{}", n), seen(n));
+			});
+		}
+		assert_eq!(walks, 4, "three calls with nothing between them cost four walks");
+		let got = attribute(&w.take(), &[]);
+		for n in 1..=3 {
+			assert!(credit_of(&got, &fmt!("f{}", n)).map(|c| c.by.is_some()).unwrap_or(false),
+				"f{} was not credited through the shared boundary", n);
+		}
+		// Another agent's call between, or any act, ends the sharing.
+		call(&mut w, &mut scope, &mut walks, &bob, |_| {});
+		assert_eq!(walks, 6);
+		call(&mut w, &mut scope, &mut walks, &alice, |_| {});
+		assert_eq!(walks, 8, "a call began from a snapshot another agent's call had come after");
+		w.act();
+		call(&mut w, &mut scope, &mut walks, &alice, |_| {});
+		assert_eq!(walks, 10, "a call began from a snapshot an act had come after");
+		call(&mut w, &mut scope, &mut walks, &alice, |_| {});
+		assert_eq!(walks, 11);
+		// And so does a turn end: the next turn begins from a look of its own.
+		let _ = w.take();
+		call(&mut w, &mut scope, &mut walks, &alice, |_| {});
+		assert_eq!(walks, 13, "a turn began from a snapshot the last turn took");
+	}
+
+	#[test]
+	fn test_a_file_that_moved_is_told_from_one_that_was_only_listed() {
+		let mut before = Snap::new();
+		before.insert("same".to_string(), seen(1));
+		before.insert("edited".to_string(), seen(2));
+		before.insert("removed".to_string(), Stamp::Hashed("aa".to_string()));
+		let mut after = before.clone();
+		after.insert("edited".to_string(), Stamp::Seen(2, Some(3)));
+		after.remove("removed");
+		after.insert("made".to_string(), seen(4));
+		let got = shifted(&before, &after);
+		assert_eq!(got, vec![
+			("edited".to_string(), Some(Stamp::Seen(2, Some(3)))),
+			("made".to_string(), Some(seen(4))),
+			("removed".to_string(), None),
+		]);
+	}
+
+	/// The reader 5.2.9 shipped for an entry's author, ported as it was: `Author::from_json` at
+	/// `<R529>`, which has no `via`.  A 5.3.0 manifest reaches 5.2.9 devices through sync.
+	fn author_as_5_2_9_read_it(obj: &str) -> Option<(String, String, String, String, String)> {
+		let role = match extract_json_string(obj, "role") {
+			Some(r) if !r.is_empty()	=> r,
+			_				=> return None,
+		};
+		Some((
+			role,
+			extract_json_string(obj, "m").unwrap_or_default(),
+			extract_json_string(obj, "pv").unwrap_or_default(),
+			extract_json_string(obj, "sp").unwrap_or_default(),
+			extract_json_string(obj, "run").unwrap_or_default(),
+		))
+	}
+
+	#[test]
+	fn test_a_5_2_9_reader_parses_an_author_with_via() -> Outcome<()> {
+		let by = Author {
+			role: "worker".to_string(),
+			m:    "glm-5p2".to_string(),
+			pv:   "fireworks".to_string(),
+			sp:   "sp1:3f9a0c12".to_string(),
+			run:  "w-7".to_string(),
+			via:  VIA_COMMAND.to_string(),
+		};
+		let mut row = e("out/a.txt", "new\n", Some("old\n"));
+		row.by = Some(by.clone());
+		let manifest = Manifest::new(Cause::Turn, 17, "m_1", "", vec![row.clone()]);
+		let json = manifest.to_json();
+		// The mark is nested, last, and after every key an older reader looks for.
+		assert!(json.contains(",\"run\":\"w-7\",\"via\":\"command\"}"), "{}", json);
+		let nested = res!(object_inside(&json, "by")
+			.ok_or_else(|| err!("no `by` object in {}", json; Missing)));
+		assert_eq!(author_as_5_2_9_read_it(nested), Some((
+			"worker".to_string(), "glm-5p2".to_string(), "fireworks".to_string(),
+			"sp1:3f9a0c12".to_string(), "w-7".to_string())));
+		// And its row: the flat keys 5.2.9 extracts come before the nested object.
+		assert_eq!(extract_json_string(&row.to_json(), "path").as_deref(), Some("out/a.txt"));
+		// 5.3.0 reads it back whole.
+		let back = res!(Manifest::from_json(&json));
+		assert_eq!(back.files[0].by, Some(by));
+		Ok(())
 	}
 }

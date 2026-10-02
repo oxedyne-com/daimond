@@ -12,6 +12,32 @@
 (function () {
 	'use strict';
 
+	// The ring follows the last input (quality bar rule 1). Chrome keeps :focus-visible on a control a key focused and a pointer then
+	// pressed -- a dialog's own close control, focused by the Enter that opened it -- and a script focus inherits it, so the control
+	// the app hands the focus back to (a closed popup's opener) drew a ring after a mouse close. While the last input is a pointer,
+	// a control that holds or takes the focus with a ring is marked `data-nofv`, which app.css draws as no ring until the focus
+	// leaves it. The first key restores the ring, on the control that holds the focus and on those that take it. Fields are left alone: their focus is a caret and a border colour, never an outline.
+	(function () {
+		var ptr = false;	// the last input was a pointer press
+		function mark(el) {
+			if (!ptr || !el || el === document.body || !el.matches || !el.setAttribute) return;
+			if (/^(input|textarea|select)$/i.test(el.tagName) || el.isContentEditable) return;
+			try { if (el.matches(':focus-visible')) el.setAttribute('data-nofv', ''); } catch (e) { /* no :focus-visible */ }
+		}
+		document.addEventListener('pointerdown', function () { ptr = true; mark(document.activeElement); }, true);
+		document.addEventListener('keydown', function () {
+			ptr = false;
+			// A control a key focused and a pointer then pressed keeps its mark, and Chrome reads it as :focus-visible again at the next
+			// key, so the key clears the mark from the control that holds the focus.
+			var a = document.activeElement;
+			if (a && a.removeAttribute) a.removeAttribute('data-nofv');
+		}, true);
+		document.addEventListener('focusin', function (e) { mark(e.target); }, true);
+		document.addEventListener('focusout', function (e) {
+			if (e.target && e.target.removeAttribute) e.target.removeAttribute('data-nofv');
+		}, true);
+	})();
+
 	var SCALE_KEY = 'daimond-fs-scale';
 	// Four steps, and no free slider. A slider invites a size nobody chose and
 	// makes a layout bug impossible to reproduce; four named steps do not.

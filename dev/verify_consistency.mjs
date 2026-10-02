@@ -233,6 +233,8 @@ const CAPTURE = ({ rootSel, surface, tap }) => {
 	// directly here, once per instance of each component.
 	const COMPONENTS = [
 		['rating-tile', '.ctile[data-t="rating"]', [['head', '.ctile-lbl'], ['lines', '.rate-line']]],
+		// The changed-files note (a Diamond's tail note and a chat's Files row): its head, then its rows, in that order whatever a path measures.
+		['turn-files', '.turn-files', [['head', '.turn-files-head'], ['rows', '.turn-file-row']]],
 		['rate-popup', '.rate-card', [['scale', '.rate-scale'], ['tags', '.ctile-rate-tags'], ['details', '.tile-dlg-adv'], ['where', '.rate-where']]],
 		['tile', '.session-box', [
 			['title', '.session-box-header'],
@@ -476,6 +478,41 @@ async function rateSurfaces(pre) {
 	await quiet();
 }
 
+/// Unfold the tile that holds the last match of `sel` (a thread drawn from history, and the transcript passes before this, leave tiles folded).
+const unfold = (sel) => ev((q) => { const e = [...document.querySelectorAll(q)].pop(); const t = e && e.closest('.ctile'); if (t) t.classList.remove('collapsed'); }, sel);
+/// U3's own surfaces on the main chat (plan unit G): its last Files row at rest and under a hover, the chip row of file tags under a down
+/// tap on an unrated row (taken back afterwards), the popup on the rated row collapsed and with Details open, and the Rating tile with its
+/// file line. `pre` is '' or 'p_'. A chat with no Files row is a fault, except on a device that holds no copy of the chat (WebKit, no gateway).
+async function fileSurfaces(pre, wk) {
+	const tile = () => page.locator('#chat-output .turn-files').last();
+	const row = (name) => tile().locator('.turn-file-row', { hasText: name });
+	const vis = (name, cls) => row(name).locator(`.${cls} >> visible=true`).first();
+	const into = () => ev(() => { const t = [...document.querySelectorAll('#chat-output .turn-files')].pop(); if (t) t.scrollIntoView({ block: 'center' }); });
+	const names = ['chat_files_row', 'file_rate_tags', 'dlg_rate_file', 'dlg_rate_file_details', 'rating_tile_file'].map((n) => pre + n);
+	if (!(await ev(() => document.querySelectorAll('#chat-output .turn-files').length))) {
+		if (wk && !WKSTORE) for (const n of names) CAP.notCovered.push({ label: 'webkit chat Files row', reason: 'the paired chat did not carry its Files row to this device', surface: `${CFG}/${n}` });
+		else CAP.missing.push(...names.map((n) => `${CFG}/${n}`));
+		return;
+	}
+	await unfold('#chat-output .turn-files'); await into(); await wait(300);
+	await grab(pre + 'chat_files_row', '#chat-output');
+	if (!pre) { await row('o.md').hover({ force: true }).catch(() => {}); await wait(300); await grab('chat_files_hover', '#chat-output', true); await page.mouse.move(...PARK_DESK); }
+	await vis('o.md', 'ctile-rate-down').click({ force: true }); await wait(400);
+	await grab(pre + 'file_rate_tags', '#chat-output');
+	await vis('o.md', 'ctile-rate-down').click({ force: true }); await wait(300);
+	await ev(async () => { await window.DaimondRatingUI.flush(String(window.DaimondAttach.focus().id)); });
+	await into(); await wait(300);
+	const ov = await overlay(pre + 'dlg_rate_file', async () => { await vis('n.md', 'ctile-rate-more').click({ force: true }); return true; });
+	if (ov) {
+		await ev(() => { const d = document.querySelector('.rate-card details'); if (d) d.open = true; }); await wait(400);
+		await grab(pre + 'dlg_rate_file_details', await topOverlay());
+	}
+	await quiet();
+	await unfold('#chat-output .ctile[data-t="rating"] .rate-line');
+	await ev(() => { const t = [...document.querySelectorAll('#chat-output .ctile[data-t="rating"]')].pop(); if (t) t.scrollIntoView({ block: 'center' }); }); await wait(300);
+	await grab(pre + 'rating_tile_file', '#chat-output');
+}
+
 // ── Surfaces: the computer ──────────────────────────────────────────────
 async function deskSurfaces() {
 	await quiet(); await mainChat();
@@ -489,6 +526,7 @@ async function deskSurfaces() {
 	const tiles = page.locator('#chat-output .ctile.chat-msg-assistant');
 	if (await tiles.count()) { await tiles.last().hover({ force: true }).catch(() => {}); await wait(300); await grab('tile_hover', '#chat-output', true); await page.mouse.move(...PARK_DESK); }
 	await rateSurfaces('');
+	await fileSurfaces('', false);
 	await page.fill('#chat-input', 'A draft that is long enough to wrap onto a second line of the composer, so its height and its buttons show how they sit together.').catch(() => {});
 	await wait(300); await grab('composer', '.chat-input-bar'); await page.fill('#chat-input', '').catch(() => {});
 	// Rail sections, each unfolded, and a filter chip on.
@@ -565,6 +603,22 @@ async function deskSurfaces() {
 	}
 	await quiet(); await click('#dview-crystal'); await wait(900);
 	await click('#dview-chat'); await wait(800); await grab('diamond_chat');
+	// The Diamond whose turn changed files, by its own name: which Kitchen Diamond the `/Kitchen/` pick above opened depends on the rail filter that
+	// `rail_filtered` left on (a look that leaves "not research" hides this one), so the filter is cleared and the Diamond picked by name.
+	await ev(() => { const b = document.querySelector('#panel-rail .tag-clear-all'); if (b && b.getClientRects().length) b.click(); }); await wait(500);
+	const kh = await ev(() => { const t = [...document.querySelectorAll('.diamond-box')].find((e) => /^Kitchen renovation for the Leederville/.test(((e.querySelector('.session-box-name') || {}).textContent || '').trim())); if (!t) return false; (t.querySelector('.tile-label') || t).click(); return true; });
+	if (kh === true) { await wait(1000); await click('#dview-chat'); await wait(800); }
+	// The first look draws the thread from the store a moment after the switch to the chat face: wait for the note as a person would.
+	await page.waitForSelector('#chat-output .turn-files .turn-file-rate', { timeout: 8000, state: 'attached' }).catch(() => {});
+	if (await ev(() => document.querySelectorAll('#chat-output .turn-files .turn-file-rate').length)) {
+		await unfold('#chat-output .turn-files');
+		await ev(() => { const t = [...document.querySelectorAll('#chat-output .turn-files')].pop(); if (t) t.scrollIntoView({ block: 'center' }); }); await wait(300);
+		await grab('turn_files_rated', '#chat-output');
+	} else {
+		CAP.missing.push(`${CFG}/turn_files_rated`);
+		log('turn_files_rated missing:', JSON.stringify(await ev(() => ({ kh: !!document.querySelector('#dview-chat.on, #dview-chat[aria-pressed="true"]'), title: (document.querySelector('#panel-ai .ctitle') || {}).textContent, rail: [...document.querySelectorAll('#diamond-list .diamond-box')].map((e) => ((e.querySelector('.session-box-name') || {}).textContent || '').trim().slice(0, 14) + (e.classList.contains('active') ? '*' : '') + (e.getClientRects().length ? '' : '(hidden)')), clear: [...document.querySelectorAll('#panel-rail button')].filter((b) => /clear/i.test(b.textContent) && b.getClientRects().length).map((b) => b.textContent.trim()), chips: [...document.querySelectorAll('#panel-rail .tag-chip')].filter((b) => b.getClientRects().length).map((b) => b.textContent.trim().slice(0, 12) + ':' + b.className.replace(/tag-chip|tag-sm/g, '').trim()).slice(0, 6), tiles: [...document.querySelectorAll('#chat-output .ctile')].map((t) => t.dataset.t).join(','), files: document.querySelectorAll('#chat-output .turn-files').length, rate: document.querySelectorAll('#chat-output .turn-file-rate').length }))));
+		await page.screenshot({ path: `${OUT}/dbg_turn_files_missing_${CFG}.png` }).catch(() => {});
+	}
 	await ev(() => { const d = document.querySelector('.rail-builtin'); if (d) d.open = true; }); await wait(300);
 	await ev(() => { const b = document.querySelector('.rail-builtin .diamond-box, .rail-builtin .session-box, .rail-builtin button'); if (b) ((b.querySelector && b.querySelector('.tile-label')) || b).click(); });
 	await wait(1400); await grab('diamond_builtin');
@@ -581,6 +635,7 @@ async function phoneSurfaces(wk) {
 	await ev(() => { const o = document.getElementById('chat-output'); if (o) o.scrollTop = 0; }); await wait(300);
 	await grab('p_chat_top', '#chat-output');
 	await rateSurfaces('p_');
+	await fileSurfaces('p_', wk);
 	await page.fill('#chat-input', 'A draft long enough to wrap onto a second line of the composer on a phone.').catch(() => {});
 	await wait(300); await grab('p_composer', '.chat-input-bar'); await page.fill('#chat-input', '').catch(() => {});
 	await click('#drawer-btn'); await wait(900);
@@ -654,6 +709,13 @@ async function carrySurfaces(wk) {
 		await wait(1200);
 		await click('#dview-crystal'); await wait(1400); await grab('p_diamond_crystal');
 		await click('#dview-chat'); await wait(900); await grab('p_diamond_chat');
+		// The thread at its end: the last tile is the tail note, and its 44px squares must clear #chat-jump and #chat-end (the 68px foot, 260f7dea).
+		await page.waitForSelector('#chat-output .turn-files .turn-file-rate', { timeout: 8000, state: 'attached' }).catch(() => {});
+		if (await ev(() => document.querySelectorAll('#chat-output .turn-files .turn-file-rate').length)) {
+			await unfold('#chat-output .turn-files');
+			await ev(() => { const o = document.getElementById('chat-output'); if (o) o.scrollTop = o.scrollHeight; }); await wait(400);
+			await grab('p_turn_files_rated');
+		} else CAP.missing.push(`${CFG}/p_turn_files_rated`);
 		await click('#dview-crystal'); await wait(500);
 	} else if (wk && !WKSTORE) {
 		// A Diamond is a folder in the store (see `webkitPair`): the device holds none, so there is no face to open.
@@ -723,7 +785,76 @@ async function seed() {
 	await chat(s, '@tool file_read {"path":"notes.md"}').catch((e) => log('tool turn', e.message));
 	await chat(s, '@tools file_read {"path":"budget.csv"} ;; file_read {"path":"quotes/harlow.md"}').catch((e) => log('tools turn', e.message));
 	await chat(s, '@reason I compare the lead times against a May start first. ;; Harlow is the only one that lands in May.').catch((e) => log('reason turn', e.message));
+	// U3 (plan unit G): two chat turns that change files (before the error turn, which leaves the chat waiting to retry), so the thread holds two Files rows (one file, then two). The second turn's
+	// n.md is rated down through its popup (a tag and the person's words), which gives the Rating tile a file line beside its two answers.
+	{
+		const cdir = await ev(() => window.DaimondAttach.chatScratch(String(window.DaimondAttach.focus().id)));
+		const cw = (p, c) => JSON.stringify({ path: `${cdir}/${p}`, content: c });
+		await chat(s, '@tools file_write ' + cw('o.md', 'old\n')).catch((e) => log('files turn 1', e.message));
+		await chat(s, '@tools file_write ' + cw('n.md', 'a new file\n') + ' ;; file_write ' + cw('o.md', 'old\nand a line more\n')).catch((e) => log('files turn 2', e.message));
+		await wait(800);
+		const tiles = await ev(() => document.querySelectorAll('#chat-output .turn-files').length);
+		const rows = await ev(() => [...document.querySelectorAll('#chat-output .turn-files')].pop().querySelectorAll('.turn-file-row[data-h]').length);
+		if (tiles !== 2 || rows !== 2) { log(`seed: the chat's Files rows did not land (${tiles} tiles, ${rows} rated rows in the last, want 2 and 2)`); await s.close().catch(() => {}); process.exit(3); }
+		const nrow = page.locator('#chat-output .turn-files').last().locator('.turn-file-row', { hasText: 'n.md' });
+		await nrow.locator('.ctile-rate-more').click({ force: true });
+		await page.waitForSelector('.rate-card', { timeout: 6000 });
+		await page.locator('.rate-card .rate-scale .tile-dlg-level').first().click({ force: true });
+		await page.locator('.rate-card .ctile-rate-tags .tile-dlg-level').nth(1).click({ force: true });
+		await page.locator('.rate-card details > summary').first().click({ force: true });
+		await page.locator('.rate-card textarea.rate-said-input').fill('It changed more of the file than I asked for.');
+		await page.locator('.rate-card .ui-close').first().click({ force: true });
+		await wait(300);
+		await ev(async () => { await window.DaimondRatingUI.flush(String(window.DaimondAttach.focus().id)); });
+		await wait(500);
+		const lines = await ev(() => document.querySelectorAll('#chat-output .ctile[data-t="rating"] .rate-line').length);
+		if (lines !== 3) { log(`seed: the file rating did not land (${lines} Rating lines, want 3)`); await s.close().catch(() => {}); process.exit(3); }
+	}
 	await chat(s, '@err 500').catch((e) => log('err turn', e.message));
+	// A Diamond's own turn that changes files leaves the tail note (a Files tile at the foot of its thread), one row rated up. It is the
+	// long-titled Kitchen Diamond, which the pass's `/Kitchen/` picks open (the most recently active), so every Diamond surface has the note. It runs on the
+	// default (mock) model, so it comes before the per-Diamond models below are set to names the mock has no route for.
+	{
+		const kid2 = await ev(async (n) => { const d = JSON.parse(await window.__free.list_diamonds()).find((x) => x.name === n); return d ? d.id : ''; }, DIAMONDS[3]);
+		const pick = await ev((name) => { const t = [...document.querySelectorAll('#diamond-list .diamond-box')].find((e) => ((e.querySelector('.session-box-name') || {}).textContent || '').trim() === name); if (!t) return false; (t.querySelector('.tile-label') || t).click(); return true; }, DIAMONDS[3]);
+		if (pick !== true) { log('seed: no long-titled Kitchen Diamond to steer'); await s.close().catch(() => {}); process.exit(3); }
+		await wait(1000);
+		await page.locator('#dview-chat').click({ force: true }); await wait(700);
+		const w = (p, c) => JSON.stringify({ path: `diamonds/${kid2}/code/${p}`, content: c });
+		await page.fill('#chat-input', '@tools file_write ' + w('plan.md', '# Plan\n\nStage two, joinery first.\n') + ' ;; file_write ' + w('quotes.md', '# Quotes\n\nHarlow, Oakline, Brandt.\n')
+			+ ' ;; file_write ' + w('drawings/stage-two/benchtop/final-revisions/kitchen-benchtop-and-splashback-v3.md', '# Drawing\n\nv3.\n') + ' ;; file_write ' + w('todo.md', '# To do\n\nPower points.\n'));
+		await page.click('#chat-send', { force: true });
+		await page.waitForFunction((id) => !window.DaimondCore.diamondBusy(id), kid2, { timeout: 90000, polling: 500 }).catch((e) => log('diamond turn', e.message));
+		await wait(1500);
+		const rr = await ev(() => document.querySelectorAll('#chat-output .turn-files .turn-file-row[data-h]').length);
+		if (rr !== 4) { log(`seed: the Diamond's tail note has ${rr} rated rows, want 4`); await s.close().catch(() => {}); process.exit(3); }
+		await page.locator('#chat-output .turn-files .turn-file-row', { hasText: 'quotes.md' }).locator('.ctile-rate-up').click({ force: true });
+		await wait(300);
+		await ev(async (id) => { const c = window.DaimondDiamond.conversation(id); await window.DaimondRatingUI.flush(String(c.id)); }, kid2);
+		await wait(600);
+		const lit = await ev(() => document.querySelectorAll('#chat-output .turn-files .ctile-rate-up[aria-pressed="true"]').length);
+		if (lit !== 1) { log(`seed: the Diamond's file rating did not land (${lit} lit arrows, want 1)`); await s.close().catch(() => {}); process.exit(3); }
+	}
+	// Three trashed things, so the Trash's rows are measured: two chats (Keep, Restore, the cross and the note) and a Diamond (no Keep).
+	{
+		const trashOne = async (listSel, boxCls, re) => {
+			await ev(() => { const b = document.getElementById('drawer-btn'); if (b && b.getClientRects().length && !document.body.classList.contains('drawer-open')) b.click(); }); await wait(300);
+			const ok = await ev((a) => { const t = [...document.querySelectorAll(a.l + ' ' + a.c)].find((e) => new RegExp(a.re).test((e.textContent || ''))); const c = t && t.querySelector('.tile-cog'); if (!c) return false; c.click(); return true; }, { l: listSel, c: boxCls, re });
+			if (!ok) return false;
+			await wait(700); await page.locator('.tile-dlg-delete').first().click({ force: true }); await wait(600);
+			await ev(() => { const b = [...document.querySelectorAll('.dlg-card .dlg-ok.danger, .modal-card .dlg-ok.danger')].find((e) => e.getClientRects().length); if (b) b.click(); });
+			await wait(900);
+			return true;
+		};
+		for (const q of ['Notes on the old tile order.', 'Why the first benchtop quote lapsed, and whether to ask Oakline to re-quote the whole job now that the lead times have changed again']) {
+			await newChat(s); await chat(s, q);
+			if (!(await trashOne('#session-list', '.chat-box', q.slice(0, 12)))) log('seed: could not trash the chat', q.slice(0, 12));
+		}
+		await page.click('#new-diamond-btn', { force: true });
+		await page.waitForSelector('.dlg-input', { timeout: 10000 });
+		await page.fill('.dlg-input', 'Old budget draft'); await page.click('.dlg-ok', { force: true }); await wait(1200);
+		if (!(await trashOne('#diamond-list', '.diamond-box', 'Old budget draft'))) log('seed: could not trash the Diamond');
+	}
 	// Three diamonds, three different shapes of the same tile (D-20260929-03
 	// followup): a short model and one tag, a long model and five tags, and a
 	// short model with none at all. A content-dependent wrap in the model,
@@ -974,6 +1105,18 @@ const ROLES = [
 	['rail-tile',       'none',     (it) => has(it, 'session-box') || has(it, 'tile-label') && within(it, /session-box/)],
 	// G20: `.path-crumb` is a breadcrumb, not a list row.
 	['file-row',        'none',     (it) => has(it, 'files-row')],
+	// U3 (plan unit G): the changed-files note's own two controls, by role. The name opens the file and the delta is a count; neither is an
+	// icon button or a text button, and filed under those they were compared with the rail's buttons (34 unexplained rows on the first run
+	// that seeded a Files row). Each is compared with its own instances: a Diamond's tail note and a chat's Files row, on a computer and a phone.
+	['file-name',       'none',     (it) => it.ctrl && has(it, 'turn-file-name')],
+	['file-count',      'none',     (it) => it.ctrl && has(it, 'turn-file-delta')],
+	// The Trash's rows (the lead's 11:55 item: a seed that fills the Trash) and History's per-row file count, by role. A pill that restores a
+	// row and a cross that purges it are the row's own verbs, drawn smaller than a dialog's text button on purpose, and the fact line is a date
+	// and a size, which are data and not a sentence (the user's own words and times are not compared for casing either).
+	['row-action',      'title',    (it) => it.ctrl && (has(it, 'trash-keep') || has(it, 'trash-restore'))],
+	['row-drop',        'none',     (it) => it.ctrl && has(it, 'arte-drop')],
+	['history-count',   'none',     (it) => it.ctrl && has(it, 'hist-files-n')],
+	['row-fact',        'none',     (it) => has(it, 'arte-note')],
 	// G14: a figures strip is not a status row (L3 lays it out on its own).
 	['stat-strip',      'none',     (it) => has(it, 'spend-row')],
 	['status-row',      'none',     (it) => has(it, 'astat-row') || has(it, 'spend-row') || has(it, 'user-row')],
@@ -1420,6 +1563,9 @@ const V_COST  = ['$0.01', 'A$1,234.56', 'A$1,234,567.89'];
 const V_TOK   = ['12 tok', '1.2M tok', '123,456,789 tok'];
 const V_FILE  = ['a.md', 'kitchen-renovation-quotes-final.md', 'a-very-long-file-name-for-the-kitchen-renovation-final-v3-with-benchtop-and-splashback.md'];
 const V_DIR   = ['q', 'joinery-and-benchtop-quotes', 'joinery-and-benchtop-quotes-from-every-supplier-we-spoke-to-in-2026'];
+// A changed file's path: a bare name, a nested path of about 60 characters, and one of 200 (a long directory and a long name).
+const V_PATH  = ['a.md', 'quotes/joinery-and-benchtop/2026-stage-two/kitchen-quote-v3.md',
+	'a-deliberately-long-directory-name-that-keeps-going-and-going/'.repeat(3) + 'kitchen-benchtop-quote.md'];
 const V_ACCT  = ['al', 'Alexandra Montgomery-Whitfield', 'Alexandra Montgomery-Whitfield (Leederville office, second laptop)'];
 const V_SYNC  = ['Synced 2m ago', 'Last synced 3 hours ago on this device', 'Sync paused: the gateway refused the last push (quota exceeded for this account), retrying in 4 minutes'];
 const V_STAT  = ['Local', 'gpt-5 · 12,345 tok · A$1,234.56 today', 'anthropic/claude-opus-5.5-extended-context-preview · 123,456,789 tok · A$1,234,567.89 today'];
@@ -1461,14 +1607,21 @@ const VSLOTS = [
 	// x for every title and every word (rule 3); `.chead` is the comp, so the whole head is read for what moves.
 	['mode word',           '#panel-ai', '.chead', '#hand-mode-chip .mode-chip-txt', V_MODE, null, 'chat'],
 	['diamond head title',  '#panel-ai', '.chead', '.ctitle', V_NAME, null, 'diamond'],
+	// 5.3.0 (G1): the changed-files note, in a chat (its Files row) and on a Diamond (its tail note). The delta and the rating group keep their x
+	// and the row keeps its height for every path (rule 3); a long path gives way in its directory first (`.turn-file-dir`) and the file's own name stays.
+	['file path, chat row',  '#chat-output', '.turn-file-row', '.turn-file-name', { path: V_PATH }, /n\.md/, 'files'],
+	['file path, tail note', '#chat-output', '.turn-file-row', '.turn-file-name', { path: V_PATH }, /quotes\.md/, 'dtail'],
+	['chat files count',     '#chat-output', '.turn-files', '.turn-files-rows', { count: [1, 5, 14] }, null, 'files'],
+	['file rating line',     '#chat-output', '.ctile[data-t="rating"]', '.rate-jump-link[data-h]', { text: V_PATH.map((x) => 'the change to ' + x) }, null, 'ratingfile'],
+	['file popup chip label', 'OVERLAY', '.ctile-rate-tags', '.tile-dlg-level', V_CHIP, null, 'filepop'],
 ];
 // Whole surfaces re-read in each locale: every label at once, en against de and fr.
-const VLOCALE = [['rail', '#panel-rail'], ['chat head', '#panel-ai > .chead'], ['workspace', '#panel-work', 'work'], ['composer', '.chat-input-bar'], ['topbar', '.topbar'], ['new diamond dialog', 'OVERLAY', 'newdia'], ['admin', '#admin', 'admin'], ['rate popup', 'OVERLAY', 'ratepop'], ['rate chips', '#chat-output', 'ratetags'],
+const VLOCALE = [['rail', '#panel-rail'], ['chat head', '#panel-ai > .chead'], ['workspace', '#panel-work', 'work'], ['composer', '.chat-input-bar'], ['topbar', '.topbar'], ['new diamond dialog', 'OVERLAY', 'newdia'], ['admin', '#admin', 'admin'], ['rate popup', 'OVERLAY', 'ratepop'], ['rate chips', '#chat-output', 'ratetags'], ['chat files row', '#chat-output', 'files'], ['file popup', 'OVERLAY', 'filepop'],
 	// The phone's ⋯ menu in en, de and fr. Phone only: on a computer the head has no ⋯, which is "not applicable", not NOT COVERED.
 	['chat head menu', 'OVERLAY', 'headmore']];
 
 // In the page: set (or restore) one slot, then read every part's geometry.
-const VMEASURE = ({ ctx, comp, slot, idx, pick, text, count, restore }) => {
+const VMEASURE = ({ ctx, comp, slot, idx, pick, text, count, fpath, restore }) => {
 	const W = window.__vl = window.__vl || {};
 	const cs = (e) => getComputedStyle(e);
 	const vis = (e) => { if (!e.getClientRects().length) return false; const s = cs(e); if (s.visibility === 'hidden' || +s.opacity === 0) return false; const r = e.getBoundingClientRect(); return r.width >= 1 && r.height >= 1; };
@@ -1489,7 +1642,35 @@ const VMEASURE = ({ ctx, comp, slot, idx, pick, text, count, restore }) => {
 		if (n) { const o = n.nodeValue; n.nodeValue = text; W.undo.push(() => { n.nodeValue = o; }); }
 		else { const o = S.textContent; S.textContent = text; W.undo.push(() => { S.textContent = o; }); }
 	}
-	if (count != null) {
+	if (fpath != null) {
+		// A file name as `_turnFileRow` draws it: the directory and the file's own name in two spans, or the bare name.
+		const old = [...S.childNodes], cut = fpath.lastIndexOf('/') + 1, kids = [];
+		if (cut > 0 && cut < fpath.length) {
+			const d = document.createElement('span'); d.className = 'turn-file-dir'; d.textContent = fpath.slice(0, cut);
+			const b = document.createElement('span'); b.className = 'turn-file-base'; b.textContent = fpath.slice(cut);
+			kids.push(d, b);
+		} else kids.push(document.createTextNode(fpath));
+		S.replaceChildren(...kids); W.undo.push(() => S.replaceChildren(...old));
+	}
+	if (count != null && S.classList.contains('turn-files-rows')) {
+		// The Files row's own list: up to the page's fold (`_TAIL_MORE`, 6) rows, then its "and N more" button.
+		const rowsEl = [...S.children].filter((c) => c.classList.contains('turn-file-row')), more0 = S.querySelector('.turn-file-more'), proto = rowsEl[0];
+		if (!proto) return { miss: 'no file row to count' };
+		const words = ['plan', 'quotes', 'budget', 'joinery', 'tiles', 'power', 'window', 'tasks', 'notes', 'sketch', 'order', 'invoice', 'photos', 'may'];
+		rowsEl.forEach((c) => { c.style.display = 'none'; }); if (more0) more0.style.display = 'none';
+		const add = [];
+		for (let i = 0; i < Math.min(count, 6); i++) {
+			const c = proto.cloneNode(true); c.style.display = ''; delete c.dataset.h;
+			const n = c.querySelector('.turn-file-name'); if (n) n.textContent = words[i % words.length] + '.md';
+			S.appendChild(c); add.push(c);
+		}
+		if (count > 6) {
+			const m = more0 ? more0.cloneNode(true) : document.createElement('button'); m.className = 'turn-file-more'; m.style.display = '';
+			m.textContent = window.DaimondI18n && window.DaimondI18n.t ? window.DaimondI18n.t('chat.turn_files_more', { n: count - 6 }) : 'and ' + (count - 6) + ' more';
+			S.appendChild(m); add.push(m);
+		}
+		W.undo.push(() => { add.forEach((c) => c.remove()); rowsEl.forEach((c) => { c.style.display = ''; }); if (more0) more0.style.display = ''; });
+	} else if (count != null) {
 		const k = [...S.children]; const proto = k[0]; if (!proto) return { miss: 'no child to count' };
 		const words = ['home', 'research', 'writing', 'citations', 'committee', 'deadline', 'thesis', 'budget', 'joinery', 'tiles', 'power', 'window', 'quotes', 'may'];
 		k.forEach((c) => { c.style.display = 'none'; });
@@ -1524,6 +1705,8 @@ const VMEASURE = ({ ctx, comp, slot, idx, pick, text, count, restore }) => {
 		comp: { x: Math.round(trr.left), y: Math.round(trr.top), w: Math.round(trr.width), h: Math.round(trr.height), over: T.scrollWidth > T.clientWidth + 1 ? T.scrollWidth - T.clientWidth : 0 },
 		slot: { x: Math.round(sr.left), y: Math.round(sr.top), w: Math.round(sr.width), h: Math.round(sr.height), ln: lines(S), ov: S.scrollWidth > S.clientWidth + 1 ? (cs(S).textOverflow === 'ellipsis' ? 'ellipsis' : 'cut') : '', sh: shown(S), past: Math.round(Math.max(0, sr.right - trr.right)) },
 		parts: leaves(T, inSlot, T),
+		inner: leaves(S, null, S).slice(0, 12),
+		more: [...S.querySelectorAll('.turn-file-more')].some(vis), nrows: [...S.children].filter((c) => c.classList && c.classList.contains('turn-file-row') && vis(c)).length,
 		sibs: sib.map((c) => leaves(c, null, c)),
 		outside: leaves(C, (e) => comps.some((c) => c.contains(e))).slice(0, 200),
 		clip: [Math.max(0, Math.round(trr.left) - 16), Math.max(0, Math.round(trr.top) - 12), Math.round(trr.width) + 32, Math.round(trr.height) + 24],
@@ -1563,10 +1746,26 @@ async function vSetup(kind) {
 		await wait(1200); await click('#dview-crystal'); await wait(1200);
 	}
 	if (kind === 'headmore') { await mainChat(); await click('#chead-more'); await wait(700); }
+	if (kind === 'files' || kind === 'filepop' || kind === 'ratingfile') {
+		await mainChat();
+		if (kind === 'ratingfile') { await unfold('#chat-output .ctile[data-t="rating"] .rate-line'); await ev(() => { const t = [...document.querySelectorAll('#chat-output .ctile[data-t="rating"]')].pop(); if (t) t.scrollIntoView({ block: 'center' }); }); }
+		else { await unfold('#chat-output .turn-files'); await ev(() => { const t = [...document.querySelectorAll('#chat-output .turn-files')].pop(); if (t) t.scrollIntoView({ block: 'center' }); }); }
+		await wait(300);
+		if (kind === 'filepop') { await page.locator('#chat-output .turn-files').last().locator('.turn-file-row', { hasText: 'n.md' }).locator('.ctile-rate-more >> visible=true').first().click({ force: true }); await wait(600); }
+	}
+	if (kind === 'dtail') {
+		// The Kitchen Diamond whose turn changed files, on its chat face, with the tail note in view (the thread's last tile).
+		const ph = page.viewportSize().width <= 760;
+		if (ph) { await ev(() => { if (!document.body.classList.contains('drawer-open')) { const b = document.getElementById('drawer-btn'); if (b) b.click(); } }); await wait(800); }
+		const hit = await ev(() => { const t = [...document.querySelectorAll('#diamond-list .diamond-box')].find((e) => /Kitchen/.test(e.getAttribute('aria-label') || e.textContent)); if (!t) return false; (t.querySelector('.tile-label') || t).click(); return true; });
+		if (hit !== true) return 'no Diamond on this device';
+		await wait(1200); await click('#dview-chat'); await wait(900);
+		await unfold('#chat-output .turn-files'); await ev(() => { const t = [...document.querySelectorAll('#chat-output .turn-files')].pop(); if (t) t.scrollIntoView({ block: 'center' }); }); await wait(300);
+	}
 	if (kind === 'cog') { await click('#diamond-list .diamond-box .tile-cog'); await wait(700); }
 	if (kind === 'newdia') { await click('#new-diamond-btn'); await wait(700); }
 	if (kind === 'admin') { await click('#settings-btn'); await wait(700); await ev(() => { try { window.DaimondAdmin.home(); } catch (e) {} }); await wait(500); }
-	if (['cog', 'newdia', 'admin', 'ratepop', 'headmore'].includes(kind)) { const ov = kind === 'admin' ? '#admin' : await topOverlay(); await ev((q) => { window.__vl = window.__vl || {}; window.__vl.ov = q && document.querySelector(q); }, ov); }
+	if (['cog', 'newdia', 'admin', 'ratepop', 'headmore', 'filepop'].includes(kind)) { const ov = kind === 'admin' ? '#admin' : await topOverlay(); await ev((q) => { window.__vl = window.__vl || {}; window.__vl.ov = q && document.querySelector(q); }, ov); }
 }
 async function vShot(name, clip) {
 	if (!clip) return '';
@@ -1586,7 +1785,7 @@ async function varlenPass(phone) {
 		if (!phone) await panels(['rail', 'ai', 'work']);
 		if (phone && setup === 'work') { await ev(() => { try { window.DaimondPanels.show('work'); } catch (e) {} }); await wait(700); }
 		else if (phone && setup === 'viewer') { await ev(() => { try { window.DaimondPanels.show('work'); } catch (e) {} }); await wait(700); }
-		else if (phone && (['chat', 'ratetags', 'ratepop', 'headmore'].includes(setup) || /panel-ai|chat-input/.test(ctx))) { await ev(() => { try { window.DaimondPanels.show('ai'); } catch (e) {} }); await wait(400); }
+		else if (phone && (['chat', 'ratetags', 'ratepop', 'headmore', 'files', 'filepop', 'ratingfile', 'dtail'].includes(setup) || /panel-ai|chat-input/.test(ctx))) { await ev(() => { try { window.DaimondPanels.show('ai'); } catch (e) {} }); await wait(400); }
 		else if (phone && /rail|diamond-list|session-list|admin-status|topbar/.test(ctx) || phone && ['cog', 'newdia'].includes(setup)) await railOpen();
 		const miss = setup ? await vSetup(setup) : null;
 		if (miss) return miss;
@@ -1613,7 +1812,7 @@ async function varlenPass(phone) {
 		if (!base || base.err || base.miss) { recs.push({ name, cfg: CFG, notCovered: (base && (base.err || base.miss)) || 'no measure' }); log('varlen', CFG, name, 'NOT COVERED', base && (base.miss || base.err)); continue; }
 		const shots = { base: await vShot(name + '_base', base.clip) };
 		const variants = [];
-		const V = Array.isArray(vals) ? vals.map((v, i) => [['short', 'long', 'vlong'][i], { text: v }]) : vals.count.map((n, i) => [['few', 'several', 'many'][i], { count: n }]);
+		const V = Array.isArray(vals) ? vals.map((v, i) => [['short', 'long', 'vlong'][i], { text: v }]) : vals.path ? vals.path.map((v, i) => [['short', 'long', 'vlong'][i], { fpath: v }]) : vals.text ? vals.text.map((v, i) => [['short', 'long', 'vlong'][i], { text: v }]) : vals.count.map((n, i) => [['few', 'several', 'many'][i], { count: n }]);
 		for (const [vn, arg] of V) {
 			const m = await ev(VMEASURE, { ctx, comp, slot, idx: base.ti, ...arg });
 			if (m && !m.err && !m.miss) { shots[vn] = await vShot(name + '_' + vn, m.clip); variants.push([vn, m]); }
@@ -1664,6 +1863,42 @@ async function varlenRun(which) {
 }
 // Diff each variant against the slot's own baseline and list every change to
 // another part. The `flag` is a first sort for the reader, not the verdict.
+// The expectations that turn a slot's reading into a verdict (G1, 5.3.0). Only the slots named here have one; every other slot is still a person's
+// read. A verdict is the list of faults, empty when the slot passes. The changed-files note's rules are the lead's ruling on the tail note's rows:
+// the name keeps one line and the row its height, the delta and the rating group never move, a long path gives way in its directory first and
+// the file's own name stays, and a Files row folds at 6 with its "more" button.
+function verdictOf(r, vn, m, own, changes) {
+	const bad = [];
+	const part = (c) => (m.inner || []).concat(m.parts).filter((p) => p.c === c);
+	if (/^file path/.test(r.name)) {
+		for (const c of changes) if (/turn-file-delta|ctile-rate|turn-file-rate/.test(c.part) && c.kinds.some((k) => /shift|vanished|squeezed|widened/.test(k))) bad.push(`${c.part} ${c.kinds.join('+')} dx${c.dx || 0} dy${c.dy || 0}`);
+		// One line: the name's box is no taller than it was, and neither is its row. (`lines` counts the tops of text rects, and the
+		// directory and the file's own name are two flex items, so it can read 2 for one line.)
+		if (own.dh !== 0) bad.push(`row height ${own.dh > 0 ? '+' : ''}${own.dh}px`);
+		if (m.slot.h > r.base.slot.h + 2) bad.push(`the name's box grows ${r.base.slot.h}px to ${m.slot.h}px`);
+		if (m.hscroll || m.ctxOver) bad.push('sideways overflow');
+		if (vn !== 'short') {
+			// The directory gives way first and may go altogether where the row has no room; the file's own name keeps the room it can
+			// have. It may end in an ellipsis only when what is left of the row is all it has: on a phone that is 92px of the 390 (the
+			// delta and the three 44px squares take the rest), so a name is a fault only when under 60px of it shows.
+			const dir = part('span.turn-file-dir')[0], base = part('span.turn-file-base')[0];
+			if (!base) bad.push('the file name span is gone');
+			else if ((base.ov || base.sh < 100) && base.w < 60) bad.push(`the file's own name is cut down to ${base.w}px`);
+			if (dir && dir.ov === 'cut') bad.push('the directory is clipped without an ellipsis');
+			if (vn === 'vlong' && dir && dir.ov !== 'ellipsis' && !(base && (base.ov || base.sh < 100))) bad.push('a 200-character path shows its directory whole');
+		}
+	} else if (r.name === 'chat files count') {
+		for (const c of changes) if (/turn-files-head/.test(c.part) && c.kinds.some((k) => /shift/.test(k) && !/y-shift/.test(k))) bad.push(`${c.part} ${c.kinds.join('+')}`);
+		if (m.hscroll || m.ctxOver) bad.push('sideways overflow');
+		const want = { few: [1, false], several: [5, false], many: [6, true] }[vn];
+		if (want && (m.nrows !== want[0] || m.more !== want[1])) bad.push(`${vn}: ${m.nrows} rows and ${m.more ? 'a' : 'no'} "more" button, want ${want[0]} and ${want[1] ? 'one' : 'none'}`);
+	} else if (r.name === 'file rating line' || r.name === 'file popup chip label') {
+		if (m.hscroll || m.ctxOver) bad.push('sideways overflow');
+		if (own.past) bad.push(`past its tile by ${own.past}px`);
+		if (own.sh < 100) bad.push(`cut to ${own.sh}% shown`);
+	} else return null;
+	return bad;
+}
 function varlenReport() {
 	const recs = ['desk', 'phone', 'webkit'].map((w) => `${OUT}/varlen_${w}.json`).filter((f) => fs.existsSync(f)).flatMap((f) => JSON.parse(fs.readFileSync(f, 'utf8')));
 	const out = [];
@@ -1697,7 +1932,8 @@ function varlenReport() {
 			for (const p of m.parts) { const bp = r.base.parts.find((z) => z.k === p.k); if (!bp) continue; const rel = p.k;
 				for (const sl of m.sibs) { const q = sl.find((z) => z.k === rel); if (!q) continue; if (Math.abs(bp.x - q.x) <= 1 && Math.abs(p.x - q.x) > 1) { align.push({ part: p.c, text: p.t, sibX: q.x, x: p.x }); break; } } }
 			const own = { ln: [r.base.slot.ln, m.slot.ln], ov: m.slot.ov, sh: m.slot.sh, past: m.slot.past, dh: m.comp.h - r.base.comp.h, dw: m.comp.w - r.base.comp.w, over: m.comp.over };
-			out.push({ name: r.name, cfg: r.cfg, variant: vn, own, hscroll: m.hscroll, ctxOver: m.ctxOver, changes: inComp.concat(outside), align, shot: r.shots[vn], base: r.shots.base });
+			const changes = inComp.concat(outside);
+			out.push({ name: r.name, cfg: r.cfg, variant: vn, own, hscroll: m.hscroll, ctxOver: m.ctxOver, changes, align, shot: r.shots[vn], base: r.shots.base, verdict: verdictOf(r, vn, m, own, changes) });
 		}
 	}
 	fs.writeFileSync(`${OUT}/varlen_report.json`, JSON.stringify(out, null, 1));
@@ -1708,11 +1944,16 @@ function varlenReport() {
 		if (o.notCovered) { md.push(`- **${o.name}** (${o.cfg}): NOT COVERED -- ${o.notCovered}`); continue; }
 		const ch = o.changes.map((c) => `${c.where}:${c.part}${c.text ? '"' + c.text.slice(0, 14) + '"' : ''}[${c.kinds.join('+')}${c.dx ? ' dx' + c.dx : ''}${c.dy ? ' dy' + c.dy : ''}${c.dw ? ' dw' + c.dw : ''}${c.dh ? ' dh' + c.dh : ''}]`);
 		md.push(`- **${o.name}** ${o.variant} (${o.cfg})${o.own ? ` own: lines ${o.own.ln.join('→')}${o.own.ov ? ' ' + o.own.ov : ''}${o.own.sh < 100 ? ' shown ' + o.own.sh + '%' : ''}${o.own.past ? ' past-tile ' + o.own.past + 'px' : ''} tile dh${o.own.dh} dw${o.own.dw}${o.own.over ? ' tile-overflow ' + o.own.over : ''}` : ''}${o.hscroll ? ' PAGE-HSCROLL ' + o.hscroll : ''}${o.ctxOver ? ' CTX-OVERFLOW ' + o.ctxOver : ''}`);
+		if (o.verdict) md.push('  - VERDICT ' + (o.verdict.length ? 'FAULT: ' + o.verdict.join('; ') : 'ok'));
 		if (ch.length) md.push('  - ' + ch.slice(0, 14).join(' ') + (ch.length > 14 ? ` (+${ch.length - 14})` : ''));
 		if (o.align && o.align.length) md.push('  - misaligned vs siblings: ' + o.align.map((a) => `${a.part} x${a.x} vs ${a.sibX}`).join(', '));
 	}
 	fs.writeFileSync(`${OUT}/varlen_report.md`, md.join('\n'));
 	log('varlen report', `${OUT}/varlen_report.md`, out.length, 'rows');
+	const vs = out.filter((o) => o.verdict), vf = vs.filter((o) => o.verdict.length);
+	log(`varlen verdicts: ${vs.length} readings with a verdict (${[...new Set(vs.map((o) => o.name))].join(', ') || 'none'}), ${vf.length} fault(s)`);
+	for (const o of vf) log('  FAULT', o.cfg, o.name, o.variant, o.verdict.join('; '));
+	return vf.length;
 }
 
 
@@ -1793,8 +2034,8 @@ if (MODE === 'varlen') {
 	const w = process.argv[3] || 'all';
 	if (w === 'all' && !process.env.CONS_NOSEED) await seed();
 	for (const x of w === 'all' ? ['desk', 'phone', 'webkit'] : w === 'report' ? [] : [w]) await varlenRun(x).catch((e) => log('varlen', x, 'failed', e.message.split('\n')[0]));
-	varlenReport();
-	process.exit(0);
+	const vfaults = varlenReport();
+	process.exit(vfaults ? 1 : 0);
 }
 if (MODE === 'seed') await seed();
 else if (MODE === 'desk') await desk();

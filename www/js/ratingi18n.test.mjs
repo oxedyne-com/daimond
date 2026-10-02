@@ -1,6 +1,7 @@
 /* ============================================================
-   Test -- THE WORDS OF RATING U2, IN EIGHT LANGUAGES (unit F of
-   specs/daimond_rating_u2_plan_20260930.md).
+   Test -- THE WORDS OF RATING U2 AND U3/U4, IN EIGHT LANGUAGES (unit F of
+   specs/daimond_rating_u2_plan_20260930.md; unit M of
+   specs/daimond_rating_u34_plan_20261002.md).
    ------------------------------------------------------------
    The rating widget, its popup, its tile and the Models page's read-only
    counts say nothing until every locale table holds their keys. A missing key
@@ -15,7 +16,9 @@
      2. the plan's length budgets hold in every locale, counted in code
         points, because the five steps must fit one line at 390px;
      3. every placeholder the English carries is carried by the translation;
-     4. the two tooltips of the Models page's retired buttons are gone.
+     4. the two tooltips of the Models page's retired buttons are gone;
+     5. the popup's `where` line no longer carries 5.2.9's claim, in any locale
+        (decision D11: the model now reads the rating with the next message).
 
    Run:  node www/js/ratingi18n.test.mjs
    ============================================================ */
@@ -69,12 +72,14 @@ const WORDS = {
 	'rating.aria_up':     'Rate up',
 	'rating.aria_down':   'Rate down',
 	'rating.aria_more':   'Rating details',
+	'rating.aria_group_file': 'Rate this change',
 	'rating.title':       'Rate this answer',
+	'rating.title_file':  'Rate this change',
 	'rating.sec_score':   'Score',
 	'rating.sec_tags':    'Tags',
 	'rating.details':     'Details',
 	'rating.note_label':  'In your words',
-	'rating.where':       'Saved in this chat, on your devices.',
+	'rating.where':       'Saved in this chat. Sent to the model with your next message.',
 	'rating.model':       'Model: {model}',
 	'rating.clear':       'Withdraw',
 	'rating.who':         'Rating',
@@ -82,6 +87,8 @@ const WORDS = {
 	'rating.log_answer':  'the answer of {time}',
 	'rating.log_cleared': 'Withdrawn from {what}',
 	'rating.log_gone':    'an answer no longer here',
+	'rating.log_file':    'the change to {path}',
+	'rating.log_file_gone': 'a change no longer here',
 	'rating.quote':       '“{text}”',
 	'rating.tags_down':   'What was wrong',
 	'rating.tags_up':     'What went well',
@@ -136,7 +143,7 @@ check('every dimension the form declares has a `rating.dim.<id>` key in the list
 	dimIds.every((id) => ('rating.dim.' + id) in WORDS));
 check('the list holds no tag the form does not declare',
 	KEYS.filter((k) => k.startsWith('rating.tag.')).every((k) => tagIds.includes(k.slice(11))));
-check('the plan lists ' + KEYS.length + ' keys', KEYS.length === 58, String(KEYS.length));
+check('the plan lists ' + KEYS.length + ' keys', KEYS.length === 62, String(KEYS.length));
 
 for (const c of LOCALES) {
 	const gone = KEYS.filter((k) => typeof T[c][k] !== 'string' || T[c][k].trim() === '');
@@ -147,8 +154,9 @@ for (const c of LOCALES) {
 const wrongEn = KEYS.filter((k) => T.en[k] !== WORDS[k]);
 check('en: the values are the plan’s', wrongEn.length === 0, wrongEn.slice(0, 5).join(' '));
 
-// English labels are sentence case: nothing after the first word starts with a capital.
-const shouty = KEYS.filter((k) => /\s[A-Z]/.test(String(T.en[k] || '').replace(/\{[a-z_]+\}/g, '')));
+// English labels are sentence case: nothing after the first word starts with a capital, except
+// the first word of a second sentence (`rating.where`).
+const shouty = KEYS.filter((k) => /(?<!\.)\s[A-Z]/.test(String(T.en[k] || '').replace(/\{[a-z_]+\}/g, '')));
 check('en: every label is sentence case', shouty.length === 0, shouty.join(' '));
 
 // Claim 2: the budgets, in code points, in every locale.
@@ -156,7 +164,7 @@ const BUDGETS = [
 	['scale words',       (k) => k.startsWith('rating.scale.'), 9],
 	['tag labels',        (k) => k.startsWith('rating.tag.'),   20],
 	['dimension labels',  (k) => k.startsWith('rating.dim.'),   26],
-	['the popup title',   (k) => k === 'rating.title',          24],
+	['the popup titles',  (k) => k === 'rating.title' || k === 'rating.title_file', 24],
 ];
 for (const c of LOCALES) {
 	for (const [what, pick, max] of BUDGETS) {
@@ -179,6 +187,24 @@ for (const c of LOCALES.filter((x) => x !== 'en')) {
 	const same = KEYS.filter((k) => T[c][k] === T.en[k]);
 	check(c + ': fewer than a fifth of the values are still English',
 		same.length * 5 < KEYS.length, same.length + ' of ' + KEYS.length + ': ' + same.join(' '));
+}
+
+// Claim 5: 5.2.9's `where` said only "on your devices". U4 makes the rest true, so every locale's
+// line must have moved off it and must say the model gets the rating with the next message.
+const OLD_WHERE = {
+	'en': 'Saved in this chat, on your devices.',
+	'de': 'In diesem Chat gespeichert, auf deinen Geräten.',
+	'es': 'Guardada en este chat, en tus dispositivos.',
+	'fr': 'Enregistrée dans ce chat, sur vos appareils.',
+	'ja': 'このチャットに、あなたのデバイス上で保存されます。',
+	'ko': '이 채팅에, 당신의 기기에 저장돼요.',
+	'pt-BR': 'Salva neste chat, nos seus dispositivos.',
+	'zh-Hans': '保存在这段对话中，存于你的设备上。',
+};
+for (const c of LOCALES) {
+	check(c + ': `rating.where` is no longer 5.2.9’s line', T[c]['rating.where'] !== OLD_WHERE[c]);
+	check(c + ': `rating.where` has two sentences, saved here and sent with the next message',
+		(String(T[c]['rating.where']).match(/[.。]/g) || []).length >= 2, String(T[c]['rating.where']));
 }
 
 // Unit G removed the Models page's per-model buttons, so their two tooltips have no reader; a key

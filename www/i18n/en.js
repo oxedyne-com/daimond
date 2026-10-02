@@ -1922,13 +1922,15 @@
 	'rating.aria_up':          'Rate up',
 	'rating.aria_down':        'Rate down',
 	'rating.aria_more':        'Rating details',
+	'rating.aria_group_file':  'Rate this change',
 	// The popup
 	'rating.title':            'Rate this answer',
+	'rating.title_file':       'Rate this change',
 	'rating.sec_score':        'Score',
 	'rating.sec_tags':         'Tags',
 	'rating.details':          'Details',
 	'rating.note_label':       'In your words',
-	'rating.where':            'Saved in this chat, on your devices.',
+	'rating.where':            'Saved in this chat. Sent to the model with your next message.',
 	'rating.model':            'Model: {model}',
 	'rating.clear':            'Withdraw',
 	// The Rating tile
@@ -1937,6 +1939,8 @@
 	'rating.log_answer':       'the answer of {time}',
 	'rating.log_cleared':      'Withdrawn from {what}',
 	'rating.log_gone':         'an answer no longer here',
+	'rating.log_file':         'the change to {path}',
+	'rating.log_file_gone':    'a change no longer here',
 	'rating.quote':            '“{text}”',
 	// The chip rows
 	'rating.tags_down':        'What was wrong',

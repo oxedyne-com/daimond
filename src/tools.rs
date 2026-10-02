@@ -16443,6 +16443,18 @@ impl Tool {
         matches!(self, Tool::Shell | Tool::Run | Tool::Verify | Tool::SpawnAgent)
     }
 
+    /// Does this call change files in the store that no capture records, so that the files are
+    /// looked at before it and after ([`crate::wasm::diamond::open_window`])?
+    ///
+    /// A command, a verifier and a download each leave bytes at paths nobody wrote down, and the
+    /// window around the call is what names the agent that ran it.  **Not `spawn_agent`**: it
+    /// returns before its worker works, so a window round it would credit the spawner with the
+    /// worker's changes.  The worker's own calls are windowed, and its file tools captured,
+    /// under the worker's own context and author.
+    pub fn windowed(&self) -> bool {
+        matches!(self, Tool::Shell | Tool::Run | Tool::Verify | Tool::FileFetch)
+    }
+
     /// The Diamond whose sidecar a link tool's call will change, or nothing when the call names
     /// none and the turn is not scoped to one.
     ///
@@ -26185,7 +26197,20 @@ impl ToolRegistry {
                         crate::wasm::diamond::ran_opaque(&k);
                     }
                 }
-                t.execute(args_json, ctx).await
+                // A WINDOW ROUND THE CALL, where its file effects are ones no capture records: the
+                // files are looked at before and after, and what moved is credited to the agent
+                // whose context ran it -- never to whoever else was working in the store.
+                #[cfg(target_arch = "wasm32")]
+                let window = match (t.windowed(), ctx.keeper()) {
+                    (true, Some(k)) => Some(crate::wasm::diamond::open_window(&k, ctx.by.clone()).await),
+                    _               => None,
+                };
+                let done = t.execute(args_json, ctx).await;
+                #[cfg(target_arch = "wasm32")]
+                if let Some(w) = window {
+                    crate::wasm::diamond::close_window(w).await;
+                }
+                done
             } {
                 Ok(c)  => c,
                 // THE ONE FAILURE THAT DOES NOT BECOME A SENTENCE. Everything else -- a bad
@@ -43461,6 +43486,24 @@ mod claim_tests {
 		for t in [Tool::FileWrite, Tool::FileEdit, Tool::FileDelete, Tool::FileMove,
 				Tool::FileRead, Tool::DirCreate, Tool::TypstCompile] {
 			assert!(!t.opaque(), "'{}' silences the audit for every turn that calls it", t.name());
+		}
+	}
+
+	/// **A window goes round the calls whose file effects no capture records, and no other.**
+	///
+	/// `spawn_agent` is opaque and is not windowed: it returns before its worker works, so a
+	/// window round it would credit the spawner with the worker's changes (J2).  Every tool that
+	/// captures what it writes is left out, because a window round it would only second-guess a
+	/// capture that already names the author.
+	#[test]
+	fn test_a_spawn_is_not_windowed_and_a_command_is() {
+		for t in [Tool::Shell, Tool::Run, Tool::Verify, Tool::FileFetch] {
+			assert!(t.windowed(), "'{}' writes where no capture records it", t.name());
+		}
+		for t in [Tool::SpawnAgent, Tool::Gather, Tool::FileWrite, Tool::FileEdit, Tool::FileDelete,
+				Tool::FileMove, Tool::FileRead, Tool::DirCreate, Tool::TypstCompile, Tool::DocEdit,
+				Tool::SheetWrite, Tool::Capture, Tool::WebFetch, Tool::FileRevert] {
+			assert!(!t.windowed(), "'{}' is windowed though its author is already known", t.name());
 		}
 	}
 }

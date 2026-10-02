@@ -785,6 +785,13 @@ pub fn msg_bytes(m: &ChatMessage, open: &OpenSet) -> u64 {
 		ChatMessage::Tool { tool_call_id, .. } => {
 			n += m.content().text_len() as u64 + tool_call_id.len() as u64;
 		},
+		// A note is sent joined to the words ([`crate::protocol::join_notes`]), so it is weight.
+		ChatMessage::User { content, pre } => {
+			n += content.text_len() as u64;
+			if !pre.is_empty() {
+				n += pre.len() as u64 + 2;	// and the blank line between
+			}
+		},
 		_ => n += m.content().text_len() as u64,
 	}
 	n
@@ -1150,8 +1157,8 @@ fn record(l: &mut Ledger, tc: &ToolCall, outcome: CallOutcome) {
 /// One message as a line of transcript for the summarising call.
 fn render_one(m: &ChatMessage) -> String {
 	match m {
-		ChatMessage::System { content } => fmt!("[system] {}", clip(&content.as_text(), 600)),
-		ChatMessage::User { content }   => fmt!("user: {}", clip(&content.as_text(), 2_000)),
+		ChatMessage::System { content }   => fmt!("[system] {}", clip(&content.as_text(), 600)),
+		ChatMessage::User { content, .. } => fmt!("user: {}", clip(&content.as_text(), 2_000)),
 		ChatMessage::Assistant { content, tool_calls } => {
 			let mut s = fmt!("assistant: {}", clip(&content.as_text(), 2_000));
 			for tc in tool_calls {
@@ -1562,7 +1569,7 @@ fn structured_body(n: &FoldNotes, capped: bool, filed: bool) -> String {
 /// searched as a fold, which costs a line of context and nothing else.
 fn is_fold_notice(m: &ChatMessage) -> bool {
 	match m {
-		ChatMessage::User { content } =>
+		ChatMessage::User { content, .. } =>
 			content.as_text().starts_with("[Daimond folded the earlier part"),
 		_ => false,
 	}
@@ -1601,7 +1608,7 @@ pub fn recall_folds(
 	for m in msgs.iter().filter(|m| is_fold_notice(m)) {
 		note += 1;
 		let text = match m {
-			ChatMessage::User { content } => content.as_text(),
+			ChatMessage::User { content, .. } => content.as_text(),
 			_                             => continue,
 		};
 		let lines: Vec<&str> = text.lines().collect();
@@ -2293,7 +2300,7 @@ pub const RECONCILE_NOTE: &str =
 /// * `prior_tail` - The last message of the session as it stood before this turn's user
 ///   instruction was appended, or `None` for a session with nothing in it yet.
 pub fn note_reconcile(msgs: &mut Vec<ChatMessage>, prior_tail: Option<&ChatMessage>) -> bool {
-	let said_last_turn = matches!(prior_tail, Some(ChatMessage::User { content })
+	let said_last_turn = matches!(prior_tail, Some(ChatMessage::User { content, .. })
 		if content.as_text() == RECONCILE_NOTE);
 	if said_last_turn {
 		return false;
@@ -3330,6 +3337,22 @@ mod tests {
 	fn user(s: &str) -> ChatMessage { ChatMessage::user(s.to_string()) }
 	fn says(s: &str) -> ChatMessage {
 		ChatMessage::assistant(s.to_string())
+	}
+
+	// ── An app note on a user message ────────────────────────────────────────
+
+	/// The note is sent, so the gauge that learns the bytes-to-tokens ratio from what was sent
+	/// must count it: a message weighs what its joined text weighs.
+	#[test]
+	fn test_an_app_note_is_counted_in_what_a_message_weighs() {
+		let open = OpenSet::new();
+		let note = "[Daimond: the user rated your answer of 10:04 -1 (long).]";
+		let noted = ChatMessage::user_noted("Now fix the lexer.".to_string(), note.to_string());
+		let joined = user(&fmt!("{}\n\nNow fix the lexer.", note));
+		assert_eq!(msg_bytes(&joined, &open), msg_bytes(&noted, &open));
+		assert!(msg_bytes(&noted, &open) > msg_bytes(&user("Now fix the lexer."), &open));
+		assert_eq!(msg_bytes(&user("a"), &open), msg_bytes(&ChatMessage::user_noted(
+			"a".to_string(), String::new()), &open), "an empty note weighs nothing");
 	}
 
 	// ── Images ───────────────────────────────────────────────────────────────

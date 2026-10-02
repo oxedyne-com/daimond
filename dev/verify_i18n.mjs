@@ -382,6 +382,22 @@ const SWEEP = ([sel, outgoing, keys]) => {
 		try { await p3.waitForSelector('#chat-output .ctile[data-t="rating"]', { timeout: 20000 }); } catch (e) { /* read as null */ }
 		await p3.waitForTimeout(600);
 	};
+	// Rating U3 (5.3.0, G1): a chat turn that writes a file leaves a Files row; its first row is rated up, so the row's group, its popup
+	// ("Rate this change", the file's tags) and the Rating line for a file are on screen too, and are read in every language below.
+	let filesReady = false;
+	if (ready) {
+		try {
+			const cdir = await p3.evaluate(() => window.DaimondAttach.chatScratch(String(window.DaimondAttach.focus().id)));
+			await chat(s3, '@tools file_write ' + JSON.stringify({ path: `${cdir}/i18n-n.md`, content: 'a new file\n' }));
+			await p3.waitForSelector('#chat-output .turn-files .turn-file-row > .turn-file-rate', { timeout: 10000 });
+			await p3.evaluate(() => { const t = [...document.querySelectorAll('#chat-output .turn-files')].pop(); const c = t && t.closest('.ctile'); if (c) c.classList.remove('collapsed'); });
+			await p3.locator('#chat-output .turn-files .turn-file-row .ctile-rate-up >> visible=true').first().click({ force: true, timeout: 8000 });
+			await p3.evaluate(async (c) => { await window.DaimondRatingUI.flush(c); }, cid3);
+			await p3.waitForFunction(() => document.querySelectorAll('#chat-output .ctile[data-t="rating"] .rate-line').length >= 2, null, { timeout: 10000 });
+			filesReady = true;
+		} catch (e) { /* reported below */ }
+	}
+	check(filesReady, 'rating: a file was rated, so its row, its popup and its Rating line are on screen to be read', filesReady ? undefined : 'no Files row or no second Rating line');
 	if (ready) {
 		for (const code of ['en'].concat(codes)) {
 			const T = tables3[code], mark = s3.logs.length;
@@ -411,6 +427,38 @@ const SWEEP = ([sel, outgoing, keys]) => {
 			await p3.screenshot({ path: path.join(SHOTS3, `verify-${code}-rate-popup.png`) });
 			await p3.keyboard.press('Escape');
 			await p3.waitForTimeout(300);
+			if (filesReady) {
+				// The Files row, its rating group, its popup and its Rating line, in this language.
+				const fr = await p3.evaluate(() => {
+					const t = [...document.querySelectorAll('#chat-output .turn-files')].pop();
+					if (!t) return null;
+					const c = t.closest('.ctile'); if (c) c.classList.remove('collapsed');
+					const g = t.querySelector('.turn-file-row > .turn-file-rate');
+					return { who: ((c || t).querySelector('.ctile-who') || {}).textContent, head: (t.querySelector('.turn-files-head') || {}).textContent || '', aria: g ? g.getAttribute('aria-label') : null,
+						links: [...document.querySelectorAll('#chat-output .ctile[data-t="rating"] .rate-jump-link')].map((l) => l.textContent), text: t.innerText };
+				});
+				const wantFile = new RegExp('^' + esc(T['rating.log_file']).replace('\\{path\\}', '.+') + '$');
+				check(!!fr && fr.who === T['chat.who_files'] && fr.aria === T['rating.aria_group_file'],
+					code + ': the Files row is in ' + code + ' (tile label and the rating group\'s name)', JSON.stringify(fr && { who: fr.who, aria: fr.aria }));
+				if (fr) check(unfilled(fr.head + ' ' + fr.text).length === 0 && !/^chat\./.test(fr.head.trim()), code + ': no literal placeholder or raw key in the Files row', fr.head);
+				check(!!fr && fr.links.some((x) => wantFile.test(x)), code + ': the Rating line for a file is in ' + code + ' (the link to the change)', JSON.stringify(fr && fr.links));
+				let fpop = null;
+				try {
+					await p3.locator('#chat-output .turn-files .turn-file-row .ctile-rate-more >> visible=true').first().click({ force: true, timeout: 8000 });
+					await p3.waitForSelector('.rate-card', { timeout: 8000 });
+					await p3.waitForTimeout(400);
+					fpop = await p3.evaluate(() => { const card = document.querySelector('.rate-card'); return card ? { title: (card.querySelector('h2') || {}).textContent.trim(), tags: [...card.querySelectorAll('.ctile-rate-tags .tile-dlg-level')].map((x) => x.textContent.trim()), text: card.innerText } : null; });
+				} catch (e) { /* null */ }
+				check(!!fpop, code + ': the popup opens from a file row\'s details control', fpop ? undefined : 'no .rate-card');
+				if (fpop) {
+					check(fpop.title === T['rating.title_file'] && fpop.tags.includes(T['rating.tag.clean']) && fpop.tags.includes(T['rating.tag.complete']),
+						code + ': the file popup is in ' + code + ' (title and the file tags)', JSON.stringify({ title: fpop.title, tags: fpop.tags }));
+					check(unfilled(fpop.text).length === 0, code + ': no literal placeholder in the file popup', unfilled(fpop.text).join(','));
+				}
+				await p3.screenshot({ path: path.join(SHOTS3, `verify-${code}-file-popup.png`) });
+				await p3.keyboard.press('Escape');
+				await p3.waitForTimeout(300);
+			}
 		}
 		// Switch while open, the tile only: the popup is a modal (the language picker is behind its scrim).
 		await reopen('en');

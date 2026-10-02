@@ -1738,6 +1738,7 @@ function buildS61Sandbox(P, spy) {
 		_askCard:           null,
 	};
 	const src = [
+		daimondFuncSource('turnMessagesOf'),
 		daimondFuncSource('continueTurn'),
 		daimondFuncSource('retryTurn'),
 		daimondFuncSource('answerAgain'),

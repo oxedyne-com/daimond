@@ -87,6 +87,7 @@ function grabFn(sig) {
 
 const NUDGE_STMT = grabVarStmt('CONTINUE_NUDGE');
 const CT_ORIG    = grabFn('function continueTurn(');   // the pristine lift, for the sentinels
+const TM_SRC     = grabFn('function turnMessagesOf(');   // the finder continueTurn asks for its turn's messages
 
 // The source actually built. `--break rerun` flips the one deciding line to the pre-fix dispatch;
 // the sentinels above still read CT_ORIG, so under break only the resume-dispatch checks fail.
@@ -135,7 +136,7 @@ function makeContinueTurn(stubs) {
 		'holdSend', 'confirmHold'];
 	const f = new Function(
 		...names,
-		NUDGE_STMT + '\n' + CT_SRC + '\nreturn continueTurn;');
+		NUDGE_STMT + '\n' + TM_SRC + '\n' + CT_SRC + '\nreturn continueTurn;');
 	return f(...names.map((n) => stubs[n]));
 }
 

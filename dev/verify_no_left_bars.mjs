@@ -117,7 +117,7 @@ const SURFACES = {
 // `host: 'chat'` puts the stage inside `#chat-output`, because some rules (the chip
 // row's padding, the selecting hide) are written against it.
 const IC   = '<svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12h14" fill="none" stroke="currentColor" stroke-width="2"/></svg>';
-const GRP  = (up, dn, more) => '<span class="ctile-rate" data-chrome="rate" role="group" aria-label="Rate this answer">'
+const GRP  = (up, dn, more, cls = '', aria = 'Rate this answer') => `<span class="${cls}ctile-rate" data-chrome="rate" role="group" aria-label="${aria}">`
 	+ `<button type="button" class="ctile-rate-up" aria-pressed="${up}" data-nlb="up (${up ? 'lit' : 'unlit'})">${IC}</button>`
 	+ `<button type="button" class="ctile-rate-down" aria-pressed="${dn}" data-nlb="down (${dn ? 'lit' : 'unlit'})">${IC}</button>`
 	+ `<button type="button" class="ctile-rate-more${more ? ' on' : ''}" aria-haspopup="dialog" data-nlb="details (${more ? 'on' : 'off'})">${IC}</button></span>`;
@@ -128,6 +128,10 @@ const TILE = (type, who, meta, lblMid, body, after) => `<div class="ctile csel-u
 	+ `<div class="ctile-body"><div class="chat-msg-content">${body}</div></div>${after}</div>`;
 const SEG  = (cls, label, words, on, attrs = '') => `<div class="tile-dlg-seg ${cls}" role="group" data-nlb="${label}"${attrs}>`
 	+ words.map((w, i) => `<button type="button" class="tile-dlg-level" aria-pressed="${i === on}" data-nlb="${label}: ${w}${i === on ? ' (pressed)' : ''}">${w}</button>`).join('') + '</div>';
+// A file row as `_turnFileRow` builds it: name (directory and base in two spans, or bare), delta, then the rating group.
+const FROW = (dir, base, delta, grp) => '<div class="turn-file-row" data-h="p1:file:nlb" data-nlb="file row"><button type="button" class="turn-file-name" data-nlb="file name">'
+	+ (dir ? `<span class="turn-file-dir">${dir}</span><span class="turn-file-base">${base}</span>` : base) + '</button>'
+	+ `<button type="button" class="turn-file-delta" data-nlb="file delta">${delta}</button>${grp}</div>`;
 const U2 = {
 	'rated answer tile (lit, phone row, chip row)': { host: 'chat', html:
 		TILE('reply', 'Daimond', 'fast', GRP(true, false, true), '<p>An answer.</p>',
@@ -135,6 +139,18 @@ const U2 = {
 			+ SEG('ctile-rate-tags', 'chip row', ['Wrong', 'Ignored', 'Long'], 0, ' data-chrome="rate"')) },
 	'rated answer tile (up and details lit)': { host: 'chat', html:
 		TILE('reply', 'Daimond', 'fast', GRP(true, false, true), '<p>An answer.</p>', '') },
+	// 5.3.0 (G1): the changed-files note, a Diamond's tail note and a chat's Files row alike (`_filesBox`, `_turnFileRow`, `mountFileRates`): the
+	// box, its head, a row with the directory and the file's own name, the delta, the rating group (one lit, one pressed details), and the chip
+	// row of file tags under a row. Every one of them is measured, in Obsidian and in Porcelain.
+	'files tile (rated rows, chip row, long path)': { host: 'chat', html:
+		TILE('tool', 'Files', '', '', '<div class="turn-files" data-nlb="files box"><div class="turn-files-head" data-nlb="files head">3 files changed this turn</div><div class="turn-files-rows">'
+			+ FROW('quotes/', 'harlow.md', '+3 \u22121', GRP(true, false, false, 'turn-file-rate ', 'Rate this change'))
+			+ FROW('', 'n.md', '\u00b7', GRP(false, true, true, 'turn-file-rate ', 'Rate this change'))
+			+ SEG('ctile-rate-tags', 'file chip row', ['Broke something', 'Wrong change', 'Incomplete'], 0, ' data-chrome="rate"')
+			+ FROW('a-deliberately-long-directory-name-that-keeps-going-and-going/', 'kitchen-benchtop-quote.md', '+1 \u22120', GRP(false, false, false, 'turn-file-rate ', 'Rate this change'))
+			+ '<button type="button" class="turn-file-more" data-nlb="more button">and 4 more</button></div></div>', '') },
+	'rating tile (a file line)': { host: 'chat', html:
+		TILE('rating', 'You', '', '', '<p class="rate-line" data-nlb="file rate line"><span class="rate-score" data-nlb="file rate score">\u22121</span> on <button type="button" class="rate-jump-link" data-nlb="file jump link">the change to n.md</button> \u00b7 Wrong change \u00b7 <span class="rate-said" data-nlb="file rate said">\u201cIt changed more than I asked.\u201d</span></p>', '') },
 	'rating tile': { host: 'chat', html:
 		TILE('rating', 'You', '', '', '<p class="rate-line" data-nlb="rate line"><span class="rate-score" data-nlb="rate score">−2</span> on <button type="button" class="rate-jump-link" data-nlb="jump link">the answer of 10:04</button> · Long · <span class="rate-said" data-nlb="rate said">“Just the command.”</span></p>'
 			+ '<p class="rate-line"><span class="rate-score">+1</span> on <button type="button" class="rate-jump-link">the answer of 10:06</button></p>', '') },

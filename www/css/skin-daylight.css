@@ -195,6 +195,10 @@
    the rail's 4px, so only these three are restated. Measured on 1 Oct (5.2.9): Spending, Agents
    and Trash hold the same body inset (x 1138), so they join. */
 :root[data-skin="daylight"] :is(.panel.modeldash, .panel.tracker, .panel.social, .panel.spend, .panel.agents, .panel.trash) > .railhead { padding-left: var(--dock-inset); }
+/* The Trash's rows: a row's own 6px padding put its kind label 4px left of the title and the note above it (x 1134 against 1138), so
+   the list takes the difference and the empty note the rest of the inset. One left edge. */
+:root[data-skin="daylight"] .panel.trash .trash-list { padding-inline: calc(var(--dock-inset) - 6px); }
+:root[data-skin="daylight"] .panel.trash .trash-list .rail-note { padding-inline: 6px; }
 /* The Workspace's head sat 7px left of the card under it (the reach and toolchain notes, x 1139 at 1440px). */
 @media (min-width: 761px) {
 	:root[data-skin="daylight"] .panel.work > .railhead { padding-left: 11px; }
@@ -297,7 +301,7 @@
 	:root[data-skin="daylight"] .panel.ai .chead-right > :is(#collapse-btn, .cfull-btn) { padding: 0; width: 30px; justify-content: center; }
 }
 :root[data-skin="daylight"] .top-actions > #settings-menu-btn { padding: 0 9px; line-height: 12px; width: auto; }
-:root[data-skin="daylight"] #hand-mode-chip { padding: 0 9px; line-height: 12px; }
+:root[data-skin="daylight"] :is(#hand-mode-chip, .chead-right > #chat-fold-btn) { padding: 0 9px; line-height: 12px; }
 :root[data-skin="daylight"] #settings-menu-btn { gap: 4px; }
 :root[data-skin="daylight"] #pending-sort { background: transparent; padding: 0 9px; }
 
@@ -1267,6 +1271,10 @@
 	:root[data-skin="daylight"] .chead { padding: 8px 4px 4px 16px; min-height: 52px; }
 	:root[data-skin="daylight"] .ctitle { font-size: var(--dl-md); font-weight: 600; }
 	:root[data-skin="daylight"] .chat-output { padding: 4px 12px 12px; }
+	/* The foot of the thread clears the floating chevrons (see responsive.css): the thread's own 12px below its last
+	   tile, with an attachment strip showing between it and the bar, and the room the chevrons take when none does. */
+	:root[data-skin="daylight"] .chat-output { padding-bottom: 68px; }
+	:root[data-skin="daylight"] .chat-output:has(~ #chat-attachments:not([style*="none"])) { padding-bottom: 12px; }
 	/* Both of these were off the seven-step scale, and the "your turn" one
 	   also put the phone back in the condensed display face batch 1 took the
 	   computer out of. Removed: both tiles now take the shared `.ctile-body`

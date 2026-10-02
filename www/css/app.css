@@ -43,6 +43,10 @@ svg { display: block; }
    hand-over leaves no ring for someone who has not touched the keyboard. */
 .focus-home:focus, .focus-home:focus-visible { outline: none; }
 
+/* A control the app focused while the last input was a pointer (workspace.js marks it): no ring. `!important` because the rings
+   are drawn by many rules of every specificity, and this one is the override whose whole job is to win. */
+[data-nofv]:focus-visible { outline: none !important; }
+
 /* ── Copy an identifier ──────────────────────────────────────────
    One button, wherever a machine-readable string is on show: the build id in
    the rail, the account fingerprint, a device id, a build in the version
@@ -3331,15 +3335,21 @@ body.locked .tile-fold, body.locked .spend-row { display: none; }
    delta right; the name and the delta are each pressable (Doc panel, diff). */
 .turn-files { margin: 8px 0 2px; border: 1px solid var(--line); border-radius: 8px; padding: 8px 12px; display: flex; flex-direction: column; gap: 4px; }
 .turn-files-h { font-size: var(--fs-xs); color: var(--text-secondary); padding-bottom: 6px; font-weight: 500; }
-.turn-file-row { display: flex; align-items: center; justify-content: space-between; gap: 16px; font-size: var(--fs-sm); padding: 4px 0; }
-.turn-file-name { color: var(--accent, var(--primary)); cursor: pointer; overflow-wrap: anywhere; text-align: left; background: none; border: none; padding: 2px 0; font: inherit; }
+.turn-file-row { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 16px; font-size: var(--fs-sm); padding: 4px 0; }
+.turn-file-name { color: var(--accent, var(--primary)); cursor: pointer; text-align: left; background: none; border: none; padding: 2px 0; font: inherit;
+	/* One line, ellipsised, so a long path never makes its row tall or moves the delta (bar rule 3). The name gives way first. */
+	flex: 1 1 0; max-width: max-content; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* A path in two parts: the directory shrinks first (and ellipsises), the file's own name only after it. */
+.turn-file-name:has(> .turn-file-dir) { display: flex; }
+.turn-file-dir { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.turn-file-base { flex: none; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .turn-file-name:hover { text-decoration: underline; }
-.turn-file-delta { font-family: var(--font-mono); font-size: var(--fs-xs); white-space: nowrap; cursor: pointer; background: none; border: none; padding: 2px 0; display: inline-flex; gap: 8px; }
+.turn-file-delta { font-family: var(--font-mono); font-size: var(--fs-xs); white-space: nowrap; cursor: pointer; background: none; border: none; padding: 2px 0; display: inline-flex; gap: 8px; flex: none; margin-left: auto; }
 .turn-file-delta .tf-add { color: var(--ok, #2e7d32); }
 .turn-file-delta .tf-del { color: var(--danger, #c62828); }
 .turn-file-delta-none { cursor: default; color: var(--text-muted); }
 /* #22 side-by-side diff: two cells per row, add green / del red, foldable */
-.tf-sbs { display: flex; flex-direction: column; margin: 8px 0 4px; border: 1px solid var(--line); border-radius: 8px; overflow: hidden; max-height: 340px; overflow-y: auto; }
+.tf-sbs { flex: 1 0 100%; min-width: 0; order: 3; display: flex; flex-direction: column; margin: 8px 0 4px; border: 1px solid var(--line); border-radius: 8px; overflow: hidden; max-height: 340px; overflow-y: auto; }
 .tf-sbs-row { display: grid; grid-template-columns: 1fr 1fr; }
 .tf-sbs-cell { padding: 2px 10px; font-family: var(--font-mono); font-size: var(--fs-xs); white-space: pre-wrap; overflow-wrap: anywhere; min-height: 1.3em; }
 .tf-sbs-cell.del { background: color-mix(in srgb, var(--danger, #c62828) 12%, transparent); color: var(--danger, #c62828); }
@@ -4576,6 +4586,9 @@ details.md-fold > .md-fold-body > :last-child { margin-bottom: 0; }
 .rate-said-label { display: block; flex: none; width: auto; margin-top: 10px; }
 .rate-said-input { display: block; width: 100%; box-sizing: border-box; padding: 6px 8px; margin-top: 4px; resize: none; font: inherit; max-height: 12.5em; overflow-y: auto; }
 .rate-where { margin-top: 12px; }
+/* "Model: <name>" is one unit: it wraps whole to the next line and never splits after the colon, and a long name ends in an ellipsis
+   rather than running out of the card (bar rule 3), as a file's link does in the rating line. */
+.rate-where > .rate-model { display: inline-block; max-width: 100%; vertical-align: bottom; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 /* The popup is a body-level modal, so the viewport and the pointer decide: on a phone or a touch screen
    every control takes the 44px overlay and the rows stand 14px or more apart. */
 @media (max-width: 760px), (pointer: coarse) {
@@ -4590,7 +4603,11 @@ details.md-fold > .md-fold-body > :last-child { margin-bottom: 0; }
 /* The rating line: it wraps, an unbroken run included. */
 .rate-line { overflow-wrap: anywhere; }
 .rate-score { font-family: var(--font-mono); font-variant-numeric: tabular-nums; }		/* the signed score is a figure */
-.rate-jump-link { background: none; border: 0; padding: 0; margin: 0; font: inherit; cursor: pointer; }
+.rate-jump-link { background: none; border: 0; padding: 0; margin: 0; font: inherit; cursor: pointer; text-align: left; }
+/* A file's link is one line that ends in an ellipsis, never a wrapped path (bar rule 3). The ellipsis is on the inner span, so the
+   button itself clips nothing and keeps its 44px tap overlay (bar rule 8). */
+.rate-jump-link[data-h] { display: inline-block; max-width: 100%; vertical-align: bottom; }
+.rate-jump-link[data-h] > .rate-jump-text { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; text-decoration: inherit; }
 
 /* In select mode the copy icon's slot holds a checkbox instead. */
 .ctile-chk {
@@ -4891,6 +4908,55 @@ details.md-fold > .md-fold-body > :last-child { margin-bottom: 0; }
 	#chat-output .ctile-rate-tags { row-gap: 14px; margin-top: 8px; }
 	#chat-output .ctile-rate-tags .tile-dlg-level { position: relative; min-width: 44px; }
 	#chat-output .ctile-rate-tags .tile-dlg-level::after { content: ''; position: absolute; top: 50%; left: 50%; width: 44px; height: 44px; transform: translate(-50%, -50%); }
+}
+
+/* ── Rating a changed file (Rating U3) ─────────────────────────────────
+   Placement only. The group in a changed-files row is the three buttons an answer has, and it wears
+   the form an answer wears in the same place and the same input mode (bar rule 2): the HEADER form
+   where there is a mouse and the chat pane has room, hidden until the row is hovered or has focus
+   inside it, a lit arrow and a lit details control always showing; the ROW form where the pane is
+   440px or less across, or the pointer is coarse (a finger has no hover), every button always there at
+   the 50px pitch. The choice is the answer's own, and so are its two conditions, written below as
+   the answer's are. The group stands at the row's right end, after the delta, and its width is the
+   form's (52px, 116px), so the delta stands at the same x on every row, and a row with no record in a
+   table that has one keeps the room empty (bar rule 3). */
+.turn-files { --tf-rate-w: 52px; }
+.turn-file-rate { flex: none; width: var(--tf-rate-w); justify-content: flex-start; }
+.turn-file-row:is(:hover, :focus-within) .turn-file-rate button { opacity: 0.75; }
+.turn-file-row:is(:hover, :focus-within) .turn-file-rate :is(button[aria-pressed="true"], .ctile-rate-more.on) { opacity: 1; }
+.turn-files:has(.turn-file-rate) .turn-file-row:not(:has(> .turn-file-rate))::after { content: ''; flex: none; width: var(--tf-rate-w); }
+@container aipane (max-width: 440px) {
+	.turn-files { --tf-rate-w: 116px; }
+	.turn-file-rate { gap: 34px; }
+	.turn-file-rate button, .turn-file-row:is(:hover, :focus-within) .turn-file-rate button { opacity: 1; }
+}
+@media (pointer: coarse) {
+	.turn-files { --tf-rate-w: 116px; }
+	.turn-file-rate { gap: 34px; }
+	.turn-file-rate button, .turn-file-row:is(:hover, :focus-within) .turn-file-rate button { opacity: 1; }
+}
+/* A finger on the ROW form: each button takes the house 44px overlay (they are 16px wide at a 50px pitch, so
+   no two meet). The row form on a mouse in a narrow window of a computer has the overlay only at the phone
+   width; a header-form group (a mouse, room to spare) has none, its buttons being 18px apart. */
+@media (pointer: coarse) {
+	.turn-file-rate button { position: relative; }
+	.turn-file-rate button::after { content: ''; position: absolute; top: 50%; left: 50%; width: 44px; height: 44px; transform: translate(-50%, -50%); }
+}
+@media (max-width: 760px) {
+	@container aipane (max-width: 440px) {
+		.turn-file-rate button { position: relative; }
+		.turn-file-rate button::after { content: ''; position: absolute; top: 50%; left: 50%; width: 44px; height: 44px; transform: translate(-50%, -50%); }
+	}
+}
+/* A phone or a touch screen: the name and the delta are the row's whole height and at least 44px wide (the
+   name clips its own overflow, so an overlay on it would be cut), and a row is 44px tall, so no two rows'
+   tap areas meet vertically. */
+@media (max-width: 760px), (pointer: coarse) {
+	.turn-file-row { min-height: 44px; padding: 0; }
+	.turn-file-name { min-width: 44px; min-height: 44px; }
+	.turn-file-name:has(> .turn-file-dir) { align-items: center; }
+	.turn-file-delta { min-width: 44px; min-height: 44px; align-items: center; justify-content: flex-end; }
+	.turn-file-more { min-height: 44px; padding: 0; }
 }
 
 /* THE WRAPPED CONTROL ROW MUST STILL FIT — OR SCROLL. On the tightest shared-stage

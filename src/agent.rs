@@ -62,7 +62,14 @@ use tokio_rustls::rustls::ClientConfig;
 /// Shared by `Rc<RefCell<..>>` rather than a channel: the browser build is
 /// single-threaded, the queue is short, and the UI needs to READ it to draw what is
 /// waiting, which a consumed channel cannot offer.
-pub type Interjections = Rc<RefCell<Vec<String>>>;
+pub type Interjections = Rc<RefCell<Vec<Said>>>;
+
+/// One thing the user said into a running turn, and the app's note that rides ahead of it.
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub struct Said {
+    pub text: String,
+    pub pre:  String,	// joined ahead of `text` on the wire, never shown as it; empty for none
+}
 
 /// A fresh, empty interjection queue.
 pub fn new_interjections() -> Interjections {
@@ -980,18 +987,31 @@ impl Agent {
     /// # Arguments
     /// * `text` - What the user said. Blank input is ignored rather than queued.
     pub fn interject(&self, text: &str) -> usize {
+        self.interject_noted(text, "")
+    }
+
+    /// [`interject`](Self::interject) with the app's note for what the user said.
+    ///
+    /// The note travels with the words and is joined ahead of them where the request is built,
+    /// exactly as a turn's first message carries it (see [`Agent::run_turn_noted`]).  Blank words
+    /// queue nothing, and a note with no words is not said.
+    ///
+    /// # Arguments
+    /// * `text` - What the user said.
+    /// * `pre` - The note for it, empty for none.
+    pub fn interject_noted(&self, text: &str, pre: &str) -> usize {
         let t = text.trim();
         if t.is_empty() {
             return self.interject.borrow().len();
         }
         let mut q = self.interject.borrow_mut();
-        q.push(t.to_string());
+        q.push(Said { text: t.to_string(), pre: pre.to_string() });
         q.len()
     }
 
     /// What is waiting to be said, for the UI to draw.
     pub fn interjections(&self) -> Vec<String> {
-        self.interject.borrow().clone()
+        self.interject.borrow().iter().map(|s| s.text.clone()).collect()
     }
 
     /// Say that whatever dispatched this agent has ended, so nothing is waiting for its report.
@@ -1024,7 +1044,7 @@ impl Agent {
     /// Drained rather than read so that a message cannot be delivered twice: it is
     /// pushed into the conversation the moment it is taken, and the conversation is
     /// the record from then on.
-    fn take_interjections(&self) -> Vec<String> {
+    fn take_interjections(&self) -> Vec<Said> {
         let mut q = self.interject.borrow_mut();
         if q.is_empty() { return Vec::new(); }
         std::mem::take(&mut *q)
@@ -1105,6 +1125,26 @@ impl Agent {
         registry:   &ToolRegistry,
         on_event:   &mut impl FnMut(AgentEvent),
     ) -> Outcome<()> {
+        self.run_turn_noted(session, user_msg, String::new(), registry, on_event).await
+    }
+
+    /// [`run_turn`](Self::run_turn) for a message that carries an app note.
+    ///
+    /// The note rides on the user message beside its words and is joined ahead of them where the
+    /// request is built, so the session, the store and the page's bubble hold only what the person
+    /// typed.  See [`crate::protocol::join_notes`].  A turn no person began -- a trigger, a preset,
+    /// a gather round, a worker -- goes through [`run_turn`](Self::run_turn) and carries none.
+    ///
+    /// # Arguments
+    /// * `pre` - The app's note for this message, empty for none.
+    pub async fn run_turn_noted(
+        &self,
+        session:    &mut Session,
+        user_msg:   String,
+        pre:        String,
+        registry:   &ToolRegistry,
+        on_event:   &mut impl FnMut(AgentEvent),
+    ) -> Outcome<()> {
         // THE TURN'S BYTE LEDGER STARTS HERE, and here is the only place it does. Every turn in
         // the app arrives through this function -- the browser chat, a Diamond's daimon, a
         // dispatched worker and `examples/devcycle_probe.rs` alike -- and a Diamond's daimon
@@ -1124,7 +1164,7 @@ impl Agent {
         // moves it; see `Agent::turn_start`.
         self.turn_start.set(session.messages.len());
         // Append the user message to the persisted history.
-        session.messages.push(ChatMessage::user(user_msg));
+        session.messages.push(ChatMessage::user_noted(user_msg, pre));
 
         // Build the working conversation: system prompt + history.
         let mut working = Vec::with_capacity(session.messages.len() + 1);
@@ -1411,7 +1451,7 @@ impl Agent {
             fmt!("{}\n\n[recall] {} line(s) from {} fold(s) of this conversation.\n\n",
                 lines.join("\n"), lines.len(),
                 session.messages.iter().filter(|m| matches!(m,
-                    ChatMessage::User { content }
+                    ChatMessage::User { content, .. }
                         if content.as_text().starts_with("[Daimond folded the earlier part")))
                     .count())
         };
@@ -2157,8 +2197,8 @@ impl Agent {
             // between the two is a malformed request, and a provider is entitled to
             // reject the whole thing.
             for said in self.take_interjections() {
-                on_event(AgentEvent::Interjected(said.clone()));
-                let msg = ChatMessage::user(said);
+                on_event(AgentEvent::Interjected(said.text.clone()));
+                let msg = ChatMessage::user_noted(said.text, said.pre);
                 working.push(msg.clone());
                 session.messages.push(msg);
             }
@@ -3236,7 +3276,7 @@ mod tests {
         let a = make_test_agent();
         a.interject("stop and summarise");
         let taken = a.take_interjections();
-        assert_eq!(taken, vec![fmt!("stop and summarise")]);
+        assert_eq!(taken, vec![Said { text: fmt!("stop and summarise"), pre: String::new() }]);
         assert!(a.interjections().is_empty());
         assert!(a.take_interjections().is_empty(), "a second take yields nothing");
     }
@@ -3249,9 +3289,111 @@ mod tests {
         let a = make_test_agent();
         a.interject("actually, target wasm");
         let taken = a.take_interjections();
-        let msg = ChatMessage::user(taken[0].clone());
+        let msg = ChatMessage::user(taken[0].text.clone());
         assert_eq!(msg.role(), "user");
         assert_eq!(msg.text(), "actually, target wasm");
+    }
+
+    // ── The app's note on a person's message ────────────────────────────
+
+    /// What the page composes for the person's next message, as the plan words it.
+    const NOTE: &str = "[Daimond: the user rated your answer of 10:04 \u{2212}1 (long): \"just give me the command\".]";
+
+    /// The request bodies the stub has been sent so far, oldest first.
+    fn sent_bodies(seen: &std::sync::Arc<std::sync::Mutex<crate::llm::tests::Seen>>) -> Vec<String> {
+        match seen.lock() {
+            Ok(g)  => g.bodies.clone(),
+            Err(e) => panic!("stub bookkeeping poisoned: {}", e),
+        }
+    }
+
+    /// A noted turn sends the note once, ahead of the words, and the session keeps the two apart.
+    /// The next turn carries none, and the history still holds the first one's note, once, so a
+    /// conversation continued after an interruption sends the note once in history and never again
+    /// as new.
+    #[tokio::test]
+    async fn test_a_noted_turn_sends_the_note_once_and_the_session_keeps_it_apart() {
+        let registry = one_tool();
+        let (port, seen) = crate::llm::tests::start_stub(
+            vec![plain_answer(), plain_answer()]).await;
+        let mut llm = crate::llm::tests::stub_client(port);
+        llm.retry.max_attempts = 1;
+        let a = Agent::new(llm, "You are Daimond.");
+        let mut session = Session::new(fmt!("s1"), fmt!("noted"), fmt!("model"));
+        let ran = a.run_turn_noted(&mut session, fmt!("Now fix the lexer."), NOTE.to_string(),
+            &registry, &mut |_| {}).await;
+        assert!(ran.is_ok(), "{:?}", ran.err());
+        let note = crate::llm::json_escape(NOTE);
+        let bodies = sent_bodies(&seen);
+        assert_eq!(1, bodies.len());
+        assert_eq!(1, bodies[0].matches(&note).count(), "the note is not sent once: {}", bodies[0]);
+        assert!(bodies[0].contains(&crate::llm::json_escape(
+            &fmt!("{}\n\nNow fix the lexer.", NOTE))), "the note does not lead the words");
+        // The session holds the words as the person said them and the note beside them.
+        assert_eq!("Now fix the lexer.", session.messages[0].text());
+        assert_eq!(NOTE, session.messages[0].pre());
+
+        let ran = a.run_turn(&mut session, fmt!("and the parser"), &registry, &mut |_| {}).await;
+        assert!(ran.is_ok(), "{:?}", ran.err());
+        let bodies = sent_bodies(&seen);
+        assert_eq!(2, bodies.len());
+        assert_eq!(1, bodies[1].matches(&note).count(),
+            "the next request does not carry the first note once: {}", bodies[1]);
+        assert!(bodies[1].contains("and the parser"));
+        let users: Vec<&ChatMessage> = session.messages.iter()
+            .filter(|m| m.role() == "user").collect();
+        assert_eq!(2, users.len());
+        assert_eq!("", users[1].pre(), "a turn started with run_turn carries no note");
+    }
+
+    /// A correction said into a running turn takes its note with it, into the next round's
+    /// request, and the event the page draws it from carries the words only.
+    #[tokio::test]
+    async fn test_an_interjection_carries_its_note_into_the_next_round() {
+        let registry = one_tool();
+        let (port, seen) = crate::llm::tests::start_stub(vec![
+            tool_round(&[("file_write", r#"{"path":"a.txt","content":"1"}"#)]),
+            plain_answer(),
+        ]).await;
+        let mut llm = crate::llm::tests::stub_client(port);
+        llm.retry.max_attempts = 1;
+        let a = Agent::new(llm, "You are Daimond.");
+        let mut session = Session::new(fmt!("s1"), fmt!("noted"), fmt!("model"));
+        let mut heard: Vec<String> = Vec::new();
+        let ran = a.run_turn(&mut session, fmt!("write it"), &registry, &mut |ev| {
+            match ev {
+                AgentEvent::ToolCall { .. }   => { a.interject_noted("actually, target wasm", NOTE); },
+                AgentEvent::Interjected(said) => heard.push(said),
+                _                             => {},
+            }
+        }).await;
+        assert!(ran.is_ok(), "{:?}", ran.err());
+        assert_eq!(vec![fmt!("actually, target wasm")], heard, "the event must carry the words alone");
+        let bodies = sent_bodies(&seen);
+        assert_eq!(2, bodies.len());
+        assert!(!bodies[0].contains("Daimond: the user rated"), "the first round had no note");
+        assert!(bodies[1].contains(&crate::llm::json_escape(
+            &fmt!("{}\n\nactually, target wasm", NOTE))),
+            "the correction did not carry its note into the round: {}", bodies[1]);
+        let said = session.messages.iter().find(|m| m.text() == "actually, target wasm");
+        match said {
+            Some(m) => assert_eq!(NOTE, m.pre()),
+            None    => panic!("the correction is not in the session"),
+        }
+    }
+
+    /// A correction with no note queues and is said as it always was.
+    #[test]
+    fn test_an_interjection_with_no_note_carries_none() {
+        let a = make_test_agent();
+        assert_eq!(1, a.interject("use the other file"));
+        assert_eq!(2, a.interject_noted("  and run the tests  ", NOTE));
+        assert_eq!(vec![fmt!("use the other file"), fmt!("and run the tests")], a.interjections());
+        let taken = a.take_interjections();
+        assert_eq!("", taken[0].pre);
+        assert_eq!(NOTE, taken[1].pre);
+        // Blank words are not said, whatever note they bring.
+        assert_eq!(0, a.interject_noted("   ", NOTE));
     }
 
     // ── What bounds a turn ──────────────────────────────────────────────

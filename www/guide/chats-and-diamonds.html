@@ -73,12 +73,18 @@
 	</ul>
 	<p>None of these is dressed up as an answer.</p>
 
-	<h2 id="s4">Keeping a chat</h2>
+	<h2 id="s4">Rating an answer or a change</h2>
+	<p>A final answer ends with an up arrow, a down arrow and a details control. A file a turn changed has the same three at the right end of its row, in the <span class="ui">Files</span> tile under that turn.</p>
+	<p>The up arrow gives a plus and the down arrow a minus, and a tap on a lit arrow takes the rating back. A down tap also opens a row of tags, such as <span class="ui">Too long</span> for an answer or <span class="ui">Broke something</span> for a file, so the rating can say what was wrong. The details control opens <span class="ui">Rate this answer</span> or <span class="ui">Rate this change</span>, with five steps from <span class="ui">Wrong</span> to <span class="ui">Great</span>, the tags, four scores and a box for your own words. <span class="ui">Withdraw</span> in that popup removes a rating too.</p>
+	<p>A file carries arrows only where Daimond can say which model changed it. Where two agents worked in the same place at the same time, the row carries none, because a rating filed under the wrong model is worse than none.</p>
+	<p>A rating is saved in the chat it was given in, ten seconds after the last tap, or sooner when you send a message or leave the chat. It is listed in a <span class="ui">Rating</span> tile at the end of the thread, with a link back to the answer or the file. The model reads it once, with your next message in that chat, and the thread shows only what you typed.</p>
+
+	<h2 id="s5">Keeping a chat</h2>
 	<p>Two buttons sit on a chat's row in the rail. <span class="ui">Keep</span> turns the whole conversation into a diamond. <span class="ui">Fold all</span> turns it into a diamond by summarising it, keeping what was worked out and dropping the back-and-forth.</p>
 	<p>To keep only part, collapse the answers, tick the turns worth keeping, and choose <span class="ui">Fold Selected</span>. Fold a step you have adopted, and leave a passing remark where it is.</p>
 	<p>Nothing is absorbed on its own. A diamond's memory changes only through a fold or an edit, and every write is kept in History.</p>
 
-	<h2 id="s5">Inside a diamond</h2>
+	<h2 id="s6">Inside a diamond</h2>
 	<p>Your diamonds sit above your chats, and the <span class="ui">+</span> makes one. A diamond has two faces, and a switch in its header moves between them. <span class="ui">Crystal</span> is what it knows, and <span class="ui">Chat</span> is its own conversation.</p>
 
 	<figure class="shot narrow">
@@ -88,7 +94,7 @@
 
 	<p>The card lists the diamond's title and summary in its own words, then everything else it holds, a line each. <span class="ui">Edit</span> opens a form. <span class="ui">Show raw memory</span> opens the file itself, for when you would rather work in it directly.</p>
 
-	<h2 id="s6">The four files a diamond keeps</h2>
+	<h2 id="s7">The four files a diamond keeps</h2>
 	<p>Memory is kept in the open. Four files sit in the diamond's own folder, readable in the Workspace panel and by the daimon.</p>
 	<ul>
 		<li><code>crystal.json</code> holds what this diamond <em>is</em>, meaning its title, summary, sections, facts and links.</li>
@@ -98,7 +104,7 @@
 	</ul>
 	<p>All four ride with the daimon on every round inside one budget, so what a diamond is told about itself is bounded and predictable. A crystal too large to fit whole keeps its overflow readable and searchable instead of dropping it. The counts on the card, <span class="ui">Objectives</span>, <span class="ui">Open tasks</span> and <span class="ui">Done</span>, are read off <code>REQUIREMENTS.md</code>.</p>
 
-	<h2 id="s7">Two kinds of fold</h2>
+	<h2 id="s8">Two kinds of fold</h2>
 	<p>The word covers two different acts.</p>
 	<ul>
 		<li><strong>Summarise earlier messages</strong>, in the chat header, is the app compressing a conversation that no longer fits. Its decisions are filed into <code>DECISIONS.md</code>, its open items into <code>REQUIREMENTS.md</code>, and its next step into <code>STATE.md</code>. What it files can be found afterwards, and what it leaves in a notice cannot.</li>
@@ -106,16 +112,16 @@
 	</ul>
 	<p>Filing is repeatable, so running the same fold twice files nothing twice, and the order two folds arrive in does not change what the files end up saying.</p>
 
-	<h2 id="s8">History</h2>
+	<h2 id="s9">History</h2>
 	<p><span class="ui">History</span> lists every version, newest first. <span class="ui">View</span> reads one, <span class="ui">Restore</span> makes it current again, and <span class="ui">Delta</span> shows the material a fold was given. Restore keeps what was current first, so a restore can itself be undone.</p>
 	<p>Every file the daimon changes in a diamond is kept too, and a row's <span class="ui">Restore file</span> brings one back while <span class="ui">Restore</span> brings the whole version back. Files on this computer are kept only where the daimon wrote them here, so a change made by an editor, a build or a command is not in History. Deleting, renaming, folding and restoring each show <span class="ui">Undo</span> for five seconds, and after that the act stands.</p>
 
-	<h2 id="s9">Acting without being asked</h2>
+	<h2 id="s10">Acting without being asked</h2>
 	<p>A diamond answers when you prompt it and at no other time, unless you set up a triggered action. Those live under <span class="ui">When this diamond acts</span> on the Crystal face, and <span class="ui">Add an action</span> makes one. Two things can set one off, either minutes of your own activity, counted only while you work, or mail arriving in a folder you name.</p>
 	<p>Each action carries an instruction, sent every time, and a context, sent once until you change it. They are an ordinary file, <code>triggers.json</code>, in the diamond's folder.</p>
 	<p>A new action is <strong>stopped</strong>, and says so: <em>Stopped. Press &#9654; on the light beside the pulldown to let this action run.</em> One press arms it.</p>
 
-	<h3 id="s10">The light</h3>
+	<h3 id="s11">The light</h3>
 	<p>Every action, every diamond and the <span class="ui">Everything</span> row wear the same three-part control, a play, a pause and a round light. The light says whether anything is armed and free to fire.</p>
 	<ul>
 		<li><strong>Red.</strong> Nothing here will act by itself.</li>
@@ -125,7 +131,7 @@
 	<p>A fresh account is red everywhere, which is the honest answer to whether anything is running by itself. An action missing its mailbox or its instruction is left out of the count, because it could not fire. Amber can only be arrived at, never set.</p>
 	<p>A held action spends nothing, because it is refused before the turn starts.</p>
 
-	<h2 id="s11">Tags, links and the Trash</h2>
+	<h2 id="s12">Tags, links and the Trash</h2>
 	<p><span class="ui">Tags</span> on the Crystal face files a diamond in the rail. Up to eight tags, lowercased and deduplicated. <span class="ui">Suggested</span> offers four to start from. Tags are inert. They are not sent to a model, they are no part of the memory, and they change nothing an agent does. <span class="ui">Filter by tag</span> in the rail narrows by them.</p>
 	<p>A diamond can also be linked to another, and the <a href="interface.html">Graph</a> is the picture of that.</p>
 	<p>Deleting a chat or a diamond trashes it. It is still stored and still synced, out of every daimon's reach, and kept thirty days with the date on the row. <span class="ui">Restore</span> brings it back on every device. <span class="ui">Delete permanently</span> and <span class="ui">Empty trash</span> are the two that ask.</p>
