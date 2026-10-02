@@ -38,6 +38,11 @@ svg { display: block; }
 	outline-offset: 1px;
 }
 
+/* The panel `hideIdentity` hands the keyboard to after unlock: focusable by
+   script (`tabindex="-1"`), out of the Tab order, and it draws nothing, so the
+   hand-over leaves no ring for someone who has not touched the keyboard. */
+.focus-home:focus, .focus-home:focus-visible { outline: none; }
+
 /* ── Copy an identifier ──────────────────────────────────────────
    One button, wherever a machine-readable string is on show: the build id in
    the rail, the account fingerprint, a device id, a build in the version

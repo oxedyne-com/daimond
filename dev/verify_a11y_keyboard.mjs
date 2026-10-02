@@ -27,6 +27,16 @@
 //      themselves, close on Escape, and return focus to their opener.
 //   7. The command palette opens with the caret in its box and swallows Tab, so
 //      the keyboard cannot end up typing behind the scrim.
+//   8. Focus the app moves by itself draws no ring (2026-10-02, "New Chat" after an
+//      automatic reload; quality bar rule 1). Section 10: with stay-unlocked forced
+//      on, the app is reloaded with NO input and left past the unlock and the 60 ms
+//      hand-over; the focused element must not match :focus-visible with a visible
+//      outline, the keyboard must not be left on <body>, and the first Tab must land
+//      on New Chat WITH its ring; with a chat open the message box itself holds the focus, draws no
+//      ring, and a typed character lands in it with no click. The same
+//      is read after a menu that a pointer opened is closed by a pointer. Computer
+//      (1440x900) and phone (390x844, touch), Obsidian and Porcelain. `--ring-only`
+//      runs this section alone.
 //
 // KNOWN DEFECTS are reported at the end under "KNOWN" and do NOT fail the run.
 // They are written up with a file:line and a fix in dev/a11y_report.md. They are
@@ -44,7 +54,7 @@
 // (DAIMOND_MOCK_PORT, default 9099). No gateway.
 
 import fs from 'node:fs';
-import { open, newChat, chat, scratch } from './harness.mjs';
+import { open, newChat, chat, scratch, signInAs } from './harness.mjs';
 
 const out = [];
 let bad = 0;
@@ -225,6 +235,168 @@ async function press(page, sel) {
 	if (!b) throw new Error(`${sel} has no box to click`);
 	await page.mouse.click(b.x, b.y);
 	await page.waitForTimeout(400);
+}
+
+// ── 10. Focus the app moves by itself draws no ring ─────────────────
+//
+// Chrome draws a button's keyboard ring (:focus-visible) for focus a script moves
+// in a page where nobody has clicked or tapped yet. A desktop stays unlocked across
+// a reload, so the updater's, sync recovery's and pairing's reloads unlock with no
+// click, and the unlock's hand-over (daimond.js hideIdentity) used to focus New Chat
+// itself and draw a thick ring round it. This section is in THIS file, not in
+// verify_no_left_bars's outline half, because that half reads the computed borders of
+// a synthetic stage and cannot reload an unlocked app; the property is about focus,
+// which this file owns (dialogs, menus and the palette give focus back here too).
+//
+// What is read, in a fresh document that has had no input at all:
+//   A. after the unlock and the 60 ms hand-over, document.activeElement is not <body>
+//      (the keyboard was handed on) and does not draw a ring;
+//   B. SELF-TEST, in the same document: focusing New Chat by script the way the old
+//      hand-over did DOES read as a ring, so the predicate is shown going red;
+//   C. the panel takes the focus back, the first Tab lands on the control the hand-over
+//      is for, and THAT draws its ring (a keyboard user still sees where they are);
+//   D. in a second fresh document, each menu opener that is on screen is pressed by a
+//      pointer and closed by a pointer (the opener again, then a click outside), and the
+//      element the close returns focus to draws no ring.
+const RING_OF = () => {
+	const a = document.activeElement;
+	if (!a || a === document.body) return { onBody: true, name: 'BODY', ring: false };
+	const cs = getComputedStyle(a);
+	const out = cs.outlineStyle !== 'none' && cs.outlineStyle !== 'hidden'
+		&& parseFloat(cs.outlineWidth) > 0 && !/rgba\([^)]*,\s*0\)$/.test(cs.outlineColor);
+	const fv = a.matches(':focus-visible');
+	const name = a.tagName.toLowerCase() + (a.id ? '#' + a.id : '')
+		+ (typeof a.className === 'string' && a.className.trim() ? '.' + a.className.trim().split(/\s+/)[0] : '');
+	return { onBody: false, name, id: a.id || '', fv, outline: cs.outlineStyle + ' ' + cs.outlineWidth,
+		ring: fv && out };
+};
+const UNLOCKED_NOW = () => {
+	const m = document.getElementById('identity-modal');
+	let un = false;
+	try { un = DaimondIdentity.isUnlocked(); } catch (e) { un = false; }
+	return { un, gate: !!(m && m.offsetParent !== null), ready: !!window.__DAIMOND_READY,
+		theme: window.DaimondTheme ? window.DaimondTheme.get() : '' };
+};
+const WANT_FIRST = () => ['chat-input', 'new-session-btn', 'new-diamond-btn']
+	.map((id) => document.getElementById(id))
+	.filter((e) => e && e.getClientRects().length).map((e) => e.id)[0] || '';
+async function reloadNoInput(page) {
+	await page.reload();
+	// The wait is for the unlock to be done, not for a fixed time: the gate is hidden,
+	// the identity is unlocked, and then 700 ms more, which is past the 60 ms.
+	for (const t0 = Date.now(); Date.now() - t0 < 60000; ) {
+		const u = await page.evaluate(UNLOCKED_NOW).catch(() => ({}));
+		if (u.un && u.ready && !u.gate) break;
+		await page.waitForTimeout(200);
+	}
+	await page.waitForTimeout(700);
+	return page.evaluate(UNLOCKED_NOW);
+}
+async function ringSection() {
+	const configs = [
+		{ tag: 'desk 1440x900',  w: 1440, h: 900, phone: false },
+		{ tag: 'phone 390x844',  w: 390,  h: 844, phone: true },
+	];
+	const root = scratch('pw', 'ring-' + process.pid);
+	for (const cfg of configs) for (const theme of ['obsidian', 'porcelain']) {
+		const tag = `${cfg.tag} ${theme}`;
+		const profile = `${root}/${cfg.phone ? 'phone' : 'desk'}-${theme}`;
+		const r = await open({ name: 'ring', profile, connect: false, signIn: false,
+			touch: cfg.phone, isMobile: cfg.phone });
+		const pg = r.page;
+		await pg.setViewportSize({ width: cfg.w, height: cfg.h });
+		// Stay-unlocked ON before the account is made, so the unlocked session is kept in
+		// tab storage: a phone's default is OFF, and a desktop's is ON.
+		await pg.evaluate(() => localStorage.setItem('daimond-stay-unlocked', '1'));
+		await signInAs(r, 'ring');
+		await pg.evaluate((t) => { window.DaimondLook && window.DaimondLook.set('daylight'); window.DaimondTheme.set(t); }, theme);
+		await pg.waitForTimeout(400);
+		const tap = async (x, y) => (cfg.phone ? pg.touchscreen.tap(x, y) : pg.mouse.click(x, y));
+		const centre = (sel) => pg.evaluate((q) => {
+			const e = document.querySelector(q);
+			if (!e || !e.getClientRects().length) return null;
+			const b = e.getBoundingClientRect();
+			if (!b.width || !b.height || b.right < 0 || b.left > innerWidth || b.bottom < 0 || b.top > innerHeight) return null;
+			return { x: b.left + b.width / 2, y: b.top + b.height / 2 };
+		}, sel);
+		// Two arrangements: no chat open (New Chat is the first stop), and a chat open on the
+		// computer (the message box is). A phone keeps to the first, where the drawer holds New Chat.
+		const arrangements = cfg.phone ? ['no chat'] : ['no chat', 'chat open'];
+		for (const arr of arrangements) {
+			const at = `${tag}, ${arr}`;
+			if (arr === 'chat open') await newChat(r);
+			// A. the unattended reload.
+			const u = await reloadNoInput(pg);
+			check(u.un && !u.gate, `${at}: the reload came back unlocked with no input (stay-unlocked on)`,
+				`unlocked ${u.un}, gate showing ${u.gate}`);
+			check(u.theme === theme, `${at}: the look survived the reload`, `theme ${u.theme}`);
+			const want = await pg.evaluate(WANT_FIRST);
+			const a = await pg.evaluate(RING_OF);
+			check(!a.onBody, `${at}: the unlock hands the keyboard on, not left on <body>`, `focus is on ${a.name}`);
+			check(!a.ring, `${at}: nothing the app focused by itself draws a ring after an unattended reload`,
+				`${a.name}, :focus-visible ${a.fv}, outline ${a.outline}`);
+			if (arr === 'chat open') {
+				// The message box is a text field: it takes the focus itself, draws no ring, and a
+				// character typed with no click lands in it (typing is the input, so it comes last).
+				check(a.id === 'chat-input', `${at}: the unlock leaves the focus in the message box`, `focus is on ${a.name}`);
+				await pg.keyboard.type('x');
+				const v = await pg.evaluate(() => { const c = document.getElementById('chat-input'); const v = c ? c.value : null; if (c) c.value = ''; return v; });
+				check(v === 'x', `${at}: a character typed with no click lands in the composer`, `value ${JSON.stringify(v)}`);
+				continue;
+			}
+			// B. the predicate goes red on the old hand-over, in this same document.
+			await pg.evaluate(() => { const b = document.getElementById('new-session-btn'); if (b) b.focus(); });
+			const old = await pg.evaluate(RING_OF);
+			check(old.ring, `${at}: SELF-TEST: focusing New Chat by script, as the old hand-over did, reads as a ring`,
+				`${old.name}, :focus-visible ${old.fv}, outline ${old.outline}`);
+			// C. the panel takes the focus back; Tab lands on the control, with its ring.
+			await pg.evaluate(() => { const h = document.querySelector('.focus-home'); if (h) h.focus(); });
+			await pg.keyboard.press('Tab');
+			await pg.waitForTimeout(150);
+			const c = await pg.evaluate(RING_OF);
+			check(want !== '' && c.id === want, `${at}: the first Tab after the unlock lands on ${want || '(nothing on screen)'}`,
+				`focus is on ${c.name}`);
+			// A text field marks focus by its caret and its border colour (check 4 holds it to
+			// that), not by an outline, so for the message box landing on it is the whole claim.
+			check(c.ring || /^(textarea|input)/.test(c.name),
+				`${at}: and the keyboard user sees where they are (the button's ring, or the field's caret)`,
+				`${c.name}, outline ${c.outline}`);
+		}
+		// D. a menu a pointer opened, closed by a pointer, in a fresh document with no input.
+		await reloadNoInput(pg);
+		let tested = 0;
+		for (const op of ['#help-btn', '#settings-menu-btn', '#panel-more', '#drawer-btn', '#chead-more']) {
+			for (const how of ['the opener again', 'a click outside']) {
+				const o = await centre(op);
+				if (!o) continue;
+				await tap(o.x, o.y);
+				await pg.waitForTimeout(350);
+				const open1 = await pg.evaluate((q) => document.querySelector(q).getAttribute('aria-expanded') === 'true', op);
+				if (!open1) continue;
+				if (how === 'the opener again') await tap(o.x, o.y);
+				else {
+					const out = await centre('#current-session-name') || { x: 4, y: cfg.h - 4 };
+					await tap(out.x, out.y);
+				}
+				await pg.waitForTimeout(350);
+				const d = await pg.evaluate(RING_OF);
+				tested++;
+				check(!d.ring, `${tag}: ${op} opened by a pointer and closed by ${how} leaves no ring`,
+					`${d.name}, :focus-visible ${d.fv}, outline ${d.outline}`);
+			}
+		}
+		check(tested > 0, `${tag}: at least one pointer-opened menu was exercised`, `${tested} open-close pairs`);
+		await r.close();
+		try { fs.rmSync(profile, { recursive: true, force: true }); } catch (e) { /* gone */ }
+	}
+	try { fs.rmSync(root, { recursive: true, force: true }); } catch (e) { /* gone */ }
+}
+
+if (process.argv.includes('--ring-only')) {
+	await ringSection();
+	console.log(out.join('\n'));
+	console.log(bad === 0 ? `\nRING: ALL ${out.length} CHECKS PASSED` : `\nRING: ${bad} of ${out.length} FAILED`);
+	process.exit(bad === 0 ? 0 : 1);
 }
 
 // ── The run ─────────────────────────────────────────────────────────
@@ -656,6 +828,9 @@ await page.keyboard.press('Escape');
 await page.waitForTimeout(300);
 
 await s.close();
+
+// ── 10. Focus the app moves by itself draws no ring ─────────────────
+await ringSection();
 
 console.log(out.join('\n'));
 if (known.length) {

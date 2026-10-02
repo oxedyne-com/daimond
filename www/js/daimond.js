@@ -57135,6 +57135,19 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 	/// Without the hand-over the focus stayed on `<body>`, so the first Tab after
 	/// signing in (or skipping) started again at the very top of the document
 	/// rather than at the thing the user had just been let through to.
+	///
+	/// The hand-over to a BUTTON goes to the panel that holds it, never to the
+	/// button (2026-10-02, "New Chat" ringed after every automatic reload). Chrome draws a
+	/// button's keyboard ring (`:focus-visible`) for focus a script moves in a page
+	/// where nobody has clicked or tapped yet, and a desktop stays unlocked across a
+	/// reload, so the updater's, sync recovery's and pairing's reloads unlocked with
+	/// no click and drew a thick ring round New Chat. A container with
+	/// `tabindex="-1"` takes the focus by script, is not in the Tab order and draws
+	/// nothing (`.focus-home`, app.css); Tab from it lands on the control inside, so
+	/// the keyboard ends up where it did before and only the ring is gone. The message
+	/// box is a text field: it draws no ring (a caret and a border colour mark it), and
+	/// a reload with a chat open should let the person type at once, so it is focused
+	/// itself.
 	function hideIdentity() {
 		document.getElementById('identity-modal').style.display = 'none';
 		// The gate is down: whoever this is got past it, by making a passphrase
@@ -57156,7 +57169,16 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			var next = ['chat-input', 'new-session-btn', 'new-diamond-btn']
 				.map(function (id) { return document.getElementById(id); })
 				.filter(function (el) { return el && el.getClientRects().length; })[0];
-			if (next) { try { next.focus(); } catch (e) { /* gone */ } }
+			if (next && next.id === 'chat-input') {
+				try { next.focus(); } catch (e) { /* gone */ }
+				return;
+			}
+			var home = next && next.parentElement;
+			if (home) {
+				home.classList.add('focus-home');
+				home.setAttribute('tabindex', '-1');
+				try { home.focus({ preventScroll: true }); } catch (e) { /* gone */ }
+			}
 		}, 60);
 		// The front door's "I have a passcode", carried across the one step that
 		// had to come first. `DaimondPasscode.front()` recorded the intent because
