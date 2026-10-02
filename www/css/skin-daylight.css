@@ -192,8 +192,13 @@
    every other dock panel (`--dock-inset`, variables.css) under a `.railhead`
    built for the rail's own denser 4px -- their own heading sat 6px left of
    their own body's edge. The other six dock panels' bodies already match
-   the rail's 4px, so only these three are restated. */
-:root[data-skin="daylight"] :is(.panel.modeldash, .panel.tracker, .panel.social) > .railhead { padding-left: var(--dock-inset); }
+   the rail's 4px, so only these three are restated. Measured on 1 Oct (5.2.9): Spending, Agents
+   and Trash hold the same body inset (x 1138), so they join. */
+:root[data-skin="daylight"] :is(.panel.modeldash, .panel.tracker, .panel.social, .panel.spend, .panel.agents, .panel.trash) > .railhead { padding-left: var(--dock-inset); }
+/* The Workspace's head sat 7px left of the card under it (the reach and toolchain notes, x 1139 at 1440px). */
+@media (min-width: 761px) {
+	:root[data-skin="daylight"] .panel.work > .railhead { padding-left: 11px; }
+}
 :root[data-skin="daylight"] .railhead > span:first-child {
 	font-family: var(--font-display);
 	font-size: var(--dl-xl);
@@ -365,7 +370,7 @@
 :root[data-skin="daylight"] :is(.admin-note, .rail-note, .trash-note, .cap-blurb, .mail-fine, .pop-note,
 	.chat-msg-empty, .files-empty, .rel-blurb, .agents-empty, .mdash-empty, .hist-note, .mdash-note, .spend-note,
 	.tools-intro, .mode-row-blurb, .shr-note, .cfg-hint, .search-engine-note, .tag-note, .spend-sec-hint,
-	.mdash-sec-hint, .crystal-empty, .graph-empty, .tile-dlg-note) {
+	.mdash-sec-hint, .crystal-empty, .graph-empty, .tile-dlg-note, .pro-fine, .ar-hint, .tools-fine, .spend-empty) {
 	font-size: var(--dl-xs); font-weight: var(--w-text); color: var(--text-muted); line-height: 1.45;
 }
 /* A dialog's note is the same note; its warning variant keeps the warning colour. */
@@ -381,7 +386,6 @@
 /* ── The account, at the rail's foot ───────────────────────── */
 /* The one rule the rail keeps: it says the list has ended. */
 :root[data-skin="daylight"] .admin-status { border-top: 1px solid var(--border); padding-top: 10px; gap: 2px; }
-:root[data-skin="daylight"] .astat-detail { border-left: 0; margin-left: 0; }
 /* One app table (D-20260929-03, remaining.md cluster 12): Spend's and Model
    stats' figures shared a head but drew a row a pixel apart, and each table's
    own numeric column and model name drew a size and colour of its own. */
@@ -413,7 +417,7 @@
    (§2/cluster 5) for the one button -- `.files-btn.attach-btn` -- that wears
    both a head-tool's and this row's class. */
 :root[data-skin="daylight"] :is(.device-rename, .device-nominate, .copy-id, .ctile-copy, .attach-btn, .files-del,
-	.files-ren, .crystal-form-x, .attach-add, .tile-cog, .ctile-rate-up, .ctile-rate-down, .ctile-rate-more) {
+	.files-ren, .crystal-form-x, .attach-add, .tile-cog, .ctile-rate-up, .ctile-rate-down, .ctile-rate-more, .mail-refresh) {
 	height: 20px; min-height: 20px; padding: 0; border-radius: var(--radius-sm); color: var(--text-secondary);
 }
 /* `.tag-x` kept OUT of the fixed-20px group above (D-20260929-03 residual
@@ -446,22 +450,15 @@
    own third line: line 2 was already full, so it wrapped (sweep item 19). */
 @media (max-width: 480px) {
 	:root[data-skin="daylight"] .device-row > .device-rename { order: 3; }
-	/* The icon-button rule (above, .device-rename etc. at 20px) outranks
-	   app.css's own 44px phone tap-target floor for the device row's
-	   controls; restate it here at the same specificity, after it. */
-	:root[data-skin="daylight"] :is(.device-row > .copy-id, .device-acts .device-remove) { width: 44px; height: 44px; min-height: 44px; }
 	/* The rename pencil's overlay reaches 4px into the copy button. */
 	:root[data-skin="daylight"] .device-row > .copy-id { margin-right: 4px; }
 	/* R12 (D-20260929-03 r526 residual): nominate and rename take the icon-
 	   button group's own 20px box now, like copy, the tile cog and the rest --
 	   they were the two out of the row at 44px. The TAP target does not follow
-	   the box down, though (the lead's ruling, same day): an invisible ::after
-	   restores it to 44px without moving anything else on the row. */
-	:root[data-skin="daylight"] :is(.device-ctl .device-nominate, .device-acts .device-rename) {
-		width: 20px; height: 20px; min-height: 0; position: relative;
-	}
-	:root[data-skin="daylight"] :is(.device-ctl .device-nominate, .device-acts .device-rename)::after {
-		content: ''; position: absolute; top: 50%; left: 50%; width: 44px; height: 44px; transform: translate(-50%, -50%);
+	   the box down, though (the lead's ruling, same day): the phone floor's
+	   invisible ::after (below) restores it to 44px, for all four. */
+	:root[data-skin="daylight"] :is(.device-row > .copy-id, .device-acts .device-remove, .device-ctl .device-nominate, .device-acts .device-rename) {
+		width: 20px; height: 20px; min-height: 0;
 	}
 }
 
@@ -662,13 +659,20 @@
    +Add-provider pills this replaces their own font, weight, padding and
    colour with it. */
 :root[data-skin="daylight"] :is(.crystal-act, .graph-btn, .attach-view-btn, .code-copy-btn, .files-mode-btn,
-	.imp-keep, .imp-send, .imp-vote, .shr-btn, .models-add, .tag-clear-all, .ti-continue) {
+	.imp-keep, .imp-send, .imp-vote, .shr-btn, .models-add, .tag-clear-all, .ti-continue,
+	.pro-buy, .tools-buy, .mail-unlock, .ar-save, .ar-card-btn) {
 	font-size: var(--dl-xs); font-weight: var(--w-text); color: var(--text-secondary); background: transparent;
 	border-color: transparent; border-radius: var(--radius-sm); padding: 3px 10px; min-height: 27px; line-height: 19px;
 	text-decoration: none;
 }
 :root[data-skin="daylight"] :is(.crystal-act, .graph-btn, .attach-view-btn, .code-copy-btn, .files-mode-btn,
-	.imp-keep, .imp-send, .imp-vote, .shr-btn, .models-add, .tag-clear-all, .ti-continue):hover { background: var(--dl-hover); color: var(--text-primary); }
+	.imp-keep, .imp-send, .imp-vote, .shr-btn, .models-add, .tag-clear-all, .ti-continue,
+	.pro-buy, .tools-buy, .mail-unlock, .ar-save, .ar-card-btn):hover { background: var(--dl-hover); color: var(--text-primary); }
+/* The primary text button: the role's size, filled in the accent. Subscribe,
+   Unlock, Save and Save a card each drew a size of their own (14px, 37px). */
+:root[data-skin="daylight"] :is(.pro-buy, .tools-buy, .mail-unlock, .ar-save, .ar-card-btn.accent),
+:root[data-skin="daylight"] :is(.pro-buy, .tools-buy, .mail-unlock, .ar-save, .ar-card-btn.accent):hover { background: var(--accent); color: var(--on-fill, #fff); }
+:root[data-skin="daylight"] :is(.pro-buy, .tools-buy, .mail-unlock, .ar-save, .ar-card-btn.accent):hover:not(:disabled) { background: var(--accent-hover); }
 :root[data-skin="daylight"] .files-card,
 :root[data-skin="daylight"] .files-mode,
 :root[data-skin="daylight"] .files-scope,
@@ -691,7 +695,9 @@
    that content's edge rather than the 28px the transcript's `.chead` sets
    for itself above (2026-09-29, owner: "the gap to the left of the file name
    title"). */
-:root[data-skin="daylight"] .panel.doc .chead { padding-left: 10px; }
+:root[data-skin="daylight"] :is(.panel.doc, .panel.tools, .panel.graph, .panel.msg, .panel.termpanel) .chead { padding-left: var(--dock-inset); }
+/* Compose's body holds the mail head's own 14px (mail.css `.compose-head`), so its title takes that. */
+:root[data-skin="daylight"] .panel.compose .chead { padding-left: 14px; }
 /* The file panel's action row -- Edit, Download, Attach, Back -- as one bare
    button: no outline, one height, one baseline, even spacing. Classic left
    the paperclip a size and a padding of its own (files.css), which is
@@ -809,7 +815,7 @@
 :root[data-skin="daylight"] .pop-head { text-transform: none; letter-spacing: 0; font-size: var(--dl-xs); font-weight: var(--w-strong); }
 /* Help's About/Guide rows read a step quieter than the drawer's own menu
    items (D-20260929-03 §7): the same primary ink and radius. */
-:root[data-skin="daylight"] #help-menu .icon-btn { color: var(--text-primary); border-radius: var(--radius-sm); }
+:root[data-skin="daylight"] [data-menu="rows"] > button { color: var(--text-primary); border-radius: var(--radius-sm); }
 
 /* ── Dialogs ───────────────────────────────────────────────── */
 /* New diamond, the chat/diamond cog dialogs and the diamond page's Edit
@@ -977,7 +983,7 @@
    text-transform. */
 :root[data-skin="daylight"] :is(.files-kits-label, .files-reach-label, .files-scope-label, .tag-box-label,
 	.imp-with-label, .models-draft-lab, .tile-dlg-label, .spend-stat-lbl, .about-ver-label,
-	.cfg-fieldlabel, .crystal-form-hot, .start-label) {
+	.cfg-fieldlabel, .crystal-form-hot, .start-label, .mail-globals-label) {
 	font-size: var(--dl-xs); font-weight: var(--w-text); color: var(--text-secondary); text-transform: none;
 	line-height: 16.2px; letter-spacing: 0;
 }
@@ -1267,7 +1273,7 @@
 	   rule (17px, the daimon's own face) on the phone too (sweep item 13,
 	   completing batch-1 item 2). */
 	:root[data-skin="daylight"] .railhead-acts > :is(button, select),
-	:root[data-skin="daylight"] .pending-actions > :is(button, select),
+	:root[data-skin="daylight"] .pending-actions > button,
 	:root[data-skin="daylight"] .railhead > .addbtn,
 	:root[data-skin="daylight"] .railhead > button,
 	:root[data-skin="daylight"] .chead-right > :is(button, .chip-btn, .mode-chip),
@@ -1275,12 +1281,6 @@
 	/* The floating ˄˅ jump buttons kept a grey ring (sweep item 18). */
 	:root[data-skin="daylight"] .chat-input-bar #chat-jump,
 	:root[data-skin="daylight"] .chat-input-bar #chat-end { border-color: transparent; box-shadow: 0 2px 10px rgb(20 12 16 / 0.16); }
-	/* The tab bar's last visible label was cut in half at the screen edge,
-	   reading as clipped text rather than as "scroll for more" (sweep item 20). */
-	:root[data-skin="daylight"] #mnav {
-		-webkit-mask-image: linear-gradient(to right, #000 86%, transparent);
-		mask-image: linear-gradient(to right, #000 86%, transparent);
-	}
 	/* QA round 2, M2 (still open after the first fix): the row was two lines,
 	   but Daylight's flat strip still centred "Icons +" inside the floating
 	   #chat-jump/#chat-end buttons' own band. 24px of bottom padding lifts
@@ -1391,17 +1391,205 @@
 :root[data-skin="daylight"] .compose-row > input:focus,
 :root[data-skin="daylight"] #msheet-ask-input:focus { outline: none; border-color: var(--accent); }
 
+/* ── The phone floor (5.2.9, F9, decision D7): by role, controls only ──────────────────
+   Every control has a tap cross of 44px both ways (bar rule 8). A text-bearing control or a
+   field takes a 44px BOX, because its words are what the finger aims at. An icon-size control
+   keeps its own box and wears the house 44px overlay (as `#drawer-btn` does, mobile.css), set
+   at a 44px pitch so neighbours' overlays tile. Read-only rows are not controls and stay as
+   they were. The chat head's tools are the head block's (the end of this file). */
+@media (max-width: 760px) {
+	/* Each role's own list, as its rule above names it. Fields and selects: */
+	:root[data-skin="daylight"] :is(select, input:not([type=checkbox], [type=radio], [type=range], [type=color], [type=file]), textarea) { min-height: 44px; }
+	/* Dialog actions, create buttons, the primary and plain text buttons: */
+	:root[data-skin="daylight"] :is(.dlg-ok, .dlg-cancel, .tile-fold, .tile-keep, .compose-btn, .compose-send, .railhead > .railbtn,
+		.crystal-act:not(.crystal-form-x), .graph-btn, .attach-view-btn, .code-copy-btn, .files-mode-btn,
+		.imp-keep, .imp-send, .imp-vote, .shr-btn, .models-add, .tag-clear-all, .ti-continue,
+		.pro-buy, .tools-buy, .mail-unlock, .ar-save, .ar-card-btn) { min-height: 44px; min-width: 44px; }
+	/* Toggle options (the head's face switch keeps the head block's 30px box and overlay, so the Diamond head stays 96px): */
+	:root[data-skin="daylight"] :is(.seg button, .size-row button, .net-opt, .spend-toggle-btn, .mdash-toggle-btn,
+		.files-scope-chip, .files-mode-chip, .imp-chip, .tile-dlg-level) { height: 44px; min-height: 44px; }
+	/* ...and 44px wide, except the rating popup's steps, which share one row (their own rule, app.css). */
+	:root[data-skin="daylight"] :is(.seg button, .size-row button, .net-opt, .spend-toggle-btn, .mdash-toggle-btn,
+		.files-scope-chip, .files-mode-chip, .imp-chip) { min-width: 44px; }
+	/* Disclosures: */
+	:root[data-skin="daylight"] :is(.rail-builtin > summary, .rel-builds > summary, .tagf-toggle, .arte-strip,
+		.models-prov-head, .tile-dlg-adv-sum, .dlg-adv-sum, .crystal-memory-sum, .mem-raw-btn, .link-strip,
+		.files-rest-head, .sys-head, .cap-more) { min-height: 44px; }
+	:root[data-skin="daylight"] .crystal-act.mem-raw-btn { height: auto; min-height: 44px; }
+	/* A check label is a 44px row, its box centred. */
+	:root[data-skin="daylight"] .dlg-tick { align-items: center; min-height: 44px; }
+	/* A colour swatch is a field of colour: 44px tall. */
+	:root[data-skin="daylight"] .tile-dlg-swatch { min-height: 44px; }
+	/* The floating jump buttons are 44px wide, as they are 46px tall. */
+	:root[data-skin="daylight"] :is(.chat-input-bar #chat-jump, .chat-input-bar #chat-end) { width: 44px; }
+	/* Icon-size controls: their own box, the house overlay. */
+	/* `z-index: 1`: a neighbour that makes its own stacking context (the active tile's preview is `opacity: .7`) is painted over an
+	   overlay at `z-index: auto`, so it took the lower half of a tile's cog and x. (The rating arrows wear U2's own overlay, app.css.) */
+	:root[data-skin="daylight"] :is(.copy-id, .ctile-copy, .tile-cog, .tile-x, .attach-add, .attach-btn, .files-ren, .files-del,
+		.device-rename, .device-nominate, .device-remove, .mail-refresh,
+		.pptw-act, .railhead .addbtn:not(.railbtn),
+		.tagf-pool .tag-chip, .tagf-active .tag-chip, .session-box-tags .tag-chip) { position: relative; z-index: 1; }
+	:root[data-skin="daylight"] :is(.copy-id, .ctile-copy, .tile-cog, .tile-x, .attach-add, .attach-btn, .files-ren, .files-del,
+		.device-rename, .device-nominate, .device-remove, .mail-refresh,
+		.pptw-act, .railhead .addbtn:not(.railbtn),
+		.tagf-pool .tag-chip, .tagf-active .tag-chip, .session-box-tags .tag-chip)::after {
+		content: ''; position: absolute; top: 50%; left: 50%; width: 44px; height: 44px; transform: translate(-50%, -50%);
+	}
+	/* Small text controls: a crumb, the instructions chip, an inline link. The same overlay, as wide as the control or 44px. */
+	:root[data-skin="daylight"] :is(.path-crumb, .instructions-chip, .termp-install, .rate-jump-link, .mail-learn-more, .spend-add-credits) { position: relative; z-index: 1; }
+	:root[data-skin="daylight"] :is(.path-crumb, .instructions-chip, .termp-install, .rate-jump-link, .mail-learn-more, .spend-add-credits)::after {
+		content: ''; position: absolute; top: 50%; left: 50%; width: max(100%, 44px); height: 44px; transform: translate(-50%, -50%);
+	}
+	/* The Workspace crumb's overlay hangs 7px below its 29px row, over the Filter field's top rows: 8px of margin below the row puts
+	   the field clear of it, so a tap there is the field's. */
+	:root[data-skin="daylight"] .files-path { margin-bottom: 8px; }
+	/* Tag chips that are buttons. The chip clips its own text (`overflow: hidden`, app.css), which also clipped the overlay to the
+	   chip's 19px, so the clip is on the x axis only (`text-overflow` still computes). A 19px chip, 26px between rows and 13px above
+	   and below the block make a 44px pitch, and 8px between chips, so the overlays of neighbours tile. A short tag is 44px wide, and
+	   `safe` keeps both ends of a long one on screen. */
+	:root[data-skin="daylight"] :is(.tagf-pool, .tagf-active) { row-gap: 26px; column-gap: 8px; padding-block: 13px; }
+	/* A Diamond's tags are ONE row that pans sideways, however many there are, so the tile is one height whatever its tags: a chip
+	   past the strip's right edge is cut by it, which is the cue. An x-scroller clips y too, so the strip's own box is the 44px
+	   the overlays need (19px chips, 13px above and below). It stops 32px short of the tile's right content edge, which is where the
+	   cog's overlay begins (the cog is 20px at the edge, its overlay reaches 12px to its left), so a chip never lies under it. */
+	:root[data-skin="daylight"] .diamond-box > .session-box-tags {
+		flex-wrap: nowrap; column-gap: 8px; padding-block: 13px; margin-right: 32px;
+		overflow-x: auto; overflow-y: hidden; overscroll-behavior-x: contain; scrollbar-width: none;
+	}
+	:root[data-skin="daylight"] .diamond-box > .session-box-tags::-webkit-scrollbar { display: none; }
+	:root[data-skin="daylight"] :is(.tagf-pool, .tagf-active, .session-box-tags) button.tag-chip {
+		overflow-x: clip; overflow-y: visible; min-width: 44px; justify-content: safe center;
+	}
+	/* Icon clusters at a 44px pitch, so overlays tile instead of stealing from one another: the gap is 44px less the box (8px
+	   between 36px boxes, 24px between 20px boxes), set on each cluster's container, or on the one control that has a label before it. */
+	:root[data-skin="daylight"] :is(.railhead, .railhead-acts, .files-actions, .mail-actions, .spend-actions, .trash-actions, .pending-actions, .pptw) { gap: 8px; }
+	:root[data-skin="daylight"] .session-box-header > .tile-x { margin-left: 18px; }
+	/* The last tool of a sheet's head sits at the panel's edge, which clips an overlay hanging outside it. */
+	:root[data-skin="daylight"] :is(.files-actions, .mail-actions) { margin-right: 4px; }
+	:root[data-skin="daylight"] :is(.session-list, .diamond-list) { padding-top: 3px; }
+	:root[data-skin="daylight"] .device-row > .copy-id { margin-right: 16px; }
+	:root[data-skin="daylight"] .device-acts { column-gap: 22px; }
+	:root[data-skin="daylight"] .device-ctl { gap: 12px; }
+	/* A file row is a 44px row, and its trailing icons are the icon button's 20px box, 24px apart. */
+	:root[data-skin="daylight"] .files-row { box-sizing: border-box; min-height: 44px; align-items: center; }
+	:root[data-skin="daylight"] .files-row > :is(.attach-btn, .files-ren, .files-del) { min-width: 20px; margin-left: 20px; text-align: center; }
+	/* A message's label bar is the collapse control and holds Copy: a 44px row, and 16px from the tile's edge, which clips an
+	   overlay that hangs outside it (`.ctile { overflow: hidden }`). */
+	:root[data-skin="daylight"] :is(.ctile-lbl, .crollup-lbl) { box-sizing: border-box; min-height: 44px; padding: 0 16px 0 12px; }
+	/* The chip's overlay reaches 12px beyond its box, and the crumb's 7px, so the chip stands 12px below the button above it and
+	   the crumb stands 15px below the chip (5px of its own row's padding makes 20). */
+	:root[data-skin="daylight"] .instructions-chip { margin-top: 12px; margin-bottom: 15px; }
+	/* The sort select has no pseudo-element to wear an overlay, so its box is the 44px. One class more than the head-tool rule
+	   above (0,4,0), which holds its height at 30px. */
+	:root[data-skin="daylight"] .pending-actions > select.pending-sort { height: 44px; min-height: 44px; }
+	/* A sheet's head starts where its content does (the panel's edge and its 1px), not 3px in: the Workspace title stood at x 12
+	   over disclosure rows at 9. The drawer's own heads stay at the tiles' edge. */
+	:root[data-skin="daylight"] .panel:not(.rail) > .railhead { padding-left: 1px; }
+	/* "Learn more" sits 19px under the mail card's top edge, which clips an overlay that reaches 22px. */
+	:root[data-skin="daylight"] .mail-fine { margin-top: 3px; }
+	/* The id rows of Admin are 44px rows, so the copy buttons stand a finger apart. */
+	:root[data-skin="daylight"] :is(.account-fp, .astat-copyrow) { min-height: 44px; }
+	/* A "+" and a refresh at a card's edge: their box is the 44px, since the card clips an overlay that hangs outside it. */
+	:root[data-skin="daylight"] :is(.attach-add.icon, .mail-refresh) { min-width: 44px; }
+}
+
 /* ── Cards: a fill, not a line ─────────────────────────────── */
 /* The left bars became a uniform coloured border, which only moved the line
    from one side to four (5.2.6 review, F3). A card is a light fill; the state
    it is in is the fill's colour. */
-:root[data-skin="daylight"] :is(.acard, .pend-card, .ask-card, .models-prov, .termp-gap, .lapse-note) { border-color: transparent; }
 :root[data-skin="daylight"] .acard.done { background: var(--ok-bg); }
 :root[data-skin="daylight"] .acard.error { background: color-mix(in srgb, var(--danger) 12%, transparent); }
 :root[data-skin="daylight"] .ask-card { background: var(--accent-soft); }
 :root[data-skin="daylight"] .ask-card.answered { background: var(--bg-secondary); }
 :root[data-skin="daylight"] .lapse-note { background: var(--warn-bg); }
 
-/* Buttons and chips that kept a 1px outline at rest (5.2.6 review, F2). */
-:root[data-skin="daylight"] .abtn { border-color: transparent; }
-:root[data-skin="daylight"] .acard .achip-model { border-color: transparent; }
+/* ── The phone chat head: the title, the mode and one "more" on a row ────────────────
+   The owner's choice of 2026-09-30 ("B: title, mode, one more menu"). The head keeps what must
+   always be on screen: the title, the permission mode (a state you read) and one "more".
+   Concise, Copy, Steps, Expand and Select are rows of its menu (js/workspace.js `foldAll` moves
+   the real buttons in and out); a Diamond's Fold stays on its second row, where full screen sits
+   on the crystal face. Nothing scrolls and nothing sits under a fade.
+
+   EVERY TOOL KEEPS THE HEAD-TOOL ROLE'S OWN BOX (36px; the face switch's 30px) AND WEARS THE HOUSE
+   44px OVERLAY, as every other panel's head tool does: a tool is one drawing everywhere (bar rule 2),
+   and its tap area is the overlay's. Each line is 44px (a box and the margin around it), so
+   the overlays of one line tile the line and never reach the next. The first version of this block
+   drew 44px boxes, and the gate read seven new head-tool rows and two toggle rows for it.
+
+   The two clusters dissolve into the head (`display: contents`), so each control is one item of one
+   wrapping row, and `order` plus two empty full-width breaks set the rows: the title, then a Diamond's
+   face switch and Fold or full screen, then select mode's own row. This block loads after mobile.css
+   (index.html), which is why it lives here: the numbers were measured with this order. */
+@media (max-width: 760px) {
+	:root[data-skin="daylight"] .panel.ai .chead {
+		flex-wrap: wrap; align-content: flex-start; align-items: center; justify-content: flex-start;
+		gap: 0; padding: 4px 4px 4px 16px; min-height: 52px;
+	}
+	:root[data-skin="daylight"] .panel.ai .chead > :is(.chead-left, .chead-right) { display: contents; }
+	/* A break is an item wider than the row (by more than any negative margin beside it), so nothing can share its line. */
+	:root[data-skin="daylight"] .panel.ai .chead::before,
+	:root[data-skin="daylight"] .panel.ai .chead::after { content: ''; flex: 0 1 calc(100% + 24px); height: 0; }
+	:root[data-skin="daylight"] .panel.ai .chead::after  { order: 4; }
+	:root[data-skin="daylight"] .panel.ai .chead::before { order: 8; }
+
+	/* The house overlay: 44px tall, as wide as the tool or 44px, centred on its box. Not `::after`, which "more" uses for its dot. */
+	:root[data-skin="daylight"] .panel.ai .chead :is(.chead-right > :is(button, .chip-btn, .mode-chip), .csel .chip-btn, .dview .dview-btn) {
+		position: relative; flex: 0 0 auto; margin-block: 4px;
+	}
+	:root[data-skin="daylight"] .panel.ai .chead :is(.chead-right > :is(button, .chip-btn, .mode-chip), .csel .chip-btn, .dview .dview-btn)::before {
+		content: ''; position: absolute; top: 50%; left: 50%; width: max(100%, 44px); height: 44px; transform: translate(-50%, -50%);
+	}
+
+	/* Row 1: the mark, the title, the mode, the menu. */
+	:root[data-skin="daylight"] .panel.ai .chead .chead-mark { order: 0; margin-right: 6px; }
+	:root[data-skin="daylight"] .panel.ai .chead .ctitle { order: 1; flex: 1 1 0; min-width: 0; align-self: center; }
+	:root[data-skin="daylight"] .panel.ai .chead .chead-right > #hand-mode-chip { order: 2; flex: 0 1 auto; min-width: 0; justify-content: flex-start; }
+	:root[data-skin="daylight"] .panel.ai .chead .chead-right > #hand-mode-chip .mode-chip-txt {
+		overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+	}
+	/* The icon-only tools are 36px high (the head-tool role's icon form) and 44px wide, so a line of them is 44px apart. */
+	:root[data-skin="daylight"] .panel.ai .chead .chead-right > .icon-chip,
+	:root[data-skin="daylight"] .panel.ai .chead .chead-right > .cfull-btn,
+	:root[data-skin="daylight"] .panel.ai .chead .chead-right > #collapse-btn {
+		width: 44px; min-width: 44px; padding: 0; justify-content: center;
+	}
+	/* And the worded ones are the mode chip's: 9px either side, a 12px line. */
+	:root[data-skin="daylight"] .panel.ai .chead .chead-right > #chat-fold-btn { padding: 0 9px; line-height: 12px; min-width: 44px; }
+	:root[data-skin="daylight"] .panel.ai .chead .chead-right > #chead-more { order: 3; display: inline-flex; }
+	/* A standing setting behind the menu is still said on the head: a dot while Concise or select mode is on. */
+	:root[data-skin="daylight"]:has(#chead-more-menu > #concise-chip.on) .panel.ai .chead #chead-more::after,
+	:root[data-skin="daylight"] .panel.ai .chead.selecting #chead-more::after {
+		content: ''; position: absolute; top: 8px; right: 8px; width: 6px; height: 6px; border-radius: 50%; background: var(--accent);
+	}
+	:root[data-skin="daylight"] .panel.ai .chead #ai-meter:empty,
+	:root[data-skin="daylight"] .panel.ai .chead #chead-when:empty { display: none; }
+
+	/* Row 2, a Diamond only: the face switch, its "edited" time, and Fold or full screen at the right. */
+	:root[data-skin="daylight"] .panel.ai .chead #diamond-view { order: 5; margin: 7px 0 7px -8px; overflow: visible; }
+	:root[data-skin="daylight"] .panel.ai .chead #diamond-view .dview-btn { margin-block: 0; min-width: 44px; }
+	:root[data-skin="daylight"] .panel.ai .chead #chead-when { order: 6; margin-left: 8px; }
+	:root[data-skin="daylight"] .panel.ai .chead .chead-right > :is(#crystal-full-btn, #chat-fold-btn) { order: 7; margin-left: auto; }
+
+	/* Row 3, select mode only: its three words and the way out (Collapse, drawn only while the mode is on). */
+	:root[data-skin="daylight"] .panel.ai .chead .chead-right > #select-tools {
+		order: 9; flex: 1 1 0; min-width: 0; display: flex; flex-wrap: wrap; align-items: center; column-gap: 2px; margin-left: -9px;
+	}
+	:root[data-skin="daylight"] .panel.ai .chead .csel .chip-btn:not(.accent) { color: var(--text-secondary); }
+	:root[data-skin="daylight"] .panel.ai .chead .csel .chip-btn { padding: 0 9px; line-height: 12px; height: 36px; min-height: 36px; min-width: 44px; }
+	:root[data-skin="daylight"] .panel.ai .chead .csel .csel-count { padding: 0 8px; }
+	:root[data-skin="daylight"] .panel.ai .chead .chead-right > #collapse-btn { order: 10; display: none; }
+	:root[data-skin="daylight"] .panel.ai .chead.selecting .chead-right > #collapse-btn { display: inline-flex; align-items: center; }
+
+	/* The menus that fold in on a phone, Help's and the head's: one row, a finger high. An icon, a gap of 4px and a
+	   word, on the fill a selected row takes everywhere. The head's rows are real `.chip-btn` buttons, so this
+	   restates the box a chip is given (`app.css` draws an icon chip at 26px). */
+	:root[data-skin="daylight"] [data-menu="rows"] > button {
+		box-sizing: border-box; display: flex; align-items: center; justify-content: flex-start;
+		width: 100%; min-width: 0; height: auto; min-height: 44px; margin: 0; padding: 10px 8px; gap: 4px;
+		border: none; border-radius: var(--radius-sm); background: transparent;
+		color: var(--text-primary); font-family: inherit; font-size: var(--fs-sm); line-height: inherit; text-align: left; white-space: nowrap; opacity: 1;
+	}
+	:root[data-skin="daylight"] [data-menu="rows"] > button:hover { background: var(--dl-hover); }
+	:root[data-skin="daylight"] [data-menu="rows"] > button:is(.on, [aria-pressed="true"]) { background: var(--dl-on); }
+	:root[data-skin="daylight"] [data-menu="rows"] > button .ic { width: 16px; height: 16px; flex: none; }
+}

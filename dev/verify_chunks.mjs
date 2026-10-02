@@ -1,3 +1,4 @@
+// gateway: own
 // verify_chunks.mjs — the content-addressed chunk store, in two tiers.
 //
 // TIER 1 (no gateway). The two things a user can act on, which had no way to be

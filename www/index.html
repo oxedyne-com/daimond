@@ -104,6 +104,7 @@
 <link rel="stylesheet" href="css/terminal.css">
 <link rel="stylesheet" href="css/lapse.css">
 	<link rel="stylesheet" href="css/release.css">
+	<link rel="stylesheet" href="css/chunks.css"><!-- js/chunks.js — the standing storage notice -->
 	<link rel="stylesheet" href="css/responsive.css">
 <link rel="stylesheet" href="css/mobile.css">
 <!-- Full-screen toggle (phone only) -- just the two icon faces; see js/fullscreen.js. -->
@@ -194,7 +195,7 @@
 	     also parks Settings and Link device in here, moving the real buttons
 	     rather than building copies, so each keeps the one click handler
 	     daimond.js, workspace.js or pairing.js already gave it. -->
-	<div class="pop" id="help-menu" hidden role="dialog" aria-label="Help" data-i18n-aria-label="topbar.help">
+	<div class="pop" data-menu="rows" id="help-menu" hidden role="dialog" aria-label="Help" data-i18n-aria-label="topbar.help">
 		<!-- The glyph is an "i" in a circle, which is what "about" is drawn as
 		     everywhere. Guide is a "?" in a circle, so the two are deliberately
 		     separated by where the dot sits: the "i" wears its dot on TOP of
@@ -219,6 +220,16 @@
 	     and a radio group inside, so the arrow keys work without a line of code. -->
 	<div class="pop mode-pop" id="hand-mode-pop" hidden role="dialog"
 		aria-label="Permission mode" data-i18n-aria-label="permmode.title"></div>
+	<!-- The chat head's rarer tools, on a phone: Help's menu again (same pop, same closer
+	     head, same rows). js/workspace.js `foldAll` moves the real buttons in and out, so
+	     each keeps the handler daimond.js gave it; the Select row is the one row that is not
+	     a moved button, and presses the Collapse button, which stays on the head. -->
+	<div class="pop" data-menu="rows" id="chead-more-menu" hidden role="dialog" aria-label="More" data-i18n-aria-label="chat.more">
+		<button class="icon-btn" id="chead-select-row" type="button" role="menuitem" aria-pressed="false">
+			<svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><rect x="4" y="4" width="16" height="16" rx="3"/><path d="M8.5 12.5l2.5 2.5 4.5-5"/></svg>
+			<span class="btn-label" data-i18n="chat.menu_select">Select</span>
+		</button>
+	</div>
 
 	<!-- The keyboard's way in. Complete at any fleet size, which is what lets
 	     the visible surfaces be selective. -->
@@ -701,9 +712,9 @@
 						<!-- The controls that were an icon nobody could read. A word says what a
 						     picture of a spanner was only hinting at. -->
 						<span class="csel" id="select-tools" style="display:none">
-							<button class="chip-btn" id="sel-all" data-i18n="chat.select_all">Select all</button>
-							<button class="chip-btn" id="sel-none" data-i18n="chat.deselect_all">Deselect all</button>
-							<button class="chip-btn accent" id="sel-fold" data-i18n="chat.fold_selected">Fold selected</button>
+							<button class="chip-btn" id="sel-all" data-i18n="chat.select_all">Select All</button>
+							<button class="chip-btn" id="sel-none" data-i18n="chat.deselect_all">Deselect All</button>
+							<button class="chip-btn" id="sel-fold" data-i18n="chat.fold_selected">Fold Selected</button>
 							<span class="csel-count" id="sel-count"></span>
 						</span>
 						<!-- Which permission mode the machine hand is in, where the work is
@@ -715,6 +726,12 @@
 							aria-haspopup="dialog" aria-expanded="false" aria-controls="hand-mode-pop"
 							title="Permission mode: what Daimond does without asking"
 							data-i18n-title="permmode.chip_help"><span class="mode-chip-dot" aria-hidden="true"></span><span class="mode-chip-txt" id="hand-mode-chip-txt">Guarded</span></button>
+						<!-- On a phone the rarer tools fold into this one 44px control's menu
+						     (js/workspace.js `foldAll`); it is drawn nowhere else. -->
+						<button class="chip-btn icon-chip" id="chead-more" type="button"
+							aria-haspopup="menu" aria-expanded="false" aria-controls="chead-more-menu"
+							title="More" aria-label="More" data-i18n-title="chat.more" data-i18n-aria-label="chat.more"><svg class="ic" viewBox="0 0 24 24"
+							aria-hidden="true"><circle cx="5" cy="12" r="1.7" fill="currentColor" stroke="none"/><circle cx="12" cy="12" r="1.7" fill="currentColor" stroke="none"/><circle cx="19" cy="12" r="1.7" fill="currentColor" stroke="none"/></svg></button>
 						<!-- Concise: a standing toggle that puts the `/concise` skill in
 						     front of every turn this chat sends. A skill, not a hidden
 						     system-prompt tweak, so what it asks for is a file in the
@@ -723,7 +740,7 @@
 							title="Ask for short answers in this chat. Every message carries the /concise skill, a file in your workspace you can edit."
 							aria-label="Concise" data-i18n-aria-label="chat.concise"
 							data-i18n-title="chat.concise_help"><svg class="ic" viewBox="0 0 24 24"
-							aria-hidden="true"><path d="M4 6h16M4 12h9M4 18h5"/></svg></button>
+							aria-hidden="true"><path d="M4 6h16M4 12h9M4 18h5"/></svg><span class="btn-label" data-i18n="chat.concise">Concise</span></button>
 						<!-- Fold, on the surface rather than only in the tile dialog.
 						     Folding is done MID-FLOW -- when a thread has grown heavy, not
 						     when you are configuring something -- and a control you reach
@@ -752,12 +769,12 @@
 							aria-label="Copy the conversation" data-i18n-aria-label="chat.copy_all_aria"
 							data-i18n-title="chat.copy_all_help"><svg class="ic" viewBox="0 0 24 24"
 							aria-hidden="true"><rect x="9" y="9" width="11" height="11" rx="2"/><path
-							d="M5 15V5a2 2 0 012-2h8"/></svg></button>
+							d="M5 15V5a2 2 0 012-2h8"/></svg><span class="btn-label" data-i18n="chat.copy_all">Copy</span></button>
 						<button class="chip-btn icon-chip" id="steps-toggle-btn"
 							title="Show or hide the tool steps in the thread"
 							aria-label="Tool steps" data-i18n-aria-label="chat.steps"
 							data-i18n-title="chat.steps_help"><svg class="ic" viewBox="0 0 24 24"
-							aria-hidden="true"><path d="M4 6h4v4H4zM10 8h10M4 14h4v4H4zM10 16h10"/></svg></button>
+							aria-hidden="true"><path d="M4 6h4v4H4zM10 8h10M4 14h4v4H4zM10 16h10"/></svg><span class="btn-label" data-i18n="chat.steps">Steps</span></button>
 						<!-- Expand or collapse every TILE in the thread at once (Thinking,
 						     Tool, System bodies and their rollups), independent of the
 						     select-mode "−" beside it, which folds whole answers. The icon
@@ -767,7 +784,7 @@
 							title="Expand every tile" data-i18n-title="chat.expand_all_help"
 							aria-label="Expand all tiles" data-i18n-aria-label="chat.expand_all"><svg class="ic ic-expand" viewBox="0 0 24 24"
 							aria-hidden="true"><path d="M8 4l4 4 4-4M8 20l4-4 4 4"/></svg><svg class="ic ic-collapse" viewBox="0 0 24 24"
-							aria-hidden="true"><path d="M8 8l4-4 4 4M8 16l4 4 4-4"/></svg></button>
+							aria-hidden="true"><path d="M8 8l4-4 4 4M8 16l4 4 4-4"/></svg><span class="btn-label" data-i18n="chat.menu_expand">Expand</span></button>
 						<button class="chip-btn" id="collapse-btn" title="Collapse every answer, leaving what you asked — and pick turns to fold" data-i18n-title="chat.collapse_help" aria-label="Collapse every answer" data-i18n-aria-label="chat.collapse">−</button>
 						<!-- Full screen, and only for the crystal face — `showCentre`
 						     draws it there and nowhere else. The page a Diamond

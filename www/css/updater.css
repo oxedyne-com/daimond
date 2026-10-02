@@ -124,14 +124,14 @@
 	font-size: var(--fs-sm);
 	color: var(--text-primary);
 	background: var(--bg-secondary);
-	border: 1px solid var(--accent);
+	border: 1px solid transparent;
 	box-shadow: 0 6px 20px rgba(0, 0, 0, 0.28);
 }
-.update-banner[data-state="stale"] { border-color: var(--danger); }
+.update-banner[data-state="stale"] { background: color-mix(in srgb, var(--danger) 12%, var(--bg-secondary)); }
 /* Stuck: a reload cannot shift the build. Warning-toned, and the message names the
    sure escape (close and reopen) while the button offers the guarded cache-clear
    reload worth trying first. */
-.update-banner[data-state="stuck"] { border-color: var(--warning, var(--danger)); }
+.update-banner[data-state="stuck"] { background: color-mix(in srgb, var(--warning, var(--danger)) 12%, var(--bg-secondary)); }
 /* `display: flex` above beats the UA's `[hidden] { display: none }`, exactly as it
    does for `.update-chip` — so `hideBanner`'s `el.hidden = true` would leave an empty
    banner box on screen. Guarded the same way `.left-banner` is (css/app.css). */
@@ -179,7 +179,7 @@
 	width: auto;
 	height: auto;
 	padding: 6px 12px;
-	border: 1px solid var(--border);
+	border: 1px solid transparent;
 	font-size: 13px;
 	line-height: 1.2;
 	color: var(--text-primary);

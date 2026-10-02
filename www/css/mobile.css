@@ -221,8 +221,7 @@
 	/* The worded "New Diamond"/"New Chat" rail button, not an icon square:
 	   the flush 36px box above clipped its label under the graph icon. */
 	:root[data-skin="daylight"] .railhead .railbtn { width: auto; padding: 0 9px; }
-	:root[data-skin="daylight"] .files-btn,
-	:root[data-skin="daylight"] #pending-sort {
+	:root[data-skin="daylight"] .files-btn {
 		height: 36px; min-height: 36px; padding: 8px 10px; box-sizing: border-box;
 	}
 	/* The phone's own toggle-option height (cluster 7): 32px against the
@@ -407,8 +406,10 @@
 		height: 44px;
 		/* The chip row's own tokens, because a tab IS a chip: a row that says which
 		   of two things is on screen. Two surfaces styling one idea differently is
-		   how an app comes to look like two apps. */
-		border: 1px solid var(--border-strong);
+		   how an app comes to look like two apps. The 1px box stays (it holds the
+		   tab's size) and its line does not: a tab is shown by a fill, never a line
+		   (bar rule 1). */
+		border: 1px solid transparent;
 		border-radius: var(--radius);
 		background: var(--bg-tertiary);
 		color: var(--text-secondary);
@@ -418,7 +419,6 @@
 	}
 	.msheet-tab.on {
 		background: var(--accent-soft);
-		border-color: var(--accent);
 		color: var(--accent-text);
 	}
 	/* THE OTHER FACE GOES WHILE THE KEYBOARD IS UP. Half the room is gone and every
@@ -701,8 +701,12 @@
 		   drawn over them for a second and then gone -- so the fact that the row
 		   scrolls is carried by the fade at its ends instead (`data-more` below). */
 		scrollbar-width: none;
-		/* A chip scrolled to is scrolled clear of the fade rather than under it. */
-		scroll-padding-inline: 22px;
+		/* A chip scrolled to is scrolled clear of the fade rather than under it. It read 22px
+		   against a 34px fade, so a chip brought in from the left stood 12px under it and
+		   "Workspace" lost its first letters; the fade's width is written once, here, and both
+		   the padding and the masks below read it, so the two cannot drift apart again. */
+		--fade: 34px;
+		scroll-padding-inline: var(--fade);
 	}
 	#mnav .panel-tags::-webkit-scrollbar { display: none; }
 	/* A THUMB'S TARGET. 44px is the AAA figure and it is what the four buttons
@@ -734,25 +738,12 @@
 	   from the strip's own scroll position, so it is never a decoration that
 	   claims something untrue. Half a chip showing through the fade is the other
 	   half of the signal. */
-	#mnav .panel-tags[data-more="end"]   { mask-image: linear-gradient(to right, #000 calc(100% - 34px), transparent 100%); }
-	#mnav .panel-tags[data-more="start"] { mask-image: linear-gradient(to right, transparent 0, #000 34px); }
-	#mnav .panel-tags[data-more="both"]  { mask-image: linear-gradient(to right, transparent 0, #000 34px, #000 calc(100% - 34px), transparent 100%); }
-	#mnav .panel-tags[data-more="end"]   { -webkit-mask-image: linear-gradient(to right, #000 calc(100% - 34px), transparent 100%); }
-	#mnav .panel-tags[data-more="start"] { -webkit-mask-image: linear-gradient(to right, transparent 0, #000 34px); }
-	#mnav .panel-tags[data-more="both"]  { -webkit-mask-image: linear-gradient(to right, transparent 0, #000 34px, #000 calc(100% - 34px), transparent 100%); }
-
-	/* The same fade, on the chat header's own control row (responsive.css makes
-	   it scroll below this breakpoint). `data-more` is set by the same
-	   `markScroll`, called on this row too from js/mobile.js `init`. A control
-	   past the fold -- Collapse, Full screen on a Diamond's crystal face -- used
-	   to read as gone rather than one swipe away (PH-02/PH-14). */
-	.panel.ai .chead-right { scroll-padding-inline: 22px; }
-	.panel.ai .chead-right[data-more="end"]   { mask-image: linear-gradient(to right, #000 calc(100% - 28px), transparent 100%); }
-	.panel.ai .chead-right[data-more="start"] { mask-image: linear-gradient(to right, transparent 0, #000 28px); }
-	.panel.ai .chead-right[data-more="both"]  { mask-image: linear-gradient(to right, transparent 0, #000 28px, #000 calc(100% - 28px), transparent 100%); }
-	.panel.ai .chead-right[data-more="end"]   { -webkit-mask-image: linear-gradient(to right, #000 calc(100% - 28px), transparent 100%); }
-	.panel.ai .chead-right[data-more="start"] { -webkit-mask-image: linear-gradient(to right, transparent 0, #000 28px); }
-	.panel.ai .chead-right[data-more="both"]  { -webkit-mask-image: linear-gradient(to right, transparent 0, #000 28px, #000 calc(100% - 28px), transparent 100%); }
+	#mnav .panel-tags[data-more="end"]   { mask-image: linear-gradient(to right, #000 calc(100% - var(--fade)), transparent 100%); }
+	#mnav .panel-tags[data-more="start"] { mask-image: linear-gradient(to right, transparent 0, #000 var(--fade)); }
+	#mnav .panel-tags[data-more="both"]  { mask-image: linear-gradient(to right, transparent 0, #000 var(--fade), #000 calc(100% - var(--fade)), transparent 100%); }
+	#mnav .panel-tags[data-more="end"]   { -webkit-mask-image: linear-gradient(to right, #000 calc(100% - var(--fade)), transparent 100%); }
+	#mnav .panel-tags[data-more="start"] { -webkit-mask-image: linear-gradient(to right, transparent 0, #000 var(--fade)); }
+	#mnav .panel-tags[data-more="both"]  { -webkit-mask-image: linear-gradient(to right, transparent 0, #000 var(--fade), #000 calc(100% - var(--fade)), transparent 100%); }
 
 	/* ── No iOS auto-zoom ───────────────────────────────────────
 	   Safari zooms IN (and never back out) when a focused control is

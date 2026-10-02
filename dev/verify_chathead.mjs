@@ -24,10 +24,15 @@
 //      clipboard and not off the button, because a button that says "Copied"
 //      having copied nothing is the failure this is for.
 //   2. AND THE BUTTON SAYS SO, briefly, then goes back to being a button.
-//   3. ON A PHONE THE HEADER SCROLLS. Asserted as `scrollWidth > clientWidth`
-//      together with an overflow that permits scrolling — the pair, because a row
-//      that fits scrolls nowhere and a row that overflows with `visible` is the
-//      state the user reported.
+//   3. ON A PHONE EVERY TOOL IS WITHIN REACH, AND NOTHING SCROLLS. The reported
+//      defect was a row that ran off the end of the panel. 5.2.6 answered with a
+//      strip that scrolled; the owner chose a different answer on 2026-09-30
+//      ("B: title, mode, one more menu"): the head holds the title, the mode chip
+//      and ONE 44px "more", and Concise, Copy, Steps, Expand and Select are rows
+//      of its menu. Asserted as the pair -- no scroller in the head, and the copy
+//      button standing on screen as a 44px row of the menu "more" opens -- because
+//      a head with no scroller and no "more" is the reported defect again.
+//      `dev/verify_phone_shell.mjs` holds the rest of the head's measures.
 //   4. AND THE COMPOSER HAS ROOM. The text box takes more than half the bar,
 //      which it did not: 170 of 372 is 46%.
 //   5. AND THE PLACEHOLDER NEVER CLAIMS YOU CANNOT TYPE. The box used to read
@@ -48,7 +53,7 @@
 // PROVED AGAINST BROKEN CODE FIRST:
 //
 //   node dev/verify_chathead.mjs --break nocopy   # 1 and 2 fail: the button copies nothing
-//   node dev/verify_chathead.mjs --break noscroll # 3 fails: the row overflows unreachably
+//   node dev/verify_chathead.mjs --break nomore   # 3 fails: the tools have no way in
 //   node dev/verify_chathead.mjs --break inbar    # 4 fails: the chevrons take the row back
 //   node dev/verify_chathead.mjs --break paused   # 5 fails: a held Diamond says you cannot type
 //   node dev/verify_chathead.mjs                  # and then, clean
@@ -80,15 +85,12 @@ const BREAKS = {
 		find: "\t\tvar text = transcriptOf(current);",
 		with: "\t\tvar text = '';",
 	},
-	// BOTH AXES. The first version of this break set `overflow-x: visible` and left
-	// `overflow-y: hidden`, and NOTHING went red — because CSS says that when one
-	// axis is not `visible` the other computes to `auto`, so the break was a no-op
-	// that read as a passing check. A break that does not redden is a finding, and
-	// this one's finding was about the break.
-	noscroll: {
-		file: 'css/responsive.css',
-		find: "\t\toverflow-x: auto;\n\t\toverflow-y: hidden;\n\t\tscrollbar-width: none;",
-		with: "\t\toverflow: visible;\n\t\tscrollbar-width: none;",
+	// The "more" button is not drawn, so the five tools that fold into its menu have nowhere to
+	// stand: the reported defect, a row of tools a phone cannot reach.
+	nomore: {
+		file: 'css/skin-daylight.css',
+		find: "> #chead-more { order: 3; display: inline-flex; }",
+		with: "> #chead-more { order: 3; display: none; }",
 	},
 	// Restores the sentence this file's fifth property exists to keep out. A break
 	// that ADDS code rather than removing it, because the defect was an addition.
@@ -194,28 +196,41 @@ try {
 	await p.setViewportSize({ width: 390, height: 844 });
 	await p.waitForTimeout(1200);
 	const m = await p.evaluate(() => {
-		const right = document.querySelector('#panel-ai .chead-right');
+		const head = document.querySelector('#panel-ai .chead');
 		const bar   = document.querySelector('.chat-input-bar');
 		const inp   = document.getElementById('chat-input');
 		const r = (el) => el ? Math.round(el.getBoundingClientRect().width) : 0;
+		// A scroller is an element that may scroll and does overflow.
+		const scrolls = [head, ...head.querySelectorAll('*')].filter((e) => {
+			const cs = getComputedStyle(e);
+			return (/auto|scroll/.test(cs.overflowX) && e.scrollWidth > e.clientWidth + 1) || (/auto|scroll/.test(cs.overflowY) && e.scrollHeight > e.clientHeight + 1);
+		}).map((e) => e.id || e.className);
+		const more = document.getElementById('chead-more');
 		return {
-			scrollW:  right ? right.scrollWidth : 0,
-			clientW:  right ? right.clientWidth : 0,
-			overflow: right ? getComputedStyle(right).overflowX : '',
+			scrolls,
+			more:     !!(more && more.getClientRects().length),
 			barW:     r(bar),
 			inputW:   r(inp),
 			// The chevrons, to say in the detail WHY the box is the width it is.
 			jumpPos:  getComputedStyle(document.getElementById('chat-jump')).position,
 		};
 	});
+	if (m.more) { await p.click('#chead-more'); await p.waitForTimeout(500); }
+	const row = await p.evaluate(() => {
+		const menu = document.getElementById('chead-more-menu'), b = document.getElementById('chat-copy-btn');
+		if (!menu || !b) return null;
+		const x = b.getBoundingClientRect();
+		return { inMenu: menu.contains(b) && !menu.hidden, w: Math.round(x.width), h: Math.round(x.height), onScreen: x.left >= 0 && x.right <= innerWidth && x.top >= 0 && x.bottom <= innerHeight };
+	});
 	await shot(s, 'chathead-phone');
+	if (m.more) await p.keyboard.press('Escape');
 
-	// THE PAIR, not either alone. A row that fits has nothing to scroll and would
-	// satisfy an overflow test; a row that overflows with `visible` is exactly the
-	// reported defect and would satisfy a width test.
-	check(m.scrollW > m.clientW && (m.overflow === 'auto' || m.overflow === 'scroll'),
-		'ON A PHONE THE HEADER SCROLLS — the row overflows AND may be dragged',
-		`scrollWidth ${m.scrollW} vs client ${m.clientW}, overflow-x ${m.overflow}`);
+	// THE PAIR, not either alone. A head with no scroller and no "more" is the reported defect
+	// again (a row of tools off the end of the panel, now clipped instead of scrolled); a "more"
+	// beside a strip that still scrolls is 5.2.6 with one control added.
+	check(m.scrolls.length === 0 && m.more && !!row && row.inMenu && row.h >= 44 && row.onScreen,
+		'ON A PHONE EVERY TOOL IS WITHIN REACH — no scroller in the head, and Copy is a 44px row of the "more" menu',
+		`scrollers ${JSON.stringify(m.scrolls)}, more ${m.more}, copy row ${JSON.stringify(row)}`);
 	check(m.inputW > m.barW * 0.6,
 		'AND THE BOX YOU TYPE IN HAS ROOM — more than 60% of the bar',
 		`${m.inputW} of ${m.barW} (${Math.round(100 * m.inputW / m.barW)}%), chevrons ${m.jumpPos}`);

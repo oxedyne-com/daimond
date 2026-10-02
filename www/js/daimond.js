@@ -11954,6 +11954,12 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		// line. `markHere` in js/mobile.js watches this attribute and answers all
 		// three, so every route into a panel is covered rather than the two that
 		// happen to pass through here.
+		// SHOWING A DESTINATION ENDS THE DRAWER'S JOB. The drawer is where a person
+		// picks a chat or a Diamond; once the floor shows what they asked for it is
+		// only in the way, and it covered the composer after New Chat. Done here, at
+		// the one seam, so every route in is covered -- the buttons, the footer chips
+		// and the callers nobody listed -- rather than each button closing it.
+		if (window.DaimondShell) DaimondShell.closeDrawer();
 		document.body.dataset.mpanel = name;
 		// The bar's own destinations. Spending and the Terminal reach here only on
 		// a page whose sheet script did not load, and are woken anyway: a panel
@@ -13564,8 +13570,11 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 
 		/// Open a panel in its own zone. A stage panel takes a free seat, or evicts
 		/// the oldest guest — never the AI, which is what one is talking to.
-		function show(id) {
+		function show(id, opts) {
 			if (!def(id)) return;
+			// `quiet` opens the panel in the engine and leaves the phone's floor, and so its
+			// drawer, where they were: for a caller that is not a person's own tap.
+			var quiet = !!(opts && opts.quiet);
 			// Before anything else, and before the already-open shortcut below: an
 			// asked-for panel that is still suppressed must be let out first, or it
 			// is seated where nothing can be seen. Ahead of the shortcut so that a
@@ -13588,7 +13597,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			// CLOSED panel -- and this shortcut returned. So `web_open` revealed nothing and a
 			// real browser window was the whole of what the user saw. A panel with no seat is not
 			// open, whatever the flag says.
-			if (open[id] && seated(id)) { if (isMobile()) mshow(id); wakeTypst(id); return; }
+			if (open[id] && seated(id)) { if (isMobile() && !quiet) mshow(id); wakeTypst(id); return; }
 			// PAST THE ALREADY-OPEN SHORTCUT, so this counts a panel being opened
 			// rather than a panel being asked for again by a redraw. Which panel,
 			// as a number from the module's table; a panel this build has that the
@@ -13623,7 +13632,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			markUsed(id);
 			apply();
 			openHooks(id);
-			if (isMobile()) mshow(id);
+			if (isMobile() && !quiet) mshow(id);
 			wakeTypst(id);
 		}
 
@@ -14541,8 +14550,13 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 
 	function revealAgents() {
 		if (agentsPushedAway) return;
-		if (!DaimondPanels.isOpen('agents')) DaimondPanels.show('agents'); else DaimondPanels.reflow();
-		if (isMobile()) mshow('agents');
+		// A fan-out lands in the middle of a turn, so it can land while a person is in
+		// the phone's drawer choosing another chat. The panel still opens, but the
+		// floor and the drawer are theirs: only a tap of their own moves either, and
+		// `show` is told to leave the floor alone because it reaches `mshow` itself.
+		var held = isMobile() && document.body.classList.contains('drawer-open');
+		if (!DaimondPanels.isOpen('agents')) DaimondPanels.show('agents', { quiet: held }); else DaimondPanels.reflow();
+		if (isMobile() && !held) mshow('agents');
 	}
 
 	/// Wire the two halves of the veto: a hand closing the panel while work runs,
@@ -32284,7 +32298,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		label.appendChild(when); label.appendChild(clock);
 		label.title = t('tile.click_to_open');
 		label.setAttribute('aria-label', chatDisplayName(s));
-		label.addEventListener('click', function (e) { e.stopPropagation(); selectChat(s); });
+		label.addEventListener('click', function (e) { e.stopPropagation(); selectChat(s); if (isMobile()) mshow('ai'); });
 		header.appendChild(label);
 		// NO TRAFFIC LIGHT ON AN ORDINARY CHAT. The user's ruling: "ordinary chats
 		// do not need a pptw", which is the same rule that took it off an

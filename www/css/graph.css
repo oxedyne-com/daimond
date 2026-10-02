@@ -31,7 +31,7 @@
 .graph {
 	min-width: 0;
 	background: var(--bg-secondary);
-	border: 1px solid var(--border);
+	border: 1px solid transparent;
 	border-radius: var(--radius-lg);
 	display: flex;
 	flex-direction: column;
@@ -259,7 +259,7 @@
 	z-index: 31;
 	width: 220px;
 	padding: 7px 8px 8px;
-	border: 1px solid var(--border-2);
+	border: 1px solid transparent;
 	border-radius: var(--radius);
 	background: var(--bg-tertiary);
 	box-shadow: 0 8px 26px rgba(0, 0, 0, 0.32);
@@ -304,7 +304,7 @@
 
 .graph-stats {
 	flex: none;
-	padding: 6px 14px 8px;
+	padding: 6px 14px 8px 17px;
 	border-top: 1px solid var(--border);
 	color: var(--text-muted);
 	font-size: var(--fs-2xs);
@@ -377,7 +377,7 @@
 	z-index: 30;
 	min-width: 170px;
 	padding: 4px;
-	border: 1px solid var(--border-2);
+	border: 1px solid transparent;
 	border-radius: var(--radius-sm);
 	background: var(--bg-tertiary);
 	box-shadow: 0 6px 22px rgba(0, 0, 0, 0.28);
@@ -411,7 +411,7 @@
 	z-index: 31;
 	width: 260px;
 	padding: 10px 12px 11px;
-	border: 1px solid var(--border-2);
+	border: 1px solid transparent;
 	border-radius: var(--radius);
 	background: var(--bg-tertiary);
 	box-shadow: 0 8px 26px rgba(0, 0, 0, 0.32);
@@ -443,7 +443,7 @@
 	font: inherit;
 	font-size: var(--fs-xs);
 	padding: 4px 7px;
-	border: 1px solid var(--border-2);
+	border: 1px solid transparent;
 	border-radius: var(--radius-sm);
 	background: var(--bg-primary);
 	color: var(--text-primary);

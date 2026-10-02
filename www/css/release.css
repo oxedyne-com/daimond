@@ -9,7 +9,7 @@
 .rel-list { display: flex; flex-direction: column; gap: 8px; padding: 2px 0 10px; }
 
 .rel-row {
-	border: 1px solid var(--border);
+	border: 1px solid transparent;
 	border-radius: var(--radius);
 	background: var(--bg-tertiary);
 	padding: 10px 12px;
@@ -30,10 +30,11 @@
 	letter-spacing: 0.06em;
 	padding: 3px 7px;
 	border-radius: 999px;
-	border: 1px solid var(--border-2);
+	border: 1px solid transparent;
 	color: var(--text-muted);
+	background: var(--dl-hover);
 }
-.rel-here { border-color: var(--accent); color: var(--accent-text); background: var(--accent-soft); }
+.rel-here { color: var(--accent-text); background: var(--accent-soft); }
 
 .rel-blurb { font-size: var(--fs-sm); color: var(--text-secondary); line-height: 1.5; margin-top: 6px; }
 .rel-note  { font-size: var(--fs-sm); color: var(--text-primary); line-height: 1.5; margin-top: 4px; }
@@ -49,14 +50,13 @@
 .rel-meta code { font-family: var(--font-mono); font-size: var(--fs-3xs-2xs); }
 
 /* You are here: the one row that is neither past nor promise. */
-.rel-current { border-color: var(--accent); background: var(--bg-secondary); }
+.rel-current { background: var(--bg-secondary); }
 
 /* What is coming. Drawn as an outline on nothing, so it cannot be mistaken for
    one of the sealed cards below it -- a promise must not borrow the authority
    of a record. */
 .rel-planned {
 	background: none;
-	border-style: dashed;
 	opacity: 0.75;
 }
 .rel-planned .rel-name { color: var(--text-secondary); font-weight: 500; }

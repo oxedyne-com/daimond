@@ -19,7 +19,7 @@
 
 /* The unlock, shown only while the account does not hold the tool. */
 .mail-pitch {
-	border: 1px solid var(--border);
+	border: 1px solid transparent;
 	border-radius: var(--radius);
 	background: var(--bg-secondary);
 	padding: 12px;
@@ -27,13 +27,7 @@
 .mail-pitch p { margin: 0 0 10px; font-size: var(--fs-sm); line-height: 1.5; }
 .mail-fine { font-size: var(--fs-xs); line-height: 1.5; color: var(--text-secondary); }
 .mail-pitch .mail-fine { margin-bottom: 10px; }
-.mail-unlock {
-	width: 100%;
-	background: var(--accent); color: var(--on-fill, #fff);
-	border: 1px solid var(--accent); border-radius: var(--radius-sm);
-	padding: 9px 16px; font-size: var(--fs-base);
-}
-.mail-unlock:hover { filter: brightness(1.08); }
+.mail-unlock { width: 100%; }
 .mail-unlock:disabled { opacity: 0.6; cursor: default; }
 
 /* The offline pitch's own link -- text, not a filled button, since there is
@@ -162,12 +156,12 @@
 .mail-more-btns > button { flex: 1; }
 .mail-stop {
 	background: var(--accent-soft); color: var(--accent-text);
-	border: 1px solid var(--accent); border-radius: var(--radius-sm);
+	border: 1px solid transparent; border-radius: var(--radius-sm);
 	padding: 8px 14px; font-size: var(--fs-sm);
 }
 .mail-all {
 	background: var(--bg-secondary); color: var(--text-secondary);
-	border: 1px solid var(--border-strong); border-radius: var(--radius-sm);
+	border: 1px solid transparent; border-radius: var(--radius-sm);
 	padding: 8px 14px; font-size: var(--fs-sm);
 }
 .mail-all:hover { color: var(--text-primary); }
@@ -176,12 +170,12 @@
 	align-self: stretch;
 	background: var(--bg-secondary);
 	color: var(--text-primary);
-	border: 1px solid var(--border-strong);
+	border: 1px solid transparent;
 	border-radius: var(--radius-sm);
 	padding: 8px 14px;
 	font-size: var(--fs-sm);
 }
-.mail-older:hover { border-color: var(--accent); color: var(--accent-text); }
+.mail-older:hover { color: var(--accent-text); background: var(--bg-hover); }
 .mail-older:disabled { opacity: 0.5; cursor: default; }
 .mail-older:disabled:hover { border-color: var(--border-strong); color: var(--text-primary); }
 .mail-msg {
@@ -235,13 +229,13 @@
 .msg-att {
 	max-width: 100%;
 	background: var(--bg-tertiary);
-	border: 1px solid var(--border); border-radius: var(--radius-sm);
+	border: 1px solid transparent; border-radius: var(--radius-sm);
 	color: var(--text-secondary);
 	padding: 5px 10px; font-size: var(--fs-xs);
 	overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
-.msg-att:hover { border-color: var(--accent); color: var(--text-primary); }
-.msg-att.done { border-color: var(--ok); color: var(--ok); }
+.msg-att:hover { color: var(--text-primary); background: var(--bg-hover); }
+.msg-att.done { color: var(--ok); }
 .msg-att:disabled { cursor: default; }
 
 .msg-body { flex: 1; min-height: 0; overflow: auto; display: flex; flex-direction: column; }
@@ -269,11 +263,11 @@
 .msg-blocked button {
 	flex: none;
 	background: var(--bg-secondary);
-	border: 1px solid var(--border-strong); border-radius: var(--radius-sm);
+	border: 1px solid transparent; border-radius: var(--radius-sm);
 	color: var(--text-primary);
 	padding: 5px 10px; font-size: var(--fs-xs);
 }
-.msg-blocked button:hover { border-color: var(--accent); color: var(--accent-text); }
+.msg-blocked button:hover { color: var(--accent-text); background: var(--bg-hover); }
 
 /* The verbs, on the message. They sit under the addresses and above the
  * attachments — after you know who sent it and before you know what came with it,
@@ -281,11 +275,11 @@
 .msg-acts { display: flex; gap: 6px; margin-top: 10px; }
 .msg-act {
 	background: var(--bg-secondary);
-	border: 1px solid var(--border-strong); border-radius: var(--radius-sm);
+	border: 1px solid transparent; border-radius: var(--radius-sm);
 	color: var(--text-primary);
 	padding: 5px 12px; font-size: var(--fs-xs-sm);
 }
-.msg-act:hover { border-color: var(--accent); color: var(--accent-text); }
+.msg-act:hover { color: var(--accent-text); background: var(--bg-hover); }
 
 /* ── Drafts ──────────────────────────────────────────────────────
  * Above the inbox, because a draft is the only thing in the panel waiting on the
@@ -366,12 +360,12 @@
 .compose-att {
 	max-width: 100%;
 	background: var(--bg-tertiary);
-	border: 1px solid var(--border); border-radius: var(--radius-sm);
+	border: 1px solid transparent; border-radius: var(--radius-sm);
 	color: var(--text-secondary);
 	padding: 5px 10px; font-size: var(--fs-xs);
 	overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
-.compose-att:hover { border-color: var(--danger); color: var(--danger); }
+.compose-att:hover { color: var(--danger); background: var(--bg-hover); }
 
 /* Wraps, because at 380px it did not: the row ran 22px past the panel and cut
    "Discard" in half, so the one control that undoes the message was the one the
@@ -472,13 +466,13 @@
 .mail-tile {
 	display: flex; align-items: center; gap: 8px;
 	padding: 7px 8px;
-	border: 1px solid var(--border);
+	border: 1px solid transparent;
 	border-radius: var(--radius-sm);
 	background: var(--bg-tertiary);
 }
 /* The mailbox's own switch governs every tile under it, so it is set apart
    from them rather than being read as one more folder. */
-.mail-tile-self { background: var(--bg-secondary); border-color: var(--border-strong); }
+.mail-tile-self { background: var(--bg-secondary); }
 .mail-tile-self .mail-fine { flex: none; }
 .mail-tile-name {
 	flex: 1; min-width: 0;
@@ -488,7 +482,7 @@
 .mail-every {
 	flex: none; max-width: 46%;
 	background: var(--bg-secondary);
-	border: 1px solid var(--border-strong); border-radius: var(--radius-sm);
+	border: 1px solid transparent; border-radius: var(--radius-sm);
 	color: var(--text-primary);
 	padding: 4px 6px; font-size: var(--fs-xs);
 }

@@ -119,7 +119,7 @@
 	'topbar.about':       'About Daimond',
 	'topbar.about_label': 'About',
 	'topbar.guide':       'Guide',
-	'topbar.link_device': 'Link Device',
+	'topbar.link_device': 'Link device',
 	'topbar.guide_short': 'User guide',
 	'topbar.appearance':  'Settings',
 	// The merged About+Guide control (TOP-03). Its accessible name stays
@@ -931,7 +931,7 @@
 	'autoreload.replace':          'Replace…',
 	'autoreload.replace_help':     'Save a different card. Stripe collects it; Daimond never sees it.',
 	'autoreload.no_card':          'No card saved.',
-	'autoreload.save_card':        'Save a card',
+	'autoreload.save_card':        'Save a Card',
 	'autoreload.save_card_help':   'Opens Stripe\'s page. Nothing charged; no card detail reaches Daimond.',
 	'autoreload.switch_on':        'Buy credits automatically',
 	'autoreload.switch_no_card':   'Buy credits automatically (save a card first)',
@@ -951,9 +951,9 @@
 	// ── The chat ───────────────────────────────────────────────
 	'chat.no_chat':        'No chat',
 	'chat.model_for_chat': 'Model for this chat',
-	'chat.select_all':     'Select all',
-	'chat.deselect_all':   'Deselect all',
-	'chat.fold_selected':  'Fold selected',
+	'chat.select_all':     'Select All',
+	'chat.deselect_all':   'Deselect All',
+	'chat.fold_selected':  'Fold Selected',
 	'chat.fold_now': 'Fold',
 	'chat.fold_now_help': 'Summarise earlier messages',
 	'say.more':             'the detail',
@@ -1008,6 +1008,10 @@
 	'chat.copy_all_failed': 'Daimond could not reach the clipboard. Select the text and copy it yourself.',
 	'chat.steps':          'Steps',
 	'chat.concise': 'Concise',
+	// i18n-indirect: workspace.js m.title = topbar.help chat.more
+	'chat.more': 'More',
+	'chat.menu_expand': 'Expand',
+	'chat.menu_select': 'Select',
 	'chat.concise_help': 'Short answers',
 	'chat.concise_failed_title': 'Concise is not available',
 	'chat.concise_failed': 'Daimond could not write .daimond/skills/concise.md, so the chip would refuse every turn instead of shortening it. Open a workspace folder, or check the Files panel, and try again.',
@@ -1796,7 +1800,7 @@
 	'spend.this_week':       'This week',
 	'spend.this_month':      'This month',
 	'spend.session':         'This session',
-	'spend.balance':         'balance',
+	'spend.balance':         'Balance',
 	'spend.tok':             'tok',
 	// The three cells of the rail's spend row. Short: they sit under a figure.
 	// `day` is local midnight to now -- a calendar day, not a rolling 24h, so a

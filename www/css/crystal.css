@@ -101,7 +101,7 @@
 	margin: 0 0 12px;
 	padding: 8px 10px;
 	background: var(--warn-bg);
-	border: 1px solid var(--warn);
+	border: 1px solid transparent;
 	border-radius: var(--radius-sm);
 	color: var(--text-primary);
 	font-size: var(--fs-sm);
@@ -402,7 +402,7 @@
 	width: 100%;
 	min-height: 320px;
 	background: var(--bg-tertiary);
-	border: 1px solid var(--border-strong);
+	border: 1px solid transparent;
 	border-radius: var(--radius-sm);
 	color: var(--text-primary);
 	font-family: var(--font-mono);
@@ -418,9 +418,7 @@
 	border-color: var(--accent);
 }
 
-.crystal-json.invalid {
-	border-color: var(--danger);
-}
+.crystal-json.invalid { background: color-mix(in srgb, var(--danger) 12%, var(--bg-tertiary)); }
 
 /* ── Narrow ──────────────────────────────────────────────────────
    The AI panel is the whole width on a phone, so the crystal is the narrowest

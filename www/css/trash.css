@@ -55,19 +55,19 @@
    region from another -- the rule `verify_theme` keeps, and whose named failure
    is "a new control written by copying an old one". This was copied from
    `.attach-state` beside it, which is exactly that. */
-.trash-restore { flex-shrink: 0; background: none; border: 1px solid var(--border-strong);
+.trash-restore { flex-shrink: 0; background: none; border: 1px solid transparent;
 	border-radius: 999px; cursor: pointer; color: var(--text-secondary);
 	font-size: var(--fs-3xs-2xs); line-height: 1.6; padding: 0 8px; }
-.trash-restore:hover { border-color: var(--accent); color: var(--accent-text); }
+.trash-restore:hover { color: var(--accent-text); background: var(--dl-hover); }
 /* Keep as a Diamond, on a trashed CHAT only. Identical to Restore rather than
    louder: they are two honest answers to the same question, and a chat arriving
    here on its own now means this panel is where somebody meets a conversation
    they had forgotten. Making one of the two shout would be the panel guessing
    which they meant. Same `--border-strong` control boundary, per verify_theme. */
-.trash-keep { flex-shrink: 0; background: none; border: 1px solid var(--border-strong);
+.trash-keep { flex-shrink: 0; background: none; border: 1px solid transparent;
 	border-radius: 999px; cursor: pointer; color: var(--text-secondary);
 	font-size: var(--fs-3xs-2xs); line-height: 1.6; padding: 0 8px; }
-.trash-keep:hover { border-color: var(--accent); color: var(--accent-text); }
+.trash-keep:hover { color: var(--accent-text); background: var(--dl-hover); }
 .trash-purge:hover { color: var(--danger, #e5534b); }
 
 /* Emptying the trash is the one control in this panel's head that destroys, so

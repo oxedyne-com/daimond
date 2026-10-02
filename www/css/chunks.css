@@ -1,0 +1,20 @@
+/* The standing storage notice in the Admin strip: "Uploads paused", "Cleanup paused".
+   It was a <style> js/chunks.js injected, on the id; it is a sheet now, on the class.
+
+   It SHARES the sync row (`#astat-sync`), so `flex: 0 1 auto` and no width: when both have
+   something to say each takes what it needs and ellipsises, and the row is one line either way.
+   IT DRAWS AS A STATUS ROW (12px, --text-secondary, 3px 4px, 21px: skin-daylight.css), and the
+   row's own 3px top and bottom are taken back with a negative margin, so the row keeps its
+   height (a chip with padding made it 36px where every other row in the strip is 30, and moved
+   ten controls above it). The pause is marked by the --warn dot, not by the text's colour: a
+   deletion that did not happen is not an error and not a success, but something is standing
+   that the operator can act on, which is what --warn is for everywhere else. */
+.chunk-chip {
+	display: none; flex: 0 1 auto; min-width: 0; align-items: center; gap: 6px; text-align: left;
+	font: inherit; font-size: var(--dl-xs); font-weight: var(--w-text); color: var(--text-secondary);
+	padding: 3px 4px; min-height: 21px; margin-block: -3px; border: none; background: none;
+	border-radius: var(--radius-sm); cursor: pointer;
+}
+.chunk-chip:hover, .chunk-chip:focus-visible { background: var(--bg-hover); }
+.chunk-chip .ctext { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.chunk-chip .cdot { flex: none; width: 7px; height: 7px; border-radius: 50%; background: var(--warn); }

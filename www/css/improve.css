@@ -255,7 +255,7 @@
 }
 .post-to {
 	background: var(--bg-tertiary); color: var(--text-primary);
-	border: 1px solid var(--border-strong); border-radius: var(--radius-sm);
+	border: 1px solid transparent; border-radius: var(--radius-sm);
 	padding: 4px 6px; font: inherit; font-size: var(--fs-xs);
 }
 /* WHO CAN READ THIS, above the button, where the hand passes on its way to it
@@ -269,7 +269,7 @@
 .post-text {
 	width: 100%; box-sizing: border-box; min-height: 72px; resize: vertical;
 	background: var(--bg-tertiary); color: var(--text-primary);
-	border: 1px solid var(--border-strong); border-radius: var(--radius-sm);
+	border: 1px solid transparent; border-radius: var(--radius-sm);
 	padding: 7px 8px; font: inherit; font-size: var(--fs-sm); line-height: 1.45;
 }
 .post-text:focus { outline: none; border-color: var(--accent); }
@@ -305,7 +305,7 @@
 	display: flex; align-items: baseline; flex-wrap: wrap; gap: 4px 7px;
 	margin: 5px 0; padding: 6px 8px;
 	background: var(--bg-secondary);
-	border: 1px solid var(--border);
+	border: 1px solid transparent;
 	border-radius: var(--radius-sm);
 	font-size: var(--fs-3xs-2xs);
 }
@@ -323,7 +323,7 @@
    The reason is TEXT and not only a tooltip: a tooltip is unavailable to a
    touch, and a chip that is silently inert on a phone is the failure this whole
    state exists to end. */
-.ref-chip.shut { opacity: 0.75; border-style: dashed; }
+.ref-chip.shut { opacity: 0.75; }
 .ref-chip.shut .ref-name { color: var(--text-muted); }
 /* The sender's own description, drawn only where the resolution failed and said
    to be theirs. It is the one thing on this chip that did not come from this
@@ -340,7 +340,7 @@
 .imp-box {
 	width: 100%; box-sizing: border-box; min-height: 96px; resize: vertical;
 	background: var(--bg-tertiary); color: var(--text-primary);
-	border: 1px solid var(--border-strong); border-radius: var(--radius-sm);
+	border: 1px solid transparent; border-radius: var(--radius-sm);
 	padding: 7px 8px; font: inherit; font-size: var(--fs-sm);
 	line-height: 1.45;
 }
@@ -354,7 +354,7 @@
 .imp-with {
 	display: flex; align-items: flex-start; gap: 6px; margin-top: 6px;
 	padding: 5px 4px 5px 7px;
-	background: var(--bg-secondary); border: 1px solid var(--border);
+	background: var(--bg-secondary); border: 1px solid transparent;
 	border-radius: var(--radius-sm);
 }
 .imp-with[hidden] { display: none; }
@@ -448,7 +448,7 @@
 	flex: 1 1 auto; min-width: 0;
 	font-size: var(--fs-xs); padding: 3px 6px;
 	color: var(--text-primary); background: var(--bg-input);
-	border: 1px solid var(--border); border-radius: 4px;
+	border: 1px solid transparent; border-radius: 4px;
 }
 /* The count is quiet until it is the answer, and then it is the loudest thing on
    the row -- it is the number the forge's own refusal cannot carry. */
@@ -568,7 +568,7 @@
    toolbar; the same collision that made the file viewer's edit boxes 43px tall
    in a row of 22px buttons, so the height is stated here too. */
 .imp-list .shr-who {
-	background: var(--bg-tertiary); border: 1px solid var(--border-strong);
+	background: var(--bg-tertiary); border: 1px solid transparent;
 	color: var(--text-primary); border-radius: var(--radius-sm);
 	padding: 1px 6px; height: auto; min-height: 0;
 	font-size: var(--fs-3xs-2xs); line-height: 1.7;
@@ -597,7 +597,7 @@
  * scoped and why the select is given its box again here. */
 .shr-sheet { display: flex; flex-direction: column; gap: 5px; }
 .shr-sheet .shr-who {
-	background: var(--bg-tertiary); border: 1px solid var(--border-strong);
+	background: var(--bg-tertiary); border: 1px solid transparent;
 	color: var(--text-primary); border-radius: var(--radius-sm);
 	padding: 1px 6px; height: auto; min-height: 0;
 	font-size: var(--fs-3xs-2xs); line-height: 1.7;
@@ -612,7 +612,7 @@
 	cursor: pointer;
 }
 .shr-note-in {
-	background: var(--bg-tertiary); border: 1px solid var(--border-strong);
+	background: var(--bg-tertiary); border: 1px solid transparent;
 	color: var(--text-primary); border-radius: var(--radius-sm);
 	padding: 2px 6px; height: auto; min-height: 0;
 	font-size: var(--fs-3xs-2xs); line-height: 1.6; width: 100%;
@@ -717,10 +717,10 @@
 .feed-tabs { display: flex; gap: 6px; padding: 6px 10px 2px; flex-wrap: wrap; }
 .feed-tab {
 	flex: none; white-space: nowrap; padding: 3px 9px;
-	font-size: var(--fs-3xs-2xs); border: 1px solid var(--border);
+	font-size: var(--fs-3xs-2xs); border: 1px solid transparent;
 	border-radius: 999px; background: none; color: var(--text-secondary); cursor: pointer;
 }
-.feed-tab.on { border-color: var(--accent); color: var(--text-primary); }
+.feed-tab.on { color: var(--text-primary); background: var(--dl-on); }
 
 .feed-list, .feed-followers { padding: 2px 10px; }
 .feed-followers h3 {
@@ -746,3 +746,7 @@
 .feed-write .imp-box { width: 100%; }
 .feed-count { margin-right: auto; }
 .feed-say:empty { display: none; }
+
+/* Admin's section head carries 8px of side padding for the Admin list's hover fill. Inside this panel its text
+   sat 8px right of the panel's edge (x 1146 against 1138 at 1440px), so the box bleeds out by the padding. */
+#panel-social .admin-sec { margin-left: -8px; margin-right: -8px; }

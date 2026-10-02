@@ -1,3 +1,4 @@
+// gateway: live
 // verify_consistency.mjs -- D-20260929-03. The same kind of control is drawn the
 // same way everywhere, and that is MEASURED, not eyeballed: an eye sweep and an
 // independent re-check both passed a "New diamond" and a "New chat" drawn two
@@ -13,13 +14,18 @@
 //   eval "$(bash dev/world.sh N --env)"; bash dev/world.sh N --up
 //   CONS_OUT=<dir> CONS_PROFILE=<dir> DAIMOND_MOCK_SCRIPT=<json> \
 //     node dev/verify_consistency.mjs seed|desk|phone|webkit|report|all
+//     node dev/verify_consistency.mjs tap                  the phone and WebKit passes and a report (seeds if there is no profile)
+//     node dev/verify_consistency.mjs diff <runA> <runB> <cfgPrefix> [rootSel]
 //
 // `all` = seed, desk (1440×900) and phone (390×844) in Chromium, phone in WebKit,
 // each in Obsidian and Porcelain, then `report`. `report` re-reads the saved
 // captures, so the table can be corrected and re-run without a browser.
 import { open, chat, newChat, signInAs } from './harness.mjs';
+import { makePagePro } from './pro.mjs';
+import { GW_URL } from './ports.mjs';
 import fs from 'node:fs';
 import os from 'node:os';
+import path from 'node:path';
 
 const OUT   = process.env.CONS_OUT || `${os.homedir()}/.cache/daimond/${process.env.RC_SLOT || 'solo'}/consistency`;
 const PROF  = process.env.CONS_PROFILE || `${OUT}/profile`;
@@ -56,7 +62,7 @@ const SCRIPT = { [Q1]: A1, [Q2]: A2, 'Outline section 4.2 on sampling bias.': 'T
 // evidence the classifier reads (tag, id, classes, ancestry, role, text) and the
 // computed styles and geometry the comparison reads. Plus the page-level layout
 // faults that need live ranges: clipping and text overlap.
-const CAPTURE = ({ rootSel, surface }) => {
+const CAPTURE = ({ rootSel, surface, tap }) => {
 	const root = rootSel ? document.querySelector(rootSel) : document.body;
 	if (!root) return { missing: true, items: [], faults: [], tiles: [] };
 	const cs = (e, p) => getComputedStyle(e, p);
@@ -95,6 +101,13 @@ const CAPTURE = ({ rootSel, surface }) => {
 	const visText = (e) => { let t = ''; const w = document.createTreeWalker(e, NodeFilter.SHOW_TEXT, { acceptNode: (n) => n.nodeValue.trim() && n.parentElement && vis(n.parentElement) ? 1 : 3 }); for (let n; (n = w.nextNode());) t += n.nodeValue; return t; };
 	const firstText = (e) => { const w = document.createTreeWalker(e, NodeFilter.SHOW_TEXT, { acceptNode: (n) => n.nodeValue.trim() && n.parentElement && vis(n.parentElement) ? 1 : 3 }); return w.nextNode(); };
 	const charRect = (n, i) => { const rg = document.createRange(); rg.setStart(n, i); rg.setEnd(n, i + 1); return rg.getBoundingClientRect(); };
+	// D3: the first cell's left padding and the last cell's right padding are the table's edge, not its spacing. They are masked (null) at
+	// capture so only the inner sides of a table's cells are compared, side by side; a lone cell has no inner side.
+	const padSides = (e, s) => {
+		if (e.tagName !== 'TH' && e.tagName !== 'TD') return null;
+		const first = !e.previousElementSibling, last = !e.nextElementSibling;
+		return [s.paddingTop, last ? null : s.paddingRight, s.paddingBottom, first ? null : s.paddingLeft];
+	};
 	const CTRL = 'button, [role="button"], [role="tab"], [role="menuitem"], [role="option"], [role="switch"], [role="checkbox"], [role="radio"], a[href], input:not([type=hidden]), select, textarea, summary';
 	const all = [root, ...root.querySelectorAll('*')].filter((e) => !(e instanceof SVGElement && e.tagName !== 'svg') && vis(e));
 	const items = [];
@@ -165,13 +178,13 @@ const CAPTURE = ({ rootSel, surface }) => {
 			sel: el.getAttribute('aria-selected') === 'true' || el.getAttribute('aria-pressed') === 'true' || el.getAttribute('aria-current') ? 1 : 0,
 			dis: el.disabled || el.getAttribute('aria-disabled') === 'true' ? 1 : 0,
 			ctrl: isCtrl ? 1 : 0, text: text.slice(0, 80), lines: tn ? (() => { const rg = document.createRange(); rg.selectNodeContents(tn); return rg.getClientRects().length; })() : 0,
-			r: [Math.round(r.left), Math.round(r.top), Math.round(r.width), Math.round(r.height)], view: inView(r) ? 1 : 0,
+			r: [Math.round(r.left), Math.round(r.top), Math.round(r.width), Math.round(r.height)], re: Math.round(r.right), view: inView(r) ? 1 : 0,
 			tx, tcy, glyph, ggap, icon, clip, ph: el.getAttribute('placeholder') || '',
 			st: {
 				ff: ls.fontFamily.split(',')[0].replace(/["']/g, '').trim(), fs: ls.fontSize, fw: ls.fontWeight, ls: ls.letterSpacing, tt: ls.textTransform,
 				col: tok(ls.color), bg: tok(s.backgroundColor),
 				bd: ['Top', 'Right', 'Bottom', 'Left'].map((x) => parseFloat(s['border' + x + 'Width']) && s['border' + x + 'Style'] !== 'none' && tok(s['border' + x + 'Color']) !== 'none' ? s['border' + x + 'Width'] + ' ' + tok(s['border' + x + 'Color']) : '0').join(' / '),
-				rad: s.borderRadius, pad: s.padding, h: Math.round(r.height), lh: ls.lineHeight, gap: s.columnGap, disp: s.display, ai: s.alignItems,
+				rad: s.borderRadius, pad: s.padding, padS: padSides(el, s), h: Math.round(r.height), lh: ls.lineHeight, gap: s.columnGap, disp: s.display, ai: s.alignItems,
 				td: ls.textDecorationLine, sh: s.boxShadow === 'none' ? 'none' : 'shadow', cur: s.cursor, ta: s.textAlign,
 			},
 		});
@@ -286,7 +299,91 @@ const CAPTURE = ({ rootSel, surface }) => {
 			if (Object.keys(rows).length >= 2) tiles.push({ kind, sig: sig(box), text: (box.textContent || '').trim().slice(0, 40), rows, surface, w: Math.round(box.getBoundingClientRect().width) });
 		}
 	}
-	return { missing: false, items, faults, tiles };
+	// F10, the tap cross (rule 8, decision D6). From the centre of the control's box cut to the viewport, walk out left, right, up
+	// and down, sampling `elementFromPoint` at pixel centres (n + 0.5), while the sample lands on the control or inside it, to
+	// 30px at most. Width = left + right + 1, height = up + down + 1. An interval of 44px always holds 44 pixel centres, so a
+	// fractional centre cannot read 44x43. Three rules choose what is measured, none of them a name:
+	//   (i)   a checkbox or radio in a <label>, or named by one with `for`, is measured as its label;
+	//   (ii)  a control in a horizontal scroller is scrolled into view within it first, and put back after;
+	//   (iii) while the surface's top overlay is open (a menu, a dialog, a sheet, the open drawer), only controls inside it are measured;
+	//   (iv)  a control inside a container that clips its overflow and has collapsed to nothing is not on screen, and is not measured (a closed
+	//         sheet is `height: 0; overflow: hidden`, parked under the footer chips with its close button still laid out);
+	//   (v)   a control in a vertical scroller is scrolled to the centre of that scroller first, and put back after, as (ii) does for a
+	//         horizontal one: a person scrolls a row into view to tap it, so a sticky head or foot at the scroller's edge is not what covers
+	//         it. A control still covered at the centre is a real fault, and is measured as one;
+	//   (vi)  a chat tile's title button (`.tile-label`) is measured as its tile, as a checkbox is as its label: it runs the tile's own action
+	//         (the tile's click handler selects the chat too), so a tap anywhere on the tile does what a tap on the title does. A 33px title
+	//         inside a taller tile is one target, and a 44px title would make every chat tile taller for nothing.
+	//         (Also for (iii): the Admin drawer's overlay is its body, `.admin-body`, which covers the whole rail on a phone, status strip
+	//         included; the `#admin` wrapper also holds the strip, which lies beneath it and is not tappable while Admin is open.)
+	const taps = [];
+	if (tap) {
+		const OV = '.pop:not([hidden]), .dlg-card, .modal-card, [role="dialog"], .modal, #admin.admin-open .admin-body, .pal-box, .menu:not([hidden]), #msheet.open, body.drawer-open #panel-rail';
+		const ovs = [...document.querySelectorAll(OV)].filter((e) => e.getClientRects().length && e.getBoundingClientRect().height > 10 && cs(e).visibility !== 'hidden');
+		// The top overlay is the one that is on top where it can be seen: of those whose own centre lands inside them, the last in document order
+		// (a popover inside a sheet beats the sheet). An open drawer over an open sheet is the top overlay, not the sheet beneath it.
+		let topOv = null;
+		for (const o of ovs) {
+			const q = o.getBoundingClientRect();
+			const h = document.elementFromPoint(Math.min(Math.max(q.left + q.width / 2, 0), innerWidth - 1), Math.min(Math.max(q.top + q.height / 2, 0), innerHeight - 1));
+			if (h && o.contains(h)) topOv = o;
+		}
+		const done = new WeakSet();
+		const collapsed = (e) => { for (let a = e.parentElement; a && a !== document.documentElement; a = a.parentElement) {
+			const o = cs(a); if (o.overflowX === 'visible' && o.overflowY === 'visible') continue;
+			const q = a.getBoundingClientRect(); if (q.width < 2 || q.height < 2) return true;
+		} return false; };
+		const ctrls = [...(root.matches(CTRL) ? [root] : []), ...root.querySelectorAll(CTRL)];
+		for (const el0 of ctrls) {
+			let el = el0;
+			if (el0.tagName === 'INPUT' && /^(checkbox|radio)$/.test(el0.type)) {
+				const lab = el0.closest('label') || (el0.id ? document.querySelector('label[for="' + CSS.escape(el0.id) + '"]') : null);
+				if (lab) el = lab;
+			}
+			// (vi) a chat tile's title button is measured as its tile.
+			if (el0.classList.contains('tile-label')) { const tl = el0.closest('.session-box'); if (tl) el = tl; }
+			if (done.has(el) || !vis(el)) continue;
+			// A control inside a closed disclosure (not its summary) is not on screen, whatever box its content kept: the crystal's
+			// Edit and Raw read "covered by the body" for that reason.
+			{ const dt = el.closest('details:not([open])'); if (dt && !(el.closest('summary') && el.closest('summary').parentElement === dt)) continue; }
+			if (topOv && !topOv.contains(el)) continue;
+			if (collapsed(el)) continue;
+			if (cs(el).pointerEvents === 'none') continue;
+			done.add(el);
+			// (ii) bring the control into each horizontal scroller that holds it, and (v) to the centre of each vertical one.
+			const back = [];
+			for (let a = el.parentElement; a && a !== document.documentElement; a = a.parentElement) {
+				const o = cs(a), hx = /auto|scroll/.test(o.overflowX) && a.scrollWidth > a.clientWidth + 1, hy = /auto|scroll/.test(o.overflowY) && a.scrollHeight > a.clientHeight + 1;
+				if (!hx && !hy) continue;
+				const q = el.getBoundingClientRect(), v = a.getBoundingClientRect();
+				back.push([a, a.scrollLeft, a.scrollTop]);
+				if (hx) { if (q.left < v.left) a.scrollLeft -= v.left - q.left; else if (q.right > v.right) a.scrollLeft += q.right - v.right; }
+				if (hy) a.scrollTop += (q.top + q.height / 2) - (v.top + v.height / 2);
+			}
+			const r = el.getBoundingClientRect();
+			const l = Math.max(r.left, 0), rr = Math.min(r.right, innerWidth), t = Math.max(r.top, 0), b = Math.min(r.bottom, innerHeight);
+			if (rr - l >= 1 && b - t >= 1) {
+				const nx = Math.floor((l + rr) / 2), ny = Math.floor((t + b) / 2);
+				// null when the sample lands on the control or inside it; otherwise what is there instead.
+				const lands = (x, y) => { const h = document.elementFromPoint(x + 0.5, y + 0.5); return !!h && (h === el || el.contains(h)) ? null : h || 'none'; };
+				const c0 = lands(nx, ny);
+				let hit = [0, 0], by = '';
+				if (c0 === null) {
+					const walk = (dx, dy) => { let n = 0; for (let i = 1; i <= 30; i++) { const x = nx + dx * i, y = ny + dy * i; if (x < 0 || y < 0 || x >= innerWidth || y >= innerHeight || lands(x, y) !== null) break; n++; } return n; };
+					hit = [walk(-1, 0) + walk(1, 0) + 1, walk(0, -1) + walk(0, 1) + 1];
+				} else by = c0 === 'none' ? 'nothing' : sig(c0);
+				const anc2 = []; for (let a = el.parentElement, i = 0; a && a !== document.documentElement && i < 7; a = a.parentElement, i++) anc2.push(sig(a));
+				taps.push({
+					surface, sig: sig(el), tag: el.tagName.toLowerCase(), id: el.id || '', cls: clsOf(el), anc: anc2, role: el.getAttribute('role') || '',
+					type: el.getAttribute('type') || '', aria: el.getAttribute('aria-label') || '', ctrl: 1, ph: el.getAttribute('placeholder') || '',
+					text: (/INPUT|TEXTAREA|SELECT/.test(el.tagName) ? '' : visText(el)).trim().replace(/\s+/g, ' ').slice(0, 80), icon: null,
+					box: [Math.round(r.left), Math.round(r.top), Math.round(r.width), Math.round(r.height)], hit, by,
+				});
+			}
+			for (const [a, x, y] of back.reverse()) { a.scrollLeft = x; a.scrollTop = y; }
+		}
+	}
+	return { missing: false, items, faults, tiles, tap: taps };
 };
 
 // ── Driving the app ─────────────────────────────────────────────────────
@@ -324,13 +421,26 @@ async function topOverlay() {
 		return '#' + e.id;
 	});
 }
-async function grab(name, rootSel) {
+// Where the pointer rests between surfaces: a phone has no resting pointer, so the corner; a computer's rests at the page's top-left,
+// which hovers no control at 1440×900 (the check in `grab` says so on every surface it parks over).
+const PARK_PHONE = [0, 0], PARK_DESK = [5, 5];
+async function grab(name, rootSel, keep) {
 	if (rootSel === undefined) rootSel = null;
 	const surface = `${CFG}/${name}`;
-	const a = await ev(CAPTURE, { rootSel, surface });
+	// Playwright's mouse stays where the last click landed (a touch context still dispatches mouse events), so whatever a later layout moves
+	// under that point reads `:hover`, and the gate takes the hover fill for the resting style. `keep` leaves the pointer for the one
+	// surface that is about hover.
+	if (!keep) {
+		const ph = /^(phone|webkit)-/.test(CFG);
+		await page.mouse.move(...(ph ? PARK_PHONE : PARK_DESK)).catch(() => {});
+		await wait(ph ? 80 : 200);	// a computer's pointer leaves a control that fades its fill over 150 ms
+		const hv = await ev(() => [...document.querySelectorAll(':hover')].filter((e) => /^(BUTTON|A|INPUT|SELECT|TEXTAREA|SUMMARY|LABEL)$/.test(e.tagName) || getComputedStyle(e).cursor === 'pointer').map((e) => e.tagName.toLowerCase() + (e.className && typeof e.className === 'string' ? '.' + e.className.trim().split(/\s+/).join('.') : '')));
+		if (hv && hv.length) log('PARK HOVERS', surface, hv.join(' '));
+	}
+	const a = await ev(CAPTURE, { rootSel, surface, tap: /^(phone|webkit)-/.test(CFG) });
 	if (a.err) { log('capture fail', surface, a.err); return; }
 	if (a.missing) { log('MISSING', surface, rootSel); CAP.missing.push(surface); return; }
-	CAP.items.push(...a.items); CAP.faults.push(...a.faults); CAP.tiles.push(...a.tiles); CAP.surfaces.push(surface);
+	CAP.items.push(...a.items); CAP.faults.push(...a.faults); CAP.tiles.push(...a.tiles); CAP.tap.push(...(a.tap || [])); CAP.surfaces.push(surface);
 	if (process.env.CONS_SHOTS) await page.screenshot({ path: `${OUT}/shot_${surface.replace(/\W+/g, '_')}.png`, animations: 'disabled' }).catch(() => {});
 	log('surface', surface, a.items.length);
 }
@@ -377,7 +487,7 @@ async function deskSurfaces() {
 	for (const f of [0.3, 0.6, 1]) { await ev((f) => { const o = document.getElementById('chat-output'); if (o) o.scrollTop = o.scrollHeight * f; }, f); await wait(250); await grab('transcript_' + f, '#chat-output'); }
 	await ev(() => { const b = document.getElementById('expand-all-btn'); if (b) b.click(); });
 	const tiles = page.locator('#chat-output .ctile.chat-msg-assistant');
-	if (await tiles.count()) { await tiles.last().hover({ force: true }).catch(() => {}); await wait(300); await grab('tile_hover', '#chat-output'); await page.mouse.move(5, 5); }
+	if (await tiles.count()) { await tiles.last().hover({ force: true }).catch(() => {}); await wait(300); await grab('tile_hover', '#chat-output', true); await page.mouse.move(...PARK_DESK); }
 	await rateSurfaces('');
 	await page.fill('#chat-input', 'A draft that is long enough to wrap onto a second line of the composer, so its height and its buttons show how they sit together.').catch(() => {});
 	await wait(300); await grab('composer', '.chat-input-bar'); await page.fill('#chat-input', '').catch(() => {});
@@ -488,7 +598,7 @@ async function phoneSurfaces(wk) {
 		// WebKit's Workspace tab is real furniture with no content behind it:
 		// WebKit keeps no file store, so files never sync to it by design (CRF2).
 		// Recorded as not covered, never scored as if it were a pass or a fail.
-		if (wk && /Workspace/i.test(tabs[i])) {
+		if (wk && !WKSTORE && /Workspace/i.test(tabs[i])) {
 			CAP.notCovered.push({ label: 'webkit Workspace', reason: 'WebKit has no file store; files do not sync to it by design (CRF2)', surface: `${CFG}/p_tab_${tabs[i]}` });
 		} else {
 			await grab('p_tab_' + tabs[i]);
@@ -512,7 +622,56 @@ async function phoneSurfaces(wk) {
 	await ev(() => { try { window.DaimondPanels.show('work'); } catch (e) {} }); await wait(700);
 	const ok = await ev(() => { const row = [...document.querySelectorAll('.files-row')].find((x) => /^\s*notes\.md/.test((x.querySelector('.files-name') || x).textContent)); if (!row) return false; (row.querySelector('.files-name') || row).click(); return true; });
 	if (ok) { await wait(1400); await grab('p_viewer_text'); }
+	// The files are in the store; a device with none holds no row to open (see `webkitPair`). Anywhere else the missing row is a fault.
+	else if (wk && !WKSTORE) CAP.notCovered.push({ label: 'webkit file viewer', reason: 'WebKit has no file store, so notes.md never reaches the device (CRF2)', surface: `${CFG}/p_viewer_text` });
+	else CAP.missing.push(`${CFG}/p_viewer_text`);
 	await quiet();
+	await carrySurfaces(wk);
+}
+
+// The surfaces the 5.2.9 carry needs (G1, rule 4: every instance). Each starts from a known place, the main chat on the chat panel with
+// the drawer shut, and each is a place a fault lived: Help's rows, the head's ⋯ menu, select mode, a Diamond's two faces, and the page
+// the drawer leaves after New Chat.
+async function carrySurfaces(wk) {
+	const home = async () => {
+		await quiet();
+		await ev(() => { document.body.classList.remove('drawer-open'); const sc = document.querySelector('.drawer-scrim, .scrim'); if (sc && sc.getClientRects().length) sc.click(); }); await wait(300);
+		await ev(() => { try { window.DaimondPanels.show('ai'); } catch (e) {} }); await wait(400);
+		await mainChat();
+	};
+	const drawer = async () => { await ev(() => { if (!document.body.classList.contains('drawer-open')) { const b = document.getElementById('drawer-btn'); if (b) b.click(); } }); await wait(800); };
+	await home();
+	await overlay('p_menu_help', '#help-btn');
+	// MISSING on B0 by design: the ⋯ menu is H1's. The surface turns from MISSING to present when H1 merges.
+	await overlay('p_menu_headmore', '#chead-more');
+	await home();
+	if (await click('#collapse-btn')) { await wait(600); await grab('p_chat_select'); await click('#collapse-btn'); await wait(400); }
+	else CAP.missing.push(`${CFG}/p_chat_select`);
+	// The Kitchen Diamond, on each face, picked from the drawer as a person would.
+	await home(); await drawer();
+	const dia = await ev(() => { const t = [...document.querySelectorAll('#diamond-list .diamond-box')].find((e) => /Kitchen/.test(e.getAttribute('aria-label') || e.textContent)); if (!t) return false; (t.querySelector('.tile-label') || t).click(); return true; });
+	if (dia === true) {
+		await wait(1200);
+		await click('#dview-crystal'); await wait(1400); await grab('p_diamond_crystal');
+		await click('#dview-chat'); await wait(900); await grab('p_diamond_chat');
+		await click('#dview-crystal'); await wait(500);
+	} else if (wk && !WKSTORE) {
+		// A Diamond is a folder in the store (see `webkitPair`): the device holds none, so there is no face to open.
+		for (const f of ['p_diamond_crystal', 'p_diamond_chat']) CAP.notCovered.push({ label: 'webkit Diamonds', reason: 'WebKit has no file store, so no Diamond reaches the device (CRF2)', surface: `${CFG}/${f}` });
+	} else CAP.missing.push(`${CFG}/p_diamond_crystal`, `${CFG}/p_diamond_chat`);
+	// New Chat from the drawer, then the page it leaves (item 8: the drawer is meant to be shut over the new chat). It leaves a pending chat.
+	await home(); await drawer();
+	if (await click('#new-session-btn')) {
+		await wait(1000); await grab('p_newchat');
+		// The pending chat is deleted again, through the app's own delete, so the surfaces after it, the other look and the WebKit device do not
+		// inherit a chat called "New Chat".
+		await home();
+		await ev(() => { const t = [...document.querySelectorAll('#session-list .session-box')].find((e) => e.classList.contains('pending') || /^New Chat/.test((e.textContent || '').trim())); const c = t && t.querySelector('.tile-cog'); if (c) c.click(); });
+		await wait(700); await click('.tile-dlg-delete'); await wait(600);
+		await ev(() => { const b = [...document.querySelectorAll('.dlg-card .dlg-ok.danger, .modal-card .dlg-ok.danger')].find((e) => e.getClientRects().length); if (b) b.click(); });
+		await wait(700);
+	} else CAP.missing.push(`${CFG}/p_newchat`);
+	await home();
 }
 
 function saveCap(name) { fs.writeFileSync(`${OUT}/cap_${name}.json`, JSON.stringify(CAP)); log('saved', `${OUT}/cap_${name}.json`, CAP.items.length, 'items', CAP.surfaces.length, 'surfaces', CAP.missing.length, 'missing', CAP.notCovered.length, 'not covered'); }
@@ -648,8 +807,9 @@ async function layoutExtras() {
 	if (railStyle) await ev((s) => { const r = document.getElementById('panel-rail'); if (r) Object.assign(r.style, s); }, railStyle);
 }
 async function desk() {
-	CAP = { items: [], faults: [], tiles: [], surfaces: [], missing: [], notCovered: [] };
-	const s = await open({ name: 'alex', profile: PROF });
+	CAP = { items: [], faults: [], tiles: [], tap: [], surfaces: [], missing: [], notCovered: [] };
+	// CONS_NOCONNECT=1: capture with no provider connected, which is what a run against another tree's server needs (the harness refuses a mock that is not this tree's), as the phone passes already do.
+	const s = await open({ name: 'alex', profile: PROF, ...(process.env.CONS_NOCONNECT ? { connect: false } : {}) });
 	page = s.page;
 	await page.setViewportSize({ width: 1440, height: 900 });
 	await wait(1000); await view('max');
@@ -660,29 +820,78 @@ async function desk() {
 }
 const IPHONE_UA = 'Mozilla/5.0 (iPhone; CPU iPhone OS 17_5 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.5 Mobile/15E148 Safari/604.1';
 // WebKit is seeded by pairing it to PROF's own account as a SECOND DEVICE, not
-// a fresh one, so its chats and diamonds are real and arrive by sync (CRF2:
-// only the Workspace files take no part). Pattern:
+// a fresh one, so its chats are real and arrive by sync. Pattern:
 // dev/verify_markshere_sync.mjs's `pairedDevice`. If pairing cannot run under
 // this harness at all, WebKit is excluded in full rather than measured empty.
+//
+// TWO FACTS THIS RESTS ON (G2, 2026-10-01; before them `all` on a gateway world
+// died at exit 4 and `varlen webkit` on a click timeout):
+//  1. SYNC IS PRO-GATED. The seed's account is on the free tier, so every flush of
+//     the lead answered `{ ok: false, why: 'not_entitled' }` and nothing ever left
+//     it: the 60 s wait was waiting on a push refused at the door. The account is
+//     granted Pro the one way the gateway trusts (dev/pro.mjs), here, after the
+//     Chromium passes have captured the free-tier surfaces.
+//  2. PLAYWRIGHT'S WEBKIT HAS NO OPFS (`navigator.storage.getDirectory` is absent;
+//     real Safari has it). Diamonds and files live in that store, so they never
+//     reach this device however long it waits: the rail says "No diamonds yet." and
+//     `DaimondSync.state().filesHeld` is false. The wait therefore asks for the
+//     chats only, and the Diamond and file surfaces are recorded as NOT COVERED
+//     with this reason. If an engine ever offers the store, the wait asks for the
+//     Diamonds too and the surfaces are measured.
+const GWDIR = new URL('../gateway', import.meta.url).pathname;
+let WKSTORE = false;	// does the WebKit device hold a file store (set by `webkitPair`)?
+const wait2 = (ms) => new Promise((r) => setTimeout(r, ms));
+const syncLine = (p) => p.evaluate(() => {
+	let st = {}; try { st = window.DaimondSync.state(); } catch (e) {}
+	return { entitled: st.entitled, stalledWhy: st.stalledWhy, ver: st.version, filesHeld: st.filesHeld, chip: (window.DaimondSync.chip && window.DaimondSync.chip()) || '',
+		chats: document.querySelectorAll('#session-list .chat-box').length, diamonds: document.querySelectorAll('#diamond-list .diamond-box').length };
+}).then((x) => JSON.stringify(x), (e) => 'unreadable: ' + e.message.split('\n')[0]);
+async function webkitPair() {
+	const lead = await open({ name: 'alex', profile: PROF, connect: false });
+	let s = null;
+	try {
+		await lead.page.waitForFunction(() => !!window.DaimondPairing, null, { timeout: 15000 });
+		const pro = await makePagePro(lead.page, GWDIR, GW_URL);
+		if (!pro.pro) throw new Error(`the Pro grant did not take (webhook ${pro.status}, account ${pro.id || 'unknown'})`);
+		s = await open({ name: 'alex', profile: PROF + '-webkit', signIn: false, connect: false, defaults: false, browser: 'webkit', touch: true, ua: IPHONE_UA });
+		await s.page.waitForFunction(() => !!window.DaimondPairing, null, { timeout: 15000 });
+		const code = await lead.page.evaluate(() => DaimondPairing.create());
+		if (!code || !code.code) throw new Error('no pairing code');
+		await s.page.evaluate((c) => DaimondPairing.redeem(c), code.code);
+		await s.page.reload({ waitUntil: 'domcontentloaded' });
+		await signInAs(s, 'alex');
+		await s.page.waitForFunction(() => !!(window.DaimondSync && window.DaimondCore && window.DaimondGateway && DaimondGateway.state().authed), null, { timeout: 30000 });
+		WKSTORE = await s.page.evaluate(() => !!(navigator.storage && typeof navigator.storage.getDirectory === 'function'));
+		return { lead, s };
+	} catch (e) {
+		if (s) await s.close().catch(() => {});
+		await lead.close().catch(() => {});
+		throw e;
+	}
+}
+// Push from the lead and pull on the device until its chats (and, if it holds a store, its Diamonds) have landed. A device that never gets
+// them fails the run with exit 4, naming both ends' sync state, rather than capturing its own empty rail as if it were real.
+async function webkitSync(lead, s) {
+	const t0 = Date.now(); let last = 0;
+	while (Date.now() - t0 < 60000) {
+		await lead.page.evaluate(() => window.DaimondSync.flush ? window.DaimondSync.flush() : window.DaimondSync.push()).catch(() => {});
+		await s.page.evaluate(() => window.DaimondSync.pull()).catch(() => {});
+		await wait2(800);
+		const n = await s.page.evaluate(() => ({ chats: document.querySelectorAll('#session-list .chat-box').length, diamonds: document.querySelectorAll('#diamond-list .diamond-box').length })).catch(() => null);
+		if (n && n.chats >= 3 && (!WKSTORE || n.diamonds >= 4)) return true;
+		if (Date.now() - last > 10000) { last = Date.now(); log(`webkit sync, t+${Math.round((Date.now() - t0) / 1000)}s  lead ${await syncLine(lead.page)}  webkit ${await syncLine(s.page)}`); }
+	}
+	log(`webkit: sync wait timed out (store ${WKSTORE ? 'held' : 'absent'}); lead ${await syncLine(lead.page)}  webkit ${await syncLine(s.page)}`);
+	return false;
+}
 async function phone(wk) {
-	CAP = { items: [], faults: [], tiles: [], surfaces: [], missing: [], notCovered: [] };
+	CAP = { items: [], faults: [], tiles: [], tap: [], surfaces: [], missing: [], notCovered: [] };
 	let lead = null, s, excluded = null;
 	if (wk) {
-		try {
-			lead = await open({ name: 'alex', profile: PROF, connect: false });
-			await lead.page.waitForFunction(() => !!window.DaimondPairing, null, { timeout: 15000 });
-			s = await open({ name: 'alex', profile: PROF + '-webkit', signIn: false, connect: false, defaults: false,
-				browser: 'webkit', touch: true, ua: IPHONE_UA });
-			await s.page.waitForFunction(() => !!window.DaimondPairing, null, { timeout: 15000 });
-			const code = await lead.page.evaluate(() => DaimondPairing.create());
-			if (!code || !code.code) throw new Error('no pairing code');
-			await s.page.evaluate((c) => DaimondPairing.redeem(c), code.code);
-			await s.page.reload({ waitUntil: 'domcontentloaded' });
-			await signInAs(s, 'alex');
-			await s.page.waitForFunction(() => !!(window.DaimondSync && window.DaimondCore && window.DaimondGateway && DaimondGateway.state().authed), null, { timeout: 30000 });
-		} catch (e) {
+		try { ({ lead, s } = await webkitPair()); }
+		catch (e) {
 			log('webkit pairing unavailable under this harness, excluding WebKit in full:', e.message);
-			excluded = 'webkit-*: no seeded content';
+			excluded = 'webkit-*: no seeded content (' + e.message.split('\n')[0] + ')';
 		}
 	} else {
 		s = await open({ name: 'alex', profile: PROF, touch: true, connect: false, isMobile: true });
@@ -697,24 +906,10 @@ async function phone(wk) {
 	page = s.page;
 	await page.setViewportSize({ width: 390, height: 844 });
 	await wait(1500);
-	if (wk) {
-		// The content comes by sync, not by WebKit's own chat() calls against a
-		// fresh, empty profile. Push from the lead and pull here until the
-		// paired content lands, or fail the run rather than capture WebKit's
-		// own empty state as if it were real.
-		const t0 = Date.now(); let synced = false;
-		while (Date.now() - t0 < 60000) {
-			await lead.page.evaluate(() => window.DaimondSync.flush ? window.DaimondSync.flush() : window.DaimondSync.push()).catch(() => {});
-			await page.evaluate(() => window.DaimondSync.pull()).catch(() => {});
-			await wait(800);
-			const n = await ev(() => ({ chats: document.querySelectorAll('#session-list .chat-box').length, diamonds: document.querySelectorAll('#diamond-list .diamond-box').length }));
-			if (n && !n.err && n.chats >= 3 && n.diamonds >= 4) { synced = true; break; }
-		}
-		if (!synced) {
-			log('webkit: sync wait timed out, failing the run rather than capturing an empty rail');
-			await s.close().catch(() => {}); await lead.close().catch(() => {});
-			process.exit(4);
-		}
+	if (wk && !(await webkitSync(lead, s))) {
+		log('webkit: failing the run rather than capturing an empty rail');
+		await s.close().catch(() => {}); await lead.close().catch(() => {});
+		process.exit(4);
 	}
 	await view('max');
 	for (const th of LOOKS) { CFG = `${wk ? 'webkit' : 'phone'}-${th}`; await wear(th); await phoneSurfaces(wk); }
@@ -735,7 +930,7 @@ const ROLES = [
 	// [role, casing rule, predicate]
 	// Controls.
 	['close-button',    'none',     (it) => it.ctrl && (has(it, 'panel-close') || has(it, 'ui-close') || has(it, 'admin-back') || has(it, 'pal-close') || /^close\b/i.test(it.aria) && !txt(it))],
-	['create-button',   'title',    (it) => it.ctrl && (has(it, 'railbtn') || /^(new|add|create)\b/i.test(txt(it)) && txt(it).length < 32 && !has(it, 'admin-item') && !within(it, /dlg-actions/) && !/link|add-credits/.test(it.cls.join(' ')))],
+	['create-button',   'title',    (it) => it.ctrl && !has(it, 'tile-label') && (has(it, 'railbtn') || /^(new|add|create)\b/i.test(txt(it)) && txt(it).length < 32 && !has(it, 'admin-item') && !within(it, /dlg-actions/) && !/link|add-credits/.test(it.cls.join(' ')))],
 	['picture-option',  'none',     (it) => it.ctrl && has(it, 'grid-opt')],
 	['tab',             'sentence', (it) => it.ctrl && (has(it, 'ptag') || within(it, /#mnav|msheet-tabs/) || it.role === 'tab') && !has(it, 'dview-btn')],
 	['dialog-action',   'title',    (it) => it.ctrl && (has(it, 'push-save') || it.id === 'push-save' || it.id === 'beta-open') || it.ctrl && within(it, /dlg-actions|modal-actions|tile-dlg-actions|dlg-foot|compose-foot/)],
@@ -761,6 +956,9 @@ const ROLES = [
 	['field',            'sentence', (it) => it.tag === 'input' && has(it, 'tag-input')],
 	['text-button',     'title',    (it) => it.ctrl && has(it, 'crystal-act') && within(it, /tag-add/)],
 	['filter-chip',     'none',     (it) => it.ctrl && (has(it, 'tag-chip') || within(it, /\.tag-box|\.tag-row|\.rail-filter/))],
+	// "Uploads paused" sits in the status strip's detail rows as a reading, not as a button the person reaches for (5.2.9, S's finding; the lead's
+	// decision of 1 Oct keeps it a status-row occupant). Its stylesheet gave it the class `chunk-chip`, which the `chip` role below would claim.
+	['status-row',      'none',     (it) => it.id === 'chunk-chip'],
 	['chip',            'sentence', (it) => it.ctrl && it.cls.some((c) => /chip/.test(c))],
 	['swatch',          'none',     (it) => has(it, 'tile-dlg-swatch') || it.type === 'color'],
 	['field',           'sentence', (it) => /^(input|textarea)$/.test(it.tag) && !/checkbox|radio|range|color|file/.test(it.type)],
@@ -849,18 +1047,22 @@ const ROLE_PROPS = {
 	'list-text': ['ff', 'fs', 'fw', 'col', 'lh'],
 	'meta': ['ff', 'fs', 'fw', 'ls', 'tt', 'col'], 'stamp': ['ff', 'fs', 'fw', 'ls', 'tt', 'col'],
 	'tile-prose': ['ff', 'fs', 'lh', 'col'], 'tile-table-head': PROPS_TEXT.concat('pad'), 'tile-table-cell': ['ff', 'fs', 'fw', 'col', 'lh', 'pad'],
-	// `pad` is left out: the last column keeps the panel's own right gutter,
-	// every other column sits flush against its neighbour, by design (§11).
-	'data-table-head': PROPS_TEXT, 'data-table-cell': ['ff', 'fs', 'fw', 'col', 'lh'],
+	// D3 (5.2.9): `pad` is compared again, side by side, with the table's outer edge (the first cell's left, the last cell's right) masked
+	// at capture. The old fix dropped `pad` for these roles because the last column keeps the panel's own right gutter, which also stopped
+	// the inner gaps being checked.
+	'data-table-head': PROPS_TEXT.concat('pad'), 'data-table-cell': ['ff', 'fs', 'fw', 'col', 'lh', 'pad'],
 };
 
 // THE ALLOW-LIST. A deliberate variant, named, with its reason. `m` is tested
 // against `sig + ' ' + text` (plus ' aria-current' when the element says it is
 // selected); `p` lists the properties it may differ in.
 const ALLOW = [
-	{ role: '*', m: /\.(on|active|current|selected|is-on|tag-inc)\b|aria-current/, p: ['col', 'bg', 'fw', 'bd'], why: 'the current or selected state is drawn apart on purpose' },
+	// GO-1 (carry r529): `bd` is NOT allowed here any more. A selected or current element is drawn apart by its colour, its fill and its weight,
+	// never by a border (bar rule 1: a selected row is a light fill, never an outline). The row used to include `bd`, which let any pressed or
+	// current element wear one.
+	{ role: '*', m: /\.(on|active|current|selected|is-on|tag-inc)\b|aria-current/, p: ['col', 'bg', 'fw'], why: 'the current or selected state is drawn apart on purpose, by colour, fill and weight, never by a border' },
 	{ role: '*', m: /\.danger\b/, p: ['col'], why: 'a destructive action is drawn in the danger colour' },
-	{ role: '*', m: /\.dlg-ok\b|#chat-send\b|\.compose-send\b|\.ti-continue\b|#push-save\b|#beta-open\b|\.crystal-act\.primary\b/, p: ['col', 'bg', 'bd', 'fw', 'rad'], why: 'the one primary action of a dialog, the composer, an interrupted turn or the crystal form is filled -- the send button’s own round primary keeps its radius too' },
+	{ role: '*', m: /\.dlg-ok\b|#chat-send\b|\.compose-send\b|\.ti-continue\b|#push-save\b|#beta-open\b|\.crystal-act\.primary\b|\.pro-buy\b|\.tools-buy\b|\.mail-unlock\b|\.ar-save\b|\.ar-card-btn\.accent\b/, p: ['col', 'bg', 'bd', 'fw', 'rad'], why: 'the one primary action of a dialog, the composer, an interrupted turn or the crystal form is filled -- the send button’s own round primary keeps its radius too' },
 	{ role: 'meta', m: /\.crollup-count\b/, p: ['col', 'fw', 'ff'], why: 'the tool-count badge is filled in the outcome colour (ok, warn, fail)' },
 	{ role: '*', m: / :focus$/, p: ['bd', 'sh'], why: 'the focused field shows the accent edge; every field takes it on focus' },
 	{ role: 'close-button', m: /about-card/, p: ['col', 'bg', 'rad'], why: 'the About card closes over its picture, so its × is a dark disc (app.css .about-card > .ui-head .ui-close)' },
@@ -883,6 +1085,11 @@ const ALLOW = [
 	// A numeric column's head and cells are mono, matching the figures in the
 	// column below them; a text column's are not (cluster 12, the data-table
 	// role). Lumping `th.num` in with `th` for `ff` votes the wrong one out.
+	// 5.2.9 (X, the lead's ruling of 1 Oct): the Diamond head's face switch keeps its 30px box (the head block's, and the toggle-option rule's own)
+	// and carries its 44px tap area as the house overlay. Every other toggle option is a 44px box on a phone, but 44px here would make the
+	// Diamond head 110px, not the 96px the owner chose on 30 Sep (B: title, mode, one more menu).
+	{ role: 'head-tool', m: /^select#pending-sort\b/, p: ['h'], why: 'a select cannot wear the 44px overlay a head tool wears (it has no pseudo-element), so its box is the 44px, and the head-tool role\'s 36px is the height of an icon box' },
+	{ role: 'toggle-option', m: /\.dview-btn\b/, p: ['h'], why: 'the face switch keeps its 30px box and wears a 44px overlay for its tap: at 44px the Diamond head would be 110px, not the 96px the owner chose' },
 	{ role: 'data-table-head', m: /\.num\b/, p: ['ff'], why: 'a numeric column head is mono, matching its own column' },
 	{ role: 'data-table-cell', m: /\.num\b/, p: ['ff'], why: 'a numeric cell is mono, matching its own column' },
 ];
@@ -919,7 +1126,9 @@ const CASE_OK = { title: ['Title', 'Cap', 'n/a', 'UPPER'], sentence: ['Sentence'
 // button that opens it quotes the label, as the guide does -- the alternative
 // is a second, sentence-case key for the same words, which puts "New diamond"
 // back on screen.
-const CASE_ALLOW = [/^New Diamond$/, /^New Message$/, /^Say Hello$/];
+// 5.2.9 (G2, the lead's decision of 1 Oct, for the owner's review): `^New Chat$` joins them. A pending chat's head title is the chat's own name,
+// and it is named for the button that made it (the owner's "New Chat"), exactly as "New Diamond" is; the head shows it until the first message names the chat.
+const CASE_ALLOW = [/^New Diamond$/, /^New Message$/, /^Say Hello$/, /^New Chat$/];
 
 function report() {
 	const caps = ['desk', 'phone', 'webkit'].map((n) => `${OUT}/cap_${n}.json`).filter((f) => fs.existsSync(f)).map((f) => JSON.parse(fs.readFileSync(f, 'utf8')));
@@ -929,6 +1138,9 @@ function report() {
 	// Workspace, CRF2, or the whole engine when pairing cannot run at all).
 	const notCovered = caps.flatMap((c) => c.notCovered || []);
 	const tiles = caps.flatMap((c) => c.tiles || []);
+	const taps = caps.flatMap((c) => c.tap || []);
+	// A run that never saved its WebKit pass (exit 4, or `desk` alone) did not cover WebKit, and says so.
+	if (!fs.existsSync(`${OUT}/cap_webkit.json`)) notCovered.push({ label: 'webkit', reason: 'no WebKit capture in this run (the pass did not finish, or was not run)', surface: 'webkit-*' });
 	const cfgOf = (s) => s.split('/')[0];
 	// One instance = one element (config + signature + text), seen on one or more surfaces.
 	const inst = new Map();
@@ -940,7 +1152,8 @@ function report() {
 	}
 	const I = [...inst.values()];
 	const byRole = new Map(); for (const it of I) { const k = it.roleName; if (!byRole.has(k)) byRole.set(k, []); byRole.get(k).push(it); }
-	const val = (it, p) => p === 'icon' ? (it.icon ? it.icon.w + '×' + it.icon.h : '-') : it.st[p];
+	const SIDEPAD = /^(tile|data)-table-(head|cell)$/;
+	const val = (it, p) => p === 'icon' ? (it.icon ? it.icon.w + '×' + it.icon.h : '-') : p.startsWith('pad:') ? (it.st.padS ? it.st.padS['TRBL'.indexOf(p[4])] : null) : it.st[p];
 	const allowed = (role, it, p) => ALLOW.find((a) => (a.role === '*' || a.role === role) && a.p.includes(p) && a.m.test(it.sig + ' ' + it.text + ' < ' + it.anc.slice(0, 3).join(' ') + (it.sel ? ' aria-current' : '') + (it.foc ? ' :focus' : '')));
 	const diffs = [];	// style differences within a role
 	for (const [role, list] of byRole) {
@@ -948,13 +1161,13 @@ function report() {
 		const byCfg = new Map(); for (const it of list) { if (!byCfg.has(it.cfg)) byCfg.set(it.cfg, []); byCfg.get(it.cfg).push(it); }
 		for (const [cfg, L] of byCfg) {
 			if (L.length < 2) continue;
-			for (const p of props) {
+			for (const p of SIDEPAD.test(role) ? props.flatMap((x) => x === 'pad' ? ['pad:T', 'pad:R', 'pad:B', 'pad:L'] : [x]) : props) {
 				if (p === 'h' && role !== 'list-row') { /* single-line only */ }
 				// Type is compared only where there is type; an icon's height only on
 				// one line. G12: a textarea sizes to its content, not to a rule. G10:
 				// `gap` means nothing on a box that isn't flex or grid.
 				const pool = L.filter((it) => !(p === 'h' && it.lines > 1) && !(p === 'icon' && !it.icon) && !(FONTP.has(p) && !/\p{L}/u.test(it.text))
-					&& !(p === 'h' && it.tag === 'textarea') && !(p === 'gap' && !/flex|grid/.test(it.st.disp)));
+					&& !(p === 'h' && it.tag === 'textarea') && !(p === 'gap' && !/flex|grid/.test(it.st.disp)) && !(p.startsWith('pad:') && val(it, p) == null));
 				// G9: padding is compared icon with icon, word with word -- a 30×30
 				// icon tool and a worded tool cannot share one canonical padding.
 				// G21: a `select`'s own text is never captured (its value is read
@@ -972,7 +1185,7 @@ function report() {
 						const v = String(val(it, p)); if (v === canon) continue;
 						if (p === 'h' && Math.abs(parseFloat(v) - parseFloat(canon)) <= 1) continue;
 						const a = allowed(role, it, p);
-						diffs.push({ role, cfg, p, canon, v, sig: it.sig, text: it.text.slice(0, 40), surfaces: it.surfaces.slice(0, 4), panel: it.panel, allowed: a ? a.why : null, n: cnt.get(canon), of: gpool.length });
+						diffs.push({ role, cfg, p: p.replace(':', ' '), canon, v, sig: it.sig, text: it.text.slice(0, 40), surfaces: it.surfaces.slice(0, 4), panel: it.panel, allowed: a ? a.why : null, n: cnt.get(canon), of: gpool.length });
 					}
 				}
 			}
@@ -1024,7 +1237,9 @@ function report() {
 		if (inRow && L.length >= 2 && L[0].ctrl) {
 			const cy = L.map((a) => a.r[1] + a.r[3] / 2); const [mc] = modeOf(cy.map(Math.round));
 			L.forEach((a, i) => { if (Math.abs(cy[i] - mc) > 1.5) addL({ kind: 'row-centre', cfg, canon: 'centre ' + mc, v: 'centre ' + Math.round(cy[i]), sig: a.sig, text: a.text.slice(0, 30), surfaces: [surf], role: a.roleName }); });
-			if (L.length >= 3) { const o = L.slice().sort((a, b) => a.r[0] - b.r[0]); const g = []; for (let i = 1; i < o.length; i++) g.push(o[i].r[0] - o[i - 1].r[0] - o[i - 1].r[2]);
+			if (L.length >= 3) { // The gap is from the rounded RIGHT edge, not from a rounded left plus a rounded width: those two round apart, and a true gap of 8px
+				// read 7 beside its neighbours' 9 (the footer strip's Agents chip, 289.4 after a chip of 71.6 at 209.9).
+				const o = L.slice().sort((a, b) => a.r[0] - b.r[0]); const g = []; for (let i = 1; i < o.length; i++) g.push(o[i].r[0] - (o[i - 1].re !== undefined ? o[i - 1].re : o[i - 1].r[0] + o[i - 1].r[2]));
 				const [mg] = modeOf(g); g.forEach((x, i) => { if (Math.abs(x - mg) > 1.5 && x < 60) addL({ kind: 'row-gap', cfg, canon: mg + 'px', v: x + 'px', sig: o[i + 1].sig, text: o[i + 1].text.slice(0, 30), surfaces: [surf], role: L[0].roleName }); }); }
 		}
 	}
@@ -1035,12 +1250,18 @@ function report() {
 	// few px with the glyph's own font metrics and reports a difference that
 	// is not there. A right-aligned reading's left edge moves with its own
 	// length by design, so it is never compared at all.
-	const GLYROLE = (it) => /^summary\b|\btagf-toggle\b|#sys-head\b|\barte-strip\b|\bastat-val\b|#sync-rest\b/.test(it.sig);
+	// `.crystal-act` is led by a glyph ("+ Add a Section") and `#current-session-name` follows the Diamond's mark: both are compared by their box edge (5.2.9, S's finding: 395 against 392).
+	const GLYROLE = (it) => /^summary\b|\btagf-toggle\b|#sys-head\b|\barte-strip\b|\bastat-val\b|#sync-rest\b|\bcrystal-act\b|#current-session-name\b/.test(it.sig);
 	const RIGHTALIGN = (it) => /\bastat-aside\b|\brel-when\b|\bpptw-head-state\b/.test(it.sig);
 	// G13: a text edge inside a card (a transcript tile, a history or tag row) is
 	// that container's own edge, not the panel's -- so it is not compared to it.
+	const textBySurf = new Map(); for (const o of items) { if (!o.view || o.tx == null || o.tcy == null) continue; if (!textBySurf.has(o.surface)) textBySurf.set(o.surface, []); textBySurf.get(o.surface).push(o); }
+	const leftMate = (it) => (textBySurf.get(it.surface) || []).some((o) => o !== it && o.panel === it.panel && Math.abs(o.tcy - it.tcy) <= 4 && o.r[0] < it.r[0] && o.r[0] + o.r[2] <= it.r[0] + 2);
 	const byPanel = new Map(); for (const it of items) { if (!it.view || it.tx == null || it.lines !== 1) continue; if (!/panel-title|section-head|list-row|meta|disclosure|body-text|create-button|text-button/.test(it.roleName)) continue;
 		if (RIGHTALIGN(it)) continue;
+		// A text edge is the left edge of a row's FIRST text. An item with another text-bearing item wholly to its left on the same line (a button
+		// after a note, a unit after a field) is placed by that neighbour, not by the panel (5.2.9: `.ar-card-btn` after "No card saved.").
+		if (leftMate(it)) continue;
 		if (within(it, /ctile|crollup|mem-card|hist-row|tag-row|fileview|crystal-bar|link-sec|session-box|pptw-|rel-|mode-pop/)) continue;
 		it.cmpx = GLYROLE(it) ? it.r[0] : it.tx;
 		const k = it.surface + '|' + it.panel; if (!byPanel.has(k)) byPanel.set(k, []); byPanel.get(k).push(it); }
@@ -1135,15 +1356,30 @@ function report() {
 	const C = merge(casing, (f) => f.role + '|' + f.text);
 	const Lx = merge(layout, (f) => [f.kind, f.sig, f.text, f.canon, f.v].join('|'));
 	const unexplained = D.filter((d) => !d.allowed);
+	// F10, rule 8: every control on a phone surface has a tap cross of at least 44 each way. One row per distinct control (role, element,
+	// label), with the surfaces and configs it failed on; the worst reading is the one shown.
+	const TAPMIN = 44, tapSeen = new Set(), tapRows = new Map();
+	for (const t of taps) {
+		const [role] = classify(t); t.roleName = role;
+		const k = role + '|' + t.sig + '|' + t.text.slice(0, 30); tapSeen.add(k);
+		if (t.hit[0] >= TAPMIN && t.hit[1] >= TAPMIN) continue;
+		const surf = t.surface.split('/')[1], cfg = cfgOf(t.surface), x = tapRows.get(k);
+		if (!x) { tapRows.set(k, { kind: 'tap', role, sig: t.sig, text: t.text.slice(0, 40), box: t.box, hit: t.hit, by: t.by, cfgs: [cfg], surfaces: [surf] }); continue; }
+		if (!x.cfgs.includes(cfg)) x.cfgs.push(cfg);
+		if (!x.surfaces.includes(surf) && x.surfaces.length < 8) x.surfaces.push(surf);
+		if (t.hit[0] * t.hit[1] < x.hit[0] * x.hit[1]) { x.hit = t.hit; x.box = t.box; x.by = t.by; }
+	}
+	const Tx = [...tapRows.values()];
 	const roleCount = new Map(); for (const it of I) roleCount.set(it.roleName, (roleCount.get(it.roleName) || 0) + 1);
 	const summary = {
 		surfaces: surfaces.length, missing, instances: I.length, roles: Object.fromEntries([...roleCount.entries()].sort((a, b) => b[1] - a[1])),
-		styleDiffs: unexplained.length, allowedDiffs: D.length - unexplained.length, casing: C.length, layout: Lx.length,
+		styleDiffs: unexplained.length, allowedDiffs: D.length - unexplained.length, casing: C.length, layout: Lx.length, tap: Tx.length, tapMeasured: tapSeen.size,
 		byRole: Object.fromEntries([...new Set(unexplained.map((d) => d.role))].map((r) => [r, unexplained.filter((d) => d.role === r).length])),
 		layoutByKind: Object.fromEntries([...new Set(Lx.map((d) => d.kind))].map((r) => [r, Lx.filter((d) => d.kind === r).length])),
+		tapByRole: Object.fromEntries([...new Set(Tx.map((d) => d.role))].map((r) => [r, Tx.filter((d) => d.role === r).length])),
 		notCovered: notCovered.map((n) => n.label + ': ' + n.reason),
 	};
-	fs.writeFileSync(`${OUT}/report.json`, JSON.stringify({ summary, style: D, casing: C, layout: Lx, unclassified: I.filter((i) => i.roleName === 'unclassified').map((i) => i.sig + ' ' + i.text) }, null, 1));
+	fs.writeFileSync(`${OUT}/report.json`, JSON.stringify({ summary, style: D, casing: C, layout: Lx, tap: Tx, unclassified: I.filter((i) => i.roleName === 'unclassified').map((i) => i.sig + ' ' + i.text) }, null, 1));
 	// A readable table too.
 	const md = ['# verify_consistency report', '', '```', JSON.stringify(summary, null, 1), '```', ''];
 	for (const r of [...new Set(D.map((d) => d.role))]) {
@@ -1155,10 +1391,13 @@ function report() {
 	for (const c of C) md.push(`| ${c.role} | ${c.rule} | ${c.got} | ${c.text} | \`${c.sig}\` | ${c.surfaces.join(', ')} ${c.cfgs.join(' ')} |`);
 	md.push('', '## Layout', '', '| kind | canonical | deviant | element | text | where | cfgs |', '|---|---|---|---|---|---|---|');
 	for (const l of Lx) md.push(`| ${l.kind} | ${l.canon} | ${l.v} | \`${l.sig}\` | ${l.text} | ${l.surfaces.join(', ')} | ${l.cfgs.join(' ')} |`);
+	md.push('', '## Tap areas', '', `Tap cross under ${TAPMIN}px either way, ${Tx.length} of ${tapSeen.size} distinct controls measured on phone surfaces.`, '',
+		'| role | element | text | box (x y w h) | hit (w×h) | covered by | cfgs | where |', '|---|---|---|---|---|---|---|---|');
+	for (const t of Tx.sort((a, b) => a.role.localeCompare(b.role) || a.sig.localeCompare(b.sig))) md.push(`| ${t.role} | \`${t.sig}\` | ${t.text} | ${t.box.join(' ')} | ${t.hit.join('×')} | ${t.by ? '`' + t.by + '`' : ''} | ${t.cfgs.join(' ')} | ${t.surfaces.join(', ')} |`);
 	fs.writeFileSync(`${OUT}/report.md`, md.join('\n'));
 	log('report', `${OUT}/report.md`, JSON.stringify(summary));
-	const bad = unexplained.length + C.length + Lx.length + missing.length;
-	return { bad, notCovered };
+	const bad = unexplained.length + C.length + Lx.length + missing.length + Tx.length;
+	return { bad, notCovered, parts: { style: unexplained.length, casing: C.length, layout: Lx.length, missing: missing.length, tap: Tx.length } };
 }
 
 // ════════════════════════════════════════════════════════════════════════
@@ -1186,6 +1425,7 @@ const V_SYNC  = ['Synced 2m ago', 'Last synced 3 hours ago on this device', 'Syn
 const V_STAT  = ['Local', 'gpt-5 · 12,345 tok · A$1,234.56 today', 'anthropic/claude-opus-5.5-extended-context-preview · 123,456,789 tok · A$1,234,567.89 today'];
 const V_BTN   = ['New', 'Neuer Diamant', 'Nouveau diamant de travail partagé avec toute l’équipe'];
 const V_OK    = ['OK', 'Diamant erstellen', 'Créer le diamant et l’ouvrir dans un nouvel onglet'];
+const V_MODE  = ['Guarded', 'Ask every time', 'Demander à chaque fois'];
 // [name, ctx, comp, slot, values, pick, setup]. `slot` '' = the comp itself;
 // `pick` chooses the instance by its text; values `{count}` vary a list's length.
 const VSLOTS = [
@@ -1217,9 +1457,15 @@ const VSLOTS = [
 	['rate chip label',     '#chat-output', '.ctile-rate-tags', '.tile-dlg-level', V_CHIP, null, 'ratetags'],
 	['rate popup chip label', 'OVERLAY', '.ctile-rate-tags', '.tile-dlg-level', V_CHIP, null, 'ratepop'],
 	['rate popup model',    'OVERLAY', '.rate-where', '', V_MODEL, null, 'ratepop'],
+	// 5.2.9 (G1): the chat head. The mode chip's word, and a Diamond's title on its crystal face. The head's tools and the mode chip keep one
+	// x for every title and every word (rule 3); `.chead` is the comp, so the whole head is read for what moves.
+	['mode word',           '#panel-ai', '.chead', '#hand-mode-chip .mode-chip-txt', V_MODE, null, 'chat'],
+	['diamond head title',  '#panel-ai', '.chead', '.ctitle', V_NAME, null, 'diamond'],
 ];
 // Whole surfaces re-read in each locale: every label at once, en against de and fr.
-const VLOCALE = [['rail', '#panel-rail'], ['chat head', '#panel-ai > .chead'], ['workspace', '#panel-work', 'work'], ['composer', '.chat-input-bar'], ['topbar', '.topbar'], ['new diamond dialog', 'OVERLAY', 'newdia'], ['admin', '#admin', 'admin'], ['rate popup', 'OVERLAY', 'ratepop'], ['rate chips', '#chat-output', 'ratetags']];
+const VLOCALE = [['rail', '#panel-rail'], ['chat head', '#panel-ai > .chead'], ['workspace', '#panel-work', 'work'], ['composer', '.chat-input-bar'], ['topbar', '.topbar'], ['new diamond dialog', 'OVERLAY', 'newdia'], ['admin', '#admin', 'admin'], ['rate popup', 'OVERLAY', 'ratepop'], ['rate chips', '#chat-output', 'ratetags'],
+	// The phone's ⋯ menu in en, de and fr. Phone only: on a computer the head has no ⋯, which is "not applicable", not NOT COVERED.
+	['chat head menu', 'OVERLAY', 'headmore']];
 
 // In the page: set (or restore) one slot, then read every part's geometry.
 const VMEASURE = ({ ctx, comp, slot, idx, pick, text, count, restore }) => {
@@ -1306,10 +1552,21 @@ async function vSetup(kind) {
 		await ev(() => { const row = [...document.querySelectorAll('.files-row')].find((x) => /^\s*notes\.md/.test((x.querySelector('.files-name') || x).textContent)); if (row) (row.querySelector('.files-name') || row).click(); });
 		await wait(1400);
 	}
+	if (kind === 'diamond') {
+		// The Kitchen Diamond on its crystal face, picked as a person would: from the drawer on a phone.
+		const ph = page.viewportSize().width <= 760;
+		if (ph) { await ev(() => { if (!document.body.classList.contains('drawer-open')) { const b = document.getElementById('drawer-btn'); if (b) b.click(); } }); await wait(800); }
+		const hit = await ev(() => { const t = [...document.querySelectorAll('#diamond-list .diamond-box')].find((e) => /Kitchen/.test(e.getAttribute('aria-label') || e.textContent)); if (!t) return false; (t.querySelector('.tile-label') || t).click(); return true; });
+		// A device that holds no Diamond (WebKit has no file store; see `webkitPair`) has no head to measure. Measuring the chat's head under this
+		// slot's name would be a pass on the wrong element.
+		if (hit !== true) return 'no Diamond on this device';
+		await wait(1200); await click('#dview-crystal'); await wait(1200);
+	}
+	if (kind === 'headmore') { await mainChat(); await click('#chead-more'); await wait(700); }
 	if (kind === 'cog') { await click('#diamond-list .diamond-box .tile-cog'); await wait(700); }
 	if (kind === 'newdia') { await click('#new-diamond-btn'); await wait(700); }
 	if (kind === 'admin') { await click('#settings-btn'); await wait(700); await ev(() => { try { window.DaimondAdmin.home(); } catch (e) {} }); await wait(500); }
-	if (['cog', 'newdia', 'admin', 'ratepop'].includes(kind)) { const ov = kind === 'admin' ? '#admin' : await topOverlay(); await ev((q) => { window.__vl = window.__vl || {}; window.__vl.ov = q && document.querySelector(q); }, ov); }
+	if (['cog', 'newdia', 'admin', 'ratepop', 'headmore'].includes(kind)) { const ov = kind === 'admin' ? '#admin' : await topOverlay(); await ev((q) => { window.__vl = window.__vl || {}; window.__vl.ov = q && document.querySelector(q); }, ov); }
 }
 async function vShot(name, clip) {
 	if (!clip) return '';
@@ -1329,15 +1586,28 @@ async function varlenPass(phone) {
 		if (!phone) await panels(['rail', 'ai', 'work']);
 		if (phone && setup === 'work') { await ev(() => { try { window.DaimondPanels.show('work'); } catch (e) {} }); await wait(700); }
 		else if (phone && setup === 'viewer') { await ev(() => { try { window.DaimondPanels.show('work'); } catch (e) {} }); await wait(700); }
-		else if (phone && (['chat', 'ratetags', 'ratepop'].includes(setup) || /panel-ai|chat-input/.test(ctx))) { await ev(() => { try { window.DaimondPanels.show('ai'); } catch (e) {} }); await wait(400); }
+		else if (phone && (['chat', 'ratetags', 'ratepop', 'headmore'].includes(setup) || /panel-ai|chat-input/.test(ctx))) { await ev(() => { try { window.DaimondPanels.show('ai'); } catch (e) {} }); await wait(400); }
 		else if (phone && /rail|diamond-list|session-list|admin-status|topbar/.test(ctx) || phone && ['cog', 'newdia'].includes(setup)) await railOpen();
-		if (setup) await vSetup(setup);
+		const miss = setup ? await vSetup(setup) : null;
+		if (miss) return miss;
 		if (/admin-status/.test(ctx)) await ev(() => { const a = document.getElementById('admin-status'); if (a) a.scrollIntoView({ block: 'end' }); });
 		if (/diamond-list|session-list/.test(ctx)) await ev((q) => { const a = document.querySelector(q); if (a) a.scrollIntoView({ block: 'start' }); }, ctx);
 		await wait(200);
 	};
+	// A `ratetags` setup taps a down rating and leaves its chip row up as a DRAFT; the row is taken away when the burst commits, BURST_MS of
+	// quiet later, under whatever is being measured by then (a pending rating's row vanished mid-pass and read as movement in the slot after
+	// it: QA2 Q7). So the pass lets it commit, with a margin, before the next slot's base read. The page's own figure, 10 s if it is unreadable.
+	let draft = false;
+	const letCommit = async () => {
+		const ms = await ev(() => window.DaimondRatings && window.DaimondRatings.BURST_MS);
+		await wait((typeof ms === 'number' ? ms : 10000) + 100);
+		draft = false;
+	};
 	for (const [name, ctx, comp, slot, vals, pick, setup] of VSLOTS) {
-		await place(setup, ctx);
+		if (draft) await letCommit();
+		const gone = await place(setup, ctx);
+		draft = setup === 'ratetags';
+		if (gone) { recs.push({ name, cfg: CFG, notCovered: gone }); log('varlen', CFG, name, 'NOT COVERED', gone); continue; }
 		const pk = pick ? { s: pick.source, f: pick.flags } : null;
 		const base = await ev(VMEASURE, { ctx, comp, slot, pick: pk });
 		if (!base || base.err || base.miss) { recs.push({ name, cfg: CFG, notCovered: (base && (base.err || base.miss)) || 'no measure' }); log('varlen', CFG, name, 'NOT COVERED', base && (base.miss || base.err)); continue; }
@@ -1354,6 +1624,8 @@ async function varlenPass(phone) {
 	}
 	// Every label at once: en, then de and fr, the same surface re-read.
 	for (const [name, ctx, setup] of VLOCALE) {
+		if (draft) await letCommit();
+		if (setup === 'headmore' && !phone) { recs.push({ name: 'locale: ' + name, cfg: CFG, na: 'phone only: a computer\'s head has no ⋯ menu' }); log('varlen', CFG, 'locale', name, 'not applicable'); continue; }
 		const by = {};
 		for (const loc of ['en', 'de', 'fr']) {
 			await ev((l) => window.DaimondI18n && window.DaimondI18n.setLocale(l), loc); await wait(900);
@@ -1364,7 +1636,9 @@ async function varlenPass(phone) {
 		await ev(() => window.DaimondI18n && window.DaimondI18n.setLocale('en')); await wait(700);
 		recs.push({ name: 'locale: ' + name, cfg: CFG, locale: by, notCovered: by.en ? null : 'no surface' });
 		log('varlen', CFG, 'locale', name, Object.keys(by).join(','));
+		draft = setup === 'ratetags';
 	}
+	if (draft) await letCommit();
 	await quiet();
 	return recs;
 }
@@ -1372,14 +1646,8 @@ async function varlenRun(which) {
 	let s, lead = null;
 	if (which === 'webkit') {
 		try {
-			lead = await open({ name: 'alex', profile: PROF, connect: false });
-			await lead.page.waitForFunction(() => !!window.DaimondPairing, null, { timeout: 15000 });
-			s = await open({ name: 'alex', profile: PROF + '-webkit', signIn: false, connect: false, defaults: false, browser: 'webkit', touch: true, ua: IPHONE_UA });
-			await s.page.waitForFunction(() => !!window.DaimondPairing, null, { timeout: 15000 });
-			const code = await lead.page.evaluate(() => DaimondPairing.create()); if (!code || !code.code) throw new Error('no pairing code');
-			await s.page.evaluate((c) => DaimondPairing.redeem(c), code.code);
-			await s.page.reload({ waitUntil: 'domcontentloaded' }); await signInAs(s, 'alex');
-			await s.page.waitForFunction(() => !!(window.DaimondSync && DaimondGateway.state().authed), null, { timeout: 30000 });
+			({ lead, s } = await webkitPair());
+			if (!(await webkitSync(lead, s))) throw new Error('the paired content did not arrive within 60 s');
 		} catch (e) {
 			log('varlen webkit: pairing unavailable, NOT COVERED:', e.message.split('\n')[0]);
 			fs.writeFileSync(`${OUT}/varlen_webkit.json`, JSON.stringify([{ name: 'webkit (all slots)', cfg: 'webkit', notCovered: 'pairing/seeding unavailable under this harness: ' + e.message.split('\n')[0] }]));
@@ -1412,6 +1680,7 @@ function varlenReport() {
 		for (const p of a) if (!b.some((q) => q.k === p.k)) ch.push({ where, part: p.c, text: p.t, k: p.k, kinds: ['vanished'] });
 		return ch; };
 	for (const r of recs) {
+		if (r.na) { out.push({ name: r.name, cfg: r.cfg, na: r.na }); continue; }
 		if (r.notCovered) { out.push({ name: r.name, cfg: r.cfg, notCovered: r.notCovered }); continue; }
 		if (r.locale) {
 			const en = r.locale.en;
@@ -1435,6 +1704,7 @@ function varlenReport() {
 	// A compact table, one line per slot and variant, for the reader's pass.
 	const md = ['# varlen', ''];
 	for (const o of out) {
+		if (o.na) { md.push(`- **${o.name}** (${o.cfg}): not applicable -- ${o.na}`); continue; }
 		if (o.notCovered) { md.push(`- **${o.name}** (${o.cfg}): NOT COVERED -- ${o.notCovered}`); continue; }
 		const ch = o.changes.map((c) => `${c.where}:${c.part}${c.text ? '"' + c.text.slice(0, 14) + '"' : ''}[${c.kinds.join('+')}${c.dx ? ' dx' + c.dx : ''}${c.dy ? ' dy' + c.dy : ''}${c.dw ? ' dw' + c.dw : ''}${c.dh ? ' dh' + c.dh : ''}]`);
 		md.push(`- **${o.name}** ${o.variant} (${o.cfg})${o.own ? ` own: lines ${o.own.ln.join('→')}${o.own.ov ? ' ' + o.own.ov : ''}${o.own.sh < 100 ? ' shown ' + o.own.sh + '%' : ''}${o.own.past ? ' past-tile ' + o.own.past + 'px' : ''} tile dh${o.own.dh} dw${o.own.dw}${o.own.over ? ' tile-overflow ' + o.own.over : ''}` : ''}${o.hscroll ? ' PAGE-HSCROLL ' + o.hscroll : ''}${o.ctxOver ? ' CTX-OVERFLOW ' + o.ctxOver : ''}`);
@@ -1445,7 +1715,80 @@ function varlenReport() {
 	log('varlen report', `${OUT}/varlen_report.md`, out.length, 'rows');
 }
 
+
+// ════════════════════════════════════════════════════════════════════════
+// DIFF (I1, carry r529). `diff <runA> <runB> <cfgPrefix> [rootSel]` holds two saved
+// captures side by side and prints every element that differs, so "computers are
+// unchanged" is a measurement and not a promise. An element is paired with its
+// namesake on the same surface (signature, then order). What is compared: its
+// box, its computed style, its classes and ancestry, its text position and gaps.
+// What is not: its words and aria (they change with the day and the locale), the
+// per-run keys, and the random id a top overlay is given. A run is a name that
+// resolves to <parent of CONS_OUT>/cons_<name>, or a directory. `cfgPrefix`
+// selects configs by their start ('desk' is desk-obsidian and desk-porcelain; a
+// comma lists several); `rootSel` keeps elements that are, or sit under, the
+// selector's id or class text (e.g. '#panel-rail').
+// ════════════════════════════════════════════════════════════════════════
+function diffRuns() {
+	const [ra, rb, pre, rootSel] = process.argv.slice(3);
+	if (!ra || !rb || !pre) { log('usage: diff <runA> <runB> <cfgPrefix> [rootSel]'); process.exit(2); }
+	const dirOf = (x) => (fs.existsSync(x) && fs.statSync(x).isDirectory() ? x : path.join(path.dirname(OUT), 'cons_' + x));
+	const A = dirOf(ra), B = dirOf(rb);
+	const prefixes = pre.split(',');
+	const norm = (v) => (typeof v === 'string' ? v.replace(/cons-ov-[a-z0-9]{5}/g, 'cons-ov-X') : v);
+	// Wall-clock words ("3m ago", "Synced 2m ago", "14:05") differ between runs by the clock alone.
+	const CLOCK = /\b\d+\s*(s|m|h|d|w|mo|y|sec|min|mins|hr|hrs|days?|weeks?|months?|years?)\b|\bago\b|\b\d{1,2}:\d{2}\b|\bjust now\b|\btoday\b|\byesterday\b/i;
+	const read = (dir) => {
+		const m = new Map();
+		for (const n of ['desk', 'phone', 'webkit']) {
+			const f = `${dir}/cap_${n}.json`; if (!fs.existsSync(f)) continue;
+			for (const it of JSON.parse(fs.readFileSync(f, 'utf8')).items) {
+				const cfg = it.surface.split('/')[0];
+				if (!prefixes.some((x) => cfg.startsWith(x))) continue;
+				if (rootSel && !(norm(it.sig).includes(rootSel.replace(/^[#.]/, '')) || it.anc.some((a) => norm(a).includes(rootSel.replace(/^[#.]/, ''))))) continue;
+				const k = it.surface + '|' + norm(it.sig); const c = (m.get(k) || []); c.push(it); m.set(k, c);
+			}
+		}
+		return m;
+	};
+	const ma = read(A), mb = read(B);
+	const out = []; let changed = 0, added = 0, removed = 0, pairs = 0;
+	const keys = new Set([...ma.keys(), ...mb.keys()]);
+	for (const k of [...keys].sort()) {
+		const la = ma.get(k) || [], lb = mb.get(k) || [];
+		const n = Math.max(la.length, lb.length);
+		for (let i = 0; i < n; i++) {
+			const x = la[i], y = lb[i], [surface] = k.split('|');
+			if (!x) { added++; out.push(`+ ${surface}  ${norm(y.sig)} "${y.text.slice(0, 30)}"  r ${y.r.join(',')}`); continue; }
+			if (!y) { removed++; out.push(`- ${surface}  ${norm(x.sig)} "${x.text.slice(0, 30)}"  r ${x.r.join(',')}`); continue; }
+			pairs++;
+			const why = [];
+			const clock = x.text !== y.text && (CLOCK.test(x.text) || CLOCK.test(y.text));
+			const cmp = (name, p, q) => { const a = JSON.stringify(p), b = JSON.stringify(q); if (a !== b) why.push(`${name}: ${a} -> ${b}`); };
+			cmp('classes', [...x.cls].sort().join(' '), [...y.cls].sort().join(' '));
+			cmp('ancestry', x.anc.map(norm), y.anc.map(norm));
+			for (const f of ['tag', 'role', 'type', 'ctrl', 'sel', 'dis', 'lines', 'glyph', 'clip', 'view']) cmp(f, x[f], y[f]);
+			cmp('panel', norm(x.panel), norm(y.panel));
+			// A box and its text edges, except across a clock-dependent word, whose width is the clock's.
+			if (clock) { cmp('y,h', [x.r[1], x.r[3]], [y.r[1], y.r[3]]); }
+			else {
+				// An inline run of text (the person's own words in a Rating tile) shifts its width and first edge by a pixel with the shaping of its text.
+				const t = x.st.disp === 'inline' ? 1 : 0, nr = (a, b, i) => (i === 2 || i === 0) && Math.abs(a - b) <= t;
+				cmp('box', x.r.map((v, i) => (nr(v, y.r[i], i) ? y.r[i] : v)), y.r);
+				cmp('text edge', [x.tx != null && y.tx != null && Math.abs(x.tx - y.tx) <= t ? y.tx : x.tx, x.tcy, x.ggap], [y.tx, y.tcy, y.ggap]); cmp('icon', x.icon, y.icon);
+			}
+			for (const p of Object.keys(x.st)) { if (clock && p === 'pad') continue; cmp('style ' + p, x.st[p], y.st[p]); }
+			if (why.length) { changed++; out.push(`~ ${surface}  ${norm(x.sig)} "${x.text.slice(0, 30)}"\n      ${why.join('\n      ')}`); }
+		}
+	}
+	fs.writeFileSync(`${OUT}/diff.md`, out.join('\n') + '\n');
+	for (const l of out) console.log(l);
+	log('diff', `${A} against ${B}, configs ${pre}${rootSel ? ', under ' + rootSel : ''}:`, pairs, 'pairs,', changed, 'changed,', added, 'added,', removed, 'removed');
+	process.exit(changed + added + removed ? 1 : 0);
+}
+
 // ── Main ────────────────────────────────────────────────────────────────
+if (MODE === 'diff') diffRuns();
 if (MODE === 'varlen') {
 	const w = process.argv[3] || 'all';
 	if (w === 'all' && !process.env.CONS_NOSEED) await seed();
@@ -1457,12 +1800,15 @@ if (MODE === 'seed') await seed();
 else if (MODE === 'desk') await desk();
 else if (MODE === 'phone') await phone(false);
 else if (MODE === 'webkit') await phone(true);
+// `tap` seeds when there is no profile yet, then takes the phone pass and the WebKit pass and reports. `all` takes the same
+// measure in through its own phone and WebKit passes.
+else if (MODE === 'tap') { if (!fs.existsSync(PROF)) await seed(); await phone(false); await phone(true); }
 if (MODE === 'all') { await seed(); await desk(); await phone(false); await phone(true); }
-if (MODE === 'report' || MODE === 'all') {
-	const { bad, notCovered } = report();
+if (MODE === 'report' || MODE === 'all' || MODE === 'tap') {
+	const { bad, notCovered, parts } = report();
 	const covGroups = new Map(); for (const n of notCovered) covGroups.set(n.label, (covGroups.get(n.label) || 0) + 1);
 	const covStr = covGroups.size ? ` (not covered: ${[...covGroups.entries()].map(([k, n]) => `${k} ×${n}`).join(', ')})` : '';
-	log(bad ? `FAIL: ${bad} unexplained differences${covStr}` : `PASS: every role consistent${covStr}`);
+	log(bad ? `FAIL: ${bad} unexplained differences (style ${parts.style}, casing ${parts.casing}, layout ${parts.layout}, missing ${parts.missing}, tap ${parts.tap})${covStr}` : `PASS: every role consistent${covStr}`);
 	process.exit(bad ? 1 : 0);
 }
 log('done', MODE);

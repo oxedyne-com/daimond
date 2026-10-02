@@ -16,7 +16,7 @@
 	gap: 8px;
 	background: var(--bg-tertiary);
 	color: var(--accent-text);
-	border: 1px solid var(--accent);
+	border: 1px solid transparent;
 	border-radius: var(--radius-sm);
 	padding: 10px 16px;
 	font-size: var(--fs-base);

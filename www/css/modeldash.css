@@ -43,7 +43,7 @@
 	font-size: var(--fs-xs-sm);
 	line-height: 1.5;
 	background: var(--bg-tertiary);
-	border: 1px solid var(--border);
+	border: 1px solid transparent;
 	border-radius: var(--radius);
 	padding: 12px 14px;
 	margin: 0 0 14px;

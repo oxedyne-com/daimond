@@ -104,35 +104,8 @@
 		margin: 0 -8px;
 	}
 
-	/* ── The header's controls SCROLL ─────────────────────────────
-	   Reported from a phone: "this header does not scroll so I can't see a lot
-	   of buttons." Every other stage panel's head wraps (`.web .chead, .doc
-	   .chead, .msg .chead { flex-wrap: wrap }` in app.css) and the AI panel's
-	   never did, so its row of chips — mode, Concise, Copy, Steps, Collapse,
-	   Fold on a Diamond, and full screen — squeezed the title to an ellipsis and
-	   then simply ran off the end of the panel, unreachable.
-
-	   SCROLLED RATHER THAN WRAPPED, deliberately. Wrapping costs a second 36px
-	   row of vertical space on every screen for ever, on the axis a phone has
-	   least of; scrolling costs nothing and is the gesture the user asked for.
-	   The title keeps a floor so it cannot be crushed to nothing in the trade,
-	   and the scrollbar is hidden because a phone has no room for one and the
-	   content is dragged, not clicked. */
-	.panel.ai .chead { gap: 6px; }
-	.panel.ai .ctitle { min-width: 4.5em; }
-	.panel.ai .chead-right {
-		flex: 1 1 auto;
-		min-width: 0;
-		overflow-x: auto;
-		overflow-y: hidden;
-		scrollbar-width: none;
-		-webkit-overflow-scrolling: touch;
-		/* Without this the chips shrink to fit instead of overflowing, which is
-		   the state that hid them: a row that fits is a row nothing scrolls. */
-		justify-content: flex-start;
-	}
-	.panel.ai .chead-right::-webkit-scrollbar { display: none; }
-	.panel.ai .chead-right > * { flex: none; }
+	/* The chat head on a phone is drawn in skin-daylight.css (the title, the mode and one "more"): its tools
+	   no longer share a strip that scrolls, so nothing here sets a gap, a floor or an overflow for it. */
 
 	/* Comfortable chat input row. */
 	.chat-output { padding: 12px 14px; }

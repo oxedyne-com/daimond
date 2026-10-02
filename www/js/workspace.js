@@ -708,97 +708,159 @@
 		if (b) { b.setAttribute('aria-expanded', 'false'); b.focus(); }
 	}
 
-	// ── The Help menu: About and Guide, one control (TOP-03) ─────────────
+	// ── Menus that fold in on a phone: Help, and the chat head's "more" ──────────
+	//
+	// ONE POPOVER, ONE OPENER, ONE FOLD. Help (TOP-03: About and Guide, one control) and the phone
+	// chat head's "more" are the same furniture: a `.pop` with a closer head over rows an icon, a
+	// gap and a word wide. A menu here is its popover (`pop`), the button that opens it (`btn`), the
+	// key of its title (`title`), and the REAL buttons that sit in it on a phone (`items`, in order),
+	// moved in and out -- never rebuilt, because daimond.js, workspace.js and pairing.js have already
+	// wired each one, and rebuilding would tear those listeners off. A comment left where each sat is
+	// how it finds its way home above 760px: inserting relative to a sibling that may itself have
+	// moved is otherwise a guess. `end` is a static row the moved buttons go in front of.
+	//
+	// Help's own rows (`about-btn`, `guide-btn`) are static markup. Only the title row is rebuilt,
+	// each open, so a language change between one open and the next still says the right word.
+	//
+	// Settings and Link device fold into Help below 760px (PH-01): seven icons a thumb cannot label
+	// become drawer, wordmark, this one control and full screen. The chat head's Concise, Copy, Steps
+	// and Expand fold into "more" for the same reason (the owner's choice of 2026-09-30), and its
+	// last row, Select, presses the Collapse button, which stays on the head so that select mode has
+	// a way out where it was entered.
+	var HELP = {
+		pop: 'help-menu', btn: 'help-btn', title: 'topbar.help', end: null, el: null, again: false,
+		items: [
+			{ id: 'pair-link-btn',     mark: null },	// PH-01 order: Link device before Settings
+			{ id: 'settings-menu-btn', mark: null },
+		],
+		// The trigger wears the guide's "?" until a phone also parks Settings and Link device in it, and
+		// then the generic dots: a "?" would say only half of what a four-row overflow means.
+		folded: function (phone) { var b = document.getElementById('help-btn'); if (b) b.classList.toggle('is-more', phone); },
+		sync: null,
+	};
+	var HEAD = {
+		pop: 'chead-more-menu', btn: 'chead-more', title: 'chat.more', end: 'chead-select-row', el: null, again: true,
+		items: [
+			{ id: 'concise-chip',     mark: null },
+			{ id: 'chat-copy-btn',    mark: null },
+			// Steps is a toggle that says it is off by dimming itself; in the menu a state is a filled row.
+			{ id: 'steps-toggle-btn', mark: null, on: function (b) { return !b.classList.contains('dim'); } },
+			{ id: 'expand-all-btn',   mark: null },
+		],
+		folded: null,
+		// What the rows say when the menu opens: select mode, and the toggles that do not carry their own state.
+		sync: function (el) {
+			var head = document.querySelector('.panel.ai .chead');
+			var sel = document.getElementById('chead-select-row');
+			if (sel) sel.setAttribute('aria-pressed', head && head.classList.contains('selecting') ? 'true' : 'false');
+			HEAD.items.forEach(function (item) {
+				var b = document.getElementById(item.id);
+				if (item.on && b && b.parentNode === el) b.setAttribute('aria-pressed', item.on(b) ? 'true' : 'false');
+			});
+		},
+	};
+	var MENUS = [HELP, HEAD];
 
-	var helpEl;
+	function popOf(m) { return m.el || (m.el = document.getElementById(m.pop)); }
+	function isOpen(m) { var el = popOf(m); return !!el && !el.hidden; }
+	/// Whichever of them is open, for the Tab trap.
+	function openFold() { for (var i = 0; i < MENUS.length; i++) if (isOpen(MENUS[i])) return popOf(MENUS[i]); return null; }
 
-	/// The head only. `about-btn` and `guide-btn` (and, on a phone, Settings
-	/// and Link device -- see `foldOverflow` below) are REAL buttons already
-	/// wired by daimond.js, workspace.js and pairing.js, sitting in the popup
-	/// as static markup; wiping them out and rebuilding them the way
-	/// `renderMenu` rebuilds the appearance menu would tear those listeners
-	/// off. Only the title row is rebuilt, each open, so a language change
-	/// between one open and the next still says the right word.
-	function renderHelp() {
-		helpEl = helpEl || document.getElementById('help-menu');
-		if (!helpEl) return;
-		var old = helpEl.querySelector(':scope > .ui-head');
+	function renderFold(m) {
+		var el = popOf(m);
+		if (!el) return;
+		var old = el.querySelector(':scope > .ui-head');
 		if (old) old.parentNode.removeChild(old);
-		helpEl.insertBefore(closerHead(t('topbar.help'), closeHelp), helpEl.firstChild);
+		el.insertBefore(closerHead(t(m.title), function () { closeFold(m); }), el.firstChild);
 	}
 
-	function toggleHelp(anchor) {
-		helpEl = helpEl || document.getElementById('help-menu');
-		if (!helpEl) return;
-		if (!helpEl.hidden) { closeHelp(); return; }
+	function toggleFold(m) {
+		var el = popOf(m), anchor = document.getElementById(m.btn);
+		if (!el || !anchor) return;
+		if (!el.hidden) { closeFold(m); return; }
 		closeMenu(); closeGallery();
-		renderHelp();
-		openPop(helpEl, anchor);
+		MENUS.forEach(function (o) { if (o !== m) closeFold(o, false); });
+		renderFold(m);
+		if (m.sync) m.sync(el);
+		openPop(el, anchor);
 		anchor.setAttribute('aria-expanded', 'true');
-		var first = helpEl.querySelector('button:not(.ui-close)');
-		if (first) first.focus();
+		// The first row that is drawn: Concise, for one, is not while no chat is open.
+		var rows = el.querySelectorAll('button:not(.ui-close)'), first = null;
+		for (var i = 0; i < rows.length && !first; i++) if (rows[i].getClientRects().length) first = rows[i];
+		if (first) first.focus();	// the menu is opened by keyboard
 	}
 
 	/// `returnFocus` is false when a row inside the popup has just opened
 	/// something of its own (the About dialog, the appearance menu, the link
 	/// sheet): focus is already on its way into that surface, and pulling it
-	/// back to `help-btn` here would yank it out again the instant it landed.
+	/// back to the button here would yank it out again the instant it landed.
 	/// Escape and a click outside -- where nothing else is claiming focus --
 	/// keep the default, matching `closeMenu`/`closeGallery`.
-	function closeHelp(returnFocus) {
-		if (!helpEl || helpEl.hidden) return;
-		helpEl.hidden = true;
-		var b = document.getElementById('help-btn');
+	function closeFold(m, returnFocus) {
+		var el = popOf(m);
+		if (!el || el.hidden) return;
+		el.hidden = true;
+		var b = document.getElementById(m.btn);
 		if (b) {
 			b.setAttribute('aria-expanded', 'false');
 			if (returnFocus !== false) b.focus();
 		}
 	}
+	function closeFolds(returnFocus) { MENUS.forEach(function (m) { closeFold(m, returnFocus); }); }
 
-	/// Settings and Link device fold into the Help popup below 760px (PH-01):
-	/// seven icons a thumb cannot label become drawer, wordmark, this one
-	/// control and full screen. A comment left where each button sat is how
-	/// it finds its way home again above 760px -- inserting relative to a
-	/// sibling that may itself have moved is otherwise a guess.
-	var FOLDABLE = [
-		{ id: 'pair-link-btn',     mark: null },	// PH-01 order: Link device before Settings
-		{ id: 'settings-menu-btn', mark: null },
-	];
 	var phoneMQ = window.matchMedia ? window.matchMedia('(max-width: 760px)') : null;
 
 	function isPhone() { return !!(phoneMQ && phoneMQ.matches); }
 
-	function foldOverflow() {
-		helpEl = helpEl || document.getElementById('help-menu');
-		var helpBtn = document.getElementById('help-btn');
-		if (!helpEl || !helpBtn) return;
+	function foldMenu(m) {
+		var el = popOf(m), btn = document.getElementById(m.btn);
+		if (!el || !btn) return;
 		var phone = isPhone();
-		FOLDABLE.forEach(function (item) {
+		var end = m.end ? document.getElementById(m.end) : null;	// null: insertBefore appends
+		m.items.forEach(function (item) {
 			var b = document.getElementById(item.id);
 			if (!b) return;
 			if (phone) {
-				if (b.parentNode !== helpEl) {
+				if (b.parentNode !== el) {
 					if (!item.mark) item.mark = document.createComment('fold:' + item.id);
 					if (b.parentNode) b.parentNode.insertBefore(item.mark, b);
-					helpEl.appendChild(b);
+					el.insertBefore(b, end);
+					b.setAttribute('role', 'menuitem');
 				}
-			} else if (item.mark && b.parentNode === helpEl) {
+			} else if (item.mark && b.parentNode === el) {
 				var home = item.mark.parentNode;
 				if (home) { home.insertBefore(b, item.mark); home.removeChild(item.mark); }
 				item.mark = null;
+				b.removeAttribute('role');
+				if (item.on) b.removeAttribute('aria-pressed');	// the state the menu added, not the button's own
 			}
 			// A row that opens ANOTHER popover (Settings) or dialog (Link device)
-			// closes this one first, or two float over each other. Wired once,
-			// and harmless on the side where Help is not open.
+			// closes this one first, or two float over each other; a row that just
+			// runs (Copy, Steps) closes it and hands the focus back to the button
+			// that opened it. Wired once, and harmless on the side where the menu is not open.
 			if (!b.dataset.foldWired) {
 				b.dataset.foldWired = '1';
-				b.addEventListener('click', function () { closeHelp(false); });
+				b.addEventListener('click', function () { closeFold(m, m.again); });
 			}
 		});
-		helpBtn.classList.toggle('is-more', phone);
+		if (!phone) closeFold(m, false);
+		if (m.folded) m.folded(phone);
+	}
+	function foldAll() { MENUS.forEach(foldMenu); }
+
+	/// Hide every popover but `keep`, each through its own closer so that the control that opened it stops
+	/// saying "expanded". Help, "more" and the mode chip open under `stopPropagation`, which keeps the document
+	/// click below from ever hearing the others' openers, so a tap on one while another was up left both open,
+	/// lying over each other on a phone. `openPop` is the one place every popover passes, so one is open at a time.
+	function dismissPops(keep) {
+		if (menuEl && menuEl !== keep) closeMenu();
+		if (galEl && galEl !== keep) closeGallery();
+		MENUS.forEach(function (m) { if (popOf(m) !== keep) closeFold(m, false); });
+		if (window.DaimondHandMode && document.getElementById('hand-mode-pop') !== keep) DaimondHandMode.close(false);
 	}
 
-	/// Place a popover under the control that opened it, kept inside the window.
+	/// Place a popover under the control that opened it, kept inside the window. `side` is 'start' to hang it from
+	/// the control's left edge, and otherwise it ends at the control's right edge.
 	///
 	/// The `left: 0` before the measurement is load-bearing. A fixed box's
 	/// shrink-to-fit width is capped by the room to the RIGHT of wherever it
@@ -808,12 +870,16 @@
 	/// menu came back 272px instead of 350px on every open after the first, and
 	/// its dock-tiling row wrapped into two ragged lines. Measuring from the left
 	/// edge lets it be its full width before anything is decided from it.
-	function openPop(pop, anchor) {
+	function openPop(pop, anchor, side) {
+		// Measured first: Settings is a row of Help's own popover, which dismissing is about to hide.
+		var r = anchor.getBoundingClientRect();
+		dismissPops(pop);
 		pop.hidden = false;
 		pop.style.left = '0px';
-		var r = anchor.getBoundingClientRect();
 		var w = pop.offsetWidth;
-		var left = Math.min(Math.max(8, r.right - w), window.innerWidth - w - 8);
+		var left = side === 'start'
+			? Math.max(8, Math.min(r.left, window.innerWidth - w - 8))	// the mode picker hangs from the chip's left edge
+			: Math.min(Math.max(8, r.right - w), window.innerWidth - w - 8);
 		pop.style.left = left + 'px';
 		pop.style.top = (r.bottom + 6) + 'px';
 	}
@@ -936,7 +1002,7 @@
 	function openPalette() {
 		palEl = palEl || document.getElementById('palette');
 		if (!palEl || !palEl.hidden) return;
-		closeMenu(); closeGallery(); closeHelp();
+		closeMenu(); closeGallery(); closeFolds();
 		palPrev = document.activeElement;
 		palInput = document.getElementById('pal-input');
 		palList = document.getElementById('pal-list');
@@ -990,13 +1056,24 @@
 		var menuBtn = document.getElementById('settings-menu-btn');
 		if (menuBtn) menuBtn.addEventListener('click', function (e) { e.stopPropagation(); toggleMenu(menuBtn); });
 
-		var helpBtn = document.getElementById('help-btn');
-		if (helpBtn) helpBtn.addEventListener('click', function (e) { e.stopPropagation(); toggleHelp(helpBtn); });
+		// Help and the chat head's "more": one opener for both.
+		MENUS.forEach(function (m) {
+			var b = document.getElementById(m.btn);
+			if (b) b.addEventListener('click', function (e) { e.stopPropagation(); toggleFold(m); });
+		});
+		// Select is the one row that is not a moved button: it presses Collapse, which stays on the
+		// head and is drawn while select mode is on. Its menu closes and hands the focus back.
+		var selRow = document.getElementById('chead-select-row');
+		if (selRow) selRow.addEventListener('click', function () {
+			var c = document.getElementById('collapse-btn');
+			closeFold(HEAD);
+			if (c) c.click();
+		});
 
 		// Guide and About each open a surface of their own (the web sheet, the
 		// About dialog) -- daimond.js wires the click that does it, and this is
 		// only the popup closing behind that click, the same courtesy
-		// `foldOverflow` gives Settings and Link device.
+		// `foldMenu` gives Settings and Link device.
 		//
 		// LEAVING HELP OPEN INSTEAD IS THE WORSE BUG. `keepFocusIn` (daimond.js)
 		// traps Tab only at the CARD's own first/last element; it has no reason
@@ -1011,15 +1088,15 @@
 		// hand is.
 		['about-btn', 'guide-btn'].forEach(function (id) {
 			var b = document.getElementById(id);
-			if (b) b.addEventListener('click', function () { closeHelp(false); });
+			if (b) b.addEventListener('click', function () { closeFold(HELP, false); });
 		});
 
 		// The fold is a function of width alone, so it is set once here for
 		// whatever width the tab opened at, and again wherever the width can
 		// change (resize below, and the matchMedia listener beside it).
-		foldOverflow();
+		foldAll();
 		if (phoneMQ) {
-			var onFoldChange = function () { foldOverflow(); };
+			var onFoldChange = function () { foldAll(); };
 			if (phoneMQ.addEventListener) phoneMQ.addEventListener('change', onFoldChange);
 			else if (phoneMQ.addListener) phoneMQ.addListener(onFoldChange);	// old Safari
 		}
@@ -1033,7 +1110,7 @@
 				else if (P()) P().reflow();
 				if (galEl && !galEl.hidden) renderGallery();
 				if (menuEl && !menuEl.hidden) renderMenu();
-				if (helpEl && !helpEl.hidden) renderHelp();
+				MENUS.forEach(function (m) { if (isOpen(m)) renderFold(m); });
 				// And the framed guide, which carries the language the same way it
 				// carries the palette. Without this line the guide stays in the
 				// language it was opened in -- the whole point of sending a locale.
@@ -1076,7 +1153,13 @@
 				palEl && palEl.hidden ? openPalette() : closePalette();
 				return;
 			}
-			if (e.key === 'Escape') { closeMenu(); closeGallery(); closeHelp(); closePalette(); }
+			if (e.key === 'Escape') {
+				closeMenu(); closeGallery(); closePalette();
+				// The innermost surface takes the key. A fold menu that closes on it consumes it, so the sheet and
+				// the drawer beneath stay up (mobile.js lets a keystroke somebody has dealt with alone), and one
+				// already dealt with by a dialog over it is not taken a second time.
+				if (!e.defaultPrevented && openFold()) { closeFolds(); e.preventDefault(); }
+			}
 			// Both popovers say `role="dialog"` and cover the app, and Tab used to
 			// walk straight out of them into the page behind -- with the popover
 			// still up, still covering whatever now had the focus. A dialog that
@@ -1086,7 +1169,7 @@
 			if (e.key === 'Tab' && window.DaimondCore && DaimondCore.keepFocusIn) {
 				var open = (menuEl && !menuEl.hidden) ? menuEl
 					: (galEl && !galEl.hidden) ? galEl
-					: (helpEl && !helpEl.hidden) ? helpEl : null;
+					: openFold();
 				if (open) DaimondCore.keepFocusIn(open, e);
 			}
 		});
@@ -1109,16 +1192,17 @@
 		document.addEventListener('click', function (e) {
 			if (menuEl && !menuEl.hidden && !beganIn(menuEl, e)) closeMenu();
 			if (galEl && !galEl.hidden && !beganIn(galEl, e)) closeGallery();
-			if (helpEl && !helpEl.hidden && !beganIn(helpEl, e)) closeHelp();
+			MENUS.forEach(function (m) { if (isOpen(m) && !beganIn(popOf(m), e)) closeFold(m); });
 		});
 
-		window.addEventListener('resize', function () { closeMenu(); closeGallery(); closeHelp(); foldOverflow(); });
+		window.addEventListener('resize', function () { closeMenu(); closeGallery(); closeFolds(); foldAll(); });
 	}
 
 	window.DaimondWorkspace = {
 		init: init,
 		renderTags: renderTags,
 		openPalette: openPalette,
+		openPop: openPop,
 		scale: scale,
 		setScale: setScale,
 		steps: function () { return STEPS.slice(); },

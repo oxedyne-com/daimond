@@ -3,11 +3,11 @@
 .models-list { display: flex; flex-direction: column; gap: 6px; margin: 10px 0; }
 
 .models-empty {
-	padding: 12px; border: 1px dashed var(--border-2); border-radius: 8px;
+	padding: 12px; border: 1px solid transparent; border-radius: 8px;
 	color: var(--text-secondary); font-size: var(--fs-xs); text-align: center;
 }
 
-.models-prov { border: 1px solid var(--border-2); border-radius: 8px; overflow: hidden; }
+.models-prov { border: 1px solid transparent; border-radius: 8px; overflow: hidden; }
 
 /* Same reason as the model rows below: the name is built to wrap in the rail
    (see .models-prov-name, which breaks between whole facts), and a disclosure
@@ -59,7 +59,7 @@
    square corner in a rounded panel. */
 .settings-section .models-refetch, .settings-section .models-remove {
 	padding: 6px 10px; border-radius: var(--radius-sm); cursor: pointer; font-size: var(--fs-2xs);
-	background: var(--bg-tertiary); border: 1px solid var(--border-strong);
+	background: var(--bg-tertiary); border: 1px solid transparent;
 	color: var(--text-secondary);
 }
 .settings-section .models-refetch:hover, .settings-section .models-remove:hover {
@@ -113,7 +113,7 @@
 .models-credit {
 	display: flex; flex-direction: column;
 	margin: 4px 4px 6px;
-	border: 1px solid var(--border-2); border-radius: var(--radius-sm);
+	border: 1px solid transparent; border-radius: var(--radius-sm);
 	background: var(--bg-tertiary);
 	/* So the control strip's corners are the card's corners, in either skin. */
 	overflow: hidden;
@@ -181,7 +181,7 @@
 	flex: 1; min-width: 0;
 	padding: 6px 8px; font-size: var(--fs-2xs);
 	font-family: var(--font-mono);
-	background: var(--bg-primary); border: 1px solid var(--border-strong);
+	background: var(--bg-primary); border: 1px solid transparent;
 	border-radius: var(--radius-sm); color: var(--text-primary);
 	transition: border-color .12s ease;
 }
@@ -196,7 +196,6 @@
    for the same real outline the app's other twenty-one fields carry, drawn outside the
    control against the surface, where it measures 3.87-6.75. The three steps survive: the
    pointer firms the border, the keyboard draws the ring. */
-.settings-section .models-credit-input:hover { border-color: var(--text-muted); }
 .settings-section .models-credit-input:focus {
 	outline: 2px solid var(--accent); outline-offset: 1px; border-color: var(--accent);
 }
@@ -228,11 +227,10 @@
 	flex: 1; min-width: 0;
 	padding: 4px 7px; font-size: var(--fs-2xs);
 	font-family: var(--font-mono);
-	background: var(--bg-primary); border: 1px solid var(--border-strong);
+	background: var(--bg-primary); border: 1px solid transparent;
 	border-radius: var(--radius-sm); color: var(--text-primary);
 	transition: border-color .12s ease;
 }
-.settings-section .models-routing-input:hover { border-color: var(--text-muted); }
 .settings-section .models-routing-input:focus {
 	outline: 2px solid var(--accent); outline-offset: 1px; border-color: var(--accent);
 }

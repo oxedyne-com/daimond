@@ -34,7 +34,7 @@
 
 /* A panel's place, about to be taken by the one being carried. */
 .ddz-box {
-	border: 2px solid var(--accent);
+	border: 2px solid transparent;
 	border-radius: 6px;
 	background: color-mix(in srgb, var(--accent) 12%, transparent);
 }
@@ -42,7 +42,7 @@
 /* A column that does not exist yet: the edge band's promise, and the
    placeholder an empty Dock offers. Dashed, because nothing is there. */
 .ddz-col {
-	border: 2px dashed var(--accent);
+	border: 2px solid transparent;
 	border-radius: 6px;
 	background: color-mix(in srgb, var(--accent) 7%, transparent);
 }
@@ -58,7 +58,6 @@
 	pointer-events: none;
 	opacity: 0.92;
 	box-shadow: 0 6px 18px rgba(0, 0, 0, 0.35);
-	border-color: var(--accent);
 }
 .ptag-ghost .gx {
 	margin-left: 6px;

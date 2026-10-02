@@ -27,7 +27,7 @@
 	color: var(--text-secondary);
 }
 .tools-count {
-	font-size: var(--fs-xs-sm); line-height: 1.5;
+	font-size: var(--fs-2xs); line-height: 1.5;
 	color: var(--text-muted);
 	padding-bottom: 2px;
 }
@@ -43,7 +43,7 @@
 	font-size: var(--fs-xs-sm); line-height: 1.5;
 	color: var(--text-muted);
 	padding: 10px 12px;
-	border: 1px dashed var(--border);
+	border: 1px solid transparent;
 	border-radius: var(--radius);
 }
 
@@ -52,13 +52,13 @@
 .cap {
 	display: flex; flex-direction: column;
 	background: var(--bg-tertiary);
-	border: 1px solid var(--border);
+	border: 1px solid transparent;
 	border-radius: var(--radius);
 	overflow: hidden;
 }
 /* A capability that is for sale is the one thing here asking for a decision, so it is
    the one thing that is not the colour of the furniture. */
-.cap[data-state="locked"] { background: var(--bg-secondary); border-color: var(--border-2); }
+.cap[data-state="locked"] { background: var(--bg-secondary); }
 
 .cap-head {
 	/* Wrapping, not two fixed tracks. In a narrow stage seat an Unlock button is a
@@ -105,13 +105,7 @@
 }
 .cap-chip.on { color: var(--ok); }
 
-.tools-buy {
-	background: var(--accent); color: var(--on-fill, #fff);
-	border: 1px solid var(--accent); border-radius: var(--radius-sm);
-	padding: 8px 14px; font-size: var(--fs-sm);
-	white-space: nowrap;
-}
-.tools-buy:hover { filter: brightness(1.08); }
+.tools-buy { white-space: nowrap; }
 .tools-buy:disabled { opacity: 0.6; cursor: default; }
 
 /* ── The lid ────────────────────────────────────────────────── */

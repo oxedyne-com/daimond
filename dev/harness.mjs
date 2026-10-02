@@ -1486,3 +1486,13 @@ export async function gateState(page) {
 		};
 	});
 }
+
+/// A counted check, printed as it is made.
+export function checker() {
+	const ok = [], bad = [];
+	const check = (name, pass, detail) => {
+		(pass ? ok : bad).push(name);
+		console.log((pass ? '  ok   ' : '  FAIL ') + name + (detail ? ' — ' + detail : ''));
+	};
+	return { ok, bad, check };
+}

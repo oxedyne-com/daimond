@@ -754,30 +754,10 @@
 		var host = document.getElementById('astat-sync')
 			|| document.getElementById('admin-status') || document.querySelector('.admin-status');
 		if (!host) return null;
-		if (!document.getElementById('chunk-status-styles')) {
-			var st = document.createElement('style');
-			st.id = 'chunk-status-styles';
-			st.textContent =
-				// `flex: 0 1 auto`, not a width: it SHARES the sync row, so when both
-				// have something to say each takes what it needs and ellipsises,
-				// and the row is one line either way.
-				'#chunk-chip{display:none;flex:0 1 auto;min-width:0;align-items:center;gap:6px;text-align:left;' +
-				// NO PADDING OF ITS OWN. It is an occupant of `#astat-sync`, not a row:
-				// its 3px top and bottom made that row 36px where every other row in
-				// the strip is 30, and the six pixels moved ten controls above it.
-				'font:inherit;font-size:var(--fs-xs);padding:0;border:none;background:none;' +
-				'border-radius:var(--radius-sm);min-width:0;' +
-				// A deletion that did not happen is not an error and not a success:
-				// something is standing that the operator can act on, which is what
-				// --warn is for everywhere else in the app.
-				'color:var(--warn);cursor:pointer}' +
-				'#chunk-chip:hover,#chunk-chip:focus-visible{background:var(--bg-hover)}' +
-				'#chunk-chip .ctext{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}' +
-				'#chunk-chip .cdot{flex:none;width:7px;height:7px;border-radius:50%;background:currentColor}';
-			document.head.appendChild(st);
-		}
+		// Its look is `css/chunks.css`, on the class, so a sheet draws it and the gate can read it.
 		var c = document.createElement('button');
 		c.id = 'chunk-chip';
+		c.className = 'chunk-chip';
 		c.type = 'button';			// never submit an enclosing form.
 		c.setAttribute('aria-live', 'polite');
 		c.innerHTML = '<span class="cdot" aria-hidden="true"></span><span class="ctext"></span>';

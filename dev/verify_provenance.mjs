@@ -1,3 +1,4 @@
+// gateway: live
 // verify_provenance.mjs — every product carries the record of who made it, and the
 // record is the one the WIRE says (U1 of the per-product rating design,
 // ~/usr/code/ai/claude/specs/daimond_product_rating_design_20260924.md §3 and §11).

@@ -130,10 +130,11 @@
 .pop-note kbd {
 	font-family: var(--font-mono);
 	font-size: var(--fs-4xs);
-	border: 1px solid var(--border-2);
+	border: 1px solid transparent;
 	border-radius: 4px;
 	padding: 1px 4px;
 	color: var(--text-secondary);
+	background: var(--dl-hover);
 }
 
 /* ── The settings menu ───────────────────────────────────────────────────────
@@ -184,14 +185,14 @@
 	width: calc(100% - 12px);
 	margin: 2px 6px 8px;
 	background: var(--bg-tertiary);
-	border: 1px solid var(--border-strong);
+	border: 1px solid transparent;
 	color: var(--text-primary);
 	border-radius: var(--radius-sm);
 	padding: 6px 8px;
 	font-size: var(--fs-xs);
 	cursor: pointer;
 }
-.theme-pick:hover { border-color: var(--accent); }
+.theme-pick:hover { background: var(--bg-hover); }
 .theme-pick:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
 /* The dropped list is drawn by the platform, which does not inherit the panel's
    colours on every browser; naming both keeps a light palette's list off a
@@ -365,10 +366,11 @@
 	text-transform: uppercase;
 	letter-spacing: 0.05em;
 	color: var(--text-muted);
-	border: 1px solid var(--border);
+	border: 1px solid transparent;
 	border-radius: 999px;
 	padding: 2px 7px;
 	flex: none;
+	background: var(--dl-hover);
 }
 .pal-item .nm { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
 .pal-item .hint { font-size: var(--fs-2xs); color: var(--text-muted); flex: none; }

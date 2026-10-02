@@ -671,22 +671,20 @@
 		// left saying the opposite of the panel hanging off it is worse than either.
 		draw();
 		render();
-		pop.hidden = false;
+		// Through the workspace's one seam, which also hides any other popover that is up.
+		DaimondWorkspace.openPop(pop, anchor || chip, 'start');
 		if (chip) chip.setAttribute('aria-expanded', 'true');
-		var r = (anchor || chip).getBoundingClientRect();
-		pop.style.top = (r.bottom + 6) + 'px';
-		var left = Math.min(r.left, window.innerWidth - pop.offsetWidth - 8);
-		pop.style.left = Math.max(8, left) + 'px';
 		var first = pop.querySelector('input[type=radio]:checked') || pop.querySelector('input');
 		if (first) first.focus();
 	}
 
-	function close() {
+	function close(returnFocus) {
 		if (!pop || pop.hidden) return;
 		pop.hidden = true;
 		if (chip) {
 			chip.setAttribute('aria-expanded', 'false');
-			try { chip.focus(); } catch (e) { /* gone from the page */ }
+			// Not when another popover is taking over: its own opener is about to place the focus.
+			if (returnFocus !== false) try { chip.focus(); } catch (e) { /* gone from the page */ }
 		}
 	}
 
@@ -726,6 +724,8 @@
 
 	window.DaimondHandMode = {
 		init: init,
+		/// Shut the picker; `false` leaves the focus where it is.
+		close: close,
 		/// The standing answer to the network question, for `ensureApp` to put into
 		/// each new engine. '' means the engine is left to ask.
 		standingNet: standing,

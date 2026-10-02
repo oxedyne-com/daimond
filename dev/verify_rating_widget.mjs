@@ -36,8 +36,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { open, chat, newChat, signInAs, mockLog, contentText, errors, scratch, BROWSER } from './harness.mjs';
-import { checker } from './handoffpair.mjs';
+import { open, chat, newChat, signInAs, mockLog, contentText, errors, scratch, BROWSER, checker } from './harness.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const WWW  = path.join(HERE, '..', 'www');
@@ -1019,7 +1018,10 @@ const squares = (s, sel) => s.page.evaluate((sel) => [...document.querySelectorA
 	});
 	const pts = [[0, 0], [21, 0], [-21, 0], [0, 21], [0, -21], [21, 21], [21, -21], [-21, 21], [-21, -21]].map(([dx, dy]) => [cx + dx, cy + dy]).filter(([x, y]) => !cut(x, y));
 	const miss = pts.filter(([x, y]) => { const h2 = document.elementFromPoint(x, y); return !(h2 && (h2 === e || e.contains(h2))); }).length;
-	return { name: (e.className || e.tagName).toString().split(' ').slice(0, 2).join('.') + ':' + (e.textContent || '').trim().slice(0, 12), l: cx - w / 2, r: cx + w / 2, t: cy - h / 2, b: cy + h / 2, miss };
+	// Each control is scrolled to the centre of its own scroller before it is measured, so two squares are compared in the scroll state each
+	// was measured in unless the scroll is added back: a card that overflows (the popup, once its steps are 44px) read two rows 15px apart.
+	let sx = 0, sy = 0; for (let a = e.parentElement; a; a = a.parentElement) { sx += a.scrollLeft || 0; sy += a.scrollTop || 0; }
+	return { name: (e.className || e.tagName).toString().split(' ').slice(0, 2).join('.') + ':' + (e.textContent || '').trim().slice(0, 12), l: cx - w / 2 + sx, r: cx + w / 2 + sx, t: cy - h / 2 + sy, b: cy + h / 2 + sy, miss };
 }), sel);
 async function tapAreas(s, tag, sel) {
 	const sq = await squares(s, sel);
@@ -1029,7 +1031,7 @@ async function tapAreas(s, tag, sel) {
 	const ov = [];
 	for (let i = 0; i < sq.length; i++) for (let j = i + 1; j < sq.length; j++) {
 		const a = sq[i], b = sq[j];
-		if (Math.min(a.r, b.r) - Math.max(a.l, b.l) > 0.5 && Math.min(a.b, b.b) - Math.max(a.t, b.t) > 0.5) ov.push(a.name + ' / ' + b.name);
+		if (Math.min(a.r, b.r) - Math.max(a.l, b.l) > 0.5 && Math.min(a.b, b.b) - Math.max(a.t, b.t) > 0.5) ov.push(`${a.name} [${Math.round(a.l)},${Math.round(a.t)}-${Math.round(a.b)}] / ${b.name} [${Math.round(b.l)},${Math.round(b.t)}-${Math.round(b.b)}]`);
 	}
 	check(`T: ${tag}: no two squares overlap`, ov.length === 0, ov.slice(0, 4).join(', '));
 }

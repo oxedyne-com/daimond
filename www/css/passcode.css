@@ -24,7 +24,7 @@
 .beta-box {
 	background: var(--bg-secondary);
 	color: var(--text-primary);
-	border: 1px solid var(--border);
+	border: 1px solid transparent;
 	border-radius: 12px;
 	max-width: 420px;
 	width: 100%;
@@ -68,7 +68,7 @@
 	text-align: center;
 	padding: 10px;
 	border-radius: 8px;
-	border: 1px solid var(--border);
+	border: 1px solid transparent;
 	background: var(--bg-primary);
 	color: inherit;
 	margin: 0 0 12px;
@@ -144,7 +144,7 @@
 .beta-btn {
 	padding: 8px 14px;
 	border-radius: 8px;
-	border: 1px solid var(--border);
+	border: 1px solid transparent;
 	background: var(--accent);
 	color: #fff;
 	cursor: pointer;
@@ -170,7 +170,7 @@
 }
 
 .beta-block {
-	border: 1px solid var(--border);
+	border: 1px solid transparent;
 	border-radius: 10px;
 	padding: 12px;
 	margin: 0 0 12px;

@@ -25,7 +25,7 @@
 .trk-title-main { font-weight: 600; }
 .trk-count { font-size: var(--fs-3xs-2xs); color: var(--text-muted); }
 
-.trk-err { margin: 4px 0; padding: 5px 8px; border-radius: var(--radius-sm);
+.trk-err { margin: 4px -8px; padding: 5px 8px; border-radius: var(--radius-sm);
 	background: var(--bg-tertiary); color: var(--warn); font-size: var(--fs-2xs-xs); }
 .trk-say { min-height: 0; font-size: var(--fs-3xs-2xs); color: var(--text-muted); }
 .trk-say:empty { display: none; }
@@ -34,16 +34,16 @@
 /* ── The owner's admin voice (dormant until one is minted) ─────────────── */
 .trk-admin { display: flex; flex-wrap: wrap; align-items: center; gap: 6px;
 	margin: 4px 0 8px; padding: 5px 8px; border-radius: var(--radius-sm);
-	background: var(--bg-secondary); border: 1px solid var(--border); }
+	background: var(--bg-secondary); border: 1px solid transparent; }
 .trk-admin-say { flex-basis: 100%; font-size: var(--fs-3xs-2xs); color: var(--text-muted); }
 .trk-admin-in { flex: 1 1 auto; min-width: 0; padding: 4px 6px; font-size: var(--fs-2xs-xs);
-	background: var(--bg-tertiary); border: 1px solid var(--border); border-radius: var(--radius-sm);
+	background: var(--bg-tertiary); border: 1px solid transparent; border-radius: var(--radius-sm);
 	color: var(--text-primary); }
 .trk-admin-btn, .trk-admin-save, .trk-admin-cancel {
 	padding: 3px 8px; font-size: var(--fs-3xs-2xs); border-radius: var(--radius-sm);
-	border: 1px solid var(--border); background: var(--bg-tertiary); color: var(--text-secondary); cursor: pointer; }
-.trk-admin-save { border-color: var(--accent); color: var(--accent-text); }
-.trk-admin-btn:hover, .trk-admin-save:hover, .trk-admin-cancel:hover { border-color: var(--accent); }
+	border: 1px solid transparent; background: var(--bg-tertiary); color: var(--text-secondary); cursor: pointer; }
+.trk-admin-save { color: var(--accent-text); }
+.trk-admin-btn:hover, .trk-admin-save:hover, .trk-admin-cancel:hover { background: var(--bg-hover); }
 
 /* ── The board ────────────────────────────────────────────────────────── */
 /* A container query, NOT a viewport one: this board sits in the ~280px Proposals
@@ -72,7 +72,7 @@
 
 /* ── One card ─────────────────────────────────────────────────────────── */
 .trk-card { display: flex; flex-direction: column; gap: 4px; padding: 7px 8px;
-	border: 1px solid var(--border); border-radius: var(--radius-sm);
+	border: 1px solid transparent; border-radius: var(--radius-sm);
 	background: var(--bg-secondary); }
 .trk-card-top { display: flex; align-items: baseline; gap: 6px; }
 .trk-num { font-family: var(--font-mono); font-size: var(--fs-3xs-2xs); color: var(--text-muted); }
@@ -87,25 +87,26 @@
 .trk-ship { display: flex; flex-wrap: wrap; align-items: baseline; gap: 5px;
 	font-size: var(--fs-3xs-2xs); color: var(--text-muted); }
 .trk-ship-id { font-family: var(--font-mono); font-size: var(--fs-3xs-2xs);
-	padding: 1px 6px; border-radius: var(--radius-sm); border: 1px solid var(--border);
+	padding: 1px 6px; border-radius: var(--radius-sm); border: 1px solid transparent;
 	background: var(--bg-tertiary); color: var(--accent-text); cursor: pointer; }
-.trk-ship-id:hover { border-color: var(--accent); text-decoration: underline; }
+.trk-ship-id:hover { text-decoration: underline; background: var(--bg-hover); }
 
 /* The state chip, one colour per state — now only on the detail head. */
 .trk-state { font-size: var(--fs-3xs); padding: 1px 6px; border-radius: 999px;
-	border: 1px solid var(--border); color: var(--text-secondary); white-space: nowrap; }
-.trk-state[data-state="open"]     { color: var(--accent-text); border-color: var(--accent); }
-.trk-state[data-state="accepted"] { color: var(--ok); border-color: var(--ok); }
+	border: 1px solid transparent; color: var(--text-secondary); white-space: nowrap;
+	background: var(--dl-hover); }
+.trk-state[data-state="open"]     { color: var(--accent-text); }
+.trk-state[data-state="accepted"] { color: var(--ok); }
 .trk-state[data-state="done"]     { color: var(--text-muted); }
-.trk-state[data-state="declined"] { color: var(--warn); border-color: var(--warn); }
+.trk-state[data-state="declined"] { color: var(--warn); }
 
 .trk-tally { font-variant-numeric: tabular-nums; }
 
 /* ── One proposal in full ─────────────────────────────────────────────── */
 .trk-detail-head { display: flex; align-items: center; gap: 8px; margin-bottom: 6px; }
 .trk-back { padding: 3px 10px; font-size: var(--fs-3xs-2xs); border-radius: var(--radius-sm);
-	border: 1px solid var(--border); background: var(--bg-tertiary); color: var(--text-secondary); cursor: pointer; }
-.trk-back:hover { border-color: var(--accent); }
+	border: 1px solid transparent; background: var(--bg-tertiary); color: var(--text-secondary); cursor: pointer; }
+.trk-back:hover { background: var(--bg-hover); }
 .trk-detail-title { margin: 4px 0; font-size: var(--fs-sm); }
 .trk-detail-meta { display: flex; flex-wrap: wrap; gap: 10px; margin-bottom: 8px;
 	font-size: var(--fs-3xs-2xs); color: var(--text-muted); }
@@ -115,8 +116,8 @@
 
 .trk-settle { display: flex; flex-wrap: wrap; gap: 6px; margin: 8px 0; }
 .trk-settle-btn { padding: 4px 10px; font-size: var(--fs-2xs-xs); border-radius: var(--radius-sm);
-	border: 1px solid var(--border-strong); background: var(--bg-tertiary); color: var(--text-secondary); cursor: pointer; }
-.trk-settle-btn:hover { border-color: var(--accent); color: var(--accent-text); }
+	border: 1px solid transparent; background: var(--bg-tertiary); color: var(--text-secondary); cursor: pointer; }
+.trk-settle-btn:hover { color: var(--accent-text); background: var(--bg-hover); }
 
 .trk-sub { margin: 10px 0 4px; font-size: var(--fs-2xs-xs); color: var(--text-secondary); }
 .trk-revisions, .trk-comments-list { margin-top: 8px; }
@@ -135,24 +136,24 @@
  * Social panel's own vote pill (accent-soft), so the two surfaces read alike. */
 .trk-vote { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin-top: 2px; }
 .trk-vote-btn { padding: 2px 9px; font-size: var(--fs-3xs-2xs); border-radius: var(--radius-sm);
-	border: 1px solid var(--border); background: var(--bg-tertiary); color: var(--text-secondary);
+	border: 1px solid transparent; background: var(--bg-tertiary); color: var(--text-secondary);
 	cursor: pointer; font-variant-numeric: tabular-nums; }
-.trk-vote-btn:hover { border-color: var(--accent); color: var(--accent-text); }
-.trk-vote-btn.on { background: var(--accent-soft); border-color: var(--accent); color: var(--accent-text); }
+.trk-vote-btn:hover { color: var(--accent-text); background: var(--bg-hover); }
+.trk-vote-btn.on { background: var(--accent-soft); color: var(--accent-text); }
 .trk-vote-count { font-size: var(--fs-3xs-2xs); color: var(--text-muted); font-variant-numeric: tabular-nums; }
 
 .trk-setvoice { padding: 2px 8px; font-size: var(--fs-3xs); border-radius: var(--radius-sm);
-	border: 1px solid var(--border); background: none; color: var(--accent-text); cursor: pointer; }
-.trk-setvoice:hover { border-color: var(--accent); text-decoration: underline; }
+	border: 1px solid transparent; background: none; color: var(--accent-text); cursor: pointer; }
+.trk-setvoice:hover { text-decoration: underline; background: var(--dl-hover); }
 
 .trk-say-box { display: flex; flex-direction: column; gap: 6px; margin-top: 8px; }
 .trk-reply { width: 100%; min-height: 0; padding: 5px 7px; font: inherit; font-size: var(--fs-2xs-xs);
-	line-height: 1.4; background: var(--bg-tertiary); border: 1px solid var(--border);
+	line-height: 1.4; background: var(--bg-tertiary); border: 1px solid transparent;
 	border-radius: var(--radius-sm); color: var(--text-primary); resize: vertical; box-sizing: border-box; }
 .trk-reply:focus { outline: none; border-color: var(--accent); }
 .trk-say-acts { display: flex; gap: 6px; }
 .trk-say-btn { padding: 4px 10px; font-size: var(--fs-2xs-xs); border-radius: var(--radius-sm);
-	border: 1px solid var(--accent); background: var(--bg-tertiary); color: var(--accent-text); cursor: pointer; }
+	border: 1px solid transparent; background: var(--bg-tertiary); color: var(--accent-text); cursor: pointer; }
 .trk-say-btn:hover { background: var(--accent-soft); }
 .trk-say-novoice { font-size: var(--fs-3xs-2xs); color: var(--text-muted); }
 
@@ -160,8 +161,8 @@
    device (improve.js), so it is a client-side allow-list, not a server query. */
 .trk-filter { display: flex; gap: 6px; margin: 2px 0 8px; }
 .trk-filter-btn { padding: 3px 10px; font-size: var(--fs-3xs-2xs); border-radius: var(--radius-sm);
-	border: 1px solid var(--border); background: var(--bg-tertiary); color: var(--text-secondary);
+	border: 1px solid transparent; background: var(--bg-tertiary); color: var(--text-secondary);
 	cursor: pointer; }
-.trk-filter-btn:hover { border-color: var(--accent); }
-.trk-filter-btn[aria-pressed="true"] { border-color: var(--accent); background: var(--accent-soft);
+.trk-filter-btn:hover { background: var(--bg-hover); }
+.trk-filter-btn[aria-pressed="true"] { background: var(--accent-soft);
 	color: var(--accent-text); }
