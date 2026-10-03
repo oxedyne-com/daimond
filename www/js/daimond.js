@@ -24572,7 +24572,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		return {
 			read:    async function () {
 				try { return await DaimondSync.leaseGet(); }
-				catch (e) { return { version: 0, leases: {} }; }
+				catch (e) { return { version: 0, leases: {}, unread: true }; }
 			},
 			commit:  async function (base, proposed) {
 				try { return await DaimondSync.leaseCommit(base, proposed); }

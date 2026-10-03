@@ -3227,8 +3227,11 @@
 	}
 
 	/// Read the lease door: its version and the decrypted lease map. Empty map on a
-	/// vacant or unopenable door. Caches the version so a later fallback getter and
-	/// the claim path agree on the base.
+	/// vacant or unopenable door; `unread` says which -- true when the door could not
+	/// be read (not a 200 with a JSON body, or a blob that would not open), false for
+	/// a real answer, vacant or not. An unreadable door is unknown, never vacant: a
+	/// runner that took it for vacant aborted its own healthy turn (2026-10-03).
+	/// Caches the version so a later fallback getter and the claim path agree on the base.
 	async function leaseGet() {
 		var res = await call('GET', undefined, '?lease=1');
 		var j   = res && res.json;
@@ -3238,7 +3241,8 @@
 		// absent field, so a Phase-A gateway that sends none changes nothing.
 		if (window.DaimondWire && j && j.max) DaimondWire.learn({ lease: j.max });
 		var leases = (j && j.blob) ? (await leaseUnseal(j.blob)) : null;
-		return { version: ver, leases: leases || {} };
+		var unread = !(res && res.status === 200 && j) || (!!(j && j.blob) && !leases);
+		return { version: ver, leases: leases || {}, unread: unread };
 	}
 
 	/// Compare-and-set the lease door: seal `proposed`, push it against `base`.

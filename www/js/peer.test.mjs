@@ -1026,6 +1026,16 @@ async function main() {
 	await runRunnerAcceptance(phone.DaimondPeer, phone.DaimondLease, check);
 
 	// ══════════════════════════════════════════════════════════
+	// THE UNREADABLE LEASE DOOR (2026-10-03, the argonaut hand-off).
+	// A runner read a lease door it could not read as an EMPTY door,
+	// took that for a revoke, aborted its own healthy turn and told
+	// nobody; its done/released writes read the same empty door and
+	// were refused `not_ours`, unseen. A revoke is a POSITIVE record.
+	// ══════════════════════════════════════════════════════════
+	console.log('\nUnreadable door — an unread lease is unknown, never revoked');
+	await runLeaseUnreadAcceptance(phone, check);
+
+	// ══════════════════════════════════════════════════════════
 	// STEP 5b — THE RENEW HEARTBEAT is bounded: it stops on every
 	// exit and cannot outlive its turn. This is the fix for the
 	// permanent 409 push-loop -- a lease that renewed for ever
@@ -3341,6 +3351,147 @@ async function runRunnerAcceptance(P, L, check) {
 		check('a crashed runner leaves the lease unreleased, to EXPIRE for the phone',
 			!!sync.leases()[TID] && sync.leases()[TID].mode !== 'released');
 	}
+}
+
+// The lease door could not be read -- a timeout, a 5xx, an identity locked for a moment --
+// and the runner took it for vacant (2026-10-03). Drives the REAL `peerSyncShim` out of
+// daimond.js over a door whose reads can be made to fail or to come back readable-but-empty,
+// and the REAL runErrand over that. Red on 198b2929: the shim turned a failed read into
+// `{ leases: {} }`, which `liveness()` read as a revoke.
+async function runLeaseUnreadAcceptance(phone, check) {
+	const P = phone.DaimondPeer, L = phone.DaimondLease;
+	const TID = 'turn-unread';
+	const T0 = Date.now();			// the errand's birth, which the age gate reads off its seed
+	const logs = [];
+	const tick = () => { let t = T0 + 2000; return () => (t += 1); };		// a clock that moves, so a later write outranks an earlier
+	const prevDiag = phone.DaimondDiag;
+	phone.DaimondDiag = { on: () => false, log: (tag, d) => logs.push(tag + ' ' + d) };
+
+	// `fail` reads throw (what a timeout does), `empty` reads answer a real, vacant door.
+	function rig() {
+		const door = makeLeaseSync({});
+		const modes = [];
+		const st = { fail: 0, empty: 0 };
+		const win = {
+			DaimondSync: {
+				leaseGet: async () => {
+					if (st.fail > 0) { st.fail--; throw new Error('pull timeout'); }
+					if (st.empty > 0) { st.empty--; return { version: door.version(), leases: {}, unread: false }; }
+					return { version: door.version(), leases: door.leases(), unread: false };
+				},
+				leaseCommit: async (base, next) => {
+					const r = door.commit(base, next);
+					if (r.ok && next[TID]) modes.push(next[TID].mode);
+					return r;
+				},
+				leaseVersion: () => door.version(),
+			},
+			DaimondLease: { snapshot: () => ({}) },
+		};
+		new Function('window', 'with (window) {\n' + daimondFuncSource('peerSyncShim')
+			+ '\nwindow.__shim = peerSyncShim; }')(win);
+		return { cas: P.syncCas(win.__shim()), door, modes, st };
+	}
+	// Run one errand over `r`; `turn(opts, r, hooks)` is the engine, `hooks.abort` is spied.
+	async function run(r, deadline, nowFn, turn, pre) {
+		L.forget();
+		logs.length = 0;
+		const reports = [];
+		const hooks = { aborted: false };
+		const errand = sentErrand(P, { turnId: TID, chatId: 'chat-u', prompt: 'compute', eid: 'e-u',
+			ts: T0, deadline });
+		const res = await P.runErrand(errand, {
+			selfId: 'peerA', cas: r.cas, now: nowFn,
+			reconstruct: async () => { if (pre) pre(); return { chat: { id: 'chat-u', messages: [] } }; },
+			runTurn: async (ctx, prompt, opts) => { await turn(opts, hooks); },
+			abort: () => { hooks.aborted = true; },
+			pushResult: async () => 1, post: async (rep) => { reports.push(rep); }, ack: async () => {},
+		});
+		return { res, hooks, reports };
+	}
+	const ticks = async (opts, hooks, n, at, act) => {
+		for (let i = 0; i < n; i++) {
+			if (i === at) await act();
+			await opts.onProgress();
+			if (hooks.aborted) throw new Error('aborted by signal');
+		}
+	};
+
+	// 1. One unreadable read mid-turn: the turn is NOT aborted and completes.
+	{
+		const r = rig();
+		const o = await run(r, 9e15, tick(), (opts, h) => ticks(opts, h, 6, 2, () => { r.st.fail = 1; }));
+		check('U1: one unreadable lease read mid-turn does not abort the turn',
+			o.hooks.aborted === false && o.res.aborted !== true && o.res.done === true,
+			JSON.stringify(o.res) + ' ' + logs.join(' / '));
+		check('U1: a done report went out and the trace has no abort',
+			o.reports.some((x) => x.status === 'done') && o.res.trace.indexOf('abort') < 0);
+		check('U1: no REVOKED line is logged for a read that merely failed',
+			!logs.some((l) => /collect REVOKED/.test(l)), logs.join(' | '));
+		check('U1: and the lease still ends released', r.door.leases()[TID].mode === 'released');
+	}
+
+	// 2. A readable door with the record ABSENT: unknown before the lease's own deadline, a
+	//    revoke after it (it has expired and drained).
+	{
+		const r = rig();
+		const o = await run(r, T0 + 5000, tick(), (opts, h) => ticks(opts, h, 6, 2, () => { r.st.empty = 1; }));
+		check('U2: a readable door with the record absent BEFORE the deadline does not abort',
+			o.hooks.aborted === false && o.res.done === true,
+			JSON.stringify({ aborted: o.hooks.aborted, trace: o.res.trace.join(',') }));
+	}
+	{
+		const r = rig();
+		let t = T0 + 2000;
+		const o = await run(r, T0 + 5000, () => t, (opts, h) => ticks(opts, h, 6, 2, () => { r.st.empty = 1; t = T0 + 6000; }));
+		check('U2: the same absent record AFTER the deadline aborts', o.hooks.aborted === true && o.res.aborted === true,
+			JSON.stringify({ aborted: o.hooks.aborted, trace: o.res.trace.join(',') }));
+		check('U2: and the abort is recorded as collect REVOKED why=absent',
+			logs.some((l) => /collect REVOKED turn=turn-unread why=absent/.test(l)), logs.join(' | '));
+	}
+
+	// 3. A positive revoke (a 'released' record) still aborts, and says so.
+	{
+		const r = rig();
+		const o = await run(r, 9e15, tick(),
+			(opts, h) => ticks(opts, h, 6, 2, () => { L.revoke(TID, r.cas, tick()); }));
+		check('U3: a positive revoke still hard-aborts the turn',
+			o.hooks.aborted === true && o.res.aborted === true && o.res.why === 'revoked' && o.reports.length === 0,
+			JSON.stringify({ aborted: o.hooks.aborted, why: o.res.why }));
+		check('U3: and is recorded as collect REVOKED why=released',
+			logs.some((l) => /collect REVOKED turn=turn-unread why=released/.test(l)), logs.join(' | '));
+	}
+
+	// 4. The claimed -> running transition reads an unreadable door: tried again, not revoked.
+	{
+		const r = rig();
+		const o = await run(r, 9e15, tick(), (opts, h) => ticks(opts, h, 3, -1, () => {}), () => { r.st.fail = 1; });
+		check('U4: an unreadable door at the claimed -> running write is retried, not a revoke',
+			o.hooks.aborted === false && o.res.done === true && r.modes.indexOf('running') >= 0,
+			JSON.stringify({ aborted: o.hooks.aborted, why: o.res.why, modes: r.modes.join(',') }));
+	}
+
+	// 5. The done write reads an unreadable door: retried once, and it lands.
+	{
+		const r = rig();
+		const o = await run(r, 9e15, tick(), async (opts, h) => { r.st.fail = 1; });
+		check('U5: an unreadable read at the done write is retried and the done lands',
+			o.res.done === true && r.modes.join(',') === 'claimed,running,done,released',
+			r.modes.join(','));
+		check('U5: a write that landed on its retry logs nothing', !logs.some((l) => /collect lease write/.test(l)),
+			logs.join(' | '));
+	}
+	// ...and when the retry is unreadable too, it is said, and the release still frees the lease.
+	{
+		const r = rig();
+		const o = await run(r, 9e15, tick(), async (opts, h) => { r.st.fail = 2; });
+		check('U5: a done write unreadable twice is logged as collect lease write mode=done',
+			logs.some((l) => /collect lease write turn=turn-unread mode=done ok=0 why=unread/.test(l)), logs.join(' | '));
+		check('U5: the turn still completes and the lease is released, not left running',
+			o.res.done === true && r.door.leases()[TID].mode === 'released', r.modes.join(','));
+	}
+
+	if (prevDiag === undefined) delete phone.DaimondDiag; else phone.DaimondDiag = prevDiag;
 }
 
 // A compare-and-set that models /api/sync: one versioned {version, leases} blob.

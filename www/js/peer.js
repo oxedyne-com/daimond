@@ -2810,6 +2810,7 @@
 	var PROGRESS_EVERY_MS = 2000;
 	var MAX_TAKE_TRIES = 10;		// bound the CAS retry loop (was 6): more headroom under two-device churn
 	var TAKE_BACKOFF_MS = 250;		// jittered wait between take retries so a claim gets a clean window
+	var UNREAD_RETRY_MS = 1000;		// the pause before a lease write looks once more at a door that would not read
 	// The hard ceiling on how long ONE errand's liveness ticker may run before it gives
 	// up and aborts. The ticker is READ-ONLY (it never renews the parcel -- the lease is
 	// claimed straight to its deadline, so no renew is needed), so it is not itself a
@@ -3261,6 +3262,7 @@
 		var tid = String(turnId), h = String(holder);
 		for (var attempt = 0; attempt < MAX_TAKE_TRIES; attempt++) {
 			var snap = await cas.read();
+			if (snap.unread) return { ok: false, why: 'unread' };		// unknown, never 'revoked'
 			var now  = leaseNow(nowFn);
 			var cur  = snap.leases[tid];
 			if (!cur || cur.holder !== h || cur.mode === 'released') {
@@ -3287,6 +3289,17 @@
 		return { ok: false, why: 'exhausted' };
 	}
 
+	/// Run a lease write, and once more after a pause when the door would not read.
+	/// Only an unread door is worth a second look: any other refusal is a fact.
+	async function retryUnread(run) {
+		var res = await run();
+		if (res && res.ok === false && res.why === 'unread') {
+			await new Promise(function (r) { setTimeout(r, UNREAD_RETRY_MS); });
+			res = await run();
+		}
+		return res;
+	}
+
 	/// COMPLETE (mode 'done') or RELEASE (mode 'released', which is vacant) a lease
 	/// this device holds, with the act reported to the debug feed.
 	async function leaseSet(turnId, holder, mode, cas, nowFn) {
@@ -3306,6 +3319,7 @@
 		var tid = String(turnId), h = String(holder);
 		for (var attempt = 0; attempt < MAX_TAKE_TRIES; attempt++) {
 			var snap = await cas.read();
+			if (snap.unread) return { ok: false, why: 'unread' };		// unknown, never 'not_ours'
 			var now  = leaseNow(nowFn);
 			var cur  = snap.leases[tid];
 			if (!cur || cur.holder !== h) {
@@ -3381,6 +3395,7 @@
 		var tid = String(turnId);
 		for (var attempt = 0; attempt < MAX_TAKE_TRIES; attempt++) {
 			var snap = await cas.read();
+			if (snap.unread) return { ok: false, why: 'unread' };		// not 'already vacant'
 			var now  = leaseNow(nowFn);
 			var cur  = snap.leases[tid];
 			if (!cur || cur.mode === 'released') return { ok: true };	// already vacant
@@ -4063,6 +4078,15 @@
 			// progress frame never overlaps the final push on the one-round gate.
 			if (progressTimer != null && clrT) { try { clrT(progressTimer); } catch (err) {} progressTimer = null; }
 		}
+		// The done and released writes. A refused one used to be ignored, leaving the lease
+		// 'running' to its deadline with the sender waiting it out, so the result is read: an
+		// unread door is tried once more, and a write that still failed is said.
+		async function settleLease(mode) {
+			var r = await retryUnread(function () { return leaseSet(turnId, d.selfId, mode, d.cas, leaseClock); });
+			if (!(r && r.ok)) diag('collect lease write', 'turn=' + turnId + ' mode=' + mode
+				+ ' ok=0 why=' + String((r && r.why) || '?'));
+			return r;
+		}
 		// READ-ONLY: never writes the parcel (no renew, no churn). Aborts on a revoke
 		// -- the lease is no longer ours, or was released, which a sync pull adopts into
 		// the view this reads -- and on the lifetime cap, the backstop for a runTurn
@@ -4078,10 +4102,18 @@
 			}
 			var snap;
 			try { snap = await d.cas.read(); } catch (err) { return; }	// a failed read is not a revoke
-			var cur = (snap && snap.leases) ? snap.leases[turnId] : null;
+			// Nor is an unreadable door: a revoke is a POSITIVE record (`leaseRevokeCas` writes a
+			// 'released' one, it never deletes), so what could not be read is unknown, not revoked.
+			if (!snap || snap.unread || !snap.leases) return;
+			var cur = snap.leases[turnId];
+			// An absent record is a revoke only past the lease's own deadline, when it has expired
+			// and drained; before it, a take-back would have left a 'released' record.
+			if (!cur && leaseNow(leaseClock) <= leaseMs(e.deadline)) return;
 			if (!cur || cur.holder !== String(d.selfId) || cur.mode === 'released') {
 				revoked = true;
 				trace.push('abort');
+				diag('collect REVOKED', 'turn=' + turnId + ' why=' + (!cur ? 'absent'
+					: cur.holder !== String(d.selfId) ? 'holder' : 'released'));
 				try { if (d.abort) d.abort(); } catch (err) { /* idempotent */ }
 			}
 		}
@@ -4126,10 +4158,11 @@
 			// footer ("running" vs "picking this up"), one write, before the turn goes
 			// busy. This keeps the deadline expiry (leaseRenew never shrinks it); it does
 			// NOT start a heartbeat. A lease already revoked between take and here aborts.
-			var mk = await leaseRenew(turnId, d.selfId, d.cas, leaseClock);
+			var mk = await retryUnread(function () { return leaseRenew(turnId, d.selfId, d.cas, leaseClock); });
 			if (!mk.ok && mk.why === 'revoked') {
 				revoked = true;
 				trace.push('abort');
+				diag('collect REVOKED', 'turn=' + turnId + ' why=renew');
 				try { if (d.abort) d.abort(); } catch (err) { /* idempotent */ }
 				return { ran: true, aborted: true, why: 'revoked', trace: trace };
 			}
@@ -4238,10 +4271,10 @@
 				await d.post(reportFor(e, { status: 'done', parcelVersion: 0, finalTail: finalTail ? 1 : 0 }));
 				trace.push('report');
 			} catch (err) { /* the report is only the nudge; the frame already carried the answer */ }
-			await leaseSet(turnId, d.selfId, 'done', d.cas, leaseClock); trace.push('complete');
+			await settleLease('done'); trace.push('complete');
 			try { if (d.ack) { await d.ack(e); trace.push('ack'); } }
 			catch (err) { /* a missed ack costs one idempotent re-collect, never a drop */ }
-			await leaseSet(turnId, d.selfId, 'released', d.cas, leaseClock); trace.push('release');
+			await settleLease('released'); trace.push('release');
 			// THE PARCEL, AFTER THE LEASE IS FREE. Awaited only where the caller asked
 			// for it (`awaitPush`, which the tests do so the sequence is assertable);
 			// otherwise started and left to land, because the originator is no longer
@@ -4346,10 +4379,14 @@
 			if (leaseNow(d.now) - checkStart > maxLife) { stopCheck(); revoked = true; return; }
 			var snap;
 			try { snap = await d.cas.read(); } catch (err) { return; }
-			var cur = (snap && snap.leases) ? snap.leases[cid] : null;
+			if (!snap || snap.unread || !snap.leases) return;		// unreadable: unknown, not a revoke
+			var cur = snap.leases[cid];
+			if (!cur && leaseNow(d.now) <= leaseMs(e.deadline)) return;	// absent before the deadline
 			if (!cur || cur.holder !== String(d.selfId) || cur.mode === 'released') {
 				revoked = true;
 				trace.push('abort');
+				diag('collect REVOKED', 'compile=' + cid + ' why=' + (!cur ? 'absent'
+					: cur.holder !== String(d.selfId) ? 'holder' : 'released'));
 			}
 		}
 		async function say(text, final) {

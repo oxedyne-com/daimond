@@ -259,7 +259,7 @@ function loadSyncLease() {
 	const btoa = (s) => Buffer.from(s, 'binary').toString('base64');
 	const atob = (s) => Buffer.from(s, 'base64').toString('binary');
 
-	const state = { posts: [], leaseStatus: 200, leaseVersion: 6 };
+	const state = { posts: [], leaseStatus: 200, leaseVersion: 6, get: null };
 	win.DaimondIdentity = {
 		isUnlocked: () => true,
 		wrapBytesAad:   async (bytes) => bytes,		// pass-through: the sealed blob is the plaintext bytes
@@ -276,6 +276,13 @@ function loadSyncLease() {
 				state.posts.push(JSON.parse(opts.body));
 				return { status: state.leaseStatus,
 					json: async () => ({ ok: state.leaseStatus === 200, version: state.leaseVersion }) };
+			}
+			// A lease-door READ, when the test sets `state.get`: a throw, or a status and a body
+			// (`undefined` is a body that is not JSON).
+			if ((!opts || opts.method === 'GET') && q.indexOf('lease=1') >= 0 && state.get) {
+				if (state.get.throws) throw new TypeError('Failed to fetch');
+				return { status: state.get.status,
+					json: async () => { if (state.get.body === undefined) throw new SyntaxError('not json'); return state.get.body; } };
 			}
 			return { status: 200, json: async () => ({}) };
 		},
@@ -339,6 +346,28 @@ async function leaseCommitChecks() {
 	check('a real 413 yields why:too_large', refused.ok === false && refused.why === 'too_large',
 		JSON.stringify(refused));
 	check('and the version is the base (5), NOT 0', refused.version === 5, String(refused.version));
+
+	// The door's READ. An unreadable door is not a vacant one (2026-10-03): a runner took
+	// the one for the other, called its own lease revoked and aborted a healthy turn.
+	state.posts = []; state.leaseStatus = 200;
+	await S.leaseCommit(5, smallMap);
+	const sealed = state.posts[0].blob;			// a blob this identity opens, for a readable door
+	const door = async (get) => { state.get = get; try { return await S.leaseGet(); } catch (e) { return { threw: true }; } };
+	const r503 = await door({ status: 503, body: null });
+	check('leaseGet marks a 503 as unread', r503.unread === true && Object.keys(r503.leases).length === 0, JSON.stringify(r503));
+	const rjson = await door({ status: 200, body: undefined });
+	check('leaseGet marks a 200 that is not JSON as unread', rjson.unread === true, JSON.stringify(rjson));
+	const rbad = await door({ status: 200, body: { ok: true, version: 9, blob: 'AAAA' } });
+	check('leaseGet marks a blob that will not open as unread', rbad.unread === true && rbad.version === 9, JSON.stringify(rbad));
+	const rthrow = await door({ throws: true });
+	check('leaseGet lets a thrown read through, for the shim to mark unread', rthrow.threw === true, JSON.stringify(rthrow));
+	const rvac = await door({ status: 200, body: { ok: true, version: 9, blob: '' } });
+	check('[ctl] a vacant door (200, no blob) is a real answer, not unread',
+		rvac.unread === false && rvac.version === 9 && Object.keys(rvac.leases).length === 0, JSON.stringify(rvac));
+	const rok = await door({ status: 200, body: { ok: true, version: 9, blob: sealed } });
+	check('[ctl] an opened door is a real answer, not unread',
+		rok.unread === false && !!rok.leases.t0 && rok.leases.t0.holder === 'H', JSON.stringify(rok));
+	state.get = null;
 }
 
 await main();
