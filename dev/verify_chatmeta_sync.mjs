@@ -60,8 +60,9 @@ if (BREAK && BROWSER !== 'chromium') {
 
 // ── The seam must be present, or a green run would prove nothing ──────
 const SEAM = [
-	{ want: 'out.name           = metaNewer.name;', why: 'the metadata scalar resolution is missing' },
-	{ want: 'var metaNewer = DaimondStamp.beats(am, ', why: 'the metaAt merge winner is missing' },
+	// One helper for the merge and the tab adoption since r53 W-rec.
+	{ want: 'takeChatMeta(out, metaNewer);', why: 'the metadata scalar resolution is missing' },
+	{ want: 'var metaNewer = chatMetaBeats(a, b) ? a : b;', why: 'the metaAt merge winner is missing' },
 ];
 {
 	const src = fs.readFileSync(path.join(WWW, 'js/daimond.js'), 'utf8');
@@ -72,11 +73,11 @@ const SEAM = [
 const PATCHED = new Map();
 if (BREAK === 'lww') {
 	const src = fs.readFileSync(path.join(WWW, 'js/daimond.js'), 'utf8');
-	const find = 'out.name           = metaNewer.name;';
+	const find = 'takeChatMeta(out, metaNewer);';
 	const n = src.split(find).length - 1;
 	if (n !== 1) { console.error(`break anchor appears ${n} times (expected 1)`); process.exit(2); }
 	PATCHED.set('js/daimond.js', src.replace(find,
-		'out.name           = turnNewer.name;   // --break lww: record-level LWW, the rename reverts'));
+		'takeChatMeta(out, turnNewer);   // --break lww: record-level LWW, the rename reverts'));
 }
 async function patchedSource(page) {
 	if (!PATCHED.size) return;

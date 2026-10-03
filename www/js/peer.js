@@ -971,9 +971,13 @@
 		if (!keep.length) return null;
 		return {
 			chatId:   String(c.id || ''),
-			title:    String(c.title || ''),
+			// The record's own `name` (it was `title`, a field no chat record has, so a seed
+			// never carried the name), and the worker the dispatcher chose (r53 W-rec).
+			name:     String(c.name || ''),
 			provider: String(c.provider || ''),
 			model:    String(c.model || ''),
+			workerModel:    String(c.workerModel || ''),
+			workerProvider: String(c.workerProvider || ''),
 			whole:    1,				// no message in `msgs` is cut; see seedGraft
 			msgs:     keep,
 		};

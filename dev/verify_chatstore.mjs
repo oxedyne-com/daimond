@@ -207,8 +207,10 @@ const BIGPATH = await p.evaluate((id) => window.DaimondAttach.chatScratch(id), w
 const BIG = 'Z'.repeat(20000);
 const bigWrite = await chat(s, '@tool file_write {"path":"' + BIGPATH + '","content":"' + BIG + '"}');
 check('the big file was really written — a refused write leaves no large result to shorten',
-	!/Refused/.test(bigWrite) && /Wrote \d+ bytes/.test(bigWrite),
-	bigWrite.slice(-140).replace(/\n/g, ' | '));
+	// The tool card names the call's status (`file_write · ok`); the result's own text (`Wrote N bytes`)
+	// is no longer in the visible transcript, so a refusal is told by its absence of `ok`.
+	!/Refused/.test(bigWrite) && /file_write · ok/.test(bigWrite),
+	bigWrite.replace(/Z{20,}/g, 'Z...').slice(-300).replace(/\n/g, ' | '));
 await chat(s, '@tool file_read {"path":"' + BIGPATH + '"}');
 
 const withTool = await readStore(s);

@@ -19,9 +19,10 @@
 //   3  SUMMARY. The summary row carries v, the rail scalars, the counts, the session
 //      marker, and the dispatched-placeholder iturns (blocker B3); a long transcript
 //      spans several chunks.
-//   4  DEDUP + SORT. Given a mid that appears twice across chunks (one elided, one
-//      full) and out of ts order, reconstruction keeps the FULLER copy and sorts by
-//      (ts, mid) -- the same rule every merge in the app uses.
+//   4  DEDUP + SORT. Given a mid that appears twice across chunks and out of ts order,
+//      reconstruction keeps the copy the message law keeps -- the same join every merge
+//      in the app uses -- and sorts by (ts, mid). The copies are ones the store can hold:
+//      a tool log pushed empty and then filled, the fill stored as `slimMessages` cuts it.
 //   5  IDEMPOTENT. A second boot re-runs the shadow pass and neither duplicates nor
 //      corrupts a chunk: the row counts are unchanged and reconstruction still exact.
 //   6  INERT. The legacy `chats` rows are untouched across both boots, and the rail
@@ -196,7 +197,10 @@ await shadowSettled(page);        // the shadow pass kicked at boot has settled
 
 // ── 1  UPGRADE: version rose, stores added, rows intact ─────────────────────────
 const info = await dbInfo(page);
-check(info && info.version === 2, `upgrade: db version is 2 (got ${info && info.version})`);
+// The version the app opens the store at, read off the source under test so a later
+// store added (v3 added `tombs`, S-SYNC #6) never leaves this assertion stale again.
+const DB_VERSION = Number((/var CHATS_DB_VERSION = (\d+);/.exec(fs.readFileSync(new URL('../www/js/daimond.js', import.meta.url), 'utf8')) || [])[1]);
+check(info && DB_VERSION >= 2 && info.version === DB_VERSION, `upgrade: db version is ${DB_VERSION} (got ${info && info.version})`);
 check(info && info.stores.includes('chats') && info.stores.includes('msgchunks') && info.stores.includes('chatsum'),
 	`upgrade: stores are ${info && info.stores.join(', ')}`);
 const rowsAfter = await allChats(page);
@@ -233,22 +237,42 @@ const chD = await chunks(page, 'cD');
 check(Array.isArray(chD) && chD.length === 3 && chD[0].seq === 0 && chD[2].seq === 2,
 	`summary: chunk rows in seq order (${(chD || []).map((c) => c.seq).join(',')})`);
 
-// ── 4  DEDUP fuller-wins + sort ─────────────────────────────────────────────────
+// ── 4  DEDUP by the message law + sort ──────────────────────────────────────────
+// Until r53 this crafted an assistant row cut to 'SHORT' with `elided: 5` beside a
+// 37-character "full" copy and asked for the full one. No store holds that pair:
+// `slimMessages` cuts only tool, think, vision and error logs, and a cut's `elided` is
+// exactly what it dropped, so the law reads a cut back as the body it was cut from
+// (`msgBodyLen`) and ranks that 'SHORT' copy as a 3077-character body. The pair here is
+// the one a store does hold: a tool log pushed empty, then filled, the fill stored cut.
+// d1 is a pre-r53 store (no stamps) appended in the order it was written; d3 has the
+// fill stamped and appended BEFORE the empty copy (a second tab's stale append), so the
+// order of the appends cannot decide. Both read back filled. On the last-wins reader
+// before r53, d3 read back empty.
+const FILL = big('result', 700);                              // 4900 chars, past a tool log's 2048
+const toolCut = (m) => Object.assign({}, m, {
+	content: m.content.slice(0, 2048) + '\n\n[' + String(m.content.length - 2048).replace(/\B(?=(\d{3})+(?!\d))/g, ',')
+		+ ' more characters of this result were not saved. The model was given the whole thing.]',
+	elided: m.content.length - 2048,
+});
 await putChunks(page, [
 	{ k: 'craft1#0', chatId: 'craft1', seq: 0, msgs: [
-		{ role: 'assistant', mid: 'd1', ts: 5, content: 'SHORT', elided: 5 },
-		{ role: 'user',      mid: 'd0', ts: 1, content: 'first, lowest ts' },
+		{ role: 'tool_log', mid: 'd1', ts: 5, content: '' },
+		{ role: 'user',     mid: 'd0', ts: 1, content: 'first, lowest ts' },
+		toolCut({ role: 'tool_log', mid: 'd3', ts: 12, content: FILL, at: 2000 }),
 	] },
 	{ k: 'craft1#1', chatId: 'craft1', seq: 1, msgs: [
-		{ role: 'assistant', mid: 'd1', ts: 5, content: 'FULL LONG CONTENT, the un-elided copy' },
-		{ role: 'user',      mid: 'd2', ts: 9, content: 'last, highest ts' },
+		toolCut({ role: 'tool_log', mid: 'd1', ts: 5, content: FILL }),
+		{ role: 'user',     mid: 'd2', ts: 9, content: 'last user, ts 9' },
+		{ role: 'tool_log', mid: 'd3', ts: 12, content: '' },
 	] },
 ]);
 const craft = await reconstruct(page, 'craft1');
-check((craft || []).map((m) => m.mid).join(',') === 'd0,d1,d2', `dedup: sorted by (ts,mid) -> ${(craft || []).map((m) => m.mid).join(',')}`);
+check((craft || []).map((m) => m.mid).join(',') === 'd0,d1,d2,d3', `dedup: sorted by (ts,mid) -> ${(craft || []).map((m) => m.mid).join(',')}`);
+const filled = (m) => !!m && m.elided === FILL.length - 2048 && String(m.content).startsWith(FILL.slice(0, 2048));
 const d1 = (craft || []).find((m) => m.mid === 'd1');
-check(d1 && d1.content === 'FULL LONG CONTENT, the un-elided copy' && !d1.elided,
-	`dedup: fuller (un-elided) copy of d1 kept (${d1 && JSON.stringify(d1.content).slice(0, 30)})`);
+check(filled(d1), `dedup: a tool log pushed empty then filled reads back filled, as stored (${d1 && JSON.stringify(d1.content).slice(0, 30)})`);
+const d3 = (craft || []).find((m) => m.mid === 'd3');
+check(filled(d3), `dedup: the filled copy stands though the empty one was appended after it (${d3 && JSON.stringify(d3.content).slice(0, 30)})`);
 
 // ── 5  IDEMPOTENT across a second boot ──────────────────────────────────────────
 const n1chunks = await storeCount(page, 'msgchunks');

@@ -8,7 +8,7 @@
    `mergeMessages` then lets the runner's own copy replace a framed one by mid,
    in either order, and never the reverse.
 
-   Lifts the REAL `stampMessages`, `unbadge`, `mergeMessages`,
+   Lifts the REAL `stampMessages`, the message law, `mergeMessages`,
    `dispatchedAnswerPresent`, `dispatchedPlaceholderIn`, `handoffLeaseSettled`,
    `handoffDone` and `adoptFinalFrame` out of daimond.js, and the real
    `settledLease` rule out of peer.js.
@@ -47,10 +47,13 @@ function extractFn(src, name) {
 	return src.slice(start + 1, i);
 }
 
+// The message law is lifted with everything `mergeMessages` reaches (dev/syncprobe.mjs
+// `liftSource`), from the same tree as DAIMOND_JS, so no hand-kept list can drift from it.
+if (process.env.DAIMOND_JS && !process.env.TREE) process.env.TREE = join(dirname(process.env.DAIMOND_JS), '..', '..');
+const { liftSource } = await import('../../dev/syncprobe.mjs');
 const src  = readFileSync(process.env.DAIMOND_JS || join(HERE, 'daimond.js'), 'utf8');
 const psrc = readFileSync(process.env.PEER_JS || join(HERE, 'peer.js'), 'utf8');
 const lifted = new Function('env', [
-	'var OLD_LEGACY = /^legacy-\\d+$/;',
 	'var REASON_DISPATCHED_STR = "dispatched";',
 	'function loadMsgTombs() { return {}; }',
 	'var window = env.window, DaimondPeer = env.window.DaimondPeer, DaimondLease = env.window.DaimondLease;',
@@ -62,9 +65,9 @@ const lifted = new Function('env', [
 	'function diag() {}',
 	'function renderDispatchedBadges() { env.badges++; }',
 	'function dropDispatchedPlaceholder(t) { env.dropped.push(t); var c = env.chatFor(t); c.messages = c.messages.filter(function (m) { return !(m.why === "dispatched" && m.iturn === t); }); }',
-	extractFn(src, 'stampMessages'),
-	extractFn(src, 'unbadge'),
-	extractFn(src, 'mergeMessages'),
+	// The message law (r53), lifted whole, and the stamp rule it ranks by.
+	'var DaimondStamp = (function () { var window = {}; ' + readFileSync(join(HERE, 'stamp.js'), 'utf8') + '\n return window.DaimondStamp; })();',
+	liftSource(['mergeMessages'], ['loadMsgTombs', 'window', 'DaimondStamp']).src,
 	extractFn(src, 'dispatchedAnswerPresent'),
 	extractFn(src, 'dispatchedPlaceholderIn'),
 	extractFn(src, 'handoffLeaseSettled'),

@@ -109,17 +109,29 @@ const { page } = s;
 
 // ── 1 + 2  seed, reload, prove no loss, then cap on save ──────────────────────
 await putRow(page, seededChat());
+// The seed as written, read back BEFORE the reload: the logs whole. Since r53 msg2 the first
+// read of a chat whose store holds a log uncut (the boot's collect, or opening the chat) heals
+// the store to the form a save writes (`slimMessages`), because the chunk reader ranks an
+// uncut body over its own cut and an uncut copy left in the chunks would have every save
+// append its cut again. So by the boot checks below the logs may already be capped; what
+// this verifier holds to is that they end capped with nothing lost.
+const rawSeed = await readRow(page, 'hot1');
+const bytesBefore = JSON.stringify(rawSeed).length;
+const thSeed = rawSeed && rawSeed.messages.find((m) => m.mid === 'th0');
+check(thSeed && thSeed.content.length > 50000 && !thSeed.elided,
+	`seed: think_log stored full and uncapped (${thSeed && thSeed.content.length} chars)`);
+
 await page.reload({ waitUntil: 'domcontentloaded' });
 await page.waitForSelector('#id-primary', { timeout: 15000 }).catch(() => {});
 await signInAs(s, 'transcript-hotpath');
 await page.waitForTimeout(700);
 
 const rawBefore = await readRow(page, 'hot1');
-const bytesBefore = JSON.stringify(rawBefore).length;
 check(rawBefore && rawBefore.messages.length === 8, `boot: row holds 8 messages (got ${rawBefore && rawBefore.messages.length})`);
 const thBefore = rawBefore.messages.find((m) => m.mid === 'th0');
-check(thBefore && thBefore.content.length > 50000 && !thBefore.elided,
-	`boot: think_log stored full and uncapped (${thBefore && thBefore.content.length} chars)`);
+check(thBefore && thSeed && (thBefore.content === thSeed.content
+		|| (thBefore.elided === thSeed.content.length - 3072 && thBefore.content.startsWith('HEADT') && /TAILT$/.test(thBefore.content))),
+	`boot: think_log whole, or cut as a save cuts it, and nothing else (${thBefore && thBefore.content.length} chars, elided ${thBefore && thBefore.elided})`);
 
 const opened = await openChatByName(page, 'Hot path chat');
 check(opened, 'open: seeded chat opened from the rail');

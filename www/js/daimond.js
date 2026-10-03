@@ -1228,85 +1228,215 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		});
 		return msgs || [];
 	}
-	/// Union two transcripts of the same chat, in time order, keeping every turn — except a message
-	/// that has been tombstoned, which stays gone however many copies of it the union sees.
-	///
-	/// When the same message arrives twice, the FULLER copy is kept. A tool result is shortened on
-	/// its way into storage (`slimMessages`), so without that rule a merge against the store would
-	/// hand this tab's whole result back to it truncated — the store's copy is written first, and
-	/// first used to win.
-	/// A copy of a message with the interrupted badge off, or the message itself where
-	/// there is no badge to take off. A COPY, because the caller holds the live record
-	/// and a merge is not the place to edit one.
-	function unbadge(m) {
-		if (!m || !m.interrupted) return m;
-		var out = {};
-		for (var k in m) {
-			if (!Object.prototype.hasOwnProperty.call(m, k)) continue;
-			if (k === 'interrupted' || k === 'why') continue;
-			out[k] = m[k];
-		}
-		return out;
-	}
+	// ── One message, many copies: the law (r53, 2026-09-25; one order, 2026-09-27) ──
+	//
+	// Two devices can hold different copies of one message: the prompt the phone wrote
+	// and the one the runner rebuilt from the errand (with and without `iturn`), a
+	// placeholder re-seated on one device and not yet on another, a final frame's copy
+	// and the runner's own, a tool log saved empty and saved again filled. The union
+	// used to keep whichever copy it met FIRST, so each device kept its own for good,
+	// the transcript manifests never agreed, and every pull fetched and re-unioned
+	// each such chat (soak R4, `messagesRef.key`).
+	//
+	// THE INVARIANT. Every holder of a message -- a merge, the chunk store's reader and
+	// its append cursor, compaction, a tab adopting another's transcript -- keeps the
+	// greatest of the copies it has met under ONE total order, `msgCmp`, and that order
+	// never puts a copy above one that stands higher, or a cut body above the body it
+	// was cut from:
+	//   1. standing (`copyStanding`), wholesale: the runner's copy over a final frame's
+	//      (`framed`) over a streamed row (`provisional`), whatever else differs;
+	//   2. the stamp `at` (`DaimondStamp`): a write made after seeing a copy outranks it;
+	//   3. the length of the body the copy stands for (`msgBodyLen`), so a copy the store
+	//      cut (`slimMessages`) counts as the whole body it was cut from: an empty tool
+	//      log never stands over its filled result, nor a think log's first fragment
+	//      over the grown log, stamped or not (QA F1, 2026-09-25);
+	//   4. `ts`, then field count, then the canonical form, each read off the copy as
+	//      the store keeps it (`msgStored`), so the cut can never reorder two copies and
+	//      a device holding the uncut text stores what every other device stores;
+	//   5. last, of two copies with one stored form, the uncut one, so the tab that
+	//      holds the text re-cuts from it rather than from a cut.
+	// Keys 4 and 5 decide only between copies no stamp and no body orders: an older
+	// build's, or two replicas, where a later `ts` is an in-place edit's (a re-seat) and
+	// more fields a fuller copy's. A copy with no `at` ranks at stamp 0.
+	//
+	// THE BADGE (`interrupted`/`why`) is joined on its own, beside the order: a clear
+	// written by Continue (`interrupted: 0`) wins over every copy whatever it stands,
+	// since no copy is ever badged after it was cleared (the badge is set only when a
+	// message is made); otherwise the copies of the top standing decide, and there a
+	// copy without the badge is a clear from before r53, and a badge only ever meets
+	// another badge by the greater canonical form.
+	//
+	// `msgJoin` is therefore a join, commutative, associative and idempotent BYTE FOR
+	// BYTE (the manifest key is a hash of the bytes): the result is an input copy,
+	// untouched, only where that copy is the order's greatest and wears the joined
+	// badge; otherwise it is rebuilt in canonical key order.
+	var MSG_BADGE = { interrupted: 1, why: 1 };	// the badge's fields, joined on their own
+	var BADGE_CLEAR = '0';				// `msgBadge` of a clear Continue wrote
 
+	/// The own keys JSON would write for `o`, in order.
+	function msgKeys(o) {
+		return Object.keys(o).filter(function (k) { return o[k] !== undefined && typeof o[k] !== 'function'; });
+	}
+	/// Is `a` the copy `b` is, byte for byte, as the parcel would carry it?
+	function sameCopy(a, b) {
+		if (a === b) return true;
+		var ka = msgKeys(a), kb = msgKeys(b);
+		if (ka.length !== kb.length) return false;
+		for (var i = 0; i < ka.length; i++) {
+			if (ka[i] !== kb[i]) return false;
+			var x = a[ka[i]], y = b[kb[i]];
+			if (x === y) continue;
+			if (!x || !y || typeof x !== 'object' || typeof y !== 'object') return false;
+			if (JSON.stringify(x) !== JSON.stringify(y)) return false;
+		}
+		return true;
+	}
+	/// A copy without its badge: what `msgCmp` ranks.
+	function msgCore(m) {
+		var o = {};
+		msgKeys(m).forEach(function (k) { if (!MSG_BADGE[k]) o[k] = m[k]; });
+		return o;
+	}
+	/// The badge a copy wears, as one comparable string: '' for none, `BADGE_CLEAR` for
+	/// Continue's clear.
+	function msgBadge(m) {
+		if (m.interrupted === 0) return BADGE_CLEAR;
+		return m.interrupted ? DaimondStamp.canon([m.interrupted, m.why == null ? null : m.why]) : '';
+	}
+	/// How whole a copy is: the runner's (2) over a final frame's (1) over a streamed row.
+	function copyStanding(m) { return m.provisional ? 0 : (m.framed ? 1 : 2); }
+	// How much of a tool result is kept in the STORED transcript.
+	//
+	// The model had the whole thing while the turn ran, and still does: its own copy of
+	// the conversation is stored separately and whole (see `captureSession`). What is
+	// kept here is the human's scrollback, and eighty kilobytes of a directory listing
+	// is not scrollback — it is the reason a day's work stopped being saved.
+	var TOOL_KEEP = 2048;
+
+	// How much of a think, vision or error log is kept in the STORED transcript.
+	//
+	// The same problem as a tool result, and for the same reason: these are the human's
+	// scrollback, not the model's context -- the model held the whole thing while the
+	// turn ran and keeps its own copy (see `captureSession`). Left untrimmed, a marathon
+	// chat's reasoning bursts, image descriptions and error dumps grew the row without
+	// bound, and the whole row is structured-cloned and `put` on every turn, so an
+	// unbounded log is unbounded write amplification. HEAD AND TAIL are kept, unlike a
+	// tool result -- the end of a thought or a stack is often the part worth reading --
+	// with the middle elided. The threshold is head+tail, so a log short enough to keep
+	// whole is passed through untouched.
+	var LOG_KEEP_HEAD = 2048;
+	var LOG_KEEP_TAIL = 1024;
+
+	/// How much of a long log `slimMessages` keeps when it cuts one. Part of the law:
+	/// `msgBodyLen` reads a cut copy's body back from it, so a change here re-ranks every
+	/// copy already cut -- record the uncut length on the copy before changing it.
+	function msgKept(m) { return m.role === 'tool_log' ? TOOL_KEEP : LOG_KEEP_HEAD + LOG_KEEP_TAIL; }
+	/// The length of the body a copy stands for: its content, or, for a copy the store
+	/// cut, what was kept and what was cut, which is exactly the body it was cut from.
+	function msgBodyLen(m) {
+		var cut = +m.elided || 0;
+		if (cut > 0) return msgKept(m) + cut;
+		return m.content == null ? 0 : String(m.content).length;
+	}
+	/// The copy as the store keeps it: `m` itself unless `slimMessages` would cut it.
+	function msgStored(m) { return slimMessages([m])[0]; }
+	/// Positive where copy `a` outranks `b` badge aside, negative where `b` does, 0 where
+	/// they are one copy but for the badge and key order. The cheap tests first: a stored
+	/// form is taken only where standing, stamp, body and `ts` all tie.
+	function msgCmp(a, b) {
+		var d = copyStanding(a) - copyStanding(b);
+		if (d !== 0) return d;
+		var sa = DaimondStamp.ms(a.at), sb = DaimondStamp.ms(b.at);
+		if (sa !== sb) return sa > sb ? 1 : -1;
+		var la = msgBodyLen(a), lb = msgBodyLen(b);
+		if (la !== lb) return la > lb ? 1 : -1;
+		var ta = +a.ts || 0, tb = +b.ts || 0;
+		if (ta !== tb) return ta > tb ? 1 : -1;
+		var xa = msgStored(a), xb = msgStored(b);
+		var ca = msgCore(xa), cb = msgCore(xb);
+		var na = Object.keys(ca).length, nb = Object.keys(cb).length;
+		if (na !== nb) return na > nb ? 1 : -1;
+		var ka = DaimondStamp.canon(ca), kb = DaimondStamp.canon(cb);
+		if (ka !== kb) return ka > kb ? 1 : -1;
+		// One stored form. The uncut copy, where one is uncut; where both are, two
+		// bodies can still differ in the middle a cut drops, so the canonical form last.
+		var wa = (a.elided || 0) ? 0 : 1, wb = (b.elided || 0) ? 0 : 1;
+		if (wa !== wb) return wa - wb;
+		if (xa === a && xb === b) return 0;
+		var fa = DaimondStamp.canon(msgCore(a)), fb = DaimondStamp.canon(msgCore(b));
+		return fa === fb ? 0 : (fa > fb ? 1 : -1);
+	}
+	/// The one copy of a message that two copies of it make. A NEW object where neither
+	/// input is the answer (a badge taken from the other copy, or two cores equal but for
+	/// key order); otherwise one of the inputs, untouched.
+	function msgJoin(prev, m) {
+		if (sameCopy(prev, m)) return prev;
+		var c = msgCmp(prev, m), w = c >= 0 ? prev : m;
+		var bp = msgBadge(prev), bm = msgBadge(m);
+		var sp = copyStanding(prev), sm = copyStanding(m), badge;
+		if (bp === BADGE_CLEAR || bm === BADGE_CLEAR) badge = BADGE_CLEAR;
+		else if (sp !== sm) badge = sp > sm ? bp : bm;		// only the top standing speaks
+		else badge = (!bp || !bm) ? '' : (bp >= bm ? bp : bm);
+		if (c !== 0 && msgBadge(w) === badge) return w;
+		var out = msgCore(w);
+		if (badge === BADGE_CLEAR) out.interrupted = 0;
+		else if (badge) {
+			var src = badge === bp ? prev : m;
+			out.interrupted = src.interrupted;
+			if (src.why != null) out.why = src.why;
+		}
+		return JSON.parse(DaimondStamp.canon(out));
+	}
+	/// Mark an edit to a message already written: its `at` moves past the stamp it had,
+	/// so the edited copy outranks every copy it was made from, on every device
+	/// (`msgJoin`). Every in-place edit of a stored message goes through here; a copy of
+	/// another device's message (a seed graft, a frame row) keeps the stamp it came with.
+	function touchMsg(m) {
+		if (m) { m.at = DaimondStamp.next(m.at); msgFpSeen['delete'](m); }
+		return m;
+	}
+	/// Take a message's interrupted badge off, as Continue does. A CLEAR, NOT AN ABSENCE
+	/// (r53 QA F2): the copy in hand may be one a final frame or a stream gave this device
+	/// (`framed`, `provisional`), and the runner's own copy, badged, stands over it when it
+	/// lands; a badge merely deleted came back with it, and with it a second Continue on a
+	/// turn already continued. `interrupted: 0` says the badge was taken off, the law lets
+	/// that stand over every copy whatever it stands (`msgJoin`), and every reader takes
+	/// it as no badge.
+	function clearBadge(m) {
+		m.interrupted = 0;
+		delete m.why;
+		return touchMsg(m);
+	}
+	// The fingerprint the store last took of each message object, so a save can ask
+	// cheaply whether the transcript in hand differs from the one on disk (`txPending`).
+	// An edit through `touchMsg` forgets its entry; any other in-place change is taken
+	// afresh by the next append that reads the message.
+	var msgFpSeen = new WeakMap();
+
+	/// Union two transcripts of the same chat, in time order, keeping every turn -- except a
+	/// message that has been tombstoned, which stays gone however many copies of it the union
+	/// sees. Two copies of one message become one by `msgJoin`, so the order the two
+	/// transcripts are given in does not matter.
 	function mergeMessages(a, b, scope, tombs) {
 		// `tombs` lets a merge PASS parse the message-tombstone map once and thread the
 		// same object through every chat it merges, rather than re-reading and
 		// re-filtering the whole map per chat. Absent, it is read here -- the single-
 		// call sites keep the old behaviour with nothing to hoist.
-		var at = {}, out = [];
+		var ix = {}, out = [];
 		if (!tombs) tombs = loadMsgTombs();
 		stampMessages(a, scope).concat(stampMessages(b, scope)).forEach(function (m) {
 			if (tombs[m.mid]) return;
-			var had = at[m.mid];
-			if (had === undefined) { at[m.mid] = out.length; out.push(m); return; }
-			var prev = out[had];
-			// THE REAL COPY REPLACES THE STREAMED ONE, in whichever order they meet. A
-			// hand-off's final frame is byte-identical to the answer the runner's parcel
-			// carries, so no rule below would ever let the parcel's copy in, and a phone
-			// that drew the frame first kept a provisional answer for good: the placeholder
-			// never dropped and every check for a real answer read none (2026-09-25).
-			if (!prev.provisional !== !m.provisional) { if (prev.provisional) out[had] = m; return; }
-			// AND THE RUNNER'S OWN COPY REPLACES ONE TAKEN FROM ITS FINAL FRAME (`framed`,
-			// `adoptFinalFrame`), in whichever order they meet. The frame's copy is the real
-			// answer on the sending device, but it is clipped and carries only the fields a
-			// frame streams, so it never stands over the copy the turn wrote.
-			if (!prev.framed !== !m.framed) { if (prev.framed) out[had] = m; return; }
-			// A BADGE CAN COME OFF, AND A FIRST-WINS UNION COULD NEVER TAKE IT OFF.
-			//
-			// `interrupted` is not content: it is a claim that the turn never finished,
-			// and `continueTurn` clears it on the partial the model has just been asked to
-			// carry on from. The STORED copy is merged first everywhere this is called, so
-			// the badge outlived every save -- and the next reload put a Continue button
-			// back on a turn that had already been continued, offering to buy the same
-			// answer a second time.
-			//
-			// Convergent in the one safe direction, like the prefix rule below: no copy of
-			// a mid is ever WRITTEN without the badge except by the clearing itself, so
-			// "either says finished" can only mean finished.
-			if (!prev.interrupted !== !m.interrupted) { prev = out[had] = unbadge(prev); m = unbadge(m); }
-			if ((prev.elided || 0) && !(m.elided || 0)) { out[had] = m; return; }
-			// STREAMED GROWTH CONVERGES. A turn running on another device streams its
-			// transcript in progress frames (sync.js pushProgress): the same message id
-			// arrives again, longer, as its thinking or tool output accrues. Without this
-			// the FIRST copy seen would win for ever (the rule above is first-wins), so a
-			// peer would freeze a half-written think tile or an empty tool result. Adopt
-			// the strictly-longer copy, but ONLY when the shorter is a PREFIX of it and
-			// the role is unchanged -- the exact, monotone signature of a message growing
-			// token by token. It never shrinks (an out-of-order older frame is shorter, so
-			// this keeps the longer one already held) and never rewrites words (an edit is
-			// not a prefix extension), so it cannot lose or corrupt content -- it can only
-			// let a stream catch up to itself. A completed turn sends each message once at
-			// its final length, so this branch never fires outside streaming.
-			else if (m.role === prev.role && !(m.elided || 0) && !(prev.elided || 0)) {
-				var pc = prev.content == null ? '' : String(prev.content);
-				var mc = m.content    == null ? '' : String(m.content);
-				if (mc.length > pc.length && mc.lastIndexOf(pc, 0) === 0) out[had] = m;
-			}
+			var had = ix[m.mid];
+			if (had === undefined) { ix[m.mid] = out.length; out.push(m); return; }
+			out[had] = msgJoin(out[had], m);
 		});
+		// By (ts, mid), the mid by code point: `localeCompare` sorted by the device's
+		// locale, so two devices in two languages could order a tie two ways and hold
+		// different bytes of one transcript.
 		out.sort(function (x, y) {
 			if ((x.ts || 0) !== (y.ts || 0)) return (x.ts || 0) - (y.ts || 0);
-			return String(x.mid).localeCompare(String(y.mid));
+			var p = String(x.mid), q = String(y.mid);
+			return p < q ? -1 : (p > q ? 1 : 0);
 		});
 		return out;
 	}
@@ -1335,7 +1465,10 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 	/// ordinary chat record and not a second kind of transcript with a second renderer,
 	/// a second store and a second merge.
 	function slimChat(c) {
-		return { id: c.id, name: c.name, messages: c.messages, model: c.model, provider: c.provider || '',
+		// `name` and `model` are written as the summary writes them (`summaryOf`), a string
+		// even when absent, so a record held as a summary and one held live travel as the
+		// same bytes: "" against absent kept one chat record apart for good (r53 W-rec).
+		return { id: c.id, name: c.name || '', messages: c.messages, model: c.model || '', provider: c.provider || '',
 			diamondId: c.diamondId || '',
 			workerModel: c.workerModel || '', workerProvider: c.workerProvider || '',
 			status: c.status || 'active',
@@ -2139,8 +2272,19 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			// holds unchanged (a rename, a model switch) still reads as a change and is
 			// written, rather than being found "unchanged" and skipped.
 			var ma = (typeof c.metaAt === 'number') ? c.metaAt : (c.updatedAt || 0);
+			// THE SCALARS ARE IN THE STAMP, in `summaryOf`'s normalised form (r53 W-rec). A
+			// merge at a tie (`mergeChatRecords`, the tab adoption) decides a name, a worker
+			// or a counter without moving either stamp, so the merged record was found
+			// unchanged and never written, and the next read put this device's own back:
+			// the record-level twin of `txPending`. Normalised as the summary is, so a live
+			// chat and the summary it was hydrated from stamp the same and nothing is
+			// rewritten at boot.
+			var sv = [c.name || '', c.model || '', c.provider || '', c.diamondId || '',
+				c.workerModel || '', c.workerProvider || '', c.status || 'active', c.foldedInto || null,
+				c.promptTokens || 0, c.completionTokens || 0, c.cachedTokens || 0, c.costUsd || 0,
+				c.prevPrompt || 0, c.prevCompletion || 0, c.prevCached || 0, c.prevCost || 0, c.lastPrompt || 0];
 			return String(c.updatedAt || 0) + ':' + mc + ':' + sc + ':' + JSON.stringify(c.holds || []) + ':m' + ma
-				+ ':' + standingOf(c);
+				+ ':' + standingOf(c) + ':' + JSON.stringify(sv);
 		}
 
 		/// Can the rows a read just handed back be believed?
@@ -2155,6 +2299,25 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			storageAlarm(tOr('store.empty_read',
 				'this browser returned none of the {n} conversations it is holding',
 				{ n: watermark() }));
+			return false;
+		}
+
+		/// Does the transcript in hand hold a message the chunks do not hold in this form?
+		/// What the stamp cannot see: a merge that took another device's copy of a message
+		/// (`msgJoin`) moves no count, no flag and no `updatedAt`, so the chat was found
+		/// unchanged, never written, and read back from disk as it was -- each device keeping
+		/// its own copy for good again, one reload later. Unknown (a chat not read from its
+		/// chunks this session, or not resident) is no reason to write.
+		function txPending(c) {
+			var fps = chunkedMids[c.id];
+			if (!fps || c._loaded === false || !Array.isArray(c.messages)) return false;
+			for (var i = 0; i < c.messages.length; i++) {
+				var m = c.messages[i];
+				if (!m || !m.mid) continue;
+				var fp = msgFpSeen.get(m);
+				if (fp === undefined) { fp = msgFp(m); msgFpSeen.set(m, fp); }
+				if (fps[m.mid] !== fp) return true;
+			}
 			return false;
 		}
 
@@ -2217,7 +2380,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 						// it is SKIPPED here rather than needlessly rewritten.
 						var stamp = stampOf(c);
 						put[c.id] = stamp;
-						if (disk[c.id] !== undefined && disk[c.id] === stamp) return;
+						if (disk[c.id] !== undefined && disk[c.id] === stamp && !txPending(c)) return;
 						// A WRITE NEVER SHORTENS OR EMPTIES A TRANSCRIPT (audit B1), now under
 						// append (seq 214, Stage 2). The msgchunks are the source of truth and
 						// only ever GROW here -- and only for THIS chat -- so a save of one chat
@@ -2510,20 +2673,20 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			return true;
 		}
 
-		/// Reduce a chat's raw physical chunk messages to its live transcript, with the
-		/// reader's exact semantics: LAST-WINS per mid (the most recently appended copy is
-		/// the current one -- append-only chunks accumulate a mid's history, and the tail
-		/// is the truth), then `mergeMessages` to drop tombstoned mids and sort by (ts,mid)
-		/// (blocker B2). Reusing `mergeMessages` for the drop-and-sort keeps the result
-		/// byte-identical to what a merge of the legacy row would produce; the last-wins
-		/// pre-pass is what makes a CHANGED message converge on its newest copy rather than
-		/// freezing the first, which is the difference the append-only store introduces.
+		/// Reduce a chat's raw physical chunk messages to its live transcript: every copy of
+		/// a mid the store holds, joined by the one law (`msgJoin`, through `mergeMessages`),
+		/// tombstoned mids dropped, sorted by (ts, mid) (blocker B2). It was LAST-WINS per mid
+		/// until r53, when the union was first-wins and a changed message needed the newest
+		/// append to show. Under the law an edit outranks what it was made from by its stamp,
+		/// and last-wins would let a second tab's stale append, landing after a newer one,
+		/// put the older copy back on this device's read: the device's own reader now agrees
+		/// with every other merge of the same copies. That covers hand-off F4 (a tab that
+		/// never adopted the final frame saving its streamed copy after the tab that did):
+		/// standing is the law's first key, so the order of the appends cannot demote a row.
+		/// And F1: an empty tool log saved before its fill, or a think log's first fragment,
+		/// ranks by the body it stands for, so a stored cut of the filled copy reads back.
 		function reduceChunks(concat, chatId, tombs) {
-			var lastIx = {};
-			concat.forEach(function (m, i) { if (m && m.mid) lastIx[m.mid] = i; });
-			var latest = [];
-			concat.forEach(function (m, i) { if (!m || !m.mid || lastIx[m.mid] === i) latest.push(m); });
-			return mergeMessages(latest, [], chatId, tombs || loadMsgTombs());
+			return mergeMessages(concat.filter(Boolean), [], chatId, tombs || loadMsgTombs());
 		}
 
 		/// Read a chat's chunk rows and rebuild BOTH the live transcript and the append
@@ -2539,14 +2702,20 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 				var sq = (r && isFinite(r.seq)) ? (r.seq | 0) : -1;
 				if (sq > maxSeq) maxSeq = sq;
 			});
-			var lastIx = {};
-			all.forEach(function (m, i) { if (m && m.mid) lastIx[m.mid] = i; });
-			var fps = {};
-			all.forEach(function (m, i) { if (m && m.mid && lastIx[m.mid] === i) fps[m.mid] = msgFp(m); });
+			// THE CURSOR IS THE READ: each mid's fingerprint is that of the copy the reader
+			// serves (the law's join), not of the copy appended last. An append is owed only
+			// where it would change what a read returns; the join is idempotent, so appending
+			// the served copy again never does, and a copy the join ranks lower is appended
+			// once at most and then compacted away (r53 msg2: one law for the reader and the
+			// cursor, where F4 had the cursor take the newest copy within its standing).
+			var msgs = reduceChunks(all, chatId, loadMsgTombs()), fps = {};
+			msgs.forEach(function (m) {
+				if (m && m.mid) { fps[m.mid] = msgFp(m); msgFpSeen.set(m, fps[m.mid]); }
+			});
 			chunkedMids[chatId]   = fps;
 			chunkPhysical[chatId] = all.length;
 			chunkNextSeq[chatId]  = maxSeq + 1;
-			return { msgs: reduceChunks(all, chatId, loadMsgTombs()), physical: all.length };
+			return { msgs: msgs, physical: all.length };
 		}
 
 		/// Rebuild a chat's transcript from its chunks, byte-for-byte as a reload of the
@@ -2562,8 +2731,9 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		/// new seq-keyed rows. Returns the count appended. Synchronous request-queuing only
 		/// -- no await, no CPU beyond the fingerprint -- so it is safe inside a live
 		/// transaction. The key carries a unique tag, so two tabs appending at once write
-		/// different rows rather than one clobbering the other; the reader is last-wins and
-		/// re-sorts by (ts,mid), so the physical order the tag disturbs does not matter.
+		/// different rows rather than one clobbering the other; the reader joins every copy of a
+		/// mid (`reduceChunks`) and re-sorts by (ts,mid), so the physical order the tag
+		/// disturbs does not matter.
 		///
 		/// NEVER-SHORTEN, now under append (audit B1): a chat's chunks only GROW here, and
 		/// only THIS chat's rows are written -- a save of one chat cannot touch another's,
@@ -2576,6 +2746,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			(Array.isArray(msgs) ? msgs : []).forEach(function (m) {
 				if (!m || typeof m !== 'object' || !m.mid) return;
 				var fp = msgFp(m);
+				msgFpSeen.set(m, fp);               // taken afresh here, whatever changed it in place
 				if (fps[m.mid] === fp) return;      // this exact copy is already the newest on disk
 				fps[m.mid] = fp;
 				fresh.push(m);
@@ -2606,8 +2777,11 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		/// tab appended between the two transactions carries a key this pass never read
 		/// and never deletes: its messages survive untouched, and the reader unions them
 		/// back in. Nothing is lost to a concurrent write; at worst a little dead weight
-		/// waits for the next pass. The compacted set is reduced with the SAME last-wins
-		/// rule the reader uses, so a compaction cannot change what reconstruct returns.
+		/// waits for the next pass. The compacted set is reduced by the SAME law the
+		/// reader uses (`reduceChunks`), so a compaction cannot change what reconstruct returns,
+		/// and it keeps each mid's greatest copy: nothing it drops stands higher, or holds a
+		/// longer body at the same stamp, than the copy it keeps (r53 QA F1 was a compaction
+		/// keeping the empty tool log and dropping the filled one, made permanent).
 		async function compactChunks(chatId) {
 			await conn();
 			var rows = await readChunks(chatId), concat = [], keys = [];
@@ -2668,6 +2842,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		/// iturns, and a fingerprint of the serialised transcript so a re-run can tell an
 		/// unchanged chat from a grown one.
 		function summaryOf(c, serial, chunks) {
+			var fp = fileHash(serial);
 			return {
 				id: c.id, v: SHADOW_V,
 				name: c.name || '', model: c.model || '', provider: c.provider || '',
@@ -2699,7 +2874,12 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 				hasSession: !!(c.session),                        // session-ref: the bytes stay in the legacy row this stage
 				sessionMsgs: (c.session && c.session.msgs) ? c.session.msgs.length : 0,
 				iturns: dispatchedIturns(c.messages),
-				fp: fileHash(serial),
+				fp: fp,
+				// The measure of the copy this row was written from. A row written here has
+				// `fp` equal to it, because the chunks were written from that same copy; the
+				// collect's `noteFps` later replaces `fp` with the authoritative value and
+				// leaves `seed`, which `carryChatFigures` compares against the copy in hand.
+				seed: fp,
 				// The serialised transcript's LENGTH, so `collectChatsRefs` can rank the
 				// inline set from summaries alone -- never loading a transcript just to
 				// measure it (the S1 heap fix). Order-independent (a JSON array's length
@@ -2857,22 +3037,20 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 					chunkMsgs  = st.msgs;
 					legacyMsgs = (row && Array.isArray(row.messages)) ? row.messages : [];
 					tombs = loadMsgTombs();
-					// THE CHUNKS ARE AUTHORITATIVE for any mid they hold; the legacy fallback
-					// row only fills a GAP -- a mid a Stage-1 chat (seq 213) left in the row but
-					// never in the chunks, because Stage 1 wrote the row and the summary on
-					// every save yet only (re)built the chunks at boot over rows with no
-					// summary, so a chat that grew after its first shadow left its chunks
-					// behind. Reading the row whole is the price of that recovery, and it is the
-					// SAME read Stage 1 paid on open. The gap-fill NEVER overrides a mid the
-					// chunks already hold, so a pre-seq-211 FULL log in the row cannot un-elide
-					// the chunk copy the reader serves; and a tombstoned mid is excluded from
-					// the fill (and already gone from the chunks), so a deletion cannot be
-					// refilled from the row. (Once the row is retired -- Stage 2d -- this read
-					// and this fill go with it.)
-					var have = {};
-					chunkMsgs.forEach(function (m) { if (m && m.mid) have[m.mid] = 1; });
-					var gap = legacyMsgs.filter(function (m) { return m && m.mid && !have[m.mid] && !tombs[m.mid]; });
-					full = gap.length ? mergeMessages(chunkMsgs, gap, chatId, tombs) : chunkMsgs;
+					// THE ROW'S COPIES JOIN THE CHUNKS' BY THE ONE LAW. The legacy fallback row
+					// holds what a Stage-1 chat (seq 213) left in it but never in the chunks:
+					// Stage 1 wrote the row and the summary on every save yet only (re)built the
+					// chunks at boot over rows with no summary, so a chat that grew after its
+					// first shadow left its chunks behind -- a mid missing from them, or one
+					// held there in an older copy (a tool log saved empty, filled after the
+					// build). Reading the row whole is the price of that recovery, and it is the
+					// SAME read Stage 1 paid on open. Until r53 msg2 the row only filled a GAP
+					// and never overrode a mid the chunks held, which kept the empty copy over
+					// the filled one; the law decides instead (`msgJoin`), and it never lets a
+					// cut body stand over the whole one. A tombstoned mid is dropped by the
+					// merge, so a deletion cannot be refilled from the row. (Once the row is
+					// retired -- Stage 2d -- this read goes.)
+					full = legacyMsgs.length ? mergeMessages(chunkMsgs, legacyMsgs.filter(Boolean), chatId, tombs) : chunkMsgs;
 					if (full.length) break;			// a transcript came back
 					// Does anything DURABLE say this chat should hold messages? The summary's
 					// own count, a legacy row that still carries some, or chunks physically on
@@ -2884,10 +3062,21 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 					if (!expects || attempt >= COLD_TRIES) break;
 					await new Promise(function (r) { setTimeout(r, COLD_GAP); });
 				}
-				// Heal the CHUNKS when the row filled a gap (a Stage-1 chat's stale chunks),
-				// so the recovery is paid once and every read after is the pure chunk path.
-				if (!sameTranscript(full, chunkMsgs)) {
-					try { await rewriteChunks(chatId, full); } catch (e) { /* served from `full` regardless */ }
+				// THE READ IS THE STORED FORM of the join (`slimMessages`), so a read serves
+				// exactly what the next read will, and every device serves one byte form of a
+				// message. The law may take a row's uncut pre-seq-211 log over the chunks' cut
+				// of the same body (the uncut copy over its own cut), and serving that uncut
+				// text once would hand it to the parcel (`collectChatsRefs` builds each
+				// transcript from this read) under a content key no other device's copy has,
+				// and to a tab whose next reload serves the cut: a read that changed on
+				// re-reading. The chunks are healed when the stored join differs from them (a
+				// Stage-1 chat's stale chunks, or a copy a pre-r53 heal wrote uncut), so the
+				// recovery is paid once and every read after is the pure chunk path. Both
+				// heals compare and write this form: a heal judged against uncut text would
+				// rewrite on every read.
+				var toStore = slimMessages(full);
+				if (!sameTranscript(toStore, chunkMsgs)) {
+					try { await rewriteChunks(chatId, toStore); } catch (e) { /* served from `toStore` regardless */ }
 				}
 				// Heal the fallback ROW when it has drifted from what the reader serves: a mid
 				// it holds un-elided that the chunks elided (a pre-seq-211 log -- the write-
@@ -2898,13 +3087,13 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 				// matches, which is every ordinary chat. GUARDED on a non-empty `full`: a
 				// cold-empty read must never blank a legacy row that is the sole home of a
 				// pre-seq-214 transcript (Fix, the tag-loss family).
-				if (row && full.length && !sameTranscript(full, legacyMsgs)) {
+				if (row && full.length && !sameTranscript(toStore, legacyMsgs)) {
 					try {
-						row.messages = slimMessages(full);
+						row.messages = toStore;
 						var tt = tx('readwrite'); tt.store.put(row); await tt.done;
 					} catch (e) { /* the reader already served the truth; the row heals next time */ }
 				}
-				return { messages: full, session: (row && row.session) || null };
+				return { messages: toStore, session: (row && row.session) || null };
 			} catch (e) {
 				return { messages: [], session: null };
 			}
@@ -2914,8 +3103,8 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		/// clean -- the one-time heal a Stage-1 chat needs when its chunks lag its row (see
 		/// `loadMessages`). Atomic and concurrent-safe the same way `compactChunks` is: it
 		/// deletes exactly the rows it read (by key), so a row another tab appended between
-		/// the read and the write survives. `reduceChunks` gives the same last-wins result
-		/// the reader uses, so the heal cannot change what a read returns.
+		/// the read and the write survives. `reduceChunks` gives the same result the reader
+		/// does, so the heal cannot change what a read returns.
 		async function rewriteChunks(chatId, msgs) {
 			await conn();
 			var rows = await readChunks(chatId), keys = [];
@@ -3183,6 +3372,8 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			/// Store `list`, which is already the merged truth. Returns at once; the
 			/// mirror is current now and the disk write happens behind it.
 			save: function (list) {
+				// The mirror's summaries keep their figures across the replacement (F3b-0).
+				carryChatFigures(list, mirror);
 				mirror = list;
 				bumpChats();
 				schedule(list);
@@ -3231,24 +3422,38 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			/// transcript, the chunks or the legacy row, so it cannot change what a later
 			/// load returns and cannot break the manifest-reuse invariant. Best-effort: a
 			/// lost write only costs a load next round.
+			///
+			/// A fix lands only on the entry it was made for. It carries the `seed` the
+			/// entry held when the collect began on it; a save since that moved the copy in
+			/// hand has cleared `fp` and taken a new seed (`carryChatFigures`), and the
+			/// fingerprint of the serial offloaded before the move must not be put back
+			/// over it. The next collect loads that chat again and writes the right one.
 			noteFps: function (fixes) {
 				if (!fixes || !fixes.length) return;
-				var by = {};
+				var by = {}, landed = [];
 				fixes.forEach(function (f) { if (f && f.id) by[f.id] = f; });
 				for (var i = 0; i < mirror.length; i++) {
 					var m = mirror[i], f = m && by[m.id];
-					if (f) { if (typeof f.bytes === 'number') m.bytes = f.bytes; if (f.fp) m.fp = f.fp; }
+					if (!f || (m.seed || '') !== (f.seed || '')) continue;
+					if (typeof f.bytes === 'number') m.bytes = f.bytes;
+					if (f.fp) m.fp = f.fp;
+					landed.push(f);
 				}
+				if (!landed.length) return;
 				try {
 					var t = db.transaction(CHATSUM_STORE, 'readwrite'), st = t.objectStore(CHATSUM_STORE);
-					fixes.forEach(function (f) {
-						if (!f || !f.id) return;
+					landed.forEach(function (f) {
 						var g = st.get(f.id);
 						g.onsuccess = function () {
 							var s = g.result;
 							if (!s) return;
+							// Only the row this fix was measured for: a write since (another tab's)
+							// has its own seed, and the pair put over it would be read back at the
+							// next boot. A row that moved costs one load instead.
+							if ((s.seed || '') !== (f.seed || '')) return;
 							if (typeof f.bytes === 'number') s.bytes = f.bytes;
 							if (f.fp) s.fp = f.fp;
+							s.seed = f.seed || '';
 							st.put(s);
 						};
 					});
@@ -3489,28 +3694,6 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		setTimeout(function () { URL.revokeObjectURL(a.href); }, 2000);
 	}
 
-	// How much of a tool result is kept in the STORED transcript.
-	//
-	// The model had the whole thing while the turn ran, and still does: its own copy of
-	// the conversation is stored separately and whole (see `captureSession`). What is
-	// kept here is the human's scrollback, and eighty kilobytes of a directory listing
-	// is not scrollback — it is the reason a day's work stopped being saved.
-	var TOOL_KEEP = 2048;
-
-	// How much of a think, vision or error log is kept in the STORED transcript.
-	//
-	// The same problem as a tool result, and for the same reason: these are the human's
-	// scrollback, not the model's context -- the model held the whole thing while the
-	// turn ran and keeps its own copy (see `captureSession`). Left untrimmed, a marathon
-	// chat's reasoning bursts, image descriptions and error dumps grew the row without
-	// bound, and the whole row is structured-cloned and `put` on every turn, so an
-	// unbounded log is unbounded write amplification. HEAD AND TAIL are kept, unlike a
-	// tool result -- the end of a thought or a stack is often the part worth reading --
-	// with the middle elided. The threshold is head+tail, so a log short enough to keep
-	// whole is passed through untouched.
-	var LOG_KEEP_HEAD = 2048;
-	var LOG_KEEP_TAIL = 1024;
-
 	/// Group a number with commas, for a count of characters in a marker.
 	function withCommas(n) {
 		return String(n).replace(/\B(?=(\d{3})+(?!\d))/g, ',');
@@ -3737,27 +3920,28 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 	}
 
 	/// Shorten the long logs in a transcript on its way into storage, saying in the record
-	/// itself how much went. Tool results keep their head; think, vision and error logs
-	/// keep head and tail. Idempotent: a message already shortened carries `elided` and is
-	/// passed through untouched -- and `mergeMessages` prefers the un-elided copy, so a
-	/// re-save re-caps from the live full text rather than the last capped copy.
+	/// itself how much went (`elided`). Tool results keep their head; think, vision and
+	/// error logs keep head and tail; how much, `msgKept` says, which is how the message
+	/// law reads a cut copy's whole length back. Idempotent: a message already shortened
+	/// carries `elided` and is passed through untouched -- and the law prefers the uncut
+	/// copy over its own cut (`msgCmp`), so a re-save re-caps from the live full text.
 	function slimMessages(msgs) {
 		return (msgs || []).map(function (m) {
 			if (!m || m.elided) return m;
 			if (m.role === 'tool_log') {
-				var body = String(m.content == null ? '' : m.content);
-				if (body.length <= TOOL_KEEP) return m;
-				var gone = body.length - TOOL_KEEP;
+				var body = String(m.content == null ? '' : m.content), keep = msgKept(m);
+				if (body.length <= keep) return m;
+				var gone = body.length - keep;
 				var out = {};
 				for (var k in m) { if (Object.prototype.hasOwnProperty.call(m, k)) out[k] = m[k]; }
-				out.content = body.slice(0, TOOL_KEEP) + '\n\n[' + withCommas(gone)
+				out.content = body.slice(0, keep) + '\n\n[' + withCommas(gone)
 					+ ' more characters of this result were not saved. The model was given the whole thing.]';
 				out.elided = gone;
 				return out;
 			}
 			if (m.role === 'think_log' || m.role === 'vision_log' || m.role === 'error_log') {
 				var b = String(m.content == null ? '' : m.content);
-				if (b.length <= LOG_KEEP_HEAD + LOG_KEEP_TAIL) return m;
+				if (b.length <= msgKept(m)) return m;
 				var cut = elideHeadTail(b, LOG_KEEP_HEAD, LOG_KEEP_TAIL);
 				var o = {};
 				for (var kk in m) { if (Object.prototype.hasOwnProperty.call(m, kk)) o[kk] = m[kk]; }
@@ -3925,6 +4109,31 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		var s = slimChat(c);
 		return names.map(function (k) { return s[k]; });
 	}
+	/// Write the metadata winner's scalars onto `out`, each in its normalised form: the
+	/// ONE assignment `mergeChatRecords` and the tab adoption share, so an empty value on
+	/// the winning side is taken as a value on both (r53 W-rec).
+	function takeChatMeta(out, src) {
+		out.name           = src.name || '';
+		out.model          = src.model || '';
+		out.provider       = src.provider || '';
+		out.workerModel    = src.workerModel || '';
+		out.workerProvider = src.workerProvider || '';
+		out.status         = src.status || 'active';
+		out.foldedInto     = src.foldedInto || null;
+		out.holds          = Array.isArray(src.holds) ? src.holds : [];
+		out.diamondId      = src.diamondId || '';
+	}
+	/// Do the arriving record's TURN fields beat the held one's (`updatedAt`, a tie to
+	/// the canonically greater)? And its METADATA (`metaAt`)? The two tests every merge
+	/// of two chat records makes, `mergeChatRecords` and the tab adoption alike.
+	function chatTurnBeats(a, b) {
+		return DaimondStamp.beats(a.updatedAt || 0, chatFields(a, CHAT_TURN_FIELDS), b.updatedAt || 0, chatFields(b, CHAT_TURN_FIELDS));
+	}
+	function chatMetaBeats(a, b) {
+		var am = (typeof a.metaAt === 'number') ? a.metaAt : (a.updatedAt || 0);
+		var bm = (typeof b.metaAt === 'number') ? b.metaAt : (b.updatedAt || 0);
+		return DaimondStamp.beats(am, chatFields(a, CHAT_META_FIELDS), bm, chatFields(b, CHAT_META_FIELDS));
+	}
 
 	/// Merge two chat records FIELD-appropriately -- the ONE rule every apply, merge,
 	/// restore and cross-tab reconcile shares, so the three cannot drift apart again
@@ -3943,9 +4152,9 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 	/// incoming side, so two devices meeting at a tie each took the other's.
 	///
 	/// The transcript is append-only and is ALWAYS unioned (`mergeMessages`), so no
-	/// message is lost whichever side wins the stamps. The union keeps the
-	/// stored-copy-wins order `mergeMessages` documents: `localMsgs` first, then the
-	/// incoming. `opts.localMsgs`/`opts.remoteMsgs` (and the matching `…Session`)
+	/// message is lost whichever side wins the stamps, and two copies of one message
+	/// become one by the message law (`msgJoin`), whichever side holds which.
+	/// `opts.localMsgs`/`opts.remoteMsgs` (and the matching `…Session`)
 	/// override each side's transcript and session -- a summary carries an empty
 	/// `messages` and no `session`, so the caller loads the authoritative rows and
 	/// passes them here. `opts.mtombs` is the parsed message-tombstone map.
@@ -3954,22 +4163,14 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		var au = a.updatedAt || 0, bu = b.updatedAt || 0;
 		var am = (typeof a.metaAt === 'number') ? a.metaAt : au;
 		var bm = (typeof b.metaAt === 'number') ? b.metaAt : bu;
-		var turnNewer = DaimondStamp.beats(au, chatFields(a, CHAT_TURN_FIELDS), bu, chatFields(b, CHAT_TURN_FIELDS)) ? a : b;
-		var metaNewer = DaimondStamp.beats(am, chatFields(a, CHAT_META_FIELDS), bm, chatFields(b, CHAT_META_FIELDS)) ? a : b;
+		var turnNewer = chatTurnBeats(a, b) ? a : b;
+		var metaNewer = chatMetaBeats(a, b) ? a : b;
 		var out = slimChat(turnNewer);
 		// The user-facing scalars come from the metadata winner, overriding the turn
 		// winner's copies of them. This is the whole of the fix: record-level LWW took
 		// EVERY scalar from whichever side had the newer `updatedAt`, so a turn
 		// reverted a rename and vice-versa.
-		out.name           = metaNewer.name;
-		out.model          = metaNewer.model;
-		out.provider       = metaNewer.provider || '';
-		out.workerModel    = metaNewer.workerModel || '';
-		out.workerProvider = metaNewer.workerProvider || '';
-		out.status         = metaNewer.status || 'active';
-		out.foldedInto     = metaNewer.foldedInto || null;
-		out.holds          = Array.isArray(metaNewer.holds) ? metaNewer.holds : [];
-		out.diamondId      = metaNewer.diamondId || '';
+		takeChatMeta(out, metaNewer);
 		// Both stamps move to the max each side holds, so the merged record is at least
 		// as fresh as either input on both axes and a re-collect of an unchanged state
 		// is byte-stable (the push-skip fixed point).
@@ -4044,6 +4245,83 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		var resident = c._loaded !== false && Array.isArray(c.messages)
 			&& !(c.messages.length === 0 && (c.msgCount | 0) > 0);
 		return resident ? msgStanding(c.messages) : String(c.standing || '');
+	}
+
+	/// A transcript's summary figures, in the one form the collect fingerprints: the
+	/// length of `JSON.stringify(msgs)` and its `fileHash`. `summaryLite` seeds the
+	/// stored summary with the same pair.
+	function chatSeed(msgs) {
+		var s = JSON.stringify(msgs || []);
+		return { bytes: s.length, fp: fileHash(s) };
+	}
+
+	/// Give the entries of a list about to become the mirror the summary figures
+	/// (`bytes`, `fp`, `seed`) that the callers' own records never carry (F3b-0, F3e).
+	///
+	/// `collectChatsRefs` ranks the inline set from `bytes` and reuses a manifest on
+	/// `fp`, and reads a summary with neither as too large to ride inline. The mirror
+	/// is replaced whole by `ChatStore.save`, and every list handed to it is built from
+	/// `slimChat` output (`persistChats` at the head of each collect, and the merge
+	/// `applyChats` saves), which has neither, so every save wiped what the boot read
+	/// and `noteFps` had put there: after it every transcript, an empty one included,
+	/// left as a reference, was loaded and fingerprinted, and the figures went back
+	/// only to be wiped at the next save.
+	///
+	/// `bytes` only ranks, so it is the measure of the copy in hand, or the prior
+	/// entry's for a transcript not in hand while it stands (the same message count and
+	/// standing: a rename, a model switch). `fp` is different: the collect trusts it
+	/// when it equals the stored manifest's, so it may only ever be the value `noteFps`
+	/// wrote, the fingerprint of the serial the collect offloaded from the STORE. The
+	/// copy in hand is not that: the store can be ahead of it (a cross-tab write, a
+	/// chunk heal, a merge not yet applied here), and a measure of a stale copy matches
+	/// the manifest made before the store moved, which is then reused and never
+	/// re-offloaded. So the entry carries `seed` beside `fp`, the measure of the copy in
+	/// hand when the pair was taken. At a save the copy in hand is measured: equal to
+	/// the prior `seed`, nothing has moved under the pair and the prior `fp` stands (a
+	/// cleared one stays cleared); different, `fp` is cleared to the empty string, which
+	/// no `fileHash` returns, so the collect loads and `noteFps` puts the real one back.
+	/// The test is on the copy in hand, not on what the entry says of itself: a copy that
+	/// is there is measured and answers to the seed, resident or not, and an entry that
+	/// holds none keeps the prior pair while the count and the standing stand. A chat
+	/// with no messages at all, and none before it, is two bytes. Otherwise the entry is
+	/// left without, as "unknown", and the collect measures it as before.
+	function carryChatFigures(list, prior) {
+		var by = {};
+		(prior || []).forEach(function (c) { if (c && c.id) by[c.id] = c; });
+		(list || []).forEach(function (c) {
+			if (!c || !c.id) return;
+			var own  = typeof c.bytes === 'number' && !!c.fp;		// a pair the entry brought
+			var ref  = own ? c : by[c.id];						// the pair a copy in hand answers to
+			var held = c._loaded !== false && Array.isArray(c.messages);
+			if (Array.isArray(c.messages) && c.messages.length) {
+				// A copy is in hand and is measured whatever the entry says of its residency,
+				// since a merge into a chat not opened here leaves a whole transcript on an
+				// entry flagged not resident. Its `bytes` is trusted only when it is the
+				// resident transcript; otherwise only a pair this copy already answers to.
+				var s = chatSeed(c.messages);
+				var kin = !!ref && ref.seed === s.fp;
+				c.bytes = held ? s.bytes : (kin && typeof ref.bytes === 'number' ? ref.bytes : undefined);
+				c.fp    = (kin && ref.fp) ? ref.fp : '';
+				c.seed  = s.fp;
+				return;
+			}
+			if (own) return;										// its own pair stands
+			var p = by[c.id];
+			if (p && typeof p.bytes === 'number') {
+				if (chatMsgCount(p) === chatMsgCount(c) && standingOf(p) === standingOf(c)) {
+					c.bytes = p.bytes;
+					c.fp    = p.fp || '';
+					c.seed  = p.seed || '';
+				}
+				return;
+			}
+			if (held && chatMsgCount(c) === 0 && (!p || chatMsgCount(p) === 0)) {
+				var e = chatSeed([]);
+				c.bytes = e.bytes;
+				c.fp    = e.fp;
+				c.seed  = e.fp;
+			}
+		});
 	}
 
 	/// Has this thread had a turn spent on it, whether or not the transcript that
@@ -4177,7 +4455,11 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			// versa.
 			var sMeta = (typeof s.metaAt === 'number') ? s.metaAt : (s.updatedAt || 0);
 			var cMeta = (typeof c.metaAt === 'number') ? c.metaAt : (c.updatedAt || 0);
-			if ((s.updatedAt || 0) > (c.updatedAt || 0) && !c._generating) {
+			// THE SAME TIE AS `mergeChatRecords` (r53 W-rec): the adoption took only a strictly
+			// newer stamp and kept its own worker over an empty one, where the merge takes
+			// the canonically greater side at a tie and an empty value as a value, so a
+			// tab and the store it reads could each hold their own for good.
+			if (chatTurnBeats(s, c) && !c._generating) {
 				c.promptTokens     = s.promptTokens || 0;
 				c.completionTokens = s.completionTokens || 0;
 				c.cachedTokens     = s.cachedTokens || 0;
@@ -4192,18 +4474,11 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 				// without one would otherwise wipe the tool history held here.
 				if (s.session) c.session = s.session;
 			}
-			if (sMeta > cMeta && !c._generating) {
-				c.name             = s.name;
-				c.model            = s.model;
-				c.provider         = s.provider || c.provider || '';
-				c.workerModel      = s.workerModel || c.workerModel || '';
-				c.workerProvider   = s.workerProvider || c.workerProvider || '';
-				c.status           = s.status || 'active';
-				c.foldedInto       = s.foldedInto || c.foldedInto || null;
+			if (chatMetaBeats(s, c) && !c._generating) {
 				// A folder marked into the workspace in ANOTHER TAB is a change to
 				// what this tab's next turn may touch, so it is adopted with the rest
 				// of the fresher metadata rather than left to whichever tab saves last.
-				if (Array.isArray(s.holds)) c.holds = s.holds;
+				takeChatMeta(c, s);
 			}
 			// Both stamps move forward to the max, so neither a turn nor a metadata edit
 			// applied here can make the record read older than the store already has it.
@@ -8677,17 +8952,13 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		// the same set and the parcel stays the byte-stable fixed point the push-skip
 		// needs. Empty when nothing can be offloaded: then the `!canOffload` path below
 		// carries every Diamond inline and holds any that overflow, retried next round.
-		var inline = {};
-		if (canOffload) {
-			var spent = 0;
-			for (var p0 = 0; p0 < held.length; p0++) {
-				var psz = sizes[p0];
-				if (psz !== null && psz <= SYNC_FILE_MAX && spent + psz <= inlineCap) {
-					inline[held[p0].id] = 1;
-					spent += psz;
-				}
-			}
-		}
+		//
+		// A Diamond that already leaves as a reference stays one while its `touched`
+		// stands (the shape law, `diamondRefStands`): a Diamond is a candidate for the
+		// inline set only while no manifest stands at its stamp.
+		var inline = canOffload ? diamondInlineSet(held, sizes, inlineCap, function (d) {
+			return diamondRefStands(diamondManifest(d.id), diamondStamp(d));
+		}) : {};
 
 		for (var i = 0; i < held.length; i++) {
 			var d = held[i], data;
@@ -8743,7 +9014,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			// included), and an import lays stamps down wholesale, so it is a safe
 			// change-key here.
 			var ref = null, lineageData = null;
-			if (stored && stored.touched === stamp && Array.isArray(stored.chunks)) {
+			if (diamondRefStands(stored, stamp)) {
 				ref = { v: stored.v, size: stored.size, key: stored.key, chunks: stored.chunks };
 			} else {
 				var text;
@@ -8970,6 +9241,98 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 	/// did.
 	function diamondStamp(d) {
 		return (d && (d.touched || d.updated)) || 0;
+	}
+
+	/// THE SHAPE LAW (F3). A Diamond travels in one of two shapes, inline (its export in
+	/// the parcel) or a reference (`dataRef`, the bytes in chunks), and which one is each
+	/// device's own choice: a phone's inline room is a quarter of a desktop's, so a
+	/// ~30 kB Diamond left the phone as a reference and the desktop as inline bytes. Two
+	/// shapes of one Diamond at one `touched` are one copy told two ways, and equal stamps
+	/// "keep what is here", so neither side ever took the other's: each stood stable on
+	/// its own last push, the head was whichever pushed last, and no push was owed.
+	///
+	/// AT AN EQUAL `touched` A REFERENCE STANDS OVER INLINE, ONE WAY AND NEVER BACK UNTIL
+	/// `touched` MOVES, at two sites and no more:
+	///   collect  a Diamond whose own manifest stands at its current stamp is not in
+	///            the inline set, though it keeps its place in the order and its room
+	///            (`diamondInlineSet`);
+	///   apply    an incoming reference is adopted by a device holding no manifest that
+	///            stands at that stamp, once the tag and link unions found nothing to add
+	///            (`diamondAdoptsRef`).
+	/// Two references at one stamp are one copy told twice: the key hashes the bytes and
+	/// only the chunk addresses differ, which the peer slot already looks after. So a shape
+	/// is a join-semilattice on { inline < reference }, "stands if either side stands":
+	/// commutative, idempotent, associative, and a pair ends on its join in one round trip.
+	/// `diamondshape.test.mjs` holds the law; `verify_diamondshape.mjs` holds it on a world.
+	///
+	/// Does a manifest `stored` for the Diamond stand at `stamp`? Also the reuse check of
+	/// the offload arm: a reference whose bytes have not moved is not exported again.
+	function diamondRefStands(stored, stamp) {
+		return !!(stored && stored.touched === stamp && Array.isArray(stored.chunks));
+	}
+
+	/// Does the equal-stamp entry `r` hand this device a reference it should stand on?
+	/// `stored` is the device's own manifest for the Diamond, if any.
+	function diamondAdoptsRef(r, stored, stamp) {
+		return !!(r && r.dataRef && Array.isArray(r.dataRef.chunks) && r.dataRef.chunks.length
+			&& !diamondRefStands(stored, stamp));
+	}
+
+	/// Which Diamonds ride inline: the freshest first, in the order given, while `cap` has
+	/// room. A Diamond over SYNC_FILE_MAX is never inline. A Diamond that `stands` as a
+	/// reference (the shape law) is not inline either, but keeps its place in the order and
+	/// its room, so that adopting a reference moves no other Diamond: the set before the
+	/// law is taken is a function of the sizes and the cap alone, the same on every
+	/// collect and in whichever order the devices met. Answers `{ id: 1 }`.
+	function diamondInlineSet(held, sizes, cap, stands) {
+		var inline = {}, spent = 0;
+		for (var p0 = 0; p0 < held.length; p0++) {
+			var psz = sizes[p0];
+			if (psz !== null && psz <= SYNC_FILE_MAX && spent + psz <= cap) {
+				spent += psz;
+				if (!stands(held[p0])) inline[held[p0].id] = 1;
+			}
+		}
+		return inline;
+	}
+
+	/// The device's own manifest for Diamond `id`, or null.
+	function diamondManifest(id) {
+		try { return (window.DaimondCloud && DaimondCloud.contentGet && DaimondCloud.contentGet('@d/' + id)) || null; }
+		catch (e) { return null; }
+	}
+
+	/// Record the sender's manifest for a Diamond as this device's own, at `touched`, so
+	/// it names the SAME chunks the sender does instead of re-offloading the identical
+	/// Diamond to fresh addresses on its next collect. Two things follow: no second upload
+	/// of a Diamond that already travelled, and, because both devices then name one
+	/// address set, no commit here sweeps the copy the sender is holding alive. The stored
+	/// `touched` matches the copy this device holds, so the collector's reuse check reuses
+	/// this reference rather than exporting again. Not in the spec, which left the
+	/// receiver to re-offload; that re-offload diverged the two devices' addresses and let
+	/// each sweep the other's, which is the outage this whole change exists to avoid.
+	///
+	/// Our own manifest now names the sender's addresses exactly, so the peer slot beside
+	/// it is a second record of one address set. Dropped, rather than left to prune itself
+	/// on the next pull -- BUT ONLY IF the index write landed. A `contentSet` lost to quota
+	/// did not record our manifest, so the peer slot is the only thing still declaring the
+	/// sender's addresses live; dropping it would have the next commit sweep the Diamond
+	/// the sender is holding alive.
+	function adoptDiamondRef(r, touched, from) {
+		if (!r.dataRef || !window.DaimondCloud || !DaimondCloud.contentSet) return false;
+		try {
+			var adopted = DaimondCloud.contentSet('@d/' + r.id, {
+				v:       r.dataRef.v,
+				size:    r.dataRef.size,
+				key:     r.dataRef.key,
+				chunks:  r.dataRef.chunks,
+				touched: touched,
+			});
+			if (adopted && DaimondCloud.contentForget && DaimondCloud.peerKeyFor) {
+				DaimondCloud.contentForget(DaimondCloud.peerKeyFor('@d/' + r.id, from));
+			}
+			return !!adopted;
+		} catch (e) { return false; /* the collector will re-offload; only efficiency is lost */ }
 	}
 
 	/// The stamp in a pack's own head, `{"id":"…","touched":N,`, which the engine
@@ -9243,6 +9606,12 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 								uc[r.id] = [diamondStamp(r), diamondStamp(r), ua !== null ? ua : (um ? um.anc : [])];
 								if (uf) us[r.id] = seenEntry(diamondStamp(r), uf);
 								recordDiamondCopies(uc, null, us, null);
+							} else if (diamondAdoptsRef(r, diamondManifest(r.id), diamondStamp(mine))) {
+								// THE SHAPE LAW, apply side. Nothing to add, so this is the copy
+								// both hold, and the sender names it as a reference: stand on it
+								// too, or this device goes on collecting it inline and both shapes
+								// stand for good. Once, and then `skipUnion` spares the read.
+								adoptDiamondRef(r, diamondStamp(mine), from);
 							}
 						}
 						udata = null;
@@ -9332,37 +9701,10 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 				trail('sync diamond CONFLICT', r.id + ' both sides moved — local edit kept as a version'
 					+ (plan.both ? '; both renamed, "' + wf.name + '" stands over "' + lf.name + '"' : ''));
 			}
-			// RECORD THE SENDER'S MANIFEST, so this device names the SAME chunks the
-			// sender does instead of re-offloading the identical Diamond to fresh
-			// addresses on its next collect. Two things follow: no second upload of a
-			// Diamond that already travelled, and — because both devices then name
-			// one address set — no commit here sweeps the copy the sender is holding
-			// alive. The stored `touched` matches what the import just laid down, so
-			// the collector's reuse-check reuses this reference rather than exporting
-			// again. Not in the spec, which left the receiver to re-offload; that
-			// re-offload diverged the two devices' addresses and let each sweep the
-			// other's, which is the outage this whole change exists to avoid.
-			if (r.dataRef && window.DaimondCloud && DaimondCloud.contentSet) {
-				try {
-					var adopted = DaimondCloud.contentSet('@d/' + r.id, {
-						v:       r.dataRef.v,
-						size:    r.dataRef.size,
-						key:     r.dataRef.key,
-						chunks:  r.dataRef.chunks,
-						touched: storedAt,
-					});
-					// Our own manifest now names the sender's addresses exactly, so the
-					// peer slot beside it is a second record of one address set. Dropped,
-					// rather than left to prune itself on the next pull -- BUT ONLY IF the
-					// index write landed. A `contentSet` lost to quota did not record our
-					// manifest, so the peer slot is the only thing still declaring the
-					// sender's addresses live; dropping it would have the next commit sweep
-					// the Diamond the sender is holding alive.
-					if (adopted && DaimondCloud.contentForget && DaimondCloud.peerKeyFor) {
-						DaimondCloud.contentForget(DaimondCloud.peerKeyFor('@d/' + r.id, from));
-					}
-				} catch (e) { /* the collector will re-offload; only efficiency is lost */ }
-			}
+			// RECORD THE SENDER'S MANIFEST (`adoptDiamondRef`), at the stamp the import
+			// just laid down, so the collector's reuse check reuses this reference
+			// rather than exporting again.
+			adoptDiamondRef(r, storedAt, from);
 			// Best effort: the model may be one this device has no key for, and
 			// the Diamond then shows as unable to run, which is already a state
 			// the rail draws.
@@ -9376,6 +9718,17 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		bumpDiamonds();                            // tell the other TABS
 		await onDiamondsChangedElsewhere();        // and this one: same reconciliation
 		signalLinksChanged();                      // links ride with their Diamond, so the graph moved
+	}
+
+	/// The order a parcel's inline budget is spent in: the freshest chat first, ties by
+	/// id, so two collects of one state pick the same set. `updatedAt` is a millisecond
+	/// stamp, past 2^31, so it is compared as a number: `| 0` kept its low 32 bits and
+	/// ranked by those (r53 QA F4), a fixed order but not the freshest first.
+	function freshestFirst(a, b) {
+		var fa = +(a && a.updatedAt) || 0, fb = +(b && b.updatedAt) || 0;
+		if (fb !== fa) return fb > fa ? 1 : -1;
+		var x = String(a && a.id), y = String(b && b.id);
+		return x < y ? -1 : (x > y ? 1 : 0);
 	}
 
 	/// Every stored chat, packed for the parcel, with a heavy transcript moved
@@ -9410,6 +9763,14 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		// once (~40 MB transient at 300 chats) despite the comment that claimed it did
 		// not. `offloadAllowed` gates the same way the Diamond plan does: a transcript
 		// uploaded by a device that cannot commit the index is a chunk nothing declares.
+		//
+		// THE STORE IS READ SETTLED, never past a write of our own (F-1). A save of a chat
+		// still queued behind a write in flight has taken its new seed in the mirror, but
+		// a read made now is ordered before it and serves the old transcript; its
+		// fingerprint equals the stored manifest's, so the old manifest would be named and
+		// `noteFps` would put that fingerprint beside the new seed, to be reused for good.
+		// Bounded, so a tab saving continuously cannot hold the push off.
+		try { await ChatStore.settled(); } catch (e) { /* the alarm is up; the read is what there is */ }
 		var sums = storedChats();
 		var canOffload = !!(window.DaimondChunks && DaimondChunks.offloadBytes
 			&& window.DaimondCloud && DaimondCloud.available && DaimondCloud.available()
@@ -9434,11 +9795,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		// cannot bind with nowhere to move a transcript to.
 		var inline = {};
 		if (canOffload) {
-			var order = sums.slice().sort(function (a, b) {
-				var fa = (a && a.updatedAt) | 0, fb = (b && b.updatedAt) | 0;
-				if (fb !== fa) return fb - fa;						// freshest first
-				return String(a && a.id) < String(b && b.id) ? -1 : 1;	// deterministic tie-break
-			});
+			var order = sums.slice().sort(freshestFirst);
 			var spent = 0;
 			for (var r = 0; r < order.length; r++) {
 				var s = order[r];
@@ -9454,6 +9811,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		var live = {}, out = [], fixes = [];
 		for (var j = 0; j < sums.length; j++) {
 			var sum = sums[j], id = sum.id;
+			var seed0 = sum.seed || '';		// the entry as this collect found it, for `noteFps`
 			live[id] = 1;
 			var ckey = '@c/' + id;
 			var stored = canOffload ? DaimondCloud.contentGet(ckey) : null;
@@ -9525,7 +9883,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			// Record the AUTHORITATIVE fingerprint and byte length -- of the exact serial
 			// just offloaded -- on the summary, so the next collect reuses this manifest
 			// with no load. Batched and flushed once below.
-			fixes.push({ id: id, bytes: serial.length, fp: fp });
+			fixes.push({ id: id, bytes: serial.length, fp: fp, seed: seed0 });
 			entry.messages = null;
 			entry.messagesRef = ref;
 			out.push(entry);
@@ -10091,8 +10449,8 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			// this the two devices held the same "you put $40 on this key" and
 			// subtracted different spend from it: each knew only its own turns, and
 			// so each showed a different figure for the same key on the same day.
-			// A ledger merges by union (see `mergeLedgers`), which is what lets both
-			// arrive at the one number.
+			// A ledger merges by the join law (see `mergeLedgers`), which is what
+			// lets both arrive at the one number.
 			//
 			// Passed through the merge with nothing, which sorts it and drops any
 			// duplicate: the parcel is compared byte-for-byte against the last one
@@ -15818,7 +16176,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		if (!text) return;
 		var msgs = conv.messages;
 		var last = msgs.length ? msgs[msgs.length - 1] : null;
-		if (last && last.role === 'think_log') { last.content = (last.content || '') + text; return; }
+		if (last && last.role === 'think_log') { last.content = (last.content || '') + text; touchMsg(last); return; }
 		msgs.push({ role: 'think_log', content: text, mid: newMid(), ts: Date.now() });
 	}
 
@@ -23926,6 +24284,9 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 				var had = Array.isArray(existing.triedDevices) ? existing.triedDevices : [];
 				if (id && had.indexOf(id) === -1) existing.triedDevices = had.concat([id]);
 			});
+			// A re-seat is an edit: stamped, so every device's union takes the new seat
+			// over the copy it holds (`msgJoin`), where first-wins kept the old one.
+			touchMsg(existing);
 		} else {
 			var rec = {
 				role:        'assistant',
@@ -23947,7 +24308,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			};
 			// The device the errand was elected to, tried from the first send (R4b).
 			if (Array.isArray(mark.tried) && mark.tried.length) rec.triedDevices = mark.tried.slice();
-			chat.messages.push(rec);
+			chat.messages.push(touchMsg(rec));
 		}
 		diag('handoff mark', (chat && chat.id) + ' turn=' + mark.iturn
 			+ ' to=' + (mark.toDevice ? mark.toDevice.slice(0, 8) : '?') + ' parks=' + (mark.parkCount | 0));
@@ -24070,6 +24431,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			diag('dispatch FAILED', 'turn=' + turnId + ' seal: ' + whyS);
 			if (placeholder) {
 				placeholder.refused = { status: 0, why: whyS, ts: Date.now() };
+				touchMsg(placeholder);
 				try { touchChat(chat); persistChats(); if (ownsChat(chat)) renderHistory(chat.messages); } catch (e2) { /* the record stands regardless */ }
 			}
 			return { ok: false, why: whyS };
@@ -24092,6 +24454,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			diag('dispatch FAILED', 'turn=' + turnId + ' unpostable: prompt over the relay door');
 			if (placeholder) {
 				placeholder.refused = { status: 0, why: whyBig, ts: Date.now() };
+				touchMsg(placeholder);
 				try { touchChat(chat); persistChats(); if (ownsChat(chat)) renderHistory(chat.messages); } catch (e) { /* the record stands */ }
 				try { recoverOneLocally(chat, placeholder); } catch (e) { /* backstop + recovery-on-return remain */ }
 			}
@@ -24142,6 +24505,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			diag('dispatch FAILED', 'turn=' + turnId + ' ' + whyR + ' status=' + (res && res.status | 0));
 			if (placeholder) {
 				placeholder.refused = { status: (res && res.status) | 0, why: whyR, ts: Date.now() };
+				touchMsg(placeholder);
 				try { touchChat(chat); persistChats(); if (ownsChat(chat)) renderHistory(chat.messages); } catch (e3) { /* the record stands regardless */ }
 				try { recoverOneLocally(chat, placeholder); } catch (e4) { /* backstop + recovery-on-return remain */ }
 			}
@@ -24259,15 +24623,24 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			// A chat this device has never seen. Built from what the seed says about it,
 			// so the turn can run NOW; the parcel's copy merges into it by id when it
 			// arrives, title and stamps included.
+			//
+			// A REPLICA, NOT A WRITE (r53 W-rec; SYNC_CONTRACT §5 rule 4): it keeps the
+			// stamps the seed carries, 0 where it carries none, so it outranks no record
+			// the dispatcher wrote. Stamped `Date.now()` it did: the runner's copy, which
+			// had no name and no worker, beat the phone's real choice on every device.
+			// The name is the record's `name` (a seed from before r53 sends `title`).
 			chat = {
 				id:       String(errand.chatId || ''),
-				title:    String(seed.title || ''),
+				name:     String(seed.name || seed.title || ''),
 				provider: String(seed.provider || ''),
 				model:    String(seed.model || ''),
+				workerModel:    String(seed.workerModel || ''),
+				workerProvider: String(seed.workerProvider || ''),
 				messages: [],
 				holds:    Array.isArray(errand.scope) ? errand.scope.slice() : [],
 				createdAt: Date.now(),
-				updatedAt: Date.now(),
+				updatedAt: 0,
+				metaAt:    0,
 			};
 			chat._loaded = true;					// its transcript is what we are about to write
 			chats.push(chat);
@@ -24292,8 +24665,9 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			if (add[j].role === 'user' && add[j].app === true) gm.app = true;
 			chat.messages.push(gm);
 		}
+		// A graft is a copy of messages the dispatcher wrote, so it moves no stamp: the
+		// count it adds is in the store's change stamp, so it is still written.
 		if (add.length) {
-			touchChat(chat);
 			persistChats();
 			diag('seed graft', 'chat=' + chat.id + ' +' + add.length + ' message(s) from the errand');
 		}
@@ -25830,7 +26204,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		for (var j = 0; j < c.messages.length; j++) {
 			var m = c.messages[j];
 			if (m.why === 'dispatched' && String(m.iturn) === tid) {
-				if ((m.parkCount | 0) !== (parkCount | 0)) { m.parkCount = parkCount | 0; moved = true; }
+				if ((m.parkCount | 0) !== (parkCount | 0)) { m.parkCount = parkCount | 0; touchMsg(m); moved = true; }
 			}
 		}
 		if (moved) { touchChat(c); persistChats(); if (ownsChat(c)) renderDispatchedBadges(); }
@@ -25977,8 +26351,10 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 				}
 			}
 			if (_ans && String(_ans.ranOn || '') === String(selfDeviceId())) {
+				var _was = (_ans.handoffFellBack || '') + '\u0000' + (_ans.handoffRefused || '');
 				if (_phTo && !_ans.handoffFellBack) _ans.handoffFellBack = _phTo;
 				if (_phRefused && !_ans.handoffRefused) _ans.handoffRefused = _phRefused;
+				if ((_ans.handoffFellBack || '') + '\u0000' + (_ans.handoffRefused || '') !== _was) touchMsg(_ans);
 			}
 			var kept = [];
 			for (var j = 0; j < c.messages.length; j++) {
@@ -26048,6 +26424,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 				if (String(m.toDevice) === holder) continue;			// already the claimant
 				m.toDevice = holder;
 				var nm = deviceLabelFor(holder); if (nm) m.toName = nm;
+				touchMsg(m);
 				changed = true;
 			}
 		}
@@ -26590,6 +26967,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			m.retryFrom = from;
 			m.retryTo   = String(label || '');
 			m.triedDevices = tried.concat([next]);
+			touchMsg(m);
 			try { touchChat(chat); persistChats(); } catch (e) { /* the in-memory record still guides the next retry */ }
 			diag('dispatch retry', 'turn=' + tid + ' next=' + String(next).slice(0, 8)
 				+ ' tried=' + tried.length + ' reason=' + res.reason);
@@ -27304,7 +27682,10 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			if (ownsChat(chat)) {
 				try { appendUserMessage(text, uts); } catch (e) { /* the record below is the truth */ }
 			}
-			pushUserRecord(chat, { role: 'user', content: text, mid: umid, iturn: umid, ts: uts }, true);
+			// STAMPED: the runner writes this message too (from the seed or the errand), and
+			// those copies carry no stamp, so the copy this device wrote -- with its `iturn`
+			// and its `ts` -- is the one every device keeps (`msgJoin`).
+			pushUserRecord(chat, touchMsg({ role: 'user', content: text, mid: umid, iturn: umid, ts: uts }), true);
 			touchChat(chat); persistChats();
 			// SHOW THE HAND-OFF THE INSTANT IT IS DECIDED, from the DURABLE record.
 			// `dispatchToPeer` now MARKS the turn dispatched FIRST -- before it seals or
@@ -27742,8 +28123,9 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		// The badge and the button come off, and the partial becomes an ordinary answer. Nothing
 		// is tombstoned: these messages are being KEPT, and a tombstone would delete them from
 		// every other device at the next sync.
+		//
 		mine.forEach(function (m) {
-			if (m.role === 'assistant' && m.interrupted) { delete m.interrupted; delete m.why; }
+			if (m.role === 'assistant' && m.interrupted) clearBadge(m);
 		});
 		// AND THE DEAD TURN LEAVES THE WRITE-AHEAD LOG. The offline branch in `runTurn`
 		// leaves it OPEN there on purpose, so a reload recovers it as interrupted -- but
@@ -28024,7 +28406,9 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			for (var j = 0; j < chat.messages.length; j++) {
 				if (chat.messages[j].role === 'user' && chat.messages[j].mid === iturn) { um = chat.messages[j]; break; }
 			}
-			if (um) um.iturn = iturn;
+			// Tagging is an edit in place, so a stamped one (`touchMsg`); a prompt already under the
+			// turn id is left as it stands.
+			if (um) { if (um.iturn !== iturn) { um.iturn = iturn; touchMsg(um); } }
 			else recoverUserRecord(chat, iturn, t);
 
 			// The tools that ran, in order; one still open when the tab died is shown as such.
@@ -35507,6 +35891,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 						var mprod = mailProd(ev.content || '', aprod);
 						if (mprod) pendingTool.prod = [mprod];
 					}
+					touchMsg(pendingTool);
 					pendingTool = null;
 				}
 				// THE ENGINE'S WORD, not a boolean made from it. `toolDone` took
@@ -35938,7 +36323,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 						if (pm.role === 'user' && pm.mid === umid) { pFrom = pi; break; }
 					}
 					for (var pj = Math.max(pFrom, 0); pFrom >= 0 && pj < chat.messages.length; pj++) {
-						chat.messages[pj].iturn = umid;
+						if (chat.messages[pj].iturn !== umid) { chat.messages[pj].iturn = umid; touchMsg(chat.messages[pj]); }
 					}
 					chat.messages.push({ role: 'assistant', content: turnText, mid: amid,
 						interrupted: true, why: 'paused', iturn: umid, itext: text,
@@ -36082,7 +36467,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 					// turn has not done.
 					for (var mi = chat.messages.length - 1; mi >= 0; mi--) {
 						var mm = chat.messages[mi];
-						mm.iturn = umid;
+						if (mm.iturn !== umid) { mm.iturn = umid; touchMsg(mm); }
 						if (mm.role === 'user' && mm.mid === umid) break;
 					}
 					chat.messages.push({
@@ -56174,6 +56559,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 						var dmprod = mailProd(ev.content || '', daimonProd());
 						if (dmprod) last.prod = [dmprod];
 					}
+					touchMsg(last);
 				}
 				busySay(rec, tOr('chat.busy_next', 'Step {n} done, thinking…', { n: step }));
 				if (onScreen()) renderToolResult(ev.name || '', ev.content || '', ev.outcome, ev.paused || '');
@@ -59124,42 +59510,18 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 	/// One spend entry's identity: the turn it records, and nothing about what it
 	/// was later decided to have cost.
 	///
-	/// Merge two spend ledgers by union, pruning entries older than the
-	/// retention window in the same pass -- delegated to `DaimondLedger.merge`
-	/// (`ledger.js`) so every path an incoming ledger arrives by (this collect,
-	/// the apply below, and the backup restore further down) prunes the same
-	/// way instead of only the device that happens to call `record`. A build
-	/// without the module (should not happen; `ledger.js` loads before this
-	/// file) falls back to an un-pruned union rather than throwing, so a
-	/// missing script degrades the retention guarantee, not the merge itself.
+	/// Merge two spend ledgers by the join law (`ledger.js`: a turn both hold is
+	/// one entry, each field joined by its own rule), pruning entries older than
+	/// the retention window in the same pass -- delegated to `DaimondLedger.merge`
+	/// so every path an incoming ledger arrives by (this collect, the apply below,
+	/// and the backup restore further down) joins and prunes the same way, and the
+	/// law has one definition. `ledger.js` loads before this file.
 	///
 	/// # Arguments
-	/// * `mine` - This device's ledger, which wins any tie.
+	/// * `mine` - This device's ledger. It has no precedence over `theirs`.
 	/// * `theirs` - The incoming ledger, from a backup file or another device.
 	function mergeLedgers(mine, theirs) {
-		if (window.DaimondLedger && typeof DaimondLedger.merge === 'function') {
-			return DaimondLedger.merge(mine, theirs, Date.now());
-		}
-		// Fallback union, no prune -- only reached if ledger.js failed to load.
-		var out = [], seen = {};
-		function key(e) { return [e.t, e.m || '', e.p || 0, e.c || 0, e.ca || 0, e.pv || ''].join('|'); }
-		function take(list) {
-			(Array.isArray(list) ? list : []).forEach(function (e) {
-				if (!e || typeof e.t !== 'number') return;
-				var k = key(e);
-				if (seen[k]) return;
-				seen[k] = 1;
-				out.push(e);
-			});
-		}
-		take(mine);
-		take(theirs);
-		out.sort(function (a, b) {
-			if (a.t !== b.t) return a.t - b.t;
-			var ka = key(a), kb = key(b);
-			return ka < kb ? -1 : ka > kb ? 1 : 0;
-		});
-		return out;
+		return DaimondLedger.merge(mine, theirs, Date.now());
 	}
 
 	/// Export everything portable as one JSON file. OPFS can be evicted by the

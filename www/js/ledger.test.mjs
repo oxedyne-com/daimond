@@ -130,15 +130,16 @@ function main() {
 			out.map((e) => e.t).join(','));
 	}
 
-	console.log('\nledger: unit -- a shared turn keeps the LOCAL (mine) copy');
+	console.log('\nledger: unit -- a shared turn is ONE entry, the repriced copy over the stale one (the join law, ledgerlaw.test)');
 	{
 		const { L } = load();
 		const now = 100 + DAY;
-		const mine = [entry(100, 'x', 5)];		// this device's re-priced figure
-		const theirs = [entry(100, 'x', 999)];	// the incoming, stale figure
-		const out = L.merge(mine, theirs, now);
-		check('one entry, not two', out.length === 1, 'len=' + out.length);
-		check('mine wins the tie', out[0].u === 5, 'u=' + out[0].u);
+		const repriced = Object.assign(entry(100, 'x', 5), { u0: 999, rp: 1 });	// the figure after the table's correction
+		const stale = entry(100, 'x', 999);										// the incoming, stale figure
+		const fwd = L.merge([repriced], [stale], now), rev = L.merge([stale], [repriced], now);
+		check('one entry, not two', fwd.length === 1, 'len=' + fwd.length);
+		check('the repriced copy stands, whichever side held it', fwd[0].u === 5 && rev[0].u === 5, 'u=' + fwd[0].u + ',' + rev[0].u);
+		check('and both orders are one set of bytes', JSON.stringify(fwd) === JSON.stringify(rev));
 	}
 
 	console.log('\nledger: unit -- output order does not depend on input order');

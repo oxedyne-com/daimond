@@ -480,52 +480,63 @@ const C = P._core;
 		near(L.perProvider(0).filter(r => r.provider === 'openrouter')[0].usd, 5.90));
 }
 
-// ── 8. Old entries still read — and their guesses are REPRICED ─────
+// ── 8. Old entries still read — and a pre-correction guess is REPRICED, in the view ──
 {
-	// A store written before `pv` and `r` existed, priced by the old table
-	// whose guesses ran ~6x high. Every reader must tolerate the shape — and
-	// the first read must reprice the guesses under the corrected table
-	// (keeping the original in `u0`), because the stale figures were still
-	// inflating every total the user saw.
+	// A store written before `pv` and `r` existed. Its entries priced since the
+	// table was corrected (2026-07-31) are not guesses from the old table: they
+	// read as stored. The entries priced before it, by the table whose guesses ran
+	// ~6x high, are shown repriced under the corrected table (the original kept in
+	// `u0`) -- as a VIEW: a read never writes the store, so two devices that read at
+	// different times still hold the same bytes (the ledger law, ledgerlaw.test).
 	store._map.set('daimond-ledger', JSON.stringify([
 		{ t: Date.now() - 1000, m: 'glm-5.2', p: 100, c: 10, ca: 0, u: 0.5, e: false },
 		{ t: Date.now() - 500,  m: 'glm-5.2', p: 100, c: 10, ca: 0, u: 0.25, e: true },
 	]));
-	// A fresh module life: repricing runs once per life, on the first read —
-	// which is what boot does. The long-lived L above has already spent its
-	// pass on earlier sections' stores.
 	const win8 = { };
 	loadModule('js/pricing.js', { window: win8 });
 	loadModule('js/ledger.js',  { window: win8, localStorage: store });
 	const L = win8.DaimondLedger;
-	const fair = P.priceFor('glm-5.2', 100, 10, 0, '').usd;
 	const tot = L.totals();
-	check('an old store is repriced under the corrected table, not summed as guessed',
-		near(tot.session.usd, 2 * fair) && !near(tot.session.usd, 0.75),
-		'session=' + tot.session.usd + ' fair=' + fair);
+	check('an entry priced since the correction reads as stored, not repriced',
+		near(tot.session.usd, 0.75), 'session=' + tot.session.usd);
 	check('and reports nothing as reported', near(tot.session.reportedUsd, 0));
-	const stored = JSON.parse(store._map.get('daimond-ledger'));
-	check('the original guess survives in u0 with the rp mark',
-		near(stored[0].u0, 0.5) && stored[0].rp === 1 && near(stored[1].u0, 0.25),
-		JSON.stringify(stored[0]));
 	check('perModel still works on old entries', L.perModel('month')[0].model === 'glm-5.2');
 	check('perProvider groups old entries under the empty id',
 		L.perProvider(0)[0].provider === '');
 	check('samples still project old entries', L.samples().length === 2);
+
+	const before = [
+		{ t: Date.UTC(2026, 5, 20), m: 'glm-5.2', p: 100, c: 10, ca: 0, u: 0.5, e: false },
+		{ t: Date.UTC(2026, 5, 21), m: 'glm-5.2', p: 100, c: 10, ca: 0, u: 0.25, e: true },
+	];
+	store._map.set('daimond-ledger', JSON.stringify(before));
+	const win8b = { };
+	loadModule('js/pricing.js', { window: win8b });
+	loadModule('js/ledger.js',  { window: win8b, localStorage: store });
+	const L8 = win8b.DaimondLedger;
+	const fair = P.priceFor('glm-5.2', 100, 10, 0, '').usd;
+	const all = L8.perProvider(0)[0];
+	check('an entry priced before the correction is repriced under the corrected table, not summed as guessed',
+		near(all.usd, 2 * fair) && !near(all.usd, 0.75), 'all=' + all.usd + ' fair=' + fair);
+	const seen = L8.reprice(L8.entries());
+	check('the original guess survives in u0 with the rp mark, in the view',
+		near(seen[0].u0, 0.5) && seen[0].rp === 1 && near(seen[1].u0, 0.25), JSON.stringify(seen[0]));
+	check('and the read wrote nothing: the store still holds the guesses',
+		store._map.get('daimond-ledger') === JSON.stringify(before), store._map.get('daimond-ledger'));
 }
 
 // ── 8b. A reported entry is never repriced ─────────────────────────
 {
+	// Dated before the correction, so only its `r` stands between it and the migration.
 	store._map.set('daimond-ledger', JSON.stringify([
-		{ t: Date.now() - 1000, m: 'glm-5.2', p: 100, c: 10, ca: 0, u: 0.0021, r: 1 },
+		{ t: Date.UTC(2026, 5, 20), m: 'glm-5.2', p: 100, c: 10, ca: 0, u: 0.0021, r: 1 },
 	]));
-	// A fresh module life, so the once-per-life guard does not skip the read.
 	const win2 = { };
 	loadModule('js/pricing.js', { window: win2 });
 	loadModule('js/ledger.js',  { window: win2, localStorage: store });
-	const t2 = win2.DaimondLedger.totals();
+	const seen = win2.DaimondLedger.reprice(win2.DaimondLedger.entries());
 	check('a reported figure is money that moved — repricing never touches it',
-		near(t2.session.usd, 0.0021) && !JSON.parse(store._map.get('daimond-ledger'))[0].rp);
+		near(win2.DaimondLedger.perProvider(0)[0].usd, 0.0021) && !seen[0].rp && !JSON.parse(store._map.get('daimond-ledger'))[0].rp);
 }
 
 // ── 8c. A session that stopped is not "this session" ───────────────

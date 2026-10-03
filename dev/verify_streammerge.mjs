@@ -3,40 +3,22 @@
 //
 // The streaming hand-off relies on a peer's IN-PROGRESS transcript converging as
 // successive progress frames carry the same message id at a growing length. This
-// extracts the REAL mergeMessages + stampMessages source out of www/js/daimond.js
-// (by literal slice, so it is the shipped code, not a paraphrase) and drives the
-// properties the streaming path needs and the ones it must not break.
+// lifts the REAL mergeMessages out of www/js/daimond.js with everything it reaches
+// (dev/syncprobe.mjs `sliceDaimond`, so it is the shipped code, not a paraphrase) and
+// drives the properties the streaming path needs and the ones it must not break. Since
+// r53 the same-mid case is the message law (`msgJoin`), over the stamp rule
+// (www/js/stamp.js).
 //
 //   node dev/verify_streammerge.mjs
 
-import { readFileSync } from 'node:fs';
-import { fileURLToPath } from 'node:url';
-import { dirname, join } from 'node:path';
+import { makeWindow, sliceDaimond } from './syncprobe.mjs';
 
-const HERE = dirname(fileURLToPath(import.meta.url));
-const SRC = readFileSync(join(HERE, '..', 'www/js/daimond.js'), 'utf8');
-
-// Pull the two functions out by name, verbatim, so this tests the shipped bodies.
-function slice(name) {
-	const start = SRC.indexOf('\tfunction ' + name + '(');
-	if (start < 0) throw new Error('could not find ' + name);
-	// Walk braces from the first '{' after the signature to its match.
-	let i = SRC.indexOf('{', start);
-	let depth = 0, end = -1;
-	for (; i < SRC.length; i++) {
-		if (SRC[i] === '{') depth++;
-		else if (SRC[i] === '}') { depth--; if (depth === 0) { end = i + 1; break; } }
-	}
-	return SRC.slice(start, end);
-}
-
-const OLD_LEGACY = /^legacy-\d/;			// matches the guard daimond.js uses
 function loadMsgTombs() { return {}; }		// no tombstones in these cases
 
-// eslint-disable-next-line no-eval
-const factory = new Function('OLD_LEGACY', 'loadMsgTombs',
-	slice('stampMessages') + '\n' + slice('mergeMessages') + '\n return mergeMessages;');
-const mergeMessages = factory(OLD_LEGACY, loadMsgTombs);
+// The app's own `mergeMessages`, lifted with everything it reaches (the message law,
+// `slimMessages` and the keep figures it ranks a cut copy by), so this cannot drift
+// from the law the way a hand-listed set of functions did (r53 msg2).
+const { mergeMessages, slimMessages } = sliceDaimond(makeWindow({ now: 1_000_000_000 }), ['mergeMessages', 'slimMessages'], { loadMsgTombs }).fns;
 
 const ok = [], bad = [];
 const check = (name, pass, detail) => {
@@ -84,32 +66,41 @@ const countOf = (out, mid) => out.filter((x) => x.mid === mid).length;
 		(out.find((x) => x.mid === 'k1') || {}).outcome === 'done');
 }
 
-// 5. NON-prefix divergent content under one mid is NOT adopted (keeps first-wins),
-//    so a genuine edit or a re-generation never silently overwrites by this rule.
+// 5. NON-prefix divergent content under one mid. First-wins kept each device's own copy
+//    for good (soak R4); the law decides it the same way in both orders, and an edit made
+//    after seeing a copy (a stamp past it) is the one kept, however short.
 {
 	const a = [{ mid: 'x1', role: 'assistant', content: 'The answer is 42.', ts: 4 }];
 	const b = [{ mid: 'x1', role: 'assistant', content: 'A completely different reply.', ts: 4 }];
-	check('a divergent (non-prefix) same-mid copy does NOT overwrite (first wins)',
-		contentOf(mergeMessages(a, b, 'c1'), 'x1') === 'The answer is 42.');
+	check('a divergent (non-prefix) same-mid copy is decided the same in both orders',
+		contentOf(mergeMessages(a, b, 'c1'), 'x1') === contentOf(mergeMessages(b, a, 'c1'), 'x1'));
+	const edit = [{ mid: 'x1', role: 'assistant', content: 'Forty-two.', ts: 4, at: 5000 }];
+	check('a stamped edit is kept over the unstamped copy it replaced, in both orders',
+		contentOf(mergeMessages(b, edit, 'c1'), 'x1') === 'Forty-two.'
+		&& contentOf(mergeMessages(edit, b, 'c1'), 'x1') === 'Forty-two.');
 }
 
-// 6. A DIFFERENT role with a prefix-matching content is not adopted (role guard).
+// 6. A DIFFERENT role under one mid (no writer does this) is still one answer in both orders.
 {
 	const a = [{ mid: 'r1', role: 'think_log', content: 'abc', ts: 5 }];
 	const b = [{ mid: 'r1', role: 'assistant', content: 'abcdef', ts: 5 }];
-	check('a role change is not treated as growth',
-		contentOf(mergeMessages(a, b, 'c1'), 'r1') === 'abc');
+	check('a role change under one mid is decided the same in both orders',
+		JSON.stringify(mergeMessages(a, b, 'c1')) === JSON.stringify(mergeMessages(b, a, 'c1')));
 }
 
 // 7. The elision recovery still wins over the length rule: a slimmed (elided) copy
-//    yields to the full one regardless of the prefix test (which is guarded off).
+//    yields to the full one regardless of the prefix test (which is guarded off). The
+//    cut is the store's own (`slimMessages`): since r53 msg2 a cut copy ranks by the body
+//    it was cut from, so a made-up `elided` on a short body no longer stands for one.
 {
-	const full  = [{ mid: 'e1', role: 'tool_log', content: 'the whole big result', ts: 6 }];
-	const slim  = [{ mid: 'e1', role: 'tool_log', content: 'the whole big', elided: 7, ts: 6 }];
+	const BIG = 'the whole big result, ' + 'x'.repeat(3000);
+	const full  = [{ mid: 'e1', role: 'tool_log', content: BIG, ts: 6 }];
+	const slim  = slimMessages([{ mid: 'e1', role: 'tool_log', content: BIG, ts: 6 }]);
+	check('the store\'s cut is elided (the result is long)', !!slim[0].elided);
 	check('a full copy replaces an elided one (a first)',
-		contentOf(mergeMessages(slim, full, 'c1'), 'e1') === 'the whole big result');
+		contentOf(mergeMessages(slim, full, 'c1'), 'e1') === BIG);
 	check('a full copy replaces an elided one (b first)',
-		contentOf(mergeMessages(full, slim, 'c1'), 'e1') === 'the whole big result');
+		contentOf(mergeMessages(full, slim, 'c1'), 'e1') === BIG);
 }
 
 // 8. Ordinary distinct messages still union and sort by ts — the base behaviour.

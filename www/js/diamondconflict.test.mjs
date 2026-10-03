@@ -71,6 +71,9 @@ const liftedTags    = lift(SRC, '\tfunction packTags(data) {');
 const liftedLinks   = lift(SRC, '\tfunction packLinks(data) {');
 const liftedPackAt  = lift(SRC, '\tfunction packStamp(data) {');
 const liftedApply   = lift(SRC, '\tasync function applyDiamonds(remote, from) {');
+// The shape law's apply side (F3): no `DaimondCloud` here, so no manifest stands and none is adopted.
+const liftedShape   = ['\tfunction diamondRefStands(', '\tfunction diamondAdoptsRef(', '\tfunction diamondManifest(',
+	'\tfunction adoptDiamondRef('].map((m) => lift(SRC, m)).join('\n');
 // The two-sided rule, the lineage record it reads and the conflict's settling of what
 // lives outside the versioned files (lanes DIA, DIA2). An entry here carries no `anc`,
 // which is a 5.2.1 sender's shape, so these cases exercise the fork point's rule and
@@ -171,7 +174,7 @@ function build(harness) {
 	const src =
 		'var window = ctx.window;\n' +
 		liftedStamp + '\n' + liftedTags + '\n' + liftedLinks + '\n' + liftedPackAt + '\n' +
-		liftedDia + '\n' + 'var DIAMOND_ANC_MAX = 16, DIAMOND_SEEN_MAX = 8;\n' +
+		liftedDia + '\n' + liftedShape + '\n' + 'var DIAMOND_ANC_MAX = 16, DIAMOND_SEEN_MAX = 8;\n' +
 		// deps applyDiamonds reaches for, stubbed to the harness
 		'function diamondApp() { return ctx.app; }\n' +
 		'function trail() {}\n' +

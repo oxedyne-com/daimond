@@ -110,9 +110,9 @@ function load(store, pricing) {
 		// Finding 1, reverted: reprice() stops skipping `ol` entries, so an
 		// outcome-only turn gets priced and marked `estimated` like any other
 		// unreported one.
-		const needle = "if (!e || e.r || e.rp || e.ol) continue;\t// `ol`: outcome-only, nothing to price";
+		const needle = "if (!e || e.r || e.rp || e.ol || !(e.t < CORRECTED_MS)) continue;\t// `ol`: outcome-only, nothing to price";
 		if (!ledgerSrc.includes(needle)) throw new Error('break target not found (noolguard)');
-		ledgerSrc = ledgerSrc.replace(needle, "if (!e || e.r || e.rp) continue; // BROKEN: ol guard removed");
+		ledgerSrc = ledgerSrc.replace(needle, "if (!e || e.r || e.rp || !(e.t < CORRECTED_MS)) continue; // BROKEN: ol guard removed");
 	}
 	if (BREAK === 'noguard') {
 		// The outcome-only guard goes: an `ol` entry counts toward `turns`,
@@ -288,27 +288,29 @@ function main() {
 		// and `estimated: true`. If `reprice()` still reaches the `ol` entry,
 		// this is what it would do to it.
 		const pricing = { priceFor: () => ({ usd: 9.99, estimated: true }) };
-		const now = Date.now();
-		const { L, store } = load(undefined, pricing);
+		// Before 2026-07-31, the only entries `reprice()` looks at (the ledger law,
+		// ledgerlaw.test): an entry priced since the correction is never migrated.
+		const t0 = Date.UTC(2026, 6, 15);
+		const { L } = load(undefined, pricing);
 
 		// The outcome-only entry `recordTurnOutcome`'s fallback writes for a
 		// steer that failed before it billed a single token -- no `r`, no `rp`,
 		// so it is exactly the shape `reprice()`'s guard must skip.
-		const ol = L.record({ ts: now, model: 'm', provider: 'p', turnId: 'f1',
+		const ol = L.record({ ts: t0, model: 'm', provider: 'p', turnId: 'f1',
 			durationMs: 100, outcome: 'failed', outcomeOnly: true });
 		check('the outcome-only entry starts unpriced and unestimated', ol.u === 0 && !ol.e, JSON.stringify(ol));
 
 		// A genuinely provider-billed turn shares the window, so the ONLY thing
 		// that could paint the total "estimated" is the ol entry above.
-		L.record({ ts: now, model: 'm', promptTokens: 10, completionTokens: 5,
+		L.record({ ts: t0 + 1000, model: 'm', promptTokens: 10, completionTokens: 5,
 			costUsd: 0.02, provider: 'p', turnId: 'f2', durationMs: 4000, outcome: 'completed' });
 
-		const totals = L.totals();	// forces reprice() to run over both entries
-		const stored = JSON.parse(store.get('daimond-ledger')).find((e) => e.tid === 'f1');
-		check('reprice() leaves the outcome-only entry unpriced', stored.u === 0, JSON.stringify(stored));
-		check('reprice() does not mark the outcome-only entry `e` (estimated)', !stored.e, JSON.stringify(stored));
-		check("totals().month.estimated stays false -- an ol entry cannot paint '≈' over real, provider-billed spend",
-			totals.month.estimated === false, JSON.stringify(totals.month));
+		const seen = L.reprice(L.entries());	// what every reader sees
+		const f1 = seen.find((e) => e.tid === 'f1');
+		check('reprice() leaves the outcome-only entry unpriced', f1.u === 0, JSON.stringify(f1));
+		check('reprice() does not mark the outcome-only entry `e` (estimated)', !f1.e, JSON.stringify(f1));
+		check("no entry of the view is estimated -- an ol entry cannot paint '≈' over real, provider-billed spend",
+			!seen.some((e) => e.e), JSON.stringify(seen));
 	}
 
 	console.log('\nmodeldash: dashboardRows -- the dashboard computes median-turn-time and failure-rate from fixtures');

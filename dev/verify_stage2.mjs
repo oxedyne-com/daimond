@@ -21,6 +21,10 @@
 //      after the cross-tab nonce, reconstructed into the transcript.
 //   6  SYNC ROUNDTRIP. The @c/ content-chunk offload still works; a parcel collected
 //      and applied back loses no message.
+//   7-10 (later additions) the stale-chunk heal, a sync into a non-resident chat, the
+//      tomb sweep, and a pre-seq-211 full log in the row served as the chunks' cut.
+//   11 A Stage-1 tool log empty in the chunks and filled in the row reads back filled,
+//      and the chunks heal to it (r53 msg2: the row's copies join by the message law).
 import { open, shot, scratch, errors, signInAs, chat, newChat } from './harness.mjs';
 import fs from 'node:fs';
 
@@ -394,10 +398,22 @@ check(loneAfter.length === loneBefore.length - 2,
 
 // ── 10  PRE-seq-211 FULL LOG: first open serves the ELIDED chunk copy, row re-slimmed ──
 // A chat migrated with a full (un-elided) log in the legacy row and the seq-211 elided
-// copy in its chunks. The chunks are authoritative, so the reader serves the ELIDED
-// copy (pre-fix it served the un-elided one -- fuller-wins over the chunk copy), and the
-// fallback row is re-slimmed so the un-elided bulk stops riding storage.
+// copy in its chunks. The reader serves the ELIDED copy (pre-fix it served the un-elided
+// one -- fuller-wins over the chunk copy), and the fallback row is re-slimmed so the
+// un-elided bulk stops riding storage. Since r53 msg2 the row's copies join the chunks'
+// by the message law, which takes an uncut body over its own cut, and the read is the
+// STORED form of that join, so it is still the elided copy, byte for byte. The chunk
+// copy is therefore the cut `slimMessages` really makes of the row's body (head 2048,
+// tail 1024, `elided` what went): until r53 msg2 this case stored 'HEAD [elided] TAIL'
+// with `elided: 9999`, a cut of no body the row held, which the law reads back as a
+// 13071-character body and ranks below the row's 16010.
 const bigBody = 'HEAD ' + ('log '.repeat(4000)) + ' TAIL';
+const logCut = (b) => {                     // `elideHeadTail(b, 2048, 1024)` in www/js/daimond.js
+	const gone = b.length - 3072;
+	return { text: b.slice(0, 2048) + '\n\n[' + String(gone).replace(/\B(?=(\d{3})+(?!\d))/g, ',')
+		+ ' characters elided here from the saved copy to save space.]\n\n' + b.slice(b.length - 1024), gone };
+};
+const bigCut = logCut(bigBody);
 await page.evaluate(([full, elided]) => new Promise((res, rej) => {
 	const req = indexedDB.open('daimond-chats');
 	req.onsuccess = () => {
@@ -409,7 +425,7 @@ await page.evaluate(([full, elided]) => new Promise((res, rej) => {
 		];
 		const chunkMsgs = [
 			{ role: 'user', mid: 'ps0', ts: 1, content: 'ask' },
-			{ role: 'think_log', mid: 'ps1', ts: 2, content: elided, elided: 9999 }, // ELIDED in the chunks
+			{ role: 'think_log', mid: 'ps1', ts: 2, content: elided.text, elided: elided.gone }, // ELIDED in the chunks
 			{ role: 'assistant', mid: 'ps2', ts: 3, content: 'answer' },
 		];
 		t.objectStore('chats').put({ id: 'preslim', name: 'Preslim', model: 'mock/fast', provider: 'mock',
@@ -425,15 +441,68 @@ await page.evaluate(([full, elided]) => new Promise((res, rej) => {
 		t.oncomplete = () => res(); t.onerror = () => rej(t.error);
 	};
 	req.onerror = () => rej(req.error);
-}), [bigBody, 'HEAD [elided] TAIL']);
+}), [bigBody, bigCut]);
 const psLoad = await loadMsgs(page, 'preslim');
 const psLog = (psLoad.messages || []).find((m) => m.mid === 'ps1');
-check(psLog && psLog.elided && psLog.content.length < 100,
+check(psLog && psLog.elided === bigCut.gone && psLog.content === bigCut.text,
 	`preslim: first open serves the ELIDED chunk copy (len=${psLog && psLog.content.length}, elided=${psLog && psLog.elided})`);
 const psRow = (await allRows(page)).find((r) => r.id === 'preslim');
 const psRowLog = psRow && (psRow.messages || []).find((m) => m.mid === 'ps1');
-check(psRowLog && psRowLog.content.length < 100,
+check(psRowLog && psRowLog.elided === bigCut.gone && psRowLog.content === bigCut.text,
 	`preslim: the legacy fallback row was re-slimmed (row log len=${psRowLog && psRowLog.content.length})`);
+const psRec = await reconstruct(page, 'preslim');
+const psRecLog = (psRec || []).find((m) => m.mid === 'ps1');
+check(psRecLog && psRecLog.content === bigCut.text && psLog && JSON.stringify(psLoad.messages) === JSON.stringify(psRec),
+	'preslim: a second read serves what the first did (the chunks hold the cut, and nothing was rewritten uncut)');
+
+// ── 11  A STAGE-1 TOOL LOG SAVED EMPTY IN THE CHUNKS, FILLED IN THE ROW ───────────
+// Stage 1 (seq 213) built a chat's chunks at boot and then wrote only the row, so a tool
+// log saved empty before a boot and filled after it is empty in the chunks and filled
+// (cut) in the row. Until r53 msg2 the row only filled a GAP and the chunks' copy of a mid
+// they held always won, so the read served the empty result and healed the ROW to it:
+// the result lost from both. Under the message law the filled copy stands (it stands for
+// the longer body; r53 QA F1's chunk-history case, on the Stage-1 path), and the chunks
+// are healed to it.
+const toolBody = 'RESULT ' + ('row '.repeat(1500)) + ' END';
+const toolCut = {
+	text: toolBody.slice(0, 2048) + '\n\n[' + String(toolBody.length - 2048).replace(/\B(?=(\d{3})+(?!\d))/g, ',')
+		+ ' more characters of this result were not saved. The model was given the whole thing.]',
+	gone: toolBody.length - 2048,
+};
+await page.evaluate(([cut]) => new Promise((res, rej) => {
+	const req = indexedDB.open('daimond-chats');
+	req.onsuccess = () => {
+		const db = req.result, t = db.transaction(['chats', 'msgchunks', 'chatsum'], 'readwrite');
+		const ask = { role: 'user', mid: 'tf0', ts: 1, content: 'run it' };
+		const end = { role: 'assistant', mid: 'tf2', ts: 3, content: 'done' };
+		t.objectStore('chats').put({ id: 'toolfill1', name: 'Tool fill', model: 'mock/fast', provider: 'mock',
+			status: 'active', promptTokens: 0, completionTokens: 0, cachedTokens: 0, costUsd: 0, prevPrompt: 0,
+			prevCompletion: 0, prevCached: 0, prevCost: 0, lastPrompt: 0, diamondId: '', workerModel: '',
+			workerProvider: '', holds: [], foldedInto: null, session: null, updatedAt: 5000,
+			messages: [ask, { role: 'tool_log', mid: 'tf1', ts: 2, content: cut.text, elided: cut.gone }, end] });
+		t.objectStore('msgchunks').put({ k: 'toolfill1#0', chatId: 'toolfill1', seq: 0,
+			msgs: [ask, { role: 'tool_log', mid: 'tf1', ts: 2, content: '' }] });
+		t.objectStore('chatsum').put({ id: 'toolfill1', v: 2, name: 'Tool fill', model: 'mock/fast', provider: 'mock',
+			diamondId: '', workerModel: '', workerProvider: '', status: 'active', promptTokens: 0, completionTokens: 0,
+			cachedTokens: 0, costUsd: 0, prevPrompt: 0, prevCompletion: 0, prevCached: 0, prevCost: 0, lastPrompt: 0,
+			holds: [], updatedAt: 5000, foldedInto: null, msgCount: 3, chunks: 1, hasSession: false, sessionMsgs: 0,
+			iturns: [], fp: 'x:0' });
+		t.oncomplete = () => res(); t.onerror = () => rej(t.error);
+	};
+	req.onerror = () => rej(req.error);
+}), [toolCut]);
+const tfLoad = await loadMsgs(page, 'toolfill1');
+const tfLog = (tfLoad.messages || []).find((m) => m.mid === 'tf1');
+check(tfLog && tfLog.elided === toolCut.gone && tfLog.content === toolCut.text,
+	`toolfill: a tool log empty in the chunks and filled in the row reads back filled (len=${tfLog && String(tfLog.content).length})`);
+const tfRec = await reconstruct(page, 'toolfill1');
+const tfRecLog = (tfRec || []).find((m) => m.mid === 'tf1');
+check(tfRecLog && tfRecLog.content === toolCut.text && (tfRec || []).length === 3,
+	`toolfill: the chunks were healed to the filled copy (${(tfRec || []).map((m) => m.mid + ':' + String(m.content).length).join(',')})`);
+const tfRow = (await allRows(page)).find((r) => r.id === 'toolfill1');
+const tfRowLog = tfRow && (tfRow.messages || []).find((m) => m.mid === 'tf1');
+check(tfRowLog && tfRowLog.content === toolCut.text,
+	`toolfill: the row still holds the filled copy (row log len=${tfRowLog && String(tfRowLog.content).length})`);
 
 await shot(s, 'stage2');
 console.log('\n--- PASS ---'); ok.forEach((m) => console.log('  ok  ', m));

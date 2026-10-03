@@ -44,6 +44,10 @@
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
+import { makeWindow, sliceDaimond } from '../../dev/syncprobe.mjs';
+
+// The order the inline budget is spent in, lifted from the tree under test.
+const { freshestFirst } = sliceDaimond(makeWindow({ now: 1_000_000_000 }), ['freshestFirst'], {}).fns;
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const DAIMOND_SRC = join(HERE, 'daimond.js');
@@ -138,7 +142,7 @@ function sourceGuards() {
 		check('a ref whose summary fp matches the manifest is reused WITHOUT a load',
 			body.includes('stored.fp === sum.fp'), 'reuse-without-load path absent');
 		check('the authoritative fp/bytes are written back for next time',
-			body.includes('fixes.push({ id: id, bytes: serial.length, fp: fp })')
+			body.includes('fixes.push({ id: id, bytes: serial.length, fp: fp, seed: seed0 })')
 			&& body.includes('ChatStore.noteFps'), 'noteFps writeback absent');
 	}
 
@@ -250,11 +254,7 @@ async function collect(w, budget) {
 	const canOffload = true;
 	const inline = {};
 	{
-		const order = sums.slice().sort((a, b) => {
-			const fa = a.updatedAt | 0, fb = b.updatedAt | 0;
-			if (fb !== fa) return fb - fa;
-			return String(a.id) < String(b.id) ? -1 : 1;
-		});
+		const order = sums.slice().sort(freshestFirst);		// the app's own order (r53 QA F4)
 		let spent = 0;
 		for (const s of order) {
 			const b = typeof s.bytes === 'number' ? s.bytes : Infinity;
@@ -364,8 +364,23 @@ async function behavioural() {
 	}
 }
 
+/// r53 QA F4: `updatedAt` is a millisecond stamp, past 2^31. Ranked by `| 0` it was
+/// ranked by its low 32 bits, so a chat touched a month later could rank as the older.
+function freshestAcrossTheWrap() {
+	console.log('\ncollectheap: the freshest chat is ranked first by its whole millisecond stamp (r53 QA F4)');
+	const older = 1758790000000;
+	let newer = older + 1;
+	while ((newer | 0) >= (older | 0)) newer += 86400000;	// a day at a time, till the low bits wrap
+	const order = [{ id: 'a-older', updatedAt: older }, { id: 'b-newer', updatedAt: newer }].sort(freshestFirst);
+	check('the chat stamped ' + Math.round((newer - older) / 86400000) + ' days later ranks first',
+		order[0].id === 'b-newer', order.map((c) => c.id).join(','));
+	const tie = [{ id: 'b', updatedAt: older }, { id: 'a', updatedAt: older }].sort(freshestFirst);
+	check('a tie goes by id, the same on every device', tie[0].id === 'a' && freshestFirst(tie[0], tie[0]) === 0);
+}
+
 async function main() {
 	sourceGuards();
+	freshestAcrossTheWrap();
 	await behavioural();
 	console.log('\n' + (failures ? 'FAILED ' + failures + '/' + checks : 'PASS ' + checks + ' checks'));
 	process.exit(failures ? 1 : 0);

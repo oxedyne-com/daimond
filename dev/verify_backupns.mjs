@@ -119,7 +119,8 @@ check('and cannot see the primary\'s file', (await read('primary-secret.md')) ==
 
 // Two turns of spend, both provider-reported so nothing is re-priced under us.
 const L1 = { t: 1750000000000, m: 'mock/fast', p: 100, c: 20, ca: 0, u: 0.010, pv: 'custom', r: 1 };
-const L2 = { t: 1750000001000, m: 'mock/fast', p: 200, c: 30, ca: 0, u: 0.020, pv: 'custom', r: 1 };
+// L2 is a guess (no `r`), the only kind the correction pass re-prices; a billed turn never is.
+const L2 = { t: 1750000001000, m: 'mock/fast', p: 200, c: 30, ca: 0, u: 0.020, pv: 'custom' };
 await setLedger([L1, L2]);
 
 // ── 1. What the export carries ───────────────────────────────────────────
@@ -146,7 +147,7 @@ check('the export carries the ledger it was taken with',
 
 // Spend since the backup was taken: L2 re-priced by the correction pass (same
 // turn, a different figure), and L3, which the backup has never heard of.
-const L2r = { t: L2.t, m: L2.m, p: L2.p, c: L2.c, ca: L2.ca, u: 0.005, pv: L2.pv, r: 1, rp: 1, u0: 0.020 };
+const L2r = { t: L2.t, m: L2.m, p: L2.p, c: L2.c, ca: L2.ca, u: 0.005, pv: L2.pv, rp: 1, u0: 0.020 };
 const L3  = { t: 1750000002000, m: 'mock/fast', p: 300, c: 40, ca: 0, u: 0.030, pv: 'custom', r: 1 };
 await setLedger([L2r, L3]);
 
@@ -174,7 +175,7 @@ check('and the spend since the backup was taken is still there',
 	at(L3.t).length === 1, `${at(L3.t).length} entries at L3`);
 check('a turn both ledgers hold is held once, not twice',
 	at(L2.t).length === 1, `${at(L2.t).length} entries at L2`);
-check('and the local record of it wins, so a re-priced turn is not un-re-priced',
+check('and the re-priced copy stands, so a re-priced turn is not un-re-priced (the join law: a repriced copy over a guess)',
 	at(L2.t).length === 1 && at(L2.t)[0].u === 0.005, JSON.stringify(at(L2.t)[0] || null));
 check('nothing else was invented', merged.length === 3, `${merged.length} entries`);
 
@@ -258,7 +259,7 @@ check('and pulling it again adds nothing', pulled.again === 4, String(pulled.aga
 
 const kept = await p.evaluate((L2t) => {
 	// The other device's copy of a turn THIS one has already re-priced.
-	const stale = { t: L2t, m: 'mock/fast', p: 200, c: 30, ca: 0, u: 0.020, pv: 'custom', r: 1 };
+	const stale = { t: L2t, m: 'mock/fast', p: 200, c: 30, ca: 0, u: 0.020, pv: 'custom' };	// the old guess, as L2 above
 	return window.DaimondCore.applySync({ v: 2, chats: [], ledger: [stale] }).then(() => {
 		const rows = JSON.parse(localStorage.getItem('daimond-ledger') || '[]').filter(e => e.t === L2t);
 		return { n: rows.length, u: rows.length ? rows[0].u : null };

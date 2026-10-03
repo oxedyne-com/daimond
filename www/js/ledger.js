@@ -38,42 +38,51 @@
 		return Array.isArray(arr) ? arr : [];
 	}
 
-	/// The owed ledger merged over the stored one, the owed side winning a clash: it
-	/// is this tab's later word on a turn both hold (a patched outcome, a reprice).
+	/// The owed ledger merged with the stored one by the join law below, which does
+	/// not care which side is which: what this tab owes (a patched outcome) is a
+	/// field the stored copy lacks, and the join keeps it.
 	function law(stored, owed) { return merge(owed, stored, Date.now()); }
 
-	// ── One-time repricing of historical guesses ───────────────
+	// ── Repricing of historical guesses ────────────────────────
 	// Entries priced before 2026-07-31 were guessed from a rate table that ran
 	// about six times high (direct-provider list prices, cached tokens billed
 	// at the full input rate). The table is fixed, but the old guesses sat in
 	// the log and kept inflating every total -- the user rightly did not trust
-	// them. So an entry the provider did NOT bill (`r` absent) is re-priced
-	// once under the corrected table, keeping the original figure in `u0` so
-	// nothing is silently rewritten without a trace. A reported entry is money
-	// that actually moved and is never touched.
-	var repricedThisLife = false;	// one pass per page life is enough
+	// them. So an entry the provider did NOT bill (`r` absent) and that was
+	// priced before the correction is shown re-priced under the corrected
+	// table, keeping the original figure in `u0` so nothing is silently
+	// rewritten without a trace. A reported entry is money that actually moved
+	// and is never touched, and an entry priced since the correction was priced
+	// by the corrected table and has nothing to migrate.
+	//
+	// A VIEW, never a write. Saving the mark from a read made the synced entry
+	// differ between two devices by when each first looked (soak R1, R2): the
+	// store keeps what was recorded, every reader sees the same figure, and an
+	// entry an older build already marked arrives marked and joins over the
+	// unmarked copy (`join`).
+	var CORRECTED_MS = Date.UTC(2026, 6, 31);	// the day the rate table was corrected
 	function reprice(entries) {
-		if (repricedThisLife) return entries;
 		if (!window.DaimondPricing || typeof window.DaimondPricing.priceFor !== 'function') {
 			return entries;	// pricing not loaded yet -- try again on the next read.
 		}
-		repricedThisLife = true;
-		var changed = false;
+		var out = null;		// copied on the first change only
 		for (var i = 0; i < entries.length; i++) {
 			var e = entries[i];
-			if (!e || e.r || e.rp || e.ol) continue;	// `ol`: outcome-only, nothing to price
+			if (!e || e.r || e.rp || e.ol || !(e.t < CORRECTED_MS)) continue;	// `ol`: outcome-only, nothing to price
 			var res;
 			try { res = window.DaimondPricing.priceFor(e.m || '', e.p || 0, e.c || 0, e.ca || 0, e.pv || ''); }
 			catch (err) { continue; }
 			if (!res || typeof res.usd !== 'number') continue;
-			e.u0 = e.u;	// the figure as originally guessed.
-			e.u  = res.usd;
-			e.e  = !!res.estimated;
-			e.rp = 1;	// repriced -- never again.
-			changed = true;
+			if (!out) out = entries.slice();
+			var v = {};
+			for (var k in e) v[k] = e[k];
+			v.u0 = e.u;	// the figure as originally guessed.
+			v.u  = res.usd;
+			v.e  = !!res.estimated;
+			v.rp = 1;	// repriced -- never again.
+			out[i] = v;
 		}
-		if (changed) save(entries);
-		return entries;
+		return out || entries;
 	}
 
 	// Persist the log. A write the box refuses never breaks the turn that made
@@ -103,16 +112,85 @@
 	// The moment, the model, the token counts and whose key paid -- two
 	// ledgers naming the same millisecond, model, tokens and provider are
 	// naming one turn. Deliberately NOT the price: an entry the provider
-	// never billed is re-priced in place when the rate table is corrected
-	// (`u` changes, `u0` keeps the old guess), so a key that included the
-	// price would see the same turn twice and double the user's spend on
-	// the strength of our own arithmetic.
+	// never billed is re-priced when the rate table is corrected (`u`
+	// changes, `u0` keeps the old guess), so a key that included the price
+	// would see the same turn twice and double the user's spend on the
+	// strength of our own arithmetic.
 	function ledgerKey(e) {
 		return [e.t, e.m || '', e.p || 0, e.c || 0, e.ca || 0, e.pv || ''].join('|');
 	}
 
-	/// Merge two spend ledgers by UNION, keeping `mine` where both hold a
-	/// turn, then PRUNE the result -- so pruning holds across every path an
+	// ── The join law ────────────────────────────────────────────
+	// Two copies of one turn (one `ledgerKey`) join FIELD BY FIELD, each field by
+	// its own declared rule, so the join is commutative, associative and
+	// idempotent and every device that meets the same copies holds the same
+	// bytes -- whichever it met first, whichever the caller named `mine`.
+	//
+	//   The price -- `u`, `e`, `r`, `rp`, `u0` -- is one claim about what the
+	//   turn cost, so it travels whole, from the copy that stands highest: a
+	//   billed copy (`r`: money that moved) over a repriced one (`rp`) over a
+	//   guess; then the greater `u`, so a join never understates spend; then
+	//   the canonical form.
+	//
+	//   Every other field -- the key's own, `tid`, `dur`, `out`, `ol`, and any
+	//   a later build adds -- is present over absent, and on a clash the
+	//   greater value: numbers by value, anything else by its JSON text in
+	//   code points, so no locale decides it.
+	//
+	// The result is the entry in ONE key order (`FIELD_ORDER`, then any other
+	// field by name), so key order is never content.
+	var PRICE_FIELDS = ['u', 'e', 'r', 'rp', 'u0'];
+	var FIELD_ORDER  = ['t', 'm', 'p', 'c', 'ca', 'u', 'e', 'pv', 'r', 'tid', 'dur', 'out', 'ol', 'u0', 'rp'];
+
+	function canon(v) { return JSON.stringify(v === undefined ? null : v); }
+
+	// The greater of two field values, `undefined` standing for absent.
+	function greater(x, y) {
+		if (x === undefined) return y;
+		if (y === undefined) return x;
+		var nx = typeof x === 'number' && isFinite(x), ny = typeof y === 'number' && isFinite(y);
+		if (nx && ny) return y > x ? y : x;
+		if (nx !== ny) return nx ? y : x;	// a number is below anything else
+		return canon(y) > canon(x) ? y : x;
+	}
+
+	function standing(e) { return e.r ? 2 : e.rp ? 1 : 0; }
+
+	// The price group of the copy that stands higher.
+	function higherPrice(a, b) {
+		var sa = standing(a), sb = standing(b);
+		if (sa !== sb) return sa > sb ? a : b;
+		var ua = typeof a.u === 'number' ? a.u : 0, ub = typeof b.u === 'number' ? b.u : 0;
+		if (ua !== ub) return ua > ub ? a : b;
+		var ca = PRICE_FIELDS.map(function (k) { return canon(a[k]); }).join('|');
+		var cb = PRICE_FIELDS.map(function (k) { return canon(b[k]); }).join('|');
+		return cb > ca ? b : a;
+	}
+
+	/// One copy of an entry, in the one key order, with the price from `src` and
+	/// every other field the greater of `a` and `b`.
+	function build(a, b, src) {
+		var seen = {}, names = [];
+		function add(e) {
+			for (var k in e) if (!seen[k] && e[k] !== undefined) { seen[k] = 1; names.push(k); }
+		}
+		add(a); add(b);
+		var rest = names.filter(function (k) { return FIELD_ORDER.indexOf(k) < 0 && PRICE_FIELDS.indexOf(k) < 0; }).sort();
+		var order = FIELD_ORDER.filter(function (k) { return seen[k]; }).concat(rest);
+		var out = {};
+		for (var i = 0; i < order.length; i++) {
+			var k = order[i];
+			var v = PRICE_FIELDS.indexOf(k) >= 0 ? src[k] : greater(a[k], b[k]);
+			if (v !== undefined) out[k] = v;
+		}
+		return out;
+	}
+
+	/// The join of two copies of one turn: see the law above.
+	function join(a, b) { return build(a, b, higherPrice(a, b)); }
+
+	/// Merge two spend ledgers by UNION, joining the copies of a turn both hold
+	/// (`join`), then PRUNE the result -- so pruning holds across every path an
 	/// incoming ledger can arrive by (a sync collect, a sync apply, a backup
 	/// restore), not only the device that happens to call `record`. Without
 	/// this a dispatch-only device that never records hands every entry the
@@ -120,9 +198,10 @@
 	/// re-adds them on its next push -- the ledger never shrinks.
 	///
 	/// A ledger is an append-only record of money that actually moved, and
-	/// two ledgers of one account differ only by turns the other has not
-	/// seen -- never by disagreeing about a turn they both hold. So union is
-	/// the only merge that cannot lose spend before the prune runs.
+	/// two ledgers of one account differ by turns the other has not seen, and
+	/// by what one copy knows of a turn the other copy has not yet learnt (its
+	/// duration, its outcome, a billed figure over a guess). The join keeps
+	/// the most each copy knows, so no spend is lost before the prune runs.
 	///
 	/// The cutoff is `min(now, newest.t + 1 day) - retentionMs()`, anchored
 	/// to the NEWEST entry the union holds rather than to `now` alone: a
@@ -136,21 +215,23 @@
 	/// Sorted by time, so the result is a function of its inputs and not of
 	/// the order they were read in -- the sync parcel is compared
 	/// byte-for-byte to decide whether there is anything to push, and a
-	/// merge that reordered itself would push for ever.
+	/// merge that reordered itself would push for ever. Every entry leaves in
+	/// one key order for the same reason.
 	///
 	/// # Arguments
-	/// * `mine` - This device's ledger, which wins any tie.
-	/// * `theirs` - The incoming ledger, from a backup file or another device.
+	/// * `mine` - One ledger, this device's. It has no precedence: the join is
+	///   symmetric, and the name is the caller's.
+	/// * `theirs` - The other, from a backup file or another device.
 	/// * `now` - The caller's clock, epoch-ms.
 	function merge(mine, theirs, now) {
-		var out = [], seen = {};
+		var by = {}, out = [];
 		function take(list) {
 			(Array.isArray(list) ? list : []).forEach(function (e) {
 				if (!e || typeof e.t !== 'number') return;
-				var k = ledgerKey(e);
-				if (seen[k]) return;
-				seen[k] = 1;
-				out.push(e);
+				var k = ledgerKey(e), held = by[k];
+				if (held) { out[held.i] = join(out[held.i], e); return; }
+				by[k] = { i: out.length };
+				out.push(build(e, e, e));
 			});
 		}
 		take(mine);
@@ -595,6 +676,7 @@
 		entries:     entries,
 		adopt:       adopt,
 		merge:       merge,
+		reprice:     reprice,
 		notifyChanged: notifyChanged,
 		ledgerKey:   ledgerKey,
 		retentionMs: retentionMs,

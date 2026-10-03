@@ -10,7 +10,7 @@
    never dropped, and nothing that asks for a real answer found one
    (gateway r5 §6; slowparcel CASE 1 with the progress tap, 2026-09-25).
 
-   Lifts the REAL `stampMessages`, `unbadge` and `mergeMessages` out of
+   Lifts the REAL `stampMessages`, the message law (`msgJoin`) and `mergeMessages` out of
    daimond.js and asserts that the real copy wins in either order, and
    that nothing else about the union moved.
      node www/js/provmerge.test.mjs      # ALL PASS
@@ -40,13 +40,16 @@ function extractFn(src, name) {
 	return src.slice(start + 1, i);
 }
 
+// The message law is lifted with everything `mergeMessages` reaches (dev/syncprobe.mjs
+// `liftSource`), from the same tree as DAIMOND_JS, so no hand-kept list can drift from it.
+if (process.env.DAIMOND_JS && !process.env.TREE) process.env.TREE = join(dirname(process.env.DAIMOND_JS), '..', '..');
+const { liftSource } = await import('../../dev/syncprobe.mjs');
 const src = readFileSync(process.env.DAIMOND_JS || join(HERE, 'daimond.js'), 'utf8');
 const lifted = [
-	'var OLD_LEGACY = /^legacy-\\d+$/;',
 	'function loadMsgTombs() { return {}; }',
-	extractFn(src, 'stampMessages'),
-	extractFn(src, 'unbadge'),
-	extractFn(src, 'mergeMessages'),
+	// The message law (r53), lifted whole, and the stamp rule it ranks by.
+	'var DaimondStamp = (function () { var window = {}; ' + readFileSync(join(HERE, 'stamp.js'), 'utf8') + '\n return window.DaimondStamp; })();',
+	liftSource(['mergeMessages'], ['loadMsgTombs', 'window', 'DaimondStamp']).src,
 	'return mergeMessages;',
 ].join('\n');
 const mergeMessages = new Function(lifted)();

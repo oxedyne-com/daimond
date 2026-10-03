@@ -81,9 +81,9 @@ function daimondSrc() {
 	if (BREAK === 'lww') {
 		// The metadata scalars resolve from the TURN winner again -- record-level
 		// LWW -- so a rename loses to a later turn exactly as it did before the split.
-		const target = 'out.name           = metaNewer.name;';
+		const target = 'takeChatMeta(out, metaNewer);';
 		if (!src.includes(target)) throw new Error('break target not found: metaNewer name resolution');
-		src = src.replace(target, 'out.name           = turnNewer.name;  // BROKEN: record-level LWW');
+		src = src.replace(target, 'takeChatMeta(out, turnNewer);  // BROKEN: record-level LWW');
 	}
 	return src;
 }
@@ -124,19 +124,24 @@ function sourceGuards() {
 		const m = funcBody(d, 'function mergeChatRecords(a, b, opts) {');
 		// A tie on either stamp goes to the canonically greater fields that stamp
 		// decides, the same on every device (the D-28 review's A3).
+		// One pair of tests, shared with the tab adoption (r53 W-rec).
 		check('the turn winner is the newer updatedAt, a tie by the turn fields',
-			m.includes('var turnNewer = DaimondStamp.beats(au, chatFields(a, CHAT_TURN_FIELDS), bu, chatFields(b, CHAT_TURN_FIELDS)) ? a : b;'));
+			m.includes('var turnNewer = chatTurnBeats(a, b) ? a : b;')
+			&& funcBody(d, 'function chatTurnBeats(a, b) {').includes('DaimondStamp.beats(a.updatedAt || 0, chatFields(a, CHAT_TURN_FIELDS), b.updatedAt || 0, chatFields(b, CHAT_TURN_FIELDS))'));
 		check('the metadata winner is the newer metaAt, a tie by the metadata fields',
-			m.includes('var metaNewer = DaimondStamp.beats(am, chatFields(a, CHAT_META_FIELDS), bm, chatFields(b, CHAT_META_FIELDS)) ? a : b;'));
+			m.includes('var metaNewer = chatMetaBeats(a, b) ? a : b;')
+			&& funcBody(d, 'function chatMetaBeats(a, b) {').includes('DaimondStamp.beats(am, chatFields(a, CHAT_META_FIELDS), bm, chatFields(b, CHAT_META_FIELDS))'));
 		check('metaAt falls back to updatedAt when a side predates the field',
 			m.includes("var am = (typeof a.metaAt === 'number') ? a.metaAt : au;")
 			&& m.includes("var bm = (typeof b.metaAt === 'number') ? b.metaAt : bu;"));
+		const tk = funcBody(d, 'function takeChatMeta(out, src) {');
 		check('the user-facing scalars come from the metadata winner, NOT the turn winner',
-			m.includes('out.name           = metaNewer.name;')
-			&& m.includes('out.model          = metaNewer.model;')
-			&& m.includes('out.status         = metaNewer.status')
-			&& m.includes('out.foldedInto     = metaNewer.foldedInto')
-			&& m.includes('out.holds          = Array.isArray(metaNewer.holds)'),
+			m.includes('takeChatMeta(out, metaNewer);')
+			&& tk.includes("out.name           = src.name || '';")
+			&& tk.includes("out.model          = src.model || '';")
+			&& tk.includes('out.status         = src.status')
+			&& tk.includes('out.foldedInto     = src.foldedInto')
+			&& tk.includes('out.holds          = Array.isArray(src.holds)'),
 			BREAK === 'lww' ? 'record-level LWW reintroduced (the break)' : 'a scalar resolves from the wrong side');
 		check('the transcript is always unioned, local copy first',
 			m.includes('out.messages = slimMessages(mergeMessages(localMsgs, remoteMsgs, out.id, opts.mtombs));'));
@@ -163,8 +168,11 @@ function sourceGuards() {
 	console.log('\nchatmeta: source -- the cross-tab in-place copy splits the two stamps');
 	{
 		const oc = funcBody(d, 'async function onChatsChangedElsewhere(touchedIds) {');
-		check('turn fields still gate on updatedAt', oc.includes("if ((s.updatedAt || 0) > (c.updatedAt || 0) && !c._generating) {"));
-		check('metadata scalars gate on metaAt', oc.includes('if (sMeta > cMeta && !c._generating) {'),
+		// Through the merge's own tie and assignment (r53 W-rec), so a tab and the
+		// store it reads cannot each keep their own.
+		check('turn fields still gate on updatedAt', oc.includes('if (chatTurnBeats(s, c) && !c._generating) {'));
+		check('metadata scalars gate on metaAt', oc.includes('if (chatMetaBeats(s, c) && !c._generating) {')
+			&& oc.includes('takeChatMeta(c, s);'),
 			'a cross-tab rename can still be clobbered by another tab\'s turn');
 	}
 }

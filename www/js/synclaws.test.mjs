@@ -26,8 +26,8 @@
    commutative, associative and fixed point, on 300 triples with tied
    stamps and 300 with distinct ones. A kind that holds another lane's
    part still says so in its name:
-     - chats: transcript rewrites other than prefix growth (BM-9, the
-       transcript's own root);
+     - chats: (none since r53: transcript rewrites other than prefix
+       growth, BM-9, are in the generator, and the message law joins them);
      - models: the default and draft (SIM-18, another lane), a provider
        row with no key (an empty key is "no statement" and needs a key
        stamp of its own), and tombstones against the model list's own
@@ -72,6 +72,7 @@ function tombCore(w) {
 	w.DaimondCore = { mergeTombs: c.mergeTombMap, loadTombMap: c.loadTombMap, tombs: c.loadTombMap };
 }
 
+const shuffledPool = (r, a) => { const o = a.slice(); for (let i = o.length - 1; i > 0; i--) { const j = r.int(i + 1); [o[i], o[j]] = [o[j], o[i]]; } return o; };
 const chatGen = (r) => {
 	const pool = [
 		{ mid: 'm1', role: 'user', content: 'hi', ts: 1 },
@@ -79,9 +80,16 @@ const chatGen = (r) => {
 		{ mid: 'm2', role: 'assistant', content: 'hello', ts: 2 },			// prefix growth
 		{ mid: 'm3', role: 'user', content: 'again', ts: 3, interrupted: true },
 		{ mid: 'm3', role: 'user', content: 'again', ts: 3 },
+		// Rewrites other than growth (BM-9, closed by the message law, r53): a stamped
+		// edit, an older build's unstamped one, the prompt with and without `iturn`.
+		{ mid: 'm4', role: 'assistant', content: '', ts: 4, why: 'dispatched', interrupted: true, toDevice: 'x' },
+		{ mid: 'm4', role: 'assistant', content: '', ts: 9, why: 'dispatched', interrupted: true, toDevice: 'y', at: 5000 },
+		{ mid: 'm4', role: 'assistant', content: '', ts: 7, why: 'dispatched', interrupted: true, toDevice: 'z' },
+		{ mid: 'm5', role: 'user', content: 'go', ts: 5, iturn: 'm5' },
+		{ mid: 'm5', role: 'user', content: 'go', ts: 5 },
 	];
 	const msgs = [], seen = {};
-	for (const m of pool) if (r.chance(0.4) && !seen[m.mid]) { seen[m.mid] = 1; msgs.push(clone(m)); }
+	for (const m of shuffledPool(r, pool)) if (r.chance(0.4) && !seen[m.mid]) { seen[m.mid] = 1; msgs.push(clone(m)); }
 	const c = { id: 'c1', name: r.pick(['Alpha', 'Beta']), model: r.pick(['m1', 'm2']), provider: 'p',
 		status: r.pick(['active', 'active', 'archived']), messages: msgs, updatedAt: T(r),
 		promptTokens: r.pick([0, 5, 9]), holds: [] };
@@ -91,7 +99,7 @@ const chatGen = (r) => {
 
 const KINDS = [
 	{
-		name: 'chats: mergeChatRecords (prefix growth only; BM-9 held)',
+		name: 'chats: mergeChatRecords (with transcript rewrites; BM-9 closed by the message law)',
 		gen: chatGen,
 		join: (...xs) => {
 			const f = core(['mergeChatRecords']);

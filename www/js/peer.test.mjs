@@ -3615,8 +3615,11 @@ async function runElectedTriedAcceptance(P, check) {
 			turnHold: () => '',
 			DISPATCH_RETRY_MAX: 3,
 			_msNum: (x) => +x || 0,
+			// A re-seat is a stamped edit (`touchMsg`, the message law, r53).
+			DaimondStamp: (() => { const w = {}; new Function('window', readFileSync(join(HERE, 'stamp.js'), 'utf8'))(w); return w.DaimondStamp; })(),
+			msgFpSeen: new WeakMap(),
 		};
-		const src = ['electedTried', 'markTurnDispatched', 'retryNextDesktopBeforeLocal']
+		const src = ['electedTried', 'touchMsg', 'markTurnDispatched', 'retryNextDesktopBeforeLocal']
 			.map((n) => daimondFuncSource(n)).join('\n')
 			+ '\nwindow.electedTried = electedTried;\nwindow.markTurnDispatched = markTurnDispatched;'
 			+ '\nwindow.retryNextDesktopBeforeLocal = retryNextDesktopBeforeLocal;\n';
