@@ -1271,6 +1271,8 @@ impl LlmClient {
         // Set once the pictures have been taken out and the turn tried again, so the retry
         // happens at most once and a second failure is reported as itself.
         let mut retried_blind = stripped.is_some();
+        // Set only once the text-only retry SUCCEEDS, never on the error alone: a 429 or a context overflow is not a refusal of the picture.
+        let mut blind_pending = false;
         let mut waited = 0u64;
         let mut retries = 0u32;
         loop {
@@ -1311,6 +1313,7 @@ impl LlmClient {
             };
             match outcome {
                 Ok(StreamOutcome { aborted, stalled }) => {
+                    if blind_pending { self.mark_blind(); }
                     let thinking = acc.take_thinking();
                     let mut resp = acc.into_response(aborted, retries);
                     resp.stalled = stalled;
@@ -1340,9 +1343,9 @@ impl LlmClient {
                     // in it a text model cannot read. Take them out, say so in their place, and
                     // send it again -- once. Only where nothing has been emitted: a turn the
                     // user has already seen tokens from cannot be started over.
-                    if !started && !retried_blind && images > 0 {
+                    if !started && !retried_blind && images > 0 && !e.retryable {
                         retried_blind = true;
-                        self.mark_blind();
+                        blind_pending = true;
                         let text_only: Vec<ChatMessage> =
                             messages.iter()
                             .map(|m| m.with_content(m.content().without_images(Dropped::Unseeable)))
@@ -1401,6 +1404,8 @@ impl LlmClient {
         let stripped = self.sighted(messages, images);
         let mut body = self.build_body(stripped.as_deref().unwrap_or(messages), tools, false);
         let mut retried_blind = stripped.is_some();
+        // Set only once the text-only retry SUCCEEDS, never on the error alone: a 429 or a context overflow is not a refusal of the picture.
+        let mut blind_pending = false;
         let mut waited = 0u64;
         let mut retries = 0u32;
         let raw = loop {
@@ -1418,9 +1423,9 @@ impl LlmClient {
                     // The picture retry, exactly as `stream_turn` does it and for the same
                     // reason; there is no emitted-tokens condition here because nothing has
                     // been shown to anybody yet.
-                    if !retried_blind && images > 0 {
+                    if !retried_blind && images > 0 && !e.retryable {
                         retried_blind = true;
-                        self.mark_blind();
+                        blind_pending = true;
                         let text_only: Vec<ChatMessage> =
                             messages.iter()
                             .map(|m| m.with_content(m.content().without_images(Dropped::Unseeable)))
@@ -1441,6 +1446,7 @@ impl LlmClient {
                 }
             }
         };
+        if blind_pending { self.mark_blind(); }
         let (content, tool_calls, use_, thinking) = match self.dialect {
             Dialect::OpenAi    => {
                 let (c, t, u) = parse_full_response(&raw);
@@ -8479,11 +8485,19 @@ pub mod tests {
         let client = stub_client(port);
         let msgs = [ChatMessage::user("hello".to_string())];
         let mut tokens = Vec::new();
+        let mut roads  = Vec::new();
 
         let started = std::time::Instant::now();
-        let resp = match client.chat_stream_tools(&msgs, None, &mut text_sink(&mut tokens)).await {
-            Ok(r)  => r,
-            Err(e) => panic!("a 429 followed by a 200 should complete: {}", e),
+        let resp = {
+            let mut sink = |d: Delta<'_>| match d {
+                Delta::Text(t)                          => tokens.push(t.to_string()),
+                Delta::Reasoning(_)                     => {}
+                Delta::Roading { attempt, of, wait_ms } => roads.push((attempt, of, wait_ms)),
+            };
+            match client.chat_stream_tools(&msgs, None, &mut sink).await {
+                Ok(r)  => r,
+                Err(e) => panic!("a 429 followed by a 200 should complete: {}", e),
+            }
         };
         let elapsed = started.elapsed();
 
@@ -8494,18 +8508,17 @@ pub mod tests {
         // client's 20ms backoff.
         assert!(elapsed >= std::time::Duration::from_millis(1_000),
             "Retry-After was ignored; waited only {:?}", elapsed);
-        // The answer streamed once, and the retry announced itself.
-        let text: String = tokens.iter().filter(|t| !t.starts_with("\n[daimond")).cloned().collect();
-        assert_eq!(text, "Hello world");
-        let notice = match tokens.iter().find(|t| t.contains("[daimond")) {
-            Some(n) => n.clone(),
-            None    => panic!("a retry the user cannot see is its own defect: {:?}", tokens),
-        };
-        assert!(notice.contains("HTTP 429"), "the notice does not say what happened: {}", notice);
-        assert!(notice.contains("attempt 2 of 4"), "the notice does not say where we are: {}", notice);
-        // The error's own rendering carries file, line and terminal colouring.
-        assert!(!notice.contains('\u{1b}'),
-            "ANSI escapes reached the user's message pane: {:?}", notice);
+        // The answer streamed once, and nothing but the answer is in the text: the retry is a
+        // `Roading` delta of its own, never prose in the reply tile.
+        assert_eq!(tokens.concat(), "Hello world",
+            "the retry notice reached the answer text: {:?}", tokens);
+        // The retry announced itself, once, with where the turn stood and how long it waited.
+        assert_eq!(roads.len(), 1, "a retry the user cannot see is its own defect: {:?}", roads);
+        let (attempt, of, wait_ms) = roads[0];
+        assert_eq!(attempt, 2, "the notice does not say where we are: {:?}", roads);
+        assert_eq!(of, 4, "the notice does not say how many attempts there are: {:?}", roads);
+        assert!(wait_ms >= 1_000,
+            "the notice announced a wait shorter than Retry-After: {} ms", wait_ms);
         // Provider-reported figures survive the retry.
         assert_eq!(resp.prompt_tokens, 11);
         assert_eq!(resp.cached_tokens, 9);
@@ -9267,5 +9280,57 @@ pub mod tests {
                 tokio_rustls::rustls::SignatureScheme::ED25519,
             ]
         }
+    }
+
+    // ── a 429 is not a refusal of the picture (crystal-probe QA, 2026-10-04) ──
+
+    /// A transient failure on a request that happens to carry a picture must not mark
+    /// the endpoint blind. Here: a 429 with Retry-After, then a 200. Wanted: the retry still
+    /// carries the picture, and the model is still taken to see afterwards.
+    #[tokio::test]
+    async fn test_a_429_on_a_request_with_a_picture_keeps_the_picture_and_does_not_mark_the_model_blind() {
+        let (port, seen) = start_stub(vec![
+            Reply::too_many(Some(1)),
+            Reply::answer(),
+        ]).await;
+        let client = stub_client(port);
+        let msgs = [ChatMessage::user(MessageContent::parts(vec![
+            ContentPart::Text("what is on this cover".to_string()),
+            ContentPart::Image(doc_image("cover.png")),
+        ]))];
+        let mut sink = |_: Delta<'_>| {};
+        let resp = match client.chat_stream_tools(&msgs, None, &mut sink).await {
+            Ok(r)  => r,
+            Err(e) => panic!("a 429 then a 200 completes: {}", e),
+        };
+        assert_eq!(resp.content, "Hello world");
+        let bodies = match seen.lock() { Ok(g) => g.bodies.clone(), Err(e) => panic!("stub: {}", e) };
+        assert_eq!(bodies.len(), 2, "one 429, one answer");
+        assert!(bodies[1].contains(DOC_PNG_B64),
+            "the rate-limit retry dropped the picture: a 429 was read as a refusal of it");
+        assert!(client.can_take_images(),
+            "a 429 on a request that carried a picture marked the model blind for every later turn");
+    }
+
+    /// The same on the non-streaming path (`chat_once`, the fold's).
+    #[tokio::test]
+    async fn test_a_429_on_chat_once_with_a_picture_keeps_the_picture_and_does_not_mark_the_model_blind() {
+        let (port, seen) = start_stub(vec![
+            Reply::too_many(Some(1)),
+            Reply::answer(),
+        ]).await;
+        let client = stub_client(port);
+        let msgs = [ChatMessage::user(MessageContent::parts(vec![
+            ContentPart::Text("and this one".to_string()),
+            ContentPart::Image(doc_image("cover.png")),
+        ]))];
+        let _ = match client.chat_once(&msgs, None).await {
+            Ok(r)  => r,
+            Err(e) => panic!("a 429 then a 200 completes: {}", e),
+        };
+        let bodies = match seen.lock() { Ok(g) => g.bodies.clone(), Err(e) => panic!("stub: {}", e) };
+        assert!(bodies.len() >= 2 && bodies[bodies.len() - 1].contains(DOC_PNG_B64),
+            "the rate-limit retry dropped the picture ({} requests)", bodies.len());
+        assert!(client.can_take_images(), "a 429 marked the model blind on the fold path");
     }
 }

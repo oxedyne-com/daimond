@@ -14590,6 +14590,8 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 	// The Web driver is a separate script and has to be able to take the stage,
 	// so the layout engine is the one piece of this module that is shared.
 	window.DaimondPanels = DaimondPanels;
+	// The reader the off-screen crystal frame answers `asset` with; `crystal.js` has no wasm of its own.
+	if (window.DaimondCrystal && window.DaimondCrystal.setAssetReader) window.DaimondCrystal.setAssetReader(readCrystalAsset);
 
 	// Which Diamond is being worked, for the surfaces that offer to act on it.
 	window.DaimondDiamond = {
@@ -38911,13 +38913,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			if (run.status !== 'running') return;	// stopped or paused by hand; not ours
 			// NOWHERE TO GO, and both spellings of it: no image model was ever chosen for
 			// this Diamond, or the one chosen is the same pair as the worker model.
-			var chose = diamondModels()[run.diamondId];
-			if (!chose || !chose.visionModel) return;
-			var vm = diamondVisionModel(run.diamondId);
-			var wm = diamondWorkerModel(run.diamondId);
-			if (!vm || !vm.model) return;
-			if (vm.model === wm.model && (vm.provider || '') === (wm.provider || '')) return;
-			return { provider: vm.provider || '', model: vm.model };
+			return imagesModelFor(run.diamondId, diamondWorkerModel(run.diamondId));
 		},
 
 		/// Move a worker that was refused a picture onto its Diamond's image model, and
@@ -51558,6 +51554,73 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		}
 		return await Wasm.store_read(path);
 	}
+
+	/// The model a Diamond's pictures go to, or nothing: the images model the user chose for it
+	/// (Diamonds > Settings > Workers, images), unless it is the very pair `from` that has just
+	/// refused one. THE ONE PLACE THAT QUESTION IS ANSWERED: a dispatched worker refused a
+	/// picture (`Workers.visionTarget`) and a tool that holds one (`DaimondVision.look`) both
+	/// ask it, so there is no second router to drift from the first.
+	function imagesModelFor(diamondId, from) {
+		var chose = diamondModels()[diamondId];
+		if (!chose || !chose.visionModel) return;
+		var vm = diamondVisionModel(diamondId);
+		if (!vm || !vm.model) return;
+		if (from && vm.model === from.model && (vm.provider || '') === (from.provider || '')) return;
+		return { provider: vm.provider || '', model: vm.model };
+	}
+
+	/// Put one PNG, held by a tool, to a Diamond's images model and answer what it said.
+	///
+	/// Reached from the wasm (`src/wasm/shot.rs::look`) when the daimon's own model cannot take
+	/// the picture, so the daimon still gets a description. The request is made HERE because the
+	/// provider key lives here and must not cross into the wasm, and the spend is written to the
+	/// ledger under the Diamond exactly as a dispatched worker's is (`recordSpend`).
+	///
+	/// Resolves a JSON string: `{ ok, text, model, tokens, micro_usd }`, `{ none: true }` when the
+	/// Diamond has no images model (or it is the model that refused), or `{ error }`. It never
+	/// rejects: the caller's table is still good whatever happens here.
+	async function lookAt(reqJson) {
+		var req = {};
+		try { req = JSON.parse(String(reqJson || '{}')); } catch (e) { req = {}; }
+		var id = String(req.id || '');
+		var own = diamondModels()[id] || {};
+		var to = id ? imagesModelFor(id, { provider: own.provider || '', model: own.model || '' }) : null;
+		if (!to) return JSON.stringify({ ok: false, none: true });
+		try {
+			var r = window.DaimondModels && DaimondModels.resolve(to.provider, to.model);
+			if (!r) return JSON.stringify({ ok: false, error: 'the images model ' + to.model + ' has no usable key' });
+			var url = r.baseUrl, key = r.apiKey, png = String(req.png_b64 || ''), anth = /\/v1\/messages\b/.test(url);
+			var body = anth
+				? { model: r.model, max_tokens: 400, messages: [{ role: 'user', content: [
+					{ type: 'image', source: { type: 'base64', media_type: 'image/png', data: png } },
+					{ type: 'text', text: String(req.prompt || '') }] }] }
+				: { model: r.model, max_tokens: 400, stream: false, messages: [{ role: 'user', content: [
+					{ type: 'text', text: String(req.prompt || '') },
+					{ type: 'image_url', image_url: { url: 'data:image/png;base64,' + png } }] }] };
+			var headers = { 'content-type': 'application/json' };
+			var auth = DaimondModels.authHeaders ? DaimondModels.authHeaders(url, key) : { authorization: 'Bearer ' + key };
+			for (var k in auth) { if (auth.hasOwnProperty(k)) headers[k] = auth[k]; }
+			var res = await fetch(url, { method: 'POST', headers: headers, body: JSON.stringify(body) });
+			var raw = await res.text(), j = {};
+			try { j = JSON.parse(raw); } catch (e) { j = {}; }
+			if (!res.ok) {
+				var why = (j.error && (j.error.message || j.error)) || raw || ('HTTP ' + res.status);
+				return JSON.stringify({ ok: false, error: to.model + ' answered ' + res.status + ': ' + String(why).slice(0, 160) });
+			}
+			var text = anth
+				? ((j.content || []).filter(function (c) { return c && c.type === 'text'; }).map(function (c) { return c.text; }).join(' '))
+				: String(((j.choices || [])[0] || {}).message && j.choices[0].message.content || '');
+			var u = j.usage || {};
+			var pt = (u.prompt_tokens || u.input_tokens || 0) | 0, ct = (u.completion_tokens || u.output_tokens || 0) | 0;
+			var cost = Number(u.cost) || 0;
+			recordSpend(to.model, pt, ct, 0, cost, to.provider, id);
+			if (!text.trim()) return JSON.stringify({ ok: false, error: to.model + ' answered with no words' });
+			return JSON.stringify({ ok: true, text: text, model: to.model, tokens: pt + ct, micro_usd: Math.round(cost * 1e6) });
+		} catch (e) {
+			return JSON.stringify({ ok: false, error: String((e && e.message) || e).slice(0, 160) });
+		}
+	}
+	window.DaimondVision = { look: lookAt };
 
 	/// Answer the page's `save` verb: write one text file into THIS Diamond's directory.
 	///

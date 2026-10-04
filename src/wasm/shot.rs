@@ -44,6 +44,15 @@ extern "C" {
     /// Photograph the current view, answering a JSON envelope with the PNG base64 in it.
     #[wasm_bindgen(method)]
     fn capture(this: &Shooter, req: &str) -> js_sys::Promise;
+
+    /// The driver the app installs at `window.DaimondVision`: it holds the keys and the ledger,
+    /// so the one request to a Diamond's images model is made there.
+    #[wasm_bindgen(js_name = DaimondVision)]
+    type Looker;
+
+    /// Put one picture to the Diamond's images model; answer a JSON envelope.
+    #[wasm_bindgen(method)]
+    fn look(this: &Looker, req: &str) -> js_sys::Promise;
 }
 
 
@@ -64,9 +73,12 @@ fn shooter() -> Outcome<Shooter> {
 
 /// One photograph of the current view: the PNG bytes and the pixel size drawn.
 pub struct Shot {
-    pub png: Vec<u8>,
-    pub w:   u32,
-    pub h:   u32,
+    pub png:   Vec<u8>,
+    pub w:     u32,
+    pub h:     u32,
+    // The text table of a Diamond page's measurement (`in:"crystal"`), else empty; `png` is
+    // then empty too when the page measured but could not be drawn, and the table says why.
+    pub table: String,
 }
 
 /// Photograph the view named by `req` and hand back the decoded PNG.
@@ -97,13 +109,68 @@ pub async fn capture(req: &str) -> Outcome<Shot> {
             extract_json_string(&json, "error").unwrap_or_else(|| "no reason given".into());
             IO, Invalid));
     }
+    let table = extract_json_string(&json, "table").unwrap_or_default();
     let b64 = match extract_json_string(&json, "png_b64") {
         Some(b) if !b.trim().is_empty() => b,
+        // A Diamond page measured without a picture: the table is the answer, and an empty
+        // `png` says so.  Without a table the missing picture is still the fault it was.
+        _ if !table.trim().is_empty() => return Ok(Shot { png: Vec::new(), w: 0, h: 0, table }),
         _ => return Err(err!(
             "The page said it captured the view but carried no image bytes."; Invalid, Data)),
     };
     let png = res!(base64::decode(&b64));
     let w = extract_json_number(&json, "w").unwrap_or(0) as u32;
     let h = extract_json_number(&json, "h").unwrap_or(0) as u32;
-    Ok(Shot { png, w, h })
+    Ok(Shot { png, w, h, table })
+}
+
+/// What the Diamond's images model made of one picture, and what that cost.
+pub struct Look {
+    pub text:   String,
+    pub model:  String,
+    pub tokens: u64,
+    pub usd:    f64,    // nought when the provider reported no cost
+}
+
+/// The outcome of asking the images model to look.
+pub enum Looked {
+    Seen(Look),
+    NoModel,            // none is set for this Diamond, or it is the model that cannot see
+    Failed(String),
+}
+
+/// Ask the images model of Diamond `id` about a PNG, in the words of `prompt`.
+///
+/// The request is made by the page, which owns the keys and writes the spend to the ledger under
+/// the Diamond, as a dispatched worker's is.  A model that is not set is an answer
+/// ([`Looked::NoModel`]), and a request that failed is another; neither is an error, because the
+/// caller's table is still good.
+pub async fn look(id: &str, png: &[u8], prompt: &str) -> Outcome<Looked> {
+    let win = res!(web_sys::window()
+        .ok_or_else(|| err!("Looking at a picture needs a browser window."; System, Missing)));
+    let obj = res!(js_sys::Reflect::get(&win, &JsValue::from_str("DaimondVision"))
+        .map_err(|e| err!("Reading window.DaimondVision failed: {}.", js_str(&e); System, Missing)));
+    if obj.is_undefined() || obj.is_null() {
+        return Ok(Looked::Failed("this build has no images-model bridge".to_string()));
+    }
+    let l = obj.unchecked_into::<Looker>();
+    let req = fmt!(r#"{{"id":"{}","prompt":"{}","png_b64":"{}"}}"#,
+        crate::llm::json_escape(id), crate::llm::json_escape(prompt), base64::encode(png));
+    let json = match JsFuture::from(l.look(&req)).await {
+        Ok(v)  => v.as_string().unwrap_or_default(),
+        Err(e) => return Ok(Looked::Failed(refusal(&e))),
+    };
+    if extract_json_bool(&json, "none").unwrap_or(false) {
+        return Ok(Looked::NoModel);
+    }
+    if !extract_json_bool(&json, "ok").unwrap_or(false) {
+        return Ok(Looked::Failed(
+            extract_json_string(&json, "error").unwrap_or_else(|| "no reason given".to_string())));
+    }
+    Ok(Looked::Seen(Look {
+        text:   extract_json_string(&json, "text").unwrap_or_default(),
+        model:  extract_json_string(&json, "model").unwrap_or_default(),
+        tokens: extract_json_number(&json, "tokens").unwrap_or(0),
+        usd:    extract_json_number(&json, "micro_usd").unwrap_or(0) as f64 / 1_000_000.0,
+    }))
 }

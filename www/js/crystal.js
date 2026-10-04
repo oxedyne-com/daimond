@@ -49,6 +49,21 @@
  * verb may be ADDED and may never change meaning, and a page that does not use
  * one is unaffected. `ready`, `asset`, `save`, `rendered`, `height`, `open`.
  *
+ * A DAIMON CAN SEE ITS OWN PAGE, ON DEMAND (`render`, 2026-10-04). `capture` cannot reach
+ * into a frame (an opaque origin has no DOM we can query), so a daimon was blind to how its
+ * own page drew, and one asked to fix a tile-size fault spent 52 rounds guessing from the
+ * CSS. The page is often not on screen at all (a handed-off turn runs on another device),
+ * so nothing here depends on the visible frame: `render` makes a FRESH frame, off screen,
+ * through the same `makeFrame` as `mount` (same sandbox, same policy), hands it the same
+ * data, and posts it `{cmd:'probe', id, sel}`. A shim armoured in beside the policy of THAT
+ * frame only, a separate script the page cannot edit, answers `{cmd:'probed', id, ...}` with
+ * rows measured from the page's OWN DOM and a PNG drawn in the frame by the app's own
+ * rasteriser; then the frame is removed. The visible frame never carries the shim. The
+ * answer is DATA, never trusted: a page can post `probed` itself, so the parent takes only
+ * the numbers and short printable strings it expects, caps every one, builds the table's
+ * text itself, and answers only the probe it has outstanding. No sandbox flag changes.
+ * See "The probe" below for the threat written down.
+ *
  * FAILING IS VISIBLE. A page that never says `ready`, or that reports rendering
  * less than the data holds, is replaced by the built-in view with a note saying
  * which of the two happened and a button that puts the standard page back.
@@ -65,7 +80,7 @@
  *
  *     window.DaimondCrystal = { CORE_KEYS, DEFAULT_PAGE, adopt, restyle, soften, draw, isDefault, FALLBACK_MS, PROTOCOL,
  *                               parse, toMarkdown, fromMarkdown,
- *                               mount, unmount, fallback }
+ *                               mount, unmount, fallback, render, setAssetReader }
  */
 (function () {
 	'use strict';
@@ -636,13 +651,14 @@
 		var s = String(html);
 		var add = CSP_META + (extra || '');
 		var carried = CSP_HAS.test(s);
-		var m = /<head\b[^>]*>/i.exec(s);
-		if (m) return insertCsp(s, m.index + m[0].length, 'head', carried, add);
-		m = /<html\b[^>]*>/i.exec(s);
-		if (m) return insertCsp(s, m.index + m[0].length, 'html', carried, add);
-		m = /^\s*<!doctype\b[^>]*>/i.exec(s);
-		if (m) return insertCsp(s, m[0].length, 'doctype', carried, add);
-		return insertCsp(s, 0, 'start', carried, add);
+		// After the leading whitespace, comments and doctype, which are all a document may hold before its
+		// first element, and nowhere else: never after a `<head>` or `<html>` found by searching, since a
+		// comment or a script string can hold either and would swallow the policy and the shim with it.
+		// A `<meta>` there is read in the parser's "before html" mode, which makes the head, and the page's
+		// own `<html>` and `<head>` tags then merge into it or are ignored; the doctype is still first,
+		// so standards mode is kept. The tail is all optional, so the match never backtracks.
+		var m = /^(?:\s*<!--[\s\S]*?-->)*\s*(<!doctype\b[^>]*>)?/i.exec(s);
+		return insertCsp(s, m[0].length, m[1] ? 'doctype' : 'start', carried, add);
 	}
 
 	function insertCsp(s, at, where, carried, add) {
@@ -652,6 +668,536 @@
 			carried:  carried,
 			at:       where,
 		};
+	}
+
+
+	/// A sandboxed frame for a page, under the policy, with its blob URL. The ONE place a crystal
+	/// frame is made: the on-screen view and the off-screen render both come here, so they cannot
+	/// differ in what the page may do.
+	function makeFrame(page, extra, cls, title) {
+		var frame = document.createElement('iframe');
+		frame.className = cls;
+		// `allow-scripts` and NOTHING else, ever. See the head of this file.
+		frame.setAttribute('sandbox', 'allow-scripts');
+		frame.setAttribute('referrerpolicy', 'no-referrer');
+		frame.setAttribute('title', title);
+		var armed = armour(page, extra);
+		var url = URL.createObjectURL(new Blob([armed.html], { type: PAGE_TYPE }));
+		frame.src = url;
+		return { frame: frame, armed: armed, url: url };
+	}
+
+
+	// ── The probe: measuring a page from inside its frame ───────────
+	//
+	// THE THREAT, WRITTEN DOWN. (1) The shim is a way for the page's DOM to talk to the
+	// parent, so it must not widen the sandbox: it adds no flag, no origin and no network,
+	// reads only `document` and `getComputedStyle` of the frame it runs in, and posts only
+	// the measurement and the PNG bytes. The off-screen frame is made by `makeFrame`, the
+	// one function that sets `sandbox`, and is handed only what the visible frame is: the
+	// Diamond's own crystal, the theme and the labels. It is read-only (`save` and `open`
+	// from it are let go) and it is removed on every path out, so a page that hangs costs
+	// a hidden frame for a bounded time and nothing else. (2) The page is hostile by assumption -- it may
+	// post `probed` without the shim, or lie in it -- so the parent never believes the
+	// shape of a reply: numbers must be numbers, strings are cut to printable ASCII and a
+	// cap, row and column counts are fixed here, the table text is built HERE, and a reply
+	// is read only while a probe is outstanding, only with its id, and only with the nonce
+	// the host wrote into the shim it armoured in. The nonce is in the shim's closure and
+	// travels only from the shim to the host, never in the `probe` message the page can read;
+	// the shim takes its own tag out of the document and keeps `parent` as it was at the
+	// start, so the page can neither read the nonce nor redirect the reply to a spy. It proves
+	// who answered, not that the bytes are honest: the rasteriser runs in the page's realm, so
+	// a picture is believed only once it DECODES at the size claimed (`probeSight`). (3) A page can put
+	// words in its own class names, which is words a daimon will read; that is no new
+	// channel, since the daimon already reads the page's source with `file_read`, but the
+	// class text is cut and its tokens joined with dots so it does not read as a sentence.
+	// The CSS-value columns hold only values their property could (`pv`) and the error
+	// lines are the host's own words (`pngWhy`), because the table is read as the tool's
+	// measurement and not as the page's text.
+	// (4) A picture is a PNG signature, base64, under a cap, or it is dropped.
+
+	/// The most rows a probe returns, and the longest it waits for a picture.
+	var PROBE_ROWS = 12;
+	var PROBE_OUTLINE_ROWS = 24;
+	var PROBE_PNG_MS = 28000;
+	/// A picture over this is not passed on: `file_read` shows an image only up to 2 MB.
+	var PROBE_PNG_MAX = 2 * 1024 * 1024;
+	var PROBE_SEL_MAX = 300;
+	/// The canvas limits `selfshot.js` draws within: a side, and the pixels in all.
+	var PROBE_PX_SIDE = 16384;
+	var PROBE_PX_MAX = 64e6;
+
+	var probeSeq = 0;
+
+	/// The script that goes into every page. It is a function written out in full and
+	/// handed over as text, because the frame can import nothing: `win` is the frame's own
+	/// window, and `mk` is the app's rasteriser (`selfshot.js`) or `null`, so a picture
+	/// is drawn by the very code the app uses on itself.
+	function shim(win, mk, nonce) {
+		var doc = win.document, up = win.parent, ROWS = 12, OUT_ROWS = 24, raster = null;
+		// Out of the document before any page script can read the nonce from it.
+		try { var me = doc.currentScript; if (me && me.parentNode) me.parentNode.removeChild(me); } catch (e) { /* no tag to remove */ }
+		function s(v, n) { v = v == null ? '' : String(v); return v.length > n ? v.slice(0, n) : v; }
+		function r1(v) { v = Number(v); return isFinite(v) ? Math.round(v * 10) / 10 : null; }
+		function who(e) {
+			return { tag: s(String(e.tagName).toLowerCase(), 24), id: s(e.id, 80),
+				cls: s(e.getAttribute ? e.getAttribute('class') : '', 160) };
+		}
+		function box(e) {
+			var b = e.getBoundingClientRect();
+			return { x: r1(b.x != null ? b.x : b.left), y: r1(b.y != null ? b.y : b.top), w: r1(b.width), h: r1(b.height) };
+		}
+		function row(e, outline) {
+			var o = who(e), b = box(e), c = win.getComputedStyle(e), p = e.parentElement;
+			o.x = b.x; o.y = b.y; o.w = b.w; o.h = b.h;
+			o.display = s(c.display, 24);
+			o.box = s(c.boxSizing, 16);
+			o.width = s(c.width, 24);
+			o.height = s(c.height, 24);
+			o.aspect = s(c.aspectRatio, 24);
+			o.padding = s(c.padding || [c.paddingTop, c.paddingRight, c.paddingBottom, c.paddingLeft].join(' '), 60);
+			o.cols = s(c.gridTemplateColumns, 400);
+			o.flex = /flex/.test(String(c.display)) ? s(c.flexDirection, 16) + ' ' + s(c.flexWrap, 12) : '';
+			o.ox = Math.max(0, Math.round((e.scrollWidth || 0) - (e.clientWidth || 0)));
+			o.oy = Math.max(0, Math.round((e.scrollHeight || 0) - (e.clientHeight || 0)));
+			if (p && p.getBoundingClientRect && !outline) {
+				var pc = win.getComputedStyle(p), q = who(p);
+				q.w = box(p).w;
+				q.display = s(pc.display, 24);
+				q.cols = s(pc.gridTemplateColumns, 400);
+				o.parent = q;
+			}
+			return o;
+		}
+		// With no selector, the page's main blocks: the body and what is inside it to three levels,
+		// in document order, hidden things left out, the shallowest first when there are too many.
+		function walk(root) {
+			var all = [], SKIP = { SCRIPT: 1, STYLE: 1, NOSCRIPT: 1, TEMPLATE: 1, BR: 1, LINK: 1, META: 1 };
+			(function down(e, d) {
+				all.push({ e: e, d: d });
+				if (d >= 3) return;
+				var k = e.children || [], i;
+				for (i = 0; i < k.length && all.length < 400; i++) {
+					if (SKIP[k[i].tagName] || win.getComputedStyle(k[i]).display === 'none') continue;
+					down(k[i], d + 1);
+				}
+			})(root, 0);
+			return all;
+		}
+		function post(o) {
+			o.dc = 1; o.v = 1; o.cmd = 'probed';
+			if (nonce) o.nonce = nonce;
+			try { up.postMessage(o, '*'); } catch (e) { /* the parent went away */ }
+		}
+		function answer(m) {
+			var out = { id: m.id }, sel = typeof m.sel === 'string' ? m.sel.slice(0, 300) : '', list, i;
+			try {
+				var depths = null;
+				if (sel.replace(/\s/g, '')) list = doc.querySelectorAll(sel);
+				else {
+					var all = walk(doc.body), pick = all.map(function (x, k) { return { k: k, d: x.d }; })
+						.sort(function (a, b) { return a.d - b.d || a.k - b.k; }).slice(0, OUT_ROWS)
+						.sort(function (a, b) { return a.k - b.k; });
+					list = pick.map(function (q) { return all[q.k].e; });
+					depths = pick.map(function (q) { return q.d; });
+					out.outline = true;
+					out.count = all.length;
+				}
+				if (!out.outline) out.count = list.length;
+				out.rows = [];
+				for (i = 0; i < list.length && i < (depths ? OUT_ROWS : ROWS); i++) {
+					out.rows.push(row(list[i], !!depths));
+					if (depths) out.rows[i].depth = depths[i];
+				}
+				var de = doc.documentElement || {};
+				out.view = { w: win.innerWidth, h: win.innerHeight, sw: de.scrollWidth, sh: de.scrollHeight };
+			} catch (err) {
+				out.error = s(err && err.message, 160);
+				post(out);
+				return;
+			}
+			if (m.png !== true || !list.length) { post(out); return; }
+			try {
+				if (!mk) throw new Error('the page has no rasteriser');
+				raster = raster || mk();
+				// The picture is the whole page (its body), whatever the table was asked about:
+				// a tile's own picture would say nothing about how the tiles sit together.
+				var t = doc.body;
+				if (t.querySelectorAll('*').length > raster.MAX_NODES) {
+					throw new Error('the page holds more than ' + raster.MAX_NODES + ' elements');
+				}
+				raster.rasterise(t, {
+					max_w: m.max_w > 0 ? Math.min(Number(m.max_w), 4000) : 0,
+					background: typeof m.background === 'string' ? m.background.slice(0, 64) : '',
+				}).then(function (r) {
+					out.png_b64 = r.b64; out.w = r.w; out.h = r.h;
+					post(out);
+				}, function (err) {
+					out.png_error = s(err && err.message, 300);
+					post(out);
+				});
+			} catch (err) {
+				out.png_error = s(err && err.message, 300);
+				post(out);
+			}
+		}
+		// Fonts, then a beat for layout, so the page is measured as it settles and not as it
+		// starts. Without a timer (a test's stand-in) it answers at once.
+		function settle(go) {
+			if (!win.setTimeout) { go(); return; }
+			var fin = false;
+			function run() { if (fin) return; fin = true; win.setTimeout(go, 60); }
+			try {
+				if (doc.fonts && doc.fonts.ready) { doc.fonts.ready.then(run, run); win.setTimeout(run, 2000); return; }
+			} catch (err) { /* no font set to wait for */ }
+			run();
+		}
+		win.addEventListener('message', function (e) {
+			if (e.source !== up) return;
+			var m = e.data;
+			if (!m || m.dc !== 1 || m.v !== 1 || m.cmd !== 'probe') return;
+			settle(function () { answer(m); });
+		});
+	}
+
+	/// The shim as a `<script>` for `armour`, with the app's rasteriser inside it when
+	/// `selfshot.js` has loaded. The rasteriser text is dropped if it could close the tag.
+	function probeShimTag(nonce) {
+		var shot = window.DaimondShot;
+		var mk = shot && typeof shot.rasteriserSource === 'string' ? shot.rasteriserSource : '';
+		if (/<\/script|<!--/i.test(mk)) mk = '';
+		return '<script>(' + shim.toString() + ')(window,' + (mk || 'null') + ',' + JSON.stringify(String(nonce)) + ');<\/script>';
+	}
+
+	/// A fresh secret for one render: 128 random bits as hex, or `''` where the browser has no
+	/// random source (the render is then refused, never run without one).
+	function newNonce() {
+		var c = typeof crypto !== 'undefined' ? crypto : (window.crypto || null), a, out = '', i;
+		if (!c || typeof c.getRandomValues !== 'function') return '';
+		a = c.getRandomValues(new Uint8Array(16));
+		for (i = 0; i < a.length; i++) out += (a[i] < 16 ? '0' : '') + a[i].toString(16);
+		return out;
+	}
+
+	/// One line, printable ASCII, cut to `n`: the only shape a page's text is let into a table in.
+	function pc(v, n) {
+		v = (typeof v === 'string' || typeof v === 'number') ? String(v) : '';
+		v = v.replace(/[^\x20-\x7e]+/g, ' ').replace(/\s+/g, ' ').trim();
+		return v.length > n ? v.slice(0, n - 1) + '~' : v;
+	}
+
+	/// A number the page measured, to one decimal, or `?` when it is not a number it could have.
+	function pn(v) { return (typeof v === 'number' && isFinite(v) && Math.abs(v) < 1e7) ? v.toFixed(1) : '?'; }
+	function pi(v) { return (typeof v === 'number' && isFinite(v) && v >= 0 && v < 1e7) ? String(Math.round(v)) : '?'; }
+
+	// What a computed style can hold, column by column. A value that is anything else is `?`: the CSS
+	// properties printed in the table have no way to carry a sentence, so a sentence in one is the page
+	// speaking, and the host does not repeat it. A grid line name is the one free word CSS allows, so it
+	// is let through only as one short identifier.
+	function kws(t) { var o = {}; t.split(' ').forEach(function (k) { o[k] = 1; }); return o; }
+	var PV_DISPLAY = kws('block inline inline-block flex inline-flex grid inline-grid none contents flow flow-root '
+		+ 'table inline-table table-row table-cell table-row-group table-header-group table-footer-group '
+		+ 'table-column table-column-group table-caption list-item ruby run-in');
+	var PV_BOX = kws('content-box border-box');
+	var PV_SIZE = kws('auto none min-content max-content fit-content');
+	var PV_TRACK = kws('auto none min-content max-content subgrid masonry');
+	var PV_DIR = kws('row row-reverse column column-reverse');
+	var PV_WRAP = kws('nowrap wrap wrap-reverse');
+	var PV_LEN = /^-?(\d+\.?\d*|\.\d+)(e[+-]?\d+)?(px|%|em|rem|ex|ch|vw|vh|vmin|vmax|cm|mm|in|pt|pc|fr)?$/i;
+	var PV_NAME = /^\[[A-Za-z0-9_-]{1,16}\]$/;
+	var PV_RATIO = /^(auto )?\d+(\.\d+)?( \/ \d+(\.\d+)?)?$/;
+
+	/// A computed-style value of the named `kind`, or `?` when it is not a value that kind can have.
+	function pv(v, kind) {
+		var t = pc(v, 200), w = t.split(' '), ok = false;
+		if (!t) return '?';
+		switch (kind) {
+			case 'display': ok = w.length <= 3 && w.every(function (x) { return PV_DISPLAY[x] === 1; }); break;
+			case 'box':     ok = PV_BOX[t] === 1; break;
+			case 'size':    ok = w.length === 1 && (PV_SIZE[t] === 1 || PV_LEN.test(t)); break;
+			case 'aspect':  ok = t === 'auto' || PV_RATIO.test(t); break;
+			case 'pad':     ok = w.length <= 4 && w.every(function (x) { return PV_LEN.test(x); }); break;
+			case 'flex':    ok = w.length === 2 && PV_DIR[w[0]] === 1 && PV_WRAP[w[1]] === 1; break;
+			case 'tracks':
+				ok = (t.match(/\[[^\]]*\]|\S+/g) || []).every(function (x) { return PV_TRACK[x] === 1 || PV_LEN.test(x) || PV_NAME.test(x); });
+				break;
+			default: break;
+		}
+		return ok ? t : '?';
+	}
+
+	/// What the host says of a picture the page could not draw, in its own words: the page's
+	/// `png_error` is matched against the refusals the rasteriser is known to make and never quoted.
+	function pngWhy(e) {
+		var t = pc(e, 300), n = /\bmore than (\d{1,5}) elements/.exec(t);
+		if (n) return 'the page holds more than ' + n[1] + ' elements, over what the rasteriser takes';
+		if (/no rasteriser/i.test(t)) return 'the page has no rasteriser';
+		if (/canvas|limit/i.test(t)) return 'the picture would be larger than the browser can draw; pass a smaller "max_w"';
+		if (/did not rasterise/i.test(t)) return 'the page did not draw within 20 s';
+		if (/taint|cross-origin/i.test(t)) return 'the page holds a cross-origin picture or background, which the browser will not read out';
+		if (/could not be rasterised/i.test(t)) return 'the page could not be rasterised; an embedded resource may be cross-origin, or its markup one the serialiser rejects';
+		return 'the page could not be drawn as a picture';
+	}
+
+	/// `tag#id.class.class`, each part cut to a name's characters and the class tokens
+	/// joined with dots, so a sentence in a class attribute does not read as one.
+	function pname(o, n) {
+		o = obj(o);
+		var word = function (v, k) { return pc(v, k).replace(/[^A-Za-z0-9_\-:.\/%#@\[\]]+/g, '_'); };
+		var cls = pc(o.cls, 160).split(' ').filter(Boolean).map(function (c) { return word(c, 40); }).join('.');
+		var out = word(String(o.tag || '').toLowerCase(), 24) + (o.id ? '#' + word(o.id, 40) : '') + (cls ? '.' + cls : '');
+		return out.length > n ? out.slice(0, n - 1) + '~' : (out || '?');
+	}
+
+	/// A grid's tracks, with a run of identical ones counted: `204px 204px 204px` is `204px x3`.
+	function ptracks(v) {
+		if (!pc(v, 600)) return '';
+		var t = pv(v, 'tracks') === '?' ? ['?'] : pc(v, 600).split(' '), out = [], i = 0, j;
+		while (i < t.length) {
+			j = i;
+			while (j + 1 < t.length && t[j + 1] === t[i]) j++;
+			out.push(j > i ? t[i] + ' x' + (j - i + 1) : t[i]);
+			i = j + 1;
+		}
+		var s = out.join(' ');
+		return s.length > 100 ? s.slice(0, 99) + '~' : s;
+	}
+
+	/// The text a daimon reads for a probe reply `m` to the selector `sel`. Pure, and
+	/// total: whatever `m` is, the result is at most `PROBE_ROWS + 2` lines of printable
+	/// ASCII, built here and not taken from the page.
+	function probeTable(m, sel) {
+		m = obj(m);
+		var outline = m.outline === true;
+		var raw = arr(m.rows).slice(0, outline ? PROBE_OUTLINE_ROWS : PROBE_ROWS);
+		var count = (typeof m.count === 'number' && isFinite(m.count) && m.count >= 0)
+			? Math.min(Math.floor(m.count), 1000000) : raw.length;
+		var v = obj(m.view);
+		var size = '(frame ' + pi(v.w) + 'x' + pi(v.h) + ', page ' + pi(v.sw) + 'x' + pi(v.sh) + ')';
+		var head = outline
+			? 'outline of the crystal page ' + size + ': the body and its blocks to three levels, ' + raw.length + ' of ' + count + ' shown.'
+			: 'probe ' + (pc(sel, 60) ? "'" + pc(sel, 60) + "'" : '(the page body)') + ' in the crystal page ' + size
+				+ ': ' + count + ' match' + (count === 1 ? '' : 'es') + ', ' + raw.length + ' shown.';
+		var cols = ['#', 'element', 'x', 'y', 'w', 'h', 'display', 'box', 'css-w', 'css-h', 'aspect', 'padding', 'cols', 'notes'];
+		if (!outline) cols.push('parent');
+		var rows = [cols];
+		for (var i = 0; i < raw.length; i++) {
+			var r = obj(raw[i]), p = r.parent && typeof r.parent === 'object' ? r.parent : null;
+			var own = ptracks(r.cols), disp = pv(r.display, 'display');
+			var flex = /flex/.test(disp) ? ' ' + pv(r.flex, 'flex') : '';
+			var depth = outline && typeof r.depth === 'number' && r.depth >= 0 && r.depth <= 3 ? Math.floor(r.depth) : 0;
+			// What is wrong with the box, in the fewest words: its own content spills out of it, or the
+			// box runs past the right edge of the frame (a page wider than the screen).
+			var notes = [];
+			if (typeof r.ox === 'number' && r.ox > 1 && r.ox < 1e7) notes.push('over-x+' + Math.round(r.ox));
+			if (typeof r.oy === 'number' && r.oy > 1 && r.oy < 1e7) notes.push('over-y+' + Math.round(r.oy));
+			if (typeof r.x === 'number' && typeof r.w === 'number' && typeof v.w === 'number' && r.x + r.w > v.w + 1) {
+				notes.push('off-right+' + Math.round(r.x + r.w - v.w));
+			}
+			var cells = [String(i + 1), '  '.repeat(depth) + pname(r, 80), pn(r.x), pn(r.y), pn(r.w), pn(r.h),
+				disp + flex, pv(r.box, 'box'), pv(r.width, 'size'), pv(r.height, 'size'),
+				pv(r.aspect, 'aspect'), pv(r.padding, 'pad'), (own && own !== 'none') ? own : '-', notes.join(' ') || '-'];
+			if (!outline) {
+				var pd = p ? pv(p.display, 'display') : '';
+				cells.push(p ? pname(p, 40) + ' w=' + pn(p.w) + ' ' + pd + (/grid/.test(pd) ? ' cols=' + (ptracks(p.cols) || '?') : '') : '-');
+			}
+			rows.push(cells);
+		}
+		var wide = cols.map(function (_, k) { return Math.max.apply(null, rows.map(function (x) { return x[k].length; })); });
+		var lines = rows.map(function (x) {
+			return x.map(function (c, k) { return k === x.length - 1 ? c : c + ' '.repeat(wide[k] - c.length); }).join('  ').replace(/\s+$/, '');
+		});
+		return [head].concat(lines).join('\n');
+	}
+
+	/// The picture in a reply, if it is one: base64 of a PNG, under the cap. Else `''`.
+	function probePng(m) {
+		var b = obj(m).png_b64;
+		if (typeof b !== 'string' || b.length < 16 || b.length % 4 !== 0) return '';
+		if (b.length > Math.ceil(PROBE_PNG_MAX * 4 / 3)) return '';
+		if (b.slice(0, 11) !== 'iVBORw0KGgo') return '';
+		return /^[A-Za-z0-9+\/]+={0,2}$/.test(b) ? b : '';
+	}
+
+	/// The width and height a PNG's header states, or `null` when the bytes do not open with a
+	/// signature and an IHDR chunk. Reads 24 bytes; decodes nothing.
+	function pngHead(b64) {
+		if (typeof b64 !== 'string' || b64.length < 32 || typeof atob !== 'function') return null;
+		var t;
+		try { t = atob(b64.slice(0, 32)); } catch (e) { return null; }
+		var u = function (k) {
+			return ((t.charCodeAt(k) << 24) | (t.charCodeAt(k + 1) << 16) | (t.charCodeAt(k + 2) << 8) | t.charCodeAt(k + 3)) >>> 0;
+		};
+		if (t.length < 24 || u(8) !== 13 || t.slice(12, 16) !== 'IHDR') return null;
+		return { w: u(16), h: u(20) };
+	}
+
+	/// A probe result whose picture has been made to PROVE itself: the header names the size the
+	/// reply claimed, within the canvas limits, and the browser decodes it to that size. A picture
+	/// that fails is dropped, with the host's own words in the table, so junk never reaches the
+	/// daimon's model (a provider refuses it, and the model would be written off as blind).
+	/// Resolves `r` itself, changed in place.
+	function probeSight(r) {
+		if (!r.png_b64) return Promise.resolve(r);
+		function drop(why) {
+			r.table += '\nNo picture: ' + why + '.';
+			r.png_b64 = ''; r.w = 0; r.h = 0;
+			return r;
+		}
+		var hd = pngHead(r.png_b64), bin, u, i;
+		if (!hd || hd.w !== r.w || hd.h !== r.h || r.w < 1 || r.h < 1 || r.w > PROBE_PX_SIDE || r.h > PROBE_PX_SIDE
+			|| r.w * r.h > PROBE_PX_MAX) {
+			return Promise.resolve(drop('the page\'s picture did not have the header and size of a picture it could have drawn'));
+		}
+		var gone = function () { return drop('the page\'s picture did not decode, so it was not passed on'); };
+		if (typeof createImageBitmap !== 'function' || typeof Blob !== 'function') {
+			return Promise.resolve(drop('this browser cannot check the page\'s picture, so it was not passed on'));
+		}
+		try {
+			bin = atob(r.png_b64); u = new Uint8Array(bin.length);
+			for (i = 0; i < bin.length; i++) u[i] = bin.charCodeAt(i);
+			return createImageBitmap(new Blob([u], { type: 'image/png' })).then(function (bm) {
+				var same = !!bm && bm.width === r.w && bm.height === r.h;
+				try { if (bm && bm.close) bm.close(); } catch (e) { /* nothing to free */ }
+				return same ? r : gone();
+			}, gone);
+		} catch (e) {
+			return Promise.resolve(gone());
+		}
+	}
+
+	/// A probe's reply as the daimon gets it: `{ err }` in the daimon's words, or
+	/// `{ table, png_b64, w, h }`. Pure: the page's reply `m` is believed in nothing.
+	function probeResult(m, sel, wantPng) {
+		m = obj(m);
+		if (typeof m.error === 'string' && m.error) {
+			// The page's own words are not repeated: it is not a selector the page can run, or the page could not be measured with it.
+			return { err: 'The crystal page refused the selector ' + JSON.stringify(pc(sel, 60)) + ': it is not a selector the page can run, '
+				+ 'or the page could not be measured with it. Try a simpler one, or leave the selector out for an outline.' };
+		}
+		if (arr(m.rows).length === 0) {
+			return { err: 'Nothing in the crystal page matches the selector ' + JSON.stringify(pc(sel, 60))
+				+ '. This measures the Diamond\'s own page, not the app. Leave the selector out to list its body and the '
+				+ 'body\'s children, or name an element the page has.' };
+		}
+		var table = probeTable(m, sel), b64 = wantPng ? probePng(m) : '';
+		if (wantPng && !b64) {
+			table += '\nNo picture: ' + (typeof m.png_error === 'string' && m.png_error ? pngWhy(m.png_error)
+				: (typeof m.png_b64 === 'string' && m.png_b64 ? 'the page returned something that is not a picture' : 'the page returned none')) + '.';
+		}
+		var w = Number(m.w), h = Number(m.h);
+		return { table: table, png_b64: b64, w: b64 && w > 0 && w <= 16384 ? Math.floor(w) : 0, h: b64 && h > 0 && h <= 16384 ? Math.floor(h) : 0 };
+	}
+
+	/// Render a Diamond's page in a frame of its own, off screen, and measure and
+	/// photograph it from inside. It does NOT need the page to be showing, and it
+	/// works on a page just edited, which is the point: a daimon on a handed-off turn
+	/// has no page on screen, and a daimon that cannot see what it built guesses.
+	///
+	/// `req` is `{ page, data, id, width, sel, max_w, background }`: the stored page text
+	/// (empty for the shipped default) and the stored `crystal.json` text, read by the
+	/// caller from the Diamond. The frame is made by the very function `mount` uses,
+	/// so it has the same sandbox and the same policy; it is READ-ONLY (a `save` or an
+	/// `open` from it is let go), it is on its own channel and not `live`, and it is gone
+	/// whatever happens. Its `asset` verb is answered as the on-screen frame's is
+	/// (`serveAsset`), from the folder of the Diamond `id` names, so the picture is faithful to
+	/// the screen. Resolves `{ table, png_b64, w, h }`, else rejects in words.
+	function render(req) {
+		req = obj(req);
+		var width = Math.round(Number(req.width));
+		if (!(width >= 200 && width <= 4000)) width = 1440;
+		var high = width < 768 ? 844 : 900;
+		var sel = str(req.sel).slice(0, PROBE_SEL_MAX);
+		var page = str(req.page).trim() ? draw(String(req.page)) : DEFAULT_PAGE;
+		var data = obj(parse(req.data).data);
+		return new Promise(function (resolve, reject) {
+			var faces = faceSkin(currentSkin());
+			if (faces) loadFaces(currentSkin());
+			var names = page.toLowerCase();
+			var nonce = newNonce();
+			if (!nonce) {
+				reject(new Error('This browser has no random source, so the crystal page cannot be measured safely.'));
+				return;
+			}
+			var made = makeFrame(page, probeShimTag(nonce) + (faces ? FACE_PRELUDE : ''), 'crystal-offscreen', 'crystal');
+			var frame = made.frame;
+			frame.style.cssText = 'position:fixed;left:-30000px;top:0;border:0;width:' + width + 'px;height:' + high + 'px;';
+			frame.setAttribute('aria-hidden', 'true');
+			frame.tabIndex = -1;
+			var settled = false, loads = 0, ready = false, rendered = false, asked = 0, readyT = 0, renderT = 0, replyT = 0;
+			var answered = false;
+
+			function end(fn, v) {
+				if (settled) return;
+				settled = true;
+				clearTimeout(readyT); clearTimeout(renderT); clearTimeout(replyT);
+				window.removeEventListener('message', onMsg);
+				if (frame.parentNode) frame.parentNode.removeChild(frame);
+				try { URL.revokeObjectURL(made.url); } catch (e) { /* already gone */ }
+				fn(v);
+			}
+			function say(msg) {
+				var w = frame.contentWindow;
+				if (!w) return;
+				msg.dc = 1; msg.v = PROTOCOL;
+				try { w.postMessage(msg, '*'); } catch (e) { /* the frame went away */ }
+			}
+			function ask() {
+				if (asked || settled) return;
+				asked = ++probeSeq;
+				say({ cmd: 'probe', id: asked, sel: sel, png: true,
+					max_w: Number(req.max_w) > 0 ? Math.min(Number(req.max_w), 4000) : 0,
+					background: str(req.background).slice(0, 64) });
+				replyT = setTimeout(function () {
+					end(reject, new Error('The crystal page did not answer within ' + Math.round(PROBE_PNG_MS / 1000)
+						+ ' s. Its script may be stuck; read its source instead.'));
+				}, PROBE_PNG_MS);
+			}
+			function onMsg(e) {
+				if (settled || loads > 1 || e.source !== frame.contentWindow) return;
+				var m = e.data;
+				if (!m || m.dc !== 1 || m.v !== PROTOCOL) return;
+				switch (m.cmd) {
+					case 'ready':
+						if (ready) return;
+						ready = true;
+						clearTimeout(readyT);
+						say({ cmd: 'data', data: wireData(data, req, document.body, names) });
+						// A page that says `rendered` is measured then; one that never does, after the
+						// same grace the on-screen frame gives it.
+						renderT = setTimeout(ask, FALLBACK_MS);
+						break;
+					case 'rendered': rendered = true; clearTimeout(renderT); ask(); break;
+					case 'asset':
+						// The same answer the on-screen frame gets, for this Diamond's own folder only.
+						serveAsset(m, req.id, assetFor(req)).then(function (reply) {
+							if (!settled) say(reply);
+						});
+						break;
+					case 'probed':
+						// Only the shim this host armoured in holds the nonce, so a page's own early
+						// answer is let go, and the shim's genuine one still lands.
+						if (!asked || answered || m.id !== asked || typeof m.nonce !== 'string' || m.nonce !== nonce) return;
+						answered = true;
+						var r = probeResult(m, sel, true);
+						if (r.err) { end(reject, new Error(r.err)); return; }
+						if (!rendered) r.table += '\nThe page never said what it drew; it may not follow the channel.';
+						probeSight(r).then(function (v) { end(resolve, v); });
+						break;
+					default: break;   // `save`, `open`, `height`: a view takes no action
+				}
+			}
+			window.addEventListener('message', onMsg);
+			frame.addEventListener('load', function () {
+				loads++;
+				if (loads > 1) end(reject, new Error('The crystal page navigated itself away, so it was not measured.'));
+			});
+			readyT = setTimeout(function () {
+				end(reject, new Error('The crystal page never said `ready`, so it cannot be drawn; its script may have failed '
+					+ 'on load. Read its source, or reset it to the shipped page.'));
+			}, 4000);
+			document.body.appendChild(frame);
+		});
 	}
 
 
@@ -682,20 +1228,12 @@
 		var wrap = document.createElement('div');
 		wrap.id = 'crystal-frame-wrap';
 
-		var frame = document.createElement('iframe');
-		frame.className = 'crystal-frame';
-		// `allow-scripts` and NOTHING else, ever. See the head of this file.
-		frame.setAttribute('sandbox', 'allow-scripts');
-		frame.setAttribute('referrerpolicy', 'no-referrer');
-		frame.setAttribute('title', tr(opts, 'crystal.view_crystal', 'Crystal'));
-
-		// The page cannot reach the network, whoever wrote it. See above. Under a skin
-		// that carries faces it is also given the lines that register them.
+		// The page cannot reach the network, whoever wrote it. See above. Under a skin that carries
+		// faces it is also given the lines that register them.
 		var faces = faceSkin(currentSkin());
 		if (faces) loadFaces(currentSkin());
-		var armed = armour(page, faces ? FACE_PRELUDE : '');
-		var url = URL.createObjectURL(new Blob([armed.html], { type: PAGE_TYPE }));
-		frame.src = url;
+		var made = makeFrame(page, faces ? FACE_PRELUDE : '', 'crystal-frame', tr(opts, 'crystal.view_crystal', 'Crystal'));
+		var frame = made.frame, armed = made.armed, url = made.url;
 		wrap.appendChild(frame);
 		el.appendChild(wrap);
 
@@ -848,26 +1386,52 @@
 		}, FALLBACK_MS);
 	}
 
-	/// A text file from this Diamond's scope, read for the page by the app. The
-	/// path is vetted here before anybody is asked for anything: a page that asks
-	/// for `../../other/crystal.json` gets an error, not a file.
-	function onAsset(m) {
-		var id = m.id;
+	/// The answer to a page's `asset` verb: one text file from a Diamond's scope, read for it
+	/// by the app. The path is vetted here before anybody is asked for anything: a page that
+	/// asks for `../../other/crystal.json` gets an error, not a file. Resolves the reply to
+	/// post, `{ id, text }` or `{ id, error }`, and never rejects.
+	///
+	/// ONE FUNCTION FOR BOTH FRAMES. The on-screen view (`onAsset`) and the off-screen one
+	/// (`render`) answer through it, so a page that fetches its own files draws the same in
+	/// the picture a daimon is given as on the screen a person sees, under the same checks.
+	/// `reader` is the app's (`readCrystalAsset`), which re-checks the path; `id` names the
+	/// Diamond whose folder it is, so a frame can only ever read its own.
+	function serveAsset(m, id, reader) {
+		var rid = m.id;
 		var rel = safePath(m.path);
-		if (!rel) { toFrame({ id: id, error: 'path' }); return; }
-		var reader = (live.opts && typeof live.opts.onAsset === 'function')
-			? live.opts.onAsset : null;
-		if (!reader) { toFrame({ id: id, error: 'unavailable' }); return; }
-		var full = 'diamonds/' + str(live.opts.id) + '/' + rel;
-		var mine = live;
-		Promise.resolve().then(function () {
+		if (!rel) return Promise.resolve({ id: rid, error: 'path' });
+		if (typeof reader !== 'function' || !str(id)) return Promise.resolve({ id: rid, error: 'unavailable' });
+		var full = 'diamonds/' + str(id) + '/' + rel;
+		return Promise.resolve().then(function () {
 			return reader(full, rel);
 		}).then(function (text) {
-			if (live !== mine || live.done) return;
-			toFrame({ id: id, text: str(text) });
+			return { id: rid, text: str(text) };
 		}, function (err) {
+			return { id: rid, error: String((err && err.message) || err) };
+		});
+	}
+
+	/// The app's reader for `asset`, for a frame that has no `mount` to be handed one.
+	/// Registered once by the app (`setAssetReader`), and used by `render`.
+	var assetReader = null;
+	function setAssetReader(fn) { assetReader = typeof fn === 'function' ? fn : null; }
+
+	/// The `(fullPath, rel)` reader an off-screen render answers `asset` with: the request's own,
+	/// else the app's registered one, which takes the Diamond's id first as `readCrystalAsset` does.
+	function assetFor(req) {
+		if (typeof req.onAsset === 'function') return req.onAsset;
+		if (!assetReader) return null;
+		return function (full, rel) { return assetReader(req.id, full, rel); };
+	}
+
+	/// A text file from this Diamond's scope, for the on-screen page.
+	function onAsset(m) {
+		var reader = (live.opts && typeof live.opts.onAsset === 'function')
+			? live.opts.onAsset : null;
+		var mine = live;
+		serveAsset(m, live.opts && live.opts.id, reader).then(function (reply) {
 			if (live !== mine || live.done) return;
-			toFrame({ id: id, error: String((err && err.message) || err) });
+			toFrame(reply);
 		});
 	}
 
@@ -1714,6 +2278,7 @@
 	// ── Export ──────────────────────────────────────────────────────
 
 	window.DaimondCrystal = {
+		setAssetReader: setAssetReader,
 		CORE_KEYS:    CORE_KEYS,
 		DEFAULT_PAGE: DEFAULT_PAGE,
 		upgrade:      upgrade,
@@ -1730,12 +2295,19 @@
 		mount:        mount,
 		unmount:      unmount,
 		fallback:     fallback,
+		render:       render,
+		probeTable:   probeTable,
+		probeResult:  probeResult,
+		probePng:     probePng,
+		probeSight:   probeSight,
+		_shim:        shim,
+		_armour:      armour,
 		/// The policy every page is served under, so a verifier can assert the exact
 		/// string rather than keeping a copy of it that can drift.
 		PAGE_CSP:     PAGE_CSP,
 		/// What is on screen, for a verifier: whether the page or the built-in view
 		/// is up, why, which keys the page claimed, and where the policy was put in
-		/// the page — `'head'`, `'html'`, `'doctype'` or `'start'`, with `carried`
+		/// the page — `'doctype'` (after the doctype) or `'start'` (ahead of the page), with `carried`
 		/// saying whether the author had already declared one. Never used by the app.
 		_state: function () {
 			if (!live) {

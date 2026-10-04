@@ -244,8 +244,9 @@ async function lastBlob() {
 		const text = b ? await b.text() : '';
 		const P = DaimondCrystal.DEFAULT_PAGE;
 		const meta = '<meta http-equiv="Content-Security-Policy" content="' + DaimondCrystal.PAGE_CSP + '">';
-		const m = /<head\b[^>]*>/i.exec(P);
-		const was = m ? P.slice(0, m.index + m[0].length) + meta + P.slice(m.index + m[0].length) : '';
+		// QA's fix C (0f0e4d1e): the policy goes after the leading comments and doctype, ahead of everything else, not after a searched-for <head>.
+		const m = /^(?:\s*<!--[\s\S]*?-->)*\s*(<!doctype\b[^>]*>)?/i.exec(P);
+		const was = P.slice(0, m[0].length) + meta + P.slice(m[0].length);
 		return { text, was, meta };
 	});
 }
@@ -260,7 +261,7 @@ const skin0 = await page.evaluate(() => document.documentElement.getAttribute('d
 check('the skin is Daylight', skin0 === 'daylight', skin0);
 
 const blobDl = await lastBlob();
-check('DAYLIGHT: the page went in as the old armour plus the prelude, and nothing else',
+check('DAYLIGHT: the page went in as the armoured page (policy ahead of the content) plus the prelude, and nothing else',
 	blobDl.text.length > blobDl.was.length
 	&& blobDl.text.replace(/<script>\(function\(\)\{var got=\{\};[\s\S]*?<\/script>/, '') === blobDl.was);
 

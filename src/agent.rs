@@ -1498,6 +1498,10 @@ impl Agent {
             // needs to.
             return Ok(MessageContent::text(truncated_call_note(self.reply_cap())));
         }
+        // WHAT THIS MODEL CAN TAKE, as it stands NOW, handed to the tool that is about to run: a
+        // tool that makes a picture (`capture`) either attaches it or gets it described, and only
+        // the engine knows which, because a refusal learned mid-turn changes it between rounds.
+        registry.ctx.set_blind(!self.llm.can_take_images());
         self.over_the_road(registry, &tc.name, &tc.arguments, on_event).await
     }
 
