@@ -56592,8 +56592,10 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		var onEvent = function (ev) {
 			if (!ev || !ev.type) return;
 			// A HANDED-OFF turn checks lease liveness between the ticker's own reads, so a
-			// take-back aborts the daimon promptly rather than at the next tick. Cheap and
-			// idempotent; the read-only ticker is still the backstop.
+			// take-back aborts the daimon promptly rather than at the next tick. Not free:
+			// the check is a lease GET, so runErrand's `liveness` is single-flight and
+			// spaced (LIVENESS_GAP_MS) and this call is only a nudge to it. The read-only
+			// ticker is still the backstop and always reads.
 			if (detached && detached.onProgress) { try { detached.onProgress(); } catch (e) { /* the ticker still catches it */ } }
 			if (ev.type === 'text') {
 				// The conductor's own words — a question, a refusal, or an account

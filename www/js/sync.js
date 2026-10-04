@@ -987,7 +987,7 @@
 		// `style.display` still carries "is the chip saying anything", because that
 		// is what six verifiers read and what `restStatus` means by an empty state.
 		// What is new is the other half of the row taking over when it is not.
-		if (!state) { c.style.display = 'none'; paintRest(true); announceChip(); return; }
+		if (!state) { c.style.display = 'none'; paintRest(true); paintIcon(); announceChip(); return; }
 		paintRest(false);
 		c.dataset.state = state;
 		c.querySelector('.stext').textContent = text;
@@ -997,6 +997,7 @@
 		// on a good one it costs a line nobody has to read.
 		c.title = [title || '', lastSyncedLine()].filter(Boolean).join('\n');
 		c.style.display = 'flex';
+		paintIcon();
 		announceChip();
 		// The hold's expiry must not blank the chip outright: a stall (owed work, a
 		// standing refusal) can arrive during the hold and must still be shown once it
@@ -1030,6 +1031,25 @@
 		_announcedChip = now;
 		try { window.dispatchEvent(new CustomEvent('daimond:sync-chip', { detail: { state: now } })); }
 		catch (e) { /* no window to tell */ }
+	}
+
+	/// Hand the top bar's sync icon what the rail's sync line says, from the same
+	/// call that painted the line, so the icon's hover and the line cannot differ.
+	/// The line is the chip's words while the chip speaks and the resting "Last
+	/// synced ..." otherwise (`paintRest`).
+	function paintIcon() {
+		try {
+			if (!window.DaimondSyncIcon) return;
+			var c = document.getElementById('sync-chip');
+			var shown = !!(c && c.style.display !== 'none');
+			var line;
+			if (shown) { var st = c.querySelector('.stext'); line = st ? st.textContent : ''; }
+			else {
+				var r = document.getElementById('sync-rest');
+				line = (r && r.textContent) ? r.textContent : lastSyncedLine();
+			}
+			DaimondSyncIcon.paint(shown ? String(c.dataset.state || '') : '', line, shown ? c.title : '');
+		} catch (e) { /* the icon is ambient; it must never break a sync */ }
 	}
 
 	/// A short relative age, in the app's own language.
@@ -4454,6 +4474,7 @@
 		// because a world with no gateway never holds one.
 		statusChip();
 		paintRest(true);
+		paintIcon();
 		// Before anything this session pulls: a cursor that is already here can
 		// only have been left by this device reading this account's mailbox on an
 		// earlier visit. See `knownDevice`.

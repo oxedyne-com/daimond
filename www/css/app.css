@@ -168,6 +168,40 @@ svg { display: block; }
    .icon-btn default of 16, so the row of five read as two different sets. */
 .top-actions .icon-btn .ic { width: 18px; height: 18px; }
 
+/* The two ambient indicators at the head of the bar: the debug lens (js/debugshare.js,
+   only while that feature is on) and the sync icon (js/syncicon.js, always there).
+   They share one pulse, which is the lens's own: a 1.6s ring that swells and fades,
+   and one reduced-motion rule: the ring stays, in the icon's own colour, and stops
+   moving. The colours are variables so the lens keeps its alarm red and the sync icon
+   takes the app's green; the keyframes, the timing and the rule are written once, here.
+   (The lens's own stylesheet, injected by js/debugshare.js, no longer sets an animation,
+   so nothing later in the cascade can undo the rule.) */
+@keyframes pulse-ring {
+	0%, 100% { box-shadow: 0 0 0 0 var(--pulse-from); }
+	50%      { box-shadow: 0 0 0 5px var(--pulse-to); }
+}
+.ds-indicator { --pulse-from: rgba(239, 68, 68, .55); --pulse-to: rgba(239, 68, 68, 0); }
+.ds-indicator, .sync-ico.on { animation: pulse-ring 1.6s ease-in-out infinite; }
+@media (prefers-reduced-motion: reduce) {
+	.ds-indicator, .sync-ico.on { animation: none; box-shadow: 0 0 0 3px var(--pulse-from); }
+}
+/* Sync, at rest, is a quiet muted glyph that does nothing: no pointer, no press,
+   no focus stop (it is a picture with a name, like the status dots). While a sync
+   is in flight (`.on`, set by js/syncicon.js) it pulses green (the pulse and its
+   reduced-motion rule are above, shared with the lens). The `::after` is a 44px
+   touch target for the tap that shows its words. */
+.sync-ico { position: relative; flex: none; display: inline-flex; align-items: center; justify-content: center;
+	width: 34px; height: 34px; margin: 0 2px; border-radius: 8px; color: var(--text-muted); cursor: default;
+	-webkit-user-select: none; user-select: none; -webkit-touch-callout: none; -webkit-tap-highlight-color: transparent; }
+.sync-ico::after { content: ''; position: absolute; inset: -5px; }
+.sync-ico .ic { width: 20px; height: 20px; stroke-width: 2; }
+.sync-ico.on { color: var(--ok); --pulse-from: color-mix(in srgb, var(--ok) 55%, transparent); --pulse-to: color-mix(in srgb, var(--ok) 0%, transparent); }
+/* What a tap shows where there is no hover: the same words as the tooltip, under the icon. */
+.sync-tip { position: fixed; z-index: 2000; max-width: min(280px, calc(100vw - 16px)); padding: 7px 10px;
+	border-radius: var(--radius-sm); background: var(--bg-tertiary); color: var(--text-primary);
+	font-size: var(--fs-xs); line-height: 1.4; white-space: pre-line; box-shadow: 0 4px 16px rgba(0, 0, 0, .28);
+	pointer-events: none; }
+
 /* Settings names itself once the bar has room (TOP-03): the icon alone is
    what "the button people look for" was missing. Hidden by default so the
    same span reads as an icon-only control at a narrower desktop width and,
@@ -1109,7 +1143,7 @@ body.resizing-v { cursor: row-resize; user-select: none; -webkit-user-select: no
 	font-size: var(--fs-xs); line-height: 1.45; color: var(--text-secondary);
 	margin: 2px 0 6px; padding: 8px 10px; border-radius: var(--radius-sm);
 	background: var(--surface-2, rgba(127, 127, 127, 0.08)); }
-/* The inline hand-off spinner: the SAME three dots the thread's turn spinner
+/* The inline hand-off spinner: the SAME three diamonds the thread's turn spinner
    uses (`.chat-spinner-dot`, animated, resting under reduced motion), set inline
    beside the status word rather than on their own centred line. */
 .ti-spin { display: inline-flex; align-items: center; gap: 3px; flex: none; }
@@ -1885,7 +1919,7 @@ span.arte-open { cursor: default; }
 .start-label { font-size: var(--fs-sm); }
 .start-go { margin-top: 0; }
 
-/* The turn indicator: three dots and a line saying what the turn is doing.
+/* The turn indicator: three diamonds and a line saying what the turn is doing.
    It is up for the whole turn, so it sits at the foot of the thread and the
    caption is what stops it being four minutes of unchanging nothing. */
 .chat-spinner { display: flex; align-items: center; gap: 4px; padding: 8px 14px; }
@@ -1894,14 +1928,20 @@ span.arte-open { cursor: default; }
    the gap between the dots and the words -- `gap` alone would set it to the
    spacing BETWEEN the dots, which is far too tight for a sentence. */
 .chat-spinner-say { margin-left: 6px; font-size: var(--fs-xs); color: var(--text-secondary); }
-.chat-spinner-dot { flex: none; width: 7px; height: 7px; border-radius: 50%; background: var(--text-secondary); animation: spinner-bounce 1.4s infinite ease-in-out both; }
+/* Each mark is a DIAMOND, the app's own (owner review 2026-10-04, replacing the three
+   circles). It is drawn as the same clip-path polygon as `.ctile-dot`, not a square
+   rotated 45 degrees: a rotation changes the box the layout sees and a radius blunts the
+   points at this size. The box is untouched -- same 7px square, same gap, same animation --
+   so only the shape inside it changed and the thread does not move by a pixel. The class
+   keeps the name `dot` for the same reason `.ctile-dot` does. */
+.chat-spinner-dot { flex: none; width: 7px; height: 7px; background: var(--text-secondary); clip-path: polygon(50% 0%, 100% 50%, 50% 100%, 0% 50%); animation: spinner-bounce 1.4s infinite ease-in-out both; }
 .chat-spinner-dot:nth-child(1) { animation-delay: -0.32s; }
 .chat-spinner-dot:nth-child(2) { animation-delay: -0.16s; }
 @keyframes spinner-bounce { 0%, 80%, 100% { transform: scale(0); } 40% { transform: scale(1); } }
 /* A reader who has asked for less motion still needs to know the model is
-   working, so the dots stay -- they stop moving. `animation: none` alone would
+   working, so the diamonds stay -- they stop moving. `animation: none` alone would
    not do: the keyframe rests them at scale(0), so switching it off mid-cycle
-   leaves three invisible dots and a spinner that says nothing. */
+   leaves three invisible diamonds and a spinner that says nothing. */
 @media (prefers-reduced-motion: reduce) {
 	.chat-spinner-dot { animation: none; transform: scale(1); opacity: 0.5; }
 	.chat-spinner-dot:nth-child(2) { opacity: 0.75; }

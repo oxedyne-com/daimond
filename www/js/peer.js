@@ -2808,6 +2808,7 @@
 	// kilobytes at most -- and not the whole account parcel, which is what made this
 	// cadence affordable; a tick whose tail is unchanged sends nothing at all.
 	var PROGRESS_EVERY_MS = 2000;
+	var LIVENESS_GAP_MS   = 3000;		// least spacing of event-driven lease reads on a running turn
 	var MAX_TAKE_TRIES = 10;		// bound the CAS retry loop (was 6): more headroom under two-device churn
 	var TAKE_BACKOFF_MS = 250;		// jittered wait between take retries so a claim gets a clean window
 	var UNREAD_RETRY_MS = 1000;		// the pause before a lease write looks once more at a door that would not read
@@ -4141,6 +4142,7 @@
 		var clrT = d.clearTimer || (typeof clearInterval === 'function' ? clearInterval : null);
 		function stopCheck() {
 			checkStopped = true;
+			if (liveTrail != null) { try { clearTimeout(liveTrail); } catch (err) {} liveTrail = null; }
 			if (checkTimer != null && clrT) { try { clrT(checkTimer); } catch (err) {} checkTimer = null; }
 			// The progress timer streams the RUNNING turn; it dies with the ticker, on
 			// EVERY exit, so it can neither push a frame of a finished turn nor leak.
@@ -4152,7 +4154,22 @@
 		// -- the lease is no longer ours, or was released, which a sync pull adopts into
 		// the view this reads -- and on the lifetime cap, the backstop for a runTurn
 		// whose promise never settles, after which the lease is simply left to expire.
-		async function liveness() {
+		// PACED. The engine calls this on EVERY journal event (a streamed token is one), and
+		// since the lease door left the parcel a read is a network GET, not a look at memory:
+		// one read per event was ~27 GETs a second on a 52-round turn (2026-10-04), each held
+		// behind the browser's six connections until its 18 s budget ended, which starved the
+		// runner's own progress PUTs. So an event-driven call (`force` absent) reads only when no
+		// event-driven read is in flight and the last read began `gapMs` ago: a take-back is seen
+		// within one gap of the next event. The ticker passes `force` and ALWAYS reads, even over
+		// a stuck in-flight read, so on a quiet stream detection is never later than the tick.
+		var liveIn = 0, liveLast = -Infinity, liveTrail = null;
+		var stuckMs = (d.livenessStuckMs != null) ? d.livenessStuckMs : 2 * LIVENESS_GAP_MS;
+		function liveTrailArm(wait) {
+			if (liveTrail != null || checkStopped || revoked || typeof setTimeout !== 'function') return;
+			liveTrail = setTimeout(function () { liveTrail = null; liveness(false); }, Math.max(0, wait));
+		}
+		var gapMs = (d.livenessGapMs != null) ? d.livenessGapMs : LIVENESS_GAP_MS;
+		async function liveness(force) {
 			if (checkStopped || revoked) return;
 			if (leaseNow(leaseClock) - checkStart > maxLife) {
 				trace.push('renew-capped');
@@ -4161,8 +4178,20 @@
 				try { if (d.abort) d.abort(); } catch (err) { /* idempotent */ }
 				return;
 			}
+			var wall = Date.now();		// the wall clock, so a test's frozen `now` cannot freeze the pacing
+			var held = false;
+			if (force !== true) {
+				var since = wall - liveLast;		// negative if the wall clock stepped back: read, do not wait
+				var need = liveIn > 0 ? Math.max(gapMs, stuckMs) : gapMs;
+				var wait = since < 0 ? 0 : need - since;
+				if (wait > 0 || liveIn >= 3) { liveTrailArm(Math.min(wait > 0 ? wait : gapMs, gapMs)); return; }
+				liveIn += 1; held = true;
+			}
+			liveLast = wall;
 			var snap;
 			try { snap = await d.cas.read(); } catch (err) { return; }	// a failed read is not a revoke
+			finally { if (held) liveIn -= 1; }
+			if (checkStopped || revoked) return;
 			// Nor is an unreadable door: a revoke is a POSITIVE record (`leaseRevokeCas` writes a
 			// 'released' one, it never deletes), so what could not be read is unknown, not revoked.
 			if (!snap || snap.unread || !snap.leases) return;
@@ -4178,6 +4207,8 @@
 				try { if (d.abort) d.abort(); } catch (err) { /* idempotent */ }
 			}
 		}
+		// What the engine's journal events call: a nudge, never a forced read.
+		function nudge() { return liveness(false); }
 		try {
 			// 2. RECONSTRUCT the chat and workspace at the errand's version.
 			var ctx;
@@ -4230,7 +4261,7 @@
 			// 4. RUN. A revoked lease HARD-ABORTS at once, via the read-only ticker and
 			// the injected onProgress (kept so a real journal-event piggyback can check
 			// liveness between ticks); chat.app.abort is the hard stop.
-			if (setT) checkTimer = setT(function () { liveness(); if (d.heartbeat) d.heartbeat(); }, RENEW_EVERY_MS);
+			if (setT) checkTimer = setT(function () { liveness(true); if (d.heartbeat) d.heartbeat(); }, RENEW_EVERY_MS);
 			// STREAM THE RUNNING TURN. Through the length of the run, push the transcript
 			// as it stands so a peer watching the hand-off sees it unfold. A no-op dep
 			// (the runner-acceptance path, and peer.test) starts no timer, so this is
@@ -4253,7 +4284,7 @@
 				// a second copy -- otherwise the prompt sits twice in `messages` AND is fed
 				// to the model twice (seeded history + the re-sent turn). `turnId` names the
 				// existing user message (mid === turnId) the runner anchors to.
-				await d.runTurn(ctx, e.prompt, { onProgress: liveness, promptInTranscript: true, turnId: turnId,
+				await d.runTurn(ctx, e.prompt, { onProgress: nudge, promptInTranscript: true, turnId: turnId,
 					pre: (typeof e.pre === 'string') ? e.pre : '' });
 				trace.push('run');
 			} catch (err) {
@@ -4434,7 +4465,8 @@
 		// READ-ONLY, exactly as the turn's is: it never writes the parcel, so a compile
 		// in flight causes no churn. It detects the take-back -- the phone pressed
 		// "Compile here" -- and stops this run rather than letting two devices lay the
-		// same book out at once.
+		// same book out at once. Ticker-driven only (no per-event caller), so one read a
+		// tick needs no pacing.
 		async function liveness() {
 			if (checkStopped || revoked) return;
 			if (leaseNow(d.now) - checkStart > maxLife) { stopCheck(); revoked = true; return; }

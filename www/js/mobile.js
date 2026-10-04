@@ -239,7 +239,14 @@
 		if (row.parentNode === want) return;
 		// FIRST in the top bar, which is where the markup has it: the icon buttons
 		// after it are what the row's left edge is measured against.
-		if (want === acts) acts.insertBefore(row, acts.firstChild);
+		if (want === acts) {
+			// After the bar's leading indicators (the debug lens, then the sync
+			// icon), which sit side by side at its edge and are not the chip row's to
+			// get in front of.
+			var lead = acts.firstElementChild;
+			while (lead && (lead.id === 'sync-ico' || lead.classList.contains('ds-indicator'))) lead = lead.nextElementSibling;
+			acts.insertBefore(row, lead);
+		}
 		else bar.appendChild(row);
 		bindScroll(row);
 		if (window.DaimondPanels) DaimondPanels.reflow();

@@ -1739,7 +1739,9 @@
 	// the feature is on and gone the instant it is off. Its title/hover carries the
 	// plain warning. Theme-aware: the alert red is deliberately close in both
 	// themes (an alarm should not go quiet in the dark), but the glyph and ring
-	// adjust so it reads on either ground.
+	// adjust so it reads on either ground. The pulse (`pulse-ring`) and its
+	// reduced-motion rule are in css/app.css, shared with the sync icon beside it
+	// (js/syncicon.js); the animation is deliberately not set here.
 
 	var INDICATOR_TITLE = 'Debug data sharing is ON — all your Daimond data is being '
 		+ 'shared with the developer for debugging. Turn off in Settings.';
@@ -1752,13 +1754,10 @@
 			s.textContent =
 				'.ds-indicator{display:inline-flex;align-items:center;justify-content:center;'
 				+ 'width:34px;height:34px;margin:0 2px;border-radius:8px;cursor:pointer;'
-				+ 'border:1px solid #ef4444;background:#fee2e2;color:#b91c1c;'
-				+ 'animation:ds-pulse 1.6s ease-in-out infinite;}'
+				+ 'border:1px solid #ef4444;background:#fee2e2;color:#b91c1c;}'
 				+ '.ds-indicator:hover{background:#fecaca;}'
 				+ '.ds-indicator .ic{width:20px;height:20px;stroke:currentColor;stroke-width:2;'
 				+ 'fill:none;stroke-linecap:round;stroke-linejoin:round;}'
-				+ '@keyframes ds-pulse{0%,100%{box-shadow:0 0 0 0 rgba(239,68,68,.55);}'
-				+ '50%{box-shadow:0 0 0 5px rgba(239,68,68,0);}}'
 				+ '@media (prefers-color-scheme:dark){'
 				+ '.ds-indicator{background:#450a0a;color:#fca5a5;border-color:#f87171;}'
 				+ '.ds-indicator:hover{background:#5b1010;}}'

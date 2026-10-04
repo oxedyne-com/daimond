@@ -39,9 +39,9 @@ const HERE = dirname(fileURLToPath(import.meta.url));
 const DAIMOND_SRC = readFileSync(join(HERE, 'daimond.js'), 'utf8');
 const real = webcrypto;
 let failures = 0;
-function check(name, cond) {
+function check(name, cond, detail) {
 	if (cond) { console.log('  ok   ' + name); }
-	else { console.log('  FAIL ' + name); failures++; }
+	else { console.log('  FAIL ' + name + (detail ? '  -- ' + detail : '')); failures++; }
 }
 const toHex = (bytes) => {
 	const b = new Uint8Array(bytes);
@@ -1868,7 +1868,7 @@ async function runFireAndForgetAcceptance(P, L, check) {
 		const turnGate = new Promise((r) => { releaseTurn = r; });
 		const errand = sentErrand(P, { turnId: TURN, chatId: CHAT, prompt: 'do the thing',
 			eid: 'e-faf', deadline: NOW + P.DISPATCH_DEADLINE_MS, dispatchedBy: 'PHONE' });
-		const running = P.runErrand(errand, {
+		const running = P.runErrand(errand, { livenessGapMs: 0,
 			selfId: 'DESK', cas: P.syncCas(sync), now: () => NOW,
 			setTimer: timer.set, clearTimer: timer.clear,
 			finished:    async () => false,
@@ -2949,7 +2949,7 @@ async function runHeartbeatContainment(P, L, check) {
 		const sync = makeCountingSync({});
 		const timer = makeFakeTimer();
 		const errand = sentErrand(P, { turnId: TID, chatId: 'c', prompt: 'p', eid: 'e', deadline: 9e15 });
-		const res = await P.runErrand(errand, {
+		const res = await P.runErrand(errand, { livenessGapMs: 0,
 			selfId: 'peerA', cas: P.syncCas(sync), now: () => 2000,
 			setTimer: timer.set, clearTimer: timer.clear,
 			reconstruct: async () => ({ chat: { id: 'c', messages: [] } }),
@@ -3148,7 +3148,7 @@ async function runRunnerAcceptance(P, L, check) {
 		// The user message carries the TURN's own mid, which is what `progressTail`
 		// anchors to -- the runner's transcript holds the prompt the dispatcher sent.
 		const ctxChat = { id: 'chat-r', messages: [{ role: 'user', content: 'compute', mid: TID, ts: 1 }] };
-		const res = await P.runErrand(errand, {
+		const res = await P.runErrand(errand, { livenessGapMs: 0,
 			selfId: 'peerA', cas: P.syncCas(sync), now: () => 2000,
 			reconstruct: async () => ({ chat: ctxChat }),
 			runTurn: async (ctx, prompt, opts) => {
@@ -3294,6 +3294,104 @@ async function runRunnerAcceptance(P, L, check) {
 			P.foldProgress(closed, { turn: 'T1', seq: 3, msgs: one }) === null);
 	}
 
+	// ── The liveness read is PACED (the 2026-10-04 request storm). The engine calls onProgress on
+	// EVERY journal event, a streamed token among them, and since the lease door left the parcel
+	// each read is a network GET: a burst of events must cost one read, not one apiece. ──
+	{
+		L.forget();
+		const sync = makeLeaseSync({});
+		let burst = 0, inBurst = false;
+		const counting = Object.assign({}, sync, { read: async () => {
+			if (inBurst) burst += 1;
+			await new Promise((r) => setTimeout(r, 20));		// a GET takes time
+			return { version: sync.version(), leases: sync.leases(), unread: false };
+		} });
+		const res = await P.runErrand(errand, {
+			selfId: 'peerA', cas: P.syncCas(counting), now: () => 1000,
+			reconstruct: async () => ({ chat: { id: 'chat-b', messages: [] } }),
+			runTurn: async (ctx, prompt, opts) => {
+				inBurst = true;
+				for (let i = 0; i < 2000; i++) opts.onProgress();		// events are not awaited
+				await new Promise((r) => setTimeout(r, 150));
+				inBurst = false;
+			},
+			abort: () => {}, pushResult: async () => 9, post: async () => {}, ack: async () => {},
+		});
+		check('the turn still runs', res.ran === true && res.trace.indexOf('run') >= 0, JSON.stringify(res.trace));
+		check('2000 journal events cost at most 2 lease reads (single-flight and paced)', burst <= 2, burst + ' read(s)');
+	}
+
+	// ── ...and pacing must not blind a runner to a take-back. On a busy stream a revoke is seen
+	// within one gap (here 120 ms) of the phone writing it, however many events fire. ──
+	{
+		L.forget();
+		const sync = makeLeaseSync({});
+		const cas = P.syncCas(sync);
+		const GAP = 120;
+		let t0 = 0, revokedAt = 0, abortAt = 0, reads = 0;
+		const counting = Object.assign({}, cas, { read: async () => {
+			reads += 1;
+			await new Promise((r) => setTimeout(r, 5));
+			return cas.read();
+		} });
+		const res = await P.runErrand(errand, { livenessGapMs: GAP,
+			selfId: 'peerA', cas: counting, now: () => 1000,
+			reconstruct: async () => ({ chat: { id: 'chat-g', messages: [] } }),
+			runTurn: async (ctx, prompt, opts) => {
+				t0 = Date.now(); reads = 0;		// count the stream's reads, not the take and the claim's
+				for (let i = 0; i < 300 && !abortAt; i++) {		// an event every 5 ms for up to 1.5 s
+					if (i === 40) { await L.revoke(TID, cas, () => 1000); revokedAt = Date.now(); }
+					opts.onProgress();
+					await new Promise((r) => setTimeout(r, 5));
+				}
+				if (abortAt) throw new Error('aborted by signal');
+			},
+			abort: () => { abortAt = Date.now(); },
+			pushResult: async () => 9, post: async () => {}, ack: async () => {},
+		});
+		const lag = abortAt - revokedAt;
+		console.log('  note  take-back lag ' + lag + ' ms at a ' + GAP + ' ms gap, ' + reads + ' reads');
+		check('a take-back mid-burst still HARD-ABORTS the turn', res.aborted === true && abortAt > 0, JSON.stringify(res.trace));
+		check('...within one gap (+ one read and timer slack) of the revoke', lag >= 0 && lag <= GAP + 80, lag + ' ms');
+		check('...having read about once a gap, not once an event', reads <= Math.ceil((abortAt - t0) / GAP) + 2, reads + ' reads');
+	}
+
+	// ── The ticker's read is FORCED: it goes ahead over a stuck in-flight event read (an 18 s
+	// timeout on a saturated browser) and over the gap, so on a quiet stream a take-back is seen
+	// at the tick, never later than before pacing. ──
+	{
+		L.forget();
+		const sync = makeLeaseSync({});
+		const cas = P.syncCas(sync);
+		const timer = makeFakeTimer();
+		let calls = 0, armed = false, abortFired = false;
+		const stuck = Object.assign({}, cas, { read: () => {
+			if (armed) calls += 1;		// the stream's reads only, not the take and the claim's
+			return (armed && calls === 1) ? new Promise(() => {}) : cas.read();		// the 1st never settles
+		} });
+		const res = await P.runErrand(errand, { livenessGapMs: 0,
+			selfId: 'peerA', cas: stuck, now: () => 1000,
+			setTimer: timer.set, clearTimer: timer.clear,
+			reconstruct: async () => ({ chat: { id: 'chat-q', messages: [] } }),
+			runTurn: async (ctx, prompt, opts) => {
+				const tick = timer.handles.find((h) => h.live && h.ms === L.RENEW_EVERY_MS);
+				check('the liveness ticker is armed on the renew period', !!tick);
+				armed = true;
+				opts.onProgress();					// read 1 goes out and never comes back
+				opts.onProgress();					// single-flight: no second read while one is in flight
+				check('an event over an in-flight read issues no second read', calls === 1, calls + ' read(s)');
+				await L.revoke(TID, cas, () => 1000);
+				tick.fn();						// FORCED: reads over the stuck one
+				await new Promise((r) => setTimeout(r, 30));
+				check('a forced read goes ahead although an earlier read is still in flight', calls === 2, calls + ' read(s)');
+				if (abortFired) throw new Error('aborted by signal');
+			},
+			abort: () => { abortFired = true; },
+			pushResult: async () => 9, post: async () => {}, ack: async () => {},
+		});
+		check('a take-back on a quiet stream is seen at the forced tick', res.aborted === true && abortFired === true, JSON.stringify(res.trace));
+	}
+
 	// ── Stand down: a peer already holds the lease, so the runner does not run. ──
 	{
 		L.forget();
@@ -3317,7 +3415,7 @@ async function runRunnerAcceptance(P, L, check) {
 		const cas = P.syncCas(sync);
 		const now = () => 1000;
 		let abortFired = false, pushed = 0, acked = 0;
-		const res = await P.runErrand(errand, {
+		const res = await P.runErrand(errand, { livenessGapMs: 0,
 			selfId: 'peerA', cas, now,
 			reconstruct: async () => ({ chat: { id: 'chat-r', messages: [] } }),
 			runTurn: async (ctx, prompt, opts) => {
@@ -3408,7 +3506,7 @@ async function runLeaseUnreadAcceptance(phone, check) {
 		const hooks = { aborted: false };
 		const errand = sentErrand(P, { turnId: TID, chatId: 'chat-u', prompt: 'compute', eid: 'e-u',
 			ts: T0, deadline });
-		const res = await P.runErrand(errand, {
+		const res = await P.runErrand(errand, { livenessGapMs: 0,
 			selfId: 'peerA', cas: r.cas, now: nowFn,
 			reconstruct: async () => { if (pre) pre(); return { chat: { id: 'chat-u', messages: [] } }; },
 			runTurn: async (ctx, prompt, opts) => { await turn(opts, hooks); },
