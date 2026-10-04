@@ -3255,6 +3255,14 @@
 		// all stand down. Reported as a no-op CAS the take loop drops.
 		if (rekeyBehind) return { ok: false, why: 'rekey', version: base | 0, leases: proposed };
 		var blob = await leaseSeal(proposed);
+		// A MAP THAT WILL NOT SEAL IS NOT A VACANT DOOR (QA LQ1, 2026-10-04). `leaseSeal` answers
+		// '' for a locked identity as it does for an empty map, and an empty blob committed at
+		// the door's real version EMPTIES it: every record on the door gone, and a runner that can
+		// read the door again finds its own turn absent. Refused unsent, and unknown, as an
+		// unreadable door is; only a map that is truly empty is a vacate.
+		if (!blob && proposed && Object.keys(proposed).length) {
+			return { ok: false, why: 'unread', version: base | 0, leases: proposed };
+		}
 		// WEIGH BEFORE THE CAS. The gateway refuses a lease blob over LEASE_MAX_BYTES
 		// with a 413 (sync.rs:423); measuring the sealed size against the same rule here
 		// means an over-large door is answered `too_large` with ZERO requests, rather
@@ -3279,7 +3287,9 @@
 		// 409 (or any other refusal): report the door's current state for the re-read.
 		var ver = (j && j.version) | 0;
 		_leaseVer = ver;
-		return { ok: false, version: ver, leases: (j && j.blob) ? (await leaseUnseal(j.blob)) || {} : {} };
+		// `unread`, as `leaseGet` says it: the refusal carried no JSON, or a blob that would not open.
+		var held = (j && j.blob) ? await leaseUnseal(j.blob) : null;
+		return { ok: false, version: ver, leases: held || {}, unread: !j || (!!j.blob && !held) };
 	}
 
 	/// Adopt the lease map folded into an ordinary pull (like presence), so a device

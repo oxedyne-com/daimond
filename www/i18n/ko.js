@@ -3355,6 +3355,7 @@
 	'turn.peer_consent_named': '{name}이(가) {act} 허락을 구하고 있어요.',
 	'turn.peer_parked': '허락이 필요했어요 — 돌아오시면 다시 실행돼요.',
 	'turn.peer_rerun': '다시 실행',
+	'turn.peer_takeback_failed': '여기서 실행하지 못했어요. 다시 시도해 주세요.',
 	'seat.on_runner': '다음 차례: {name}',
 	'seat.on_desktop': '다음 차례: {name}',
 	'seat.on_desktop_runner_off': '다음 차례: {name}',

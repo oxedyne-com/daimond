@@ -2255,6 +2255,7 @@
 	'turn.peer_consent_named': '{name} needs your permission to {act}.',
 	'turn.peer_parked':        'This needed your permission — it will re-run when you’re back.',
 	'turn.peer_rerun':         'Re-run',
+	'turn.peer_takeback_failed': 'Could not run it here. Try again.',
 	// WHERE THE NEXT TURN WILL RUN -- the line under the composer. Stated before the
 	// send, not after it: a turn that runs on the phone itself needs the screen kept
 	// awake and in the foreground, and the user can only plan for that if they are

@@ -1035,6 +1035,10 @@ async function main() {
 	console.log('\nUnreadable door — an unread lease is unknown, never revoked');
 	await runLeaseUnreadAcceptance(phone, check);
 
+	// The four follow-ups of the Opus QA of that fix (2026-10-04, LQ1-LQ4).
+	console.log('\nUnreadable door — the take, the confirm, the releases, the take-back');
+	await runLeaseFollowupAcceptance(phone, check);
+
 	// ══════════════════════════════════════════════════════════
 	// STEP 5b — THE RENEW HEARTBEAT is bounded: it stops on every
 	// exit and cannot outlive its turn. This is the fix for the
@@ -2201,7 +2205,7 @@ async function runNominationAcceptance(P, L, check) {
 //   - post.js takeRow returns HOLD on a `why:'nominee'` stand-down, so the errand
 //     stays on the relay (not acked) for the nominee -- driven through the REAL
 //     DaimondPost.take door and the REAL DaimondPeer.absorb/runErrand;
-//   - a scheduled re-collect (daimond.js scheduleNomineeFallback) re-decides against
+//   - a scheduled re-collect (daimond.js scheduleStandDownRecollect) re-decides against
 //     LIVE presence, so once the nominee's beat ages out the fallback CLAIMS;
 //   - that scheduler RE-ARMS on a transient collect failure, so an offline blip
 //     restores the driver instead of dropping the only prompt re-collect.
@@ -3353,6 +3357,34 @@ async function runRunnerAcceptance(P, L, check) {
 	}
 }
 
+// A lease door the REAL `peerSyncShim` (daimond.js) reads and writes through, for the unread-door
+// tests. `st.fail` reads throw (what a timeout does), `st.empty` reads answer a real, vacant door.
+function unreadRig(phone, TID) {
+	const P = phone.DaimondPeer;
+	const door = makeLeaseSync({});
+	const modes = [];
+	const st = { fail: 0, empty: 0 };
+	const win = {
+		DaimondSync: {
+			leaseGet: async () => {
+				if (st.fail > 0) { st.fail--; throw new Error('pull timeout'); }
+				if (st.empty > 0) { st.empty--; return { version: door.version(), leases: {}, unread: false }; }
+				return { version: door.version(), leases: door.leases(), unread: false };
+			},
+			leaseCommit: async (base, next) => {
+				const r = door.commit(base, next);
+				if (r.ok && next[TID]) modes.push(next[TID].mode);
+				return r;
+			},
+			leaseVersion: () => door.version(),
+		},
+		DaimondLease: { snapshot: () => ({}) },
+	};
+	new Function('window', 'with (window) {\n' + daimondFuncSource('peerSyncShim')
+		+ '\nwindow.__shim = peerSyncShim; }')(win);
+	return { cas: P.syncCas(win.__shim()), door, modes, st };
+}
+
 // The lease door could not be read -- a timeout, a 5xx, an identity locked for a moment --
 // and the runner took it for vacant (2026-10-03). Drives the REAL `peerSyncShim` out of
 // daimond.js over a door whose reads can be made to fail or to come back readable-but-empty,
@@ -3367,31 +3399,7 @@ async function runLeaseUnreadAcceptance(phone, check) {
 	const prevDiag = phone.DaimondDiag;
 	phone.DaimondDiag = { on: () => false, log: (tag, d) => logs.push(tag + ' ' + d) };
 
-	// `fail` reads throw (what a timeout does), `empty` reads answer a real, vacant door.
-	function rig() {
-		const door = makeLeaseSync({});
-		const modes = [];
-		const st = { fail: 0, empty: 0 };
-		const win = {
-			DaimondSync: {
-				leaseGet: async () => {
-					if (st.fail > 0) { st.fail--; throw new Error('pull timeout'); }
-					if (st.empty > 0) { st.empty--; return { version: door.version(), leases: {}, unread: false }; }
-					return { version: door.version(), leases: door.leases(), unread: false };
-				},
-				leaseCommit: async (base, next) => {
-					const r = door.commit(base, next);
-					if (r.ok && next[TID]) modes.push(next[TID].mode);
-					return r;
-				},
-				leaseVersion: () => door.version(),
-			},
-			DaimondLease: { snapshot: () => ({}) },
-		};
-		new Function('window', 'with (window) {\n' + daimondFuncSource('peerSyncShim')
-			+ '\nwindow.__shim = peerSyncShim; }')(win);
-		return { cas: P.syncCas(win.__shim()), door, modes, st };
-	}
+	const rig = () => unreadRig(phone, TID);
 	// Run one errand over `r`; `turn(opts, r, hooks)` is the engine, `hooks.abort` is spied.
 	async function run(r, deadline, nowFn, turn, pre) {
 		L.forget();
@@ -3489,6 +3497,300 @@ async function runLeaseUnreadAcceptance(phone, check) {
 			logs.some((l) => /collect lease write turn=turn-unread mode=done ok=0 why=unread/.test(l)), logs.join(' | '));
 		check('U5: the turn still completes and the lease is released, not left running',
 			o.res.done === true && r.door.leases()[TID].mode === 'released', r.modes.join(','));
+	}
+
+	if (prevDiag === undefined) delete phone.DaimondDiag; else phone.DaimondDiag = prevDiag;
+}
+
+// The follow-ups of the QA of the unread-lease fix (2026-10-04). Red on c80507f1.
+//   LQ1  a take ignored `unread`, and a locked device's commit sealed to '' and EMPTIED the door
+//   LQ2  a landed claim whose confirm read was unread answered `won:false`
+//   LQ3  the park, reconstruct, error hand-back and compile releases skipped the unread retry
+// and of the QA of those (2026-10-04, M1, L2, L3; L1 is in handofftabs.test.mjs, beside the sweep).
+//   M1   one timed-out lease read at take time stood the take down at once, and the errand was acked
+async function runLeaseFollowupAcceptance(phone, check) {
+	const P = phone.DaimondPeer, L = phone.DaimondLease;
+	const TID = 'turn-lq';
+	const T0 = Date.now();
+	const logs = [];
+	const tick = () => { let t = T0 + 2000; return () => (t += 1); };
+	const prevDiag = phone.DaimondDiag;
+	phone.DaimondDiag = { on: () => false, log: (tag, d) => logs.push(tag + ' ' + d) };
+
+	// LQ1. Runner A holds turn X. Device B, taking Y, loses a race (the version moves), then locks.
+	// Its re-read is unread, and a commit it made would seal to '' -- an empty door, A's record gone.
+	{
+		const X = { turnId: 'turn-x', eid: 'ex', holder: 'peerA', dispatchedBy: 'phone', mode: 'running',
+			deadline: T0 + 6e5, expiry: T0 + 6e5, renewedAt: T0 };
+		const door = makeLeaseSync({ 'turn-x': X });
+		let locked = false, raced = false, writes = 0;
+		const cas = {
+			read: async () => locked ? { version: door.version(), leases: {}, unread: true }
+				: { version: door.version(), leases: door.leases() },
+			// What `leaseCommit` does on a locked device: `leaseSeal` gives '' and the blob goes up empty.
+			write: async (base, next) => {
+				writes++;
+				if (!raced) { raced = true; door.commit(door.version(), door.leases()); locked = true; }
+				return door.commit(base, locked ? {} : next);
+			},
+		};
+		const snap = { version: door.version(), leases: door.leases() };
+		const res = await L.takeFrom(snap, 'turn-y', { holder: 'devB', eid: 'ey', deadline: T0 + 6e5 }, cas, tick());
+		check('LQ1: a take whose re-read is unread stands down, why unread',
+			res.won === false && res.why === 'unread', JSON.stringify(res));
+		check('LQ1: the door still holds runner A\'s record (a locked take emptied it)',
+			!!door.leases()['turn-x'] && door.leases()['turn-x'].holder === 'peerA', JSON.stringify(Object.keys(door.leases())));
+		check('LQ1: and the take wrote once (the lost race), never again on the unread door', writes === 1, String(writes));
+
+		// ...and an unread snapshot IN HAND is not a vacant door either.
+		L.forget();
+		let w2 = 0;
+		const res2 = await L.takeFrom({ version: 9, leases: {}, unread: true }, 'turn-z', { holder: 'devB', eid: 'ez', deadline: T0 + 6e5 },
+			{ read: async () => ({ version: 9, leases: {}, unread: true }), write: async () => { w2++; return { ok: true, version: 10 }; } }, tick());
+		check('LQ1: a take handed an unread snapshot stands down without writing',
+			res2.won === false && res2.why === 'unread' && w2 === 0, JSON.stringify(res2) + ' writes=' + w2);
+	}
+
+	// LQ2. The claim LANDED; only the confirm read is unreadable. Look once more, then trust `ok`.
+	{
+		const mk = (unreadReads, thrown) => {
+			const door = makeLeaseSync({});
+			let reads = 0;
+			const cas = {
+				read: async () => {
+					reads++;
+					if (reads <= unreadReads) { if (thrown) throw new Error('pull timeout'); return { version: door.version(), leases: {}, unread: true }; }
+					return { version: door.version(), leases: door.leases() };
+				},
+				write: async (base, next) => door.commit(base, next),
+			};
+			return { cas, door, reads: () => reads };
+		};
+		for (const [n, thrown, label] of [[1, false, 'one unread confirm read'], [2, false, 'two unread confirm reads'], [2, true, 'two thrown confirm reads']]) {
+			L.forget();
+			const r = mk(n, thrown);
+			const res = await L.takeFrom({ version: r.door.version(), leases: {} }, TID, { holder: 'devB', eid: 'e', deadline: T0 + 6e5 }, r.cas, tick());
+			check('LQ2: ' + label + ' after a landed claim: the take still wins',
+				res.won === true && res.holder === 'devB', JSON.stringify(res));
+			check('LQ2: ' + label + ': the confirm read was tried twice, no more', r.reads() === 2, 'reads=' + r.reads());
+			check('LQ2: ' + label + ': the door holds the claim', !!r.door.leases()[TID] && r.door.leases()[TID].holder === 'devB');
+		}
+	}
+
+	// LQ3. Every release goes through settleLease: an unread door is tried once more, and a release
+	// that still failed is said. One unreadable read lands on the retry; two are logged.
+	const errandFor = (extra) => sentErrand(P, Object.assign({ turnId: TID, chatId: 'chat-lq', prompt: 'compute', eid: 'e-lq', ts: T0, deadline: 9e15 }, extra || {}));
+	const deps = (r, over) => Object.assign({
+		selfId: 'peerA', cas: r.cas, now: tick(),
+		reconstruct: async () => ({ chat: { id: 'chat-lq', messages: [] } }),
+		runTurn: async () => {}, abort: () => {},
+		pushResult: async () => 1, post: async () => {}, ack: async () => {},
+	}, over || {});
+	const paths = {
+		'park':                 (r) => P.runErrand(errandFor(), deps(r, { parkRequested: () => ({ why: 'needs permission' }), runTurn: async () => { r.st.fail = r.n; } })),
+		'reconstruct failed':   (r) => P.runErrand(errandFor(), deps(r, { reconstruct: async () => { r.st.fail = r.n; throw new Error('chat is gone'); } })),
+		'error hand-back':      (r) => P.runErrand(errandFor(), deps(r, { runTurn: async () => { r.st.fail = r.n; throw new Error('Daimond is locked'); } })),
+	};
+	for (const name of Object.keys(paths)) {
+		L.forget(); logs.length = 0;
+		let r = unreadRig(phone, TID); r.n = 1;
+		await paths[name](r);
+		check('LQ3: ' + name + ': a release that read an unreadable door lands on the retry',
+			!!r.door.leases()[TID] && r.door.leases()[TID].mode === 'released', JSON.stringify(r.modes));
+		L.forget(); logs.length = 0;
+		r = unreadRig(phone, TID); r.n = 2;
+		await paths[name](r);
+		check('LQ3: ' + name + ': a release unreadable twice is logged as collect lease write mode=released',
+			logs.some((l) => /collect lease write turn=turn-lq mode=released ok=0 why=unread/.test(l)), logs.join(' | '));
+	}
+	// The compile errand's own release.
+	for (const n of [1, 2]) {
+		L.forget(); logs.length = 0;
+		const r = unreadRig(phone, 'cmp-lq');
+		const out = await P.runCompileErrand({ cid: 'cmp-lq', eid: 'e-c', main: 'book.typ', dispatchedBy: 'phone', ts: T0, deadline: 9e15 }, {
+			selfId: 'peerA', cas: r.cas, now: tick(), allowSelf: true,
+			check: async () => { r.st.fail = n; return { ok: false, why: 'wrong folder' }; },		// the skip: refused, released, acked
+			post: async () => {}, ack: async () => {}, compile: async () => ({}),
+		});
+		check('LQ3: compile skip, ' + n + ' unreadable read(s): ' + (n === 1 ? 'the release lands on the retry' : 'the failed release is logged'),
+			n === 1 ? (!!r.door.leases()['cmp-lq'] && r.door.leases()['cmp-lq'].mode === 'released')
+				: logs.some((l) => /collect lease write .*cmp-lq mode=released ok=0 why=unread/.test(l)),
+			out.why + ' ' + logs.join(' | '));
+	}
+
+	// LQ4. `peerTakeBack` (daimond.js, the real function) said nothing when the revoke did not land.
+	{
+		const toasts = [], dl = [];
+		const mk = (lease) => {
+			const win = { DaimondLease: lease, DaimondPeer: { syncCas: (x) => x, retryUnread: P.retryUnread }, peerSyncShim: () => ({}),
+				renderDispatchedBadges: () => {}, toast: (txt, err) => toasts.push(txt + (err ? '!' : '')),
+				t: (k) => k, diag: (tag, d) => dl.push(tag + ' ' + d) };
+			new Function('window', 'with (window) {\nasync ' + daimondFuncSource('peerTakeBack')
+				+ '\nwindow.__tb = peerTakeBack; }')(win);
+			return win.__tb;
+		};
+		const run = async (lease) => { toasts.length = 0; dl.length = 0; await mk(lease)('turn-tb'); };
+		await run({ revoke: async () => ({ ok: false, why: 'unread' }) });
+		check('LQ4: a take-back that read an unreadable door toasts once, as an error',
+			toasts.length === 1 && toasts[0] === 'turn.peer_takeback_failed!', JSON.stringify(toasts));
+		check('LQ4: and logs take-back failed with the turn and the why',
+			dl.length === 1 && dl[0] === 'take-back failed turn=turn-tb why=unread', JSON.stringify(dl));
+		await run({ revoke: async () => { throw new Error('boom'); } });
+		check('LQ4: a revoke that threw is a failed take-back too',
+			toasts.length === 1 && /take-back failed turn=turn-tb why=threw boom/.test(dl[0] || ''), JSON.stringify([toasts, dl]));
+		await run({ revoke: async () => ({ ok: true }) });
+		check('LQ4: a take-back that landed says nothing', toasts.length === 0 && dl.length === 0, JSON.stringify([toasts, dl]));
+		await run({});
+		check('LQ4: no revoke primitive on this build says nothing', toasts.length === 0 && dl.length === 0, JSON.stringify([toasts, dl]));
+	}
+
+	// M1. One timed-out lease read at take time is no verdict: the door is looked at again.
+	{
+		const X = { turnId: 'turn-x', eid: 'ex', holder: 'peerA', dispatchedBy: 'phone', mode: 'running',
+			deadline: T0 + 6e5, expiry: T0 + 6e5, renewedAt: T0 };
+		const opts = { holder: 'devB', eid: 'ey', dispatchedBy: 'phone', deadline: T0 + 9e5 };
+		const rig = () => {
+			L.forget();
+			const r = unreadRig(phone, 'turn-y');
+			r.door.commit(r.door.version(), { 'turn-x': X });
+			r.writes = 0;
+			const w0 = r.cas.write;
+			r.wrap = (f) => { const inner = r.cas.write; r.cas.write = (b, n) => f(inner, b, n); };
+			return r;
+		};
+		const verdict = (res, r) => res.won === true && res.holder === 'devB'
+			&& !!r.door.leases()['turn-y'] && r.door.leases()['turn-y'].holder === 'devB'
+			&& !!r.door.leases()['turn-x'] && r.door.leases()['turn-x'].holder === 'peerA';
+		let r = rig(); r.st.fail = 1;
+		let res = await L.take('turn-y', opts, r.cas, tick());
+		check('M1 A: the take\'s first read times out once, the door is healthy: the take wins', verdict(res, r), JSON.stringify(res));
+		r = rig();
+		let first = true;
+		r.wrap(async (inner, b, n) => {
+			if (first) { first = false; r.door.commit(r.door.version(), r.door.leases()); r.st.fail = 1; }	// unrelated churn, then a read that times out
+			return inner(b, n);
+		});
+		res = await L.take('turn-y', opts, r.cas, tick());
+		check('M1 B: a 409 from unrelated churn, then the re-read times out once: the take wins', verdict(res, r), JSON.stringify(res));
+		r = rig();
+		let lost = false;
+		r.wrap(async (inner, b, n) => {
+			const x = await inner(b, n);
+			if (!lost) { lost = true; r.st.fail = 1; return { ok: false, version: b, leases: {} }; }	// landed, the answer lost
+			return x;
+		});
+		res = await L.take('turn-y', opts, r.cas, tick());
+		check('M1 C: the claim lands, its answer is lost, the re-read times out once: the take wins', verdict(res, r), JSON.stringify(res));
+
+		// A door that never reads still stands the take down, after the bounded looks, never committing.
+		r = rig(); r.st.fail = 99;
+		res = await L.take('turn-y', opts, r.cas, tick());
+		check('M1: a door unreadable throughout stands the take down, why unread', res.won === false && res.why === 'unread', JSON.stringify(res));
+		check('M1: after exactly UNREAD_LOOKS (3) reads, and it never wrote',
+			99 - r.st.fail === 3 && !r.modes.length && !!r.door.leases()['turn-x'] && !r.door.leases()['turn-y'], 'reads ' + (99 - r.st.fail));
+
+		// Which stand-downs leave the errand on the relay for one more collect.
+		const und = ['nominee', 'unread', 'exhausted'], dec = ['stale-turn', 'deadline', 'settled', 'too_large', 'rekey', 'no-cas', 'stood-down', undefined];
+		check('M1: nominee, unread and exhausted are undecided stand-downs', und.every((w) => P.standDownUndecided(w) === true));
+		check('M1: a decided stand-down (a live claim, aged out, settled, a fixed refusal) is not', dec.every((w) => P.standDownUndecided(w) === false));
+	}
+
+	// M1 part 3. The sender's own local recovery that stands down undecided arms its backstop again.
+	{
+		const calls = [];
+		const mk = (res) => {
+			const win = {
+				_localRecovering: Object.create(null), diag: () => {}, renderDispatchedBadges: () => {},
+				claimTurnHere: async () => ({ release: () => {} }),
+				errandForRecovery: () => ({ turnId: 'turn-m1' }), peerRunErrandDeps: () => ({}),
+				dropDispatchedPlaceholder: () => {}, retryNextDesktopBeforeLocal: async () => false,
+				scheduleDispatchFallback: (...a) => calls.push(a), UNDECIDED_RECOLLECT_MS: 30000,
+				DaimondPeer: { runErrand: async () => res, standDownUndecided: P.standDownUndecided },
+			};
+			new Function('window', 'with (window) {\nasync ' + daimondFuncSource('recoverOneLocally')
+				+ '\nwindow.__r = recoverOneLocally; }')(win);
+			return win.__r;
+		};
+		for (const [why, armed] of [['unread', true], ['exhausted', true], ['holder', false], ['stale-turn', false]]) {
+			calls.length = 0;
+			await mk({ ran: false, why })({ id: 'chat-m1', messages: [] }, { iturn: 'turn-m1', dispatchedBy: 'dev' }, {});
+			check('M1: a local recovery that stood down for `' + why + '` ' + (armed ? 're-arms' : 'does not re-arm') + ' the backstop',
+				armed ? (calls.length === 1 && calls[0][0] === 'chat-m1' && calls[0][1] === 'turn-m1' && calls[0][2] > 0 && calls[0][2] < 90000)
+					: calls.length === 0, JSON.stringify(calls));
+		}
+		calls.length = 0;
+		await mk({ ran: true, done: true })({ id: 'chat-m1', messages: [] }, { iturn: 'turn-m1', dispatchedBy: 'dev' }, {});
+		check('M1: a local recovery that ran does not re-arm it', calls.length === 0, JSON.stringify(calls));
+	}
+
+	// M1 part 2, the collector's side: the scheduler takes the sooner of two requests, and the
+	// errand handler asks for it on every undecided stand-down.
+	{
+		const timers = []; let cleared = 0, collects = 0;
+		const win = {
+			_nomineeFallbackTimer: null, _nomineeFallbackAt: 0,
+			setTimeout: (fn, ms) => { timers.push({ fn, ms }); return timers.length; },
+			clearTimeout: () => { cleared++; },
+			DaimondPeer: { DISPATCH_FRESH_MS: 90000 },
+			DaimondPost: { collect: async () => { collects++; return { ok: true }; } },
+		};
+		new Function('window', 'with (window) {\n' + daimondFuncSource('scheduleStandDownRecollect')
+			+ '\nwindow.__s = scheduleStandDownRecollect; }')(win);
+		win.__s();
+		check('M1: a nominee stand-down waits the freshness window plus 5 s', timers.length === 1 && timers[0].ms === 95000, JSON.stringify(timers.map((t) => t.ms)));
+		win.__s(30000);
+		check('M1: a sooner request replaces the later timer', timers.length === 2 && timers[1].ms === 30000 && cleared === 1, JSON.stringify([timers.map((t) => t.ms), cleared]));
+		win.__s();
+		check('M1: a later request never replaces a sooner one', timers.length === 2 && cleared === 1, JSON.stringify([timers.map((t) => t.ms), cleared]));
+		await timers[1].fn();
+		check('M1: the timer re-collects once', collects === 1, String(collects));
+		check('M1: the errand handler asks for the re-collect on every undecided stand-down',
+			/standDownUndecided\(res\.why\)\)\s*\{\s*scheduleStandDownRecollect\(res\.why === 'nominee' \? undefined : UNDECIDED_RECOLLECT_MS\)/.test(DAIMOND_SRC));
+	}
+
+	// L2. A revoke that finds the lease already vacant adopts what the door says.
+	{
+		L.forget();
+		const claimed = { turnId: 'turn-b', eid: 'eb', holder: 'peerA', dispatchedBy: 'phone', mode: 'claimed',
+			deadline: T0 + 6e5, expiry: T0 + 6e5, renewedAt: T0 };
+		const released = Object.assign({}, claimed, { mode: 'released', expiry: 0, renewedAt: T0 + 50 });
+		L.install({ 'turn-b': claimed });
+		const door = makeLeaseSync({ 'turn-b': released });
+		const res = await L.revoke('turn-b', { read: async () => ({ version: door.version(), leases: door.leases() }),
+			write: async (b, n) => door.commit(b, n) }, tick());
+		const view = L.record('turn-b');
+		const m = { why: P.REASON_DISPATCHED, iturn: 'turn-b', dispatchedBy: 'phone', ts: T0 };
+		check('L2: a revoke of an already vacant lease answers ok', res.ok === true, JSON.stringify(res));
+		check('L2: and the local view adopts the release, not the runner\'s stale claim', !!view && view.mode === 'released', JSON.stringify(view));
+		check('L2: so [Run here] no longer reads the turn as peer-held', P.dispatchState(m, view, 'phone', T0 + 100) !== 'peer-held',
+			P.dispatchState(m, view, 'phone', T0 + 100));
+	}
+
+	// L3. The take-back retries an unread door, and its copy names what the person pressed.
+	{
+		const toasts = [], dl = [];
+		const mkTb = (lease) => {
+			const win = { DaimondLease: lease, DaimondPeer: { syncCas: (x) => x, retryUnread: P.retryUnread }, peerSyncShim: () => ({}),
+				renderDispatchedBadges: () => {}, toast: (txt, err) => toasts.push(txt + (err ? '!' : '')),
+				t: (k) => k, diag: (tag, d) => dl.push(tag + ' ' + d) };
+			new Function('window', 'with (window) {\nasync ' + daimondFuncSource('peerTakeBack')
+				+ '\nwindow.__tb = peerTakeBack; }')(win);
+			return win.__tb;
+		};
+		for (const [n, landed] of [[1, true], [2, false]]) {
+			toasts.length = 0; dl.length = 0;
+			let calls = 0;
+			await mkTb({ revoke: async () => (++calls <= n ? { ok: false, why: 'unread' } : { ok: true }) })('turn-l3');
+			check('L3: a revoke unreadable ' + n + ' time(s) is tried once more, then ' + (landed ? 'lands silently' : 'toasts'),
+				calls === 2 && (landed ? (toasts.length === 0 && dl.length === 0) : (toasts.length === 1 && /why=unread/.test(dl[0] || ''))),
+				JSON.stringify([calls, toasts, dl]));
+		}
+		let calls = 0;
+		await mkTb({ revoke: async () => { calls++; return { ok: false, why: 'holder' }; } })('turn-l3');
+		check('L3: a refusal that is a fact is not retried', calls === 1, String(calls));
+		const en = readFileSync(join(HERE, '..', 'i18n', 'en.js'), 'utf8');
+		check('L3: the copy says "Could not run it here. Try again." and no longer names a take-back',
+			/'turn\.peer_takeback_failed':\s*'Could not run it here\. Try again\.'/.test(en));
 	}
 
 	if (prevDiag === undefined) delete phone.DaimondDiag; else phone.DaimondDiag = prevDiag;

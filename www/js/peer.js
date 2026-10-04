@@ -2811,6 +2811,7 @@
 	var MAX_TAKE_TRIES = 10;		// bound the CAS retry loop (was 6): more headroom under two-device churn
 	var TAKE_BACKOFF_MS = 250;		// jittered wait between take retries so a claim gets a clean window
 	var UNREAD_RETRY_MS = 1000;		// the pause before a lease write looks once more at a door that would not read
+	var UNREAD_LOOKS    = 3;		// reads of an unreadable door that a take makes before it stands down on it
 	// The hard ceiling on how long ONE errand's liveness ticker may run before it gives
 	// up and aborts. The ticker is READ-ONLY (it never renews the parcel -- the lease is
 	// claimed straight to its deadline, so no renew is needed), so it is not itself a
@@ -3139,8 +3140,25 @@
 		var o = opts || {};
 		var holder = String(o.holder || '');
 		var tid    = String(turnId);
+		var unreadLooks = 0;
 		for (var attempt = 0; attempt < MAX_TAKE_TRIES; attempt++) {
 			var now = leaseNow(nowFn);
+			// AN UNREADABLE DOOR IS UNKNOWN, NOT VACANT (QA LQ1, 2026-10-04). Its `leases` is
+			// `{}` only because nothing could be read, so a claim folded into it and committed
+			// at the door's real version would REPLACE every record on the door with one, or
+			// with an empty blob if this device is locked (`leaseSeal`) -- and a runner that
+			// can read the door again would find its own turn gone. So it is never committed on.
+			// But one slow or dropped read (the shim turns a timeout into this snapshot) is no
+			// verdict either, so the door is looked at again after a pause, UNREAD_LOOKS times
+			// in all and within the try budget, before the take stands down. The stand-down is
+			// undecided (`standDownUndecided`): the errand stays on the relay for one more collect.
+			if (snap.unread) {
+				if (++unreadLooks >= UNREAD_LOOKS || attempt + 1 >= MAX_TAKE_TRIES) return { won: false, why: 'unread' };
+				await new Promise(function (r) { setTimeout(r, UNREAD_RETRY_MS); });
+				try { snap = await cas.read(); }
+				catch (e) { snap = { version: 0, leases: {}, unread: true }; }
+				continue;
+			}
 			// A MISSING OR ZERO DEADLINE IS NOT "NO DEADLINE" (S6-2). Only an old build
 			// (or a hand-crafted envelope) posts an errand with no `deadline`; this build
 			// always stamps one (`buildDispatch`, above). Falling back to
@@ -3208,9 +3226,13 @@
 				// holder. A concurrent winner cannot be displaced by a later pull either --
 				// its lease is live and foreign, which `mergeLeases` keeps -- so a re-read
 				// that names us is a true win.
-				var conf;
-				try { conf = await cas.read(); }
-				catch (e) { conf = { version: res.version, leases: res.leases || {} }; }
+				var conf = await readTwice(cas);
+				// AN UNREADABLE CONFIRM IS NOT A LOSS (QA LQ2, 2026-10-04). The claim LANDED -- the
+				// door answered `ok` to a write at its own version, and stores the proposal verbatim
+				// -- so after one more look, an unreadable door trusts that answer. Standing down
+				// here left a `claimed` record pinned to the deadline and the sender showing
+				// "picking this up" for the whole of it, on a turn nobody was running.
+				if (conf.unread) { _leases = proposed; return { won: true, holder: holder }; }
 				_leases = conf.leases || {};
 				var landed = _leases[tid];
 				if (landed && landed.holder === holder && liveLease(landed, leaseNow(nowFn))) {
@@ -3223,6 +3245,9 @@
 			// times against a fixed-size refusal for no gain, so stand down at once with
 			// the honest reason -- the drain heals the door as records age out.
 			if (res.why === 'too_large') return { won: false, why: 'too_large' };
+			// An UNREAD refusal is not a race either: this device could not seal the claim (it
+			// is locked), and the next try would be refused the same way.
+			if (res.why === 'unread') return { won: false, why: 'unread' };
 			// A REKEY refusal is not a race either (Gap 5): the device is behind the epoch
 			// chain, so `leaseCommit` will refuse EVERY try with the same 'rekey' -- its
 			// stale wrap key seals a lease blob nobody on the current epoch can open. Stand
@@ -3238,7 +3263,7 @@
 			// stands us down if a live foreign winner has appeared, so this stays
 			// single-run safe: only the persistence changes, never the arbitration.
 			try { snap = await cas.read(); }
-			catch (e) { snap = { version: res.version, leases: res.leases || {} }; }
+			catch (e) { snap = { version: res.version, leases: res.leases || {}, unread: !!res.unread }; }
 			if (attempt + 1 < MAX_TAKE_TRIES) {
 				await new Promise(function (r) {
 					setTimeout(r, Math.round(TAKE_BACKOFF_MS * (0.5 + Math.random())));
@@ -3285,8 +3310,19 @@
 			var res = await cas.write(snap.version, proposed);
 			if (res.ok) { _leases = proposed; return { ok: true }; }
 			if (res.why === 'too_large') return { ok: false, why: 'too_large' };	// not a race: no retry
+			if (res.why === 'unread') return { ok: false, why: 'unread' };	// unsealable, not a race: no retry
 		}
 		return { ok: false, why: 'exhausted' };
+	}
+
+	/// Is a stand-down undecided, so that the errand stays on the relay for one more collect
+	/// rather than being acked away? Standing down for the nominated runner is, and so is a take
+	/// that could not read the door or won no try at it: nobody holds the turn, and a stand-down
+	/// that dropped the errand would leave the sender to find out at its deadline. A stand-down
+	/// for a live foreign claim, a settled or aged-out turn, or a refusal that will not change
+	/// is decided, and the errand goes.
+	function standDownUndecided(why) {
+		return why === 'nominee' || why === 'unread' || why === 'exhausted';
 	}
 
 	/// Run a lease write, and once more after a pause when the door would not read.
@@ -3298,6 +3334,30 @@
 			res = await run();
 		}
 		return res;
+	}
+
+	/// The done and released writes, for every exit that frees a lease. A refused one used to
+	/// be ignored, leaving the lease 'running' to its deadline with the sender waiting it out,
+	/// so the result is read: an unread door is tried once more, and a write that still failed
+	/// is said. `what` names the errand in the diag line (`turn=<id>`, or `compile=<id>`).
+	async function settleLease(what, id, holder, mode, cas, nowFn) {
+		var r = await retryUnread(function () { return leaseSet(id, holder, mode, cas, nowFn); });
+		if (!(r && r.ok)) diag('collect lease write', what + '=' + id + ' mode=' + mode
+			+ ' ok=0 why=' + String((r && r.why) || '?'));
+		return r;
+	}
+
+	/// Read the door, once more after a pause when it would not read (an unread snapshot, or
+	/// a read that threw). Still unread: `{ unread: true }`. The confirm read after a claim
+	/// landed uses it, and so does the restart sweep before it frees a lease.
+	async function readTwice(cas) {
+		for (var i = 0; i < 2; i++) {
+			var snap = null;
+			try { snap = await cas.read(); } catch (e) { snap = null; }
+			if (snap && !snap.unread) return snap;
+			if (i === 0) await new Promise(function (r) { setTimeout(r, UNREAD_RETRY_MS); });
+		}
+		return { unread: true };
 	}
 
 	/// COMPLETE (mode 'done') or RELEASE (mode 'released', which is vacant) a lease
@@ -3346,6 +3406,7 @@
 			var res = await cas.write(snap.version, proposed);
 			if (res.ok) { _leases = proposed; return { ok: true }; }
 			if (res.why === 'too_large') return { ok: false, why: 'too_large' };	// not a race: no retry
+			if (res.why === 'unread') return { ok: false, why: 'unread' };	// unsealable, not a race: no retry
 		}
 		return { ok: false, why: 'exhausted' };
 	}
@@ -3398,7 +3459,13 @@
 			if (snap.unread) return { ok: false, why: 'unread' };		// not 'already vacant'
 			var now  = leaseNow(nowFn);
 			var cur  = snap.leases[tid];
-			if (!cur || cur.mode === 'released') return { ok: true };	// already vacant
+			// Already vacant, but the view has not heard: the runner's release landed and this
+			// device has yet to pull it, so `continueTurn` would still read a peer-held lease
+			// and do nothing. Adopt what the door says.
+			if (!cur || cur.mode === 'released') {
+				_leases = mergeLeases(_leases, snap.leases, now);
+				return { ok: true };
+			}
 			var stop = guard ? guard(cur) : '';
 			if (stop) {
 				_leases = mergeLeases(_leases, snap.leases, now);
@@ -3416,6 +3483,7 @@
 			var res = await cas.write(snap.version, proposed);
 			if (res.ok) { _leases = proposed; return { ok: true }; }
 			if (res.why === 'too_large') return { ok: false, why: 'too_large' };	// not a race: no retry
+			if (res.why === 'unread') return { ok: false, why: 'unread' };	// unsealable, not a race: no retry
 		}
 		return { ok: false, why: 'exhausted' };
 	}
@@ -3582,6 +3650,7 @@
 			var res = await cas.write(snap.version, proposed);
 			if (res.ok) { _leases = proposed; return { ok: true, blocked: !!blocker }; }
 			if (res.why === 'too_large') return { ok: false, why: 'too_large' };	// not a race: no retry
+			if (res.why === 'unread') return { ok: false, why: 'unread' };	// unsealable, not a race: no retry
 		}
 		return { ok: false, why: 'exhausted' };
 	}
@@ -3871,7 +3940,7 @@
 				status: terminal ? 'aborted' : 'parked', why: why, parkCount: out.next }));
 			trace.push('report');
 		} catch (err) { /* the release below still frees the turn */ }
-		try { await leaseSet(turnId, d.selfId, 'released', d.cas, d.now); trace.push('release'); }
+		try { await settleLease('turn', turnId, d.selfId, 'released', d.cas, d.now); trace.push('release'); }
 		catch (err) { /* an unreleased lease still expires at its deadline */ }
 		return { ran: true, parked: !terminal, terminal: terminal, why: why, parkCount: out.next, trace: trace };
 	}
@@ -4046,7 +4115,8 @@
 			deadline: e.deadline, ts: e.ts, until: age.until }, d.cas, leaseClock);
 		trace.push('take');
 		if (!took.won) {
-			diag('collect stand-down', 'turn=' + turnId + ' peer holds ('
+			diag('collect stand-down', 'turn=' + turnId
+				+ (standDownUndecided(took.why) ? ' undecided (' : ' peer holds (')
 				+ (took.why || '?') + ' holder=' + String(took.holder || '').slice(0, 8) + ')');
 			return { ran: false, why: took.why || 'stood-down', holder: took.holder, trace: trace };
 		}
@@ -4077,15 +4147,6 @@
 			// Stopped HERE (before the final pushResult, which stopCheck precedes) so a
 			// progress frame never overlaps the final push on the one-round gate.
 			if (progressTimer != null && clrT) { try { clrT(progressTimer); } catch (err) {} progressTimer = null; }
-		}
-		// The done and released writes. A refused one used to be ignored, leaving the lease
-		// 'running' to its deadline with the sender waiting it out, so the result is read: an
-		// unread door is tried once more, and a write that still failed is said.
-		async function settleLease(mode) {
-			var r = await retryUnread(function () { return leaseSet(turnId, d.selfId, mode, d.cas, leaseClock); });
-			if (!(r && r.ok)) diag('collect lease write', 'turn=' + turnId + ' mode=' + mode
-				+ ' ok=0 why=' + String((r && r.why) || '?'));
-			return r;
 		}
 		// READ-ONLY: never writes the parcel (no renew, no churn). Aborts on a revoke
 		// -- the lease is no longer ours, or was released, which a sync pull adopts into
@@ -4145,7 +4206,7 @@
 				try { if (d.post) await d.post(reportFor(e, {
 					status: undeliverable ? 'undeliverable' : 'error', why: rwhy, by: d.selfId })); }
 				catch (e2) { /* the release below still frees the turn */ }
-				try { await leaseSet(turnId, d.selfId, 'released', d.cas, leaseClock); trace.push('release'); }
+				try { await settleLease('turn', turnId, d.selfId, 'released', d.cas, leaseClock); trace.push('release'); }
 				catch (e2) { /* an unreleased lease still expires at its deadline */ }
 				if (undeliverable) {
 					try { if (d.ack) { await d.ack(e); trace.push('ack'); } }
@@ -4219,7 +4280,7 @@
 					trace.push('handback');
 					try { if (d.post) await d.post(reportFor(e, { status: 'error', why: ewhy })); trace.push('report'); }
 					catch (e2) { /* the release below still frees the turn */ }
-					try { await leaseSet(turnId, d.selfId, 'released', d.cas, leaseClock); trace.push('release'); }
+					try { await settleLease('turn', turnId, d.selfId, 'released', d.cas, leaseClock); trace.push('release'); }
 					catch (e2) { /* an unreleased lease still expires at its deadline */ }
 					return { ran: true, error: true, handback: ek, why: ewhy, trace: trace };
 				}
@@ -4271,10 +4332,10 @@
 				await d.post(reportFor(e, { status: 'done', parcelVersion: 0, finalTail: finalTail ? 1 : 0 }));
 				trace.push('report');
 			} catch (err) { /* the report is only the nudge; the frame already carried the answer */ }
-			await settleLease('done'); trace.push('complete');
+			await settleLease('turn', turnId, d.selfId, 'done', d.cas, leaseClock); trace.push('complete');
 			try { if (d.ack) { await d.ack(e); trace.push('ack'); } }
 			catch (err) { /* a missed ack costs one idempotent re-collect, never a drop */ }
-			await settleLease('released'); trace.push('release');
+			await settleLease('turn', turnId, d.selfId, 'released', d.cas, leaseClock); trace.push('release');
 			// THE PARCEL, AFTER THE LEASE IS FREE. Awaited only where the caller asked
 			// for it (`awaitPush`, which the tests do so the sequence is assertable);
 			// otherwise started and left to land, because the originator is no longer
@@ -4395,7 +4456,7 @@
 			catch (err) { /* a dropped frame is only a quieter stream */ }
 		}
 		async function release() {
-			try { await leaseSet(cid, d.selfId, 'released', d.cas, d.now); trace.push('release'); }
+			try { await settleLease('compile', cid, d.selfId, 'released', d.cas, d.now); trace.push('release'); }
 			catch (err) { /* an unreleased lease still expires at its deadline */ }
 		}
 		async function report(f) {
@@ -5327,6 +5388,13 @@
 		/// a hard-abort on revoke and ack only after commit. Pure over injected deps.
 		syncCas:    syncCas,
 		runErrand:  runErrand,
+		/// A stand-down whose errand stays on the relay for one more collect.
+		standDownUndecided: standDownUndecided,
+		/// The retry on an unread door that every lease write in `runErrand` has, for a caller
+		/// that revokes or releases outside it: a write, a read, and the done or released write.
+		retryUnread: retryUnread,
+		readTwice:   readTwice,
+		settleLease: settleLease,
 		/// The content address of some sealed bytes, exposed for a caller that
 		/// seals by hand.
 		addressOf:   addressOf,

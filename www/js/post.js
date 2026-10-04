@@ -2671,7 +2671,10 @@
 			// never ran would strand the turn. So the row stays HELD and is collected --
 			// and decided against live presence -- again, until the nominee runs it or its
 			// beat ages out and this device claims. Money-safe by the lease either way.
-			stood = !!(res && res.result && res.result.why === 'nominee');
+			// A take that could not read the lease door, or won no try at it, is held the
+			// same way (`standDownUndecided`): nobody has the turn, and acking the row
+			// would drop it for the whole account with no word to the sender.
+			stood = !!(res && res.result && DaimondPeer.standDownUndecided(res.result.why));
 			if (!stood) await withMailboxLock(function () { return letGo(w.row.seq); });
 		} catch (e) { log('a finished row could not be let go; the next collect decides it', e); }
 		finally { w.claim.release(); }

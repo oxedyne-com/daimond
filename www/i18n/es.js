@@ -3315,6 +3315,7 @@
 	'turn.peer_consent_named': '{name} necesita tu permiso para {act}.',
 	'turn.peer_parked': 'Esto necesitaba tu permiso — se ejecutará de nuevo cuando vuelvas.',
 	'turn.peer_rerun': 'Volver a ejecutar',
+	'turn.peer_takeback_failed': 'No se pudo ejecutar aquí. Inténtalo de nuevo.',
 	'seat.on_runner': 'Próximo turno: {name}',
 	'seat.on_desktop': 'Próximo turno: {name}',
 	'seat.on_desktop_runner_off': 'Próximo turno: {name}',

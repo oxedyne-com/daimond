@@ -3345,6 +3345,7 @@
 	'turn.peer_consent_named': '{name} 需要你的许可才能{act}。',
 	'turn.peer_parked': '这需要你的许可——等你回来会重新运行。',
 	'turn.peer_rerun': '重新运行',
+	'turn.peer_takeback_failed': '没能在这里运行。请重试。',
 	'seat.on_runner': '下一轮：{name}',
 	'seat.on_desktop': '下一轮：{name}',
 	'seat.on_desktop_runner_off': '下一轮：{name}',

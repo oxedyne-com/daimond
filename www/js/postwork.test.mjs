@@ -171,6 +171,7 @@ function makeTab(box, opts) {
 			return null;
 		},
 		isOwnDispatch: () => false,
+		standDownUndecided: (why) => why === 'nominee' || why === 'unread' || why === 'exhausted',
 		isWork: (p) => !!p && p.t === 'errand',
 		workKey: (p) => 'turn:' + p.turnId,
 		verifyEnvelope: async (p) => !(opts.forged && opts.forged.includes(p.turnId)),
@@ -181,7 +182,9 @@ function makeTab(box, opts) {
 			if (p.t !== 'errand') { stat.notes.push(p.turnId); return { routed: true, verified: true, result: null }; }
 			stat.runs.push(p.turnId);
 			const outcome = (opts.outcome && opts.outcome[p.turnId]) || 'done';
-			if (outcome === 'nominee') return { routed: true, verified: true, result: { ran: false, why: 'nominee' } };
+			if (outcome === 'nominee' || outcome === 'unread' || outcome === 'exhausted' || outcome === 'holder') {
+				return { routed: true, verified: true, result: { ran: false, why: outcome } };
+			}
 			await opts.turn(p.turnId);
 			const s = await win.DaimondPost.settle(p.turnId);
 			stat.settled.push(p.turnId + ':' + !!(s && s.settled));
@@ -312,6 +315,33 @@ async function main() {
 		await within(P.round());
 		await ticks(80);
 		check('the next collect decides it again', tab.stat.runs.length === 2, JSON.stringify(tab.stat.runs));
+	}
+
+	// ── (4b) an UNDECIDED stand-down is held too, a decided one is let go (QA M1, 2026-10-04) ──
+	// A take that could not read the lease door (`unread`) or won no try (`exhausted`) has
+	// not learned that anybody else holds the turn, so acking its row drops the errand for
+	// the whole account. A stand-down for a live foreign claim (`holder`) is a verdict.
+	for (const [why, held] of [['unread', true], ['exhausted', true], ['holder', false]]) {
+		console.log('\na stand-down for `' + why + '` ' + (held ? 'keeps' : 'lets go of') + ' the errand');
+		const box = makeBox([{ seq: 1, kind: 'post', addr: 'e1', envelope: 'ERRAND:T1' }]);
+		const locks = makeLocks();
+		const tab = makeTab(box, { locks, inline, outcome: { T1: why }, turn: () => Promise.resolve() });
+		await ticks();
+		const P = tab.P();
+		await within(P.round());
+		await ticks(80);
+		const st = await P.read();
+		if (held) {
+			check(why + ': the errand is still on the relay', box.has(1), 'rows: ' + JSON.stringify(box.rows.map((x) => x.seq)));
+			check(why + ': and held below the cursor', st.through === 0 && (st.holds || []).some((h) => h.seq === 1),
+				'through ' + st.through + ', holds ' + JSON.stringify(st.holds));
+			await within(P.round());
+			await ticks(80);
+			check(why + ': the next collect decides it again', tab.stat.runs.length === 2, JSON.stringify(tab.stat.runs));
+		} else {
+			check(why + ': the errand is acked away', !box.has(1), 'rows: ' + JSON.stringify(box.rows.map((x) => x.seq)));
+			check(why + ': and holds nothing', !(st.holds || []).length, 'holds ' + JSON.stringify(st.holds));
+		}
 	}
 
 	// ── (5) a forged errand is dropped, never held ──

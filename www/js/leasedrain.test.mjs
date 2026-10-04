@@ -259,9 +259,9 @@ function loadSyncLease() {
 	const btoa = (s) => Buffer.from(s, 'binary').toString('base64');
 	const atob = (s) => Buffer.from(s, 'base64').toString('binary');
 
-	const state = { posts: [], leaseStatus: 200, leaseVersion: 6, get: null };
+	const state = { posts: [], leaseStatus: 200, leaseVersion: 6, get: null, locked: false, postBlob: undefined };
 	win.DaimondIdentity = {
-		isUnlocked: () => true,
+		isUnlocked: () => !state.locked,
 		wrapBytesAad:   async (bytes) => bytes,		// pass-through: the sealed blob is the plaintext bytes
 		unwrapBytesAad: async (bytes) => bytes,
 		deviceId: () => 'dev-self', handle: () => '',
@@ -275,7 +275,7 @@ function loadSyncLease() {
 			if (opts && opts.method === 'POST' && q.indexOf('lease=1') >= 0) {
 				state.posts.push(JSON.parse(opts.body));
 				return { status: state.leaseStatus,
-					json: async () => ({ ok: state.leaseStatus === 200, version: state.leaseVersion }) };
+					json: async () => ({ ok: state.leaseStatus === 200, version: state.leaseVersion, blob: state.postBlob }) };
 			}
 			// A lease-door READ, when the test sets `state.get`: a throw, or a status and a body
 			// (`undefined` is a body that is not JSON).
@@ -368,6 +368,33 @@ async function leaseCommitChecks() {
 	check('[ctl] an opened door is a real answer, not unread',
 		rok.unread === false && !!rok.leases.t0 && rok.leases.t0.holder === 'H', JSON.stringify(rok));
 	state.get = null;
+
+	// A LOCKED device cannot seal. `leaseSeal` answers '' for a map it could not seal, and a
+	// commit of that empty blob at the door's real version EMPTIES the door -- every record
+	// on it gone (QA LQ1, 2026-10-04). It is refused, unsent and unknown; a map that is
+	// genuinely empty is still a vacate.
+	state.posts = []; state.locked = true;
+	const wiped = await S.leaseCommit(5, smallMap);
+	check('LQ1: a locked leaseCommit of a non-empty map is refused, why unread',
+		wiped.ok === false && wiped.why === 'unread', JSON.stringify(wiped));
+	check('LQ1: and it sends nothing (an empty blob would empty the door)', state.posts.length === 0,
+		state.posts.length + ' POST(s): ' + JSON.stringify(state.posts));
+	const vacate = await S.leaseCommit(5, {});
+	check('[ctl] an empty map still commits as a vacate, locked or not',
+		vacate.ok === true && state.posts.length === 1 && state.posts[0].blob === '', JSON.stringify(vacate));
+	state.locked = false;
+
+	// A 409 hands back the door's blob for the re-read. One this device cannot open is not a
+	// vacant door: it is marked unread, as `leaseGet` marks it.
+	state.posts = []; state.leaseStatus = 409; state.postBlob = 'AAAA';
+	const r409 = await S.leaseCommit(5, smallMap);
+	check('LQ1: a 409 whose door blob will not open is marked unread',
+		r409.ok === false && r409.unread === true && Object.keys(r409.leases).length === 0, JSON.stringify(r409));
+	state.postBlob = sealed;
+	const r409ok = await S.leaseCommit(5, smallMap);
+	check('[ctl] a 409 whose door blob opens is a real answer, not unread',
+		r409ok.ok === false && r409ok.unread === false && !!r409ok.leases.t0, JSON.stringify(r409ok));
+	state.postBlob = undefined; state.leaseStatus = 200;
 }
 
 await main();

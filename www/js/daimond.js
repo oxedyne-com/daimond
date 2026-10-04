@@ -25431,15 +25431,25 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 	// One pending fallback re-collect after a stand-down, so many held errands do not
 	// pile timers. Cleared when it fires; the re-collect it triggers re-schedules if
 	// this device still stands down.
-	var _nomineeFallbackTimer = null;
+	var _nomineeFallbackTimer = null, _nomineeFallbackAt = 0;
+	var UNDECIDED_RECOLLECT_MS = 30000;	// the re-look after a take that could not read the lease door
 
-	/// After standing down for the nominated runner, re-collect once its freshness
-	/// window has elapsed, so a nominee that slept without running the turn does not
-	/// leave this awake device idle. Idempotent: a re-collect that finds the turn run
-	/// (nominee collected it, or the lease is taken) simply stands down or is a no-op.
-	function scheduleNomineeFallback() {
-		if (_nomineeFallbackTimer) return;
-		var wait = ((window.DaimondPeer && DaimondPeer.DISPATCH_FRESH_MS) || 90000) + 5000;
+	/// After an undecided stand-down (`DaimondPeer.standDownUndecided`), re-collect once.
+	/// For the nominated runner the wait is its freshness window, so a nominee that slept
+	/// without running the turn does not leave this awake device idle; for a take that could
+	/// not read the lease door it is `fastMs`, since nobody has the turn and the door is
+	/// likely back. A sooner request replaces a later timer, never the reverse. Idempotent: a
+	/// re-collect that finds the turn run (nominee collected it, or the lease is taken)
+	/// simply stands down or is a no-op.
+	function scheduleStandDownRecollect(fastMs) {
+		var wait = (fastMs != null) ? fastMs
+			: ((window.DaimondPeer && DaimondPeer.DISPATCH_FRESH_MS) || 90000) + 5000;
+		var at = Date.now() + wait;
+		if (_nomineeFallbackTimer) {
+			if (at >= _nomineeFallbackAt) return;
+			clearTimeout(_nomineeFallbackTimer);
+		}
+		_nomineeFallbackAt = at;
 		_nomineeFallbackTimer = setTimeout(async function () {
 			_nomineeFallbackTimer = null;			// null FIRST, so a route's re-arm can take the slot
 			// AWAITED, and RE-ARMED on failure. On a genuine route the re-collected errand
@@ -25454,7 +25464,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			var res = null;
 			try { if (window.DaimondPost && DaimondPost.collect) res = await DaimondPost.collect(); }
 			catch (e) { res = null; }
-			if (!res || !res.ok) scheduleNomineeFallback();
+			if (!res || !res.ok) scheduleStandDownRecollect(fastMs);
 		}, wait);
 	}
 
@@ -25533,7 +25543,8 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			// stand-down then reads it offline and a fallback grabs the turn. Beat the instant
 			// a turn ends, so back-to-back turns in a chat stay with this device.
 			if (res && res.ran) { try { presenceTick(); } catch (e) { /* best-effort liveness */ } }
-			// STOOD DOWN for the nominated runner: the errand is HELD on the relay
+			// STOOD DOWN for the nominated runner (or UNDECIDED: the take could not read the
+			// lease door, or won no try at it): the errand is HELD on the relay
 			// (takeRow), not acked, so it survives for the nominee. But the 45s presence
 			// beat does not re-collect, so nothing here would retry until an unrelated
 			// wake -- and a nominee that slept just after its last beat would leave this
@@ -25542,7 +25553,9 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			// a nominee that kept beating (still fresh) stands this down again and
 			// reschedules. Bounds the fallback stall to about one freshness window
 			// rather than the dispatcher's much longer deadline.
-			if (res && res.why === 'nominee') scheduleNomineeFallback();
+			if (res && DaimondPeer.standDownUndecided(res.why)) {
+				scheduleStandDownRecollect(res.why === 'nominee' ? undefined : UNDECIDED_RECOLLECT_MS);
+			}
 			return res;
 		});
 		// The DISPATCHING side: a report is the nudge that a dispatched turn is settled.
@@ -26344,11 +26357,19 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 	/// or run here, never revoked to nothing. The peer's next renew reads `released` and
 	/// hard-aborts (proven in peer.test.mjs), then `continueTurn` runs the turn here.
 	async function peerTakeBack(turnId) {
-		try {
-			if (!window.DaimondLease || !DaimondLease.revoke) return;
-			await DaimondLease.revoke(turnId, DaimondPeer.syncCas(peerSyncShim()));
-			renderDispatchedBadges();
-		} catch (e) { /* a revoke that could not land leaves the peer running; the UI reflects it */ }
+		if (!window.DaimondLease || !DaimondLease.revoke) return;
+		var res;
+		var cas = DaimondPeer.syncCas(peerSyncShim());
+		// One more try at a door that would not read, as every release has.
+		try { res = await DaimondPeer.retryUnread(function () { return DaimondLease.revoke(turnId, cas); }); }
+		catch (e) { res = { ok: false, why: 'threw ' + String((e && e.message) || e).slice(0, 60) }; }
+		try { renderDispatchedBadges(); } catch (e) { /* a redraw is only a redraw */ }
+		if (res && res.ok) return;
+		// A revoke that did not land leaves the peer running and `continueTurn` gated off, so
+		// [Run here] would otherwise do nothing and say nothing (QA LQ4, 2026-10-04). The
+		// person is told, once, and only for a take-back that really failed.
+		diag('take-back failed', 'turn=' + turnId + ' why=' + String((res && res.why) || '?'));
+		toast(t('turn.peer_takeback_failed'), true);
 	}
 
 	/// PRE-CLAIM take-back: pull a dispatched turn that NO device has claimed yet back to
@@ -26612,6 +26633,13 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			var res = null;
 			try { res = await DaimondPeer.runErrand(errand, peerRunErrandDeps({ allowSelf: true })); }
 			catch (e) { return; }				// a failed recovery leaves the footer as it was
+			// A take that could not read the lease door, or won no try at it, has decided
+			// nothing: nobody is running the turn. The backstop that brought this run is spent,
+			// so it is armed again, to look once more rather than leave the turn to its deadline.
+			if (res && !res.ran && DaimondPeer.standDownUndecided(res.why)) {
+				try { scheduleDispatchFallback(chat.id, tid, UNDECIDED_RECOLLECT_MS); }
+				catch (e) { /* recovery-on-return still nets it */ }
+			}
 			if (res && res.done) {
 				try { dropDispatchedPlaceholder(String(m.iturn)); } catch (e) { /* nothing drawn */ }
 				renderDispatchedBadges();
@@ -26663,12 +26691,16 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 	async function releaseOwnStaleLeases() {
 		try {
 			if (!window.DaimondPeer || !DaimondPeer.staleOwnLeaseDecision) return 0;
-			if (!window.DaimondLease || !DaimondLease.release) return 0;
-			var snap = {};
-			try { snap = (await DaimondSync.leaseGet()).leases || {}; } catch (e) { return 0; }
+			if (!DaimondPeer.settleLease || !DaimondPeer.readTwice) return 0;
+			var cas = DaimondPeer.syncCas(peerSyncShim());
+			// AN UNREAD DOOR IS NOT AN EMPTY ONE. It is read once more after a pause, as a
+			// release's write is; still unread, nothing is freed, and that is said, since the
+			// sweep next runs on the next foreground return.
+			var door = await DaimondPeer.readTwice(cas);
+			if (door.unread) { diag('lease self-release skipped', 'unread'); return 0; }
+			var snap = door.leases || {};
 			var self = selfDeviceId();
 			var stale = DaimondPeer.staleOwnLeaseDecision(snap, self, _runnerCtx, leaseClockNow());
-			var cas = DaimondPeer.syncCas(peerSyncShim());
 			var freed = 0;
 			for (var i = 0; i < stale.length; i++) {
 				var tid = stale[i];
@@ -26689,7 +26721,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 						await DaimondPost.post(await DaimondPeer.sealForSelf(DaimondPeer.reportFor(
 							snap[tid] || { turnId: tid }, { status: 'error', why: 'runner-restarted' })));
 					} catch (e) { /* the release below still frees the turn */ }
-					try { await DaimondLease.release(tid, self, cas); }
+					try { await DaimondPeer.settleLease('turn', tid, self, 'released', cas, leaseClockNow); }
 					catch (e) { /* an unreleased lease still expires at its deadline */ }
 					freed++;
 				} finally { claim.release(); }

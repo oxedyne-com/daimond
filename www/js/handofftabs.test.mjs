@@ -105,9 +105,10 @@ function loadPeer() {
 		localStorage: { getItem() { return null; }, setItem() {}, removeItem() {} } };
 	const document = { readyState: 'complete', addEventListener() {}, querySelector() { return null; }, getElementById() { return null; } };
 	new Function('window', 'document', 'with (window) {\n' + PEER + '\n}')(win, document);
-	return win.DaimondPeer;
+	return win;
 }
-const P = loadPeer();
+const PEERWIN = loadPeer();
+const P = PEERWIN.DaimondPeer;
 
 const LIFTED = [
 	'var _claimed = {};',
@@ -132,6 +133,11 @@ const LIFTED = [
 function makeTab(name, locks, w) {
 	const stat = { runs: 0, reseats: 0, released: [], reports: [], appended: [], restored: null };
 	const tab = { stat, runnerCtx: Object.create(null), gate: null, reseatAnswer: false };
+	const doorRead = async () => {
+		w.reads++;
+		if (w.unreadAt.indexOf(w.reads) >= 0) return { version: 0, leases: {}, unread: true };
+		return { version: w.version, leases: JSON.parse(JSON.stringify(w.leases)), unread: false };
+	};
 	const scope = {
 		navigator: { locks },
 		DaimondPeer: Object.assign(Object.create(P), {
@@ -139,12 +145,27 @@ function makeTab(name, locks, w) {
 			sealForSelf: async (x) => x,
 		}),
 		DaimondPost: null,		// set below, from the lifted claimWork
-		DaimondLease: { release: async (tid) => { stat.released.push(tid); w.released.push(name + ':' + tid); } },
-		DaimondSync: { leaseGet: async () => ({ leases: w.leases }) },
-		diag: () => {},
+		DaimondLease: PEERWIN.DaimondLease,
+		diag: (tag, d) => { w.diags.push(tag + ' ' + d); },
 		selfDeviceId: () => 'SELF',
 		leaseClockNow: () => 1000,
-		peerSyncShim: () => ({}),
+		// The lease door, versioned: the sweep reads it and the real lease writes it, so a
+		// release is what the door was told, not what a stub was called with. `w.unreadAt`
+		// names the reads (counted from 1) that time out, as the shim reports them.
+		DaimondSync: { leaseGet: async () => doorRead() },
+		peerSyncShim: () => ({
+			read: async () => doorRead(),
+			commit: async (base, next) => {
+				if (base !== w.version) return { ok: false, version: w.version, leases: JSON.parse(JSON.stringify(w.leases)) };
+				Object.keys(next).forEach((tid) => {
+					if (next[tid].mode === 'released' && (w.leases[tid] || {}).mode !== 'released') {
+						stat.released.push(tid); w.released.push(name + ':' + tid);
+					}
+				});
+				w.version += 1; w.leases = JSON.parse(JSON.stringify(next));
+				return { ok: true, version: w.version };
+			},
+		}),
 		errandForRecovery: (chat, m) => ({ turnId: String(m.iturn), chatId: chat.id }),
 		peerRunErrandDeps: () => ({}),
 		dropDispatchedPlaceholder: () => {},
@@ -178,7 +199,7 @@ function makeTab(name, locks, w) {
 }
 
 function world() {
-	return { runs: 0, released: [], reports: [],
+	return { runs: 0, released: [], reports: [], version: 5, reads: 0, unreadAt: [], diags: [],
 		leases: { T: { holder: 'SELF', mode: 'running', expiry: 9000, renewedAt: 1, turnId: 'T' } } };
 }
 const chatOf = () => ({ id: 'c', messages: [] });
@@ -265,6 +286,29 @@ check('the local run claims the key a runner\'s collect claims',
 	check('so no run of the turn starts in another tab until the lease is freed', w.runs === 0, w.runs);
 	B1.postGate.open();
 	check('then the lease is freed, once', (await rel) === 1 && w.released.join() === 'B1:T', w.released);
+}
+
+// ── L1 (QA 2026-10-04). A door that will not read is not an empty one, and a release retries. ──
+{
+	const locks = makeLocks();
+	// One timed-out first read: looked at again, and the lease is freed with its report.
+	let w = world(); w.unreadAt = [1];
+	let B = makeTab('B', locks, w);
+	let n = await B.releaseOwnStaleLeases();
+	check('L1: a first read that timed out is read again, and the stale lease is freed',
+		n === 1 && w.released.join() === 'B:T' && w.reports.join() === 'B', [n, w.released, w.reports, w.reads]);
+	// Unreadable twice: nothing is freed, no "runner restarted" report goes, and it is said.
+	w = world(); w.unreadAt = [1, 2];
+	B = makeTab('B', locks, w);
+	n = await B.releaseOwnStaleLeases();
+	check('L1: a door unreadable twice frees nothing and sends no report', n === 0 && !w.released.length && !w.reports.length, [n, w.released, w.reports]);
+	check('L1: and says so, as lease self-release skipped unread', w.diags.some((d) => d === 'lease self-release skipped unread'), w.diags);
+	// The release's own write meets one unreadable read: the retry lands it.
+	w = world(); w.unreadAt = [2];
+	B = makeTab('B', locks, w);
+	n = await B.releaseOwnStaleLeases();
+	check('L1: a release write that read an unreadable door lands on the retry',
+		n === 1 && w.released.join() === 'B:T' && w.leases.T.mode === 'released', [n, w.released, w.leases.T && w.leases.T.mode]);
 }
 
 // ── F3. The session path leaves the re-sent message out, as the no-session path does. ──

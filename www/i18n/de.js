@@ -3322,6 +3322,7 @@
 	'turn.peer_consent_named': '{name} braucht deine Erlaubnis, um {act}.',
 	'turn.peer_parked': 'Das brauchte deine Erlaubnis — es läuft erneut, sobald du zurück bist.',
 	'turn.peer_rerun': 'Erneut ausführen',
+	'turn.peer_takeback_failed': 'Das konnte hier nicht ausgeführt werden. Versuche es erneut.',
 	'seat.on_runner': 'Nächster Zug: {name}',
 	'seat.on_desktop': 'Nächster Zug: {name}',
 	'seat.on_desktop_runner_off': 'Nächster Zug: {name}',

@@ -3357,6 +3357,7 @@
 	'turn.peer_consent_named': '{name} が {act} の許可を求めています。',
 	'turn.peer_parked': 'これには許可が必要でした——戻り次第、再実行します。',
 	'turn.peer_rerun': '再実行',
+	'turn.peer_takeback_failed': 'ここで実行できませんでした。もう一度お試しください。',
 	'seat.on_runner': '次のターン：{name}',
 	'seat.on_desktop': '次のターン：{name}',
 	'seat.on_desktop_runner_off': '次のターン：{name}',

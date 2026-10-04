@@ -3330,6 +3330,7 @@
 	'turn.peer_consent_named': '{name} a besoin de votre permission pour {act}.',
 	'turn.peer_parked': 'Cela nécessitait votre permission — cela reprendra à votre retour.',
 	'turn.peer_rerun': 'Relancer',
+	'turn.peer_takeback_failed': 'Impossible de l’exécuter ici. Réessayez.',
 	'seat.on_runner': 'Prochain tour : {name}',
 	'seat.on_desktop': 'Prochain tour : {name}',
 	'seat.on_desktop_runner_off': 'Prochain tour : {name}',
