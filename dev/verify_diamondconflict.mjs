@@ -32,8 +32,16 @@
 // It reddens the kept-loser and tag-union assertions. A control run that leaves
 // them green would prove the checks have no teeth.
 //
+// ROUND F (5.3.2, QA pair 2: Fable F1, Opus B F1): the Diamond's note file `.daimond/steering.md` is not a
+// versioned file either, so the import replaced it whole: a note added on the losing side vanished and a Remove
+// flipped back to active. The last section drives both on the same two devices: an Add on each side, and a Remove
+// made on the side that loses the import. `--break nonotes` serves a daimond.js that never joins the files.
+//
 //   node dev/verify_diamondconflict.mjs           # the gate (must be green)
 //   node dev/verify_diamondconflict.mjs --break lww  # pre-fix LWW (must redden)
+//   node dev/verify_diamondconflict.mjs --break nonotes  # the import's whole replacement of the note file (must redden the notes section)
+//   node dev/verify_diamondconflict.mjs --break nolock   # no lock between a press and the import (must redden G5b and G5d only)
+//   node dev/verify_diamondconflict.mjs --break stale     # the decision from the pull's first list (must redden G5a and G5c only)
 //
 // Chromium only: it needs an origin-private filesystem to create a Diamond at all
 // (Playwright's Linux WebKit exposes none). The cloud is stood up IN THIS PROCESS
@@ -60,7 +68,7 @@ const arg = (flag, dflt) => {
 	return i > 0 ? String(process.argv[i + 1] || dflt) : dflt;
 };
 const BREAK = arg('--break', '');
-if (BREAK && BREAK !== 'lww') { console.error(`unknown break '${BREAK}'; only: lww`); process.exit(2); }
+if (BREAK && !['lww', 'nonotes', 'nolock', 'stale'].includes(BREAK)) { console.error(`unknown break '${BREAK}'; only: lww, nonotes, nolock, stale`); process.exit(2); }
 if (BREAK && BROWSER !== 'chromium') {
 	console.error(`--break serves an edited file through page.route, which does not fire under `
 		+ `${BROWSER}. Run the break under Chromium.`);
@@ -75,6 +83,12 @@ const SEAM = [
 	  why: 'the conflict path is absent' },
 	{ file: 'js/daimond.js', want: 'function diamondTwoSided(r, mine, recv, dbase) {',
 	  why: 'the two-sided rule (descent, lane DIA) is missing' },
+	{ file: 'js/daimond.js', want: 'await window.DaimondNotes.uniteHeld(r.id, loserNotes);',
+	  why: 'the join of the note file is missing (round F), so the notes section would prove nothing' },
+	{ file: 'js/daimond.js', want: 'var storedAt = await holdDiamond(r.id, async function () {',
+	  why: 'the apply does not take the Diamond\'s lock (round F, R1), so the R1 section would prove nothing' },
+	{ file: 'js/daimond.js', want: 'function holdDiamond(id, fn, wait) {',
+	  why: 'the one lock per Diamond is missing (round F, R1)' },
 ];
 for (const s of SEAM) {
 	const src = fs.readFileSync(path.join(WWW, s.file), 'utf8');
@@ -91,6 +105,27 @@ if (BREAK === 'lww') {
 	if (n !== 1) { console.error(`break anchor appears ${n} times (expected 1)`); process.exit(2); }
 	PATCHED.set(file, src.replace(find,
 		'var twoSided = false;   // --break lww: whole-directory LWW, the loser is discarded'));
+}
+if (BREAK === 'nonotes') {
+	const file = 'js/daimond.js';
+	const src = fs.readFileSync(path.join(WWW, file), 'utf8');
+	const find = 'await window.DaimondNotes.uniteHeld(r.id, loserNotes);';
+	const n = src.split(find).length - 1;
+	if (n !== 1) { console.error(`break anchor appears ${n} times (expected 1)`); process.exit(2); }
+	PATCHED.set(file, src.replace(find, 'await 0; /* --break nonotes: the note file is replaced whole, as the import leaves it */'));
+}
+// --break nolock: the lock admits everyone at once (a shared Web Lock), so a press made as the import starts runs beside it (G5b, and G5d for a second tab).
+// --break stale: the apply decides from the list read at the top of the pull and not from the Diamond under the lock (G5a, G5c).
+function patchOnce(file, find, to) {
+	const src = PATCHED.get(file) || fs.readFileSync(path.join(WWW, file), 'utf8');
+	const n = src.split(find).length - 1;
+	if (n !== 1) { console.error(`break anchor appears ${n} times (expected 1): ${find}`); process.exit(2); }
+	PATCHED.set(file, src.replace(find, to));
+}
+if (BREAK === 'nolock') patchOnce('js/daimond.js', "{ mode: 'exclusive', signal: ctl.signal }", "{ mode: 'shared', signal: ctl.signal }");
+if (BREAK === 'stale') {
+	patchOnce('js/daimond.js', 'mine = cur; local[r.id] = cur;', 'void cur; /* --break stale */');
+	patchOnce('js/daimond.js', 'if (!(diamondStamp(r) > diamondStamp(cur))) return 0;', '/* --break stale: the arrival is still taken as the newer */');
 }
 async function patchedSource(page) {
 	if (!PATCHED.size) return;
@@ -199,7 +234,7 @@ const AGREE = '<h1>Ledger</h1><p>the copy both devices agreed on before either e
 const A_EDIT = '<h1>Ledger</h1><p>PHONE EDIT phone-only-marker-9f21 offline before push</p>';
 const B_EDIT = '<h1>Ledger</h1><p>DESKTOP EDIT desktop-only-marker-7ac3 pushed while the phone slept</p>';
 
-let A = null, B = null;
+let A = null, B = null, A2 = null;
 try {
 	console.log(`\n— S-SYNC #4: two devices, one Diamond, a two-sided edit${BREAK ? '  [--break ' + BREAK + ']' : ''} —`);
 
@@ -312,10 +347,206 @@ try {
 	check('#4 a further resume-pull keeps a single kept snapshot (no fresh conflict each round — fixed point)',
 		aVerAfter === aVerBefore, `versions ${aVerBefore} -> ${aVerAfter}, ${cloud.commits.length - commitsBefore} commit(s) in the round`);
 
+	// ═══ ROUND F: THE NOTE FILE ═══
+	// The notes are one file in the Diamond's own store, outside the versioned files, so a two-sided import used to
+	// replace this device's file with the arriving one: the Add made here vanished, and a Remove made here came back.
+	console.log('\n— round F: the note file on a two-sided change —');
+	const NOTE_COMMON = 'Name the source of every figure, note-common-4d21.';
+	const NOTE_A      = 'Say plainly when you are unsure, note-phone-9e17.';
+	const NOTE_B      = 'Keep every answer under about 200 words, note-desk-6b30.';
+	const notesReady = (s) => s.page.waitForFunction(() => !!(window.DaimondNotes && window.DaimondCore && DaimondCore.loadDiamonds), null, { timeout: 20000 });
+	await notesReady(A); await notesReady(B);
+	// One tag each: a Diamond's note displaces another of the same tag, and the arms tell what a turn is told.
+	const noteAdd = (s, line, tag) => s.page.evaluate(async ({ did, line, tag }) => {
+		await DaimondCore.loadDiamonds();
+		const e = await DaimondNotes.add({ level: 2, scope: did, cm: 'all', tag, line, at: { t: 0, n: 0 } });
+		return e ? e.id : '';
+	}, { did: X, line, tag });
+	const noteRemove = (s, id) => s.page.evaluate(async ({ did, id }) => {
+		await DaimondCore.loadDiamonds();
+		const e = await DaimondNotes.retire({ level: 2, scope: did, id }, { t: 0, n: 1 });
+		return e ? e.status : '';
+	}, { did: X, id });
+	const noteView = (s) => s.page.evaluate(async (did) => {
+		await DaimondCore.loadDiamonds();
+		await DaimondNotes.reload(true);
+		return { all: DaimondNotes.all().filter((e) => e.scope === did).map((e) => ((/note-(common|phone|desk)-/.exec(e.line) || [])[1] || '?') + ':' + e.status).sort(), told: DaimondNotes.steerFor('any-model', did) };
+	}, X);
+	const round = async () => { await push(A); await pull(B); await push(B); await pull(A); };
+
+	// The note both devices hold before either moves.
+	const commonId = await noteAdd(A, NOTE_COMMON, 'wrong');
+	await round();
+	const b0 = await noteView(B);
+	check('F0 the common note reached B one-sided (a control for the two-sided arms)', b0.told.indexOf('note-common-4d21') !== -1, JSON.stringify(b0.all));
+
+	// F1: both Add between syncs; the arrival is the later copy and wins the import.
+	await noteAdd(A, NOTE_A, 'ignored');
+	await B.page.waitForTimeout(80);
+	await noteAdd(B, NOTE_B, 'long');
+	await push(B);
+	await pull(A);
+	const a1 = await noteView(A);
+	check('F1 the note A Added survives the import of B\'s later copy', a1.told.indexOf('note-phone-9e17') !== -1, JSON.stringify(a1.all));
+	check('F1 the note B Added stands, and the common one', a1.told.indexOf('note-desk-6b30') !== -1 && a1.told.indexOf('note-common-4d21') !== -1, JSON.stringify(a1.all));
+	await push(A); await pull(B);
+	const b1 = await noteView(B);
+	check('F1 the join travels back: B holds all three, one-sided', b1.all.length === 3 && b1.told.indexOf('note-phone-9e17') !== -1, JSON.stringify(b1.all));
+	await round();
+	const a1b = await noteView(A), b1b = await noteView(B);
+	check('F1 a further round changes nothing (the join settles)', JSON.stringify(a1b.all) === JSON.stringify(a1.all) && JSON.stringify(b1b.all) === JSON.stringify(b1.all), JSON.stringify([a1b.all, b1b.all]));
+
+	// F2: A Removes the common note; B edits the Diamond later (still holding the note active) and its copy wins.
+	const st = await noteRemove(A, commonId);
+	await B.page.waitForTimeout(80);
+	await B.page.evaluate(async ({ did, html }) => {
+		const mod = await import('/pkg/oxedyne_daimond.js');
+		const app = new mod.DaimondApp('http://127.0.0.1/v1/chat/completions', '', 'none', 4096, '', true);
+		await app.write_crystal_page(did, html);
+	}, { did: X, html: B_EDIT.replace('desktop-only-marker-7ac3', 'desktop-only-marker-7ac3-second') });
+	await push(B);
+	await pull(A);
+	const a2 = await noteView(A);
+	check('F2 the Remove A made stands after the import of B\'s later copy', st === 'retired' && a2.told.indexOf('note-common-4d21') === -1, JSON.stringify(a2.all));
+	check('F2 and A\'s other notes are still told', a2.told.indexOf('note-phone-9e17') !== -1 && a2.told.indexOf('note-desk-6b30') !== -1, JSON.stringify(a2.told));
+	await push(A); await pull(B);
+	const b2 = await noteView(B);
+	check('F2 B takes the Remove: it is no longer told the removed note', b2.told.indexOf('note-common-4d21') === -1 && b2.all.indexOf('common:retired') !== -1, JSON.stringify(b2.all));
+
+	// ═══ R1 (5.3.2 round F re-check): A PRESS WHILE A PULL APPLIES THE SAME DIAMOND ═══
+	// `applyDiamonds` listed this device's Diamonds once, at its top, and decided "two-sided" from that list; the import sat
+	// outside the queue the note writes share. So a note pressed after the list read as one-sided and the import replaced the file
+	// whole: an Add was gone from both devices, a Remove came back to active and was told again, and the trail said nothing. The
+	// account's notes live in the Optimiser, which every other device's timer moves, so most pulls carry a one-sided copy of it.
+	//   G5a  the press completes after the pull listed this device's Diamonds, before the import (the chunk-fetch window)
+	//   G5b  the press lands while import_diamond runs
+	//   G5c  a Remove pressed in the G5a window
+	console.log('\n— R1: a note pressed while a pull applies the Optimiser —');
+	const OPT = '0da1000000f2';
+	const optSeed = (s) => s.page.evaluate(async (OPT) => {
+		const app = DaimondCore.diamondApp();
+		await DaimondCore.loadDiamonds();
+		if (!JSON.parse(await app.list_diamonds()).some((d) => d.id === OPT)) await app.create_diamond_at('Daimond Optimiser', OPT);
+		await DaimondCore.loadDiamonds();
+	}, OPT);
+	const optTick = (s) => s.page.evaluate(async (OPT) => { const m = await import('/pkg/oxedyne_daimond.js'); await m.touch_diamond(OPT); try { await DaimondCore.loadDiamonds(); } catch (e) {} }, OPT);
+	const acctAdd = (s, line, tag) => s.page.evaluate(async ({ line, tag }) => { await DaimondCore.loadDiamonds();
+		const e = await DaimondNotes.add({ level: 3, scope: '', cm: 'all', tag, line, at: { t: 0, n: 0 } }); return e ? e.id : ''; }, { line, tag });
+	const acctView = (s) => s.page.evaluate(async () => { await DaimondCore.loadDiamonds(); await DaimondNotes.reload(true);
+		return { all: DaimondNotes.all().filter((e) => e.level === 3).map((e) => ((/r1-([a-z0-9]+)/.exec(e.line) || [])[1] || '?') + ':' + e.status).sort(),
+			told: DaimondNotes.steerFor('any-model', '') }; });
+	const hasN = (v, k, st) => v.all.indexOf(k + ':' + st) !== -1;
+	for (const s of [A, B]) await optSeed(s);
+	// Each device seeded the Optimiser at its fixed id, so the first meeting is two-sided; the note made before it is on both after.
+	await acctAdd(A, 'Name the source of each figure, r1-common.', 'wrong');
+	await optTick(B);
+	await round(); await round();
+	let ra = await acctView(A), rb = await acctView(B);
+	check('R0 the account note made before the first meeting is on both devices (the control for G5)', hasN(ra, 'common', 'active') && hasN(rb, 'common', 'active'), JSON.stringify([ra.all, rb.all]));
+	const R1_TAG = { G5a: ['r1a', 'scope'], G5b: ['r1b', 'long'], G5c: ['common', ''] };
+	for (const arm of ['G5a', 'G5b', 'G5c']) {
+		// B's Optimiser timer moves the Diamond and pushes; A has not moved it, so A's pull applies a one-sided copy.
+		await round();
+		await optTick(B); await push(B);
+		const [key, tag] = R1_TAG[arm];
+		const g = await A.page.evaluate(async ({ arm, key, tag }) => {
+			const app = DaimondCore.diamondApp(), oi = app.import_diamond, ol = app.list_diamonds;
+			let fired = null, answered = false, imports = 0, two = null, listed = 0, armed = true;
+			const cid = (DaimondNotes.all().find((e) => e.level === 3 && /r1-common/.test(e.line)) || {}).id;
+			const press = () => (arm === 'G5c'
+				? DaimondNotes.retire({ level: 3, scope: '', id: cid }, { t: 0, n: 2 })
+				: DaimondNotes.add({ level: 3, scope: '', cm: 'all', tag, line: 'Pressed mid-pull, r1-' + key + '.', at: { t: 0, n: 0 } })
+			).then((x) => { answered = true; return x; }, () => { answered = true; return null; });
+			// G5a, G5c: the press completes right after applyDiamonds' own list, which is the one it then decides from.
+			app.list_diamonds = async function () {
+				const mine = /applyDiamonds/.test(new Error().stack || '');
+				const r = await ol.apply(this, arguments);
+				if (mine && arm !== 'G5b' && armed) { armed = false; listed++; fired = press(); await fired; }
+				return r;
+			};
+			// G5b: the press is made as the import starts and not waited for there; it is the page's to queue.
+			app.import_diamond = async function (data, tw) {
+				imports++; two = tw;
+				if (arm === 'G5b' && !fired) fired = press();
+				return oi.apply(this, arguments);
+			};
+			try {
+				await DaimondSync.pull();
+				if (fired) await Promise.race([fired, new Promise((r) => setTimeout(r, 15000))]);
+			} finally { app.import_diamond = oi; app.list_diamonds = ol; }
+			return { pressed: !!fired, answered, imports, two, listed };
+		}, { arm, key, tag });
+		note(`${arm}: pressed=${g.pressed}, answered=${g.answered}, imports=${g.imports}, twoSided=${g.two}`);
+		const aNow = await acctView(A);
+		await round(); await round();
+		ra = await acctView(A); rb = await acctView(B);
+		if (arm === 'G5c') {
+			check('G5c an account Remove pressed during a pull stays removed (A right after, then both) and is not told again',
+				g.pressed && g.answered && hasN(aNow, key, 'retired') && hasN(ra, key, 'retired') && hasN(rb, key, 'retired') && ra.told.indexOf('r1-common') === -1 && rb.told.indexOf('r1-common') === -1,
+				`A right after ${JSON.stringify(aNow.all)}, A ${JSON.stringify(ra.all)}, B ${JSON.stringify(rb.all)}, A told it ${ra.told.indexOf('r1-common') !== -1}`);
+			continue;
+		}
+		check(`${arm} an account Add pressed during a pull stands (A right after, then both)`,
+			g.pressed && g.answered && hasN(aNow, key, 'active') && hasN(ra, key, 'active') && hasN(rb, key, 'active'),
+			`answered=${g.answered}, A right after ${hasN(aNow, key, 'active')}, A ${hasN(ra, key, 'active')}, B ${hasN(rb, key, 'active')}`);
+	}
+
+	// ═══ G5d (L7): THE PRESS IS MADE IN A SECOND TAB OF THE SAME DEVICE ═══
+	// The lock was this page's alone. A press in another tab of the device (same origin, same storage, so the same Diamond files) ran
+	// beside the first tab's import: it read and wrote the note file while the import replaced it, and the Add was gone from both
+	// devices. The lock is now the browser's (Web Locks), so the second tab waits for the first tab's apply and lands after it.
+	//   G5d  tab A1 pulls a one-sided copy of the Optimiser; as its import is about to start, tab A2 presses an Add and the import is held
+	//        until A2's press has completed (or 2.5 s have passed, which is what happens when the press is held off by the lock).
+	console.log('\n— R1 L7: a note pressed in a SECOND TAB while the first tab applies the Optimiser —');
+	{
+		const pg2 = await A.browser.newPage();
+		A2 = { page: pg2, browser: A.browser, name: 'dconf-a2', errs: [], logs: [], net: [], foreign: [] };
+		await patchedSource(pg2);
+		await pg2.goto(A.page.url(), { waitUntil: 'domcontentloaded' });
+		await signInAs(A2, 'dconf'); await ready(A2); await notesReady(A2);
+		const lockHeld = await A.page.evaluate(() => !!(navigator.locks && navigator.locks.request));
+		note(`Web Locks in the page: ${lockHeld}`);
+		await round();
+		await optTick(B); await push(B);
+		let pressP = null, pressed = false;
+		await A.page.exposeFunction('__tabB', async () => {
+			if (pressed) return 'again';
+			pressed = true;
+			pressP = pg2.evaluate(async () => {
+				await DaimondCore.loadDiamonds();
+				const e = await DaimondNotes.add({ level: 3, scope: '', cm: 'all', tag: 'r1d', line: 'Pressed in the second tab, r1-tabb.', at: { t: 0, n: 0 } });
+				return e ? e.id : '';
+			}).then((x) => ({ ok: true, id: x }), (e) => ({ ok: false, why: String((e && e.message) || e) }));
+			return Promise.race([pressP.then(() => 'done'), new Promise((r) => setTimeout(() => r('waiting'), 2500))]);
+		});
+		const g = await A.page.evaluate(async () => {
+			const app = DaimondCore.diamondApp(), oi = app.import_diamond;
+			let imports = 0, two = null, told = '';
+			app.import_diamond = async function (data, tw) {
+				imports++; two = tw;
+				if (imports === 1) told = await window.__tabB();
+				return oi.apply(this, arguments);
+			};
+			try { await DaimondSync.pull(); } finally { app.import_diamond = oi; }
+			return { imports, two, told };
+		});
+		const pr = pressP ? await Promise.race([pressP, new Promise((r) => setTimeout(() => r({ ok: false, why: 'not answered in 15 s' }), 15000))]) : { ok: false, why: 'never pressed' };
+		note(`G5d: imports=${g.imports}, twoSided=${g.two}, A2's press was ${g.told} when the import was let go; answered ok=${pr.ok}${pr.ok ? '' : ' (' + pr.why + ')'}`);
+		const a1 = await acctView(A);
+		const a2 = await pg2.evaluate(async () => { await DaimondCore.loadDiamonds(); await DaimondNotes.reload(true);
+			return { all: DaimondNotes.all().filter((e) => e.level === 3).map((e) => ((/r1-([a-z0-9]+)/.exec(e.line) || [])[1] || '?') + ':' + e.status).sort() }; });
+		await round(); await round();
+		ra = await acctView(A); rb = await acctView(B);
+		check('G5d an account Add pressed in a second tab during the first tab\'s pull stands (tab A1 and tab A2 right after, then both devices)',
+			g.imports >= 1 && pr.ok && hasN(a1, 'tabb', 'active') && hasN(a2, 'tabb', 'active') && hasN(ra, 'tabb', 'active') && hasN(rb, 'tabb', 'active'),
+			`A2 answered=${pr.ok}, A1 right after ${hasN(a1, 'tabb', 'active')}, A2 right after ${hasN(a2, 'tabb', 'active')}, A ${hasN(ra, 'tabb', 'active')}, B ${hasN(rb, 'tabb', 'active')}`);
+	}
+
 } catch (e) {
 	console.log('VERIFY THREW:', e && (e.stack || e.message || e));
 	bad.push('verify threw: ' + (e && e.message));
 } finally {
+	try { await A2?.page?.close?.(); } catch (e) {}
 	try { await A?.close?.(); } catch (e) {}
 	try { await B?.close?.(); } catch (e) {}
 	console.log('\n=== SUMMARY ' + ok.length + ' ok, ' + bad.length + ' FAIL ' + (BREAK ? '(--break: FAILs are expected)' : '') + ' ===');

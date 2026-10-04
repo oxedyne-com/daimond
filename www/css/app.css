@@ -2709,6 +2709,8 @@ span.arte-open { cursor: default; }
    (`.dlg-input.dlg-select`), so it takes `:focus-visible` for the pulldown's
    sake -- see the note at `.settings-select`. On the text fields it resolves to
    exactly what `:focus` did. */
+/* A multiline prompt (`lines` on `dialog`): the same field, wrapping, grown by the dialog to the whole of its text. */
+.dlg-area { display: block; resize: none; font-family: inherit; line-height: 1.4; overflow-y: auto; }
 .dlg-input:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; border-color: var(--accent); }
 /* A models pulldown in a dialog: the same box as the text fields beside it, so the
    form reads as one form. A long model id is allowed to be long -- truncating it
@@ -3975,7 +3977,7 @@ body.resizing { cursor: col-resize; user-select: none; }
 .pend-diamond { font-family: var(--font-mono); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .pend-when { margin-left: auto; flex: none; }
 .pend-line {
-	background: none; border: 0; padding: 0; text-align: left;
+	background: none; border: 0; padding: 2px 5px 2px 0; border-radius: var(--radius-sm); text-align: left;
 	color: var(--text-primary); font-size: var(--fs-sm); line-height: 1.4;
 }
 .pend-line:hover { color: var(--accent-text); }
@@ -3990,6 +3992,15 @@ body.resizing { cursor: col-resize; user-select: none; }
 .pend-go:hover  { border-color: var(--accent); background: var(--accent-soft); color: var(--accent-text); }
 .pend-no:hover  { border-color: var(--danger); color: var(--danger); }
 .pend-act:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+
+/* The Steering list (Rating U7c): a note's line, then its scope, model and day with Remove beside them. The line is the
+   Pending tile's own note drawing and Remove its text button, so a note and its press are drawn the same wherever they appear.
+   No rule between rows: the gap is the separation. */
+.steer-list { display: flex; flex-direction: column; gap: 12px; }
+.steer-row { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+.steer-foot { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.steer-meta { flex: 1 1 auto; min-width: 0; overflow-wrap: anywhere; }
+.steer-rm { flex: none; padding: 4px 10px; }
 
 /* ── The `/` menu ────────────────────────────────────────────────
    Skills have worked since seq 65 and nothing told anyone they existed. A `/`

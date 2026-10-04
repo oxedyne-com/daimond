@@ -100,7 +100,7 @@ if (BREAK && !BREAKS[BREAK]) {
 	const stale = Object.entries(BREAKS).filter(([, b]) => src.split(b.from).length !== 2).map(([n]) => n);
 	if (stale.length) { console.error('break(s) no longer match www/js/daimond.js once: ' + stale.join(', ')); process.exit(2); }
 }
-const ONLY = new Set((arg('--only') || (BREAK ? BREAKS[BREAK].section : 'H,C,F,M,D,P,R,O,S,X'))
+const ONLY = new Set((arg('--only') || (BREAK ? BREAKS[BREAK].section : 'H,C,N,F,M,D,P,R,O,S,X'))
 	.split(',').map((s) => s.trim().toUpperCase()).filter(Boolean));
 const on = (sec) => ONLY.has(sec);
 let ROUTE = null;
@@ -535,6 +535,42 @@ try {
 		}
 	}
 
+	// ══ N. A steering note moves sp when it is activated, and at no other time (5.3.2, plan C5) ══════
+	// `sp` fingerprints the composed prompt, so a note that reaches the prompt moves it once, when it is kept; a note for another
+	// model, a turn, a rating landing and a reload leave it; retiring the note puts the first value back.
+	if (on('N')) {
+		const NL = 'Reply in plain sentences, without a heading, unless a heading is asked for.', NO = 'Name the file you changed at the end of every change.';
+		const havePage = await b.page.evaluate(() => !!(window.DaimondNotes && DaimondNotes.add && DaimondNotes.retire));
+		check('N: the page can keep a note (DaimondNotes.add, retire)', havePage);
+		const ncid = await newChat(b);
+		const spOf2 = (t) => (one(t.ans) ? one(t.ans).sp : '');
+		const n1 = await textTurn(b, ncid, 'N-ONE'), n2 = await textTurn(b, ncid, 'N-TWO');
+		const s1 = spOf2(n1);
+		check('N: with no note sp is stable across two turns', !!s1 && s1 === spOf2(n2), s1 + ' / ' + spOf2(n2));
+		if (havePage) {
+			const other = await b.page.evaluate((l) => DaimondNotes.add({ level: 3, scope: '', cm: 'a-model-nobody-runs', tag: 'tool', line: l, at: { t: 3, n: 9 } }), NO);
+			const n3 = await textTurn(b, ncid, 'N-THREE');
+			check('N: a note for another model leaves sp where it was, and the wire holds no block', spOf2(n3) === s1 && !!n3.req && !sysOf(n3.req).includes('## Standing notes from this user'), spOf2(n3));
+			const mine = await b.page.evaluate((l) => DaimondNotes.add({ level: 3, scope: '', cm: 'all', tag: 'long', line: l, at: { t: 7, n: 20 } }), NL);
+			const n4 = await textTurn(b, ncid, 'N-FOUR');
+			const span4 = checkRec('N4', one(n4.ans), n4.req, { k: 'answer', role: 'chat', dev: idB });
+			const s4 = spOf2(n4);
+			check('N: keeping a note for the model moves sp', !!s4 && s4 !== s1, s1 + ' -> ' + s4);
+			check('N: to a fingerprint of text holding the note', !!span4 && span4.includes(NL) && !span4.includes(NO));
+			const n5 = await textTurn(b, ncid, 'N-FIVE');
+			check('N: and the next turn, with no change, keeps it', spOf2(n5) === s4, s4 + ' / ' + spOf2(n5));
+			const mid = n5.ans ? String(n5.ans.mid) : '';
+			await b.page.locator(`#chat-output .ctile[data-mid="${mid}"] .ctile-rate-up >> visible=true`).first().click({ force: true });
+			let rated = false; for (let i = 0; i < 40 && !rated; i++) { rated = (await msgsOf(b, ncid)).some((m) => m.role === 'rating_log'); if (!rated) await b.page.waitForTimeout(500); }
+			const n6 = await textTurn(b, ncid, 'N-SIX');
+			check('N: a rating landing between turns leaves sp where it was', rated && spOf2(n6) === s4, 'rated ' + rated + ', ' + s4 + ' / ' + spOf2(n6));
+			await b.page.evaluate((n) => DaimondNotes.retire({ level: 3, scope: '', id: n.id }, { t: 7, n: 40 }), mine);
+			await b.page.evaluate((n) => DaimondNotes.retire({ level: 3, scope: '', id: n.id }, { t: 3, n: 29 }), other);
+			const n7 = await textTurn(b, ncid, 'N-SEVEN');
+			check('N: retiring the notes puts the first sp back', spOf2(n7) === s1, s1 + ' vs ' + spOf2(n7));
+		}
+	}
+
 	// ══ M. A mail draft is its own product ══════════════════════════════
 	if (on('M') || on('S')) {
 		await b.page.evaluate(async () => {
@@ -673,6 +709,20 @@ try {
 		check('D: removing the file puts sp back where it was', !!dsp4 && dsp4 === dsp1, dsp4 + ' vs ' + dsp1);
 		keep.daimon = { cid: rcid, mids: [d1, d2, d3, d4].map((t) => t.ans && String(t.ans.mid)).filter(Boolean),
 			tail: tail ? String(tail.mid) : '' };
+
+		// The daimon's sp moves when a Diamond's note is kept, and not otherwise (5.3.2 plan C5; the engine records it as the turn composes).
+		if (await b.page.evaluate(() => !!(window.DaimondNotes && DaimondNotes.add && DaimondNotes.retire))) {
+			const DN = 'Keep every reply to this Diamond under two short paragraphs.';
+			const dn = await b.page.evaluate(({ D, l }) => DaimondNotes.add({ level: 2, scope: D, cm: 'all', tag: 'long', line: l, at: { t: 5, n: 14 } }), { D, l: DN });
+			const d5 = await daimonTurn('@text D-FIVE', (m) => said(m) === 'D-FIVE'), d6 = await daimonTurn('@text D-SIX', (m) => said(m) === 'D-SIX');
+			const dsp5 = one(d5.ans) ? one(d5.ans).sp : '', dsp6 = one(d6.ans) ? one(d6.ans).sp : '';
+			const dspan5 = d5.req ? spanOf(sysOf(d5.req), dsp5) : null;
+			check('D: keeping a Diamond note moves the daimon’s sp, to a fingerprint of text holding the note', !!dsp5 && dsp5 !== dsp1 && !!dspan5 && dspan5.includes(DN), dsp1 + ' -> ' + dsp5);
+			check('D: and the next daimon turn, with no change, keeps it', !!dsp6 && dsp6 === dsp5, dsp5 + ' / ' + dsp6);
+			await b.page.evaluate(({ D, n }) => DaimondNotes.retire({ level: 2, scope: D, id: n.id }, { t: 5, n: 34 }), { D, n: dn });
+			const d7 = await daimonTurn('@text D-SEVEN', (m) => said(m) === 'D-SEVEN');
+			check('D: retiring it puts the daimon’s first sp back', (one(d7.ans) ? one(d7.ans).sp : '') === dsp1, dsp1 + ' vs ' + (one(d7.ans) ? one(d7.ans).sp : ''));
+		}
 
 		// ══ P. A proposal carries its answer's record ═══════════════════
 		if (on('P')) {

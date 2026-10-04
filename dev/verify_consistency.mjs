@@ -56,6 +56,13 @@ const A1 = '**Take Harlow Joinery.**\n\n| Quote | Price | Lead time | Benchtop |
 const Q2 = 'Write a function that totals the budget file.';
 const A2 = 'Here it is:\n\n```rust\nfn total(rows: &[(String, u32)]) -> u32 {\n    rows.iter().map(|(_, c)| c).sum()\n}\n```\n\n- It reads `budget.csv`\n- It returns cents\n\n1. Load\n2. Sum';
 const SCRIPT = { [Q1]: A1, [Q2]: A2, 'Outline section 4.2 on sampling bias.': 'Three parts: the problem, the two corrections, and what they cost.', 'Flights to Hobart on 14 November.': 'Two direct options: 7:05 and 9:40.' };
+// Rating U5-U7 (5.3.2, lane G): the Models page's Trust column and the Pending tiles of the Optimiser's proposals. Three models are recorded in the
+// ledger so the table holds three rows (a trusted cell, a thin one and none); `ratingFixtures` below turns them into a rating roll-up and into
+// the four tile kinds. A fixture is read like any seeded row: the real modules draw it, and nothing here presses a button that writes.
+const STEER_MODELS = ['glm-5.2', 'gpt-5', 'anthropic/claude-opus-5.5'];
+const STEER_LINE_A = 'Keep answers under about 200 words unless asked for detail.';
+const STEER_LINE_B = 'Say which file you changed and why, before the reasoning.';
+const STEER_LINE_200 = ('Keep it short, name the file you changed and give the reason first. ').repeat(4).slice(0, 200);	// the most a line may hold (the engine's cap)
 
 // ── The in-page capture ─────────────────────────────────────────────────
 // Every rendered control and text-bearing element under `rootSel`, with the
@@ -160,6 +167,11 @@ const CAPTURE = ({ rootSel, surface, tap }) => {
 					const as = cs(a);
 					// A one-line scrolling strip cuts its last item by design; its `overflow-y` computes to `auto`, so test it first.
 					if (/auto|scroll/.test(as.overflowX) && /flex/.test(as.display) && as.flexWrap === 'nowrap') break;
+					// An ancestor that scrolls sideways: a text beyond its edge is reached by scrolling, and it is that scroller's own box that holds it,
+					// not a clipping ancestor further out (5.3.2, G: the Models table scrolls inside `.mdash-view`, which clips x; its "Tokens out" head
+					// read as cut by the view whenever a model id widened the first column). `overflow-y` computes to `auto` too, so a scroller with
+					// nothing to scroll sideways does not stop the walk, and this is tested before the clip test.
+					if (/auto|scroll/.test(as.overflowX) && a.scrollWidth > a.clientWidth + 1) break;
 					if (!/hidden|clip/.test(as.overflowX + as.overflowY)) continue;
 					if (/auto|scroll/.test(as.overflowX)) break;
 					const ar = a.getBoundingClientRect();
@@ -513,9 +525,171 @@ async function fileSurfaces(pre, wk) {
 	await grab(pre + 'rating_tile_file', '#chat-output');
 }
 
+// ── Rating U5-U7 (5.3.2, lane G): the fixtures and the surfaces they draw ─────────────────────
+// In the page, idempotent: the five Pending tiles (a switch, a note on a Diamond, a note on the account, a review, a switch's review) under the page's own store key, and a
+// rating roll-up for the Models page made by the REAL `DaimondRatingRoll.cells` from synthetic rated answers (twelve for the first model, four for the
+// second, none for the third), handed to the panel as its roll source. The tiles' words come from the page's own strings. Nothing is pressed.
+const RATING_FIX = ({ models, lineA, lineB, names }) => {
+	const I = window.DaimondI18n, t = (k, a) => I.t(k, a), out = {};
+	const pre = (window.DaimondAccounts && DaimondAccounts.prefix && DaimondAccounts.prefix()) || '';
+	const key = pre + 'daimond-pending';
+	let have = []; try { have = JSON.parse(localStorage.getItem(key) || '[]'); } catch (e) { have = []; }
+	have = Array.isArray(have) ? have : [];
+	if (!have.some((x) => x && x.id === 'gate-steer-5')) {
+		const now = Date.now();
+		const mk = (n, kind, level, name, from, o) => ({ id: 'gate-steer-' + n, diamondId: level === 3 ? '' : 'gate-d' + n, diamondName: level === 3 ? t('pending.steer.account') : name,
+			headline: '', detail: '', kind: 'steer', priority: 'low', at: now - n * 60000,
+			steer: Object.assign({ id: 'gate|' + n, kind, level, scope: level === 3 ? '' : 'gate-d' + n, name, key: from, tag: '', to: '', evidence: {}, line: '', lineKey: '', at: { t: 7, n: 20 } }, o) });
+		const list = [
+			mk(1, 'switch', 2, names[0], models[0], { to: models[1], evidence: { from: { n: 20 }, to: { n: 14 } } }),
+			mk(2, 'note',   2, names[0], models[0], { tag: 'long', line: lineA, evidence: { down: 7, n: 20, tagged: 5 } }),
+			mk(3, 'note',   3, '',       models[1], { tag: 'long', line: lineB, evidence: { down: 22, n: 60, tagged: 15 } }),
+			mk(4, 'review', 2, names[0], models[0], { tag: 'long', line: lineA, evidence: { before: { t: 9, n: 20 }, after: { t: 3, n: 20 } } }),
+			// U7c: the review of a Switch (P5). `key` is the model the Diamond runs now and `to` the one it left.
+			mk(5, 'back',   2, names[0], models[1], { to: models[0], evidence: { note: 'gate-n1', n: 36, up: 30, down: 6 } }),
+		];
+		list.forEach((it) => { const p = it.steer;
+			if (p.kind === 'switch') { it.headline = t('pending.steer.switch_head', { to: p.to }); it.detail = t('pending.steer.switch_why', { from: p.key, to: p.to, fn: 20, tn: 14 }); }
+			else if (p.kind === 'note') { it.headline = t('pending.steer.note_head', { model: p.key }); it.detail = t('pending.steer.note_why', p.evidence); }
+			else if (p.kind === 'back') { it.headline = t('pending.steer.back_head', { model: p.key, to: p.to }); it.detail = t('pending.steer.back_why', p.evidence); }
+			else { const b = p.evidence.before, a = p.evidence.after; it.headline = t('pending.steer.review_head', { model: p.key }); it.detail = t('pending.steer.review_why', { bt: b.t, bn: b.n, at: a.t, an: a.n }); } });
+		localStorage.setItem(key, JSON.stringify(have.filter((x) => !(x && /^gate-steer-/.test(x.id))).concat(list)));
+		window.dispatchEvent(new StorageEvent('storage', { key }));
+	}
+	out.tiles = document.querySelectorAll('#pending-list .pend-card[data-id^="gate-steer-"]').length;
+	// The roll-up: the real module over synthetic rated answers, as ratingroll.test.mjs builds them.
+	const R = window.DaimondRatings, RR = window.DaimondRatingRoll, P = window.DaimondPricing, MD = window.DaimondModelDash;
+	if (!(R && RR && MD && MD.useRolls)) { out.roll = 'modules missing'; return out; }
+	const cmOf = (m) => { try { return String(P.identify(m).cm || ''); } catch (e) { return String(m || ''); } };
+	let clock = 1790000000000, seq = 0;
+	const BASE = { h: '', k: 'answer', m: '', pv: 'fireworks', cm: '', fam: 'fam-x', fi: false, cls: 'frontier', role: 'chat', sp: 'sp1:3f9a0c12', d: '', c: 'c1',
+		t: 'mfq19-0-abcde', dev: 'd-4f2a', at: clock, hash: '', run: '', via: '' };
+	const answer = (model, rated, s) => {
+		const mid = 'g' + (seq++) + 'x';
+		const prod = Object.assign({}, BASE, { cm: cmOf(model), m: model, h: 'p1:answer:c1/' + mid });
+		const msgs = [{ role: 'assistant', mid, ts: clock++, content: 'an answer', prod: [prod] }];
+		if (rated) msgs.push(R.message(R.build({ prod, s, tags: [], dims: {}, note: '', src: 'tap', sup: '', burst: '', tools: '', len: 300 }), 'r-' + seq.toString(36) + '-' + String(seq).padStart(5, '0'), clock++));
+		return msgs;
+	};
+	const chats = [];
+	for (let i = 0; i < 12; i++) chats.push(answer(models[0], true, i < 9 ? 1 : -1));
+	for (let i = 0; i < 280; i++) chats.push(answer(models[0], false, 0));
+	for (let i = 0; i < 4; i++) chats.push(answer(models[1], true, 1));
+	let roll = null;
+	try { roll = RR.cells(chats.map((m) => RR.chatPart(m))); } catch (e) { out.roll = 'cells threw ' + e.message; return out; }
+	MD.useRolls(() => Promise.resolve({ roll }));
+	out.trust = { a: RR.cell(roll, 3, '', 'cm', cmOf(models[0])) && RR.cell(roll, 3, '', 'cm', cmOf(models[0])).ok, b: RR.cell(roll, 3, '', 'cm', cmOf(models[1])) && RR.cell(roll, 3, '', 'cm', cmOf(models[1])).ok };
+	out.roll = 'ok';
+	return out;
+};
+// The Steering list's notes (U7c), written through the page's own note writer into the real note files and idempotent: for the Diamond the tiles are named
+// for, one note for all models, one for the model the page connects to (both in use), one for a model it does not run (so "not in use" is drawn), and
+// one for the account. The lines are the fixed sentences the Optimiser proposes, which the engine's lint admits.
+const STEER_LINE_C = 'Check facts, figures and code before stating them, and say plainly when you are unsure.';
+const STEER_LINE_D = 'Use a tool only when the task needs one, and say in a line what it did.';
+const STEER_NOTES_FIX = async ({ names, lines, other }) => {
+	const N = window.DaimondNotes, out = {};
+	if (!N || !N.add) return { notes: 'no writer' };
+	const box = [...document.querySelectorAll('#diamond-list .diamond-box')].find((b) => ((b.querySelector('.session-box-name') || b).textContent || '').trim() === names[0]);
+	if (!box) return { notes: 'no Diamond ' + names[0] };
+	// The model the Diamond runs is the one it has saved, and the default only when it has none (the page's `diamondModel`): the Thesis Diamond is
+	// saved on a long model of a provider this world does not have, so the default (`fast`, which its pulldown falls back to) is not its model.
+	let saved = ''; try { saved = (JSON.parse(localStorage.getItem('daimond-diamond-models') || '{}')[box.dataset.id] || {}).model || ''; } catch (e) { /* the default stands */ }
+	const id = box.dataset.id, mine = N.cmOf(saved || (window.DaimondModels.getDefault() || {}).model || '');
+	try {
+		await N.list();
+		// Held by the Diamond (or the account) it is for: a same-named Diamond's notes are not this one's.
+		const has = (line, level) => N.all().some((e) => e.status === 'active' && e.line === line && e.level === level && (level === 3 || e.scope === id));
+		const at = { t: 0, n: 0 };
+		if (!has(lines[0], 2)) await N.add({ level: 2, scope: id, cm: 'all',  tag: 'long',  line: lines[0], at });
+		if (!has(lines[1], 2)) await N.add({ level: 2, scope: id, cm: mine,   tag: 'style', line: lines[1], at });
+		if (!has(lines[2], 2)) await N.add({ level: 2, scope: id, cm: other,  tag: 'tool',  line: lines[2], at });
+		if (!has(lines[3], 3)) await N.add({ level: 3, scope: '', cm: 'all',  tag: 'wrong', line: lines[3], at });
+		out.notes = N.all().filter((e) => e.status === 'active').length;
+	} catch (e) { out.notes = 'write failed: ' + ((e && e.message) || e); }
+	return out;
+};
+const ratingFixtures = async () => {
+	const out = await ev(RATING_FIX, { models: STEER_MODELS, lineA: STEER_LINE_A, lineB: STEER_LINE_B, names: [DIAMONDS[1]] });
+	// The notes go to a Diamond found by name in the rail, which a computer draws only while the rail is shown.
+	const listed = () => ev((nm) => [...document.querySelectorAll('#diamond-list .diamond-box')].some((b) => ((b.querySelector('.session-box-name') || b).textContent || '').trim() === nm), DIAMONDS[1]);
+	if (!(await listed())) {
+		// A rail filter an earlier surface left on (a look that hides research) hides this Diamond: shown, and the filter cleared as a person would.
+		await panels(['rail', 'ai']);
+		await ev(() => { const b = document.querySelector('#panel-rail .tag-clear-all'); if (b && b.getClientRects().length) b.click(); }); await wait(600);
+	}
+	const n = await ev(STEER_NOTES_FIX, { names: [DIAMONDS[1]], lines: [STEER_LINE_A, STEER_LINE_B, STEER_LINE_D, STEER_LINE_C], other: STEER_MODELS[0] });
+	return Object.assign({}, out, n);
+};
+async function ratingPanel(id, pre) {
+	// The panel on its own: a computer's dock beside the chat, a phone's sheet.
+	if (pre) await ev((id) => { try { window.DaimondPanels.show(id); } catch (e) {} }, id); else await panels(['rail', 'ai', id]);
+	await wait(500);
+}
+/// The Pending tiles of the proposals (collapsed, then each headline opened), the Edit dialog (as opened, then with a line the engine's lint
+/// refuses), and the Models page with its Trust column scrolled into view. `pre` is '' on a computer and 'p_' on a phone.
+async function ratingSurfaces(pre) {
+	await quiet();
+	const fx = await ratingFixtures();
+	log('rating fixtures', pre || 'desk', JSON.stringify(fx));
+	await ratingPanel('pending', pre);
+	if (!fx || fx.err || (await ev(() => document.querySelectorAll('#pending-list .pend-card[data-id^="gate-steer-"]').length)) !== 5) {
+		CAP.missing.push(`${CFG}/${pre}pending_steer_0`, `${CFG}/${pre}dlg_steer_edit`, `${CFG}/${pre}dlg_steer_edit_lint`);
+	} else {
+		// Each tile in view whole, as a person scrolls to one to press it (a phone's sheet shows two at a time), first collapsed and then with the
+		// headlines opened.
+		// The tile's press row is brought to the middle of the list, so the row is measured whole and not at the sheet's foot (the first tile's
+		// presses sit under the list's bottom edge at rest).
+		const seeTile = (i) => ev((i) => { const t = document.querySelectorAll('#pending-list .pend-card')[i], a = t && t.querySelector('.pend-acts'); if (a) a.scrollIntoView({ block: 'center' }); }, i);
+		// One tile at a time (the others are hidden while it is read), so a neighbour's presses peeking in at the sheet's foot are not measured as
+		// cut: a person scrolls to a tile to press it, and the stack itself is `panel_pending` and `p_tab_Pending`.
+		const only = (i) => ev((i) => document.querySelectorAll('#pending-list .pend-card').forEach((c, j) => { c.style.display = j === i ? '' : 'none'; }), i);
+		const every = () => ev(() => document.querySelectorAll('#pending-list .pend-card').forEach((c) => { c.style.display = ''; }));
+		for (let i = 0; i < 5; i++) { await only(i); await seeTile(i); await wait(250); await grab(`${pre}pending_steer_${i}`, '#panel-pending'); }
+		await every();
+		await ev(() => document.querySelectorAll('#pending-list .pend-line[aria-expanded="false"]').forEach((b) => b.click())); await wait(300);
+		for (let i = 0; i < 5; i++) { await only(i); await seeTile(i); await wait(250); await grab(`${pre}pending_steer_open_${i}`, '#panel-pending'); }
+		await every();
+		await ev(() => document.querySelectorAll('#pending-list .pend-line[aria-expanded="true"]').forEach((b) => b.click())); await wait(200);
+		await seeTile(0);
+		const ov = await overlay(pre + 'dlg_steer_edit', async () => { await ratingPanel('pending', pre); return clickText('#pending-list .pend-act', '^Edit\\b'); });
+		if (ov) {
+			// A line of the 200 bytes the engine allows at most: the field grows to show all of it (U7c), and no message shows.
+			await page.fill('.dlg-input', STEER_LINE_200).catch(() => {}); await wait(300);
+			await grab(pre + 'dlg_steer_edit_200', ov);
+			// A line over the 200 bytes the engine allows: the message shows where a refusal shows and Add is withheld.
+			await page.fill('.dlg-input', STEER_LINE_A.repeat(5)).catch(() => {}); await wait(300);
+			await grab(pre + 'dlg_steer_edit_lint', ov);
+		} else CAP.missing.push(`${CFG}/${pre}dlg_steer_edit_lint`);
+		await quiet();
+	}
+	await ratingPanel('modeldash', pre);
+	await ev(() => { const t = document.querySelector('#modeldash-view .mdash-table'); for (let e = t; e && e !== document.body; e = e.parentElement) { if (e.scrollWidth > e.clientWidth + 1 && /auto|scroll/.test(getComputedStyle(e).overflowX)) { e.scrollLeft = e.scrollWidth; break; } } });
+	await wait(400);
+	if (await ev(() => /\bup, \d+ down of\b|not enough yet/.test((document.getElementById('modeldash-view') || {}).textContent || ''))) await grab(pre + 'models_trust', '#panel-modeldash');
+	else CAP.missing.push(`${CFG}/${pre}models_trust`);
+	// The Steering list on the Model stats page (U7c): every note, each with its exact line, whose it is and Remove.
+	await ev(() => { const l = document.querySelector('#panel-modeldash .mdash-steer'); if (l) l.scrollIntoView({ block: 'center' }); }); await wait(400);
+	if (await ev(() => document.querySelectorAll('#panel-modeldash .mdash-steer .steer-row').length >= 4)) await grab(pre + 'models_steer', '#panel-modeldash');
+	else CAP.missing.push(`${CFG}/${pre}models_steer`);
+	// The fixture's premise, held by the gate: the note for the model the Diamond runs is in use, and the note for another model is marked so.
+	const vd = await ev((a) => { const rows = [...document.querySelectorAll('#panel-modeldash .mdash-steer .steer-row')], off = (l) => { const r = rows.find((x) => ((x.querySelector('.steer-line') || {}).textContent || '') === l); return r ? ((r.querySelector('.steer-off') || { dataset: {} }).dataset.off || '') : null; }; return { mine: off(a.b), other: off(a.d) }; }, { b: STEER_LINE_B, d: STEER_LINE_D });
+	if (vd.mine !== '' || vd.other !== 'model') { log('steer verdicts', pre || 'desk', JSON.stringify(vd)); CAP.missing.push(`${CFG}/${pre}steer_in_use_verdict`); }
+	await quiet();
+	// The same list in the Diamond's own settings (Models area): its notes and the account's.
+	const cogOv = await overlay(pre + 'dlg_steer_list', async () => {
+		if (pre) { await ev(() => { if (!document.body.classList.contains('drawer-open')) { const b = document.getElementById('drawer-btn'); if (b) b.click(); } }); await wait(800); }
+		const hit = await ev((nm) => { const t = [...document.querySelectorAll('#diamond-list .diamond-box')].find((e) => ((e.querySelector('.session-box-name') || e).textContent || '').trim() === nm); const c = t && t.querySelector('.tile-cog'); if (!c) return false; c.click(); return true; }, DIAMONDS[1]);
+		if (hit === true) { await wait(900); await ev(() => { const l = document.querySelector('.tile-dlg-card [data-steer-list]'); if (l) l.scrollIntoView({ block: 'center' }); }); await wait(300); }
+		return hit;
+	});
+	void cogOv;
+	await quiet();
+}
+
 // ── Surfaces: the computer ──────────────────────────────────────────────
 async function deskSurfaces() {
-	await quiet(); await mainChat();
+	await quiet(); await ratingFixtures(); await mainChat();
 	await panels(['rail', 'ai', 'work']);
 	await grab('page_chat');
 	await ev(() => { const o = document.getElementById('chat-output'); if (o) o.scrollTop = 0; }); await wait(300);
@@ -580,6 +754,7 @@ async function deskSurfaces() {
 		await wait(200);
 		await grab('panel_' + id, `#panel-${id}`);
 	}
+	await ratingSurfaces('');
 	// The file viewer and editor.
 	await panels(['rail', 'ai', 'work']);
 	for (const [name, re] of [['viewer_text', '^\\s*notes\\.md'], ['viewer_image', 'plan\\.svg'], ['viewer_csv', 'budget\\.csv'], ['viewer_long', 'a-very-long']]) {
@@ -627,7 +802,7 @@ async function deskSurfaces() {
 
 // ── Surfaces: the phone ─────────────────────────────────────────────────
 async function phoneSurfaces(wk) {
-	await quiet();
+	await quiet(); await ratingFixtures();
 	for (let i = 0; i < 3; i++) { if (await page.locator('#admin-close').isVisible().catch(() => false)) { await page.locator('#admin-close').click({ force: true }); await wait(300); } }
 	await ev(() => { try { window.DaimondPanels.show('ai'); } catch (e) {} }); await wait(300);
 	await mainChat();
@@ -682,6 +857,7 @@ async function phoneSurfaces(wk) {
 	else CAP.missing.push(`${CFG}/p_viewer_text`);
 	await quiet();
 	await carrySurfaces(wk);
+	await ratingSurfaces('p_');
 }
 
 // The surfaces the 5.2.9 carry needs (G1, rule 4: every instance). Each starts from a known place, the main chat on the chat panel with
@@ -894,6 +1070,9 @@ async function seed() {
 	// this seed's direct file/tag writes -- the rail's OWN app object does not
 	// hear about the change, so the tile it already drew keeps its old tags
 	// until something re-reads the list. A reload is that something.
+	// Rating U5b (lane G): three models in the ledger, an hour apart, so the Models page holds a row for each (the Trust column's three states).
+	await ev((a) => { const L = window.DaimondLedger; if (!L) return; a.models.forEach((m, i) => L.record({ ts: Date.now() - (i + 1) * 3600e3, model: m, provider: i ? 'openrouter' : 'fireworks',
+		promptTokens: 4200 + 300 * i, completionTokens: 900 + 100 * i, durationMs: 8000 + 900 * i, outcome: 'completed', turnId: 'gate-trust-' + i })); }, { models: STEER_MODELS });
 	await page.reload(); await wait(1500);
 	const tagCount = await ev(() => document.querySelectorAll('#panel-rail .session-box-tags .tag-chip').length);
 	if (tagCount < 10) { log(`seed: tags did not land (${tagCount} chips, want >= 10)`); await s.close().catch(() => {}); process.exit(3); }
@@ -1061,6 +1240,10 @@ const ROLES = [
 	// [role, casing rule, predicate]
 	// Controls.
 	['close-button',    'none',     (it) => it.ctrl && (has(it, 'panel-close') || has(it, 'ui-close') || has(it, 'admin-back') || has(it, 'pal-close') || /^close\b/i.test(it.aria) && !txt(it))],
+	// 5.3.2 (G): a Pending tile's headline opens its detail, as a rail tile's name selects the tile: the same label button. Ahead of the
+	// create-button regex, which reads "Add a note for glm-5.2" as a creating verb.
+	['rail-tile-label', 'none',     (it) => it.ctrl && has(it, 'pend-line')],
+	['text-button',     'title',    (it) => it.ctrl && has(it, 'pend-verb')],
 	['create-button',   'title',    (it) => it.ctrl && !has(it, 'tile-label') && (has(it, 'railbtn') || /^(new|add|create)\b/i.test(txt(it)) && txt(it).length < 32 && !has(it, 'admin-item') && !within(it, /dlg-actions/) && !/link|add-credits/.test(it.cls.join(' ')))],
 	['picture-option',  'none',     (it) => it.ctrl && has(it, 'grid-opt')],
 	['tab',             'sentence', (it) => it.ctrl && (has(it, 'ptag') || within(it, /#mnav|msheet-tabs/) || it.role === 'tab') && !has(it, 'dview-btn')],
@@ -1144,7 +1327,7 @@ const ROLES = [
 	// G1: release notes are list data -- 315 `.rel-build-note` lines would
 	// otherwise outvote the 20 real note classes.
 	['list-text',       'none',     (it) => has(it, 'rel-build-note')],
-	['note',            'sentence', (it) => it.cls.some((c) => /(^|-)(note|empty|hint|fine|help|blurb|intro|desc)$/.test(c))],
+	['note',            'sentence', (it) => has(it, 'pend-detail') || it.cls.some((c) => /(^|-)(note|empty|hint|fine|help|blurb|intro|desc)$/.test(c))],
 	// G11: times, ids, sizes, versions and fingerprints are mono stamps on
 	// purpose (the pre-existing "one meta reading" rule); the rest of `meta`
 	// is sans. The class list is explicit, not a loose substring match --
@@ -1394,7 +1577,9 @@ function report() {
 	// is not there. A right-aligned reading's left edge moves with its own
 	// length by design, so it is never compared at all.
 	// `.crystal-act` is led by a glyph ("+ Add a Section") and `#current-session-name` follows the Diamond's mark: both are compared by their box edge (5.2.9, S's finding: 395 against 392).
-	const GLYROLE = (it) => /^summary\b|\btagf-toggle\b|#sys-head\b|\barte-strip\b|\bastat-val\b|#sync-rest\b|\bcrystal-act\b|#current-session-name\b/.test(it.sig);
+	// A Pending tile's worded press (`.pend-verb`, 5.3.2, G) is compared by its box edge too: its label starts after the button's padding, and the first
+	// letter's own side bearing (the K of Keep, the A of Add) moves the ink a pixel between tiles.
+	const GLYROLE = (it) => /^summary\b|\btagf-toggle\b|#sys-head\b|\barte-strip\b|\bastat-val\b|#sync-rest\b|\bcrystal-act\b|\bpend-verb\b|#current-session-name\b/.test(it.sig);
 	const RIGHTALIGN = (it) => /\bastat-aside\b|\brel-when\b|\bpptw-head-state\b/.test(it.sig);
 	// G13: a text edge inside a card (a transcript tile, a history or tag row) is
 	// that container's own edge, not the panel's -- so it is not compared to it.
@@ -1572,6 +1757,16 @@ const V_STAT  = ['Local', 'gpt-5 · 12,345 tok · A$1,234.56 today', 'anthropic/
 const V_BTN   = ['New', 'Neuer Diamant', 'Nouveau diamant de travail partagé avec toute l’équipe'];
 const V_OK    = ['OK', 'Diamant erstellen', 'Créer le diamant et l’ouvrir dans un nouvel onglet'];
 const V_MODE  = ['Guarded', 'Ask every time', 'Demander à chaque fois'];
+// Rating U5-U7 (5.3.2, lane G). A note line runs from a few words to the 600 bytes a Diamond's whole block may hold (the engine caps a line at 200,
+// so the longest is a stress and not a state a person reaches); a Trust cell from a dash to a figure of nine digits.
+const V_TRUST = ['\u2014', '9 up, 3 down of 292 answers', '1,234 up, 5,678 down of 123,456,789 answers'];
+const V_NOTE  = ['Keep it short.', 'Keep answers under about 200 words unless asked for detail.', ('Keep it short, name the file you changed and give the reason first. ').repeat(9).slice(0, 600)];
+// 5.3.2 (U7c): the Steering list. A listed line is at most the 200 bytes the engine allows; its meta line (whose, which model, which day) runs from short
+// to long in the Diamond's name and in the model's id.
+const V_LINE200 = ['Keep it short.', 'Keep answers under about 200 words unless asked for detail.', STEER_LINE_200];
+const V_META_NAME  = V_NAME.map((n) => 'This diamond: ' + n + ' \u00b7 All models \u00b7 Added Oct 4, 2026');
+const V_META_MODEL = V_MODEL.map((m) => 'This diamond: Thesis, chapter 4 \u00b7 ' + m + ' \u00b7 Added Oct 4, 2026');
+const V_LINT  = ['Write a line.', 'This line cannot be used: it is over 200 bytes', 'This line cannot be used: it asks the model to please, agree or seek approval, and it holds a control character, and it is over 200 bytes'];
 // [name, ctx, comp, slot, values, pick, setup]. `slot` '' = the comp itself;
 // `pick` chooses the instance by its text; values `{count}` vary a list's length.
 const VSLOTS = [
@@ -1614,6 +1809,19 @@ const VSLOTS = [
 	['chat files count',     '#chat-output', '.turn-files', '.turn-files-rows', { count: [1, 5, 14] }, null, 'files'],
 	['file rating line',     '#chat-output', '.ctile[data-t="rating"]', '.rate-jump-link[data-h]', { text: V_PATH.map((x) => 'the change to ' + x) }, null, 'ratingfile'],
 	['file popup chip label', 'OVERLAY', '.ctile-rate-tags', '.tile-dlg-level', V_CHIP, null, 'filepop'],
+	// 5.3.2 (G): the Optimiser's Pending tiles, the Edit dialog and the Models page's Trust column.
+	['steer tile Diamond name', '#pending-list', '.pend-card', '.pend-diamond', V_NAME, /Thesis/, 'pending'],
+	['steer tile model id',     '#pending-list', '.pend-card', '.pend-line', { text: V_MODEL.map((m) => 'Add a note for ' + m) }, /Add a note for glm/, 'pending'],
+	['steer tile note line',    '#pending-list', '.pend-card', '.pend-steer-line', V_NOTE, /Add a note for glm/, 'pending'],
+	['steer edit line',         'OVERLAY', '.dlg-card', '.dlg-input', { val: V_LINE200 }, null, 'steeredit'],
+	['steer edit refusal',      'OVERLAY', '.dlg-card', '.dlg-err', V_LINT, null, 'steeredit'],
+	['trust cell',              '#panel-modeldash', 'tbody tr', 'td:last-child', V_TRUST, /glm-5\.2/, 'models'],
+	// 5.3.2 (U7c): the Steering list, on the Model stats page and in a Diamond's settings. A listed line, its meta line and the Remove beside it keep their places.
+	['steer list note line',     '#panel-modeldash', '.steer-row', '.steer-line', V_LINE200, /Keep answers under/, 'models'],
+	['steer list Diamond name',  '#panel-modeldash', '.steer-row', '.steer-foot .steer-meta', { text: V_META_NAME }, /Keep answers under/, 'models'],
+	['steer list model id',      '#panel-modeldash', '.steer-row', '.steer-foot .steer-meta', { text: V_META_MODEL }, /Keep answers under/, 'models'],
+	['steer cog note line',      'OVERLAY', '.steer-row', '.steer-line', V_LINE200, /Keep answers under/, 'steercog'],
+	['steer cog model id',       'OVERLAY', '.steer-row', '.steer-foot .steer-meta', { text: V_META_MODEL }, /Keep answers under/, 'steercog'],
 ];
 // Whole surfaces re-read in each locale: every label at once, en against de and fr.
 const VLOCALE = [['rail', '#panel-rail'], ['chat head', '#panel-ai > .chead'], ['workspace', '#panel-work', 'work'], ['composer', '.chat-input-bar'], ['topbar', '.topbar'], ['new diamond dialog', 'OVERLAY', 'newdia'], ['admin', '#admin', 'admin'], ['rate popup', 'OVERLAY', 'ratepop'], ['rate chips', '#chat-output', 'ratetags'], ['chat files row', '#chat-output', 'files'], ['file popup', 'OVERLAY', 'filepop'],
@@ -1621,7 +1829,7 @@ const VLOCALE = [['rail', '#panel-rail'], ['chat head', '#panel-ai > .chead'], [
 	['chat head menu', 'OVERLAY', 'headmore']];
 
 // In the page: set (or restore) one slot, then read every part's geometry.
-const VMEASURE = ({ ctx, comp, slot, idx, pick, text, count, fpath, restore }) => {
+const VMEASURE = ({ ctx, comp, slot, idx, pick, text, count, fpath, val, restore }) => {
 	const W = window.__vl = window.__vl || {};
 	const cs = (e) => getComputedStyle(e);
 	const vis = (e) => { if (!e.getClientRects().length) return false; const s = cs(e); if (s.visibility === 'hidden' || +s.opacity === 0) return false; const r = e.getBoundingClientRect(); return r.width >= 1 && r.height >= 1; };
@@ -1633,7 +1841,7 @@ const VMEASURE = ({ ctx, comp, slot, idx, pick, text, count, fpath, restore }) =
 	if (idx != null) ti = idx;
 	if (ti < 0) return { miss: 'slot ' + slot + (pick ? ' ' + pick.s : '') };
 	const T = comps[ti];
-	if (idx == null && text == null && count == null) T.scrollIntoView({ block: 'center' });
+	if (idx == null && text == null && count == null && val == null) T.scrollIntoView({ block: 'center' });
 	const S = slot ? (T.matches(slot) ? T : T.querySelector(slot)) : T;
 	W.undo = W.undo || [];
 	if (text != null) {
@@ -1641,6 +1849,12 @@ const VMEASURE = ({ ctx, comp, slot, idx, pick, text, count, fpath, restore }) =
 		const n = tw.nextNode();
 		if (n) { const o = n.nodeValue; n.nodeValue = text; W.undo.push(() => { n.nodeValue = o; }); }
 		else { const o = S.textContent; S.textContent = text; W.undo.push(() => { S.textContent = o; }); }
+	}
+	if (val != null) {
+		const o = S.value; S.value = val;
+		// The multiline prompt (U7c) fits itself to its text when it is typed into: say so, as a person's typing does, and put it back after.
+		if (S.tagName === 'TEXTAREA') S.dispatchEvent(new Event('input', { bubbles: true }));
+		W.undo.push(() => { S.value = o; if (S.tagName === 'TEXTAREA') S.dispatchEvent(new Event('input', { bubbles: true })); });
 	}
 	if (fpath != null) {
 		// A file name as `_turnFileRow` draws it: the directory and the file's own name in two spans, or the bare name.
@@ -1703,7 +1917,7 @@ const VMEASURE = ({ ctx, comp, slot, idx, pick, text, count, fpath, restore }) =
 		ti, n: comps.length, hscroll: document.documentElement.scrollWidth > innerWidth + 1 ? document.documentElement.scrollWidth - innerWidth : 0,
 		ctxOver: C.scrollWidth > C.clientWidth + 1 && !/auto|scroll/.test(cs(C).overflowX) ? C.scrollWidth - C.clientWidth : 0,
 		comp: { x: Math.round(trr.left), y: Math.round(trr.top), w: Math.round(trr.width), h: Math.round(trr.height), over: T.scrollWidth > T.clientWidth + 1 ? T.scrollWidth - T.clientWidth : 0 },
-		slot: { x: Math.round(sr.left), y: Math.round(sr.top), w: Math.round(sr.width), h: Math.round(sr.height), ln: lines(S), ov: S.scrollWidth > S.clientWidth + 1 ? (cs(S).textOverflow === 'ellipsis' ? 'ellipsis' : 'cut') : '', sh: shown(S), past: Math.round(Math.max(0, sr.right - trr.right)) },
+		slot: { x: Math.round(sr.left), y: Math.round(sr.top), w: Math.round(sr.width), h: Math.round(sr.height), ln: lines(S), hid: S.tagName === 'TEXTAREA' ? Math.max(0, S.scrollHeight - S.clientHeight) : 0, ov: S.scrollWidth > S.clientWidth + 1 ? (cs(S).textOverflow === 'ellipsis' ? 'ellipsis' : 'cut') : '', sh: shown(S), past: Math.round(Math.max(0, sr.right - trr.right)) },
 		parts: leaves(T, inSlot, T),
 		inner: leaves(S, null, S).slice(0, 12),
 		more: [...S.querySelectorAll('.turn-file-more')].some(vis), nrows: [...S.children].filter((c) => c.classList && c.classList.contains('turn-file-row') && vis(c)).length,
@@ -1746,6 +1960,12 @@ async function vSetup(kind) {
 		await wait(1200); await click('#dview-crystal'); await wait(1200);
 	}
 	if (kind === 'headmore') { await mainChat(); await click('#chead-more'); await wait(700); }
+	if (kind === 'pending' || kind === 'steeredit' || kind === 'models') {
+		const ph = page.viewportSize().width <= 760;
+		await ratingFixtures();
+		await ratingPanel(kind === 'models' ? 'modeldash' : 'pending', ph ? 'p_' : '');
+		if (kind === 'steeredit') { await clickText('#pending-list .pend-act', '^Edit\\b'); await wait(600); }
+	}
 	if (kind === 'files' || kind === 'filepop' || kind === 'ratingfile') {
 		await mainChat();
 		if (kind === 'ratingfile') { await unfold('#chat-output .ctile[data-t="rating"] .rate-line'); await ev(() => { const t = [...document.querySelectorAll('#chat-output .ctile[data-t="rating"]')].pop(); if (t) t.scrollIntoView({ block: 'center' }); }); }
@@ -1763,9 +1983,16 @@ async function vSetup(kind) {
 		await unfold('#chat-output .turn-files'); await ev(() => { const t = [...document.querySelectorAll('#chat-output .turn-files')].pop(); if (t) t.scrollIntoView({ block: 'center' }); }); await wait(300);
 	}
 	if (kind === 'cog') { await click('#diamond-list .diamond-box .tile-cog'); await wait(700); }
+	if (kind === 'steercog') {
+		// The settings of the Diamond the Steering notes belong to, with its list in view.
+		await ratingFixtures();
+		const hit = await ev((nm) => { const t = [...document.querySelectorAll('#diamond-list .diamond-box')].find((e) => ((e.querySelector('.session-box-name') || e).textContent || '').trim() === nm); const c = t && t.querySelector('.tile-cog'); if (!c) return false; c.click(); return true; }, DIAMONDS[1]);
+		if (hit !== true) return 'no Diamond ' + DIAMONDS[1] + ' on this device';
+		await wait(1000); await ev(() => { const l = document.querySelector('.tile-dlg-card [data-steer-list]'); if (l) l.scrollIntoView({ block: 'center' }); }); await wait(300);
+	}
 	if (kind === 'newdia') { await click('#new-diamond-btn'); await wait(700); }
 	if (kind === 'admin') { await click('#settings-btn'); await wait(700); await ev(() => { try { window.DaimondAdmin.home(); } catch (e) {} }); await wait(500); }
-	if (['cog', 'newdia', 'admin', 'ratepop', 'headmore', 'filepop'].includes(kind)) { const ov = kind === 'admin' ? '#admin' : await topOverlay(); await ev((q) => { window.__vl = window.__vl || {}; window.__vl.ov = q && document.querySelector(q); }, ov); }
+	if (['cog', 'newdia', 'admin', 'ratepop', 'headmore', 'filepop', 'steeredit', 'steercog'].includes(kind)) { const ov = kind === 'admin' ? '#admin' : await topOverlay(); await ev((q) => { window.__vl = window.__vl || {}; window.__vl.ov = q && document.querySelector(q); }, ov); }
 }
 async function vShot(name, clip) {
 	if (!clip) return '';
@@ -1786,7 +2013,7 @@ async function varlenPass(phone) {
 		if (phone && setup === 'work') { await ev(() => { try { window.DaimondPanels.show('work'); } catch (e) {} }); await wait(700); }
 		else if (phone && setup === 'viewer') { await ev(() => { try { window.DaimondPanels.show('work'); } catch (e) {} }); await wait(700); }
 		else if (phone && (['chat', 'ratetags', 'ratepop', 'headmore', 'files', 'filepop', 'ratingfile', 'dtail'].includes(setup) || /panel-ai|chat-input/.test(ctx))) { await ev(() => { try { window.DaimondPanels.show('ai'); } catch (e) {} }); await wait(400); }
-		else if (phone && /rail|diamond-list|session-list|admin-status|topbar/.test(ctx) || phone && ['cog', 'newdia'].includes(setup)) await railOpen();
+		else if (phone && /rail|diamond-list|session-list|admin-status|topbar/.test(ctx) || phone && ['cog', 'newdia', 'steercog'].includes(setup)) await railOpen();
 		const miss = setup ? await vSetup(setup) : null;
 		if (miss) return miss;
 		if (/admin-status/.test(ctx)) await ev(() => { const a = document.getElementById('admin-status'); if (a) a.scrollIntoView({ block: 'end' }); });
@@ -1812,7 +2039,7 @@ async function varlenPass(phone) {
 		if (!base || base.err || base.miss) { recs.push({ name, cfg: CFG, notCovered: (base && (base.err || base.miss)) || 'no measure' }); log('varlen', CFG, name, 'NOT COVERED', base && (base.miss || base.err)); continue; }
 		const shots = { base: await vShot(name + '_base', base.clip) };
 		const variants = [];
-		const V = Array.isArray(vals) ? vals.map((v, i) => [['short', 'long', 'vlong'][i], { text: v }]) : vals.path ? vals.path.map((v, i) => [['short', 'long', 'vlong'][i], { fpath: v }]) : vals.text ? vals.text.map((v, i) => [['short', 'long', 'vlong'][i], { text: v }]) : vals.count.map((n, i) => [['few', 'several', 'many'][i], { count: n }]);
+		const V = Array.isArray(vals) ? vals.map((v, i) => [['short', 'long', 'vlong'][i], { text: v }]) : vals.path ? vals.path.map((v, i) => [['short', 'long', 'vlong'][i], { fpath: v }]) : vals.text ? vals.text.map((v, i) => [['short', 'long', 'vlong'][i], { text: v }]) : vals.val ? vals.val.map((v, i) => [['short', 'long', 'vlong'][i], { val: v }]) : vals.count.map((n, i) => [['few', 'several', 'many'][i], { count: n }]);
 		for (const [vn, arg] of V) {
 			const m = await ev(VMEASURE, { ctx, comp, slot, idx: base.ti, ...arg });
 			if (m && !m.err && !m.miss) { shots[vn] = await vShot(name + '_' + vn, m.clip); variants.push([vn, m]); }
@@ -1856,8 +2083,13 @@ async function varlenRun(which) {
 	page = s.page;
 	await page.setViewportSize(which === 'desk' ? { width: 1440, height: 900 } : { width: 390, height: 844 });
 	await wait(1200); await view('max');
-	CFG = `varlen-${which}-obsidian`; await wear('obsidian');
+	CFG = `varlen-${which}-obsidian`; await wear('obsidian'); await ratingFixtures();
+	// The `rail filter chip` slot unfolds the rail's tag pool, which the app keeps in the profile; it is put back so that the passes after this one
+	// (`tap` reads the same profile) see the rail as `all` left it.
+	const POOL_KEY = 'daimond-tag-pool-open';
+	const pool = await ev((k) => { try { return localStorage.getItem(k); } catch (e) { return null; } }, POOL_KEY);
 	const recs = await varlenPass(which !== 'desk');
+	await ev((a) => { try { if (a.v === null) localStorage.removeItem(a.k); else localStorage.setItem(a.k, a.v); } catch (e) { /* the profile keeps what it has */ } }, { k: POOL_KEY, v: pool });
 	fs.writeFileSync(`${OUT}/varlen_${which}.json`, JSON.stringify(recs));
 	await s.close(); if (lead) await lead.close().catch(() => {});
 }
@@ -1896,6 +2128,33 @@ function verdictOf(r, vn, m, own, changes) {
 		if (m.hscroll || m.ctxOver) bad.push('sideways overflow');
 		if (own.past) bad.push(`past its tile by ${own.past}px`);
 		if (own.sh < 100) bad.push(`cut to ${own.sh}% shown`);
+	} else if (/^steer (tile|edit|list|cog)|^trust cell/.test(r.name)) {
+		// The Optimiser's surfaces (5.3.2). However long the slot is, the page does not scroll sideways, nothing leaves its tile or dialog, the
+		// slot is not cut to nothing, and what is not the slot keeps its place: a tile's presses and head, a dialog's two buttons, a table row's height.
+		if (m.hscroll || m.ctxOver) bad.push('sideways overflow');
+		if (own.past) bad.push(`past its box by ${own.past}px`);
+		// A line is never cut or ellipsised by its own box. How much of it a sheet shows is the sheet's scroll, not the line's: 600 bytes make
+		// a tile taller than a phone's list.
+		if (/^steer (tile note line|list note line|cog note line)/.test(r.name)) { if (own.ov) bad.push(`the line is ${own.ov === 'cut' ? 'cut' : 'ellipsised'} by its own box`); }
+		else if (own.sh < 100 && !/trust cell/.test(r.name)) bad.push(`cut to ${own.sh}% shown`);
+		if (/^steer tile/.test(r.name)) {
+			// The head (priority, Diamond, time) is above the slot and never moves. The presses are below it and follow it down when a long line wraps
+			// (the whole line stays in view, so Add writes what was shown, J8), so they keep their x, width and height, and are never lost.
+			for (const c of changes) if (/pend-prio|pend-when|pend-diamond|pend-head/.test(c.part) && c.kinds.some((k) => /shift|vanished|squeezed|widened|height/.test(k))) bad.push(`${c.part} ${c.kinds.join('+')} dx${c.dx || 0} dy${c.dy || 0}`);
+			for (const c of changes) if (/pend-act/.test(c.part) && c.kinds.some((k) => /x-shift|vanished|squeezed|widened|height/.test(k))) bad.push(`${c.part} ${c.kinds.join('+')} dx${c.dx || 0} dy${c.dy || 0}`);
+			if (own.dw) bad.push(`the tile's width moves ${own.dw}px`);
+		} else if (/^steer edit/.test(r.name)) {
+			for (const c of changes) if (/dlg-ok|dlg-cancel|dlg-actions|dlg-input/.test(c.part) && c.kinds.some((k) => /x-shift|vanished|squeezed|widened/.test(k))) bad.push(`${c.part} ${c.kinds.join('+')} dx${c.dx || 0}`);
+			if (own.dw) bad.push(`the dialog's width moves ${own.dw}px`);
+			// U7c: the whole of a line of up to 200 bytes is in view in the Edit field, with no scrolling: the textarea grows to its text.
+			if (/^steer edit line/.test(r.name) && m.slot.hid > 1) bad.push(`the field hides ${m.slot.hid}px of a ${vn} line (it must show up to 200 bytes whole)`);
+		} else if (/^steer (list|cog)/.test(r.name)) {
+			// The Steering list: a longer line or meta wraps and the row grows, so its height is free. What does not move is the Remove beside the meta (its x,
+			// width and height, and it is never lost), the row's width, and the text itself, which is whole: a note is read, not clipped.
+			for (const c of changes) if (/steer-rm/.test(c.part) && c.kinds.some((k) => /x-shift|vanished|squeezed|widened|height/.test(k))) bad.push(`${c.part} ${c.kinds.join('+')} dx${c.dx || 0}`);
+			if (own.dw) bad.push(`the row's width moves ${own.dw}px`);
+			if (/ meta|Diamond name|model id/.test(r.name) && own.ov) bad.push(`the meta line is ${own.ov === 'cut' ? 'cut' : 'ellipsised'} by its own box`);
+		} else if (own.dh !== 0) bad.push(`row height ${own.dh > 0 ? '+' : ''}${own.dh}px`);
 	} else return null;
 	return bad;
 }
@@ -2032,7 +2291,9 @@ function diffRuns() {
 if (MODE === 'diff') diffRuns();
 if (MODE === 'varlen') {
 	const w = process.argv[3] || 'all';
-	if (w === 'all' && !process.env.CONS_NOSEED) await seed();
+	// Seeds only when there is no profile yet, as `tap` does: `all` has seeded it, and a second seed on the same profile piles a second set of the same
+	// Diamonds on the first (two Thesis Diamonds, the steer cog slots on the one without notes, and `tap` after it measuring two rails).
+	if (w === 'all' && !process.env.CONS_NOSEED && !fs.existsSync(PROF)) await seed();
 	for (const x of w === 'all' ? ['desk', 'phone', 'webkit'] : w === 'report' ? [] : [w]) await varlenRun(x).catch((e) => log('varlen', x, 'failed', e.message.split('\n')[0]));
 	const vfaults = varlenReport();
 	process.exit(vfaults ? 1 : 0);

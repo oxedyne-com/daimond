@@ -48,6 +48,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { extDev, isExtSource } from './extdev.mjs';
+import { testCfg } from './testcfg.mjs';
 
 // playwright-core lives outside the repo, so it is resolved by path, not by
 // package name — nothing here is installed into the app.
@@ -1255,10 +1256,10 @@ export async function connectMock(s, { baseUrl = MOCK, model = MODEL, apiKey = '
 	return ready;
 }
 
-/// Connect a real provider (from dev/.secrets/testcfg.json) through the real
+/// Connect a real provider (from the test config `testcfg.mjs` reads, outside the tree) through the real
 /// Settings form. `tier` selects value|mid|power. Returns the saved cfg.
 export async function connectReal(s, tier = 'value') {
-	const cfg = JSON.parse(fs.readFileSync(path.join(HERE, '.secrets/testcfg.json'), 'utf8'));
+	const cfg = testCfg();
 	const model = cfg.models[tier] || cfg.models.value;
 	await s.page.evaluate(async (c) => {
 		document.getElementById('settings-btn')?.click();

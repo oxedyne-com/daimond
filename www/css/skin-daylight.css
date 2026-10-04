@@ -332,7 +332,8 @@
 }
 :root[data-skin="daylight"] .session-box.active::before { content: none; }
 :root[data-skin="daylight"] .session-box-name,
-:root[data-skin="daylight"] .tile-label {
+:root[data-skin="daylight"] .tile-label,
+:root[data-skin="daylight"] .pend-line {
 	font-size: var(--dl-sm);
 	font-weight: var(--w-med);
 	color: var(--text-primary);
@@ -374,7 +375,7 @@
 :root[data-skin="daylight"] :is(.admin-note, .rail-note, .trash-note, .cap-blurb, .mail-fine, .pop-note,
 	.chat-msg-empty, .files-empty, .rel-blurb, .agents-empty, .mdash-empty, .hist-note, .mdash-note, .spend-note,
 	.tools-intro, .mode-row-blurb, .shr-note, .cfg-hint, .search-engine-note, .tag-note, .spend-sec-hint,
-	.mdash-sec-hint, .crystal-empty, .graph-empty, .tile-dlg-note, .pro-fine, .ar-hint, .tools-fine, .spend-empty) {
+	.mdash-sec-hint, .crystal-empty, .graph-empty, .tile-dlg-note, .pro-fine, .ar-hint, .tools-fine, .spend-empty, .pend-detail) {
 	font-size: var(--dl-xs); font-weight: var(--w-text); color: var(--text-muted); line-height: 1.45;
 }
 /* A dialog's note is the same note; its warning variant keeps the warning colour. */
@@ -661,21 +662,25 @@
    fill on hover. Crystal's Edit/History/Save-a-version, the Graph bar, a
    code block's Copy, the Workspace's Import/Save-a-copy and the Social/
    +Add-provider pills this replaces their own font, weight, padding and
-   colour with it. */
+   colour with it. A Pending tile's worded presses (`.pend-verb`: Switch, Add,
+   Edit, Dismiss, Keep, Remove; 5.3.2) are the same button. */
 :root[data-skin="daylight"] :is(.crystal-act, .graph-btn, .attach-view-btn, .code-copy-btn, .files-mode-btn,
 	.imp-keep, .imp-send, .imp-vote, .shr-btn, .models-add, .tag-clear-all, .ti-continue,
-	.pro-buy, .tools-buy, .mail-unlock, .ar-save, .ar-card-btn) {
+	.pro-buy, .tools-buy, .mail-unlock, .ar-save, .ar-card-btn, .pend-verb) {
 	font-size: var(--dl-xs); font-weight: var(--w-text); color: var(--text-secondary); background: transparent;
 	border-color: transparent; border-radius: var(--radius-sm); padding: 3px 10px; min-height: 27px; line-height: 19px;
 	text-decoration: none;
 }
 :root[data-skin="daylight"] :is(.crystal-act, .graph-btn, .attach-view-btn, .code-copy-btn, .files-mode-btn,
 	.imp-keep, .imp-send, .imp-vote, .shr-btn, .models-add, .tag-clear-all, .ti-continue,
-	.pro-buy, .tools-buy, .mail-unlock, .ar-save, .ar-card-btn):hover { background: var(--dl-hover); color: var(--text-primary); }
+	.pro-buy, .tools-buy, .mail-unlock, .ar-save, .ar-card-btn, .pend-verb):hover { background: var(--dl-hover); color: var(--text-primary); }
 /* The primary text button: the role's size, filled in the accent. Subscribe,
    Unlock, Save and Save a card each drew a size of their own (14px, 37px). */
 :root[data-skin="daylight"] :is(.pro-buy, .tools-buy, .mail-unlock, .ar-save, .ar-card-btn.accent),
 :root[data-skin="daylight"] :is(.pro-buy, .tools-buy, .mail-unlock, .ar-save, .ar-card-btn.accent):hover { background: var(--accent); color: var(--on-fill, #fff); }
+/* The Pending tile's press row stretched each glyph press across the card (`.pend-act { flex: 1 }`); the worded ones are text buttons and
+   keep the button's own width, left to right like Crystal's Edit and History. */
+:root[data-skin="daylight"] .pend-verb { flex: none; }
 :root[data-skin="daylight"] :is(.pro-buy, .tools-buy, .mail-unlock, .ar-save, .ar-card-btn.accent):hover:not(:disabled) { background: var(--accent-hover); }
 :root[data-skin="daylight"] .files-card,
 :root[data-skin="daylight"] .files-mode,
@@ -1361,7 +1366,9 @@
 :root[data-skin="daylight"] #diamond-view .dview-btn { padding: 6px 8px; }
 :root[data-skin="daylight"] .theme-pick:hover,
 :root[data-skin="daylight"] .pop select:hover { border-color: transparent; background-color: var(--bg-hover); }
-/* A chat tile's name sits on the same edge as a diamond's. */
+/* A chat tile's name sits on the same edge as a diamond's. A Pending tile's headline is the same label button (5.3.2): its
+   padding and radius are the label's (app.css, and responsive.css on a phone), so the rail's names and the Pending headlines are
+   measured as one kind. */
 :root[data-skin="daylight"] .tile-label { padding-left: 0; }
 
 /* ── Remaining controls ───────────────────────────────────── */
@@ -1412,7 +1419,7 @@
 	:root[data-skin="daylight"] :is(.dlg-ok, .dlg-cancel, .tile-fold, .tile-keep, .compose-btn, .compose-send, .railhead > .railbtn,
 		.crystal-act:not(.crystal-form-x), .graph-btn, .attach-view-btn, .code-copy-btn, .files-mode-btn,
 		.imp-keep, .imp-send, .imp-vote, .shr-btn, .models-add, .tag-clear-all, .ti-continue,
-		.pro-buy, .tools-buy, .mail-unlock, .ar-save, .ar-card-btn) { min-height: 44px; min-width: 44px; }
+		.pro-buy, .tools-buy, .mail-unlock, .ar-save, .ar-card-btn, .pend-verb) { min-height: 44px; min-width: 44px; }
 	/* Toggle options (the head's face switch keeps the head block's 30px box and overlay, so the Diamond head stays 96px): */
 	:root[data-skin="daylight"] :is(.seg button, .size-row button, .net-opt, .spend-toggle-btn, .mdash-toggle-btn,
 		.files-scope-chip, .files-mode-chip, .imp-chip, .tile-dlg-level) { height: 44px; min-height: 44px; }
@@ -1424,6 +1431,8 @@
 		.models-prov-head, .tile-dlg-adv-sum, .dlg-adv-sum, .crystal-memory-sum, .mem-raw-btn, .link-strip,
 		.files-rest-head, .sys-head, .cap-more) { min-height: 44px; }
 	:root[data-skin="daylight"] .crystal-act.mem-raw-btn { height: auto; min-height: 44px; }
+	/* A Pending tile's headline is a 44px row. */
+	:root[data-skin="daylight"] .pend-line { min-height: 44px; }
 	/* A check label is a 44px row, its box centred. */
 	:root[data-skin="daylight"] .dlg-tick { align-items: center; min-height: 44px; }
 	/* A colour swatch is a field of colour: 44px tall. */

@@ -24,6 +24,12 @@
 
 @media (max-width: 760px) {
 
+	/* The Pending tile's presses (the ✓ ? ✕ and U7b's worded ones) are a finger's work: 44px,
+	   as every phone control is (bar rule 8). They drew at 29px. */
+	.pend-act {
+		min-height: 44px;
+	}
+
 	/* ── The hamburger ─────────────────────────────────────────
 	   Far left of the top bar, within thumb reach is less important
 	   here than convention: the menu lives where a menu lives. */

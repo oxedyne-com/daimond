@@ -11,20 +11,27 @@
          file reads the ledger the design calls `daimond-ledger`, not a
          private copy of it.
 
-     (b) THE TRUST COLUMN IS READ ONLY (Rating U2, plan unit G). The one-tap
-         per-model buttons are gone. The column draws the counts this device
-         already holds, as the cell's own text, until U5 replaces them with
-         figures from rated answers; and NOTHING writes `daimond-model-ratings`
-         any more -- checked with a spy on `setItem` and `removeItem` across
-         opening, redrawing, a period toggle and closing, and by the removed
-         functions being gone from the module's surface.
+     (b) THE TRUST COLUMN READS RATED ANSWERS (U5b of 5.3.2; it was read-only counts
+         from Rating U2). A model's cell is the account-level cell of the rating roll-up,
+         built here by the REAL `ratingroll.js` from parts and handed to the panel through
+         `useRolls`: "9 up, 3 down of 340 answers" where trusted, "not enough yet, N more"
+         where not, a dash where no answer has been rated. The ledger's spelling of a model
+         is joined to its cell by the catalogue's id (the REAL `pricing.js`). The old
+         `daimond-model-ratings` key is not read or written by this file in any path
+         (checked with a spy on `getItem`, `setItem` and `removeItem` across opening,
+         redrawing, a period toggle and closing); `ratingsFor`, `loadRatings` and
+         `RATINGS_KEY` are gone from its surface, and the import that removes the key
+         is `ratingsaccount.test.mjs`'s.
 
      Each check is proven able to fail:
 
      node www/js/modeldash.test.mjs --break nosplit    # perModel stops splitting prompt/completion
      node www/js/modeldash.test.mjs --break buttons    # the Trust cell draws a button again
-     node www/js/modeldash.test.mjs --break nocounts   # the Trust cell stops showing the stored counts
-     node www/js/modeldash.test.mjs --break writes     # reading the store writes it back
+     node www/js/modeldash.test.mjs --break nocounts   # a trusted cell stops showing its counts
+     node www/js/modeldash.test.mjs --break nocells    # the column ignores the rating cells
+     node www/js/modeldash.test.mjs --break thintrust  # a thin cell is shown as trusted
+     node www/js/modeldash.test.mjs --break rawid      # the join uses the ledger's spelling, not the catalogue's
+     node www/js/modeldash.test.mjs --break oldkey     # the column reads daimond-model-ratings again
      node www/js/modeldash.test.mjs                     # and then, clean
    ============================================================ */
 import { readFileSync } from 'node:fs';
@@ -48,13 +55,13 @@ const BREAK = (() => {
 	const i = process.argv.indexOf('--break');
 	return i >= 0 ? (process.argv[i + 1] || '') : '';
 })();
-const KNOWN = ['nosplit', 'buttons', 'nocounts', 'writes'];
+const KNOWN = ['nosplit', 'buttons', 'nocounts', 'nocells', 'thintrust', 'rawid', 'oldkey'];
 if (BREAK && !KNOWN.includes(BREAK)) {
 	console.error('unknown break ' + JSON.stringify(BREAK) + '; known: ' + KNOWN.join(', '));
 	process.exit(2);
 }
 
-/// The three breaks that patch modeldash.js. Each anchor must match exactly once, or the run fails,
+/// The breaks that patch modeldash.js. Each anchor must match exactly once, or the run fails,
 /// so a refactor that moves the line cannot leave a break that damages nothing.
 function patched(src) {
 	function swap(needle, to) {
@@ -63,16 +70,35 @@ function patched(src) {
 		src = src.replace(needle, to);
 	}
 	if (BREAK === 'buttons') {
-		swap("var rateTd = el('td', null, fmtCounts(r.up, r.down));",
-			"var rateTd = el('td', null, fmtCounts(r.up, r.down)); rateTd.appendChild(el('button', 'mdash-rate-btn', '\u25B2'));");
+		swap("var rateTd = el('td', 'num', trustText(r.trust));",
+			"var rateTd = el('td', 'num', trustText(r.trust)); rateTd.appendChild(el('button', 'mdash-rate-btn', '\u25B2'));");
 	}
 	if (BREAK === 'nocounts') {
-		swap("return t('modeldash.rating_counts', { up: up, down: down });", "return '';");
+		swap("return t('modeldash.trust_counts', { up: tr.up, down: tr.down, made: tr.made });", "return '';");
 	}
-	if (BREAK === 'writes') {
-		swap('var obj = JSON.parse(raw);', 'var obj = JSON.parse(raw); localStorage.setItem(RATINGS_KEY, raw);');
+	if (BREAK === 'nocells') {
+		swap("var c = (roll && RR) ? RR.cell(roll, 3, '', 'cm', cmOf(model)) : null;", "var c = null;");
+	}
+	if (BREAK === 'thintrust') {
+		swap("if (c.ok) return { kind: 'trusted'", "if (true) return { kind: 'trusted'");
+	}
+	if (BREAK === 'rawid') {
+		swap("RR.cell(roll, 3, '', 'cm', cmOf(model))", "RR.cell(roll, 3, '', 'cm', String(model || ''))");
+	}
+	if (BREAK === 'oldkey') {
+		swap("return { kind: 'thin', more: c.more };",
+			"return { kind: 'thin', more: c.more };\n\t}\n\tfunction oldKey() { try { return localStorage.getItem('daimond-model-ratings'); } catch (e) { return null; }");
+		swap("function trustFor(roll, model) {", "function trustFor(roll, model) { oldKey();");
 	}
 	return src;
+}
+
+/// The two modules the Trust cell reads, the real ones: the catalogue that names a model, and the
+/// roll-up that makes its cell.
+function loadSiblings(win, localStorage) {
+	for (const f of ['pricing.js', 'ratingroll.js']) {
+		new Function('window', 'localStorage', readFileSync(join(HERE, f), 'utf8'))(win, localStorage);
+	}
 }
 
 /// A fresh `{ L, M, store }` -- `DaimondLedger` and `DaimondModelDash` loaded
@@ -103,6 +129,7 @@ function load(store) {
 	// eslint-disable-next-line no-new-func
 	loadStore(win, localStorage);
 	new Function('window', 'localStorage', ledgerSrc)(win, localStorage);
+	loadSiblings(win, localStorage);
 
 	let modeldashSrc = readFileSync(MODELDASH_SRC, 'utf8');
 	modeldashSrc = patched(modeldashSrc);
@@ -112,7 +139,7 @@ function load(store) {
 	// eslint-disable-next-line no-new-func
 	new Function('window', 'localStorage', modeldashSrc)(win, localStorage);
 
-	return { L: win.DaimondLedger, M: win.DaimondModelDash, store: store };
+	return { L: win.DaimondLedger, M: win.DaimondModelDash, RR: win.DaimondRatingRoll, store: store };
 }
 
 /// The DOM half, for the live-redraw claim (S-UI #2): a minimal fake
@@ -124,9 +151,9 @@ function load(store) {
 function loadDom(store) {
 	store = store || new Map();
 	// Every write and removal, by key: the spy the read-only claim is judged by.
-	const writes = [];
+	const writes = [], reads = [];
 	const localStorage = {
-		getItem:    (k) => (store.has(k) ? store.get(k) : null),
+		getItem:    (k) => { reads.push(k); return store.has(k) ? store.get(k) : null; },
 		setItem:    (k, v) => { writes.push(['set', k]); store.set(k, String(v)); },
 		removeItem: (k) => { writes.push(['remove', k]); store.delete(k); },
 	};
@@ -179,11 +206,12 @@ function loadDom(store) {
 	const ledgerSrc = readFileSync(LEDGER_SRC, 'utf8');
 	loadStore(win, localStorage);
 	new Function('window', 'localStorage', ledgerSrc)(win, localStorage);
+	loadSiblings(win, localStorage);
 	const modeldashSrc = patched(readFileSync(MODELDASH_SRC, 'utf8'));
 	// `DaimondI18n` is also a bare global in the page, which `onChange` at the foot of the file uses.
 	new Function('window', 'document', 'localStorage', 'DaimondI18n', modeldashSrc)(win, document_, localStorage, win.DaimondI18n);
 
-	return { L: win.DaimondLedger, M: win.DaimondModelDash, host: host, winOn: winOn, localStorage: localStorage, writes: writes, node: node };
+	return { L: win.DaimondLedger, M: win.DaimondModelDash, RR: win.DaimondRatingRoll, host: host, winOn: winOn, localStorage: localStorage, writes: writes, reads: reads, node: node };
 }
 
 /// The rendered table's rows, `[[model, turns], ...]`, read back out of the
@@ -224,7 +252,7 @@ function entry(t, m, p, c, u) {
 	return { t: t, m: m, p: p, c: c, ca: 0, u: u };
 }
 
-function main() {
+async function main() {
 	console.log('modeldash: aggregation -- reads the real daimond-ledger key and splits tokens correctly');
 	{
 		const store = new Map();
@@ -251,8 +279,8 @@ function main() {
 		check('beta turns = 1, tokens in = 40, tokens out = 10',
 			beta && beta.turns === 1 && beta.promptTokens === 40 && beta.completionTokens === 10,
 			JSON.stringify(beta));
-		check('a model never rated reports zero ratings',
-			alpha && alpha.up === 0 && alpha.down === 0, JSON.stringify(alpha));
+		check('a model never rated carries no Trust figure, and no stored count stands in for one',
+			alpha && alpha.trust && alpha.trust.kind === 'none' && !('up' in alpha) && !('down' in alpha), JSON.stringify(alpha));
 	}
 
 	console.log('\nmodeldash: aggregation -- an empty ledger reports no rows, not an error');
@@ -262,56 +290,77 @@ function main() {
 		check('empty in, empty out', Array.isArray(rows) && rows.length === 0, JSON.stringify(rows));
 	}
 
-	console.log('\nmodeldash: rating -- read only: the stored counts are read back, and nothing can write them');
-	{
-		const store = new Map();
-		store.set('daimond-model-ratings', JSON.stringify({ 'delta/four': { up: 2, down: 1 } }));
-		const { M } = load(store);
-		check('an unrated model reads as zero', JSON.stringify(M.ratingsFor('gamma')) === JSON.stringify({ up: 0, down: 0 }));
-		check('a stored count reads back, from the same key across a reload',
-			JSON.stringify(M.ratingsFor('delta/four')) === JSON.stringify({ up: 2, down: 1 }),
-			JSON.stringify(M.ratingsFor('delta/four')));
-
-		// The dashboard row carries the same figures, so the contribution preview and the Trust
-		// column never disagree.
-		store.set('daimond-ledger', JSON.stringify([entry(Date.now(), 'delta/four', 10, 10, 0.001)]));
-		const { M: second } = load(store);
-		const row = second.dashboardRows('month').find((r) => r.model === 'delta/four');
-		check('dashboardRows carries the stored rating', row && row.up === 2 && row.down === 1, JSON.stringify(row));
-
-		// The writers are deleted, not merely unused: a later change cannot call what is not there.
-		check('rate, saveRatings and clearRatings are gone from the module\u2019s surface',
-			['rate', 'saveRatings', 'clearRatings'].every((k) => !(k in M)),
-			Object.keys(M).join(' '));
+	// ── The rating cells the column reads, made by the real roll-up from hand-built parts ──
+	// One head is { h, mid, ts, s, tags, dims, len, via, cm, fam, cls, role, pv, d, c }, as `chatPart` reduces it.
+	const NODIMS = { correct: -1, followed: -1, length: -1, style: -1 };
+	function head(cm, i, s) {
+		return { h: 'p1:answer:c1/' + cm + i, mid: cm + i, ts: 1000 + i, s: s, tags: [], dims: NODIMS, len: 300, via: '',
+			cm: cm, fam: 'fam', cls: 'frontier', role: 'chat', pv: 'pv', d: '', c: 'c1' };
 	}
-
-	console.log('\nmodeldash: a corrupt rating store degrades to empty rather than throwing');
-	{
-		const store = new Map();
-		store.set('daimond-model-ratings', 'not json{{{');
-		const { M } = load(store);
-		check('corrupt store reads as no ratings', JSON.stringify(M.ratingsFor('x')) === JSON.stringify({ up: 0, down: 0 }));
+	function made(cm, i) {
+		return { h: 'p1:answer:c1/' + cm + i, k: 'answer', cm: cm, fam: 'fam', cls: 'frontier', role: 'chat', pv: 'pv', d: '', c: 'c1' };
 	}
-
-	// The three claims of unit G, each with a break of its own.
+	// alpha: 12 rated (9 up, 3 down) of 340 made, a trusted account figure (floor 10). gamma: 2 rated down of 5 made.
+	// The ledger below names alpha by a provider's spelling, and the catalogue's id for it is glm-5.2. It names gamma
+	// as `gamma/three`, which the catalogue does not know, so a stamp files it under its last segment, `three`.
+	function rollOf(RR) {
+		const heads = [], mades = [];
+		for (let i = 0; i < 12; i++) heads.push(head('glm-5.2', i, i < 9 ? 1 : -1));
+		for (let i = 0; i < 340; i++) mades.push(made('glm-5.2', i));
+		for (let i = 0; i < 2; i++) heads.push(head('three', i, -1));
+		for (let i = 0; i < 5; i++) mades.push(made('three', i));
+		return RR.cells([{ heads: heads, made: mades }], { sides: {} });
+	}
+	const ALPHA_RAW = 'accounts/fireworks/models/glm-5p2';
 	const G_LEDGER = () => JSON.stringify([
-		entry(Date.now() - 1000, 'alpha/one',   100, 50, 0.010),
+		entry(Date.now() - 1000, ALPHA_RAW,     100, 50, 0.010),
 		entry(Date.now() - 2000, 'beta/two',     40, 10, 0.004),
 		entry(Date.now() - 3000, 'gamma/three',  20,  5, 0.002),
 	]);
-	const G_RATINGS = () => JSON.stringify({ 'alpha/one': { up: 3, down: 1 }, 'gamma/three': { up: 0, down: 2 } });
-	const seededDom = () => {
+	const tick = () => new Promise((r) => setImmediate(r));
+	// The panel opened with the roll source handed in; the cells follow once the promise has settled.
+	const seededDom = async (source) => {
 		const store = new Map();
 		store.set('daimond-ledger', G_LEDGER());
-		store.set('daimond-model-ratings', G_RATINGS());
+		// The old key, present: nothing may read it, write it or remove it.
+		store.set('daimond-model-ratings', JSON.stringify({ [ALPHA_RAW]: { up: 77, down: 66 }, 'beta/two': { up: 55, down: 44 } }));
 		const dom = loadDom(store);
+		if (source !== null) dom.M.useRolls(source || (() => Promise.resolve({ roll: rollOf(dom.RR), reads: 0 })));
 		dom.M.onOpen();
+		await tick();
 		return dom;
 	};
 
+	console.log('\nmodeldash: rating -- the row carries a Trust reading from the cells, joined by the catalogue’s id');
+	{
+		const store = new Map();
+		store.set('daimond-ledger', G_LEDGER());
+		const { M, RR } = load(store);
+		const roll = rollOf(RR);
+		const rows = M.dashboardRows('month', undefined, roll);
+		const by = Object.fromEntries(rows.map((r) => [r.model, r.trust]));
+		check('the ledger’s spelling reads the cell of the catalogue’s id: trusted, 9 up 3 down of 340',
+			JSON.stringify(by[ALPHA_RAW]) === JSON.stringify({ kind: 'trusted', up: 9, down: 3, made: 340 }), JSON.stringify(by[ALPHA_RAW]));
+		check('a model with two ratings is thin, and says how many more it needs',
+			by['gamma/three'] && by['gamma/three'].kind === 'thin' && by['gamma/three'].more > 0, JSON.stringify(by['gamma/three']));
+		check('thin is exactly what the cell says it needs',
+			by['gamma/three'] && by['gamma/three'].more === RR.cell(roll, 3, '', 'cm', 'three').more);
+		check('a model never rated has none', by['beta/two'] && by['beta/two'].kind === 'none', JSON.stringify(by['beta/two']));
+		check('without a roll every row has none', M.dashboardRows('month').every((r) => r.trust.kind === 'none'));
+		check('trustFor of nothing is none, never a throw',
+			[null, undefined, {}, { L3: {} }, { L3: { '': {} } }].every((x) => M.trustFor(x, 'any').kind === 'none'));
+
+		// The old surface is deleted, not merely unused: a later change cannot call what is not there.
+		check('rate, saveRatings, clearRatings, ratingsFor, loadRatings and RATINGS_KEY are gone from the module’s surface',
+			['rate', 'saveRatings', 'clearRatings', 'ratingsFor', 'loadRatings', 'RATINGS_KEY'].every((k) => !(k in M)),
+			Object.keys(M).join(' '));
+		check('the rows carry no up or down of their own',
+			rows.every((r) => !('up' in r) && !('down' in r)), JSON.stringify(rows[0]));
+	}
+
 	console.log('\nmodeldash: Trust column -- there is no button in the cell');
 	{
-		const { host } = seededDom();
+		const { host } = await seededDom();
 		const cells = trustCells(host);
 		check('one Trust cell per row', cells.length === 3, String(cells.length));
 		check('no cell holds a button or any element at all',
@@ -321,13 +370,17 @@ function main() {
 			walk(host).some((n) => n.tagName === 'th' && n.textContent === 'Trust'));
 	}
 
-	console.log('\nmodeldash: Trust column -- the stored counts are shown, as the cell\u2019s own text');
+	console.log('\nmodeldash: Trust column -- figures from rated answers, as the cell’s own text');
 	{
-		const { host } = seededDom();
+		const { host } = await seededDom();
 		const by = Object.fromEntries(trustCells(host).map(([m, td]) => [m, td.textContent]));
-		check('a model rated up and down shows both counts', by['alpha/one'] === '3 up \u00B7 1 down', by['alpha/one']);
-		check('a model rated only down shows zero up', by['gamma/three'] === '0 up \u00B7 2 down', by['gamma/three']);
-		check('a model never rated shows a dash, not a zero it did not earn', by['beta/two'] === '\u2014', by['beta/two']);
+		check('a trusted model shows its ups, downs and answers made',
+			by[ALPHA_RAW] === '9 up, 3 down of 340 answers', by[ALPHA_RAW]);
+		check('a thin model says it is not enough yet, and how many more',
+			/^not enough yet, \d+ more$/.test(by['gamma/three']), by['gamma/three']);
+		check('a model never rated shows a dash, not a zero it did not earn', by['beta/two'] === '—', by['beta/two']);
+		check('none of the old counts (77, 66, 55, 44) is on screen',
+			!Object.values(by).some((v) => /77|66|55|44/.test(v)), JSON.stringify(by));
 		check('the cell is a figure cell, a td of class num like the columns beside it',
 			trustCells(host).every(([, td]) => td.tagName === 'td' && td.className === 'num'),
 			trustCells(host).map(([, td]) => td.tagName + '.' + td.className).join(' '));
@@ -335,21 +388,54 @@ function main() {
 			walk(host).some((n) => n.tagName === 'th' && n.textContent === 'Trust' && n.className === 'num'));
 	}
 
-	console.log('\nmodeldash: Trust column -- nothing writes daimond-model-ratings, in any path');
+	console.log('\nmodeldash: Trust column -- drawn at once from the ledger, filled when the cells arrive');
 	{
-		const { L, M, host, writes } = seededDom();
+		let release;
+		const slow = () => new Promise((r) => { release = r; });
+		const dom = await seededDom(slow);
+		let by = Object.fromEntries(trustCells(dom.host).map(([m, td]) => [m, td.textContent]));
+		check('before the cells arrive the table is there and every Trust cell is a dash',
+			Object.keys(by).length === 3 && Object.values(by).every((v) => v === '—'), JSON.stringify(by));
+		release({ roll: rollOf(dom.RR), reads: 0 });
+		await tick();
+		by = Object.fromEntries(trustCells(dom.host).map(([m, td]) => [m, td.textContent]));
+		check('when they arrive the cells are drawn', by[ALPHA_RAW] === '9 up, 3 down of 340 answers', JSON.stringify(by));
+	}
+
+	console.log('\nmodeldash: Trust column -- a source that fails, throws or is not given leaves dashes and breaks nothing');
+	{
+		for (const [what, src] of [
+			['rejects', () => Promise.reject(new Error('no store'))],
+			['throws', () => { throw new Error('boom'); }],
+			['answers a plain value', () => 42],
+			['answers no roll', () => Promise.resolve({})],
+			[null, null],
+		]) {
+			const { host } = await seededDom(src);
+			const by = Object.fromEntries(trustCells(host).map(([m, td]) => [m, td.textContent]));
+			check('a source that ' + (what || 'is never given') + ': the three rows stand, all dashes',
+				Object.keys(by).length === 3 && Object.values(by).every((v) => v === '—'), JSON.stringify(by));
+		}
+	}
+
+	console.log('\nmodeldash: Trust column -- the old key is neither read nor written, in any path');
+	{
+		const { L, M, host, writes, reads } = await seededDom();
 		// Press every button the panel offers, then redraw by the ledger's own change event, a refresh
 		// and a close: every path that draws or touches this panel.
 		const buttons = walk(host).filter((n) => n.tagName === 'button');
 		buttons.forEach((b) => (b._listeners.click || []).forEach((fn) => fn({})));
 		L.record({ ts: Date.now(), model: 'alpha/one', promptTokens: 1, completionTokens: 1, costUsd: 0.001 });
 		M.refresh();
+		await tick();
 		M.onClose();
-		const mine = writes.filter(([, k]) => k === 'daimond-model-ratings');
+		const mineW = writes.filter(([, k]) => k === 'daimond-model-ratings');
+		const mineR = reads.filter((k) => k === 'daimond-model-ratings');
 		check('the paths above ran (the ledger, a different key, was written to)',
 			writes.some(([, k]) => k === 'daimond-ledger') && buttons.some((b) => /mdash-toggle-btn/.test(b.className)),
 			JSON.stringify(writes) + ' buttons=' + buttons.length);
-		check('no setItem and no removeItem on daimond-model-ratings', mine.length === 0, JSON.stringify(mine));
+		check('no setItem and no removeItem on daimond-model-ratings', mineW.length === 0, JSON.stringify(mineW));
+		check('no getItem on daimond-model-ratings either', mineR.length === 0, String(mineR.length) + ' reads');
 	}
 
 	console.log('\nmodeldash: DOM half -- the panel redraws live while open, and stops once closed (S-UI #2)');
@@ -398,4 +484,4 @@ function main() {
 	process.exit(failures > 0 ? 1 : 0);
 }
 
-main();
+main().catch((e) => { console.log('  FAIL threw ' + (e && e.stack || e)); process.exit(1); });

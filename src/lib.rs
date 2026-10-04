@@ -72,6 +72,12 @@ pub mod session;
 /// because in the browser, which is where the user actually works, this module used to compile and
 /// be read by nothing.
 pub mod skills;
+/// The one block of a person's standing notes composed into the chat's and the daimon's prompt,
+/// and the lint that keeps a note from asking the model to chase approval.
+///
+/// Target-agnostic, so the cap and the lint are held by native unit tests, and the page asks
+/// the wasm for the same verdict the engine acts on.
+pub mod steering;
 pub mod syntax;
 pub mod tools;
 /// The browser (wasm32) entry surface — a `#[wasm_bindgen]` API plus the

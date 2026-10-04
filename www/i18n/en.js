@@ -1249,6 +1249,45 @@
 	// one, so the tick is a fresh instruction rather than a permission.
 	'pending.proposal.note': 'Found by its diamond. “Do it” asks that diamond to carry it out.',
 	'pending.proposal_do':   'Do it: {headline}',
+	'pending.steer.account': 'Your account',
+	'pending.steer.switch_head': 'Switch to {to}',
+	'pending.steer.switch_why': 'Here, {from} is rated down ({fn} rated answers) and {to} is rated up ({tn}).',
+	'pending.steer.note_head': 'Add a note for {model}',
+	'pending.steer.note_why': '{down} of {n} rated answers were rated down, {tagged} of them with this tag.',
+	'pending.steer.review_head': 'Review the note for {model}',
+	'pending.steer.review_why': 'Before the note, {bt} of {bn} rated answers had this tag. Since, {at} of {an}.',
+	'pending.steer.switch': 'Switch',
+	'pending.steer.add': 'Add',
+	'pending.steer.edit': 'Edit',
+	'pending.steer.keep': 'Keep',
+	'pending.steer.remove': 'Remove',
+	'pending.steer.edit_title': 'Edit the note',
+	'pending.steer.empty': 'Write a line.',
+	'pending.steer.refused': 'This line cannot be used: {why}',
+	'pending.steer.gone': 'That proposal no longer applies.',
+	'pending.steer.failed': 'That could not be saved.',
+	'pending.steer.no_model': 'No key on this device for {to}.',
+	'pending.steer.why_long': 'it is over 200 bytes',
+	'pending.steer.why_tone': 'it asks the model to please people, agree with them or seek approval',
+	'pending.steer.why_rating': 'it mentions ratings, scores or votes',
+	'pending.steer.why_control': 'it holds a control character',
+	'pending.steer.why_heading': 'it starts with # (a heading in the prompt)',
+	'pending.steer.back_head': 'Keep {model}, or switch back to {to}?',
+	'pending.steer.back_why': '{n} answers from this model have been rated here: {up} up, {down} down.',
+	'pending.steer.back': 'Switch Back',
+	'steer.title': 'Steering notes',
+	'steer.hint': 'Lines the model is told with each turn',
+	'steer.empty': 'No steering notes are active.',
+	'steer.unreadable': 'The notes could not be read.',
+	'steer.scope_diamond': 'This diamond: {name}',
+	'steer.scope_account': 'Your account: every diamond and chat',
+	'steer.model_all': 'All models',
+	'steer.added': 'Added {date}',
+	'steer.remove_aria': 'Remove the note: {line}',
+	'steer.off_model': 'Not in use: this diamond runs another model',
+	'steer.off_diamond': 'Not in use here: this diamond has its own note on the topic',
+	'steer.off_taken': 'Not in use: another note on the topic comes first',
+	'steer.off_refused': 'Not in use: this line is not allowed',
 
 	// A dispatched agent's request for permission, raised here because there was
 	// nobody at the screen to put it to. The agent is holding its work open until
@@ -1701,10 +1740,6 @@
 	'menu.view_max':        'Detailed',
 	'menu.view_simple_help': 'Names only',
 	'menu.view_max_help':   'Details on every tile',
-	// i18n-family: menu.look_ = classic daylight
-	'menu.look':            'Look',
-	'menu.look_classic':    'Classic',
-	'menu.look_daylight':   'Daylight',
 	'menu.theme':         'Theme',
 	// The bands and the palettes, both from `DaimondTheme` in daimond.js, which
 	// this app owns. `_help` is optional and only Amber has one: `workspace.js`
@@ -1904,7 +1939,8 @@
 	'modeldash.col_median_help':    'Median time from send to answer, across turns this window recorded a duration for.',
 	'modeldash.col_fail_rate_help': 'Failed or stopped turns as a share of turns with a recorded outcome ({failed} failed, {stopped} stopped).',
 	'modeldash.gap_note': 'Not shown: how turn time is spread out — only the median. Daimond does not record the full spread yet.',
-	'modeldash.rating_counts': '{up} up · {down} down',
+	'modeldash.trust_counts': '{up} up, {down} down of {made} answers',
+	'modeldash.trust_more': 'not enough yet, {n} more',
 
 	// ── Rating: the arrows, the popup and the Rating tile ──
 	// The tag, scale and dimension keys are the ones src/rating.rs names (`rating.tag.<id>`,
@@ -1985,6 +2021,21 @@
 	'rating.tag.not_useful':   'Not useful',
 	'rating.tag.already_knew': 'Already knew',
 	'rating.tag.useful':       'Useful',
+	// The steering notes the Optimiser can propose, one fixed sentence per tag (O3). Held as data in steering.js and worded through `t` at the call, so the keys are declared here.
+	// i18n-indirect: steering.js e.key = steer.line.wrong steer.line.ignored steer.line.long steer.line.short steer.line.style steer.line.tool steer.line.refused steer.line.slow steer.line.broke steer.line.wrong_change steer.line.incomplete steer.line.scope steer.line.wiped
+	'steer.line.wrong':           'Check facts, figures and code before stating them, and say plainly when you are unsure.',
+	'steer.line.ignored':         'Follow every instruction in the request, and check the answer against them before sending it.',
+	'steer.line.long':            'Keep answers under about 200 words unless asked for detail.',
+	'steer.line.short':           'Give fuller answers, with the reasoning and a worked example, unless a short one is asked for.',
+	'steer.line.style':           'Write in a plain, neutral tone, and use lists, headings and tables only where they help.',
+	'steer.line.tool':            'Use a tool only when the task needs one, and say in a line what it did.',
+	'steer.line.refused':         'Answer the question asked; decline or hedge only for a real reason, and say what it is.',
+	'steer.line.slow':            'Go straight to the answer: skip preambles, and skip steps and tools the task does not need.',
+	'steer.line.broke':           'After changing a file, check that it still works, and say what was checked.',
+	'steer.line.wrong_change':    'Make the change that was asked for, then read the file again to confirm it is the one wanted.',
+	'steer.line.incomplete':      'Finish the whole change, and list anything left undone.',
+	'steer.line.scope':           'Change only what was asked for, and name each file touched.',
+	'steer.line.wiped':           'Never remove content that was not asked about, and ask before deleting a file.',
 
 	// ── Tools ──────────────────────────────────────────────────
 	// `tools.head` and `tools.shop_fine` are placed inside markup, so any HTML

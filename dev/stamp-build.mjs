@@ -42,14 +42,16 @@ async function walk(dir, out) {
 }
 
 /// A short content hash: the relative path and bytes of every file fold into one digest, so a
-/// change to any file -- or a rename -- moves the id.
-async function contentHash() {
+/// change to any file -- or a rename -- moves the id. `bytes` reads a file's absolute path; the
+/// soak passes one that fetches the bytes the app server SERVES, so the served bundle's hash is
+/// compared with the tree's predicted build rather than a build id read from the same tree.
+export async function contentHash(bytes = (f) => readFile(f)) {
 	const files = (await walk(ROOT, [])).sort();
 	const h = createHash('sha256');
 	for (const f of files) {
 		h.update(relative(ROOT, f));
 		h.update('\0');
-		h.update(await readFile(f));
+		h.update(await bytes(f));
 		h.update('\0');
 	}
 	return h.digest('hex').slice(0, 12);

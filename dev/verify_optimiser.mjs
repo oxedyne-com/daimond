@@ -1,4 +1,4 @@
-// gateway: none
+// gateway: live
 // verify_optimiser.mjs — the Daimond Optimiser, end to end, from a real signal to
 // a tile you can answer.
 //
@@ -34,6 +34,11 @@
 //
 //   node dev/verify_optimiser.mjs
 //   node dev/verify_optimiser.mjs --breaks   # every break still matches; no browser
+//   node dev/verify_optimiser.mjs --only OP1,OP4   # V3 (5.3.2): just those proposal sections (no section named with --proposals: all five)
+//   node dev/verify_optimiser.mjs --break nofloor   # the trust floor removed: red in OP1 only
+//   node dev/verify_optimiser.mjs --break nodedupe  # a dismissal forgotten at once: red in OP4 only
+//   (a default run is the 29 checks and then OP1 to OP5; OP4's second device is a paired phone-and-desktop account, so the gateway is `live`.
+//    Run from a 5.3.1 tree, where nothing is ever proposed, every OP section is red on its positive claim.)
 //
 // Every break below replaces a piece of the CODE UNDER TEST with the way it
 // behaved before this work, or with the plausible wrong way to write it, and
@@ -95,6 +100,8 @@ import path from 'node:path';
 import os from 'node:os';
 import { fileURLToPath } from 'node:url';
 import { open, connectMock, signInAs, scratch, shot, mockLog } from './harness.mjs';
+import { pair } from './handoffpair.mjs';
+import { GW_URL } from './ports.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const WWW  = path.join(HERE, '..', 'www');
@@ -200,7 +207,33 @@ const BREAKS = {
 		from: "\t\treturn (w && typeof w.workers === 'number') ? w.workers : Infinity;",
 		to:   "\t\treturn Infinity;" },
 };
-if (BREAK && !BREAKS[BREAK]) die(`no break called "${BREAK}" — see the header`);
+// V3 (5.3.2): the proposals, OP1 to OP5, below. `--only OP1,OP3` or `--proposals` runs those alone (all five when none is named); a
+// default run is the 29 checks above and then all five. Their breaks are under OP_BREAKS, and each edit must match exactly once.
+const ONLY = (() => { const i = process.argv.indexOf('--only'); return i > 0 && process.argv[i + 1] ? process.argv[i + 1].split(',') : []; })();
+const OP_BREAKS = {
+	// The trust floor is removed: every cell with any weight counts as trusted. Red in OP1 only.
+	nofloor:  { red: 'OP1', file: 'js/ratingroll.js', edits: [
+		{ from: "a.ok = a.eff >= a.floor;", to: "a.ok = a.eff > 0;" } ] },
+	// A dismissed (or retired) proposal is forgotten at once: no note and no switch is held by one. Red in OP4 only.
+	nodedupe: { red: 'OP4', file: 'js/steering.js', edits: [
+		{ from: "return e.level === p.level && e.scope === p.scope && cooling(e, cell) > 0;", to: "return false;" },
+		{ from: "e.to === x.c.key && cooling(e, cur) > 0; })) return;", to: "e.to === x.c.key && false; })) return;" } ] },
+};
+const OP_ONLY = process.argv.includes('--proposals') || ONLY.length > 0 || !!OP_BREAKS[BREAK];
+let OP_PATCH = null;
+for (const [name, b] of Object.entries(OP_BREAKS)) {
+	// A 5.3.1 tree has no ratingroll.js or steering.js: its breaks cannot be checked there, and only a break asked for (or --breaks) is refused for it.
+	let src = null;
+	try { src = fs.readFileSync(path.join(WWW, b.file), 'utf8'); }
+	catch (e) { if (name === BREAK || process.argv.includes('--breaks')) { console.error(`break '${name}': www/${b.file} is not in this tree`); process.exit(2); } continue; }
+	for (const e of b.edits) {
+		const n = src.split(e.from).length - 1;
+		if (n !== 1) { console.error(`break '${name}': anchor matched ${n} times, not once, in www/${b.file}: ${JSON.stringify(e.from)}`); process.exit(2); }
+		src = src.replace(e.from, () => e.to);
+	}
+	if (name === BREAK) { OP_PATCH = [{ file: b.file, src }]; console.log(`\n*** BREAK ${BREAK}: only ${b.red} may go red ***\n`); }
+}
+if (BREAK && !BREAKS[BREAK] && !OP_BREAKS[BREAK]) die(`no break called "${BREAK}" — see the header`);
 
 // EVERY break is matched against the source on EVERY run, not just the one that
 // was asked for. A break whose string has drifted does not fail loudly when
@@ -216,13 +249,13 @@ if (BREAK && !BREAKS[BREAK]) die(`no break called "${BREAK}" — see the header`
 	}
 	if (stale.length) die('break(s) no longer match the source:\n         ' + stale.join('\n         '));
 	if (process.argv.includes('--breaks')) {
-		console.log(`  ok   all ${Object.keys(BREAKS).length} breaks still match the source`);
+		console.log(`  ok   all ${Object.keys(BREAKS).length + Object.keys(OP_BREAKS).length} breaks still match the source`);
 		process.exit(0);
 	}
 }
 
 let ROUTE = null;
-if (BREAK) {
+if (BREAK && BREAKS[BREAK]) {
 	const b = BREAKS[BREAK];
 	const src = fs.readFileSync(path.join(WWW, b.file), 'utf8');
 	const broken = src.replace(b.from, b.to);
@@ -241,6 +274,331 @@ const MOOD = /frustrat|angry|upset|annoy|mood|swear|swore|profan|temper|emotion|
 // What the synthetic signal must produce, word for word, because it is the
 // sentence that has to travel the whole chain: index → digest → model → tile.
 const FINDING = 'web_fetch refused 6 of 8 calls';
+
+// ══ V3 (5.3.2, U7): the proposals, OP1 to OP5 ══════════════════════════════════
+// The page, not a model, turns trusted rating cells into Pending tiles (steering.js `proposals`, daimond.js `steerRaise`). Seeded rated chats go
+// into the real ChatStore; a digest write raises the tiles; the presses are real clicks; the note file is read back through the wasm store.
+//   OP1 no proposal below the floor: a cell one rating short (`more` = 1) raises nothing, one rating more raises it   [J5]
+//   OP2 on input chosen to provoke it (strong language, mood tags, a signal index full of it), no tile, evidence or note names the reaction   [J9]
+//   OP3 Add writes exactly the line the tile showed, and Edit then Add the line as edited (the file's bytes are compared)   [J8]
+//   OP4 Dismiss is not re-raised: not on this device (a digest, a reload), not for 19 more answers and again at 20, not on a second
+//       device of the account; the dismissal Switch Back writes keeps that switch away for 20 answers too
+//   OP5 Switch changes the Diamond's model through setDiamondModel (the one writer of its model record), and the Diamond cog shows it
+// The positive claim of each section is a tile that must appear, so each is red on 5.3.1 (where nothing is ever proposed).
+const OPN = { n: 0 }, OPBAD = {}, OPOK = {};
+const opcheck = (sec, cond, msg, detail) => { OPBAD[sec] = OPBAD[sec] || 0; OPOK[sec] = OPOK[sec] || 0; cond ? OPOK[sec]++ : OPBAD[sec]++; check(cond, sec + '  ' + msg, detail); };
+const HELP = '0da1000000e1', OPTD = '0da1000000f2', STEER_FILE = '.daimond/steering.md';
+const LONGLINE = 'Keep answers under about 200 words unless asked for detail.';
+const OP_BASE = 1790000000000;
+const opwait = (ms) => new Promise((r) => setTimeout(r, ms));
+const opuntil = async (fn, ms = 8000) => { const t0 = Date.now(); for (;;) { let v = false; try { v = await fn(); } catch (e) { v = false; } if (v || Date.now() - t0 > ms) return v; await opwait(150); } };
+
+/// Seed rated answers into the real ChatStore: { model, d, up, down, tagged, extra, note, pv }; `tagged` of the down-rates carry `long`, `extra` tags go on every down-rate.
+async function rated(page, g) {
+	const base = OP_BASE + (OPN.n += 1) * 100000000;
+	return page.evaluate(async (a) => {
+		const R = window.DaimondRatings, st = DaimondCore.chatStore(), id = DaimondPricing.identify(a.g.model);
+		const cid = 'opchat' + a.n, msgs = [], list = st.stored();
+		const stamp = (i) => ({ h: 'p1:answer:' + cid + '/a-' + i, k: 'answer', m: a.g.model, pv: a.g.pv || 'custom', cm: id.cm, fam: id.fam, fi: !!id.fi, cls: id.cls,
+			role: 'chat', sp: 'sp1:3f9a0c12', d: a.g.d || '', c: cid, t: 'm' + i, dev: 'd-4f2a', at: a.base, hash: '', run: '', via: '' });
+		const total = a.g.up + a.g.down;
+		for (let i = 0; i < total; i++) {
+			const up = i < a.g.up, ts = a.base + (i + 1) * 2000, prod = stamp(i);
+			msgs.push({ role: 'assistant', mid: 'a-' + i, ts: ts, content: 'an answer ' + i, prod: [prod] });
+			const tags = up ? [] : ((i - a.g.up) < (a.g.tagged || 0) ? ['long'] : []).concat(a.g.extra || []);
+			const rid = R.newId(ts + 1000, 'q' + String(i).padStart(4, '0'));
+			msgs.push(R.message(R.build({ prod: prod, s: up ? 1 : -1, clear: false, tags: tags, dims: {}, note: a.g.note || '', src: 'tap', sup: '', burst: '', tools: '', len: 300 }), rid, ts + 1000));
+		}
+		list.push({ id: cid, name: 'op ' + a.n, model: a.g.model, updatedAt: a.base + (total + 2) * 2000, messages: msgs, session: null });
+		await st.save(list);
+		try { await st.settled(); } catch (e) { /* the alarm is up; the read is what there is */ }
+		return cid;
+	}, { g: g, base: base, n: OPN.n });
+}
+/// The cell the page's own roll holds for a model at a level: { n, eff, floor, ok, more, claim }.
+const cellOf = (page, lv, sc, cm) => page.evaluate(async (a) => {
+	const st = DaimondCore.chatStore(), parts = [];
+	for (const c of st.stored()) { const g = await st.loadMessages(c.id); parts.push(DaimondRatingRoll.chatPart(g.messages || [])); }
+	const c = DaimondRatingRoll.cell(DaimondRatingRoll.cells(parts, { sides: null }), a.lv, a.sc, 'cm', a.cm);
+	return c ? { n: c.n, eff: c.eff, floor: c.floor, ok: c.ok, more: c.more, claim: c.claim } : null;
+}, { lv, sc, cm }).catch((e) => ({ err: String(e.message || e) }));
+/// The steer tiles on the page, with the proposal behind each.
+const tiles = (page) => page.evaluate(() => DaimondPendingView.items().filter((x) => x.kind === 'steer' && x.steer).map((x) => ({
+	id: x.id, kind: x.steer.kind, level: x.steer.level, scope: x.steer.scope, line: x.steer.line, to: x.steer.to, key: x.steer.key, tag: x.steer.tag,
+	at: x.steer.at, head: x.headline, detail: x.detail, ev: x.steer.evidence }))).catch(() => []);
+const raise = async (page) => {
+	await page.evaluate(() => DaimondDiamond.usageDigest()).catch(() => {});
+	await page.evaluate(() => (window.DaimondPendingView && DaimondPendingView.steer) ? DaimondPendingView.steer() : null).catch(() => {});
+	await opwait(300);
+	return tiles(page);
+};
+const has = (ts, kind, level, scope, key, to) => ts.find((t) => t.kind === kind && t.level === level && t.scope === scope && (!key || t.key === key) && (!to || t.to === to));
+/// Press `label` on the tile `id` in the Pending panel, as a person does (opened first; the DOM click is the fallback where another tile covers it).
+async function press(page, id, label) {
+	await page.evaluate(() => DaimondPanels.show('pending'));
+	await page.evaluate((id) => { const l = document.querySelector(`#pending-list .pend-card[data-id="${id}"] .pend-line[aria-expanded="false"]`); if (l) l.click(); }, id);
+	await opwait(250);
+	const b = page.locator(`#pending-list .pend-card[data-id="${id}"] .pend-act`, { hasText: new RegExp('^' + label + '$') }).first();
+	await b.waitFor({ state: 'visible', timeout: 8000 });
+	await b.scrollIntoViewIfNeeded();
+	await b.click({ timeout: 4000 }).catch(async () => { await b.evaluate((el) => el.click()); });
+	await opwait(900);
+}
+const fileOf = (page, d) => page.evaluate(async (p) => { const W = await import('/pkg/oxedyne_daimond.js'); try { return String(await W.store_read(p)); } catch (e) { return ''; } }, 'diamonds/' + d + '/' + STEER_FILE);
+const modelOf = (page, d) => page.evaluate((id) => {
+	for (let i = 0; i < localStorage.length; i++) { const k = localStorage.key(i);
+		if (k && /daimond-diamond-models$/.test(k)) { try { const m = JSON.parse(localStorage.getItem(k) || '{}')[id]; return m ? { provider: m.provider, model: m.model } : null; } catch (e) { return null; } } }
+	return null; }, d);
+const opBreakRoute = () => (OP_PATCH ? async (page) => { await page.route((u) => OP_PATCH.some((p) => u.pathname.endsWith('/' + p.file)), (r) => {
+	const f = OP_PATCH.find((p) => new URL(r.request().url()).pathname.endsWith('/' + p.file)); r.fulfill({ status: 200, contentType: 'application/javascript', body: f.src }); }); } : null);
+const OPCTX = [];
+/// A fresh device: signed in under its own name, the mock connected, the two default Diamonds up.
+async function opctx(name) {
+	const s = await open({ name: name, signIn: false, connect: false, route: opBreakRoute(), profile: scratch('pw', name + '-' + process.pid) });
+	OPCTX.push(s);
+	await signInAs(s, name);
+	await connectMock(s);
+	const page = s.page;
+	await page.waitForFunction(() => !!(window.DaimondDiamond && DaimondDiamond.usageDigest && window.DaimondPendingView), null, { timeout: 40000 });		// not DaimondRatingRoll: 5.3.1 has none, and its sections are to fail on their claims
+	await page.evaluate(() => DaimondDiamond.seedDefaults());
+	await page.waitForFunction(() => [...document.querySelectorAll('#diamond-list .diamond-box')].length >= 2, null, { timeout: 30000 }).catch(() => {});
+	return { s, page };
+}
+/// The data every section but OP1 starts from: Help (running mock/fast) rates fast 4 up 26 down (12 'long'), mock/thinker 15 up 1 down.
+const standard = async (page, o = {}) => {
+	await rated(page, { model: 'mock/fast', d: HELP, up: 4, down: 26, tagged: 12, note: o.note, extra: o.extra });
+	await rated(page, { model: 'mock/thinker', d: HELP, up: 15, down: 1, tagged: 0, note: o.note });
+};
+
+const OPS = {
+	OP1: async () => {
+		const { page } = await opctx('op1a');
+		const pre = await page.evaluate(() => !!(window.DaimondNotes && DaimondNotes.add && DaimondNotes.list && window.DaimondSteering && DaimondSteering.proposals && DaimondPendingView.steer)).catch(() => false);
+		opcheck('OP1', pre, 'PRE: DaimondNotes, DaimondSteering.proposals and DaimondPendingView.steer are on the page');
+		// A Diamond note: the Diamond floor is 6 effective ratings, and fading makes 7 the smallest count that reaches it.
+		await rated(page, { model: 'mock/fast', d: HELP, up: 0, down: 6, tagged: 3 });
+		let c = await cellOf(page, 2, HELP, 'fast');
+		opcheck('OP1', !!c && c.ok === false && c.more === 1 && c.floor === 6, 'control: Help\'s mock/fast cell is one rating short of its floor (more = 1)', JSON.stringify(c));
+		let ts = await raise(page);
+		opcheck('OP1', !has(ts, 'note', 2, HELP) && !has(ts, 'switch', 2, HELP), 'no note and no switch is proposed from the cell one rating short', JSON.stringify(ts.map((t) => t.kind + ':' + t.level)));
+		await rated(page, { model: 'mock/fast', d: HELP, up: 0, down: 1, tagged: 1 });
+		c = await cellOf(page, 2, HELP, 'fast');
+		ts = await raise(page);
+		opcheck('OP1', !!c && c.ok === true && c.claim === 'bad' && !!has(ts, 'note', 2, HELP, 'fast'), 'one rating more: the cell holds its floor and the note is proposed (the silence above was the floor)', JSON.stringify(c) + ' ' + JSON.stringify(ts.map((t) => t.kind + ':' + t.level)));
+		// A switch needs both sides trusted: Help's fast is now bad and trusted; thinker 6 up is one short, 7 is not.
+		await rated(page, { model: 'mock/thinker', d: HELP, up: 6, down: 0, tagged: 0 });
+		c = await cellOf(page, 2, HELP, 'thinker');
+		ts = await raise(page);
+		opcheck('OP1', !!c && c.ok === false && c.more === 1 && !has(ts, 'switch', 2, HELP), 'no switch while the good side is one rating short', JSON.stringify(c));
+		await rated(page, { model: 'mock/thinker', d: HELP, up: 1, down: 0, tagged: 0 });
+		ts = await raise(page);
+		opcheck('OP1', !!has(ts, 'switch', 2, HELP, 'fast', 'thinker'), 'one rating more on the good side: the switch is proposed', JSON.stringify(ts.map((t) => t.kind + ':' + t.level)));
+		// ... and the bad side, in the other Diamond: fast 6 down (one short), thinker 7 up.
+		await rated(page, { model: 'mock/fast', d: OPTD, up: 0, down: 6, tagged: 0 });
+		await rated(page, { model: 'mock/thinker', d: OPTD, up: 7, down: 0, tagged: 0 });
+		ts = await raise(page);
+		opcheck('OP1', !has(ts, 'switch', 2, OPTD), 'no switch while the bad side is one rating short', JSON.stringify(await cellOf(page, 2, OPTD, 'fast')));
+		await rated(page, { model: 'mock/fast', d: OPTD, up: 0, down: 1, tagged: 0 });
+		ts = await raise(page);
+		opcheck('OP1', !!has(ts, 'switch', 2, OPTD, 'fast', 'thinker'), 'one rating more on the bad side: the switch is proposed', JSON.stringify(ts.map((t) => t.kind + ':' + t.level + ':' + t.scope.slice(-2))));
+		// The account: the floor is 10 effective ratings (11 reach it); ratings outside every Diamond.
+		const B = await opctx('op1b');
+		await rated(B.page, { model: 'mock/thinker', d: '', up: 0, down: 10, tagged: 4 });
+		c = await cellOf(B.page, 3, '', 'thinker');
+		ts = await raise(B.page);
+		opcheck('OP1', !!c && c.ok === false && c.more === 1 && c.floor === 10 && !has(ts, 'note', 3, ''), 'an account cell one rating short (floor 10) proposes no note', JSON.stringify(c));
+		await rated(B.page, { model: 'mock/thinker', d: '', up: 0, down: 1, tagged: 1 });
+		ts = await raise(B.page);
+		opcheck('OP1', !!has(ts, 'note', 3, '', 'thinker'), 'one rating more: the account note is proposed', JSON.stringify(ts.map((t) => t.kind + ':' + t.level)));
+	},
+
+	OP2: async () => {
+		const { page } = await opctx('op2');
+		const NOTE = 'QUOKKAWRATH I am FRUSTRATED and ANGRY, I swore at it, bloody useless crap, damn it, I am upset and stressed and irritated';
+		const TAGS = ['frustrated', 'angrybloodyhell', 'swearing'];
+		const POISON = ['QUOKKAWRATH', 'frustrated', 'angrybloodyhell', 'swearing', 'bloody', 'useless', 'crap', 'damn', 'swore', 'fuck', 'WHAT?!'];
+		await standard(page, { note: NOTE, extra: TAGS });
+		// The signal index is fed the most provocative input it can be given, for the same Diamond.
+		await page.evaluate((id) => { if (window.DaimondSignals) for (let i = 0; i < 12; i++) DaimondSignals.noteUserMessage({ diamondId: id, text: 'WHAT?! fuck this, that is wrong AGAIN, as i already told you', prevModel: 'mock/fast' }); }, HELP);
+		// The provocation is really there: the ratings hold the note and the tags, and the signal index counted the swearing.
+		const fed = await page.evaluate(async () => { const st = DaimondCore.chatStore(); let all = '';
+			for (const c of st.stored()) { const g = await st.loadMessages(c.id); all += JSON.stringify(g.messages || []); }
+			let missed = -1; try { missed = DaimondSignals.snapshot().diamonds['0da1000000e1'].missed; } catch (e) { /* none */ }
+			return { note: all.includes('QUOKKAWRATH'), tag: all.includes('angrybloodyhell'), missed }; });
+		opcheck('OP2', fed.note && fed.tag && fed.missed >= 12, 'control: the provoking input is in the seeded ratings (a note, a mood tag) and in the signal index', JSON.stringify(fed));
+		const ts = await raise(page);
+		opcheck('OP2', !!has(ts, 'note', 2, HELP) && !!has(ts, 'switch', 2, HELP) && !!has(ts, 'note', 3, ''), 'control: the provoking ratings raise a Diamond note, a switch and an account note', JSON.stringify(ts.map((t) => t.kind + ':' + t.level)));
+		await page.evaluate(() => DaimondPanels.show('pending'));
+		await opwait(500);
+		const dom = await page.evaluate(() => (document.querySelector('#pending-list') || {}).innerText || '');
+		const text = JSON.stringify(ts) + '\n' + dom;
+		const hit = (s) => [...(s.match(MOOD) || []), ...POISON.filter((w) => s.toLowerCase().includes(w.toLowerCase()))];
+		opcheck('OP2', ts.length > 0 && dom.length > 20 && hit(text).length === 0, 'no tile (head, why, line, evidence, drawn text) names the reaction or quotes a note, a tag or a message', hit(text).join(' ') || ('clean, ' + text.length + ' bytes'));
+		const sw = has(ts, 'switch', 2, HELP), n2 = has(ts, 'note', 2, HELP);
+		if (n2) await press(page, n2.id, 'Add');
+		const f = await fileOf(page, HELP);
+		opcheck('OP2', f.includes(LONGLINE) && hit(f).length === 0, 'and the note Add writes holds the fixed sentence and none of it', hit(f).join(' ') || JSON.stringify(f.slice(0, 120)));
+		if (sw) await press(page, sw.id, 'Dismiss');
+		const g = await fileOf(page, HELP);
+		opcheck('OP2', g.includes(' · dismissed · ') && hit(g).length === 0, 'nor does the dismissal entry', hit(g).join(' ') || JSON.stringify(g.slice(-120)));
+	},
+
+	OP3: async () => {
+		const { page } = await opctx('op3');
+		await standard(page);
+		let ts = await raise(page);
+		const n2 = has(ts, 'note', 2, HELP), n3 = has(ts, 'note', 3, '');
+		opcheck('OP3', !!n2 && !!n3 && n2.line === LONGLINE, 'control: a Diamond note and an account note are proposed, with the fixed sentence', JSON.stringify(ts.map((t) => t.kind + ':' + t.level)));
+		if (!n2 || !n3) return;
+		// The line as drawn on the tile, not the record's.
+		await page.evaluate(() => DaimondPanels.show('pending'));
+		await page.evaluate((id) => { const l = document.querySelector(`#pending-list .pend-card[data-id="${id}"] .pend-line[aria-expanded="false"]`); if (l) l.click(); }, n2.id);
+		await opwait(300);
+		const shown = await page.evaluate((id) => (document.querySelector(`#pending-list .pend-card[data-id="${id}"] .pend-steer-line`) || {}).textContent || '', n2.id);
+		opcheck('OP3', shown === n2.line, 'the tile draws the line it will write', JSON.stringify(shown));
+		await press(page, n2.id, 'Add');
+		const f = await fileOf(page, HELP), m = /^## (\S+) · active · diamond · fast · long (\d+) of (\d+)\n/.exec(f);
+		const want = m ? `## ${m[1]} · active · diamond · fast · long ${n2.at.t} of ${n2.at.n}\n${shown}\n` : '';
+		opcheck('OP3', !!m && f === want && new TextEncoder().encode(f).length === new TextEncoder().encode(want).length, 'Add wrote the file whole: one header and the shown line, byte for byte, with the counts the tile showed', JSON.stringify(f.slice(0, 240)));
+		// Edit then Add: the line as edited, non-ASCII included.
+		const EDITED = 'Open with the answer, then give the reason in one short paragraph (naïve café 日本語).';
+		await press(page, n3.id, 'Edit');
+		await page.waitForSelector('.dlg textarea.dlg-area', { timeout: 6000 }).catch(() => {});
+		const open0 = await page.evaluate(() => { const a = document.querySelector('.dlg textarea.dlg-area'); return a ? a.value : null; });
+		opcheck('OP3', open0 === LONGLINE, 'Edit opens with the line the tile showed', JSON.stringify(open0));
+		await page.fill('.dlg textarea.dlg-area', EDITED);
+		await opwait(300);
+		await page.locator('.dlg button', { hasText: /^Add$/ }).first().click({ timeout: 4000 }).catch(() => {});
+		await opuntil(async () => (await fileOf(page, OPTD)).includes(EDITED), 8000);
+		const fo = await fileOf(page, OPTD), mo = /^## (\S+) · active · account · fast · long (\d+) of (\d+)\n/.exec(fo);
+		const wo = mo ? `## ${mo[1]} · active · account · fast · long ${n3.at.t} of ${n3.at.n}\n${EDITED}\n` : '';
+		opcheck('OP3', !!mo && fo === wo, 'Edit then Add wrote the edited line exactly, in the Optimiser\'s file, byte for byte', JSON.stringify(fo.slice(0, 240)));
+	},
+
+	OP4: async () => {
+		const { page } = await opctx('op4');
+		await standard(page);
+		let ts = await raise(page);
+		const n2 = has(ts, 'note', 2, HELP), sw = has(ts, 'switch', 2, HELP, 'fast', 'thinker');
+		opcheck('OP4', !!n2 && !!sw, 'control: a Diamond note and a switch are proposed', JSON.stringify(ts.map((t) => t.kind + ':' + t.level)));
+		if (!n2 || !sw) return;
+		await press(page, n2.id, 'Dismiss');
+		await press(page, sw.id, 'Dismiss');
+		const f = await fileOf(page, HELP);
+		opcheck('OP4', / · dismissed · diamond · fast · long \d+ of 30\n/.test(f) && / · dismissed · diamond · fast · switch /.test(f), 'Dismiss wrote a dismissed entry for each, with the cell\'s count', JSON.stringify(f.slice(0, 260)));
+		ts = await raise(page);
+		opcheck('OP4', !has(ts, 'note', 2, HELP) && !has(ts, 'switch', 2, HELP), 'a digest write on this device raises neither again', JSON.stringify(ts.map((t) => t.kind + ':' + t.level)));
+		await page.reload();
+		await page.waitForFunction(() => !!(window.DaimondDiamond && DaimondDiamond.usageDigest && window.DaimondPendingView && window.DaimondNotes), null, { timeout: 40000 });
+		await page.waitForFunction(() => [...document.querySelectorAll('#diamond-list .diamond-box')].length >= 2, null, { timeout: 30000 }).catch(() => {});
+		await opwait(800);
+		ts = await raise(page);
+		opcheck('OP4', !has(ts, 'note', 2, HELP) && !has(ts, 'switch', 2, HELP), 'nor after a reload (the dismissal is in the Diamond\'s file, not the page)', JSON.stringify(ts.map((t) => t.kind + ':' + t.level)));
+		// 19 more rated answers of the key: still held; the 20th frees it (the window is 20 answers, not for ever).
+		await rated(page, { model: 'mock/fast', d: HELP, up: 0, down: 19, tagged: 19 });
+		ts = await raise(page);
+		opcheck('OP4', !has(ts, 'note', 2, HELP) && !has(ts, 'switch', 2, HELP), 'nor after 19 more rated answers', JSON.stringify(await cellOf(page, 2, HELP, 'fast')));
+		await rated(page, { model: 'mock/fast', d: HELP, up: 0, down: 1, tagged: 1 });
+		ts = await raise(page);
+		opcheck('OP4', !!has(ts, 'note', 2, HELP) && !!has(ts, 'switch', 2, HELP), 'the 20th frees both (so the silence was the dismissal)', JSON.stringify(ts.map((t) => t.kind + ':' + t.level)));
+
+		// Switch Back writes its own dismissal: Switch, 20 good answers on the model it went to, Switch Back, and that switch stays away.
+		const C = await opctx('op4c');
+		await standard(C.page);
+		ts = await raise(C.page);
+		const sw2 = has(ts, 'switch', 2, HELP, 'fast', 'thinker');
+		if (!sw2) { opcheck('OP4', false, 'Switch Back: the switch tile to press was not raised', JSON.stringify(ts.map((t) => t.kind + ':' + t.level))); return; }
+		await press(C.page, sw2.id, 'Switch');
+		await rated(C.page, { model: 'mock/thinker', d: HELP, up: 20, down: 0, tagged: 0 });
+		ts = await raise(C.page);
+		const back = has(ts, 'back', 2, HELP);
+		opcheck('OP4', !!back, 'Switch Back: 20 answers on the new model raise the review (Keep, Switch Back)', JSON.stringify(ts.map((t) => t.kind + ':' + t.level)));
+		if (!back) return;
+		await press(C.page, back.id, 'Switch Back');
+		const mb = await modelOf(C.page, HELP), fb = await fileOf(C.page, HELP);
+		opcheck('OP4', !!mb && /fast$/.test(mb.model) && / · dismissed · diamond · fast · switch /.test(fb), 'Switch Back returned the Diamond to mock/fast and wrote the dismissed entry', JSON.stringify(mb) + ' ' + JSON.stringify(fb.slice(-200)));
+		ts = await raise(C.page);
+		opcheck('OP4', !has(ts, 'switch', 2, HELP), 'that switch is not proposed again at once', JSON.stringify(ts.map((t) => t.kind + ':' + t.level)));
+		await rated(C.page, { model: 'mock/fast', d: HELP, up: 0, down: 19, tagged: 0 });
+		ts = await raise(C.page);
+		opcheck('OP4', !has(ts, 'switch', 2, HELP), 'nor after 19 more rated answers on the model it came back to', JSON.stringify(await cellOf(C.page, 2, HELP, 'fast')));
+		await rated(C.page, { model: 'mock/fast', d: HELP, up: 0, down: 1, tagged: 0 });
+		ts = await raise(C.page);
+		opcheck('OP4', !!has(ts, 'switch', 2, HELP, 'fast', 'thinker'), 'the 20th frees it', JSON.stringify(ts.map((t) => t.kind + ':' + t.level)));
+
+		// A second device of the account: ratings and the Diamond's note file travel by sync.
+		let pr = null;
+		try {
+			const gw = await fetch(GW_URL + '/api/health', { signal: AbortSignal.timeout(3000) }).then((r) => r.ok).catch(() => false);
+			if (!gw) { opcheck('OP4', false, 'the second device needs the live gateway (' + GW_URL + ' does not answer)'); return; }
+			const mk = (what, pass, detail) => opcheck('OP4', pass, 'pair: ' + what, detail);
+			pr = await pair(mk, 'oplead', 'opmate', { route: opBreakRoute() });
+			OPCTX.push(pr.a, pr.b);
+			const A = pr.a, Bd = pr.b;
+			const sync = async (X, Y, k) => { for (let i = 0; i < k; i++) for (const [P, Q] of [[X, Y], [Y, X]]) {
+				await P.page.evaluate(async () => { try { DaimondCore.syncClearWalkCache(); } catch (e) { /* older */ } return window.DaimondSync.flush ? DaimondSync.flush() : DaimondSync.push(); }).catch(() => {});
+				await opwait(500);
+				await Q.page.evaluate(async () => { try { DaimondCore.syncClearWalkCache(); } catch (e) { /* older */ } return DaimondSync.pull(); }).catch(() => {});
+				await opwait(500); } };
+			for (const X of [A, Bd]) { await X.page.evaluate(() => DaimondDiamond.seedDefaults()); }
+			await standard(A.page);
+			await sync(A, Bd, 3);
+			const haveB = await opuntil(async () => (await Bd.page.evaluate(() => DaimondCore.chatStore().stored().filter((c) => /^opchat/.test(c.id)).length)) >= 2, 20000);
+			const tb = await raise(Bd.page), ta = await raise(A.page);
+			opcheck('OP4', haveB && !!has(tb, 'note', 2, HELP) && !!has(ta, 'note', 2, HELP), 'control: both devices hold the ratings and each raises the Diamond note', JSON.stringify([ta, tb].map((x) => x.map((t) => t.kind + ':' + t.level))));
+			const an = has(ta, 'note', 2, HELP);
+			if (an) await press(A.page, an.id, 'Dismiss');
+			await sync(A, Bd, 3);
+			await Bd.page.evaluate(() => (window.DaimondNotes && DaimondNotes.reload) ? DaimondNotes.reload(true) : null).catch(() => {});
+			const fB = await fileOf(Bd.page, HELP), tb2 = await raise(Bd.page);
+			opcheck('OP4', / · dismissed · diamond · fast · long /.test(fB), 'the dismissal reached the second device in the Diamond\'s file', JSON.stringify(fB.slice(0, 200)));
+			opcheck('OP4', !has(tb2, 'note', 2, HELP), 'and the second device\'s tile is taken down and not raised again', JSON.stringify(tb2.map((t) => t.kind + ':' + t.level)));
+		} catch (e) { opcheck('OP4', false, 'the second device ran to its end', String((e && e.message) || e)); }
+	},
+
+	OP5: async () => {
+		const { page } = await opctx('op5');
+		await standard(page);
+		const before = await modelOf(page, HELP);
+		// Count the writes to the Diamonds' model record (the page may shim localStorage per account: patch the object that owns setItem).
+		await page.evaluate(() => { window.__sdm = []; const L = window.localStorage, own = Object.prototype.hasOwnProperty.call(L, 'setItem'), T = own ? L : Storage.prototype, o = T.setItem;
+			T.setItem = function (k, v) { if (/daimond-diamond-models$/.test(String(k))) window.__sdm.push(String(v)); return o.apply(this, arguments); }; });
+		const ts = await raise(page);
+		const sw = has(ts, 'switch', 2, HELP, 'fast', 'thinker');
+		opcheck('OP5', !!sw, 'control: a switch for Help from mock/fast to mock/thinker is proposed', JSON.stringify(ts.map((t) => t.kind + ':' + t.level)));
+		if (!sw) return;
+		await press(page, sw.id, 'Switch');
+		const after = await modelOf(page, HELP), writes = await page.evaluate(() => window.__sdm.map((v) => { try { return JSON.parse(v); } catch (e) { return null; } }));
+		opcheck('OP5', !!after && /thinker$/.test(after.model) && (!before || before.model !== after.model), 'Switch changed Help\'s model record from ' + JSON.stringify(before) + ' to mock/thinker', JSON.stringify(after));
+		const last = writes.length ? writes[writes.length - 1] : null;
+		opcheck('OP5', !!last && !!last[HELP] && /thinker$/.test(last[HELP].model) && Object.keys(last[HELP]).sort().join() === 'model,provider,visionModel,visionProvider,workerModel,workerProvider', 'through setDiamondModel: the record\'s one writer, with its whole shape', writes.length + ' write(s) seen; ' + JSON.stringify(last && last[HELP]));
+		const f = await fileOf(page, HELP);
+		opcheck('OP5', / · switched · diamond · fast /.test(f), 'the switch is on file for its review', JSON.stringify(f.slice(0, 200)));
+		// The Diamond cog shows the model.
+		await page.evaluate((id) => { const cog = document.querySelector(`#diamond-list .diamond-box[data-id="${id}"] .tile-cog`); if (cog) cog.click(); }, HELP);
+		await page.waitForSelector('.tile-dlg-card select.tile-model', { timeout: 8000 }).catch(() => {});
+		const shown = await page.evaluate(() => { const s = document.querySelector('.tile-dlg-card select.tile-model'); const o = s && s.selectedOptions[0]; return o ? { text: o.textContent, value: o.value } : null; });
+		opcheck('OP5', !!shown && /thinker/.test(shown.text + ' ' + shown.value), 'the Diamond cog\'s pulldown shows mock/thinker', JSON.stringify(shown));
+	},
+};
+
+/// Run the sections asked for (`--only OP1,OP3`, else all); each opens its own devices and they are all closed at the end.
+async function runProposals() {
+	const want = ONLY.length ? ONLY : Object.keys(OPS);
+	for (const k of want) {
+		if (!OPS[k]) { check(false, 'no section called ' + k); continue; }
+		try { await OPS[k](); }
+		catch (e) { opcheck(k, false, 'the section ran to its end', String((e && e.message) || e)); }
+		while (OPCTX.length) { const x = OPCTX.pop(); try { await x.close(); } catch (e) { /* closed */ } }
+	}
+	console.log('\n  OP tally: ' + Object.keys(OPBAD).map((k) => `${k} ${OPOK[k]} ok ${OPBAD[k]} bad`).join(', '));
+}
+
+if (OP_ONLY) {
+	await runProposals();
+	console.log(failures === 0 ? '\nverify_optimiser: all checks pass.' : `\nverify_optimiser: ${failures} check(s) failed.`);
+	process.exit(failures === 0 ? 0 : 1);
+}
 
 const s = await open({ name: 'optimiser' + (BREAK ? '-' + BREAK : ''),
 	signIn: false, connect: false, route: ROUTE,
@@ -689,6 +1047,7 @@ try {
 } finally {
 	await s.close();
 }
+await runProposals();
 
 console.log(failures === 0
 	? '\nverify_optimiser: all checks pass.'

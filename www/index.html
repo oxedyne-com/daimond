@@ -1806,6 +1806,12 @@
 <!-- ratings.js: the rating record, the head rule, the lit state and the burst, all pure.
      After provenance.js, whose `prod` record every rating carries. -->
 <script src="js/ratings.js"></script>
+<!-- ratingroll.js: the rating roll-up (cells per level and key, fading by newer ratings, shrinkage, trust,
+     the digest's Ratings section), all pure. After ratings.js, whose head rule it reads. -->
+<script src="js/ratingroll.js"></script>
+<!-- steering.js: what the page may propose from the rating cells (a switch, a note, a review), and the
+     fixed sentence for each note, all pure. After ratingroll.js, whose cells it reads. -->
+<script src="js/steering.js"></script>
 <script src="js/ledger.js"></script>
 <!-- money.js: which pot of money a figure belongs to, and what may honestly be
      said about it. Pure wording rules, before the app that draws them. -->

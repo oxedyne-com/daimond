@@ -1,7 +1,7 @@
 // A long-lived HEADED browser on the user's screen (:0), launched by Playwright
 // (which gets the sandbox flags right) and left alive with CDP exposed so other
-// scripts can attach and drive it. Real Fireworks key, from the gitignored
-// testcfg. Signs in (skips the passphrase), connects the value model, and then
+// scripts can attach and drive it. Real Fireworks key, from the test config kept
+// outside the tree (dev/testcfg.mjs). Signs in (skips the passphrase), connects the value model, and then
 // waits — the user can watch, and grant a real folder when asked.
 import fs from 'node:fs';
 import os from 'node:os';
@@ -14,11 +14,12 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 // desktop. Importing this strips the two variables from `process.env`, which is all a
 // launcher that spreads `process.env` needs. See dev/display.mjs.
 import './display.mjs';
+import { testCfg } from './testcfg.mjs';
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const PW = path.join(os.homedir(), '.red-pw/node_modules/playwright-core/index.mjs');
 const { chromium } = await import(pathToFileURL(PW).href);
 const CHROME = `${os.homedir()}/.cache/ms-playwright/chromium-1229/chrome-linux64/chrome`;
-const cfg = JSON.parse(fs.readFileSync(path.join(HERE, '.secrets/testcfg.json'), 'utf8'));
+const cfg = testCfg();
 const MODEL = cfg.models.value;
 const CDP_PORT = 9223;
 // The world's dev server -- see dev/world.sh.  Kept inline rather than imported,

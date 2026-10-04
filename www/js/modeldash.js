@@ -28,13 +28,15 @@
  * because a second caller needing that split is exactly the situation
  * "extend the existing machinery" describes.
  *
- * THE TRUST COLUMN, READ ONLY. `daimond-model-ratings` in localStorage,
- * `{ model: { up, down } }`, was written by two buttons in each row. Since
- * Rating U2 an answer is rated where it is given (the arrows on the tile), so
- * two ways to rate would be two drawings of one control, and the buttons are
- * gone. The counts already given still show, as the cell's own text, and
- * nothing writes the key again; U5 replaces them with figures from rated
- * answers, imports what is here and removes the key.
+ * THE TRUST COLUMN READS RATED ANSWERS (U5b of 5.3.2). A model's cell is the account-level
+ * `cm` cell of the rating roll-up (`DaimondRatingRoll`, www/js/ratingroll.js), which the page
+ * builds from the ratings in every chat and hands in through `useRolls`: "9 up, 3 down of 340
+ * answers" where the figure is trusted, "not enough yet, 4 more" where it is not, a dash where no
+ * answer of the model has been rated. The cell is filed under the model's canonical id, so a row
+ * the ledger names by a provider's spelling reads the same cell as the rating did
+ * (`DaimondPricing.identify`). The old one-tap counts (`daimond-model-ratings`) are not read
+ * here at all: the page imports them once into the Optimiser's digest and removes the key
+ * (`importModelCounts`, daimond.js), so this table shows only figures from rated answers.
  *
  * TWO HALVES, the pattern `dockdrag.js` and `models.js` use: everything
  * above the `typeof document === 'undefined'` guard is PURE -- ledger joins
@@ -45,32 +47,36 @@
 (function () {
 	'use strict';
 
-	var RATINGS_KEY = 'daimond-model-ratings';
+	// ── The Trust cell, from the rating cells ───────────────────
 
-	// ── Rating store (localStorage), read only ──────────────────
-	// Shape: `{ "<model>": { up: N, down: N } }`. Corrupt or absent storage
-	// degrades to "no ratings", the same rule `ledger.js` uses for its own
-	// store, rather than throwing and taking the dashboard with it.
-	function loadRatings() {
-		try {
-			var raw = localStorage.getItem(RATINGS_KEY);
-			if (!raw) return {};
-			var obj = JSON.parse(raw);
-			return (obj && typeof obj === 'object' && !Array.isArray(obj)) ? obj : {};
-		} catch (e) { return {}; }
+	function rolls() { return (typeof window !== 'undefined') ? window.DaimondRatingRoll : null; }
+
+	// The id a rating cell is filed under: the catalogue's name for the model, which is what a
+	// product's stamp carries. The model's own string stands where the catalogue is not loaded.
+	function cmOf(model) {
+		var P = (typeof window !== 'undefined') ? window.DaimondPricing : null;
+		if (P && typeof P.identify === 'function') {
+			try { return String(P.identify(model).cm || ''); } catch (e) { /* the string stands */ }
+		}
+		return String(model || '');
 	}
 
-	/// This model's rating counts, `{ up, down }`, zeros when it has never
-	/// been rated.
-	function ratingsFor(model) {
-		var r = loadRatings()[model || ''];
-		return { up: (r && r.up) || 0, down: (r && r.down) || 0 };
+	/// What the Trust column says of a model, from the account's rating cells (`roll`, as
+	/// `DaimondRatingRoll.cells` makes it): `{ kind: 'none' }` where no answer of it has been
+	/// rated, `{ kind: 'trusted', up, down, made }` where the figure can be believed, and
+	/// `{ kind: 'thin', more }` with how many further ratings would make it so.
+	function trustFor(roll, model) {
+		var RR = rolls();
+		var c = (roll && RR) ? RR.cell(roll, 3, '', 'cm', cmOf(model)) : null;
+		if (!c || !c.n) return { kind: 'none' };
+		if (c.ok) return { kind: 'trusted', up: c.pos, down: c.neg, made: c.made };
+		return { kind: 'thin', more: c.more };
 	}
 
 	// ── The dashboard rows ───────────────────────────────────────
 	//
 	// Joins `DaimondLedger.perModel(period)` -- tokens, cost, turns, the
-	// prompt/completion split -- with the old rating counts, read as they stand. Nothing
+	// prompt/completion split -- with the Trust cell of `roll`. Nothing
 	// here re-walks the raw ledger: that aggregation belongs to `ledger.js`
 	// and stays owned there, so there is exactly one place a ledger entry is
 	// summed per model.
@@ -80,21 +86,19 @@
 	// without this file reaching for a global the test did not set up.
 	//
 	// Returns `[{ model, tokens, promptTokens, completionTokens, usd, turns,
-	// reportedUsd, up, down, medianTurnMs, turnsCompleted, turnsFailed,
+	// reportedUsd, trust, medianTurnMs, turnsCompleted, turnsFailed,
 	// turnsStopped, outcomeTurns, failureRate }]` in `perModel`'s own order
 	// (dearest first). The outcome fields (D-20260921-01) are `null`/`0` for
 	// a model whose turns predate turn-time tracking, or that has none in
 	// the window -- `outcomeTurns === 0` is the panel's own signal to show
 	// "not recorded" rather than a rate it did not earn.
-	function dashboardRows(period, ledgerApi) {
+	function dashboardRows(period, ledgerApi, roll) {
 		var L = ledgerApi || (typeof window !== 'undefined' ? window.DaimondLedger : null);
 		var rows = [];
 		if (L && typeof L.perModel === 'function') {
 			try { rows = L.perModel(period) || []; } catch (e) { rows = []; }
 		}
-		var ratings = loadRatings();
 		return rows.map(function (r) {
-			var rt = ratings[r.model] || { up: 0, down: 0 };
 			return {
 				model:            r.model,
 				tokens:           r.tokens || 0,
@@ -103,8 +107,7 @@
 				usd:              r.usd || 0,
 				turns:            r.turns || 0,
 				reportedUsd:      r.reportedUsd || 0,
-				up:               rt.up || 0,
-				down:             rt.down || 0,
+				trust:            trustFor(roll, r.model),
 				medianTurnMs:     (typeof r.medianTurnMs === 'number') ? r.medianTurnMs : null,
 				turnsCompleted:   r.turnsCompleted || 0,
 				turnsFailed:      r.turnsFailed || 0,
@@ -130,9 +133,7 @@
 	}
 
 	var PURE = {
-		RATINGS_KEY:   RATINGS_KEY,
-		loadRatings:   loadRatings,
-		ratingsFor:    ratingsFor,
+		trustFor:      trustFor,
 		dashboardRows: dashboardRows,
 		gapFields:     gapFields,
 	};
@@ -142,6 +143,9 @@
 
 	var period = 'month';	// 'week' | 'month'
 	var wiredActions = false;
+	var rollSource = null;	// the page's reader of the account's rating cells, or null
+	var roll = null;		// what it last gave, drawn in the Trust column
+	var steerSource = null;	// the page's drawer of the Steering list, or null
 
 	function el(tag, cls, text) {
 		var e = document.createElement(tag);
@@ -193,15 +197,16 @@
 		try { return (M.getDefault() || {}).model || ''; } catch (e) { return ''; }
 	}
 
-	// The Trust cell's words: the counts the old one-tap rating gave. A model
-	// never rated reads as a dash, as an unrecorded median does.
-	function fmtCounts(up, down) {
-		if (!up && !down) return '—';
-		return t('modeldash.rating_counts', { up: up, down: down });
+	// The Trust cell's words. A model with no rated answer reads as a dash, as an
+	// unrecorded median does, and so does every model until the cells have been read.
+	function trustText(tr) {
+		if (tr.kind === 'trusted') return t('modeldash.trust_counts', { up: tr.up, down: tr.down, made: tr.made });
+		if (tr.kind === 'thin') return t('modeldash.trust_more', { n: tr.more });
+		return '—';
 	}
 
 	function table() {
-		var rows = dashboardRows(period);
+		var rows = dashboardRows(period, undefined, roll);
 		if (!rows.length) return el('div', 'mdash-empty', t('modeldash.no_usage'));
 
 		var def = defaultModel();
@@ -237,7 +242,7 @@
 			var failTd = el('td', 'num', r.outcomeTurns > 0 ? fmtRate(r.failureRate) : '—');
 			failTd.title = t('modeldash.col_fail_rate_help', { failed: r.turnsFailed, stopped: r.turnsStopped });
 			tr.appendChild(failTd);
-			var rateTd = el('td', 'num', fmtCounts(r.up, r.down));
+			var rateTd = el('td', 'num', trustText(r.trust));
 			tr.appendChild(rateTd);
 			tb.appendChild(tr);
 		});
@@ -270,6 +275,16 @@
 		sec.appendChild(table());
 		sec.appendChild(gapNote());
 		host.appendChild(sec);
+
+		// The notes the models are told, with Remove: the Steering list (Rating U7c), drawn by the page.
+		if (steerSource) {
+			var ss = el('section', 'mdash-sec');
+			ss.appendChild(sectionHead(t('steer.title'), t('steer.hint')));
+			var body = el('div', 'mdash-steer');
+			ss.appendChild(body);
+			host.appendChild(ss);
+			try { steerSource(body); } catch (e) { /* the table stands without it */ }
+		}
 	}
 
 	function wireActions() {
@@ -294,11 +309,31 @@
 		if (document.getElementById('modeldash-view')) render();
 	}
 
-	/// Called when the panel is revealed. Everything here is local and
-	/// synchronous -- no fetch, ever -- so the draw is instant.
+	/// The page hands in how to read the account's rating cells: a function that answers a
+	/// promise of `{ roll }`. Called each time the panel opens, so the Trust column is as
+	/// current as the transcripts; nothing is stored here.
+	function useRolls(fn) { rollSource = (typeof fn === 'function') ? fn : null; }
+
+	/// The page hands in how to draw the Steering list: a function that fills the element it is given.
+	function useSteering(fn) { steerSource = (typeof fn === 'function') ? fn : null; }
+
+	function readRoll() {
+		if (!rollSource) return;
+		var p;
+		try { p = rollSource(); } catch (e) { return; }
+		if (!p || typeof p.then !== 'function') return;
+		p.then(function (res) {
+			roll = (res && res.roll) || null;
+			if (document.getElementById('modeldash-view')) render();
+		}, function () { /* the Trust cells stay as they were */ });
+	}
+
+	/// Called when the panel is revealed. The table is drawn at once from the ledger, and
+	/// the Trust cells follow when the rating cells have been read.
 	function onOpen() {
 		wireActions();
 		render();
+		readRoll();
 		if (!hooked) { window.addEventListener('daimond:ledger', onLedgerChanged); hooked = true; }
 	}
 
@@ -317,12 +352,12 @@
 
 	window.DaimondModelDash = {
 		// Pure surface (also on `PURE`, kept in sync for the test file).
-		RATINGS_KEY:   RATINGS_KEY,
-		loadRatings:   loadRatings,
-		ratingsFor:    ratingsFor,
+		trustFor:      trustFor,
 		dashboardRows: dashboardRows,
 		gapFields:     gapFields,
 		// DOM surface.
+		useRolls: useRolls,
+		useSteering: useSteering,
 		onOpen:  onOpen,
 		onClose: onClose,
 		refresh: onOpen,

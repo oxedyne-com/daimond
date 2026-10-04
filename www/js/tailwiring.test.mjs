@@ -85,13 +85,17 @@ async function main() {
 	{
 		const parseTailNoteSrc = extractFn(src, '_parseTailNote');
 		const wiringSrc = extractBetween(src,
-			'// #22: the engine appends the end-of-turn changed-files note as the LAST',
-			'// The ending, last, under whatever the turn managed to say.');
+			'// #22: the engine appends the end-of-turn changed-files note',
+			'// A PAUSE CAUGHT IT PART WAY');
 		// The lifted block references `after`, `rec`, `detached`, `onScreen`,
 		// `appendUserMessage`, `newMid` and `_parseTailNote` exactly as
 		// `runSteer` does; here they are the function's own parameters/closure.
+		// The block awaits `turnFileProds` (one record per file row, from the manifest the turn
+		// wrote) and names `diamondId` and `dumid`; here the manifest is empty, so no `prod`.
 		const wrapperBody = parseTailNoteSrc + '\n'
-			+ 'function applyTailNoteWiring(after, rec, detached, onScreen, appendUserMessage, newMid) {\n'
+			+ 'var diamondId = "D1", dumid = "U1";\n'
+			+ 'async function turnFileProds() { return []; }\n'
+			+ 'async function applyTailNoteWiring(after, rec, detached, onScreen, appendUserMessage, newMid) {\n'
 			+ wiringSrc + '\n'
 			+ '}\n'
 			+ 'return { applyTailNoteWiring: applyTailNoteWiring };\n';
@@ -110,7 +114,7 @@ async function main() {
 			];
 			const drawn = [];
 			const appendUserMessage = (text, ts) => drawn.push({ text: text, ts: ts });
-			wiring.applyTailNoteWiring(after, rec, null, () => true, appendUserMessage, () => 'MID_TAIL');
+			await wiring.applyTailNoteWiring(after, rec, null, () => true, appendUserMessage, () => 'MID_TAIL');
 
 			check('(a1) rec.messages grew by exactly one row',
 				rec.messages.length === 2, rec.messages.length);
@@ -131,7 +135,7 @@ async function main() {
 			const rec = { messages: [] };
 			const after = [{ role: 'user', content: TAIL }];
 			const drawn = [];
-			wiring.applyTailNoteWiring(after, rec, null, () => false, (t, ts) => drawn.push(t), () => 'M2');
+			await wiring.applyTailNoteWiring(after, rec, null, () => false, (t, ts) => drawn.push(t), () => 'M2');
 			check('(a6) off-screen: the row is still recorded', rec.messages.length === 1);
 			check('(a7) off-screen: nothing is drawn', drawn.length === 0);
 		}
@@ -141,7 +145,7 @@ async function main() {
 		{
 			const rec = { messages: [] };
 			const after = [{ role: 'user', content: TAIL }];
-			wiring.applyTailNoteWiring(after, rec, { turnId: 'ERRAND-9' }, () => false, () => {}, () => 'M3');
+			await wiring.applyTailNoteWiring(after, rec, { turnId: 'ERRAND-9' }, () => false, () => {}, () => 'M3');
 			check('(a8) a detached turn stamps iturn with the errand\'s turn id',
 				rec.messages[0] && rec.messages[0].iturn === 'ERRAND-9');
 			check('(a9) mid is still fresh (mid !== iturn: distinct fields)',
@@ -153,8 +157,8 @@ async function main() {
 		{
 			const rec = { messages: [] };
 			const after = [{ role: 'user', content: TAIL }];
-			wiring.applyTailNoteWiring(after, rec, null, () => false, () => {}, () => 'M4');
-			wiring.applyTailNoteWiring(after, rec, null, () => false, () => {}, () => 'M5');
+			await wiring.applyTailNoteWiring(after, rec, null, () => false, () => {}, () => 'M4');
+			await wiring.applyTailNoteWiring(after, rec, null, () => false, () => {}, () => 'M5');
 			check('(a10) a second pass over the same tail note does not duplicate it',
 				rec.messages.length === 1, rec.messages.length);
 		}
@@ -164,7 +168,7 @@ async function main() {
 		{
 			const rec = { messages: [{ role: 'assistant', content: 'All good, nothing to change.', mid: 'A1', ts: 1 }] };
 			const after = [{ role: 'user', content: 'is everything ok?' }, { role: 'assistant', content: 'All good, nothing to change.' }];
-			wiring.applyTailNoteWiring(after, rec, null, () => true, () => { throw new Error('must not draw'); }, () => 'M6');
+			await wiring.applyTailNoteWiring(after, rec, null, () => true, () => { throw new Error('must not draw'); }, () => 'M6');
 			check('(a11) no tail note as the last message: rec.messages is untouched',
 				rec.messages.length === 1);
 		}
@@ -224,10 +228,11 @@ async function main() {
 			extractVar(src, '_TAIL_MORE'),
 			extractFn(src, '_parseTailNote'),
 			extractFn(src, '_tailNoteTable'),
+			extractFn(src, '_filesBox'),
 			extractFn(src, 'openTurnFile'),
 			extractFn(src, '_turnFileRow'),
 		].join('\n');
-		const wrapperBody = 'var currentDiamond = null;\n' + tableSrc
+		const wrapperBody = 'var window = {}, currentDiamond = null;\n' + tableSrc
 			+ '\nreturn { tailNoteTable: _tailNoteTable, setCurrentDiamond: function (d) { currentDiamond = d; } };\n';
 		const table = new Function('document', 'tn', 'DaimondVersions', 'openFile', wrapperBody)(
 			document, tn, DaimondVersions, openFile);
@@ -382,6 +387,7 @@ async function main() {
 			extractVar(src, '_TAIL_MORE'),
 			extractFn(src, '_parseTailNote'),
 			extractFn(src, '_tailNoteTable'),
+			extractFn(src, '_filesBox'),
 			extractFn(src, 'openTurnFile'),
 			extractFn(src, '_turnFileRow'),
 		].join('\n');
@@ -458,7 +464,9 @@ async function main() {
 	{
 		const fnSrc = extractFn(src, 'runDispatchFallback');
 		const makeFn = (recovering) => {
-			const retrySpy = [], localSpy = [];
+			// Since 448f951b the backstop hands the turn to `recoverOneLocally(chat, m, { reseat })`,
+			// which offers it to the next live desktop first; the one spy sees both halves.
+			const localSpy = [];
 			const peer  = { REASON_DISPATCHED: 'dispatched', recoverDecision: () => true, runErrand: () => {} };
 			const lease = { record: () => null };
 			const stubs = {
@@ -470,12 +478,13 @@ async function main() {
 				dispatchedTurnFinished:      () => false,
 				selfDeviceId:                () => 'self',
 				_localRecovering:            recovering ? { t1: true } : Object.create(null),
-				retryNextDesktopBeforeLocal: async () => { retrySpy.push(1); return false; },
-				recoverOneLocally:           async () => { localSpy.push(1); },
+				_handBack:                   Object.create(null),
+				diag:                        () => {},
+				recoverOneLocally:           async (chat, m, o) => { localSpy.push(o); },
 			};
 			const names = Object.keys(stubs);
 			const fn = new Function(...names, fnSrc + '\nreturn runDispatchFallback;')(...names.map((n) => stubs[n]));
-			return { fn, retrySpy, localSpy };
+			return { fn, localSpy };
 		};
 
 		// (d1) GUARD ON: a turn already recovering locally is neither re-seated nor re-run.
@@ -483,15 +492,15 @@ async function main() {
 		const on = makeFn(true);
 		await on.fn('c1', 't1');
 		check('(d1) backstop stands down while _localRecovering[tid] is set (no re-seat, no re-run)',
-			on.retrySpy.length === 0 && on.localSpy.length === 0,
-			{ retry: on.retrySpy.length, local: on.localSpy.length });
+			on.localSpy.length === 0, { local: on.localSpy.length });
 
 		// (d2) GUARD OFF: with no local recovery in flight, the backstop still proceeds
 		// to try the next desktop -- the guard is surgical, not a blanket stand-down.
 		const off = makeFn(false);
 		await off.fn('c1', 't1');
-		check('(d2) with no local recovery in flight, the backstop still retries the next desktop',
-			off.retrySpy.length === 1, { retry: off.retrySpy.length });
+		check('(d2) with no local recovery in flight, the backstop still re-seats to the next desktop first',
+			off.localSpy.length === 1 && !!off.localSpy[0] && !!off.localSpy[0].reseat,
+			{ local: off.localSpy.length, opts: off.localSpy[0] });
 	}
 
 	console.log(failures ? ('\nFAIL -- ' + failures + '/' + checks + ' checks') : ('\nALL PASS -- ' + checks + '/' + checks));

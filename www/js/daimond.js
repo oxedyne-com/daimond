@@ -291,7 +291,8 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 	// says so by name. A caller with no model in hand passes nothing and gets every note,
 	// which is the safe answer: an absent note costs a turn, a needless one costs about a
 	// hundred tokens.
-	function SYSTEM_PROMPT(model) { return Prompts.role('chat', model); }
+	// `steer` is the steering notes to tell it, one per line, where a chat is built with any (`ensureApp`).
+	function SYSTEM_PROMPT(model, steer) { return Prompts.role('chat', model, steer); }
 
 	// ── Settings (BYOK, localStorage) ──────────────────────────
 	var CFG_KEY = 'daimond-byok';
@@ -3012,7 +3013,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		/// consumer needs a whole transcript the summary mirror does not hold. Never throws:
 		/// a row that will not read hands back an empty transcript rather than a rejection
 		/// the open path would have to catch.
-		async function loadMessages(chatId) {
+		async function loadMessages(chatId, readOnly) {
 			try {
 				await conn();
 				// A COLD iOS/WebKit tab can hand back an EMPTY read from a store still
@@ -3075,7 +3076,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 				// heals compare and write this form: a heal judged against uncut text would
 				// rewrite on every read.
 				var toStore = slimMessages(full);
-				if (!sameTranscript(toStore, chunkMsgs)) {
+				if (!readOnly && !sameTranscript(toStore, chunkMsgs)) {
 					try { await rewriteChunks(chatId, toStore); } catch (e) { /* served from `toStore` regardless */ }
 				}
 				// Heal the fallback ROW when it has drifted from what the reader serves: a mid
@@ -3087,7 +3088,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 				// matches, which is every ordinary chat. GUARDED on a non-empty `full`: a
 				// cold-empty read must never blank a legacy row that is the sole home of a
 				// pre-seq-214 transcript (Fix, the tag-loss family).
-				if (row && full.length && !sameTranscript(toStore, legacyMsgs)) {
+				if (!readOnly && row && full.length && !sameTranscript(toStore, legacyMsgs)) {
 					try {
 						row.messages = toStore;
 						var tt = tx('readwrite'); tt.store.put(row); await tt.done;
@@ -3415,6 +3416,10 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			/// row -- what the open path and the whole-transcript consumers call to make a
 			/// chat resident (seq 213, Stage 1). See `loadMessages`.
 			loadMessages:  function (chatId) { loadProbe++; return loadMessages(chatId); },
+			/// The same transcript `loadMessages` serves, read and not healed: no chunk is rewritten, no
+			/// legacy row is put back and no summary's `fp` is cleared. For a reader that must leave the
+			/// store as it found it (the ratings roll behind the Optimiser's digest).
+			readMessages:  function (chatId) { loadProbe++; return loadMessages(chatId, true); },
 			/// Record a transcript's fingerprint and byte length on its summary, in the
 			/// mirror now and in the database behind it, so the NEXT collect reuses the
 			/// stored manifest without a load (`collectChatsRefs`). Batched: one summary
@@ -9635,6 +9640,16 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		} catch (e) { return ''; }
 	}
 
+	/// The note file a Diamond export is carrying (`.daimond/steering.md`), as its stored text, read as
+	/// defensively as `packLinks`.
+	function packNotes(data) {
+		try {
+			var files = (JSON.parse(data) || {}).files || {};
+			var text  = files['.daimond/steering.md'] || '';
+			return typeof text === 'string' ? text : '';
+		} catch (e) { return ''; }
+	}
+
 	/// Give a Diamond the links of BOTH copies when the two are equally fresh.
 	/// True when something was written.
 	///
@@ -9827,86 +9842,121 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			}
 			var idata = await diamondData(r);
 			if (idata == null) continue;			// a v3 ref whose chunks are no longer held
-			// TWO-SIDED CHANGE (S-SYNC #4). A strictly newer copy is arriving, but did
-			// THIS device also move the Diamond, and was the arrival built on something
-			// else? If so, the arrival would silently overwrite the local edit -- the
-			// phone that changed the memory, backgrounded before its push and pulled the
-			// desktop's copy on resume; the edit made while a push flew; the edit that
-			// landed first and was skipped as older by a device that had also moved. So
-			// the loser is kept as a recoverable version inside the import
-			// (`keep_conflict`), and its tags and links -- which live outside the
-			// versioned files -- are unioned onto the winner below. See `diamondTwoSided`.
-			var twoSided = diamondTwoSided(r, mine, recv, dbase);
-			var rAnc = sentAnc(r);
-			var wfOk = packFacets(idata);
-			var wf = wfOk || { tags: packTags(idata), kits: [], name: '', links: packLinks(idata) };
-			var plan = null;
-			if (twoSided) {
-				// What lives outside the versioned files -- tags, links, name, grants -- is
-				// settled THREE-WAY against the copy both sides last shared (the newest in
-				// the arrival's lineage this device holds a record of), so what either side
-				// took off stays off and what either added stays on (QDIA F2, F4). The links
-				// sidecar is not a versioned file, so it is read off the loser's export
-				// before the import replaces it -- only on the rare conflict path.
-				var loserLinks = '';
-				try { loserLinks = packLinks(await app.export_diamond(r.id)); }
-				catch (e) { loserLinks = ''; }
-				var lf = {
-					tags:  (mine && Array.isArray(mine.tags)) ? mine.tags.slice() : [],
-					kits:  (mine && Array.isArray(mine.toolkits)) ? mine.toolkits.slice() : [],
-					name:  (mine && typeof mine.name === 'string') ? mine.name : '',
-					links: loserLinks,
-				};
-				plan = diamondMergePlan(wf, lf, wfOk ? seenAncestor(seen[r.id], rAnc) : null);
-			}
-			// A REMOVAL OR A NARROWING MADE ON ANOTHER DEVICE LANDS ON THIS DEVICE'S
-			// RECORD HERE (R2), from the rows the live copy will hold -- the arriving
-			// copy's own sidecar, or the merge's rows where a conflict settles them -- and
-			// never from a read of the store, which mid-import answers "no links". Before
-			// the import, so a failed import leaves an entry narrowed and a row standing:
-			// that errs closed, and the next pull's retry repairs it. A widening never lands.
-			if (DaimondMarksHere.settle(r.id, plan ? plan.rows : wf.links, '')) changed = true;
-			var storedAt = packStamp(idata) || diamondStamp(r);	// the stamp the import lays down
-			try { await app.import_diamond(idata, twoSided); changed = true; }
-			catch (e) { idata = null; continue; }
-			idata = null;							// free the export before the next Diamond
-			// The import laid both sides on the remote's copy: it is now the agreed
-			// fork point (S-SYNC #4), at the stamp that copy carries, not the entry's.
-			dbase[r.id] = storedAt; baseDirty = true;
-			// And it is a copy RECEIVED, the one thing that moves the receipt, with the
-			// lineage it came with (lanes DIA, DIA2). Laid down now, before the merge's
-			// writes below move the stamp: a collect between them reads the new copy as
-			// built on this one. A copy that REPLACED this device's copy leaves only the
-			// records of copies it descends from as common ground; a conflict keeps all.
-			var rc = {}, rs = {}, ro = {};
-			rc[r.id] = [storedAt, storedAt, rAnc !== null ? rAnc : []];
-			// Only a copy whose metadata could be read is common ground: a guessed name or
-			// grant list would read as a change the loser made.
-			if (wfOk) rs[r.id] = seenEntry(storedAt, wf);
-			if (!twoSided && rAnc !== null) ro[r.id] = rAnc;
-			recordDiamondCopies(rc, null, rs, ro);
-			if (plan) {
-				// Each write moves `touched`, so the result travels back on the next push
-				// and the other device takes it one-sided: it descends from both copies.
-				if (plan.tags) { try { await app.set_tags(r.id, JSON.stringify(plan.tags)); } catch (e) {} }
-				if (plan.kits && app.set_toolkits) {
-					try { await app.set_toolkits(r.id, JSON.stringify(plan.kits)); } catch (e) {}
+			// ONE CRITICAL SECTION PER DIAMOND (round F, R1). From here to the join of the note file the Diamond is held, as it is
+			// for every note press (`holdDiamond`). The data was fetched above, outside the lock, so a press waits for the local
+			// work only. The decision is made on the Diamond as it stands NOW and not on the list read at the top of this pull,
+			// which a press (a note, a tag, a fold's crystal write) made since has outrun: a copy that was one-sided read as such,
+			// and the import replaced the file under the press.
+			var storedAt = await holdDiamond(r.id, async function () {
+				if (mine) {
+					var cur = null;
+					try { JSON.parse(await app.list_diamonds()).forEach(function (d) { if (d && d.id === r.id) cur = d; }); }
+					catch (e) { return 0; }				// the store would not list: nothing is replaced on a guess
+					if (!cur) return 0;					// deleted meanwhile; its tombstone settles it
+					// A press has made this device's copy the newer: the arrival is no longer the strictly newer one, and the
+					// other device takes this copy at its next pull, the join of the note file there keeping what it added.
+					if (!(diamondStamp(r) > diamondStamp(cur))) return 0;
+					mine = cur; local[r.id] = cur;
 				}
-				if (plan.name !== null) { try { await app.rename_diamond(r.id, plan.name); } catch (e) {} }
-				// A row the merge takes off is a removal this device made since the common
-				// copy, so it goes through the one door every removal here takes: the entry,
-				// then the row. `settle` above left the entry out already; the door keeps it
-				// out should a press have brought the row, stood back up by the import, into
-				// force meanwhile. Read as `settle` reads it, so the two name one entry.
-				for (var pd = 0; pd < plan.drop.length; pd++) {
-					var gr = DaimondMarksHere.parseSidecar(plan.drop[pd].line)[0];
-					try { await removeLinkHere({ owner: r.id, id: plan.drop[pd].id, to: gr ? gr.to : '' }); }
-					catch (e) {}
+				// TWO-SIDED CHANGE (S-SYNC #4). A strictly newer copy is arriving, but did
+				// THIS device also move the Diamond, and was the arrival built on something
+				// else? If so, the arrival would silently overwrite the local edit -- the
+				// phone that changed the memory, backgrounded before its push and pulled the
+				// desktop's copy on resume; the edit made while a push flew; the edit that
+				// landed first and was skipped as older by a device that had also moved. So
+				// the loser is kept as a recoverable version inside the import
+				// (`keep_conflict`), and its tags and links -- which live outside the
+				// versioned files -- are unioned onto the winner below. See `diamondTwoSided`.
+				var twoSided = diamondTwoSided(r, mine, recv, dbase);
+				var rAnc = sentAnc(r);
+				var wfOk = packFacets(idata);
+				var wf = wfOk || { tags: packTags(idata), kits: [], name: '', links: packLinks(idata) };
+				var plan = null, loserNotes = '';
+				if (twoSided) {
+					// What lives outside the versioned files -- tags, links, name, grants -- is
+					// settled THREE-WAY against the copy both sides last shared (the newest in
+					// the arrival's lineage this device holds a record of), so what either side
+					// took off stays off and what either added stays on (QDIA F2, F4). The links
+					// sidecar is not a versioned file, so it is read off the loser's export
+					// before the import replaces it -- only on the rare conflict path.
+					var loserLinks = '';
+					try {
+						var loserPack = await app.export_diamond(r.id);
+						loserLinks = packLinks(loserPack);
+						loserNotes = packNotes(loserPack);
+					}
+					catch (e) { loserLinks = ''; loserNotes = ''; }
+					var lf = {
+						tags:  (mine && Array.isArray(mine.tags)) ? mine.tags.slice() : [],
+						kits:  (mine && Array.isArray(mine.toolkits)) ? mine.toolkits.slice() : [],
+						name:  (mine && typeof mine.name === 'string') ? mine.name : '',
+						links: loserLinks,
+					};
+					plan = diamondMergePlan(wf, lf, wfOk ? seenAncestor(seen[r.id], rAnc) : null);
 				}
-				if (plan.add.trim()) { try { await app.union_links(r.id, plan.add); } catch (e) {} }
-				trail('sync diamond CONFLICT', r.id + ' both sides moved — local edit kept as a version'
-					+ (plan.both ? '; both renamed, "' + wf.name + '" stands over "' + lf.name + '"' : ''));
-			}
+				// A REMOVAL OR A NARROWING MADE ON ANOTHER DEVICE LANDS ON THIS DEVICE'S
+				// RECORD HERE (R2), from the rows the live copy will hold -- the arriving
+				// copy's own sidecar, or the merge's rows where a conflict settles them -- and
+				// never from a read of the store, which mid-import answers "no links". Before
+				// the import, so a failed import leaves an entry narrowed and a row standing:
+				// that errs closed, and the next pull's retry repairs it. A widening never lands.
+				if (DaimondMarksHere.settle(r.id, plan ? plan.rows : wf.links, '')) changed = true;
+				var storedAt = packStamp(idata) || diamondStamp(r);	// the stamp the import lays down
+				try { await app.import_diamond(idata, twoSided); changed = true; }
+				catch (e) { idata = null; return 0; }
+				idata = null;							// free the export before the next Diamond
+				// The import laid both sides on the remote's copy: it is now the agreed
+				// fork point (S-SYNC #4), at the stamp that copy carries, not the entry's.
+				dbase[r.id] = storedAt; baseDirty = true;
+				// And it is a copy RECEIVED, the one thing that moves the receipt, with the
+				// lineage it came with (lanes DIA, DIA2). Laid down now, before the merge's
+				// writes below move the stamp: a collect between them reads the new copy as
+				// built on this one. A copy that REPLACED this device's copy leaves only the
+				// records of copies it descends from as common ground; a conflict keeps all.
+				var rc = {}, rs = {}, ro = {};
+				rc[r.id] = [storedAt, storedAt, rAnc !== null ? rAnc : []];
+				// Only a copy whose metadata could be read is common ground: a guessed name or
+				// grant list would read as a change the loser made.
+				if (wfOk) rs[r.id] = seenEntry(storedAt, wf);
+				if (!twoSided && rAnc !== null) ro[r.id] = rAnc;
+				recordDiamondCopies(rc, null, rs, ro);
+				if (plan) {
+					// Each write moves `touched`, so the result travels back on the next push
+					// and the other device takes it one-sided: it descends from both copies.
+					if (plan.tags) { try { await app.set_tags(r.id, JSON.stringify(plan.tags)); } catch (e) {} }
+					if (plan.kits && app.set_toolkits) {
+						try { await app.set_toolkits(r.id, JSON.stringify(plan.kits)); } catch (e) {}
+					}
+					if (plan.name !== null) { try { await app.rename_diamond(r.id, plan.name); } catch (e) {} }
+					// A row the merge takes off is a removal this device made since the common
+					// copy, so it goes through the one door every removal here takes: the entry,
+					// then the row. `settle` above left the entry out already; the door keeps it
+					// out should a press have brought the row, stood back up by the import, into
+					// force meanwhile. Read as `settle` reads it, so the two name one entry.
+					for (var pd = 0; pd < plan.drop.length; pd++) {
+						var gr = DaimondMarksHere.parseSidecar(plan.drop[pd].line)[0];
+						try { await removeLinkHere({ owner: r.id, id: plan.drop[pd].id, to: gr ? gr.to : '' }); }
+						catch (e) {}
+					}
+					if (plan.add.trim()) { try { await app.union_links(r.id, plan.add); } catch (e) {} }
+					trail('sync diamond CONFLICT', r.id + ' both sides moved — local edit kept as a version'
+						+ (plan.both ? '; both renamed, "' + wf.name + '" stands over "' + lf.name + '"' : ''));
+				}
+				// THE NOTE FILE IS NOT A VERSIONED FILE EITHER (round F, QA pair 2 F1). The import deleted this
+				// device's `.daimond/steering.md` with the rest and laid the arriving copy's over it, so a note added
+				// here vanished and a Remove made here came back to active. The two files are joined by entry id
+				// instead, a status only moving forward, and the result is written and stamped so that it travels
+				// back and the other device takes it one-sided. Nothing to write where the arriving file already
+				// holds everything this one did.
+				if (twoSided && loserNotes && window.DaimondNotes) {
+					try { await window.DaimondNotes.uniteHeld(r.id, loserNotes); }
+					catch (e) { trail('steering unjoined', r.id + ': ' + ((e && (e.message || e)) || '?')); }
+				}
+				loserNotes = '';
+				return storedAt;
+			});
+			idata = null;
+			if (!storedAt) continue;
 			// RECORD THE SENDER'S MANIFEST (`adoptDiamondRef`), at the stamp the import
 			// just laid down, so the collector's reuse check reuses this reference
 			// rather than exporting again.
@@ -18455,9 +18505,13 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			// app has one modal and it should go on having one.
 			if (opts.kind === 'pick') picked = opts.build(card);
 			if (opts.kind === 'prompt') {
-				input = document.createElement('input');
-				input.className = 'dlg-input';
-				input.type = 'text';
+				// `opts.lines` (2 or more) asks for a field that wraps and shows that many rows at least, growing to
+				// the whole of what is in it (to ten rows, then it scrolls): a line of 200 bytes is read, not scrolled
+				// past. Every other prompt keeps its one-line field. A secret is always one line.
+				var multi = opts.lines > 1 && !opts.secret;
+				input = document.createElement(multi ? 'textarea' : 'input');
+				input.className = 'dlg-input' + (multi ? ' dlg-area' : '');
+				if (multi) input.rows = Math.floor(opts.lines); else input.type = 'text';
 				mark(input, 'placeholder', opts.placeholder || '');
 				// A passphrase must not sit on screen in the clear. Daimond masks
 				// secrets itself (a text field with bullets) rather than using
@@ -18584,7 +18638,25 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			});
 			if (cancel) cancel.addEventListener('click', function () { close(nothing()); });
 			ok.addEventListener('click', submit);
+			// `opts.live`, asked at every keystroke of a prompt (U7b lints a proposed note as it is edited), answers the
+			// message to show where `validate`'s would be; the yes is withheld while there is one.
+			if (input && typeof opts.live === 'function') {
+				var live = function () { var m = opts.live(input.value.trim()) || ''; err.textContent = m; ok.disabled = !!m; };
+				input.addEventListener('input', live);
+				live();
+			}
 
+			if (input && input.tagName === 'TEXTAREA') {
+				var fit = function () {
+					input.style.height = 'auto';
+					var cs = getComputedStyle(input), lh = parseFloat(cs.lineHeight) || 20, pad = (parseFloat(cs.paddingTop) || 0) + (parseFloat(cs.paddingBottom) || 0);
+					// A border-box field's height holds its borders, which scrollHeight does not: without them the last row is short by two pixels.
+					var bd = cs.boxSizing === 'border-box' ? (parseFloat(cs.borderTopWidth) || 0) + (parseFloat(cs.borderBottomWidth) || 0) : 0;
+					input.style.height = Math.min(input.scrollHeight + bd, Math.ceil(lh * 10 + pad + bd)) + 'px';
+				};
+				input.addEventListener('input', fit);
+				fit();
+			}
 			(input || (opts.guard && cancel) || ok).focus();
 			if (input) input.select();
 			// The self-answer, wired LAST so nothing above it can fire early. It closes
@@ -18638,7 +18710,8 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		});
 	}
 
-	/// Ask the user for a line of text. Resolves the string, or null if cancelled.
+	/// Ask the user for a line of text. Resolves the string, or null if cancelled. `opts.lines` (2 or
+	/// more) gives the field that many rows to wrap in; the answer is still one line.
 	function promptDialog(title, opts) {
 		opts = opts || {};
 		return dialog({
@@ -18649,7 +18722,9 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			placeholder: opts.placeholder || '',
 			okLabel: opts.okLabel || 'OK',
 			validate: opts.validate,
+			live: opts.live,
 			secret: !!opts.secret,
+			lines: opts.lines,
 			danger: false,
 		});
 	}
@@ -23067,6 +23142,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		if (list.length) {
 			list.forEach(function (m) { chat.messages.push(m); });
 			persistChats();		// and no touchChat: a rating is not a turn
+			ratingsDigestSoon();
 		}
 		if (current === chat && o.draw !== false) {
 			if (list.length) rateDraw(chat, list);
@@ -23074,6 +23150,131 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		}
 		return list.length > 0;
 	}
+
+	// ── The ratings of the whole account (Rating U5b) ───────────────────
+	//
+	// `ratingsAccount` rolls every rating in every chat into the cells the Optimiser's digest and
+	// the Models page read (`DaimondRatingRoll`, ratingroll.js; plan daimond_optimiser_532_plan_
+	// 20261004.md §5 U5b). It is a pure function of the transcripts: nothing is stored, no chat is
+	// made resident and nothing is written to the store, so a rebuild from cold equals one from the
+	// memo, byte for byte (J1, J2).
+	//
+	// A chat that is not resident is read ONE AT A TIME through `ChatStore.readMessages`, the reader
+	// the collect streams its transcripts through (`collectChatsRefs`) without its two heals: it leaves the
+	// summary mirror, the chunks and the legacy row alone, and the transcript is released before the next,
+	// so the peak is a single chat however
+	// many there are. The read itself yields to the page between chats. A resident chat is read
+	// from memory, where its newest rating can be ahead of the store. Only the reduced part
+	// (`chatPart`) is kept, in a memo keyed on the summary row's `seed`, `msgCount` and `standing`,
+	// so a chat whose transcript moved is read again and no other is. The store is read SETTLED, as
+	// the collect reads it (F-1): a save queued behind a write in flight has already put its new
+	// seed in the mirror, and a read made now would pair that seed with the old transcript for good.
+	var _ratingsMemo  = new Map();		// chat id -> { key, part }, for each stored chat read from the store
+	var _ratingsRun   = null;			// the rebuild in flight, which a caller arriving meanwhile shares
+	var _ratingsAgain = false;			// such a caller wants one more pass, so it sees what changed after it asked
+	var _ratingsTimer = 0;				// the digest write that follows a burst of ratings
+	var RATINGS_DIGEST_MS = 10000;
+	var MODEL_COUNTS_KEY  = 'daimond-model-ratings';		// the Models page's old thumbs counts; nothing writes it now
+
+	/// What a stored chat's memo is valid for: the three figures of its summary row that move
+	/// with its transcript. Empty where the row carries no seed, which is never memoised.
+	function ratingsKey(sum) {
+		return sum && sum.seed ? sum.seed + '|' + (sum.msgCount | 0) + '|' + (sum.standing || '') : '';
+	}
+
+	async function ratingsWalk() {
+		try { await ChatStore.booted(); } catch (e) { /* the store reads empty, and so does the roll */ }
+		try { await ChatStore.settled(); } catch (e) { /* the alarm is up; the read is what there is */ }
+		var mem = {};
+		chats.forEach(function (c) { if (c && c.id) mem[c.id] = c; });
+		var sums = storedChats(), parts = [], live = {}, reads = 0;
+		for (var i = 0; i < sums.length; i++) {
+			var sum = sums[i], id = sum.id, held = mem[id], part;
+			live[id] = 1;
+			if (held && held._loaded && Array.isArray(held.messages)) {
+				part = DaimondRatingRoll.chatPart(held.messages);
+			} else {
+				var key = ratingsKey(sum), hit = key ? _ratingsMemo.get(id) : null;
+				if (hit && hit.key === key) {
+					part = hit.part;
+				} else {
+					var got = await ChatStore.readMessages(id);
+					reads++;
+					part = DaimondRatingRoll.chatPart(got.messages || []);
+					got = null;							// released before the next chat
+					if (key) _ratingsMemo.set(id, { key: key, part: part });
+					else _ratingsMemo.delete(id);
+				}
+			}
+			parts.push(part);
+		}
+		Array.from(_ratingsMemo.keys()).forEach(function (id) { if (!live[id]) _ratingsMemo.delete(id); });
+		var form = rateForm();
+		return { roll: DaimondRatingRoll.cells(parts, { sides: form ? form.tags : null }), reads: reads, chats: sums.length };
+	}
+
+	/// The account's rating cells, as `{ roll, reads, chats }`: `roll` from `DaimondRatingRoll.cells`,
+	/// `reads` the transcripts this pass read from the store (none when every chat's memo stood).
+	/// Callers that arrive while a pass is running share it, and get a further pass if they
+	/// asked after it began.
+	function ratingsAccount() {
+		if (_ratingsRun) { _ratingsAgain = true; return _ratingsRun; }
+		_ratingsRun = (async function () {
+			try {
+				var out;
+				do { _ratingsAgain = false; out = await ratingsWalk(); } while (_ratingsAgain);
+				return out;
+			} finally { _ratingsRun = null; _ratingsAgain = false; }
+		})();
+		return _ratingsRun;
+	}
+
+	/// The digest's tail: the Ratings section, then the closing block of the old Models-page
+	/// counts kept in `models-before.md`. A part that cannot be made is left out and the rest stands.
+	async function ratingsDigest() {
+		var out = '';
+		try {
+			var acct = await ratingsAccount();
+			out += '\n' + DaimondRatingRoll.digestText(acct.roll, (diamonds || []).map(function (d) {
+				return { id: d.id, name: d.name };
+			}));
+		} catch (e) { /* no Ratings section this time; the next write tries again */ }
+		try {
+			var before = String(await Wasm.store_read(USAGE_DIR + '/models-before.md') || '');
+			if (before.trim()) out += '\n' + before.replace(/\s+$/, '') + '\n';
+		} catch (e) { /* none was imported */ }
+		return out;
+	}
+
+	/// Write the digest soon, once a burst of ratings has stopped: a rating is not a turn, so
+	/// nothing else would write it. Each call restarts the wait.
+	function ratingsDigestSoon() {
+		if (_ratingsTimer) clearTimeout(_ratingsTimer);
+		_ratingsTimer = setTimeout(function () {
+			_ratingsTimer = 0;
+			try { writeUsageDigest(); } catch (e) { /* best-effort */ }
+		}, RATINGS_DIGEST_MS);
+	}
+
+	/// Move the Models page's old thumbs counts (O4) to where they belong, once: written as the
+	/// closing block of the Optimiser's digest, kept as that block's source in
+	/// `system/usage/models-before.md` (app state, never synced), and the key removed. The block is
+	/// never mixed into a figure. The key goes only once the file holds it, so a store that is not
+	/// there yet leaves it for the next digest; with nothing in it, it just goes.
+	async function importModelCounts() {
+		var raw;
+		try { raw = localStorage.getItem(MODEL_COUNTS_KEY); } catch (e) { return; }
+		if (raw === null || raw === undefined || !window.DaimondRatingRoll) return;
+		var list = DaimondRatingRoll.legacy(raw);
+		if (list.length) {
+			try { await Wasm.store_write(USAGE_DIR + '/models-before.md', DaimondRatingRoll.beforeText(list)); }
+			catch (e) { return; }
+		}
+		try { localStorage.removeItem(MODEL_COUNTS_KEY); } catch (e) { /* the file already holds the counts */ }
+	}
+
+	// The Models page's Trust column reads the same cells.
+	if (window.DaimondModelDash && DaimondModelDash.useRolls) DaimondModelDash.useRolls(ratingsAccount);
 
 	// ── The note a person's message carries (U4) ───────────────
 	//
@@ -30318,16 +30519,20 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 	/// while a round's tools run still ends the turn (PQA W, WD). `abort()` remains for an
 	/// app nobody shares.
 	function abortTurn(c) {
-		if (!c || !c.app) return;
+		if (!c) return;
+		// THE APP THE RUNNING TURN HOLDS, not the one the chat holds now: a note, a setting or a key that
+		// moved mid-turn may have dropped `c.app`, and a Stop that read it reached nothing (round F, Opus A F1).
+		var app = c._generating && c._runApp ? c._runApp : c.app;
+		if (!app) return;
 		// THE SHARED DAIMON CLIENT IS NEVER STOPPED WHOLE (engine QA E1): it carries every Diamond
 		// on its model, so a record on it is stopped by its tag or not at all.
-		var shared = _sharedClients.has(c.app);
+		var shared = _sharedClients.has(app);
 		try {
 			var hit = false;
-			if (c._turnTag && typeof c.app.abort_turn === 'function') hit = c.app.abort_turn(String(c._turnTag));
+			if (c._turnTag && typeof app.abort_turn === 'function') hit = app.abort_turn(String(c._turnTag));
 			// A tag that reached no running turn, on an app that is this record's own: the whole
 			// app, which is only this turn (E2's belt). An early tag is remembered all the same.
-			if (!hit && !shared) c.app.abort();
+			if (!hit && !shared) app.abort();
 		} catch (e) { /* idempotent */ }
 	}
 
@@ -32189,32 +32394,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			// context against its window. A smaller window is folded on the next turn by
 			// the engine, which is also the only thing that ever forces a fresh daimon --
 			// never this button.
-			setDiamondModel(opts.id, { provider: p.provider, model: p.model });
-			// A DaimondApp has no setter for its model, so the cached client for this
-			// Diamond has to go; `diamondApp` builds the new one, with the new window, on
-			// next use. The persisted session is untouched and is re-seeded into it.
-			resetDiamondApps();
-			var logged = true;
-			try {
-				await diamondApp(opts.id).record_model_change(opts.id,
-					t('tile.model_change_note', {
-						from: before.model || '?', to: p.model,
-					}));
-			} catch (e) {
-				// The setting is already written and in force. Say the history entry
-				// failed rather than implying the change did.
-				logged = false;
-				toast(t('tile.model_change_unlogged'), true);
-			}
-			// The receipt: what moved, and that the thread came with it. One message
-			// or the other -- `model_change_unlogged` already says the change stuck,
-			// so a second toast beside it would say it twice.
-			if (logged) {
-				toast(t('tile.model_changed', {
-					from: shortModel(before.model) || t('tile.model_none'),
-					to:   shortModel(p.model),
-				}));
-			}
+			await changeDiamondModel(opts.id, before, p);
 			pendingPick   = null;			// the pulldown now matches the model in force
 			change.hidden = true;
 			if (currentDiamond && currentDiamond.id === opts.id) {
@@ -32226,6 +32406,12 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 
 		// The Change button, beside the model it thinks with.
 		daimonSel.parentNode.appendChild(change);
+
+		// The notes this model is told, and Remove: here, where a person looks after the model it thinks with.
+		card.appendChild(secHead(t('steer.title')));
+		var steerBody = document.createElement('div');
+		card.appendChild(steerBody);
+		steerListMount(steerBody, { diamond: opts.id, empty: 'tile-dlg-note' });
 		// "Fresh daimon" removed (owner review 2026-09-04): a new model takes effect
 		// on the next turn on its own, and the responding model now shows in the
 		// Thinking and Daimond tile headers, so a button to force a fresh start was
@@ -32413,6 +32599,38 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			toast(t('tile.daimon_reset_done'));
 		});
 		row.appendChild(b);
+	}
+
+	/// Point a Diamond at another model, as the Change button does and as a Pending model switch
+	/// does (Rating U7b): record it, drop the cached client, write the history entry and say what
+	/// moved. `before` is the model in force until now; `p` is `{ provider, model }`.
+	async function changeDiamondModel(id, before, p) {
+		setDiamondModel(id, { provider: p.provider, model: p.model });
+		// A DaimondApp has no setter for its model, so the cached client for this
+		// Diamond has to go; `diamondApp` builds the new one, with the new window, on
+		// next use. The persisted session is untouched and is re-seeded into it.
+		resetDiamondApps();
+		var logged = true;
+		try {
+			await diamondApp(id).record_model_change(id,
+				t('tile.model_change_note', {
+					from: before.model || '?', to: p.model,
+				}));
+		} catch (e) {
+			// The setting is already written and in force. Say the history entry
+			// failed rather than implying the change did.
+			logged = false;
+			toast(t('tile.model_change_unlogged'), true);
+		}
+		// The receipt: what moved, and that the thread came with it. One message
+		// or the other -- `model_change_unlogged` already says the change stuck,
+		// so a second toast beside it would say it twice.
+		if (logged) {
+			toast(t('tile.model_changed', {
+				from: shortModel(before.model) || t('tile.model_none'),
+				to:   shortModel(p.model),
+			}));
+		}
 	}
 
 	/// A settings dialog for something that is not a tile: a title, a body somebody
@@ -33487,7 +33705,10 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		// `_capTry` is set only while a turn is mid-backoff, after a provider
 		// refused the length first asked for; it lasts exactly as long as that
 		// retry and is not persisted.
-		var chatSys = Instructions.compose(SYSTEM_PROMPT(a.model), '');
+		// The account's steering notes for this model, composed into the chat's prompt (an ordinary
+		// chat has no Diamond, so no Diamond's). Remembered so a change of notes rebuilds it.
+		chat._steer = (typeof Notes === 'object' && Notes) ? Notes.steerFor(a.model, chat.diamondId || '') : '';
+		var chatSys = Instructions.compose(SYSTEM_PROMPT(a.model, chat._steer), '');
 		chat.app = new DaimondApp(a.baseUrl, a.apiKey, a.model,
 			chat._capTry || maxOutFor(a.model, a.provider),
 			chatSys, cfg.tools !== false);
@@ -33906,6 +34127,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		}
 		try { await scopeTurnApp(chat, app, null); }
 		catch (e) { if (chat.app === app) { chat.app = prev; chat._held = prevHeld; } throw e; }
+		if (chat._generating) chat._runApp = app;		// the turn goes on on the new session, which Stop must now reach
 		return app;
 	}
 
@@ -35967,6 +36189,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		busySay(chat, tOr('chat.busy', 'Thinking…'));
 		syncComposer();               // Stop on the button, and the queue hint in the box
 		chat.app = app;
+		chat._runApp = app;           // what Stop and a pause reach, whatever becomes of `chat.app` meanwhile
 
 		// Which round of the turn this is: one per tool-call round, counted so the
 		// indicator has something that MOVES on it. A caption that never changes
@@ -36817,6 +37040,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 				}
 				pendingEnd = null;
 				chat._generating = false;
+				chat._runApp = null;
 				chat._capTry = 0;            // the backoff belonged to this turn only
 				// The turn is over, so the last question can be asked again. The two
 				// controls are withheld while one runs (`mountTurnActions` tests
@@ -37176,7 +37400,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 	function stopGeneration() {
 		// Stop the CURRENT chat's turn — the one whose Stop button was pressed —
 		// never whichever happened to start last.
-		if (!current || !current._generating || !current.app) return;
+		if (!current || !current._generating || !(current._runApp || current.app)) return;
 		// Stop means stop: anything queued behind this turn is handed back to the
 		// composer rather than sent the moment the turn the user just killed ends.
 		current._aborted = true;
@@ -39662,7 +39886,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			// Existing agents hold a system prompt composed at construction, so a
 			// changed DAIMOND.md only takes effect on their next turn — rebuild them.
 			if (this.md !== prev) {
-				chats.forEach(function (c) { c.app = null; });
+				chats.forEach(rebuildChatApp);
 				var md = this.md;
 				Object.keys(_diamondApps).forEach(function (k) {
 					try { _diamondApps[k].set_instructions(md); } catch (e) { /* ignore */ }
@@ -39810,7 +40034,13 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		/// plus the rules their edit cannot remove.
 		/// `model` is the model that will carry the request, where the caller knows it.
 		/// Absent means unmeasured, which composes every note rather than none.
-		role: function (id, model) {
+		role: function (id, model, steer) {
+			// The steering notes, where there are any: the engine composes them before the safety
+			// clause. An engine without the entry point, or no notes, composes as it always has.
+			if (steer) {
+				try { return Wasm.compose_prompt_with(id, this.md[id] || '', model || '', steer); }
+				catch (e) { /* falls to the composition without them */ }
+			}
 			try { return compose_prompt_for(id, this.md[id] || '', model || ''); }
 			catch (e) {
 				// An engine without the three-argument entry point still composes; it simply
@@ -39879,7 +40109,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			// The daimon and the reducer are built inside the wasm, which is
 			// told directly.
 			if (changed) {
-				chats.forEach(function (c) { c.app = null; });
+				chats.forEach(rebuildChatApp);
 				var self = this;
 				Object.keys(_diamondApps).forEach(function (k) {
 					try {
@@ -39922,6 +40152,373 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 	// it. Exposed so the Admin panel, the verifiers and anything added later all
 	// go through the one implementation rather than reading the files again.
 	window.DaimondPrompts = Prompts;
+
+	// ── One lock per Diamond (round F, R1; across tabs, L7) ────────
+	//
+	// Two writers read a Diamond's files and then lay them down whole: a note press (`Notes._edit`) and the
+	// pull that imports another device's copy (`applyDiamonds`, which also joins the note file back). Left
+	// apart, a press made after the pull read the Diamond's stamp read as a one-sided change, and the import
+	// replaced the file under it: an Add was gone from both devices and a Remove came back. Both take this lock.
+	// The lock is the browser's own (Web Locks, one name per Diamond), so a second tab of the same device is held
+	// off as well: its press cannot read the files while this tab's pull replaces them.
+	var DIAMOND_LOCKS = {};		// Diamond id -> { tail: this page's line (no Web Locks), n: asks in this page, held or waiting }
+	var DIAMOND_LOCK_WAIT = 20000;	// ms a note press waits its turn before it answers that it could not
+	var DIAMOND_LOCK_NAME = 'daimond-diamond:';
+	var DIAMOND_LOCK_LATE = 'This Diamond is being brought up to date by a sync, and the change waited too long for it. Try again in a moment.';
+
+	/// Run `fn` holding the lock of Diamond `id`: one holder at a time per Diamond, in the order asked, and
+	/// whatever `fn` returns or throws is the answer. A holder must not ask for the same Diamond's lock again
+	/// (it would wait for itself): inside, call the `...Held` form of a writer. Where `wait` (ms) is given
+	/// a caller still queued after that long is answered with an error and never runs `fn`. Where the browser
+	/// has no Web Locks the line is this page's alone (a second tab is then not held off).
+	function holdDiamond(id, fn, wait) {
+		var q = DIAMOND_LOCKS[id] || (DIAMOND_LOCKS[id] = { tail: Promise.resolve(), n: 0 });
+		var ls = (typeof navigator !== 'undefined' && navigator.locks && typeof navigator.locks.request === 'function'
+			&& typeof AbortController === 'function') ? navigator.locks : null;
+		q.n++;
+		// This page's own line: each ask waits for the one before it.
+		var inPage = function () {
+			var prior = q.tail, free = null, late = false, timer = 0;
+			q.tail = new Promise(function (r) { free = r; });
+			return new Promise(function (resolve, reject) {
+				if (wait > 0) timer = setTimeout(function () { late = true; reject(new Error(DIAMOND_LOCK_LATE)); }, wait);
+				prior.then(function () {
+					clearTimeout(timer);
+					if (late) { free(); return; }
+					var run;
+					try { run = Promise.resolve(fn()); } catch (e) { run = Promise.reject(e); }
+					run.then(resolve, reject).then(free);
+				});
+			});
+		};
+		// The browser's line: the lock manager grants a name to one holder at a time, across the tabs of the origin, in
+		// the order asked. An ask still queued when `wait` runs out is aborted before it is granted, so it never runs.
+		var shared = function () {
+			var ctl = new AbortController(), timer = 0, entered = false, late = false, got = null;
+			if (wait > 0) timer = setTimeout(function () { late = true; ctl.abort(); }, wait);
+			try {
+				got = ls.request(DIAMOND_LOCK_NAME + id, { mode: 'exclusive', signal: ctl.signal }, function () {
+					entered = true; clearTimeout(timer);
+					return new Promise(function (r) { r(fn()); });
+				});
+			} catch (e) { got = Promise.reject(e); }
+			return got.catch(function (e) {
+				clearTimeout(timer);
+				if (entered) throw e;						// `fn`'s own
+				if (late) throw new Error(DIAMOND_LOCK_LATE);		// aborted in the queue
+				return inPage();							// the lock manager would not take the name (an opaque origin): this page's line
+			});
+		};
+		var leave = function () { if (--q.n === 0 && DIAMOND_LOCKS[id] === q) delete DIAMOND_LOCKS[id]; };
+		return (ls ? shared() : inPage()).then(function (v) { leave(); return v; }, function (e) { leave(); throw e; });
+	}
+
+	// ── The steering notes ─────────────────────────────────────────
+	//
+	// A note is one line told to one model (or to every model) in a turn. `steering.js` holds the
+	// rules and the file's format; this is the half that touches the world: the files, the
+	// engine and the apps built from it (U6b of 5.3.2).
+	//
+	// WHERE THEY LIVE. A Diamond's notes are `.daimond/steering.md` inside that Diamond, and the
+	// account's notes (which also reach an ordinary chat) are the same file inside the Daimond
+	// Optimiser. A Diamond travels in its export from every device, a folder-mounted desktop
+	// included, where a file in Daimond's own store would not (checked: C1). INSIDE `.daimond/`
+	// AND NOT BESIDE THE CRYSTAL, for two reasons the engine already settles: every tool a daimon
+	// holds is refused a write there (`is_keeper_record`), so a page a daimon read cannot talk it
+	// into rewriting its own instructions for good; and a share or a template never carries it.
+	//
+	// A WRITE IS TWO CALLS. `store_write` is a raw write and moves no stamp, so the file would be
+	// the one thing in the Diamond the next sync did not carry (checked: C2). `touch_diamond` is
+	// what stamps it, as every other page door does (`writeCappRecord`).
+	//
+	// WHAT A TURN READS is kept in memory and read synchronously, because a chat is built
+	// and a daimon's app handed out by synchronous calls. The files are re-read when a Diamond's
+	// stamp moves (a sync, an edit), through `loadDiamonds`, and the apps and chats are told
+	// when what a turn would be told has changed.
+	var Notes = {
+		by:      {},                   // Diamond id -> { stamp, entries }, as the file read at that stamp
+		views:   [],                   // the Steering lists on screen, each a function that draws itself again
+		applied: new WeakMap(),        // app -> { Diamond id -> the text its daimon was last given }
+		_load:   Promise.resolve(),
+
+		home: function (level, scope) {
+			return level === 3 ? DEFAULT_IDS['Daimond Optimiser'] : String(scope || '');
+		},
+
+		path: function (id) { return 'diamonds/' + id + '/' + DaimondSteering.FILE; },
+
+		/// The engine's lint on a line: '' where it may enter a prompt, else why not. Where the engine
+		/// has no lint (an older one) every line is let through here and the engine composes as it can.
+		refusal: function (line) {
+			try {
+				if (typeof Wasm.steering_refusal !== 'function') return '';
+				return String(Wasm.steering_refusal(String(line == null ? '' : line)) || '');
+			} catch (e) { return ''; }
+		},
+
+		/// The model's id as the ratings file it: the catalogue's `cm`, else the string as it stands.
+		cmOf: function (model) {
+			try {
+				var id = window.DaimondPricing && DaimondPricing.identify(model || '');
+				if (id && id.cm) return String(id.cm);
+			} catch (e) { /* the string stands */ }
+			return String(model || '');
+		},
+
+		/// Is `cm` a family (what several models share) and not one model? A note is for a model.
+		isFamily: function (cm) {
+			try {
+				var id = window.DaimondPricing && DaimondPricing.identify(cm);
+				return !!(id && id.fam && id.fam === cm && id.cm !== cm);
+			} catch (e) { return false; }
+		},
+
+		/// Every note the page holds, as `proposals` reads them.
+		all: function () {
+			var out = [], by = this.by;
+			Object.keys(by).forEach(function (id) { out.push.apply(out, by[id].entries); });
+			return out;
+		},
+
+		/// What one turn is told, one note per line: `diamondId` is '' for an ordinary chat.
+		steerFor: function (model, diamondId) {
+			var self = this;
+			return DaimondSteering.text(DaimondSteering.select(this.all(), this.cmOf(model), diamondId || '',
+				{ refuse: function (l) { return self.refusal(l); } }));
+		},
+
+		/// Hand a Diamond's daimon the notes it is to be told on `model`. A Diamond's client is shared by
+		/// every Diamond on one provider and model, so the engine keeps the notes per Diamond id and
+		/// this is called with the Diamond's own. Cheap where nothing changed.
+		applyTo: function (app, diamondId, model) {
+			if (!app || !diamondId || typeof app.set_steering !== 'function') return;
+			var text = this.steerFor(model, diamondId), held = this.applied.get(app);
+			if (!held) { held = {}; this.applied.set(app, held); }
+			if ((held[diamondId] || '') === text) return;
+			try { app.set_steering('daimon', diamondId, text); held[diamondId] = text; }
+			catch (e) { trail('steering apply failed', diamondId + ': ' + ((e && (e.message || e)) || '?')); }
+		},
+
+		/// A Diamond's model has changed (`setDiamondModel`): the client it now uses is another one,
+		/// and the old one must not go on holding its notes.
+		reapply: function (id) {
+			var self = this;
+			try {
+				var a = appCfgFor(diamondModel(id)), now = _diamondApps[diamondAppKey(a)];
+				Object.keys(_diamondApps).forEach(function (k) {
+					var app = _diamondApps[k];
+					if (app === now) self.applyTo(app, id, a.model);
+					else if (app && (self.applied.get(app) || {})[id]) {
+						try { app.set_steering('daimon', id, ''); self.applied.get(app)[id] = ''; } catch (e) { /* an older engine */ }
+					}
+				});
+			} catch (e) { /* the page is not up yet */ }
+			// Which notes a turn is told depends on the model, so a list on screen says it again.
+			this.views = this.views.filter(function (v) { return v.live(); });
+			this.views.forEach(function (v) { try { v.draw(); } catch (e) { /* a list that will not draw */ } });
+		},
+
+		/// What a note change reaches: every built daimon client, and the chats whose own notes moved.
+		changed: function () {
+			var self = this;
+			this.views = this.views.filter(function (v) { return v.live(); });
+			this.views.forEach(function (v) { try { v.draw(); } catch (e) { /* a list that will not draw */ } });
+			try {
+				(diamonds || []).forEach(function (d) {
+					var a = appCfgFor(diamondModel(d.id)), app = _diamondApps[diamondAppKey(a)];
+					if (app) self.applyTo(app, d.id, a.model);
+				});
+			} catch (e) { /* no Diamonds yet */ }
+			try {
+				// A chat is built with its prompt composed, so one told something else is built again.
+				// Told that Diamond's notes too where the chat is a Diamond's own thread; and a chat mid-turn waits for
+				// its turn to end (`rebuildChatApp`), since a dropped app leaves Stop and a pause nothing to stop.
+				chats.forEach(function (c) {
+					if (!c.app) return;
+					var a = appCfgFor(c);
+					if ((c._steer || '') !== self.steerFor(a.model, c.diamondId || '')) rebuildChatApp(c);
+				});
+			} catch (e) { /* no chats yet */ }
+		},
+
+		/// One Diamond's file, parsed. A line it could not read is named in the trail and left where it is.
+		read: async function (id) {
+			var text = '';
+			try { text = await Wasm.store_read(this.path(id)); } catch (e) { text = ''; }
+			var r = DaimondSteering.parse(typeof text === 'string' ? text : '', id, id === DEFAULT_IDS['Daimond Optimiser']);
+			if (r.ignored.length) trail('steering unreadable', id + ': ' + r.ignored.length + ' line(s) kept as written');
+			return r;
+		},
+
+		/// Re-read the files of the Diamonds whose stamp has moved (all of them where `force`).
+		reload: function (force) {
+			var self = this;
+			this._load = this._load.then(function () { return self._reload(force); }, function () { return self._reload(force); });
+			return this._load;
+		},
+		_reload: async function (force) {
+			var self = this, list = Array.isArray(diamonds) ? diamonds : [], keep = {}, moved = false;
+			await Promise.all(list.map(async function (d) {
+				keep[d.id] = true;
+				var stamp = Number(d.touched) || 0, was = self.by[d.id];
+				if (!force && was && was.stamp === stamp) return;
+				var r = await self.read(d.id);
+				if (!was || JSON.stringify(was.entries) !== JSON.stringify(r.entries)) moved = true;
+				self.by[d.id] = { stamp: stamp, entries: r.entries };
+			}));
+			Object.keys(this.by).forEach(function (id) {
+				if (!keep[id]) { delete self.by[id]; moved = true; }
+			});
+			if (moved) this.changed();
+			return moved;
+		},
+
+		/// Every note, from every file: `[entry]` in the shape `DaimondSteering.proposals` reads. Where
+		/// `force`, every file is read again and not only those whose Diamond's stamp has moved: a raise
+		/// and a press ask it, since a stamp this tab has not seen yet may stand over a file it has not read.
+		list: async function (force) {
+			await this.reload(!!force);
+			return this.all();
+		},
+
+		// Read the file, let `change(doc, entries)` return the entry to write (or null to write
+		// nothing; or a list of entries, written together in one file write), write it and stamp the
+		// Diamond, and announce the write so that the device's other tabs and the sync hear of it. One at a time
+		// per Diamond, and with the import of that Diamond (`holdDiamond`): a file is read, changed and written whole.
+		_edit: function (level, scope, change) {
+			var self = this, id = this.home(level, scope);
+			var run = async function () {
+				if (level !== 2 && level !== 3) throw new Error('A note is for a Diamond (2) or the account (3), not ' + level + '.');
+				if (!id || !(diamonds || []).some(function (d) { return d.id === id; })) {
+					throw new Error(level === 3 ? 'The Daimond Optimiser, which keeps the account\'s notes, is not here.'
+						: 'There is no Diamond ' + id + ' to keep a note in.');
+				}
+				var r = await self.read(id), made = change(r.doc, r.entries);
+				if (!made) return null;
+				var all = Array.isArray(made) ? made : [made], doc = r.doc;
+				all.forEach(function (m) {
+					var why = DaimondSteering.check(m, { refuse: function (l) { return self.refusal(l); }, isFamily: function (c) { return self.isFamily(c); } });
+					if (why) throw new Error('This note cannot be kept (' + why + ').');
+				});
+				all.forEach(function (m) { doc = DaimondSteering.put(doc, m); });
+				await Wasm.store_write(self.path(id), DaimondSteering.serialise(doc));
+				try { await Wasm.touch_diamond(id); }
+				catch (e) { trail('steering unstamped', id + ': a sync may replace it — ' + ((e && (e.message || e)) || '?')); }
+				// The file is what it was just written as; the stamp is read again with the next list.
+				self.by[id] = { stamp: -1, entries: DaimondSteering.parse(DaimondSteering.serialise(doc), id, id === DEFAULT_IDS['Daimond Optimiser']).entries };
+				self.changed();
+				// A Diamond's file is worked on without a turn, so the write is announced as every Diamond change is:
+				// another tab of this device re-reads the files (a Remove here is not told again there), and the sync
+				// is nudged so that it goes out.
+				bumpDiamonds();
+				return all[0];
+			};
+			return holdDiamond(id, run, DIAMOND_LOCK_WAIT);
+		},
+
+		/// A two-sided sync has just laid another device's copy of a Diamond over this one's, and with it that
+		/// copy's note file. Join the file this device held (`there`) into the one now in force, entry by entry
+		/// (`DaimondSteering.join`), write it and stamp the Diamond so the result travels on. True where
+		/// something was written; one at a time with every other write to that Diamond.
+		unite: function (id, there) {
+			var self = this;
+			return holdDiamond(id, function () { return self.uniteHeld(id, there); }, DIAMOND_LOCK_WAIT);
+		},
+		/// `unite` for the caller that already holds the Diamond's lock, which is the import that has just laid the copy down.
+		uniteHeld: async function (id, there) {
+			var self = this, acct = id === DEFAULT_IDS['Daimond Optimiser'];
+			var here = '';
+			try { here = String(await Wasm.store_read(self.path(id)) || ''); } catch (e) { here = ''; }
+			var text = DaimondSteering.join(here, there, id, acct);
+			if (text === null) return false;
+			await Wasm.store_write(self.path(id), text);
+			try { await Wasm.touch_diamond(id); }
+			catch (e) { trail('steering unstamped', id + ': a sync may replace it — ' + ((e && (e.message || e)) || '?')); }
+			self.by[id] = { stamp: -1, entries: DaimondSteering.parse(text, id, acct).entries };
+			self.changed();
+			return true;
+		},
+
+		_mint: function () {
+			var r = '';
+			while (r.length < 5) r += Math.random().toString(36).slice(2);
+			return 'n-' + Date.now().toString(36) + '-' + r.slice(0, 5);
+		},
+
+		/// A new note, active, with `line` written exactly as given. `at` is `{ t, n }` as a proposal carries it.
+		add: function (o) {
+			var self = this;
+			o = o || {};
+			return this._edit(o.level, o.scope, function () {
+				return { id: self._mint(), status: 'active', cm: String(o.cm || ''), tag: String(o.tag || ''), level: o.level,
+					scope: o.level === 2 ? String(o.scope || '') : '', at: { t: Number(o.at && o.at.t) || 0, n: Number(o.at && o.at.n) || 0 },
+					kept: 0, line: String(o.line == null ? '' : o.line), to: '' };
+			});
+		},
+
+		/// Keep, on a review: the cell's count `n` becomes the new mark the next review waits from.
+		keep: function (ref, n) {
+			ref = ref || {};
+			return this._edit(ref.level, ref.scope, function (doc, entries) {
+				var e = entries.filter(function (x) { return x.id === ref.id; })[0];
+				return e ? Object.assign({}, e, { kept: Math.max(0, Math.floor(Number(n) || 0)) }) : null;
+			});
+		},
+
+		/// Remove, on a review: the note is kept as a record and never told to a model again.
+		retire: function (ref, at) {
+			ref = ref || {};
+			return this._edit(ref.level, ref.scope, function (doc, entries) {
+				var e = entries.filter(function (x) { return x.id === ref.id; })[0];
+				return e ? Object.assign({}, e, { status: 'retired', at: { t: Number(at && at.t) || 0, n: Number(at && at.n) || 0 } }) : null;
+			});
+		},
+
+		/// Dismiss a proposal. A switch is `tag: 'switch'` at level 2, `cm` the model left and `to` the target.
+		dismiss: function (o) {
+			var self = this;
+			o = o || {};
+			return this._edit(o.level, o.scope, function () {
+				return { id: self._mint(), status: 'dismissed', cm: String(o.cm || ''), tag: String(o.tag || ''), level: o.level,
+					scope: o.level === 2 ? String(o.scope || '') : '', at: { t: Number(o.at && o.at.t) || 0, n: Number(o.at && o.at.n) || 0 },
+					kept: 0, line: String(o.line == null ? '' : o.line), to: String(o.to || '') };
+			});
+		},
+
+		/// A Switch pressed on a tile, on file so that 20 new rated answers on the model it went to can ask Keep
+		/// or Switch back (P5). `cm` is the model left, `to` the model gone to, `at.n` the rated answers of
+		/// `to` in this Diamond then and `was` the whole model left, `{ provider, model }`, which Switch back
+		/// restores. A Keep or a Switch back closes it with `retire`, the one write that closes a note.
+		switched: function (o) {
+			var self = this;
+			o = o || {};
+			return this._edit(2, o.scope, function () {
+				return { id: self._mint(), status: 'switched', cm: String(o.cm || ''), tag: 'switch', level: 2, scope: String(o.scope || ''),
+					at: { t: 0, n: Number(o.at && o.at.n) || 0 }, kept: 0, line: '', to: String(o.to || ''),
+					was: o.was && o.was.model ? { provider: String(o.was.provider || ''), model: String(o.was.model) } : null };
+			});
+		},
+
+		/// Switch back, on the review of a Switch: the `switched` entry `ref` is closed (`retire`, at `o.at`) and the
+		/// switch is dismissed in the same file write, so that the page does not offer the same switch again at once.
+		/// The dismissal is the cooling rule's own: `o.cm` the model the Diamond is back on, `o.to` the model it
+		/// tried and `o.n` the rated answers of `o.cm` now, so 20 more of them free it. Null where the file holds
+		/// no such entry.
+		back: function (ref, o) {
+			var self = this;
+			ref = ref || {};
+			o = o || {};
+			return this._edit(2, ref.scope, function (doc, entries) {
+				var e = entries.filter(function (x) { return x.id === ref.id; })[0];
+				if (!e) return null;
+				return [Object.assign({}, e, { status: 'retired', at: { t: Number(o.at && o.at.t) || 0, n: Number(o.at && o.at.n) || 0 } }),
+					{ id: self._mint(), status: 'dismissed', cm: String(o.cm || ''), tag: 'switch', level: 2, scope: String(ref.scope || ''),
+						at: { t: 0, n: Number(o.n) || 0 }, kept: 0, line: '', to: String(o.to || '') }];
+			});
+		},
+	};
+	DaimondSteering.refusal = function (line) { return Notes.refusal(line); };
+	window.DaimondNotes = Notes;
 
 	// ── Pending: what a daimon has proposed and is waiting on you for ──
 	//
@@ -39987,6 +40584,14 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 	// runs and nothing waits, so there is nothing to discuss and no diamond for
 	// `?` to open. `tile` hides that control for it; the tick and `✕` both just
 	// take the tile down, since acknowledging one IS dismissing it.
+	//
+	// `steer` is the fifth (Rating U7b), raised by the PAGE and by no model: after each digest write
+	// `steerRaise` turns the trusted rating cells into a model switch, a note to add or a note to
+	// review (`DaimondSteering.proposals`). Nothing applies without a press, and each tile's presses
+	// are its own (`steerTile`). It is the one kind that raises NO count: a proposal from figures is
+	// advice with no deadline, so it fails the importance filter that a badge, dot or toast must
+	// pass, and it waits at low priority where the person looks. `add` refuses it at the door;
+	// `steerSettle` is the only way in, and the way out of a tile another device has answered.
 	//
 	// The `kind === 'consent'` tests that remain are NOT dead branch selectors, so
 	// please do not report them as such: `items` is read back out of localStorage,
@@ -40256,6 +40861,9 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 				box.appendChild(sug);
 			}
 
+			// The page's own proposals carry their own verbs (Rating U7b).
+			if (it.kind === 'steer') { steerTile(box, it); return box; }
+
 			var acts = document.createElement('div');
 			acts.className = 'pend-acts';
 			var go = document.createElement('button');
@@ -40435,7 +41043,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		var had = {};
 		Pending.items.forEach(function (x) { had[x.id] = true; });
 		Pending.fresh();
-		var news = Pending.items.filter(function (x) { return !had[x.id]; }).length;
+		var news = Pending.items.filter(function (x) { return !had[x.id] && x.kind !== 'steer'; }).length;
 		Pending.render();
 		if (news) Badge.bump('pending', news);
 	});
@@ -40457,7 +41065,385 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		add:   function (item) { return Pending.add(item); },
 		items: function () { Pending.fresh(); return Pending.items.slice(); },
 		drop:  function (id) { return Pending.drop(id); },
+		/// Raise the page's own proposals now, and resolve when the tiles are as they should be.
+		steer: function () { return steerRaise(); },
 	};
+	// ── What the ratings propose, as Pending tiles (Rating U7b) ─────────────────
+	//
+	// The PAGE, not a model, turns the trusted rating cells into at most a few tiles
+	// (`DaimondSteering.proposals`, steering.js; plan daimond_optimiser_532_plan_20261004.md
+	// §5 U7b): switch a Diamond's model (Switch, Dismiss), add a note (Add, Edit, Dismiss),
+	// review an active note (Keep, Remove). NOTHING APPLIES WITHOUT A PRESS (design decision
+	// 6 (a), J8) and Add writes exactly the line the tile shows, or the one the person edited it to.
+	//
+	// Raised after each digest write (`writeUsageDigest`), against the notes as the note file
+	// holds them: a proposal already answered, here or on another device, is not in the list,
+	// and its tile is taken down. Pending does not sync, so the note file is what makes a
+	// dismissal stick on every device (P7). Every press asks the same question again first,
+	// since a tile can be minutes old.
+	//
+	// THE NOTE FILE IS NOT THIS UNIT'S. U6b (lane S) writes it, as `window.DaimondNotes` (its log, "The note
+	// writer U7b calls"), and every write there re-applies the steering before it resolves. It is reached
+	// through `steerApi` alone, by the names in one table, so that a rename is made in one place. With no
+	// writer nothing is raised: a tile whose Add had nowhere to write would be a lie.
+	var STEER_API = {
+		read:    ['DaimondNotes',    'list'],		// () -> Promise<entry[]>, every Diamond's notes and the account's
+		add:     ['DaimondNotes',    'add'],			// ({ level, scope, cm, tag, line, at })
+		keep:    ['DaimondNotes',    'keep'],		// ({ level, scope, id }, n) -> entry, or null when the file holds no such id
+		retire:  ['DaimondNotes',    'retire'],		// ({ level, scope, id }, at) -> entry, or null
+		dismiss: ['DaimondNotes',    'dismiss'],		// ({ level, scope, cm, tag, at, to })
+		switched:['DaimondNotes',    'switched'],	// ({ scope, cm, to, at }): a Switch pressed, on file for its review (P5)
+		back:    ['DaimondNotes',    'back'],			// ({ level, scope, id }, { at, cm, to, n }) -> entry, or null: Switch back closes the review and dismisses the switch
+		lint:    ['DaimondSteering', 'refusal'],		// (line) -> '' when admitted, else the engine's code
+	};
+	var STEER_LINE_MAX = 200;							// bytes: the engine's own limit, for the page that has no lint to ask
+	var _steerRun = null, _steerAgain = false;
+
+	/// The one door to the note file: the function the table names for `op`, or null.
+	function steerApi(op) {
+		var e = STEER_API[op], o = e && window[e[0]];
+		return o && typeof o[e[1]] === 'function' ? o[e[1]].bind(o) : null;
+	}
+
+	/// Run one note-file operation. Never throws: `{ ok: false }` where there is no writer or it rejected.
+	async function steerStore(op, a, b) {
+		var f = steerApi(op);
+		if (!f) return { ok: false, why: 'unavailable' };
+		try { return { ok: true, value: await f(a, b) }; }
+		catch (e) { return { ok: false, why: String((e && e.message) || e) }; }
+	}
+
+	/// Every note the files hold, or null when they cannot be read (and nothing is then raised or taken down).
+	async function steerNotes() {
+		var r = await steerStore('read', true);			// forced: a press and a raise take the files as they are now
+		return r.ok && Array.isArray(r.value) ? r.value : null;
+	}
+
+	/// A model this device can run for the catalogue id `cm`, on the provider the Diamond uses where it can; or null.
+	function steerTarget(cm, id) {
+		if (!window.DaimondModels || !window.DaimondPricing || !cm) return null;
+		var now = id ? diamondModel(id) : { provider: '' }, got = null;
+		DaimondModels.all().forEach(function (m) {
+			if (DaimondPricing.identify(m.model).cm !== cm || !DaimondModels.resolve(m.provider, m.model)) return;
+			if (!got || (m.provider === now.provider && got.provider !== now.provider)) got = { provider: m.provider, model: m.model };
+		});
+		return got;
+	}
+
+	/// The model a Switch back puts a Diamond on: the one it left, provider and id as the `switched` entry
+	/// holds them, where this device can still run it; else the same model on a provider it can run (an
+	/// entry with no record of the provider, or one whose provider has since lost its key); or null.
+	function steerReturn(p) {
+		var w = p && p.was;
+		if (w && w.model && window.DaimondModels && DaimondModels.resolve(w.provider || '', w.model)) return { provider: w.provider || '', model: w.model };
+		return steerTarget(p && p.to, p && p.scope);
+	}
+
+	/// What `proposals` needs of the page: each Diamond with the catalogue id of the model it runs on now.
+	function steerCtx() {
+		return {
+			diamonds: (diamonds || []).map(function (f) {
+				var m = diamondModel(f.id);
+				return { d: f.id, name: f.name || '', cm: window.DaimondPricing && m.model ? DaimondPricing.identify(m.model).cm : '' };
+			}),
+			t: function (k) { return t(k); },
+		};
+	}
+
+	/// The proposals, less a switch (or a switch back) to a model this device cannot run (its press could do nothing).
+	function steerProposals(roll, notes) {
+		return DaimondSteering.proposals(roll, notes, steerCtx()).filter(function (p) {
+			return (p.kind !== 'switch' && p.kind !== 'back') || !!(p.kind === 'back' ? steerReturn(p) : steerTarget(p.to, p.scope));
+		});
+	}
+
+	/// The tile for one proposal, in words. Numbers and model ids only: no note, no name of a reaction (J9).
+	function steerRecord(p) {
+		var ev = p.evidence || {}, head, why, acct = p.level !== 2;
+		if (p.kind === 'switch') {
+			head = t('pending.steer.switch_head', { to: p.to });
+			why  = t('pending.steer.switch_why', { from: p.key, to: p.to, fn: (ev.from && ev.from.n) | 0, tn: (ev.to && ev.to.n) | 0 });
+		} else if (p.kind === 'back') {
+			head = t('pending.steer.back_head', { model: p.key, to: p.to });
+			why  = t('pending.steer.back_why', { n: ev.n | 0, up: ev.up | 0, down: ev.down | 0 });
+		} else if (p.kind === 'note') {
+			head = t('pending.steer.note_head', { model: p.key });
+			why  = t('pending.steer.note_why', { down: ev.down | 0, n: ev.n | 0, tagged: ev.tagged | 0 });
+		} else {
+			var b = ev.before || {}, a = ev.after || {};
+			head = t('pending.steer.review_head', { model: p.key });
+			why  = t('pending.steer.review_why', { bt: b.t | 0, bn: b.n | 0, at: a.t | 0, an: a.n | 0 });
+		}
+		return {
+			id: 'p' + Date.now().toString(36) + Math.floor(Math.random() * 1e6).toString(36),
+			diamondId: acct ? '' : p.scope, diamondName: acct ? t('pending.steer.account') : (p.name || ''),
+			headline: head, detail: why, kind: 'steer', priority: 'low', at: Date.now(), steer: p,
+		};
+	}
+
+	/// Make the `steer` tiles what `list` (the page's current proposals) says: raise the ones not
+	/// yet here, and take down the ones no longer proposed, because another device pressed them, a
+	/// rating moved the figures or the model changed. One read and one write, as `Pending.add`
+	/// does, and no badge: see the Pending header. A tile already up is left as it was raised, so
+	/// that what Add writes is what the person was shown (J8). `make` builds a tile from a proposal.
+	function steerSettle(list, make) {
+		Pending.fresh();
+		var want = {}, have = {};
+		list.forEach(function (p) { want[p.id] = p; });
+		var kept = Pending.items.filter(function (x) {
+			if (x.kind !== 'steer') return true;
+			if (!x.steer || !want[x.steer.id]) return false;
+			have[x.steer.id] = 1;
+			return true;
+		});
+		var fresh = list.filter(function (p) { return !have[p.id]; }).map(make);
+		if (kept.length === Pending.items.length && !fresh.length) return;
+		Pending.items = kept.concat(fresh);
+		Pending.save();
+	}
+
+	/// Put the tiles as the figures and the notes say. Coalesced: a call during a pass asks for one more.
+	function steerRaise() {
+		if (_steerRun) { _steerAgain = true; return _steerRun; }
+		_steerRun = (async function () {
+			try {
+				do {
+					_steerAgain = false;
+					if (!window.DaimondSteering || !window.DaimondSteering.proposals || !window.DaimondRatingRoll) return;
+					var notes = await steerNotes();
+					if (!notes) continue;				// the note file cannot be read: raise nothing, take nothing down
+					var acct = await ratingsAccount();
+					steerSettle(steerProposals(acct.roll, notes), steerRecord);
+				} while (_steerAgain);
+			} catch (e) { /* a panel that will not draw must not fail the digest */ }
+			finally { _steerRun = null; _steerAgain = false; }
+		})();
+		return _steerRun;
+	}
+
+	/// Is this proposal still one the figures and the notes make? null when that cannot be known.
+	async function steerStillHolds(p) {
+		var notes = await steerNotes();
+		if (!notes) return null;
+		var acct = await ratingsAccount();
+		return steerProposals(acct.roll, notes).some(function (q) { return q.id === p.id; });
+	}
+
+	/// Why a line may not be added, or '' when it may. The engine's lint where there is one; its code is worded here.
+	function steerLintMsg(v) {
+		if (!v) return t('pending.steer.empty');
+		var f = steerApi('lint'), code = '';
+		if (f) { try { code = String(f(v) || ''); } catch (e) { code = ''; } }
+		else if (new TextEncoder().encode(v).length > STEER_LINE_MAX) code = 'long';
+		if (!code) return '';
+		if (code === 'empty') return t('pending.steer.empty');
+		var why = code === 'long' ? t('pending.steer.why_long')
+			: code === 'rating' ? t('pending.steer.why_rating')
+			: (code === 'pleasing' || code === 'agreeing' || code === 'approval') ? t('pending.steer.why_tone')
+			: code === 'control' ? t('pending.steer.why_control')
+			: code === 'heading' ? t('pending.steer.why_heading') : code;
+		return t('pending.steer.refused', { why: why });
+	}
+
+	/// One press. Returns whether it took effect. Checked against the notes and figures as they are now first.
+	async function steerPress(it, act, line) {
+		var p = it.steer, ok = false;
+		if (!p) { Pending.drop(it.id); return false; }
+		var holds = null;
+		try { holds = await steerStillHolds(p); } catch (e) { /* unknown */ }
+		if (holds === null) { toast(t('pending.steer.failed'), true); return false; }
+		if (!holds) { toast(t('pending.steer.gone')); Pending.drop(it.id); steerRaise(); return false; }
+		var note = p.evidence && p.evidence.note, scope = p.level === 2 ? p.scope : '';
+		var at = { t: p.at.t | 0, n: p.at.n | 0 }, r;
+		if (act === 'switch' || act === 'back') {
+			var f = (diamonds || []).find(function (x) { return x.id === p.scope; }), tg = act === 'back' ? steerReturn(p) : steerTarget(p.to, p.scope);
+			if (!f || !tg) { toast(t('pending.steer.no_model', { to: p.to }), true); return false; }
+			if (act === 'switch') {
+				// On file first, so that no Switch goes without its review (P5): the rated answers of the model it
+				// goes to, in this Diamond, as they stand now.
+				// The whole model it leaves goes with it, provider and id, so that Switch back restores that one.
+				var acct = await ratingsAccount(), c0 = acct && acct.roll ? DaimondRatingRoll.cell(acct.roll, 2, f.id, 'cm', p.to) : null, left = diamondModel(f.id);
+				r = await steerStore('switched', { scope: f.id, cm: p.key, to: p.to, at: { t: 0, n: c0 ? c0.n | 0 : 0 }, was: { provider: left.provider || '', model: left.model || '' } });
+				if (!r.ok) { toast(t('pending.steer.failed'), true); return false; }
+			} else {
+				// Switch back closes the review the way Keep does, and dismisses the switch it undoes in the same write
+				// (the cooling rule's own entry: the model it returns to, the one it tried, the returned-to model's
+				// rated answers now), so that the same Switch is not offered again at once; then it moves the model.
+				var acctB = await ratingsAccount(), cB = acctB && acctB.roll ? DaimondRatingRoll.cell(acctB.roll, 2, scope, 'cm', p.to) : null;
+				r = await steerStore('back', { level: 2, scope: scope, id: note }, { at: at, cm: p.to, to: p.key, n: cB ? cB.n | 0 : 0 });
+				if (!r.ok) { toast(t('pending.steer.failed'), true); return false; }
+				if (r.value === null) { toast(t('pending.steer.gone')); Pending.drop(it.id); steerRaise(); return false; }
+			}
+			// `setDiamondModel` re-applies the steering for the model now in force (U6b, C6).
+			await changeDiamondModel(f.id, diamondModel(f.id), tg);
+			if (currentDiamond && currentDiamond.id === f.id) await refreshDiamondAfterChange();
+			else { bumpDiamonds(); await loadDiamonds(); }
+			ok = true;
+		} else {
+			if (act === 'add') {
+				r = await steerStore('add', { level: p.level, scope: scope, cm: p.key, tag: p.tag, line: line || p.line, at: at });
+			} else if (act === 'dismiss') {
+				r = await steerStore('dismiss', p.kind === 'switch'
+					? { level: 2, scope: scope, cm: p.key, tag: 'switch', at: at, to: p.to }
+					: { level: p.level, scope: scope, cm: p.key, tag: p.tag, at: at });
+			} else if (act === 'keep') {
+				// A switch review has no note to mark: its Keep closes it, as a Remove closes a note.
+				r = p.kind === 'back' ? await steerStore('retire', { level: p.level, scope: scope, id: note }, at)
+					: await steerStore('keep', { level: p.level, scope: scope, id: note }, at.n);
+			} else if (act === 'remove') {
+				r = await steerStore('retire', { level: p.level, scope: scope, id: note }, at);
+			} else return false;
+			if (!r.ok) { toast(t('pending.steer.failed'), true); return false; }
+			// The file holds no such note any more: nothing was written, and the tile has no note to answer.
+			if ((act === 'keep' || act === 'remove') && r.value === null) { toast(t('pending.steer.gone')); Pending.drop(it.id); steerRaise(); return false; }
+			ok = true;
+		}
+		Pending.drop(it.id);
+		steerRaise();
+		return ok;
+	}
+
+	/// Edit: the line in a field, linted as it is typed, then Add with the line as edited.
+	async function steerEdit(it) {
+		var v = await promptDialog(t('pending.steer.edit_title'), {
+			value: it.steer.line, okLabel: t('pending.steer.add'), live: steerLintMsg, validate: steerLintMsg, lines: 4,
+		});
+		return v ? steerPress(it, 'add', v) : false;
+	}
+
+	/// The body and the buttons of a `steer` tile (called by `Pending.tile`): the line Add would write, always in view.
+	function steerTile(box, it) {
+		var p = it.steer, acts = document.createElement('div');
+		acts.className = 'pend-acts';
+		function btn(cls, label, fn) {
+			var b = document.createElement('button');
+			b.type = 'button'; b.className = 'pend-act pend-verb ' + cls; b.textContent = label;
+			b.addEventListener('click', async function () {
+				var all = acts.querySelectorAll('button');
+				all.forEach(function (x) { x.disabled = true; });		// one press at a time
+				try { await fn(); } finally { all.forEach(function (x) { x.disabled = false; }); }
+			});
+			acts.appendChild(b);
+		}
+		if (!p) btn('pend-no', t('common.dismiss'), function () { Pending.drop(it.id); });
+		else {
+			if (p.line) {
+				var ln = document.createElement('div');
+				ln.className = 'pend-detail pend-steer-line';
+				ln.textContent = p.line;
+				box.appendChild(ln);
+			}
+			if (p.kind === 'switch') {
+				btn('pend-go', t('pending.steer.switch'), function () { return steerPress(it, 'switch'); });
+				btn('pend-no', t('common.dismiss'),       function () { return steerPress(it, 'dismiss'); });
+			} else if (p.kind === 'note') {
+				btn('pend-go', t('pending.steer.add'),    function () { return steerPress(it, 'add'); });
+				btn('',        t('pending.steer.edit'),   function () { return steerEdit(it); });
+				btn('pend-no', t('common.dismiss'),       function () { return steerPress(it, 'dismiss'); });
+			} else if (p.kind === 'back') {
+				btn('pend-go', t('pending.steer.keep'),   function () { return steerPress(it, 'keep'); });
+				btn('',        t('pending.steer.back'),   function () { return steerPress(it, 'back'); });
+			} else {
+				btn('pend-go', t('pending.steer.keep'),   function () { return steerPress(it, 'keep'); });
+				btn('pend-no', t('pending.steer.remove'), function () { return steerPress(it, 'remove'); });
+			}
+		}
+		box.appendChild(acts);
+	}
+
+	// ── The Steering list (Rating U7c) ──────────────────────────
+	//
+	// Every active note, so that a person can see what the model is told and take any of it away at any
+	// time (design §9.5, the Steering view, in its smallest real form; U9 grows the prompt-as-sent and
+	// the evidence from this same component). Each row has the line exactly as it is sent, the scope (this
+	// diamond or the account), the model (one, or all) and the day it was added. Remove is `retire`, through
+	// `steerStore` and the `STEER_API` table: the one write path every note press uses, so a removal re-applies
+	// the steering and, because it records the figures of that day (`retireAt`), the note is not proposed
+	// again until 20 more rated answers. A list is drawn where a person looks for it: the Diamond's Models
+	// area (its notes and the account's) and the account's Model stats page (every note).
+
+	/// The day a note was added, in the page's language; '' for an id that does not say.
+	function steerDate(ms) {
+		if (!ms) return '';
+		try {
+			var loc = window.DaimondI18n && DaimondI18n.locale ? DaimondI18n.locale() : undefined;
+			return new Date(ms).toLocaleDateString(loc || undefined, { day: 'numeric', month: 'short', year: 'numeric' });
+		} catch (e) { return ''; }
+	}
+
+	function steerEl(tag, cls, text) {
+		var e = document.createElement(tag);
+		if (cls) e.className = cls;
+		if (text != null) e.textContent = text;
+		return e;
+	}
+
+	/// Take a note away: record the figures of today and retire it. Never throws.
+	async function steerRemove(n) {
+		var roll = null;
+		try { roll = (await ratingsAccount()).roll; } catch (e) { roll = null; }
+		var at = DaimondSteering.retireAt(roll, { level: n.level, scope: n.scope, cm: n.cm, tag: n.tag });
+		var r = await steerStore('retire', { level: n.level, scope: n.scope, id: n.id }, at);
+		if (!r.ok) { toast(t('pending.steer.failed'), true); return false; }
+		steerRaise();			// a review tile for this note, or a proposal it was holding, is settled again
+		return true;
+	}
+
+	/// Draw the Steering list into `host`, and again whenever the notes change. `opts.diamond` is a
+	/// Diamond's id for its view (its notes and the account's), else every note; `opts.empty` is the class
+	/// the empty-state line wears where it is drawn.
+	function steerListMount(host, opts) {
+		opts = opts || {};
+		host.classList.add('steer-list');
+		host.setAttribute('data-steer-list', opts.diamond ? 'diamond' : 'account');
+		var seq = 0;
+		async function draw() {
+			var mine = ++seq, notes = await steerNotes();
+			if (mine !== seq || !host.isConnected) return;			// a later draw has the say, or the page was redrawn
+			host.textContent = '';
+			if (!notes) { host.appendChild(steerEl('div', opts.empty || 'mdash-empty', t('steer.unreadable'))); return; }
+			// The model each Diamond runs, as the notes name it, so that the list can say which note a turn would not be told.
+			var groups = DaimondSteering.listing(notes, {
+				diamonds: (diamonds || []).map(function (f) { return { d: f.id, name: f.name || '', cm: Notes.cmOf(diamondModel(f.id).model) }; }),
+				diamond: opts.diamond || '', refuse: function (l) { return Notes.refusal(l); } });
+			if (!groups.length) { host.appendChild(steerEl('div', (opts.empty || 'mdash-empty') + ' steer-empty', t('steer.empty'))); return; }
+			groups.forEach(function (g) {
+				g.notes.forEach(function (n) {
+					var row = steerEl('div', 'steer-row'), foot = steerEl('div', 'steer-foot');
+					row.setAttribute('data-note', n.id);
+					row.appendChild(steerEl('div', 'pend-detail pend-steer-line steer-line', n.line));
+					if (n.off) {
+						var why = n.off === 'model' ? t('steer.off_model') : n.off === 'diamond' ? t('steer.off_diamond')
+							: n.off === 'refused' ? t('steer.off_refused') : t('steer.off_taken');
+						var off = steerEl('div', 'pend-head steer-meta steer-off', why);
+						off.setAttribute('data-off', n.off);
+						row.appendChild(off);
+					}
+					var who = n.level === 3 ? t('steer.scope_account') : t('steer.scope_diamond', { name: g.name || g.scope.slice(0, 8) });
+					var day = steerDate(n.added);
+					foot.appendChild(steerEl('div', 'pend-head steer-meta', [who, n.cm === 'all' ? t('steer.model_all') : n.cm]
+						.concat(day ? [t('steer.added', { date: day })] : []).join(' \u00b7 ')));
+					var rm = steerEl('button', 'pend-act pend-verb pend-no steer-rm', t('pending.steer.remove'));
+					rm.type = 'button';
+					rm.setAttribute('aria-label', t('steer.remove_aria', { line: n.line }));
+					rm.addEventListener('click', async function () {
+						rm.disabled = true;
+						try { await steerRemove(n); } finally { rm.disabled = false; }
+					});
+					foot.appendChild(rm);
+					row.appendChild(foot);
+					host.appendChild(row);
+				});
+			});
+		}
+		Notes.views.push({ live: function () { return host.isConnected; }, draw: draw });
+		draw();
+		return draw;
+	}
+	if (window.DaimondModelDash && DaimondModelDash.useSteering) {
+		DaimondModelDash.useSteering(function (host) { steerListMount(host, { empty: 'mdash-empty' }); });
+	}
+
 	// The two layers of standing instructions, for the same reason: what reaches
 	// every agent should be askable from outside the one function that composes it.
 	window.DaimondInstructions = Instructions;
@@ -47283,6 +48269,8 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			visionModel:    keep('visionModel', pick.visionModel),
 		};
 		try { localStorage.setItem(DIAMOND_MODELS_KEY, JSON.stringify(all)); } catch (e) { /* quota */ }
+		// Another model is another client, and the notes are chosen per model (C6).
+		try { if (typeof Notes === 'object' && Notes) Notes.reapply(id); } catch (e) { /* the notes are not up yet */ }
 	}
 
 	/// The model a Diamond runs on. A Diamond made before Diamonds had models falls back to the default,
@@ -48015,8 +49003,9 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 
 	/// Write the digest, and make sure the Optimiser can read it.
 	///
-	/// Called after a turn and on demand. Cheap: the index is counters, and the
-	/// digest is built from them rather than from any transcript.
+	/// Called after a turn, after a burst of ratings and on demand. The signals are counters; the
+	/// Ratings section is the account's rating cells (`ratingsAccount`), which read a transcript
+	/// only where its memo has gone stale, and the old Models-page counts close it (O4).
 	///
 	/// THROUGH `Wasm.store_write`, NEVER `Files.writeBytes` (2026-09-25). The
 	/// latter is `tools().write_bytes`, which lands in whatever workspace is
@@ -48030,6 +49019,8 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 	/// (M4) -- the one place this write and that grant now agree.
 	async function writeUsageDigest() {
 		if (!window.DaimondSignals) return;
+		await importModelCounts();
+		var tail = await ratingsDigest();
 		var md;
 		try {
 			md = DaimondSignals.digest((diamonds || []).map(function (d) {
@@ -48037,8 +49028,9 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			}));
 		} catch (e) { return; }
 		try {
-			await Wasm.store_write(USAGE_DIR + '/digest.md', md);
+			await Wasm.store_write(USAGE_DIR + '/digest.md', String(md).replace(/\s+$/, '') + '\n' + tail);
 		} catch (e) { /* no store yet, or no room; the next turn tries again */ }
+		steerRaise();		// the figures the digest just carried are the ones a proposal reads
 	}
 
 	/// Where Daimond Help reads the user guide.
@@ -48578,11 +49570,17 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 	/// function so a reader of the cache and its writer cannot spell the key differently.
 	function diamondAppKey(a) { return (a.provider || '') + '\u0000' + (a.model || ''); }
 
+	/// Tell a Diamond's daimon its steering notes. Before the notes service exists (a call made while
+	/// the page is still starting) there is nothing to tell.
+	function noteSteer(app, diamondId, model) {
+		try { if (typeof Notes === 'object' && Notes) Notes.applyTo(app, diamondId, model); } catch (e) { /* the turn goes unsteered */ }
+	}
+
 	function diamondApp(diamondId, pick) {
 		var m = pick && pick.model ? pick : diamondModel(diamondId);
 		var a = appCfgFor(m);
 		var k = diamondAppKey(a);
-		if (_diamondApps[k]) return _diamondApps[k];
+		if (_diamondApps[k]) { noteSteer(_diamondApps[k], diamondId, a.model); return _diamondApps[k]; }
 
 		var app;
 		var base = a.baseUrl || 'http://127.0.0.1/v1/chat/completions';
@@ -48621,6 +49619,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		// The daimon and the reducer name themselves per turn; the engine needs only the
 		// provider, which nothing but the page knows.
 		noteAppProv(app, 'daimon', a.model || '', a.provider || '', '', '');
+		noteSteer(app, diamondId, a.model);
 		return app;
 	}
 
@@ -48724,6 +49723,10 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 				// set can change.
 				try { await Triggers.reload(); } catch (e) { /* the module is not up */ }
 				try { noteTriggersHeldHere(); } catch (e) { /* a notice must not stop the walk */ }
+				// The notes travel in the Diamonds too, so this is every occasion on which they can change.
+				// Not waited for: a rail does not wait on a file, and a turn built before they are read is
+				// built again when they are (`Notes.changed`).
+				try { Notes.reload().catch(function () { /* the next walk tries again */ }); } catch (e) { /* not up */ }
 				if (!_diamondAgain) return;
 			}
 		})();
@@ -54324,7 +55327,14 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 	/// it never rides the sync parcel.
 	function dropChatApp(chatId) {
 		var c = chats.find(function (x) { return x.id === chatId; });
-		if (!c) return;
+		if (c) rebuildChatApp(c);
+	}
+
+	/// The engine session a chat holds is to be built again (its workspace, its prompt, its notes,
+	/// a setting or a key have moved): the one door, for a chat and for every chat at once. A chat
+	/// mid-turn keeps the session its turn runs on, which Stop, a pause and an interjection all reach
+	/// it by, and the mark is applied at the top of the next turn.
+	function rebuildChatApp(c) {
 		if (c._generating) { c._scopeStale = true; return; }
 		c.app = null;
 	}
@@ -56626,6 +57636,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		// aborting is idempotent, and a Diamond's app is rebuilt by `diamondApp` on the
 		// next use, so a stopped daimon does not leave a poisoned client behind.
 		rec.app = diamondApp(f.id);
+		rec._runApp = rec.app;		// and what Stop and a pause reach, whatever becomes of `rec.app`
 		// TRAINING WHEELS — the debug feed's `turn.start`, THE DAIMON'S. The chat path
 		// has emitted one since the feed existed and this path never did, so the lens
 		// had to invent a daimon's turns out of its `ended` rows (`lens.mjs`: "the
@@ -57168,6 +58179,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			persistChats();
 			crystalSay(friendlyError(e));
 			rec._generating = false;
+			rec._runApp = null;
 			rec._busy = '';
 			if (detached) { try { delete _liveTurn[String(detached.turnId)]; delete _liveMid[String(detached.turnId)]; delete _liveProd[String(detached.turnId)]; } catch (e2) { /* bounded map */ } }
 			// TRAINING WHEELS — a failure BEFORE the turn is still an end of it.
@@ -57186,6 +58198,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			return '';
 		}
 		rec._generating = false;
+		rec._runApp = null;
 		rec._busy = '';
 		if (current === rec) mountRateControls();
 		rateArm(rec.id);
@@ -57823,7 +58836,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		// And the search keys, which are the same kind of thing: somebody else's
 		// bearer credential, held in memory, and a locked Daimond holds none.
 		if (window.DaimondSearch) DaimondSearch.lock();
-		chats.forEach(function (c) { c.app = null; });
+		chats.forEach(rebuildChatApp);
 		resetDiamondApps();
 
 		locked = true;
@@ -60580,7 +61593,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			stored.maxRounds = n;
 			try { localStorage.setItem(CFG_KEY, JSON.stringify(stored)); }
 			catch (e) { /* quota or unavailable — the choice holds for this session */ }
-			chats.forEach(function (c) { c.app = null; });
+			chats.forEach(rebuildChatApp);
 			resetDiamondApps();
 			this.render();
 		},
@@ -60670,7 +61683,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			stored.foldAt = f;
 			try { localStorage.setItem(CFG_KEY, JSON.stringify(stored)); }
 			catch (e) { /* quota or unavailable — the choice holds for this session */ }
-			chats.forEach(function (c) { c.app = null; });
+			chats.forEach(rebuildChatApp);
 			resetDiamondApps();
 			this.render();
 		},
@@ -60763,7 +61776,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			stored.contextCap = n;
 			try { localStorage.setItem(CFG_KEY, JSON.stringify(stored)); }
 			catch (e) { /* quota or unavailable \u2014 the choice holds for this session */ }
-			chats.forEach(function (c) { c.app = null; });
+			chats.forEach(rebuildChatApp);
 			resetDiamondApps();
 			this.render();
 		},
@@ -60859,7 +61872,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			stored.spendCap = n;
 			try { localStorage.setItem(CFG_KEY, JSON.stringify(stored)); }
 			catch (e) { /* quota or unavailable — the choice holds for this session */ }
-			chats.forEach(function (c) { c.app = null; });
+			chats.forEach(rebuildChatApp);
 			resetDiamondApps();
 			this.render();
 		},
@@ -62409,7 +63422,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			stored.maxOut = n;
 			try { localStorage.setItem(CFG_KEY, JSON.stringify(stored)); }
 			catch (e) { /* quota or unavailable — the choice holds for this session */ }
-			chats.forEach(function (c) { c.app = null; });
+			chats.forEach(rebuildChatApp);
 			resetDiamondApps();
 			this.render();
 		},
@@ -62528,7 +63541,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		note.textContent = t('files.saved');
 		// New settings imply fresh app instances for existing chats and
 		// for every Diamond app built on the old key.
-		chats.forEach(function (c) { c.app = null; });
+		chats.forEach(rebuildChatApp);
 		resetDiamondApps();
 		// A form that has done its job leaves. The confirmation is not a word in
 		// a box that stays open — it is the status header now naming the model

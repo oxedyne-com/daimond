@@ -765,6 +765,44 @@ pub fn compose_prompt_for(role: &str, text: &str, model: &str) -> String {
     }
 }
 
+/// The same, with the person's standing notes composed in as one block.
+///
+/// For the chat and the daimon the block goes after the search note and before the safety clause,
+/// which stays last; a worker, the crystal fold and the context fold get none.  An empty `steer`,
+/// or one with no admitted line, answers exactly what [`compose_prompt_for`] does.  Pass the
+/// result to [`prompt_fingerprint`] as it stands, so `sp` moves when a note does.
+///
+/// # Arguments
+/// * `steer` - One note to a line, most specific first.  At most five notes and 600 bytes are
+///   taken, from the front; a refused line takes no place.  See [`steering_limits`].
+#[wasm_bindgen]
+pub fn compose_prompt_with(role: &str, text: &str, model: &str, steer: &str) -> String {
+    match crate::prompts::Role::parse(role) {
+        Ok(r)  => r.compose_with(text, model, steer),
+        Err(_) => text.to_string(),
+    }
+}
+
+/// Why a steering note is refused, as a code, or empty when it is admitted: `empty`, `control`,
+/// `long`, `rating`, `pleasing`, `agreeing` or `approval`.  The one lint, so the page keeps no
+/// word list of its own.
+#[wasm_bindgen]
+pub fn steering_refusal(line: &str) -> String {
+    crate::steering::refusal(line)
+}
+
+/// The steering block the engine would compose from `steer`, or empty when no line is admitted.
+#[wasm_bindgen]
+pub fn steering_block(steer: &str) -> String {
+    crate::steering::block(steer)
+}
+
+/// The steering caps as JSON: `{"notes":5,"bytes":600,"line":200}`.
+#[wasm_bindgen]
+pub fn steering_limits() -> String {
+    crate::steering::limits_json()
+}
+
 /// The fingerprint a product records of the instructions it was made under (`sp1:` and eight hex
 /// digits), for the two roles the page composes: pass exactly what the app was built with -- the
 /// role and the user's standing instructions, without a worker's dispatching crystal.  See

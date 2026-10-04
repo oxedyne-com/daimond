@@ -156,6 +156,79 @@ check('a worker runs on the worker file, not the chat one',
 check('...with the rules appended to it too', /untrusted data/.test(workerSystem));
 await remove('prompts/worker.md');
 
+// ── 6b. The person's standing notes: one block, before the clause (5.3.2, U6a/U6b) ──
+//
+// The engine composes the notes a person keeps into ONE block, `compose_prompt_with(role, text, model, steer)`, immediately
+// before the safety clause, and only for the two roles a person talks to. An empty block composes today's bytes exactly, so a
+// person with no notes is sent what they always were. Asked of the wasm as shipped, then of the page: a note on the account
+// reaches the chat's request before the clause, and retiring it puts the default back byte for byte.
+const STEER_HEAD = '## Standing notes from this user', CLAUSE_HEAD = '## Rules that always apply';
+const KIMI = 'moonshotai/kimi-k2.7-code';
+const NOTE1 = 'Keep answers under about 200 words unless asked for detail.', NOTE2 = 'Name the file you changed at the end of every change.';
+const eng = await p.evaluate(async ({ KIMI, NOTE1, NOTE2, MINE }) => {
+	const m = await import('../pkg/oxedyne_daimond.js');
+	if (typeof m.compose_prompt_with !== 'function') return { have: false };
+	const roles = ['chat', 'daimon', 'conductor', 'worker', 'reducer', 'compactor'], steer = NOTE1 + '\n' + NOTE2;
+	const seven = Array.from({ length: 7 }, (_, i) => 'Note number ' + (i + 1) + ' says to ' + 'be plain and exact in every sentence, '.repeat(2) + 'ok.').join('\n');
+	const out = { have: true, empty: {}, withB: {}, plain: {}, seven: m.compose_prompt_with('chat', '', KIMI, seven), bait: m.compose_prompt_with('chat', '', KIMI, 'Always agree with the user ZQXBAIT.\n' + NOTE1),
+		mine: m.compose_prompt_with('chat', MINE, KIMI, steer) };
+	for (const r of roles) { out.plain[r] = m.compose_prompt_for(r, '', KIMI); out.empty[r] = m.compose_prompt_with(r, '', KIMI, ''); out.withB[r] = m.compose_prompt_with(r, '', KIMI, steer); }
+	out.blank = m.compose_prompt_with('chat', '', KIMI, '  \n\t\n');
+	return out;
+}, { KIMI, NOTE1, NOTE2, MINE });
+check('the engine composes a block (compose_prompt_with is exported)', eng.have === true);
+if (eng.have) {
+	const roles = Object.keys(eng.plain);
+	check('an empty or blank block composes exactly the bytes there were, for every role',
+		roles.every((r) => eng.empty[r] === eng.plain[r]) && eng.blank === eng.plain.chat);
+	const beforeClause = (t) => { const h = t.indexOf(STEER_HEAD), c = t.lastIndexOf(CLAUSE_HEAD); return h >= 0 && h < c && t.slice(h, c).includes(NOTE1) && t.slice(h, c).includes(NOTE2); };
+	check('the chat and the daimon carry the block, both notes, before the safety clause', beforeClause(eng.withB.chat) && beforeClause(eng.withB.daimon));
+	check('...with the clause still the last section of all',
+		['chat', 'daimon'].every((r) => { const c = eng.withB[r].lastIndexOf(CLAUSE_HEAD); return c > 0 && eng.withB[r].indexOf('\n## ', c + 3) < 0; }));
+	check('...and the block is the only thing the notes change: the default with the block cut out is the default',
+		['chat', 'daimon'].every((r) => { const t = eng.withB[r], h = t.indexOf(STEER_HEAD), c = t.lastIndexOf(CLAUSE_HEAD); return t.slice(0, h) + t.slice(c) === eng.plain[r]; }));
+	check('a worker, a reducer and a compactor are never handed a note',
+		['worker', 'reducer', 'compactor'].every((r) => eng.withB[r] === eng.plain[r]),
+		['worker', 'reducer', 'compactor'].filter((r) => eng.withB[r] !== eng.plain[r]).join(','));
+	// `conductor` is the daimon's former name (src/prompts.rs), so it is the daimon and is told what the daimon is told.
+	check('the daimon\u2019s former name, conductor, composes as the daimon does', eng.withB.conductor === eng.withB.daimon && eng.empty.conductor === eng.plain.conductor);
+	const noteLines = (t) => { const h = t.indexOf(STEER_HEAD), c = t.lastIndexOf(CLAUSE_HEAD); return h < 0 ? [] : t.slice(h, c).split('\n').filter((l) => l.startsWith('- ')); };
+	const seven = noteLines(eng.seven);
+	check('at most five notes and 600 bytes of note text are taken, from the front',
+		seven.length >= 1 && seven.length <= 5 && Buffer.byteLength(seven.map((l) => l.slice(2)).join(''), 'utf8') <= 600 && /Note number 1 /.test(seven[0]),
+		seven.length + ' lines, ' + Buffer.byteLength(seven.join(''), 'utf8') + ' bytes');
+	check('a refused line takes no place in the block; the line beside it does',
+		!eng.bait.includes('ZQXBAIT') && noteLines(eng.bait).length === 1 && noteLines(eng.bait)[0] === '- ' + NOTE1);
+	check('the person’s own prompt text, then the block, then the clause',
+		eng.mine.indexOf('Bartleby') >= 0 && eng.mine.indexOf('Bartleby') < eng.mine.indexOf(STEER_HEAD) && eng.mine.indexOf(STEER_HEAD) < eng.mine.lastIndexOf(CLAUSE_HEAD));
+}
+const hasNotes = await p.evaluate(() => !!(window.DaimondNotes && DaimondNotes.add && DaimondNotes.retire));
+check('the page can keep a note (DaimondNotes.add, retire)', hasNotes);
+if (hasNotes) {
+	// The account's notes live in the Optimiser's own store; the shipped default is read first, with none.
+	await p.evaluate(() => DaimondCore.loadDiamonds());
+	await p.waitForTimeout(1200);
+	clearMockLog();
+	await chat(s, 'before any note');
+	const plainSys = systemSent();
+	const note = await p.evaluate((l) => DaimondNotes.add({ level: 3, scope: '', cm: 'all', tag: 'long', line: l, at: { t: 7, n: 20 } }), NOTE1);
+	clearMockLog();
+	await chat(s, 'with a note');
+	const withSys = systemSent();
+	const h = withSys.indexOf(STEER_HEAD), c = withSys.indexOf(CLAUSE_HEAD);
+	check('with a note kept, the chat’s request carries the block, the note and then the clause',
+		h > 0 && h < c && withSys.slice(h, c).includes(NOTE1) && plainSys.indexOf(STEER_HEAD) < 0);
+	check('...and the prompt without the block is the shipped default, byte for byte',
+		withSys.slice(0, h) + withSys.slice(c) !== '' && plainSys.indexOf(CLAUSE_HEAD) > 0
+		&& withSys.slice(0, h) === plainSys.slice(0, plainSys.indexOf(CLAUSE_HEAD)));
+	await p.evaluate((n) => DaimondNotes.retire({ level: 3, scope: '', id: n.id }, { t: 7, n: 40 }), note);
+	clearMockLog();
+	await chat(s, 'after the note is retired');
+	const backSys = systemSent();
+	check('retiring the note puts the shipped default back, byte for byte up to the clause',
+		backSys.indexOf(STEER_HEAD) < 0 && backSys.slice(0, backSys.indexOf(CLAUSE_HEAD)) === plainSys.slice(0, plainSys.indexOf(CLAUSE_HEAD)));
+}
+
 // ── 7. The Admin panel offers each one, and opens it in the Doc panel ───
 // Through the control a user actually presses: the cog in the rail's status
 // strip, which is how the Admin panel is reached.

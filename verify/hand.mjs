@@ -17,6 +17,11 @@
 //   node verify/hand.mjs                 # seal ../daimond-oss/hand
 //   node verify/hand.mjs --root DIR      # some other tree
 //   node verify/hand.mjs --no-lock       # do not check the lock first
+//   node verify/hand.mjs --check-only    # the path, pin and lock checks, then stop: no hand.json
+//
+// `--check-only` is how `dev/deploy.sh --dry-run` proves step 2. It runs the same three refusals
+// against `--root DIR` (a tree `node dev/publish.mjs --stage-hand DIR` staged) and exits before it
+// hashes or writes anything, so a rehearsal that exits 0 here is a release that gets past the seal.
 //
 // **It reads the PUBLIC tree, not this one**, for the same reason the bundle is built there: the
 // two differ where it matters. This tree's `hand/Cargo.toml` depends on fe2o3 by path, into a
@@ -53,6 +58,12 @@ const args	= process.argv.slice(2);
 const opt	= (name, def = null) => { const i = args.indexOf(name); return i >= 0 ? args[i + 1] : def; };
 const ROOT	= resolve(opt('--root', join(MIRROR, 'hand')));
 const NO_LOCK	= args.includes('--no-lock');
+const CHECK_ONLY = args.includes('--check-only');
+
+if (CHECK_ONLY && NO_LOCK) {
+	console.error(`--check-only checks the lock and --no-lock skips it: the pair would pass without checking.`);
+	process.exit(2);
+}
 
 /// Everything under the hand except its build output. `target/` is its own cargo workspace's, so
 /// it does not fall under the root `target/` the rest of the repository ignores.
@@ -135,6 +146,11 @@ if (!NO_LOCK) {
 		process.exit(1);
 	}
 	console.log(`Cargo.lock  checked against ${ROOT}/Cargo.toml (--locked: unchanged)`);
+}
+
+if (CHECK_ONLY) {
+	console.log(`check-only  ${ROOT}: the seal's path, pin and lock checks pass; nothing hashed, hand.json not written`);
+	process.exit(0);
 }
 
 const files	= await hashTree(ROOT, { exclude: new Set(), excludeDirs: EXCLUDE_DIRS, excludeSuffixes: [] });

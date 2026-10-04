@@ -91,6 +91,10 @@ pub struct DaimondApp {
     // Diamond id: a Diamond app is shared per provider and model, so a second Diamond steering on
     // the same model must not overwrite the first one's cell.  Read by `last_prompt_fingerprint`.
     fingerprints: RefCell<std::collections::BTreeMap<(String, String), String>>,
+    // The standing notes the daimon composes in for each Diamond, by Diamond id, already reduced to
+    // the lines the block carries.  Held per Diamond and not per app because the app is shared by
+    // every Diamond on one model, and a note written for Thesis must not steer the Diamond beside it.
+    steering: RefCell<std::collections::BTreeMap<String, String>>,
 }
 
 /// A turn's place in its app's list of running turns, given up when the turn ends -- however it
@@ -227,6 +231,7 @@ impl DaimondApp {
             ended:            RefCell::new(Vec::new()),
             provider:         RefCell::new(String::new()),
             fingerprints:     RefCell::new(std::collections::BTreeMap::new()),
+            steering:         RefCell::new(std::collections::BTreeMap::new()),
         })
     }
 
@@ -871,6 +876,43 @@ impl DaimondApp {
                  constructor instead.", other.name(); Invalid, Input))),
         }
         Ok(())
+    }
+
+    /// Set the standing notes Diamond `id`'s daimon composes into its prompt, and say how many are
+    /// in force.
+    ///
+    /// Only the daimon is steered here.  A chat is composed in the browser, through
+    /// [`compose_prompt_with`](crate::wasm::entry::compose_prompt_with), and a worker and the two
+    /// folds are never handed a note.  The notes are kept per Diamond because one app serves every
+    /// Diamond on a model; the page calls this on a change to a Diamond's notes and when
+    /// `setDiamondModel` hands the Diamond another app.  Empty `text` clears them.
+    ///
+    /// # Arguments
+    /// * `role` - `daimon`.
+    /// * `id` - The Diamond the notes are for.
+    /// * `text` - One note to a line, most specific first; see [`crate::steering::admitted`] for
+    ///   the lines it carries.
+    pub fn set_steering(&self, role: &str, id: &str, text: String) -> Result<u32, JsValue> {
+        match Role::parse(role) {
+            Ok(Role::Daimon) => (),
+            Ok(Role::Chat) => return Err(to_js_err(err!(
+                "set_steering was given role '{}' for Diamond '{}', but the chat's notes are \
+                 composed in the browser with compose_prompt_with, not held on an app.",
+                role, id; Invalid, Input))),
+            Ok(other) => return Err(to_js_err(err!(
+                "The {} is never given steering notes, so none can be set for Diamond '{}'.",
+                other.name(), id; Invalid, Input))),
+            Err(e) => return Err(to_js_err(e)),
+        }
+        // Reduced here, so what is held is exactly what the block will carry and no more.
+        let lines = crate::steering::admitted(&text);
+        let n = lines.len() as u32;
+        if lines.is_empty() {
+            self.steering.borrow_mut().remove(id);
+        } else {
+            self.steering.borrow_mut().insert(id.to_string(), lines.join("\n"));
+        }
+        Ok(n)
     }
 
     /// Say who this app's writes are by, so every version entry its file tools capture names the
@@ -3027,8 +3069,12 @@ impl DaimondApp {
         // from a constant, exactly as `briefing` reads it: two of the notes are dropped for a
         // model measured not to need them, and a model this build has not heard of is given all
         // of them.  See `prompts::CONDITIONAL` and `dev/PROMPT_NOTES.md`.
-        let standing = Role::Daimon.compose_wire(
-            &self.daimon_prompt.borrow(), &self.agent.llm.model, self.registry.claude_names());
+        // The notes are this Diamond's and no other's, and are in `standing`, so the fingerprint
+        // taken over it below moves when a note does and for no other reason.
+        let steer = self.steering.borrow().get(id).cloned().unwrap_or_default();
+        let standing = Role::Daimon.compose_wire_with(
+            &self.daimon_prompt.borrow(), &self.agent.llm.model, &steer,
+            self.registry.claude_names());
         // Named apart from the standing text rather than pushed onto it, and the reason is the
         // question the Wire asks of every paragraph: WHOSE is it.  The role prompt above is one
         // constant every Diamond shares and its owner may rewrite; what follows is true of THIS

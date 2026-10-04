@@ -1,8 +1,8 @@
 // One real turn against Fireworks gpt-oss-120b, driven through the real Settings
 // form (the reliable path), headless. Proves the loop works with a real model.
-import fs from 'node:fs';
 import { open, chat, errors } from './harness.mjs';
-const cfg = JSON.parse(fs.readFileSync('dev/.secrets/testcfg.json', 'utf8'));
+import { testCfg } from './testcfg.mjs';
+const cfg = testCfg();
 const MODEL = cfg.models.value;
 
 const s = await open({ name: 'realsmoke', connect: false });   // signed in, not yet connected

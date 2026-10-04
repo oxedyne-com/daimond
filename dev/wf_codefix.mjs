@@ -5,8 +5,9 @@
 import fs from 'node:fs';
 import { execSync } from 'node:child_process';
 import { open, chat, errors } from './harness.mjs';
+import { testCfg } from './testcfg.mjs';
 
-const cfg = JSON.parse(fs.readFileSync('dev/.secrets/testcfg.json', 'utf8'));
+const cfg = testCfg();
 const MODEL = cfg.models.value;   // gpt-oss-120b (value)
 // The rustcalc fixture is not in this repository — it is a scratch project one
 // developer keeps outside it, so the path is a setting and not a constant.

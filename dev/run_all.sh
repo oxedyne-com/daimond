@@ -172,7 +172,7 @@ declarations_all() {
 # -- the same wall `verify_pausesync`/`verify_sessionrenew` hit, and the same
 # honest skip below is what a first run of either now gets instead of an
 # unexplained refusal three checks deep.
-NEEDS_GRANT="verify_compose verify_mailfolders verify_sync verify_pausesync verify_sessionrenew verify_handoff_noresurrect verify_ed25519_forall verify_handoff_backtoback"
+NEEDS_GRANT="verify_compose verify_mailfolders verify_sync verify_pausesync verify_sessionrenew verify_handoff_noresurrect verify_ed25519_forall verify_handoff_backtoback verify_steering verify_optimiser"
 
 # WHICH IDENTITY EACH OF THEM DRIVES, because they do not all drive one.
 #
@@ -204,6 +204,10 @@ ident_for() {
 		verify_handoff_noresurrect)			echo "nrlead" ;;
 		# `verify_handoff_backtoback` pairs the same way, as `b2blead` and `b2bmate`.
 		verify_handoff_backtoback)			echo "b2blead" ;;
+		# 5.3.2 (rating U5-U7). `verify_steering` pairs `steerlead` and `steermate` (ST7, ST8); `verify_optimiser` pairs
+		# `oplead` and `opmate` for OP4's second device. Both were first measured with the live gateway up.
+		verify_steering)					echo "steerlead" ;;
+		verify_optimiser)					echo "oplead" ;;
 		verify_ed25519_forall)				echo "ed25519-old" ;;
 		*)									echo "" ;;
 	esac
@@ -336,9 +340,25 @@ verify_consolenav verify_interfacediagram verify_search_console verify_vocabular
 # list above must still not stop the whole suite on its account.
 OWN_DISPLAY="verify_reflux"
 
+# A `headless: false` that is given `--headless=new` in the same launch options is headless in effect: Playwright adds no
+# `--headless` of its own, and Chromium's new headless mode needs no display, which is why such a verifier deletes DISPLAY
+# itself (verify_resurrect_mixed does; it ran nothing on 2026-10-04's nightly for want of a HEADED entry it had no use for).
+# What the check guards against is a window or "Missing X server", and neither can happen to it. So the check asks of the
+# file whether any `headless: false` has no `--headless=new` within eight lines of it (the options object or its args), and
+# only then wants the name in HEADED. Exact in the direction that matters: a launch with no such flag is still caught.
+launches_headed() {	# $1 = a verifier file
+	awk '{ l[NR] = $0 }
+		END { for (i = 1; i <= NR; i++) if (l[i] ~ /headless: *false/) {
+			seen = 0
+			for (j = i - 8; j <= i + 8; j++) if (j >= 1 && j <= NR && l[j] ~ /--headless=new/) seen = 1
+			if (!seen) { print "headed"; exit }
+		} }' "$1"
+}
+
 missing_headed=""
 for f in dev/verify_*.mjs; do
 	grep -q 'headless: *false' "$f" || continue
+	[ -n "$(launches_headed "$f")" ] || continue
 	n=$(basename "$f" .mjs)
 	case " $OWN_DISPLAY " in *" $n "*) continue ;; esac
 	case " $HEADED " in *" $n "*) ;; *) missing_headed="$missing_headed $n" ;; esac
@@ -393,6 +413,11 @@ budget_floor() {
 		# on release 4: over the 600 it had, so the release-5 nightly would read exit 124.
 		verify_style)                     echo 900 ;;
 		verify_handoff_noresurrect|verify_syncfixedpoint) echo 600 ;;
+		# 5.3.2 (rating U5-U7), measured by lane V on world 88 (2026-10-05): verify_steering 214 s green and 339 s on 5.3.1 where
+		# every section fails slowly; verify_ratings_digest 222 s (411 s under a break); verify_optimiser is its old 29 checks
+		# and then OP1 to OP5, whose second device is a paired account.
+		verify_steering|verify_ratings_digest) echo 600 ;;
+		verify_optimiser)                 echo 900 ;;
 		verify_scope|verify_kitfence)     echo 600 ;;
 		verify_reversible)                echo 420 ;;
 		verify_sweep_mobile)              echo 900 ;;

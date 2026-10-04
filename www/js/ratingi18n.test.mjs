@@ -3,8 +3,8 @@
    specs/daimond_rating_u2_plan_20260930.md; unit M of
    specs/daimond_rating_u34_plan_20261002.md).
    ------------------------------------------------------------
-   The rating widget, its popup, its tile and the Models page's read-only
-   counts say nothing until every locale table holds their keys. A missing key
+   The rating widget, its popup, its tile and the Models page's Trust figures
+   say nothing until every locale table holds their keys. A missing key
    falls back to English (i18n.js), so a German user would see an English chip
    in a German popup and nothing would fail; only a census can see it.
 
@@ -129,7 +129,8 @@ const WORDS = {
 	'rating.tag.not_useful':   'Not useful',
 	'rating.tag.already_knew': 'Already knew',
 	'rating.tag.useful':       'Useful',
-	'modeldash.rating_counts': '{up} up · {down} down',
+	'modeldash.trust_counts':  '{up} up, {down} down of {made} answers',
+	'modeldash.trust_more':    'not enough yet, {n} more',
 };
 const KEYS = Object.keys(WORDS);
 
@@ -143,7 +144,7 @@ check('every dimension the form declares has a `rating.dim.<id>` key in the list
 	dimIds.every((id) => ('rating.dim.' + id) in WORDS));
 check('the list holds no tag the form does not declare',
 	KEYS.filter((k) => k.startsWith('rating.tag.')).every((k) => tagIds.includes(k.slice(11))));
-check('the plan lists ' + KEYS.length + ' keys', KEYS.length === 62, String(KEYS.length));
+check('the plan lists ' + KEYS.length + ' keys', KEYS.length === 63, String(KEYS.length));
 
 for (const c of LOCALES) {
 	const gone = KEYS.filter((k) => typeof T[c][k] !== 'string' || T[c][k].trim() === '');
@@ -174,7 +175,7 @@ for (const c of LOCALES) {
 	}
 }
 
-// Claim 3: the placeholders. `{up}` and `{down}` are the Models page's, the rest the widget's.
+// Claim 3: the placeholders. `{up}`, `{down}`, `{made}` and `{n}` are the Models page's, the rest the widget's.
 for (const c of LOCALES) {
 	const bad = KEYS.filter((k) => holders(T[c][k]) !== holders(WORDS[k]));
 	check(c + ': every placeholder of the English is carried', bad.length === 0,
@@ -207,11 +208,12 @@ for (const c of LOCALES) {
 		(String(T[c]['rating.where']).match(/[.。]/g) || []).length >= 2, String(T[c]['rating.where']));
 }
 
-// Unit G removed the Models page's per-model buttons, so their two tooltips have no reader; a key
-// with no caller is a translation someone pays for and nobody sees.
+// Unit G removed the Models page's per-model buttons, so their two tooltips have no reader; U5b of
+// 5.3.2 replaced the counts the old buttons gave with figures from rated answers, so their line has
+// none either. A key with no caller is a translation someone pays for and nobody sees.
 for (const c of LOCALES) {
-	const left = ['modeldash.rate_up_help', 'modeldash.rate_down_help'].filter((k) => k in T[c]);
-	check(c + ': the retired Models-page button tooltips are gone', left.length === 0, left.join(' '));
+	const left = ['modeldash.rate_up_help', 'modeldash.rate_down_help', 'modeldash.rating_counts'].filter((k) => k in T[c]);
+	check(c + ': the retired Models-page keys (button tooltips, the old counts line) are gone', left.length === 0, left.join(' '));
 }
 
 console.log('\n' + (failures ? failures + ' of ' + checks + ' checks failed' : 'all ' + checks + ' checks passed'));
