@@ -102,6 +102,7 @@ async function merge({ disk: d0 = {}, base = {}, remote, folder = false, seen, c
 		syncFilesBudget:   async () => 1 << 20,
 		withoutAppState:   (m) => m,
 		syncAppState:      () => false,
+		ownHere:           () => false,
 		withinShare:       () => true,
 		deleteSyncFile:    async () => true,
 		conflictName:      (p) => p + '.conflict',

@@ -786,14 +786,24 @@
 		return enc;
 	}
 
-	/// The directory handle holding `path`, or null when a component is absent.
+	/// Is this the store's plain answer that nothing is at the name? A file where a directory
+	/// is wanted, or the reverse, is the same answer. Any other error means the store could not
+	/// be read, and that is unknown, not absent: a caller that reads it as "no such file" would
+	/// delete on a fault (SYNC_CONTRACT.md section 1, rule 7).
+	function isAbsent(e) {
+		var n = e && e.name;
+		return n === 'NotFoundError' || n === 'TypeMismatchError';
+	}
+
+	/// The directory handle holding `path`, or null when a component is absent. A directory
+	/// that cannot be read throws, as `opfsRoot` does.
 	async function dirFor(path, create) {
 		var p = parts(path);
 		if (!p.length) return null;
 		var dir = await opfsRoot();
 		for (var i = 0; i < p.length - 1; i++) {
 			try { dir = await dir.getDirectoryHandle(await diskNameIn(dir, p[i]), { create: !!create }); }
-			catch (e) { return null; }
+			catch (e) { if (isAbsent(e)) return null; throw e; }
 		}
 		return dir;
 	}
@@ -826,14 +836,14 @@
 		await w.close();
 	}
 
-	/// The File at a path, or null. The handle is how a file is read in slices
-	/// rather than whole.
+	/// The File at a path, or null when it is absent. The handle is how a file is read in
+	/// slices rather than whole. A store that cannot be read throws, and is not null.
 	async function fileAt(path) {
 		var p = parts(path);
 		var dir = await dirFor(path, false);
 		if (!dir) return null;
 		try { return await (await dir.getFileHandle(await diskNameIn(dir, p[p.length - 1]))).getFile(); }
-		catch (e) { return null; }
+		catch (e) { if (isAbsent(e)) return null; throw e; }
 	}
 
 	/// The File at a path resolved against SOME OTHER ROOT — the real folder the

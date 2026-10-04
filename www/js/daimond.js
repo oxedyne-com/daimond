@@ -5746,6 +5746,131 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		return out;
 	}
 
+	// ── The app's own files ────────────────────────────────────
+	//
+	// A FILE IS THE APP'S OWN OR THE USER'S, AND THE CENSUS ABOVE CANNOT TELL. It walks "the
+	// workspace", which in the browser IS Daimond's store -- so `prompts/chat.md` and the user's
+	// own `DAIMOND.md` rode along as workspace files -- and with a real folder open the workspace
+	// is the folder, so the walk stopped seeing the store at all and the owner's role prompts,
+	// edited on a folder-mounted desktop, never reached his other devices (D-20260924-28). A
+	// folder follows the owner's opt-in per folder; the app's own files do not, because they
+	// are not in the folder. They travel in their own parcel section, `own`, from every device
+	// whatever is mounted, and the registry below is the one list of what they are.
+	var SYNC_OWN_KEY = 'daimond-own-files';		// { path -> { h, at } }: what this device last held of each, and when it was made
+
+	/// Every file the app itself keeps in the browser store for the user, with the text it
+	/// is seeded with. An absent, blank or seed-identical file is the shipped default, so
+	/// it carries no news. A new kind of own file is one more row here.
+	function ownFiles() {
+		var out = [];
+		// The starter `Instructions.seedOnce` writes on a device's first load, so that is its default.
+		try { out.push({ path: INSTRUCTIONS_FILE, seed: function () { return instructionsSeed(); } }); } catch (e) { /* not defined yet */ }
+		try {
+			Prompts.roles.forEach(function (r) {
+				out.push({ path: Prompts.path(r.id), seed: function () { return Prompts.defaultFor(r.id); } });
+			});
+		} catch (e) { /* not defined yet */ }
+		return out;
+	}
+
+	/// Does the files census and merge leave the path to the `own` section? Only in the
+	/// browser: with a folder open the same name is the project's, and the folder's rule is
+	/// the owner's opt-in. Applying a parcel passes whether it CARRIES `own` (`parcelOwn`):
+	/// an older page sends these paths in `files` alone, so for its parcel `files` stays the
+	/// one authority, as it was. Left out, as in the local census, there is no parcel to ask.
+	function ownHere(plan, p, parcelOwn) {
+		if (plan && plan.folder) return false;
+		if (parcelOwn === false) return false;
+		var reg = ownFiles();
+		for (var i = 0; i < reg.length; i++) if (reg[i].path === p) return true;
+		return false;
+	}
+
+	/// What this device holds of its own files, as `own` carries it: `{ s, at }` for a text
+	/// and `{ d: 1, at }` for one taken back to the default, `at` being when that was made.
+	/// A file's stamp is its modification time the first time this device sees the edit and
+	/// never below the stamp it replaces, and the sender's stamp for a copy that merely
+	/// ARRIVED, so that copy is never newer than the edit it carries. A device that has never
+	/// held a text, or whose store cannot be read, says nothing.
+	async function collectOwn() {
+		var st = readJson(SYNC_OWN_KEY, {}), out = {}, dirty = false, reg = ownFiles();
+		if (!st || typeof st !== 'object' || Array.isArray(st)) st = {};
+		// A store that cannot be read is unknown, never empty (SYNC_CONTRACT.md section 1, rule 7):
+		// say nothing, so nothing deletes because of it.
+		if (await noFileStore()) return out;
+		for (var i = 0; i < reg.length; i++) {
+			var f = reg[i], file = null, text = null, seed = '';
+			// A throw is unknown, not absent: a record becomes a deletion only on a null file.
+			try { file = await DaimondCloud.fileAt(f.path); } catch (e) { continue; }
+			if (file) { try { text = await file.text(); } catch (e) { continue; } }
+			try { seed = String(f.seed() || ''); } catch (e) { seed = ''; }
+			var live = (text !== null && text.trim() !== '' && text !== seed) ? text : null;
+			var rec = st[f.path], h = live === null ? '' : fileHash(live);
+			// A stamp is a real millisecond time and never below the one it replaces
+			// (`DaimondStamp.next`, with the file's own time where the clock would be), so a
+			// write made after seeing another beats it at any clock skew.
+			var mt = file ? DaimondStamp.ms(file.lastModified) : 0, below = DaimondStamp.ms(rec && rec.at) + 1;
+			if (live !== null) {
+				if (!rec || rec.h !== h) { rec = st[f.path] = { h: h, at: Math.max(mt || Date.now(), below) }; dirty = true; }
+				out[f.path] = { s: live, at: rec.at };
+			} else if (rec) {
+				// A reset is stamped when the file was blanked, not when this census ran.
+				if (rec.h !== '') { rec = st[f.path] = { h: '', at: Math.max(mt || Date.now(), below) }; dirty = true; }
+				out[f.path] = { d: 1, at: rec.at };
+			}
+		}
+		if (dirty) { try { localStorage.setItem(SYNC_OWN_KEY, JSON.stringify(st)); } catch (e) { /* re-derived next round */ } }
+		return out;
+	}
+
+	/// Take another device's own files: the NEWER stamp wins, per file, and an older copy
+	/// never replaces a newer one. This device's own edits are stamped first, so one made
+	/// since the last collect is compared at its real time. Equal stamps break to the larger
+	/// content hash (`fileHash`), which both sides compute alike. A device that holds nothing
+	/// of a file takes the arriving text whatever its stamp, since there is nothing to lose.
+	/// A text this replaces is kept beside it as `<path>.synced`, as the `files` merge keeps
+	/// the loser, so a wrong guess at edit order costs a sidecar and never a text.
+	async function applyOwn(remote) {
+		if (!remote || typeof remote !== 'object') return false;
+		await collectOwn();
+		var st = readJson(SYNC_OWN_KEY, {}), reg = ownFiles(), changed = false, noted = false;
+		if (!st || typeof st !== 'object' || Array.isArray(st)) st = {};
+		for (var i = 0; i < reg.length; i++) {
+			var f = reg[i], r = remote[f.path];
+			if (!r || typeof r !== 'object' || !(r.at > 0)) continue;
+			var rt = (r.d === 1) ? null : (typeof r.s === 'string' ? r.s : undefined);
+			if (rt === undefined) continue;
+			var rh = rt === null ? '' : fileHash(rt), rec = st[f.path];
+			var lh = rec ? rec.h : '', la = rec ? rec.at : 0;
+			// The same text under a later stamp: take the stamp, so the next edit here outranks it.
+			if (rh === lh) { if (rec && r.at > la) { rec.at = r.at; noted = true; } continue; }
+			if (!(r.at > la || (r.at === la && rh > lh))) continue;
+			// What is held now, if it is not the shipped default, is kept before it is replaced. If it
+			// cannot be kept, or was edited since the census above, it is not replaced this round.
+			if (lh !== '') {
+				var held = null, seed = '';
+				try { var cur = await DaimondCloud.fileAt(f.path); held = cur ? await cur.text() : null; } catch (e) { continue; }
+				try { seed = String(f.seed() || ''); } catch (e) { seed = ''; }
+				if (held !== null && held.trim() !== '' && held !== seed) {
+					if (fileHash(held) !== lh) continue;
+					try { await Wasm.store_write(f.path + '.synced', held); } catch (e) { continue; }
+				}
+			}
+			try { await Wasm.store_write(f.path, rt === null ? '' : rt); } catch (e) { continue; }
+			st[f.path] = { h: rh, at: r.at };
+			changed = true;
+		}
+		if (changed || noted) {
+			try { localStorage.setItem(SYNC_OWN_KEY, JSON.stringify(st)); } catch (e) { /* re-derived next round */ }
+		}
+		if (changed) {
+			try { await Prompts.refresh(); } catch (e) { /* the next boot reads them */ }
+			try { await Instructions.refresh(); } catch (e) { /* likewise */ }
+			try { window.dispatchEvent(new CustomEvent('daimond-file-written')); } catch (e) { /* no window */ }
+		}
+		return changed;
+	}
+
 	/// A cheap, non-cryptographic content fingerprint — enough to tell whether a
 	/// file changed, which is all the 3-way merge asks of it.
 	function fileHash(s) {
@@ -6437,7 +6562,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		var paths = Object.keys(local);
 		for (var ri = 0; ri < paths.length; ri++) {
 			var rp = paths[ri];
-			if (syncAppState(rp)) continue;
+			if (syncAppState(rp) || ownHere(plan, rp)) continue;
 			var rr = fileRecord(rp);
 			if (!rr || rr.d !== 1) continue;
 			if (await owesDeletion(rp, local[rp], rr, base, mineHere, seen)) continue;
@@ -6447,7 +6572,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			// A DEVICE CAN SAY IT DELETED A FILE ONLY FROM THE STORAGE IT IS LOOKING AT: in
 			// a folder, only inside the share (an unshared path is not a deleted one).
 			var candidates = Object.keys(base).filter(function (p) {
-				return !here(p) && !(plan.folder && !withinShare(plan, p));
+				return !here(p) && !(plan.folder && !withinShare(plan, p)) && !ownHere(plan, p);
 			});
 			for (var i = 0; i < candidates.length; i++) {
 				var p = candidates[i], onDisk = null;
@@ -7484,7 +7609,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		return s === 'none' || s === 'refused';
 	}
 
-	async function applyFiles(remoteFiles, remoteComplete, remoteTombs, fromDevice, chunkTombs, stamped, remoteChunked, at) {
+	async function applyFiles(remoteFiles, remoteComplete, remoteTombs, fromDevice, chunkTombs, stamped, remoteChunked, at, parcelOwn) {
 		// The records first and whatever else happens: a device that relays nothing it heard
 		// breaks the chain for every device that reads its parcel next (QFB2-3).
 		if (window.DaimondCloud && DaimondCloud.joinTombs) DaimondCloud.joinTombs(chunkTombs);
@@ -7592,7 +7717,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			// ANOTHER DEVICE'S OWN STATE IS NOT NEWS HERE. A build from before `syncAppState`
 			// still sends its digest, its guide mirror and its agents' transcripts, and each
 			// would go over this device's own copy of the same path.
-			if (syncAppState(p)) continue;
+			if (syncAppState(p) || ownHere(plan, p, parcelOwn)) continue;
 			// A REAL FOLDER IS WRITTEN INTO ONLY WHERE THE USER MARKED IT IN. Everything
 			// arriving from another device is a path in ITS workspace, which on a
 			// folder-mounted device is somebody's disk: a path outside the shared roots,
@@ -7697,7 +7822,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		}
 		// Deletions, ON A RECORD ONLY, in the sandbox as on somebody's disk, for every
 		// copy this device owes, inline or offloaded.
-		var done = await honourFileRecords(plan, loc, local, base, wrote);
+		var done = await honourFileRecords(plan, loc, local, base, wrote, parcelOwn);
 		Object.keys(done).forEach(function (dp) { gone[dp] = 1; });
 		// AN OLDER PAGE'S OWN TOMBSTONES, on the 5.2.1 rule: from a census that saw its own
 		// root, for a path it does not carry, at the bytes here. Not where this device holds a
@@ -7706,7 +7831,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		var olds = (!stamped && remoteComplete === true && remoteTombs && typeof remoteTombs === 'object') ? remoteTombs : {};
 		for (var tp in olds) {
 			if (!Object.prototype.hasOwnProperty.call(olds, tp)) continue;
-			if (syncAppState(tp) || (plan.folder && !withinShare(plan, tp))) continue;
+			if (syncAppState(tp) || ownHere(plan, tp, parcelOwn) || (plan.folder && !withinShare(plan, tp))) continue;
 			if (Object.prototype.hasOwnProperty.call(remoteFiles, tp)) continue;	// they have it after all.
 			if (Object.prototype.hasOwnProperty.call(wrote, tp) || gone[tp]) continue;
 			var tr = fileRecord(tp);
@@ -7797,13 +7922,13 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 	///
 	/// A SHARED FOLDER IS SOMEBODY'S DISK, so there only a path inside the share is touched,
 	/// and never the app's own state or a keeper's record.
-	async function honourFileRecords(plan, loc, local, base, wrote) {
+	async function honourFileRecords(plan, loc, local, base, wrote, parcelOwn) {
 		var gone = {};
 		if (!window.DaimondCloud || !DaimondCloud.recordOf) return gone;
 		var app = plan && plan.app;
 		if (!app) return gone;
 		var mineHere = readMine()[loc] || {}, seen = readAgreedAt(loc);
-		var inside = function (p) { return !syncAppState(p) && !(plan.folder && !withinShare(plan, p)); };
+		var inside = function (p) { return !syncAppState(p) && !ownHere(plan, p, parcelOwn) && !(plan.folder && !withinShare(plan, p)); };
 		var ps = Object.keys(local || {});
 		for (var i = 0; i < ps.length; i++) {
 			var p = ps[i];
@@ -10321,6 +10446,8 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		var plan = await planDiamonds();
 		var filesBudget = await syncFilesBudget(plan);
 		var fileCol = await collectFiles(filesBudget);
+		// The app's own files ride apart from the workspace census, from every device.
+		var ownCol = await collectOwn();
 		// THE ONE LINE THAT WOULD HAVE NAMED THIS DEFECT. The inline files overspending
 		// the budget they were handed is what left the Diamonds a share of zero, and
 		// nothing anywhere said it had happened: the parcel was simply refused at the
@@ -10457,6 +10584,8 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			// a path it still carries while its record says deleted is a copy it still owes,
 			// not a write (`applyFiles`). A parcel without it is from an older page.
 			fileTombsStamped: true,
+			// The app's own store files (role prompts, the user's DAIMOND.md), whatever is mounted.
+			own:          ownCol,
 			diamonds:     dCol.list,
 			// Whether `diamonds` above is the WHOLE store. Nothing reads it today and
 			// nothing needs to: a Diamond is deleted on a tombstone, so absence is not
@@ -11097,7 +11226,8 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		});
 		await section('files',    function () {
 			return applyFiles(remote.files, remote.filesComplete === true,
-				remote.fileTombs, parcelSender(remote), remote.chunkedTombs, remote.fileTombsStamped === true, remote.chunked, at);
+				remote.fileTombs, parcelSender(remote), remote.chunkedTombs, remote.fileTombsStamped === true, remote.chunked, at,
+				remote.own !== undefined);
 		});
 		// The large files held in the chunk store, reconstructed on demand.
 		await section('chunked',  function () {
@@ -11149,6 +11279,9 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		await section('debugshare', function () {
 			if (window.DEBUG_SHARE && DEBUG_SHARE.adoptSync) DEBUG_SHARE.adoptSync(remote.debugShare);
 		});
+		// The app's own files: from every device, folder or none. A parcel without the field
+		// is a build that predates it, and its own files then ride its `files` as before.
+		await section('own', function () { return applyOwn(remote.own); });
 		// The "Something went wrong" report's consent decision (D-20260920-02).
 		// Same rule as `debugshare` just above: freshest-`at`-wins, verbatim, so a
 		// value this device already holds moves nothing.

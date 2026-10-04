@@ -64,7 +64,7 @@ async function device() {
 	// `readAgreedAt` is absent from a tree before the fix, so the red can be run against it.
 	const names = ['noteFileTombs', 'owesDeletion', 'commitAgreedFiles', 'readFilebaseAt', 'readAgreedAt', 'readMine', 'fileHash'].filter((n) => declLine(n));
 	const { fns } = sliceDaimond(win, names, {
-		syncFileLoc: () => 'browser', syncFileAt: async () => null, withinShare: () => true,
+		syncFileLoc: () => 'browser', syncFileAt: async () => null, withinShare: () => true, ownHere: () => false,
 		writeOldFileTombs: () => {}, ChatStore: { putTombs: () => Promise.resolve(true), dropTombs: () => {} },
 		storageAlarm: () => {}, tOr: (k, f) => f,
 	});

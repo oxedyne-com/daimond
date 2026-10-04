@@ -53,6 +53,7 @@ async function merge({ held = {}, local = {}, base = {}, remote, theirIx = {}, i
 		syncFilesBudget:   async () => 1 << 20,
 		withoutAppState:   (m) => m,
 		syncAppState:      () => false,
+		ownHere:           () => false,
 		withinShare:       () => true,
 		deadCopy:          async () => false,
 		deleteSyncFile:    async () => true,
