@@ -1752,7 +1752,7 @@
 	/// unchanged. A section that restamped itself on apply is exactly the
 	/// `touchSelfDevice` bug that had a freshly paired phone always holding news,
 	/// and two devices pushing at each other about once a second.
-	async function applyParcel(state) {
+	async function applyParcel(state, at) {
 		var failed = [];
 		if (window.DaimondPause) {
 			try { DaimondPause.adopt(state && state.pause); }
@@ -1827,7 +1827,7 @@
 			catch (e) { log('look adopt failed', e); failed.push('look'); }
 		}
 		var report = null;
-		try { report = await DaimondCore.applySync(state); }
+		try { report = await DaimondCore.applySync(state, at); }
 		catch (e) { log('applySync threw', e); report = { failed: ['all'] }; }
 		var core = (report && Array.isArray(report.failed)) ? report.failed : [];
 		lastRefused = (report && report.refused && Array.isArray(report.refused.chats))
@@ -2175,7 +2175,7 @@
 			lastFailed = [];
 		} else {
 			remergeOwed = false;		// this apply is the one it was owed
-			lastFailed = await applyParcel(state);
+			lastFailed = await applyParcel(state, j.version | 0);
 			applied = true;
 		}
 		pulledOk   = true;			// a parcel was read; see `pulledOk`.
@@ -2513,7 +2513,7 @@
 					// happened.
 					saveSig(await sigOf(cmp));
 					// The pushed state is now the shared fork point for the file merge.
-					try { if (DaimondCore.syncCommitBaseline) await DaimondCore.syncCommitBaseline(fork); }
+					try { if (DaimondCore.syncCommitBaseline) await DaimondCore.syncCommitBaseline(fork, serverVersion); }
 					catch (e) { /* baseline advances next time */ }
 					// Declare the live chunk set that this state references and let
 					// the gateway sweep everything it no longer does. The version
@@ -4609,7 +4609,7 @@
 		/// parcel only, and would miss anything hung on it here -- so the fixed
 		/// point has to be measured through these two rather than around them.
 		parcel:  function () { return collectParcel(); },
-		apply:   function (state) { return applyParcel(state); },
+		apply:   function (state, version) { return applyParcel(state, version | 0); },
 		/// The account's public handle, and the three things anyone does with
 		/// it. `handle()` is what this device knows; `refreshHandle()` asks the
 		/// gateway, which mints one if the account has none; `claimHandle()`

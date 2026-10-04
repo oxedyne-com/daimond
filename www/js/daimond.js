@@ -6266,18 +6266,92 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 
 	/// Does this device still owe the deletion `rec`, for its inline copy `text` of `path`?
 	///
-	/// ONLY ITS AGREED COPY OF EXACTLY THOSE BYTES, AND NOT ITS OWN DELETION. The copy must be
-	/// what `base`, this location's fork point, says both devices agreed on, and must be the
-	/// bytes the record names. Anything else here is a write made since, and a write returns
-	/// the path: an edit (other bytes); a restore after this device carried the deletion out
-	/// (which took the path out of the fork point); a restore after this device's own deletion,
-	/// before the push that carried it landed (`mineHere`, the one window the fork point still
-	/// names the path); a copy in a location that never agreed it.
-	async function owesDeletion(path, text, rec, base, mineHere) {
+	/// ONLY ITS AGREED COPY, AND NOT ITS OWN DELETION. The copy must be what `base`, this
+	/// location's fork point, says both devices agreed on: anything else here is a write made
+	/// since, and a write returns the path (an edit; a restore after this device carried the
+	/// deletion out, which took the path out of the fork point; a restore after this device's own
+	/// deletion, before the push that carried it landed (`mineHere`, the one window the fork
+	/// point still names the path); a copy in a location that never agreed it).
+	///
+	/// AND A COPY THE DELETER HAD SEEN (fix/sync-resurrect, 2026-10-03). An agreed copy is owed
+	/// when it is exactly the bytes the record names, or when it was agreed at a mailbox version
+	/// the deleter had itself merged (`rec.at`, against `seen`, `readAgreedAt`): the deleter held
+	/// those bytes or their successors, so its deletion covers them. The mailbox is one chain of
+	/// versions and a push lands only on a merged head, so that is a fact about what the deleter
+	/// knew, not a guess. Without it a device that slept through the deleter's last edit, or
+	/// merely read the mailbox after the edit and the deletion had both landed, held an older
+	/// agreed copy of other bytes, took it for a write and returned it: the deleted file came
+	/// back on every device holding its second-to-last text (the soak's `[resurrect]`). A copy
+	/// agreed AFTER the deleter's version is news the deleter never saw, and still stands.
+	async function owesDeletion(path, text, rec, base, mineHere, seen) {
 		if (!rec || rec.d !== 1) return false;
 		if (mineHere && mineHere[path] === rec.s) return false;
 		if (!Object.prototype.hasOwnProperty.call(base, path) || base[path] !== fileHash(text)) return false;
-		return textIs(text, rec.h);
+		if (await textIs(text, rec.h)) return true;
+		return agreedBefore(seen, path, base[path], rec.at);
+	}
+
+	var SYNC_FILEAGREE_KEY = 'daimond-file-agreed-at';		// { loc -> { path -> [hash, version] } }
+
+	/// Where each path of `loc` was last agreed with the account: `path -> [hash, mailbox version]`.
+	///
+	/// A DEVICE THAT HAS JUST TAKEN THIS BUILD HAS A FORK POINT AND NO NOTE, and without one the
+	/// first deletion it heard of would be judged on bytes alone: a sleeper opened after the upgrade
+	/// would return a copy the deleter had superseded, as before the law. So the first read, with
+	/// the note's key absent altogether, seeds it from the fork point at the version this location
+	/// last merged (sync.js `daimond-sync-merged-at`, else the version applied): every path of the
+	/// fork point was agreed at or before it, and a LATER version than the true one only owes fewer
+	/// copies, never more.
+	function readAgreedAt(loc) {
+		var raw = null;
+		try { raw = localStorage.getItem(SYNC_FILEAGREE_KEY); } catch (e) { raw = ''; }
+		if (raw === null) {
+			var mv = readJson('daimond-sync-merged-at', {}), v = (mv && typeof mv === 'object') ? mv[loc] | 0 : 0;
+			if (!(v > 0)) { try { v = parseInt(localStorage.getItem('daimond-sync-version'), 10) | 0; } catch (e) { v = 0; } }	// "version:foreign"
+			var fork = withoutAppState(readFilebaseAt(loc));
+			if (v > 0 && Object.keys(fork).length) noteAgreedAt(loc, fork, fork, v);
+		}
+		var m = readJson(SYNC_FILEAGREE_KEY, {});
+		var a = (m && typeof m === 'object' && !Array.isArray(m)) ? m[loc] : null;
+		return (a && typeof a === 'object' && !Array.isArray(a)) ? a : {};
+	}
+
+	/// The mailbox version `seen` holds `path` at `hash` agreed, or 0.
+	function agreedVersion(seen, path, hash) {
+		var a = seen && Object.prototype.hasOwnProperty.call(seen, path) ? seen[path] : null;
+		return (Array.isArray(a) && a[0] === hash && a[1] > 0) ? a[1] : 0;
+	}
+
+	/// Was `path` agreed here at `hash` at or before mailbox version `at`?
+	function agreedBefore(seen, path, hash, at) {
+		var v = agreedVersion(seen, path, hash);
+		return at > 0 && v > 0 && v <= at;
+	}
+
+	/// Note that this device and the account hold `agreed` (`path -> hash`) at mailbox version
+	/// `at`, and drop every path `keep` (the new fork point) no longer names. A round that learns
+	/// no version (`at` 0) only drops: an entry is valid only while its hash is the fork
+	/// point's, so a path agreed again at other bytes reads as unknown, never as old.
+	function noteAgreedAt(loc, agreed, keep, at) {
+		var all = readJson(SYNC_FILEAGREE_KEY, {});
+		if (!all || typeof all !== 'object' || Array.isArray(all)) all = {};
+		var here = (all[loc] && typeof all[loc] === 'object' && !Array.isArray(all[loc])) ? all[loc] : {};
+		Object.keys(here).forEach(function (p) { if (!Object.prototype.hasOwnProperty.call(keep, p)) delete here[p]; });
+		if (at > 0) {
+			Object.keys(agreed).forEach(function (p) {
+				if (syncAppState(p)) return;
+				delete here[p];
+				here[p] = [agreed[p], at];			// the newest last, so the bound drops the oldest
+			});
+		}
+		var keys = Object.keys(here);
+		keys.slice(0, Math.max(0, keys.length - SYNC_FILEBASE_MAX)).forEach(function (k) { delete here[k]; });
+		delete all[loc];
+		all[loc] = here;
+		var locs = Object.keys(all);
+		locs.slice(0, Math.max(0, locs.length - SYNC_FILEBASE_LOCS_MAX)).forEach(function (l) { delete all[l]; });
+		try { localStorage.setItem(SYNC_FILEAGREE_KEY, JSON.stringify(all)); }
+		catch (e) { /* the bytes rule still holds */ }
 	}
 
 	/// Write this location's news into the record set: a deletion for every path the fork
@@ -6357,6 +6431,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		// other device's own copy.
 		var base = withoutAppState(readFilebaseAt(loc));
 		var mine = readMine(), mineHere = mine[loc] || {};
+		var seen = readAgreedAt(loc);
 		var marks = [], made = [];
 		// RETURNS: an inline copy here while the record says deleted, that this device does not owe.
 		var paths = Object.keys(local);
@@ -6365,7 +6440,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			if (syncAppState(rp)) continue;
 			var rr = fileRecord(rp);
 			if (!rr || rr.d !== 1) continue;
-			if (await owesDeletion(rp, local[rp], rr, base, mineHere)) continue;
+			if (await owesDeletion(rp, local[rp], rr, base, mineHere, seen)) continue;
 			marks.push({ path: rp, d: 0 });
 		}
 		if (complete === true) {
@@ -6386,7 +6461,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 				// joined and not yet carried out here. The copy went here, so it is this device's
 				// deletion too, and a restore before the landing must not read as owed.
 				if (rec && rec.d === 1) { mineHere[p] = rec.s; continue; }
-				marks.push({ path: p, d: 1, h: base[p] });
+				marks.push({ path: p, d: 1, h: base[p], at: agreedVersion(seen, p, base[p]) });
 				made.push(p);
 			}
 		}
@@ -7305,7 +7380,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 	/// the retry carried it to everyone. A file edited in flight was worse: recorded as
 	/// agreed at bytes the gateway did not have, the 409's pull read the old copy as the
 	/// only side that moved and wrote it over the edit (fix/r52-del).
-	async function commitFileBaseline(fork) {
+	async function commitFileBaseline(fork, at) {
 		// The per-Diamond fork point advances on this same push hook (S-SYNC #4), and
 		// FIRST -- it does not depend on the file plan, and a device with no workspace
 		// to walk must still record which Diamonds it just agreed on, or its next
@@ -7354,6 +7429,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 				});
 			}
 			writeFilebaseAt(loc, base);
+			noteAgreedAt(loc, fork.files || {}, base, at);
 		}
 		// The cloud index forked at the same moment, and its residency list is
 		// only true once the push that carried it has landed.
@@ -7408,7 +7484,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		return s === 'none' || s === 'refused';
 	}
 
-	async function applyFiles(remoteFiles, remoteComplete, remoteTombs, fromDevice, chunkTombs, stamped, remoteChunked) {
+	async function applyFiles(remoteFiles, remoteComplete, remoteTombs, fromDevice, chunkTombs, stamped, remoteChunked, at) {
 		// The records first and whatever else happens: a device that relays nothing it heard
 		// breaks the chain for every device that reads its parcel next (QFB2-3).
 		if (window.DaimondCloud && DaimondCloud.joinTombs) DaimondCloud.joinTombs(chunkTombs);
@@ -7656,7 +7732,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		// and the moment it has is a successful push -- which is what `commitFileBaseline` is for
 		// and where sync.js already calls it. Into THIS merge's location, whatever is current by
 		// the time it ends (QFB2-2).
-		commitAgreedFiles(agreed, gone, loc);
+		commitAgreedFiles(agreed, gone, loc, at);
 		_lastConflicts = out_conflicts;
 		// A VERSION THIS STORAGE COULD NOT WRITE IS NOT MERGED HERE. The write of a file another
 		// device changed can be refused -- the storage full, the folder's permission gone, the
@@ -7726,7 +7802,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		if (!window.DaimondCloud || !DaimondCloud.recordOf) return gone;
 		var app = plan && plan.app;
 		if (!app) return gone;
-		var mineHere = readMine()[loc] || {};
+		var mineHere = readMine()[loc] || {}, seen = readAgreedAt(loc);
 		var inside = function (p) { return !syncAppState(p) && !(plan.folder && !withinShare(plan, p)); };
 		var ps = Object.keys(local || {});
 		for (var i = 0; i < ps.length; i++) {
@@ -7734,7 +7810,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			if (Object.prototype.hasOwnProperty.call(wrote, p) || !inside(p)) continue;
 			var rec = fileRecord(p);
 			if (!rec || rec.d !== 1) continue;
-			if (!(await owesDeletion(p, local[p], rec, base, mineHere))) {
+			if (!(await owesDeletion(p, local[p], rec, base, mineHere, seen))) {
 				if (!(await textIs(local[p], rec.h))) {
 					console.warn('sync: ' + p + ' was deleted elsewhere but has changed here since, so it is kept');
 				}
@@ -7758,11 +7834,14 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 					try { same = fileHash(await f.text()) === h; } catch (e) { same = false; }
 				}
 			} else {
-				if (m && m.hash !== h) continue;					// a different file stands here now
+				// A DIFFERENT FILE STANDS HERE NOW, unless the manifest is a version the deleter had
+				// seen (`deadCovers`, the record's `vs`): older than the bytes it deleted, and owed
+				// as that copy is (fix/sync-resurrect, the offloaded form of `owesDeletion`).
+				if (m && !DaimondCloud.deadCovers(q, m)) continue;
 				if (!f) { if (m) DaimondCloud.forget(q); continue; }	// not held here: the reference goes
 				same = !!(m && !(plan && plan.folder) && m.mtime && m.bytes === f.size && m.mtime === f.lastModified);
 				if (!same && window.DaimondChunks) {
-					try { same = (await DaimondCloud.fileKey(f, DaimondChunks.chunkSizeFor(f.size))) === h; }
+					try { same = (await DaimondCloud.fileKey(f, DaimondChunks.chunkSizeFor(f.size))) === (m ? m.hash : h); }
 					catch (e) { same = false; }
 				}
 			}
@@ -7788,7 +7867,8 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 	/// * `agreed` - Path to hash, for the paths both devices now hold identically.
 	/// * `gone` - Paths the merge has just deleted here, which leave the fork point with them.
 	/// * `loc` - The location the merge read its fork point and census in.
-	function commitAgreedFiles(agreed, gone, loc) {
+	/// * `at` - The mailbox version the merge was of, or 0 where the caller does not know it.
+	function commitAgreedFiles(agreed, gone, loc, at) {
 		var base = readFilebaseAt(loc), next = {};
 		Object.keys(base).forEach(function (p) { next[p] = base[p]; });
 		Object.keys(agreed).forEach(function (p) { next[p] = agreed[p]; });
@@ -7801,6 +7881,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		// same question to the next round.
 		Object.keys(gone || {}).forEach(function (p) { delete next[p]; });
 		writeFilebaseAt(loc, next);
+		noteAgreedAt(loc, agreed, next, at);
 	}
 
 	// ── The per-Diamond fork point (S-SYNC #4) ─────────────────────
@@ -10911,7 +10992,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 	/// can say the merge did not finish rather than push its own state over what it
 	/// could not read. `refused` names the chats that could not be read and were left
 	/// out while the rest of their section merged: that section is not in `failed`.
-	async function applySync(remote) {
+	async function applySync(remote, at) {
 		var failed = [];
 		_chunkedWhole = false;		// set by this apply's chunked section, and only by it
 		if (!remote || typeof remote !== 'object') return { failed: ['parcel'] };
@@ -11016,7 +11097,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		});
 		await section('files',    function () {
 			return applyFiles(remote.files, remote.filesComplete === true,
-				remote.fileTombs, parcelSender(remote), remote.chunkedTombs, remote.fileTombsStamped === true, remote.chunked);
+				remote.fileTombs, parcelSender(remote), remote.chunkedTombs, remote.fileTombsStamped === true, remote.chunked, at);
 		});
 		// The large files held in the chunk store, reconstructed on demand.
 		await section('chunked',  function () {

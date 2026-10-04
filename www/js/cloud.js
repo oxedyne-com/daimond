@@ -1440,7 +1440,7 @@
 			// A COPY OF WHAT WAS DELETED IS NO NEWS. Their manifest of the content a path was
 			// deleted at is from a device that has not heard of the deletion, and adopting it
 			// was how the deletion came back.
-			if (r && isDead(p, r.hash)) r = null;
+			if (r && deadCovers(p, r)) r = null;
 			if (!r) { if (l !== undefined) out[p] = l; return; }	// only here: keep, it will push.
 			if (!l) { out[p] = r; return; }							// only there: adopt the reference.
 			// SAME FILE, AND NOT NECESSARILY THE SAME CHUNKS. `hash` is the content key,
@@ -1626,6 +1626,14 @@
 	//        and stands: an edit beats a delete, as in the inline merge.
 	//   `s`  the stamp, so a later write brings the path back: this device's own upload of
 	//        the path (`put`) writes `d: 0` past the deletion.
+	//   `at` (optional, a deletion of an inline file) the mailbox version at which the deleting
+	//        device agreed `h`: it had merged every version up to it, so a copy another device
+	//        agreed at or before it is one the deletion covers, whatever its bytes
+	//        (fix/sync-resurrect, daimond.js `owesDeletion`). Absent, only the bytes `h` are covered.
+	//   `vs` (optional, a deletion of an offloaded file) the versions the deleted copy was made
+	//        from, its own first (`removed`, `deadCovers`): the same law for a manifest, whose
+	//        history is its `ver` and `anc`, not a mailbox version. A manifest of one of them is
+	//        a copy the deleter had seen, whatever its bytes; one that is not stands.
 	// Joined on every pull, by the later stamp and then the canonical form, and carried in
 	// every parcel (`chunkedTombs`), so the news reaches a device whichever parcel it pulls.
 	// Kept until gateway release 2 gives stable versions (§8); bounded meanwhile, newest kept.
@@ -1653,11 +1661,34 @@
 	}
 	function tombOf(p) { var t = TBM.m[p]; return validTomb(t) ? t : null; }
 
+	/// `t` as the record that travels: `{ d, h, s }` and, for a deletion that names them, `at`
+	/// and `vs`.
+	function recOut(t) {
+		var r = { d: t.d, h: t.h, s: t.s };
+		if (t.d === 1 && t.at > 0 && Math.floor(t.at) === t.at) r.at = t.at;
+		if (t.d === 1 && Array.isArray(t.vs)) {
+			var vs = uniq(t.vs.filter(function (v) { return typeof v === 'string' && v; })).slice(0, ANC_MAX + 1);
+			if (vs.length) r.vs = vs;
+		}
+		return r;
+	}
+
 	/// The content key `p` was deleted at, or null while it is live.
 	function deadAt(p) { var t = tombOf(p); return (t && t.d === 1) ? t.h : null; }
 
 	/// Is a manifest of `hash` at `p` a copy of what was deleted there?
 	function isDead(p, hash) { var h = deadAt(p); return h !== null && !!hash && h === hash; }
+
+	/// Does the deletion held for `p` cover the manifest `m`? Its bytes are the deleted ones, or
+	/// its version is one the deleter's copy was made from (`vs`): a manifest the deleter had
+	/// seen, older than what it deleted. A version made since, or one the record does not name
+	/// (an older build wrote it, a relay dropped it), is not covered.
+	function deadCovers(p, m) {
+		var t = tombOf(p);
+		if (!t || t.d !== 1 || !m) return false;
+		if (m.hash && m.hash === t.h) return true;
+		return typeof m.ver === 'string' && !!m.ver && Array.isArray(t.vs) && t.vs.indexOf(m.ver) >= 0;
+	}
 
 	/// The tombstones in path order, for the parcel: two devices holding the same set send
 	/// the same bytes (SIM-7).
@@ -1665,7 +1696,7 @@
 		var out = {};
 		Object.keys(TBM.m).sort().forEach(function (p) {
 			var t = tombOf(p);
-			if (t) out[p] = { d: t.d, h: t.h, s: t.s };
+			if (t) out[p] = recOut(t);
 		});
 		return out;
 	}
@@ -1695,6 +1726,17 @@
 
 	var _freshDead = {};		// paths a join has made dead here since the last `honourList`
 
+	/// The lower of two versions where both are named, else the one that is: a claim of fewer
+	/// copies covered is the safe one, and two devices joining in either order agree.
+	function lowest(a, b) { return (a > 0 && b > 0) ? Math.min(a, b) : (a > 0 ? a : (b > 0 ? b : undefined)); }
+
+	/// Of two `vs` lists, the one that is there, or the larger in canonical order where both are.
+	function richer(a, b) {
+		if (!Array.isArray(a)) return b;
+		if (!Array.isArray(b)) return a;
+		return DaimondStamp.canon(a) >= DaimondStamp.canon(b) ? a : b;
+	}
+
 	/// Join a parcel's tombstones into this device's. Answers how many moved.
 	function joinTombs(remote) {
 		if (!remote || typeof remote !== 'object' || !window.DaimondStamp) return 0;
@@ -1702,9 +1744,19 @@
 		Object.keys(remote).forEach(function (p) {
 			var r = remote[p];
 			if (!validTomb(r) || isContentKey(p)) return;
-			var rec = { d: r.d, h: r.h, s: DaimondStamp.ms(r.s) }, l = tombOf(p);
+			var rec = recOut({ d: r.d, h: r.h, s: DaimondStamp.ms(r.s), at: r.at, vs: r.vs }), l = tombOf(p);
 			if (!l && rec.s <= floor) return;					// under what this device has forgotten
-			if (l && !DaimondStamp.beats(rec.s, rec, l.s, l)) return;
+			if (l && DaimondStamp.ms(l.s) === rec.s && l.d === rec.d && l.h === rec.h) {
+				// THE SAME WORD, STAMPED OR STRIPPED. An older build's relay rebuilds a record as
+				// `{ d, h, s }`, dropping `at` and `vs`; at an equal stamp the canonical tie-break ranks
+				// that stripped form the maximum, so it would overwrite the stamped one on every device
+				// that read it, the deleter's own among them. `at` and `vs` are facts about this word,
+				// not a rival for it: take what arrives, keep what is held, and move only when
+				// something is added (a fixed point both ways).
+				var u = recOut({ d: rec.d, h: rec.h, s: rec.s, at: lowest(rec.at, l.at), vs: richer(rec.vs, l.vs) });
+				if (DaimondStamp.canon(u) === DaimondStamp.canon(recOut(l))) return;
+				rec = u;
+			} else if (l && !DaimondStamp.beats(rec.s, rec, l.s, l)) return;
 			ops[p] = { v: rec };
 			n++;
 			if (rec.d === 1) _freshDead[p] = 1; else delete _freshDead[p];
@@ -1715,9 +1767,9 @@
 
 	/// This device's own word on a path: `d` 1 for a deletion of content `h`, 0 for a write
 	/// that brings it back. Stamped past what is held, so it beats it (§5).
-	function stampTomb(p, d, h) { mark([{ path: p, d: d, h: h }]); }
+	function stampTomb(p, d, h, vs) { mark([{ path: p, d: d, h: h, vs: vs }]); }
 
-	/// This device's own words on several paths, in one write: `[{ path, d, h }]`. Each is
+	/// This device's own words on several paths, in one write: `[{ path, d, h, at, vs }]`. Each is
 	/// stamped past the record it replaces and past the one written before it in the same
 	/// call, so a batch keeps its order. Answers `path -> stamp` for what was written; a
 	/// content key or an empty path is refused.
@@ -1729,7 +1781,7 @@
 			if (!p || isContentKey(p) || (e.d !== 0 && e.d !== 1)) return;
 			var t = tombOf(p), st = DaimondStamp.next(Math.max(t ? t.s : 0, last));
 			last = st;
-			ops[p] = { v: { d: e.d, h: e.d === 1 ? String(e.h || '') : '', s: st } };
+			ops[p] = { v: recOut({ d: e.d, h: e.d === 1 ? String(e.h || '') : '', s: st, at: e.at, vs: e.vs }) };
 			out[p] = st;
 		});
 		if (Object.keys(ops).length) keep(TBM, tombTrim(ops));
@@ -1737,7 +1789,7 @@
 	}
 
 	/// The record held for `p`, `{ d, h, s }`, or null.
-	function recordOf(p) { var t = tombOf(p); return t ? { d: t.d, h: t.h, s: t.s } : null; }
+	function recordOf(p) { var t = tombOf(p); return t ? recOut(t) : null; }
 
 	/// The paths whose deletion this device has still to carry out: a manifest here of the
 	/// content that was deleted, and every path a join has made dead since the last call.
@@ -1747,7 +1799,7 @@
 		var out = {}, ix = index();
 		Object.keys(TBM.m).forEach(function (p) {
 			var m = ix[p];
-			if (m && Array.isArray(m.chunks) && !m.peer && isDead(p, m.hash)) out[p] = 1;
+			if (m && Array.isArray(m.chunks) && !m.peer && deadCovers(p, m)) out[p] = 1;
 		});
 		Object.keys(_freshDead).forEach(function (p) { if (deadAt(p) !== null) out[p] = 1; });
 		_freshDead = {};
@@ -1814,7 +1866,13 @@
 			if (k !== want && k.indexOf(want + '/') !== 0) return;
 			var m = ix[k];
 			if (!m || !Array.isArray(m.chunks) || m.peer || !m.hash || isContentKey(k)) return;
-			if (!isDead(k, m.hash)) stampTomb(k, 1, m.hash);		// already said at this content: once
+			if (isDead(k, m.hash)) return;						// already said at this content: once
+			// The versions this copy was made from, which the deletion covers with it: a manifest
+			// of any of them is one this device had seen. Not what it only saw (`sn`), and nothing
+			// for a manifest with no version of its own.
+			var vs = (typeof m.ver === 'string' && m.ver)
+				? [m.ver].concat(ancOf(m).filter(function (v) { return snOf(m).indexOf(v) < 0; })) : undefined;
+			stampTomb(k, 1, m.hash, vs);
 		});
 		return forget(path);
 	}
@@ -2185,6 +2243,7 @@
 		mark:         mark,
 		recordOf:     recordOf,
 		deadAt:       deadAt,
+		deadCovers:   deadCovers,
 		honourList:   honourList,
 		textKey:      textKey,
 		// Content manifests (Diamonds, chats) co-located under a reserved prefix.

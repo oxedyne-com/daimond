@@ -1,1 +1,1 @@
-{"build":"e4bffbd045e1","note":"A turn handed to another device no longer stops silently when one check fails"}
+{"build":"165b4bbf2a48","note":"A file deleted on one device stays deleted on all of them"}

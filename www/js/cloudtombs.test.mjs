@@ -230,5 +230,69 @@ console.log('\nfix/r53-faultb3: inline files\' deletions in the same set, relaye
 	check('[ctl] a later record for a path held is joined as ever', A.C.joinTombs({ 'cap/c02009.md': { d: 0, h: '', s: st['cap/c02009.md'] + 11 } }) === 1);
 }
 
+// ── A deletion covers every version its deleter made the copy from ──
+
+// ── The same word, stamped or stripped (an older page's relay) ───────
+console.log('\nfix/sync-resurrect: an older page\'s relay strips `at` and `vs`; at an equal stamp they are kept\n');
+{
+	const J = (x) => JSON.stringify(x);
+	const P = 'doc/relayed.md';
+	const devD = device(), devP = device(), devQ = device();
+	const D = tab(devD), Pp = tab(devP), Q = tab(devQ);
+	await D.C.ready(); await Pp.C.ready(); await Q.C.ready();
+	D.C.mark([{ path: P, d: 1, h: 'h-x', at: 20, vs: ['v2', 'v1'] }]);
+	const stamped = D.C.tombs()[P];
+	const stripped = { d: stamped.d, h: stamped.h, s: stamped.s };	// what an older page's join rebuilds and relays
+	check('the deleter\'s record carries `at` and `vs`', stamped.at === 20 && Array.isArray(stamped.vs) && stamped.vs.length === 2, J(stamped));
+	Pp.C.joinTombs({ [P]: stamped });
+	check('the stripped form at the same stamp moves nothing on a stamped holder', Pp.C.joinTombs({ [P]: stripped }) === 0, J(Pp.C.recordOf(P)));
+	check('and the holder keeps `at` and `vs`', Pp.C.recordOf(P).at === 20 && Pp.C.recordOf(P).vs.length === 2, J(Pp.C.recordOf(P)));
+	Q.C.joinTombs({ [P]: stripped });
+	check('a stripped holder takes the stamped form\'s fields (it moves once)', Q.C.joinTombs({ [P]: stamped }) === 1 && Q.C.recordOf(P).at === 20, J(Q.C.recordOf(P)));
+	check('the join is a fixed point both ways', Q.C.joinTombs({ [P]: stamped }) === 0 && Q.C.joinTombs({ [P]: stripped }) === 0, J(Q.C.recordOf(P)));
+	check('[ctl] a later stamp still wins whole, stripped or not', Q.C.joinTombs({ [P]: { d: 0, h: '', s: stamped.s + 5000 } }) === 1 && Q.C.recordOf(P).d === 0, J(Q.C.recordOf(P)));
+}
+
+console.log('\nfix/sync-resurrect: a large file\'s deletion covers the versions it was made from\n');
+{
+	const J = (x) => JSON.stringify(x);
+	const P = 'big/lineage.bin';
+	const devA = device(), devB = device(), devD = device();
+	const A = tab(devA), B = tab(devB), D = tab(devD);
+	await A.C.ready(); await B.C.ready(); await D.C.ready();
+	// All three hold v1. A edits it to v2 and deletes it; B and D have heard of neither.
+	for (const t of [A, B, D]) await t.C.put(P, mani('v1'), 'h-v1', { ...FILE, parent: null });
+	await A.C.put(P, mani('v2'), 'h-v2', { ...FILE, parent: A.C.index()[P] });
+	await A.C.settle();
+	const v1 = B.C.index()[P].ver;
+	A.C.remove(P);
+	await A.C.settle();
+	const rec = A.C.tombs()[P];
+	check('the deleter\'s record names the bytes and the versions that copy was made from',
+		!!rec && rec.d === 1 && rec.h === 'h-v2' && Array.isArray(rec.vs) && rec.vs.length === 2 && rec.vs.includes(v1), J(rec));
+	// D edits its v1 to v3 before it hears: a version the deleter never saw.
+	await D.C.put(P, mani('v3'), 'h-v3', { ...FILE, parent: D.C.index()[P] });
+	await D.C.settle();
+	// B holds the older version it agreed, and has not edited it.
+	B.C.merge(A.C.index(), {}, 'devB', 'devA', A.C.tombs());
+	check('B, holding a version the deleter made its copy from, owes the deletion',
+		B.C.deadCovers && B.C.deadCovers(P, B.C.index()[P]) === true, J(B.C.index()[P]));
+	D.C.merge(A.C.index(), {}, 'devD', 'devA', A.C.tombs());
+	check('[ctl] D\'s edit since is a version the deleter never saw, and stands (an edit beats a delete)',
+		!!D.C.index()[P] && !(D.C.deadCovers && D.C.deadCovers(P, D.C.index()[P])), J(D.C.index()[P]));
+	// And the older manifest, offered back to A by a device that has not heard, is no news.
+	const A2 = tab(devA);
+	await A2.C.ready();
+	A2.C.merge(B.C.index(), {}, 'devA', 'devB', {});
+	check('B\'s older manifest, offered back to the deleter, is not adopted', !A2.C.index()[P], J(Object.keys(A2.C.index())));
+	// A record that carries no versions (an older build, a relay that dropped them) is the bytes rule.
+	const devE = device(), E = tab(devE);
+	await E.C.ready();
+	await E.C.put(P, mani('v1'), 'h-v1', { ...FILE, parent: null });
+	E.C.joinTombs({ [P]: { d: 1, h: 'h-v2', s: rec.s } });
+	check('[ctl] with no versions on the record, an older copy is not covered',
+		!!E.C.deadCovers && E.C.deadCovers(P, E.C.index()[P]) === false && E.C.deadCovers(P, { hash: 'h-v2' }) === true, J(E.C.recordOf(P)));
+}
+
 console.log('\n' + (failures ? failures + ' FAILED' : 'ALL PASS'));
 process.exit(failures ? 1 : 0);
