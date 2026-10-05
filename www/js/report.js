@@ -495,11 +495,6 @@
 		open(m).then(null, function (err) { log('sheet failed', err); });
 	});
 
-	// Escape closes it, on the rule every other overlay in this app follows.
-	document.addEventListener('keydown', function (e) {
-		if (e.key === 'Escape' && _open) close();
-	});
-
 	// ── Public surface ─────────────────────────────────────────
 	window.DaimondReport = {
 		/// Whether a message can be reported, for a caller drawing a control.

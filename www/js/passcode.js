@@ -87,8 +87,8 @@
 	// ── The dialog ─────────────────────────────────────────────
 	//
 	// The same shape pairing.js uses for the same kind of moment: a scrim, a
-	// card, Escape and a Tab that stays inside it, and the one cross every
-	// surface in this app wears.
+	// card that is a layer (so Back and Escape close it), a Tab that stays
+	// inside it, and the one cross every surface in this app wears.
 
 	// SAY THE CARD AGAIN WHERE IT STANDS, when the language changes under it.
 	//
@@ -112,10 +112,12 @@
 		var box   = el('div', 'beta-box');
 		scrim.appendChild(box);
 		var prev = document.activeElement;			// where the keyboard was.
+		var lid;
 		function close() {
 			relabelCard = null;
 			document.removeEventListener('keydown', onKey, true);
 			try { document.body.removeChild(scrim); } catch (e) { /* already gone */ }
+			DaimondLayers.done(lid);
 			if (prev && prev.focus && prev.getClientRects && prev.getClientRects().length) {
 				try { prev.focus(); } catch (e) { /* gone with a redraw */ }
 			}
@@ -127,7 +129,6 @@
 				function (n) { return !n.disabled && n.getClientRects().length; });
 		}
 		function onKey(e) {
-			if (e.key === 'Escape') { e.preventDefault(); close(); return; }
 			if (e.key !== 'Tab') return;
 			var f = stops();
 			if (!f.length) return;
@@ -146,6 +147,7 @@
 				: DaimondCloser.head('', { name: t('common.close'), onClose: close });
 			box.insertBefore(row, box.firstChild);
 		}
+		lid = DaimondLayers.open(DaimondLayers.uid('dialog'), close);
 		document.body.appendChild(scrim);
 		// The first real control, not the closer: the way out should not be what
 		// the keyboard lands on in a card that exists to be answered.

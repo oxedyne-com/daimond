@@ -23,6 +23,22 @@ import { fileURLToPath } from 'node:url';
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const SRC  = path.join(HERE, 'layers.js');
 
+// A stand-in for the parts of the document the router reads: which element holds focus, and whether an element is
+// on screen. `el(name, { shown, own })` makes one; `focus()` moves `activeElement` to it, as a real element does.
+// `own` stands for an ancestor that carries `data-own-escape`, which `closest` answers for.
+function dom() {
+	const d = { body: null, activeElement: null, documentElement: { name: 'html' } };
+	d.el = (name, o = {}) => {
+		const e = { name, shown: o.shown !== false, isConnected: o.connected !== false, own: !!o.own, focus() { d.activeElement = e; },
+			getClientRects() { return e.shown && e.isConnected ? [ {} ] : []; },
+			closest(sel) { return sel === '[data-own-escape]' && e.own ? e : null; } };
+		return e;
+	};
+	d.body = d.el('body');
+	d.activeElement = d.body;
+	return d;
+}
+
 // A session history. `entries` and `idx` outlive a reload, which is the point of `load`.
 // `how` is when a traversal picks its target: 'land' (relative to the index when it lands) or 'call' (the entry it
 // pointed at when `go` was called, which is what Chromium did in the 2026-10-05 world run: the target was fixed
@@ -63,10 +79,27 @@ function browser(how = 'land') {
 	// Evaluate layers.js as a page: new listeners, and `b.L` the stack it made.
 	b.boot = function () {
 		b.listeners = [];
-		const win = { history: b.history, addEventListener(t, fn) { if (t === 'popstate') b.listeners.push(fn); } };
+		b.keys = [];
+		b.dom = dom();
+		const win = {
+			history: b.history,
+			document: b.dom,
+			addEventListener(t, fn, cap) {
+				if (t === 'popstate') b.listeners.push(fn);
+				else if (t === 'keydown') b.keys.push({ fn, cap });
+			},
+		};
 		new Function('window', fs.readFileSync(SRC, 'utf8'))(win);
 		b.L = win.DaimondLayers;
 		return b.L;
+	};
+	// A key press, as the window's capture listeners hear it. `target` is an element from `b.dom.el`.
+	b.key = async function (key = 'Escape', o = {}) {
+		const e = { key, isComposing: !!o.isComposing, target: o.target || b.dom.body, defaultPrevented: false, stopped: false,
+			preventDefault() { this.defaultPrevented = true; }, stopPropagation() { this.stopped = true; } };
+		for (const k of b.keys) k.fn(e);
+		await tick(); await b.land();
+		return e;
 	};
 	// Land every queued traversal, each relative to the index at that moment.
 	b.land = async function () {
@@ -487,4 +520,369 @@ test('fit: whatever the menu, its box lies inside the glass', () => {
 		assert.ok(f.top >= inset + 8 || height < 1, `top ${f.top} under the bar (view ${view}, inset ${inset})`);
 		assert.ok(f.top + h <= view - 8 + 0.001, `bottom ${f.top + h} off the glass (view ${view}, h ${height}, top ${top})`);
 	}
+});
+
+// ── Escape: one router, innermost first (r533 QA B-3) ──────────────────────
+//
+// Escape used to be answered by every module for itself, so one press could close the Settings menu AND the sheet
+// under it, and an Admin drawer along with the dialog over it, at a cost of an extra `go(-2)`. The stack now owns the
+// key: one capture-phase listener on the window closes the top layer through its own closer, and what the stack
+// does for Back it does for Escape, so the two cannot disagree about which surface is innermost.
+
+test('the router listens on the window, in the capture phase', () => {
+	const b = browser(); b.load();
+	assert.equal(b.keys.length, 1);
+	assert.equal(b.keys[0].cap, true, 'capture, so it runs before every capture listener on the document');
+});
+
+test('Escape closes only the top of two layers, and history goes back one entry', async () => {
+	const b = browser(), L = b.load(), log = [];
+	layer(L, 'sheet', log); layer(L, 'pop', log);
+	await tick();
+	assert.equal(b.idx, 2);
+	const e = await b.key();
+	assert.deepEqual(log, ['pop']);
+	assert.equal(L.depth(), 1);
+	assert.equal(L.top(), 'sheet');
+	assert.equal(b.idx, 1, 'one layer up, one entry deep');
+	assert.equal(b.left, false);
+	assert.equal(e.defaultPrevented, true, 'the key is consumed, so nothing after it takes it a second time');
+	assert.equal(e.stopped, false, 'but it is not stopped: record.js still hears the press');
+});
+
+test('Escape and Back agree: the same layer goes first whichever is pressed', async () => {
+	for (const first of [ 'key', 'back' ]) {
+		const b = browser(), L = b.load(), log = [];
+		layer(L, 'drawer', log); layer(L, 'gallery', log);
+		await tick();
+		if (first === 'key') await b.key(); else await b.press();
+		assert.deepEqual(log, ['gallery'], first);
+		if (first === 'key') await b.press(); else await b.key();
+		assert.deepEqual(log, ['gallery', 'drawer'], first);
+		assert.equal(b.idx, 0, first);
+		assert.equal(b.left, false, first);
+	}
+});
+
+test('Escape closes a layer whose closer does not report itself done', async () => {
+	const b = browser(), L = b.load();
+	let closed = 0;
+	L.open('menu', () => { closed++; });
+	await tick();
+	await b.key();
+	assert.equal(closed, 1);
+	assert.equal(L.depth(), 0, 'the router takes it off the stack itself');
+	assert.equal(b.idx, 0);
+});
+
+test('a closer that throws still leaves the stack, and history settles', async () => {
+	const b = browser(), L = b.load(), log = [];
+	layer(L, 'sheet', log);
+	L.open('bad', () => { throw new Error('closer failed'); });
+	await tick();
+	const e = await b.key();
+	assert.equal(L.depth(), 1);
+	assert.equal(L.top(), 'sheet');
+	assert.equal(b.idx, 1);
+	assert.equal(e.defaultPrevented, true);
+	await b.key();
+	assert.deepEqual(log, ['sheet']);
+	assert.equal(b.idx, 0);
+});
+
+test('with no layer up, Escape is left alone', async () => {
+	const b = browser(), L = b.load();
+	const e = await b.key();
+	assert.equal(e.defaultPrevented, false, 'a later listener (full screen) may still have it');
+	assert.equal(L.depth(), 0);
+	assert.deepEqual(b.calls, []);
+});
+
+test('keys other than Escape are none of its business', async () => {
+	const b = browser(), L = b.load(), log = [];
+	layer(L, 'sheet', log);
+	await tick();
+	for (const k of [ 'Enter', 'Tab', 'Esc', 'Backspace', 'a' ]) {
+		const e = await b.key(k);
+		assert.equal(e.defaultPrevented, false, k);
+	}
+	assert.deepEqual(log, []);
+	assert.equal(L.depth(), 1);
+});
+
+test('an element that owns Escape as input is let through, and so is composition', async () => {
+	const b = browser(), L = b.load(), log = [];
+	layer(L, 'sheet', log);
+	await tick();
+	const term = b.dom.el('terminal-input', { own: true });
+	const e1 = await b.key('Escape', { target: term });
+	assert.equal(e1.defaultPrevented, false, 'the terminal sends the byte to its program');
+	const e2 = await b.key('Escape', { isComposing: true });
+	assert.equal(e2.defaultPrevented, false, 'Escape ends an input method\'s composition, it is not a close');
+	assert.deepEqual(log, []);
+	assert.equal(L.depth(), 1);
+	assert.equal(b.idx, 1);
+	// And the same layer closes for an ordinary target.
+	await b.key('Escape', { target: b.dom.el('composer') });
+	assert.deepEqual(log, ['sheet']);
+});
+
+test('a target with no selector engine does not break the router', async () => {
+	const b = browser(), L = b.load(), log = [];
+	layer(L, 'sheet', log);
+	await tick();
+	await b.key('Escape', { target: {} });
+	assert.deepEqual(log, ['sheet']);
+});
+
+test('a claim is called before the top layer, and consumes the key', async () => {
+	const b = browser(), L = b.load(), log = [], seen = [];
+	layer(L, 'sheet', log);
+	await tick();
+	L.claim('drag', (e) => { seen.push(e.key); });
+	const e = await b.key();
+	assert.deepEqual(seen, ['Escape']);
+	assert.deepEqual(log, [], 'the layer under a claim stays up');
+	assert.equal(e.defaultPrevented, true);
+	assert.equal(b.idx, 1, 'a claim has no history entry, and costs none');
+	L.release('drag');
+	await b.key();
+	assert.deepEqual(log, ['sheet']);
+});
+
+test('a claim opens no history entry and releasing one touches none', async () => {
+	const b = browser(), L = b.load();
+	L.claim('skill', () => {});
+	await tick();
+	L.release('skill');
+	await tick();
+	assert.deepEqual(b.calls, []);
+	assert.equal(L.depth(), 0);
+});
+
+test('the latest claim goes first; one that declines passes the key to the one before it, then to the layers', async () => {
+	const b = browser(), L = b.load(), order = [], log = [];
+	layer(L, 'sheet', log);
+	await tick();
+	L.claim('a', () => { order.push('a'); });
+	L.claim('b', () => { order.push('b'); return false; });
+	let e = await b.key();
+	assert.deepEqual(order, ['b', 'a']);
+	assert.equal(e.defaultPrevented, true);
+	assert.deepEqual(log, []);
+	L.release('a');
+	order.length = 0;
+	e = await b.key();
+	assert.deepEqual(order, ['b']);
+	assert.deepEqual(log, ['sheet'], 'every claim declined, so the layer takes it');
+});
+
+test('a claim that throws does not hold the layers hostage', async () => {
+	const b = browser(), L = b.load(), log = [];
+	layer(L, 'sheet', log);
+	await tick();
+	L.claim('broken', () => { throw new Error('claim failed'); });
+	await b.key();
+	assert.deepEqual(log, ['sheet']);
+});
+
+test('claiming again under the same name replaces the claim and does not stack two', async () => {
+	const b = browser(), L = b.load(), order = [];
+	L.claim('x', () => { order.push('old'); });
+	L.claim('x', () => { order.push('new'); });
+	await b.key();
+	assert.deepEqual(order, ['new']);
+	L.release('x');
+	const e = await b.key();
+	assert.equal(e.defaultPrevented, false, 'nothing left to take it');
+});
+
+test('a claim declines while a layer that opened over it is up, and holds again when that layer has gone', async () => {
+	const b = browser(), L = b.load(), log = [], took = [];
+	L.claim('mode', () => { took.push('mode'); }, () => true);
+	layer(L, 'dialog#1', log);
+	await tick();
+	const e = await b.key();
+	assert.deepEqual(took, [], 'the dialog opened over the mode, so the mode is not asked');
+	assert.deepEqual(log, ['dialog#1'], 'the topmost layer takes the key');
+	assert.equal(e.defaultPrevented, true);
+	await b.key();
+	assert.deepEqual(took, ['mode'], 'with nothing over it the claim has the key again');
+	assert.deepEqual(log, ['dialog#1']);
+});
+
+test('a claim holds the key while nothing opened above it, whatever is under it', async () => {
+	const b = browser(), L = b.load(), log = [], took = [];
+	layer(L, 'sheet', log);
+	await tick();
+	// The mode begins inside the sheet, after it: nothing is above the claim.
+	L.claim('mode', () => { took.push('mode'); }, () => true);
+	await b.key();
+	assert.deepEqual(took, ['mode']);
+	assert.deepEqual(log, [], 'the sheet under the mode stays up');
+});
+
+test('a claim that was idle when a layer opened is not under it, and a claim made afterwards is above it', async () => {
+	const b = browser(), L = b.load(), log = [], took = [];
+	let live = false;
+	L.claim('idle', () => { took.push('idle'); }, () => live);
+	layer(L, 'sheet', log);
+	await tick();
+	live = true;
+	await b.key();
+	assert.deepEqual(took, ['idle'], 'nothing it was live under is up');
+	took.length = 0;
+	live = true;
+	L.claim('idle', () => { took.push('again'); }, () => live);
+	layer(L, 'dialog#1', log);
+	L.claim('idle', () => { took.push('later'); }, () => live);
+	await tick();
+	await b.key();
+	assert.deepEqual(took, ['later'], 'claiming again puts the claim above every layer up');
+});
+
+test('a claim with no liveness test answers for itself and is never put under a layer', async () => {
+	const b = browser(), L = b.load(), log = [], took = [];
+	L.claim('self', () => { took.push('self'); });
+	layer(L, 'dialog#1', log);
+	await tick();
+	await b.key();
+	assert.deepEqual(took, ['self']);
+	assert.deepEqual(log, []);
+});
+
+test('a throwing liveness test is no claim on the key', async () => {
+	const b = browser(), L = b.load(), log = [], took = [];
+	L.claim('odd', () => { took.push('odd'); }, () => { throw new Error('gone'); });
+	layer(L, 'dialog#1', log);
+	await tick();
+	await b.key();
+	assert.deepEqual(took, ['odd'], 'a test that fails leaves the claim as it was');
+});
+
+test('Escape over a dialog whose closer opens the next one is no navigation at all', async () => {
+	const b = browser(), L = b.load();
+	L.open('dialog#1', () => { L.done('dialog#1'); L.open('dialog#2', () => L.done('dialog#2')); });
+	await tick();
+	b.calls.length = 0;
+	await b.key();
+	assert.equal(L.top(), 'dialog#2');
+	assert.deepEqual(b.calls, [], 'a dialog answered by the next is the same turn');
+	assert.equal(b.idx, 1);
+});
+
+test('Escape in a world with a frame\'s entries still goes back to the last entry of the layers that remain', async () => {
+	const b = browser(), L = b.load(), log = [];
+	layer(L, 'drawer', log); layer(L, 'sheet', log);
+	await tick();
+	b.frame(2);
+	await b.key();
+	assert.deepEqual(log, ['sheet']);
+	assert.equal(L.depth(), 1);
+	await b.press();
+	assert.deepEqual(log, ['sheet', 'drawer'], 'Back still reaches the drawer');
+	assert.equal(b.left, false);
+});
+
+// FOCUS. A layer remembers what had the keyboard when it went up, and the router gives it back when the key closed
+// the layer and the keyboard has nowhere else to be.
+
+test('focus returns to the opener when it is stranded on the body', async () => {
+	const b = browser(), L = b.load();
+	const btn = b.dom.el('settings-button'), row = b.dom.el('row');
+	btn.focus();
+	L.open('pop', () => { row.shown = false; });
+	row.focus();
+	await tick();
+	await b.key();
+	assert.equal(b.dom.activeElement, btn);
+});
+
+test('focus returns to the opener when it was inside the surface that has just gone', async () => {
+	const b = browser(), L = b.load();
+	const btn = b.dom.el('opener'), inner = b.dom.el('inner');
+	btn.focus();
+	L.open('dialog#1', () => { inner.shown = false; L.done('dialog#1'); });
+	inner.focus();
+	await tick();
+	await b.key();
+	assert.equal(b.dom.activeElement, btn, 'not left on a control nobody can see');
+});
+
+test('focus is left alone when it is already somewhere on screen, or the closer put it there', async () => {
+	const b = browser(), L = b.load();
+	const btn = b.dom.el('opener'), other = b.dom.el('somewhere-else'), next = b.dom.el('next-dialog-button');
+	btn.focus();
+	L.open('a', () => {});
+	other.focus();
+	await tick();
+	await b.key();
+	assert.equal(b.dom.activeElement, other, 'focus on a visible control elsewhere is the person\'s');
+	btn.focus();
+	L.open('b', () => { next.focus(); });
+	await tick();
+	await b.key();
+	assert.equal(b.dom.activeElement, next, 'a closer that places focus keeps the say');
+});
+
+test('focus is not sent to an opener that is gone or hidden', async () => {
+	const b = browser(), L = b.load();
+	const gone = b.dom.el('gone', { connected: false }), hid = b.dom.el('hidden', { shown: false });
+	gone.focus();
+	L.open('a', () => {});
+	await tick();
+	b.dom.body.focus();
+	await b.key();
+	assert.equal(b.dom.activeElement, b.dom.body, 'a disconnected opener');
+	hid.focus();
+	L.open('b', () => {});
+	await tick();
+	b.dom.body.focus();
+	await b.key();
+	assert.equal(b.dom.activeElement, b.dom.body, 'a hidden opener');
+});
+
+test('a layer opened with nothing focused has no opener to give back', async () => {
+	const b = browser(), L = b.load();
+	const stray = b.dom.el('stray');
+	L.open('a', () => {});
+	await tick();
+	stray.shown = false;
+	stray.focus();
+	await b.key();
+	assert.equal(b.dom.activeElement, stray, 'nowhere to send it');
+});
+
+test('a layer can be given its opener, and keeps the first one when opened again', async () => {
+	const b = browser(), L = b.load();
+	const burger = b.dom.el('burger'), first = b.dom.el('first'), second = b.dom.el('second');
+	first.focus();
+	L.open('drawer', () => {}, burger);
+	second.focus();
+	L.open('drawer', () => {});
+	await tick();
+	second.shown = false;
+	await b.key();
+	assert.equal(b.dom.activeElement, burger, 'the given opener, not the element focused at either opening');
+	first.focus();
+	L.open('menu', () => {});
+	second.shown = true;
+	second.focus();
+	L.open('menu', () => {});
+	first.shown = true;
+	await tick();
+	second.shown = false;
+	await b.key();
+	assert.equal(b.dom.activeElement, first, 'opening a layer already up keeps what it first remembered');
+});
+
+test('Back does not move the focus: only the key does', async () => {
+	const b = browser(), L = b.load();
+	const btn = b.dom.el('opener'), inner = b.dom.el('inner');
+	btn.focus();
+	L.open('dialog#1', () => { inner.shown = false; L.done('dialog#1'); });
+	inner.focus();
+	await tick();
+	await b.press();
+	assert.equal(b.dom.activeElement, inner, 'the stack does not reach into the page on a popstate');
 });

@@ -67,6 +67,35 @@
      loses what was typed into the first boot (r533 QA, B-1). Back from
      there boots those older entries one by one, each as the app at nought.
 
+     ESCAPE IS ROUTED THE WAY BACK IS (r533 QA, B-3). Every module used to answer
+     Escape for itself, so one press could close a menu and the sheet under it, or
+     a dialog and the Admin drawer it was over, and the two closes cost an extra
+     traversal. The stack now owns the key: one listener on the window, in the
+     capture phase, closes the topmost layer through its own closer and consumes
+     the key (`preventDefault`, and not `stopPropagation`, so the recorder still
+     hears the press and a bubble listener such as full screen's can see that it
+     was taken). No module compares a key with 'Escape' to close a surface of its
+     own; layers.wiring.test.mjs fails the one that does.
+
+     Three things stand outside that rule, each on purpose:
+       - an element that owns Escape as input says so with `data-own-escape`
+         (the terminal's input, whose Escape is a byte for its program), and an
+         input method's composition ends on Escape and is never a close;
+       - a CLAIM is a transient key mode that is not a surface and has no history
+         entry: a drag, a menu's keyboard, a form held open in place. It is called
+         before the layers, the latest first, and answers `false` to pass the key on
+         (a claim with nothing to do right now says so rather than being released).
+         A claim holds the key only while nothing has opened above it (r535 QA, MED-1):
+         the topmost thing is still the first to go, so a dialog or the palette
+         opened over the graph's link mode is what one Escape closes, and the mode
+         is the second press's. A claim that can say whether it is live (a third
+         argument, a test with no effect) is put under each layer that opens while
+         it is, and is not asked while that layer is up;
+       - what had the keyboard when a layer went up is kept, and given back after
+         the key has closed the layer if the keyboard is then on the body or on
+         something no longer shown. A closer that placed the focus itself keeps
+         the say, and so does a visible control the person was on.
+
    Classic, and loaded before everything that opens a surface, so
    `window.DaimondLayers` is there for the module (daimond.js) and for the
    classic scripts (workspace.js, mobile.js) alike.
@@ -84,7 +113,8 @@
 
 	function make(win) {
 		var api       = {};
-		var stack     = [];		// { id, close }, bottom first
+		var stack     = [];		// { id, close, opener, over }, bottom first; over: the claims live when it opened
+		var claims    = [];		// { id, fn, live }, oldest first: Escape-only entries with no history
 		var pos       = 0;		// the history depth we believe the page is at
 		var pending   = [];		// when each traversal we issued was issued
 		var scheduled = false;
@@ -170,11 +200,51 @@
 			return -1;
 		}
 
+		function claimAt(id) {
+			for (var i = claims.length - 1; i >= 0; i--) if (claims[i].id === id) return i;
+			return -1;
+		}
+
+		/// The claims that are live now, which a layer opening now is over.
+		function liveClaims() {
+			var ids = [];
+			for (var i = 0; i < claims.length; i++) {
+				var probe = claims[i].live, on = false;
+				if (probe) { try { on = !!probe(); } catch (e) { on = false; } }	// a test that fails is no reason to hold the key
+				if (on) ids.push(claims[i].id);
+			}
+			return ids;
+		}
+
+		/// Is a layer that opened over the claim still up?
+		function under(id) {
+			for (var i = 0; i < stack.length; i++) if (stack[i].over.indexOf(id) >= 0) return true;
+			return false;
+		}
+
+		/// What has the keyboard, unless that is the page itself.
+		function active() {
+			var d = win.document, a = d && d.activeElement;
+			return a && a !== d.body && a !== d.documentElement ? a : null;
+		}
+
+		/// Is the element in the document and drawn?
+		function shown(el) {
+			try { return !!(el && el.isConnected && el.getClientRects && el.getClientRects().length); }
+			catch (e) { return false; }
+		}
+
 		/// A layer is up. Opening one already up only replaces its closer.
-		api.open = function (id, close) {
+		///
+		/// `opener` is what the keyboard goes back to when Escape closes the layer, and defaults to what has it now.
+		/// A layer opened again keeps the one it had.
+		api.open = function (id, close, opener) {
 			var i = indexOf(id);
-			if (i >= 0) stack[i].close = close;
-			else stack.push({ id: id, close: close });
+			if (i >= 0) {
+				stack[i].close = close;
+				if (opener) stack[i].opener = opener;
+			}
+			else stack.push({ id: id, close: close, opener: opener || active(), over: liveClaims() });
 			later();
 			return id;
 		};
@@ -185,6 +255,29 @@
 			if (i < 0) return;
 			stack.splice(i, 1);
 			later();
+		};
+
+		/// A key mode that is not a surface takes Escape ahead of the layers it is not under: `fn(e)` acts, and answers
+		/// `false` when it has nothing to do just now, which passes the key to the next claim and then to the layers.
+		/// Claiming again under a name replaces the claim and makes it the latest, and above every layer up now.
+		///
+		/// `live()` says, with no effect, whether the mode has something to do. A claim held for the page's life
+		/// gives one, so that a layer opened while the mode is on (a dialog, the palette) stands over it and is the
+		/// layer one Escape closes. A claim with none answers for itself, by `fn` declining.
+		api.claim = function (id, fn, live) {
+			var i = claimAt(id);
+			if (i >= 0) claims.splice(i, 1);
+			claims.push({ id: id, fn: fn, live: typeof live === 'function' ? live : null });
+			for (var k = 0; k < stack.length; k++) {
+				var at = stack[k].over.indexOf(id);
+				if (at >= 0) stack[k].over.splice(at, 1);
+			}
+			return id;
+		};
+
+		api.release = function (id) {
+			var i = claimAt(id);
+			if (i >= 0) claims.splice(i, 1);
 		};
 
 		api.uid    = function (kind) { seq++; return kind + '#' + seq; };
@@ -234,7 +327,39 @@
 			settle();
 		}
 
-		if (win.addEventListener) win.addEventListener('popstate', onPop);
+		/// Give the keyboard back to what opened a layer the key has just closed, if it has nowhere else to be.
+		function refocus(opener) {
+			var d = win.document;
+			if (!d || !shown(opener)) return;
+			var a = d.activeElement;
+			if (a && a !== d.body && a !== d.documentElement && shown(a)) return;
+			try { opener.focus(); } catch (e) { /* not focusable */ }
+		}
+
+		/// Escape: a claim that nothing has opened over if one has the key, otherwise the topmost layer, through its own closer.
+		function onKey(e) {
+			if (!e || e.key !== 'Escape' || e.isComposing) return;
+			try { if (e.target && e.target.closest && e.target.closest('[data-own-escape]')) return; }
+			catch (x) { /* a target with no selector engine is nobody's input */ }
+			for (var i = claims.length - 1; i >= 0; i--) {
+				if (under(claims[i].id)) continue;	// a layer opened over it: that layer is the topmost thing
+				var took;
+				try { took = claims[i].fn(e); } catch (x) { took = false; }	// a broken claim must not hold the layers
+				if (took !== false) { e.preventDefault(); return; }
+			}
+			if (!stack.length) return;
+			var l = stack.pop();
+			e.preventDefault();
+			try { l.close(); } catch (x) { /* a closer that fails still leaves the stack */ }
+			refocus(l.opener);
+			later();
+		}
+
+		if (win.addEventListener) {
+			win.addEventListener('popstate', onPop);
+			// The window, in the capture phase: before every capture listener on the document.
+			win.addEventListener('keydown', onKey, true);
+		}
 		// A page that begins on a layer's entry is a reload of one (or a Back onto an entry an earlier page pushed).
 		// The entries below it belong to a document that is gone, so a traversal onto one is a second full load of
 		// the page, and whatever the person typed into this boot, a passphrase at unlock, is lost. The entry stands

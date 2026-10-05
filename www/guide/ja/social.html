@@ -40,10 +40,11 @@
 <main>
 	<h1>ソーシャルと提案</h1>
 	<p class="lede">二つのパネルと一つの diamond。 <span class="ui">ソーシャル</span> は、あなたが何かをこちらに伝える場所です。 <span class="ui">改善</span> は、それが届く先の掲示板です。 <span class="ui">保留</span> は、 <em>あなた</em> を待っているものが現れる場所です。</p>
+	<p><span class="ui">ソーシャル</span> opens on <span class="ui">Messages</span>, and carries six chips: <span class="ui">Messages</span>, <span class="ui">人</span>, <span class="ui">Groups</span>, <span class="ui">Feed</span>, <span class="ui">Share</span> と <span class="ui">Feedback</span>. Settings moved to the cog in the header.</p>
 
 	<h2 id="s1">何かを伝える</h2>
-	<p> <span class="ui">ソーシャル</span> を開いて書きます。最初の行が題名で、起きたことはその下に書きます。 <span class="ui">送信</span> は、画面にあるものとビルド ID を送ります。それ以外は何も添えられません。</p>
-	<p>投稿には <strong>投稿名</strong>が要ります。アプリではこれを「声」と呼びます。なければすべてを読み、この端末限りのメモを残すことはできます。パネルは一行でそれを伝えます—— <em>「投稿するには投稿名を設定してください。」</em>—— <span class="ui">入手する</span> が横にあります。タップ一つで済み、Daimond Pro の一部です。</p>
+	<p> <span class="ui">ソーシャル</span>, choose <span class="ui">Feedback</span>, and write. The first line is the title, and what happened goes under it. <span class="ui">送信</span> は、画面にあるものとビルド ID を送ります。それ以外は何も添えられません。</p>
+	<p>投稿には <strong>投稿名</strong>. Without one you can read everything and keep a note to this device. The panel says so in one row, <em>Posting name: none.</em>—— <span class="ui">入手する</span> beside it in <span class="ui">Settings</span>. It takes one tap, and it needs Daimond Pro.</p>
 
 	<h3 id="s2">対応できるメモ</h3>
 	<p>メモには、この順で三つのことが要ります。どれか一つでも欠ければ、何かをする前に会話が必要になります。</p>
@@ -84,14 +85,17 @@
 
 	<h2 id="s7">ステアリングメモ</h2>
 	<p>ステアリングメモは、モデルにどう答えてほしいかを伝える、飾らない一文です。たとえば <em>詳しい説明を求められない限り、回答は約200語以内にしてください。</em> メモは一つのモデルのためのものなので、あるモデルに教えたことが別のモデルに押しつけられることはありません。そのモデルが答えるとき、最大五つのメモ、合わせて 600 バイトまでが、安全のルールの直前で指示に加えられます。安全のルールは今までどおり最後に置かれ、今までどおり優先されます。</p>
-	<p>メモはだれかが代わりに書くものではありません。あるモデルの回答が何度も <span class="ui">長すぎる</span> と評価される、といった評価のパターンを、オプティマイザーが探します。見つけると、 <span class="ui">保留</span> にタイルを出し、メモを提案します。タイルには、加える一文とその根拠の数が載ります。見るのはあなたが評価したものだけで、パターンが偶然以上と言えるだけの回答が評価されてからです。目安は diamond で少なくとも 7 件、アカウント全体で 11 件です。古い評価は、同じモデルの新しい評価が増えるにつれて軽くなります。日付は関係ありません。不満の種類ごとに決まった一文があるので、評価に書いたあなたの言葉が使われることはありません。</p>
-	<p>タイルにはそれぞれボタンがあります。 <span class="ui">追加</span> は、表示された一文をそのまま保存します。 <span class="ui">編集</span> を押すと、先に言い回しを直せます。モデルにあなたの機嫌を取らせる、同調させる、承認を求めさせる、評価に触れさせる行は受け付けられず、理由が表示されます。 <span class="ui">閉じる</span> は提案を取り下げ、そのモデルの回答がさらに 20 件評価されるまで再び出されません。タイルは代わりに <span class="ui">切り替える</span> を出すこともあります。これは、評価が良いほうのモデルに diamond を一つ切り替えるものです。また、さらに 20 件評価されたあとで、メモの見直しを求めることもあり、そのときは <span class="ui">残す</span> か <span class="ui">外す</span> を選びます。押すまでは、何も追加も変更も切り替えもされません。</p>
+	<p>メモはだれかが代わりに書くものではありません。あるモデルの回答が何度も <span class="ui">長すぎる</span>と評価される、といった評価のパターンを、オプティマイザーが探します。見つけると、 <span class="ui">保留</span> にタイルを出し、メモを提案します。タイルには、加える一文とその根拠の数が載ります。見るのはあなたが評価したものだけで、パターンが偶然以上と言えるだけの回答が評価されてからです。目安は diamond で少なくとも 7 件、アカウント全体で 11 件です。古い評価は、同じモデルの新しい評価が増えるにつれて軽くなります。日付は関係ありません。不満の種類ごとに決まった一文があるので、評価に書いたあなたの言葉が使われることはありません。</p>
+	<p>タイルにはそれぞれボタンがあります。 <span class="ui">追加</span> は、表示された一文をそのまま保存します。 <span class="ui">編集</span> を押すと、先に言い回しを直せます。モデルにあなたの機嫌を取らせる、同調させる、承認を求めさせる、評価に触れさせる行は受け付けられず、理由が表示されます。 <span class="ui">閉じる</span> は提案を取り下げ、そのモデルの回答がさらに 20 件評価されるまで再び出されません。タイルは代わりに <span class="ui">切り替える</span>を出すこともあります。これは、評価が良いほうのモデルに diamond を一つ切り替えるものです。また、さらに 20 件評価されたあとで、メモの見直しを求めることもあり、そのときは <span class="ui">残す</span> か <span class="ui">外す</span>を選びます。押すまでは、何も追加も変更も切り替えもされません。</p>
 	<p>有効なメモはすべて一覧に表示され、正確な行、だれのメモか、どのモデル向けか、追加した日が分かります。diamond の設定はタイルの歯車から開き、その diamond のメモとアカウントのメモは <span class="ui">モデル</span> の中にあります。すべてのメモは <span class="ui">モデル統計</span> で見られます。 <span class="ui">外す</span> を押すと、メモをいつでも外せます。外したメモは、さらに 20 件の回答が評価されるまで再提案されません。モデルに伝わらないメモ（たとえば diamond が別のモデルを使っている場合）には <em>未使用</em> と理由が表示されます。 <span class="ui">切り替える</span>を押したあと、新しいモデルで 20 件の回答が評価されると、タイルがもう一度たずねます。 <span class="ui">残す</span> （新しいモデルのまま）か <span class="ui">元に戻す</span> （diamond が離れたモデルへ）のどちらかを選べます。</p>
-	<p>diamond 一つのメモは、その diamond の中のファイル <code translate="no">.daimond/steering.md</code> に保存されるので、diamond と一緒に、お使いのどの端末にも移ります。アカウント全体のメモは、普通のチャットにも届くもので、同じようにオプティマイザー自身の diamond に保存されるため、オプティマイザーを削除するとそのメモも一緒に消えます。daimon はどちらのファイルにも書き込めません。メモは、指示の残りと一緒にモデルの提供元に送られます。</p>
+	<p>diamond 一つのメモは、その diamond の中のファイル <code translate="no">.daimond/steering.md</code>に保存されるので、diamond と一緒に、お使いのどの端末にも移ります。アカウント全体のメモは、普通のチャットにも届くもので、同じようにオプティマイザー自身の diamond に保存されるため、オプティマイザーを削除するとそのメモも一緒に消えます。daimon はどちらのファイルにも書き込めません。メモは、指示の残りと一緒にモデルの提供元に送られます。</p>
 
 	<h2 id="s8">人、メッセージ、共有</h2>
-	<p><span class="ui">人</span> が、誰かと直接つなぎます。その場でお互いのコードを見せ合うか、相手のものを読んでください。そこから、二人だけの個人的なメッセージと、グループが持てます。グループは作った人が閉じられ、閉じたあとは、すでに言われたことは取り除かれず、新しいものも届きません。</p>
-	<p>diamond は、つながっている相手と共有できます。共有された diamond は、その記憶とページを運び、どちらも送った相手に対して封じられます。</p>
+	<p><span class="ui">人</span> connects you to somebody directly. Show your code to them in the room, or read theirs. From there you have private messages between the two of you, in <span class="ui">Messages</span>, and groups of them, in <span class="ui">Groups</span>. A group can be closed by whoever made it, and then nothing already said is taken away and nothing new arrives.</p>
+	<p>Nobody in the room? <span class="ui">Find somebody</span> takes their handle and fetches the code they published, and <span class="ui">Send my code</span> hands yours over however you already talk to them. A key that arrives either way reads <em>New key</em>, and stays new: it came through something that could have swapped it. Read the sixty digits aloud to each other to change that.</p>
+	<p>A diamond can be shared with somebody you are connected to. Use <span class="ui">Share&hellip;</span> on its tile: send a copy, or the shape only, and say whether the conversation goes with it.</p>
+	<p>What arrives waits in their <span class="ui">Messages</span> tray until they press <span class="ui">追加</span>, and the copy is then theirs to keep and to change. Triggered actions and the notes about your own folders never travel, and neither does the conversation unless you tick it.</p>
+	<p><span class="ui">Feed</span> is where you write to the people you have let follow you. A post is kept on our server in the clear, shown to your approved followers and nobody else, and we can read and remove it; delete one and it is gone. Follow somebody from their row in <span class="ui">人</span> or from their name on a post, and they choose whether to let you. A follower who sees something wrong can press <span class="ui">Report</span> on it; a post we remove for that stays on your own feed marked as removed, and says why.</p>
 	<p>これらはどれも、リレーがオンになっていることに頼っています。オンでないときは、パネルが一行でそれを伝え、失敗するはずの操作は何も差し出しません。</p>
 
 	<div class="next">
@@ -101,7 +105,6 @@
 </main>
 
 <footer class="site-foot">
-	<span>Daimond はブラウザの中で動きます。ここでの内容は私たちに送信されません。</span>
 	<nav aria-label="ガイドのページ">
 		<a href="index.html">ここから始める</a>
 		<a href="interface.html">インターフェース</a>

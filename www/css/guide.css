@@ -317,7 +317,6 @@ ol.steps > li h3 { margin-top: 0; }
 /* Empty until there is something to say, and taking no room while it is. */
 .do-say { margin: 0.6rem 0 0; color: var(--text-primary); font-weight: 600; }
 .do-say:empty { display: none; }
-.do-note { margin: 0.6rem 0 0; font-size: 0.9rem; color: var(--text-muted); }
 
 /* ── Screenshot slots ─────────────────────────────────────────────────────
    The main agent will set a real src on each img later. Until then the figure

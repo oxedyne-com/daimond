@@ -11823,6 +11823,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 	var chatOutput    = document.getElementById('chat-output');
 	var chatInput     = document.getElementById('chat-input');
 	var chatSend      = document.getElementById('chat-send');
+	var sendCtl       = null;		// Send, once `bindSend` has built it through the answer rule
 	var chatStop      = null; // removed (proposal #19): the second ■ beside the arrow
 	// Send's arrow, drawn rather than typed: `➤` sat off the button's centre in
 	// most faces and in none of them matched the stroke of the icons beside it.
@@ -15647,6 +15648,17 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		_jumpAt = -1;
 	}
 
+	/// Show each walk-back button only while it has somewhere to go: a contextual control is hidden,
+	/// not dimmed (`DaimondAnswer.shown`). A rebuild's thread is half drawn and reads as empty; the
+	/// end-pin that closes it asks again.
+	function syncJumps() {
+		if (!jumpBtn || !endBtn) return;
+		var s = _renderingHistory ? { users: 0, top: 0, height: 0, view: 0 } : {
+			users: userDivs().length, top: chatOutput.scrollTop, height: chatOutput.scrollHeight, view: chatOutput.clientHeight };
+		DaimondAnswer.show(jumpBtn, DaimondAnswer.shown.jump_back(s));
+		DaimondAnswer.show(endBtn, DaimondAnswer.shown.jump_end(s));
+	}
+
 	// ── The chat tile ──────────────────────────────────────────
 	//
 	// One uniform, collapsible tile per unit of a turn, so the transcript reads as
@@ -18678,11 +18690,11 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 				// Swallowed in the capture phase, before the focused button sees it: a key
 				// that reaches a button presses it, whichever button that is.
 				if (guarded(e)) { e.preventDefault(); e.stopPropagation(); return; }
-				if (e.key === 'Escape') { e.preventDefault(); close(nothing()); }
+				// Escape is the layer stack's: it closes this card through `close(nothing())`.
 				// Not on a `pick`: its body is full of buttons -- a folder to walk
 				// into, a row to tick -- and swallowing Enter would make the
 				// keyboard route into a folder unreachable.
-				else if (e.key === 'Enter' && (opts.kind === 'prompt' || opts.kind === 'form')) {
+				if (e.key === 'Enter' && (opts.kind === 'prompt' || opts.kind === 'form')) {
 					e.preventDefault(); submit();
 				}
 				else if (e.key === 'Tab') keepFocusIn(card, e);
@@ -21084,8 +21096,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 				}
 				escaper = function (e) {
 					if (!formView.contains(document.activeElement)) return;
-					if (e.key === 'Escape') { e.preventDefault(); done(null); }
-					else if (e.key === 'Enter') { e.preventDefault(); submit(); }
+					if (e.key === 'Enter') { e.preventDefault(); submit(); }
 				};
 				document.addEventListener('keydown', escaper, true);
 				back.addEventListener('click', function () { done(null); });
@@ -21271,7 +21282,6 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 				});
 				b.title = t(r.blurb) + ' ' + t('home.prompt_opens', { path: Prompts.path(r.id) });
 			});
-			homeView.appendChild(el('div', 'admin-note', t('home.prompts_note')));
 
 			// Where a push goes, and the token it goes with.
 			pushSection();
@@ -21339,9 +21349,11 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 				sb.title = tOr('settings.sync_help',
 					'Stopping is immediate and loses nothing; your work stays on this '
 						+ 'device and this device stops reaching your others.');
-				homeView.appendChild(el('div', 'admin-note', syncing
-					? tOr('settings.sync_on_note', 'Sending your work to your other devices.')
-					: tOr('settings.sync_off_note', 'Not syncing — your work stays here.')));
+				// Said only for the state that needs saying: syncing is the default.
+				if (!syncing) {
+					homeView.appendChild(el('div', 'admin-note',
+						tOr('settings.sync_off_note', 'Not syncing — your work stays here.')));
+				}
 			}
 			if (window.DaimondTrail) {
 				var trailOut = el('div', 'admin-note', '');
@@ -21507,8 +21519,6 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 						function () { switchAccount(a.id); });
 				});
 				item(t('home.add_account'), addAccount);
-				homeView.appendChild(el('div', 'admin-note', t('home.accounts_note')));
-				homeView.appendChild(el('div', 'admin-sec', ''));
 			}
 
 			// Lock beside Log out: the only difference is the session on the gateway
@@ -21971,7 +21981,6 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			a.rel = 'noopener';
 			a.textContent = t('home.console_open');
 			homeView.appendChild(a);
-			homeView.appendChild(el('div', 'admin-note', t('home.console_note', { role: consoleRole })));
 		}
 
 		/// Ask what to call a device, and put the answer on its line.
@@ -22662,9 +22671,6 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 				if (f) f.style.display = f.style.display === 'none' ? '' : 'none';
 			});
 			modal.addEventListener('click', function (e) { if (e.target === modal) closeModal(); });
-			document.addEventListener('keydown', function (e) {
-				if (e.key === 'Escape' && (drawerOpen || modal.style.display !== 'none')) closeAdmin();
-			});
 			// The rail comes and goes with the window width, and whatever is open has
 			// to follow it. BOTH ways: only modal-to-panel was handled, so a window
 			// shrinking past the fold took the rail away and left the open view with
@@ -22885,6 +22891,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		_turn = 0; _jumpAt = -1;
 		_handoffTurn = -1;
 		setSelectMode(false);
+		syncJumps();
 	}
 
 	/// The centre with no chat in it -- which on a fresh account is the first thing the
@@ -23006,6 +23013,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		chatOutput.scrollTop = v;
 		_selfTop = chatOutput.scrollTop;		// read back: the browser clamps to the range
 		_wasAtEnd = nearBottom();
+		syncJumps();
 	}
 
 	/// Pin the thread to the live end. The unconditional draw-path idiom, kept in one
@@ -23020,6 +23028,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		if (chatOutput && chatOutput.addEventListener) {
 			chatOutput.addEventListener('scroll', function () {
 				_wasAtEnd = nearBottom();
+				syncJumps();
 				if (chatOutput.scrollTop === _selfTop) return;
 				_lastScrollAt = Date.now();
 			}, { passive: true });
@@ -23039,6 +23048,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 	try {
 		if (window.ResizeObserver && chatOutput) {
 			new ResizeObserver(function () {
+				syncJumps();
 				if (_wasAtEnd) setScrollTop(chatOutput.scrollHeight);
 			}).observe(chatOutput);
 		}
@@ -28799,6 +28809,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		if (!iturn) return;
 		chat._editing = iturn;
 		chatInput.value = text;
+		syncSendMode();
 		try { chatInput.focus(); } catch (e) { /* no composer on screen */ }
 	}
 
@@ -29126,7 +29137,6 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 	function setSendMode(mode) {
 		// SENDING: a press of this conversation's is still on its way (`holdSend`), so the
 		// button says so and a second press cannot start a second send.
-		chatSend.disabled = mode === 'sending';
 		chatSend.classList.toggle('sending', mode === 'sending');
 		if (mode === 'sending') chatSend.setAttribute('aria-busy', 'true');
 		else chatSend.removeAttribute('aria-busy');
@@ -29145,6 +29155,9 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		}
 		chatSend.title = words;
 		chatSend.setAttribute('aria-label', words);
+		// The hold is the answer rule's, so its reason (an empty box) is re-asked with it and the title is its to keep.
+		if (sendCtl) sendCtl.hold(mode === 'sending');
+		else chatSend.disabled = mode === 'sending';
 		// The second ■ (interject-mode stop) is gone (proposal #19): stopping
 		// mid-turn with text typed means emptying the box, which makes the send
 		// button ■ again. There is never a second ■ beside the arrow.
@@ -29162,6 +29175,35 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 	/// keystroke as well as at the ends of a turn, because mid-turn the button's
 	/// meaning changes as the box fills and empties.
 	function syncSendMode() { if (chatSend) setSendMode(sendMode()); }
+
+	/// Why Send cannot act now, in the viewer's words, or '' when it can.
+	function sendWhy() {
+		var k = DaimondAnswer.reasons.send_home({ text: chatInput.value, stop: sendMode() === 'stop' });
+		return k ? t(k) : '';
+	}
+
+	var sendToast = null;
+	/// A press on a dimmed Send is answered on screen, and the cursor goes to the box that wants the words.
+	function sendSay(msg) {
+		if (!msg) return;
+		try { chatInput.focus(); } catch (e) { /* no composer on screen */ }
+		if (sendToast && sendToast.parentNode) sendToast.parentNode.removeChild(sendToast);
+		sendToast = toast(msg, false);
+	}
+
+	/// In stop mode the same button cancels the current chat's running turn -- but only with an empty
+	/// box. With something typed in it the button is a Send arrow and sends, because a user who has just
+	/// written a correction and pressed the button meant to send the correction, not to kill the turn.
+	function sendPress() {
+		if (sendMode() === 'stop') { stopGeneration(); return; }
+		sendUserMessage();
+	}
+
+	function bindSend() {
+		sendCtl = DaimondAnswer.control(chatSend, { can: sendWhy, say: sendSay, fields: [chatInput], act: sendPress });
+		syncSendMode();
+		return sendCtl;
+	}
 
 	// ── Meters ─────────────────────────────────────────────────
 	function fmtCtx(n) {
@@ -29582,12 +29624,11 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		if (!_chatsMenu) return;
 		_chatsMenu.remove(); _chatsMenu = null;
 		document.removeEventListener('click', onChatsMenuOutside, true);
-		document.removeEventListener('keydown', onChatsMenuKey, true);
+		DaimondLayers.done('chatsmenu');
 		var btn = document.getElementById('chats-menu-btn');
 		if (btn) btn.setAttribute('aria-expanded', 'false');
 	}
 	function onChatsMenuOutside(e) { if (_chatsMenu && !_chatsMenu.contains(e.target)) closeChatsMenu(); }
-	function onChatsMenuKey(e) { if (e.key === 'Escape') { e.preventDefault(); closeChatsMenu(); } }
 
 	function openChatsMenu(anchor) {
 		if (_chatsMenu) { closeChatsMenu(); return; }		// second press on the button toggles it shut
@@ -29660,10 +29701,11 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		menu.style.left = Math.max(8, left) + 'px';
 		menu.style.top = (r.bottom + 4) + 'px';
 		_chatsMenu = menu;
+		// A layer, so that Back closes it as Escape does; the button is where the keyboard goes back to.
+		DaimondLayers.open('chatsmenu', closeChatsMenu, anchor);
 		anchor.setAttribute('aria-expanded', 'true');
 		setTimeout(function () {
 			document.addEventListener('click', onChatsMenuOutside, true);
-			document.addEventListener('keydown', onChatsMenuKey, true);
 		}, 0);
 	}
 
@@ -31479,8 +31521,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			refocus(prev, prevHost);
 		}
 		function onKey(e) {
-			if (e.key === 'Escape') { e.preventDefault(); close(); }
-			else if (e.key === 'Tab') keepFocusIn(card, e);
+			if (e.key === 'Tab') keepFocusIn(card, e);
 		}
 		document.addEventListener('keydown', onKey, true);
 		back.addEventListener('mousedown', function (e) { if (e.target === back) close(); });
@@ -31683,7 +31724,6 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		input.type = 'text';
 		input.className = 'tile-dlg-name-input';
 		input.value = chat.name || '';
-		input.placeholder = tOr('tile.dlg_name_hint', 'Unnamed: the rail shows the time');
 		input.spellcheck = false;
 		input.setAttribute('autocomplete', 'off');
 		input.setAttribute('data-1p-ignore', '');
@@ -32067,7 +32107,6 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		function draw() {
 			host.innerHTML = '';
 			var list = Triggers.of(opts.id);
-			pathNote.style.display = list.length ? '' : 'none';
 			if (list.length) {
 				if (!list.some(function (x) { return x.id === chosen; })) chosen = list[0].id;
 				var ta = list.filter(function (x) { return x.id === chosen; })[0];
@@ -32175,11 +32214,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			host.appendChild(add);
 		}
 
-		// Where the actions live on disk. Only worth saying once there is a file
-		// to look in: a Diamond that has never had an action has no such path.
-		var pathNote = secNote(t('trig.note', { path: 'diamonds/' + opts.id + '/triggers.json' }));
 		draw();
-		card.appendChild(pathNote);
 	}
 
 	/// The chosen action's own settings: what sets it off, and its two texts.
@@ -32818,8 +32853,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			}
 			finish = close;			// the cross above, wired to the one way out
 			function onKey(e) {
-				if (e.key === 'Escape') { e.preventDefault(); close(true); }
-				else if (e.key === 'Tab') keepFocusIn(card, e);
+				if (e.key === 'Tab') keepFocusIn(card, e);
 			}
 			document.addEventListener('keydown', onKey, true);
 			back.addEventListener('mousedown', function (e) { if (e.target === back) close(true); });
@@ -34909,6 +34943,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		if (!el) return;
 		el.value = '';
 		el.style.height = 'auto';
+		if (el === chatInput) syncSendMode();
 		if (current) current._draft = '';
 		try {
 			var k = chatDraftKey(current);
@@ -34945,6 +34980,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			if (left === chatInput.value) return;
 			chatInput.value = left;
 			fitComposer();
+			syncSendMode();
 			if (chat) chat._draft = '';
 			try { if (k && window.DaimondDrafts) DaimondDrafts.set(k, left); } catch (e) { /* storage blocked */ }
 			return;
@@ -35065,6 +35101,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		_skillMenu.remove();
 		_skillMenu = null;
 		document.removeEventListener('click', onSkillOutside, true);
+		DaimondLayers.release('skill');
 	}
 	function onSkillOutside(e) {
 		if (_skillMenu && !_skillMenu.contains(e.target) && e.target !== chatInput) closeSkillMenu();
@@ -35253,6 +35290,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 				// The command you would have typed, with the space after it, so the
 				// next thing you type is its argument.
 				chatInput.value = '/' + n + ' ';
+				syncSendMode();
 				chatInput.focus();
 			});
 			menu.appendChild(b);
@@ -35265,6 +35303,12 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		// a menu under it would be off the bottom of the window.
 		menu.style.top = Math.max(8, r.top - menu.offsetHeight - 6) + 'px';
 		_skillMenu = menu;
+		// Escape in the box puts the menu away. A claim and not a layer: the menu is a key mode over the composer,
+		// with no history entry, and it declines when the keyboard is anywhere else.
+		DaimondLayers.claim('skill', function () {
+			if (document.activeElement !== chatInput) return false;
+			closeSkillMenu();
+		});
 		setTimeout(function () { document.addEventListener('click', onSkillOutside, true); }, 0);
 	}
 
@@ -36035,6 +36079,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		chat._queue = [];
 		chatInput.value = chatInput.value.trim() ? text + '\n\n' + chatInput.value : text;
 		fitComposer();
+		syncSendMode();
 		renderQueue();
 		toast(t('chat.queue_returned'), true);
 	}
@@ -42776,12 +42821,13 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 				reachEl.appendChild(reachChip(tailOf(path, 1) || path, path, ro.indexOf(path) >= 0));
 			});
 
-			var says = document.createElement('span');
-			says.className = 'files-reach-says' + (marks.length ? '' : ' none');
-			says.textContent = marks.length
-				? t('dws.reach_search')
-				: t('dws.reach_none', { name: currentDiamond.name });
-			reachEl.appendChild(says);
+			// Said only for the state that needs saying; chips alone say the rest.
+			if (!marks.length) {
+				var says = document.createElement('span');
+				says.className = 'files-reach-says none';
+				says.textContent = t('dws.reach_none', { name: currentDiamond.name });
+				reachEl.appendChild(says);
+			}
 
 			var here = markHereBtn(marks, own);
 			if (here) reachEl.appendChild(here);
@@ -52066,12 +52112,13 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 
 	/// Is anything drawn over the app right now?
 	///
-	/// Escape belongs to the topmost thing on screen. Every dialog here already
-	/// answers it (`verify_escapable` is about nothing else), and most of them
-	/// call `preventDefault` -- but the appearance menu, the panel gallery and
-	/// the command palette close on Escape WITHOUT marking the event, so
-	/// `defaultPrevented` alone would let one keystroke both close the menu and
-	/// leave full screen. Asking what is on screen catches those three as well.
+	/// Escape belongs to the topmost thing on screen. The layer stack answers it
+	/// for every dialog and popover (`verify_escapable` is about nothing else) and
+	/// marks each press it acts on with `preventDefault`, so `defaultPrevented`
+	/// says that one surface took the key. What it keeps here is the question of
+	/// what is on screen that the stack does not hold: a surface that came up
+	/// without registering, so that one keystroke would both close it and leave
+	/// full screen.
 	///
 	/// On screen, not merely present: `#identity-modal` and the popovers all live
 	/// in the document from first paint.
@@ -54007,15 +54054,11 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			var eh = document.createElement('div');
 			eh.className = 'cfg-fieldlabel';
 			eh.textContent = tOr('crystal.other_fields', 'Other fields');
-			var en = document.createElement('p');
-			en.className = 'cfg-fieldnote';
-			en.textContent = tOr('crystal.other_fields_note',
-				'Kept as they are, and shown here so nothing vanishes.');
 			var ep = document.createElement('pre');
 			var shown = {};
 			extraKeys.forEach(function (k) { shown[k] = draft[k]; });
 			ep.textContent = JSON.stringify(shown, null, 2);   // escaped via textContent (H5)
-			extra.appendChild(eh); extra.appendChild(en); extra.appendChild(ep);
+			extra.appendChild(eh); extra.appendChild(ep);
 			form.appendChild(extra);
 		}
 
@@ -56051,6 +56094,37 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		return !!(o && o.mark);
 	}
 
+	/// A scrolling region is a keyboard stop while it scrolls, and not otherwise.
+	///
+	/// With more than fits, the keyboard has no other way to the rows past the edge
+	/// (axe `scrollable-region-focusable`). With nothing to scroll, a stop is a place
+	/// Tab lands and nothing happens, which reads as a dead control. So the stop is set
+	/// from the box's own size and read again when the box is resized or its content
+	/// changes. Attribute writes are not watched, so the write cannot wake its own reader.
+	function scrollStop(el) {
+		var ro = null, mo = null, seen = false;
+		function mark() {
+			if (el.isConnected) seen = true;
+			else if (seen) {
+				// Drawn again elsewhere and this one dropped: let the observers go.
+				if (ro) ro.disconnect();
+				if (mo) mo.disconnect();
+				return;
+			}
+			if (el.scrollHeight > el.clientHeight || el.scrollWidth > el.clientWidth) el.tabIndex = 0;
+			else el.removeAttribute('tabindex');
+		}
+		if (typeof ResizeObserver !== 'undefined') {
+			ro = new ResizeObserver(mark);
+			ro.observe(el);
+		}
+		if (typeof MutationObserver !== 'undefined') {
+			mo = new MutationObserver(mark);
+			mo.observe(el, { childList: true, subtree: true, characterData: true });
+		}
+		mark();
+	}
+
 	/// The scrolling box of tiles, in whichever view is chosen.
 	///
 	/// Its own function because a chat's footer has TWO of them -- the workspace and
@@ -56061,12 +56135,12 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		var icons = !o.stack && attachView() === 'icons';
 		var body = document.createElement('div');
 		body.className = (o.cls || 'attach-body') + (icons ? ' icons' : '');
-		// A scrolling region is a keyboard stop and needs a name, or a screen
-		// reader announces "group" and nothing else.
-		body.tabIndex = 0;
+		// A scrolling region needs a name, or a screen reader announces "group"
+		// and nothing else; it is a keyboard stop only while it scrolls.
 		body.setAttribute('role', 'group');
 		body.setAttribute('aria-label', o.label || t('attach.list'));
 		items.forEach(function (it) { body.appendChild(attachTile(it)); });
+		scrollStop(body);
 		return body;
 	}
 
@@ -56888,6 +56962,15 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		return row;
 	}
 
+	// Escape in the link form puts the form away. A claim held for the page's life, not a layer: the form is
+	// held open in place and has no history entry, and it declines unless the keyboard is inside it.
+	DaimondLayers.claim('linkform', function () {
+		var a = document.activeElement;
+		if (!a || !a.closest || !a.closest('#link-form')) return false;
+		linkForm = null;
+		renderLinks();
+	});
+
 	/// The add-a-link form: which Diamond, in what relation, and optionally why.
 	///
 	/// Everything typed is held in `linkForm` rather than read back out of the
@@ -56898,13 +56981,6 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		var wrap = document.createElement('div');
 		wrap.className = 'link-form';
 		wrap.id = 'link-form';
-		wrap.addEventListener('keydown', function (e) {
-			if (e.key !== 'Escape') return;
-			e.preventDefault();
-			e.stopPropagation();
-			linkForm = null;
-			renderLinks();
-		});
 
 		var err = document.createElement('div');
 		err.className = 'link-err';
@@ -59338,14 +59414,12 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			? (linked ? t('identity.title_linked')
 				: (name ? t('identity.title_welcome', { name: name }) : t('identity.title_unlock')))
 			: t('identity.title_create');
-		document.getElementById('id-lead').textContent = unlock
-			? (linked
-				? (linked !== '1' ? t('identity.lead_linked_named', { name: linked }) : t('identity.lead_linked'))
-				: t('identity.lead_unlock'))
-			// Deliberately short: the passphrase box below carries the part that
-			// matters (what it is, that nothing can reset it, write it down), and
-			// repeating it here pushed the button and the escape hatch off screen.
-			: t('identity.lead_create');
+		// The lead says something only for a freshly linked device. An ordinary
+		// unlock or create has none: the title, the Name field and the passphrase
+		// box below carry it, and an empty lead takes no room (`:empty` in app.css).
+		document.getElementById('id-lead').textContent = unlock && linked
+			? (linked !== '1' ? t('identity.lead_linked_named', { name: linked }) : t('identity.lead_linked'))
+			: '';
 		// The name doubles as the username a password manager files the entry
 		// under, so it stays in the form when unlocking rather than being hidden.
 		// It is read-only there: it names the account being opened, not a choice.
@@ -60576,8 +60650,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 				close(v);
 			}
 			function onKey(e) {
-				if (e.key === 'Escape') { e.preventDefault(); close(null); }
-				else if (e.key === 'Enter') { e.preventDefault(); submit(); }
+				if (e.key === 'Enter') { e.preventDefault(); submit(); }
 				else if (e.key === 'Tab') keepFocusIn(card, e);
 			}
 			document.addEventListener('keydown', onKey, true);
@@ -60775,6 +60848,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		document.body.appendChild(box);
 		setTimeout(function () { box.style.transition = 'opacity .4s'; box.style.opacity = '0'; }, 3600);
 		setTimeout(function () { if (box.parentNode) box.parentNode.removeChild(box); }, 4200);
+		return box;
 	}
 
 	/// The error toast a genuine unhandled failure gets (D-20260920-02), rather
@@ -61903,12 +61977,8 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			var sel = document.createElement('select');
 			sel.className = 'settings-select';
 			sel.id = 'cfg-spend-cap';
-			var note = document.createElement('p');
-			note.className = 'cfg-fieldnote';
-			note.id = 'cfg-spend-cap-note';
 			section.insertBefore(lab, form);
 			section.insertBefore(sel, form);
-			section.insertBefore(note, form);
 			sel.addEventListener('change', function () { SpendCap.save(sel.value); });
 			return true;
 		},
@@ -61923,11 +61993,6 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			if (!this.mount()) return;
 			var lab = document.querySelector('label[for="cfg-spend-cap"]');
 			if (lab) lab.textContent = tOr('settings.spend_cap', 'Stop a turn at');
-			var note = document.getElementById('cfg-spend-cap-note');
-			if (note) {
-				note.textContent = tOr('settings.spend_cap_note',
-					'The most one turn may spend before Daimond stops it.');
-			}
 			var sel = document.getElementById('cfg-spend-cap');
 			// WHY THERE IS A CEILING AT ALL rides on hover, because the reason is not obvious from
 			// the row: the round limit stopped being the thing that ends a runaway turn.
@@ -62432,9 +62497,9 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 				sel.appendChild(o);
 			});
 
-			// The note under the pulldown. The general sentence promises nothing
-			// about anybody's free tier — it says most vendors HAVE one — and the
-			// per-engine line beneath is the only place a figure is stated.
+			// The note under the pulldown is the per-engine line alone, the only place
+			// a figure is stated. The general sentence that once opened it is cut
+			// (D-13, r535), and the note is hidden when the engine has nothing to say.
 			//
 			// A FIGURE THAT CAN GO STALE, and shaped so that it does not go stale
 			// silently. The number lives in `KNOWN` in search.js, where one value is
@@ -62446,14 +62511,12 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			// those it overstated a cost by six times.
 			var note = document.getElementById('search-engine-note');
 			if (note) {
-				note.textContent = tOr('search.engine_note',
-					'Which service Daimond searches with.');
+				note.textContent = '';
 				// Where a key comes from, for the engine now chosen. A vendor's own
 				// signup page in a real tab: it is somebody else's site and somebody
 				// else's session, so it is not one Daimond can draw.
 				var url = (S.KNOWN[cur] && S.KNOWN[cur].url) || '';
 				if (url) {
-					note.appendChild(document.createTextNode(' '));
 					var a = document.createElement('a');
 					a.href = url;
 					a.target = '_blank';
@@ -62465,10 +62528,11 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 				if (free > 0) {
 					var n = free;
 					try { n = free.toLocaleString(); } catch (e) { n = String(free); }
-					note.appendChild(document.createTextNode(' ' + tOr('search.free_month',
+					note.appendChild(document.createTextNode((url ? ' ' : '') + tOr('search.free_month',
 						'{engine}: about {n} searches a month free, last time we looked.',
 						{ engine: S.engineName(cur), n: n })));
 				}
+				note.hidden = !note.firstChild;
 			}
 
 			// The key field, hidden for credits: the gateway holds that key and there
@@ -62772,13 +62836,9 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			var sel = document.createElement('select');
 			sel.className = 'settings-select';
 			sel.id = 'cfg-crystal-cap';
-			var note = document.createElement('p');
-			note.className = 'cfg-fieldnote';
-			note.id = 'cfg-crystal-cap-note';
 			section.insertBefore(head, form);
 			section.insertBefore(lab, form);
 			section.insertBefore(sel, form);
-			section.insertBefore(note, form);
 			sel.addEventListener('change', function () { CrystalCap.save(sel.value); });
 			return true;
 		},
@@ -62790,11 +62850,6 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			if (head) head.textContent = tOr('settings.crystal_limits', 'Size limits');
 			var lab = document.querySelector('label[for="cfg-crystal-cap"]');
 			if (lab) lab.textContent = tOr('settings.crystal_cap', 'Crystal size limit');
-			var cnote = document.getElementById('cfg-crystal-cap-note');
-			if (cnote) {
-				cnote.textContent = tOr('settings.crystal_cap_note',
-					'How large a diamond’s memory may grow.');
-			}
 			var sel = document.getElementById('cfg-crystal-cap');
 			sel.innerHTML = '';
 			var mine = cfg.crystalKb || 0;
@@ -62861,12 +62916,8 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			var sel = document.createElement('select');
 			sel.className = 'settings-select';
 			sel.id = 'cfg-crystal-page-cap';
-			var note = document.createElement('p');
-			note.className = 'cfg-fieldnote';
-			note.id = 'cfg-crystal-page-cap-note';
 			section.insertBefore(lab, form);
 			section.insertBefore(sel, form);
-			section.insertBefore(note, form);
 			sel.addEventListener('change', function () { CrystalPageCap.save(sel.value); });
 			return true;
 		},
@@ -62875,11 +62926,6 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			if (!this.mount()) return;
 			var lab = document.querySelector('label[for="cfg-crystal-page-cap"]');
 			if (lab) lab.textContent = tOr('settings.crystal_page_cap', 'Page size limit');
-			var pnote = document.getElementById('cfg-crystal-page-cap-note');
-			if (pnote) {
-				pnote.textContent = tOr('settings.crystal_page_cap_note',
-					'How large a diamond’s page may grow.');
-			}
 			var sel = document.getElementById('cfg-crystal-page-cap');
 			sel.innerHTML = '';
 			var mine = cfg.crystalPageKb || 0;
@@ -63136,12 +63182,8 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			var sel = document.createElement('select');
 			sel.className = 'settings-select';
 			sel.id = 'cfg-delete-ask';
-			var note = document.createElement('p');
-			note.className = 'cfg-fieldnote';
-			note.id = 'cfg-delete-ask-note';
 			section.insertBefore(lab, form);
 			section.insertBefore(sel, form);
-			section.insertBefore(note, form);
 			sel.addEventListener('change', function () { DeleteAsk.save(sel.value); });
 			return true;
 		},
@@ -63155,8 +63197,6 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			if (!this.mount()) return;
 			var lab = document.querySelector('label[for="cfg-delete-ask"]');
 			if (lab) lab.textContent = t('deletes.ask_label');
-			var dnote = document.getElementById('cfg-delete-ask-note');
-			if (dnote) dnote.textContent = t('deletes.ask_note');
 			var sel = document.getElementById('cfg-delete-ask');
 			sel.innerHTML = '';
 			var mine = (typeof cfg.deleteAskAfter === 'number') ? cfg.deleteAskAfter : -1;
@@ -63495,10 +63535,10 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			if (sel.selectedIndex === -1) sel.value = '0';
 			// The ceiling clause only when there IS one: naming the model and then
 			// saying nothing about it reads as a sentence that lost its end.
-			note.textContent = tOr('settings.max_tokens_note',
-				'How long a single reply may be.')
-				+ (ceil ? ' ' + model + ' ' + tOr('settings.max_tokens_ceiling', 'accepts up to')
-					+ ' ' + fmtTok(ceil) + '.' : '');
+			// The note is only that clause now (the sentence before it is cut, D-13).
+			note.textContent = ceil ? model + ' ' + tOr('settings.max_tokens_ceiling', 'accepts up to')
+				+ ' ' + fmtTok(ceil) + '.' : '';
+			note.hidden = !ceil;
 		},
 
 		/// Record a choice and rebuild every agent, since `max_tokens` is frozen
@@ -63711,7 +63751,6 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		new ResizeObserver(fitComposer).observe(chatInput);
 	}
 	chatInput.addEventListener('keydown', function (e) {
-		if (e.key === 'Escape' && _skillMenu) { e.preventDefault(); closeSkillMenu(); return; }
 		if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); closeSkillMenu(); sendUserMessage(); }
 	});
 	// A `/` alone in an empty box asks what there is. Anything after it is a
@@ -63727,14 +63766,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 	// The same act as the send button in stop mode, through the same function, so
 	// the two controls cannot come to mean different things.
 	if (chatStop) chatStop.addEventListener('click', function () { stopGeneration(); });
-	chatSend.addEventListener('click', function () {
-		// In stop-mode the same button cancels the current chat's running turn -- but
-		// only with an empty box. With something typed in it the button is a Send
-		// arrow and sends, because a user who has just written a correction and
-		// pressed the button meant to send the correction, not to kill the turn.
-		if (sendMode() === 'stop') { stopGeneration(); return; }
-		sendUserMessage();
-	});
+	bindSend();
 	newSessionBtn.addEventListener('click', newChat);
 	var chatsMenuBtn = document.getElementById('chats-menu-btn');
 	if (chatsMenuBtn) chatsMenuBtn.addEventListener('click', function (e) {
@@ -63776,8 +63808,9 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 	// capture phase: every dialog in the app installs a capture handler when it
 	// opens, and a capture listener registered here at start-up would run before
 	// all of them and pull the mode out from under a dialog the user was
-	// answering. Bubbling, plus `defaultPrevented`, plus `overlayUp` for the three
-	// popovers that close on Escape without marking the event, is the whole rule.
+	// answering. Bubbling, plus `defaultPrevented` (the stack's router marks every
+	// Escape it acts on), plus `overlayUp` for a surface it does not hold, is the
+	// whole rule.
 	document.addEventListener('keydown', function (e) {
 		if (e.key !== 'Escape' || !crystalFull) return;
 		if (e.defaultPrevented || overlayUp()) return;
@@ -64232,6 +64265,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 	if (jumpBtn) jumpBtn.addEventListener('click', jumpBack);
 	var endBtn = document.getElementById('chat-end');
 	if (endBtn) endBtn.addEventListener('click', jumpEnd);
+	syncJumps();
 
 	// ── Boot ───────────────────────────────────────────────────
 	async function boot() {

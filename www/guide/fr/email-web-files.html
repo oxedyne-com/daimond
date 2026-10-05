@@ -39,7 +39,6 @@
 
 <main>
 	<h1>Fichiers, e-mail &amp; le web</h1>
-	<p class="lede">Un daimon travaille à partir de fichiers qu’il peut lire et écrire, de dossiers que vous lui confiez, de courrier auquel vous pouvez répondre, et de pages qu’il peut montrer ou conduire.</p>
 
 	<h2 id="s1">L’Espace de travail</h2>
 	<p>Le bouton <span class="ui">Espace</span> montre vos fichiers comme une arborescence ordinaire. Trois puces en haut nomment où vit l’espace de travail.</p>
@@ -76,14 +75,14 @@
 	<h3 id="s5">Ce qu’un daimon peut ouvrir</h3>
 	<p>Un daimon ne peut ouvrir que ce qui est dans l’espace de travail de son diamond. Rien d’autre n’est lisible ni inscriptible par les outils de fichier, ni par le daimon, ni par un agent qu’il dépêche. La vérification est dans le code compilé, à l’unique porte que traverse chaque outil de fichier, et ce code est dans un paquet qui se construit de façon reproductible depuis une source publique : ce n’est donc pas une consigne dans un prompt.</p>
 	<p>Cette règle règle ce qu’un daimon peut atteindre, et ne dit rien de là où finit ce qu’il lit, car tout ce qu’il ouvre part chez votre fournisseur de modèle avec le reste du tour.</p>
-	<p>Supprimer ou écraser compte de la même façon. Au-delà d’une limite que vous fixez dans <span class="ui">Réglages</span> — huit par tour par défaut —, le tour s’arrête là et demande avant de continuer. Écraser en grande partie, c’est garder moins de la moitié de ce qu’il y avait. Une copie de chaque fichier supprimé ou écrasé est gardée pendant au moins sept jours.</p>
+	<p>Deleting or wiping counts the same way. Past a limit you set under <span class="ui">Settings</span> — eight in a turn by default — the turn stops there and asks before it goes on. Wiping a file means writing over it so that less than half of it is left. Daimond keeps a copy of anything deleted or wiped for at least seven days.</p>
 
 	<h3 id="s6">La liste des pièces jointes</h3>
 	<p>Les lignes portent un âge, <span class="ui">Ajouté {when}</span>. Un chemin qui n’est plus là est dessiné comme <span class="ui">Disparu</span> sans action d’ouverture, si bien qu’une ligne morte ne se fait jamais passer pour une vivante.</p>
 	<p>Tout ce qu’un daimon a joint pour lui-même, comme la récolte d’un repliage ou un fichier qu’un agent a gardé, se tient sous un même en-tête replié, <span class="ui">Ajouté par le daimon</span>, avec un compte et un <span class="ui">Tout retirer</span>. Vos propres pièces jointes restent où elles sont.</p>
 
-	<h3 id="s7">Les marques et vos autres appareils</h3>
-	<p>Joindre un dossier ou un fichier à un diamond, et marquer l’un pour l’espace de travail d’un chat, se synchronisent tous deux vers vos autres appareils, mais n’y prennent effet qu’une fois que vous avez appuyé de nouveau sur cet appareil. Ouvrez le même diamond sur un second appareil et un dossier joint ailleurs apparaît marqué mais pas encore actif, avec <span class="ui">Utiliser ici</span> pour l’activer là, ou <span class="ui">Tout utiliser ici</span> pour tout ce qui n’est pas encore actif à la fois. Retirer une marque atteint tous les appareils de lui-même ; l’activer ne le fait pas : une marque ne compte que sur l’appareil sur lequel elle a été appuyée. Après cette mise à jour, une marque sur un dossier Machine peut demander un nouvel appui : une marque partagée a besoin de <span class="ui">Utiliser ici</span> puis de nouveau de ⇄, et la marque d’espace de travail d’un chat ou <span class="ui">Lire</span> a besoin elle aussi d’un nouvel appui. La propre marque de Daimond Help sur ce guide peut elle aussi demander ce même nouvel appui une fois, si elle a d’abord été mise en place avec un dossier Machine ouvert.</p>
+	<h3 id="s7">Marks and your other devices</h3>
+	<p>Attaching a folder or a file to a diamond, and marking one for a chat&rsquo;s workspace, both sync to your other devices, but neither takes effect there until you press it again on that device. Open the same diamond on a second device and a folder attached elsewhere reads as marked but not yet in force, with <span class="ui">Use here</span> to bring it into force there, or <span class="ui">Use all here</span> for everything not yet in force at once. Taking a mark off reaches every device on its own; bringing one into force does not, so a mark counts only on the device it was pressed on. After this update, a machine folder&rsquo;s marks can ask for one press again: a shared one needs <span class="ui">Use here</span> and then ⇄ once more, and a chat&rsquo;s workspace mark or <span class="ui">Lire</span> needs pressing again too. Daimond Help&rsquo;s own mark on this guide can ask for that same press once too, where it was first set up with a machine folder open.</p>
 
 	<h3 id="s8">Partager un dossier vers vos autres appareils</h3>
 	<p>Un dossier <span class="ui">Machine</span> vit sur un ordinateur, et votre téléphone ne peut pas l’ouvrir. Le <span class="ui">⇄</span> contrôle sur la ligne est comment il en atteint un quand même, avec <span class="ui">Partager avec les appareils sans accès natif</span>.</p>
@@ -125,7 +124,6 @@
 </main>
 
 <footer class="site-foot">
-	<span>Daimond s’exécute dans votre navigateur. Rien de tout cela ne nous est envoyé.</span>
 	<nav aria-label="Pages du guide">
 		<a href="index.html">Commencez ici</a>
 		<a href="interface.html">L’interface</a>

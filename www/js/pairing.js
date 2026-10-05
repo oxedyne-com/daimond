@@ -579,11 +579,9 @@
 			return [].filter.call(box.querySelectorAll('button,input,a[href],[tabindex]:not([tabindex="-1"])'),
 				function (n) { return !n.disabled && n.getClientRects().length; });
 		}
-		// Escape, and a Tab that stays put. This dialog answered only to the scrim
-		// and to Done: a keyboard user had no way to put it down, and Tab walked
-		// straight past it into an app they could not see behind the scrim.
+		// A Tab that stays put. Tab walked straight past this dialog into an app
+		// nobody could see behind the scrim; Escape is the layer stack's.
 		function onKey(e) {
-			if (e.key === 'Escape') { e.preventDefault(); close(); return; }
 			if (e.key !== 'Tab') return;
 			var f = stops();
 			if (!f.length) return;

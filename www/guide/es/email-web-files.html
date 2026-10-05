@@ -39,7 +39,6 @@
 
 <main>
 	<h1>Archivos, correo y la web</h1>
-	<p class="lede">Un daimon trabaja con archivos que puede leer y escribir, carpetas que le entregas, correo que puedes responder, y páginas que puede mostrar o conducir.</p>
 
 	<h2 id="s1">El espacio de trabajo</h2>
 	<p>El botón <span class="ui">Espacio</span> panel muestra tus archivos como un árbol corriente. Tres fichas arriba nombran dónde vive el espacio de trabajo.</p>
@@ -76,14 +75,14 @@
 	<h3 id="s5">Qué puede abrir un daimon</h3>
 	<p>Un daimon solo puede abrir lo que está en el espacio de trabajo de su diamond. Nada más se puede leer ni escribir con las herramientas de archivos, ni por el daimon ni por ningún ayudante que despache. La comprobación está en código compilado en la única puerta por la que pasa cada herramienta de archivos, y ese código está en un paquete que se compila de forma reproducible a partir de fuente pública, así que no es una instrucción en un prompt.</p>
 	<p>Esa regla decide qué puede alcanzar un daimon y no dice nada sobre dónde termina lo que lee, porque lo que abre va a tu proveedor de modelo junto con el resto del turno.</p>
-	<p>Borrar o sobrescribir cuenta de la misma manera. Pasado un límite que fijas en <span class="ui">Ajustes</span> —ocho en un turno por defecto—, el turno se detiene ahí y pregunta antes de seguir. Sobrescribir en su mayor parte es conservar menos de la mitad de lo que había. Se guarda una copia de cada archivo borrado o sobrescrito durante al menos siete días.</p>
+	<p>Deleting or wiping counts the same way. Past a limit you set under <span class="ui">Settings</span> — eight in a turn by default — the turn stops there and asks before it goes on. Wiping a file means writing over it so that less than half of it is left. Daimond keeps a copy of anything deleted or wiped for at least seven days.</p>
 
 	<h3 id="s6">La lista de adjuntos</h3>
 	<p>Las filas llevan una antigüedad, <span class="ui">Añadido {when}</span>. Una ruta que ya no está se dibuja como <span class="ui">Desaparecido</span> sin acción de abrir, así que una fila muerta nunca se hace pasar por una viva.</p>
 	<p>Cualquier cosa que un daimon adjuntó por su cuenta, como la cosecha de un pliegue o un archivo que guardó un agente, está bajo un encabezado plegado, <span class="ui">Añadido por el daimon</span>, con un recuento y un <span class="ui">Quitar todos</span>. Tus propios adjuntos se quedan donde están.</p>
 
-	<h3 id="s7">Las marcas y tus otros dispositivos</h3>
-	<p>Adjuntar una carpeta o un archivo a un diamond, y marcar uno para el espacio de trabajo de un chat, sincronizan ambos con tus otros dispositivos, pero no tienen efecto allí hasta que los pulses de nuevo en ese dispositivo. Abre el mismo diamond en un segundo dispositivo y una carpeta adjuntada en otro sitio aparece marcada pero aún no activa, con <span class="ui">Usar aquí</span> para activarla allí, o <span class="ui">Usar todas aquí</span> para todo lo que aún no está activo a la vez. Quitar una marca llega a todos los dispositivos por su cuenta; activarla no, así que una marca solo cuenta en el dispositivo en el que se pulsó. Después de esta actualización, una marca en una carpeta de equipo puede pedir una pulsación más: una compartida necesita <span class="ui">Usar aquí</span> y luego ⇄ otra vez, y la marca del espacio de trabajo de un chat o <span class="ui">Leer</span> también necesita pulsarse de nuevo. La propia marca de Daimond Help en esta guía también puede pedir esa misma pulsación una vez, si se configuró primero con una carpeta de equipo abierta.</p>
+	<h3 id="s7">Marks and your other devices</h3>
+	<p>Attaching a folder or a file to a diamond, and marking one for a chat&rsquo;s workspace, both sync to your other devices, but neither takes effect there until you press it again on that device. Open the same diamond on a second device and a folder attached elsewhere reads as marked but not yet in force, with <span class="ui">Use here</span> to bring it into force there, or <span class="ui">Use all here</span> for everything not yet in force at once. Taking a mark off reaches every device on its own; bringing one into force does not, so a mark counts only on the device it was pressed on. After this update, a machine folder&rsquo;s marks can ask for one press again: a shared one needs <span class="ui">Use here</span> and then ⇄ once more, and a chat&rsquo;s workspace mark or <span class="ui">Leer</span> needs pressing again too. Daimond Help&rsquo;s own mark on this guide can ask for that same press once too, where it was first set up with a machine folder open.</p>
 
 	<h3 id="s8">Compartir una carpeta con tus otros dispositivos</h3>
 	<p>Una carpeta <span class="ui">Equipo</span> vive en un solo ordenador, y tu teléfono no puede abrirla. El botón <span class="ui">⇄</span> control de la fila es cómo llega a él de todas formas, con <span class="ui">Compartir con dispositivos sin acceso nativo</span>.</p>
@@ -125,7 +124,6 @@
 </main>
 
 <footer class="site-foot">
-	<span>Daimond se ejecuta en tu navegador. Nada de esto se nos envía.</span>
 	<nav aria-label="Páginas de la guía">
 		<a href="index.html">Empieza aquí</a>
 		<a href="interface.html">La interfaz</a>

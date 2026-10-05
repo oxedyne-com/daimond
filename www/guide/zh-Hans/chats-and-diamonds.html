@@ -42,14 +42,13 @@
 	<p class="lede">一场聊天就是一段对话。一个 diamond 是一个保存下来的项目，有自己的记忆、自己的页面和自己的文件。你把前者留进后者里面。</p>
 
 	<h2 id="s1">一场聊天</h2>
-	<p> <span class="ui">+</span> 紧挨着 <span class="ui">聊天</span> ，新建一场。在框里打字，然后发送。一场新聊天的标题是 <span class="ui">新建聊天</span> ，直到你说点什么；之后，它的第一行就是它的标题。</p>
+	<p> <span class="ui">+</span> 紧挨着 <span class="ui">聊天</span> ，新建一场。在框里打字，然后发送。一场新聊天的标题是 <span class="ui">New Chat</span> ，直到你说点什么；之后，它的第一行就是它的标题。</p>
 	<p>答案正在到来的时候，你可以继续打字。这时候发出的消息，会以一个虚线气泡的样子等着，等答案结束后，作为独立的一轮发出去。点它可以把它取回来，点它的叉可以丢掉它。按停止，会把排在后面的东西原样退还给你，不会发出。</p>
 	<p>删除一场聊天会把它移进回收站，所以不会先问你。两个没法撤销的动作才会先问，它们都在那个面板里。</p>
 
 	<h2 id="s2">读一段长对话</h2>
 	<figure class="shot narrow">
 		<img alt="一段聊天对话：一张标着「你」的卡片装着问题，一张标着「Daimond」的卡片装着答案。" src="../img/thread.png" loading="lazy">
-		<figcaption>每一轮都是一张带标签的卡片，所以你一眼就能看出谁说了什么。</figcaption>
 	</figure>
 	<p>每一轮都是一张卡片，标着 <span class="ui">你</span>, <span class="ui">思考中</span>, <span class="ui">工具</span>, <span class="ui">Daimond</span>，或者作为应用自己的一条备注。每个标题栏都带着本地日期和时间，精确到分钟，用的是全新世纪年法，所以 <code>12026-09-15 13:12</code> 就是今年加一万年。悬停可以看到完整的时刻和它的时区偏移。</p>
 	<p>聊天的标题栏带着这些控件。</p>
@@ -78,7 +77,7 @@
 	<p>向上箭头给加号，向下箭头给减号，再点一下亮着的箭头就收回评价。点向下箭头还会展开一排标签，好让评价说明哪里不对，例如 <span class="ui">太长</span> 用于回答， <span class="ui">弄坏了东西</span> 用于文件。点详情控件会打开 <span class="ui">评价这条回答</span> 或者 <span class="ui">评价这处改动</span>，里面有从 <span class="ui">错误</span> 到 <span class="ui">很棒</span>的五个等级、标签、四项评分，以及一个写自己的话的框。 <span class="ui">撤回</span> 按钮在那个弹窗里也能收回评价。</p>
 	<p>只有 Daimond 能说出是哪个模型改的文件，那一行才带箭头。两个代理在同一处同时工作时，那一行不带箭头，因为归到错误模型名下的评价比没有还糟。</p>
 	<p>评价会保存在给出它的那场聊天里，在最后一次点按十秒后保存，或者在你发送消息、离开聊天时更早保存。它列在对话末尾的 <span class="ui">评分</span> 卡片里，带一个回到回答或文件的链接。模型只读它一次，随你在那场聊天里的下一条消息一起读，而对话里只显示你输入的内容。</p>
-	<p>评价也可能促成一条引导备注，也就是加进模型指令的一句话，但只有你在提议上按下 <span class="ui">添加</span> 才会这样。参见 <a href="social.html">社交和提案</a>。</p>
+	<p>评价也可能促成一条引导备注，也就是加进模型指令的一句话，但只有你在提议上按下 <span class="ui">添加</span> 才会这样。参见 <a href="social.html">社交和提案</a>.</p>
 
 	<h2 id="s5">留下一场聊天</h2>
 	<p>侧栏里，一场聊天那一行上坐着两个按钮。 <span class="ui">留下</span> ，把整段对话变成一个 diamond。 <span class="ui">全部折叠</span> ，靠总结把它变成一个 diamond，留下搞定的结论，去掉来回的过程。</p>
@@ -115,6 +114,7 @@
 
 	<h2 id="s9">历史</h2>
 	<p><span class="ui">历史</span> ，列出每一个版本，最新的在最前面。 <span class="ui">查看</span> 读一个， <span class="ui">恢复</span> 让它重新变成当前版本，而 <span class="ui">增量</span> 显示一次折叠拿到的材料。恢复会先保留当时的当前版本，所以一次恢复本身也可以被撤销。</p>
+	<p>Every file the daimon changes in a diamond is kept too, and a row's <span class="ui">Restore file</span> brings one back while <span class="ui">恢复</span> brings the whole version back. Files on this computer are kept only where the daimon wrote them here, so a change made by an editor, a build or a command is not in History. Deleting, renaming, folding and restoring each show <span class="ui">Undo</span> for five seconds, and after that the act stands.</p>
 
 	<h2 id="s10">不用问就行动</h2>
 	<p>一个 diamond 只在你提示它的时候回答，别的时候不会，除非你设置了一个触发动作。这些都在 <span class="ui">这个 diamond 什么时候行动</span> 下面，在晶体面上，而 <span class="ui">添加一个动作</span> ，新建一个。两样东西可以触发它：要么是你自己活动的分钟数，只在你工作的时候计数，要么是邮件到达一个你指定的文件夹。</p>
@@ -143,7 +143,6 @@
 </main>
 
 <footer class="site-foot">
-	<span>Daimond 在你的浏览器中运行。这里的任何内容都不会发送给我们。</span>
 	<nav aria-label="指南页面">
 		<a href="index.html">从这里开始</a>
 		<a href="interface.html">界面</a>

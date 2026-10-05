@@ -11,8 +11,9 @@
 	overflow-x: hidden;
 	/* 10px is the dock's one body inset, so Agents, Email, Workspace and
 	   Spending all start on the same edge under a 4px header. Four panels used
-	   to start at 6, 10, 14 and 11. */
-	padding: 12px 10px 24px;
+	   to start at 6, 10, 14 and 11. The top is the 12px the view always had plus
+	   the 4px the first head carried; a later head owns the gap before it. */
+	padding: 16px 10px 24px;
 	font-size: var(--fs-sm);
 	color: var(--text-primary);
 }
@@ -37,15 +38,19 @@
 }
 .spend-add-credits:hover { filter: brightness(1.08); }
 
+/* A section ends flush and the break after it is the token (r535 U3): the head that follows owns the gap, so what stands before it
+   gives up its trailing margin. The rule between the two sections is inside that gap, not added to it. */
 .spend-sec {
-	margin: 0 0 6px;
+	margin: 0;
 }
+.spend-sec > :last-child { margin-bottom: 0; }
+.spend-sec + .spend-note { margin-top: 8px; }
 
 /* Two block lines, not a wrap (layout_contract.md V7): see modeldash.css's
    .mdash-sec-head, the identical control. */
 .spend-sec-head {
 	display: block;
-	margin: 4px 0 10px;
+	margin: 0 0 10px;
 }
 .spend-sec-title {
 	margin: 0;
@@ -155,8 +160,9 @@
 	font-size: var(--fs-xs);
 	color: var(--text-secondary);
 	font-weight: 600;
-	margin: 6px 0 6px;
+	margin: var(--gap-section) 0 6px;
 }
+.spend-sec > :has(+ .spend-sub) { margin-bottom: 0; }
 .spend-breakdown {
 	display: flex;
 	flex-direction: column;
@@ -254,5 +260,5 @@
 .spend-divider {
 	height: 1px;
 	background: var(--border);
-	margin: 16px 0 14px;
+	margin: calc(var(--gap-section) / 2) 0 calc(var(--gap-section) / 2 - 1px);
 }

@@ -302,3 +302,140 @@ test('Refresh in Diamond scope: a listing that drew rows says "Refreshed." for t
 	await w.m.refresh();
 	assert.deepEqual(w.notes, [ { text: '[files.refreshed]', isErr: false, ms: 3000 } ]);
 });
+
+// ── the home composer's Send, from daimond.js ───────────────────────────
+function homeSend(opts = {}) {
+	const body = cut(src('daimond.js'), '\t/// What the one button under the composer means right now.', '\t// ── Meters');
+	const chatSend = el({ attrs: new Map([ [ 'title', 'Send' ] ]) }), chatInput = el({ value: opts.value || '' });
+	const log = { stopped: 0, sent: 0, toasts: [], focused: 0 };
+	chatInput.focus = () => { log.focused++; };
+	chatSend.classList = { toggle() {}, add() {}, remove() {} };
+	const toasts = [];
+	const make = new Function('DaimondAnswer', 'chatSend', 'chatInput', 'chatStop', 'curGen', 't', 'SEND_ARROW', 'toast', 'stopGeneration', 'sendUserMessage',
+		'var current = ' + (opts.sending ? '{ _sending: true }' : 'null') + '; var sendCtl = null;'
+		+ body + '; return { bind: function () { return bindSend(); }, sync: syncSendMode, mode: sendMode, set: function (c) { current = c; } };');
+	const toast = (text, isErr) => { const b = { text, isErr, parentNode: { removeChild(x) { log.toasts.splice(log.toasts.indexOf(x), 1); } } }; log.toasts.push(b); toasts.push(text); return b; };
+	const m = make(answer(), chatSend, chatInput, null, () => !!opts.running, words, '<arrow>', toast, () => { log.stopped++; }, () => { log.sent++; });
+	return { chatSend, chatInput, log, m, toasts };
+}
+
+test('Home Send: an empty box is dimmed with the reason, and a press answers it and sends nothing', async () => {
+	const h = homeSend();
+	h.m.bind();
+	assert.equal(off(h.chatSend), true);
+	assert.equal(h.chatSend.disabled, false, 'not disabled, so a phone tap is delivered');
+	assert.equal(h.chatSend.getAttribute('title'), '[sheet.ask_empty]');
+	await h.chatSend.fire('click');
+	assert.equal(h.log.sent, 0);
+	assert.deepEqual(h.toasts, [ '[sheet.ask_empty]' ], 'the press is answered where the person can see it');
+	assert.equal(h.log.focused, 1, 'and the cursor goes to the box that wants the words');
+	await h.chatSend.fire('click');
+	assert.equal(h.log.toasts.length, 1, 'a second press replaces the first note, it does not stack');
+});
+
+test('Home Send: typing lifts the reason and a press sends once', async () => {
+	const h = homeSend();
+	h.m.bind();
+	h.chatInput.value = 'hello';
+	await h.chatInput.fire('input');
+	assert.equal(off(h.chatSend), false);
+	assert.equal(h.chatSend.getAttribute('title'), 'Send', 'the title it had is given back');
+	await h.chatSend.fire('click');
+	assert.equal(h.log.sent, 1); assert.equal(h.log.stopped, 0); assert.deepEqual(h.toasts, []);
+});
+
+test('Home Send: a script emptying the box re-asks, since it raises no input event', () => {
+	const h = homeSend({ value: 'hello' });
+	h.m.bind();
+	assert.equal(off(h.chatSend), false);
+	h.chatInput.value = '';
+	h.m.sync();
+	assert.equal(off(h.chatSend), true);
+});
+
+test('Home Send: with a turn running and the box empty it is Stop, which acts', async () => {
+	const h = homeSend({ running: true });
+	h.m.bind();
+	assert.equal(h.m.mode(), 'stop');
+	assert.equal(off(h.chatSend), false, 'Stop is never dimmed for want of words');
+	await h.chatSend.fire('click');
+	assert.equal(h.log.stopped, 1); assert.equal(h.log.sent, 0);
+});
+
+test('Home Send: while a press is in flight it is really disabled with no reason, and a second press does nothing', async () => {
+	const h = homeSend({ value: 'hello', sending: true });
+	h.m.bind();
+	h.m.sync();
+	assert.equal(h.chatSend.disabled, true);
+	assert.equal(off(h.chatSend), false, 'a hold gives no reason');
+	await h.chatSend.fire('click');
+	assert.equal(h.log.sent, 0);
+	h.m.set(null);
+	h.m.sync();
+	assert.equal(h.chatSend.disabled, false, 'released with the press');
+});
+
+// ── Mail's Sync now, from mail.js ───────────────────────────────────────
+// `note` is the helper's own, so a stand-in host carries just what it touches, and the timers are caught
+// to be run by the test rather than waited for.
+function mailSync(sel) {
+	const timers = [];
+	const win = { DaimondI18n: { onChange() {} } };
+	new Function('window', 'setTimeout', src('answer.js'))(win, (fn, ms) => { timers.push({ fn, ms }); return 0; });
+	const host = el();
+	host.ownerDocument = { createElement: () => el() };
+	host.querySelector = () => host.children.find((c) => /panel-say/.test(c.className)) || null;
+	host.insertBefore = (n) => { n.parentNode = host; host.children.unshift(n); };
+	host.removeChild = (n) => { host.children.splice(host.children.indexOf(n), 1); n.parentNode = null; };
+	const body = cut(src('mail.js'), '\t// ── Sync now', '\t// ── Wiring');
+	const state = { sel }, els = { state: host }, synced = [];
+	const btn = el({ attrs: new Map([ [ 'title', 'Sync now' ] ]) });
+	const make = new Function('DaimondAnswer', 'state', 'els', 't', 'syncAccount',
+		body + '; return { bind: bindSync, ctl: function () { return syncCtl; } };');
+	const m = make(win.DaimondAnswer, state, els, words, (a) => synced.push(a));
+	return { m, state, host, btn, synced, timers };
+}
+
+test('Mail Sync now: with no mailbox it is dimmed with a reason, and a press says why and syncs nothing', async () => {
+	const s = mailSync(null);
+	s.m.bind(s.btn);
+	assert.equal(off(s.btn), true);
+	assert.equal(s.btn.getAttribute('title'), '[trig.no_mailbox]');
+	assert.equal(s.btn.disabled, false, 'a tap on a phone must still arrive to be answered');
+	await s.btn.click();
+	assert.deepEqual(s.synced, []);
+	assert.equal(s.host.children.length, 1);
+	assert.equal(s.host.children[0].textContent, '[trig.no_mailbox]');
+	assert.equal(s.host.children[0].className, 'panel-say');
+	// One line at a time, and it takes its leave.
+	await s.btn.click();
+	assert.equal(s.host.children.length, 1);
+	const last = s.timers[s.timers.length - 1];
+	assert.equal(last.ms, 3000);
+	last.fn();
+	assert.equal(s.host.children.length, 0);
+});
+
+test('Mail Sync now: with a mailbox it is live and acts as it did, with no note', async () => {
+	const s = mailSync('me@x.io');
+	s.m.bind(s.btn);
+	assert.equal(off(s.btn), false);
+	assert.equal(s.btn.getAttribute('title'), 'Sync now');
+	await s.btn.click();
+	assert.deepEqual(s.synced, [ 'me@x.io' ]);
+	assert.equal(s.host.children.length, 0);
+});
+
+test('Mail Sync now: a mailbox arriving or leaving re-asks it, since the panel draws on both', async () => {
+	const s = mailSync(null);
+	s.m.bind(s.btn);
+	s.state.sel = 'me@x.io';
+	s.m.ctl().sync();
+	assert.equal(off(s.btn), false);
+	assert.equal(s.btn.getAttribute('title'), 'Sync now', 'the title it had comes back');
+	s.state.sel = null;
+	s.m.ctl().sync();
+	assert.equal(off(s.btn), true);
+	await s.btn.click();
+	assert.deepEqual(s.synced, []);
+});

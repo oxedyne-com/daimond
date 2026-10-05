@@ -407,9 +407,10 @@ const r2 = await reach();
 check('5d and the row moved with it: a chip for the folder now stands in the fence',
 	!!r2 && r2.chips.some(c => c.path === 'code'),
 	r2 ? JSON.stringify(r2.chips.map(c => c.path)) : '');
-check('5e and the alarm is gone, because the state it described is gone',
-	!!r2 && r2.saysNone === false && (r2.says || '').trim().length > 0,
-	r2 ? `none=${r2.saysNone} text=${JSON.stringify((r2.says || '').slice(0, 60))}` : '');
+// D-13 (r535): the line that explained a marked fence is cut; the chips alone say it.
+check('5e and the alarm is gone, because the state it described is gone, and nothing replaces it',
+	!!r2 && r2.saysNone === false && r2.says === null,
+	r2 ? `none=${r2.saysNone} text=${JSON.stringify(r2.says)}` : '');
 check('5f and it does not offer to mark a folder that is already inside the fence',
 	!!r2 && r2.markHere === null, r2 ? JSON.stringify(r2.markHere) : '');
 await shot(s, 'reach-everything-marked');

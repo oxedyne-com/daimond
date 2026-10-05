@@ -23,6 +23,8 @@
 import { open, chat, newChat, signInAs } from './harness.mjs';
 import { makePagePro } from './pro.mjs';
 import { GW_URL } from './ports.mjs';
+import { checkGaps } from './sectiongap.mjs';
+import { spawnSync } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -30,6 +32,8 @@ import path from 'node:path';
 const OUT   = process.env.CONS_OUT || `${os.homedir()}/.cache/daimond/${process.env.RC_SLOT || 'solo'}/consistency`;
 const PROF  = process.env.CONS_PROFILE || `${OUT}/profile`;
 const MODE  = process.argv[2] || 'all';
+// The www tree this run starts on, so the by-role evidence it files (dev/gate_evidence.mjs, deploy.sh step 0h) is for the tree that was measured.
+const WWW0  = MODE === 'all' ? spawnSync('git', ['rev-parse', 'HEAD:www'], { cwd: path.join(import.meta.dirname, '..'), encoding: 'utf8' }).stdout.trim() : '';
 const LOOKS = (process.env.CONS_LOOKS || 'obsidian,porcelain').split(',');
 fs.mkdirSync(OUT, { recursive: true });
 const log = (...a) => console.log('[cons]', ...a);
@@ -191,6 +195,7 @@ const CAPTURE = ({ rootSel, surface, tap }) => {
 			dis: el.disabled || el.getAttribute('aria-disabled') === 'true' ? 1 : 0,
 			ctrl: isCtrl ? 1 : 0, text: text.slice(0, 80), lines: tn ? (() => { const rg = document.createRange(); rg.selectNodeContents(tn); return rg.getClientRects().length; })() : 0,
 			r: [Math.round(r.left), Math.round(r.top), Math.round(r.width), Math.round(r.height)], re: Math.round(r.right), view: inView(r) ? 1 : 0,
+			lb: (() => { const l = el.closest('label'); return l && l !== el ? Math.round(l.getBoundingClientRect().bottom) : null; })(),
 			tx, tcy, glyph, ggap, icon, clip, ph: el.getAttribute('placeholder') || '',
 			st: {
 				ff: ls.fontFamily.split(',')[0].replace(/["']/g, '').trim(), fs: ls.fontSize, fw: ls.fontWeight, ls: ls.letterSpacing, tt: ls.textTransform,
@@ -1418,6 +1423,9 @@ const ALLOW = [
 	{ role: 'toggle-option', m: /\.dview-btn\b/, p: ['h'], why: 'the face switch keeps its 30px box and wears a 44px overlay for its tap: at 44px the Diamond head would be 110px, not the 96px the owner chose' },
 	{ role: 'data-table-head', m: /\.num\b/, p: ['ff'], why: 'a numeric column head is mono, matching its own column' },
 	{ role: 'data-table-cell', m: /\.num\b/, p: ['ff'], why: 'a numeric cell is mono, matching its own column' },
+	// r535 U3: the two heads whose gap above is not the white space between two sections.
+	{ role: 'section-head', m: /\.mem-title\b/, p: ['section-gap'], why: 'a card\'s own title: the white space above it is the card\'s margin and padding (the card is what the section break sets off), not a head standing in the panel\'s flow' },
+	{ role: 'section-head', m: /\.admin-sec\b/, p: ['head-gap'], why: 'the Admin drawer\'s title row carries a rule under it; the first head stands the rule\'s own spacing below the close button\'s box, not a title-to-head gap' },
 ];
 
 // ── Report ──────────────────────────────────────────────────────────────
@@ -1599,6 +1607,10 @@ function report() {
 			if (!near.length) continue; const to = near.sort((a, b) => cnt.get(b) - cnt.get(a))[0];
 			for (const a of L.filter((a) => a.cmpx === x)) addL({ kind: 'text-edge', cfg: cfgOf(a.surface), canon: 'x ' + to, v: 'x ' + x, sig: a.sig, text: a.text.slice(0, 30), surfaces: [a.surface.split('/')[1]], role: a.roleName, panel: a.panel }); }
 	}
+	// r535 U3 (D-13): one white space above a section head, one under a title row. A head more than 1.5px off its mode fails; ALLOW names the
+	// exempt ones with `p: ['section-gap']` or `['head-gap']`. Measured on every captured item, not the deduped instances: it is geometry.
+	const gapExempt = (h, kind) => { const a = ALLOW.find((x) => x.role === 'section-head' && x.p.includes(kind) && x.m.test(h.sig + ' ' + h.text)); return a ? a.why : null; };
+	layout.push(...checkGaps(items, gapExempt).faults);
 	for (const it of I) if (it.clip) layout.push({ kind: 'clipped', cfg: it.cfg, canon: 'fits or ellipsis', v: it.clip, sig: it.sig, text: it.text.slice(0, 40), surfaces: it.surfaces.slice(0, 3), role: it.roleName });
 	const ovs = new Map(); for (const f of faults) { const k = cfgOf(f.surface) + '|' + f.a + '|' + f.b; if (!ovs.has(k)) ovs.set(k, { kind: 'overlap', cfg: cfgOf(f.surface), canon: 'apart', v: f.b, sig: f.a, text: '', surfaces: [f.surface.split('/')[1]], role: f.panel }); }
 	layout.push(...ovs.values());
@@ -2310,7 +2322,13 @@ if (MODE === 'report' || MODE === 'all' || MODE === 'tap') {
 	const { bad, notCovered, parts } = report();
 	const covGroups = new Map(); for (const n of notCovered) covGroups.set(n.label, (covGroups.get(n.label) || 0) + 1);
 	const covStr = covGroups.size ? ` (not covered: ${[...covGroups.entries()].map(([k, n]) => `${k} ×${n}`).join(', ')})` : '';
-	log(bad ? `FAIL: ${bad} unexplained differences (style ${parts.style}, casing ${parts.casing}, layout ${parts.layout}, missing ${parts.missing}, tap ${parts.tap})${covStr}` : `PASS: every role consistent${covStr}`);
+	const verdict = bad ? `FAIL: ${bad} unexplained differences (style ${parts.style}, casing ${parts.casing}, layout ${parts.layout}, missing ${parts.missing}, tap ${parts.tap})${covStr}` : `PASS: every role consistent${covStr}`;
+	log(verdict);
+	// `all` is the by-role gate: it files its verdict under the www tree for deploy.sh step 0h. The writer refuses a dirty or moved tree, and a FAIL files a red record.
+	if (MODE === 'all') {
+		const w = spawnSync('node', [path.join(import.meta.dirname, 'gate_evidence.mjs'), 'write', 'byrole', OUT, `--bad=${bad}`, `--parts=${JSON.stringify(parts)}`, `--line=${verdict}`, `--tree=${WWW0}`], { encoding: 'utf8' });
+		log((w.stdout + w.stderr).trim());
+	}
 	process.exit(bad ? 1 : 0);
 }
 log('done', MODE);

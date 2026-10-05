@@ -462,14 +462,13 @@ try {
 				? [...adv.querySelectorAll('.tile-dlg-head')].filter(e => e !== adv.firstElementChild).map(txt)
 				: [],
 			words: { name: t('tile.dlg_name'), colour: t('tile.dlg_colour'),
-				running: t('tile.dlg_running'), hint: t('tile.dlg_name_hint') },
+				running: t('tile.dlg_running') },
 			hasAdv:   !!adv,
 			advOpen:  !!(adv && adv.open),
 			footLast: !!(foot && card.lastElementChild === foot),
-			// CHAT-10: the placeholder ASKS for the thing. It used to explain the
-			// empty case — "Unnamed: the rail shows the time" — which is a sentence
-			// about what happens if you do nothing, in the one place a reader is
-			// looking to be told what to do.
+			// CHAT-10, then D-13 (r535): the placeholder first asked for the thing
+			// instead of explaining the empty case, and is now cut, because it only
+			// restated the Name label above the field. The aria-label stays.
 			hint:     nameIn ? (nameIn.getAttribute('placeholder') || '') : null,
 			// And the field is not a model pulldown in disguise: a chat's cog
 			// offers no model at all.
@@ -487,8 +486,8 @@ try {
 	check(chatDlg && chatDlg.models === 0,
 		'and no model pulldown — a chat’s models are fixed at creation',
 		chatDlg && String(chatDlg.models));
-	check(chatDlg && chatDlg.hint === CW.hint && /\?|[Nn]ame|名|이름|命名/.test(chatDlg.hint),
-		'the name field ASKS for a name rather than explaining the empty case',
+	check(chatDlg && chatDlg.hint === '',
+		'the name field carries no placeholder; the Name label above it says it',
 		chatDlg && JSON.stringify(chatDlg.hint));
 
 	// ── 2d. KEEP SAYS THE NUMBER (CHAT-11) ──

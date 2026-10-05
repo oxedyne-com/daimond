@@ -141,14 +141,15 @@ const BREAKS = {
 			+ '<a class="mb-hit mb-ai" href="https://need2know.ai/mostly-ai/code"></a></span>\n'
 			+ '\t\t\t<button class="icon-btn" id="guide-btn"',
 	}],
-	// The shared dialog's Escape, gone. If About had a modal of its own this
-	// break would not touch it, and the check would pass with the app broken —
-	// which is exactly what it is here to notice.
+	// The shared dialog's way out by Escape, gone: the layer stack's Escape closes a
+	// dialog through the closer it was registered with, so a closer that does nothing
+	// leaves the card up. If About had a modal of its own this break would not touch
+	// it, and the check would pass with the app broken — which is exactly what it is
+	// here to notice.
 	noescape: [{
 		file: 'js/daimond.js',
-		find: '\t\t\t\tif (e.key === \'Escape\') { e.preventDefault(); close(true); }\n'
-			+ '\t\t\t\telse if (e.key === \'Tab\') keepFocusIn(card, e);',
-		with: '\t\t\t\tif (e.key === \'Tab\') keepFocusIn(card, e);',
+		find: '\t\t\tvar lid = DaimondLayers.open(DaimondLayers.uid(\'dialog\'), function () { close(true); });',
+		with: '\t\t\tvar lid = DaimondLayers.open(DaimondLayers.uid(\'dialog\'), function () { });',
 	}],
 	// The focus trap, gone: Tab walks out of the card and into the app behind it.
 	notrap: [{

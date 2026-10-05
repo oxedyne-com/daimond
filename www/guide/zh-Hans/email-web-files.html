@@ -39,7 +39,6 @@
 
 <main>
 	<h1>文件、邮件和网页</h1>
-	<p class="lede">一个 daimon 靠它能读写的文件工作，靠你交给它的文件夹，你能回复的邮件，以及它能展示或操作的网页。</p>
 
 	<h2 id="s1">工作区</h2>
 	<p> <span class="ui">工作区</span> 面板把你的文件显示成一棵普通的树。顶上三个标签，说明这个工作区住在哪里。</p>
@@ -76,14 +75,14 @@
 	<h3 id="s5">一个 daimon 能打开什么</h3>
 	<p>一个 daimon 只能打开它这个 diamond 工作区里的东西。别的任何东西，不管是这个 daimon 还是它派发的任何帮手，都没法通过文件工具读到或写到。这个检查是编译好的代码，在每个文件工具都要经过的那一道门上，而那份代码在一个从公开源码可复现构建出来的软件包里，所以它不是提示词里的一条指示。</p>
 	<p>这条规则定下的是一个 daimon 能碰到什么，不涉及它读到的东西最后去哪里，因为它打开的一切，都会连同这一轮的其余内容一起发给你的模型提供商。</p>
-	<p>删除和覆盖按同样的方式计数。超过你在<span class="ui">设置</span>里定的上限(默认一轮 8 个)后，这一轮就会在那里停下，等你同意才继续。大部分覆盖是指保留的原内容不到一半。被删除或覆盖的文件的副本会保留至少七天。</p>
+	<p>Deleting or wiping counts the same way. Past a limit you set under <span class="ui">Settings</span> — eight in a turn by default — the turn stops there and asks before it goes on. Wiping a file means writing over it so that less than half of it is left. Daimond keeps a copy of anything deleted or wiped for at least seven days.</p>
 
 	<h3 id="s6">附件列表</h3>
 	<p>每一行都带着一个时间， <span class="ui">已添加 {when}</span>。一个不再存在的路径，会画成 <span class="ui">已不在</span> ，没有打开的动作，所以一行失效的记录，绝不会假装自己还活着。</p>
 	<p>一个 daimon 自己附加的任何东西——比如一次折叠的收获，或者一个智能体留下的文件——都收在一个折起来的标题下面， <span class="ui">由 daimon 添加</span>，带着一个数目和一个 <span class="ui">全部移除</span>。你自己的附件留在原处。</p>
 
-	<h3 id="s7">标记与你的其他设备</h3>
-	<p>把一个文件夹或文件附加到一个 diamond，以及为一场聊天的工作区做标记，这两者都会同步到你的其他设备，但在那台设备上再按一次之前，都不会在那里生效。在第二台设备上打开同一个 diamond，你会看到别处附加的文件夹显示为已标记但尚未生效，可以用 <span class="ui">在这里使用</span> 让它在那里生效，或者用 <span class="ui">全部在这里使用</span> 一次性生效所有尚未生效的标记。摘下一个标记会自己到达每台设备；让它生效却不会，所以一个标记只在按下它的那台设备上算数。这次更新之后，本机文件夹上的标记可能需要再按一次：共享的那个需要先按 <span class="ui">在这里使用</span>，再按一次 ⇄；聊天的工作区标记或 <span class="ui">阅读</span> 也需要重新按一次。Daimond Help 自己在这份指南上的标记，如果最初是在打开本机文件夹的情况下设置的，也可能需要同样再按一次。</p>
+	<h3 id="s7">Marks and your other devices</h3>
+	<p>Attaching a folder or a file to a diamond, and marking one for a chat&rsquo;s workspace, both sync to your other devices, but neither takes effect there until you press it again on that device. Open the same diamond on a second device and a folder attached elsewhere reads as marked but not yet in force, with <span class="ui">Use here</span> to bring it into force there, or <span class="ui">Use all here</span> for everything not yet in force at once. Taking a mark off reaches every device on its own; bringing one into force does not, so a mark counts only on the device it was pressed on. After this update, a machine folder&rsquo;s marks can ask for one press again: a shared one needs <span class="ui">Use here</span> and then ⇄ once more, and a chat&rsquo;s workspace mark or <span class="ui">读取</span> needs pressing again too. Daimond Help&rsquo;s own mark on this guide can ask for that same press once too, where it was first set up with a machine folder open.</p>
 
 	<h3 id="s8">把一个文件夹分享给你的其他设备</h3>
 	<p>一个 <span class="ui">本机</span> 文件夹住在一台电脑上，你的手机打不开它。 <span class="ui">⇄</span> 行上的这个开关，是让它无论如何都能到达手机的办法，靠 <span class="ui">分享给没有原生访问权限的设备</span>.</p>
@@ -125,7 +124,6 @@
 </main>
 
 <footer class="site-foot">
-	<span>Daimond 在你的浏览器中运行。这里的任何内容都不会发送给我们。</span>
 	<nav aria-label="指南页面">
 		<a href="index.html">从这里开始</a>
 		<a href="interface.html">界面</a>

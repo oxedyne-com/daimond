@@ -230,13 +230,6 @@
 /* Everything nobody recognised. Boxed rather than run in with the rest, because
    a reader has to be able to tell what the schema knows about from what it is
    merely carrying. */
-.crystal-fb-extra-note {
-	margin: 0 0 10px;
-	color: var(--text-muted);
-	font-size: var(--fs-sm);
-	line-height: 1.45;
-}
-
 .crystal-fb-field {
 	margin: 0 0 8px;
 	padding: 9px 11px;

@@ -16,6 +16,8 @@
 	padding: 10px;
 	flex: none;
 }
+/* The line that answers a press on a dimmed Sync now; the block's own gap spaces it. */
+.mail-state .panel-say { margin: 0; }
 
 /* The unlock, shown only while the account does not hold the tool. */
 .mail-pitch {

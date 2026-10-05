@@ -3020,9 +3020,24 @@
 			sel.appendChild(g);
 		});
 
-		// Select what was asked for; failing that, the starred default; failing that, the first
-		// model anything can actually run.
-		if (!select(sel, provider, model) && !select(sel, d.provider, d.model)) {
+		// Select what was asked for. A model that was asked for and is not offered (its provider
+		// removed, its key gone, the catalogue no longer lists it) stays the selection as an
+		// option of its own, first, so the pulldown says what the record holds and a Change
+		// cannot carry it to a model nobody picked. The starred default stands in for an empty
+		// ask only; failing that, the first model anything can actually run.
+		if (model) {
+			if (!select(sel, provider, model)) {
+				var kept = document.createElement('option');
+				kept.value            = model;
+				kept.dataset.provider = provider || '';
+				kept.dataset.kept     = '1';
+				kept.textContent      = model + ' · ' + t('models.not_offered');
+				sel.insertBefore(kept, sel.firstChild);
+				kept.selected = true;
+			}
+			return;
+		}
+		if (!select(sel, d.provider, d.model)) {
 			var firstUsable = sel.querySelector('option:not([disabled])');
 			if (firstUsable) firstUsable.selected = true;
 		}

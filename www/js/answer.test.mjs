@@ -229,6 +229,20 @@ test('Ask: a composer that is not there yet is a reason of its own, ahead of the
 	assert.equal(R.ask({ text: 'why?', ready: true }), '');
 });
 
+test('Home Send: an empty box is a reason, a typed message or a Stop is none', () => {
+	const R = load().DaimondAnswer.reasons;
+	for (const text of [ '', '   ', '\n\t', undefined, null ]) assert.equal(R.send_home({ text }), 'sheet.ask_empty', JSON.stringify(text));
+	assert.equal(R.send_home({ text: ' hello ' }), '');
+	assert.equal(R.send_home({ text: '', stop: true }), '', 'with a turn running and the box empty the button is Stop, and acts');
+	assert.equal(R.send_home({ text: '   ', stop: true }), '');
+});
+
+test('Mail Sync now: no mailbox is a reason, a selected one is none', () => {
+	const R = load().DaimondAnswer.reasons;
+	for (const sel of [ null, undefined, '' ]) assert.equal(R.sync_mail({ sel }), 'trig.no_mailbox', JSON.stringify(sel));
+	assert.equal(R.sync_mail({ sel: 'me@x.io' }), '');
+});
+
 test('Compose Send: nothing open, then nobody to send to, then free', () => {
 	const R = load().DaimondAnswer.reasons;
 	assert.equal(R.send({ open: false, to: 'a@b.c' }), 'compose.none_open', 'nothing open outranks a stale address');

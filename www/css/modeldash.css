@@ -10,19 +10,22 @@
 	height: 100%;
 	overflow-y: auto;
 	overflow-x: hidden;
-	padding: 12px 10px 24px;
+	padding: 16px 10px 24px;
 	font-size: var(--fs-sm);
 	color: var(--text-primary);
 }
 
-.mdash-sec { margin: 0 0 6px; }
+/* As Spending's: a section ends flush, and the break before the next one is the token its head owns (r535 U3). */
+.mdash-sec { margin: 0; }
+.mdash-sec + .mdash-sec { margin-top: var(--gap-section); }
+.mdash-sec > :last-child { margin-bottom: 0; }
 
 /* Two block lines, not a wrap (layout_contract.md V7): a wide hint -- French's
    own -- dropped under the title only in that locale, since flex-wrap decides
    per string width. The title and its hint now always keep their own line. */
 .mdash-sec-head {
 	display: block;
-	margin: 4px 0 10px;
+	margin: 0 0 10px;
 }
 .mdash-sec-title {
 	margin: 0;

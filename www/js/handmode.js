@@ -708,9 +708,6 @@
 		// shows the guarded one the wasm is actually still in.
 		if (!push(current)) current = FALLBACK;
 		if (chip) chip.addEventListener('click', function (e) { e.stopPropagation(); open(chip); });
-		document.addEventListener('keydown', function (e) {
-			if (e.key === 'Escape') close();
-		});
 		document.addEventListener('click', function (e) {
 			if (!pop || pop.hidden) return;
 			var path = e.composedPath ? e.composedPath() : null;

@@ -22,10 +22,6 @@
    whole redesign invisible, on a rule nothing on the panel had written. */
 .tools-body > * { flex: 0 0 auto; }
 
-.tools-intro {
-	font-size: var(--fs-sm); line-height: 1.55;
-	color: var(--text-secondary);
-}
 .tools-count {
 	font-size: var(--fs-2xs); line-height: 1.5;
 	color: var(--text-muted);

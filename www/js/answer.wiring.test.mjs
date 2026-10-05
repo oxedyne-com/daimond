@@ -162,3 +162,79 @@ test('no new chip is given a click that has no answer: a chip with a handler is 
 	assert.match(body, /setAttribute\('tabindex', '0'\)/);
 	assert.match(body, /ev\.key === 'Enter'/);
 });
+
+// ── U6 (r535): dead controls by role ───────────────────────────────────
+test('the home Send is built through the helper with a reason and a say, and nothing else binds its click', () => {
+	const d = read('js', 'daimond.js');
+	assert.match(d, /sendCtl\s*=\s*DaimondAnswer\.control\(chatSend, \{[^}]*can: sendWhy\b[^}]*say: sendSay\b/);
+	assert.match(d, /DaimondAnswer\.reasons\.send_home\(/);
+	assert.equal(count(d, /chatSend\.addEventListener\(\s*'click'/g), 0, 'a bare click on Send');
+	assert.match(d, /bindSend\(\);/, 'the control is never built');
+	// A hold is the helper's, so the page cannot set `disabled` behind its back.
+	assert.equal(count(d, /chatSend\.disabled\s*=/g), 1, 'only the fallback before the control exists');
+	assert.match(d, /sendCtl\.hold\(mode === 'sending'\)/);
+});
+
+test('every place the composer\'s words change by script re-asks Send, since a script raises no input event', () => {
+	const d = read('js', 'daimond.js');
+	for (const fn of [ 'function putInComposer(', 'function clearComposer(', 'function editResend(' ]) {
+		const at = d.indexOf(fn);
+		assert.ok(at > 0, fn + ' moved');
+		const next = d.slice(at + 10).search(/\n\t(async )?function \w+/);
+		assert.match(d.slice(at, at + 10 + next), /syncSendMode\(\)/, fn + ' leaves Send as it was');
+	}
+});
+
+test('all three Refresh buttons are built through the helper and end in a note on their panel', () => {
+	const d = read('js', 'daimond.js'), s = read('js', 'spend.js'), m = read('js', 'modeldash.js');
+	assert.match(d, /DaimondAnswer\.control\(\s*panel\.querySelector\('\[data-act="refresh"\]'\)/);
+	for (const [ src, act ] of [ [ s, 'spend-refresh' ], [ m, 'modeldash-refresh' ] ]) {
+		assert.match(src, new RegExp('DaimondAnswer\\.control\\(\\s*panel\\.querySelector\\(\'\\[data-act="' + act + '"\\]\'\\)'), act + ' is not built through control');
+		assert.equal(count(src, new RegExp('closest\\(\'\\[data-act="' + act + '"\\]\'\\)', 'g')), 0, act + ' still has a delegated bare click');
+		assert.match(src, /DaimondAnswer\.note\(/, act + ' says nothing when it has run');
+	}
+	assert.match(s, /gateway\.acct_unreachable/, 'a refresh that could not reach the account says so rather than "Refreshed."');
+});
+
+test('the walk-back buttons are hidden while they cannot act, and re-asked wherever the thread moves', () => {
+	const d = read('js', 'daimond.js');
+	assert.match(html, /<button id="chat-jump" hidden/);
+	assert.match(html, /<button id="chat-end" hidden/);
+	assert.match(read('css', 'app.css'), /#chat-jump\[hidden\],\s*#chat-end\[hidden\]\s*\{\s*display:\s*none/);
+	assert.match(d, /DaimondAnswer\.show\(jumpBtn, DaimondAnswer\.shown\.jump_back\(/);
+	assert.match(d, /DaimondAnswer\.show\(endBtn, DaimondAnswer\.shown\.jump_end\(/);
+	const body = (name) => { const at = d.indexOf('function ' + name + '('); const n = d.slice(at + 10).search(/\n\t(async )?function \w+/); return d.slice(at, at + 10 + n); };
+	assert.match(body('setScrollTop'), /syncJumps\(\)/);
+	assert.match(body('clearChat'), /syncJumps\(\)/);
+	// The thread's own scroll listener and resize observer; no listener of its own.
+	assert.match(d, /chatOutput\.addEventListener\('scroll', function \(\) \{\s*_wasAtEnd = nearBottom\(\);\s*syncJumps\(\);/);
+	assert.match(d, /new ResizeObserver\(function \(\) \{\s*syncJumps\(\);/);
+	assert.equal(count(d, /chatOutput\.addEventListener\('scroll'/g), 1, 'a second scroll listener');
+});
+
+test('Mail Sync now is built through the helper with a reason and a say, and re-asked wherever the panel draws', () => {
+	const m = read('js', 'mail.js');
+	assert.match(m, /syncCtl\s*=\s*DaimondAnswer\.control\(btn, \{[^}]*can: syncWhy\b[^}]*say: syncSay\b/);
+	assert.match(m, /DaimondAnswer\.reasons\.sync_mail\(/);
+	assert.match(m, /bindSync\(sync\);/, 'the control is never built');
+	assert.equal(count(m, /sync\.addEventListener\(\s*'click'/g), 0, 'a bare click on Sync now');
+	// A mailbox arrives or leaves by a draw, so the draw re-asks.
+	const at = m.indexOf('\tfunction render() {');
+	assert.ok(at > 0, 'render moved');
+	const next = m.slice(at + 10).search(/\n\t(async )?function \w+/);
+	assert.match(m.slice(at, at + 10 + next), /syncCtl\.sync\(\)/, 'render leaves Sync now as it was');
+});
+
+test('a gated control is dimmed by aria-disabled wherever it was dimmed by disabled: the rail buttons and home Send', () => {
+	const css = read('css', 'app.css');
+	assert.match(css, /\.addbtn\[aria-disabled="true"\]\s*\{[^}]*opacity:\s*0\.4/);
+	assert.match(css, /\.addbtn\[aria-disabled="true"\]:hover\s*\{[^}]*color:\s*var\(--text-secondary\)/);
+	assert.match(css, /#chat-send\[aria-disabled="true"\]\s*\{[^}]*opacity:\s*0\.4/);
+	assert.match(read('css', 'skin-daylight.css'), /\.addbtn\[aria-disabled="true"\]:hover\s*\{[^}]*background:\s*transparent/);
+});
+
+test('the reason Sync now gives is in all eight languages', () => {
+	for (const l of [ 'de', 'en', 'es', 'fr', 'ja', 'ko', 'pt-BR', 'zh-Hans' ]) {
+		assert.match(read('i18n', l + '.js'), /'trig\.no_mailbox':/, l);
+	}
+});

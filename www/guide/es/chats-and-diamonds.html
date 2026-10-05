@@ -42,14 +42,13 @@
 	<p class="lede">Un chat es una conversación. Un diamond es un proyecto guardado con su propia memoria, su propia página y sus propios archivos. Guardas el uno dentro del otro.</p>
 
 	<h2 id="s1">Un chat</h2>
-	<p>El <span class="ui">+</span> junto a <span class="ui">Chats</span> empieza uno. Escribe en la caja y envía. Un chat nuevo se titula <span class="ui">Nuevo chat</span> hasta que dices algo, y después su primera línea es su título.</p>
+	<p>El <span class="ui">+</span> junto a <span class="ui">Chats</span> empieza uno. Escribe en la caja y envía. Un chat nuevo se titula <span class="ui">New Chat</span> hasta que dices algo, y después su primera línea es su título.</p>
 	<p>Mientras llega una respuesta puedes seguir escribiendo. Un mensaje enviado entonces espera como una burbuja discontinua y va como su propio turno cuando termina la respuesta. Púlsalo para recuperarlo, o su aspa para descartarlo. Pulsar parar te devuelve sin enviar cualquier cosa en cola.</p>
 	<p>Borrar un chat lo mueve a la papelera, así que nada pregunta antes. Los dos actos que no se pueden deshacer son los que preguntan, y los dos están en ese panel.</p>
 
 	<h2 id="s2">Leer un hilo largo</h2>
 	<figure class="shot narrow">
 		<img alt="Un hilo de chat: un mosaico etiquetado Tú con la pregunta, y un mosaico etiquetado Daimond con la respuesta." src="../img/thread.png" loading="lazy">
-		<figcaption>Cada turno es un mosaico etiquetado, así que ves de un vistazo quién dijo qué.</figcaption>
 	</figure>
 	<p>Cada turno es un mosaico, etiquetado <span class="ui">Tú</span>, <span class="ui">Pensando</span>, <span class="ui">Herramienta</span>, <span class="ui">Daimond</span>, o como una nota de la propia aplicación. Cada cabecera lleva la fecha y hora locales al minuto en la cuenta holocena, así que <code>12026-09-15 13:12</code> es este año más diez mil. Pasa el ratón por encima para ver el instante completo con su desfase.</p>
 	<p>La cabecera del chat lleva los controles.</p>
@@ -115,6 +114,7 @@
 
 	<h2 id="s9">Historial</h2>
 	<p><span class="ui">Historial</span> lista cada versión, de la más nueva a la más vieja. <span class="ui">Ver</span> lee una, <span class="ui">Restaurar</span> vuelve a hacerla la actual, y <span class="ui">Delta</span> muestra el material que se le dio a un pliegue. Restaurar guarda primero lo que era la actual, así que una restauración se puede deshacer a su vez.</p>
+	<p>Every file the daimon changes in a diamond is kept too, and a row's <span class="ui">Restore file</span> brings one back while <span class="ui">Restaurar</span> brings the whole version back. Files on this computer are kept only where the daimon wrote them here, so a change made by an editor, a build or a command is not in History. Deleting, renaming, folding and restoring each show <span class="ui">Undo</span> for five seconds, and after that the act stands.</p>
 
 	<h2 id="s10">Actuar sin que se le pida</h2>
 	<p>Un diamond responde cuando se lo pides y en ningún otro momento, a menos que configures una acción disparada. Esas viven en <span class="ui">Cuándo actúa este diamond</span> en la cara Cristal, y <span class="ui">Añadir una acción</span> crea una. Dos cosas pueden dispararla: minutos de tu propia actividad, contados solo mientras trabajas, o correo que llega a una carpeta que nombres.</p>
@@ -143,7 +143,6 @@
 </main>
 
 <footer class="site-foot">
-	<span>Daimond se ejecuta en tu navegador. Nada de esto se nos envía.</span>
 	<nav aria-label="Páginas de la guía">
 		<a href="index.html">Empieza aquí</a>
 		<a href="interface.html">La interfaz</a>

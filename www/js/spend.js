@@ -514,11 +514,13 @@
 		if (wiredActions) return;
 		var panel = document.getElementById('panel-spend');
 		if (!panel) return;
-		// The refresh button re-pulls and re-draws.
-		panel.addEventListener('click', function (ev) {
-			var b = ev.target.closest && ev.target.closest('[data-act="spend-refresh"]');
-			if (b) { ev.preventDefault(); onOpen(); }
-		});
+		// The refresh button re-pulls and re-draws, the same figures when nothing moved, so it says it ran.
+		DaimondAnswer.control(panel.querySelector('[data-act="spend-refresh"]'), { act: async function () {
+			var ok = await onOpen();
+			var host = document.getElementById('spend-view');
+			if (ok) DaimondAnswer.note(host, t('files.refreshed'), false, 3000);
+			else DaimondAnswer.note(host, t('gateway.acct_unreachable'), true, 5000);
+		} });
 		// The header spend meter is the door to this view. Wire it once, at load,
 		// so it opens the panel whenever it is visible -- independently of when
 		// the meter's figures are (re)drawn.
@@ -538,15 +540,20 @@
 	/// Called when the panel is revealed: pull the freshest numbers, then draw.
 	/// The inference side is local and instant; the credit side is a fetch, so
 	/// the view renders at once and fills the credit table in when it lands.
+	///
+	/// Answers whether the pull went through: true with no account to ask (the local figures are all
+	/// there is), false when the account is signed in and its balance would not come back.
 	async function onOpen() {
 		wireActions();
 		render();									// instant, from local data
 		var g = window.DaimondGateway;
+		var ok = true;
 		if (g && g.state && g.state().authed) {
-			try { await g.refreshBalance(); } catch (e) {}
+			try { ok = (await g.refreshBalance()) !== null; } catch (e) { ok = false; }
 			try { creditEntries = await g.ledger(); } catch (e) { creditEntries = []; }
 			render();								// redraw with credit history
 		}
+		return ok;
 	}
 
 	/// Open the Spending panel (used by the header meter's click).

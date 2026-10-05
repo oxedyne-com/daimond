@@ -440,8 +440,6 @@
 			facts:      tr(opts, 'crystal.field_facts', 'Facts'),
 			links:      tr(opts, 'crystal.field_links', 'Links'),
 			other:      tr(opts, 'crystal.other_fields', 'Other fields'),
-			other_note: tr(opts, 'crystal.other_fields_note',
-				'Kept as they are, and shown here so nothing vanishes.'),
 			empty:      tr(opts, 'crystal.empty', 'The crystal is empty. Steer it below to begin.'),
 		};
 	}
@@ -1854,11 +1852,6 @@
 			var extra = document.createElement('div');
 			extra.className = 'crystal-fb-extra';
 			extra.appendChild(fieldHead(tr(opts, 'crystal.other_fields', 'Other fields')));
-			var note = document.createElement('p');
-			note.className = 'crystal-fb-extra-note';
-			note.textContent = tr(opts, 'crystal.other_fields_note',
-				'Kept as they are, and shown here so nothing vanishes.');
-			extra.appendChild(note);
 			for (var xi = 0; xi < rest.length; xi++) {
 				var box = document.createElement('div');
 				box.className = 'crystal-fb-field';

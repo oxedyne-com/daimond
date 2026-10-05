@@ -39,7 +39,6 @@
 
 <main>
 	<h1>파일, 이메일, 웹</h1>
-	<p class="lede">daimon은 읽고 쓸 수 있는 파일, 내가 건넨 폴더, 답할 수 있는 메일, 보여 주거나 조작할 수 있는 페이지를 바탕으로 일해요.</p>
 
 	<h2 id="s1">작업 공간</h2>
 	<p> <span class="ui">작업 공간</span>  패널은 내 파일을 보통의 나무로 보여 줘요. 맨 위 세 칩이 작업 공간이 사는 곳의 이름이에요.</p>
@@ -76,14 +75,14 @@
 	<h3 id="s5">daimon이 열 수 있는 것</h3>
 	<p>daimon이 열 수 있는 것은 자기 diamond의 작업 공간에 있는 것뿐이에요. 그 밖의 것은 파일 도구로는 daimon도, 그가 내보내는 어떤 헬퍼도 읽거나 쓸 수 없어요. 이 검사는 모든 파일 도구가 지나는 문 하나에 컴파일된 코드로 있고, 그 코드는 공개된 소스에서 그대로 재현되게 빌드되는 번들 안에 있어요. 그러니 프롬프트 속 지시가 아니에요.</p>
 	<p>이 규칙이 정하는 것은 daimon이 닿는 범위이지, 읽은 것이 어디로 가 닿는지는 말하지 않아요. 여는 것은 무엇이든 턴의 나머지와 함께 내 모델 제공자에게 가니까요.</p>
-	<p>삭제와 덮어쓰기는 같은 방식으로 세어요. <span class="ui">설정</span>에서 정한 한도(기본값은 한 턴에 8개)를 넘으면, 그 자리에서 멈추고 계속하기 전에 물어봐요. 대부분 덮어쓰기는 원래 내용을 절반도 남기지 않는 거예요. 삭제되거나 덮어써진 파일의 사본은 최소 7일 동안 보관돼요.</p>
+	<p>Deleting or wiping counts the same way. Past a limit you set under <span class="ui">Settings</span> — eight in a turn by default — the turn stops there and asks before it goes on. Wiping a file means writing over it so that less than half of it is left. Daimond keeps a copy of anything deleted or wiped for at least seven days.</p>
 
 	<h3 id="s6">첨부 목록</h3>
 	<p>행마다 나이가 있어요, <span class="ui">{when}에 추가됨</span>. 더는 없는 경로는 <span class="ui">사라짐</span> 으로 그려지고, 여는 조작은 없어요. 그래서 죽은 행이 산 것처럼 보이는 일은 없어요.</p>
 	<p>daimon이 스스로 붙인 것 — 접기의 수확물이나 에이전트가 남긴 파일 같은 것 — 은 접힌 머리글 하나 아래에 있어요, <span class="ui">daimon이 추가함</span>, 개수와 <span class="ui">모두 떼기</span>가 함께요. 내가 직접 붙인 것은 있던 자리에 그대로 있어요.</p>
 
-	<h3 id="s7">표시와 다른 기기</h3>
-	<p>폴더나 파일을 diamond에 붙이는 것과, 채팅의 작업 공간을 위해 표시하는 것은 둘 다 다른 기기로 동기화되지만, 그 기기에서 다시 누르기 전까지는 거기서 아무 효과가 없어요. 같은 diamond을 두 번째 기기에서 열면, 다른 곳에서 붙인 폴더는 표시는 되어 있지만 아직 사용되지 않은 것으로 나오고, <span class="ui">여기서 사용</span>으로 거기서 사용하게 할 수 있어요. 아직 사용되지 않은 것을 한꺼번에 사용하려면 <span class="ui">모두 여기서 사용</span>을 눌러요. 표시를 떼는 것은 저절로 모든 기기에 닿지만, 사용하게 하는 것은 그렇지 않아요. 그래서 표시는 그것이 눌린 기기에서만 셈해요. 이번 업데이트 뒤에는 컴퓨터 폴더의 표시가 한 번 더 누르길 요구할 수 있어요. 공유된 것은 <span class="ui">여기서 사용</span> 다음에 ⇄를 한 번 더 눌러야 하고, 채팅의 작업 공간 표시나 <span class="ui">읽기</span>도 마찬가지로 다시 눌러야 해요. Daimond Help 자신이 이 안내서에 가진 표시도, 컴퓨터 폴더가 열린 상태에서 처음 설정됐다면 똑같이 한 번 더 누르길 요구할 수 있어요.</p>
+	<h3 id="s7">Marks and your other devices</h3>
+	<p>Attaching a folder or a file to a diamond, and marking one for a chat&rsquo;s workspace, both sync to your other devices, but neither takes effect there until you press it again on that device. Open the same diamond on a second device and a folder attached elsewhere reads as marked but not yet in force, with <span class="ui">Use here</span> to bring it into force there, or <span class="ui">Use all here</span> for everything not yet in force at once. Taking a mark off reaches every device on its own; bringing one into force does not, so a mark counts only on the device it was pressed on. After this update, a machine folder&rsquo;s marks can ask for one press again: a shared one needs <span class="ui">Use here</span> and then ⇄ once more, and a chat&rsquo;s workspace mark or <span class="ui">읽기</span> needs pressing again too. Daimond Help&rsquo;s own mark on this guide can ask for that same press once too, where it was first set up with a machine folder open.</p>
 
 	<h3 id="s8">다른 기기로 폴더 공유하기</h3>
 	<p>이(가) <span class="ui">이 기기</span>  폴더는 컴퓨터 하나에 있어서 휴대폰이 열 수 없어요. <span class="ui">⇄</span>  조작이 그래도 닿게 하는 방법이에요, <span class="ui">직접 열 수 없는 기기와도 공유</span>.</p>
@@ -125,7 +124,6 @@
 </main>
 
 <footer class="site-foot">
-	<span>Daimond는 브라우저 안에서 실행돼요. 여기 있는 어떤 것도 저희에게 전송되지 않아요.</span>
 	<nav aria-label="가이드 페이지">
 		<a href="index.html">여기서 시작하기</a>
 		<a href="interface.html">인터페이스</a>

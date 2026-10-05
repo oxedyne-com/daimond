@@ -103,7 +103,12 @@
 	color: var(--text-muted);
 	padding: 6px 6px 4px;
 }
-.pop-head:not(:first-child) { margin-top: 6px; border-top: 1px solid var(--border); }
+.pop-head:not(:first-child) { margin-top: var(--gap-section); border-top: 1px solid var(--border); }
+/* The head owns the gap before it (r535 U3): whatever stands before one -- a picker, a segmented row, a note, the title row, the search box --
+   gives up its own trailing margin and padding, so the white space is the token and nothing more. The `.pop` in front is weight, not scope:
+   `:has()` weighs its argument, so the bare form weighs one class and lost to any later class rule that set a margin (the gallery's search box). */
+.pop :has(+ .pop-head) { margin-bottom: 0; }
+.pop :is(div, p):has(+ .pop-head), .pop > .ui-head:has(+ .pop-head) { padding-bottom: 0; }
 .pop-note {
 	font-size: var(--fs-2xs);
 	color: var(--text-muted);
@@ -127,15 +132,6 @@
 /* A note explaining the picker directly above it is one thought, not a new
    section -- no divider. */
 .pop .set-pick + .pop-note { border-top: none; margin-top: 0; padding-top: 2px; }
-.pop-note kbd {
-	font-family: var(--font-mono);
-	font-size: var(--fs-4xs);
-	border: 1px solid transparent;
-	border-radius: 4px;
-	padding: 1px 4px;
-	color: var(--text-secondary);
-	background: var(--dl-hover);
-}
 
 /* ── The settings menu ───────────────────────────────────────────────────────
    Theme, reading size and the dock's tiling, in one place. They belong together

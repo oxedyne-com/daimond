@@ -326,20 +326,13 @@ const trySearch = (q, opts) => p.evaluate(async ({ q, opts }) => {
 	// one file to the left — but that the line agrees with the REGISTRY, and that
 	// an engine with no figure we can cite says nothing about being free.
 	{
-		// The line is TWO claims stitched together: a general one about vendors
-		// ("most give a free allowance"), identical whichever engine is chosen,
-		// and a per-engine tail that is the only place a figure may be stated.
-		// Only the tail is judged here, and it is found by removing the general
-		// sentence THE APP ITSELF PAINTED, read back from the catalogue. A copy
-		// of that sentence written out in this file is the same staleness one
-		// directory to the left: an editor's comma turns this check red and it
-		// then reports a product fault where there is none. It also has to be
-		// the general sentence and not merely something before the tail, so the
-		// prefix is asserted rather than assumed — a restructure that folds a
-		// per-engine claim into the shared opening goes red here instead of
-		// slipping past the rule underneath.
-		const general = await p.evaluate(() =>
-			(window.DaimondI18n && window.DaimondI18n.t('search.engine_note')) || '');
+		// The line was TWO claims stitched together: a general one about vendors
+		// ("most give a free allowance") and a per-engine tail that is the only
+		// place a figure may be stated. D-13 (r535) cut the general sentence, so
+		// the line IS the tail, and `general` is empty. The check below that no
+		// engine note opens with prose of its own stands in for the old prefix
+		// assertion: a sentence folded back in goes red here.
+		const general = '';
 		const seen = [];
 		for (const id of await p.evaluate(() => Object.keys(window.DaimondSearch.KNOWN))) {
 			seen.push(await p.evaluate((want) => {
@@ -351,6 +344,9 @@ const trySearch = (q, opts) => p.evaluate(async ({ q, opts }) => {
 					id: want,
 					free: (window.DaimondSearch.KNOWN[want] || {}).free || 0,
 					note: ((el && el.textContent) || '').trim(),
+					// What the app painted as a link, so prose around it can be told from it.
+					link: ((el && el.querySelector('a')) || {}).textContent || '',
+					hidden: !!(el && el.hidden),
 				};
 			}, id));
 		}
@@ -366,12 +362,15 @@ const trySearch = (q, opts) => p.evaluate(async ({ q, opts }) => {
 		check(withFigure.length > 0 && mismatched.length === 0,
 			'and the number on screen is the registry\'s, so one edit moves it',
 			JSON.stringify(mismatched.map((r) => ({ id: r.id, free: r.free, note: r.note }))));
-		// The general sentence really is the shared opening every note begins with.
-		const strays = seen.filter((r) => !/\S/.test(general) || r.note.indexOf(general) !== 0);
+		// No engine note opens with prose of its own: it is the vendor's link and the
+		// registry's figure, or it is not drawn at all.
+		const strays = seen.filter((r) => (r.note !== '' && r.hidden)
+			|| (r.note === '' && !r.hidden)
+			|| (r.note !== '' && r.link !== '' && r.note.indexOf(r.link) !== 0)
+			|| (r.free === 0 && r.note !== r.link));
 		check(strays.length === 0,
-			'the sentence about vendors in general opens every engine note, so what follows '
-			+ 'it is that engine\'s own claim',
-			JSON.stringify({ general, strays: strays.map((r) => ({ id: r.id, note: r.note })) }));
+			'every engine note is that engine\'s own claim: its link and its figure, or nothing',
+			JSON.stringify(strays.map((r) => ({ id: r.id, note: r.note, link: r.link, hidden: r.hidden }))));
 		// Nothing says "free" about an engine whose allowance nobody wrote down.
 		const freeWord = seen.filter((r) => r.free === 0 && r.id !== 'credits'
 			&& claimsFree(r.note, general));
@@ -864,9 +863,8 @@ out.push('--- self-test: breaking each property in the live page');
 // (g) A free tier claimed for an engine nobody wrote a figure for — the shape
 // §9 forbids, and the one this rule exists to catch. The sentence is planted on
 // the live note for an engine whose registry entry has no figure, then the same
-// `claimsFree` the check above runs is run over it. The general sentence stays
-// where it is, so this also shows that the rule is reading the per-engine tail
-// and not merely finding the word "free" somewhere in the paragraph.
+// `claimsFree` the check above runs is run over it. The general sentence is cut
+// (D-13, r535), so the planted words are the whole of the note's prose.
 {
 	const r = await p.evaluate(() => {
 		const sel = document.getElementById('set-search-engine');
@@ -877,7 +875,7 @@ out.push('--- self-test: breaking each property in the live page');
 		if (!bare) return null;
 		sel.value = bare;
 		sel.dispatchEvent(new Event('change', { bubbles: true }));
-		const general = (window.DaimondI18n && window.DaimondI18n.t('search.engine_note')) || '';
+		const general = '';
 		const honest = (el.textContent || '').trim();
 		el.appendChild(document.createTextNode(' It is free to use.'));
 		const forged = (el.textContent || '').trim();

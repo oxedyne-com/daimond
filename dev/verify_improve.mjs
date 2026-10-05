@@ -443,7 +443,7 @@ const BREAKS = {
 	// turn this break into a false abort.
 	i18ngap: [{
 		file: 'i18n/de.js',
-		re:   /\n\t'social\.public_note': '[^']*',/,
+		re:   /\n\t'social\.compose_public': '[^']*',/,
 		with: '',
 	}],
 	// One of the capp strings in seven catalogues and not the eighth. English
@@ -1863,7 +1863,6 @@ try {
 	// and a whole `voice.*` family is in no table at all, both found by reading
 	// rather than by any check.
 	const CATALOGUE = [
-		['social.public_note',      '{host}'],
 		['capp.legacy_body',         '{name}'],
 		['capp.legacy_ok',           ''],
 		['capp.update_kept',         '{files}'],

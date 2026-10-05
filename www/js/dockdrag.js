@@ -624,7 +624,6 @@
 			return;
 		}
 		if (ev.key === 'Enter')  { ev.preventDefault(); keyLeave(true);  return; }
-		if (ev.key === 'Escape') { ev.preventDefault(); keyLeave(false); return; }
 	}
 
 	/// Make every docked panel's heading a place the keyboard can reach, and say
@@ -864,17 +863,18 @@
 			cancel: function () { end(false); },
 		});
 
-		// Escape ends a drag wherever it is, and ends the keyboard mode too.
-		document.addEventListener('keydown', function (ev) {
-			if (ev.key !== 'Escape') return;
-			if (live) { end(false); ev.preventDefault(); }
-			if (strip) { stripEnd(false); ev.preventDefault(); }
-			// The keyboard mode too, and from wherever the focus happens to be:
-			// a mode entered from a CHIP can have the focus on the chip when the
-			// user changes their mind, and the heading's own handler would never
-			// see the key.
-			if (keys) { keyLeave(false); ev.preventDefault(); }
-		});
+		// Escape ends a drag wherever it is, and ends the keyboard mode too. A claim
+		// held for the page's life, not a layer: there is no surface and no history
+		// entry, and while nothing is in progress it declines, so the key goes on to
+		// the layers. A layer that opened while it was on (a dialog) is over it and goes first. From wherever
+		// the focus happens to be, since a mode entered from a CHIP can have the focus on the chip when the
+		// user changes their mind.
+		DaimondLayers.claim('dockdrag', function () {
+			if (!live && !strip && !keys) return false;
+			if (live) end(false);
+			if (strip) stripEnd(false);
+			if (keys) keyLeave(false);
+		}, function () { return !!(live || strip || keys); });
 
 		// A chip the keyboard is on enters the same mode with Shift+Enter, having
 		// first been given a slot to move from.

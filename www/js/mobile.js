@@ -94,11 +94,18 @@
 	// ── The drawer ─────────────────────────────────────────────
 	function openDrawer() {
 		document.body.classList.add('drawer-open');
-		DaimondLayers.open('drawer', closeDrawer);
+		DaimondLayers.open('drawer', leaveDrawer);
 	}
 	function closeDrawer() {
 		document.body.classList.remove('drawer-open');
 		DaimondLayers.done('drawer');
+	}
+	/// The drawer put away by a key, a cross or Back: the keyboard goes back to what opened it. It is the layer's own
+	/// closer, because the drawer hides by transform and so the stack's Escape can never tell it is not on screen.
+	function leaveDrawer() {
+		closeDrawer();
+		var burger = document.getElementById('drawer-btn');
+		if (burger) { try { burger.focus(); } catch (x) { /* not on screen */ } }
 	}
 	function toggleDrawer() {
 		if (document.body.classList.contains('drawer-open')) closeDrawer();
@@ -985,35 +992,13 @@
 			if (!b || !isPhone()) return;
 			e.stopPropagation();
 			e.preventDefault();
-			closeDrawer();
-			var burger2 = document.getElementById('drawer-btn');
-			// The keyboard goes back to what opened the drawer.
-			if (burger2) { try { burger2.focus(); } catch (x) { /* not on screen */ } }
+			leaveDrawer();
 		}, true);
 
 		// A left-edge swipe opens the drawer; a swipe on the open drawer's
 		// scrim is caught by the scrim tap. Gesture, always paired with the
 		// visible hamburger — never gesture-only.
 		bindEdgeSwipe();
-
-		// Escape, which neither of these two answered. They are the only surfaces
-		// in the app that cover it and had no key out at all — a phone shell run
-		// on a tablet with a keyboard, or on a desktop narrowed past 760px, left
-		// the keyboard with nothing to press.
-		//
-		// The innermost thing goes first, and a keystroke a dialog has already
-		// dealt with is left alone: the app's dialogs call `preventDefault` on the
-		// Escape they consume, so `defaultPrevented` is how one closed OVER the
-		// sheet avoids taking the sheet down with it.
-		document.addEventListener('keydown', function (e) {
-			if (e.key !== 'Escape' || e.defaultPrevented) return;
-			if (guest) { close(); return; }
-			if (document.body.classList.contains('drawer-open')) {
-				closeDrawer();
-				var burger3 = document.getElementById('drawer-btn');
-				if (burger3) { try { burger3.focus(); } catch (x) { /* not on screen */ } }
-			}
-		});
 
 		// Keep the sheet honest across a keyboard show/hide and rotation.
 		if (window.visualViewport) {

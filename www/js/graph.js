@@ -2905,6 +2905,13 @@
 		};
 	}
 
+	/// Is there anything for Escape to put away: something floating, a gesture running, link mode, a tile
+	/// showing its anchors, a pick? The twin of `dismiss` that changes nothing, so it must name all that it ends.
+	function afoot() {
+		if (!visible() && !menu && !editor) return false;
+		return !!(namer || picker || editor || menu || wire || drag || pan || link.armed || link.from || hover || selEdge || selNode);
+	}
+
 	/// Everything that is open, shut, in the order a user means when they press
 	/// Escape: the innermost thing first.
 	///
@@ -3055,13 +3062,18 @@
 			if (e.key && e.key.length >= TILE_KEY.length
 				&& e.key.slice(-TILE_KEY.length) === TILE_KEY) refreshColours();
 		});
-		// Escape, from anywhere. Capture, so a form field inside the editor
-		// cannot swallow it first.
-		document.addEventListener('keydown', function (e) {
-			if (e.key !== 'Escape') return;
-			if (!visible() && !menu && !editor) return;
-			if (dismiss()) { e.stopPropagation(); e.preventDefault(); }
-		}, true);
+		// Escape, from anywhere, as a claim: the router asks it ahead of the layers, from
+		// the window in the capture phase, so a form field inside the editor cannot
+		// swallow it first. It declines unless the picture or something floating over it
+		// is up, and when there is nothing to dismiss, so the key goes on to the layer
+		// the picture sits in.
+		//
+		// A third argument says, with no effect, whether it has something to put away. A dialog or the palette
+		// that opens while it has is over it, and the one Escape closes that first (r535 QA, MED-1).
+		DaimondLayers.claim('graph', function () {
+			if (!visible() && !menu && !editor) return false;
+			if (!dismiss()) return false;
+		}, afoot);
 		// A press anywhere else shuts what is floating, which is how every menu
 		// behaves. The relation picker is the one that must NOT close on a press
 		// inside the picture: it opens the instant a link is dropped, and the

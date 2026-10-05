@@ -497,7 +497,6 @@
 					     Reached from the "Models" status row above, which counts them. -->
 					<div class="admin-view" id="admin-models" style="display:none">
 						<div class="settings-section">
-							<p class="cfg-lead" data-i18n="models.lead">A key for each provider you use. New chats and diamonds start on the default model; any model can be picked for a single chat.</p>
 							<div id="models-list" class="models-list"></div>
 							<!-- The panel's message line: a provider that would not say what is left,
 							     a credit figure that is not a number, a models list that would not
@@ -534,7 +533,6 @@
 									<option value="" data-i18n="models.choose_provider_first">Choose a provider first…</option>
 								</select>
 								<input type="text" id="cfg-model-custom" placeholder="Model id (type manually)" spellcheck="false" style="display:none;" data-i18n-placeholder="models.model_id_ph">
-								<p class="cfg-fieldnote" data-i18n="models.default_note">New agents use this unless you choose another for them.</p>
 								<button type="button" id="byok-save" data-i18n="models.save_start">Save &amp; start</button>
 							</div>
 							<div id="byok-note" class="login-error"></div>
@@ -561,7 +559,7 @@
 							<div class="search-engine-row">
 								<label class="cfg-fieldlabel" for="set-search-engine">Search engine</label>
 								<select id="set-search-engine" class="settings-select"></select>
-								<p class="search-engine-note" id="search-engine-note">Which service Daimond searches with.</p>
+								<p class="search-engine-note" id="search-engine-note" hidden></p>
 							</div>
 							<!-- Hidden for `credits`: the gateway holds that key and there is
 							     nothing here for anyone to paste. -->
@@ -849,10 +847,10 @@
 					<!-- Drawn chevrons, not ↑ and ↓: a font's arrowhead is a few
 					     pixels of ink on a 32px button, and read as specks beside
 					     the stroked icons the rest of the app is made of. -->
-					<button id="chat-jump" title="Jump back to your last message. Press again to walk back through the ones before it." data-i18n-title="chat.jump_help" aria-label="Jump back to your last message" data-i18n-aria-label="chat.jump">
+					<button id="chat-jump" hidden title="Jump back to your last message. Press again to walk back through the ones before it." data-i18n-title="chat.jump_help" aria-label="Jump back to your last message" data-i18n-aria-label="chat.jump">
 						<svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 15l6-6 6 6"/></svg>
 					</button>
-					<button id="chat-end" title="Jump to the end of the chat." data-i18n-title="chat.end_help" aria-label="Jump to the end of the chat" data-i18n-aria-label="chat.end">
+					<button id="chat-end" hidden title="Jump to the end of the chat." data-i18n-title="chat.end_help" aria-label="Jump to the end of the chat" data-i18n-aria-label="chat.end">
 						<svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 9l6 6 6-6"/></svg>
 					</button>
 				</div>

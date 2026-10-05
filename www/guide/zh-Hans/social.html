@@ -40,10 +40,11 @@
 <main>
 	<h1>社交和提案</h1>
 	<p class="lede">两个面板，一个 diamond。 <span class="ui">社交</span> ，是你跟我们说点什么的地方。 <span class="ui">改进</span> ，是它到达的那块看板。 <span class="ui">待办</span> ，是任何等着 <em>你</em> 的事情出现的地方。</p>
+	<p><span class="ui">社交</span> opens on <span class="ui">Messages</span>, and carries six chips: <span class="ui">Messages</span>, <span class="ui">联系人</span>, <span class="ui">Groups</span>, <span class="ui">Feed</span>, <span class="ui">Share</span> 和 <span class="ui">Feedback</span>. Settings moved to the cog in the header.</p>
 
 	<h2 id="s1">说点什么</h2>
-	<p>打开 <span class="ui">社交</span> 然后写。第一行是标题，发生了什么写在它下面。 <span class="ui">发送</span> ，发送屏幕上的内容和构建 ID，除此之外什么都不会附带。</p>
-	<p>发布需要一个 <strong>发布名</strong>——应用管这个叫你的“声音”。没有它，你可以读到一切，也可以把一条备注留在这台设备上。面板会用一行字说明这一点， <em>设一个发布名才能发送。</em>，旁边带着 <span class="ui">去弄一个</span> 。这只要点一下，而且是 Daimond Pro 的一部分。</p>
+	<p>打开 <span class="ui">社交</span>, choose <span class="ui">Feedback</span>, and write. The first line is the title, and what happened goes under it. <span class="ui">发送</span> ，发送屏幕上的内容和构建 ID，除此之外什么都不会附带。</p>
+	<p>发布需要一个 <strong>发布名</strong>. Without one you can read everything and keep a note to this device. The panel says so in one row, <em>Posting name: none.</em>，旁边带着 <span class="ui">去弄一个</span> beside it in <span class="ui">Settings</span>. It takes one tap, and it needs Daimond Pro.</p>
 
 	<h3 id="s2">一条能被处理的留言</h3>
 	<p>一条留言需要三样东西，按这个顺序。少了任何一样，这条留言在能被处理之前都需要先聊一聊。</p>
@@ -85,13 +86,16 @@
 	<h2 id="s7">引导备注</h2>
 	<p>引导备注是一句朴素的话，告诉模型你希望它怎样回答，比如 <em>除非被要求详述，回答请控制在约200字以内。</em> 一条备注只针对一个模型，所以你教给某个模型的，不会强加给另一个。这个模型回答时，最多五条备注、合计 600 字节，会被加进它的指令里，放在安全规则的正前方；安全规则仍然在最后，仍然优先。</p>
 	<p>没有人替你写备注。评价里出现某种规律，比如某个模型的回答常被评为 <span class="ui">太长</span>，优化器找的就是这个。它随后会在 <span class="ui">待办</span> 里放一张卡片，提出一条备注，附上它要加的那句话和背后的数字。它只看你评过的内容，而且要等评价的回答足够多，规律才不只是巧合，也就是一个 diamond 里至少 7 条，整个账户里至少 11 条。同一个模型出现更新的评价后，旧评价的分量会变轻，与日期无关。每一种不满都有自己固定的一句话，所以你在评价里写的话不会被用到。</p>
-	<p>每张卡片都有自己的按钮。 <span class="ui">添加</span> 会原样保存显示的那句话。 <span class="ui">编辑</span> 让你先改写它，并拒绝要求模型讨好你、附和你、寻求你的认可或提到评价的句子，同时说明原因。 <span class="ui">关闭</span> 会撤下这条提议，直到该模型再有 20 条回答被评价后才会重新提出。卡片也可能改为提供 <span class="ui">切换</span>，把某个 diamond 换到评价更好的模型；或者在再评价 20 条回答之后，请你用 <span class="ui">保留</span> 或 <span class="ui">移除</span> 来复查一条备注。你按下之前，什么都不会被添加、更改或切换。</p>
+	<p>每张卡片都有自己的按钮。 <span class="ui">添加</span> 会原样保存显示的那句话。 <span class="ui">编辑</span> 让你先改写它，并拒绝要求模型讨好你、附和你、寻求你的认可或提到评价的句子，同时说明原因。 <span class="ui">关闭</span> 会撤下这条提议，直到该模型再有 20 条回答被评价后才会重新提出。卡片也可能改为提供 <span class="ui">切换</span>，把某个 diamond 换到评价更好的模型；或者在再评价 20 条回答之后，请你用 <span class="ui">保留</span> 或 <span class="ui">移除</span>来复查一条备注。你按下之前，什么都不会被添加、更改或切换。</p>
 	<p>每一条生效的备注都会列在清单里，包括它的原文、属于谁、适用于哪个模型，以及添加的日期。从 diamond 卡片上的齿轮打开它的设置，在 <span class="ui">模型</span> 下可以看到这个 diamond 的备注和你账户的备注；想看全部，请打开 <span class="ui">模型统计</span> 。 <span class="ui">移除</span> 可以随时拿掉一条备注，被移除的备注要等再有 20 条回答被评价后才会重新提出。模型不会收到的备注（比如这个 diamond 用的是另一个模型）会标出 <em>未使用</em> 和原因。按下 <span class="ui">切换</span>之后，新模型的回答再有 20 条被评价时，卡片会再问一次： <span class="ui">保留</span> （继续用新模型）或 <span class="ui">切换回去</span> （回到这个 diamond 离开的模型）。</p>
 	<p>一个 diamond 的备注保存在这个 diamond 里的一个文件中， <code translate="no">.daimond/steering.md</code>，所以它会随 diamond 到你用的每台设备。整个账户的备注（也会影响你的普通聊天）以同样的方式保存在优化器自己的 diamond 里，因此删除优化器会连这些备注一起删掉。daimon 不能写入这两个文件中的任何一个。备注会和指令的其余部分一起发送给模型的提供方。</p>
 
 	<h2 id="s8">联系人、消息和分享</h2>
-	<p><span class="ui">联系人</span> ，直接把你和某个人连起来。当面把你的码给他们看，或者读他们的。从那以后，你们两个之间就有私信，也有群组。一个群组可以被建它的人关闭，关闭之后，已经说过的话不会被拿走，也不会再有新的进来。</p>
-	<p>一个 diamond 可以分享给一个和你连接的人。被分享的 diamond 带着它的记忆和它的页面，两者都只对你发给的那些人封存开放。</p>
+	<p><span class="ui">联系人</span> connects you to somebody directly. Show your code to them in the room, or read theirs. From there you have private messages between the two of you, in <span class="ui">Messages</span>, and groups of them, in <span class="ui">Groups</span>. A group can be closed by whoever made it, and then nothing already said is taken away and nothing new arrives.</p>
+	<p>Nobody in the room? <span class="ui">Find somebody</span> takes their handle and fetches the code they published, and <span class="ui">Send my code</span> hands yours over however you already talk to them. A key that arrives either way reads <em>New key</em>, and stays new: it came through something that could have swapped it. Read the sixty digits aloud to each other to change that.</p>
+	<p>A diamond can be shared with somebody you are connected to. Use <span class="ui">Share&hellip;</span> on its tile: send a copy, or the shape only, and say whether the conversation goes with it.</p>
+	<p>What arrives waits in their <span class="ui">Messages</span> tray until they press <span class="ui">添加</span>, and the copy is then theirs to keep and to change. Triggered actions and the notes about your own folders never travel, and neither does the conversation unless you tick it.</p>
+	<p><span class="ui">Feed</span> is where you write to the people you have let follow you. A post is kept on our server in the clear, shown to your approved followers and nobody else, and we can read and remove it; delete one and it is gone. Follow somebody from their row in <span class="ui">联系人</span> or from their name on a post, and they choose whether to let you. A follower who sees something wrong can press <span class="ui">Report</span> on it; a post we remove for that stays on your own feed marked as removed, and says why.</p>
 	<p>这些都要靠中继打开才行。没打开的时候，面板会用一行字说明，也不会给出一个反正会失败的控件。</p>
 
 	<div class="next">
@@ -101,7 +105,6 @@
 </main>
 
 <footer class="site-foot">
-	<span>Daimond 在你的浏览器中运行。这里的任何内容都不会发送给我们。</span>
 	<nav aria-label="指南页面">
 		<a href="index.html">从这里开始</a>
 		<a href="interface.html">界面</a>

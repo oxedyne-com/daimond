@@ -385,10 +385,6 @@
 			galEl.appendChild(el('div', 'pop-head', t('gallery.zone_' + zone)));
 			inZone.forEach(function (p) { galEl.appendChild(galleryRow(p)); });
 		});
-
-		var note = el('div', 'pop-note');
-		note.innerHTML = t('gallery.note');
-		galEl.appendChild(note);
 	}
 
 	function galleryRow(p) {
@@ -617,9 +613,6 @@
 				drop.addEventListener('click', function () { P().forgetArrangement(diamond.id); renderMenu(); });
 				menuEl.appendChild(drop);
 			}
-			var n = el('div', 'pop-note');
-			n.textContent = t('menu.arrangement_note');
-			menuEl.appendChild(n);
 		}
 
 		renderLanguage(menuEl);
@@ -830,8 +823,9 @@
 	/// something of its own (the About dialog, the appearance menu, the link
 	/// sheet): focus is already on its way into that surface, and pulling it
 	/// back to the button here would yank it out again the instant it landed.
-	/// Escape and a click outside -- where nothing else is claiming focus --
-	/// keep the default, matching `closeMenu`/`closeGallery`.
+	/// A click outside -- where nothing else is claiming focus -- keeps the
+	/// default, matching `closeMenu`/`closeGallery`. Escape closes through the
+	/// layer's closer with false, and the stack gives the focus back to the anchor.
 	function closeFold(m, returnFocus) {
 		var el = popOf(m);
 		if (!el || el.hidden) return;
@@ -930,7 +924,12 @@
 		pop.style.top = fit.top + 'px';
 		pop.style.maxHeight = fit.max === null ? '' : fit.max + 'px';
 		// One popover is up at a time, so one layer stands for whichever it is.
-		DaimondLayers.open('pop', function () { dismissPops(null); });
+		// The anchor is what Escape gives the keyboard back to: a fold closes without placing it, and a browser
+		// that does not focus a button when it is pressed has nothing else to remember.
+		// A row of the fold (Settings, in Help's popover on a phone) is hidden with its popover by now, so the
+		// keyboard goes back to the fold's own button, which is drawn.
+		var back = anchor.getClientRects().length ? anchor : (document.getElementById('help-btn') || anchor);
+		DaimondLayers.open('pop', function () { dismissPops(null); }, back);
 	}
 
 	/// The one place a popover is put away, so that the layer stack hears of it.
@@ -1197,7 +1196,6 @@
 				if (e.key === 'ArrowDown') { e.preventDefault(); palAt = Math.min(palAt + 1, palItems.length - 1); renderPalette(); }
 				else if (e.key === 'ArrowUp') { e.preventDefault(); palAt = Math.max(palAt - 1, 0); renderPalette(); }
 				else if (e.key === 'Enter') { e.preventDefault(); runAt(palAt); }
-				else if (e.key === 'Escape') { e.preventDefault(); closePalette(); }
 				// The palette is one box and a list walked with the arrows, and it
 				// covers the app. Tab had nowhere to go inside it, so it went behind
 				// it instead -- leaving the caret on a rail button under the scrim,
@@ -1221,13 +1219,6 @@
 				e.preventDefault();
 				palEl && palEl.hidden ? openPalette() : closePalette();
 				return;
-			}
-			if (e.key === 'Escape') {
-				closeMenu(); closeGallery(); closePalette();
-				// The innermost surface takes the key. A fold menu that closes on it consumes it, so the sheet and
-				// the drawer beneath stay up (mobile.js lets a keystroke somebody has dealt with alone), and one
-				// already dealt with by a dialog over it is not taken a second time.
-				if (!e.defaultPrevented && openFold()) { closeFolds(); e.preventDefault(); }
 			}
 			// Both popovers say `role="dialog"` and cover the app, and Tab used to
 			// walk straight out of them into the page behind -- with the popover

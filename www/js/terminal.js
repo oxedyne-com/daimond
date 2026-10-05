@@ -1122,6 +1122,8 @@
 		input.setAttribute('spellcheck', 'false');
 		input.setAttribute('autocapitalize', 'off');
 		input.setAttribute('autocorrect', 'off');
+		// Escape is a byte for the program in the terminal, and the page's layer stack leaves it alone here.
+		input.setAttribute('data-own-escape', '');
 		input.setAttribute('autocomplete', 'off');
 		// Bound where it is ours to name. A caller-supplied label is a finished
 		// string with no key behind it, so it stays as given.
@@ -1161,10 +1163,12 @@
 
 		var paste = document.createElement('div');	// the multi-line paste question
 		paste.className = 'term-paste';
+		paste.setAttribute('data-own-escape', '');	// closed by its own Escape, below
 		paste.hidden = true;
 
 		var menu = document.createElement('div');	// what a right-click offers
 		menu.className = 'term-menu';
+		menu.setAttribute('data-own-escape', '');	// closed by its own Escape, below
 		menu.hidden = true;
 
 		root.appendChild(canvas);

@@ -155,9 +155,9 @@ const BREAKS = {
 			find: '\t\tfunction close() {\n\t\t\tdocument.removeEventListener(\'keydown\', onKey, true);\n\t\t\tif (sayPause) window.removeEventListener(\'daimond:pause\', sayPause);',
 			with: '\t\tfunction close() {\n\t\t\tdocument.body.classList.remove(\'drawer-open\');\n\t\t\tdocument.removeEventListener(\'keydown\', onKey, true);\n\t\t\tif (sayPause) window.removeEventListener(\'daimond:pause\', sayPause);' },
 		{ file: 'js/mobile.js',
-			find: '\tfunction closeDrawer() { document.body.classList.remove(\'drawer-open\'); }',
-			with: '\tfunction closeDrawer() { document.body.classList.remove(\'drawer-open\');'
-				+ ' var sh = document.getElementById(\'msheet\'); if (sh) sh.classList.remove(\'open\'); }' },
+			find: '\tfunction closeDrawer() {\n\t\tdocument.body.classList.remove(\'drawer-open\');\n\t\tDaimondLayers.done(\'drawer\');\n\t}',
+			with: '\tfunction closeDrawer() {\n\t\tdocument.body.classList.remove(\'drawer-open\');\n\t\tDaimondLayers.done(\'drawer\');\n'
+				+ '\t\tvar sh = document.getElementById(\'msheet\'); if (sh) sh.classList.remove(\'open\');\n\t}' },
 	],
 	// The keyboard is dropped on the floor. Both families again: the modal
 	// dialogs restore through `refocus`, and the popovers and shells each do it
@@ -165,7 +165,7 @@ const BREAKS = {
 	nofocus: [
 		{ file: 'js/daimond.js',   find: '\tfunction refocus(prev, host) {\n\t\tif (tookFocus(prev)) return;', with: '\tfunction refocus(prev, host) {\n\t\tif (true) return;' },
 		{ file: 'js/workspace.js', find: '\t\tif (b) { b.setAttribute(\'aria-expanded\', \'false\'); b.focus(); }', with: '\t\tif (b) { b.setAttribute(\'aria-expanded\', \'false\'); }' },
-		{ file: 'js/mobile.js',    find: '\t\t\tif (burger2) { try { burger2.focus(); } catch (x) { /* not on screen */ } }', with: '\t\t\tif (burger2) { /* dropped */ }' },
+		{ file: 'js/mobile.js',    find: '\t\tif (burger) { try { burger.focus(); } catch (x) { /* not on screen */ } }', with: '\t\tif (burger) { /* dropped */ }' },
 		{ file: 'js/pairing.js',   find: '\t\t\tif (prev && prev.focus && prev.getClientRects && prev.getClientRects().length) {', with: '\t\t\tif (false) {' },
 		{ file: 'js/workspace.js', find: '\t\tif (more) { more.setAttribute(\'aria-expanded\', \'false\'); more.focus(); }', with: '\t\tif (more) { more.setAttribute(\'aria-expanded\', \'false\'); }' },
 		{ file: 'js/workspace.js', find: '\t\tif (palPrev && palPrev.focus && document.contains(palPrev)) {', with: '\t\tif (false) {' },

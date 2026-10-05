@@ -382,8 +382,8 @@ body.dragging { cursor: col-resize; user-select: none; -webkit-user-select: none
 .ptag { position: relative; }
 .addbtn { width: 22px; height: 22px; padding: 0; display: flex; align-items: center; justify-content: center; border: 1px solid var(--border-strong); border-radius: 6px; background: var(--bg-secondary); color: var(--text-secondary); font-size: var(--fs-sm); line-height: 1; }
 .addbtn:hover { color: var(--text-primary); }
-.addbtn:disabled { opacity: 0.4; cursor: default; }
-.addbtn:disabled:hover { border-color: var(--border); color: var(--text-secondary); }
+.addbtn:disabled, .addbtn[aria-disabled="true"] { opacity: 0.4; cursor: default; }
+.addbtn:disabled:hover, .addbtn[aria-disabled="true"]:hover { border-color: var(--border); color: var(--text-secondary); }
 /* A rail-head button that LATCHES has to look latched. `#link-graph-btn` opens
    the Graph and closes it again, so it carries `aria-pressed` -- and a state a
    screen reader announces while the screen shows nothing is half a control:
@@ -725,6 +725,7 @@ body.resizing-v { cursor: row-resize; user-select: none; -webkit-user-select: no
    The CTA is left out: its label is centred in a filled button, so its padding
    sets a width, not a margin. */
 .admin-sec { font-weight: 600; letter-spacing: 0.04em; text-transform: uppercase; color: var(--text-muted); padding: 2px 8px 4px; }
+.admin-sec:not(:first-child) { margin-top: var(--gap-section); }
 .admin-item { display: block; width: 100%; text-align: left; background: none; border: none; color: var(--text-primary); font-size: var(--fs-sm); padding: 7px 8px; border-radius: var(--radius-sm); }
 .admin-item:hover { background: var(--bg-hover); }
 /* Keyboard focus, themed, matching the app's ring elsewhere (workspace.css).
@@ -1075,7 +1076,7 @@ body.resizing-v { cursor: row-resize; user-select: none; -webkit-user-select: no
 }
 #chat-send { background: var(--accent); color: var(--on-fill, #fff); border: none; }
 #chat-send:hover { background: var(--accent-hover); }
-#chat-send:disabled { opacity: 0.4; cursor: default; }
+#chat-send:disabled, #chat-send[aria-disabled="true"] { opacity: 0.4; cursor: default; }
 #chat-send.stop { background: var(--danger); }
 /* The drawn arrow sits at the size of the words around it, and heavier than a
    plain icon, since it is the one filled control on the row. */
@@ -1100,6 +1101,11 @@ body.resizing-v { cursor: row-resize; user-select: none; -webkit-user-select: no
    size and the mark size are set in the same place and cannot drift apart. */
 #chat-jump .ic, #chat-end .ic { width: 20px; height: 20px; }
 #chat-jump:hover, #chat-end:hover { background: var(--bg-hover); color: var(--text-primary); }
+/* Hidden while there is nowhere to walk to (`DaimondAnswer.shown`); `display: flex` above would beat the UA's [hidden]. */
+#chat-jump[hidden], #chat-end[hidden] { display: none; }
+/* A note answering a press inside a panel's body: the role, and so the look, of `.files-mode-msg`. */
+.panel-say { font-size: var(--fs-2xs); color: var(--text-secondary); margin: 0 0 8px; }
+.panel-say.err { color: var(--accent-text); }
 /* Chat messages */
 /* An answer belongs to the question above it, so it sits close to it; the air
    goes between turns instead, where it separates things that are separate.
@@ -2124,6 +2130,10 @@ span.arte-open { cursor: default; }
    or Credits shifted every word 8px left. Measured off the ink: Home 16, Models
    8, Credits 8. */
 .settings-section { margin-bottom: 20px; padding: 0 8px; }
+/* In the drawer a section ends flush and the head that opens the next owns the gap (r535 U3); the 20px the last section carried is the view's. */
+.admin-body .settings-section { margin-bottom: 0; }
+.admin-body .settings-section ~ .settings-section > h3:first-child { margin-top: var(--gap-section); }
+.admin-view:has(> .settings-section) { padding-bottom: 20px; }
 .settings-section h3 { font-size: var(--fs-lg); margin-bottom: 12px; color: var(--text-secondary); }
 .settings-section form { display: flex; flex-direction: column; gap: 10px; }
 .settings-section input { background: var(--bg-tertiary); border: 1px solid var(--border-strong); border-radius: var(--radius-sm); color: var(--text-primary); padding: 9px 12px; font-size: var(--fs-base); }
@@ -2203,7 +2213,7 @@ span.arte-open { cursor: default; }
    data limit and its page limit. Presented apart they read as two unrelated
    numbers. Heavier than a field label and lighter than the section title, with
    a rule under it so the two rows beneath read as belonging to it. */
-.cfg-fieldhead { font-size: var(--fs-sm); font-weight: 600; color: var(--text-primary); margin: 18px 0 0; padding-bottom: 5px; border-bottom: 1px solid var(--border); }
+.cfg-fieldhead { font-size: var(--fs-sm); font-weight: 600; color: var(--text-primary); margin: var(--gap-section) 0 0; padding-bottom: 5px; border-bottom: 1px solid var(--border); }
 .cfg-fieldhead + .cfg-fieldlabel { margin-top: 8px; }
 .cfg-advanced summary { font-size: var(--fs-sm); color: var(--text-secondary); cursor: pointer; user-select: none; padding: 2px 0; }
 .cfg-advanced[open] { display: flex; flex-direction: column; gap: 10px; }
@@ -2275,7 +2285,7 @@ span.arte-open { cursor: default; }
 .rail-day { font-size: var(--fs-2xs); text-transform: uppercase; letter-spacing: 0.05em; color: var(--text-muted); padding: 8px 2px 3px 4px; }
 .rail-day:first-child { padding-top: 2px; }
 /* The rename field, in the cog dialog and nowhere else. */
-.tile-dlg-name { padding: 0 2px 4px; }
+.tile-dlg-name { padding: 0 2px; }
 .tile-dlg-name-input { width: 100%; background: var(--bg-tertiary); border: 1px solid transparent; border-radius: var(--radius-sm); color: var(--text-primary); font-size: var(--fs-sm); padding: 6px 8px; }
 .tile-dlg-name-input:focus { outline: 2px solid var(--accent); outline-offset: 1px; border-color: var(--accent); }
 .session-box.pending { border-style: dashed; }
@@ -2484,6 +2494,7 @@ span.arte-open { cursor: default; }
 }
 #identity-modal h2 { margin-bottom: 8px; }
 #identity-modal .cfg-lead { margin: 0 0 12px; }
+#identity-modal .cfg-lead:empty { display: none; }
 
 /* ── The front door ─────────────────────────────────────────────
    Three routes for a stranger, above the form, drawn only for a browser that
@@ -2872,8 +2883,9 @@ span.arte-open { cursor: default; }
    travel to in order to do nothing. */
 .tile-dlg-head {
 	text-transform: uppercase; letter-spacing: 0.04em;
-	color: var(--text-muted); margin: 14px 0 6px;
+	color: var(--text-muted); margin: var(--gap-section) 0 6px;
 }
+.tile-dlg-card :has(+ .tile-dlg-head) { margin-bottom: 0; }
 .tile-dlg-card h2 { margin-bottom: 4px; overflow-wrap: anywhere; }
 /* The title row -- the Diamond's name, and the way out -- is `.ui-head` now;
    the element carries both classes so the selectors written against this one

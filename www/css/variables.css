@@ -1,4 +1,7 @@
 :root {
+	/* One white space above a section head, whatever the panel (r535 U3, D-13). The by-role gate (dev/sectiongap.mjs) measures it:
+	   the mode of the r533 captures was 14px. The head owns it as its margin-top, and what stands before a head gives up its own trailing space. */
+	--gap-section:       14px;
 	/* R1 (D-20260929-03 r526 residual): a utility panel's head and its own
 	   body were drawn on two different insets (14px against 10px), so a
 	   title sat 3-8px off the content under it. One token, used by both. */
@@ -239,6 +242,7 @@
 	   paddings and gaps by this, so the whole skin can breathe more or less
 	   from one number. 1 would match the sharp skin; 1.4 is a clear loosening. */
 	--space-scale:       1.4;
+	--gap-section:       calc(14px * var(--space-scale));
 	/* Soft, diffuse shadows replace some of the hard 1px borders, the way an
 	   approachable UI lifts a card off the page rather than ruling a line. */
 	--shadow-1:          0 1px 2px rgba(17, 12, 8, 0.04), 0 3px 10px rgba(17, 12, 8, 0.06);

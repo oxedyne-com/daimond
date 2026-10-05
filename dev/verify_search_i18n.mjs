@@ -52,7 +52,7 @@ const loadTable = (code) => {
 // of the contract, and a key quietly dropped from en.js should fail here
 // rather than shrink the list being checked.
 const KEYS = [
-	'search.head', 'search.engine', 'search.engine_note', 'search.credits',
+	'search.head', 'search.engine', 'search.credits',
 	'search.key', 'search.key_note', 'search.no_key',
 	'search.kind_web', 'search.kind_news', 'search.kind_academic',
 	'search.refused_serper', 'search.free_month',

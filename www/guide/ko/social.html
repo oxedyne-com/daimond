@@ -40,10 +40,11 @@
 <main>
 	<h1>소셜과 제안</h1>
 	<p class="lede">패널 둘과 diamond 하나예요. <span class="ui">소셜</span> 은 무언가를 저희에게 말하는 곳이에요. <span class="ui">개선</span> 은 그것이 도착하는 게시판이에요. <span class="ui">대기</span> 는 <em>나</em> 를 기다리는 것이 나타나는 곳이에요.</p>
+	<p><span class="ui">소셜</span> opens on <span class="ui">Messages</span>, and carries six chips: <span class="ui">Messages</span>, <span class="ui">사람</span>, <span class="ui">Groups</span>, <span class="ui">Feed</span>, <span class="ui">Share</span> 그리고 <span class="ui">Feedback</span>. Settings moved to the cog in the header.</p>
 
 	<h2 id="s1">무언가 말하기</h2>
-	<p>여세요 <span class="ui">소셜</span> 을 열고 쓰세요. 첫 줄이 제목이고, 그 아래에 무슨 일이 있었는지 적어요. <span class="ui">보내기</span> 는 화면에 있는 것과 빌드 ID를 보내요. 그 밖에는 아무것도 딸려 가지 않아요.</p>
-	<p>글을 올리려면 <strong>게시 이름</strong>이 필요해요. 앱은 그것을 내 목소리라고 불러요. 없어도 모든 것을 읽을 수 있고, 쪽지를 이 기기에만 남길 수 있어요. 패널이 한 줄로 그렇게 말해요, <em>보내려면 게시 이름을 정하세요.</em>, 그리고 옆에는 <span class="ui">만들기</span> 이 있어요. 톡 한 번이면 되고, Daimond Pro에 딸려 있어요.</p>
+	<p>여세요 <span class="ui">소셜</span>, choose <span class="ui">Feedback</span>, and write. The first line is the title, and what happened goes under it. <span class="ui">보내기</span> 는 화면에 있는 것과 빌드 ID를 보내요. 그 밖에는 아무것도 딸려 가지 않아요.</p>
+	<p>글을 올리려면 <strong>게시 이름</strong>. Without one you can read everything and keep a note to this device. The panel says so in one row, <em>Posting name: none.</em>, 그리고 옆에는 <span class="ui">만들기</span> beside it in <span class="ui">Settings</span>. It takes one tap, and it needs Daimond Pro.</p>
 
 	<h3 id="s2">행동으로 옮길 수 있는 쪽지</h3>
 	<p>쪽지에는 이 순서로 세 가지가 필요해요. 하나라도 빠지면, 무엇을 하기 전에 대화가 한 번 필요해져요.</p>
@@ -84,14 +85,17 @@
 
 	<h2 id="s7">조정 메모</h2>
 	<p>조정 메모는 모델이 어떻게 답하면 좋겠는지 알려 주는 담백한 한 문장이에요. 예를 들어 <em>자세한 설명을 요청받지 않는 한 답변은 약 200단어 이내로 하세요.</em> 메모는 모델 하나를 위한 것이라서, 한 모델에게 가르친 것이 다른 모델에게 강요되지 않아요. 그 모델이 답할 때 메모 최대 다섯 개, 모두 합쳐 600바이트까지가 지시에 더해지고, 안전 규칙 바로 앞에 놓여요. 안전 규칙은 여전히 맨 끝에 오고 여전히 우선해요.</p>
-	<p>메모를 대신 써 주는 사람은 없어요. 한 모델의 답이 자주 <span class="ui">너무 김</span>으로 평가되는 것 같은 평가의 패턴을 옵티마이저가 찾아요. 찾으면 <span class="ui">대기</span>에 메모를 제안하는 타일을 올리고, 거기에 더할 문장과 그 근거가 되는 수치를 보여 줘요. 내가 평가한 것만 보고, 패턴이 우연 이상이라고 할 만큼 답이 평가된 뒤에야 올려요. diamond 하나에서는 적어도 7개, 계정 전체에서는 11개예요. 오래된 평가는 같은 모델의 새 평가가 쌓일수록 가볍게 쳐요. 날짜는 상관없어요. 불만의 종류마다 정해진 문장이 있어서, 평가에 쓴 내 말은 쓰이지 않아요.</p>
-	<p>타일마다 버튼이 있어요. <span class="ui">추가</span>는 보인 문장을 그대로 저장해요. <span class="ui">편집</span>은 먼저 표현을 고치게 해 줘요. 모델이 내 비위를 맞추게 하거나, 맞장구치게 하거나, 승인을 구하게 하거나, 평가를 언급하게 하는 줄은 받지 않고, 이유를 알려 줘요. <span class="ui">닫기</span>는 제안을 거두고, 그 모델의 답이 20개 더 평가될 때까지 다시 올라오지 않아요. 타일은 대신 <span class="ui">전환</span>을 내놓기도 해요. 평가가 더 좋은 모델로 diamond 하나를 옮기는 거예요. 또는 평가가 20개 더 쌓인 뒤 메모를 다시 살펴보라고 하면서 <span class="ui">유지</span>나 <span class="ui">제거</span>를 내놓아요. 누르기 전에는 아무것도 추가되거나 바뀌거나 전환되지 않아요.</p>
+	<p>메모를 대신 써 주는 사람은 없어요. 한 모델의 답이 자주 <span class="ui">너무 김</span>으로 평가되는 것 같은 평가의 패턴을 옵티마이저가 찾아요. 찾으면 <span class="ui">대기</span> 에 메모를 제안하는 타일을 올리고, 거기에 더할 문장과 그 근거가 되는 수치를 보여 줘요. 내가 평가한 것만 보고, 패턴이 우연 이상이라고 할 만큼 답이 평가된 뒤에야 올려요. diamond 하나에서는 적어도 7개, 계정 전체에서는 11개예요. 오래된 평가는 같은 모델의 새 평가가 쌓일수록 가볍게 쳐요. 날짜는 상관없어요. 불만의 종류마다 정해진 문장이 있어서, 평가에 쓴 내 말은 쓰이지 않아요.</p>
+	<p>타일마다 버튼이 있어요. <span class="ui">추가</span> 는 보인 문장을 그대로 저장해요. <span class="ui">편집</span> 은 먼저 표현을 고치게 해 줘요. 모델이 내 비위를 맞추게 하거나, 맞장구치게 하거나, 승인을 구하게 하거나, 평가를 언급하게 하는 줄은 받지 않고, 이유를 알려 줘요. <span class="ui">닫기</span> 는 제안을 거두고, 그 모델의 답이 20개 더 평가될 때까지 다시 올라오지 않아요. 타일은 대신 <span class="ui">전환</span>을 내놓기도 해요. 평가가 더 좋은 모델로 diamond 하나를 옮기는 거예요. 또는 평가가 20개 더 쌓인 뒤 메모를 다시 살펴보라고 하면서 <span class="ui">유지</span> 나 <span class="ui">제거</span>를 내놓아요. 누르기 전에는 아무것도 추가되거나 바뀌거나 전환되지 않아요.</p>
 	<p>유효한 메모는 모두 목록에 나와요. 정확한 문장, 누구의 메모인지, 어느 모델용인지, 추가한 날이 함께 보여요. diamond의 설정은 타일의 톱니에서 열고, 그 diamond의 메모와 계정 메모는 <span class="ui">모델</span> 아래에서 볼 수 있어요. 전부 보려면 <span class="ui">모델 통계</span> 를 여세요. <span class="ui">제거</span> 를 누르면 언제든 메모를 뺄 수 있어요. 뺀 메모는 답이 20개 더 평가될 때까지 다시 제안되지 않아요. 모델에 전달되지 않는 메모(예: diamond가 다른 모델을 쓰는 경우)에는 <em>사용 안 함</em> 과 이유가 표시돼요. <span class="ui">전환</span>을 누른 뒤 새 모델로 답이 20개 평가되면 타일이 다시 물어요. <span class="ui">유지</span> (새 모델 그대로) 또는 <span class="ui">되돌리기</span> (diamond가 떠난 모델로) 중에서 고를 수 있어요.</p>
 	<p>diamond 하나의 메모는 그 diamond 안의 파일 <code translate="no">.daimond/steering.md</code>에 들어 있어서, diamond와 함께 쓰는 모든 기기로 가요. 계정 전체의 메모는 평소 채팅에도 닿는데, 같은 방식으로 옵티마이저 자신의 diamond에 들어 있어요. 그래서 옵티마이저를 지우면 그 메모도 함께 지워져요. daimon은 두 파일 어느 쪽에도 쓸 수 없어요. 메모는 나머지 지시와 함께 모델 제공자에게 보내져요.</p>
 
 	<h2 id="s8">사람, 메시지, 공유</h2>
-	<p><span class="ui">사람</span> 은 누군가와 나를 곧바로 이어 줘요. 같은 방에서 내 코드를 보여 주거나 그들의 것을 읽으세요. 거기서부터 둘만의 개인 메시지와, 그룹을 가질 수 있어요. 그룹은 만든 사람이 닫을 수 있고, 그러면 이미 한 말은 사라지지 않지만 새로 오는 것도 없어요.</p>
-	<p>diamond은 연결된 사람과 공유할 수 있어요. 공유한 diamond은 자기 기억과 페이지를 함께 나르고, 둘 다 보낸 사람들에게만 봉인돼요.</p>
+	<p><span class="ui">사람</span> connects you to somebody directly. Show your code to them in the room, or read theirs. From there you have private messages between the two of you, in <span class="ui">Messages</span>, and groups of them, in <span class="ui">Groups</span>. A group can be closed by whoever made it, and then nothing already said is taken away and nothing new arrives.</p>
+	<p>Nobody in the room? <span class="ui">Find somebody</span> takes their handle and fetches the code they published, and <span class="ui">Send my code</span> hands yours over however you already talk to them. A key that arrives either way reads <em>New key</em>, and stays new: it came through something that could have swapped it. Read the sixty digits aloud to each other to change that.</p>
+	<p>A diamond can be shared with somebody you are connected to. Use <span class="ui">Share&hellip;</span> on its tile: send a copy, or the shape only, and say whether the conversation goes with it.</p>
+	<p>What arrives waits in their <span class="ui">Messages</span> tray until they press <span class="ui">추가</span>, and the copy is then theirs to keep and to change. Triggered actions and the notes about your own folders never travel, and neither does the conversation unless you tick it.</p>
+	<p><span class="ui">Feed</span> is where you write to the people you have let follow you. A post is kept on our server in the clear, shown to your approved followers and nobody else, and we can read and remove it; delete one and it is gone. Follow somebody from their row in <span class="ui">사람</span> or from their name on a post, and they choose whether to let you. A follower who sees something wrong can press <span class="ui">Report</span> on it; a post we remove for that stays on your own feed marked as removed, and says why.</p>
 	<p>이 모든 것은 릴레이가 켜져 있어야 해요. 꺼져 있으면 패널이 한 줄로 그렇게 말하고, 실패할 조작은 아예 내놓지 않아요.</p>
 
 	<div class="next">
@@ -101,7 +105,6 @@
 </main>
 
 <footer class="site-foot">
-	<span>Daimond는 브라우저 안에서 실행돼요. 여기 있는 어떤 것도 저희에게 전송되지 않아요.</span>
 	<nav aria-label="가이드 페이지">
 		<a href="index.html">여기서 시작하기</a>
 		<a href="interface.html">인터페이스</a>

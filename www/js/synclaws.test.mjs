@@ -126,7 +126,7 @@ const KINDS = [
 	{
 		name: 'graph layout: adopt',
 		gen: (r) => { const pos = {}; for (const id of ['d1', 'd2']) if (r.chance(0.6)) pos[id] = { x: r.int(3), y: r.int(3), t: T(r) }; return { v: 1, pos }; },
-		join: (...xs) => { const w = win(); loadScript(w, 'graph.js'); for (const x of xs) w.DaimondGraph.adopt(clone(x)); return w.DaimondGraph.snapshot(); },
+		join: (...xs) => { const w = win(); loadScript(w, 'layers.js'); loadScript(w, 'graph.js'); for (const x of xs) w.DaimondGraph.adopt(clone(x)); return w.DaimondGraph.snapshot(); },
 	},
 	{
 		name: 'trash: adopt',

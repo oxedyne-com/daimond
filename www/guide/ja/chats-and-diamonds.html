@@ -42,14 +42,13 @@
 	<p class="lede">チャットは会話です。diamond は、自分専用の記憶とページとファイルを持つ、保存されたプロジェクトです。片方をもう片方の中に保存します。</p>
 
 	<h2 id="s1">チャット</h2>
-	<p> <span class="ui">+</span> — 隣は <span class="ui">チャット</span> が一つ始めます。欄に入力して送信してください。新しいチャットの題名は <span class="ui">新しいチャット</span> 何か言うまでで、そのあとは最初の行が題名になります。</p>
+	<p> <span class="ui">+</span> — 隣は <span class="ui">チャット</span> が一つ始めます。欄に入力して送信してください。新しいチャットの題名は <span class="ui">New Chat</span> 何か言うまでで、そのあとは最初の行が題名になります。</p>
 	<p>答えが届いているあいだも、打ち続けられます。そのとき送ったメッセージは、破線の吹き出しとして待ち、答えが終わると自分のやり取りとして送られます。クリックすれば取り戻せ、その×を押せば捨てられます。停止を押すと、待っているものはすべて、送られないままあなたに返ります。</p>
 	<p>チャットを削除すると、ゴミ箱に移るだけなので、先に何も尋ねられません。取り消せない二つの行いだけが尋ねてきて、どちらもそのパネルの中にあります。</p>
 
 	<h2 id="s2">長いスレッドを読む</h2>
 	<figure class="shot narrow">
 		<img alt="チャットのスレッド。「あなた」というタイルに質問があり、「Daimond」というタイルに答えがあります。" src="../img/thread.png" loading="lazy">
-		<figcaption>それぞれのやり取りはラベルの付いたタイルなので、誰が何を言ったか一目で分かります。</figcaption>
 	</figure>
 	<p>どのやり取りもタイルで、 <span class="ui">あなた</span>, <span class="ui">思考中</span>, <span class="ui">ツール</span>, <span class="ui">Daimond</span>、あるいはアプリ自身からのメモというラベルが付きます。それぞれのヘッダーには、ホロシーン紀元での現地の日時が分単位で添えられます。ですから <code>12026-09-15 13:12</code> は、今年に一万を足した年です。ポインターを乗せると、時差を含めた完全な瞬間が見えます。</p>
 	<p>チャットのヘッダーに操作があります。</p>
@@ -78,7 +77,7 @@
 	<p>上向きの矢印はプラス、下向きの矢印はマイナスを付け、点いている矢印をもう一度タップすると評価を取り下げます。下向きにタップすると、何が悪かったかを伝えられるよう、タグの列も開きます。たとえば <span class="ui">長すぎる</span> は回答に、 <span class="ui">何かを壊した</span> はファイルに使います。詳細のコントロールを開くと、 <span class="ui">この回答を評価</span> または <span class="ui">この変更を評価</span>が出ます。中には、 <span class="ui">誤り</span> から <span class="ui">最高</span>までの五段階、タグ、四つの点数、自分の言葉を書く欄があります。 <span class="ui">取り消す</span> を押すと、そのポップアップから評価を取り消せます。</p>
 	<p>ファイルに矢印が付くのは、どのモデルが変更したかを Daimond が言える場合だけです。二つのエージェントが同じ場所で同時に作業していた場合、その行には矢印が付きません。間違ったモデルの下に記録された評価は、ないよりも悪いからです。</p>
 	<p>評価は、付けたチャットに保存されます。最後のタップの十秒後、またはメッセージを送るかチャットを離れたときにそれより早く保存されます。スレッドの末尾には <span class="ui">評価</span> タイルが並び、回答やファイルへのリンクが付きます。モデルが評価を読むのは、そのチャットでの次のメッセージと一緒に一度だけで、スレッドにはあなたが入力したものしか表示されません。</p>
-	<p>評価は、モデルの指示に一文を加えるステアリングメモにつながることもありますが、それは提案で <span class="ui">追加</span> を押したときだけです。詳しくは <a href="social.html">ソーシャルと提案</a>を見てください。</p>
+	<p>評価は、モデルの指示に一文を加えるステアリングメモにつながることもありますが、それは提案で <span class="ui">追加</span> を押したときだけです。詳しくは <a href="social.html">ソーシャルと提案</a>.</p>
 
 	<h2 id="s5">チャットを保存する</h2>
 	<p>チャットの、レールにある行には二つのボタンがあります。 <span class="ui">保存</span> は、会話全体を diamond に変えます。 <span class="ui">すべてたたむ</span> は、要約することでそれを diamond に変え、分かったことを残し、やり取りの往復を落とします。</p>
@@ -115,6 +114,7 @@
 
 	<h2 id="s9">履歴</h2>
 	<p><span class="ui">履歴</span> は、すべてのバージョンを新しい順に並べます。 <span class="ui">表示</span> が一つを読み、 <span class="ui">復元</span> がそれを再び最新にし、 <span class="ui">差分</span> がたたみ込みに与えられた材料を示します。復元は最初にいまのものを保ってから行うので、復元そのものも取り消せます。</p>
+	<p>Every file the daimon changes in a diamond is kept too, and a row's <span class="ui">Restore file</span> brings one back while <span class="ui">復元</span> brings the whole version back. Files on this computer are kept only where the daimon wrote them here, so a change made by an editor, a build or a command is not in History. Deleting, renaming, folding and restoring each show <span class="ui">Undo</span> for five seconds, and after that the act stands.</p>
 
 	<h2 id="s10">尋ねられずに動く</h2>
 	<p>diamond は、あなたが促したときにだけ答えます。それ以外のときは動きません。トリガーされる動作を設定しないかぎりは。それらがあるのは <span class="ui">この diamond が動くとき</span> 、結晶の面です。そして <span class="ui">動作を追加</span> が一つを作ります。きっかけになりうるのは二つ。あなた自身の活動時間——実際に働いているあいだだけ数えられます——か、名指ししたフォルダーに届くメールです。</p>
@@ -143,7 +143,6 @@
 </main>
 
 <footer class="site-foot">
-	<span>Daimond はブラウザの中で動きます。ここでの内容は私たちに送信されません。</span>
 	<nav aria-label="ガイドのページ">
 		<a href="index.html">ここから始める</a>
 		<a href="interface.html">インターフェース</a>

@@ -228,7 +228,9 @@
 			var row = {
 				id:    id,
 				name:  t('tools.cap.' + id + '.name'),
-				blurb: t('tools.cap.' + id + '.blurb'),
+				// The unplaced bucket has a name and no blurb; a missing key would read as itself.
+				blurb: CAPS.some(function (c) { return c.id === id; })
+					? t('tools.cap.' + id + '.blurb') : '',
 				fns:   fns.map(function (f) {
 					return { name: f.tool, blurb: f.blurb, sale: saleOf(f.pack) };
 				}),
@@ -477,7 +479,6 @@
 		var r = rows();
 		var c = counts();
 
-		els.body.appendChild(html('<div class="tools-intro">' + esc(t('tools.intro')) + '</div>'));
 		// "13 of 13" is true of every account until something is actually locked --
 		// on a BYOK account, or while the service cannot say, it is ALWAYS true and
 		// says nothing. Shown only once there is a real shelf to count against.

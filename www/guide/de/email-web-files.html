@@ -24,7 +24,7 @@
 			<a href="index.html">Hier anfangen</a>
 			<a href="interface.html">Die Oberfläche</a>
 			<a href="chats-and-diamonds.html">Chats &amp; Diamonds</a>
-			<a href="capps.html">Die Seite eines diamond</a>
+			<a href="capps.html">Die Seite eines Diamond</a>
 			<a href="email-web-files.html" aria-current="page">Dateien, E-Mail &amp; das Web</a>
 			<a href="machine-operations.html">Dein Rechner</a>
 			<a href="runner.html">Helfer &amp; wo Züge laufen</a>
@@ -39,7 +39,6 @@
 
 <main>
 	<h1>Dateien, E-Mail &amp; das Web</h1>
-	<p class="lede">Ein Daimon arbeitet mit Dateien, die er lesen und schreiben kann, Ordnern, die Sie ihm geben, Mail, die Sie beantworten können, und Seiten, die er zeigen oder bedienen kann.</p>
 
 	<h2 id="s1">Der Arbeitsbereich</h2>
 	<p>Die Schaltfläche <span class="ui">Workspace</span> -Panel zeigt Ihre Dateien als gewöhnlichen Baum. Drei Chips oben benennen, wo der Arbeitsbereich liegt.</p>
@@ -76,14 +75,14 @@
 	<h3 id="s5">Was ein Daimon öffnen kann</h3>
 	<p>Ein Daimon kann nur öffnen, was im Arbeitsbereich seines Diamond liegt. Nichts anderes ist über die Dateiwerkzeuge lesbar oder beschreibbar, weder für den Daimon noch für einen Helfer, den er losschickt. Die Prüfung sitzt im kompilierten Code, an der einen Tür, durch die jedes Dateiwerkzeug geht, und dieser Code steckt in einem Bündel, das reproduzierbar aus öffentlichem Quelltext baut — es ist also keine Anweisung in einem Prompt.</p>
 	<p>Diese Regel legt fest, was ein Daimon erreichen kann, und sagt nichts darüber, wo das, was er liest, endet, denn was auch immer er öffnet, geht mit dem Rest des Zugs an Ihren Modellanbieter.</p>
-	<p>Löschen oder Überschreiben wird auf dieselbe Weise gezählt. Nach einer Grenze, die Sie unter <span class="ui">Einstellungen</span> festlegen — standardmäßig acht in einem Zug —, hält der Zug dort an und fragt, bevor er weitergeht. Großteils überschreiben heißt, weniger als die Hälfte des alten Inhalts zu behalten. Von jeder gelöschten oder überschriebenen Datei wird mindestens sieben Tage lang eine Kopie aufbewahrt.</p>
+	<p>Deleting or wiping counts the same way. Past a limit you set under <span class="ui">Settings</span> — eight in a turn by default — the turn stops there and asks before it goes on. Wiping a file means writing over it so that less than half of it is left. Daimond keeps a copy of anything deleted or wiped for at least seven days.</p>
 
 	<h3 id="s6">Die Anhangsliste</h3>
 	<p>Zeilen tragen ein Alter, <span class="ui">Hinzugefügt {when}</span>. Ein Pfad, der nicht mehr da ist, wird gezeichnet als <span class="ui">Weg</span> ohne Öffnen-Aktion, eine tote Zeile gibt sich also nie als lebende aus.</p>
 	<p>Alles, was ein Daimon von sich aus angehängt hat, etwa der Ertrag eines Einklappens oder eine Datei, die ein Agent behalten hat, sitzt unter einer eingeklappten Überschrift, <span class="ui">Vom Daimon hinzugefügt</span>, mit einer Zählung und einem <span class="ui">Alle entfernen</span>. Ihre eigenen Anhänge bleiben, wo sie sind.</p>
 
-	<h3 id="s7">Markierungen und Ihre anderen Geräte</h3>
-	<p>Einen Ordner oder eine Datei an ein Diamond anzuhängen, und eine Markierung für den Arbeitsbereich eines Chats zu setzen, wird beides zu Ihren anderen Geräten übertragen, wirkt sich dort aber erst aus, wenn Sie es auf diesem Gerät erneut drücken. Öffnen Sie dasselbe Diamond auf einem zweiten Gerät, zeigt sich ein anderswo angehängter Ordner als markiert, aber noch nicht aktiv, mit <span class="ui">Hier verwenden</span>, um ihn dort zu aktivieren, oder <span class="ui">Alle hier verwenden</span> für alles noch nicht Aktive auf einmal. Eine Markierung zu entfernen erreicht jedes Gerät von selbst, sie zu aktivieren tut das nicht: Eine Markierung gilt nur auf dem Gerät, auf dem sie gedrückt wurde. Nach diesem Update braucht eine Markierung auf einem Rechner-Ordner einmal einen erneuten Druck: eine geteilte braucht <span class="ui">Hier verwenden</span> und danach noch einmal ⇄, und die Markierung für den Arbeitsbereich eines Chats oder für <span class="ui">Lesen</span> braucht ihn ebenfalls. Auch Daimond Helps eigene Markierung für dieses Handbuch kann einmal denselben erneuten Druck verlangen, wenn sie ursprünglich bei geöffnetem Rechner-Ordner eingerichtet wurde.</p>
+	<h3 id="s7">Marks and your other devices</h3>
+	<p>Attaching a folder or a file to a diamond, and marking one for a chat&rsquo;s workspace, both sync to your other devices, but neither takes effect there until you press it again on that device. Open the same diamond on a second device and a folder attached elsewhere reads as marked but not yet in force, with <span class="ui">Use here</span> to bring it into force there, or <span class="ui">Use all here</span> for everything not yet in force at once. Taking a mark off reaches every device on its own; bringing one into force does not, so a mark counts only on the device it was pressed on. After this update, a machine folder&rsquo;s marks can ask for one press again: a shared one needs <span class="ui">Use here</span> and then ⇄ once more, and a chat&rsquo;s workspace mark or <span class="ui">Lesen</span> needs pressing again too. Daimond Help&rsquo;s own mark on this guide can ask for that same press once too, where it was first set up with a machine folder open.</p>
 
 	<h3 id="s8">Einen Ordner mit Ihren anderen Geräten teilen</h3>
 	<p>Ein <span class="ui">Rechner</span> -Ordner liegt auf einem Rechner, und Ihr Telefon kann ihn nicht öffnen. Die <span class="ui">⇄</span> -Kontrolle in der Zeile ist, wie er ihn trotzdem erreicht, mit <span class="ui">Mit Geräten ohne nativen Zugriff teilen</span>.</p>
@@ -119,18 +118,17 @@
 	<p>Die Schaltfläche <span class="ui">Werkzeuge</span> -Panel sagt, was Daimond kann. Eingebaute Werkzeuge sind schon Ihres und kostenlos, und das Panel führt genau auf, was gehalten wird, es kann also keines versprechen, das es nicht gibt. Pakete sind Extras, einmal gekauft, in Dollar.</p>
 
 	<div class="next">
-		<a href="capps.html">&larr; Die Seite eines diamond</a>
+		<a href="capps.html">&larr; Die Seite eines Diamond</a>
 		<a href="machine-operations.html">Weiter: Dein Rechner &rarr;</a>
 	</div>
 </main>
 
 <footer class="site-foot">
-	<span>Daimond läuft in deinem Browser. Nichts davon wird an uns gesendet.</span>
 	<nav aria-label="Handbuchseiten">
 		<a href="index.html">Hier anfangen</a>
 		<a href="interface.html">Die Oberfläche</a>
 		<a href="chats-and-diamonds.html">Chats &amp; Diamonds</a>
-		<a href="capps.html">Die Seite eines diamond</a>
+		<a href="capps.html">Die Seite eines Diamond</a>
 		<a href="email-web-files.html">Dateien, E-Mail &amp; das Web</a>
 		<a href="machine-operations.html">Dein Rechner</a>
 		<a href="runner.html">Helfer &amp; wo Züge laufen</a>

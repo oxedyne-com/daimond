@@ -279,7 +279,7 @@
 		// The notes the models are told, with Remove: the Steering list (Rating U7c), drawn by the page.
 		if (steerSource) {
 			var ss = el('section', 'mdash-sec');
-			ss.appendChild(sectionHead(t('steer.title'), t('steer.hint')));
+			ss.appendChild(sectionHead(t('steer.title')));
 			var body = el('div', 'mdash-steer');
 			ss.appendChild(body);
 			host.appendChild(ss);
@@ -291,10 +291,11 @@
 		if (wiredActions) return;
 		var panel = document.getElementById('panel-modeldash');
 		if (panel) {
-			panel.addEventListener('click', function (ev) {
-				var b = ev.target.closest && ev.target.closest('[data-act="modeldash-refresh"]');
-				if (b) { ev.preventDefault(); render(); }
-			});
+			// Redraws the same table when nothing moved, so a press says it ran.
+			DaimondAnswer.control(panel.querySelector('[data-act="modeldash-refresh"]'), { act: function () {
+				render();
+				DaimondAnswer.note(document.getElementById('modeldash-view'), t('files.refreshed'), false, 3000);
+			} });
 		}
 		wiredActions = true;
 	}

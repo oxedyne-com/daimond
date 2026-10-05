@@ -254,7 +254,7 @@
 	background: transparent;
 }
 :root[data-skin="daylight"] .addbtn:hover { background: var(--dl-hover); color: var(--text-primary); }
-:root[data-skin="daylight"] .addbtn:disabled:hover { border-color: transparent; background: transparent; }
+:root[data-skin="daylight"] .addbtn:disabled:hover, :root[data-skin="daylight"] .addbtn[aria-disabled="true"]:hover { border-color: transparent; background: transparent; }
 :root[data-skin="daylight"] .addbtn[aria-pressed="true"] { background: var(--dl-on); border-color: transparent; color: var(--text-primary); }
 /* A head's word button ("New diamond") is a word in the accent, not a box. */
 :root[data-skin="daylight"] .railbtn {
@@ -374,7 +374,7 @@
    filled-box notes each drew a size or a colour of their own. */
 :root[data-skin="daylight"] :is(.admin-note, .rail-note, .trash-note, .cap-blurb, .mail-fine, .pop-note,
 	.chat-msg-empty, .files-empty, .rel-blurb, .agents-empty, .mdash-empty, .hist-note, .mdash-note, .spend-note,
-	.tools-intro, .mode-row-blurb, .shr-note, .cfg-hint, .search-engine-note, .tag-note, .spend-sec-hint,
+	.mode-row-blurb, .shr-note, .cfg-hint, .search-engine-note, .tag-note, .spend-sec-hint,
 	.mdash-sec-hint, .crystal-empty, .graph-empty, .tile-dlg-note, .pro-fine, .ar-hint, .tools-fine, .spend-empty, .pend-detail) {
 	font-size: var(--dl-xs); font-weight: var(--w-text); color: var(--text-muted); line-height: 1.45;
 }

@@ -2904,6 +2904,9 @@
 			els.list.appendChild(html('<div class="mail-fine">' + t('mail.nothing_yet') + '</div>'));
 		}
 
+		// A mailbox arriving or leaving ends in a draw, so Sync now is re-asked here.
+		if (syncCtl) syncCtl.sync();
+
 		// One re-arming point for the schedule. Every change that could move a due
 		// time — a sync finishing, a frequency changing, a mailbox arriving in a
 		// parcel, the device unlocking — already ends here, so none of them has to
@@ -3187,7 +3190,6 @@
 			if (prev && prev.focus) { try { prev.focus(); } catch (e) { /* gone */ } }
 		}
 		function onKey(e) {
-			if (e.key === 'Escape') { e.preventDefault(); close(); return; }
 			if (e.key !== 'Tab') return;
 			// Keep Tab inside the card. Without it the focus ring walks off into the
 			// panel behind and a keyboard user cannot get back to Done.
@@ -3566,6 +3568,28 @@
 		render();
 	}
 
+	// ── Sync now ────────────────────────────────────────────────────
+
+	var syncCtl = null;
+
+	/// Why Sync now cannot act, in the viewer's words, or '' when it can.
+	function syncWhy() {
+		var k = DaimondAnswer.reasons.sync_mail({ sel: state.sel });
+		return k ? t(k) : '';
+	}
+
+	/// A press on a dimmed Sync now is answered in a line at the head of the state block, which a draw clears.
+	function syncSay(msg) {
+		if (msg) DaimondAnswer.note(els.state, msg, false, 3000);
+	}
+
+	function bindSync(btn) {
+		syncCtl = DaimondAnswer.control(btn, { can: syncWhy, say: syncSay, act: function () {
+			if (state.sel) syncAccount(state.sel);
+		} });
+		return syncCtl;
+	}
+
 	// ── Wiring ──────────────────────────────────────────────────────
 
 	function init(d) {
@@ -3580,9 +3604,7 @@
 		var sync = panel.querySelector('[data-act="mail-sync"]');
 		var neu  = panel.querySelector('[data-act="mail-new"]');
 		if (add)  add.addEventListener('click', addAccount);
-		if (sync) sync.addEventListener('click', function () {
-			if (state.sel) syncAccount(state.sel);
-		});
+		if (sync) bindSync(sync);
 		if (neu) neu.addEventListener('click', function () {
 			openCompose({ to: '', cc: '', subject: '', body: '', attachments: [] });
 		});

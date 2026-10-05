@@ -29,6 +29,12 @@
      its reason goes to `say`. Only a hold, a send in flight, sets the
      real `disabled`, and has no reason to give.
 
+   A CONTEXTUAL control, one that only means something in a state (the two
+   walk-back buttons under the chat), is not gated: it is HIDDEN while it
+   cannot act (`shown`, `show`), since less on screen is the aim. A press on
+   a standing control that Refreshes or redraws the same thing ends in a
+   `note` where the panel keeps its figures, so it never looks like none.
+
    A control is only built through `control`; the wiring test refuses a
    new one that binds its own click and returns silently.
    ============================================================ */
@@ -112,11 +118,45 @@
 		send:  function (s) { return !s.open ? 'compose.none_open' : (String(s.to || '').trim() ? '' : 'compose.err_no_to'); },
 		// Save Draft, Attach and Discard need a message open.
 		draft: function (s) { return s.open ? '' : 'compose.none_open'; },
+		// Mail's Sync now needs a mailbox to sync.
+		sync_mail: function (s) { return s.sel ? '' : 'trig.no_mailbox'; },
+		// The home composer's Send needs words; with a turn running and the box empty it is Stop, which needs none.
+		send_home: function (s) { return (s.stop || String(s.text || '').trim()) ? '' : 'sheet.ask_empty'; },
 	};
+
+	// Whether a contextual control can act now, from the thread's measures: `users` questions, scrolled `top`,
+	// whole `height` and visible `view`. True shows it; false hides it. The 48 is the thread's own "at the end".
+	var shown = {
+		// Walking back needs a question to walk to and more thread than window (a pixel is rounding).
+		jump_back: function (s) { return s.users > 0 && s.height - s.view > 1; },
+		// The end needs somewhere below the reader.
+		jump_end:  function (s) { return s.height - s.top - s.view >= 48; },
+	};
+
+	// Show or hide a contextual control through `hidden`, which CSS must honour (`[hidden] { display: none }`).
+	function show(el, on) {
+		if (!el) return false;
+		el.hidden = !on;
+		return !!on;
+	}
+
+	// A line at the head of `host` that answers a press (Refresh), one at a time, gone after `ms`.
+	function note(host, text, isErr, ms) {
+		if (!host) return null;
+		var old = host.querySelector('.panel-say');
+		if (old && old.parentNode) old.parentNode.removeChild(old);
+		var n = host.ownerDocument.createElement('div');
+		n.className = 'panel-say' + (isErr ? ' err' : '');
+		n.setAttribute('role', 'status');
+		n.textContent = text;
+		host.insertBefore(n, host.firstChild);
+		setTimeout(function () { if (n.parentNode) n.parentNode.removeChild(n); }, ms || 3000);
+		return n;
+	}
 
 	// A language change rewrites titles and the words of every reason.
 	if (typeof window !== 'undefined' && window.DaimondI18n && window.DaimondI18n.onChange) window.DaimondI18n.onChange(syncAll);
 
-	var api = { gate: gate, control: control, syncAll: syncAll, reasons: reasons };
+	var api = { gate: gate, control: control, syncAll: syncAll, reasons: reasons, shown: shown, show: show, note: note };
 	if (typeof window !== 'undefined') window.DaimondAnswer = api;
 })();
