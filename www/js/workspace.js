@@ -448,7 +448,7 @@
 
 	function closeGallery() {
 		if (!galEl || galEl.hidden) return;
-		galEl.hidden = true;
+		hidePop(galEl);
 		var more = document.getElementById('panel-more');
 		if (more) { more.setAttribute('aria-expanded', 'false'); more.focus(); }
 	}
@@ -634,15 +634,32 @@
 	// at the card statement.
 
 	var localesReady = null;   // the codes that actually have a table, once probed
+	var langSel = null;        // the Language select now drawn, which the probe updates in place
 
-	/// Find out which locale files exist, by trying to load them. Once only,
-	/// and the picker is redrawn with the answer.
+	// A language with no file is offered but not selectable, so the picker
+	// shows what is coming without pretending it has arrived. Until the probe
+	// has answered, only the table already in hand is known to exist.
+	function markLocales(sel) {
+		var names = {};
+		DaimondI18n.locales().forEach(function (l) { names[l.code] = l.name; });
+		for (var i = 0; i < sel.options.length; i++) {
+			var o = sel.options[i];
+			var pending = !!localesReady && localesReady.indexOf(o.value) === -1;
+			o.disabled = pending;
+			o.textContent = pending ? names[o.value] + ' — ' + t('menu.language_pending') : names[o.value];
+		}
+	}
+
+	/// Find out which locale files exist, by trying to load them. Once only.
+	/// The answer goes into the select the person is holding rather than into
+	/// a rebuilt menu: a redraw replaces that select, and on a phone the
+	/// native picker closes under the finger that opened it.
 	function probeLocales() {
 		if (localesReady !== null || !window.DaimondI18n) return;
 		localesReady = [];
 		DaimondI18n.available().then(function (codes) {
 			localesReady = codes;
-			if (menuEl && !menuEl.hidden) renderMenu();
+			if (langSel) markLocales(langSel);
 		});
 	}
 
@@ -660,18 +677,11 @@
 		DaimondI18n.locales().forEach(function (l) {
 			var o = document.createElement('option');
 			o.value = l.code;
-			o.textContent = l.name;
-			// Until the probe has answered, only the table already in hand is
-			// known to exist. A language with no file is offered but not
-			// selectable, so the picker shows what is coming without pretending
-			// it has arrived.
-			if (localesReady && localesReady.indexOf(l.code) === -1) {
-				o.disabled = true;
-				o.textContent = l.name + ' — ' + t('menu.language_pending');
-			}
 			if (l.code === DaimondI18n.locale()) o.selected = true;
 			lsel.appendChild(o);
 		});
+		markLocales(lsel);
+		langSel = lsel;
 		// A language with no file falls back to English, and the picker is drawn
 		// again so it shows what actually happened rather than what was asked.
 		lsel.addEventListener('change', function () {
@@ -729,7 +739,7 @@
 
 	function closeMenu() {
 		if (!menuEl || menuEl.hidden) return;
-		menuEl.hidden = true;
+		hidePop(menuEl);
 		var b = document.getElementById('settings-menu-btn');
 		if (b) { b.setAttribute('aria-expanded', 'false'); b.focus(); }
 	}
@@ -825,7 +835,7 @@
 	function closeFold(m, returnFocus) {
 		var el = popOf(m);
 		if (!el || el.hidden) return;
-		el.hidden = true;
+		hidePop(el);
 		var b = document.getElementById(m.btn);
 		if (b) {
 			b.setAttribute('aria-expanded', 'false');
@@ -902,12 +912,43 @@
 		dismissPops(pop);
 		pop.hidden = false;
 		pop.style.left = '0px';
+		pop.style.maxHeight = '';		// the CSS cap again, until it is measured below
 		var w = pop.offsetWidth;
 		var left = side === 'start'
 			? Math.max(8, Math.min(r.left, window.innerWidth - w - 8))	// the mode picker hangs from the chip's left edge
 			: Math.min(Math.max(8, r.right - w), window.innerWidth - w - 8);
+		// Inside the glass whatever the anchor: a menu opened from a row low on the screen
+		// (Settings, from Help) moves up to fit, and one taller than the screen is held to
+		// it and scrolls inside itself, its head pinned (css/workspace.css), so the
+		// Close and the last row are both reachable.
+		var vv = window.visualViewport;
+		var fit = DaimondLayers.fit({
+			top: r.bottom + 6, height: pop.offsetHeight,
+			view: vv ? vv.height : window.innerHeight, inset: safeTop(), gap: 8,
+		});
 		pop.style.left = left + 'px';
-		pop.style.top = (r.bottom + 6) + 'px';
+		pop.style.top = fit.top + 'px';
+		pop.style.maxHeight = fit.max === null ? '' : fit.max + 'px';
+		// One popover is up at a time, so one layer stands for whichever it is.
+		DaimondLayers.open('pop', function () { dismissPops(null); });
+	}
+
+	/// The one place a popover is put away, so that the layer stack hears of it.
+	function hidePop(pop) {
+		pop.hidden = true;
+		DaimondLayers.done('pop');
+	}
+
+	/// What the system bar lays over the top of the glass, in px.
+	var safeProbe = null;
+	function safeTop() {
+		if (!safeProbe) {
+			safeProbe = document.createElement('div');
+			safeProbe.setAttribute('aria-hidden', 'true');
+			safeProbe.style.cssText = 'position:fixed;top:0;left:0;width:0;height:0;visibility:hidden;pointer-events:none;padding-top:var(--safe-t)';
+			document.body.appendChild(safeProbe);
+		}
+		return parseFloat(getComputedStyle(safeProbe).paddingTop) || 0;
 	}
 
 	// ── The palette ─────────────────────────────────────────────────────
@@ -1035,6 +1076,7 @@
 		palInput.value = '';
 		palAt = 0;
 		palEl.hidden = false;
+		DaimondLayers.open('palette', closePalette);
 		renderPalette();
 		palInput.focus();
 	}
@@ -1052,6 +1094,7 @@
 	function closePalette() {
 		if (!palEl || palEl.hidden) return;
 		palEl.hidden = true;
+		DaimondLayers.done('palette');
 		if (palPrev && palPrev.focus && document.contains(palPrev)) {
 			try { palPrev.focus(); } catch (e) { /* gone from the page */ }
 		}
@@ -1229,6 +1272,7 @@
 		renderTags: renderTags,
 		openPalette: openPalette,
 		openPop: openPop,
+		hidePop: hidePop,
 		scale: scale,
 		setScale: setScale,
 		steps: function () { return STEPS.slice(); },

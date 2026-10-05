@@ -92,9 +92,18 @@
 	}
 
 	// ── The drawer ─────────────────────────────────────────────
-	function openDrawer()  { document.body.classList.add('drawer-open'); }
-	function closeDrawer() { document.body.classList.remove('drawer-open'); }
-	function toggleDrawer() { document.body.classList.toggle('drawer-open'); }
+	function openDrawer() {
+		document.body.classList.add('drawer-open');
+		DaimondLayers.open('drawer', closeDrawer);
+	}
+	function closeDrawer() {
+		document.body.classList.remove('drawer-open');
+		DaimondLayers.done('drawer');
+	}
+	function toggleDrawer() {
+		if (document.body.classList.contains('drawer-open')) closeDrawer();
+		else openDrawer();
+	}
 
 	// ── The drawer's sections ──────────────────────────────────
 	//
@@ -515,6 +524,7 @@
 		// live pages came back at page one of a 48-page book every time.
 		if (el.parentNode !== bodyEl) bodyEl.appendChild(el);
 		guest = id;
+		DaimondLayers.open('sheet', close);
 		titleEl.textContent = label(id);
 		hideRedundantHead(el, label(id));
 		// The other face comes up with it, hidden, so the panel the watch draws into
@@ -661,6 +671,7 @@
 		face  = null;
 		document.body.classList.remove('sheet-open');
 		sheetEl.classList.remove('open');		// slides down (transform), then rests
+		DaimondLayers.done('sheet');
 		applyH(0);
 		// Give the keyboard back to whatever raised the sheet, if it is still on
 		// screen — a panel that redrew underneath may have taken it with it.
@@ -729,6 +740,9 @@
 	function bindGrab() {
 		var startY = 0, startH = 0, startDetent = 'half', dragging = false;
 		grabEl.addEventListener('pointerdown', function (e) {
+			// The x lives in the bar. A captured pointer sends its click to the bar, so a press on the x would
+			// never reach it (a mouse did nothing; a touch tap and a script's .click() are not retargeted).
+			if (e.target && e.target.closest && e.target.closest('.msheet-close')) return;
 			dragging = true;
 			startY = e.clientY;
 			startH = sheetEl.getBoundingClientRect().height;
@@ -879,12 +893,24 @@
 	}
 
 	// ── The ask pill: forward to the one composer ──────────────
+	var askCtl;
+	var askNote;				// the line above the field that says why a press did nothing
+	function askSay(msg) {
+		if (!askNote) return;
+		askNote.textContent = msg || '';
+		askNote.hidden = !msg;
+	}
+	function askWhy() {
+		var k = DaimondAnswer.reasons.ask({ text: askInput.value, ready: !!(window.DaimondCore && DaimondCore.ask) });
+		var why = k ? t(k) : '';
+		if (!why) askSay('');		// the reason goes however it went: a keystroke, or the composer arriving
+		return why;
+	}
 	function ask() {
 		var text = (askInput.value || '').trim();
-		if (!text) return;
-		if (!(window.DaimondCore && DaimondCore.ask)) return;
 		DaimondCore.ask(text);
 		askInput.value = '';
+		askCtl.sync();				// a script clearing the field raises no input event
 		askInput.blur();
 		// Park the thing so the answer, which lands on the chat floor
 		// behind the sheet, comes fully into view. The peek bar taps back.
@@ -901,15 +927,18 @@
 		askWrap  = document.getElementById('msheet-ask');
 		askInput = document.getElementById('msheet-ask-input');
 		askSend  = document.getElementById('msheet-ask-send');
+		askNote  = document.getElementById('msheet-ask-note');
 		if (!sheetEl) return;
 
 		bindGrab();
 		bindKeyboard();
 		sayKb();
 		document.getElementById('msheet-close').addEventListener('click', close);
-		askSend.addEventListener('click', ask);
+		// Until there is a question to send the pill is aria-disabled, with the reason as its title; a tap
+		// or an Enter on it says the reason in the note line above the field.
+		askCtl = DaimondAnswer.control(askSend, { can: askWhy, act: ask, say: askSay, fields: [askInput] });
 		askInput.addEventListener('keydown', function (e) {
-			if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); ask(); }
+			if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); askCtl.go(e); }
 		});
 
 		// The chip row belongs to whichever bar this width uses.

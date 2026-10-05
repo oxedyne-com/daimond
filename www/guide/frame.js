@@ -85,6 +85,50 @@
 		}
 	} catch (e) { /* no framer, or one that will not listen. */ }
 
+	/* ── Links, inside a frame ───────────────────────────────────────────────
+	   A frame's navigations are entries in the SAME session history as the page
+	   that holds it, so every link followed in the Web sheet added an entry to
+	   the app's own. The sheet's close takes one entry off with `go(-1)`, and
+	   that landed on a guide page instead: no `popstate` reached the app, the
+	   layer stack walked back again two seconds later, and a drawer opened
+	   meanwhile got no entry, so Back did nothing at all.
+
+	   Framed, a plain click on one of the guide's own links therefore REPLACES the
+	   entry rather than pushing one. Nothing is lost by it: the sheet's Back
+	   control is not shown over the guide (an opaque origin has no history for it
+	   to walk), and the sheet's close never wanted the guide's trail. Opened on
+	   its own the guide keeps the browser's links and its Back. A click the
+	   browser should have (a modifier, another button, a new window, a download,
+	   another origin) is left to it. */
+
+	/// Is this click a plain one, on a link that stays in this window and this site?
+	function ours(e) {
+		if (e.defaultPrevented || e.button !== 0) return null;
+		if (e.ctrlKey || e.metaKey || e.shiftKey || e.altKey) return null;
+		var t = e.target;
+		var a = t && t.closest ? t.closest('a[href]') : null;
+		if (!a || typeof a.href !== 'string') return null;          // not a link, or an SVG one
+		var to = a.getAttribute('target');
+		if (to && to !== '_self') return null;
+		if (a.hasAttribute('download')) return null;
+		try {
+			var u = new URL(a.href);
+			// The origin is read from the address: this page's own is opaque.
+			if (!/^https?:$/.test(u.protocol) || u.origin !== new URL(location.href).origin) return null;
+		} catch (x) { return null; }
+		return a.href;
+	}
+	try {
+		if (window.parent && window.parent !== window) {
+			document.addEventListener('click', function (e) {
+				var to = ours(e);
+				if (!to) return;
+				e.preventDefault();
+				location.replace(to);
+			});
+		}
+	} catch (e) { /* no framer to ask. */ }
+
 	// The direct path, for the case where the guide is framed WITHOUT a sandbox
 	// and can simply read the app's root. Harmless wherever it is blocked.
 	function fromApp(appRoot) {

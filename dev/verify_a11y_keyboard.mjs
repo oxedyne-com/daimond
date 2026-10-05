@@ -773,9 +773,6 @@ check(await page.evaluate(() => document.getElementById('settings-menu').hidden 
 	'Escape closes the appearance menu');
 w = await page.evaluate(WHERE, null);
 check(w.id === 'settings-menu-btn', 'and the focus goes back to the button that opened it', `focus is on ${w.name}`);
-note('The appearance menu and the gallery do not hold Tab',
-	'Both are role="dialog" popovers over the app (www/index.html:98, :101), but Tab walks '
-	+ 'straight out of them into the page behind and they stay open. See a11y_report.md §9.');
 
 // ── 7. The panel gallery ────────────────────────────────────────────
 // The ⋯ button only exists once the chip row has overflowed, so the window is
@@ -791,6 +788,16 @@ if (galReached) {
 	await page.waitForTimeout(350);
 	w = await page.evaluate(WHERE, '#panel-gallery');
 	check(w.inside, 'the panel gallery takes the focus when it opens', w.inside ? w.name : `focus is on ${w.name}`);
+	// The gallery holds Tab as the appearance menu does (workspace.js keepFocusIn).
+	const galStops = await page.evaluate(COUNT_IN, { sel: '#panel-gallery', focusSel: FOCUS_SEL });
+	let galLeft = -1;
+	for (let i = 0; i < galStops + 3; i++) {
+		await page.keyboard.press('Tab');
+		await page.waitForTimeout(50);
+		if (!(await page.evaluate(WHERE, '#panel-gallery')).inside) { galLeft = i + 1; break; }
+	}
+	check(galStops > 0 && galLeft === -1, `Tab stays inside the panel gallery (${galStops} stops, ${galStops + 3} presses)`,
+		galLeft === -1 ? null : `Tab ${galLeft} left it`);
 	await page.keyboard.press('Escape');
 	await page.waitForTimeout(350);
 	check(await page.evaluate(() => document.getElementById('panel-gallery').hidden === true),
@@ -926,10 +933,39 @@ if (await page.$('.dlg-card')) { await page.keyboard.press('Escape'); await page
 
 // (f) The focus-trap walk, run against a surface that genuinely does NOT trap.
 //
-// Not a broken copy of the dialog: the appearance menu is a real popover that
-// covers the app and lets Tab walk out of it (defect §9 in a11y_report.md), so
-// the identical walk that says "trapped" for the dialog must say "escaped" here.
-// If it does not, the walk is measuring nothing and the dialog's pass is empty.
+// Not a broken copy of the dialog and not a real popover: the appearance menu and
+// the gallery trap Tab now (workspace.js keepFocusIn, defect §9 in a11y_report.md),
+// so the positive control is a fixed div wearing role="dialog" with three buttons
+// and no key handler at all, as (e) uses a click-only span. The identical walk that
+// says "trapped" for the dialog must say "escaped" here. If it does not, the walk is
+// measuring nothing and the dialog's pass is empty.
+await page.evaluate(() => {
+	const d = document.createElement('div');
+	d.id = 'a11y-selftest-untrapped';
+	d.setAttribute('role', 'dialog');
+	d.setAttribute('aria-label', 'self-test control');
+	d.style.cssText = 'position:fixed;left:2px;bottom:40px;z-index:99999;background:#fff;padding:4px';
+	for (const t of ['one', 'two', 'three']) {
+		const b = document.createElement('button');
+		b.type = 'button';
+		b.textContent = t;
+		d.appendChild(b);
+	}
+	document.body.appendChild(d);
+	d.querySelector('button').focus();
+});
+const ctlStops = await page.evaluate(COUNT_IN, { sel: '#a11y-selftest-untrapped', focusSel: FOCUS_SEL });
+let leftCtl = false;
+for (let i = 0; i < ctlStops + 3; i++) {
+	await page.keyboard.press('Tab');
+	await page.waitForTimeout(50);
+	if (!(await page.evaluate(WHERE, '#a11y-selftest-untrapped')).inside) { leftCtl = true; break; }
+}
+red(leftCtl, `the same trap-walk reports an escape on an untrapped dialog (${ctlStops} stops)`);
+await page.evaluate(() => document.getElementById('a11y-selftest-untrapped').remove());
+
+// The appearance menu, which does hold Tab: the walk that just reported an escape
+// on the control must report none on the real popover.
 await press(page, '#settings-menu-btn');
 await page.waitForTimeout(350);
 const menuStops = await page.evaluate(COUNT_IN, { sel: '#settings-menu', focusSel: FOCUS_SEL });
@@ -939,7 +975,7 @@ for (let i = 0; i < menuStops + 3; i++) {
 	await page.waitForTimeout(50);
 	if (!(await page.evaluate(WHERE, '#settings-menu')).inside) { leftMenu = true; break; }
 }
-red(leftMenu, `the same trap-walk reports an escape on an untrapped popover (${menuStops} stops)`);
+red(!leftMenu, `Tab stays inside the appearance menu (${menuStops} stops, ${menuStops + 3} presses)`);
 await page.keyboard.press('Escape');
 await page.waitForTimeout(350);
 

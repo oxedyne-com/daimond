@@ -113,7 +113,10 @@
 	   moves in and out with it. */
 	.panel.rail .admin-body {
 		position: fixed;
-		top: 0;
+		/* Where the rail's own padding puts its content, which holds the hardware off:
+		   at 0 the drawer's head and Close lay under the status bar, out of reach
+		   (crawl, D-20261003-07). The max-height below already allowed for both insets. */
+		top: calc(8px + var(--safe-t));
 		bottom: auto;
 		left: 0;
 		right: 0;
@@ -655,7 +658,17 @@
 		font-size: var(--fs-xl-2xl);
 		cursor: pointer;
 	}
-	#msheet-ask-send:disabled { opacity: .4; }
+	#msheet-ask-send:disabled, #msheet-ask-send[aria-disabled="true"] { opacity: .4; }
+	/* Why a press on the dimmed pill did nothing: its own line above the field, there only while it says something. */
+	.msheet-ask { flex-wrap: wrap; }
+	.msheet-ask-note {
+		order: -1;
+		flex: 1 0 100%;
+		padding: 0 4px;
+		font-size: var(--fs-xs);
+		color: var(--text-secondary);
+	}
+	.msheet-ask-note[hidden] { display: none; }
 
 	/* While a sheet is up, the destination behind it is always the
 	   chat floor. Its own input bar is hidden — the ask pill speaks
@@ -767,12 +780,12 @@
 	   generic "Settings" heading and bottom Close, which duplicated it
 	   with the wrong title and no corner close. And size to the DYNAMIC
 	   viewport so a tall form scrolls inside instead of dragging. */
-	.modal { padding: 12px; align-items: flex-start; }
+	.modal { padding: calc(12px + var(--safe-t)) 12px 12px; align-items: flex-start; }
 	.modal-card {
 		width: 100%;
 		max-width: 520px;
 		margin: 0 auto;
-		max-height: calc(100dvh - 24px);
+		max-height: calc(100dvh - 24px - var(--safe-t));
 		padding: 16px;
 	}
 	/* The About card's two bleeding children cancel the card's padding out, so
@@ -784,7 +797,7 @@
 	   phone does not show, so on a phone the card ran past the fold and cut
 	   "Create account" in half. The dynamic viewport is the honest measure, and
 	   the card scrolls inside it. */
-	#identity-modal .modal-card { max-height: calc(100dvh - 24px); }
+	#identity-modal .modal-card { max-height: calc(100dvh - 24px - var(--safe-t)); }
 	/* The hosted view's own head is the card's heading everywhere now, and the
 	   bottom Close is hidden everywhere with it (both in app.css), so nothing
 	   about the settings card needs saying twice here. */

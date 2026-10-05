@@ -782,6 +782,8 @@
 	// ── 휴대폰 화면 ────────────────────────────────────────────
 	'sheet.panel':   '패널',
 	'sheet.ask':     '질문',
+	'sheet.ask_empty': '질문을 입력하세요.',
+	'common.not_ready': '아직 준비되지 않았습니다.',
 	'sheet.ask_ph':  '이것에 대해 물어보기…',
 	// {thing}은 패널 이름이에요.
 	'sheet.ask_about': '이 {thing}에 대해 물어보기…',
@@ -2021,6 +2023,7 @@
 	'files.browser_switch': '에이전트를 브라우저 안의 개인 작업 공간으로 되돌려요.',
 	'files.browser_help': '이 브라우저에 저장되고 동기화돼요.',
 	'files.mode_machine': '이 기기',
+	'files.refreshed': '새로 고침했습니다.',
 	'files.machine_here': '에이전트가 이 실제 폴더를 읽고 써요. 동기화되지 않아요.',
 	'files.machine_pick': '이 컴퓨터의 폴더예요. 동기화하지 않아요.',
 	'files.machine_needs_chromium': '실제 폴더는 Chromium 기반 브라우저가 필요해요.',
@@ -2192,6 +2195,7 @@
 	'compose.draft':             '임시 보관',
 	'compose.remove_attachment': '이 첨부 빼기',
 	'compose.err_no_to':         '누구에게 가는지 적어 주세요.',
+	'compose.none_open': '열린 메시지가 없습니다.',
 	'compose.send_title':        '이 메시지를 보낼까요?',
 	'compose.send_body':         '{from}에서 보내지고, 되돌릴 수 없어요.',
 	'compose.discard_title':     '이 임시 보관 메일을 버릴까요?',

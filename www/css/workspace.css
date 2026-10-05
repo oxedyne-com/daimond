@@ -316,7 +316,7 @@
 	display: flex;
 	align-items: flex-start;
 	justify-content: center;
-	padding: 12vh 16px 16px;
+	padding: max(12vh, calc(var(--safe-t) + 8px)) 16px 16px;
 }
 .pal-scrim[hidden] { display: none; }
 .pal-box {
@@ -389,5 +389,5 @@
    sideways, which is what a phone does with a list too long for its width.
    Its rules are in css/mobile.css, with the rest of the phone shell. */
 @media (max-width: 760px) {
-	.pal-scrim { padding-top: 6vh; }
+	.pal-scrim { padding-top: max(6vh, calc(var(--safe-t) + 8px)); }
 }

@@ -92,14 +92,14 @@ function daimondSrc() {
 		// The stream goes: the two-pass loop is replaced by the old up-front loop
 		// that reads and HOLDS every transcript in one array before returning.
 		const body = funcBody(src, 'async function collectChatsRefs(inlineBudget) {');
-		const broken = body.replace('var live = {}, out = [], fixes = [];',
-			'var recs = []; for (var z = 0; z < sums.length; z++) { var gz = await ChatStore.loadMessages(sums[z].id); recs.push({ id: sums[z].id, serial: JSON.stringify(gz.messages || []) }); }\n\t\tvar live = {}, out = [], fixes = [];');
+		const broken = body.replace('var live = {}, out = [];',
+			'var recs = []; for (var z = 0; z < sums.length; z++) { var gz = await ChatStore.loadMessages(sums[z].id); recs.push({ id: sums[z].id, serial: JSON.stringify(gz.messages || []) }); }\n\t\tvar live = {}, out = [];');
 		src = src.replace(body, broken);
 	}
 	if (BREAK === 'noreuse') {
 		// The reuse-without-load path goes: a ref always loads and recomputes,
 		// exactly as it did before the summary carried a trustworthy fp.
-		src = src.replace('if (stored && sum.fp && stored.fp === sum.fp && Array.isArray(stored.chunks)) {',
+		src = src.replace('if (stored && fpHave && stored.fp === fpHave && Array.isArray(stored.chunks)) {',
 			'if (false) {  // BROKEN: reuse-without-load removed');
 	}
 	if (BREAK === 'perframe') {
@@ -136,11 +136,12 @@ function sourceGuards() {
 			!/recs\.push\(\{[^}]*serial/.test(body), 'a per-chat serial is being accumulated');
 		check('a transcript is released after use (msgs = null in the ref arm)',
 			body.includes('msgs = null;'), 'no release of the loaded transcript');
-		check('the inline set is ranked from summary bytes, not a load',
-			body.includes('typeof s.bytes === \'number\'') && body.includes('spent + b <= budget'),
-			'ranking still needs a loaded length');
+		check('the inline set is ranked from summary bytes, and a summary with none is measured, not assumed large',
+			body.includes('typeof s.bytes === \'number\'') && body.includes('spent + b <= budget')
+			&& body.includes('meas[u.id] = { bytes: serU.length'),
+			'ranking still reads an unmeasured summary as too large to ride inline');
 		check('a ref whose summary fp matches the manifest is reused WITHOUT a load',
-			body.includes('stored.fp === sum.fp'), 'reuse-without-load path absent');
+			body.includes('stored.fp === fpHave') && body.includes('var fpHave = sum.fp ||'), 'reuse-without-load path absent');
 		check('the authoritative fp/bytes are written back for next time',
 			body.includes('fixes.push({ id: id, bytes: serial.length, fp: fp, seed: seed0 })')
 			&& body.includes('ChatStore.noteFps'), 'noteFps writeback absent');
@@ -252,16 +253,25 @@ function world(chats) {
 async function collect(w, budget) {
 	const sums = Object.values(w.summaries);
 	const canOffload = true;
-	const inline = {};
+	const inline = {}, meas = {}, fixes = [];
 	{
 		const order = sums.slice().sort(freshestFirst);		// the app's own order (r53 QA F4)
+		// A summary with no `bytes` is measured from the store, one at a time (5 Oct 2026),
+		// not read as too large to ride inline; `chatrefmeasure.test.mjs` drives the real one.
+		for (const u of order) {
+			if (typeof u.bytes === 'number') continue;
+			const got = await w.loadMessages(u.id);
+			const sr = JSON.stringify(got.messages || []);
+			meas[u.id] = { bytes: sr.length, fp: fileHash(sr) };
+			fixes.push({ id: u.id, bytes: sr.length, fp: meas[u.id].fp });
+		}
 		let spent = 0;
 		for (const s of order) {
-			const b = typeof s.bytes === 'number' ? s.bytes : Infinity;
+			const b = typeof s.bytes === 'number' ? s.bytes : (meas[s.id] ? meas[s.id].bytes : Infinity);
 			if (b <= SYNC_FILE_MAX && spent + b <= budget) { inline[s.id] = 1; spent += b; }
 		}
 	}
-	const out = [], fixes = [];
+	const out = [];
 	for (const sum of sums) {
 		const id = sum.id;
 		const stored = w.cloud[id] || null;
@@ -270,7 +280,8 @@ async function collect(w, budget) {
 			out.push({ id, messages: got.messages });
 			continue;
 		}
-		if (stored && sum.fp && stored.fp === sum.fp && Array.isArray(stored.chunks)) {
+		const fpHave = sum.fp || (meas[id] ? meas[id].fp : '');
+		if (stored && fpHave && stored.fp === fpHave && Array.isArray(stored.chunks)) {
 			out.push({ id, messages: null, messagesRef: { key: stored.key, chunks: stored.chunks } });
 			continue;
 		}

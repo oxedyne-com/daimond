@@ -383,6 +383,7 @@
 	function close() {
 		if (_open && _open.parentNode) _open.parentNode.removeChild(_open);
 		_open = null;
+		DaimondLayers.done('support');
 	}
 
 	/// The one-tap action, called from the error toast and from Settings.
@@ -442,6 +443,7 @@
 		wrap.appendChild(card);
 		document.body.appendChild(wrap);
 		_open = wrap;
+		DaimondLayers.open('support', close);
 		go.focus();
 	}
 

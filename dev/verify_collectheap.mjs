@@ -127,11 +127,12 @@ try {
 	note(`seeded ${TOTAL} chats: ${seeded.small} small (~${(SMALL_BYTES/1024)|0} kB, inline) + ${seeded.large} large (~${(LARGE_BYTES/1024)|0} kB, offload)`);
 
 	// ── WARM-UP collect ──────────────────────────────────────────
-	// A freshly-saved mirror carries no `bytes` on its summaries -- `save` stores the
-	// list verbatim, and only a collect's `noteFps` writes the serialised length
-	// back. So the COLD collect ranks every chat as a ref (unknown size = too large
-	// to ride inline), offloads them all, and lands the bytes and the manifests. The
-	// inline set therefore appears on the SECOND collect, which is the one measured.
+	// The COLD collect: `save` measures a transcript in hand (`carryChatFigures`), and a
+	// summary that arrives with no `bytes` is measured from the store in pass 1 of the
+	// collect (5 Oct 2026; it was read as too large to ride inline, which sent a small
+	// chat as a reference). So the inline set is already right on this collect, the large
+	// transcripts are offloaded and `noteFps` lands the manifests, and the SECOND collect
+	// is the quiet one that is measured.
 	const first = await page.evaluate(async () => {
 		const store = window.DaimondCore.chatStore();
 		store.resetLoadCount();
@@ -143,15 +144,16 @@ try {
 	});
 	note(`warm-up collect: loaded ${first.load}, parcel ${first.chats} chats = ${first.inlineN} inline + ${first.refN} refs, ${first.puts} put(s), ${first.store} chunks in store`);
 
-	// Precondition: in the healthy run the cold collect offloaded (nearly) every chat
-	// to a ref; in --break nothing offloads and every chat rides inline (load-all).
+	// Precondition: in the healthy run the cold collect offloaded every LARGE chat to a
+	// ref (the small ones ride inline); in --break nothing offloads and every chat rides
+	// inline (load-all).
 	if (BREAK) {
 		check('BREAK: with offload OFF, every chat rides inline (load-all)', first.inlineN === first.chats,
 			`${first.inlineN}/${first.chats} inline`);
 	} else {
-		check('offload armed: the cold collect moved (nearly) every transcript out to a ref',
-			first.refN >= TOTAL - 5 && first.puts > 0,
-			`${first.refN} refs of ${first.chats}, ${first.puts} put(s)`);
+		check('offload armed: the cold collect moved every large transcript out to a ref',
+			first.refN >= TOTAL - SMALL - 5 && first.puts > 0,
+			`${first.refN} refs of ${first.chats} (${seeded.large} large), ${first.puts} put(s)`);
 	}
 
 	// ── SECOND, quiet collect: the gate ──

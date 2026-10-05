@@ -274,6 +274,7 @@
 	function close() {
 		if (_open && _open.parentNode) _open.parentNode.removeChild(_open);
 		_open = null;
+		DaimondLayers.done('report');
 	}
 
 	/// Open the confirmation sheet for one message.
@@ -436,6 +437,7 @@
 		wrap.appendChild(card);
 		document.body.appendChild(wrap);
 		_open = wrap;
+		DaimondLayers.open('report', close);
 		go.focus();
 		return wrap;
 	}
@@ -459,6 +461,7 @@
 		wrap.appendChild(card);
 		document.body.appendChild(wrap);
 		_open = wrap;
+		DaimondLayers.open('report', close);
 		no.focus();
 	}
 

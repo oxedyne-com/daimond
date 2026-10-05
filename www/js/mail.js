@@ -3177,11 +3177,13 @@
 		card.appendChild(row);
 		back.appendChild(card);
 		document.body.appendChild(back);
+		var lid = DaimondLayers.open(DaimondLayers.uid('dialog'), function () { close(); });
 
 		var prev = document.activeElement;
 		function close() {
 			document.removeEventListener('keydown', onKey, true);
 			back.remove();
+			DaimondLayers.done(lid);
 			if (prev && prev.focus) { try { prev.focus(); } catch (e) { /* gone */ } }
 		}
 		function onKey(e) {

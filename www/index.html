@@ -1592,6 +1592,7 @@
 	<div class="msheet-tabs" id="msheet-tabs" role="tablist" hidden></div>
 	<div class="msheet-scroll" id="msheet-body"></div>
 	<div class="msheet-ask" id="msheet-ask">
+		<div class="msheet-ask-note" id="msheet-ask-note" role="status" hidden></div>
 		<input id="msheet-ask-input" type="text" placeholder="Ask about this…" autocomplete="off" autocapitalize="sentences" spellcheck="true" data-i18n-placeholder="sheet.ask_ph">
 		<button id="msheet-ask-send" title="Ask" aria-label="Ask" data-i18n-title="sheet.ask" data-i18n-aria-label="sheet.ask"><svg class="ic send-arrow" viewBox="0 -2 24 24" aria-hidden="true"><path d="M12 16V4M8 8l4-4 4 4"/></svg></button>
 	</div>
@@ -1768,6 +1769,13 @@
      dialog, popover, drawer and sheet wears, and it is loaded before ANY of
      them so a classic script and the wasm module can both reach for it. -->
 <script src="js/closer.js"></script>
+<!-- layers.js: the layer stack. Every drawer, sheet, menu, dialog and the palette
+     registers here so that the platform's Back closes the top one rather than
+     leaving the app. Loaded with the closer, before anything that opens a surface. -->
+<script src="js/layers.js"></script>
+<!-- answer.js: the answer rule. A control a person presses acts or visibly says why it cannot;
+     one that cannot is disabled with the reason as its title. Before every file that binds one. -->
+<script src="js/answer.js"></script>
 <!-- journal.js: the write-ahead log for in-flight work. Loaded early so it is
      ready before the first turn. -->
 <script src="js/journal.js"></script>

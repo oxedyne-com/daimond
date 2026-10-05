@@ -680,7 +680,7 @@
 
 	function close(returnFocus) {
 		if (!pop || pop.hidden) return;
-		pop.hidden = true;
+		DaimondWorkspace.hidePop(pop);
 		if (chip) {
 			chip.setAttribute('aria-expanded', 'false');
 			// Not when another popover is taking over: its own opener is about to place the focus.

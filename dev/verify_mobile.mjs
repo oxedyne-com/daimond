@@ -268,7 +268,14 @@ check('sheet: tools has no ask pill', await page.evaluate(() =>
 	document.getElementById('msheet-ask').classList.contains('hidden')));
 
 // ── 5. Close returns the guest to the stage ────────────────
-await page.evaluate(() => document.getElementById('msheet-close').click());
+// connectMock left the Admin view open in the rail; on the phone it is re-hosted as a modal card over the sheet's x, and a real press lands on the card.
+await page.evaluate(() => window.DaimondAdmin.close());
+// A real mouse press, not a DOM .click(): the x sits in the grab bar, and a press that took the bar's pointer
+// capture sent its click to the bar (r533 QA). A script's .click() never goes through a pointer.
+{
+	const b = await page.evaluate(() => { const r = document.getElementById('msheet-close').getBoundingClientRect(); return { x: r.x + r.width / 2, y: r.y + r.height / 2 }; });
+	await page.mouse.click(b.x, b.y);
+}
 await sleep(400);
 check('close: sheet down', await page.evaluate(() => !window.DaimondSheet.isOpen() && !document.body.classList.contains('sheet-open')));
 check('close: guest back in the stage', await page.evaluate(() => {
@@ -281,7 +288,9 @@ check('close: engine marks it closed', await page.evaluate(() => !window.Daimond
 await raise('web');
 const asked = await page.evaluate(async () => {
 	const before = document.querySelectorAll('.chat-msg-user').length;
-	document.getElementById('msheet-ask-input').value = 'what is this page';
+	const q = document.getElementById('msheet-ask-input');
+	q.value = 'what is this page';
+	q.dispatchEvent(new Event('input', { bubbles: true }));		// the pill is disabled until the field says it has a question
 	document.getElementById('msheet-ask-send').click();
 	await new Promise(r => setTimeout(r, 600));
 	const after = document.querySelectorAll('.chat-msg-user').length;

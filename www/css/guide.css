@@ -55,6 +55,8 @@ a:hover { text-decoration: underline; }
 .site-head {
 	position: sticky;
 	top: 0;
+	/* Under the system bar, not behind it: the brand and the nav are controls. */
+	padding-top: var(--safe-t);
 	z-index: 10;
 	background: var(--bg-secondary);
 	border-bottom: 1px solid var(--border);
@@ -149,8 +151,16 @@ ul, ol { margin: 0.6rem 0; padding-left: 1.4rem; }
 li { margin: 0.35rem 0; }
 
 /* A control the reader must find on screen: a small pill that stands in for a
-   button or a row label in the app. */
+   button or a row label in the app. It is a box of its own (inline-block), so a
+   short label moves whole to the next line and a long one, such as the German
+   "Haben Sie einen Passcode oder einen Kopplungscode?", wraps inside its own
+   rounded fill instead of being cut mid-label or pushing the page wider than
+   the phone. It used to be nowrap, and the front page of de, es, fr, ja and
+   pt-BR scrolled sideways, which on de, fr and ja moved the layout viewport so
+   that a tap at a link missed it (dev/verify_guidewidth.mjs holds the width). */
 .ui {
+	display: inline-block;
+	max-width: 100%;
 	font-family: var(--font);
 	font-weight: 600;
 	color: var(--accent-text);
@@ -158,8 +168,13 @@ li { margin: 0.35rem 0; }
 	border: 1px solid transparent;
 	border-radius: var(--radius-sm);
 	padding: 0.05em 0.4em;
-	white-space: nowrap;
+	white-space: normal;
+	overflow-wrap: anywhere;
 	font-size: 0.92em;
+	/* Tighter than the body's 1.6, so a one-line pill sits inside the line it is in
+	   and does not push its neighbours apart (measured: 1.35 still grew the line by
+	   about a pixel); a wrapped one reads as one label. */
+	line-height: 1.2;
 }
 
 code, kbd {

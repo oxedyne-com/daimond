@@ -3012,7 +3012,10 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		/// row (seq 213, Stage 1). The app calls this when a chat is opened, or whenever a
 		/// consumer needs a whole transcript the summary mirror does not hold. Never throws:
 		/// a row that will not read hands back an empty transcript rather than a rejection
-		/// the open path would have to catch.
+		/// the open path would have to catch. That empty answer carries `failed: true` (the key
+		/// only when true) when the read threw, or when the cold budget ran out on a chat that
+		/// durable state says holds messages, so a caller that MEASURES the transcript (the
+		/// parcel's pass 1, which packs and sizes it) can tell a lied-to empty from a real one.
 		async function loadMessages(chatId, readOnly) {
 			try {
 				await conn();
@@ -3028,6 +3031,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 				var COLD_TRIES = 12;	// re-reads after the first
 				var COLD_GAP   = 50;	// ms between them (<=600ms worst case)
 				var st, row, sum, chunkMsgs, legacyMsgs, tombs, full;
+				var cold = false;	// the budget ran out on a read that durable state says should hold messages
 				for (var attempt = 0; ; attempt++) {
 					// STAGE 2 (seq 214): the CHUNKS are the source of truth, so the transcript
 					// is reconstructed from them -- which also seeds this chat's append cursor,
@@ -3060,7 +3064,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 					var expects = (sum && sum.msgCount > 0)
 						|| legacyMsgs.length > 0
 						|| (st.physical || 0) > 0;
-					if (!expects || attempt >= COLD_TRIES) break;
+					if (!expects || attempt >= COLD_TRIES) { cold = expects; break; }
 					await new Promise(function (r) { setTimeout(r, COLD_GAP); });
 				}
 				// THE READ IS THE STORED FORM of the join (`slimMessages`), so a read serves
@@ -3094,9 +3098,11 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 						var tt = tx('readwrite'); tt.store.put(row); await tt.done;
 					} catch (e) { /* the reader already served the truth; the row heals next time */ }
 				}
-				return { messages: toStore, session: (row && row.session) || null };
+				var res = { messages: toStore, session: (row && row.session) || null };
+				if (cold) { res.failed = true; }
+				return res;
 			} catch (e) {
-				return { messages: [], session: null };
+				return { messages: [], session: null, failed: true };
 			}
 		}
 
@@ -4264,13 +4270,15 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 	/// (`bytes`, `fp`, `seed`) that the callers' own records never carry (F3b-0, F3e).
 	///
 	/// `collectChatsRefs` ranks the inline set from `bytes` and reuses a manifest on
-	/// `fp`, and reads a summary with neither as too large to ride inline. The mirror
-	/// is replaced whole by `ChatStore.save`, and every list handed to it is built from
-	/// `slimChat` output (`persistChats` at the head of each collect, and the merge
+	/// `fp`, and MEASURES a summary with neither from the store (one load, once). The
+	/// mirror is replaced whole by `ChatStore.save`, and every list handed to it is built
+	/// from `slimChat` output (`persistChats` at the head of each collect, and the merge
 	/// `applyChats` saves), which has neither, so every save wiped what the boot read
 	/// and `noteFps` had put there: after it every transcript, an empty one included,
-	/// left as a reference, was loaded and fingerprinted, and the figures went back
-	/// only to be wiped at the next save.
+	/// was loaded and fingerprinted, and the figures went back only to be wiped at the
+	/// next save. (Until 5 Oct 2026 the collect read the missing figure as "too large to
+	/// ride inline", so a wiped chat went as a reference whatever its size; see the
+	/// measuring pass in `collectChatsRefs`.)
 	///
 	/// `bytes` only ranks, so it is the measure of the copy in hand, or the prior
 	/// entry's for a transcript not in hand while it stands (the same message count and
@@ -4289,7 +4297,12 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 	/// is there is measured and answers to the seed, resident or not, and an entry that
 	/// holds none keeps the prior pair while the count and the standing stand. A chat
 	/// with no messages at all, and none before it, is two bytes. Otherwise the entry is
-	/// left without, as "unknown", and the collect measures it as before.
+	/// left without, as "unknown", and the collect measures it from the store. That is
+	/// deliberate and not a gap to close here: the copy in hand of a chat not resident may
+	/// be behind the store, and a figure that understated the stored transcript would
+	/// let it ride inline and overspend the budget, since nothing corrects the `bytes` of
+	/// an inline entry until the next save. The collect's measure is of the store itself, so the form of a chat in
+	/// the parcel cannot follow what a save did or did not leave here.
 	function carryChatFigures(list, prior) {
 		var by = {};
 		(prior || []).forEach(function (c) { if (c && c.id) by[c.id] = c; });
@@ -10036,26 +10049,54 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		var budget = (inlineBudget === undefined || inlineBudget === null)
 			? SYNC_CHATS_INLINE_MAX : Math.max(0, inlineBudget | 0);
 
-		// PASS 1 -- RANK THE INLINE SET FROM SUMMARIES ALONE, no transcript loaded. The
-		// freshest keep theirs; once the budget is spent the rest become refs -- EVEN a
-		// transcript under SYNC_FILE_MAX -- so the SUM of many small chats cannot push
-		// the parcel past the gateway's front door. Ranked freshest-first, ties by id,
-		// so two collects of one state pick the same set and the parcel stays the fixed
-		// point the push-skip needs. The budget spends against each summary's `bytes`
-		// (the serialised transcript length, order-independent, so a re-collect ranks
-		// identically); a summary with no known `bytes` -- an un-migrated store, a chat
-		// this build never saved -- is treated as too large to ride inline, so it
-		// becomes a ref, is loaded and measured in pass 2, and `noteFps` writes its
-		// bytes back for next time. That is the conservative direction: it never
-		// overspends the inline budget. Off when nothing can be offloaded -- the budget
-		// cannot bind with nowhere to move a transcript to.
-		var inline = {};
+		// PASS 1 -- RANK THE INLINE SET FROM SUMMARIES, loading a transcript only to
+		// MEASURE one that has no figure. The freshest keep theirs; once the budget is
+		// spent the rest become refs -- EVEN a transcript under SYNC_FILE_MAX -- so the SUM
+		// of many small chats cannot push the parcel past the gateway's front door. Ranked
+		// freshest-first, ties by id, so two collects of one state pick the same set and
+		// the parcel stays the fixed point the push-skip needs. The budget spends against
+		// each summary's `bytes` (the serialised transcript length, order-independent, so
+		// a re-collect ranks identically).
+		//
+		// A SUMMARY WITH NO `bytes` IS MEASURED, never assumed large. A merge into a chat
+		// not resident here wipes the figure (`carryChatFigures` cannot vouch for a copy it
+		// does not hold), and reading that as "too large to ride inline" sent a 1.8 kB chat
+		// as a reference, so its stored FORM followed a bookkeeping field instead of its
+		// size: a peer pushed it back inline a round later, and the last device online
+		// left the reference standing at the gateway with nothing to ask for another round.
+		// So the transcript is loaded here, ONE AT A TIME and released before the next,
+		// serialised, and the figure goes to `noteFps` with the seed the summary held when
+		// the collect began (a save since drops it). Each chat is measured once: every
+		// later collect finds the figure on the summary and loads nothing for it. A load
+		// that fails -- a throw, or the reader's own `failed` flag on the empty transcript it
+		// hands back for a read it could not make -- leaves the chat unmeasured, the
+		// conservative side (a ref, measured in pass 2), so measuring cannot fail a collect
+		// that would otherwise have gone through.
+		// Off when nothing can be offloaded -- the budget cannot bind with nowhere to move
+		// a transcript to.
+		var inline = {}, meas = {}, fixes = [];
 		if (canOffload) {
 			var order = sums.slice().sort(freshestFirst);
+			for (var q = 0; q < order.length; q++) {
+				var u = order[q];
+				if (!u || !u.id || typeof u.bytes === 'number') continue;
+				var useed = u.seed || '';			// before the await, for `noteFps`
+				try {
+					var gotU = await ChatStore.loadMessages(u.id);
+					// The reader never throws: a read it could not make comes back EMPTY and
+					// flagged `failed`, and measuring that would size the chat at 2 bytes.
+					if (gotU.failed) { gotU = null; continue; }
+					var serU = JSON.stringify(gotU.messages || []);
+					gotU = null;						// released before the next chat
+					meas[u.id] = { bytes: serU.length, fp: fileHash(serU) };
+					fixes.push({ id: u.id, bytes: meas[u.id].bytes, fp: meas[u.id].fp, seed: useed });
+					serU = null;
+				} catch (e) { /* stays unmeasured: a ref this round, measured in pass 2 */ }
+			}
 			var spent = 0;
 			for (var r = 0; r < order.length; r++) {
 				var s = order[r];
-				var b = (s && typeof s.bytes === 'number') ? s.bytes : Infinity;
+				var b = (s && typeof s.bytes === 'number') ? s.bytes : ((s && meas[s.id]) ? meas[s.id].bytes : Infinity);
 				if (b <= SYNC_FILE_MAX && spent + b <= budget) { inline[s.id] = 1; spent += b; }
 			}
 		}
@@ -10064,7 +10105,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		// loaded, packed (inline) or offloaded (ref), then RELEASED before the next chat.
 		// The model's own conversation never travels (collectSync stripped it), so
 		// `session` is nulled as it was in the inline map.
-		var live = {}, out = [], fixes = [];
+		var live = {}, out = [];
 		for (var j = 0; j < sums.length; j++) {
 			var sum = sums[j], id = sum.id;
 			var seed0 = sum.seed || '';		// the entry as this collect found it, for `noteFps`
@@ -10092,7 +10133,10 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			// and the manifest still names it. `fileHash` is a content hash, so an equal
 			// pair is identical bytes -- the same trust the fresh-fp reuse below makes.
 			// NOTHING is read from the database for this chat.
-			if (stored && sum.fp && stored.fp === sum.fp && Array.isArray(stored.chunks)) {
+			// A chat measured in pass 1 vouches with the fingerprint it just took from the
+			// store, so a stored manifest that still matches is reused without a second load.
+			var fpHave = sum.fp || (meas[id] ? meas[id].fp : '');
+			if (stored && fpHave && stored.fp === fpHave && Array.isArray(stored.chunks)) {
 				var entryR = slimChat(sum);
 				entryR.messages = null;
 				entryR.session = null;
@@ -10106,6 +10150,21 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			// The transcript is released before the next chat in every arm.
 			var got = await ChatStore.loadMessages(id);
 			var msgs = got.messages || [];
+			if (got.failed) {
+				// A read that could not be made is not an empty chat, and fingerprinting it
+				// would offload `[]` as the transcript. A stored manifest still names the last
+				// good copy, so it is reused with no figure recorded; with none, the chat waits
+				// a round (a gap in a parcel is never read as a deletion).
+				got = null; msgs = null;
+				if (stored && Array.isArray(stored.chunks)) {
+					var entryF = slimChat(sum);
+					entryF.messages = null;
+					entryF.session = null;
+					entryF.messagesRef = { v: stored.v, size: stored.size, key: stored.key, chunks: stored.chunks };
+					out.push(entryF);
+				}
+				continue;
+			}
 			got = null;
 			var serial = JSON.stringify(msgs);
 			var fp = fileHash(serial);
@@ -18548,6 +18607,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 
 			back.appendChild(card);
 			document.body.appendChild(back);
+			var lid = DaimondLayers.open(DaimondLayers.uid('dialog'), function () { close(nothing()); });
 
 			var prev = document.activeElement;
 		// Captured while the opener is still in the document: a panel that redraws
@@ -18588,6 +18648,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 				document.removeEventListener('keydown', onKey, true);
 				document.removeEventListener('keyup', onKeyUp, true);
 				back.remove();
+				DaimondLayers.done(lid);
 				refocus(prev, prevHost);
 				resolve(value);
 			}
@@ -20629,6 +20690,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 				if (v && v.parentNode !== body) body.insertBefore(v, formView);
 			});
 			modal.style.display = 'none';
+			DaimondLayers.done('admin-view');
 		}
 		/// The head the hosted view wears in the modal: what it is, and a × to close it.
 		///
@@ -20674,7 +20736,14 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			modalHead(title, formMode ? cancelForm : null, key);
 			slot.appendChild(v);
 			v.style.display = '';
+			var down = modal.style.display === 'none';
 			modal.style.display = 'flex';
+			// The card is the scroller and the head with the × is its first child. A
+			// browser gives a card that was scrolled, closed and shown again its old
+			// offset, so a view hosted anew starts at its head, not below the ×.
+			if (down) { var card = modal.querySelector('.modal-card'); if (card) card.scrollTop = 0; }
+			// What Back does here is what the head's × does: cancel a form, close a view.
+			DaimondLayers.open('admin-view', function () { (headClose || closeAdmin)(); });
 		}
 
 		/// Back out of the built form the way its own × does, so the promise the
@@ -20711,6 +20780,8 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			}
 			if (!drawerOpen) {
 				drawerOpen = true;
+				// Back does what the form's own × does when a form is up, so the caller's promise is answered.
+				DaimondLayers.open('admin', function () { if (escaper) cancelForm(); else closeAdmin(); });
 				// What had the keyboard when the drawer went up, so its closer can
 				// give it back. Only on the way IN: switching from Home to Models is
 				// not a new opening, and taking the reading again there would make
@@ -20754,6 +20825,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			curView = null;
 			if (adminWrap) adminWrap.classList.remove('admin-open', 'admin-form-mode');
 			drawerOpen = false;
+			DaimondLayers.done('admin');
 			document.removeEventListener('mousedown', outsideClose, true);
 			// The keyboard goes back to whatever opened the drawer -- the identity
 			// row or the cog. Left alone it fell to the document body, and the next
@@ -31392,6 +31464,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 
 		back.appendChild(card);
 		document.body.appendChild(back);
+		var lid = DaimondLayers.open(DaimondLayers.uid('dialog'), function () { close(); });
 
 		var prev = document.activeElement;
 		// Captured while the opener is still in the document: a panel that redraws
@@ -31402,6 +31475,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			document.removeEventListener('keydown', onKey, true);
 			if (sayPause) window.removeEventListener('daimond:pause', sayPause);
 			back.remove();
+			DaimondLayers.done(lid);
 			refocus(prev, prevHost);
 		}
 		function onKey(e) {
@@ -32734,9 +32808,11 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		// where `prev` does not. See `refocus`.
 		var prevHost = (prev && prev.closest) ? prev.closest('[id]') : null;
 		return new Promise(function (resolve) {
+			var lid = DaimondLayers.open(DaimondLayers.uid('dialog'), function () { close(true); });
 			function close(v) {
 				document.removeEventListener('keydown', onKey, true);
 				back.remove();
+				DaimondLayers.done(lid);
 				refocus(prev, prevHost);
 				resolve(v);
 			}
@@ -34682,6 +34758,10 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			} catch (e) { return null; }
 		},
 	};
+	// Readiness changes here. A control whose reason reads `DaimondCore.ask` (the Ask pill, which mobile.js
+	// builds, with a field the browser restored already holding text) was last asked while it was absent and
+	// would say "Not ready yet." until the next keystroke.
+	if (window.DaimondAnswer) DaimondAnswer.syncAll();
 	/// The composer, refitted to what is in it.
 	///
 	/// Skips a HIDDEN box (QA round 2, M1a): a `display:none` field reports
@@ -42950,7 +43030,8 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		///
 		/// At the top it is a composed view -- the Diamond's own directory listed
 		/// in full, then each attachment at its own name -- and below that it is an
-		/// ordinary listing of whichever real directory was opened.
+		/// ordinary listing of whichever real directory was opened. It says whether it drew a listing
+		/// (false: it drew the reason instead), so a caller does not announce a redraw that failed.
 		async function listDiamond(dir) {
 			curDir = dir || '';
 			// The DOCUMENT closes when you walk the tree; the preview does not.
@@ -42970,11 +43051,11 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 					err.className = 'files-empty';
 					err.textContent = toolReason(res);
 					treeEl.appendChild(err);
-					return;
+					return false;
 				}
 				renderTree(parseListing(res.text));
 				refreshResidency();
-				return;
+				return true;
 			}
 			// The composed root. The path line names it rather than showing "/",
 			// which would be a lie: this is not a directory.
@@ -43018,6 +43099,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 				treeEl.appendChild(hint);
 			}
 			refreshResidency();
+			return true;
 		}
 
 		/// A row for something in the Diamond's own directory: a real file in a
@@ -43301,7 +43383,10 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 				kitsEl.style.display = 'none';
 				reachEl.parentNode.insertBefore(kitsEl, reachEl.nextSibling);
 			}
-			panel.querySelector('[data-act="refresh"]').addEventListener('click', function () { list(curDir); });
+			// Refresh redraws the same rows when nothing changed, so a press looked like none: it says it ran.
+			DaimondAnswer.control(panel.querySelector('[data-act="refresh"]'), { act: async function () {
+				if (await list(curDir)) showModeMsg(t('files.refreshed'), false, 3000);
+			} });
 			var newBtn = panel.querySelector('[data-act="new-file"]');
 			if (newBtn) newBtn.addEventListener('click', newFile);
 			var dirBtn = panel.querySelector('[data-act="new-dir"]');
@@ -43886,8 +43971,8 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			return b;
 		}
 
-		// A transient note in the mode bar (errors, guidance).
-		function showModeMsg(text, isErr) {
+		// A note in the mode bar (errors, guidance). With `ms` it takes its own leave: an answer to a press, not a standing fact.
+		function showModeMsg(text, isErr, ms) {
 			if (!modeEl) return;
 			var old = modeEl.querySelector('.files-mode-msg');
 			if (old) old.remove();
@@ -43895,6 +43980,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			msg.className = 'files-mode-msg' + (isErr ? ' err' : '');
 			msg.textContent = stripAnsi(text);      // escaped, and free of terminal codes
 			modeEl.appendChild(msg);
+			if (ms) setTimeout(function () { if (msg.parentNode) msg.remove(); }, ms);
 		}
 
 		// Query, then (if needed) request read/write permission on a
@@ -44284,7 +44370,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		async function list(dir) {
 			// One panel, two trees. In Diamond scope the tree is the open
 			// Diamond's workspace, which is composed rather than listed.
-			if (diamondScope()) { await listDiamond(dir); return; }
+			if (diamondScope()) return await listDiamond(dir);
 			curDir = dir || '';
 			curFile = null; listed = true;
 			viewEl.style.display = 'none'; syncLineNo();   // the preview is not ours to close
@@ -44308,10 +44394,11 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 				// it stands and prettifies only a raw failure.
 				err.textContent = toolReason(res);            // escaped
 				treeEl.appendChild(err);
-				return;
+				return false;
 			}
 			renderTree(parseListing(res.text));
 			refreshResidency();
+			return true;
 		}
 
 		// ── What the tree used to keep from you, in one shut row ──────
@@ -51165,6 +51252,109 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		DaimondPanels.reflow();
 	}
 
+	// ── Compose: one panel, its buttons bound once ──────────────────
+	//
+	// The four buttons are bound at boot and read `composeCur`, the draft on show. They used to be cloned and
+	// bound afresh on every showing, so a panel shown with no draft (a restored layout, the dead-controls crawl)
+	// held four buttons with no handler at all, and a draft closed by Send or Discard left its handlers behind.
+	// Each now answers: with no draft open it is aria-disabled and a press says so; Send also waits for an address.
+	var composeCur = null;		// the draft on show: { v, atts, paint }, or null when none is open
+	var composeCtl = [];		// Send, Save Draft, Attach, Discard
+
+	function composeSay(msg, bad) {
+		var n = document.getElementById('compose-note');
+		if (!n) return;
+		n.textContent = msg;
+		n.className = 'compose-note' + (bad ? ' err' : '');
+	}
+	function composeSync() { composeCtl.forEach(function (c) { c.sync(); }); }
+	function composeHold(on) { composeCtl.forEach(function (c) { c.hold(on); }); }
+	function composeFields() {
+		var g = function (id) { return document.getElementById(id).value; };
+		return { from: g('compose-from'), to: g('compose-to'), cc: g('compose-cc'), subject: g('compose-subject'),
+			body: g('compose-text'), attachments: composeCur ? composeCur.atts : [] };
+	}
+	// The draft is finished with: let go of it, shut the panel, and have the buttons say none is open.
+	function composeClose() {
+		composeCur = null;
+		composeSync();
+		DaimondPanels.hide('compose');
+		DaimondPanels.reflow();
+	}
+
+	function initCompose() {
+		var send = document.getElementById('compose-send'), save = document.getElementById('compose-save');
+		var attach = document.getElementById('compose-attach'), discard = document.getElementById('compose-discard');
+		var file = document.getElementById('compose-file'), to = document.getElementById('compose-to');
+		if (!send || !save || !attach || !discard || !file || !to) return;
+		var why = function (row) {
+			return function () {
+				var k = row({ open: !!composeCur, to: to.value });
+				return k ? t(k) : '';
+			};
+		};
+		var R = DaimondAnswer.reasons;
+		composeCtl = [
+			DaimondAnswer.control(send, { can: why(R.send), fields: [to], say: composeSay, act: async function () {
+				var cur = composeCur, f = composeFields();
+				var ok = await confirmDialog(
+					t('compose.send_body', { from: f.from }),
+					t('compose.send'), { title: t('compose.send_title'), danger: false });
+				if (!ok || composeCur !== cur) return;
+				composeHold(true);
+				composeSay('Sending…');
+				try {
+					var j = await cur.v.send(f);
+					var cost = j && j.charged_minor ? ' · ' + DaimondGateway.fmtMoney(j.charged_minor, 'usd') : '';
+					composeSay('Sent.' + cost);
+					if (cur.v.sent) cur.v.sent('Sent to ' + f.to + '.' + cost);
+					composeClose();
+				} catch (e) {
+					composeSay(friendlyError(e), true);
+				} finally {
+					composeHold(false);
+				}
+			} }),
+			DaimondAnswer.control(save, { can: why(R.draft), say: composeSay, act: async function () {
+				var cur = composeCur;
+				composeHold(true);
+				try {
+					var path = await cur.v.save(composeFields());
+					composeSay('Saved to ' + path);
+				} catch (e) {
+					composeSay(friendlyError(e), true);
+				} finally {
+					composeHold(false);
+				}
+			} }),
+			DaimondAnswer.control(attach, { can: why(R.draft), say: composeSay, act: function () { file.click(); } }),
+			DaimondAnswer.control(discard, { can: why(R.draft), say: composeSay, act: async function () {
+				var cur = composeCur;
+				var ok = await confirmDialog(t('compose.discard_body'),
+					t('compose.discard'), { title: t('compose.discard_title'), danger: true });
+				if (!ok || composeCur !== cur) return;
+				await cur.v.discard();
+				composeClose();
+			} }),
+		];
+		file.addEventListener('change', async function () {
+			var cur = composeCur;
+			var picked = [].slice.call(file.files || []);
+			for (var i = 0; cur && i < picked.length; i++) {
+				var f = picked[i];
+				var buf = await f.arrayBuffer();
+				cur.atts.push({
+					name:  f.name,
+					type:  f.type || 'application/octet-stream',
+					size:  buf.byteLength,
+					bytes: new Uint8Array(buf),
+				});
+			}
+			file.value = '';
+			if (cur) cur.paint();
+		});
+	}
+
 	/// Write a message, on the stage, beside the daimon.
 	///
 	/// The panel owns the fields and the attachments; the mail module owns the draft — its
@@ -51185,11 +51375,11 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		var subj   = document.getElementById('compose-subject');
 		var text   = document.getElementById('compose-text');
 		var attBox = document.getElementById('compose-atts');
-		var note   = document.getElementById('compose-note');
 		var title  = document.getElementById('compose-title');
 		if (!from || !to || !text) return;
 
 		var atts = (d.attachments || []).slice();
+		composeSay('');
 
 		from.innerHTML = '';
 		(v.from || []).forEach(function (addr) {
@@ -51203,26 +51393,10 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		cc.value   = d.cc || '';
 		subj.value = d.subject || '';
 		text.value = d.body || '';
-		note.textContent = '';
-		note.className = 'compose-note';
 		title.textContent = d.subject
 			? t(d.inReplyTo ? 'msg.reply' : 'compose.draft') + ' · ' + d.subject
 			: t('compose.new_message');
 
-		function fields() {
-			return {
-				from:        from.value,
-				to:          to.value,
-				cc:          cc.value,
-				subject:     subj.value,
-				body:        text.value,
-				attachments: atts,
-			};
-		}
-		function say(msg, bad) {
-			note.textContent = msg;
-			note.className = 'compose-note' + (bad ? ' err' : '');
-		}
 		function paintAtts() {
 			attBox.innerHTML = '';
 			atts.forEach(function (att, i) {
@@ -51239,101 +51413,15 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		}
 		paintAtts();
 
-		var send    = document.getElementById('compose-send');
-		var save    = document.getElementById('compose-save');
-		var attach  = document.getElementById('compose-attach');
-		var file    = document.getElementById('compose-file');
-		var discard = document.getElementById('compose-discard');
-
-		// Each showing rebinds, so the buttons are replaced rather than added to: a listener
-		// left over from the last draft would send this one to the wrong person.
-		//
-		// `file` IS IN THIS LIST, and was not. It is the only one here that takes
-		// its listener below rather than above, so it looked like markup rather
-		// than a control and the rule the comment states was quietly not applied
-		// to it: every open added another `change` handler, each closed over a
-		// stale `atts` and a stale `paintAtts`, so the Nth open read every picked
-		// file into memory N times. The newest handler painted last, so the chips
-		// looked right, which is why it went unnoticed.
-		[send, save, attach, file, discard].forEach(function (b) {
-			var n = b.cloneNode(true);
-			b.parentNode.replaceChild(n, b);
-		});
-		send    = document.getElementById('compose-send');
-		save    = document.getElementById('compose-save');
-		attach  = document.getElementById('compose-attach');
-		file    = document.getElementById('compose-file');
-		discard = document.getElementById('compose-discard');
-
-		function busy(on) {
-			[send, save, attach, discard].forEach(function (b) { b.disabled = on; });
-		}
-
-		send.addEventListener('click', async function () {
-			var f = fields();
-			if (!f.to.trim()) { say(t('compose.err_no_to'), true); return; }
-			var ok = await confirmDialog(
-				t('compose.send_body', { from: f.from }),
-				t('compose.send'), { title: t('compose.send_title'), danger: false });
-			if (!ok) return;
-			busy(true);
-			say('Sending…');
-			try {
-				var j = await v.send(f);
-				var cost = j && j.charged_minor ? ' · ' + DaimondGateway.fmtMoney(j.charged_minor, 'usd') : '';
-				say('Sent.' + cost);
-				if (v.sent) v.sent('Sent to ' + f.to + '.' + cost);
-				DaimondPanels.hide('compose');
-				DaimondPanels.reflow();
-			} catch (e) {
-				say(friendlyError(e), true);
-			} finally {
-				busy(false);
-			}
-		});
-
-		save.addEventListener('click', async function () {
-			busy(true);
-			try {
-				var path = await v.save(fields());
-				say('Saved to ' + path);
-			} catch (e) {
-				say(friendlyError(e), true);
-			} finally {
-				busy(false);
-			}
-		});
-
-		attach.addEventListener('click', function () { file.click(); });
-		file.addEventListener('change', async function () {
-			var picked = [].slice.call(file.files || []);
-			for (var i = 0; i < picked.length; i++) {
-				var f = picked[i];
-				var buf = await f.arrayBuffer();
-				atts.push({
-					name:  f.name,
-					type:  f.type || 'application/octet-stream',
-					size:  buf.byteLength,
-					bytes: new Uint8Array(buf),
-				});
-			}
-			file.value = '';
-			paintAtts();
-		});
-
-		discard.addEventListener('click', async function () {
-			var ok = await confirmDialog(t('compose.discard_body'),
-				t('compose.discard'), { title: t('compose.discard_title'), danger: true });
-			if (!ok) return;
-			await v.discard();
-			DaimondPanels.hide('compose');
-			DaimondPanels.reflow();
-		});
+		composeCur = { v: v, atts: atts, paint: paintAtts };
+		// The fields were filled by script, which raises no input event: ask the buttons again.
+		composeSync();
 
 		DaimondPanels.show('compose');
 		DaimondPanels.reflow();
 		(d.to ? text : to).focus();
 	}
+
 
 	/// A mail date as a person writes one, falling back to the header verbatim when it will not
 	/// parse — a date we cannot read is still a date the reader may recognise.
@@ -59653,7 +59741,10 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		// composer hidden (`body.sheet-open .chat-input-bar { visibility: hidden }`,
 		// css/mobile.css) on a phone that resumed straight into a chat. Unlocking is a
 		// fresh app draw, so any stale sheet/drawer state is cleared here defensively.
-		try { document.body.classList.remove('sheet-open', 'drawer-open'); } catch (e) { /* no body */ }
+		try {
+			document.body.classList.remove('sheet-open');
+			if (window.DaimondShell) DaimondShell.closeDrawer();	// through the layer stack, not past it
+		} catch (e) { /* no body */ }
 		updateUserRow();
 		// The CONTENT, not the drawer: unlocking is not a request to open Admin.
 		DaimondAdmin.homeContent();
@@ -60448,9 +60539,11 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		// underneath replaces its CHILDREN and keeps its own box, so this survives
 		// where `prev` does not. See `refocus`.
 		var prevHost = (prev && prev.closest) ? prev.closest('[id]') : null;
+			var lid = DaimondLayers.open(DaimondLayers.uid('dialog'), function () { close(null); });
 			function close(value) {
 				document.removeEventListener('keydown', onKey, true);
 				back.remove();
+				DaimondLayers.done(lid);
 				refocus(prev, prevHost);
 				resolve(value);
 			}
@@ -64243,6 +64336,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		watchAgentsPanel();      // after init: the closers it listens through are bound there
 		DaimondAdmin.init();
 		initPauseUi();
+		initCompose();           // its buttons answer from the first moment, draft or none
 		if (window.DaimondMail) {
 			DaimondMail.init({
 				writeBytes:   Files.writeBytes,

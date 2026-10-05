@@ -25,6 +25,8 @@
 	'use strict';
 
 	var IX = window.GUIDE_INDEX;
+	var framed = false;
+	try { framed = !!window.parent && window.parent !== window; } catch (e) { /* alone */ }
 	if (!IX || !IX.sections || !IX.sections.length) return;
 	var W = IX.words || {};
 
@@ -365,7 +367,13 @@
 				// With nothing picked, Enter takes the best answer — which is
 				// what the reader meant by pressing it at all.
 				var go = sel >= 0 ? hits[sel] : hits[0];
-				if (go) { e.preventDefault(); window.location.href = go.href; }
+				if (go) {
+					e.preventDefault();
+					// Framed, a push would add an entry to the app's history
+					// (see frame.js, "Links, inside a frame").
+					if (framed) window.location.replace(go.href);
+					else window.location.href = go.href;
+				}
 			}
 		});
 		document.addEventListener('click', function (e) {

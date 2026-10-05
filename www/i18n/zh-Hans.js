@@ -777,6 +777,8 @@
 	// ── 手机界面 ───────────────────────────────────────────────
 	'sheet.panel':   '面板',
 	'sheet.ask':     '提问',
+	'sheet.ask_empty': '请输入问题。',
+	'common.not_ready': '尚未就绪。',
 	'sheet.ask_ph':  '就这个提问…',
 	// {thing} 是一个面板的名称。
 	'sheet.ask_about': '就这个{thing}提问…',
@@ -2015,6 +2017,7 @@
 	'files.browser_switch': '把智能体切回浏览器里的私有工作区。',
 	'files.browser_help': '保存在这个浏览器中，会同步。',
 	'files.mode_machine': '本机',
+	'files.refreshed': '已刷新。',
 	'files.machine_here': '智能体读写这个真实文件夹。它不会同步。',
 	'files.machine_pick': '这台电脑上的一个文件夹，不会同步。',
 	'files.machine_needs_chromium': '真实文件夹需要基于 Chromium 的浏览器。',
@@ -2186,6 +2189,7 @@
 	'compose.draft':             '草稿',
 	'compose.remove_attachment': '移除这个附件',
 	'compose.err_no_to':         '说清楚这封信要发给谁。',
+	'compose.none_open': '没有打开的邮件。',
 	'compose.send_title':        '要发出这封邮件吗？',
 	'compose.send_body':         '它会经由 {from} 发出，而且无法撤回。',
 	'compose.discard_title':     '要丢掉这份草稿吗？',

@@ -1294,6 +1294,17 @@
 		return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 	}
 
+	/// Open the page again. An address that cannot be opened (none at all, or the
+	/// guide's own relative one) is refused by `open` with the sheet's usual
+	/// words, and they are shown in the sheet's note like every other refusal,
+	/// not thrown out of the click where the person sees nothing.
+	function reload() {
+		if (state.driver === 'guide') { guide(); return Promise.resolve(); }
+		return open(state.url).catch(function (e) {
+			note(esc((e && e.message) || e));
+		});
+	}
+
 	function init(d) {
 		deps = d || {};
 		els.frame  = document.getElementById('web-frame');
@@ -1314,9 +1325,7 @@
 		els.frame.addEventListener('load', paintBack);
 		window.addEventListener('message', onBridgeMessage);
 		document.getElementById('web-takeover').addEventListener('click', takeover);
-		document.getElementById('web-reload').addEventListener('click', function () {
-			if (state.url) open(state.url);
-		});
+		document.getElementById('web-reload').addEventListener('click', reload);
 		document.getElementById('web-pop').addEventListener('click', function () {
 			if (state.url) window.open(state.url, '_blank', 'noopener');
 		});
@@ -1341,6 +1350,7 @@
 		init: init,
 		status: status,
 		open: open,
+		reload: reload,
 		guide: guide,
 		close: close,
 		fetch: fetchPage,

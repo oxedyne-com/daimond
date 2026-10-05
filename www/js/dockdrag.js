@@ -650,10 +650,18 @@
 			var panel = h.closest ? h.closest('.panel[data-panel]') : null;
 			if (!span || !panel) return;
 			var id = panel.dataset.panel;
-			span.title = t('dock.drag');
+			// A heading is offered as something to move only where it can be moved. A phone has no drag,
+			// and a tap on the word does nothing (the crawl pressed three of them, D-20261003-07), so
+			// there it is neither tabbable nor titled; the chip strip's keyboard mode still `focus()`es it.
+			if (isPhone()) {
+				span.title = '';
+				span.setAttribute('tabindex', '-1');
+			} else {
+				span.title = t('dock.drag');
+				span.setAttribute('tabindex', '0');
+			}
 			if (span.dataset.dockKeys) return;
 			span.dataset.dockKeys = '1';
-			span.setAttribute('tabindex', '0');
 			span.addEventListener('keydown', function (ev) {
 				onHeadKey(ev, id, panel.dataset.label || id);
 			});

@@ -565,9 +565,11 @@
 		scrim.appendChild(box);
 		// Where the keyboard was before this went up, so it can be given back.
 		var prev = document.activeElement;
+		var lid;
 		function close() {
 			document.removeEventListener('keydown', onKey, true);
 			try { document.body.removeChild(scrim); } catch (e) { /* already gone */ }
+			DaimondLayers.done(lid);
 			if (prev && prev.focus && prev.getClientRects && prev.getClientRects().length) {
 				try { prev.focus(); } catch (e) { /* gone with the redraw */ }
 			}
@@ -606,6 +608,7 @@
 			box.insertBefore(row, box.firstChild);
 		}
 		document.body.appendChild(scrim);
+		lid = DaimondLayers.open(DaimondLayers.uid('dialog'), function () { close(); });
 		// Once it is in the document and can be focused: the first control in it,
 		// so the keyboard starts inside the thing covering the screen. Not the
 		// closer, which is first in the document now -- landing on it would offer
@@ -841,7 +844,7 @@
 		try {
 			var h = (location.hash || '').replace(/[#&]?pair=[^&]*/, '');
 			if (h === '#') h = '';
-			history.replaceState({}, '', location.pathname + location.search + h);
+			history.replaceState(history.state, '', location.pathname + location.search + h);
 		} catch (e) {}
 	}
 

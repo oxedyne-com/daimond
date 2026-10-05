@@ -781,6 +781,8 @@
 	// ── スマートフォンの外枠 ───────────────────────────────────
 	'sheet.panel':   'パネル',
 	'sheet.ask':     '質問',
+	'sheet.ask_empty': '質問を入力してください。',
+	'common.not_ready': 'まだ準備できていません。',
 	'sheet.ask_ph':  'これについて質問…',
 	// {thing} はパネル名です。
 	'sheet.ask_about': 'この{thing}について質問…',
@@ -2022,6 +2024,7 @@
 	'files.browser_switch': 'エージェントをブラウザ内のプライベートな作業領域に戻します。',
 	'files.browser_help': 'このブラウザに保存され、同期します。',
 	'files.mode_machine': 'この端末',
+	'files.refreshed': '更新しました。',
 	'files.machine_here': 'エージェントはこの実際のフォルダーを読み書きします。同期はされません。',
 	'files.machine_pick': 'このコンピューター上のフォルダです。同期しません。',
 	'files.machine_needs_chromium': '実際のフォルダーには Chromium 系のブラウザが必要です。',
@@ -2193,6 +2196,7 @@
 	'compose.draft':             '下書き',
 	'compose.remove_attachment': 'この添付を外す',
 	'compose.err_no_to':         '宛先を書いてください。',
+	'compose.none_open': '開いているメッセージはありません。',
 	'compose.send_title':        'このメッセージを送りますか？',
 	'compose.send_body':         '{from} から送られ、取り消すことはできません。',
 	'compose.discard_title':     'この下書きを破棄しますか？',

@@ -1550,6 +1550,8 @@
 	// ── The phone shell ────────────────────────────────────────
 	'sheet.panel':   'Panel',
 	'sheet.ask':     'Ask',
+	'sheet.ask_empty': 'Type a question.',
+	'common.not_ready': 'Not ready yet.',
 	'sheet.ask_ph':  'Ask about this…',
 	// {thing} is a panel's name, lower-cased by the caller. A language where
 	// that reads badly should rewrite the sentence around it.
@@ -2820,6 +2822,7 @@
 	'files.browser_switch': 'Switch the agent back to the private in-browser workspace.',
 	'files.browser_help': 'Stored in this browser; syncs.',
 	'files.mode_machine': 'Machine',
+	'files.refreshed': 'Refreshed.',
 	'files.machine_here': 'The agent reads and writes this real folder. It does not sync.',
 	'files.machine_pick': 'A folder on this computer; does not sync.',
 	'files.machine_needs_chromium': 'Real folders need a Chromium-based browser.',
@@ -3102,6 +3105,7 @@
 	'compose.draft':             'Draft',
 	'compose.remove_attachment': 'Remove this attachment',
 	'compose.err_no_to':         'Say who it is going to.',
+	'compose.none_open': 'No message open.',
 	'compose.send_title':        'Send this message?',
 	'compose.send_body':         'It will be posted through {from}, and cannot be recalled.',
 	'compose.discard_title':     'Discard this draft?',

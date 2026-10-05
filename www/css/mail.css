@@ -393,7 +393,10 @@
 }
 .compose-btn:hover { color: var(--text-primary); }
 .compose-btn.danger:hover { border-color: var(--danger); color: var(--danger); }
-.compose-send:disabled, .compose-btn:disabled { opacity: 0.5; cursor: default; }
+.compose-send:disabled, .compose-btn:disabled,
+.compose-send[aria-disabled="true"], .compose-btn[aria-disabled="true"] { opacity: 0.5; cursor: default; }
+.compose-send[aria-disabled="true"]:hover { filter: none; }
+.compose-btn[aria-disabled="true"]:hover { color: var(--text-secondary); }
 .compose-note {
 	margin-left: auto;
 	font-size: var(--fs-xs); color: var(--text-secondary);

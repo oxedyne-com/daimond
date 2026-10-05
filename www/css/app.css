@@ -2109,6 +2109,10 @@ span.arte-open { cursor: default; }
 	overflow-wrap: anywhere;
 }
 .pop > .ui-head { margin-bottom: 4px; padding: 2px 0 2px 6px; }
+/* A popover taller than the glass scrolls inside itself (`openPop` holds it to the
+   glass), and its head -- the name and the Close -- stays where it is while the rows
+   pass under it. Pinned flush to the scroller's edge, over its own fill. */
+.pop > .ui-head { position: sticky; top: 0; z-index: 1; background: var(--bg-secondary); }
 
 /* Modal */
 .modal { position: fixed; inset: 0; background: rgba(0,0,0,0.6); display: flex; align-items: center; justify-content: center; z-index: 1000; }

@@ -1316,7 +1316,7 @@
 		if (!buy && !card) return null;
 		q.delete('buy'); q.delete('card');
 		var url = location.pathname + (q.toString() ? '?' + q : '');
-		history.replaceState({}, '', url);
+		history.replaceState(history.state, '', url);
 		// 'credits' | 'cancel' | 'pro' | 'card:saved' | 'card:cancel'
 		return buy || ('card:' + card);
 	}

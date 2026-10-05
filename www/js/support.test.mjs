@@ -163,6 +163,7 @@ function makeEnv(cfg) {
 	}
 	loadScript('store.js');
 	loadScript('stamp.js');		// index.html loads it before every register writer
+	loadScript('layers.js');	// the consent sheet is a layer, so it reports to the stack
 	loadScript('support.js');
 
 	return {
