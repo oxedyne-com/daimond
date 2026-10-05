@@ -281,10 +281,10 @@
 	/// width, and measure it and photograph it from inside, through `crystal.js`. The caller
 	/// (src/tools.rs) reads the stored page and `crystal.json` and sends them as `page` and
 	/// `data`, so this works whether or not the page is on screen and on a page just edited.
-	/// The table and the picture always come together.
+	/// The table and the picture come together unless the request says `"png": false`.
 	///
 	/// Request : { "in": "crystal", "page": text, "data": text, "id": the Diamond, "width"?: int, "selector"?: CSS,
-	///             "max_w"?: int, "background"?: CSS colour }
+	///             "max_w"?: int, "background"?: CSS colour, "png"?: false for the table alone }
 	/// Answer  : { "ok": true, "table": text, "png_b64"?: ..., "w"?: int, "h"?: int, "bytes"?: int }
 	function renderCrystal(req) {
 		if (!crystalDriver()) {
@@ -300,6 +300,7 @@
 			sel:        req.selector == null ? '' : String(req.selector),
 			max_w:      maxW > 0 ? maxW : 0,
 			background: req.background == null ? '' : String(req.background),
+			png:        req.png !== false,
 		}).then(function (r) {
 			var out = { ok: true, table: String(r.table) };
 			if (r.png_b64) {

@@ -475,6 +475,9 @@ pub struct LlmClient {
     /// See [`Blind`]; read by [`LlmClient::vision_guard`] and set by the strip-and-retry in
     /// [`LlmClient::stream_turn`] and [`LlmClient::chat_once`].
     blind:          Blind,
+    /// Set once a request that carried pictures has been answered, never refused: the model is
+    /// shown to take one. The other half of [`Blind`]; see [`LlmClient::mark_seen`].
+    seen:           Blind,
     /// How long a stream may go without a byte before it is read as stalled rather than
     /// slow; see [`stream_sse`](Self::stream_sse) and `Limits::stream_idle_ms` in
     /// `src/compact.rs`, which `Agent::set_stream_idle_ms` pushes down into this.  An
@@ -1130,6 +1133,7 @@ impl LlmClient {
             open_folds: std::rc::Rc::new(std::cell::RefCell::new(std::collections::HashSet::new())),
             tune:       std::rc::Rc::new(std::cell::Cell::new(ThinkTune::default())),
             blind:      new_blind(),
+            seen:       new_blind(),
             stream_idle_ms: std::rc::Rc::new(std::cell::Cell::new(DEFAULT_STREAM_IDLE_MS)),
             provider_routing: std::rc::Rc::new(std::cell::RefCell::new(ProviderRouting::default())),
             tls_config,
@@ -1182,6 +1186,7 @@ impl LlmClient {
             open_folds: std::rc::Rc::new(std::cell::RefCell::new(std::collections::HashSet::new())),
             tune:       std::rc::Rc::new(std::cell::Cell::new(ThinkTune::default())),
             blind:      new_blind(),
+            seen:       new_blind(),
             stream_idle_ms: std::rc::Rc::new(std::cell::Cell::new(DEFAULT_STREAM_IDLE_MS)),
             provider_routing: std::rc::Rc::new(std::cell::RefCell::new(ProviderRouting::default())),
             secure,
@@ -1314,6 +1319,7 @@ impl LlmClient {
             match outcome {
                 Ok(StreamOutcome { aborted, stalled }) => {
                     if blind_pending { self.mark_blind(); }
+                    else if images > 0 && !retried_blind && !aborted { self.mark_seen(); }
                     let thinking = acc.take_thinking();
                     let mut resp = acc.into_response(aborted, retries);
                     resp.stalled = stalled;
@@ -1447,6 +1453,7 @@ impl LlmClient {
             }
         };
         if blind_pending { self.mark_blind(); }
+        else if images > 0 && !retried_blind { self.mark_seen(); }
         let (content, tool_calls, use_, thinking) = match self.dialect {
             Dialect::OpenAi    => {
                 let (c, t, u) = parse_full_response(&raw);
@@ -1536,6 +1543,26 @@ impl LlmClient {
         { self.blind.set(true) }
     }
 
+    /// Has this endpoint answered a request that carried a picture without refusing it?
+    fn is_seen(&self) -> bool {
+        #[cfg(not(target_arch = "wasm32"))]
+        { self.seen.load(std::sync::atomic::Ordering::Relaxed) }
+        #[cfg(target_arch = "wasm32")]
+        { self.seen.get() }
+    }
+
+    /// Record that it has: the model takes a picture, whatever the allow-list says of its name.
+    ///
+    /// Learned, never persisted, and shared across clones as `blind` is. Set only where a
+    /// picture went out whole and the answer came back (not aborted, not the text-only retry),
+    /// so a refusal never proves anything and [`mark_blind`](Self::mark_blind) still outranks it.
+    pub(crate) fn mark_seen(&self) {
+        #[cfg(not(target_arch = "wasm32"))]
+        { self.seen.store(true, std::sync::atomic::Ordering::Relaxed) }
+        #[cfg(target_arch = "wasm32")]
+        { self.seen.set(true) }
+    }
+
     /// May a picture be put in front of this endpoint?
     ///
     /// Both halves of what is known, and nothing else: the deny-list [`model_can_see`] before any
@@ -1544,6 +1571,17 @@ impl LlmClient {
     /// so a model released after this line was written is taken to see until it says otherwise.
     pub fn can_take_images(&self) -> bool {
         model_can_see(&self.model) && !self.is_blind()
+    }
+
+    /// Is this endpoint KNOWN to take pictures: a model on the allow-list
+    /// ([`model_sight_proven`]) or one that has taken a picture ([`mark_seen`](Self::mark_seen)),
+    /// and has not been turned away?
+    ///
+    /// What the engine tells a tool, where [`can_take_images`](Self::can_take_images) is what the
+    /// request layer asks before it sends one.  A tool that spends a picture's bytes on the
+    /// chance that a model sees it asks this, so a model nobody has proven reads the table.
+    pub fn sight_proven(&self) -> bool {
+        self.can_take_images() && (self.is_seen() || model_sight_proven(&self.model))
     }
 
     /// The conversation as it must be sent: whole, or with the pictures turned into words when
@@ -3714,6 +3752,45 @@ pub(crate) fn model_can_see(model: &str) -> bool {
         "embedding",
     ];
     !BLIND.iter().any(|id| m.contains(id))
+}
+
+/// Whether `model` is KNOWN to take pictures, which is the narrower question than
+/// [`model_can_see`] and the one to ask before a picture is sent for the sake of a result.
+///
+/// An allow-list of the families that read them, where [`model_can_see`] is a deny-list that lets
+/// every model it does not know through.  A model that is allowed but not proven is offered a
+/// picture only where the request can afford the refusal that finds it out, and a Diamond's
+/// `capture` does not go to such a model blind: it takes the table.  Anything the deny-list or a
+/// refusal rules out is out here too.
+///
+/// # Arguments
+/// * `model` - The model id, in whatever form the user configured it.
+pub(crate) fn model_sight_proven(model: &str) -> bool {
+    if !model_can_see(model) {
+        return false;
+    }
+    let m = model.to_ascii_lowercase();
+    // The id without its vendor prefix and without a router's `:free` style suffix.
+    let base = m.rsplit('/').next().unwrap_or("").split(':').next().unwrap_or("");
+    // A leading token, so `o3-mini` is the model and `foo3` is not.
+    let leads = |t: &str| base == t || base.starts_with(&fmt!("{}-", t));
+    // `glm-4v`, `glm-4.5v`: a 4 series id whose first token ends in `v`.
+    let glm_v = base.strip_prefix("glm-")
+        .and_then(|r| r.split('-').next())
+        .map_or(false, |t| t.starts_with('4') && t.ends_with('v'));
+    m.contains("claude")
+        || base.starts_with("gpt-4o") || base.starts_with("chatgpt-4o") || base.starts_with("gpt-4.1")
+        || base.starts_with("gpt-4-turbo") || base.starts_with("gpt-4-vision")
+        || base.starts_with("gpt-4.5") || base.starts_with("gpt-5")
+        || leads("o1") || leads("o3") || leads("o4")
+        || m.contains("gemini")
+        || m.contains("pixtral")
+        || ((base.contains("llama-3.2") || base.contains("llama3.2")) && base.contains("vision"))
+        || base.contains("llama-4") || base.contains("llama4")
+        || (base.contains("qwen") && base.contains("-vl"))
+        || base.contains("qvq")
+        || base.contains("grok")
+        || glm_v
 }
 
 /// Translate an OpenAI-shaped tool array into the Anthropic one.
@@ -7340,6 +7417,57 @@ pub mod tests {
         assert!(!model_can_see("anthropic/claude-2.1"));
     }
 
+    /// A model is PROVEN to see only when its family is known to take pictures: the deny-list above
+    /// lets everything else through, and a Diamond's page is a picture that costs a vision request.
+    #[test]
+    fn test_only_a_known_family_is_proven_to_see() {
+        for m in ["claude-opus-5-5", "anthropic/claude-sonnet-4.5", "claude-3-5-haiku", "gpt-4o-mini",
+            "openai/gpt-4.1", "gpt-5", "o3-mini", "openai/o4-mini", "google/gemini-2.5-pro",
+            "mistralai/pixtral-large", "meta-llama/llama-3.2-90b-vision-instruct", "meta-llama/llama-4-scout",
+            "qwen/qwen2.5-vl-72b-instruct", "x-ai/grok-4", "z-ai/glm-4.5v"]
+        {
+            assert!(model_sight_proven(m), "{} takes pictures and is not proven to", m);
+        }
+        for m in ["some-vendor/brand-new-model-9", "mock/eyes", "deepseek/deepseek-chat", "moonshotai/kimi-k2",
+            "gpt-4", "gpt-3.5-turbo", "anthropic/claude-2.1", "claude-instant-1.2", "meta-llama/llama-3.2-3b-instruct",
+            "o1-mini", "foo3", "qwen/qwen-2.5-72b-instruct"]
+        {
+            assert!(!model_sight_proven(m), "{} is not known to take pictures and is proven to", m);
+        }
+        // Proven is never wider than allowed: what the deny-list or a refusal rules out is out.
+        assert!(!model_sight_proven("claude-2.0") && model_can_see("some-vendor/brand-new-model-9"));
+    }
+
+    /// The GPT ids that took pictures before the allow-list existed are on it by name: the list is
+    /// only the seed, but a seed that leaves out `gpt-4-turbo` turns a sighted model into a
+    /// table-reader until somebody happens to attach a picture to it.
+    #[test]
+    fn test_the_seed_list_names_the_gpt_ids_that_took_pictures_before_it() {
+        for m in ["chatgpt-4o-latest", "openai/chatgpt-4o-latest", "gpt-4-turbo", "gpt-4-turbo-2024-04-09",
+            "openai/gpt-4-turbo-preview", "gpt-4-vision-preview", "openai/gpt-4-vision-preview",
+            "o1", "openai/o1", "o1-2024-12-17", "o1-pro"]
+        {
+            assert!(model_can_see(m), "{} was never refused by the deny-list", m);
+            assert!(model_sight_proven(m), "{} took pictures before r534 and is not proven to", m);
+        }
+        // Still out: the o1 models that never took one, and plain gpt-4.
+        for m in ["o1-mini", "o1-preview", "openai/o1-mini", "gpt-4", "gpt-4-0613", "gpt-4-32k"] {
+            assert!(!model_sight_proven(m), "{} does not take pictures and is proven to", m);
+        }
+    }
+
+    /// The client is proven to see only while its model is proven AND it has not been turned away.
+    #[test]
+    fn test_a_client_is_proven_to_see_until_it_is_caught_refusing() {
+        let known = test_client("localhost", 1, "anthropic/claude-opus-5");
+        assert!(known.sight_proven() && known.can_take_images());
+        known.mark_blind();
+        assert!(!known.sight_proven() && !known.can_take_images(), "a refusal withdraws the proof");
+        let unknown = test_client("localhost", 1, "some-vendor/brand-new-model-9");
+        assert!(unknown.can_take_images(), "a new model may be sent a picture, so it is not refused one");
+        assert!(!unknown.sight_proven(), "but nobody has shown that it can read one");
+    }
+
     /// When the provider refuses a turn that carried images and its words are about images, the
     /// error names the model and says it cannot see -- with the provider's own sentence kept.
     #[test]
@@ -9332,5 +9460,105 @@ pub mod tests {
         assert!(bodies.len() >= 2 && bodies[bodies.len() - 1].contains(DOC_PNG_B64),
             "the rate-limit retry dropped the picture ({} requests)", bodies.len());
         assert!(client.can_take_images(), "a 429 marked the model blind on the fold path");
+    }
+
+    // ── a model that has taken a picture is proven to see (crystal-probe QA F2, 2026-10-05) ──
+
+    /// A client at the stub whose model is `model`.
+    fn stub_client_of(port: u16, model: &str) -> LlmClient {
+        let mut c = stub_client(port);
+        c.model = model.to_string();
+        c
+    }
+
+    /// A user message that carries the documented picture.
+    fn with_picture(text: &str) -> [ChatMessage; 1] {
+        [ChatMessage::user(MessageContent::parts(vec![
+            ContentPart::Text(text.to_string()),
+            ContentPart::Image(doc_image("cover.png")),
+        ]))]
+    }
+
+    /// Models on no list, which every one of took a picture before the allow-list: a router's
+    /// brand-new id, an Azure deployment named by its owner, a fine-tune.
+    const UNLISTED: [&str; 4] = ["some-vendor/brand-new-model-9", "my-gpt4o-prod", "contoso-vision-eu",
+        "ft:gpt-4o-2024-08-06:acme::abc123"];
+
+    /// Proof is learned: a request that carried a picture and was answered, never refused, shows
+    /// that the model takes one -- and a request that carried none shows nothing.
+    #[tokio::test]
+    async fn test_a_model_that_has_taken_a_picture_without_refusing_is_proven_to_see() {
+        for m in UNLISTED {
+            let (port, _seen) = start_stub(vec![Reply::answer(), Reply::answer()]).await;
+            let client = stub_client_of(port, m);
+            assert!(client.can_take_images() && !client.sight_proven(),
+                "{}: nobody has shown it can read a picture", m);
+            let mut sink = |_: Delta<'_>| {};
+            if let Err(e) = client.chat_stream_tools(&[ChatMessage::user("hello".to_string())], None, &mut sink).await {
+                panic!("{}: a plain turn completes: {}", m, e);
+            }
+            assert!(!client.sight_proven(), "{}: a turn with no picture proved it could see one", m);
+            if let Err(e) = client.chat_stream_tools(&with_picture("what is on this cover"), None, &mut sink).await {
+                panic!("{}: a turn with a picture completes: {}", m, e);
+            }
+            assert!(client.sight_proven(), "{}: took a picture and answered, and is still not proven", m);
+        }
+    }
+
+    /// The same on the fold's path, `chat_once`, which shares the client and so the proof.
+    #[tokio::test]
+    async fn test_chat_once_with_a_picture_proves_the_model_too() {
+        let (port, _seen) = start_stub(vec![Reply::answer()]).await;
+        let client = stub_client_of(port, "my-gpt4o-prod");
+        assert!(!client.sight_proven());
+        if let Err(e) = client.chat_once(&with_picture("and this one"), None).await {
+            panic!("a picture is answered: {}", e);
+        }
+        assert!(client.sight_proven(), "a picture taken on the fold path proved nothing");
+        assert!(client.clone().sight_proven(), "a clone of the client did not share the proof");
+    }
+
+    /// Learned proof covers every id that can be sent a picture at all, and none that cannot: the
+    /// deny-list outranks it, so a model that has been caught blind is not proven by anyone.
+    #[test]
+    fn test_learned_proof_covers_every_id_that_takes_a_picture_and_no_other() {
+        let ids = ["some-vendor/brand-new-model-9", "my-gpt4o-prod", "contoso-vision-eu", "gpt-4", "gpt-4-0613",
+            "z-ai/glm-5.3", "mistral-large-latest", "o1-mini", "o1-preview", "gpt-3.5-turbo", "claude-2.1",
+            "text-embedding-3-small", "anthropic/claude-opus-5", "gpt-4o-mini"];
+        for m in ids {
+            let c = stub_client_of(1, m);
+            c.mark_seen();
+            assert_eq!(model_can_see(m), c.sight_proven(),
+                "{}: a model that can take a picture and has taken one is proven, and one that cannot is not", m);
+        }
+        // A refusal after the proof withdraws it: the deny-list is not the only thing that outranks it.
+        let c = stub_client_of(1, "my-gpt4o-prod");
+        c.mark_seen();
+        assert!(c.sight_proven());
+        c.mark_blind();
+        assert!(!c.sight_proven() && !c.can_take_images());
+    }
+
+    /// A refusal is not proof, and what a refusal learned stays learned: the retry without the
+    /// picture succeeds, and that success says nothing about pictures.
+    #[tokio::test]
+    async fn test_a_refused_picture_proves_nothing_and_a_refusal_withdraws_proof() {
+        let (port, _seen) = start_stub(vec![Reply::not_found(), Reply::answer()]).await;
+        let client = stub_client_of(port, "my-gpt4o-prod");
+        let mut sink = |_: Delta<'_>| {};
+        if let Err(e) = client.chat_stream_tools(&with_picture("cover"), None, &mut sink).await {
+            panic!("the text-only retry completes: {}", e);
+        }
+        assert!(!client.can_take_images() && !client.sight_proven(),
+            "a model that refused the picture was proven to read one");
+        // And one that was proven, then refused, is not proven any more.
+        let (port, _seen) = start_stub(vec![Reply::answer(), Reply::not_found(), Reply::answer()]).await;
+        let client = stub_client_of(port, "my-gpt4o-prod");
+        for _ in 0..2 {
+            if let Err(e) = client.chat_stream_tools(&with_picture("cover"), None, &mut sink).await {
+                panic!("a turn completes: {}", e);
+            }
+        }
+        assert!(!client.sight_proven(), "a refusal after an acceptance left the model proven");
     }
 }

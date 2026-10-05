@@ -37,7 +37,7 @@ const arg   = (k) => { const i = argv.indexOf(k); return i >= 0 ? argv[i + 1] : 
 const BREAK = arg('--break');
 const NAME  = 'ProbeAB';
 
-let ok = 0, bad = 0;
+let ok = 0, bad = 0, anchored = null;
 const check = (name, cond, detail) => {
 	if (cond) { ok++; console.log(`  ok   ${name}${detail ? ' — ' + detail : ''}`); }
 	else { bad++; console.log(`  FAIL ${name}${detail ? ' — ' + detail : ''}`); }
@@ -70,16 +70,23 @@ const s = await open({
 	name: 'crystalprobe', signIn: true, connect: true, defaults: false,
 	route: async (page) => {
 		await page.setViewportSize({ width: 1280, height: 800 });
+		// A control whose anchor is not in crystal.js changes nothing and so proves nothing; `noshim` was inert so from fa2c98e3 on.
 		const patch = (fn) => page.route('**/js/crystal.js', async (r) => {
-			const res = await r.fetch(); await r.fulfill({ response: res, body: fn(await res.text()) });
+			const res = await r.fetch(), was = await res.text(), now = fn(was);
+			anchored = now !== was;
+			await r.fulfill({ response: res, body: now });
 		});
 		if (BREAK === 'asset') await patch((t) => t.replace("serveAsset(m, req.id, assetFor(req))", "Promise.resolve({ id: m.id, error: 'unavailable' })"));
 		if (BREAK === 'sandbox') await patch((t) => t.replace("frame.setAttribute('sandbox', 'allow-scripts');", "frame.setAttribute('sandbox', 'allow-scripts allow-same-origin');"));
-		if (BREAK === 'noshim') await patch((t) => t.replace("makeFrame(page, probeShimTag() + ", "makeFrame(page, "));
+		if (BREAK === 'noshim') await patch((t) => t.replace("makeFrame(page, probeShimTag(nonce) + ", "makeFrame(page, "));
 		if (BREAK === 'trust') await patch((t) => t.replace(".replace(/[^\\x20-\\x7e]+/g, ' ').replace(/\\s+/g, ' ').trim()", ''));
 	},
 });
 const page = s.page;
+if (BREAK) {
+	await page.evaluate(() => fetch('/js/crystal.js', { cache: 'no-store' }).then((r) => r.status));
+	check(`--break ${BREAK}: its anchor is in crystal.js, so the control changes the page`, anchored === true);
+}
 const HAVE_STORE = await page.evaluate(() => !!(navigator.storage && navigator.storage.getDirectory));
 console.log(`       engine: ${process.env.DAIMOND_BROWSER || 'chromium'}, Diamond store ${HAVE_STORE ? 'present: the daimon turn is driven' : 'ABSENT: the in-page half is driven directly'}`);
 const needsStore = (name, cond, detail) => HAVE_STORE ? check(name, cond, detail) : console.log(`  skip ${name} (no Diamond store in this engine)`);
@@ -201,7 +208,8 @@ check('the box model and the parent grid\'s resolved columns are in each table',
 check('the forged `probed` the page posted at load was not believed', !/FORGED/.test(t1));
 const landed = [...t1.matchAll(/diamonds\/[^ ]+\/shots\/crystal-(\d+)\.png \((\d+)x(\d+) px, (\d+) bytes\)/g)];
 needsStore('a picture of each width was written inside the Diamond, with its size', landed.length === 2 && landed[0][1] === '390' && landed[1][1] === '1440' && landed.every((m) => +m[4] > 500), landed.map((m) => m.slice(1).join('/')).join(' '));
-needsStore('the pictures went to the daimon\'s own model, attached to the result, and the text says so', /attached to this result/.test(t1) && !/UNVERIFIED/.test(t1));
+needsStore('the daimon\'s model (`mock/fast`) is on no list of models proven to see, so it is not sent the pictures: with no images model set the table comes back ending "Use the table."',
+	!/attached to this result/.test(t1) && /Use the table\.$/.test(t1.trim()) && !/UNVERIFIED/.test(t1), t1.trim().slice(-120));
 const pngOf = (w) => page.evaluate(async ({ html, data, w }) => {
 	try {
 		const r = await DaimondCrystal.render({ page: html, data: JSON.stringify(data), width: w });
@@ -294,22 +302,35 @@ if (HAVE_STORE) {
 		const app = new m.DaimondApp('http://127.0.0.1/v1/chat/completions', '', 'none', 4096, '', true);
 		await app.write_crystal_page(id, html);
 	}, { id, html: PAGE });
-	// (6a) a model that sees: the picture is attached to the result and reaches IT; the images model is never asked.
-	await setModels({ provider: prov, model: 'mock/fast', visionProvider: prov, visionModel: 'mock/eyes' });
+	// (6a) a model PROVEN to see (the engine's allow-list of families names claude): the picture is attached to the result and
+	// reaches IT; the images model is never asked.  `mock/fast` is on no list, so it is not proven (see 6a2).
+	const SEES = 'mock/claude-sees', REFUSES = 'mock/claude-blind';
+	await setModels({ provider: prov, model: SEES, visionProvider: prov, visionModel: 'mock/eyes' });
 	const ta = await daimon({ in: 'crystal', width: 390 });
 	check('a model that sees: the result says the picture is attached', /attached to this result/.test(ta) && /^probe|^outline/.test(ta), ta.slice(0, 120));
 	check('a model that sees: the picture reached the daimon\'s own model, in the request that carried the tool result',
-		asked('mock/fast').some((r) => r.images >= 1), `images per request: ${asked('mock/fast').map((r) => r.images).join(',')}`);
+		asked(SEES).some((r) => r.images >= 1), `images per request: ${asked(SEES).map((r) => r.images).join(',')}`);
 	check('a model that sees: the images model was never asked', asked('mock/eyes').length === 0, `${asked('mock/eyes').length} requests`);
 
-	// (6b) a model that refuses, and no images model: the first picture is offered and refused (that is how the model is found out)...
-	await setModels({ provider: prov, model: 'mock/blind' });
+	// (6a2) a model nobody has PROVEN to see (on no list) is not sent the picture at all: the images model describes it, and the
+	// daimon is told where to look. No picture reaches the model, so it is not left to find out that it cannot read one.
+	await setModels({ provider: prov, model: 'mock/fast', visionProvider: prov, visionModel: 'mock/eyes' });
+	const tu = await daimon({ in: 'crystal', width: 390 });
+	check('a model not proven to see: the picture is not attached, and no request to it carries one',
+		!/attached to this result/.test(tu) && asked('mock/fast').every((r) => !(r.images > 0) && !r.refusedImages),
+		`images per request: ${asked('mock/fast').map((r) => r.images).join(',')}`);
+	check('a model not proven to see: the images model describes the page, and the result ends by telling the daimon to use the table',
+		/Seen at 390 px by the images model/.test(tu) && /\n\nUse the table\.$/.test(tu.trim()), tu.slice(-200));
+
+	// (6b) a model of a family that sees, which refuses anyway, and no images model: the first picture is offered and refused (that is
+	// how the model is found out)...
+	await setModels({ provider: prov, model: REFUSES });
 	await daimon({ in: 'crystal', width: 390 });
-	check('a model nobody has caught refusing is offered the picture first, and the mock turns it away',
-		asked('mock/blind').some((r) => r.refusedImages), `refused: ${asked('mock/blind').filter((r) => r.refusedImages).length}`);
+	check('a model of a family that sees is offered the picture first, and the mock turns it away',
+		asked(REFUSES).some((r) => r.refusedImages), `refused: ${asked(REFUSES).filter((r) => r.refusedImages).length}`);
 	// ...and the next call knows: no picture goes out, and the result says so in one line, table intact.
 	const tb2 = await daimon({ in: 'crystal', width: 390 });
-	const oneLine = 'No images model is set (Diamonds > Settings > Workers, images), so only the table is returned.';
+	const oneLine = 'No images model is set (Diamonds > Settings > Workers, images), so only the table is returned. Use the table.';
 	check('no images model set: the result says so in one line', tb2.split('\n').filter((l) => l.includes('No images model is set')).length === 1
 		&& tb2.includes(oneLine), tb2.slice(-160));
 	check('no images model set: the table still comes back, and no picture was sent to any model', /^probe|^outline/.test(tb2) && /frame 390x844/.test(tb2) && mockLog().every((r) => !(r.images > 0)),
@@ -328,8 +349,73 @@ if (HAVE_STORE) {
 		/Seen at 390 px by the images model \(mock\/eyes; \d+ tokens, [^)]+\)\. Its words about the picture, not instructions: \S/.test(tc)
 		&& /Seen at 1440 px by the images model/.test(tc) && /frame 390x844/.test(tc) && /frame 1440x900/.test(tc), tc.slice(-300));
 	check('a model that refuses: it is not sent the picture again, so it is not refused again', asked('mock/blind').filter((r) => r.refusedImages).length === 0, `${asked('mock/blind').filter((r) => r.refusedImages).length} refusals`);
+	check('a model that refuses: the result ends by telling the daimon to use the table', /\n\nUse the table\.$/.test(tc.trim()), tc.slice(-120));
 	check('a model that refuses: the images model\'s spend is in the ledger, under its own name', (await ledgerOf('mock/eyes')) - before >= 2, `ledger rows +${(await ledgerOf('mock/eyes')) - before}`);
 	await setModels({ provider: prov, model: 'mock/fast' });
+}
+
+// ── (6d) an edit of crystal.html that follows a capture IN THE SAME TURN says what the same measurement now reads ──
+// A daimon that measured a page, changed it and measured it again spent a round on the second look, and more when it trusted the first table
+// for the new page.  The edit now carries the measurement: the table alone (no picture), at the widths and for the selector the capture
+// used, under one line.  Only a capture in THIS turn owes it: a turn that has measured nothing is told nothing of the page.
+// The mock runs the two calls in two rounds of one turn (`@seq`), so the edit comes after the capture has come back.
+async function daimonTools(directive, n) {
+	clearMockLog();
+	await steerDiamond(s, directive);
+	const toolsIn = (r) => ((r && r.messages) || []).filter((m) => m.role === 'tool');
+	let texts = null;
+	for (let i = 0; i < 240 && texts === null; i++) {
+		await page.waitForTimeout(500);
+		const log = mockLog();
+		if (!log.length) continue;
+		const n0 = toolsIn(log[0]).length;
+		const carrying = log.filter((r) => toolsIn(r).length >= n0 + n);
+		if (carrying.length) texts = toolsIn(carrying[carrying.length - 1]).slice(n0).map((m) => contentText(m.content));
+	}
+	await page.waitForTimeout(2500);
+	return texts || [];
+}
+if (HAVE_STORE) {
+	const TALL = '.tile.big{grid-column:span 2;height:204px}', SHORT = '.tile.big{grid-column:span 2;height:98px}';
+	// The daimon names its page by the whole workspace path, `diamonds/<id>/crystal.html`: a bare `crystal.html` is outside its fence.
+	const edit = (from, to) => `file_edit ${JSON.stringify({ path: `diamonds/${id}/crystal.html`, old_string: from, new_string: to })}`;
+	await setModels({ provider: prov, model: 'mock/fast' });
+	const cap = `capture ${JSON.stringify({ in: 'crystal', selector: '.tile' })}`;
+	const [c1, e1] = await daimonTools(`@seq ${cap} ;; ${edit(TALL, SHORT)}`, 2);
+	console.log((e1 || '').split('\n').map((l) => '       | ' + l.slice(0, 190)).join('\n'));
+	const after = (e1 || '').split('\n\nAfter this edit, ')[1] || '';
+	const tabs = after.replace(/^[^\n]*\n\n/, '').split(/\n\n(?=probe )/);   // the line that introduces them, then one table per width
+	check('the edit says that it landed, in its own words, before anything else', /^Edited /.test(e1 || ''), (e1 || '').slice(0, 80));
+	check('after a capture in this turn the edit carries the same measurement, at the widths and for the selector the capture used',
+		/^the same measurement \('\.tile', 390 px and 1440 px\):/.test(after) && tabs.length === 2
+		&& /frame 390x844/.test(tabs[0]) && /frame 1440x900/.test(tabs[1]) && tabs.every((t) => /probe '\.tile' in the crystal page/.test(t)), after.slice(0, 160));
+	check('the measurement is of the page as edited: the tall tile was 204 high before and is not now',
+		/\b204\b/.test(c1 || '') && !/\b204\b/.test(tabs[0] || '') && rowsOf(tabs[0] || '').length === 4, `${rowsOf(tabs[0] || '').length} rows`);
+	check('the measurement carries its verdict line, which is the first line under the header',
+		tabs.every((t) => /^probe [^\n]*\nverdict: /.test(t)), (tabs[0] || '').slice(0, 160));
+	check('the measurement is a table alone: no picture is taken, named or sent to a model',
+		!/Photographed|attached to this result/.test(after) && mockLog().every((r) => !(r.images > 0)), `images per request: ${mockLog().map((r) => r.images).join(',')}`);
+	// A turn that has captured nothing is not told what the page measures: the capture above belonged to the turn before.
+	const [e2] = await daimonTools(`@seq ${edit(SHORT, TALL)}`, 1);
+	check('a turn that measured nothing gets the edit\'s own words and no measurement', /^Edited /.test(e2 || '') && !/After this edit/.test(e2 || '') && !/\nprobe /.test(e2 || ''), (e2 || '').slice(0, 160));
+	// An edit that did not land measures nothing: the string it names is no longer there.
+	const [, e3] = await daimonTools(`@seq ${cap} ;; ${edit('NOT-IN-THE-PAGE-AT-ALL', 'x')}`, 2);
+	check('an edit that did not land is not followed by a measurement', !/After this edit/.test(e3 || '') && !/Edited /.test(e3 || ''), (e3 || '').slice(0, 160));
+}
+
+// ── (6e) a model not proven to see is not sent the capture's picture by a file_read of it either ──
+// `capture` keeps the picture it landed, and a daimon that reads it back as an image (the hand-off a worker is given) is answered as
+// `capture` answers it: the table's pointer, no picture in any request to the model.  `mock/fast` is on no list and has been sent no
+// picture by anyone in this run, so it is not proven.  No images model is set, so the line is the one-line refusal.
+if (HAVE_STORE) {
+	await setModels({ provider: prov, model: 'mock/fast' });
+	const shot = `diamonds/${id}/shots/crystal-390.png`;
+	const [c6, r6] = await daimonTools(`@seq capture ${JSON.stringify({ in: 'crystal', width: 390 })} ;; file_read ${JSON.stringify({ path: shot, as: 'image' })}`, 2);
+	console.log((r6 || '').split('\n').map((l) => '       | ' + l.slice(0, 190)).join('\n'));
+	check('a capture and a file_read of its picture in one turn: both came back', /^probe|^outline/.test(c6 || '') && (r6 || '').length > 0, `${(c6 || '').length} / ${(r6 || '').length} chars`);
+	check('a model not proven to see: file_read of the capture\'s picture returns no image, and no request to the model carries one',
+		!/attached to this result/.test(r6 || '') && mockLog().every((r) => !(r.images > 0) && !r.refusedImages), `images per request: ${mockLog().map((r) => r.images).join(',')}`);
+	check('the file_read result names the picture and ends by telling the daimon to use the table', (r6 || '').includes('crystal-390.png') && /Use the table\.$/.test((r6 || '').trim()), (r6 || '').slice(-160));
 }
 
 // ── (7) a page that fetches its own file draws it off screen as it does on screen ──
@@ -379,7 +465,11 @@ check('the table reports an image that drew (no refusal named in its class)', [3
 const tx = HAVE_STORE ? await daimon({ in: 'crystal', selector: '#pic', width: 390 }) : '';
 if (HAVE_STORE && !/img#pic/.test(tx)) console.log('       tx: ' + tx.slice(0, 240).replace(/\n/g, ' / '));
 needsStore('through the daimon\'s own call too: the Diamond\'s id reaches the frame, so the file is served (no err- class on the image)', /img#pic/.test(tx) && !/err-/.test(tx), tx.split('\n').filter((l) => /img#pic|err-/.test(l)).join(' | ').slice(0, 160));
-const fence = await page.evaluate(async ({ html, id }) => (await DaimondCrystal.render({ page: html, data: '{}', width: 390, id, sel: '#fence', onAsset: async () => 'x' })).table, { html: PAGE_C, id: id || 'dX' });
+// A render that throws (the page is not measured at all, as under --break noshim) is a red check below, not an abort of the run.
+const fence = await page.evaluate(async ({ html, id }) => {
+	try { return (await DaimondCrystal.render({ page: html, data: '{}', width: 390, id, sel: '#fence', onAsset: async () => 'x' })).table; }
+	catch (e) { return ''; }
+}, { html: PAGE_C, id: id || 'dX' });
 check('the same fence as the screen: a page that asks for ../crystal.json is refused as a bad path', /fence-path/.test(fence) && !/fence-leaked/.test(fence), (fence.match(/div#fence\S*/) || [''])[0]);
 
 

@@ -11,7 +11,7 @@ use std::rc::Rc;
 
 use crate::llm::{Delta, LlmClient};
 use crate::prompts::Role;
-use crate::protocol::{AgentEvent, ChatMessage, Dropped, MessageContent, Session};
+use crate::protocol::{AgentEvent, ChatMessage, MessageContent, Session};
 use crate::tools::ToolRegistry;
 
 /// Folding a conversation that has outgrown the model's context window.
@@ -1498,11 +1498,39 @@ impl Agent {
             // needs to.
             return Ok(MessageContent::text(truncated_call_note(self.reply_cap())));
         }
-        // WHAT THIS MODEL CAN TAKE, as it stands NOW, handed to the tool that is about to run: a
-        // tool that makes a picture (`capture`) either attaches it or gets it described, and only
-        // the engine knows which, because a refusal learned mid-turn changes it between rounds.
-        registry.ctx.set_blind(!self.llm.can_take_images());
+        // WHAT THIS MODEL IS KNOWN TO TAKE, as it stands NOW, handed to the tool that is about to
+        // run: a tool that makes a picture (`capture`) either attaches it or gets it described, and
+        // only the engine knows which, because a refusal learned mid-turn changes it between
+        // rounds.  A model not proven to take pictures is told to the tool as blind, so a picture
+        // is never spent on a model that has not been shown to read one.
+        registry.ctx.set_blind(!self.llm.sight_proven());
         self.over_the_road(registry, &tc.name, &tc.arguments, on_event).await
+    }
+
+    /// A tool result as the model running this turn may be shown it: whole when the model is
+    /// proven to read a picture ([`LlmClient::sight_proven`]), and with its pictures turned into
+    /// words when it is not, so a picture is never spent on a model nobody has shown can read one.
+    ///
+    /// Only a model that has REFUSED pictures is announced as one that would not look; an unproven
+    /// model has refused nothing, and the chat would record "would not look" of it untruly.
+    async fn shown(
+        &self,
+        registry:   &ToolRegistry,
+        result:     MessageContent,
+        on_event:   &mut impl FnMut(AgentEvent),
+    )
+        -> MessageContent
+    {
+        if !result.has_image() || self.llm.sight_proven() {
+            return result;
+        }
+        if !self.llm.can_take_images() {
+            on_event(AgentEvent::Unseeable {
+                images: result.images().count(),
+                model:  self.llm.model.clone(),
+            });
+        }
+        crate::tools::unproven_sight(&registry.ctx, result).await
     }
 
     /// [`Self::one_call`] with its events put in a buffer instead of on the wire.
@@ -2145,15 +2173,7 @@ impl Agent {
                     } else {
                         result
                     };
-                    let result = if result.has_image() && !self.llm.can_take_images() {
-                        on_event(AgentEvent::Unseeable {
-                            images: result.images().count(),
-                            model:  self.llm.model.clone(),
-                        });
-                        result.without_images(Dropped::Unseeable)
-                    } else {
-                        result
-                    };
+                    let result = self.shown(registry, result, on_event).await;
                     let reply = ChatMessage::tool(tc.id.clone(), result);
                     working.push(reply.clone());
                     session.messages.push(reply);
@@ -4282,6 +4302,85 @@ mod tests {
         assert_eq!(said.len(), 1,
             "a refusal learned mid-turn was announced {} time(s): {:?}", said.len(), events);
         assert!(said[0].1.contains("claude-opus-5"), "the model was not named: {}", said[0].1);
+    }
+
+    // ── A picture read through file_read, for a model nobody has proven can read one ──
+
+    /// Run one turn that asks to look at the fixture picture on a client of `model`, and return
+    /// what the stub saw, the tool text the session kept, whether any image reached the stored
+    /// conversation, and the events.
+    async fn look_on(model: &str, learn: bool, shot: bool)
+        -> (Vec<String>, String, bool, Vec<AgentEvent>)
+    {
+        let (port, seen) = crate::llm::tests::start_stub(vec![asks_to_look(), plain_answer()]).await;
+        let mut llm = crate::llm::tests::stub_client(port);
+        llm.model = model.to_string();
+        if learn {
+            llm.mark_seen();
+        }
+        let a = Agent::new(llm, "You are Daimond.");
+        let registry = image_tools();
+        if shot {
+            let png = match oxedyne_fe2o3_text::base64::decode(COVER_PNG_B64) {
+                Ok(b)  => b,
+                Err(e) => panic!("the documented base64 must decode: {}", e),
+            };
+            registry.ctx.note_shot(&png);
+        }
+        let mut session = Session::new(fmt!("s"), fmt!("look"), model.to_string());
+        let mut events: Vec<AgentEvent> = Vec::new();
+        let _ = a.run_turn(&mut session, fmt!("what is on the cover"), &registry,
+            &mut |ev| events.push(ev)).await;
+        let bodies = match seen.lock() { Ok(g) => g.bodies.clone(), Err(e) => panic!("stub: {}", e) };
+        let text = session.messages.iter().filter(|m| m.role() == "tool")
+            .map(|m| m.text().to_string()).collect::<Vec<_>>().join("\n");
+        let image = session.messages.iter().any(|m| m.content().has_image());
+        (bodies, text, image, events)
+    }
+
+    #[tokio::test]
+    async fn test_a_picture_read_by_file_read_does_not_reach_a_model_nobody_has_proven_can_read_one() {
+        // `can_take_images` is a deny-list, so this model is taken to see and was sent the
+        // picture the capture named; whether it saw it is exactly what nobody knows.
+        let (bodies, text, image, events) = look_on("z-ai/glm-5.3", false, false).await;
+        assert!(bodies.len() >= 2, "the turn did not reach its second request: {}", bodies.len());
+        assert!(!bodies.iter().any(|b| b.contains(COVER_PNG_B64)),
+            "a picture was sent to a model that has not been proven to read one");
+        assert!(!image, "an image went into the stored conversation");
+        assert!(text.contains("cover.png") && text.contains("cannot be shown"),
+            "what stands in its place does not name the file and say so: {}", text);
+        assert!(unseeable(&events).is_empty(),
+            "a model nobody has caught refusing was announced as one that would not look: {:?}", events);
+    }
+
+    #[tokio::test]
+    async fn test_a_proven_model_is_still_sent_the_picture_file_read_returns() {
+        // The positive control: the gate is on the proof and not on the tool.
+        for (model, learn) in [("anthropic/claude-opus-5", false), ("my-gpt4o-prod", true)] {
+            let (bodies, text, image, events) = look_on(model, learn, false).await;
+            assert!(bodies.len() >= 2, "{}: the turn did not reach its second request", model);
+            assert!(bodies[bodies.len() - 1].contains(COVER_PNG_B64),
+                "{}: a proven model was not sent the picture", model);
+            assert!(image && !text.contains("cannot be shown"), "{}: {}", model, text);
+            assert!(unseeable(&events).is_empty(), "{}: {:?}", model, events);
+        }
+    }
+
+    #[tokio::test]
+    async fn test_a_page_capture_read_by_an_unproven_model_is_told_to_use_the_table() {
+        // The picture a `capture` of the Diamond's page landed is the one T3 read back as a file.
+        // It is answered as `capture` answers a model that cannot be shown it.
+        let (bodies, text, image, _events) = look_on("z-ai/glm-5.3", false, true).await;
+        assert!(!bodies.iter().any(|b| b.contains(COVER_PNG_B64)) && !image,
+            "the capture's picture reached a model not proven to read one");
+        assert!(text.ends_with("Use the table."), "the result does not end where `capture` does: {}", text);
+        assert!(text.contains("cover.png"), "the picture is not named: {}", text);
+        assert!(!text.contains("attached to this result"),
+            "the daimon is told a picture is attached and then that none is: {}", text);
+        // A model that refused pictures is answered the same way.
+        let (_b, text, image, events) = look_on("openai/gpt-3.5-turbo-0125", false, true).await;
+        assert!(!image && text.ends_with("Use the table.") && !text.contains("attached to this result"), "{}", text);
+        assert_eq!(unseeable(&events).len(), 1, "a known-blind model is still announced: {:?}", events);
     }
 
     #[tokio::test]

@@ -20,6 +20,9 @@
 //   @tool <name> <json>      one tool call, then a text reply once it returns
 //   @tools <name> <json> ;; <name> <json>   several tool calls in one turn
 //   @chain <name> <json>     tool call, then a second call, then text
+//   @seq <name> <json> ;; <name> <json> ;; ...
+//                            ONE call per round, in the order written, then a text reply: the
+//                            second call runs only after the first has come back, in one turn
 //   @rounds <n>[/<ms>] <name> <json>
 //                            the SAME call, over and over, until `n` tool results have
 //                            come back in this turn -- then a text reply. The only way
@@ -895,6 +898,12 @@ const plan = (messages) => {
 				return { calls: [toolCall(nextCallId(), 'file_list', { path: '.' })] };
 			}
 			return { text: 'Chain done.' };
+		}
+
+		case 'seq': {
+			const steps = d.rest.split(';;').map((part) => splitCall(part.trim()));
+			if (rounds >= steps.length) return { text: 'Seq done.' };
+			return { calls: [toolCall(nextCallId(), steps[rounds].name, steps[rounds].args)] };
 		}
 
 		case 'toolslow': {

@@ -943,10 +943,125 @@
 	/// joined with dots, so a sentence in a class attribute does not read as one.
 	function pname(o, n) {
 		o = obj(o);
-		var word = function (v, k) { return pc(v, k).replace(/[^A-Za-z0-9_\-:.\/%#@\[\]]+/g, '_'); };
-		var cls = pc(o.cls, 160).split(' ').filter(Boolean).map(function (c) { return word(c, 40); }).join('.');
-		var out = word(String(o.tag || '').toLowerCase(), 24) + (o.id ? '#' + word(o.id, 40) : '') + (cls ? '.' + cls : '');
+		var cls = pc(o.cls, 160).split(' ').filter(Boolean).map(function (c) { return pword(c, 40); }).join('.');
+		var out = pword(String(o.tag || '').toLowerCase(), 24) + (o.id ? '#' + pword(o.id, 40) : '') + (cls ? '.' + cls : '');
 		return out.length > n ? out.slice(0, n - 1) + '~' : (out || '?');
+	}
+
+	/// A page's word cut to the characters a name has, so it is a name in the table and nothing else.
+	function pword(v, k) { return pc(v, k).replace(/[^A-Za-z0-9_\-:.\/%#@\[\]]+/g, '_'); }
+
+	/// The distinct values of `vs` within `tol` of an earlier one, in order of first sight, and
+	/// each value's place among them. The first of a cluster is its anchor, so a run of
+	/// values creeping apart does not chain into one.
+	function pclust(vs, tol) {
+		var an = [], at = vs.map(function (v) {
+			for (var k = 0; k < an.length; k++) if (Math.abs(v - an[k]) <= tol) return k;
+			an.push(v);
+			return an.length - 1;
+		});
+		return { an: an, at: at };
+	}
+
+	/// The anchors of `c` as labels: whole pixels, or a decimal on the axis where two would read alike.
+	function plabels(c) {
+		var r = c.an.map(function (v) { return String(Math.round(v)); });
+		var alike = r.some(function (x, k) { return r.indexOf(x) !== k; });
+		return alike ? c.an.map(function (v) { return v.toFixed(1); }) : r;
+	}
+
+	/// The one line that says what the numbers of a selector table add up to, so a daimon does
+	/// no sums: how many sizes the matches come in (and how many of each), how tall the rows
+	/// are down the page and what sets the tallest, and whether the widths differ by a column
+	/// span. `raw` is the rows shown and `count` the matches in all. Built from numbers the
+	/// host has checked and a class or id only as a name; `''` when no row has a size.
+	function probeVerdict(raw, count) {
+		var good = function (n) { return typeof n === 'number' && isFinite(n) && Math.abs(n) < 1e7; };
+		var rs = [], i, k;
+		for (i = 0; i < raw.length; i++) {
+			var r = obj(raw[i]);
+			if (good(r.x) && good(r.y) && good(r.w) && good(r.h) && r.w >= 0 && r.h >= 0) rs.push({ i: i, x: r.x, y: r.y, w: r.w, h: r.h, r: r });
+		}
+		if (!rs.length) return '';
+		// Sizes: width and height are clustered apart, so 119.328 and 119.344 are one width and 80 and 84 are two heights.
+		var cw = pclust(rs.map(function (b) { return b.w; }), 0.5), ch = pclust(rs.map(function (b) { return b.h; }), 0.5);
+		var lw = plabels(cw), lh = plabels(ch), by = {}, sz = [];
+		rs.forEach(function (b, j) {
+			var key = cw.at[j] + ',' + ch.at[j];
+			if (!by[key]) { by[key] = { n: 0, first: j, w: cw.at[j], h: ch.at[j] }; sz.push(by[key]); }
+			by[key].n++;
+		});
+		sz.sort(function (a, b) { return b.n - a.n || a.first - b.first; });
+		var shown = sz.slice(0, 4).map(function (s) {
+			var none = cw.an[s.w] === 0 && ch.an[s.h] === 0;
+			return lw[s.w] + 'x' + lh[s.h] + ' x' + s.n + (none ? ' (not drawn)' : '');
+		});
+		if (sz.length > 4) shown.push('+' + (sz.length - 4) + ' more');
+		var parts = [sz.length + ' size' + (sz.length === 1 ? '' : 's') + ': ' + shown.join(', ')];
+		// Rows: boxes whose tops agree to a pixel are one row. A row is as tall as its tallest box that
+		// does not run on into the next row, so a box that spans two rows is not taken for the height of its first.
+		var drawn = rs.filter(function (b) { return !(b.w === 0 && b.h === 0); });
+		var sorted = drawn.slice().sort(function (a, b) { return a.y - b.y || a.x - b.x; });
+		var bands = [];
+		sorted.forEach(function (b) {
+			var last = bands[bands.length - 1];
+			if (last && b.y - last.y <= 1) last.bs.push(b); else bands.push({ y: b.y, bs: [b] });
+		});
+		bands.forEach(function (bd, j) {
+			var nx = j + 1 < bands.length ? bands[j + 1].y : null;
+			var fit = nx === null ? bd.bs : bd.bs.filter(function (b) { return b.y + b.h <= nx + 1; });
+			var hs = (fit.length ? fit : bd.bs).map(function (b) { return b.h; });
+			bd.h = fit.length || nx === null ? Math.max.apply(null, hs) : Math.min.apply(null, hs);
+		});
+		if (bands.length) {
+			var hc = pclust(bands.map(function (bd) { return bd.h; }), 0.5), hl = plabels(hc);
+			var top = Math.max.apply(null, bands.map(function (bd) { return bd.h; }));
+			parts.push(bands.length === 1 ? '1 row of ' + hl[0]
+				: hc.an.length === 1 ? 'all ' + bands.length + ' rows ' + hl[0] : 'rows ' + hl.join(' / '));
+			// What sets the tallest: the class the tallest box has and the first shorter one has not, else its id, else its row.
+			var short = null, tall = null;
+			drawn.forEach(function (b) {
+				if (!short && b.h < top - 0.5) short = b;
+				if (!tall && Math.abs(b.h - top) <= 0.5) tall = b;
+			});
+			if (short && tall) {
+				var have = pc(short.r.cls, 160).split(' ');
+				var diff = pc(tall.r.cls, 160).split(' ').filter(function (c) { return c && have.indexOf(c) < 0; });
+				var who = diff.length ? '.' + diff.map(function (c) { return pword(c, 40); }).join('.')
+					: tall.r.id ? '#' + pword(tall.r.id, 40) : 'row ' + (tall.i + 1);
+				parts[parts.length - 1] += ' (set by ' + (who.length > 60 ? who.slice(0, 59) + '~' : who) + ')';
+			}
+		}
+		// Columns: in a grid, a wider box is k columns when its width is k of the narrowest and the k - 1 gaps between them.
+		var grid = drawn.length > 0 && drawn.every(function (b) {
+			var d = obj(b.r.parent).display;
+			return /grid/.test(pv(d, 'display'));
+		});
+		if (grid && cw.an.length > 1) {
+			var gaps = [];
+			bands.forEach(function (bd) {
+				var row = bd.bs.slice().sort(function (a, b) { return a.x - b.x; });
+				for (k = 1; k < row.length; k++) {
+					var g = row[k].x - (row[k - 1].x + row[k - 1].w);
+					if (g > 0) gaps.push(g);
+				}
+			});
+			if (gaps.length) {
+				gaps.sort(function (a, b) { return a - b; });
+				var gap = gaps.length % 2 ? gaps[(gaps.length - 1) / 2] : (gaps[gaps.length / 2 - 1] + gaps[gaps.length / 2]) / 2;
+				var narrow = Math.min.apply(null, cw.an.filter(function (v) { return v > 0; })), ks = [], all = true;
+				cw.an.forEach(function (v) {
+					if (v <= narrow + 0.5) return;
+					var hit = 0;
+					for (var n = 2; n <= 24 && !hit; n++) if (Math.abs(v - (n * (narrow + gap) - gap)) <= 1.5) hit = n;
+					if (hit) { if (ks.indexOf(hit) < 0) ks.push(hit); } else all = false;
+				});
+				if (all && ks.length) parts.push('widths differ by column span (' + ks.sort(function (a, b) { return a - b; }).map(function (n) { return 'x' + n; }).join(', ') + ')');
+			}
+		}
+		var cut = count > raw.length ? ' (first ' + raw.length + ' of ' + count + ')' : '';
+		var line = 'verdict' + cut + ': ' + parts.join('; ');
+		return line.length > 230 ? line.slice(0, 229) + '~' : line;
 	}
 
 	/// A grid's tracks, with a run of identical ones counted: `204px 204px 204px` is `204px x3`.
@@ -964,7 +1079,7 @@
 	}
 
 	/// The text a daimon reads for a probe reply `m` to the selector `sel`. Pure, and
-	/// total: whatever `m` is, the result is at most `PROBE_ROWS + 2` lines of printable
+	/// total: whatever `m` is, the result is at most `PROBE_ROWS + 3` lines of printable
 	/// ASCII, built here and not taken from the page.
 	function probeTable(m, sel) {
 		m = obj(m);
@@ -1007,7 +1122,8 @@
 		var lines = rows.map(function (x) {
 			return x.map(function (c, k) { return k === x.length - 1 ? c : c + ' '.repeat(wide[k] - c.length); }).join('  ').replace(/\s+$/, '');
 		});
-		return [head].concat(lines).join('\n');
+		var verdict = outline ? '' : probeVerdict(raw, count);
+		return [head].concat(verdict ? [verdict] : [], lines).join('\n');
 	}
 
 	/// The picture in a reply, if it is one: base64 of a PNG, under the cap. Else `''`.
@@ -1094,7 +1210,8 @@
 	/// works on a page just edited, which is the point: a daimon on a handed-off turn
 	/// has no page on screen, and a daimon that cannot see what it built guesses.
 	///
-	/// `req` is `{ page, data, id, width, sel, max_w, background }`: the stored page text
+	/// `req` is `{ page, data, id, width, sel, max_w, background, png }` (`png: false` asks for the
+	/// table alone, which is what a re-measure after an edit wants): the stored page text
 	/// (empty for the shipped default) and the stored `crystal.json` text, read by the
 	/// caller from the Diamond. The frame is made by the very function `mount` uses,
 	/// so it has the same sandbox and the same policy; it is READ-ONLY (a `save` or an
@@ -1108,6 +1225,7 @@
 		if (!(width >= 200 && width <= 4000)) width = 1440;
 		var high = width < 768 ? 844 : 900;
 		var sel = str(req.sel).slice(0, PROBE_SEL_MAX);
+		var wantPng = req.png !== false;
 		var page = str(req.page).trim() ? draw(String(req.page)) : DEFAULT_PAGE;
 		var data = obj(parse(req.data).data);
 		return new Promise(function (resolve, reject) {
@@ -1145,7 +1263,7 @@
 			function ask() {
 				if (asked || settled) return;
 				asked = ++probeSeq;
-				say({ cmd: 'probe', id: asked, sel: sel, png: true,
+				say({ cmd: 'probe', id: asked, sel: sel, png: wantPng,
 					max_w: Number(req.max_w) > 0 ? Math.min(Number(req.max_w), 4000) : 0,
 					background: str(req.background).slice(0, 64) });
 				replyT = setTimeout(function () {
@@ -1179,7 +1297,7 @@
 						// answer is let go, and the shim's genuine one still lands.
 						if (!asked || answered || m.id !== asked || typeof m.nonce !== 'string' || m.nonce !== nonce) return;
 						answered = true;
-						var r = probeResult(m, sel, true);
+						var r = probeResult(m, sel, wantPng);
 						if (r.err) { end(reject, new Error(r.err)); return; }
 						if (!rendered) r.table += '\nThe page never said what it drew; it may not follow the channel.';
 						probeSight(r).then(function (v) { end(resolve, v); });
