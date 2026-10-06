@@ -244,6 +244,9 @@
 	   it does everywhere else. A crystal page that must keep a control off the
 	   indicator owns that at its own foot; the app frame does not guess it. */
 	:root[data-cfull] .mnav { display: none !important; }
+	/* A closed sheet never paints in full screen: the slide-away transition leaves
+	   it off-screen but still composited, and full screen wants the page alone. */
+	:root[data-cfull] #msheet { display: none !important; }
 	/* The way out is the only control left in the header, and on a phone it is
 	   the one a thumb has to find. */
 	:root[data-cfull] .chead .cfull-btn { min-height: 40px; padding: 8px 12px; }

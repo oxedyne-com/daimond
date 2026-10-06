@@ -1472,6 +1472,12 @@ button.tag-pool { cursor: pointer; }
    inside the panel's own header, which keeps its own padding. */
 :root[data-cfull] #app { padding: 0; gap: 0; }
 
+/* THE GUTTER IS NOT APP CHROME. The app frame's padding went above, but the
+   page still needs the app's standard gutter — the safe-area insets on the
+   panel itself (top/right/left), and on the body the dock inset and the foot's
+   safe inset, whichever is deeper. One rule per element, not one per side. */
+:root[data-cfull] .panel.ai { padding: var(--safe-t) var(--safe-r) 0 var(--safe-l); }
+
 /* The one panel left takes the stage, whatever inline width the layout engine
    last measured it at. */
 :root[data-cfull] .stage > .panel.ai {
@@ -1480,11 +1486,12 @@ button.tag-pool { cursor: pointer; }
 	display: flex !important;
 }
 
-/* The page runs to the panel's own edges. The gutter is chrome too.
+/* The page keeps the standard gutter at the sides and the foot, and nothing
+   above: the panel's own header holds the top clear of the notch.
    Only when there IS a page: `:has()` scopes this exactly as crystal.css scopes
    the flex column, so the built-in view -- which is prose in our own document --
    keeps the margin every other panel's text has. */
-:root[data-cfull] .panel.ai .crystal-body:has(#crystal-frame-wrap) { padding: 0; }
+:root[data-cfull] .panel.ai .crystal-body:has(#crystal-frame-wrap) { padding: 0 var(--dock-inset) max(var(--dock-inset), var(--safe-b)); }
 
 /* Nothing sits between the frame and the viewport edge but the panel's own border: the wrap's 4px
    bottom margin (crystal.css) is chrome in full screen, as the app's padding and gap are. */

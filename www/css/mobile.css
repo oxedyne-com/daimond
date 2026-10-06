@@ -332,10 +332,18 @@
 		   janky with an iframe inside); the open/close SLIDE is a transform, which
 		   the compositor handles smoothly. Closed = slid fully below its own foot. */
 		transform: translateY(110%);
-		transition: transform .3s cubic-bezier(.32, .72, 0, 1);
+		transition: transform .3s cubic-bezier(.32, .72, 0, 1), visibility 0s .3s;
 		will-change: transform;
 	}
-	#msheet.open { transform: translateY(0); }
+	/* The `.3s` delay above holds `visibility: hidden` back until the close
+	   slide has finished; the OPEN rule re-declares the transition with
+	   `visibility 0s` so it unhides at once -- undelayed, opening would
+	   slide in unseen for .3s. */
+	#msheet.open {
+		transform: translateY(0);
+		transition: transform .3s cubic-bezier(.32, .72, 0, 1), visibility 0s;
+	}
+	#msheet:not(.open) { visibility: hidden; }
 	#msheet.dragging { transition: none; }
 	@media (prefers-reduced-motion: reduce) {
 		#msheet { transition: none; }

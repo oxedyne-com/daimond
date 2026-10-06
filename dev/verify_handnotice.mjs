@@ -231,7 +231,8 @@ try {
 	const n1 = await reach();
 	check('F4: a notice arriving at 720px leaves the input and Send uncovered', n1.input === '' && n1.send === '',
 		JSON.stringify(n1));
-	check('F4: and counts on the Pending chip instead', n1.chip === n0.chip + 1, JSON.stringify({ before: n0.chip, after: n1.chip }));
+	// r536 (T1b): the dock count badge is gone, so nothing counts; the notice is in the Pending list.
+	check('F4: and no count is shown: the badge is gone, the Pending list holds the notice', n0.chip === 'undefined' && n1.chip === 'undefined', JSON.stringify({ before: n0.chip, after: n1.chip }));
 } finally {
 	if (br) br.close();
 	await s.close();
