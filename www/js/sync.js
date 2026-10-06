@@ -1827,8 +1827,6 @@
 			// A parcel is the one occasion the unread count can have changed that
 			// is neither a press nor an arrival on this device: messages read on
 			// another device arrive here already read.
-			try { if (window.DaimondBadge && DaimondBadge.post) DaimondBadge.post(); }
-			catch (e) { /* no badge in this build */ }
 		}
 		// The account's public handle, under the same rule as everything above
 		// it: `adoptHandle` takes the larger record and writes it VERBATIM, so a

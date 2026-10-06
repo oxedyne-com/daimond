@@ -152,9 +152,8 @@ const still = async (what, before) => {
 	await sleep(450);
 	// The header carries no counters (owner, 2026-09-29): the count goes to the
 	// tab's title and the app icon, and the chip stays a word.
-	check('three messages arriving put no count on the Email chip, and one in the title', await page.evaluate(() => {
-		const b = document.querySelector('#panel-tags .ptag[data-panel="mail"] .dock-count');
-		return !b && /^\(3\) /.test(document.title);
+	check('three messages arriving leave the tab title plain Daimond', await page.evaluate(() => {
+		return document.title === 'Daimond';
 	}));
 	await still('a count arriving moves nothing — not even the chip it is on', before);
 }

@@ -2928,8 +2928,6 @@
 	'ref.build_other': 'Tienes la compilación {id}.',
 	'ref.build_update': 'Actualizar a ella',
 
-	'dock.unseen.one': '{n} sin leer',
-	'dock.unseen.other': '{n} sin leer',
 	'social.info': 'Qué es este panel, en la guía',
 	'social.box_label': 'Escribe una nota sobre Daimond',
 	'social.box_ph': 'Dónde fue, qué esperabas y qué ocurrió en su lugar.',
@@ -3296,6 +3294,8 @@
 	'chat.turn_files.one':       '{n} archivo cambiado en este turno',
 	'chat.turn_files.other':     '{n} archivos cambiados en este turno',
 	'chat.turn_files_more':      'Mostrar {n} más',
+	'chat.turn_file_nofile':      'Este archivo aún no está en este dispositivo.',
+	'chat.turn_file_nocount':     'Los recuentos de líneas de este cambio aún no están en este dispositivo.',
 	'tile.model_change': 'Cambiar',
 	'tile.model_change_help': 'Cambia el daimon al modelo seleccionado. La conversación continúa.',
 	'models.drafting_label': 'Modelo de redacción',

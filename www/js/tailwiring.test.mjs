@@ -227,12 +227,14 @@ async function main() {
 		const tableSrc = [
 			extractVar(src, '_TAIL_MORE'),
 			extractFn(src, '_parseTailNote'),
+			extractFn(src, '_tailNoteParts'),
+			extractFn(src, '_filesNoStore'),
 			extractFn(src, '_tailNoteTable'),
 			extractFn(src, '_filesBox'),
 			extractFn(src, 'openTurnFile'),
 			extractFn(src, '_turnFileRow'),
 		].join('\n');
-		const wrapperBody = 'var window = {}, currentDiamond = null;\n' + tableSrc
+		const wrapperBody = 'var window = {}, currentDiamond = null;\nvar dsEvent = function () {}, selfDeviceId = function () { return \"dev\"; }, _noStoreSaid = {}, mountFileRates = function () {};\n' + tableSrc
 			+ '\nreturn { tailNoteTable: _tailNoteTable, setCurrentDiamond: function (d) { currentDiamond = d; } };\n';
 		const table = new Function('document', 'tn', 'DaimondVersions', 'openFile', wrapperBody)(
 			document, tn, DaimondVersions, openFile);
@@ -386,12 +388,14 @@ async function main() {
 		const tableSrc = [
 			extractVar(src, '_TAIL_MORE'),
 			extractFn(src, '_parseTailNote'),
+			extractFn(src, '_tailNoteParts'),
+			extractFn(src, '_filesNoStore'),
 			extractFn(src, '_tailNoteTable'),
 			extractFn(src, '_filesBox'),
 			extractFn(src, 'openTurnFile'),
 			extractFn(src, '_turnFileRow'),
 		].join('\n');
-		const wrapperBody = 'var currentDiamond = { id: "d1" };\n' + tableSrc
+		const wrapperBody = 'var currentDiamond = { id: "d1" };\nvar dsEvent = function () {}, selfDeviceId = function () { return \"dev\"; }, _noStoreSaid = {}, mountFileRates = function () {};\n' + tableSrc
 			+ '\nreturn { tailNoteTable: _tailNoteTable };\n';
 		// `DaimondFiles` is passed as its own name too: in the browser a bare
 		// `DaimondFiles` IS `window.DaimondFiles` (a global), and the pre-fix code

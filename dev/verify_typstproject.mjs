@@ -42,7 +42,7 @@
 import { readFileSync, existsSync, readdirSync, statSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join as pjoin } from 'node:path';
-import { open, shot } from './harness.mjs';
+import { open, shot, bin } from './harness.mjs';
 
 const HERE  = dirname(fileURLToPath(import.meta.url));
 const FIX   = pjoin(HERE, 'fixtures', 'typstproj');
@@ -78,7 +78,7 @@ const CONTENT = {};
 for (const [rel, kind] of FILES) {
 	CONTENT[rel] = kind === 'text'
 		? readFileSync(pjoin(FIX, rel), 'utf8')
-		: Array.from(readFileSync(pjoin(FIX, rel)));
+		: bin(readFileSync(pjoin(FIX, rel)));
 }
 const SOLO = readFileSync(pjoin(FIX, 'solo/main.typ'), 'utf8');
 
@@ -497,7 +497,7 @@ if (!existsSync(pjoin(BOOK, BOOK_MAIN))) {
 	// the fiction back; if a `@preview/…` import stops this compile, the answer is to
 	// vendor the pack (www/assets/typst/refresh.sh), not to edit it out.
 	const bookSrc = [...seen].map(rel => [rel, readFileSync(pjoin(BOOK, rel), 'utf8')]);
-	const bookBin = [...pics, ...fontFiles].map(rel => [rel, Array.from(readFileSync(pjoin(BOOK, rel)))]);
+	const bookBin = [...pics, ...fontFiles].map(rel => [rel, bin(readFileSync(pjoin(BOOK, rel)))]);
 	console.log(`  ..   the real book: ${bookSrc.length} sources, ${pics.size} pictures, ${fontFiles.length} fonts`);
 
 	// (a) The folder above the book is marked in -- the arrangement that makes the

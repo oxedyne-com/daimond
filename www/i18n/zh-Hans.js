@@ -2963,8 +2963,6 @@
 	'ref.build_other': '你正在用构建 {id}。',
 	'ref.build_update': '更新到该构建',
 
-	'dock.unseen.one': '{n} 条未读',
-	'dock.unseen.other': '{n} 条未读',
 	'social.info': '在指南中查看这个面板是什么',
 	'social.box_label': '写一条关于 Daimond 的笔记',
 	'social.box_ph': '在哪里、你以为会怎样、结果又发生了什么。',
@@ -3326,6 +3324,8 @@
 	'chat.turn_files.one':       '本轮更改了{n}个文件',
 	'chat.turn_files.other':     '本轮更改了{n}个文件',
 	'chat.turn_files_more':      '再显示{n}个',
+	'chat.turn_file_nofile':      '此文件尚未在本设备上。',
+	'chat.turn_file_nocount':     '此更改的行数尚未在本设备上。',
 	'tile.model_change': '更改',
 	'tile.model_change_help': '把 daimon 切换到选定的模型。对话会保留。',
 	'models.drafting_label': '起草模型',

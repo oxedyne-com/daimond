@@ -349,35 +349,7 @@ body.dragging { cursor: col-resize; user-select: none; -webkit-user-select: none
 .railhead > span:first-child { flex: 1; font-size: var(--fs-2xs); font-weight: 600; letter-spacing: 0.04em; text-transform: uppercase; color: var(--text-muted); white-space: nowrap; }
 .rail-count { font-family: var(--font-mono); font-size: var(--fs-2xs); color: var(--text-muted); white-space: nowrap; }
 
-/* ── The dock count badge ───────────────────────────────────────────
-   How many things arrived at a panel while you were looking somewhere else.
-   `.rail-count` above says what a panel HOLDS, quietly, while you are already
-   reading it; this says something is WAITING, on the chip that opens it, and
-   has to be seen from across the row. So it is filled rather than muted.
 
-   `--accent-text` on `--accent-soft` and not `--accent` on it: this is 10px
-   text, small text needs 4.5, and the plain accent manages 3.6 on seven of the
-   eleven palettes. The same pairing the phone bar's own selected tab uses, and
-   for the same measurement.
-
-   It is never drawn holding a zero: the count that owns it writes an empty
-   string instead, and hides the element as well, so a count that has gone back
-   to nothing leaves no mark and no gap. */
-.dock-count {
-	display: inline-block;
-	min-width: 1.15em;
-	padding: 0 4px;
-	border-radius: 999px;
-	background: var(--accent-soft);
-	color: var(--accent-text);
-	border: 1px solid transparent;
-	font-family: var(--font-mono);
-	font-size: var(--fs-3xs);
-	line-height: 1.4;
-	text-align: center;
-	font-variant-numeric: tabular-nums;
-}
-.dock-count[hidden] { display: none; }
 /* A chip is the anchor for what dockdrag.js draws over it. */
 .ptag { position: relative; }
 .addbtn { width: 22px; height: 22px; padding: 0; display: flex; align-items: center; justify-content: center; border: 1px solid var(--border-strong); border-radius: 6px; background: var(--bg-secondary); color: var(--text-secondary); font-size: var(--fs-sm); line-height: 1; }
@@ -1489,6 +1461,17 @@ button.tag-pool { cursor: pointer; }
 :root[data-cfull] .panel.ai #diamond-view,
 :root[data-cfull] .panel.ai .chead-right > *:not(.cfull-btn) { display: none !important; }
 
+/* THE APP FRAME OWNS NOTHING IN THIS MODE. `#app`'s own padding (12px a side in
+   a tab, plus the safe-area insets) and its 8px column gap are app chrome too:
+   with the panel the only thing on stage they would hold the page off every
+   edge of the viewport -- the bottom one is exactly the gap the check below
+   measures. They go to nought here, all four sides and the gap, so the stage's
+   own bottom IS the viewport's bottom at every size. The phone media query's
+   old `padding-bottom: var(--safe-b)` add-back is gone with them: one rule
+   serves both. The way out stays clear of the notch because the button rides
+   inside the panel's own header, which keeps its own padding. */
+:root[data-cfull] #app { padding: 0; gap: 0; }
+
 /* The one panel left takes the stage, whatever inline width the layout engine
    last measured it at. */
 :root[data-cfull] .stage > .panel.ai {
@@ -1503,21 +1486,30 @@ button.tag-pool { cursor: pointer; }
    keeps the margin every other panel's text has. */
 :root[data-cfull] .panel.ai .crystal-body:has(#crystal-frame-wrap) { padding: 0; }
 
-/* The toggle. Two glyphs, one shown at a time, and a word beside the glyph
-   ONLY while the mode is on: coming back is the thing a reader has to be able
-   to do without working out what an icon means, and it is the one moment when
-   there is room for the word because every other chip in the row has gone. */
+/* Nothing sits between the frame and the viewport edge but the panel's own border: the wrap's 4px
+   bottom margin (crystal.css) is chrome in full screen, as the app's padding and gap are. */
+:root[data-cfull] #crystal-frame-wrap { margin-bottom: 0; }
+
+/* THE MEMORY IS CHROME IN FULL SCREEN. The `.crystal-memory` <details> rides in
+   `#crystal-body` above the frame on every face-state (daimond.js
+   `crystalMemoryPanel`), but full screen exists to give the page the whole
+   panel -- so the memory goes too, and `.crystal-body`'s `flex: 1` lets the
+   frame run down to the panel's bottom edge where the memory used to sit. */
+:root[data-cfull] .panel.ai .crystal-memory { display: none !important; }
+
+/* The toggle. Two glyphs, one shown at a time, icon only: the accessible
+   name lives on `aria-label` (and `title`), and in full screen this button
+   is the only thing left of the header, so the way back is the one control
+   on screen. */
 .cfull-btn { display: inline-flex; align-items: center; gap: 5px; padding: 3px 6px; }
 /* An explicit ring rather than the browser's own. In full screen this is the
    only control on the app, so where the keyboard is has to be legible against
    the accent ground it wears there. */
 .cfull-btn:focus-visible { outline: 2px solid var(--text-primary); outline-offset: 2px; }
 .cfull-btn .ic { width: 16px; height: 16px; }
-.cfull-btn .ic-cfull-out,
-.cfull-txt { display: none; }
+.cfull-btn .ic-cfull-out { display: none; }
 :root[data-cfull] .cfull-btn .ic-cfull-in { display: none; }
 :root[data-cfull] .cfull-btn .ic-cfull-out { display: block; }
-:root[data-cfull] .cfull-txt { display: inline; }
 /* On in the sense the header's other latched chip is on, so the mode is
    readable from the control as well as from the screen behind it. */
 :root[data-cfull] .cfull-btn { background: var(--accent); border-color: var(--accent); color: var(--on-fill, #fff); }
@@ -4597,17 +4589,21 @@ details.md-fold > .md-fold-body > :last-child { margin-bottom: 0; }
 .ctile-ctl { display: flex; align-items: center; flex: none; }
 
 /* Copy — hidden until the tile is hovered, at the right end of the bar. The rating
-   controls (up, down, details) are drawn as Copy is: the same box, icon and reveal. */
+   controls (up, down, details) are drawn as Copy is: the same box and icon. They are not
+   hidden at rest: they show in the muted-control colour, as on a phone, and take the accent
+   on hover or keyboard focus. */
 .ctile-copy,
 .ctile-rate-up, .ctile-rate-down, .ctile-rate-more {
 	background: transparent; border: 0; padding: 2px; margin: -2px -2px -2px 0;
 	cursor: pointer; color: var(--text-muted); border-radius: var(--radius-sm);
-	display: grid; place-items: center; opacity: 0; transition: opacity 0.12s;
+	display: grid; place-items: center;
 }
+.ctile-copy { opacity: 0; transition: opacity 0.12s; }
 .ctile:hover > .ctile-lbl .ctile-copy,
 .crollup:hover > .crollup-lbl .ctile-copy { opacity: 0.75; }
 .ctile-copy:hover,
-.ctile-rate button:hover { opacity: 1; color: var(--accent); background: color-mix(in srgb, var(--accent) 12%, transparent); }
+.ctile-rate button:hover,
+.ctile-rate button:focus-visible { opacity: 1; color: var(--accent); background: color-mix(in srgb, var(--accent) 12%, transparent); }
 .ctile-copy.done { color: var(--ok); opacity: 1; }
 .ctile-copy .ic,
 .ctile-rate .ic { width: 13px; height: 13px; }
@@ -4615,8 +4611,8 @@ details.md-fold > .md-fold-body > :last-child { margin-bottom: 0; }
 /* ── Rating an answer (Rating U2) ─────────────────────────────────────
    The group sits in the label bar between the peek and the time, so its width comes
    out of the flexible middle and the time and Copy keep the x they have on every other
-   tile. It shows on hover or focus, as Copy does; a lit arrow, and a details control
-   holding more than a bare +1 or -1, always show.
+   tile. It shows at rest in the muted colour and takes the accent on hover or focus; a
+   lit arrow, and a details control holding more than a bare +1 or -1, always wear it.
 
    Where there is no hover, or the chat panel has no room for three buttons beside a
    model name, the same group is drawn a second time in a row under the answer
@@ -4625,13 +4621,6 @@ details.md-fold > .md-fold-body > :last-child { margin-bottom: 0; }
    changes live, as the chat head does at 440px. */
 .ctile-rate { display: flex; align-items: center; gap: 2px; flex: none; }
 .ctile-rate button { margin: -2px 0; }		/* Copy's vertical margin: each arrow adds 16px to the bar, as Copy does */
-.ctile:is(:hover, :focus-within) > .ctile-lbl .ctile-rate button { opacity: 0.75; }
-.ctile-rate button:hover,
-.ctile-rate button:focus-visible,
-.ctile-rate button[aria-pressed="true"],
-.ctile-rate .ctile-rate-more.on,
-.ctile:is(:hover, :focus-within) > .ctile-lbl .ctile-rate button[aria-pressed="true"],
-.ctile:is(:hover, :focus-within) > .ctile-lbl .ctile-rate .ctile-rate-more.on { opacity: 1; }
 .ctile-rate button[aria-pressed="true"],
 .ctile-rate .ctile-rate-more.on { color: var(--accent); background: color-mix(in srgb, var(--accent) 12%, transparent); }
 .ctile-rate-row { display: none; }
@@ -4736,12 +4725,14 @@ details.md-fold > .md-fold-body > :last-child { margin-bottom: 0; }
    2026-09-04). So the compact Tool label stays in the flow, keeping it coherent
    as [Thinking][Tool][Thinking], and only its Sent→Result body, peek and copy
    are withheld while the switch is off. */
-.chat-output.hide-tools .ctile[data-t="tool"] > .ctile-body,
-.chat-output.hide-tools .ctile[data-t="tool"] > .ctile-nonet,
-.chat-output.hide-tools .ctile[data-t="tool"] .ctile-peek,
-.chat-output.hide-tools .ctile[data-t="tool"] .ctile-copy { display: none !important; }
-.chat-output.hide-tools .ctile[data-t="tool"] > .ctile-lbl { cursor: default; }
-.chat-output.hide-tools .ctile[data-t="tool"] { opacity: 0.75; }
+.chat-output.hide-tools .ctile[data-t="tool"]:not(.ctile-result) > .ctile-body,
+.chat-output.hide-tools .ctile[data-t="tool"]:not(.ctile-result) > .ctile-nonet,
+.chat-output.hide-tools .ctile[data-t="tool"]:not(.ctile-result) .ctile-peek,
+.chat-output.hide-tools .ctile[data-t="tool"]:not(.ctile-result) .ctile-copy { display: none !important; }
+.chat-output.hide-tools .ctile[data-t="tool"]:not(.ctile-result) > .ctile-lbl { cursor: default; }
+.chat-output.hide-tools .ctile[data-t="tool"]:not(.ctile-result) { opacity: 0.75; }
+/* A RESULT TILE IS NOT A STEP (`.ctile-result`, the Files list a turn leaves). The switch withholds the
+   working; a result stays as drawn, or the tile is a label that expands to nothing. */
 
 /* ── Rollup: a run of same-type tiles under one collapsible container ── */
 .crollup {
@@ -4957,7 +4948,7 @@ details.md-fold > .md-fold-body > :last-child { margin-bottom: 0; }
    clips at its edge; a 34px gap then makes the 50px pitch at which no two 44px overlays overlap. The row
    is tall enough that the tile's own clip does not cut an overlay at the foot. */
 .ctile-rate-row .ctile-rate { gap: 34px; }
-.ctile-rate-row .ctile-rate button { position: relative; opacity: 1; }
+.ctile-rate-row .ctile-rate button { position: relative; }
 .ctile-rate-row .ctile-rate button::after { content: ''; position: absolute; top: 50%; left: 50%; width: 44px; height: 44px; transform: translate(-50%, -50%); }
 .ctile-rate-row .ctile-rate button:first-child::after { left: -8px; transform: translateY(-50%); }
 @container aipane (max-width: 440px) {
@@ -4980,8 +4971,8 @@ details.md-fold > .md-fold-body > :last-child { margin-bottom: 0; }
 /* ── Rating a changed file (Rating U3) ─────────────────────────────────
    Placement only. The group in a changed-files row is the three buttons an answer has, and it wears
    the form an answer wears in the same place and the same input mode (bar rule 2): the HEADER form
-   where there is a mouse and the chat pane has room, hidden until the row is hovered or has focus
-   inside it, a lit arrow and a lit details control always showing; the ROW form where the pane is
+   where there is a mouse and the chat pane has room, shown at rest in the muted colour and taking the
+   accent on hover or focus, a lit arrow and a lit details control always wearing it; the ROW form where the pane is
    440px or less across, or the pointer is coarse (a finger has no hover), every button always there at
    the 50px pitch. The choice is the answer's own, and so are its two conditions, written below as
    the answer's are. The group stands at the row's right end, after the delta, and its width is the
@@ -4989,18 +4980,14 @@ details.md-fold > .md-fold-body > :last-child { margin-bottom: 0; }
    table that has one keeps the room empty (bar rule 3). */
 .turn-files { --tf-rate-w: 52px; }
 .turn-file-rate { flex: none; width: var(--tf-rate-w); justify-content: flex-start; }
-.turn-file-row:is(:hover, :focus-within) .turn-file-rate button { opacity: 0.75; }
-.turn-file-row:is(:hover, :focus-within) .turn-file-rate :is(button[aria-pressed="true"], .ctile-rate-more.on) { opacity: 1; }
 .turn-files:has(.turn-file-rate) .turn-file-row:not(:has(> .turn-file-rate))::after { content: ''; flex: none; width: var(--tf-rate-w); }
 @container aipane (max-width: 440px) {
 	.turn-files { --tf-rate-w: 116px; }
 	.turn-file-rate { gap: 34px; }
-	.turn-file-rate button, .turn-file-row:is(:hover, :focus-within) .turn-file-rate button { opacity: 1; }
 }
 @media (pointer: coarse) {
 	.turn-files { --tf-rate-w: 116px; }
 	.turn-file-rate { gap: 34px; }
-	.turn-file-rate button, .turn-file-row:is(:hover, :focus-within) .turn-file-rate button { opacity: 1; }
 }
 /* A finger on the ROW form: each button takes the house 44px overlay (they are 16px wide at a 50px pitch, so
    no two meet). The row form on a mouse in a narrow window of a computer has the overlay only at the phone

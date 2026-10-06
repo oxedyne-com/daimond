@@ -299,9 +299,7 @@
 		return authors.length;
 	}
 
-	/// Say that `n` posts landed. The SAME event post.js raises for a message, so
-	/// the one Social badge counts both -- `postBadge` in js/daimond.js sums the
-	/// two tallies and the comment there is the reason there is one badge.
+	/// Say that `n` posts landed. The SAME event post.js raises for a message.
 	var ARRIVED = 'daimond:post-arrived';
 
 	function announce(n) {
@@ -846,7 +844,7 @@
 			return null;
 		},
 		/// How many posts arrived and have not been drawn, and the event raised
-		/// when some do. The Social badge sums this with `DaimondPost.unread()`.
+		/// when some do.
 		unread:       unread,
 		arrivedEvent: ARRIVED,
 		/// Everything this module would say if asked.

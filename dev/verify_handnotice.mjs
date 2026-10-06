@@ -219,7 +219,7 @@ try {
 			res[k] = (top && (top === el || el.contains(top))) ? '' : ('under ' + (top ? (top.id || top.className || top.tagName) : 'nothing'));
 		}
 		res.narrow = window.matchMedia('(max-width: 760px)').matches;
-		res.chip = window.DaimondBadge ? window.DaimondBadge.count('pending') : -1;
+		res.chip = typeof window.DaimondBadge; // no badge: DaimondBadge is undefined
 		return res;
 	});
 	const n0 = await reach();

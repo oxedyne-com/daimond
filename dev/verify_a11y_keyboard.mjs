@@ -694,8 +694,8 @@ if (rateFocused) {
 
 // ── 5c. Rating U3: a changed file's arrows and details are reached by Tab, and its popup is a dialog ─
 // A chat turn that writes two files leaves a Files row (`.turn-files`), and each of its rows carries the same three controls as an
-// answer (`.turn-file-rate`: up, down, details). On a computer the group is faded until the row is hovered or holds focus, so a
-// keyboard user must find it by Tab: the row's name, its delta, then the three. The details control opens the "Rate this change"
+// answer (`.turn-file-rate`: up, down, details). On a computer the group shows at rest, quiet in colour, and takes the accent when a control holds focus;
+// a keyboard user must find it by Tab: the row's name, its delta, then the three. The details control opens the "Rate this change"
 // popup, which meets the dialog properties of 5 and 5b, and gives the focus back to the control that opened it.
 {
 	const cdir = await page.evaluate(() => window.DaimondAttach.chatScratch(String(window.DaimondAttach.focus().id)));
@@ -718,7 +718,7 @@ if (rateFocused) {
 			await page.keyboard.press('Tab');
 			await page.waitForTimeout(60);
 			seen.push(await page.evaluate(() => { const a = document.activeElement; return a ? (a.className && typeof a.className === 'string' ? a.className.split(/\s+/)[0] : a.tagName.toLowerCase()) : ''; }));
-			// The group's opacity while this control holds focus (a computer fades the group until hover or focus-within).
+			// The group's opacity while this control holds focus (the group is never hidden, at rest or in focus).
 			ops.push(await page.evaluate(() => { const a = document.activeElement; const g = a && a.closest('.turn-file-rate'); return g ? +getComputedStyle(g).opacity : -1; }));
 		}
 		const at = (c) => seen.indexOf(c);

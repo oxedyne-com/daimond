@@ -1229,6 +1229,12 @@
 	:root[data-skin="daylight"] :is(.files-view-head > span > .files-btn, .rail-fold)::after {
 		content: ''; position: absolute; top: 50%; left: 50%; width: 44px; height: 44px; transform: translate(-50%, -50%);
 	}
+	/* The first worded button sits flush to the panel's left edge (its ink lines up with the file name), so a
+	   centred 44px overlay would run off the screen and the viewport clips it to 43px. It is anchored to the
+	   button's left edge instead, as the first arrow of a rating row is (app.css). */
+	:root[data-skin="daylight"] .files-view-head > span > .files-btn:first-child::after {
+		left: 0; transform: translateY(-50%);
+	}
 	/* The bar's own icon tools (`#drawer-btn`, `#settings-btn`) are worded-
 	   free already at their group's own padding -- `#settings-btn` still
 	   carries `.icon-btn`'s worded padding from the desktop rule above. */

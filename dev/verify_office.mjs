@@ -41,7 +41,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
-import { open, scratch } from './harness.mjs';
+import { open, scratch, bin } from './harness.mjs';
 
 const PROFILE = scratch('pw', 'office');
 
@@ -55,35 +55,35 @@ const check = (ok, name, detail) => {
 /// both. It is LibreOffice's output, not ours.
 const FIXTURE = new URL(
 	'../../../../../rust/fe2o3/fe2o3_file/tests/data/rich.docx', import.meta.url);
-const DOCX = Array.from(fs.readFileSync(FIXTURE));
+const DOCX = bin(fs.readFileSync(FIXTURE));
 
 /// The same writer's output, holding a picture: the one thing in this set a
 /// reading view genuinely cannot draw, and therefore the one that proves the
 /// band says so rather than merely being able to.
-const WITHPIC = Array.from(fs.readFileSync(new URL(
+const WITHPIC = bin(fs.readFileSync(new URL(
 	'../../../../../rust/fe2o3/fe2o3_file/tests/data/withpic.docx', import.meta.url)));
 
 /// A `.xlsx` LibreOffice wrote, holding a formula whose cached value is what
 /// everyone sees, a date stored as a serial under a custom number format, and a
 /// row that skips two columns.
-const XLSX = Array.from(fs.readFileSync(new URL(
+const XLSX = bin(fs.readFileSync(new URL(
 	'../../../../../rust/fe2o3/fe2o3_file/tests/data/foreign.xlsx', import.meta.url)));
 
 /// The OpenDocument pair, both written by LibreOffice. They reach the SAME two
 /// tiers as their Microsoft counterparts, which is the claim worth checking:
 /// what a reader wants out of a text document does not depend on which
 /// vocabulary it was written in.
-const ODT = Array.from(fs.readFileSync(new URL(
+const ODT = bin(fs.readFileSync(new URL(
 	'../../../../../rust/fe2o3/fe2o3_file/tests/data/foreign.odt', import.meta.url)));
-const ODS = Array.from(fs.readFileSync(new URL(
+const ODS = bin(fs.readFileSync(new URL(
 	'../../../../../rust/fe2o3/fe2o3_file/tests/data/foreign.ods', import.meta.url)));
 
 /// The two decks. They are here to prove an ABSENCE: both can be read, and
 /// neither may be offered an edit, because a slide is a position on a canvas and
 /// changing the words without knowing the geometry puts text over other text.
-const PPTX = Array.from(fs.readFileSync(new URL(
+const PPTX = bin(fs.readFileSync(new URL(
 	'../../../../../rust/fe2o3/fe2o3_file/tests/data/foreign.pptx', import.meta.url)));
-const ODP = Array.from(fs.readFileSync(new URL(
+const ODP = bin(fs.readFileSync(new URL(
 	'../../../../../rust/fe2o3/fe2o3_file/tests/data/foreign.odp', import.meta.url)));
 
 /// The leading bytes of an OLE compound file, which is what an encrypted Office
@@ -92,7 +92,7 @@ const ENCRYPTED = [0xD0, 0xCF, 0x11, 0xE0, 0xA1, 0xB1, 0x1A, 0xE1]
 	.concat(new Array(512).fill(0x00));
 
 /// A ZIP that is not an Office document, so the floor is still the floor.
-const PLAIN_ZIP = Array.from(Buffer.from('UEsFBgAAAAAAAAAAAAAAAAAAAAAAAA==', 'base64'));
+const PLAIN_ZIP = bin(Buffer.from('UEsFBgAAAAAAAAAAAAAAAAAAAAAAAA==', 'base64'));
 
 const s = await open({ name: 'office', profile: PROFILE, connect: false, defaults: false });
 const { page } = s;
@@ -420,7 +420,7 @@ check(!!scon && scon.save.length === 1, 'a spreadsheet offers the same',
 console.log('\n-- and Markdown becomes a real document --');
 const MD = '# Quarterly Review\n\nAn opening paragraph with **bold words**.\n\n'
 	+ '## Findings\n\n- First finding\n- Second finding\n';
-await put('office/notes.md', Array.from(Buffer.from(MD)));
+await put('office/notes.md', bin(Buffer.from(MD)));
 await view('office/notes.md');
 const mcon = await controls();
 check(!!mcon && mcon.save.length >= 1,
@@ -485,7 +485,7 @@ console.log('\n-- and it says what the document does NOT carry, per kind and per
 // source names for what it could not draw, and Markdown does -- they are paths the
 // author wrote. So the picture can be NAMED rather than counted.
 const withPic = '# Trip\n\n![The harbour](photos/harbour.png)\n\nSome prose.\n';
-await put('office/withpic.md', Array.from(Buffer.from(withPic)));
+await put('office/withpic.md', bin(Buffer.from(withPic)));
 await view('office/withpic.md');
 const shapes = await page.evaluate(async ({ md }) => {
 	const m = await import('/pkg/oxedyne_daimond.js');

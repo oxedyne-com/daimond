@@ -55,7 +55,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { open, signInAs, scratch, shot } from './harness.mjs';
+import { open, signInAs, scratch, shot, bin } from './harness.mjs';
 import { makePagePro, makePagePack } from './pro.mjs';
 import { GW_URL } from './ports.mjs';
 
@@ -184,7 +184,7 @@ for (const [rel, re] of [
 		if (!re.test(n)) continue;
 		const b = fs.readFileSync(path.join(SRC, rel, n));
 		seed.push([ROOT + '/' + rel + '/' + n,
-			/\.svg$/i.test(n) ? b.toString('utf8') : Array.from(b)]);
+			/\.svg$/i.test(n) ? b.toString('utf8') : bin(b)]);
 	}
 }
 // A chapter the phone will NOT be given, so the gather on the phone genuinely

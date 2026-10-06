@@ -2941,8 +2941,6 @@
 	'ref.build_other': 'Vous êtes sur le build {id}.',
 	'ref.build_update': 'Mettre à jour vers celui-ci',
 
-	'dock.unseen.one': '{n} non lu',
-	'dock.unseen.other': '{n} non lus',
 	'social.info': 'Ce qu’est ce panneau, dans le guide',
 	'social.box_label': 'Écrire une note sur Daimond',
 	'social.box_ph': 'Où c’était, ce que vous attendiez et ce qui s’est passé à la place.',
@@ -3311,6 +3309,8 @@
 	'chat.turn_files.one':       '{n} fichier modifié ce tour',
 	'chat.turn_files.other':     '{n} fichiers modifiés ce tour',
 	'chat.turn_files_more':      'Afficher {n} de plus',
+	'chat.turn_file_nofile':      'Ce fichier n\'est pas encore sur cet appareil.',
+	'chat.turn_file_nocount':     'Les nombres de lignes de ce changement ne sont pas encore sur cet appareil.',
 	'tile.model_change': 'Changer',
 	'tile.model_change_help': 'Fait passer le daimon au modèle sélectionné. La conversation se poursuit.',
 	'models.drafting_label': 'Modèle de rédaction',

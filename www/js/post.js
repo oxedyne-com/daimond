@@ -940,9 +940,8 @@
 		return 1;
 	}
 
-	/// How many feed posts have arrived and not been drawn. The Social badge adds
-	/// this to `unread()` above; see `postBadge` in js/daimond.js, and the comment
-	/// there insisting there is ONE badge.
+	/// How many feed posts have arrived and not been drawn.
+	///
 	function feedUnread() {
 		if (!_st || !_st.feed) return 0;
 		var n = 0;
@@ -2221,10 +2220,7 @@
 	/// The unread tally moved. The badge holds the number, so it is TOLD rather
 	/// than left to poll -- and it is the same badge Mail lights, one function in
 	/// daimond.js, so a second count here would be a second thing to keep right.
-	function countChanged() {
-		try { if (window.DaimondBadge && DaimondBadge.post) DaimondBadge.post(); }
-		catch (e) { /* no badge in this build */ }
-	}
+	function countChanged() {}
 
 	/// The ack watermark for a record: `seen` when nothing is held, else one below the
 	/// LOWEST live hold, so `ackThrough` never drops a held errand off the relay before

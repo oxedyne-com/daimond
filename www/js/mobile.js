@@ -240,7 +240,7 @@
 	// -- and named four of the seventeen panels there are. It carries the chip
 	// row now, which is the row the desktop header carries, MOVED here rather
 	// than copied: `#panel-tags` is the one row the layout engine renders, the
-	// one `Badge.paint` marks with unseen counts, and the one the gallery asks
+	// the one the gallery asks
 	// whether a panel is on. A second copy would be a second thing to keep in
 	// step with all three, and the first to drift.
 

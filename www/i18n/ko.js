@@ -2970,8 +2970,6 @@
 	'ref.build_other': '지금은 빌드 {id}예요.',
 	'ref.build_update': '그 빌드로 업데이트',
 
-	'dock.unseen.one': '읽지 않음 {n}',
-	'dock.unseen.other': '읽지 않음 {n}',
 	'social.info': '이 패널이 무엇인지 안내서에서 보기',
 	'social.box_label': 'Daimond에 대한 메모 쓰기',
 	'social.box_ph': '어디였는지, 무엇을 기대했는지, 대신 무슨 일이 일어났는지.',
@@ -3336,6 +3334,8 @@
 	'chat.turn_files.one':       '이 턴에서 {n}개 파일 변경됨',
 	'chat.turn_files.other':     '이 턴에서 {n}개 파일 변경됨',
 	'chat.turn_files_more':      '{n}개 더 보기',
+	'chat.turn_file_nofile':      '이 파일은 아직 이 기기에 없습니다.',
+	'chat.turn_file_nocount':     '이 변경의 줄 수는 아직 이 기기에 없습니다.',
 	'tile.model_change': '변경',
 	'tile.model_change_help': 'daimon을 선택한 모델로 바꿔요. 대화는 이어져요.',
 	'models.drafting_label': '초안 모델',

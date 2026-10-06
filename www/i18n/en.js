@@ -547,6 +547,8 @@
 	'chat.turn_files.one':       '{n} file changed this turn',
 	'chat.turn_files.other':     '{n} files changed this turn',
 	'chat.turn_files_more':      'Show {n} more',
+	'chat.turn_file_nofile':      'This file is not on this device yet.',
+	'chat.turn_file_nocount':     'The line counts for this change are not on this device yet.',
 	'chat.connect_to_chat': 'Connect a provider, or unlock, to chat on this model.',
 	'tile.cost_estimated': 'Estimated. This model is not in the price table.',
 	'tile.cost_so_far':    'Cost so far for this chat.',
@@ -4695,13 +4697,6 @@
 	'ref.build_here':    'This is the build you are on.',
 	'ref.build_other':   'You are on build {id}.',
 	'ref.build_update':  'Update to it',
-
-	// ── The dock count badge ───────────────────────────────────
-	// One number on a dock chip, and the whole of what this app does to say
-	// something arrived while you were elsewhere. Never a zero: a badge showing
-	// 0 is a mark that has to be read before it can be ignored.
-	'dock.unseen.one':   '{n} unread',
-	'dock.unseen.other': '{n} unread',
 
 	// ── The sealing key, and the identity that holds it ────────
 	// js/identity.js has named this key since the sealing key landed and this

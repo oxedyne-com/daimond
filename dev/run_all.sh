@@ -1116,6 +1116,12 @@ if [ $# -eq 0 ]; then
 	# and the check itself shown red on each way a declaration can be wrong: a verifier
 	# written without one is caught here the first time anybody runs the suite.
 	static_one gatewaydecl  bash dev/breakproof_gatewaydecl.sh
+	# No verifier may send a file into `page.evaluate` as `Array.from(buf)`: Playwright makes
+	# an object and a validated copy of every element, and 6.8 MB of fonts took the node
+	# verifier to 1.9 GiB and killed nightly shard 3 (3G cap) on 2026-10-03 and 2026-10-06.
+	# `bin()` in harness.mjs sends a `Uint8Array`, which travels as one blob. The check is
+	# shown red on each spelling of the mistake and then run over the whole tree.
+	static_one bytearrays   bash dev/breakproof_bytearrays.sh
 fi
 
 # ── Phase 0b: the Rust tests, counted ───────────────────────────────────────

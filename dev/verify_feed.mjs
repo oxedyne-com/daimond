@@ -488,11 +488,10 @@ const looked = await B.page.evaluate(() => {
 });
 check('pressing the handle looks that person up in People', looked === 'amber-fox-9k2q', looked);
 
-// ── 4. Unread, the badge, and the mark ───────────────────────────────
+// ── 4. Unread, no badge, and the mark ───────────────────────────────
 
-console.log('\n4. the badge counts what nobody has looked at, and the mark moves once');
+console.log('\n4. unread is counted, no badge, and the mark moves once');
 await showView(B, 'messages');			// the feed view is now shut
-await B.page.evaluate(() => { window.DaimondBadge.seen('social'); });
 wireB.st.merged = [row({ id: 5, ts: 1500, body: 'Back on Monday.' })].concat(wireB.st.merged);
 const arrival = await B.page.evaluate(async () => {
 	let heard = null, times = 0;
@@ -501,12 +500,12 @@ const arrival = await B.page.evaluate(async () => {
 	await window.DaimondFeed.poll();
 	await new Promise(r => setTimeout(r, 300));
 	window.removeEventListener('daimond:post-arrived', on);
-	return { times, heard, unread: window.DaimondFeed.unread(), badge: window.DaimondBadge.count('social') };
+	return { times, heard, unread: window.DaimondFeed.unread(), badge: typeof window.DaimondBadge };
 });
 check('a post folded with the panel shut is announced exactly once',
 	arrival.times === 1 && arrival.heard && arrival.heard.kind === 'feed', arrival);
 check('it counts as one unread', arrival.unread === 1, arrival);
-check('and the Social badge carries it', arrival.badge >= 1, arrival);
+check('and no badge is raised', arrival.badge === 'undefined', arrival);
 
 // A HIDDEN VIEW MARKS NOTHING. The rows are drawn into a region with no area.
 const blind = await B.page.evaluate(async () => {
@@ -518,7 +517,7 @@ check('drawing into a hidden view clears nothing', blind.unread === 1, blind);
 await showView(B, 'feed');
 await sleep(500);
 const cleared = await B.page.evaluate(() => ({
-	unread: window.DaimondFeed.unread(), badge: window.DaimondBadge.count('social') }));
+	unread: window.DaimondFeed.unread(), badge: typeof window.DaimondBadge }));
 check('opening the view, where the rows have real area, clears it',
 	cleared.unread === 0, cleared);
 

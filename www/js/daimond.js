@@ -12647,206 +12647,14 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		// a page whose sheet script did not load, and are woken anyway: a panel
 		// shown without its onOpen is a panel that draws nothing.
 		if (name === 'work') Files.onOpen();
-		if (name === 'mail' && window.DaimondMail) { DaimondMail.onOpen(); Badge.seen('mail'); }
+		if (name === 'mail' && window.DaimondMail) { DaimondMail.onOpen(); }
 		if (name === 'spend' && window.DaimondSpend) DaimondSpend.onOpen();
 		if (name === 'modeldash' && window.DaimondModelDash) DaimondModelDash.onOpen();
 		if (name === 'term' && window.DaimondTerm) DaimondTerm.onOpen();
 		if (name === 'trash' && window.DaimondTrashPanel) DaimondTrashPanel.onOpen();
-		if (name === 'social' && window.DaimondSocial) { DaimondSocial.onOpen(); postBadge(); }
+		if (name === 'social' && window.DaimondSocial) { DaimondSocial.onOpen(); }
 	}
 
-	// ── The dock count badge ───────────────────────────────────
-	//
-	// ONE NUMBER PER PANEL, and with Web Push declined (messaging_plan §10) this
-	// is the whole of what this app does to say that something arrived while you
-	// were looking somewhere else. It is said in these places:
-	//
-	//   a panel's own head   `.rail-count-host`, where a panel offers one
-	//   the document title   `(3) Daimond`, when the tab is not the one in front
-	//
-	// NOT ON THE CHIP ROW. It was drawn over each chip until 2026-09-29, when
-	// the owner asked for the counters on the header's tabs to go: a chip is a
-	// word, and a number over Email and Social was the header's loudest mark.
-	//
-	// and `navigator.setAppBadge`, which an installed app shows on its icon and
-	// which needs no push subscription and no permission prompt. Where it is not
-	// implemented the call simply does not exist and nothing else changes.
-	//
-	// THE COUNT IS NEVER A ZERO ON SCREEN. `#pending-count`, `#agents-count` and
-	// `#trash-count` all write `n ? String(n) : ''` for the same reason: a badge
-	// reading 0 is a mark that has to be READ before it can be ignored, which is
-	// the opposite of what a badge is for.
-	//
-	// AND IT DOES NOT COUNT WHAT YOU ARE LOOKING AT. A panel that is open and on
-	// screen when its thing arrives has already told you; a badge over it would
-	// be asking you to go and see what is in front of you.
-	//
-	// TWO CALLERS AND ONE FUNCTION. Mail bumps it from `daimond:mail-arrived`;
-	// messages SET it from `DaimondPost.unread()`. The removal of 2026-08-31 took
-	// the badge out at the owner's word while messaging had no caller at all;
-	// §10.1 requires it, and it is back with both callers wired rather than one.
-	//
-	// The two are not the same kind of number and the difference is deliberate.
-	// Mail's is ARRIVALS SINCE YOU LAST LOOKED, held in memory: `mail.js` has the
-	// honest tally within reach -- every row it draws knows its own `seen` -- but
-	// exposes only per-folder TOTALS (`counts()`), and mail.js is another lane's
-	// file. When it offers an unseen tally, `set()` takes it and this paragraph
-	// goes. Messages' is the honest one: `post.js` marks a row read when it is
-	// DRAWN, and a message you have not opened stays unread while you stare at
-	// the list of them.
-	var Badge = (function () {
-		var counts = {};                 // panel id -> what has arrived unseen
-		var BASE = document.title;
-
-		function total() {
-			var n = 0;
-			Object.keys(counts).forEach(function (k) { n += counts[k] | 0; });
-			return n;
-		}
-
-		/// Is that panel in front of the user right now? Open is not enough on a
-		/// phone, where only the panel in the sheet or on the floor is visible.
-		function visible(id) {
-			try {
-				if (!DaimondPanels.isOpen(id)) return false;
-				if (!isMobile()) return true;
-				if (document.body.dataset.mpanel === id) return true;
-				return !!(window.DaimondSheet && DaimondSheet.guest && DaimondSheet.guest() === id);
-			} catch (e) { return false; }
-		}
-
-		/// Put the count on one host element, adding the mark only if there is
-		/// something to say and taking it away again when there is not.
-		function mark(host, n) {
-			if (!host) return;
-			var b = host.querySelector('.dock-count');
-			if (!b) {
-				if (!n) return;
-				b = document.createElement('span');
-				b.className = 'dock-count';
-				b.setAttribute('role', 'status');
-				host.appendChild(b);
-			}
-			b.textContent = n ? String(n) : '';
-			b.hidden = !n;
-			b.title = n ? tn('dock.unseen', n, { n: n }) : '';
-			if (n) host.dataset.unseen = String(n); else delete host.dataset.unseen;
-		}
-
-		/// Draw every count where it belongs. Called whenever a number changes and
-		/// again after the chip row is rebuilt, since that throws the chips away.
-		function paint() {
-			var ids = Object.keys(counts);
-			ids.forEach(function (id) {
-				// A panel's own head, where one has been given a place for it.
-				mark(document.querySelector('#panel-' + id + ' .rail-count-host'), counts[id] | 0);
-			});
-			var n = total();
-			document.title = n ? '(' + n + ') ' + BASE : BASE;
-			try {
-				if (n && navigator.setAppBadge) navigator.setAppBadge(n);
-				else if (navigator.clearAppBadge) navigator.clearAppBadge();
-			} catch (e) { /* the platform does not draw one */ }
-		}
-
-		return {
-			/// Set the count for a panel outright. What an honest tally calls.
-			set: function (id, n) {
-				n = Math.max(0, n | 0);
-				if ((counts[id] | 0) === n) return;
-				counts[id] = n;
-				paint();
-			},
-			/// Something arrived. Ignored while that panel is in front of the user.
-			bump: function (id, n) {
-				n = Math.max(0, n | 0);
-				if (!n || visible(id)) return;
-				counts[id] = (counts[id] | 0) + n;
-				paint();
-			},
-			/// The user is looking at it now, so there is nothing left to say.
-			seen: function (id) {
-				if (!(counts[id] | 0)) return;
-				counts[id] = 0;
-				paint();
-			},
-			/// What it would draw, for a verifier that wants the record as well as
-			/// the pixels.
-			count: function (id) { return counts[id] | 0; },
-			/// Whether that panel is in front of the user, published because
-			/// `bump`'s refusal is otherwise indistinguishable from a lost event.
-			visible: visible,
-			total: total,
-			paint: paint,
-		};
-	})();
-	window.DaimondBadge = Badge;
-
-	// Mail's caller. `count` is what came in above the mark this fetch started
-	// from — mail.js's own definition of an arrival, with backfills and
-	// uid-validity rebuilds already fenced out of it.
-	window.addEventListener('daimond:mail-arrived', function (ev) {
-		var d = (ev && ev.detail) || {};
-		Badge.bump('mail', d.count);
-	});
-
-	/// The Social panel's own count: how many messages have not been read.
-	///
-	/// `set` rather than `bump`, and NOT cleared merely by opening the panel,
-	/// because this is an honest tally rather than a memory of arrivals —
-	/// `post.js` marks a row read when it DRAWS it, so opening the Messages view
-	/// clears exactly the rows the reader can see and no others. Mail's badge is
-	/// the weaker of the two and says so where it is wired.
-	///
-	/// NO TIMER OF ITS OWN. It is recomputed on the six occasions the number can
-	/// have changed: a message arriving (`daimond:post-arrived`), the minute clock
-	/// this file already runs, the panel opening, anything pressed inside the
-	/// panel, another tab writing the store, and a sync parcel arriving (js/sync.js
-	/// and js/post.js, both through `DaimondBadge.post`).
-	/// What the two lanes of the Social panel have waiting, added. ONE BADGE: a
-	/// message nobody has read and a feed post nobody has drawn are both "open the
-	/// panel", and two counts on one chip would be two numbers to keep right.
-	function socialUnread() {
-		var n = 0;
-		try { n += DaimondPost.unread() | 0; } catch (e) { /* locked */ }
-		try {
-			if (window.DaimondFeed && DaimondFeed.unread) n += DaimondFeed.unread() | 0;
-		} catch (e) { /* no feed in this build */ }
-		return n;
-	}
-
-	function postBadge() {
-		try {
-			if (!window.DaimondPost || !DaimondPost.unread) return;
-			// BELT AND BRACES over identity.js's `daimond:unlock`. The store is read
-			// lazily and answers 0 unread while it is unread, so a badge that only
-			// counted would be a badge that could never light: its whole job is to
-			// say "open the panel", and the panel opening was the only thing that
-			// read the store. Asking here means a listener that never fired costs a
-			// minute rather than the session.
-			if (DaimondPost.read && DaimondPost.state && !DaimondPost.state().read) {
-				DaimondPost.read().then(function () {
-					Badge.set('social', socialUnread());
-				}, function () { /* locked: there is nothing to count yet */ });
-			}
-			Badge.set('social', socialUnread());
-		} catch (e) { /* no messages in this build */ }
-	}
-	window.DaimondBadge.post = postBadge;
-	// THE ARRIVAL, which is the signal this whole mechanism was missing: until
-	// post.js raised it, a message could land on a parked poll and nothing in the
-	// app knew. The tally is recomputed rather than added to, because `unread()`
-	// is the authority and a running total could drift from it.
-	window.addEventListener('daimond:post-arrived', function () { postBadge(); });
-	document.addEventListener('click', function (e) {
-		if (!e.target || !e.target.closest || !e.target.closest('#panel-social')) return;
-		// After the press has been handled: `post.js` marks a message read on the
-		// way through, and a count taken in the same tick is the count before it.
-		setTimeout(postBadge, 0);
-	});
-	window.addEventListener('storage', function (e) {
-		if (e && e.key && e.key.indexOf('daimond-post') !== -1) postBadge();
-	});
 
 	// ── Layout: three zones ────────────────────────────────────
 	//
@@ -14230,10 +14038,6 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			if (!tagsEl) return;
 			if (window.DaimondWorkspace && DaimondWorkspace.renderTags) {
 				DaimondWorkspace.renderTags(tagModel());
-				// The chips were thrown away and rebuilt, and the counts on them
-				// with them. Repainted HERE rather than inside the renderer, so the
-				// badge has one owner and workspace.js need not know it exists.
-				Badge.paint();
 				return;
 			}
 			tagsEl.innerHTML = '';
@@ -14247,7 +14051,6 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 				b.addEventListener('click', function () { activate(p.id); });
 				tagsEl.appendChild(b);
 			});
-			Badge.paint();
 		}
 
 		/// Open a panel in its own zone. A stage panel takes a free seat, or evicts
@@ -14328,9 +14131,8 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		function openHooks(id) {
 			if (id === 'work') Files.onOpen();
 			if (id === 'doc') Files.onDocOpen();
-			if (id === 'mail' && window.DaimondMail) { DaimondMail.onOpen(); Badge.seen('mail'); }
+			if (id === 'mail' && window.DaimondMail) { DaimondMail.onOpen(); }
 			// A notice or a proposal raises no panel, only the chip's count (F4).
-			if (id === 'pending') Badge.seen('pending');
 			if (id === 'spend' && window.DaimondSpend) DaimondSpend.onOpen();
 			if (id === 'modeldash' && window.DaimondModelDash) DaimondModelDash.onOpen();
 			// The terminal is built on the first open and started there: a pty is a
@@ -14338,7 +14140,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			// for one and not when the app loads.
 			if (id === 'term' && window.DaimondTerm) DaimondTerm.onOpen();
 			if (id === 'trash' && window.DaimondTrashPanel) DaimondTrashPanel.onOpen();
-			if (id === 'social' && window.DaimondSocial) { DaimondSocial.onOpen(); postBadge(); }
+			if (id === 'social' && window.DaimondSocial) { DaimondSocial.onOpen(); }
 		}
 
 		/// The pages are on screen again, so the watch that paused when they left
@@ -15738,7 +15540,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 	function buildTile(type, opts) {
 		opts = opts || {};
 		var tile = document.createElement('div');
-		tile.className = 'ctile csel-unit' + (opts.expanded ? '' : ' collapsed');
+		tile.className = 'ctile csel-unit' + (opts.expanded ? '' : ' collapsed') + (opts.result ? ' ctile-result' : '');
 		tile.dataset.t = type;
 		tile.dataset.dir = TILE_DIR[type] || 'from';
 		var lbl = document.createElement('div');
@@ -15953,14 +15755,12 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		return { count: Number(m[1]), v: Number(m[2]), files: shown, rest: rest };
 	}
 
-	/// The changed-files table for one turn, or null when the text is not the
-	/// tail note. Names open the file (openFile); the +N −M loads the version
-	/// store's diff and folds it in under the row, History-style.
-	async function _tailNoteTable(text, chat, prod) {
+	/// What a Files tile is drawn from, or null when the text is not a tail note: the parse, the Diamond
+	/// the note's chat belongs to, and the handles of the rows the note's own records name. A row whose
+	/// handle is not in `have` is drawn without one, and so is never offered for a rating.
+	function _tailNoteParts(text, chat, prod) {
 		var p = _parseTailNote(text);
 		if (!p) return null;
-		// The handles of the rows this note's own records name. A row whose handle is not here is
-		// drawn without one, and so is never offered for a rating.
 		var have = new Set();
 		(Array.isArray(prod) ? prod : []).forEach(function (r) {
 			if (r && r.k === 'file' && typeof r.h === 'string') have.add(r.h);
@@ -15973,17 +15773,71 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		// which is the owner-hit bug. `currentDiamond` remains the fallback for a note drawn
 		// while a Diamond is open the ordinary way.
 		var id = (chat && chat.diamondId) || (currentDiamond ? currentDiamond.id : '');
+		return { p: p, id: id, have: have };
+	}
+
+	/// The Files table from what the note itself says: every file it names and no counts, at once, on
+	/// any device. A tile draws from the data the device has and is enriched when more arrives, so
+	/// this never waits on the version store (`_tailNoteTable` adds the counts).
+	function _tailNoteNames(text, chat, prod) {
+		var q = _tailNoteParts(text, chat, prod);
+		return q ? _filesBox(q.id, q.p.count, q.p.v, q.p.files, q.p.rest || 0, {}, q.have, false) : null;
+	}
+
+	/// The changed-files table for one turn, or null when the text is not the tail note, with the
+	/// +N −M of the version store folded in where the store holds this version (`box._counted`).
+	/// Names open the file (openFile); the +N −M loads the version store's diff and folds it in
+	/// under the row, History-style.
+	async function _tailNoteTable(text, chat, prod) {
+		var q = _tailNoteParts(text, chat, prod);
+		if (!q) return null;
 		// The manifest rows for this version: was→hash per file, so the delta
 		// comes from the version store, never re-derived from the bytes on disk.
-		var entries = [];
+		var ms = [], mv = null;
 		try {
-			var ms = await DaimondVersions.manifests(id);
-			var mv = (ms || []).find(function (m) { return m && m.version === p.v; });
-			entries = (mv && mv.files) || [];
-		} catch (e) { entries = []; }
+			ms = (await DaimondVersions.manifests(q.id)) || [];
+			mv = ms.find(function (m) { return m && m.version === q.p.v; }) || null;
+		} catch (e) { ms = []; mv = null; }
 		var byPath = {};
-		entries.forEach(function (e) { if (e && e.path) byPath[e.path] = e; });
-		return _filesBox(id, p.count, p.v, p.files, p.rest || 0, byPath, have, false);
+		((mv && mv.files) || []).forEach(function (e) { if (e && e.path) byPath[e.path] = e; });
+		if (!mv) _filesNoStore(q.id, q.p.v, ms);
+		var box = _filesBox(q.id, q.p.count, q.p.v, q.p.files, q.p.rest || 0, byPath, q.have, false);
+		box._counted = !!mv;
+		return box;
+	}
+
+	/// Say once a version, through the feed, that a Files tile was drawn without its version on this
+	/// device. A Diamond travels whole, so a device that has the note should have the version too: the
+	/// tile falls back to the names, and this keeps the fallback from hiding a sync that is behind.
+	/// A version the store has since pruned (it holds newer ones) is not a fault and says nothing.
+	var _noStoreSaid = {};
+	function _filesNoStore(id, v, ms) {
+		if (!id || String(id).indexOf('chat:') === 0) return;   // a chat keeps no version store
+		var top = 0;
+		(ms || []).forEach(function (m) { if (m && m.version > top) top = m.version; });
+		if (top > v) return;
+		var k = id + '@' + v;
+		if (_noStoreSaid[k]) return;
+		if (Object.keys(_noStoreSaid).length > 200) _noStoreSaid = {};
+		_noStoreSaid[k] = 1;
+		dsEvent('files.nostore', { id: String(id), v: v, held: top, dev: String(selfDeviceId() || '').slice(0, 12) });
+	}
+
+	/// Fill a Files tile's body from a tail note: at once from the names the note carries, then again with
+	/// the counts when the version store answers. Never blank: a note that does not parse is shown as the
+	/// words it is, so a tile never opens on nothing.
+	function _fillFilesTile(tile, text, chat, prod) {
+		var body = tile.querySelector('.ctile-body');
+		if (!body) return;
+		var first = _tailNoteNames(text, chat, prod);
+		if (!first) { body.textContent = text; return; }
+		body.replaceChildren(first);
+		mountFileRates(first);
+		_tailNoteTable(text, chat, prod).then(function (tbl) {
+			if (!tbl || !tbl._counted) return;
+			body.replaceChildren(tbl);
+			mountFileRates(tbl);
+		}).catch(function () { /* the names stay */ });
 	}
 
 	/// The Files box: a head, one row a file, and a fold after `_TAIL_MORE` rows. The Diamond's tail
@@ -16048,13 +15902,13 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 	/// so on failure the version-store SNAPSHOT this tile is already about is shown
 	/// read-only. The click therefore always lands on the file, never on nothing.
 	async function openTurnFile(id, name, hash) {
-		try { await Files.open(name, { line: 0 }); return; }
+		try { await Files.open(name, { line: 0 }); return true; }
 		catch (liveErr) {
 			if (!hash) {
 				try { console.warn('Daimond: could not open "' + name + '": '
 					+ ((liveErr && liveErr.message) ? liveErr.message : liveErr)); }
 				catch (e0) { /* no console */ }
-				return;
+				return false;
 			}
 			// The live file is not here (a `code/…` path with no folder mounted lands in
 			// OPFS, where it is not), so show the version-store SNAPSHOT this tile is about.
@@ -16068,7 +15922,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 				try { info = await DaimondViewer.probe(bodyPath, { store: true }); } catch (e) { info = null; }
 			}
 			if (info && DaimondViewer.editable && !DaimondViewer.editable(info)) {
-				try { await Files.view(bodyPath, info, { store: true, label: name }); return; }
+				try { await Files.view(bodyPath, info, { store: true, label: name }); return true; }
 				catch (e2) { /* fall through to the text snapshot / notice */ }
 			}
 			// Editable, or no probe: the snapshot as read-only text (the pre-#4 path).
@@ -16076,12 +15930,13 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			try { snap = await DaimondVersions.body(id, hash); }
 			catch (e) { snap = null; }
 			if (snap != null) {
-				try { await Files.open(name, { content: snap, readOnly: true }); return; }
+				try { await Files.open(name, { content: snap, readOnly: true }); return true; }
 				catch (e3) { /* fall through to the notice */ }
 			}
 			try { console.warn('Daimond: could not open "' + name + '": '
 				+ ((liveErr && liveErr.message) ? liveErr.message : liveErr)); }
 			catch (e4) { /* no console */ }
+			return false;
 		}
 	}
 
@@ -16098,6 +15953,11 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 	function _turnFileRow(id, name, e, v, have, still) {
 		var row = document.createElement('div');
 		row.className = 'turn-file-row';
+		// A press that cannot act answers in the box it is in (the answer rule), never silently.
+		function say(text) {
+			var box = row.closest ? row.closest('.turn-files') : null;
+			if (box && window.DaimondAnswer && DaimondAnswer.note) DaimondAnswer.note(box, text, true);
+		}
 		// The row's handle is built in, not mounted, so the rows read the same before and after a
 		// rating. Only a row the note holds a record for has one (`mountFileRates` dresses those).
 		if (have && have.size && window.DaimondProvenance) {
@@ -16127,7 +15987,8 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			// The earlier fix called `Files.open` directly, which threw NotFound for
 			// exactly those workspace files and left the click doing nothing. A
 			// deletion opens what the file WAS; every other change what it became.
-			openTurnFile(id, name, e && e.gone ? (e.was || '') : (e && e.hash ? e.hash : ''));
+			Promise.resolve(openTurnFile(id, name, e && e.gone ? (e.was || '') : (e && e.hash ? e.hash : '')))
+				.then(function (landed) { if (landed === false) say(t('chat.turn_file_nofile')); });
 		});
 		row.appendChild(nm);
 		var de = document.createElement('button');
@@ -16219,7 +16080,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 					var mv = (ms || []).find(function (m) { return m && m.version === v; });
 					ent = ((mv && mv.files) || []).find(function (x) { return x && x.path === name; }) || null;
 				} catch (err) { ent = null; }
-				if (!ent || !ent.hash) { de.textContent = '·'; return; }   // not held: no honest count
+				if (!ent || !ent.hash) { de.textContent = '·'; say(t('chat.turn_file_nocount')); return; }   // not held: no honest count
 				if (!ent.was) { openTurnFile(id, name, ent.hash); return; }
 				try {
 					var d = await DaimondVersions.diff(id, ent.was, ent.hash);
@@ -16261,6 +16122,12 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		} else {
 			de.classList.add('turn-file-delta-none');
 			de.textContent = e && e.gone ? '−' : '·';
+			// No manifest row here: the version store has not got this version on this device, so
+			// there is no count to show and no diff to fold. The press says so.
+			if (!e) {
+				if (window.DaimondAnswer && DaimondAnswer.gate) DaimondAnswer.gate(de, t('chat.turn_file_nocount'));
+				de.addEventListener('click', function (ev) { ev.stopPropagation(); say(t('chat.turn_file_nocount')); });
+			}
 		}
 		return row;
 	}
@@ -16274,7 +16141,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		var box = recs.length ? _filesLogBox(recs, m.delta) : null;
 		if (!box) return null;
 		var names = [].map.call(box.querySelectorAll('.turn-file-name'), function (n) { return n.title; });
-		var tile = buildTile('tool', { who: tOr('chat.who_files', 'Files'), expanded: true, copy: names.join('\n'), ts: m.ts });
+		var tile = buildTile('tool', { who: tOr('chat.who_files', 'Files'), expanded: true, result: true, copy: names.join('\n'), ts: m.ts });
 		tile._body.appendChild(box);
 		tilePeek(tile, box.querySelector('.turn-files-head').textContent);
 		postToChat(tile);
@@ -16290,12 +16157,10 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		if (/^\[Daimond: this turn changed /.test(text)) {
 			// #22: the changed-files summary is the app noticing files changed, not a
 			// model tool call — so it wears a "Files" header, not the generic "Tool".
-			var d2 = buildTile('tool', { who: tOr('chat.who_files', 'Files'), expanded: true, copy: text, ts: ts });
-			_tailNoteTable(text, current, prod).then(function (tbl) {
-				if (!tbl) return;
-				var c = d2.querySelector('.ctile-body');
-				if (c) { c.replaceChildren(tbl); mountFileRates(tbl); }
-			}).catch(function () { });
+			var d2 = buildTile('tool', { who: tOr('chat.who_files', 'Files'), expanded: true, result: true, copy: text, ts: ts });
+			// The list is the turn's RESULT, not a step (the Steps switch leaves it), drawn from the
+			// note's own names at once and enriched with the counts.
+			_fillFilesTile(d2, text, current, prod);
 			tilePeek(d2, text);
 			postToChat(d2);
 			pinBottom();
@@ -40820,8 +40685,6 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			if (kind === 'consent') {
 				try { if (!DaimondPanels.isOpen('pending')) DaimondPanels.show('pending'); }
 				catch (e) { /* the layout engine is not up */ }
-			} else {
-				Badge.bump('pending', 1);
 			}
 			return rec.id;
 		},
@@ -41165,12 +41028,8 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		try { if (window.DaimondAccounts) pre = DaimondAccounts.prefix() || ''; }
 		catch (err) { /* no accounts module: the raw key */ }
 		if (!e || (e.key !== null && e.key !== pre + PENDING_KEY)) return;
-		var had = {};
-		Pending.items.forEach(function (x) { had[x.id] = true; });
 		Pending.fresh();
-		var news = Pending.items.filter(function (x) { return !had[x.id] && x.kind !== 'steer'; }).length;
 		Pending.render();
-		if (news) Badge.bump('pending', news);
 	});
 
 	// One Diamond's triggered actions, read-only. Published so that anything
@@ -41898,7 +41757,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		// been fetched at boot -- the identity was still locked. Ask now that
 		// there is a session, or a returning user is told the account service is
 		// unreachable when it is fine.
-		if (window.DaimondMail && DaimondPanels.isOpen('mail')) { DaimondMail.onOpen(); Badge.seen('mail'); }
+		if (window.DaimondMail && DaimondPanels.isOpen('mail')) { DaimondMail.onOpen(); }
 		grew('mail.onOpen');
 		// And what this account has unlocked, for the same reason: at boot there was no
 		// session to ask under, so the rail could count what Daimond is born with and
@@ -49570,8 +49429,6 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		/// an hour of wall clock to reach the case it is checking.
 		async function triggerTick() {
 			DaimondTriggers.tickActivity(TRIGGER_TICK_MS);
-			// The Social panel's unread count, on an occasion that already exists.
-			postBadge();
 			// Every TA is measured against ITS OWN stopwatch, so the reading goes in
 			// as a lookup: `due` stays pure and asks the occasion, and the occasion
 			// asks the clock. There is no early return on "less than a minute" any
@@ -52091,14 +51948,14 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 
 	/// Say on the control which state it is in, and what pressing it will do.
 	///
-	/// `aria-pressed` carries the state for a screen reader; the visible word is
-	/// what a person who cannot read the glyph goes by. Both are the WAY OUT
-	/// while the mode is on, so the label names the destination rather than the
-	/// mode: "Exit full screen", not "Full screen (on)".
+	/// `aria-pressed` carries the state for a screen reader, and the accessible
+	/// name lives on `aria-label` (mirrored by `title` for the sighted hover).
+	/// The button is icon-only: both name and title are the WAY OUT while the
+	/// mode is on, so the label names the destination rather than the mode:
+	/// "Exit full screen", not "Full screen (on)".
 	function syncCrystalFullBtn() {
 		var b = document.getElementById('crystal-full-btn');
 		if (!b) return;
-		var txt = document.getElementById('crystal-full-txt');
 		var label = crystalFull
 			? tOr('crystal.full_exit', 'Exit full screen')
 			: tOr('crystal.full', 'Full screen');
@@ -52107,7 +51964,6 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		b.title = crystalFull
 			? tOr('crystal.full_exit_help', 'Put the rail and the top bar back')
 			: tOr('crystal.full_help', 'Fill the screen with this page');
-		if (txt) txt.textContent = crystalFull ? label : '';
 	}
 
 	/// Is anything drawn over the app right now?
@@ -58799,12 +58655,12 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		// A panel that was already open when the app booted is never `show`n,
 		// so it would otherwise never ask the gateway what this account holds
 		// and would sit there reporting the account service unreachable.
-		if (window.DaimondMail && DaimondPanels.isOpen('mail')) { DaimondMail.onOpen(); Badge.seen('mail'); }
+		if (window.DaimondMail && DaimondPanels.isOpen('mail')) { DaimondMail.onOpen(); }
 		// And the Terminal, for the same reason: a panel left open in the saved
 		// layout is never `show`n, so nothing would ever build the terminal into it.
 		if (window.DaimondTerm && DaimondPanels.isOpen('term')) DaimondTerm.onOpen();
 		if (window.DaimondTrashPanel && DaimondPanels.isOpen('trash')) DaimondTrashPanel.onOpen();
-		if (window.DaimondSocial && DaimondPanels.isOpen('social')) { DaimondSocial.onOpen(); postBadge(); }
+		if (window.DaimondSocial && DaimondPanels.isOpen('social')) { DaimondSocial.onOpen(); }
 		// Expiry and retention, on every boot. A device that has been off for six
 		// weeks comes back to a trash whose whole contents are due, and works
 		// that out from the stamps it already holds rather than from a message

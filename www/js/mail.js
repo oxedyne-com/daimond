@@ -136,6 +136,7 @@
 		draining: false,             // a "fetch all" is walking the mailbox down
 		note:     '',
 		err:      '',
+		errOf:    null,              // { key, text }: the folder whose failed poll painted `err`
 	};
 
 	/// What each provider calls its IMAP server, and what it demands instead of
@@ -1370,7 +1371,10 @@
 	/// mailbox is never pulled down whole.
 	/// `auto` marks a poll the schedule asked for rather than the user. It changes
 	/// nothing about what is fetched — only how loudly the panel narrates it, and
-	/// whether a refusal is worth saying out loud to somebody who did not ask.
+	/// whether a refusal or a failure is worth saying out loud to somebody who did
+	/// not ask: see `DaimondQuiet`, which holds the rule. `asked` marks the one
+	/// automatic-style sync a person did press, Refresh walking every folder
+	/// quietly, so that a failure in it is still theirs to hear at once.
 	/// What is running now, so a second sync can wait for it instead of vanishing.
 	///
 	/// `state.busy` used to make `syncAccount` return at once, and every caller is
@@ -1390,22 +1394,23 @@
 	/// dropped when something else is running, because the schedule comes round again
 	/// and a queue of automatic polls is a queue of bills. `auto` already carries
 	/// exactly that distinction.
-	function syncAccount(address, older, folder, auto) {
+	function syncAccount(address, older, folder, auto, asked) {
 		if (auto && state.busy) return Promise.resolve();
 		// `finally` on both arms: a sync that threw must not stop the next one, and
 		// a rejected chain would strand every later fetch for the life of the tab.
 		var next = syncTurn.then(
-			function () { return syncOne(address, older, folder, auto); },
-			function () { return syncOne(address, older, folder, auto); });
+			function () { return syncOne(address, older, folder, auto, asked); },
+			function () { return syncOne(address, older, folder, auto, asked); });
 		syncTurn = next.then(function () {}, function () {});
 		return next;
 	}
 
-	async function syncOne(address, older, folder, auto) {
+	async function syncOne(address, older, folder, auto, asked) {
 		var a = acct(address);
 		if (!a) return;
 		var name = folder || a.folder || 'INBOX';
 		var f    = fld(a, name);
+		var key  = address + '\n' + name;       // a folder recovers on its own, so it is counted on its own
 		if (older && !f.firstUid) return;      // nothing held, so nothing to reach back from
 
 		// REFUSED WHERE THE REQUEST IS MADE. `gwFetch` refuses it again at the
@@ -1419,7 +1424,11 @@
 			return;
 		}
 
-		state.busy = true; state.err = '';
+		state.busy = true;
+		// A poll's own standing error is taken down by that folder's next success, not
+		// by the start of the retry, or it would blink off for as long as each one runs.
+		// Anything else on the line is cleared here, as it always was.
+		if (!auto || !pollErrShown()) { state.err = ''; state.errOf = null; }
 		// When this folder was last TRIED, which is what the schedule counts from.
 		// See `dueAt`: a failure must cost an interval, not nothing.
 		f.lastTry = Date.now();
@@ -1561,6 +1570,11 @@
 			await rebuildIndex(a, name);
 			await loadDigest(a.address, name);
 			save();		// the count `loadDigest` just took, kept across a reload
+			// Done, so whatever this folder failed before is over, and a line its failure
+			// painted comes down. Here and not at the reply: a local step that fails every
+			// poll must still add up to a streak.
+			DaimondQuiet.ok(key);
+			pollErrClear(key);
 			var parts = [];
 			if (!msgs.length) {
 				// An automatic poll that found nothing leaves the panel as it was.
@@ -1576,12 +1590,30 @@
 			state.note = parts.join(' · ');
 			if (deps.refreshFiles) deps.refreshFiles();
 		} catch (e) {
-			state.err = friendly(e);
-			state.note = '';
+			// A poll nobody asked for says nothing the first time: Gmail drops a connection
+			// now and then and the next poll succeeds. It is told once the failure persists.
+			if (DaimondQuiet.failed(key, asked || !auto)) {
+				state.err   = friendly(e);
+				state.errOf = { key: key, text: state.err };
+				state.note  = '';
+			}
 		} finally {
 			state.busy = false;
 			render();
 		}
+	}
+
+	/// Is the line at the head of the panel one a poll painted, still showing as it painted it?
+	function pollErrShown() {
+		var o = state.errOf;
+		return !!(o && state.err && state.err === o.text);
+	}
+
+	/// This folder succeeded: take down its error, and only its error.
+	function pollErrClear(key) {
+		if (!pollErrShown() || state.errOf.key !== key) return;
+		state.err = '';
+		state.errOf = null;
 	}
 
 	/// Walk the whole mailbox down, a batch at a time, until nothing is left on the server.
@@ -2668,7 +2700,8 @@
 			var names = allFolders(a);
 			for (var k = 0; k < names.length; k++) {
 				if (pollStop(a.address, names[k])) { held++; continue; }
-				await syncAccount(a.address, false, names[k], true);
+				// Quiet, as a walk of a dozen folders must be, but pressed: a failure is told.
+				await syncAccount(a.address, false, names[k], true, true);
 				done++;
 			}
 		}

@@ -54,7 +54,6 @@ function patch(src) {
 	if (BREAK === 'nostale')    swap("if (!x.steer || !want[x.steer.id]) return false;", "if (!x.steer) return false;");
 	if (BREAK === 'nocheck')    swap('try { holds = await steerStillHolds(p); } catch (e) { /* unknown */ }', 'holds = true;');
 	if (BREAK === 'editline')   swap("cm: p.key, tag: p.tag, line: line || p.line, at: at }", "cm: p.key, tag: p.tag, line: p.line, at: at }");
-	if (BREAK === 'badge')      swap("Pending.items = kept.concat(fresh);", "Pending.items = kept.concat(fresh); Badge.bump('pending', fresh.length);");
 	if (BREAK === 'switchtag')  swap("{ level: 2, scope: scope, cm: p.key, tag: 'switch', at: at, to: p.to }", "{ level: 2, scope: scope, cm: p.key, tag: p.tag, at: at, to: p.to }");
 	if (BREAK === 'unreadable') swap("return r.ok && Array.isArray(r.value) ? r.value : null;", "return r.ok && Array.isArray(r.value) ? r.value : [];");
 	if (BREAK === 'nullnote')   swap("if ((act === 'keep' || act === 'remove') && r.value === null) {", "if (false) {");

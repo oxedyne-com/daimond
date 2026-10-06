@@ -238,13 +238,12 @@
 	   the dock; here the bottom bar goes too, because a phone's app switcher is
 	   the last piece of chrome around the page.
 
-	   THE FOOT'S SAFE INSET COMES BACK WITH IT. `#app` above sets its bottom
-	   padding to nought and says why: the bar owns the home indicator's space in
-	   its own padding, and adding it twice would lift the bar off the screen
-	   edge. With the bar gone there is nothing holding that space, so the panel
-	   would run under the indicator -- and the crystal page's last row with it. */
+	   The foot's safe inset is NOT added back: app.css's `[data-cfull] #app` rule
+	   already zeroes the frame's padding on every side, and the mode's promise --
+	   the page gets the whole screen -- holds under the home indicator exactly as
+	   it does everywhere else. A crystal page that must keep a control off the
+	   indicator owns that at its own foot; the app frame does not guess it. */
 	:root[data-cfull] .mnav { display: none !important; }
-	:root[data-cfull] #app { padding-bottom: var(--safe-b); }
 	/* The way out is the only control left in the header, and on a phone it is
 	   the one a thumb has to find. */
 	:root[data-cfull] .chead .cfull-btn { min-height: 40px; padding: 8px 12px; }

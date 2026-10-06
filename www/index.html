@@ -800,15 +800,15 @@
 						     It is LAST in the row so that it keeps its place when
 						     everything else in the row is hidden: in full screen this
 						     button is the only thing left of the header's right-hand
-						     side, and it is the way back. Its words and its title are
+						     side, and it is the way back. Its name and its title are
 						     set from `syncCrystalFullBtn` rather than written here,
-						     because both change with the state and the label carries
-						     a word as well as a glyph while the mode is on. -->
+						     because both change with the state. Icon only: the
+						     accessible name is on `aria-label`, and `title` says
+						     what pressing it does. -->
 						<button class="chip-btn cfull-btn" id="crystal-full-btn" type="button"
 							style="display:none" aria-pressed="false">
 							<svg class="ic ic-cfull-in" viewBox="0 0 24 24" aria-hidden="true"><path d="M9 4H4v5M15 4h5v5M15 20h5v-5M9 20H4v-5"/></svg>
 							<svg class="ic ic-cfull-out" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 9h5V4M20 9h-5V4M20 15h-5v5M4 15h5v5"/></svg>
-							<span class="cfull-txt" id="crystal-full-txt"></span>
 						</button>
 					</div>
 				</div>
@@ -1774,6 +1774,9 @@
 <!-- answer.js: the answer rule. A control a person presses acts or visibly says why it cannot;
      one that cannot is disabled with the reason as its title. Before every file that binds one. -->
 <script src="js/answer.js"></script>
+<!-- quiet.js: the quiet rule. Background work that fails says nothing until the failure persists;
+     work a person asked for says so at once. Before mail.js, its first user. -->
+<script src="js/quiet.js"></script>
 <!-- journal.js: the write-ahead log for in-flight work. Loaded early so it is
      ready before the first turn. -->
 <script src="js/journal.js"></script>

@@ -2972,8 +2972,6 @@
 	'ref.build_other': 'いまはビルド {id} です。',
 	'ref.build_update': 'それに更新',
 
-	'dock.unseen.one': '未読 {n} 件',
-	'dock.unseen.other': '未読 {n} 件',
 	'social.info': 'このパネルの説明をガイドで開く',
 	'social.box_label': 'Daimond についてのメモを書く',
 	'social.box_ph': 'どこで、何を期待し、代わりに何が起きたか。',
@@ -3338,6 +3336,8 @@
 	'chat.turn_files.one':       'このターンで{n}件のファイルを変更',
 	'chat.turn_files.other':     'このターンで{n}件のファイルを変更',
 	'chat.turn_files_more':      'さらに{n}件表示',
+	'chat.turn_file_nofile':      'このファイルはまだこの端末にありません。',
+	'chat.turn_file_nocount':     'この変更の行数はまだこの端末にありません。',
 	'tile.model_change': '変更',
 	'tile.model_change_help': 'daimon を選択したモデルに切り替えます。会話は引き継がれます。',
 	'models.drafting_label': '下書きモデル',

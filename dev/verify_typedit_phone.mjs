@@ -80,7 +80,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { open, shot, scratch, errors } from './harness.mjs';
+import { open, shot, scratch, errors, bin } from './harness.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const WWW  = path.join(HERE, '..', 'www');
@@ -209,7 +209,7 @@ for (const n of fs.readdirSync(SRC)) {
 	if (/\.typ$/i.test(n)) fs.copyFileSync(path.join(SRC, n), path.join(COPY, n));
 }
 
-/// Everything the workspace is seeded with: `[path, text | byte array]`.
+/// Everything the workspace is seeded with: `[path, text | Uint8Array]`.
 ///
 /// THE PICTURES AND THE FONTS ARE NOT DECORATION HERE. The Rust gatherer walks
 /// `assets/fonts` outward from the main and reads the bytes; a book that sets Felipa
@@ -231,7 +231,7 @@ for (const [rel, re] of [
 		if (!re.test(n)) continue;
 		const b = fs.readFileSync(path.join(SRC, rel, n));
 		seed.push([ROOT + '/' + rel + '/' + n,
-			/\.svg$/i.test(n) ? b.toString('utf8') : Array.from(b)]);
+			/\.svg$/i.test(n) ? b.toString('utf8') : bin(b)]);
 	}
 }
 

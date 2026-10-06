@@ -382,7 +382,7 @@ try {
 	const typed = Buffer.from([0x03, 0x1b, 0x5b, 0x41, 0x00, 0xff, 0xc3, 0xa9, 0x0d]);
 	await page.evaluate(async ({ id, t }) => {
 		await window.DaimondPty.input(id, new Uint8Array(t));
-	}, { id: 't1', t: Array.from(typed) });
+	}, { id: 't1', t: new Uint8Array(typed) });
 	await sleep(300);
 	const ins = received('input');
 	check('keystrokes travel as one input message', ins.length === 1, JSON.stringify(ins).slice(0, 120));

@@ -2934,8 +2934,6 @@
 	'ref.build_other': 'Du bist auf Build {id}.',
 	'ref.build_update': 'Darauf aktualisieren',
 
-	'dock.unseen.one': '{n} ungelesen',
-	'dock.unseen.other': '{n} ungelesen',
 	'social.info': 'Was dieses Panel ist — im Handbuch',
 	'social.box_label': 'Eine Notiz zu Daimond schreiben',
 	'social.box_ph': 'Wo es war, was du erwartet hast und was stattdessen passiert ist.',
@@ -3303,6 +3301,8 @@
 	'chat.turn_files.one':       '{n} Datei in dieser Runde geändert',
 	'chat.turn_files.other':     '{n} Dateien in dieser Runde geändert',
 	'chat.turn_files_more':      '{n} weitere anzeigen',
+	'chat.turn_file_nofile':      'Diese Datei ist noch nicht auf diesem Gerät.',
+	'chat.turn_file_nocount':     'Die Zeilenzahlen dieser Änderung sind noch nicht auf diesem Gerät.',
 	'tile.model_change': 'Ändern',
 	'tile.model_change_help': 'Wechselt den Daimon zum ausgewählten Modell. Das Gespräch bleibt erhalten.',
 	'models.drafting_label': 'Entwurfsmodell',

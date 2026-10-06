@@ -380,6 +380,18 @@ export const contentText = (content) => {
 	return '';
 };
 
+/// A file's bytes, in the one shape that crosses into `page.evaluate` cheaply.
+///
+/// Never send a file as `Array.from(buf)`: Playwright turns each element of a number array into
+/// an object and then a validated copy, so 6.8 MB became a 6.8-million-element graph and took the
+/// verifier to 1.9 GiB and its page to 0.9 GiB, which killed nightly shard 3 on 2026-10-03 and
+/// 2026-10-06.  A `Uint8Array` travels as one binary blob.  A bare Node `Buffer` is worse than
+/// either, because it is not recognised as a typed array and is walked as an object, so this
+/// copies it into a plain `Uint8Array` of its own (no pool slab behind it).  The page side wants
+/// `new Uint8Array(x)`, which takes this as it took the array.  `dev/breakproof_bytearrays.sh`
+/// is the phase-0 gate that keeps the other form out.
+export const bin = (buf) => new Uint8Array(buf);
+
 /// Launch a browser, sign in, and connect the mock model.
 ///
 /// `name` seeds a distinct identity so parallel sessions never share state;
@@ -1291,26 +1303,63 @@ export function spend(s) {
 	});
 }
 
+/// How long `chat()` waits for a press of Send to be TAKEN, before it throws.
+///
+/// The page takes a press late under load: the question bubble and the busy Send
+/// came seconds after the click on 2026-10-06 (shard 3), well past the 300 ms this
+/// used to wait. Generous, because a throw here is a fault and a slow machine is not.
+export const SEND_REGISTER_MS = 20000;
+
+/// What the page shows of a press of Send: the question bubbles (a turn's own, or one
+/// said into a running turn), the held messages, and whether Send is offering Stop.
+/// Run in the page.
+const sendState = () => {
+	const out = document.getElementById('chat-output');
+	const held = document.getElementById('chat-queued');
+	const b = document.getElementById('chat-send');
+	const t = b ? (b.getAttribute('title') || '') + (b.className || '') : '';
+	return {
+		n: out ? out.querySelectorAll('.chat-msg-user, .chat-msg-interjected').length : 0,
+		w: held ? held.querySelectorAll('.chat-msg-queued').length : 0,
+		busy: !!b && (/stop/i.test(t) || b.disabled),
+	};
+};
+
 /// Send a message and wait for the turn to finish.
 ///
 /// "Finished" means the send button is offering Send again, not Stop — the
 /// only signal the UI itself trusts.
+///
+/// "Not busy" is also true BEFORE the press has been taken, so it cannot be read
+/// as "finished" until the press has shown itself: a new question bubble, a held
+/// message, or a busy Send, whichever comes first. A press that shows none of
+/// them within `SEND_REGISTER_MS` throws. Waiting a fixed 300 ms instead returned
+/// early whenever the page was slow, and the next `chat()` then landed INSIDE the
+/// turn it had not waited for, as an interjection.
 export async function chat(s, text, { timeout = 30000 } = {}) {
 	const { page } = s;
 	// `reuse`: a conversation is several messages in ONE chat. Only a caller who
 	// asks for `newChat` itself is asking for a new one.
 	await newChat(s, { reuse: true });
 	await page.fill('#chat-input', text);
+	const before = await page.evaluate(sendState);
 	await page.click('#chat-send', { force: true });
-	await page.waitForTimeout(300);
+	// SEND-REGISTERS begin
+	const r0 = Date.now();
+	for (;;) {
+		const now = await page.evaluate(sendState);
+		if (now.busy || now.n > before.n || now.w > before.w) break;
+		if (Date.now() - r0 > SEND_REGISTER_MS) {
+			throw new Error(`chat(): the send never registered — no new question bubble, held message `
+				+ `or busy Send within ${SEND_REGISTER_MS} ms of pressing Send on `
+				+ `${JSON.stringify(text.length > 60 ? text.slice(0, 60) + '…' : text)}.`);
+		}
+		await page.waitForTimeout(50);
+	}
+	// SEND-REGISTERS end
 	const t0 = Date.now();
 	while (Date.now() - t0 < timeout) {
-		const busy = await page.evaluate(() => {
-			const b = document.getElementById('chat-send');
-			if (!b) return false;
-			const t = (b.getAttribute('title') || '') + (b.className || '');
-			return /stop/i.test(t) || b.disabled;
-		});
+		const { busy } = await page.evaluate(sendState);
 		if (!busy) break;
 		await page.waitForTimeout(250);
 	}

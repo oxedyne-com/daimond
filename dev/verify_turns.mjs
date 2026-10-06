@@ -58,6 +58,18 @@ check('every question is a numbered turn',
 check('and every answer carries the turn it belongs to',
 	shape.asstTagged && shape.asstTurns.join(',') === '1,2,3,4', shape.asstTurns.join(','));
 
+// Everything below drives turns 1 to 4 by number. A thread without one of them (a message
+// that landed in a turn rather than starting one) is a named failure, not a TypeError.
+const absent = [1, 2, 3, 4].filter(n => !shape.turns.includes(String(n)));
+if (absent.length) {
+	check('the thread holds the four questions this test drives', false,
+		`turn ${absent.join(', ')} missing; the thread has turns [${shape.turns.join(',')}]`);
+	await s.close();
+	console.log(`\n${ok.length} passed, ${bad.length} failed`);
+	console.log('FAILED:\n  ' + bad.join('\n  '));
+	process.exit(1);
+}
+
 // ── A question is the switch for its own answers ───────────────────────
 
 const toggle = await p.evaluate(() => {
@@ -169,6 +181,7 @@ const jump = await p.evaluate(async () => {
 	out.scrollTop = out.scrollHeight;
 	const topOf = n => {
 		const u = out.querySelector(`.chat-msg-user[data-turn="${n}"]`);
+		if (!u) return null;	// a missing turn is a FAIL below, never a TypeError
 		return Math.round(u.getBoundingClientRect().top - out.getBoundingClientRect().top);
 	};
 	const scrollable = out.scrollHeight > out.clientHeight + 100;
@@ -186,11 +199,11 @@ const jump = await p.evaluate(async () => {
 check('the thread is taller than its window, so a jump has somewhere to go', jump.scrollable);
 // "At the top" means within a few pixels of the thread's own top edge.
 check('the jump puts the last question at the top',
-	Math.abs(jump.first) <= 4, `${jump.first}px from the top`);
+	jump.first !== null && Math.abs(jump.first) <= 4, `${jump.first}px from the top`);
 check('pressing again walks back to the one before it',
-	Math.abs(jump.second) <= 4, `${jump.second}px from the top`);
+	jump.second !== null && Math.abs(jump.second) <= 4, `${jump.second}px from the top`);
 check('and again, so a long thread is walked by its questions',
-	Math.abs(jump.third) <= 4, `${jump.third}px from the top`);
+	jump.third !== null && Math.abs(jump.third) <= 4, `${jump.third}px from the top`);
 
 // ── The ↓ comes back, and resets the walk ──────────────────────────────
 //
@@ -205,6 +218,7 @@ const end = await p.evaluate(async () => {
 	if (!btn) return { missing: true };
 	const topOf = n => {
 		const u = out.querySelector(`.chat-msg-user[data-turn="${n}"]`);
+		if (!u) return null;	// a missing turn is a FAIL below, never a TypeError
 		return Math.round(u.getBoundingClientRect().top - out.getBoundingClientRect().top);
 	};
 	btn.click();
@@ -218,7 +232,7 @@ check('the ↓ lands at the end of the chat',
 	!end.missing && Math.abs(end.fromBottom) <= 4,
 	end.missing ? '(no ↓ button in the bar)' : `${end.fromBottom}px from the bottom`);
 check('and the walk starts again from the last question, not from where it had got to',
-	!end.missing && Math.abs(end.restarted) <= 4,
+	!end.missing && end.restarted !== null && Math.abs(end.restarted) <= 4,
 	end.missing ? '(no ↓ button in the bar)' : `turn 4 is ${end.restarted}px from the top`);
 
 // ── Fold selected really folds only what was selected ──────────────────

@@ -30,7 +30,8 @@ const state = (p) => p.evaluate(() => {
 	return {
 		attr:   document.documentElement.getAttribute('data-cfull'),
 		btn:    b ? { drawn: !!b.getClientRects().length, pressed: b.getAttribute('aria-pressed'),
-			label: b.getAttribute('aria-label'), word: (document.getElementById('crystal-full-txt') || {}).textContent } : null,
+			label: b.getAttribute('aria-label'), text: b.textContent.trim() } : null,
+		memory: drawn('.panel.ai .crystal-memory'),
 		topbar: drawn('.topbar'),
 		rail:   drawn('#panel-rail'),
 		dock:   drawn('.dock'),
@@ -44,6 +45,14 @@ const s = await open({ name: 'cfull', connect: false });
 const p = s.page;
 await p.waitForTimeout(1500);
 
+// The bottom-of-the-viewport check runs at BOTH sizes the owner reported the
+// gap at -- a desktop window and a phone -- because the padding that held the
+// page off the edge was viewport-dependent before it was taken out by rule.
+const bottomGap = () => p.evaluate(() => {
+	const r = document.getElementById('crystal-frame-wrap').getBoundingClientRect();
+	return Math.round(window.innerHeight - r.bottom);
+});
+
 try {
 	// A seeded default Diamond; the face it opens on is the crystal.
 	await p.evaluate(() => {
@@ -56,9 +65,12 @@ try {
 	console.log('  rest ' + JSON.stringify(rest));
 	check(!!rest.btn && rest.btn.drawn, 'the control is on the crystal face');
 	check(rest.btn && rest.btn.pressed === 'false', 'and says it is not pressed');
-	check(rest.btn && !rest.btn.word, 'with no word beside the glyph while the mode is off',
-		JSON.stringify(rest.btn && rest.btn.word));
+	check(rest.btn && rest.btn.text === '', 'with no visible text of its own while the mode is off',
+		JSON.stringify(rest.btn && rest.btn.text));
+	check(rest.btn && (rest.btn.label || '').length > 0, 'and a non-empty accessible name',
+		JSON.stringify(rest.btn && rest.btn.label));
 	check(rest.attr === null, 'and nothing is covering the app');
+	check(rest.memory, 'and the memory section is drawn');
 
 	await p.click('#crystal-full-btn');
 	await p.waitForTimeout(500);
@@ -70,15 +82,29 @@ try {
 	check(on.btn && on.btn.drawn, 'AND THE WAY OUT IS STILL ON SCREEN');
 	check(on.btn && on.btn.pressed === 'true' && /exit/i.test(on.btn.label || ''),
 		'saying what pressing it will do', JSON.stringify(on.btn));
-	check(!!(on.btn && on.btn.word), 'with the word beside the glyph', JSON.stringify(on.btn && on.btn.word));
+	check(on.btn && on.btn.text === '', 'still icon-only', JSON.stringify(on.btn && on.btn.text));
 	check(on.body, 'and the crystal is still drawn (reflow did not tear it down)');
+	check(!on.memory, 'and the memory section is not drawn in full screen');
+	const gap = await bottomGap();
+	console.log('  on.gap=' + gap); check(Math.abs(gap) <= 2, 'the crystal frame reaches the bottom of the viewport', 'gap=' + gap);
 	await p.screenshot({ path: scratch('cfull-on.png') });
+
+	// Same rule at the desktop window and the phone the gap was reported at:
+	// resize with the mode ON and re-measure, so a regression at either fails.
+	for (const [w, h, tag] of [[1400, 900, '1400x900'], [390, 844, '390x844']]) {
+		await p.setViewportSize({ width: w, height: h });
+		await p.waitForTimeout(600);
+		check((await state(p)).attr === '1', 'still in full screen at ' + tag);
+		const g = await bottomGap();
+		console.log('  ' + tag + '.gap=' + g); check(Math.abs(g) <= 2, 'the crystal frame reaches the bottom at ' + tag, 'gap=' + g);
+	}
 
 	// Escape, from the app's own focus.
 	await p.keyboard.press('Escape');
 	await p.waitForTimeout(400);
 	const esc = await state(p);
 	check(esc.attr === null && esc.topbar && esc.rail, 'Escape leaves it', JSON.stringify(esc.attr));
+	check(esc.memory, 'and the memory section is drawn again when the mode is off');
 
 	// Leaving the crystal face puts the mode down rather than leaving a covered
 	// app with no subject.
