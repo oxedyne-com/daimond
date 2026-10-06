@@ -2563,9 +2563,11 @@
 	// `astat.workspace_browser` / `astat.workspace_native`, so the footer, the
 	// account strip and the guide say the same words about the same idea.
 	'attach.ws_mark':      'Workspace',
-	'attach.ws_add':       'Attach…',
-	'attach.add_mark':     'Add a folder',
-	'attach.mark_note':    'Folders can be edited. Files are read.',
+	'attach.ws_add':       'Add files and folders',
+	'attach.pick_mark_title':   'Add files and folders',
+	'attach.add_mark':     'Add files and folders',
+	'attach.select':	'Select',
+	'attach.mark_note':    'Select one or more files to read and/or folders to read and write within.',
 	'attach.mark_focus':   'Add this folder to {name}, so its daimon may read and change what is inside',
 	'attach.ws_help':      'Folders this chat can edit',
 	'attach.ws_on':        'Remove',

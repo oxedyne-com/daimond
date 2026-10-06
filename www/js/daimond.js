@@ -56290,8 +56290,8 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		var ticked = {};				// path -> { dir }
 		var picked = await dialog({
 			kind:  'pick',
-			title: grants ? t('attach.ws_add') : t('attach.pick_title'),
-			okLabel: t(grants ? 'attach.add_mark' : 'attach.add'),
+			title: grants ? t('attach.pick_mark_title') : t('attach.pick_title'),
+			okLabel: t(grants ? 'attach.select' : 'attach.add'),
 			build: function (card) {
 				if (grants) {
 					// What a tick will DO, at the top of the thing doing it. A folder and

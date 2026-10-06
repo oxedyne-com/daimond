@@ -422,7 +422,7 @@
    (§2/cluster 5) for the one button -- `.files-btn.attach-btn` -- that wears
    both a head-tool's and this row's class. */
 :root[data-skin="daylight"] :is(.device-rename, .device-nominate, .copy-id, .ctile-copy, .attach-btn, .files-del,
-	.files-ren, .crystal-form-x, .attach-add, .tile-cog, .ctile-rate-up, .ctile-rate-down, .ctile-rate-more, .mail-refresh) {
+	.files-ren, .crystal-form-x, .tile-cog, .ctile-rate-up, .ctile-rate-down, .ctile-rate-more, .mail-refresh) {
 	height: 20px; min-height: 20px; padding: 0; border-radius: var(--radius-sm); color: var(--text-secondary);
 }
 /* `.tag-x` kept OUT of the fixed-20px group above (D-20260929-03 residual
@@ -664,16 +664,18 @@
    +Add-provider pills this replaces their own font, weight, padding and
    colour with it. A Pending tile's worded presses (`.pend-verb`: Switch, Add,
    Edit, Dismiss, Keep, Remove; 5.3.2) are the same button. */
-:root[data-skin="daylight"] :is(.crystal-act, .graph-btn, .attach-view-btn, .code-copy-btn, .files-mode-btn,
+:root[data-skin="daylight"] :is(.crystal-act, .graph-btn, .attach-view-btn, .attach-add, .code-copy-btn, .files-mode-btn,
 	.imp-keep, .imp-send, .imp-vote, .shr-btn, .models-add, .tag-clear-all, .ti-continue,
 	.pro-buy, .tools-buy, .mail-unlock, .ar-save, .ar-card-btn, .pend-verb) {
 	font-size: var(--dl-xs); font-weight: var(--w-text); color: var(--text-secondary); background: transparent;
 	border-color: transparent; border-radius: var(--radius-sm); padding: 3px 10px; min-height: 27px; line-height: 19px;
 	text-decoration: none;
 }
-:root[data-skin="daylight"] :is(.crystal-act, .graph-btn, .attach-view-btn, .code-copy-btn, .files-mode-btn,
+:root[data-skin="daylight"] :is(.crystal-act, .graph-btn, .attach-view-btn, .attach-add, .code-copy-btn, .files-mode-btn,
 	.imp-keep, .imp-send, .imp-vote, .shr-btn, .models-add, .tag-clear-all, .ti-continue,
 	.pro-buy, .tools-buy, .mail-unlock, .ar-save, .ar-card-btn, .pend-verb):hover { background: var(--dl-hover); color: var(--text-primary); }
+/* The bare + is the same 27px box as the worded chips, but round, its glyph centred. */
+:root[data-skin="daylight"] .attach-add.icon { width: 27px; height: 27px; padding: 0; border-radius: 50%; }
 /* The primary text button: the role's size, filled in the accent. Subscribe,
    Unlock, Save and Save a card each drew a size of their own (14px, 37px). */
 :root[data-skin="daylight"] :is(.pro-buy, .tools-buy, .mail-unlock, .ar-save, .ar-card-btn.accent),
@@ -1423,7 +1425,7 @@
 	:root[data-skin="daylight"] :is(select, input:not([type=checkbox], [type=radio], [type=range], [type=color], [type=file]), textarea) { min-height: 44px; }
 	/* Dialog actions, create buttons, the primary and plain text buttons: */
 	:root[data-skin="daylight"] :is(.dlg-ok, .dlg-cancel, .tile-fold, .tile-keep, .compose-btn, .compose-send, .railhead > .railbtn,
-		.crystal-act:not(.crystal-form-x), .graph-btn, .attach-view-btn, .code-copy-btn, .files-mode-btn,
+		.crystal-act:not(.crystal-form-x), .graph-btn, .attach-view-btn, .attach-add, .code-copy-btn, .files-mode-btn,
 		.imp-keep, .imp-send, .imp-vote, .shr-btn, .models-add, .tag-clear-all, .ti-continue,
 		.pro-buy, .tools-buy, .mail-unlock, .ar-save, .ar-card-btn, .pend-verb) { min-height: 44px; min-width: 44px; }
 	/* Toggle options (the head's face switch keeps the head block's 30px box and overlay, so the Diamond head stays 96px): */
