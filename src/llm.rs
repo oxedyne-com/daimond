@@ -212,7 +212,23 @@ const CARRY_MAX_TURNS: usize = 32;
 /// 2026-09-15: OpenRouter's own export showed a round with `generation_time` 83.7 s that the
 /// app sat on for 318 s -- roughly four minutes on a stream that had already stopped sending.
 /// Overridable per turn via `Limits::stream_idle_ms`; see `Agent::set_stream_idle_ms`.
+///
+/// Measured from the last REAL data -- the accumulator growing -- and not from the last byte.
+/// OpenRouter holds a request whose provider has gone quiet by sending `: OPENROUTER
+/// PROCESSING` comment lines, and a watchdog re-armed by those ran a round to the daimon's
+/// 30-minute cap (r540).  Before any data the limit is 1.5 x this; see [`StreamWatch`].
 pub const DEFAULT_STREAM_IDLE_MS: u64 = 60_000;
+
+/// How many times a round that produced NO data at all is asked again.
+///
+/// One, and with the provider that stalled it left out: after the first retry no new
+/// provider name is known, so a second exclusion would have nothing to exclude.
+const STALL_RETRIES: u32 = 1;
+
+/// How long the retry of a stalled round waits for its first data, as a multiple of the idle
+/// ceiling -- 5 x 60 s = 5 minutes by default.  A model that thinks silently for longer than
+/// the first attempt's 1.5 x is not abandoned a second time at 90 s.
+const STALL_WAIT_FACTOR: u64 = 5;
 
 /// How much longer a non-streaming reply may take to arrive than a stream's first byte.
 ///
@@ -240,10 +256,6 @@ struct ProviderRouting {
     /// OpenRouter's `provider.allow_fallbacks`, sent only when this is `true` (the field's
     /// own default is `true`, so `false` is the only value worth a byte on the wire).
     only:   bool,
-}
-
-impl ProviderRouting {
-    fn is_empty(&self) -> bool { self.order.is_empty() && self.ignore.is_empty() }
 }
 
 /// The signed thinking blocks of recent assistant turns, held until their tool
@@ -359,6 +371,19 @@ pub enum Delta<'a> {
     // `AgentEvent::Roading` and shows a retry caption, exactly as the tool-loop's
     // own road ladder does. Carries no borrow, so the lifetime is unused here.
     Roading { attempt: u32, of: u32, wait_ms: u64 },
+    // The provider has taken the request and shown nothing yet: `secs` since the last real
+    // data (text, reasoning or a call fragment -- never a keep-alive comment).  Raised every
+    // half of the idle ceiling while it lasts, so a page can say what it is waiting on.
+    Waiting { provider: &'a str, secs: u64 },
+    // A round ended with no data at all.  `retrying` says whether it is being asked again
+    // (with this provider left out where OpenRouter can be told so) or has been given up on.
+    Stalled { provider: &'a str, secs: u64, retrying: bool },
+}
+
+// What the transport hands the stream's sink.
+enum Wire<'a> {
+    Data(&'a str),      // one `data:` payload
+    Silence(u64),       // seconds without real data; a notice is due
 }
 
 // ┌───────────────────────────────────────────────────────────────┐
@@ -490,6 +515,10 @@ pub struct LlmClient {
     /// reason `stream_idle_ms` is a shared cell: one client, one routing preference,
     /// wherever it is cloned.
     provider_routing: std::rc::Rc<std::cell::RefCell<ProviderRouting>>,
+    /// The upstream provider that last answered a round on this client, kept so a round that
+    /// stalls before it names one can still say who it was waiting on and leave that one out
+    /// of its retry.  Shared across clones for the reason `provider_routing` is.
+    last_provider:  std::rc::Rc<std::cell::RefCell<String>>,
     /// Root-trust TLS configuration for the native transport.  The wasm
     /// transport delegates trust to the browser's `fetch`, so this field
     /// is native-only.
@@ -1105,7 +1134,102 @@ async fn race<T>(
         std::task::Poll::Pending
     }).await
 }
+/// The pending read if it finishes within `ms`, else `None` -- and the read is left pending.
+///
+/// `race` takes both futures by value and drops the loser, which is right for a one-shot wait
+/// and wrong for a read that has to survive the watch's ticks.
+#[cfg(target_arch = "wasm32")]
+async fn read_or_nap<T>(
+    read: &mut std::pin::Pin<Box<dyn std::future::Future<Output = T>>>,
+    ms:   u64,
+)
+    -> Option<T>
+{
+    // A trait object, so `poll` needs no `Future` import (this crate is edition 2021).
+    let mut nap: std::pin::Pin<Box<dyn std::future::Future<Output = ()>>> = Box::pin(sleep_ms(ms));
+    std::future::poll_fn(move |cx| {
+        if let std::task::Poll::Ready(v) = read.as_mut().poll(cx) {
+            return std::task::Poll::Ready(Some(v));
+        }
+        if nap.as_mut().poll(cx).is_ready() { return std::task::Poll::Ready(None); }
+        std::task::Poll::Pending
+    }).await
+}
 
+/// Milliseconds on a clock that only moves forward (the browser's wall clock on wasm).
+#[cfg(not(target_arch = "wasm32"))]
+fn now_ms() -> u64 {
+    static START: std::sync::OnceLock<std::time::Instant> = std::sync::OnceLock::new();
+    START.get_or_init(std::time::Instant::now).elapsed().as_millis() as u64
+}
+
+/// Milliseconds since the epoch, from the browser.
+#[cfg(target_arch = "wasm32")]
+fn now_ms() -> u64 {
+    js_sys::Date::now() as u64
+}
+
+/// The clocks of one stream, kept apart from the transports so both read them the same way.
+///
+/// **A BYTE IS NOT DATA.**  The watchdog used to be re-armed by every line the provider sent,
+/// and OpenRouter sends `: OPENROUTER PROCESSING` while the provider behind it says nothing:
+/// the comment re-armed the timeout and was then dropped by the `data: ` test, so a round
+/// whose provider never answered ran to the daimon's 30-minute cap and the turn ended
+/// "Stopped".  Only progress re-arms it now -- the sink reports whether the accumulator
+/// grew -- and before any progress the limit is the wider `first_ms`.
+#[derive(Clone, Copy, Debug)]
+struct StreamWatch {
+    idle_ms:   u64,     // the limit once something has arrived
+    first_ms:  u64,     // the limit before anything has
+    wait_ms:   u64,     // how often a notice is due while it is quiet
+    last_real: u64,     // clock at the start, then at the last progress
+    last_wait: u64,     // clock at the last notice, or progress
+    any:       bool,    // has anything arrived
+}
+
+impl StreamWatch {
+
+    fn new(now: u64, idle_ms: u64, first_ms: u64) -> Self {
+        Self {
+            idle_ms,
+            first_ms,
+            wait_ms:   (idle_ms / 2).max(1),
+            last_real: now,
+            last_wait: now,
+            any:       false,
+        }
+    }
+
+    // Real data arrived: both clocks restart.
+    fn progress(&mut self, now: u64) {
+        self.any       = true;
+        self.last_real = now;
+        self.last_wait = now;
+    }
+
+    fn limit(&self) -> u64 {
+        if self.any { self.idle_ms } else { self.first_ms }
+    }
+
+    // Has the quiet outlasted its limit?
+    fn expired(&self, now: u64) -> bool {
+        now.saturating_sub(self.last_real) >= self.limit()
+    }
+
+    // The seconds of quiet, if a notice is due now; arms the next one.
+    fn tick(&mut self, now: u64) -> Option<u64> {
+        if now.saturating_sub(self.last_wait) < self.wait_ms { return None; }
+        self.last_wait = now;
+        Some(now.saturating_sub(self.last_real) / 1000)
+    }
+
+    // Milliseconds to the next thing that needs doing: a notice or the end of the wait.
+    fn next_in(&self, now: u64) -> u64 {
+        let to_end  = (self.last_real + self.limit()).saturating_sub(now);
+        let to_tick = (self.last_wait + self.wait_ms).saturating_sub(now);
+        to_end.min(to_tick).max(1)
+    }
+}
 
 impl LlmClient {
 
@@ -1136,6 +1260,7 @@ impl LlmClient {
             seen:       new_blind(),
             stream_idle_ms: std::rc::Rc::new(std::cell::Cell::new(DEFAULT_STREAM_IDLE_MS)),
             provider_routing: std::rc::Rc::new(std::cell::RefCell::new(ProviderRouting::default())),
+            last_provider: std::rc::Rc::new(std::cell::RefCell::new(String::new())),
             tls_config,
             halt:       Halt::new(),
         }
@@ -1189,6 +1314,7 @@ impl LlmClient {
             seen:       new_blind(),
             stream_idle_ms: std::rc::Rc::new(std::cell::Cell::new(DEFAULT_STREAM_IDLE_MS)),
             provider_routing: std::rc::Rc::new(std::cell::RefCell::new(ProviderRouting::default())),
+            last_provider: std::rc::Rc::new(std::cell::RefCell::new(String::new())),
             secure,
             halt:       Halt::new(),
         }
@@ -1280,6 +1406,14 @@ impl LlmClient {
         let mut blind_pending = false;
         let mut waited = 0u64;
         let mut retries = 0u32;
+        // The picture-less messages, once the blind retry has made them, so that a stalled
+        // round asked again sends the same conversation as the one it replaces.
+        let mut blind_msgs: Option<Vec<ChatMessage>> = None;
+        // Rounds that produced nothing at all and were asked again, and the providers
+        // they are asked to leave out.
+        let mut stall_tries = 0u32;
+        let mut stall_ignore: Vec<String> = Vec::new();
+        let idle = self.stream_idle_ms.get();
         loop {
             // A STOPPED TURN SENDS NOTHING MORE, asked at the top of EVERY attempt.  A Stop, a
             // pause or the 540 s wall clock in `www/js/daimond.js` may land during the backoff
@@ -1293,19 +1427,43 @@ impl LlmClient {
             }
             let mut acc = Acc::new(self.dialect);
             let mut emitted = false;
+            // The first attempt gives a provider 1.5 x the idle ceiling to begin; the one
+            // retry gives it 5 x, so a model that thinks silently is not cut a second time.
+            let first_ms = if stall_tries == 0 { idle.saturating_mul(3) / 2 }
+                           else { idle.saturating_mul(STALL_WAIT_FACTOR) };
+            let began = now_ms();
             let outcome = {
-                let mut sink = |data: &str| {
-                    acc.ingest(data, &mut |d: Delta<'_>| {
-                        // ONLY TEXT MAKES A TURN UNREPEATABLE. Reasoning already shown and
-                        // then shown again reads as the model thinking twice, which is odd;
-                        // an answer delivered twice is wrong. So a turn that has only
-                        // reasoned so far is still safe to start over.
-                        if matches!(d, Delta::Text(_)) { emitted = true; }
-                        on_token(d);
-                    });
+                let mut sink = |w: Wire<'_>| -> bool {
+                    match w {
+                        Wire::Data(data) => {
+                            let before = acc.size();
+                            acc.ingest(data, &mut |d: Delta<'_>| {
+                                // ONLY TEXT MAKES A TURN UNREPEATABLE. Reasoning already shown and
+                                // then shown again reads as the model thinking twice, which is odd;
+                                // an answer delivered twice is wrong. So a turn that has only
+                                // reasoned so far is still safe to start over.
+                                if matches!(d, Delta::Text(_)) { emitted = true; }
+                                on_token(d);
+                            });
+                            // PROGRESS IS GROWTH.  A role-only chunk or a usage block parses and
+                            // adds nothing, and does not hold the watchdog off.
+                            acc.size() > before
+                        }
+                        Wire::Silence(secs) => {
+                            let named = self.last_provider.borrow().clone();
+                            let p = if acc.provider().is_empty() { named.as_str() } else { acc.provider() };
+                            on_token(Delta::Waiting { provider: p, secs });
+                            false
+                        }
+                    }
                 };
-                self.stream_sse(&body, &mut sink).await
+                self.stream_sse(&body, first_ms, &mut sink).await
             };
+            // Whoever answered, even with nothing, is remembered as the one to leave out if
+            // the next round stalls before it can name itself.
+            if !acc.provider().is_empty() {
+                *self.last_provider.borrow_mut() = acc.provider().to_string();
+            }
             // An `error` event on a 200 stream is the provider's own trouble
             // arriving after the headers, so it is classified like a status code
             // rather than read as a short answer.
@@ -1317,6 +1475,41 @@ impl LlmClient {
                 Err(e) => Err(e),
             };
             match outcome {
+                // A ROUND THAT NEVER SAID ANYTHING.  The provider took the request and went
+                // quiet behind OpenRouter's keep-alives, which used to hold the round to the
+                // daimon's 30-minute cap.  Asked again once, with that provider left out where
+                // OpenRouter can be told so; if that is silent too, the turn ends with a plain
+                // reason.  It is an error and not an empty `Ok`, because an empty answer
+                // reaches the agent's nudges, which would send ANOTHER request.  A round that
+                // had begun to reason keeps the old way out: it has something to show.
+                Ok(StreamOutcome { aborted: false, stalled: true })
+                    if acc.size() == 0 && !self.halted() =>
+                {
+                    let secs = now_ms().saturating_sub(began) / 1000;
+                    let named = if acc.provider().is_empty() {
+                        self.last_provider.borrow().clone()
+                    } else {
+                        acc.provider().to_string()
+                    };
+                    if stall_tries < STALL_RETRIES {
+                        stall_tries += 1;
+                        self.exclude_stalled(&named, &mut stall_ignore);
+                        on_token(Delta::Stalled { provider: &named, secs, retrying: true });
+                        let cur: &[ChatMessage] = match (&blind_msgs, &stripped) {
+                            (Some(b), _)    => b,
+                            (None, Some(s)) => s,
+                            (None, None)    => messages,
+                        };
+                        body = self.build_body_ignoring(cur, tools, true, &stall_ignore);
+                        continue;
+                    }
+                    on_token(Delta::Stalled { provider: &named, secs, retrying: false });
+                    let who = if named.is_empty() { self.model.clone() } else { named.clone() };
+                    return Err(self.vision_error(TransportErr::fatal(
+                        fmt!("the model did not answer ({})", who),
+                        err!("LLM: no data from '{}' in {} s, asked twice.", who, secs;
+                            IO, Network, Timeout)).crossed(), images));
+                }
                 Ok(StreamOutcome { aborted, stalled }) => {
                     if blind_pending { self.mark_blind(); }
                     else if images > 0 && !retried_blind && !aborted { self.mark_seen(); }
@@ -1356,7 +1549,8 @@ impl LlmClient {
                             messages.iter()
                             .map(|m| m.with_content(m.content().without_images(Dropped::Unseeable)))
                             .collect();
-                        body = self.build_body(&text_only, tools, true);
+                        body = self.build_body_ignoring(&text_only, tools, true, &stall_ignore);
+                        blind_msgs = Some(text_only);
                         if notify {
                             on_token(Delta::Text(&fmt!(
                                 "\n[daimond: the model would not take {} image{}; asking again \
@@ -1664,11 +1858,40 @@ impl LlmClient {
     /// [`crate::protocol::join_notes`]), because every request in this client, whichever dialect
     /// carries it, is built here.  Neither builder below reads a message's `pre`.
     fn build_body(&self, messages: &[ChatMessage], tools: Option<&str>, stream: bool) -> String {
+        self.build_body_ignoring(messages, tools, stream, &[])
+    }
+
+    /// [`build_body`](Self::build_body) with more providers left out for this one request.
+    ///
+    /// `extra` joins the person's own `ignore` list on OpenRouter's `provider.ignore` and is
+    /// never stored: it is what a round that stalled asks again with.  The Anthropic dialect
+    /// has no such field and passes over it.
+    fn build_body_ignoring(
+        &self,
+        messages: &[ChatMessage],
+        tools:    Option<&str>,
+        stream:   bool,
+        extra:    &[String],
+    )
+        -> String
+    {
         let sent = crate::protocol::join_notes(messages);
         match self.dialect {
-            Dialect::OpenAi    => self.build_openai_body(&sent, tools, stream),
+            Dialect::OpenAi    => self.build_openai_body(&sent, tools, stream, extra),
             Dialect::Anthropic => self.build_anthropic_body(&sent, tools, stream),
         }
+    }
+
+    /// Leave `culprit` out of the next attempt, if that is permitted.
+    ///
+    /// Not when the person set `only` (they asked for these providers and no others, and a
+    /// retry that routed around that would be a decision made for them), nor when no provider
+    /// is known, nor when it is listed already.  The retry then goes out unchanged, which
+    /// still gets a fresh connection and, on OpenRouter, a fresh choice of provider.
+    fn exclude_stalled(&self, culprit: &str, ignore: &mut Vec<String>) {
+        if culprit.is_empty() || self.provider_routing.borrow().only { return; }
+        if ignore.iter().any(|p| p == culprit) { return; }
+        ignore.push(culprit.to_string());
     }
 
     /// The OpenAI-compatible request body.
@@ -1682,7 +1905,13 @@ impl LlmClient {
     /// replies are emitted together in one `user` message directly after the run.  After the run
     /// and not between the replies, because a run of `tool` messages answers one assistant turn
     /// and a message of another role wedged inside it is a conversation the API rejects.
-    fn build_openai_body(&self, messages: &[ChatMessage], tools: Option<&str>, stream: bool)
+    fn build_openai_body(
+        &self,
+        messages: &[ChatMessage],
+        tools:    Option<&str>,
+        stream:   bool,
+        extra:    &[String],
+    )
         -> String
     {
         let marks = self.cache_breakpoints(messages, tools);
@@ -1730,7 +1959,12 @@ impl LlmClient {
         // hard-coded on this side; every entry here is whatever the user typed.
         if self.host.contains("openrouter") {
             let routing = self.provider_routing.borrow();
-            if !routing.is_empty() {
+            // The person's list first, then what this request adds; none twice.
+            let mut ignore: Vec<&String> = routing.ignore.iter().collect();
+            for e in extra {
+                if !ignore.iter().any(|p| *p == e) { ignore.push(e); }
+            }
+            if !routing.order.is_empty() || !ignore.is_empty() {
                 out.push_str("\"provider\":{");
                 let mut wrote = false;
                 if !routing.order.is_empty() {
@@ -1741,10 +1975,10 @@ impl LlmClient {
                     out.push(']');
                     wrote = true;
                 }
-                if !routing.ignore.is_empty() {
+                if !ignore.is_empty() {
                     if wrote { out.push(','); }
                     out.push_str("\"ignore\":[");
-                    out.push_str(&routing.ignore.iter()
+                    out.push_str(&ignore.iter()
                         .map(|p| fmt!("\"{}\"", json_escape(p)))
                         .collect::<Vec<String>>().join(","));
                     out.push(']');
@@ -2348,9 +2582,14 @@ impl LlmClient {
     }
 
     /// Send the HTTP request and stream the SSE response line-by-line,
-    /// calling `on_data` with each `data:` payload (the JSON after the
-    /// `data: ` prefix) as it arrives, stopping at `[DONE]`.  Handles
-    /// both chunked and identity transfer encoding via [`LineReader`].
+    /// handing `on_data` each `data:` payload (the JSON after the `data: ` prefix) as it
+    /// arrives, stopping at `[DONE]`.  Handles both chunked and identity transfer encoding
+    /// via [`LineReader`].
+    ///
+    /// `on_data` answers whether the payload was real data (the accumulator grew), and only
+    /// that re-arms the watchdog: see [`StreamWatch`].  It is also told, as
+    /// [`Wire::Silence`], whenever half the idle ceiling has gone by without any.
+    /// `first_ms` is how long the first real data may take.
     ///
     /// Returns whether the stream was aborted.  The native transport has
     /// no cancellation path, so it always returns `false`; the wasm
@@ -2359,34 +2598,53 @@ impl LlmClient {
     async fn stream_sse(
         &self,
         body:       &str,
-        on_data:    &mut impl FnMut(&str),
+        first_ms:   u64,
+        on_data:    &mut impl FnMut(Wire<'_>) -> bool,
     ) -> Result<StreamOutcome, TransportErr>
     {
         // Headers arrive before the first token on a streaming request, so the header wait in
-        // `open` is the plain idle ceiling; the per-line watchdog below covers the body.
-        let (stream, is_chunked) = match self.open(body, self.stream_idle_ms.get()).await {
+        // `open` is the plain idle ceiling; the watch below covers the body.
+        let idle_ms = self.stream_idle_ms.get();
+        let (stream, is_chunked) = match self.open(body, idle_ms).await {
             Ok(v)  => v,
             Err(e) => return Err(e),
         };
         let mut reader = LineReader::new(stream, is_chunked);
-        let idle = std::time::Duration::from_millis(self.stream_idle_ms.get());
+        let mut watch  = StreamWatch::new(now_ms(), idle_ms, first_ms);
         loop {
             // THE IDLE WATCHDOG. Proposal 15, 2026-09-15: OpenRouter's own export showed a
             // round with `generation_time` 83.7 s that this app sat on for 318 s -- about
             // four minutes reading a connection the provider had already stopped writing
-            // to. Bounded per line rather than per round, so an ordinary slow-but-live
-            // stream is never cut: each byte that DOES arrive re-arms the timeout.
-            let line = match tokio::time::timeout(idle, reader.read_line()).await {
-                Ok(Ok(Some(l))) => l,
-                Ok(Ok(None)) => break,
-                Ok(Err(e)) if e.kind() == tokio::io::ErrorKind::UnexpectedEof => break,
-                Ok(Err(e)) => return Err(TransportErr::transient("the stream broke".to_string(), err!(e,
-                    "LLM: read SSE line failed."; IO, Network, Wire, Read))),
+            // to.  r540: and a provider that never answers at all, behind OpenRouter's
+            // keep-alive comments, held a round open to the 30-minute cap, because each
+            // comment re-armed a per-line timeout.  So the clock is the watch's, restarted
+            // only by real data, and the read is polled across its ticks rather than
+            // dropped: `read_line` holds the half-read line in its own state, and a future
+            // dropped mid-line would lose it.
+            let mut next = Box::pin(reader.read_line());
+            let line = loop {
+                let now = now_ms();
                 // Whatever `on_data` already delivered this round is kept -- the round
                 // ends `stalled` rather than erroring, so a reply that reasoned and got
                 // this far still reaches the nudge path instead of being thrown away and
                 // the whole request sent again.
-                Err(_elapsed) => return Ok(StreamOutcome { aborted: false, stalled: true }),
+                if watch.expired(now) {
+                    return Ok(StreamOutcome { aborted: false, stalled: true });
+                }
+                if let Some(secs) = watch.tick(now) {
+                    on_data(Wire::Silence(secs));
+                }
+                let nap = std::time::Duration::from_millis(watch.next_in(now_ms()));
+                if let Ok(read) = tokio::time::timeout(nap, &mut next).await {
+                    break read;
+                }
+            };
+            let line = match line {
+                Ok(Some(l)) => l,
+                Ok(None) => break,
+                Err(e) if e.kind() == tokio::io::ErrorKind::UnexpectedEof => break,
+                Err(e) => return Err(TransportErr::transient("the stream broke".to_string(), err!(e,
+                    "LLM: read SSE line failed."; IO, Network, Wire, Read))),
             };
             let line = line.trim();
             if !line.starts_with("data: ") {
@@ -2396,7 +2654,9 @@ impl LlmClient {
             if data == "[DONE]" {
                 break;
             }
-            on_data(data);
+            if on_data(Wire::Data(data)) {
+                watch.progress(now_ms());
+            }
         }
         Ok(StreamOutcome::default())
     }
@@ -2663,8 +2923,10 @@ impl LlmClient {
     }
 
     /// Streaming request — read the SSE body incrementally from the
-    /// response's `ReadableStream`, calling `on_data` with each `data:`
-    /// payload as it arrives, stopping at `[DONE]`.
+    /// response's `ReadableStream`, handing `on_data` each `data:`
+    /// payload as it arrives, stopping at `[DONE]`.  `on_data` answers whether the payload
+    /// was real data, and only that re-arms the watch; see the native `stream_sse` and
+    /// [`StreamWatch`].
     ///
     /// Returns whether the browser fired the abort signal.  When the
     /// initial `fetch` or a stream read rejects, an armed abort is
@@ -2674,7 +2936,8 @@ impl LlmClient {
     async fn stream_sse(
         &self,
         body:       &str,
-        on_data:    &mut impl FnMut(&str),
+        first_ms:   u64,
+        on_data:    &mut impl FnMut(Wire<'_>) -> bool,
     ) -> Result<StreamOutcome, TransportErr>
     {
         use wasm_bindgen::JsValue;
@@ -2682,8 +2945,9 @@ impl LlmClient {
         use web_sys::{ReadableStream, ReadableStreamDefaultReader};
 
         // Headers arrive before the first token on a streaming request, so the first-byte
-        // wait is the plain idle ceiling; the per-chunk watchdog below covers the rest.
-        let resp = match self.wasm_fetch(body, self.stream_idle_ms.get()).await {
+        // wait is the plain idle ceiling; the watch below covers the rest.
+        let idle_ms = self.stream_idle_ms.get();
+        let resp = match self.wasm_fetch(body, idle_ms).await {
             Ok(r) => r,
             Err(e) => {
                 if self.halted() {
@@ -2707,37 +2971,47 @@ impl LlmClient {
         // arrive, mirroring the native `LineReader` line discipline.
         let mut buf: Vec<u8> = Vec::with_capacity(8192);
 
+        let mut watch = StreamWatch::new(now_ms(), idle_ms, first_ms);
+        // ONE READ, kept across the watch's ticks: a read future dropped when a tick fired
+        // would take the chunk it was about to deliver with it.
+        let mut pending: Option<std::pin::Pin<Box<dyn std::future::Future<Output = Result<JsValue, JsValue>>>>>
+            = None;
+
         loop {
             // THE IDLE WATCHDOG, raced against the read rather than wrapped around it, so a
-            // chunk that DOES arrive re-arms the timeout for the next one; see the same
-            // note on the native `stream_sse`. `sleep_ms` is the browser `setTimeout` this
-            // client already uses for retry backoff, so no new timer mechanism is added.
-            // `race` (below) rather than `tokio::select!`: `tokio` is not in this target's
+            // chunk of real data re-arms the timeout for the next one; see the same note on
+            // the native `stream_sse`. `sleep_ms` is the browser `setTimeout` this client
+            // already uses for retry backoff, so no new timer mechanism is added. Hand-rolled
+            // (`read_or_nap`) rather than `tokio::select!`: `tokio` is not in this target's
             // dependency graph at all -- the wasm build has no TCP sockets or TLS stack, and
             // pulling in tokio's executor for one macro would be a second async runtime
             // fighting `wasm-bindgen-futures` for the same microtask queue.
-            enum Raced { Data(Result<JsValue, JsValue>), Idle }
+            let now = now_ms();
+            if watch.expired(now) {
+                // Tear the `fetch` down, as a Stop would, but leave the turn's halt alone: a
+                // stall is not a Stop.  Nothing else tears down a `fetch` this client has
+                // stopped reading from, and a dropped `JsFuture` does not reach the
+                // connection at all.
+                self.halt.tear_down();
+                return Ok(StreamOutcome { aborted: false, stalled: true });
+            }
+            if let Some(secs) = watch.tick(now) {
+                on_data(Wire::Silence(secs));
+            }
             // A cloned HANDLE, not a second reader: `ReadableStreamDefaultReader` is a thin
             // wasm-bindgen wrapper around one JS object, so cloning it is what lets the read
-            // future OWN a reference to it (required for the `'static` bound `race` needs)
-            // while `reader` itself is still there to read from on the next loop iteration.
-            let reader_handle = reader.clone();
-            let idle_ms = self.stream_idle_ms.get();
-            let raced = race(
-                Box::pin(async move { Raced::Data(JsFuture::from(reader_handle.read()).await) }),
-                Box::pin(async move { sleep_ms(idle_ms).await; Raced::Idle }),
-            ).await;
+            // future OWN a reference to it while `reader` itself is still there to read from
+            // on the next loop iteration.
+            let read = pending.get_or_insert_with(|| {
+                let handle = reader.clone();
+                Box::pin(async move { JsFuture::from(handle.read()).await })
+            });
+            let raced = read_or_nap(read, watch.next_in(now_ms())).await;
             let result = match raced {
-                Raced::Idle => {
-                    // Tear the `fetch` down, as a Stop would, but leave the turn's halt alone: a
-                    // stall is not a Stop.  Nothing else tears down a `fetch` this client has
-                    // stopped reading from, and a dropped `JsFuture` does not reach the
-                    // connection at all.
-                    self.halt.tear_down();
-                    return Ok(StreamOutcome { aborted: false, stalled: true });
-                }
-                Raced::Data(Ok(r)) => r,
-                Raced::Data(Err(e)) => {
+                // A tick: nothing arrived yet, and the read is still pending.
+                None => continue,
+                Some(Ok(r)) => { pending = None; r }
+                Some(Err(e)) => {
                     if self.halted() {
                         return Ok(StreamOutcome { aborted: true, stalled: false });
                     }
@@ -2780,7 +3054,9 @@ impl LlmClient {
                 if data == "[DONE]" {
                     return Ok(StreamOutcome::default());
                 }
-                on_data(data);
+                if on_data(Wire::Data(data)) {
+                    watch.progress(now_ms());
+                }
             }
         }
 
@@ -4607,6 +4883,8 @@ struct StreamAcc {
     content:           String,
     // The model's own working, kept apart from the answer it produced.
     reasoning:         String,
+    // Bytes of `reasoning_details` seen: never shown, but data all the same; see `size`.
+    pulse:             usize,
     /// The last usage block the stream reported.  An aborted stream may never
     /// deliver one, which leaves this at its default rather than erroring.
     usage:             Usage,
@@ -4645,9 +4923,10 @@ impl StreamAcc {
         // sends, `reasoning_content` is what DeepSeek's own endpoint calls it. So one is
         // read and then the other, rather than both concatenated.
         //
-        // `reasoning_details` is NOT read. OpenRouter sends it alongside `reasoning` with
+        // `reasoning_details` is NOT SHOWN. OpenRouter sends it alongside `reasoning` with
         // the same words in it, verbatim, so a reader that took both would put every
-        // token on the page twice.
+        // token on the page twice.  It is COUNTED, though, in `pulse`: a model that streams
+        // only this field is working, and the stream's watch must not read it as silent.
         //
         // `null` is the value on the deltas that carry no reasoning, and
         // `extract_json_string` answers None for a value that is not a string -- so the
@@ -4658,6 +4937,12 @@ impl StreamAcc {
             if !t.is_empty() {
                 on_token(Delta::Reasoning(&t));
                 self.reasoning.push_str(&t);
+            }
+        }
+
+        if let Some(d) = find_json_array(&data[..scope_end], "reasoning_details") {
+            if !d.trim_matches(|c: char| c == '[' || c == ']' || c.is_whitespace()).is_empty() {
+                self.pulse += d.len();
             }
         }
 
@@ -4735,6 +5020,18 @@ impl StreamAcc {
     /// duplicate rather than replace.
     fn has_output(&self) -> bool {
         !self.content.is_empty() || !self.calls.is_empty()
+    }
+
+    /// How much the model has said so far, in bytes: answer, working and call fragments.
+    ///
+    /// What "real data" means to the stream's watch -- it grew, or it did not.  A role-only
+    /// first chunk, a usage block and a keep-alive are not progress, however many arrive.
+    /// `reasoning_details` is progress too, though it is never shown (see `ingest`).
+    fn size(&self) -> usize {
+        self.content.len()
+            + self.reasoning.len()
+            + self.pulse
+            + self.calls.iter().map(|c| c.id.len() + c.name.len() + c.arguments.len()).sum::<usize>()
     }
 
     /// Consume the accumulator into a [`ChatOnceResponse`].  Calls with no
@@ -5056,6 +5353,19 @@ impl AnthropicAcc {
             || self.blocks.iter().any(|b| b.kind == AnthKind::ToolUse)
     }
 
+    /// How much the model has said so far, thinking included; see [`StreamAcc::size`].
+    ///
+    /// A block opening counts, so a model that opens a thinking block and then reasons
+    /// silently (its text omitted, the signature arriving last) is not mistaken for one that
+    /// never started.  A `ping` and a `message_start` are not progress.
+    fn size(&self) -> usize {
+        self.content.len()
+            + self.blocks.len()
+            + self.blocks.iter()
+                .map(|b| b.id.len() + b.name.len() + b.args.len() + b.think.len() + b.sig.len())
+                .sum::<usize>()
+    }
+
     /// The signed thinking blocks of this turn, serialised for replay.
     ///
     /// Empty when any block of the run is unsigned -- a stream cut before its
@@ -5163,6 +5473,22 @@ impl Acc {
         match self {
             Self::OpenAi(a)    => a.has_output(),
             Self::Anthropic(a) => a.has_output(),
+        }
+    }
+
+    /// How much the model has said so far; see [`StreamAcc::size`].
+    fn size(&self) -> usize {
+        match self {
+            Self::OpenAi(a)    => a.size(),
+            Self::Anthropic(a) => a.size(),
+        }
+    }
+
+    /// The upstream provider the stream has named, or empty.  Only OpenRouter names one.
+    fn provider(&self) -> &str {
+        match self {
+            Self::OpenAi(a)    => &a.provider,
+            Self::Anthropic(_) => "",
         }
     }
 
@@ -6378,6 +6704,7 @@ pub mod tests {
                 Delta::Text(t)      => tokens.push(t.to_string()),
                 Delta::Reasoning(t) => thought.push(t.to_string()),
                 Delta::Roading { .. } => {}   // the SSE accumulator never emits a retry delta
+                Delta::Waiting { .. } | Delta::Stalled { .. } => {}   // nor a silence notice
             });
         }
         (acc.into_response(false, 0), tokens, thought)
@@ -7272,7 +7599,7 @@ pub mod tests {
             ContentPart::Text("What is in this image?".to_string()),
             ContentPart::Image(doc_image("shots/after.png")),
         ]))];
-        let body = client.build_openai_body(&msgs, None, true);
+        let body = client.build_openai_body(&msgs, None, true, &[]);
         assert!(body.contains(&want), "the image part is not the documented one.\nwant: {}\ngot:  {}",
             want, body);
         assert!(body.contains("\"content\":[{\"type\":\"text\",\"text\":\"What is in this image?\"}"),
@@ -7288,7 +7615,7 @@ pub mod tests {
     fn test_text_only_content_stays_a_bare_string_on_both_sides() {
         let msgs = vec![ChatMessage::user("Hello".to_string())];
         let openai = test_client("api.example.com", 443, "gpt-5.6")
-            .build_openai_body(&msgs, None, true);
+            .build_openai_body(&msgs, None, true, &[]);
         assert!(openai.contains("{\"role\":\"user\",\"content\":\"Hello\"}"),
             "text content grew an array: {}", openai);
         let anth = anth_client("claude-opus-5").build_anthropic_body(&msgs, None, true);
@@ -7325,7 +7652,7 @@ pub mod tests {
         assert!(image_at > result_at, "the image left the tool result it belongs to");
 
         let openai = test_client("api.example.com", 443, "gpt-5.6")
-            .build_openai_body(&msgs, None, true);
+            .build_openai_body(&msgs, None, true, &[]);
         // The tool reply itself is text only -- the API has nowhere else to put an image.
         let tool_msg = openai.find("\"role\":\"tool\"").expect("no tool message");
         let img_at   = openai.find("image_url").expect("the image was dropped");
@@ -8050,6 +8377,21 @@ pub mod tests {
         Hang {
             idle_ms: u64,
         },
+        /// A chunked stream that sends `first` (if any), then an SSE comment line every
+        /// `every_ms` for `total_ms`, and closes -- what OpenRouter does while the provider
+        /// behind it has taken the request and said nothing: `: OPENROUTER PROCESSING`, forever,
+        /// and not one `data:` line.  The comments are bytes on the wire but not data.
+        KeepAlive {
+            first:    Option<String>,
+            every_ms: u64,
+            total_ms: u64,
+        },
+        /// A chunked stream that sends `chunks` one at a time, `every_ms` apart, and closes --
+        /// a model that is slow but alive.  Include `data: [DONE]` as the last chunk to end it.
+        Trickle {
+            chunks:   Vec<String>,
+            every_ms: u64,
+        },
     }
 
     impl Reply {
@@ -8392,6 +8734,43 @@ pub mod tests {
                 let _ = tls.write_all(b"0\r\n\r\n").await;
                 let _ = tls.flush().await;
             }
+            Reply::KeepAlive { first, every_ms, total_ms } => {
+                let head = "HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\n\
+                    Transfer-Encoding: chunked\r\nConnection: close\r\n\r\n";
+                let _ = tls.write_all(head.as_bytes()).await;
+                let _ = tls.flush().await;
+                if let Some(chunk) = first {
+                    let framed = fmt!("{:x}\r\n{}\r\n", chunk.len(), chunk);
+                    let _ = tls.write_all(framed.as_bytes()).await;
+                    let _ = tls.flush().await;
+                }
+                let beat = ": OPENROUTER PROCESSING\n\n";
+                let end  = std::time::Instant::now() + std::time::Duration::from_millis(*total_ms);
+                while std::time::Instant::now() < end {
+                    let framed = fmt!("{:x}\r\n{}\r\n", beat.len(), beat);
+                    // A client that has hung up ends the beat, so an aborted attempt does not
+                    // leave the stub writing into a dead socket for the rest of the run.
+                    if tls.write_all(framed.as_bytes()).await.is_err() { return; }
+                    if tls.flush().await.is_err() { return; }
+                    tokio::time::sleep(std::time::Duration::from_millis(*every_ms)).await;
+                }
+                let _ = tls.write_all(b"0\r\n\r\n").await;
+                let _ = tls.flush().await;
+            }
+            Reply::Trickle { chunks, every_ms } => {
+                let head = "HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\n\
+                    Transfer-Encoding: chunked\r\nConnection: close\r\n\r\n";
+                let _ = tls.write_all(head.as_bytes()).await;
+                let _ = tls.flush().await;
+                for chunk in chunks {
+                    let framed = fmt!("{:x}\r\n{}\r\n", chunk.len(), chunk);
+                    if tls.write_all(framed.as_bytes()).await.is_err() { return; }
+                    if tls.flush().await.is_err() { return; }
+                    tokio::time::sleep(std::time::Duration::from_millis(*every_ms)).await;
+                }
+                let _ = tls.write_all(b"0\r\n\r\n").await;
+                let _ = tls.flush().await;
+            }
             Reply::Hang { idle_ms } => {
                 // Not a byte of a reply -- no status line, no headers.  Just hold the
                 // connection open past whatever the client's first-byte watchdog is set to,
@@ -8621,6 +9000,7 @@ pub mod tests {
                 Delta::Text(t)                          => tokens.push(t.to_string()),
                 Delta::Reasoning(_)                     => {}
                 Delta::Roading { attempt, of, wait_ms } => roads.push((attempt, of, wait_ms)),
+                Delta::Waiting { .. } | Delta::Stalled { .. } => {}
             };
             match client.chat_stream_tools(&msgs, None, &mut sink).await {
                 Ok(r)  => r,
@@ -8690,6 +9070,248 @@ pub mod tests {
         // the round is over, with whatever it had, not sent again from the top.
         assert_eq!(connections(&seen), 1,
             "a stall must not trigger a full resend of the request");
+    }
+
+    /// THE MODEL STALL (r540, T1). OpenRouter holds a request whose provider has gone quiet by
+    /// sending `: OPENROUTER PROCESSING` comment lines.  They are bytes on the wire and not one
+    /// of them is data, but the idle watchdog was re-armed by every one, so a round whose provider
+    /// (Relace) never answered ran to the daimon's 30-minute cap and left the owner's turn
+    /// "Stopped".  Here the first connection says only that; the client must give up on it at
+    /// the first-data deadline (1.5 x idle) and ask again, and the second connection answers.
+    #[tokio::test]
+    async fn stall_keepalive_only_stream_is_aborted_and_retried() {
+        let (port, seen) = start_stub(vec![
+            Reply::KeepAlive {
+                // A role-only first chunk names the provider and says nothing.
+                first: Some("data: {\"provider\":\"Relace\",\"choices\":[{\"delta\":\
+                    {\"role\":\"assistant\",\"content\":\"\"}}]}\n\n".to_string()),
+                every_ms: 150,
+                total_ms: 6_000,
+            },
+            Reply::answer(),
+        ]).await;
+        let client = stub_client(port);
+        client.set_stream_idle_ms(1_000);
+        let msgs = [ChatMessage::user("hello".to_string())];
+        let mut tokens = Vec::new();
+
+        let started = std::time::Instant::now();
+        let resp = match client.chat_stream_tools(&msgs, None, &mut text_sink(&mut tokens)).await {
+            Ok(r)  => r,
+            Err(e) => panic!("the retry should have been answered, not failed: {}", e),
+        };
+        let elapsed = started.elapsed();
+
+        assert!(elapsed < std::time::Duration::from_millis(3_500),
+            "keep-alive comments held the round open: waited {:?} against a 1 s idle ceiling",
+            elapsed);
+        assert_eq!(connections(&seen), 2,
+            "a stream that never carried data should have been abandoned and asked again once");
+        assert_eq!(resp.content, "Hello world");
+        assert!(!resp.stalled, "the retry was answered, so the round did not stall");
+    }
+
+    /// What a sink saw of the two new deltas, in order: `("wait", provider, secs)` and
+    /// `("stall", provider, retrying)`.
+    fn stall_notes(out: &mut Vec<(String, String, bool)>) -> impl FnMut(Delta<'_>) + '_ {
+        move |d| match d {
+            Delta::Waiting { provider, .. } =>
+                out.push(("wait".to_string(), provider.to_string(), false)),
+            Delta::Stalled { provider, retrying, .. } =>
+                out.push(("stall".to_string(), provider.to_string(), retrying)),
+            _ => {}
+        }
+    }
+
+    /// While a provider is silent the page is told who it is waiting on, and the one retry says
+    /// what it is: a `Waiting` naming Relace during the quiet, then one `Stalled` that is being
+    /// asked again.
+    #[tokio::test]
+    async fn stall_waiting_notice_names_the_provider_and_the_retry_says_so() {
+        let (port, seen) = start_stub(vec![
+            Reply::KeepAlive {
+                first: Some("data: {\"provider\":\"Relace\",\"choices\":[{\"delta\":\
+                    {\"role\":\"assistant\",\"content\":\"\"}}]}\n\n".to_string()),
+                every_ms: 100,
+                total_ms: 6_000,
+            },
+            Reply::answer(),
+        ]).await;
+        let client = stub_client(port);
+        client.set_stream_idle_ms(1_000);
+        let msgs = [ChatMessage::user("hello".to_string())];
+        let mut notes = Vec::new();
+        let resp = match client.chat_stream_tools(&msgs, None, &mut stall_notes(&mut notes)).await {
+            Ok(r)  => r,
+            Err(e) => panic!("the retry should have been answered: {}", e),
+        };
+        assert_eq!(resp.content, "Hello world");
+        assert_eq!(connections(&seen), 2);
+        assert!(notes.iter().any(|n| n.0 == "wait" && n.1 == "Relace"),
+            "no Waiting notice named the silent provider: {:?}", notes);
+        let stalls: Vec<_> = notes.iter().filter(|n| n.0 == "stall").collect();
+        assert_eq!(stalls.len(), 1, "exactly one Stalled was due: {:?}", notes);
+        assert_eq!((stalls[0].1.as_str(), stalls[0].2), ("Relace", true),
+            "the first silence is being asked again, with the provider named: {:?}", notes);
+    }
+
+    /// The retry is not repeated.  Two silent rounds end the turn with a plain reason and an
+    /// error -- not an empty answer, which would reach the agent's nudges and send a third
+    /// request -- and the page is told it is the end (`retrying` false).
+    #[tokio::test]
+    async fn stall_second_silence_ends_the_turn_with_a_plain_error() {
+        let silent = || Reply::KeepAlive {
+            first: Some("data: {\"provider\":\"Relace\",\"choices\":[{\"delta\":\
+                {\"role\":\"assistant\",\"content\":\"\"}}]}\n\n".to_string()),
+            every_ms: 100,
+            total_ms: 12_000,
+        };
+        let (port, seen) = start_stub(vec![silent(), silent(), Reply::answer()]).await;
+        let client = stub_client(port);
+        // The setter floors this at one second.
+        client.set_stream_idle_ms(1_000);
+        let msgs = [ChatMessage::user("hello".to_string())];
+        let mut notes = Vec::new();
+        let started = std::time::Instant::now();
+        let got = client.chat_stream_tools(&msgs, None, &mut stall_notes(&mut notes)).await;
+        let elapsed = started.elapsed();
+        let e = match got {
+            Err(e) => e,
+            Ok(r)  => panic!("a silent provider asked twice must be an error, got {:?}", r.content),
+        };
+        let text = fmt!("{}", e);
+        assert!(text.contains("did not answer (Relace)"), "the reason was not plain: {}", text);
+        assert_eq!(connections(&seen), 2, "asked once more and no further");
+        // 1.5 s for the first wait, and 5 s -- the wider retry wait -- for the second, never more.
+        assert!(elapsed >= std::time::Duration::from_millis(5_500)
+            && elapsed < std::time::Duration::from_millis(8_000),
+            "the two waits should come to about 6.5 s (1.5 x then 5 x the 1 s floor): {:?}", elapsed);
+        let ends: Vec<bool> = notes.iter().filter(|n| n.0 == "stall").map(|n| n.2).collect();
+        assert_eq!(ends, vec![true, false], "retrying, then given up: {:?}", notes);
+    }
+
+    /// A slow model that is making progress is never cut: data every 400 ms for several
+    /// seconds against a 1 s ceiling is one connection and the whole answer.
+    #[tokio::test]
+    async fn stall_slow_stream_with_real_data_is_never_cut() {
+        let mut chunks = Vec::new();
+        for i in 0..8 {
+            chunks.push(fmt!("data: {{\"choices\":[{{\"delta\":{{\"content\":\"{}\"}}}}]}}\n\n", i));
+        }
+        chunks.push("data: [DONE]\n\n".to_string());
+        let (port, seen) = start_stub(vec![Reply::Trickle { chunks, every_ms: 400 }]).await;
+        let client = stub_client(port);
+        client.set_stream_idle_ms(1_000);
+        let msgs = [ChatMessage::user("hello".to_string())];
+        let mut tokens = Vec::new();
+        let resp = match client.chat_stream_tools(&msgs, None, &mut text_sink(&mut tokens)).await {
+            Ok(r)  => r,
+            Err(e) => panic!("a slow but live stream failed: {}", e),
+        };
+        assert_eq!(resp.content, "01234567");
+        assert!(!resp.stalled, "a stream with data every 400 ms was read as stalled");
+        assert_eq!(connections(&seen), 1, "a live stream must not be asked again");
+    }
+
+    /// A model that streams ONLY `reasoning_details` (encrypted or summary parts, no `reasoning`
+    /// text) is working, not silent.  The details are never shown, but they are data: the
+    /// stream is neither cut at the first-data deadline nor asked again.
+    #[tokio::test]
+    async fn stall_reasoning_details_only_stream_is_not_falsely_stalled() {
+        let mut chunks = Vec::new();
+        for i in 0..6 {
+            chunks.push(fmt!("data: {{\"provider\":\"OpenAI\",\"choices\":[{{\"delta\":\
+                {{\"role\":\"assistant\",\"content\":\"\",\"reasoning_details\":\
+                [{{\"type\":\"reasoning.encrypted\",\"data\":\"blob{}\",\"index\":0}}]}}}}]}}\n\n", i));
+        }
+        chunks.push("data: {\"choices\":[{\"delta\":{\"content\":\"done\"}}]}\n\n".to_string());
+        chunks.push("data: [DONE]\n\n".to_string());
+        let (port, seen) = start_stub(vec![Reply::Trickle { chunks, every_ms: 500 }, Reply::answer()]).await;
+        let client = stub_client(port);
+        client.set_stream_idle_ms(1_000);
+        let msgs = [ChatMessage::user("hello".to_string())];
+        let mut notes = Vec::new();
+        let resp = match client.chat_stream_tools(&msgs, None, &mut stall_notes(&mut notes)).await {
+            Ok(r)  => r,
+            Err(e) => panic!("a model streaming reasoning_details was failed: {}", e),
+        };
+        assert_eq!(resp.content, "done");
+        assert!(!resp.stalled);
+        assert_eq!(connections(&seen), 1, "reasoning_details was read as silence and the round asked again");
+        assert!(notes.iter().all(|n| n.0 != "stall"), "a false stall was announced: {:?}", notes);
+    }
+
+    /// The accumulator counts `reasoning_details` as progress and a role-only chunk, a usage
+    /// block or an empty details array as none.
+    #[test]
+    fn stall_size_grows_on_reasoning_details_and_not_on_empty_chunks() {
+        let mut acc = StreamAcc::default();
+        let mut none = |_d: Delta<'_>| {};
+        acc.ingest(r#"{"provider":"X","choices":[{"delta":{"role":"assistant","content":""}}]}"#, &mut none);
+        acc.ingest(r#"{"choices":[{"delta":{"content":"","reasoning":null,"reasoning_details":[]}}]}"#, &mut none);
+        acc.ingest(r#"{"choices":[],"usage":{"prompt_tokens":3,"completion_tokens":1}}"#, &mut none);
+        assert_eq!(acc.size(), 0, "chunks with nothing in them counted as data");
+        assert_eq!(acc.provider, "X", "the provider is named even by a chunk with no data");
+        acc.ingest(r#"{"choices":[{"delta":{"content":"","reasoning_details":[{"type":"reasoning.encrypted","data":"abc"}]}}]}"#, &mut none);
+        assert!(acc.size() > 0, "reasoning_details did not count as data");
+        assert!(acc.reasoning.is_empty(), "reasoning_details must not be shown: it repeats `reasoning`");
+    }
+
+    /// A Stop is a Stop.  A round the person has halted is not asked again because it was
+    /// silent: the halt is read before the retry, so the connection count stays at one.
+    #[tokio::test]
+    async fn stall_a_stopped_round_is_not_asked_again() {
+        let (port, seen) = start_stub(vec![
+            Reply::KeepAlive { first: None, every_ms: 100, total_ms: 5_000 },
+            Reply::answer(),
+        ]).await;
+        let client = stub_client(port);
+        client.set_stream_idle_ms(1_000);
+        let halt = client.halt();
+        let msgs = [ChatMessage::user("hello".to_string())];
+        let mut stalls = 0usize;
+        let got = client.chat_stream_tools(&msgs, None, &mut |d: Delta<'_>| match d {
+            Delta::Waiting { .. } => halt.fire(),
+            Delta::Stalled { .. } => stalls += 1,
+            _ => {}
+        }).await;
+        assert!(got.is_ok(), "a stopped round ends cleanly, not as an error");
+        assert_eq!(connections(&seen), 1, "a stopped round was sent again");
+        assert_eq!(stalls, 0, "a stopped round announced a stall retry");
+    }
+
+    /// The retry leaves the stalled provider out of OpenRouter's routing, on top of whatever
+    /// the person already ignores, and not twice; under `only` nothing is added.
+    #[test]
+    fn stall_retry_body_ignores_the_stalled_provider_on_top_of_the_users() {
+        use rustls::crypto::ring;
+        let _ = ring::default_provider().install_default();
+        let tls = Arc::new(ClientConfig::builder().dangerous()
+            .with_custom_certificate_verifier(Arc::new(NoVerify)).with_no_client_auth());
+        let client = LlmClient::new("openrouter.ai", 443, "/api/v1/chat/completions",
+            "key", "z-ai/glm-5.3", 4096, tls);
+        let msgs = [ChatMessage::user("hi".to_string())];
+        // No routing at all: the retry still builds the object, with only the culprit in it.
+        let mut ignore = Vec::new();
+        client.exclude_stalled("Relace", &mut ignore);
+        client.exclude_stalled("Relace", &mut ignore);
+        assert_eq!(ignore, vec!["Relace".to_string()], "listed twice, or not at all");
+        let body = client.build_body_ignoring(&msgs, None, true, &ignore);
+        assert!(body.contains("\"provider\":{\"ignore\":[\"Relace\"]}"), "{}", body);
+        // The person's own ignore list is kept and comes first.
+        client.set_provider_routing("", "DeepInfra", false);
+        let body = client.build_body_ignoring(&msgs, None, true, &ignore);
+        assert!(body.contains("\"ignore\":[\"DeepInfra\",\"Relace\"]"), "{}", body);
+        // The person's own request is not stored over: a plain build is as it was.
+        let plain = client.build_body(&msgs, None, true);
+        assert!(plain.contains("\"ignore\":[\"DeepInfra\"]") && !plain.contains("Relace"), "{}", plain);
+        // `only` is the person refusing every other provider; routing around it is not ours to do.
+        client.set_provider_routing("Novita", "", true);
+        let mut under_only = Vec::new();
+        client.exclude_stalled("Relace", &mut under_only);
+        assert!(under_only.is_empty(), "a stalled provider was added under `only`");
+        client.exclude_stalled("", &mut under_only);
+        assert!(under_only.is_empty());
     }
 
     /// A provider that accepts the connection and then sends NOTHING is given up on by the

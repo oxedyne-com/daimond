@@ -1079,6 +1079,19 @@ pub enum AgentEvent {
     /// (`[daimond: …; retrying in …]`, src/llm.rs); this is the same courtesy one layer down, in
     /// a form the page can draw as furniture rather than as prose.
     Roading { name: String, attempt: u32, of: u32, wait_ms: u64 },
+    /// The provider has taken the request and shown nothing for `secs` seconds.
+    ///
+    /// Raised every half of the stream idle ceiling while it lasts, so a page can say who it is
+    /// waiting on instead of drawing a spinner that cannot be told from a hang.  Keep-alive
+    /// comments do not end it: only text, reasoning or a call fragment does.  `provider` is the
+    /// upstream OpenRouter named, or empty.  Added with the r540 model-stall fix.
+    Wait { model: String, provider: String, secs: u64 },
+    /// A round got no data at all and was given up on.
+    ///
+    /// `retried` says whether it is being asked again (with `provider` left out where OpenRouter
+    /// can be told so) or this is the second silence and the turn ends with a plain error.
+    /// Both are the APP's doing and never reach the model.
+    Stall { model: String, provider: String, secs: u64, retried: bool },
     /// The turn reached its round limit and carried on anyway, rather than ending there.
     ///
     /// Its own variant for the reason [`Compacted`](Self::Compacted) has one, and it is the same
@@ -1278,6 +1291,19 @@ impl AgentEvent {
                 m.insert(dat!("attempt"), Dat::U64(*attempt as u64));
                 m.insert(dat!("of"),      Dat::U64(*of      as u64));
                 m.insert(dat!("wait_ms"), Dat::U64(*wait_ms));
+            }
+            Self::Wait { model, provider, secs } => {
+                m.insert(dat!("type"),     dat!("wait"));
+                m.insert(dat!("model"),    dat!(model.clone()));
+                m.insert(dat!("provider"), dat!(provider.clone()));
+                m.insert(dat!("secs"),     Dat::U64(*secs));
+            }
+            Self::Stall { model, provider, secs, retried } => {
+                m.insert(dat!("type"),     dat!("stall"));
+                m.insert(dat!("model"),    dat!(model.clone()));
+                m.insert(dat!("provider"), dat!(provider.clone()));
+                m.insert(dat!("secs"),     Dat::U64(*secs));
+                m.insert(dat!("retried"),  Dat::Bool(*retried));
             }
             Self::Continued { n, rounds_so_far } => {
                 m.insert(dat!("type"), dat!("continued"));

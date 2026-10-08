@@ -1176,14 +1176,44 @@ pub async fn list() -> Outcome<String> {
 /// **The last of those is the most destructive failure in this whole change**, which is why there
 /// are three things before it: a Diamond whose crystal is not found reads as an empty one, and an
 /// agent handed an empty crystal will happily write a new one over the top of work it never saw.
+///
+/// This lenient reader is the PANEL's: a Diamond that lists must open.  A caller that judges the
+/// crystal rather than shows it -- the daimon's `capture` -- reads through
+/// [`read_crystal_data_strict`], where "nothing anywhere" is an error and not an empty page.
 pub async fn read_crystal_data(id: &str) -> Outcome<String> {
+    match res!(find_crystal_data(id).await) {
+        Some(text) => Ok(text),
+        None       => {
+            console_log(&fmt!(
+                "Diamond '{}' has no crystal and no version to fall back on; it opens empty.", id));
+            Ok(String::new())
+        },
+    }
+}
+
+/// [`read_crystal_data`] for a caller that must not mistake "nothing anywhere" for a crystal.
+///
+/// The same four-step search, but where the lenient reader ends on an empty string this one is an
+/// error naming the absence.  The probe that draws the crystal used to take that empty string for
+/// a crystal whose every key was missing, and drew the empty card for a Diamond that had no
+/// crystal to draw.
+pub async fn read_crystal_data_strict(id: &str) -> Outcome<String> {
+    match res!(find_crystal_data(id).await) {
+        Some(text) => Ok(text),
+        None       => Err(err!(
+            "this Diamond has no crystal.json and no version of one"; Missing, Data)),
+    }
+}
+
+// `None` where there is nothing anywhere to read.
+async fn find_crystal_data(id: &str) -> Outcome<Option<String>> {
     if let Ok(bytes) = opfs::read_file(FileRoot::Opfs, &crystal_data_path(id)).await {
-        return Ok(String::from_utf8_lossy(&bytes).to_string());
+        return Ok(Some(String::from_utf8_lossy(&bytes).to_string()));
     }
     if let Some((n, json)) = res!(newest_data_version(id).await) {
         console_log(&fmt!(
             "Diamond '{}' has no crystal.json; read version {} instead.", id, n));
-        return Ok(json);
+        return Ok(Some(json));
     }
     // The markdown a migration has not reached, or could not finish.  Converted rather than
     // returned as it stands, because every caller above this now reads data.
@@ -1192,17 +1222,15 @@ pub async fn read_crystal_data(id: &str) -> Outcome<String> {
             "Diamond '{}' still has a markdown crystal; it is read as data without being \
              converted on disk.", id));
         let md = String::from_utf8_lossy(&bytes).to_string();
-        return Ok(crate::tools::crystal_from_markdown(&md).to_json());
+        return Ok(Some(crate::tools::crystal_from_markdown(&md).to_json()));
     }
     if let Some((n, md)) = res!(newest_legacy_version(id).await) {
         console_log(&fmt!(
             "Diamond '{}' has no crystal at all; markdown version {} is read as data instead.",
             id, n));
-        return Ok(crate::tools::crystal_from_markdown(&md).to_json());
+        return Ok(Some(crate::tools::crystal_from_markdown(&md).to_json()));
     }
-    console_log(&fmt!(
-        "Diamond '{}' has no crystal and no version to fall back on; it opens empty.", id));
-    Ok(String::new())
+    Ok(None)
 }
 
 
@@ -1510,26 +1538,43 @@ async fn migrate_open(id: &str) -> Outcome<Vec<String>> {
 /// [`read_version_page`], so a page lost from its own file is recovered from the last version
 /// that changed it.
 pub async fn read_crystal_page(id: &str) -> Outcome<String> {
+    match find_crystal_page(id).await {
+        Ok(page) => Ok(page),
+        Err(e)   => {
+            console_log(&fmt!("Diamond '{}': {}. It opens on the built-in page.", id, e.plain()));
+            Ok(String::new())
+        },
+    }
+}
+
+/// [`read_crystal_page`] for a caller that must not mistake a failed read for "no page".
+///
+/// An unreadable page comes back as an error here.  The lenient reader answers empty, the
+/// renderer fills an empty page with the SHIPPED one, and a probe that read through it drew the
+/// built-in page for a Diamond whose own page it had failed to read.  `Ok("")` from this reader
+/// still means what it always did: the Diamond has no page of its own.
+pub async fn read_crystal_page_strict(id: &str) -> Outcome<String> {
+    find_crystal_page(id).await
+}
+
+async fn find_crystal_page(id: &str) -> Outcome<String> {
     if let Ok(bytes) = opfs::read_file(FileRoot::Opfs, &crystal_page_path(id)).await {
         return Ok(String::from_utf8_lossy(&bytes).to_string());
     }
-    // Unreadable metadata means no page, not a throw. A Diamond that LISTS must OPEN, and the
-    // panel opening on the built-in view beats it not opening at all.
+    // Unreadable metadata means no page we can vouch for.  The panel opens on the built-in view
+    // regardless ([`read_crystal_page`]), but a caller judging the page must be told.
     let at = match read_meta(id).await {
         Ok(m)  => m.version,
-        Err(_) => return Ok(String::new()),
+        Err(e) => return Err(err!(e, "the Diamond's metadata could not be read, so its page \
+            cannot be found"; IO, File, Read)),
     };
-    // And nor is a chain that cannot be walked.  The next write mends it: a version whose parent
-    // could not be read is recorded as a full copy, so the Diamond heals rather than staying
-    // unopenable -- see [`write_snapshot`].
+    // A chain that cannot be walked.  The next write mends it: a version whose parent could not
+    // be read is recorded as a full copy, so the Diamond heals rather than staying unopenable --
+    // see [`write_snapshot`].
     match read_version_page(id, at).await {
         Ok(page) => Ok(page),
-        Err(e)   => {
-            console_log(&fmt!(
-                "Diamond '{}' has no page file and its snapshots at version {} could not be \
-                 rebuilt: {}. It opens on the built-in page.", id, at, e));
-            Ok(String::new())
-        },
+        Err(e)   => Err(err!(e, "the page file is gone and the snapshots at version {} could \
+            not be rebuilt", at; IO, File, Read)),
     }
 }
 

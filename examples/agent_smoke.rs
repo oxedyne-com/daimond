@@ -108,6 +108,12 @@ async fn run() -> Outcome<()> {
             AgentEvent::Roading { name, attempt, of, wait_ms } =>
                 println!("\n[roading] {} again, attempt {} of {}, after {}ms",
                     name, attempt, of, wait_ms),
+            // The provider took the round and said nothing, and what was done about it.
+            AgentEvent::Wait { model, provider, secs } =>
+                println!("\n[wait] {} ({}) silent for {} s", model, provider, secs),
+            AgentEvent::Stall { model, provider, secs, retried } =>
+                println!("\n[stall] {} ({}) gave nothing in {} s; {}", model, provider, secs,
+                    if retried { "asking again" } else { "giving up" }),
             AgentEvent::Interjected(text) => println!("\n[interjected] {}", text),
             AgentEvent::Unseeable { images, model } =>
                 println!("\n[unseeable] {} image(s) withheld from {}", images, model),

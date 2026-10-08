@@ -824,6 +824,10 @@ fn event_to_ws(ev: &AgentEvent) -> Option<(&'static str, Vec<Dat>)> {
         // reach this wire unnoticed.
         AgentEvent::Roading { .. } => ("roading", vec![]),
         AgentEvent::Truncated => ("truncated", vec![]),
+        // Not carried on this wire either, for the reason `roading` is not: `src/syntax.rs`
+        // declares neither `wait` nor `stall`, and the browser reads them over
+        // `wasm::app::event_to_js`.
+        AgentEvent::Wait { .. } | AgentEvent::Stall { .. } => return None,
         // Not carried on this wire either, for the reason `thinking`, `ended` and `roading`
         // are not: `src/syntax.rs` declares no `round_meta`. The browser reads it over
         // `wasm::app::event_to_js`, which is the path the page runs on.

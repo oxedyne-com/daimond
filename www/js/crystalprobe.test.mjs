@@ -24,7 +24,10 @@
          read only with the nonce the host wrote into the shim (finding A, crprobe QA);
      (g) the policy goes in AHEAD of any page content, whatever a comment or a string
          holds (C); and no text of the page's own reaches the table or the error
-         lines, only a value the property could hold, or `?` (D).
+         lines, only a value the property could hold, or `?` (D);
+     (h) a `crystal.json` that does not parse is an ERROR from the render and never an
+         empty crystal: the probe used to take `{}` from it and draw the `.empty` card,
+         which is what a daimon on the Ontheism Diamond debugged for 14 minutes (lane K, K0).
 
    Run:  node www/js/crystalprobe.test.mjs
    ============================================================ */
@@ -487,6 +490,22 @@ async function main() {
 	let nodrv = '';
 	try { await bare.DaimondShot.capture(JSON.stringify({ in: 'crystal' })); } catch (e) { nodrv = e.message; }
 	check('in:"crystal" with no driver says the build cannot', /cannot draw a Diamond page/.test(nodrv), nodrv);
+
+	// ---- (h) a crystal that does not parse is an error, not an empty crystal ----
+	const settle = (data) => Promise.race([
+		C.render({ page: '<p>x</p>', data, width: 390 }).then(() => 'RESOLVED', (e) => String((e && e.message) || e)),
+		new Promise((r) => setTimeout(() => r('PENDING'), 60)),
+	]);
+	for (const [what, data] of [['a truncated file', '{"title":'], ['a BOM', '\uFEFF{"title":"t"}'],
+		['a raw newline in a string', '{"title":"a\nb"}'], ['a trailing comma', '{"title":"t",}'], ['an array', '[1]']]) {
+		const m = await settle(data);
+		check(`render of ${what} rejects, naming crystal.json and that it is not valid JSON`,
+			/crystal\.json/.test(m) && /not valid JSON/.test(m), m);
+	}
+	for (const [what, data] of [['valid data', '{"title":"t"}'], ['blank data, a new Diamond\'s crystal', ''], ['whitespace', ' \n']]) {
+		const m = await settle(data);
+		check(`render of ${what} is not refused as a parse fault`, !/not valid JSON/.test(m), m);
+	}
 
 	console.log(failures ? '\n' + failures + ' FAILED' : '\nall ok');
 	process.exit(failures ? 1 : 0);

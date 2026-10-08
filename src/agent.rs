@@ -1260,6 +1260,14 @@ impl Agent {
                     // and the UI reads "trying that again".
                     Delta::Roading { attempt, of, wait_ms } =>
                         on_event(AgentEvent::Roading { name: String::new(), attempt, of, wait_ms }),
+                    // The provider has taken the round and said nothing; a caption, never `full`.
+                    Delta::Waiting { provider, secs } =>
+                        on_event(AgentEvent::Wait {
+                            model: self.llm.model.clone(), provider: provider.to_string(), secs }),
+                    Delta::Stalled { provider, secs, retrying } =>
+                        on_event(AgentEvent::Stall {
+                            model: self.llm.model.clone(), provider: provider.to_string(),
+                            secs, retried: retrying }),
                 },
             ).await;
             match result {
@@ -1754,6 +1762,14 @@ impl Agent {
                         // to the transcript — see the note in the streaming loop above.
                         Delta::Roading { attempt, of, wait_ms } =>
                             on_event(AgentEvent::Roading { name: String::new(), attempt, of, wait_ms }),
+                        // A silent provider, as in the streaming loop above.
+                        Delta::Waiting { provider, secs } =>
+                            on_event(AgentEvent::Wait {
+                                model: self.llm.model.clone(), provider: provider.to_string(), secs }),
+                        Delta::Stalled { provider, secs, retrying } =>
+                            on_event(AgentEvent::Stall {
+                                model: self.llm.model.clone(), provider: provider.to_string(),
+                                secs, retried: retrying }),
                     },
                 ).await {
                     Ok(r) => break r,

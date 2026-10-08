@@ -4160,6 +4160,19 @@ fn event_to_js(ev: &AgentEvent) -> JsValue {
             set("of",      &JsValue::from_f64(*of      as f64));
             set("wait_ms", &JsValue::from_f64(*wait_ms as f64));
         }
+        AgentEvent::Wait { model, provider, secs } => {
+            set("type",     &JsValue::from_str("wait"));
+            set("model",    &JsValue::from_str(model));
+            set("provider", &JsValue::from_str(provider));
+            set("secs",     &JsValue::from_f64(*secs as f64));
+        }
+        AgentEvent::Stall { model, provider, secs, retried } => {
+            set("type",     &JsValue::from_str("stall"));
+            set("model",    &JsValue::from_str(model));
+            set("provider", &JsValue::from_str(provider));
+            set("secs",     &JsValue::from_f64(*secs as f64));
+            set("retried",  &JsValue::from_bool(*retried));
+        }
         AgentEvent::Truncated => {
             set("type", &JsValue::from_str("truncated"));
         }

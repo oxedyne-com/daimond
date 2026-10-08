@@ -1225,7 +1225,16 @@
 		var sel = str(req.sel).slice(0, PROBE_SEL_MAX);
 		var wantPng = req.png !== false;
 		var page = str(req.page).trim() ? draw(String(req.page)) : DEFAULT_PAGE;
-		var data = obj(parse(req.data).data);
+		// A crystal that does not parse is an ERROR here and never `{}`: the probe used to draw the
+		// empty card for it, and a daimon went looking for a layout fault in a page that had
+		// simply never been given its data (lane K, K0).  Blank stays `{}`, a new Diamond's.
+		var parsed = parse(req.data);
+		if (!parsed.ok) {
+			return Promise.reject(new Error('crystal.json is not valid JSON (' + parsed.error +
+				'), so the crystal page cannot be drawn; the owner\'s panel shows it as text. ' +
+				'Write it again as one JSON object.'));
+		}
+		var data = obj(parsed.data);
 		return new Promise(function (resolve, reject) {
 			var faces = faceSkin(currentSkin());
 			if (faces) loadFaces(currentSkin());
