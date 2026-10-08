@@ -3559,6 +3559,9 @@
 	'update.held_typed':  'unsent text in the box',
 	'update.held_sync':   'syncing',
 	'update.held_phone':  'a phone',
+	'update.held_hand':    'a command is running',
+	'update.stops':        'Updating in {s}s will stop what the machine hand is still running: {what}',
+	'update.stopped':      'The update stopped what the machine hand was still running: {what}',
 
 	// ── Typst ──────────────────────────────────────────────────
 	// {reason} is the compiler's own diagnostic, which stays as it came.

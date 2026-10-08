@@ -1649,6 +1649,19 @@
 		run: run,
 		file: file,
 		runs: runs,
+		/// How many runs of THIS page are in flight, answered at once. The updater
+		/// reads it: a reload would end each of them, and `DaimondCore.busy` cannot see them.
+		liveRuns: function () { return Object.keys(live).length; },
+		/// Is a link to the hand open and greeted? Asking never opens one, which would put
+		/// the approval window on screen.
+		linked: function () { return !!(link && link.greeted && !link.dead); },
+		/// What the hand is still holding for this page, standing groups included, as
+		/// `runs` lists them; `[]` where there is no link or no answer. Never opens a link.
+		standing: function () {
+			if (!(link && link.greeted && !link.dead)) return Promise.resolve([]);
+			return runs().then(function (r) { return (r && Array.isArray(r.runs)) ? r.runs : []; },
+				function () { return []; });
+		},
 		dirs: dirs,
 		grant: grant,
 		held: held,

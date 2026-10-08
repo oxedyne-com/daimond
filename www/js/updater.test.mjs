@@ -117,9 +117,10 @@ function emitter() {
 /// which is what surviving a reload means.
 function makeTab(cfg) {
 	cfg = cfg || {};
+	cfg.state = cfg.state || {};
 	const clock = makeClock(cfg.t0 || 1757000000000);
 	const local = cfg.store || new Map();
-	const session = new Map();
+	const session = cfg.session || new Map();
 	const mkStore = (m) => ({
 		getItem: (k) => (m.has(k) ? m.get(k) : null),
 		setItem: (k, v) => m.set(k, String(v)),
@@ -157,6 +158,7 @@ function makeTab(cfg) {
 
 	const reloads = { n: 0 };
 	const events = [];
+	const trails = [];
 	const win = {
 		Date: clock.Date,
 		addEventListener: winEv.addEventListener,
@@ -164,14 +166,27 @@ function makeTab(cfg) {
 		navigator: {},
 		localStorage: mkStore(local),
 		sessionStorage: mkStore(session),
-		DaimondI18n: { t: (k, v) => k + (v && v.s !== undefined ? ':' + v.s : '') },
-		DaimondCore: {
+		DaimondI18n: { t: (k, v) => k + (v ? ':' + Object.keys(v).map((n) => v[n]).join(':') : '') },
+		DaimondCore: cfg.noCore ? undefined : {
 			busy: () => !!cfg.state.busy,
 			composerHasText: () => !!cfg.state.typed,
 			// `typed` alone is text in the box; a bound draft key (`draftBound`)
 			// is what makes it a `drafts.js` restore the next load will not lose.
 			composerHasUnsavedText: () => !!cfg.state.typed && !cfg.state.draftBound,
 		},
+		// The hand, as far as the updater reaches it: how many runs of THIS page are
+		// in flight (`state.handRuns`), whether a link is open (`cfg.hand`), and what
+		// it is still holding once asked (`cfg.hand.standing`). Absent unless a
+		// scenario gives one, so every other scenario sees the page it always saw.
+		DaimondHand: cfg.hand || cfg.state.handRuns !== undefined ? {
+			liveRuns: () => cfg.state.handRuns | 0,
+			linked: () => !!(cfg.hand && cfg.hand.linked),
+			// `hand.delay` makes the hand slow to answer, as it is when it is asked what it holds.
+			standing: () => (cfg.hand && cfg.hand.delay)
+				? new Promise((r) => clock.setTimeout(() => r((cfg.hand.standing || []).slice()), cfg.hand.delay))
+				: Promise.resolve(((cfg.hand && cfg.hand.standing) || []).slice()),
+		} : undefined,
+		DaimondTrail: { note: (w, d) => trails.push(w + ' | ' + d), setBuild() {} },
 		DaimondSync: { state: () => ({ quiet: cfg.state.quiet !== false,
 			busyWith: cfg.state.busyWith || 'a round is running' }) },
 		// The unlock gate, and the two things the runner exemption needs to be sure
@@ -211,7 +226,7 @@ function makeTab(cfg) {
 	fn(win, document, clock.setTimeout, clock.clearTimeout, clock.setInterval, clock.clearInterval);
 
 	return {
-		win, document, chip, clock, reloads, events, fetchCalls, local, session,
+		win, document, chip, clock, reloads, events, trails, fetchCalls, local, session,
 		state: cfg.state,
 		U: () => win.DaimondUpdater,
 		fireWin: winEv.fire,
@@ -725,6 +740,221 @@ async function main() {
 			tab.U().countdown() === 0);
 		await tab.clock.advance(10 * MIN);
 		check('and it never reloaded', tab.reloads.n === 0);
+	}
+
+	console.log('\nupdater: one door -- every automatic reload waits for idle, and says which door it took');
+	{
+		// RED on 27d05f87: `repair` reloaded at once with a turn running, and no
+		// reload said which door it came through. 7 Oct 2026, r539 U5.
+		const tab = await boot({ stamps: [BOOTED], state: { busy: true } });
+		tab.U().repair("a mismatched pair");
+		await tab.clock.advance(1000);
+		check('repair does not reload over a running turn', tab.reloads.n === 0);
+		check('the held repair is said to the feed', tab.events.some((e) => e.kind === 'update'
+			&& e.payload.at === 'held' && e.payload.door === 'repair'));
+		tab.state.busy = false;
+		tab.fireWin('daimond:idle');
+		await tab.clock.advance(1000);
+		check('the repair lands once the turn ends', tab.reloads.n === 1);
+		const row = tab.events.find((e) => e.kind === 'update' && e.payload.at === 'reload');
+		check('and the reload row names the repair door', !!row && row.payload.door === 'repair');
+	}
+	{
+		// The gateway refuses the tab while a turn runs: held, landing at idle, once,
+		// with the loop guard unspent until it does.
+		const tab = await boot({ stamps: [BOOTED, NEWER], state: { busy: true } });
+		tab.fireWin('daimond:stale');
+		await tab.clock.advance(2000);
+		check('a forced reload waits for the turn', tab.reloads.n === 0);
+		check('its loop guard is not spent while it waits', !tab.session.has('daimond-forced-from'));
+		tab.state.busy = false;
+		tab.fireWin('daimond:idle');
+		await tab.clock.advance(1000);
+		check('it lands at idle', tab.reloads.n === 1);
+		check('and then spends the guard', tab.session.get('daimond-forced-from') === BOOTED.build);
+		const row = tab.events.find((e) => e.kind === 'update' && e.payload.at === 'reload');
+		check('the reload row names the forced door', !!row && row.payload.door === 'forced');
+		tab.fireWin('daimond:stale');
+		await tab.clock.advance(2000);
+		check('the loop guard still refuses a second forced reload from this build', tab.reloads.n === 1);
+	}
+	{
+		// A hand run in flight is work the page would lose, and `DaimondCore.busy`
+		// cannot see it. The hand's end sends no `daimond:idle`, so the door also
+		// looks again on its own.
+		const tab = await boot({ stamps: [BOOTED], state: { handRuns: 1 } });
+		tab.U().repair('x');
+		await tab.clock.advance(3000);
+		check('a hand run in flight holds a repair', tab.reloads.n === 0);
+		check('the hold says it is a hand run', tab.events.some((e) => e.kind === 'update'
+			&& e.payload.at === 'held' && e.payload.why === 'hand-run'));
+		tab.state.handRuns = 0;
+		await tab.clock.advance(6000);
+		check('it lands within seconds of the run ending, with no idle event', tab.reloads.n === 1);
+	}
+	{
+		const tab = await boot({ stamps: [BOOTED, NEWER], state: { handRuns: 1 } });
+		await tab.clock.advance(65000);
+		await learn(tab);
+		await tab.clock.advance(5 * MIN);
+		check('a hand run in flight holds the soft path', tab.reloads.n === 0 && tab.U().countdown() === 0);
+		check('the soft hold names the hand run', tab.U().held() === 'hand-run');
+		tab.state.handRuns = 0;
+		await tab.clock.advance(11000 + 21000);
+		check('the soft path takes it when the run ends', tab.reloads.n === 1);
+		const row = tab.events.find((e) => e.kind === 'update' && e.payload.at === 'reload');
+		check('the reload row names the soft door', !!row && row.payload.door === 'soft');
+	}
+	{
+		// Boot: a LinkError repair runs before DaimondCore exists. It must not throw
+		// and must not wait for an idle that no one will announce.
+		const tab = await boot({ stamps: [BOOTED], noCore: true, state: {} });
+		check('repair before DaimondCore exists goes straight through', tab.U().repair('boot') === true);
+		await tab.clock.advance(1000);
+		check('and reloads at once', tab.reloads.n === 1);
+	}
+	{
+		const src = readFileSync(join(HERE, 'updater.js'), 'utf8')
+			.split('\n').filter((l) => !/^\s*\/\//.test(l)).join('\n');
+		const n = (src.match(/location\.reload\(/g) || []).length;
+		check('location.reload( appears in exactly one place, the door (found ' + n + ')', n === 1);
+	}
+
+	console.log('\nupdater: a standing run is named before the reload, and again after it');
+	{
+		const hand = { linked: true, standing: [
+			{ id: 'r1', state: 'standing', what: 'node dev-server.js' },
+			{ id: 'r2', state: 'standing', what: 'python -m http.server' },
+		] };
+		const tab = await boot({ stamps: [BOOTED], hand, state: {} });
+		tab.U().repair('a mismatched pair');
+		await tab.clock.advance(1000);
+		check('a standing run delays the reload for a notice', tab.reloads.n === 0);
+		const txt = tab.bannerText() || '';
+		check('the notice says it will stop things', /update\.stops/.test(txt));
+		check('it names the first standing run', /node dev-server\.js/.test(txt));
+		check('it names the second', /python -m http\.server/.test(txt));
+		await tab.clock.advance(9000);
+		check('the update is not deferred for ever: it lands after the notice', tab.reloads.n === 1);
+		const row = tab.events.find((e) => e.kind === 'update' && e.payload.at === 'reload');
+		check('the reload row carries what it stopped', !!row && /node dev-server\.js/.test(String(row.payload.stopped)));
+		const next = await boot({ stamps: [BOOTED], session: tab.session, store: tab.local, state: {} });
+		const after = next.bannerText() || '';
+		check('the next boot says again what was stopped', /update\.stopped/.test(after)
+			&& /node dev-server\.js/.test(after));
+	}
+	{
+		const hand = { linked: true, standing: [] };
+		const tab = await boot({ stamps: [BOOTED], hand, state: {} });
+		tab.U().repair('x');
+		await tab.clock.advance(1000);
+		check('a linked hand with nothing standing reloads without a notice', tab.reloads.n === 1);
+	}
+
+	console.log('\nupdater: the standing-run notice re-asks "busy?" before it reloads');
+	{
+		// RED on bd55a90c: the 8 s notice and its "Reload now" never asked again, so a
+		// turn, a hand run or unsent text that began under the notice was reloaded over.
+		// 8 Oct 2026, r539 U5 QA S1-1 (cases A1-A4 of updater_t1_qa.test.mjs).
+		const STANDING = [{ id: 'r1', state: 'standing', what: 'node dev-server.js' }];
+		{
+			// Repair door: a turn starts 2 s into the notice.
+			const tab = await boot({ stamps: [BOOTED], hand: { linked: true, standing: STANDING }, state: {} });
+			tab.U().repair('x');
+			await tab.clock.advance(2000);
+			check('the notice is up before the turn starts', /update\.stops/.test(tab.bannerText() || '') && tab.reloads.n === 0);
+			tab.state.busy = true;
+			await tab.clock.advance(9000);
+			check('a turn started under the notice is not reloaded over', tab.reloads.n === 0);
+			tab.state.busy = false;
+			tab.fireWin('daimond:idle');
+			await tab.clock.advance(12000);
+			check('the reload lands once that turn ends', tab.reloads.n === 1);
+		}
+		{
+			// A hand run the daimon starts during the notice.
+			const tab = await boot({ stamps: [BOOTED], hand: { linked: true, standing: STANDING }, state: { handRuns: 0 } });
+			tab.U().repair('x');
+			await tab.clock.advance(2000);
+			tab.state.handRuns = 1;
+			await tab.clock.advance(9000);
+			check('a hand run started under the notice is not reloaded over', tab.reloads.n === 0);
+		}
+		{
+			// "Reload now" while a turn runs: the click door refuses over a turn.
+			const tab = await boot({ stamps: [BOOTED], hand: { linked: true, standing: STANDING }, state: {} });
+			tab.U().repair('x');
+			await tab.clock.advance(2000);
+			tab.state.busy = true;
+			tab.banner().children[1].click();
+			await tab.clock.advance(1000);
+			check('Reload now on the notice does not reload over a running turn', tab.reloads.n === 0);
+		}
+		{
+			// Soft door: unsaved text typed during the notice, which stopped the countdown before it.
+			const tab = await boot({ stamps: [BOOTED, NEWER], hand: { linked: true, standing: STANDING }, state: {} });
+			await tab.clock.advance(65000);
+			await learn(tab);
+			await tab.clock.advance(21000);
+			check('the soft countdown ended in the notice', /update\.stops/.test(tab.bannerText() || '') && tab.reloads.n === 0);
+			tab.state.typed = true;
+			tab.fireDoc('keydown');
+			await tab.clock.advance(9000);
+			check('a soft notice does not reload over unsaved text typed under it', tab.reloads.n === 0);
+		}
+	}
+
+	console.log('\nupdater: a reload re-held after the standing ask keeps its own re-entry');
+	{
+		// RED on bd55a90c: `launch` re-held without `again`, so a soft reload landed at idle
+		// with no countdown and a forced one skipped force()'s typing grace.
+		// 8 Oct 2026, r539 U5 QA S2-1 (cases B1-B2 of updater_t1_qa.test.mjs).
+		{
+			// Soft: a turn starts during the 2 s ask; at its end the box holds unsent text.
+			const tab = await boot({ stamps: [BOOTED, NEWER], hand: { linked: true, standing: [], delay: 2000 }, state: {} });
+			await tab.clock.advance(65000);
+			await learn(tab);
+			await tab.clock.advance(20500);            // the countdown ends, the ask is in flight
+			tab.state.busy = true;
+			await tab.clock.advance(2000);             // the answer lands on a busy page
+			check('the soft reload is not made over the turn', tab.reloads.n === 0);
+			tab.state.typed = true;
+			tab.fireDoc('keydown');
+			tab.state.busy = false;
+			tab.fireWin('daimond:idle');
+			await tab.clock.advance(5000);
+			check('the soft reload does not land at idle over unsaved text, with no countdown', tab.reloads.n === 0);
+		}
+		{
+			// Soft, nothing typed: put back, not spent -- the tick counts down again and then reloads.
+			const tab = await boot({ stamps: [BOOTED, NEWER], hand: { linked: true, standing: [], delay: 2000 }, state: {} });
+			await tab.clock.advance(65000);
+			await learn(tab);
+			await tab.clock.advance(20500);
+			tab.state.busy = true;
+			await tab.clock.advance(2000);
+			tab.state.busy = false;
+			tab.fireWin('daimond:idle');
+			await tab.clock.advance(1000);
+			check('the put-back soft reload does not land at once', tab.reloads.n === 0);
+			await tab.clock.advance(120000);
+			check('the put-back soft reload comes back through the countdown and lands', tab.reloads.n === 1);
+		}
+		{
+			// Forced: the same window; the user is typing when the turn ends.
+			const tab = await boot({ stamps: [BOOTED, NEWER], hand: { linked: true, standing: [], delay: 2000 }, state: {} });
+			tab.fireWin('daimond:stale');
+			await tab.clock.advance(500);
+			tab.state.busy = true;
+			await tab.clock.advance(2000);
+			check('the forced reload is not made over the turn', tab.reloads.n === 0);
+			tab.state.typed = true;
+			tab.fireDoc('keydown');
+			tab.state.busy = false;
+			tab.fireWin('daimond:idle');
+			await tab.clock.advance(5000);
+			check('a forced reload re-held after the ask still waits out the typing grace', tab.reloads.n === 0);
+		}
 	}
 
 	console.log('\nupdater: the poll is jittered, so a fleet does not read in lockstep');

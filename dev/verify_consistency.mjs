@@ -1249,6 +1249,11 @@ const ROLES = [
 	// create-button regex, which reads "Add a note for glm-5.2" as a creating verb.
 	['rail-tile-label', 'none',     (it) => it.ctrl && has(it, 'pend-line')],
 	['text-button',     'title',    (it) => it.ctrl && has(it, 'pend-verb')],
+	// r539 BR: the bare round "+" has no letters, so the icon-button fall-through below filed it with the 20px icon tools (tile-cog, copy-id, ...)
+	// and called its 27px box (44px on a phone) a fault. It is not an icon tool. skin-daylight.css puts it in the worded chips' own group, "the same
+	// 27px box as the worded chips, but round", and the phone floor gives that group a 44px box, so it is the glyph form of a text-button and is
+	// compared with the chips it sits beside (Edit, History, Import a Folder...), not with the icon tools that keep a 20px box and wear a 44px overlay.
+	['text-button',     'title',    (it) => it.ctrl && has(it, 'attach-add') && has(it, 'icon')],
 	['create-button',   'title',    (it) => it.ctrl && !has(it, 'tile-label') && (has(it, 'railbtn') || /^(new|add|create)\b/i.test(txt(it)) && txt(it).length < 32 && !has(it, 'admin-item') && !within(it, /dlg-actions/) && !/link|add-credits/.test(it.cls.join(' ')))],
 	['picture-option',  'none',     (it) => it.ctrl && has(it, 'grid-opt')],
 	['tab',             'sentence', (it) => it.ctrl && (has(it, 'ptag') || within(it, /#mnav|msheet-tabs/) || it.role === 'tab') && !has(it, 'dview-btn')],
@@ -1405,7 +1410,7 @@ const ALLOW = [
 	{ role: 'icon-button', m: /\.tag-x\b/, p: ['col', 'h'], why: 'the chip’s own × colour is inherited from its tag’s hue, and it is sized by its chip, not a standalone control' },
 	// r526 residual allow-list, all approved by the lead (D-20260929-03):
 	{ role: 'inline-link', m: /^a\.(brand|mb-hit)\b/, p: ['col'], why: 'the wordmark and the About picture’s hotspots keep the brand colour -- they are not text links' },
-	{ role: 'icon-button', m: /\.attach-add\.grants\b/, p: ['col'], why: 'a "+" that widens a fence takes the accent, like every granting control (daimond.js)' },
+	{ role: 'text-button', m: /\.attach-add\.grants\b/, p: ['col'], why: 'a "+" that widens a fence takes the accent, like every granting control (daimond.js)' },
 	{ role: 'composer-button', m: /#chat-send\b/, p: ['icon'], why: 'the filled send disc carries a 16px arrow for optical balance' },
 	{ role: '*', m: /\.ghost\b/, p: ['col'], why: 'a ghost (unavailable) option is drawn muted' },
 	{ role: 'tile-prose', m: /^(strong|b)\b/, p: ['col'], why: 'bold in a reply may take the ink colour' },

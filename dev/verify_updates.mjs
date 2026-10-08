@@ -142,6 +142,36 @@ try {
 	check('loop guard: does not re-reload from the same build', (await page.evaluate(() => window.__m)) === 1);
 	check('loop guard leaves the chip red for the user', (await state()) === 'stale');
 
+	// ── I2. A hand run in flight is work in flight: no automatic, forced or repair ──
+	// reload lands on it, and each lands when the run ends. r539 U5, 8 Oct 2026.
+	//
+	// `DaimondCore.busy` cannot see the hand: a command the daimon started is a
+	// `live` entry in hand.js and nothing else, and on 7 Oct the only door that
+	// asked nobody at all was `repair`. The hand's end sends no `daimond:idle`, so
+	// the door also looks again on its own -- there is no idle event below.
+	await reboot({ build: 'HR1', note: 'hr' });
+	await setBusy(false);
+	await page.evaluate(() => {
+		for (const k of ['daimond-forced-at', 'daimond-forced-n']) { try { localStorage.removeItem(k); } catch (e) {} }
+		window.__m = 1;
+		window.__runs = 1;
+		window.__ds = [];
+		window.DEBUG_SHARE = { event: (kind, payload) => window.__ds.push({ kind, payload }) };
+		window.DaimondHand.liveRuns = () => window.__runs;
+	});
+	await page.evaluate(() => DaimondUpdater.repair('verify: a hand run is live')).catch(() => {});
+	await new Promise(r => setTimeout(r, 700));
+	check('no repair reload while a hand run is live', (await page.evaluate(() => window.__m)) === 1);
+	await page.evaluate(() => window.dispatchEvent(new Event('daimond:stale'))).catch(() => {});
+	await new Promise(r => setTimeout(r, 700));
+	check('no forced reload while a hand run is live', (await page.evaluate(() => window.__m)) === 1);
+	const heldHR = await page.evaluate(() => (window.__ds || []).find(e => e.kind === 'update'
+		&& e.payload && e.payload.at === 'held' && e.payload.why === 'hand-run'));
+	check('the feed hears the hold, and that a hand run caused it', !!heldHR, heldHR && JSON.stringify(heldHR));
+	await page.evaluate(() => { window.__runs = 0; });
+	const landedHR = await until(page, () => typeof window.__m === 'undefined' && !!window.DaimondUpdater, 14000);
+	check('the held reload lands within seconds of the run ending, with no idle event', landedHR);
+
 	// ── J. A sync round in flight holds the AUTOMATIC path, tells the feed why, ──
 	// and the banner (a desktop, not yet given up) says it will reload itself.
 	//

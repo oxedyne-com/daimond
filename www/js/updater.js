@@ -185,10 +185,29 @@
 			.catch(function () { return null; });
 	}
 
-	function busy() {
+	/// Is a turn, fold, worker or queued message of this page live? `DaimondCore.busy`
+	/// answers for all of them, and for nothing the machine hand is doing.
+	function turnBusy() {
 		var C = window.DaimondCore;
 		return !!(C && C.busy && C.busy());
 	}
+	/// Is a command this page sent to the machine hand still in flight? A reload ends
+	/// every one of them, and `turnBusy` cannot see them: on 7 Oct a hand the page had
+	/// left running was let go at the next hand use, and nothing here had asked.
+	function handBusy() {
+		try {
+			var H = window.DaimondHand;
+			return !!(H && H.liveRuns && H.liveRuns() > 0);
+		} catch (e) { return false; }
+	}
+	/// What the page is busy with, as `whyUnsafe` names it: `turn`, `hand-run`, or
+	/// empty when nothing a reload would lose is live.
+	function busyWhy() {
+		if (turnBusy()) return 'turn';
+		if (handBusy()) return 'hand-run';
+		return '';
+	}
+	function busy() { return busyWhy() !== ''; }
 	function composerHasText() {
 		var C = window.DaimondCore;
 		return !!(C && C.composerHasText && C.composerHasText());
@@ -390,7 +409,8 @@
 		try { last = parseInt(localStorage.getItem(SKEY), 10) || 0; } catch (e) {}
 		if (now - last < GAP_MS) return 'gap';
 		if (dialogOpen()) return 'dialog';
-		if (busy()) return 'turn';
+		var bw = busyWhy();
+		if (bw) return bw;
 		if (composerHasUnsavedText()) return 'typed';
 		if (recordsOwed()) return 'owed';
 		if (!syncQuiet()) return 'sync:' + syncBusyWith();
@@ -427,7 +447,7 @@
 	/// The automatic path. It never reloads itself -- it arms the tick, and the
 	/// tick is what eventually starts a countdown.
 	function softTry() {
-		if (applying || !pending || gaveUp) return false;
+		if (applying || launching || !pending || gaveUp) return false;
 		if (!tick) tick = setInterval(evaluate, TICK_MS);
 		evaluate();
 		return false;
@@ -436,7 +456,7 @@
 	/// One pass of "is it safe yet?".
 	function evaluate() {
 		if (applying || !pending) { heldWhy = null; disarm(); return; }
-		if (counting()) return;
+		if (counting() || launching) return;
 		// Latch the sync yield (read by `safeNow`, so it survives into the countdown,
 		// where `unsafeSince` is reset to 0). It arms only once every HARD block is
 		// clear and sync is the sole thing left unsafe, the build has already waited
@@ -504,12 +524,19 @@
 		stopCount();
 	}
 
-	/// The automatic reload itself. The timestamp goes down BEFORE the reload, so
+	/// The automatic reload itself. Its timestamp goes down BEFORE the reload (`softGo`), so
 	/// the once-per-GAP_MS guard survives the thing it is guarding.
 	function takeIt() {
+		doApply('soft', softGo);
+	}
+
+	/// The soft reload's own work. The stamp is written here and not in `takeIt`,
+	/// because a reload the door puts back (a turn began while the hand was asked what
+	/// it held) must not spend the once-per-GAP_MS guard: the tick would then wait
+	/// ten minutes to count down again.
+	function softGo() {
 		try { localStorage.setItem(SKEY, String(Date.now())); } catch (e) {}
-		share('update', { live: pending, mine: booted, at: 'reload' });
-		doApply();
+		applyGo();
 	}
 
 	/// THE SEAM FOR A PUSH. Polling is how a tab learns of a deploy today; when the
@@ -532,13 +559,21 @@
 	function apply(force) {
 		// The automatic caller gets the scheduler, not a reload: it arms the tick,
 		// which watches for a safe moment and counts down in front of the user. A
-		// forced caller -- a click, the gateway's refusal -- goes straight through.
-		return force ? doApply() : softTry();
+		// click goes to the door, which refuses it over a running turn. The gateway's
+		// refusal does not come here at all: `force` holds the loop guard.
+		return force ? doApply('click') : softTry();
 	}
 
-	function doApply() {
-		if (applying || !pending) return false;
-		if (busy()) return false;                 // never interrupt a running turn or agent
+	/// Take the pending build on `door` ('soft' or 'click'): refused over anything a
+	/// reload would lose, never held, because the caller is either a countdown that has
+	/// just found the page safe or a person who can click again.
+	function doApply(door, go) {
+		if (applying || launching || !pending) return false;
+		return reloadWhenIdle(door, go || applyGo, false);
+	}
+
+	/// The soft and forced reload's own work, once the door has let it through.
+	function applyGo() {
 		applying = true;
 		disarm();
 		try { sessionStorage.setItem(KEY, pending); } catch (e) {}
@@ -548,8 +583,175 @@
 		// reload only.
 		try { if (booted) sessionStorage.setItem(PREV_KEY, booted); } catch (e) {}
 		try { if (window.DaimondJournal) DaimondJournal.flush(); } catch (e) {}
-		doReload();
+		doReload(false);
+	}
+
+	// ── The one door ────────────────────────────────────────────────────────
+	//
+	// EVERY reload this file starts goes through `reloadWhenIdle`, and `doReload`
+	// below it is the only place that calls `location.reload`: the soft countdown,
+	// the click, the gateway's refusal (`force`), the mismatched pair (`repair`) and
+	// the stuck-worker escape. Before r539 four of those five each had their own
+	// idea of "not now": `repair` had none, and `busy()` could not see a command the
+	// hand was running. A door that asks one question, writes one row naming itself
+	// (`update at:reload door:...`), and holds the rest until the page is idle means
+	// that a reload nobody logged cannot happen -- on 6 Oct gilgamesh took a build
+	// with no row at all, because only the soft path wrote one.
+	//
+	// WHAT IT HOLDS BACK FOR: a turn, a fold, a worker, or a hand run in flight on
+	// this page. WHAT IT DOES NOT HOLD BACK FOR: a standing run, the server a command
+	// left behind. The hand keeps those, only the hand can list them, and waiting on
+	// one would pin an update for as long as a person leaves a dev server up. They
+	// are NAMED to the user before the reload, and again after it.
+	//
+	// THE LOOP GUARD STAYS WITH THE DOOR'S CALLERS. `force` and `repair` check
+	// `mayForce` before asking and the door asks it again (`ok`) when a held reload
+	// finally goes, since another tab may have spent the guard in between. It is spent
+	// only when the reload is really starting (`spendForce`), never on an attempt that
+	// is only waiting.
+	var DOOR_POLL_MS    = 5000;     // a hand run's end sends no `daimond:idle`: look again this often
+	var STOP_NOTICE_MS  = 8000;     // how long the standing-run notice stands before the reload goes
+	var STANDING_ASK_MS = 2500;     // how long to wait for the hand to list what it holds
+	var STOP_KEY        = 'daimond-update-stopped';  // what the reload stopped, for the next boot to say
+	var launching       = false;    // a reload has been let through and is not yet away
+	var waiting         = null;     // { door, go, ok, again }: the reload held for idle
+	var doorTimer       = null;
+	var notice          = null;     // { door, go, names, left, timer }: the standing-run notice
+	var stoppedNote     = '';       // what the last reload stopped, said once after it
+	var DOOR_RANK       = { soft: 1, click: 1, forced: 2, repair: 3 };
+
+	/// Ask to reload through `door`. `go` does the reload's own work (guards, storage,
+	/// `doReload`); `ok`, where given, is asked again at the moment it would go.
+	/// `wait` holds a refused reload for idle rather than dropping it; `again`
+	/// re-enters the caller (as `force` does, for the typing grace) instead of going
+	/// straight to `go`.
+	/// True when the reload is going or will land; false when it was refused.
+	function reloadWhenIdle(door, go, wait, ok, again) {
+		if (launching) return true;               // one is already on its way
+		var why = busyWhy();
+		if (!why) { launch(door, go, ok, again); return true; }
+		if (!wait) { trail('reload refused', door + ': ' + why); return false; }
+		var rank = (waiting && DOOR_RANK[waiting.door]) || 0;
+		if (!waiting) {
+			share('update', { live: pending, mine: booted, at: 'held', why: why, door: door });
+			trail('reload held', door + ': ' + why);
+		}
+		// The stronger door keeps the place: a repair clears the caches, a forced
+		// reload does not, and both end in the same reload.
+		if (!waiting || (DOOR_RANK[door] || 0) >= rank) waiting = { door: door, go: go, ok: ok, again: again };
+		if (!doorTimer) doorTimer = setInterval(drain, DOOR_POLL_MS);
 		return true;
+	}
+
+	/// The held reload goes, if the page has gone idle.
+	function drain() {
+		if (!waiting) {
+			if (doorTimer) clearInterval(doorTimer);
+			doorTimer = null;
+			return;
+		}
+		if (busyWhy()) return;
+		var w = waiting;
+		waiting = null;
+		if (doorTimer) clearInterval(doorTimer);
+		doorTimer = null;
+		if (w.again) { w.again(); return; }
+		launch(w.door, w.go, w.ok);
+	}
+
+	/// The page is idle: name what the hand is still holding, if it has a link and
+	/// anything to name, and then go.
+	function launch(door, go, ok, again) {
+		if (ok && !ok()) {
+			trail(door + ' reload REFUSED', 'loop guard held');
+			if (door === 'forced') setChip('stale');
+			return;
+		}
+		var H = window.DaimondHand, linked = false;
+		try { linked = !!(H && H.linked && H.linked() && H.standing); } catch (e) {}
+		launching = true;
+		if (!linked) { fire(door, go, []); return; }
+		var done = false, timer = null;
+		var asked = function (list) {
+			if (done) return;
+			done = true;
+			clearTimeout(timer);
+			var names = (Array.isArray(list) ? list : [])
+				.map(function (r) { return r && r.what ? String(r.what).replace(/\s+/g, ' ').slice(0, 60) : ''; })
+				.filter(function (n) { return n; });
+			// The answer took a moment; a turn may have started in it.
+			if (!stillIdle(door, go, ok, again)) return;
+			if (!names.length) { fire(door, go, []); return; }
+			warn(door, go, names, ok, again);
+		};
+		timer = setTimeout(function () { asked([]); }, STANDING_ASK_MS);
+		try { H.standing().then(asked, function () { asked([]); }); } catch (e) { asked([]); }
+	}
+
+	/// A reload let through the door is not yet away, and in that time (the hand's
+	/// answer, a second of the standing-run notice) a turn or a hand run can begin, or
+	/// for the soft door unsent text, a dialog or a sync round. Is the page still fit
+	/// for it? If not, the reload goes back to its door and is not made: held for
+	/// idle by the forced and repair doors, each with its own re-entry (`again`),
+	/// refused by a click, which the person can repeat, and by the soft door, which
+	/// the tick takes again through its countdown, so it is never held at idle without
+	/// one. A person's own click (`person`) is asked about work in flight and no more.
+	function stillIdle(door, go, ok, again, person) {
+		var why = busyWhy(), soft = door === 'soft' && !person;
+		if (!why && soft && !(safeNow() && quietEnough())) why = 'not safe';
+		if (!why) return true;
+		launching = false;
+		if (notice) { clearInterval(notice.timer); notice = null; reflect(); }
+		if (busyWhy()) reloadWhenIdle(door, go, door === 'forced' || door === 'repair', ok, again);
+		else trail('reload refused', door + ': ' + why);
+		return false;
+	}
+
+	/// The reload goes now: one row naming the door (and anything it stopped), one
+	/// trail line, and what it stopped is left for the next boot to say.
+	function fire(door, go, names) {
+		if (notice) { clearInterval(notice.timer); notice = null; }
+		if (names.length) { try { sessionStorage.setItem(STOP_KEY, names.join('\n')); } catch (e) {} }
+		var row = { live: pending, mine: booted, at: 'reload', door: door };
+		if (names.length) row.stopped = names.join(', ');
+		share('update', row);
+		trail('reload', door + (names.length ? ' (stops: ' + names.join(', ') + ')' : ''));
+		go();
+	}
+
+	/// The names in a sentence: the first three, then how many more.
+	function stopNames(names) {
+		var shown = names.slice(0, 3).join(', ');
+		return names.length > 3 ? shown + ' +' + (names.length - 3) : shown;
+	}
+
+	/// The plain notice: what the update will stop, a few seconds, then the reload. A
+	/// soft or clicked reload can be put off (Not now); the gateway's refusal and a
+	/// mismatched pair cannot, because the page cannot keep working as it is.
+	function warn(door, go, names, ok, again) {
+		notice = { door: door, go: go, names: names, ok: ok, again: again,
+			left: Math.round(STOP_NOTICE_MS / 1000), timer: null };
+		notice.timer = setInterval(function () {
+			if (!notice) return;
+			// Eight seconds is long enough for a turn to start; ask again every second.
+			if (!stillIdle(door, go, ok, again)) return;
+			notice.left--;
+			if (notice.left <= 0) { fire(door, go, names); return; }
+			syncBanner('stops');
+		}, 1000);
+		share('update', { live: pending, mine: booted, at: 'notice', door: door, stops: names.join(', ') });
+		reflect();
+	}
+
+	/// Not now, said to the standing-run notice: put the reload off as Cancel does.
+	function cancelNotice() {
+		if (!notice) return;
+		clearInterval(notice.timer);
+		notice = null;
+		launching = false;
+		deferUntil   = Date.now() + DEFER_MS;
+		dismissedFor = pending;
+		reflect();
 	}
 
 	/// Reload onto the newest build in ONE go. A bare `location.reload()` reboots a
@@ -562,7 +764,11 @@
 	/// load fetches the freshest bytes. Both are bounded and neither can throw, and
 	/// the reload happens exactly once whatever the worker does -- a safety timer
 	/// fires it even if the handshake stalls, so a click is never lost.
-	function doReload() {
+	///
+	/// `hard` is the repair's: every cache goes, and the worker is not consulted,
+	/// since a mismatched pair is served by the very worker that would be asked.
+	/// THE ONLY CALL TO `location.reload` IN THIS FILE.
+	function doReload(hard) {
 		var went = false;
 		var go = function () {
 			if (went) return;
@@ -571,11 +777,22 @@
 		};
 		var safety = setTimeout(go, 3000);
 		var pwa = window.DaimondPWA;
-		var fresh = (pwa && pwa.freshenWorker) ? pwa.freshenWorker(2500) : Promise.resolve();
-		fresh
-			.then(function () { return (pwa && pwa.clearShell) ? pwa.clearShell() : null; })
-			.then(function () { clearTimeout(safety); go(); },
-			      function () { clearTimeout(safety); go(); });
+		var fresh;
+		if (hard) {
+			fresh = Promise.resolve();
+			try {
+				if (window.caches && caches.keys) {
+					fresh = caches.keys().then(function (ns) {
+						return Promise.all(ns.map(function (n) { return caches.delete(n); }));
+					});
+				}
+			} catch (e) { /* no Cache Storage; the reload alone is still worth taking */ }
+		} else {
+			fresh = ((pwa && pwa.freshenWorker) ? pwa.freshenWorker(2500) : Promise.resolve())
+				.then(function () { return (pwa && pwa.clearShell) ? pwa.clearShell() : null; });
+		}
+		fresh.then(function () { clearTimeout(safety); go(); },
+		           function () { clearTimeout(safety); go(); });
 	}
 
 	var checking = false;
@@ -627,8 +844,15 @@
 		// working" (stale) is the very advice that keeps failing, so the escape prompt
 		// -- close and reopen / clear site data -- is the more actionable word.
 		if (stuck)    { setChip('stuck');   syncBanner('stuck');   return; }
-		if (stale)    { setChip('stale');   syncBanner('stale');   return; }
-		if (!pending) { setChip('current'); syncBanner('current'); return; }
+		if (stale && !notice) { setChip('stale'); syncBanner('stale'); return; }
+		// The standing-run notice is the last thing said before a reload, so it is
+		// said over everything but a stuck worker.
+		if (notice)   { setChip('ready');   syncBanner('stops');   return; }
+		if (!pending) {
+			setChip('current');
+			syncBanner(stoppedNote ? 'stopped' : 'current');
+			return;
+		}
 		// Having given up, the banner is the ONLY way this build gets taken, so it is
 		// shown whatever the tab is doing -- including mid-turn, which is the state
 		// that caused the giving up. Painting `busy` here would hide the one control
@@ -676,6 +900,11 @@
 		// shifting a worker that keeps serving stale, and itself loop-guarded so a
 		// stuck device cannot reload-storm. Neither can lose work in flight.
 		go.addEventListener('click', function () {
+			if (notice) {   // Reload now, notice or not, but never over work in flight
+				var n = notice;
+				if (stillIdle(n.door, n.go, n.ok, n.again, true)) fire(n.door, n.go, n.names);
+				return;
+			}
 			if (stuck) { repair('stuck worker: cache clear + reload'); return; }
 			if (stale) { force(); return; }
 			if (counting()) stopCount();
@@ -689,6 +918,8 @@
 			// Mid-countdown this button is Cancel, not Dismiss: it defers the reload
 			// rather than merely hiding the word about it.
 			if (counting()) { cancelCount(); hideBanner(); return; }
+			if (notice) { cancelNotice(); hideBanner(); return; }
+			if (stoppedNote && !pending) { stoppedNote = ''; hideBanner(); return; }
 			if (stuck) stuckDismissed = true; else dismissedFor = pending;
 			hideBanner();
 		});
@@ -713,6 +944,7 @@
 	function heldReason(why) {
 		if (why === 'dialog') return t('update.held_dialog');
 		if (why === 'turn')   return t('update.held_turn');
+		if (why === 'hand-run') return t('update.held_hand');
 		if (why === 'typed')  return t('update.held_typed');
 		if (why && why.indexOf('sync:') === 0) return t('update.held_sync');
 		if (why === 'phone')  return t('update.held_phone');
@@ -725,7 +957,8 @@
 	/// gateway has refused the tab); hidden otherwise -- including `busy`, where a
 	/// reload would be wrong and the amber chip already says "waiting on this turn".
 	function syncBanner(state) {
-		var want = state === 'ready' || state === 'stale' || state === 'stuck' || state === 'soon';
+		var want = state === 'ready' || state === 'stale' || state === 'stuck' || state === 'soon'
+			|| state === 'stops' || state === 'stopped';
 		// A dismissal silences only the ready banner, and only for the build that
 		// was pending when it was waved away. Stale is not dismissible: ignoring
 		// the gateway's refusal is not a state the app can keep working in. Stuck is
@@ -735,6 +968,32 @@
 		if (state === 'stuck' && stuckDismissed) want = false;
 		if (!want) { hideBanner(); return; }
 		if (!banner) buildBanner();
+		banner.go.hidden = false;
+		// The standing-run notice: the update is about to end what the hand left
+		// running, so say what, for a few seconds, with the same two controls the
+		// countdown has. Not-now is offered only where the page could do without
+		// the reload (a click, the soft path).
+		if (state === 'stops' && notice) {
+			banner.msg.textContent = t('update.stops', { s: notice.left, what: stopNames(notice.names) });
+			banner.go.textContent  = t('update.reload_now');
+			banner.x.textContent   = t('update.cancel');
+			banner.x.setAttribute('aria-label', t('update.cancel'));
+			banner.x.hidden = !(notice.door === 'soft' || notice.door === 'click');
+			banner.el.dataset.state = 'soon';
+			banner.el.hidden = false;
+			return;
+		}
+		// After the reload: what it stopped, once, with a way to wave it off.
+		if (state === 'stopped') {
+			banner.msg.textContent = t('update.stopped', { what: stoppedNote });
+			banner.go.hidden = true;
+			banner.x.textContent = '×';
+			banner.x.setAttribute('aria-label', t('update.dismiss'));
+			banner.x.hidden = false;
+			banner.el.dataset.state = 'stopped';
+			banner.el.hidden = false;
+			return;
+		}
 		// The countdown: what is about to happen, when, and the two ways to change
 		// it. Said in the banner because the chip's whole message lives in a `title`
 		// nobody hovers -- the reason the banner exists at all, above.
@@ -902,10 +1161,18 @@
 			graceTimer = setTimeout(force, GRACE_MS - quietFor() + 100);
 			return false;
 		}
-		if (!apply(true)) return false;            // deferred over a running turn
+		if (applying || launching || !pending) return false;
+		// Through the door, which holds it over a turn or a hand run and asks again
+		// at idle (`force` itself, so the typing grace above applies at that moment
+		// too). The guard is spent in `forceGo`, when the reload really starts.
+		return reloadWhenIdle('forced', forceGo, true, mayForce, force);
+	}
+
+	/// The forced reload's own work, once the door has let it through.
+	function forceGo() {
 		trail('forced reload', 'the gateway refused this build');
 		spendForce();
-		return true;
+		applyGo();
 	}
 
 	/// A MISMATCHED PAIR: the wasm the page fetched and the JS glue running beside it
@@ -924,25 +1191,17 @@
 	/// and fail again, which is a loop rather than a repair.
 	function repair(why) {
 		if (!mayForce()) { trail('repair reload REFUSED', 'loop guard held'); return false; }
-		spendForce();
-		trail('repair reload', why || 'a mismatched engine pair');
-		// Record the build we are leaving, so if this reload ALSO fails to advance
-		// (a worker that will not let go), the next boot counts it toward the stuck
-		// prompt rather than losing the evidence -- repair does not go through apply().
-		try { if (booted) sessionStorage.setItem(PREV_KEY, booted); } catch (e) {}
-		var go = function () { try { location.reload(); } catch (e) {} };
-		try {
-			if (window.caches && caches.keys) {
-				caches.keys()
-					.then(function (ns) {
-						return Promise.all(ns.map(function (n) { return caches.delete(n); }));
-					})
-					.then(go, go);
-				return true;
-			}
-		} catch (e) { /* no Cache Storage; the reload alone is still worth taking */ }
-		go();
-		return true;
+		// At boot this runs before `DaimondCore` and the hand exist, so the door finds
+		// nothing busy and goes straight through: it can neither crash nor hold a boot.
+		return reloadWhenIdle('repair', function () {
+			spendForce();
+			trail('repair reload', why || 'a mismatched engine pair');
+			// Record the build we are leaving, so if this reload ALSO fails to advance
+			// (a worker that will not let go), the next boot counts it toward the stuck
+			// prompt rather than losing the evidence -- repair does not go through apply().
+			try { if (booted) sessionStorage.setItem(PREV_KEY, booted); } catch (e) {}
+			doReload(true);
+		}, true, mayForce);
 	}
 
 	/// A reload that WORKED clears the counter. Called from `init` when the build
@@ -981,6 +1240,13 @@
 		try { was = sessionStorage.getItem(KEY); } catch (e) {}
 		try { if (was) sessionStorage.removeItem(KEY); } catch (e) {}
 
+		// What the reload we just came through stopped (the hand's standing runs), said
+		// again now that there is a page to say it on. Only after an update reload.
+		try {
+			var st = sessionStorage.getItem(STOP_KEY);
+			if (st) sessionStorage.removeItem(STOP_KEY);
+			if (st) stoppedNote = stopNames(st.split('\n').filter(function (n) { return n; }));
+		} catch (e) {}
 		var first = await readStamp();
 		booted = first ? first.build : null;
 		// Into the trail, and into storage for the next boot's `boot` row. Without
@@ -1035,6 +1301,17 @@
 			chip.hidden = true;                   // no stamp deployed yet: no version system, stay silent
 		}
 
+		// What the reload stopped, once, for half a minute or until waved away. Said
+		// on the banner directly: `reflect` would repaint the chip over the "updated" mark.
+		if (stoppedNote && !stuck) {
+			syncBanner('stopped');
+			setTimeout(function () {
+				if (!stoppedNote) return;
+				stoppedNote = '';
+				if (!pending && !notice && !stale && !stuck) hideBanner();
+			}, 30000);
+		}
+
 		// User input, for the quiescence and typing-grace thresholds above. Capture
 		// phase so it counts even when a downstream handler stops propagation.
 		var bump = function () { lastActive = Date.now(); };
@@ -1056,6 +1333,7 @@
 			// on every idle event for as long as `stale` was true, with no
 			// loop-breaker at all -- so a tab the gateway kept refusing reloaded
 			// again every time a turn ended, for ever.
+			if (waiting) { drain(); return; }            // a held reload goes first
 			if (stale) { force(); return; }              // was only waiting on the turn
 			if (pending) { reflect(); apply(false); }
 		});
