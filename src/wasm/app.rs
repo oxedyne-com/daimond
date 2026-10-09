@@ -3570,38 +3570,23 @@ impl DaimondApp {
                      recorded as a version: {}", e.plain())));
             },
         }
-        // THE LAST PAGE THAT PASSED THE LOAD PROOF COMES BACK (K2): a turn that leaves a page the
-        // proof did not pass -- one that drew nothing, or a JSON dump -- does not leave it in front
-        // of the person. Only once the turn's page is recorded, so the failing page stays in the
-        // chain as the turn's version and "Bring back" can put it back.
+        // K2, WARNING ONLY (r544 hotfix, QA-B F-B1..F-B3): a turn that ends with a page other than the
+        // last one the load proof passed is said, never put back. The put-back keyed on the mark could
+        // not tell this turn's page from a newer one written elsewhere, or from the daimon's own
+        // `file_revert`, and wrote over both. Nothing is written here until fire/fb restores the
+        // put-back as a compare-and-swap on the turn's own FAIL verdict.
         if kept {
             let mark = diamond::last_passed(id).await;
             if crate::tools::restore_wanted(mark.as_ref().map(|m| m.page.as_str()),
                 &page_before, &page_after)
             {
-                let mark = mark.map(|m| m.page).unwrap_or_default();
-                match diamond::restore_passed(id, &mark).await {
-                    Ok(Some((failing, restored))) => {
-                        session.messages.push(ChatMessage::user(fmt!(
-                            "The page this turn left (version {}) did not pass the load proof, so \
-                             the last page that did was put back as version {}. The person can \
-                             bring yours back; fix it before writing it again.", failing, restored)));
-                        let obj = js_sys::Object::new();
-                        let _ = js_sys::Reflect::set(&obj, &JsValue::from_str("type"),
-                            &JsValue::from_str("crystal_restored"));
-                        let _ = js_sys::Reflect::set(&obj, &JsValue::from_str("failing"),
-                            &JsValue::from_f64(failing as f64));
-                        let _ = js_sys::Reflect::set(&obj, &JsValue::from_str("restored"),
-                            &JsValue::from_f64(restored as f64));
-                        let _ = on_event.call1(&JsValue::NULL, &obj);
-                    },
-                    Ok(None) => web_sys::console::warn_1(&JsValue::from_str(&fmt!(
-                        "Diamond '{}': the page that last passed the load proof is in no version \
-                         kept, so the page this turn left stays.", id))),
-                    Err(e) => web_sys::console::warn_1(&JsValue::from_str(&fmt!(
-                        "Diamond '{}': the page that last passed the load proof could not be put \
-                         back: {}", id, e))),
-                }
+                session.messages.push(ChatMessage::user(
+                    "The page now in place has not passed the load proof. Nothing was put back. \
+                     If you wrote it this turn, fix it before you end.".to_string()));
+                let obj = js_sys::Object::new();
+                let _ = js_sys::Reflect::set(&obj, &JsValue::from_str("type"),
+                    &JsValue::from_str("crystal_unproven"));
+                let _ = on_event.call1(&JsValue::NULL, &obj);
             }
         }
         // THE TAIL NOTE, said once and never twice running: a turn that edited a file or read a

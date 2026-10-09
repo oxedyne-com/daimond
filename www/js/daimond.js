@@ -59044,23 +59044,10 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 					rec.messages.push(dFoldRow);
 					if (onScreen()) appendCompacted(ev.content || '', ev.folded, ev.kept, dFoldTs);
 				}
-			} else if (ev.type === 'crystal_restored') {
-				// K2: the page this turn left failed the load proof, and the engine put back
-				// the last one that passed. The failing page is still a version of its own,
-				// so the person can have it back, for longer than an ordinary undo.
-				var failingV = Number(ev.failing);
-				if (failingV > 0 && window.DaimondUndo) DaimondUndo.able({
-					text:   tOr('crystal.restored', 'This turn left a page that did not load, so the last one that did is back.'),
-					label:  tOr('crystal.bring_back', 'Bring back'),
-					ms:     20000,
-					revert: async function () {
-						try {
-							var failPage = await diamondApp(diamondId).read_version_page(diamondId, failingV);
-							await diamondApp(diamondId).write_crystal_page(diamondId, failPage);
-						} catch (e) { noticeDialog(t('crystal.save_failed'), friendlyError(e)); return; }
-						if (currentDiamond && currentDiamond.id === diamondId) await renderCrystal();
-					},
-				});
+			} else if (ev.type === 'crystal_unproven') {
+				// K2, warning only (r544 hotfix, QA-B F-B1/F-B2): the page now in place has not passed the
+				// load proof. Nothing is put back and nothing offers to write; History keeps the rest.
+				toast(tOr('crystal.unproven', 'This page did not pass the load check. Nothing was changed; History has earlier pages.'), true);
 			} else if (ev.type === 'error') {
 				// Not the end of the turn, so the dots stay: see the same arm in
 				// `runTurn`. The one place a steer ends is its `finally`.

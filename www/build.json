@@ -1,1 +1,1 @@
-{"build":"30d9216e69fc","note":"A crystal page that fails to load is put back, replies reach the screen in one piece, and prices read one way"}
+{"build":"fc4319a9d654","note":"A page that fails the load check is now only flagged, never put back, so a newer page is never overwritten"}

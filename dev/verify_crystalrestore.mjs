@@ -2,6 +2,10 @@
 // verify_crystalrestore.mjs — a turn that leaves a page the load proof did not pass puts back the
 // last one that did (K2, D-20261008-08).
 //
+// r544 HOTFIX (QA-B F-B1..F-B3): the put-back is OFF. The engine now writes nothing and raises
+// {type:'crystal_unproven'} instead, and the page offers no "Bring back"; R2 checks that, R3 is gone.
+// fire/fb brings the put-back back as a compare-and-swap on the turn's own FAIL verdict.
+//
 // The Ontheism daimon left a crystal that drew nothing, and it stayed in front of the person. Now,
 // where a pass is marked (.daimond/crystal_passed.json, written by the load proof) and a turn leaves
 // a different page, the engine writes the passed page back as a version of its own, keeps the
@@ -47,15 +51,16 @@ await p.evaluate(async ({ folder, mock }) => {
 	// One mock turn: what its tools answered, and every crystal_restored event it raised.
 	const turn = async (id, tool, args) => {
 		const eng = new mod.DaimondApp(mock, 'mock-key', 'mock/fast', 4096, '', true);
-		const seen = [], restored = [];
+		const seen = [], restored = [], unproven = [];
 		try {
 			await eng.steer_crystal(id, '@tool ' + tool + ' ' + JSON.stringify(args), '[]', '[]', '[]', [],
 				(ev) => {
 					if (ev.type === 'tool_result') seen.push(String(ev.content || ''));
 					if (ev.type === 'crystal_restored') restored.push({ failing: ev.failing, restored: ev.restored });
+					if (ev.type === 'crystal_unproven') unproven.push(1);
 				});
 		} catch (e) { seen.push('THREW: ' + String(e && e.message || e)); }
-		return { said: seen.join(' | '), restored };
+		return { said: seen.join(' | '), restored, unproven: unproven.length };
 	};
 	// The load proof's mark, written as the proof writes it: the sha256 hex of the page.
 	const mark = async (id, page) => {
@@ -104,17 +109,6 @@ const r = await p.evaluate(async ({ X, Y, Z, W }) => {
 	out.t2 = await turn(id, 'file_write', { path: page, content: Y });
 	out.p2 = await read(page);
 	out.n2 = await count(id);
-	const ev = out.t2.restored[0];
-	if (ev) {
-		out.failPage = await app.read_version_page(id, ev.failing);
-		out.goodPage = await app.read_version_page(id, ev.restored);
-	}
-	// R3
-	if (ev) {
-		await app.write_crystal_page(id, await app.read_version_page(id, ev.failing));
-		out.p3 = await read(page);
-		out.n3 = await count(id);
-	}
 	// R4 -- the page is Y again, which did not pass, but this turn does not touch it.
 	out.t4 = await turn(id, 'file_write', { path: data, content: '{"facts":["one"]}\n' });
 	out.p4 = await read(page);
@@ -142,19 +136,14 @@ const r = await p.evaluate(async ({ X, Y, Z, W }) => {
 const short = (t) => String(t).slice(0, 160);
 check('R1. no mark: the page the turn wrote stays', r.p1 === PAGE('Y'), short(r.p1));
 check('R1. no mark: nothing is raised', r.t1.restored.length === 0, JSON.stringify(r.t1.restored));
-const ev = r.t2.restored[0];
-check('R2. marked on X, a turn writes Y: X is back', r.p2 === PAGE('X'), short(r.p2));
-check('R2. crystal_restored names the failing and the restored version',
-	!!ev && ev.failing > 0 && ev.restored > ev.failing, JSON.stringify(r.t2.restored));
-check('R2. the failing version holds Y', r.failPage === PAGE('Y'), short(r.failPage));
-check('R2. the restored version holds X', r.goodPage === PAGE('X'), short(r.goodPage));
-check('R2. the turn and the restore are a version each', r.n2 === r.n0 + 2, r.n0 + ' -> ' + r.n2);
-check('R3. "Bring back" puts Y back', r.p3 === PAGE('Y'), short(r.p3));
-check('R3. and no version is lost', r.n3 >= r.n2, r.n2 + ' -> ' + r.n3);
+check('R2. marked on X, a turn writes Y: Y stays (nothing is put back, r544 hotfix)', r.p2 === PAGE('Y'), short(r.p2));
+check('R2. no crystal_restored is raised', r.t2.restored.length === 0, JSON.stringify(r.t2.restored));
+check('R2. crystal_unproven is raised once', r.t2.unproven === 1, String(r.t2.unproven));
+check('R2. only the turn is a version: no restore version', r.n2 === r.n0 + 1, r.n0 + ' -> ' + r.n2);
 check('R4. a turn that does not touch the page restores nothing',
-	r.t4.restored.length === 0 && r.p4 === PAGE('Y'), JSON.stringify(r.t4.restored) + ' | ' + short(r.p4));
+	r.t4.restored.length === 0 && r.t4.unproven === 0 && r.p4 === PAGE('Y'), JSON.stringify(r.t4.restored) + ' | ' + short(r.p4));
 check('R2b. a turn that leaves the passed page restores nothing',
-	r.t6.restored.length === 0 && r.p6 === PAGE('Z'), JSON.stringify(r.t6.restored) + ' | ' + short(r.p6));
+	r.t6.restored.length === 0 && r.t6.unproven === 0 && r.p6 === PAGE('Z'), JSON.stringify(r.t6.restored) + ' | ' + short(r.p6));
 check('R5. the toast\'s button says "Bring back"', r.btn === 'Bring back' && r.aria === 'Bring back',
 	JSON.stringify([r.btn, r.aria]));
 check('R5. an ordinary undo still says "Undo"', /Undo/.test(r.plain), JSON.stringify(r.plain));

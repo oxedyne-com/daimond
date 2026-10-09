@@ -152,29 +152,25 @@ console.log('\nPASSING: a page that draws the crystal');
 	check('the passing version is marked', marked.length > 0 && marked.includes('KEYMAP') === false, `${marked.length} chars`);
 }
 
-// K2 x K1: a page that fails the proof after one has passed. The turn ends Blocked over it, AND the page that passed comes
-// back, with the "Bring back" toast for the failing one -- the engine's crystal_restored event run by a real browser turn,
-// through the page's own steer, not replayed.
-console.log('\nFAILING AFTER A PASS: the turn ends Blocked and the passed page comes back');
+// K2 x K1: a page that fails the proof after one has passed. The turn ends Blocked over it, and since the r544 hotfix
+// (QA-B F-B1/F-B2) nothing is put back: the page stays as the turn left it, a warning says so, and no "Bring back" writes.
+console.log('\nFAILING AFTER A PASS: the turn ends Blocked, the page stays, a warning and no Bring back');
 {
 	const readPage = async () => await pg.evaluate(async (path) => {
 		const m = await import('/pkg/oxedyne_daimond.js');
 		try { return String(await m.read_file(path)); } catch (e) { return null; }
 	}, PAGE_PATH);
-	const good = await readPage();
 	const bad  = page(DRAW_JSON);
 	const t = await writePage(bad);
 	check('K2xK1: the failing write says MUST FIX ... load proof', /MUST FIX[^]*load proof/.test(t));
 	check('K2xK1: the model is told the must-fix line before the turn ends', await nudged(20000));
-	const bringBack = () => pg.evaluate(() => {
-		const b = [...document.querySelectorAll('button')].find((n) => n.textContent.trim() === 'Bring back');
-		return b ? true : false;
-	});
-	// The toast lasts 20 s, so it is clicked as soon as it shows; the turn's Blocked end is the end notice's locale-neutral
-	// `data-why`, or its sentence where the turn drew nothing else.
-	let shown = false;
-	for (let i = 0; i < 60 && !shown; i++) { await pg.waitForTimeout(500); shown = await bringBack(); }
-	const restored = await readPage();
+	const probe = () => pg.evaluate(() => ({
+		bring: !![...document.querySelectorAll('button')].find((n) => n.textContent.trim() === 'Bring back'),
+		warn:  !![...document.querySelectorAll('.daimond-toast')].find((n) => /load check/.test(n.textContent)),
+	}));
+	let warned = false, offered = false;
+	for (let i = 0; i < 60 && !warned; i++) { await pg.waitForTimeout(500); const v = await probe(); warned = v.warn; offered = offered || v.bring; }
+	const after = await readPage();
 	let blocked = false;
 	for (let i = 0; i < 20 && !blocked; i++) {
 		blocked = await pg.evaluate(() => !!document.querySelector('.ended-notice[data-why="blocked"]')
@@ -183,17 +179,9 @@ console.log('\nFAILING AFTER A PASS: the turn ends Blocked and the passed page c
 	}
 	const ends = await pg.evaluate(() => [...document.querySelectorAll('.ended-notice')].map((n) => (n.dataset.why || '-') + ':' + n.textContent.trim().slice(0, 60)).join(' | '));
 	check('K2xK1: the turn ends Blocked', blocked, blocked ? '' : 'end notices: ' + (ends || 'none'));
-	check('K2xK1: the page that passed is back', restored === good, good === null ? 'no page read' : '');
-	check('K2xK1: a "Bring back" toast offers the failing page', shown);
-	if (shown) {
-		await pg.evaluate(() => {
-			const b = [...document.querySelectorAll('button')].find((n) => n.textContent.trim() === 'Bring back');
-			if (b) b.click();
-		});
-		let back = null;
-		for (let i = 0; i < 20 && back !== bad; i++) { await pg.waitForTimeout(500); back = await readPage(); }
-		check('K2xK1: "Bring back" puts the failing page back', back === bad);
-	}
+	check('K2xK1: nothing is put back: the page is the one the turn left', after === bad, after === null ? 'no page read' : '');
+	check('K2xK1: a warning says the page did not pass the load check', warned);
+	check('K2xK1: no "Bring back" is offered', !offered && !(await probe()).bring);
 }
 
 console.log(`\n${ok} ok, ${bad} failed`);
