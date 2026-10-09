@@ -166,6 +166,8 @@ const SNAP_GAP = Object.assign({}, SNAP, { iso: new Date(NOW - 7 * 3600000).toIS
 
 const evRow = (n, kind, extra, t) =>
 	row(t, 'ev ' + kind, JSON.stringify(Object.assign({ v: 1, d: DEV_A, n, b: BUILD_A, t }, extra)));
+const evRowK = (n, kind, extra, t) =>
+	row(t, 'ev ' + kind, JSON.stringify(Object.assign({ v: 1, d: DEV_BACK, n, b: 'fixture-build', t }, extra)));
 
 const A_BT1 = NOW - 120000, A_BT2 = NOW - 60000;
 const telRows = chunkRows('telemetry', 'tfixture01', TEL, NOW - 20000);
@@ -1053,6 +1055,230 @@ check('queried through either device alone, the turn is still there once',
 		lensJson6('turns', '--since', '24h', '--device', DEV_Q).length]));
 
 fs.rmSync(ROOT6, { recursive: true, force: true });
+
+// ── A stamped rotation the live gateway writes, the 2026-10-07 argonaut case ──
+//
+// The gateway rotates by RENAMING the live file to `<name>.log.<UTC stamp>`
+// (gateway/src/handlers/debug_trace.rs `rotate`), keeping the stamped files for
+// RETAIN_DAYS. A reader that opens only `.log` and `.log.1` -- the OLDER
+// gateway's names -- never sees a stamped file at all, so every block that
+// lands in one is dropped silently: the 18:12:38 turn end the owner watched a
+// device send while `lens events` stopped at 18:12:25.
+
+const ROOT7 = fs.mkdtempSync(path.join(os.tmpdir(), 'lens-verify-stamped-'));
+const TRACES7 = path.join(ROOT7, 'traces');
+fs.mkdirSync(TRACES7, { recursive: true });
+const DEV_STAMPED = 'devS00000000000000000000000000ss';
+const stamp = '20261007T181225Z';
+
+// The rotated file: two blocks, the second holding the turn that ENDED at
+// 18:12:38 -- the very event the owner saw the lens drop. It carries the older
+// receive times because rotation preserves append order.
+const S_BLOCK1 = block(NOW - 60000, DEV_STAMPED, [
+	evRow(1, 'turn.start', { turn: 'turnS1', chat: 'cS', model: 'fixture/glm-5.3', dia: 1 }, NOW - 59000),
+]);
+const S_BLOCK2 = block(NOW - 54000, DEV_STAMPED, [
+	evRow(2, 'round', { turn: 'turnS1', r: 1, ctx: 9000, win: 200000, ca: 2000, msgs: 2, dia: 1 }, NOW - 53000),
+	evRow(3, 'turn.end', { turn: 'turnS1', r: 1, p: 9000, c: 200, ca: 2000, usd: 0.09,
+		out: 'done', dia: 1 }, NOW - 51000),
+]);
+// The live file after rotation: one later boot block.
+const S_BLOCK3 = block(NOW - 50000, DEV_STAMPED, [
+	evRow(4, 'boot', { b: 'fixture-build' }, NOW - 49000),
+]);
+
+// The STAMPED rotation file: what the live gateway leaves behind and the old
+// reader never opened. Its name must sort BEFORE the live file by stamp.
+fs.writeFileSync(
+	path.join(TRACES7, `${ACCOUNT}-${DEV_STAMPED}.log.${stamp}`),
+	S_BLOCK1 + S_BLOCK2);
+fs.writeFileSync(
+	path.join(TRACES7, `${ACCOUNT}-${DEV_STAMPED}.log`),
+	S_BLOCK3);
+
+const lens7 = (...args) => execFileSync('node', [LENS, ...args], {
+	encoding: 'utf8',
+	env: Object.assign({}, process.env, { DAIMOND_LENS_HOME: ROOT7, DAIMOND_LENS_REMOTE: '' }),
+});
+const lens7Json = (...args) => {
+	const out = lens7(...args, '--json').trim();
+	try { return JSON.parse(out); } catch (e) { return { _unparsed: out }; }
+};
+const p7 = lens7Json('pull', '--no-rsync');
+check('stamped rotation files are ingested', p7.blocks === 3,
+	`${p7.blocks} block(s), expected 3`);
+check("the 18:12 turn end is in the device's events",
+	lens7Json('events', '--device', DEV_STAMPED).some(e => e.kind === 'turn.end'),
+	'turn.end missing from ' + JSON.stringify(lens7Json('events', '--device', DEV_STAMPED)));
+check('the stamped file and the live file both count',
+	lens7Json('events', '--device', DEV_STAMPED).length === 4,
+	lens7Json('events', '--device', DEV_STAMPED).length + ' events, expected 4');
+check('a second pull changes nothing',
+	(() => { const p = lens7Json('pull', '--no-rsync'); return p.blocks === 0 && p.events === 0; })(),
+	JSON.stringify(lens7Json('pull', '--no-rsync')));
+
+// ── The backfill case: an archive already poisoned by the watermark shortcut ──
+//
+// The owner's real archive: the lens ran for days before it learned to open
+// stamped rotation files, so its state holds a watermark DAYS ahead of the
+// blocks those files contain — and the v1 shortcut ("well behind the watermark
+// means seen") dismissed every one of them unread. The pull reported 308 new
+// and 246191 seen, and the 18:12:38 turn.end stayed missing. The fix is exact
+// per-block memory, seeded on migration from the archive itself: every `bt` the
+// archive's rows carry was ingested, everything else in the trace files was
+// not, so the skipped file finally ingests and nothing already filed is
+// duplicated.
+
+const ROOT8 = fs.mkdtempSync(path.join(os.tmpdir(), 'lens-verify-backfill-'));
+const TRACES8 = path.join(ROOT8, 'traces');
+fs.mkdirSync(TRACES8, { recursive: true });
+const DEV_BACK = 'devK00000000000000000000000000kk';
+const stamp8 = '20261007T181225Z';
+
+// Three days of history in a STAMPED file: the turn that ended at 18:12:38,
+// behind a watermark the old state had already carried far past it.
+const K_OLD_TURN_START = NOW - 3 * 86400000;
+const K_BLOCK1 = block(K_OLD_TURN_START, DEV_BACK, [
+	evRowK(1, 'turn.start', { turn: 'turnK', chat: 'cK', model: 'fixture/glm-5.3', dia: 1 }, K_OLD_TURN_START + 2000),
+	evRowK(2, 'turn.end', { turn: 'turnK', r: 1, p: 12000, c: 300, usd: 0.11, out: 'done', dia: 1 }, K_OLD_TURN_START + 38000),
+]);
+// A second stamped file, older still, whose block was INGESTED by the old
+// reader (it is in the archive) — the migration must not duplicate it.
+const K_BLOCK0 = block(NOW - 4 * 86400000, DEV_BACK, [
+	evRowK(1, 'boot', { b: 'fixture-build-old' }, NOW - 4 * 86400000 + 1000),
+]);
+// The live file: recent traffic, which built the poisoned watermark.
+const K_BLOCK2 = block(NOW - 30000, DEV_BACK, [
+	evRowK(3, 'boot', { b: 'fixture-build-new' }, NOW - 29000),
+]);
+fs.writeFileSync(path.join(TRACES8, `${ACCOUNT}-${DEV_BACK}.log.${stamp8}`), K_BLOCK1);
+fs.writeFileSync(path.join(TRACES8, `${ACCOUNT}-${DEV_BACK}.log.20261004T000000Z`), K_BLOCK0);
+fs.writeFileSync(path.join(TRACES8, `${ACCOUNT}-${DEV_BACK}.log`), K_BLOCK2);
+
+// The poisoned v1 state, built by hand: a watermark DAYS ahead of the stamped
+// file's blocks, `recent` holding only the live block — exactly what the old
+// reader's state looked like after the 308-new/246191-seen pull.
+const st8 = {
+	v: 1, devices: {} 
+};
+st8.devices[DEV_BACK] = {
+	maxBt: NOW - 30000, minBt: NOW - 4 * 86400000,
+	recent: { [String(NOW - 30000)]: 1 },
+	ev: {}, pending: {}, done: {},
+};
+// And the archive the old reader DID file: the old boot block only. The
+// migration must seed `seen` from this, and only this.
+const ARCH8 = path.join(ROOT8, 'archive');
+fs.mkdirSync(ARCH8, { recursive: true });
+fs.appendFileSync(path.join(ARCH8, `${DEV_BACK}.events.ndjson`),
+	JSON.stringify({ src: 'ev', device: DEV_BACK, bt: NOW - 4 * 86400000, ts: NOW - 4 * 86400000 + 1000, kind: 'boot', ev: { v: 1, d: DEV_BACK, n: 1, b: 'fixture-build-old', t: NOW - 4 * 86400000 + 1000 } }) + '\n');
+fs.writeFileSync(path.join(ROOT8, 'state.json'), JSON.stringify(st8));
+
+const lens8 = (...args) => execFileSync('node', [LENS, ...args], {
+	encoding: 'utf8',
+	env: Object.assign({}, process.env, { DAIMOND_LENS_HOME: ROOT8, DAIMOND_LENS_REMOTE: '' }),
+});
+const lens8Json = (...args) => {
+	const out = lens8(...args, '--json').trim();
+	try { return JSON.parse(out); } catch (e) { return { _unparsed: out }; }
+};
+const p8 = lens8Json('pull', '--no-rsync');
+check('the backfill ingests the stamped file the watermark had eaten',
+	p8.blocks === 2, `${p8.blocks} block(s), expected 2 (stamped turn + live boot)`);
+check('the turn.end lost behind the watermark is recovered',
+	lens8Json('events', '--device', DEV_BACK, '--since', 'all').some(e => e.kind === 'turn.end' && e.ev && e.ev.turn === 'turnK'),
+	'turn.end for turnK missing');
+check('the already-archived boot block is not duplicated',
+	lens8Json('events', '--device', DEV_BACK, '--since', 'all').filter(e => e.kind === 'boot' && e.ev && e.ev.b === 'fixture-build-old').length === 1,
+	JSON.stringify(lens8Json('events', '--device', DEV_BACK, '--since', 'all').filter(e => e.kind === 'boot' && e.ev && e.ev.b === 'fixture-build-old').length));
+check('the live boot ingested exactly once',
+	lens8Json('events', '--device', DEV_BACK, '--since', 'all').filter(e => e.kind === 'boot' && e.ev && e.ev.b === 'fixture-build-new').length === 1,
+	JSON.stringify(lens8Json('events', '--device', DEV_BACK, '--since', 'all').filter(e => e.kind === 'boot' && e.ev && e.ev.b === 'fixture-build-new').length));
+check('a second backfilled pull changes nothing',
+	(() => { const p = lens8Json('pull', '--no-rsync'); return p.blocks === 0 && p.events === 0; })(),
+	JSON.stringify(lens8Json('pull', '--no-rsync')));
+
+fs.rmSync(ROOT8, { recursive: true, force: true });
+
+// ── U4a: a tool refusal and an engine error, whole, per Diamond and turn ──
+//
+// D-20261008-02: the owner could not see what a crystal HOT-budget refusal SAID, in
+// which Diamond, in which turn -- the feed carried the outcome word and nothing else.
+// The client now puts the Diamond, the chat and the turn on every failed or refused
+// tool row and every `turn.error`, the head of the engine's sentence as `msg`, and
+// the whole of it (scrubbed, at most 300 characters) as a `ds error <mref> i/n` set
+// the row names. `errors` must show the whole sentence with its Diamond and turn, and
+// `turns` must show the refusal on its turn. A key the client somehow let through is
+// still scrubbed here, at the second line.
+
+const ROOT9 = fs.mkdtempSync(path.join(os.tmpdir(), 'lens-verify-u4a-'));
+fs.mkdirSync(path.join(ROOT9, 'traces'), { recursive: true });
+const DEV_R = 'devR00000000000000000000000000rr';
+const R_BT = NOW - 30000;
+const evR = (n, kind, extra, t) =>
+	row(t, 'ev ' + kind, JSON.stringify(Object.assign({ v: 1, d: DEV_R, n, b: 'fixture-u4a', t }, extra)));
+const R_KEY = 'sk-or-v1-' + seeded(48, 909);
+const REFUSAL = 'Refused: the crystal would be 9,412 bytes, over its HOT budget of 6,144 bytes. '
+	+ 'Move the settled requirements to WARM or cut the state section, then write it again. '
+	+ 'Nothing was written; the crystal on disk is the one from round 3, key ' + R_KEY + '.';
+const R_HEAD = REFUSAL.slice(0, 120);
+const W_FAIL = 'Failed: the shell exited 2 after 41 ms.';
+const T_ERR  = 'Provider error 529: the model is overloaded; the turn was not charged.';
+const R_ROWS = [
+	evR(1, 'turn.start', { turn: 'turnR1', chat: 'chatR1', dia: 'diaR1', model: 'z-ai/glm-5.3', prov: 'openrouter' }, R_BT + 1),
+	evR(2, 'tool', { turn: 'turnR1', r: 1, name: 'read', ab: 12, rb: 400, out: 'done' }, R_BT + 2),
+	evR(3, 'tool', { turn: 'turnR1', r: 2, name: 'crystal', ab: 9500, rb: REFUSAL.length, out: 'refused',
+		dia: 'diaR1', chat: 'chatR1', msg: R_HEAD, mref: 'eref0001' }, R_BT + 3),
+	...chunkRows('error', 'eref0001', { kind: 'error', ts: R_BT + 3, text: REFUSAL }, R_BT + 3)
+		.map(c => row(c.ts, c.tag, c.data)),
+	evR(4, 'tool', { w: 'w7', r: 1, name: 'shell', out: 'failed', dia: 'diaR1', chat: 'chatR1', turn: 'turnR1',
+		msg: W_FAIL }, R_BT + 4),
+	evR(5, 'turn.end', { turn: 'turnR1', model: 'z-ai/glm-5.3', p: 900, c: 40, ca: 0, usd: 0.01, r: 3, out: 'done' }, R_BT + 5),
+	evR(6, 'turn.error', { turn: 'turnE2', chat: 'chatE2', dia: 'diaE2', msg: T_ERR }, R_BT + 6),
+];
+fs.writeFileSync(path.join(ROOT9, 'traces', ACCOUNT + '-' + DEV_R + '.log'), block(R_BT, DEV_R, R_ROWS));
+const lens9 = (...args) => execFileSync('node', [LENS, ...args], {
+	encoding: 'utf8',
+	env: Object.assign({}, process.env, { DAIMOND_LENS_HOME: ROOT9, DAIMOND_LENS_REMOTE: '' }),
+});
+const lens9Json = (...args) => {
+	const out = lens9(...args, '--json').trim();
+	try { return JSON.parse(out); } catch (e) { return { _unparsed: out }; }
+};
+lens9('pull', '--no-rsync');
+const errs9 = lens9Json('errors', '--since', '24h');
+const ref9 = Array.isArray(errs9) ? errs9.find(e => /HOT budget/.test(e.msg || '')) : null;
+check('U4a: errors shows the refusal', !!ref9, JSON.stringify(errs9).slice(0, 200));
+check('U4a: the refusal is the WHOLE sentence, past the row\'s head',
+	!!ref9 && /then write it again\. Nothing was written/.test(ref9.msg) && ref9.msg.length > R_HEAD.length,
+	ref9 ? ref9.msg.length + ' chars' : '');
+check('U4a: the refusal names its Diamond, chat and turn',
+	!!ref9 && ref9.dia === 'diaR1' && ref9.chat === 'chatR1' && ref9.turn === 'turnR1', JSON.stringify(ref9 || {}).slice(0, 200));
+check('U4a: the refusal is a tool refusal, naming the tool',
+	!!ref9 && ref9.kind === 'tool.refused' && ref9.name === 'crystal', ref9 ? ref9.kind + ' ' + ref9.name : '');
+check('U4a: a key inside the sentence is scrubbed at the reader too',
+	JSON.stringify(errs9).indexOf(R_KEY) === -1 && lens9('errors', '--since', '24h').indexOf(R_KEY) === -1);
+const wf9 = Array.isArray(errs9) ? errs9.find(e => e.msg === W_FAIL) : null;
+check('U4a: a worker\'s failed tool is an error with its Diamond and turn',
+	!!wf9 && wf9.kind === 'tool.failed' && wf9.dia === 'diaR1' && wf9.turn === 'turnR1', JSON.stringify(wf9 || {}));
+const te9 = Array.isArray(errs9) ? errs9.find(e => e.msg === T_ERR) : null;
+check('U4a: an engine error in a turn is an error with its Diamond, chat and turn',
+	!!te9 && te9.kind === 'turn.error' && te9.dia === 'diaE2' && te9.chat === 'chatE2' && te9.turn === 'turnE2', JSON.stringify(te9 || {}));
+check('U4a: a completed tool call is not an error',
+	Array.isArray(errs9) && !errs9.some(e => e.name === 'read'));
+const txt9 = lens9('errors', '--since', '24h');
+check('U4a: the text form prints the whole sentence and the Diamond and turn',
+	txt9.indexOf('then write it again. Nothing was written') >= 0 && /diaR1/.test(txt9) && /turnR1/.test(txt9), txt9.slice(0, 300));
+const turns9 = lens9Json('turns', '--since', '24h');
+const tr9 = Array.isArray(turns9) ? turns9.find(t => t.turn === 'turnR1') : null;
+check('U4a: turns names the Diamond the turn ran in', !!tr9 && tr9.dia === 'diaR1', JSON.stringify(tr9 || {}).slice(0, 200));
+check('U4a: turns lists the turn\'s refused and failed calls, the refusal whole',
+	!!tr9 && Array.isArray(tr9.faults) && tr9.faults.length === 2
+		&& tr9.faults.some(f => f.name === 'crystal' && f.out === 'refused' && /Nothing was written/.test(f.msg)),
+	JSON.stringify(tr9 && tr9.faults || null).slice(0, 200));
+const ttxt9 = lens9('turns', '--since', '24h');
+check('U4a: the turns text shows the Diamond and the refusal', /diaR1/.test(ttxt9) && /HOT budget/.test(ttxt9), ttxt9.slice(0, 300));
+fs.rmSync(ROOT9, { recursive: true, force: true });
 
 // ── An unknown command must not look like success ────────────────────
 

@@ -508,7 +508,7 @@ if (HAVE_STORE) {
 	const th = await daimon({ in: 'crystal', width: 390 });
 	check('through the daimon: no picture is attached or sent to any model, and the model is not asked twice about one',
 		/No picture: the page's picture did not/.test(th) && !/attached to this result/.test(th) && mockLog().every((r) => !(r.images > 0) && !r.refusedImages),
-		`images per request: ${mockLog().map((r) => r.images).join(',')}`);
+		`images per request: ${mockLog().map((r) => r.images).join(',')}; refused ${mockLog().filter((r) => r.refusedImages).length}; result: ${JSON.stringify(th.slice(-400))}`);
 }
 
 // ── (9) a page whose leading comment holds <head> is still under the policy, and still measured ──

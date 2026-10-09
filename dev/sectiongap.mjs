@@ -52,13 +52,18 @@ export function measureGaps(items) {
 			if (h.roleName !== 'section-head') continue;
 			// What stands above a head in the flow is in its own scroller. An item outside it counts only when it ends above the scroller's
 			// content (the title row over a drawer): the status strip below, or a head scrolled out of sight beneath it, is not above anything.
+			// A scroller that holds the panel itself (the phone's `#msheet-body` around a dock panel) holds every item of the panel: the
+			// chain of a shallow item reaches the panel first and stops being read there, so `inside` would call it outside and only an item
+			// deep enough to have its chain cut (a price tag's figure in a table cell) would be left to stand above the head (r544).
 			const sc = anc(h).find((a) => SCROLL.test(a));
-			const top = sc ? Math.min(...L.filter((o) => anc(o).includes(sc)).map((o) => o.r[1])) : null;
+			const hp = anc(h).indexOf(h.panel), si = anc(h).indexOf(sc);
+			const sc0 = sc && !(hp >= 0 && si > hp) ? sc : null;
+			const top = sc0 ? Math.min(...L.filter((o) => anc(o).includes(sc0)).map((o) => o.r[1])) : null;
 			let prev = null;
 			for (const o of L) {
 				if (o === h || chrome(o)) continue;
 				const bot = bottom(o);
-				if (sc && !inside(o, sc) && bot > top + 1) continue;
+				if (sc0 && !inside(o, sc0) && bot > top + 1) continue;
 				if (bot <= h.r[1] + 1 && (!prev || bot > bottom(prev))) prev = o;
 			}
 			if (!prev) continue; // first in its panel

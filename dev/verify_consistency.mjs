@@ -15,6 +15,7 @@
 //   CONS_OUT=<dir> CONS_PROFILE=<dir> DAIMOND_MOCK_SCRIPT=<json> \
 //     node dev/verify_consistency.mjs seed|desk|phone|webkit|report|all
 //     node dev/verify_consistency.mjs tap                  the phone and WebKit passes and a report (seeds if there is no profile)
+//     node dev/verify_consistency.mjs send                 Send's own check alone, 390 and 1440, mouse and touch (seeds if there is no profile)
 //     node dev/verify_consistency.mjs diff <runA> <runB> <cfgPrefix> [rootSel]
 //
 // `all` = seed, desk (1440×900) and phone (390×844) in Chromium, phone in WebKit,
@@ -158,7 +159,10 @@ const CAPTURE = ({ rootSel, surface, tap }) => {
 		const ic = [...el.querySelectorAll('svg, img')].find((x) => vis(x));
 		if (ic) {
 			const ir = ic.getBoundingClientRect();
-			icon = { w: Math.round(ir.width), h: Math.round(ir.height), gap: tx != null && tx > ir.left ? +(tx - ir.right).toFixed(1) : null, dy: tcy != null ? Math.round((ir.top + ir.bottom) / 2 - tcy) : null };
+			// Leading only on the label's own line: a figure's tag glyph on the line under its label (the phone's spend tally, r544) is not
+			// a leading icon, and its "gap" to the label above came out negative.
+			const lead = tx != null && tx > ir.left && (tcy == null || tcy >= ir.top - 1 && tcy <= ir.bottom + 1);
+			icon = { w: Math.round(ir.width), h: Math.round(ir.height), gap: lead ? +(tx - ir.right).toFixed(1) : null, dy: tcy != null ? Math.round((ir.top + ir.bottom) / 2 - tcy) : null };
 		}
 		// Clipped text: overflowing its own box without an ellipsis, or cut by a clipping ancestor.
 		let clip = null;
@@ -1151,14 +1155,86 @@ async function layoutExtras() {
 	await grab('rail', '#panel-rail');
 	if (railStyle) await ev((s) => { const r = document.getElementById('panel-rail'); if (r) Object.assign(r.style, s); }, railStyle);
 }
+// ── Send stays where it was pressed (Q1, 9 Oct) ─────────────────────────
+// A control that shows itself must never take a composer's Send. verify_crystalprobe lost a turn in eight because `#chat-jump`
+// appeared between Playwright measuring Send and clicking it: on a computer the walk-back pair sat AFTER Send in the bar's flow,
+// so showing them pushed Send left by their width and put `#chat-jump` exactly where Send had been. A member pressing Send as the
+// thread first overflowed, or as a turn's rebuild ended, jumped up the chat instead and their message was not sent. Measured, not
+// eyeballed: Send's box with the pair hidden and shown, the pair's boxes against Send's, and what a press at Send's centre and at
+// the field's centre lands on. The same class on a phone: a sheet's ask pill (`#msheet-ask-send`, `#msheet-ask-input`) under the
+// panel strip (`#panel-tags`), seen once on Spending.
+const SENDCLEAR = ({ send, field, floats }) => {
+	const sigOf = (e) => e.tagName.toLowerCase() + (e.id ? '#' + e.id : '') + (typeof e.className === 'string' && e.className.trim() ? '.' + e.className.trim().split(/\s+/).join('.') : '');
+	const s = document.querySelector(send), f = document.querySelector(field);
+	if (!s || !s.getClientRects().length || getComputedStyle(s).visibility === 'hidden') return { miss: send + ' is not on screen' };
+	const fl = floats.map((q) => document.querySelector(q)).filter(Boolean);
+	const was = fl.map((e) => e.hidden);
+	const box = (e) => { const r = e.getBoundingClientRect(); return [r.left, r.top, r.width, r.height].map((v) => Math.round(v * 10) / 10); };
+	const meet = (a, b) => Math.max(0, Math.min(a[0] + a[2], b[0] + b[2]) - Math.max(a[0], b[0])) * Math.max(0, Math.min(a[1] + a[3], b[1] + b[3]) - Math.max(a[1], b[1]));
+	// null when a press at the element's centre reaches it; otherwise what it reaches instead.
+	const lands = (e) => { const r = e.getBoundingClientRect(); const h = document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2);
+		if (h && (h === e || e.contains(h))) return null; let o = h; while (o && o.parentElement && !o.id) o = o.parentElement; return h ? sigOf(h) + (o && o !== h ? ' in ' + sigOf(o) : '') : 'nothing'; };
+	const out = [];
+	const press = (state) => { for (const e of [s, f]) { if (!e || !e.getClientRects().length) continue; const by = lands(e); if (by) out.push({ kind: 'send-covered', el: '#' + e.id, by, state, box: box(e) }); } };
+	try {
+		fl.forEach((e) => { e.hidden = true; }); const r0 = box(s); press('pair hidden');
+		fl.forEach((e) => { e.hidden = false; }); const r1 = box(s); press('pair shown');
+		if (r0.some((v, i) => Math.abs(v - r1[i]) > 0.5)) out.push({ kind: 'send-displaced', el: send, by: 'showing ' + floats.join(', '), state: 'pair shown', box: r1, was: r0 });
+		for (const e of fl) { const b = box(e); if (b[2] && b[3] && meet(b, r1) > 0) out.push({ kind: 'send-overlap', el: send, by: '#' + e.id, state: 'pair shown', box: r1, was: b }); }
+	} finally { fl.forEach((e, i) => { e.hidden = was[i]; }); }
+	return { faults: out, send: box(s) };
+};
+async function sendCheck(name, q) {
+	const a = await ev(SENDCLEAR, q);
+	const surface = `${CFG}/${name}`;
+	if (!a || a.err || a.miss) { log('SEND MISSING', surface, (a && (a.err || a.miss)) || 'no reading'); CAP.missing.push(surface); return; }
+	for (const f of a.faults) { f.surface = surface; CAP.send.push(f); log('SEND FAULT', surface, f.kind, f.el, 'by', f.by, `(${f.state}) at`, f.box.join(','), f.was ? 'was ' + f.was.join(',') : ''); }
+	if (!a.faults.length) log('send clear', surface, a.send.join(','));
+}
+// Both widths in the pass's own input (a mouse on `desk`, touch on `phone`), so every pairing of 390 / 1440 and touch / mouse is
+// measured, and at the phone width every sheet the strip raises is checked for its ask pill.
+async function sendClear(touch) {
+	const vp = page.viewportSize();
+	for (const w of [1440, 390]) {
+		await page.setViewportSize({ width: w, height: w > 760 ? 900 : 844 }); await wait(700);
+		await quiet();
+		await ev(() => { try { window.DaimondPanels.show('ai'); } catch (e) {} }); await wait(300);
+		await mainChat();
+		const tag = `send_${w}_${touch ? 'touch' : 'mouse'}`;
+		await sendCheck(tag, { send: '#chat-send', field: '#chat-input', floats: ['#chat-jump', '#chat-end'] });
+		if (w > 760) continue;
+		const tabs = await ev(() => [...document.querySelectorAll('#mnav button')].map((b, i) => (b.textContent || '').trim().replace(/\W+/g, '').slice(0, 12) || 'b' + i));
+		for (let i = 0; i < (tabs || []).length; i++) {
+			await ev((i) => { const b = [...document.querySelectorAll('#mnav button')][i]; if (b) b.click(); }, i); await wait(700);
+			const open = await ev(() => { const m = document.getElementById('msheet'), a = document.getElementById('msheet-ask');
+				return !!(m && m.classList.contains('open') && a && a.getClientRects().length && getComputedStyle(a).display !== 'none'); });
+			if (open === true) {
+				await sendCheck(`${tag}_sheet_${tabs[i]}`, { send: '#msheet-ask-send', field: '#msheet-ask-input', floats: [] });
+				// The sheet must end where the bar begins: `#mnav` paints over `#msheet`, so a sheet whose bottom
+				// (`--mnav-h`) is shorter than the bar's real height has its ask pill's lower edge under the bar.
+				const g = await ev(() => { const n = document.getElementById('mnav'), m = document.getElementById('msheet');
+					if (!n || !m) return null; const nr = n.getBoundingClientRect(), mr = m.getBoundingClientRect();
+					return { navTop: nr.top, navH: nr.height, sheetBottom: mr.bottom, box: [mr.left, mr.top, mr.width, mr.height].map(Math.round) }; });
+				const surface = `${CFG}/${tag}_sheet_${tabs[i]}`;
+				log('sheet', surface, g ? `bar ${g.navH.toFixed(1)}px from ${g.navTop.toFixed(1)}, sheet ends ${g.sheetBottom.toFixed(1)}` : 'not measured');
+				if (g && g.sheetBottom > g.navTop + 0.5) {
+					const f = { kind: 'sheet-under-bar', el: '#msheet', by: '#mnav', state: `${(g.sheetBottom - g.navTop).toFixed(1)}px under`, box: g.box, surface };
+					CAP.send.push(f); log('SEND FAULT', surface, f.kind, f.el, 'by', f.by, `(${f.state})`);
+				}
+			}
+			await quiet();
+		}
+	}
+	if (vp) await page.setViewportSize(vp); await wait(700);
+}
 async function desk() {
-	CAP = { items: [], faults: [], tiles: [], tap: [], surfaces: [], missing: [], notCovered: [] };
+	CAP = { items: [], faults: [], tiles: [], tap: [], send: [], surfaces: [], missing: [], notCovered: [] };
 	// CONS_NOCONNECT=1: capture with no provider connected, which is what a run against another tree's server needs (the harness refuses a mock that is not this tree's), as the phone passes already do.
 	const s = await open({ name: 'alex', profile: PROF, ...(process.env.CONS_NOCONNECT ? { connect: false } : {}) });
 	page = s.page;
 	await page.setViewportSize({ width: 1440, height: 900 });
 	await wait(1000); await view('max');
-	for (const th of LOOKS) { CFG = `desk-${th}`; await wear(th); await deskSurfaces(); }
+	for (const th of LOOKS) { CFG = `desk-${th}`; await wear(th); await deskSurfaces(); await sendClear(false); }
 	await layoutExtras().catch((e) => log('layout extras', e.message));
 	saveCap('desk');
 	await s.close();
@@ -1230,7 +1306,7 @@ async function webkitSync(lead, s) {
 	return false;
 }
 async function phone(wk) {
-	CAP = { items: [], faults: [], tiles: [], tap: [], surfaces: [], missing: [], notCovered: [] };
+	CAP = { items: [], faults: [], tiles: [], tap: [], send: [], surfaces: [], missing: [], notCovered: [] };
 	let lead = null, s, excluded = null;
 	if (wk) {
 		try { ({ lead, s } = await webkitPair()); }
@@ -1257,7 +1333,7 @@ async function phone(wk) {
 		process.exit(4);
 	}
 	await view('max');
-	for (const th of LOOKS) { CFG = `${wk ? 'webkit' : 'phone'}-${th}`; await wear(th); await phoneSurfaces(wk); }
+	for (const th of LOOKS) { CFG = `${wk ? 'webkit' : 'phone'}-${th}`; await wear(th); await phoneSurfaces(wk); if (!wk) await sendClear(true); }
 	saveCap(wk ? 'webkit' : 'phone');
 	await s.close();
 	if (lead) await lead.close().catch(() => {});
@@ -1367,6 +1443,8 @@ const ROLES = [
 	// G1: release notes are list data -- 315 `.rel-build-note` lines would
 	// otherwise outvote the 20 real note classes.
 	['list-text',       'none',     (it) => has(it, 'rel-build-note')],
+	// D-20261009-18: every estimated price is ONE element, the tag; a site sets its size and colour, never its face.
+	['price-tag',       'none',     (it) => has(it, 'tagb') || has(it, 'tagb-n')],
 	['note',            'sentence', (it) => has(it, 'pend-detail') || it.cls.some((c) => /(^|-)(note|empty|hint|fine|help|blurb|intro|desc)$/.test(c))],
 	// G11: times, ids, sizes, versions and fingerprints are mono stamps on
 	// purpose (the pre-existing "one meta reading" rule); the rest of `meta`
@@ -1411,6 +1489,7 @@ const ROLE_PROPS = {
 	'palette-row': ['ff', 'fs', 'col', 'bd', 'rad', 'pad', 'h'],
 	'panel-title': PROPS_TEXT, 'dialog-title': PROPS_TEXT, 'section-head': PROPS_TEXT, 'field-label': PROPS_TEXT, 'note': ['ff', 'fs', 'fw', 'ls', 'col', 'lh'],
 	'list-text': ['ff', 'fs', 'fw', 'col', 'lh'],
+	'price-tag': ['ff', 'fw', 'ls', 'tt', 'td'],
 	'meta': ['ff', 'fs', 'fw', 'ls', 'tt', 'col'], 'stamp': ['ff', 'fs', 'fw', 'ls', 'tt', 'col'],
 	'tile-prose': ['ff', 'fs', 'lh', 'col'], 'tile-table-head': PROPS_TEXT.concat('pad'), 'tile-table-cell': ['ff', 'fs', 'fw', 'col', 'lh', 'pad'],
 	// D3 (5.2.9): `pad` is compared again, side by side, with the table's outer edge (the first cell's left, the last cell's right) masked
@@ -1509,6 +1588,7 @@ function report() {
 	const notCovered = caps.flatMap((c) => c.notCovered || []);
 	const tiles = caps.flatMap((c) => c.tiles || []);
 	const taps = caps.flatMap((c) => c.tap || []);
+	const sends = caps.flatMap((c) => c.send || []);
 	// A run that never saved its WebKit pass (exit 4, or `desk` alone) did not cover WebKit, and says so.
 	if (!fs.existsSync(`${OUT}/cap_webkit.json`)) notCovered.push({ label: 'webkit', reason: 'no WebKit capture in this run (the pass did not finish, or was not run)', surface: 'webkit-*' });
 	const cfgOf = (s) => s.split('/')[0];
@@ -1764,7 +1844,7 @@ function report() {
 	const roleCount = new Map(); for (const it of I) roleCount.set(it.roleName, (roleCount.get(it.roleName) || 0) + 1);
 	const summary = {
 		surfaces: surfaces.length, missing, instances: I.length, roles: Object.fromEntries([...roleCount.entries()].sort((a, b) => b[1] - a[1])),
-		styleDiffs: unexplained.length, allowedDiffs: D.length - unexplained.length, casing: C.length, layout: Lx.length, tap: Tx.length, tapMeasured: tapSeen.size,
+		styleDiffs: unexplained.length, allowedDiffs: D.length - unexplained.length, casing: C.length, layout: Lx.length, tap: Tx.length, tapMeasured: tapSeen.size, send: sends.length,
 		byRole: Object.fromEntries([...new Set(unexplained.map((d) => d.role))].map((r) => [r, unexplained.filter((d) => d.role === r).length])),
 		layoutByKind: Object.fromEntries([...new Set(Lx.map((d) => d.kind))].map((r) => [r, Lx.filter((d) => d.kind === r).length])),
 		tapByRole: Object.fromEntries([...new Set(Tx.map((d) => d.role))].map((r) => [r, Tx.filter((d) => d.role === r).length])),
@@ -1785,10 +1865,13 @@ function report() {
 	md.push('', '## Tap areas', '', `Tap cross under ${TAPMIN}px either way, ${Tx.length} of ${tapSeen.size} distinct controls measured on phone surfaces.`, '',
 		'| role | element | text | box (x y w h) | hit (w×h) | covered by | cfgs | where |', '|---|---|---|---|---|---|---|---|');
 	for (const t of Tx.sort((a, b) => a.role.localeCompare(b.role) || a.sig.localeCompare(b.sig))) md.push(`| ${t.role} | \`${t.sig}\` | ${t.text} | ${t.box.join(' ')} | ${t.hit.join('×')} | ${t.by ? '`' + t.by + '`' : ''} | ${t.cfgs.join(' ')} | ${t.surfaces.join(', ')} |`);
+	md.push('', '## Send', '', `A composer's Send, its field and a sheet's ask pill: covered, displaced or overlapped by a control that shows itself. ${sends.length} fault(s).`, '',
+		'| kind | element | by | state | box | was | where |', '|---|---|---|---|---|---|---|');
+	for (const f of sends) md.push(`| ${f.kind} | \`${f.el}\` | \`${f.by}\` | ${f.state} | ${f.box.join(' ')} | ${(f.was || []).join(' ')} | ${f.surface} |`);
 	fs.writeFileSync(`${OUT}/report.md`, md.join('\n'));
 	log('report', `${OUT}/report.md`, JSON.stringify(summary));
-	const bad = unexplained.length + C.length + Lx.length + missing.length + Tx.length;
-	return { bad, notCovered, parts: { style: unexplained.length, casing: C.length, layout: Lx.length, missing: missing.length, tap: Tx.length } };
+	const bad = unexplained.length + C.length + Lx.length + missing.length + Tx.length + sends.length;
+	return { bad, notCovered, parts: { style: unexplained.length, casing: C.length, layout: Lx.length, missing: missing.length, tap: Tx.length, send: sends.length } };
 }
 
 // ════════════════════════════════════════════════════════════════════════
@@ -2361,6 +2444,23 @@ if (MODE === 'varlen') {
 	const vfaults = varlenReport();
 	process.exit(vfaults ? 1 : 0);
 }
+// `send` takes the Send check alone (both widths, mouse then touch, each look), seeding when there is no profile yet, and writes no
+// capture: the full measure is `all`, which runs the same check inside its desk and phone passes.
+if (MODE === 'send') {
+	if (!fs.existsSync(PROF)) await seed();
+	const found = [];
+	for (const touch of [false, true]) {
+		CAP = { items: [], faults: [], tiles: [], tap: [], send: [], surfaces: [], missing: [], notCovered: [] };
+		const s = await open({ name: 'alex', profile: PROF, ...(touch ? { touch: true, connect: false, isMobile: true } : (process.env.CONS_NOCONNECT ? { connect: false } : {})) });
+		page = s.page;
+		await page.setViewportSize(touch ? { width: 390, height: 844 } : { width: 1440, height: 900 }); await wait(1000); await view('max');
+		for (const th of LOOKS) { CFG = `${touch ? 'phone' : 'desk'}-${th}`; await wear(th); await sendClear(touch); }
+		await s.close();
+		found.push(...CAP.send, ...CAP.missing.map((m) => ({ kind: 'missing', surface: m })));
+	}
+	log(found.length ? `FAIL: send ${found.length}` : 'PASS: send clear in every layout');
+	process.exit(found.length ? 1 : 0);
+}
 if (MODE === 'seed') await seed();
 else if (MODE === 'desk') await desk();
 else if (MODE === 'phone') await phone(false);
@@ -2373,7 +2473,7 @@ if (MODE === 'report' || MODE === 'all' || MODE === 'tap') {
 	const { bad, notCovered, parts } = report();
 	const covGroups = new Map(); for (const n of notCovered) covGroups.set(n.label, (covGroups.get(n.label) || 0) + 1);
 	const covStr = covGroups.size ? ` (not covered: ${[...covGroups.entries()].map(([k, n]) => `${k} ×${n}`).join(', ')})` : '';
-	const verdict = bad ? `FAIL: ${bad} unexplained differences (style ${parts.style}, casing ${parts.casing}, layout ${parts.layout}, missing ${parts.missing}, tap ${parts.tap})${covStr}` : `PASS: every role consistent${covStr}`;
+	const verdict = bad ? `FAIL: ${bad} unexplained differences (style ${parts.style}, casing ${parts.casing}, layout ${parts.layout}, missing ${parts.missing}, tap ${parts.tap}, send ${parts.send})${covStr}` : `PASS: every role consistent${covStr}`;
 	log(verdict);
 	// `all` is the by-role gate: it files its verdict under the www tree for deploy.sh step 0h. The writer refuses a dirty or moved tree, and a FAIL files a red record.
 	if (MODE === 'all') {

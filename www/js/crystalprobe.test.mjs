@@ -27,7 +27,15 @@
          lines, only a value the property could hold, or `?` (D);
      (h) a `crystal.json` that does not parse is an ERROR from the render and never an
          empty crystal: the probe used to take `{}` from it and draw the `.empty` card,
-         which is what a daimon on the Ontheism Diamond debugged for 14 minutes (lane K, K0).
+         which is what a daimon on the Ontheism Diamond debugged for 14 minutes (lane K, K0);
+     (i) the load proof (K1, D-20261008-08): a probe that asks for it gets the page's visible
+         text and what it draws, and every reply carries the page's console and verbs (K3);
+     (j) the verdict is the host's, from the crystal it holds: title, summary, every section
+         heading, no raw JSON or debug dump, enough graphics for an infographic;
+     (k) a page that cannot be drawn is a FAILED proof, not a missing one; `capture` carries
+         the proof and the trace; the last passing version is marked through the app's store.
+     (l) a page reads `DaimondTime` in its own frame, fixed to the account's calendar, so a
+         capp draws a date the way the app does (D-20261006-34, D-20261006-30b).
 
    Run:  node www/js/crystalprobe.test.mjs
    ============================================================ */
@@ -505,6 +513,162 @@ async function main() {
 	for (const [what, data] of [['valid data', '{"title":"t"}'], ['blank data, a new Diamond\'s crystal', ''], ['whitespace', ' \n']]) {
 		const m = await settle(data);
 		check(`render of ${what} is not refused as a parse fault`, !/not valid JSON/.test(m), m);
+	}
+
+	// ---- (i) the shim's facts and trace ----
+	{
+		const logged = [];
+		const pf = frame((sel) => ({ svg: [1, 2], canvas: [1], img: [], pre: [1], '#dbg': [] }[sel] || []));
+		pf.win.console = { log: (...a) => logged.push(a.join(' ')), error: () => {} };
+		const shown = 'ONTHEISM\nThe fabric is divine but no one\'s god.\nPART 1 - MONOBIOS';
+		pf.win.document.body.innerText = shown;
+		C._shim(pf.win, null);
+		pf.win.console.log('drew', { n: 3 });
+		pf.win.console.error(new Error('bars missing'));
+		pf.send({ dc: 1, v: 1, cmd: 'data', data: {} });
+		pf.send(probe(21, '', { proof: true }));
+		const pm = pf.posted[0] && pf.posted[0].m || {};
+		check('(i) a proof probe answers the page\'s visible text and what it draws',
+			pm.facts && pm.facts.text === shown && pm.facts.svg === 2 && pm.facts.canvas === 1 && pm.facts.img === 0
+			&& pm.facts.pre === 1 && pm.facts.dbg === 0 && pm.facts.keymap === 0, JSON.stringify(pm.facts));
+		check('(i) the console still prints for the page: the wrap passes every call through', logged.length === 1 && /drew/.test(logged[0]), JSON.stringify(logged));
+		const tr = (pm.trace || []).join('\n');
+		check('(i) the reply carries the page\'s console, errors by their message, and the verbs it was sent',
+			/console\.log: drew \{"n":3\}/.test(tr) && /console\.error: bars missing/.test(tr) && /host -> page: data/.test(tr), tr);
+		pf.send(probe(22, ''));
+		check('(i) a probe that does not ask for the proof gets no facts, and still the trace',
+			pf.posted[1] && !pf.posted[1].m.facts && Array.isArray(pf.posted[1].m.trace));
+		const many = frame(() => []);
+		many.win.console = { log: () => {} };
+		C._shim(many.win, null);
+		for (let k = 0; k < 90; k++) many.win.console.log('x'.repeat(500) + k);
+		many.send(probe(1, ''));
+		const mt = many.posted[0].m.trace;
+		check('(i) the trace is a ring: the newest 40 lines, each cut to 200', mt.length === 40 && mt.every((l) => l.length <= 200) && /^console\.log: x/.test(mt[39]), String(mt.length));
+	}
+
+	// ---- (j) the verdict ----
+	{
+		const V = C.proofVerdict;
+		check('(j) the verdict is exposed', typeof V === 'function');
+		const data = { title: 'Ontheism', summary: 'The **fabric** is divine but no one\'s god, and the [mind](#m) is bionous throughout.',
+			sections: [{ heading: 'Part 1 -- Monobios', body: 'x' }, { heading: 'Part 2: Bionous', body: 'y' }, { heading: 'Part 3', body: 'z' }],
+			links: [] };
+		const good = { text: 'ONTHEISM\nThe fabric is divine but no one\u2019s god, and the mind is bionous throughout.\nPART 1 \u2014 MONOBIOS\nPart 2 Bionous\nPart 3',
+			svg: 2, canvas: 0, img: 1, bar: 4, pre: 0, dbg: 0, keymap: 0, dkeys: 0 };
+		const ok = V(good, data, 3);
+		check('(j) a page that shows the title, the summary and every heading, with graphics, passes', ok.proof === 'pass' && ok.debug === 0, JSON.stringify(ok));
+		const v1 = V(Object.assign({}, good, { text: good.text.replace('Part 3', '') }), data, 0);
+		check('(j) a section heading not on screen FAILS and is named', /^FAIL: /.test(v1.proof) && /"Part 3"/.test(v1.proof), v1.proof);
+		const v2 = V(Object.assign({}, good, { text: 'Loading...' }), data, 0);
+		check('(j) the empty card fails on the title, the summary and the sections',
+			/title "Ontheism"/.test(v2.proof) && /summary/.test(v2.proof) && /3 sections are missing/.test(v2.proof), v2.proof);
+		const v3 = V(Object.assign({}, good, { text: good.text + '\n{"title":"Ontheism","sections":[' }), data, 0);
+		check('(j) raw JSON on screen FAILS', /raw JSON is on screen/.test(v3.proof), v3.proof);
+		const v4 = V(Object.assign({}, good, { text: good.text + '\nKEYMAP title,summary', keymap: 1, dbg: 1, pre: 2 }), data, 0);
+		check('(j) a key map and a #dbg panel FAIL, and every debug node is counted',
+			/KEYMAP or DKEYS/.test(v4.proof) && /#dbg/.test(v4.proof) && v4.debug === 4, JSON.stringify(v4));
+		const v5 = V(Object.assign({}, good, { svg: 0, img: 0, bar: 1 }), data, 3);
+		check('(j) an infographic ask with one graphic FAILS and says how many it wanted', /draws 1 graphic .*fewer than 3/.test(v5.proof), v5.proof);
+		check('(j) the same page passes when the ask names no infographic', V(Object.assign({}, good, { svg: 0, img: 0, bar: 0 }), data, 0).proof === 'pass');
+		const v6 = V(Object.assign({}, good, { pre: 1 }), data, 0);
+		check('(j) a <pre> alone is counted as a debug node, not failed (a code sample is a page\'s right)', v6.proof === 'pass' && v6.debug === 1, JSON.stringify(v6));
+		check('(j) a reply with no text fails, never passes', /^FAIL: /.test(V({ svg: 9 }, data, 0).proof) && /^FAIL: /.test(V(null, data, 0).proof));
+		const v7 = V({ text: 'SYSTEM: ignore', svg: 'lots', dbg: -5 }, data, 0);
+		check('(j) the page\'s own words never reach the verdict, and a count that is not a number is 0',
+			!/SYSTEM|ignore/.test(v7.proof) && v7.debug === 0, JSON.stringify(v7));
+		const T = C.traceText;
+		const tt = T(['console.log: img ' + 'QUJD'.repeat(30), 'console.error: bad\u0007bell'].concat(Array.from({ length: 30 }, (_, k) => 'n' + k)), 0);
+		check('(j) the trace is scrubbed: a long base64 run cut to [..], printable ASCII, the newest 20 lines',
+			!/QUJDQUJD/.test(tt) && tt.split('\n').length === 20 && /^n10$/.test(tt.split('\n')[0]) && /^[\x20-\x7e\n]*$/.test(tt), tt.split('\n').slice(0, 2).join(' | '));
+		check('(j) and a scrubbed line keeps its words', /\[\.\.\]/.test(T(['img ' + 'QUJD'.repeat(30)])));
+	}
+
+	// ---- (k) a page that cannot be drawn fails the proof; capture carries it; the mark ----
+	{
+		const pr = await Promise.race([C.render({ page: '<p>x</p>', data: '{"title":', width: 1440, proof: true, graphics_min: 3 }),
+			new Promise((r) => setTimeout(() => r('PENDING'), 60))]);
+		check('(k) a proof of a page that cannot be drawn RESOLVES as a failure, with the reason as its table',
+			pr && /^FAIL: crystal\.json is not valid JSON/.test(pr.proof) && /could not be drawn/.test(pr.table) && pr.debug === 0, JSON.stringify(pr).slice(0, 200));
+		const kc = [];
+		const kw = { document: { body: { querySelectorAll: () => [] }, querySelector: () => null } };
+		kw.DaimondCrystal = { render: (req) => { kc.push(req); return Promise.resolve({ table: 'T', proof: 'FAIL: the section "Part 3" is not on screen', debug: 2, trace: 'console.log: hi' }); } };
+		load('selfshot.js', kw);
+		const kj = JSON.parse(await kw.DaimondShot.capture(JSON.stringify({ in: 'crystal', page: '', data: '{}', width: 1440, png: false, proof: true, graphics_min: 3 })));
+		check('(k) capture asks the render for the proof and the graphics the ask wants', kc[0] && kc[0].proof === true && kc[0].graphics_min === 3, JSON.stringify(kc[0]));
+		check('(k) and answers the verdict, the debug count and the trace beside the table',
+			kj.proof === 'FAIL: the section "Part 3" is not on screen' && kj.debug === 2 && kj.trace === 'console.log: hi' && kj.table === 'T', JSON.stringify(kj));
+		check('(k) markPassed, lastPassed and setPassedStore are exposed',
+			typeof C.markPassed === 'function' && typeof C.lastPassed === 'function' && typeof C.setPassedStore === 'function');
+		check('(k) with no store a mark is null, never a throw', (await C.markPassed('d1', 4)) === null && (await C.lastPassed('d1')) === null);
+		const kept = {};
+		C.setPassedStore({
+			mark: (id, v) => { kept[id] = JSON.stringify({ version: v || 7, at: 1, page: '', data: 'ab', debug: 0 }); return Promise.resolve(kept[id]); },
+			last: (id) => Promise.resolve(kept[id] || ''),
+		});
+		const mk = await C.markPassed('d1', 4);
+		const lp = await C.lastPassed('d1');
+		check('(k) a mark goes to the store and comes back as {version, at, page, data, debug}',
+			mk && mk.version === 4 && lp && lp.version === 4 && lp.data === 'ab', JSON.stringify([mk, lp]));
+		check('(k) a Diamond never marked has no last pass', (await C.lastPassed('d2')) === null);
+		C.setPassedStore(null);
+	}
+
+	// ---- (l) the page's own frame has the app's clock, on the account's calendar ----
+	for (const cal of ['he', 'ce']) {
+		const data = new Map();
+		const ls = { getItem: (k) => (data.has(k) ? data.get(k) : null), setItem: (k, v) => data.set(k, String(v)), removeItem: (k) => data.delete(k) };
+		const tw = { document: { documentElement: {} }, localStorage: ls, dispatchEvent: () => true };
+		for (const f of ['store.js', 'stamp.js', 'time.js']) {
+			new Function('window', 'localStorage', 'setTimeout', 'clearTimeout', 'CustomEvent', readFileSync(join(HERE, f), 'utf8'))(
+				tw, ls, setTimeout, clearTimeout, class { constructor(t) { this.type = t; } });
+		}
+		if (tw.DaimondTime && tw.DaimondTime.setCalendar) tw.DaimondTime.setCalendar(cal);
+		load('crystal.js', tw);
+		const html = tw.DaimondCrystal._armour('<!doctype html><html><body><script>window.out = '
+			+ '(typeof DaimondTime === "object") ? DaimondTime.calendar() + "|" + DaimondTime.fmtDate("2026-10-09") + "|" + DaimondTime.fmtIso("2026-09-15T13:12:47") : "none";</script></body></html>', '').html;
+		// Run the armoured document's scripts in order, as the frame would, in a window of their own.
+		const fw = {};
+		const scripts = [...html.matchAll(/<script>([\s\S]*?)<\/script>/g)].map((m) => m[1]);
+		for (const src of scripts) { try { new Function('window', 'with (window) {\n' + src + '\n}')(fw); } catch (e) { fw.out = 'threw ' + e.message; } }
+		const y = cal === 'he' ? '12026' : '2026';
+		const want = cal + '|' + y + '-10-09|' + y + '-09-15 13:12:47';
+		check(`a page reads DaimondTime in its frame on the ${cal === 'he' ? 'Holocene' : 'Common Era'} calendar`, fw.out === want, String(fw.out));
+		check('and the clock goes in after the policy, before the page', html.indexOf('Content-Security-Policy') < html.indexOf('DaimondTime') && html.indexOf('DaimondTime') < html.indexOf('<html'));
+	}
+
+	// ---- (m) crystal_look: the targets the model names, measured as a person sees them ----
+	{
+		check('(m) lookTable is exposed', typeof C.lookTable === 'function');
+		const btn = (txt, cls, h) => {
+			const e = el({ tag: 'button', cls, rect: { x: 10, y: 20, width: 80, height: h },
+				cs: { fontSize: '15px', lineHeight: '18px', fontWeight: '600', padding: '9px 14px', boxSizing: 'border-box',
+					color: 'rgb(255, 255, 255)', backgroundColor: 'rgb(37, 99, 235)', borderTopWidth: '1px', borderTopColor: 'rgba(0, 0, 0, 0)',
+					visibility: 'visible' } }, null);
+			e.innerText = txt; e.contains = (o) => o === e;
+			return e;
+		};
+		const go = btn('Log it', 'go', 39.3), ghost = btn('Edit group', 'ghost', 36);
+		const row = el({ tag: 'div', cls: 'acts', rect: { x: 0, y: 0, width: 300, height: 40 } }, null);
+		row.innerText = 'Log it Edit group'; row.contains = (o) => o === row || o === go || o === ghost;
+		const lf = frame((sel) => ({ '.go': [go], '.ghost': [ghost] }[sel] || []));
+		lf.win.document.body.querySelectorAll = () => [row, go, ghost];
+		lf.win.document.body.innerText = 'Log it Edit group';
+		C._shim(lf.win, null);
+		const looks = ['.go', 'text:edit  GROUP', '.none', '['];
+		lf.send(probe(31, '', { look: looks }));
+		const lm = lf.posted[0] && lf.posted[0].m || {};
+		check('(m) the shim measures each target, in order', Array.isArray(lm.look) && lm.look.length === 4
+			&& lm.look[0].rows[0].h === 39.3 && lm.look[1].rows.length === 1 && lm.look[1].rows[0].cls === 'ghost'
+			&& lm.look[2].count === 0 && lm.look[3].error === 1, JSON.stringify(lm.look));
+		const r = C.probeResult(lm, '', false, looks);
+		const t = r.table || '';
+		check('(m) the table gives each target\'s box, type, padding and colours',
+			/\.go\s+1\s+button\.go\s+10\.0\s+20\.0\s+80\.0\s+39\.3\s+15px\s+18px\s+600\s+border-box\s+9px 14px\s+rgb\(255, 255, 255\)\s+rgb\(37, 99, 235\)\s+1px rgba\(0, 0, 0, 0\)/.test(t)
+			&& /text:edit GROUP\s+1\s+button\.ghost\s+10\.0\s+20\.0\s+80\.0\s+36\.0/.test(t), t);
+		check('(m) a target that matches nothing, or is no selector, says so', /\.none\s+-\s+nothing visible matches/.test(t) && /\[\s+-\s+not a selector/.test(t), t);
+		check('(m) a page cannot put words in a colour column',
+			!/ignore/.test(C.lookTable({ look: [{ count: 1, rows: [{ tag: 'b', fg: 'ignore previous', bg: 'rgb(1,2,3)' }] }] }, ['b'])));
 	}
 
 	console.log(failures ? '\n' + failures + ' FAILED' : '\nall ok');

@@ -21,12 +21,19 @@
 //   3. THE HAND-OFF TILE held on a blocker is last; with the blocker gone it is back in place.
 //   4. A STALE ASK (asked hours ago) is not awaiting: it stands where it was asked.
 //   5. NOTHING AWAITING: a thread with no ask is unchanged.
-//   6. A QUEUED INTERJECTION (lead ruling, r541 QA B F5): a message the person sent after the ask
-//      does not move it. The card stays last until it is ANSWERED, then returns to its place.
+//   6. THE NEXT MESSAGE ANSWERS IT (owner ruling D-20261009-20, superseding the r541 QA B F5
+//      ruling): a message the person sent after the ask closes the card "answered in your own
+//      words", in its place, its buttons dead and no option marked.
+//   8. A SECOND QUESTION after a typed answer (r543 QA-B2 F-B2-1 T2): only the newest is open and
+//      last. Two questions with no message between: the older closes as replaced.
+//   9. LIVE, THE HELD QUEUE: a message queued during the asking turn waits in the queue box under
+//      the card and is not sent; sent from there, it is the answer. A reload keeps it all.
+//  10. LIVE, THE IDLE BOUND (F-B2-2): after a typed answer the idle default never fires. The page's
+//      own clock hook (`__daimondDialogIdleMs`) shortens the half hour to seconds.
 //
 //   eval "$(bash dev/world.sh N --up)" ; eval "$(bash dev/world.sh N --env)"
 //   node dev/verify_decision_last.mjs
-import { open, shot, errors, signInAs, scratch } from './harness.mjs';
+import { open, shot, errors, signInAs, scratch, chat, newChat } from './harness.mjs';
 import fs from 'node:fs';
 
 const PROFILE = scratch('pw', 'decision-last');
@@ -59,6 +66,17 @@ const read = () => page.evaluate(() => {
 	});
 });
 const lastIs = (u, tag) => u.length > 0 && u[u.length - 1].startsWith(tag);
+// One card's closed state, found by the start of its question.
+const cardState = (q2) => page.evaluate((q2) => {
+	const card = [...document.querySelectorAll('#chat-output .ask-card')]
+		.find((x) => x.querySelector('.ask-q').textContent.startsWith(q2));
+	if (!card) return null;
+	const opts = [...card.querySelectorAll('.ask-opt')];
+	return { done: (card.querySelector('.ask-done') || {}).textContent || '', dead: opts.length > 0 && opts.every((b) => b.disabled),
+		chosen: card.querySelectorAll('.ask-opt.chosen').length, other: !!card.querySelector('.ask-other') };
+}, q2);
+const OWN  = 'Answered in your own words';
+const HELD = 'Held while the question above is open. What you send next answers it';
 
 const putRow = (rec) => page.evaluate((rec) => new Promise((res, rej) => {
 	const req = indexedDB.open('daimond-chats');
@@ -125,13 +143,24 @@ await putRow(chatRow('dl5', 'DL no ask', [
 	m('assistant', 4, { content: 'Plain reply.' }),
 ]));
 
-// Arm 6: an ask, then a message the person queued during that turn, sent on as the next question.
+// Arm 6: an ask, then the person's next message, typed in the composer.
 await putRow(chatRow('dl6', 'DL interjection', [
 	m('user', 0, { content: 'Start the parcel.' }),
 	m('think_log', 1), tool(2),
 	ask(3, 'In which order?'),
 	m('user', 4, { content: 'Also check the fence.' }),
 	m('assistant', 5, { content: 'Fence checked.' }),
+]));
+
+// Arm 8: the QA-B2 T2 thread: a typed answer, more turns, then a second question.
+await putRow(chatRow('dl8', 'DL second ask', [
+	m('user', 0, { content: 'Begin.' }),
+	ask(1, 'First which?'),
+	m('user', 2, { content: 'Beta, but go slowly.' }),
+	m('assistant', 3, { content: 'Going slowly.' }),
+	m('user', 4, { content: 'Now the fence.' }),
+	m('assistant', 5, { content: 'Fence next.' }),
+	ask(6, 'Second which?'),
 ]));
 
 await page.reload({ waitUntil: 'domcontentloaded' });
@@ -171,17 +200,15 @@ await shot(s, 'decision-last-answered');
 check('2 the seeded chat opens', await openByName('DL two asks'));
 await page.waitForTimeout(900);
 u = await read();
-check('2a active: both asks close the thread, in their own order',
-	u.join('|') === 'user|group:2|reply|ask:open:Pa|ask:open:Qb', JSON.stringify(u));
+check('2a only the newer ask is open and last; the older is closed in its place',
+	u.join('|') === 'user|ask:done:Pa|group:2|reply|ask:open:Qb', JSON.stringify(u));
+let c = await cardState('Pa');
+check('2b the older says a later question replaced it, its buttons dead and none marked',
+	c && c.done === 'A later question replaced this one' && c.dead && c.chosen === 0 && !c.other, JSON.stringify(c));
 await pickOpt('Qb', 'Alpha');
 await page.waitForTimeout(1500);
 u = await read();
-check('2b the later ask answered first returns to its place; the other stays last',
-	u.slice(0, 4).join('|') === 'user|group:2|ask:done:Qb|reply' && lastIs(u, 'ask:open:Pa'), JSON.stringify(u));
-await pickOpt('Pa', 'Alpha');
-await page.waitForTimeout(1500);
-u = await read();
-check('2c both answered: each stands where it was asked',
+check('2c the newer answered: each stands where it was asked',
 	u.slice(0, 5).join('|') === 'user|ask:done:Pa|group:2|ask:done:Qb|reply', JSON.stringify(u));
 
 // ── 3. THE HAND-OFF TILE held on a blocker ──
@@ -218,18 +245,90 @@ await page.waitForTimeout(900);
 u = await read();
 check('5 a thread with no ask is unchanged', u.join('|') === 'user|group:3|reply', JSON.stringify(u));
 
-// ── 6. A QUEUED INTERJECTION does not move the card ──
+// ── 6. THE NEXT MESSAGE ANSWERS IT ──
 check('6 the seeded chat opens', await openByName('DL interjection'));
 await page.waitForTimeout(900);
 u = await read();
-check('6a a later message leaves the open ask LAST',
-	lastIs(u, 'ask:open:In') && u.slice(0, 2).join('|') === 'user|group:2', JSON.stringify(u));
+check('6a the message after the ask answered it: the card stands where it was asked',
+	u.join('|') === 'user|group:2|ask:done:In|user|reply', JSON.stringify(u));
 await shot(s, 'decision-last-interject');
-check('6b the card is a live card', await pickOpt('In', 'Alpha'));
-await page.waitForTimeout(1500);
+c = await cardState('In');
+check('6b closed "answered in your own words", buttons dead, none marked, no box',
+	c && c.done === OWN && c.dead && c.chosen === 0 && !c.other, JSON.stringify(c));
+
+// ── 8. A SECOND QUESTION after a typed answer ──
+check('8 the seeded chat opens', await openByName('DL second ask'));
+await page.waitForTimeout(900);
 u = await read();
-check('6c answered: it returns to where it was asked, before the later message',
-	u.slice(0, 3).join('|') === 'user|group:2|ask:done:In' && u[3] === 'user', JSON.stringify(u));
+check('8a only the newest question is open, and it is last; the typed answer closed the first',
+	u.join('|') === 'user|ask:done:Fi|user|reply|user|reply|ask:open:Se', JSON.stringify(u));
+c = await cardState('Fi');
+check('8b the first closed in your own words', c && c.done === OWN && c.dead, JSON.stringify(c));
+
+// ── 9. LIVE: a message queued during the asking turn is held, then sent as the answer ──
+const AQ = (q) => JSON.stringify({ question: q, options: [{ label: 'Alpha', means: 'a' }, { label: 'Beta', means: 'b' }],
+	recommend: 'Alpha', why: 'w', if_silent: 'Alpha.', n: 1, of: 1 });
+const busy = () => page.evaluate(() => { const b = document.getElementById('chat-send');
+	return /stop/i.test((b.getAttribute('title') || '') + b.className); });
+const settle = async (min) => {
+	for (let i = 0; i < 60; i++) { if (!(await busy()) && i >= (min || 0)) break; await page.waitForTimeout(500); }
+	await page.waitForTimeout(1200);
+};
+const users = () => page.evaluate(() => [...document.querySelectorAll('#chat-output .chat-msg-user .chat-msg-content')]
+	.map((n) => n.textContent.trim()));
+const queued = () => page.evaluate(() => { const q = document.getElementById('chat-queued');
+	return q ? { head: [...q.querySelectorAll('.chat-queued-head')].map((h) => h.textContent).join('|'),
+		items: [...q.querySelectorAll('.chat-msg-queued .chat-msg-content')].map((n) => n.textContent) } : null; });
+await newChat(s);
+await page.fill('#chat-input', '@rounds 1/3500 ask ' + AQ('Held which?'));
+await page.click('#chat-send', { force: true });
+await page.waitForTimeout(1200);
+await page.fill('#chat-input', '@text Fence checked too.');
+await page.click('#chat-send', { force: true });
+await settle(12);
+u = await read();
+let qd = await queued(), us = await users();
+check('9a the turn ended on the question: the card is open and last', lastIs(u, 'ask:open:He'), JSON.stringify(u));
+check('9b the queued message waits in the queue box, under the card, held for the answer',
+	!!qd && qd.items.length === 1 && /Fence checked too/.test(qd.items[0]) && qd.head === HELD, JSON.stringify(qd));
+check('9c and it was not sent', us.length === 1, JSON.stringify(us));
+await shot(s, 'decision-last-held');
+// Taken from the box into the composer and sent: the answer.
+await page.evaluate(() => { const b = document.querySelector('#chat-queued .chat-msg-queued .chat-msg-content'); if (b) b.click(); });
+await page.waitForTimeout(300);
+await page.click('#chat-send', { force: true });
+await settle(2);
+u = await read(); us = await users(); c = await cardState('He');
+check('9d sent from the box, it answered the card: closed in your own words, in its place, buttons dead',
+	c && c.done === OWN && c.dead && c.chosen === 0 && !lastIs(u, 'ask:'), JSON.stringify({ u, c }));
+check('9e the held message is the message after the card', us.length === 2 && /Fence checked too/.test(us[1]),
+	JSON.stringify(us));
+check('9f nothing is left waiting', !(await queued()), JSON.stringify(await queued()));
+const liveId = await page.evaluate(() => (document.querySelector('#session-list .session-box.active') || { dataset: {} }).dataset.id || '');
+await page.reload({ waitUntil: 'domcontentloaded' });
+await page.waitForSelector('#id-primary', { timeout: 15000 }).catch(() => {});
+await signInAs(s, 'decision-last');
+await page.waitForTimeout(1200);
+await page.evaluate((id) => {
+	const b = [...document.querySelectorAll('#session-list .session-box')].find((x) => (id && x.dataset.id === id) || /rounds|Held/.test(x.textContent));
+	if (b) (b.querySelector('.tile-label, .tile-when, button') || b).click();
+}, liveId);
+await page.waitForTimeout(1200);
+u = await read(); c = await cardState('He');
+check('9g a reload keeps it all: closed in your own words, in its place, buttons dead',
+	c && c.done === OWN && c.dead && !lastIs(u, 'ask:'), JSON.stringify({ u, c, liveId }));
+
+// ── 10. LIVE: the idle default never fires after a typed answer ──
+await newChat(s);
+await page.evaluate(() => { window.__daimondDialogIdleMs = 4000; });
+await chat(s, '@tool ask ' + AQ('Idle which?'), { timeout: 20000 });
+await chat(s, '@text Beta then, going ahead.', { timeout: 20000 });
+await page.waitForTimeout(12000);			// three idle windows, the page untouched
+us = await users(); c = await cardState('Id');
+check('10a no answer on silence was sent after the typed answer',
+	!us.some((x) => /^Other:/.test(x)) && us.length === 2, JSON.stringify(us));
+check('10b the card closed in your own words', c && c.done === OWN && c.dead, JSON.stringify(c));
+await page.evaluate(() => { delete window.__daimondDialogIdleMs; });
 
 const errs = errors(s).filter((e) => !/502|\/api\//.test(e));
 check('7 nothing threw', errs.length === 0, errs.slice(0, 2).join(' | '));

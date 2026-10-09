@@ -66,3 +66,34 @@ test('end.why_blocked is in every locale', () => {
 		assert.match(t, /'end\.why_blocked':\s+'[^']+'/, loc + ' has no end.why_blocked');
 	}
 });
+
+// r543 QA F-A2-3: the engine's own Decision on a blocked turn is marked `app: "blocked"`, and
+// the page draws it in the user's language rather than in the engine's English.
+const BLOCKED_KEYS = ['ask.blocked_q', 'ask.blocked_retry', 'ask.blocked_retry_means',
+	'ask.blocked_stop', 'ask.blocked_stop_means', 'ask.blocked_why', 'ask.blocked_silent'];
+
+test('the blocked Decision is drawn in the user\'s words and language', () => {
+	const said = {};
+	const blockedAsk = lift('blockedAsk', { t: (k) => { said[k] = 1; return '«' + k + '»'; } });
+	const o = blockedAsk({ app: 'blocked', question: 'How should I go on?',
+		options: [{ label: 'Try another way', means: 'x' }, { label: 'Stop here', means: 'y' }],
+		recommend: 'Try another way', why: 'w', if_silent: 's' });
+	assert.equal(o.question, '«ask.blocked_q»');
+	assert.deepEqual(o.options.map((p) => p.label), ['«ask.blocked_retry»', '«ask.blocked_stop»']);
+	assert.equal(o.recommend, o.options[0].label, 'the recommendation no longer names an option');
+	for (const k of BLOCKED_KEYS) assert.ok(said[k], k + ' is not used');
+	// A daimon's own question is drawn as it was asked.
+	const own = { question: 'Which?', options: [] };
+	assert.equal(blockedAsk(own), own);
+	assert.match(cut('renderAsk'), /o = blockedAsk\(o\);/, 'renderAsk does not use it');
+});
+
+test('the blocked Decision is in every locale', () => {
+	for (const loc of ['en', 'de', 'es', 'fr', 'pt-BR', 'ja', 'ko', 'zh-Hans']) {
+		const t = readFileSync(join(HERE, '..', 'i18n', loc + '.js'), 'utf8');
+		for (const k of BLOCKED_KEYS) {
+			assert.match(t, new RegExp("'" + k.replace('.', '\\.') + "':\\s+'[^']+'"),
+				loc + ' has no ' + k);
+		}
+	}
+});

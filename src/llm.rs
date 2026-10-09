@@ -390,6 +390,84 @@ enum Wire<'a> {
     Silence(u64),       // seconds without real data; a notice is due
 }
 
+// The most of a one-body reply kept for parsing.  Past it the body is cut, which no parse
+// accepts, so an oversized body ends as an error naming its first bytes rather than in memory.
+const ONE_BODY_CAP: usize = 8 << 20;
+
+/// What one line of a streamed reply is to the reader; see [`SseLines`].
+enum SseLine<'l> {
+    Data(&'l str),  // one `data:` payload
+    Done,           // `data: [DONE]`
+    Skip,           // an SSE field line, a comment, a blank, or kept for a one-body reply
+}
+
+/// The line discipline both transports' `stream_sse` share.
+///
+/// **ONE BODY WHERE A STREAM WAS ASKED FOR.**  Some providers answer `stream: true` with one
+/// plain chat completion.  The reader used to skip every line that was not `data:`, so that
+/// reply was dropped whole: nothing on screen, nothing stored, an empty assistant turn.  So a
+/// reply is read as one body when its `Content-Type` is not an event stream, or when it never
+/// yields a `data:` line, and [`LlmClient::deliver_body`] hands it on.
+struct SseLines {
+    sse:  bool,     // the reply is labelled an event stream, or not labelled
+    seen: bool,     // a `data:` line has arrived
+    body: String,   // what was not SSE, while no data has arrived
+}
+
+impl SseLines {
+
+    fn new(ctype: Option<&str>) -> Self {
+        let sse = match ctype {
+            Some(t) => t.to_ascii_lowercase().contains("event-stream"),
+            None    => true,
+        };
+        Self { sse, seen: false, body: String::new() }
+    }
+
+    fn sort<'l>(&mut self, line: &'l str) -> SseLine<'l> {
+        if self.sse {
+            let line = line.trim();
+            if let Some(rest) = line.strip_prefix("data:") {
+                // The space after the colon is optional on the wire.
+                let data = rest.strip_prefix(' ').unwrap_or(rest);
+                if data == "[DONE]" {
+                    return SseLine::Done;
+                }
+                self.seen = true;
+                return SseLine::Data(data);
+            }
+            if line.is_empty()
+                || line.starts_with(':')
+                || line.starts_with("event:")
+                || line.starts_with("id:")
+                || line.starts_with("retry:")
+                || self.seen
+            {
+                return SseLine::Skip;
+            }
+        }
+        if self.body.len() < ONE_BODY_CAP {
+            self.body.push_str(line);
+            self.body.push('\n');
+        }
+        SseLine::Skip
+    }
+
+    /// The reply as one body, when it was one.
+    fn body(&self) -> Option<&str> {
+        let b = self.body.trim();
+        if !self.sse || (!self.seen && !b.is_empty()) { Some(b) } else { None }
+    }
+}
+
+/// Is `body` one whole OpenAI-style chat completion, with at least one choice?
+fn openai_completion(body: &str) -> bool {
+    match find_json_array(body, "choices") {
+        Some(arr) => !split_top_level_objects(&arr).is_empty(),
+        None      => false,
+    }
+}
+
 // ┌───────────────────────────────────────────────────────────────┐
 // │ Halt: one turn's stop                                          │
 // └───────────────────────────────────────────────────────────────┘
@@ -1038,18 +1116,44 @@ impl TransportErr {
     /// the error it is asked, so a stall wrapped here without saying so would arrive as a plain
     /// network failure, and a refusal's status would be left as digits in prose for the caller to
     /// guess at.  The agent's overflow test once did guess, and a stall that took 400 seconds
-    /// read as a 400 (r541 QA N2).  So a timeout keeps `Timeout`, and a status a provider answers
-    /// an over-long prompt with -- 400, 413, 422 -- is marked `TooBig`, which says only that size
-    /// MAY be why; [`compact::looks_like_overflow`](crate::agent::compact::looks_like_overflow)
+    /// read as a 400 (r541 QA N2).  So a timeout keeps `Timeout`; a refusal for SIZE
+    /// ([`too_big`](Self::too_big)) leaves `TooBig`, so the fold that answers it, and the picture
+    /// rule that must not, read the tag rather than the provider's prose a second time; and a
+    /// bare 400 or 422 -- the status a refused picture gets too -- leaves `Size`, which says only
+    /// that size MAY be why: [`compact::looks_like_overflow`](crate::agent::compact::looks_like_overflow)
     /// still weighs it against the prompt.
     fn crossed(self) -> Error<ErrTag> {
         if self.err.tags().contains(&ErrTag::Timeout) {
             err!(self.err, "{}", self.reason; IO, Network, Wire, Timeout)
-        } else if matches!(self.status, 400 | 413 | 422) {
+        } else if self.too_big() {
             err!(self.err, "{}", self.reason; IO, Network, Wire, TooBig)
+        } else if matches!(self.status, 400 | 422) {
+            err!(self.err, "{}", self.reason; IO, Network, Wire, Size)
         } else {
             err!(self.err, "{}", self.reason; IO, Network, Wire)
         }
+    }
+
+    /// Was the request refused for its SIZE rather than for anything in it?
+    ///
+    /// A 413, an error already tagged `TooBig`, or a refusal whose own words are about the
+    /// context window ([`says_overflow`](crate::agent::compact::says_overflow)). The words are
+    /// read here, once, because nothing else on a 400 says it: the status is the same one a
+    /// refused picture gets.
+    fn too_big(&self) -> bool {
+        self.status == 413
+            || self.err.tags().contains(&ErrTag::TooBig)
+            || crate::agent::compact::says_overflow(&fmt!("{}", self.err))
+    }
+
+    /// Could this refusal be about a picture the request carried?
+    ///
+    /// Only a refusal that will fail the same way again, and is not one for size: a context
+    /// window overflowed by a long conversation is not cured by taking a picture out of it, and
+    /// curing it that way would mark a model that sees as blind for the rest of the session.
+    /// The fold answers a size refusal; see [`too_big`](Self::too_big).
+    fn may_be_the_picture(&self) -> bool {
+        !self.retryable && !self.too_big()
     }
 }
 
@@ -1427,7 +1531,9 @@ impl LlmClient {
         messages:   &[ChatMessage],
         on_token:   &mut impl FnMut(Delta<'_>),
     ) -> Outcome<ChatResponse> {
-        let resp = res!(self.stream_turn(messages, None, on_token, false).await);
+        // ok!, not res!: the transport's tags (TooBig, Size, Timeout) are what the agent's fold
+        // reads, and the pinned fe2o3's tags() does not look past a wrapper.
+        let resp = ok!(self.stream_turn(messages, None, on_token, false).await);
         Ok(ChatResponse {
             content:           resp.content,
             prompt_tokens:     resp.prompt_tokens,
@@ -1665,7 +1771,7 @@ impl LlmClient {
                     // in it a text model cannot read. Take them out, say so in their place, and
                     // send it again -- once. Only where nothing has been emitted: a turn the
                     // user has already seen tokens from cannot be started over.
-                    if !started && !retried_blind && images > 0 && !e.retryable {
+                    if !started && !retried_blind && images > 0 && e.may_be_the_picture() {
                         retried_blind = true;
                         blind_pending = true;
                         let why = self.dropped_why(true);
@@ -1756,7 +1862,7 @@ impl LlmClient {
                     // The picture retry, exactly as `stream_turn` does it and for the same
                     // reason; there is no emitted-tokens condition here because nothing has
                     // been shown to anybody yet.
-                    if !retried_blind && images > 0 && !e.retryable {
+                    if !retried_blind && images > 0 && e.may_be_the_picture() {
                         retried_blind = true;
                         blind_pending = true;
                         let why = self.dropped_why(true);
@@ -2034,7 +2140,9 @@ impl LlmClient {
     /// * `e` - The error the provider produced.
     /// * `images` - How many images the refused turn carried.
     fn vision_error(&self, e: Error<ErrTag>, images: usize) -> Error<ErrTag> {
-        if images == 0 {
+        // A refusal for size is the fold's to answer, and its words may well mention the image
+        // that made the request too big; it is not the model failing to see.
+        if images == 0 || e.tags().contains(&ErrTag::TooBig) {
             return e;
         }
         let low = fmt!("{}", e).to_lowercase();
@@ -2643,7 +2751,7 @@ impl LlmClient {
         body:    &str,
         wait_ms: u64,
     )
-        -> Result<(tokio_rustls::client::TlsStream<tokio::net::TcpStream>, bool), TransportErr>
+        -> Result<(tokio_rustls::client::TlsStream<tokio::net::TcpStream>, bool, Option<String>), TransportErr>
     {
         use tokio_rustls::TlsConnector;
         use tokio::net::TcpStream;
@@ -2751,7 +2859,9 @@ impl LlmClient {
             }.at(status));
         }
 
-        Ok((stream, is_chunked))
+        // The `Content-Type`, which says whether a reply to a streaming request is a stream.
+        let ctype = header_value(&headers_str, "content-type");
+        Ok((stream, is_chunked, ctype))
     }
 
     /// Perform a non-streaming request and return the full response
@@ -2766,7 +2876,7 @@ impl LlmClient {
         // the header wait (in `open`) and the body wait below get the wider ceiling; see
         // `REPLY_WAIT_FACTOR`.
         let wait_ms = self.stream_idle_ms.get().saturating_mul(REPLY_WAIT_FACTOR);
-        let (stream, is_chunked) = match self.open(body, wait_ms).await {
+        let (stream, is_chunked, _) = match self.open(body, wait_ms).await {
             Ok(v)  => v,
             Err(e) => return Err(e),
         };
@@ -2814,12 +2924,13 @@ impl LlmClient {
         // Headers arrive before the first token on a streaming request, so the header wait in
         // `open` is the plain idle ceiling; the watch below covers the body.
         let idle_ms = self.stream_idle_ms.get();
-        let (stream, is_chunked) = match self.open(body, idle_ms).await {
+        let (stream, is_chunked, ctype) = match self.open(body, idle_ms).await {
             Ok(v)  => v,
             Err(e) => return Err(e),
         };
         let mut reader = LineReader::new(stream, is_chunked);
         let mut watch  = StreamWatch::new(now_ms(), idle_ms, first_ms);
+        let mut lines  = SseLines::new(ctype.as_deref());
         loop {
             // THE IDLE WATCHDOG. Proposal 15, 2026-09-15: OpenRouter's own export showed a
             // round with `generation_time` 83.7 s that this app sat on for 318 s -- about
@@ -2856,18 +2967,20 @@ impl LlmClient {
                     "LLM: read SSE line failed."; IO, Network, Wire, Read))),
             };
             watch.heard(now_ms());
-            let line = line.trim();
-            if !line.starts_with("data: ") {
-                continue;
+            match lines.sort(&line) {
+                SseLine::Skip       => continue,
+                SseLine::Done       => break,
+                SseLine::Data(data) => {
+                    let pulse = on_data(Wire::Data(data));
+                    watch.data(now_ms(), pulse);
+                }
             }
-            let data = &line[6..];
-            if data == "[DONE]" {
-                break;
-            }
-            let pulse = on_data(Wire::Data(data));
-            watch.data(now_ms(), pulse);
         }
-        Ok(StreamOutcome::default())
+        match lines.body() {
+            // The headers said 200, or `open` would have refused the reply.
+            Some(b) => self.deliver_body(200, b, on_data),
+            None    => Ok(StreamOutcome::default()),
+        }
     }
 }
 
@@ -3180,6 +3293,9 @@ impl LlmClient {
         let mut buf: Vec<u8> = Vec::with_capacity(8192);
 
         let mut watch = StreamWatch::new(now_ms(), idle_ms, first_ms);
+        let status = resp.status();
+        let ctype = resp.headers().get("content-type").ok().flatten();
+        let mut lines = SseLines::new(ctype.as_deref());
         // ONE READ, kept across the watch's ticks: a read future dropped when a tick fired
         // would take the chunk it was about to deliver with it.
         let mut pending: Option<std::pin::Pin<Box<dyn std::future::Future<Output = Result<JsValue, JsValue>>>>>
@@ -3255,20 +3371,29 @@ impl LlmClient {
                 };
                 let line_bytes: Vec<u8> = buf.drain(..=nl).collect();
                 let line = String::from_utf8_lossy(&line_bytes[..line_bytes.len() - 1]);
-                let line = line.trim();
-                if !line.starts_with("data: ") {
-                    continue;
+                match lines.sort(&line) {
+                    SseLine::Skip       => continue,
+                    SseLine::Done       => return Ok(StreamOutcome::default()),
+                    SseLine::Data(data) => {
+                        let pulse = on_data(Wire::Data(data));
+                        watch.data(now_ms(), pulse);
+                    }
                 }
-                let data = &line[6..];
-                if data == "[DONE]" {
-                    return Ok(StreamOutcome::default());
-                }
-                let pulse = on_data(Wire::Data(data));
-                watch.data(now_ms(), pulse);
             }
         }
 
-        Ok(StreamOutcome::default())
+        // A last line with no newline after it: a one-body reply usually ends so.
+        if !buf.is_empty() {
+            let line = String::from_utf8_lossy(&buf).to_string();
+            match lines.sort(&line) {
+                SseLine::Data(data) => { on_data(Wire::Data(data)); }
+                SseLine::Done | SseLine::Skip => {}
+            }
+        }
+        match lines.body() {
+            Some(b) => self.deliver_body(status, b, on_data),
+            None    => Ok(StreamOutcome::default()),
+        }
     }
 }
 
@@ -3277,6 +3402,35 @@ impl LlmClient {
 // └───────────────────────────────────────────────────────────────┘
 
 impl LlmClient {
+
+    /// Hand a reply that came back as one body, where a stream was asked for, to `on_data` as
+    /// the one payload of a stream, so it reaches the screen, the store, the ledger and the
+    /// usage exactly as a streamed reply does; see [`SseLines`].
+    ///
+    /// A whole completion is a delta that says everything at once: the accumulator reads it as
+    /// it reads a stream's chunks.  A body that is not one -- an HTML error page, a truncated
+    /// body, an Anthropic dialect that never answers this way -- is a provider error naming the
+    /// provider, the status and what came, never an empty turn.  Not retried: the same request
+    /// gets the same answer.
+    fn deliver_body(
+        &self,
+        status:  u16,
+        body:    &str,
+        on_data: &mut impl FnMut(Wire<'_>) -> Pulse,
+    )
+        -> Result<StreamOutcome, TransportErr>
+    {
+        if matches!(self.dialect, Dialect::OpenAi) && openai_completion(body) {
+            on_data(Wire::Data(body));
+            return Ok(StreamOutcome::default());
+        }
+        let head = clip_bytes(body, ERR_BODY_BYTES);
+        Err(TransportErr::fatal(
+            fmt!("{} answered HTTP {} with no reply it could read: {}", self.host, status, head),
+            err!("LLM: '{}' ({}) answered a streaming request with HTTP {} and a body that is \
+                neither an event stream nor a chat completion ({} bytes).",
+                self.host, self.model, status, body.len(); IO, Network, Wire, Read)))
+    }
 
     /// Stop the turn this client is running: every later request of it is refused before it
     /// goes out, and the one in flight is cancelled.  Safe to call when idle.  See [`Halt`].
@@ -5156,10 +5310,12 @@ impl StreamAcc {
 
         // Tool-call fragments — merge each into its slot by `index`.
         if let Some(arr) = find_json_array(data, "tool_calls") {
-            for elem in split_top_level_objects(&arr) {
+            for (pos, elem) in split_top_level_objects(&arr).into_iter().enumerate() {
+                // A stream's fragment names its call; a whole completion's calls carry no
+                // `index` and are told apart by where they stand.
                 let index = extract_json_number(&elem, "index")
                     .map(|n| n as i64)
-                    .unwrap_or(0);
+                    .unwrap_or(pos as i64);
                 // Locate an existing slot by index before borrowing
                 // mutably, so a new slot can be pushed without an
                 // overlapping borrow.
@@ -10421,6 +10577,89 @@ pub mod tests {
         assert!(!client.sight_proven(), "a refusal after an acceptance left the model proven");
     }
 
+    // ── a refusal for SIZE is not a refusal of the picture (r543 Q6 unproven 2, 2026-10-09) ──
+
+    /// A 400 for the context window, in OpenAI's words.
+    fn context_too_long() -> Reply {
+        Reply::Http {
+            status: 400, reason: "Bad Request", headers: Vec::new(),
+            body: "{\"error\":{\"message\":\"This model's maximum context length is 131072 tokens, \
+                however you requested 174233 tokens.\",\"code\":\"context_length_exceeded\"}}"
+                .to_string(),
+        }
+    }
+
+    /// A 413 from a CDN in front of the provider, whose page says nothing about tokens.
+    fn entity_too_large() -> Reply {
+        Reply::Http {
+            status: 413, reason: "Request Entity Too Large", headers: Vec::new(),
+            body: "<html><body>nginx</body></html>".to_string(),
+        }
+    }
+
+    /// A 400 that is about the picture, as a text model's endpoint words it.
+    fn image_refused() -> Reply {
+        Reply::Http {
+            status: 400, reason: "Bad Request", headers: Vec::new(),
+            body: "{\"error\":{\"message\":\"image input is not supported by this model\"}}"
+                .to_string(),
+        }
+    }
+
+    /// A refusal for size, on either path, is handed back whole for the fold: no text-only retry,
+    /// no "cannot see" rewrite, the model still taken to see, and the error tagged `TooBig`.
+    #[tokio::test]
+    async fn test_a_size_refusal_on_a_request_with_a_picture_is_left_for_the_fold() {
+        for (what, refusal) in [("400 context length", context_too_long()), ("413", entity_too_large())] {
+            for once in [false, true] {
+                let (port, seen) = start_stub(vec![refusal.clone(), Reply::answer()]).await;
+                let client = stub_client_of(port, "my-gpt4o-prod");
+                let mut sink = |_: Delta<'_>| {};
+                let got = if once {
+                    client.chat_once(&with_picture("cover"), None).await.map(|_| ())
+                } else {
+                    client.chat_stream_tools(&with_picture("cover"), None, &mut sink).await.map(|_| ())
+                };
+                let e = match got {
+                    Ok(())  => panic!("{} (once {}): a size refusal was answered by a retry", what, once),
+                    Err(e)  => e,
+                };
+                let bodies = match seen.lock() { Ok(g) => g.bodies.clone(), Err(e) => panic!("stub: {}", e) };
+                assert_eq!(bodies.len(), 1,
+                    "{} (once {}): the refusal was retried without the picture", what, once);
+                assert!(client.can_take_images(),
+                    "{} (once {}): a refusal for size marked the model blind", what, once);
+                assert!(e.tags().contains(&ErrTag::TooBig),
+                    "{} (once {}): the refusal is not tagged as one for size: {}", what, once, e);
+                assert!(!fmt!("{}", e).contains("could not be shown"),
+                    "{} (once {}): a size refusal was said to be about the picture: {}", what, once, e);
+            }
+        }
+    }
+
+    /// A refusal that IS about the picture still gets the text-only retry, and the model is
+    /// marked blind once that retry is answered -- on both paths.
+    #[tokio::test]
+    async fn test_a_400_about_the_picture_still_retries_without_it_and_marks_blind() {
+        for once in [false, true] {
+            let (port, seen) = start_stub(vec![image_refused(), Reply::answer()]).await;
+            let client = stub_client_of(port, "my-gpt4o-prod");
+            let mut sink = |_: Delta<'_>| {};
+            let got = if once {
+                client.chat_once(&with_picture("cover"), None).await.map(|_| ())
+            } else {
+                client.chat_stream_tools(&with_picture("cover"), None, &mut sink).await.map(|_| ())
+            };
+            if let Err(e) = got {
+                panic!("(once {}) the text-only retry completes: {}", once, e);
+            }
+            let bodies = match seen.lock() { Ok(g) => g.bodies.clone(), Err(e) => panic!("stub: {}", e) };
+            assert_eq!(bodies.len(), 2, "(once {}) one refusal, one retry", once);
+            assert!(!bodies[1].contains(DOC_PNG_B64), "(once {}) the retry still carried the picture", once);
+            assert!(!client.can_take_images(), "(once {}) a refused picture left the model seeing", once);
+        }
+    }
+
     /// What the watch lets a quiet last, by what the stream has shown (F1, F2, F8).  The clock is
     /// the test's own, in milliseconds.
     #[test]
@@ -10984,5 +11223,112 @@ pub mod tests {
             assert!(!crate::agent::compact::looks_like_overflow(&e, 500, 100_000),
                 "a small prompt refused is a bad request: {}", e);
         }
+    }
+
+    // ── One body where a stream was asked for ───────────────────────────
+    //
+    // Some providers answer `stream: true` with one plain chat completion.  The stream reader
+    // skipped every line that was not `data:`, so the whole reply was dropped: nothing on
+    // screen, nothing stored, an empty assistant turn.  It must arrive as a streamed reply
+    // would, and a body that is no reply at all must be an error that says what came back.
+
+    /// A 200 with `Content-Type: application/json` and one whole completion.
+    fn one_body(body: &str) -> Reply {
+        Reply::Http {
+            status: 200, reason: "OK",
+            headers: vec![("Content-Type", "application/json".to_string())],
+            body: body.to_string(),
+        }
+    }
+
+    #[tokio::test]
+    async fn onebody_content_reasoning_and_usage_arrive_as_a_stream_would() {
+        let (port, seen) = start_stub(vec![one_body(
+            "{\"id\":\"gen-1\",\"provider\":\"Acme\",\"choices\":[{\"index\":0,\"message\":\
+             {\"role\":\"assistant\",\"content\":\"Hello world\",\"reasoning\":\"thought first\"},\
+             \"finish_reason\":\"stop\"}],\
+             \"usage\":{\"prompt_tokens\":7,\"completion_tokens\":3,\"cost\":0.25}}")]).await;
+        let client = stub_client(port);
+        let msgs = [ChatMessage::user("hello".to_string())];
+        let mut tokens = Vec::new();
+        let r = client.chat_stream_tools(&msgs, None, &mut text_sink(&mut tokens)).await
+            .unwrap_or_else(|e| panic!("a one-body reply failed: {}", e));
+        assert_eq!(tokens.concat(), "Hello world", "the words never reached the screen");
+        assert_eq!(r.content, "Hello world");
+        assert_eq!(r.thinking, "thought first");
+        assert_eq!((r.prompt_tokens, r.completion_tokens), (7, 3));
+        assert_eq!(r.cost_usd, 0.25);
+        assert_eq!((r.finish_reason.as_str(), r.gen_id.as_str(), r.provider.as_str()),
+            ("stop", "gen-1", "Acme"));
+        assert_eq!(connections(&seen), 1);
+    }
+
+    #[tokio::test]
+    async fn onebody_tool_calls_arrive_whole_and_apart() {
+        let (port, _seen) = start_stub(vec![one_body(
+            "{\"choices\":[{\"message\":{\"role\":\"assistant\",\"content\":null,\"tool_calls\":[\
+             {\"id\":\"call_a\",\"type\":\"function\",\"function\":{\"name\":\"read_file\",\
+             \"arguments\":\"{\\\"path\\\":\\\"a.txt\\\"}\"}},\
+             {\"id\":\"call_b\",\"type\":\"function\",\"function\":{\"name\":\"list_dir\",\
+             \"arguments\":\"{\\\"path\\\":\\\".\\\"}\"}}]},\
+             \"finish_reason\":\"tool_calls\"}],\
+             \"usage\":{\"prompt_tokens\":11,\"completion_tokens\":4}}")]).await;
+        let client = stub_client(port);
+        let msgs = [ChatMessage::user("look".to_string())];
+        let mut tokens = Vec::new();
+        let r = client.chat_stream_tools(&msgs, Some("[]"), &mut text_sink(&mut tokens)).await
+            .unwrap_or_else(|e| panic!("a one-body tool call failed: {}", e));
+        let calls: Vec<(&str, &str, &str)> = r.tool_calls.iter()
+            .map(|c| (c.id.as_str(), c.name.as_str(), c.arguments.as_str())).collect();
+        assert_eq!(calls, vec![
+            ("call_a", "read_file", "{\"path\":\"a.txt\"}"),
+            ("call_b", "list_dir",  "{\"path\":\".\"}"),
+        ]);
+        assert_eq!(r.content, "");
+        assert_eq!((r.prompt_tokens, r.completion_tokens), (11, 4));
+        assert_eq!(r.finish_reason, "tool_calls");
+    }
+
+    /// Labelled a stream, but the body never carries a `data:` line: judged by the body.
+    #[tokio::test]
+    async fn onebody_under_an_event_stream_label_is_read_by_its_body() {
+        let (port, _seen) = start_stub(vec![Reply::Sse {
+            chunks: vec![
+                "{\"choices\":[{\"message\":{\"role\":\"assistant\",\n".to_string(),
+                "\"content\":\"Plain body\"},\"finish_reason\":\"stop\"}],\
+                 \"usage\":{\"prompt_tokens\":2,\"completion_tokens\":2}}".to_string(),
+            ],
+            reset_after: None,
+        }]).await;
+        let client = stub_client(port);
+        let msgs = [ChatMessage::user("hello".to_string())];
+        let mut tokens = Vec::new();
+        let r = client.chat_stream_tools(&msgs, None, &mut text_sink(&mut tokens)).await
+            .unwrap_or_else(|e| panic!("{}", e));
+        assert_eq!((tokens.concat().as_str(), r.content.as_str(), r.prompt_tokens),
+            ("Plain body", "Plain body", 2));
+    }
+
+    /// A body that is no reply at all is an error naming who sent it, the status and what came,
+    /// never a blank turn, and it is not sent again.
+    #[tokio::test]
+    async fn onebody_garbage_is_an_honest_error_not_a_blank_turn() {
+        let (port, seen) = start_stub(vec![Reply::Http {
+            status: 200, reason: "OK",
+            headers: vec![("Content-Type", "text/html".to_string())],
+            body: "<html><body>Upstream is having a moment</body></html>".to_string(),
+        }]).await;
+        let client = stub_client(port);
+        let msgs = [ChatMessage::user("hello".to_string())];
+        let mut tokens = Vec::new();
+        let e = match client.chat_stream_tools(&msgs, None, &mut text_sink(&mut tokens)).await {
+            Ok(r)  => panic!("a garbage body was taken as a reply: {:?}", r.content),
+            Err(e) => fmt!("{}", e),
+        };
+        assert!(e.contains("localhost"), "the error does not name the provider: {}", e);
+        assert!(e.contains("200"), "the error does not give the status: {}", e);
+        assert!(e.contains("<html><body>Upstream"), "the error does not show what came: {}", e);
+        assert!(tokens.is_empty());
+        assert_eq!(connections(&seen), 1, "a body that is no reply was sent again");
     }
 }

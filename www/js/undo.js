@@ -121,6 +121,7 @@
 	/// # Arguments
 	/// * `opts.text` - what the toast says; already translated by the caller.
 	/// * `opts.ms` - the window, in milliseconds. 5000 where absent.
+	/// * `opts.label` - the button's words, already translated; "Undo" where absent.
 	function able(opts) {
 		opts = opts || {};
 		// The one before it stands, now — never two windows open at once (D8).
@@ -135,8 +136,9 @@
 		};
 		var node = ensureEl();
 		node._text.textContent = held.text;
-		node._btn.textContent = tOr('undo.undo', 'Undo');
-		node._btn.setAttribute('aria-label', tOr('undo.undo', 'Undo'));
+		var label = opts.label == null || opts.label === '' ? tOr('undo.undo', 'Undo') : String(opts.label);
+		node._btn.textContent = label;
+		node._btn.setAttribute('aria-label', label);
 		node.hidden = false;
 		// Raised after the node is shown, so the transition has a frame to run in.
 		try { requestAnimationFrame(function () { if (el) el.classList.add('up'); }); }

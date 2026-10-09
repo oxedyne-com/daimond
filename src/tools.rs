@@ -265,6 +265,18 @@ pub struct TurnState {
     // `ToolContext::daimon_of` for the reason the workers below are, and cleared by
     // `ToolContext::begin_turn`: a measurement is of the turn that took it.
     pub probed: HashMap<String, String>,
+    // The load proof of the Diamond's page this turn, as last taken (K1)
+    //
+    // Set by the proof an edit of `crystal.html` or `crystal.json` runs, KEYED BY
+    // `ToolContext::daimon_of` as `probed` is, and cleared by `ToolContext::begin_turn`.  Read at
+    // the turn's end through `ToolContext::crystal_proof_blocked`.
+    pub proof: HashMap<String, CrystalProof>,
+    // The fewest graphics this turn's ask wants the page to draw: `PROOF_GRAPHICS_MIN` for an
+    // infographic ask, else 0.  Written once a turn by `Agent::run_turn_noted`.
+    pub graphics_min: u32,
+    // Is this turn's ask about how something looks?  Set with `graphics_min`, from the same ask;
+    // a visual ask that edits the page's styles is owed a look after its last edit (unit G).
+    pub visual: bool,
     // The turn's workers
     //
     // What this turn started with `spawn_agent`, what it has already read back with `gather`,
@@ -1302,6 +1314,26 @@ pub fn keeper_of_dir(dir: &str) -> String {
         [root, id, work] if *root == CHAT_ROOT && *work == CHAT_WORK_DIR
             => fmt!("{}{}", CHAT_KEEPER, id),
         _   => String::new(),
+    }
+}
+
+/// Does `glob` match a walked file, by the path shown or by the path under the walk's start?
+///
+/// A pattern with a '/' matches "the whole relative path", and a model reads that as relative to
+/// the `path` it gave: `{path:"diamonds/x", pattern:"versions/**"}` must find what
+/// `diamonds/x/versions/**` finds from the root, and found nothing until fix 7 (2026-10-09).
+/// `under` and `start` are spelt alike (both scoped, or both shown); `shown` is the hit as listed.
+fn glob_hits(glob: &Glob, shown: &str, under: &str, start: &str) -> bool {
+    if glob.matches(shown) {
+        return true;
+    }
+    let start = start.trim_end_matches('/');
+    if start.is_empty() || start == "." {
+        return false;       // the walk started at the root, so `shown` was the whole answer
+    }
+    match under.strip_prefix(start).and_then(|r| r.strip_prefix('/')) {
+        Some(r) => glob.matches(r),
+        None    => false,
     }
 }
 
@@ -3984,6 +4016,7 @@ pub const DAIMOND_DIR: &str = ".daimond/";
 
 // The skills index
 pub const SKILLS_DIR: &str	= ".daimond/skills/";	// where installed skills live
+pub const CRYSTAL_STARTER_PATH: &str = ".daimond/starters/crystal.html"; // the page a daimon forks (K4)
 pub const SKILL_MANIFEST: &str	= "SKILL.md";		// the one file that declares one
 
 /// Is this one of the few paths inside Daimond's own directory that a fenced turn may still read?
@@ -7043,8 +7076,9 @@ pub(crate) fn would_invent_said(path: &str, dir: &str, marks: &str) -> String {
     // THE THREE PLACES BY NAME, because "reach it with run" is the one of them the model cannot
     // act on without knowing WHERE, and a refusal that leaves the reader to guess buys a round.
     let machine = if marks.is_empty() {
-        fmt!("If you mean the file on this computer, no folder has been marked into this chat, so \
-            neither a file tool nor run reaches one -- ask the user to mark one in.")
+        fmt!("If you mean the file on this computer, no folder has been added to this chat, so \
+            neither a file tool nor run reaches one -- ask the user to add one with the + in the \
+            Workspace group.")
     } else {
         fmt!("If you mean the file on this computer, write it under {}, which a file tool reaches \
             as the real file and run reaches too.", marks)
@@ -8757,9 +8791,9 @@ pub(crate) fn walk_residue(tool: &str, left: usize, denied: usize) -> String {
         out.push_str(&fmt!(
             "\n[{}] {} director(ies) under the walk could not be opened at all. That is this \
             turn's fence rather than a missing folder: a command reaches exactly the folders \
-            marked into this Diamond and so does a file tool. Nothing inside them was looked \
+            added to this Diamond and so does a file tool. Nothing inside them was looked \
             at, so a short answer here is not evidence that there is nothing to find. Ask the \
-            user to mark the folder in if it should be reachable.", tool, denied));
+            user to add the folder with the + in the Workspace group if it should be reachable.", tool, denied));
     }
     out
 }
@@ -11787,8 +11821,8 @@ impl ToolContext {
             // the workspace" asks for a mark that already exists, or goes looking for a way round.
             let waiting = match self.unconfirmed_mark(&p) {
                 Some(m) => fmt!(
-                    " '{}' IS marked in, but on another device or before this device recorded \
-                    marks, so it is not in force here until the user confirms it on this device: \
+                    " '{}' IS added, but on another device or before this device recorded added \
+                    folders, so it is not yet in use here until the user confirms it on this device: \
                     tell them so and ask for that one press, on the notice above the message box, \
                     rather than working around it.", m),
                 None    => String::new(),
@@ -11802,7 +11836,7 @@ impl ToolContext {
                     in. This chat's workspace is: {}. Inside it you may write and create freely and \
                     need ask nobody for anything. Reading is not fenced -- you may read anything the \
                     user can -- so if you only meant to look at it, read it. To CHANGE it, say which \
-                    path you need and let the user mark it in with the + in the Workspace group. The \
+                    path you need and let the user add the folder with the + in the Workspace group. The \
                     paperclip attaches for reading and grants no writing. Note and Read add \
                     nothing: they only decide what is quoted into the conversation.{}",
                     path, self.allowed_places(), waiting);
@@ -12123,6 +12157,11 @@ impl ToolContext {
         if is_skills_disclosure(&p) && !self.denied_deeper(&p) {
             return true;
         }
+        // The crystal starter page (K4): the app installs it, every daimon may read it, none may
+        // write it. One exact path, so it opens nothing else under Daimond's directory.
+        if p == normalise(CRYSTAL_STARTER_PATH) && !self.denied_deeper(&p) {
+            return true;
+        }
         !self.no_write.iter().any(|b| match b {
             Bound::NoRead(prefix) => under(&p, prefix),
             _                     => false,
@@ -12350,6 +12389,7 @@ impl ToolContext {
         c.removed = 0;
         c.turn_ms = 0;
         c.probed.remove(&who);
+        c.proof.remove(&who);
         // THE WORKERS GO WITH THE TURN, unlike the taint and the network answer above.  A model
         // may only gather what it started here, so a ledger that outlived its turn would let the
         // next one wait on a worker it never asked for -- and bill it for the report.  The
@@ -12540,6 +12580,45 @@ impl ToolContext {
     /// The arguments of this turn's last `capture` of the Diamond's page, if it took one.
     pub fn last_probe(&self) -> Option<String> {
         lock_cache(&self.read_seen).probed.get(&self.daimon_of).cloned()
+    }
+
+    /// Keep the load proof an edit of the Diamond's page has just taken.
+    pub fn note_proof(&self, proof: CrystalProof) {
+        let who = self.daimon_of.clone();
+        lock_cache(&self.read_seen).proof.insert(who, proof);
+    }
+
+    /// The load proof this turn last took of the Diamond's page, if it took one.
+    pub fn last_proof(&self) -> Option<CrystalProof> {
+        lock_cache(&self.read_seen).proof.get(&self.daimon_of).cloned()
+    }
+
+    /// The failing load proof the turn may not end over, or `None` when it may.
+    ///
+    /// THE HOOK FOR UNIT G'S `Blocked` ENDING.  A turn whose last load proof of the Diamond's page
+    /// failed has not delivered the page, whatever its last words say; the turn's end tells the
+    /// model its `must_fix` line once, then ends the turn `Blocked` on its `said`, so the person
+    /// is told the page did not load rather than that it is done.  `None` for a turn that took
+    /// no proof, and for one whose last proof passed.
+    pub fn crystal_proof_blocked(&self) -> Option<CrystalProof> {
+        self.last_proof().filter(|p| p.must_fix().is_some())
+    }
+
+    /// Set the fewest graphics the page must draw for this turn's ask, from the ask itself.
+    pub fn set_ask(&self, ask: &str) {
+        let mut c = lock_cache(&self.read_seen);
+        c.graphics_min = proof_graphics_min(ask);
+        c.visual = visual_ask(ask);
+    }
+
+    /// Is this turn's ask about how something looks?
+    pub fn visual_ask(&self) -> bool {
+        lock_cache(&self.read_seen).visual
+    }
+
+    /// The fewest graphics the page must draw for this turn's ask.
+    pub fn graphics_min(&self) -> u32 {
+        lock_cache(&self.read_seen).graphics_min
     }
 
     /// Bytes of tool output this turn has taken so far.
@@ -16042,6 +16121,11 @@ pub enum Tool {
     /// cross-origin image in the subtree taints the canvas and is named so the caller can narrow
     /// the selector.
     Capture,
+    /// Look at the Diamond's own page as its owner sees it, with their theme and data, at a
+    /// desktop or a phone width: a capped picture, and for each target the model names (a
+    /// selector, or `text:` and the words on the element) its box, font, padding and colours.
+    /// The renderer is `capture`'s `in:"crystal"`, so there is one way a page is drawn.
+    CrystalLook,
     /// Put ONE decision to the user, as options they answer with a single tap.
     ///
     /// **The one thing a model could not do and a person does every day.**  Everything else a
@@ -17086,6 +17170,10 @@ impl Tool {
             // tool existed it had no way to make the picture from inside the fence. It draws its
             // own view to a PNG and hands that to a vision worker.
             Tool::Capture,
+            // Its page, looked at and measured as the owner sees it, before and after a visual
+            // change: the Life log daimon made every button 3.3 px shorter for "make the heights
+            // consistent" and said it was done, having never seen the page (9 Oct 2026).
+            Tool::CrystalLook,
             // Reading a scan or a photograph, the daimon's for the same reason `file_read`
             // is: a Diamond's book may be a PDF of scanned pages or a folder of photographed
             // documents, and a daimon that could open neither could not work over them.
@@ -17202,6 +17290,8 @@ impl Tool {
                 },
             Tool::Capture =>
                 vec![Self::capture_out(args_json)],
+            // Its picture lands inside the Diamond, where its daimon may always write.
+            Tool::CrystalLook => Vec::new(),
             Tool::FileMove =>
                 vec![res!(Self::arg(args_json, "path")), res!(Self::arg(args_json, "to"))],
             // A DOWNLOAD IS A WRITE. `to` was missing from this list until 2026-09-23 (re-check
@@ -17279,6 +17369,7 @@ impl Tool {
             // drawn leaves no file, so nothing is claimed for it; the app's view always writes one.
             Tool::Capture if Self::capture_in_crystal(args_json) => Vec::new(),
             Tool::Capture => vec![(Self::capture_out(args_json), PathClaim::Left)],
+            Tool::CrystalLook => Vec::new(),
             // A move states both halves, and the audit needs both: without the `Removed` half a
             // file moved away from a path an earlier call wrote would be reported as a write that
             // never happened.
@@ -17667,6 +17758,7 @@ impl Tool {
             Tool::FileFetch   => "file_fetch",
             Tool::FileShow    => "file_show",
             Tool::Capture     => "capture",
+            Tool::CrystalLook => "crystal_look",
             Tool::Ask         => "ask",
             Tool::SocialRead  => "social_read",
             Tool::SocialSend  => SOCIAL_SEND_TOOL,
@@ -17806,8 +17898,48 @@ impl Tool {
         if !png {
             req.push_str(r#","png":false"#);
         }
+        // A look's targets ride through to the page's shim, which measures each; a re-measure
+        // after an edit is handed the same arguments and so measures the same targets.
+        let look = extract_json_string_array(args_json, "targets").unwrap_or_default();
+        if !look.is_empty() {
+            let each: Vec<String> = look.iter().map(|t| fmt!("\"{}\"", json_escape(t))).collect();
+            req.push_str(&fmt!(r#","look":[{}]"#, each.join(",")));
+        }
         req.push('}');
         req
+    }
+
+    /// The `capture` arguments a `crystal_look` call stands for: one width, a capped picture, the
+    /// targets, and a picture path inside the Diamond `id`; or the refusal, in words, of targets
+    /// over the caps.
+    pub(crate) fn look_args(args_json: &str, id: &str) -> std::result::Result<String, String> {
+        let raw = extract_json_string_array(args_json, "targets").unwrap_or_default();
+        let targets: Vec<String> = raw.iter().map(|t| t.trim().to_string()).filter(|t| !t.is_empty()).collect();
+        if targets.is_empty() {
+            return Err("crystal_look needs 'targets': the selectors, or 'text:' and the words, \
+                of the parts to measure, e.g. [\".go\", \"text:Edit group\"].".to_string());
+        }
+        if targets.len() > LOOK_TARGETS_MAX {
+            return Err(fmt!("crystal_look measures at most {} targets a call, and was given {}. \
+                Name the ones the change is about.", LOOK_TARGETS_MAX, targets.len()));
+        }
+        if let Some(t) = targets.iter().find(|t| t.chars().count() > LOOK_TARGET_CHARS) {
+            return Err(fmt!("A crystal_look target is at most {} characters, and one is {}. \
+                Name the element more briefly.", LOOK_TARGET_CHARS, t.chars().count()));
+        }
+        let width = match extract_json_number(args_json, "width") {
+            Some(w) if w > 0 && w < 768 => LOOK_PHONE,
+            _                           => LOOK_DESK,
+        };
+        let each: Vec<String> = targets.iter().map(|t| fmt!("\"{}\"", json_escape(t))).collect();
+        Ok(fmt!(r#"{{"in":"crystal","width":{},"max_w":{},"path":"diamonds/{}/shots/look.png","targets":[{}]}}"#,
+            width, LOOK_MAX_W, json_escape(id), each.join(",")))
+    }
+
+    /// Does this call look at the Diamond's own page: `crystal_look`, or `capture` in:"crystal"?
+    pub fn looks_at_crystal(name: &str, args_json: &str) -> bool {
+        name == Tool::CrystalLook.name()
+            || (name == Tool::Capture.name() && Self::capture_in_crystal(args_json))
     }
 
     /// Does this call edit or write the Diamond's own page, `crystal.html` at the Diamond's top?
@@ -17865,7 +17997,7 @@ impl Tool {
                 let sel  = probe_sel_label(sel);
                 let what = if sel.is_empty() { "the outline".to_string() } else { fmt!("'{}'", sel) };
                 let px   = widths.iter().map(|w| fmt!("{} px", w)).collect::<Vec<_>>().join(" and ");
-                fmt!("After this edit, the same measurement ({}, {}):\n\n{}", what, px, tables.join("\n\n"))
+                fmt!("{} ({}, {}):\n\n{}", REMEASURE_HEAD, what, px, tables.join("\n\n"))
             },
             Err(why) => {
                 let why: String = why.split_whitespace().collect::<Vec<_>>().join(" ")
@@ -17928,6 +18060,7 @@ impl Tool {
             "file_fetch"   => Some(Tool::FileFetch),
             "file_show"    => Some(Tool::FileShow),
             "capture"      => Some(Tool::Capture),
+            "crystal_look" => Some(Tool::CrystalLook),
             "ask"          => Some(Tool::Ask),
             "social_read"  => Some(Tool::SocialRead),
             SOCIAL_SEND_TOOL => Some(Tool::SocialSend),
@@ -17972,17 +18105,18 @@ impl Tool {
             Tool::FileWrite   => "Create or overwrite a file in the workspace with the given content.",
             Tool::FileEdit    => "Replace exact, unique substrings in a workspace text file. Give either one 'old_string'/'new_string' pair, or 'edits' -- a list of such pairs applied in order, which is one round instead of many and is what to prefer. ALL OR NOTHING: if any pair fails to match, nothing at all is written and the reply names the ones that failed, so re-send only those. 'old_string' must be the file's own bytes -- file_read prefixes each line with its number and a TAB, so strip that from anything copied out of a read -- and must be unique; include surrounding text.",
             Tool::FileList    => "List the entries of a workspace directory. One directory, no recursion: to find files by name across a tree use file_glob, and to find files by their contents use file_search.",
-            Tool::FileSearch  => "Search file CONTENTS; each hit is 'path:line:text', a neighbour 'path-line-text'. THIS IS THE FIRST THING TO REACH FOR on any tree. 'query' is a regex; \"fixed\":true for literal text, \"ignore_case\":true to fold case. Narrow with \"glob\" ('**/*.rs') and \"path\"; \"context\" (or \"before\"/\"after\") adds neighbouring lines. ANY file size. At most 200 matches unless you raise \"limit\"; a stopped search says so and gives the \"offset\" to page with, and it names what it never opened -- read that before concluding anything is absent. .git, node_modules and target are skipped unless \"all\":true or you NAME one. Past twenty thousand directory entries it STOPS and says where: narrow 'path' and ask again. Inside a folder marked on this computer it runs there natively in ONE call; 'rg' or 'grep' through run buys none of that. Use run for a command that DOES something, this to find where to change.",
+            Tool::FileSearch  => "Search file CONTENTS; each hit is 'path:line:text', a neighbour 'path-line-text'. THIS IS THE FIRST THING TO REACH FOR on any tree. 'query' is a regex; \"fixed\":true for literal text, \"ignore_case\":true to fold case. Narrow with \"glob\" ('**/*.rs') and \"path\"; \"context\" (or \"before\"/\"after\") adds neighbouring lines. ANY file size. At most 200 matches unless you raise \"limit\"; a stopped search says so and gives the \"offset\" to page with, and it names what it never opened -- read that before concluding anything is absent. .git, node_modules and target are skipped unless \"all\":true or you NAME one. Past twenty thousand directory entries it STOPS and says where: narrow 'path' and ask again. Inside a folder added on this computer it runs there natively in ONE call; 'rg' or 'grep' through run buys none of that. Use run for a command that DOES something, this to find where to change.",
             Tool::Outline     => "Map a file: one row per function, method, type, section or heading -- 'start-end  kind  name', nested items indented -- in about a kilobyte for any size of file. Rust, JS/TS, Python, Markdown and Typst. Use it BEFORE reading a file you do not know, then file_read the region by 'offset'/'limit'. Ranges end where the next item begins.",
-            Tool::FileGlob    => "Find files by PATH without reading any: give a glob, get the matching paths, most recently modified first. Each line is the path, a TAB and the UTC mtime; a path whose storage keeps no time reads 'unknown' and sorts last. '*' matches within a segment, '**' any number of segments, '?' one character, '[a-z]' a set, '{a,b}' either. A pattern with no '/' matches the file NAME anywhere under 'path' ('*_test.rs'); one with a '/' matches the whole relative path ('src/**/*.rs'). This is 'where is X'; file_search is 'which lines say X'. A folder on this computer marked into this Diamond is walked there at native speed; a call spanning it and Daimond's own storage reports both. .git, .hg, .svn, node_modules and target are skipped unless \"all\":true or you NAME one; every other dotted directory is walked. Past twenty thousand entries it STOPS and names where it reached: narrow 'path' or the pattern rather than reading a short result as an absence.",
-            Tool::FileDelete  => "Delete ONE file; a folder is refused. With a folder open, this removes the file from the user's own disk and from every copy their sync reaches, so delete only what the user asked to go. Daimond keeps a copy they can restore for at least seven days, and refuses a delete it has no room to keep. It has no hand door: a path in a folder marked through the hand is an error, not a delete.",
+            Tool::FileGlob    => "Find files by PATH without reading any: give a glob, get the matching paths, most recently modified first. Each line is the path, a TAB and the UTC mtime; a path whose storage keeps no time reads 'unknown' and sorts last. '*' matches within a segment, '**' any number of segments, '?' one character, '[a-z]' a set, '{a,b}' either. A pattern with no '/' matches the file NAME anywhere under 'path' ('*_test.rs'); one with a '/' matches the whole relative path ('src/**/*.rs'). This is 'where is X'; file_search is 'which lines say X'. A folder added on this computer is walked there at native speed; a call spanning it and Daimond's own storage reports both. .git, .hg, .svn, node_modules and target are skipped unless \"all\":true or you NAME one; every other dotted directory is walked. Past twenty thousand entries it STOPS and names where it reached: narrow 'path' or the pattern rather than reading a short result as an absence.",
+            Tool::FileDelete  => "Delete ONE file; a folder is refused. With a folder open, this removes the file from the user's own disk and from every copy their sync reaches, so delete only what the user asked to go. Daimond keeps a copy they can restore for at least seven days, and refuses a delete it has no room to keep. It has no hand door: a path in a folder added through the hand is an error, not a delete.",
             Tool::FileRevert  => "Put ONE file back to how it was. ONLY WHEN THE USER ASKS to undo something -- never to walk back your own work. 'version' defaults to the state before the most recent change Daimond recorded, which is what 'undo that' means. Daimond keeps only what it changed itself, so a file changed outside Daimond, or one too large to keep, has nothing to go back to and this says so. Same write door as file_write; reverting is itself recorded.",
             Tool::FileMove    => "Move or rename a file or directory within the workspace.",
             Tool::DirCreate   => "Create a directory in the workspace, and any parent directories it needs.",
             Tool::ArtefactAdd => "Record that a file already in the workspace is an artefact of this Diamond, so it is listed with the work rather than only sitting in the folder. Use it for files the user put there, or found, or wrote themselves -- anything this Diamond produced is recorded without being asked. Recording a file does not read it: read it as well if what it says belongs in the crystal.",
             Tool::SocialRead  => "THIS IS HOW YOU SEE WHAT PEOPLE ARE SAYING ABOUT DAIMOND, and whether something has already been reported. Six views. 'proposals': what anybody has asked for or reported about Daimond itself -- bugs, requests, complaints -- newest first, each with its number, state and votes for and against. 'proposal': ONE in full with its discussion; give 'n'. 'notes': what was written on this device and not sent. 'messages': what other people sent this account. 'people': who this account can reach. 'feed': what the people this account follows have posted to their followers. SO WHEN THE USER REPORTS A DEFECT IN DAIMOND, OR ASKS FOR SOMETHING, THIS IS WHERE IT GOES: read the proposals to see whether somebody has already said it, then use social_send. There is no external issue tracker and no web page to fetch: this panel IS how something about Daimond gets reported, and reading it takes no permission.",
             Tool::SocialSend  => "Publish on Daimond's Social panel, in the user's name, where other people read it. Four acts. 'propose' opens one, with 'title' and 'body' -- this is how a defect in Daimond reaches the people who build it. 'vote' backs or opposes an open one: 'n' and 'd' as 'for', 'against' or 'withdraw'. 'comment' says something on one: 'n' and 'said'. 'feed_post' publishes 'body' to this account's own followers, and needs Daimond Pro. Read with social_read first, so you have the number and do not repeat a proposal already there. EVERY CALL IS PUT TO THE USER BEFORE IT GOES OUT: they see exactly what would be published and say yes or no, and the yes covers that one publication. Write it for them to read. If they decline, do not send it again -- say what you wanted to publish and why. A dispatched worker cannot publish at all: say in your report what should be published and let the daimon put it.",
-            Tool::Capture     => "Photograph the app's OWN current view to a PNG in the workspace, to LOOK at a change you made (your shell and workers cannot launch a browser). NAME THE SMALLEST SELECTOR THAT SHOWS THE CHANGE -- an '#id' or a specific class -- NEVER the whole page, '#chat-output' or the chat pane (over ~3000 elements is refused, naming the count). THE HAND-OFF: dispatch a vision-capable worker with the path; it file_reads it with \"as\":\"image\" and confirms the change appears and nothing else looks broken. If it does not report back the change is UNVERIFIED: say so, never infer a pass. YOUR DIAMOND'S PAGE is in a sandboxed frame no selector reaches: pass in:\"crystal\" to see it as a user does, drawn afresh (open or not, edits included) at phone 390 and desktop 1440 (or one 'width'): a PNG of the whole page and a TEXT TABLE per width (no selector: an outline of its main blocks with size, display, grid/flex and overflow; a selector: its matches). Use the table for any layout fault, not guesses from the CSS. Browser build only.",
+            Tool::Capture     => "Photograph the app's OWN current view to a PNG in the workspace, to LOOK at a change you made (your shell and workers cannot launch a browser). NAME THE SMALLEST SELECTOR THAT SHOWS THE CHANGE -- an '#id' or a specific class -- NEVER the whole page, '#chat-output' or the chat pane (over ~3000 elements is refused, naming the count). THE HAND-OFF: dispatch a vision-capable worker with the path; it file_reads it with \"as\":\"image\" and confirms the change appears and nothing else looks broken. If it does not report back the change is UNVERIFIED: say so, never infer a pass. YOUR DIAMOND'S PAGE is in a sandboxed frame no selector reaches: in:\"crystal\" draws it at 390 and 1440 with a TEXT TABLE of its blocks' size, display, grid/flex and overflow (a selector: its matches); to measure parts, crystal_look. Browser build only.",
+            Tool::CrystalLook => "Draw your Diamond's page as its owner sees it, your edits included, at 1440 (default) or 390, and MEASURE up to 8 'targets' (a CSS selector, or 'text:' and an element's words): box, font-size, line-height, weight, padding, colours, border, and a picture if you can see. Look BEFORE a visual edit and AFTER (an edit after a look re-measures by itself); answer with the difference, e.g. 'both 40 px; were 39 and 39'. Browser build only.",
             Tool::Ask         => "Put ONE decision to the user as options they answer with a single tap. THIS IS HOW YOU ASK THEM SOMETHING: a decision answered by typing is a decision put off, so reach for this wherever you would otherwise stop and ask which of these, or shall I go on. ONE at a time, never a list; where more follow, set 'n' and 'of'. Each option has a short 'label' (the button's words) and a 'means': what choosing it concretely does, with an example and the trade-off. 'recommend' must match one 'label' EXACTLY. 'it depends' is not an answer: say what it depends on and pick the branch you believe applies. 'why' is one sentence citing THEIR world -- their constraint, cost or users -- not a general virtue. 'if_silent' says what you will do if they answer nothing; they may also answer in their own words and reject every option. YOUR TURN ENDS WHEN YOU CALL THIS: do not restate the question afterwards. Their answer arrives next, opening 'Chose:' with the label or 'Other:' with words of their own.",
             Tool::FileShow    => "Put a workspace file on the user's screen, in Daimond's document panel beside the chat -- this is for showing them something; the other file tools only hand bytes to you. A PDF is drawn page by page by the browser's own viewer, so say 'it is on screen now', never 'I cannot display a PDF'. Pictures (PNG, JPEG, GIF, WebP, AVIF, HEIC, BMP, ICO, TIFF, SVG) are drawn, sound and video get a player, HTML is rendered, JSON becomes a tree, CSV and TSV a table, Markdown is rendered, and source opens in an editor the user can type in. A format with no viewer is shown as a paged hex dump naming it, so this never fails: never conclude Daimond cannot display things. It takes a PATH, not content: the panel reads the file, so call it again with the same path after you rewrite or recompile it. 'page' opens a PDF at a page. Show a file when they asked to see one, when you have just produced a document, or when looking beats describing.",
             Tool::SheetRead   => "Read a rectangle of an Excel spreadsheet (.xlsx) as a table. Give a 'path', optionally a 'sheet' by the name on its tab (the first sheet otherwise) and optionally a 'range' like 'A1:H40' (the first 100 rows otherwise). The result carries the column letters and the row numbers, so your next call can name exactly the range you now want. THE VALUE SHOWN IS THE ONE STORED IN THE FILE -- the number the person who wrote it saw. Formulas are NOT recalculated; the formulas inside the range are listed after the table, so you can see what produced a figure without being handed a different figure. Call file_read on a .xlsx first to learn what sheets it has and how big they are, then this to read the cells. A workbook is a compressed archive of XML and one sheet can be a hundred thousand rows, which is why this takes a range and file_read does not hand you the whole thing.",
@@ -18042,6 +18176,7 @@ impl Tool {
             Tool::FileFetch   => "Bring a file down from cloud storage onto this device.",
             Tool::FileShow    => "Put one of your files on the screen beside the chat.",
             Tool::Capture     => "Photograph its own view, or draw and measure its Diamond's page, to check a change it just made -- and show it to a worker that can see.",
+            Tool::CrystalLook => "Look at its Diamond's page as you see it, and measure the parts you asked about, before and after it changes them.",
             Tool::Ask         => "Ask you a question, with the answers as buttons.",
             Tool::SocialRead  => "Read the Social panel: what people have reported about Daimond, what is in this account's messages, and the feed of who it follows.",
             Tool::SocialSend  => "Report something about Daimond, vote on what somebody else has reported, or post to your followers -- with the user's say-so each time.",
@@ -18086,7 +18221,7 @@ impl Tool {
             Tool::FileWrite => r#"{"type":"object","properties":{"path":{"type":"string","description":"Workspace-relative file path, e.g. 'src/main.rs'; never absolute"},"content":{"type":"string","description":"Full file content"}},"required":["path","content"]}"#,
             Tool::FileEdit => r#"{"type":"object","properties":{"path":{"type":"string","description":"Workspace-relative path; never absolute"},"edits":{"type":"array","description":"The replacements, in order; each applies to the file as the one before it left it","items":{"type":"object","properties":{"old_string":{"type":"string","description":"Exact substring to replace; must be unique in the file"},"new_string":{"type":"string","description":"Replacement; empty deletes"}},"required":["old_string","new_string"]}},"old_string":{"type":"string","description":"Single-edit form, used when 'edits' is absent"},"new_string":{"type":"string","description":"Replacement, for the single-edit form"}},"required":["path"]}"#,
             Tool::FileList => r#"{"type":"object","properties":{"path":{"type":"string","description":"Workspace-relative directory (default '.')"}}}"#,
-            Tool::FileSearch => r#"{"type":"object","properties":{"query":{"type":"string","description":"Regular expression to search for, unless 'fixed' is true"},"path":{"type":"string","description":"Directory to search under (default '.')"},"glob":{"type":"string","description":"Only search files whose path matches this glob, e.g. '**/*.rs' or '*.{md,typ}'"},"fixed":{"type":"boolean","description":"Match 'query' as literal text, not a regex (default false)"},"ignore_case":{"type":"boolean","description":"Fold case when matching (default false)"},"before":{"type":"integer","description":"Lines of context before each match (default 0, maximum 20)"},"after":{"type":"integer","description":"Lines of context after each match (default 0, maximum 20)"},"context":{"type":"integer","description":"Lines of context either side of each match (default 0, maximum 20); sets both before and after"},"offset":{"type":"integer","description":"Skip this many matches before reporting any, to page past an earlier call's limit"},"limit":{"type":"integer","description":"Most matches to report (default 200, maximum 1000)"},"all":{"type":"boolean","description":"Search .git, .hg, .svn, node_modules and target as well (default false)"}},"required":["query"]}"#,
+            Tool::FileSearch => r#"{"type":"object","properties":{"query":{"type":"string","description":"Regular expression to search for, unless 'fixed' is true"},"path":{"type":"string","description":"Directory to search under (default '.')"},"glob":{"type":"string","description":"Only search files whose path matches this glob, e.g. '**/*.rs' or '*.{md,typ}'"},"fixed":{"type":"boolean","description":"Match 'query' as literal text, not a regex (default false)"},"ignore_case":{"type":"boolean","description":"Fold case when matching (default false)"},"before":{"type":"integer","description":"Context lines before each match (max 20)"},"after":{"type":"integer","description":"Context lines after each match (max 20)"},"context":{"type":"integer","description":"Context lines either side (max 20); sets before and after"},"offset":{"type":"integer","description":"Matches to skip, to page past an earlier call's limit"},"limit":{"type":"integer","description":"Most matches to report (default 200, maximum 1000)"},"all":{"type":"boolean","description":"Also search .git, .hg, .svn, node_modules and target"}},"required":["query"]}"#,
             Tool::Outline => r#"{"type":"object","properties":{"path":{"type":"string","description":"Workspace-relative file"},"depth":{"type":"integer","description":"Nesting levels to show below the top (default 1, maximum 6)"},"name":{"type":"string","description":"Only items whose name matches this regular expression"},"offset":{"type":"integer","description":"Skip this many rows, to page past an earlier limit"},"limit":{"type":"integer","description":"Most rows (default 400, maximum 2000)"}},"required":["path"]}"#,
             Tool::FileGlob => r#"{"type":"object","properties":{"pattern":{"type":"string","description":"Glob to match, e.g. '**/*_test.rs', '*.{md,typ}' or 'src/**/mod.rs'"},"path":{"type":"string","description":"Directory to search under (default '.')"},"limit":{"type":"integer","description":"Most paths to return (default 500, maximum 500)"},"all":{"type":"boolean","description":"Walk .git, .hg, .svn, node_modules and target as well (default false)"}},"required":["pattern"]}"#,
             Tool::FileDelete => r#"{"type":"object","properties":{"path":{"type":"string","description":"One file, never a folder"}},"required":["path"]}"#,
@@ -18097,17 +18232,18 @@ impl Tool {
             Tool::FileFetch => r#"{"type":"object","properties":{"path":{"type":"string","description":"Workspace-relative path of the file to bring down from cloud storage"}},"required":["path"]}"#,
             Tool::SocialRead => r#"{"type":"object","properties":{"view":{"type":"string","enum":["proposals","proposal","notes","messages","people","feed"],"description":"Which view to read. Defaults to 'proposals'."},"n":{"type":"integer","description":"Which proposal, for the 'proposal' view; the number it is listed under."},"limit":{"type":"integer","description":"How many records to answer with (default 12, most 50)."}},"required":[]}"#,
             Tool::SocialSend => r#"{"type":"object","properties":{"act":{"type":"string","enum":["propose","vote","comment","feed_post"],"description":"Open a new proposal, vote on one, comment on one, or post to your followers."},"title":{"type":"string","description":"For 'propose': ONE line saying what this is about, the line everybody reads first."},"body":{"type":"string","description":"For 'propose': what happened and what was expected instead, up to 20000 characters with the title. For 'feed_post': the words to publish, up to 4096 bytes."},"n":{"type":"integer","description":"For 'vote' and 'comment': the proposal's number, as social_read lists it."},"d":{"type":"string","enum":["for","against","withdraw"],"description":"For 'vote': which way. 'withdraw' takes back a vote this account already cast."},"said":{"type":"string","description":"For 'comment': what to say on the proposal."}},"required":["act"]}"#,
-            Tool::Ask => r#"{"type":"object","properties":{"question":{"type":"string","description":"The decision in ONE sentence of plain words, naming the thing it decides"},"options":{"type":"array","minItems":2,"maxItems":4,"items":{"type":"object","properties":{"label":{"type":"string","description":"The words on the button, short enough to sit beside the others"},"means":{"type":"string","description":"What choosing it concretely does -- what they see, get or pay -- with an example where one is possible, and the trade-off"}},"required":["label","means"]},"description":"Fewer is not a decision; more is a list."},"recommend":{"type":"string","description":"The label of the option you recommend, exactly"},"why":{"type":"string","description":"One sentence citing their own constraint, cost or users"},"if_silent":{"type":"string","description":"What you will do if they answer nothing"},"n":{"type":"integer","description":"This is decision n of several. Omit for a single decision."},"of":{"type":"integer","description":"How many decisions follow in all, including this one"}},"required":["question","options","recommend","why","if_silent"]}"#,
+            Tool::Ask => r#"{"type":"object","properties":{"question":{"type":"string","description":"The decision in ONE sentence of plain words, naming the thing it decides"},"options":{"type":"array","minItems":2,"maxItems":4,"items":{"type":"object","properties":{"label":{"type":"string","description":"The words on the button, short enough to sit beside the others"},"means":{"type":"string","description":"What choosing it concretely does -- what they see, get or pay -- with an example where one is possible, and the trade-off"}},"required":["label","means"]},"description":"Fewer is not a decision; more is a list."},"recommend":{"type":"string","description":"The label of the option you recommend, exactly"},"why":{"type":"string","description":"One sentence citing their own constraint, cost or users"},"if_silent":{"type":"string","description":"What you will do if they answer nothing"},"n":{"type":"integer","description":"Which decision of several this is; omit for one."},"of":{"type":"integer","description":"How many decisions in all"}},"required":["question","options","recommend","why","if_silent"]}"#,
             Tool::FileShow => r#"{"type":"object","properties":{"path":{"type":"string","description":"Workspace-relative path of the file to put on screen, e.g. 'notes/report.pdf'; never absolute"},"page":{"type":"integer","description":"Which page to open a PDF at, 1-based. Omit for the start of the document."}},"required":["path"]}"#,
-            Tool::Capture => r#"{"type":"object","properties":{"selector":{"type":"string","description":"ALMOST ALWAYS GIVE THIS: the SMALLEST element that shows the change ('#id' or a specific selector). With in:\"crystal\", none means the page's whole outline."},"in":{"type":"string","enum":["crystal"],"description":"\"crystal\": your Diamond's own page."},"width":{"type":"integer","description":"Viewport px for in:\"crystal\"; default 390 and 1440."},"path":{"type":"string","description":"Workspace-relative PNG path. Default 'dev/shots/self.png'; with in:\"crystal\", 'diamonds/<your id>/shots/crystal.png' plus the width."},"max_w":{"type":"integer","description":"Cap the picture's width in px (default 1600)."},"background":{"type":"string","description":"CSS colour behind a see-through view."}},"required":[]}"#,
+            Tool::Capture => r#"{"type":"object","properties":{"selector":{"type":"string","description":"ALMOST ALWAYS GIVE THIS: the SMALLEST element showing the change. With in:\"crystal\", none outlines the page."},"in":{"type":"string","enum":["crystal"],"description":"\"crystal\": your Diamond's own page."},"width":{"type":"integer","description":"in:\"crystal\" viewport px (default 390 and 1440)."},"path":{"type":"string","description":"Workspace-relative PNG path (default 'dev/shots/self.png')."},"max_w":{"type":"integer","description":"Picture width cap, px (default 1600)."},"background":{"type":"string","description":"CSS colour behind a see-through view."}},"required":[]}"#,
+            Tool::CrystalLook => r#"{"type":"object","properties":{"targets":{"type":"array","maxItems":8,"items":{"type":"string"},"description":"'.go' or 'text:Edit group'."},"width":{"type":"integer","enum":[1440,390]}},"required":["targets"]}"#,
             Tool::SheetRead => r#"{"type":"object","properties":{"path":{"type":"string","description":"Workspace-relative path of the .xlsx, e.g. 'books/ledger.xlsx'; never absolute"},"sheet":{"type":"string","description":"Which sheet, by the name on its tab. Omit for the first sheet; file_read on the workbook lists the names."},"range":{"type":"string","description":"Which cells, like 'A1:H40'. Omit for the first 100 rows. A range larger than the sheet is clipped to it rather than refused."}},"required":["path"]}"#,
             Tool::DocEdit => r#"{"type":"object","properties":{"path":{"type":"string","description":"Workspace-relative path of the .docx or .odt, e.g. 'notes/report.docx'; never absolute"},"edits":{"type":"array","description":"The replacements to make, in order. Each is applied to the document as the one before it left it.","items":{"type":"object","properties":{"find":{"type":"string","description":"The exact text to look for, as the document holds it"},"replace":{"type":"string","description":"What to put in its place. Empty removes the text."},"nth":{"type":"integer","description":"Which occurrence to change, counted from 1 through the whole document. Omit to change every one."}},"required":["find","replace"]}}},"required":["path","edits"]}"#,
             Tool::SheetWrite => r#"{"type":"object","properties":{"path":{"type":"string","description":"Workspace-relative path of the .xlsx or .ods, e.g. 'books/ledger.xlsx'; never absolute"},"edits":{"type":"array","description":"The cells to write.","items":{"type":"object","properties":{"sheet":{"type":"string","description":"Which sheet, by the name on its tab. Omit for the first sheet."},"ref":{"type":"string","description":"Which cell, like 'B2' or 'AC14'"},"value":{"type":"string","description":"What to put in the cell, as a person would type it. '' empties it."},"formula":{"type":"string","description":"A formula in the ordinary A1 form, e.g. '=B2*C2'. Give this or 'value', not both unless you know the cached value is right."}},"required":["ref"]}}},"required":["path","edits"]}"#,
             Tool::Shell => r#"{"type":"object","properties":{"command":{"type":"string","description":"Shell command to run"},"max_bytes":{"type":"integer","description":"The most bytes of the command's output this result may carry (default 16000, maximum 80000). Past the default the result is cut to its head and its tail and says so; set this only when you have been told the size and have decided the whole of it is worth the context."}},"required":["command"]}"#,
-            Tool::Verify => r#"{"type":"object","properties":{"name":{"type":"string","description":"A repository verifier's short name ('graph' for dev/verify_graph.mjs): letters, digits and underscores, never a path. LEAVE IT OUT for this project's own check."},"cwd":{"type":"string","description":"Project check: workspace-relative directory to verify (default: this turn's folder)"},"max_bytes":{"type":"integer","description":"Project check: most bytes of output to carry (default 16000, maximum 80000)"},"break":{"type":"string","description":"Run the clean pass and this ONE declared break instead of all of them; any other string is refused, and the refusal lists the declared ones."},"clean_only":{"type":"boolean","description":"Skip every break; the clean pass alone. NOT PROVEN, not evidence: use it to see if something is broken, never to say it works."},"world":{"type":"boolean","description":"Stand a dev world (default: yes if the verifier imports dev/harness.mjs); false if it starts its own servers."},"timeout_ms":{"type":"integer","description":"Budget in ms for the WHOLE sequence -- clean run plus every break (default 1200000, maximum 7200000). A break the budget does not reach is reported as never run."}},"required":[]}"#,
+            Tool::Verify => r#"{"type":"object","properties":{"name":{"type":"string","description":"A repository verifier's short name ('graph' for dev/verify_graph.mjs): letters, digits and underscores, never a path. LEAVE IT OUT for this project's own check."},"cwd":{"type":"string","description":"Project check: workspace-relative directory to verify (default: this turn's folder)"},"max_bytes":{"type":"integer","description":"Project check: output bytes carried (default 16000, max 80000)"},"break":{"type":"string","description":"Run the clean pass and only this ONE declared break; an undeclared one is refused with the list."},"clean_only":{"type":"boolean","description":"The clean pass alone. NOT PROVEN: it may show a fault, never that it works."},"world":{"type":"boolean","description":"Stand a dev world (default: yes if the verifier imports dev/harness.mjs); false if it starts its own servers."},"timeout_ms":{"type":"integer","description":"Budget in ms for the WHOLE sequence -- clean run plus every break (default 1200000, maximum 7200000). A break the budget does not reach is reported as never run."}},"required":[]}"#,
             Tool::Runs => r#"{"type":"object","properties":{"stop":{"type":"string","description":"Stop this run. It is the IDENTIFIER from this tool's own listing, such as 'run-1-bash' -- never a process id, never a program name and never a pattern. Leave it out to list without stopping anything."},"signal":{"type":"string","description":"Which signal to send with 'stop': 'term' to ask it to stop (the default), 'kill' to insist, 'int' to interrupt it as Ctrl-C would."},"read":{"type":"string","description":"Hand over the output being held for this run from before the page reloaded. The listing names which runs have any. It is handed over once and then let go, so read it before stopping that run."}},"required":[]}"#,
-            Tool::Serve => r#"{"type":"object","properties":{"act":{"type":"string","enum":["start","stop","list"],"description":"Default 'list'"},"path":{"type":"string","description":"For 'start': workspace-relative folder to serve, inside a folder marked on this computer"},"port":{"type":"integer","description":"For 'start': 1024-65535 (default 8800 and up)"},"id":{"type":"string","description":"For 'stop': the identifier 'start' or 'list' gave"}},"required":[]}"#,
-            Tool::Run => r#"{"type":"object","properties":{"argv":{"type":"array","items":{"type":"string"},"description":"The program and each argument as a separate element, e.g. [\"cargo\",\"test\"]. Never a shell command line."},"cwd":{"type":"string","description":"Workspace-relative directory to run in (default: this Diamond's own directory). Never absolute."},"stdin":{"type":"string","description":"Text written to the command's standard input, then closed"},"timeout_ms":{"type":"integer","description":"Hard limit in milliseconds (default 120000, maximum 900000)"},"max_bytes":{"type":"integer","description":"Most bytes of output to carry (default 16000, maximum 80000)."}},"required":["argv"]}"#,
+            Tool::Serve => r#"{"type":"object","properties":{"act":{"type":"string","enum":["start","stop","list"],"description":"Default 'list'"},"path":{"type":"string","description":"For 'start': workspace-relative folder to serve, inside a folder added on this computer"},"port":{"type":"integer","description":"For 'start': 1024-65535 (default 8800 and up)"},"id":{"type":"string","description":"For 'stop': the identifier 'start' or 'list' gave"}},"required":[]}"#,
+            Tool::Run => r#"{"type":"object","properties":{"argv":{"type":"array","items":{"type":"string"},"description":"The program, then each argument separately."},"cwd":{"type":"string","description":"Workspace-relative directory to run in (default: this Diamond's own directory). Never absolute."},"stdin":{"type":"string","description":"Text written to the command's standard input, then closed"},"timeout_ms":{"type":"integer","description":"Hard limit, ms (default 120000, max 900000)"},"max_bytes":{"type":"integer","description":"Output bytes carried (default 16000, max 80000)."}},"required":["argv"]}"#,
             Tool::SpawnAgent => r#"{"type":"object","properties":{"name":{"type":"string","description":"Short label for the agent, e.g. 'research-opfs'"},"task":{"type":"string","description":"The complete, self-contained instruction for the agent. It cannot see this conversation, so say everything it needs."}},"required":["name","task"]}"#,
             Tool::Gather => r#"{"type":"object","properties":{"names":{"type":"array","items":{"type":"string"},"description":"Worker names. Omit for every one this turn started and has not gathered."},"timeout_s":{"type":"integer","description":"Seconds to wait before answering with what has finished, 10..600. Default 600."},"partial":{"type":"boolean","description":"Answer at the FIRST report, not waiting for all. Default false."}}}"#,
             Tool::WebOpen => r#"{"type":"object","properties":{"url":{"type":"string","description":"Absolute URL of the page to show, including the https:// scheme"}},"required":["url"]}"#,
@@ -18248,6 +18384,9 @@ impl Tool {
                 "Tool 'capture' photographs the app's own view by drawing the browser DOM to a \
                 picture; this is the native build, which has no page to photograph.";
                 Unimplemented)),
+            Tool::CrystalLook => Err(err!(
+                "Tool 'crystal_look' draws a Diamond's page in the browser; this is the native \
+                build, which has no page to draw."; Unimplemented)),
             Tool::Ask        => Err(err!(
                 "Tool 'ask' draws a question card in the browser page, with buttons somebody \
                 taps; this is the native build, which has neither. Put the question in your \
@@ -19062,17 +19201,100 @@ impl Tool {
     /// [`ToolRegistry::charge`] charges the whole result.
     #[cfg(target_arch = "wasm32")]
     pub async fn execute(&self, args_json: &str, ctx: &ToolContext) -> Outcome<MessageContent> {
-        let out = res!(self.execute_inner(args_json, ctx).await);
-        let probe = match self.remeasure_owed(args_json, ctx, &out.as_text()) {
-            Some(p) => p,
-            None    => return Ok(out),
-        };
-        let note = if ctx.spend_is_short() {
-            Self::crystal_remeasure_skipped()
+        let out  = res!(self.execute_inner(args_json, ctx).await);
+        let said = out.as_text();
+        // THE LOAD PROOF (K1): every edit of the page or its data that lands is read from outside,
+        // as the owner sees it, and a failure is a must-fix line here.  One line, so it runs
+        // whatever the turn has spent.
+        let proof = if Self::edit_landed(&said) && self.is_crystal_write(args_json, ctx) {
+            Self::crystal_proof(ctx).await
         } else {
-            Self::crystal_remeasure(&probe, ctx).await
+            String::new()
         };
-        Ok(MessageContent::text(fmt!("{}\n\n{}", out.as_text().trim_end(), note)))
+        let note = match self.remeasure_owed(args_json, ctx, &said) {
+            Some(_) if ctx.spend_is_short() => Self::crystal_remeasure_skipped(),
+            Some(probe)                     => Self::crystal_remeasure(&probe, ctx).await,
+            None                            => String::new(),
+        };
+        if proof.is_empty() && note.is_empty() {
+            return Ok(out);
+        }
+        let mut text = said.trim_end().to_string();
+        for add in [note, proof] {
+            if !add.is_empty() {
+                text.push_str("\n\n");
+                text.push_str(&add);
+            }
+        }
+        Ok(MessageContent::text(text))
+    }
+
+    /// Take the load proof of the Diamond's page as stored now, keep it for the turn's end, mark it
+    /// passed when it passes, and answer the line the edit's result carries.
+    #[cfg(target_arch = "wasm32")]
+    async fn crystal_proof(ctx: &ToolContext) -> String {
+        let id = match ctx.daimon() {
+            Some(i) => i,
+            None    => return String::new(),
+        };
+        let (data, page) = match Self::crystal_inputs(&id).await {
+            Ok(pair) => pair,
+            Err(why) => {
+                let p = CrystalProof { pass: false, why: fmt!("the page cannot be drawn, because {}",
+                    why.trim_end_matches('.')), ..Default::default() };
+                ctx.note_proof(p.clone());
+                return p.line();
+            },
+        };
+        let req = Self::crystal_proof_req(&id, &page, &data, ctx.graphics_min());
+        let shot = match crate::wasm::shot::capture(&req).await {
+            Ok(s)  => s,
+            // The proof was not taken, which is not the page failing it: the driver is missing or
+            // the page could not be drawn off screen, and the line says which.
+            Err(e) => return fmt!("Load proof not taken: {}", e.plain()),
+        };
+        let mut p = match CrystalProof::from_driver(&shot.proof, shot.debug) {
+            Some(p) => p,
+            None    => return "Load proof not taken: this build's crystal driver gives no proof.".to_string(),
+        };
+        p.before = crate::wasm::diamond::last_passed(&id).await.map(|m| m.debug);
+        if p.must_fix().is_none() {
+            if let Err(e) = crate::wasm::diamond::mark_passed(&id, 0, &page, &data, p.debug).await {
+                crate::wasm::entry::trail("CRYSTAL PASS NOT MARKED", &fmt!("{}: {}", id, e));
+            }
+        }
+        ctx.note_proof(p.clone());
+        match p.must_fix() {
+            Some(_) => fmt!("{}{}", p.line(), page_trace_block(&shot.trace).trim_end()),
+            None    => p.line(),
+        }
+    }
+
+    /// The request for the load proof: the page drawn at a desktop width, no picture, the proof
+    /// asked for, and the fewest graphics the ask wants.
+    #[cfg(any(target_arch = "wasm32", test))]
+    fn crystal_proof_req(id: &str, page: &str, data: &str, graphics_min: u32) -> String {
+        let mut req = Self::crystal_req("{}", id, page, data, PROOF_WIDTH, false);
+        req.pop();
+        req.push_str(&fmt!(r#","proof":true,"graphics_min":{}}}"#, graphics_min));
+        req
+    }
+
+    /// Does this call edit or write the Diamond's page or its data, at the Diamond's top?
+    #[cfg(any(target_arch = "wasm32", test))]
+    fn is_crystal_write(&self, args_json: &str, ctx: &ToolContext) -> bool {
+        if !matches!(self, Tool::FileEdit | Tool::FileWrite) || ctx.daimon().is_none() {
+            return false;
+        }
+        let raw = match extract_json_string(args_json, "path") {
+            Some(p) => p,
+            None    => return false,
+        };
+        match Self::scoped(ctx, &raw) {
+            Ok(path) => crystal_page_of(&path) == ctx.daimon()
+                || diamond_file_of(&path, CRYSTAL_DATA_FILE) == ctx.daimon(),
+            Err(_)   => false,
+        }
     }
 
     /// The browser transport's tools, before an edit of a Diamond's page is measured again.
@@ -19412,6 +19634,30 @@ impl Tool {
                         part of one: nothing here keeps copies."))),
                 };
                 let at = extract_json_number(args_json, "version");
+                // THE CRYSTAL'S TWO FILES KEEP THE CRYSTAL CHAIN, not rows in the store, so the
+                // store never had a copy of them and every revert of the page the daimon had just
+                // written said so (fix 7, 2026-10-09). They go back from the chain; the turn's
+                // end records what lands as a version of its own, so this is undoable too.
+                if let Some(half) = crate::wasm::diamond::crystal_half(&dia, &path) {
+                    let (n, text) = match res!(crate::wasm::diamond::crystal_undo_target(
+                        &dia, half, at).await)
+                    {
+                        Some(t) => t,
+                        None    => return Ok(MessageContent::text(refusal_line(&fmt!(
+                            "'{}' has no earlier version to go back to: Daimond's history of it \
+                            starts where it stands now.", raw)))),
+                    };
+                    res!(crate::wasm::opfs::write_licensed(ctx.root, &lic, text.as_bytes()).await);
+                    lock_cache(&ctx.read_seen).seen.insert(&stored_in(ctx, &path), &path,
+                        content_hash(text.as_bytes()));
+                    let shipped = if text.is_empty() && half == crate::wasm::diamond::CrystalHalf::Page {
+                        " (no page of its own: the Diamond shows the page Daimond ships)"
+                    } else {
+                        ""
+                    };
+                    return Ok(MessageContent::text(fmt!("Put {} back to how it stood at version \
+                        {}: {} bytes{}.", raw, n, text.len(), shipped)));
+                }
                 // WHICH FILESYSTEM, asked once and before anything -- because it decides both
                 // where the file is written and what the store knows the file BY: a file on this
                 // computer is recorded under its absolute path.
@@ -19825,14 +20071,30 @@ impl Tool {
                     stack.push(res!(Self::scoped(ctx, st)));
                 }
                 'walk: while let Some(dir) = stack.pop() {
-                    let mut entries = match crate::wasm::opfs::list_dir(ctx.root, &dir).await {
-                        Ok(e)  => e,
+                    let (dir, mut entries) = match crate::wasm::opfs::list_dir(ctx.root, &dir).await {
+                        Ok(e)  => (dir, e),
                         // NOT the same as a directory holding nothing, and until 2026-08-25 this
                         // arm could not tell the reader which it had met. A start on the machine
                         // that browser storage does not hold fails here on the first turn of the
                         // walk, and the search then answered "No matches" about a tree it had
                         // never opened.
-                        Err(_) => { unopened += 1; continue; },
+                        //
+                        // A START THAT IS A FILE is searched as that file, walked as its folder
+                        // holding only it: see the native arm (finding 4, 2026-10-08).
+                        Err(_) => {
+                            let (up, leaf) = match dir.rfind('/') {
+                                Some(i) => (dir[..i].to_string(), dir[i + 1..].to_string()),
+                                None    => (String::new(), dir.clone()),
+                            };
+                            let hit = match crate::wasm::opfs::list_dir(ctx.root, &up).await {
+                                Ok(es) => es.into_iter().find(|(n, d, _)| !*d && *n == leaf),
+                                Err(_) => None,
+                            };
+                            match hit {
+                                Some(e) => (up, vec![e]),
+                                None    => { unopened += 1; continue; },
+                            }
+                        },
                     };
                     let here = if strip.is_empty() {
                         dir.clone()
@@ -20072,11 +20334,14 @@ impl Tool {
                 // was seen on -- a `**` pattern over an open machine folder, one round trip per
                 // entry, and a turn that never ended.
                 let mut budget = WalkBudget::new();
-                let mut stack: Vec<String> = Vec::new();
+                // Each directory with the start its walk came from, which a '/' pattern is read
+                // against as well as the root ([`glob_hits`]).
+                let mut stack: Vec<(String, String)> = Vec::new();
                 for st in starts.iter().rev() {
-                    stack.push(res!(Self::scoped(ctx, st)));
+                    let at = res!(Self::scoped(ctx, st));
+                    stack.push((at.clone(), at));
                 }
-                'walk: while let Some(dir) = stack.pop() {
+                'walk: while let Some((dir, from)) = stack.pop() {
                     let mut entries = match crate::wasm::opfs::list_dir_stamped(ctx.root, &dir).await {
                         Ok(e)  => e,
                         // See the same arm in `Tool::FileSearch`: a directory that will not open
@@ -20099,7 +20364,7 @@ impl Tool {
                                 skipped += 1;
                                 continue;
                             }
-                            stack.push(child);
+                            stack.push((child, from.clone()));
                             continue;
                         }
                         let disp = if strip.is_empty() {
@@ -20112,7 +20377,7 @@ impl Tool {
                             refused += 1;
                             continue;
                         }
-                        if glob.matches(&disp) {
+                        if glob_hits(&glob, &disp, &child, &from) {
                             // Milliseconds from the browser, nanoseconds in the hit, so both arms
                             // sort on one scale and a build's worth of files written in the same
                             // second keeps whatever order the platform can actually distinguish.
@@ -20157,6 +20422,16 @@ impl Tool {
             Tool::Capture if Self::capture_in_crystal(args_json) =>
                 return Self::capture_crystal(args_json, ctx).await,
             Tool::Capture  => Self::capture_view(args_json, ctx).await,
+            // The same drawing as `capture` in:"crystal", asked for the targets alone.
+            Tool::CrystalLook => return match ctx.daimon() {
+                None     => Ok(MessageContent::text(refusal_line(
+                    "crystal_look looks at a Diamond's own page, and this turn is not working \
+                    inside a Diamond, so there is no page to look at."))),
+                Some(id) => match Self::look_args(args_json, &id) {
+                    Ok(req)  => Self::capture_crystal(&req, ctx).await,
+                    Err(why) => Ok(MessageContent::text(refusal_line(&why))),
+                },
+            },
             Tool::Ocr      => return Self::ocr(args_json, ctx).await,
             Tool::Ask      => return Self::ask(args_json, ctx).await,
             Tool::SocialRead => Self::social_read(args_json, ctx).await,
@@ -22336,7 +22611,7 @@ impl Tool {
                     None => return Ok(MessageContent::text(refusal_line(&fmt!(
                         "file_move: '{}' is a folder on this computer and '{}' is not in \
                         one, so this would move a file out of the filesystem it is in. \
-                        Move it to a path inside a folder the user marked in.",
+                        Move it to a path inside a folder the user added.",
                         raw, to)))),
                 };
                 // WHAT THE MOVE CARRIES, read through the hand and its room reserved before
@@ -22538,11 +22813,15 @@ impl Tool {
         let mut text   = String::new();
         let mut landed = Vec::new();
         let mut pics   = Vec::new();
+        let mut trace  = String::new();
         for (i, (w, raw)) in outs.iter().enumerate() {
             let req  = Self::crystal_req(args_json, &id, &page, &data, *w, true);
             let shot = res!(crate::wasm::shot::capture(&req).await);
             text.push_str(&shot.table);
             text.push_str("\n\n");
+            if trace.is_empty() {
+                trace = shot.trace.clone();
+            }
             if shot.png.is_empty() {
                 continue;   // the table says why there is no picture at this width
             }
@@ -22554,6 +22833,9 @@ impl Tool {
             landed.push(fmt!("{} ({}x{} px, {} bytes)", path, shot.w, shot.h, shot.png.len()));
             pics.push((*w, path.clone(), shot.png));
         }
+        // K3: what the page said while it drew, which is where a page that shows the wrong thing
+        // says why.
+        text.push_str(&page_trace_block(&trace));
         if landed.is_empty() {
             return Ok(MessageContent::text(text.trim_end().to_string()));
         }
@@ -22621,7 +22903,12 @@ impl Tool {
             Some(i) => i,
             None    => return String::new(),
         };
-        let sel    = extract_json_string(probe, "selector").unwrap_or_default();
+        let look   = extract_json_string_array(probe, "targets").unwrap_or_default();
+        let sel    = if look.is_empty() {
+            extract_json_string(probe, "selector").unwrap_or_default()
+        } else {
+            look.join(", ")
+        };
         let widths: Vec<u32> = Self::capture_outs(probe, &id).into_iter().map(|o| o.0).collect();
         let (data, page) = match Self::crystal_inputs(&id).await {
             Ok(pair) => pair,
@@ -24219,9 +24506,19 @@ impl Tool {
             }
         }
         'walk: while let Some(dir) = stack.pop() {
-            let entries = match Self::sorted_entries(&dir) {
-                Some(e) => e,
-                None    => { unopened += 1; continue; },
+            let (dir, entries) = match Self::sorted_entries(&dir) {
+                Some(e) => (dir, e),
+                // A START THAT IS A FILE IS SEARCHED AS THAT FILE: it is walked as its folder
+                // holding only it.  It used to count as a directory that would not open, and the
+                // answer was "No matches ... 0 file(s) searched" about a file nobody read (the
+                // Ontheism crystal, 2026-10-08, finding 4).
+                None => match (dir.is_file(), dir.parent(), dir.file_name()) {
+                    (true, Some(up), Some(leaf)) => {
+                        let name = leaf.to_string_lossy().into_owned();
+                        (up.to_path_buf(), vec![(name, dir.clone(), false)])
+                    },
+                    _ => { unopened += 1; continue; },
+                },
             };
             let here = ctx.workspace.display_rel(&dir);
             // Sub-directories are pushed in reverse so they pop in name order, which makes the
@@ -24364,14 +24661,18 @@ impl Tool {
         // The bound on the WALK.  `limit` bounds what comes back, which on a `**` pattern over a
         // machine folder is a handful of paths found by looking at everything there is.
         let mut budget = WalkBudget::new();
-        let mut stack: Vec<std::path::PathBuf> = Vec::new();
+        // Each directory with the start its walk came from ([`glob_hits`]).
+        let mut stack: Vec<(std::path::PathBuf, String)> = Vec::new();
         for st in starts.iter().rev() {
             match ctx.workspace.resolve(st) {
-                Ok(p)  => stack.push(p),
+                Ok(p)  => {
+                    let from = ctx.workspace.display_rel(&p);
+                    stack.push((p, from));
+                },
                 Err(e) => return Err(e),
             }
         }
-        'walk: while let Some(dir) = stack.pop() {
+        'walk: while let Some((dir, from)) = stack.pop() {
             let here = ctx.workspace.display_rel(&dir);
             let entries = match Self::sorted_entries(&dir) {
                 Some(e) => e,
@@ -24386,7 +24687,7 @@ impl Tool {
                         skipped += 1;
                         continue;
                     }
-                    stack.push(p);
+                    stack.push((p, from.clone()));
                     continue;
                 }
                 let rel = ctx.workspace.display_rel(&p);
@@ -24398,7 +24699,7 @@ impl Tool {
                     refused += 1;
                     continue;
                 }
-                if !glob.matches(&rel) {
+                if !glob_hits(&glob, &rel, &rel, &from) {
                     continue;
                 }
                 // Nanoseconds since the epoch, and `None` where the platform will not say -- which
@@ -24791,7 +25092,7 @@ impl Tool {
                         "Refused: this chat's workspace holds nothing on this computer, so there \
                         is nowhere for a command to run. Your own working folder is in Daimond's \
                         storage, which is not a place on this computer. Tell the user which folder \
-                        the command needs and ask them to mark it into this chat's workspace with the + \
+                        the command needs and ask them to add it to this chat's workspace with the + \
                         in the Workspace group; once it is in, you may work in it freely.")));
                 }
                 if d.is_empty() && ctx.is_scoped() {
@@ -24833,7 +25134,7 @@ impl Tool {
                 return Ok(Exec::Refused(fmt!(
                     "Refused: '{}' is your own working folder, which is in Daimond's storage and \
                     not a place on this computer, so no command can run there. Run in a folder \
-                    the user marked into this chat's workspace, or ask them to mark one in with the + \
+                    the user added to this chat's workspace, or ask them to add one with the + \
                     in the Workspace group.", cwd_rel)));
             }
             return Ok(Exec::Refused(fmt!(
@@ -25882,7 +26183,7 @@ impl Tool {
             Some(p) => p,
             None    => return Ok(refusal_line(
                 "serve 'start' needs the 'path' of the folder to serve, workspace-relative and \
-                inside a folder marked on this computer.")),
+                inside a folder on this computer added to the workspace.")),
         };
         // A WORKER NEVER SERVES. Nobody is reading its transcript, so nobody would see the URL,
         // and its network is withheld in any case -- said as its own sentence rather than let
@@ -25900,7 +26201,7 @@ impl Tool {
             Reach::Storage     => return Ok(refusal_line(&fmt!(
                 "'{}' is in Daimond's storage, not on this computer, so nothing can listen for \
                 it. A single HTML file in the workspace can be shown with web_open('{}'); to \
-                serve a FOLDER, ask the user to mark one on this computer into this Diamond.",
+                serve a FOLDER, ask the user to add one on this computer with the + in the Workspace group.",
                 raw, raw))),
             Reach::Machine { abs, .. } => {
                 // The network question, asked before anything is composed: a turn that has read
@@ -27712,16 +28013,14 @@ impl ToolRegistry {
             // skip both.
             (true, true)   => return out,
             (true, false)  =>
-                "\n[budget] This turn has taken all the output it can carry, so results from \
-                here are cut to their head and tail. It is not stopped, and a question whose \
+                "\n[budget] Results are being narrowed from here, and the turn continues. A question whose \
                 ANSWER is small still arrives whole: grep -n for a name, sed -n for a line range, \
                 wc -l for a count. A whole file will not arrive.",
             (false, true)  =>
-                "\n[budget] And this turn has taken most of the output it can carry, so the \
-                narrower question just named is the one to ask next as well, not only for this \
-                file.",
+                "\n[budget] Results are being narrowed and the turn continues. The narrower question \
+                just named is the one to ask next as well, not only for this file.",
             (false, false) =>
-                "\n[budget] This turn has taken most of the output it can carry. Ask for the \
+                "\n[budget] Results are being narrowed from here, and the turn continues. Ask for the \
                 part you need from here -- grep -n for a name, sed -n for a line range, wc -l for \
                 a count -- rather than for a whole file, which will be cut.",
         };
@@ -27750,6 +28049,64 @@ mod tests {
     use crate::llm::parse_json_string_array;
 
     use oxedyne_fe2o3_jdat::prelude::*;
+
+    // ── crystal_look ─────────────────────────────────────────────
+
+    /// 9 Oct 2026, Life log: a daimon asked to make the button heights consistent edited the CSS
+    /// without ever seeing the page.  `crystal_look` is offered to a daimon, measures only what it
+    /// is asked about, and is capped in targets and picture size.
+    #[test]
+    fn test_crystal_look_is_a_daimon_tool_with_capped_targets_and_picture_00() {
+        assert_eq!(Tool::from_name("crystal_look"), Some(Tool::CrystalLook));
+        assert_eq!(Tool::CrystalLook.name(), "crystal_look");
+        assert!(Tool::daimon().contains(&Tool::CrystalLook), "a daimon cannot look at its page");
+        let schema = Tool::CrystalLook.parameters();
+        assert!(schema.contains(r#""maxItems":8"#) && schema.contains(r#""enum":[1440,390]"#), "{}", schema);
+        assert!(schema.contains(r#""required":["targets"]"#), "{}", schema);
+        let says = Tool::CrystalLook.description();
+        assert!(says.contains("BEFORE") && says.contains("AFTER") && says.contains("were 39 and 39"), "{}", says);
+        assert!(Tool::CrystalLook.path_claims("{}").is_empty());
+
+        let req = match Tool::look_args(r#"{"targets":[".go"," text:Log it "]}"#, "d1") {
+            Ok(r)  => r,
+            Err(e) => panic!("two targets refused: {}", e),
+        };
+        assert_eq!(extract_json_number(&req, "width"), Some(LOOK_DESK as _));
+        assert_eq!(extract_json_number(&req, "max_w"), Some(LOOK_MAX_W as _));
+        assert_eq!(extract_json_string_array(&req, "targets"),
+            Some(vec![".go".to_string(), "text:Log it".to_string()]));
+        assert!(Tool::capture_in_crystal(&req), "a look must draw the Diamond's page, not the app");
+        assert!(Tool::looks_at_crystal("crystal_look", "{}") && Tool::looks_at_crystal("capture", &req));
+        assert!(!Tool::looks_at_crystal("capture", r#"{"selector":".x"}"#));
+        assert_eq!(Tool::capture_outs(&req, "d1"), vec![(1440, "diamonds/d1/shots/look-1440.png".to_string())]);
+        let phone = Tool::look_args(r#"{"targets":[".go"],"width":390}"#, "d1").unwrap_or_default();
+        assert_eq!(extract_json_number(&phone, "width"), Some(LOOK_PHONE as _));
+
+        // The shim is handed the targets, and a re-measure after an edit hands them on again.
+        let drawn = Tool::crystal_req(&req, "d1", "<p>x</p>", "{}", 1440, true);
+        assert!(drawn.contains(r#""look":[".go","text:Log it"]"#) && drawn.contains(r#""max_w":960"#), "{}", drawn);
+
+        let nine: Vec<String> = (0..9).map(|i| fmt!("\".c{}\"", i)).collect();
+        let over = Tool::look_args(&fmt!(r#"{{"targets":[{}]}}"#, nine.join(",")), "d1");
+        assert!(matches!(&over, Err(w) if w.contains("at most 8")), "{:?}", over);
+        assert!(Tool::look_args(r#"{"targets":[]}"#, "d1").is_err());
+        assert!(Tool::look_args(r#"{}"#, "d1").is_err());
+        let long = fmt!(r#"{{"targets":["{}"]}}"#, "a".repeat(LOOK_TARGET_CHARS + 1));
+        assert!(Tool::look_args(&long, "d1").is_err());
+    }
+
+    /// The two halves of unit G's look nudge: the ask is visual, and the edit changed styles.
+    #[test]
+    fn test_a_visual_ask_and_a_style_edit_are_told_apart_00() {
+        assert!(visual_ask("make the button heights consistent with other associated buttons"));
+        assert!(visual_ask("The cards look cramped on my phone"));
+        assert!(!visual_ask("add today's workout to the log"));
+        assert!(touches_style(r#"{"path":"diamonds/d1/crystal.html","old_string":".go{","new_string":".go{min-height:36px;"}"#));
+        assert!(touches_style("<style>.x{}</style>"));
+        assert!(touches_style(".ghost { line-height : 1.2 }"));
+        assert!(!touches_style(r#"{"path":"diamonds/d1/crystal.html","old_string":"Log it","new_string":"Log"}"#));
+        assert!(!touches_style("var o = {count: 3};"));
+    }
 
     // ── capture, in:"crystal" ────────────────────────────────────
 
@@ -28513,7 +28870,7 @@ mod tests {
         assert!(out.contains("dir_create"), "it does not name browser storage's door: {}", out);
         assert!(out.contains("diamonds/<id>/"), "it does not name the store: {}", out);
         let unmarked = would_invent_said("src/a.rs", "src", "");
-        assert!(unmarked.contains("no folder has been marked"),
+        assert!(unmarked.contains("no folder has been added"),
             "an unmarked turn is told to write somewhere it cannot: {}", unmarked);
     }
 
@@ -28623,7 +28980,7 @@ mod tests {
     /// Under the user cache rather than `std::env::temp_dir()`: `/tmp` is a tmpfs
     /// here, so a fixture written there is resident memory the test binary never
     /// gives back -- this helper alone left 27,281 directories behind.
-    fn ctx() -> ToolContext {
+    pub(super) fn ctx() -> ToolContext {
         let dir = match oxedyne_fe2o3_test::scratch::scratch_dir("daimond_tools_test") {
             Ok(d)  => d,
             Err(e) => panic!("a scratch directory: {}", e),
@@ -29012,6 +29369,17 @@ mod tests {
     // them.
 
     #[test]
+    fn test_a_fenced_daimon_may_read_the_crystal_starter_and_never_write_it_00() {
+        let c = scoped(&["diamonds/d1"], &[]);
+        assert!(c.may_read(CRYSTAL_STARTER_PATH), "the starter a daimon is told to fork");
+        assert!(c.may_read("./.daimond//starters/crystal.html"), "however it is spelled");
+        assert!(!c.may_write(CRYSTAL_STARTER_PATH), "it is the app's, never a daimon's to write");
+        assert!(!c.may_read(".daimond/starters"), "the folder is not granted");
+        assert!(!c.may_read(".daimond/starters/other.html"), "nor anything beside it");
+        assert!(!c.may_read(".daimond/config.jdat"));
+    }
+
+    #[test]
     fn test_a_fenced_daimon_may_see_which_skills_are_installed_00() {
         let c = scoped(&["notes/specs"], &[]);
         assert!(c.may_read(".daimond/skills"), "the index, which is what a listing names");
@@ -29265,7 +29633,7 @@ mod tests {
 
     /// Every tool this build has, by name -- written out rather than taken from a roster, so a
     /// tool no roster offers today is still asked about.
-    const EVERY_TOOL: [&str; 49] = [
+    const EVERY_TOOL: [&str; 50] = [
         "file_read", "file_write", "file_edit", "file_list", "file_search", "outline", "serve",
         "file_glob", "file_delete", "file_revert", "file_move", "dir_create", "artefact_add",
         "file_fetch", "file_show", "capture", "ask", "social_read", "social_send", "sheet_read",
@@ -29273,7 +29641,7 @@ mod tests {
         "web_open", "web_close", "web_fetch", "web_search", "web_snapshot", "web_read",
         "web_click", "web_type", "web_scroll", "typst_compile", "link_list", "crystal_read",
         "recall", "link_add", "link_remove", "ocr", "mail_list", "mail_search", "mail_read",
-        "mail_draft", "compound",
+        "mail_draft", "compound", "crystal_look",
     ];
 
     /// **Every argument of every tool that names a path is fenced as a write, or is named here as
@@ -29700,18 +30068,18 @@ mod tests {
         let mut c = scoped(&["code"], &[]);
         c.unconfirmed = vec![fmt!("books/novel")];
         let r = c.refusal("books/novel/ch1.md", true);
-        assert!(r.starts_with("Refused") && r.contains("'books/novel' IS marked in")
+        assert!(r.starts_with("Refused") && r.contains("'books/novel' IS added")
             && r.contains("confirms it on this device"), "{}", r);
         assert!(!c.may_write("books/novel/ch1.md"), "an unconfirmed mark granted a write");
         // A place nobody marked is refused as it always was.
         let r2 = c.refusal("elsewhere/x.md", true);
-        assert!(r2.starts_with("Refused") && !r2.contains("IS marked in"), "{}", r2);
+        assert!(r2.starts_with("Refused") && !r2.contains("IS added"), "{}", r2);
         // And a chat says it in its own words.
         let mut chat = ctx();
         chat.no_write = chat_bounds("chats/c1/work", &[fmt!("papers")], &[]);
         chat.unconfirmed = vec![fmt!("thesis")];
         let r3 = chat.refusal("thesis/a.tex", true);
-        assert!(r3.contains("this chat's workspace") && r3.contains("'thesis' IS marked in"), "{}", r3);
+        assert!(r3.contains("this chat's workspace") && r3.contains("'thesis' IS added"), "{}", r3);
     }
 
     /// **The person was asked, and the model is told so after the fact** (decision review of
@@ -33679,6 +34047,26 @@ mod tests {
         Tool::FileWrite.execute_sync(r#"{"path":"b.txt","content":"x x"}"#, &c).expect("write");
         let e = Tool::FileEdit.execute_sync(r#"{"path":"b.txt","old_string":"x","new_string":"y"}"#, &c);
         assert!(e.is_err()); // appears twice
+    }
+
+    #[test]
+    fn test_a_search_started_on_a_file_searches_that_file_00() {
+        // The Ontheism crystal, 2026-10-08: `file_search` on `crystal.json` answered "No matches
+        // ... 0 file(s) searched" about a file nobody opened, and the daimon took it as an absence.
+        let c = ctx();
+        put(&c, "d/crystal.json", "{\"heading\":\"Ontheism\"}");
+        put(&c, "d/other.json", "{\"heading\":\"not this one\"}");
+        let hit = Tool::FileSearch.execute_sync(
+            r#"{"query":"heading","path":"d/crystal.json"}"#, &c).expect("search").as_text()
+            .to_string();
+        assert!(hit.contains("crystal.json") && hit.contains("Ontheism"),
+            "the file named was not searched: {}", hit);
+        assert!(!hit.contains("other.json"), "the search spread to the file's folder: {}", hit);
+        let miss = Tool::FileSearch.execute_sync(
+            r#"{"query":"absent","path":"d/crystal.json"}"#, &c).expect("search").as_text()
+            .to_string();
+        assert!(miss.contains("1 file(s) searched"), "an absence not read from the file: {}", miss);
+        assert!(!miss.contains("would not open"), "the file was taken for a folder: {}", miss);
     }
 
     #[test]
@@ -37748,7 +38136,7 @@ CLEAN            27 passed, 0 failed, exit 0, 900 ms
                 "the small answer arrived cut, which is a turn that cannot finish: {}", narrow);
         }
         // And the way through is spelled out on it, because nothing else on this result is.
-        assert!(narrow.contains("It is not stopped") && narrow.contains("grep -n")
+        assert!(narrow.contains("the turn continues") && narrow.contains("grep -n")
                 && narrow.contains("sed -n") && narrow.contains("wc -l"),
             "a turn with nothing left is not told what still answers: {}", narrow);
         // A whole file, on the same exhausted turn, does not.
@@ -39105,6 +39493,19 @@ CLEAN            27 passed, 0 failed, exit 0, 900 ms
             }
         }
         None
+    }
+
+    #[test]
+    fn test_file_glob_reads_a_slashed_pattern_from_the_path_it_was_given_00() {
+        // Fix 7: `versions/**` under `diamonds/x` found nothing, being read from the root only.
+        let c = ctx();
+        write_fixture(&c);
+        let from_root = glob_says(&c, r#"{"pattern":"src/deep/*.rs"}"#);
+        let from_path = glob_says(&c, r#"{"path":"src","pattern":"deep/*.rs"}"#);
+        assert_eq!(vec![fmt!("src/deep/mod.rs")], from_root);
+        assert_eq!(from_root, from_path, "a '/' pattern is read from the path given as well");
+        // The whole relative path still matches with a path given.
+        assert_eq!(from_root, glob_says(&c, r#"{"path":"src","pattern":"src/deep/*.rs"}"#));
     }
 
     #[test]
@@ -45020,6 +45421,12 @@ CLEAN            27 passed, 0 failed, exit 0, 900 ms
         // dropping what the tools it runs already say: the per-key sentences of its schema (the
         // keys and types stay, and `file_read` and its siblings describe them), and three of the
         // six worked examples. The compound-off figure is unchanged.
+        //
+        // 2026-10-09, `crystal_look` UNDER THE SAME CEILING. The 44th tool cost 1,142 and put the
+        // compound-on arm at 48,626. Its rule moved to the composed `LOOK_NOTE` (paid once in the
+        // prompt, not per tool), its text cut to 644, `capture` gave up the paragraph that
+        // crystal_look now owns, and schema descriptions that restated their tool's description
+        // were cut in `run`, `verify`, `file_search` and `ask`: 47,443 on, 46,270 off.
         const BUDGET: usize = 47_500;
 
         set_locked_packs("");
@@ -45136,6 +45543,8 @@ impl Tool {
             // process has no page to photograph -- the same shape as `file_show` above.
             Tool::Capture    => Err(err!(
                 "capture needs the browser's DOM to photograph."; Unimplemented)),
+            Tool::CrystalLook => Err(err!(
+                "crystal_look needs the browser to draw the page."; Unimplemented)),
             // The policy is `ask_step`, which is pure and is called directly by the tests.  What
             // is left here is the card and the person in front of it, and a test process has
             // neither.
@@ -45397,4 +45806,446 @@ mod claim_tests {
 			assert!(!t.windowed(), "'{}' is windowed though its author is already known", t.name());
 		}
 	}
+}
+
+// ┌───────────────────────────────────────────────────────────────┐
+// │ The load proof, taken from outside the page (K1, K3)          │
+// └───────────────────────────────────────────────────────────────┘
+//
+// D-20261008-08: a daimon wrote the Ontheism infographic, the page drew an empty card, a JSON dump
+// and a key map for two turns, and the daimon said it was done.  Its own probe measured boxes, not
+// whether the reader could see the crystal.  The proof reads the page as the owner does -- its
+// visible text and what it draws -- after every edit of the page or its data, and a page that
+// fails it is a must-fix line in that edit's result and the turn's `Blocked` reason (unit G).
+
+// 9 Oct 2026: the Life log daimon was asked to "make the button heights consistent", added the same
+// rule to both button classes, made every button 3.3 px shorter and said it was done; it had never
+// seen the page.  `crystal_look` draws the page as the owner sees it and measures what is named,
+// and a visual ask that edits the page's styles is told once to look after its last edit.
+
+pub const LOOK_TARGETS_MAX:  usize = 8;     // targets one crystal_look measures
+pub const LOOK_TARGET_CHARS: usize = 120;   // the longest target
+pub const LOOK_MAX_W:        u32   = 960;   // the picture's widest, px
+pub const LOOK_DESK:         u32   = 1440;
+pub const LOOK_PHONE:        u32   = 390;
+/// How an edit's result opens the measurement it took again by itself after a look.
+pub const REMEASURE_HEAD: &str = "After this edit, the same measurement";
+
+/// Is an ask about how something looks: sizes, colours, spacing, alignment, type or layout?
+pub fn visual_ask(ask: &str) -> bool {
+    const WORDS: &[&str] = &[
+        "height", "width", "taller", "shorter", "wider", "narrower", "bigger", "smaller", "size",
+        "colour", "color", "background", "contrast", "darker", "lighter", "font", "bold", "italic",
+        "spacing", "padding", "margin", "gap", "align", "centre", "center", "consistent",
+        "layout", "button", "border", "rounded", "style", "looks", "look like", "visible",
+        "overlap", "cramped", "line up", "lines up", "px", "pixel", "mobile", "phone screen",
+    ];
+    let low = ask.to_lowercase();
+    WORDS.iter().any(|w| low.contains(w))
+}
+
+/// Does `text`, a page edit's new text, change how the page looks: a `<style>`, a `style`
+/// attribute or property, or a CSS declaration of a property that sizes, spaces or colours?
+pub fn touches_style(text: &str) -> bool {
+    const PROPS: &[&str] = &[
+        "height", "width", "padding", "margin", "font", "line-height", "color", "background",
+        "border", "display", "gap", "align-items", "justify-content", "flex", "grid", "box-sizing",
+        "letter-spacing", "text-align", "opacity", "radius", "shadow", "inset", "top", "left",
+        "transform", "outline", "position",
+    ];
+    let low = text.to_lowercase();
+    if low.contains("<style") || low.contains("style=") || low.contains(".style") {
+        return true;
+    }
+    // A declaration: a property name, then optional spaces, then a colon.
+    low.match_indices(':').any(|(i, _)| {
+        let head = low[..i].trim_end();
+        let word: String = head.chars().rev()
+            .take_while(|c| c.is_ascii_alphanumeric() || *c == '-').collect::<Vec<_>>()
+            .into_iter().rev().collect();
+        PROPS.iter().any(|p| word == *p || word.ends_with(&fmt!("-{}", p)) || word.starts_with(&fmt!("{}-", p)))
+    })
+}
+
+pub const PROOF_GRAPHICS_MIN: u32 = 3;     // svg, canvas, img, bar or chart elements an infographic draws
+pub const PROOF_WIDTH:        u32 = 1440;  // a desktop's, where the owner reads it
+
+/// The fewest graphics the page must draw for an ask: [`PROOF_GRAPHICS_MIN`] when the ask names
+/// an infographic, else 0.
+pub fn proof_graphics_min(ask: &str) -> u32 {
+    let low = ask.to_lowercase();
+    if ["infographic", "info-graphic", "info graphic"].iter().any(|w| low.contains(w)) {
+        PROOF_GRAPHICS_MIN
+    } else {
+        0
+    }
+}
+
+/// What the load proof found, as the driver answered it.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct CrystalProof {
+    pub pass:   bool,
+    pub why:    String,     // the driver's reasons, empty on a pass
+    pub debug:  u32,        // debug nodes shown: #dbg, <pre>, KEYMAP, DKEYS
+    pub before: Option<u32>,// debug nodes at the last passing version, when one is marked
+}
+
+impl CrystalProof {
+    /// Read the driver's `proof` line, `pass` or `FAIL: <reasons>`, with its debug count.
+    pub fn from_driver(line: &str, debug: u32) -> Option<Self> {
+        let line = line.trim();
+        if line == "pass" {
+            return Some(Self { pass: true, why: String::new(), debug, before: None });
+        }
+        line.strip_prefix("FAIL:").map(|why| Self {
+            pass: false, why: why.trim().chars().take(400).collect(), debug, before: None })
+    }
+
+    /// The line the turn may not end over, or `None` when the page passes and holds no new
+    /// debug node.
+    pub fn must_fix(&self) -> Option<String> {
+        if !self.pass {
+            return Some(fmt!(
+                "MUST FIX before this turn ends: the Diamond's page fails the load proof, read from \
+                 outside as the owner sees it -- {}. Mend crystal.html or crystal.json; the page is \
+                 not delivered until it passes.", self.why.trim_end_matches('.')));
+        }
+        debug_node_check(self.debug, self.before)
+    }
+
+    /// The sentence a turn ended over a failing proof gives the person, or `None` on a pass.
+    pub fn said(&self) -> Option<String> {
+        if !self.pass {
+            return Some(fmt!("Not done: the page does not load as you would see it -- {}.",
+                self.why.trim_end_matches('.')));
+        }
+        debug_node_check(self.debug, self.before).map(|_| "Not done: the page still shows debug \
+            output (#dbg, <pre>, KEYMAP or DKEYS) its last working version did not.".to_string())
+    }
+
+    /// What an edit's result says of the proof.
+    pub fn line(&self) -> String {
+        match self.must_fix() {
+            Some(m) => m,
+            None    => "Load proof: pass -- the page shows its title, summary and every section, \
+                        and no debug output.".to_string(),
+        }
+    }
+}
+
+/// K3: a debug node the page shows at the turn's end that its last passing version did not is a
+/// must-fix: `#dbg`, a `<pre>`, a KEYMAP or a DKEYS left on screen is a page still being debugged.
+///
+/// # Arguments
+/// * `now` - Debug nodes the page shows now.
+/// * `before` - Debug nodes at the last version that passed, `None` when none is marked.
+pub fn debug_node_check(now: u32, before: Option<u32>) -> Option<String> {
+    let was = before.unwrap_or(0);
+    if now <= was {
+        return None;
+    }
+    Some(fmt!(
+        "MUST FIX before this turn ends: the Diamond's page shows {} debug node{} (#dbg, <pre>, \
+         KEYMAP or DKEYS) its last passing version did not. Take {} out.",
+        now - was, if now - was == 1 { "" } else { "s" }, if now - was == 1 { "it" } else { "them" }))
+}
+
+/// The last version of a Diamond's page that passed the load proof, as
+/// `.daimond/crystal_passed.json` holds it.  The interface K2 restores from.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct CrystalPassed {
+    pub version: u64,       // the newest recorded version when it passed
+    pub at:      u64,       // ms since the epoch
+    pub page:    String,    // sha256 of crystal.html as it passed, empty for the shipped page
+    pub data:    String,    // sha256 of crystal.json as it passed
+    pub debug:   u32,       // debug nodes it showed
+}
+
+impl CrystalPassed {
+    pub fn to_json(&self) -> String {
+        fmt!(r#"{{"version":{},"at":{},"page":"{}","data":"{}","debug":{}}}"#,
+            self.version, self.at, json_escape(&self.page), json_escape(&self.data), self.debug)
+    }
+
+    pub fn from_json(s: &str) -> Option<Self> {
+        let version = match extract_json_number(s, "version") {
+            Some(v) => v as u64,
+            None    => return None,
+        };
+        Some(Self {
+            version,
+            at:      extract_json_number(s, "at").unwrap_or(0) as u64,
+            page:    extract_json_string(s, "page").unwrap_or_default(),
+            data:    extract_json_string(s, "data").unwrap_or_default(),
+            debug:   extract_json_number(s, "debug").unwrap_or(0) as u32,
+        })
+    }
+}
+
+/// The page's console and channel messages as a block for a tool result, `""` when it said
+/// nothing.  The driver has already capped and scrubbed the lines.
+pub fn page_trace_block(trace: &str) -> String {
+    let t = trace.trim();
+    if t.is_empty() {
+        return String::new();
+    }
+    fmt!("\nThe page's console and messages while it drew, oldest first:\n{}\n\n", t)
+}
+
+/// What the person's viewer showed in place of the page since the daimon's last turn, as a note
+/// for its next one: one line a fallback, newest last, at most `n` of them.
+///
+/// # Arguments
+/// * `jsonl` - `.daimond/crystal_viewer.jsonl`, one `{"reason":..,"missed":[..]}` a line.
+pub fn viewer_fallback_note(jsonl: &str, n: usize) -> String {
+    let mut lines: Vec<String> = Vec::new();
+    for raw in jsonl.lines().filter(|l| !l.trim().is_empty()) {
+        let why    = extract_json_string(raw, "reason").unwrap_or_default();
+        let missed = extract_json_string_array(raw, "missed").unwrap_or_default();
+        let what = match why.as_str() {
+            "timeout"  => "did not load, so the plain data view stood in".to_string(),
+            "undrawn"  => fmt!("loaded but did not draw: {}", missed.join(", ")),
+            "partial"  => "did not show everything it holds, so the plain data view stood in".to_string(),
+            other      => fmt!("fell back ({})", other.chars().take(24).collect::<String>()),
+        };
+        lines.push(fmt!("- the page {}", what));
+    }
+    if lines.is_empty() {
+        return String::new();
+    }
+    let over = lines.len().saturating_sub(n);
+    fmt!("Since your last turn, the person's viewer showed this Diamond's page fail:\n{}",
+        lines[over..].join("\n"))
+}
+
+// ┌───────────────────────────────────────────────────────────────┐
+// │ The crystal load proof (r542 K1)                              │
+// └───────────────────────────────────────────────────────────────┘
+
+#[cfg(test)]
+mod crystal_load_proof {
+    use super::*;
+
+    /// A crystal the shape of the Ontheism copy: about 11 KB, with a base64 image data-URI among
+    /// its sections, which is what the probe drew as an empty card for two turns (D-20261008-08).
+    fn ontheism_shaped() -> String {
+        let mut b64 = String::new();
+        let abc = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+        for i in 0..9800usize {
+            b64.push(abc[(i * 37 + i / 7) % 64] as char);
+        }
+        b64.push_str("==");
+        let mut secs = String::new();
+        for i in 0..12 {
+            secs.push_str(&fmt!(
+                r#"{{"heading":"Part {} — \"the fabric\"","body":"Line one.\nLine two, with a \\ and a / in it."}},"#, i));
+        }
+        secs.pop();
+        fmt!(r#"{{"title":"Ontheism","summary":"A map of the fabric, in twelve parts.","image":"data:image/png;base64,{}","sections":[{}]}}"#,
+            b64, secs)
+    }
+
+    /// Fix 1: the probe draws the REAL stored crystal.  An 11 KB crystal with a data-URI is valid
+    /// JSON to the strict reader, and reaches the driver's request byte for byte, never emptied.
+    #[test]
+    fn a_large_crystal_with_a_data_uri_reaches_the_driver_whole() {
+        let data = ontheism_shaped();
+        assert!(data.len() > 10_000 && data.len() < 12_500, "fixture is {} bytes", data.len());
+        assert_eq!(crystal_json_fault(&data), None, "an Ontheism-shaped crystal is valid JSON");
+        let req = Tool::crystal_req(r#"{"in":"crystal"}"#, "d1", "<p>x</p>", &data, 390, true);
+        assert_eq!(extract_json_string(&req, "data").as_deref(), Some(data.as_str()),
+            "the request carries the crystal whole");
+    }
+
+    /// Fix 1, the other half: a crystal that cannot be passed is the capture's answer, in words.
+    #[test]
+    fn a_broken_large_crystal_is_named_never_drawn_empty() {
+        let mut data = ontheism_shaped();
+        data.insert_str(data.len() - 2, ",");
+        let fault = crystal_json_fault(&data);
+        assert!(fault.is_some(), "a trailing comma in an 11 KB crystal is a fault");
+        let line = crystal_unreadable_line(&fmt!("crystal.json is not valid JSON: {}", fault.unwrap_or_default()));
+        assert!(line.contains("drew nothing") && line.contains("not valid JSON"), "{}", line);
+    }
+
+    /// K1: the proof asks the driver for the page as stored, no picture, the proof and the ask's
+    /// graphics minimum.
+    #[test]
+    fn the_proof_request_asks_for_the_proof_and_no_picture() {
+        let data = ontheism_shaped();
+        let req = Tool::crystal_proof_req("d1", "<p>x</p>", &data, PROOF_GRAPHICS_MIN);
+        assert_eq!(extract_json_bool(&req, "proof"), Some(true), "{}", &req[..80]);
+        assert_eq!(extract_json_bool(&req, "png"), Some(false));
+        assert_eq!(extract_json_number(&req, "graphics_min"), Some(PROOF_GRAPHICS_MIN as i64 as _));
+        assert_eq!(extract_json_number(&req, "width"), Some(PROOF_WIDTH as i64 as _));
+        assert_eq!(extract_json_string(&req, "data").as_deref(), Some(data.as_str()));
+    }
+
+    /// K1: an infographic ask wants graphics; any other ask wants none.
+    #[test]
+    fn an_infographic_ask_wants_graphics() {
+        assert_eq!(proof_graphics_min("Make the Ontheism INFOGRAPHIC from the copy"), PROOF_GRAPHICS_MIN);
+        assert_eq!(proof_graphics_min("an info-graphic, please"), PROOF_GRAPHICS_MIN);
+        assert_eq!(proof_graphics_min("Tidy the summary"), 0);
+    }
+
+    /// K1: the driver's verdict is read strictly; a failure is a must-fix line naming the reasons,
+    /// a pass is not, and anything else is no proof at all.
+    #[test]
+    fn a_failing_proof_is_a_must_fix_line() {
+        let bad = CrystalProof::from_driver("FAIL: no title 'Ontheism'; a JSON run in the text", 0)
+            .expect("a FAIL line reads");
+        let m = bad.must_fix().expect("a failure must be fixed");
+        assert!(m.starts_with("MUST FIX") && m.contains("no title 'Ontheism'") && m.contains("JSON run"), "{}", m);
+        assert_eq!(bad.line(), m);
+        let good = CrystalProof::from_driver("pass", 0).expect("pass reads");
+        assert!(good.must_fix().is_none() && good.line().starts_with("Load proof: pass"), "{}", good.line());
+        assert!(CrystalProof::from_driver("", 0).is_none() && CrystalProof::from_driver("ok", 0).is_none());
+    }
+
+    /// K1: the hook unit G's `Blocked` ending consumes -- `Some` while the turn's last proof
+    /// fails, `None` once it passes, and gone with the turn.
+    #[test]
+    fn the_turn_end_hook_names_a_failing_page() {
+        let mut c = super::tests::ctx();
+        c.daimon_of = "d1".to_string();
+        assert!(c.crystal_proof_blocked().is_none(), "no proof taken, nothing blocks");
+        c.note_proof(CrystalProof::from_driver("FAIL: no section 'Part 3'", 0).expect("reads"));
+        let p = c.crystal_proof_blocked().expect("a failing proof blocks");
+        assert!(p.must_fix().map_or(false, |m| m.contains("Part 3")));
+        assert!(p.said().map_or(false, |m| m.starts_with("Not done:") && m.contains("Part 3")), "{:?}", p.said());
+        c.note_proof(CrystalProof::from_driver("pass", 0).expect("reads"));
+        assert!(c.crystal_proof_blocked().is_none(), "the last proof passed");
+        c.note_proof(CrystalProof::from_driver("pass", 1).expect("reads"));
+        assert!(c.crystal_proof_blocked().and_then(|p| p.said()).map_or(false, |m| m.contains("debug")),
+            "a pass that leaves a new debug node on screen still blocks");
+        c.note_proof(CrystalProof::from_driver("FAIL: x", 0).expect("reads"));
+        c.begin_turn();
+        assert!(c.crystal_proof_blocked().is_none(), "a proof is of the turn that took it");
+    }
+
+    /// K1: the proof runs after an edit of the page OR its data, the Diamond's own and no other's.
+    #[test]
+    fn the_proof_follows_an_edit_of_the_page_or_its_data() {
+        let mut c = super::tests::ctx();
+        c.daimon_of = "d1".to_string();
+        let on = |path: &str| fmt!(r#"{{"path":"{}","content":"x"}}"#, path);
+        assert!(Tool::FileWrite.is_crystal_write(&on("diamonds/d1/crystal.html"), &c));
+        assert!(Tool::FileWrite.is_crystal_write(&on("diamonds/d1/crystal.json"), &c));
+        assert!(!Tool::FileWrite.is_crystal_write(&on("diamonds/d2/crystal.json"), &c));
+        assert!(!Tool::FileWrite.is_crystal_write(&on("diamonds/d1/notes.md"), &c));
+        assert!(!Tool::FileRead.is_crystal_write(&on("diamonds/d1/crystal.json"), &c));
+    }
+
+    /// K1: the turn's ask sets the graphics minimum, through the context.
+    #[test]
+    fn the_ask_reaches_the_context() {
+        let c = super::tests::ctx();
+        c.set_ask("build me an infographic");
+        assert_eq!(c.graphics_min(), PROOF_GRAPHICS_MIN);
+        c.set_ask("thanks");
+        assert_eq!(c.graphics_min(), 0);
+    }
+
+    /// The marker K2 restores from survives its own JSON.
+    #[test]
+    fn the_passed_mark_reads_back() {
+        let m = CrystalPassed { version: 12, at: 1_790_000_000_000, page: "ab".into(), data: "cd".into(), debug: 1 };
+        assert_eq!(CrystalPassed::from_json(&m.to_json()), Some(m));
+        assert_eq!(CrystalPassed::from_json("{}"), None);
+    }
+
+    /// K1: the viewer's fallbacks become one note for the daimon's next turn, newest last, capped.
+    #[test]
+    fn the_viewers_fallbacks_are_a_note_for_the_next_turn() {
+        assert_eq!(viewer_fallback_note("", 8), "");
+        let jsonl = "{\"reason\":\"timeout\",\"missed\":[]}\n{\"reason\":\"undrawn\",\"missed\":[\"facts\",\"links\"]}";
+        let n = viewer_fallback_note(jsonl, 8);
+        assert!(n.starts_with("Since your last turn") && n.contains("did not load") && n.contains("did not draw: facts, links"), "{}", n);
+        let one = viewer_fallback_note(jsonl, 1);
+        assert!(!one.contains("did not load") && one.contains("facts, links"), "{}", one);
+    }
+}
+
+#[cfg(test)]
+mod debug_node_check {
+    use super::*;
+
+    /// K3: a debug node the last passing version did not show is a must-fix.
+    #[test]
+    fn a_new_debug_node_is_a_must_fix() {
+        let m = debug_node_check(1, None).expect("one new node");
+        assert!(m.starts_with("MUST FIX") && m.contains("1 debug node ") && m.contains("Take it out"), "{}", m);
+        assert!(debug_node_check(3, Some(1)).map_or(false, |m| m.contains("2 debug nodes")));
+    }
+
+    /// K3: none, or no more than the last passing version showed, is not.
+    #[test]
+    fn no_new_debug_node_is_fine() {
+        assert!(debug_node_check(0, None).is_none());
+        assert!(debug_node_check(2, Some(2)).is_none());
+    }
+
+    /// K3: a page that passes the text check but shows a new debug node still blocks the turn.
+    #[test]
+    fn a_passing_page_with_a_new_debug_node_still_blocks() {
+        let mut p = CrystalProof::from_driver("pass", 1).expect("reads");
+        p.before = Some(0);
+        assert!(p.must_fix().map_or(false, |m| m.contains("debug node")));
+        p.before = Some(1);
+        assert!(p.must_fix().is_none());
+    }
+
+    /// K3: the page's console reaches the daimon as one block, and a silent page adds nothing.
+    #[test]
+    fn the_page_trace_is_a_block_or_nothing() {
+        assert_eq!(page_trace_block("  \n "), "");
+        let b = page_trace_block("console.error: bars missing\npage -> host: ready");
+        assert!(b.contains("console and messages") && b.contains("console.error: bars missing\npage -> host: ready"), "{}", b);
+    }
+}
+
+/// A page as [`CrystalPassed::page`] names it: the sha256 of the page, or empty for no page of its
+/// own, which shows the shipped one.
+pub fn crystal_page_mark(page: &str) -> String {
+    if page.trim().is_empty() {
+        String::new()
+    } else {
+        crate::diamond_versions::hash_of(page.as_bytes())
+    }
+}
+
+/// Should a turn's end put back the last page that passed the load proof (K2)?
+///
+/// Only where the turn changed the page, a pass is marked, and the page it leaves is not the one
+/// that passed: a page the proof passed this turn has been marked already, and a Diamond never
+/// marked has no known good page to go back to.
+///
+/// # Arguments
+/// * `passed` - [`CrystalPassed::page`] of the mark, `None` when none is.
+pub fn restore_wanted(passed: Option<&str>, before: &str, after: &str) -> bool {
+    match passed {
+        Some(mark) => after != before && crystal_page_mark(after) != mark,
+        None       => false,
+    }
+}
+
+#[cfg(test)]
+mod tests_restore {
+    use super::*;
+
+    #[test]
+    fn test_restore_wanted_only_for_a_changed_page_that_did_not_pass_00() {
+        let good = "<p>good</p>";
+        let mark = crystal_page_mark(good);
+        assert!(!restore_wanted(None, good, "<p>bad</p>"), "no mark, nothing to go back to");
+        assert!(!restore_wanted(Some(&mark), "<p>bad</p>", "<p>bad</p>"), "the page did not move");
+        assert!(!restore_wanted(Some(&mark), "<p>old</p>", good), "the page left is the one that passed");
+        assert!(restore_wanted(Some(&mark), good, "<p>bad</p>"));
+        // The shipped page is a mark too: empty, and an emptied page is it.
+        assert!(restore_wanted(Some(""), "", "<p>bad</p>"));
+        assert!(!restore_wanted(Some(""), "<p>bad</p>", "  "));
+        let m = CrystalPassed { version: 3, at: 1, page: mark.clone(), data: "d".into(), debug: 0 };
+        assert_eq!(CrystalPassed::from_json(&m.to_json()), Some(m));
+    }
 }

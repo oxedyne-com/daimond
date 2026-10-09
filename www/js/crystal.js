@@ -647,7 +647,7 @@
 	/// at the same place: the face prelude, under a skin that carries faces, else ''.
 	function armour(html, extra) {
 		var s = String(html);
-		var add = CSP_META + (extra || '');
+		var add = CSP_META + timeTag() + (extra || '');
 		var carried = CSP_HAS.test(s);
 		// After the leading whitespace, comments and doctype, which are all a document may hold before its
 		// first element, and nowhere else: never after a `<head>` or `<html>` found by searching, since a
@@ -657,6 +657,16 @@
 		// so standards mode is kept. The tail is all optional, so the match never backtracks.
 		var m = /^(?:\s*<!--[\s\S]*?-->)*\s*(<!doctype\b[^>]*>)?/i.exec(s);
 		return insertCsp(s, m[0].length, m[1] ? 'doctype' : 'start', carried, add);
+	}
+
+	/// The app's clock for the page, on the account's calendar (D-20261006-34): a page draws a
+	/// date the way the app does, and never needs the browser's own Gregorian date picker. It
+	/// goes in with the policy, so every page has it, and is dropped if it could close the tag.
+	function timeTag() {
+		var T = window.DaimondTime, tag = '';
+		try { tag = T && typeof T.frameTag === 'function' ? String(T.frameTag()) : ''; } catch (e) { tag = ''; }
+		var body = tag.replace(/^<script>/, '').replace(/<\/script>$/, '');
+		return /<\/script|<!--/i.test(body) ? '' : tag;
 	}
 
 	function insertCsp(s, at, where, carried, add) {
@@ -721,6 +731,10 @@
 	/// A picture over this is not passed on: `file_read` shows an image only up to 2 MB.
 	var PROBE_PNG_MAX = 2 * 1024 * 1024;
 	var PROBE_SEL_MAX = 300;
+	/// crystal_look: the most targets, the longest one, and the matches shown for each.
+	var LOOK_MAX = 8;
+	var LOOK_CHARS = 120;
+	var LOOK_ROWS = 4;
 	/// The canvas limits `selfshot.js` draws within: a side, and the pixels in all.
 	var PROBE_PX_SIDE = 16384;
 	var PROBE_PX_MAX = 64e6;
@@ -736,6 +750,47 @@
 		// Out of the document before any page script can read the nonce from it.
 		try { var me = doc.currentScript; if (me && me.parentNode) me.parentNode.removeChild(me); } catch (e) { /* no tag to remove */ }
 		function s(v, n) { v = v == null ? '' : String(v); return v.length > n ? v.slice(0, n) : v; }
+		// K3: the page's console, its uncaught errors and the verbs it is sent, kept as they happen
+		// (the shim runs ahead of the page) so a probe can say why a page showed what it did.
+		var ring = [], TRACE_N = 40, TRACE_W = 200;
+		function note(k, v) {
+			ring.push(s(k + ': ' + v, TRACE_W));
+			if (ring.length > TRACE_N) ring.shift();
+		}
+		function said(a) {
+			var o = [], i;
+			for (i = 0; i < a.length && i < 6; i++) {
+				var x = a[i];
+				try { o.push(typeof x === 'string' ? x : (x && x.message) ? String(x.message) : JSON.stringify(x)); }
+				catch (e) { o.push(String(x)); }
+			}
+			return o.join(' ');
+		}
+		try {
+			var con = win.console;
+			if (con) ['log', 'info', 'warn', 'error', 'debug'].forEach(function (k) {
+				var was = con[k];
+				if (typeof was !== 'function') return;
+				con[k] = function () { note('console.' + k, said(arguments)); return was.apply(con, arguments); };
+			});
+		} catch (e) { /* a console that cannot be wrapped */ }
+		win.addEventListener('error', function (e) {
+			note('error', s(e && e.message, TRACE_W) + (e && e.lineno ? ' (line ' + e.lineno + ')' : ''));
+		});
+		win.addEventListener('unhandledrejection', function (e) {
+			var r = e && e.reason;
+			note('unhandled rejection', r && r.message ? r.message : said([r]));
+		});
+		// The load proof's facts: what the reader can see, read as text, and what the page draws.
+		function facts() {
+			var b = doc.body || {}, text = s(b.innerText != null ? b.innerText : b.textContent, 200000);
+			function n(sel) { try { return doc.querySelectorAll(sel).length; } catch (e) { return 0; } }
+			return {
+				text: text, svg: n('svg'), canvas: n('canvas'), img: n('img'),
+				bar: n('[class*=bar],[class*=chart]'), pre: n('pre'), dbg: n('#dbg'),
+				keymap: /KEYMAP/.test(text) ? 1 : 0, dkeys: /DKEYS/.test(text) ? 1 : 0,
+			};
+		}
 		function r1(v) { v = Number(v); return isFinite(v) ? Math.round(v * 10) / 10 : null; }
 		function who(e) {
 			return { tag: s(String(e.tagName).toLowerCase(), 24), id: s(e.id, 80),
@@ -782,6 +837,49 @@
 			})(root, 0);
 			return all;
 		}
+		// crystal_look: what a person sees of an element -- its box, its type, its padding and its
+		// colours. A target is a selector, or `text:` and the words on the element, which finds
+		// the innermost visible elements whose own text is those words (any case).
+		function lrow(e) {
+			var o = who(e), b = box(e), c = win.getComputedStyle(e);
+			o.x = b.x; o.y = b.y; o.w = b.w; o.h = b.h;
+			o.fs = s(c.fontSize, 24); o.lh = s(c.lineHeight, 24); o.fw = s(c.fontWeight, 8);
+			o.pad = s(c.padding || [c.paddingTop, c.paddingRight, c.paddingBottom, c.paddingLeft].join(' '), 60);
+			o.fg = s(c.color, 60); o.bg = s(c.backgroundColor, 60);
+			o.bd = s(c.borderTopWidth, 16) + ' ' + s(c.borderTopColor, 60);
+			o.box = s(c.boxSizing, 16);
+			return o;
+		}
+		function shown(e) {
+			var r = e.getBoundingClientRect();
+			return r.width > 0 && r.height > 0 && win.getComputedStyle(e).visibility !== 'hidden';
+		}
+		function byText(words) {
+			var want = words.replace(/\s+/g, ' ').trim().toLowerCase(), hit = [];
+			if (!want) return hit;
+			var all = doc.body ? doc.body.querySelectorAll('*') : [], i;
+			for (i = 0; i < all.length && i < 20000; i++) {
+				var e = all[i];
+				if (/^(SCRIPT|STYLE|TEMPLATE|NOSCRIPT)$/.test(e.tagName)) continue;
+				var t = String(e.innerText != null ? e.innerText : e.textContent).replace(/\s+/g, ' ').trim().toLowerCase();
+				if (t === want && shown(e)) hit.push(e);
+			}
+			// The innermost: an element that holds another match is the match's wrapper.
+			return hit.filter(function (e) { return !hit.some(function (f) { return f !== e && e.contains(f); }); });
+		}
+		function look(ts) {
+			return ts.slice(0, 8).map(function (t) {
+				t = s(t, 120);
+				var o = { t: t, rows: [] }, list;
+				try {
+					list = /^text:/i.test(t) ? byText(t.slice(5))
+						: Array.prototype.filter.call(doc.querySelectorAll(t), shown);
+				} catch (err) { o.error = 1; return o; }
+				o.count = list.length;
+				for (var i = 0; i < list.length && i < 4; i++) o.rows.push(lrow(list[i]));
+				return o;
+			});
+		}
 		function post(o) {
 			o.dc = 1; o.v = 1; o.cmd = 'probed';
 			if (nonce) o.nonce = nonce;
@@ -789,6 +887,13 @@
 		}
 		function answer(m) {
 			var out = { id: m.id }, sel = typeof m.sel === 'string' ? m.sel.slice(0, 300) : '', list, i;
+			out.trace = ring.slice();
+			if (Array.isArray(m.look) && m.look.length) {
+				try { out.look = look(m.look); } catch (err) { out.look = []; }
+			}
+			if (m.proof === true) {
+				try { out.facts = facts(); } catch (err) { out.facts = { error: s(err && err.message, 160) }; }
+			}
 			try {
 				var depths = null;
 				if (sel.replace(/\s/g, '')) list = doc.querySelectorAll(sel);
@@ -853,6 +958,7 @@
 		win.addEventListener('message', function (e) {
 			if (e.source !== up) return;
 			var m = e.data;
+			if (m && m.dc === 1 && typeof m.cmd === 'string' && m.cmd !== 'probe') note('host -> page', s(m.cmd, 24));
 			if (!m || m.dc !== 1 || m.v !== 1 || m.cmd !== 'probe') return;
 			settle(function () { answer(m); });
 		});
@@ -903,6 +1009,7 @@
 	var PV_WRAP = kws('nowrap wrap wrap-reverse');
 	var PV_LEN = /^-?(\d+\.?\d*|\.\d+)(e[+-]?\d+)?(px|%|em|rem|ex|ch|vw|vh|vmin|vmax|cm|mm|in|pt|pc|fr)?$/i;
 	var PV_NAME = /^\[[A-Za-z0-9_-]{1,16}\]$/;
+	var PV_COLOUR = /^(rgba?|hsla?|color|oklch|oklab|lab|lch)\([a-z0-9., \/%-]{1,80}\)$/;
 	var PV_RATIO = /^(auto )?\d+(\.\d+)?( \/ \d+(\.\d+)?)?$/;
 
 	/// A computed-style value of the named `kind`, or `?` when it is not a value that kind can have.
@@ -916,6 +1023,9 @@
 			case 'aspect':  ok = t === 'auto' || PV_RATIO.test(t); break;
 			case 'pad':     ok = w.length <= 4 && w.every(function (x) { return PV_LEN.test(x); }); break;
 			case 'flex':    ok = w.length === 2 && PV_DIR[w[0]] === 1 && PV_WRAP[w[1]] === 1; break;
+			case 'lh':      ok = w.length === 1 && (t === 'normal' || PV_LEN.test(t)); break;
+			case 'weight':  ok = /^(normal|bold|lighter|bolder|[1-9]00|[1-9]\d{0,2}(\.\d+)?)$/.test(t); break;
+			case 'colour':  ok = t === 'transparent' || PV_COLOUR.test(t); break;
 			case 'tracks':
 				ok = (t.match(/\[[^\]]*\]|\S+/g) || []).every(function (x) { return PV_TRACK[x] === 1 || PV_LEN.test(x) || PV_NAME.test(x); });
 				break;
@@ -1151,6 +1261,35 @@
 	/// that fails is dropped, with the host's own words in the table, so junk never reaches the
 	/// daimon's model (a provider refuses it, and the model would be written off as blind).
 	/// Resolves `r` itself, changed in place.
+	/// crystal_look's measurement, built HERE from the shim's reply: for each target the model named,
+	/// in its order, the matches' box, type, padding and colours, each value one its property could
+	/// hold. `looks` is the targets as the host sent them, so a target's name is never the page's.
+	function lookTable(m, looks) {
+		var got = arr(m.look), v = obj(m.view), out = [];
+		out.push('look at the crystal page (frame ' + pi(v.w) + 'x' + pi(v.h) + ', page ' + pi(v.sw) + 'x' + pi(v.sh)
+			+ '), as its owner sees it: ' + looks.length + ' target' + (looks.length === 1 ? '' : 's') + '.');
+		var cols = ['target', '#', 'element', 'x', 'y', 'w', 'h', 'font-size', 'line-h', 'weight', 'box', 'padding', 'colour', 'background', 'border'];
+		var rows = [cols];
+		looks.forEach(function (t, k) {
+			var g = obj(got[k]), raw = arr(g.rows).slice(0, LOOK_ROWS), name = pc(t, 40);
+			var count = (typeof g.count === 'number' && isFinite(g.count) && g.count >= 0) ? Math.min(Math.floor(g.count), 1000000) : raw.length;
+			if (g.error) { rows.push([name, '-', 'not a selector the page can run'].concat(cols.slice(3).map(function () { return ''; }))); return; }
+			if (!raw.length) { rows.push([name, '-', 'nothing visible matches'].concat(cols.slice(3).map(function () { return ''; }))); return; }
+			raw.forEach(function (r, i) {
+				r = obj(r);
+				var bd = pc(r.bd, 80).split(' '), bw = pv(bd[0], 'size'), bc = pv(bd.slice(1).join(' '), 'colour');
+				rows.push([i === 0 ? name + (count > raw.length ? ' (' + raw.length + ' of ' + count + ')' : '') : '', String(i + 1),
+					pname(r, 50), pn(r.x), pn(r.y), pn(r.w), pn(r.h), pv(r.fs, 'size'), pv(r.lh, 'lh'), pv(r.fw, 'weight'),
+					pv(r.box, 'box'), pv(r.pad, 'pad'), pv(r.fg, 'colour'), pv(r.bg, 'colour'), bw + ' ' + bc]);
+			});
+		});
+		var wide = cols.map(function (_, k) { return Math.max.apply(null, rows.map(function (x) { return String(x[k] || '').length; })); });
+		rows.forEach(function (x) {
+			out.push(x.map(function (c, k) { c = String(c || ''); return k === x.length - 1 ? c : c + ' '.repeat(wide[k] - c.length); }).join('  ').replace(/\s+$/, ''));
+		});
+		return out.join('\n');
+	}
+
 	function probeSight(r) {
 		if (!r.png_b64) return Promise.resolve(r);
 		function drop(why) {
@@ -1182,8 +1321,9 @@
 
 	/// A probe's reply as the daimon gets it: `{ err }` in the daimon's words, or
 	/// `{ table, png_b64, w, h }`. Pure: the page's reply `m` is believed in nothing.
-	function probeResult(m, sel, wantPng) {
+	function probeResult(m, sel, wantPng, looks) {
 		m = obj(m);
+		looks = arr(looks);
 		if (typeof m.error === 'string' && m.error) {
 			// The page's own words are not repeated: it is not a selector the page can run, or the page could not be measured with it.
 			return { err: 'The crystal page refused the selector ' + JSON.stringify(pc(sel, 60)) + ': it is not a selector the page can run, '
@@ -1194,13 +1334,84 @@
 				+ '. This measures the Diamond\'s own page, not the app. Leave the selector out to list its body and the '
 				+ 'body\'s children, or name an element the page has.' };
 		}
-		var table = probeTable(m, sel), b64 = wantPng ? probePng(m) : '';
+		var table = looks.length ? lookTable(m, looks) : probeTable(m, sel), b64 = wantPng ? probePng(m) : '';
 		if (wantPng && !b64) {
 			table += '\nNo picture: ' + (typeof m.png_error === 'string' && m.png_error ? pngWhy(m.png_error)
 				: (typeof m.png_b64 === 'string' && m.png_b64 ? 'the page returned something that is not a picture' : 'the page returned none')) + '.';
 		}
 		var w = Number(m.w), h = Number(m.h);
 		return { table: table, png_b64: b64, w: b64 && w > 0 && w <= 16384 ? Math.floor(w) : 0, h: b64 && h > 0 && h <= 16384 ? Math.floor(h) : 0 };
+	}
+
+	// ── The load proof (K1, K3) ─────────────────────────────────────
+	//
+	// D-20261008-08: a daimon's Ontheism infographic drew an empty card, a JSON dump and a key map
+	// for two turns, and the daimon said it was done, because its probe measured boxes and never
+	// whether the reader could see the crystal. The proof reads the page as the owner does -- its
+	// visible text and what it draws -- and the verdict is the host's, from the crystal it holds;
+	// the page's reply supplies only facts, and a page that lies about them lies about itself.
+
+	/// Text reduced to the words a reader sees: markdown marks and links dropped, case and
+	/// punctuation folded, so `**Part 3** -- Fire` in the data matches `PART 3 - FIRE` on screen.
+	function plainWords(v) {
+		return str(v).replace(/!?\[([^\]]*)\]\([^)]*\)/g, '$1').toLowerCase()
+			.replace(/[^\p{L}\p{N}]+/gu, ' ').trim();
+	}
+
+	/// A JSON member on screen: a quoted key, a colon, and the start of a value.
+	var JSON_RUN = /"[A-Za-z_][\w-]*"\s*:\s*["\[{0-9tfn]/;
+	var SUMMARY_PREFIX = 40;
+
+	/// The verdict on what the page showed: `{ proof: 'pass' | 'FAIL: <reasons>', debug }`, where
+	/// `debug` counts the debug nodes left on screen (`#dbg`, `<pre>`, KEYMAP, DKEYS) for the
+	/// turn's end to compare with the last version that passed. `gmin` is the fewest graphics
+	/// the ask wants (an infographic's), 0 when it names none.
+	function proofVerdict(facts, data, gmin) {
+		var f = obj(facts), d = obj(data), why = [], i;
+		var num = function (v) { v = Number(v); return isFinite(v) && v > 0 ? Math.min(Math.floor(v), 100000) : 0; };
+		var debug = num(f.dbg) + num(f.pre) + num(f.keymap) + num(f.dkeys);
+		if (typeof f.text !== 'string') {
+			return { proof: 'FAIL: the page could not be read as text', debug: debug };
+		}
+		var seen = ' ' + plainWords(f.text) + ' ';
+		function shows(v) { var w = plainWords(v); return !w || seen.indexOf(' ' + w + ' ') >= 0; }
+		if (str(d.title).trim() && !shows(d.title)) why.push('the title ' + JSON.stringify(pc(d.title, 60)) + ' is not on screen');
+		var sum = plainWords(d.summary).slice(0, SUMMARY_PREFIX).replace(/\s\S*$/, '');
+		if (sum && seen.indexOf(sum) < 0) why.push('the summary is not on screen');
+		var missing = [], secs = arr(d.sections);
+		for (i = 0; i < secs.length; i++) {
+			var h = obj(secs[i]).heading;
+			if (str(h).trim() && !shows(h)) missing.push(JSON.stringify(pc(h, 40)));
+		}
+		if (missing.length) {
+			why.push((missing.length === 1 ? 'the section ' : missing.length + ' sections are missing: ')
+				+ missing.slice(0, 6).join(', ') + (missing.length > 6 ? ' and ' + (missing.length - 6) + ' more' : '')
+				+ (missing.length === 1 ? ' is not on screen' : ''));
+		}
+		if (JSON_RUN.test(f.text) || /\{"/.test(f.text)) why.push('raw JSON is on screen');
+		if (num(f.dbg)) why.push('a #dbg debug panel is on screen');
+		if (num(f.keymap) || num(f.dkeys)) why.push('a KEYMAP or DKEYS debug dump is on screen');
+		var g = num(f.svg) + num(f.canvas) + num(f.img) + num(f.bar), want = num(gmin);
+		if (want && g < want) why.push('the ask is an infographic and the page draws ' + g + ' graphic' + (g === 1 ? '' : 's')
+			+ ' (svg, canvas, img, bar or chart), fewer than ' + want);
+		if (!seen.trim() && !g) why.push('the page shows nothing');
+		return { proof: why.length ? 'FAIL: ' + why.join('; ') : 'pass', debug: debug };
+	}
+
+	/// The keys of `data` with content that a page's `rendered` list leaves out.
+	function undrawn(data, keys) {
+		var want = contentKeys(data), out = [], i;
+		for (i = 0; i < want.length; i++) if (arr(keys).indexOf(want[i]) < 0) out.push(want[i]);
+		return out;
+	}
+
+	/// The page's console and the channel's verbs as the daimon reads them: printable ASCII, a long
+	/// base64 or hex run cut to `[..]`, the newest 20 lines of 160.
+	function traceText(lines) {
+		var out = arr(lines).filter(function (l) { return typeof l === 'string'; }).map(function (l) {
+			return pc(l.replace(/[A-Za-z0-9+\/=_-]{40,}/g, '[..]'), 160);
+		}).filter(function (l) { return l; });
+		return out.slice(-20).join('\n');
 	}
 
 	/// Render a Diamond's page in a frame of its own, off screen, and measure and
@@ -1216,14 +1427,32 @@
 	/// `open` from it is let go), it is on its own channel and not `live`, and it is gone
 	/// whatever happens. Its `asset` verb is answered as the on-screen frame's is
 	/// (`serveAsset`), from the folder of the Diamond `id` names, so the picture is faithful to
-	/// the screen. Resolves `{ table, png_b64, w, h }`, else rejects in words.
+	/// the screen. Resolves `{ table, png_b64, w, h, trace }`, else rejects in words.
+	///
+	/// With `proof: true` (and `graphics_min`) it is the load proof: the reply also carries
+	/// `proof` (`pass` or `FAIL: ...`) and `debug`, and a page that cannot be drawn at all
+	/// RESOLVES as a failed proof with the reason as its table, because a page that never loads
+	/// is the plainest failure there is and not a fault of the driver.
 	function render(req) {
 		req = obj(req);
+		var verbs = [];
+		var out = renderPage(req, verbs);
+		if (req.proof !== true) return out;
+		return out.then(null, function (e) {
+			var why = pc(e && e.message, 300) || 'the page could not be drawn';
+			return { table: 'The page could not be drawn: ' + why, png_b64: '', w: 0, h: 0,
+				proof: 'FAIL: ' + why.replace(/\.$/, ''), debug: 0, trace: traceText(verbs) };
+		});
+	}
+
+	function renderPage(req, verbs) {
 		var width = Math.round(Number(req.width));
 		if (!(width >= 200 && width <= 4000)) width = 1440;
 		var high = width < 768 ? 844 : 900;
 		var sel = str(req.sel).slice(0, PROBE_SEL_MAX);
-		var wantPng = req.png !== false;
+		var wantPng = req.png !== false, wantProof = req.proof === true, gmin = Number(req.graphics_min) || 0;
+		var looks = arr(req.look).filter(function (t) { return typeof t === 'string' && t.trim(); })
+			.slice(0, LOOK_MAX).map(function (t) { return t.trim().slice(0, LOOK_CHARS); });
 		var page = str(req.page).trim() ? draw(String(req.page)) : DEFAULT_PAGE;
 		// A crystal that does not parse is an ERROR here and never `{}`: the probe used to draw the
 		// empty card for it, and a daimon went looking for a layout fault in a page that had
@@ -1250,7 +1479,7 @@
 			frame.setAttribute('aria-hidden', 'true');
 			frame.tabIndex = -1;
 			var settled = false, loads = 0, ready = false, rendered = false, asked = 0, readyT = 0, renderT = 0, replyT = 0;
-			var answered = false;
+			var answered = false, drew = [];
 
 			function end(fn, v) {
 				if (settled) return;
@@ -1270,7 +1499,7 @@
 			function ask() {
 				if (asked || settled) return;
 				asked = ++probeSeq;
-				say({ cmd: 'probe', id: asked, sel: sel, png: wantPng,
+				say({ cmd: 'probe', id: asked, sel: sel, png: wantPng, proof: wantProof, look: looks,
 					max_w: Number(req.max_w) > 0 ? Math.min(Number(req.max_w), 4000) : 0,
 					background: str(req.background).slice(0, 64) });
 				replyT = setTimeout(function () {
@@ -1282,6 +1511,7 @@
 				if (settled || loads > 1 || e.source !== frame.contentWindow) return;
 				var m = e.data;
 				if (!m || m.dc !== 1 || m.v !== PROTOCOL) return;
+				if (m.cmd !== 'probed' && verbs.length < 40) verbs.push('page -> host: ' + pc(m.cmd, 24));
 				switch (m.cmd) {
 					case 'ready':
 						if (ready) return;
@@ -1292,7 +1522,9 @@
 						// same grace the on-screen frame gives it.
 						renderT = setTimeout(ask, FALLBACK_MS);
 						break;
-					case 'rendered': rendered = true; clearTimeout(renderT); ask(); break;
+					case 'rendered':
+						if (!rendered) drew = arr(m.keys).filter(function (k) { return typeof k === 'string'; });
+						rendered = true; clearTimeout(renderT); ask(); break;
 					case 'asset':
 						// The same answer the on-screen frame gets, for this Diamond's own folder only.
 						serveAsset(m, req.id, assetFor(req)).then(function (reply) {
@@ -1304,9 +1536,19 @@
 						// answer is let go, and the shim's genuine one still lands.
 						if (!asked || answered || m.id !== asked || typeof m.nonce !== 'string' || m.nonce !== nonce) return;
 						answered = true;
-						var r = probeResult(m, sel, wantPng);
+						var r = probeResult(m, sel, wantPng, looks);
 						if (r.err) { end(reject, new Error(r.err)); return; }
 						if (!rendered) r.table += '\nThe page never said what it drew; it may not follow the channel.';
+						r.trace = traceText(arr(m.trace).concat(verbs));
+						if (wantProof) {
+							var v = proofVerdict(m.facts, data, gmin), miss = undrawn(data, drew);
+							// What the viewer does with the same page: no `rendered` and it shows the plain
+							// data view instead; keys left out and it names them under the page.
+							var also = !rendered ? 'the page never says what it drew, so the viewer shows the plain data view in its place'
+								: miss.length ? 'the page says it did not draw ' + miss.slice(0, 8).map(function (k) { return pc(k, 40); }).join(', ') : '';
+							if (also) v.proof = (v.proof === 'pass' ? 'FAIL: ' : v.proof + '; ') + also;
+							r.proof = v.proof; r.debug = v.debug;
+						}
 						probeSight(r).then(function (v) { end(resolve, v); });
 						break;
 					default: break;   // `save`, `open`, `height`: a view takes no action
@@ -1541,6 +1783,33 @@
 	var assetReader = null;
 	function setAssetReader(fn) { assetReader = typeof fn === 'function' ? fn : null; }
 
+	// The last version of a Diamond's page that passed the load proof (K1), kept by the app in
+	// `diamonds/<id>/.daimond/crystal_passed.json` as `{version, at, page, data, debug}`; K2
+	// restores from it. `crystal.js` has no store of its own, so the app registers one.
+	var passedStore = null;
+	function setPassedStore(st) {
+		passedStore = st && typeof st.mark === 'function' && typeof st.last === 'function' ? st : null;
+	}
+
+	/// Mark the Diamond's page and data, as stored now, as passing at `version` (0: the newest
+	/// recorded). Resolves the mark, or `null` with no store.
+	function markPassed(id, version) {
+		if (!passedStore || !str(id)) return Promise.resolve(null);
+		return Promise.resolve(passedStore.mark(String(id), Number(version) || 0)).then(passedOf);
+	}
+
+	/// The last mark for the Diamond, or `null` when none is kept.
+	function lastPassed(id) {
+		if (!passedStore || !str(id)) return Promise.resolve(null);
+		return Promise.resolve(passedStore.last(String(id))).then(passedOf, function () { return null; });
+	}
+
+	function passedOf(j) {
+		var o = null;
+		try { o = typeof j === 'string' ? (j ? JSON.parse(j) : null) : j; } catch (e) { return null; }
+		return o && typeof o === 'object' && typeof o.version === 'number' ? o : null;
+	}
+
 	/// The `(fullPath, rel)` reader an off-screen render answers `asset` with: the request's own,
 	/// else the app's registered one, which takes the Diamond's id first as `readCrystalAsset` does.
 	function assetFor(req) {
@@ -1673,9 +1942,14 @@
 	}
 
 	/// What the page says it drew. If that does not cover every top-level key with
-	/// content in it, the page is showing less than the Diamond holds and the
-	/// built-in view takes over — the one defect this design is shaped around is a
-	/// key that vanishes from the display because nothing recognised it.
+	/// content in it, the page is showing less than the Diamond holds, and a note
+	/// over the page names what it leaves out — the one defect this design is shaped
+	/// around is a key that vanishes from the display because nothing recognised it.
+	///
+	/// The page stays up (K1, D-20261008-08). It used to be replaced by the built-in view,
+	/// so an infographic that drew its sections and left `links` out was never seen at all,
+	/// by the owner or by anyone judging it; the note keeps the key from vanishing, and the
+	/// daimon is told at its next turn (`onFallback('undrawn', keys)`).
 	function onRendered(m) {
 		live.reported = true;
 		clearTimeout(live.rtimer);
@@ -1688,9 +1962,20 @@
 		if (live.opts && typeof live.opts.onKeys === 'function') {
 			try { live.opts.onKeys(keys.slice()); } catch (e) { /* the app's problem */ }
 		}
-		var want = contentKeys(live.data);
-		for (var j = 0; j < want.length; j++) {
-			if (keys.indexOf(want[j]) < 0) { fell('partial'); return; }
+		var miss = undrawn(live.data, keys), wrap = live.frame.parentNode, old = null;
+		if (wrap && wrap.querySelector) old = wrap.querySelector('.crystal-undrawn');
+		if (old && old.parentNode) old.parentNode.removeChild(old);
+		live.undrawn = miss;
+		if (!miss.length || !wrap) return;
+		var note = document.createElement('div');
+		note.className = 'crystal-fallback-note crystal-undrawn';
+		note.textContent = tr(live.opts, 'crystal.page_undrawn', 'This page does not show: {keys}.', { keys: miss.join(', ') });
+		wrap.insertBefore(note, live.frame);
+		var said = miss.join('\n');
+		if (said === live.undrawnSaid) return;
+		live.undrawnSaid = said;
+		if (live.opts && typeof live.opts.onFallback === 'function') {
+			try { live.opts.onFallback('undrawn', miss.slice()); } catch (e) { /* the app's problem */ }
 		}
 	}
 
@@ -2260,7 +2545,11 @@
 		return s === DEFAULT_PAGE || adopt(s) !== null;
 	}
 
-	var DEFAULT_PAGE = [
+	// The page is assembled from four shared pieces, so the shipped page and the starter speak one
+	// channel from one text: the head and its policy, the library (escaping, the markdown, the
+	// generic view and the theme), the wire (height, the data message, links, `ready`), and the close.
+	// DEFAULT_PAGE is byte for byte what it was before the split; `adopt` matches stored copies of it.
+	var PAGE_OPEN = [
 		'<!doctype html>',
 		'<html><head>',
 		'<meta charset="utf-8">',
@@ -2268,9 +2557,8 @@
 		'<meta http-equiv="Content-Security-Policy" content="default-src \'none\';'
 			+ ' script-src \'unsafe-inline\'; style-src \'unsafe-inline\'; img-src data:; font-src data:">',
 		'<style>',
-		].concat(CSS_NOW, [
-		'</style></head><body><div id="r"></div><script>',
-		'(function(){',
+	];
+	var PAGE_LIB = [
 		'var CORE=["title","summary","sections","facts","links"];',
 		'var R=document.getElementById("r"),D={},L={},last=-1;',
 		'function post(o){o.dc=1;o.v=1;parent.postMessage(o,"*");}',
@@ -2348,6 +2636,29 @@
 		'if(!el){el=document.createElement("style");el.id="dc-theme";',
 		'document.head.insertBefore(el,document.head.firstChild);}',
 		'el.textContent=":root{"+css+"}";}',
+	];
+	var PAGE_WIRE = [
+		'function measure(){var px=Math.ceil(Math.max(document.body.scrollHeight,',
+		'R.getBoundingClientRect().height))+2;',
+		'if(Math.abs(px-last)<2)return;last=px;post({cmd:"height",px:px});}',
+		'addEventListener("message",function(e){if(e.source!==parent)return;',
+		'var m=e.data;if(!m||m.dc!==1||m.v!==1)return;',
+		'if(m.cmd==="data"){D=m.data||{};L=D._labels||{};theme(D._theme);render();}});',
+		'document.addEventListener("click",function(e){var a=e.target;',
+		'while(a&&a!==document.body&&a.tagName!=="A")a=a.parentNode;',
+		'if(!a||a.tagName!=="A")return;e.preventDefault();',
+		'var h=a.getAttribute("data-h")||"";if(h)post({cmd:"open",href:h});});',
+		'if(window.ResizeObserver)new ResizeObserver(measure).observe(document.body);',
+		'else addEventListener("resize",measure);',
+		'post({cmd:"ready"});',
+	];
+	var PAGE_SHUT = [
+		'})();',
+		'<\/script></body></html>',
+		'',
+	];
+	var PAGE_BODY = ['</style></head><body><div id="r"></div><script>', '(function(){'];
+	var DEFAULT_PAGE = PAGE_OPEN.concat(CSS_NOW, PAGE_BODY, PAGE_LIB, [
 		'function render(){var h="",keys=[],i;',
 		'if(has(D.title)){keys.push("title");h+="<h1>"+esc(D.title)+"</h1>";}',
 		'if(has(D.summary)){keys.push("summary");h+=md(D.summary);}',
@@ -2376,31 +2687,218 @@
 		'+val(D[xs[i]],1)+"</div>";}}',
 		'if(!h&&L.empty)h="<div class=\\"empty\\">"+esc(L.empty)+"</div>";',
 		'R.innerHTML=h;post({cmd:"rendered",keys:keys});measure();}',
-		'function measure(){var px=Math.ceil(Math.max(document.body.scrollHeight,',
-		'R.getBoundingClientRect().height))+2;',
-		'if(Math.abs(px-last)<2)return;last=px;post({cmd:"height",px:px});}',
-		'addEventListener("message",function(e){if(e.source!==parent)return;',
-		'var m=e.data;if(!m||m.dc!==1||m.v!==1)return;',
-		'if(m.cmd==="data"){D=m.data||{};L=D._labels||{};theme(D._theme);render();}});',
-		'document.addEventListener("click",function(e){var a=e.target;',
-		'while(a&&a!==document.body&&a.tagName!=="A")a=a.parentNode;',
-		'if(!a||a.tagName!=="A")return;e.preventDefault();',
-		'var h=a.getAttribute("data-h")||"";if(h)post({cmd:"open",href:h});});',
-		'if(window.ResizeObserver)new ResizeObserver(measure).observe(document.body);',
-		'else addEventListener("resize",measure);',
-		'post({cmd:"ready"});',
-		'})();',
-		'<\/script></body></html>',
-		'',
-	]).join('\n');
+	], PAGE_WIRE, PAGE_SHUT).join('\n');
+
+
+	// ── The starter page, which a daimon forks ──────────────────────
+	//
+	// D-20261008-08 (K4). The Ontheism daimon forked a hand-built page full of earlier hacks
+	// (`loadSelf`, a re-ping, a `<pre>` dump of the data) and re-derived the handshake on every
+	// retry. This is the page to fork instead: the same head, policy, library and wire as
+	// DEFAULT_PAGE, plus a small set of infographic parts that are drawn from the crystal's own keys.
+	// The app installs it at STARTER_PATH, where a fenced daimon may read it and never write it.
+	//
+	// The parts are a plain function, stringified into the page, so it is real code here (linted,
+	// and testable in node) and has no free variable: everything it uses arrives as an argument.
+	var STARTER_PATH = '.daimond/starters/crystal.html';
+
+	function starterDraw(D, L, H) {
+		var esc = H.esc, md = H.md, inl = H.inl, has = H.has, anch = H.anch;
+		var keys = [], h = '', i, k;
+		var isArr = function (v) { return Object.prototype.toString.call(v) === '[object Array]'; };
+		var num = function (v) { var n = typeof v === 'number' ? v : parseFloat(String(v)); return isFinite(n) ? n : null; };
+		var txt = function (v) { return v == null ? '' : String(v); };
+		var img = function (s) { return /^data:image\//i.test(txt(s)) ? '<img alt="" src="' + esc(s) + '">' : ''; };
+		// An icon is a data-URI image, else a short glyph, else the first letter in a disc.
+		var icon = function (v, word) {
+			var s = txt(v);
+			if (/^data:image\//i.test(s)) return '<span class="ic">' + img(s) + '</span>';
+			if (s && s.length <= 4) return '<span class="ic">' + esc(s) + '</span>';
+			var c = esc((txt(word).trim().charAt(0) || '*').toUpperCase());
+			return '<span class="ic"><svg viewBox="0 0 32 32" aria-hidden="true"><circle cx="16" cy="16" r="15"/>'
+				+ '<text x="16" y="21" text-anchor="middle">' + c + '</text></svg></span>';
+		};
+		var part = {
+			// stats: [{label, value, max?, unit?}] as rings.
+			stats: function (v) {
+				var o = '<div class="rings">';
+				for (var j = 0; j < v.length; j++) {
+					var s = v[j] || {}, n = num(s.value), mx = num(s.max) || 100, f = n == null ? 0 : Math.max(0, Math.min(1, n / mx));
+					o += '<figure class="ring"><svg viewBox="0 0 36 36" aria-hidden="true"><circle class="t" cx="18" cy="18" r="15.9"/>'
+						+ '<circle class="f" cx="18" cy="18" r="15.9" stroke-dasharray="' + (f * 100).toFixed(1) + ' 100"/></svg>'
+						+ '<b>' + esc(txt(s.value)) + esc(txt(s.unit)) + '</b><figcaption>' + inl(txt(s.label)) + '</figcaption></figure>';
+				}
+				return o + '</div>';
+			},
+			// ranked: [{label, value}] as bars, largest first.
+			ranked: function (v) {
+				var r = v.slice().sort(function (a, b) { return (num((b || {}).value) || 0) - (num((a || {}).value) || 0); });
+				var top = Math.max.apply(null, r.map(function (x) { return Math.abs(num((x || {}).value) || 0); }).concat([1e-9]));
+				var o = '<div class="bars">';
+				for (var j = 0; j < r.length; j++) {
+					var s = r[j] || {}, w = Math.round(100 * Math.abs(num(s.value) || 0) / top);
+					o += '<div class="bar"><span class="bl">' + inl(txt(s.label)) + '</span><span class="bt"><i style="width:' + w + '%"></i></span>'
+						+ '<span class="bv">' + esc(txt(s.value)) + '</span></div>';
+				}
+				return o + '</div>';
+			},
+			// timeline: [{when, what}] in the order given.
+			timeline: function (v) {
+				var o = '<ol class="tl">';
+				for (var j = 0; j < v.length; j++) {
+					var s = v[j] || {};
+					o += '<li><span class="tw">' + esc(txt(s.when != null ? s.when : (s.date != null ? s.date : s.year))) + '</span>'
+						+ '<div class="tx">' + md(txt(s.what != null ? s.what : (s.text != null ? s.text : s.label))) + '</div></li>';
+				}
+				return o + '</ol>';
+			},
+			// spectrum: {left, right, value 0..1 or 0..100, label}, or a list of them.
+			spectrum: function (v) {
+				var a = isArr(v) ? v : [v], o = '';
+				for (var j = 0; j < a.length; j++) {
+					var s = a[j] || {}, n = num(s.value), p = n == null ? 50 : (n > 1 ? n : n * 100);
+					p = Math.max(0, Math.min(100, p));
+					o += '<div class="sp">' + (has(s.label) ? '<div class="sl">' + inl(txt(s.label)) + '</div>' : '')
+						+ '<div class="st"><i style="left:' + p.toFixed(1) + '%"></i></div>'
+						+ '<div class="se"><span>' + esc(txt(s.left)) + '</span><span>' + esc(txt(s.right)) + '</span></div></div>';
+				}
+				return o;
+			},
+			// cards: [{icon, title, body}].
+			cards: function (v) {
+				var o = '<div class="cards">';
+				for (var j = 0; j < v.length; j++) {
+					var s = v[j] || {};
+					o += '<div class="card">' + icon(s.icon, s.title) + '<div><h3>' + esc(txt(s.title)) + '</h3>' + md(txt(s.body)) + '</div></div>';
+				}
+				return o + '</div>';
+			},
+		};
+		// Which part a key no part names fits, judged by its shape, so a new key still draws.
+		var shape = function (v) {
+			if (!isArr(v) || !v.length) return (v && typeof v === 'object' && 'left' in v && 'right' in v) ? 'spectrum' : '';
+			var o = v[0];
+			if (!o || typeof o !== 'object') return '';
+			if ('when' in o || 'date' in o || 'year' in o) return 'timeline';
+			if ('left' in o && 'right' in o) return 'spectrum';
+			if (num(o.value) != null && 'label' in o) return 'ranked';
+			if ('title' in o && ('body' in o || 'icon' in o)) return 'cards';
+			return '';
+		};
+		// Anything else, without a `<pre>` or a run of JSON: a list of fields, as text.
+		var gen = function (v, d) {
+			if (typeof v === 'string') return /^data:image\//i.test(v) ? img(v) : md(v);
+			if (typeof v === 'number' || typeof v === 'boolean') return '<p>' + esc(v) + '</p>';
+			if (v == null) return '';
+			if (isArr(v)) { var o = '<ul>'; for (var j = 0; j < v.length; j++) o += '<li>' + gen(v[j], d + 1) + '</li>'; return o + '</ul>'; }
+			var o2 = '<dl class="kv">';
+			for (var q in v) if (Object.prototype.hasOwnProperty.call(v, q)) o2 += '<dt>' + esc(q) + '</dt><dd>' + gen(v[q], d + 1) + '</dd>';
+			return o2 + '</dl>';
+		};
+		var head = function (k2) { return '<h2>' + esc(L[k2] || k2.charAt(0).toUpperCase() + k2.slice(1).replace(/_/g, ' ')) + '</h2>'; };
+
+		if (has(D.title) || has(D.summary) || has(D.image)) {
+			h += '<header class="hero">';
+			if (has(D.image)) { keys.push('image'); h += img(D.image); }
+			if (has(D.title)) { keys.push('title'); h += '<h1>' + esc(D.title) + '</h1>'; }
+			if (has(D.summary)) { keys.push('summary'); h += md(D.summary); }
+			h += '</header>';
+		}
+		if (has(D.sections) && isArr(D.sections)) {
+			keys.push('sections'); h += '<div class="cards">';
+			for (i = 0; i < D.sections.length; i++) {
+				var s = D.sections[i] || {};
+				h += '<section class="card">' + icon(s.icon, s.heading) + '<div>' + (has(s.heading) ? '<h2>' + esc(s.heading) + '</h2>' : '')
+					+ (has(s.body) ? md(s.body) : '') + '</div></section>';
+			}
+			h += '</div>';
+		}
+		var named = ['stats', 'cards', 'ranked', 'spectrum', 'timeline'];
+		for (i = 0; i < named.length; i++) {
+			k = named[i];
+			if (!has(D[k])) continue;
+			keys.push(k); h += head(k) + part[k](isArr(D[k]) || k === 'spectrum' ? D[k] : [D[k]]);
+		}
+		if (has(D.facts) && isArr(D.facts)) {
+			keys.push('facts'); h += head('facts') + '<div class="facts">';
+			for (i = 0; i < D.facts.length; i++) {
+				var ft = D.facts[i] || {};
+				h += '<div class="k">' + esc(txt(ft.k)) + '</div><div class="v">' + inl(txt(ft.v)) + '</div>';
+			}
+			h += '</div>';
+		}
+		if (has(D.links) && isArr(D.links)) {
+			keys.push('links'); h += head('links') + '<ul>';
+			for (i = 0; i < D.links.length; i++) {
+				var lk = D.links[i] || {}, hr = esc(txt(lk.href));
+				h += '<li>' + anch(hr, esc(has(lk.label) ? lk.label : txt(lk.href))) + '</li>';
+			}
+			h += '</ul>';
+		}
+		var done = ['title', 'summary', 'image', 'sections', 'facts', 'links'].concat(named);
+		for (k in D) {
+			if (!Object.prototype.hasOwnProperty.call(D, k) || k.charAt(0) === '_' || done.indexOf(k) >= 0 || !has(D[k])) continue;
+			var sh = shape(D[k]);
+			keys.push(k);
+			h += head(k) + (sh ? part[sh](sh === 'spectrum' && !isArr(D[k]) ? D[k] : D[k]) : gen(D[k], 1));
+		}
+		if (!h && L.empty) h = '<div class="empty">' + esc(L.empty) + '</div>';
+		return { html: h, keys: keys };
+	}
+
+	var STARTER_CSS = [
+		'.hero{margin:0 0 1.2em}.hero img{display:block;max-height:220px;margin:0 0 .8em}',
+		'.cards{display:grid;grid-template-columns:repeat(auto-fill,minmax(min(100%,260px),1fr));gap:12px;margin:0 0 1em}',
+		'.card{display:flex;gap:10px;align-items:flex-start;background:var(--sf,rgba(128,128,128,.10));border-radius:var(--rd,8px);padding:12px;min-width:0}',
+		'.card>div{min-width:0}.card h2,.card h3{margin:0 0 .35em}.card>div>:last-child{margin-bottom:0}',
+		'.ic{flex:0 0 32px;width:32px;height:32px;display:inline-flex;align-items:center;justify-content:center;font-size:20px}',
+		'.ic img,.ic svg{width:32px;height:32px;border-radius:50%}',
+		'.ic circle{fill:var(--ac,#4a7fd0)}.ic text{fill:var(--at,#fff);font:600 16px var(--fo,system-ui,sans-serif)}',
+		'.rings{display:flex;flex-wrap:wrap;gap:14px;margin:0 0 1em}',
+		'.ring{position:relative;margin:0;width:104px;text-align:center}.ring svg{width:88px;height:88px;transform:rotate(-90deg)}',
+		'.ring circle{fill:none;stroke-width:3.2}.ring .t{stroke:color-mix(in srgb,var(--tx,#777) 15%,transparent)}',
+		'.ring .f{stroke:var(--ac,#4a7fd0);stroke-linecap:round}',
+		'.ring b{position:absolute;left:0;right:0;top:30px;font-size:1.05em}.ring figcaption{color:var(--mu,#999);font-size:.88em}',
+		'.bars{margin:0 0 1em}.bar{display:grid;grid-template-columns:minmax(0,9em) 1fr auto;gap:8px;align-items:center;margin:.3em 0}',
+		'.bt{height:10px;border-radius:5px;background:color-mix(in srgb,var(--tx,#777) 12%,transparent);overflow:hidden}',
+		'.bt i{display:block;height:100%;background:var(--ac,#4a7fd0);border-radius:5px}.bv{font-variant-numeric:tabular-nums}',
+		'.tl{list-style:none;padding:0 0 0 18px;margin:0 0 1em;border-left:2px solid color-mix(in srgb,var(--tx,#777) 20%,transparent)}',
+		'.tl li{position:relative;margin:0 0 .8em}.tl li:before{content:"";position:absolute;left:-24px;top:.45em;width:10px;height:10px;border-radius:50%;background:var(--ac,#4a7fd0)}',
+		'.tw{color:var(--mu,#999);font-size:.88em}.tx>:last-child{margin-bottom:0}',
+		'.sp{margin:0 0 1em}.st{position:relative;height:12px;border-radius:6px;background:linear-gradient(90deg,color-mix(in srgb,var(--ac,#4a7fd0) 25%,transparent),var(--ac,#4a7fd0))}',
+		'.st i{position:absolute;top:-4px;width:6px;height:20px;margin-left:-3px;border-radius:3px;background:var(--tx,#777)}',
+		'.se{display:flex;justify-content:space-between;color:var(--mu,#999);font-size:.88em}',
+		'.kv{display:grid;grid-template-columns:auto 1fr;gap:.2em .9em;margin:0 0 .8em}.kv dt{color:var(--mu,#999)}.kv dd{margin:0;min-width:0}',
+		'.kv dd>:last-child{margin-bottom:0}',
+		'@media (max-width:420px){.bar{grid-template-columns:1fr auto}.bar .bt{grid-column:1/-1;grid-row:2}}',
+	];
+
+	var STARTER_PAGE = PAGE_OPEN.concat(CSS_NOW, STARTER_CSS, [
+		'</style></head><body>',
+		'<!-- The Daimond crystal starter. Fork it: keep the head, the channel and `ready`, change the parts. -->',
+		'<!-- Its data arrives in the `data` message. It never reads a file and never fetches: no asset, no loadSelf. -->',
+		'<!-- Every key it draws goes in `rendered`, and a key no part names still draws, by its shape. -->',
+		'<!-- Parts: stats [{label,value,max,unit}], ranked [{label,value}], timeline [{when,what}], -->',
+		'<!-- spectrum {left,right,value,label}, cards [{icon,title,body}], sections[].icon, image (a data URI). -->',
+		'<div id="r"></div><script>', '(function(){',
+	], PAGE_LIB, [
+		'var DRAW=' + starterDraw.toString() + ';',
+		'function render(){var o=DRAW(D,L,{esc:esc,md:md,inl:inl,has:has,anch:anch});',
+		'R.innerHTML=o.html;post({cmd:"rendered",keys:o.keys});measure();}',
+	], PAGE_WIRE, PAGE_SHUT).join('\n');
 
 
 	// ── Export ──────────────────────────────────────────────────────
 
 	window.DaimondCrystal = {
 		setAssetReader: setAssetReader,
+		setPassedStore: setPassedStore,
+		markPassed:     markPassed,
+		lastPassed:     lastPassed,
 		CORE_KEYS:    CORE_KEYS,
 		DEFAULT_PAGE: DEFAULT_PAGE,
+		STARTER_PAGE: STARTER_PAGE,
+		STARTER_PATH: STARTER_PATH,
 		upgrade:      upgrade,
 		adopt:        adopt,
 		restyle:      restyle,
@@ -2418,6 +2916,9 @@
 		render:       render,
 		probeTable:   probeTable,
 		probeResult:  probeResult,
+		lookTable:    lookTable,
+		proofVerdict: proofVerdict,
+		traceText:    traceText,
 		probePng:     probePng,
 		probeSight:   probeSight,
 		_shim:        shim,
@@ -2449,6 +2950,7 @@
 				ready:  !!live.ready,
 				reason: '',
 				keys:   (live.keys || []).slice(),
+				undrawn: (live.undrawn || []).slice(),
 				height: live.height || 0,
 				csp:    live.csp || null,
 				faces:  !!live.faces,

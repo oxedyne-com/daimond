@@ -169,12 +169,15 @@
 			bar.appendChild(fill);
 			spent.appendChild(bar);
 		}
-		spent.appendChild(el('span', 'ar-spent-txt',
+		// What has been reloaded this month is a meter, drawn as price tags; the
+		// amounts the card WILL be charged below keep their dollars.
+		var pm = function (m) { return DaimondI18n.priceMarkMinor(m, ccy); };
+		spent.appendChild(DaimondI18n.fillPrices(el('span', 'ar-spent-txt'),
 			s.monthly_budget_minor > 0
 				? t('autoreload.spent_of', {
-					spent: money(s.spent_this_month_minor || 0, ccy),
-					cap:   money(s.monthly_budget_minor, ccy) })
-				: t('autoreload.spent', { spent: money(s.spent_this_month_minor || 0, ccy) })));
+					spent: pm(s.spent_this_month_minor || 0),
+					cap:   pm(s.monthly_budget_minor) })
+				: t('autoreload.spent', { spent: pm(s.spent_this_month_minor || 0) })));
 		host.appendChild(spent);
 
 		// The gateway's last complaint, said plainly. A card that has expired or been declined is

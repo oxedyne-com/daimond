@@ -4157,6 +4157,90 @@ pub async fn versions_undo_target(id: &str, path: &str, at: Option<u64>)
     }
 }
 
+/// One of the crystal's two files, which keep the crystal chain rather than rows in the store.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum CrystalHalf {
+    Data,   // crystal.json
+    Page,   // crystal.html
+}
+
+/// Which half of THIS Diamond's crystal `path` is, if either ([`versionable`] leaves both out).
+pub fn crystal_half(id: &str, path: &str) -> Option<CrystalHalf> {
+    if path == crystal_data_path(id) {
+        Some(CrystalHalf::Data)
+    } else if path == crystal_page_path(id) {
+        Some(CrystalHalf::Page)
+    } else {
+        None
+    }
+}
+
+/// One half as it stood at `version`, `None` where its chain holds nothing at or before it.
+async fn half_at(id: &str, half: CrystalHalf, version: u64, snaps: &[(u64, Snap)])
+    -> Outcome<Option<String>>
+{
+    match half {
+        CrystalHalf::Page => page_at(id, version, snaps).await,
+        // The memory is snapshotted at every version, so a version with none is one never minted.
+        CrystalHalf::Data => if snaps.iter().any(|(n, _)| *n == version) {
+            Ok(Some(res!(read_version(id, version).await)))
+        } else {
+            Ok(None)
+        },
+    }
+}
+
+/// What a `file_revert` of one crystal half writes back: the version and the text.
+///
+/// The half is not in the files store ([`versionable`]), so [`versions_undo_target`] never finds
+/// it; its history is the crystal chain.  `at` of `Some(n)` is the half as at `n`.  `None` is
+/// "undo that": a file the turn wrote since the last snapshot goes back to the version the Diamond
+/// is at, and one standing as recorded goes back past the last version that changed it
+/// ([`versions::chain_undo_version`]), stepping further while an older version holds the same
+/// text, so a revert is never a write of what is already there.  A page with nothing recorded is
+/// the empty page, which shows the shipped one; memory with nothing recorded is `None`.
+pub async fn crystal_undo_target(id: &str, half: CrystalHalf, at: Option<u64>)
+    -> Outcome<Option<(u64, String)>>
+{
+    let (kf, patch, path) = match half {
+        CrystalHalf::Page => (PAGE_KEYFRAME_EXT, PAGE_PATCH_EXT, crystal_page_path(id)),
+        CrystalHalf::Data => (DATA_KEYFRAME_EXT, DATA_PATCH_EXT, crystal_data_path(id)),
+    };
+    let snaps = snapshot_chain(id, kf, patch).await;
+    let empty = |t: Option<String>| match half {
+        CrystalHalf::Page => Some(t.unwrap_or_default()),
+        CrystalHalf::Data => t,
+    };
+    if let Some(n) = at {
+        return Ok(empty(res!(half_at(id, half, n, &snaps).await)).map(|t| (n, t)));
+    }
+    let head = res!(read_meta(id).await).version;
+    let disk = match opfs::read_file(FileRoot::Opfs, &path).await {
+        Ok(b)  => String::from_utf8_lossy(&b).into_owned(),
+        Err(_) => String::new(),
+    };
+    let numbers: Vec<u64> = snaps.iter().map(|(n, _)| *n).collect();
+    let recorded = empty(res!(half_at(id, half, head, &snaps).await));
+    let moved = recorded.as_deref() != Some(disk.as_str());
+    let mut want = versions::chain_undo_version(&numbers, head, moved);
+    // Bounded: a memory unchanged across many versions is stepped over, not walked for ever.
+    for _ in 0..64 {
+        let n = match want {
+            Some(n) => n,
+            None    => return Ok(None),
+        };
+        let text = match empty(res!(half_at(id, half, n, &snaps).await)) {
+            Some(t) => t,
+            None    => return Ok(None),
+        };
+        if text != disk {
+            return Ok(Some((n, text)));
+        }
+        want = versions::chain_undo_version(&numbers, n, false);
+    }
+    Ok(None)
+}
+
 // ── A restore, from its opening to its record ────────────────────────────
 //
 // **A restore never destroys bytes that exist only on the person's disk** (release 5.1's F5 and
@@ -6705,4 +6789,153 @@ pub async fn adopt_from_folder() -> Outcome<String> {
 #[wasm_bindgen]
 pub async fn adopt_folder_diamonds() -> Result<String, JsValue> {
     adopt_from_folder().await.map_err(crate::wasm::to_js_err)
+}
+
+// ── The load proof's marks (K1, K2, K3) ─────────────────────────────
+
+/// The last version of the page that passed the load proof, `diamonds/<id>/.daimond/crystal_passed.json`.
+fn passed_path(id: &str) -> String {
+    fmt!("diamonds/{}/{}/crystal_passed.json", id, STORE_DIR)
+}
+
+/// What the person's viewer showed in place of the page, `diamonds/<id>/.daimond/crystal_viewer.jsonl`.
+fn viewer_path(id: &str) -> String {
+    fmt!("diamonds/{}/{}/crystal_viewer.jsonl", id, STORE_DIR)
+}
+
+/// The most viewer fallbacks kept for the daimon's next turn.
+const VIEWER_NOTES_MAX: usize = 8;
+
+/// The newest version this Diamond has recorded, 0 for none.
+pub async fn newest_version(id: &str) -> u64 {
+    version_entries(id).await.iter()
+        .filter(|(_, is_dir, _)| !*is_dir)
+        .filter_map(|(name, _, _)| versions::manifest_version(name))
+        .max()
+        .unwrap_or(0)
+}
+
+/// Mark the page and data as they stand as the last that passed the load proof.
+///
+/// # Arguments
+/// * `version` - The version to name, 0 for the newest recorded.
+pub async fn mark_passed(id: &str, version: u64, page: &str, data: &str, debug: u32)
+    -> Outcome<crate::tools::CrystalPassed>
+{
+    let version = if version == 0 { newest_version(id).await } else { version };
+    let mark = crate::tools::CrystalPassed {
+        version,
+        at:    now_ms() as u64,
+        page:  crate::tools::crystal_page_mark(page),
+        data:  versions::hash_of(data.as_bytes()),
+        debug,
+    };
+    res!(opfs::write_file(FileRoot::Opfs, &passed_path(id), mark.to_json().as_bytes()).await);
+    Ok(mark)
+}
+
+/// Mark the page and data as stored now as passed, reading them first.  For the JS interface,
+/// which holds no copy of either.
+pub async fn mark_passed_stored(id: &str, version: u64) -> Outcome<crate::tools::CrystalPassed> {
+    let data = res!(read_crystal_data_strict(id).await);
+    let page = read_crystal_page(id).await.unwrap_or_default();
+    mark_passed(id, version, &page, &data, 0).await
+}
+
+/// The last version of the page that passed the load proof, `None` when none is marked.
+pub async fn last_passed(id: &str) -> Option<crate::tools::CrystalPassed> {
+    match opfs::read_file(FileRoot::Opfs, &passed_path(id)).await {
+        Ok(b)  => crate::tools::CrystalPassed::from_json(&String::from_utf8_lossy(&b)),
+        Err(_) => None,
+    }
+}
+
+/// Keep a fallback the person's viewer showed, for the daimon's next turn.
+///
+/// # Arguments
+/// * `note` - `{"reason": "timeout" | "partial" | "undrawn", "missed": [keys]}`.
+pub async fn note_viewer(id: &str, reason: &str, missed: &[String]) -> Outcome<()> {
+    let was = match opfs::read_file(FileRoot::Opfs, &viewer_path(id)).await {
+        Ok(b)  => String::from_utf8_lossy(&b).to_string(),
+        Err(_) => String::new(),
+    };
+    let mut lines: Vec<String> = was.lines().filter(|l| !l.trim().is_empty()).map(String::from).collect();
+    let keys: Vec<String> = missed.iter().take(24).map(|k| fmt!("\"{}\"", json_escape(k))).collect();
+    let line = fmt!(r#"{{"reason":"{}","missed":[{}],"at":{}}}"#,
+        json_escape(&reason.chars().take(24).collect::<String>()), keys.join(","), now_ms() as u64);
+    // The same fallback twice in a row is one fact, not two.
+    let same = lines.last().map_or(false, |l| {
+        extract_json_string(l, "reason").as_deref() == Some(reason)
+            && l.contains(&fmt!("\"missed\":[{}]", keys.join(",")))
+    });
+    if !same {
+        lines.push(line);
+    }
+    let over = lines.len().saturating_sub(VIEWER_NOTES_MAX);
+    let body = lines[over..].join("\n");
+    opfs::write_file(FileRoot::Opfs, &viewer_path(id), body.as_bytes()).await
+}
+
+/// The viewer's fallbacks since the daimon's last turn, as a note for this one, and gone once
+/// read: a turn is told once.
+pub async fn take_viewer_note(id: &str) -> String {
+    let jsonl = match opfs::read_file(FileRoot::Opfs, &viewer_path(id)).await {
+        Ok(b)  => String::from_utf8_lossy(&b).to_string(),
+        Err(_) => return String::new(),
+    };
+    let note = crate::tools::viewer_fallback_note(&jsonl, VIEWER_NOTES_MAX);
+    if let Err(e) = opfs::delete_file(FileRoot::Opfs, &viewer_path(id)).await {
+        console_log(&fmt!("Diamond '{}': the viewer's fallback notes could not be cleared: {}", id, e));
+    }
+    note
+}
+
+/// Put back the last page that passed the load proof, as a version of its own (K2): the turn's
+/// failing page stays in the chain as the version the turn took, so it can be brought back.
+///
+/// Found by its mark ([`crate::tools::crystal_page_mark`]) among the page's snapshots, newest
+/// first, since the mark's `version` names the newest version recorded when it passed, which a
+/// mark made mid-turn sets one short.  `None` where no snapshot holds that page.  Answers the
+/// failing version and the restored one.
+pub async fn restore_passed(id: &str, mark: &str) -> Outcome<Option<(u64, u64)>> {
+    let failing = res!(read_meta(id).await).version;
+    let good = if mark.is_empty() {
+        Some(String::new())     // the shipped page: no page of its own
+    } else {
+        let snaps = snapshot_chain(id, PAGE_KEYFRAME_EXT, PAGE_PATCH_EXT).await;
+        let mut nums: Vec<u64> = snaps.iter().map(|(n, _)| *n).filter(|n| *n <= failing).collect();
+        nums.sort_unstable_by(|a, b| b.cmp(a));
+        let mut found = None;
+        // Bounded: a page passed hundreds of edits ago is not walked back to on every turn.
+        for n in nums.into_iter().take(256) {
+            match page_at(id, n, &snaps).await {
+                Ok(Some(p)) if crate::tools::crystal_page_mark(&p) == mark => {
+                    found = Some(p);
+                    break;
+                },
+                _ => {},        // another page, or a link that will not rebuild: look further back
+            }
+        }
+        found
+    };
+    let good = match good {
+        Some(g) => g,
+        None    => return Ok(None),
+    };
+    let now = now_ms() as u64;
+    let data = res!(read_crystal_data(id).await);
+    let restored = res!(snapshot(id, &data, Some(&good), now).await);
+    let rec = LogRecord {
+        id:        generate_session_id(),
+        ts:        now,
+        kind:      "edit",
+        agent:     "daimond".to_string(),
+        task:      "put back the last page that passed the load proof".to_string(),
+        parent:    failing as i64,
+        version:   restored,
+        delta_ref: String::new(),
+        note:      fmt!("the page of version {} did not pass", failing),
+    };
+    res!(append_log(id, &rec).await);
+    Ok(Some((failing, restored)))
 }

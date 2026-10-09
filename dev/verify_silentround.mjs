@@ -30,11 +30,16 @@
 //      which was previously a local flag nobody outside the tab could see.
 //   8. NOTHING THREW. A world with no gateway refuses `/api`, which is this
 //      world's configuration and not the app breaking.
+//   9. A NOTE IS NOT AN OUTCOME (r542 QA B, F-B1). Seeded chats redrawn on the
+//      real `renderHistory` path: a "picture was left out" note or a fold note
+//      ahead of the reasoning must not swallow the line either, while a tool
+//      tile after a note still counts as shown.
 //
 //   node dev/verify_silentround.mjs
 //   node dev/verify_silentround.mjs --break silentisdone   # endedHow forgets the new words
 //   node dev/verify_silentround.mjs --break thinkingshown  # a thinking tile counts as shown again
 //   node dev/verify_silentround.mjs --break notruncated    # dsEvent('truncated', …) removed
+//   node dev/verify_silentround.mjs --break noteshown      # a note or fold counts as shown again
 //
 // A `--break` run EXPECTS to fail: exit 0 when something reddened, 1 when
 // nothing did. `--break nonudge` is NOT offered: the nudge itself is engine
@@ -48,7 +53,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { open, newChat, shot, errors } from './harness.mjs';
+import { open, newChat, shot, errors, signInAs, scratch } from './harness.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const WWW  = path.join(HERE, '..', 'www');
@@ -76,17 +81,14 @@ const BREAKS = {
 	// which is the bug itself: the line never draws.
 	thinkingshown: [{
 		file: 'js/daimond.js',
-		find: "			if (k.classList.contains('chat-msg-user')) continue;\n"
-			+ "			// A lone thinking tile carries `chat-msg-thinking`; a RUN of them is\n"
-			+ "			// wrapped in a `.crollup` container instead (`makeRollup`, above), whose\n"
-			+ "			// own class list never gets that marker -- only `dataset.t === 'think'`\n"
-			+ "			// says what it holds. Both must be skipped, or a second reasoning-only\n"
-			+ "			// round (which rolls the first tile up rather than standing it alone)\n"
-			+ "			// slips back into \"something was shown\" the moment there are two.\n"
-			+ "			if (k.classList.contains('chat-msg-thinking') || k.dataset.t === 'think') continue;\n"
-			+ "			shown = true;\n"
-			+ "			break;",
-		with: "			if (!k.classList.contains('chat-msg-user')) { shown = true; break; }   // --break thinkingshown",
+		find: "		return OUTCOME_TILE[k.dataset.t] === true;\n",
+		with: "		return OUTCOME_TILE[k.dataset.t] === true || k.dataset.t === 'think';   // --break thinkingshown\n",
+	}],
+	// `tileShows` goes back to a deny-list: a picture or fold note counts as shown.
+	noteshown: [{
+		file: 'js/daimond.js',
+		find: "		return OUTCOME_TILE[k.dataset.t] === true;\n",
+		with: "		return k.dataset.t !== 'think' && !k.classList.contains('chat-msg-user');   // --break noteshown\n",
 	}],
 	// The `truncated` event no longer reaches the feed.
 	notruncated: [{
@@ -111,9 +113,9 @@ function damagedFiles() {
 
 async function serveBreaks(page) {
 	if (!BREAK) return;
-	if (BREAK !== 'silentisdone' && BREAK !== 'thinkingshown' && BREAK !== 'notruncated') {
+	if (!BREAKS[BREAK]) {
 		console.error(`verify_silentround: no such break '${BREAK}'. `
-			+ `Known: silentisdone, thinkingshown, notruncated.`);
+			+ `Known: ${Object.keys(BREAKS).join(', ')}.`);
 		process.exit(1);
 	}
 	for (const [file, body] of damagedFiles()) {
@@ -278,6 +280,75 @@ try {
 	try { await shot(s, 'silentround-threw' + (BREAK ? '-' + BREAK : '')); } catch (e2) { /* no picture */ }
 } finally {
 	await s.close();
+}
+
+// ── 9. A NOTE IS NOT AN OUTCOME ──────────────────────────────────────────────
+//
+// Seeded rather than driven: the picture note needs a model that cannot see and a
+// picture, and the fold needs a long chat, but the defect is in how the page counts
+// what a turn drew, which `renderHistory` exercises exactly as a live turn does.
+{
+	const PROFILE = scratch('pw', 'silentround-seeded');
+	fs.rmSync(PROFILE, { recursive: true, force: true });
+	const z = await open({ name: 'silentround-seeded', profile: PROFILE, connect: true, defaults: true,
+		route: serveBreaks });
+	try {
+		const zp = z.page;
+		const NOW = Date.now();
+		let n = 0;
+		const m = (role, x) => { n++; return Object.assign({ role, mid: 'sr' + n, ts: NOW + n * 10,
+			content: role + ' ' + n }, x || {}); };
+		const U  = () => m('user', { content: 'Do the work.' });
+		const T  = () => m('think_log', { content: 'Working it through, step ' + n });
+		const TL = () => m('tool_log', { name: 'file_list', args: '{"path":"."}', outcome: 'done' });
+		const V  = () => m('vision_log', { content: 'The picture was left out: mock/fast cannot be shown pictures.' });
+		const F  = () => m('fold_log', { content: 'Earlier rounds were folded.', folded: 4, kept: 2 });
+		const E  = (how, x) => m('end_log', Object.assign({ how, offered: 30, rounds: 2, calls: 0 }, x || {}));
+		const ARMS = [
+			// [name, messages, ending lines wanted]
+			['SR picture note reasoned', [U(), V(), T(), T(), E('reasoned_only', { reasoned: 2 })], 1],
+			['SR fold note silent',      [U(), T(), F(), T(), E('silent')], 1],
+			['SR picture note tool',     [U(), V(), T(), TL(), E('failed')], 0],
+		];
+		for (let i = 0; i < ARMS.length; i++) {
+			const rec = { id: 'sr' + i, name: ARMS[i][0], model: 'mock/fast', provider: 'mock', status: 'active',
+				promptTokens: 1, completionTokens: 1, cachedTokens: 0, costUsd: 0, prevPrompt: 0, prevCompletion: 0,
+				prevCached: 0, prevCost: 0, lastPrompt: 0, updatedAt: NOW + 5000, messages: ARMS[i][1] };
+			await zp.evaluate((rec) => new Promise((res, rej) => {
+				const r = indexedDB.open('daimond-chats');
+				r.onsuccess = () => {
+					const t = r.result.transaction('chats', 'readwrite');
+					t.objectStore('chats').put(rec);
+					t.oncomplete = () => res(); t.onerror = () => rej(t.error);
+				};
+				r.onerror = () => rej(r.error);
+			}), rec);
+		}
+		await zp.reload({ waitUntil: 'domcontentloaded' });
+		await zp.waitForSelector('#id-primary', { timeout: 15000 }).catch(() => {});
+		await signInAs(z, 'silentround-seeded');
+		await zp.waitForTimeout(800);
+		for (const [nm, , want] of ARMS) {
+			const opened = await zp.evaluate((nm) => {
+				const hit = [...document.querySelectorAll('#session-list .session-box')]
+					.find((b) => (b.textContent || '').trim().includes(nm));
+				if (hit) { (hit.querySelector('.tile-label, .tile-when, button') || hit).click(); return true; }
+				return false;
+			}, nm);
+			if (!opened) { check(`9 ${nm}: the seeded chat opens`, false); continue; }
+			await zp.waitForTimeout(700);
+			const got = await zp.evaluate(() => [...document.getElementById('chat-output')
+				.querySelectorAll('.chat-msg-ended')].map((e) => e.dataset.how || ''));
+			check(`9 ${nm}: ${want ? 'the note does not swallow the ending line'
+				: 'a tool tile after the note still counts as shown'}`,
+				got.length === want, JSON.stringify(got));
+		}
+		await shot(z, 'silentround-9-notes' + (BREAK ? '-' + BREAK : ''));
+	} catch (e) {
+		check('9 the seeded arms got to the end', false, String(e && e.message ? e.message : e).split('\n')[0]);
+	} finally {
+		await z.close();
+	}
 }
 
 if (BREAK) {

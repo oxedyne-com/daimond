@@ -715,6 +715,27 @@
 			: t('menu.currency_help') + ' ' + t('billing.usd_note')
 				+ ' ' + t('billing.rates_as_of', { date: DaimondI18n.ratesAsOf() });
 		box.appendChild(cn);
+
+		// The calendar dates are drawn in (D-20261006-34): a display format, so it sits with
+		// the language and the currency, but an account fact, so it syncs (time.js).
+		if (!window.DaimondTime || !DaimondTime.setCalendar) return;
+		box.appendChild(el('div', 'pop-head', t('menu.calendar')));
+		var krow = el('div', 'set-pick');
+		var ksel = document.createElement('select');
+		ksel.className = 'settings-select';
+		ksel.id = 'calendar-select';
+		ksel.setAttribute('aria-label', t('menu.calendar'));
+		var y = new Date().getFullYear();
+		[['ce', t('menu.calendar_ce'), y], ['he', t('menu.calendar_he'), y + 10000]].forEach(function (c) {
+			var o = document.createElement('option');
+			o.value = c[0];
+			o.textContent = c[1] + ' (' + c[2] + ')';	// the year itself says which is which
+			if (c[0] === DaimondTime.calendar()) o.selected = true;
+			ksel.appendChild(o);
+		});
+		ksel.addEventListener('change', function () { DaimondTime.setCalendar(ksel.value); });
+		krow.appendChild(ksel);
+		box.appendChild(krow);
 	}
 
 	function toggleMenu(anchor) {

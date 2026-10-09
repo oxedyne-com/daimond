@@ -1584,10 +1584,11 @@
 				parts.push(t(older ? 'mail.note.no_older' : 'mail.note.up_to_date'));
 			} else {
 				parts.push(tn(older ? 'mail.note.older' : 'mail.note.new', msgs.length));
-				if (j.charged_minor) parts.push(fmtMinor(j.charged_minor));
 				if (f.heldBack) parts.push(tn('mail.note.still_older', f.heldBack));
 			}
-			state.note = parts.join(' · ');
+			// The charge goes last, as a price tag; its glyph is the separator.
+			state.note = parts.join(' · ')
+				+ (msgs.length && j.charged_minor ? ' ' + priceMark(j.charged_minor) : '');
 			if (deps.refreshFiles) deps.refreshFiles();
 		} catch (e) {
 			// A poll nobody asked for says nothing the first time: Gmail drops a connection
@@ -2724,8 +2725,8 @@
 		var m = (e && e.message) ? e.message : String(e);
 		return m.replace(/\[[0-9;]*m/g, '');
 	}
-	function fmtMinor(n) {
-		return window.DaimondGateway ? DaimondGateway.fmtMoney(n, 'usd') : ('$' + (n / 100).toFixed(2));
+	function priceMark(n) {
+		return window.DaimondI18n ? DaimondI18n.priceMarkMinor(n, 'usd') : '';
 	}
 	var HOUR = 3600000;
 
@@ -2804,7 +2805,13 @@
 			els.state.appendChild(unk);
 		}
 		if (state.err) els.state.appendChild(html('<div class="mail-err">' + esc(state.err) + '</div>'));
-		else if (state.note) els.state.appendChild(html('<div class="mail-note">' + esc(state.note) + '</div>'));
+		else if (state.note) {
+			// A note may carry a charge as a price mark; it is drawn as the tag.
+			var mn = document.createElement('div');
+			mn.className = 'mail-note';
+			els.state.appendChild(window.DaimondI18n ? DaimondI18n.fillPrices(mn, state.note)
+				: (mn.textContent = state.note, mn));
+		}
 
 		// The mailboxes. Drawn only once the account service has confirmed
 		// this is unlocked -- `null` (unknown) gets the pitch above and nothing

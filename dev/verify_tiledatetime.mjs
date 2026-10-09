@@ -1,5 +1,5 @@
 // gateway: none
-// verify_tiledatetime.mjs — local Holocene datetime on every chat transcript tile header.
+// verify_tiledatetime.mjs — local datetime, on the chosen calendar, on every chat transcript tile header.
 //
 // The owner, 2026-09-15: "we should have local datetime in format e.g.
 // 12026-09-15 13:12, using Holocene calendar, on the headers of all chat
@@ -21,6 +21,10 @@
 //   node dev/verify_tiledatetime.mjs --break utc
 //   node dev/verify_tiledatetime.mjs --break seconds
 //   node dev/verify_tiledatetime.mjs --break missingts
+//   node dev/verify_tiledatetime.mjs --break norepaint
+//
+// Since D-20261006-34 the calendar is the person's choice: a new account reads
+// Common Era, and choosing Holocene redraws the tiles already on screen (G).
 
 import fs from 'node:fs';
 import path from 'node:path';
@@ -42,8 +46,8 @@ const check = (name, pass, detail) => {
 // ── Seams: the fix must be in the file, or a green run proves nothing ──
 
 const SEAM = [
-	{ file: 'js/time.js', want: "function holoceneYear(d) { return d.getFullYear() + 10000; }",
-	  why: 'the Holocene offset is no longer on the local year' },
+	{ file: 'js/time.js', want: "function year(d) { return cal === 'he' ? d.getFullYear() + 10000 : d.getFullYear(); }",
+	  why: 'the calendar\u2019s year is no longer on the local year' },
 	{ file: 'js/time.js', want: "pad2(d.getHours()) + ':' + pad2(d.getMinutes()) + ':' + pad2(d.getSeconds());",
 	  why: 'the tile string no longer reads the LOCAL hour, minute and second' },
 	{ file: 'js/daimond.js', want: 'if (!ts || !window.DaimondTime) return null;',
@@ -56,21 +60,15 @@ const BREAKS = {
 	// The Gregorian year, undisguised — `verify_year` (check B) reddens.
 	noholocene: [{
 		file: 'js/time.js',
-		find: 'function holoceneYear(d) { return d.getFullYear() + 10000; }',
-		with: 'function holoceneYear(d) { return d.getFullYear(); }',
+		find: "function year(d) { return cal === 'he' ? d.getFullYear() + 10000 : d.getFullYear(); }",
+		with: 'function year(d) { return d.getFullYear(); }',
 	}],
 	// UTC getters where the whole point is the device's own zone — check B (the
 	// two-zone comparison) reddens for whichever session's zone is not UTC's.
 	utc: [{
 		file: 'js/time.js',
-		find: "return holoceneYear(d) + '-' + pad2(d.getMonth() + 1) + '-' + pad2(d.getDate())\n\t\t\t+ ' ' + clock(d);\n\t}\n\n\t/// `13:12:47`",
-		with: "return holoceneYear(d) + '-' + pad2(d.getUTCMonth() + 1) + '-' + pad2(d.getUTCDate())\n\t\t\t+ ' ' + pad2(d.getUTCHours()) + ':' + pad2(d.getUTCMinutes()) + ':' + pad2(d.getUTCSeconds());\n\t}\n\n\t/// `13:12:47`",
-	}, {
-		// `holoceneYear` itself stays local -- only fmtHolocene's OWN getters are
-		// broken, isolating the break to the one function the tiles actually call.
-		file: 'js/time.js',
-		find: 'function fmtHolocene(ts) {\n\t\tif (!isInstant(ts)) return \'\';\n\t\tvar d = new Date(ts);\n\t\treturn holoceneYear(d)',
-		with: 'function fmtHolocene(ts) {\n\t\tif (!isInstant(ts)) return \'\';\n\t\tvar d = new Date(ts);\n\t\tvar holoceneYear = function (dd) { return dd.getUTCFullYear() + 10000; };\n\t\treturn holoceneYear(d)',
+		find: "var d = new Date(ts);\n\t\t\treturn day(d) + ' ' + clock(d);",
+		with: "var d = new Date(ts + new Date(ts).getTimezoneOffset() * 60000);\n\t\t\treturn day(d) + ' ' + clock(d);",
 	}],
 	// Seconds taken back off the tile string (they are drawn since 2026-09-29)
 	// — check C reddens.
@@ -80,6 +78,12 @@ const BREAKS = {
 		with: "function clock(d) { return pad2(d.getHours()) + ':' + pad2(d.getMinutes()); }",
 	}],
 	// A message with no `ts` gets one invented at draw time — check D reddens.
+	// A calendar change that leaves the tiles on screen as they were — check G reddens.
+	norepaint: [{
+		file: 'js/daimond.js',
+		find: "try { document.querySelectorAll('.ctile-time[data-ts]').forEach(paintTileTime); }",
+		with: "try { /* broken: no repaint */ }",
+	}],
 	missingts: [{
 		file: 'js/daimond.js',
 		find: 'function tileTimeEl(ts) {\n\t\tif (!ts || !window.DaimondTime) return null;',
@@ -142,6 +146,10 @@ function localParts(epochMs, timeZone) {
 	// Some ICU builds print midnight as "24" under hour12:false.
 	if (p.hour === '24') p.hour = '00';
 	return p;
+}
+function expectCE(epochMs, timeZone) {
+	const p = localParts(epochMs, timeZone);
+	return p.year + '-' + p.month + '-' + p.day + ' ' + p.hour + ':' + p.minute + ':' + p.second;
 }
 function expectHolocene(epochMs, timeZone) {
 	const p = localParts(epochMs, timeZone);
@@ -267,6 +275,14 @@ try {
 	check('A opens the fixture chat', await openChatByName(a.page, 'Tile datetime fixture'));
 	await a.page.waitForTimeout(500);
 
+	// ── (G) A new account reads Common Era; choosing Holocene redraws what is on screen ──
+	const ceT = await tileTimeByText(a.page, 'MARK_USER');
+	const wantCE = expectCE(FIXED_TS, ZONE_A);
+	check('(G) a new account reads the Common Era year', !!ceT.time && ceT.time.full === wantCE,
+		`got ${ceT.time && ceT.time.full}, want ${wantCE}`);
+	await a.page.evaluate(() => window.DaimondTime.setCalendar('he'));
+	await a.page.waitForTimeout(300);
+
 	b = await open({ name: 'tiledtB', profile: PB, defaults: true, connect: true,
 		timezoneId: ZONE_B, route: FILES.size ? serveBroken : null });
 	await seed(b.page, fixtureChat());
@@ -275,11 +291,14 @@ try {
 	await b.page.waitForTimeout(600);
 	check('B opens the same fixture chat under a different zone',
 		await openChatByName(b.page, 'Tile datetime fixture'));
+	await b.page.evaluate(() => window.DaimondTime.setCalendar('he'));
 	await b.page.waitForTimeout(500);
 
 	// ── (A) Headers show the string — user, assistant, tool ────────────
 	const FMT_RE = /^\d{4,}-\d\d-\d\d \d\d:\d\d:\d\d$/;
 	const userT = await tileTimeByText(a.page, 'MARK_USER');
+	check('(G) choosing Holocene redraws the tile already on screen, with no reload',
+		!!userT.time && userT.time.full === expectHolocene(FIXED_TS, ZONE_A), userT.time && userT.time.full);
 	const asstT = await tileTimeByText(a.page, 'MARK_ASST');
 	const toolT = await tileTimeByText(a.page, 'MARK_TOOL');
 	check('(A) the user tile header carries a time', !!(userT.time && FMT_RE.test(userT.time.full)),
@@ -337,9 +356,11 @@ try {
 		// Rebuild the epoch this string names in THIS process's own zone
 		// (the live session was opened with no timezoneId override, so it kept
 		// the host's) and check it falls inside the turn's own wall-clock window.
+		// The live session is a new account, so it reads the Common Era (G): the
+		// year is taken as written.
 		const mm = full.match(/^(\d+)-(\d\d)-(\d\d) (\d\d):(\d\d):(\d\d)$/);
 		if (!mm) return false;
-		const t = new Date(Number(mm[1]) - 10000, Number(mm[2]) - 1, Number(mm[3]), Number(mm[4]), Number(mm[5]), Number(mm[6])).getTime();
+		const t = new Date(Number(mm[1]), Number(mm[2]) - 1, Number(mm[3]), Number(mm[4]), Number(mm[5]), Number(mm[6])).getTime();
 		return t >= beforeLive - 60000 && t <= afterLive + 60000;
 	};
 	check('(E) a LIVE user tile (drawn as it happened, not on reload) carries a time',

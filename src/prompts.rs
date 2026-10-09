@@ -346,7 +346,10 @@ impl Role {
 	pub fn compose_with(&self, text: &str, model: &str, steer: &str) -> String {
 		let body = if text.trim().is_empty() { self.default_prompt() } else { text.trim() };
 		if matches!(self, Self::Reducer) {
-			return fmt!("{}\n\n{}\n\n{}", body, CRYSTAL_SCHEMA_NOTE, CRYSTAL_FILES_NOTE);
+			// The time line sits with the schema it qualifies; the files note stays last, since it
+			// ends on "write nothing after the last fence".
+			return fmt!("{}\n\n{}\n\n{}\n\n{}", body, CRYSTAL_SCHEMA_NOTE, CRYSTAL_TIME_NOTE,
+				CRYSTAL_FILES_NOTE);
 		}
 		if !self.has_tools() {
 			return body.to_string();
@@ -366,6 +369,8 @@ impl Role {
 		// about turns it does not have.
 		if matches!(self, Self::Daimon) {
 			out.push_str(&fmt!("\n\n{}", NEVER_FORGET_NOTE));
+			out.push_str(&fmt!("\n\n{}", CRYSTAL_TIME_NOTE));
+			out.push_str(&fmt!("\n\n{}", LOOK_NOTE));
 		}
 		// WHAT THIS FAMILY GETS WRONG, and nothing any other family gets wrong.  Composed here
 		// beside `VISION_NOTE` rather than written into `prompts/<role>.md`, so a user's rewrite
@@ -447,7 +452,20 @@ impl Role {
 /// It says what `file_list`'s own parentheses mean, because that is the one signal the model can
 /// act on WITHOUT a failed call first.
 pub const PLACES_NOTE: &str =
-	"## Where files are\n\n	 Every file tool sees one tree of workspace-relative paths, and file_list says where an entry 	 is: on this device unless its parentheses say 'in cloud storage' (a small one is fetched 	 when you read it, a large one needs file_fetch) or 'on <host>' (a folder the user marked in, 	 which run reaches too). diamonds/, chats/ and mail/ are browser storage on this device and 	 never on the machine, so a file tool always reaches them and run never can.";
+	"## Where files are\n\n	 Every file tool sees one tree of workspace-relative paths, and file_list says where an entry 	 is: on this device unless its parentheses say 'in cloud storage' (a small one is fetched 	 when you read it, a large one needs file_fetch) or 'on <host>' (a folder the user added, 	 which run reaches too). diamonds/, chats/ and mail/ are browser storage on this device and 	 never on the machine, so a file tool always reaches them and run never can.";
+
+/// The crystal contract's line on time (#2): store ISO, display through `DaimondTime`.
+///
+/// Composed for the two roles that write `crystal.json`, the daimon and the reducer, so a
+/// rewritten prompt cannot lose it. A date kept as the page shows it ("9 Oct", "12026-10-09")
+/// cannot be sorted, compared or shown in another form; ISO can, and every crystal page is
+/// handed `DaimondTime` by `crystal.js` `armour`, so the page shows it as the app does.
+pub const CRYSTAL_TIME_NOTE: &str =
+	"## Dates and times in the crystal\n\n\
+	 Store a date or a time in `crystal.json` as ISO 8601 -- `2026-10-09`, or \
+	 `2026-10-09T13:12:47Z` -- never in the form it is shown in. `crystal.html` displays \
+	 one through `DaimondTime`, which every page is given: `DaimondTime.fmtIso(value)` \
+	 shows it the way the rest of the app does.";
 
 /// The never-forget rule, appended to the daimon alone.
 ///
@@ -478,6 +496,19 @@ pub const NEVER_FORGET_NOTE: &str =
 	 REQUIREMENTS.md is the list of what this Diamond exists to do. A task leaves it only by \
 	 being ticked with the version that did it, or by the user striking it. Before you say a \
 	 piece of work is finished, read the file.";
+
+/// The look-before-and-after rule, appended to the daimon alone.
+///
+/// A daimon restyled the Life log buttons, never looked, and said "done" (2026-10-09, and before
+/// it 2026-10-08: "I'm not seeing any difference").  The load proof says a page draws; only a
+/// measurement says a button grew.  Composed in, like [`NEVER_FORGET_NOTE`], so a rewritten
+/// `prompts/daimon.md` cannot lose it; `crystal_look`'s description says how, this says when.
+pub const LOOK_NOTE: &str =
+	"## Looking at a change to the page\n\n\
+	 When you change how `crystal.html` looks -- a size, a colour, a spacing, a font -- call \
+	 `crystal_look` on the parts asked about BEFORE you edit and AFTER, and put the measured \
+	 difference in your answer, in numbers, before and after. If they measure the same as \
+	 before, say plainly that nothing changed; never call it done.";
 
 /// What a new Diamond's `REQUIREMENTS.md` says, and what an old one is given on its next turn.
 ///
@@ -948,7 +979,7 @@ pub const DEFAULT_CHAT: &str =
 	 works alone and cannot ask anybody anything, so it reads wherever you can read, writes \
 	 only in this chat's own working folder and whatever the user has attached here, and runs \
 	 commands only in an attached folder on their machine. If a task needs a command, and \
-	 nothing is attached, say which folder it needs and let the user mark it in with the + \
+	 nothing is attached, say which folder it needs and let the user add the folder with the + \
 	 in the Workspace group — do not send a worker off to discover that for itself.";
 
 /// The daimon's role: it maintains one Diamond's crystal, resolving an
@@ -1761,6 +1792,9 @@ mod tests {
 		// use while the wrong one is still named beside it.
 		assert!(p.contains("Workspace group"),
 			"a chat cannot say how to put a folder in scope: {}", p);
+		// And in the ruled words (D-20261006-25): a folder is added, never marked in.
+		assert!(p.contains("add the folder with the +") && !p.contains("mark it in"),
+			"the prompt teaches the retired word for adding a folder: {}", p);
 		assert!(!p.contains("with the paperclip"),
 			"the prompt still sends the user to the control that grants no writing: {}", p);
 	}
@@ -3322,6 +3356,25 @@ mod tests {
 			"the reducer is still told about a key that is no longer in the schema:\n{}", p);
 	}
 
+	/// **The crystal's dates are stored as ISO and shown through DaimondTime (#2).**
+	///
+	/// The two roles that write `crystal.json` -- the daimon and the reducer -- are told it, as a
+	/// composed note so a rewritten prompt cannot lose it, and nobody else is: a chat and a worker
+	/// write no crystal.
+	#[test]
+	fn test_the_crystal_time_line_reaches_both_crystal_writers_and_survives_a_rewrite() {
+		for role in [Role::Daimon, Role::Reducer] {
+			for text in ["", "Answer in haiku."] {
+				let p = role.compose(text);
+				assert!(p.contains("ISO 8601") && p.contains("DaimondTime.fmtIso"),
+					"{} is not told to store ISO and display through DaimondTime:\n{}", role.name(), p);
+			}
+		}
+		for role in [Role::Chat, Role::Worker] {
+			assert!(!role.compose("").contains("DaimondTime"), "{} writes no crystal", role.name());
+		}
+	}
+
 	/// **The never-forget rule reaches the daimon, survives a rewritten prompt, and stops there.**
 	///
 	/// A rule that only lives in `DEFAULT_DAIMON` is a rule the user deletes the moment they
@@ -3348,6 +3401,22 @@ mod tests {
 		assert!(!Role::Worker.compose("").contains("REQUIREMENTS.md"),
 			"a worker that cannot see this conversation was given a rule about carrying \
 			across turns");
+	}
+
+	/// **The look-before-and-after rule reaches the daimon, survives a rewrite, and stops there.**
+	/// A daimon that restyled a page and never measured it said "done" over no visible change.
+	#[test]
+	fn test_the_look_rule_reaches_a_daimon_and_survives_a_rewrite_00() {
+		for p in [Role::Daimon.compose(""), Role::Daimon.compose("Answer in haiku.")] {
+			assert!(p.contains("`crystal_look`") && p.contains("BEFORE you edit and AFTER"),
+				"the daimon is not told to look before and after a visual edit:\n{}", p);
+			assert!(p.contains("measured difference") && p.contains("nothing changed"),
+				"the daimon is not told to report the numbers, or to say when nothing moved:\n{}", p);
+		}
+		assert!(!Role::Chat.compose("").contains("crystal_look"),
+			"a chat with no Diamond page was told to look at one");
+		assert!(!Role::Worker.compose("").contains("crystal_look"),
+			"a worker without crystal_look was told to call it");
 	}
 
 	/// The daimon is told where what it learns goes, and it is no longer "the crystal".
@@ -3403,6 +3472,7 @@ mod tests {
 		// is contradicted back. Two since 2026-09-15: the schema, then the files beside it.
 		assert!(p.contains(CRYSTAL_SCHEMA_NOTE), "a rewritten prompt lost the schema:\n{}", p);
 		assert!(p.ends_with(CRYSTAL_FILES_NOTE), "{}", p);
+		assert!(p.contains(CRYSTAL_TIME_NOTE), "a rewritten prompt lost the time line:\n{}", p);
 	}
 
 	#[test]

@@ -1977,15 +1977,21 @@ pub const RETIRE_KEEP_TURNS: u32 = 1;
 /// would delete a real result's last line.  Two markers, two subjects.
 const BUDGET_NOTE_OPEN: &str = "\n[turn budget: ";
 
+/// The notice speaks only when the nearer of the two limits is this close.  Under a fifth of
+/// the rounds or of the spend left, whichever is nearer: early enough to plan around, late
+/// enough that an ordinary turn never sees it and so never stops for it.  ONE rule for the
+/// whole notice -- it appears near a real limit, says what remains and what happens there, and
+/// never invites stopping, because the model that reads it cannot tell a near limit from a
+/// distant one and a mention of either reads as "stop now".  2026-10-05: a turn at 21 of 600
+/// rounds ended on an empty reply after reading this line on a comfortable budget.
+pub const BUDGET_NOTE_UNDER: f64 = 0.20;
+
 /// The tail every retired tool RESULT ends with.
 ///
 /// It is how a second pass recognises its own work, which is what makes retirement
 /// idempotent: a stub rebuilt from the same call would be identical but for the byte count,
 /// and a count of a count is a lie that grows.
 const RESULT_RETIRED_TAIL: &str = "; call it again if you need it]";
-
-/// The key a retired argument object carries, and the marker that says it is already retired.
-const ARGS_RETIRED_KEY: &str = "retired";
 
 /// Bytes of a key argument kept in a stub, so one enormous path cannot undo the saving.
 const STUB_ARG_CAP: usize = 200;
@@ -2070,10 +2076,11 @@ pub fn retire_upto(msgs: &mut [ChatMessage], end: usize) -> usize {
 			if let ChatMessage::Assistant { content, .. } = &msgs[i] {
 				msgs[i] = ChatMessage::Assistant {
 					content:    content.clone(),
-					tool_calls: lighter,
+					tool_calls: lighter.clone(),
 				};
 				n += 1;
 			}
+			say_args_retired(msgs, i, end, &calls, &lighter);
 		}
 		i += 1 + calls.len();
 	}
@@ -2139,9 +2146,11 @@ pub fn retire_written(msgs: &mut [ChatMessage], end: usize) -> usize {
 		}
 		if moved {
 			if let ChatMessage::Assistant { content, .. } = &msgs[i] {
-				msgs[i] = ChatMessage::Assistant { content: content.clone(), tool_calls: lighter };
+				msgs[i] = ChatMessage::Assistant { content: content.clone(),
+					tool_calls: lighter.clone() };
 				n += 1;
 			}
+			say_args_retired(msgs, i, end, &calls, &lighter);
 		}
 		i += 1 + calls.len();
 	}
@@ -2237,7 +2246,8 @@ pub fn retire_results(msgs: &mut [ChatMessage], end: usize, over: usize) -> usiz
 /// * `usd_left` - Dollars left of the per-turn ceiling, or `None` where the provider reports no
 ///   cost at all -- in which case the ceiling is not enforced either, and a figure would be a
 ///   claim about money nobody quoted.
-pub fn note_budget(msgs: &mut [ChatMessage], rounds_left: usize, usd_left: Option<f64>) -> bool {
+pub fn note_budget(msgs: &mut [ChatMessage], rounds_left: usize, usd_left: Option<f64>,
+					fraction_left: f64) -> bool {
 	let mut last = None;
 	for i in 0..msgs.len() {
 		let text = match &msgs[i] {
@@ -2256,11 +2266,17 @@ pub fn note_budget(msgs: &mut [ChatMessage], rounds_left: usize, usd_left: Optio
 		Some(i) => i,
 		None    => return false,	// a turn with no tool result has nowhere to say this
 	};
+	if fraction_left >= BUDGET_NOTE_UNDER {
+		// Nothing near a limit, so nothing is said: the model cannot tell a near limit from a
+		// distant one, and a mention of either reads as "stop now".
+		return false;
+	}
 	let money = match usd_left {
 		Some(usd) => fmt!(" and US${:.2}", usd.max(0.0)),
 		None      => String::new(),
 	};
-	let whole = fmt!("{}{}{} rounds{} left; if short, report now]",
+	let whole = fmt!("{}{}{} rounds{} left. When they are spent the turn ends, so use them on \
+		the task]",
 		msgs[i].content().as_text(), BUDGET_NOTE_OPEN, rounds_left, money);
 	msgs[i] = msgs[i].with_content(MessageContent::text(whole));
 	true
@@ -2381,25 +2397,56 @@ fn retired_arg_object(tc: &ToolCall) -> Option<String> {
 	if tc.name == "say" || tc.arguments.len() <= ARG_RETIRE_CAP {
 		return None;
 	}
-	if tc.arguments.contains(ARGS_RETIRED_KEY) && tc.arguments.len() < ARG_RETIRE_CAP * 2 {
-		return None;	// already retired
-	}
-	let mut kept = String::new();
-	for key in ["path", "to", "url", "name", "cwd"] {
-		if let Some(v) = extract_json_string(&tc.arguments, key) {
-			if v.is_empty() {
-				continue;
+	// ONLY THE CALL'S OWN KEYS, and no key of the stub's: a model copies the shape of the calls
+	// it has seen, and a `retired` key carried here came back as an argument of a new
+	// `file_edit` (the Ontheism crystal, 2026-10-08, finding 7).  What went is said in the
+	// result instead, by [`say_args_retired`].
+	let object = |cap: bool| -> String {
+		let mut kept: Vec<String> = Vec::new();
+		for key in ARGS_KEPT {
+			if let Some(v) = extract_json_string(&tc.arguments, key) {
+				if v.is_empty() {
+					continue;
+				}
+				let v = if cap { clip(&v, STUB_ARG_CAP) } else { v };
+				kept.push(fmt!("\"{}\":\"{}\"", key, crate::llm::json_escape(&v)));
 			}
-			kept.push_str(&fmt!("\"{}\":\"{}\",",
-				key, crate::llm::json_escape(&clip(&v, STUB_ARG_CAP))));
 		}
+		fmt!("{{{}}}", kept.join(","))
+	};
+	// Already retired, or never held anything but the kept keys: the object rebuilt WHOLE from
+	// itself is itself.  Rebuilt clipped it would not be, since a clip of a clip grows.
+	if object(false) == tc.arguments {
+		return None;
 	}
-	Some(fmt!(
-		"{{{}\"{}\":\"{}\"}}",
-		kept, ARGS_RETIRED_KEY,
-		crate::llm::json_escape(&fmt!(
-			"{} bytes of arguments retired. The call already happened and its result says so; \
-			 read the file if you need what is in it now.", tc.arguments.len()))))
+	Some(object(true))
+}
+
+/// The keys a retired call keeps, which are what the call was made ON.
+const ARGS_KEPT: [&str; 5] = ["path", "to", "url", "name", "cwd"];
+
+/// Each retired call's result opened with a line saying its arguments went, so that a call
+/// that now reads `file_write {"path":"a"}` is not taken for a write of nothing.
+///
+/// In the RESULT, which is read and never copied, rather than in the arguments, which are both.
+/// A result that holds pictures is left alone: its parts are not one text to prefix.
+fn say_args_retired(msgs: &mut [ChatMessage], i: usize, end: usize, was: &[ToolCall],
+	now: &[ToolCall])
+{
+	for (k, (a, b)) in was.iter().zip(now.iter()).enumerate() {
+		let j = i + 1 + k;
+		if a.arguments == b.arguments || j >= end || j >= msgs.len() {
+			continue;
+		}
+		let text = match &msgs[j] {
+			ChatMessage::Tool { content: MessageContent::Text(t), tool_call_id }
+				if *tool_call_id == a.id => t.clone(),
+			_ => continue,
+		};
+		msgs[j] = msgs[j].with_content(MessageContent::text(fmt!(
+			"[{} bytes of this call's arguments are retired; it already happened, and what it \
+			 did follows]\n{}", a.arguments.len(), text)));
+	}
 }
 
 /// A call named the way a person reads it: the tool, then what it was called on.
@@ -3094,8 +3141,9 @@ pub fn needs_fold(est_tokens: u64, real_tokens: u64, budget: u64, forced: bool) 
 /// all there is.  Both halves are needed even then -- acting on the status alone would
 /// fold the conversation every time a key was mistyped.
 ///
-/// THE STATUS IS READ FROM THE TAGS, NEVER FROM THE TEXT.  The transport marks a 400, 413
-/// or 422 `TooBig` where the status is still in hand (`TransportErr::crossed`).  Digits in
+/// THE STATUS IS READ FROM THE TAGS, NEVER FROM THE TEXT.  The transport marks a 413, or a
+/// refusal whose words say size, `TooBig`, and a bare 400 or 422 `Size`, where the status is
+/// still in hand (`TransportErr::crossed`).  Digits in
 /// the prose were read instead until r541: a source line "llm.rs:1400" and a stall "in 400
 /// s" both passed for a refusal, folded the conversation and learnt the window down for
 /// the rest of the session.  And a `Timeout` is never an overflow, whatever it says: a
@@ -3110,8 +3158,24 @@ pub fn looks_like_overflow(e: &Error<ErrTag>, prompt_tokens: u64, budget: u64) -
 	if tags.contains(&ErrTag::Timeout) {
 		return false;
 	}
-	let low = fmt!("{}", e).to_lowercase();
-	for m in [
+	if says_overflow(&fmt!("{}", e)) {
+		return true;
+	}
+	// The fallback: no words that say so, so the status and the size are all there is.  The
+	// transport tags a 413 `TooBig` and a bare 400 or 422 `Size` (size MAY be why).
+	(tags.contains(&ErrTag::TooBig) || tags.contains(&ErrTag::Size))
+		&& prompt_tokens >= OVERFLOW_FLOOR_TOKENS.min(budget / 2)
+}
+
+/// Do the provider's own words say the request was too big -- for the context window, or for
+/// the wire -- whatever size the prompt was thought to be?
+///
+/// The decisive half of [`looks_like_overflow`], on its own for the one caller that has no size
+/// to weigh: the transport, which turns these words into the `TooBig` tag where the refusal
+/// leaves it, so that nothing downstream reads them again.
+pub fn says_overflow(err: &str) -> bool {
+	let low = err.to_lowercase();
+	[
 		"context length",
 		"context_length",
 		"maximum context",
@@ -3122,13 +3186,7 @@ pub fn looks_like_overflow(e: &Error<ErrTag>, prompt_tokens: u64, budget: u64) -
 		"input length",
 		"request too large",
 		"payload too large",
-	] {
-		if low.contains(m) {
-			return true;
-		}
-	}
-	// The fallback: no words that say so, so the status and the size are all there is.
-	tags.contains(&ErrTag::TooBig) && prompt_tokens >= OVERFLOW_FLOOR_TOKENS.min(budget / 2)
+	].iter().any(|m| low.contains(m))
 }
 
 
@@ -4254,8 +4312,11 @@ mod tests {
 		assert!(args.starts_with('{') && args.ends_with('}'), "{}", args);
 		assert_eq!(Some(fmt!("src/a.rs")), extract_json_string(&args, "path"),
 			"the path the call was made on did not survive: {}", args);
-		assert!(args.contains("bytes of arguments retired"),
-			"the size that went is not stated: {}", args);
+		// No key of the stub's own: a model copies the calls it has seen, and a `retired` key
+		// came back as an argument of a new `file_edit` (finding 7, 2026-10-08).
+		assert!(!args.contains("retired"), "the stub carries a key no call takes: {}", args);
+		assert!(v[6].text().contains("bytes of this call's arguments are retired"),
+			"the size that went is not stated beside the call: {}", v[6].text());
 	}
 
 	#[test]
@@ -4553,9 +4614,10 @@ mod tests {
 			asks("a", "file_read", "{\"path\":\"src/a.rs\"}"), replies("a", "first"),
 			asks("b", "file_read", "{\"path\":\"src/b.rs\"}"), replies("b", "second"),
 		];
-		assert!(note_budget(&mut v, 47, Some(0.82)));
+		assert!(note_budget(&mut v, 47, Some(0.82), 0.05));
 		assert_eq!(
-			"second\n[turn budget: 47 rounds and US$0.82 left; if short, report now]",
+			"second\n[turn budget: 47 rounds and US$0.82 left. When they are spent the turn ends, \
+			so use them on the task]",
 			v[4].text());
 		// NOTHING ELSE MOVED. The system prompt is the cached prefix and the earlier rounds are
 		// what the prefix cache is made of: a note anywhere but the tail costs a miss on every
@@ -4568,26 +4630,59 @@ mod tests {
 		// six.
 		v.push(asks("c", "file_read", "{\"path\":\"src/c.rs\"}"));
 		v.push(replies("c", "third"));
-		assert!(note_budget(&mut v, 37, Some(0.61)));
+		assert!(note_budget(&mut v, 37, Some(0.61), 0.05));
 		assert_eq!("second", v[4].text(), "the earlier budget line was left behind");
-		assert_eq!("third\n[turn budget: 37 rounds and US$0.61 left; if short, report now]",
+		assert_eq!("third\n[turn budget: 37 rounds and US$0.61 left. When they are spent the turn \
+			ends, so use them on the task]",
 			v[6].text());
 		// Said again on the same round count with the same figures: still one line.
-		assert!(note_budget(&mut v, 37, Some(0.61)));
+		assert!(note_budget(&mut v, 37, Some(0.61), 0.05));
 		assert_eq!(1, v[6].text().matches("[turn budget:").count(), "{}", v[6].text());
 
 		// NO MONEY WHERE NONE IS REPORTED. Several endpoints put no cost in the response and the
 		// ceiling is not enforced on such a turn either, so a figure would be a claim about a price
 		// nobody quoted.
-		assert!(note_budget(&mut v, 37, None));
-		assert_eq!("third\n[turn budget: 37 rounds left; if short, report now]",
+		assert!(note_budget(&mut v, 37, None, 0.05));
+		assert_eq!("third\n[turn budget: 37 rounds left. When they are spent the turn ends, so use \
+			them on the task]",
 			v[6].text());
 
 		// A turn with nothing to append to is left alone rather than growing a message of its own.
 		let mut bare = vec![user("hello")];
-		assert!(!note_budget(&mut bare, 47, Some(1.0)));
+		assert!(!note_budget(&mut bare, 47, Some(1.0), 0.05));
 		assert_eq!(1, bare.len());
 		assert_eq!("hello", bare[0].text());
+	}
+
+	/// The notice follows ONE rule: it speaks only when a real limit is near, and it never
+	/// invites the turn to stop.  2026-10-05: a DeepSeek Flash turn, 21 of 600 rounds and
+	/// US$0.08 of US$25 used, read "if short, report now" and stopped with an empty reply.
+	#[test]
+	fn test_the_budget_notice_speaks_only_near_a_limit_and_never_invites_stopping_00() {
+		let convo = || vec![
+			user("go"),
+			asks("a", "file_read", "{\"path\":\"src/a.rs\"}"), replies("a", "first"),
+		];
+		// FAR FROM EVERY LIMIT -- the October turn: 21 of 600 rounds, 8% of the spend used.
+		// Nothing is said, because nothing is near.
+		let mut v = convo();
+		assert!(!note_budget(&mut v, 579, Some(25.0 - 0.08), 0.965),
+			"a turn with 96% of its budget left was told to watch it: {}", v[2].text());
+		assert!(!v.iter().any(|m| m.text().contains(BUDGET_NOTE_OPEN)),
+			"a notice was written far from any limit: {}", v[2].text());
+		// UNDER 20% of the rounds left: it speaks.
+		let mut v = convo();
+		assert!(note_budget(&mut v, 100, Some(20.0), 100.0 / 600.0),
+			"the turn near its round limit was not told: {}", v[2].text());
+		let line = &v[2].text()[v[2].text().find(BUDGET_NOTE_OPEN).expect("the line")..];
+		assert!(line.contains("100 rounds"), "the line does not say what remains: {}", line);
+		// It says WHAT HAPPENS AT THE LIMIT and never invites stopping.
+		for stop in ["if short", "report now", "stop now", "wrap up", "finish now"] {
+			assert!(!line.to_lowercase().contains(stop),
+				"the notice invites the turn to stop ({:?}): {}", stop, line);
+		}
+		assert!(line.to_lowercase().contains("the turn ends") || line.to_lowercase().contains("turn will end") || line.to_lowercase().contains("at the limit"),
+			"the notice does not say what happens at the limit: {}", line);
 	}
 
 	// ── The tail note ─────────────────────────────────────────────────────

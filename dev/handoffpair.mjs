@@ -63,6 +63,17 @@ export async function send(page, text) {
 	await page.click('#chat-send', { force: true });
 }
 
+/// Send one prompt from the composer at a DESKTOP's width, where a quick turn runs here.
+/// `send` above narrows the window to a phone's, and a desktop sent from at that width
+/// reads itself a phone and hands its own turn to whichever peer is awake -- so a turn
+/// that must run on B (B busy on a turn of its own) is sent through this one.
+export async function sendDesk(page, text) {
+	await page.setViewportSize({ width: 1280, height: 900 });
+	await page.waitForTimeout(300);
+	await page.fill('#chat-input', text);
+	await page.click('#chat-send', { force: true });
+}
+
 /// A new chat, from the rail a phone's width hides.
 export async function freshChat(s) {
 	await s.page.setViewportSize({ width: 1280, height: 900 });

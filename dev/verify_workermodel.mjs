@@ -261,7 +261,7 @@ check('the starred default is still the FIRST provider\'s model',
 
 // ── The New Diamond dialog ──────────────────────────────────────────
 await p.click('#new-diamond-btn');
-await p.waitForSelector('.dlg-select', { timeout: 8000 });
+await p.waitForSelector('.dlg-select', { state: 'attached', timeout: 8000 });
 const dlg = await p.evaluate(() => {
 	const sels = [...document.querySelectorAll('.dlg-select')];
 	const labs = [...document.querySelectorAll('.cfg-fieldlabel')].map((l) => l.textContent);
@@ -339,7 +339,7 @@ check('the daimon still ran on the Diamond\'s own model',
 // Its record carries a model and NOTHING about workers. Absent has to mean the
 // Diamond's own model; reading it as the starred default is the defect, kept.
 await p.click('#new-diamond-btn');
-await p.waitForSelector('.dlg-select', { timeout: 8000 });
+await p.waitForSelector('.dlg-select', { state: 'attached', timeout: 8000 });
 await p.fill('.dlg-input', 'Legacy Diamond');
 await chooseIn(p, '.dlg-select', 0, 'mock/thinker', DEF);
 await clickOk(p);

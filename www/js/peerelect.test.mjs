@@ -172,8 +172,13 @@ console.log('\n— D: a busy runner answers the errand at once —');
 		const e = sentErrand(P, { turnId: 't-busy-1', chatId: 'c2', eid: 'e1', deadline: 0, dispatchedBy: SELF });
 		const res = await P.runErrand(e, deps);
 		check('D1 the busy nominee answers `busy` and does not run', res.why === 'busy' && seen.ran === 0, JSON.stringify(res));
-		check('D1 with a busy report naming itself', seen.posts.length === 1 && seen.posts[0].status === 'busy' && seen.posts[0].by === NOM,
-			JSON.stringify(seen.posts.map((p) => ({ status: p.status, by: p.by }))));
+		// The hand-back is an `undeliverable` carrying `busy` (QA F-A1): every sender since
+		// 2026-09, r542 and r543 included, runs one at once.
+		check('D1 with a hand-back naming itself: undeliverable, busy, by', seen.posts.length === 1
+			&& seen.posts[0].status === 'undeliverable' && seen.posts[0].busy === 1 && seen.posts[0].by === NOM,
+			JSON.stringify(seen.posts.map((p) => ({ status: p.status, busy: p.busy, by: p.by }))));
+		check('D1 which every sender reads as a hand-back, never as settled',
+			P.handBackReport(seen.posts[0]) && !P.settlingReport(seen.posts[0]));
 	}
 	{
 		const { deps, seen } = base({ selfId: NOM, nominatedId: '', presence: {
@@ -189,9 +194,55 @@ console.log('\n— D: a busy runner answers the errand at once —');
 		const { deps, seen } = base({ selfId: NOM, nominatedId: '', presence: {} });
 		const e = sentErrand(P, { turnId: 't-busy-3', chatId: 'c2', eid: 'e3', deadline: 0, dispatchedBy: SELF });
 		const res = await P.runErrand(e, deps);
-		check('D3 with no idle desk beside it, the busy device answers `busy`',
-			res.why === 'busy' && seen.posts.length === 1 && seen.posts[0].status === 'busy', JSON.stringify(res));
+		check('D3 with no idle desk beside it, the busy device hands the turn back',
+			res.why === 'busy' && seen.posts.length === 1 && seen.posts[0].status === 'undeliverable', JSON.stringify(res));
 	}
+	{
+		// QA F-A2: the only idle desk is the SENDER, which never claims its own errand.
+		const { deps, seen } = base({ selfId: NOM, nominatedId: '', presence: {
+			[SELF]: { name: 'sender-desk', lastSeen: now, busy: 0 } } });
+		const e = sentErrand(P, { turnId: 't-busy-4', chatId: 'c2', eid: 'e7', deadline: 0, dispatchedBy: SELF });
+		const res = await P.runErrand(e, deps);
+		check('D4 the sender is not the idle desk: the busy device hands back rather than hold',
+			res.why === 'busy' && seen.posts.length === 1 && seen.posts[0].status === 'undeliverable', JSON.stringify(res));
+	}
+	{
+		// ...while a third, idle desk beside the sender still takes the hold.
+		const { deps, seen } = base({ selfId: NOM, nominatedId: '', presence: {
+			[SELF]: { name: 'sender-desk', lastSeen: now, busy: 0 },
+			[DESK]: { name: 'desk', lastSeen: now, busy: 0 } } });
+		const e = sentErrand(P, { turnId: 't-busy-5', chatId: 'c2', eid: 'e8', deadline: 0, dispatchedBy: SELF });
+		const res = await P.runErrand(e, deps);
+		check('D5 with another idle desk beside the sender, the busy device holds',
+			res.why === 'busy-hold' && seen.posts.length === 0, JSON.stringify(res));
+	}
+}
+
+console.log('\n— F: one predicate says which reports settle a turn —');
+{
+	const r = (status, extra) => P.makeReport(Object.assign({ turnId: 't', chatId: 'c', status }, extra || {}));
+	for (const st of ['done', 'aborted', 'error', 'refused-spend']) {
+		check('F1 `' + st + '` settles', P.settlingReport(r(st)) === true && P.handBackReport(r(st)) === false);
+	}
+	check('F2 a survivable `parked` does not settle, and is no hand-back',
+		P.settlingReport(r('parked')) === false && P.handBackReport(r('parked')) === false);
+	check('F3 `undeliverable` is a hand-back, not settled',
+		P.settlingReport(r('undeliverable')) === false && P.handBackReport(r('undeliverable')) === true);
+	check('F4 r543\'s `busy` (still sent by r543 runners) is a hand-back, not settled',
+		P.settlingReport(r('busy')) === false && P.handBackReport(r('busy')) === true);
+	check('F5 nothing, and a non-report, settle nothing',
+		P.settlingReport(null) === false && P.settlingReport({ t: 'errand', status: 'done' }) === false);
+	check('F6 makeReport carries a busy depth, 0 by default',
+		r('undeliverable', { busy: 2 }).busy === 2 && r('done').busy === 0);
+	// The tile: the SENDER of a busy hand-back inside its deadline spins ('claimed'), as
+	// for any hand-back -- r543 drew 'failed' and ran nothing.
+	const turn = { why: P.REASON_DISPATCHED, dispatchedBy: SELF, iturn: 't', ts: Date.now(),
+		deadline: Date.now() + 60000 };
+	const want = P.uiState(turn, null, r('undeliverable'), SELF, Date.now(), null);
+	check('F7 uiState reads `busy` exactly as `undeliverable`',
+		P.uiState(turn, null, r('busy'), SELF, Date.now(), null) === want, want);
+	check('F7 uiState still reads `error` as failed',
+		P.uiState(turn, null, r('error'), SELF, Date.now(), null) === 'failed');
 }
 
 console.log('\n— E: decideNow takes a busy errand out of the work chain —');

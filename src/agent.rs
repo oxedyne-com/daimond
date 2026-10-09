@@ -365,9 +365,8 @@ fn reasoned_only_nudge() -> String {
 /// final reply.  It wrote no report, and the fan-out that dispatched it reads that silence
 /// as "nothing found" -- so it is asked, once, to write the report the work is worth.
 fn report_nudge() -> String {
-	"You have finished your tool calls but written no report. Write your report now: \
-	 say what you did, what you found, and where you left it. This is the only thing the \
-	 person who dispatched you will read.".to_string()
+	"You stopped without a reply. If the task is not done, continue it; otherwise report \
+	 what you did and what stops you.".to_string()
 }
 
 /// One dispatched tool call, as the audit sees it.
@@ -1187,6 +1186,9 @@ impl Agent {
         // `Limits`. Written every turn rather than once, so an arm that changes it between two
         // turns of one conversation is obeyed by the second of them.
         registry.ctx.set_compound(self.limits.borrow().compound);
+        // AND WHAT THE ASK WANTS THE DIAMOND'S PAGE TO DRAW, for the load proof an edit of the page
+        // takes (K1): an infographic ask must draw graphics, not only words.
+        registry.ctx.set_ask(&user_msg);
         // THIS TURN'S OWN MESSAGES BEGIN WITH THE SENTENCE ABOUT TO BE PUSHED, and the index is
         // recorded on the agent rather than left to the caller, because a fold later in the turn
         // moves it; see `Agent::turn_start`.
@@ -1675,8 +1677,13 @@ impl Agent {
         let mut blocked: Option<String> = None;
         // A refusal left standing when the model tries to end gets ONE must-fix nudge.
         let mut refusal_nudged = false;
+        // And a page that fails its load proof when the model tries to end gets ONE as well (K1).
+        let mut proof_nudged = false;
         // What this turn did to its Diamond's page, for the honest ending (infographic fix 5).
-        let mut page = PageLog::default();
+        let mut page = PageLog { visual: registry.ctx.visual_ask(), ..Default::default() };
+        // And a visual ask that changed the page's styles and never looked after is told once to
+        // look before it ends (unit G); ending over it again ends the turn as it would have.
+        let mut look_nudged = false;
         // WHERE EACH ROUND STARTED IN `working`, so "three rounds old" is a position rather than a
         // guess.  Cleared whenever a fold rebuilds the list, because a fold moves every index in
         // it and a stale mark would retire the wrong messages -- the newest ones.
@@ -2049,6 +2056,38 @@ impl Agent {
                 } else if let Some(why) = page.undelivered() {
                     how = TurnEnd::Blocked;
                     said = why.to_string();
+                } else if let Some(proof) = registry.ctx.crystal_proof_blocked() {
+                    // THE PAGE FAILS ITS LOAD PROOF, READ FROM OUTSIDE AS THE OWNER SEES IT (K1,
+                    // D-20261008-08): the edit's result said MUST FIX, and a model that ends over
+                    // it is told so once; ending over it again is `Blocked`, not a delivery.
+                    if !proof_nudged {
+                        proof_nudged = true;
+                        let nudge = proof.must_fix().unwrap_or_default();
+                        let reply = ChatMessage::Assistant {
+                            content: MessageContent::text(resp.content.clone()),
+                            tool_calls: Vec::new(),
+                        };
+                        working.push(reply.clone());
+                        session.messages.push(reply);
+                        working.push(ChatMessage::user(nudge.clone()));
+                        session.messages.push(ChatMessage::user(nudge));
+                        continue;
+                    }
+                    how = TurnEnd::Blocked;
+                    said = proof.said().unwrap_or_default();
+                } else if !look_nudged && page.look_owed() {
+                    // A VISUAL CHANGE NOBODY LOOKED AT (9 Oct 2026): the Life log daimon made every
+                    // button 3.3 px shorter for "make the heights consistent" and said it was done.
+                    look_nudged = true;
+                    let reply = ChatMessage::Assistant {
+                        content: MessageContent::text(resp.content.clone()),
+                        tool_calls: Vec::new(),
+                    };
+                    working.push(reply.clone());
+                    session.messages.push(reply);
+                    working.push(ChatMessage::user(LOOK_NUDGE.to_string()));
+                    session.messages.push(ChatMessage::user(LOOK_NUDGE.to_string()));
+                    continue;
                 }
                 // THE SEAM, and only here. A run of prose with a tool call after it is
                 // working rather than an answer -- `demoteToWorking` in the page draws it as
@@ -2124,14 +2163,16 @@ impl Agent {
                 let mut sinks: Vec<Vec<AgentEvent>> = Vec::new();
                 // A CALL THAT ALREADY FAILED TWICE THE SAME WAY IS NOT SENT A THIRD TIME.  It is
                 // answered as a refusal, so the conversation stays well formed, and the turn ends
-                // at the seam with the choice put to the user.
-                let held: Vec<bool> = group.iter()
-                    .map(|tc| setbacks.holds(&tc.name, &tc.arguments)).collect();
+                // at the seam with the choice put to the user.  Only the same call, arguments and
+                // all: a corrected one is sent.
+                let held: Vec<Option<(String, String)>> = group.iter()
+                    .map(|tc| setbacks.held(&tc.name, &tc.arguments)
+                        .map(|head| (held_said(&tc.name, head), held_told(&tc.name, head))))
+                    .collect();
                 let truncated = resp.truncated;
                 let outs: Vec<Outcome<MessageContent>> = if group.len() == 1 {
-                    if held[0] {
-                        vec![Ok(MessageContent::text(
-                            crate::tools::refusal_line(&held_said(&group[0].name))))]
+                    if let Some((said, _)) = &held[0] {
+                        vec![Ok(MessageContent::text(crate::tools::refusal_line(said)))]
                     } else {
                         vec![self.one_call(registry, &group[0], truncated, on_event).await]
                     }
@@ -2139,11 +2180,9 @@ impl Agent {
                     sinks = group.iter().map(|_| Vec::new()).collect();
                     let futs: Vec<_> = group.iter().zip(sinks.iter_mut()).zip(held.iter())
                         .map(|((tc, sink), h)| {
-                            let h = *h;
                             async move {
-                                if h {
-                                    Ok(MessageContent::text(
-                                        crate::tools::refusal_line(&held_said(&tc.name))))
+                                if let Some((said, _)) = h {
+                                    Ok(MessageContent::text(crate::tools::refusal_line(said)))
                                 } else {
                                     self.call_buffered(registry, tc, truncated, sink).await
                                 }
@@ -2227,13 +2266,13 @@ impl Agent {
                     if let Some(w) = verdict.warn {
                         text.push_str(&fmt!("\n{}", w));
                     }
-                    if held.get(n).copied().unwrap_or(false) {
-                        blocked.get_or_insert_with(|| held_said(&tc.name));
+                    if let Some(Some((_, told))) = held.get(n) {
+                        blocked.get_or_insert_with(|| told.clone());
                     } else if let Some(stop) = verdict.stop {
                         blocked.get_or_insert(stop);
                     }
                     if outcome == crate::tools::CallOutcome::Done {
-                        page.saw(&tc.name, &tc.arguments);
+                        page.saw(&tc.name, &tc.arguments, &text);
                     } else {
                         page.failed(&tc.name, &tc.arguments);
                     }
@@ -2384,7 +2423,7 @@ impl Agent {
             // `compact::note_budget`.  On the sweeps' own cadence, so the round that rewrites old
             // messages is the round that rewrites this one.
             if swept % sweep_every == 0 {
-                let (rounds_left, usd_left) = {
+                let (rounds_left, usd_left, fraction_left) = {
                     let l = self.limits.borrow();
                     let legs = l.max_continuations.saturating_sub(continuations);
                     let left = (max_rounds.saturating_sub(leg)) + legs * max_rounds;
@@ -2400,9 +2439,22 @@ impl Agent {
                     } else {
                         None
                     };
-                    (left, usd)
+                    // THE NEARER of the two real limits, as the fraction of it left.  A turn
+                    // that is nowhere near either is told nothing: a notice that appears while
+                    // hundreds of rounds remain is read as an invitation to stop, and one that
+                    // names a figure is a number a model spends to.
+                    // The WHOLE turn's rounds, every leg it may run, which is what `left`
+                    // counts down from; the legs run so far would put `left` over its total.
+                    let rounds_total = (l.max_continuations + 1) * max_rounds;
+                    let round_frac = if rounds_total == 0 { 0.0 }
+                        else { left as f64 / rounds_total as f64 };
+                    let frac = match usd {
+                        Some(u) => round_frac.min(u / l.spend_cap_usd),
+                        None    => round_frac,
+                    };
+                    (left, usd, frac)
                 };
-                compact::note_budget(&mut working, rounds_left, usd_left);
+                compact::note_budget(&mut working, rounds_left, usd_left, fraction_left);
             }
         }
     }
@@ -2485,7 +2537,7 @@ impl Agent {
             let tc = crate::protocol::ToolCall {
                 id:        fmt!("daimond-blocked-{}", rounds),
                 name:      ask.name().to_string(),
-                arguments: blocked_ask_args(&said),
+                arguments: blocked_ask_args(),
             };
             let asked = ChatMessage::Assistant {
                 content:    MessageContent::text(said.clone()),
@@ -2694,6 +2746,11 @@ impl Agent {
     /// * `e` - The error the call returned.
     /// * `bytes` - Bytes of prompt that were refused.
     fn overflowed(&self, e: &Error<ErrTag>, bytes: u64) -> bool {
+        // The transport tags a refusal for size where it can tell (`LlmClient`'s `too_big`);
+        // the words and the size estimate remain for an error that reached here untagged.
+        if e.tags().contains(&ErrTag::TooBig) {
+            return true;
+        }
         let budget = self.limits.borrow().budget(self.reply_cap());
         compact::looks_like_overflow(e, self.gauge.tokens(bytes), budget)
     }
@@ -3171,20 +3228,24 @@ pub fn json_object_is_whole(s: &str) -> bool {
 // │ A failure repeated is a change of approach, never a loop        │
 // └───────────────────────────────────────────────────────────────┘
 
-/// How many failures the same way, on the same target, before the next such call is not sent.
+/// How many failures the same way, of the same call, before that call is not sent again.
 const SAME_WAY_HOLDS: usize = 2;
 
-/// How many failures of any kind on the same target before the turn stops and asks.
+/// How many failures in a row on the same target, with nothing landing on it between them,
+/// before the turn stops and asks.
 ///
 /// The 2026-10-08 Ontheism turn checked its page eleven times, each failing differently, and
-/// nothing in the loop could tell that from progress.
+/// nothing in the loop could tell that from progress.  A call on the target that completes is
+/// that progress, and clears the count (r543 QA F-A2-1).
 const FAILS_STOP: usize = 3;
 
 /// One failed or refused call, as the turn's setbacks keep it.
 #[derive(Clone, Debug)]
 struct Fail {
 	target:	u64,	// the tool and the thing it acted on
+	call:	u64,	// the tool and its whole arguments, normalised
 	sig:	u64,	// the tool and its error, numbers masked
+	head:	String,	// the error's first line, for the sentence a held call is answered with
 }
 
 /// A refusal the turn has not yet mended.
@@ -3198,10 +3259,16 @@ struct Unmended {
 /// What the turn has seen go wrong, and what that now requires.
 ///
 /// **A repeated identical failure ends in a change of approach or a Decision, never a loop**
-/// (the 2026-10-08 transcript analysis).  The second failure the same way says so in the result;
-/// the third such call is not sent and the user is asked; three failures of any kind on one
-/// target stop the turn the same way.  Every count is read off the tool layer's own outcome and
-/// the arguments the model sent, never off its prose.
+/// (the 2026-10-08 transcript analysis).  The second failure of one call the same way says so in
+/// the result; that same call, sent a third time unchanged, is not sent and the user is asked;
+/// three failures in a row on one target, with nothing completing on it between them, stop the
+/// turn the same way.  Every count is read off the tool layer's own outcome and the arguments
+/// the model sent, never off its prose.
+///
+/// **"The same call" means the same tool and the same arguments** (r543 QA F-A2-1).  Keyed on
+/// the target alone, two different misses on a file held every later edit of it, so the usual
+/// recovery -- re-read the file and send the right `old_string` -- was refused as "this exact
+/// call".  A different call is always sent; the target only counts towards `FAILS_STOP`.
 #[derive(Clone, Debug, Default)]
 struct Setbacks {
 	fails:	Vec<Fail>,
@@ -3217,11 +3284,14 @@ struct Verdict {
 
 impl Setbacks {
 
-	/// Should this call be held back rather than sent?
-	fn holds(&self, name: &str, args: &str) -> bool {
-		let t = call_target(name, args);
-		let mine: Vec<&Fail> = self.fails.iter().filter(|f| f.target == t).collect();
-		mine.iter().any(|f| mine.iter().filter(|g| g.sig == f.sig).count() >= SAME_WAY_HOLDS)
+	/// The error this exact call already failed with twice the same way, if it did, in which
+	/// case it is held back rather than sent.
+	fn held(&self, name: &str, args: &str) -> Option<&str> {
+		let c = call_key(name, args);
+		let mine: Vec<&Fail> = self.fails.iter().filter(|f| f.call == c).collect();
+		mine.iter()
+			.find(|f| mine.iter().filter(|g| g.sig == f.sig).count() >= SAME_WAY_HOLDS)
+			.map(|f| f.head.as_str())
 	}
 
 	/// Record one result, and say what it calls for.
@@ -3240,7 +3310,10 @@ impl Setbacks {
 		-> Verdict
 	{
 		let place = call_place(args);
+		let target = call_target(name, args);
 		if outcome == crate::tools::CallOutcome::Done {
+			// Progress on the target: what failed on it before no longer counts.
+			self.fails.retain(|f| f.target != target);
 			// Mended: the same place written by any tool, or a placeless tool that now worked.
 			self.open.retain(|u| match (u.place, place.as_deref()) {
 				(Some(p), Some(q))	=> p != call_fingerprint("", q),
@@ -3249,10 +3322,10 @@ impl Setbacks {
 			});
 			return Verdict::default();
 		}
-		let target = call_target(name, args);
+		let call = call_key(name, args);
 		let head = first_line(text);
 		let sig = call_fingerprint(name, &masked(&head));
-		self.fails.push(Fail { target, sig });
+		self.fails.push(Fail { target, call, sig, head: head.clone() });
 		if outcome == crate::tools::CallOutcome::Refused && !paused {
 			self.open.push(Unmended {
 				place: place.as_deref().map(|q| call_fingerprint("", q)),
@@ -3260,17 +3333,18 @@ impl Setbacks {
 				head:  head.clone(),
 			});
 		}
-		let same = self.fails.iter().filter(|f| f.target == target && f.sig == sig).count();
+		let same = self.fails.iter().filter(|f| f.call == call && f.sig == sig).count();
 		let all = self.fails.iter().filter(|f| f.target == target).count();
 		let mut v = Verdict::default();
 		if same == SAME_WAY_HOLDS {
-			v.warn = Some(fmt!("This has failed twice the same way: change approach, or ask the \
-				user. The same call will not be sent a third time."));
+			v.warn = Some(fmt!("This exact call has failed twice the same way: change approach, \
+				or ask the user. Sent again with the same arguments it will not be sent; a call \
+				with corrected arguments will be."));
 		}
 		if all >= FAILS_STOP {
-			v.stop = Some(fmt!("{} failed {} times on {}, so I have stopped rather than try it \
-				again. The last answer was: {}", name, all,
-				place.unwrap_or_else(|| fmt!("the same call")), head));
+			v.stop = Some(fmt!("{} failed {} times in a row on {}, with nothing completing \
+				between, so I have stopped rather than try it again. The last answer was: {}",
+				name, all, place.unwrap_or_else(|| fmt!("the same call")), head));
 		}
 		v
 	}
@@ -3279,6 +3353,31 @@ impl Setbacks {
 	fn unmended(&self) -> Option<&Unmended> {
 		self.open.first()
 	}
+}
+
+/// A call's identity for holding a repeat: its tool and its arguments, with the whitespace
+/// between JSON tokens taken out, so a reformatted resend of the same call is the same call.
+fn call_key(name: &str, args: &str) -> u64 {
+	let mut out = String::with_capacity(args.len());
+	let mut quoted = false;
+	let mut escaped = false;
+	for c in args.trim().chars() {
+		if quoted {
+			out.push(c);
+			match (escaped, c) {
+				(true, _)		=> escaped = false,
+				(false, '\\')	=> escaped = true,
+				(false, '"')	=> quoted = false,
+				_				=> {},
+			}
+		} else if c == '"' {
+			quoted = true;
+			out.push(c);
+		} else if !c.is_whitespace() {
+			out.push(c);
+		}
+	}
+	call_fingerprint(name, &out)
 }
 
 /// What a call acts on: its path, URL, destination or Diamond, whichever it names first.
@@ -3318,16 +3417,20 @@ struct PageLog {
 	wrote:		bool,			// a completed call changed the page this turn
 	restored:	bool,			// ... and the last one to touch it was a revert
 	checked:	Option<bool>,	// the last check of the page: did it fail?
+	visual:		bool,			// the ask is about how something looks
+	styled:		bool,			// a style edit of the page no look has followed
 }
 
 impl PageLog {
 
 	/// Note a completed call.
-	fn saw(&mut self, name: &str, args: &str) {
-		if name == crate::tools::Tool::Capture.name()
-			&& crate::tools::Tool::capture_in_crystal(args)
-		{
+	///
+	/// `said` is its result: an edit that measured the page again by itself, after a look, has
+	/// been looked at.
+	fn saw(&mut self, name: &str, args: &str, said: &str) {
+		if crate::tools::Tool::looks_at_crystal(name, args) {
 			self.checked = Some(false);
+			self.styled = false;
 			return;
 		}
 		let tool = match crate::tools::Tool::from_name(name) {
@@ -3341,17 +3444,24 @@ impl PageLog {
 		}
 		if tool == crate::tools::Tool::FileRevert {
 			self.restored = self.wrote;
+			self.styled = false;
 		} else {
 			self.wrote = true;
 			self.restored = false;
+			if crate::tools::touches_style(args) {
+				self.styled = !said.contains(crate::tools::REMEASURE_HEAD);
+			}
 		}
+	}
+
+	/// Does a visual ask end with a style edit of the page that no look has followed?
+	fn look_owed(&self) -> bool {
+		self.visual && self.styled
 	}
 
 	/// Note a call that failed or was refused; only a failed check of the page counts.
 	fn failed(&mut self, name: &str, args: &str) {
-		if name == crate::tools::Tool::Capture.name()
-			&& crate::tools::Tool::capture_in_crystal(args)
-		{
+		if crate::tools::Tool::looks_at_crystal(name, args) {
 			self.checked = Some(true);
 		}
 	}
@@ -3368,6 +3478,13 @@ impl PageLog {
 	}
 }
 
+/// What the model is told once when a visual ask edited the page's styles and never looked after.
+const LOOK_NUDGE: &str = "You changed how your Diamond's page looks and have not looked at it \
+	since your last edit. Before you answer: call crystal_look on the parts that were asked about, \
+	compare them with what they measured before, and put the measured difference in your answer, \
+	e.g. 'Log it and Edit group are now both 40 px; were 39 and 39'. If they measure the same as \
+	before, say so plainly; do not call it done.";
+
 /// What the model is told once when it tries to end with a refusal standing.
 fn refusal_nudge(tool: &str, head: &str) -> String {
 	fmt!("You are ending the turn with {} still refused: {} You MUST fix this now: change the \
@@ -3375,16 +3492,26 @@ fn refusal_nudge(tool: &str, head: &str) -> String {
 		blocked; the turn will end as not done.", tool, head)
 }
 
-/// The sentence a call held back as a repeat is answered with.
-fn held_said(name: &str) -> String {
-	fmt!("{} was not sent: this exact call already failed twice the same way, and a third try \
-		would fail again. The user has been asked how to go on.", name)
+/// The sentence a call held back as a repeat is answered with: what was identical, what it
+/// failed with, and what to change.
+fn held_said(name: &str, head: &str) -> String {
+	fmt!("{} was not sent: the same call, with the same arguments, already failed twice with \
+		the same error ({}). Sent unchanged it would fail again; change the arguments or take \
+		another route.", name, head)
+}
+
+/// What the user is told when the turn ends on a held call.
+fn held_told(name: &str, head: &str) -> String {
+	fmt!("I did not send {} a third time: the same call, with the same arguments, had already \
+		failed twice with the same error ({}).", name, head)
 }
 
 /// The arguments of the Decision the app offers when a turn is blocked.
-fn blocked_ask_args(said: &str) -> String {
-	fmt!(r#"{{"question":"{}","options":[{{"label":"Try another way","means":"I change approach rather than repeat what failed, for example a smaller step or a different tool."}},{{"label":"Stop here","means":"I leave things as they are and report what was done and what is left."}}],"recommend":"Try another way","why":"Sending the same thing again would fail the same way and cost another round.","if_silent":"I leave things as they are."}}"#,
-		crate::llm::json_escape(&fmt!("I could not finish: {} How should I go on?", said)))
+///
+/// It only asks: the reason is the turn's text, drawn just above it.  `app` marks it as the
+/// app's own, so the page draws it in the user's language (r543 QA F-A2-3).
+fn blocked_ask_args() -> String {
+	fmt!(r#"{{"app":"blocked","question":"I could not get past this. How should I go on?","options":[{{"label":"Try another way","means":"I change approach rather than repeat what failed, for example a smaller step or a different tool."}},{{"label":"Stop here","means":"I leave things as they are and report what was done and what is left."}}],"recommend":"Try another way","why":"Sending the same thing again would fail the same way and cost another round.","if_silent":"I leave things as they are."}}"#)
 }
 
 /// A call's identity, for counting repeats: its name and its arguments, verbatim.
@@ -4408,15 +4535,12 @@ mod tests {
             "the older turn's retired result does not name the call that made it");
     }
 
-    #[tokio::test]
-    async fn test_a_long_turn_is_told_what_is_left_of_it_00() {
-        // A turn that reaches a ceiling stops in the middle of the work, and nothing could see it
-        // coming: a model cannot count its own rounds and cannot see the bill.  So the figures are
-        // put where it will read them and where they cost nothing to change -- the last tool
-        // result, never the system prompt, which is the cached prefix.
+    /// The request a ten-round turn ends on, each round costing `usd` of the five-dollar ceiling,
+    /// with the session it left behind.
+    async fn last_request_of_ten_rounds_at(usd: f64) -> (String, Session) {
         let registry = one_tool();
         let mut script: Vec<crate::llm::tests::Reply> =
-            (0..compact::IN_TURN_RETIRE_EVERY).map(|_| round_costing(0.05)).collect();
+            (0..compact::IN_TURN_RETIRE_EVERY).map(|_| round_costing(usd)).collect();
         script.push(plain_answer());
         let (port, seen) = crate::llm::tests::start_stub(script).await;
         let mut llm = crate::llm::tests::stub_client(port);
@@ -4434,14 +4558,24 @@ mod tests {
             "the turn did not reach the round the line is said on: {} requests", bodies.len());
         // THE LAST REQUEST, because that is the one the line was written for: it is appended at the
         // seam of round ten and the eleventh request is the first to carry it.
-        let last = match bodies.last() {
-            Some(b) => b.clone(),
+        match bodies.last() {
+            Some(b) => (b.clone(), session),
             None    => panic!("no request reached the provider"),
-        };
+        }
+    }
+
+    #[tokio::test]
+    async fn test_a_long_turn_is_told_what_is_left_of_it_00() {
+        // A turn that reaches a ceiling stops in the middle of the work, and nothing could see it
+        // coming: a model cannot count its own rounds and cannot see the bill.  So the figures are
+        // put where it will read them and where they cost nothing to change -- the last tool
+        // result, never the system prompt, which is the cached prefix.  Ten rounds at 45 cents of
+        // a five-dollar ceiling leave a tenth of the spend: near a real limit, so it is said.
+        let (last, session) = last_request_of_ten_rounds_at(0.45).await;
         // 50 left of this leg and three more legs of 60, which is what the app will actually run
-        // unattended -- see `compact::MAX_CONTINUATIONS`. Ten rounds at five cents of a
-        // five-dollar ceiling.
-        let want = "[turn budget: 230 rounds and US$4.50 left; if short, report now]";
+        // unattended -- see `compact::MAX_CONTINUATIONS`.
+        let want = "[turn budget: 230 rounds and US$0.50 left. When they are spent the turn ends, \
+            so use them on the task]";
         assert!(last.contains(want), "the turn was not told what was left of it: {}",
             &last[last.len().saturating_sub(600)..]);
         // AND IT IS SAID ONCE AND NOWHERE ELSE: not in the system prompt, which is the cached
@@ -4451,6 +4585,38 @@ mod tests {
         // it would be re-sent for the life of the conversation and be wrong every time.
         assert!(!session.messages.iter().any(|m| m.text().contains("[turn budget:")),
             "the app's own bookkeeping was written into the user's transcript");
+    }
+
+    #[tokio::test]
+    async fn test_a_turn_far_from_every_limit_is_told_nothing_00() {
+        // Ten rounds at five cents of five dollars, ten of 240 rounds: nowhere near either limit,
+        // so nothing is said.  2026-10-05: a Flash turn read "if short, report now" on a
+        // comfortable budget and stopped with an empty reply.
+        let (last, _) = last_request_of_ten_rounds_at(0.05).await;
+        assert!(!last.contains("[turn budget:"),
+            "a turn far from every limit was told about its budget: {}",
+            &last[last.len().saturating_sub(600)..]);
+    }
+
+    /// A model that stopped with an empty reply is told to continue or report -- never that it
+    /// is on a budget.  The reasoning-only and leaked-call nudges carry no budget words either.
+    /// 2026-10-05: a Flash turn ended on an empty reply after reading three budget notices.
+    #[test]
+    fn test_the_nudges_carry_no_budget_words_00() {
+        for nudge in [report_nudge(), reasoned_only_nudge(), leak_nudge("any-model")] {
+            for word in ["budget", "rounds left", "us$", "spend", "cost", "if short",
+                         "most of the output"] {
+                assert!(!nudge.to_lowercase().contains(word),
+                    "the nudge talks about a budget ({:?}): {}", word, nudge);
+            }
+        }
+        assert!(report_nudge().contains("You stopped without a reply"),
+            "the empty-reply nudge does not name what happened: {}", report_nudge());
+        assert!(report_nudge().contains("continue it"),
+            "the empty-reply nudge does not say to continue an unfinished task: {}",
+            report_nudge());
+        assert!(report_nudge().contains("report what you did"),
+            "the empty-reply nudge does not say to report a finished one: {}", report_nudge());
     }
 
     /// What the compactor is told when the user has not said otherwise.
@@ -4940,12 +5106,21 @@ mod tests {
             "the second identical failure said nothing: {}", got[1].2);
         assert!(got[2].2.contains("was not sent"), "the third was sent: {}", got[2].2);
         // The choice is the app's own Decision.
-        assert!(events.iter().any(|e| matches!(e,
-            AgentEvent::ToolCall { name, .. } if name == "ask")), "no Decision was offered");
+        let ask: Vec<&String> = events.iter().filter_map(|e| match e {
+            AgentEvent::ToolCall { name, args, .. } if name == "ask" => Some(args),
+            _ => None,
+        }).collect();
+        assert_eq!(1, ask.len(), "no Decision was offered");
         let (how, why, said) = ended_of(&events);
         assert_eq!(("failed", "blocked"), (how.as_str(), why.as_str()),
             "the turn did not end blocked");
-        assert!(said.contains("was not sent"), "the user is not told why: {}", said);
+        assert!(said.contains("did not send file_edit a third time"),
+            "the user is not told why in their own terms: {}", said);
+        // The Decision is the app's own, marked so the page draws it in the user's language,
+        // and it does not repeat the sentence drawn just above it (r543 QA F-A2-3).
+        assert!(ask[0].contains(r#""app":"blocked""#), "the Decision is not marked: {}", ask[0]);
+        assert!(!ask[0].contains("third time") && !ask[0].contains("The user"),
+            "the Decision repeats the sentence, or speaks of the user: {}", ask[0]);
     }
 
     /// Three failures on one target, each different, stop the turn too (infographic fix 8).
@@ -4959,14 +5134,52 @@ mod tests {
         let v = s.record("capture", args, "Error: no title", failed, false);
         assert!(v.stop.as_deref().map_or(false, |t| t.contains("failed 3 times")),
             "three failed checks on one page did not stop: {:?}", v);
-        // Numbers are masked, so line 41 and line 42 are the same failure.
+        // Something completing on the page between them means they are not in a row.
+        let done = crate::tools::CallOutcome::Done;
         let mut s = Setbacks::default();
-        s.record("file_edit", r#"{"path":"a"}"#, "Error: no match at line 41", failed, false);
-        assert!(!s.holds("file_edit", r#"{"path":"a"}"#));
-        s.record("file_edit", r#"{"path":"a","x":1}"#, "Error: no match at line 42", failed, false);
-        assert!(s.holds("file_edit", r#"{"path":"a"}"#), "the masked repeat is not held");
-        assert!(!s.holds("file_edit", r#"{"path":"b"}"#), "another file is held");
-        assert!(!s.holds("file_read", r#"{"path":"a"}"#), "another tool is held");
+        s.record("capture", args, "Error: blank at 390", failed, false);
+        s.record("capture", args, "Error: JSON shown", failed, false);
+        s.record("capture", args, "Captured", done, false);
+        assert!(s.record("capture", args, "Error: no title", failed, false).stop.is_none(),
+            "a failure after progress was counted with the ones before it");
+    }
+
+    /// Only the same call, arguments and all, is held (r543 QA F-A2-1).  Numbers in the error
+    /// are masked, so line 41 and line 42 are the same failure.
+    #[test]
+    fn test_repeat_failure_holds_only_the_identical_call_00() {
+        let failed = crate::tools::CallOutcome::Failed;
+        let mut s = Setbacks::default();
+        let x = r#"{"path":"a","old_string":"betta"}"#;
+        s.record("file_edit", x, "Error: no match at line 41", failed, false);
+        assert!(s.held("file_edit", x).is_none());
+        s.record("file_edit", x, "Error: no match at line 42", failed, false);
+        assert_eq!(Some("Error: no match at line 41"), s.held("file_edit", x),
+            "the masked repeat is not held");
+        // Reformatted is the same call.
+        assert!(s.held("file_edit", r#"{ "path": "a", "old_string": "betta" }"#).is_some());
+        // Different arguments, another file or another tool are not.
+        assert!(s.held("file_edit", r#"{"path":"a","old_string":"beta"}"#).is_none(),
+            "a corrected call is held");
+        assert!(s.held("file_edit", r#"{"path":"a","old_string":"bet ta"}"#).is_none(),
+            "whitespace inside a string was taken out");
+        assert!(s.held("file_edit", r#"{"path":"b","old_string":"betta"}"#).is_none(),
+            "another file is held");
+        assert!(s.held("file_read", x).is_none(), "another tool is held");
+        // Two different calls failing the same way do not hold either of them.
+        let mut s = Setbacks::default();
+        let y = r#"{"path":"a","old_string":"beeta"}"#;
+        s.record("file_edit", x, "Error: old_string not found", failed, false);
+        s.record("file_edit", y, "Error: old_string not found", failed, false);
+        assert!(s.held("file_edit", x).is_none() && s.held("file_edit", y).is_none(),
+            "two different misses held a call");
+        // A completed call on the file clears what failed on it before.
+        let mut s = Setbacks::default();
+        s.record("file_edit", x, "Error: old_string not found", failed, false);
+        s.record("file_edit", x, "Error: old_string not found", failed, false);
+        s.record("file_edit", r#"{"path":"a","old_string":"alpha"}"#, "Edited a",
+            crate::tools::CallOutcome::Done, false);
+        assert!(s.held("file_edit", x).is_none(), "progress on the file left the call held");
     }
 
     /// A call that SUCCEEDS is not counted, however often it is repeated, and mends a refusal.
@@ -4981,7 +5194,7 @@ mod tests {
         for _ in 0..5 {
             assert_eq!(Verdict::default(), s.record("file_read", r#"{"path":"a"}"#, "ok", done, false));
         }
-        assert!(!s.holds("file_read", r#"{"path":"a"}"#));
+        assert!(s.held("file_read", r#"{"path":"a"}"#).is_none());
         let refused = crate::tools::CallOutcome::Refused;
         s.record("file_write", r#"{"path":"a"}"#, "Refused: too big", refused, false);
         assert!(s.unmended().is_some());
@@ -5016,25 +5229,206 @@ mod tests {
         assert!(said.contains("Refused"), "the refusal's words did not reach the user: {}", said);
     }
 
+    /// One tool call, as a stub reply.
+    fn call_reply(name: &str, args: &str) -> crate::llm::tests::Reply {
+        crate::llm::tests::Reply::Sse {
+            chunks: vec![
+                fmt!("data: {{\"choices\":[{{\"delta\":{{\"tool_calls\":[{{\"index\":0,\
+                    \"id\":\"c0\",\"type\":\"function\",\"function\":{{\"name\":\"{}\",\
+                    \"arguments\":\"{}\"}}}}]}}}}]}}\n\n", name, crate::llm::json_escape(args)),
+                "data: {\"choices\":[{\"delta\":{},\"finish_reason\":\"tool_calls\"}]}\n\n"
+                    .to_string(),
+                "data: [DONE]\n\n".to_string(),
+            ],
+            reset_after: None,
+        }
+    }
+
+    /// A `file_edit` of `notes/g.txt`, as a stub reply.
+    fn edit_g(old: &str, new: &str) -> crate::llm::tests::Reply {
+        call_reply("file_edit", &fmt!(r#"{{"path":"notes/g.txt","old_string":"{}","new_string":"{}"}}"#,
+            old, new))
+    }
+
+    /// Run one turn of `file_edit` calls on `notes/g.txt`, seeded with `body`, and return the
+    /// events and the file as the turn left it.
+    async fn edits_on_one_file(body: &str, calls: Vec<crate::llm::tests::Reply>)
+        -> (Vec<AgentEvent>, String)
+    {
+        let n = calls.len();
+        let mut replies = calls;
+        replies.push(plain_answer());
+        replies.push(plain_answer());
+        let (port, _seen) = crate::llm::tests::start_stub(replies).await;
+        let mut llm = crate::llm::tests::stub_client(port);
+        llm.retry.max_attempts = 1;
+        let a = Agent::new(llm, "You are Daimond.");
+        a.set_max_rounds(n + 5);
+        let mut registry = no_tools();
+        registry.tools = vec![crate::tools::Tool::FileEdit, crate::tools::Tool::Ask];
+        let file = registry.ctx.workspace.root().join("notes/g.txt");
+        if let Some(dir) = file.parent() {
+            if let Err(e) = std::fs::create_dir_all(dir) {
+                panic!("the fixture directory: {}", e);
+            }
+        }
+        if let Err(e) = std::fs::write(&file, body) {
+            panic!("the fixture file: {}", e);
+        }
+        let mut session = Session::new(fmt!("s1"), fmt!("edits"), fmt!("model"));
+        let mut events: Vec<AgentEvent> = Vec::new();
+        let _ = a.run_turn(&mut session, fmt!("edit it"), &registry,
+            &mut |ev| events.push(ev)).await;
+        let after = std::fs::read_to_string(&file).unwrap_or_default();
+        (events, after)
+    }
+
+    /// No call in the run was held, and the turn did not end blocked.
+    fn nothing_held(events: &[AgentEvent], arm: &str) {
+        let held: Vec<_> = tool_results(events).into_iter()
+            .filter(|r| r.2.contains("was not sent")).collect();
+        assert!(held.is_empty(), "arm {}: a call that is not a repeat was held: {:?}", arm, held);
+        let (how, why, said) = ended_of(events);
+        assert!(why != "blocked", "arm {}: the turn ended {} / {}: {}", arm, how, why, said);
+    }
+
+    /// r543 QA F-A2-1, arm A: two DIFFERENT misses on one file, then the corrected edit.  The
+    /// corrected edit is a different call, so it is sent and lands.
+    #[tokio::test]
+    async fn test_repeat_failure_corrected_edit_after_two_misses_is_sent_00() {
+        let (events, after) = edits_on_one_file("alpha\nbeta\ngamma\n", vec![
+            edit_g("betta", "B1"), edit_g("beeta", "B2"), edit_g("beta", "BETA")]).await;
+        nothing_held(&events, "A");
+        assert_eq!("alpha\nBETA\ngamma\n", after, "arm A: the corrected edit did not land");
+    }
+
+    /// Arm D: a miss, two good edits, a second miss, then good edits.  Nothing is a repeat.
+    #[tokio::test]
+    async fn test_repeat_failure_misses_among_good_edits_do_not_hold_00() {
+        let (events, after) = edits_on_one_file("l1\nl2\nl3\nl4\nl5\n", vec![
+            edit_g("zz1", "x"), edit_g("l1", "L1"), edit_g("l2", "L2"), edit_g("zz2", "x"),
+            edit_g("l3", "L3"), edit_g("l4", "L4")]).await;
+        nothing_held(&events, "D");
+        assert_eq!("L1\nL2\nL3\nL4\nl5\n", after, "arm D: a good edit did not land");
+    }
+
+    /// Arm E: three different failures on one file, each followed by a good edit.  Progress
+    /// between them means they are not three in a row, so the turn is not stopped.
+    #[tokio::test]
+    async fn test_repeat_failure_failures_with_progress_between_do_not_stop_00() {
+        let (events, after) = edits_on_one_file("a1\na2\na3\na4\na2\n", vec![
+            edit_g("qq", "x"), edit_g("a1", "A1"), edit_g("a2", "x"), edit_g("a3", "A3"),
+            call_reply("file_edit", r#"{"path":"notes/g.txt"}"#), edit_g("a4", "A4")]).await;
+        nothing_held(&events, "E");
+        assert_eq!("A1\na2\nA3\nA4\na2\n", after, "arm E: the last good edit did not land");
+    }
+
+    /// The control for arm E: three different failures in a row on one file, nothing landing
+    /// between, still stop the turn and ask.
+    #[tokio::test]
+    async fn test_repeat_failure_three_failures_in_a_row_still_stop_00() {
+        let (events, after) = edits_on_one_file("a1\na2\na3\na2\n", vec![
+            edit_g("qq", "x"), edit_g("a2", "x"),
+            call_reply("file_edit", r#"{"path":"notes/g.txt"}"#), edit_g("a1", "A1")]).await;
+        let (how, why, said) = ended_of(&events);
+        assert_eq!(("failed", "blocked"), (how.as_str(), why.as_str()),
+            "three failures in a row did not stop the turn: {}", said);
+        assert!(said.contains("3 times in a row"), "the stop does not say why: {}", said);
+        assert_eq!("a1\na2\na3\na2\n", after, "the call after the stop was sent");
+    }
+
     /// A turn that puts the page back as it was, or whose last check failed, is not delivered.
     #[test]
     fn test_repeat_failure_restored_page_is_not_delivered_00() {
         let page = r#"{"path":"diamonds/d1/crystal.html","content":"x"}"#;
         let mut p = PageLog::default();
-        p.saw("file_write", page);
+        p.saw("file_write", page, "Wrote");
         assert!(p.undelivered().is_none());
-        p.saw("file_revert", r#"{"path":"diamonds/d1/crystal.html"}"#);
+        p.saw("file_revert", r#"{"path":"diamonds/d1/crystal.html"}"#, "");
         assert_eq!(Some("I could not make the page; it is back as it was."), p.undelivered());
         // A revert asked for on its own is the delivery.
         let mut p = PageLog::default();
-        p.saw("file_revert", r#"{"path":"diamonds/d1/crystal.html"}"#);
+        p.saw("file_revert", r#"{"path":"diamonds/d1/crystal.html"}"#, "");
         assert!(p.undelivered().is_none());
         // The last check decides.
         let shot = r#"{"id":"d1","in":"crystal"}"#;
         p.failed("capture", shot);
         assert!(p.undelivered().is_some());
-        p.saw("capture", shot);
+        p.saw("capture", shot, "");
         assert!(p.undelivered().is_none());
+    }
+
+    /// Unit G's look: a visual ask whose last style edit of the page no look followed is owed one;
+    /// a look, or an edit that measured the page again by itself, pays it.
+    #[test]
+    fn test_a_visual_style_edit_is_owed_a_look_until_one_follows_it_00() {
+        let css = r#"{"path":"diamonds/d1/crystal.html","old_string":".go{","new_string":".go{min-height:36px;"}"#;
+        let words = r#"{"path":"diamonds/d1/crystal.html","old_string":"Log it","new_string":"Log"}"#;
+        let mut p = PageLog { visual: true, ..Default::default() };
+        p.saw("file_edit", css, "Edited diamonds/d1/crystal.html");
+        assert!(p.look_owed(), "a style edit nobody looked at");
+        p.saw("crystal_look", r#"{"targets":[".go"]}"#, "probe");
+        assert!(!p.look_owed(), "looked after the edit");
+        p.saw("file_edit", css, "Edited diamonds/d1/crystal.html");
+        p.saw("capture", r#"{"in":"crystal"}"#, "");
+        assert!(!p.look_owed(), "capture in:crystal is a look as well");
+        p.saw("file_edit", css, &fmt!("Edited diamonds/d1/crystal.html\n\n{} ('.go', 1440 px):", crate::tools::REMEASURE_HEAD));
+        assert!(!p.look_owed(), "the edit measured the page again by itself");
+        p.saw("file_edit", words, "Edited diamonds/d1/crystal.html");
+        assert!(!p.look_owed(), "an edit of words is not a style edit");
+        let mut q = PageLog::default();
+        q.saw("file_edit", css, "Edited diamonds/d1/crystal.html");
+        assert!(!q.look_owed(), "an ask that is not visual is not nudged");
+    }
+
+    /// One `file_write` of the Diamond's page that changes its styles.
+    fn one_style_write() -> crate::llm::tests::Reply {
+        crate::llm::tests::Reply::Sse {
+            chunks: vec![
+                "data: {\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"id\":\"c0\",\
+                    \"type\":\"function\",\"function\":{\"name\":\"file_write\",\"arguments\":\
+                    \"{\\\"path\\\":\\\"diamonds/d1/crystal.html\\\",\\\"content\\\":\\\"<style>.go{min-height:36px}</style>\\\"}\"}}]}}]}\n\n"
+                    .to_string(),
+                "data: {\"choices\":[{\"delta\":{},\"finish_reason\":\"tool_calls\"}]}\n\n"
+                    .to_string(),
+                "data: [DONE]\n\n".to_string(),
+            ],
+            reset_after: None,
+        }
+    }
+
+    /// A turn of `ask` whose model writes the page's styles, then only answers.
+    async fn ran_styled(ask: &str) -> (TurnEnding, Vec<String>) {
+        let registry = one_tool();
+        let (port, seen) = crate::llm::tests::start_stub(
+            vec![one_style_write(), plain_answer(), plain_answer(), plain_answer()]).await;
+        let mut llm = crate::llm::tests::stub_client(port);
+        llm.retry.max_attempts = 1;
+        let a = Agent::new(llm, "You are Daimond.");
+        a.set_max_rounds(4);
+        let mut session = Session::new(fmt!("s1"), fmt!("audit"), fmt!("model"));
+        let _ = a.run_turn(&mut session, ask.to_string(), &registry, &mut |_| {}).await;
+        let bodies = seen.lock().map(|v| v.bodies.clone()).unwrap_or_default();
+        match a.ending() {
+            Some(e) => (e, bodies),
+            None    => panic!("a turn ran and said nothing at all about how it ended"),
+        }
+    }
+
+    /// Unit G, 9 Oct 2026 (Life log buttons): a visual ask that edited the page's styles and never
+    /// looked is told ONCE to look and report the measured difference; ending over it again ends
+    /// the turn as it would have, so the nudge cannot hold a turn forever.
+    #[tokio::test]
+    async fn test_a_visual_edit_never_looked_at_is_nudged_once_to_look_00() {
+        let (end, bodies) = ran_styled("make the button heights consistent").await;
+        assert_eq!(TurnEnd::Answered, end.how, "{:?}", end);
+        assert_eq!(3, bodies.len(), "the write, the ending, and one round after the nudge");
+        assert!(bodies[2].contains("call crystal_look") && bodies[2].contains("measured difference"),
+            "the model was not told to look before it ended");
+        // An ask that is not about looks is not nudged.
+        let (end, bodies) = ran_styled("save my notes on the page").await;
+        assert_eq!(TurnEnd::Answered, end.how, "{:?}", end);
+        assert_eq!(2, bodies.len(), "a turn that was not asked about looks was nudged");
     }
 
     /// Every `ToolResult` in a run, as `(name, outcome, text)`.
@@ -5642,6 +6036,73 @@ mod tests {
         // breakage alone would not: only the refusal is a thing the turn was told to mend.
         assert_eq!(TurnEnd::Blocked, end.how, "{:?}", end);
         assert!(end.said.starts_with("Not done: file_write was refused"), "{:?}", end);
+    }
+
+    /// One `file_write` that lands, standing for an edit of the Diamond's page.
+    fn one_page_write() -> crate::llm::tests::Reply {
+        crate::llm::tests::Reply::Sse {
+            chunks: vec![
+                "data: {\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"id\":\"c0\",\
+                    \"type\":\"function\",\"function\":{\"name\":\"file_write\",\"arguments\":\
+                    \"{\\\"path\\\":\\\"notes/page.txt\\\",\\\"content\\\":\\\"hi\\\"}\"}}]}}]}\n\n"
+                    .to_string(),
+                "data: {\"choices\":[{\"delta\":{},\"finish_reason\":\"tool_calls\"}]}\n\n"
+                    .to_string(),
+                "data: [DONE]\n\n".to_string(),
+            ],
+            reset_after: None,
+        }
+    }
+
+    /// A turn whose page edit was followed by the load proof `proof`, as the driver answered it.
+    ///
+    /// The proof is taken by the browser transport alone, so the test notes it where that
+    /// transport does -- on the turn's context, as the write's result arrives -- and the turn's end
+    /// reads it through the same hook.
+    async fn ran_with_proof(proof: &str, script: Vec<crate::llm::tests::Reply>) -> (TurnEnding, Vec<String>) {
+        let registry = one_tool();
+        let (port, seen) = crate::llm::tests::start_stub(script).await;
+        let mut llm = crate::llm::tests::stub_client(port);
+        llm.retry.max_attempts = 1;
+        let a = Agent::new(llm, "You are Daimond.");
+        a.set_max_rounds(4);
+        let mut session = Session::new(fmt!("s1"), fmt!("audit"), fmt!("model"));
+        let found = crate::tools::CrystalProof::from_driver(proof, 0).expect("a driver line");
+        let ctx = &registry.ctx;
+        let _ = a.run_turn(&mut session, fmt!("make the page"), &registry, &mut |e| {
+            if let AgentEvent::ToolResult { .. } = e {
+                ctx.note_proof(found.clone());
+            }
+        }).await;
+        let bodies = seen.lock().map(|v| v.bodies.clone()).unwrap_or_default();
+        match a.ending() {
+            Some(e) => (e, bodies),
+            None    => panic!("a turn ran and said nothing at all about how it ended"),
+        }
+    }
+
+    /// K1, D-20261008-08: a model that ends while its page fails the load proof is told the
+    /// must-fix line once, and ending over it again is `Blocked` on the reason -- the Ontheism
+    /// daimon said "done" over a JSON dump and a KEYMAP, and the tile read as a delivery.
+    #[tokio::test]
+    async fn test_a_page_failing_its_load_proof_ends_blocked_00() {
+        let (end, bodies) = ran_with_proof("FAIL: raw JSON is on screen",
+            vec![one_page_write(), plain_answer(), plain_answer(), plain_answer()]).await;
+        assert_eq!(TurnEnd::Blocked, end.how, "{:?}", end);
+        assert!(end.said.starts_with("Not done: the page does not load") && end.said.contains("raw JSON"),
+            "{:?}", end);
+        assert_eq!(3, bodies.len(), "the write, the ending, and one round after the nudge");
+        assert!(bodies[2].contains("MUST FIX") && bodies[2].contains("load proof"),
+            "the model was not told the must-fix line before the turn ended");
+    }
+
+    /// And a page that passes ends answered, with no nudge.
+    #[tokio::test]
+    async fn test_a_page_passing_its_load_proof_ends_answered_00() {
+        let (end, bodies) = ran_with_proof("pass",
+            vec![one_page_write(), plain_answer(), plain_answer()]).await;
+        assert_eq!(TurnEnd::Answered, end.how, "{:?}", end);
+        assert_eq!(2, bodies.len(), "a passing page was nudged");
     }
 
     #[tokio::test]
@@ -7543,5 +8004,64 @@ fn test_agent_message_building() {
         assert_eq!(session.messages.len(), 1);
         assert_eq!(session.messages[0].role(), "user");
         assert_eq!(session.messages[0].text(), "Hello");
+    }
+
+    // ── a refusal for size folds, and never blinds the model (r543 Q6 unproven 2, 2026-10-09) ──
+
+    /// A conversation with a picture in it, refused for its size, is folded and sent again with
+    /// the picture still in it; the model is not marked blind and no "cannot see" note is shown.
+    #[tokio::test]
+    async fn test_a_size_refusal_with_a_picture_folds_and_does_not_blind_the_model_00() {
+        let refusals = [
+            ("400 context length", crate::llm::tests::Reply::Http {
+                status: 400, reason: "Bad Request", headers: Vec::new(),
+                body: "{\"error\":{\"message\":\"This model's maximum context length is 131072 \
+                    tokens, however you requested 174233 tokens.\",\
+                    \"code\":\"context_length_exceeded\"}}".to_string(),
+            }),
+            ("413", crate::llm::tests::Reply::Http {
+                status: 413, reason: "Request Entity Too Large", headers: Vec::new(),
+                body: "<html><body>nginx</body></html>".to_string(),
+            }),
+        ];
+        let png = match oxedyne_fe2o3_text::base64::decode(COVER_PNG_B64) {
+            Ok(b)  => b,
+            Err(e) => panic!("the documented base64 must decode: {}", e),
+        };
+        for (what, refusal) in refusals {
+            let (port, seen) = crate::llm::tests::start_stub(vec![
+                refusal,
+                completion(structured_fold_reply()),
+                plain_answer(),
+            ]).await;
+            let mut llm = crate::llm::tests::stub_client(port);
+            llm.model = "my-gpt4o-prod".to_string();
+            llm.retry.max_attempts = 1;
+            let a = Agent::new(llm, "You are Daimond.");
+            let mut session = foldable_session(30, 3_000);
+            session.messages.push(ChatMessage::user(MessageContent::parts(vec![
+                crate::protocol::ContentPart::Text("what is on this cover".to_string()),
+                crate::protocol::ContentPart::Image(crate::protocol::ImagePart::new(
+                    crate::protocol::ImageMedia::Png, png.clone(), "cover.png".to_string())),
+            ])));
+            session.messages.push(ChatMessage::Assistant {
+                content: MessageContent::text("A cover."), tool_calls: Vec::new(),
+            });
+            let registry = no_tools();
+            let mut events: Vec<AgentEvent> = Vec::new();
+            let ran = a.run_turn(&mut session, fmt!("and the spine?"), &registry,
+                &mut |ev| events.push(ev)).await;
+            assert!(ran.is_ok(), "{}: the turn did not recover: {:?} {:?}", what, ran.err(), events);
+            assert!(events.iter().any(|e| matches!(e, AgentEvent::Compacted { .. })),
+                "{}: the refusal for size did not fold the conversation: {:?}", what, events);
+            assert!(unseeable(&events).is_empty(),
+                "{}: a refusal for size was announced as a model that cannot see: {:?}", what, events);
+            assert!(a.llm.can_take_images(),
+                "{}: a refusal for size marked the model blind for the rest of the session", what);
+            let bodies = sent_bodies(&seen);
+            assert_eq!(bodies.len(), 3, "{}: refusal, fold, answer", what);
+            assert!(bodies[2].contains(COVER_PNG_B64),
+                "{}: the request after the fold dropped the picture", what);
+        }
     }
 }

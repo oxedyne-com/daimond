@@ -48,7 +48,7 @@ function makeEl(tag) {
 		addEventListener(t, fn) { (el.listeners[t] = el.listeners[t] || []).push(fn); },
 		setAttribute(k, v) { el.attrs[k] = v; },
 		querySelector() { return null; },
-		remove() {},
+		remove() { if (el.parent) { const i = el.parent.children.indexOf(el); if (i >= 0) el.parent.children.splice(i, 1); el.parent = null; } },
 		closest(sel) {
 			const cls = sel.replace(/^\./, '');
 			for (let n = el; n; n = n.parent) if (String(n.className).split(' ').includes(cls)) return n;
@@ -168,4 +168,76 @@ test('both Files tile builders mark the tile a result', () => {
 	assert.match(tail.slice(0, tail.indexOf('var div = buildTile')), /buildTile\('tool', \{[^}]*result: true/);
 	assert.match(extractFn('appendFilesLog'), /buildTile\('tool', \{[^}]*result: true/);
 	assert.match(extractFn('buildTile'), /opts\.result \? ' ctile-result'/);
+});
+
+// #8: a turn that wrote more files than the note names (it names six, then "and N more") draws EVERY
+// file, with its count, from the structured list the turn row carries -- never from the note's words.
+const NINE = Array.from({ length: 9 }, (_, i) => 'diamonds/d1/f' + i + '.md');
+const NOTE9 = '[Daimond: this turn changed 9 files (v31): ' + NINE.slice(0, 6).join(', ') + ' and 3 more. '
+	+ 'The user can restore any of them from History, and file_revert does the same when they ask.]';
+const shownCounts = (bodyEl) => rowsOf(bodyEl).map((row) => {
+	const de = all(row, 'turn-file-delta')[0];
+	return all(de, 'tf-add').map((n) => n.textContent).concat(all(de, 'tf-del').map((n) => n.textContent)).join(' ');
+});
+
+test('a turn that wrote 9 files shows all 9, with counts, from the row alone (#8)', async () => {
+	const files = NINE.map((p, i) => ({ path: p, hash: 'H' + i, add: i + 1, del: i }));
+	const r = rig(() => new Promise(() => {}));        // no version store on this device
+	r.api.fill(r.tile, NOTE9, { diamondId: 'd1' }, [], files);
+	const more = all(r.bodyEl, 'turn-file-more')[0];
+	assert.ok(more, 'six rows, then a fold');
+	await more.press();
+	const names = all(r.bodyEl, 'turn-file-name').map((n) => n.title);
+	assert.deepEqual(names, NINE, 'every file the turn wrote, in the manifest order');
+	assert.deepEqual(shownCounts(r.bodyEl), NINE.map((_, i) => '+' + (i + 1) + ' −' + i), 'each with its +N −M');
+});
+
+test('a row from before the structured list draws all 9 from the manifest when the store holds it (#8)', async () => {
+	const held = [{ version: 31, files: NINE.map((p, i) => ({ path: p, hash: 'H' + i, gone: false })) }];
+	const r = rig(async () => held);
+	r.api.fill(r.tile, NOTE9, { diamondId: 'd1' }, []);
+	await flush(); await flush();
+	const more = all(r.bodyEl, 'turn-file-more')[0];
+	if (more) await more.press();
+	assert.deepEqual(all(r.bodyEl, 'turn-file-name').map((n) => n.title), NINE);
+});
+
+test('the turn end writes the structured list: every manifest entry, counted, credited or not (#8)', async () => {
+	const mv = { version: 31, files: NINE.map((p, i) => ({ path: p, hash: i === 8 ? '' : 'H' + i, was: i ? 'W' + i : '',
+		gone: i === 8, by: i % 2 ? { role: 'daimon' } : undefined })) };
+	const DaimondVersions = { manifests: async () => [mv],
+		diff: async (s, was, now) => ({ add: Number(now.slice(1)) + 1, del: was ? 1 : 0 }) };
+	const list = await new Function('window', 'DaimondVersions', extractFn('turnFileList') + '\nreturn turnFileList;')(
+		{ DaimondVersions }, DaimondVersions)('d1', 31);
+	assert.equal(list.length, 9, 'all nine, not only the credited');
+	assert.deepEqual(list[0], { path: NINE[0], hash: 'H0', add: 1, del: 0 });
+	assert.deepEqual(list[8], { path: NINE[8], hash: '', gone: true });
+});
+
+test('an old row whose other names this device cannot know shows their count as text, never a fold that unfolds nothing (#8)', async () => {
+	const r = rig(async () => []);                     // no structured list, no manifest held
+	r.api.fill(r.tile, NOTE9, { diamondId: 'd1' }, []);
+	await flush(); await flush();
+	assert.equal(rowsOf(r.bodyEl).length, 6, 'the six names the note carries');
+	assert.equal(all(r.bodyEl, 'turn-file-more').length, 0, 'no button: there is nothing behind it');
+	const rest = all(r.bodyEl, 'turn-file-rest');
+	assert.equal(rest.length, 1, 'the count is said once');
+	assert.notEqual(rest[0].tagName, 'button');
+	assert.equal(rest[0].textContent, 'chat.turn_files_rest:3');
+});
+
+test('names held but folded keep the button, and the unknown rest stays text after it unfolds (#8)', async () => {
+	// Seven names known (a fold of one) and two the note only counts.
+	const seven = NINE.slice(0, 7);
+	const note = '[Daimond: this turn changed 9 files (v31): ' + seven.join(', ') + ' and 2 more. '
+		+ 'The user can restore any of them from History, and file_revert does the same when they ask.]';
+	const r = rig(async () => []);
+	r.api.fill(r.tile, note, { diamondId: 'd1' }, []);
+	await flush(); await flush();
+	const more = all(r.bodyEl, 'turn-file-more');
+	assert.equal(more.length, 1, 'one name is behind the fold');
+	await more[0].press();
+	assert.equal(rowsOf(r.bodyEl).length, 7);
+	assert.equal(all(r.bodyEl, 'turn-file-more').length, 0);
+	assert.equal(all(r.bodyEl, 'turn-file-rest').map((n) => n.textContent).join(), 'chat.turn_files_rest:2');
 });

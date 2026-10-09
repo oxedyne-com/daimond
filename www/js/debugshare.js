@@ -179,6 +179,8 @@
 	var MAX_TILE_TEXT_CHARS = 80;				// the last tile's text, head only
 	var MAX_DLG_CHARS     = 48;					// an open dialog/banner's kind + head
 	var MAX_MSG_CHARS = 200;					// an `error` or `console` message, clipped
+	var MAX_FULL_CHARS = 300;					// a refusal or error sentence, whole (D-20261008-02)
+	var MAX_HEAD_CHARS = 120;					// its head, on the row itself
 	var MAX_SRC_CHARS = 60;						// and where it came from
 	// The console lanes. A dedupe window and the rate window are deliberately the
 	// same minute: a line repeating faster than once a minute is one event with a
@@ -996,7 +998,7 @@
 	/// `/api/debug-trace` handler accepts). A snapshot's rows are tagged
 	/// `ds <kind> <id> i/N` so the operator reassembles by concatenating `data` in
 	/// order and base64-decoding. Exposed for tests as `_chunk`.
-	function chunk(bundle) {
+	function chunk(bundle, setId) {
 		var json = '';
 		// THE EGRESS SEAM, half one. Nothing reaches the wire as a `ds` row except
 		// through here, so this is where the content rules meet a whole bundle --
@@ -1004,8 +1006,8 @@
 		try { json = JSON.stringify(scrubDeep(bundle)); }
 		catch (e) { json = '{"error":"stringify"}'; }
 		var payload = b64(json);
-		var id = (bundle && bundle.kind === 'telemetry' ? 't' : 's')
-			+ Date.now().toString(36) + Math.random().toString(36).slice(2, 5);
+		var id = setId || ((bundle && bundle.kind === 'telemetry' ? 't' : 's')
+			+ Date.now().toString(36) + Math.random().toString(36).slice(2, 5));
 		var slices = [];
 		for (var i = 0; i < payload.length; i += MAX_DATA_BYTES) {
 			slices.push(payload.slice(i, i + MAX_DATA_BYTES));
@@ -1225,6 +1227,18 @@
 		return cap;
 	}
 
+	/// Queue `text` as a `ds error <id> i/n` chunk set and give back its id, which the
+	/// event row carries as `mref`. A refusal is longer than a row can hold beside its
+	/// ids, and the owner asked for it whole; the set rides the same outbox, so it is
+	/// persisted, retried and dropped by the same rules as the row that points at it.
+	function textSet(text) {
+		var id = 'e' + Date.now().toString(36) + Math.random().toString(36).slice(2, 5);
+		chunk({ kind: 'error', ts: Date.now(), text: text }, id).forEach(function (post) {
+			post.forEach(function (r) { pushRow(r.tag, r.data); });
+		});
+		return id;
+	}
+
 	/// Build, redact, fit and queue one event. The envelope wins over a payload
 	/// key of the same name, so a caller cannot overwrite `n` or `t` by accident.
 	/// `boot` and `beat` additionally carry `capabilities()`, added HERE rather
@@ -1246,10 +1260,20 @@
 		}
 		if (payload && typeof payload === 'object') {
 			Object.keys(payload).forEach(function (k) {
-				if (k === 'v' || k === 'd' || k === 'n' || k === 'b' || k === 't') return;
+				if (k === 'v' || k === 'd' || k === 'n' || k === 'b' || k === 't' || k === 'full') return;
 				if (payload[k] === undefined) return;
 				ev[k] = payload[k];
 			});
+			// `full`: the engine's own refusal or error sentence (D-20261008-02). Scrubbed
+			// of keys BEFORE the cut by `clip`, capped at 300 characters, its head on the
+			// row as `msg` and the whole of it in a chunk set the row names as `mref`.
+			if (typeof payload.full === 'string') {
+				var full = clip(payload.full, MAX_FULL_CHARS);
+				if (full) {
+					if (ev.msg == null) ev.msg = full.slice(0, MAX_HEAD_CHARS);
+					if (full.length > String(ev.msg).length) ev.mref = textSet(full);
+				}
+			}
 		}
 		pushRow('ev ' + kind, fit(redact(ev)));
 		return true;

@@ -835,11 +835,10 @@
 				<div class="mark-notice" id="mark-notice" aria-live="polite" hidden></div>
 				<div class="chat-input-bar">
 					<textarea id="chat-input" placeholder="Type a message…" rows="1" data-i18n-placeholder="chat.input_ph"></textarea>
-					<button id="chat-send" title="Send" data-i18n-title="chat.send" aria-label="Send" data-i18n-aria-label="chat.send"><svg class="ic send-arrow" viewBox="0 -2 24 24" aria-hidden="true"><path d="M12 16V4M8 8l4-4 4 4"/></svg></button>
-					<!-- The second stop that lived here is gone (proposal #19): the send
-					     button itself is ■ while a turn runs and the box is empty, and a box
-					     with text mid-turn is a correction to send, not a turn to kill.
-					     Emptying the box reaches stop in that mode. -->
+					<!-- The walk-back pair comes BEFORE Send, so Send is the last control and
+					     never moves: showing the pair narrows the field, not the row under the
+					     cursor. After it, a computer's Send stepped 80px left as they appeared
+					     and a click aimed at it landed on the jump (Q1, 2026-10-09). -->
 					<!-- Drawn chevrons, not ↑ and ↓: a font's arrowhead is a few
 					     pixels of ink on a 32px button, and read as specks beside
 					     the stroked icons the rest of the app is made of. -->
@@ -849,6 +848,11 @@
 					<button id="chat-end" hidden title="Jump to the end of the chat." data-i18n-title="chat.end_help" aria-label="Jump to the end of the chat" data-i18n-aria-label="chat.end">
 						<svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 9l6 6 6-6"/></svg>
 					</button>
+					<button id="chat-send" title="Send" data-i18n-title="chat.send" aria-label="Send" data-i18n-aria-label="chat.send"><svg class="ic send-arrow" viewBox="0 -2 24 24" aria-hidden="true"><path d="M12 16V4M8 8l4-4 4 4"/></svg></button>
+					<!-- The second stop that lived here is gone (proposal #19): the send
+					     button itself is ■ while a turn runs and the box is empty, and a box
+					     with text mid-turn is a correction to send, not a turn to kill.
+					     Emptying the box reaches stop in that mode. -->
 				</div>
 				<!-- WHERE THE NEXT TURN WILL RUN. One line, always there while a chat is
 				     open, written from the latest presence beats: the device the turn is

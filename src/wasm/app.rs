@@ -2718,6 +2718,22 @@ impl DaimondApp {
     /// # Arguments
     /// * `path` - Workspace-relative destination path.
     /// * `bytes` - The bytes to write, replacing any existing file.
+    /// Put the crystal starter page where a daimon is told to find it (K4), writing only when the
+    /// stored bytes differ, and say whether it wrote. The page is `DaimondCrystal.STARTER_PAGE`:
+    /// the JS holds the channel, so the starter is generated there and handed in, like the caps.
+    pub async fn install_crystal_starter(&self, html: String) -> Result<bool, JsValue> {
+        let path = crate::tools::CRYSTAL_STARTER_PATH;
+        if let Ok(old) = crate::wasm::opfs::read_file(crate::tools::FileRoot::Workspace, path).await {
+            if old == html.as_bytes() {
+                return Ok(false);
+            }
+        }
+        crate::wasm::opfs::write_file(crate::tools::FileRoot::Workspace, path, html.as_bytes())
+            .await
+            .map(|_| true)
+            .map_err(to_js_err)
+    }
+
     pub async fn write_bytes(&self, path: String, bytes: Vec<u8>) -> Result<(), JsValue> {
         crate::wasm::opfs::write_file(crate::tools::FileRoot::Workspace, &path, &bytes)
             .await
@@ -3105,6 +3121,12 @@ impl DaimondApp {
         local.push_str(&diamond::diamond_dir(id));
         local.push_str("/crystal.json` and its page is the `crystal.html` beside it. Paths you \
             give the file tools are whole workspace-relative paths, never bare names.");
+        // K4: the page to fork, so a new page starts from the channel and the infographic parts
+        // rather than from whatever page this Diamond last carried.
+        local.push_str(" To build a new page, fork `");
+        local.push_str(crate::tools::CRYSTAL_STARTER_PATH);
+        local.push_str("`: it speaks the channel and draws cards, rings, bars, a timeline and a \
+            spectrum from the data's keys.");
         // MARKED, AND NOT IN FORCE ON THIS DEVICE.  A mark is in force only on a device where
         // the user made it or confirmed it, so every mark made elsewhere -- and every one made
         // before marks said who made them -- is out of reach here until they press to confirm it.
@@ -3114,7 +3136,7 @@ impl DaimondApp {
         if marked.is_empty() && consult.is_empty() && waiting.is_empty() {
             local.push_str(" Nothing is attached to this Diamond yet, so the folder above is the \
                 only place you may write. If the user asks for work on files that are not there, \
-                say what needs marking in with the + in the Workspace group rather than creating it.");
+                say which folder to add with the + in the Workspace group rather than creating it.");
         } else if marked.is_empty() && consult.is_empty() {
             local.push_str(" Nothing attached to this Diamond is in force on this device yet, so \
                 the folder above is the only place you may write.");
@@ -3134,8 +3156,8 @@ impl DaimondApp {
                 may READ anywhere in the workspace, and you may write only in the places above.");
         }
         if !waiting.is_empty() {
-            local.push_str("\n\nMarked into this Diamond on another device, or before this \
-                device recorded marks, and NOT in force on this device until the user confirms \
+            local.push_str("\n\nAdded to this Diamond on another device, or before this \
+                device recorded added folders, and NOT yet in use on this device until the user confirms \
                 them here:\n");
             for p in &waiting {
                 local.push_str("- `");
@@ -3370,6 +3392,14 @@ impl DaimondApp {
             let js = event_to_js(&ev);
             let _ = on_event.call1(&JsValue::NULL, &js);
         };
+        // WHAT THE PERSON'S VIEWER SHOWED IN PLACE OF THE PAGE since the last turn (K1): a page
+        // that fell back on their screen is news to a daimon whose own proof never saw it fail.
+        let viewer = diamond::take_viewer_note(id).await;
+        let pre = match (viewer.is_empty(), pre.trim().is_empty()) {
+            (true, _)      => pre,
+            (false, true)  => viewer,
+            (false, false) => fmt!("{}\n\n{}", pre, viewer),
+        };
         let ran = agent.run_turn_noted(&mut session, instruction, pre, &registry, &mut sink).await;
         self.absorb_usage(&session);
         // WHERE THIS TURN'S OWN MESSAGES START, so its ledger can be read apart from every turn
@@ -3522,6 +3552,7 @@ impl DaimondApp {
                 Err(e)
             },
         };
+        let kept = recorded.is_ok();
         match recorded {
             // THE DAIMON IS TOLD, in one sentence, and only where a manifest was actually
             // written. A model with no way to undo its own work does not merely fail to undo it:
@@ -3538,6 +3569,40 @@ impl DaimondApp {
                     "What this turn changed is on disk as you left it, but it could not be \
                      recorded as a version: {}", e.plain())));
             },
+        }
+        // THE LAST PAGE THAT PASSED THE LOAD PROOF COMES BACK (K2): a turn that leaves a page the
+        // proof did not pass -- one that drew nothing, or a JSON dump -- does not leave it in front
+        // of the person. Only once the turn's page is recorded, so the failing page stays in the
+        // chain as the turn's version and "Bring back" can put it back.
+        if kept {
+            let mark = diamond::last_passed(id).await;
+            if crate::tools::restore_wanted(mark.as_ref().map(|m| m.page.as_str()),
+                &page_before, &page_after)
+            {
+                let mark = mark.map(|m| m.page).unwrap_or_default();
+                match diamond::restore_passed(id, &mark).await {
+                    Ok(Some((failing, restored))) => {
+                        session.messages.push(ChatMessage::user(fmt!(
+                            "The page this turn left (version {}) did not pass the load proof, so \
+                             the last page that did was put back as version {}. The person can \
+                             bring yours back; fix it before writing it again.", failing, restored)));
+                        let obj = js_sys::Object::new();
+                        let _ = js_sys::Reflect::set(&obj, &JsValue::from_str("type"),
+                            &JsValue::from_str("crystal_restored"));
+                        let _ = js_sys::Reflect::set(&obj, &JsValue::from_str("failing"),
+                            &JsValue::from_f64(failing as f64));
+                        let _ = js_sys::Reflect::set(&obj, &JsValue::from_str("restored"),
+                            &JsValue::from_f64(restored as f64));
+                        let _ = on_event.call1(&JsValue::NULL, &obj);
+                    },
+                    Ok(None) => web_sys::console::warn_1(&JsValue::from_str(&fmt!(
+                        "Diamond '{}': the page that last passed the load proof is in no version \
+                         kept, so the page this turn left stays.", id))),
+                    Err(e) => web_sys::console::warn_1(&JsValue::from_str(&fmt!(
+                        "Diamond '{}': the page that last passed the load proof could not be put \
+                         back: {}", id, e))),
+                }
+            }
         }
         // THE TAIL NOTE, said once and never twice running: a turn that edited a file or read a
         // worker's report and left `REQUIREMENTS.md` and `STATE.md` exactly as they were is a

@@ -95,6 +95,7 @@ const BREAKS = {
 
 /// The real template on disk, which is what an unbroken run delivers at version 2.
 const real = (rel) => fs.readFileSync(path.join(TPL, rel), 'utf8');
+const V0 = JSON.parse(real('capp.json')).v;	// the shipped version: every one served below is past it, whatever it is
 
 /// What the bundle SERVES, when this file wants it to be something else.
 ///
@@ -340,7 +341,7 @@ try {
 	const rec0 = id ? await record(id) : null;
 	console.log('  record: ' + JSON.stringify(rec0 && { capp: rec0.capp, v: rec0.v, files: Object.keys(rec0.files || {}) }));
 	check(!!rec0 && rec0.capp === 'lifelog', 'delivery writes a record naming the template');
-	check(!!rec0 && rec0.v === JSON.parse(real('capp.json')).v,
+	check(!!rec0 && rec0.v === V0,
 		'at the version the bundle serves', rec0 ? rec0.v : 'no record');
 	check(!!rec0 && !!(rec0.files || {})['crystal.html'] && !!(rec0.files || {})['lanes/gym.json'],
 		'with a hash per delivered file');
@@ -364,7 +365,7 @@ try {
 
 	const GYM3 = JSON.stringify(Object.assign(JSON.parse(real('lanes/gym.json')), { v3: true }));
 	plan = {
-		v: 3,
+		v: V0 + 1,
 		files: {
 			'crystal.html':          real('crystal.html') + '\n<!-- delivered v3 -->\n',
 			'lanes/gym.json':        GYM3,
@@ -380,7 +381,7 @@ try {
 	check(String(await stored(id, 'lanes/gym.json')) === GYM3,
 		'and its seeded data, which nobody had edited');
 	const rec3 = await record(id);
-	check(!!rec3 && rec3.v === 3, 'and the stored version moves with it', rec3 ? rec3.v : 'no record');
+	check(!!rec3 && rec3.v === V0 + 1, 'and the stored version moves with it', rec3 ? rec3.v : 'no record');
 	const logAfter = await logTree(id);
 	check(JSON.stringify(logAfter) === JSON.stringify(logBefore),
 		'THE LOG IS BYTE-IDENTICAL, though the manifest named a path inside it',
@@ -393,7 +394,7 @@ try {
 	await put(id, 'lanes/diet.json', MINE);
 	const GYM4 = JSON.stringify(Object.assign(JSON.parse(real('lanes/gym.json')), { v4: true }));
 	plan = {
-		v: 4,
+		v: V0 + 2,
 		files: {
 			'crystal.html':   real('crystal.html') + '\n<!-- delivered v4 -->\n',
 			'lanes/gym.json': GYM4,
@@ -414,7 +415,7 @@ try {
 	check(n4.n === 1, 'and the person is told ONCE, not once per file', n4.n + ' notes');
 	check(/lanes\/diet\.json/.test(n4.text), 'naming what was kept', n4.text);
 	const rec4 = await record(id);
-	check(!!rec4 && rec4.v === 4, 'the version moves even though a file did not', rec4 ? rec4.v : 'no record');
+	check(!!rec4 && rec4.v === V0 + 2, 'the version moves even though a file did not', rec4 ? rec4.v : 'no record');
 	check(JSON.stringify(await logTree(id)) === JSON.stringify(logBefore), 'and the log is still untouched');
 
 	// ══ 7. An instance with NO record is not silently rewritten ════════
@@ -436,7 +437,7 @@ try {
 	}, { id, page: LEGACY });
 	check(!(await record(id)), 'the instance now has no delivery record');
 
-	plan = { v: 5, files: { 'crystal.html': real('crystal.html') + '\n<!-- delivered v5 -->\n' } };
+	plan = { v: V0 + 3, files: { 'crystal.html': real('crystal.html') + '\n<!-- delivered v5 -->\n' } };
 	await reopen();
 	const asked = await p.$('.dlg-card');
 	check(!!asked, 'a record-less instance is ASKED about rather than updated');
@@ -449,7 +450,7 @@ try {
 	check(String(await stored(id, 'crystal.html')) === LEGACY,
 		'SAYING NO LEAVES THE PAGE EXACTLY AS IT WAS');
 	const rec5 = await record(id);
-	check(!!rec5 && rec5.offered === 5 && !rec5.files,
+	check(!!rec5 && rec5.offered === V0 + 3 && !rec5.files,
 		'the refusal is remembered, at the version it was offered at', JSON.stringify(rec5));
 
 	await reopen();
@@ -458,7 +459,7 @@ try {
 
 	// Taken, this time: the page moves, everything else stays, and the instance
 	// joins the automatic path.
-	plan = { v: 6, files: { 'crystal.html': real('crystal.html') + '\n<!-- delivered v6 -->\n' } };
+	plan = { v: V0 + 4, files: { 'crystal.html': real('crystal.html') + '\n<!-- delivered v6 -->\n' } };
 	await reopen();
 	const asked6 = await p.$('.dlg-card');
 	check(!!asked6, 'something newer asks again');
@@ -470,7 +471,7 @@ try {
 	check(JSON.stringify(await logTree(id)) === JSON.stringify(logBefore),
 		'and so are the entries');
 	const rec6 = await record(id);
-	check(!!rec6 && rec6.v === 6 && !!(rec6.files || {})['crystal.html']
+	check(!!rec6 && rec6.v === V0 + 4 && !!(rec6.files || {})['crystal.html']
 		&& !(rec6.files || {})['lanes/diet.json'],
 		'a record is written claiming the PAGE only, so no later version overwrites a lane',
 		JSON.stringify(rec6 && { v: rec6.v, files: Object.keys(rec6.files || {}) }));

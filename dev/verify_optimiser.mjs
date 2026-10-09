@@ -576,7 +576,7 @@ const OPS = {
 		opcheck('OP5', / · switched · diamond · fast /.test(f), 'the switch is on file for its review', JSON.stringify(f.slice(0, 200)));
 		// The Diamond cog shows the model.
 		await page.evaluate((id) => { const cog = document.querySelector(`#diamond-list .diamond-box[data-id="${id}"] .tile-cog`); if (cog) cog.click(); }, HELP);
-		await page.waitForSelector('.tile-dlg-card select.tile-model', { timeout: 8000 }).catch(() => {});
+		await page.waitForSelector('.tile-dlg-card select.tile-model', { state: 'attached', timeout: 8000 }).catch(() => {});
 		const shown = await page.evaluate(() => { const s = document.querySelector('.tile-dlg-card select.tile-model'); const o = s && s.selectedOptions[0]; return o ? { text: o.textContent, value: o.value } : null; });
 		opcheck('OP5', !!shown && /thinker/.test(shown.text + ' ' + shown.value), 'the Diamond cog\'s pulldown shows mock/thinker', JSON.stringify(shown));
 	},

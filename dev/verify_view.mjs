@@ -393,6 +393,14 @@ try {
 		}, ids[1]);
 		await p.reload({ waitUntil: 'domcontentloaded' });
 		await signInAs(s, 'view');          // a reload locks the app, as it should
+		// The seeded Diamonds are the built-ins, which the rail folds into a shut group at its
+		// foot (5aa12b42), shut unless this device opened it. Shut, a tile is in the page but not
+		// visible, so a wait for a visible one timed out; it is opened the way a person opens it.
+		await p.waitForSelector('#diamond-list .diamond-box[data-id]', { state: 'attached', timeout: 20000 });
+		await p.evaluate(() => {
+			const g = document.querySelector('#diamond-list details.rail-builtin');
+			if (g && !g.open) g.querySelector('summary').click();
+		});
 		await p.waitForSelector('#diamond-list .diamond-box[data-id]', { timeout: 20000 });
 		await p.waitForTimeout(900);
 

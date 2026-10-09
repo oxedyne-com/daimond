@@ -91,8 +91,8 @@
 //     red and the policy check stays green;
 //   * accept a message without comparing `e.source` → the three source checks go
 //     red and nothing else does;
-//   * drop the coverage half of the fallback rule → the partial check goes red
-//     and the timeout check stays green, which is the shape of the naive build;
+//   * drop the coverage rule → the partial check (the page kept, its undrawn keys
+//     named over it) goes red and the timeout check stays green;
 //   * make the coverage rule "every key" rather than "every key that carries
 //     content" → the sparse control goes red;
 //   * memoise the egress answer per host → the second-time check goes red.
@@ -453,6 +453,7 @@ const face = () => p.evaluate(() => {
 		ready:     st ? !!st.ready : null,
 		reason:    st ? (st.reason || '') : null,
 		keys:      st ? (st.keys || []) : null,
+		undrawn:   st ? (st.undrawn || []) : null,
 	};
 });
 
@@ -821,6 +822,7 @@ try {
 	// ══ 7. Falling back, visibly, for four different reasons ════
 	const wantFailed  = await T('crystal.page_failed');
 	const wantPartial = await T('crystal.page_partial');
+	const wantUndrawn = String(await T('crystal.page_undrawn')).split('{')[0];
 	const wantReset   = await T('crystal.page_reset');
 
 	await showDiamond(D.broken.name);
@@ -843,17 +845,20 @@ try {
 	await showDiamond(D.partial.name);
 	await p.waitForTimeout(settle);
 	const par = await face();
-	check(par.fallback && par.reason === 'partial',
-		'a page that answers but renders only some of what it holds ALSO falls back',
-		JSON.stringify({ fallback: par.fallback, reason: par.reason, keys: par.keys }));
-	check(norm(par.note || '').includes(norm(wantPartial)),
-		'and says THAT, rather than reporting a page that did not load',
+	// K1 (D-20261008-08): the page STAYS. Replacing it hid every page that left one key out, an
+	// infographic among them, from the person it was drawn for; the note over it names the rest.
+	check(par.framed && !par.fallback && par.mode === 'frame',
+		'a page that answers but renders only some of what it holds stays on screen',
+		JSON.stringify({ framed: par.framed, fallback: par.fallback, mode: par.mode, keys: par.keys }));
+	check(JSON.stringify(par.undrawn) === JSON.stringify(['summary', 'sections']),
+		'and the keys it left out are known', JSON.stringify(par.undrawn));
+	check(norm(par.note || '').includes(norm(wantUndrawn)) && /summary, sections/.test(par.note || ''),
+		'and a note over it names them, rather than reporting a page that did not load',
 		JSON.stringify(String(par.note).slice(0, 140)));
 	// Two reasons, two notes. If the app shows one message for both, the user is
 	// told to look for a load failure in a page that loaded perfectly well.
 	check(norm(par.note || '') !== norm(bro.note || ''),
 		'the two failures do not share one note', JSON.stringify(String(par.note).slice(0, 80)));
-	check(/PARTIAL-PAGE-TITLE/.test(par.text), 'the data is readable in that one too');
 
 	// A page that says hello and then nothing is UNVERIFIABLE, and unverifiable is
 	// treated as broken. It is the rule most likely to be "fixed" later by somebody
@@ -865,6 +870,8 @@ try {
 		'a page that says `ready` and never reports what it drew falls back too',
 		JSON.stringify({ fallback: sil.fallback, reason: sil.reason }));
 	check(/SILENT-PAGE-TITLE/.test(sil.text), 'showing the data it never drew');
+	check(norm(sil.note || '').includes(norm(wantPartial)), 'and saying it did not show everything',
+		JSON.stringify(String(sil.note).slice(0, 140)));
 
 	// The control. Without it, "always fall back" passes every check above and the
 	// page is never used at all.

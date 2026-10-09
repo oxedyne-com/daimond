@@ -689,8 +689,12 @@ try {
 		[...document.querySelectorAll('.dlg-card')]
 			.filter(c => c.getClientRects().length && !c.classList.contains('tile-dlg-card'))
 			.length > 0, null, { timeout: 8000 }).then(() => true).catch(() => false);
-	check(askedFirst, 'pressing Fold asks first, in a card of its own',
-		askedFirst ? 'a confirm was drawn over the tile dialog' : 'no confirm appeared, so nothing was pressed');
+	// THIS CHAT IS ONE TURN, so there is nothing to fold, and since 1a69469f (15 Sep,
+	// "fold-now checks first") `foldChatNow` says so BEFORE it asks: a confirm for a fold
+	// that cannot happen is a question whose every answer is the same refusal. The confirm
+	// itself is for a chat longer than `FOLD_MIN_KEEP_MESSAGES`; here its absence is right.
+	check(!askedFirst, 'pressing Fold on a chat too short to fold asks nothing first',
+		askedFirst ? 'a confirm was drawn for a fold that cannot happen' : 'no confirm, as wanted');
 	if (askedFirst) {
 		await p.evaluate(() => {
 			const card = [...document.querySelectorAll('.dlg-card')]

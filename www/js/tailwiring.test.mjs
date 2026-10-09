@@ -95,6 +95,7 @@ async function main() {
 		const wrapperBody = parseTailNoteSrc + '\n'
 			+ 'var diamondId = "D1", dumid = "U1";\n'
 			+ 'async function turnFileProds() { return []; }\n'
+			+ 'async function turnFileList() { return []; }\n'
 			+ 'async function applyTailNoteWiring(after, rec, detached, onScreen, appendUserMessage, newMid) {\n'
 			+ wiringSrc + '\n'
 			+ '}\n'

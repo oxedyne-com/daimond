@@ -9,9 +9,9 @@
 
    THE FIX. The envelope leaves the record. `save()` shelves it in DaimondDurable
    (IndexedDB, committed BEFORE the record is written and so before any ack) and the
-   record keeps metadata plus `envAt:'idb'`. `addShare` reads it back on demand and
-   prunes it only after the `taken` save has landed. A failed mailbox write raises a
-   banner. The parcel never carries an envelope.
+   record keeps metadata plus `envAt:'idb'`. `addShare` reads it back on demand, and the
+   save door prunes it once any write recording `taken` has landed. A failed mailbox write
+   raises a banner. The parcel never carries an envelope.
 
    Drives the REAL collect() / round() / ackThrough(), the REAL durable.js over a fake
    async IndexedDB, and a localStorage with an ORIGIN-WIDE quota that throws exactly as
@@ -288,7 +288,7 @@ function arm(name) {
 			src = patch(src, 'if (hasInlineEnv(obj)) await shelve(obj);', '/* BROKEN: no shelving at the save door */', 'save-door shelving');
 		}
 		if (name === 'noprune') {
-			src = patch(src, 'await DaimondDurable.del(ENV_KEY + String(addr));', '/* BROKEN: no prune */', 'prune');
+			src = patch(src, 'try { await DaimondDurable.del(ENV_KEY + addrs[i]); }', 'try { throw new Error(\'BROKEN: no prune\'); }', 'prune');
 		}
 		if (name === 'prunefirst') {
 			// The store entry goes before the `taken` save, so a failed save leaves a record
@@ -482,6 +482,67 @@ async function main() {
 		check('7b. the banner shows', typeof P.wedged === 'function' && P.wedged() === true && tab.dom.has('post-bad'));
 		check('7c. nothing was written into the box as a fallback key',
 			![...tab.local.m.keys()].some((k) => k.startsWith('shenv/')));
+	}
+
+	// ── 8. A taken share holds no envelope, whichever save lands it ───────
+	//
+	// r542 QA B, F-B2. The prune ran only inside `addShare` and only when THAT save landed.
+	// A failed taken-save took the row off the tray, so Add could not be pressed again, and
+	// every later save wrote `taken:1` beside `envAt:'idb'` while up to 3 MiB stayed in
+	// IndexedDB for good. The rule now lives at the save door.
+	{
+		console.log('\n8. a failed taken-save is pruned by the next save that lands');
+		const E = 'SHARE:' + 'D'.repeat(2 * 1024 * 1024);
+		const box = makeBox([{ seq: 1, kind: 'post', addr: 'c8', envelope: E, from_pub: 'sender' }]);
+		const tab = makeTab(box, { breakArm: BREAK ? arm(BREAK) : null });
+		crowd(tab.local);
+		await sleep(10);
+		const P = tab.P(), D = tab.D();
+		await P.round();
+		check('8a. the gift is shelved', (await D.get('shenv/c8')) === E);
+		tab.local.ctl.failRecord = 1;
+		const a = await P.addShare('c8');
+		check('8b. the accept ran and the row left the tray', a && a.ok === true && P.shares().length === 0,
+			JSON.stringify(a));
+		box.rows.push({ seq: 2, kind: 'post', addr: 'msg8', envelope: 'MSG:hi', from_pub: 'sender' });
+		const r = await P.round();
+		await sleep(30);
+		const rec = stored(tab.local);
+		const c8 = rec && rec.shares && rec.shares.c8;
+		check('8c. a later round lands taken:1', r.ok && c8 && c8.taken === 1, JSON.stringify(c8 && { t: c8.taken, at: c8.envAt }));
+		const still = await D.get('shenv/c8');
+		check('8d. and the envelope is gone from IndexedDB', still === null,
+			'IDB still holds ' + (still ? still.length : 0) + ' bytes');
+		check('8e. and the stored record no longer names it', c8 && !('envAt' in c8), JSON.stringify(c8 && c8.envAt));
+	}
+
+	// ── 9. An evicted envelope is said to be gone, not "not collected" ───
+	//
+	// r542 QA B, F-B3. The share WAS collected here; its stored copy has gone (evicted, or
+	// a cleared site store). "It was not collected here" was false, and Add could only
+	// answer the same again, so the row offers Ignore alone.
+	{
+		console.log('\n9. an evicted envelope says so and offers only Ignore');
+		const box = makeBox([{ seq: 1, kind: 'post', addr: 'h9', envelope: SMALL, from_pub: 'sender' }]);
+		const tab = makeTab(box, { breakArm: BREAK ? arm(BREAK) : null });
+		await sleep(10);
+		const P = tab.P(), D = tab.D();
+		await P.round();
+		await D.del('shenv/h9');
+		const a = await P.addShare('h9');
+		check('9a. Add refuses without claiming it was not collected here',
+			a && a.ok === false && !/not collected/.test(a.why || '') && /no longer on this device/.test(a.why || ''),
+			JSON.stringify(a));
+		check('9b. the row is still listed, so it can be Ignored', P.shares().length === 1);
+		P.render();
+		const acts = [];
+		const walk = (n) => { if (n.dataset && n.dataset.act) acts.push(n.dataset.act); (n.children || []).forEach(walk); };
+		walk(tab.dom.host);
+		check('9c. the row offers Ignore alone', acts.includes('post-share-ignore')
+			&& !acts.includes('post-share-add') && !acts.includes('post-share-block'), JSON.stringify(acts));
+		const rec = stored(tab.local);
+		check('9d. which a reload keeps (the record says the copy is gone)',
+			rec && rec.shares && rec.shares.h9 && rec.shares.h9.envGone === 1, JSON.stringify(rec && rec.shares && rec.shares.h9));
 	}
 
 	console.log('\n' + (checks - failures) + '/' + checks + ' checks passed');

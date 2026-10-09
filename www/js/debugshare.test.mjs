@@ -934,6 +934,53 @@ async function main() {
 			DS._outbox().every((r) => DS._byteLen(r.data) <= 360));
 	}
 
+	// D-20261008-02: a refused or failed tool call, and an engine error, carry the engine's
+	// own sentence whole -- scrubbed of keys, capped at 300 characters -- as a `ds error`
+	// chunk set the row names by `mref`, with the head on the row as `msg`.
+	console.log('debugshare: events — a refusal rides whole as a chunk set, keys scrubbed');
+	{
+		const env = makeEnv({ fastTimers: true, respond: () => 200 });
+		const DS = env.win.DEBUG_SHARE;
+		const refusal = 'Refused: the crystal would be 9,412 bytes, over its HOT budget of 6,144 bytes. '
+			+ 'Move the settled requirements to WARM or cut the state section, then write it again. '
+			+ 'The key in the config was ' + RAW_API_KEY + ' and nothing was written. ' + 'x'.repeat(200);
+		check('a refusal is not queued while sharing is off',
+			DS.event('tool', { turn: 't1', name: 'crystal', out: 'refused', full: refusal }) === false
+				&& DS.outboxDepth() === 0);
+		DS.setEnabled(true);
+		DS.event('tool', { turn: 't1', r: 2, name: 'crystal', out: 'refused', dia: 'd1', chat: 'c1', full: refusal });
+		const rows = DS._outbox();
+		const evRow = rows.find((r) => r.tag === 'ev tool');
+		const ev = evRow ? JSON.parse(evRow.data) : {};
+		check('the tool row keeps its Diamond, chat and turn', ev.dia === 'd1' && ev.chat === 'c1' && ev.turn === 't1');
+		check('the tool row carries the head of the sentence as msg',
+			typeof ev.msg === 'string' && ev.msg.length > 0 && ev.msg.length <= 120 && refusal.indexOf(ev.msg) === 0);
+		check('the tool row does not carry the whole text itself', ev.full === undefined);
+		check('the tool row names a chunk set by mref', typeof ev.mref === 'string' && ev.mref.length > 0);
+		check('the tool row is within the 360-byte cap', DS._byteLen(evRow ? evRow.data : '') <= 360);
+		const set = rows.filter((r) => /^ds error /.test(r.tag) && r.tag.split(' ')[2] === ev.mref);
+		check('the whole text rides as a `ds error <mref> i/n` set', set.length >= 1
+			&& set.every((r, i) => r.tag.endsWith(' ' + (i + 1) + '/' + set.length)));
+		let body = null;
+		try { body = JSON.parse(Buffer.from(set.map((r) => r.data).join(''), 'base64').toString('utf8')); } catch (e) { body = null; }
+		check('the set decodes to the sentence, whole up to the cap',
+			!!body && body.kind === 'error' && /then write it again\. The key in the config was/.test(body.text));
+		check('the sentence is capped at 300 characters', !!body && body.text.length <= 300);
+		check('a key-shaped string inside the sentence never reaches the feed',
+			rows.every((r) => r.data.indexOf(RAW_API_KEY) === -1 && r.data.indexOf(RAW_API_KEY.slice(0, 20)) === -1
+				&& Buffer.from(r.data, 'base64').toString('utf8').indexOf(RAW_API_KEY.slice(0, 20)) === -1));
+		// A sentence that fits on the row whole needs no set.
+		const before = DS._outbox().length;
+		DS.event('turn.error', { turn: 't2', chat: 'c2', dia: 'd2', full: 'Provider error 529: overloaded.' });
+		const added = DS._outbox().slice(before);
+		const te = JSON.parse(added[added.length - 1].data);
+		check('a short engine error rides whole on its row, with no set',
+			added.length === 1 && te.msg === 'Provider error 529: overloaded.' && te.mref === undefined
+				&& te.dia === 'd2' && te.chat === 'c2' && te.turn === 't2');
+		DS.setEnabled(false);
+		env.halt();
+	}
+
 	console.log('debugshare: events — the redactor fingerprints a secret-named field');
 	{
 		const env = makeEnv({ fastTimers: true, respond: () => 200 });
@@ -1316,7 +1363,10 @@ async function main() {
 		check('a worker emits a round row on a tool call, keyed by its own id',
 			/dsEvent\('round', wroundPayload\)/.test(body) && /w: String\(run\.id \|\| ''\)/.test(body));
 		check('a worker emits a tool row on a tool result, name and outcome only',
-			/dsEvent\('tool', \{ w: String\(run\.id \|\| ''\)/.test(body));
+			/var wrow = \{ w: String\(run\.id \|\| ''\)/.test(body) && /dsEvent\('tool', wrow\)/.test(body));
+		// D-20261008-02: a call the engine did not complete also says where, and what.
+		check('a worker\'s failed or refused tool row carries the Diamond, chat, turn and the sentence',
+			/if \(outcome !== 'done'\) \{[^}]*wrow\.dia[^}]*wrow\.chat[^}]*wrow\.turn[^}]*wrow\.full/.test(body));
 		check('the round the turn actually ended on is caught even when unthrottled',
 			/wroundPayload && wroundSent !== wstep/.test(body));
 		// THE ENDING IS THE ENGINE'S, NOT A BLANKET 'done'. Before 2026-09-12

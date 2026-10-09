@@ -156,7 +156,13 @@
 
 	function t(k, v) { return window.DaimondI18n ? DaimondI18n.t(k, v) : k; }
 
-	function fmtUsd(v) { return window.DaimondI18n ? DaimondI18n.money(v, 'fine') : ('$' + (v || 0).toFixed(4)); }
+	// The cost cell is the price tag: estimated unless the providers billed all of it.
+	function costCell(r) {
+		var td = el('td', 'num');
+		var all = r.usd > 0 && (r.reportedUsd || 0) >= r.usd - 1e-12;
+		td.appendChild(DaimondI18n.priceTag(r.usd || 0, { mode: 'fine', estimated: !all }));
+		return td;
+	}
 
 	function fmtTokens(n) {
 		n = n || 0;
@@ -232,7 +238,7 @@
 			tr.appendChild(el('td', 'num', String(r.turns)));
 			tr.appendChild(el('td', 'num', fmtTokens(r.promptTokens)));
 			tr.appendChild(el('td', 'num', fmtTokens(r.completionTokens)));
-			tr.appendChild(el('td', 'num', fmtUsd(r.usd)));
+			tr.appendChild(costCell(r));
 			// D-20260921-01 -- real figures now the ledger carries a duration and
 			// an outcome per turn; `outcomeTurns === 0` (nothing in this window
 			// recorded either) is the one case still shown as "—", not "0%".

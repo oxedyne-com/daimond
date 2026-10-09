@@ -1549,3 +1549,35 @@ fn json_str(s: &str) -> String {
     out.push('"');
     out
 }
+
+/// Mark a Diamond's page and data, as stored now, as the last that passed the load proof, and
+/// answer the mark as JSON: `{version, at, page, data, debug}`, the hashes sha256 hex.
+///
+/// # Arguments
+/// * `version` - The version to name, 0 for the newest recorded.
+#[wasm_bindgen]
+pub async fn crystal_mark_passed(id: String, version: f64) -> Result<String, JsValue> {
+    let v = if version.is_finite() && version > 0.0 { version as u64 } else { 0 };
+    match diamond::mark_passed_stored(&id, v).await {
+        Ok(m)  => Ok(m.to_json()),
+        Err(e) => Err(to_js_err(e)),
+    }
+}
+
+/// The last version of a Diamond's page that passed the load proof, as JSON, or `""` for none.
+#[wasm_bindgen]
+pub async fn crystal_last_passed(id: String) -> String {
+    diamond::last_passed(&id).await.map(|m| m.to_json()).unwrap_or_default()
+}
+
+/// Keep a fallback the person's viewer showed in place of a Diamond's page, so its daimon is told
+/// on its next turn.
+///
+/// # Arguments
+/// * `reason` - `timeout`, `partial` or `undrawn`.
+/// * `missed` - JSON array of the keys the page did not draw, `[]` for none.
+#[wasm_bindgen]
+pub async fn crystal_note_viewer(id: String, reason: String, missed: String) -> Result<(), JsValue> {
+    let keys = crate::llm::extract_json_string_array(&fmt!("{{\"m\":{}}}", missed), "m").unwrap_or_default();
+    diamond::note_viewer(&id, &reason, &keys).await.map_err(to_js_err)
+}

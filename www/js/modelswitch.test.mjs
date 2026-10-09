@@ -41,6 +41,8 @@
      node www/js/modelswitch.test.mjs --break alwayschange # it relabels for the same model too
      node www/js/modelswitch.test.mjs --break oldwindow    # the meter keeps the old window
      node www/js/modelswitch.test.mjs --break alwaysfresh  # every switch demands a fresh daimon
+     node www/js/modelswitch.test.mjs --break workerstays  # inherited workers stay on the old model
+     node www/js/modelswitch.test.mjs --break workerfollows # chosen workers are dragged along
      node www/js/modelswitch.test.mjs                      # and then, clean
    ============================================================ */
 import { readFileSync } from 'node:fs';
@@ -88,6 +90,13 @@ function patchModels(src) {
 		return src.replace(
 			"(DaimondPricing.contextWindow(after.model || '', after.provider || '') || 0)",
 			"(DaimondPricing.contextWindow(before.model || '', before.provider || '') || 0)");
+	}
+	if (BREAK === 'workerstays') {
+		return src.replace('if (inherited) return { provider: after.provider || \'\', model: after.model || \'\' };',
+			'');
+	}
+	if (BREAK === 'workerfollows') {
+		return src.replace('var inherited = ', 'var inherited = true || ');
 	}
 	if (BREAK === 'alwaysfresh') {
 		return src.replace(
@@ -175,6 +184,25 @@ function main() {
 	check('an unknown new window never forces a fresh daimon',
 		unknown.changed === true && unknown.window === 0 && unknown.needsFresh === false,
 		'window=' + unknown.window + ' needsFresh=' + unknown.needsFresh);
+
+	// ── (e) WORKERS FOLLOW ONLY WHEN THEY WERE NEVER MOVED ──────
+	console.log('(e) a chat\'s workers follow its model only when they were never chosen apart from it');
+	const wf = M.workerAfterSwitch;
+	check('workerAfterSwitch is shipped', typeof wf === 'function');
+	if (typeof wf === 'function') {
+		const rode = wf(A, B, { provider: 'fw', model: 'model-a' });
+		check('workers on the chat\'s old model follow it to the new one',
+			rode.provider === 'fw' && rode.model === 'model-b', JSON.stringify(rode));
+		const none = wf(A, B, { provider: '', model: '' });
+		check('an empty worker pair (never chosen) follows too',
+			none.provider === 'fw' && none.model === 'model-b', JSON.stringify(none));
+		const own = wf(A, B, { provider: 'fw', model: 'model-x' });
+		check('workers the user set apart stay where they were set',
+			own.provider === 'fw' && own.model === 'model-x', JSON.stringify(own));
+		const other = wf(A, B, { provider: 'other', model: 'model-a' });
+		check('the same model name on another provider is a separate choice, and stays',
+			other.provider === 'other' && other.model === 'model-a', JSON.stringify(other));
+	}
 
 	console.log('\n' + (failures ? 'FAIL' : 'PASS') + ' — ' + (checks - failures) + '/' + checks
 		+ ' checks' + (BREAK ? ' (--break ' + BREAK + ')' : ''));

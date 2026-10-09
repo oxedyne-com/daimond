@@ -443,9 +443,10 @@ try {
 	// ── 2c. THE CHAT DIALOG READS THE SAME WAY (CRY-15/CHAT-10) ──
 	//
 	// The two dialogs are one control on two objects, so the cog has to mean the
-	// same thing whichever tile it is on. A chat has no changeable models — notes2
-	// fixes those at creation — so its sequence is Name → Colour, and the rest of
-	// the skeleton is identical: a collapsed Advanced, Delete last.
+	// same thing whichever tile it is on. Since 2026-10-09 a chat's model is
+	// changed here too (an active chat's tile has no pulldown, CHAT-01), so its
+	// sequence is Name → Models → Colour, one model row, and the rest of the
+	// skeleton is identical: a collapsed Advanced, Delete last.
 	await openCog(page, '#session-list');
 	await snap(page, 'chat-dialog', '.tile-dlg-card');
 	const chatDlg = await page.evaluate(() => {
@@ -462,7 +463,7 @@ try {
 				? [...adv.querySelectorAll('.tile-dlg-head')].filter(e => e !== adv.firstElementChild).map(txt)
 				: [],
 			words: { name: t('tile.dlg_name'), colour: t('tile.dlg_colour'),
-				running: t('tile.dlg_running') },
+				models: t('tile.dlg_models'), running: t('tile.dlg_running') },
 			hasAdv:   !!adv,
 			advOpen:  !!(adv && adv.open),
 			footLast: !!(foot && card.lastElementChild === foot),
@@ -470,21 +471,21 @@ try {
 			// instead of explaining the empty case, and is now cut, because it only
 			// restated the Name label above the field. The aria-label stays.
 			hint:     nameIn ? (nameIn.getAttribute('placeholder') || '') : null,
-			// And the field is not a model pulldown in disguise: a chat's cog
-			// offers no model at all.
+			// One model: the chat's own. Its workers stay on the tile's pending
+			// row, where they are chosen before the first turn.
 			models:   card.querySelectorAll('select.tile-model').length,
 		};
 	});
 	const CW = chatDlg && chatDlg.words;
-	check(chatDlg && seq(chatDlg.heads, [CW.name, CW.colour]),
-		'the chat dialog reads Name → Colour, the same skeleton as the Diamond’s',
+	check(chatDlg && seq(chatDlg.heads, [CW.name, CW.models, CW.colour]),
+		'the chat dialog reads Name → Model → Colour, the same skeleton as the Diamond’s',
 		chatDlg && JSON.stringify(chatDlg.heads));
 	check(chatDlg && chatDlg.hasAdv && !chatDlg.advOpen && chatDlg.advHeads.includes(CW.running),
 		'with running behind the same collapsed Advanced',
 		chatDlg && JSON.stringify({ has: chatDlg.hasAdv, open: chatDlg.advOpen, heads: chatDlg.advHeads }));
 	check(chatDlg && chatDlg.footLast, 'and Delete last');
-	check(chatDlg && chatDlg.models === 0,
-		'and no model pulldown — a chat’s models are fixed at creation',
+	check(chatDlg && chatDlg.models === 1,
+		'and one model row — the model the chat answers with',
 		chatDlg && String(chatDlg.models));
 	check(chatDlg && chatDlg.hint === '',
 		'the name field carries no placeholder; the Name label above it says it',

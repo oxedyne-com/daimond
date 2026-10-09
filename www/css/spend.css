@@ -65,21 +65,24 @@
 	color: var(--text-muted);
 }
 
-/* Headline stats row: a grid of equal columns, not a wrapping flex row
-   (layout_contract.md V8) -- three stats split two-and-one in every desk
-   config, since 18px of gap plus three natural widths never quite fit one
-   line. Three columns always; two on the phone (responsive.css). */
+/* Headline stats row. A grid of three equal columns clipped the third figure in the
+   Spending dock at 1440 ("118" with no "tok", "This mo"), because a figure is nowrap
+   and the dock is narrower than three of them -- and the price tag's glyph made each
+   figure wider still (D-20261009-18). So the stats WRAP: each keeps its natural width,
+   and the one that does not fit goes to the next line whole, never cut. */
 .spend-totals {
-	display: grid;
-	grid-template-columns: repeat(3, minmax(min-content, 1fr));
-	gap: 12px;
+	display: flex;
+	flex-wrap: wrap;
+	gap: 10px 22px;
 	margin: 0 0 12px;
 }
 .spend-stat {
 	display: flex;
 	flex-direction: column;
 	gap: 2px;
+	flex: 0 1 auto;
 	min-width: 0;
+	max-width: 100%;
 }
 .spend-stat-val {
 	font-size: var(--fs-4xl);
@@ -95,9 +98,6 @@
 	font-size: var(--fs-2xs);
 	color: var(--text-muted);
 	overflow-wrap: break-word;
-}
-@media (max-width: 760px) {
-	.spend-totals { grid-template-columns: repeat(2, minmax(min-content, 1fr)); }
 }
 
 /* Week / Month toggle. */

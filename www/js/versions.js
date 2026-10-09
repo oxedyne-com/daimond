@@ -578,8 +578,14 @@
 	/// cap is the whole of the memory discipline: an LCS table is O(n·m), so two
 	/// 40,000-line files would be 1.6 billion cells.
 	function lineDiff(before, after) {
-		var a = String(before == null ? '' : before).split('\n');
-		var b = String(after == null ? '' : after).split('\n');
+		// A newline ends a line rather than starting one, as the engine's `line_diff` reads it.
+		function lines(t) {
+			var s = String(t == null ? '' : t), v = s.split('\n');
+			if (s === '' || s.charAt(s.length - 1) === '\n') v.pop();
+			return v;
+		}
+		var a = lines(before);
+		var b = lines(after);
 		if (a.length > DIFF_MAX_LINES || b.length > DIFF_MAX_LINES) return null;
 		var n = a.length, m = b.length, i, j;
 		var lcs = new Array(n + 1);

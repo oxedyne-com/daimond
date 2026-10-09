@@ -273,6 +273,214 @@
 			+ ' ≈ ' + intlMoney(((minor || 0) / 100) * RATE[currency()], currency());
 	}
 
+	// ── The price tag (D-20261009-18) ──────────────────────────
+	//
+	// Every figure the app ESTIMATES -- a turn's cost, a day's spend, a key's
+	// balance -- is drawn one way: a tag glyph, then the bare number. No
+	// currency symbol and no "≈": the glyph says "this is a price", the hover
+	// title says "Estimated" and in which currency, and the number is written
+	// with the user's own grouping. A price that is CHARGED keeps "US$" and goes
+	// through `billed`, because the card statement reads in dollars.
+
+	/// The bare figure for `v`, already in `ccy`. Four places below a cent and
+	/// three below a unit, as `digits` always gave; never fewer than the
+	/// currency's own decimals, except that a whole-unit currency (yen, won)
+	/// keeps decimals below one, so a turn never reads as free.
+	function bare(v, ccy, mode) {
+		var own = decimalsOf(ccy);
+		var d;
+		if (v === 0)        d = own;
+		else if (own === 0) d = v >= 1 ? 0 : (v < 0.01 ? 4 : 2);
+		else                d = Math.max(digits(v, mode), own);
+		// Never rounds to nothing: a real figure below the last place shows as
+		// that place, not as zero.
+		var floor = Math.pow(10, -d);
+		if (v > 0 && v < floor / 2) v = floor;
+		var opt = { minimumFractionDigits: d, maximumFractionDigits: d };
+		try {
+			return v.toLocaleString(intlLocale(), opt);
+		} catch (e) {
+			return v.toFixed(d);
+		}
+	}
+
+	/// Is this a figure at all? An unknown price draws nothing.
+	function known(x) { return x !== null && x !== undefined && x !== '' && isFinite(+x); }
+
+	/// A US dollar estimate as a bare figure in the display currency, or '' when
+	/// the price is unknown.
+	function price(usd, mode) {
+		if (!known(usd)) return '';
+		var ccy = currency();
+		return bare(Math.max(0, +usd) * RATE[ccy], ccy, mode);
+	}
+
+	/// The same for the gateway's minor units. A figure quoted in a currency
+	/// other than US dollars is shown as quoted, never converted twice.
+	function priceMinorParts(minor, src) {
+		src = String(src || 'usd').toUpperCase();
+		var v = Math.max(0, +minor || 0) / 100;
+		var ccy = currency();
+		if (src !== 'USD' || ccy === 'USD') return { text: bare(v, src, 'calm'), ccy: src, conv: false };
+		return { text: bare(v * RATE[ccy], ccy, 'calm'), ccy: ccy, conv: true };
+	}
+	function priceMinor(minor, src) {
+		if (!known(minor)) return '';
+		return priceMinorParts(minor, src).text;
+	}
+
+	/// A figure where no tag can be drawn -- a title, a line of plain text: the
+	/// bare figure and the currency's code, never its symbol. '' when unknown.
+	function priceText(usd, mode) {
+		var v = price(usd, mode);
+		return v ? v + ' ' + currency() : '';
+	}
+
+	/// The currency's name in the reader's language, for the tag's title.
+	function ccyName(ccy) {
+		try {
+			var n = new Intl.DisplayNames([intlLocale() || 'en'], { type: 'currency' }).of(ccy);
+			if (n) return n;
+		} catch (e) {}
+		for (var i = 0; i < CURRENCIES.length; i++) if (CURRENCIES[i].code === ccy) return CURRENCIES[i].name;
+		return ccy;
+	}
+
+	/// The hover title: "Estimated" for anything converted or priced from the
+	/// table, and always the currency, so the number is never a bare quantity
+	/// to a screen reader.
+	/// `note` is the site's own sentence about the figure, on a line after it;
+	/// a note that already opens with "Estimated" is not told so twice.
+	function tagTitle(ccy, estimated, note) {
+		var est = t('price.estimated');
+		var head = estimated && !(note && note.indexOf(est) === 0) ? est + ' · ' + ccyName(ccy) : ccyName(ccy);
+		return note ? head + '\n' + note : head;
+	}
+
+	// The glyph, in one place: an outlined tag, drawn by `.tagb > svg`.
+	var TAG_SVG = '<svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">'
+		+ '<path d="M2.8 4.6v6.1c0 .6.2 1.1.6 1.5l8.6 8.6a2 2 0 0 0 2.8 0l6.2-6.2a2 2 0 0 0 0-2.8L12.4 3.2a2 2 0 0 0-1.5-.6H4.8a2 2 0 0 0-2 2z"/>'
+		+ '<circle cx="7.6" cy="7.6" r="1.3"/></svg>';
+	var glyph = null;
+
+	function buildTag(text, ccy, estimated, opts) {
+		var el = document.createElement('span');
+		el.className = 'tagb' + (opts.cls ? ' ' + opts.cls : '');
+		el.title = tagTitle(ccy, estimated, opts.note);
+		if (!glyph) {
+			var h = document.createElement('span');
+			h.innerHTML = TAG_SVG;
+			glyph = h.firstChild;
+		}
+		el.appendChild(glyph.cloneNode(true));
+		var n = document.createElement('span');
+		n.className = 'tagb-n';
+		n.textContent = text;
+		el.appendChild(n);
+		return el;
+	}
+
+	/// The tag for a US dollar estimate, or null when the price is unknown.
+	/// `opts.estimated` marks a figure priced from the table rather than stated
+	/// by the provider; a converted figure is an estimate whatever it says.
+	/// `opts.mode` is `digits`'s cascade, `opts.cls` the site's own class and
+	/// `opts.note` its sentence for the title.
+	function priceTag(usd, opts) {
+		opts = opts || {};
+		if (!known(usd)) return null;
+		var ccy = currency();
+		return buildTag(price(usd, opts.mode), ccy, !!opts.estimated || ccy !== 'USD', opts);
+	}
+
+	/// The tag for the gateway's minor units.
+	function priceTagMinor(minor, src, opts) {
+		opts = opts || {};
+		if (!known(minor)) return null;
+		var p = priceMinorParts(minor, src);
+		return buildTag(p.text, p.ccy, !!opts.estimated || p.conv, opts);
+	}
+
+	/// The tag as markup, for a surface built from a string. '' when unknown.
+	function priceTagHtml(usd, opts) {
+		var el = priceTag(usd, opts);
+		return el ? el.outerHTML : '';
+	}
+
+	// A PRICE INSIDE A STRING. A sentence with an amount slot ("Balance:
+	// {amount}") and a note assembled from parts both travel as strings, so a
+	// price is carried in them as a mark -- two private-use characters around
+	// what the tag needs -- and turned into the tag where the string is drawn.
+	// Every language's word order is kept, because the mark sits in the slot.
+	var M_OPEN = '\uE010', M_SHUT = '\uE011';
+
+	/// A mark for a US dollar estimate, or '' when the price is unknown.
+	function priceMark(usd, opts) {
+		if (!known(usd)) return '';
+		opts = opts || {};
+		return M_OPEN + 'u' + (+usd) + (opts.estimated ? '|e' : '|') + (opts.mode === 'fine' ? '|f' : '') + M_SHUT;
+	}
+
+	/// A mark for the gateway's minor units.
+	function priceMarkMinor(minor, src, opts) {
+		if (!known(minor)) return '';
+		opts = opts || {};
+		return M_OPEN + 'm' + (+minor) + '|' + (opts.estimated ? 'e' : '') + '|' + String(src || 'usd') + M_SHUT;
+	}
+
+	function unmark(body, asText) {
+		var f = body.slice(1).split('|');
+		var est = f[1] === 'e';
+		if (body[0] === 'm') {
+			return asText ? (function (p) { return p.text + ' ' + p.ccy; })(priceMinorParts(+f[0], f[2]))
+				: priceTagMinor(+f[0], f[2], { estimated: est });
+		}
+		var mode = f[2] === 'f' ? 'fine' : undefined;
+		return asText ? priceText(+f[0], mode) : priceTag(+f[0], { estimated: est, mode: mode });
+	}
+
+	/// Walk `s`, handing each run of text and each mark's body to `text` and `mark`.
+	function walkMarks(s, text, mark) {
+		s = String(s == null ? '' : s);
+		var i = 0;
+		while (i < s.length) {
+			var o = s.indexOf(M_OPEN, i);
+			if (o < 0) { text(s.slice(i)); break; }
+			if (o > i) text(s.slice(i, o));
+			var c = s.indexOf(M_SHUT, o);
+			if (c < 0) { text(s.slice(o + 1)); break; }
+			mark(s.slice(o + 1, c));
+			i = c + 1;
+		}
+	}
+
+	/// Does this string carry a price mark?
+	function hasPrice(s) { return typeof s === 'string' && s.indexOf(M_OPEN) >= 0; }
+
+	/// Draw `s` into `host`, each mark as a price tag. Returns `host`.
+	function fillPrices(host, s) {
+		host.textContent = '';
+		walkMarks(s, function (x) { if (x) host.appendChild(document.createTextNode(x)); },
+			function (b) { var tg = unmark(b, false); if (tg) host.appendChild(tg); });
+		return host;
+	}
+
+	/// `s` as markup, each text run through the caller's `esc` and each mark as
+	/// the tag's own markup, for a surface built from a string.
+	function pricesHtml(s, esc) {
+		var out = '';
+		walkMarks(s, function (x) { out += esc(x); },
+			function (b) { var tg = unmark(b, false); if (tg) out += tg.outerHTML; });
+		return out;
+	}
+
+	/// `s` for a place no tag can be drawn -- a title, a log line: each mark as
+	/// `priceText` writes it.
+	function pricesText(s) {
+		var out = '';
+		walkMarks(s, function (x) { out += x; }, function (b) { out += unmark(b, true); });
+		return out;
+	}
+
 	// ── Round prices in a currency that is not the billing one ─
 	//
 	// A shop offers €10, not €9.26. A dollar tier converted straight through
@@ -685,6 +893,18 @@
 		moneyMinor:   moneyMinor,
 		billed:       billed,
 		billedMinor:  billedMinor,
+		price:        price,
+		priceMinor:   priceMinor,
+		priceText:    priceText,
+		priceTag:     priceTag,
+		priceTagMinor: priceTagMinor,
+		priceTagHtml: priceTagHtml,
+		priceMark:    priceMark,
+		priceMarkMinor: priceMarkMinor,
+		hasPrice:     hasPrice,
+		fillPrices:   fillPrices,
+		pricesText:   pricesText,
+		pricesHtml:   pricesHtml,
 		niceTiers:    niceTiers,
 		snap:         snap,
 		onChange:     onChange,

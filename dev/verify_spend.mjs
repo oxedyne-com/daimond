@@ -122,11 +122,12 @@ try {
 		]));
 		await window.DaimondSpend.refresh();
 		const n = document.querySelector('#spend-view .spend-reprice');
-		return { shown: !!n, text: n ? n.textContent : '' };
+		return { shown: !!n, text: n ? n.textContent : '', tag: !!(n && n.querySelector('.tagb > svg')) };
 	});
 	check('a repriced period says so', repriced.shown, repriced.text);
-	check('and quotes what the period read under the old table',
-		/\$0\.50/.test(repriced.text), repriced.text);
+	// The old figure is the price tag (D-20261009-18): the glyph and a bare 0.50.
+	check('and quotes what the period read under the old table, as a price tag',
+		repriced.tag && /(^|[^\d.])0\.50/.test(repriced.text) && !/[≈$]/.test(repriced.text), repriced.text);
 
 	// A shot of the panel itself, scrolled to the note, for the record.
 	await page.evaluate(() => {

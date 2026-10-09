@@ -261,6 +261,11 @@ function dstr(n) {
 	return d.getUTCFullYear() + '-' + p2(d.getUTCMonth() + 1) + '-' + p2(d.getUTCDate());
 }
 function dow(n) { return (n + 4) % 7; }
+// What the person reads goes through the app's clock, on the calendar they chose
+// (Holocene or Common Era); what is stored stays ISO. A frame without it draws the
+// Gregorian year and the stored stamp as they are.
+function yr(d) { var T = window.DaimondTime; return T && T.year ? T.year(d) : d.getFullYear(); }
+function when(at) { var T = window.DaimondTime, t = tms(at); return T && T.fmt && t ? T.fmt(t) : String(at); }
 var MON = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 var DAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 
@@ -285,7 +290,7 @@ function bend(b, per) { return bshift(b, per, 1); }
 function bdays(b, per) { return per === 'day' ? 1 : dnum(bend(b, per)) - dnum(b); }
 function blabel(b, per, short) {
 	var d = new Date(b + 'T12:00:00');
-	if (per === 'month') return MON[d.getMonth()] + (short ? '' : ' ' + d.getFullYear());
+	if (per === 'month') return MON[d.getMonth()] + (short ? '' : ' ' + yr(d));
 	if (per === 'week') return (short ? '' : 'Week of ') + d.getDate() + ' ' + MON[d.getMonth()];
 	if (short) return String(d.getDate());
 	var t = ymd(new Date());
@@ -1348,7 +1353,7 @@ function formScreen() {
 		+ B('ghost', 'back', '', 'Cancel') + '<div class="gap"></div>'
 		+ (sc.id ? C('Delete', 'del', sc.id, 0) : '') + '</div>';
 	if (sc.id && e.src) {
-		o += '<div class="tgt">recorded by <b>' + esc(e.src) + '</b> at ' + esc(e.at) + '</div>';
+		o += '<div class="tgt">recorded by <b>' + esc(e.src) + '</b> at ' + esc(when(e.at)) + '</div>';
 	}
 	return o + '</div>';
 }

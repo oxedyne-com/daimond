@@ -32,6 +32,10 @@
 //       toggle where they were and overlap nothing.
 //   D9  the phone still has its own fold and now one drawn by the same code: shut by
 //       default, the toggle's tap area at least 44px.
+//   D11 THE TALLY IS OUT OF THE FOLD (D-20261009-18, owner-approved variant B). Today /
+//       Week / Month stay at the foot of the section, folded or open, at 1440 and at 390;
+//       each figure is the price tag (glyph and bare figure, no "≈", no symbol); on the
+//       phone the identity row and the tally are each a thumb's height, 44px or more.
 //   D10 ONE DOOR (D-20261009-11). Exactly one control in the status header opens the
 //       admin panel, and it is the identity row, named "Settings". A cog beside it
 //       opened the same panel; the owner called that "unnecessary redundancy".
@@ -63,6 +67,12 @@ const survey = (p) => p.evaluate((TOGGLE) => {
 		rail: box('#panel-rail'), railTop: box('#rail-top'), admin: box('#admin'), status: box('#admin-status'),
 		idRow: box('#admin-status .astat-id'), name: box('#user-info'), userRow: box('#user-row'),
 		toggle: box(TOGGLE), summary: box('#astat-summary'), spend: box('#spend-row'), flag: box('#astat-flag'),
+		tally: (() => {
+			const r = document.getElementById('spend-row');
+			const amts = r ? [...r.querySelectorAll('.spend-amt')] : [];
+			return { n: amts.length, tags: amts.filter((a) => a.querySelector('.tagb > svg') && a.querySelector('.tagb-n')).length,
+				text: amts.map((a) => a.textContent.trim()).join(' | ') };
+		})(),
 		diamondList: box('#diamond-list'), sessionList: box('#session-list'),
 		chat: box('#panel-ai'), guide: box('#panel-guide'),
 		expanded: t ? t.getAttribute('aria-expanded') === 'true' : null,
@@ -108,9 +118,11 @@ check('D1 it is the last thing in the identity row, right of the name', A.toggle
 	`userRow.right=${A.userRow.right} toggle=${A.toggle.left}..${A.toggle.right} row.right=${A.idRow.right}`);
 check('D2 shut by default', A.expanded === false, `aria-expanded=${A.expanded}`);
 check('D2 the summary row is not on screen', !A.summary.drawn, `h=${A.summary.h}`);
-check('D2 the spend row is not on screen', !A.spend.drawn, `h=${A.spend.h}`);
+check('D11 1440 folded: the tally stays on screen', A.spend.drawn, `h=${A.spend.h}`);
+check('D11 1440: every tally figure is the price tag, no "≈" and no symbol', A.tally.n === 3 && A.tally.tags === 3 && !/[≈$€£¥]/.test(A.tally.text),
+	`${A.tally.tags}/${A.tally.n} tags, "${A.tally.text}"`);
 check('D2 the identity row stays', A.idRow.drawn && A.userRow.drawn, `id=${A.idRow.h} userRow=${A.userRow.drawn}`);
-check('D2 the whole section is one compact line (<= 60px)', A.admin.drawn && A.admin.h <= 60, `#admin=${A.admin.h}px`);
+check('D2 the folded section is the identity row and the tally, nothing more', A.admin.drawn && A.admin.h <= A.idRow.h + A.spend.h + 16, `#admin=${A.admin.h}px id=${A.idRow.h} tally=${A.spend.h}`);
 
 // ── D7 (collapsed half): no model is a warning, so the line says so ───────
 check('D7 no model: the collapsed line carries the status flag', A.flag.drawn, `flag.drawn=${A.flag.drawn} text="${A.flagText}"`);
@@ -124,7 +136,7 @@ check('D4 the toggle can be pressed', pressed);
 check('D4 expanded: aria-expanded is true', B.expanded === true, `aria-expanded=${B.expanded}`);
 check('D4 expanded: the summary and the spend rows are on screen', B.summary.drawn && B.spend.drawn, `summary=${B.summary.h} spend=${B.spend.h}`);
 const gained = B.admin.h - A.admin.h;
-check('D3 RAIL HEIGHT RECOVERED: collapsed is at least 60px shorter than expanded', gained >= 60, `expanded #admin=${B.admin.h}px, collapsed=${A.admin.h}px, recovered=${gained}px`);
+check('D3 RAIL HEIGHT RECOVERED: collapsed is at least 20px shorter than expanded', gained >= 20, `expanded #admin=${B.admin.h}px, collapsed=${A.admin.h}px, recovered=${gained}px`);
 check('D3 the room goes to the rail\'s lists', gained > 0 && (A.railTop.h - B.railTop.h) >= gained - 2, `#rail-top collapsed=${A.railTop.h} expanded=${B.railTop.h}`);
 const grew = pressed && B.expanded === true;
 check('D4 in place: the rail does not move or resize', grew && A.rail.top === B.rail.top && A.rail.h === B.rail.h && A.rail.left === B.rail.left && A.rail.w === B.rail.w,
@@ -139,7 +151,7 @@ check('D5 the open state is written under the per-device key', !!B.stored && B.s
 
 await press(p);
 const C = await survey(p);
-check('D4 collapses again, to the same line', C.expanded === false && Math.abs(C.admin.h - A.admin.h) <= 1 && !C.summary.drawn && !C.spend.drawn,
+check('D4 collapses again, to the same line, the tally still there', C.expanded === false && Math.abs(C.admin.h - A.admin.h) <= 1 && !C.summary.drawn && C.spend.drawn,
 	`expanded=${C.expanded} #admin=${C.admin.h} (was ${A.admin.h})`);
 check('D5 the shut state is written too', !!C.stored && C.stored !== 'unreadable' && C.stored.status === false, JSON.stringify(C.stored));
 
@@ -157,7 +169,7 @@ await signInAs(s, s.name);
 await settle(p, 1400);
 await quiet(p);
 const R2 = await survey(p);
-check('D5 shut, then reloaded: still shut', R2.expanded === false && !R2.summary.drawn && R2.admin.h <= 60, `expanded=${R2.expanded} #admin=${R2.admin.h}`);
+check('D5 shut, then reloaded: still shut', R2.expanded === false && !R2.summary.drawn && Math.abs(R2.admin.h - A.admin.h) <= 1, `expanded=${R2.expanded} #admin=${R2.admin.h} (folded ${A.admin.h})`);
 
 // ── D6: storage refuses to write, the fold still works ─────────────────
 await p.evaluate(() => { Storage.prototype.setItem = function () { throw new Error('quota'); }; });
@@ -178,7 +190,7 @@ await settle(p, 900);
 await quiet(p);
 const Q = await survey(p);
 check('D7 a model is connected and nothing is wrong: the collapsed line carries no flag', Q.expanded === false && !Q.flag.drawn, `flag.drawn=${Q.flag.drawn} text="${Q.flagText}" summary="${Q.summaryText}"`);
-check('D7 and the section is still one compact line', Q.admin.h <= 60, `#admin=${Q.admin.h}`);
+check('D7 and the section is still the folded height', Math.abs(Q.admin.h - A.admin.h) <= 1, `#admin=${Q.admin.h} (folded ${A.admin.h})`);
 
 // ── D8: variable length. A long name, a long flag, and the line holds. ──
 // The flag is only drawn on a warning, so the test makes one by emptying the models again.
@@ -252,7 +264,9 @@ const hit = await p.evaluate((TOGGLE) => {
 	}
 	return { ok: n === total, n, total };
 }, TOGGLE);
-check('D9 phone: the toggle is drawn and the section is shut by default', F.toggle.drawn && F.expanded === false && !F.summary.drawn && !F.spend.drawn, `toggle=${F.toggle.drawn} expanded=${F.expanded}`);
+check('D9 phone: the toggle is drawn and the section is shut by default', F.toggle.drawn && F.expanded === false && !F.summary.drawn, `toggle=${F.toggle.drawn} expanded=${F.expanded}`);
+check('D11 390 folded: the tally stays on screen, as price tags', F.spend.drawn && F.tally.tags === 3 && !/[≈$€£¥]/.test(F.tally.text), `drawn=${F.spend.drawn} ${F.tally.tags}/${F.tally.n} "${F.tally.text}"`);
+check('D11 390: the identity row and the tally are each at least 44px tall', F.idRow.h >= 44 && F.spend.h >= 44, `id=${F.idRow.h} tally=${F.spend.h}`);
 check('D9 phone: the toggle\'s tap area is at least 44px each way', hit.ok, JSON.stringify(hit));
 check('D9 phone: nothing in the identity row overlaps or overflows at 390', F.idOverflow <= 0 && F.userRow.right <= F.toggle.left + 1 + 8, `overflow=${F.idOverflow} userRow.right=${F.userRow.right} toggle.left=${F.toggle.left}`);
 await press(p);

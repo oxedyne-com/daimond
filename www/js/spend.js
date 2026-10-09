@@ -41,16 +41,23 @@
 	// Inference costs are provider USD, often sub-cent, so show enough figures
 	// to be honest about a small number without a wall of zeros on a large one.
 	// The `fine` cascade in i18n.js is this rule; the display currency rides
-	// along with it.
+	// along with it. Every figure on the page is the price tag; `fmtUsd` is the
+	// same figure for a place no tag can be drawn (a bar's title).
+	function tagUsd(v, opts) {
+		opts = opts || {};
+		return DaimondI18n.priceTag(v || 0, { mode: 'fine', estimated: opts.estimated, note: opts.note });
+	}
 	function fmtUsd(v) {
-		return DaimondI18n.money(v, 'fine');
+		return DaimondI18n.priceText(v || 0, 'fine');
 	}
 
-	// Credits are gateway minor units; reuse the gateway's own formatter.
-	function fmtCredits(minor) {
+	// Credits are gateway minor units, quoted in the gateway's currency.
+	function creditCur() {
 		var g = window.DaimondGateway;
-		var cur = (g && g.state && g.state().currency) || 'usd';
-		return DaimondI18n.moneyMinor(minor, cur);
+		return (g && g.state && g.state().currency) || 'usd';
+	}
+	function tagCredits(minor) {
+		return DaimondI18n.priceTagMinor(minor || 0, creditCur());
 	}
 
 	function fmtTokens(n) {
@@ -192,7 +199,9 @@
 			fill.style.width = Math.max(2, (v / total) * 100).toFixed(1) + '%';
 			barWrap.appendChild(fill);
 			row.appendChild(barWrap);
-			row.appendChild(el('span', 'spend-bd-amt', fmt(v)));
+			var amt = el('span', 'spend-bd-amt');
+			amt.appendChild(fmt(v));
+			row.appendChild(amt);
 			wrap.appendChild(row);
 		}
 		return wrap;
@@ -207,19 +216,17 @@
 
 	// Whether a rolled-up total is entirely what the providers reported. Old
 	// entries carry no `r` and so are priced, not reported -- which is what they
-	// were, and the honest answer for them is still "≈".
+	// were, and the honest answer for them is still "estimated".
 	function allReported(tot) {
 		if (!tot || !(tot.usd > 0)) return false;
 		var rep = tot.reportedUsd || 0;
 		return rep >= tot.usd - 1e-12;
 	}
 
-	// The "≈" that precedes a figure, or nothing when the figure is a bill. A
-	// converted figure already carries its own ≈ from i18n, so this adds none.
-	function mark(tot) {
-		if (allReported(tot)) return '';
-		if (window.DaimondI18n && DaimondI18n.converted()) return '';
-		return '≈ ';
+	// A period's total as the tag: estimated unless the providers billed all of
+	// it. A converted figure is estimated whatever it says; the tag knows that.
+	function totalTag(tot) {
+		return tagUsd((tot && tot.usd) || 0, { estimated: !allReported(tot) });
 	}
 
 	// The tooltip behind the "Estimated" badge -- the rate-table detail that used
@@ -253,12 +260,9 @@
 		try { rp = L.repriced(period); } catch (e) { return ''; }
 		if (!rp || !rp.turns) return '';
 		var before = (tot.usd || 0) - (rp.usd || 0) + (rp.was || 0);
-		var was = fmtUsd(before);
-		if (was === fmtUsd(tot.usd || 0)) return '';
-		// The old figure was a guess, and says so -- unless the currency
-		// conversion has already hung a ≈ on it.
-		var approx = (window.DaimondI18n && DaimondI18n.converted()) ? '' : '≈ ';
-		return t('spend.repriced', { amount: approx + was });
+		if (fmtUsd(before) === fmtUsd(tot.usd || 0)) return '';
+		// The old figure was a guess, and its tag says so.
+		return t('spend.repriced', { amount: DaimondI18n.priceMark(before, { estimated: true, mode: 'fine' }) });
 	}
 
 	// ── Inference section (from DaimondLedger) ─────────────────
@@ -277,12 +281,9 @@
 		// The headline: this period's spend, plus session for immediacy.
 		var head = el('div', 'spend-totals');
 		var periodLbl = period === 'week' ? t('spend.this_week') : t('spend.this_month');
-		// A converted figure already carries its own ≈, so the estimate mark is
-		// not added a second time.
-		var approx = (window.DaimondI18n && DaimondI18n.converted()) ? '' : '≈ ';
-		head.appendChild(bigStat(mark(win) + fmtUsd(win.usd), periodLbl));
+		head.appendChild(bigStat(totalTag(win), periodLbl));
 		if (totals.session) {
-			head.appendChild(bigStat(mark(totals.session) + fmtUsd(totals.session.usd), t('spend.session')));
+			head.appendChild(bigStat(totalTag(totals.session), t('spend.session')));
 		}
 		head.appendChild(bigStat(fmtTokens(win.tokens) + ' ' + t('spend.tok'), periodLbl));
 		sec.appendChild(head);
@@ -299,7 +300,7 @@
 
 		// And, while the correction is still in view, why the figure fell.
 		var rn = repriceNote(win);
-		if (rn) sec.appendChild(el('div', 'spend-note spend-reprice', rn));
+		if (rn) sec.appendChild(DaimondI18n.fillPrices(el('div', 'spend-note spend-reprice'), rn));
 
 		// The period toggle.
 		var toggle = el('div', 'spend-toggle');
@@ -342,7 +343,7 @@
 				tr.appendChild(el('td', 'spend-model', m.model || t('spend.unknown_model')));
 				tr.appendChild(el('td', 'num', String(m.turns)));
 				tr.appendChild(el('td', 'num', fmtTokens(m.tokens)));
-				tr.appendChild(el('td', 'num', fmtUsd(m.usd)));
+				tr.appendChild(cell(tagUsd(m.usd, { estimated: !allReported(m) })));
 				tb.appendChild(tr);
 			});
 			tbl.appendChild(tb);
@@ -366,10 +367,10 @@
 			keys.forEach(function (k) {
 				var tr = el('tr');
 				tr.appendChild(el('td', 'spend-model', k.name));
-				var left = el('td', 'num', k.left);
+				var left = DaimondI18n.fillPrices(el('td', 'num'), k.left);
 				if (k.leftHint) left.title = k.leftHint;
 				tr.appendChild(left);
-				tr.appendChild(el('td', 'num', fmtUsd(k.spent)));
+				tr.appendChild(cell(tagUsd(k.spent, { estimated: true })));
 				ktb.appendChild(tr);
 			});
 			ktbl.appendChild(ktb);
@@ -412,9 +413,19 @@
 		return out;
 	}
 
+	// A number cell holding a tag.
+	function cell(node) {
+		var td = el('td', 'num');
+		td.appendChild(node);
+		return td;
+	}
+
+	// `value` is a tag or a plain string (a token count).
 	function bigStat(value, label) {
 		var s = el('div', 'spend-stat');
-		s.appendChild(el('span', 'spend-stat-val', value));
+		var v = el('span', 'spend-stat-val');
+		if (typeof value === 'string') v.textContent = value; else v.appendChild(value);
+		s.appendChild(v);
 		s.appendChild(el('span', 'spend-stat-lbl', label));
 		return s;
 	}
@@ -443,7 +454,7 @@
 
 		// Balance headline.
 		var head = el('div', 'spend-totals');
-		head.appendChild(bigStat(fmtCredits(st.credits || 0), t('spend.balance')));
+		head.appendChild(bigStat(tagCredits(st.credits), t('spend.balance')));
 		sec.appendChild(head);
 
 		// Category breakdown of spends only (debits are negative deltas).
@@ -461,7 +472,7 @@
 			.map(function (c) { return { label: catLabel(c), value: byCat[c] }; })
 			.sort(function (a, b) { return b.value - a.value; });
 		sec.appendChild(el('div', 'spend-sub', t('spend.where_credits_went')));
-		sec.appendChild(breakdown(catRows, fmtCredits));
+		sec.appendChild(breakdown(catRows, tagCredits));
 
 		// The movements table: the ledger itself, plainly.
 		if (movements) {
@@ -477,10 +488,10 @@
 				tr.appendChild(el('td', 'spend-when', fmtWhen(e.ts / 1e6)));	// ts is ns
 				tr.appendChild(el('td', null, catLabel(e.category || e.kind)));
 				var d = e.delta_minor || 0;
-				var amt = el('td', 'num ' + (d < 0 ? 'debit' : 'credit'),
-					(d < 0 ? '−' : '+') + fmtCredits(Math.abs(d)));
+				var amt = el('td', 'num ' + (d < 0 ? 'debit' : 'credit'), d < 0 ? '−' : '+');
+				amt.appendChild(tagCredits(Math.abs(d)));
 				tr.appendChild(amt);
-				tr.appendChild(el('td', 'num', fmtCredits(e.balance || 0)));
+				tr.appendChild(cell(tagCredits(e.balance)));
 				tb.appendChild(tr);
 			});
 			tbl.appendChild(tb);

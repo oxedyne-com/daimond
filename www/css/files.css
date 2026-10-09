@@ -358,8 +358,8 @@
 /* A listing in flight, and a listing that failed: each a row of its own, so neither
    passes for the empty state ("nothing here"), which it is not. Loading is one role
    in the tree and in Daimond's files. */
-.files-loading { padding: 16px; text-align: center; color: var(--text-secondary); }
-.files-fail { padding: 16px; text-align: center; color: var(--danger); }
+.files-loading { padding: 16px; text-align: center; color: var(--text-secondary); overflow-wrap: anywhere; }
+.files-fail { padding: 16px; text-align: center; color: var(--danger); overflow-wrap: anywhere; }
 
 .files-row {
 	display: flex; align-items: center; gap: 8px;

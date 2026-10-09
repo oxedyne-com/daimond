@@ -1040,7 +1040,8 @@ body.resizing-v { cursor: row-resize; user-select: none; -webkit-user-select: no
    tall as the input at rest — 21px of line + ~9px of vertical padding + 2px of
    border — so the row reads as one control rather than a box with taller buttons
    beside it. The bar aligns to flex-end, so they stay on the baseline as the
-   input grows. */
+   input grows. Send is LAST in the markup: the pair shows and hides before it,
+   so it narrows the field and never moves Send out from under a click. */
 #chat-send, #chat-jump, #chat-end {
 	box-sizing: border-box;
 	height: 32px;
@@ -2375,6 +2376,18 @@ span.arte-open { cursor: default; }
 .tile-ctx-pct { color: var(--text-secondary); }
 .tile-tok { white-space: nowrap; }
 .tile-cost { color: var(--text-secondary); white-space: nowrap; }
+/* THE PRICE TAG (D-20261009-18, variant B). Every estimated price in the app is
+   this one element, built by `DaimondI18n.priceTag`: an outlined tag glyph and the
+   bare figure, with no currency symbol and no "≈" -- the glyph says "price", and the
+   title says "Estimated" and in which currency. One role, so one rule: a site sets
+   the size and the colour of the figure, never the tag's own shape. */
+/* The figure sets the tag's baseline (`align-items: baseline`) and the glyph is centred on
+   it (`align-self: center`): a glyph-first box took its baseline from the glyph's foot and
+   stood the whole tag up off the line, 4px taller in the rail tally. */
+.tagb { display: inline-flex; align-items: baseline; gap: 0.3em; white-space: nowrap; font-family: var(--font-mono); font-variant-numeric: tabular-nums; }
+.tagb > svg { align-self: center; width: 1.05em; height: 1.05em; flex: none; fill: none; stroke: var(--text-muted); stroke-width: 1.9; stroke-linejoin: round; }
+/* The glyph is the separator: a meter's "·" before it would be a second one. */
+:is(.tile-meter, .diamond-meter) > .tagb::before { content: none !important; }
 .tile-fold { background: none; border: 1px solid var(--border-strong); color: var(--text-secondary); border-radius: var(--radius-sm); font-size: var(--fs-2xs); padding: 2px 9px; white-space: nowrap; }
 .tile-fold:hover { border-color: var(--accent); color: var(--accent-text); }
 /* Keep as a Diamond. It wears the SAME shape as Fold because they sit side by
@@ -2983,6 +2996,62 @@ span.arte-open { cursor: default; }
 	   stays at 8px: only the arrow side needs the air. */
 	padding: 7px 22px 7px 8px;
 }
+/* ── The filter list (models.js `picker`) ───────────────────────────────
+   Every model pulldown is drawn by one control: a text field that stands where the
+   native `<select>` stood (the select stays, hidden, as the state) and one list on the
+   body. The field wears the role of the pulldown it replaces -- the wrapper takes the
+   select's own classes with an `mp-` prefix, so a settings pulldown stays a settings
+   pulldown, a tile's stays a tile's -- and nothing here is per site.
+   The field is an `<input>`, so the app's generic text-field rules reach it; the
+   `.mp > input.mp-in` block is written after them and says what a pulldown looks like. */
+.mp { position: relative; display: block; flex: 1 1 auto; min-width: 0; }
+.mp-native { display: none !important; }
+.mp > input.mp-in {
+	display: block; width: 100%; min-width: 0; box-sizing: border-box;
+	background: var(--bg-tertiary); border: 1px solid transparent; border-radius: var(--radius-sm);
+	color: var(--text-primary); cursor: pointer;
+	text-overflow: ellipsis; padding: 9px 28px 9px 12px; font-size: var(--fs-base);
+}
+.mp > input.mp-in::placeholder { color: var(--text-muted); }
+.mp > input.mp-in:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; border-color: var(--accent); }
+.mp > input.mp-in:disabled { cursor: default; opacity: 0.6; }
+/* The chevron: borders, not an image, so it takes the theme's muted colour. */
+.mp::after {
+	content: ''; position: absolute; right: 12px; top: 50%; width: 6px; height: 6px;
+	border-right: 1.5px solid var(--text-muted); border-bottom: 1.5px solid var(--text-muted);
+	transform: translateY(-70%) rotate(45deg); pointer-events: none;
+}
+/* A tile's rail pulldown, and the drafting pulldown, which has the same size of job. */
+.mp-tile-model > input.mp-in,
+.mp-models-draft-sel > input.mp-in { padding: 5px 18px 5px 6px; font-size: var(--fs-xs); }
+.mp-tile-model::after, .mp-models-draft-sel::after { right: 7px; }
+.tile-dlg-field .mp-tile-model > input.mp-in,
+.tile-dlg-model .mp-tile-model > input.mp-in { padding: 7px 22px 7px 8px; font-size: var(--fs-sm); }
+.tile-dlg-field .mp-tile-model::after, .tile-dlg-model .mp-tile-model::after { right: 9px; }
+/* The dialog's pulldown is a `.dlg-input`; its models take the mono face. */
+.mp-dlg-input { margin-bottom: 4px; }
+.mp-dlg-select > input.mp-in { font-family: var(--font-mono); font-size: var(--fs-sm); }
+/* The list. It stands on the body, above every dialog. */
+.mp-pop {
+	position: fixed; z-index: 5000; background: var(--bg-secondary); border: 1px solid transparent;
+	border-radius: var(--radius); box-shadow: 0 8px 28px rgba(0,0,0,0.4); padding: 5px;
+	overflow-y: auto; overscroll-behavior: contain; box-sizing: border-box;
+}
+.mp-pop[hidden] { display: none; }
+.mp-grp { font-size: var(--fs-2xs); text-transform: uppercase; letter-spacing: 0.04em; color: var(--text-muted); padding: 6px 8px 2px; }
+.mp-row {
+	display: flex; align-items: baseline; gap: 8px; min-height: 32px; box-sizing: border-box;
+	padding: 6px 8px; border-radius: var(--radius-sm); color: var(--text-primary); cursor: pointer;
+}
+.mp-row.mp-act { background: var(--bg-hover); }
+.mp-row[aria-selected="true"] { background: var(--accent-soft); color: var(--accent-text); }
+.mp-row[aria-disabled="true"] { color: var(--text-muted); cursor: default; }
+.mp-main { font-family: var(--font-mono); font-size: var(--fs-sm); min-width: 0; overflow-wrap: anywhere; }
+.mp-sub { font-size: var(--fs-2xs); color: var(--text-muted); margin-left: auto; white-space: nowrap; }
+.mp-none { font-size: var(--fs-xs); color: var(--text-muted); padding: 8px; }
+@media (max-width: 760px), (pointer: coarse) {
+	.mp-row { min-height: 44px; align-items: center; }
+}
 /* A tile's colour. The browser draws the well itself, so the job here is to
    stop it drawing the CHROME around it: left alone, `input[type=color]` comes
    with a platform border and a grey plate that belong to no theme in this app.
@@ -3449,6 +3518,7 @@ body.locked .tile-fold, body.locked .spend-row { display: none; }
 .tf-fold:hover { color: var(--accent, var(--primary)); }
 .turn-file-more { font-size: var(--fs-xs); color: var(--text-secondary); cursor: pointer; padding-top: 4px; background: none; border: none; padding: 4px 0 0; font: inherit; }
 .turn-file-more:hover { text-decoration: underline; }
+.turn-file-rest { color: var(--text-secondary); padding: 4px 0 0; }	/* reads as the fold button does (its font: inherit), but is not one */
 .hist-diff-line.add { color: var(--ok); background: color-mix(in srgb, var(--ok) 10%, transparent); }
 .hist-diff-line.del { color: var(--danger); background: color-mix(in srgb, var(--danger) 10%, transparent); }
 

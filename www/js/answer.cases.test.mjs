@@ -144,6 +144,8 @@ function compose() {
 		confirmDialog: async (...a) => { log.confirms.push(a[1]); return yes; },
 		friendlyError: (e) => 'ERR ' + e.message,
 		DaimondGateway: { fmtMoney: (n) => '$' + n },
+		// The charge travels as a price mark and is drawn by `fillPrices` (D-20261009-18).
+		DaimondI18n: { priceMarkMinor: (n) => '$' + n, fillPrices: (host, str) => { host.textContent = String(str); return host; } },
 		DaimondPanels: { show() { log.opened++; }, hide() { log.hidden++; }, reflow() { log.reflow++; } },
 	};
 	const names = Object.keys(stubs);

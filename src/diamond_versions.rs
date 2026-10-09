@@ -2496,11 +2496,18 @@ pub enum Row {
 /// it is reported as one replacement, because the table an exact match needs is the product of
 /// the two sides.
 pub fn line_diff(before: &str, after: &str) -> Outcome<Vec<Row>> {
-	// `"".split('\n')` yields one empty element, not zero -- unguarded, a brand-new file (an
-	// empty `before`) reads as one phantom blank line removed, and a deleted file as one
-	// phantom blank line added.
-	let a: Vec<&str> = if before.is_empty() { Vec::new() } else { before.split('\n').collect() };
-	let b: Vec<&str> = if after.is_empty() { Vec::new() } else { after.split('\n').collect() };
+	// A newline ends a line rather than starting one, so neither `""` (a new or deleted file)
+	// nor a final `\n` (nearly every file) may count as a blank line of its own: unguarded, a
+	// three-line file written with its final newline read as +4.
+	fn lines(t: &str) -> Vec<&str> {
+		let mut v: Vec<&str> = t.split('\n').collect();
+		if t.is_empty() || t.ends_with('\n') {
+			v.pop();
+		}
+		v
+	}
+	let a = lines(before);
+	let b = lines(after);
 	if a.len() > DIFF_LINES_MAX || b.len() > DIFF_LINES_MAX {
 		return Err(err!(
 			"A comparison of {} lines against {} is past the {} this shows, so these two \
@@ -2699,6 +2706,24 @@ fn objects_in(arr: &str) -> Vec<&str> {
 	out
 }
 
+
+/// The version a `file_revert` of one half of a crystal goes back to, read off that half's chain.
+///
+/// The crystal's two files are not rows in the files store: their history is the crystal chain,
+/// `versions/NNNN.json|html`, written at turn end. `snaps` is the half's snapshot numbers, `head`
+/// the version the Diamond is at, and `moved` whether the file on disk differs from the half at
+/// `head` -- a write this turn made. A moved file goes back to `head`; one that stands as recorded
+/// goes back to the version before the newest snapshot that changed it. `None` where nothing
+/// earlier was ever recorded.
+pub fn chain_undo_version(snaps: &[u64], head: u64, moved: bool) -> Option<u64> {
+	if moved {
+		return Some(head);
+	}
+	match snaps.iter().copied().filter(|n| *n <= head).max() {
+		Some(n) if n > 0	=> Some(n - 1),
+		_			=> None,	// first recorded at 0, or never
+	}
+}
 
 #[cfg(test)]
 mod tests {
@@ -3974,7 +3999,7 @@ Garden: order two bags of bark for a bed.
 	fn test_the_diff_of_a_page_against_itself_is_every_line_unchanged() -> Outcome<()> {
 		let rows = res!(line_diff(PAGE, PAGE));
 		assert_eq!((0, 0), diff_counts(&rows));
-		assert_eq!(PAGE.split('\n').count(), rows.len());
+		assert_eq!(PAGE.lines().count(), rows.len());	// a final newline ends the last line
 		Ok(())
 	}
 
@@ -4016,6 +4041,19 @@ Garden: order two bags of bark for a bed.
 	fn test_a_deleted_file_diffs_as_all_remove_with_no_phantom_addition() -> Outcome<()> {
 		let rows = res!(line_diff("a\nb\nc", ""));
 		assert_eq!((0, 3), diff_counts(&rows));
+		Ok(())
+	}
+
+	/// A newline ENDS a line; it does not start an empty one. A new file of three lines, written
+	/// the ordinary way with a final newline, is three added lines -- the Files tile showed +4.
+	#[test]
+	fn test_a_final_newline_is_no_extra_line() -> Outcome<()> {
+		assert_eq!((3, 0), diff_counts(&res!(line_diff("", "a\nb\nc\n"))));
+		assert_eq!((0, 3), diff_counts(&res!(line_diff("a\nb\nc\n", ""))));
+		assert_eq!((1, 1), diff_counts(&res!(line_diff("a\nb\n", "a\nB\n"))));
+		assert_eq!((1, 0), diff_counts(&res!(line_diff("a\n", "a\nb\n"))));
+		// A blank last line is still a line: two newlines are one line and one blank one.
+		assert_eq!((2, 0), diff_counts(&res!(line_diff("", "a\n\n"))));
 		Ok(())
 	}
 
@@ -4810,6 +4848,21 @@ Garden: order two bags of bark for a bed.
 		// 5.3.0 reads it back whole.
 		let back = res!(Manifest::from_json(&json));
 		assert_eq!(back.files[0].by, Some(by));
+		Ok(())
+	}
+
+	#[test]
+	fn test_chain_undo_version_goes_back_past_the_last_change_00() -> Outcome<()> {
+		// A write this turn: back to the version the Diamond is at.
+		assert_eq!(chain_undo_version(&[1, 4], 6, true), Some(6));
+		// Standing as recorded: back past the newest snapshot that changed it.
+		assert_eq!(chain_undo_version(&[1, 4], 6, false), Some(3));
+		assert_eq!(chain_undo_version(&[1, 4, 9], 6, false), Some(3));	// a snapshot above head is not this history
+		// The first page ever written goes back to before it: no page, the shipped one.
+		assert_eq!(chain_undo_version(&[1], 1, false), Some(0));
+		// Recorded first at 0, or never: nothing earlier.
+		assert_eq!(chain_undo_version(&[0], 3, false), None);
+		assert_eq!(chain_undo_version(&[], 3, false), None);
 		Ok(())
 	}
 }

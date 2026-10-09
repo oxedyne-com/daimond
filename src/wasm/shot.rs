@@ -79,6 +79,12 @@ pub struct Shot {
     // The text table of a Diamond page's measurement (`in:"crystal"`), else empty; `png` is
     // then empty too when the page measured but could not be drawn, and the table says why.
     pub table: String,
+    // The load proof's verdict (`pass` or `FAIL: ...`) when the request asked for one, else empty,
+    // and the debug nodes the page showed.
+    pub proof: String,
+    pub debug: u32,
+    // The page's console and the channel's messages, capped and scrubbed by the driver (K3).
+    pub trace: String,
 }
 
 /// Photograph the view named by `req` and hand back the decoded PNG.
@@ -110,18 +116,21 @@ pub async fn capture(req: &str) -> Outcome<Shot> {
             IO, Invalid));
     }
     let table = extract_json_string(&json, "table").unwrap_or_default();
+    let proof = extract_json_string(&json, "proof").unwrap_or_default();
+    let debug = extract_json_number(&json, "debug").unwrap_or(0) as u32;
+    let trace = extract_json_string(&json, "trace").unwrap_or_default();
     let b64 = match extract_json_string(&json, "png_b64") {
         Some(b) if !b.trim().is_empty() => b,
         // A Diamond page measured without a picture: the table is the answer, and an empty
         // `png` says so.  Without a table the missing picture is still the fault it was.
-        _ if !table.trim().is_empty() => return Ok(Shot { png: Vec::new(), w: 0, h: 0, table }),
+        _ if !table.trim().is_empty() => return Ok(Shot { png: Vec::new(), w: 0, h: 0, table, proof, debug, trace }),
         _ => return Err(err!(
             "The page said it captured the view but carried no image bytes."; Invalid, Data)),
     };
     let png = res!(base64::decode(&b64));
     let w = extract_json_number(&json, "w").unwrap_or(0) as u32;
     let h = extract_json_number(&json, "h").unwrap_or(0) as u32;
-    Ok(Shot { png, w, h, table })
+    Ok(Shot { png, w, h, table, proof, debug, trace })
 }
 
 /// What the Diamond's images model made of one picture, and what that cost.

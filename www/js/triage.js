@@ -356,16 +356,13 @@
 		}
 		return tOr('social.triage_cost',
 			'All {n} notes on {model}, your key: ~{in} tokens in, up to {out} out — at most {usd}.',
-			{ n: n, model: est.model, in: est.inTok, out: est.outTok, usd: money(est.usd) }) + stop;
+			{ n: n, model: est.model, in: est.inTok, out: est.outTok, usd: priceMark(est.usd) }) + stop;
 	}
 
-	/// A price a person can read. Small figures keep their digits: rounding
-	/// $0.004 to "$0.00" would say the run is free.
-	function money(usd) {
-		var v = Math.max(0, Number(usd) || 0);
-		if (v >= 1)    return '$' + v.toFixed(2);
-		if (v >= 0.01) return '$' + v.toFixed(3);
-		return '$' + v.toFixed(4);
+	/// The figure as a price-tag mark, drawn as the tag by `line`; the shared
+	/// formatter keeps a small figure's digits, so a run never reads as free.
+	function priceMark(usd) {
+		return window.DaimondI18n ? DaimondI18n.priceMark(Math.max(0, Number(usd) || 0), { estimated: true }) : '';
 	}
 
 	// ── Reading the answer ─────────────────────────────────────
@@ -611,7 +608,8 @@
 	function line(cls, text) {
 		var s = document.createElement('div');
 		s.className = cls;
-		s.textContent = text;
+		if (window.DaimondI18n) DaimondI18n.fillPrices(s, text);
+		else s.textContent = text;
 		return s;
 	}
 

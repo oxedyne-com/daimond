@@ -284,7 +284,8 @@
 	/// The table and the picture come together unless the request says `"png": false`.
 	///
 	/// Request : { "in": "crystal", "page": text, "data": text, "id": the Diamond, "width"?: int, "selector"?: CSS,
-	///             "max_w"?: int, "background"?: CSS colour, "png"?: false for the table alone }
+	///             "max_w"?: int, "background"?: CSS colour, "png"?: false for the table alone,
+	///             "look"?: [selector or "text:words"] for crystal_look's measured targets }
 	/// Answer  : { "ok": true, "table": text, "png_b64"?: ..., "w"?: int, "h"?: int, "bytes"?: int }
 	function renderCrystal(req) {
 		if (!crystalDriver()) {
@@ -301,8 +302,15 @@
 			max_w:      maxW > 0 ? maxW : 0,
 			background: req.background == null ? '' : String(req.background),
 			png:        req.png !== false,
+			// crystal_look: the targets to measure, each a selector or `text:` and its words.
+			look:       Array.isArray(req.look) ? req.look : [],
+			// The load proof (K1): the verdict and the debug count come back beside the table.
+			proof:        req.proof === true,
+			graphics_min: Number(req.graphics_min) || 0,
 		}).then(function (r) {
 			var out = { ok: true, table: String(r.table) };
+			if (typeof r.proof === 'string' && r.proof) { out.proof = r.proof; out.debug = Number(r.debug) || 0; }
+			if (typeof r.trace === 'string' && r.trace) out.trace = r.trace;
 			if (r.png_b64) {
 				out.png_b64 = r.png_b64;
 				out.w       = r.w;

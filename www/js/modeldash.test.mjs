@@ -199,7 +199,8 @@ function loadDom(store) {
 	}
 	win.DaimondI18n = {
 		t: (k, v) => String(k in en ? en[k] : k).replace(/\{(\w+)\}/g, (m, n) => (v && n in v ? v[n] : m)),
-		money: (n) => '$' + n,
+		// The price tag (D-20261009-18): an element holding the bare figure.
+		priceTag: (n) => { const e = document_.createElement('span'); e.className = 'tagb'; e.textContent = String(n); return e; },
 		onChange() {},
 	};
 

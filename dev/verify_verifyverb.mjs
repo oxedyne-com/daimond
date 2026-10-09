@@ -921,7 +921,9 @@ const stood = [];
 	try { saw = JSON.parse(fs.readFileSync(path.join(CHILD, 'dev', 'saw-clean.json'), 'utf8')); }
 	catch (e) { saw = null; }
 	if (n !== null) {
-		const r2 = spawnSync('bash', [path.join(HERE, 'world.sh'), String(n), '--down'],
+		// The CHILD's own script: the world is the child's, and world.sh refuses a
+		// teardown from a tree that did not stand it.
+		const r2 = spawnSync('bash', [path.join(CHILD, 'dev', 'world.sh'), String(n), '--down'],
 			{ encoding: 'utf8',
 				env: { ...process.env, DAIMOND_WORLD_ROOT: path.join(CHILD, '.scratch/worlds') } });
 		if (r2.status !== 0) console.log(`  note  world ${n} did not shut down cleanly`);
@@ -954,9 +956,10 @@ const stood = [];
 // STOP WHATEVER IS LEFT. `--break leak` deliberately leaves a world standing, and
 // a break that leaves a dev server holding a port for hours is worse than no break.
 // The real script, and the world's own scratch, because the fixture's copy is by
-// now a two-line refusal.
+// now a two-line refusal.  `--force`, because these worlds are the fixture tree's
+// and world.sh refuses another tree's teardown without it.
 for (const n of stood) {
-	const r = spawnSync('bash', [path.join(HERE, 'world.sh'), String(n), '--down'],
+	const r = spawnSync('bash', [path.join(HERE, 'world.sh'), String(n), '--down', '--force'],
 		{ encoding: 'utf8', env: { ...process.env, DAIMOND_WORLD_ROOT: WORLDS } });
 	if (r.status !== 0) {
 		console.log(`  note  world ${n} did not shut down cleanly: `

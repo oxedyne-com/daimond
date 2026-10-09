@@ -742,11 +742,6 @@
 		try { return new URL(url).hostname.replace(/^www\./, ''); } catch (e) { return ''; }
 	}
 
-	function money(minor, cur) {
-		if (window.DaimondGateway && DaimondGateway.fmtMoney) return DaimondGateway.fmtMoney(minor, cur);
-		return '$' + ((minor || 0) / 100).toFixed(2);
-	}
-
 	/// Mint a fresh inference key, and hold it in memory only.
 	///
 	/// The gateway authenticates the session, reconciles what the last key drew, and returns a
@@ -1730,11 +1725,10 @@
 	}
 
 	/// A balance as money, from a USD figure rather than the gateway's minor units.
+	/// A price-tag mark, drawn as the tag wherever the string lands
+	/// (`fillPrices`, `pricesHtml`, or `pricesText` where no tag can be drawn).
 	function usd(v) {
-		if (window.DaimondI18n && typeof DaimondI18n.money === 'function') {
-			return DaimondI18n.money(v, 'fine');
-		}
-		return '$' + (v || 0).toFixed(2);
+		return DaimondI18n.priceMark(v, { mode: 'fine' });
 	}
 
 	/// Every model Daimond can reach, across every provider with a key.
@@ -1785,7 +1779,7 @@
 				why:     mine ? credits.why : '',
 				via:     mine ? credits.via : '',
 				balance: mine
-					? (credits.state === 'ready' ? money(credits.bal, credits.cur) : '')
+					? (credits.state === 'ready' ? DaimondI18n.priceMarkMinor(credits.bal, credits.cur) : '')
 					: (cr ? usd(cr.usd) : ''),
 				state:   mine ? credits.state : '',
 				// How the balance beside the name is known, so the row can say. Empty when
@@ -2524,7 +2518,7 @@
 		var c    = creditFor(id);
 		var line = wrap.querySelector('.models-credit-line');
 		var age  = wrap.querySelector('.models-credit-age');
-		if (line) line.textContent = creditSentence(c);
+		if (line) DaimondI18n.fillPrices(line, creditSentence(c));
 		if (!age) return;
 		var words = ageSentence(id, c);
 		age.textContent = words;
@@ -2564,7 +2558,7 @@
 	/// left alone: its balance is the gateway's, not a probe's, and it has no age to carry.
 	function paintBal(bal, id, c) {
 		if (id === CREDITS) return;
-		if (c) bal.textContent = t('models.balance_left', { amount: usd(c.usd) });
+		if (c) DaimondI18n.fillPrices(bal, t('models.balance_left', { amount: usd(c.usd) }));
 		var words = ageSentence(id, c);
 		if (words) bal.setAttribute('title', words); else bal.removeAttribute('title');
 		if (words && creditStale(id, c)) bal.setAttribute('data-stale', '1');
@@ -2641,7 +2635,7 @@
 				+ '<span class="models-prov-name">'
 				+   '<span class="models-nm">' + esc(p.name) + '</span>'
 				+   (p.balance ? '<span class="models-bal">'
-						+ esc(t('models.balance_left', { amount: p.balance })) + '</span>' : '')
+						+ DaimondI18n.pricesHtml(t('models.balance_left', { amount: p.balance }), esc) + '</span>' : '')
 				+   (p.via ? '<span class="models-via">'
 						+ esc(t('models.via', { provider: p.via })) + '</span>' : '')
 				+ '</span>'
@@ -2862,6 +2856,7 @@
 			: t('models.drafting_same');
 		sel.insertBefore(same, sel.firstChild);
 		if (!dr.model) same.selected = true;
+		picker(sel);
 
 		// A sentinel value of '' clears the setting through `setDraft`, so choosing it
 		// is the one gesture that puts drafting back on the chat model.
@@ -3023,6 +3018,7 @@
 			var o = document.createElement('option');
 			o.value = m;
 			o.dataset.provider = p.id;
+			o.dataset.pname    = p.name;
 			o.dataset.paid     = p.paid ? '1' : '';
 			o.textContent = m
 				+ (p.paid ? ' · ' + t('models.econ_credits') : twin ? ' · ' + t('models.econ_own') : '')
@@ -3060,7 +3056,7 @@
 			// the mark has to be the exception to read as one.
 			g.label = p.paid
 				? p.name
-					+ (p.balance ? ' · ' + t('models.balance_left', { amount: p.balance }) : '')
+					+ (p.balance ? ' · ' + DaimondI18n.pricesText(t('models.balance_left', { amount: p.balance })) : '')
 					+ (p.via ? ' — ' + t('models.via', { provider: p.via }) : '')
 					+ (p.ready ? '' : ' (' + t(p.state === 'nocredits'
 						? 'models.top_up_to_use' : 'models.connecting') + ')')
@@ -3100,6 +3096,7 @@
 		for (var i = 0; i < opts.length; i++) {
 			if (opts[i].value === model && (!provider || opts[i].dataset.provider === provider)) {
 				opts[i].selected = true;
+				if (sel._mp) sel._mp.repaint();
 				return true;
 			}
 		}
@@ -3111,6 +3108,373 @@
 		var o = sel && sel.selectedOptions && sel.selectedOptions[0];
 		if (!o || !o.value) return { provider: '', model: '' };
 		return { provider: o.dataset.provider || '', model: o.value };
+	}
+
+	// ── The filter list ─────────────────────────────────────────────
+	//
+	// Every model pulldown in the app is drawn by this one control (D-20261008-13). A native
+	// `<select>` can neither be searched nor ranked, and a list of forty models across five
+	// providers, in the order they are billed, is a list nobody can use at a glance.
+	//
+	// The `<select>` STAYS, hidden, and is still the state: its options, its value, its change
+	// event and `pick()` are what every caller reads, so a site converts with one call and
+	// nothing that read the select has to learn the new control. What a person touches is an
+	// input beside it and one list drawn on the body, below the field.
+	//
+	//  - A click opens the whole list, as the select holds it.
+	//  - Typing narrows it. The words are split on spaces and EVERY word must be found
+	//    somewhere in the model's name, its id or its provider -- not only at the start.
+	//  - The models that match are ordered by how much each has been used (`readUse`, the
+	//    record `noteUse` keeps), then by recency; the ones that cannot run go last.
+	//  - Up, Down, Enter and Escape; a tap on a row; rows a finger can hit.
+
+	var mpPop = null;		// the one list, shared
+	var mpCur = null;		// the picker that has it open
+	var mpSeq = 0;
+	var mpBound = false;
+
+	/// What a row is found by: the words shown, the model id, and the provider's id and name.
+	function mpHay(o) {
+		return (o.textContent + ' ' + o.value + ' ' + (o.dataset.provider || '') + ' '
+			+ (o.dataset.pname || '')).toLowerCase();
+	}
+
+	/// The rows of a select for a query, as `{ grp }` headings and `{ o }` options.
+	///
+	/// An empty query is the list exactly as the select holds it: the favourites group and then
+	/// each provider. A query flattens it, drops the favourites' duplicates (the real row is in
+	/// the list), and orders what is left by use.
+	function mpItems(sel, words) {
+		var items = [], i, kids = sel.children;
+		if (!words.length) {
+			for (i = 0; i < kids.length; i++) {
+				var k = kids[i];
+				if (k.tagName === 'OPTGROUP') {
+					items.push({ grp: k.label || '' });
+					for (var j = 0; j < k.children.length; j++) items.push({ o: k.children[j] });
+				} else if (k.tagName === 'OPTION') items.push({ o: k });
+			}
+			return items;
+		}
+		var use = readUse(), hits = [], keep = [], all = sel.options;
+		for (i = 0; i < all.length; i++) {
+			var o = all[i];
+			if (o.dataset.fav) continue;
+			var hay = mpHay(o), good = true;
+			for (var w = 0; w < words.length; w++) {
+				if (hay.indexOf(words[w]) < 0) { good = false; break; }
+			}
+			if (o.dataset.keep) { keep.push({ o: o }); continue; }
+			if (!good) continue;
+			var u = use[useKey(o.dataset.provider, o.value)] || {};
+			hits.push({ o: o, i: i, n: u.n || 0, t: u.t || 0, d: o.disabled ? 1 : 0 });
+		}
+		hits.sort(function (a, b) {
+			return (a.d - b.d) || (b.n - a.n) || (b.t - a.t) || (a.i - b.i);
+		});
+		return hits.concat(keep);
+	}
+
+	/// Turn a native `<select>` into the filter field. Call it once the select is in its place.
+	function picker(sel) {
+		if (!sel) return null;
+		if (sel._mp) return sel._mp;
+		if (!sel.parentNode) return null;
+
+		var wrap = document.createElement('span');
+		wrap.className = 'mp';
+		// The select's own role classes, prefixed, so the field wears the pulldown it
+		// replaces by the role's own CSS rather than by a rule per site.
+		for (var c = 0; c < sel.classList.length; c++) wrap.classList.add('mp-' + sel.classList[c]);
+		var inp = document.createElement('input');
+		inp.type = 'text';
+		inp.className = 'mp-in';
+		inp.setAttribute('role', 'combobox');
+		inp.setAttribute('aria-autocomplete', 'list');
+		inp.setAttribute('aria-expanded', 'false');
+		inp.setAttribute('aria-haspopup', 'listbox');
+		inp.autocomplete = 'off';
+		inp.spellcheck = false;
+		inp.setAttribute('autocapitalize', 'off');
+		inp.setAttribute('autocorrect', 'off');
+		inp.setAttribute('data-1p-ignore', '');
+		inp.setAttribute('data-lpignore', 'true');
+		wrap.appendChild(inp);
+		sel.parentNode.insertBefore(wrap, sel.nextSibling);
+		sel.classList.add('mp-native');
+
+		var isOpen = false, query = '', items = [], rows = [], act = -1, side = '', tick = 0;
+
+		function labelText() {
+			var l = sel.labels && sel.labels[0];
+			return (sel.getAttribute('aria-label') || (l && l.firstChild && l.firstChild.nodeType === 3
+				? l.firstChild.textContent : '') || sel.title || t('models.find')).trim();
+		}
+		function repaint() {
+			var o = sel.selectedOptions && sel.selectedOptions[0];
+			if (!isOpen) inp.value = o ? o.textContent.trim() : '';
+			inp.disabled = sel.disabled;
+			inp.placeholder = t('models.find');
+			inp.title = sel.title || '';
+			inp.setAttribute('aria-label', labelText());
+		}
+		function enabled(n) { return n >= 0 && n < rows.length && !rows[n].disabled; }
+		function setAct(n, scroll) {
+			if (act >= 0 && rows[act]) rows[act].el.classList.remove('mp-act');
+			act = n;
+			if (n >= 0 && rows[n]) {
+				rows[n].el.classList.add('mp-act');
+				inp.setAttribute('aria-activedescendant', rows[n].el.id);
+				if (scroll) rows[n].el.scrollIntoView({ block: 'nearest' });
+			} else inp.removeAttribute('aria-activedescendant');
+		}
+
+		function place() {
+			if (!isOpen || !mpPop) return;
+			if (!inp.isConnected) { close(true); return; }
+			var vv  = window.visualViewport;
+			var vw  = vv ? vv.width : window.innerWidth;
+			var vh  = vv ? vv.height : window.innerHeight;
+			var ox  = vv ? vv.offsetLeft : 0;
+			var oy  = vv ? vv.offsetTop : 0;
+			var r   = inp.getBoundingClientRect();
+			var low = oy + vh - r.bottom - 8;
+			var up  = r.top - oy - 8;
+			// Below, unless there is more room above and too little below to be worth it.
+			if (!side) side = (low >= 220 || low >= up) ? 'below' : 'above';
+			var room = Math.max(120, side === 'below' ? low - 4 : up - 4);
+			var width = Math.max(r.width, Math.min(320, vw - 16));
+			mpPop.style.width     = width + 'px';
+			mpPop.style.maxHeight = Math.min(360, room) + 'px';
+			var left = Math.min(Math.max(r.left, ox + 8), ox + vw - 8 - width);
+			mpPop.style.left = left + 'px';
+			var h = mpPop.offsetHeight;
+			mpPop.style.top = (side === 'below' ? r.bottom + 4 : Math.max(oy + 8, r.top - 4 - h)) + 'px';
+		}
+
+		function render() {
+			var words = query.toLowerCase().split(/\s+/).filter(Boolean);
+			items = mpItems(sel, words);
+			mpPop.innerHTML = '';
+			rows = [];
+			var cur = sel.selectedOptions && sel.selectedOptions[0];
+			var curKey = cur ? useKey(cur.dataset.provider, cur.value) : '';
+			var markAt = -1, reason = '';
+			items.forEach(function (it) {
+				if (it.grp !== undefined) {
+					var g = document.createElement('div');
+					g.className = 'mp-grp';
+					g.textContent = it.grp;
+					mpPop.appendChild(g);
+					// A group heading ends in what keeps its models from running.
+					var m = /\(([^)]*)\)\s*$/.exec(it.grp);
+					reason = m ? m[1] : '';
+					return;
+				}
+				var o = it.o;
+				var el = document.createElement('div');
+				el.className = 'mp-row';
+				el.id = 'mp-r' + (++mpSeq);
+				el.setAttribute('role', 'option');
+				el.dataset.value = o.value;
+				el.dataset.provider = o.dataset.provider || '';
+				el.setAttribute('aria-selected', 'false');
+				if (o.disabled) el.setAttribute('aria-disabled', 'true');
+				if (o.title) el.title = o.title;
+				var main = document.createElement('span');
+				main.className = 'mp-main';
+				main.textContent = o.textContent.trim();
+				el.appendChild(main);
+				// A flat list has lost the heading that said whose model this is.
+				if (words.length && (o.dataset.pname || o.disabled)) {
+					var sub = document.createElement('span');
+					sub.className = 'mp-sub';
+					sub.textContent = (o.dataset.pname || '') + (o.disabled && reason ? ' · ' + reason : '');
+					el.appendChild(sub);
+				}
+				mpPop.appendChild(el);
+				rows.push({ el: el, o: o, disabled: o.disabled });
+			});
+			// The chosen model is marked once: its own row, or failing that the row of the
+			// same model under the same provider (a flat list drops the favourites' copies).
+			for (var k = 0; cur && k < rows.length; k++) if (rows[k].o === cur) { markAt = k; break; }
+			for (var k2 = 0; cur && markAt < 0 && k2 < rows.length; k2++) {
+				if (useKey(rows[k2].o.dataset.provider, rows[k2].o.value) === curKey) { markAt = k2; break; }
+			}
+			if (markAt >= 0) rows[markAt].el.setAttribute('aria-selected', 'true');
+			// Rows the filter always keeps ("Other…") do not count as a match.
+			var real = 0;
+			for (var r0 = 0; r0 < rows.length; r0++) if (!rows[r0].o.dataset.keep) real++;
+			if (!real && (words.length || !rows.length)) {
+				var none = document.createElement('div');
+				none.className = 'mp-none';
+				none.textContent = t('models.no_match');
+				mpPop.appendChild(none);
+			}
+			act = -1;
+			var first = markAt >= 0 && !words.length ? markAt : -1;
+			if (first < 0) {
+				for (var f = 0; f < rows.length; f++) {
+					if (!rows[f].disabled && !(words.length && rows[f].o.dataset.keep)) { first = f; break; }
+				}
+			}
+			setAct(first, false);
+			place();
+			if (!words.length && markAt >= 0) rows[markAt].el.scrollIntoView({ block: 'nearest' });
+			else mpPop.scrollTop = 0;
+		}
+
+		function show() {
+			if (isOpen) return;
+			if (mpCur && mpCur !== api) mpCur.close(true);
+			if (inp.disabled) return;
+			if (!mpPop) {
+				mpPop = document.createElement('div');
+				mpPop.className = 'mp-pop';
+				mpPop.id = 'mp-pop';
+				mpPop.setAttribute('role', 'listbox');
+				document.body.appendChild(mpPop);
+			}
+			mpBind();
+			isOpen = true; mpCur = api; side = ''; query = '';
+			// Escape belongs to the layer stack, which would close the dialog this field sits
+			// in; claiming it makes the first press shut the list and the second the dialog.
+			if (window.DaimondLayers) {
+				DaimondLayers.claim('mp', function () { if (!isOpen) return false; close(true); return true; });
+			}
+			mpPop.hidden = false;
+			inp.setAttribute('aria-expanded', 'true');
+			inp.setAttribute('aria-controls', 'mp-pop');
+			mpPop.onmousedown = function (e) { e.preventDefault(); };
+			mpPop.onclick = function (e) {
+				var el = e.target.closest ? e.target.closest('.mp-row') : null;
+				if (!el) return;
+				for (var i = 0; i < rows.length; i++) if (rows[i].el === el) { choose(i, true); return; }
+			};
+			mpPop.onmousemove = function (e) {
+				var el = e.target.closest ? e.target.closest('.mp-row') : null;
+				if (!el) return;
+				for (var i = 0; i < rows.length; i++) {
+					if (rows[i].el === el) { if (i !== act && !rows[i].disabled) setAct(i, false); return; }
+				}
+			};
+			render();
+			// A field that is gone while its list stands -- a dialog closed, a panel redrawn --
+			// takes the list with it.
+			tick = setInterval(function () { if (!inp.isConnected) close(true); }, 400);
+		}
+
+		function close(restore) {
+			if (!isOpen) return;
+			isOpen = false; query = '';
+			clearInterval(tick);
+			if (window.DaimondLayers) DaimondLayers.release('mp');
+			if (mpCur === api) mpCur = null;
+			if (mpPop) { mpPop.hidden = true; mpPop.innerHTML = ''; }
+			inp.setAttribute('aria-expanded', 'false');
+			inp.removeAttribute('aria-activedescendant');
+			if (restore !== false) repaint();
+		}
+
+		/// Choose row `n`. The select takes it and says so, exactly as a native pick would.
+		function choose(n, byPointer) {
+			if (!enabled(n)) return;
+			var o = rows[n].o;
+			var changed = sel.selectedOptions[0] !== o;
+			if (changed) o.selected = true;
+			close(true);
+			if (changed) sel.dispatchEvent(new Event('change', { bubbles: true }));
+			// A finger is done with the keyboard once it has chosen.
+			if (byPointer && window.matchMedia && matchMedia('(pointer: coarse)').matches) inp.blur();
+		}
+
+		function step(d) {
+			if (!rows.length) return;
+			var n = act;
+			for (var i = 0; i < rows.length; i++) {
+				n = (n + d + rows.length) % rows.length;
+				if (!rows[n].disabled) break;
+			}
+			setAct(n, true);
+		}
+
+		inp.addEventListener('click', function () {
+			if (!isOpen) { show(); inp.select(); }
+		});
+		inp.addEventListener('input', function () {
+			if (!isOpen) show();
+			if (!isOpen) return;
+			query = inp.value;
+			render();
+		});
+		inp.addEventListener('keydown', function (e) {
+			var k = e.key;
+			if (k === 'ArrowDown' || k === 'ArrowUp') {
+				e.preventDefault();
+				if (!isOpen) { show(); inp.select(); return; }
+				step(k === 'ArrowDown' ? 1 : -1);
+			} else if (k === 'Tab') {
+				// Escape is not here: the layer stack's claim ('mp', in `show`) takes it
+				// first, so one press closes the list and not the dialog under it.
+				close(true);
+			}
+		});
+		inp.addEventListener('blur', function () { close(true); });
+		// The label of a hidden select forwards its click here.
+		sel.addEventListener('click', function () { inp.focus(); show(); inp.select(); });
+		sel.addEventListener('change', repaint);
+		// Existing code sets these on the select and expects the screen to follow.
+		['value', 'selectedIndex'].forEach(function (key) {
+			var d = Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, key);
+			Object.defineProperty(sel, key, {
+				configurable: true,
+				get: function () { return d.get.call(sel); },
+				set: function (v) { d.set.call(sel, v); repaint(); },
+			});
+		});
+		sel.focus = function (o) { inp.focus(o); };
+		// And whoever refills the select.
+		new MutationObserver(function () {
+			repaint();
+			if (isOpen) render();
+		}).observe(sel, { childList: true, subtree: true, attributes: true,
+			attributeFilter: ['disabled', 'title', 'aria-label'] });
+
+		/// Enter, routed here by `mpBind` ahead of the dialog's own handler.
+		function enter() { if (act >= 0) choose(act, false); }
+
+		var api = { el: wrap, input: inp, repaint: repaint, close: close, place: place, enter: enter };
+		sel._mp = api;
+		repaint();
+		return api;
+	}
+
+	/// The listeners the open list needs on the window, bound once.
+	function mpBind() {
+		if (mpBound) return;
+		mpBound = true;
+		var move = function () { if (mpCur) mpCur.place(); };
+		var inList = function (e) { return mpPop && e.target && mpPop.contains(e.target); };
+		// Enter on an open list chooses the row. A form dialog submits on Enter from a capture
+		// listener on the document, so this one is on the window, which comes before it.
+		window.addEventListener('keydown', function (e) {
+			if (!mpCur || e.key !== 'Enter' || e.isComposing || e.target !== mpCur.input) return;
+			e.preventDefault(); e.stopPropagation();
+			mpCur.enter();
+		}, true);
+		window.addEventListener('resize', move);
+		window.addEventListener('scroll', function (e) { if (!inList(e)) move(); }, true);
+		if (window.visualViewport) {
+			window.visualViewport.addEventListener('resize', move);
+			window.visualViewport.addEventListener('scroll', move);
+		}
+		// A press anywhere else closes it; iOS does not blur a field for a press on a
+		// control that cannot take the focus.
+		document.addEventListener('pointerdown', function (e) {
+			if (!mpCur) return;
+			if (inList(e) || (mpCur.el && mpCur.el.contains(e.target))) return;
+			mpCur.close(true);
+		}, true);
 	}
 
 	/// The consequence of pointing a daimon (or a chat) at a different model.
@@ -3136,6 +3500,22 @@
 			window:     win,
 			needsFresh: changed && win > 0 && (used || 0) > win,
 		};
+	}
+
+	/// The pair a chat's WORKERS run on once the chat itself moves from `before` to `after`.
+	///
+	/// Workers the user never moved off the chat's model follow it: an empty pair, or one equal to
+	/// the model being left, is the chat's own model carried along, and leaving it behind would
+	/// turn into a separate choice nobody made -- one that peer routing then reads as a worker
+	/// chat, since a pair that differs from the chat's own is what marks one. A pair the user set
+	/// apart from the chat's model stays where it was set.
+	function workerAfterSwitch(before, after, worker) {
+		before = before || {}; after = after || {}; worker = worker || {};
+		var wm = String(worker.model || ''), wp = String(worker.provider || '');
+		var inherited = !wm
+			|| (wm === String(before.model || '') && (!wp || wp === String(before.provider || '')));
+		if (inherited) return { provider: after.provider || '', model: after.model || '' };
+		return { provider: wp, model: wm };
 	}
 
 	function init(d) {
@@ -3225,9 +3605,11 @@
 		favourites:     favourites,
 		fillSelect:     fillSelect,
 		pick:           pick,
+		picker:         picker,
 		// Whether a picked model differs from the one in force, the new model's window,
 		// and whether the held context cannot fit it at all. Drives the daimon "Change".
 		planModelSwitch: planModelSwitch,
+		workerAfterSwitch: workerAfterSwitch,
 		init:           init,
 		// Re-read the store over a bounded budget when a cold tab read it empty at
 		// boot, before the composer gate is decided against it (see loadSettled).

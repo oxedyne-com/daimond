@@ -819,6 +819,9 @@
 		// version check and answers `blank()`, discarding the store. The snapshot at
 		// the door is what this device actually had when `save()` was called.
 		var snapshot = JSON.stringify(obj);
+		// The taken shares THIS write records. Their envelopes go once it lands, and not
+		// before: pruned first, a failed write would leave "waiting" with nothing to Add.
+		var landed = takenWithEnv(obj);
 		var boxFull = false;		// the box refused the write, as against a wrap that threw
 		var mine = _writing = (_writing || Promise.resolve()).then(async function () {
 			try {
@@ -832,6 +835,7 @@
 		var okSaved = await mine;
 		if (_writing === mine) _writing = null;
 		if (okSaved) flagWedged(false); else if (boxFull) flagWedged(true);
+		if (okSaved && landed.length && await pruneTaken(obj, landed)) await save(obj);
 		return okSaved;
 	}
 
@@ -858,6 +862,37 @@
 		var keys = Object.keys(sh);
 		for (var i = 0; i < keys.length; i++) { if (sh[keys[i]] && sh[keys[i]].env) return true; }
 		return false;
+	}
+
+	/// The shares that are taken but still name a shelved envelope.
+	function takenWithEnv(rec) {
+		var sh = rec && rec.shares, out = [];
+		if (!sh) return out;
+		var keys = Object.keys(sh);
+		for (var i = 0; i < keys.length; i++) {
+			var s1 = sh[keys[i]];
+			if (s1 && s1.taken && s1.envAt) out.push(keys[i]);
+		}
+		return out;
+	}
+
+	/// A TAKEN SHARE HOLDS NO ENVELOPE (r542 QA B, F-B2). Called once a write recording
+	/// `taken` has landed, whichever write it was: tied to the Add's own save, a failed one
+	/// left up to 3 MiB in IndexedDB for good, since the row had left the tray and nothing
+	/// else would reconcile it. A `del` that throws keeps `envAt`, so the next landed write
+	/// tries again. Answers how many shares changed.
+	async function pruneTaken(rec, addrs) {
+		var sh = rec.shares || {}, n = 0;
+		if (!window.DaimondDurable) return 0;
+		for (var i = 0; i < addrs.length; i++) {
+			var s1 = sh[addrs[i]];
+			if (!s1 || !s1.taken || !s1.envAt) continue;
+			try { await DaimondDurable.del(ENV_KEY + addrs[i]); }
+			catch (e) { log('envelope not pruned', addrs[i]); continue; }
+			delete s1.envAt;
+			n++;
+		}
+		return n;
 	}
 
 	/// Move every inline envelope to the store, leaving `envAt` on its share. A taken
@@ -1160,7 +1195,7 @@
 		var sh = rec.shares;
 		if (!sh) return rec;
 		Object.keys(sh).forEach(function (a) {
-			if (sh[a] && typeof sh[a] === 'object') { delete sh[a].env; delete sh[a].envAt; }
+			if (sh[a] && typeof sh[a] === 'object') { delete sh[a].env; delete sh[a].envAt; delete sh[a].envGone; }
 		});
 		return rec;
 	}
@@ -1226,7 +1261,7 @@
 			if (!r || typeof r !== 'object' || !r.addr) return;
 			var mine = _st.shares[addr];
 			// A marker from a parcel points at THAT device's store, not this one's.
-			if (!mine) { if (!r.env) delete r.envAt; _st.shares[addr] = r; moved = true; return; }
+			if (!mine) { if (!r.env) delete r.envAt; delete r.envGone; _st.shares[addr] = r; moved = true; return; }
 			if (r.taken && !mine.taken)   { mine.taken = 1; moved = true; }
 			if (r.hidden && !mine.hidden) { mine.hidden = 1; moved = true; }
 		});
@@ -2871,6 +2906,13 @@
 		}
 		var rec = st.shares[String(addr)];
 		var env = await envOf(rec, String(addr));
+		if (!env && rec.envAt) {
+			// COLLECTED HERE, AND ITS STORED COPY HAS GONE (r542 QA B, F-B3): evicted, or the
+			// site's data cleared. Saying "not collected here" was false, and Add can only
+			// answer the same again, so the row keeps Ignore alone (`drawShareRow`).
+			if (!rec.envGone) { rec.envGone = 1; await save(); render(); }
+			return { ok: false, gone: true, why: envGoneSaid() };
+		}
 		if (!env) {
 			return { ok: false, why: tOr('post.share_env_gone',
 				'That diamond cannot be added from this device: it was not collected here.') };
@@ -2893,15 +2935,16 @@
 		// share was a page the receiver declined, and that is an answer rather than
 		// a failure: re-drawing the row would ask the same question again for ever.
 		rec.taken = 1;
-		// THE ENVELOPE GOES ONLY AFTER THE `taken` SAVE HAS LANDED. Pruned first, a failed
-		// save leaves a record that still says "waiting" with nothing left to Add from.
-		if (await save()) {
-			try { await DaimondDurable.del(ENV_KEY + String(addr)); } catch (e) { /* an orphan, harmless */ }
-			delete rec.envAt;
-			await save();
-		}
+		// The envelope goes at the save door once a write recording `taken` lands, this one
+		// or a later one (`pruneTaken`).
+		await save();
 		render();
 		return r;
+	}
+
+	function envGoneSaid() {
+		return tOr('post.share_env_evicted',
+			'This diamond’s contents are no longer on this device. Ask the sender to send it again.');
 	}
 
 	/// Keep the sender's own row for a diamond they sent.
@@ -3640,17 +3683,20 @@
 		row.appendChild(elt('p', 'post-body', facts));
 		if (sh.note) row.appendChild(elt('p', 'post-share-note', sh.note));
 		var acts = elt('div', 'post-acts');
-		[['post-share-add',    tOr('post.share_add', 'Add')],
-		 ['post-share-ignore', tOr('post.ignore', 'Ignore')],
-		 ['post-share-block',  tOr('post.block',  'Block')]].forEach(function (pair) {
+		var offer = sh.envGone
+			? [['post-share-ignore', tOr('post.ignore', 'Ignore')]]
+			: [['post-share-add',    tOr('post.share_add', 'Add')],
+			   ['post-share-ignore', tOr('post.ignore', 'Ignore')],
+			   ['post-share-block',  tOr('post.block',  'Block')]];
+		offer.forEach(function (pair) {
 			var b = elt('button', 'post-btn', pair[1]);
 			b.type = 'button';
 			b.dataset.act = pair[0];
 			acts.appendChild(b);
 		});
 		row.appendChild(acts);
-		var say = elt('p', 'post-share-say', '');
-		say.hidden = true;
+		var say = elt('p', 'post-share-say', sh.envGone ? envGoneSaid() : '');
+		say.hidden = !sh.envGone;
 		row.appendChild(say);
 		return row;
 	}

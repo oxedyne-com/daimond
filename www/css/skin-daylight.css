@@ -1154,12 +1154,15 @@
 :root[data-skin="daylight"] .diamond-box > .session-box-tags   { grid-area: tags; margin-top: 4px; }
 /* The model is ONE line: the chip's own ellipsis (app.css) is what a long
    name gives way to, not the row's height or the meter's position. */
-:root[data-skin="daylight"] .diamond-box > .session-box-meta   { grid-area: model; margin-top: 3px; display: flex; flex-wrap: nowrap; min-width: 0; gap: 6px; overflow: hidden; }
+:root[data-skin="daylight"] .diamond-box > .session-box-meta   { grid-area: model; margin-top: 3px; flex-wrap: nowrap; min-width: 0; gap: 6px; overflow: hidden; }
+/* Neither row sets `display`: both are flex in app.css already, and a skin rule
+   that said so again outranked the Simple view's `display: none` and drew the
+   meter and the meta row on every Simple tile. */
 /* The meter is its own line, starting at the tile's left content edge in
    every tile. `overflow: hidden` plus the last-reading ellipsis below is
    the narrowest-width fallback: earlier readings stay whole, only the last
    one gives up characters, and the row never wraps. */
-:root[data-skin="daylight"] .diamond-box > .diamond-meter      { grid-area: meter; margin-top: 3px; display: flex; flex-wrap: nowrap; min-width: 0; gap: 0; white-space: nowrap; overflow: hidden; }
+:root[data-skin="daylight"] .diamond-box > .diamond-meter      { grid-area: meter; margin-top: 3px; flex-wrap: nowrap; min-width: 0; gap: 0; white-space: nowrap; overflow: hidden; }
 :root[data-skin="daylight"] .diamond-box .tile-model-chip      { min-width: 0; }	/* ellipsis already set, app.css */
 :root[data-skin="daylight"] .diamond-box > :not(.diamond-meter) { min-width: 0; }
 /* V4/V6. The same shape for a chat tile's model/meter pair (`.tile-active`):

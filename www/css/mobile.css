@@ -32,7 +32,9 @@
    (BYOK, Pro, the spend readout) that money.js and release.js turn on and off --
    folded they are all away, and unfolded each is back under whichever rule owns
    it. The identity row is the section's header, and a header stays. */
-.panel.rail:not([data-fold-status="on"]) .admin-status > *:not(.astat-id) { display: none !important; }
+/* The spend tally is NOT folded (D-20261009-18): Today / Week / Month stay at the
+   foot of the section, folded or open, at every width. */
+.panel.rail:not([data-fold-status="on"]) .admin-status > *:not(.astat-id):not(.spend-row) { display: none !important; }
 #msheet     { display: none; }
 #scrim      { display: none; }
 
@@ -253,6 +255,7 @@
 	/* The phone's own select and field height (cluster 12): a thumb's target
 	   is taller than a pointer's. */
 	:root[data-skin="daylight"] :where(select) { height: 36px; }
+	:root[data-skin="daylight"] .mp > input.mp-in { height: 36px; }
 	:root[data-skin="daylight"] :where(input):not([type=checkbox], [type=radio], [type=range], [type=color], [type=file]) { height: 34px; }
 	.rail-fold:active { background: var(--accent-soft); }
 	/* The whole heading is the target, not the 34px chevron alone: the row is

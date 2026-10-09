@@ -274,7 +274,7 @@ console.log('\nThe three paths set it, and nothing else does');
 	check('doSteer hands how on to runSteer', /return runSteer\(currentDiamond, presetArg, depthArg, null, how\)/.test(lift(SRC, 'doSteer') || ''));
 	// the bubble: appendUserMessage takes (text, ts, prod) and no site hands it a note
 	check('no appendUserMessage call is given a pre', !/appendUserMessage\([^)]*\bpre\b/.test(SRC));
-	check('a stored record is drawn from its content (history redraw)', /appendUserMessage\(m\.content, m\.ts, m\.prod\)/.test(SRC));
+	check('a stored record is drawn from its content (history redraw)', /appendUserMessage\(m\.content, m\.ts, m\.prod, m\.files\)/.test(SRC));
 	// path 5 and the journal recovery are wired in section 7 and 8 below.
 }
 

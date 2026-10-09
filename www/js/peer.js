@@ -304,7 +304,7 @@
 			eid:     String(o.eid || ''),
 			turnId:  String(o.turnId || ''),
 			chatId:  String(o.chatId || ''),
-			status:  String(o.status || 'done'),	// done | refused-spend | error | aborted | parked | undeliverable | busy
+			status:  String(o.status || 'done'),	// done | refused-spend | error | aborted | parked | undeliverable (| busy, r543 only)
 			// THE DEVICE THIS REPORT IS FOR: the errand's dispatcher. The relay's ack is one
 			// account-wide watermark, so any device that collects the report and acks past it
 			// drops it for every device -- the runner first of all, whose own collect folds
@@ -330,8 +330,25 @@
 			// THE RUNNER THAT SENT IT, on a hand-back: the claim `leaseReclaim` may vacate.
 			// '' from an older runner, whose hand-back waits for its own release.
 			by:      String(o.by || ''),
+			// THE QUEUE DEPTH of a runner that handed the turn back because it was busy (r544,
+			// QA F-A1): an `undeliverable` with `busy` > 0. 0 on every other report.
+			busy:    o.busy | 0,
 			ts:      o.ts || Date.now(),
 		};
+	}
+
+	/// Is a report a HAND-BACK: the runner ran nothing and the turn is the sender's to run?
+	/// `undeliverable`, and r543's `busy`, which a page of that build still sends.
+	function handBackReport(r) {
+		return !!r && r.t === T_REPORT && (r.status === 'undeliverable' || r.status === 'busy');
+	}
+
+	/// Does a report SETTLE its turn, so nothing re-runs it here? Every report but a
+	/// survivable `parked` and a hand-back. The ONE list (r544, QA F-A1): r543 kept it twice,
+	/// here and in daimond.js, and the `busy` status it added to neither was read as a
+	/// terminal failure by both, so a turn its runner handed back was never run.
+	function settlingReport(r) {
+		return !!r && r.t === T_REPORT && r.status !== 'parked' && !handBackReport(r);
 	}
 
 	/// A runner's report on errand `e`: `f`'s status and sentence, with the errand's turn,
@@ -1302,7 +1319,7 @@
 			// gate the recovery goes through (`recoverDecision`). Anywhere else nothing
 			// will ever pick it up (a non-sender, an ask answer, a hand-off past its
 			// deadline), so the tile says so and offers [Run here] rather than spin for ever.
-			if (report.status === 'undeliverable') {
+			if (handBackReport(report)) {
 				return recoverDecision(turn, lease, false, selfId, n) ? 'claimed' : 'failed';
 			}
 			return 'failed';									// aborted / error / refused-spend: terminal
@@ -1580,6 +1597,9 @@
 		if (age >= DISPATCH_DEADLINE_MS) return { ok: false, why: 'stale', age: age, birth: birth, until: 0, clock: clock };
 		return { ok: true, why: '', age: age, birth: birth, until: n + (DISPATCH_DEADLINE_MS - age), clock: clock };
 	}
+
+	/// The sentence a busy runner's hand-back carries home.
+	var BUSY_WHY = 'Your other device was busy with another chat, so this one runs here.';
 
 	/// The sentence a refused turn's `aborted` report carries home.
 	var STALE_TURN_WHY = 'This turn was sent more than ' + Math.round(DISPATCH_DEADLINE_MS / 60000)
@@ -3402,13 +3422,15 @@
 		return why === 'nominee' || why === 'unread' || why === 'exhausted' || why === 'busy-hold';
 	}
 
-	/// Is another live, idle, non-mobile, servicing desktop beside `self`, one that would
-	/// claim a turn this busy device holds back from?
-	function idleDeskBeside(presence, self, now, windowMs) {
+	/// Is another live, idle, non-mobile, servicing desktop beside these, one that would
+	/// claim a turn this busy device holds back from? `not` is this device's id, or a list:
+	/// this device and the errand's sender, which never claims its own errand.
+	function idleDeskBeside(presence, not, now, windowMs) {
 		var p = presence || {}, w = windowMs || DISPATCH_FRESH_MS;
 		var n = now == null ? Date.now() : now;
+		var skip = (Array.isArray(not) ? not : [not]).map(function (x) { return String(x || ''); });
 		for (var id in p) {
-			if (!Object.prototype.hasOwnProperty.call(p, id) || id === String(self || '')) continue;
+			if (!Object.prototype.hasOwnProperty.call(p, id) || skip.indexOf(id) >= 0) continue;
 			var r = p[id];
 			if (!r || recMobileView(r) || r.busy > 0) continue;
 			if (recRunner(r) ? (n - leaseMs(r.lastSeen)) <= w : recGenuine(r, n, w)) return true;
@@ -4162,14 +4184,21 @@
 		// BUSY (H1, C1). This device is running a turn for another chat, so it would reach
 		// this one only when that ends, and the sender used to wait out its backstop and
 		// then run the turn itself. Decided now instead. When this device is the one the
-		// turn waits on -- the nominee, or with no idle desktop live beside it -- it says
-		// so at once: a `busy` report and the row let go, and the sender runs it. Otherwise
-		// it HOLDS the row and leaves it to the idle device that will claim it. A turn for
-		// the chat already running here is not busy: it queues behind it (O3).
+		// turn waits on -- the nominee, or with no idle desktop live beside it -- it hands
+		// the turn back at once and lets the row go, and the sender runs it. Otherwise it
+		// HOLDS the row and leaves it to the idle device that will claim it. A turn for the
+		// chat already running here is not busy: it queues behind it (O3).
+		//
+		// THE HAND-BACK IS AN `undeliverable` CARRYING `busy` (r544, QA F-A1), not a status
+		// of its own. r543 answered `busy`, which no sender counted as a hand-back: the turn
+		// read as settled, the fallback and the backstop both stood down, and it never ran.
+		// Every sender since 2026-09 runs an `undeliverable` at once, r542 and r543 included.
+		// The sender itself is never the idle desk: it does not claim its own errand (QA F-A2).
 		var busyN = (!d.allowSelf && d.busyFor) ? busyDepth(d.busyFor(e)) : 0;
 		if (busyN > 0) {
 			var nomB = String(d.nominatedId || '');
-			var mine = nomB ? nomB === String(d.selfId) : !idleDeskBeside(d.presence, d.selfId, leaseNow(leaseClock), d.freshWindowMs);
+			var mine = nomB ? nomB === String(d.selfId)
+				: !idleDeskBeside(d.presence, [d.selfId, e.dispatchedBy], leaseNow(leaseClock), d.freshWindowMs);
 			diag('collect busy', 'turn=' + turnId + ' depth=' + busyN + ' -> ' + (mine ? 'ANSWER busy' : 'hold for an idle device'));
 			if (!mine) {
 				trace.push('busy-hold');
@@ -4177,7 +4206,8 @@
 			}
 			trace.push('busy');
 			try {
-				if (d.post) await d.post(reportFor(e, { status: 'busy', by: String(d.selfId || '') }));
+				if (d.post) await d.post(reportFor(e, { status: 'undeliverable', busy: busyN, why: BUSY_WHY,
+					by: String(d.selfId || '') }));
 				trace.push('report');
 			} catch (err) { /* the sender's backstop still ends it */ }
 			return { ran: false, why: 'busy', busy: busyN, trace: trace };
@@ -5390,6 +5420,8 @@
 		/// The §5 display state of a dispatched turn (dispatched/no-peer-awake/
 		/// claimed/running/done/failed). Pure; daimond.js only renders it.
 		uiState:       uiState,
+		handBackReport: handBackReport,
+		settlingReport: settlingReport,
 		settledLease:  settledLease,
 		frameWhole:    frameWhole,
 		frameJson:     frameJson,

@@ -23,6 +23,9 @@
 //   @seq <name> <json> ;; <name> <json> ;; ...
 //                            ONE call per round, in the order written, then a text reply: the
 //                            second call runs only after the first has come back, in one turn
+//   @seqreport <name> <json> ;; ...
+//                            @seq, then an answer quoting the turn's first and last
+//                            crystal_look rows as "Before: ... After: ..."
 //   @rounds <n>[/<ms>] <name> <json>
 //                            the SAME call, over and over, until `n` tool results have
 //                            come back in this turn -- then a text reply. The only way
@@ -294,7 +297,19 @@ const hasLooked = (messages) => (messages || []).some(m => m && m.role === 'tool
 // the engine). The directive is the words, so it is read after the note. The note's own grammar finds its end, because its
 // words may hold `]` and a blank line: each clause ends `.`, the words sit in `: "..."`, and a clause with words closes
 // `".` then ` They `, ` And N earlier rating` or the final `]`. A note that does not parse is taken whole as plain text.
-const afterNote = (text) => {
+// K1's viewer note rides there too, after any rating note (`take_viewer_note`, joined in app.rs): its header line, one
+// `- the page ...` line per fallback, a blank line, then the words. Read as plain, it swallowed the directive behind it
+// whenever a probe's page had fallen back on the person's screen (r544, verify_crystalprobe's junk page).
+const VIEWER_HEAD = "Since your last turn, the person's viewer showed this Diamond's page fail:\n";
+const afterViewer = (t) => {
+	if (!t.startsWith(VIEWER_HEAD)) return t;
+	const lines = t.slice(VIEWER_HEAD.length).split('\n');
+	let k = 0;
+	while (k < lines.length && lines[k].startsWith('- the page ')) k++;
+	return k > 0 && k < lines.length && lines[k] === '' ? lines.slice(k + 1).join('\n').trim() : t;
+};
+const afterNote = (text) => afterViewer(afterRating(text));
+const afterRating = (text) => {
 	const t = String(text || '').trim();
 	if (!t.startsWith('[Daimond:')) return t;
 	const NEXT = /^( They (rated|withdrew) | And \d+ earlier rating)/;
@@ -909,6 +924,20 @@ const plan = (messages, tools) => {
 			const steps = d.rest.split(';;').map((part) => splitCall(part.trim()));
 			if (rounds >= steps.length) return { text: 'Seq done.' };
 			return { calls: [toolCall(nextCallId(), steps[rounds].name, steps[rounds].args)] };
+		}
+
+		// @seq, answered the way a daimon that LOOKED answers: the first and the last
+		// crystal_look tables of the turn, each target's first row, quoted as before and after.
+		case 'seqreport': {
+			const steps = d.rest.split(';;').map((part) => splitCall(part.trim()));
+			if (rounds < steps.length) return { calls: [toolCall(nextCallId(), steps[rounds].name, steps[rounds].args)] };
+			const said = (m) => typeof m.content === 'string' ? m.content
+				: (Array.isArray(m.content) ? m.content.map((c) => (c && c.text) || '').join('') : '');
+			const looks = messages.filter((m) => m.role === 'tool').map(said)
+				.filter((t) => t.includes('look at the crystal page'));
+			const rows = (t) => t.split('\n').filter((l) => /^\S+\s+1\s/.test(l)).map((l) => l.replace(/\s+/g, ' ').trim());
+			if (looks.length < 2) return { text: 'Seq done, never measured twice.' };
+			return { text: 'Before: ' + rows(looks[0]).join('; ') + '. After: ' + rows(looks[looks.length - 1]).join('; ') + '.' };
 		}
 
 		case 'toolslow': {
