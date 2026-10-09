@@ -14,11 +14,10 @@
 // 200 summary), then screenshots the dashboard desktop + mobile into dev/shots.
 
 import fs from 'node:fs';
-import os from 'node:os';
 import path from 'node:path';
 import crypto from 'node:crypto';
 import { spawn } from 'node:child_process';
-import { fileURLToPath, pathToFileURL } from 'node:url';
+import { fileURLToPath } from 'node:url';
 import { signInFresh } from './session.mjs';
 import { requireFreshGateway, procLog, GWCWD } from './gwbin.mjs';
 import { GW_PORT, GW_URL } from './ports.mjs';
@@ -37,8 +36,6 @@ const SERVE_LOG = procLog('verify_admin', 'serve');
 // so this stays standalone and does not load the harness.
 const APP    = process.env.DAIMOND_APP || `http://localhost:${process.env.DAIMOND_PORT || 8777}`;
 
-const PW = process.env.DAIMOND_PW
-	|| path.join(os.homedir(), '.red-pw/node_modules/playwright-core/index.mjs');
 const CHROME = process.env.DAIMOND_CHROME
 	|| `${process.env.HOME}/.cache/ms-playwright/chromium-1229/chrome-linux64/chrome`;
 
@@ -184,7 +181,7 @@ async function adminRaw() {
 	check('dev server serves /console/', serveUp);
 
 	if (serveUp) {
-		const { chromium } = await import(pathToFileURL(PW).href);
+		const { chromium } = await import('./pw.mjs');
 		const browser = await chromium.launch({ executablePath: CHROME, headless: true, args: ['--no-sandbox'] });
 		const errs = [];
 		try {

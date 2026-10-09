@@ -259,9 +259,7 @@ await p.waitForTimeout(500);
 	process.env.PLAYWRIGHT_SKIP_VALIDATE_HOST_REQUIREMENTS = '1';
 	const { pathToFileURL } = await import('node:url');
 	const os = await import('node:os');
-	const PWPATH = process.env.DAIMOND_PW
-		|| path.join(os.homedir(), '.red-pw/node_modules/playwright-core/index.mjs');
-	const { webkit } = await import(pathToFileURL(PWPATH).href);
+	const { webkit } = await import('./pw.mjs');
 	// A FORWARDED DISPLAY STALLS THE LAUNCH, which is the house note about
 	// WebKit and the reason these two lines are here rather than in the harness:
 	// nothing in this block goes through `open()`.

@@ -158,7 +158,7 @@ const survey = (p) => p.evaluate(() => {
 		rail: box('#panel-rail'), railTop: box('#rail-top'),
 		diamondList: box('#diamond-list'), sessionList: box('#session-list'),
 		admin: box('#admin'), status: box('#admin-status'),
-		idRow: box('#panel-rail .astat-id'), cog: box('#settings-btn'),
+		idRow: box('#panel-rail .astat-id'), userRow: box('#user-row'),
 		modelRow: box('#astat-model'), split: box('#handle-rail-split'),
 		headD: box('.railhead:has(.rail-fold[data-fold="diamonds"])'),
 		headC: box('.railhead:has(.rail-fold[data-fold="chats"])'),
@@ -243,8 +243,8 @@ try {
 	check('a folded status section draws its header row and nothing below it',
 		m.idRow.drawn && !m.modelRow.drawn && m.admin.h < 90,
 		`identity ${m.idRow.h}px, #astat-model ${m.modelRow.h}px, #admin ${m.admin.h}px`);
-	check('and the Settings cog survives that fold, which is a phone\'s only route to Settings',
-		m.cog.drawn && m.cog.h >= 34, m.cog.h + 'px');
+	check('and the identity row survives that fold, which is the only route to Settings',
+		m.userRow.drawn && m.userRow.h >= 34, m.userRow.h + 'px');
 	check('each list is bounded and scrolls inside itself rather than the drawer',
 		m.sessionList.scroll > m.sessionList.client && m.rail.scroll === m.rail.client,
 		`chats ${m.sessionList.client}/${m.sessionList.scroll}, drawer ${m.rail.client}/${m.rail.scroll}`);

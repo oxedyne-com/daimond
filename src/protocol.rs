@@ -1221,6 +1221,8 @@ pub enum AgentEvent {
         missing:   Vec<String>,
         malformed: usize,       // rounds re-sent because a tool call arrived as text
         reasoned:  usize,       // rounds re-sent because a reply reasoned and answered nothing
+        why:       String,      // `blocked` beside `failed`, else empty; see `TurnEnd::why`
+        said:      String,      // the plain sentence a blocked turn ends on, else empty
     },
     /// A tool call arrived as TEXT, in the model's own native call syntax, with no JSON
     /// `tool_calls` beside it.
@@ -1259,7 +1261,7 @@ impl AgentEvent {
                 m.insert(dat!("type"), dat!("thinking"));
                 m.insert(dat!("content"), dat!(text.clone()));
             }
-            Self::Ended { how, offered, rounds, calls, refused, failed, missing, malformed, reasoned } => {
+            Self::Ended { how, offered, rounds, calls, refused, failed, missing, malformed, reasoned, why, said } => {
                 m.insert(dat!("type"),      dat!("ended"));
                 m.insert(dat!("how"),       dat!(how.clone()));
                 m.insert(dat!("offered"),   Dat::U64(*offered as u64));
@@ -1271,6 +1273,10 @@ impl AgentEvent {
                 m.insert(dat!("reasoned"),  Dat::U64(*reasoned as u64));
                 m.insert(dat!("missing"),
                     Dat::List(missing.iter().map(|p| dat!(p.clone())).collect()));
+                if !why.is_empty() {
+                    m.insert(dat!("why"),   dat!(why.clone()));
+                    m.insert(dat!("said"),  dat!(said.clone()));
+                }
             }
             Self::Leaked { fragment, recovered } => {
                 m.insert(dat!("type"),      dat!("leaked"));

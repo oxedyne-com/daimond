@@ -275,12 +275,14 @@ function workspace(listOutcome) {
 	const make = new Function('document', 'tools', 'treeEl', 'viewEl', 'pathEl', 'syncLineNo', 'loadAttached', 'paintReach',
 		'renderCrumbs', 'goDir', 't', 'toolReason', 'renderTree', 'parseListing', 'refreshResidency', 'ownDir', 'upRow',
 		'diamondOwnRow', 'statAttachments', 'attached', 'attachedRow', 'daimonGroupRow', 'diamondScope', 'showModeMsg',
-		'DaimondAnswer', 'window',
-		'var curDir = "", curFile = null, listed = false, lastEntries = [], daimonGroupOpen = false;\n' + body);
+		'DaimondAnswer', 'window', 'listBusy', 'listNote', 'listKey',
+		'var curDir = "", curFile = null, listed = false, lastEntries = [], daimonGroupOpen = false, drawnKey = null;\n' + body);
 	const noop = () => {};
 	const m = make(doc, tools, treeEl, el({ style: {} }), el(), noop, async () => {}, noop, noop, noop, words, (r) => 'ERR ' + (r && r.text), noop,
 		(txt) => [ { name: txt, dir: false } ], noop, () => 'own', () => null, () => el(), async () => {}, [], () => el(), () => el(),
-		() => true, (text, isErr, ms) => notes.push({ text, isErr: !!isErr, ms }), answer(), {});
+		() => true, (text, isErr, ms) => notes.push({ text, isErr: !!isErr, ms }), answer(), {},
+		// WS-U1's loading row and keyed redraw: the loading row is not what these cases test, the failure row is.
+		noop, (kind, words) => el({ className: 'files-' + kind, textContent: words }), () => 'd|sub');
 	return { m, treeEl, notes };
 }
 

@@ -25,9 +25,8 @@
 // Engine: WebKit by default, because an iPhone runs WebKit. `--engine chromium`
 // is for when this host's WebKit will not launch; it is a different engine and
 // the report must say so.
-import os from 'node:os';
 import path from 'node:path';
-import { fileURLToPath, pathToFileURL } from 'node:url';
+import { fileURLToPath } from 'node:url';
 import fs from 'node:fs';
 import { signInAs, connectMock, APP, scratch, MOCK, MODEL } from './harness.mjs';
 
@@ -89,8 +88,7 @@ if (BREAK && !BREAKS[BREAK]) {
 	process.exit(2);
 }
 
-const PW = process.env.DAIMOND_PW || path.join(os.homedir(), '.red-pw/node_modules/playwright-core/index.mjs');
-const pw = await import(pathToFileURL(PW).href);
+const pw = await import('./pw.mjs');
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 
 const iph = pw.devices['iPhone 13'];

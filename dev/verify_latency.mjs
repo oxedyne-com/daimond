@@ -44,14 +44,14 @@ import net from 'node:net';
 import os from 'node:os';
 import path from 'node:path';
 import { spawn, execFileSync } from 'node:child_process';
-import { fileURLToPath, pathToFileURL } from 'node:url';
+import { fileURLToPath } from 'node:url';
 
-import { PW, CHROME, SCRATCH, signInAs, connectMock, newChat } from './harness.mjs';
+import { CHROME, SCRATCH, signInAs, connectMock, newChat } from './harness.mjs';
 import { cleanDisplayEnv } from './display.mjs';
 import { makePagePro } from './pro.mjs';
 import { TARGETS, summarise, judge, fmtMs } from './latencylib.mjs';
 
-const { chromium } = await import(pathToFileURL(PW).href);
+import { chromium } from './pw.mjs';
 process.env.PLAYWRIGHT_SKIP_VALIDATE_HOST_REQUIREMENTS = '1';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
@@ -165,7 +165,7 @@ async function launch(d) {
 	fs.mkdirSync(d.profile, { recursive: true });
 	d.ctx = await chromium.launchPersistentContext(d.profile, {
 		executablePath: CHROME, headless: false, env, viewport: d.viewport, hasTouch: !!d.mobile,
-		args: ['--no-sandbox', '--disable-dev-shm-usage', '--headless=new'],
+		args: ['--no-sandbox', '--headless=new'],
 		...(d.ua ? { userAgent: d.ua, isMobile: true } : {}),
 	});
 	d.ctx.on('response', (r) => {

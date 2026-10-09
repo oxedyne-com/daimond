@@ -64,10 +64,8 @@
 import path from 'node:path';
 import os from 'node:os';
 import fs from 'node:fs';
-import { pathToFileURL } from 'node:url';
 
-const PW = path.join(os.homedir(), '.red-pw/node_modules/playwright-core/index.mjs');
-const { chromium } = await import(pathToFileURL(PW).href);
+const { chromium } = await import('./pw.mjs');
 const CHROME = `${process.env.HOME}/.cache/ms-playwright/chromium-1229/chrome-linux64/chrome`;
 import { fileURLToPath } from 'node:url';
 const ROOT = path.join(path.dirname(fileURLToPath(import.meta.url)), '..');	// this checkout, not one developer's home
@@ -225,7 +223,7 @@ fs.mkdirSync(PROFILE, { recursive: true });
 
 const b = await chromium.launchPersistentContext(PROFILE, {
 	executablePath: CHROME, headless: false,
-	args: ['--no-sandbox', '--disable-dev-shm-usage', `--disable-extensions-except=${EXT}`, `--load-extension=${EXT}`],
+	args: ['--no-sandbox', `--disable-extensions-except=${EXT}`, `--load-extension=${EXT}`],
 });
 async function waitSW() { for (let i = 0; i < 80 && !b.serviceWorkers().length; i++) await new Promise(r => setTimeout(r, 100)); return b.serviceWorkers()[0]; }
 

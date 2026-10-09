@@ -232,7 +232,7 @@ if (hasNotes) {
 // ── 7. The Admin panel offers each one, and opens it in the Doc panel ───
 // Through the control a user actually presses: the cog in the rail's status
 // strip, which is how the Admin panel is reached.
-await p.click('#settings-btn', { force: true });
+await p.click('#user-row', { force: true });
 await p.waitForTimeout(900);
 const buttons = await p.$$eval('#admin-home .admin-item', els => els.map(e => e.textContent));
 // BY KEY, NOT BY WORDING. This listed the English labels -- "dispatched worker",

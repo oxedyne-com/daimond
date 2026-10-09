@@ -71,8 +71,8 @@ const BREAKS = {
 		with: 'recordTurnOutcome(dsPair.model, dsPair.provider, dmid,' },
 		{ file: 'js/daimond.js', find: 'meterDiamondTurn(fa, diamondId, dumid);',
 		with: 'meterDiamondTurn(fa, diamondId, dmid);' }],
-	norid:   [{ file: 'js/daimond.js', find: "(run.prov && run.prov.rid) || '', wmeter.facts('w'));",
-		with: "'', wmeter.facts('w'));" }],
+	norid:   [{ file: 'js/daimond.js', find: "(run.prov && run.prov.rid) || '', wmeter ? wmeter.facts('w') : null);",
+		with: "'', wmeter ? wmeter.facts('w') : null);" }],
 };
 
 /// The served bodies a break asks for, by file, checked so a break that matched nothing

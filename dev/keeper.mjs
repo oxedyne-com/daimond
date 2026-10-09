@@ -6,7 +6,7 @@
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { fileURLToPath, pathToFileURL } from 'node:url';
+import { fileURLToPath } from 'node:url';
 
 // Chromium's ozone platform is chosen by autodetection and prefers Wayland whenever
 // `WAYLAND_DISPLAY` is set -- which it is in every rc session on argonaut -- so a headed
@@ -16,8 +16,7 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 import './display.mjs';
 import { testCfg } from './testcfg.mjs';
 const HERE = path.dirname(fileURLToPath(import.meta.url));
-const PW = path.join(os.homedir(), '.red-pw/node_modules/playwright-core/index.mjs');
-const { chromium } = await import(pathToFileURL(PW).href);
+const { chromium } = await import('./pw.mjs');
 const CHROME = `${os.homedir()}/.cache/ms-playwright/chromium-1229/chrome-linux64/chrome`;
 const cfg = testCfg();
 const MODEL = cfg.models.value;
@@ -35,7 +34,7 @@ const browser = await chromium.launchPersistentContext(path.join(SCRATCH, 'real-
 	executablePath: CHROME,
 	headless: false,
 	args: [
-		'--no-sandbox', '--disable-gpu', '--disable-dev-shm-usage',
+		'--no-sandbox', '--disable-gpu',
 		`--remote-debugging-port=${CDP_PORT}`,
 		'--window-size=1600,1000', '--window-position=40,40',
 	],

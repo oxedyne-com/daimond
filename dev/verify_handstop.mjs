@@ -63,9 +63,7 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 // desktop. Importing this strips the two variables from `process.env`, which is all a
 // launcher that spreads `process.env` needs. See dev/display.mjs.
 import './display.mjs';
-const PW = process.env.DAIMOND_PW
-	|| path.join(os.homedir(), '.red-pw/node_modules/playwright-core/index.mjs');
-const { chromium } = await import(pathToFileURL(PW).href);
+const { chromium } = await import('./pw.mjs');
 const CHROME = process.env.DAIMOND_CHROME
 	|| `${process.env.HOME}/.cache/ms-playwright/chromium-1229/chrome-linux64/chrome`;
 
@@ -242,7 +240,7 @@ check('install.sh registers the real binary in this run\'s own profile',
 const b = await chromium.launchPersistentContext(PROFILE, {
 	executablePath:	CHROME,
 	headless:	false,
-	args: ['--no-sandbox', '--disable-dev-shm-usage',
+	args: ['--no-sandbox',
 		`--disable-extensions-except=${EXT}`, `--load-extension=${EXT}`],
 	viewport: { width: 1100, height: 700 },
 });

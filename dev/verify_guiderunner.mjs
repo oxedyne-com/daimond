@@ -26,12 +26,9 @@
 //   node dev/verify_guiderunner.mjs        # with dev/serve.mjs up
 //
 // Needs dev/serve.mjs (DAIMOND_PORT, default 8777). No gateway, no mock LLM.
-import os from 'node:os';
 import path from 'node:path';
-import { pathToFileURL } from 'node:url';
 
-const PW = path.join(os.homedir(), '.red-pw/node_modules/playwright-core/index.mjs');
-const { chromium } = await import(pathToFileURL(PW).href);
+const { chromium } = await import('./pw.mjs');
 const CHROME = `${process.env.HOME}/.cache/ms-playwright/chromium-1229/chrome-linux64/chrome`;
 const APP = process.env.DAIMOND_APP || `http://localhost:${process.env.DAIMOND_PORT || 8777}`;
 const SHOTS = new URL('shots/', import.meta.url).pathname;

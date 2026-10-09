@@ -35,8 +35,8 @@ const s = await open({ name: 'settings', connect: false });
 
 // Open settings and save a key the model-fetch will reject.
 const result = await s.page.evaluate(async (arg) => {
-	const cog = document.getElementById('settings-btn');
-	if (cog) cog.click();
+	const door = document.getElementById('user-row');
+	if (door) door.click();
 	await new Promise(r => setTimeout(r, 300));
 	const prov = document.getElementById('cfg-provider');
 	if (!prov) return { missing: '#cfg-provider' };

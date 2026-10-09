@@ -17,18 +17,14 @@
 //     await VIEWS.find(v => v.name === 'spend').setup(s.page);
 //     await s.close();
 //   }
-import os from 'node:os';
 import path from 'node:path';
-import { pathToFileURL } from 'node:url';
 import { signInAs, connectMock, scratch } from './harness.mjs';
 
 // This host (Ubuntu 25.10) is newer than WebKit's build target, so the launch
 // preflight refuses; the runtime libs are supplied out-of-band (setup-webkit-libs.sh).
 process.env.PLAYWRIGHT_SKIP_VALIDATE_HOST_REQUIREMENTS = '1';
 
-const PW = process.env.DAIMOND_PW
-	|| path.join(os.homedir(), '.red-pw/node_modules/playwright-core/index.mjs');
-const { chromium, firefox, webkit, devices } = await import(pathToFileURL(PW).href);
+const { chromium, firefox, webkit, devices } = await import('./pw.mjs');
 const CHROME = process.env.DAIMOND_CHROME
 	|| `${process.env.HOME}/.cache/ms-playwright/chromium-1229/chrome-linux64/chrome`;
 
@@ -168,7 +164,7 @@ export async function openCell(cell, opts = {}) {
 		await connectMock(s);
 		// connectMock leaves the settings form open; toggle it shut so a signed-in
 		// view is the app itself, not the config panel lingering over it.
-		await page.evaluate(() => { const b = document.getElementById('settings-btn'); if (b) b.click(); }).catch(() => {});
+		await page.evaluate(() => { const b = document.getElementById('user-row'); if (b) b.click(); }).catch(() => {});
 		await page.waitForTimeout(150);
 	}
 	await applyTheme(page, cell.theme);
@@ -205,7 +201,7 @@ export const VIEWS = [
 	// the "Models" status row, with the add-a-provider form folded away when a
 	// provider already exists. Walk that path -- drawer, Models row, unfold --
 	// state-aware at each step, because connectMock may have left the drawer
-	// open and #settings-btn is a toggle: a blind click shot "home" for every
+	// open and #user-row is a toggle: a blind click shot "home" for every
 	// settings cell.
 	// A BUILT form, not a static panel: the add-a-mailbox dialog exercises the
 	// shared buildForm path (labels, inputs, selects) that no static view
@@ -220,7 +216,7 @@ export const VIEWS = [
 	{ name: 'settings', needsAuth: true,  setup: async (p) => open(p, async () => {
 		const vis = (el) => el && el.offsetParent !== null;
 		const row = document.getElementById('astat-model');
-		if (!vis(row)) { const b = document.getElementById('settings-btn'); if (b) b.click(); }
+		if (!vis(row)) { const b = document.getElementById('user-row'); if (b) b.click(); }
 		await new Promise(r => setTimeout(r, 250));
 		const row2 = document.getElementById('astat-model');
 		if (vis(row2)) row2.click();
@@ -259,7 +255,7 @@ export async function resetView(page) {
 		// Close the settings/admin form if it is showing, back to home.
 		try {
 			var cfg = document.getElementById('cfg-provider');
-			if (cfg && cfg.offsetParent !== null) { var s = document.getElementById('settings-btn'); if (s) s.click(); }
+			if (cfg && cfg.offsetParent !== null) { var s = document.getElementById('user-row'); if (s) s.click(); }
 		} catch (e) {}
 	}).catch(() => {});
 	await page.waitForTimeout(150);

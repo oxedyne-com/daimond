@@ -93,10 +93,9 @@
 // lane `gateway` registers them. That is reported rather than skipped: an
 // operator whose Search group has nothing in it is looking at the same absence.
 
-import os from 'node:os';
 import path from 'node:path';
 import { spawn } from 'node:child_process';
-import { fileURLToPath, pathToFileURL } from 'node:url';
+import { fileURLToPath } from 'node:url';
 import { requireFreshGateway, GWCWD } from './gwbin.mjs';
 import { signInFresh } from './session.mjs';
 import { GW_PORT, GW_URL } from './ports.mjs';
@@ -112,8 +111,6 @@ const ROOT  = path.join(HERE, '..');
 const GWDIR = path.join(ROOT, 'gateway');
 const APP = process.env.DAIMOND_APP || `http://localhost:${process.env.DAIMOND_PORT || 8777}`;
 
-const PW = process.env.DAIMOND_PW
-	|| path.join(os.homedir(), '.red-pw/node_modules/playwright-core/index.mjs');
 const CHROME = process.env.DAIMOND_CHROME
 	|| `${process.env.HOME}/.cache/ms-playwright/chromium-1229/chrome-linux64/chrome`;
 
@@ -690,13 +687,13 @@ async function api(page, view, body) {
 	}
 }
 
-const { chromium } = await import(pathToFileURL(PW).href);
+const { chromium } = await import('./pw.mjs');
 // Launched as dev/harness.mjs launches: no mode on this host produces animation
 // frames, so Playwright's stability check never settles and every click is
 // forced. Where that matters -- a control that might be covered -- the reach is
 // asserted separately, as showProviders does.
 const browser = await chromium.launch({ executablePath: CHROME, headless: false,
-	args: ['--no-sandbox', '--disable-dev-shm-usage', '--headless=new'] });
+	args: ['--no-sandbox', '--headless=new'] });
 
 try {
 	// ── Leg one: the page, against a stub ───────────────────

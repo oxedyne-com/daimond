@@ -91,7 +91,7 @@ for (const code of ['en'].concat(codes)) {
 	const mark = s.logs.length;
 	const loaded = await p.evaluate(c => window.DaimondI18n.setLocale(c), code);
 	await p.waitForTimeout(300);
-	await p.evaluate(() => { try { document.getElementById('settings-btn').click(); } catch (e) {} });
+	await p.evaluate(() => { try { document.getElementById('user-row').click(); } catch (e) {} });
 	await p.waitForTimeout(700);
 	const txt = await p.evaluate(() => {
 		const el = document.getElementById('admin-body');

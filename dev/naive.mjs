@@ -36,7 +36,6 @@ import os		from 'node:os';
 import path		from 'node:path';
 import crypto		from 'node:crypto';
 import { execFileSync }	from 'node:child_process';
-import { createRequire }	from 'node:module';
 import { fileURLToPath }	from 'node:url';
 
 import * as forge	from './forge.mjs';
@@ -581,8 +580,7 @@ function saveCacheIfFirst(n, resendCheck, text, cacheDir) {
 /// The same playwright resolution and CDP attach `drive.mjs` uses -- attach, never launch, and
 /// pick the `daimond.oxedyne.com` page rather than whatever tab happened to be on top.
 async function connectRealPage(cdpUrl) {
-	const require = createRequire(import.meta.url);
-	const { chromium } = require('/home/jason/usr/code/web/apps/oxegen/node_modules/playwright');
+	const { chromium } = await import('./pw.mjs');
 	const browser = await chromium.connectOverCDP(cdpUrl);
 	const pages = browser.contexts().flatMap((c) => c.pages());
 	const page = pages.find((p) => p.url().startsWith('https://daimond.oxedyne.com')) || pages[0];

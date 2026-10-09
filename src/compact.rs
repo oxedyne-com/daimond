@@ -3094,12 +3094,23 @@ pub fn needs_fold(est_tokens: u64, real_tokens: u64, budget: u64, forced: bool) 
 /// all there is.  Both halves are needed even then -- acting on the status alone would
 /// fold the conversation every time a key was mistyped.
 ///
+/// THE STATUS IS READ FROM THE TAGS, NEVER FROM THE TEXT.  The transport marks a 400, 413
+/// or 422 `TooBig` where the status is still in hand (`TransportErr::crossed`).  Digits in
+/// the prose were read instead until r541: a source line "llm.rs:1400" and a stall "in 400
+/// s" both passed for a refusal, folded the conversation and learnt the window down for
+/// the rest of the session.  And a `Timeout` is never an overflow, whatever it says: a
+/// model that did not answer did not refuse the prompt's size.
+///
 /// # Arguments
-/// * `err` - The error text from the failed call.
+/// * `e` - The error from the failed call.
 /// * `prompt_tokens` - The estimated size of the prompt that was refused.
 /// * `budget` - The turn's token budget.
-pub fn looks_like_overflow(err: &str, prompt_tokens: u64, budget: u64) -> bool {
-	let low = err.to_lowercase();
+pub fn looks_like_overflow(e: &Error<ErrTag>, prompt_tokens: u64, budget: u64) -> bool {
+	let tags = e.tags();
+	if tags.contains(&ErrTag::Timeout) {
+		return false;
+	}
+	let low = fmt!("{}", e).to_lowercase();
 	for m in [
 		"context length",
 		"context_length",
@@ -3117,41 +3128,7 @@ pub fn looks_like_overflow(err: &str, prompt_tokens: u64, budget: u64) -> bool {
 		}
 	}
 	// The fallback: no words that say so, so the status and the size are all there is.
-	let plain   = without_locations(&low);
-	let refused = ["400", "413", "422"].iter().any(|code| names_status(&plain, code));
-	refused && prompt_tokens >= OVERFLOW_FLOOR_TOKENS.min(budget / 2)
-}
-
-// The text with the line number of every `file.rs:LINE` taken out.  An error carries the place
-// that made it, and a refactor that moved the macro to line 1400 sent every transport failure
-// to the fold, because "1400" holds "400".
-fn without_locations(text: &str) -> String {
-	let mut out  = String::with_capacity(text.len());
-	let mut rest = text;
-	while let Some(i) = rest.find(".rs:") {
-		let cut = i + 4;
-		out.push_str(&rest[..cut]);
-		let tail = &rest[cut..];
-		let n    = tail.bytes().take_while(|b| b.is_ascii_digit()).count();
-		rest     = &tail[n..];
-	}
-	out.push_str(rest);
-	out
-}
-
-// Does `text` hold `code` as a number of its own, not as part of a longer one?
-fn names_status(text: &str, code: &str) -> bool {
-	let digit = |c: Option<char>| c.map_or(false, |c| c.is_ascii_digit());
-	let mut from = 0;
-	while let Some(i) = text[from..].find(code) {
-		let at  = from + i;
-		let end = at + code.len();
-		if !digit(text[..at].chars().next_back()) && !digit(text[end..].chars().next()) {
-			return true;
-		}
-		from = end;
-	}
-	false
+	tags.contains(&ErrTag::TooBig) && prompt_tokens >= OVERFLOW_FLOOR_TOKENS.min(budget / 2)
 }
 
 
@@ -4895,6 +4872,16 @@ mod tests {
 
 	// ── Recognising the failure ──────────────────────────────────────────────
 
+	// An error in words alone, as a stream that broke or an SSE `error` event leaves it.
+	fn said(msg: &str) -> Error<ErrTag> {
+		err!("{}", msg; IO, Network, Wire)
+	}
+
+	// An error as the transport hands over a 400, 413 or 422: marked as possibly one of size.
+	fn refusal(msg: &str) -> Error<ErrTag> {
+		err!("{}", msg; IO, Network, Wire, TooBig)
+	}
+
 	#[test]
 	fn test_a_providers_own_words_are_enough_00() {
 		for msg in [
@@ -4903,7 +4890,7 @@ mod tests {
 			"input length exceeds the model limit",
 			"Request too large for model",
 		] {
-			assert!(looks_like_overflow(msg, 0, 100_000), "{}", msg);
+			assert!(looks_like_overflow(&said(msg), 0, 100_000), "{}", msg);
 		}
 	}
 
@@ -4927,7 +4914,7 @@ mod tests {
 		] {
 			// Recognised on the words alone: the prompt size is given as zero, so
 			// nothing here can be passing on the fallback below.
-			assert!(looks_like_overflow(msg, 0, 100_000), "{}", msg);
+			assert!(looks_like_overflow(&said(msg), 0, 100_000), "{}", msg);
 		}
 	}
 
@@ -4939,7 +4926,7 @@ mod tests {
 		// request unless the prompt cleared an absolute floor.
 		let body = "LLM: HTTP error: 400 Bad Request | {\"error\":{\"message\":\"This \
 			model's maximum context length is 8192 tokens\"}}";
-		assert!(looks_like_overflow(body, 100, Limits::default().budget(4_096)),
+		assert!(looks_like_overflow(&said(body), 100, Limits::default().budget(4_096)),
 			"the provider said so and it was not believed");
 	}
 
@@ -4954,8 +4941,8 @@ mod tests {
 			 Request Entity Too Large</title></head><body><center><h1>413 Request \
 			 Entity Too Large</h1></center><hr><center>nginx</center></body></html>",
 		] {
-			assert!(looks_like_overflow(bare, 90_000, 100_000), "{}", bare);
-			assert!(!looks_like_overflow(bare, 500, 100_000),
+			assert!(looks_like_overflow(&refusal(bare), 90_000, 100_000), "{}", bare);
+			assert!(!looks_like_overflow(&refusal(bare), 500, 100_000),
 				"a small prompt refused with no explanation is a bad request: {}", bare);
 		}
 	}
@@ -4966,8 +4953,8 @@ mod tests {
 		// small prompt is a mistyped request, not an overflow, and folding on it would throw
 		// away the user's history for nothing.
 		let bare = "LLM: HTTP error: 400 Bad Request.";
-		assert!(!looks_like_overflow(bare, 500, 100_000));
-		assert!(looks_like_overflow(bare, 90_000, 100_000));
+		assert!(!looks_like_overflow(&refusal(bare), 500, 100_000));
+		assert!(looks_like_overflow(&refusal(bare), 90_000, 100_000));
 	}
 
 	#[test]
@@ -4985,7 +4972,7 @@ mod tests {
 		let assumed = Limits::default().budget(4_096);
 		assert!(assumed > refused * 5, "the assumed budget is {}", assumed);
 		let bare = "LLM: HTTP error: 400 Bad Request.";
-		assert!(looks_like_overflow(bare, refused, assumed),
+		assert!(looks_like_overflow(&refusal(bare), refused, assumed),
 			"a 12k-token prompt refused by a 16k-window model was not recognised");
 	}
 
@@ -5017,19 +5004,31 @@ mod tests {
 	}
 
 	#[test]
-	fn test_a_source_line_number_is_not_a_status_00() {
+	fn test_digits_in_the_text_are_not_a_status_00() {
 		// The error text names the file and line that made it, and "src/llm.rs:1400" holds
-		// "400".  A refused connection on a big conversation was read as a 400 overflow and
-		// folded a second time, until a refactor moved the line (r541 T1qa).
+		// "400"; a stall's "in 400 s" does too.  Each was read as a 400 overflow and folded the
+		// conversation (r541 T1qa, then QA N2).  Only the transport's tag says "refused".
 		for msg in [
 			"UpstreamErr{\"src/llm.rs:1400\"} could not reach 127.0.0.1:1",
 			"LLM: stream broke at src/llm.rs:413: connection reset",
-			"\u{1b}[96m\"src/agent.rs:2422\"\u{1b}[0m the stream broke",
+			"LLM: no data from 'z-ai' in 400 s, asked twice.",
+			"LLM: HTTP error: 400 Bad Request.",
 		] {
-			assert!(!looks_like_overflow(msg, 90_000, 100_000), "{}", msg);
+			let e = err!("{}", msg; IO, Network, Wire);
+			assert!(!looks_like_overflow(&e, 90_000, 100_000), "{}", msg);
 		}
-		// A status beside a location is still a status.
-		assert!(looks_like_overflow("src/llm.rs:1033: LLM: HTTP error: 400 Bad Request.", 90_000, 100_000));
+		// A refusal the transport marked, on a prompt big enough to explain it, is one.
+		let e = err!("LLM: HTTP error: 413 Payload Too Big | <html></html>"; IO, Network, Wire, TooBig);
+		assert!(looks_like_overflow(&e, 90_000, 100_000));
+		// And the same mark on a small prompt is a malformed request, not an overflow.
+		assert!(!looks_like_overflow(&e, 500, 100_000));
+	}
+
+	#[test]
+	fn test_a_timeout_is_never_an_overflow_00() {
+		// Not even one whose text happens to hold the words, or that carries a refusal's mark.
+		let e = err!("LLM: no data from 'context window labs' in 413 s."; IO, Network, Wire, Timeout, TooBig);
+		assert!(!looks_like_overflow(&e, 200_000, 100_000));
 	}
 
 	#[test]
@@ -5040,7 +5039,8 @@ mod tests {
 			"LLM: HTTP error: 429 Too Many Requests.",
 			"LLM: HTTP error: 500 Internal Server Error.",
 		] {
-			assert!(!looks_like_overflow(msg, 200_000, 100_000), "{}", msg);
+			let e = err!("{}", msg; IO, Network, Wire);
+			assert!(!looks_like_overflow(&e, 200_000, 100_000), "{}", msg);
 		}
 	}
 

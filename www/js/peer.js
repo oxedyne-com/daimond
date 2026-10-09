@@ -304,7 +304,7 @@
 			eid:     String(o.eid || ''),
 			turnId:  String(o.turnId || ''),
 			chatId:  String(o.chatId || ''),
-			status:  String(o.status || 'done'),	// done | refused-spend | error | aborted | parked | undeliverable
+			status:  String(o.status || 'done'),	// done | refused-spend | error | aborted | parked | undeliverable | busy
 			// THE DEVICE THIS REPORT IS FOR: the errand's dispatcher. The relay's ack is one
 			// account-wide watermark, so any device that collects the report and acks past it
 			// drops it for every device -- the runner first of all, whose own collect folds
@@ -743,6 +743,23 @@
 	var _onCompile = null;	// a compile errand, run on a machine that holds the folder
 	var _onBuilt   = null;	// the runner's account of a compile, collected by the dispatcher
 	function onErrand(fn) { _onErrand = fn; }
+
+	/// How many turns this device is running for chats OTHER than `chatId`, 0 when it is
+	/// free for it (H1). Registered by the app; absent, a device is never busy.
+	var _busyProbe = null;
+	function onBusyProbe(fn) { _busyProbe = fn; }
+	function busyFor(chatId) {
+		if (!_busyProbe) return 0;
+		try { return busyDepth(_busyProbe(String(chatId || ''))); } catch (e) { return 0; }
+	}
+
+	/// Must this collected envelope be decided NOW rather than behind the work already
+	/// running here (post.js `startWork`)? A turn errand for another chat, while this
+	/// device is busy, is: it is answered at once, so no sender waits on a timer for a
+	/// turn this device would only reach when its current one ends (H1, C1).
+	function decideNow(env) {
+		return !!(env && env.t === T_ERRAND && busyFor(env.chatId) > 0);
+	}
 	function onReport(fn) { _onReport = fn; }
 	function onAsk(fn)    { _onAsk = fn; }
 	function onGrant(fn)  { _onGrant = fn; }
@@ -1724,7 +1741,7 @@
 	/// unlike the posture: it is a boot-time fact about the machine, so a beat that cannot
 	/// say keeps what the device already said rather than unsaying it.
 	function presenceBeat(deviceId, name, now, attended, servicing, build, runner, mobile,
-		hand, folder) {
+		hand, folder, busy) {
 		var id = String(deviceId || '');
 		if (!id) return false;
 		var n = now == null ? Date.now() : now;
@@ -1758,6 +1775,11 @@
 		else if (prev && typeof prev.hand === 'boolean') _presence[id].hand = prev.hand;
 		if (folder != null) _presence[id].folder = !!folder;
 		else if (prev && typeof prev.folder === 'boolean') _presence[id].folder = prev.folder;
+		// HOW MANY TURNS THIS MACHINE IS RUNNING OR HOLDING, 0 when idle (H1). LIVE like the
+		// placement pair, and absent when the beat cannot say: the election reads absence
+		// as "not known to be busy", and the runner's own busy answer to an errand covers it.
+		if (busy != null) _presence[id].busy = busyDepth(busy);
+		else if (prev && typeof prev.busy === 'number') _presence[id].busy = prev.busy;
 		return true;
 	}
 
@@ -1803,6 +1825,10 @@
 				else if (cur && typeof cur.hand === 'boolean') adopted.hand = cur.hand;
 				if (typeof inc.folder === 'boolean') adopted.folder = inc.folder;
 				else if (cur && typeof cur.folder === 'boolean') adopted.folder = cur.folder;
+				// Busy rides the freshest line, LIVE: a line that cannot say keeps the last
+				// answer only while it is the same device speaking.
+				if (inc.busy != null) adopted.busy = busyDepth(inc.busy);
+				else if (cur && typeof cur.busy === 'number') adopted.busy = cur.busy;
 				_presence[id] = adopted;
 				moved = true;
 			}
@@ -1876,6 +1902,10 @@
 			// first. Coercing absent to false is how seq 217 struck a live runner out.
 			if (typeof rec.hand === 'boolean')   recOut.hand   = rec.hand;
 			if (typeof rec.folder === 'boolean') recOut.folder = rec.folder;
+			// The turns that machine is running or holding (H1), relayed verbatim. LEFT
+			// ABSENT when the gateway or the peer does not send it: unknown is not idle,
+			// but neither is it busy, and the runner answers a busy errand itself.
+			if (rec.busy != null) recOut.busy = busyDepth(rec.busy);
 			next[String(id)] = recOut;
 		}
 		var before = JSON.stringify(_presence);
@@ -2253,6 +2283,23 @@
 		return !!(rec && rec.runner);
 	}
 
+	/// A beat's `busy` as a depth: the turns that machine is running or holding. An old
+	/// boolean true reads as one.
+	function busyDepth(v) {
+		if (v === true) return 1;
+		var k = +v;
+		return (k > 0 && isFinite(k)) ? Math.floor(k) : 0;
+	}
+
+	/// Is this peer BUSY for the turn being seated (H1, C1)? A machine running a turn
+	/// collects the next errand only when that turn ends, so seating it made the sender
+	/// wait out its backstop and run the turn itself. The one exception is `queueOn`,
+	/// the device already running this same chat (O3): the turn queues there, visibly.
+	function recBusy(rec, id, o) {
+		if (!rec || !(rec.busy > 0)) return false;
+		return !(o && o.queueOn && String(o.queueOn) === String(id));
+	}
+
 	/// Does this presence record MEET the caller's requirement -- a beat field that must
 	/// be explicitly true for this peer to be seated at all?
 	///
@@ -2268,9 +2315,24 @@
 
 	/// Answers `{ target, reason }` where `target` is `{ deviceId, name, lastSeen, build,
 	/// staleBuild? }` or null (→ run local), and `reason` is one of
-	/// `nominee` / `nominee-presumed` / `worker` / `other-desktop` / `local`.
+	/// `nominee` / `nominee-presumed` / `worker` / `other-desktop` / `local`. `passed`
+	/// names every live peer skipped because its beat said busy, so the election row and
+	/// the tile can say why the turn did not go there.
 	function handoffTarget(presence, opts, now) {
+		var passed = [];
+		var res = electTarget(presence, opts, now, passed);
+		res.passed = passed;
+		return res;
+	}
+
+	function electTarget(presence, opts, now, passed) {
 		var o = opts || {}, p = presence || {};
+		var seen = {};
+		function busyHere(id, rec) {
+			if (!recBusy(rec, id, o)) return false;
+			if (!seen[id]) { seen[id] = 1; passed.push({ deviceId: id, name: (rec.name || ''), busy: rec.busy | 0 }); }
+			return true;
+		}
 		var self = String(o.selfId || '');
 		var n = now == null ? Date.now() : now;
 		var w = o.windowMs || DISPATCH_FRESH_MS;
@@ -2290,7 +2352,7 @@
 		if (nom && nom !== self && !exclude[nom]) {
 			var nr = p[nom];
 			if (nr && !recMobileView(nr) && meetsRequire(nr, o.require)
-				&& (n - leaseMs(nr.lastSeen)) <= nomWin) {
+				&& (n - leaseMs(nr.lastSeen)) <= nomWin && !busyHere(nom, nr)) {
 				var presumed = (n - leaseMs(nr.lastSeen)) > w;		// seated on trust, not a fresh beat
 				var nb = String(nr.build || '');
 				var nomStale = !!(cur && nb && nb !== cur);
@@ -2322,6 +2384,7 @@
 				if (!r || recMobileView(r) || !meetsRequire(r, o.require)) continue;
 				if ((n - leaseMs(r.lastSeen)) > w) continue;
 				if (normLabel(r.name) !== pref) continue;
+				if (busyHere(id, r)) continue;
 				byLabel.push({ deviceId: id, name: (r.name || ''), lastSeen: leaseMs(r.lastSeen), build: String(r.build || '') });
 			}
 			// Through freshestWithBuild even for one, so a lone match on a superseded build
@@ -2351,6 +2414,7 @@
 			var r3 = p[id3];
 			if (!r3 || !recRunner(r3) || recMobileView(r3) || !meetsRequire(r3, o.require)) continue;
 			if ((n - leaseMs(r3.lastSeen)) > w) continue;
+			if (busyHere(id3, r3)) continue;
 			runners.push({ deviceId: id3, name: (r3.name || ''), lastSeen: leaseMs(r3.lastSeen), build: String(r3.build || '') });
 		}
 		if (runners.length) return { target: freshestWithBuild(runners, cur), reason: 'runner-posture' };
@@ -2367,6 +2431,7 @@
 			var r2 = p[id2];
 			if (!r2 || recMobileView(r2) || !meetsRequire(r2, o.require)) continue;
 			if (!recGenuine(r2, n, w)) continue;
+			if (busyHere(id2, r2)) continue;
 			desks.push({ deviceId: id2, name: (r2.name || ''), lastSeen: leaseMs(r2.lastSeen), build: String(r2.build || '') });
 		}
 		if (desks.length) return { target: freshestWithBuild(desks, cur), reason: 'other-desktop' };
@@ -2382,6 +2447,14 @@
 	/// per-chat opt-out, the always-on-worker rule, the step-away and posture rules, the
 	/// agentic rule, and the mobile-vs-desktop last-resort split.
 	function autoDispatchDecision(chat, presence, opts, now) {
+		var box = { passed: [] };
+		var d = dispatchDecision(chat, presence, opts, now, box);
+		// The busy peers the election passed over (H1), for the elect row and the tile.
+		d.passed = box.passed;
+		return d;
+	}
+
+	function dispatchDecision(chat, presence, opts, now, box) {
 		var o = opts || {}, c = chat || {};
 		var n = (now == null ? Date.now() : now);
 		var win = o.freshWindowMs || DISPATCH_FRESH_MS;
@@ -2396,7 +2469,9 @@
 			nominatedId:            o.nominatedId,
 			presumeNomineeWindowMs: o.presumeNomineeWindowMs,
 			exclude:                o.exclude,
+			queueOn:                o.queueOn,
 		}, n);
+		box.passed = res.passed || [];
 		var target = res.target;
 		// `runner-posture` is worker-grade: a machine arranged to be the runner is the seat
 		// for every turn exactly as the star is, which is the whole point of arming it.
@@ -2771,6 +2846,7 @@
 		if (nom === String(selfId || '')) return false;	// this device IS the nominee -> claim
 		var rec = (presence || {})[nom];
 		if (!rec) return false;						// nominee absent from presence -> offline
+		if (rec.busy > 0) return false;				// busy nominee -> an idle device claims (H1)
 		var n = now == null ? Date.now() : now;
 		var w = windowMs || DISPATCH_FRESH_MS;
 		return (n - leaseMs(rec.lastSeen)) <= w;	// stand down only while the nominee is FRESH
@@ -3323,7 +3399,21 @@
 	/// for a live foreign claim, a settled or aged-out turn, or a refusal that will not change
 	/// is decided, and the errand goes.
 	function standDownUndecided(why) {
-		return why === 'nominee' || why === 'unread' || why === 'exhausted';
+		return why === 'nominee' || why === 'unread' || why === 'exhausted' || why === 'busy-hold';
+	}
+
+	/// Is another live, idle, non-mobile, servicing desktop beside `self`, one that would
+	/// claim a turn this busy device holds back from?
+	function idleDeskBeside(presence, self, now, windowMs) {
+		var p = presence || {}, w = windowMs || DISPATCH_FRESH_MS;
+		var n = now == null ? Date.now() : now;
+		for (var id in p) {
+			if (!Object.prototype.hasOwnProperty.call(p, id) || id === String(self || '')) continue;
+			var r = p[id];
+			if (!r || recMobileView(r) || r.busy > 0) continue;
+			if (recRunner(r) ? (n - leaseMs(r.lastSeen)) <= w : recGenuine(r, n, w)) return true;
+		}
+		return false;
 	}
 
 	/// Run a lease write, and once more after a pause when the door would not read.
@@ -4067,6 +4157,30 @@
 				trace.push('report');
 			} catch (err) { /* refused either way; the sender's deadline ends it too */ }
 			return { ran: false, why: 'paused', node: String(ph.node || ''), trace: trace };
+		}
+
+		// BUSY (H1, C1). This device is running a turn for another chat, so it would reach
+		// this one only when that ends, and the sender used to wait out its backstop and
+		// then run the turn itself. Decided now instead. When this device is the one the
+		// turn waits on -- the nominee, or with no idle desktop live beside it -- it says
+		// so at once: a `busy` report and the row let go, and the sender runs it. Otherwise
+		// it HOLDS the row and leaves it to the idle device that will claim it. A turn for
+		// the chat already running here is not busy: it queues behind it (O3).
+		var busyN = (!d.allowSelf && d.busyFor) ? busyDepth(d.busyFor(e)) : 0;
+		if (busyN > 0) {
+			var nomB = String(d.nominatedId || '');
+			var mine = nomB ? nomB === String(d.selfId) : !idleDeskBeside(d.presence, d.selfId, leaseNow(leaseClock), d.freshWindowMs);
+			diag('collect busy', 'turn=' + turnId + ' depth=' + busyN + ' -> ' + (mine ? 'ANSWER busy' : 'hold for an idle device'));
+			if (!mine) {
+				trace.push('busy-hold');
+				return { ran: false, why: 'busy-hold', busy: busyN, trace: trace };
+			}
+			trace.push('busy');
+			try {
+				if (d.post) await d.post(reportFor(e, { status: 'busy', by: String(d.selfId || '') }));
+				trace.push('report');
+			} catch (err) { /* the sender's backstop still ends it */ }
+			return { ran: false, why: 'busy', busy: busyN, trace: trace };
 		}
 
 		// D1(c) — DEFER TO THE NOMINATED RUNNER. When the account has named an always-on
@@ -5249,6 +5363,8 @@
 		/// Register the runners the collector hands a verified envelope to. Set by
 		/// daimond.js; absent, `absorb` verifies and drops.
 		onErrand: onErrand,
+		onBusyProbe: onBusyProbe,
+		decideNow: decideNow,
 		onReport: onReport,
 		/// Register the remote-consent handlers: `onAsk` raises a runner's question on
 		/// an attended device; `onGrant` delivers the answer to the awaiting runner.
@@ -5435,6 +5551,7 @@
 		runErrand:  runErrand,
 		/// A stand-down whose errand stays on the relay for one more collect.
 		standDownUndecided: standDownUndecided,
+		busyDepth: busyDepth,
 		/// The retry on an unread door that every lease write in `runErrand` has, for a caller
 		/// that revokes or releases outside it: a write, a read, and the done or released write.
 		retryUnread: retryUnread,

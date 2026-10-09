@@ -408,24 +408,22 @@
 		};
 	}
 
-	/// Write what is known once a turn has ended onto the entry already recorded for
-	/// `turnId` -- the common case, a billed turn whose cost `record()` wrote before
-	/// its duration, outcome and facts were known. `facts` is `{ dur, out }` and the
-	/// turn facts above. Finds the MOST RECENT entry carrying that `tid` and patches
-	/// it in place; a no-op, returning null, when there is none -- the caller then
-	/// `record`s a fresh `outcomeOnly` entry for a turn that billed nothing.
+	/// Write what is known once a turn has ended onto the entry that turn's own `record`
+	/// wrote -- the common case, a billed turn whose cost was known before its duration,
+	/// outcome and facts were. `key` is that entry's `ledgerKey`; `facts` is `{ dur, out }`
+	/// and the turn facts above. A no-op, returning null, when no entry has that key -- the
+	/// caller then `record`s a fresh `outcomeOnly` entry.
 	///
-	/// Best-effort like every other write here: a caller that races this
-	/// against nothing (there is no concurrent write path in a single tab)
-	/// simply finds what `record` last wrote.
-	function patchTurn(turnId, facts) {
-		if (!turnId) return null;
+	/// By key, never by turn id: every run of a handed-off turn (the runner, Run here, a
+	/// take-back, a park recovery) carries the same `tid`, so after a sync "the newest
+	/// entry with this tid" can be another run's (r542 QA A F1).
+	function patchTurn(key, facts) {
+		if (!key) return null;
 		var f = facts || {};
 		var entries = load();
-		var tid = String(turnId);
 		for (var i = entries.length - 1; i >= 0; i--) {
 			var e = entries[i];
-			if (!e || e.tid !== tid) continue;
+			if (!e || ledgerKey(e) !== key) continue;
 			if (typeof f.dur === 'number' && isFinite(f.dur) && f.dur >= 0) {
 				e.dur = Math.round(f.dur);
 			}

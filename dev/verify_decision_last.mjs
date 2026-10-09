@@ -21,6 +21,8 @@
 //   3. THE HAND-OFF TILE held on a blocker is last; with the blocker gone it is back in place.
 //   4. A STALE ASK (asked hours ago) is not awaiting: it stands where it was asked.
 //   5. NOTHING AWAITING: a thread with no ask is unchanged.
+//   6. A QUEUED INTERJECTION (lead ruling, r541 QA B F5): a message the person sent after the ask
+//      does not move it. The card stays last until it is ANSWERED, then returns to its place.
 //
 //   eval "$(bash dev/world.sh N --up)" ; eval "$(bash dev/world.sh N --env)"
 //   node dev/verify_decision_last.mjs
@@ -123,6 +125,15 @@ await putRow(chatRow('dl5', 'DL no ask', [
 	m('assistant', 4, { content: 'Plain reply.' }),
 ]));
 
+// Arm 6: an ask, then a message the person queued during that turn, sent on as the next question.
+await putRow(chatRow('dl6', 'DL interjection', [
+	m('user', 0, { content: 'Start the parcel.' }),
+	m('think_log', 1), tool(2),
+	ask(3, 'In which order?'),
+	m('user', 4, { content: 'Also check the fence.' }),
+	m('assistant', 5, { content: 'Fence checked.' }),
+]));
+
 await page.reload({ waitUntil: 'domcontentloaded' });
 await page.waitForSelector('#id-primary', { timeout: 15000 }).catch(() => {});
 await signInAs(s, 'decision-last');
@@ -207,8 +218,21 @@ await page.waitForTimeout(900);
 u = await read();
 check('5 a thread with no ask is unchanged', u.join('|') === 'user|group:3|reply', JSON.stringify(u));
 
+// ── 6. A QUEUED INTERJECTION does not move the card ──
+check('6 the seeded chat opens', await openByName('DL interjection'));
+await page.waitForTimeout(900);
+u = await read();
+check('6a a later message leaves the open ask LAST',
+	lastIs(u, 'ask:open:In') && u.slice(0, 2).join('|') === 'user|group:2', JSON.stringify(u));
+await shot(s, 'decision-last-interject');
+check('6b the card is a live card', await pickOpt('In', 'Alpha'));
+await page.waitForTimeout(1500);
+u = await read();
+check('6c answered: it returns to where it was asked, before the later message',
+	u.slice(0, 3).join('|') === 'user|group:2|ask:done:In' && u[3] === 'user', JSON.stringify(u));
+
 const errs = errors(s).filter((e) => !/502|\/api\//.test(e));
-check('6 nothing threw', errs.length === 0, errs.slice(0, 2).join(' | '));
+check('7 nothing threw', errs.length === 0, errs.slice(0, 2).join(' | '));
 
 await s.close();
 console.log(`\n${ok.length} passed, ${bad.length} failed`);

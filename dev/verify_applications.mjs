@@ -128,7 +128,7 @@ import net from 'node:net';
 import path from 'node:path';
 import crypto from 'node:crypto';
 import { spawn } from 'node:child_process';
-import { fileURLToPath, pathToFileURL } from 'node:url';
+import { fileURLToPath } from 'node:url';
 import { staleSources, procLog, GWDIR, GWBIN } from './gwbin.mjs';
 import { signInFresh } from './session.mjs';
 
@@ -171,8 +171,6 @@ const SRV_LOG = procLog('verify_applications', 'serve');
 // measures the wrong artefact passes things it never examined.
 const BIN = process.env.DAIMOND_GW_BIN || GWBIN;
 
-const PW = process.env.DAIMOND_PW
-	|| path.join(os.homedir(), '.red-pw/node_modules/playwright-core/index.mjs');
 const CHROME = process.env.DAIMOND_CHROME
 	|| `${process.env.HOME}/.cache/ms-playwright/chromium-1229/chrome-linux64/chrome`;
 
@@ -873,7 +871,7 @@ async function buildIndex(page) {
 	if (!await startGateway(null)) { check('the gateway starts', false); die('no gateway'); }
 	check('the gateway starts', true, BIN);
 
-	const { chromium } = await import(pathToFileURL(PW).href);
+	const { chromium } = await import('./pw.mjs');
 	// DISPLAY is dropped: this session's is an X display forwarded over SSH, a
 	// headless Chrome still consults it, and when nothing answers no frame is
 	// ever produced -- so every rAF-based wait expires over a page that was

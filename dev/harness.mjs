@@ -46,33 +46,14 @@ import fs from 'node:fs';
 import crypto from 'node:crypto';
 import os from 'node:os';
 import path from 'node:path';
-import { fileURLToPath, pathToFileURL } from 'node:url';
+import { fileURLToPath } from 'node:url';
 import { extDev, isExtSource } from './extdev.mjs';
+import { PW, chromium, webkit, firstThatOpens } from './pw.mjs';
 import { testCfg } from './testcfg.mjs';
 
-// playwright-core lives outside the repo, so it is resolved by path, not by
-// package name — nothing here is installed into the app.
-/// Where playwright-core is, since it lives outside the repo and is resolved by
-/// path rather than by package name.
-///
-/// Exported because a file that launches a browser of its own -- rather than
-/// through `open()` -- would otherwise write this path down a second time, and a
-/// second copy of a path is a second thing to move.
+// playwright-core is reached only through ./pw.mjs, whose Chromium keeps its
+// shared memory in /dev/shm; PW is re-exported for the files that name it.
 const HERE0 = path.dirname(fileURLToPath(import.meta.url));
-/// The first of these that can be OPENED wins, because `existsSync` cannot tell
-/// a file from a fence: inside Daimond's run fence `~/.red-pw` stats `true` (the
-/// directory list is permitted) while opening the file is EACCES, so a
-/// stat-based choice picks a path the import can never read. The second
-/// candidate lives INSIDE the granted tree (the oxegen checkout beside this
-/// one), so a daimon's fenced `run` and the hand's unfenced `verify` both reach
-/// it without an environment variable either of them may not have.
-function firstThatOpens(candidates) {
-	for (const p of candidates) {
-		try { fs.closeSync(fs.openSync(p, 'r')); return p; } catch (e) { /* next */ }
-	}
-	return candidates[0];			// nothing opens: return the first, so the
-						// import fails naming IT rather than `undefined`
-}
 
 /// The first of these that can be CREATED (or already written), with the same
 /// open-not-stat discipline as `firstThatOpens`: scratch is written, not read,
@@ -91,16 +72,7 @@ function firstWritable(candidates) {
 	return { dir: candidates[0] };		// nothing writable: name the first in
 						// the failure, never `undefined`
 }
-export const PW = process.env.DAIMOND_PW
-	|| firstThatOpens([
-		path.join(os.homedir(), '.red-pw/node_modules/playwright-core/index.mjs'),
-		// Three levels up from dev/ (daimond → oxedyne → apps) reaches the
-		// oxegen checkout beside this one; two reach oxedyne, where no
-		// node_modules lives, and the fallback would silently pick the
-		// unreadable first candidate instead.
-		path.resolve(HERE0, '../../../oxegen/node_modules/playwright-core/index.mjs'),
-	]);
-const { chromium, webkit } = await import(pathToFileURL(PW).href);
+export { PW };
 
 /// Which engine `open()` launches. Chromium is the default and the only one the
 /// extension (MV3) flows can use; `webkit` is Playwright's bundled JavaScriptCore
@@ -487,7 +459,7 @@ export async function open(opts = {}) {
 	// necessary. Only when the session is going to be pointed at one.
 	if (connect) await requireOwnMock();
 
-	const args = ['--no-sandbox', '--disable-dev-shm-usage'];
+	const args = ['--no-sandbox'];
 	if (Array.isArray(extraArgs)) args.push(...extraArgs);
 	if (extension) {
 		// `ext/` is the SHIPPED extension and names one origin, which is not this
@@ -1189,7 +1161,7 @@ export async function connectMock(s, { baseUrl = MOCK, model = MODEL, apiKey = '
 	if (baseUrl === MOCK) await requireOwnMock();
 	await page.evaluate(async ({ baseUrl, model, apiKey }) => {
 		// Drive the form the user drives, so its own save path is exercised.
-		const open = document.getElementById('settings-btn')
+		const open = document.getElementById('user-row')
 			|| document.querySelector('[data-admin="settings"]')
 			|| document.querySelector('#admin-settings-btn');
 		if (open) open.click();
@@ -1286,7 +1258,7 @@ export async function connectReal(s, tier = 'value') {
 	const cfg = testCfg();
 	const model = cfg.models[tier] || cfg.models.value;
 	await s.page.evaluate(async (c) => {
-		document.getElementById('settings-btn')?.click();
+		document.getElementById('user-row')?.click();
 		await new Promise(r => setTimeout(r, 250));
 		const prov = document.getElementById('cfg-provider');
 		prov.value = 'custom'; prov.dispatchEvent(new Event('change', { bubbles: true }));

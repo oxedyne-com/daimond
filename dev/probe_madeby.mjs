@@ -1,9 +1,5 @@
-// playwright-core lives outside the repo and is resolved by path, exactly as
-// dev/harness.mjs resolves it.
-import os from 'node:os';
-import path from 'node:path';
-const { chromium } = await import(process.env.PW_CORE
-	|| path.join(os.homedir(), '.red-pw/node_modules/playwright-core/index.mjs'));
+// Playwright through dev/pw.mjs, as every browser in dev/ is.
+const { chromium } = await import('./pw.mjs');
 const b = await chromium.launch({ executablePath: process.env.PW_CHROME
 	|| `${process.env.HOME}/.cache/ms-playwright/chromium-1229/chrome-linux64/chrome` });
 const p = await b.newPage();

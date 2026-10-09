@@ -159,7 +159,7 @@ const SURFACES = [
 			await pause(350);
 		} },
 
-	{ id: 'admin-home',    sel: '#admin-body', admin: 'settings-btn' },
+	{ id: 'admin-home',    sel: '#admin-body', admin: 'user-row' },
 	{ id: 'admin-models',  sel: '#admin-body', admin: 'astat-model' },
 	{ id: 'admin-account', sel: '#admin-body', admin: 'astat-account' },
 	{ id: 'admin-tools',   sel: '#admin-body', admin: 'astat-tools' },

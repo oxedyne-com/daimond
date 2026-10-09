@@ -49,7 +49,7 @@ await p.route('**://api.anthropic.com/**', async (route) => {
 // ── The picker offers it ───────────────────────────────────────────────────
 
 await p.evaluate(() => {
-	const open = document.getElementById('settings-btn') || document.querySelector('[data-admin="settings"]');
+	const open = document.getElementById('user-row') || document.querySelector('[data-admin="settings"]');
 	if (open) open.click();
 });
 await p.waitForTimeout(400);

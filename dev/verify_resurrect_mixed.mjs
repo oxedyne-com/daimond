@@ -55,7 +55,7 @@ const ROOT = path.join(os.homedir(), '.cache/daimond/claude-rc-5/f4b/mix' + W1);
 const H = await import(pathToFileURL(path.join(F4T, 'dev/harness.mjs')).href);
 const { cleanDisplayEnv } = await import(pathToFileURL(path.join(F4T, 'dev/display.mjs')).href);
 const { makePagePro } = await import(pathToFileURL(path.join(F4T, 'dev/pro.mjs')).href);
-const { chromium } = await import(pathToFileURL(H.PW).href);
+const { chromium } = await import('./pw.mjs');
 process.env.PLAYWRIGHT_SKIP_VALIDATE_HOST_REQUIREMENTS = '1';
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -129,7 +129,7 @@ async function launch(d) {
 	fs.mkdirSync(d.profile, { recursive: true });
 	d.ctx = await chromium.launchPersistentContext(d.profile, {
 		executablePath: H.CHROME, headless: false, env, viewport: { width: 1200, height: 800 },
-		args: ['--no-sandbox', '--disable-dev-shm-usage', '--headless=new'],
+		args: ['--no-sandbox', '--headless=new'],
 	});
 	await d.ctx.addInitScript(() => {
 		try { localStorage.setItem('daimond-policy', JSON.stringify({ v: 1, expire: 3650, retain: 30, high: 30 })); } catch (e) { /* private */ }

@@ -579,7 +579,7 @@ const SCENES = {
 	/// than an outline, and it lives inside a scroller.
 	models: async () => {
 		await calm();
-		// `#astat-model` -- the "Models · N" row -- not `#settings-btn`, which
+		// `#astat-model` -- the "Models · N" row -- not `#user-row`, which
 		// opens the Admin home and leaves the form unbuilt.
 		await page.click('#astat-model', { force: true }).catch(() => {});
 		await page.waitForTimeout(700);

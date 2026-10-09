@@ -24,10 +24,8 @@
 import os from 'node:os';
 import fs from 'node:fs';
 import path from 'node:path';
-import { pathToFileURL } from 'node:url';
 
-const PW = path.join(os.homedir(), '.red-pw/node_modules/playwright-core/index.mjs');
-const { chromium } = await import(pathToFileURL(PW).href);
+const { chromium } = await import('./pw.mjs');
 const CHROME = `${process.env.HOME}/.cache/ms-playwright/chromium-1229/chrome-linux64/chrome`;
 const OUT = path.join(os.homedir(), '.cache/daimond/guide-shots');
 fs.mkdirSync(OUT, { recursive: true });

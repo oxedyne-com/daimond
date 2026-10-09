@@ -3306,9 +3306,9 @@
 	// crowds a 390px dock, and the head's closer census in index.html is the
 	// record of what wrapping did last time. The view is unmoved and everything
 	// that addresses it by id still works; what changed is the door, which is now
-	// the header cog's "Social settings…" row calling `open('settings')`. The
-	// posting name and the doorbell are settings, and the cog is where this app
-	// keeps settings.
+	// the admin drawer's "Social settings…" row calling `open('settings')`. The
+	// posting name and the doorbell are settings, and that drawer is where this
+	// app keeps settings.
 	//
 	// The count is deliberately not in the heading. A heading that names a number
 	// goes stale the next time somebody adds a chip, and the panel is the only

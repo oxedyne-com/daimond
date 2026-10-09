@@ -1033,8 +1033,23 @@ impl TransportErr {
     /// putting it in front of the error makes the classification a property of
     /// Daimond rather than of Safari.  It is first because the reader -- person or
     /// regex -- should meet the plain sentence before the framing.
+    ///
+    /// WHAT THE ERROR IS TRAVELS IN ITS TAGS, ON THE OUTER ERROR.  `tags()` reads no further than
+    /// the error it is asked, so a stall wrapped here without saying so would arrive as a plain
+    /// network failure, and a refusal's status would be left as digits in prose for the caller to
+    /// guess at.  The agent's overflow test once did guess, and a stall that took 400 seconds
+    /// read as a 400 (r541 QA N2).  So a timeout keeps `Timeout`, and a status a provider answers
+    /// an over-long prompt with -- 400, 413, 422 -- is marked `TooBig`, which says only that size
+    /// MAY be why; [`compact::looks_like_overflow`](crate::agent::compact::looks_like_overflow)
+    /// still weighs it against the prompt.
     fn crossed(self) -> Error<ErrTag> {
-        err!(self.err, "{}", self.reason; IO, Network, Wire)
+        if self.err.tags().contains(&ErrTag::Timeout) {
+            err!(self.err, "{}", self.reason; IO, Network, Wire, Timeout)
+        } else if matches!(self.status, 400 | 413 | 422) {
+            err!(self.err, "{}", self.reason; IO, Network, Wire, TooBig)
+        } else {
+            err!(self.err, "{}", self.reason; IO, Network, Wire)
+        }
     }
 }
 
@@ -1211,7 +1226,8 @@ struct Pulse {
 ///
 /// - no `data:` chunk at all: `first_ms`, 1.5 x the idle ceiling on a first attempt;
 /// - a chunk that carried nothing yet (a role, a provider's name), which shows the provider
-///   took the request and is working: `wide_ms`, 5 x the ceiling;
+///   took the request and is working: `wide_ms`, 5 x the ceiling, but only while some byte
+///   keeps arriving -- `first_ms` after the last one, as if nothing had come;
 /// - real data: `idle_ms`, except while the model is reasoning and has not begun to answer,
 ///   when it is `wide_ms` again.  A model that thinks without streaming its thinking (an
 ///   Anthropic block with the text omitted, or reasoning in bursts minutes apart) is working
@@ -1274,9 +1290,17 @@ impl StreamWatch {
         else                  { self.first_ms }
     }
 
-    // Where the wide limit gives way to plain silence: the idle ceiling after the last byte.
+    // Where the wide limit gives way to plain silence.  The wide limit is for a model that is
+    // working, and a working model sends something: a socket that has gone wholly silent gets
+    // what it would have had with no sign of life at all.  So the reasoning state falls back to
+    // the idle ceiling after the last byte, and a stream that has sent only a chunk with nothing
+    // in it -- a role, a provider's name, Anthropic's `message_start` -- falls back to the
+    // first-chunk ceiling.  Without the second, a dead socket after that one chunk was held
+    // 5 x idle, past the page's worker limit (r541 QA N1).
     fn dead_at(&self) -> u64 {
-        if self.thinking { self.last_byte.saturating_add(self.idle_ms) } else { u64::MAX }
+        if self.thinking                    { self.last_byte.saturating_add(self.idle_ms) }
+        else if self.accepted && !self.any  { self.last_byte.saturating_add(self.first_ms) }
+        else                                { u64::MAX }
     }
 
     // Has the quiet outlasted its limit?
@@ -9734,15 +9758,16 @@ pub mod tests {
         let client = stub_client(port);
         let msgs = [ChatMessage::user("hello".to_string())];
 
-        let e = match client.chat_stream_tools(&msgs, None, &mut |_| {}).await {
+        let raw = match client.chat_stream_tools(&msgs, None, &mut |_| {}).await {
             Ok(_)  => panic!("a 400 must not be reported as success"),
-            Err(e) => fmt!("{}", e),
+            Err(e) => e,
         };
+        let e = fmt!("{}", raw);
         assert!(e.contains("maximum context length"),
             "the provider said why and the error does not: {}", e);
         assert!(e.contains("400"), "{}", e);
         // And that is enough on its own -- no size estimate needed.
-        assert!(crate::agent::compact::looks_like_overflow(&e, 0, 100_000),
+        assert!(crate::agent::compact::looks_like_overflow(&raw, 0, 100_000),
             "the words the provider used were not recognised: {}", e);
     }
 
@@ -10405,10 +10430,16 @@ pub mod tests {
         assert_eq!(w.limit(), 1_500);
         w.heard(1_000);
         assert!(!w.expired(1_499) && w.expired(1_500), "comments moved the first-data deadline");
-        // A data chunk that carried nothing: the provider took the request, so 5 x the ceiling.
+        // A data chunk that carried nothing: the provider took the request, so 5 x the ceiling
+        // while bytes keep arriving, and the first-chunk ceiling after the last byte once they
+        // stop: a dead socket is no more alive for having sent a role (N1).
         w.data(1_000, Pulse { grew: false, thinking: false });
         assert_eq!(w.limit(), 5_000);
-        assert!(!w.expired(4_999) && w.expired(5_000));
+        assert!(!w.expired(2_499) && w.expired(2_500), "a wholly silent socket was held wide");
+        let mut live = w;
+        live.heard(2_400);
+        live.heard(3_800);
+        assert!(!live.expired(4_999) && live.expired(5_000), "keep-alives did not hold the wide limit");
         // Real data, not reasoning: the plain ceiling again, counted from the data.
         w.data(2_000, Pulse { grew: true, thinking: false });
         assert_eq!(w.limit(), 1_000);
@@ -10784,6 +10815,174 @@ pub mod tests {
             assert_eq!(bodies.len(), 1, "the request was sent more than once");
             assert!(!bodies[0].contains(DOC_PNG_B64), "a picture went to a text-only model");
             assert!(bodies[0].contains("model list shows this model as text-only"), "{}", bodies[0]);
+        }
+    }
+
+    // ── QA r541 A1 (Opus): re-QA probes of the T1qa fixes, kept as regressions. ──
+
+    fn a1_role(provider: &str) -> String {
+        fmt!("data: {{\"provider\":\"{}\",\"choices\":[{{\"delta\":{{\"role\":\"assistant\",\"content\":\"\"}}}}]}}\n\n", provider)
+    }
+
+    const A1_ANTH_START: &str = "event: message_start\ndata: {\"type\":\"message_start\",\"message\":{\"usage\":{\"input_tokens\":5,\"output_tokens\":1}}}\n\n";
+    const A1_ANTH_THINK: &str = "event: content_block_start\ndata: {\"type\":\"content_block_start\",\"index\":0,\"content_block\":{\"type\":\"thinking\",\"thinking\":\"\"}}\n\n";
+
+    /// A1-1. A role-only chunk, then a WHOLLY silent socket (no comment, no ping, nothing).  The
+    /// commit's own rule is "a connection gone wholly silent is cut at idle_ms"; at r540 this was
+    /// cut at 1.5 x idle.  At r541 `accepted` grants the wide 5 x limit with no `dead_at`, so the
+    /// dead socket is held 5 x idle.  Expected: the first stall notice within 2.5 s at idle 1 s.
+    #[tokio::test]
+    async fn qa_r541_a1_wholly_silent_after_role_chunk_is_cut_at_the_ceiling() {
+        let (port, _seen) = start_stub(vec![
+            Reply::Stall { chunks: vec![a1_role("Relace")], idle_ms: 9_000 },
+            Reply::answer(),
+        ]).await;
+        let client = stub_client(port);
+        client.set_stream_idle_ms(1_000);
+        let msgs = [ChatMessage::user("hello".to_string())];
+        let t0 = std::time::Instant::now();
+        let mut first_stall: Option<std::time::Duration> = None;
+        let mut sink = |d: Delta<'_>| {
+            if let Delta::Stalled { .. } = d { if first_stall.is_none() { first_stall = Some(t0.elapsed()); } }
+        };
+        let _ = client.chat_stream_tools(&msgs, None, &mut sink).await;
+        let at = first_stall.unwrap_or(std::time::Duration::from_secs(999));
+        assert!(at < std::time::Duration::from_millis(2_500),
+            "a dead socket after a role chunk was held {:?} (5 x idle) instead of being cut at the ceiling", at);
+    }
+
+    /// A1-2. Anthropic: `message_start` (always the first data chunk on that API), then a wholly
+    /// silent socket.  Same gap as A1-1, and it applies to every Anthropic round.
+    #[tokio::test]
+    async fn qa_r541_a1_anthropic_dead_socket_after_message_start_is_cut_at_the_ceiling() {
+        let (port, _seen) = start_stub(vec![
+            Reply::Stall { chunks: vec![A1_ANTH_START.to_string()], idle_ms: 9_000 },
+            Reply::Stall { chunks: vec![A1_ANTH_START.to_string()], idle_ms: 9_000 },
+        ]).await;
+        let client = anth_stub_client(port);
+        client.set_stream_idle_ms(1_000);
+        let msgs = [ChatMessage::user("hello".to_string())];
+        let t0 = std::time::Instant::now();
+        let mut first_stall: Option<std::time::Duration> = None;
+        let mut sink = |d: Delta<'_>| {
+            if let Delta::Stalled { .. } = d { if first_stall.is_none() { first_stall = Some(t0.elapsed()); } }
+        };
+        let _ = client.chat_stream_tools(&msgs, None, &mut sink).await;
+        let at = first_stall.unwrap_or(std::time::Duration::from_secs(999));
+        assert!(at < std::time::Duration::from_millis(2_500),
+            "a dead Anthropic socket after message_start was held {:?} instead of being cut at the ceiling", at);
+    }
+
+    /// A1-3 (no-regression, expected GREEN).  Reasoning, then a provider that really is stalled
+    /// behind endless keep-alives: still cut, at the wide limit (about 5 s at idle 1 s), one
+    /// connection, reasoning kept.
+    #[tokio::test]
+    async fn qa_r541_a1_reasoning_stalled_behind_keepalives_is_still_cut() {
+        let (port, seen) = start_stub(vec![
+            Reply::KeepAlive {
+                first: Some("data: {\"provider\":\"OpenAI\",\"choices\":[{\"delta\":{\"reasoning\":\"hm\"}}]}\n\n".to_string()),
+                every_ms: 150, total_ms: 30_000,
+            },
+            Reply::answer(),
+        ]).await;
+        let client = stub_client(port);
+        client.set_stream_idle_ms(1_000);
+        let msgs = [ChatMessage::user("hello".to_string())];
+        let t0 = std::time::Instant::now();
+        let r = client.chat_stream_tools(&msgs, None, &mut |_d: Delta<'_>| {}).await
+            .unwrap_or_else(|e| panic!("{}", e));
+        let el = t0.elapsed();
+        assert!(r.stalled && connections(&seen) == 1 && r.thinking == "hm", "{:?} {}", r.stalled, connections(&seen));
+        assert!(el >= std::time::Duration::from_millis(4_500) && el < std::time::Duration::from_millis(7_500),
+            "a stalled reasoning round was not cut at the wide limit: {:?}", el);
+    }
+
+    /// A1-4 (no-regression, expected GREEN).  Anthropic thinking block open, then a model that
+    /// really is hung behind endless pings: cut at the wide limit, not held for ever.
+    #[tokio::test]
+    async fn qa_r541_a1_anthropic_thinking_hung_behind_pings_is_still_cut() {
+        let mut chunks = vec![A1_ANTH_START.to_string(), A1_ANTH_THINK.to_string()];
+        for _ in 0..200 { chunks.push("event: ping\ndata: {\"type\": \"ping\"}\n\n".to_string()); }
+        let (port, seen) = start_stub(vec![Reply::Trickle { chunks, every_ms: 150 }]).await;
+        let client = anth_stub_client(port);
+        client.set_stream_idle_ms(1_000);
+        let msgs = [ChatMessage::user("hello".to_string())];
+        let t0 = std::time::Instant::now();
+        let r = client.chat_stream_tools(&msgs, None, &mut |_d: Delta<'_>| {}).await
+            .unwrap_or_else(|e| panic!("{}", e));
+        let el = t0.elapsed();
+        assert!(r.stalled && connections(&seen) == 1, "{:?} {}", r.stalled, connections(&seen));
+        assert!(el >= std::time::Duration::from_millis(4_500) && el < std::time::Duration::from_millis(7_500),
+            "a hung thinking round was not cut at the wide limit: {:?}", el);
+    }
+
+    /// A1-5 (no-regression, expected GREEN).  Thinking open, then a wholly silent socket: cut at
+    /// the plain ceiling (dead_at), about 1 s.
+    #[tokio::test]
+    async fn qa_r541_a1_anthropic_thinking_then_dead_socket_cut_at_idle() {
+        let (port, _seen) = start_stub(vec![Reply::Stall {
+            chunks: vec![A1_ANTH_START.to_string(), A1_ANTH_THINK.to_string()], idle_ms: 9_000 }]).await;
+        let client = anth_stub_client(port);
+        client.set_stream_idle_ms(1_000);
+        let msgs = [ChatMessage::user("hello".to_string())];
+        let t0 = std::time::Instant::now();
+        let r = client.chat_stream_tools(&msgs, None, &mut |_d: Delta<'_>| {}).await
+            .unwrap_or_else(|e| panic!("{}", e));
+        let el = t0.elapsed();
+        assert!(r.stalled, "not stalled");
+        assert!(el < std::time::Duration::from_millis(2_000), "thinking + dead socket held {:?}", el);
+    }
+
+    /// A1-6. F7 makes the stall error's "in N s" the whole turn's wait, so with the shipped 60 s
+    /// ceiling it now runs ~390-700 s and can read "in 400 s" (or 413, 422).  The agent hands every
+    /// failed round's text to `compact::looks_like_overflow`, whose fallback takes a standalone
+    /// 400/413/422 plus a prompt over 4,000 tokens for a context overflow: the conversation is
+    /// folded and the window is LEARNT DOWN (`Fold::Refused` -> `learn_from_refusal`) for the
+    /// session.  The real error text is produced, and only its seconds figure is replaced.
+    #[tokio::test]
+    async fn qa_r541_a1_a_stall_error_is_not_read_as_an_overflow() {
+        let quiet = || Reply::KeepAlive { first: None, every_ms: 150, total_ms: 20_000 };
+        let (port, _seen) = start_stub(vec![quiet(), quiet()]).await;
+        let client = stub_client(port);
+        client.set_stream_idle_ms(1_000);
+        let msgs = [ChatMessage::user("hello".to_string())];
+        let raw = match client.chat_stream_tools(&msgs, None, &mut |_d: Delta<'_>| {}).await {
+            Err(e) => e,
+            Ok(_)  => panic!("expected the did-not-answer error"),
+        };
+        assert!(!crate::agent::compact::looks_like_overflow(&raw, 90_000, 100_000),
+            "a stall error was read as a context overflow: {}", raw);
+        let text = fmt!("{}", raw);
+        let n = text.split(" in ").nth(1).and_then(|t| t.split(' ').next()).unwrap_or("").to_string();
+        assert!(!n.is_empty(), "no seconds figure in: {}", text);
+        let at400 = text.replace(&fmt!(" in {} s", n), " in 400 s");
+        assert!(at400.contains(" in 400 s"), "substitution failed: {}", at400);
+        // The same stall, its figure landing on 400, wrapped as the agent wraps a failed round.
+        let wrapped = err!(raw, "{}", at400; IO, Network, Timeout);
+        assert!(!crate::agent::compact::looks_like_overflow(&wrapped, 90_000, 100_000),
+            "a stall error was read as a context overflow: {}", at400);
+    }
+
+    #[tokio::test]
+    async fn stall_overflow_is_read_from_the_status_not_the_text() {
+        // The fallback still works end to end now that it reads the transport's mark: a 413
+        // from a CDN with a page that says nothing about tokens is an overflow on a big
+        // prompt, and a 401 with the same page is not, though its text holds "413" too.
+        let page = "<html><body><h1>413 Request Entity Too Large</h1></body></html>";
+        for (status, reason, over) in [(413u16, "Request Entity Too Large", true), (401, "Unauthorized", false)] {
+            let (port, _seen) = start_stub(vec![Reply::Http {
+                status, reason, headers: Vec::new(), body: page.to_string(),
+            }]).await;
+            let client = stub_client(port);
+            let msgs = [ChatMessage::user("hello".to_string())];
+            let e = match client.chat_stream_tools(&msgs, None, &mut |_| {}).await {
+                Ok(_)  => panic!("a {} must not be reported as success", status),
+                Err(e) => e,
+            };
+            assert_eq!(crate::agent::compact::looks_like_overflow(&e, 90_000, 100_000), over,
+                "status {}: {}", status, e);
+            assert!(!crate::agent::compact::looks_like_overflow(&e, 500, 100_000),
+                "a small prompt refused is a bad request: {}", e);
         }
     }
 }

@@ -9,7 +9,7 @@ const s = await open({ name: 'realsmoke', connect: false });   // signed in, not
 
 // Drive the Settings form with REAL values (mirrors connectMock, real key).
 await s.page.evaluate(async (c) => {
-  document.getElementById('settings-btn')?.click();
+  document.getElementById('user-row')?.click();
   await new Promise(r => setTimeout(r, 250));
   const prov = document.getElementById('cfg-provider');
   prov.value = 'custom'; prov.dispatchEvent(new Event('change', { bubbles: true }));

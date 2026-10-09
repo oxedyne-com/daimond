@@ -80,11 +80,11 @@ import fs from 'node:fs';
 import http from 'node:http';
 import path from 'node:path';
 import { spawn } from 'node:child_process';
-import { fileURLToPath, pathToFileURL } from 'node:url';
-import { PW, CHROME, scratch } from './harness.mjs';
+import { fileURLToPath } from 'node:url';
+import { CHROME, scratch } from './harness.mjs';
 import * as forge from './forge.mjs';
 
-const { chromium } = await import(pathToFileURL(PW).href);
+const { chromium } = await import('./pw.mjs');
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const WWW  = path.join(HERE, '..', 'www');
@@ -534,7 +534,7 @@ async function run() {
 	const env = Object.assign({}, process.env);
 	delete env.DISPLAY;
 	const browser = await chromium.launchPersistentContext(PROFILE, {
-		executablePath: CHROME, headless: true, args: ['--no-sandbox', '--disable-dev-shm-usage', '--headless=new'],
+		executablePath: CHROME, headless: true, args: ['--no-sandbox', '--headless=new'],
 		env, viewport: { width: 1100, height: 900 },
 	});
 	const page = browser.pages()[0] || await browser.newPage();

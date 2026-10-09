@@ -13,7 +13,7 @@ const r0 = await openState();
 await shot(s, 'adminrail-rest');            // drawer closed, Status strip only
 
 // The cog opens the Admin drawer on its menu.
-await page.click('#settings-btn', { force: true });
+await page.click('#user-row', { force: true });
 await pause(350);
 const r1 = await openState();
 const title1 = await page.$eval('#admin-drawer-title', el => el.textContent);
@@ -38,7 +38,7 @@ await pause(350);
 const r4 = await openState();
 
 // A click outside the rail also closes it (open, then click the stage).
-await page.click('#settings-btn', { force: true });
+await page.click('#user-row', { force: true });
 await pause(300);
 const r5open = await openState();
 await page.mouse.click(760, 400);           // somewhere on the stage

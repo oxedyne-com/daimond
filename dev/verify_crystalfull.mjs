@@ -35,6 +35,7 @@ const state = (p) => p.evaluate(() => {
 		topbar: drawn('.topbar'),
 		rail:   drawn('#panel-rail'),
 		dock:   drawn('.dock'),
+		hdock:  drawn('#handle-dock'),
 		bar:    drawn('.panel.ai .crystal-bar'),
 		frame:  drawn('#crystal-frame-wrap'),
 		body:   drawn('#crystal-body'),
@@ -126,6 +127,9 @@ try {
 	check(on.attr === '1', 'pressing it sets data-cfull');
 	check(!on.topbar && !on.rail && !on.dock, 'the top bar, the rail and the dock go',
 		JSON.stringify({ topbar: on.topbar, rail: on.rail, dock: on.dock }));
+	// #handle-dock is a sibling of <main>, not `.stage > .phandle`, so it needs its own rule (D-20261006-22).
+	check(rest.hdock, 'the dock handle is drawn at rest (so the next check means something)');
+	check(!on.hdock, 'and the dock handle goes with the dock');
 	check(on.btn && on.btn.drawn, 'AND THE WAY OUT IS STILL ON SCREEN');
 	check(on.btn && on.btn.pressed === 'true' && /exit/i.test(on.btn.label || ''),
 		'saying what pressing it will do', JSON.stringify(on.btn));
@@ -138,7 +142,9 @@ try {
 	// there, so a regression fails. (The phone is measured below in its own session.)
 	await p.setViewportSize({ width: 1400, height: 900 });
 	await p.waitForTimeout(600);
-	check((await state(p)).attr === '1', 'still in full screen at 1400x900');
+	const big = await state(p);
+	check(big.attr === '1', 'still in full screen at 1400x900');
+	check(!big.hdock, 'and no dock handle at 1400x900');
 	gutter(await measure(p), '1400x900', true);
 
 	// Escape, from the app's own focus.

@@ -220,14 +220,6 @@
 	.astat-row.astat-btn,
 	.astat-row.astat-sync { padding-top: 9px; padding-bottom: 9px; }
 	.astat-id .user-row { padding: 9px 4px; }
-	.astat-id #settings-btn {
-		min-width: 36px; min-height: 36px; position: relative;
-	}
-	/* Bar-icon's own 36px box (G16), touch floor held by an invisible 44px
-	   overlay, the same way as every other shrunk control this pass. */
-	.astat-id #settings-btn::after {
-		content: ''; position: absolute; top: 50%; left: 50%; width: 44px; height: 44px; transform: translate(-50%, -50%);
-	}
 	.admin-item { padding-top: 10px; padding-bottom: 10px; min-height: 44px; box-sizing: border-box; }
 	.tile-label, .pend-line { padding-top: 6px; padding-bottom: 6px; }
 	/* Steps / collapse, in the chat header: 26px tall is a pointer's target, not

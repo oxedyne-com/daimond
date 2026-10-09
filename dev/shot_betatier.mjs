@@ -23,7 +23,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { spawn } from 'node:child_process';
-import { fileURLToPath, pathToFileURL } from 'node:url';
+import { fileURLToPath } from 'node:url';
 import { requireFreshGateway, procLog, GWDIR, GWBIN, openBeta } from './gwbin.mjs';
 import { signInFresh } from './session.mjs';
 
@@ -42,8 +42,6 @@ const WORK    = path.join(LANE, 'shot_betatier-gw');
 const SHOTS   = path.join(LANE, 'shots');
 const GW_LOG  = procLog('shot_betatier');
 const SRV_LOG = procLog('shot_betatier', 'serve');
-const PW = process.env.DAIMOND_PW
-	|| path.join(os.homedir(), '.red-pw/node_modules/playwright-core/index.mjs');
 const CHROME = process.env.DAIMOND_CHROME
 	|| `${process.env.HOME}/.cache/ms-playwright/chromium-1229/chrome-linux64/chrome`;
 
@@ -115,7 +113,7 @@ async function startGateway(cwd, owner) {
 		console.log('  FAIL the dev server did not serve'); SRV_LOG.report(); cleanup(); process.exit(1);
 	}
 
-	const { chromium } = await import(pathToFileURL(PW).href);
+	const { chromium } = await import('./pw.mjs');
 	// DISPLAY is dropped for the reason dev/harness.mjs drops it: a forwarded X
 	// display that nobody answers leaves headless Chrome producing no frames, so
 	// every rAF-based wait expires over a page that was ready long before.

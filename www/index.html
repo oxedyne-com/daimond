@@ -387,34 +387,25 @@
 				     one that can be acted on is a button that goes there. -->
 				<div class="admin-status" id="admin-status">
 					<div class="astat-row astat-id">
-						<button class="user-row" id="user-row" title="Your Daimond identity" data-i18n-title="admin.identity">
+						<!-- The one way into Settings, on every device: the identity, which
+						     is also what the person reads first. A cog beside it opened the
+						     same panel and was removed as a second door to one room
+						     (D-20261009-11). It answers to "Settings"; its text stays the
+						     identity, so a person sees whose machine this is. -->
+						<button class="user-row" id="user-row" title="Settings" data-i18n-title="admin.settings" aria-label="Settings" data-i18n-aria-label="admin.settings">
 							<span class="user-avatar" id="user-avatar" aria-hidden="true"><img class="mark-ic" src="assets/daimond_mark.svg" alt=""></span>
 							<span class="user-info" id="user-info">Browser-only</span>
 						</button>
 						<!-- Shown ONLY when the summary is a warning (renderStatusSummary), so
 						     a shut section never hides a fault and says nothing otherwise. -->
 						<span class="astat-flag" id="astat-flag" hidden><span class="astat-dot warn" aria-hidden="true"></span><span class="astat-val"></span></span>
-						<!-- The same cog every Diamond tile and every mailbox row wears,
-						     not the ⚙ character. A font glyph is drawn by whichever font
-						     the platform finds it in, at whatever weight and size that
-						     font gives it, so the one cog in the rail's status header
-						     read as a different icon from the cogs directly above it.
-						     The path is `COG_D` in js/daimond.js, which `DaimondUI.cogIcon`
-						     hands to the tiles and to mail.js; this copy is inline because
-						     the button is in the static markup and nothing builds it. Both
-						     must move together if the drawing ever changes.
-						     No size override: `.icon-btn .ic` and `.tile-cog .ic` both take
-						     the 16px default, which is what makes the two identical. -->
-						<button class="icon-btn" id="settings-btn" title="Settings" data-i18n-title="admin.settings" aria-label="Settings" data-i18n-aria-label="admin.settings">
-							<svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 00.3 1.8l.1.1a2 2 0 11-2.8 2.8l-.1-.1a1.7 1.7 0 00-2.9 1.2v.2a2 2 0 11-4 0v-.1a1.7 1.7 0 00-1.1-1.5 1.7 1.7 0 00-1.9.3l-.1.1a2 2 0 11-2.8-2.8l.1-.1a1.7 1.7 0 00-1.2-2.9H2.9a2 2 0 110-4H3a1.7 1.7 0 001.5-1.1 1.7 1.7 0 00-.3-1.9l-.1-.1a2 2 0 112.8-2.8l.1.1a1.7 1.7 0 001.8.3H9a1.7 1.7 0 001-1.5V2.9a2 2 0 114 0V3a1.7 1.7 0 001 1.5 1.7 1.7 0 001.9-.3l.1-.1a2 2 0 112.8 2.8l-.1.1a1.7 1.7 0 00-.3 1.8V9a1.7 1.7 0 001.5 1H21a2 2 0 110 4h-.1a1.7 1.7 0 00-1.5 1z"/></svg>
-						</button>
 						<!-- The eleven machine-status rows fold behind THIS row, which stays
-						     put: the identity and the cog beside it are a phone's only route
-						     to Settings, so this section's header has to survive its own
+						     put: the identity is the only route to Settings, on a phone as
+						     everywhere, so this section's header has to survive its own
 						     fold. Collapsed by default at every width -- measured at 390x844
 						     those rows held 345px, more than either list they took it from,
 						     and at 1440x900 the foot of the rail held 119px, always. A
-						     desktop's toggle is drawn as the cog beside it (`.icon-btn`). -->
+						     desktop's toggle is drawn as an `.icon-btn`. -->
 						<button class="rail-fold icon-btn" data-fold="status" aria-controls="admin-status" aria-expanded="false" title="Open this section" aria-label="Open this section" data-i18n-title="rail.unfold_section" data-i18n-aria-label="rail.unfold_section">
 							<svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M7 10l5 5 5-5"/></svg>
 						</button>

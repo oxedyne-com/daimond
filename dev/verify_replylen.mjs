@@ -356,7 +356,7 @@ check('and it survives a reload', persisted === 8192, `stored maxOut=${persisted
 // The control itself, on screen: a row that says which model it is reading and
 // what that model will accept. Read off the DOM and shot, because a setting
 // nobody can find is not a setting.
-await p.evaluate(() => { document.getElementById('settings-btn')?.click(); });
+await p.evaluate(() => { document.getElementById('user-row')?.click(); });
 await p.waitForTimeout(400);
 await p.evaluate(() => {
 	const row = document.querySelector('.astat-btn#astat-model') || document.getElementById('astat-model');

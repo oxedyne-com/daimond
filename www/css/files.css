@@ -5,7 +5,12 @@
 	background: var(--bg-secondary);
 	border: 1px solid var(--border);
 	border-radius: 10px;
-	overflow: hidden;
+	/* ONE scroller: the whole card. The tree used to be a scroller of its own with
+	   Daimond's files (`.sys-sec`) pinned under it, so the section was never in the
+	   flow of the thing that scrolled: on a short panel the tree was squeezed to a
+	   few pixels and the section stayed fixed, and the last rows of either could not
+	   be reached. Now everything in the card scrolls together and nothing is cut. */
+	overflow-y: auto; overflow-x: hidden;
 	font-size: var(--fs-sm);
 }
 
@@ -348,8 +353,13 @@
 .files-row.cloud .files-name { color: var(--text-secondary); }
 .files-row.cloud .files-size { font-style: italic; }
 
-.files-tree { flex: 1; overflow-y: auto; padding: 4px 0; }
+.files-tree { flex: 1 0 auto; overflow: visible; padding: 4px 0; }
 .files-empty { padding: 16px; text-align: center; color: var(--text-secondary); }
+/* A listing in flight, and a listing that failed: each a row of its own, so neither
+   passes for the empty state ("nothing here"), which it is not. Loading is one role
+   in the tree and in Daimond's files. */
+.files-loading { padding: 16px; text-align: center; color: var(--text-secondary); }
+.files-fail { padding: 16px; text-align: center; color: var(--danger); }
 
 .files-row {
 	display: flex; align-items: center; gap: 8px;
@@ -597,7 +607,7 @@
    the confusion dev/ROOT_SEPARATION.md exists to prevent. Collapsed by default:
    it answers a question ("where is DAIMOND.md?") rather than being where the
    work is. */
-.sys-sec { border-top: 1px solid var(--border); margin-top: 8px; padding-top: 4px; }
+.sys-sec { flex: none; border-top: 1px solid var(--border); margin-top: 8px; padding-top: 4px; }
 .sys-head {
 	display: block; width: 100%; text-align: left; border: 0;
 	cursor: pointer;

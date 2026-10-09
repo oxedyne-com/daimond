@@ -23,7 +23,7 @@ const SEED = fs.readFileSync(`${FIXTURE}/src/lib.rs`, 'utf8');
 
 function connectReal(page) {
   return page.evaluate(async (c) => {
-    document.getElementById('settings-btn')?.click();
+    document.getElementById('user-row')?.click();
     await new Promise(r => setTimeout(r, 250));
     const prov = document.getElementById('cfg-provider'); prov.value='custom'; prov.dispatchEvent(new Event('change',{bubbles:true}));
     await new Promise(r=>setTimeout(r,200));
@@ -38,7 +38,7 @@ const spendOf = (page) => page.evaluate(() => { try { return JSON.parse(localSto
 
 const s = await open({ name: 'wf-codefix', connect: false });
 await s.page.evaluate(async (c)=>{ // inline connectReal (evaluate can't take a fn ref easily)
-  document.getElementById('settings-btn')?.click(); await new Promise(r=>setTimeout(r,250));
+  document.getElementById('user-row')?.click(); await new Promise(r=>setTimeout(r,250));
   const prov=document.getElementById('cfg-provider'); prov.value='custom'; prov.dispatchEvent(new Event('change',{bubbles:true})); await new Promise(r=>setTimeout(r,200));
   const url=document.getElementById('cfg-base-url'); url.value=c.baseUrl; url.dispatchEvent(new Event('input',{bubbles:true})); url.dispatchEvent(new Event('change',{bubbles:true}));
   const key=document.getElementById('cfg-api-key'); key.value=c.apiKey; key.dispatchEvent(new Event('input',{bubbles:true})); key.dispatchEvent(new Event('change',{bubbles:true}));

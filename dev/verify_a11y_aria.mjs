@@ -66,7 +66,6 @@ const note = (what, why) => known.push(`${what}\n        ${why}`);
 // text content. All are written up in dev/a11y_report.md §4 and §10; the census
 // is here so the NEXT one fails this run instead of joining them.
 const GLYPHS = new Set([
-	'button#settings-btn.icon-btn|⚙',
 	'button#collapse-btn.chip-btn|−',
 	'button#chat-send|➤',
 	'button#chat-jump|↑',

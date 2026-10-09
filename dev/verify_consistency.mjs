@@ -710,6 +710,12 @@ async function deskSurfaces() {
 	await ev(() => { const b = document.getElementById('expand-all-btn'); if (b) b.click(); }); await wait(500);
 	for (const f of [0.3, 0.6, 1]) { await ev((f) => { const o = document.getElementById('chat-output'); if (o) o.scrollTop = o.scrollHeight * f; }, f); await wait(250); await grab('transcript_' + f, '#chat-output'); }
 	await ev(() => { const b = document.getElementById('expand-all-btn'); if (b) b.click(); });
+	// r541 QA B F4: the stopped chat, scrolled to its foot, so the left-edge check below sees a stop line and its Continue.
+	await ev(() => { const t = [...document.querySelectorAll('#session-list .chat-box')].find((b) => /Stopped survey/.test(b.textContent));
+		const l = t && t.querySelector('.tile-label'); if (l) l.click(); else if (t) t.click(); });
+	await wait(900); await ev(() => { const o = document.getElementById('chat-output'); if (o) o.scrollTop = o.scrollHeight; }); await wait(300);
+	await grab('transcript_stopped', '#chat-output');
+	await mainChat();
 	const tiles = page.locator('#chat-output .ctile.chat-msg-assistant');
 	if (await tiles.count()) { await tiles.last().hover({ force: true }).catch(() => {}); await wait(300); await grab('tile_hover', '#chat-output', true); await page.mouse.move(...PARK_DESK); }
 	await rateSurfaces('');
@@ -746,7 +752,7 @@ async function deskSurfaces() {
 	// Admin: every view of the drawer, top and bottom, then the forms its rows open.
 	for (const v of ['home', 'settings', 'credits', 'release', 'push']) {
 		await quiet();
-		if (!(await click('#settings-btn'))) { CAP.missing.push(`${CFG}/admin_${v}`); continue; }
+		if (!(await click('#user-row'))) { CAP.missing.push(`${CFG}/admin_${v}`); continue; }
 		await wait(600);
 		await ev((v) => { try { window.DaimondAdmin[v](); } catch (e) {} }, v); await wait(700);
 		await ev(() => document.querySelectorAll('#admin details').forEach((d) => { d.open = true; }));
@@ -755,7 +761,7 @@ async function deskSurfaces() {
 		await grab('admin_' + v + '_end', '#admin');
 	}
 	for (const re of ['^Change name', '^Change passphrase', '^Set up git push', '^Edit the Chat prompt', '^Forget this identity', '^Social settings']) {
-		await overlay('form_' + re.replace(/\W+/g, '').slice(0, 16), async () => { await click('#settings-btn'); await wait(600); await ev(() => { try { window.DaimondAdmin.home(); } catch (e) {} }); await wait(400); return clickText('#admin .admin-item', re); });
+		await overlay('form_' + re.replace(/\W+/g, '').slice(0, 16), async () => { await click('#user-row'); await wait(600); await ev(() => { try { window.DaimondAdmin.home(); } catch (e) {} }); await wait(400); return clickText('#admin .admin-item', re); });
 	}
 	await quiet();
 	// Every dock and stage panel on its own beside the chat.
@@ -858,7 +864,7 @@ async function phoneSurfaces(wk) {
 	}
 	await quiet();
 	await ev(() => { try { window.DaimondPanels.show('ai'); } catch (e) {} }); await wait(300);
-	for (const [name, sel, drawer] of [['p_menu_settings', '#settings-menu-btn'], ['p_admin', '#settings-btn', 1], ['p_dlg_newdiamond', '#new-diamond-btn', 1], ['p_menu_handmode', '#hand-mode-chip'], ['p_dlg_chatcog', '#session-list .chat-box .tile-cog', 1]]) {
+	for (const [name, sel, drawer] of [['p_menu_settings', '#settings-menu-btn'], ['p_admin', '#user-row', 1], ['p_dlg_newdiamond', '#new-diamond-btn', 1], ['p_menu_handmode', '#hand-mode-chip'], ['p_dlg_chatcog', '#session-list .chat-box .tile-cog', 1]]) {
 		await overlay(name, async () => { if (drawer) { await click('#drawer-btn'); await wait(700); } return click(sel); });
 	}
 	await quiet();
@@ -1086,6 +1092,22 @@ async function seed() {
 	// Rating U5b (lane G): three models in the ledger, an hour apart, so the Models page holds a row for each (the Trust column's three states).
 	await ev((a) => { const L = window.DaimondLedger; if (!L) return; a.models.forEach((m, i) => L.record({ ts: Date.now() - (i + 1) * 3600e3, model: m, provider: i ? 'openrouter' : 'fireworks',
 		promptTokens: 4200 + 300 * i, completionTokens: 900 + 100 * i, durationMs: 8000 + 900 * i, outcome: 'completed', turnId: 'gate-trust-' + i })); }, { models: STEER_MODELS });
+	// r541 QA B F4: a chat whose last turn ran out its lease, so a transcript surface holds a stop line and its Continue. Put
+	// straight into the chat store (the same `renderHistory` a reload draws), since no mock turn can be made to stop that way.
+	await ev((now) => new Promise((res, rej) => {
+		const m = (role, i, x) => Object.assign({ role, mid: 'st' + i, ts: now + i, content: role + ' ' + i }, x || {});
+		const req = indexedDB.open('daimond-chats');
+		req.onsuccess = () => { const t = req.result.transaction('chats', 'readwrite');
+			t.objectStore('chats').put({ id: 'cons-stopped', name: 'Stopped survey', model: 'mock/fast', provider: 'mock', status: 'active',
+				promptTokens: 1, completionTokens: 1, cachedTokens: 0, costUsd: 0, prevPrompt: 0, prevCompletion: 0, prevCached: 0, prevCost: 0, lastPrompt: 0,
+				updatedAt: now - 60000, messages: [
+					m('user', 0, { content: 'Survey the fence line.' }), m('think_log', 1),
+					m('tool_log', 2, { name: 'file_list', args: '{"path":"."}', outcome: 'done' }),
+					m('assistant', 3, { content: 'The north side is sound. The east side' }),
+					m('end_log', 4, { how: 'stopped', why: 'lease_cap', offered: 30, rounds: 3, calls: 1 })] });
+			t.oncomplete = () => res(); t.onerror = () => rej(t.error); };
+		req.onerror = () => rej(req.error);
+	}), Date.now() - 120000);
 	await page.reload(); await wait(1500);
 	const tagCount = await ev(() => document.querySelectorAll('#panel-rail .session-box-tags .tag-chip').length);
 	if (tagCount < 10) { log(`seed: tags did not land (${tagCount} chips, want >= 10)`); await s.close().catch(() => {}); process.exit(3); }
@@ -1271,10 +1293,10 @@ const ROLES = [
 	['disclosure',      'sentence', (it) => it.ctrl && (has(it, 'tagf-toggle') || has(it, 'models-prov-head'))],
 	['toggle-option',   'sentence', (it) => it.ctrl && (has(it, 'dview-btn') || within(it, /\.seg\b|\.size-row|-toggle\b|\.files-scope|\.imp-chips|\.net-row|\.tile-dlg-seg|\.files-mode\b/) && !has(it, 'files-mode-btn') || has(it, 'grid-opt'))],
 	['composer-button', 'none',     (it) => it.ctrl && (within(it, /chat-input-bar|msheet-ask/) && !/^(input|textarea)$/.test(it.tag))],
-	// G16: the bar's own icon-only tools (hamburger, gear, section fold) are a
+	// G16: the bar's own icon-only tools (hamburger, section fold) are a
 	// role of their own -- 30px on desk, 36px on phone -- ahead of `head-tool`,
 	// whose regex otherwise claims `.rail-fold` for a row it does not belong to.
-	['bar-icon',        'none',     (it) => it.ctrl && (it.id === 'drawer-btn' || it.id === 'settings-btn' || has(it, 'rail-fold'))],
+	['bar-icon',        'none',     (it) => it.ctrl && (it.id === 'drawer-btn' || has(it, 'rail-fold'))],
 	['head-tool',       'title',    (it) => it.ctrl && within(it, /chead-right|railhead-acts|(files|mail|spend|trash|pending|agents|top)-actions(\.|$)|files-view-head|^div\.railhead($|\.)|pptw-head/)],
 	// The "Go to a panel" gallery is a padded search-result row, not a plain
 	// text menu entry -- it fell into `menu-item` only through the generic
@@ -1623,6 +1645,18 @@ function report() {
 		for (const x of xs) { const near = xs.filter((y) => y !== x && Math.abs(y - x) <= 8 && (cnt.get(y) > cnt.get(x) || cnt.get(y) === cnt.get(x) && y < x));
 			if (!near.length) continue; const to = near.sort((a, b) => cnt.get(b) - cnt.get(a))[0];
 			for (const a of L.filter((a) => a.cmpx === x)) addL({ kind: 'text-edge', cfg: cfgOf(a.surface), canon: 'x ' + to, v: 'x ' + x, sig: a.sig, text: a.text.slice(0, 30), surfaces: [a.surface.split('/')[1]], role: a.roleName, panel: a.panel }); }
+	}
+	// r541 QA B F4: a stop line and its Continue are transcript text, so their text starts on the tiles' text edge (the mode of the
+	// first-letter x of the tile paragraphs on that surface), within 1px. The G13 exclusion above skips tile text, so this is its own
+	// comparison. A seeded stopped surface that drew no stop line or no Continue is a fault: the check would otherwise pass on nothing.
+	{ const bySurf = new Map(); for (const it of items) { if (!it.view || it.tx == null) continue;
+			const k = /\bend-line\b/.test(it.sig) ? 'line' : /\bti-continue\b/.test(it.sig) && within(it, /chat-msg-ended/) ? 'go' : it.tag === 'p' && within(it, /ctile-body/) ? 'tile' : null;
+			if (!k) continue; if (!bySurf.has(it.surface)) bySurf.set(it.surface, { line: [], go: [], tile: [] }); bySurf.get(it.surface)[k].push(it); }
+		const stopSurfs = new Set(items.filter((it) => /\/transcript_stopped$/.test(it.surface)).map((it) => it.surface));
+		for (const surf of stopSurfs) { const g = bySurf.get(surf); if (!g || !g.line.length || !g.go.length) addL({ kind: 'stop-edge', cfg: cfgOf(surf), canon: 'a stop line and its Continue', v: g && g.line.length ? 'no Continue' : 'no stop line', sig: '.chat-msg-ended', text: 'the seeded stopped chat', surfaces: ['transcript_stopped'], role: 'body-text', panel: 'page' }); }
+		for (const [surf, g] of bySurf) { const ends = [...g.line, ...g.go]; if (!ends.length) continue;
+			const [edge] = g.tile.length ? modeOf(g.tile.map((a) => a.tx)) : [null];
+			for (const a of ends) if (edge == null || Math.abs(a.tx - edge) > 1) addL({ kind: 'stop-edge', cfg: cfgOf(surf), canon: edge == null ? 'a tile text edge' : 'x ' + edge, v: 'x ' + a.tx, sig: a.sig, text: a.text.slice(0, 30), surfaces: [surf.split('/')[1]], role: a.roleName, panel: a.panel }); }
 	}
 	// r535 U3 (D-13): one white space above a section head, one under a title row. A head more than 1.5px off its mode fails; ALLOW names the
 	// exempt ones with `p: ['section-gap']` or `['head-gap']`. Measured on every captured item, not the deduped instances: it is geometry.
@@ -2020,7 +2054,7 @@ async function vSetup(kind) {
 		await wait(1000); await ev(() => { const l = document.querySelector('.tile-dlg-card [data-steer-list]'); if (l) l.scrollIntoView({ block: 'center' }); }); await wait(300);
 	}
 	if (kind === 'newdia') { await click('#new-diamond-btn'); await wait(700); }
-	if (kind === 'admin') { await click('#settings-btn'); await wait(700); await ev(() => { try { window.DaimondAdmin.home(); } catch (e) {} }); await wait(500); }
+	if (kind === 'admin') { await click('#user-row'); await wait(700); await ev(() => { try { window.DaimondAdmin.home(); } catch (e) {} }); await wait(500); }
 	if (['cog', 'newdia', 'admin', 'ratepop', 'headmore', 'filepop', 'steeredit', 'steercog'].includes(kind)) { const ov = kind === 'admin' ? '#admin' : await topOverlay(); await ev((q) => { window.__vl = window.__vl || {}; window.__vl.ov = q && document.querySelector(q); }, ov); }
 }
 async function vShot(name, clip) {

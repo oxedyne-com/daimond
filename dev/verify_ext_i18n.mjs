@@ -27,8 +27,7 @@ import fs from 'node:fs';
 import http from 'node:http';
 import { pathToFileURL } from 'node:url';
 
-const PW = path.join(os.homedir(), '.red-pw/node_modules/playwright-core/index.mjs');
-const { chromium } = await import(pathToFileURL(PW).href);
+const { chromium } = await import('./pw.mjs');
 const CHROME = `${process.env.HOME}/.cache/ms-playwright/chromium-1229/chrome-linux64/chrome`;
 import { fileURLToPath } from 'node:url';
 // Chromium's ozone platform is chosen by autodetection and prefers Wayland whenever
@@ -191,7 +190,7 @@ function launch(profile) {
 	fs.mkdirSync(profile, { recursive: true });
 	return chromium.launchPersistentContext(profile, {
 		executablePath: CHROME, headless: false,
-		args: ['--no-sandbox', '--disable-dev-shm-usage',
+		args: ['--no-sandbox',
 			`--disable-extensions-except=${EXT_DEV}`, `--load-extension=${EXT_DEV}`],
 		viewport: { width: 1280, height: 900 },
 	});
@@ -379,7 +378,7 @@ try {
 
 	b = await chromium.launchPersistentContext(P2, {
 		executablePath: CHROME, headless: false,
-		args: ['--no-sandbox', '--disable-dev-shm-usage',
+		args: ['--no-sandbox',
 			`--disable-extensions-except=${EXT_DEV}`, `--load-extension=${EXT_DEV}`],
 		viewport: { width: 1280, height: 900 },
 	});

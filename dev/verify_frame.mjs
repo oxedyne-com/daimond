@@ -295,7 +295,7 @@ const still = async (what, before) => {
 	for (const h of [700, 940, 1100]) {
 		await page.setViewportSize({ width: 1440, height: h });
 		await sleep(500);
-		await page.evaluate(() => { const b = document.getElementById('settings-btn'); if (b && !document.getElementById('admin').classList.contains('admin-open')) b.click(); });
+		await page.evaluate(() => { const b = document.getElementById('user-row'); if (b && !document.getElementById('admin').classList.contains('admin-open')) b.click(); });
 		await sleep(500);
 		const said = { h, spill: await spill(), close: await seen('#admin-close'), plus: await seen('#new-diamond-btn') };
 		if (said.spill > 0 || said.close !== 'whole' || said.plus !== 'whole') bad.push(JSON.stringify(said));

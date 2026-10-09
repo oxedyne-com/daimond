@@ -29,9 +29,7 @@ import fs from 'node:fs';
 import http from 'node:http';
 import { pathToFileURL } from 'node:url';
 
-const PW = process.env.DAIMOND_PW
-	|| path.join(os.homedir(), '.red-pw/node_modules/playwright-core/index.mjs');
-const { chromium } = await import(pathToFileURL(PW).href);
+const { chromium } = await import('./pw.mjs');
 const CHROME = process.env.DAIMOND_CHROME
 	|| `${process.env.HOME}/.cache/ms-playwright/chromium-1229/chrome-linux64/chrome`;
 
@@ -261,7 +259,7 @@ register({ chunks: 3, caps: ['fence:none', 'root:/tmp'] });
 const b = await chromium.launchPersistentContext(PROFILE, {
 	executablePath:	CHROME,
 	headless:	false,
-	args: ['--no-sandbox', '--disable-dev-shm-usage',
+	args: ['--no-sandbox',
 		`--disable-extensions-except=${EXT_DEV}`, `--load-extension=${EXT_DEV}`],
 	viewport: { width: 1200, height: 800 },
 });

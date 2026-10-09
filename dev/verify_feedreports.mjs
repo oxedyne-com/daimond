@@ -27,17 +27,14 @@
 //
 //   node dev/verify_feedreports.mjs
 
-import os from 'node:os';
 import path from 'node:path';
 import { spawn } from 'node:child_process';
-import { fileURLToPath, pathToFileURL } from 'node:url';
+import { fileURLToPath } from 'node:url';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.join(HERE, '..');
 const APP  = process.env.DAIMOND_APP || `http://localhost:${process.env.DAIMOND_PORT || 8777}`;
 
-const PW = process.env.DAIMOND_PW
-	|| path.join(os.homedir(), '.red-pw/node_modules/playwright-core/index.mjs');
 const CHROME = process.env.DAIMOND_CHROME
 	|| `${process.env.HOME}/.cache/ms-playwright/chromium-1229/chrome-linux64/chrome`;
 
@@ -174,7 +171,7 @@ async function rowInfo(page, id) {
 	check('dev server serves /console/', serveUp);
 	if (!serveUp) { cleanup(); console.log(`\n${ok.length} passed, ${bad.length} failed`); process.exit(1); }
 
-	const { chromium } = await import(pathToFileURL(PW).href);
+	const { chromium } = await import('./pw.mjs');
 	const browser = await chromium.launch({ executablePath: CHROME, headless: true, args: ['--no-sandbox'] });
 	try {
 		const page = await browser.newPage({ viewport: { width: 1400, height: 1000 } });

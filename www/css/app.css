@@ -719,7 +719,6 @@ body.resizing-v { cursor: row-resize; user-select: none; -webkit-user-select: no
    here, so the ring is painted inside the control's own box and no ancestor's
    overflow can take it. */
 #user-row:focus-visible,
-#settings-btn:focus-visible,
 #spend-row:focus-visible,
 .astat-row:focus-visible,
 .models-prov-head:focus-visible {
@@ -1267,6 +1266,17 @@ body.resizing-v { cursor: row-resize; user-select: none; -webkit-user-select: no
    button on a line of its own, as the interrupted footer does -- not a wrap that happens
    to break between them. */
 .chat-msg-ended.has-continue { display: flex; flex-direction: column; align-items: flex-start; gap: 6px; }
+/* A STOP IS TRANSCRIPT TEXT, NOT FURNITURE (r541 QA B, F3): a turn cut short -- stopped,
+   paused, the step or spend limit -- was set in the timestamp register above and the owner
+   did not see it. It reads at the tiles' body size, in their ink, and its words start on
+   their text edge: a tile's 1px frame and its body's inline padding (F4). Still a plain
+   line: no box, no outline, no bar. */
+.chat-msg-ended.ended-stop {
+	padding-inline-start: calc(1px + var(--ct-pad-x));
+	font-size: var(--fs-base);
+	line-height: 1.55;
+	color: var(--text-primary);
+}
 /* The same fact on a worker's tile, which is not a thread: it rides with the
    vision note, in the app's own voice rather than the worker's. */
 .acard .anote.aended { color: var(--text-muted); }
@@ -1464,6 +1474,7 @@ button.tag-pool { cursor: pointer; }
 :root[data-cfull] #panel-rail,
 :root[data-cfull] #handle-rail,
 :root[data-cfull] .dock,
+:root[data-cfull] #handle-dock,
 :root[data-cfull] .stage > .phandle,
 :root[data-cfull] .stage > .panel:not(.ai),
 :root[data-cfull] .panel.ai .chat-input-bar,
@@ -4719,7 +4730,8 @@ details.md-fold > .md-fold-body > :last-child { margin-bottom: 0; }
 .ctile.sel, .crollup.sel { background: color-mix(in srgb, var(--accent) 12%, var(--bg-secondary)); }
 
 /* The body. */
-.ctile-body { padding: 1px 12px 10px; font-size: var(--fs-base); color: var(--text-primary); line-height: 1.55; }
+.chat-output { --ct-pad-x: 12px; }			/* a tile body's inline padding; a stop line keys its edge to it */
+.ctile-body { padding: 1px var(--ct-pad-x) 10px; font-size: var(--fs-base); color: var(--text-primary); line-height: 1.55; }
 .ctile.collapsed > .ctile-body { display: none; }
 /* A folded turn keeps its question on screen — the whole point of the collapse
    is to leave what you asked. So the You tile's body never hides. */

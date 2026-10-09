@@ -126,7 +126,7 @@ await grab('vocab-composer.png',  '#panel-ai .chat-input-bar', { pad: 8 });
 await grab('vocab-spendrow.png',  '#spend-row', { pad: 10 });
 
 // ── The admin panel ──────────────────────────────────────────────────
-await p.evaluate(() => { const b = document.getElementById('settings-btn'); if (b) b.click(); });
+await p.evaluate(() => { const b = document.getElementById('user-row'); if (b) b.click(); });
 await pause(900);
 await p.evaluate(() => { const b = document.getElementById('admin-close'); if (b) b.click(); });
 await pause(500);

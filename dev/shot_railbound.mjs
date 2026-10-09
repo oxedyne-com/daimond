@@ -27,7 +27,7 @@ const shot = async (name, sel, scale = 1.5) => {
 for (const vh of [700, 900, 1100]) {
 	await p.setViewportSize({ width: 1440, height: vh });
 	await sleep(500);
-	await p.evaluate(() => { const b = document.getElementById('settings-btn'); if (b && !document.getElementById('admin').classList.contains('admin-open')) b.click(); });
+	await p.evaluate(() => { const b = document.getElementById('user-row'); if (b && !document.getElementById('admin').classList.contains('admin-open')) b.click(); });
 	await sleep(500);
 	await shot('railbound-' + vh, '.panel.rail');
 	await p.evaluate(() => { try { DaimondAdmin.close(); } catch (e) {} });

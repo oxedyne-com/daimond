@@ -1714,10 +1714,13 @@ impl Standing {
 
 /// A crystal with `open[]` taken out, and what it held -- or nothing where there is nothing to do.
 ///
-/// `None` where the crystal is empty, will not parse, is not one object, or has no `open` key.
+/// `None` where the crystal is empty, is not valid JSON, is not one object, or has no `open` key.
 /// Those are one answer rather than four because the caller does one thing with all of them:
 /// leaves the file alone.  In particular a crystal a daimon left half-written comes back `None`
 /// and is not rewritten, because the turn that has to mend it must see exactly what it left.
+/// "Not valid JSON" is [`crystal_json_fault`]'s rule, not the decoder's: the decoder reads a
+/// byte order mark into the first key and the re-encoded text would then parse, so the fault
+/// would be buried where nothing reports it (r541 QA A2, F4).
 ///
 /// Only string entries are carried over.  A malformed one is rendered as its JSON, which is what
 /// a reader of `REQUIREMENTS.md` can then act on, rather than dropped.
@@ -1725,8 +1728,11 @@ impl Standing {
 /// # Arguments
 /// * `json` - The crystal exactly as it sits on disk.
 pub fn crystal_without_open(json: &str) -> Option<(String, Vec<String>)> {
+    if crystal_json_fault(json).is_some() {
+        return None;
+    }
     let cfg = crate::agent::compact::json_cfg();
-    let mut map = match Dat::decode_string_with_config(json.trim(), &cfg) {
+    let mut map = match Dat::decode_string_with_config(crystal_decode_text(json), &cfg) {
         Ok(Dat::Map(m)) => m,
         _               => return None,
     };
@@ -2793,6 +2799,134 @@ pub fn crystal_hot_refusal(new_text: &str, old_text: &str, standing_hot: usize) 
     None
 }
 
+// The moves that make room in a hot part, said with its first refusal (D-29), and what happens
+// to the write after it.
+#[cfg(any(target_arch = "wasm32", test))]
+const HOT_ROOM_MOVES: &str = " To make room: retire finished items, move detail to a file \
+    beside the crystal and link it, condense what stays, or move a section to cold. If the next \
+    write is still over, the largest hot section is moved to cold for you and the write lands.";
+
+/// What a Diamond's capped-file door does with one write.
+#[derive(Debug, Clone, PartialEq)]
+pub enum CapDoor {
+    Pass,
+    Refuse {
+        msg: String,
+        hot: bool,	// the hot-part ceiling, the one refusal that recurs into a demote
+    },
+    Demoted {
+        text:  String,		// the write as it lands
+        moved: Vec<String>,	// headings of the sections now cold
+    },
+}
+
+/// The door both file tools ask, with the Diamond's count of hot-part refusals since its last
+/// crystal write that landed.
+///
+/// **The SECOND refusal does the move itself.**  A daimon refused on the hot part was seen to
+/// send the same over-budget crystal again and again, each turn paying for the whole rewrite and
+/// landing nothing.  The first refusal names the moves that make room; when the next write is
+/// still over, the largest hot sections go cold until the hot part fits, and the write lands --
+/// cold is not deleted, it is one outline line away.
+///
+/// # Arguments
+/// * `hot_refusals` - Hot-part refusals of this Diamond's crystal since one last landed, in this
+///   turn or the ones before it.
+#[cfg(any(target_arch = "wasm32", test))]
+pub fn diamond_cap_door(
+    path:         &str,
+    new_text:     &str,
+    old_text:     &str,
+    standing_hot: usize,
+    hot_refusals: u32,
+)
+    -> CapDoor
+{
+    let hot_first = is_crystal_data_path(path)
+        && !crystal_write_refused(new_text.len(), old_text.len());
+    if hot_first {
+        if let Some(msg) = crystal_hot_refusal(new_text, old_text, standing_hot) {
+            if hot_refusals == 0 {
+                return CapDoor::Refuse { msg: refusal_line(&fmt!("{}{}", msg, HOT_ROOM_MOVES)),
+                    hot: true };
+            }
+            let demoted = crystal_demote_to_fit(new_text, crystal_hot_room(standing_hot));
+            return match demoted {
+                Some((text, moved)) => match diamond_cap_refusal(path, &text, old_text, standing_hot) {
+                    None      => CapDoor::Demoted { text, moved },
+                    Some(msg) => CapDoor::Refuse { msg, hot: true },
+                },
+                // Nothing hot left to move, so only the daimon can shorten it.
+                None => CapDoor::Refuse { msg: refusal_line(&msg), hot: true },
+            };
+        }
+    }
+    match diamond_cap_refusal(path, new_text, old_text, standing_hot) {
+        Some(msg) => CapDoor::Refuse { msg, hot: false },
+        None      => CapDoor::Pass,
+    }
+}
+
+/// Mark the largest hot sections cold until the crystal's hot part fits `cap`, with the headings
+/// moved.
+///
+/// Never `title` or `summary`, which are hot by name rather than by flag.  Nothing where the text
+/// is not one object with sections, where it already fits, or where every section is cold and it
+/// still does not.  Re-encoded through `Dat`, as [`crystal_without_open`] is, so key order is the
+/// decoder's.
+pub fn crystal_demote_to_fit(json: &str, cap: usize) -> Option<(String, Vec<String>)> {
+    let cfg = crate::agent::compact::json_cfg();
+    let mut map = match Dat::decode_string_with_config(crystal_decode_text(json), &cfg) {
+        Ok(Dat::Map(m)) => m,
+        _               => return None,
+    };
+    let key = Dat::Str(fmt!("sections"));
+    let mut secs = match map.remove(&key) {
+        Some(Dat::List(v)) => v,
+        _                  => return None,
+    };
+    let mut moved: Vec<String> = Vec::new();
+    loop {
+        let mut whole = map.clone();
+        whole.insert(key.clone(), Dat::List(secs.clone()));
+        let text = Dat::Map(whole).json().ok()?;
+        if crystal_split(&text, cap).ok()?.hot_bytes <= cap {
+            return match moved.is_empty() {
+                true  => None,
+                false => Some((text, moved)),
+            };
+        }
+        let big = secs.iter().enumerate()
+            .filter(|(_, s)| crystal_hot_flag(s))
+            .max_by_key(|(_, s)| crystal_bytes(s))
+            .map(|(i, _)| i)?;
+        moved.push(crystal_demote(&mut secs[big]));
+    }
+}
+
+/// Make one section cold -- `"hot": false` and no `!` on its heading -- and give its heading.
+fn crystal_demote(sec: &mut Dat) -> String {
+    let heading = crystal_heading(sec);
+    let bare = heading.trim_start().trim_start_matches('!').trim_start().to_string();
+    if let Dat::Map(m) = sec {
+        m.insert(Dat::Str(fmt!("hot")), Dat::Bool(false));
+        if bare != heading {
+            m.insert(Dat::Str(fmt!("heading")), Dat::Str(bare.clone()));
+        }
+    }
+    bare
+}
+
+/// The line a demoted write leads its result with, which the user reads as well as the daimon.
+pub fn hot_demote_said(moved: &[String]) -> String {
+    let names: Vec<String> = moved.iter().map(|h| fmt!("'{}'", h)).collect();
+    let noun = match moved.len() {
+        1 => "section",
+        _ => "sections",
+    };
+    fmt!("Moved {} {} out of the always-present part to make room.\n", noun, names.join(", "))
+}
+
 // ┌───────────────────────────────────────────────────────────────┐
 // │ A crystal that does not parse                                  │
 // └───────────────────────────────────────────────────────────────┘
@@ -3147,6 +3281,10 @@ pub fn crystal_invalid_refusal(path: &str, new_text: &str) -> Option<String> {
 /// bare "not valid JSON" gave a daimon no reason to think its own hunk was fine and the file was
 /// already broken elsewhere -- so it went looking for the fault in what it had just written.
 ///
+/// The place to mend is `now`, the fault the edit would leave, in the edited text's lines;
+/// `was` is background.  Pointing at `was` sent a daimon whose edit had mended it back to that
+/// place, and one that obeyed re-sent the same edit to its round cap (r541 QA A2, F2).
+///
 /// # Arguments
 /// * `path` - The workspace-relative path being edited.
 /// * `old_text` - The file as the edit found it.
@@ -3164,10 +3302,10 @@ pub fn crystal_edit_refusal(path: &str, old_text: &str, new_text: &str) -> Optio
         None    => return crystal_invalid_refusal(path, new_text),
     };
     Some(refusal_line(&fmt!(
-        "crystal.json was already invalid before this edit ({}) and the edit left it not valid \
-        JSON ({}) -- so this edit was NOT made and the file on disk is as it was. Mend the \
-        place the first fault names in the same edit, or write the complete crystal again as ONE \
-        JSON object.", was, now)))
+        "crystal.json was already invalid before this edit ({}), and the edit would leave it not \
+        valid JSON ({}) -- so this edit was NOT made and the file on disk is as it was. \
+        Mend the place named last, which is where the text as this edit leaves it breaks, in the \
+        same edit, or write the complete crystal again as ONE JSON object.", was, now)))
 }
 
 /// What `capture` with `in:"crystal"` says when it has nothing real to draw.
@@ -17598,7 +17736,7 @@ impl Tool {
     }
 
     /// Does a `capture` call draw a Diamond's own page (`in:"crystal"`) rather than the app's view?
-    fn capture_in_crystal(args_json: &str) -> bool {
+    pub(crate) fn capture_in_crystal(args_json: &str) -> bool {
         extract_json_string(args_json, "in").map_or(false, |s| s.trim() == "crystal")
     }
 
@@ -18244,6 +18382,48 @@ impl Tool {
     ///
     /// # Arguments
     /// * `path` - A workspace-relative path under `diamonds/<id>/`.
+    /// A write to one of a Diamond's capped files through [`diamond_cap_door`]: what lands and
+    /// the line that leads the result, or the refusal as `tool`'s error.  Counts a hot-part
+    /// refusal against the Diamond, so the next over-budget write is demoted rather than refused.
+    #[cfg(target_arch = "wasm32")]
+    async fn cap_door(
+        ctx:  &ToolContext,
+        tool: &str,
+        path: &str,
+        new:  String,
+        old:  &str,
+    )
+        -> Outcome<(String, String)>
+    {
+        let id = diamond_of_path(path);
+        let prior = match is_crystal_data_path(path) && !id.is_empty() {
+            true  => crate::wasm::diamond::hot_refusals(&id).await,
+            false => 0,
+        };
+        match diamond_cap_door(path, &new, old, Self::standing_hot(ctx, path).await, prior) {
+            CapDoor::Pass                    => Ok((new, String::new())),
+            CapDoor::Demoted { text, moved } => Ok((text, hot_demote_said(&moved))),
+            CapDoor::Refuse { msg, hot }     => {
+                if hot && !id.is_empty() {
+                    // Best effort: a count that did not save costs one more refusal, not a write.
+                    let _ = crate::wasm::diamond::set_hot_refusals(&id, prior + 1).await;
+                }
+                Err(err!("{}: {}", tool, msg; Invalid, Input, Size))
+            },
+        }
+    }
+
+    /// A crystal write passed its doors, so the Diamond's count of hot-part refusals starts again.
+    #[cfg(target_arch = "wasm32")]
+    async fn hot_landed(path: &str) {
+        let id = diamond_of_path(path);
+        if is_crystal_data_path(path) && !id.is_empty()
+            && crate::wasm::diamond::hot_refusals(&id).await > 0
+        {
+            let _ = crate::wasm::diamond::set_hot_refusals(&id, 0).await;
+        }
+    }
+
     #[cfg(target_arch = "wasm32")]
     async fn standing_hot(ctx: &ToolContext, path: &str) -> usize {
         let id = diamond_of_path(path);
@@ -21438,8 +21618,9 @@ impl Tool {
         // refusal below reports is on what is LIVE. The arithmetic is the app's; a model
         // asked to prune its own record prunes what it judges unimportant, which is the
         // judgement the record exists to survive.
-        let (content, retired) = res!(crate::wasm::diamond::standing_retired(
+        let (mut content, retired) = res!(crate::wasm::diamond::standing_retired(
             ctx.root, &path, content).await);
+        let mut demoted = String::new();
         // A Diamond has a ceiling on five of its files, and this is the door a daimon
         // uses: it edits them with the ordinary file tools, and the store only sees the
         // result afterwards, when `record_steer` snapshots whatever is on disk. Refusing
@@ -21454,17 +21635,16 @@ impl Tool {
             let old = crate::wasm::opfs::read_file(ctx.root, &path).await
                 .map(|b| String::from_utf8_lossy(&b).into_owned())
                 .unwrap_or_default();
-            if let Some(msg) = diamond_cap_refusal(
-                &path, &content, &old, Self::standing_hot(ctx, &path).await)
-            {
-                return Err(err!("file_write: {}", msg; Invalid, Input, Size));
-            }
+            let (got, said) = res!(Self::cap_door(ctx, "file_write", &path, content, &old).await);
+            content = got;
+            demoted = said;
             // And a crystal that is not one JSON object: the panel would show it as raw text and
             // the page would draw nothing from it.  Refused with the place, so that the turn
             // writes it again rather than finding out fourteen minutes later.
             if let Some(msg) = crystal_invalid_refusal(&path, &content) {
                 return Err(err!("file_write: {}", msg; Invalid, Input, Data));
             }
+            Self::hot_landed(&path).await;
         }
         // A path naming an Office document means the content is MARKDOWN and the file is a
         // real document. The name decides, not the bytes: `.docx` is what the user will
@@ -21541,8 +21721,8 @@ impl Tool {
                 wiped);
         }
         lock_cache(&ctx.read_seen).seen.insert(&at, &path, content_hash(content.as_bytes()));
-        Ok(fmt!("Wrote {} bytes to {}.{}{}{}", content.len(), path, place_line, retired,
-            Self::file_write_nudge(content.len())))
+        Ok(fmt!("{}Wrote {} bytes to {}.{}{}{}", demoted, content.len(), path, place_line,
+            retired, Self::file_write_nudge(content.len())))
         };
         Ok(MessageContent::text(res!(text)))
     }
@@ -21906,16 +22086,13 @@ impl Tool {
         // refused -- and a daimon that appends a decision a day never meets the limit.
         let (updated, retired) = res!(crate::wasm::diamond::standing_retired(
             ctx.root, &path, updated).await);
-        if let Some(msg) = diamond_cap_refusal(
-            &path, &updated, &data, Self::standing_hot(ctx, &path).await)
-        {
-            return Err(err!("file_edit: {}", msg; Invalid, Input, Size));
-        }
+        let (updated, demoted) = res!(Self::cap_door(ctx, "file_edit", &path, updated, &data).await);
         // The edit's RESULT must still be one JSON object where it is a crystal's data, and a
         // crystal that was broken before the edit is said to be.
         if let Some(msg) = crystal_edit_refusal(&path, &data, &updated) {
             return Err(err!("file_edit: {}", msg; Invalid, Input, Data));
         }
+        Self::hot_landed(&path).await;
         // THE BYTES IT REPLACES, kept as the write door keeps them -- this arm kept none,
         // so a turn's first edit of a file no version had named had nowhere to go back to.
         // An edit whose hunks leave less than half of the file is a wipe like any other
@@ -21942,7 +22119,7 @@ impl Tool {
         // The edit is anchored to current on-disk content, so it merges
         // safely; record the new state as this agent's latest view.
         lock_cache(&ctx.read_seen).seen.insert(&at, &path, content_hash(updated.as_bytes()));
-        Ok(fmt!("{}{}{}", Self::edit_said(&path, hunks.len()),
+        Ok(fmt!("{}{}{}{}", demoted, Self::edit_said(&path, hunks.len()),
             relaxed_said(&relaxed), retired))
         };
         Ok(MessageContent::text(res!(text)))
@@ -30974,6 +31151,37 @@ mod tests {
         assert_eq!(None, crystal_edit_refusal("notes/crystal.json", broken, still));
     }
 
+    /// The fault to mend is the one the edit would LEAVE, not the one it found (r541 QA A2, F2):
+    /// an edit that mends the old fault and leaves or makes another was sent back to the place it
+    /// had just mended, and a daimon that obeys re-sends the same edit until its round cap.
+    #[test]
+    fn test_a_refused_edit_names_the_fault_it_would_leave_00() {
+        let data = "diamonds/abc123/crystal.json";
+        let cases = [
+            // Broken in two places; the edit mends the first and leaves the second.
+            ("{\"title\":\"T\",\n\"a\":\"x\ty\",\n\"b\":[1,]}",
+             "{\"title\":\"T\",\n\"a\":\"x y\",\n\"b\":[1,]}"),
+            // Broken at the end; the edit mends the end and breaks line 1.
+            ("{\"title\":\"T\",\n\"summary\":\"S\",\n\"body\":\"cut",
+             "{\"title\":\"T\",,\n\"summary\":\"S\",\n\"body\":\"cut\"}"),
+        ];
+        for (old, new) in cases {
+            let was = crystal_json_fault(old).unwrap_or_default();
+            let now = crystal_json_fault(new).unwrap_or_default();
+            assert!(!was.is_empty() && !now.is_empty() && was != now, "{} / {}", was, now);
+            let m = match crystal_edit_refusal(data, old, new) {
+                Some(m) => m,
+                None    => panic!("an edit that leaves the crystal broken must be refused"),
+            };
+            assert!(!m.contains("the first fault names"), "sent back to the mended place: {}", m);
+            // The instruction comes after both faults are named, and points at the one still there.
+            let at_now = match m.find(&now) { Some(i) => i, None => panic!("`now` unnamed: {}", m) };
+            let at_was = match m.find(&was) { Some(i) => i, None => panic!("`was` unnamed: {}", m) };
+            assert!(at_was < at_now, "the fault to mend is named last: {}", m);
+            assert!(m.contains("Mend the place named last"), "{}", m);
+        }
+    }
+
     #[test]
     fn test_an_unreadable_crystal_is_an_error_in_words_and_not_an_empty_one_00() {
         let m = crystal_unreadable_line("crystal.json is not valid JSON: the text ends inside a string, at line 1, column 41");
@@ -31281,6 +31489,18 @@ mod tests {
         assert!(crystal_without_open(r#"{"title":"T"}"#).is_none());
         assert!(crystal_without_open("").is_none());
         assert!(crystal_without_open("{\"title\": \"half").is_none());
+        // Nor is one the decoder would read but the browser would not (r541 QA A2, F4): a byte
+        // order mark went into the first key and was written back as JSON that parses, burying
+        // the title where nothing reads it and the fault where nothing reports it.
+        for raw in ["\u{feff}{\"title\":\"Ontheism\",\"summary\":\"S\",\"open\":[\"x\"]}",
+                    "{\"title\":\"T\",\"open\":[\"x\"],}",
+                    "{\"title\":\"T\", // c\n\"open\":[\"x\"]}"] {
+            assert!(crystal_json_fault(raw).is_some(), "{:?}", raw);
+            assert!(crystal_without_open(raw).is_none(), "a crystal with a fault was migrated: {:?} -> {:?}",
+                raw, crystal_without_open(raw));
+        }
+        // Whitespace around a sound crystal is not a fault, and it still migrates.
+        assert!(crystal_without_open("\n  {\"title\":\"T\",\"open\":[\"x\"]}\n").is_some());
         // Filed under the heading, above `## Done`, and the second run files nothing.
         let req = standing_template(REQUIREMENTS_FILE);
         let once = file_unfiled(req, &open);
@@ -31720,6 +31940,86 @@ mod tests {
         };
         assert!(facts.contains("half to even"), "the value comes back: {}", facts);
         assert!(matches!(crystal_key(&json, "nosuchkey"), Ok(None)));
+    }
+
+    // A crystal with title and summary, two hot sections (one big, one `!`-small) and a cold one.
+    fn hot_recurrence_fixture(big: usize) -> String {
+        fmt!("{{\"title\":\"T\",\"summary\":\"short\",\"sections\":[\
+            {{\"heading\":\"!Big\",\"body\":\"{}\"}},\
+            {{\"heading\":\"Small\",\"hot\":true,\"body\":\"tiny\"}},\
+            {{\"heading\":\"Cold\",\"body\":\"{}\"}}]}}", "b".repeat(big), "c".repeat(500))
+    }
+
+    #[test]
+    fn test_hot_refusal_recurrence_second_over_budget_write_demotes_the_largest_and_lands_00() {
+        set_crystal_cap(1_000_000);
+        set_crystal_hot_cap(200);
+        let data = "diamonds/abc123/crystal.json";
+        let new = hot_recurrence_fixture(400);
+        // The first refusal names the moves that make room, and what the next one will do.
+        match diamond_cap_door(data, &new, "", 0, 0) {
+            CapDoor::Refuse { msg, hot: true } => {
+                assert!(msg.starts_with(REFUSAL_OPENING), "{}", msg);
+                assert!(msg.contains("retire finished items") && msg.contains("link it")
+                    && msg.contains("condense") && msg.contains("moved to cold for you"),
+                    "the first refusal does not name the moves: {}", msg);
+            },
+            other => panic!("the first over-budget write was not refused as hot: {:?}", other),
+        }
+        // The second lands, with the largest hot section made cold and nothing else touched.
+        let (text, moved) = match diamond_cap_door(data, &new, "", 0, 1) {
+            CapDoor::Demoted { text, moved } => (text, moved),
+            other => panic!("the second over-budget write was not demoted: {:?}", other),
+        };
+        assert_eq!(vec![fmt!("Big")], moved);
+        let split = match crystal_split(&text, 200) {
+            Ok(s)  => s,
+            Err(e) => panic!("the demoted crystal does not split: {}", e),
+        };
+        assert!(split.hot_bytes <= 200, "still over: {}", split.hot_bytes);
+        let big = split.outline.iter().find(|r| r.heading == "Big");
+        assert_eq!(Some(false), big.map(|r| r.hot), "Big is not cold, or kept its '!': {:?}",
+            split.outline);
+        assert_eq!(Some(true), split.outline.iter().find(|r| r.heading == "Small").map(|r| r.hot),
+            "the small hot section was moved too");
+        assert!(split.hot.contains("\"title\"") && split.hot.contains("\"short\""),
+            "title or summary left the hot part: {}", split.hot);
+        assert!(text.contains(&"b".repeat(400)) && text.contains(&"c".repeat(500)),
+            "a demote deleted content");
+        assert_eq!("Moved section 'Big' out of the always-present part to make room.\n",
+            hot_demote_said(&moved));
+    }
+
+    #[test]
+    fn test_hot_refusal_recurrence_never_moves_title_or_summary_00() {
+        set_crystal_cap(1_000_000);
+        set_crystal_hot_cap(200);
+        let data = "diamonds/abc123/crystal.json";
+        // Over on the summary alone: there is no section to move, so it stays the daimon's.
+        let new = fmt!("{{\"title\":\"T\",\"summary\":\"{}\",\"sections\":[\
+            {{\"heading\":\"!Hot\",\"body\":\"h\"}}]}}", "s".repeat(400));
+        assert_eq!(None, crystal_demote_to_fit(&new, 200), "a demote that cannot fit is no demote");
+        match diamond_cap_door(data, &new, "", 0, 3) {
+            CapDoor::Refuse { hot: true, .. } => {},
+            other => panic!("a summary over the ceiling was not refused: {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_hot_refusal_recurrence_a_write_that_fits_passes_whatever_the_count_00() {
+        set_crystal_cap(1_000_000);
+        set_crystal_hot_cap(200);
+        let data = "diamonds/abc123/crystal.json";
+        let fits = hot_recurrence_fixture(10);
+        assert_eq!(CapDoor::Pass, diamond_cap_door(data, &fits, "", 0, 4));
+        assert_eq!(None, crystal_demote_to_fit(&fits, 200), "a crystal that fits is left alone");
+        // The total ceiling never demotes: it is not the hot part's to fix.
+        set_crystal_cap(100);
+        match diamond_cap_door(data, &hot_recurrence_fixture(400), "", 0, 4) {
+            CapDoor::Refuse { hot: false, .. } => {},
+            other => panic!("a write over the total ceiling was demoted: {:?}", other),
+        }
+        set_crystal_cap(1_000_000);
     }
 
     #[test]

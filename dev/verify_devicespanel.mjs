@@ -39,7 +39,7 @@ try {
 
 	// A FRESH render every time, through the app's own entry point. `DaimondAdmin.home()`
 	// runs renderHomeBody (which clears and rebuilds the whole home view) then shows the
-	// drawer -- so a read never sees the previous section's rows, the trap a settings-btn
+	// drawer -- so a read never sees the previous section's rows, the trap a user-row
 	// TOGGLE falls into (a second click hides the drawer without rebuilding, and the DOM
 	// nodes linger for a stale read).
 	const rows = () => s.page.evaluate(() => [...document.querySelectorAll('.device-row')].map(r => ({

@@ -37,8 +37,7 @@ import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
 process.env.PLAYWRIGHT_SKIP_VALIDATE_HOST_REQUIREMENTS = '1';
-const PW = process.env.DAIMOND_PW || path.join(os.homedir(), '.red-pw/node_modules/playwright-core/index.mjs');
-const { chromium, webkit } = await import(pathToFileURL(PW).href);
+const { chromium, webkit } = await import('./pw.mjs');
 const CHROME = process.env.DAIMOND_CHROME || path.join(os.homedir(), '.cache/ms-playwright/chromium-1229/chrome-linux64/chrome');
 
 const HERE    = path.dirname(fileURLToPath(import.meta.url));

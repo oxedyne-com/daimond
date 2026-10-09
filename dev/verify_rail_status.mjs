@@ -6,7 +6,7 @@
 // section of the rail, make it expandable in desktop view." Measured on build
 // 000a44a01612 at 1440x900, the foot of the rail held, always:
 //
-//   identity row   avatar, name, cog                      36px
+//   identity row   avatar, name, cog (the cog since gone)  36px
 //   summary row    dot and one word ("This device only")  22px
 //   spend row      Today / Week / Month                    46px
 //   #admin         the three and their padding           119px  (299px with the detail open)
@@ -28,10 +28,13 @@
 //   D7  the collapsed line carries a status ONLY when it passed the importance filter:
 //       a warning (no model) shows a flag with the summary's own word; an ordinary state
 //       shows nothing; expanded, the flag steps aside for the summary row.
-//   D8  variable length: a long name and a long flag leave the cog and the toggle where
-//       they were and overlap nothing.
+//   D8  variable length: a long name and a long flag leave the identity row and the
+//       toggle where they were and overlap nothing.
 //   D9  the phone still has its own fold and now one drawn by the same code: shut by
 //       default, the toggle's tap area at least 44px.
+//   D10 ONE DOOR (D-20261009-11). Exactly one control in the status header opens the
+//       admin panel, and it is the identity row, named "Settings". A cog beside it
+//       opened the same panel; the owner called that "unnecessary redundancy".
 //
 //   bash dev/world.sh 76 --up   (or the runner the lane uses)
 //   DAIMOND_APP=http://localhost:8853 node dev/verify_rail_status.mjs
@@ -58,7 +61,7 @@ const survey = (p) => p.evaluate((TOGGLE) => {
 	const sum = document.getElementById('astat-summary');
 	return {
 		rail: box('#panel-rail'), railTop: box('#rail-top'), admin: box('#admin'), status: box('#admin-status'),
-		idRow: box('#admin-status .astat-id'), name: box('#user-info'), userRow: box('#user-row'), cog: box('#settings-btn'),
+		idRow: box('#admin-status .astat-id'), name: box('#user-info'), userRow: box('#user-row'),
 		toggle: box(TOGGLE), summary: box('#astat-summary'), spend: box('#spend-row'), flag: box('#astat-flag'),
 		diamondList: box('#diamond-list'), sessionList: box('#session-list'),
 		chat: box('#panel-ai'), guide: box('#panel-guide'),
@@ -101,12 +104,12 @@ await quiet(p);
 const A = await survey(p);
 console.log('  measured, collapsed by default:', JSON.stringify({ admin: A.admin.h, idRow: A.idRow.h, summary: A.summary.drawn, spend: A.spend.drawn, toggle: A.toggle.drawn, expanded: A.expanded }));
 check('D1 the status toggle is drawn on a desktop', A.toggle.drawn && A.toggle.w >= 30 && A.toggle.h >= 30, `drawn=${A.toggle.drawn} ${A.toggle.w}x${A.toggle.h}`);
-check('D1 it is the last thing in the identity row, right of the cog', A.toggle.drawn && A.toggle.left >= A.cog.right - 1 && A.toggle.right <= A.idRow.right + 1,
-	`cog.right=${A.cog.right} toggle=${A.toggle.left}..${A.toggle.right} row.right=${A.idRow.right}`);
+check('D1 it is the last thing in the identity row, right of the name', A.toggle.drawn && A.toggle.left >= A.userRow.right - 1 && A.toggle.right <= A.idRow.right + 1,
+	`userRow.right=${A.userRow.right} toggle=${A.toggle.left}..${A.toggle.right} row.right=${A.idRow.right}`);
 check('D2 shut by default', A.expanded === false, `aria-expanded=${A.expanded}`);
 check('D2 the summary row is not on screen', !A.summary.drawn, `h=${A.summary.h}`);
 check('D2 the spend row is not on screen', !A.spend.drawn, `h=${A.spend.h}`);
-check('D2 the identity row and the cog stay', A.idRow.drawn && A.cog.drawn && A.userRow.drawn, `id=${A.idRow.h} cog=${A.cog.drawn}`);
+check('D2 the identity row stays', A.idRow.drawn && A.userRow.drawn, `id=${A.idRow.h} userRow=${A.userRow.drawn}`);
 check('D2 the whole section is one compact line (<= 60px)', A.admin.drawn && A.admin.h <= 60, `#admin=${A.admin.h}px`);
 
 // ── D7 (collapsed half): no model is a warning, so the line says so ───────
@@ -130,7 +133,7 @@ check('D4 in place: its neighbours do not move', grew && A.chat.left === B.chat.
 	`chat ${A.chat.left}/${A.chat.w} -> ${B.chat.left}/${B.chat.w}; guide ${A.guide.left} -> ${B.guide.left}`);
 check('D4 in place: the section stays at the rail\'s foot and inside it', grew && B.admin.bottom === A.admin.bottom && B.admin.top >= B.rail.top && B.admin.bottom <= B.rail.bottom,
 	`#admin bottom ${A.admin.bottom} -> ${B.admin.bottom}, rail ${B.rail.top}..${B.rail.bottom}`);
-check('D4 in place: the toggle keeps its column', grew && A.toggle.drawn && A.toggle.left === B.toggle.left && A.cog.left === B.cog.left, `toggle ${A.toggle.left} -> ${B.toggle.left}, cog ${A.cog.left} -> ${B.cog.left}`);
+check('D4 in place: the toggle keeps its column', grew && A.toggle.drawn && A.toggle.left === B.toggle.left && A.userRow.left === B.userRow.left, `toggle ${A.toggle.left} -> ${B.toggle.left}, userRow ${A.userRow.left} -> ${B.userRow.left}`);
 check('D7 expanded: the flag steps aside for the summary row', grew && A.flag.drawn && !B.flag.drawn && B.summary.drawn, `flag.drawn=${B.flag.drawn}`);
 check('D5 the open state is written under the per-device key', !!B.stored && B.stored !== 'unreadable' && B.stored.status === true, JSON.stringify(B.stored));
 
@@ -189,13 +192,47 @@ await p.evaluate(({ longName, flagWords }) => {
 await settle(p);
 const V = await survey(p);
 const baseline = Q;
-console.log('  measured, long name and flag:', JSON.stringify({ cog: [baseline.cog.left, V.cog.left], toggle: [baseline.toggle.left, V.toggle.left], idRow: [baseline.idRow.h, V.idRow.h], overflow: V.idOverflow }));
-check('D8 a long name leaves the cog where it was', V.cog.left === baseline.cog.left && V.cog.drawn, `cog ${baseline.cog.left} -> ${V.cog.left}`);
+console.log('  measured, long name and flag:', JSON.stringify({ userRow: [baseline.userRow.left, V.userRow.left], toggle: [baseline.toggle.left, V.toggle.left], idRow: [baseline.idRow.h, V.idRow.h], overflow: V.idOverflow }));
+check('D8 a long name leaves the identity row where it was', V.userRow.left === baseline.userRow.left && V.userRow.drawn, `userRow ${baseline.userRow.left} -> ${V.userRow.left}`);
 check('D8 and the toggle where it was', V.toggle.left === baseline.toggle.left && V.toggle.drawn, `toggle ${baseline.toggle.left} -> ${V.toggle.left}`);
 check('D8 the row keeps its height', V.idRow.h === baseline.idRow.h && V.admin.h === baseline.admin.h, `idRow ${baseline.idRow.h} -> ${V.idRow.h}, #admin ${baseline.admin.h} -> ${V.admin.h}`);
 check('D8 nothing wider than the row', V.idOverflow <= 0, `scroll overflow ${V.idOverflow}px`);
 check('D8 the flag does not overlap the name', V.flag.drawn && V.flag.left >= V.userRow.right - 1, `flag.left=${V.flag.left} name.right=${V.userRow.right}`);
-check('D8 the flag stays left of the cog', V.flag.drawn && V.flag.right <= V.cog.left + 1, `flag.right=${V.flag.right} cog.left=${V.cog.left}`);
+check('D8 the flag stays left of the toggle', V.flag.drawn && V.flag.right <= V.toggle.left + 1, `flag.right=${V.flag.right} toggle.left=${V.toggle.left}`);
+
+// ── D10: one door. Press every control in the status header, from a shut drawer, and
+// count the ones that open the admin panel. ─────────────────────────────
+const doors = await p.evaluate(async () => {
+	const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+	const adminOpen = () => document.getElementById('admin').classList.contains('admin-open');
+	const shut = async () => {
+		if (adminOpen() && window.DaimondAdmin && DaimondAdmin.toggle) DaimondAdmin.toggle();
+		const m = document.getElementById('identity-modal');
+		// Only ever the create card's Skip: on the unlock card the same button is Forget.
+		if (m && m.offsetParent && m.dataset.mode === 'create') { const k = document.getElementById('id-skip'); if (k) k.click(); }
+		await wait(250);
+	};
+	const row = document.querySelector('#admin-status .astat-id');
+	const ctrls = row ? [...row.querySelectorAll('button, a[href], [role="button"], [tabindex]:not([tabindex="-1"])')] : [];
+	const opens = [];
+	for (const c of ctrls) {
+		await shut();
+		const before = adminOpen();
+		c.click();
+		await wait(400);
+		if (!before && adminOpen()) opens.push(c.id || c.className);
+		// A fold that was opened goes back the way it was.
+		if (c.matches('.rail-fold') && c.getAttribute('aria-expanded') === 'true') c.click();
+	}
+	await shut();
+	const u = document.getElementById('user-row');
+	return { opens, controls: ctrls.length, label: u && u.getAttribute('aria-label'), title: u && u.title,
+		text: u ? u.textContent.trim() : null };
+});
+check('D10 exactly one control in the status header opens the admin panel', doors.opens.length === 1, JSON.stringify(doors));
+check('D10 and it is the identity row', doors.opens.length === 1 && doors.opens[0] === 'user-row', JSON.stringify(doors.opens));
+check('D10 the identity row is named "Settings" and still shows the identity', doors.label === 'Settings' && doors.title === 'Settings' && !!doors.text && doors.text !== 'Settings',
+	`aria-label="${doors.label}" title="${doors.title}" text="${doors.text}"`);
 
 // ── D9: the phone, the same toggle, shut by default, a thumb's target ───
 await p.setViewportSize({ width: 390, height: 844 });
@@ -217,7 +254,7 @@ const hit = await p.evaluate((TOGGLE) => {
 }, TOGGLE);
 check('D9 phone: the toggle is drawn and the section is shut by default', F.toggle.drawn && F.expanded === false && !F.summary.drawn && !F.spend.drawn, `toggle=${F.toggle.drawn} expanded=${F.expanded}`);
 check('D9 phone: the toggle\'s tap area is at least 44px each way', hit.ok, JSON.stringify(hit));
-check('D9 phone: nothing in the identity row overlaps or overflows at 390', F.idOverflow <= 0 && F.cog.right <= F.toggle.left + 1 + 8, `overflow=${F.idOverflow} cog.right=${F.cog.right} toggle.left=${F.toggle.left}`);
+check('D9 phone: nothing in the identity row overlaps or overflows at 390', F.idOverflow <= 0 && F.userRow.right <= F.toggle.left + 1 + 8, `overflow=${F.idOverflow} userRow.right=${F.userRow.right} toggle.left=${F.toggle.left}`);
 await press(p);
 const G = await survey(p);
 check('D9 phone: it opens, and the summary and spend rows come back', G.expanded === true && G.summary.drawn, `expanded=${G.expanded} summary=${G.summary.h}`);

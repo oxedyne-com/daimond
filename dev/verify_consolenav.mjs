@@ -29,9 +29,6 @@
 // Each --break is a defect the checks below are supposed to catch. If a break
 // runs green, the check for it is worthless and should be rewritten.
 
-import os from 'node:os';
-import path from 'node:path';
-import { pathToFileURL } from 'node:url';
 
 // Chromium's ozone platform is chosen by autodetection and prefers Wayland whenever
 // `WAYLAND_DISPLAY` is set -- which it is in every rc session on argonaut -- so a headed
@@ -40,8 +37,6 @@ import { pathToFileURL } from 'node:url';
 // launcher that spreads `process.env` needs. See dev/display.mjs.
 import './display.mjs';
 const APP = process.env.DAIMOND_APP || `http://localhost:${process.env.DAIMOND_PORT || 8777}`;
-const PW  = process.env.DAIMOND_PW
-	|| path.join(os.homedir(), '.red-pw/node_modules/playwright-core/index.mjs');
 const CHROME = process.env.DAIMOND_CHROME
 	|| `${process.env.HOME}/.cache/ms-playwright/chromium-1229/chrome-linux64/chrome`;
 
@@ -153,13 +148,12 @@ async function state(page) {
 	}, VIEWS);
 }
 
-const pwUrl = pathToFileURL(PW).href;
-const { chromium } = await import(pwUrl);
+const { chromium } = await import('./pw.mjs');
 // Launched as dev/harness.mjs launches. No mode on this host produces animation
 // frames -- measured, on a blank page, in both headless modes -- which is why
 // every click here is forced and clickability is asserted separately.
 const browser = await chromium.launch({ executablePath: CHROME, headless: false,
-	args: ['--no-sandbox', '--disable-dev-shm-usage', '--headless=new'] });
+	args: ['--no-sandbox', '--headless=new'] });
 
 try {
 	// ── An owner sees every section, one at a time ──────────

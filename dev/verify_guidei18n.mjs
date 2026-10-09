@@ -2,11 +2,7 @@
 // The translated guide page: does it wear the app's palette (which it now gets
 // from the app's own stylesheet rather than a copy), and does a change of
 // language actually move the reader to the translated page?
-import os from 'node:os';
-import path from 'node:path';
-import { pathToFileURL } from 'node:url';
-const PW = path.join(os.homedir(), '.red-pw/node_modules/playwright-core/index.mjs');
-const { chromium } = await import(pathToFileURL(PW).href);
+const { chromium } = await import('./pw.mjs');
 const CHROME = `${process.env.HOME}/.cache/ms-playwright/chromium-1229/chrome-linux64/chrome`;
 const SP = new URL('shots/', import.meta.url).pathname;
 // The world's dev server -- see dev/world.sh.  Kept inline rather than imported,

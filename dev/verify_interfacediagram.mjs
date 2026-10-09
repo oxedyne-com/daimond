@@ -45,7 +45,7 @@
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { fileURLToPath, pathToFileURL } from 'node:url';
+import { fileURLToPath } from 'node:url';
 
 // Chromium's ozone platform is chosen by autodetection and prefers Wayland whenever
 // `WAYLAND_DISPLAY` is set -- which it is in every rc session on argonaut -- so a headed
@@ -64,8 +64,6 @@ const SHOTS = path.join(HERE, 'shots');
 /// the one taken with the width floor deliberately removed.
 const tag = (n) => `ifdiag-${n}${BREAK ? '-BREAK-' + BREAK : ''}.png`;
 const APP   = process.env.DAIMOND_APP || `http://localhost:${process.env.DAIMOND_PORT || 8777}`;
-const PW    = process.env.DAIMOND_PW
-	|| path.join(os.homedir(), '.red-pw/node_modules/playwright-core/index.mjs');
 const CHROME = process.env.DAIMOND_CHROME
 	|| `${process.env.HOME}/.cache/ms-playwright/chromium-1229/chrome-linux64/chrome`;
 const SCRATCH = process.env.DAIMOND_SCRATCH || path.join(os.homedir(), '.cache/daimond');
@@ -225,7 +223,7 @@ if (BREAK) console.log(`BREAK ${BREAK}: ${applied.join('; ')}\n`);
 }
 
 // ── The browser ──────────────────────────────────────────────────────
-const { chromium } = await import(pathToFileURL(PW).href);
+const { chromium } = await import('./pw.mjs');
 const profile = path.join(SCRATCH, 'pw', 'ifdiag' + (BREAK ? '-' + BREAK : ''));
 fs.rmSync(profile, { recursive: true, force: true });
 fs.mkdirSync(profile, { recursive: true });
@@ -239,7 +237,7 @@ delete env.DISPLAY;
 const browser = await chromium.launchPersistentContext(profile, {
 	executablePath: CHROME,
 	headless: false,
-	args: ['--no-sandbox', '--disable-dev-shm-usage', '--headless=new'],
+	args: ['--no-sandbox', '--headless=new'],
 	env,
 	viewport: { width: 1100, height: 900 },
 });

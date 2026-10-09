@@ -63,14 +63,11 @@
 // and that is a decision for whoever owns the backlog, not for this file.
 
 import fs from 'node:fs';
-import os from 'node:os';
 import path from 'node:path';
-import { fileURLToPath, pathToFileURL } from 'node:url';
+import { fileURLToPath } from 'node:url';
 import { APP, CHROME, signInAs, connectMock, scratch, artefactPath } from './harness.mjs';
 
-const PW = process.env.DAIMOND_PW
-	|| path.join(os.homedir(), '.red-pw/node_modules/playwright-core/index.mjs');
-const { chromium } = await import(pathToFileURL(PW).href);
+const { chromium } = await import('./pw.mjs');
 
 const HERE  = path.dirname(fileURLToPath(import.meta.url));
 const SHOTS = path.join(HERE, 'shots', 'sweepm');
@@ -474,7 +471,7 @@ async function boot() {
 	const browser = await chromium.launchPersistentContext(dir, {
 		executablePath: CHROME,
 		headless: false,
-		args: ['--no-sandbox', '--disable-dev-shm-usage', '--headless=new'],
+		args: ['--no-sandbox', '--headless=new'],
 		viewport: { width: 390, height: 844 },
 		// A phone is coarse and cannot hover.  responsive.css keys a whole block
 		// on that, so without it the sweep reads a stylesheet no phone loads.

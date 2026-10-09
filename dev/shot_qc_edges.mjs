@@ -100,7 +100,7 @@ if (await page.$('#hand-mode-chip')) {
 // Six views behind one drawer, each written separately. Switching between them
 // should not move the left margin under the reader.
 const views = [];
-for (const [name, opener] of [['home', '#settings-btn'], ['models', '#astat-model'],
+for (const [name, opener] of [['home', '#user-row'], ['models', '#astat-model'],
 	['account', '#astat-account'], ['release', '#astat-release']]) {
 	await quieten();
 	await page.evaluate(() => DaimondPanels.show('rail'));

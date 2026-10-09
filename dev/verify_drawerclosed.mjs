@@ -50,7 +50,7 @@ check((await drawerOpen()) === false,
 	'signing in again does NOT reopen the drawer');
 
 // ── The other half: it must still be reachable and still render ─────────────
-await page.click('#settings-btn', { force: true });
+await page.click('#user-row', { force: true });
 await page.waitForTimeout(700);
 check((await drawerOpen()) === true, 'the cog still opens it');
 

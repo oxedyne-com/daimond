@@ -7,9 +7,6 @@
 // tolerates get caught. It is DESKTOP WebKit on Linux, not iOS, so it may not
 // reproduce iOS-only behaviour (auto-zoom, address-bar vh) — the zoom PROBE below
 // reports whether this build does; treat that line as a diagnostic, not a gate.
-import os from 'node:os';
-import path from 'node:path';
-import { pathToFileURL } from 'node:url';
 import { signInAs, connectMock, APP, scratch } from './harness.mjs';
 
 // This host (Ubuntu 25.10) is newer than Playwright's WebKit build targets, so
@@ -17,8 +14,7 @@ import { signInAs, connectMock, APP, scratch } from './harness.mjs';
 // out-of-band (see dev/setup-webkit-libs.sh). Skip the preflight.
 process.env.PLAYWRIGHT_SKIP_VALIDATE_HOST_REQUIREMENTS = '1';
 
-const PW = process.env.DAIMOND_PW || path.join(os.homedir(), '.red-pw/node_modules/playwright-core/index.mjs');
-const { webkit, devices } = await import(pathToFileURL(PW).href);
+const { webkit, devices } = await import('./pw.mjs');
 
 const ok = [], bad = [];
 const check = (name, pass, detail) => {

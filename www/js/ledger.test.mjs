@@ -321,12 +321,12 @@ function main() {
 		const now = Date.now();
 		check('patchTurn is the one entry point (patchOutcome is gone)',
 			typeof L.patchTurn === 'function' && L.patchOutcome === undefined);
-		L.record({ ts: now - 5000, model: 'm', promptTokens: 20, completionTokens: 10,
+		const spent = L.record({ ts: now - 5000, model: 'm', promptTokens: 20, completionTokens: 10,
 			costUsd: 0.03, provider: 'p', turnId: 'u1' });
 		const before = JSON.parse(store.get('daimond-ledger'))[0];
 		let patched = null;
 		try {
-			patched = L.patchTurn('u1', { dur: 4200.4, out: 'completed', ft: 812.4, tc: 3, te: 1,
+			patched = L.patchTurn(L.ledgerKey(spent), { dur: 4200.4, out: 'completed', ft: 812.4, tc: 3, te: 1,
 				sg: 0, im: 0, ro: 'c' });
 		} catch (e) { /* red on a build without it */ }
 		const e = JSON.parse(store.get('daimond-ledger') || '[]')[0] || {};
@@ -340,7 +340,7 @@ function main() {
 			Object.keys(e).join(',') === 't,m,p,c,ca,u,e,pv,r,tid,dur,out,ft,ro,tc,te', Object.keys(e).join(','));
 		let none = 'threw';
 		try { none = L.patchTurn('never-seen', { dur: 1, out: 'failed' }); } catch (x) { /* red */ }
-		check('patching an id nobody recorded is a no-op returning null', none === null);
+		check('patching a key nobody recorded is a no-op returning null', none === null);
 		let bad = null;
 		try {
 			L.record({ ts: now - 3000, model: 'm2', promptTokens: 5, completionTokens: 5, provider: 'p',

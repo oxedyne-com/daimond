@@ -545,7 +545,12 @@
 :root[data-skin="daylight"] .ctile[data-t="user"] .ctile-who,
 :root[data-skin="daylight"] .ctile[data-t="rating"] .ctile-who { color: var(--text-secondary); }
 :root[data-skin="daylight"] .ctile-time { font-size: var(--dl-2xs); }
-:root[data-skin="daylight"] .ctile-body { padding: 0 12px 10px; font-size: var(--dl-md); line-height: 1.56; }
+:root[data-skin="daylight"] .ctile-body { padding: 0 var(--ct-pad-x) 10px; font-size: var(--dl-md); line-height: 1.56; }
+/* A stop line in the body's own type (F3), and its Continue's word on the same text edge as
+   the line's: the button's inline padding is taken back by its margin, so its hover fill
+   still has room (F4). */
+:root[data-skin="daylight"] .chat-msg-ended.ended-stop { font-size: var(--dl-md); line-height: 1.56; }
+:root[data-skin="daylight"] .chat-msg-ended.has-continue .ti-continue { margin-inline-start: -10px; }
 /* Your turn reads in exactly the daimon's own type -- same face, size, weight
    and line-height, from the plain `.ctile-body` rule above. The label line
    above it (name and stamp, `.ctile-lbl`) is what still tells the speakers
@@ -1243,10 +1248,6 @@
 	:root[data-skin="daylight"] .files-view-head > span > .files-btn:first-child::after {
 		left: 0; transform: translateY(-50%);
 	}
-	/* The bar's own icon tools (`#drawer-btn`, `#settings-btn`) are worded-
-	   free already at their group's own padding -- `#settings-btn` still
-	   carries `.icon-btn`'s worded padding from the desktop rule above. */
-	:root[data-skin="daylight"] #settings-btn { padding: 0; }
 	/* R8: the Terminal panel's own Start/Stop are plain `.addbtn`, outside
 	   every named actions row this file already sizes for the phone, so they
 	   were left at the base rule's own colour and (via a still-unfound path)
@@ -1278,8 +1279,6 @@
 	:root[data-skin="daylight"] #rail-top { margin-right: -4px; padding-right: 4px; }
 	/* Every pressable status row is a finger's height, so the drawer's rows agree. */
 	:root[data-skin="daylight"] :is(.astat-row.astat-id, .astat-row > #user-row, .astat-row.astat-btn, .astat-row.astat-sync) { min-height: 44px; }
-	/* Gear beside the fold: a 44px pitch. */
-	:root[data-skin="daylight"] .astat-id #settings-btn { margin-right: 8px; }
 	/* R9: the rail's own closer sits in `.pptw-head`, so the head-tool group
 	   rule above (30px, unscoped, two grouped classes) outranks the plain
 	   `.ui-close` phone rule (responsive.css) for it alone -- restated here at

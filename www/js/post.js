@@ -2745,6 +2745,13 @@
 	function startWork(list) {
 		return Promise.all((list || []).map(function (w) {
 			var run = function () { return runWork(w); };
+			// A turn for another chat, collected while this device is busy, is decided NOW
+			// and not behind the running turn, so its sender hears `busy` at once instead
+			// of waiting out its backstop (H1, C1).
+			var now = false;
+			try { now = !!(window.DaimondPeer && DaimondPeer.decideNow && DaimondPeer.decideNow(w.peer)); }
+			catch (e) { now = false; }
+			if (now) return run();
 			var p = _workChain.then(run, run);
 			_workChain = p;
 			return p;

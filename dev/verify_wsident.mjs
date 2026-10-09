@@ -43,14 +43,11 @@
 // through the real `pty_request`.
 import fs from 'node:fs';
 import http from 'node:http';
-import os from 'node:os';
 import path from 'node:path';
-import { fileURLToPath, pathToFileURL } from 'node:url';
+import { fileURLToPath } from 'node:url';
 import { whyStaleWasm, refuse } from './staleguard.mjs';
 
-const PW = process.env.DAIMOND_PW
-	|| path.join(os.homedir(), '.red-pw/node_modules/playwright-core/index.mjs');
-const { chromium } = await import(pathToFileURL(PW).href);
+const { chromium } = await import('./pw.mjs');
 const CHROME = process.env.DAIMOND_CHROME
 	|| `${process.env.HOME}/.cache/ms-playwright/chromium-1229/chrome-linux64/chrome`;
 
@@ -291,7 +288,7 @@ const PORT = await listen(Number(process.env.WSIDENT_PORT || 8811));
 const APP  = `http://127.0.0.1:${PORT}`;
 
 const b = await chromium.launch({ executablePath: CHROME, headless: true,
-	args: ['--no-sandbox', '--disable-dev-shm-usage'] });
+	args: ['--no-sandbox'] });
 const page = await b.newPage();
 const errs = [];
 page.on('pageerror', (e) => errs.push(`pageerror: ${e.message}`));

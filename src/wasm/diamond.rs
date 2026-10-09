@@ -1842,6 +1842,27 @@ async fn snapshot_held(
     Ok(next)
 }
 
+/// The count of hot-part refusals since the crystal last landed, `diamonds/<id>/.daimond/hot_refusals`.
+///
+/// On disk rather than in the turn, because the daimon that sends an over-budget crystal again
+/// is as often the next turn as the same one.
+fn hot_refusals_path(id: &str) -> String {
+    fmt!("diamonds/{}/{}/hot_refusals", id, STORE_DIR)
+}
+
+/// How many times this Diamond's crystal has been refused on its hot part since one landed.
+pub async fn hot_refusals(id: &str) -> u32 {
+    match opfs::read_file(FileRoot::Opfs, &hot_refusals_path(id)).await {
+        Ok(b)  => String::from_utf8_lossy(&b).trim().parse().unwrap_or(0),
+        Err(_) => 0,
+    }
+}
+
+/// Set the count [`hot_refusals`] reads.
+pub async fn set_hot_refusals(id: &str, n: u32) -> Outcome<()> {
+    opfs::write_file(FileRoot::Opfs, &hot_refusals_path(id), fmt!("{}", n).as_bytes()).await
+}
+
 /// Apply a user hand-edit to the crystal's data: snapshot a new version and log an
 /// `edit` record.
 ///

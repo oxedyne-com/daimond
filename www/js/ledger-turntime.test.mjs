@@ -11,8 +11,9 @@
        them as `dur` / `out` on the entry; a caller that never passes them
        (every caller before this build) gets exactly the entry it always
        got.
-     - `DaimondLedger.patchTurn(turnId, { dur, out, ...facts })` stamps
-       both onto the entry already recorded for a turn -- the common case,
+     - `DaimondLedger.patchTurn(key, { dur, out, ...facts })` stamps
+       both onto the entry already recorded for a turn, found by its
+       `ledgerKey` (r542 QA A F1: never by turn id) -- the common case,
        since a turn's cost is known well before its duration and outcome
        are (both settle only once the turn has fully ended).
      - A turn that billed NOTHING at all -- it failed, or was stopped,
@@ -130,10 +131,10 @@ function load(store, pricing) {
 			'function median(nums) { return (nums && nums.length) ? nums[0] : null; } // BROKEN: not a median');
 	}
 	if (BREAK === 'nopatch') {
-		// patchTurn stops matching by turn id, so it never finds the
+		// patchTurn stops matching by key, so it never finds the
 		// entry a billed turn already wrote and every outcome falls through
 		// to a fresh, unbilled duplicate instead of patching the real one.
-		const needle = "if (!e || e.tid !== tid) continue;";
+		const needle = "if (!e || ledgerKey(e) !== key) continue;";
 		if (!ledgerSrc.includes(needle)) throw new Error('break target not found (nopatch)');
 		ledgerSrc = ledgerSrc.replace(needle, "if (true) continue; // BROKEN: never matches");
 	}
@@ -185,21 +186,21 @@ function main() {
 		check('it is not marked `r` (reported) -- nothing was reported', !e.r, JSON.stringify(e));
 	}
 
-	console.log('\nledger: patchTurn -- stamps the MOST RECENT entry for a turn id');
+	console.log('\nledger: patchTurn -- stamps the entry whose key it is given, whatever its turn id shares');
 	{
 		const { L, store } = load();
-		L.record({ ts: 1000, model: 'm', promptTokens: 1, completionTokens: 1, turnId: 'dup' });
+		const first = L.record({ ts: 1000, model: 'm', promptTokens: 1, completionTokens: 1, turnId: 'dup' });
 		const second = L.record({ ts: 2000, model: 'm', promptTokens: 1, completionTokens: 1, turnId: 'dup' });
-		const patched = L.patchTurn('dup', { dur: 1234, out: 'completed' });
-		check('the newest entry sharing the id is the one patched',
-			!!patched && patched.t === second.t, JSON.stringify(patched));
+		const patched = L.patchTurn(L.ledgerKey(first), { dur: 1234, out: 'completed' });
+		check('the entry named by the key is the one patched, not the newest sharing its id',
+			!!patched && patched.t === first.t, JSON.stringify(patched));
 		const stored = JSON.parse(store.get('daimond-ledger'));
-		const older = stored.find((r) => r.t === 1000);
-		check('the older entry sharing the id is untouched', !('dur' in older) && !('out' in older),
-			JSON.stringify(older));
+		const other = stored.find((r) => r.t === second.t);
+		check('the other entry sharing the id is untouched', !('dur' in other) && !('out' in other),
+			JSON.stringify(other));
 
-		check('patching an id nobody recorded is a no-op, not a throw', L.patchTurn('never-seen', { dur: 1, out: 'completed' }) === null);
-		check('a falsy turn id is refused outright', L.patchTurn('', { dur: 1, out: 'completed' }) === null);
+		check('patching a key nobody recorded is a no-op, not a throw', L.patchTurn('never-seen', { dur: 1, out: 'completed' }) === null);
+		check('a falsy key is refused outright', L.patchTurn('', { dur: 1, out: 'completed' }) === null);
 	}
 
 	console.log('\nledger: patchTurn -- billed figures on the patched entry do not move');
@@ -207,7 +208,7 @@ function main() {
 		const { L, store } = load();
 		const before = L.record({ ts: 6000, model: 'm', promptTokens: 40, completionTokens: 10,
 			costUsd: 0.05, provider: 'p', turnId: 't3' });
-		L.patchTurn('t3', { dur: 777, out: 'interrupted' });
+		L.patchTurn(L.ledgerKey(before), { dur: 777, out: 'interrupted' });
 		const stored = JSON.parse(store.get('daimond-ledger'));
 		const after = stored.find((r) => r.tid === 't3');
 		check('cost is unchanged after the patch', after.u === before.u, after.u);
@@ -345,11 +346,11 @@ function main() {
 			// keying on `rec.id`, the daimon chat's id -- shared by every steer of
 			// that Diamond -- instead of `dmid`, generated fresh per call.
 			const needleA = "recordTurnOutcome(dsPair.model, dsPair.provider, dumid, Date.now() - dsT0,";
-			const needleB = "meterDiamondTurn(fa, diamondId, dumid);";
+			const needleB = "dsSpent = meterDiamondTurn(fa, diamondId, dumid);";
 			if (!src.includes(needleA)) throw new Error('break target not found (sharedtid A)');
 			if (!src.includes(needleB)) throw new Error('break target not found (sharedtid B)');
 			src = src.replace(needleA, "recordTurnOutcome(dsPair.model, dsPair.provider, rec.id, Date.now() - dsT0, // BROKEN: shared id");
-			src = src.replace(needleB, "meterDiamondTurn(fa, diamondId, rec.id); // BROKEN: shared id");
+			src = src.replace(needleB, "dsSpent = meterDiamondTurn(fa, diamondId, rec.id); // BROKEN: shared id");
 		}
 		if (BREAK === 'nofallback') {
 			// The fallback that records a fresh outcome-only entry when nothing
@@ -360,7 +361,7 @@ function main() {
 			src = src.replace(needle, 'if (false) { // BROKEN: fallback removed');
 		}
 		check('runTurn calls recordTurnOutcome from its finally',
-			src.includes("recordTurnOutcome(chat.model, chat.provider, umid, Date.now() - telT0, turnOutcome, tmeter.facts('c'));"));
+			src.includes("recordTurnOutcome(chat.model, chat.provider, umid, Date.now() - telT0, turnOutcome, tmeter.facts('c'), turnSpent);"));
 		check('the Stop button reads as interrupted', src.includes("var turnOutcome = chat._aborted ? 'interrupted'"));
 		check('a page/tab going away reads as interrupted, not failed',
 			src.includes("(threw && _unloading) ? 'interrupted'"));
@@ -377,7 +378,7 @@ function main() {
 		check('doSteer closes its turn through the same recordTurnOutcome, keyed on its own dumid, the answer\'s prod.t (MC1 C1)',
 			src.includes("recordTurnOutcome(dsPair.model, dsPair.provider, dumid, Date.now() - dsT0,"));
 		check('doSteer bills the turn (meterDiamondTurn) under that same dumid, not the shared chat id',
-			src.includes("meterDiamondTurn(fa, diamondId, dumid);"));
+			src.includes("dsSpent = meterDiamondTurn(fa, diamondId, dumid);"));
 		// MC1 (D-20261009-01): the turn facts are measured where each path already
 		// receives its stream events -- no second event loop -- and every ledger entry a
 		// turn writes joins to what it produced: the daimon's to its answer's `prod.t`
@@ -385,7 +386,7 @@ function main() {
 		check('MC1 C1: the daimon answer is stamped t: dumid, the id its ledger entries carry',
 			/stampProd\(\{ h: DaimondProvenance\.h\.answer\(rec\.id, dmid\)[\s\S]{0,200}?t: dumid/.test(src));
 		check('MC1 C2: a worker bills under its run id (h.worker(rid)), with its facts',
-			/recordSpend\(run\.model, _pt, _ct, _ca, _cost, run\.provider, run\.diamondId \|\| '',\s*\(run\.prov && run\.prov\.rid\) \|\| '', wmeter\.facts\('w'\)\);/.test(src));
+			/recordSpend\(run\.model, _pt, _ct, _ca, _cost, run\.provider, run\.diamondId \|\| '',\s*\(run\.prov && run\.prov\.rid\) \|\| '', wmeter \? wmeter\.facts\('w'\) : null\);/.test(src));
 		check('MC1 C5: the chat, daimon and worker sinks each feed their meter first',
 			/var onEvent = function \(ev\) \{\s*if \(!ev \|\| !ev\.type\) return;\s*tmeter\.see\(ev\);/.test(src)
 			&& /var onEvent = function \(ev\) \{\s*if \(!ev \|\| !ev\.type\) return;\s*dmeter\.see\(ev\);/.test(src)
@@ -396,8 +397,8 @@ function main() {
 			src.includes("recordSpend(to.model, pt, ct, 0, cost, to.provider, id, '', { im: 1 });"));
 		check('MC1: recordSpend hands its facts to the ledger',
 			/turnId: turnId \|\| '', facts: facts \|\| null \}\)/.test(src));
-		check('recordTurnOutcome patches the billed entry first',
-			src.includes('var patched = DaimondLedger.patchTurn(turnId, facts);'));
+		check('recordTurnOutcome patches the entry this run billed, by its key (r542 QA A F1)',
+			src.includes('var patched = spent ? DaimondLedger.patchTurn(DaimondLedger.ledgerKey(spent), facts) : null;'));
 		check('and falls back to an unbilled outcome-only entry when nothing was billed',
 			src.includes('outcomeOnly: true') &&
 			/if \(!patched\) \{[\s\S]{0,200}?outcomeOnly: true/.test(src));
@@ -407,45 +408,25 @@ function main() {
 	{
 		const now = Date.now();
 
-		// The mechanism the finding describes, reproduced directly against the
-		// real `patchTurn`: two steers of ONE Diamond keyed on the SAME id
-		// (what `rec.id` gave every steer before this fix) collide -- the
-		// second call finds and overwrites the first steer's entry, because
-		// `patchTurn` matches the MOST RECENT entry for a tid and there is
-		// only one entry to find.
+		// Two steers sharing ONE turn id (a handed-off turn's runs all do, r542 QA A F1):
+		// each closes on the entry its own `record` returned, so a key, not the id, decides.
 		{
 			const { L, store } = load();
-			const sharedId = 'chat-42';	// stands in for the old, buggy `rec.id`
-			L.record({ ts: now - 5000, model: 'm', promptTokens: 20, completionTokens: 10,
+			const sharedId = 'turn-errand-9';
+			const s1e = L.record({ ts: now - 5000, model: 'm', promptTokens: 20, completionTokens: 10,
 				costUsd: 0.03, provider: 'p', turnId: sharedId });
-			L.patchTurn(sharedId, { dur: 4000, out: 'completed' });	// steer 1 completes
-			L.patchTurn(sharedId, { dur: 500, out: 'failed' });	// steer 2 fails, SAME id
+			L.patchTurn(L.ledgerKey(s1e), { dur: 4000, out: 'completed' });	// steer 1 completes
+			// Steer 2 bills nothing and fails: no entry of its own, so no key, so the
+			// fallback of `recordTurnOutcome` writes an outcome-only entry.
+			L.record({ ts: now - 1000, model: 'm', provider: 'p', turnId: sharedId,
+				durationMs: 500, outcome: 'failed', outcomeOnly: true });
 			const stored = JSON.parse(store.get('daimond-ledger'));
-			check('mechanism confirmed: a shared id lets steer 2\'s failure overwrite steer 1\'s billed entry',
-				stored.length === 1 && stored[0].out === 'failed', JSON.stringify(stored));
-		}
-
-		// The fix: each steer keyed on its OWN id -- `dmid` in `doSteer`, a
-		// fresh `newMid()` every call -- so the two turns cannot collide.
-		{
-			const { L, store } = load();
-			L.record({ ts: now - 5000, model: 'm', promptTokens: 20, completionTokens: 10,
-				costUsd: 0.03, provider: 'p', turnId: 'dmid-1' });
-			L.patchTurn('dmid-1', { dur: 4000, out: 'completed' });	// steer 1 completes, its own id
-			// Steer 2 bills nothing and fails, under ITS OWN id -- `recordTurnOutcome`'s
-			// own fallback when the patch finds nothing to patch.
-			var patched2 = L.patchTurn('dmid-2', { dur: 500, out: 'failed' });
-			if (!patched2) {
-				L.record({ ts: now - 1000, model: 'm', provider: 'p', turnId: 'dmid-2',
-					durationMs: 500, outcome: 'failed', outcomeOnly: true });
-			}
-			const stored = JSON.parse(store.get('daimond-ledger'));
-			const s1 = stored.find((e) => e.tid === 'dmid-1');
-			const s2 = stored.find((e) => e.tid === 'dmid-2');
+			const s1 = stored.find((e) => e.t === s1e.t);
+			const s2 = stored.find((e) => e.ol === 1);
 			check('the earlier, billed steer keeps its own completed outcome',
 				!!s1 && s1.out === 'completed', JSON.stringify(s1));
 			check('the failed steer lands on its OWN entry, not the earlier completed one',
-				!!s2 && s2.out === 'failed' && s2.ol === 1, JSON.stringify(s2));
+				!!s2 && s2.out === 'failed' && s2.tid === sharedId, JSON.stringify(s2));
 			check('both turns survive, distinct -- nothing was overwritten',
 				stored.length === 2, JSON.stringify(stored));
 		}

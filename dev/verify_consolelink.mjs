@@ -63,7 +63,7 @@ await page.evaluate(() => {
 	document.body.dispatchEvent(new MouseEvent('mousedown', { bubbles: true }));
 });
 await page.waitForTimeout(400);
-await page.click('#settings-btn', { force: true });
+await page.click('#user-row', { force: true });
 await page.waitForTimeout(1700);
 
 // The drawer has to be open, or "no link" below means "no drawer" and the check

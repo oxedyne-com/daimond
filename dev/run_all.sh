@@ -1122,6 +1122,9 @@ if [ $# -eq 0 ]; then
 	# `bin()` in harness.mjs sends a `Uint8Array`, which travels as one blob. The check is
 	# shown red on each spelling of the mistake and then run over the whole tree.
 	static_one bytearrays   bash dev/breakproof_bytearrays.sh
+	# No browser launch may move Chromium's shared memory onto the disk. With TMPDIR on ~/.cache,
+	# the `disable-dev-shm-usage` switch had every verifier writing 37-60 GB/h to the NVMe (2026-10-09).
+	static_one devshm       bash dev/breakproof_devshm.sh
 fi
 
 # ── Phase 0b: the Rust tests, counted ───────────────────────────────────────

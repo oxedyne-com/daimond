@@ -721,7 +721,7 @@ check('none of the English says public, anyone, or Diamond with a capital',
 
 console.log('\n13. the Settings view kept its door when it lost its chip');
 const cog = await A.page.evaluate(async () => {
-	document.getElementById('settings-btn').click();
+	document.getElementById('user-row').click();
 	await new Promise(r => setTimeout(r, 400));
 	const b = document.getElementById('admin-social-settings');
 	if (!b) return { row: false };

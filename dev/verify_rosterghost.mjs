@@ -294,7 +294,7 @@ try {
 		});
 		// Open Settings → the home/admin drawer where the Devices list lives.
 		const opened = await s.page.evaluate(() => {
-			const b = document.getElementById('settings-btn')
+			const b = document.getElementById('user-row')
 				|| document.querySelector('[data-admin="settings"]')
 				|| document.getElementById('admin-settings-btn');
 			if (b) { b.click(); return true; }

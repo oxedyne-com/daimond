@@ -15,11 +15,8 @@
 //   node dev/verify_guidewidth.mjs --width 360    # another phone
 //   node dev/verify_guidewidth.mjs --break wide   # a 3000 px block in each page: expected to FAIL
 import fs from 'node:fs';
-import os from 'node:os';
 import path from 'node:path';
-import { pathToFileURL } from 'node:url';
-const PW = path.join(os.homedir(), '.red-pw/node_modules/playwright-core/index.mjs');
-const { chromium } = await import(pathToFileURL(PW).href);
+const { chromium } = await import('./pw.mjs');
 const CHROME = `${process.env.HOME}/.cache/ms-playwright/chromium-1229/chrome-linux64/chrome`;
 // The world's dev server -- see dev/world.sh.  Kept inline rather than imported,
 // so this stays standalone and does not load the harness.

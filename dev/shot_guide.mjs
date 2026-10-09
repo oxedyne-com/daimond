@@ -74,7 +74,7 @@ await grab('diamond-fold.png', '#panel-rail');
 
 // ── accounts-switch.png — the whole window with the account list showing ──
 await p.evaluate(async () => {
-	const btn = document.getElementById('settings-btn');
+	const btn = document.getElementById('user-row');
 	if (btn) btn.click();                       // the admin panel home, where accounts live
 	await new Promise(r => setTimeout(r, 1000));
 });

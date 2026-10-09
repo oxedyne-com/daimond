@@ -85,7 +85,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { spawn, spawnSync } from 'node:child_process';
-import { fileURLToPath, pathToFileURL } from 'node:url';
+import { fileURLToPath } from 'node:url';
 
 import {
 	displayFault,
@@ -332,8 +332,8 @@ if (DISPLAY && BREAK !== 'inheritseat') {
 		// The same playwright and the same Chrome `dev/harness.mjs` uses, taken from
 		// it rather than written down again: a browser proved to land on this display
 		// is only evidence if it is the browser everything else here launches.
-		const { PW, CHROME } = await import('./harness.mjs');
-		const { chromium } = await import(pathToFileURL(PW).href);
+		const { CHROME } = await import('./harness.mjs');
+		const { chromium } = await import('./pw.mjs');
 		const prof = path.join(SCRATCH, 'guard-profile');
 		fs.rmSync(prof, { recursive: true, force: true });
 		const b = await chromium.launchPersistentContext(prof, {

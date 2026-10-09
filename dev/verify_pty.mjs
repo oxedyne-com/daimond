@@ -57,9 +57,7 @@ import path from 'node:path';
 import { spawn } from 'node:child_process';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
-const PW = process.env.DAIMOND_PW
-	|| path.join(os.homedir(), '.red-pw/node_modules/playwright-core/index.mjs');
-const { chromium } = await import(pathToFileURL(PW).href);
+const { chromium } = await import('./pw.mjs');
 const CHROME = process.env.DAIMOND_CHROME
 	|| `${process.env.HOME}/.cache/ms-playwright/chromium-1229/chrome-linux64/chrome`;
 
@@ -327,7 +325,7 @@ const stub = await stubOnFreePort(8977);
 const b = await chromium.launchPersistentContext(path.join(WORK, 'profile'), {
 	executablePath:	CHROME,
 	headless:	false,
-	args: ['--no-sandbox', '--disable-dev-shm-usage', '--headless=new'],
+	args: ['--no-sandbox', '--headless=new'],
 	viewport: { width: 1000, height: 700 },
 });
 const page = b.pages()[0] || await b.newPage();

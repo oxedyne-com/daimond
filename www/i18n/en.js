@@ -1081,15 +1081,17 @@
 	// its reader to skip the one that mattered. "Answered · no tools used" is a
 	// statement of what happened, not an accusation — the reader decides whether
 	// the model promised otherwise.
-	// i18n-family: end.how_ = answered stopped paused capped silent failed malformed reasoned_only
-	// i18n-family: end.why_ = lease_cap lease_revoked stream_abort
+	// i18n-family: end.how_ = answered stopped paused capped spend_cap silent failed malformed reasoned_only
+	// i18n-family: end.why_ = lease_cap lease_revoked stream_abort blocked
 	'end.how_answered': 'Answered',
 	'end.how_stopped':  'Stopped',
 	'end.why_lease_cap':    'Stopped: ran past the 30-minute limit for a turn handed to another device',
 	'end.why_lease_revoked': 'Stopped: another device took this turn over',
 	'end.why_stream_abort': 'Stopped: cut off before the turn finished',
+	'end.why_blocked':      'Not done: stopped on something it could not get past',
 	'end.how_paused':   'Paused',
-	'end.how_capped':   'Step limit reached',
+	'end.how_capped':   'Stopped: step limit reached',
+	'end.how_spend_cap': 'Stopped: spend limit reached',
 	'end.how_silent':   'Ended without saying anything',
 	'end.how_failed':   'Ended on an error',
 	'end.how_malformed': 'Ended: the tool call arrived as text',
@@ -2528,6 +2530,7 @@
 	'crystal.edit_json':      'Edit as JSON',
 	'crystal.json_invalid':   'That is not valid JSON, so nothing was saved.',
 	'crystal.broken':         'The crystal is not valid JSON, so nothing is drawn from it. Mend the text below.',
+	'crystal.unreadable':     'The crystal could not be read, so nothing is drawn from it and nothing can be saved over it. Try again in a moment.',
 	'crystal.field_title':    'Title',
 	'crystal.field_summary':  'Summary',
 	'crystal.field_sections': 'Sections',
@@ -2792,6 +2795,7 @@
 	'files.rest_count.other': '{n} entries',
 	'files.rest_help':       'Dot-files and Daimond’s own folders.',
 	'files.back':            'Back',
+	'files.loading':         'Reading…',
 	'files.edit':            'Edit',
 	'files.stop_editing':    'Stop editing',
 	'files.line_numbers':    'Line numbers',

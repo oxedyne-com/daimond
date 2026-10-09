@@ -40,9 +40,8 @@
 // Needs the dev server (DAIMOND_PORT). Block B needs a gateway behind it
 // (DAIMOND_GW_PORT); without one it says it did not run rather than passing.
 
-import { pathToFileURL } from 'node:url';
 import { webcrypto, createPublicKey, verify as osslVerify } from 'node:crypto';
-import { open, signInAs, PASS, PW, APP } from './harness.mjs';
+import { open, signInAs, PASS, APP } from './harness.mjs';
 import { GW_URL, GW_PORT } from './ports.mjs';
 
 const ok = [], bad = [];
@@ -417,7 +416,7 @@ try {
 			check('a fallback-made Ed25519 key from block A to carry across', false);
 		} else {
 			process.env.PLAYWRIGHT_SKIP_VALIDATE_HOST_REQUIREMENTS = '1';
-			const pw = await import(pathToFileURL(PW).href);
+			const pw = await import('./pw.mjs');
 			const env = Object.assign({}, process.env);
 			delete env.DISPLAY; delete env.WAYLAND_DISPLAY;
 			for (const [label, engine] of [['Firefox', pw.firefox], ['WebKit', pw.webkit]]) {

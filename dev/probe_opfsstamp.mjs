@@ -14,13 +14,8 @@
 //     eval "$(bash dev/world.sh 5 --env)"
 //     node dev/probe_opfsstamp.mjs                 # every engine that is installed
 //     node dev/probe_opfsstamp.mjs chromium webkit
-import os from 'node:os';
-import path from 'node:path';
-import { pathToFileURL } from 'node:url';
 
-const PW = process.env.DAIMOND_PW
-	|| path.join(os.homedir(), '.red-pw/node_modules/playwright-core/index.mjs');
-const pw = await import(pathToFileURL(PW).href);
+const pw = await import('./pw.mjs');
 const APP = process.env.DAIMOND_APP || 'http://localhost:8777';
 
 const want = process.argv.slice(2).filter(a => !a.startsWith('-'));

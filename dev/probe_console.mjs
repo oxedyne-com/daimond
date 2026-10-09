@@ -9,10 +9,9 @@
 // reports the responses behind it.
 
 import fs from 'node:fs';
-import os from 'node:os';
 import path from 'node:path';
 import { spawn } from 'node:child_process';
-import { fileURLToPath, pathToFileURL } from 'node:url';
+import { fileURLToPath } from 'node:url';
 import { requireFreshGateway, procLog } from './gwbin.mjs';
 import { signInFresh } from './session.mjs';
 import { GW_URL } from './ports.mjs';
@@ -23,8 +22,6 @@ const GWDIR  = path.join(ROOT, 'gateway');
 const GW_LOG = procLog('probe_console');
 const SERVE_LOG = procLog('probe_console', 'serve');
 const APP    = process.env.DAIMOND_APP || `http://localhost:${process.env.DAIMOND_PORT || 8777}`;
-const PW = process.env.DAIMOND_PW
-	|| path.join(os.homedir(), '.red-pw/node_modules/playwright-core/index.mjs');
 const CHROME = process.env.DAIMOND_CHROME
 	|| `${process.env.HOME}/.cache/ms-playwright/chromium-1229/chrome-linux64/chrome`;
 
@@ -75,7 +72,7 @@ async function startGateway(owner) {
 		console.log('dev server did not serve'); cleanup(); process.exit(1);
 	}
 
-	const { chromium } = await import(pathToFileURL(PW).href);
+	const { chromium } = await import('./pw.mjs');
 	// DISPLAY is dropped, and it is the reason a wait for content here could
 	// expire over a panel that was filled thirty seconds earlier. This session's
 	// DISPLAY is an X display forwarded over SSH; a headless Chrome still
