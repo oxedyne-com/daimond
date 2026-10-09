@@ -9,8 +9,10 @@
    wrapper around it, and `renderCrystal` drew the wrapper as a crystal with content.
 
    THE FIX. A text that starts with `{` and fails `parse` answers `null` from `crystalData` (so
-   `crystalJson` returns it exactly as it came), and `crystalBroken` says why for the face to
-   name. Markdown, blank and valid JSON read as before.   `node www/js/crystaldata.test.mjs`
+   `crystalJson` returns it exactly as it came), and `crystalFile` says why for the face to
+   name. Blank and valid JSON read as before; `crystalData` still migrates markdown (a backup,
+   an old version), but the LIVE file read through `crystalFile` is JSON or it is unread
+   (r544 QA C, F-C1).   `node www/js/crystaldata.test.mjs`
    ============================================================ */
 
 import { makeWindow, loadScript, sliceDaimond } from '../../dev/syncprobe.mjs';
@@ -25,8 +27,9 @@ const win = makeWindow({});
 loadScript(win, 'crystal.js');
 const lift = (names) => sliceDaimond(win, names, {}).fns;
 const { crystalData, crystalJson } = lift(['crystalData', 'crystalJson', 'crystalLib']);
-let crystalBroken = null;
-try { crystalBroken = lift(['crystalBroken', 'crystalLib']).crystalBroken; } catch (e) { /* not there yet */ }
+let crystalFile = null;
+try { crystalFile = lift(['crystalFile', 'crystalLib']).crystalFile; } catch (e) { /* not there yet */ }
+const crystalBroken = typeof crystalFile === 'function' ? (t) => crystalFile(t).broken : null;
 
 const damaged = {
 	'trailing comma':   '{"title":"T",}',
@@ -51,18 +54,19 @@ check('valid JSON: parsed, and written back pretty', crystalData(ok).title === '
 	&& crystalJson(ok) === JSON.stringify(JSON.parse(ok), null, 2));
 check('valid JSON: not broken', typeof crystalBroken === 'function' && crystalBroken(ok) === null);
 const md = '# Title\n\nsome prose\n\n## Heading\n\nbody\n';
-check('markdown: still migrated, not broken', crystalData(md) && Array.isArray(crystalData(md).sections || [])
-	&& typeof crystalBroken === 'function' && crystalBroken(md) === null);
+check('markdown: crystalData still migrates it (backups, old versions)', crystalData(md) && Array.isArray(crystalData(md).sections || []));
+check('markdown as the live file: unread, no text, no data (F-C1)', typeof crystalFile === 'function'
+	&& crystalFile(md).unread === true && crystalFile(md).data === null && crystalFile(md).text === '');
 check('blank: an empty crystal, not broken', JSON.stringify(crystalData('')) === '{}'
 	&& typeof crystalBroken === 'function' && crystalBroken('  \n') === null);
-check('an array is not JSON that failed: left to the old reading',
-	typeof crystalBroken === 'function' && crystalBroken('[1,2]') === null);
+check('an array is not a crystal: unread, not damaged JSON to mend',
+	typeof crystalFile === 'function' && crystalFile('[1,2]').unread === true);
 
 // No library: the text goes back as it came, and nothing is called broken.
 const bare = makeWindow({});
 const bareFns = sliceDaimond(bare, ['crystalData', 'crystalJson', 'crystalLib'], {}).fns;
 let bareBroken = null;
-try { bareBroken = sliceDaimond(bare, ['crystalBroken', 'crystalLib'], {}).fns.crystalBroken; } catch (e) { /* not there yet */ }
+try { const f = sliceDaimond(bare, ['crystalFile', 'crystalLib'], {}).fns.crystalFile; bareBroken = (t) => f(t).broken; } catch (e) { /* not there yet */ }
 check('no library: unchanged, and not called broken',
 	bareFns.crystalJson('{"title":"T",}') === '{"title":"T",}'
 	&& typeof bareBroken === 'function' && bareBroken('{"title":"T",}') === null);

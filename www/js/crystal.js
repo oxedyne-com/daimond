@@ -47,7 +47,13 @@
  * page written before today does not speak `save`, and nothing can teach it --
  * a migration can rename a file but cannot rewrite a model-authored page. So a
  * verb may be ADDED and may never change meaning, and a page that does not use
- * one is unaffected. `ready`, `asset`, `save`, `rendered`, `height`, `open`.
+ * one is unaffected. `ready`, `asset`, `save`, `rendered`, `height`, `open`, `dirty`.
+ *
+ * `dirty {on}` (2026-10-09, D-20261006-07) is a page saying a person is mid-entry in it.
+ * The app then holds back a remount (a page rewritten on another device) until it clears;
+ * a page that never sends it is held back only while it has the focus. Coming down, `data`
+ * carries `_rev`, the Diamond's stamp: a page that keeps records in its own files reads
+ * them again when `_rev` moves, and is not remounted to make it do so.
  *
  * A DAIMON CAN SEE ITS OWN PAGE, ON DEMAND (`render`, 2026-10-04). `capture` cannot reach
  * into a frame (an opaque origin has no DOM we can query), so a daimon was blind to how its
@@ -58,7 +64,7 @@
  * data, and posts it `{cmd:'probe', id, sel}`. A shim armoured in beside the policy of THAT
  * frame only, a separate script the page cannot edit, answers `{cmd:'probed', id, ...}` with
  * rows measured from the page's OWN DOM and a PNG drawn in the frame by the app's own
- * rasteriser; then the frame is removed. The visible frame never carries the shim. The
+ * rasteriser; then the frame is removed. The visible frame never carries the probe shim (only, on a device that turned the Lens picture on, the smaller `lensShim`). The
  * answer is DATA, never trusted: a page can post `probed` itself, so the parent takes only
  * the numbers and short printable strings it expects, caps every one, builds the table's
  * text itself, and answers only the probe it has outstanding. No sandbox flag changes.
@@ -80,7 +86,7 @@
  *
  *     window.DaimondCrystal = { CORE_KEYS, DEFAULT_PAGE, adopt, restyle, soften, draw, isDefault, FALLBACK_MS, PROTOCOL,
  *                               parse, toMarkdown, fromMarkdown,
- *                               mount, unmount, fallback, render, setAssetReader }
+ *                               mount, unmount, fallback, render, setAssetReader, shotFrames }
  */
 (function () {
 	'use strict';
@@ -448,7 +454,11 @@
 	/// two added, and any `_` key the model happened to write stripped — the
 	/// underscore is reserved on the wire, so a crystal carrying `_theme` cannot
 	/// dress itself up as the parent.
-	function wireData(data, opts, el, names) {
+	///
+	/// `rev` is the Diamond's stamp when the app has one: a page that keeps its records in its
+	/// own files reads them again when it moves, which is how a change from another device
+	/// reaches a page that stays mounted (`refresh`).
+	function wireData(data, opts, el, names, rev) {
 		var d = obj(data), out = {};
 		for (var k in d) {
 			if (!own(d, k) || k.charAt(0) === '_') continue;
@@ -456,6 +466,7 @@
 		}
 		out._theme  = themeOf(el, names);
 		out._labels = labelsFor(opts);
+		if (rev != null && String(rev) !== '') out._rev = String(rev);
 		return out;
 	}
 
@@ -971,6 +982,94 @@
 		var mk = shot && typeof shot.rasteriserSource === 'string' ? shot.rasteriserSource : '';
 		if (/<\/script|<!--/i.test(mk)) mk = '';
 		return '<script>(' + shim.toString() + ')(window,' + (mk || 'null') + ',' + JSON.stringify(String(nonce)) + ');<\/script>';
+	}
+
+	// ── The Lens's picture: the visible page draws itself (D-20261006-14) ──
+	//
+	// The Lens's picture of a device is drawn in the app's document, where a frame is only a box:
+	// an opaque origin has no DOM to clone. So on a device whose owner turned the picture on
+	// (Settings, `DaimondLensShot`), the visible frame is armoured with a second, smaller shim
+	// that answers `{cmd:'shot', id}` by drawing ITS OWN window with the same rasteriser in
+	// viewport mode, scrolled where the person left it, and posting `{cmd:'shot_done', id, nonce,
+	// png_b64}` back. The threat is the probe's, smaller: it reads only its own document, posts
+	// only to the parent it started with, under a nonce the page cannot read; the parent takes a
+	// PNG signature under a cap or nothing. A device that never turned the picture on gets no
+	// shim, so the visible frame is unchanged for everybody else.
+
+	var SHOT_MS = 1500;
+	var SHOT_B64_MAX = 4e6;
+	var shotSeq = 0;
+
+	function lensShim(win, mk, nonce) {
+		var doc = win.document, up = win.parent, raster = null;
+		try { var me = doc.currentScript; if (me && me.parentNode) me.parentNode.removeChild(me); } catch (e) { /* no tag to remove */ }
+		win.addEventListener('message', function (e) {
+			if (e.source !== up) return;
+			var m = e.data;
+			if (!m || m.dc !== 1 || m.v !== 1 || m.cmd !== 'shot') return;
+			var out = { dc: 1, v: 1, cmd: 'shot_done', id: String(m.id).slice(0, 40), nonce: nonce };
+			function send() { try { up.postMessage(out, '*'); } catch (err) { /* the parent went away */ } }
+			try {
+				if (!mk) throw new Error('the page has no rasteriser');
+				raster = raster || mk();
+				raster.rasterise(doc.body, { viewport: true, max_w: m.max_w > 0 ? Math.min(Number(m.max_w), 4000) : 0 })
+					.then(function (r) { out.png_b64 = r.b64; send(); },
+						function (err) { out.error = String(err && err.message).slice(0, 200); send(); });
+			} catch (err) {
+				out.error = String(err && err.message).slice(0, 200);
+				send();
+			}
+		});
+	}
+
+	function lensShimTag(nonce) {
+		var shot = window.DaimondShot;
+		var mk = shot && typeof shot.rasteriserSource === 'string' ? shot.rasteriserSource : '';
+		if (/<\/script|<!--/i.test(mk)) mk = '';
+		return '<script>(' + lensShim.toString() + ')(window,' + (mk || 'null') + ',' + JSON.stringify(String(nonce)) + ');<\/script>';
+	}
+
+	/// Has this device's owner turned the Lens's picture on?
+	function lensOn() {
+		var L = window.DaimondLensShot;
+		try { return !!(L && typeof L.enabled === 'function' && L.enabled()); } catch (e) { return false; }
+	}
+
+	/// The visible page's own picture, for the Lens to lay over the frame's box: a list of
+	/// `{ rect: {x, y, w, h}, png_b64, why }`, empty when no page is on screen. `png_b64` is null
+	/// with `why` said when the page did not answer within `ms` (1.5 s) or was opened before the
+	/// picture was turned on; the box then stays labelled.
+	function shotFrames(ms) {
+		ms = ms > 0 ? ms : SHOT_MS;
+		if (!live || live.done || !live.frame || !live.frame.isConnected) return Promise.resolve([]);
+		var frame = live.frame, nonce = live.shotNonce || '', r = frame.getBoundingClientRect();
+		if (r.width < 1 || r.height < 1 || r.bottom <= 0 || r.top >= window.innerHeight) return Promise.resolve([]);
+		var one = { rect: { x: r.left, y: r.top, w: r.width, h: r.height }, png_b64: null, why: '' };
+		if (!nonce) { one.why = 'the page was opened before pictures were turned on'; return Promise.resolve([one]); }
+		return new Promise(function (resolve) {
+			var id = 'ls' + (++shotSeq), done = false, t = null;
+			function fin(why) {
+				if (done) return;
+				done = true;
+				window.removeEventListener('message', on);
+				clearTimeout(t);
+				if (why) one.why = why;
+				resolve([one]);
+			}
+			function on(e) {
+				if (e.source !== frame.contentWindow) return;
+				var m = e.data;
+				if (!m || m.dc !== 1 || m.cmd !== 'shot_done' || m.id !== id || m.nonce !== nonce) return;
+				var b = m.png_b64;
+				if (typeof b === 'string' && b.length < SHOT_B64_MAX && b.slice(0, 11) === 'iVBORw0KGgo') one.png_b64 = b;
+				fin(one.png_b64 ? '' : 'the page could not draw itself');
+			}
+			window.addEventListener('message', on);
+			t = setTimeout(function () { fin('the page did not answer within ' + (ms / 1000) + ' s'); }, ms);
+			try {
+				frame.contentWindow.postMessage({ dc: 1, v: 1, cmd: 'shot', id: id, max_w: Math.ceil(r.width) }, '*');
+			} catch (e) { fin('the page could not be reached'); }
+		});
 	}
 
 	/// A fresh secret for one render: 128 random bits as hex, or `''` where the browser has no
@@ -1599,13 +1698,16 @@
 		// faces it is also given the lines that register them.
 		var faces = faceSkin(currentSkin());
 		if (faces) loadFaces(currentSkin());
-		var made = makeFrame(page, faces ? FACE_PRELUDE : '', 'crystal-frame', tr(opts, 'crystal.view_crystal', 'Crystal'));
+		// The Lens's picture shim, only on a device whose owner turned the picture on.
+		var shotNonce = lensOn() ? newNonce() : '';
+		var made = makeFrame(page, (shotNonce ? lensShimTag(shotNonce) : '') + (faces ? FACE_PRELUDE : ''),
+			'crystal-frame', tr(opts, 'crystal.view_crystal', 'Crystal'));
 		var frame = made.frame, armed = made.armed, url = made.url;
 		wrap.appendChild(frame);
 		el.appendChild(wrap);
 
 		live = {
-			el: el, opts: opts, data: data, frame: frame, url: url,
+			el: el, opts: opts, data: data, frame: frame, url: url, shotNonce: shotNonce,
 			// What the page names, lower-cased: a face it names in its own stack is handed
 			// over with the theme's, so a head set in Sofia Sans Condensed draws in it.
 			names: page.toLowerCase(),
@@ -1614,6 +1716,7 @@
 			csp: { policy: PAGE_CSP, injected: armed.injected, carried: armed.carried, at: armed.at },
 			ready: false, reported: false, done: false, loads: 0, keys: [], faces: faces,
 			timer: 0, rtimer: 0, watch: null, height: 0, onMsg: null, onLoad: null,
+			rev: opts.rev == null ? '' : String(opts.rev), dirty: false, spoke: false,
 		};
 
 		live.onMsg = function (e) { onMessage(e); };
@@ -1716,6 +1819,7 @@
 			case 'rendered': onRendered(m); break;
 			case 'height':   onHeight(m); break;
 			case 'open':     onOpen(m); break;
+			case 'dirty':    live.spoke = true; live.dirty = !!m.on; break;
 			default: break;   // an unknown verb is a page from a later Daimond; ignore it
 		}
 	}
@@ -1735,7 +1839,88 @@
 
 	function sendData() {
 		if (!live || live.done || !live.ready) return;
-		toFrame({ cmd: 'data', data: wireData(live.data, live.opts, live.el, live.names) });
+		toFrame({ cmd: 'data', data: wireData(live.data, live.opts, live.el, live.names, live.rev) });
+	}
+
+	/// The same Diamond moved under a page that is still the right page: another device
+	/// logged into it, or its memory was folded. The page is handed the new data and the
+	/// new stamp and stays mounted, so whatever is half-typed in it stays too (D-20261006-07).
+	/// A remount here was the old answer, and it took the typing with it.
+	///
+	/// The built-in view has nothing typed in it, so it is simply drawn again.
+	function refresh(data, rev) {
+		if (!live) return false;
+		live.data = obj(data);
+		if (live.opts) live.opts.data = live.data;
+		live.rev = rev == null ? '' : String(rev);
+		if (live.done) {
+			if (live.el) {
+				var o = {}, k;
+				for (k in live.opts) if (own(live.opts, k)) o[k] = live.opts[k];
+				o.reason = live.reason;
+				fallback(live.el, live.data, o);
+			}
+			return true;
+		}
+		sendData();
+		return true;
+	}
+
+	/// Is a person in the middle of something in the page? A page that speaks `dirty` is
+	/// taken at its word; one that never has is busy while it has the focus. A remount waits for
+	/// this to clear.
+	function busy() {
+		if (!live || live.done) return false;
+		if (live.spoke) return !!live.dirty;
+		try { return !!(live.frame && document.activeElement === live.frame); }
+		catch (e) { return false; }
+	}
+
+
+	// ── Three-way merge, per top-level key ──────────────────────────
+	//
+	// Two devices each edit a crystal from the same base. A key only one of them moved is
+	// that one's; a key both moved to the same value is agreed; a key both moved to
+	// different values is a CONFLICT, which is named and never settled silently.
+
+	/// JSON with every object's keys sorted, so two equal values compare equal however their
+	/// keys were ordered. `undefined` (a key that is not there) is its own value.
+	function canon(x) {
+		if (x === undefined) return '\u0000absent';
+		return JSON.stringify(x, function (k, v) {
+			if (v && typeof v === 'object' && !Array.isArray(v)) {
+				var o = {}, ks = Object.keys(v).sort(), i;
+				for (i = 0; i < ks.length; i++) o[ks[i]] = v[ks[i]];
+				return o;
+			}
+			return v;
+		});
+	}
+
+	/// `{ merged, conflicts }`. `conflicts` is `[{ key, base, mine, theirs }]`; each is
+	/// resolved in `merged` to `prefer` (`'mine'`, the default, or `'theirs'`), so a caller
+	/// that has asked the person can write `merged` as it stands.
+	function merge3(base, mine, theirs, prefer) {
+		var b = obj(base), m = obj(mine), t = obj(theirs);
+		var merged = {}, conflicts = [], keys = [], seen = {}, i, k;
+		var add = function (o) { for (var x in o) if (own(o, x) && !seen[x]) { seen[x] = 1; keys.push(x); } };
+		add(m); add(t); add(b);
+		for (i = 0; i < keys.length; i++) {
+			k = keys[i];
+			var cb = canon(own(b, k) ? b[k] : undefined);
+			var cm = canon(own(m, k) ? m[k] : undefined);
+			var ct = canon(own(t, k) ? t[k] : undefined);
+			var take;
+			if (cm === ct || ct === cb) take = 'mine';
+			else if (cm === cb) take = 'theirs';
+			else {
+				conflicts.push({ key: k, base: b[k], mine: m[k], theirs: t[k] });
+				take = prefer === 'theirs' ? 'theirs' : 'mine';
+			}
+			var src = take === 'mine' ? m : t;
+			if (own(src, k)) merged[k] = src[k];
+		}
+		return { merged: merged, conflicts: conflicts };
 	}
 
 	/// The page is listening. Its data goes out unprompted, and a second clock
@@ -1784,8 +1969,8 @@
 	function setAssetReader(fn) { assetReader = typeof fn === 'function' ? fn : null; }
 
 	// The last version of a Diamond's page that passed the load proof (K1), kept by the app in
-	// `diamonds/<id>/.daimond/crystal_passed.json` as `{version, at, page, data, debug}`; K2
-	// restores from it. `crystal.js` has no store of its own, so the app registers one.
+	// `diamonds/<id>/.daimond/crystal_passed.json` as `{version, at, page, data, debug}`. Nothing
+	// is put back from it; the proof reads it for the debug count it compares against. `crystal.js` has no store of its own, so the app registers one.
 	var passedStore = null;
 	function setPassedStore(st) {
 		passedStore = st && typeof st.mark === 'function' && typeof st.last === 'function' ? st : null;
@@ -2891,6 +3076,7 @@
 	// ── Export ──────────────────────────────────────────────────────
 
 	window.DaimondCrystal = {
+		shotFrames:     shotFrames,
 		setAssetReader: setAssetReader,
 		setPassedStore: setPassedStore,
 		markPassed:     markPassed,
@@ -2912,6 +3098,10 @@
 		fromMarkdown: fromMarkdown,
 		mount:        mount,
 		unmount:      unmount,
+		refresh:      refresh,
+		busy:         busy,
+		merge3:       merge3,
+		canon:        canon,
 		fallback:     fallback,
 		render:       render,
 		probeTable:   probeTable,

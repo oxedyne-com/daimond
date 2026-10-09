@@ -213,73 +213,33 @@ await page.waitForSelector('.dlg-input', { timeout: 10000 });
 await page.fill('.dlg-input', 'Push something');
 await page.click('.dlg-ok', { force: true });
 await page.waitForTimeout(1200);
-// The Diamond tree is chosen BEFORE the panel is drawn, not by clicking the
-// chip afterwards. `setScope` returns early when the scope is already what was
-// asked for, and the panel reads this key when it first renders -- so a click
-// after the fact can land on a row that is already in the state it wants and
-// redraw nothing. The panel's own persistence is the door here.
-await page.evaluate(() => localStorage.setItem('daimond-files-scope', 'diamond'));
+// The toolchains are granted from the Workspace head's ⋯ (round 2, P2), which is drawn while a Diamond
+// is in focus -- the new one is. Reached through `evaluate` rather than `waitForSelector`, which waits for
+// VISIBILITY: the head can hold the button while the rail is still settling.
 await page.evaluate(() => window.DaimondPanels && DaimondPanels.show('work'));
 await page.waitForTimeout(800);
-await page.click('#panel-work [data-act="refresh"]', { force: true }).catch(() => {});
-await page.waitForTimeout(800);
-// The chip is reached through `evaluate` rather than `waitForSelector`, which
-// waits for VISIBILITY: the panel can hold the row while the rail is still
-// settling, and a chip that is present but not yet laid out times out for a
-// reason that has nothing to do with what is being tested. `verify_dworkspace`
-// reads it the same way, and passes.
-for (let i = 0; i < 40; i++) {
-	const there = await page.evaluate(() =>
-		!!document.querySelector('.files-scope-chip[data-scope="diamond"]'));
-	if (there) break;
-	await page.evaluate(() => {
-		const r = document.querySelector('#panel-work [data-act="refresh"]');
-		if (r) r.click();
-	});
-	await page.waitForTimeout(500);
+const openMenu = () => page.evaluate(async () => {
+	const more = document.querySelector('#panel-work [data-act="ws-more"]');
+	if (!more || more.hidden) return [];
+	if (!document.querySelector('.railhead-menu')) more.click();
+	await new Promise((r) => setTimeout(r, 300));
+	return [...document.querySelectorAll('.railhead-menu [data-kit]')].map((x) => x.dataset.kit);
+});
+let kits = [];
+for (let i = 0; i < 40 && !kits.length; i++) {
+	kits = await openMenu();
+	if (!kits.length) await page.waitForTimeout(500);
 }
-// The toolchain row is drawn only in the Diamond tree, so the scope click is
-// what makes it exist -- and a re-render can land between the click and the
-// read. Press until the row is there, or the next check reports "no Git chip"
-// when what actually happened is "no chips at all".
-for (let i = 0; i < 40; i++) {
-	await page.evaluate(() => {
-		const c = document.querySelector('.files-scope-chip[data-scope="diamond"]');
-		if (c) c.click();
-	});
-	await page.waitForTimeout(500);
-	const n = await page.evaluate(() => document.querySelectorAll('.files-kit-chip').length);
-	if (n > 0) break;
-}
-const kits = await page.$$eval('.files-kit-chip', els => els.map(e => e.textContent));
-
-// The toolchain row needs a Diamond that is OPEN, not merely created, and this
-// harness has not found a way to get one into that state -- NO chips render
-// here, Rust and Node included, so the row is absent rather than the Git entry
-// being missing from it. Reported as not covered rather than failed: a red that
-// means "the harness cannot reach this" teaches the next reader the wrong thing,
-// and a green would be a lie.
-//
-// Confirmed by hand on 2026-08-03 against seq 66, in the running app: open a
-// Diamond, Workspace, "This Diamond" -- the row reads Rust, Node, Python, Go,
-// Git. A screenshot is the evidence, which is weaker than a check and is why
-// this is written down rather than quietly dropped.
-if (!kits.length) {
-	console.log('  ---- NOT COVERED: the toolchain row did not render in this harness '
-		+ '(no chips at all, not just Git). Confirmed by hand against seq 66.');
-} else {
-	check(kits.includes('Git'), `the workspace offers the Git toolkit (${kits.join(', ')})`);
-}
+// The ⋯ is drawn only while a Diamond is in focus, and this harness's new Diamond is made but not
+// opened (focus stays null), so the menu cannot exist here: reported as not covered, as the chip row
+// was before it, rather than as a fault in the app. `verify_workspacepanel` opens one and presses it.
+const focus = kits.length ? true : await page.evaluate(() => !!(window.DaimondAttach && DaimondAttach.focus()));
+if (!focus) console.log('  ---- NOT COVERED: no Diamond in focus in this harness, so the head ⋯ is not drawn.');
+else check(kits.includes('git'), `the workspace offers the Git toolkit (${kits.join(', ') || 'no ⋯ menu'})`);
 
 // Offered is not granted: press it, and ask the STORE what it kept. A label the
-// engine will not parse would draw the same chip and grant nothing.
-await page.click('.files-kit-chip:text-is("Git")', { force: true }).catch(async () => {
-	await page.evaluate(() => {
-		const b = Array.from(document.querySelectorAll('.files-kit-chip'))
-			.find(x => x.textContent === 'Git');
-		if (b) b.click();
-	});
-});
+// engine will not parse would draw the same item and grant nothing.
+await page.evaluate(() => { const b = document.querySelector('.railhead-menu [data-kit="git"]'); if (b) b.click(); });
 await page.waitForTimeout(900);
 const granted = await page.evaluate(async () => {
 	const m = await import('/pkg/oxedyne_daimond.js');
@@ -304,12 +264,12 @@ const kept = await page.evaluate(async () => {
 // `null` means the store held NO Diamond at this point — so this file's own
 // creation step never landed, and that is the whole of why the toolchain row
 // was absent. It is a fault in this harness and not in the app: the same
-// creation sequence passes in `verify_dworkspace`, and the row was confirmed by
+// creation sequence passes in `verify_workspacepanel`, and the row was confirmed by
 // hand. Recorded rather than papered over, because the next person to touch this
 // file needs to know the Diamond is the missing piece, not the chip.
 if (kept === null) {
 	console.log('  ---- NOT COVERED: no Diamond in the store at this point, so this '
-		+ "file's own creation step is what failed. See verify_dworkspace for a "
+		+ "file's own creation step is what failed. See verify_workspacepanel for a "
 		+ 'sequence that works.');
 } else {
 	check(kept.indexOf('git') >= 0,

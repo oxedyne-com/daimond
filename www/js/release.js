@@ -146,12 +146,6 @@
 		return tn('rel.years_ago', Math.round(days / 365));
 	}
 
-	function dateOf(iso) {
-		var d = new Date(iso);
-		if (isNaN(d)) return '';
-		return d.toLocaleDateString(undefined, { day: 'numeric', month: 'short', year: 'numeric' });
-	}
-
 	// ── The status row ──────────────────────────────────────────────────
 
 	/// Fill the row in the status strip: the release you are on, and how long it
@@ -188,7 +182,7 @@
 				: (unreachable ? t('rel.log_unreachable') : t('rel.not_published'))));
 		r.title = cur
 			? t(m ? 'rel.title_named' : 'rel.title_prerelease',
-					{ name: name, build: cur.build, date: dateOf(cur.ts) })
+					{ name: name, build: cur.build, date: window.DaimondTime.fmtLocal(cur.ts, 'day') })
 				+ (behind ? ' ' + t('rel.title_behind') : '')
 				+ ' ' + t('rel.title_click')
 			: (unreachable ? t('rel.log_unreachable') : t('rel.title_unlogged'));
@@ -237,7 +231,7 @@
 			var head = el('div', 'rel-head');
 			head.appendChild(el('span', 'rel-name', m.name));
 			if (here) head.appendChild(el('span', 'rel-tag rel-here', t('rel.you_are_here')));
-			if (first) head.appendChild(el('span', 'rel-when', dateOf(first.ts)));
+			if (first) head.appendChild(el('span', 'rel-when', window.DaimondTime.fmtLocal(first.ts, 'day')));
 			row.appendChild(head);
 			if (m.blurb) row.appendChild(el('div', 'rel-blurb', m.blurb));
 			into.appendChild(row);
@@ -248,7 +242,7 @@
 			var nh = el('div', 'rel-head');
 			nh.appendChild(el('span', 'rel-name', t('rel.prerelease')));
 			nh.appendChild(el('span', 'rel-tag rel-here', t('rel.you_are_here')));
-			if (cur) nh.appendChild(el('span', 'rel-when', dateOf(cur.ts)));
+			if (cur) nh.appendChild(el('span', 'rel-when', window.DaimondTime.fmtLocal(cur.ts, 'day')));
 			none.appendChild(nh);
 			none.appendChild(el('div', 'rel-blurb', t('rel.none_declared')));
 			if (cur) {
@@ -272,7 +266,7 @@
 			var b = el('div', 'rel-build' + (cur && e.seq === cur.seq ? ' rel-build-here' : ''));
 			var bh = el('div', 'rel-build-head');
 			bh.appendChild(el('code', null, e.build));
-			bh.appendChild(el('span', 'rel-when', dateOf(e.ts)));
+			bh.appendChild(el('span', 'rel-when', window.DaimondTime.fmtLocal(e.ts, 'day')));
 			b.appendChild(bh);
 			if (e.note) b.appendChild(el('div', 'rel-build-note', e.note));
 			det.appendChild(b);

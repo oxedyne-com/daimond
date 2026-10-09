@@ -4337,6 +4337,7 @@
 			return {
 				read:    !!_st,
 				through: _st ? _st.through : 0,
+				seen:    _st ? (_st.seen | 0) : 0,		// collected: past every folded row, a held one included
 				acked:   _st ? _st.acked : 0,
 				solo:    !syncReady(),
 				park:    { on: _parking, off: _parkOff, parks: _parks,

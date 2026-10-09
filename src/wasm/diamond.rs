@@ -1206,9 +1206,26 @@ pub async fn read_crystal_data_strict(id: &str) -> Outcome<String> {
 }
 
 // `None` where there is nothing anywhere to read.
+//
+// Every text here can be drawn with Edit and saved back, so none is decoded lossily: bytes that
+// are not UTF-8 are an error naming the file and the byte, and the page shows its "could not be
+// read" state (r544 QA C, F-C1).  So is an EMPTY crystal.json beside a version that holds a
+// crystal -- read as empty, its Save wrote `{}` over the work the version still carries.
 async fn find_crystal_data(id: &str) -> Outcome<Option<String>> {
-    if let Ok(bytes) = opfs::read_file(FileRoot::Opfs, &crystal_data_path(id)).await {
-        return Ok(Some(String::from_utf8_lossy(&bytes).to_string()));
+    let path = crystal_data_path(id);
+    if let Ok(bytes) = opfs::read_file(FileRoot::Opfs, &path).await {
+        let text = res!(crate::tools::utf8_text(&bytes, &path));
+        if crate::tools::crystal_text_is_blank(&text) {
+            if let Ok(Some((n, json))) = newest_data_version(id).await {
+                if !crate::tools::crystal_text_is_blank(&json) {
+                    return Err(err!(
+                        "{} is empty, but version {} holds a crystal, so the empty file is not \
+                        read as one: put the version back from History.", path, n;
+                        Invalid, Data, Missing));
+                }
+            }
+        }
+        return Ok(Some(text));
     }
     if let Some((n, json)) = res!(newest_data_version(id).await) {
         console_log(&fmt!(
@@ -1221,7 +1238,7 @@ async fn find_crystal_data(id: &str) -> Outcome<Option<String>> {
         console_log(&fmt!(
             "Diamond '{}' still has a markdown crystal; it is read as data without being \
              converted on disk.", id));
-        let md = String::from_utf8_lossy(&bytes).to_string();
+        let md = res!(crate::tools::utf8_text(&bytes, &crystal_legacy_path(id)));
         return Ok(Some(crate::tools::crystal_from_markdown(&md).to_json()));
     }
     if let Some((n, md)) = res!(newest_legacy_version(id).await) {
@@ -1512,8 +1529,13 @@ fn today() -> String {
 /// # Arguments
 /// * `id` - The Diamond.
 async fn migrate_open(id: &str) -> Outcome<Vec<String>> {
+    // Not UTF-8 is "will not parse": this rewrites the file, and a lossy read would have written
+    // U+FFFD over every byte it could not decode.
     let json = match opfs::read_file(FileRoot::Opfs, &crystal_data_path(id)).await {
-        Ok(b)  => String::from_utf8_lossy(&b).into_owned(),
+        Ok(b)  => match crate::tools::utf8_text(&b, &crystal_data_path(id)) {
+            Ok(t)  => t,
+            Err(_) => return Ok(Vec::new()),
+        },
         Err(_) => return Ok(Vec::new()),
     };
     let (rest, open) = match crate::tools::crystal_without_open(&json) {
@@ -1600,7 +1622,7 @@ async fn newest_legacy_version(id: &str) -> Outcome<Option<(u64, String)>> {
     };
     let path = fmt!("{}/{:04}.md", versions_dir(id), n);
     let bytes = res!(opfs::read_file(FileRoot::Opfs, &path).await);
-    Ok(Some((n, String::from_utf8_lossy(&bytes).to_string())))
+    Ok(Some((n, res!(crate::tools::utf8_text(&bytes, &path)))))
 }
 
 /// The newest data version a Diamond can actually REBUILD, with its text.
@@ -1623,8 +1645,13 @@ async fn newest_data_version(id: &str) -> Outcome<Option<(u64, String)>> {
             Ok(c)  => c,
             Err(_) => continue,
         };
+        // A version whose bytes are not UTF-8 is passed over like one whose chain will not
+        // rebuild: decoded lossily it would be drawn, and saved, as the crystal.
         if let Ok(bytes) = follow(id, &chain, DATA_KEYFRAME_EXT, DATA_PATCH_EXT).await {
-            return Ok(Some((n, String::from_utf8_lossy(&bytes).to_string())));
+            match crate::tools::utf8_text(&bytes, &fmt!("{} version {}", crystal_data_path(id), n)) {
+                Ok(json) => return Ok(Some((n, json))),
+                Err(e)   => console_log(&fmt!("Diamond '{}': {}", id, e)),
+            }
         }
     }
     Ok(None)
@@ -6888,54 +6915,4 @@ pub async fn take_viewer_note(id: &str) -> String {
         console_log(&fmt!("Diamond '{}': the viewer's fallback notes could not be cleared: {}", id, e));
     }
     note
-}
-
-/// Put back the last page that passed the load proof, as a version of its own (K2): the turn's
-/// failing page stays in the chain as the version the turn took, so it can be brought back.
-///
-/// Found by its mark ([`crate::tools::crystal_page_mark`]) among the page's snapshots, newest
-/// first, since the mark's `version` names the newest version recorded when it passed, which a
-/// mark made mid-turn sets one short.  `None` where no snapshot holds that page.  Answers the
-/// failing version and the restored one.
-pub async fn restore_passed(id: &str, mark: &str) -> Outcome<Option<(u64, u64)>> {
-    let failing = res!(read_meta(id).await).version;
-    let good = if mark.is_empty() {
-        Some(String::new())     // the shipped page: no page of its own
-    } else {
-        let snaps = snapshot_chain(id, PAGE_KEYFRAME_EXT, PAGE_PATCH_EXT).await;
-        let mut nums: Vec<u64> = snaps.iter().map(|(n, _)| *n).filter(|n| *n <= failing).collect();
-        nums.sort_unstable_by(|a, b| b.cmp(a));
-        let mut found = None;
-        // Bounded: a page passed hundreds of edits ago is not walked back to on every turn.
-        for n in nums.into_iter().take(256) {
-            match page_at(id, n, &snaps).await {
-                Ok(Some(p)) if crate::tools::crystal_page_mark(&p) == mark => {
-                    found = Some(p);
-                    break;
-                },
-                _ => {},        // another page, or a link that will not rebuild: look further back
-            }
-        }
-        found
-    };
-    let good = match good {
-        Some(g) => g,
-        None    => return Ok(None),
-    };
-    let now = now_ms() as u64;
-    let data = res!(read_crystal_data(id).await);
-    let restored = res!(snapshot(id, &data, Some(&good), now).await);
-    let rec = LogRecord {
-        id:        generate_session_id(),
-        ts:        now,
-        kind:      "edit",
-        agent:     "daimond".to_string(),
-        task:      "put back the last page that passed the load proof".to_string(),
-        parent:    failing as i64,
-        version:   restored,
-        delta_ref: String::new(),
-        note:      fmt!("the page of version {} did not pass", failing),
-    };
-    res!(append_log(id, &rec).await);
-    Ok(Some((failing, restored)))
 }

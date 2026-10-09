@@ -386,7 +386,7 @@ function main() {
 		check('MC1 C1: the daimon answer is stamped t: dumid, the id its ledger entries carry',
 			/stampProd\(\{ h: DaimondProvenance\.h\.answer\(rec\.id, dmid\)[\s\S]{0,200}?t: dumid/.test(src));
 		check('MC1 C2: a worker bills under its run id (h.worker(rid)), with its facts',
-			/recordSpend\(run\.model, _pt, _ct, _ca, _cost, run\.provider, run\.diamondId \|\| '',\s*\(run\.prov && run\.prov\.rid\) \|\| '', wmeter \? wmeter\.facts\('w'\) : null\);/.test(src));
+			/recordSpend\(run\.model, ws\.p, ws\.c, ws\.ca, ws\.cost, run\.provider, run\.diamondId \|\| '',\s*\(run\.prov && run\.prov\.rid\) \|\| '', wmeter \? wmeter\.facts\('w'\) : null\);/.test(src));
 		check('MC1 C5: the chat, daimon and worker sinks each feed their meter first',
 			/var onEvent = function \(ev\) \{\s*if \(!ev \|\| !ev\.type\) return;\s*tmeter\.see\(ev\);/.test(src)
 			&& /var onEvent = function \(ev\) \{\s*if \(!ev \|\| !ev\.type\) return;\s*dmeter\.see\(ev\);/.test(src)

@@ -220,7 +220,7 @@ const A_BLOCK2 = block(A_BT2, DEV_A, [
 	// health is the beat's to state, and a tick arriving after it says nothing
 	// about the feed and must not hide what the beat said.
 	evRow(10, 'beat', { ctx: 12345, win: 200000, busy: 0, ob: 3,
-		throttled: 2, postFail: 1, cdrop: 5 }, NOW - 94000),
+		throttled: 2, postFail: 1, cdrop: 5, tdrop: 3 }, NOW - 94000),
 	// THE SCREEN (added 2026-09-13): what the person is actually looking at,
 	// on the phone that cannot be driven from Linux. `tile` rides the wire as
 	// one string, `"role: text"`; `status` splits it back for the reader.
@@ -354,7 +354,7 @@ check('status counts the console at warn and error',
 	statusLines.some(l => /^console \(1h\): 2 warn, 1 err/.test(l)),
 	statusLines.find(l => /^console/.test(l)));
 check('status reports the feed\'s own health from the beat',
-	statusLines.some(l => /^feed: throttled 2, postFail 1, console dropped 5 \(last beat\)/.test(l)),
+	statusLines.some(l => /^feed: throttled 2, postFail 1, console dropped 5, telemetry dropped 3 \(last beat\)/.test(l)),
 	statusLines.find(l => /^feed:/.test(l)));
 check('status --json carries the same two',
 	st.console1h.warn === 2 && st.console1h.error === 1
@@ -687,11 +687,11 @@ check('`lens turns` prints the round count, the max and the fold count',
 	rtLine.trim().split('\n').filter(l => /chatT1|r6|r10/.test(l) || true).slice(0, 2).join(' | '));
 
 const roundEvents = lens2('events', '--since', '24h', '--kind', 'round');
-check('`lens events --kind round` summarises the sampled rounds per turn',
-	/turn daimonT1: rounds 1-10 sampled \(3\), max prompt 95k/.test(roundEvents),
+check('`lens events --kind round` summarises the rounds each turn\'s rows cover',
+	/turn daimonT1: rounds 1-10, 3 seen, max prompt 95k/.test(roundEvents),
 	roundEvents.trim().split('\n').slice(-3).join(' | '));
 check('and a worker\'s own rounds, by its id rather than a turn',
-	/worker w7: rounds 1-5 sampled \(2\)/.test(roundEvents),
+	/worker w7: rounds 1-5, 2 seen/.test(roundEvents),
 	roundEvents.trim().split('\n').slice(-4).join(' | '));
 
 fs.rmSync(ROOT2, { recursive: true, force: true });

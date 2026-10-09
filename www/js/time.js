@@ -19,7 +19,7 @@
    the calendar of the moment, through `frameTag` (crystal.js's `armour`).
    `make` is therefore written to stand alone: it is sent as text.
 
-   window.DaimondTime = { fmt, fmtShort, fmtFull, fmtDate, fmtIso, year, calendar,
+   window.DaimondTime = { fmt, fmtShort, fmtFull, fmtDate, fmtIso, fmtLocal, year, calendar,
                           setCalendar, syncSnapshot, adoptSync, frameTag }
    ============================================================ */
 (function () {
@@ -66,18 +66,58 @@
 		// The date alone, from an epoch, an ISO instant (read as its LOCAL date) or a
 		// bare `YYYY-MM-DD` (that day as written: `Date.parse` would take it as UTC).
 		function fmtDate(v) {
-			var d = null, m;
+			var d = null;
 			if (isInstant(v)) d = new Date(v);
 			else if (typeof v === 'string') {
-				m = /^(-?\d{1,6})-(\d\d)-(\d\d)$/.exec(v);
-				if (m) d = new Date(+m[1], +m[2] - 1, +m[3], 12);
-				else if (/^-?\d{4,6}-\d\d-\d\dT/.test(v) && isFinite(Date.parse(v))) d = new Date(Date.parse(v));
+				d = calDay(v);
+				if (!d && /^-?\d{4,6}-\d\d-\d\dT/.test(v) && isFinite(Date.parse(v))) d = new Date(Date.parse(v));
 			}
+			return (d && isFinite(d.getTime())) ? day(d) : '';
+		}
+		// A bare `YYYY-MM-DD` as that LOCAL day at noon, or null; a day the calendar
+		// does not have (2026-13-45) is not a date, not a later one.
+		function calDay(v) {
+			var m = /^(-?\d{1,6})-(\d\d)-(\d\d)$/.exec(v);
+			if (!m) return null;
+			var d = new Date(+m[1], +m[2] - 1, +m[3], 12);
+			d.setFullYear(+m[1]);					// two-digit years are not 19xx
+			return (d.getMonth() === +m[2] - 1 && d.getDate() === +m[3]) ? d : null;
+		}
+		// The shapes a surface asks for by name, so that no surface keeps its own.
+		var SHAPES = {
+			day:          { day: 'numeric', month: 'short', year: 'numeric' },
+			dayLong:      { day: 'numeric', month: 'long', year: 'numeric' },
+			dayMonth:     { day: 'numeric', month: 'short' },
+			dayMonthLong: { day: 'numeric', month: 'long' },
+			dow:          { weekday: 'short' },
+			weekday:      { weekday: 'short', day: 'numeric', month: 'short', year: 'numeric' },
+			when:         { day: 'numeric', month: 'short', hour: 'numeric', minute: '2-digit' },
+			whenFull:     { weekday: 'short', day: 'numeric', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' },
+			clock:        { hour: 'numeric', minute: '2-digit' },
+		};
+		// A date in words, in the language `loc` (the app's, from the window's own
+		// copy), on the account's calendar. `v` is an epoch, a Date, a bare day or
+		// any string `Date.parse` reads; '' when it is none of them. The Gregorian
+		// calendar is pinned so a locale with its own (Thai, Persian) cannot slip a
+		// third reckoning in, and the Holocene year is spelt in the locale's digits.
+		function fmtLocal(v, shape, loc) {
+			var d = null;
+			if (v instanceof Date) d = new Date(v.getTime());
+			else if (isInstant(v)) d = new Date(v);
+			else if (typeof v === 'string' && v !== '') d = calDay(v) || new Date(Date.parse(v));
 			if (!d || !isFinite(d.getTime())) return '';
-			if (m) d.setFullYear(+m[1]);			// two-digit years are not 19xx
-			// A day the calendar does not have (2026-13-45) is not a date, not a later one.
-			if (m && (d.getMonth() !== +m[2] - 1 || d.getDate() !== +m[3])) return '';
-			return day(d);
+			var o = {}, k, src = SHAPES[shape] || SHAPES.day;
+			for (k in src) o[k] = src[k];
+			o.calendar = 'gregory';
+			var f;
+			try { f = new Intl.DateTimeFormat(loc || undefined, o); }
+			catch (e) { f = new Intl.DateTimeFormat(undefined, o); }
+			// A two-digit year is the same in both reckonings: ten thousand is a multiple of a hundred.
+			if (cal !== 'he' || o.year !== 'numeric' || !f.formatToParts) return f.format(d);
+			var y = year(d), ys;
+			try { ys = new Intl.NumberFormat(f.resolvedOptions().locale, { useGrouping: false }).format(y); }
+			catch (e) { ys = String(y); }
+			return f.formatToParts(d).map(function (p) { return p.type === 'year' ? ys : p.value; }).join('');
 		}
 		// A value as a crystal stores it (the contract: store ISO, display through
 		// DaimondTime). A calendar date keeps its day, an ISO instant or an epoch reads
@@ -94,8 +134,16 @@
 		}
 		return {
 			fmt: fmt, fmtShort: fmtShort, fmtFull: fmtFull, fmtDate: fmtDate, fmtIso: fmtIso, year: year,
+			fmtLocal: fmtLocal,
 			calendar: function () { return cal; },
 		};
+	}
+
+	/// The language the app is in, never the browser's: a reader who has put Daimond
+	/// into German reads every other word in German.
+	function appLocale() {
+		try { return (window.DaimondI18n && window.DaimondI18n.locale && window.DaimondI18n.locale()) || undefined; }
+		catch (e) { return undefined; }
 	}
 
 	function ms(v) { var n = Number(v); return (isFinite(n) && n > 0) ? Math.floor(n) : 0; }
@@ -190,6 +238,7 @@
 		fmtFull:      function (ts) { return cur.fmtFull(ts); },
 		fmtDate:      function (v) { return cur.fmtDate(v); },
 		fmtIso:       function (v) { return cur.fmtIso(v); },
+		fmtLocal:     function (v, shape) { return cur.fmtLocal(v, shape, appLocale()); },
 		year:         function (d) { return cur.year(d); },
 		calendar:     function () { return cur.calendar(); },
 		setCalendar:  setCalendar,

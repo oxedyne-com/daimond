@@ -24,17 +24,21 @@
 // fail: the grant is gone before R returns. That run is the baseline, not a regression.
 //
 // Usage: node dev/verify_handoff_q4grant.mjs      (the world's env, one gateway on its port)
-//        Q4_TARGET=L node dev/verify_handoff_q4grant.mjs
+//        Q4_TARGET=all node dev/verify_handoff_q4grant.mjs   (the broadcast ask, see below)
 //        Q4_SWAP=<path> node dev/verify_handoff_q4grant.mjs
 // With Q4_SWAP the probe is a ROLLBACK probe: once the relay is shown keeping the grant for R,
 // it writes <path>.ready and waits for <path>.done, which the world's runner writes after
 // putting the OLD gateway on the same store and port (tools/gw6_inner.sh, SWAPBIN). R then comes
 // back to a relay that does not ack per device and must still receive the grant: an addressed
 // row is an account row to the old gateway, and R's page goes back to the account's rules.
-// With Q4_TARGET=L the ask names L, the device that answers it. Release 5 (SIM-3) holds an ask
-// with no addressee for every device while it can be answered, so on its pages no device acks
-// through the grant inside the probe's window; an ask addressed to L is the case the per-device
-// ack changes there.
+// THE ASK NAMES L BY DEFAULT (2026-10-09, Q7). Release 5 (SIM-3, 442cfa24) holds an ask with
+// no addressee for every device while it can be answered, so L's `through` cannot pass it and
+// no device acks through the grant until the ask's deadline: the broadcast default sat out
+// every wait and ran into run_all's budget (exit 124). An ask addressed to L is the case the
+// per-device ack changes. `Q4_TARGET=all` keeps the broadcast ask, with a 20 s deadline so
+// the holds lapse inside the run. "Collected" is read from `seen`, the cursor that climbs
+// past every folded row, a held one included; `through` is the ACK watermark. Every wait
+// fails fast: the first that does not come true ends the probe with its reason.
 
 import fs from 'node:fs';
 import { open, signInAs, connectMock } from './harness.mjs';
@@ -43,6 +47,17 @@ import { GW_URL } from './ports.mjs';
 import { pair, checker, until, settle, comeBack, WAKE } from './handoffpair.mjs';
 
 const { ok, bad, check } = checker();
+let R, L, P;
+/// A wait the rest of the probe stands on: on a miss, report it and stop, rather than
+/// sit out every later wait on a premise already false.
+async function need(name, pass, detail) {
+	check(name, pass, detail);
+	if (pass) return;
+	console.log('\n' + ok.length + ' passed, ' + bad.length + ' failed (stopped at the first wait that failed)');
+	console.log('  FAILED: ' + bad.join(' | '));
+	for (const s of [R, L, P]) { try { await s?.close(); } catch (e) { /* already gone */ } }
+	process.exit(1);
+}
 
 /// The relay's rows as one device reads them, through its own session.
 const relayRows = (s) => s.page.evaluate(async () => {
@@ -81,8 +96,8 @@ async function third(lead, name) {
 }
 
 console.log('Q4 -- a grant for the runner survives the other devices\' acks');
-const { a: R, b: L } = await pair(check, 'q4run', 'q4lap');
-const P = await third(R, 'q4pho');
+({ a: R, b: L } = await pair(check, 'q4run', 'q4lap'));
+P = await third(R, 'q4pho');
 const [idR, idL, idP] = await Promise.all([R, L, P].map((s) =>
 	s.page.evaluate(() => window.DaimondIdentity.deviceId())));
 check('three distinct devices', new Set([idR, idL, idP]).size === 3, [idR, idL, idP].join(' '));
@@ -95,22 +110,24 @@ await R.page.evaluate(() => {
 
 // R asks, as a runner blocked on a consent does: `dispatchedBy` is R, so the answer routes home.
 const CID = 'q4-' + Date.now().toString(36);
-const TARGET = process.env.Q4_TARGET === 'L' ? idL : '';
-if (TARGET) console.log('  the ask names L (Q4_TARGET=L)');
-await R.page.evaluate(async ({ cid, idR, target }) => {
+const BROADCAST = process.env.Q4_TARGET === 'all';
+const TARGET = BROADCAST ? '' : idL;
+console.log(BROADCAST ? '  the ask names no device (Q4_TARGET=all), deadline 20 s' : '  the ask names L');
+await R.page.evaluate(async ({ cid, idR, target, life }) => {
 	const ask = window.DaimondPeer.makeAsk({
 		cid, eid: 'q4-eid', turnId: 'q4-turn', chatId: '', tool: 'web_fetch', host: 'example.com',
-		detail: 'fetch https://example.com (probe)', deadline: Date.now() + 120000,
+		detail: 'fetch https://example.com (probe)', deadline: Date.now() + life,
 		dispatchedBy: idR, target,
 	});
 	await window.DaimondPost.post(await window.DaimondPeer.sealForSelf(ask));
-}, { cid: CID, idR, target: TARGET });
+}, { cid: CID, idR, target: TARGET, life: BROADCAST ? 20000 : 120000 });
 
 // L has the ask once its cursor is past it.
 const askRows = await relayRows(L);
 const askSeq = Math.max(0, ...askRows.rows.map((x) => x.seq));
-const lSawAsk = await until(L.page, (s) => window.DaimondPost.state().through >= s, askSeq, 30000);
-check('L collected the ask', lSawAsk, 'ask seq ' + askSeq);
+const lSawAsk = await until(L.page, (s) => window.DaimondPost.state().seen >= s, askSeq, 30000);
+await need('L collected the ask', lSawAsk, 'ask seq ' + askSeq + ', L seen '
+	+ await L.page.evaluate(() => window.DaimondPost.state().seen));
 
 // R goes offline: it cannot collect before the others do.
 await R.page.context().setOffline(true);
@@ -124,17 +141,19 @@ const grantAddr = await L.page.evaluate(async ({ cid, idL }) => {
 }, { cid: CID, idL });
 const withGrant = await relayRows(L);
 const grantRow = withGrant.rows.find((x) => x.addr === grantAddr) || null;
-check('the grant is on the relay', !!grantRow, JSON.stringify(withGrant.rows));
+await need('the grant is on the relay', !!grantRow, JSON.stringify(withGrant.rows));
 const gSeq = grantRow ? grantRow.seq : 1e9;
 console.log('  relay says acks=' + JSON.stringify(withGrant.acks) + '; grant seq ' + gSeq + ' for '
 	+ JSON.stringify(grantRow && grantRow['for']) + ' (R is ' + idR + ')');
 
 // L and P collect and ack through the grant, as a device holding nothing below it does.
-const lAcked = await until(L.page, (s) => window.DaimondPost.state().acked >= s, gSeq, 45000);
-const pAcked = await until(P.page, (s) => window.DaimondPost.state().acked >= s, gSeq, 45000);
-console.log('  L acked through ' + await L.page.evaluate(() => window.DaimondPost.state().acked)
+// The broadcast ask is held until its deadline, so its acks wait that out as well.
+const ackMs = BROADCAST ? 45000 : 30000;
+const lAcked = await until(L.page, (s) => window.DaimondPost.state().acked >= s, gSeq, ackMs);
+const pAcked = lAcked && await until(P.page, (s) => window.DaimondPost.state().acked >= s, gSeq, ackMs);
+await need('L and P acked through the grant', lAcked && pAcked, 'L acked through '
+	+ await L.page.evaluate(() => window.DaimondPost.state().acked)
 	+ ', P through ' + await P.page.evaluate(() => window.DaimondPost.state().acked));
-check('L and P acked through the grant', lAcked && pAcked);
 
 const afterAcks = await relayRows(L);
 const kept = afterAcks.rows.find((x) => x.addr === grantAddr) || null;
@@ -177,7 +196,7 @@ check('R received it once', grants.length === 1, 'received ' + grants.length);
 check('the grant R received names R', grants.length > 0 && grants[0].to === idR, JSON.stringify(grants));
 
 // R's own ack takes it.
-const rAcked = await until(R.page, (s) => window.DaimondPost.state().acked >= s, gSeq, 45000);
+const rAcked = await until(R.page, (s) => window.DaimondPost.state().acked >= s, gSeq, 30000);
 const finalRows = await relayRows(L);
 check('R acked through the grant', rAcked);
 check('R\'s ack took the grant off the relay',

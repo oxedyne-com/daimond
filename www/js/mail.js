@@ -861,17 +861,6 @@
 		}).replace(/\?=\s*=\?/g, '');
 	}
 
-	/// A date the reader can read, in the language the interface is speaking.
-	/// `toDateString` is English whatever the locale, which is what this quoted
-	/// a reply's date in for every user in the world.
-	function longDate(d) {
-		var loc = window.DaimondI18n ? DaimondI18n.locale() : undefined;
-		try {
-			return d.toLocaleDateString(loc,
-				{ weekday: 'short', day: 'numeric', month: 'short', year: 'numeric' });
-		} catch (e) { return d.toDateString(); }
-	}
-
 	/// Thousands separators, because "69635 older messages" is a number the eye has to count.
 	function fmtCount(n) {
 		return String(n || 0).replace(/\B(?=(\d{3})+(?!\d))/g, ',');
@@ -3449,7 +3438,7 @@
 		// translator then had to work around. An undated quote gets its own
 		// sentence instead.
 		var head = dated
-			? t('mail.quote.head', { date: longDate(when), who: who })
+			? t('mail.quote.head', { date: window.DaimondTime.fmtLocal(when, 'weekday'), who: who })
 			: t('mail.quote.head_undated', { who: who });
 		var text = v.text || (v.html ? stripHtml(v.html) : '');
 		var body = String(text).split('\n').map(function (l) { return '> ' + l; }).join('\n');

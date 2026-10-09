@@ -75,10 +75,10 @@ export async function sendDesk(page, text) {
 }
 
 /// A new chat, from the rail a phone's width hides.
-export async function freshChat(s) {
+export async function freshChat(s, opts = {}) {
 	await s.page.setViewportSize({ width: 1280, height: 900 });
 	await s.page.waitForTimeout(300);
-	await newChat(s);
+	await newChat(s, opts);
 }
 
 /// The tab going to the background and coming back, which is what starts the recovery
@@ -183,30 +183,9 @@ export async function reopen(s) {
 	return r;
 }
 
-/// A and B: two devices of one Pro account, paired, both awake, A seeing B.
-///
-/// # Arguments
-/// * `lead`, `mate` - Harness names for the two browsers; `lead` is also the account.
-/// * `opts.route` - Called with each page before it is navigated, so a verifier can serve a
-///   damaged `www/js` file to BOTH devices (a `--break`). Absent, nothing is routed.
-export async function pair(check, lead, mate, opts = {}) {
-	const route = opts.route || null;
-	const a = await open({ name: lead, touch: true, signIn: false, connect: false, route });
-	a.account = lead; a.name = lead; a.touch = true;
-	await gateUp(a);
-	await signInAs(a, lead);
-	await a.page.waitForFunction(() => !!window.DaimondSync && !!window.DaimondPeer
-		&& window.DaimondGateway && DaimondGateway.state().authed, null, { timeout: 20000 }).catch(() => {});
-	const pro = await makePagePro(a.page, new URL('../gateway', import.meta.url).pathname, GW_URL);
-	check('A holds Pro', pro.pro === true, JSON.stringify(pro));
-	await connectMock(a);
-	if (WAKE) await a.page.evaluate((m) => window.DaimondSync.wakeVia(m), WAKE);
-	await newChat(a);
-	// A chat and a parcel on the account before a peer joins, as a real account has.
-	await chat(a, 'seed turn so the account has a chat and a parcel');
-	await settle(a.page);
-
-	const b = await open({ name: mate, signIn: false, connect: false, route });
+/// Pair one more device of `a`'s account, awake, parked and beating, as `pair` pairs B.
+async function joinMate(a, lead, mate, route, extra = {}) {
+	const b = await open({ name: mate, signIn: false, connect: false, route, ...extra });
 	b.account = lead; b.name = mate;
 	await b.page.waitForFunction(() => !!window.DaimondPairing, null, { timeout: 90000 }).catch(() => {});
 	const code = await a.page.evaluate(() => DaimondPairing.create());
@@ -224,6 +203,47 @@ export async function pair(check, lead, mate, opts = {}) {
 	await b.page.evaluate((n) => window.DaimondSync.beatPresence(window.DaimondIdentity.deviceId(), n), mate);
 	await a.page.evaluate(() => window.DaimondSync.refreshPresence && window.DaimondSync.refreshPresence());
 	await a.page.waitForTimeout(1500);
+	return b;
+}
+
+/// A third device, C, joined to `a`'s account the way `pair` joins B. For an arm that needs
+/// two runners beside the sender.
+export async function third(check, a, mate, opts = {}) {
+	const c = await joinMate(a, a.account, mate, opts.route || null, opts.open || {});
+	const idC = await c.page.evaluate(() => window.DaimondIdentity.deviceId());
+	await a.page.evaluate(() => window.DaimondSync.refreshPresence && window.DaimondSync.refreshPresence());
+	await a.page.waitForTimeout(1500);
+	const seen = await a.page.evaluate((id) => !!window.DaimondPresence.snapshot()[id], idC);
+	check('A sees C as a peer', seen);
+	return c;
+}
+
+/// A and B: two devices of one Pro account, paired, both awake, A seeing B.
+///
+/// # Arguments
+/// * `lead`, `mate` - Harness names for the two browsers; `lead` is also the account.
+/// * `opts.route` - Called with each page before it is navigated, so a verifier can serve a
+///   damaged `www/js` file to BOTH devices (a `--break`). Absent, nothing is routed.
+/// * `opts.openA`, `opts.openB` - Further `open()` options for one device alone, so a verifier
+///   can give A or B another build's www (its own `route`, service workers blocked).
+export async function pair(check, lead, mate, opts = {}) {
+	const route = opts.route || null;
+	const a = await open({ name: lead, touch: true, signIn: false, connect: false, route, ...(opts.openA || {}) });
+	a.account = lead; a.name = lead; a.touch = true;
+	await gateUp(a);
+	await signInAs(a, lead);
+	await a.page.waitForFunction(() => !!window.DaimondSync && !!window.DaimondPeer
+		&& window.DaimondGateway && DaimondGateway.state().authed, null, { timeout: 20000 }).catch(() => {});
+	const pro = await makePagePro(a.page, new URL('../gateway', import.meta.url).pathname, GW_URL);
+	check('A holds Pro', pro.pro === true, JSON.stringify(pro));
+	await connectMock(a);
+	if (WAKE) await a.page.evaluate((m) => window.DaimondSync.wakeVia(m), WAKE);
+	await newChat(a);
+	// A chat and a parcel on the account before a peer joins, as a real account has.
+	await chat(a, 'seed turn so the account has a chat and a parcel');
+	await settle(a.page);
+
+	const b = await joinMate(a, lead, mate, route, opts.openB || {});
 	const idA = await a.page.evaluate(() => window.DaimondIdentity.deviceId());
 	const aSeesB = await a.page.evaluate((self) => (window.DaimondPresence.awake(self, Date.now()) || []).length, idA);
 	check('A sees B as an awake peer', aSeesB >= 1, 'awake peers: ' + aSeesB);

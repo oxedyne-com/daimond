@@ -104,18 +104,6 @@
 
 	// ── Words ───────────────────────────────────────────────────────
 
-	/// A date in the language the app is in — not the browser's. A reader who has
-	/// put Daimond into German reads every other word of the notice in German.
-	function fmtDate(ms) {
-		var loc;
-		try { loc = window.DaimondI18n ? DaimondI18n.locale() : undefined; }
-		catch (e) { loc = undefined; }
-		try {
-			return new Date(ms).toLocaleDateString(loc || undefined,
-				{ day: 'numeric', month: 'long', year: 'numeric' });
-		} catch (e) { return ''; }
-	}
-
 	/// A size a person reads. The twin of `fmtBytes` in trash.js and daimond.js;
 	/// this file is a classic script and cannot reach into either closure.
 	function fmtBytes(n) {
@@ -302,7 +290,7 @@
 	/// the app knows — the day the meter pauses — not the last.
 	function storageSpec() {
 		if (!state.storageOn) return null;
-		var when = state.storageAt ? fmtDate(state.storageAt) : '';
+		var when = state.storageAt ? window.DaimondTime.fmtLocal(state.storageAt, 'dayLong') : '';
 		var body = [
 			t('lapse.storage_why',
 				'Your credits will not cover the cloud storage you are holding, so the '
@@ -355,7 +343,7 @@
 		var lead = LICENCE_LEAD_DAYS * 86400 * 1000;
 		if (state.licenceAt - now > lead) return null;
 		var over = state.licenceAt <= now;
-		var when = fmtDate(state.licenceAt);
+		var when = window.DaimondTime.fmtLocal(state.licenceAt, 'dayLong');
 		return {
 			kind: 'licence',
 			at:   state.licenceAt,

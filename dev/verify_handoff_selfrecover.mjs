@@ -422,7 +422,9 @@ try {
 		const n = document.querySelector('.seat-note.seat-warn');
 		return !!(n && /refused \(413\)/i.test(n.textContent || ''));
 	}, null, 20000);
-	check('#6: the seat note reads "refused (413)"', refusedNote);
+	const notes6 = refusedNote ? '' : await a.page.evaluate(() => Array.from(document.querySelectorAll('.seat-note'))
+		.map((n) => n.className + ': ' + n.textContent.trim()).join(' | ')).catch(() => '');
+	check('#6: the seat note reads "refused (413)"', refusedNote, notes6 ? 'notes: ' + notes6.slice(0, 300) + ' posts: ' + postCalls : '');
 	const ranHere413 = await untilChats(a, (cs) => answersFor(cs, 'refused413').some((m) => String(m.ranOn) === String(idA)), RTMS);
 	check('#6: the refused turn completed HERE with one assistant row', answersFor(ranHere413, 'refused413').filter((m) => String(m.ranOn) === String(idA)).length === 1);
 	await a.page.unroute('**/api/post');
@@ -442,12 +444,24 @@ try {
 		return route.continue();
 	});
 	const HUGE = 'BIGPROMPT ' + 'x'.repeat(80 * 1024);
+	// The note is chrome on the hand-off tile, which goes once the local answer is in
+	// (Q19, r545), so it is latched as it appears rather than sampled at a fixed 4 s:
+	// a fast local run had dropped it before the sample, red 1 run in 3.
+	await a.page.evaluate(() => {
+		window.__seatWarnSeen = [];
+		const look = () => document.querySelectorAll('.seat-note.seat-warn').forEach((n) => {
+			const t = n.textContent || '';
+			if (t && !window.__seatWarnSeen.includes(t)) window.__seatWarnSeen.push(t);
+		});
+		window.__seatWarnObs = new MutationObserver(look);
+		window.__seatWarnObs.observe(document.body, { childList: true, subtree: true, characterData: true });
+	});
 	await a.page.fill('#chat-input', HUGE);
 	await a.page.click('#chat-send', { force: true });
 	await a.page.waitForTimeout(4000);
 	const note0 = await a.page.evaluate(() => {
-		const n = document.querySelector('.seat-note.seat-warn');
-		return n ? n.textContent : '';
+		window.__seatWarnObs.disconnect();
+		return window.__seatWarnSeen.join(' | ');
 	});
 	check('#6: an oversized prompt shows a refused seat (status 0)', /refused \(0\)/i.test(note0 || ''), 'note=' + JSON.stringify(note0));
 	check('#6: no POST /api/post was attempted for the oversized prompt', postCalls2 === 0, 'post calls: ' + postCalls2);

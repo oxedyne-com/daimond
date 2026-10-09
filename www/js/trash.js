@@ -740,23 +740,6 @@
 		return (i === 0 ? n : n.toFixed(1)) + ' ' + u[i];
 	}
 
-	/// The day something stops existing, in the language the APP is in. A date
-	/// and not "in 27 days": the question a person asks of a trash is whether
-	/// the thing will still be there when they get back on Monday.
-	///
-	/// The locale comes from `DaimondI18n`, not from `undefined`. Left to the
-	/// browser, a reader who has put Daimond into German reads every other word
-	/// on this row in German and the date in whatever their browser was
-	/// installed as — which was "Sep 10, 2026" in the first screenshot of the
-	/// finished panel.
-	function fmtDate(ms) {
-		var loc;
-		try { loc = window.DaimondI18n ? DaimondI18n.locale() : undefined; }
-		catch (e) { loc = undefined; }
-		try { return new Date(ms).toLocaleDateString(loc || undefined, { day: 'numeric', month: 'short', year: 'numeric' }); }
-		catch (e) { return ''; }
-	}
-
 	/// Draw the panel from the store. Safe to call at any time; it is what every
 	/// action here ends with.
 	async function render() {
@@ -820,7 +803,7 @@
 				// The two facts that VARY per row, and the two the design asks
 				// for by name: the day this stops existing, and what it costs to
 				// keep. Their own line, below the reason.
-				note:  t('trash.until', { date: fmtDate(it.due) }) + ' · ' + fmtBytes(it.bytes),
+				note:  t('trash.until', { date: window.DaimondTime.fmtLocal(it.due, 'day') }) + ' · ' + fmtBytes(it.bytes),
 				// STACK, always. The icon view is the attachment footers' choice
 				// and their toggle sets it; an 88px cell cannot show a date and a
 				// size, and this panel has no toggle to get back with.

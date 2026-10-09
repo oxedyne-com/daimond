@@ -248,6 +248,14 @@ impl ImagePart {
                  in the request or the route, not blindness. Do not describe what it looks like. \
                  Say it was refused and not that you cannot see; try a smaller picture]",
                 self.source, self.media.mime(), self.data.len()),
+            // The model sees: it is the picture's size the provider would not take, so the
+            // words say that and ask for a smaller one, never that the model is blind.
+            Dropped::TooLarge => fmt!(
+                "[image {} ({}, {} bytes) was left out because it is too large for the provider \
+                 to take; that is no sign you cannot see pictures. Do not describe what it looks \
+                 like -- you have not seen it. Tell the owner the picture was too large, and that \
+                 a smaller one will do]",
+                self.source, self.media.mime(), self.data.len()),
             Dropped::Unconfirmed => fmt!(
                 "[image {} ({}, {} bytes) was not sent: Daimond cannot confirm that this model \
                  reads pictures, as its provider's model list does not say. That is a gap in \
@@ -276,6 +284,7 @@ pub enum Dropped {
     Refused,
     /// Nothing says the model reads pictures: the list is silent and the model is unknown.
     Unconfirmed,
+    TooLarge,   // refused for its size; the model may well see
 }
 
 /// One piece of a message's content.

@@ -17,9 +17,14 @@
 // stubbing the peer, not the network).
 //
 // Verifies the seq-2xx fix (RED before it, GREEN after):
-//   (1) the tile names the device the turn is going to -- a tentative "Sending to X…",
-//       from the dispatch's chosen target -- NOT the past-tense "Handed off to X" that
-//       seq 217 withholds until a real claim;
+//   (1a) NOMINEE ARM: with a runner nominated (DaimondCore.roster.nominate(B)), the tile names
+//        it -- a tentative "Sending to B…" (`turn.peer_sending_named`) -- NOT the
+//        past-tense "Handed off to X" that seq 217 withholds until a real claim;
+//   (1b) NO-NOMINEE ARM: with none nominated, the tile stays GENERIC ("Sent to your
+//        other devices.") and names no device. The owner's ruling of 2026-09-07
+//        (a3bdf814): "With NO nominee set, advertise NOTHING specific ... never a
+//        guessed device." This verifier predates that ruling by 12 hours and asked for
+//        the guess; split 2026-10-09 (Q7) so each arm asserts its own rule;
 //   (2) a take-back control is offered during the spinner;
 //   (3) MONEY-SAFETY: clicking it pulls the turn local through the take-if-vacant lease
 //       (trace: take…release), producing exactly one answer -- no double-run even with
@@ -117,41 +122,8 @@ try {
 	check('A sees B as a GENUINE peer the election will pick', !!(genuine && genuine.deviceId === idB),
 		JSON.stringify(genuine));
 
-	// ── SEND. A auto-dispatches (phone viewport + genuine peer); B never claims,
-	//    so A stays in the pre-claim `dispatched` spinner. ──
-	console.log('\nThe pre-claim spinner — A has dispatched, no peer has claimed the lease yet');
-	await a.page.setViewportSize({ width: 390, height: 844 });   // iPhone-ish; isPhoneViewport() true
-	await a.page.waitForTimeout(300);
-	const PROMPT = 'SPINUI what is two plus two';
-	await a.page.fill('#chat-input', PROMPT);
-	await a.page.click('#chat-send', { force: true });
-
-	// Wait for the hand-off tile's spinner to be up and the state to be `dispatched`
-	// (no lease holder). This is the window the owner watches.
-	const spinnerUp = await until(a.page, () => {
-		const tile = document.querySelector('#chat-output .chat-msg-handoff, #chat-output .ti-handoff');
-		return !!tile && !!document.querySelector('#chat-output .chat-spinner-dot, #chat-output .ti-spin');
-	}, null, 20000);
-	check('A shows the hand-off tile with its spinner', spinnerUp);
-
-	// Confirm we are genuinely PRE-CLAIM (no lease holder), so this is the reported
-	// window and not a post-claim state.
-	const holder = await a.page.evaluate((tid) => {
-		try { return (window.DaimondLease && DaimondLease.holder) ? (DaimondLease.holder(tid) || '') : ''; }
-		catch (e) { return ''; }
-	}, null);
-	const preClaim = await a.page.evaluate(() => {
-		// The dispatched placeholder's uiState, straight from the classifier.
-		try {
-			const cs = (window.DaimondCore && DaimondCore.chatResidency) ? null : null;
-			const c = window.__curChat || null;
-			return true;   // holder check below is the authority
-		} catch (e) { return true; }
-	});
-
-	// THE TWO GAPS. Snapshot the HAND-OFF TILE specifically (its own header + footer),
-	// not the whole thread.
-	const snap = await a.page.evaluate(() => {
+	// THE HAND-OFF TILE, snapshotted specifically (its own header + footer), not the thread.
+	const snapTile = () => a.page.evaluate(() => {
 		const tile = document.querySelector('#chat-output .chat-msg-handoff')
 			|| document.querySelector('#chat-output .ti-handoff') || null;
 		const scope = tile ? (tile.closest('.chat-msg') || tile) : null;
@@ -160,15 +132,65 @@ try {
 			.map((b) => (b.textContent || '').trim()).filter(Boolean) : [];
 		return { found: !!tile, txt, btns };
 	});
-	check('the hand-off tile is on screen', snap.found, 'tile text: ' + JSON.stringify((snap.txt || '').replace(/\s+/g, ' ').slice(0, 120)));
-	// (1) DEVICE HINT: the tile should name the device the turn is going to. Currently it
-	//     is the generic "Sent to your other devices" with no name -> RED. (Post-fix a
-	//     tentative "Sending to <peer>" naming the CHOSEN target satisfies this without
-	//     the past-tense "Handed off to X" that seq 217 rightly withheld until a claim.)
-	const generic = /^\s*(hand-?off|sent to your other devices\.?)\s*$/i.test((snap.txt || '').trim())
-		|| !/sending to|going to|→|picking this up|is doing|will run/i.test(snap.txt || '');
-	check('(1) the spinner names the device the turn is going to (a "Sending to X" hint)',
-		!generic, 'tile text: ' + JSON.stringify((snap.txt || '').replace(/\s+/g, ' ').slice(0, 160)));
+	// One arm: a fresh chat (the new-chat control is in the rail at desktop width), then
+	// the send at an iPhone-ish 390x844 so isPhoneViewport() is true and A auto-dispatches;
+	// B never claims, so A stays in the pre-claim `dispatched` spinner -- the window the
+	// owner watches.
+	const sendArm = async (prompt) => {
+		await a.page.setViewportSize({ width: 1500, height: 950 });
+		await newChat(a);
+		await a.page.setViewportSize({ width: 390, height: 844 });
+		await a.page.waitForTimeout(300);
+		await a.page.fill('#chat-input', prompt);
+		await a.page.click('#chat-send', { force: true });
+		const up = await until(a.page, () => {
+			const tile = document.querySelector('#chat-output .chat-msg-handoff, #chat-output .ti-handoff');
+			return !!tile && !!document.querySelector('#chat-output .chat-spinner-dot, #chat-output .ti-spin');
+		}, null, 20000);
+		return { up, snap: await snapTile() };
+	};
+	const flat = (t) => (t || '').replace(/\s+/g, ' ').trim();
+	const bLabel = await b.page.evaluate(() => (window.DaimondIdentity.displayName
+		&& window.DaimondIdentity.displayName()) || 'hofmate');
+
+	// ── (1a) NOMINEE ARM. A nominates B, so the dispatch has a chosen target to name. ──
+	console.log('\n(1a) Nominee arm — A has nominated B; the pre-claim spinner names it');
+	const nom = await a.page.evaluate((id) => {
+		try { const r = window.DaimondCore.roster.nominate(id); return { ok: !!r, now: window.DaimondCore.roster.nominee() }; }
+		catch (e) { return { err: String(e) }; }
+	}, idB);
+	check('A nominated B as its runner', !!(nom && nom.ok && nom.now === idB), JSON.stringify(nom));
+	await a.page.waitForTimeout(1500);
+	const armN = await sendArm('NOMARM what is three plus three');
+	check('(1a) A shows the hand-off tile with its spinner', armN.up);
+	check('(1a) with a nominee, the spinner names it: "Sending to ' + bLabel + '…"',
+		/sending to/i.test(armN.snap.txt) && armN.snap.txt.indexOf(bLabel) !== -1
+			&& !/handed off to/i.test(armN.snap.txt),
+		'tile text: ' + JSON.stringify(flat(armN.snap.txt).slice(0, 160)));
+
+	// ── (1b) NO-NOMINEE ARM. The nomination is cleared; the tile must name no device. ──
+	console.log('\n(1b) No-nominee arm — nothing nominated; the spinner stays generic (owner, 2026-09-07)');
+	const cleared = await a.page.evaluate(() => {
+		try { window.DaimondCore.roster.nominate(''); return window.DaimondCore.roster.nominee() || ''; }
+		catch (e) { return 'ERR ' + e; }
+	});
+	check('A cleared its nomination', cleared === '', JSON.stringify(cleared));
+	await a.page.waitForTimeout(1500);
+	const PROMPT = 'SPINUI what is two plus two';
+	const armG = await sendArm(PROMPT);
+	const snap = armG.snap;
+	check('A shows the hand-off tile with its spinner', armG.up);
+	// Confirm we are genuinely PRE-CLAIM (no lease holder), so this is the reported
+	// window and not a post-claim state.
+	const holder = await a.page.evaluate(() => {
+		try { return (window.DaimondLease && DaimondLease.holder) ? (DaimondLease.holder() || '') : ''; }
+		catch (e) { return ''; }
+	});
+	check('the hand-off tile is on screen', snap.found, 'tile text: ' + JSON.stringify(flat(snap.txt).slice(0, 120)));
+	check('(1b) with no nominee, the spinner is the generic line and names no device',
+		/sent to your other devices/i.test(snap.txt) && !/sending to|handed off to/i.test(snap.txt)
+			&& snap.txt.indexOf(bLabel) === -1,
+		'tile text: ' + JSON.stringify(flat(snap.txt).slice(0, 160)));
 	// (2) TAKE-BACK / CANCEL: a control to pull the turn back / run here should be offered
 	//     during the spinner. Currently none is (take-back is holder-gated) -> RED.
 	const hasControl = snap.btns.some((t) => /take back|run here|cancel|bring back|stop/i.test(t));
@@ -192,7 +214,9 @@ try {
 		const t0 = Date.now();
 		while (Date.now() - t0 < 15000) {
 			let cs = []; try { cs = await servedChats(a); } catch (e) { cs = []; }
-			if ((cs || []).some((c) => (c.messages || []).some((mm) => mm.why === 'dispatched'))) break;
+			// This arm's chat, not the nominee arm's, which is dispatched too.
+			if ((cs || []).some((c) => (c.messages || []).some((mm) => mm.why === 'dispatched')
+				&& (c.messages || []).some((mm) => mm.role === 'user' && /SPINUI/.test(mm.content || '')))) break;
 			await a.page.waitForTimeout(400);
 		}
 	}

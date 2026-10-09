@@ -56,6 +56,7 @@
 	function nat(x) { x = Number(x); return isFinite(x) && x > 0 ? Math.floor(x) : 0; }
 	function ratings() { return (typeof window !== 'undefined') ? window.DaimondRatings : null; }
 	function prov() { return (typeof window !== 'undefined') ? window.DaimondProvenance : null; }
+	function modelCompare() { return (typeof window !== 'undefined') ? window.DaimondModelCompare : null; }
 
 	// ── The parts ──────────────────────────────────────────────
 
@@ -94,13 +95,16 @@
 	}
 
 	/// What one chat gives the roll-up: `heads`, the head rating of each product it holds a record
-	/// for (a withdrawn one is dropped), and `made`, every answer and changed-file row it holds a
-	/// stamp for. Reduced to the keys a cell needs; no note and no text is copied. Memoisable.
+	/// for (a withdrawn one is dropped), `made`, every answer and changed-file row it holds a
+	/// stamp for, and `turns`, each answered turn's kind and verdict for the Compare grid
+	/// (`DaimondModelCompare.turns`; empty where that module is not loaded). Reduced to the keys a
+	/// cell needs; no note and no text is copied. Memoisable.
 	function chatPart(msgs) {
-		var R = ratings(), P = prov(), list = Array.isArray(msgs) ? msgs : [];
-		var heads = [], made = [], seen = {};
+		var R = ratings(), P = prov(), MC = modelCompare(), list = Array.isArray(msgs) ? msgs : [];
+		var heads = [], made = [], seen = {}, idx = null;
 		if (R) {
-			R.index(list).forEach(function (m) { if (m) heads.push(reduceHead(m)); });
+			idx = R.index(list);
+			idx.forEach(function (m) { if (m) heads.push(reduceHead(m)); });
 		}
 		if (P) {
 			list.forEach(function (m) {
@@ -114,7 +118,7 @@
 		}
 		heads.sort(byHandle);
 		made.sort(byHandle);
-		return { heads: heads, made: made };
+		return { heads: heads, made: made, turns: MC && MC.turns ? MC.turns(list, idx) : [] };
 	}
 
 	// ── Weights, trust, the interval ───────────────────────────
@@ -530,7 +534,7 @@
 
 	window.DaimondRatingRoll = {
 		K: K, FLOOR: FLOOR, HALF: HALF,
-		chatPart: chatPart, cells: cells, cell: cell, weight: weight, wilson: wilson,
+		chatPart: chatPart, cells: cells, cell: cell, weight: weight, wilson: wilson, rateable: rateable,
 		compare: compare, lengthFinding: lengthFinding, digestText: digestText,
 		legacy: legacy, beforeText: beforeText,
 	};

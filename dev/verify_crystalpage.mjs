@@ -1066,32 +1066,40 @@ try {
 	// before this fix (`.crystal-frame` pinned to `height: <content px>`) this
 	// reads about 12%; the fix (`height: 100%` floored by a `min-height` the
 	// content sets) reads at or near 100%.
+	//
+	// OF THE SPACE THE FRAME IS GIVEN, not of the whole of `#crystal-body`. The
+	// body also carries its own padding, the 4px under the wrap, and since this
+	// check was written two rows above the frame -- `.crystal-bar` and the
+	// `.crystal-memory` <details> (`crystalMemoryPanel`). Measured 2026-10-09
+	// (Q10), world 88: body 163..798 (635px, padding 16), bar 179+27, memory
+	// 216+27, frame 253..778 -- its foot exactly at the content box's foot less
+	// the wrap's 4px margin, nothing exposed -- yet 525/635 = 83% failed the old
+	// "frame over body > 85%". The fill was right; the denominator had grown
+	// chrome the check was never about. So the space is measured from the
+	// frame's own top to the foot of the body's content box.
 	await showDiamond(D.bgshort.name);
 	await p.waitForTimeout(900);
 	const cover = await p.evaluate(() => {
 		const body  = document.getElementById('crystal-body');
 		const frame = document.querySelector('.crystal-frame');
-		const b = body ? body.getBoundingClientRect() : null;
-		const f = frame ? frame.getBoundingClientRect() : null;
-		return {
-			bodyH:  b ? b.height : 0,
-			frameH: f ? f.height : 0,
-			// The colour a page too short to reach the bottom of `crystal-body`
-			// would leave exposed there, sampled where the frame USED to stop.
-			// `getComputedStyle` on an element outside the sandboxed frame --
-			// this reads the app's own chrome, never the page's.
-			belowColor: (b && f) ? getComputedStyle(body).backgroundColor
-				: null,
-		};
+		if (!body || !frame) return null;
+		const b  = body.getBoundingClientRect();
+		const f  = frame.getBoundingClientRect();
+		const cs = getComputedStyle(body);
+		const foot = b.bottom - parseFloat(cs.paddingBottom || '0');	// content box foot
+		return { bodyH: b.height, frameH: f.height, avail: foot - f.top, exposed: foot - f.bottom };
 	});
-	const coverage = cover.bodyH ? (cover.frameH / cover.bodyH) : 0;
-	// A LITTLE under 100%, not exactly: a scrollbar or a sub-pixel layout
-	// rounding is not the property under test. 85% is well clear of both —
-	// and worlds away from the ~12% the code shipped with before this fix.
-	check(coverage > 0.85,
+	const coverage = (cover && cover.avail > 0) ? (cover.frameH / cover.avail) : 0;
+	// A LITTLE under 100%, not exactly: the wrap's 4px margin and sub-pixel
+	// rounding are not the property under test. 97% is well clear of both, and
+	// worlds away from the ~12% the code shipped with before the fix. The frame
+	// must also be a real share of the panel, so a frame squeezed to nothing by
+	// some new row above it cannot pass on a tiny denominator.
+	check(cover && coverage > 0.97 && cover.frameH > cover.bodyH * 0.5,
 		'a page far shorter than the panel still fills nearly all of it',
-		`frame ${cover.frameH.toFixed(0)}px of ${cover.bodyH.toFixed(0)}px available `
-			+ `(${(coverage * 100).toFixed(0)}%)`);
+		cover ? `frame ${cover.frameH.toFixed(0)}px of ${cover.avail.toFixed(0)}px below its top `
+			+ `(${(coverage * 100).toFixed(0)}%, ${cover.exposed.toFixed(0)}px exposed; `
+			+ `body ${cover.bodyH.toFixed(0)}px)` : 'no #crystal-body or .crystal-frame');
 
 	// A page taller than the panel must still scroll rather than being
 	// squashed down to the panel's own height -- the other half of the same

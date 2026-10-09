@@ -778,14 +778,6 @@
 
 	var _host = null;
 
-	function fmtWhen(secs) {
-		if (!secs) return '';
-		var loc;
-		try { loc = window.DaimondI18n ? DaimondI18n.locale() : undefined; } catch (e) { loc = undefined; }
-		try { return new Date(secs * 1000).toLocaleDateString(loc || undefined, { day: 'numeric', month: 'short' }); }
-		catch (e) { return ''; }
-	}
-
 	function stateWord(s) {
 		if (s === 'accepted') return tOr('tracker.state_taken', 'Being done');
 		if (s === 'done')     return tOr('tracker.state_done', 'Done');
@@ -1039,7 +1031,7 @@
 			line.textContent = who + snippet(p.latest.said);
 		} else {
 			var parts = [tOr('tracker.comments', '{n} comments', { n: p.comments })];
-			if (p.changed) parts.push(tOr('tracker.active', 'active {when}', { when: fmtWhen(p.changed) }));
+			if (p.changed) parts.push(tOr('tracker.active', 'active {when}', { when: window.DaimondTime.fmtLocal(p.changed * 1000, 'dayMonth') }));
 			line.textContent = parts.join(' · ');
 		}
 		return line;
@@ -1148,7 +1140,7 @@
 
 		var meta = el('div', 'trk-detail-meta');
 		if (p.author) meta.appendChild(el('span', 'trk-author', p.author));
-		if (p.opened) meta.appendChild(el('span', 'trk-when', fmtWhen(p.opened)));
+		if (p.opened) meta.appendChild(el('span', 'trk-when', window.DaimondTime.fmtLocal(p.opened * 1000, 'dayMonth')));
 		var tl = tallyLine(p);
 		if (tl) meta.appendChild(tl);
 		if (p.mark) meta.appendChild(el('span', 'trk-mark', p.mark));
@@ -1171,7 +1163,7 @@
 			revs.appendChild(el('h4', 'trk-sub', tOr('tracker.revisions', 'Revisions')));
 			p.revisions.forEach(function (r) {
 				var one = el('div', 'trk-rev');
-				one.appendChild(el('span', 'trk-when', fmtWhen(r.when)));
+				one.appendChild(el('span', 'trk-when', r.when ? window.DaimondTime.fmtLocal(r.when * 1000, 'dayMonth') : ''));
 				one.appendChild(el('span', 'trk-rev-title', r.title));
 				revs.appendChild(one);
 			});
@@ -1188,7 +1180,7 @@
 				var c = el('div', 'trk-comment');
 				var foot = el('div', 'trk-comment-foot');
 				if (d.author) foot.appendChild(el('span', 'trk-author', d.author));
-				if (d.when)   foot.appendChild(el('span', 'trk-when', fmtWhen(d.when)));
+				if (d.when)   foot.appendChild(el('span', 'trk-when', window.DaimondTime.fmtLocal(d.when * 1000, 'dayMonth')));
 				c.appendChild(el('div', 'trk-comment-said', d.said));
 				c.appendChild(foot);
 				comments.appendChild(c);

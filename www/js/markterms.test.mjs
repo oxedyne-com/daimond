@@ -47,7 +47,7 @@ const MARK = {
 const KEYS = [
 	'attach.ws_mark', 'attach.ws_add', 'attach.add_mark', 'attach.pick_mark_title',
 	'attach.mark_note', 'attach.mark_focus', 'attach.ws_help', 'attach.ws_empty',
-	'dws.mark_here', 'dws.mark_here_help', 'dws.confirm_here', 'dws.confirm_old',
+	'dws.confirm_here', 'dws.confirm_old',	// ws2 removed dws.mark_here(_help) with the scope tree
 	'marks.waiting.one', 'marks.waiting.other', 'marks.waiting_why', 'marks.no_record',
 	'marks.not_saved', 'marks.made_before', 'marks.use_here', 'marks.use_all',
 	'marks.use_help', 'marks.use_ask',

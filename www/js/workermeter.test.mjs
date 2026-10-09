@@ -21,9 +21,10 @@ const check = (name, cond, detail) => {
 	else { bad++; console.log('  FAIL ' + name + (detail ? '  -- ' + detail : '')); }
 };
 
-// The worker's block: from its meter's declaration to the bill in its `finally`.
+// The worker's block: from its meter's declaration to its `finally`, which bills the
+// last attempt through `billAttempt` (r543 QA F-A2-2).
 const a = SRC.indexOf('var wmeter');
-const b = SRC.indexOf("wmeter.facts('w')", a);
+const b = SRC.indexOf('} finally {', SRC.indexOf('await runTurnCapped(run.task);', a));
 const blk = (a >= 0 && b > a) ? SRC.slice(a, b) : '';
 check("the worker's block is found", !!blk);
 

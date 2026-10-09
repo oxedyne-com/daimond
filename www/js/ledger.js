@@ -144,9 +144,12 @@
 	// exactly where a build that has never heard of them puts them (any other field,
 	// by name), so an r541 device and this one write the same bytes for the same
 	// entry and a mixed fleet's parcel settles instead of pushing for ever.
+	//
+	// `tr` (Q27, `markRetried`) is last for the same reason, and its name sorts after `te`
+	// so a build that knows neither it nor the turn facts puts it there too.
 	var PRICE_FIELDS = ['u', 'e', 'r', 'rp', 'u0'];
 	var FIELD_ORDER  = ['t', 'm', 'p', 'c', 'ca', 'u', 'e', 'pv', 'r', 'tid', 'dur', 'out', 'ol', 'u0', 'rp',
-		'ft', 'im', 'ro', 'sg', 'tc', 'te'];
+		'ft', 'im', 'ro', 'sg', 'tc', 'te', 'tr'];
 
 	function canon(v) { return JSON.stringify(v === undefined ? null : v); }
 
@@ -437,6 +440,30 @@
 			return entries[i];
 		}
 		return null;
+	}
+
+	/// Mark turn `tid` RETRIED (Q27): the person asked it again, so its answer was not wanted, and
+	/// `retryTurn` tombstones it out of the transcript. What stays is its spend, and `tr` on every
+	/// entry of it names the turn `by` that replaced it, so the model Compare counts the answer as
+	/// rejected (`DaimondModelCompare.grid`). A field under the join law above, present over absent,
+	/// so the mark syncs with the entry and no device that has it can lose it.
+	///
+	/// Where this device holds no entry for the turn (its spend not synced in yet, or pruned), one
+	/// outcome-only entry carries the mark, `ts` and `model` (the answer's) standing in, so the
+	/// rejected answer is still counted. Returns the number of entries marked or written.
+	function markRetried(tid, by, ts, model, provider) {
+		if (!tid || !by) return 0;
+		var id = String(tid), entries = load(), hit = [];
+		entries.forEach(function (e) { if (e && e.tid === id) hit.push(Object.assign({}, e, { tr: String(by) })); });
+		if (!hit.length) {
+			if (typeof ts !== 'number' || !model) return 0;
+			var mark = { t: ts, m: String(model), p: 0, c: 0, ca: 0, u: 0, e: false };
+			if (provider) mark.pv = String(provider);
+			mark.tid = id; mark.ol = 1; mark.tr = String(by);
+			hit.push(mark);
+		}
+		save(merge(entries, hit, typeof ts === 'number' ? ts : Date.now()));
+		return hit.length;
 	}
 
 	// ── Aggregation ────────────────────────────────────────────
@@ -734,6 +761,7 @@
 	window.DaimondLedger = {
 		record:       record,
 		patchTurn:   patchTurn,
+		markRetried: markRetried,
 		meter:       meter,
 		totals:      totals,
 		perModel:    perModel,

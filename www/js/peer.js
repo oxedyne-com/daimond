@@ -276,6 +276,12 @@
 			// placeholder, so the ≤MAX_PARKS bound is GLOBAL across devices rather than
 			// a per-device count that would multiply the spend cap by device count.
 			parkCount: o.parkCount | 0,
+			// THE DEVICES THAT HAVE ALREADY HANDED THIS TURN BACK (r545, Q19): each runner
+			// whose hand-back the sender collected, appended by the sender as it re-seats
+			// the turn (`triedAfterHandBack`). A busy runner does not hold the row for one of
+			// them, and does not defer to a nominee among them: each has said it will not run
+			// it. [] from a first send and from an older sender.
+			tried:   triedList(o.tried),
 			// THE THREAD THE TURN NEEDS, carried ON the errand so the runner can start
 			// without the parcel. `parcelVersion` still names the version the dispatcher
 			// is pushing -- the workspace, the Diamonds, everything else -- but the turn
@@ -335,6 +341,24 @@
 			busy:    o.busy | 0,
 			ts:      o.ts || Date.now(),
 		};
+	}
+
+	/// A list of device ids, de-duplicated, as strings; [] for anything else.
+	function triedList(v) {
+		var out = [];
+		(Array.isArray(v) ? v : []).forEach(function (x) {
+			var id = String(x || '');
+			if (id && out.indexOf(id) < 0) out.push(id);
+		});
+		return out;
+	}
+
+	/// `tried` with the runner that sent hand-back `r` added, or `tried` as a list when
+	/// `r` is no hand-back or names no runner (an older runner's).
+	function triedAfterHandBack(tried, r) {
+		var out = triedList(tried);
+		if (handBackReport(r) && r.by && out.indexOf(String(r.by)) < 0) out.push(String(r.by));
+		return out;
 	}
 
 	/// Is a report a HAND-BACK: the runner ran nothing and the turn is the sender's to run?
@@ -1012,6 +1036,7 @@
 			model:    String(c.model || ''),
 			workerModel:    String(c.workerModel || ''),
 			workerProvider: String(c.workerProvider || ''),
+			effort:   String(c.effort || ''),		// the chat's Effort, so the runner thinks as hard
 			whole:    1,				// no message in `msgs` is cut; see seedGraft
 			msgs:     keep,
 		};
@@ -1146,6 +1171,7 @@
 		// re-dispatch of a parked turn carries the GLOBAL count read from the synced
 		// placeholder / parked report, so the ≤MAX_PARKS bound holds across devices.
 		var parkCount = o.parkCount | 0;
+		var tried    = triedList(o.tried);		// the runners that handed it back (Q19)
 		// THE THREAD, ON THE ERRAND. Taken from the chat the caller handed in, so the
 		// errand is self-sufficient and the order below can put it first. A caller that
 		// passes `seed: false` suppresses it (the recovery path, which is running the
@@ -1184,7 +1210,7 @@
 					prompt: prompt, pre: pre, model: model,
 					scope: scope, pause: pause, parcelVersion: parcelVersion,
 					deadline: deadline, dispatchedBy: by, parkCount: parkCount, ts: now,
-					seed: seed, thread: thread,
+					seed: seed, thread: thread, tried: tried,
 				});
 			},
 			// The fully-resolved fields (bar parcelVersion), exposed for inspection.
@@ -1192,7 +1218,7 @@
 				turnId: turnId, chatId: chatId, diamondId: diamondId, prompt: prompt, pre: pre,
 				model: model, scope: scope,
 				pause: pause, deadline: deadline, dispatchedBy: by, eid: eid, parkCount: parkCount,
-				seed: seed, thread: thread,
+				seed: seed, thread: thread, tried: tried,
 			},
 		};
 	}
@@ -2903,7 +2929,16 @@
 	// rendered tail through the progress door (sync.js pushProgressFrame), tens of
 	// kilobytes at most -- and not the whole account parcel, which is what made this
 	// cadence affordable; a tick whose tail is unchanged sends nothing at all.
-	var PROGRESS_EVERY_MS = 2000;
+	//
+	// 750 ms, down from 2000 (Q20, D-20261006-13: model output reached a watcher too
+	// slowly). The runner LOOKS every PROGRESS_TICK_MS and SENDS only when the turn
+	// changed, at least PROGRESS_EVERY_MS after the last frame left and never while
+	// one is in flight -- so a quiet turn costs nothing and a busy one at most four
+	// frames in three seconds. A fixed 750 ms interval could not keep that spacing:
+	// a frame leaves some milliseconds after its tick, so the next tick would land
+	// short of 750 ms and wait a whole interval more.
+	var PROGRESS_EVERY_MS = 750;		// least spacing of two streaming frames
+	var PROGRESS_TICK_MS  = 250;		// how often the runner looks for growth
 	var LIVENESS_GAP_MS   = 3000;		// least spacing of event-driven lease reads on a running turn
 	var MAX_TAKE_TRIES = 10;		// bound the CAS retry loop (was 6): more headroom under two-device churn
 	var TAKE_BACKOFF_MS = 250;		// jittered wait between take retries so a claim gets a clean window
@@ -3424,18 +3459,36 @@
 
 	/// Is another live, idle, non-mobile, servicing desktop beside these, one that would
 	/// claim a turn this busy device holds back from? `not` is this device's id, or a list:
-	/// this device and the errand's sender, which never claims its own errand.
-	function idleDeskBeside(presence, not, now, windowMs) {
+	/// this device and the errand's sender, which never claims its own errand. With
+	/// `before`, only a desk whose id sorts ahead of it counts (`busyHoldsFor`).
+	function idleDeskBeside(presence, not, now, windowMs, before) {
 		var p = presence || {}, w = windowMs || DISPATCH_FRESH_MS;
 		var n = now == null ? Date.now() : now;
 		var skip = (Array.isArray(not) ? not : [not]).map(function (x) { return String(x || ''); });
+		var top  = before == null ? null : String(before);
 		for (var id in p) {
 			if (!Object.prototype.hasOwnProperty.call(p, id) || skip.indexOf(id) >= 0) continue;
+			if (top != null && !(id < top)) continue;
 			var r = p[id];
 			if (!r || recMobileView(r) || r.busy > 0) continue;
 			if (recRunner(r) ? (n - leaseMs(r.lastSeen)) <= w : recGenuine(r, n, w)) return true;
 		}
 		return false;
+	}
+
+	/// Does a busy device hold an errand's row for an idle desk beside it, rather than hand
+	/// the turn back? Only for a desk whose id sorts ahead of its own (r545, Q22).
+	///
+	/// A device that starts a turn reads idle to every other until its next beat lands, so
+	/// two busy desktops can each read the other idle. Each used to hold the row for the
+	/// other, nobody handed it back, and the sender waited out its 95 s backstop; `tried`
+	/// could not help, as neither said no. The id order is one both compute alike: of busy
+	/// desks that read each other idle, the first in it finds nobody ahead and hands back,
+	/// the sender re-seats the turn with it in `tried`, and the next finds nobody ahead in
+	/// turn. A desk that really is idle claims the row whatever its place, and a busy
+	/// device ahead of it hands back early, which costs one re-seat, to that desk.
+	function busyHoldsFor(presence, selfId, not, now, windowMs) {
+		return idleDeskBeside(presence, [selfId].concat(not || []), now, windowMs, String(selfId || ''));
 	}
 
 	/// Run a lease write, and once more after a pause when the door would not read.
@@ -4013,13 +4066,17 @@
 	///                which is what a runner on an older build does;
 	///   awaitPush    optional: await the parcel push before answering, so a test can
 	///                assert the whole sequence. Production leaves it off;
-	///   pushProgress optional async (turnId): stream the RUNNING turn's transcript
-	///                tail to the progress door on a timer, so a peer watching the
-	///                hand-off sees it unfold. ONE SMALL FRAME per tick, keyed by the
-	///                turn -- no new turn, no new lease, no second charge, and not the
-	///                account parcel (which travels once, at the end, through
-	///                `pushResult`). A no-op when the tail has not changed.
-	///                Absent (runner-acceptance, tests) -> no streaming, no timer.
+	///   pushProgress optional async (turnId) -> at: stream the RUNNING turn's
+	///                transcript tail to the progress door on a timer, so a peer
+	///                watching the hand-off sees it unfold. ONE SMALL FRAME per tick,
+	///                keyed by the turn -- no new turn, no new lease, no second
+	///                charge, and not the account parcel (which travels once, at the
+	///                end, through `pushResult`). A no-op answering 0 when the tail
+	///                has not changed; otherwise the `frameNow` time the frame was
+	///                handed to the door, which the cadence is kept from.
+	///                Absent (runner-acceptance, tests) -> no streaming, no timer;
+	///   frameNow     optional () -> ms: the clock of `pushProgress`'s answer
+	///                (default Date.now; NOT `now`, which is the lease clock).
 	///   post         async (reportEnvelope): post the report;
 	///   ack          async (): `DaimondPost.ack`, AFTER the push committed;
 	///   now          optional clock, for tests.
@@ -4184,21 +4241,29 @@
 		// BUSY (H1, C1). This device is running a turn for another chat, so it would reach
 		// this one only when that ends, and the sender used to wait out its backstop and
 		// then run the turn itself. Decided now instead. When this device is the one the
-		// turn waits on -- the nominee, or with no idle desktop live beside it -- it hands
-		// the turn back at once and lets the row go, and the sender runs it. Otherwise it
-		// HOLDS the row and leaves it to the idle device that will claim it. A turn for the
-		// chat already running here is not busy: it queues behind it (O3).
+		// turn waits on -- the nominee, or with no idle desktop live beside it ahead of it in
+		// id order (`busyHoldsFor`, Q22) -- it hands the turn back at once and lets the row
+		// go, and the sender runs it. Otherwise it HOLDS the row and leaves it to the idle
+		// device that will claim it. A turn for the chat already running here is not busy:
+		// it queues behind it (O3).
 		//
 		// THE HAND-BACK IS AN `undeliverable` CARRYING `busy` (r544, QA F-A1), not a status
 		// of its own. r543 answered `busy`, which no sender counted as a hand-back: the turn
 		// read as settled, the fallback and the backstop both stood down, and it never ran.
 		// Every sender since 2026-09 runs an `undeliverable` at once, r542 and r543 included.
 		// The sender itself is never the idle desk: it does not claim its own errand (QA F-A2).
+		//
+		// NOR FOR A DEVICE THAT HAS HANDED IT BACK (r545, Q19). `tried` names each runner the
+		// sender collected a hand-back from. Holding the row for one of them, or deferring to
+		// a nominee among them, sent the turn to a device that had already said no, and it
+		// waited out the sender's backstop. A nominee in it is no nominee for this turn.
+		var tried = triedList(e.tried);
+		var nomE  = String(d.nominatedId || '');
+		if (nomE && tried.indexOf(nomE) >= 0) nomE = '';
 		var busyN = (!d.allowSelf && d.busyFor) ? busyDepth(d.busyFor(e)) : 0;
 		if (busyN > 0) {
-			var nomB = String(d.nominatedId || '');
-			var mine = nomB ? nomB === String(d.selfId)
-				: !idleDeskBeside(d.presence, [d.selfId, e.dispatchedBy], leaseNow(leaseClock), d.freshWindowMs);
+			var mine = nomE ? nomE === String(d.selfId)
+				: !busyHoldsFor(d.presence, d.selfId, [e.dispatchedBy].concat(tried), leaseNow(leaseClock), d.freshWindowMs);
 			diag('collect busy', 'turn=' + turnId + ' depth=' + busyN + ' -> ' + (mine ? 'ANSWER busy' : 'hold for an idle device'));
 			if (!mine) {
 				trace.push('busy-hold');
@@ -4231,16 +4296,16 @@
 		// stand-down that SHOULD have happened from one driven by a stale or mismatched
 		// nominee id. Built only when Diagnostics is on.
 		if (window.DaimondDiag && DaimondDiag.on()) {
-			var _nom = String(d.nominatedId || '');
+			var _nom = nomE;
 			var _rec = _nom ? ((d.presence || {})[_nom]) : null;
 			var _beat = _rec ? Math.round((leaseNow(leaseClock) - leaseMs(_rec.lastSeen)) / 1000) + 's' : 'absent';
-			var _stand = !d.allowSelf && nominationStandDown(d.nominatedId, d.selfId, d.presence, leaseNow(leaseClock), d.freshWindowMs);
+			var _stand = !d.allowSelf && nominationStandDown(nomE, d.selfId, d.presence, leaseNow(leaseClock), d.freshWindowMs);
 			diag('collect nominee check', 'turn=' + turnId
 				+ ' nominee=' + (_nom ? _nom.slice(0, 8) : 'none')
 				+ ' present=' + (_rec ? 'Y' : 'N') + ' beat=' + _beat
 				+ ' -> ' + (_stand ? 'STAND DOWN for nominee' : 'proceed to claim'));
 		}
-		if (!d.allowSelf && nominationStandDown(d.nominatedId, d.selfId, d.presence, leaseNow(leaseClock), d.freshWindowMs)) {
+		if (!d.allowSelf && nominationStandDown(nomE, d.selfId, d.presence, leaseNow(leaseClock), d.freshWindowMs)) {
 			trace.push('stood-down-for-nominee');
 			return { ran: false, why: 'nominee', trace: trace };
 		}
@@ -4280,6 +4345,7 @@
 		// churn. The check is owned HERE (not in the injected runTurn) and stopped on
 		// EVERY exit (the finally), so it can neither outlive the errand nor leak a timer.
 		var revoked = false, checkStopped = false, checkTimer = null, progressTimer = null;
+		var progFlight = null, progLast = 0;		// the frame in flight; when the last one left
 		var checkStart = leaseNow(leaseClock);
 		var maxLife = (d.maxLeaseLifeMs != null) ? d.maxLeaseLifeMs : MAX_LEASE_LIFE_MS;
 		var setT = d.setTimer   || (typeof setInterval   === 'function' ? setInterval   : null);
@@ -4415,12 +4481,20 @@
 			// second charge -- and it never waits, so it cannot stall the turn. Stopped
 			// by stopCheck on every exit, before the final pushResult.
 			if (setT && d.pushProgress) {
+				var frameNow = d.frameNow || Date.now;
 				progressTimer = setT(function () {
-					if (checkStopped || revoked) return;
+					if (checkStopped || revoked || progFlight) return;
+					if (progLast && frameNow() - progLast < PROGRESS_EVERY_MS) return;
 					// The turn id is PASSED: a frame is keyed by the turn it belongs to, so the
 					// dep cannot be left to guess which turn this device is running.
-					try { d.pushProgress(turnId); } catch (err) { /* a dropped frame is only a slower stream */ }
-				}, PROGRESS_EVERY_MS);
+					var sent;
+					try { sent = d.pushProgress(turnId); } catch (err) { return; }	// a dropped frame is only a slower stream
+					progFlight = Promise.resolve(sent).then(function (at) {
+						if (typeof at === 'number' && at > 0) progLast = at;
+					}, function () { /* a dropped frame is only a slower stream */ })
+						.then(function () { progFlight = null; });
+					return progFlight;
+				}, PROGRESS_TICK_MS);
 			}
 			try {
 				// D3 — the prompt is ALREADY in the synced transcript (the dispatcher
@@ -4500,6 +4574,9 @@
 			// handles; what it can no longer do is strand the turn for the length of a
 			// flush.
 			var finalTail = '';
+			// A streaming frame still in flight lands first, so it can never arrive after
+			// the final frame and stand in for the finished turn.
+			if (progFlight) { try { await progFlight; } catch (err) { /* settled either way */ } }
 			if (d.finalFrame) {
 				try { finalTail = String((await d.finalFrame(turnId)) || ''); trace.push('final-frame'); }
 				catch (err) { /* a dropped final frame only means the parcel is the first sight */ }
@@ -5190,10 +5267,11 @@
 	/// when nothing changed (so the caller draws nothing).
 	///
 	/// The rules that keep tiles immutable and the parcel merge a no-op redraw:
-	///   * a new row is APPENDED after the turn's dispatched placeholder (the chrome tile
-	///     that stands above the streaming answer and is removed when it merges) -- after,
-	///     not before, so an add is an APPEND and the append fast path draws it without
-	///     rebuilding the thread; absent a placeholder the rows go at the tail of the turn;
+	///   * a new row lands after the nearest earlier row of its frame already held, else
+	///     after the turn's dispatched placeholder (the chrome tile that stands above the
+	///     streaming answer and is removed when it merges), so the turn is drawn in the
+	///     runner's order and a growing turn's add is an APPEND the append fast path draws
+	///     without rebuilding the thread; absent a placeholder the rows go at the tail of the turn;
 	///   * a REAL (non-provisional) row already in the transcript for a mid WINS -- the
 	///     answer has merged, and a stale frame must never overdraw it;
 	///   * a provisional row is updated in place BY MID, never moved, so a tile already
@@ -5223,7 +5301,7 @@
 			if (mm.provisional) prov[String(mm.mid)] = mm; else real[String(mm.mid)] = k;
 		}
 		var changed = false;
-		var add = [];
+		var add = [];							// [frame index, new row]
 		for (var j = 0; j < rows.length; j++) {
 			var r = rows[j];
 			if (!r || !r.mid) continue;
@@ -5234,22 +5312,37 @@
 			if (have) {
 				if (provRowSig(have) !== provRowSig(want)) { copyProv(have, want); changed = true; }
 			} else {
-				add.push(want); prov[rid] = want; changed = true;
+				add.push([j, want]); prov[rid] = want; changed = true;
 			}
 		}
 		if (!changed) return null;
 		if (!add.length) return msgs.slice();			// in-place growth only: same order, new content
-		// AFTER the placeholder (or, when there is none, after the turn's own last row, so a
-		// final frame folded once a later turn has begun stays with its turn), in the frame's
-		// order -- so while the placeholder is the last message an add is a pure append.
+		// Each new row goes right after the nearest EARLIER row of the frame the transcript
+		// already holds (merged or provisional, by mid), so a row that arrives a frame late --
+		// the answer after its thinking, tool 2 after tool 1 -- is drawn where the runner has
+		// it. With no earlier row held it goes after the placeholder (or, when there is none,
+		// after the turn's own last row, so a final frame folded once a later turn has begun
+		// stays with its turn). Rows added together keep the frame's order, and while the
+		// turn's rows end the transcript an add is a pure append.
 		var out = msgs.slice();
 		var endAt = userAt;
 		for (var e = userAt + 1; e < out.length; e++) {
 			if (out[e] && out[e].role === 'user' && String(out[e].iturn || '') !== id) break;
 			endAt = e;
 		}
-		var insAt = placeAt >= 0 ? placeAt + 1 : endAt + 1;
-		out.splice.apply(out, [insAt, 0].concat(add));
+		var baseAt = placeAt >= 0 ? placeAt + 1 : endAt + 1;
+		for (var a = 0; a < add.length; a++) {
+			var insAt = -1;
+			for (var p = add[a][0] - 1; p >= 0 && insAt < 0; p--) {
+				var pid = rows[p] && rows[p].mid ? String(rows[p].mid) : '';
+				if (!pid) continue;
+				for (var q = userAt; q < out.length; q++) {
+					if (out[q] && String(out[q].mid || '') === pid) { insAt = q + 1; break; }
+				}
+			}
+			if (insAt < 0) insAt = baseAt;
+			out.splice(insAt, 0, add[a][1]);
+		}
 		return out;
 	}
 
@@ -5421,6 +5514,8 @@
 		/// claimed/running/done/failed). Pure; daimond.js only renders it.
 		uiState:       uiState,
 		handBackReport: handBackReport,
+		triedAfterHandBack: triedAfterHandBack,
+		busyHoldsFor:       busyHoldsFor,
 		settlingReport: settlingReport,
 		settledLease:  settledLease,
 		frameWhole:    frameWhole,

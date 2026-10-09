@@ -331,16 +331,24 @@ function buildLocalFn(name, freeNames, transform) {
 	// The ceiling only protects `gather` if it fires well inside GATHER_TIMEOUT_S
 	// (600s, src/compact.rs) -- a ceiling above or equal to it would race the
 	// SAME timeout gather is already waiting on, and either could win.
-	const jsMs = Number((/WORKER_WALL_CLOCK_MS\s*=\s*(\d+)/.exec(SRC) || [])[1]);
-	let rustS = null;
+	//
+	// r543 QA N1: the ceiling has ONE source, `WORKER_WALL_CLOCK_MS` in
+	// src/compact.rs, which the engine also bounds a round's first-data wait
+	// inside. The page reads it through the wasm export, never a literal of its
+	// own that could drift from the engine's figure.
+	check('FIX4 the page reads its ceiling from the engine, not a literal',
+		/var\s+WORKER_WALL_CLOCK_MS\s*=\s*Number\(\s*Sbj\.worker_wall_clock_ms\(\)\s*\)/.test(SRC)
+			&& !/WORKER_WALL_CLOCK_MS\s*=\s*\d/.test(SRC));
+	let rustMs = null, rustS = null;
 	try {
 		const compactRs = readFileSync(join(HERE, '..', '..', 'src', 'compact.rs'), 'utf8');
+		rustMs = Number((/WORKER_WALL_CLOCK_MS:\s*u64\s*=\s*([\d_]+)/.exec(compactRs) || [])[1]?.replace(/_/g, ''));
 		rustS = Number((/GATHER_TIMEOUT_S:\s*u64\s*=\s*(\d+)/.exec(compactRs) || [])[1]);
 	} catch (e) { /* src/ not shipped alongside www/js in every checkout */ }
-	check('FIX4 the JS ceiling constant parses to a number', Number.isFinite(jsMs), jsMs);
-	if (rustS != null && Number.isFinite(rustS)) {
-		check('FIX4 the JS ceiling sits below gather\'s own 600s timeout',
-			jsMs < rustS * 1000, `${jsMs}ms vs ${rustS}s`);
+	if (rustS != null) {
+		check('FIX4 the engine\'s ceiling constant parses to a number', Number.isFinite(rustMs), rustMs);
+		check('FIX4 the ceiling sits below gather\'s own 600s timeout',
+			rustMs < rustS * 1000, `${rustMs}ms vs ${rustS}s`);
 	}
 	check('FIX4 `isTerminal` already treats capped as terminal',
 		methodSource('isTerminal').body.includes("'capped'"));

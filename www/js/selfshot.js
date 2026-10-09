@@ -139,16 +139,97 @@
 			return clone;
 		}
 
+		/// The viewport's worth of `el` (D-20261006-14, the Lens's picture of a device): only what
+		/// intersects the window is cloned and styled, so a chat of any length costs what is on
+		/// screen. A node wholly outside the window keeps its own box, emptied and sized, so what
+		/// is visible lays out as it does live; a scrolled container's children are translated by
+		/// its scroll, since the clone starts unscrolled; a frame becomes a labelled box, because
+		/// a frame cannot be drawn from outside it (its picture, when it sends one, goes on top).
+		function cloneView(el, opts) {
+			var vw = window.innerWidth, vh = window.innerHeight, seen = 0;
+			var label = typeof opts.frame_label === 'string' ? opts.frame_label : '';
+			function off(r) { return r.bottom <= 0 || r.right <= 0 || r.top >= vh || r.left >= vw; }
+			function walk(s) {
+				if (s.nodeType === 3) return s.cloneNode(false);
+				if (s.nodeType !== 1 || DROP[s.tagName]) return null;
+				var r = s.getBoundingClientRect();
+				var d = s.cloneNode(false);
+				var cs = getComputedStyle(s);
+				if (cs.display === 'none') { d.setAttribute('style', 'display:none'); return d; }
+				if (s !== el && off(r)) {
+					inlineStyle(s, d);
+					d.style.setProperty('box-sizing', 'border-box');
+					d.style.setProperty('width', r.width + 'px');
+					d.style.setProperty('height', r.height + 'px');
+					return d;
+				}
+				if (++seen > MAX_NODES) {
+					throw new Error('the view holds more than ' + MAX_NODES + ' elements on screen');
+				}
+				inlineStyle(s, d);
+				if (s.tagName === 'IFRAME') {
+					var box = document.createElement('div');
+					box.setAttribute('style', d.getAttribute('style') || '');
+					box.style.setProperty('box-sizing', 'border-box');
+					box.style.setProperty('width', r.width + 'px');
+					box.style.setProperty('height', r.height + 'px');
+					box.style.setProperty('display', 'flex');
+					box.style.setProperty('align-items', 'center');
+					box.style.setProperty('justify-content', 'center');
+					box.style.setProperty('border', '1px dashed #888');
+					box.style.setProperty('color', '#888');
+					box.textContent = label;
+					return box;
+				}
+				if (s.tagName === 'CANVAS') {
+					try {
+						var img = document.createElement('img');
+						img.setAttribute('src', s.toDataURL('image/png'));
+						img.setAttribute('style', d.getAttribute('style') || '');
+						return img;
+					} catch (e) { return d; }
+				}
+				if (s.tagName === 'INPUT') {
+					if (s.type === 'checkbox' || s.type === 'radio') {
+						if (s.checked) d.setAttribute('checked', 'checked');
+					} else if (s.value != null) {
+						d.setAttribute('value', s.value);
+					}
+					return d;
+				}
+				if (s.tagName === 'TEXTAREA') { d.textContent = s.value; return d; }
+				var sx = s === el ? 0 : s.scrollLeft, sy = s === el ? 0 : s.scrollTop;
+				for (var c = s.firstChild; c; c = c.nextSibling) {
+					var k = walk(c);
+					if (!k) continue;
+					if ((sx || sy) && k.nodeType === 1) {
+						k.style.setProperty('transform',
+							'translate(' + (-sx) + 'px,' + (-sy) + 'px) ' + (k.style.transform || ''));
+					}
+					d.appendChild(k);
+				}
+				return d;
+			}
+			var clone = walk(el);
+			var at = el.getBoundingClientRect();
+			// The root's own place in the window: a scrolled page puts its top above zero.
+			clone.style.setProperty('transform', 'translate(' + at.left + 'px,' + at.top + 'px)');
+			clone.style.setProperty('transform-origin', '0 0');
+			return clone;
+		}
+
 		/// Draw `el` to a PNG and answer `{ dataUrl, b64, w, h, bytes }`.
 		///
 		/// `opts`: `max_w` caps the output width (default TARGET_MAX_W, scaling the whole
 		/// picture down to fit); `background` paints behind a see-through view; `scale`
-		/// forces a device-pixel ratio instead of the fitted one.
+		/// forces a device-pixel ratio instead of the fitted one; `viewport` draws only the window's
+		/// worth of `el` at the window's size (`cloneView`), labelling a frame `frame_label`.
 		function rasterise(el, opts) {
 			opts = opts || {};
+			var vp = opts.viewport === true;
 			var rect = el.getBoundingClientRect();
-			var w = Math.max(1, Math.ceil(rect.width));
-			var h = Math.max(1, Math.ceil(rect.height));
+			var w = Math.max(1, Math.ceil(vp ? window.innerWidth : rect.width));
+			var h = Math.max(1, Math.ceil(vp ? window.innerHeight : rect.height));
 			var maxW = opts.max_w > 0 ? opts.max_w : TARGET_MAX_W;
 			var scale = opts.scale > 0 ? opts.scale : Math.min(1, maxW / w);
 			var cw = Math.max(1, Math.round(w * scale));
@@ -162,7 +243,7 @@
 			}
 			var bg = backdrop(el, opts.background);
 
-			var clone = cloneStyled(el);
+			var clone = vp ? cloneView(el, opts) : cloneStyled(el);
 			clone.style.margin = '0';
 			clone.style.setProperty('box-sizing', 'border-box');
 

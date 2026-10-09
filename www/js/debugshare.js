@@ -141,6 +141,11 @@
 	var DRAIN_MS       = 3000;			// the minimum gap between ANY two posts, all lanes
 
 	var TELEMETRY_MS = 30000;					// stream telemetry cadence while on
+	// The most telemetry posts held for a feed that is not landing them: ten
+	// minutes of cadence, far past anything a draining feed holds. The oldest go
+	// first, since the newest numbers supersede them, and the beat's `tdrop` says
+	// how many (D-20260918-26).
+	var TEL_QUEUE_MAX = 20;
 	var RESNAP_MS    = 300000;					// periodic full re-snapshot (5 min)
 
 	// ── The event feed ──
@@ -205,6 +210,10 @@
 	// A REAL fold (the engine's `compacted` event) within this window suppresses
 	// the inferred one, so a fold that IS reported is not also guessed at.
 	var FOLD_REAL_MS = 20000;
+	// A turn's `round` rows: each round its own row up to ROUND_EACH, then ROUND_FOLD
+	// rounds to a row (see `roundFeed`).
+	var ROUND_EACH = 60;
+	var ROUND_FOLD = 10;
 
 	// A transcript embeds whole source-file reads and command outputs verbatim, so
 	// a snapshot was ~7 MB / 25k chunks and drained for ~12 min, starving telemetry
@@ -296,6 +305,7 @@
 	// feed itself logs while capturing must not come back through here.
 	var conHeld     = {};			// (lvl|msg) -> {lvl, msg, src, at, x}
 	var conWindowAt = 0, conCount = 0, conDropped = 0;
+	var telDropped = 0;				// telemetry posts the lane cap dropped since the last beat
 	var conTimer    = null;
 	var inConsole   = false, conFlushing = false;
 	var origLog     = {};			// the console methods as they were, by level
@@ -1368,6 +1378,37 @@
 		emit('fold', { turn: id, before: was, after: ctx, trigger: 'est', inferred: 1 });
 	}
 
+	/// One turn's `round` rows (Q8b). Every round goes out as it happens up to
+	/// ROUND_EACH; past that, ROUND_FOLD rounds share one row -- the last round's
+	/// payload with `r0` (its first round), `co` (how many) and `cmax` (the highest
+	/// prompt it covered) -- so a marathon turn cannot fill the outbox. `flush()`
+	/// at the end of the turn sends a part-filled fold. Replaces the old "round 1,
+	/// every 5th and the last" throttle, which left the rounds between unseen.
+	function roundFeed() {
+		var seen = 0, held = null;
+		function send() {
+			if (!held) return;
+			var row = held;
+			held = null;
+			event('round', row);
+		}
+		return {
+			add: function (p) {
+				if (!p || typeof p !== 'object') return;
+				seen += 1;
+				if (seen <= ROUND_EACH) { event('round', p); return; }
+				var ctx = Number(p.ctx) || 0;
+				var r0 = held ? held.r0 : p.r, co = held ? held.co + 1 : 1;
+				var cmax = Math.max(held ? held.cmax : 0, ctx);
+				held = {};
+				Object.keys(p).forEach(function (k) { held[k] = p[k]; });
+				held.r0 = r0; held.co = co; held.cmax = cmax;
+				if (co >= ROUND_FOLD) send();
+			},
+			flush: send,
+		};
+	}
+
 	/// Record that the engine reported a REAL fold for this turn, so the inference
 	/// above stands down. Called beside the `fold` event in daimond.js.
 	function noteRealFold(id) {
@@ -1612,6 +1653,7 @@
 			throttled: throttledCount,
 			postFail:  postFailCount,
 			cdrop:     (function () { var n = conDropped; conDropped = 0; return n; })(),
+			tdrop:     (function () { var n = telDropped; telDropped = 0; return n; })(),
 		});
 		screenTick();
 	}
@@ -1774,10 +1816,20 @@
 
 	/// Enqueue a bundle's posts onto the telemetry lane when `priority` is true, else
 	/// the snapshot lane, and kick the drainer. A no-op when off.
+	///
+	/// Both lanes are bounded, so a feed that is not landing posts cannot grow the
+	/// tab's memory or, once it recovers, the gateway's log. A snapshot is whole
+	/// state, so a new one REPLACES whatever of the last is still queued. Telemetry
+	/// is kept to `TEL_QUEUE_MAX` posts, oldest dropped and counted in `tdrop`.
 	function enqueue(posts, priority) {
 		if (!enabled || !posts || !posts.length) return;
-		var q = priority ? telQueue : snapQueue;
-		for (var i = 0; i < posts.length; i++) q.push(posts[i]);
+		if (priority) {
+			for (var i = 0; i < posts.length; i++) telQueue.push(posts[i]);
+			var over = telQueue.length - TEL_QUEUE_MAX;
+			if (over > 0) { telQueue.splice(0, over); telDropped += over; }
+		} else {
+			snapQueue = posts.slice();
+		}
 		drain();
 	}
 
@@ -1931,6 +1983,7 @@
 			// flush after the person said stop.
 			conHeld = {};
 			conDropped = 0;
+			telDropped = 0;
 			try { if (conTimer) clearTimeout(conTimer); } catch (e) {}
 			conTimer = null;
 			persistNow();
@@ -2246,6 +2299,8 @@
 		arrive:           arrive,
 		noteFetchFail:    noteFetchFail,
 		noteRealFold:     noteRealFold,
+		// One turn's `round` rows: `var rf = roundFeed(); rf.add(p) ...; rf.flush()`.
+		roundFeed:        roundFeed,
 		/// Is the feed still collecting? False once it has faulted, even while the
 		/// share switch is on -- see `fault`.
 		feedOk:           function () { return !feedOff; },
@@ -2296,6 +2351,7 @@
 		/// the console lines the cap dropped.
 		_health:      function () {
 			return { throttled: throttledCount, postFail: postFailCount, cdrop: conDropped,
+				tdrop: telDropped,
 				gap: gapMs(), lastPostAt: lastPostAt };
 		},
 		// Exposed for the verifier: whether a post may go NOW, per the clock this

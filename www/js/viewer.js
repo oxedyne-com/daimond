@@ -1731,6 +1731,41 @@
 		screenOwner = (typeof fn === 'function') ? fn : null;
 	}
 
+	// ── Whose screen it is, across devices ──────────────────────────
+	//
+	// D-20261006-27: a turn asked on one device and run on another opened its
+	// files on the RUNNER -- over whatever was on that desk -- while the person
+	// who asked sat at the first device with nothing new in front of them. The
+	// question above ("is this conversation the one in view?") was asked of the
+	// wrong screen: the screen that matters is the one the turn was asked from.
+	//
+	// So before anything here is drawn, the page is asked whether the turn
+	// showing it runs for ANOTHER device. If it does, the show becomes an intent
+	// that travels to the asker in the turn's progress frames, and this screen is
+	// left exactly as it was. `daimond.js` answers, because only it holds the
+	// runner's turns and the device each was asked from.
+
+	/// Answers `{ label, send(intent) }` for a turn run here for another device,
+	/// or null for one asked on this device.
+	var remoteAsker = null;
+
+	/// Register the function that says whether a turn runs for another device.
+	/// Called once, by `daimond.js`.
+	function setRemoteAsker(fn) {
+		remoteAsker = (typeof fn === 'function') ? fn : null;
+	}
+
+	/// The asking device of the turn `owner` tagged `turn`, or null when the turn
+	/// was asked here (or nothing can say).
+	function askerOf(owner, turn) {
+		if (!remoteAsker || !turn) return null;
+		try {
+			var a = remoteAsker(String(owner || ''), String(turn));
+			return (a && typeof a.send === 'function') ? a : null;
+		}
+		catch (e) { return null; }
+	}
+
 	/// The file `owner` asked to show while it was off screen, and forget it.
 	///
 	/// Taken rather than read: it is shown once, when the user arrives. Leaving it
@@ -1775,12 +1810,24 @@
 	///   in the reader's place rather than at page 1.
 	/// * `owner` - The conversation asking, or nothing when the caller cannot say.
 	///   See `mayTakeScreen`.
-	async function showToUser(path, page, owner) {
-		if (!opener) {
+	/// * `turn` - The engine's tag for the turn asking, or nothing. See `askerOf`.
+	async function showToUser(path, page, owner, turn) {
+		var asker = askerOf(owner, turn);
+		if (!opener && !asker) {
 			throw new Error('Daimond’s document panel is not on this page, so there is '
 				+ 'nothing to show a file in.');
 		}
 		var v = await verdict(path, {});
+		// THE ASKER'S SCREEN, NOT THIS ONE. Answered first: no deferral is kept
+		// here and no aim is moved, because nothing on this device is to change.
+		if (asker) {
+			var want = (typeof page === 'number' && page > 0) ? Math.floor(page) : 0;
+			asker.send({ show: String(path), page: want });
+			v.shown = false;
+			v.asker = String(asker.label || '');
+			if (want) v.page = want;
+			return JSON.stringify(v);
+		}
 		// Answered before the draw and reported in the verdict, so the sentence the
 		// model says to the user is the one thing that actually happened. A tool
 		// result claiming a file is on screen when the user is looking at another
@@ -1819,6 +1866,7 @@
 		// Who is on screen, and what an absent owner asked for while it was. Both
 		// registered from `daimond.js`, which is the only module that knows.
 		screenOwner:   setScreenOwner,
+		remoteAsker:   setRemoteAsker,
 		takeDeferred:  takeDeferred,
 		mayTakeScreen: mayTakeScreen,
 		// The routing question a panel with an editor in it has to answer, kept

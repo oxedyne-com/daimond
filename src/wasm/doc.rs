@@ -56,8 +56,11 @@ extern "C" {
     /// `owner` names the conversation asking, so the driver can decline to take a screen that
     /// belongs to another one.  An empty string means the caller could not say, and the driver
     /// reads that as the user's own act.
+    ///
+    /// `turn` is the page's tag for the turn asking, so the driver can tell a turn this device
+    /// runs for ANOTHER device, whose screen the file then goes to.  An older driver ignores it.
     #[wasm_bindgen(method)]
-    fn show(this: &Panel, path: &str, page: JsValue, owner: &str) -> js_sys::Promise;
+    fn show(this: &Panel, path: &str, page: JsValue, owner: &str, turn: &str) -> js_sys::Promise;
 }
 
 
@@ -82,13 +85,14 @@ fn panel() -> Outcome<Panel> {
 /// * `path` - The workspace-relative path, already scoped and already checked by the guard.
 /// * `page` - Which page to open a paged document at, or `None` for the top.
 /// * `owner` - The Diamond whose daimon is asking, or empty for a chat or the user.
-pub async fn show(path: &str, page: Option<u32>, owner: &str) -> Outcome<Shown> {
+/// * `turn` - The page's tag for the turn asking, or empty when there is none.
+pub async fn show(path: &str, page: Option<u32>, owner: &str, turn: &str) -> Outcome<Shown> {
     let p = res!(panel());
     let at = match page {
         Some(n) => JsValue::from_f64(n as f64),
         None    => JsValue::UNDEFINED,
     };
-    let v = match JsFuture::from(p.show(path, at, owner)).await {
+    let v = match JsFuture::from(p.show(path, at, owner, turn)).await {
         Ok(v)  => v,
         Err(e) => return Err(err!("{}", refusal(&e); IO, Invalid)),
     };
@@ -127,5 +131,6 @@ pub async fn show(path: &str, page: Option<u32>, owner: &str) -> Outcome<Shown> 
         // predates the field: reading a missing one as "not shown" would have every show in that
         // bundle report a failure that did not happen.
         shown:    extract_json_bool(&json, "shown").unwrap_or(true),
+        asker:    extract_json_string(&json, "asker").unwrap_or_default(),
     })
 }

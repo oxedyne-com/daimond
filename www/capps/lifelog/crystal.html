@@ -362,13 +362,18 @@ function runRpn(prog, get) {
 // Monthly shards because `save` in append mode is a read-then-write: a year in
 // one file would rewrite hundreds of kilobytes for every meal.
 var IDX = null, LANE = {}, CAT = {}, LOG = {}, GOT = {};
+// KEEP: a re-read after another device's change is under way (`resync`).
+var KEEP = 0;
 
-/// Last write wins per id, and an import never replaces what a person typed.
+/// Last write wins per id, and an import never replaces what a person typed. A re-read
+/// does not replace on an EQUAL `w` either: that is the same entry as this page holds,
+/// and the copy here may carry typing in its rows that the tick has not written yet.
 function ingest(ln, e) {
 	var m = LOG[ln] || (LOG[ln] = {}), p = m[e.id];
 	if (p) {
 		if (e.src === 'import' && p.src !== 'import') return;
 		if ((e.w || 0) < (p.w || 0)) return;
+		if (KEEP && (e.w || 0) === (p.w || 0)) return;
 	}
 	m[e.id] = e;
 }
@@ -1716,6 +1721,7 @@ function draw() {
 	else body = home();
 	APP.innerHTML = head() + body;
 	measure();
+	dirty();
 }
 function measure() {
 	var h = Math.ceil(Math.max(document.body.scrollHeight,
@@ -1810,9 +1816,12 @@ function undo(es) {
 /// memory; the tick is what writes it. A redraw that skipped this step would type
 /// over the row being filled in, which is the fault the entry form and the lane
 /// builder each carried once.
-function readSets() {
+/// `typed`: only the rows typed into since they were drawn, so a re-read that brought a
+/// newer copy of an entry is not overwritten by the old values still standing in its row.
+function readSets(typed) {
 	var l = lane(), ins = APP.querySelectorAll('[data-set]'), m = LOG[l.id] || {}, i;
 	for (i = 0; i < ins.length; i++) {
+		if (typed && ins[i].value === ins[i].defaultValue) continue;
 		var p = ins[i].getAttribute('data-set').split('|'), e = m[p[0]];
 		if (!e) continue;
 		e.f = e.f || {};
@@ -2009,6 +2018,72 @@ document.addEventListener('input', function (ev) {
 	}
 });
 
+// ── Another device ────────────
+//
+// The owner logs on two devices. When the other one's copy of this Diamond arrives, the
+// app does not remount this page (that took the half-typed entry with it): it sends
+// `data` again with a new `_rev`, and the page reads its files again here. An open form
+// or lane screen is left exactly as it is, and shows the new entries when it closes;
+// the home view is drawn again keeping what is typed in its rows and where the caret is.
+//
+// And the page says when a person is mid-entry (`dirty`), so that a remount the app
+// cannot avoid -- the page itself rewritten elsewhere -- waits until it is not.
+var REV = null, SYNCING = 0, AGAIN = 0, DIRTY = null;
+
+function resync() {
+	if (!BOOTED || SYNCING) { AGAIN = 1; return; }
+	SYNCING = 1;
+	var done = function () {
+		KEEP = 0; SYNCING = 0;
+		settle();
+		if (AGAIN) { AGAIN = 0; resync(); }
+	};
+	jread('index.json').then(function (ix) {
+		if (ix && ix.lanes && ix.lanes.length) IDX = ix;
+		return readLanes();
+	}).then(function () {
+		if (IDX.lanes.indexOf(S.lane) < 0) S.lane = IDX.lanes[0];
+		GOT = {}; KEEP = 1;
+		return loadRange();
+	}).then(done, done);
+}
+/// Draw what was re-read, unless a screen is open over the log.
+function settle() {
+	if (S.scr) { dirty(); return; }
+	var a = document.activeElement, k = '', v = '', s0 = null, s1 = null;
+	if (a && a !== document.body && APP.contains(a) && a.getAttribute) {
+		k = a.getAttribute('data-set') != null ? 'data-set' : a.getAttribute('data-in') != null ? 'data-in' : '';
+		if (k) v = a.getAttribute(k);
+		try { s0 = a.selectionStart; s1 = a.selectionEnd; } catch (x) { s0 = null; }
+	}
+	try { readSets(true); } catch (x) { }
+	draw();
+	if (!k) return;
+	var ins = APP.querySelectorAll('[' + k + ']'), i;
+	for (i = 0; i < ins.length; i++) {
+		if (ins[i].getAttribute(k) !== v) continue;
+		ins[i].focus();
+		if (s0 != null) { try { ins[i].setSelectionRange(s0, s1); } catch (x) { } }
+		break;
+	}
+}
+/// Is a person mid-entry? A screen over the log, a field with the focus, or a row typed
+/// into and not ticked. Said to the app only when it changes.
+function dirty() {
+	var on = !!S.scr, a = document.activeElement, i;
+	if (!on && a && a !== document.body && APP.contains(a) && /^(INPUT|TEXTAREA|SELECT)$/.test(a.tagName)) on = true;
+	if (!on) {
+		var ins = APP.querySelectorAll('[data-set]');
+		for (i = 0; i < ins.length; i++) if (ins[i].value !== ins[i].defaultValue) { on = true; break; }
+	}
+	if (on === DIRTY) return;
+	DIRTY = on;
+	post({ cmd: 'dirty', on: on });
+}
+document.addEventListener('input', dirty);
+document.addEventListener('focusin', dirty);
+document.addEventListener('focusout', function () { setTimeout(dirty, 0); });
+
 // ── Boot ────────────
 function loadRange() {
 	var l = lane(), b = curB(), N = S.per === 'day' ? 14 : S.per === 'week' ? 10 : 12;
@@ -2024,7 +2099,22 @@ function boot() {
 		var o = openSess(lane());
 		if (o) S.sess = o.id;
 		draw();
+		// Another device's copy arrived while the first reads were out.
+		if (AGAIN) { AGAIN = 0; resync(); }
 	});
+}
+/// Every lane's fields and catalogue.
+function readLanes() {
+	var ls = IDX.lanes, jobs = [], i;
+	for (i = 0; i < ls.length; i++) {
+		jobs.push(jread('lanes/' + ls[i] + '.json').then((function (id) {
+			return function (d) { if (d) LANE[id] = d; };
+		})(ls[i])));
+		jobs.push(jread('cat/' + ls[i] + '.json').then((function (id) {
+			return function (d) { if (d) CAT[id] = d; };
+		})(ls[i])));
+	}
+	return Promise.all(jobs);
 }
 /// Everything the page needs, in the order it needs it. `rendered` has already
 /// gone out by the time any of this runs — a capp that waits on a read before
@@ -2034,16 +2124,7 @@ function start() {
 		if (ix && ix.lanes && ix.lanes.length) { IDX = ix; return null; }
 		return seed();
 	}).then(function () {
-		var ls = IDX.lanes, jobs = [], i;
-		for (i = 0; i < ls.length; i++) {
-			jobs.push(jread('lanes/' + ls[i] + '.json').then((function (id) {
-				return function (d) { if (d) LANE[id] = d; };
-			})(ls[i])));
-			jobs.push(jread('cat/' + ls[i] + '.json').then((function (id) {
-				return function (d) { if (d) CAT[id] = d; };
-			})(ls[i])));
-		}
-		return Promise.all(jobs);
+		return readLanes();
 	}).then(function () {
 		S.lane = IDX.lanes[0];
 		return boot();
@@ -2065,13 +2146,17 @@ window.addEventListener('message', function (ev) {
 	// ONCE. `data` arrives again on every theme, ink and skin change, and a
 	// second `start()` while the first is still reading would seed the store a
 	// second time.
+	var rev = D._rev == null ? null : String(D._rev);
 	if (!STARTED) {
 		STARTED = true;
+		REV = rev;
 		start().catch(function (e) {
 			APP.innerHTML = '<div class="empty">' + esc('Could not open the log: ' + e) + '</div>';
 		});
 		return;
 	}
+	// Another device's copy arrived: read the files again, keeping what is typed.
+	if (rev !== null && rev !== REV) { REV = rev; resync(); return; }
 	// A theme change mid-sentence must not take the half-typed entry — or the
 	// half-built lane — with it.
 	redraw();

@@ -1361,19 +1361,21 @@ async function main() {
 		const startFn = src.slice(src.indexOf('start: async function (run) {'));
 		const body = startFn.slice(0, startFn.indexOf('\n\t\tstop: function (run) {'));
 		check('a worker emits a round row on a tool call, keyed by its own id',
-			/dsEvent\('round', wroundPayload\)/.test(body) && /w: String\(run\.id \|\| ''\)/.test(body));
+			/wrounds = dsRounds\(\)/.test(body) && /wrounds\.add\(\{ w: String\(run\.id \|\| ''\), r: wstep \}\)/.test(body));
 		check('a worker emits a tool row on a tool result, name and outcome only',
 			/var wrow = \{ w: String\(run\.id \|\| ''\)/.test(body) && /dsEvent\('tool', wrow\)/.test(body));
 		// D-20261008-02: a call the engine did not complete also says where, and what.
 		check('a worker\'s failed or refused tool row carries the Diamond, chat, turn and the sentence',
 			/if \(outcome !== 'done'\) \{[^}]*wrow\.dia[^}]*wrow\.chat[^}]*wrow\.turn[^}]*wrow\.full/.test(body));
-		check('the round the turn actually ended on is caught even when unthrottled',
-			/wroundPayload && wroundSent !== wstep/.test(body));
+		// Since Q8b every round goes through the turn's `roundFeed`, so the round the
+		// turn ended on is whatever the feed still holds, sent by the flush at `ended`.
+		check('the round the turn actually ended on is caught: the feed is flushed at the end',
+			/ev\.type === 'ended'\) \{[^}]*wrounds\.flush\(\)/.test(body));
 		// THE ENDING IS THE ENGINE'S, NOT A BLANKET 'done'. Before 2026-09-12
 		// `run.status = 'done'` ran unconditionally once a turn returned without
 		// throwing, whatever `TurnEnd` the engine actually reported.
 		check('a worker\'s status is read from the engine\'s own ending, not written as done',
-			/run\.status = run\.ended \? workerEndStatus\(run\.ended\.how\) : 'done'/.test(body));
+			/run\.status = run\.ended \? workerEndStatus\(run\.ended\.how, run\.ended\.why\) : 'done'/.test(body));
 		// ONE READING OF WHAT TERMINAL MEANS, since 2026-09-13. `gather` held an inline
 		// copy and the in-turn wait needed the same answer; two copies of this rule is
 		// two chances for a batch to be called finished by one and not by the other,
@@ -1755,7 +1757,10 @@ async function main() {
 		const body  = steer.slice(0, steer.indexOf('\n\tasync function ', 1));
 		check('the turn body is the one that runs, not the door', body.length > 10000);
 		for (const kind of ['turn.start', 'round', 'tool', 'ended', 'fold', 'turn.end']) {
-			check('runSteer emits ' + kind, body.indexOf("dsEvent('" + kind + "'") !== -1);
+			// A round goes through the turn's `roundFeed` (Q8b), not a bare `dsEvent`.
+			check('runSteer emits ' + kind, kind === 'round'
+				? /rounds = dsRounds\(\)/.test(body) && body.indexOf('rounds.add({') !== -1
+				: body.indexOf("dsEvent('" + kind + "'") !== -1);
 		}
 		// BOTH exits, because `doSteer` has no `finally`: a failure before the turn and
 		// a turn that came back are two different lines and each has to close the turn.
@@ -2219,6 +2224,38 @@ async function main() {
 		check('one event row costs a fraction of a millisecond', per < 0.5);
 	}
 
+	console.log('debugshare: roundFeed — every round of a turn reaches the feed (Q8b)');
+	{
+		const env = makeEnv({ fastTimers: true, respond: () => 200 });
+		const DS = env.win.DEBUG_SHARE;
+		check('roundFeed is exposed', typeof DS.roundFeed === 'function');
+		if (typeof DS.roundFeed === 'function') {
+			DS.setEnabled(true);
+			const rows = (id) => DS._outbox().filter((r) => r.tag === 'ev round')
+				.map((r) => JSON.parse(r.data)).filter((e) => e.turn === id);
+			// A 14-round turn: every round is its own row, none held back to the end.
+			const a = DS.roundFeed();
+			for (let r = 1; r <= 14; r++) a.add({ turn: 'T14', r, ctx: 1000 + r });
+			check('a 14-round turn sends all 14 rounds as they happen',
+				rows('T14').map((e) => e.r).join(',') === '1,2,3,4,5,6,7,8,9,10,11,12,13,14');
+			a.flush();
+			check('and the flush adds nothing it already sent', rows('T14').length === 14);
+			// A 75-round turn: 60 rows, then rounds 61-70 folded into one, 71-75 into the flush.
+			const b = DS.roundFeed();
+			for (let r = 1; r <= 75; r++) b.add({ turn: 'T75', r, ctx: r === 65 ? 99999 : 2000 + r });
+			check('past 60 rounds, ten rounds fold into one row', rows('T75').length === 61);
+			b.flush();
+			const got = rows('T75');
+			check('the flush sends the part-filled fold', got.length === 62);
+			const f1 = got[60], f2 = got[61];
+			check('a folded row names its first round, its last and its count',
+				f1.r0 === 61 && f1.r === 70 && f1.co === 10 && f2.r0 === 71 && f2.r === 75 && f2.co === 5);
+			check('a folded row keeps the highest prompt it covered', f1.cmax === 99999 && f1.ctx === 2070);
+			DS.setEnabled(false);
+		}
+		env.halt();
+	}
+
 	console.log('debugshare: arrive — the viewer\'s half of the latency instrument');
 	{
 		const env = makeEnv({ fastTimers: true, respond: () => 200 });
@@ -2250,6 +2287,43 @@ async function main() {
 		check('and clears', DS._arrivals().length === 0);
 		DS.setEnabled(false);
 		env.halt();
+	}
+
+	console.log('debugshare: bounds — a new snapshot REPLACES the pending one (D-20260918-26)');
+	{
+		const env = makeEnv({ gateFetch: true });
+		const DS = env.win.DEBUG_SHARE;
+		DS.registerProvider(async () => ({ config: { instructions: 'I'.repeat(300000) },
+			transcripts: [], roster: {}, presence: {}, election: {}, tokenStats: [] }));
+		DS.setEnabled(true);
+		await sleep(20);				// post #1 in flight (gated), the rest of snapshot #1 queued
+		const backlog = DS._snapQueueLen();
+		check('a multi-post snapshot leaves a backlog', backlog >= 2);
+		for (let i = 0; i < 3; i++) await DS.snapshotNow();
+		check('three more snapshots hold one snapshot\'s posts, not four',
+			DS._snapQueueLen() <= backlog + 1, DS._snapQueueLen() + ' queued, backlog ' + backlog);
+		DS.setEnabled(false);
+	}
+
+	console.log('debugshare: bounds — the telemetry lane is capped, and the beat says what it dropped');
+	{
+		const env = makeEnv({ gateFetch: true });
+		const DS = env.win.DEBUG_SHARE;
+		DS.registerProvider(async () => ({ config: {}, transcripts: [], roster: {}, presence: {},
+			election: {}, tokenStats: [] }));
+		DS.setEnabled(true);
+		await sleep(20);				// the first post is in flight and never lands
+		const ticks = 100;
+		for (let i = 0; i < ticks; i++) DS._telemetryTick();
+		const held = DS._telQueueLen();
+		check('a stalled feed does not hold every telemetry post', held < ticks && held >= 1, held + ' held');
+		check('the overflow is counted', DS._health().tdrop === ticks - held,
+			DS._health().tdrop + ' counted, ' + (ticks - held) + ' dropped');
+		DS._beatTick();
+		const beat = JSON.parse(DS._outbox().filter((r) => r.tag === 'ev beat').pop().data);
+		check('the next beat reports it beside cdrop', beat.tdrop === ticks - held && 'cdrop' in beat);
+		check('and clears it, so the count is per-beat', DS._health().tdrop === 0);
+		DS.setEnabled(false);
 	}
 
 	console.log('');

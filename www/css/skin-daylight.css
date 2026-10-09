@@ -375,7 +375,7 @@
 :root[data-skin="daylight"] :is(.admin-note, .rail-note, .trash-note, .cap-blurb, .mail-fine, .pop-note,
 	.chat-msg-empty, .files-empty, .rel-blurb, .agents-empty, .mdash-empty, .hist-note, .mdash-note, .spend-note,
 	.mode-row-blurb, .shr-note, .cfg-hint, .search-engine-note, .tag-note, .spend-sec-hint,
-	.mdash-sec-hint, .crystal-empty, .graph-empty, .tile-dlg-note, .pro-fine, .ar-hint, .tools-fine, .spend-empty, .pend-detail) {
+	.mdash-sec-hint, .crystal-empty, .graph-empty, .tile-dlg-note, .pro-fine, .ar-hint, .tools-fine, .spend-empty, .pend-detail, .capp-offer-note) {
 	font-size: var(--dl-xs); font-weight: var(--w-text); color: var(--text-muted); line-height: 1.45;
 }
 /* A dialog's note is the same note; its warning variant keeps the warning colour. */
@@ -387,6 +387,8 @@
 :root[data-skin="daylight"] :is(.ctile-meta, .chead-when, .device-when, .fv-size, .hist-ver, .ctile-time-full) {
 	font-family: var(--font-mono); font-size: var(--dl-2xs); font-weight: var(--w-text); color: var(--text-muted);
 }
+/* A merge conflict's line reference is meta in the sans, at the meta's size. */
+:root[data-skin="daylight"] .capp-conflict-meta { font-size: var(--dl-2xs); }
 
 /* ── The account, at the rail's foot ───────────────────────── */
 /* The one rule the rail keeps: it says the list has ended. */
@@ -421,8 +423,8 @@
    (two classes), which silently outranked `.files-view-head > span > button`
    (§2/cluster 5) for the one button -- `.files-btn.attach-btn` -- that wears
    both a head-tool's and this row's class. */
-:root[data-skin="daylight"] :is(.device-rename, .device-nominate, .copy-id, .ctile-copy, .attach-btn, .files-del,
-	.files-ren, .crystal-form-x, .tile-cog, .ctile-rate-up, .ctile-rate-down, .ctile-rate-more, .mail-refresh) {
+:root[data-skin="daylight"] :is(.device-rename, .device-nominate, .copy-id, .ctile-copy, .attach-btn,
+	.crystal-form-x, .tile-cog, .ctile-rate-up, .ctile-rate-down, .ctile-rate-more, .mail-refresh) {
 	height: 20px; min-height: 20px; padding: 0; border-radius: var(--radius-sm); color: var(--text-secondary);
 }
 /* `.tag-x` kept OUT of the fixed-20px group above (D-20260929-03 residual
@@ -694,16 +696,12 @@
 :root[data-skin="daylight"] :is(.pro-buy, .tools-buy, .mail-unlock, .ar-save, .ar-card-btn.accent):hover:not(:disabled) { background: var(--accent-hover); }
 :root[data-skin="daylight"] .files-card,
 :root[data-skin="daylight"] .files-mode,
-:root[data-skin="daylight"] .files-scope,
-:root[data-skin="daylight"] .files-reach,
-:root[data-skin="daylight"] .files-kits,
 :root[data-skin="daylight"] .files-path,
 :root[data-skin="daylight"] .files-rest,
 :root[data-skin="daylight"] .sys-sec,
 :root[data-skin="daylight"] .files-view-head,
 :root[data-skin="daylight"] .files-view-msg,
 :root[data-skin="daylight"] .files-view-note,
-:root[data-skin="daylight"] .files-row.attached-group,
 :root[data-skin="daylight"] .cloud-row {
 	border-color: transparent;
 	background: transparent;
@@ -745,42 +743,7 @@
    carry `.files-view-name` first (cloud storage, preview) is excluded, so
    its own title is left alone. */
 :root[data-skin="daylight"] .files-view-head > span:first-child:not(.files-view-name) { margin-left: -10px; }
-:root[data-skin="daylight"] .files-mark-here,
-:root[data-skin="daylight"] .files-badge {
-	border-color: transparent;
-	background: transparent;
-	border-radius: var(--radius-sm);
-	color: var(--text-secondary);
-}
-:root[data-skin="daylight"] .files-mark-here:hover { background: var(--dl-hover); border-color: transparent; }
-/* A Toolchains toggle keeps a faint rest fill rather than going fully bare
-   (QA round 2, minor 2): "Showing" always has a member on to read as a
-   control, but a Diamond with no toolchain granted has FIVE off chips and
-   nothing to contrast them against words -- they read as a sentence, not
-   five buttons.
-
-   RE-CHECK (regression): `--bg-tertiary` at rest sat within a point of
-   `--dl-hover`'s own fill on Porcelain (235 vs 234) and read DARKER than
-   hover on Obsidian, so rest and hover were the same control at two names;
-   and a GRANTED chip's `--dl-on` (8% of the ink) was barely a shade off
-   ungranted's rest, so only the text said a toolchain was on. Rest now
-   takes `--dl-hover`'s fill (still faint, but a genuine step below hover),
-   hover takes `--dl-on`, and granted takes the accent fill base's own
-   granted chip uses -- clearly a third, different thing from either. */
-:root[data-skin="daylight"] .files-kit-chip {
-	border-color: transparent;
-	background: var(--dl-hover);
-	border-radius: var(--radius-sm);
-	color: var(--text-secondary);
-}
-:root[data-skin="daylight"] .files-kit-chip:hover { background: var(--dl-on); border-color: transparent; }
-:root[data-skin="daylight"] .files-kit-chip.active,
-:root[data-skin="daylight"] .files-kit-chip[aria-pressed="true"] {
-	background: var(--accent-soft);
-	border-color: transparent;
-	color: var(--accent-text);
-}
-:root[data-skin="daylight"] .files-row { font-size: var(--dl-sm); border-color: transparent; border-radius: var(--radius-sm); gap: 4px; }
+:root[data-skin="daylight"] .files-row, :root[data-skin="daylight"] .files-focus .r { font-size: var(--dl-sm); border-color: transparent; border-radius: var(--radius-sm); gap: 4px; }
 :root[data-skin="daylight"] .files-size { font-size: var(--dl-2xs); color: var(--text-muted); }
 :root[data-skin="daylight"] .cloud-bar { border-color: transparent; }
 
@@ -1000,9 +963,9 @@
 /* One field label (§8): 12px, --w-text, --text-secondary. Nine fields each
    drew at 10.5 or 14px, some bold, some muted, one lower-cased by
    text-transform. */
-:root[data-skin="daylight"] :is(.files-kits-label, .files-reach-label, .files-scope-label, .tag-box-label,
+:root[data-skin="daylight"] :is(.tag-box-label,
 	.imp-with-label, .models-draft-lab, .tile-dlg-label, .spend-stat-lbl, .about-ver-label,
-	.cfg-fieldlabel, .crystal-form-hot, .start-label, .mail-globals-label) {
+	.cfg-fieldlabel, .crystal-form-hot, .start-label, .mail-globals-label, .capp-conflict-label) {
 	font-size: var(--dl-xs); font-weight: var(--w-text); color: var(--text-secondary); text-transform: none;
 	line-height: 16.2px; letter-spacing: 0;
 }
@@ -1060,7 +1023,7 @@
    not set: colour on hover, the fold triangle, focus rings. */
 :root[data-skin="daylight"] :is(.rail-builtin > summary, .rel-builds > summary, .tagf-toggle, .arte-strip,
 	.models-prov-head, .tile-dlg-adv-sum, .dlg-adv-sum, .crystal-memory-sum, .mem-raw-btn, .link-strip,
-	.files-rest-head, .sys-head, .cap-more) {
+	.files-rest-head, .sys-head, .cap-more, .capp-conflicts > summary) {
 	font-size: var(--dl-xs); font-weight: var(--w-text); color: var(--text-muted); line-height: 19px;
 	padding: 4px 8px 4px 4px; min-height: 27px; box-sizing: border-box; background: transparent; border-color: transparent;
 }
@@ -1099,9 +1062,6 @@
 	background: transparent;
 }
 :root[data-skin="daylight"] .files-mode-btn.accent { background: var(--accent); color: var(--on-fill); font-weight: var(--w-strong); padding-left: 10px; }
-:root[data-skin="daylight"] .files-reach-chip,
-:root[data-skin="daylight"] .files-reach-chip.ro { border-color: transparent; background: transparent; }
-:root[data-skin="daylight"] .instructions-chip { border-color: transparent; background: transparent; justify-content: flex-start; padding-left: 0; }
 /* A search field is a well set into the ground, not a ruled box. Sized as
    every other field is (§10): 14px, 31px high -- Agents' and the Workspace
    filter drew a size smaller and 4-6px shorter than a dialog's own fields. */
@@ -1342,13 +1302,6 @@
 	:root[data-skin="daylight"] .ws-group:has(> .ws-body > .ws-empty:only-child) > .ws-body { flex: 1 1 auto; min-width: 0; }
 }
 :root[data-skin="daylight"] .ws-empty { font-size: var(--dl-xs); color: var(--text-muted); padding-left: 0; }
-/* The chip role's own form (cluster 13, A4 refused: the chip face, like
-   every other chip -- not the mono DAIMOND.md was set in). */
-:root[data-skin="daylight"] .instructions-chip {
-	text-align: left; width: auto; align-self: flex-start;
-	font-family: var(--font); font-size: var(--dl-2xs); font-weight: 600;
-	background: var(--dl-hover); border-radius: var(--radius-sm); padding: 2px 8px; height: 20px; box-sizing: border-box;
-}
 :root[data-skin="daylight"] .files-path,
 :root[data-skin="daylight"] .path-crumb {
 	font-family: var(--font); font-size: var(--dl-sm);
@@ -1363,13 +1316,13 @@
    `--text-secondary`, padding 6px 8px, height 30px, radius `--radius-sm`, no
    border. The chosen one takes `--dl-on` with `--text-primary`. */
 :root[data-skin="daylight"] :is(.seg button, .size-row button, .net-opt, .spend-toggle-btn, .mdash-toggle-btn,
-	.files-scope-chip, .files-mode-chip, .imp-chip, .tile-dlg-level, .dview-btn) {
+	.files-mode-chip, .imp-chip, .tile-dlg-level, .dview-btn) {
 	font-size: var(--dl-xs); font-weight: var(--w-text); letter-spacing: 0; line-height: 18px;
 	color: var(--text-secondary); background: transparent; border-color: transparent; border-width: 0;
 	border-radius: var(--radius-sm); padding: 6px 8px; height: 30px; min-height: 30px; box-sizing: border-box; gap: 4px;
 }
 :root[data-skin="daylight"] :is(.seg button, .size-row button, .net-opt, .spend-toggle-btn, .mdash-toggle-btn,
-	.files-scope-chip, .files-mode-chip, .imp-chip, .tile-dlg-level, .dview-btn):is([aria-pressed="true"], .on, .active) {
+	.files-mode-chip, .imp-chip, .tile-dlg-level, .dview-btn):is([aria-pressed="true"], .on, .active) {
 	background: var(--dl-on); color: var(--text-primary);
 }
 :root[data-skin="daylight"] .seg button:hover,
@@ -1438,14 +1391,14 @@
 		.pro-buy, .tools-buy, .mail-unlock, .ar-save, .ar-card-btn, .pend-verb) { min-height: 44px; min-width: 44px; }
 	/* Toggle options (the head's face switch keeps the head block's 30px box and overlay, so the Diamond head stays 96px): */
 	:root[data-skin="daylight"] :is(.seg button, .size-row button, .net-opt, .spend-toggle-btn, .mdash-toggle-btn,
-		.files-scope-chip, .files-mode-chip, .imp-chip, .tile-dlg-level) { height: 44px; min-height: 44px; }
+		.files-mode-chip, .imp-chip, .tile-dlg-level) { height: 44px; min-height: 44px; }
 	/* ...and 44px wide, except the rating popup's steps, which share one row (their own rule, app.css). */
 	:root[data-skin="daylight"] :is(.seg button, .size-row button, .net-opt, .spend-toggle-btn, .mdash-toggle-btn,
-		.files-scope-chip, .files-mode-chip, .imp-chip) { min-width: 44px; }
+		.files-mode-chip, .imp-chip) { min-width: 44px; }
 	/* Disclosures: */
 	:root[data-skin="daylight"] :is(.rail-builtin > summary, .rel-builds > summary, .tagf-toggle, .arte-strip,
 		.models-prov-head, .tile-dlg-adv-sum, .dlg-adv-sum, .crystal-memory-sum, .mem-raw-btn, .link-strip,
-		.files-rest-head, .sys-head, .cap-more) { min-height: 44px; }
+		.files-rest-head, .sys-head, .cap-more, .capp-conflicts > summary) { min-height: 44px; }
 	:root[data-skin="daylight"] .crystal-act.mem-raw-btn { height: auto; min-height: 44px; }
 	/* A Pending tile's headline is a 44px row. */
 	:root[data-skin="daylight"] .pend-line { min-height: 44px; }
@@ -1458,19 +1411,19 @@
 	/* Icon-size controls: their own box, the house overlay. */
 	/* `z-index: 1`: a neighbour that makes its own stacking context (the active tile's preview is `opacity: .7`) is painted over an
 	   overlay at `z-index: auto`, so it took the lower half of a tile's cog and x. (The rating arrows wear U2's own overlay, app.css.) */
-	:root[data-skin="daylight"] :is(.copy-id, .ctile-copy, .tile-cog, .tile-x, .attach-add, .attach-btn, .files-ren, .files-del,
+	:root[data-skin="daylight"] :is(.copy-id, .ctile-copy, .tile-cog, .tile-x, .attach-add, .attach-btn,
 		.device-rename, .device-nominate, .device-remove, .mail-refresh,
 		.pptw-act, .railhead .addbtn:not(.railbtn),
 		.tagf-pool .tag-chip, .tagf-active .tag-chip, .session-box-tags .tag-chip) { position: relative; z-index: 1; }
-	:root[data-skin="daylight"] :is(.copy-id, .ctile-copy, .tile-cog, .tile-x, .attach-add, .attach-btn, .files-ren, .files-del,
+	:root[data-skin="daylight"] :is(.copy-id, .ctile-copy, .tile-cog, .tile-x, .attach-add, .attach-btn,
 		.device-rename, .device-nominate, .device-remove, .mail-refresh,
 		.pptw-act, .railhead .addbtn:not(.railbtn),
 		.tagf-pool .tag-chip, .tagf-active .tag-chip, .session-box-tags .tag-chip)::after {
 		content: ''; position: absolute; top: 50%; left: 50%; width: 44px; height: 44px; transform: translate(-50%, -50%);
 	}
-	/* Small text controls: a crumb, the instructions chip, an inline link. The same overlay, as wide as the control or 44px. */
-	:root[data-skin="daylight"] :is(.path-crumb, .instructions-chip, .termp-install, .rate-jump-link, .mail-learn-more, .spend-add-credits) { position: relative; z-index: 1; }
-	:root[data-skin="daylight"] :is(.path-crumb, .instructions-chip, .termp-install, .rate-jump-link, .mail-learn-more, .spend-add-credits)::after {
+	/* Small text controls: a crumb, an inline link. The same overlay, as wide as the control or 44px. */
+	:root[data-skin="daylight"] :is(.path-crumb, .termp-install, .rate-jump-link, .mail-learn-more, .spend-add-credits) { position: relative; z-index: 1; }
+	:root[data-skin="daylight"] :is(.path-crumb, .termp-install, .rate-jump-link, .mail-learn-more, .spend-add-credits)::after {
 		content: ''; position: absolute; top: 50%; left: 50%; width: max(100%, 44px); height: 44px; transform: translate(-50%, -50%);
 	}
 	/* The Workspace crumb's overlay hangs 7px below its 29px row, over the Filter field's top rows: 8px of margin below the row puts
@@ -1504,14 +1457,11 @@
 	:root[data-skin="daylight"] .device-acts { column-gap: 22px; }
 	:root[data-skin="daylight"] .device-ctl { gap: 12px; }
 	/* A file row is a 44px row, and its trailing icons are the icon button's 20px box, 24px apart. */
-	:root[data-skin="daylight"] .files-row { box-sizing: border-box; min-height: 44px; align-items: center; }
-	:root[data-skin="daylight"] .files-row > :is(.attach-btn, .files-ren, .files-del) { min-width: 20px; margin-left: 20px; text-align: center; }
+	:root[data-skin="daylight"] .files-row, :root[data-skin="daylight"] .files-focus .r { box-sizing: border-box; min-height: 44px; align-items: center; }
+	:root[data-skin="daylight"] .files-row > .files-more { min-width: 20px; margin-left: 20px; text-align: center; }
 	/* A message's label bar is the collapse control and holds Copy: a 44px row, and 16px from the tile's edge, which clips an
 	   overlay that hangs outside it (`.ctile { overflow: hidden }`). */
 	:root[data-skin="daylight"] :is(.ctile-lbl, .crollup-lbl) { box-sizing: border-box; min-height: 44px; padding: 0 16px 0 12px; }
-	/* The chip's overlay reaches 12px beyond its box, and the crumb's 7px, so the chip stands 12px below the button above it and
-	   the crumb stands 15px below the chip (5px of its own row's padding makes 20). */
-	:root[data-skin="daylight"] .instructions-chip { margin-top: 12px; margin-bottom: 15px; }
 	/* The sort select has no pseudo-element to wear an overlay, so its box is the 44px. One class more than the head-tool rule
 	   above (0,4,0), which holds its height at 30px. */
 	:root[data-skin="daylight"] .pending-actions > select.pending-sort { height: 44px; min-height: 44px; }

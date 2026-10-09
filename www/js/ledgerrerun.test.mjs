@@ -127,7 +127,7 @@ console.log('case 3: the billed entry is gone (pruned or cleared) before the pat
 console.log('daimond.js: every path closes the turn on the entry it billed');
 {
 	check('the chat path keeps what recordSpend returned and hands it to recordTurnOutcome',
-		/turnSpent = recordSpend\(chat\.model,/.test(DAIMOND)
+		/turnSpent = tb\.entry;/.test(DAIMOND) && /d\.entry = recordSpend\(chat\.model,/.test(lift('billChatSpend'))
 		&& DAIMOND.includes("recordTurnOutcome(chat.model, chat.provider, umid, Date.now() - telT0, turnOutcome, tmeter.facts('c'), turnSpent);"));
 	check('the daimon path keeps what meterDiamondTurn returned and hands it to recordTurnOutcome',
 		DAIMOND.includes('dsSpent = meterDiamondTurn(fa, diamondId, dumid);')

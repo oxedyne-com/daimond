@@ -15,6 +15,12 @@
 //       reads B idle when B is already running a long turn of its own. A seats B,
 //       B hands the turn back, and A's turn reaches the model inside 5 s of the send,
 //       its answer reaches A, and each turn reaches the model exactly once.
+//   (3) THREE DEVICES, TWO BUSY (r545, Q19). B (the nominee) and C both run long turns of
+//       their own with their beats held back, so A reads both idle. A seats B; B hands it
+//       back busy; A re-seats it on C. C must not hold the row for B, which has already
+//       handed it back (the errand's `tried`), so C hands it back at once and A runs it
+//       inside 10 s of the send -- before Q19, C deferred to B and A waited out its 95 s
+//       backstop. The answer's tile names the busy seat as the cause.
 //
 // Needs the dev stack: app (DAIMOND_PORT), mock (DAIMOND_MOCK_PORT), gateway
 // (DAIMOND_GW_PORT). Pro-gated via pro.mjs.
@@ -30,6 +36,8 @@ import {
 	send,
 	sendDesk,
 	freshChat,
+	third,
+	answersFor,
 } from './handoffpair.mjs';
 
 const EDGE_MS   = 5000;			// the bound on a busy or idle edge reaching A
@@ -37,6 +45,8 @@ const EDGE_SLOW = 12000;		// B's first local turn
 const RACE_SLOW = 60000;		// B's second local turn, running through the race
 const RUN_MS    = 5000;			// the bound on A's turn reaching the model
 const ANSWER_MS = 20000;		// and its answer reaching A's store
+const TRIO_SLOW = 90000;		// B's and C's own turns through arm (3)
+const TRIO_MS   = 10000;		// the bound on A's turn reaching the model in (3)
 const { ok, bad, check } = checker();
 
 /// Does A hold a non-empty answer after the user message `prompt`, in its chat?
@@ -48,7 +58,7 @@ const answered = (a, prompt) => a.page.evaluate(async (p) => {
 		const ms = (got && got.messages) || [];
 		const at = ms.findIndex((m) => m && m.role === 'user' && String(m.content || '').includes(p));
 		if (at < 0) continue;
-		return ms.slice(at + 1).some((m) => m && m.role === 'assistant' && !m.interrupted
+		return ms.slice(at + 1).some((m) => m && m.role === 'assistant' && !m.interrupted && !m.provisional
 			&& String(m.content || '').trim());
 	}
 	return false;
@@ -81,7 +91,7 @@ const sawUntil = async (pg, text, ms) => {
 	return -1;
 };
 
-let a, b;
+let a, b, c;
 try {
 	({ a, b } = await pair(check, 'raceload', 'racemate'));
 	for (const s of [a, b]) {
@@ -159,6 +169,95 @@ try {
 	await watch;
 	check('(2) A\'s turn reached the model exactly once', modelSaw(second) === 1, 'seen ' + modelSaw(second));
 	check('(2) and B\'s own turn exactly once', modelSaw('b local race turn ' + tag) === 1, 'seen ' + modelSaw('b local race turn ' + tag));
+
+	// ── (3) Three devices, two busy: no bounce to a device that said busy ──
+	if (!process.env.BUSYRACE_SKIP3) {
+		console.log('\n(3) B (nominee) and C both busy, both read idle; A sends');
+		c = await third(check, a, 'racetrio');
+		await c.page.evaluate(() => { try { window.DaimondDiag.set(true, 'busyrace'); } catch (e) { /* none */ } });
+		const idC = await c.page.evaluate(() => window.DaimondIdentity.deviceId());
+		// B's race turn has to end first, so its next turn is the one that keeps it busy.
+		check('(3) B\'s race turn ended', await until(b.page, () => {
+			try { return !window.DaimondCore.busy(); } catch (e) { return false; }
+		}, null, RACE_SLOW + 20000));
+		// A fresh idle beat from each, then every later beat lost on the way.
+		await b.page.unroute(/[?&]presence=1/);
+		for (const [s, n] of [[b, 'racemate'], [c, 'racetrio']]) {
+			await s.page.evaluate((nm) => window.DaimondSync.beatPresence(window.DaimondIdentity.deviceId(), nm), n);
+			await s.page.route(/[?&]presence=1/, (r) => (r.request().method() === 'POST' ? r.abort() : r.continue()));
+		}
+		// Each runs it in the chat it is in: B's is its own race chat, which has ended, and C's
+		// is the one it opened with on joining. Neither is A's.
+		for (const [s, w] of [[b, 'b trio turn '], [c, 'c trio turn ']]) {
+			await freshChat(s, { reuse: true });
+			await sendDesk(s.page, '@slow ' + TRIO_SLOW + ' ' + w + tag);
+		}
+		check('(3) B is running a turn of its own', (await sawUntil(b.page, 'b trio turn ' + tag, 10000)) >= 0);
+		check('(3) C is running a turn of its own', (await sawUntil(c.page, 'c trio turn ' + tag, 10000)) >= 0);
+		// Named only now: with B the nominee already, C handed its own turn to B, and B ran C's.
+		for (const s of [a, b, c]) await s.page.evaluate((id) => window.DaimondCore.roster.nominate(id), idB);
+		const noms = [];
+		for (const s of [a, b, c]) noms.push(await s.page.evaluate(() => window.DaimondCore.roster.nominee()));
+		check('(3) every device names B the nominee', noms.every((x) => x === idB), noms.map((x) => String(x).slice(0, 8)).join(','));
+		const vB = await aViewBusy(a, idB), vC = await aViewBusy(a, idC);
+		check('(3) A still reads both idle', (vB === 0 || vB === -1) && (vC === 0 || vC === -1), 'B=' + vB + ' C=' + vC);
+
+		await freshChat(a);
+		const trio = 'trio chat ' + tag;
+		const t3 = Date.now();
+		await send(a.page, trio);
+		let at3 = -1;
+		const watch3 = (async () => {
+			while (at3 < 0 && Date.now() - t3 < TRIO_MS + ANSWER_MS + 100000) {
+				if (modelSaw(trio) > 0) at3 = Date.now() - t3;
+				else await new Promise((r) => setTimeout(r, 100));
+			}
+		})();
+		let ph3 = null;
+		for (let i = 0; i < 60 && !ph3; i++) {
+			ph3 = placeholders(await storedMsgs(a)).find((m) => String(m.itext || '').includes(trio)) || null;
+			if (!ph3) await a.page.waitForTimeout(100);
+		}
+		check('(3) A handed the chat off', !!ph3, ph3 ? 'tid=' + ph3.iturn + ' to=' + String(ph3.toDevice || '').slice(0, 8) : 'ran locally');
+		const tid3 = ph3 ? String(ph3.iturn) : '';
+		const answeredBusy = (s) => (tid3 ? until(s.page, (t) => {
+			try { return window.DaimondDiag.rows().some((r) => /collect busy/.test(r.tag)
+				&& String(r.data).includes(t) && /ANSWER busy/.test(String(r.data))); } catch (e) { return false; }
+		}, tid3, 15000) : Promise.resolve(false));
+		check('(3) B, the nominee, handed it back busy', await answeredBusy(b));
+		check('(3) C, re-seated with it, handed it back too rather than hold for B', await answeredBusy(c));
+		while (at3 < 0 && Date.now() - t3 < TRIO_MS + 1000) await a.page.waitForTimeout(100);
+		check('(3) A\'s turn reached the model inside ' + TRIO_MS / 1000 + ' s of the send', at3 >= 0 && at3 <= TRIO_MS,
+			at3 >= 0 ? 'at +' + at3 + 'ms' : 'not inside ' + (TRIO_MS + 1000) + 'ms');
+		let ans3 = false;
+		for (const tA = Date.now(); !ans3 && Date.now() - tA < ANSWER_MS + 100000;) {
+			ans3 = await answered(a, trio);
+			if (!ans3) await a.page.waitForTimeout(500);
+		}
+		check('(3) its answer reached A', !!ans3);
+		await watch3;
+		check('(3) A\'s turn reached the model exactly once', modelSaw(trio) === 1, 'seen ' + modelSaw(trio));
+		const ansMsg = tid3 ? answersFor(await storedMsgs(a), tid3)[0] : null;
+		check('(3) the answer names the busy seat as the cause (handoffBusy)', !!(ansMsg && ansMsg.handoffBusy),
+			ansMsg ? 'handoffBusy=' + String(ansMsg.handoffBusy || '') + ' fellBack=' + String(ansMsg.handoffFellBack || '')
+				+ ' ranOn=' + String(ansMsg.ranOn || '').slice(0, 8) : 'no answer');
+		const line = await a.page.evaluate(() => Array.from(document.querySelectorAll('.chat-msg-handoff'))
+			.map((x) => x.textContent || '').join(' | ')).catch(() => '');
+		check('(3) and the tile says it was busy', /busy/i.test(line), line.slice(0, 160));
+		if (bad.length || process.env.BUSYRACE_DUMP) {
+			if (process.env.BUSYRACE_DUMP && tid3) await until(a.page, (t) => window.DaimondDiag.rows()
+				.some((r) => /handoff local run/.test(r.tag) && String(r.data).includes(t)), tid3, 60000).catch(() => false);
+			const rows3 = (s, re) => s.page.evaluate((src) => {
+				const r = new RegExp(src);
+				try { return window.DaimondDiag.rows().filter((x) => r.test(String(x.tag)))
+					.map((x) => x.a + ' ' + String(x.tag) + ' | ' + String(x.data).slice(0, 200)); } catch (e) { return ['diag: ' + e]; }
+			}, re.source).catch((e) => ['eval: ' + e]);
+			for (const r of (await rows3(a, /handoff|fallback|recover|elect|handback|retry|collect|drop|run|local|continue|lease|answer/)).slice(-60)) console.log('  A3 ..', r);
+			for (const r of (await rows3(c, /collect/)).slice(-20)) console.log('  C3 ..', r);
+			for (const r of (await rows3(b, /./)).slice(-25)) console.log('  B3 ..', r);
+			console.log('  B3 focus', await b.page.evaluate(() => JSON.stringify(window.DaimondAttach.focus())).catch(() => '?'));
+		}
+	}
 	if (bad.length) {
 		const rows = (s, re) => s.page.evaluate((src) => {
 			const r = new RegExp(src);
@@ -173,6 +272,7 @@ try {
 } finally {
 	try { await a?.close(); } catch (e) { /* gone */ }
 	try { await b?.close(); } catch (e) { /* gone */ }
+	try { await c?.close(); } catch (e) { /* gone */ }
 }
 console.log('\n' + ok.length + ' ok, ' + bad.length + ' failed');
 process.exit(bad.length ? 1 : 0);

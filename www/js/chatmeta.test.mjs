@@ -137,11 +137,13 @@ function sourceGuards() {
 		const tk = funcBody(d, 'function takeChatMeta(out, src) {');
 		check('the user-facing scalars come from the metadata winner, NOT the turn winner',
 			m.includes('takeChatMeta(out, metaNewer);')
-			&& tk.includes("out.name           = src.name || '';")
-			&& tk.includes("out.model          = src.model || '';")
-			&& tk.includes('out.status         = src.status')
-			&& tk.includes('out.foldedInto     = src.foldedInto')
-			&& tk.includes('out.holds          = Array.isArray(src.holds)'),
+			// Each metadata field is taken from the winner in `slimChat`'s form, the one
+			// place a field's stored form is spelled (r545: `effort` "" against absent).
+			&& tk.includes('var s = slimChat(src);')
+			&& tk.includes('CHAT_META_FIELDS.forEach(')
+			&& tk.includes('if (s[k] === undefined) delete out[k];')
+			&& tk.includes('else out[k] = s[k];')
+			&& ['name', 'model', 'status', 'foldedInto', 'holds'].every((k) => new RegExp("var CHAT_META_FIELDS = \\[[^\\]]*'" + k + "'").test(d)),
 			BREAK === 'lww' ? 'record-level LWW reintroduced (the break)' : 'a scalar resolves from the wrong side');
 		check('the transcript is always unioned, local copy first',
 			m.includes('out.messages = slimMessages(mergeMessages(localMsgs, remoteMsgs, out.id, opts.mtombs));'));

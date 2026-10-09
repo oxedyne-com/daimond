@@ -1185,6 +1185,16 @@ impl DaimondApp {
         self.agent.set_provider_routing(&order, &ignore, only);
     }
 
+    /// Ask this app's model for a reasoning level, by OpenRouter's spelling (`low`, `high`
+    /// ...), or pass an empty string for the model's own default.  The page offers only the
+    /// levels the model's catalogue entry names; see `LlmClient::set_reasoning_effort`.
+    pub fn set_reasoning_effort(&self, effort: String) -> Result<(), JsValue> {
+        match self.agent.set_reasoning_effort(&effort) {
+            Ok(())  => Ok(()),
+            Err(e)  => Err(to_js_err(e)),
+        }
+    }
+
     /// Tell the engine what the provider's own model list says of this app's model and pictures:
     /// 1 takes them, -1 text-only, 0 nothing said.  It outranks the engine's name tables and
     /// applies from the next request; see `LlmClient::set_sight`.
@@ -3570,19 +3580,19 @@ impl DaimondApp {
                      recorded as a version: {}", e.plain())));
             },
         }
-        // K2, WARNING ONLY (r544 hotfix, QA-B F-B1..F-B3): a turn that ends with a page other than the
-        // last one the load proof passed is said, never put back. The put-back keyed on the mark could
-        // not tell this turn's page from a newer one written elsewhere, or from the daimon's own
-        // `file_revert`, and wrote over both. Nothing is written here until fire/fb restores the
-        // put-back as a compare-and-swap on the turn's own FAIL verdict.
+        // K2, WARNING ONLY (r544 hotfix; r545, QA F-H1): said only on this turn's own verdict -- the
+        // last load proof the turn took after writing the page or its data FAILED, and that page is
+        // still in place. A page written elsewhere, the daimon's own `file_revert`, or a page no
+        // proof read this turn was never judged by this turn, and a false "fix it" could push the
+        // daimon to undo a revert. Nothing is written here; History keeps the earlier pages.
         if kept {
-            let mark = diamond::last_passed(id).await;
-            if crate::tools::restore_wanted(mark.as_ref().map(|m| m.page.as_str()),
-                &page_before, &page_after)
-            {
-                session.messages.push(ChatMessage::user(
-                    "The page now in place has not passed the load proof. Nothing was put back. \
-                     If you wrote it this turn, fix it before you end.".to_string()));
+            if let Some(p) = crate::tools::unproven_left(registry.ctx.last_proof(), &page_after) {
+                // Read in the NEXT turn, so it names the turn that left the page.
+                let why = p.why.trim().trim_end_matches('.');
+                let why = if why.is_empty() { String::new() } else { fmt!(": {}", why) };
+                session.messages.push(ChatMessage::user(fmt!(
+                    "The page your last turn left did not pass the load proof{}. Nothing was put \
+                     back. Fix it in this turn.", why)));
                 let obj = js_sys::Object::new();
                 let _ = js_sys::Reflect::set(&obj, &JsValue::from_str("type"),
                     &JsValue::from_str("crystal_unproven"));

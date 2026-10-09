@@ -2264,19 +2264,6 @@
 
 	// ── Drawing ────────────────────────────────────────────────
 
-	/// The day something happened, in the language the APP is in — not the
-	/// browser's. trash.js records why.
-	function fmtDate(at) {
-		var loc;
-		try { loc = window.DaimondI18n ? DaimondI18n.locale() : undefined; }
-		catch (e) { loc = undefined; }
-		try { return new Date(at).toLocaleDateString(loc || undefined, { day: 'numeric', month: 'short' }); }
-		catch (e) { return ''; }
-	}
-
-	/// A forge stamp is in seconds; everything else here is in milliseconds.
-	function fmtWhen(secs) { return secs ? fmtDate(secs * 1000) : ''; }
-
 	function button(cls, act, text, title) {
 		var b = document.createElement('button');
 		b.type = 'button';
@@ -2709,7 +2696,7 @@
 			facts.className = 'imp-prop-facts';
 			var parts = [stateWord(p.state)];
 			if (p.author) parts.push(tOr('social.by', 'from {who}', { who: p.author }));
-			if (p.opened) parts.push(fmtWhen(p.opened));
+			if (p.opened) parts.push(window.DaimondTime.fmtLocal(p.opened * 1000, 'dayMonth'));
 			parts.push(tnOr('social.said_n', p.comments, '{n} reply', '{n} replies', { n: p.comments }));
 			// AN EMPTY LIST SAYS NOTHING HERE, and that is not the same as saying
 			// nothing about it: `[]` is the forge's answer that this proposal has
@@ -2746,7 +2733,7 @@
 					one.className = 'imp-disc-one';
 					var who = document.createElement('span');
 					who.className = 'imp-note-state';
-					who.textContent = d.author + (d.when ? ' · ' + fmtWhen(d.when) : '');
+					who.textContent = d.author + (d.when ? ' · ' + window.DaimondTime.fmtLocal(d.when * 1000, 'dayMonth') : '');
 					var said = document.createElement('p');
 					said.className = 'imp-prop-says';
 					said.textContent = d.said;

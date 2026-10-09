@@ -1525,7 +1525,7 @@ button.tag-pool { cursor: pointer; }
    `crystalMemoryPanel`), but full screen exists to give the page the whole
    panel -- so the memory goes too, and `.crystal-body`'s `flex: 1` lets the
    frame run down to the panel's bottom edge where the memory used to sit. */
-:root[data-cfull] .panel.ai .crystal-memory { display: none !important; }
+:root[data-cfull] .panel.ai :is(.crystal-memory, .capp-offer) { display: none !important; }
 
 /* The toggle. Two glyphs, one shown at a time, icon only: the accessible
    name lives on `aria-label` (and `title`), and in full screen this button
@@ -2416,6 +2416,9 @@ span.arte-open { cursor: default; }
 .railhead-menu-item:disabled { color: var(--text-muted); cursor: default; }
 .railhead-menu-item:disabled:hover { background: none; }
 .railhead-menu-sep { height: 1px; background: var(--border-2); margin: 4px 2px; }
+/* A menu's group label: the role `.gl` has in the Workspace's focus section, so a
+   label reads the same in a menu as in the panel it came from. */
+.railhead-menu-head { padding: 6px 8px 2px; font-size: var(--fs-xs); font-weight: var(--w-med); color: var(--text-muted); }
 
 /* Global spend readout (session / week / month). */
 .spend-row { display: flex; flex-wrap: wrap; gap: 4px; padding: 6px 2px; border-top: 1px solid var(--border); }
@@ -3413,6 +3416,17 @@ body.locked .tile-fold, body.locked .spend-row { display: none; }
 /* The memory, click-to-expand and editable. The page renders the memory; this
    shows the memory itself. Collapsed by default, so it costs one row until asked. */
 .crystal-memory { margin: 0 0 10px; }
+
+/* A forked capp page offered its template's fix (daimond.js `cappOfferNote`): one
+   line, the two buttons, and the places both sides changed, above the page. */
+.capp-offer { margin: 0 0 10px; display: flex; flex-direction: column; gap: 6px; }
+.capp-offer-note { margin: 0; color: var(--text-secondary); font-size: var(--fs-xs); line-height: 1.5; }
+.capp-offer-acts { display: flex; gap: 6px; flex-wrap: wrap; }
+.capp-conflicts > summary { cursor: pointer; color: var(--text-secondary); font-size: var(--fs-xs); user-select: none; }
+.capp-conflict { display: flex; flex-direction: column; gap: 4px; margin: 6px 0 0; }
+.capp-conflict-meta { color: var(--text-muted); font-size: var(--fs-xs); }
+.capp-conflict-label { color: var(--text-secondary); font-size: var(--fs-xs); }
+.capp-conflict-code { margin: 0; padding: 6px 8px; max-height: 12em; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; font-family: var(--font-mono); font-size: var(--fs-xs); background: var(--bg-tertiary); border-radius: var(--radius-sm); color: var(--text-primary); }
 .crystal-memory-sum { cursor: pointer; color: var(--text-secondary); user-select: none; }
 .crystal-memory-sum:hover { color: var(--text-primary); }
 /* What a daimon pays for this memory on every round, above the box it edits. */
@@ -3783,13 +3797,6 @@ button.tag-no:hover { background: hsl(var(--tag-h, 0) 30% 16%); border-color: hs
 .files-filter-input { width: 100%; background: var(--bg-tertiary); border: 1px solid var(--border-strong); border-radius: var(--radius-sm); color: var(--text-primary); padding: 5px 8px; font-size: var(--fs-xs); }
 .files-filter-input:focus { outline: 2px solid var(--accent); outline-offset: 1px; border-color: var(--accent); }
 .files-filter-input::placeholder { color: var(--text-muted); }
-.files-ren { color: var(--text-secondary); }
-.files-ren:hover { color: var(--accent); }
-
-/* The standing-instructions chip: quiet, but visible, so the user knows the
-   rules are in force and can open them. */
-.instructions-chip { display: inline-block; margin: 0 8px 6px; font-family: var(--font-mono); font-size: var(--fs-2xs); padding: 3px 8px; background: var(--bg-tertiary); color: var(--text-secondary); border: 1px solid var(--border); border-radius: 999px; }
-.instructions-chip:hover { color: var(--accent); border-color: var(--accent); }
 
 /* A readable multi-line dialog body: a version preview that collapses its
    newlines into one run-on line cannot be read, which defeats the History
@@ -5268,3 +5275,13 @@ details.md-fold > .md-fold-body > :last-child { margin-bottom: 0; }
 /* While choosing turns the bar belongs to the checkbox, as it does for copy. */
 .chat-output.selecting .ctile-retry,
 .chat-output.selecting .ctile-edit { display: none; }
+
+/* A crystal that moved on another device (D-20261006-07): the quiet line, and the two sides
+   of a key both devices changed with the two ways to settle it. */
+.crystal-stale { margin: 6px 0; font-size: var(--fs-xs); color: var(--text-secondary); }
+.crystal-conflict { margin: 8px 0; padding: 10px 12px; border-radius: var(--radius-sm); background: var(--bg-tertiary); }
+.crystal-conflict-head { margin: 0 0 8px; font-weight: 600; color: var(--text-primary); }
+.crystal-conflict-key { margin: 8px 0 4px; font-family: var(--font-mono); font-size: var(--fs-sm); color: var(--text-primary); }
+.crystal-conflict-side { margin: 4px 0 2px; font-size: var(--fs-xs); color: var(--text-secondary); }
+.crystal-conflict-val { margin: 0; max-height: 160px; overflow: auto; white-space: pre-wrap; word-break: break-word; font-family: var(--font-mono); font-size: var(--fs-xs); color: var(--text-primary); }
+.crystal-conflict-acts { display: flex; gap: 6px; margin-top: 10px; }

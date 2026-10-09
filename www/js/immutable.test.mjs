@@ -214,6 +214,36 @@ async function main() {
 			&& visibleAnswer(merged) && sigsAfterFirst.length === 3 && sigsBeforeMerge.length >= 3);
 	}
 
+	// ── A row arriving in a LATER frame lands after the earlier rows of its turn. ──
+	console.log('\n(o) — rows that arrive across frames are drawn in the frame\'s order');
+	{
+		// A reasoning turn: frame 1 carries the thinking alone, frame 2 the grown
+		// thinking and the answer that follows it.
+		let t = baseTranscript();
+		t = P.foldProvisional(t, 'U', [{ mid: 'K', role: 'think_log', content: 'weighing' }]) || t;
+		t = P.foldProvisional(t, 'U', [{ mid: 'K', role: 'think_log', content: 'weighing it up' },
+			{ mid: 'A', role: 'assistant', content: 'Here ' }]) || t;
+		check('(o1) an answer that follows the thinking in a later frame is drawn AFTER it',
+			t.map((m) => m.mid).join(',') === 'U,PH,K,A', t.map((m) => m.mid).join(','));
+		// A multi-tool turn: tool 2 arrives one frame after tool 1.
+		let u = baseTranscript();
+		u = P.foldProvisional(u, 'U', [{ mid: 'T1', role: 'tool_log', name: 'file_read', content: 'ok' }]) || u;
+		u = P.foldProvisional(u, 'U', [{ mid: 'T1', role: 'tool_log', name: 'file_read', content: 'ok' },
+			{ mid: 'T2', role: 'tool_log', name: 'file_read', content: 'ok' }]) || u;
+		check('(o2) a later tool tile is drawn after the earlier one',
+			u.map((m) => m.mid).join(',') === 'U,PH,T1,T2', u.map((m) => m.mid).join(','));
+		// Rows new in one frame keep its order, and a row that belongs BEFORE one
+		// already held still lands before it.
+		let v = baseTranscript();
+		v = P.foldProvisional(v, 'U', [{ mid: 'A', role: 'assistant', content: 'Here ' }]) || v;
+		v = P.foldProvisional(v, 'U', [{ mid: 'K', role: 'think_log', content: 'w' },
+			{ mid: 'T', role: 'tool_log', name: 'file_read', content: 'ok' },
+			{ mid: 'A', role: 'assistant', content: 'Here is' },
+			{ mid: 'E', role: 'assistant', content: 'after' }]) || v;
+		check('(o3) earlier rows go before the held answer and a later one after it',
+			v.map((m) => m.mid).join(',') === 'U,PH,K,T,A,E', v.map((m) => m.mid).join(','));
+	}
+
 	// ── A stale streaming frame must never overdraw the REAL merged answer. ──
 	console.log('\n(a) — once the real answer has merged, a late frame does not overdraw it');
 	{

@@ -88,6 +88,7 @@ function rec(r) {
 	put('status', [undefined, 'active', 'archived']);
 	put('holds', [undefined, [], ['f1']]);
 	put('diamondId', [undefined, '', 'd1']);
+	put('effort', [undefined, '', 'high']);
 	put('updatedAt', [undefined, 0, 100, 100, 200]);
 	put('metaAt', [undefined, 0, 100, 100, 200]);
 	put('promptTokens', [undefined, 0, 5, 9]);
@@ -108,6 +109,12 @@ console.log('\nA. the join laws on the record\'s bytes (2000 generated pairs and
 		if (bytes(M(M(a, b), c)) === bytes(M(a, M(b, c)))) assoc++;
 		if (bytes(M(ab, a)) === bytes(ab) && bytes(M(b, ab)) === bytes(ab)) fixed++;
 	}
+	{ let norm = 0, self = 0; const r2 = rng(0xe4f0);
+	  for (let i = 0; i < N; i++) { const a = rec(r2), b = rec(r2), ab = M(a, b);
+	    if (bytes(ab) === bytes(slimChat(ab))) norm++;
+	    if (bytes(M(a, a)) === bytes(slimChat(a))) self++; }
+	  check('a merge answers the record in its travelling form (slimChat)', norm === N, norm + '/' + N);
+	  check('a record merged with itself is its own travelling form', self === N, self + '/' + N); }
 	check('idempotent: a merged record merged with itself is unchanged', idem === N, idem + '/' + N);
 	check('commutative: either device\'s order gives the same bytes', comm === N, comm + '/' + N + ' ' + eg);
 	check('associative: the order of arrival does not matter', assoc === N, assoc + '/' + N);

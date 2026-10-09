@@ -375,7 +375,7 @@ const addBtn = await p.evaluate(() => {
 // that button its words -- on a Diamond this `+` widens the write fence, and
 // the two `+` buttons had been telling apart by position and a tooltip alone --
 // so from seq 149 this check asserted the button back into the state that made
-// a fence widen silently, and `verify_reachlegible` 6b-6e asserted the opposite
+// a fence widen silently, and `verify_reachlegible` (retired with the reach rows) 6b-6e asserted the opposite
 // about the same button in the same suite. Two checks disagreeing about one
 // element is a gate whose colour depends on running order. The words are 6c's
 // to guard; the reachability is this one's.

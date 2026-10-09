@@ -153,5 +153,30 @@ const SYMBOL = /[$€£¥₩≈~]|A\$|US/;
 	}
 }
 
+// THE LAST OLD SITES (r544 QA, F-C2): the Pro price, the balance after a
+// top-up, the forget-account warning and the spend-cap ladder each drew money
+// their own way. The old formatter is retired, so no site can reach for it; a
+// charge goes through `billed`, a balance through the tag, and the sentence
+// around the forget warning's balance is translated, not English glue.
+{
+	const strip = (s) => s.replace(/\/\*[\s\S]*?\*\//g, '')
+		.split('\n').map((l) => l.replace(/(^|[^:'"\\])\/\/.*$/, '$1')).join('\n');
+	const code = (f) => strip(fs.readFileSync(path.join(HERE, f), 'utf8'));
+	const sites = fs.readdirSync(HERE).filter((f) => /\.js$/.test(f));
+	const users = sites.filter((f) => /\bfmtMoney\b/.test(code(f)));
+	check('gate: the old fmtMoney is retired everywhere', users.length === 0, users.join(', '));
+	const dj = code('daimond.js');
+	check('gate: daimond.js writes no bare "$"', !/'\$'\s*\+/.test(dj));
+	check('gate: daimond.js glues no English round a balance', !/'a balance of /.test(dj));
+	const LOC = path.join(HERE, '..', 'i18n');
+	for (const f of fs.readdirSync(LOC).filter((x) => /\.js$/.test(x))) {
+		const s = fs.readFileSync(path.join(LOC, f), 'utf8');
+		const has = ['forget.held_both', 'forget.held_balance', 'forget.held_pro']
+			.every((k) => s.indexOf("'" + k + "'") >= 0);
+		check('i18n: ' + f + ' translates what the forget warning holds', has
+			&& /'forget\.credits_body':[^\n]*\{held\}/.test(s));
+	}
+}
+
 console.log('\n' + (checks - failures) + '/' + checks + ' passed');
 process.exit(failures ? 1 : 0);

@@ -502,6 +502,18 @@ async function rateSurfaces(pre) {
 }
 
 /// Unfold the tile that holds the last match of `sel` (a thread drawn from history, and the transcript passes before this, leave tiles folded).
+// #12: the forked Log Life on its face, the template's offer above its page; then the places both changed, opened as a person opens them.
+// Answers false when the device holds no Log Life.
+async function cappOfferFace(pre) {
+	const hit = await ev(() => { const t = [...document.querySelectorAll('#diamond-list .diamond-box')].find((e) => ((e.querySelector('.session-box-name') || {}).textContent || '').trim() === 'Log Life'); if (!t) return false; (t.querySelector('.tile-label') || t).click(); return true; });
+	if (hit !== true) return false;
+	await wait(1200); await click('#dview-crystal'); await wait(2200);
+	if (!(await ev(() => !!document.getElementById('capp-offer')))) { log('MISSING', `${CFG}/${pre}diamond_capp_offer`, 'no offer on the forked Log Life'); CAP.missing.push(`${CFG}/${pre}diamond_capp_offer`); return true; }
+	await grab(pre + 'diamond_capp_offer');
+	if (await click('#capp-offer details > summary')) { await wait(400); await grab(pre + 'diamond_capp_conflicts'); await click('#capp-offer details > summary'); await wait(300); }
+	else CAP.missing.push(`${CFG}/${pre}diamond_capp_conflicts`);
+	return true;
+}
 const unfold = (sel) => ev((q) => { const e = [...document.querySelectorAll(q)].pop(); const t = e && e.closest('.ctile'); if (t) t.classList.remove('collapsed'); }, sel);
 /// U3's own surfaces on the main chat (plan unit G): its last Files row at rest and under a hover, the chip row of file tags under a down
 /// tap on an unrated row (taken back afterwards), the popup on the rated row collapsed and with Details open, and the Rating tile with its
@@ -801,6 +813,7 @@ async function deskSurfaces() {
 	}
 	await quiet(); await click('#dview-crystal'); await wait(900);
 	await click('#dview-chat'); await wait(800); await grab('diamond_chat');
+	if (!(await cappOfferFace(''))) CAP.missing.push(`${CFG}/diamond_capp_offer`);
 	// The Diamond whose turn changed files, by its own name: which Kitchen Diamond the `/Kitchen/` pick above opened depends on the rail filter that
 	// `rail_filtered` left on (a look that leaves "not research" hides this one), so the filter is cleared and the Diamond picked by name.
 	await ev(() => { const b = document.querySelector('#panel-rail .tag-clear-all'); if (b && b.getClientRects().length) b.click(); }); await wait(500);
@@ -920,6 +933,11 @@ async function carrySurfaces(wk) {
 		// A Diamond is a folder in the store (see `webkitPair`): the device holds none, so there is no face to open.
 		for (const f of ['p_diamond_crystal', 'p_diamond_chat']) CAP.notCovered.push({ label: 'webkit Diamonds', reason: 'WebKit has no file store, so no Diamond reaches the device (CRF2)', surface: `${CFG}/${f}` });
 	} else CAP.missing.push(`${CFG}/p_diamond_crystal`, `${CFG}/p_diamond_chat`);
+	await home(); await drawer();
+	if (!(await cappOfferFace('p_'))) {
+		if (wk && !WKSTORE) CAP.notCovered.push({ label: 'webkit Diamonds', reason: 'WebKit has no file store, so no Diamond reaches the device (CRF2)', surface: `${CFG}/p_diamond_capp_offer` });
+		else CAP.missing.push(`${CFG}/p_diamond_capp_offer`);
+	}
 	// New Chat from the drawer, then the page it leaves (item 8: the drawer is meant to be shut over the new chat). It leaves a pending chat.
 	await home(); await drawer();
 	if (await click('#new-session-btn')) {
@@ -938,6 +956,30 @@ async function carrySurfaces(wk) {
 function saveCap(name) { fs.writeFileSync(`${OUT}/cap_${name}.json`, JSON.stringify(CAP)); log('saved', `${OUT}/cap_${name}.json`, CAP.items.length, 'items', CAP.surfaces.length, 'surfaces', CAP.missing.length, 'missing', CAP.notCovered.length, 'not covered'); }
 
 // ── Modes that drive a browser ──────────────────────────────────────────
+// #12: the forked Log Life the seed lays down. The base is the served past page nearest today's, the person's change is a comment added to a
+// script line the template has since changed (so the offer has one place both changed), and the page still runs.
+function lifelogFork() {
+	const dir = path.join(import.meta.dirname, '..', 'www', 'capps', 'lifelog');
+	const now = fs.readFileSync(path.join(dir, 'crystal.html'), 'utf8').split('\n');
+	const have = new Set(now);
+	let best = null;
+	for (const f of fs.readdirSync(path.join(dir, 'base'))) {
+		const ls = fs.readFileSync(path.join(dir, 'base', f), 'utf8').split('\n');
+		const off = ls.filter((l) => !have.has(l)).length;
+		if (off && (!best || off < best.off)) best = { hash: f.replace(/\.html$/, ''), ls, off };
+	}
+	const ls = best.ls, from = ls.indexOf('<script>');
+	let ticks = 0, at = -1;
+	for (let i = 0; i < ls.length - 1; i++) {
+		const l = ls[i];
+		if (i > from && ticks % 2 === 0 && !have.has(l) && !l.includes('`') && /;\s*$/.test(l) && ls.indexOf(l) === ls.lastIndexOf(l)) { at = i; break; }
+		ticks += (l.match(/`/g) || []).length;
+	}
+	if (at < 0) at = from + 1;
+	ls[at] = ls[at] + ' // kept as I had it';
+	return { hash: best.hash, page: ls.join('\n') };
+}
+
 async function seed() {
 	if (process.env.DAIMOND_MOCK_SCRIPT) fs.writeFileSync(process.env.DAIMOND_MOCK_SCRIPT, JSON.stringify(SCRIPT));
 	const s = await open({ name: 'alex', profile: PROF });
@@ -1053,6 +1095,29 @@ async function seed() {
 		await page.waitForSelector('.dlg-input', { timeout: 10000 });
 		await page.fill('.dlg-input', 'Old budget draft'); await page.click('.dlg-ok', { force: true }); await wait(1200);
 		if (!(await trashOne('#diamond-list', '.diamond-box', 'Old budget draft'))) log('seed: could not trash the Diamond');
+	}
+	// #12: a Log Life whose page the person has changed and whose template has moved on since, so its face carries the offer to bring the
+	// template's fix in, with one line both changed (the conflicts disclosure). Delivered through the guide as a person gets one; the page and
+	// the record's base are then set to an older served page the person edited (`lifelogFork`).
+	{
+		await ev(() => window.DaimondWeb.guide('capps.html')); await wait(2500);
+		const gf = page.frames().find((fr) => /guide\/capps\.html/.test(fr.url()));
+		if (!gf) { log('seed: the guide did not show capps.html'); await s.close().catch(() => {}); process.exit(3); }
+		await gf.click('#make-lifelog');
+		await page.waitForSelector('.dlg-card .dlg-ok', { timeout: 8000 });
+		await ev(() => { const c = [...document.querySelectorAll('.dlg-card')].filter((x) => x.getClientRects().length).pop(); if (c) c.querySelector('.dlg-ok').click(); });
+		await wait(2500);
+		const got = await ev(async (a) => {
+			const d = JSON.parse(await window.__free.list_diamonds()).find((x) => x.name === 'Log Life');
+			if (!d) return 'no Log Life';
+			const m = await import('/pkg/oxedyne_daimond.js');
+			await window.__free.write_crystal_page(d.id, a.page);
+			const rec = JSON.parse(await m.store_read('diamonds/' + d.id + '/capp.json'));
+			rec.files['crystal.html'] = a.hash;
+			await m.store_write('diamonds/' + d.id + '/capp.json', JSON.stringify(rec));
+			return true;
+		}, lifelogFork());
+		if (got !== true) { log('seed: ' + got); await s.close().catch(() => {}); process.exit(3); }
 	}
 	// Three diamonds, three different shapes of the same tile (D-20260929-03
 	// followup): a short model and one tag, a long model and five tags, and a
@@ -1403,7 +1468,11 @@ const ROLES = [
 	['rail-tile-label', 'none',     (it) => has(it, 'tile-label')],
 	['rail-tile',       'none',     (it) => has(it, 'session-box') || has(it, 'tile-label') && within(it, /session-box/)],
 	// G20: `.path-crumb` is a breadcrumb, not a list row.
-	['file-row',        'none',     (it) => has(it, 'files-row')],
+	// Round 2 (P2): the Workspace focus section's rows (`.files-focus .r`) are file rows too, styled by the same rule.
+	['file-row',        'none',     (it) => has(it, 'files-row') || has(it, 'r') && within(it, /files-focus/)],
+	// A focus row that is not a control ("Its own folder") is captured by its name, not its box: the row's words, placed by the row's own
+	// padding exactly as a tree row's are, so it is neither body text nor measured against the panel's text edge.
+	['file-row-name',   'none',     (it) => has(it, 'nm') && within(it, /files-focus/)],
 	// U3 (plan unit G): the changed-files note's own two controls, by role. The name opens the file and the delta is a count; neither is an
 	// icon button or a text button, and filed under those they were compared with the rail's buttons (34 unexplained rows on the first run
 	// that seeded a Files row). Each is compared with its own instances: a Diamond's tail note and a chat's Files row, on a computer and a phone.
@@ -1484,6 +1553,7 @@ const ROLE_PROPS = {
 	'labelled-toggle': ['ff', 'fs', 'fw', 'col', 'bg', 'bd', 'rad', 'pad', 'h', 'gap'],
 	'rail-tile': ['ff', 'fs', 'fw', 'col', 'bg', 'bd', 'rad', 'pad'], 'rail-tile-label': ['ff', 'fs', 'fw', 'col', 'bg', 'bd', 'rad', 'pad'],
 	'file-row': ['ff', 'fs', 'fw', 'col', 'bg', 'bd', 'rad', 'pad', 'h', 'lh'],
+	'file-row-name': ['ff', 'fs', 'fw', 'col', 'lh'],
 	'status-row': ['ff', 'fs', 'fw', 'col', 'bg', 'bd', 'rad', 'pad', 'h'], 'stat-strip': ['ff', 'fs', 'fw', 'col', 'bg', 'bd', 'rad', 'pad', 'h'],
 	'gallery-row': ['ff', 'fs', 'fw', 'col', 'bg', 'bd', 'rad', 'pad', 'h'],
 	'palette-row': ['ff', 'fs', 'col', 'bd', 'rad', 'pad', 'h'],
@@ -1516,6 +1586,7 @@ const ALLOW = [
 	// is still the chip's own hue by inheritance, not the icon-button grey.
 	// r526 residual, approved: its height is the chip's own too (17px), not a
 	// standalone 20px control.
+	{ role: 'icon-button', m: /^button\.dm\b/, p: ['col', 'rad', 'h', 'icon'], why: 'the ◈ is the mock’s round 28px target (44px on a phone) around a 12px glyph, the row’s one standing mark; its state, not a text colour, colours it (mock r2 `.dm`)' },
 	{ role: 'icon-button', m: /\.tag-x\b/, p: ['col', 'h'], why: 'the chip’s own × colour is inherited from its tag’s hue, and it is sized by its chip, not a standalone control' },
 	// r526 residual allow-list, all approved by the lead (D-20260929-03):
 	{ role: 'inline-link', m: /^a\.(brand|mb-hit)\b/, p: ['col'], why: 'the wordmark and the About picture’s hotspots keep the brand colour -- they are not text links' },
@@ -1541,13 +1612,15 @@ const ALLOW = [
 	// r535 U3: the two heads whose gap above is not the white space between two sections.
 	{ role: 'section-head', m: /\.mem-title\b/, p: ['section-gap'], why: 'a card\'s own title: the white space above it is the card\'s margin and padding (the card is what the section break sets off), not a head standing in the panel\'s flow' },
 	{ role: 'section-head', m: /\.admin-sec\b/, p: ['head-gap'], why: 'the Admin drawer\'s title row carries a rule under it; the first head stands the rule\'s own spacing below the close button\'s box, not a title-to-head gap' },
+	// WS2 P2: the gate reads a row's colour from its first words, and a Recent row's first words are its folder.
+	{ role: 'file-row', m: /^div\.r(\.[\w-]+)* \S*\/\S/, p: ['col'], why: 'a Recent row leads with its folder in the muted colour (mock r2 `<i>docs/</i>`); its name, after it, is in the primary colour' },
 ];
 
 // ── Report ──────────────────────────────────────────────────────────────
 const MINOR = new Set(['a', 'an', 'the', 'and', 'or', 'of', 'to', 'in', 'on', 'for', 'with', 'by', 'at', 'as', 'from', 'per', 'vs', 'into']);
-const PROPER = /^(Chat|Helper|Conversation|Daimond|Daimonds|Crystal|GitHub|OpenRouter|Anthropic|Typst|Obsidian|Porcelain|Daylight|English|Google|Apple|iPhone|Android|Windows|Linux|Mac|macOS|Hobart|Harlow|Oakline|Brandt|Kitchen|Priya|Sam|Alex|Ozone|Oxedyne|Pro|Max|Simple|Classic|I|OK|Git|Ctrl)$/;
+const PROPER = /^(Chat|Helper|Conversation|Daimond|Daimonds|Crystal|GitHub|OpenRouter|Anthropic|Typst|Obsidian|Porcelain|Daylight|English|Google|Apple|iPhone|Android|Windows|Linux|Mac|macOS|Hobart|Harlow|Oakline|Brandt|Kitchen|Priya|Sam|Alex|Ozone|Oxedyne|Log|Life|Pro|Max|Simple|Classic|I|OK|Git|Ctrl)$/;
 // The user's own words are not UI copy: the seeded names, titles and files.
-const USER = /Kitchen|Thesis|Tax return|Compare the three|Flights to|Outline section|Write a function|^alex$|\.(md|csv|svg|pdf|typ|json)\b|Daimond (Optimiser|Helper)|^[\w-]+\/|^\d/;
+const USER = /^Log Life$|Kitchen|Thesis|Tax return|Compare the three|Flights to|Outline section|Write a function|^alex$|\.(md|csv|svg|pdf|typ|json)\b|Daimond (Optimiser|Helper)|^[\w-]+\/|^\d/;
 // G23: a leading glyph joined straight to its word ("▸Custom") must not carry
 // the word out with it -- strip glyphs before splitting, not just punctuation.
 const GLY_CHARS = /[▸▾▶▼►◂◀←-⇿✎✕×⟳↺⋯☰✓✔•◈⚙⊕‹›»«⤓⬇⬆↗●○★☆…✏✂⧉⎘⏸■□◆◇≡✖✗✘⚠ℹ❓❗+＋📎🔒🔓📄📁🗑⭐⚡]/gu;
@@ -1912,9 +1985,12 @@ const V_NOTE  = ['Keep it short.', 'Keep answers under about 200 words unless as
 const V_LINE200 = ['Keep it short.', 'Keep answers under about 200 words unless asked for detail.', STEER_LINE_200];
 const V_META_NAME  = V_NAME.map((n) => 'This diamond: ' + n + ' \u00b7 All models \u00b7 Added Oct 4, 2026');
 const V_META_MODEL = V_MODEL.map((m) => 'This diamond: Thesis, chapter 4 \u00b7 ' + m + ' \u00b7 Added Oct 4, 2026');
+// F-C3: a date on the account's calendar, from the narrowest Common Era form to the widest Holocene one a supported language writes.
+const V_DAY   = ['Until 1 Nov 2026 \u00b7 2.0 KB', 'Until Nov 1, 12026 \u00b7 123.4 MB', 'Bis 1. Nov. 12026 \u00b7 1,234.5 MB'];
 const V_LINT  = ['Write a line.', 'This line cannot be used: it is over 200 bytes', 'This line cannot be used: it asks the model to please, agree or seek approval, and it holds a control character, and it is over 200 bytes'];
 // [name, ctx, comp, slot, values, pick, setup]. `slot` '' = the comp itself;
 // `pick` chooses the instance by its text; values `{count}` vary a list's length.
+const V_OFFER = ['There is a newer page.', 'There is a newer Log Life page. Your own changes to this page are kept.', 'There is a newer Gym, diet and body measurements, the long-form training journal page. Your own changes are kept. Where it changes the same lines you did, yours stay, and both are shown below.'];
 const VSLOTS = [
 	['diamond name',        '#diamond-list', '.diamond-box', '.session-box-name', V_NAME, /Tax return/],
 	['diamond model',       '#diamond-list', '.diamond-box', '.tile-model-chip', V_MODEL, /Tax return/],
@@ -1968,6 +2044,11 @@ const VSLOTS = [
 	['steer list model id',      '#panel-modeldash', '.steer-row', '.steer-foot .steer-meta', { text: V_META_MODEL }, /Keep answers under/, 'models'],
 	['steer cog note line',      'OVERLAY', '.steer-row', '.steer-line', V_LINE200, /Keep answers under/, 'steercog'],
 	['steer cog model id',       'OVERLAY', '.steer-row', '.steer-foot .steer-meta', { text: V_META_MODEL }, /Keep answers under/, 'steercog'],
+	// #12: the template's offer on a forked capp page. Update and Not now keep their places for every line of it.
+	['capp offer line',          '#crystal-body', '#capp-offer', '.capp-offer-note', V_OFFER, null, 'lifelog'],
+	// F-C3: the Trash's keep-until line and the Steering list's day, as wide as either calendar writes them.
+	['trash until date',         '#trash-list', '.arte-row', '.arte-note', { text: V_DAY }, null, 'trash'],
+	['steer list day',           '#panel-modeldash', '.steer-row', '.steer-foot .steer-meta', { text: ['Added 4 Oct 2026', 'This diamond: Thesis, chapter 4 \u00b7 All models \u00b7 Added Oct 4, 12026', 'Dieser Diamant: Thesis, chapter 4 \u00b7 Alle Modelle \u00b7 Hinzugef\u00fcgt am 4. Okt. 12026'] }, /Keep answers under/, 'models'],
 ];
 // Whole surfaces re-read in each locale: every label at once, en against de and fr.
 const VLOCALE = [['rail', '#panel-rail'], ['chat head', '#panel-ai > .chead'], ['workspace', '#panel-work', 'work'], ['composer', '.chat-input-bar'], ['topbar', '.topbar'], ['new diamond dialog', 'OVERLAY', 'newdia'], ['admin', '#admin', 'admin'], ['rate popup', 'OVERLAY', 'ratepop'], ['rate chips', '#chat-output', 'ratetags'], ['chat files row', '#chat-output', 'files'], ['file popup', 'OVERLAY', 'filepop'],
@@ -2105,6 +2186,13 @@ async function vSetup(kind) {
 		if (hit !== true) return 'no Diamond on this device';
 		await wait(1200); await click('#dview-crystal'); await wait(1200);
 	}
+	if (kind === 'lifelog') {
+		const ph = page.viewportSize().width <= 760;
+		if (ph) { await ev(() => { if (!document.body.classList.contains('drawer-open')) { const b = document.getElementById('drawer-btn'); if (b) b.click(); } }); await wait(800); }
+		const hit = await ev(() => { const t = [...document.querySelectorAll('#diamond-list .diamond-box')].find((e) => ((e.querySelector('.session-box-name') || {}).textContent || '').trim() === 'Log Life'); if (!t) return false; (t.querySelector('.tile-label') || t).click(); return true; });
+		if (hit !== true) return 'no Log Life on this device';
+		await wait(1200); await click('#dview-crystal'); await wait(2200);
+	}
 	if (kind === 'headmore') { await mainChat(); await click('#chead-more'); await wait(700); }
 	if (kind === 'pending' || kind === 'steeredit' || kind === 'models') {
 		const ph = page.viewportSize().width <= 760;
@@ -2128,6 +2216,7 @@ async function vSetup(kind) {
 		await wait(1200); await click('#dview-chat'); await wait(900);
 		await unfold('#chat-output .turn-files'); await ev(() => { const t = [...document.querySelectorAll('#chat-output .turn-files')].pop(); if (t) t.scrollIntoView({ block: 'center' }); }); await wait(300);
 	}
+	if (kind === 'trash') { await ev(() => { try { window.DaimondPanels.show('trash'); } catch (e) {} }); await wait(900); }
 	if (kind === 'cog') { await click('#diamond-list .diamond-box .tile-cog'); await wait(700); }
 	if (kind === 'steercog') {
 		// The settings of the Diamond the Steering notes belong to, with its list in view.

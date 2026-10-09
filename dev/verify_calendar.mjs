@@ -1,7 +1,7 @@
 // gateway: none
 // verify_calendar.mjs — the person chooses Holocene or Common Era (D-20261006-34, D-20261006-30b).
 //
-// Drives the real page: the Calendar row in the Appearance and layout menu, beside
+// Drives the real page: the Calendar row in the Appearance menu, beside
 // Language and Currency; a new account on Common Era; a choice that holds over a
 // reload; the row fitting a phone; and a Diamond page reading the same calendar in
 // its own sandboxed frame, under the real policy (so the browser, not a stub, says
@@ -89,6 +89,57 @@ const frameSays = (page) => page.evaluate(() => new Promise((res) => {
 	document.body.appendChild(f);
 }));
 
+// ── The date surfaces (F-C3): each drawn from real data, read as the person sees it ──
+const RELEASE_LOG = 'data:text/plain,' + encodeURIComponent([0, 1].map((i) => JSON.stringify({
+	seq: i, ts: '2026-0' + (i + 2) + '-03T12:00:00.000Z', build: (i ? 'b' : 'a').repeat(12), note: 'Build ' + i,
+	bundle: 'x'.repeat(64), prev: '0'.repeat(64), entry: 'e'.repeat(64) })).join('\n'));
+
+/// Every date surface's text, drawn afresh under the calendar of the moment.
+async function surfaces(page) {
+	return page.evaluate(async (log) => {
+		const out = {};
+		const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+		// Release notes: the history panel's own render, from a fixed log.
+		try {
+			let m = document.querySelector('meta[name="daimond-log"]');
+			if (!m) { m = document.createElement('meta'); m.name = 'daimond-log'; document.head.appendChild(m); }
+			m.content = log;
+			window.DaimondRelease.reset();
+			let host = document.getElementById('rel-list');
+			if (!host) { host = document.createElement('div'); host.id = 'rel-list'; document.body.appendChild(host); }
+			await window.DaimondRelease.render(host);
+			await wait(200);
+			out.release = [...host.querySelectorAll('.rel-when')].map((e) => e.textContent).join(' | ');
+		} catch (e) { out.release = 'threw: ' + e.message; }
+		// Trash: the panel's own render, over one item the bin holds until a fixed day.
+		try {
+			const core = window.DaimondCore, real = core.trashList;
+			core.trashList = async () => [{ id: 'fc3', kind: 'chat', name: 'A binned chat', bytes: 2048,
+				at: Date.parse('2026-10-01T12:00:00Z'), due: Date.parse('2026-11-01T12:00:00Z') }];
+			window.DaimondPanels.show('trash');
+			await wait(300);
+			try { await window.DaimondTrashPanel.render(); } finally { core.trashList = real; }
+			await wait(200);
+			out.trash = [...document.querySelectorAll('#trash-list .arte-row')].map((e) => e.textContent).join(' | ');
+		} catch (e) { out.trash = 'threw: ' + e.message; }
+		// Every shape the formatter offers, through the page's own copy.
+		const ts = Date.parse('2026-10-09T12:00:00Z');
+		out.shapes = ['day', 'dayLong', 'weekday', 'whenFull'].map((k) => window.DaimondTime.fmtLocal(ts, k)).join(' | ');
+		return out;
+	}, RELEASE_LOG);
+}
+
+/// Which year a drawn text carries: 'he', 'ce', 'both', or 'none'.
+const yearIn = (txt) => {
+	const he = /(^|[^0-9])120\d\d([^0-9]|$)/.test(txt), ce = /(^|[^0-9])20\d\d([^0-9]|$)/.test(txt);
+	return he && ce ? 'both' : he ? 'he' : ce ? 'ce' : 'none';
+};
+
+async function surfacesAre(page, cal, label) {
+	const s = await surfaces(page);
+	for (const k of ['release', 'trash', 'shapes']) check(label + ': ' + k + ' reads ' + cal, yearIn(s[k]) === cal, String(s[k]).slice(0, 160));
+}
+
 console.log(`verify_calendar on ${BROWSER}${BREAK ? ' (break: ' + BREAK + ')' : ''}`);
 let s = null;
 try {
@@ -125,6 +176,19 @@ try {
 		await openMenu(page);
 		st = await rowState(page);
 		check('the choice holds over a reload', !!st && st.value === 'he', st && st.value);
+
+		// The switch, both ways, on every date surface (F-C3).
+		await page.setViewportSize({ width: 1280, height: 860 });
+		await page.waitForTimeout(300);
+		await surfacesAre(page, 'he', 'Holocene');
+		await openMenu(page);
+		await page.selectOption('#calendar-select', 'ce');
+		await page.waitForTimeout(200);
+		await surfacesAre(page, 'ce', 'switched to Common Era');
+		await openMenu(page);
+		await page.selectOption('#calendar-select', 'he');
+		await page.waitForTimeout(200);
+		await surfacesAre(page, 'he', 'and back to Holocene');
 
 		await page.setViewportSize({ width: 390, height: 844 });
 		await page.waitForTimeout(300);

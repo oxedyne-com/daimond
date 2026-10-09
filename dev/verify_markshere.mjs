@@ -53,7 +53,7 @@
 //
 // Needs a world for the app and the mock provider: `eval "$(bash dev/world.sh N --env)"`.
 import fs from 'node:fs';
-import { open, signInAs, connectMock, newChat, errors, scratch } from './harness.mjs';
+import { open, signInAs, connectMock, newChat, errors, scratch, workRows, pressRowItem, pressRowMark } from './harness.mjs';
 
 const ok = [], bad = [];
 const tally = { route: [0, 0], control: [0, 0] };
@@ -261,29 +261,17 @@ async function openDiamond(id) {
 	return p.evaluate(() => (window.DaimondDiamond && DaimondDiamond.current()) ? DaimondDiamond.current().id : '');
 }
 
-/// This device's ⇄ on a folder of the open Diamond, pressed only where it is not already `on`.
+/// The share item in a folder's row ⋯ in the Workspace panel, pressed only where it is not already `on`.
 async function shareHere(path, on) {
 	const rows = await panelRows();
 	if (!rows[path] || rows[path].share === on) return false;
-	const done = await press('#panel-work .files-row.attached[data-path="' + path + '"] [data-act="share"]');
+	const done = await pressRowItem(s, path, 'share');
 	await install();
 	return done;
 }
 
-/// The Diamond's own rows in the Workspace panel: what each ⇄ says and whether it can be pressed.
-async function panelRows() {
-	await p.evaluate(() => window.DaimondPanels && DaimondPanels.show('work'));
-	await sleep(500);
-	await p.click('#panel-work [data-act="refresh"]', { force: true }).catch(() => {});
-	await sleep(700);
-	await p.click('.files-scope-chip[data-scope="diamond"]', { force: true }).catch(() => {});
-	await sleep(1400);
-	return p.evaluate(() => Object.fromEntries([...document.querySelectorAll('#panel-work .files-row.attached')].map((e) => {
-		const b = e.querySelector('[data-act="share"]');
-		return [e.dataset.path || '', { share: b ? b.getAttribute('aria-pressed') === 'true' : null,
-			pressable: b ? !b.disabled : null, ro: e.classList.contains('ro') }];
-	})));
-}
+/// The Diamond's rows in the Workspace tree: what each share item says and whether it can be pressed.
+const panelRows = () => workRows(s);
 
 await install();
 const DEV = await H('dev');
@@ -358,7 +346,7 @@ const b5a = await H('bounds', d5);
 control('P5. the mark is in force here', has(b5a.at, 'kept'), J(b5a));
 const e5 = await H('exportOf', d5);
 const rows5 = await panelRows();
-const off5 = await press('#panel-work .files-row.attached[data-path="kept"] [data-act="hold-dir"]');
+const off5 = await pressRowMark(s, 'kept');
 await install();
 const b5b = await H('bounds', d5);
 control('P5. the Workspace panel\'s ◈ takes it off', off5 && !has(b5b.at, 'kept') && !has(b5b.un, 'kept'), J({ off5, rows5, b5b }));

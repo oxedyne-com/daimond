@@ -47,8 +47,9 @@ const BREAKS = {
 		edits: [{ from: 'for (i = list.length - 1; i >= 0; i--) { if (own(list[i])) { cut = i; break; } }',
 			to: 'for (i = list.length - 1; i >= 0; i--) { if (own(list[i])) { break; } }\t\t// BROKEN: no cut' }] },
 	bubble: { sections: ['N2'], file: 'js/daimond.js', what: 'a redrawn user bubble shows `pre` before the words (the draw only: the stored content and the wire are untouched)',
-		edits: [{ from: '\t\t\tappendUserMessage(m.content, m.ts, m.prod);\n',
-			to: '\t\t\tappendUserMessage((typeof m.pre === \'string\' && m.pre ? m.pre + \'\\n\\n\' : \'\') + m.content, m.ts, m.prod);\t\t// BROKEN: the note in the bubble\n' }] },
+		// Anchored on the call's head only: the arguments after `m.prod` grow (files, app) and the break is about `m.content`.
+		edits: [{ from: '\t\t\tappendUserMessage(m.content, m.ts, m.prod',
+			to: '\t\t\t/* BROKEN: the note in the bubble */ appendUserMessage((typeof m.pre === \'string\' && m.pre ? m.pre + \'\\n\\n\' : \'\') + m.content, m.ts, m.prod' }] },
 	leak: { sections: ['N3'], file: 'js/daimond.js', what: 'noteFor is also given the OTHER chats\' rating records, after this chat\'s own messages, so the cut stays here and a rating made elsewhere is told here',
 		edits: [{ from: '\t\t\tvar ms = (chat && chat.messages) || [];\n\t\t\tif (typeof at === \'number\') {',
 			to: '\t\t\tvar ms = Array.prototype.concat.apply((chat && chat.messages) || [], chats.filter(function (c) { return c !== chat; }).map(function (c) { return (c.messages || []).filter(function (m) { return m && m.role === \'rating_log\'; }); }));\t\t// BROKEN: other chats\' ratings\n\t\t\tif (typeof at === \'number\') {' }] },
@@ -255,6 +256,7 @@ try {
 		await popupRate(D, String(dlast.mid), { step: 1, words: 'NW6 rated before' });
 		await D.page.evaluate(async ({ D, says }) => {
 			const T = window.DaimondTriggers, ta = T.blank('activity');
+			ta.id = 'activity-' + Date.now().toString(36);	// as the app's `+` names it
 			ta.minutes = 1; ta.offScreen = true; ta.instruction = says;
 			await window.DaimondCore.triggerSet(D, ta);
 			const got = (window.DaimondTriggersOf(D) || [])[0];

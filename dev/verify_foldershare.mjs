@@ -17,11 +17,13 @@
 // so cost four minutes a round. The copy grant is now its own flag on the attachment,
 // generic with respect to devices, off until somebody turns it on.
 //
-// THE FIXTURE IS THE BOOK. `~/usr/books/ontheism/TheOrder/Onthearche` -- 582 files and
-// about 89 MB once the `assets` symlink is followed, 411 of them text, five of them
-// compiled PDFs, 91 of them over the inline ceiling. It is READ and never written: the
-// only thing this run writes is the browser profile and the OPFS folder it mounts, so
-// there is no copy to make and none to leave behind.
+// THE FIXTURE IS A BOOK THIS RUN BUILDS (`dev/foldershare_book.mjs`), under its own
+// scratch directory: well over a hundred files once its `assets` symlink is followed,
+// most of them text, five compiled PDFs, fonts and pictures over the inline ceiling. It
+// was the owner's own book, read live, until the book moved on 1 October 2026 and the
+// run exited 2 for a week with nothing wrong in the app; a verifier never reads
+// anybody's writing. The run writes the fixture, the browser profiles and the OPFS
+// folder it mounts, and nothing else.
 //
 // FIVE GUARDS, each with its own break:
 //
@@ -80,14 +82,14 @@
 //   node dev/verify_foldershare.mjs --break markshares   # a mark shares the folder, flag or no flag
 //   node dev/verify_foldershare.mjs --break allornothing # one folder over the ceiling stops them all
 //   node dev/verify_foldershare.mjs --break nonames      # the banner counts the folders instead of naming them
-//   node dev/verify_foldershare.mjs --break flagstuck    # the far panel never hears the flag move
 //   node dev/verify_foldershare.mjs --break skillprobe   # a SKILL.md's own folder being fenced is believed over the file
 //   bash dev/world.sh 32 --down
 import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
 import { fileURLToPath } from 'node:url';
-import { open, signInAs, scratch, BROWSER, markHere } from './harness.mjs';
+import { buildBook } from './foldershare_book.mjs';
+import { open, signInAs, scratch, BROWSER, markHere, MOCK } from './harness.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const WWW  = path.join(HERE, '..', 'www');
@@ -137,19 +139,6 @@ const BREAKS = {
 	nonames: [{ file: 'js/daimond.js',
 		find: '			function (r) { return r.root; },',
 		with: '			function (r) { return \'\'; },			// BROKEN: counted, never named' }],
-	// The flag moves on one device and the other device's panel never hears about it.
-	// TWO SPECS, because the redraw has two carriers and either alone is enough: the
-	// links ride with their Diamond and the merge says the links moved, and a landed
-	// parcel re-lists an open Workspace panel whatever moved. Breaking one leaves the
-	// other drawing the right row, which is a guard proved by nothing -- found by this
-	// file on 2026-09-14, when a one-anchor break went green.
-	flagstuck: [
-		{ file: 'js/daimond.js',
-		  find: '		signalLinksChanged();                      // links ride with their Diamond, so the graph moved',
-		  with: '		if (false) signalLinksChanged();           // BROKEN: the merge says nothing moved' },
-		{ file: 'js/daimond.js',
-		  find: '				if (Files.refresh) Files.refresh();',
-		  with: '				if (false && Files.refresh) Files.refresh();		// BROKEN: a landed parcel redraws nothing' }],
 	// The manifest carries the modification time again, which is what two desktops
 	// disagree about while agreeing about every byte.
 	timekeyed: [{ file: 'js/daimond.js',
@@ -359,21 +348,24 @@ if (BREAK) {
 }
 
 // ═══════════════════════════════════════════════════════════════════════
-// THE FIXTURE — read from the owner's book, never written to.
+// THE FIXTURE — built by this run, under its scratch directory.
 // ═══════════════════════════════════════════════════════════════════════
 
-const BOOK = path.join(os.homedir(), 'usr/books/ontheism/TheOrder/Onthearche');
+let BUILT;
+try { BUILT = buildBook(scratch('fixture', 'foldershare-book' + (BREAK ? '-' + BREAK : ''))); }
+catch (e) { console.error('the fixture could not be built: ' + e.message); process.exit(2); }
+const BOOK = BUILT.book;
 const SCOPE = 'TheOrder/Onthearche';		// where it is mounted, inside the folder
 
 /// Walk the book FOLLOWING SYMLINKS, which is what the browser's file API does with
 /// one and what makes `assets -> ../../assets` 26 MB of fonts rather than a link.
 ///
-/// `dev` is left out and it is the only thing that is: it is a symlink to the owner's
-/// build scripts, outside the book, and following it would put this run's fixture
-/// somewhere nobody described.
+/// `dev` is left out and it is the only thing that is: in a real book it is a symlink
+/// to build scripts outside it, and following it would put the fixture somewhere
+/// nobody described.
 ///
 /// The guard is the ANCESTOR CHAIN and not a set of everything seen, which is the
-/// difference between refusing a loop and refusing a repeat. This book reaches one
+/// difference between refusing a loop and refusing a repeat. The book reaches one
 /// `assets` tree from two places -- the top level and the archived snapshot -- and a
 /// global seen-set drops whichever it meets second, which is 26 MB of fonts silently
 /// absent from a fixture whose whole purpose is the budgets.
@@ -407,8 +399,8 @@ function walkBook(rel, out, chain) {
 const FIXTURE = walkBook('', [], new Set()).sort((a, b) => (a.p < b.p ? -1 : 1));
 const FIX_BYTES = FIXTURE.reduce((n, f) => n + f.size, 0);
 if (FIXTURE.length < 100) {
-	console.error(`the fixture at ${BOOK} has only ${FIXTURE.length} files; this run needs the `
-		+ `owner's book to say anything about budgets.`);
+	console.error(`the fixture at ${BOOK} has only ${FIXTURE.length} files; the budgets need `
+		+ `at least a hundred to say anything.`);
 	process.exit(2);
 }
 console.log(`\n— the folder: ${FIXTURE.length} files, ${(FIX_BYTES / 1048576).toFixed(1)} MiB `
@@ -672,16 +664,12 @@ const seeded = await A.page.evaluate(async (list) => {
 		return h;
 	}
 	let n = 0, bytes = 0;
-	const missing = [];
 	for (const f of list) {
 		const cut = f.p.lastIndexOf('/');
 		const d = await dirFor(cut < 0 ? '' : f.p.slice(0, cut));
 		const fh = await d.getFileHandle(cut < 0 ? f.p : f.p.slice(cut + 1), { create: true });
 		const res = await fetch('/__fx/' + f.src.split('/').map(encodeURIComponent).join('/'));
-		// GONE SINCE THE WALK IS NOT A BROKEN RUN. The book is a Syncthing folder and
-		// this reads it live; a file that has moved under the fixture costs the fixture
-		// that file, and the counts below are taken from what was actually written.
-		if (res.status === 404) { missing.push(f.p); continue; }
+		// The run built this book a moment ago, so a file it cannot serve is a broken run.
 		if (!res.ok) throw new Error('fixture ' + f.src + ': ' + res.status);
 		const buf = await res.arrayBuffer();
 		const w = await fh.createWritable();
@@ -689,7 +677,7 @@ const seeded = await A.page.evaluate(async (list) => {
 		await w.close();
 		n++; bytes += buf.byteLength;
 	}
-	return { n, bytes, missing };
+	return { n, bytes };
 }, FIXTURE.map(f => ({ p: SCOPE + '/' + f.p, src: f.p })));
 await A.page.evaluate(async (a) => {
 	const root = window.DaimondFiles.folder();
@@ -702,8 +690,7 @@ await A.page.evaluate(async (a) => {
 		await w.close();
 	}
 }, { scope: SCOPE, rules: RULES });
-note(`seeded ${seeded.n} files, ${(seeded.bytes / 1048576).toFixed(1)} MiB, in ${((Date.now() - t0) / 1000).toFixed(1)}s`
-	+ (seeded.missing.length ? `; ${seeded.missing.length} had gone since the walk` : ''));
+note(`seeded ${seeded.n} files, ${(seeded.bytes / 1048576).toFixed(1)} MiB, in ${((Date.now() - t0) / 1000).toFixed(1)}s`);
 
 // ── One Diamond, scoped to the book ──────────────────────────────────
 //
@@ -1076,7 +1063,7 @@ const held = await B.page.evaluate(async (a) => {
 		try { text[p] = await window.DaimondCloud.readText(p); } catch (e) { miss.push(p); }
 	}
 	const ix = window.DaimondCloud.index();
-	return { text, miss, manifests: Object.keys(ix).filter(k => k.indexOf(a.scope + '/') === 0).length };
+	return { text, miss, manifests: Object.keys(ix).filter(k => k.indexOf(a.scope + '/') === 0) };
 }, { want: [CHAPTER, MAIN], scope: SCOPE });
 const aText = await A.page.evaluate(async (want) => {
 	const out = {};
@@ -1093,18 +1080,33 @@ check('B holds the chapter\'s text, byte for byte as it is on A\'s disk',
 	held.text[CHAPTER] === aText[CHAPTER] && (held.text[CHAPTER] || '').length > 1000,
 	held.miss.length ? 'missing: ' + held.miss.join(', ') : (held.text[CHAPTER] || '').length + ' chars');
 check('and the document it is a chapter of', held.text[MAIN] === aText[MAIN]);
+// EVERY ONE, BY NAME: the files over the per-file inline ceiling that no rule of the
+// folder leaves out. A count would pass on manifests for small text the budget pushed
+// out while a font went missing.
+const TOO_BIG = FIXTURE
+	.filter(f => f.size > 128 * 1024 && !/\.(pdf|zip)$/i.test(f.p) && !/^(archive|revision)\//.test(f.p))
+	.map(f => SCOPE + '/' + f.p);
+const noManifest = TOO_BIG.filter(p => held.manifests.indexOf(p) < 0);
 check('and a manifest for every asset that was too big to ride inline',
-	held.manifests > 50, `${held.manifests} manifests under ${SCOPE}`);
+	TOO_BIG.length > 0 && noManifest.length === 0,
+	noManifest.length ? 'none for: ' + noManifest.slice(0, 3).join(', ')
+		: `${TOO_BIG.length} of ${TOO_BIG.length}, ${held.manifests.length} manifests under ${SCOPE}`);
 
 // ═══════════════════════════════════════════════════════════════════════
-// THE FLAG IS A FACT ABOUT THE ATTACHMENT, so it travels and is drawn
+// THE FLAG IS A FACT ABOUT THE ATTACHMENT, so it travels with the Diamond
 // ═══════════════════════════════════════════════════════════════════════
 //
 // The flag rides in the link's own record, which rides inside the Diamond -- so a
-// device that cannot open the folder at all still shows whether the folder is expected
-// to reach it, and a person who turns the flag on at their desk sees it on everything
-// else without touching anything there.
-console.log('\n— the flag travels with its Diamond, and the far panel redraws —');
+// device that cannot open the folder at all still holds whether the folder is expected
+// to reach it, and a person who turns the flag on at their desk changes it everywhere
+// without touching anything there.
+//
+// A MARK MADE ON ANOTHER DEVICE IS NOT DRAWN AS A ROW HERE (workspace first principles,
+// 2026-10-09, the Reach row and the write-on-first-use table): B is asked in the moment
+// instead, on a write under that folder -- "Let <Diamond> change <place> here too?",
+// "Allowed on <A>.", Allow / Not Now. So what is measured on B is its own copy of the
+// links, and that ask; never focus rows, which B rightly does not draw.
+console.log('\n— the flag travels with its Diamond, and B asks for the mark in the moment —');
 
 // A THIRD ATTACHMENT, made for this and left OFF at the end, so the two flagged roots
 // the ceiling cells below measure are exactly the two they were. A folder rather than a
@@ -1132,29 +1134,22 @@ await A.page.evaluate(async () => {
 	window.DaimondCore.syncClearWalkCache();
 });
 
-/// The attachment rows B is DRAWING, with the three things the flag shows on them.
-///
-/// `pressed` is `aria-pressed` on the ⇄ button, which since R2 is `a.share` -- the
-/// ROW'S flag AND this device's OWN entry, together (O2). B has no native access to
-/// the folder at all, so it can never hold an entry and its button can never read
-/// pressed, whatever A's row says; `shared` (the badge, from `rowShare`) is what
-/// still tells B the folder is shared FROM elsewhere, titled `dws.shared_there`.
-const bRows = async () => B.page.evaluate(() => Array.from(
-	document.querySelectorAll('#panel-work .files-row.attached')).map((e) => {
-		const btn = e.querySelector('.files-share');
-		return {
-			path:     e.dataset.path || '',
-			shared:   !!e.querySelector('.files-badge.files-shared'),
-			pressed:  btn ? btn.getAttribute('aria-pressed') : '',
-			disabled: btn ? !!btn.disabled : null,
-		};
-	}));
-const said = (rs) => rs.map(r => `${r.path}=${r.pressed}${r.shared ? '+badge' : ''}`).join(' | ')
-	|| 'no attached rows drawn';
+/// The share flag on each of the Diamond's links, as B's own copy of the Diamond holds it,
+/// keyed by the path the link names.
+const bFlags = async () => B.page.evaluate(async (did) => {
+	const links = JSON.parse(await DaimondCore.diamondApp().links_touching('diamond:' + did) || '[]');
+	const out = {};
+	for (const l of links) {
+		const ref = String(l.other || l.to || '');
+		const i = ref.lastIndexOf(']');
+		if (i >= 0) out[ref.slice(i + 1)] = !!l.share;
+	}
+	return out;
+}, did);
+const said = (f) => Object.keys(f).sort().map(k => `${k}=${f[k]}`).join(' | ') || 'no links on B';
 
-// B HAS TO BE LOOKING AT IT for the redraw to be a claim about anything: the rows are
-// drawn when the panel lists the Diamond's own tree, and what is under test below is
-// whether a flag moved on A repaints them with nobody touching B.
+// B is on the Diamond, as a person would be, so the ask further down has somewhere to
+// be drawn.
 await round(A, B);
 await B.page.evaluate(() => window.DaimondCore.loadDiamonds());
 await B.page.waitForTimeout(800);
@@ -1164,20 +1159,12 @@ await B.page.evaluate(() => window.DaimondPanels && DaimondPanels.show('work'));
 await B.page.waitForTimeout(800);
 await B.page.click('#panel-work [data-act="refresh"]', { force: true }).catch(() => {});
 await B.page.waitForTimeout(900);
-await B.page.click('.files-scope-chip[data-scope="diamond"]', { force: true }).catch(() => {});
 await B.page.waitForTimeout(1500);
 
-let rows = await bRows();
-const rowFor = (rs, p) => rs.find(r => r.path === p) || {};
-// R2/O2: B can never press ⇄ itself (it has no native folder to hold), so its own
-// button reads NOT pressed and disabled whatever the row says -- this is the
-// opposite of what this asserted before R2, when B's `pressed` read the row's flag
-// directly. The badge (`shared`) is the property that carries "shared from A" now.
-check("B draws the Diamond's attachments and says which are shared, though it can never press ⇄ itself",
-	rowFor(rows, SCOPE).shared === true && rowFor(rows, SCOPE).pressed === 'false'
-		&& rowFor(rows, SCOPE).disabled === true
-	&& rowFor(rows, FLAGTEST).shared === false && rowFor(rows, FLAGTEST).pressed === 'false',
-	said(rows));
+let flags = await bFlags();
+check("B's copy of the Diamond carries each link's flag: the shared folder on, the others off",
+	flags[SCOPE] === true && flags[FLAGTEST] === false,
+	said(flags));
 
 // ── the flag goes on at A, and nobody touches B ──────────────────────
 // R2/O2: the row's flag AND this device's (A's) own entry, both -- `markHere`'s job,
@@ -1193,11 +1180,9 @@ check('flagging a second folder on A puts it in what A shares, beside the first'
 	`roots [${onA.roots.join(', ')}]`);
 await round(A, B);
 await B.page.waitForTimeout(1200);
-rows = await bRows();
-check("and B's panel redraws on its own: the attachment nobody touched here now reads as shared FROM ANOTHER DEVICE, never as pressed here",
-	rowFor(rows, FLAGTEST).pressed === 'false' && rowFor(rows, FLAGTEST).disabled === true
-		&& rowFor(rows, FLAGTEST).shared === true,
-	said(rows));
+flags = await bFlags();
+check('and the flag reaches B with nobody touching B',
+	flags[FLAGTEST] === true && flags[SCOPE] === true, said(flags));
 
 // ── and off again, which is the same journey backwards ───────────────
 await A.page.evaluate(async (a) => {
@@ -1213,10 +1198,52 @@ check('taking the flag off stops A sharing that folder, and leaves the other fla
 	`roots [${offA.roots.join(', ')}]`);
 await round(A, B);
 await B.page.waitForTimeout(1200);
-rows = await bRows();
-check('and B hears that too — the flag is one fact, drawn wherever the attachment is drawn',
-	rowFor(rows, FLAGTEST).pressed === 'false' && rowFor(rows, FLAGTEST).shared === false,
-	said(rows));
+flags = await bFlags();
+check('and B hears that too — the flag is one fact, carried wherever the Diamond goes',
+	flags[FLAGTEST] === false && flags[SCOPE] === true, said(flags));
+
+// ── B writes under the shared folder, and is asked in the moment ─────
+//
+// The mark naming A's device is not in force on B until it is pressed on B, so a daimon
+// write there is held at an ask that says where it IS allowed. Not Now, so the mark stays
+// waiting and the write-back below still runs exactly as before.
+const ASKED = SCOPE + '/asked_on_b.md';
+await B.page.evaluate(async (a) => {
+	const mod = await import('/pkg/oxedyne_daimond.js');
+	const b = await DaimondDiamond.bounds(a.id);
+	const app = new mod.DaimondApp(a.mock, 'mock-key', 'mock/fast', 4096, '', true);
+	window.__askSeen = [];
+	window.__askTurn = app.steer_crystal(a.id,
+		'@tool file_write ' + JSON.stringify({ path: a.p, content: 'from B' }),
+		JSON.stringify(b.attached || []), JSON.stringify(b.read_only || []),
+		JSON.stringify(b.toolkits || []), [],
+		(ev) => { if (ev.type === 'tool_result') window.__askSeen.push(String(ev.content || '')); },
+		JSON.stringify(b.unconfirmed || []))
+		.then(() => 'done', (e) => 'threw ' + String(e && e.message || e));
+}, { id: did, p: ASKED, mock: MOCK });
+const asked = await B.page.waitForSelector('.modal.dlg[data-ask="place"]', { timeout: 15000 })
+	.then(() => true, () => false);
+const askText = asked ? await B.page.evaluate(() => {
+	const c = [...document.querySelectorAll('.modal.dlg[data-ask="place"] .dlg-card')].pop();
+	return c ? c.textContent.replace(/\s+/g, ' ').trim() : '';
+}) : '';
+if (asked) {
+	await B.page.waitForSelector('.dlg-card .dlg-ok:not([disabled])', { timeout: 3000 }).catch(() => {});
+	await B.page.evaluate(() => {
+		const c = [...document.querySelectorAll('.modal.dlg[data-ask="place"] .dlg-card')].pop();
+		c.querySelector('.dlg-cancel').click();
+	});
+}
+const askEnd = await B.page.evaluate(async () => ({ end: await window.__askTurn, seen: window.__askSeen }));
+// "Allowed on <A>." names the device the mark was pressed on, never the generic
+// fallback, which would say nothing about where the folder is in force.
+const onDev = (askText.match(/Allowed on ([^.]+)\./) || [])[1] || '';
+check('a write under the shared folder on B asks for the mark here too, saying it is allowed on A',
+	asked && /change TheOrder\/Onthearche here too\?/.test(askText)
+		&& !!onDev && onDev !== 'another device'
+		&& askEnd.seen.some((t) => /^Refused/.test(t)),
+	(askText || 'no ask on B').slice(0, 200) + ' | ' + (askEnd.seen[0] || askEnd.end).slice(0, 100));
+
 
 // ═══════════════════════════════════════════════════════════════════════
 // THE WRITE-BACK
@@ -1662,11 +1689,11 @@ console.log('\n— the phone holds the pictures and the fonts as ☁ rows, and s
 // a check that calls `Wasm.typst_compile_project` itself passes whether or not anything
 // a person can press is wired to it.
 const PROBE = SCOPE + '/probe_phone.typ';
-// Its own document, so `mainFor` answers the probe and not the 281-page book: the mark
+// Its own document, so `mainFor` answers the probe and not the whole book: the mark
 // `dev` and the panel both read is `#show: doc.with(`, and a local `doc` is one.
 const PROBE_SRC = '#let doc(body) = body\n#show: doc.with()\n'
 	+ '#set page(width: 120mm, height: 90mm, margin: 8mm)\n'
-	+ '#set text(font: "Cormorant Garamond", size: 11pt)\n'
+	+ '#set text(font: "' + BUILT.family + '", size: 11pt)\n'
 	+ '= A page the phone drew\n\n'
 	+ '#image("' + PIC.p + '", width: 40mm)\n';
 await A.page.evaluate(async (a) => {

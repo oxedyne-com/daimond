@@ -234,15 +234,89 @@ const STALL_RETRIES: u32 = 1;
 /// at 90 s, nor cut mid-thought at 60 s.
 const STALL_WAIT_FACTOR: u64 = 5;
 
+/// The most a round may wait, across all its attempts, for real data: a minute inside the page's
+/// worker wall clock, so a model that never answers ends with its own reason before the page
+/// stops the worker (r543 QA N1).
+const ROUND_QUIET_MS: u64 = crate::agent::compact::WORKER_WALL_CLOCK_MS - 60_000;
+
+/// The waits of one attempt at a round: how long its first data may take, and the most any quiet
+/// before real data may last, given the `elapsed` milliseconds of the round so far.
+///
+/// The first attempt gives a provider 1.5 x the idle ceiling to begin; the one retry gives it
+/// 5 x, so a model that thinks silently is not cut a second time.  Neither may carry the round
+/// past [`ROUND_QUIET_MS`].
+fn attempt_wait(idle: u64, stall_tries: u32, elapsed: u64) -> (u64, u64) {
+    let first_ms = if stall_tries == 0 { idle.saturating_mul(3) / 2 }
+                   else { idle.saturating_mul(STALL_WAIT_FACTOR) };
+    (first_ms, ROUND_QUIET_MS.saturating_sub(elapsed).max(1))
+}
+
 /// How much longer a non-streaming reply may take to arrive than a stream's first byte.
 ///
 /// `do_request_full` (the transport behind `chat_once`, which serves the fold summary) awaits
 /// the WHOLE body in one piece, where `stream_sse` only needs the first token to arrive within
 /// `stream_idle_ms`.  A non-streaming provider generates the entire answer before it sends a
 /// byte, so a slow fold must not be cut at the streaming ceiling: its first-byte bound is this
-/// multiple of the idle figure -- 5 x 60 s = 300 s by default, still inside the JS 540 s wall
-/// clock that wraps the round.
+/// multiple of the idle figure -- 5 x 60 s = 300 s by default, still inside the page's worker wall
+/// clock ([`WORKER_WALL_CLOCK_MS`](crate::agent::compact::WORKER_WALL_CLOCK_MS)) that wraps the round.
 const REPLY_WAIT_FACTOR: u64 = 5;
+
+/// How hard an OpenAI-dialect model is asked to reason: OpenRouter's `reasoning.effort`.
+///
+/// Not [`Effort`], which is the Anthropic Messages API's own ladder: OpenRouter's has `none`
+/// and `minimal` below it, and each model publishes which rungs it takes in its catalogue
+/// entry (`reasoning.supported_efforts`).  The page draws the per-chat control from that list
+/// and sends only a level the model named, so nothing here guesses at a model's ladder.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum ReasoningEffort {
+    None,
+    Minimal,
+    Low,
+    Medium,
+    High,
+    XHigh,
+    Max,
+}
+
+impl ReasoningEffort {
+
+    pub fn wire(self) -> &'static str {
+        match self {
+            Self::None    => "none",
+            Self::Minimal => "minimal",
+            Self::Low     => "low",
+            Self::Medium  => "medium",
+            Self::High    => "high",
+            Self::XHigh   => "xhigh",
+            Self::Max     => "max",
+        }
+    }
+
+    /// Read a spelling; anything else is `None` rather than a silent default.
+    pub fn from_wire(s: &str) -> Option<Self> {
+        match s.trim() {
+            "none"    => Some(Self::None),
+            "minimal" => Some(Self::Minimal),
+            "low"     => Some(Self::Low),
+            "medium"  => Some(Self::Medium),
+            "high"    => Some(Self::High),
+            "xhigh"   => Some(Self::XHigh),
+            "max"     => Some(Self::Max),
+            _         => None,
+        }
+    }
+}
+
+/// A chosen [`ReasoningEffort`] and the model it was chosen for.
+///
+/// The model rides with the level because a level is a choice about ONE model's ladder: a
+/// clone of the client pointed at another model (the fold's own model, say) must not carry
+/// a level that model may not take, so the body sends it only while the models agree.
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct ChosenEffort {
+    model:  String,
+    effort: ReasoningEffort,
+}
 
 /// Which upstream providers OpenRouter should try for this model, and in what order.
 ///
@@ -601,6 +675,10 @@ pub struct LlmClient {
     /// reason `stream_idle_ms` is a shared cell: one client, one routing preference,
     /// wherever it is cloned.
     provider_routing: std::rc::Rc<std::cell::RefCell<ProviderRouting>>,
+    /// The chat's own reasoning level, or none for the model's default; see
+    /// [`set_reasoning_effort`](Self::set_reasoning_effort).  Shared across clones as
+    /// `provider_routing` is.
+    reasoning:      std::rc::Rc<std::cell::RefCell<Option<ChosenEffort>>>,
     /// Root-trust TLS configuration for the native transport.  The wasm
     /// transport delegates trust to the browser's `fetch`, so this field
     /// is native-only.
@@ -1155,6 +1233,37 @@ impl TransportErr {
     fn may_be_the_picture(&self) -> bool {
         !self.retryable && !self.too_big()
     }
+
+    /// Was it the picture's own size that was refused -- "image exceeds 5 MB" -- and not the
+    /// picture as such?
+    ///
+    /// The status cannot say: it is the same 400 a text model gives any picture.  So the
+    /// provider's words decide ([`says_picture_too_large`]).  Taking the picture out still cures
+    /// it, but the model sees, and marking it blind would refuse every later picture, however
+    /// small, for the rest of the session.
+    fn picture_too_large(&self) -> bool {
+        self.may_be_the_picture() && says_picture_too_large(&fmt!("{}", self.err))
+    }
+}
+
+// The providers' own words for a picture refused for its size, lower-cased: Anthropic's, OpenAI's,
+// Google's and the routers' that pass them on.  The one list every reader goes by.
+const PICTURE_TOO_LARGE: [&str; 9] = [
+    "image exceeds",
+    "image is too large",
+    "image too large",
+    "image_too_large",
+    "image is too big",
+    "image size exceeds",
+    "image file is too large",
+    "image dimensions exceed",
+    "exceeds the maximum image size",
+];
+
+/// Do the provider's words say a picture was refused for its size?  See [`PICTURE_TOO_LARGE`].
+pub(crate) fn says_picture_too_large(err: &str) -> bool {
+    let low = err.to_lowercase();
+    PICTURE_TOO_LARGE.iter().any(|m| low.contains(m))
 }
 
 /// What [`LlmClient::stream_sse`] ended on, alongside whatever it already handed `on_data`.
@@ -1349,6 +1458,7 @@ struct StreamWatch {
     any:       bool,    // has real data arrived
     accepted:  bool,    // has any `data:` chunk arrived
     thinking:  bool,    // is the model reasoning, with no answer yet
+    quiet_cap: u64,     // the most any quiet before real data may last
 }
 
 impl StreamWatch {
@@ -1365,7 +1475,14 @@ impl StreamWatch {
             any:       false,
             accepted:  false,
             thinking:  false,
+            quiet_cap: u64::MAX,
         }
+    }
+
+    // Bounds the quiet before real data, whatever the ceilings: see [`attempt_wait`].
+    fn capped(mut self, quiet_cap: u64) -> Self {
+        self.quiet_cap = quiet_cap;
+        self
     }
 
     // A line of any kind arrived, a keep-alive comment included.
@@ -1390,8 +1507,8 @@ impl StreamWatch {
     fn limit(&self) -> u64 {
         if self.thinking      { self.wide_ms }
         else if self.any      { self.idle_ms }
-        else if self.accepted { self.wide_ms }
-        else                  { self.first_ms }
+        else if self.accepted { self.wide_ms.min(self.quiet_cap) }
+        else                  { self.first_ms.min(self.quiet_cap) }
     }
 
     // Where the wide limit gives way to plain silence.  The wide limit is for a model that is
@@ -1457,6 +1574,7 @@ impl LlmClient {
             sight:      std::rc::Rc::new(std::cell::Cell::new(0)),
             stream_idle_ms: std::rc::Rc::new(std::cell::Cell::new(DEFAULT_STREAM_IDLE_MS)),
             provider_routing: std::rc::Rc::new(std::cell::RefCell::new(ProviderRouting::default())),
+            reasoning:  std::rc::Rc::new(std::cell::RefCell::new(None)),
             tls_config,
             halt:       Halt::new(),
         }
@@ -1511,6 +1629,7 @@ impl LlmClient {
             sight:      std::rc::Rc::new(std::cell::Cell::new(0)),
             stream_idle_ms: std::rc::Rc::new(std::cell::Cell::new(DEFAULT_STREAM_IDLE_MS)),
             provider_routing: std::rc::Rc::new(std::cell::RefCell::new(ProviderRouting::default())),
+            reasoning:  std::rc::Rc::new(std::cell::RefCell::new(None)),
             secure,
             halt:       Halt::new(),
         }
@@ -1645,10 +1764,8 @@ impl LlmClient {
             }
             let mut acc = Acc::new(self.dialect);
             let mut emitted = false;
-            // The first attempt gives a provider 1.5 x the idle ceiling to begin; the one
-            // retry gives it 5 x, so a model that thinks silently is not cut a second time.
-            let first_ms = if stall_tries == 0 { idle.saturating_mul(3) / 2 }
-                           else { idle.saturating_mul(STALL_WAIT_FACTOR) };
+            let (first_ms, quiet_cap) = attempt_wait(idle, stall_tries,
+                now_ms().saturating_sub(turn_began));
             let outcome = {
                 let mut sink = |w: Wire<'_>| -> Pulse {
                     match w {
@@ -1677,7 +1794,7 @@ impl LlmClient {
                         }
                     }
                 };
-                self.stream_sse(&body, first_ms, &mut sink).await
+                self.stream_sse(&body, first_ms, quiet_cap, &mut sink).await
             };
             // An `error` event on a 200 stream is the provider's own trouble
             // arriving after the headers, so it is classified like a status code
@@ -1772,9 +1889,12 @@ impl LlmClient {
                     // send it again -- once. Only where nothing has been emitted: a turn the
                     // user has already seen tokens from cannot be started over.
                     if !started && !retried_blind && images > 0 && e.may_be_the_picture() {
+                        // A picture too large is not a model that cannot see: it goes, and
+                        // the model is not marked blind.
+                        let too_large = e.picture_too_large();
                         retried_blind = true;
-                        blind_pending = true;
-                        let why = self.dropped_why(true);
+                        blind_pending = !too_large;
+                        let why = if too_large { Dropped::TooLarge } else { self.dropped_why(true) };
                         let text_only: Vec<ChatMessage> =
                             messages.iter()
                             .map(|m| m.with_content(m.content().without_images(why)))
@@ -1784,7 +1904,10 @@ impl LlmClient {
                         if notify {
                             // The provider's list says it sees: the request was refused, not the
                             // model blind, and the notice says which.
-                            let verdict = if self.declared() == Some(true) {
+                            let verdict = if too_large {
+                                if images == 1 { "it is too large for the provider" }
+                                else { "they are too large for the provider" }
+                            } else if self.declared() == Some(true) {
                                 "the provider refused the request, though it lists this model as \
                                  taking pictures"
                             } else {
@@ -1863,9 +1986,10 @@ impl LlmClient {
                     // reason; there is no emitted-tokens condition here because nothing has
                     // been shown to anybody yet.
                     if !retried_blind && images > 0 && e.may_be_the_picture() {
+                        let too_large = e.picture_too_large();
                         retried_blind = true;
-                        blind_pending = true;
-                        let why = self.dropped_why(true);
+                        blind_pending = !too_large;
+                        let why = if too_large { Dropped::TooLarge } else { self.dropped_why(true) };
                         let text_only: Vec<ChatMessage> =
                             messages.iter()
                             .map(|m| m.with_content(m.content().without_images(why)))
@@ -1888,13 +2012,42 @@ impl LlmClient {
         };
         if blind_pending { self.mark_blind(); }
         else if images > 0 && !retried_blind { self.mark_seen(); }
-        let (content, tool_calls, use_, thinking) = match self.dialect {
-            Dialect::OpenAi    => {
-                let (c, t, u) = parse_full_response(&raw);
-                (c, t, u, Vec::new())
+        match self.dialect {
+            // ONE PARSER FOR BOTH PATHS.  `chat_once` had a parser of its own for the whole
+            // completion it asks for, which read none of the reasoning and fell behind every
+            // field the stream's parser learned since.  The body now goes through the stream's
+            // line discipline and accumulator: a whole completion is a delta that says
+            // everything at once, an event stream sent anyway is read as one, and a body that
+            // is neither is an error naming who sent it (see `deliver_body`).
+            Dialect::OpenAi => {
+                let mut acc = Acc::new(self.dialect);
+                let mut lines = SseLines::new(None);
+                let mut sink = |w: Wire<'_>| -> Pulse {
+                    if let Wire::Data(data) = w { acc.ingest(data, &mut |_| {}); }
+                    Pulse::default()
+                };
+                for line in raw.lines() {
+                    match lines.sort(line) {
+                        SseLine::Data(data) => { sink(Wire::Data(data)); }
+                        SseLine::Done       => break,
+                        SseLine::Skip       => {}
+                    }
+                }
+                if let Some(b) = lines.body() {
+                    if let Err(e) = self.deliver_body(200, b, &mut sink) {
+                        return Err(e.crossed());
+                    }
+                }
+                Ok(acc.into_response(false, retries))
             }
-            Dialect::Anthropic => parse_anthropic_response(&raw),
-        };
+            Dialect::Anthropic => Ok(self.anthropic_whole(&raw, retries)),
+        }
+    }
+
+    /// A whole Anthropic Messages response as a [`ChatOnceResponse`].  Its shape is not a
+    /// stream's events, so it has a parser of its own; see [`parse_anthropic_response`].
+    fn anthropic_whole(&self, raw: &str, retries: u32) -> ChatOnceResponse {
+        let (content, tool_calls, use_, thinking) = parse_anthropic_response(raw);
         let thinking_text = thinking.iter()
             .filter_map(|b| extract_json_string(b, "thinking"))
             .filter(|s| !s.is_empty())
@@ -1903,33 +2056,15 @@ impl LlmClient {
         if let Some(tc) = tool_calls.first() {
             self.carry_put(&tc.id, thinking);
         }
-        // Read from the whole body, in whichever dialect it came back in.
-        let truncated = match self.dialect {
-            Dialect::OpenAi    => openai_truncated(&raw),
-            Dialect::Anthropic => anthropic_truncated(&raw),
-        };
-        // The four trace fields; see `ChatOnceResponse` for what each is and why. Empty on
-        // the Anthropic dialect, which sends none of them.
-        let (gen_id, finish_reason, native_finish_reason, provider) = match self.dialect {
-            Dialect::OpenAi => {
-                let head_end = raw.find("\"choices\"").unwrap_or(raw.len());
-                (
-                    extract_json_string(&raw[..head_end], "id").unwrap_or_default(),
-                    extract_json_string(&raw, "finish_reason").unwrap_or_default(),
-                    extract_json_string(&raw, "native_finish_reason").unwrap_or_default(),
-                    extract_json_string(&raw[..head_end], "provider").unwrap_or_default(),
-                )
-            }
-            Dialect::Anthropic => Default::default(),
-        };
         // See the same branch in `stream_turn`: Anthropic reports no `cost` at all, so `use_`
-        // above always carries zero here and the ledger is booked from the token counts instead.
-        let cost_usd = if use_.cost_usd == 0.0 && matches!(self.dialect, Dialect::Anthropic) {
+        // always carries zero here and the ledger is booked from the token counts instead.
+        let cost_usd = if use_.cost_usd == 0.0 {
             anthropic_list_price_usd(&self.model, use_.prompt, use_.completion, use_.cached)
         } else {
             use_.cost_usd
         };
-        Ok(ChatOnceResponse {
+        // The four trace fields are empty: the Anthropic dialect sends none of them.
+        ChatOnceResponse {
             content,
             tool_calls,
             prompt_tokens:     use_.prompt,
@@ -1939,14 +2074,14 @@ impl LlmClient {
             aborted:           false,
             retries,
             thinking:          thinking_text,
-            truncated,
+            truncated:         anthropic_truncated(raw),
             stalled:           false,
             shape:             ReplyShape::Plain,
-            gen_id,
-            finish_reason,
-            native_finish_reason,
-            provider,
-        }.classified())
+            gen_id:               String::new(),
+            finish_reason:        String::new(),
+            native_finish_reason: String::new(),
+            provider:             String::new(),
+        }.classified()
     }
 
     /// Refuse, before the request is built, to send an image to a model known not to see.
@@ -2307,6 +2442,14 @@ impl LlmClient {
                 out.push_str("},");
             }
         }
+        // THE CHAT'S OWN REASONING LEVEL, drawn by the page from the model's catalogue entry
+        // and set for this model alone (`ChosenEffort`).  Unset sends nothing, which is the
+        // model's own default.
+        if let Some(c) = self.reasoning.borrow().as_ref() {
+            if c.model == self.model {
+                out.push_str(&fmt!("\"reasoning\":{{\"effort\":\"{}\"}},", c.effort.wire()));
+            }
+        }
         if stream {
             out.push_str("\"stream\":true,");
             out.push_str("\"stream_options\":{\"include_usage\":true},");
@@ -2321,7 +2464,7 @@ impl LlmClient {
     /// Streaming body (no tools).  Kept for the pure-chat path's unit test,
     /// which is the only caller now that both paths share [`stream_turn`](Self::stream_turn).
     #[cfg(test)]
-    fn build_request_body(&self, messages: &[ChatMessage]) -> String {
+    pub(crate) fn build_request_body(&self, messages: &[ChatMessage]) -> String {
         self.build_body(messages, None, true)
     }
 
@@ -2661,6 +2804,19 @@ impl LlmClient {
         };
     }
 
+    /// Ask this client's model for a reasoning level, or `None` for the model's own default.
+    ///
+    /// Sent as `reasoning.effort` on the OpenAI dialect only, and only while the client's
+    /// model is the one the level was set for (see [`ChosenEffort`]).  The Anthropic dialect
+    /// has its own ladder, `output_config.effort`, set through
+    /// [`set_thinking`](Self::set_thinking).
+    pub fn set_reasoning_effort(&self, effort: Option<ReasoningEffort>) {
+        *self.reasoning.borrow_mut() = effort.map(|e| ChosenEffort {
+            model:  self.model.clone(),
+            effort: e,
+        });
+    }
+
     /// The thinking blocks held for `id`, or none when no held turn produced
     /// that call (or a lock could not be taken; see
     /// [`carry_put`](Self::carry_put)).
@@ -2887,7 +3043,9 @@ impl LlmClient {
             // Bounded per line, like the streaming path: a body that stops arriving ends the
             // attempt as a transient timeout rather than hanging on a dead connection.
             match tokio::time::timeout(idle, reader.read_line()).await {
-                Ok(Ok(Some(l))) => full.push_str(&l),
+                // The line's end goes back in: an event stream sent anyway is one event to a
+                // line, and lines run together are one line no reader can split.
+                Ok(Ok(Some(l))) => { full.push_str(&l); full.push('\n'); }
                 Ok(Ok(None)) => break,
                 Ok(Err(e)) if e.kind() == tokio::io::ErrorKind::UnexpectedEof => break,
                 Ok(Err(e)) => return Err(TransportErr::transient("the reply was cut short".to_string(), err!(e,
@@ -2918,6 +3076,7 @@ impl LlmClient {
         &self,
         body:       &str,
         first_ms:   u64,
+        quiet_cap:  u64,
         on_data:    &mut impl FnMut(Wire<'_>) -> Pulse,
     ) -> Result<StreamOutcome, TransportErr>
     {
@@ -2929,7 +3088,7 @@ impl LlmClient {
             Err(e) => return Err(e),
         };
         let mut reader = LineReader::new(stream, is_chunked);
-        let mut watch  = StreamWatch::new(now_ms(), idle_ms, first_ms);
+        let mut watch  = StreamWatch::new(now_ms(), idle_ms, first_ms).capped(quiet_cap);
         let mut lines  = SseLines::new(ctype.as_deref());
         loop {
             // THE IDLE WATCHDOG. Proposal 15, 2026-09-15: OpenRouter's own export showed a
@@ -3258,6 +3417,7 @@ impl LlmClient {
         &self,
         body:       &str,
         first_ms:   u64,
+        quiet_cap:  u64,
         on_data:    &mut impl FnMut(Wire<'_>) -> Pulse,
     ) -> Result<StreamOutcome, TransportErr>
     {
@@ -3292,7 +3452,7 @@ impl LlmClient {
         // arrive, mirroring the native `LineReader` line discipline.
         let mut buf: Vec<u8> = Vec::with_capacity(8192);
 
-        let mut watch = StreamWatch::new(now_ms(), idle_ms, first_ms);
+        let mut watch = StreamWatch::new(now_ms(), idle_ms, first_ms).capped(quiet_cap);
         let status = resp.status();
         let ctype = resp.headers().get("content-type").ok().flatten();
         let mut lines = SseLines::new(ctype.as_deref());
@@ -5189,32 +5349,6 @@ fn anthropic_truncated(json: &str) -> bool {
     matches!(extract_json_string(json, "stop_reason").as_deref(), Some("max_tokens"))
 }
 
-/// Parse a non-streaming chat completion body into
-/// `(content, tool_calls, usage)`.
-fn parse_full_response(body: &str) -> (String, Vec<ToolCall>, Usage) {
-    // Scope content extraction to before "tool_calls" so we don't pick
-    // up a "content" key inside a tool call's arguments.
-    let scope_end = body.find("\"tool_calls\"").unwrap_or(body.len());
-    let content = extract_json_string(&body[..scope_end], "content").unwrap_or_default();
-
-    let mut tool_calls = Vec::new();
-    if let Some(arr) = find_json_array(body, "tool_calls") {
-        for elem in split_top_level_objects(&arr) {
-            let name = match extract_json_string(&elem, "name") {
-                Some(n) if !n.is_empty() => n,
-                _ => continue,
-            };
-            let id = extract_json_string(&elem, "id").unwrap_or_default();
-            let arguments = extract_json_string(&elem, "arguments")
-                .unwrap_or_else(|| "{}".to_string());
-            tool_calls.push(ToolCall { id, name, arguments });
-        }
-    }
-
-    (content, tool_calls, parse_usage(body).unwrap_or_default())
-}
-
-
 // ┌───────────────────────────────────────────────────────────────┐
 // │ StreamAcc — streamed delta accumulator                         │
 // └───────────────────────────────────────────────────────────────┘
@@ -7002,17 +7136,25 @@ pub mod tests {
     // Chunked transfer decoding is now handled inline by `LineReader`;
     // the standalone `dechunk` helper and its tests were removed.
 
+    /// A whole completion read by the stream's accumulator, as `chat_once` reads it.
+    fn whole(body: &str) -> ChatOnceResponse {
+        let mut acc = Acc::new(Dialect::OpenAi);
+        acc.ingest(body, &mut |_| {});
+        acc.into_response(false, 0)
+    }
+
     #[test]
-    fn test_parse_full_response_tool_calls() {
+    fn test_whole_completion_tool_calls() {
         let body = r#"{"choices":[{"index":0,"message":{"role":"assistant","content":null,"tool_calls":[{"id":"call_1","type":"function","function":{"name":"file_read","arguments":"{\"path\":\"a.txt\"}"}}]},"finish_reason":"tool_calls"}],"usage":{"prompt_tokens":12,"completion_tokens":8}}"#;
-        let (content, calls, use_) = parse_full_response(body);
+        let r = whole(body);
+        let (content, calls) = (r.content.clone(), r.tool_calls.clone());
         assert_eq!(content, "");
         assert_eq!(calls.len(), 1);
         assert_eq!(calls[0].id, "call_1");
         assert_eq!(calls[0].name, "file_read");
         assert_eq!(calls[0].arguments, r#"{"path":"a.txt"}"#);
-        assert_eq!(use_.prompt, 12);
-        assert_eq!(use_.completion, 8);
+        assert_eq!(r.prompt_tokens, 12);
+        assert_eq!(r.completion_tokens, 8);
     }
 
     #[test]
@@ -7025,34 +7167,36 @@ pub mod tests {
     }
 
     #[test]
-    fn test_parse_full_response_spaced() {
+    fn test_whole_completion_spaced() {
         // Whitespace after colons, as real APIs emit.
         let body = r#"{"choices": [{"message": {"content": null, "tool_calls": [{"id": "c1", "type": "function", "function": {"name": "file_write", "arguments": "{\"path\": \"a.txt\", \"content\": \"hi\"}"}}]}}], "usage": {"prompt_tokens": 4, "completion_tokens": 2}}"#;
-        let (content, calls, use_) = parse_full_response(body);
+        let r = whole(body);
+        let (content, calls) = (r.content.clone(), r.tool_calls.clone());
         assert_eq!(content, "");
         assert_eq!(calls.len(), 1);
         assert_eq!(calls[0].name, "file_write");
         assert_eq!(calls[0].arguments, r#"{"path": "a.txt", "content": "hi"}"#);
-        assert_eq!(use_.prompt, 4);
-        assert_eq!(use_.completion, 2);
+        assert_eq!(r.prompt_tokens, 4);
+        assert_eq!(r.completion_tokens, 2);
         // And the tool can extract the spaced args.
         assert_eq!(extract_json_string(&calls[0].arguments, "path"), Some("a.txt".to_string()));
     }
 
     #[test]
-    fn test_parse_full_response_text() {
+    fn test_whole_completion_text() {
         let body = r#"{"choices":[{"message":{"role":"assistant","content":"Hello there."},"finish_reason":"stop"}],"usage":{"prompt_tokens":5,"completion_tokens":3}}"#;
-        let (content, calls, use_) = parse_full_response(body);
+        let r = whole(body);
+        let (content, calls) = (r.content.clone(), r.tool_calls.clone());
         assert_eq!(content, "Hello there.");
         assert!(calls.is_empty());
-        assert_eq!(use_.prompt, 5);
-        assert_eq!(use_.completion, 3);
+        assert_eq!(r.prompt_tokens, 5);
+        assert_eq!(r.completion_tokens, 3);
     }
 
     #[test]
-    fn test_parse_full_response_two_calls() {
+    fn test_whole_completion_two_calls() {
         let body = r#"{"choices":[{"message":{"content":null,"tool_calls":[{"id":"c1","type":"function","function":{"name":"file_list","arguments":"{}"}},{"id":"c2","type":"function","function":{"name":"shell","arguments":"{\"command\":\"ls\"}"}}]}}]}"#;
-        let (_c, calls, _use) = parse_full_response(body);
+        let calls = whole(body).tool_calls;
         assert_eq!(calls.len(), 2);
         assert_eq!(calls[0].name, "file_list");
         assert_eq!(calls[1].name, "shell");
@@ -8376,9 +8520,9 @@ pub mod tests {
         // the floor a thinking turn needs.
         assert!(off.contains("\"max_tokens\":4096"), "{}", off);
 
-        // THE SAME SETTING ON THE OPENAI DIALECT CHANGES NOTHING.  There is no field this app
-        // has ever sent there and nowhere to hand a signed block back, so a request that
-        // carried one would be asking for something it could not replay next round.
+        // THE SAME SETTING ON THE OPENAI DIALECT CHANGES NOTHING.  Its own level is the chat's
+        // `reasoning.effort` (`set_reasoning_effort`, below), drawn from the model's own
+        // catalogue entry; the Anthropic tune is a different ladder and never leaks across.
         let router = test_client("openrouter.ai", 443, "anthropic/claude-opus-5");
         router.set_thinking(Thinking::Off, Effort::Max);
         let openai = router.build_body(&msgs, None, true);
@@ -8386,6 +8530,57 @@ pub mod tests {
         assert!(!openai.contains("output_config"), "{}", openai);
         assert!(!openai.contains("effort"), "{}", openai);
         assert!(!openai.contains("reasoning"), "{}", openai);
+    }
+
+    /// THE CHAT'S OWN EFFORT reaches the OpenAI body as `reasoning.effort`, and unset sends
+    /// nothing, which leaves the model on its own default (D-20261006-04/-05, owner 09 Oct).
+    #[test]
+    fn test_a_chosen_reasoning_effort_reaches_the_openai_body_and_unset_sends_none() {
+        let msgs = [ChatMessage::user("Hi".to_string())];
+        let c = test_client("openrouter.ai", 443, "z-ai/glm-5.3");
+        let dflt = c.build_body(&msgs, None, true);
+        assert!(!dflt.contains("reasoning"), "an unset level was sent: {}", dflt);
+
+        c.set_reasoning_effort(Some(ReasoningEffort::Low));
+        let low = c.build_body(&msgs, None, true);
+        assert!(low.contains("\"reasoning\":{\"effort\":\"low\"}"), "{}", low);
+        // The Anthropic ladder's field is never what carries it.
+        assert!(!low.contains("output_config"), "{}", low);
+
+        // A clone made inside the turn shares the setting, as routing is shared.
+        let twin = c.clone();
+        assert!(twin.build_body(&msgs, None, true).contains("\"effort\":\"low\""));
+
+        // Cleared, the model's default again: nothing on the wire.
+        c.set_reasoning_effort(None);
+        let back = c.build_body(&msgs, None, true);
+        assert!(!back.contains("reasoning"), "{}", back);
+    }
+
+    /// A LEVEL IS ONE MODEL'S CHOICE: a clone pointed at another model -- the fold's own
+    /// model, say -- does not carry a rung that model may not have.
+    #[test]
+    fn test_a_reasoning_effort_is_not_carried_onto_another_model() {
+        let msgs = [ChatMessage::user("Hi".to_string())];
+        let c = test_client("openrouter.ai", 443, "z-ai/glm-5.3");
+        c.set_reasoning_effort(Some(ReasoningEffort::Max));
+        let mut other = c.clone();
+        other.model = "deepseek/deepseek-chat".to_string();
+        let body = other.build_body(&msgs, None, true);
+        assert!(!body.contains("reasoning"), "a level crossed to another model: {}", body);
+        assert!(c.build_body(&msgs, None, true).contains("\"reasoning\":{\"effort\":\"max\"}"));
+    }
+
+    /// OpenRouter's ladder round-trips, and a typo is refused rather than defaulted.
+    #[test]
+    fn test_the_reasoning_effort_spellings_round_trip_and_a_typo_is_refused() {
+        for e in [ReasoningEffort::None, ReasoningEffort::Minimal, ReasoningEffort::Low,
+            ReasoningEffort::Medium, ReasoningEffort::High, ReasoningEffort::XHigh, ReasoningEffort::Max]
+        {
+            assert_eq!(Some(e), ReasoningEffort::from_wire(e.wire()));
+        }
+        assert_eq!(None, ReasoningEffort::from_wire("lwo"));
+        assert_eq!(None, ReasoningEffort::from_wire(""));
     }
 
     /// A level or a switch the model would answer a 400 to is not sent.
@@ -10660,6 +10855,32 @@ pub mod tests {
         }
     }
 
+    /// r543 QA N1: a round whose provider sends one empty chunk and then only keep-alives, asked
+    /// twice, ends with its own reason inside the page's worker wall clock, so a worker in that
+    /// state ends "did not answer" and not "stopped after 540s, no result".  At the default
+    /// ceiling the two attempts were held 300 s each, 600 s in all.
+    #[test]
+    fn stalled_round_ends_inside_the_worker_wall_clock() {
+        let wall = crate::agent::compact::WORKER_WALL_CLOCK_MS;
+        for idle in [DEFAULT_STREAM_IDLE_MS, 30_000, 120_000] {
+            let mut now = 0u64;
+            for tries in 0..=STALL_RETRIES {
+                let (first_ms, cap) = attempt_wait(idle, tries, now);
+                let mut w = StreamWatch::new(now, idle, first_ms).capped(cap);
+                w.data(now, Pulse { grew: false, thinking: false });    // a role, nothing in it
+                loop {
+                    now += 5_000;                                       // a keep-alive
+                    w.heard(now);
+                    if w.expired(now) { break; }
+                    assert!(now < 3_600_000, "the watch never gave up");
+                }
+                now += 1_000;                                           // the resend
+            }
+            assert!(now < wall, "idle {} ms: the stalled round ended at {} ms, past the {} ms \
+                worker wall clock", idle, now, wall);
+        }
+    }
+
     /// What the watch lets a quiet last, by what the stream has shown (F1, F2, F8).  The clock is
     /// the test's own, in milliseconds.
     #[test]
@@ -11330,5 +11551,108 @@ pub mod tests {
         assert!(e.contains("<html><body>Upstream"), "the error does not show what came: {}", e);
         assert!(tokens.is_empty());
         assert_eq!(connections(&seen), 1, "a body that is no reply was sent again");
+    }
+
+    // ── chat_once reads a reply with the stream's own parser (Q13, 2026-10-09) ──
+    //
+    // `chat_once`, the fold's path, had a parser of its own for the whole completion it asks for,
+    // and it read neither the model's reasoning nor anything a stream's parser had learned since.
+    // One parser now serves both: what the stream path records, `chat_once` records.
+
+    #[tokio::test]
+    async fn eng2_chat_once_records_reasoning_cost_and_finish_reason() {
+        for (key, body_reasoning) in [("reasoning", "thought first"), ("reasoning_content", "deepseek thought")] {
+            let (port, _seen) = start_stub(vec![one_body(&fmt!(
+                "{{\"id\":\"gen-9\",\"provider\":\"Acme\",\"choices\":[{{\"index\":0,\"message\":\
+                 {{\"role\":\"assistant\",\"content\":\"Folded\",\"{}\":\"{}\"}},\
+                 \"finish_reason\":\"length\",\"native_finish_reason\":\"max_tokens\"}}],\
+                 \"usage\":{{\"prompt_tokens\":70,\"completion_tokens\":30,\"cost\":0.125}}}}",
+                key, body_reasoning))]).await;
+            let client = stub_client(port);
+            let r = client.chat_once(&[ChatMessage::user("fold this".to_string())], None).await
+                .unwrap_or_else(|e| panic!("{}: a whole completion failed: {}", key, e));
+            assert_eq!(r.content, "Folded", "{}", key);
+            assert_eq!(r.thinking, body_reasoning, "{}: chat_once dropped the model's reasoning", key);
+            assert_eq!(r.cost_usd, 0.125, "{}: chat_once dropped the cost", key);
+            assert_eq!((r.finish_reason.as_str(), r.native_finish_reason.as_str()), ("length", "max_tokens"),
+                "{}: chat_once dropped why the model stopped", key);
+            assert!(r.truncated, "{}: a reply cut at the limit was not marked so", key);
+            assert_eq!((r.gen_id.as_str(), r.provider.as_str(), r.prompt_tokens, r.completion_tokens),
+                ("gen-9", "Acme", 70, 30), "{}", key);
+        }
+    }
+
+    /// A provider that streams although no stream was asked for is read as the stream it is.
+    #[tokio::test]
+    async fn eng2_chat_once_reads_an_event_stream_it_did_not_ask_for() {
+        let (port, _seen) = start_stub(vec![Reply::answer()]).await;
+        let client = stub_client(port);
+        let r = client.chat_once(&[ChatMessage::user("fold this".to_string())], None).await
+            .unwrap_or_else(|e| panic!("{}", e));
+        assert_eq!((r.content.as_str(), r.prompt_tokens, r.cached_tokens), ("Hello world", 11, 9));
+        assert_eq!(r.cost_usd, 0.0003);
+    }
+
+    /// A body that is no reply is an error naming who sent it, not an empty fold.
+    #[tokio::test]
+    async fn eng2_chat_once_garbage_is_an_honest_error_not_an_empty_reply() {
+        let (port, _seen) = start_stub(vec![Reply::Http {
+            status: 200, reason: "OK",
+            headers: vec![("Content-Type", "text/html".to_string())],
+            body: "<html><body>Upstream is having a moment</body></html>".to_string(),
+        }]).await;
+        let client = stub_client(port);
+        let e = match client.chat_once(&[ChatMessage::user("fold this".to_string())], None).await {
+            Ok(r)  => panic!("a garbage body was taken as a reply: {:?}", r.content),
+            Err(e) => fmt!("{}", e),
+        };
+        assert!(e.contains("localhost") && e.contains("<html><body>Upstream"),
+            "the error does not say who answered what: {}", e);
+    }
+
+    // ── a picture too large is not a model that cannot see (Q14, 2026-10-09) ──
+
+    /// A 400 for the picture's own size, in Anthropic's words: no overflow words, no 413.
+    fn picture_too_large() -> Reply {
+        Reply::Http {
+            status: 400, reason: "Bad Request", headers: Vec::new(),
+            body: "{\"type\":\"error\",\"error\":{\"type\":\"invalid_request_error\",\"message\":\
+                \"messages.0.content.1.image.source.base64: image exceeds 5 MB maximum: \
+                7340032 bytes > 5242880 bytes\"}}".to_string(),
+        }
+    }
+
+    /// The picture comes out and the request goes again, on both paths, but the model is still
+    /// taken to see, and the model and the person are told the picture was too large -- not that
+    /// the model cannot see.
+    #[tokio::test]
+    async fn eng2_a_picture_too_large_retries_without_it_and_does_not_mark_blind() {
+        for once in [false, true] {
+            let (port, seen) = start_stub(vec![picture_too_large(), Reply::answer()]).await;
+            let client = stub_client_of(port, "my-gpt4o-prod");
+            let mut tokens = Vec::new();
+            let got = if once {
+                client.chat_once(&with_picture("cover"), None).await.map(|_| ())
+            } else {
+                client.chat_stream_tools(&with_picture("cover"), None, &mut text_sink(&mut tokens)).await.map(|_| ())
+            };
+            if let Err(e) = got {
+                panic!("(once {}) the text-only retry completes: {}", once, e);
+            }
+            let bodies = match seen.lock() { Ok(g) => g.bodies.clone(), Err(e) => panic!("stub: {}", e) };
+            assert_eq!(bodies.len(), 2, "(once {}) one refusal, one retry", once);
+            assert!(!bodies[1].contains(DOC_PNG_B64), "(once {}) the retry still carried the picture", once);
+            assert!(bodies[1].contains("too large"),
+                "(once {}) the model was not told the picture was too large", once);
+            assert!(!bodies[1].contains("cannot be shown pictures"),
+                "(once {}) the model was told it cannot see", once);
+            assert!(client.can_take_images(),
+                "(once {}) a picture refused for its size marked the model blind", once);
+            if !once {
+                let said = tokens.concat();
+                assert!(said.contains("too large") && !said.contains("cannot see"),
+                    "the person was not told plainly the picture was too large: {}", said);
+            }
+        }
     }
 }

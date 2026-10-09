@@ -50,9 +50,10 @@ const stubs = {
 	refreshDiamondAfterChange: async () => {},
 	renderCrystal() {},
 	currentDiamond: { id: 'd1' },
-	diamondApp: () => ({ write_crystal_data: async (id, text) => { writes.push([id, text]); } }),
+	// The store holds what the form opened on, so the save door writes it straight through.
+	diamondApp: () => ({ read_crystal_data: async () => good, write_crystal_data: async (id, text) => { writes.push([id, text]); } }),
 };
-const fns = sliceDaimond(win, ['crystalData', 'crystalBroken', 'crystalJson', 'crystalBar', 'editCrystal', 'crystalLib'], stubs).fns;
+const fns = sliceDaimond(win, ['crystalData', 'crystalFile', 'crystalJson', 'crystalBar', 'editCrystal', 'crystalLib'], stubs).fns;
 const editOf = (bar) => bar.children.find((c) => c.textContent === 'files.edit');
 async function editThenSave(bar) {
 	const btn = editOf(bar);
@@ -69,7 +70,7 @@ check('renderCrystal hands the bar the parsed copy as it is, null included',
 
 // A broken crystal: no Edit, and Edit then Save writes nothing.
 const broken = '{"title":"Ontheism","summary":"S",\n"sections":[{"heading":"H","body":"B"},]}';
-check('the text is broken', fns.crystalBroken(broken) !== null);
+check('the text is broken', fns.crystalFile(broken).broken !== null);
 const bar = fns.crystalBar(fns.crystalData(broken));
 check('the crystal bar offers no Edit for a broken crystal', !editOf(bar), 'it does');
 await editThenSave(bar);

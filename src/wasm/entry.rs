@@ -155,6 +155,16 @@ pub fn grow_on_purpose(mb: u32) -> f64 {
     heap_bytes()
 }
 
+/// The page's ceiling on one worker's `run_turn`, in milliseconds.
+///
+/// Read by `Workers.start` in `daimond.js` so the figure has one source,
+/// [`WORKER_WALL_CLOCK_MS`](crate::agent::compact::WORKER_WALL_CLOCK_MS), which the round's own
+/// wait for first data is bounded inside.
+#[wasm_bindgen]
+pub fn worker_wall_clock_ms() -> f64 {
+    crate::agent::compact::WORKER_WALL_CLOCK_MS as f64
+}
+
 /// The linear memory in whole megabytes, for a trail line.
 ///
 /// Separate from [`heap_bytes`] because the JS side wants bytes and every caller
@@ -460,6 +470,41 @@ pub async fn store_list(path: String) -> Result<String, JsValue> {
     let mut out = String::new();
     for (name, is_dir, size) in entries {
         out.push_str(&fmt!("{}\t{}\t{}\n", name, if is_dir { "dir" } else { "file" }, size));
+    }
+    Ok(out)
+}
+
+/// One directory for the Workspace search (E5), with each file's time: the store's when `machine`
+/// is false, the open machine folder's when it is true.
+///
+/// One entry per line, `name\tdir|file\tbytes\tms`, where `ms` is the last-modified time in epoch
+/// milliseconds and empty when the backend keeps none.  [`store_list`]'s three columns plus one,
+/// as a door of its own so that no caller of that one meets a column it did not expect.
+///
+/// In the machine folder a path that names the store (a `diamonds/` the project happens to hold)
+/// is left out: every Workspace reader resolves that name to the store, so a row for it would
+/// open a different file from the one it was found as.
+#[wasm_bindgen]
+pub async fn list_stamped(path: String, machine: bool) -> Result<String, JsValue> {
+    let root = if machine { FileRoot::Machine } else { FileRoot::Opfs };
+    let entries = match opfs::list_dir_stamped(root, &path).await {
+        Ok(e)  => e,
+        Err(e) => return Err(to_js_err(e)),
+    };
+    let dir = path.trim_matches('/');
+    let mut out = String::new();
+    for (name, is_dir, size, when) in entries {
+        if machine {
+            let full = if dir.is_empty() || dir == "." { name.clone() } else { fmt!("{}/{}", dir, name) };
+            if crate::tools::is_store_path(&full) {
+                continue;
+            }
+        }
+        let ms = match when {
+            Some(t) => fmt!("{}", t as u64),
+            None    => String::new(),
+        };
+        out.push_str(&fmt!("{}\t{}\t{}\t{}\n", name, if is_dir { "dir" } else { "file" }, size, ms));
     }
     Ok(out)
 }

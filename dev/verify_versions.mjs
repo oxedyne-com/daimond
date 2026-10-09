@@ -474,8 +474,8 @@ console.log('10. Retry replaces the last reply; Edit & resend runs nothing until
 	check('daimond.js defines retryTurn(chat, iturn, text)', !!RT, RT ? '' : 'not found');
 	check('and editResend(chat, iturn, text)', !!ER, ER ? '' : 'not found');
 	const names = ['loadMsgTombs', 'msgTombstone', 'touchChat', 'persistChats', 'renderHistory',
-		'runTurn', 'ChatStore', 'window', 'DaimondJournal', 'DaimondPeer', 'DaimondLease',
-		'selfDeviceId', 'chatInput'];
+		'runTurn', 'ChatStore', 'window', 'DaimondJournal', 'DaimondPeer', 'DaimondLease', 'newMid',
+		'selfDeviceId', 'chatInput', 'syncSendMode'];
 	const spies = () => {
 		const calls = { runTurn: [], msgTombstone: [], compact: [] };
 		const stubs = {
@@ -484,8 +484,9 @@ console.log('10. Retry replaces the last reply; Edit & resend runs nothing until
 			runTurn: (chat, text) => calls.runTurn.push({ text }),
 			ChatStore: { compact: (id) => calls.compact.push(id) },
 			window: { DaimondJournal: true }, DaimondJournal: { clearTurn: () => {} },
-			DaimondPeer: null, DaimondLease: null, selfDeviceId: () => 'me',
+			DaimondPeer: null, DaimondLease: null, selfDeviceId: () => 'me', newMid: () => 'n1',
 			chatInput: { value: '', focus() { this.focused = true; } },
+			syncSendMode: () => {},		// the composer's Send/Stop face; no button here
 		};
 		return { stubs, calls };
 	};

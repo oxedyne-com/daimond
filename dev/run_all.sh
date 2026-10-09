@@ -413,6 +413,8 @@ budget_floor() {
 		# on release 4: over the 600 it had, so the release-5 nightly would read exit 124.
 		verify_style)                     echo 900 ;;
 		verify_handoff_noresurrect|verify_syncfixedpoint) echo 600 ;;
+		# Two devices paired, two turns, then a sync leg and the panels: 150 s red on world 99 (9 Oct).
+		verify_handoff_intent)            echo 300 ;;
 		# 5.3.2 (rating U5-U7), measured by lane V on world 88 (2026-10-05): verify_steering 214 s green and 339 s on 5.3.1 where
 		# every section fails slowly; verify_ratings_digest 222 s (411 s under a break); verify_optimiser is its old 29 checks
 		# and then OP1 to OP5, whose second device is a paired account.
@@ -537,6 +539,9 @@ budget_floor() {
 		# waits come to about 420 s before two browser launches; 1200 until a measured
 		# run replaces it in dev/budgets.tsv.
 		verify_pausehandoff)              echo 1200 ;;
+		# Up to three devices and two chats, each turn given 130 s to reach the model and
+		# 30 s for its answer, then an 8 s settle and a ledger pull (r545, FA).
+		verify_handoff_mixrace)           echo 480 ;;
 		*)                                echo 180 ;;
 	esac
 }
@@ -1098,6 +1103,10 @@ if [ $# -eq 0 ]; then
 	# false greens was giving a confident number about two thirds of the tree. It asks
 	# git now, so a directory added later is in the list without anybody widening a glob.
 	static_one jscheck      bash dev/jscheck.sh
+	# A forked capp page is merged with its template's fix against the page it came
+	# from, served from `capps/<key>/base/<sha256>.html`. A template change that did
+	# not lay its old page down there leaves every fork of it unmergeable.
+	static_one cappbases    node dev/cappbases.mjs --check
 	# Four assertions, no browser, no port, a fraction of a second: that a terminal
 	# request composed in Rust reaches the wire whole, and that a fence root outside the
 	# grant travels with the toolkit it belongs to. Written on 2026-08-24 for the day the

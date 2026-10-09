@@ -177,10 +177,13 @@
 	   adds to its own padding. It was 54px here and 58px in fact, and nothing
 	   read it: css/mobile.css and js/mobile.js each carried their own copy of the
 	   real number, and the sheet's foot is placed from one and its height from the
-	   other. Both read this now, and mobile.js measures the bar rather than
-	   trusting any of the three. 62 is a 44px chip -- the AAA target the row of
-	   destinations before it met -- plus the strip's own 8 and 9 and the bar's
-	   1px rule. */
+	   other. It is a FIXED number: nothing measures the bar into it. css/mobile.css
+	   places the sheet's foot from it; js/mobile.js does not read it, and caps the
+	   sheet's height from the bar's laid-out height (`barH`, with its own fallback
+	   of 62 for a bar not yet laid out). So the strip's padding in css/mobile.css,
+	   this line and that fallback must change together. 62 is a 44px chip -- the
+	   AAA target the row of destinations before it met -- plus the strip's own 8
+	   and 9 and the bar's 1px rule. */
 	--mnav-h:            62px;
 }
 

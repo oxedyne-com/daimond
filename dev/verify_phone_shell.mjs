@@ -457,7 +457,7 @@ await section('HM', async () => {
 	await shot('HM_menu_open', { x: 0, y: 0, width: 390, height: 420 });
 	check('HM: the rows are, in his order, Concise, Copy, Steps, Expand, Select', J(menu.rows.map((r) => r.id)) === J(ROWS.map((r) => r[0])), J(menu.rows.map((r) => r.id)));
 	check('HM: every row is 44px high and at least 44 wide', menu.rows.length === 5 && menu.rows.every((r) => Math.abs(r.h - 44) <= 0.6 && r.w >= 44), menu.rows.map((r) => `${r.id} ${r.w}x${r.h}`).join(', '));
-	check('HM: the menu has Help\'s closer head, titled "More"', menu.hasHead && menu.head.closer && menu.head.text === (await wordOf('chat.more')), J(menu.head));
+	check('HM: the menu has Help\'s closer head, titled "Chat options"', menu.hasHead && menu.head.closer && menu.head.text === (await wordOf('chat.more')), J(menu.head));
 	const words = await Promise.all(ROWS.map((r) => wordOf(r[1])));
 	check('HM: each row shows its word, visibly, from t() (Concise, Copy, Steps, Expand, Select)',
 		menu.rows.every((r, i) => r.shown && r.label === words[i] && r.label === ROWS[i][2]), J(menu.rows.map((r) => [r.id, r.label, r.shown])));

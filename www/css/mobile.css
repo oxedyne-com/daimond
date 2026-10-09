@@ -703,12 +703,15 @@
 	   the desktop header carries, moved rather than copied (`placeChips`,
 	   js/mobile.js).
 
-	   ITS HEIGHT IS `--mnav-h`, plus the home indicator's inset, and that variable
-	   is the only place the number is written. `#msheet { bottom }` below reads
-	   it, and js/mobile.js MEASURES the bar rather than carrying a fourth copy:
-	   there were three -- 54 in variables.css, 58 in this file and 58 in the shell
-	   -- and `dev/verify_sweep_mobile.mjs` exists partly because a sheet placed
-	   from one of them lands over a bar drawn from another. */
+	   ITS HEIGHT IS `--mnav-h`, plus the home indicator's inset: a FIXED 62px in
+	   variables.css, which nothing measures or rewrites. The bar is drawn to it by
+	   the strip's padding below, and `#msheet { bottom }` above is placed from it.
+	   js/mobile.js does not read the variable; it caps the sheet's height from the
+	   bar's laid-out height (`barH`, falling back to its own 62 before layout).
+	   Change the padding, the variable and that fallback together. There were
+	   three disagreeing copies -- 54 in variables.css, 58 in this file and 58 in
+	   the shell -- and `dev/verify_sweep_mobile.mjs` exists partly because a sheet
+	   placed from one of them lands over a bar drawn from another. */
 	.mnav { position: relative; z-index: 60; }
 
 	/* The strip itself. It SCROLLS rather than fitting: "A chip is its label.

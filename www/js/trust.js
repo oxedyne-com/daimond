@@ -767,7 +767,7 @@
 
 	/// The sentence for a person's key state.
 	function keyWords(p) {
-		var when = p.matchedAt ? shortDate(p.matchedAt) : '';
+		var when = p.matchedAt ? window.DaimondTime.fmtLocal(p.matchedAt, 'dayMonthLong') : '';
 		if (p.state === 'blocked') return tOr('trust.key_blocked', 'Blocked key');
 		if (p.state === 'matched') {
 			return (p.method === METHOD.QR)
@@ -777,7 +777,7 @@
 		if (p.state === 'changed') {
 			return tOr('trust.key_changed',
 				'Different key — the one you matched was last seen {when}',
-				{ when: shortDate(p.prevAt) });
+				{ when: p.prevAt ? window.DaimondTime.fmtLocal(p.prevAt, 'dayMonthLong') : '' });
 		}
 		return tOr('trust.key_new', 'New key — you have not matched this one');
 	}
@@ -810,15 +810,6 @@
 		line.setAttribute('data-key-state', p.state);
 		line.textContent = words;
 		return line;
-	}
-
-	function shortDate(ms) {
-		if (!ms) return '';
-		var loc = 'en';
-		try { loc = (window.DaimondI18n && window.DaimondI18n.locale && window.DaimondI18n.locale()) || 'en'; }
-		catch (e) { loc = 'en'; }
-		try { return new Date(ms).toLocaleDateString(loc, { day: 'numeric', month: 'long' }); }
-		catch (e) { return new Date(ms).toDateString(); }
 	}
 
 	// ── The scanner, loaded when it is wanted ──────────────────

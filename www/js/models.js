@@ -1151,6 +1151,25 @@
 		return null;
 	}
 
+	/// The reasoning levels the rungs of a model's Effort are drawn from, low to high. A level
+	/// a provider names that is not on this ladder is dropped rather than guessed at.
+	var EFFORT_LADDER = ['none', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max'];
+
+	/// The levels `m` (a `/models` entry) says it takes, as `{ levels, dflt }` ordered low to
+	/// high, or null when it names none. OpenRouter publishes `reasoning.supported_efforts` and
+	/// `reasoning.default_effort`; an on/off switch alone is not a level. THE PROVIDER'S WORD,
+	/// for the reason `sightOf` gives: a hand table is wrong for every model released after it.
+	function effortsOf(m) {
+		if (!m || typeof m !== 'object') return null;
+		var r = (m.reasoning && typeof m.reasoning === 'object') ? m.reasoning : null;
+		if (!r || !Array.isArray(r.supported_efforts)) return null;
+		var named = r.supported_efforts.map(function (x) { return String(x).toLowerCase(); });
+		var levels = EFFORT_LADDER.filter(function (l) { return named.indexOf(l) >= 0; });
+		if (!levels.length) return null;
+		var d = typeof r.default_effort === 'string' ? r.default_effort.toLowerCase() : '';
+		return { levels: levels, dflt: levels.indexOf(d) >= 0 ? d : '' };
+	}
+
 	/// Ask a provider what it can run. The list is cached, because a chat's model can be
 	/// switched from its header and re-asking on every switch would be rude to the provider
 	/// and slow for the user.
@@ -1176,10 +1195,16 @@
 			var mid = m.id || m.name;
 			var rr = ratesOf(m);
 			var sees = sightOf(m);
-			if (!mid || (!rr && sees === null)) return;
-			// The pictures flag rides the rates row, so it is stored, merged and synced with them.
+			var eff  = effortsOf(m);
+			if (!mid || (!rr && sees === null && !eff)) return;
+			// The pictures flag and the Effort levels ride the rates row, so they are stored,
+			// merged and synced with them.
 			var row = rr || {};
 			if (sees !== null) row.sees = sees;
+			if (eff) {
+				row.efforts = eff.levels;
+				if (eff.dflt) row.effortDefault = eff.dflt;
+			}
 			rates[mid] = row;
 		});
 		var p = store.providers[id];
@@ -1222,6 +1247,41 @@
 		if (!p || !p.rates) return null;
 		var r = p.rates[model];
 		return (r && typeof r.sees === 'boolean') ? r.sees : null;
+	}
+
+	/// The Effort levels `provider` lists for `model`, as `{ levels, dflt }`, or null when it
+	/// lists none (and the chat then shows no Effort and sends none).
+	function effortsFor(provider, model) {
+		var p = store.providers[provider];
+		if (!p || !p.rates) return null;
+		var r = p.rates[model];
+		if (!r || !Array.isArray(r.efforts) || !r.efforts.length) return null;
+		return { levels: r.efforts.slice(), dflt: typeof r.effortDefault === 'string' ? r.effortDefault : '' };
+	}
+
+	/// A chat's Effort after its model changes: kept when the new model offers it, cleared
+	/// (and `cleared` set, so the page can say so) when it does not.
+	function effortAfterSwitch(effort, provider, model) {
+		if (!effort) return { effort: '', cleared: false };
+		var f = effortsFor(provider, model);
+		if (f && f.levels.indexOf(effort) >= 0) return { effort: effort, cleared: false };
+		return { effort: '', cleared: true };
+	}
+
+	/// A daimon's Effort on the model in force. `rec` pairs the level with the model it was set
+	/// for (`effort`, `effortProvider`, `effortModel`), as the engine's `ChosenEffort` does, so a
+	/// Diamond that follows the default never has to pin a model to keep one. On that model the
+	/// level holds; on another (the default moved) it is kept where the model offers it and
+	/// otherwise `dropped`, for the caller to forget quietly.
+	function effortInForce(rec, provider, model) {
+		var e = rec && typeof rec.effort === 'string' ? rec.effort : '';
+		if (!e) return { effort: '', dropped: false };
+		if ((rec.effortModel || '') === (model || '') && (rec.effortProvider || '') === (provider || '')) {
+			return { effort: e, dropped: false };
+		}
+		var f = effortsFor(provider, model);
+		if (f && f.levels.indexOf(e) >= 0) return { effort: e, dropped: false };
+		return { effort: '', dropped: true };
 	}
 
 	/// The raw provider-routing text set on this model's own row, or '' when nobody has set
@@ -2060,11 +2120,16 @@
 			var r = rates[mid];
 			var priced = !!r && typeof r.in === 'number' && typeof r.out === 'number';
 			var sighted = !!r && typeof r.sees === 'boolean';
-			if (!priced && !sighted) return;
+			var levelled = !!r && Array.isArray(r.efforts) && r.efforts.length > 0;
+			if (!priced && !sighted && !levelled) return;
 			var row = priced ? { in: r.in, out: r.out } : {};
 			if (priced && typeof r.cached === 'number') row.cached = r.cached;
 			if (priced && typeof r.ctx    === 'number') row.ctx    = r.ctx;
 			if (sighted) row.sees = r.sees;
+			if (levelled) {
+				row.efforts = r.efforts.map(String);
+				if (typeof r.effortDefault === 'string' && r.effortDefault) row.effortDefault = r.effortDefault;
+			}
 			out[mid] = row;
 			n++;
 		});
@@ -2457,17 +2522,17 @@
 					amount: usd(c.usd),
 					base:   usd(c.probedUsd),
 					spent:  usd(c.spentUsd),
-					when:   whenShort(c.asOf),
+					when:   window.DaimondTime.fmtLocal(c.asOf, 'when'),
 				});
 			}
-			return t('models.credit_auto', { amount: usd(c.usd), when: whenShort(c.asOf) });
+			return t('models.credit_auto', { amount: usd(c.usd), when: window.DaimondTime.fmtLocal(c.asOf, 'when') });
 		}
 		if (c && c.mode === 'manual') {
 			return t('models.credit_manual', {
 				amount: usd(c.usd),
 				base:   usd(c.baseUsd),
 				spent:  usd(c.spentUsd),
-				when:   whenShort(c.baseAt),
+				when:   window.DaimondTime.fmtLocal(c.baseAt, 'when'),
 			});
 		}
 		return t('models.credit_unknown');
@@ -2563,15 +2628,6 @@
 		if (words) bal.setAttribute('title', words); else bal.removeAttribute('title');
 		if (words && creditStale(id, c)) bal.setAttribute('data-stale', '1');
 		else bal.removeAttribute('data-stale');
-	}
-
-	/// A short local date and time for a figure that was true at a moment.
-	function whenShort(ts) {
-		try {
-			var d = new Date(ts);
-			return d.toLocaleDateString(undefined, { month: 'short', day: 'numeric' })
-				+ ' ' + d.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' });
-		} catch (e) { return ''; }
 	}
 
 	/// Draw the providers, each one expandable to the models it can run.
@@ -2722,7 +2778,7 @@
 					var age = document.createElement('div');
 					age.className = 'models-list-age';
 					age.textContent = p.fetched
-						? t('models.list_asked', { when: whenShort(p.fetched) })
+						? t('models.list_asked', { when: window.DaimondTime.fmtLocal(p.fetched, 'when') })
 						: t('models.list_never');
 					body.appendChild(age);
 				}
@@ -3641,6 +3697,11 @@
 		// Whether a provider lists a model as taking pictures; see `sightOf`.
 		sightOf:        sightOf,
 		sightFor:       sightFor,
+		// A model's own reasoning levels, which the chat's Effort is drawn from.
+		effortsOf:      effortsOf,
+		effortsFor:     effortsFor,
+		effortAfterSwitch: effortAfterSwitch,
+		effortInForce:  effortInForce,
 		// OpenRouter provider routing, set on a model's own row; see `routing` above.
 		routing:        routing,
 		setRouting:     setRouting,

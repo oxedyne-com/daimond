@@ -95,212 +95,97 @@
 }
 .files-mode-msg.err { color: var(--accent-text); }
 
-/* ── Whose files: the workspace, or one Diamond's ──────────────
-   A second row under the mode row, and deliberately not part of it: those chips
-   name a PLACE the files are (the sandbox, a folder on this disk, cloud
-   storage), these name WHOSE files are being shown. Hidden outright when no
-   Diamond is open, because a switch with one position is furniture. */
-.files-scope {
-	display: flex; flex-wrap: wrap; align-items: center; gap: 6px;
-	padding: 6px 10px;
-	border-bottom: 1px solid var(--border);
-	flex: none;
-}
-.files-scope-chip {
-	display: inline-flex; align-items: center; gap: 4px;
-	padding: 2px 8px; border-radius: 999px;
-	font-size: var(--fs-2xs); font-weight: 600;
-	color: var(--text-secondary); background: var(--bg-tertiary);
-	border: 1px solid var(--border-strong); cursor: pointer;
-}
-/* R7: `.mark-ic`'s own `margin-right` (app.css, for inline text usage with no
-   gap of its own) doubled up with this row's flex `gap`, giving 8-9px --
-   flex gap already does the icon's job here. */
-.files-scope-chip .mark-ic { margin-right: 0; }
-.files-scope-chip:hover { background: var(--bg-hover); border-color: var(--accent); }
-.files-scope-chip:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
-/* The lit one is what the tree below is showing, so it has to read as a state
-   and not as an offer -- the two trees can differ by a whole workspace. */
-.files-scope-chip.active {
-	color: var(--accent-text); background: var(--accent-soft); border-color: var(--accent);
-}
-
-/* The word in front of the chips. They pick a TREE and change no permission,
-   and without a label they read as a setting for how much the daimon may
-   touch -- which is exactly how they were read. */
-.files-scope-label, .files-reach-label {
-	font-size: var(--fs-2xs); font-weight: 600; color: var(--text-secondary);
-}
-
-/* ── Where this Diamond's daimon may actually work ─────────────
-   Under the chips because it answers the question the chips were being asked:
-   what may be written, and where a search that names no path will look. Drawn
-   in BOTH trees and built from the same `Files.bounds` that composes the fence,
-   so it cannot come to disagree with what a turn is confined to. Nothing here
-   waits for a hover: a fence nobody can see is a fence nobody trusts. */
-.files-reach {
-	display: flex; flex-wrap: wrap; align-items: center; gap: 6px;
-	padding: 6px 10px;
-	border-bottom: 1px solid var(--border);
-	flex: none;
-}
-/* A place inside the fence. The accent edge is the app's one mark for "this
-   grants something", worn by the workspace rail in the chat footer and by a
-   granted toolchain beside it. */
-.files-reach-chip {
-	display: inline-flex; align-items: center;
-	padding: 2px 8px; border-radius: 999px;
-	font-size: var(--fs-2xs); font-weight: 600;
-	max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
-	color: var(--accent-text); background: var(--accent-soft);
-	border: 1px solid var(--accent);
-}
-/* Consulted, not worked in. It reads as a place and not as a grant, so it drops
-   the accent and keeps the ordinary control edge. */
-.files-reach-chip.ro {
-	color: var(--text-secondary); background: var(--bg-tertiary);
-	border-color: var(--border-strong);
-}
-.files-reach-says {
-	flex: 1 1 100%;
-	font-size: var(--fs-3xs-2xs); color: var(--text-secondary); line-height: 1.5;
-}
-/* The state that most needs saying, and the one a person is most likely to be
-   in without knowing: the daimon can write nowhere of theirs. */
-.files-reach-says.none { color: var(--accent-text); }
-/* One press, from the folder already on screen. A button and not a chip: the
-   row beside it reports, and this changes something. */
-.files-mark-here {
-	display: inline-flex; align-items: center;
-	padding: 2px 9px; border-radius: 999px;
-	font-size: var(--fs-2xs); font-weight: 600;
-	color: var(--text-secondary); background: var(--bg-tertiary);
-	border: 1px dashed var(--border-strong); cursor: pointer;
-}
-.files-mark-here:hover { color: var(--accent-text); border-color: var(--accent); }
-.files-mark-here:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
-
-/* ── What a Diamond may reach that is not a folder ─────────────
-   A toolchain grant. It sits under the scope row because it answers the same
-   question the row above and the tree below answer -- what this Diamond may
-   open -- and it is the one answer that is not a path in the workspace: a
-   compiler lives on the machine, outside anything the user granted as a folder.
-   Off unless the user says so, and a daimon never chooses one. */
-.files-kits {
-	display: flex; flex-wrap: wrap; align-items: center; gap: 6px;
-	padding: 6px 10px;
-	border-bottom: 1px solid var(--border);
-	flex: none;
-}
-.files-kits-label {
-	font-size: var(--fs-2xs); font-weight: 600;
-	color: var(--text-secondary);
-}
-.files-kit-chip {
-	display: inline-flex; align-items: center;
-	padding: 2px 8px; border-radius: 999px;
-	font-size: var(--fs-2xs); font-weight: 600;
-	color: var(--text-secondary); background: var(--bg-tertiary);
-	border: 1px solid var(--border-strong); cursor: pointer;
-}
-.files-kit-chip:hover { background: var(--bg-hover); border-color: var(--accent); }
-.files-kit-chip:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
-/* A granted toolchain is a PERMISSION in force, so it reads as a state. */
-.files-kit-chip.active {
-	color: var(--accent-text); background: var(--accent-soft); border-color: var(--accent);
-}
-/* Said out loud rather than left to be inferred from four unlit chips: "none"
-   is the ordinary state and the safe one, and a person should be able to see
-   that it is deliberate. */
-.files-kits-none {
-	flex: 1 1 100%;
-	font-size: var(--fs-3xs-2xs); color: var(--text-secondary);
-}
-
 /* The step out of this folder, at the top of the listing where every file
    manager has put it. Dimmer than a real entry, because it is navigation and
    not a thing in the folder, and it carries none of the controls a real row
    does. It replaced a button in the panel's header on 2026-08-24. */
 .files-row.files-up .files-name { color: var(--text-secondary); }
 
-/* A row for something attached from elsewhere in the workspace. It is a
-   pointer, not a copy: the file lives where it always did, and every other
-   Diamond holding it goes on holding it. */
-.files-row.attached .files-name { font-style: italic; }
-.files-badge {
-	flex: none; font-size: var(--fs-3xs-2xs);
-	color: var(--text-secondary);
-	border: 1px solid var(--border-2); border-radius: 999px;
-	padding: 0 5px; line-height: 1.6;
-}
-.files-badge.files-elsewhere { border: none; padding: 0 2px; font-size: var(--fs-2xs); }
-/* Stat'd lazily (see `statAttachments`): a row for something that no longer
-   exists at that path. Dimmed like an unreachable one, but for a different
-   reason -- there is nowhere else this could be open FROM, so the row carries
-   no open action at all, only the ◈ to take the dangling reference back out. */
-.files-badge.files-gone { color: var(--danger, #e5534b); border-color: var(--danger, #e5534b); }
-.files-row.attached.gone { opacity: 0.6; }
-.files-row.attached.gone .files-name { cursor: default; }
-/* The "added by the daimon" header row: a fold's harvest or an agent's own
-   `artefact_add`, collapsed by default (`dev/ATTACH_CONTRACT.md` §2b). Not a
-   `.files-row.attached` -- it names no single path and carries no ◈. */
-.files-row.attached-group { display: flex; align-items: center; justify-content: space-between;
-	border-top: 1px solid var(--border); padding: 2px 0; }
-.files-group-toggle { flex: 1; text-align: left; background: none; border: none; cursor: pointer;
-	color: var(--text-muted); font-size: var(--fs-xs-sm); font-family: var(--font-mono); }
-.files-group-toggle:hover { color: var(--text-secondary); }
-.files-group-drop { background: none; border: none; cursor: pointer; color: var(--text-muted);
-	font-size: var(--fs-3xs-2xs); }
-.files-group-drop:hover { color: var(--danger, #e5534b); }
-/* Read-only says what a daimon may do with it, so it stays visible: a hover-only
-   badge is a permission nobody reads. */
-.files-badge.files-ro { white-space: nowrap; }
-/* Shared says where the folder's contents are expected to go, so like read-only
-   it is standing information rather than a hover. */
-.files-badge.files-shared { white-space: nowrap; }
-/* ⇄ on an attached row: the copy grant. Lit is standing information, the same
-   rule `.files-hold.on` follows and for the same reason. */
-.files-res.files-share.on { visibility: visible; color: var(--accent-text); }
-.files-res.files-share[disabled] { opacity: 0.4; cursor: default; }
-/* ◈ on a row: put this folder in the open Diamond's workspace, or take it out.
-   Like the pin, the LIT state is standing information and must not hide until
-   the pointer finds it. */
-.files-res.files-hold.on { visibility: visible; color: var(--accent-text); }
-/* The hint under an empty Diamond workspace, which sits below real rows rather
-   than replacing them. */
-.files-dws-hint { text-align: left; font-size: var(--fs-2xs); line-height: 1.5; }
-
-/* A folder row with a Diamond in focus: the paperclip is the control that puts
-   that folder inside the write fence, so it does not wait for a hover. The same
-   rule `.files-hold.on` already follows, for the same reason. */
+/* The paperclip: "Attach to current focus" (ATTACH_CONTRACT.md §4), in the Doc
+   header and the `+` picker; a tree row carries the ◈ instead (P3). It draws
+   `ACTION_ICONS.attach` (daimond.js), an outline `.ic`, and `font-size` here sets
+   the button's box. Lit and away are standing information and must not hide
+   until the pointer finds them; so is a folder's, which is a grant. */
 .attach-btn.mark { visibility: visible; }
-
-/* The paperclip: "Attach to current focus" (ATTACH_CONTRACT.md §4), on a
-   folder row, a file row, and the Doc header. Its own class rather than a
-   `.files-res` modifier for the reason `.files-pin` already has one -- it was
-   '📎', an emoji drawn at full size in a colour font, so the size bump
-   `.files-res` gives its thin dingbats would only have inflated it; it is
-   `ACTION_ICONS.attach` now (daimond.js), an outline `.ic` the same weight as
-   the row's kind icons, and `font-size` here still sets the button's box.
-   Lit and away are standing information, exactly as the pin's `.on` is, and
-   must not hide until the pointer finds them. */
 .attach-btn {
 	background: transparent; border: none; color: var(--text-secondary);
 	cursor: pointer; padding: 0 3px; visibility: hidden; font-size: var(--fs-sm);
 }
-.files-row:hover .attach-btn { visibility: visible; }
 .attach-btn:hover { color: var(--accent-text); }
 .attach-btn.on { visibility: visible; color: var(--accent-text); }
 .attach-btn.away { visibility: visible; color: var(--text-muted); }
 
-/* Touch. The scope chips take the same 24px floor as the mode row's, and the ◈
-   comes out of hiding: there is no hover on a phone, so a control that waits for
-   one cannot be reached at all. */
+/* ── The focus section: what is in focus, its Recent, and what it can change ──
+   Mock r2. Roles, not surfaces: the focus name is a section head, Recent and
+   Can change are group labels, and a row is a file row. No rules and no
+   outlines -- white space delineates the groups. The ◈ is the one mark: accent
+   where the daimon can change the thing, ghost where it waits on this device. */
+.files-focus { flex: none; padding-bottom: 6px; }
+.files-focus .sh {
+	display: block; padding: 16px 12px 2px;
+	font-size: var(--fs-base); font-weight: var(--w-strong); color: var(--text-primary);
+	white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.files-focus .gl {
+	display: block; padding: 8px 12px 2px;
+	font-size: var(--fs-xs); font-weight: var(--w-med); color: var(--text-muted);
+}
+/* A focus row is a file row by role: it takes `.files-row`'s box (below), and only its parts are its own. */
+.files-focus .r[role="button"] { cursor: pointer; }
+.files-focus .r[role="button"]:hover { background: var(--bg-hover); }
+.files-focus .r .nm { flex: 1 1 auto; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+:is(.files-focus .r .nm, .files-hit .files-name) i { font-style: normal; color: var(--text-muted); }
+:is(.files-focus .r, .files-hit) .place {
+	flex: 0 1 auto; min-width: 0;
+	font-size: var(--fs-xs); color: var(--text-muted);
+	white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+:is(.files-focus .r, .files-hit) .meta {
+	flex: none; font-family: var(--font-mono); font-size: var(--fs-3xs-2xs);
+	color: var(--text-muted); white-space: nowrap;
+}
+.dm {
+	flex: none; width: 28px; height: 28px; padding: 0;
+	border: 0; border-radius: 999px; background: none;
+	display: inline-grid; place-items: center;
+}
+.dm .mark-ic { width: 12px; height: 12px; margin: 0; }
+button.dm { cursor: pointer; }
+.dm.ghost { opacity: 0.5; }
+button.dm.ghost:hover { opacity: 1; background: var(--accent-soft); }
+.dm.fixed { cursor: default; }
+/* Muted: the daimon may read this and not change it. */
+.dm.ro .mark-ic { filter: grayscale(1); opacity: 0.6; }
+/* `:focus`, not `:focus-visible`: `verify_a11y_keyboard` focuses these from script,
+   and a ring that depends on the browser's guess at the modality is sometimes not there. */
+button.dm:focus { outline: 2px solid var(--accent); outline-offset: 1px; }
+/* N5, one per-row glyph at rest. On a tree row an unmarked ◈ is a ghost that comes
+   out on hover and on keyboard focus; a mark, given or waiting, is standing
+   information and is always drawn. The ⋯ beside it holds the rest of the row's
+   actions and comes out the same way. */
+.files-row .dm.ghost:not(.wait), .files-row .files-more { visibility: hidden; }
+.files-row:hover :is(.dm, .files-more),
+.files-row:focus-within :is(.dm, .files-more) { visibility: visible; }
+.files-more {
+	flex: none; padding: 0 4px; border: 0; background: none; cursor: pointer;
+	color: var(--text-secondary); font-size: var(--fs-base); line-height: 1;
+}
+.files-more:hover { color: var(--text-primary); }
+.files-more:focus { outline: 2px solid var(--accent); outline-offset: 1px; }
+/* Taken away in the last five seconds: dimmed where it stood, beside its Undo. */
+:is(.files-row, .files-focus .r).taken :is(.files-name, .nm, .files-size, .place) { opacity: 0.45; }
+.files-undo {
+	flex: none; padding: 0 4px; border: 0; background: none; cursor: pointer;
+	color: var(--accent-text); font-size: var(--fs-xs); font-weight: var(--w-med);
+}
+.files-undo:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+/* Touch: a phone has no hover, so the ghost ◈ is always drawn, at 44px, and the ⋯
+   gives way to the long-press. */
 @media (max-width: 760px), (pointer: coarse) {
-	.files-scope-chip { min-height: 24px; padding-top: 4px; padding-bottom: 4px; }
-	.files-mark-here { min-height: 24px; padding-top: 4px; padding-bottom: 4px; }
-	.files-row .files-hold { visibility: visible; padding: 4px 6px; }
-	.files-row .attach-btn { visibility: visible; padding: 4px 6px; }
+	:is(.files-focus .r, .files-row) { min-height: 44px; padding-right: 0; }
+	.dm { width: 44px; height: 44px; }
+	.files-row .dm.ghost { visibility: visible; }
+	.files-row .files-more { display: none; }
 }
 
 .files-path {
@@ -325,29 +210,6 @@
 .path-crumb:disabled { color: var(--text-primary); cursor: default; font-weight: 600; }
 .path-sep { margin: 0 3px; opacity: 0.55; }
 
-/* Residency controls on a row: fetch, pin, free up space. Like .files-del they
-   stay out of the way until the row is under the pointer -- except a pin, which
-   is a standing state and must be visible without hunting for it.
-   The pin is its OWN class rather than a `.files-res` modifier, because the two
-   want different type sizes and a shared class can only carry one. Everything
-   else about them is identical, so the shape is stated once for both. */
-.files-res, .files-pin {
-	background: transparent; border: none; color: var(--text-secondary);
-	cursor: pointer; padding: 0 3px; visibility: hidden;
-}
-/* '⤓', '⤒' and '◈' are dingbats drawn well inside their em box -- the same
-   reason `.files-ren` needs a size of its own. At the 13px they had, they
-   carried visibly less ink than the 15px '×' on the same row and read as specks
-   rather than as controls. A step ABOVE the cross, not level with it, because
-   the cross fills its box and these do not. */
-.files-res { font-size: var(--fs-xl); }
-/* '📌' is an emoji: the platform draws it at full size in a colour font, so it
-   was never the undersized one and the bump above would only have inflated it. */
-.files-pin { font-size: var(--fs-sm); }
-.files-row:hover .files-res,
-.files-row:hover .files-pin { visibility: visible; }
-.files-res:hover, .files-pin:hover { color: var(--accent-text); }
-.files-pin.on { visibility: visible; opacity: 0.9; }
 /* A cloud row is the user's file, safe, and simply not here at the moment --
    so it is quieter than a held file, never struck through or greyed to junk. */
 .files-row.cloud .files-name { color: var(--text-secondary); }
@@ -360,11 +222,17 @@
    in the tree and in Daimond's files. */
 .files-loading { padding: 16px; text-align: center; color: var(--text-secondary); overflow-wrap: anywhere; }
 .files-fail { padding: 16px; text-align: center; color: var(--danger); overflow-wrap: anywhere; }
+/* Search files (E5): while a query stands the card is the box and its hits, nothing else. */
+.files-card.files-searching > :not(.files-filter):not(.files-tree) { display: none !important; }
+.files-capped { padding: 6px 10px; text-align: center; color: var(--text-secondary); font-size: var(--fs-2xs); }
 
-.files-row {
+/* A row is its min-height with no padding above or below (mock r2 `.r`): the ◈'s
+   28px box sits inside the 30px row, so a row with a mark is as tall as one without. */
+.files-row, .files-focus .r {
 	display: flex; align-items: center; gap: 8px;
-	padding: 5px 10px; cursor: pointer;
+	min-height: 30px; padding: 0 10px; cursor: pointer;
 }
+.files-focus .r { cursor: default; }
 .files-row:hover { background: var(--bg-hover); }
 .files-name { flex: 1; color: var(--text-primary); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 /* A folder row does NOT name itself in the accent (r526 residual, the lead's
@@ -372,44 +240,16 @@
    second, accented signal was the file-row role's own inconsistency, not a
    feature -- the row reads in the ordinary text colour, like every other. */
 .files-size { color: var(--text-secondary); font-size: var(--fs-2xs); font-family: var(--font-mono); }
-.files-del {
-	background: transparent; border: none; color: var(--text-secondary);
-	cursor: pointer; font-size: var(--fs-lg); padding: 0 4px; visibility: hidden;
-}
-.files-row:hover .files-del { visibility: visible; }
-.files-del:hover { color: var(--danger); }
-/* A control that waits for a hover is a control the keyboard cannot see: tabbing
-   to the cross moved the focus to something not on the screen, so the row's
-   controls come out when anything inside the row takes focus, exactly as the
-   touch rule above brings the ◈ out where there is no pointer at all.
-   Appearing is not enough on its own -- `verify_a11y_keyboard` compares the
-   focused element's own ink, and rightly, since a control that merely appears
-   has not said WHICH of the three now holds the focus. So each draws the ring.
-   `:focus`, not `:focus-visible`: these are reached by Tab, but the check
-   focuses them from script, and a ring that depends on the browser's guess at
-   the user's modality is a ring that is sometimes not there. */
-.files-row:focus-within .files-del,
-.files-row:focus-within .files-res,
-.files-row:focus-within .files-pin { visibility: visible; }
-.files-del:focus,
-.files-res:focus,
-.files-pin:focus { outline: 2px solid var(--accent); outline-offset: 1px; }
 /* The row itself is now a control (`sysRowAsButton`), so it says so as well.
    Inset, because a row is flush with the panel and an outset ring would be
    clipped by the tree's own scroller -- which the desktop sweep already reports
    for the Diamond rail.
-   `:focus-visible` here, where the three buttons above keep `:focus`: a row is
+   `:focus-visible` here, where the row's ◈ and ⋯ keep `:focus`: a row is
    opened by pointer far more often than by Tab, so a bare `:focus` left a ring
    standing on the row of every file anyone clicked. Nothing is lost to the
    keyboard -- `verify_a11y_keyboard` presses Tab before it focuses anything, so
    modality is established and a script focus matches this too. */
 .files-row:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
-/* The rename pencil borrows `.files-del` for its shape. It draws
-   `ACTION_ICONS.edit` now (daimond.js), an outline `.ic` at its own fixed
-   16px rather than the glyph '✎' the bumped `font-size` here used to carry;
-   it is not a delete either, so it keeps the neutral hover. */
-.files-ren { font-size: var(--fs-2xl); }
-.files-ren:hover { color: var(--text-primary); }
 
 /* The file VIEW now lives in the Doc panel (see app.css, .doc-view): a document
    you have opened is something you are attending to, and belongs on the stage.
@@ -630,9 +470,6 @@
 	color: var(--text-muted);
 	display: flex; flex-wrap: wrap; align-items: center;
 }
-/* No × and no rename: this section is for reading and editing, never for
-   destroying. A row here is a Diamond's whole directory as often as not. */
-.sys-row .files-res, .sys-row .files-pin, .sys-row .files-del { display: none; }
 /* A row that can take focus has to SHOW it. These became focusable the hour they
    were written -- they are `role="button"` -- and a focus ring is the other half
    of that: a keyboard user who cannot see where they are is not being offered a

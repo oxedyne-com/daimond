@@ -1743,6 +1743,7 @@ function buildS61Sandbox(P, spy) {
 		persistChats:       () => { spy.persisted++; },
 		renderHistory:      () => { spy.rendered++; },
 		runTurn:            (chat, text, opts) => spy.ranTurn.push({ text: text, opts: opts }),
+		newMid:             () => 'n1',
 		ChatStore:          { compact: (id) => spy.compacted.push(id) },
 		CONTINUE_NUDGE:     '__continue_nudge__',
 		handoffTargetLabel: () => '',
@@ -1888,8 +1889,8 @@ async function runFireAndForgetAcceptance(P, L, check) {
 		});
 		await tick0(6);				// let take / reconstruct / claimed→running / the timers start
 		// MID-TURN. The phone is backgrounded and drives nothing. Fire the DESKTOP's own
-		// 2s progress timer a few times: the stream advances with no phone involvement.
-		const prog = timer.handles.find((h) => h.live && h.ms === 2000);
+		// progress timer a few times: the stream advances with no phone involvement.
+		const prog = timer.handles.find((h) => h.live && h.ms === 250);
 		check('(a) the desktop started its OWN progress-streaming timer (no phone needed to stream)', !!prog);
 		if (prog) { for (let i = 0; i < 3; i++) await prog.fn(); }
 		check('(a) mid-turn the desktop streamed on its own and the phone drove nothing',
@@ -1961,6 +1962,75 @@ async function runFireAndForgetAcceptance(P, L, check) {
 			peerRes.ran === false && peerRes.why === 'already-done' && peerRuns === 0);
 		check('(c) the lease still names the desktop as its released holder — no re-claim on wake',
 			sync.leases()[TURN].holder === 'DESK' && sync.leases()[TURN].mode === 'released');
+	}
+
+	// ── (d) THE FRAME CADENCE (Q20, D-20261006-13). The runner looks for growth every
+	//    250 ms and sends a frame at most every 750 ms from the last one that went out,
+	//    never while one is still in flight, and the final frame waits for an in-flight
+	//    one so the two cannot land out of order. The dep answers the time its frame
+	//    left (0 when the turn had not changed), and the spacing is kept on that clock. ──
+	{
+		console.log('\nFrame cadence — at most one frame per 750 ms, none overlapping, the final one last');
+		L.forget();
+		const T2 = 't-cad', C2 = 'c-cad';
+		const sync = makeLeaseSync({});
+		const timer = makeFakeTimer();
+		const chat2 = { id: C2, messages: [{ role: 'user', content: 'go', mid: T2, iturn: T2, ts: NOW - 10 }] };
+		const T0 = 1_000_000;			// the frame clock; 0 is the dep's "nothing sent"
+		let clock = T0;
+		const sent = [];				// the frame clock at each frame that went out
+		const order = [];				// 'frame' / 'frame-done' / 'final', in the order they happened
+		let hold = null;				// a frame left in flight, released by the test
+		let releaseTurn;
+		const turnGate = new Promise((r) => { releaseTurn = r; });
+		const errand = sentErrand(P, { turnId: T2, chatId: C2, prompt: 'go',
+			eid: 'e-cad', deadline: NOW + P.DISPATCH_DEADLINE_MS, dispatchedBy: 'PHONE' });
+		const running = P.runErrand(errand, { livenessGapMs: 0,
+			selfId: 'DESK', cas: P.syncCas(sync), now: () => NOW, frameNow: () => clock,
+			setTimer: timer.set, clearTimer: timer.clear,
+			finished:    async () => false,
+			reconstruct: async () => ({ chat: chat2 }),
+			runTurn: async () => {
+				await turnGate;
+				P.foldAssistant(chat2, { mid: 'a-cad', turnId: T2, text: 'done', ts: NOW });
+			},
+			abort: () => {},
+			pushProgress: async () => {
+				sent.push(clock); order.push('frame');
+				const at = clock;
+				if (hold) { await hold.p; order.push('frame-done'); }
+				return at;
+			},
+			finalFrame: async () => { order.push('final'); return 'tail'; },
+			pushResult: async () => 1, post: async () => {}, ack: async () => {},
+		});
+		await tick0(6);
+		const prog = timer.handles.find((h) => h.live && h.ms === 250);
+		check('(d) the runner looks for growth every 250 ms', !!prog,
+			'timers: ' + JSON.stringify(timer.handles.map((h) => h.ms)));
+		if (prog) {
+			for (const t of [0, 250, 500, 749, 750, 1000, 1499, 1500]) { clock = T0 + t; await prog.fn(); await tick0(2); }
+			check('(d) a frame goes out at most every 750 ms (0, 750, 1500 of eight looks)',
+				JSON.stringify(sent.map((t) => t - T0)) === '[0,750,1500]', 'sent at ' + JSON.stringify(sent.map((t) => t - T0)));
+			// A frame that does not come back holds the next one, however long it takes.
+			let rel; hold = { p: new Promise((r) => { rel = r; }) };
+			clock = T0 + 2250; prog.fn(); await tick0(2);
+			clock = T0 + 5000; await prog.fn(); await tick0(2);
+			check('(d) no second frame while one is still in flight',
+				JSON.stringify(sent.map((t) => t - T0)) === '[0,750,1500,2250]', 'sent at ' + JSON.stringify(sent.map((t) => t - T0)));
+			// The turn ends with that frame still in flight: the final frame waits for it.
+			releaseTurn();
+			await tick0(8);
+			check('(d) the final frame does not overtake a frame in flight',
+				order.indexOf('final') === -1, JSON.stringify(order));
+			rel(); hold = null;
+			await running;
+			check('(d) the final frame goes out after it, last of all',
+				order[order.length - 1] === 'final' && order.indexOf('frame-done') < order.indexOf('final'),
+				JSON.stringify(order));
+		} else releaseTurn();
+		await running;
+		check('(d) the cadence timer is stopped with the turn', timer.live() === 0);
 	}
 }
 

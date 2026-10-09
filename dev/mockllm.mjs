@@ -211,6 +211,14 @@ const MODELS = [
 	'mock/eyes',
 ];
 
+/// The reasoning levels a model lists, in OpenRouter's own shape, so the page's Effort row
+/// has a model that offers levels (mock/thinker), a second that shares only some of them
+/// (mock/eyes) and models that offer none (the rest).
+const EFFORT_LEVELS = {
+	'mock/thinker': { supported_efforts: ['high', 'medium', 'low'], default_effort: 'medium' },
+	'mock/eyes':    { supported_efforts: ['high', 'low'], default_effort: 'high' },	// shares low, lacks medium
+};
+
 /// Is this a model that cannot be shown pictures?
 ///
 /// Substring, like [`model_can_see`]'s deny-list in src/llm.rs, so a test can mint a
@@ -1118,7 +1126,8 @@ const server = http.createServer((req, res) => {
 		if (/\breject\b/.test(auth)) {
 			return sendJson(res, { error: { message: 'mock: invalid api key' } }, 401);
 		}
-		return sendJson(res, { object: 'list', data: MODELS.map(id => ({ id, object: 'model' })) });
+		return sendJson(res, { object: 'list', data: MODELS.map(id => ({ id, object: 'model',
+			...(EFFORT_LEVELS[id] ? { reasoning: EFFORT_LEVELS[id] } : {}) })) });
 	}
 
 	if (req.method !== 'POST') { cors(res); res.writeHead(404); return res.end(); }
@@ -1147,6 +1156,9 @@ const server = http.createServer((req, res) => {
 			// (`compact::FoldShape::max_tokens`), and a verifier that could not read it back
 			// could not tell a structured fold's budget from a prose one's.
 			max_tokens: payload.max_tokens,
+			// The reasoning level asked for, absent when none was, so a verifier can tell
+			// "sent low" from "sent nothing".
+			...(payload.reasoning ? { reasoning: payload.reasoning } : {}),
 			auth:      !!(req.headers.authorization),
 			images,		// picture parts in this request, either dialect
 			...(refused ? { refusedImages: true } : {}),

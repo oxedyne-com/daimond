@@ -732,6 +732,7 @@ try {
 			await b.page.evaluate(async ({ D, says }) => {
 				const T = window.DaimondTriggers;
 				const ta = T.blank('activity');
+				ta.id = 'activity-' + Date.now().toString(36);	// as the app's `+` names it
 				ta.minutes = 1; ta.offScreen = true; ta.instruction = says;
 				await window.DaimondCore.triggerSet(D, ta);
 				const got = (window.DaimondTriggersOf(D) || [])[0];

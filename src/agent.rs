@@ -858,6 +858,24 @@ impl Agent {
         self.llm.set_provider_routing(order, ignore, only);
     }
 
+    /// Set the chat's own reasoning level from its wire spelling; an empty string clears
+    /// it, back to the model's default.  See `LlmClient::set_reasoning_effort`.
+    pub fn set_reasoning_effort(&self, effort: &str) -> Outcome<()> {
+        let e = effort.trim();
+        if e.is_empty() {
+            self.llm.set_reasoning_effort(None);
+            return Ok(());
+        }
+        match crate::llm::ReasoningEffort::from_wire(e) {
+            Some(level) => {
+                self.llm.set_reasoning_effort(Some(level));
+                Ok(())
+            }
+            None => Err(err!("Reasoning effort '{}' is not one of none, minimal, low, medium, \
+                high, xhigh or max; the model keeps its previous setting.", e; Invalid, Input)),
+        }
+    }
+
     /// Hand the engine the provider's word on pictures; see `LlmClient::set_sight`.
     pub fn set_sight(&self, state: i32) {
         self.llm.set_sight(state);
@@ -4315,6 +4333,22 @@ mod tests {
     /// `LlmClient`, so a setter that wrote only the limits would give `turn_limits` a figure to
     /// report and every request the shipped default -- an arm measuring the wrong engine while
     /// the selftest passed.
+    /// The page's spelling reaches the request; empty clears it; a typo is refused and leaves
+    /// the level that was in force, so a bad string never silently becomes the default.
+    #[test]
+    fn test_the_chat_reasoning_effort_reaches_the_request_00() {
+        let a = make_test_agent();
+        let msgs = [ChatMessage::user("Hi".to_string())];
+        if let Err(e) = a.set_reasoning_effort("low") { panic!("refused: {}", e); }
+        let body = a.llm.build_request_body(&msgs);
+        assert!(body.contains("\"reasoning\":{\"effort\":\"low\"}"), "{}", body);
+        assert!(a.set_reasoning_effort("lwo").is_err(), "a typo was taken");
+        assert!(a.llm.build_request_body(&msgs).contains("\"effort\":\"low\""),
+            "a refused spelling moved the level");
+        if let Err(e) = a.set_reasoning_effort("") { panic!("{}", e); }
+        assert!(!a.llm.build_request_body(&msgs).contains("reasoning"));
+    }
+
     #[test]
     fn test_the_thinking_tune_reaches_the_client_and_not_only_the_limits_00() {
         use crate::llm::{Effort, Thinking};

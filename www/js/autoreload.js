@@ -31,17 +31,12 @@
 	/// Whether figures are being shown in the currency they are billed in.
 	function usdDisplay() { return !window.DaimondI18n || DaimondI18n.currency() === 'USD'; }
 
-	function money(minor, ccy) {
-		if (window.DaimondGateway && DaimondGateway.fmtMoney) return DaimondGateway.fmtMoney(minor, ccy);
-		return ((minor || 0) / 100).toFixed(2);
-	}
-
 	/// A standing instruction to charge a card is the sharpest end of the
 	/// billing question, so every amount here is a US dollar amount and the
 	/// panel says so when the user is reading in something else.
 	function billed(minor, ccy) {
 		if (window.DaimondGateway && DaimondGateway.fmtBilled) return DaimondGateway.fmtBilled(minor, ccy);
-		return money(minor, ccy);
+		return ((minor || 0) / 100).toFixed(2);
 	}
 
 	function el(tag, cls, text) {

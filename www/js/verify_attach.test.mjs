@@ -123,9 +123,17 @@ function toggleBody() {
 function buildToggle() {
 	const args = asyncFuncBody('toggleAttachHold').args;
 	const freeNames = ['currentDiamond', 'rootedRef', 'linkTo', 'diamondApp', 'signalLinksChanged', 'attachedOf',
-		'markWaiting', 'confirmMarkHere', 'removeLinkHere', 'markHere'];
+		'markWaiting', 'confirmMarkHere', 'removeLinkHere', 'grantHoldHere'];
 	const params = freeNames.concat(args.split(',').map(s => s.trim()).filter(Boolean));
 	return new AsyncFunction(...params, toggleBody());
+}
+
+// The REAL `grantHoldHere` (E2): the ◈'s add, shared with a yes to the write question.
+// Its free names are the same stand-ins `toggle` hands the toggle, plus `markForce`.
+function buildGrantHold() {
+	const { args, body } = asyncFuncBody('grantHoldHere');
+	const freeNames = ['rootedRef', 'linkTo', 'markForce', 'markHere', 'diamondApp'];
+	return new AsyncFunction(...freeNames, ...args.split(',').map(s => s.trim()).filter(Boolean), body);
 }
 
 // ── Source-level checks: the cache is gone from the resolution path ──────
@@ -172,6 +180,10 @@ async function toggle(diamondId, links, attachedOfImpl, path, dir) {
 	// the add returned; the stand-ins keep the store calls this suite spies on.
 	const removeLinkHere = async (l) => app().remove_link(l.owner, l.id);
 	const markHere = async (id, linkId) => { state.marked.push({ id, linkId }); return true; };
+	// A row this suite hands the add is never in force here: the toggle adds only where linkTo found none.
+	const markForce = () => null;
+	const grant = buildGrantHold();
+	const grantHoldHere = (id, p, d) => grant(rootedRef, linkTo, markForce, markHere, app, id, p, d);
 	await run(
 		{ id: diamondId },		// currentDiamond
 		rootedRef,
@@ -182,7 +194,7 @@ async function toggle(diamondId, links, attachedOfImpl, path, dir) {
 		markWaiting,
 		confirmMarkHere,
 		removeLinkHere,
-		markHere,
+		grantHoldHere,
 		path, dir);
 	return { state, signalled, attachedOfCalls, confirmMarkHereCalls };
 }

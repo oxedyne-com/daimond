@@ -218,6 +218,125 @@ console.log('\n— D: a busy runner answers the errand at once —');
 	}
 }
 
+console.log('\n— G: a device that handed the turn back is not waited on again (Q19) —');
+{
+	const now = Date.now();
+	const C = 'c0000000000000000000000000000000';
+	const base = (over) => {
+		const seen = { ran: 0, posts: [] };
+		const deps = Object.assign({
+			cas: { read: async () => ({ version: 1, leases: {} }), write: async () => ({ ok: true }) },
+			finished: async () => false,
+			reconstruct: async () => ({ chat: {}, app: {} }),
+			runTurn: async () => { seen.ran++; },
+			abort: () => {}, pushResult: async () => 1,
+			post: async (r) => { seen.posts.push(r); }, ack: async () => {},
+			freshWindowMs: W,
+			busyFor: () => 1,
+		}, over);
+		return { deps, seen };
+	};
+	const hb = (by, extra) => P.makeReport(Object.assign({ turnId: 't', chatId: 'c', status: 'undeliverable', by }, extra || {}));
+	check('G1 an errand carries tried[], [] by default',
+		Array.isArray(P.makeErrand({}).tried) && P.makeErrand({}).tried.length === 0);
+	check('G1 and keeps the ids it is given, once each, as strings',
+		JSON.stringify(P.makeErrand({ tried: [NOM, NOM, '', null, DESK] }).tried) === JSON.stringify([NOM, DESK]));
+	const tah = typeof P.triedAfterHandBack === 'function' ? P.triedAfterHandBack : () => [];
+	check('G2 peer.js exposes triedAfterHandBack', typeof P.triedAfterHandBack === 'function');
+	check('G2 the sender appends the runner of each hand-back',
+		JSON.stringify(tah(tah([], hb(NOM, { busy: 1 })), hb(DESK))) === JSON.stringify([NOM, DESK]));
+	check('G2 once, and only for a hand-back that names its runner',
+		JSON.stringify(tah([NOM], hb(NOM))) === JSON.stringify([NOM])
+		&& tah([], hb('')).length === 0
+		&& tah([], P.makeReport({ status: 'done', by: DESK })).length === 0
+		&& tah([], hb(DESK, { status: 'busy' })).length === 1);
+	{
+		const plan = P.buildDispatch({ id: 'c2', messages: [] }, { turnId: 't-g3', prompt: 'p', dispatchedBy: SELF, tried: [NOM] });
+		check('G3 a re-seat\'s errand carries the list', JSON.stringify(plan.errand(1).tried) === JSON.stringify([NOM]));
+	}
+	{
+		// The idle-looking desk beside this busy device already handed the turn back.
+		const { deps, seen } = base({ selfId: C, nominatedId: '', presence: {
+			[DESK]: { name: 'desk', lastSeen: now, busy: 0 } } });
+		const e = sentErrand(P, { turnId: 't-g4', chatId: 'c2', eid: 'eg4', deadline: 0, dispatchedBy: SELF, tried: [DESK] });
+		const res = await P.runErrand(e, deps);
+		check('G4 a busy device does not hold the row for a desk that handed it back',
+			res.why === 'busy' && seen.ran === 0 && seen.posts.length === 1 && seen.posts[0].status === 'undeliverable',
+			JSON.stringify(res));
+	}
+	{
+		// The nominee handed it back busy; the re-seat lands on this busy device.
+		const { deps, seen } = base({ selfId: C, nominatedId: NOM, presence: {
+			[NOM]: { name: 'nominee', lastSeen: now, busy: 0 } } });
+		const e = sentErrand(P, { turnId: 't-g5', chatId: 'c2', eid: 'eg5', deadline: 0, dispatchedBy: SELF, tried: [NOM] });
+		const res = await P.runErrand(e, deps);
+		check('G5 nor defers to a nominee that handed it back: it hands back at once',
+			res.why === 'busy' && seen.posts.length === 1, JSON.stringify(res));
+	}
+	{
+		const { deps } = base({ selfId: C, nominatedId: NOM, busyFor: () => 0, presence: {
+			[NOM]: { name: 'nominee', lastSeen: now, busy: 0 } } });
+		const res = await P.runErrand(sentErrand(P, { turnId: 't-g6', chatId: 'c2', eid: 'eg6', deadline: 0, dispatchedBy: SELF, tried: [NOM] }), deps);
+		check('G6 an idle device does not stand down for a nominee that handed it back', res.why !== 'nominee', JSON.stringify(res));
+		const res2 = await P.runErrand(sentErrand(P, { turnId: 't-g7', chatId: 'c2', eid: 'eg7', deadline: 0, dispatchedBy: SELF }), deps);
+		check('G7 control: with no hand-back it still stands down for the live nominee', res2.why === 'nominee', JSON.stringify(res2));
+	}
+	{
+		// The idle desk sorts ahead of this one, so the id order of Q22 (H) keeps the hold.
+		const { deps, seen } = base({ selfId: NOM, nominatedId: '', presence: {
+			[DESK]: { name: 'desk', lastSeen: now, busy: 0 } } });
+		const res = await P.runErrand(sentErrand(P, { turnId: 't-g8', chatId: 'c2', eid: 'eg8', deadline: 0, dispatchedBy: SELF, tried: [C] }), deps);
+		check('G8 control: an idle desk that has not handed it back is still waited for',
+			res.why === 'busy-hold' && seen.posts.length === 0, JSON.stringify(res));
+	}
+}
+
+console.log('\n— H: two busy desks that read each other idle do not hold for each other (Q22) —');
+{
+	const now = Date.now();
+	const B = 'b0000000000000000000000000000000';
+	const C = 'c0000000000000000000000000000000';
+	const A = 'a0000000000000000000000000000000';
+	const idle = (name) => ({ name, lastSeen: now, busy: 0 });
+	const run = async (self, presence, tried, tid) => {
+		const seen = { ran: 0, posts: [] };
+		const deps = {
+			cas: { read: async () => ({ version: 1, leases: {} }), write: async () => ({ ok: true }) },
+			finished: async () => false,
+			reconstruct: async () => ({ chat: {}, app: {} }),
+			runTurn: async () => { seen.ran++; },
+			abort: () => {}, pushResult: async () => 1,
+			post: async (r) => { seen.posts.push(r); }, ack: async () => {},
+			freshWindowMs: W, busyFor: () => 1,
+			selfId: self, nominatedId: '', presence,
+		};
+		const res = await P.runErrand(sentErrand(P, { turnId: tid, chatId: 'c2', eid: 'e-' + tid, deadline: 0,
+			dispatchedBy: SELF, tried: tried || [] }), deps);
+		return { res, seen };
+	};
+	// B and C both busy, each with the other's stale idle beat, no nominee.
+	const b = await run(B, { [C]: idle('c'), [SELF]: idle('sender') }, [], 't-h1');
+	const c = await run(C, { [B]: idle('b'), [SELF]: idle('sender') }, [], 't-h1');
+	check('H1 of two busy desks reading each other idle, the first in id order hands back',
+		b.res.why === 'busy' && b.seen.ran === 0 && b.seen.posts.length === 1 && b.seen.posts[0].status === 'undeliverable'
+			&& b.seen.posts[0].by === B, JSON.stringify(b.res));
+	check('H1 and the other holds for it, so exactly one hands back',
+		c.res.why === 'busy-hold' && c.seen.posts.length === 0, JSON.stringify(c.res));
+	const c2 = await run(C, { [B]: idle('b'), [SELF]: idle('sender') }, [B], 't-h2');
+	check('H2 re-seated with the first in `tried`, the other hands back too: neither waits on the backstop',
+		c2.res.why === 'busy' && c2.seen.posts.length === 1, JSON.stringify(c2.res));
+	const b3 = await run(B, { [A]: idle('a'), [C]: idle('c') }, [], 't-h3');
+	check('H3 an idle desk ahead in id order still takes the hold',
+		b3.res.why === 'busy-hold' && b3.seen.posts.length === 0, JSON.stringify(b3.res));
+	const hf = typeof P.busyHoldsFor === 'function' ? P.busyHoldsFor : () => null;
+	check('H4 peer.js exposes busyHoldsFor', typeof P.busyHoldsFor === 'function');
+	check('H4 it counts only an idle desk ahead, not one in `tried` nor a busy one',
+		hf({ [A]: idle('a') }, B, [A], now, W) === false
+		&& hf({ [A]: Object.assign(idle('a'), { busy: 2 }) }, B, [], now, W) === false
+		&& hf({ [A]: idle('a') }, B, [], now, W) === true
+		&& hf({ [C]: idle('c') }, B, [], now, W) === false);
+}
+
 console.log('\n— F: one predicate says which reports settle a turn —');
 {
 	const r = (status, extra) => P.makeReport(Object.assign({ turnId: 't', chatId: 'c', status }, extra || {}));

@@ -34,6 +34,8 @@
 //                the runner sends FRAMES rather than mid-turn parcel pushes.
 //   SAME TEXT  — A's finished transcript is the runner's, so the streamed view
 //                converged on the answer rather than merely looking busy.
+//   FOLLOW     — A reads the door within 1 s of each frame B stores: the gateway taps
+//                the watcher, so it is not left to its 4 s fallback tick (Q7, 2026-10-09).
 //
 // Needs the dev stack: app (DAIMOND_PORT), mock (DAIMOND_MOCK_PORT), gateway
 // (DAIMOND_GW_PORT). Pro-gated via pro.mjs. Run under WebKit:
@@ -62,13 +64,49 @@ async function until(pg, fn, arg, ms = 30000, step = 250) {
 	}
 	return false;
 }
-// The streamed tail as A has it ON SCREEN -- a frame's own destination, which the
-// store does not hold, because a frame is a view and not a message.
-const streamedOf = (pg) => pg.evaluate(() => {
-	const el = document.querySelector('.handoff-stream');
-	return el ? String(el.textContent || '') : '';
-});
+// THE TURN AS A HAS IT ON SCREEN: the text of the tiles after the prompt's own tile.
+// Since 0ffe75e2 (2026-09-18) a frame is no longer a separate `.handoff-stream` view:
+// its rows fold into the transcript as PROVISIONAL messages and draw as ordinary tiles
+// (daimond.js `onProgressFrame` -> `applyProvisional`), so the streamed view is the
+// thread itself and is read there. Read only AFTER the prompt: the prompt holds
+// `reasoning1`, `word1` and `ANSWERWORD` itself, so any whole-thread test is always
+// true. The anchor is `<last thought> ;; word1`, which only the prompt contains.
+const turnTextOf = (pg, anchor, end) => pg.evaluate(([anchor, end]) => {
+	const out = document.getElementById('chat-output');
+	const txt = out ? String(out.textContent || '') : '';
+	const at = txt.lastIndexOf(anchor);
+	if (at < 0) return '';
+	const fin = txt.indexOf(end, at);
+	return fin < 0 ? '' : txt.slice(fin + end.length);
+}, [anchor, end]);
 // The thread as a reader sees it, for the "A's transcript is the runner's" property.
+// THE TURN'S ORDER ON A'S SCREEN, by the tiles themselves (r545 item 18): where the
+// last THINKING tile of the turn ends and where the answer's first word sits, as
+// offsets into the thread's text. Not by the word "reasoning": the mock answer ends
+// "the slow reasoning is done", so once its tail is drawn a word search finds the
+// answer and reads it as thinking (chain1, 9 Oct 2026: every ABOVE was that).
+const turnOrderOf = (pg, anchor, end) => pg.evaluate(([anchor, end]) => {
+	const out = document.getElementById('chat-output');
+	if (!out) return { thinkEnd: -1, word1: -1, tiles: 0 };
+	const txt = String(out.textContent || '');
+	const at = txt.lastIndexOf(anchor);
+	const fin = at < 0 ? -1 : txt.indexOf(end, at);
+	if (fin < 0) return { thinkEnd: -1, word1: -1, tiles: 0 };
+	const start = fin + end.length;
+	const offOf = (el, atEnd) => {
+		const r = document.createRange();
+		r.setStart(out, 0);
+		if (atEnd) r.setEndAfter(el); else r.setEndBefore(el);
+		return r.toString().length;
+	};
+	let thinkEnd = -1, tiles = 0;
+	out.querySelectorAll('.chat-msg-thinking').forEach((el) => {
+		if (offOf(el, false) < start) return;		// a tile before this turn
+		tiles++; thinkEnd = Math.max(thinkEnd, offOf(el, true));
+	});
+	const w = txt.indexOf('word1 ', start);
+	return { thinkEnd: thinkEnd < 0 ? -1 : thinkEnd - start, word1: w < 0 ? -1 : w - start, tiles };
+}, [anchor, end]);
 const threadText = (pg) => pg.evaluate(() => {
 	const out = document.getElementById('chat-output');
 	return out ? String(out.innerText || '') : '';
@@ -155,11 +193,26 @@ try {
 	});
 	// A's reads of the door, so a frame drawn is a frame that was fetched.
 	let aFrameReads = 0;
+	const aReadAts = [];			// when A read the door, for the follow property
 	a.page.on('request', (req) => {
-		try { if (/\/api\/sync\?/.test(req.url()) && /progress=/.test(req.url())) aFrameReads++; }
-		catch (e) {}
+		try {
+			if (req.method() === 'GET' && /\/api\/sync\?/.test(req.url()) && /progress=/.test(req.url())) {
+				aFrameReads++; aReadAts.push(Date.now());
+			}
+		} catch (e) {}
 	});
 
+	// THE FRAMES AS THE RUNNER HANDED THEM TO THE DOOR (Q20, D-20261006-13): when each
+	// left and what it said. The wire carries sealed blobs, so a repeat cannot be told
+	// there; the door's own entry can, and its clock is the one the cadence is kept on.
+	await b.page.evaluate(() => {
+		const S = window.DaimondSync, put = S.pushProgressFrame;
+		window.__q20frames = [];
+		S.pushProgressFrame = function (turnId, tail, final) {
+			window.__q20frames.push({ at: Date.now(), turn: String(turnId), tail: String(tail || ''), final: !!final });
+			return put.apply(this, arguments);
+		};
+	});
 	console.log('\nStreaming — A dispatches a slow-thinking turn and watches it unfold');
 	const newId = await newChat(a);
 	// A SHORT phone viewport, so even the growing thinking tile overflows and the
@@ -182,6 +235,12 @@ try {
 	const SAY_N = 60;
 	const SAY = Array.from({ length: SAY_N }, (_, i) => 'word' + (i + 1)).join(' ');
 	const PROMPT = '@reasonslow ' + THINK + ' ;; ' + SAY + ' ANSWERWORD the slow reasoning is done';
+	const ANCHOR = 'reasoning' + THINK_N + ' ;; word1 ', PEND = 'the slow reasoning is done';
+	const streamedOf = (pg) => turnTextOf(pg, ANCHOR, PEND);
+	// The turn's own content on screen: a thought or a word of the answer, past the
+	// hand-off chrome ("Sent to your other devices") that is drawn before any frame.
+	// No leading \b: textContent joins a tile's label to its body with no space.
+	const hasTurn = (t) => /reasoning\d+\b|word\d+\b|ANSWERWORD/.test(t);
 	const tDispatch = Date.now();
 	aPulls = 0;
 	await a.page.fill('#chat-input', PROMPT);
@@ -190,22 +249,37 @@ try {
 	// Poll A fast, on BOTH paths at once, because the streamed view and the stored
 	// transcript are now different things and only one of them is the door:
 	//
-	//   THE SCREEN — `.handoff-stream`, the tail the runner has sent, which exists only
-	//     while the turn is running. This is what the progress door delivers, and it has
-	//     to be sampled DURING the turn: after the answer merges the node is gone, so a
-	//     check made afterwards would find nothing and report a working door as broken.
+	//   THE SCREEN — the turn's tiles after the prompt, which the runner's frames fill as
+	//     provisional rows while the turn runs. This is what the progress door delivers,
+	//     and it has to be sampled DURING the turn: once the answer lands, "mid-turn" can
+	//     no longer be told apart from "after".
 	//   THE STORE — the think_log in A's own chats, which arrives with a PARCEL. The
 	//     progress tick no longer pushes parcels, so this is no longer the mid-turn
 	//     signal; it is the reconciliation, asserted further down.
 	let sawScreenBeforeAnswer = false, tFirstScreen = 0, screenGrew = false, screenLen = 0;
 	let sawWorkBeforeAnswer = false, tFirstWork = 0, grew = false, prevLen = 0;
 	let screened = '';
+	let tFirstWord = 0;				// when the answer's first word was on A's screen
+	let midTurn = '';				// the last screen read taken before B's final frame (set after the loop)
+	let midOrd = null;				// the tile order on that read
+	const reads = [];				// { at, shot, ord }: every read that showed the turn
+	const thinkSeen = [];			// { at, n }: the highest thought A shows, per screen read
+	// Only a thought with a space after it: textContent runs a tile's last thought into
+	// the stamp that follows ("reasoning2" + "1 2026-10-09" reads as 212026, measured
+	// 9 Oct when the first frame came at +0.4 s), so the last thought is not counted
+	// and the count lags one thought, which a growth test does not mind.
+	const thoughtOf = (t) => (String(t).match(/reasoning\d+(?=\s)/g) || [])
+		.reduce((n, w) => Math.max(n, +w.slice(9)), 0);
 	for (let i = 0; i < 260; i++) {									// generous budget
 		let cs = []; try { cs = await servedChats(a); } catch (e) { cs = []; }
 		const tl = thinkLen(cs), ans = answerText(cs).length;
 		let shot = ''; try { shot = await streamedOf(a.page); } catch (e) { shot = ''; }
-		if (shot) {
+		thinkSeen.push({ at: Date.now(), n: thoughtOf(shot) });
+		if (hasTurn(shot)) {
+			let ord = null; try { ord = await turnOrderOf(a.page, ANCHOR, PEND); } catch (e) { ord = null; }
+			reads.push({ at: Date.now(), shot, ord });
 			if (!tFirstScreen) { tFirstScreen = Date.now(); screened = shot; }
+			if (!tFirstWord && /word1\b/.test(shot)) tFirstWord = Date.now();
 			if (!ans) sawScreenBeforeAnswer = true;
 			if (shot.length > screenLen) { if (screenLen) screenGrew = true; screenLen = shot.length; }
 			screened = shot;
@@ -216,6 +290,18 @@ try {
 		if (tl > prevLen) prevLen = tl;
 		if (ans >= 1) break;
 		await a.page.waitForTimeout(200);
+	}
+	// MID-TURN = before the runner's FINAL frame left B (r545 item 18), on the frames
+	// B's door entry logged. A's own store is no measure: with the 750 ms cadence the
+	// final frame's tail is on A's screen before the parcel brings the answer.
+	{
+		const lg = await b.page.evaluate(() => window.__q20frames || []);
+		const finAt = lg.filter((f) => f.final).reduce((n, f) => Math.min(n, f.at), Infinity);
+		const pre = reads.filter((r) => r.at < finAt);
+		const last = pre[pre.length - 1];
+		if (last) { midTurn = last.shot; midOrd = last.ord; }
+		console.log('  ..    mid-turn reads (before B\'s final frame): ' + pre.length + ' of ' + reads.length
+			+ (Number.isFinite(finAt) ? ', final frame at +' + (finAt - tDispatch) + 'ms' : ', no final frame logged'));
 	}
 	check('STREAMING: A sees the turn ON SCREEN mid-turn, BEFORE the final answer',
 		sawScreenBeforeAnswer, 'first streamed frame on screen at +'
@@ -249,16 +335,49 @@ try {
 	check('FRAME SIZE: every frame on the wire is under the door\'s 64 KiB ceiling',
 		frames.length > 0 && maxFrame > 0 && maxFrame <= 64 * 1024,
 		frames.length + ' frame(s), largest ' + maxFrame + ' bytes, first at +' + tFirstFrame + 'ms');
-	check('STREAMED VIEW: what A draws is the turn as the runner rendered it',
-		/\[thinking \d+ chars\]/.test(screened),
+	// The thinking itself, as the runner rendered it, not a count of it: the retired
+	// flattened view drew `[thinking N chars]` here.
+	check('STREAMED VIEW: what A draws is the turn as the runner rendered it (its thinking, word for word)',
+		/reasoning1\b/.test(screened) && !/\[thinking \d+ chars\]/.test(screened),
 		'on A\'s screen: ' + JSON.stringify(screened.slice(0, 120)));
 	// THE DAIMON'S OWN WORDS, mid-turn, on the device that asked. This is the owner's
 	// requirement in one line: the answer being produced elsewhere is readable here
 	// while it is being produced. A thinking count alone would satisfy everything above
 	// it and none of what was asked for.
+	// Read from `midTurn`, the last screen taken before B's final frame left. A streamed
+	// frame may already carry the answer's tail (ANSWERWORD), which is correct streaming.
 	check('STREAMED VIEW: the answer\'s own words reach A while the runner is still writing',
-		/\bword1\b/.test(screened) && !/ANSWERWORD/.test(screened),
-		'on A\'s screen: ' + JSON.stringify(screened.slice(-120)));
+		/word1\b/.test(midTurn),
+		'on A\'s screen: ' + JSON.stringify(midTurn.slice(-120)));
+	// And in the runner's order: the answer under the thinking that came before it,
+	// not drawn above it until the parcel merge swaps them (a visible jump).
+	check('STREAMED VIEW: mid-turn, the answer is drawn BELOW the thinking that preceded it',
+		!!midOrd && midOrd.tiles > 0 && midOrd.thinkEnd >= 0 && midOrd.word1 >= midOrd.thinkEnd,
+		'thinking tile(s) ' + (midOrd ? midOrd.tiles : 0) + ' end at ' + (midOrd ? midOrd.thinkEnd : -1)
+		+ ', word1 at ' + (midOrd ? midOrd.word1 : -1));
+
+	// THE THINKING GROWS ON A WITH EACH FRAME. A frame larger than the one before it,
+	// sent while the thinking was still being written, carries more thinking; within a
+	// second of it A must show a later thought than it did before it. The tile used to
+	// be redrawn only when a NEW row arrived or A's ~8 s parcel pull forced it, so a
+	// reasoning round sat still on A between rows (Q7 diag 2, 9 Oct 2026).
+	const growth = [];
+	for (let f = 1; f < frames.length; f++) {
+		const fr = frames[f];
+		if (fr.bytes < frames[f - 1].bytes + 16) continue;				// did not grow
+		const before = thinkSeen.filter((s) => s.at <= fr.at).reduce((n, s) => Math.max(n, s.n), 0);
+		if (before >= THINK_N) break;									// the thinking was whole
+		const win = thinkSeen.filter((s) => s.at > fr.at && s.at <= fr.at + 1000);
+		if (!win.length) continue;										// no read in the window
+		growth.push({ at: fr.at - tDispatch, before, after: win.reduce((n, s) => Math.max(n, s.n), 0) });
+	}
+	const stalled = growth.filter((g) => g.after <= g.before);
+	check('STREAMED VIEW: A\'s thinking grows within 1 s of each frame that grew it',
+		growth.length >= 2 && stalled.length === 0,
+		growth.length + ' growing frame(s), ' + stalled.length + ' left A\'s thinking still: '
+		+ JSON.stringify(growth.slice(0, 10)) + '; A\'s reads (at, thought) '
+		+ JSON.stringify(thinkSeen.slice(0, 40).map((x) => [x.at - tDispatch, x.n]))
+		+ '; frames at ' + JSON.stringify(frames.slice(0, 20).map((f) => f.at - tDispatch)));
 
 	// NO SHAKING — scroll A UP now (mid-stream) and hold; assert scrollTop is not yanked
 	// as further mid-turn re-renders (full rebuilds of the growing thinking tile) arrive.
@@ -338,20 +457,63 @@ try {
 		+ ' (sizes ' + JSON.stringify(frames.map((f) => f.bytes).slice(0, 8)) + ')');
 	check('FRAMES: A actually read the door (a frame drawn is a frame fetched)',
 		aFrameReads >= 1, 'A\'s progress reads: ' + aFrameReads);
+	// CADENCE (Q20, D-20261006-13): the runner frames at most every 750 ms, and only when
+	// the turn changed since its last frame -- no empty frame, none repeating the one
+	// before it. The final flush is exempt from the spacing: it is the turn ending, and
+	// holding it back would delay the finished answer for a cadence that has stopped.
+	const log = await b.page.evaluate(() => window.__q20frames || []);
+	const byTurn = {};
+	for (const f of log) (byTurn[f.turn] = byTurn[f.turn] || []).push(f);
+	const turnLog = Object.values(byTurn).sort((x, y) => y.length - x.length)[0] || [];
+	const stream = turnLog.filter((f) => !f.final);
+	const gaps = stream.slice(1).map((f, i) => f.at - stream[i].at);
+	const fin = turnLog.find((f) => f.final);
+	const finGap = (fin && stream.length) ? fin.at - stream[stream.length - 1].at : -1;
+	check('CADENCE: no two of the runner\'s streaming frames went out under 750 ms apart',
+		stream.length >= 2 && gaps.every((g) => g >= 750),
+		stream.length + ' streaming frame(s) + ' + (fin ? 1 : 0) + ' final; gaps ms ' + JSON.stringify(gaps)
+		+ '; final ' + finGap + ' ms after the last');
+	const repeats = turnLog.filter((f, i) => !f.tail || (i > 0 && f.tail === turnLog[i - 1].tail && f.final === turnLog[i - 1].final));
+	check('CADENCE: no frame is empty or repeats the frame before it (sent only when the turn grew)',
+		turnLog.length >= 2 && repeats.length === 0,
+		repeats.length + ' empty or repeated of ' + turnLog.length);
+	const wordFrame = turnLog.find((f) => /word1\b/.test(f.tail));
+	// FOLLOW (Q7, D-20261006-13): A's reads FOLLOW B's frames, within a second of each.
+	// The gateway taps every watcher when a frame is stored (`p<seq>` on the wake socket,
+	// `progress:true` on a park asked with `&prog=1`), and the watcher reads the door on
+	// the tap. Without the tap the watcher reads only on its 4 s fallback tick: measured
+	// 2026-10-09, B framed every 2.0 s, A read every 4.0 s like a clock, so half the
+	// frames were never seen and each change was 0-4 s late. Counted over the frames
+	// that have a read after them (the last frame closes the watch).
+	const follow = frames.filter((f) => aReadAts.some((r) => r >= f.at)).map((f) => {
+		const r = aReadAts.find((x) => x >= f.at);
+		return r - f.at;
+	});
+	const quick = follow.filter((d) => d <= 1000).length;
+	check('FOLLOW: A reads the door within 1 s of each of B\'s frames (tapped, not on the 4 s tick)',
+		follow.length >= 2 && quick >= Math.ceil(follow.length * 0.8),
+		quick + ' of ' + follow.length + ' frames read within 1 s; lags ms '
+		+ JSON.stringify(follow.slice(0, 12)));
 	// THE COST, in bytes rather than in pushes. A count of parcel pushes is the wrong
 	// measure and a first run of this check said so: the ordinary sync engine pushes on
 	// its own cadence through a turn, so ten parcel pushes can be nothing to do with
 	// the progress tick. What the door changed is the SIZE of what a frame costs -- it
-	// used to be a whole parcel -- so that is what is asserted: a frame is a fraction
-	// of a parcel push, on this run's own numbers.
+	// used to be a whole parcel -- so that is what is asserted, on this run's own numbers.
+	//
+	// AGAINST THE PARCEL THAT CARRIED THE TURN, not the average push. Most of B's pushes
+	// in a run are a few hundred bytes of bookkeeping (measured 9 Oct: 485, 485, 189, 497,
+	// 489, 189 beside one 13696), so the average rose and fell with how many of them a
+	// run happened to make, and the check flipped between runs on an unchanged build. The
+	// largest push is the one holding the finished turn: a frame carries that same turn's
+	// tail, so every frame must cost less than it, and that parcel grows with the chat
+	// while a frame does not.
 	const avgFrame  = frames.length ? Math.round(frames.reduce((n, f) => n + f.bytes, 0) / frames.length) : 0;
-	const avgParcel = bParcelBytes.length
-		? Math.round(bParcelBytes.reduce((n, b) => n + b, 0) / bParcelBytes.length) : 0;
-	check('COST: a frame costs less than a parcel push, and the LARGEST frame still does',
-		avgFrame > 0 && avgParcel > 0 && maxFrame < avgParcel,
-		'frame ' + avgFrame + ' bytes average, ' + maxFrame + ' bytes largest, against a parcel push of '
-		+ avgParcel + ' bytes average -- ' + (avgParcel / Math.max(1, avgFrame)).toFixed(1)
-		+ 'x (' + frames.length + ' frames, ' + bParcelBytes.length + ' parcel pushes). The fixture\'s '
+	const turnParcel = bParcelBytes.reduce((n, b) => Math.max(n, b), 0);
+	check('COST: every frame, the largest included, costs less than the parcel push that carried the turn',
+		avgFrame > 0 && turnParcel > 0 && maxFrame < turnParcel,
+		'frame ' + avgFrame + ' bytes average, ' + maxFrame + ' bytes largest, against the turn\'s parcel push of '
+		+ turnParcel + ' bytes -- ' + (turnParcel / Math.max(1, maxFrame)).toFixed(1) + 'x the largest frame ('
+		+ frames.length + ' frames; parcel pushes ' + JSON.stringify(bParcelBytes) + '). The fixture\'s '
 		+ 'parcel is a few kilobytes; a real one is hundreds, and a frame does not grow with it.');
 	// SAME TEXT — A's finished transcript is the runner's. Compared in the STORES on
 	// both sides and not on B's screen: a runner is a background device and need not be
@@ -368,17 +530,29 @@ try {
 	check('SAME TEXT: and the reader\'s own thread shows it',
 		/ANSWERWORD the slow reasoning is done/.test(aScreen),
 		'on A\'s screen: ' + JSON.stringify(aScreen.slice(-120)));
-	check('RECONCILE: the streamed tail is gone once the answer is in the transcript',
-		(await streamedOf(a.page)) === '' || !done,
-		'streamed node still on screen after the answer merged');
+	// The provisional rows gave way to the runner's copies by mid, not beside them.
+	const after = await streamedOf(a.page);
+	const nAns = after.split('ANSWERWORD the slow reasoning is done').length - 1;
+	check('RECONCILE: the streamed rows gave way to the answer (it is on A\'s screen once)',
+		done && nAns === 1, 'answer occurrences after the prompt: ' + nAns);
 
 	console.log('\nMEASURED — ' + frames.length + ' frame(s), average ' + avgFrame
 		+ ' bytes, largest ' + maxFrame + ' bytes'
 		+ '; first frame sent at +' + tFirstFrame + 'ms and on A\'s screen at +'
 		+ (tFirstScreen ? tFirstScreen - tDispatch : -1) + 'ms (latency ' + latency + 'ms)'
-		+ '; A read the door ' + aFrameReads + ' time(s)'
-		+ '; the runner\'s parcel pushes: ' + bParcelPushes + ' at ' + avgParcel + ' bytes average'
+		+ '; A read the door ' + aFrameReads + ' time(s), ' + quick + ' of ' + follow.length + ' frames within 1 s'
+		+ '; the runner\'s parcel pushes: ' + bParcelPushes + ', the turn\'s ' + turnParcel + ' bytes'
 		+ '; A\'s stored transcript caught up at +' + tFirstWork + 'ms');
+	// THE Q20 FIGURES, one line, for the before/after comparison.
+	const wireBytes = frames.reduce((n, f) => n + f.bytes, 0);
+	console.log('Q20 — frames/turn ' + frames.length + ' (door entries ' + turnLog.length + ', ' + stream.length
+		+ ' streaming + ' + (fin ? 1 : 0) + ' final); bytes/turn ' + wireBytes
+		+ '; relay pushes to A (door reads) ' + aFrameReads
+		+ '; streaming gap ms min ' + (gaps.length ? Math.min(...gaps) : -1) + ' median '
+		+ (gaps.length ? gaps.slice().sort((x, y) => x - y)[gaps.length >> 1] : -1)
+		+ '; first word on A at +' + (tFirstWord ? tFirstWord - tDispatch : -1) + 'ms from dispatch, '
+		+ ((tFirstWord && wordFrame) ? (tFirstWord - wordFrame.at) : -1) + 'ms after the runner framed it'
+		+ ' (framed at +' + (wordFrame ? wordFrame.at - tDispatch : -1) + 'ms)');
 
 	console.log(`\n${ok.length} ok, ${bad.length} failed`);
 	if (bad.length) console.log('  FAILED: ' + bad.join(' | '));

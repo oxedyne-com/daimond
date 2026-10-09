@@ -184,9 +184,10 @@
 	.chat-output { padding-bottom: 68px; }
 	.chat-output:has(~ #chat-attachments:not([style*="none"])) { padding-bottom: 12px; }
 
-	/* Give lists a little more row height for touch. */
+	/* Give lists a little more row height for touch. A file row's comes from its
+	   44px min-height (files.css), which its 44px ◈ fills, so it takes no padding. */
 	.session-box { padding: 10px 11px; }
-	.files-row { padding: 8px 12px; }
+	.files-row, .files-focus .r { padding: 0 12px; }
 
 	/* A thumb's floor. The shared touch block below lifts the small controls to
 	   ~34px, which suits a dense tablet dock; on a phone, where these are the
@@ -297,12 +298,6 @@
 	   the phone sheet's and the admin drawer's. Both now take its one size
 	   and its hit area with no size of their own to fight it (R9). */
 
-	/* These named classes that do not exist (`.files-row-del`), so on touch the
-	   file buttons stayed hidden and could not be reached at all. The real class
-	   is `.files-del`, and the file buttons hide with `visibility`, not
-	   `opacity`. The tile's closer cross was removed in phase C -- Delete lives
-	   at the foot of the cog dialog now -- so its three rules went with it. */
-	.files-row .files-del { visibility: visible; opacity: 1; }
 
 	/* A tablet keeps the desktop bar and its chip row, where the controls were
 	   23-36px tall. They grow in HEIGHT only: the chip row already has more

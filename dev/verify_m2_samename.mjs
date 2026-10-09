@@ -26,7 +26,7 @@
 // the Machine chip, then "Change folder…", which is the real `openFolder` -> `activateFolder`.
 //
 // Needs a world: `eval "$(bash dev/world.sh N --env)"`.
-import { open, signInAs, markHere, standInFolders } from './harness.mjs';
+import { open, signInAs, markHere, standInFolders, workRows, pressRowItem } from './harness.mjs';
 
 const ok = [], bad = [];
 const check = (name, pass, detail) => {
@@ -93,20 +93,10 @@ const notice = () => p.evaluate(() => {
 		rows: [...box.querySelectorAll('.mark-notice-row')].map((x) => x.dataset.path).sort() };
 });
 
-/// This device's ⇄ on a folder of the open Diamond, pressed in the Workspace panel.
+/// The share item in a folder's row ⋯ in the Workspace panel, pressed as a person does.
 async function shareHere(path) {
-	await p.evaluate(() => window.DaimondPanels && (DaimondPanels.open ? DaimondPanels.open('work') : DaimondPanels.show('work')));
-	await sleep(500);
-	await p.click('#panel-work [data-act="refresh"]', { force: true }).catch(() => {});
-	await sleep(700);
-	await p.click('.files-scope-chip[data-scope="diamond"]', { force: true }).catch(() => {});
-	await sleep(1400);
-	const sel = '#panel-work .files-row.attached[data-path="' + path + '"] [data-act="share"]';
-	const el = await p.$(sel);
-	if (!el) return false;
-	await el.click({ force: true });
-	await sleep(1500);
-	return true;
+	await workRows(s);
+	return pressRowItem(s, path, 'share');
 }
 
 // ── 1. Folder A ──────────────────────────────────────────────────────────────

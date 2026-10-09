@@ -67,15 +67,6 @@
 		return String(n);
 	}
 
-	// A short, local, human day/time for a ledger row.
-	function fmtWhen(tsMs) {
-		try {
-			var d = new Date(tsMs);
-			return d.toLocaleDateString(undefined, { month: 'short', day: 'numeric' })
-				+ ' ' + d.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' });
-		} catch (e) { return ''; }
-	}
-
 	function t(k, v) { return window.DaimondI18n ? DaimondI18n.t(k, v) : k; }
 
 	// Every category a movement can carry. The gateway is the authority on this
@@ -321,8 +312,7 @@
 		var activeDays = ser.filter(function (d) { return d.usd > 0 || d.turns > 0; }).length;
 		if (activeDays >= 3) {
 			var bars = ser.map(function (d) {
-				var dd = new Date(d.ts);
-				return { value: d.usd, label: dd.toLocaleDateString(undefined, { month: 'short', day: 'numeric' }) };
+				return { value: d.usd, label: window.DaimondTime.fmtLocal(d.ts, 'dayMonth') };
 			});
 			sec.appendChild(barChart(bars, { fmt: fmtUsd, empty: t('spend.no_turns') }));
 		}
@@ -485,7 +475,7 @@
 			var tb = el('tbody');
 			creditEntries.slice(0, 40).forEach(function (e) {
 				var tr = el('tr');
-				tr.appendChild(el('td', 'spend-when', fmtWhen(e.ts / 1e6)));	// ts is ns
+				tr.appendChild(el('td', 'spend-when', window.DaimondTime.fmtLocal(e.ts / 1e6, 'when')));	// ts is ns
 				tr.appendChild(el('td', null, catLabel(e.category || e.kind)));
 				var d = e.delta_minor || 0;
 				var amt = el('td', 'num ' + (d < 0 ? 'debit' : 'credit'), d < 0 ? '−' : '+');

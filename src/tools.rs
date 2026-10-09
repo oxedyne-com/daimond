@@ -239,6 +239,17 @@ pub struct TurnState {
     // A chat and a dispatched worker each get a cache of their own, where the key is the empty
     // string and the map holds one entry.
     pub web_consent: HashMap<String, Verdict>,
+    // Toolkits the user granted in the consent door during this turn, keyed as the consents are.
+    // The yes is also written to the Diamond (`set_toolkits`), which the NEXT turn's bounds read;
+    // this carries it for the rest of this one, whose bounds were built before it.  Cleared by
+    // `begin_turn`, so a toolkit taken back in the panel is not kept alive here.  A no is never
+    // held (N2).
+    pub kits: HashMap<String, Vec<Toolkit>>,
+    // Places the user let this turn change in the consent door (E2), held as `kits` is.
+    pub places: HashMap<String, Vec<String>>,
+    // The first write a model's call was refused that the user could be asked about, taken by
+    // the dispatch that made the call (`ToolRegistry::try_dispatch_asking`).
+    pub place_ask: HashMap<String, PlaceAsk>,
     /// Set once this turn has put a question to the user with [`Tool::Ask`].
     ///
     /// One decision at a time is the whole rule, and a round may carry several tool calls -- so
@@ -431,6 +442,33 @@ const SNIFF: usize = 8000;
 /// still reads every byte.
 fn is_binary(bytes: &[u8]) -> bool {
     bytes[..bytes.len().min(SNIFF)].contains(&0) || std::str::from_utf8(bytes).is_err()
+}
+
+/// A stored file's bytes as text, REFUSED rather than repaired where they are not UTF-8.
+///
+/// For every reader whose text can be written back: a crystal shown with Edit, a file a daimon
+/// edits.  `from_utf8_lossy` there is not a lenient read but a replacement -- each invalid sequence
+/// becomes U+FFFD before anyone sees it, and the next save writes the replacement over the
+/// original bytes (r544 QA C, F-C1).  The refusal names the file and the first bad byte, so the
+/// page can say the file could not be read and offer nothing that would overwrite it.
+pub fn utf8_text(bytes: &[u8], path: &str) -> Outcome<String> {
+    match std::str::from_utf8(bytes) {
+        Ok(text) => Ok(text.to_string()),
+        Err(e)   => Err(err!(
+            "{} is not UTF-8 text from byte {}, so it is not read: decoding it would replace \
+            those bytes, and a save would write the replacement over them.",
+            path, e.valid_up_to(); Invalid, Input, Decode)),
+    }
+}
+
+/// Does this crystal text hold nothing -- blank, or an object with no keys?
+///
+/// A new Diamond's crystal.json and its version 0 are both written empty, so an empty file beside
+/// an empty newest version is a crystal nobody has filled.  Beside a version that holds something
+/// it is a file that lost its bytes.
+pub fn crystal_text_is_blank(text: &str) -> bool {
+    let t = text.trim();
+    t.is_empty() || (t.starts_with('{') && t.ends_with('}') && t[1..t.len() - 1].trim().is_empty())
 }
 
 /// Refuse a binary file, naming it, its size, and what to do instead.
@@ -4753,6 +4791,21 @@ impl Toolkit {
         }
     }
 
+    /// The programs that need this toolkit, matched against the tail of a command's program.
+    ///
+    /// Git's list is empty: `git` is on the base `PATH`, and what its grant lends is the user's
+    /// identity, which only some subcommands use (see [`kits_wanted`]).
+    pub fn programs(&self) -> &'static [&'static str] {
+        match self {
+            Self::Rust   => &["cargo", "rustc", "rustup"],
+            Self::Node   => &["node", "npm", "npx"],
+            Self::Python => &["python", "python3", "pip", "pip3", "pytest"],
+            Self::Go     => &["go", "gofmt"],
+            Self::Git    => &[],
+            Self::Remote => &[],
+        }
+    }
+
     /// Read a toolkit from its name.
     ///
     /// # Arguments
@@ -5170,6 +5223,255 @@ pub fn machine_rooted_seen() -> Option<bool> {
 fn cap_value(caps: &[String], key: &str) -> Option<String> {
     let pre = fmt!("{}:", key);
     caps.iter().find_map(|c| c.strip_prefix(&pre).map(|v| v.to_string()))
+}
+
+// ── A toolchain asked for on first use ─────────────────────────────
+//
+// Workspace round 2, E1 (specs/daimond_workspace_firstprinciples_20261009.md §3.3).  A toolkit is
+// still never INFERRED from what the model ran: the command only chooses which question is put,
+// and the grant is the user's press in the consent door.  A no is not remembered past the command
+// (N2), and nothing but that press and the head's Toolchains entry writes `set_toolkits` (N3).
+
+/// The name the toolchain question travels under through the consent door.
+pub const KIT_TOOL: &str = "toolkit";
+
+/// The word a yes to [`KIT_TOOL`] comes back as, and nothing else: an `allow` from a posture, a
+/// shortcut or an older page means no here, for the reason [`RUN_NET_ALLOW_WORD`] gives.
+pub const KIT_ALLOW_WORD: &str = "allow-kit";
+
+/// The git subcommands that use the user's identity, and so ask for the Git toolkit.
+const GIT_IDENTITY: [&str; 4] = ["commit", "merge", "rebase", "tag"];
+
+/// The toolkits one simple command needs, from its words.
+fn kits_of_words(words: &[&str], out: &mut Vec<Toolkit>) {
+    // Assignments and the wrappers that run the next word as the command.
+    let mut i = 0;
+    while i < words.len() {
+        let w = words[i];
+        let wrapper = matches!(w, "env" | "exec" | "command" | "time" | "nohup" | "nice");
+        if wrapper || (w.contains('=') && !w.starts_with('-') && !w.starts_with('=')) {
+            i += 1;
+        } else {
+            break;
+        }
+    }
+    let prog = match words.get(i) {
+        Some(p) => p.rsplit('/').next().unwrap_or(p),
+        None    => return,
+    };
+    let mut push = |k: Toolkit| if !out.contains(&k) { out.push(k); };
+    if prog == "git" {
+        // The first word that is not an option is the subcommand; `-C` and `-c` take a value.
+        let mut j = i + 1;
+        while j < words.len() {
+            let w = words[j];
+            if w == "-C" || w == "-c" {
+                j += 2;
+            } else if w.starts_with('-') {
+                j += 1;
+            } else {
+                if GIT_IDENTITY.contains(&w) {
+                    push(Toolkit::Git);
+                }
+                break;
+            }
+        }
+        return;
+    }
+    for k in Toolkit::all() {
+        if k.programs().contains(&prog) {
+            push(k);
+        }
+    }
+}
+
+/// The toolkits a command line needs: its program, and each simple command inside a `sh -c`.
+///
+/// A plain split on the shell's separators, not a parser.  A wrapper script calling `cargo` is
+/// not seen here; the fence refuses it as before.
+pub fn kits_wanted(argv: &[String]) -> Vec<Toolkit> {
+    let mut out = Vec::new();
+    let prog = match argv.first() {
+        Some(p) => p.rsplit('/').next().unwrap_or(p),
+        None    => return out,
+    };
+    let shell = matches!(prog, "sh" | "bash" | "dash" | "zsh");
+    let script = argv.iter().skip(1)
+        .position(|a| a.starts_with('-') && !a.starts_with("--") && a.contains('c'))
+        .and_then(|p| argv.get(p + 2));
+    match (shell, script) {
+        (true, Some(s)) => {
+            let cut: String = s.chars()
+                .map(|c| if matches!(c, ';' | '&' | '|' | '\n' | '(' | ')' | '`' | '{' | '}')
+                    { '\n' } else { c })
+                .collect();
+            for line in cut.split('\n') {
+                let words: Vec<&str> = line.split_whitespace()
+                    .map(|w| w.trim_matches(|c| c == '"' || c == '\''))
+                    .filter(|w| !w.is_empty() && *w != "$")
+                    .collect();
+                kits_of_words(&words, &mut out);
+            }
+        },
+        _ => {
+            let words: Vec<&str> = argv.iter().map(|a| a.as_str()).collect();
+            kits_of_words(&words, &mut out);
+        },
+    }
+    out
+}
+
+/// Which toolkits to ask the user for before a command runs; empty means run as it stands.
+///
+/// Asked only where the answer can be a press here: a Diamond's own turn (there is somewhere to
+/// record the yes), someone watching (a worker alone has nobody to ask), a rung that asks
+/// ([`Mode::Bypass`] never does), and a hand that reported a home (without one a grant reaches
+/// nothing).  Everywhere else the command runs inside the fence it has, as before.
+///
+/// # Arguments
+/// * `argv` - The command.
+/// * `granted` - The toolkits this turn already holds.
+/// * `can_ask` - Whether the question can be put at all, as above.
+pub fn kits_to_ask(argv: &[String], granted: &[Toolkit], can_ask: bool) -> Vec<Toolkit> {
+    if !can_ask {
+        return Vec::new();
+    }
+    kits_wanted(argv).into_iter().filter(|k| !granted.contains(k)).collect()
+}
+
+/// The toolkits a command's own "not found" names, where a question before it ran could not see
+/// them: a wrapper script calling `cargo` (§7 of the Workspace spec).  Empty unless the shell
+/// itself gave up on a program (exit 127) and that program is one an ungranted toolkit lends.
+///
+/// Read from the shells' own sentences -- bash's `cargo: command not found`, dash's `cargo: not
+/// found` and env's `'cargo': No such file or directory` -- and from nothing else, so a program
+/// reporting a missing FILE is not mistaken for a missing toolchain.  Git is never named, since
+/// [`Toolkit::programs`] lists none for it.
+///
+/// # Arguments
+/// * `err` - The command's stderr.
+/// * `exit` - Its exit status.
+/// * `granted` - The toolkits the command already ran with.
+pub fn kits_not_found(err: &str, exit: i64, granted: &[Toolkit]) -> Vec<Toolkit> {
+    let mut out: Vec<Toolkit> = Vec::new();
+    if exit != 127 {
+        return out;
+    }
+    for line in err.lines() {
+        let head = if let Some(h) = line.strip_suffix(": command not found") {
+            h
+        } else if let Some(h) = line.strip_suffix(": not found") {
+            h
+        } else if let Some(h) = line.strip_suffix(": No such file or directory") {
+            // Only env's form: a bare path here is a program's own missing file.
+            if !line.starts_with("env: ") { continue; }
+            h
+        } else {
+            continue;
+        };
+        let word = head.rsplit(": ").next().unwrap_or(head)
+            .trim_matches(|c| c == '\'' || c == '"' || c == '`' || c == '\u{2018}' || c == '\u{2019}');
+        let prog = word.rsplit('/').next().unwrap_or(word);
+        for k in Toolkit::all() {
+            if !granted.contains(&k) && !out.contains(&k) && k.programs().contains(&prog) {
+                out.push(k);
+            }
+        }
+    }
+    out
+}
+
+/// What the daimon reads after a "not found" raised the toolchain question once the command had
+/// run: granted for this turn and to be run again, or the user's no, which is not to be retried.
+pub fn kit_after_note(argv: &[String], kits: &[Toolkit], yes: bool) -> String {
+    if yes {
+        fmt!("\n[{} was not found by this command because this Diamond had not been granted it. \
+            The user has now granted it: run '{}' again.]",
+            kit_labels(kits), safe_origin(&argv.join(" ")))
+    } else {
+        fmt!("\n[{} is installed but not granted to this Diamond, and the user said not now. It \
+            is asked again the next time a command needs it, so say what you wanted it for rather \
+            than retrying.]", kit_labels(kits))
+    }
+}
+
+/// The kits named for a person: "Rust", "Rust and Git", "Rust, Node and Git".
+pub fn kit_labels(kits: &[Toolkit]) -> String {
+    let names: Vec<&str> = kits.iter().map(|k| k.label()).collect();
+    match names.split_last() {
+        None              => String::new(),
+        Some((l, []))     => fmt!("{}", l),
+        Some((l, rest))   => fmt!("{} and {}", rest.join(", "), l),
+    }
+}
+
+/// What the daimon reads when the user says no to a toolchain, or nobody answers.
+///
+/// Says it is the user's decision and that it is not remembered, so the daimon neither reworks
+/// the command nor concludes the toolchain is missing from the computer.
+pub fn kit_refusal(argv: &[String], kits: &[Toolkit]) -> String {
+    fmt!("Refused: '{}' needs {}, which this Diamond has not been granted, and the user said not \
+        now. Nothing was run. {} is waiting for the user's yes; it is asked again the next time a \
+        command needs it, so say what you wanted it for rather than retrying.",
+        safe_origin(&argv.join(" ")), kit_labels(kits), kit_labels(kits))
+}
+
+// Workspace round 2, E2 (specs/daimond_workspace_firstprinciples_20261009.md §3.3).  A model's
+// write refused for being outside what its Diamond may change is put to the user once, in the
+// moment, through the consent door: "Let <Diamond> change <place>?".  The place is the NARROWEST
+// folder holding the file (owner, 2026-10-09), or the waiting mark over it where one was made on
+// another device.  A yes is the page writing the same `holds` link and marks-here entry the ◈
+// writes; a no is not remembered (N2).
+
+/// The name the write question travels under through the consent door.
+pub const PLACE_TOOL: &str = "place";
+
+/// The word a yes to [`PLACE_TOOL`] comes back as, and nothing else (see [`KIT_ALLOW_WORD`]).
+pub const PLACE_ALLOW_WORD: &str = "allow-place";
+
+/// A refused write the user may be asked about.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct PlaceAsk {
+    pub path:       String, // normalised, as refused
+    pub place:      String, // what a yes adds
+    pub waiting:    bool,   // `place` is a mark made on another device
+}
+
+impl PlaceAsk {
+    /// The question's detail for the page, which draws and records from it.
+    pub fn detail(&self, id: &str) -> String {
+        fmt!("{{\"id\":\"{}\",\"place\":\"{}\",\"waiting\":{}}}",
+            json_escape(id), json_escape(&self.place), self.waiting)
+    }
+}
+
+/// The narrowest folder holding `path`: its parent, or the file itself at the root.
+pub fn narrowest_place(path: &str) -> String {
+    let p = normalise(path);
+    match p.rfind('/') {
+        Some(i) => fmt!("{}", &p[..i]),
+        None    => p,
+    }
+}
+
+/// What the daimon reads when the user says no to a write, or nobody answers.
+pub fn place_refusal(ask: &PlaceAsk) -> String {
+    fmt!("Refused: the user said not now to this Diamond changing '{}', so '{}' was not changed. \
+        It is asked again the next time a write needs it, so say what you wanted to change rather \
+        than retrying.", ask.place, ask.path)
+}
+
+/// The page's door for a write question; none on a native build, where nobody is there to press.
+async fn place_door(ask: PlaceAsk, id: String) -> Option<Verdict> {
+    #[cfg(target_arch = "wasm32")]
+    {
+        crate::wasm::web::egress_allowed_place(&ask.path, &ask.detail(&id)).await
+    }
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        let _ = (ask, id);
+        None
+    }
 }
 
 /// The toolkits a turn's bounds grant, in the order the user gave them and each named once.
@@ -9231,6 +9533,13 @@ const LINKING_SCRIPTS: &[Linking] = &[
             lane starts, not a check you run inside a turn. Ask the user to run it, and say \
             which section you wanted run.",
     },
+    Linking {
+        path: "dev/foldershare_book.mjs",
+        does: "an `assets` folder into the test book it generates, from the top and from an \
+            archived snapshot",
+        instead: "It builds the fixture dev/verify_foldershare.mjs shares and is not a check of \
+            its own. Ask the user to run that verifier, and say what you wanted shared.",
+    },
 ];
 
 /// The linking script a path names, where it names one.
@@ -12390,6 +12699,9 @@ impl ToolContext {
         c.turn_ms = 0;
         c.probed.remove(&who);
         c.proof.remove(&who);
+        c.kits.remove(&who);
+        c.places.remove(&who);
+        c.place_ask.remove(&who);
         // THE WORKERS GO WITH THE TURN, unlike the taint and the network answer above.  A model
         // may only gather what it started here, so a ledger that outlived its turn would let the
         // next one wait on a worker it never asked for -- and bill it for the report.  The
@@ -12399,6 +12711,126 @@ impl ToolContext {
         w.spawned.clear();
         w.gathered.clear();
         w.worker_usd = 0.0;
+    }
+
+    /// The turn's bounds with any toolkit the user granted in the consent door since it began.
+    pub fn run_bounds(&self) -> Vec<Bound> {
+        let mut b = self.write_bounds();
+        let have = toolkits(&b);
+        if let Some(ks) = lock_cache(&self.read_seen).kits.get(&self.daimon_of) {
+            for k in ks {
+                if !have.contains(k) {
+                    b.push(k.bound());
+                }
+            }
+        }
+        b
+    }
+
+    /// Hold toolkits the user just granted in the consent door, for the rest of this turn.
+    pub fn grant_kits(&self, kits: &[Toolkit]) {
+        let who = self.daimon_of.clone();
+        let mut c = lock_cache(&self.read_seen);
+        let held = c.kits.entry(who).or_default();
+        for k in kits {
+            if !held.contains(k) {
+                held.push(*k);
+            }
+        }
+    }
+
+    /// The turn's bounds with any place the user let it change in the consent door since it
+    /// began (E2).  A place is the same [`Bound::OnlyWriteUnder`] its mark gives the next turn.
+    pub fn write_bounds(&self) -> Vec<Bound> {
+        let mut b = self.no_write.clone();
+        if let Some(ps) = lock_cache(&self.read_seen).places.get(&self.daimon_of) {
+            for p in ps {
+                let w = Bound::OnlyWriteUnder(p.clone());
+                if !b.contains(&w) {
+                    b.push(w);
+                }
+            }
+        }
+        b
+    }
+
+    /// Hold a place the user just let this turn change, for the rest of the turn.
+    pub fn grant_place(&self, place: &str) {
+        let who = self.daimon_of.clone();
+        let mut c = lock_cache(&self.read_seen);
+        let held = c.places.entry(who).or_default();
+        let p = normalise(place);
+        if !p.is_empty() && !held.contains(&p) {
+            held.push(p);
+        }
+    }
+
+    /// Can a write question be put on this turn?  A model's call in a Diamond's own scoped turn,
+    /// watched, and not in Bypass, whose promise is that nothing is asked.
+    pub fn can_ask_writes(&self, mode: Mode) -> bool {
+        self.by_model && !self.daimon_of.is_empty() && !self.is_unsupervised()
+            && !matches!(mode, Mode::Bypass) && self.is_write_scoped() && !self.is_chat_scoped()
+    }
+
+    /// The question a refused write of `path` could put, or `None` where the refusal is not one
+    /// a yes may lift: the record, Daimond's own directory, the app's store, a read-only mark,
+    /// or a turn that may change nothing.
+    pub fn place_ask_for(&self, path: &str) -> Option<PlaceAsk> {
+        let p = normalise(path);
+        if p.is_empty() || is_keeper_record(&p) || is_store_path(&p)
+            || under(&fold(&p), &normalise(DAIMOND_DIR))
+            || !self.within_allow_list(&p) || self.within_write_allow_list(&p)
+            || self.no_write.iter().any(|b| matches!(b, Bound::Nowhere))
+        {
+            return None;
+        }
+        let folded = fold(&p);
+        let denied = self.no_write.iter().any(|b| match b {
+            Bound::NoWrite(pre) => under(&p, pre) || under(&folded, &fold(pre)),
+            _                   => false,
+        });
+        if denied {
+            return None;
+        }
+        Some(match self.unconfirmed_mark(&p) {
+            Some(m) => PlaceAsk { path: p, place: m, waiting: true },
+            None    => PlaceAsk { place: narrowest_place(&p), path: p, waiting: false },
+        })
+    }
+
+    /// Keep the first askable write refused in this call, for its dispatch to ask about.
+    fn note_place_ask(&self, path: &str) {
+        if !self.by_model {
+            return;
+        }
+        if let Some(a) = self.place_ask_for(path) {
+            lock_cache(&self.read_seen).place_ask.entry(self.daimon_of.clone()).or_insert(a);
+        }
+    }
+
+    /// The write question this call left, taken so the next call starts with none.
+    pub fn take_place_ask(&self) -> Option<PlaceAsk> {
+        lock_cache(&self.read_seen).place_ask.remove(&self.daimon_of)
+    }
+
+    /// Can a toolchain question be put on this turn?  See [`kits_to_ask`].
+    ///
+    /// # Arguments
+    /// * `mode` - Which rung the user is in.
+    /// * `home` - Whether the hand reported a home directory.
+    pub fn can_ask_kits(&self, mode: Mode, home: bool) -> bool {
+        home && !self.daimon_of.is_empty() && !self.is_unsupervised()
+            && !matches!(mode, Mode::Bypass)
+    }
+
+    /// Which toolkits to ask for before `argv` runs, given what this turn already holds.
+    ///
+    /// # Arguments
+    /// * `argv` - The command.
+    /// * `mode` - Which rung the user is in.
+    /// * `home` - Whether the hand reported a home directory.
+    pub fn kits_to_ask(&self, argv: &[String], mode: Mode, home: bool) -> Vec<Toolkit> {
+        kits_to_ask(argv, &toolkits(&self.run_bounds()), self.can_ask_kits(mode, home))
     }
 
     /// Record that the page has started a worker for this turn.
@@ -12704,6 +13136,7 @@ mod licence {
         ///   handed to the primitive.
         pub fn licence(&self, path: &str) -> Result<Licence, String> {
             if !self.may_write(path) {
+                self.note_place_ask(path);
                 return Err(refusal_line(&self.refusal(path, true)));
             }
             if let Some(inner) = self.fenced_beneath(path) {
@@ -15005,6 +15438,7 @@ pub struct Shown {
     /// possible" -- a distinction [`show_result`](Tool::show_result) has to keep, because a model
     /// that reads a refusal as a limit of the app reports the limit to the user and stops trying.
     pub shown: bool,
+    pub asker: String, // the device the turn was asked from, when it runs here for it, else empty
 }
 
 // ── Social: the panel a daimon could not reach ──────────────────────
@@ -19206,10 +19640,9 @@ impl Tool {
         // THE LOAD PROOF (K1): every edit of the page or its data that lands is read from outside,
         // as the owner sees it, and a failure is a must-fix line here.  One line, so it runs
         // whatever the turn has spent.
-        let proof = if Self::edit_landed(&said) && self.is_crystal_write(args_json, ctx) {
-            Self::crystal_proof(ctx).await
-        } else {
-            String::new()
+        let proof = match self.crystal_write(args_json, ctx) {
+            Some(page) if Self::edit_landed(&said) => Self::crystal_proof(ctx, page).await,
+            _                                      => String::new(),
         };
         let note = match self.remeasure_owed(args_json, ctx, &said) {
             Some(_) if ctx.spend_is_short() => Self::crystal_remeasure_skipped(),
@@ -19232,16 +19665,21 @@ impl Tool {
     /// Take the load proof of the Diamond's page as stored now, keep it for the turn's end, mark it
     /// passed when it passes, and answer the line the edit's result carries.
     #[cfg(target_arch = "wasm32")]
-    async fn crystal_proof(ctx: &ToolContext) -> String {
+    async fn crystal_proof(ctx: &ToolContext, page_write: bool) -> String {
         let id = match ctx.daimon() {
             Some(i) => i,
             None    => return String::new(),
         };
+        // The page the proof read, so the turn's end warns only while that page is still in place.
+        let read = crate::wasm::diamond::read_crystal_page(&id).await.ok()
+            .map(|pg| crystal_page_mark(&pg));
+        // A data write over a page this turn wrote earlier still judges the turn's own page.
+        let wrote = page_write || ctx.last_proof().map_or(false, |q| q.wrote && q.page == read);
         let (data, page) = match Self::crystal_inputs(&id).await {
             Ok(pair) => pair,
             Err(why) => {
                 let p = CrystalProof { pass: false, why: fmt!("the page cannot be drawn, because {}",
-                    why.trim_end_matches('.')), ..Default::default() };
+                    why.trim_end_matches('.')), page: read, wrote, ..Default::default() };
                 ctx.note_proof(p.clone());
                 return p.line();
             },
@@ -19258,6 +19696,8 @@ impl Tool {
             None    => return "Load proof not taken: this build's crystal driver gives no proof.".to_string(),
         };
         p.before = crate::wasm::diamond::last_passed(&id).await.map(|m| m.debug);
+        p.page = read;
+        p.wrote = wrote;
         if p.must_fix().is_none() {
             if let Err(e) = crate::wasm::diamond::mark_passed(&id, 0, &page, &data, p.debug).await {
                 crate::wasm::entry::trail("CRYSTAL PASS NOT MARKED", &fmt!("{}: {}", id, e));
@@ -19280,20 +19720,23 @@ impl Tool {
         req
     }
 
-    /// Does this call edit or write the Diamond's page or its data, at the Diamond's top?
+    /// Which half of the Diamond's crystal this call edits or writes at the Diamond's top:
+    /// `Some(true)` the page, `Some(false)` its data, `None` neither.
     #[cfg(any(target_arch = "wasm32", test))]
-    fn is_crystal_write(&self, args_json: &str, ctx: &ToolContext) -> bool {
+    fn crystal_write(&self, args_json: &str, ctx: &ToolContext) -> Option<bool> {
         if !matches!(self, Tool::FileEdit | Tool::FileWrite) || ctx.daimon().is_none() {
-            return false;
+            return None;
         }
-        let raw = match extract_json_string(args_json, "path") {
-            Some(p) => p,
-            None    => return false,
+        let path = match extract_json_string(args_json, "path").map(|raw| Self::scoped(ctx, &raw)) {
+            Some(Ok(p)) => p,
+            _           => return None,
         };
-        match Self::scoped(ctx, &raw) {
-            Ok(path) => crystal_page_of(&path) == ctx.daimon()
-                || diamond_file_of(&path, CRYSTAL_DATA_FILE) == ctx.daimon(),
-            Err(_)   => false,
+        if crystal_page_of(&path) == ctx.daimon() {
+            Some(true)
+        } else if diamond_file_of(&path, CRYSTAL_DATA_FILE) == ctx.daimon() {
+            Some(false)
+        } else {
+            None
         }
     }
 
@@ -22340,7 +22783,9 @@ impl Tool {
                 },
             },
         };
-        let data = String::from_utf8_lossy(&bytes).to_string();
+        // Strict, because this text is WRITTEN BACK whole: a lossy read turned every invalid
+        // byte in the file into U+FFFD, not only the ones the hunks touched.
+        let data = res!(utf8_text(&bytes, &path));
         let (updated, relaxed) = res!(file_edited(&path, &data, &hunks));
         // THE CRYSTAL'S THIRD DOOR, and it answers for both of its files.
         //
@@ -22752,8 +23197,11 @@ impl Tool {
         // The panel is told WHO is asking, and answers whether it took the screen.  Asked at the
         // panel and not here because the answer is "which Diamond is in view", which lives on the
         // page; this side knows only which Diamond the turn acts for.
+        // And WHICH TURN, so a turn this device runs for another can be told apart from one
+        // asked here: its file goes to the asking device's screen and this one is left alone
+        // (D-20261006-27).
         let owner = ctx.daimon().unwrap_or_default();
-        let shown = res!(crate::wasm::doc::show(&path, page, &owner).await);
+        let shown = res!(crate::wasm::doc::show(&path, page, &owner, &ctx.turn_tag()).await);
         Ok(Self::show_result(&path, &shown))
     }
 
@@ -23096,6 +23544,19 @@ impl Tool {
     #[cfg(any(target_arch = "wasm32", test))]
     fn show_result(path: &str, s: &Shown) -> MessageContent {
         let size = fmt!("{} bytes", s.size);
+        // A TURN RUN HERE FOR ANOTHER DEVICE.  The user is at that device, not this one, so the
+        // file goes to its screen and this one is left alone; the sentence names the device, and
+        // says nothing of "another Diamond", which was what it used to say and was false.
+        if !s.asker.trim().is_empty() {
+            let at = s.asker.trim();
+            return MessageContent::text(fmt!(
+                "'{}' ({}, {}) is going to the user's screen on {}, the device they asked from: \
+                this turn is running on another of their devices for them, so the file opens in \
+                Daimond's document panel on {} as this turn's progress reaches it, and the screen \
+                of the device running the turn is left alone. There is nothing to do again -- do \
+                not call file_show a second time for it. Tell them it is open on {}.",
+                path, s.label, size, at, at, at));
+        }
         // Answered before the format, because the format describes a screen nobody is looking at.
         if !s.shown {
             return MessageContent::text(fmt!(
@@ -24982,9 +25443,9 @@ impl Tool {
             extract_json_string(args, "stdin"), ctx).await)
         {
             Exec::Refused(why) => Ok(why),
-            Exec::Ran { res, no_net, tainting, read_only } =>
+            Exec::Ran { res, no_net, tainting, read_only, after } =>
                 Ok(Self::run_result(&argv, &res, ctx, no_net, tainting, read_only,
-                    spend_cap(args))),
+                    spend_cap(args)) + &after),
         }
     }
 
@@ -25163,6 +25624,23 @@ impl Tool {
                 "Refused: this turn's bounds do not describe any folder the command could run in, \
                 so there is no fence to run it inside. Nothing was run.")));
         }
+        // A toolchain this Diamond lacks is asked for here, on first use (E1), and the fence is
+        // then built from the bounds the answer leaves. A yes is recorded on the Diamond by the
+        // page (`set_toolkits`) and held for the rest of this turn; a no refuses this command
+        // and is not remembered.
+        let ask = ctx.kits_to_ask(argv, mode, machine.home.is_some());
+        if !ask.is_empty() {
+            let names: Vec<String> = ask.iter().map(|k| fmt!("\"{}\"", k.name())).collect();
+            let detail = fmt!("{{\"id\":\"{}\",\"kits\":[{}]}}",
+                json_escape(&ctx.daimon_of), names.join(","));
+            let answer = crate::wasm::web::egress_allowed_kit(&argv.join(" "), &detail).await;
+            if answer != Some(Verdict::Allow) {
+                return Ok(Exec::Refused(kit_refusal(argv, &ask)));
+            }
+            ctx.grant_kits(&ask);
+        }
+        let bounds = ctx.run_bounds();
+        let bare = command_fence(&bounds, &machine, true);
         // The network, asked about rather than taken away in silence (`hand/REVIEW.md` §1.13).
         //
         // `net_risk`, not the raw taint: an unattended worker is at risk on a clean turn too, and
@@ -25196,7 +25674,7 @@ impl Tool {
         // field comes from the turn's bounds and nothing else --
         // `test_a_yes_moves_nothing_but_the_network` holds it to exactly that.
         let fence = if step.gives_net() {
-            command_fence(&ctx.no_write, &machine, false)
+            command_fence(&bounds, &machine, false)
         } else {
             bare
         };
@@ -25252,7 +25730,7 @@ impl Tool {
         // The push credential joins it here and nowhere else, and it is appended LAST so that a
         // toolkit variable can never overwrite one of git's: the two name-spaces do not overlap
         // today, and "today" is not a property worth resting a credential on.
-        let mut env_pairs = match Kit::resolve(&ctx.no_write, &machine) {
+        let mut env_pairs = match Kit::resolve(&bounds, &machine) {
             Some(kit) => kit.env,
             None      => Vec::new(),
         };
@@ -25282,7 +25760,7 @@ impl Tool {
             stdin_json,
             timeout,
             fence.to_json(),
-            toolkit_names_json(&ctx.no_write),
+            toolkit_names_json(&bounds),
             budget,
             since_ms,
         ), link);
@@ -25291,7 +25769,29 @@ impl Tool {
             let mut c = lock_cache(&ctx.read_seen);
             c.removed = c.removed.saturating_add(n.min(u32::MAX as u64) as u32);
         }
-        Ok(Exec::Ran { res, no_net, tainting, read_only })
+        // AFTER THE FACT, for what the question above could not see: a wrapper script calling
+        // `cargo` is one program to `kits_wanted`, and the shell's "not found" is the first word
+        // of the toolkit it needed. The same door, the same answer; the command is not run again
+        // here, since it may have done half its work, and the daimon is told to run it again.
+        let mut after = String::new();
+        if ctx.can_ask_kits(mode, machine.home.is_some()) {
+            let late = kits_not_found(
+                &extract_json_string(&res, "stderr").unwrap_or_default(),
+                extract_json_i64(&res, "exit").unwrap_or(-1),
+                &toolkits(&bounds));
+            if !late.is_empty() {
+                let names: Vec<String> = late.iter().map(|k| fmt!("\"{}\"", k.name())).collect();
+                let detail = fmt!("{{\"id\":\"{}\",\"kits\":[{}]}}",
+                    json_escape(&ctx.daimon_of), names.join(","));
+                let yes = crate::wasm::web::egress_allowed_kit(&cmd, &detail).await
+                    == Some(Verdict::Allow);
+                if yes {
+                    ctx.grant_kits(&late);
+                }
+                after = kit_after_note(argv, &late, yes);
+            }
+        }
+        Ok(Exec::Ran { res, no_net, tainting, read_only, after })
     }
 
     /// The longest a run's identifier may be.
@@ -25956,20 +26456,11 @@ impl Tool {
     /// cause is a grant the user makes in a panel.
     #[cfg(any(target_arch = "wasm32", test))]
     fn toolkit_missing(argv0: &str, bounds: &[Bound]) -> Option<String> {
-        // The PROGRAMS each toolkit puts on PATH, which `Toolkit::bins` does not answer -- that
-        // one names the directories. Written here because only this door asks the question, and
-        // a table in the toolkit would be a second place to keep in step for one caller.
-        let programs: [(Toolkit, &[&str]); 4] = [
-            (Toolkit::Rust,   &["cargo", "rustc", "rustup"]),
-            (Toolkit::Node,   &["node", "npm", "npx"]),
-            (Toolkit::Python, &["python", "python3", "pip", "pip3", "pytest"]),
-            (Toolkit::Go,     &["go", "gofmt"]),
-        ];
         let granted = toolkits(bounds);
         // The tail of a path is the program: `/usr/bin/cargo` is cargo.
         let prog = argv0.rsplit('/').next().unwrap_or(argv0);
-        for (kit, names) in programs {
-            if names.contains(&prog) && !granted.contains(&kit) {
+        for kit in Toolkit::all() {
+            if kit.programs().contains(&prog) && !granted.contains(&kit) {
                 return Some(fmt!(
                     "Refused: the project's verify command is '{}' and the {} toolkit is not \
                     granted to this Diamond -- grant it in the Workspace panel, or declare a \
@@ -26021,8 +26512,16 @@ impl Tool {
             Ok(p)  => p,
             Err(w) => return Ok(refusal_line(w.trim_start_matches("Refused: "))),
         };
-        if let Some(why) = Self::toolkit_missing(&plan.argv[0], &ctx.no_write) {
-            return Ok(refusal_line(why.trim_start_matches("Refused: ")));
+        // Where the toolchain question can be put, `run_exec` puts it; this sentence is for the
+        // turns it cannot be put on (a worker alone, the bypass rung, a hand with no home).
+        // No answer is no home: `run_exec` says why the hand did not answer.
+        let home = crate::wasm::hand::status().await
+            .map(|st| Machine::from_status(&st).home.is_some())
+            .unwrap_or(false);
+        if !ctx.can_ask_kits(mode(), home) {
+            if let Some(why) = Self::toolkit_missing(&plan.argv[0], &ctx.run_bounds()) {
+                return Ok(refusal_line(why.trim_start_matches("Refused: ")));
+            }
         }
         // The declaration's `cwd` is relative to the project root, which is where this turn's
         // commands already run.
@@ -26036,10 +26535,10 @@ impl Tool {
             plan.timeout, None, ctx).await)
         {
             Exec::Refused(why) => Ok(why),
-            Exec::Ran { res, no_net, tainting, read_only } => {
+            Exec::Ran { res, no_net, tainting, read_only, after } => {
                 let secs = (js_sys::Date::now() - began) / 1_000.0;
                 Ok(Self::verify_project_result(&plan, &res, ctx, no_net, tainting, read_only, cap,
-                    secs))
+                    secs) + &after)
             },
         }
     }
@@ -26557,6 +27056,7 @@ enum Exec {
         no_net:    bool,
         tainting:  bool,
         read_only: bool,    // nothing was writable: the hand does not meter removals
+        after:     String,  // the toolchain question a "not found" raised, answered
     },
 }
 
@@ -27575,10 +28075,43 @@ impl ToolRegistry {
     pub async fn try_dispatch(&self, name: &str, args_json: &str)
         -> Outcome<MessageContent>
     {
+        self.try_dispatch_asking(name, args_json, place_door).await
+    }
+
+    /// [`Self::try_dispatch`], with the door a refused write is asked through given (E2).
+    ///
+    /// A write refused for being outside what the Diamond may change, where a yes could lift
+    /// it, is put to `ask`.  A yes holds the place for the rest of the turn -- the page has
+    /// written its mark -- and the call is made again, once.  A no answers with
+    /// [`place_refusal`].  No door (`None`) leaves the refusal as it was.
+    pub async fn try_dispatch_asking<A, F>(&self, name: &str, args_json: &str, ask: A)
+        -> Outcome<MessageContent>
+    where
+        A: FnOnce(PlaceAsk, String) -> F,
+        F: std::future::Future<Output = Option<Verdict>>,
+    {
         // A MODEL IS CALLING, so the call is answered as a model's and never as the user's own
         // door: the record's fence holds whatever the turn's bounds (`ToolContext::may_write`).
-        let ctx = ToolContext { by_model: true, ..self.ctx.clone() };
-        let out = self.dispatch_in(name, args_json, &ctx).await;
+        let model = || ToolContext { by_model: true, no_write: self.ctx.write_bounds(),
+            ..self.ctx.clone() };
+        let ctx = model();
+        ctx.take_place_ask();
+        let mut out = self.dispatch_in(name, args_json, &ctx).await;
+        if let (Ok(_), Some(pa)) = (&out, ctx.take_place_ask()) {
+            if ctx.can_ask_writes(mode()) {
+                match ask(pa.clone(), ctx.daimon_of.clone()).await {
+                    Some(Verdict::Allow) => {
+                        ctx.grant_place(&pa.place);
+                        let again = model();
+                        out = self.dispatch_in(name, args_json, &again).await;
+                        // Once: a second refusal is answered as it was said.
+                        again.take_place_ask();
+                    },
+                    Some(Verdict::Deny) => out = Ok(MessageContent::text(place_refusal(&pa))),
+                    None                => {},
+                }
+            }
+        }
         // Charged only on the answer.  A road failure carried nothing into the conversation --
         // it is about to be retried, and a turn that paid for each attempt would run out of
         // budget for having been on a train.
@@ -36533,6 +37066,315 @@ CLEAN            27 passed, 0 failed, exit 0, 900 ms
             "a program no toolkit grants was refused as though one did");
     }
 
+    // ── E1: a toolchain asked for on first use ──────────────────────
+
+    fn e1_argv(words: &[&str]) -> Vec<String> {
+        words.iter().map(|w| fmt!("{}", w)).collect()
+    }
+
+    fn e1_ctx(bounds: Vec<Bound>) -> ToolContext {
+        ToolContext { no_write: bounds, daimon_of: fmt!("d1"), ..ctx() }
+    }
+
+    /// An ungranted toolkit is a question, not a run -- on its own and inside `sh -c`.
+    #[test]
+    fn test_e1_an_ungranted_toolkit_is_asked_for_before_the_command_runs() {
+        let c = e1_ctx(diamond_bounds("diamonds/d1", &[fmt!("code")], &[]));
+        assert_eq!(c.kits_to_ask(&e1_argv(&["cargo", "build"]), Mode::Guarded, true),
+            vec![Toolkit::Rust]);
+        assert_eq!(c.kits_to_ask(&e1_argv(&["/home/u/.cargo/bin/rustc", "-V"]), Mode::Ask, true),
+            vec![Toolkit::Rust]);
+        assert_eq!(c.kits_to_ask(&e1_argv(&["sh", "-c", "cd x && cargo test 2>&1 | tail -5"]),
+            Mode::Guarded, true), vec![Toolkit::Rust]);
+        assert_eq!(c.kits_to_ask(&e1_argv(&["bash", "-lc", "FOO=1 npm ci; env python3 -m pytest"]),
+            Mode::Guarded, true), vec![Toolkit::Node, Toolkit::Python]);
+        assert!(c.kits_to_ask(&e1_argv(&["make", "all"]), Mode::Guarded, true).is_empty(),
+            "a program no toolkit lends was asked about");
+        assert!(c.kits_to_ask(&e1_argv(&["sh", "-c", "ls | grep cargo"]), Mode::Guarded, true)
+            .is_empty(), "an argument named like a program was asked about");
+    }
+
+    /// A yes grants the toolkit for the rest of the turn: the bounds carry it and nothing asks.
+    #[test]
+    fn test_e1_a_yes_grants_the_toolkit_and_the_command_runs_with_it() {
+        let c = e1_ctx(diamond_bounds("diamonds/d1", &[fmt!("code")], &[]));
+        let argv = e1_argv(&["cargo", "--version"]);
+        let ask = c.kits_to_ask(&argv, Mode::Guarded, true);
+        assert_eq!(ask, vec![Toolkit::Rust]);
+        c.grant_kits(&ask);
+        assert!(toolkits(&c.run_bounds()).contains(&Toolkit::Rust),
+            "the yes did not reach the bounds the fence is built from");
+        assert!(c.kits_to_ask(&argv, Mode::Guarded, true).is_empty(), "asked twice after a yes");
+        assert!(c.kits_to_ask(&e1_argv(&["rustup", "show"]), Mode::Guarded, true).is_empty(),
+            "the same toolkit was asked again for another of its programs");
+        // The next turn reads the grant from the Diamond, which the page wrote; this turn's copy
+        // goes, so a toolkit taken back in the panel is not kept alive here.
+        c.begin_turn();
+        assert!(!toolkits(&c.run_bounds()).contains(&Toolkit::Rust));
+    }
+
+    /// A no refuses this command with a sentence the daimon reads, and is not remembered.
+    #[test]
+    fn test_e1_a_no_refuses_the_command_and_is_asked_again_next_time() {
+        let c = e1_ctx(diamond_bounds("diamonds/d1", &[fmt!("code")], &[]));
+        let argv = e1_argv(&["cargo", "test"]);
+        let ask = c.kits_to_ask(&argv, Mode::Guarded, true);
+        let why = kit_refusal(&argv, &ask);
+        assert!(why.starts_with("Refused:") && why.contains("Rust") && why.contains("cargo test"),
+            "{}", why);
+        assert!(why.contains("waiting for the user's yes"), "{}", why);
+        assert_eq!(c.kits_to_ask(&argv, Mode::Guarded, true), vec![Toolkit::Rust],
+            "a no was remembered beyond the command");
+    }
+
+    /// A toolkit the Diamond already holds is never asked about.
+    #[test]
+    fn test_e1_a_granted_toolkit_is_not_asked_about() {
+        let mut b = diamond_bounds("diamonds/d1", &[fmt!("code")], &[]);
+        b.push(Toolkit::Rust.bound());
+        let c = e1_ctx(b);
+        assert!(c.kits_to_ask(&e1_argv(&["cargo", "build"]), Mode::Guarded, true).is_empty());
+        assert_eq!(c.kits_to_ask(&e1_argv(&["sh", "-c", "cargo build && npm test"]),
+            Mode::Guarded, true), vec![Toolkit::Node]);
+    }
+
+    /// Git asks only for the subcommands that carry the user's identity.
+    #[test]
+    fn test_e1_git_asks_on_commit_merge_rebase_and_tag_only() {
+        let c = e1_ctx(diamond_bounds("diamonds/d1", &[fmt!("code")], &[]));
+        for sub in ["commit", "merge", "rebase", "tag"] {
+            assert_eq!(c.kits_to_ask(&e1_argv(&["git", sub, "x"]), Mode::Guarded, true),
+                vec![Toolkit::Git], "git {} did not ask", sub);
+        }
+        assert_eq!(c.kits_to_ask(&e1_argv(&["git", "-C", "repo", "-c", "a=b", "commit", "-m", "x"]),
+            Mode::Guarded, true), vec![Toolkit::Git]);
+        assert_eq!(c.kits_to_ask(&e1_argv(&["sh", "-c", "git add -A && git commit -m 'fix'"]),
+            Mode::Guarded, true), vec![Toolkit::Git]);
+        for sub in ["status", "log", "diff", "add", "push", "fetch"] {
+            assert!(c.kits_to_ask(&e1_argv(&["git", sub]), Mode::Guarded, true).is_empty(),
+                "git {} asked for the user's identity", sub);
+        }
+        assert!(c.kits_to_ask(&e1_argv(&["git", "-C", "commit", "status"]), Mode::Guarded, true)
+            .is_empty(), "the value of -C was read as the subcommand");
+    }
+
+    /// Nobody is asked where a press here cannot be the answer; the command runs as before.
+    #[test]
+    fn test_e1_no_question_where_it_cannot_be_a_press_here() {
+        let argv = e1_argv(&["cargo", "build"]);
+        let b = diamond_bounds("diamonds/d1", &[fmt!("code")], &[]);
+        let c = e1_ctx(b.clone());
+        assert!(c.kits_to_ask(&argv, Mode::Bypass, true).is_empty(), "bypass asked");
+        assert!(c.kits_to_ask(&argv, Mode::Guarded, false).is_empty(), "asked with no home");
+        let chat = ToolContext { no_write: b.clone(), ..ctx() };
+        assert!(chat.kits_to_ask(&argv, Mode::Guarded, true).is_empty(), "a chat was asked");
+        let alone = e1_ctx(b);
+        alone.set_unsupervised();
+        assert!(alone.kits_to_ask(&argv, Mode::Guarded, true).is_empty(), "a lone worker asked");
+    }
+
+    /// The briefing promises the question only to a turn that can be asked it: a Diamond's own.
+    #[test]
+    fn test_e1_only_a_diamonds_own_turn_is_told_toolkits_are_asked_for() {
+        let mut m = Machine::at("/home/u/ws");
+        m.home = Some(fmt!("/home/u"));
+        m.caps = vec![fmt!("fence:linux"), fmt!("root:/home/u/ws"), fmt!("home:/home/u"),
+            fmt!("meter:deletes")];
+        let line = "asked on first use";
+        let brief = |c: &ToolContext| crate::prompts::turn_machine_note(c, &m, NetStep::Give,
+            Mode::Guarded);
+        let own = e1_ctx(diamond_bounds("diamonds/d1", &[fmt!("code")], &[]));
+        assert!(brief(&own).contains(line), "a Diamond's own turn is not told: {}", brief(&own));
+        let chat = ToolContext { no_write: chat_bounds("chats/c1/work", &[fmt!("code")], &[]),
+            ..ctx() };
+        assert!(!brief(&chat).is_empty(), "the chat was given no briefing at all");
+        assert!(!brief(&chat).contains(line), "a chat was promised a question: {}", brief(&chat));
+        let alone = e1_ctx(diamond_bounds("diamonds/d1", &[fmt!("code")], &[]));
+        alone.set_unsupervised();
+        assert!(!brief(&alone).contains(line), "a lone worker was promised a question: {}",
+            brief(&alone));
+        assert!(!crate::prompts::turn_machine_note(&own, &m, NetStep::Give, Mode::Bypass)
+            .contains(line), "bypass was promised a question it never puts");
+    }
+
+    /// A wrapper's "not found" names the toolkit after the fact; a missing file never does.
+    #[test]
+    fn test_e1_a_wrappers_not_found_names_the_toolkit_after_the_fact() {
+        assert_eq!(kits_not_found("./build.sh: line 3: cargo: command not found", 127, &[]),
+            vec![Toolkit::Rust]);
+        assert_eq!(kits_not_found("./t.sh: 2: npm: not found\nmake: *** [all] Error 127", 127, &[]),
+            vec![Toolkit::Node]);
+        assert_eq!(kits_not_found("env: \u{2018}go\u{2019}: No such file or directory", 127, &[]),
+            vec![Toolkit::Go]);
+        assert_eq!(kits_not_found("env: 'cargo': No such file or directory", 127, &[]),
+            vec![Toolkit::Rust]);
+        assert!(kits_not_found("x.sh: line 3: cargo: command not found", 1, &[]).is_empty(),
+            "a status the shell did not give for a missing program raised the question");
+        assert!(kits_not_found("cat: cargo: No such file or directory", 127, &[]).is_empty(),
+            "a program's own missing file was read as a missing toolchain");
+        assert!(kits_not_found("x.sh: line 1: make: command not found", 127, &[]).is_empty(),
+            "a program no toolkit lends was asked about");
+        assert!(kits_not_found("x.sh: line 3: cargo: command not found", 127, &[Toolkit::Rust])
+            .is_empty(), "a granted toolkit was asked about again");
+        let argv = e1_argv(&["./build.sh"]);
+        let yes = kit_after_note(&argv, &[Toolkit::Rust], true);
+        assert!(yes.contains("Rust") && yes.contains("run './build.sh' again"), "{}", yes);
+        let no = kit_after_note(&argv, &[Toolkit::Rust], false);
+        assert!(no.contains("not now") && no.contains("rather than retrying"), "{}", no);
+    }
+
+    /// Only the consent door's own word is a yes to the toolchain question.
+    #[test]
+    fn test_e1_only_the_kit_word_is_a_yes() {
+        assert_eq!(verdict_of(Some(KIT_ALLOW_WORD), KIT_ALLOW_WORD), Verdict::Allow);
+        for w in ["allow", "allow-net", "allow-once", "deny", ""] {
+            assert_eq!(verdict_of(Some(w), KIT_ALLOW_WORD), Verdict::Deny, "{} granted a kit", w);
+        }
+    }
+
+    // ── E2: a write outside what a Diamond may change is asked about ──
+
+    fn e2_reg(attached: &[&str], read_only: &[&str]) -> ToolRegistry {
+        let mut c = scoped(attached, read_only);
+        c.daimon_of = fmt!("d1");
+        ToolRegistry::new(vec![Tool::FileWrite], c)
+    }
+
+    /// The call answered with the door's `answer`, and every question it put.
+    async fn e2_write(reg: &ToolRegistry, path: &str, answer: Option<Verdict>)
+        -> (String, Vec<PlaceAsk>)
+    {
+        let asked = std::cell::RefCell::new(Vec::new());
+        let args = fmt!("{{\"path\":\"{}\",\"content\":\"x\"}}", path);
+        let out = reg.try_dispatch_asking("file_write", &args, |pa, id| {
+            assert_eq!("d1", id, "the question named no Diamond");
+            asked.borrow_mut().push(pa);
+            async move { answer }
+        }).await;
+        let said = match out {
+            Ok(m)  => m.as_text().into_owned(),
+            Err(e) => panic!("{}", e),
+        };
+        (said, asked.into_inner())
+    }
+
+    /// A refused write is a question naming the narrowest folder holding the file.
+    #[tokio::test]
+    async fn test_e2_a_refused_write_is_a_question_for_the_narrowest_folder() {
+        let reg = e2_reg(&["code"], &[]);
+        let (_, asked) = e2_write(&reg, "docs/plans/a.md", Some(Verdict::Deny)).await;
+        assert_eq!(asked, vec![PlaceAsk { path: fmt!("docs/plans/a.md"),
+            place: fmt!("docs/plans"), waiting: false }]);
+        let (_, asked) = e2_write(&reg, "top.md", Some(Verdict::Deny)).await;
+        assert_eq!(asked[0].place, "top.md", "a file at the root is its own place");
+        assert_eq!(asked[0].detail("d1"),
+            r#"{"id":"d1","place":"top.md","waiting":false}"#);
+        // Inside what it may change, nothing is asked.
+        let (said, asked) = e2_write(&reg, "code/a.rs", None).await;
+        assert!(asked.is_empty() && !said.starts_with(REFUSAL_OPENING), "{}", said);
+    }
+
+    /// A yes grants the narrowest folder, retries once, and is not asked again under it.
+    #[tokio::test]
+    async fn test_e2_a_yes_grants_the_narrowest_folder_and_retries_once() {
+        let reg = e2_reg(&["code"], &[]);
+        let root = reg.ctx.workspace.root().to_path_buf();
+        let (said, asked) = e2_write(&reg, "docs/plans/a.md", Some(Verdict::Allow)).await;
+        assert_eq!(asked.len(), 1);
+        assert!(!said.starts_with(REFUSAL_OPENING), "the retry was refused: {}", said);
+        assert_eq!(b"x".to_vec(), std::fs::read(root.join("docs/plans/a.md")).expect("written"));
+        let (said, asked) = e2_write(&reg, "docs/plans/deeper/b.md", None).await;
+        assert!(asked.is_empty(), "asked twice under a folder already allowed");
+        assert!(!said.starts_with(REFUSAL_OPENING), "{}", said);
+        // The narrowest folder, not its parent.
+        let (said, asked) = e2_write(&reg, "docs/c.md", Some(Verdict::Deny)).await;
+        assert_eq!(asked.len(), 1, "a yes for docs/plans granted docs");
+        assert!(said.starts_with(REFUSAL_OPENING), "{}", said);
+        // A new turn reads the grant from the mark the page wrote, not from this turn.
+        reg.ctx.begin_turn();
+        assert!(!reg.ctx.write_bounds().contains(&Bound::OnlyWriteUnder(fmt!("docs/plans"))));
+    }
+
+    /// A no refuses with a sentence the daimon reads, and the next write asks again.
+    #[tokio::test]
+    async fn test_e2_a_no_refuses_and_is_asked_next_time() {
+        let reg = e2_reg(&["code"], &[]);
+        let root = reg.ctx.workspace.root().to_path_buf();
+        let (said, asked) = e2_write(&reg, "docs/a.md", Some(Verdict::Deny)).await;
+        assert_eq!(asked.len(), 1);
+        assert_eq!(said, place_refusal(&asked[0]));
+        assert!(said.starts_with(REFUSAL_OPENING) && said.contains("not now"), "{}", said);
+        assert!(!root.join("docs/a.md").exists(), "a no wrote the file");
+        let (_, asked) = e2_write(&reg, "docs/a.md", Some(Verdict::Deny)).await;
+        assert_eq!(asked.len(), 1, "a no was remembered beyond the call");
+        // No door at all leaves the fence's own refusal as it was.
+        let (said, _) = e2_write(&reg, "docs/a.md", None).await;
+        assert!(said.contains("not in this Diamond's workspace"), "{}", said);
+    }
+
+    /// Under a mark made on another device the question is that mark, waiting.
+    #[tokio::test]
+    async fn test_e2_a_waiting_mark_is_asked_as_itself() {
+        let mut reg = e2_reg(&["code"], &[]);
+        reg.ctx.unconfirmed = vec![fmt!("notes")];
+        let (_, asked) = e2_write(&reg, "notes/deep/x.md", Some(Verdict::Allow)).await;
+        assert_eq!(asked, vec![PlaceAsk { path: fmt!("notes/deep/x.md"),
+            place: fmt!("notes"), waiting: true }]);
+        assert!(asked[0].detail("d1").contains(r#""waiting":true"#));
+        let (_, asked) = e2_write(&reg, "notes/other.md", None).await;
+        assert!(asked.is_empty(), "the whole waiting mark was not granted");
+    }
+
+    /// Nothing is asked where a yes may not lift the refusal, or nobody may be asked.
+    #[tokio::test]
+    async fn test_e2_no_question_where_a_yes_cannot_lift_it() {
+        let reg = e2_reg(&["code"], &["code/ro"]);
+        for p in ["code/ro/x.md", "diamonds/d1/.daimond/links.jsonl", "diamonds/d2/x.md",
+            ".daimond/skills/x.md"]
+        {
+            let (_, asked) = e2_write(&reg, p, Some(Verdict::Allow)).await;
+            assert!(asked.is_empty(), "{} was asked about", p);
+        }
+        let prev = set_mode(Mode::Bypass);
+        let (_, asked) = e2_write(&reg, "docs/a.md", Some(Verdict::Allow)).await;
+        set_mode(prev);
+        assert!(asked.is_empty(), "Bypass asked");
+        reg.ctx.set_unsupervised();
+        let (_, asked) = e2_write(&reg, "docs/a.md", Some(Verdict::Allow)).await;
+        assert!(asked.is_empty(), "an unattended turn asked");
+        // The user's own door is never the model's, so it records nothing to ask.
+        let reg = e2_reg(&["code"], &[]);
+        let _ = reg.dispatch_unbilled("file_write", r#"{"path":"docs/a.md","content":"x"}"#).await;
+        assert!(reg.ctx.take_place_ask().is_none());
+        // Nor is a chat's.
+        let mut c = ctx();
+        c.no_write = chat_bounds("chats/c1", &[], &[]);
+        c.daimon_of = fmt!("c1");
+        let reg = ToolRegistry::new(vec![Tool::FileWrite], c);
+        let (_, asked) = e2_write_as(&reg, "docs/a.md", "c1").await;
+        assert!(asked.is_empty(), "a chat asked");
+    }
+
+    async fn e2_write_as(reg: &ToolRegistry, path: &str, who: &str) -> (String, Vec<PlaceAsk>) {
+        let asked = std::cell::RefCell::new(Vec::new());
+        let args = fmt!("{{\"path\":\"{}\",\"content\":\"x\"}}", path);
+        let out = reg.try_dispatch_asking("file_write", &args, |pa, id| {
+            assert_eq!(who, id);
+            asked.borrow_mut().push(pa);
+            async move { Some(Verdict::Allow) }
+        }).await;
+        (out.map(|m| m.as_text().into_owned()).unwrap_or_default(), asked.into_inner())
+    }
+
+    /// Only the consent door's own word is a yes to the write question.
+    #[test]
+    fn test_e2_only_the_place_word_is_a_yes() {
+        assert_eq!(verdict_of(Some(PLACE_ALLOW_WORD), PLACE_ALLOW_WORD), Verdict::Allow);
+        for w in ["allow", "allow-kit", "allow-net", "deny", ""] {
+            assert_eq!(verdict_of(Some(w), PLACE_ALLOW_WORD), Verdict::Deny, "{} granted", w);
+        }
+    }
+
 
     // ── serve: a folder a person can look at ────────────────────────
 
@@ -43690,6 +44532,39 @@ CLEAN            27 passed, 0 failed, exit 0, 900 ms
             deferred);
     }
 
+    /// **A turn run for another device says the file went to THAT device, and names it**
+    /// (D-20261006-27).  It used to say "the user is in another Diamond" -- false: the user was at
+    /// the device they asked from, and the panel opened over the screen of the one running the
+    /// turn.  The control: a show deferred on this device for another Diamond still says so.
+    #[test]
+    fn test_a_show_for_another_device_names_that_device() {
+        let s = Shown {
+            tier:  fmt!("doc"),
+            media: fmt!("Pdf"),
+            label: fmt!("PDF document"),
+            size:  900,
+            shown: false,
+            asker: fmt!("Fred's laptop"),
+            ..Default::default()
+        };
+        let out = Tool::show_result("book/main.pdf", &s).as_text().to_string();
+        assert!(out.contains("on Fred's laptop, the device they asked from"),
+            "the answer does not say the file goes to the asking device: {}", out);
+        assert!(out.contains("Tell them it is open on Fred's laptop"),
+            "the model is not told where to point the user: {}", out);
+        assert!(!out.contains("another Diamond"),
+            "the answer still says the user is in another Diamond: {}", out);
+        assert!(out.contains("do not call file_show a second time"),
+            "the model is not told the show needs no repeat: {}", out);
+        assert_eq!(CallOutcome::Done, call_outcome(&out),
+            "a show sent to the asking device is booked as a refusal or a failure: {}", out);
+
+        let here = Tool::show_result("book/main.pdf", &Shown { asker: String::new(), ..s })
+            .as_text().to_string();
+        assert!(here.contains("another Diamond"),
+            "the same-device deferral lost its own sentence: {}", here);
+    }
+
     /// **The fold does not tell the model it wrote a file that does not exist.**
     ///
     /// Asserted on the NOTE, which is what the model actually reads, and not only on the booking.
@@ -43820,6 +44695,7 @@ CLEAN            27 passed, 0 failed, exit 0, 900 ms
             named:    fmt!("PNG image"),
             found:    fmt!("PDF document"),
             shown:    true,
+            asker:    String::new(),
         };
         let out = Tool::show_result("export.png", &s).as_text().to_string();
         assert!(out.contains("PNG image") && out.contains("PDF document"), "{}", out);
@@ -45888,6 +46764,8 @@ pub struct CrystalProof {
     pub why:    String,     // the driver's reasons, empty on a pass
     pub debug:  u32,        // debug nodes shown: #dbg, <pre>, KEYMAP, DKEYS
     pub before: Option<u32>,// debug nodes at the last passing version, when one is marked
+    pub page:   Option<String>,// mark of the page it read (`crystal_page_mark`), None if unread
+    pub wrote:  bool,       // the turn wrote that page itself, by this write or an earlier one
 }
 
 impl CrystalProof {
@@ -45895,10 +46773,10 @@ impl CrystalProof {
     pub fn from_driver(line: &str, debug: u32) -> Option<Self> {
         let line = line.trim();
         if line == "pass" {
-            return Some(Self { pass: true, why: String::new(), debug, before: None });
+            return Some(Self { pass: true, why: String::new(), debug, before: None, page: None, wrote: false });
         }
         line.strip_prefix("FAIL:").map(|why| Self {
-            pass: false, why: why.trim().chars().take(400).collect(), debug, before: None })
+            pass: false, why: why.trim().chars().take(400).collect(), debug, before: None, page: None, wrote: false })
     }
 
     /// The line the turn may not end over, or `None` when the page passes and holds no new
@@ -46130,11 +47008,11 @@ mod crystal_load_proof {
         let mut c = super::tests::ctx();
         c.daimon_of = "d1".to_string();
         let on = |path: &str| fmt!(r#"{{"path":"{}","content":"x"}}"#, path);
-        assert!(Tool::FileWrite.is_crystal_write(&on("diamonds/d1/crystal.html"), &c));
-        assert!(Tool::FileWrite.is_crystal_write(&on("diamonds/d1/crystal.json"), &c));
-        assert!(!Tool::FileWrite.is_crystal_write(&on("diamonds/d2/crystal.json"), &c));
-        assert!(!Tool::FileWrite.is_crystal_write(&on("diamonds/d1/notes.md"), &c));
-        assert!(!Tool::FileRead.is_crystal_write(&on("diamonds/d1/crystal.json"), &c));
+        assert_eq!(Tool::FileWrite.crystal_write(&on("diamonds/d1/crystal.html"), &c), Some(true));
+        assert_eq!(Tool::FileWrite.crystal_write(&on("diamonds/d1/crystal.json"), &c), Some(false));
+        assert_eq!(Tool::FileWrite.crystal_write(&on("diamonds/d2/crystal.json"), &c), None);
+        assert_eq!(Tool::FileWrite.crystal_write(&on("diamonds/d1/notes.md"), &c), None);
+        assert_eq!(Tool::FileRead.crystal_write(&on("diamonds/d1/crystal.json"), &c), None);
     }
 
     /// K1: the turn's ask sets the graphics minimum, through the context.
@@ -46215,19 +47093,19 @@ pub fn crystal_page_mark(page: &str) -> String {
     }
 }
 
-/// Should a turn's end put back the last page that passed the load proof (K2)?
+/// The failing load proof a turn's end warns over (K2), or `None` when it says nothing.
 ///
-/// Only where the turn changed the page, a pass is marked, and the page it leaves is not the one
-/// that passed: a page the proof passed this turn has been marked already, and a Diamond never
-/// marked has no known good page to go back to.
+/// Only this turn's own verdict counts: the last proof the turn took failed, the page it read is
+/// one this turn wrote, and that page is still in place.  A page written
+/// elsewhere, one the daimon put back with `file_revert`, or one no proof read this turn was
+/// never judged by this turn, and a false "fix it" is worse than no warning.
 ///
 /// # Arguments
-/// * `passed` - [`CrystalPassed::page`] of the mark, `None` when none is.
-pub fn restore_wanted(passed: Option<&str>, before: &str, after: &str) -> bool {
-    match passed {
-        Some(mark) => after != before && crystal_page_mark(after) != mark,
-        None       => false,
-    }
+/// * `last` - the turn's last proof ([`ToolContext::last_proof`]).
+/// * `after` - the page as the turn left it.
+pub fn unproven_left(last: Option<CrystalProof>, after: &str) -> Option<CrystalProof> {
+    let mark = crystal_page_mark(after);
+    last.filter(|p| !p.pass && p.wrote && p.page.as_deref() == Some(mark.as_str()))
 }
 
 #[cfg(test)]
@@ -46235,17 +47113,64 @@ mod tests_restore {
     use super::*;
 
     #[test]
-    fn test_restore_wanted_only_for_a_changed_page_that_did_not_pass_00() {
-        let good = "<p>good</p>";
-        let mark = crystal_page_mark(good);
-        assert!(!restore_wanted(None, good, "<p>bad</p>"), "no mark, nothing to go back to");
-        assert!(!restore_wanted(Some(&mark), "<p>bad</p>", "<p>bad</p>"), "the page did not move");
-        assert!(!restore_wanted(Some(&mark), "<p>old</p>", good), "the page left is the one that passed");
-        assert!(restore_wanted(Some(&mark), good, "<p>bad</p>"));
+    fn test_unproven_left_only_for_this_turns_failing_page_00() {
+        let bad = "<p>bad</p>";
+        let fail = |page: Option<String>| Some(CrystalProof { page, wrote: true,
+            ..CrystalProof::from_driver("FAIL: x", 0).expect("reads") });
+        let pass = Some(CrystalProof { page: Some(crystal_page_mark(bad)), wrote: true,
+            ..CrystalProof::from_driver("pass", 0).expect("reads") });
+        assert!(unproven_left(fail(Some(crystal_page_mark(bad))), bad).is_some(), "the turn's failing page is in place");
+        assert!(unproven_left(None, bad).is_none(), "no proof this turn: the turn judged nothing");
+        assert!(unproven_left(pass, bad).is_none(), "the turn's last proof passed");
+        assert!(unproven_left(fail(Some(crystal_page_mark(bad))), "<p>newer</p>").is_none(),
+            "another page replaced it, from elsewhere or by file_revert");
+        assert!(unproven_left(fail(None), bad).is_none(), "the proof read no page");
+        let theirs = Some(CrystalProof { page: Some(crystal_page_mark(bad)),
+            ..CrystalProof::from_driver("FAIL: x", 0).expect("reads") });
+        assert!(unproven_left(theirs, bad).is_none(), "a data write's proof of a page the turn did not write");
         // The shipped page is a mark too: empty, and an emptied page is it.
-        assert!(restore_wanted(Some(""), "", "<p>bad</p>"));
-        assert!(!restore_wanted(Some(""), "<p>bad</p>", "  "));
-        let m = CrystalPassed { version: 3, at: 1, page: mark.clone(), data: "d".into(), debug: 0 };
+        assert!(unproven_left(fail(Some(String::new())), "  ").is_some());
+        let m = CrystalPassed { version: 3, at: 1, page: crystal_page_mark(bad), data: "d".into(), debug: 0 };
         assert_eq!(CrystalPassed::from_json(&m.to_json()), Some(m));
+    }
+}
+
+#[cfg(test)]
+mod tests_utf8_text {
+    use super::*;
+
+    /// Bytes that are not UTF-8 are refused, naming the file and the first bad byte, and never
+    /// decoded into U+FFFD that a save would write back (r544 QA C, F-C1).
+    #[test]
+    fn test_utf8_text_refuses_bytes_that_are_not_utf8_00() {
+        let path = "diamonds/abc123/crystal.json";
+        let bytes = b"\x00\x01PK\x03\x04binary\xff\xfe not json".to_vec();
+        let msg = match utf8_text(&bytes, path) {
+            Ok(t)  => panic!("decoded {:?} instead of refusing", t),
+            Err(e) => fmt!("{}", e),
+        };
+        assert!(msg.contains(path), "names the file: {}", msg);
+        assert!(msg.contains("from byte 12"), "names the first bad byte: {}", msg);
+        assert!(!msg.contains('\u{fffd}'), "carries no replacement character: {}", msg);
+    }
+
+    #[test]
+    fn test_utf8_text_passes_text_byte_for_byte_01() {
+        for t in ["", "{}", "\u{feff}{\"t\":\"BOM\"}", "AGE-ENCRYPTED-FILE v1\nZm9v", "\u{0}\u{1}PK"] {
+            match utf8_text(t.as_bytes(), "x") {
+                Ok(got) => assert_eq!(got, t),
+                Err(e)  => panic!("refused valid UTF-8 {:?}: {}", t, e),
+            }
+        }
+    }
+
+    #[test]
+    fn test_crystal_text_is_blank_only_for_nothing_02() {
+        for t in ["", "  \n", "{}", " { \n } "] {
+            assert!(crystal_text_is_blank(t), "{:?} holds nothing", t);
+        }
+        for t in ["{\"title\":\"x\"}", "{", "}", "x", "{\"sections\":[]}"] {
+            assert!(!crystal_text_is_blank(t), "{:?} holds something", t);
+        }
     }
 }

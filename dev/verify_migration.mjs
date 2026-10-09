@@ -78,11 +78,10 @@ await p.waitForTimeout(2500);      // loadDiamonds() and Instructions.refresh() 
 const listed = await p.$eval('#diamond-list', e => e.textContent);
 check('the Diamond is still in the list', /An old pursuit/.test(listed), listed.trim().slice(0, 60));
 
-const chip = await p.evaluate(() => {
-	const el = document.getElementById('instructions-chip');
-	return el && el.style.display !== 'none' ? el.textContent.trim() : '(hidden)';
-});
-check('the standing instructions are still in force', /DAIMOND\.md/.test(chip), chip);
+// The DAIMOND.md chip left the Workspace (round 2, P2), so "in force" is read where it is true: the
+// user's own rules as the prompt is composed from them.
+const mine = await p.evaluate(() => (window.DaimondInstructions && DaimondInstructions.mine) || '');
+check('the standing instructions are still in force', mine.includes(RULE.trim()), mine.trim().slice(0, 60) || '(none)');
 
 // ── What is actually on disk ────────────────────────────────────────────
 const disk = await p.evaluate(async ({ id }) => {

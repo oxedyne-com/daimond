@@ -472,8 +472,10 @@ try {
 			// restated the Name label above the field. The aria-label stays.
 			hint:     nameIn ? (nameIn.getAttribute('placeholder') || '') : null,
 			// One model: the chat's own. Its workers stay on the tile's pending
-			// row, where they are chosen before the first turn.
-			models:   card.querySelectorAll('select.tile-model').length,
+			// row, where they are chosen before the first turn. The Effort row
+			// (U-D #9) shares the picker's select class, so it is not a model.
+			models:   [...card.querySelectorAll('select.tile-model')]
+				.filter(s => !s.closest('.tile-dlg-effort')).length,
 		};
 	});
 	const CW = chatDlg && chatDlg.words;

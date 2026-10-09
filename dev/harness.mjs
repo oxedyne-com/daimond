@@ -452,6 +452,11 @@ export async function open(opts = {}) {
 		// a demo, an owner recording -- rather than for asserting on. Left unset,
 		// nothing is recorded, as before.
 		video     = null,
+		// SERVICE WORKERS, passed to the context ('allow' or 'block'). A verifier that
+		// serves another build's www through `route` blocks them: Playwright's page.route
+		// never sees a request a service worker answers, so a worker could serve the page
+		// this tree's files behind the route's back.
+		serviceWorkers = 'allow',
 	} = opts;
 
 	// Before a browser is even launched: is the mock this run will read the mock
@@ -546,6 +551,7 @@ export async function open(opts = {}) {
 			...(ua ? { userAgent: ua } : {}),
 			...(timezoneId ? { timezoneId: timezoneId } : {}),
 			...(video ? { recordVideo: { dir: video, size: { width: 1500, height: 950 } } } : {}),
+			serviceWorkers,
 		});
 	} else if (engine === 'chromium') {
 		browser = await chromium.launchPersistentContext(profileDir, {
@@ -559,6 +565,7 @@ export async function open(opts = {}) {
 			...(ua ? { userAgent: ua } : {}),
 			...(timezoneId ? { timezoneId: timezoneId } : {}),
 			...(video ? { recordVideo: { dir: video, size: { width: 1500, height: 950 } } } : {}),
+			serviceWorkers,
 		});
 	} else {
 		throw new Error('unknown engine "' + engine + '"; set DAIMOND_BROWSER to chromium or webkit');
@@ -1133,6 +1140,67 @@ export async function markHere(s, diamondId, ref, opts = {}) {
 		}, { diamondId, id });
 	}
 	return { id, confirmed: !!confirmed, shared };
+}
+
+/// The Workspace tree's rows that hold a mark for what is in focus, read the way a person
+/// reads them (P3): the ◈'s role on the row, and the share item in the row ⋯.
+///
+/// Keyed by the row's path in the tree. `share` is the item's `aria-checked`, `pressable`
+/// whether it can be pressed, `why` its title; all three are null where the ⋯ has no share
+/// item (not the user's own mark). `ro` is the muted ◈, `wait` a mark waiting on this device.
+export async function workRows(s) {
+	const p = s.page || s;
+	await p.evaluate(() => window.DaimondPanels && (DaimondPanels.open ? DaimondPanels.open('work') : DaimondPanels.show('work')));
+	await p.waitForTimeout(500);
+	await p.click('#panel-work [data-act="refresh"]', { force: true }).catch(() => {});
+	await p.waitForTimeout(2100);
+	return p.evaluate(() => {
+		const out = {};
+		for (const r of document.querySelectorAll('#panel-work .files-row[data-path]')) {
+			const m = r.querySelector('[data-act="mark"]');
+			if (!m || m.hidden || !['on', 'ro', 'wait'].some((c) => m.classList.contains(c))) continue;
+			const more = r.querySelector('[data-act="row-more"]');
+			let share = null, pressable = null, why = null;
+			if (more) {
+				more.click();
+				const b = document.querySelector('.railhead-menu[data-menu="row"] [data-act="share"]');
+				if (b) { share = b.getAttribute('aria-checked') === 'true'; pressable = !b.disabled; why = b.title || ''; }
+				if (document.querySelector('.railhead-menu[data-menu="row"]')) more.click();
+			}
+			out[r.dataset.path] = { share, pressable, why, ro: m.classList.contains('ro'), wait: m.classList.contains('wait') };
+		}
+		return out;
+	});
+}
+
+/// Press an item of a tree row's ⋯ in the Workspace panel, as a person does: hover the row,
+/// open its ⋯, press the item. False where the row, the item, or a press of it is not there.
+export async function pressRowItem(s, path, act) {
+	const p = s.page || s;
+	const row = '#panel-work .files-row[data-path="' + path + '"]';
+	if (!await p.$(row)) return false;
+	await p.hover(row).catch(() => {});
+	await p.click(row + ' [data-act="row-more"]', { force: true });
+	const it = await p.$('.railhead-menu[data-menu="row"] [data-act="' + act + '"]');
+	if (!it || await it.isDisabled()) {
+		await p.keyboard.press('Escape').catch(() => {});
+		return false;
+	}
+	await it.click();
+	await p.waitForTimeout(1500);
+	return true;
+}
+
+/// Press a tree row's ◈ in the Workspace panel: give where it is a ghost, take away where
+/// the mark is in force.
+export async function pressRowMark(s, path) {
+	const p = s.page || s;
+	const sel = '#panel-work .files-row[data-path="' + path + '"] [data-act="mark"]';
+	if (!await p.$(sel)) return false;
+	await p.hover('#panel-work .files-row[data-path="' + path + '"]').catch(() => {});
+	await p.click(sel, { force: true });
+	await p.waitForTimeout(1500);
+	return true;
 }
 
 /// Point the app at a provider through the real Settings form.

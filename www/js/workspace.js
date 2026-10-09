@@ -780,10 +780,10 @@
 	var HELP = {
 		pop: 'help-menu', btn: 'help-btn', title: 'topbar.help', end: null, el: null, again: false,
 		items: [
-			{ id: 'pair-link-btn',     mark: null },	// PH-01 order: Link device before Settings
+			{ id: 'pair-link-btn',     mark: null },	// PH-01 order: Link device before Appearance
 			{ id: 'settings-menu-btn', mark: null },
 		],
-		// The trigger wears the guide's "?" until a phone also parks Settings and Link device in it, and
+		// The trigger wears the guide's "?" until a phone also parks Appearance and Link device in it, and
 		// then the generic dots: a "?" would say only half of what a four-row overflow means.
 		folded: function (phone) { var b = document.getElementById('help-btn'); if (b) b.classList.toggle('is-more', phone); },
 		sync: null,

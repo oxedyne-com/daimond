@@ -231,6 +231,16 @@ pub const ORPHAN_GRACE_ROUNDS: usize = 5;
 /// its workers are terminal, so the wait only bites while one is genuinely still running.
 pub const GATHER_TIMEOUT_S: u64 = 600;
 
+/// Milliseconds the page lets one worker's `run_turn` run before it stops the worker with a report
+/// of its own, inside [`GATHER_TIMEOUT_S`] so `gather` always has a terminal answer to hand back.
+///
+/// The one source of the figure (r543 QA N1): `www/js/daimond.js` reads it through the wasm's
+/// `worker_wall_clock_ms`, and a round's wait for its first data is bounded inside it
+/// (`llm::attempt_wait`), so a model that never answers is reported as that and not as a worker
+/// the clock stopped.
+pub const WORKER_WALL_CLOCK_MS: u64 = 540_000;
+const _: () = assert!(WORKER_WALL_CLOCK_MS < GATHER_TIMEOUT_S * 1_000);
+
 /// Fraction of the budget kept verbatim at the end of the conversation.
 ///
 /// The recent exchanges are the ones that must survive intact: a model that has just been

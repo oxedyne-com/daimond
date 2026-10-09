@@ -120,6 +120,7 @@ const LIFTED = [
 	'var _engineHeld = new WeakMap();',
 	extractFn(APP, 'ensureApp'),
 	extractFn(APP, 'applySight'),		// T2: ensureApp puts the model list's picture support on the app
+	extractFn(APP, 'applyEffort'),		// U-D #9: and the chat's chosen Effort
 	extractFn(APP, 'seedEngine'),
 	extractFn(APP, 'armEngine'),
 	extractFn(APP, 'reconcileEngine'),

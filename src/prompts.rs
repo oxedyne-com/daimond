@@ -1318,13 +1318,22 @@ pub fn machine_note(m: &Machine, bounds: &[Bound], step: NetStep, mode: Mode) ->
 				// So: name the base, say what is missing, and say WHOSE decision it is.  The last
 				// clause is the load-bearing one -- it turns a dead end into a sentence the user
 				// can act on.
-				s.push_str(
-					"\nNo toolchain is granted to this Diamond. A command reaches only \
-					/usr/local/bin, /usr/bin and /bin, so anything installed under the user's own \
-					home -- cargo and rustc, nvm's node, pip's tools, go -- is not on PATH and \
-					not readable, however certainly it is installed. Do not report a missing \
-					toolchain as absent from the computer: it is a grant the user makes in this \
-					Diamond's settings, and asking for it is the way forward.");
+				//
+				// With a home, the line below says how the grant is made, so this one is shorter.
+				if m.home.is_some() {
+					s.push_str(
+						"\nNo toolchain is granted to this Diamond yet. A command reaches only \
+						/usr/local/bin, /usr/bin and /bin; a toolchain under the user's home is not \
+						missing from the computer, it is a grant the user makes.");
+				} else {
+					s.push_str(
+						"\nNo toolchain is granted to this Diamond. A command reaches only \
+						/usr/local/bin, /usr/bin and /bin, so anything installed under the user's own \
+						home -- cargo and rustc, nvm's node, pip's tools, go -- is not on PATH and \
+						not readable, however certainly it is installed. Do not report a missing \
+						toolchain as absent from the computer: it is a grant the user makes in this \
+						Diamond's settings, and asking for it is the way forward.");
+				}
 			}
 			for k in granted {
 				s.push_str(&fmt!("\n{} toolkit: granted, but this hand did not say where the \
@@ -1465,7 +1474,7 @@ pub async fn machine_briefing(ctx: &crate::tools::ToolContext) -> String {
 	let step = crate::tools::net_step(
 		mode, ctx.net_risk(), ctx.is_unsupervised(), ctx.net_consent());
 	let note = match Machine::paired(&st) {
-		Some(m) => machine_note(&m, &ctx.no_write, step, mode),
+		Some(m) => turn_machine_note(ctx, &m, step, mode),
 		None    => String::new(),
 	};
 	// THE ONE PLACE THE FACT IS ESTABLISHED, and `ToolRegistry::offered` reads it back to decide
@@ -1475,6 +1484,40 @@ pub async fn machine_briefing(ctx: &crate::tools::ToolContext) -> String {
 	// that is not a path, or bounds that describe nowhere on the machine.
 	crate::tools::note_machine_rooted(!note.is_empty());
 	if note.is_empty() { NO_MACHINE_NOTE.to_string() } else { note }
+}
+
+/// The machine briefing a turn is given: [`machine_note`] for its bounds, and the toolkits still
+/// to be asked for where this turn can put that question.
+///
+/// Only a Diamond's own, supervised turn can ([`ToolContext::can_ask_kits`]); a chat or a lone
+/// worker is told what [`machine_note`] says and nothing more, because a promise of a question
+/// nobody will be shown is a promise the next command breaks.
+pub fn turn_machine_note(
+	ctx:	&crate::tools::ToolContext,
+	m:		&Machine,
+	step:	NetStep,
+	mode:	Mode,
+)
+	-> String
+{
+	let mut s = machine_note(m, &ctx.no_write, step, mode);
+	if !s.is_empty() && ctx.can_ask_kits(mode, m.home.is_some()) {
+		s.push_str(&kit_ask_note(&ctx.no_write));
+	}
+	s
+}
+
+/// E1: the toolkits not yet granted, named as asked for when a command first needs one, so the
+/// daimon runs the command rather than sending the user to a panel.
+fn kit_ask_note(bounds: &[Bound]) -> String {
+	let have = toolkits(bounds);
+	let rest: Vec<Toolkit> = Toolkit::all().into_iter().filter(|k| !have.contains(k)).collect();
+	if rest.is_empty() {
+		return String::new();
+	}
+	fmt!("\n{}: asked on first use; run the command and the user is asked.{}",
+		crate::tools::kit_labels(&rest),
+		if rest.contains(&Toolkit::Git) { " Git: on commit, merge, rebase or tag." } else { "" })
 }
 
 /// What a turn with nowhere to run a command is told, in place of the paragraph about folders.
@@ -2918,6 +2961,27 @@ mod tests {
 		assert!(!g.contains("No toolchain is granted"),
 			"a Diamond that HAS a toolkit is told it has none: {}", g);
 		assert!(g.contains("Rust"), "and the one it has is not named: {}", g);
+	}
+
+	/// E1: the toolkits not yet granted are named as asked on first use, in one line.
+	#[test]
+	fn test_e1_ungranted_toolkits_are_named_as_asked_on_first_use() {
+		let mut b = diamond_bounds("diamonds/d1", &[fmt!("code")], &[]);
+		let s = kit_ask_note(&b);
+		assert!(s.contains("Rust, Node, Python, Go and Git: asked on first use"), "{}", s);
+		assert!(s.contains("Git: on commit, merge, rebase or tag"), "{}", s);
+		b.push(Toolkit::Git.bound());
+		let g = kit_ask_note(&b);
+		assert!(g.contains("Rust, Node, Python and Go: asked on first use"), "{}", g);
+		assert!(!g.contains("Git: on commit"), "a granted Git is still said to be asked: {}", g);
+		for k in Toolkit::all() {
+			b.push(k.bound());
+		}
+		assert_eq!(kit_ask_note(&b), "", "a Diamond holding every toolkit was told of a question");
+		// The briefing a chat is given never carries it; which turns can ask is
+		// `tools::tests::test_e1_only_a_diamonds_own_turn_is_told_toolkits_are_asked_for`.
+		assert!(!machine_note(&machine(), &diamond_bounds("diamonds/d1", &[fmt!("code")], &[]),
+			NetStep::Give, Mode::default()).contains("asked on first use"));
 	}
 
 	#[test]

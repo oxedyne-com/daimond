@@ -17,7 +17,7 @@ const HERE = dirname(fileURLToPath(import.meta.url));
 const APP  = readFileSync(join(HERE, 'daimond.js'), 'utf8');
 
 function extractFn(src, name) {
-	const m = new RegExp('\\n\\t+function ' + name + '\\(').exec(src);
+	const m = new RegExp('\\n\\t+(?:async )?function ' + name + '\\(').exec(src);
 	if (!m) return '';
 	const start = m.index + 1;
 	const brace = src.indexOf('{', start);
@@ -58,8 +58,9 @@ function card(q) {
 
 // The lifted functions, over a world the test controls.
 function world() {
-	const W = { sent: [], rendered: 0, unpinned: [], armed: null, out: new El('chat-output') };
-	const names = ['askClose', 'askMarkAnswered', 'askHolds', 'drainQueue', 'armAskIdleBound', 'askCurrent'];
+	const W = { sent: [], steered: [], rendered: 0, unpinned: [], armed: null, out: new El('chat-output') };
+	const names = ['askClose', 'askMarkAnswered', 'askHolds', 'drainQueue', 'armAskIdleBound', 'askCurrent',
+		'askOpenIn', 'steerFromTrigger'];
 	const body = names.map((n) => extractFn(APP, n)).join('\n');
 	W.api = new Function('W', `
 		var ASK_CHOSE = 'Chose: ', ASK_OTHER = 'Other: ', ASK_SILENT_MAX_MS = 3600000;
@@ -76,11 +77,19 @@ function world() {
 		function dialogIdleMs() { return 1800000; }
 		function trail() {}
 		function askAnswer(c, text, shown) { if (c.dataset.answered) return; askClose(c, shown); W.sent.push(text); }
+		var currentDiamond = null;
+		function diamondBusy() { return false; }
+		function daimonChat(f) { return f.rec; }
+		function offScreenSteerAllowed() { return true; }
+		async function selectDiamond(f) { currentDiamond = f; }
+		async function doSteer(text) { W.steered.push(text); return ''; }
+		async function runSteer(f, text) { W.steered.push(text); return ''; }
 		${body}
 		return {
 			draw: function (c) { W.out.appendChild(c); _askCard = c; },
 			open: function (chat) { current = chat; chats = [chat]; },
 			askMarkAnswered: askMarkAnswered, drainQueue: drainQueue, armAskIdleBound: armAskIdleBound,
+			steerFromTrigger: steerFromTrigger, onDiamond: function (f) { currentDiamond = f; },
 			holds: function () { return typeof askHolds === 'function' ? askHolds() : null; },
 		};`)(Object.assign(W, { El }));
 	return W;
@@ -138,4 +147,46 @@ test('after a typed answer the idle default stands down, whatever the clock says
 	// The half hour passes: the backstop, if it fired, would answer "Other: Alpha.".
 	if (W.armed.stands()) W.armed.fire();
 	assert.deepEqual(W.sent, [], 'the idle default sent an answer the person had not given');
+});
+
+// Q18: a Diamond's trigger or preset is drawn as a user message, but it is not the person's
+// words. It never answers an open question; a trigger that comes due waits behind the card.
+test('a trigger\'s or preset\'s message drawn after the question does not answer it', () => {
+	const W = world(), c = card('Which way?');
+	W.api.draw(c);
+	W.api.askMarkAnswered('Run the hourly check.', true);
+	assert.equal(c.dataset.answered, undefined, 'a trigger\'s message closed the card "in your own words"');
+	assert.equal(c.querySelector('.ask-done'), null);
+	// The person's own message after it still answers.
+	W.api.askMarkAnswered('Beta, please.');
+	assert.equal(c.dataset.answered, '1');
+	assert.equal(c.querySelector('.ask-done').textContent, 'ask.answered_own');
+});
+
+test('a trigger that comes due while its Diamond\'s question is open waits behind the card', async () => {
+	const W = world(), now = Date.now();
+	const rec = { messages: [
+		{ role: 'user', content: 'Plan it.', ts: now - 3000 },
+		{ role: 'tool_log', name: 'ask', outcome: 'done', args: '{}', ts: now - 2000 },
+		{ role: 'user', content: 'An earlier trigger.', app: true, ts: now - 1000 },
+	] };
+	const f = { id: 'D1', rec: rec };
+	W.api.onDiamond(f);
+	let out = await W.api.steerFromTrigger(f, 'Run the hourly check.', { kind: 'activity' });
+	assert.equal(out.went, false, 'the trigger was sent while the question was open');
+	assert.deepEqual(W.steered, [], 'the trigger\'s words reached the daimon as the answer');
+	// Answered by the person: the held trigger goes at its next tick.
+	rec.messages.push({ role: 'user', content: 'Chose: Alpha', ts: now });
+	out = await W.api.steerFromTrigger(f, 'Run the hourly check.', { kind: 'activity' });
+	assert.equal(out.went, true, 'the trigger stayed held after the answer');
+	assert.deepEqual(W.steered, ['Run the hourly check.']);
+});
+
+test('a question no longer current does not hold a trigger', async () => {
+	const W = world();
+	const rec = { messages: [{ role: 'tool_log', name: 'ask', outcome: 'done', args: '{}', ts: Date.now() - 2 * 3600000 }] };
+	const f = { id: 'D2', rec: rec };
+	W.api.onDiamond(f);
+	const out = await W.api.steerFromTrigger(f, 'Tick.', { kind: 'activity' });
+	assert.equal(out.went, true, 'a stale question held the trigger for ever');
 });

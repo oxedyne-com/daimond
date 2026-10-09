@@ -98,5 +98,28 @@ check(workerEndStatus('something-unknown') === 'done', 'an unrecognised word sti
 		workerEndingNote(r));
 }
 
+// A WORKER G STOPPED (r544 QA, F-C4). A blocked turn travels as `failed` with
+// `why: "blocked"`; the worker is held on purpose, not fallen over, so its tile and
+// its gathered heading say "not done", as the chat's ending line does, never "error".
+check(workerEndStatus('failed', 'blocked') === 'blocked', 'a blocked worker is blocked, not error',
+	workerEndStatus('failed', 'blocked'));
+check(workerEndStatus('failed', '') === 'error', 'a plain failure is still error');
+{
+	const r = { status: 'blocked', ended: { how: 'failed', why: 'blocked', rounds: 2 }, costUsd: 0.01 };
+	const note = workerEndingNote(r);
+	check(/not done/.test(note) && !/error/.test(note), 'a blocked worker\'s heading reads "not done"', note);
+}
+{
+	// The capture keeps `why`, every terminal reading counts `blocked`, and the tile has a word for it.
+	const cap = SRC.slice(SRC.indexOf('run.ended = {'), SRC.indexOf('run.ended = {') + 600);
+	check(/\bwhy:\s/.test(cap.slice(0, cap.indexOf('};'))), 'run.ended keeps the engine\'s `why`');
+	check(SRC.indexOf('workerEndStatus(run.ended.how, run.ended.why)') >= 0, 'start() passes `why` through');
+	const term = grabFn('isTerminal: function (');
+	check(/'blocked'/.test(term), 'a blocked worker is terminal for gather');
+	check(/'end\.why_blocked'/.test(grabFn('function endingParts(')), 'the tile\'s ending line names a blocked turn');
+	const EN = fs.readFileSync(path.join(HERE, '..', 'www', 'i18n', 'en.js'), 'utf8');
+	check(/'agents\.status_blocked':/.test(EN), 'the tile has a word for blocked');
+}
+
 console.log(`\nworker status: ${ran - bad} passed, ${bad} failed`);
 process.exit(bad ? 1 : 0);

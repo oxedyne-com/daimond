@@ -179,10 +179,11 @@ function sourceGuards() {
 		// With the door present the branch must RETURN; the whole-parcel fallback
 		// sits only after the door-absence check.
 		const doorIdx = body.indexOf('if (DaimondSync && DaimondSync.pushProgressFrame) {');
-		const fallbackIdx = body.indexOf('if (DaimondSync && DaimondSync.pushProgress) await DaimondSync.pushProgress();');
+		const fallbackIdx = body.indexOf('await DaimondSync.pushProgress();');
+		// The branch answers the time its frame left (Q20: the runner's 750 ms spacing).
 		check('the frame branch returns before the whole-parcel fallback',
 			doorIdx >= 0 && fallbackIdx > doorIdx && body.includes('// PRE-DOOR GATEWAY ONLY')
-			&& /if \(out && out\.ok\) _progressSent\[turnId\] = payload;\s*\n\s*return;/.test(body),
+			&& /if \(out && out\.ok\) _progressSent\[turnId\] = payload;\s*\n\s*return at;/.test(body),
 			'a present door can still fall through to a whole-parcel collect');
 	}
 

@@ -39,7 +39,7 @@
 // Needs the dev stack: the app (DAIMOND_PORT), the mock, and a gateway on DAIMOND_GW_PORT. Sync is
 // Pro-gated, so the account is granted Pro the way the gateway trusts (dev/pro.mjs).
 import fs from 'node:fs';
-import { open, signInAs, scratch } from './harness.mjs';
+import { open, signInAs, scratch, workRows, pressRowItem, pressRowMark } from './harness.mjs';
 import { makePagePro } from './pro.mjs';
 import { GW_URL } from './ports.mjs';
 
@@ -154,32 +154,24 @@ async function useHere(s, id, path) {
 	await openDiamond(s, id);
 	return press(s, '#mark-notice .mark-notice-row[data-path="' + path + '"] [data-act="mark-use-here"]');
 }
-async function panelRows(s) {
-	await s.page.evaluate(() => window.DaimondPanels && DaimondPanels.show('work'));
-	await sleep(500);
-	await s.page.click('#panel-work [data-act="refresh"]', { force: true }).catch(() => {});
-	await sleep(700);
-	await s.page.click('.files-scope-chip[data-scope="diamond"]', { force: true }).catch(() => {});
-	await sleep(1400);
-	return s.page.evaluate(() => Object.fromEntries([...document.querySelectorAll('#panel-work .files-row.attached')].map((e) => {
-		const b = e.querySelector('[data-act="share"]');
-		const badge = e.querySelector('.files-badge.files-shared');
-		return [e.dataset.path || '', { share: b ? b.getAttribute('aria-pressed') === 'true' : null,
-			pressable: b ? !b.disabled : null, badge: badge ? badge.title : '' }];
-	})));
-}
-/// This device's ⇄ on a folder of the open Diamond, pressed only where it is not already `on`.
+/// The Diamond's rows in the Workspace tree: what each share item says and whether it can be pressed.
+const panelRows = (s) => workRows(s);
+/// The share item in a folder's row ⋯ in the Workspace panel, pressed only where it is not already `on`.
 async function shareHere(s, id, path, on) {
 	await openDiamond(s, id);
 	const rows = await panelRows(s);
 	if (!rows[path] || rows[path].share === on) return false;
-	return press(s, '#panel-work .files-row.attached[data-path="' + path + '"] [data-act="share"]');
+	const done = await pressRowItem(s, path, 'share');
+	await install(s);
+	return done;
 }
 /// The Workspace panel's ◈ on a folder of the open Diamond: the removal door a person uses.
 async function removeHere(s, id, path) {
 	await openDiamond(s, id);
 	await panelRows(s);
-	return press(s, '#panel-work .files-row.attached[data-path="' + path + '"] [data-act="hold-dir"]');
+	const done = await pressRowMark(s, path);
+	await install(s);
+	return done;
 }
 
 /// Cut a device off from the mailbox, or put it back: every `/api/sync` call fails meanwhile.
@@ -400,8 +392,8 @@ try {
 	await openDiamond(B, d2);
 	const r5 = (await panelRows(B)).share || {};
 	const there = await B.page.evaluate(() => DaimondI18n.t('dws.shared_there'));
-	check('S5. B\'s ⇄ is off and pressable, drawn as shared from another device',
-		r5.share === false && r5.pressable === true && r5.badge === there, J({ r5, there }));
+	check('S5. B\'s share item is off and pressable, titled as shared from another device',
+		r5.share === false && r5.pressable === true && String(r5.why || '').startsWith(there), J({ r5, there }));
 	await shareHere(B, d2, 'share', true);
 	control('S5. B\'s own ⇄ shares it from B', has(await H(B, 'shared'), 'share'), J(await H(B, 'shared')));
 

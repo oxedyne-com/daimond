@@ -440,6 +440,28 @@ pub async fn egress_allowed_net(cmd: &str, cwd: &str) -> Option<Verdict> {
         crate::tools::RUN_NET_ALLOW_WORD).await
 }
 
+/// Ask whether this Diamond may use a toolchain it has not been granted, before a command that
+/// needs it runs.  A yes comes back only as [`crate::tools::KIT_ALLOW_WORD`].
+///
+/// # Arguments
+/// * `cmd` - The command line, shown to the user.
+/// * `detail` - `{"id":"<diamond>","kits":["rust",...]}`, which the page draws and records from.
+pub async fn egress_allowed_kit(cmd: &str, detail: &str) -> Option<Verdict> {
+    egress_ask_js(crate::tools::KIT_TOOL, cmd, detail, false, crate::tools::KIT_ALLOW_WORD).await
+}
+
+/// Ask whether this Diamond may change a place it was not given, after a write there was
+/// refused.  A yes comes back only as [`crate::tools::PLACE_ALLOW_WORD`].
+///
+/// # Arguments
+/// * `path` - The path the write was refused at, shown to the user.
+/// * `detail` - `{"id":"<diamond>","place":"<folder>","waiting":false}` (see
+///   [`crate::tools::PlaceAsk::detail`]).
+pub async fn egress_allowed_place(path: &str, detail: &str) -> Option<Verdict> {
+    egress_ask_js(crate::tools::PLACE_TOOL, path, detail, false, crate::tools::PLACE_ALLOW_WORD)
+        .await
+}
+
 /// Ask whether one publication on the Social panel may go out.
 ///
 /// The same door, the same payload and the same dialog machinery as every other question here.

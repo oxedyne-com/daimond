@@ -30,10 +30,13 @@
 //      the card and is not sent; sent from there, it is the answer. A reload keeps it all.
 //  10. LIVE, THE IDLE BOUND (F-B2-2): after a typed answer the idle default never fires. The page's
 //      own clock hook (`__daimondDialogIdleMs`) shortens the half hour to seconds.
+//  11. A TRIGGER IS NOT AN ANSWER (Q18): a message the app sent (a Diamond's trigger or preset,
+//      stored `app: true`) after the ask leaves the card open. Live, on a Diamond: a trigger that
+//      comes due while its question is open is held, and goes once the person has answered.
 //
 //   eval "$(bash dev/world.sh N --up)" ; eval "$(bash dev/world.sh N --env)"
 //   node dev/verify_decision_last.mjs
-import { open, shot, errors, signInAs, scratch, chat, newChat } from './harness.mjs';
+import { open, shot, errors, signInAs, scratch, chat, newChat, steerDiamond } from './harness.mjs';
 import fs from 'node:fs';
 
 const PROFILE = scratch('pw', 'decision-last');
@@ -161,6 +164,14 @@ await putRow(chatRow('dl8', 'DL second ask', [
 	m('user', 4, { content: 'Now the fence.' }),
 	m('assistant', 5, { content: 'Fence next.' }),
 	ask(6, 'Second which?'),
+]));
+
+// Arm 11: an ask, then a message the app sent (a trigger's), stored as such.
+await putRow(chatRow('dl11', 'DL trigger after', [
+	m('user', 0, { content: 'Watch the parcel.' }),
+	ask(1, 'Trig which?'),
+	m('user', 2, { content: 'Run the hourly check.', app: true }),
+	m('assistant', 3, { content: 'Checked.' }),
 ]));
 
 await page.reload({ waitUntil: 'domcontentloaded' });
@@ -329,6 +340,66 @@ check('10a no answer on silence was sent after the typed answer',
 	!us.some((x) => /^Other:/.test(x)) && us.length === 2, JSON.stringify(us));
 check('10b the card closed in your own words', c && c.done === OWN && c.dead, JSON.stringify(c));
 await page.evaluate(() => { delete window.__daimondDialogIdleMs; });
+
+// ── 11. A TRIGGER IS NOT AN ANSWER, and waits behind the card ──
+check('11 the seeded chat opens', await openByName('DL trigger after'));
+await page.waitForTimeout(900);
+u = await read(); c = await cardState('Tr');
+check('11a a trigger\'s message after the ask leaves the card open, and last',
+	c && c.done === '' && !c.dead && lastIs(u, 'ask:open:Tr'), JSON.stringify({ u, c }));
+// Live: a Diamond whose daimon asks, then an activity trigger comes due.
+await page.evaluate(() => document.getElementById('new-diamond-btn').click());
+await page.waitForSelector('.dlg-card', { timeout: 8000 });
+await page.evaluate((nm) => { const k = [...document.querySelectorAll('.dlg-card')].filter((x) => x.getClientRects().length).pop();
+	const i = k.querySelector('input.dlg-input'); i.value = nm; i.dispatchEvent(new Event('input', { bubbles: true })); k.querySelector('.dlg-ok').click(); },
+	'DL trig ' + Date.now().toString(36));
+await page.waitForTimeout(1500);
+const DID = await page.evaluate(() => { const d = window.DaimondDiamond.current(); return d ? d.id : ''; });
+await page.evaluate((id) => { const all = JSON.parse(localStorage.getItem('daimond-diamond-models') || '{}'); const def = window.DaimondModels.getDefault() || {};
+	all[id] = { provider: def.provider, model: def.model, workerProvider: def.provider, workerModel: def.model, visionProvider: '', visionModel: '' };
+	localStorage.setItem('daimond-diamond-models', JSON.stringify(all)); }, DID);
+const dIdle = async () => { for (let i = 0; i < 120; i++) { if (!(await page.evaluate((id) => window.DaimondCore.diamondBusy(id), DID))) break; await page.waitForTimeout(500); } await page.waitForTimeout(1000); };
+const dUsers = () => page.evaluate((id) => { const r = window.DaimondDiamond.conversation(id);
+	return ((r && r.messages) || []).filter((x) => x.role === 'user').map((x) => String(x.content)); }, DID);
+await steerDiamond(s, '@tool ask ' + AQ('Trig live?'));
+await page.waitForTimeout(800); await dIdle();
+c = await cardState('Tr');
+check('11b the daimon asked: its card is open', !!DID && c && c.done === '' && !c.dead, JSON.stringify({ DID, c }));
+await page.evaluate(async ({ D, says }) => {
+	const T = window.DaimondTriggers, ta = T.blank('activity');
+	ta.id = 'activity-' + Date.now().toString(36);	// as the app's `+` names it
+	ta.minutes = 1; ta.offScreen = true; ta.instruction = says;
+	await window.DaimondCore.triggerSet(D, ta);
+}, { D: DID, says: '@text TRIG-11 tick' });
+// Released here once, as a person would; the release stands through the answer's turn.
+const release = () => page.evaluate((D) => {
+	const got = (window.DaimondTriggersOf(D) || [])[0];
+	window.DaimondPause.set(window.DaimondTriggers.node(D, got.id), true);
+	window.DaimondPause.set(window.DaimondPause.id('root', 'diamonds', D, 'self'), true);
+	return !window.DaimondPause.isPaused(window.DaimondTriggers.node(D, got.id));
+}, DID);
+check('11b\' the trigger is released', await release());
+const tick = async (n) => { for (let i = 0; i < n; i++) {
+	await page.evaluate(async () => { window.DaimondTriggers.noteActivity(); await window.DaimondTriggerTick(); });
+	await page.waitForTimeout(700);
+	if ((await dUsers()).some((x) => x.includes('TRIG-11'))) break;
+} await dIdle(); };
+await tick(8);
+let du = await dUsers(); c = await cardState('Tr');
+check('11c the trigger came due with the question open: it is held, not sent',
+	!du.some((x) => x.includes('TRIG-11')), JSON.stringify(du));
+check('11d the card is still open', c && c.done === '' && !c.dead, JSON.stringify(c));
+await pickOpt('Tr', 'Beta');
+await page.waitForTimeout(800); await dIdle();
+await tick(8);
+du = await dUsers(); c = await cardState('Tr');
+const dTail = await page.evaluate((id) => { const r = window.DaimondDiamond.conversation(id);
+	const ta = (window.DaimondTriggersOf(id) || [])[0];
+	return { tail: ((r && r.messages) || []).slice(-4).map((x) => [x.role, x.name || '', x.outcome || '', x.app === true]),
+		mins: ta ? window.DaimondTriggers.activityMinutes(id, ta.id) : null, due: ta ? window.DaimondTriggers.due(id, [ta], { kind: 'activity', minutesFor: () => 99 }).length : -1, ready: ta ? JSON.stringify(ta).slice(0, 300) : '', paused: ta ? window.DaimondPause.isPaused(window.DaimondTriggers.node(id, ta.id)) : null, busy: window.DaimondCore.diamondBusy(id) }; }, DID);
+check('11e answered by the person, the held trigger goes after the answer',
+	du.length >= 3 && /^Chose: Beta/.test(du[du.length - 2]) && du[du.length - 1].includes('TRIG-11') && c && c.dead, JSON.stringify({ du, c, dTail }));
+await page.evaluate((D) => (window.DaimondTriggersOf(D) || []).forEach((t) => window.DaimondPause.set(window.DaimondTriggers.node(D, t.id), false)), DID);
 
 const errs = errors(s).filter((e) => !/502|\/api\//.test(e));
 check('7 nothing threw', errs.length === 0, errs.slice(0, 2).join(' | '));

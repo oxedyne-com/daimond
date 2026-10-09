@@ -131,7 +131,7 @@ test('Ask: "Not ready yet." is said on a press and lifts when the composer arriv
 
 // ── Compose, from daimond.js ────────────────────────────────────────────
 function compose() {
-	const body = cut(src('daimond.js'), '\t// ── Compose: one panel, its buttons bound once', '\t/// A mail date as a person writes one');
+	const body = cut(src('daimond.js'), '\t// ── Compose: one panel, its buttons bound once', '\tfunction fmtBytes(n) {');
 	const ids = {};
 	for (const id of [ 'from', 'to', 'cc', 'subject', 'text', 'atts', 'title', 'note', 'send', 'save', 'attach', 'discard', 'file' ]) ids['compose-' + id] = el();
 	ids['compose-send'].attrs.set('title', 'Send');
@@ -265,43 +265,41 @@ test('Compose: opening the next message does not leave the last one\'s handlers 
 });
 
 // ── Workspace Refresh, from daimond.js: it says "Refreshed." only when a listing was drawn ──
+// One tree since round 2 (P2): the Diamond tree and its `listDiamond` are gone, so Refresh is `list` alone.
 function workspace(listOutcome) {
 	const s = src('daimond.js');
-	const ld   = cut(s, '\t\tasync function listDiamond(dir) {', '\t\t/// A row for something in the Diamond\'s own directory');
 	const ls   = cut(s, '\t\tasync function list(dir) {', '\t\t// ── What the tree used to keep from you');
 	const act  = cut(s, '{ act: async function () {', '} });\n\t\t\tvar newBtn');
 	const treeEl = el(), notes = [];
 	const doc = { createElement: () => el() };
 	const tools = () => ({ run_tool_outcome: async () => listOutcome });
-	const body = ld + '\n' + ls + '\n; return { list: list, listDiamond: listDiamond, refresh: ' + act.replace(/^\{ act: /, '') + '} };';
-	const make = new Function('document', 'tools', 'treeEl', 'viewEl', 'pathEl', 'syncLineNo', 'loadAttached', 'paintReach',
-		'renderCrumbs', 'goDir', 't', 'toolReason', 'renderTree', 'parseListing', 'refreshResidency', 'ownDir', 'upRow',
-		'diamondOwnRow', 'statAttachments', 'attached', 'attachedRow', 'daimonGroupRow', 'diamondScope', 'showModeMsg',
+	const body = ls + '\n; return { list: list, refresh: ' + act.replace(/^\{ act: /, '') + '} };';
+	const make = new Function('document', 'tools', 'treeEl', 'viewEl', 'pathEl', 'syncLineNo', 'loadAttached',
+		'renderCrumbs', 'goDir', 't', 'toolReason', 'renderTree', 'parseListing', 'refreshResidency', 'showModeMsg',
 		'DaimondAnswer', 'window', 'listBusy', 'listNote', 'listKey',
-		'var curDir = "", curFile = null, listed = false, lastEntries = [], daimonGroupOpen = false, drawnKey = null;\n' + body);
+		'var curDir = "", curFile = null, listed = false, lastEntries = [], drawnKey = null, filter = "";\n' + body);
 	const noop = () => {};
-	const m = make(doc, tools, treeEl, el({ style: {} }), el(), noop, async () => {}, noop, noop, noop, words, (r) => 'ERR ' + (r && r.text), noop,
-		(txt) => [ { name: txt, dir: false } ], noop, () => 'own', () => null, () => el(), async () => {}, [], () => el(), () => el(),
-		() => true, (text, isErr, ms) => notes.push({ text, isErr: !!isErr, ms }), answer(), {},
+	const m = make(doc, tools, treeEl, el({ style: {} }), el(), noop, async () => {}, noop, noop, words, (r) => 'ERR ' + (r && r.text),
+		(entries) => entries.forEach((e) => treeEl.appendChild(el({ textContent: e.name }))),
+		(txt) => [ { name: txt, dir: false } ], noop,
+		(text, isErr, ms) => notes.push({ text, isErr: !!isErr, ms }), answer(), {},
 		// WS-U1's loading row and keyed redraw: the loading row is not what these cases test, the failure row is.
-		noop, (kind, words) => el({ className: 'files-' + kind, textContent: words }), () => 'd|sub');
+		noop, (kind, words) => el({ className: 'files-' + kind, textContent: words }), () => 'sub');
 	return { m, treeEl, notes };
 }
 
-test('Refresh in Diamond scope: a listing that drew an error is not "Refreshed."', async () => {
+test('Refresh: a listing that drew an error is not "Refreshed."', async () => {
 	const w = workspace({ outcome: 'failed', text: 'no such folder' });
 	// The panel's Refresh looks at curDir; open a sub-folder first, as a person would, so the listing runs.
-	assert.equal(await w.m.listDiamond('sub'), false, 'listDiamond must say it drew an error');
+	assert.equal(await w.m.list('sub'), false, 'list() must say it drew an error');
 	assert.equal(w.treeEl.children.length, 1);
 	assert.equal(w.treeEl.children[0].textContent, 'ERR no such folder');
-	assert.equal(await w.m.list('sub'), false, 'list() must pass the failure on');
 	await w.m.refresh();
 	assert.deepEqual(w.notes, [], 'a failed redraw says nothing false; the error row in the tree is the answer');
 });
 
-test('Refresh in Diamond scope: a listing that drew rows says "Refreshed." for three seconds', async () => {
+test('Refresh: a listing that drew rows says "Refreshed." for three seconds', async () => {
 	const w = workspace({ outcome: 'done', text: 'a.txt' });
-	assert.equal(await w.m.listDiamond('sub'), true);
 	assert.equal(await w.m.list('sub'), true);
 	await w.m.refresh();
 	assert.deepEqual(w.notes, [ { text: '[files.refreshed]', isErr: false, ms: 3000 } ]);

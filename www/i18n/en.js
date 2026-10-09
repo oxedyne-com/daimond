@@ -121,9 +121,9 @@
 	'topbar.guide':       'Guide',
 	'topbar.link_device': 'Link device',
 	'topbar.guide_short': 'User guide',
-	'topbar.appearance':  'Settings',
+	'topbar.appearance':  'Appearance',
 	// The merged About+Guide control (TOP-03). Its accessible name stays
-	// "Help" even on a phone, where Settings and Link device fold in beside
+	// "Help" even on a phone, where Appearance and Link device fold in beside
 	// them -- a name that changes with the viewport is its own kind of
 	// confusing to a screen reader user who has already learned it.
 	'topbar.help':        'Help',
@@ -216,7 +216,7 @@
 	// What an unnamed chat is called before anything has been said in it. After that
 	// its first line is its title -- see `chatDisplayName`.
 	'rail.new_chat':             'New Chat',
-	'rail.chats_menu':           'More',
+	'rail.chats_menu':           'Chats list options',
 	// i18n-indirect: mobile.js key = rail.fold_section rail.unfold_section
 	'rail.fold_section':           'Fold this section away',
 	'rail.unfold_section':           'Open this section',
@@ -243,7 +243,6 @@
 
 	// ── The Admin drawer ───────────────────────────────────────
 	// The name at the head of the drawer, which changes with what it is holding.
-	'drawer.admin':   'Admin',
 	'drawer.models':  'Models',
 	'drawer.version': 'Version',
 	'drawer.credits': 'Credits',
@@ -339,6 +338,7 @@
 	// knows, not the coarse platform guess above.
 	'devices.on_host':     '{brand} on {host}',
 	'devices.unknown':     'This device',
+	'devices.another':     'another device',
 	'devices.this_device': 'this device',
 	'devices.only_this':   'Only this device syncs this account.',
 	// Naming a device. The name is the user's own words, so it never leaves the
@@ -518,12 +518,14 @@
 	// never finished, and the turn ran here. Said so provenance is never silent.
 	'chat.ran_here_failed': 'Ran here — hand-off to {name} didn’t finish',
 	'chat.ran_here_refused': 'Ran here — the relay refused the hand-off',
+	'chat.ran_here_busy': 'Ran here — {name} was busy with another chat',
 	'chat.ran_here':       'Ran on this device',
 	// The hand-off tile's expanded body: a concise account of what happened when a
 	// turn ran off this device. The provenance line, then a facts row of only the
 	// figures the runner actually reported (run time, model, tokens, cost).
 	'chat.handoff_ran_on':        'Ran on {name}; the answer synced back to this device.',
 	'chat.handoff_ran_here':      'Ran on this device after the hand-off to {name} didn’t finish.',
+	'chat.handoff_ran_here_busy': 'Ran on this device because {name} was busy with another chat.',
 	'chat.handoff_ran_here_plain': 'Ran on this device.',
 	'chat.handoff_tokens':        '{n} tok',
 	'chat.who_handoff':    'Hand-off',
@@ -606,6 +608,19 @@
 	'tile.model_chat_help': 'The model this chat answers with.',
 	'tile.chat_model_change_help': 'Switch this chat to the selected model. The conversation carries over.',
 	'tile.chat_model_changed': 'Chat moved from {from} to {to}. The conversation continues.',
+	'tile.effort': 'Effort',
+	'tile.effort_help': 'How hard the model thinks before it answers. Only the levels this model offers are listed.',
+	'tile.effort_default': 'Model default',
+	'tile.effort_default_named': 'Model default ({level})',
+	'tile.effort_cleared': 'Effort is back to the default: {model} does not offer that level.',
+	// i18n-family: tile.effort_ = one-way none minimal low medium high xhigh max -- the reasoning rungs (models.js EFFORT_LADDER); help, default and cleared share the prefix
+	'tile.effort_none': 'None',
+	'tile.effort_minimal': 'Minimal',
+	'tile.effort_low': 'Low',
+	'tile.effort_medium': 'Medium',
+	'tile.effort_high': 'High',
+	'tile.effort_xhigh': 'Extra high',
+	'tile.effort_max': 'Max',
 	'tile.chat_model_busy_title': 'The chat is still working',
 	'tile.chat_model_busy': 'This chat is mid-turn. Stop the turn or let it finish, then change the model.',
 	'tile.dlg_context': 'Context',
@@ -1015,7 +1030,7 @@
 	'chat.steps':          'Steps',
 	'chat.concise': 'Concise',
 	// i18n-indirect: workspace.js m.title = topbar.help chat.more
-	'chat.more': 'More',
+	'chat.more': 'Chat options',
 	'chat.menu_expand': 'Expand',
 	'chat.menu_select': 'Select',
 	'chat.concise_help': 'Short answers',
@@ -1341,7 +1356,7 @@
 	// Built by concatenation at daimond.js's `tOr('agents.status_' + run.status,
 	// run.status)`, so a status with no key here reaches the screen as the raw
 	// internal word -- which is what it used to do for all seven.
-	// i18n-family: agents.status_ = queued running paused done error stopped interrupted capped spend_cap
+	// i18n-family: agents.status_ = queued running paused done error stopped interrupted capped spend_cap blocked
 	'agents.status_queued':      'queued',
 	'agents.status_running':     'running',
 	'agents.status_paused':      'paused',
@@ -1351,6 +1366,7 @@
 	'agents.status_interrupted': 'cut off',
 	'agents.status_capped':      'capped',
 	'agents.status_spend_cap':   'spend capped',
+	'agents.status_blocked':     'not done',
 
 	'agents.search':         'Search agents',
 	'agents.search_help':    'Search',
@@ -1560,7 +1576,7 @@
 	'work.new_folder': 'New Folder',
 	'work.upload':     'Upload files',
 	'work.parent':     'Parent folder',
-	'work.filter_ph':  'Filter…',
+	'work.search_ph':  'Search files',
 	'work.breadcrumb': 'Folder path',
 
 	// ── The phone shell ────────────────────────────────────────
@@ -2468,12 +2484,17 @@
 	'crystal.empty':          'The crystal is empty. Steer it below to begin.',
 	'crystal.empty_paren':    '(empty)',
 	'crystal.save_failed':    'Could not save the crystal',
-	'crystal.unproven':    'This page did not pass the load check. Nothing was changed; History has earlier pages.',
+	'crystal.unproven':    'This page did not pass the load check. Nothing was put back; History has earlier pages.',
 	'crystal.back':           'Back',
 	'crystal.back_to_form':   'Back to form',
 	'crystal.memory':         'Memory',
 	'crystal.memory_help':    'What this diamond remembers',
 	'crystal.memory_invalid': 'Not valid JSON. Nothing saved.',
+	'crystal.changed_elsewhere': 'Changed on another device',
+	'crystal.this_device': 'This device',
+	'crystal.other_device': 'Other device',
+	'crystal.keep_mine': 'Keep mine',
+	'crystal.keep_theirs': 'Keep theirs',
 	// ── Memory ──────────────────────────────────────────────────
 	// One view of crystal.json: the card is what opens, the raw file is behind
 	// `crystal.show_raw`. The counts come from REQUIREMENTS.md beside it and are
@@ -2537,8 +2558,16 @@
 	'capp.legacy_body':  'This {name} was made before capps carried a version, so Daimond cannot tell which parts of its page are the ones it was given. Bring its page up to the current one? Your lanes and your entries are left alone.',
 	// Says WHAT it updates. The Reset control beside it does something quite
 	// different, and a bare "Update" invites the two to be confused.
-	'capp.legacy_ok':    'Update the page',
+	'capp.legacy_ok':    'Update the Page',
 	'capp.update_kept':  'The page has been brought up to date. These files are yours and were left as they are: {files}.',
+	'capp.merge_body': 'There is a newer {name} page. Your own changes to this page are kept.',
+	'capp.merge_conflict': 'There is a newer {name} page. Your own changes are kept. Where it changes the same lines you did, yours stay, and both are shown below.',
+	'capp.merge_ok': 'Update the Page',
+	'capp.merge_later': 'Not Now',
+	'capp.merge_show': 'Where you both changed it',
+	'capp.merge_line': 'Line {n}',
+	'capp.merge_yours': 'Yours',
+	'capp.merge_theirs': 'The update',
 	'capp.update_failed': 'The page could not be replaced: {why}',
 	// A capp's page resets to ITS OWN template, not to a blank or standard page:
 	// `crystal.page_reset_confirm` is the one that says "the standard one" and it
@@ -2556,7 +2585,7 @@
 	'crystal.edit_json':      'Edit as JSON',
 	'crystal.json_invalid':   'That is not valid JSON, so nothing was saved.',
 	'crystal.broken':         'The crystal is not valid JSON, so nothing is drawn from it. Mend the text below.',
-	'crystal.unreadable':     'The crystal could not be read, so nothing is drawn from it and nothing can be saved over it. Try again in a moment.',
+	'crystal.unreadable':     'The crystal could not be read, so nothing is drawn from it and nothing can be saved over it. Try again in a moment, or put an earlier version back from History.',
 	'crystal.field_title':    'Title',
 	'crystal.field_summary':  'Summary',
 	'crystal.field_sections': 'Sections',
@@ -2623,8 +2652,6 @@
 	'dws.count.one':       '{n} item',
 	'dws.count.other':     '{n} items',
 	'dws.none_yet':        'Nothing kept here yet',
-	'dws.mode_all':        'Everything',
-	'dws.mode_diamond':    'This diamond',
 	'dws.empty':           'No files yet.',
 	// An attachment records the workspace it was made in, so one made on the
 	// machine can say so when the browser sandbox is what is open.
@@ -2666,7 +2693,6 @@
 	'dws.a_folder':        'a folder',
 	'dws.attach_dir':      'Keep this folder with {name}',
 	'dws.detach_dir':      'Stop keeping this folder with {name}',
-	'dws.elsewhere':       'Lives in the workspace',
 	'dws.readonly':        'Read only',
 	'dws.readwrite':       'Read and change',
 	'dws.share':           'Share with devices that lack native access',
@@ -2675,22 +2701,16 @@
 	'dws.shared_there':    'Shared from another device',
 	'dws.share_here_help': 'Changes and deletions from your other devices will reach this folder here.',
 	'dws.share_unavailable': 'Can only be shared from a device that can open it',
-	'dws.showing':         'Showing',
-	'dws.reach':           'Reach',
-	'dws.reach_help':      'Editable folders',
-	'dws.reach_own':       'Its own folder',
-	'dws.reach_none':      'This folder only.',
-	'dws.mark_here':       'Add “{name}”',
-	'dws.mark_here_help':  'Add this folder to {name}',
+	'dws.share_item': 'Share to other devices',
+	'dws.take_away': 'Take away from {name}',
+	'dws.own_folder':       'Its own folder',
+	'dws.recent':          'Recent',
+	'dws.can_change':      'Can change',
 	'dws.kits':            'Toolchains',
-	'dws.kits_help':       'Runnable toolchains',
 	'dws.kit_on':          'Grant the {kit} toolchain to {name}',
 	'dws.kit_off':         'Take the {kit} toolchain back from {name}',
 	'dws.kit_failed':      'That toolchain grant was not saved',
-	'dws.kit_none':        'None',
-	'dws.added':           'Added {when}',
-	'dws.gone':            'Gone',
-	'dws.gone_help':       'Nothing is at this path now. Remove the reference with ◈.',
+	'dws.kit_waiting': '{kit} was asked for and not granted. Grant it to {name}',
 	'dws.added_by_daimon.one':   'Added by the daimon ({n})',
 	'dws.added_by_daimon.other': 'Added by the daimon ({n})',
 	'dws.drop_all':        'Drop all',
@@ -2742,9 +2762,6 @@
 	'agents.a_diamond':           'diamond',
 	'agents.clear_diamond_filter': 'Clear the diamond filter',
 	'agents.clear_chat_filter':    'Clear the chat filter',
-	'instructions.chip_help':     'Instructions',
-	'instructions.chip_empty':    'Write your instructions',
-	'instructions.chip_two':      'Two layers are in force, yours and this project’s. Click to open yours.',
 
 	// ── The System section: Daimond's own store ────────────────
 	'sys.head':  'Daimond’s files',
@@ -2852,6 +2869,7 @@
 	'files.err_name':        'Enter a name.',
 	'files.rename_failed':   'Could not rename: {reason}',
 	'files.no_match':        'Nothing matches "{filter}".',
+	'files.search_capped':   'Showing first {n}',
 	'files.new_doc_here':    'New document. Save writes it into {place}.',
 	'files.new_file_hint':   'Name it DAIMOND.md to write standing instructions every agent will follow.',
 	'files.create_failed':   'Could not create file: {reason}',
@@ -2929,6 +2947,8 @@
 	'files.pinned_help':     'Pinned: always kept on this device. Click to release.',
 	'files.pin_help':        'Pin: never free this one to make room.',
 	'files.free_help':       'Keep it in cloud storage; drop the copy here',
+	'files.get':             'Bring onto this device',
+	'files.free':            'Free up space here',
 	'files.free_undeclared': 'Kept on this device for now: this device can\'t yet confirm cloud storage will keep it.',
 	'files.reclaim_undeclared': 'Nothing freed yet: this device can\'t yet confirm cloud storage will keep these files.',
 	'files.fetch':           'Fetch',
@@ -3177,7 +3197,10 @@
 
 	// ── Forgetting an account ──────────────────────────────────
 	'forget.credits_title':  'Save your credits first?',
-	'forget.credits_body':   'This account holds {amount} on Daimond\'s server, unlocked only by this identity. A backup lets another device take it over with this account\'s passphrase. Losing the passphrase loses the balance. Export now?',
+	'forget.credits_body':   'This account holds {held} on Daimond\'s server, unlocked only by this identity. A backup lets another device take it over with this account\'s passphrase. Losing the passphrase loses the balance. Export now?',
+	'forget.held_both':      'a balance of {amount} and Daimond Pro',
+	'forget.held_balance':   'a balance of {amount}',
+	'forget.held_pro':       'Daimond Pro',
 	'forget.skip':           'Skip',
 	'forget.title':          'Forget this account?',
 	'forget.ok':             'Erase Everything',
@@ -3448,6 +3471,16 @@
 	'permmode.run_title':    'Run this command?',
 	'permmode.run_body':     'Daimond wants to run a command on your machine.\n\n{cmd}\n\nin {cwd}\n\nThe “ask every time” permission mode puts every command to you first.',
 	'permmode.run_ok':       'Run it',
+
+	// A toolchain asked for on first use (Workspace round 2, E1). The command is shown
+	// beneath it as it will run.
+	'kit.ask_title':        'Let {name} use {kits}?',
+	'kit.ask_ok':           'Allow',
+	'kit.ask_no':           'Not now',
+	'place.ask_title': 'Let {name} change {place}?',
+	'place.ask_here_title': 'Let {name} change {place} here too?',
+	'place.allowed_on': 'Allowed on {device}.',
+	'kit.save_failed':      'Allowed for this turn only; the grant was not saved',
 
 	// The network question a marked chat's first command puts (`hand/REVIEW.md` §1.13,
 	// remedy 2). Not the same question as `run_body` above and it must not read like it:
@@ -3861,6 +3894,13 @@
 	'settings.debugshare_off':  'Stop sharing data for debugging',
 	'settings.debugshare_note': 'Beta only. Shares all your data with the developer, never your keys.',
 	'settings.debugshare_help': 'Beta only. Shares chats, costs, devices and settings; never your keys.',
+	// Lens screenshots (js/lensshot.js), owner-only and opt-in per device.
+	'home.sec_lens':             'Lens',
+	'settings.lensshot_on':      'Allow Lens screenshots on this device',
+	'settings.lensshot_off':     'Stop Lens screenshots on this device',
+	'settings.lensshot_help':    'Lets the Lens take a picture of this screen. You are told each time; pictures are kept 7 days.',
+	'lens.shot_toast':           'Taking a Lens screenshot',
+	'lens.frame_label':          'Diamond page',
 
 	// ── Autonomous work and step-away hand-off (see js/handmode.js) ──
 	'autonomous.head':   'Work on its own when you’re away',

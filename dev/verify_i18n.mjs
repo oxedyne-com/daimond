@@ -245,7 +245,7 @@ const SWEEP = ([sel, outgoing, keys]) => {
 			name: 'drawer form', sel: '#admin',
 			show: () => p.evaluate(() => {
 				window.DaimondAdmin.form({
-					title: window.DaimondI18n.t('drawer.admin'),
+					title: window.DaimondI18n.t('admin.settings'),
 					message: window.DaimondI18n.t('home.change_name'),
 					fields: [{ name: 'n', label: window.DaimondI18n.t('common.save'), value: '' }],
 				});

@@ -608,7 +608,104 @@
 		return { add: add, del: del, rows: out };
 	}
 
+	// ── The three-way merge ──────────────────────────────────────
+	//
+	// A capp's page is CODE that its person (or their daimon) may have changed. When
+	// the template it came from gets a fix, the fix is brought in AROUND those
+	// changes: what moved only in the template is taken, what moved only in the
+	// person's copy stays, and a place where both moved differently is a conflict
+	// that is SHOWN, never guessed. The person's lines stand at a conflict, so
+	// nothing they wrote is lost, and the template's lines there are listed for them.
+	//
+	// The diff is Myers' O((N+M)·D), not the LCS table above: a capp page is past
+	// `DIFF_MAX_LINES` (Life log is ~2,200 lines) and a fork usually differs from its
+	// base in a few places, which is exactly where Myers is cheap. The trace it keeps
+	// is D² cells, so D is capped and a pair that differs everywhere answers null.
+
+	var MERGE_MAX_EDITS = 2000;
+
+	/// The line arrays of a text. Joining them with '\n' gives the text back exactly.
+	function mergeLines(t) { return String(t == null ? '' : t).split('\n'); }
+
+	/// For each line of `a`, the index of the line of `b` it is matched to, or -1.
+	/// Null where the two differ by more than `MERGE_MAX_EDITS` lines.
+	function lineMatches(a, b) {
+		var n = a.length, m = b.length, ma = new Int32Array(n).fill(-1);
+		var pre = 0;
+		while (pre < n && pre < m && a[pre] === b[pre]) { ma[pre] = pre; pre++; }
+		var suf = 0;
+		while (suf < n - pre && suf < m - pre && a[n - 1 - suf] === b[m - 1 - suf]) {
+			ma[n - 1 - suf] = m - 1 - suf; suf++;
+		}
+		var N = n - pre - suf, M = m - pre - suf;
+		if (N === 0 || M === 0) return ma;
+		var max = Math.min(N + M, MERGE_MAX_EDITS), off = max + 1;
+		var v = new Int32Array(2 * max + 3), trace = [], D = -1, d, k, x, y;
+		for (d = 0; d <= max && D < 0; d++) {
+			for (k = -d; k <= d; k += 2) {
+				x = (k === -d || (k !== d && v[off + k - 1] < v[off + k + 1]))
+					? v[off + k + 1] : v[off + k - 1] + 1;
+				y = x - k;
+				while (x < N && y < M && a[pre + x] === b[pre + y]) { x++; y++; }
+				v[off + k] = x;
+				if (x >= N && y >= M) { D = d; break; }
+			}
+			trace.push(v.slice(off - d, off + d + 1));
+		}
+		if (D < 0) return null;
+		x = N; y = M;
+		for (d = D; d > 0; d--) {
+			var pv = trace[d - 1];
+			k = x - y;
+			var down = (k === -d || (k !== d && pv[k - 1 + d - 1] < pv[k + 1 + d - 1]));
+			var pk = down ? k + 1 : k - 1;
+			var px = pv[pk + d - 1], py = px - pk;
+			var sx = down ? px : px + 1;
+			while (x > sx && y > sx - k) { x--; y--; ma[pre + x] = pre + y; }
+			x = px; y = py;
+		}
+		while (x > 0 && y > 0) { x--; y--; ma[pre + x] = pre + y; }
+		return ma;
+	}
+
+	/// `{text, conflicts}`: `theirs`' changes since `base` brought into `mine`, or
+	/// null where either side is too far from the base to merge.
+	///
+	/// Each conflict is `{line, base, mine, theirs}` -- line arrays, and the 1-based
+	/// line of `text` where `mine` stands in its place.
+	function merge3(base, mine, theirs) {
+		var o = mergeLines(base), a = mergeLines(mine), b = mergeLines(theirs);
+		var ma = lineMatches(o, a), mb = lineMatches(o, b);
+		if (!ma || !mb) return null;
+		var out = [], conflicts = [], i = 0, ia = 0, ib = 0;
+		function same(x, y) {
+			if (x.length !== y.length) return false;
+			for (var q = 0; q < x.length; q++) if (x[q] !== y[q]) return false;
+			return true;
+		}
+		for (;;) {
+			// The next base line both sides still have: the end of this unstable chunk.
+			var k = i;
+			while (k < o.length && (ma[k] < 0 || mb[k] < 0)) k++;
+			var end = k >= o.length;
+			var ea = end ? a.length : ma[k], eb = end ? b.length : mb[k];
+			var so = o.slice(i, k), sa = a.slice(ia, ea), sb = b.slice(ib, eb);
+			if (same(sa, so))      Array.prototype.push.apply(out, sb);
+			else if (same(sb, so)) Array.prototype.push.apply(out, sa);
+			else if (same(sa, sb)) Array.prototype.push.apply(out, sa);
+			else {
+				conflicts.push({ line: out.length + 1, base: so, mine: sa, theirs: sb });
+				Array.prototype.push.apply(out, sa);
+			}
+			if (end) break;
+			out.push(o[k]);
+			i = k + 1; ia = ea + 1; ib = eb + 1;
+		}
+		return { text: out.join('\n'), conflicts: conflicts };
+	}
+
 	window.DaimondVersions = {
+		merge3:      merge3,
 		ready:       ready,
 		dirty:       dirty,
 		dirtyBefore: dirtyBefore,

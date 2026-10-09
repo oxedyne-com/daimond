@@ -157,7 +157,7 @@
 			     no word beside it, and both answer the same kind of question --
 			     "what is this" -- so one control opening a two-row menu is a
 			     single decision where there were two. On a phone the same
-			     control also takes in Settings and Link device (see
+			     control also takes in Appearance and Link device (see
 			     js/workspace.js foldOverflow), which is why its icon has a
 			     second face: a "?" for Help alone, three dots once it is
 			     standing in for the whole overflow. -->
@@ -167,11 +167,11 @@
 				<svg class="ic ic-help" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M9.2 9.3a2.8 2.8 0 115.3 1.2c-.4.9-1.5 1.3-2 2-.3.4-.3.9-.3 1.5"/><circle cx="12" cy="17.4" r="0.6" fill="currentColor" stroke="none"/></svg>
 				<svg class="ic ic-more" viewBox="0 0 24 24" aria-hidden="true"><circle cx="5" cy="12" r="1.7" fill="currentColor" stroke="none"/><circle cx="12" cy="12" r="1.7" fill="currentColor" stroke="none"/><circle cx="19" cy="12" r="1.7" fill="currentColor" stroke="none"/></svg>
 			</button>
-			<button class="icon-btn menu-btn" id="settings-menu-btn" title="Appearance and layout"
-				aria-label="Appearance and layout" aria-haspopup="menu" aria-expanded="false" aria-controls="settings-menu"
+			<button class="icon-btn menu-btn" id="settings-menu-btn" title="Appearance"
+				aria-label="Appearance" aria-haspopup="menu" aria-expanded="false" aria-controls="settings-menu"
 				data-i18n-title="topbar.appearance" data-i18n-aria-label="topbar.appearance">
 				<svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h10M18 7h2M4 17h2M10 17h10"/><circle cx="16" cy="7" r="2.2"/><circle cx="8" cy="17" r="2.2"/></svg>
-				<span class="btn-label" data-i18n="topbar.appearance">Settings</span>
+				<span class="btn-label" data-i18n="topbar.appearance">Appearance</span>
 			</button>
 			<!-- Full screen: PHONE ONLY, and only where the browser offers the
 			     Fullscreen API. Firefox on Android will not install the PWA
@@ -195,11 +195,11 @@
 	<div class="pop" id="panel-gallery" hidden role="dialog" aria-label="Panels" data-i18n-aria-label="gallery.title"></div>
 
 	<!-- Appearance and layout: theme, reading size, dock tiling. -->
-	<div class="pop" id="settings-menu" hidden role="dialog" aria-label="Appearance and layout" data-i18n-aria-label="topbar.appearance"></div>
+	<div class="pop" id="settings-menu" hidden role="dialog" aria-label="Appearance" data-i18n-aria-label="topbar.appearance"></div>
 
 	<!-- Help: Guide and About, TOP-03's merge of the header's two "what is
 	     this" buttons into one. Below 760px js/workspace.js's foldOverflow
-	     also parks Settings and Link device in here, moving the real buttons
+	     also parks Appearance and Link device in here, moving the real buttons
 	     rather than building copies, so each keeps the one click handler
 	     daimond.js, workspace.js or pairing.js already gave it. -->
 	<div class="pop" data-menu="rows" id="help-menu" hidden role="dialog" aria-label="Help" data-i18n-aria-label="topbar.help">
@@ -365,7 +365,7 @@
 					     promoted to a different, much larger act with no visible change
 					     to warn a hand that has learned to trust it. daimond.js builds
 					     the dropdown; nothing here decides what is in it. -->
-					<button class="addbtn" id="chats-menu-btn" title="More" data-i18n-title="rail.chats_menu" aria-haspopup="menu" aria-expanded="false">
+					<button class="addbtn" id="chats-menu-btn" title="Chats list options" aria-label="Chats list options" data-i18n-title="rail.chats_menu" data-i18n-aria-label="rail.chats_menu" aria-haspopup="menu" aria-expanded="false">
 						<svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><circle cx="5" cy="12" r="1.8"/><circle cx="12" cy="12" r="1.8"/><circle cx="19" cy="12" r="1.8"/></svg>
 					</button>
 					<!-- The Chats section's fold; see the Diamonds one above. -->
@@ -474,7 +474,7 @@
 
 				<div class="admin-body" id="admin-body">
 					<div class="admin-drawer-head">
-						<span class="admin-title" id="admin-drawer-title">Admin</span>
+						<span class="admin-title" id="admin-drawer-title" data-i18n="admin.settings">Settings</span>
 						<!-- The drawn cross, not the '×' character: a glyph's ink is not
 						     centred in its own em box and which box it gets depends on
 						     whichever font the platform found it in. `.ui-close` carries
@@ -731,7 +731,7 @@
 						     (js/workspace.js `foldAll`); it is drawn nowhere else. -->
 						<button class="chip-btn icon-chip" id="chead-more" type="button"
 							aria-haspopup="menu" aria-expanded="false" aria-controls="chead-more-menu"
-							title="More" aria-label="More" data-i18n-title="chat.more" data-i18n-aria-label="chat.more"><svg class="ic" viewBox="0 0 24 24"
+							title="Chat options" aria-label="Chat options" data-i18n-title="chat.more" data-i18n-aria-label="chat.more"><svg class="ic" viewBox="0 0 24 24"
 							aria-hidden="true"><circle cx="5" cy="12" r="1.7" fill="currentColor" stroke="none"/><circle cx="12" cy="12" r="1.7" fill="currentColor" stroke="none"/><circle cx="19" cy="12" r="1.7" fill="currentColor" stroke="none"/></svg></button>
 						<!-- Concise: a standing toggle that puts the `/concise` skill in
 						     front of every turn this chat sends. A skill, not a hidden
@@ -1238,6 +1238,9 @@
 					<button class="addbtn" data-act="upload" title="Upload files" aria-label="Upload files" data-i18n-title="work.upload" data-i18n-aria-label="work.upload">
 						<svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 16V4M8 8l4-4 4 4"/><path d="M4 16v2a2 2 0 002 2h12a2 2 0 002-2v-2"/></svg>
 					</button>
+					<button class="addbtn" data-act="ws-more" title="More" aria-label="More" aria-haspopup="menu" aria-expanded="false" data-i18n-title="chat.more" data-i18n-aria-label="chat.more">
+						<svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><circle cx="6" cy="12" r="1.4"/><circle cx="12" cy="12" r="1.4"/><circle cx="18" cy="12" r="1.4"/></svg>
+					</button>
 					<button class="addbtn" data-act="refresh" title="Refresh" aria-label="Refresh" data-i18n-title="common.refresh" data-i18n-aria-label="common.refresh">
 						<svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M20 11a8 8 0 10-.6 4"/><path d="M20 4v5h-5"/></svg>
 					</button>
@@ -1248,9 +1251,9 @@
 			</div>
 			<div class="files-card">
 				<div class="files-mode"></div>
-				<button class="instructions-chip" id="instructions-chip" style="display:none"></button>
+				<div class="files-focus" hidden></div>
 				<div class="files-path"></div>
-				<div class="files-filter"><input type="text" class="files-filter-input" placeholder="Filter…" autocomplete="off" spellcheck="false" data-i18n-placeholder="work.filter_ph"></div>
+				<div class="files-filter"><input type="text" class="files-filter-input" placeholder="Search files" autocomplete="off" spellcheck="false" data-i18n-placeholder="work.search_ph"></div>
 				<div class="files-tree"></div>
 				<!-- Daimond's own store, which the tree above deliberately hides: a ×
 				     beside `diamonds/` would delete every Diamond you have. Hiding it
@@ -1818,6 +1821,10 @@
 <!-- ratingroll.js: the rating roll-up (cells per level and key, fading by newer ratings, shrinkage, trust,
      the digest's Ratings section), all pure. After ratings.js, whose head rule it reads. -->
 <script src="js/ratingroll.js"></script>
+<!-- modelcompare.js: the model Compare roll-up (task kind read from the transcript, accepted answers,
+     quantile and Wilson bands, the ranking, the card's snapshot), all pure. After ratingroll.js, whose
+     cells and chat parts it reads and fills. -->
+<script src="js/modelcompare.js"></script>
 <!-- steering.js: what the page may propose from the rating cells (a switch, a note, a review), and the
      fixed sentence for each note, all pure. After ratingroll.js, whose cells it reads. -->
 <script src="js/steering.js"></script>
@@ -1834,6 +1841,9 @@
 <!-- markshere.js: the marks pressed on this device, which a mark needs as well as
      its synced row to be in force here. Before daimond.js, whose every grant asks it. -->
 <script src="js/markshere.js"></script>
+<!-- recent.js: the pure ring of files a daimon or chat last wrote, and the rows
+     of what it can change, both drawn in the Workspace focus section. -->
+<script src="js/recent.js"></script>
 <!-- trash.js BEFORE sync.js, daimond.js and graph.js: all three ask it whether
      something has been deleted while they build the lists they draw, so the
      store has to be there when they do. -->
@@ -1914,6 +1924,7 @@
 		     through it, because two copies of a rule about text is how one of them comes to be
 		     right. Before daimond.js, which closes over both call sites. -->
 		<script src="js/listing.js"></script>
+		<script src="js/wssearch.js"></script>
 <!-- The one reader of a .gitignore. A shared folder is a real folder on somebody's
      disk and holds build output; the census that decides what to send and the merge
      that decides what an arriving path may be written to must agree about which
@@ -1965,6 +1976,7 @@
 <script src="js/autoreload.js"></script>
 <script src="js/web.js"></script>
 <script src="js/selfshot.js"></script><!-- js/selfshot.js — in-page DOM→PNG self-capture behind the `capture` tool (window.DaimondShot) -->
+<script src="js/lensshot.js"></script><!-- js/lensshot.js — the Lens's picture of this screen, owner-only and opt-in per device (window.DaimondLensShot) -->
 <script src="js/hand.js"></script>
 <script src="js/handpty.js"></script>
 <script src="js/terminal.js"></script>

@@ -37,7 +37,7 @@ const stubs = {
 };
 let fns = null;
 try {
-	fns = sliceDaimond(win, ['readCrystalFor', 'crystalBar', 'crystalData', 'crystalBroken', 'crystalLib'], stubs).fns;
+	fns = sliceDaimond(win, ['readCrystalFor', 'crystalBar', 'crystalData', 'crystalFile', 'crystalLib'], stubs).fns;
 } catch (e) { check('readCrystalFor exists', false, e.message); }
 
 if (fns) {

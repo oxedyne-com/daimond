@@ -48,7 +48,7 @@ const r6 = await openState();
 console.log(JSON.stringify({
 	rest_closed:        r0 === false,
 	cog_opens:          r1 === true,
-	cog_title_admin:    title1.trim() === 'Admin',
+	cog_title_admin:    title1.trim() === 'Settings',
 	x_closes:           r2 === false,
 	models_row_opens:   r3 === true && modelsShown,
 	models_title:       title3.trim() === 'Models',
@@ -58,7 +58,7 @@ console.log(JSON.stringify({
 }, null, 2));
 
 const realErrs = s.errs.filter(e => !/502|Bad Gateway|\/api\b/.test(e));
-const ok = r0 === false && r1 === true && title1.trim() === 'Admin' && r2 === false
+const ok = r0 === false && r1 === true && title1.trim() === 'Settings' && r2 === false
 	&& r3 === true && modelsShown && title3.trim() === 'Models' && r4 === false
 	&& r5open === true && r6 === false && realErrs.length === 0;
 console.log(ok ? '\n✅ PASS' : '\n❌ FAIL');

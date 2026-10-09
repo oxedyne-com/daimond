@@ -82,6 +82,7 @@ const { stampOf, msgStanding, standingOf, chatMsgCount, chatSessionMsgs, slimCha
 	extractFn(APP, 'standingOf'),
 	extractFn(APP, 'chatMsgCount'),
 	extractFn(APP, 'chatSessionMsgs'),
+	extractFn(APP, 'withRecent'),
 	extractFn(APP, 'slimChat'),
 	'function applyCarry(merged, c) { ' + carryBlock + ' }',
 	'return { stampOf, msgStanding, standingOf, chatMsgCount, chatSessionMsgs, slimChat, applyCarry };',

@@ -2,9 +2,11 @@
 // verify_crystalrestore.mjs — a turn that leaves a page the load proof did not pass puts back the
 // last one that did (K2, D-20261008-08).
 //
-// r544 HOTFIX (QA-B F-B1..F-B3): the put-back is OFF. The engine now writes nothing and raises
-// {type:'crystal_unproven'} instead, and the page offers no "Bring back"; R2 checks that, R3 is gone.
-// fire/fb brings the put-back back as a compare-and-swap on the turn's own FAIL verdict.
+// r544 HOTFIX (QA-B F-B1..F-B3): the put-back is OFF. The engine writes nothing and the page offers no
+// "Bring back"; R3 is gone. r545 (QA r544h F-H1): {type:'crystal_unproven'} and the daimon's note follow
+// only this turn's own FAILING load proof of a page it wrote, whatever the mark says (R2, R4, R2b here;
+// verify_crystalproof drives a page written elsewhere and file_revert). fire/fb brings the put-back back
+// as a compare-and-swap on the turn's own FAIL verdict.
 //
 // The Ontheism daimon left a crystal that drew nothing, and it stayed in front of the person. Now,
 // where a pass is marked (.daimond/crystal_passed.json, written by the load proof) and a turn leaves
@@ -17,9 +19,9 @@
 //       version, the restore is a new version, and the version count never drops.
 //   R3. "Bring back" (the toast's revert) puts Y back.
 //   R4. A turn that does not touch the page restores nothing.
-//   R5. The toast's button says "Bring back", not "Undo".
 //
-// The mock turn does not run the load proof, so the mark stays as written.
+// The load proof runs after each page write here too, and fails these bare pages; the mark below is
+// written by hand, so it says nothing about what the proof found.
 // Needs a world for the mock provider: `eval "$(bash dev/world.sh N --env)"`.
 import { open } from './harness.mjs';
 
@@ -118,18 +120,6 @@ const r = await p.evaluate(async ({ X, Y, Z, W }) => {
 	out.t5 = await turn(id, 'file_write', { path: page, content: W });
 	out.t6 = await turn(id, 'file_write', { path: page, content: Z });
 	out.p6 = await read(page);
-	// R5
-	let btn = '', aria = '';
-	if (window.DaimondUndo) {
-		DaimondUndo.able({ text: 'restored', label: 'Bring back', ms: 60000, revert: () => {} });
-		const b = [...document.querySelectorAll('button')].find((n) => /Bring back|Undo/.test(n.textContent));
-		btn  = b ? b.textContent : '';
-		aria = b ? b.getAttribute('aria-label') : '';
-		DaimondUndo.able({ text: 'plain', ms: 60000, revert: () => {} });
-		const u = [...document.querySelectorAll('button')].find((n) => /Bring back|Undo/.test(n.textContent));
-		out.plain = u ? u.textContent : '';
-	}
-	out.btn = btn; out.aria = aria;
 	return out;
 }, { X: PAGE('X'), Y: PAGE('Y'), Z: PAGE('Z'), W: PAGE('W') });
 
@@ -138,15 +128,15 @@ check('R1. no mark: the page the turn wrote stays', r.p1 === PAGE('Y'), short(r.
 check('R1. no mark: nothing is raised', r.t1.restored.length === 0, JSON.stringify(r.t1.restored));
 check('R2. marked on X, a turn writes Y: Y stays (nothing is put back, r544 hotfix)', r.p2 === PAGE('Y'), short(r.p2));
 check('R2. no crystal_restored is raised', r.t2.restored.length === 0, JSON.stringify(r.t2.restored));
-check('R2. crystal_unproven is raised once', r.t2.unproven === 1, String(r.t2.unproven));
+const failed = (t) => /MUST FIX[^]*load proof/.test(t.said);
+check('R2. the turn\'s own proof of Y failed, and crystal_unproven is raised once', failed(r.t2) && r.t2.unproven === 1,
+	r.t2.unproven + ' | ' + short(r.t2.said));
 check('R2. only the turn is a version: no restore version', r.n2 === r.n0 + 1, r.n0 + ' -> ' + r.n2);
-check('R4. a turn that does not touch the page restores nothing',
+check('R4. a turn that writes only the data, over a page it did not write, raises nothing (F-H1)',
 	r.t4.restored.length === 0 && r.t4.unproven === 0 && r.p4 === PAGE('Y'), JSON.stringify(r.t4.restored) + ' | ' + short(r.p4));
-check('R2b. a turn that leaves the passed page restores nothing',
-	r.t6.restored.length === 0 && r.t6.unproven === 0 && r.p6 === PAGE('Z'), JSON.stringify(r.t6.restored) + ' | ' + short(r.p6));
-check('R5. the toast\'s button says "Bring back"', r.btn === 'Bring back' && r.aria === 'Bring back',
-	JSON.stringify([r.btn, r.aria]));
-check('R5. an ordinary undo still says "Undo"', /Undo/.test(r.plain), JSON.stringify(r.plain));
+check('R2b. a turn that leaves the marked page restores nothing, and warns only on its own failing proof',
+	r.t6.restored.length === 0 && r.t6.unproven === (failed(r.t6) ? 1 : 0) && r.p6 === PAGE('Z'),
+	JSON.stringify(r.t6.restored) + ' | ' + r.t6.unproven + ' | ' + short(r.p6));
 
 await p.evaluate(async (folder) => {
 	const root = await navigator.storage.getDirectory();
