@@ -129,6 +129,7 @@ web-sys = { version = "0.3", features = [
 	"Storage",
 	# OPFS filesystem edge (main-thread async path).
 	"Navigator",
+	"Performance",
 	"StorageManager",
 	"FileSystemDirectoryHandle",
 	"FileSystemFileHandle",

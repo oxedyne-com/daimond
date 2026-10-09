@@ -25,6 +25,10 @@
 // kept per DEVICE. Folding one list gives its room to the other, which is the lever the
 // phone had lost.
 //
+// 2026-10-08 (D-20261008-14): the STATUS fold alone now reaches a desktop (shut by default,
+// see dev/verify_rail_status.mjs). Diamonds and Chats still pay nothing there, and the desktop
+// section below says so; it presses the status toggle before it reads the rows.
+//
 // FOUR CONTEXTS, and the third of them needs a word. Playwright's WebKit build exposes
 // no `navigator.storage` at all, so `create_diamond` fails there ("this browser exposes
 // no getDirectory") and a Diamond cannot exist in it — the engine an iPhone runs is the
@@ -190,7 +194,16 @@ async function tap(p, sel) {
 // checks below that measure the rows were reading a deliberately shut drawer as a
 // missing row. Opened here, because what those checks are about is where the rows sit
 // once they ARE shown, not whether the app shows them unasked.
+//
+// AND THE SECTION ITSELF IS SHUT BY DEFAULT AT EVERY WIDTH (D-20261008-14): the phone's
+// fold was lifted to the desktop, so the identity row's status toggle is pressed first,
+// as a user would, and only then the summary.
 async function openStatusDetail(p) {
+	const folded = await p.evaluate(() => {
+		const b = document.querySelector('#panel-rail .rail-fold[data-fold="status"]');
+		return !!b && b.getAttribute('aria-expanded') !== 'true';
+	});
+	if (folded) await tap(p, '#panel-rail .rail-fold[data-fold="status"]');
 	const shut = await p.evaluate(() => {
 		const d = document.getElementById('astat-detail');
 		return !d || d.hidden;
@@ -374,11 +387,15 @@ try {
 	await p.waitForTimeout(1200);
 	await p.evaluate(() => DaimondPanels.show('rail'));
 	await p.waitForTimeout(500);
+	const m0 = await survey(p);
+	check('a desktop\'s status section starts shut, to its identity row alone',
+		m0.folds.status && m0.folds.status.expanded === false && m0.idRow.drawn && !m0.modelRow.drawn && m0.admin.h < 90,
+		`status expanded ${m0.folds.status && m0.folds.status.expanded}, identity ${m0.idRow.h}px, #admin ${m0.admin.h}px`);
 	const deskDetailOpen = await openStatusDetail(p);
 	const m = await survey(p);
-	check('no fold control is drawn on a desktop',
+	check('only the status fold is drawn on a desktop; Diamonds and Chats are not',
 		Object.keys(m.folds).length === 3
-			&& Object.keys(m.folds).every((k) => m.folds[k].drawn === false),
+			&& m.folds.status.drawn === true && m.folds.diamonds.drawn === false && m.folds.chats.drawn === false,
 		JSON.stringify(Object.keys(m.folds).map((k) => k + ':' + m.folds[k].drawn)));
 	check('the desktop keeps its own lever, the split handle between the two lists',
 		m.split && m.split.drawn, m.split ? m.split.h + 'px' : 'absent');
@@ -392,20 +409,20 @@ try {
 	check('the heading is still the railhead\'s first child, and the fold its last',
 		m.headingFirst && m.foldLast && m.headingFlex === '1',
 		`first-child ${m.headingFirst}, fold last ${m.foldLast}, flex-grow ${m.headingFlex}`);
-	// The attributes are written at every width; only rules inside the phone
-	// breakpoint read them. Proven rather than asserted: the phone's own state is
-	// forced onto a desktop rail and nothing moves.
+	// The attributes are written at every width; only the status section's rules sit
+	// outside the phone breakpoint. Proven rather than asserted: the phone's Diamonds
+	// and Chats state is forced onto a desktop rail and nothing moves.
 	const moved = await p.evaluate(() => {
 		const r = document.getElementById('panel-rail');
 		const h = () => ['#diamond-list', '#session-list', '#admin-status', '#admin']
 			.map((sel) => Math.round(document.querySelector(sel).getBoundingClientRect().height)).join(',');
 		const was = h();
-		['diamonds', 'chats', 'status'].forEach((k) => r.setAttribute('data-fold-' + k, 'off'));
+		['diamonds', 'chats'].forEach((k) => r.setAttribute('data-fold-' + k, 'off'));
 		const now = h();
-		['diamonds', 'chats', 'status'].forEach((k) => r.setAttribute('data-fold-' + k, 'on'));
+		['diamonds', 'chats'].forEach((k) => r.setAttribute('data-fold-' + k, 'on'));
 		return { was, now };
 	});
-	check('and a phone\'s fold state forced onto the desktop rail moves nothing',
+	check('and a phone\'s Diamonds and Chats fold state forced onto the desktop rail moves nothing',
 		moved.was === moved.now, `${moved.was} → ${moved.now}`);
 	await p.screenshot({ path: path.join(SHOTS, 'railmobile-desktop-1280.png') });
 	consoleClean(s, 'Chromium desktop');

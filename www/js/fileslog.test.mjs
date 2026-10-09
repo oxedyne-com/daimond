@@ -145,7 +145,7 @@ async function main() {
 			/filesEv = ev/.test(armSrc) && /indexOf\('chat:'\) === 0/.test(armSrc) && !/appendFilesLog|chat\.messages\.push/.test(armSrc), armSrc);
 		check('offerTurnUndo is the 5.2.9 toast: it reads `files` and never `made`', !/\bmade\b/.test(lift(SRC, 'offerTurnUndo') || 'made'), '');
 		const iFlog = SRC.indexOf('var flog = await filesLogOf(chat, fev, umid)');
-		const iKeep = SRC.indexOf('await app.end_keeper_turn(', arm), iEnd = SRC.indexOf('chat.messages.push(pendingEnd)', arm);
+		const iKeep = SRC.indexOf('await app.end_keeper_turn(', arm), iEnd = SRC.indexOf('chat.messages.push(stampAfter(chat.messages, pendingEnd))', arm);
 		check('it is written after the Diamond store\'s turn end and before the ending', iKeep > 0 && iFlog > iKeep && iEnd > iFlog, { iKeep, iFlog, iEnd });
 		const tryEnd = SRC.indexOf('} finally {', arm);
 		check('and in the `finally`, so a turn that wrote a file and then failed still has its row', tryEnd > 0 && iFlog > tryEnd, { tryEnd, iFlog });

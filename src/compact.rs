@@ -3117,8 +3117,41 @@ pub fn looks_like_overflow(err: &str, prompt_tokens: u64, budget: u64) -> bool {
 		}
 	}
 	// The fallback: no words that say so, so the status and the size are all there is.
-	let refused = low.contains("400") || low.contains("413") || low.contains("422");
+	let plain   = without_locations(&low);
+	let refused = ["400", "413", "422"].iter().any(|code| names_status(&plain, code));
 	refused && prompt_tokens >= OVERFLOW_FLOOR_TOKENS.min(budget / 2)
+}
+
+// The text with the line number of every `file.rs:LINE` taken out.  An error carries the place
+// that made it, and a refactor that moved the macro to line 1400 sent every transport failure
+// to the fold, because "1400" holds "400".
+fn without_locations(text: &str) -> String {
+	let mut out  = String::with_capacity(text.len());
+	let mut rest = text;
+	while let Some(i) = rest.find(".rs:") {
+		let cut = i + 4;
+		out.push_str(&rest[..cut]);
+		let tail = &rest[cut..];
+		let n    = tail.bytes().take_while(|b| b.is_ascii_digit()).count();
+		rest     = &tail[n..];
+	}
+	out.push_str(rest);
+	out
+}
+
+// Does `text` hold `code` as a number of its own, not as part of a longer one?
+fn names_status(text: &str, code: &str) -> bool {
+	let digit = |c: Option<char>| c.map_or(false, |c| c.is_ascii_digit());
+	let mut from = 0;
+	while let Some(i) = text[from..].find(code) {
+		let at  = from + i;
+		let end = at + code.len();
+		if !digit(text[..at].chars().next_back()) && !digit(text[end..].chars().next()) {
+			return true;
+		}
+		from = end;
+	}
+	false
 }
 
 
@@ -4981,6 +5014,22 @@ mod tests {
 		l.learn_from_refusal(refused);
 		assert!(l.budget(4_096) < refused,
 			"budget {} is not below the {} tokens the provider refused", l.budget(4_096), refused);
+	}
+
+	#[test]
+	fn test_a_source_line_number_is_not_a_status_00() {
+		// The error text names the file and line that made it, and "src/llm.rs:1400" holds
+		// "400".  A refused connection on a big conversation was read as a 400 overflow and
+		// folded a second time, until a refactor moved the line (r541 T1qa).
+		for msg in [
+			"UpstreamErr{\"src/llm.rs:1400\"} could not reach 127.0.0.1:1",
+			"LLM: stream broke at src/llm.rs:413: connection reset",
+			"\u{1b}[96m\"src/agent.rs:2422\"\u{1b}[0m the stream broke",
+		] {
+			assert!(!looks_like_overflow(msg, 90_000, 100_000), "{}", msg);
+		}
+		// A status beside a location is still a status.
+		assert!(looks_like_overflow("src/llm.rs:1033: LLM: HTTP error: 400 Bad Request.", 90_000, 100_000));
 	}
 
 	#[test]

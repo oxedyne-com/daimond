@@ -517,17 +517,17 @@
 }
 :root[data-skin="daylight"] .ctile .ctile:hover { background: color-mix(in srgb, var(--ct-edge) 8%, transparent); }
 /* A solo Tool step -- one call, no rollup drawn round it -- nests its `.ctile`
-   three and four selectors deep (`.crollup[data-t="tool"] > .crollup-body >
-   .ctile`, `.crollup.solo[...]`), which out-specifies the two rules above and
+   three and four selectors deep (`.crollup[data-t="work"] > .crollup-body >
+   .ctile[data-t="tool"]`, `.crollup.solo[...]`), which out-specifies the two rules above and
    kept its green fill at rest under them (QA round 2, minor 6). Named
    explicitly here rather than raised generically, so it drops to transparent
    like every other tile and takes the same hover fill. */
-:root[data-skin="daylight"] .crollup[data-t="tool"] > .crollup-body > .ctile,
-:root[data-skin="daylight"] .crollup.solo[data-t="tool"] > .crollup-body > .ctile {
+:root[data-skin="daylight"] .crollup[data-t="work"] > .crollup-body > .ctile[data-t="tool"],
+:root[data-skin="daylight"] .crollup.solo[data-t="work"] > .crollup-body > .ctile[data-t="tool"] {
 	background: transparent;
 }
-:root[data-skin="daylight"] .crollup[data-t="tool"] > .crollup-body > .ctile:hover,
-:root[data-skin="daylight"] .crollup.solo[data-t="tool"] > .crollup-body > .ctile:hover {
+:root[data-skin="daylight"] .crollup[data-t="work"] > .crollup-body > .ctile[data-t="tool"]:hover,
+:root[data-skin="daylight"] .crollup.solo[data-t="work"] > .crollup-body > .ctile[data-t="tool"]:hover {
 	background: color-mix(in srgb, var(--ct-edge) 6%, transparent);
 }
 :root[data-skin="daylight"] .ctile-lbl,
@@ -651,6 +651,9 @@
 :root[data-skin="daylight"] #chat-end:hover { background: var(--dl-hover); color: var(--text-primary); }
 :root[data-skin="daylight"] .chat-attach-strip { padding: 0 14px 0 28px; margin: 0; }
 :root[data-skin="daylight"] .attach-head { border: 0; background: transparent; font-size: var(--dl-xs); color: var(--text-muted); }
+/* The band that carries the fold toggle IS the collapsed footer row, so its toggle is drawn as `.arte-strip` is drawn in a diamond's
+   footer: the box on the footer's text edge, with no inset of the band's own. */
+:root[data-skin="daylight"] .attach-head.attach-fold { padding-left: 0; }
 :root[data-skin="daylight"] .arte-list,
 :root[data-skin="daylight"] .arte-row { border-color: transparent; }
 :root[data-skin="daylight"] .mark-notice { border-color: transparent; }
@@ -1062,14 +1065,17 @@
 :root[data-skin="daylight"] .rhandle:hover::after,
 :root[data-skin="daylight"] .rhandle.dragging::after { background: var(--accent); }
 /* The composer's attach row: a quiet line of words over the field. */
-:root[data-skin="daylight"] .ws-group { border-color: transparent; background: transparent; }
+/* A frame that is not drawn takes no room: the transparent 1px border pushed the band's contents 1px off the footer's text edge. */
+:root[data-skin="daylight"] .ws-group { border: 0; background: transparent; }
 :root[data-skin="daylight"] .attach-view-btn,
 :root[data-skin="daylight"] .attach-add,
 :root[data-skin="daylight"] .attach-add.grants {
 	border-color: transparent;
 	background: transparent;
-	border-radius: var(--radius-sm);
 }
+/* The radius is set on the two bases only: `.attach-add.grants` outranks `.attach-add.icon`, and would square the round + that grants carry. */
+:root[data-skin="daylight"] .attach-view-btn,
+:root[data-skin="daylight"] .attach-add { border-radius: var(--radius-sm); }
 :root[data-skin="daylight"] .attach-add.grants { color: var(--accent-text); }
 :root[data-skin="daylight"] .attach-view-btn:hover,
 :root[data-skin="daylight"] .attach-add:hover,

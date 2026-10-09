@@ -209,6 +209,13 @@ try {
 	check('movements show signed debit/credit amounts', creditsRender.debits >= 4, creditsRender.debits + ' amounts');
 
 	// ── The header meter opens the panel. ─────────────────────────────────────
+	// The status section holding the meter is shut by default (D-20261008-14): press its toggle
+	// first, as a user does.
+	await page.evaluate(() => {
+		const b = document.querySelector('#panel-rail .rail-fold[data-fold="status"]');
+		if (b && b.getAttribute('aria-expanded') !== 'true') b.click();
+	});
+	await page.waitForTimeout(300);
 	// (Re-render fresh, close the panel, then click the meter.)
 	const meterOpens = await page.evaluate(async () => {
 		document.getElementById('spend-view').innerHTML = '';	// prove the click repopulates it

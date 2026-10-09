@@ -16,9 +16,23 @@
    phone breakpoint so desktop is untouched.
    ============================================================ */
 
-/* The hamburger, the sheet and the section folds exist only on a phone. */
+/* The hamburger and the sheet exist only on a phone. The section folds do too,
+   except the status section's: it is shut by default at every width
+   (D-20261008-14), so its toggle is drawn on a desktop as well. */
 #drawer-btn { display: none; }
 .rail-fold  { display: none; }
+.rail-fold[data-fold="status"] { display: flex; flex: none; }
+/* Pointing down when the section is open, at its heading when it is not. The
+   chevron turns with the state at every width, so it is outside the breakpoint. */
+.rail-fold .ic { width: 16px; height: 16px; transition: transform .18s; }
+.rail-fold[aria-expanded="false"] .ic { transform: rotate(-90deg); }
+/* Everything in the status strip but its identity row, until somebody opens it.
+   Keyed on NOT-on, so nothing flashes before `mobile.js` has painted the state.
+   `!important` because three of these rows carry an inline `display` of their own
+   (BYOK, Pro, the spend readout) that money.js and release.js turn on and off --
+   folded they are all away, and unfolded each is back under whichever rule owns
+   it. The identity row is the section's header, and a header stays. */
+.panel.rail:not([data-fold-status="on"]) .admin-status > *:not(.astat-id) { display: none !important; }
 #msheet     { display: none; }
 #scrim      { display: none; }
 
@@ -240,9 +254,6 @@
 	   is taller than a pointer's. */
 	:root[data-skin="daylight"] :where(select) { height: 36px; }
 	:root[data-skin="daylight"] :where(input):not([type=checkbox], [type=radio], [type=range], [type=color], [type=file]) { height: 34px; }
-	.rail-fold .ic { width: 16px; height: 16px; transition: transform .18s; }
-	/* Pointing down when the section is open, at its heading when it is not. */
-	.rail-fold[aria-expanded="false"] .ic { transform: rotate(-90deg); }
 	.rail-fold:active { background: var(--accent-soft); }
 	/* The whole heading is the target, not the 34px chevron alone: the row is
 	   already there and a thumb aims at the word. `mobile.js` binds it. */
@@ -254,11 +265,6 @@
 	.panel.rail[data-fold-diamonds="off"] .diamond-find,
 	.panel.rail[data-fold-diamonds="off"] .diamond-list,
 	.panel.rail[data-fold-chats="off"] .session-list { display: none; }
-	/* Everything in the status strip but its header row. `!important` because
-	   three of these rows carry an inline `display` of their own (BYOK, Pro, the
-	   spend readout) that money.js and release.js turn on and off -- folded they
-	   are all away, and unfolded each is back under whichever rule owns it. */
-	.panel.rail[data-fold-status="off"] .admin-status > *:not(.astat-id) { display: none !important; }
 	/* Unfolded, the strip scrolls inside itself rather than pushing the lists
 	   back down to their floor: every open section is bounded, which is the whole
 	   rule this block is written around. */

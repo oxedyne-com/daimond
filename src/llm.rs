@@ -216,7 +216,9 @@ const CARRY_MAX_TURNS: usize = 32;
 /// Measured from the last REAL data -- the accumulator growing -- and not from the last byte.
 /// OpenRouter holds a request whose provider has gone quiet by sending `: OPENROUTER
 /// PROCESSING` comment lines, and a watchdog re-armed by those ran a round to the daimon's
-/// 30-minute cap (r540).  Before any data the limit is 1.5 x this; see [`StreamWatch`].
+/// 30-minute cap (r540).  Before any chunk the limit is 1.5 x this, once a chunk has shown the
+/// provider took the request it is 5 x, and so it is while a model reasons without answering;
+/// see [`StreamWatch`].
 pub const DEFAULT_STREAM_IDLE_MS: u64 = 60_000;
 
 /// How many times a round that produced NO data at all is asked again.
@@ -225,9 +227,11 @@ pub const DEFAULT_STREAM_IDLE_MS: u64 = 60_000;
 /// provider name is known, so a second exclusion would have nothing to exclude.
 const STALL_RETRIES: u32 = 1;
 
-/// How long the retry of a stalled round waits for its first data, as a multiple of the idle
-/// ceiling -- 5 x 60 s = 5 minutes by default.  A model that thinks silently for longer than
-/// the first attempt's 1.5 x is not abandoned a second time at 90 s.
+/// How long a model that is plainly working may be quiet, as a multiple of the idle ceiling --
+/// 5 x 60 s = 5 minutes by default.  That is the retry of a stalled round waiting for its first
+/// data, any attempt once a chunk has shown the provider took the request, and a stream that
+/// is reasoning and has not begun its answer.  A model that thinks silently is not abandoned
+/// at 90 s, nor cut mid-thought at 60 s.
 const STALL_WAIT_FACTOR: u64 = 5;
 
 /// How much longer a non-streaming reply may take to arrive than a stream's first byte.
@@ -515,10 +519,6 @@ pub struct LlmClient {
     /// reason `stream_idle_ms` is a shared cell: one client, one routing preference,
     /// wherever it is cloned.
     provider_routing: std::rc::Rc<std::cell::RefCell<ProviderRouting>>,
-    /// The upstream provider that last answered a round on this client, kept so a round that
-    /// stalls before it names one can still say who it was waiting on and leave that one out
-    /// of its retry.  Shared across clones for the reason `provider_routing` is.
-    last_provider:  std::rc::Rc<std::cell::RefCell<String>>,
     /// Root-trust TLS configuration for the native transport.  The wasm
     /// transport delegates trust to the browser's `fetch`, so this field
     /// is native-only.
@@ -964,6 +964,7 @@ impl RetryPolicy {
 struct TransportErr {
     retryable: bool,            // is another attempt worth making?
     after_ms:  Option<u64>,     // what the provider asked us to wait, if it said
+    status:    u16,             // the HTTP status that refused the request, else 0
     // A few plain words for the retry notice, and -- since 2026-08-28 -- for the
     // caller.  The error itself carries file, line and ANSI colouring, none of
     // which belongs in a user's message pane.  See [`TransportErr::crossed`].
@@ -975,13 +976,13 @@ impl TransportErr {
 
     /// A failure worth another attempt: a 429, a 5xx, or a broken connection.
     fn transient(reason: String, err: Error<ErrTag>) -> Self {
-        Self { retryable: true, after_ms: None, reason, err }
+        Self { retryable: true, after_ms: None, status: 0, reason, err }
     }
 
     /// A failure that will fail again the same way: a malformed request, a bad
     /// key, an unknown model.
     fn fatal(reason: String, err: Error<ErrTag>) -> Self {
-        Self { retryable: false, after_ms: None, reason, err }
+        Self { retryable: false, after_ms: None, status: 0, reason, err }
     }
 
     /// Classify a transport error by its tags, terminal if it is a first-byte/idle timeout.
@@ -1005,6 +1006,12 @@ impl TransportErr {
     /// Attach the provider's requested delay.
     fn after(mut self, after_ms: Option<u64>) -> Self {
         self.after_ms = after_ms;
+        self
+    }
+
+    /// Say which HTTP status the failure was, so a caller can tell a refusal from a broken line.
+    fn at(mut self, status: u16) -> Self {
+        self.status = status;
         self
     }
 
@@ -1156,17 +1163,37 @@ async fn read_or_nap<T>(
     }).await
 }
 
-/// Milliseconds on a clock that only moves forward (the browser's wall clock on wasm).
+/// Milliseconds on a clock that only moves forward.
 #[cfg(not(target_arch = "wasm32"))]
 fn now_ms() -> u64 {
     static START: std::sync::OnceLock<std::time::Instant> = std::sync::OnceLock::new();
     START.get_or_init(std::time::Instant::now).elapsed().as_millis() as u64
 }
 
-/// Milliseconds since the epoch, from the browser.
+/// Milliseconds on the browser's monotonic clock (`performance.now()`).
+///
+/// Not `Date.now()`: the wall clock steps when the system clock is set or an NTP correction
+/// lands.  A step back would stop the watch from ever expiring until the clock caught up, and
+/// a step forward would expire a live round at once.
 #[cfg(target_arch = "wasm32")]
 fn now_ms() -> u64 {
-    js_sys::Date::now() as u64
+    use wasm_bindgen::JsCast;
+    let perf = match web_sys::window() {
+        Some(win) => win.performance(),
+        None      => js_sys::global().dyn_into::<web_sys::WorkerGlobalScope>().ok()
+                         .and_then(|scope| scope.performance()),
+    };
+    match perf {
+        Some(p) => p.now() as u64,
+        None    => js_sys::Date::now() as u64,  // a scope with no performance clock at all
+    }
+}
+
+/// What the stream's sink makes of one `data:` chunk, for the watch.
+#[derive(Clone, Copy, Debug, Default)]
+struct Pulse {
+    grew:     bool,     // the accumulator grew: real data
+    thinking: bool,     // the model is reasoning and has not begun its answer
 }
 
 /// The clocks of one stream, kept apart from the transports so both read them the same way.
@@ -1176,15 +1203,28 @@ fn now_ms() -> u64 {
 /// the comment re-armed the timeout and was then dropped by the `data: ` test, so a round
 /// whose provider never answered ran to the daimon's 30-minute cap and the turn ended
 /// "Stopped".  Only progress re-arms it now -- the sink reports whether the accumulator
-/// grew -- and before any progress the limit is the wider `first_ms`.
+/// grew -- and how long the quiet may last depends on what the stream has shown:
+///
+/// - no `data:` chunk at all: `first_ms`, 1.5 x the idle ceiling on a first attempt;
+/// - a chunk that carried nothing yet (a role, a provider's name), which shows the provider
+///   took the request and is working: `wide_ms`, 5 x the ceiling;
+/// - real data: `idle_ms`, except while the model is reasoning and has not begun to answer,
+///   when it is `wide_ms` again.  A model that thinks without streaming its thinking (an
+///   Anthropic block with the text omitted, or reasoning in bursts minutes apart) is working
+///   behind its pings.  That wider limit holds only while some byte keeps arriving: a
+///   connection gone wholly silent is cut at `idle_ms`, as it always was.
 #[derive(Clone, Copy, Debug)]
 struct StreamWatch {
     idle_ms:   u64,     // the limit once something has arrived
-    first_ms:  u64,     // the limit before anything has
+    first_ms:  u64,     // the limit before any chunk has
+    wide_ms:   u64,     // the limit for a model that is working without saying so
     wait_ms:   u64,     // how often a notice is due while it is quiet
     last_real: u64,     // clock at the start, then at the last progress
     last_wait: u64,     // clock at the last notice, or progress
-    any:       bool,    // has anything arrived
+    last_byte: u64,     // clock at the last line of any kind, comments included
+    any:       bool,    // has real data arrived
+    accepted:  bool,    // has any `data:` chunk arrived
+    thinking:  bool,    // is the model reasoning, with no answer yet
 }
 
 impl StreamWatch {
@@ -1193,11 +1233,27 @@ impl StreamWatch {
         Self {
             idle_ms,
             first_ms,
+            wide_ms:   idle_ms.saturating_mul(STALL_WAIT_FACTOR).max(first_ms),
             wait_ms:   (idle_ms / 2).max(1),
             last_real: now,
             last_wait: now,
+            last_byte: now,
             any:       false,
+            accepted:  false,
+            thinking:  false,
         }
+    }
+
+    // A line of any kind arrived, a keep-alive comment included.
+    fn heard(&mut self, now: u64) {
+        self.last_byte = now;
+    }
+
+    // A `data:` chunk arrived, and the sink has read it.
+    fn data(&mut self, now: u64, pulse: Pulse) {
+        self.accepted = true;
+        self.thinking = pulse.thinking;
+        if pulse.grew { self.progress(now); }
     }
 
     // Real data arrived: both clocks restart.
@@ -1208,12 +1264,20 @@ impl StreamWatch {
     }
 
     fn limit(&self) -> u64 {
-        if self.any { self.idle_ms } else { self.first_ms }
+        if self.thinking      { self.wide_ms }
+        else if self.any      { self.idle_ms }
+        else if self.accepted { self.wide_ms }
+        else                  { self.first_ms }
+    }
+
+    // Where the wide limit gives way to plain silence: the idle ceiling after the last byte.
+    fn dead_at(&self) -> u64 {
+        if self.thinking { self.last_byte.saturating_add(self.idle_ms) } else { u64::MAX }
     }
 
     // Has the quiet outlasted its limit?
     fn expired(&self, now: u64) -> bool {
-        now.saturating_sub(self.last_real) >= self.limit()
+        now.saturating_sub(self.last_real) >= self.limit() || now >= self.dead_at()
     }
 
     // The seconds of quiet, if a notice is due now; arms the next one.
@@ -1225,8 +1289,8 @@ impl StreamWatch {
 
     // Milliseconds to the next thing that needs doing: a notice or the end of the wait.
     fn next_in(&self, now: u64) -> u64 {
-        let to_end  = (self.last_real + self.limit()).saturating_sub(now);
-        let to_tick = (self.last_wait + self.wait_ms).saturating_sub(now);
+        let to_end  = self.last_real.saturating_add(self.limit()).min(self.dead_at()).saturating_sub(now);
+        let to_tick = self.last_wait.saturating_add(self.wait_ms).saturating_sub(now);
         to_end.min(to_tick).max(1)
     }
 }
@@ -1260,7 +1324,6 @@ impl LlmClient {
             seen:       new_blind(),
             stream_idle_ms: std::rc::Rc::new(std::cell::Cell::new(DEFAULT_STREAM_IDLE_MS)),
             provider_routing: std::rc::Rc::new(std::cell::RefCell::new(ProviderRouting::default())),
-            last_provider: std::rc::Rc::new(std::cell::RefCell::new(String::new())),
             tls_config,
             halt:       Halt::new(),
         }
@@ -1314,7 +1377,6 @@ impl LlmClient {
             seen:       new_blind(),
             stream_idle_ms: std::rc::Rc::new(std::cell::Cell::new(DEFAULT_STREAM_IDLE_MS)),
             provider_routing: std::rc::Rc::new(std::cell::RefCell::new(ProviderRouting::default())),
-            last_provider: std::rc::Rc::new(std::cell::RefCell::new(String::new())),
             secure,
             halt:       Halt::new(),
         }
@@ -1374,6 +1436,22 @@ impl LlmClient {
         self.stream_turn(messages, tools, on_token, true).await
     }
 
+    /// The conversation a resent request carries: the picture-less one once the blind retry
+    /// has made it, else what the sight check left, else the caller's own.
+    fn resend_of<'m>(
+        blind:    &'m Option<Vec<ChatMessage>>,
+        stripped: &'m Option<Vec<ChatMessage>>,
+        messages: &'m [ChatMessage],
+    )
+        -> &'m [ChatMessage]
+    {
+        match (blind, stripped) {
+            (Some(b), _)    => b,
+            (None, Some(s)) => s,
+            (None, None)    => messages,
+        }
+    }
+
     /// The one streamed turn both public streaming entry points run.
     ///
     /// Builds the request in whichever [`Dialect`] the endpoint speaks, drives
@@ -1413,6 +1491,10 @@ impl LlmClient {
         // they are asked to leave out.
         let mut stall_tries = 0u32;
         let mut stall_ignore: Vec<String> = Vec::new();
+        // Set once a retry that left a provider out was refused for it and sent again without.
+        let mut unexcluded = false;
+        // When the turn began, so a stall reports the wait of every attempt and not the last.
+        let turn_began = now_ms();
         let idle = self.stream_idle_ms.get();
         loop {
             // A STOPPED TURN SENDS NOTHING MORE, asked at the top of EVERY attempt.  A Stop, a
@@ -1431,9 +1513,8 @@ impl LlmClient {
             // retry gives it 5 x, so a model that thinks silently is not cut a second time.
             let first_ms = if stall_tries == 0 { idle.saturating_mul(3) / 2 }
                            else { idle.saturating_mul(STALL_WAIT_FACTOR) };
-            let began = now_ms();
             let outcome = {
-                let mut sink = |w: Wire<'_>| -> bool {
+                let mut sink = |w: Wire<'_>| -> Pulse {
                     match w {
                         Wire::Data(data) => {
                             let before = acc.size();
@@ -1446,24 +1527,22 @@ impl LlmClient {
                                 on_token(d);
                             });
                             // PROGRESS IS GROWTH.  A role-only chunk or a usage block parses and
-                            // adds nothing, and does not hold the watchdog off.
-                            acc.size() > before
+                            // adds nothing, and does not hold the watchdog off; it does show the
+                            // provider took the request.  And a model reasoning with no answer
+                            // yet is allowed its quiet: see [`StreamWatch`].
+                            Pulse { grew: acc.size() > before, thinking: acc.thinking_open() }
                         }
                         Wire::Silence(secs) => {
-                            let named = self.last_provider.borrow().clone();
-                            let p = if acc.provider().is_empty() { named.as_str() } else { acc.provider() };
-                            on_token(Delta::Waiting { provider: p, secs });
-                            false
+                            // THIS round's provider, and none until a chunk names one.  The
+                            // client is shared by every Diamond on the model, so a name kept
+                            // from an earlier round would be somebody else's.
+                            on_token(Delta::Waiting { provider: acc.provider(), secs });
+                            Pulse::default()
                         }
                     }
                 };
                 self.stream_sse(&body, first_ms, &mut sink).await
             };
-            // Whoever answered, even with nothing, is remembered as the one to leave out if
-            // the next round stalls before it can name itself.
-            if !acc.provider().is_empty() {
-                *self.last_provider.borrow_mut() = acc.provider().to_string();
-            }
             // An `error` event on a 200 stream is the provider's own trouble
             // arriving after the headers, so it is classified like a status code
             // rather than read as a short answer.
@@ -1485,21 +1564,15 @@ impl LlmClient {
                 Ok(StreamOutcome { aborted: false, stalled: true })
                     if acc.size() == 0 && !self.halted() =>
                 {
-                    let secs = now_ms().saturating_sub(began) / 1000;
-                    let named = if acc.provider().is_empty() {
-                        self.last_provider.borrow().clone()
-                    } else {
-                        acc.provider().to_string()
-                    };
+                    let secs = now_ms().saturating_sub(turn_began) / 1000;
+                    // Only the provider THIS round named is blamed and left out.  A round
+                    // that named nobody leaves nothing out, and the error names the model.
+                    let named = acc.provider().to_string();
                     if stall_tries < STALL_RETRIES {
                         stall_tries += 1;
                         self.exclude_stalled(&named, &mut stall_ignore);
                         on_token(Delta::Stalled { provider: &named, secs, retrying: true });
-                        let cur: &[ChatMessage] = match (&blind_msgs, &stripped) {
-                            (Some(b), _)    => b,
-                            (None, Some(s)) => s,
-                            (None, None)    => messages,
-                        };
+                        let cur = Self::resend_of(&blind_msgs, &stripped, messages);
                         body = self.build_body_ignoring(cur, tools, true, &stall_ignore);
                         continue;
                     }
@@ -1511,6 +1584,10 @@ impl LlmClient {
                             IO, Network, Timeout)).crossed(), images));
                 }
                 Ok(StreamOutcome { aborted, stalled }) => {
+                    // The native transport cannot cut a read, so a Stop that landed during a
+                    // silent wait only shows when the watch gives up: that round is the
+                    // person's stop, not a model that ended without a word.
+                    let aborted = aborted || (stalled && self.halted());
                     if blind_pending { self.mark_blind(); }
                     else if images > 0 && !retried_blind && !aborted { self.mark_seen(); }
                     let thinking = acc.take_thinking();
@@ -1537,6 +1614,22 @@ impl LlmClient {
                     // tool-call fragment that will become one -- makes this turn
                     // unrepeatable.
                     let started = emitted || acc.has_output();
+                    // THE EXCLUSION MAY BE WHAT WAS REFUSED.  Where the provider that stalled
+                    // was the only one serving the model (or the only one taking this request's
+                    // tools or data policy), OpenRouter answers the retry that leaves it out
+                    // with a 404 "No allowed providers".  The retry was for a fresh connection,
+                    // not for that refusal, so it is sent once more without the exclusion; if
+                    // that stalls too, the ordinary end applies and the person is told the
+                    // model did not answer, never the 404.
+                    if !stall_ignore.is_empty() && !unexcluded && !started && !e.retryable
+                        && e.status != 0
+                    {
+                        unexcluded = true;
+                        stall_ignore.clear();
+                        let cur = Self::resend_of(&blind_msgs, &stripped, messages);
+                        body = self.build_body_ignoring(cur, tools, true, &stall_ignore);
+                        continue;
+                    }
                     // A REFUSED PICTURE IS NOT A DEAD TURN. The provider would not take this
                     // request and it carried images, so the likeliest reason is the one thing
                     // in it a text model cannot read. Take them out, say so in their place, and
@@ -2540,7 +2633,7 @@ impl LlmClient {
                 TransportErr::transient(reason, err).after(after)
             } else {
                 TransportErr::fatal(reason, err)
-            });
+            }.at(status));
         }
 
         Ok((stream, is_chunked))
@@ -2586,8 +2679,9 @@ impl LlmClient {
     /// arrives, stopping at `[DONE]`.  Handles both chunked and identity transfer encoding
     /// via [`LineReader`].
     ///
-    /// `on_data` answers whether the payload was real data (the accumulator grew), and only
-    /// that re-arms the watchdog: see [`StreamWatch`].  It is also told, as
+    /// `on_data` answers with a [`Pulse`]: whether the payload was real data (the accumulator
+    /// grew), which alone re-arms the watchdog, and whether the model is still reasoning;
+    /// see [`StreamWatch`].  It is also told, as
     /// [`Wire::Silence`], whenever half the idle ceiling has gone by without any.
     /// `first_ms` is how long the first real data may take.
     ///
@@ -2599,7 +2693,7 @@ impl LlmClient {
         &self,
         body:       &str,
         first_ms:   u64,
-        on_data:    &mut impl FnMut(Wire<'_>) -> bool,
+        on_data:    &mut impl FnMut(Wire<'_>) -> Pulse,
     ) -> Result<StreamOutcome, TransportErr>
     {
         // Headers arrive before the first token on a streaming request, so the header wait in
@@ -2646,6 +2740,7 @@ impl LlmClient {
                 Err(e) => return Err(TransportErr::transient("the stream broke".to_string(), err!(e,
                     "LLM: read SSE line failed."; IO, Network, Wire, Read))),
             };
+            watch.heard(now_ms());
             let line = line.trim();
             if !line.starts_with("data: ") {
                 continue;
@@ -2654,9 +2749,8 @@ impl LlmClient {
             if data == "[DONE]" {
                 break;
             }
-            if on_data(Wire::Data(data)) {
-                watch.progress(now_ms());
-            }
+            let pulse = on_data(Wire::Data(data));
+            watch.data(now_ms(), pulse);
         }
         Ok(StreamOutcome::default())
     }
@@ -2762,7 +2856,7 @@ impl LlmClient {
                 TransportErr::transient(reason, err).after(after)
             } else {
                 TransportErr::fatal(reason, err)
-            });
+            }.at(status));
         }
         Ok(resp)
     }
@@ -2924,9 +3018,8 @@ impl LlmClient {
 
     /// Streaming request — read the SSE body incrementally from the
     /// response's `ReadableStream`, handing `on_data` each `data:`
-    /// payload as it arrives, stopping at `[DONE]`.  `on_data` answers whether the payload
-    /// was real data, and only that re-arms the watch; see the native `stream_sse` and
-    /// [`StreamWatch`].
+    /// payload as it arrives, stopping at `[DONE]`.  `on_data` answers with a [`Pulse`]; see the
+    /// native `stream_sse` and [`StreamWatch`].
     ///
     /// Returns whether the browser fired the abort signal.  When the
     /// initial `fetch` or a stream read rejects, an armed abort is
@@ -2937,7 +3030,7 @@ impl LlmClient {
         &self,
         body:       &str,
         first_ms:   u64,
-        on_data:    &mut impl FnMut(Wire<'_>) -> bool,
+        on_data:    &mut impl FnMut(Wire<'_>) -> Pulse,
     ) -> Result<StreamOutcome, TransportErr>
     {
         use wasm_bindgen::JsValue;
@@ -3037,6 +3130,7 @@ impl LlmClient {
             };
             let chunk = js_sys::Uint8Array::new(&value).to_vec();
             buf.extend_from_slice(&chunk);
+            watch.heard(now_ms());
 
             // Drain complete lines (terminated by `\n`) from the buffer.
             loop {
@@ -3054,9 +3148,8 @@ impl LlmClient {
                 if data == "[DONE]" {
                     return Ok(StreamOutcome::default());
                 }
-                if on_data(Wire::Data(data)) {
-                    watch.progress(now_ms());
-                }
+                let pulse = on_data(Wire::Data(data));
+                watch.data(now_ms(), pulse);
             }
         }
 
@@ -5034,6 +5127,16 @@ impl StreamAcc {
             + self.calls.iter().map(|c| c.id.len() + c.name.len() + c.arguments.len()).sum::<usize>()
     }
 
+    /// Is the model reasoning, with no answer and no call begun?
+    ///
+    /// The one case where a quiet stream is still working: reasoning that arrives in bursts,
+    /// or only as `reasoning_details`, with minutes between them.  See [`StreamWatch`].
+    fn thinking_open(&self) -> bool {
+        (!self.reasoning.is_empty() || self.pulse > 0)
+            && self.content.is_empty()
+            && self.calls.is_empty()
+    }
+
     /// Consume the accumulator into a [`ChatOnceResponse`].  Calls with no
     /// name are dropped (a stray fragment), and an empty arguments string
     /// becomes `{}` so tool dispatch always sees a valid JSON object.
@@ -5366,6 +5469,15 @@ impl AnthropicAcc {
                 .sum::<usize>()
     }
 
+    /// Is a thinking block open, its signature (which closes it) not yet in?
+    ///
+    /// With the thinking text omitted (`display` defaults to that when the request sends no
+    /// thinking), the block opens, the model thinks behind `ping` events, and the signature
+    /// arrives last.  That quiet is work, not a stall.  See [`StreamWatch`].
+    fn thinking_open(&self) -> bool {
+        self.blocks.last().map_or(false, |b| b.kind == AnthKind::Thinking && b.sig.is_empty())
+    }
+
     /// The signed thinking blocks of this turn, serialised for replay.
     ///
     /// Empty when any block of the run is unsigned -- a stream cut before its
@@ -5481,6 +5593,14 @@ impl Acc {
         match self {
             Self::OpenAi(a)    => a.size(),
             Self::Anthropic(a) => a.size(),
+        }
+    }
+
+    /// Is the model reasoning and not yet answering; see [`StreamAcc::thinking_open`].
+    fn thinking_open(&self) -> bool {
+        match self {
+            Self::OpenAi(a)    => a.thinking_open(),
+            Self::Anthropic(a) => a.thinking_open(),
         }
     }
 
@@ -9082,9 +9202,9 @@ pub mod tests {
     async fn stall_keepalive_only_stream_is_aborted_and_retried() {
         let (port, seen) = start_stub(vec![
             Reply::KeepAlive {
-                // A role-only first chunk names the provider and says nothing.
-                first: Some("data: {\"provider\":\"Relace\",\"choices\":[{\"delta\":\
-                    {\"role\":\"assistant\",\"content\":\"\"}}]}\n\n".to_string()),
+                // Pure PROCESSING comments, no data chunk at all.  (A role-only first chunk
+                // is a data chunk: it earns the wide limit, see `stall_watch_limits_...`.)
+                first: None,
                 every_ms: 150,
                 total_ms: 6_000,
             },
@@ -9133,7 +9253,7 @@ pub mod tests {
                 first: Some("data: {\"provider\":\"Relace\",\"choices\":[{\"delta\":\
                     {\"role\":\"assistant\",\"content\":\"\"}}]}\n\n".to_string()),
                 every_ms: 100,
-                total_ms: 6_000,
+                total_ms: 12_000,
             },
             Reply::answer(),
         ]).await;
@@ -9164,7 +9284,7 @@ pub mod tests {
             first: Some("data: {\"provider\":\"Relace\",\"choices\":[{\"delta\":\
                 {\"role\":\"assistant\",\"content\":\"\"}}]}\n\n".to_string()),
             every_ms: 100,
-            total_ms: 12_000,
+            total_ms: 20_000,
         };
         let (port, seen) = start_stub(vec![silent(), silent(), Reply::answer()]).await;
         let client = stub_client(port);
@@ -9182,10 +9302,11 @@ pub mod tests {
         let text = fmt!("{}", e);
         assert!(text.contains("did not answer (Relace)"), "the reason was not plain: {}", text);
         assert_eq!(connections(&seen), 2, "asked once more and no further");
-        // 1.5 s for the first wait, and 5 s -- the wider retry wait -- for the second, never more.
-        assert!(elapsed >= std::time::Duration::from_millis(5_500)
-            && elapsed < std::time::Duration::from_millis(8_000),
-            "the two waits should come to about 6.5 s (1.5 x then 5 x the 1 s floor): {:?}", elapsed);
+        // The role-only chunk is data, so the provider has answered something and gets the wide
+        // 5 s limit (F2) on each attempt: 5 s, then 5 s again on the retry, never more.
+        assert!(elapsed >= std::time::Duration::from_millis(9_500)
+            && elapsed < std::time::Duration::from_millis(13_000),
+            "the two waits should come to about 10 s (5 x the 1 s floor, twice): {:?}", elapsed);
         let ends: Vec<bool> = notes.iter().filter(|n| n.0 == "stall").map(|n| n.2).collect();
         assert_eq!(ends, vec![true, false], "retrying, then given up: {:?}", notes);
     }
@@ -10182,5 +10303,294 @@ pub mod tests {
             }
         }
         assert!(!client.sight_proven(), "a refusal after an acceptance left the model proven");
+    }
+
+    /// What the watch lets a quiet last, by what the stream has shown (F1, F2, F8).  The clock is
+    /// the test's own, in milliseconds.
+    #[test]
+    fn stall_watch_limits_follow_what_the_stream_has_shown() {
+        let mut w = StreamWatch::new(0, 1_000, 1_500);
+        // Nothing yet: 1.5 x the ceiling, and a comment does not postpone it.
+        assert_eq!(w.limit(), 1_500);
+        w.heard(1_000);
+        assert!(!w.expired(1_499) && w.expired(1_500), "comments moved the first-data deadline");
+        // A data chunk that carried nothing: the provider took the request, so 5 x the ceiling.
+        w.data(1_000, Pulse { grew: false, thinking: false });
+        assert_eq!(w.limit(), 5_000);
+        assert!(!w.expired(4_999) && w.expired(5_000));
+        // Real data, not reasoning: the plain ceiling again, counted from the data.
+        w.data(2_000, Pulse { grew: true, thinking: false });
+        assert_eq!(w.limit(), 1_000);
+        assert!(!w.expired(2_999) && w.expired(3_000));
+        w.heard(2_900);
+        assert!(w.expired(3_000), "a comment postponed a stream that was producing data");
+        // Reasoning with no answer yet: the wide limit, but only while bytes keep arriving.
+        w.heard(3_000);
+        w.data(3_000, Pulse { grew: true, thinking: true });
+        assert_eq!(w.limit(), 5_000);
+        assert!(!w.expired(3_999) && w.expired(4_000), "a wholly silent socket outlived the ceiling");
+        w.heard(3_900);
+        assert!(!w.expired(4_000) && w.expired(4_900));
+        w.heard(4_800);
+        w.heard(7_900);
+        assert!(!w.expired(7_999), "bytes were arriving, and the model was cut early");
+        assert!(w.expired(8_000), "the wide limit was never reached");
+        // The answer begins: back to the plain ceiling.
+        w.data(7_900, Pulse { grew: true, thinking: false });
+        assert_eq!(w.limit(), 1_000);
+        // The next wake is never beyond the end of the wait, and never zero.
+        assert!(w.next_in(7_900) >= 1 && w.next_in(7_900) <= 1_000);
+    }
+
+    /// "Reasoning, no answer yet" on both accumulators.  OpenAI-shaped: reasoning text or any
+    /// `reasoning_details` before content or a call; Anthropic: a thinking block that has not
+    /// yet been signed.
+    #[test]
+    fn stall_thinking_open_on_both_accumulators() {
+        let mut none = |_d: Delta<'_>| {};
+        let mut acc = StreamAcc::default();
+        assert!(!acc.thinking_open(), "an empty accumulator is not thinking");
+        acc.ingest(r#"{"choices":[{"delta":{"reasoning":"hm"}}]}"#, &mut none);
+        assert!(acc.thinking_open(), "reasoning text did not open thinking");
+        acc.ingest(r#"{"choices":[{"delta":{"content":"ok"}}]}"#, &mut none);
+        assert!(!acc.thinking_open(), "an answer did not close thinking");
+
+        let mut acc = StreamAcc::default();
+        acc.ingest(r#"{"choices":[{"delta":{"content":"","reasoning_details":[{"type":"reasoning.encrypted","data":"abc"}]}}]}"#, &mut none);
+        assert!(acc.thinking_open(), "reasoning_details alone did not open thinking");
+        acc.ingest(r#"{"choices":[{"delta":{"tool_calls":[{"index":0,"id":"c1","type":"function","function":{"name":"f","arguments":"{}"}}]}}]}"#, &mut none);
+        assert!(!acc.thinking_open(), "a begun call did not close thinking");
+
+        let mut acc = AnthropicAcc::default();
+        assert!(!acc.thinking_open());
+        acc.ingest(r#"{"type":"content_block_start","index":0,"content_block":{"type":"thinking","thinking":""}}"#, &mut none);
+        assert!(acc.thinking_open(), "an open thinking block was not thinking");
+        acc.ingest(r#"{"type":"content_block_delta","index":0,"delta":{"type":"signature_delta","signature":"sig"}}"#, &mut none);
+        assert!(!acc.thinking_open(), "a signed block is closed");
+        acc.ingest(r#"{"type":"content_block_start","index":1,"content_block":{"type":"text","text":""}}"#, &mut none);
+        assert!(!acc.thinking_open(), "a text block after the thinking is the answer");
+    }
+
+    /// A model that reasons, goes quiet behind keep-alives for longer than the ceiling and then
+    /// answers is working, not hung (F1): one connection, the whole answer.
+    #[tokio::test]
+    async fn stall_openai_reasoning_gap_behind_keepalives_is_not_cut() {
+        let mut chunks = vec!["data: {\"provider\":\"OpenAI\",\"choices\":[{\"delta\":\
+            {\"reasoning\":\"let me think\"}}]}\n\n".to_string()];
+        for _ in 0..12 { chunks.push(": OPENROUTER PROCESSING\n\n".to_string()); }
+        chunks.push("data: {\"choices\":[{\"delta\":{\"content\":\"worked it out\"}}]}\n\n".to_string());
+        chunks.push("data: [DONE]\n\n".to_string());
+        let (port, seen) = start_stub(vec![Reply::Trickle { chunks, every_ms: 150 }, Reply::answer()]).await;
+        let client = stub_client(port);
+        client.set_stream_idle_ms(1_000);
+        let msgs = [ChatMessage::user("hello".to_string())];
+        let mut notes = Vec::new();
+        let resp = match client.chat_stream_tools(&msgs, None, &mut stall_notes(&mut notes)).await {
+            Ok(r)  => r,
+            Err(e) => panic!("a model reasoning behind keep-alives was failed: {}", e),
+        };
+        assert_eq!(resp.content, "worked it out");
+        assert!(!resp.stalled);
+        assert_eq!(connections(&seen), 1, "the reasoning gap was read as silence and the round asked again");
+        assert!(notes.iter().all(|n| n.0 != "stall"), "a false stall was announced: {:?}", notes);
+    }
+
+    /// The retry that left the silent provider out is refused (404 "No allowed providers"), is
+    /// sent once more with nobody left out (F4), and when that is silent too the turn ends with
+    /// the plain reason and never the 404 (F4).  The error counts the wait of every attempt (F7).
+    #[tokio::test]
+    async fn stall_refused_exclusion_then_second_stall_ends_plain() {
+        let silent = || Reply::KeepAlive {
+            first: Some("data: {\"provider\":\"Relace\",\"choices\":[{\"delta\":\
+                {\"role\":\"assistant\",\"content\":\"\"}}]}\n\n".to_string()),
+            every_ms: 100,
+            total_ms: 20_000,
+        };
+        let (port, seen) = start_stub(vec![
+            silent(),
+            Reply::Http {
+                status:  404,
+                reason:  "Not Found",
+                headers: vec![("Content-Type", "application/json".to_string())],
+                body:    "{\"error\":{\"message\":\"No allowed providers are available for the \
+                    selected model.\",\"code\":404}}".to_string(),
+            },
+            silent(),
+            Reply::answer(),
+        ]).await;
+        let client = stub_client(port);
+        client.set_stream_idle_ms(1_000);
+        let msgs = [ChatMessage::user("hello".to_string())];
+        let mut notes = Vec::new();
+        let got = client.chat_stream_tools(&msgs, None, &mut stall_notes(&mut notes)).await;
+        let text = match got {
+            Err(e) => fmt!("{}", e),
+            Ok(r)  => panic!("a provider silent twice must be an error, got {:?}", r.content),
+        };
+        assert!(text.contains("did not answer"), "the reason was not plain: {}", text);
+        assert!(!text.contains("404"), "the exclusion's refusal reached the person: {}", text);
+        assert_eq!(connections(&seen), 3, "silent, refused, silent -- and no fourth ask");
+        // F7: two waits of about 5 s each, and the figure in the error is the turn's, not the last's.
+        let secs = text.split(" in ").nth(1)
+            .and_then(|t| t.split(' ').next())
+            .and_then(|n| n.parse::<u64>().ok());
+        assert!(secs.map_or(false, |n| n >= 9), "the error counted only the last attempt: {}", text);
+    }
+
+    // ── QA r540-1 (Opus): regression probes of the T1a stall machinery. ──
+
+    fn qa_notes(out: &mut Vec<(String, String, bool)>) -> impl FnMut(Delta<'_>) + '_ {
+        move |d| match d {
+            Delta::Text(t)  => out.push(("text".to_string(), t.to_string(), false)),
+            Delta::Waiting { provider, .. } =>
+                out.push(("wait".to_string(), provider.to_string(), false)),
+            Delta::Stalled { provider, retrying, .. } =>
+                out.push(("stall".to_string(), provider.to_string(), retrying)),
+            _ => {}
+        }
+    }
+
+    /// QA-1. A model that thinks silently (no streamed reasoning) for 1.8 x idle before its first
+    /// token -- 108 s at the shipped 60 s -- while OpenRouter sends keep-alives.  It is live, and
+    /// would have answered on the first connection; it is abandoned and asked again instead.
+    #[tokio::test]
+    async fn qa_r540_slow_first_token_model_is_abandoned() {
+        let mut chunks = vec!["data: {\"provider\":\"OpenAI\",\"choices\":[{\"delta\":\
+            {\"role\":\"assistant\",\"content\":\"\"}}]}\n\n".to_string()];
+        for _ in 0..12 { chunks.push(": OPENROUTER PROCESSING\n\n".to_string()); }
+        chunks.push("data: {\"choices\":[{\"delta\":{\"content\":\"thought it through\"}}]}\n\n".to_string());
+        chunks.push("data: [DONE]\n\n".to_string());
+        let (port, seen) = start_stub(vec![Reply::Trickle { chunks, every_ms: 150 }, Reply::answer()]).await;
+        let client = stub_client(port);
+        client.set_stream_idle_ms(1_000);
+        let msgs = [ChatMessage::user("hello".to_string())];
+        let mut notes = Vec::new();
+        let resp = client.chat_stream_tools(&msgs, None, &mut qa_notes(&mut notes)).await;
+        let content = resp.map(|r| r.content).unwrap_or_else(|e| fmt!("ERR {}", e));
+        assert_eq!((connections(&seen), content.as_str()), (1, "thought it through"),
+            "a live slow-thinking model was cut and re-asked: notes {:?}", notes);
+    }
+
+    /// QA-2. The retry leaves the stalled provider out; where it was the only one serving the
+    /// model (or the only one taking tools), OpenRouter answers 404 "No allowed providers".  That
+    /// refusal ends the turn with OpenRouter's wording -- the same provider is never asked again
+    /// without the exclusion, and the person is not told the model did not answer.
+    #[tokio::test]
+    async fn qa_r540_retry_refused_for_its_exclusion_kills_the_turn() {
+        let (port, seen) = start_stub(vec![
+            Reply::KeepAlive {
+                first: Some("data: {\"provider\":\"Relace\",\"choices\":[{\"delta\":\
+                    {\"role\":\"assistant\",\"content\":\"\"}}]}\n\n".to_string()),
+                every_ms: 100,
+                total_ms: 12_000,
+            },
+            Reply::Http {
+                status:  404,
+                reason:  "Not Found",
+                headers: vec![("Content-Type", "application/json".to_string())],
+                body:    "{\"error\":{\"message\":\"No allowed providers are available for the \
+                    selected model.\",\"code\":404}}".to_string(),
+            },
+            Reply::answer(),
+        ]).await;
+        let client = stub_client(port);
+        client.set_stream_idle_ms(1_000);
+        let msgs = [ChatMessage::user("hello".to_string())];
+        let mut notes = Vec::new();
+        let got = client.chat_stream_tools(&msgs, None, &mut qa_notes(&mut notes)).await;
+        match got {
+            Ok(r)  => assert_eq!(r.content, "Hello world"),
+            Err(e) => panic!("the exclusion's own refusal ended the turn after {} connections: {}",
+                connections(&seen), e),
+        }
+    }
+
+    /// QA-3. A round that stalls before any chunk names its provider is blamed on whoever
+    /// answered the PREVIOUS round on this client (shared by every Diamond on the model), and
+    /// that provider is the one left out of the retry.
+    #[tokio::test]
+    async fn qa_r540_unnamed_stall_blames_the_previous_rounds_provider() {
+        let named = Reply::Sse {
+            chunks: vec![
+                "data: {\"provider\":\"Alpha\",\"choices\":[{\"delta\":{\"content\":\"ok\"}}]}\n\n".to_string(),
+                "data: [DONE]\n\n".to_string(),
+            ],
+            reset_after: None,
+        };
+        let (port, seen) = start_stub(vec![
+            named,
+            Reply::KeepAlive { first: None, every_ms: 100, total_ms: 4_000 },
+            Reply::answer(),
+        ]).await;
+        let client = stub_client(port);
+        client.set_stream_idle_ms(1_000);
+        let msgs = [ChatMessage::user("hello".to_string())];
+        let mut first = Vec::new();
+        let _ = client.chat_stream_tools(&msgs, None, &mut qa_notes(&mut first)).await;
+        let mut notes = Vec::new();
+        let _ = client.chat_stream_tools(&msgs, None, &mut qa_notes(&mut notes)).await;
+        let blamed: Vec<_> = notes.iter().filter(|n| n.0 != "text").map(|n| n.1.clone()).collect();
+        // The retry is the third request of the two turns; it leaves nobody out.
+        let retry = seen.lock().map(|g| g.bodies.get(2).cloned().unwrap_or_default()).unwrap_or_default();
+        assert!(blamed.iter().all(|p| p.is_empty()) && !retry.contains("Alpha"),
+            "a silent round that named nobody was put on Alpha: notices {:?}, retry body {}",
+            blamed, retry);
+    }
+
+    /// QA-4. Native: a Stop during the silent wait.  The native transport cannot cut the read,
+    /// so the round runs to the watch and returns stalled -- and the `!halted()` guard sends it
+    /// to the ordinary arm, which reports it NOT aborted.  `run_streaming` then says "The model
+    /// ended its turn without saying anything." and ends Silent rather than Stopped.
+    #[tokio::test]
+    async fn qa_r540_native_stop_during_silence_reads_as_aborted() {
+        let (port, _seen) = start_stub(vec![
+            Reply::KeepAlive { first: None, every_ms: 100, total_ms: 5_000 },
+            Reply::answer(),
+        ]).await;
+        let client = stub_client(port);
+        client.set_stream_idle_ms(1_000);
+        let halt = client.halt();
+        let msgs = [ChatMessage::user("hello".to_string())];
+        let got = client.chat_stream_tools(&msgs, None, &mut |d: Delta<'_>| {
+            if let Delta::Waiting { .. } = d { halt.fire(); }
+        }).await;
+        let r = got.unwrap_or_else(|e| panic!("{}", e));
+        assert!(r.aborted, "a stopped round came back aborted={} stalled={}", r.aborted, r.stalled);
+    }
+
+    /// QA-5. A very large idle ceiling (a "never cut me" setting) overflows the watch's sums.
+    #[test]
+    fn qa_r540_watch_survives_a_huge_idle_ceiling() {
+        let mut w = StreamWatch::new(10, u64::MAX, u64::MAX);
+        w.progress(20);
+        let _ = w.next_in(30);
+    }
+
+    /// QA-6. Anthropic, thinking left off the request (Opus 5 above `high`, Fable, Mythos with
+    /// thinking set Off -- `display` then defaults to `omitted`): the thinking block opens, which
+    /// counts as data, and the model then thinks silently behind `ping` events.  Pings used to
+    /// re-arm the watch; now the round is cut at the plain idle ceiling, mid-thought, with no
+    /// answer and no retry (size > 0), where it would have answered.
+    #[tokio::test]
+    async fn qa_r540_omitted_thinking_is_cut_mid_thought() {
+        let mut chunks = vec![
+            "event: message_start\ndata: {\"type\":\"message_start\",\"message\":{\"usage\":{\"input_tokens\":5,\"output_tokens\":1}}}\n\n".to_string(),
+            "event: content_block_start\ndata: {\"type\":\"content_block_start\",\"index\":0,\"content_block\":{\"type\":\"thinking\",\"thinking\":\"\"}}\n\n".to_string(),
+        ];
+        for _ in 0..12 { chunks.push("event: ping\ndata: {\"type\": \"ping\"}\n\n".to_string()); }
+        chunks.push("event: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"signature_delta\",\"signature\":\"sig\"}}\n\n".to_string());
+        chunks.push("event: content_block_stop\ndata: {\"type\":\"content_block_stop\",\"index\":0}\n\n".to_string());
+        chunks.push("event: content_block_start\ndata: {\"type\":\"content_block_start\",\"index\":1,\"content_block\":{\"type\":\"text\",\"text\":\"\"}}\n\n".to_string());
+        chunks.push("event: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"index\":1,\"delta\":{\"type\":\"text_delta\",\"text\":\"answer\"}}\n\n".to_string());
+        chunks.push("event: message_stop\ndata: {\"type\":\"message_stop\"}\n\n".to_string());
+        let (port, seen) = start_stub(vec![Reply::Trickle { chunks, every_ms: 150 }]).await;
+        let client = anth_stub_client(port);
+        client.set_stream_idle_ms(1_000);
+        let msgs = [ChatMessage::user("hello".to_string())];
+        let mut tokens = Vec::new();
+        let r = client.chat_stream_tools(&msgs, None, &mut text_sink(&mut tokens)).await
+            .unwrap_or_else(|e| panic!("{}", e));
+        assert_eq!((r.content.as_str(), r.stalled, connections(&seen)), ("answer", false, 1),
+            "a model thinking silently behind pings was cut mid-thought");
     }
 }

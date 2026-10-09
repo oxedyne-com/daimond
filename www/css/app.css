@@ -520,6 +520,13 @@ body.resizing-v { cursor: row-resize; user-select: none; -webkit-user-select: no
 .admin-status { display: flex; flex-direction: column; gap: 1px; flex: none; border-top: 1px solid var(--border); padding-top: 6px; }
 .astat-row { display: flex; align-items: center; gap: 6px; padding: 3px 4px; border-radius: var(--radius-sm); font-size: var(--fs-xs); color: var(--text-secondary); min-width: 0; }
 .astat-row.astat-id { gap: 4px; padding: 0; }
+/* The shut section's one voice: a dot and the summary's own word, drawn in the
+   identity row only for a warning (renderStatusSummary). It gives way to the name
+   (the user row is `flex: 1; overflow: hidden`), never to the cog or the toggle. */
+.astat-flag { display: flex; align-items: center; gap: 4px; flex: 0 1 auto; min-width: 0; max-width: 45%; font-size: var(--fs-xs); color: var(--text-secondary); }
+.astat-flag[hidden] { display: none; }
+/* Open, the summary row below says it, so the flag steps aside. */
+.panel.rail[data-fold-status="on"] .astat-flag { display: none; }
 /* The one line, and the eight behind it (audit 2026-09-15, STRIP-01). The chevron
    is drawn by the rule rather than put in the markup, so nothing has to keep a
    glyph and an `aria-expanded` in step by hand. */
@@ -1256,6 +1263,10 @@ body.resizing-v { cursor: row-resize; user-select: none; -webkit-user-select: no
 .chat-msg-ended.ended-notice {
 	color: var(--text-secondary);
 }
+/* A stop that offers Continue (a turn that ran past its lease cap): the line, then the
+   button on a line of its own, as the interrupted footer does -- not a wrap that happens
+   to break between them. */
+.chat-msg-ended.has-continue { display: flex; flex-direction: column; align-items: flex-start; gap: 6px; }
 /* The same fact on a worker's tile, which is not a thread: it rides with the
    vision note, in the app's own voice rather than the worker's. */
 .acard .anote.aended { color: var(--text-muted); }
@@ -1756,6 +1767,17 @@ span.arte-open { cursor: default; }
    a link, and a control that appears once there is already one of the thing it
    makes is a control nobody finds. */
 .link-sec { margin: 2px 0 6px; }
+/* ONE ROW, TWO TOGGLES (D-20261008-04). `#link-sec` is the diamond footer's row: the links
+   header and the workspace strip side by side instead of one under the other, each as wide
+   as its words and no wider, and shrinking with an ellipsis rather than wrapping when the
+   row is short. What each opens expands beneath the row, so a collapsed footer is one line. */
+.link-sec { display: grid; grid-template-columns: repeat(2, minmax(0, max-content));
+	column-gap: 8px; justify-content: start; }
+.link-sec > .foot-toggle { width: auto; margin: 0; }
+/* The toggle in a chat's band takes the room the band's chips leave, so the `+` stays at
+   the right edge in both states and the words stay on one line. */
+.attach-head > .foot-toggle { flex: 1 1 0; width: auto; min-width: 0; margin: 0; }
+.foot-toggle { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .link-strip { display: block; width: 100%; text-align: left; border: none;
 	color: var(--text-muted); font-family: var(--font-mono);
 	cursor: pointer; }
@@ -4536,6 +4558,10 @@ details.md-fold > .md-fold-body > :last-child { margin-bottom: 0; }
    tool. Minimal: a label bar with no body. */
 .ctile[data-t="handoff"] { --ct-edge: var(--text-muted); background: color-mix(in srgb, var(--text-muted) 6%, var(--bg-secondary)); }
 .ctile[data-t="handoff"] .ctile-who { font-weight: 500; }
+/* Its `who` is a device sentence ("Chromium on Linux · 9f00 is on it"), not a role word, so on a phone it gives way before the time and the copy control do. */
+.ctile[data-t="handoff"] .ctile-who { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+/* An empty meta or peek still costs a flex gap; on this bar that 16px is the sentence's. */
+.ctile[data-t="handoff"] :is(.ctile-meta, .ctile-peek):empty, .ctile[data-t="handoff"] .ctile-grow { display: none; }
 /* The expanded body: a provenance line and a terse facts row, both muted — this
    is the app saying where a turn ran, not either speaker's words. */
 .ct-handoff { display: flex; flex-direction: column; gap: 3px; }
@@ -4741,7 +4767,7 @@ details.md-fold > .md-fold-body > :last-child { margin-bottom: 0; }
 /* A RESULT TILE IS NOT A STEP (`.ctile-result`, the Files list a turn leaves). The switch withholds the
    working; a result stays as drawn, or the tile is a label that expands to nothing. */
 
-/* ── Rollup: a run of same-type tiles under one collapsible container ── */
+/* ── Rollup: a run of Thinking and Tool tiles (`work`), or of System tiles, under one container ── */
 .crollup {
 	min-width: 0; border-radius: var(--radius); overflow: hidden; margin: 3px 0;
 	border: 1px solid var(--border); transition: border-color 0.12s;
@@ -4749,8 +4775,7 @@ details.md-fold > .md-fold-body > :last-child { margin-bottom: 0; }
 .crollup[data-dir="to"]    { margin-left:  var(--ct-indent); }
 .crollup[data-dir="from"]  { margin-right: var(--ct-indent); }
 .crollup[data-dir="local"] { margin-left:  var(--ct-indent); margin-right: var(--ct-indent); }
-.crollup[data-t="think"] { --ct-edge: var(--text-secondary); background: color-mix(in srgb, var(--text-secondary) 7%, var(--bg-secondary)); }
-.crollup[data-t="tool"]  { --ct-edge: var(--ok);   background: color-mix(in srgb, var(--ok) 8%, var(--bg-secondary)); }
+.crollup[data-t="work"]  { --ct-edge: var(--text-secondary); background: color-mix(in srgb, var(--text-secondary) 7%, var(--bg-secondary)); }
 .crollup[data-t="wire"]  { --ct-edge: var(--warn); background: color-mix(in srgb, var(--warn) 8%, var(--bg-secondary)); }
 .crollup:hover { border-color: color-mix(in srgb, var(--ct-edge) 45%, var(--border)); }
 .crollup-lbl {
@@ -4774,8 +4799,8 @@ details.md-fold > .md-fold-body > :last-child { margin-bottom: 0; }
 /* Nested tiles carry no outer margin — the container gives them their inset —
    and sit on a slightly lifted ground so the nesting reads. */
 .crollup-body > .ctile { margin: 0; }
-.crollup[data-t="think"] > .crollup-body > .ctile { background: color-mix(in srgb, var(--text-secondary) 4%, var(--bg-tertiary)); }
-.crollup[data-t="tool"]  > .crollup-body > .ctile { background: color-mix(in srgb, var(--ok) 5%, var(--bg-tertiary)); }
+.crollup[data-t="work"] > .crollup-body > .ctile[data-t="think"] { background: color-mix(in srgb, var(--text-secondary) 4%, var(--bg-tertiary)); }
+.crollup[data-t="work"] > .crollup-body > .ctile[data-t="tool"]  { background: color-mix(in srgb, var(--ok) 5%, var(--bg-tertiary)); }
 .crollup[data-t="wire"]  > .crollup-body > .ctile { background: color-mix(in srgb, var(--warn) 5%, var(--bg-tertiary)); }
 /* A run of one is not a rollup — hide the container chrome and let the single
    tile stand as itself. */
@@ -4786,8 +4811,8 @@ details.md-fold > .md-fold-body > :last-child { margin-bottom: 0; }
 .crollup.solo > .crollup-lbl { display: none; }
 .crollup.solo > .crollup-body { padding: 0; display: block; }
 .crollup.solo > .crollup-body > .ctile { background: var(--bg-secondary); }
-.crollup.solo[data-t="think"] > .crollup-body > .ctile { background: color-mix(in srgb, var(--text-secondary) 7%, var(--bg-secondary)); }
-.crollup.solo[data-t="tool"]  > .crollup-body > .ctile { background: color-mix(in srgb, var(--ok) 8%, var(--bg-secondary)); }
+.crollup.solo[data-t="work"] > .crollup-body > .ctile[data-t="think"] { background: color-mix(in srgb, var(--text-secondary) 7%, var(--bg-secondary)); }
+.crollup.solo[data-t="work"] > .crollup-body > .ctile[data-t="tool"]  { background: color-mix(in srgb, var(--ok) 8%, var(--bg-secondary)); }
 .crollup.solo[data-t="wire"]  > .crollup-body > .ctile { background: color-mix(in srgb, var(--warn) 8%, var(--bg-secondary)); }
 /* Nested tiles keep their own indent from the container edge only. */
 .crollup > .crollup-body > .ctile[data-dir] { margin-left: 0; margin-right: 0; }

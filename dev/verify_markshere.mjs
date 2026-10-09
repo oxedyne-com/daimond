@@ -74,7 +74,7 @@ const ELSEWHERE = 'machine:elsewhere#' + 'e'.repeat(32);
 const BODY   = 'MARKSHERE-READ-BODY-7f3a';
 
 let step = 'boot';
-const s = await open({ name: 'markshere', connect: false, defaults: false,
+const s = await open({ name: 'markshere', connect: false, defaults: false, foot: ['ws'],
 	route: async (page) => {
 		page.setDefaultNavigationTimeout(180000);
 		page.on('pageerror', (e) => console.log('  note  page error during "' + step + '": '

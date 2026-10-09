@@ -419,6 +419,11 @@ export async function open(opts = {}) {
 		// the test COUNTS Diamonds, or pause leaves, and needs to own the set --
 		// see `clearDiamonds` below for why they are removed rather than skipped.
 		defaults  = true,
+		// The footer keys to leave OPEN on a first load (r539: a footer is folded by default, and a
+		// verifier about the tiles or the links body needs them drawn). 'ws' is the workspace list of a
+		// chat or a diamond, 'links' the linked-diamonds body. Seeded once per tab, so a verifier that
+		// folds one and reloads finds it folded.
+		foot      = [],
 		// A fixed profile directory, so a run keeps the identity — and therefore the
 		// GATEWAY ACCOUNT — of the run before it. Without one, every run mints a new
 		// account, and nothing that needs an entitlement (mail, a pack) can be tested
@@ -635,6 +640,13 @@ export async function open(opts = {}) {
 	// The retention is left at thirty days: nothing here depends on it, and a
 	// figure invented for the tests is a figure the tests would then be proving
 	// things about.
+	if (foot.length) await page.addInitScript((keys) => {
+		try {
+			if (sessionStorage.getItem('footseed')) return;
+			sessionStorage.setItem('footseed', '1');
+			for (const k of keys) localStorage.setItem('daimond-foot-' + k, '1');
+		} catch (e) { /* private mode: the folded default stands */ }
+	}, foot);
 	await page.addInitScript(() => {
 		try { localStorage.setItem('daimond-policy',
 			JSON.stringify({ v: 1, expire: 3650, retain: 30, high: 30 })); }

@@ -64,7 +64,10 @@ export function measureGaps(items) {
 			if (!prev) continue; // first in its panel
 			// The title row: the nearest item is a title, or sits on a title's line (its close button).
 			const under = TITLES.test(prev.roleName) || L.some((t) => TITLES.test(t.roleName) && t.r[1] < prev.r[1] + prev.r[3] && prev.r[1] < t.r[1] + t.r[3]);
-			rows.push({ kind: under ? 'head-gap' : 'section-gap', cfg: h.surface.split('/')[0], gap: h.r[1] - bottom(prev), head: h, prev });
+			// The head's own previous sibling stands in the flow too: a row whose box runs lower than its captured text (padding outside the item) ends where
+			// the sibling does, so the white space is measured from there. Without it the same margin reads wider under a padded row than under a note.
+			const above = h.ps != null && h.ps <= h.r[1] + 1 ? Math.max(bottom(prev), h.ps) : bottom(prev);
+			rows.push({ kind: under ? 'head-gap' : 'section-gap', cfg: h.surface.split('/')[0], gap: h.r[1] - above, head: h, prev });
 		}
 	}
 	return rows;

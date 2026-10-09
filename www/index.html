@@ -391,6 +391,9 @@
 							<span class="user-avatar" id="user-avatar" aria-hidden="true"><img class="mark-ic" src="assets/daimond_mark.svg" alt=""></span>
 							<span class="user-info" id="user-info">Browser-only</span>
 						</button>
+						<!-- Shown ONLY when the summary is a warning (renderStatusSummary), so
+						     a shut section never hides a fault and says nothing otherwise. -->
+						<span class="astat-flag" id="astat-flag" hidden><span class="astat-dot warn" aria-hidden="true"></span><span class="astat-val"></span></span>
 						<!-- The same cog every Diamond tile and every mailbox row wears,
 						     not the ⚙ character. A font glyph is drawn by whichever font
 						     the platform finds it in, at whatever weight and size that
@@ -408,9 +411,11 @@
 						<!-- The eleven machine-status rows fold behind THIS row, which stays
 						     put: the identity and the cog beside it are a phone's only route
 						     to Settings, so this section's header has to survive its own
-						     fold. Collapsed by default on a phone -- measured at 390x844
-						     those rows held 345px, more than either list they took it from. -->
-						<button class="rail-fold" data-fold="status" aria-controls="admin-status" aria-expanded="true" title="Fold this section away" aria-label="Fold this section away" data-i18n-title="rail.fold_section" data-i18n-aria-label="rail.fold_section">
+						     fold. Collapsed by default at every width -- measured at 390x844
+						     those rows held 345px, more than either list they took it from,
+						     and at 1440x900 the foot of the rail held 119px, always. A
+						     desktop's toggle is drawn as the cog beside it (`.icon-btn`). -->
+						<button class="rail-fold icon-btn" data-fold="status" aria-controls="admin-status" aria-expanded="false" title="Open this section" aria-label="Open this section" data-i18n-title="rail.unfold_section" data-i18n-aria-label="rail.unfold_section">
 							<svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M7 10l5 5 5-5"/></svg>
 						</button>
 					</div>

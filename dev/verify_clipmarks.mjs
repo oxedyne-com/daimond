@@ -216,8 +216,9 @@ const anyDialog = (p) => p.evaluate(() => !!document.querySelector('.modal.dlg')
 		const dp = await makeDiamond(p, 'M3 plus', [{ to: machShelf }]);
 		await openDiamond(p, dp);
 		await p.evaluate(() => {
+			// The strip is folded until it is pressed (r539); press it as a person does.
 			const strip = document.getElementById('arte-strip');
-			if (strip) strip.dataset.open = '1';
+			if (strip && strip.getAttribute('aria-expanded') !== 'true') strip.click();
 			return window.DaimondArtefacts && DaimondArtefacts.render();
 		});
 		await sleep(900);

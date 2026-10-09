@@ -92,7 +92,7 @@ const check = (name, pass, detail) => {
 	else { bad++; console.log(`  FAIL ${name}${detail ? ' — ' + detail : ''}`); }
 };
 
-const s = await open({ name: 'attachroot', signIn: false, connect: false });
+const s = await open({ name: 'attachroot', signIn: false, connect: false, foot: ['ws'] });
 const { page } = s;
 
 if (BREAK) {

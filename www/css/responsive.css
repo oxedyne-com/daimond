@@ -172,6 +172,10 @@
 	   them. */
 	.chat-attach-strip .ws-body,
 	.chat-attach-strip .attach-body { padding-right: 100px; }
+	/* A FOLDED GROUP'S BAND is the strip's only row, so it lies on the chevrons' own row and its `+` sat under `#chat-end`
+	   (hit 0x0 on a 390px phone). It takes the room the bodies take, on the same figure. Open, the band heads a list and
+	   is clear of them, and the `+` keeps the edge it belongs on. */
+	.chat-attach-strip .ws-group.folded > .attach-head { padding-right: calc(5px + 100px); }
 
 	/* THE FOOT OF THE THREAD CLEARS THE CHEVRONS. They float 10px above the bar and stand 40px tall, so with no attachment
 	   strip between the thread and the bar (a Diamond's own chat) they lie over the last 56px of the thread, and the last row

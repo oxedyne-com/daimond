@@ -1265,7 +1265,8 @@ impl DaimondApp {
         let files = diamond::read_standing(&id).await;
         let split = crate::tools::crystal_split(
             &json, crate::tools::crystal_hot_room(files.hot_bytes())).map_err(to_js_err)?;
-        Ok(crate::tools::crystal_prompt_text(&split, &files))
+        // A worker is not the crystal's keeper: told the fact, and not to mend the file.
+        Ok(crate::tools::crystal_prompt_for(&split, &files, false))
     }
 
     /// What a Diamond's crystal weighs, hot and whole, as `{hot, total, hot_cap, cap}`.

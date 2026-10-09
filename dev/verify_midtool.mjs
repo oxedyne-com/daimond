@@ -12,9 +12,10 @@
 // visible tile.
 //
 // THE FIX. Steps now hides the tool's DETAIL (its Sent→Result body), not the
-// whole tile. The compact Tool label stays in the flow, so the turn reads
-// [Thinking][Tool][Thinking][Daimond] whether Steps is on or off, and the two
-// reasoning tiles do NOT roll up across the tool.
+// whole tile. The compact Tool label stays in the flow, so the working reads
+// [Thinking][Tool][Thinking] whether Steps is on or off. Since r539 (D-20261007-04) those
+// three adjacent tiles are ONE collapsed "Thinking and Tools" group, and the tool tile is
+// still inside it, still drawn, still expandable.
 //
 //   eval "$(bash dev/world.sh N --up)" ; eval "$(bash dev/world.sh N --env)"
 //   node dev/verify_midtool.mjs
@@ -50,7 +51,8 @@ const flow = () => page.evaluate(() => {
 		hideTools: out.classList.contains('hide-tools'),
 		toolLabelInk: ink(toolTile && toolTile.querySelector(':scope > .ctile-lbl')),
 		toolBodyInk:  ink(toolTile && toolTile.querySelector(':scope > .ctile-body')),
-		thinkTiles:   out.querySelectorAll('.crollup[data-t="think"]').length,
+		groups:       out.querySelectorAll('.crollup:not(.solo):not(#wire-head)').length,   // the System band is not a work group
+		leafOrder:    [...out.querySelectorAll('.ctile[data-t="think"], .ctile[data-t="tool"]')].map((n) => n.dataset.t).join(','),
 		toolResult:   (out.querySelector('.tool-result') || {}).textContent || '',
 	};
 });
@@ -62,14 +64,16 @@ await page.waitForTimeout(1800);
 
 // ── 1. Steps ON (default): the tool tile is in the flow, expandable ──
 let f = await flow();
-check('1a. the flow reads [Thinking][Tool][Thinking][Daimond] with Steps on',
-	JSON.stringify(f.order) === JSON.stringify(['You', 'Thinking', 'Tools', 'Thinking', 'Daimond']),
+check('1a. the flow reads [You][Thinking and Tools][Daimond] with Steps on',
+	JSON.stringify(f.order) === JSON.stringify(['You', 'Thinking and Tools', 'Daimond']),
 	JSON.stringify(f.order));
-check('1b. the two reasoning bursts are TWO tiles, not rolled up across the tool',
-	f.thinkTiles === 2, `${f.thinkTiles} think rollups`);
+check('1b. the reasoning, the tool and the reasoning are ONE group, in order',
+	f.groups === 1 && f.leafOrder === 'think,tool,think', `${f.groups} group(s); leaves ${f.leafOrder}`);
 
-// Expand the Tool tile with a REAL click on its label, and read Sent→Result.
+// Expand the group, then the Tool tile, with REAL clicks on their labels, and read Sent→Result.
 await page.evaluate(() => {
+	const g = document.querySelector('#chat-output .crollup:not(.solo):not(#wire-head)');
+	if (g && g.classList.contains('collapsed')) g.querySelector(':scope > .crollup-lbl').click();
 	const tool = document.querySelector('#chat-output .ctile[data-t="tool"]');
 	if (tool && tool.classList.contains('collapsed')) tool.querySelector('.ctile-lbl').click();
 });
@@ -91,9 +95,9 @@ await shot(s, 'midtool-steps-on');
 await page.click('#steps-toggle-btn', { force: true });
 await page.waitForTimeout(300);
 f = await flow();
-check('2a. Steps off STILL reads [Thinking][Tool][Thinking][Daimond] — the tool is not orphaned',
-	JSON.stringify(f.order) === JSON.stringify(['You', 'Thinking', 'Tools', 'Thinking', 'Daimond']),
-	`hideTools=${f.hideTools}, order=${JSON.stringify(f.order)}`);
+check('2a. Steps off STILL holds [Thinking][Tool][Thinking] in the one group — the tool is not orphaned',
+	JSON.stringify(f.order) === JSON.stringify(['You', 'Thinking and Tools', 'Daimond']) && f.leafOrder === 'think,tool,think',
+	`hideTools=${f.hideTools}, order=${JSON.stringify(f.order)}, leaves ${f.leafOrder}`);
 check('2b. the Tool LABEL is still drawn (a call with a tile, not a phantom)',
 	f.toolLabelInk > 0, `label ink ${f.toolLabelInk}px²`);
 check('2c. but its DETAIL body is withheld — that is what "hide steps" means now',

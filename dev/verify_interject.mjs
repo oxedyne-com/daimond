@@ -89,9 +89,9 @@ const shape = () => p.evaluate(() => {
 		  n.classList.contains('chat-msg-user')        ? 'user'
 		: n.classList.contains('chat-msg-interjected') ? 'cut'
 		// A tool tile sits inside its rollup container (solo, for one call), so the
-		// top-level node is the .crollup — recognise both.
+		// top-level node is the .crollup (class `work`, shared with Thinking) — recognise both.
 		: (n.classList.contains('tool-block')
-			|| (n.classList.contains('crollup') && n.dataset.t === 'tool')) ? 'tool'
+			|| (n.classList.contains('crollup') && n.dataset.t === 'work')) ? 'tool'
 		: n.classList.contains('chat-msg-assistant')   ? 'asst'
 		: n.id === 'chat-queued'                       ? 'waiting'
 		: '';

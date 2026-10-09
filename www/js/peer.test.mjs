@@ -2976,6 +2976,7 @@ async function runHeartbeatContainment(P, L, check) {
 		const sync = makeCountingSync({});
 		const timer = makeFakeTimer();
 		let clock = 1000, aborted = 0;
+		const whys = [];
 		const errand = sentErrand(P, { turnId: TID, chatId: 'c', prompt: 'p', eid: 'e', deadline: 9e15 });
 		const running = P.runErrand(errand, {
 			selfId: 'peerHang', cas: P.syncCas(sync), now: () => clock,
@@ -2983,7 +2984,7 @@ async function runHeartbeatContainment(P, L, check) {
 			maxLeaseLifeMs: 100,			// tiny cap so the test drives past it in a few ticks
 			reconstruct: async () => ({ chat: { id: 'c', messages: [] } }),
 			runTurn: () => new Promise(() => {}),		// never settles
-			abort: () => { aborted += 1; },
+			abort: (why) => { aborted += 1; whys.push(why); },
 			pushResult: async () => 9, post: async () => {}, ack: async () => {},
 		});
 		await new Promise((r) => setTimeout(r, 0));		// let take/mark-running/ticker start
@@ -2999,6 +3000,8 @@ async function runHeartbeatContainment(P, L, check) {
 		check('heartbeat: a hung turn does NOT fire for ever -- the cap STOPS the ticker',
 			timer.live() === 0);
 		check('heartbeat: the cap aborts the hung run (best-effort hard stop)', aborted >= 1);
+		check('heartbeat: and names the reason, so the stop line can say why (lease_cap)',
+			whys.length >= 1 && whys[0] === 'lease_cap', JSON.stringify(whys));
 		for (let i = 0; i < 6; i++) { clock += 40; await tick(); }		// well past the cap
 		check('heartbeat: past the cap the parcel is still untouched (fixed point during the turn)',
 			sync.pushes() === pushesAtRunStart);
@@ -5112,6 +5115,24 @@ function streamedViewChecks(tab) {
 	const P = tab.DaimondPeer;
 
 	console.log('\nThe streamed view — the frame a runner sends (STRUCTURED rows)');
+	{
+		// An ending travels with its word, its reason and its tallies (E6): without them the
+		// asker's provisional stop line has no `how` and draws nothing until the parcel lands.
+		const msgs = [
+			{ role: 'user',      content: 'go', mid: 't1', iturn: 't1' },
+			{ role: 'assistant', content: 'partial', mid: 'a1', ts: 5 },
+			{ role: 'end_log', how: 'stopped', why: 'lease_cap', offered: 3, rounds: 2, calls: 1,
+				refused: 0, failed: 1, malformed: 0, reasoned: 0, missing: ['/a.txt'], mid: 'e1', ts: 6 },
+		];
+		const rows = P.progressTail(msgs, 't1', 48 * 1024);
+		const end = rows.find((r) => r.mid === 'e1') || {};
+		check('E6a: an end_log row carries how, why and the tallies',
+			end.how === 'stopped' && end.why === 'lease_cap' && end.offered === 3 && end.rounds === 2
+			&& end.calls === 1 && end.failed === 1 && end.refused === 0 && JSON.stringify(end.missing) === '["/a.txt"]',
+			JSON.stringify(end));
+		check('E6b: an ordinary row does not grow the ending\'s fields',
+			!('how' in rows.find((r) => r.mid === 'a1')) && !('why' in rows.find((r) => r.mid === 'a1')));
+	}
 	{
 		const msgs = [
 			{ role: 'user',      content: 'earlier turn', mid: 't0', iturn: 't0' },

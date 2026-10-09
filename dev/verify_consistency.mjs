@@ -196,6 +196,8 @@ const CAPTURE = ({ rootSel, surface, tap }) => {
 			ctrl: isCtrl ? 1 : 0, text: text.slice(0, 80), lines: tn ? (() => { const rg = document.createRange(); rg.selectNodeContents(tn); return rg.getClientRects().length; })() : 0,
 			r: [Math.round(r.left), Math.round(r.top), Math.round(r.width), Math.round(r.height)], re: Math.round(r.right), view: inView(r) ? 1 : 0,
 			lb: (() => { const l = el.closest('label'); return l && l !== el ? Math.round(l.getBoundingClientRect().bottom) : null; })(),
+			// The bottom of the nearest earlier sibling that takes part in the flow: the section-gap check measures from it when it ends lower than the captured item above.
+			ps: (() => { for (let p = el.previousElementSibling; p; p = p.previousElementSibling) { const q = p.getBoundingClientRect(); if (q.height > 0 && !/^(absolute|fixed)$/.test(getComputedStyle(p).position)) return Math.round(q.bottom); } return null; })(),
 			tx, tcy, glyph, ggap, icon, clip, ph: el.getAttribute('placeholder') || '',
 			st: {
 				ff: ls.fontFamily.split(',')[0].replace(/["']/g, '').trim(), fs: ls.fontSize, fw: ls.fontWeight, ls: ls.letterSpacing, tt: ls.textTransform,
@@ -633,7 +635,7 @@ async function ratingPanel(id, pre) {
 }
 /// The Pending tiles of the proposals (collapsed, then each headline opened), the Edit dialog (as opened, then with a line the engine's lint
 /// refuses), and the Models page with its Trust column scrolled into view. `pre` is '' on a computer and 'p_' on a phone.
-async function ratingSurfaces(pre) {
+async function ratingSurfaces(pre, wk) {
 	await quiet();
 	const fx = await ratingFixtures();
 	log('rating fixtures', pre || 'desk', JSON.stringify(fx));
@@ -673,23 +675,29 @@ async function ratingSurfaces(pre) {
 	await wait(400);
 	if (await ev(() => /\bup, \d+ down of\b|not enough yet/.test((document.getElementById('modeldash-view') || {}).textContent || ''))) await grab(pre + 'models_trust', '#panel-modeldash');
 	else CAP.missing.push(`${CFG}/${pre}models_trust`);
-	// The Steering list on the Model stats page (U7c): every note, each with its exact line, whose it is and Remove.
-	await ev(() => { const l = document.querySelector('#panel-modeldash .mdash-steer'); if (l) l.scrollIntoView({ block: 'center' }); }); await wait(400);
-	if (await ev(() => document.querySelectorAll('#panel-modeldash .mdash-steer .steer-row').length >= 4)) await grab(pre + 'models_steer', '#panel-modeldash');
-	else CAP.missing.push(`${CFG}/${pre}models_steer`);
-	// The fixture's premise, held by the gate: the note for the model the Diamond runs is in use, and the note for another model is marked so.
-	const vd = await ev((a) => { const rows = [...document.querySelectorAll('#panel-modeldash .mdash-steer .steer-row')], off = (l) => { const r = rows.find((x) => ((x.querySelector('.steer-line') || {}).textContent || '') === l); return r ? ((r.querySelector('.steer-off') || { dataset: {} }).dataset.off || '') : null; }; return { mine: off(a.b), other: off(a.d) }; }, { b: STEER_LINE_B, d: STEER_LINE_D });
-	if (vd.mine !== '' || vd.other !== 'model') { log('steer verdicts', pre || 'desk', JSON.stringify(vd)); CAP.missing.push(`${CFG}/${pre}steer_in_use_verdict`); }
-	await quiet();
-	// The same list in the Diamond's own settings (Models area): its notes and the account's.
-	const cogOv = await overlay(pre + 'dlg_steer_list', async () => {
-		if (pre) { await ev(() => { if (!document.body.classList.contains('drawer-open')) { const b = document.getElementById('drawer-btn'); if (b) b.click(); } }); await wait(800); }
-		const hit = await ev((nm) => { const t = [...document.querySelectorAll('#diamond-list .diamond-box')].find((e) => ((e.querySelector('.session-box-name') || e).textContent || '').trim() === nm); const c = t && t.querySelector('.tile-cog'); if (!c) return false; c.click(); return true; }, DIAMONDS[1]);
-		if (hit === true) { await wait(900); await ev(() => { const l = document.querySelector('.tile-dlg-card [data-steer-list]'); if (l) l.scrollIntoView({ block: 'center' }); }); await wait(300); }
-		return hit;
-	});
-	void cogOv;
-	await quiet();
+	// The Steering list's notes are written into the Diamond's note files, and a WebKit device with no file store holds neither the Diamond nor the files
+	// (see `webkitPair`): the list has nothing to show, so it is a gap in what the harness can reach, not a missing surface.
+	if (wk && !WKSTORE) {
+		for (const f of ['models_steer', 'steer_in_use_verdict', 'dlg_steer_list']) CAP.notCovered.push({ label: 'webkit Steering list', reason: 'WebKit has no file store, so the Diamond the notes belong to never reaches the device (CRF2)', surface: `${CFG}/${pre}${f}` });
+	} else {
+		// The Steering list on the Model stats page (U7c): every note, each with its exact line, whose it is and Remove.
+		await ev(() => { const l = document.querySelector('#panel-modeldash .mdash-steer'); if (l) l.scrollIntoView({ block: 'center' }); }); await wait(400);
+		if (await ev(() => document.querySelectorAll('#panel-modeldash .mdash-steer .steer-row').length >= 4)) await grab(pre + 'models_steer', '#panel-modeldash');
+		else CAP.missing.push(`${CFG}/${pre}models_steer`);
+		// The fixture's premise, held by the gate: the note for the model the Diamond runs is in use, and the note for another model is marked so.
+		const vd = await ev((a) => { const rows = [...document.querySelectorAll('#panel-modeldash .mdash-steer .steer-row')], off = (l) => { const r = rows.find((x) => ((x.querySelector('.steer-line') || {}).textContent || '') === l); return r ? ((r.querySelector('.steer-off') || { dataset: {} }).dataset.off || '') : null; }; return { mine: off(a.b), other: off(a.d) }; }, { b: STEER_LINE_B, d: STEER_LINE_D });
+		if (vd.mine !== '' || vd.other !== 'model') { log('steer verdicts', pre || 'desk', JSON.stringify(vd)); CAP.missing.push(`${CFG}/${pre}steer_in_use_verdict`); }
+		await quiet();
+		// The same list in the Diamond's own settings (Models area): its notes and the account's.
+		const cogOv = await overlay(pre + 'dlg_steer_list', async () => {
+			if (pre) { await ev(() => { if (!document.body.classList.contains('drawer-open')) { const b = document.getElementById('drawer-btn'); if (b) b.click(); } }); await wait(800); }
+			const hit = await ev((nm) => { const t = [...document.querySelectorAll('#diamond-list .diamond-box')].find((e) => ((e.querySelector('.session-box-name') || e).textContent || '').trim() === nm); const c = t && t.querySelector('.tile-cog'); if (!c) return false; c.click(); return true; }, DIAMONDS[1]);
+			if (hit === true) { await wait(900); await ev(() => { const l = document.querySelector('.tile-dlg-card [data-steer-list]'); if (l) l.scrollIntoView({ block: 'center' }); }); await wait(300); }
+			return hit;
+		});
+		void cogOv;
+		await quiet();
+	}
 }
 
 // ── Surfaces: the computer ──────────────────────────────────────────────
@@ -862,7 +870,7 @@ async function phoneSurfaces(wk) {
 	else CAP.missing.push(`${CFG}/p_viewer_text`);
 	await quiet();
 	await carrySurfaces(wk);
-	await ratingSurfaces('p_');
+	await ratingSurfaces('p_', wk);
 }
 
 // The surfaces the 5.2.9 carry needs (G1, rule 4: every instance). Each starts from a known place, the main chat on the chat panel with
@@ -1411,6 +1419,7 @@ const ALLOW = [
 	// r526 residual allow-list, all approved by the lead (D-20260929-03):
 	{ role: 'inline-link', m: /^a\.(brand|mb-hit)\b/, p: ['col'], why: 'the wordmark and the About picture’s hotspots keep the brand colour -- they are not text links' },
 	{ role: 'text-button', m: /\.attach-add\.grants\b/, p: ['col'], why: 'a "+" that widens a fence takes the accent, like every granting control (daimond.js)' },
+	{ role: 'text-button', m: /\.attach-add(\.grants)?\.icon\b/, p: ['rad'], why: 'the bare + is round, the glyph form of the worded chips (skin-daylight.css "same 27px box as the worded chips, but round")' },
 	{ role: 'composer-button', m: /#chat-send\b/, p: ['icon'], why: 'the filled send disc carries a 16px arrow for optical balance' },
 	{ role: '*', m: /\.ghost\b/, p: ['col'], why: 'a ghost (unavailable) option is drawn muted' },
 	{ role: 'tile-prose', m: /^(strong|b)\b/, p: ['col'], why: 'bold in a reply may take the ink colour' },
@@ -1594,12 +1603,15 @@ function report() {
 	// letter's own side bearing (the K of Keep, the A of Add) moves the ink a pixel between tiles.
 	const GLYROLE = (it) => /^summary\b|\btagf-toggle\b|#sys-head\b|\barte-strip\b|\bastat-val\b|#sync-rest\b|\bcrystal-act\b|\bpend-verb\b|#current-session-name\b/.test(it.sig);
 	const RIGHTALIGN = (it) => /\bastat-aside\b|\brel-when\b|\bpptw-head-state\b/.test(it.sig);
+	// The seat line ("Runs here -- keep this open") is drawn under the composer and padded 12 px so its text lines up with the composer box edge
+	// (app.css "reads as part of the one control"); it is placed by the composer, not by the panel title, so it is not compared to the panel's text edge.
+	const COMPOSER_PART = (it) => /#seat-line\b/.test(it.sig);
 	// G13: a text edge inside a card (a transcript tile, a history or tag row) is
 	// that container's own edge, not the panel's -- so it is not compared to it.
 	const textBySurf = new Map(); for (const o of items) { if (!o.view || o.tx == null || o.tcy == null) continue; if (!textBySurf.has(o.surface)) textBySurf.set(o.surface, []); textBySurf.get(o.surface).push(o); }
 	const leftMate = (it) => (textBySurf.get(it.surface) || []).some((o) => o !== it && o.panel === it.panel && Math.abs(o.tcy - it.tcy) <= 4 && o.r[0] < it.r[0] && o.r[0] + o.r[2] <= it.r[0] + 2);
 	const byPanel = new Map(); for (const it of items) { if (!it.view || it.tx == null || it.lines !== 1) continue; if (!/panel-title|section-head|list-row|meta|disclosure|body-text|create-button|text-button/.test(it.roleName)) continue;
-		if (RIGHTALIGN(it)) continue;
+		if (RIGHTALIGN(it) || COMPOSER_PART(it)) continue;
 		// A text edge is the left edge of a row's FIRST text. An item with another text-bearing item wholly to its left on the same line (a button
 		// after a note, a unit after a field) is placed by that neighbour, not by the panel (5.2.9: `.ar-card-btn` after "No card saved.").
 		if (leftMate(it)) continue;

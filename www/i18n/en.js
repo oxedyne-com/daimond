@@ -530,6 +530,7 @@
 	'chat.who_tool':       'Tool',
 	'chat.who_files':      'Files',
 	'chat.who_tools':      'Tools',
+	'chat.who_work':       'Thinking and Tools',
 	'chat.who_system':     'System',
 	'chat.who_leak':       'Tool call',
 	'chat.tool_sent':      'Sent',
@@ -540,6 +541,8 @@
 	'chat.roll_thinking.other': 'thinking steps',
 	'chat.roll_tools.one':      'tool call',
 	'chat.roll_tools.other':    'tool calls',
+	'chat.roll_work.one':       'step',
+	'chat.roll_work.other':     'steps',
 	'chat.roll_system.one':     'part',
 	'chat.roll_system.other':   'parts',
 	'chat.selected_n.one':      '{n} selected',
@@ -1079,8 +1082,12 @@
 	// statement of what happened, not an accusation — the reader decides whether
 	// the model promised otherwise.
 	// i18n-family: end.how_ = answered stopped paused capped silent failed malformed reasoned_only
+	// i18n-family: end.why_ = lease_cap lease_revoked stream_abort
 	'end.how_answered': 'Answered',
 	'end.how_stopped':  'Stopped',
+	'end.why_lease_cap':    'Stopped: ran past the 30-minute limit for a turn handed to another device',
+	'end.why_lease_revoked': 'Stopped: another device took this turn over',
+	'end.why_stream_abort': 'Stopped: cut off before the turn finished',
 	'end.how_paused':   'Paused',
 	'end.how_capped':   'Step limit reached',
 	'end.how_silent':   'Ended without saying anything',
@@ -2516,6 +2523,7 @@
 	'crystal.ask':            'Ask the daimon to change this page',
 	'crystal.edit_json':      'Edit as JSON',
 	'crystal.json_invalid':   'That is not valid JSON, so nothing was saved.',
+	'crystal.broken':         'The crystal is not valid JSON, so nothing is drawn from it. Mend the text below.',
 	'crystal.field_title':    'Title',
 	'crystal.field_summary':  'Summary',
 	'crystal.field_sections': 'Sections',

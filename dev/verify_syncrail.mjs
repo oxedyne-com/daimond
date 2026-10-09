@@ -51,6 +51,15 @@ try {
 	// The summary is a ladder, and a model that cannot run outranks sync: connect one the way
 	// the settings form does, so the line is free to talk about sync.
 	await connectMock(s);
+	// The status section is shut by default (D-20261008-14): press its toggle first, as a user
+	// reads the summary, and hold the summary row to being on screen from here on.
+	await pg.evaluate(() => {
+		const b = document.querySelector('#panel-rail .rail-fold[data-fold="status"]');
+		if (b && b.getAttribute('aria-expanded') !== 'true') b.click();
+	});
+	await sleep(400);
+	check('[ctl] the status toggle opened the section: the summary row is on screen',
+		await pg.evaluate(() => { const e = document.getElementById('astat-summary'); return !!e && e.offsetParent !== null; }));
 	const pro = await makePagePro(pg, path.join(process.cwd(), 'gateway'), GW_URL);
 	check('[ctl] Pro held, so this device syncs', pro.pro === true, JSON.stringify(pro));
 	await pg.evaluate(() => { try { window.DaimondSync.recheck(); } catch (e) { /* */ } });

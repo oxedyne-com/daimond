@@ -221,7 +221,7 @@ const section = async (name, fn) => {
 // Not signed in and not connected by `open` itself: the break has to be routed
 // before the app is ever loaded, and signing in afterwards is what gives the
 // composer -- and therefore the footer above it -- a page to be drawn on.
-const s = await open({ name: 'chatworkspace', signIn: false, connect: false });
+const s = await open({ name: 'chatworkspace', signIn: false, connect: false, foot: ['ws'] });
 const { page } = s;
 
 /// Serve one deliberately damaged file in place of the real one, before the app

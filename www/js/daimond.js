@@ -11808,7 +11808,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 	// rebuilt whole on every crystal repaint, and a half-typed link form must
 	// survive one -- a resize, a steer, a fold -- rather than vanishing with
 	// everything typed into it.
-	var linkOpen  = false;      // the section is expanded
+	// Whether the section is expanded is the device's (`footOpen('links')`), not this file's.
 	var arteDaimonOpen = false; // the "added by the daimon" group in renderArtefacts; see there
 	var _lastDiamondSig = '';   // dedup key for the `ev diamond` debug row; see renderArtefacts
 	var linkForm  = null;       // { target, query, rel, note } while adding, else null
@@ -15474,7 +15474,9 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 	// streaming turn and a reload draw the identical shape.
 	var TILE_DIR  = { user: 'to', wire: 'to', think: 'from', reply: 'from', tool: 'local', handoff: 'local',
 		leak: 'local', rating: 'local' };
-	var TILE_ROLL = { think: 1, tool: 1, wire: 1 };   // consecutive runs of these roll up
+	// The class a tile rolls up under. Thinking and Tool share `work`, so an alternating run
+	// of the two is one group (D-20261007-04); System rolls up only with System.
+	var TILE_ROLL = { think: 'work', tool: 'work', wire: 'wire' };
 
 	/// The speaker word for a tile type, translated where a key exists.
 	function tileWho(type) {
@@ -15599,26 +15601,133 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 
 	// ── Rollups ────────────────────────────────────────────────
 	//
-	// A run of consecutive same-type tiles (Thinking, Tools, System) collapses into
-	// one container with a count badge; a run of one stands as an ordinary tile.
-	// Accreted at `postToChat`, the single door every render path goes through, so
-	// the live turn and a reload group identically. `_roll` is the container the
-	// current run is growing, cleared the moment anything else reaches the thread.
-	var _roll = null;
+	// A run of consecutive tiles of one class (Thinking and Tools together, or System)
+	// collapses into one container with a count badge; a run of one stands as an ordinary
+	// tile. Accreted at `postToChat`, the single door every render path goes through, so
+	// the live turn and a reload group identically. The run a new tile joins is read off
+	// the thread itself (`lastContent`): the box standing last, if it is of the tile's class.
+	// Display only -- the stored messages are one per tile either way.
 
-	function makeRollup(type, first) {
+	/// The last element of the conversation, ignoring the turn indicator, the queue box
+	/// (always kept beneath it) and any tile pinned to the foot while it awaits the reader.
+	/// Null when a pinned tile's slot lies between it and the end: the run was closed there.
+	function lastContent() {
+		for (var n = chatOutput.lastChild; n; n = n.previousSibling) {
+			if (n.nodeType === 8) { if (n._slotOf) return null; continue; }
+			if (n.nodeType !== 1) continue;
+			if (n === spinnerEl || n.id === 'chat-queued' || n._slot) continue;
+			return n;
+		}
+		return null;
+	}
+
+	// ── A tile that awaits the reader stands last ─────────────────────
+	//
+	// D-20261007-05, the owner's words: "Decision tiles should go to the end of the
+	// transcript whilst active ... once it is completed, the Decision tile then should go
+	// back into its original order in the transcript." The end of a transcript is where the
+	// reader looks for the latest output and for anything they must do. So an ask card the
+	// model is waiting on, and a hand-off tile held on a blocker, are drawn after the last
+	// content tile, in their own order, above the turn indicator and the queue box; and a
+	// comment node, the SLOT, keeps the place they were asked in. Answered, or the blocker
+	// gone, the tile moves back to its slot and the Thinking-and-Tools run it interrupted
+	// splits in two around it. Display only: the stored messages are the same either way.
+	//
+	// A tile opts in with `_awaits`, a function that says whether it still awaits. It is
+	// pinned while `_slot` is set. `_awaits` is read again at the next tile drawn.
+
+	/// The first of the tiles pinned to the foot of the thread, or null.
+	function firstAwaiting() {
+		var first = null;
+		for (var n = chatOutput.lastChild; n; n = n.previousSibling) {
+			if (n.nodeType !== 1) continue;
+			if (n === spinnerEl || n.id === 'chat-queued') continue;
+			if (!n._slot) break;
+			first = n;
+		}
+		return first;
+	}
+
+	/// The element pinned tiles are drawn above: the turn indicator, else the queue box.
+	function tailAnchor() {
+		return (spinnerEl && spinnerEl.parentNode === chatOutput) ? spinnerEl : document.getElementById('chat-queued');
+	}
+
+	/// Draw a tile that awaits the reader at the foot of the thread, leaving a slot where
+	/// it would otherwise have stood. The slot is the end of the run it interrupts, so
+	/// the run goes on past it.
+	function pinAwaiting(node) {
+		if (node._slot) return;
+		var slot = document.createComment('');
+		slot._slotOf = node;
+		node._slot = slot;
+		var last = lastContent();
+		if (last && last._body && last.classList.contains('crollup') && last.id !== 'wire-head') last._body.appendChild(slot);
+		else chatOutput.insertBefore(slot, firstAwaiting() || tailAnchor());
+		chatOutput.insertBefore(node, tailAnchor());
+	}
+
+	/// Return a pinned tile to its slot. A slot inside a rollup splits the rollup there:
+	/// what followed it becomes a rollup of its own, folded as the first is.
+	function unpinAwaiting(node) {
+		var slot = node._slot;
+		if (!slot) return;
+		node._slot = null;
+		var host = slot.parentNode;
+		if (!host) return;
+		if (host === chatOutput) { host.insertBefore(node, slot); slot.remove(); return; }
+		var box = host.parentNode, par = box.parentNode;
+		var lead = [], trail = [], seen = false, isEl = function (c) { return c.nodeType === 1; };
+		for (var c = host.firstChild; c; c = c.nextSibling) {
+			if (c === slot) seen = true; else (seen ? trail : lead).push(c);
+		}
+		var hasLead = lead.some(isEl), hasTrail = trail.some(isEl);
+		slot.remove();
+		if (hasLead && hasTrail) {
+			var box2 = makeRollup(box._type, trail.filter(isEl)[0]);
+			box2.classList.toggle('collapsed', box.classList.contains('collapsed'));
+			trail.forEach(function (c) { box2._body.appendChild(c); });
+			par.insertBefore(node, box.nextSibling);
+			par.insertBefore(box2, node.nextSibling);
+			rollUpdate(box); rollUpdate(box2);
+			syncContainerSel(box); syncContainerSel(box2);
+		} else if (hasLead) {
+			// Only other slots follow: they stand after the tile, at the top level.
+			var ref = box.nextSibling;
+			par.insertBefore(node, ref);
+			trail.forEach(function (c) { par.insertBefore(c, ref); });
+		} else {
+			// Nothing before it in the rollup: the tile stands above it, with any earlier slots.
+			lead.forEach(function (c) { par.insertBefore(c, box); });
+			par.insertBefore(node, box);
+		}
+	}
+
+	/// Send home every pinned tile that no longer awaits the reader.
+	function reconcileAwaiting() {
+		var gone = [];
+		for (var n = chatOutput.lastChild; n; n = n.previousSibling) {
+			if (n.nodeType !== 1) continue;
+			if (n === spinnerEl || n.id === 'chat-queued') continue;
+			if (!n._slot) break;
+			if (!n._awaits()) gone.push(n);
+		}
+		for (var i = gone.length - 1; i >= 0; i--) unpinAwaiting(gone[i]);
+	}
+
+	/// Make the container for a run of class `cls` ('work' or 'wire'). `first` is the tile
+	/// that opens it; it sets the container's direction of travel.
+	function makeRollup(cls, first) {
 		var box = document.createElement('div');
 		box.className = 'crollup csel-unit solo collapsed';
-		box.dataset.t = type;
-		box.dataset.dir = TILE_DIR[type] || 'from';
+		box.dataset.t = cls;
+		box.dataset.dir = TILE_DIR[first.dataset.t || cls] || 'from';
 		if (first.dataset.turn != null) box.dataset.turn = first.dataset.turn;
 		var lbl = document.createElement('div');
 		lbl.className = 'crollup-lbl';
 		var dot = document.createElement('span'); dot.className = 'ctile-dot';
 		var who = document.createElement('span'); who.className = 'ctile-who';
-		// The container reads plural — "Tools · 3" beside "Thinking" and "System" —
-		// while an individual tool tile stays "Tool".
-		who.textContent = type === 'tool' ? tOr('chat.who_tools', 'Tools') : tileWho(type);
+		who.textContent = cls === 'work' ? tOr('chat.who_work', 'Thinking and Tools') : tileWho(cls);
 		var cnt = document.createElement('span'); cnt.className = 'crollup-count';
 		var noun = document.createElement('span'); noun.className = 'ctile-meta';
 		var grow = document.createElement('span'); grow.className = 'ctile-grow';
@@ -15633,7 +15742,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		lbl.appendChild(grow); lbl.appendChild(peek); lbl.appendChild(ctl);
 		var rbody = document.createElement('div'); rbody.className = 'crollup-body';
 		box.appendChild(lbl); box.appendChild(rbody);
-		box._body = rbody; box._count = cnt; box._noun = noun; box._peek = peek; box._type = type;
+		box._body = rbody; box._count = cnt; box._noun = noun; box._peek = peek; box._type = cls;
 		lbl.addEventListener('click', function (e) {
 			if (e.target.closest('.ctile-copy, .ctile-rate')) return;
 			if (chatOutput.classList.contains('selecting')) { toggleSelContainer(box); return; }
@@ -15649,10 +15758,9 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		return box;
 	}
 
-	function rollNoun(type, n) {
-		if (type === 'think') return tn('chat.roll_thinking', n, { n: n });
-		if (type === 'tool')  return tn('chat.roll_tools', n, { n: n });
-		if (type === 'wire')  return tn('chat.roll_system', n, { n: n });
+	function rollNoun(cls, n) {
+		if (cls === 'work') return tn('chat.roll_work', n, { n: n });
+		if (cls === 'wire') return tn('chat.roll_system', n, { n: n });
 		return '';
 	}
 
@@ -15669,9 +15777,9 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		box._noun.textContent = n < 2 ? '' : rollNoun(box._type, n);
 		// The most telling one-liner per kind: a Tool's name-and-outcome, a System
 		// part's name, a thinking step's thought.
-		var pick = box._type === 'wire' ? '_who' : box._type === 'tool' ? '_meta' : '_peek';
 		var bits = [];
 		for (var i = 0; i < kids.length && bits.length < 3; i++) {
+			var pick = box._type === 'wire' ? '_who' : kids[i].dataset.t === 'tool' ? '_meta' : '_peek';
 			var el = kids[i][pick] || kids[i]._peek || kids[i]._meta || kids[i]._who;
 			var m = (el && el.textContent) || '';
 			bits.push(m.length > 24 ? m.slice(0, 24) + '…' : m);
@@ -16694,7 +16802,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 	/// the failure would otherwise be invisible. So a single minimal notice
 	/// survives, and only then: it is gated on the turn having drawn nothing, not
 	/// on what the tally says.
-	function appendEnding(e) {
+	function appendEnding(e, isLast, ch) {
 		var p = endingParts(e);
 		if (!p) return;
 		// What this turn actually drew, its own question aside. A tool tile or an
@@ -16739,9 +16847,34 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		line.className = 'end-line';
 		// Minimal: the ending word alone (e.g. "Ended on an error"), not the tool
 		// tally — there were no tools to tally, which is the whole reason we are here.
-		line.textContent = tOr('end.how_' + (e.how || ''), String(e.how || '')) || p.line;
+		var word = tOr('end.how_' + (e.how || ''), String(e.how || '')) || p.line;
+		// A STOP SAYS WHY (D-20261006-30 (a)). The reason is the engine's own, stamped where
+		// the abort was raised; a stop the person made keeps plain "Stopped", and a record
+		// from before `why` existed has none and reads as it always did. `data-why` is the
+		// locale-neutral mark the gate reads.
+		var why = e.how === 'stopped' ? String(e.why || '') : '';
+		if (why) {
+			div.dataset.why = why;
+			if (why !== 'user') word = tOr('end.why_' + why, word);
+		}
+		line.textContent = word;
 		div.appendChild(line);
+		// CONTINUE, ONLY WHERE IT IS THE THING TO DO: a turn that ran out its lease is
+		// unfinished through no act of the person's, and the stop is the newest thing in
+		// the thread. A stop higher up has been overtaken, and a second device pressing it
+		// would run the turn twice.
+		var cont = null;
+		if (isLast && why === 'lease_cap') {
+			cont = document.createElement('button');
+			cont.className = 'ti-continue';
+			cont.textContent = t('turn.continue');
+			cont.title = t('turn.continue_help');
+			cont.addEventListener('click', function () { continueStopped(ch || current, cont); });
+			div.classList.add('has-continue');
+			div.appendChild(cont);
+		}
 		tagTurn(div); postToChat(div);
+		_contBtn = cont;
 		if (nearBottom()) setScrollTop(chatOutput.scrollHeight);
 	}
 
@@ -16751,12 +16884,12 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 	/// reload still shows how a turn ended. A turn that draws nothing stores
 	/// nothing: a record kept for a line no build will ever draw is a message per
 	/// turn in every pure chat, which is the noise rule 2 exists to prevent.
-	function endLogOf(ev) {
+	function endLogOf(ev, why) {
 		if (!ev) return null;
 		// Stored on the same rule `endingParts` draws on: a stopped turn is kept whatever
 		// was offered, so the line is still there after a reload.
 		if (String(ev.how || '') !== 'stopped' && !((ev.offered | 0) > 0)) return null;
-		return {
+		var rec = {
 			role:    'end_log',
 			how:     String(ev.how || ''),
 			offered: ev.offered | 0,
@@ -16775,7 +16908,39 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			mid:     newMid(),
 			ts:      Date.now(),
 		};
+		// WHY A STOP STOPPED, stored with the record so every device draws the same words.
+		// `user` is a Stop the person pressed; a reason nobody named is `stream_abort`
+		// (the caller's fallback), so no stop is left unexplained.
+		if (rec.how === 'stopped' && why) rec.why = String(why);
+		return rec;
 	}
+
+	/// Fit an end record into a transcript so it sorts AFTER everything already there.
+	///
+	/// A transcript is merged by `(ts, mid)`. The record was stamped when the engine's
+	/// `ended` event arrived and pushed after the answer or partial, which took a later
+	/// stamp -- so on every merged device the line sorted above the tile it closes (owner,
+	/// 21:48, 2026-10-07). Restamped at push time, past the newest stamp in the thread.
+	function stampAfter(msgs, rec) {
+		var top = 0;
+		for (var i = 0; i < (msgs || []).length; i++) top = Math.max(top, +(msgs[i] && msgs[i].ts) || 0);
+		rec.ts = Math.max(Date.now(), top + 1);
+		return rec;
+	}
+
+	/// Take the Continue button off the stop line that offered it.
+	function retireContinue() {
+		var b = _contBtn;
+		_contBtn = null;
+		if (!b) return;
+		try {
+			var line = b.parentNode;
+			b.remove();
+			if (line && line.classList) line.classList.remove('has-continue');
+		} catch (e) { /* the line is gone already */ }
+	}
+
+	var _contBtn = null;			// the Continue button on screen, if any
 
 	/// Put something into the thread, taking the placeholder away first.
 	///
@@ -16783,7 +16948,11 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 	/// on screen lands BELOW a full-height box: the thread opens scrolled past
 	/// its own first message, with a screen of nothing above it. Every render
 	/// path goes through here, so a path added later cannot forget.
+	///
+	/// It is also where a stop line's Continue is withdrawn: a tile that lands after the
+	/// line makes it no longer the newest thing in the thread.
 	function postToChat(node) {
+		if (_contBtn) { retireContinue(); }
 		// A tile reached the thread from somewhere OTHER than a history render -- the
 		// live turn, a streamed answer. The append fast path in `renderHistory` may only
 		// draw a tail onto a thread whose tiles it put there itself, so a draw through
@@ -16801,33 +16970,38 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			if (!liveThink._held) liveThink.classList.add('collapsed');
 			liveThink = null;
 		}
-		// ROLL UP A RUN OF SAME-TYPE TILES. A rollable tile joins the container the
-		// current run is growing; anything else closes the run. See `_roll`.
-		var rollable = node.classList && node.classList.contains('ctile') && TILE_ROLL[node.dataset.t];
-		if (rollable) {
-			var type = node.dataset.t;
-			if (_roll && _roll.type === type && _roll.box.parentNode === chatOutput
-				&& isLastContent(_roll.box)) {
+		// A tile pinned to the foot goes home once it no longer awaits the reader; one that
+		// awaits is pinned, and whatever comes after it is drawn above it.
+		reconcileAwaiting();
+		if (node._awaits && node._awaits()) {
+			pinAwaiting(node);
+			placeFurniture();
+			return;
+		}
+		// ROLL UP A RUN OF TILES OF ONE CLASS. A rollable tile joins the box standing last
+		// in the thread when that box is of its class; anything else lying between closes
+		// the run, as it must.
+		var cls = node.classList && node.classList.contains('ctile') && TILE_ROLL[node.dataset.t];
+		if (cls) {
+			var prev = lastContent();
+			if (prev && prev.classList.contains('crollup') && prev._type === cls && prev.id !== 'wire-head') {
 				node.classList.remove('csel-unit');
 				node.dataset.dir = '';               // the container carries the indent
-				_roll.body.appendChild(node);
-				rollUpdate(_roll.box);
+				prev._body.appendChild(node);
+				rollUpdate(prev);
 				placeFurniture();
 				return;
 			}
-			var box = makeRollup(type, node);
+			var box = makeRollup(cls, node);
 			node.classList.remove('csel-unit');
 			node.dataset.dir = '';
 			box._body.appendChild(node);
 			rollUpdate(box);
-			_roll = { type: type, box: box };
-			_roll.body = box._body;
 			node = box;
-		} else if (node !== spinnerEl) {
-			_roll = null;                            // a non-rollable tile closes the run
 		}
-		// What is waiting to be sent stays at the bottom, under what has happened.
-		var q = document.getElementById('chat-queued');
+		// What is waiting to be sent stays at the bottom, under what has happened -- and
+		// under the tiles that await the reader, which stand last of all.
+		var q = firstAwaiting() || document.getElementById('chat-queued');
 		if (q) chatOutput.insertBefore(node, q);
 		else chatOutput.appendChild(node);
 		placeFurniture();
@@ -16843,13 +17017,13 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 	function postTurnLead(node) {
 		if (!_renderingHistory) _renderSynced = false;
 		var ph = chatOutput.querySelector('.empty-state'); if (ph) ph.remove();
-		// A non-rollable tile reaching the thread closes any open thinking tile / run,
-		// exactly as `postToChat` does, so a later same-type tile starts a fresh group.
+		// A non-rollable tile reaching the thread closes any open thinking tile,
+		// exactly as `postToChat` does.
 		if (liveThink && node !== liveThink) {
 			if (!liveThink._held) liveThink.classList.add('collapsed');
 			liveThink = null;
 		}
-		_roll = null;
+		reconcileAwaiting();
 		var turn = node.dataset ? node.dataset.turn : null;
 		var before = null;
 		if (turn != null) {
@@ -16858,13 +17032,13 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 				var k = kids[i];
 				if (!k.dataset || k.dataset.turn !== turn) continue;
 				if (k.classList && k.classList.contains('chat-msg-user')) continue;	// the question leads; the hand-off follows it
-				if (k === spinnerEl || k.id === 'chat-queued') continue;
+				if (k === spinnerEl || k.id === 'chat-queued' || k._slot) continue;
 				before = k; break;
 			}
 		}
 		if (before) chatOutput.insertBefore(node, before);
 		else {
-			var q = document.getElementById('chat-queued');
+			var q = firstAwaiting() || document.getElementById('chat-queued');
 			if (q) chatOutput.insertBefore(node, q); else chatOutput.appendChild(node);
 		}
 		placeFurniture();
@@ -16875,7 +17049,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 	function isLastContent(node) {
 		var n = node.nextSibling;
 		while (n) {
-			if (n.nodeType === 1 && n !== spinnerEl && n.id !== 'chat-queued') return false;
+			if (n.nodeType === 1 && n !== spinnerEl && n.id !== 'chat-queued' && !n._slot) return false;
 			n = n.nextSibling;
 		}
 		return true;
@@ -17408,7 +17582,8 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		} else {
 			addMsgCopy(div, o.summary);
 		}
-		chatOutput.appendChild(div);
+		var lead = firstAwaiting();
+		if (lead) chatOutput.insertBefore(div, lead); else chatOutput.appendChild(div);
 		if (nearBottom()) setScrollTop(chatOutput.scrollHeight);
 		return true;
 	}
@@ -17533,6 +17708,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		done.className = 'ask-done';
 		done.textContent = t('ask.answered', { what: shown });
 		card.appendChild(done);
+		unpinAwaiting(card);			// back to the place it was asked in
 	}
 
 	/// A replayed answer closes the question it was an answer to.
@@ -17674,7 +17850,19 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		other.appendChild(open); other.appendChild(row);
 		card.appendChild(other);
 
-		chatOutput.appendChild(card);
+		// AWAITING THE READER while no newer question has begun (`_turn` is still the turn it
+		// was asked in), nobody has answered it, and it is current: then it stands last (see
+		// `pinAwaiting`). An interjection leaves it there; a new question withdraws it to the
+		// place it was asked in.
+		card._turn = _turn;
+		card._awaits = function () {
+			return card._turn === _turn && !card.dataset.answered && askCurrent(askedAt);
+		};
+		if (card._awaits()) pinAwaiting(card);
+		else {
+			var lead = firstAwaiting();
+			if (lead) chatOutput.insertBefore(card, lead); else chatOutput.appendChild(card);
+		}
 		_askCard = card;
 		if (nearBottom()) setScrollTop(chatOutput.scrollHeight);
 		armAskIdleBound(card, typeof o.if_silent === 'string' ? o.if_silent.trim() : '', askedAt);
@@ -17862,6 +18050,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		if (name === 'ask' && _askJust) {
 			_askJust = false;
 			if (outcome !== 'done' && _askCard) {
+				if (_askCard._slot) { _askCard._slot.remove(); _askCard._slot = null; }
 				_askCard.remove();
 				_askCard = null;
 			}
@@ -21978,6 +22167,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			var el = document.getElementById('astat-summary');
 			if (!el) return;
 			var dot = 'ok', text = '';
+			var fault = false;	// a warning the shut section must still voice
 			var devices = 0;
 			try { devices = Object.keys(collectDevices() || {}).length; } catch (e) { devices = 0; }
 			// The chip's one word (`DaimondSync.chip`). `DaimondSync.state()` is the engine's
@@ -21990,14 +22180,19 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			if (locked) {
 				dot = 'off'; text = tOr('astat.sum_locked', 'Locked');
 			} else if (neverHeldAnIdentity()) {
-				dot = 'warn'; text = tOr('astat.sum_no_account', 'Not signed in');
+				dot = 'warn'; fault = true; text = tOr('astat.sum_no_account', 'Not signed in');
 			} else if (!(M && M.ready())) {
-				dot = 'warn'; text = t('astat.no_model');
+				dot = 'warn'; fault = true; text = t('astat.no_model');
 			} else if (sync === 'off' || sync === 'stalled') {
 				dot = 'warn'; text = tOr('astat.sum_offline', 'Offline');
+				// A plan without sync also reads 'off' (`restStatus` in js/sync.js): that is
+				// what the plan is, not a fault, so only a stall or a safe start is voiced.
+				var safe = false;
+				try { safe = !!(window.DaimondSafe && DaimondSafe.on()); } catch (e) { safe = false; }
+				fault = sync === 'stalled' || safe;
 			} else if (sync === 'partial') {
 				// Everything but the files travels; see `restStatus` in js/sync.js.
-				dot = 'warn'; text = tOr('astat.sum_partial', 'Synced, but not files');
+				dot = 'warn'; fault = true; text = tOr('astat.sum_partial', 'Synced, but not files');
 			} else if (sync === 'synced' && devices > 1) {
 				dot = 'ok'; text = tOr('astat.sum_synced_n', 'Synced \u00b7 {n} devices', { n: devices });
 			} else if (sync === 'synced') {
@@ -22007,6 +22202,15 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			}
 			row('astat-summary', dot, '', text);
 			el.title = tOr('astat.sum_help', 'Details');
+			// The shut section's one voice: only a fault passes the importance filter
+			// (no model, a stalled sync or a safe start, partial files, not signed in),
+			// so an ordinary, merely local or unentitled state leaves the line silent.
+			var flag = document.getElementById('astat-flag');
+			if (flag) {
+				var fv = flag.querySelector('.astat-val');
+				if (fv) fv.textContent = fault ? text : '';
+				flag.hidden = !fault;
+			}
 		}
 
 		/// Redraw the status. Cheap, and safe to call from anywhere that changes
@@ -22749,7 +22953,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		// next conversation's first answer close a question drawn in the last one.
 		_askCard = null; _askJust = false;
 		// The live-turn tile state pointed into the thread that has just been emptied.
-		liveThink = null; _roll = null; lastToolBlock = null;
+		liveThink = null; lastToolBlock = null;
 		// The turns belonged to the thread that has just been thrown away. Numbering them from
 		// scratch is what keeps a turn number meaning "the nth question in THIS chat", which is
 		// the assumption the fold relies on when it maps a ticked turn back to a message.
@@ -23824,9 +24028,9 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 	/// Draw one stored message as its tile(s). The SINGLE per-message drawing path, shared
 	/// by the full rebuild and the tail-only append, so the two cannot draw a message
 	/// differently. Every path reaches `postToChat`, which coalesces a run of same-type
-	/// tiles from `_roll` -- so a tail drawn onto a thread whose `_roll` still points at
-	/// the trailing rollup groups exactly as a rebuild would have grouped it.
-	function drawHistoryMessage(m) {
+	/// tiles onto the box standing last -- so a tail drawn onto a thread whose last box is a
+	/// rollup groups exactly as a rebuild would have grouped it.
+	function drawHistoryMessage(m, i, arr) {
 		// A message said into a running turn is a user message to the model and
 		// not a turn of its own here, so it is drawn where it landed rather than
 		// as the question that started something.
@@ -23883,7 +24087,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		// How the turn ended, redrawn from the record: a reload that dropped it
 		// would leave a reader who had walked away with the same silence the
 		// line exists to replace.
-		else if (m.role === 'end_log') { appendEnding(m); }
+		else if (m.role === 'end_log') { appendEnding(m, !!arr && i === arr.length - 1); }
 		else if (m.role === 'tool_log') {
 			// A record of a tool the agent ran. Display only: it is not sent
 			// back to the model, which cannot replay a tool call it has no
@@ -23991,6 +24195,8 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 	/// System band, the permissions chip. Runs on every render -- full or append -- because
 	/// each can differ between two chats and the append path does not otherwise touch them.
 	function renderHistoryFurniture() {
+		// A tile that awaited the reader may not any longer (a blocker cleared, a stamp aged).
+		reconcileAwaiting();
 		renderQueue();
 		// The band belongs to the conversation on screen, and every part of it can differ between
 		// two: a Diamond's fence is not a chat's, and a user may have rewritten one role prompt
@@ -24062,7 +24268,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		// THE APPEND FAST PATH. The same chat is on screen and the only change is turns
 		// added on the end -- the common case behind every store-change nonce, a sync
 		// pull, another tab's write, a landed dispatch. Draw the new tail onto the tiles
-		// already standing (nothing cleared, the counters and `_roll` continue) rather
+		// already standing (nothing cleared, the counters continue) rather
 		// than clearing thousands of tiles and rebuilding every one. `drawHistoryMessage`
 		// is the same door as the rebuild below, so the tail draws identically; the drawn
 		// prefix is proven byte-for-byte unchanged by `isAppendOf`, so the result is the
@@ -24110,7 +24316,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 				_renderingHistory = true;
 				loadTextFolds();
 				for (var i = _renderedSigs.length; i < messages.length; i++) {
-					drawHistoryMessage(messages[i]);
+					drawHistoryMessage(messages[i], i, messages);
 				}
 				_renderingHistory = false;
 				renderHistoryFurniture();
@@ -24558,6 +24764,8 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			tile._body.appendChild(nd);
 		}
 		tagTurn(tile);
+		// It awaits the reader while the runner is blocked on a question or a consent.
+		tile._awaits = function () { return !!blockerFor(m.iturn); };
 		postToChat(tile);
 	}
 
@@ -25578,9 +25786,10 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 				// local transcript. A turn that fanned out nothing returns from here at once.
 				await drainAgenticRounds(c.chat);
 			},
-			abort: function () {
+			abort: function (why) {
 				try { if (ctx && ctx.chat) Workers.cancelAwaits(ctx.chat.id); } catch (e) { /* best effort */ }
-				if (ctx && ctx.chat) abortTurn(ctx.chat);
+				// The reason first, so the engine's `ended` event finds it when the stop lands.
+				if (ctx && ctx.chat) { ctx.chat._stopWhy = String(why || ''); abortTurn(ctx.chat); }
 			},
 			pushResult: async function () {
 				// A DAIMON'S session is written by `runSteer` itself, straight from
@@ -28539,6 +28748,37 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		chat.app = null;
 		touchChat(chat); persistChats();
 		renderHistory(chat.messages);
+		runTurn(chat, CONTINUE_NUDGE);
+	}
+
+	/// Carry on a turn that ran past the lease cap, from the Continue on its stop line.
+	///
+	/// The partial answer is already in the transcript as an ordinary message, so the model is
+	/// asked to carry on from it, as `continueTurn` does -- but there is no interrupted badge
+	/// and no turn id here, because nothing was lost: the runner stopped on purpose. The stop
+	/// must still be the newest thing in the chat; a button that outlived a newer turn (another
+	/// device's, merged in) does nothing and goes.
+	function continueStopped(chat, btn, holdRead) {
+		if (!chat || chat._generating) return;
+		var ms = chat.messages || [];
+		var last = ms.length ? ms[ms.length - 1] : null;
+		if (!last || last.role !== 'end_log' || last.why !== 'lease_cap') { retireContinue(); return; }
+		// Asked before anything moves, as `continueTurn` asks: a pause refuses it in the words
+		// every door uses, and the line keeps its button for when play is pressed.
+		var held = turnHold(chat);
+		if (held && !holdRead) {
+			if (chat._sending) return;
+			var release = holdSend(chat);
+			confirmHold(chat).then(function () {
+				release();
+				continueStopped(chat, btn, true);
+			});
+			return;
+		}
+		if (held) { toast(DaimondModels.pauseError(held).message, true); return; }
+		retireContinue();
+		chat.app = null;
+		touchChat(chat); persistChats();
 		runTurn(chat, CONTINUE_NUDGE);
 	}
 
@@ -35850,6 +36090,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		if (chat.diamondId) return;
 		var aborted = !!chat._aborted;
 		chat._aborted = false;
+		chat._stopWhy = '';
 		var q = chat._queue || [];
 		if (!q.length) return;
 		// Only for the chat on screen. runTurn writes the question straight into the
@@ -36144,6 +36385,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		});
 		// The composer stays live: what is typed while this runs is queued, not lost.
 		chat._aborted = false;
+		chat._stopWhy = '';
 		chat._pausedMid = '';		// set by `brakeHeld` when a pause catches this turn running
 
 		// PERSIST-FIRST. The prompt is durable the instant it is sent — before a single token comes
@@ -36429,7 +36671,12 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 				// written now lands ABOVE the message it is about, on screen and again on
 				// every reload. The `finally` below is where a turn's records are complete,
 				// and that is where this one joins them.
-				var endLog = endLogOf(ev);
+				// A stop carries its reason: the one the abort named (`_stopWhy`: the lease cap, a
+				// take-over), else the person's own Stop, else a cut-off nobody named -- so no
+				// stop is left unexplained.
+				var endWhy = String(ev.how || '') === 'stopped'
+					? (chat._stopWhy || (chat._aborted ? 'user' : 'stream_abort')) : '';
+				var endLog = endLogOf(ev, endWhy);
 				if (endLog) pendingEnd = endLog;
 				// TRAINING WHEELS — the debug feed's `ended`. The round the turn actually
 				// stopped on may not be one of the throttled ones above, so it is caught
@@ -37025,8 +37272,8 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 				// -- the louder one calling a lost connection an error (UX run, annoyance 4).
 				// One ending, one sentence.
 				if (pendingEnd && !handedBack && !pausedBack) {
-					chat.messages.push(pendingEnd);
-					if (owns()) appendEnding(pendingEnd);
+					chat.messages.push(stampAfter(chat.messages, pendingEnd));
+					if (owns()) appendEnding(pendingEnd, true, chat);
 				}
 				pendingEnd = null;
 				chat._generating = false;
@@ -37394,6 +37641,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		// Stop means stop: anything queued behind this turn is handed back to the
 		// composer rather than sent the moment the turn the user just killed ends.
 		current._aborted = true;
+		current._stopWhy = 'user';
 		// AND ANY GATHER THIS CHAT IS WAITING ON. `LlmClient::abort` fires the armed fetch, and
 		// during a gather there is none -- so without this Stop would do nothing at all until
 		// the wait ran out, which is up to ten minutes of a button that looks broken.
@@ -51803,6 +52051,12 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 	/// The alternative -- treating it as an error and opening empty -- is the most destructive
 	/// failure in this whole change, because an agent handed an empty crystal writes a new one
 	/// over work it never saw.
+	///
+	/// **A text that starts with `{` and does not parse is neither.** It is a JSON file that was
+	/// damaged -- a daimon's half-written edit, a trailing comma -- and reading it as the old
+	/// format turned the whole file into one section of prose: drawn as a crystal, and written
+	/// back as one by every restore. It answers `null`, as it does with no library, so
+	/// [`crystalJson`] hands the text back unchanged; [`crystalBroken`] says why.
 	function crystalData(text) {
 		var C = crystalLib();
 		var s = String(text || '');
@@ -51810,7 +52064,22 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		if (!s.trim()) return {};
 		var r = C.parse(s);
 		if (r && r.ok) return r.data || {};
+		if (s.trim().charAt(0) === '{') return null;
 		return C.fromMarkdown(s);
+	}
+
+	/// Why a text that looks like a JSON crystal is not one, or `null` when nothing is wrong.
+	///
+	/// Only a text that starts with `{` is JSON that failed; anything else that will not parse is
+	/// the old markdown format and [`crystalData`] migrates it. The words are the engine's, for
+	/// a console line -- the sentence the reader sees is `crystal.broken`.
+	function crystalBroken(text) {
+		var C = crystalLib();
+		var s = String(text || '');
+		if (!C || s.trim().charAt(0) !== '{') return null;
+		var r = C.parse(s);
+		if (r && r.ok) return null;
+		return String((r && r.error) || 'not valid JSON');
 	}
 
 	/// The same, as the JSON text the store wants.
@@ -52138,7 +52407,9 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 	/// * `id` - The Diamond whose memory this is.
 	/// * `rawText` - `crystal.json` exactly as it sits on disk.
 	/// * `data` - The same, parsed, or `{}` where it would not parse.
-	function crystalMemoryPanel(id, rawText, data) {
+	/// * `broken` - Whether the file is JSON that does not parse: the raw text is then open at
+	///   once, which is the only way to mend it, and there is no form to save `{}` over it.
+	function crystalMemoryPanel(id, rawText, data, broken) {
 		var C = crystalLib();
 		var d = (data && typeof data === 'object') ? data : {};
 		var box = document.createElement('details');
@@ -52224,7 +52495,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			drew++;
 		});
 		if (drew) card.appendChild(dl);
-		else {
+		else if (!broken) {
 			var none = document.createElement('p');
 			none.className = 'mem-none';
 			none.textContent = tOr('crystal.knows_nothing', 'Nothing yet. Ask below.');
@@ -52240,7 +52511,9 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		edit.className = 'crystal-act';
 		edit.textContent = t('files.edit');
 		edit.addEventListener('click', function () { editCrystal(d); });
-		acts.appendChild(edit);
+		// The form edits the parsed copy, which is `{}` for a crystal that will not parse, and
+		// its Save would write that over the file.
+		if (!broken) acts.appendChild(edit);
 
 		// FOLD, where the fold lives. A daimon's conversation folds into its own crystal --
 		// the same act `#chat-fold-btn` performs on the chat face -- and this is the face
@@ -52268,8 +52541,12 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		// ── The raw file, one press away and no closer ────────────
 		var raw = document.createElement('div');
 		raw.className = 'mem-raw';
-		raw.hidden = true;
+		raw.hidden = !broken;
 		card.appendChild(raw);
+		if (broken) {
+			rawBtn.setAttribute('aria-expanded', 'true');
+			rawBtn.textContent = tOr('crystal.show_raw', 'Show raw memory') + ' ▾';
+		}
 		rawBtn.addEventListener('click', function () {
 			raw.hidden = !raw.hidden;
 			rawBtn.setAttribute('aria-expanded', raw.hidden ? 'false' : 'true');
@@ -52418,12 +52695,13 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		if (!currentDiamond || currentDiamond.id !== id) return;
 
 		var data = crystalData(text);
+		var broken = crystalBroken(text);
 		clearCrystalBody();
 		crystalBody.appendChild(crystalBar(data || {}));
 		// The raw memory, click-to-expand and editable, on every face-state below: a page
 		// renders the memory but does not let you see or change the memory itself, and
 		// `mount` and `fallback` touch only their own nodes, so this survives the swap.
-		crystalBody.appendChild(crystalMemoryPanel(id, text, data));
+		crystalBody.appendChild(crystalMemoryPanel(id, text, data, broken !== null));
 
 		// An instance with NO delivery record cannot be judged and must not be
 		// rewritten behind anybody's back, so it is asked about instead. Not awaited:
@@ -52442,6 +52720,23 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			raw.className = 'crystal-raw';
 			raw.textContent = text || '';
 			crystalBody.appendChild(raw);
+			renderCrystalControls();
+			renderArtefacts();
+			return;
+		}
+
+		// JSON that does not parse is NAMED, and not drawn as an empty crystal (which says "steer
+		// it below", an invitation to write a new one over the file) or as a one-section
+		// markdown crystal.  The raw text is open above this, the one place it can be mended.
+		if (broken !== null) {
+			try { console.warn('crystal.json does not parse: ' + broken); } catch (e) { /* no console */ }
+			var bad = document.createElement('div');
+			bad.className = 'chat-msg-content';
+			var badNote = document.createElement('div');
+			badNote.className = 'crystal-empty crystal-broken';
+			badNote.textContent = t('crystal.broken');
+			bad.appendChild(badNote);
+			crystalBody.appendChild(bad);
 			renderCrystalControls();
 			renderArtefacts();
 			return;
@@ -54527,7 +54822,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		// of `DEBUG_SHARE`.
 		//
 		// THIS MUST STAY ABOVE THE COLLAPSED-PANEL RETURN BELOW. It used to sit at the
-		// foot of this function, after `if (!strip.dataset.open) { … return; }` --
+		// foot of this function, after `if (!wsOpen) { … return; }` --
 		// which is the panel's OWN fold state, closed by default and left closed by
 		// most sessions, so the event was dead code for as long as nobody happened to
 		// click the strip open. Moved here, it fires on every render with a Diamond
@@ -54562,7 +54857,10 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			? tn('dws.count', links.length)
 			: t('dws.none_yet'));
 		strip.title = t('dws.title');
-		if (!strip.dataset.open) { list.style.display = 'none'; return; }
+		// The fold is the device's, shared with a chat's workspace list (`footOpen`).
+		var wsOpen = footOpen('ws');
+		strip.setAttribute('aria-expanded', wsOpen ? 'true' : 'false');
+		if (!wsOpen) { list.style.display = 'none'; return; }
 		list.style.display = '';
 
 		// Most recent first: what was last touched is what is being worked on.
@@ -55856,6 +56154,32 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		renderArtefacts();
 	}
 
+	// ── The two folds in a footer, remembered on this device ────────────
+	//
+	// D-20261008-04: the workspace list and the linked diamonds were drawn open (a chat's
+	// list) or one full row each (a diamond's two strips), and the transcript paid for it.
+	// Both now sit behind a toggle that starts shut. The choice is a device preference, like
+	// the view above, so it lives in the same kind of place and is held the same way: in
+	// memory as well as in storage, so the toggle still works where `localStorage` throws.
+	//
+	// ONE `ws` KEY FOR BOTH SURFACES. A chat's workspace list and a diamond's are the same
+	// component (`renderAttachFooter`), and a person who opened the one to see what the daimon
+	// may reach meant to see it everywhere; two keys would make them answer a question twice.
+	var FOOT_KEYS = { ws: 'daimond-foot-ws', links: 'daimond-foot-links' };
+	var footNow   = {};
+	function footOpen(k) {
+		if (footNow[k] === undefined) {
+			try { footNow[k] = localStorage.getItem(FOOT_KEYS[k]) === '1'; }
+			catch (e) { footNow[k] = false; }
+		}
+		return footNow[k];
+	}
+	function setFootOpen(k, on) {
+		footNow[k] = !!on;
+		try { localStorage.setItem(FOOT_KEYS[k], on ? '1' : '0'); }
+		catch (e) { /* private mode: the choice holds for this session only */ }
+	}
+
 	/// The bar above the tiles: the view toggle, and `+`.
 	///
 	/// It carries no count. The crystal footer already has one on the strip
@@ -55867,10 +56191,24 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 	/// * `o.help`  - The one sentence the title says on hover.
 	/// * `o.view`  - `false` to leave the view toggle off this band.
 	/// * `o.add`   - `false` to leave the `+` off it.
+	/// * `o.fold`  - `{ open, text, help, onClick }` to put a fold toggle at the band's left,
+	///   in the strip drawing the diamond footer uses, so that the band IS the collapsed row.
 	function attachFooterHead(o) {
 		o = o || {};
 		var head = document.createElement('div');
-		head.className = 'attach-head' + (o.title ? ' attach-group-head' : '');
+		head.className = 'attach-head' + (o.title ? ' attach-group-head' : '') + (o.fold ? ' attach-fold' : '');
+
+		if (o.fold) {
+			var fold = document.createElement('button');
+			fold.type = 'button';
+			fold.className = 'arte-strip foot-toggle';
+			fold.dataset.act = 'foot-fold';
+			fold.setAttribute('aria-expanded', o.fold.open ? 'true' : 'false');
+			markName(fold, o.fold.text);
+			if (o.fold.help) fold.title = o.fold.help;
+			fold.addEventListener('click', function (ev) { ev.stopPropagation(); o.fold.onClick(); });
+			head.appendChild(fold);
+		}
 
 		if (o.title) {
 			var name = document.createElement('span');
@@ -56115,8 +56453,15 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		// `attachTile` already reads. An 88px icon cell has no room for the
 		// `Workspace` pill, and the pill is the whole of what tells the fence from
 		// the prompt now that the headings are gone.
+		//
+		// D-20261008-04: the band is also the COLLAPSED footer. The list sits behind the
+		// toggle at its left and starts shut; the `+` stays on the band in both states, which
+		// is the 4216383 lesson kept (the control that ends the empty state is reachable
+		// from the empty state). The view toggle has nothing to act on while shut, so it
+		// waits for the list.
+		var wsOpen = footOpen('ws');
 		var ws = document.createElement('section');
-		ws.className = 'attach-group ws-group';
+		ws.className = 'attach-group ws-group' + (wsOpen ? '' : ' folded');
 		ws.appendChild(attachFooterHead({
 			help:  t('attach.ws_help'),
 			mark:  true,
@@ -56124,7 +56469,19 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			// could be confused are in different places, and it is the crystal
 			// footer's that grants -- see `attachFooterHead`.
 			icon:  true,
+			view:  wsOpen,
+			fold:  {
+				open:    wsOpen,
+				text:    held.length ? tn('dws.count', held.length) : t('dws.none_yet'),
+				help:    t('attach.ws_help'),
+				onClick: function () {
+					setFootOpen('ws', !wsOpen);
+					renderChatAttachments();
+					renderArtefacts();
+				},
+			},
 		}));
+		if (!wsOpen) { box.appendChild(ws); return; }
 		// Marked first, because the fence is the more consequential claim and a
 		// reader scanning for "what can this chat reach" should not have to sort.
 		var body = attachBody(marked.concat(noted).map(toTile),
@@ -56605,10 +56962,12 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		var sec = document.getElementById('link-sec');
 		if (!sec || !currentDiamond) return;
 		var diamondId = currentDiamond.id;
-		// The open state and any half-typed form belong to the Diamond they were
-		// started on, not to whatever the Centre shows next.
+		// Any half-typed form belongs to the Diamond it was started on, not to whatever
+		// the Centre shows next. Whether the section is open does not: that is a device
+		// preference, kept across Diamonds and reloads (D-20261008-04).
+		var linkOpen = footOpen('links');
 		if (linkFor !== diamondId) {
-			linkFor = diamondId; linkOpen = false; linkForm = null; linkNotes = {};
+			linkFor = diamondId; linkForm = null; linkNotes = {};
 		}
 		var token = ++linkPaint;
 		var selfRef = 'diamond:' + diamondId;
@@ -57155,8 +57514,9 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		render: renderLinks,
 		/// Open or close the section, then repaint it.
 		toggle: function (open) {
-			linkOpen = (open === undefined) ? !linkOpen : !!open;
-			if (!linkOpen) linkForm = null;
+			var on = (open === undefined) ? !footOpen('links') : !!open;
+			setFootOpen('links', on);
+			if (!on) linkForm = null;
 			return renderLinks();
 		},
 		changed: signalLinksChanged,
@@ -57190,13 +57550,14 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		linkSec.className = 'link-sec';
 		linkSec.id = 'link-sec';
 		var linkStrip = document.createElement('button');
-		linkStrip.className = 'link-strip';
+		linkStrip.className = 'link-strip foot-toggle';
 		linkStrip.id = 'link-strip';
 		linkStrip.type = 'button';
 		linkStrip.setAttribute('aria-expanded', 'false');
 		linkStrip.addEventListener('click', function () {
-			linkOpen = !linkOpen;
-			if (!linkOpen) linkForm = null;   // closing the section closes the form with it
+			var on = !footOpen('links');
+			setFootOpen('links', on);
+			if (!on) linkForm = null;   // closing the section closes the form with it
 			renderLinks();
 		});
 		var linkBody = document.createElement('div');
@@ -57204,7 +57565,6 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		linkBody.id = 'link-body';
 		linkBody.style.display = 'none';
 		linkSec.appendChild(linkStrip);
-		linkSec.appendChild(linkBody);
 
 		// The artefact strip: a count, above the steer box, that opens the list.
 		//
@@ -57213,18 +57573,19 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		// at zero rather than hiding: the control that attaches the first thing is inside
 		// the list, so a strip that hid itself hid the way in. See `renderArtefacts`.
 		var arte = document.createElement('button');
-		arte.className = 'arte-strip';
+		arte.className = 'arte-strip foot-toggle';
 		arte.id = 'arte-strip';
+		arte.type = 'button';
+		arte.setAttribute('aria-expanded', 'false');
 		arte.style.display = 'none';
 		var arteList = document.createElement('div');
 		arteList.className = 'arte-list';
 		arteList.id = 'arte-list';
 		arteList.style.display = 'none';
 		arte.addEventListener('click', function () {
-			var shown = arteList.style.display !== 'none';
-			arteList.style.display = shown ? 'none' : '';
-			arte.dataset.open = shown ? '' : '1';
+			setFootOpen('ws', !footOpen('ws'));
 			renderArtefacts();
+			renderChatAttachments();
 		});
 
 		// NO INPUT BOXES HERE. The crystal used to carry two: a "steer" box, on
@@ -57243,8 +57604,12 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		// conversation being folded actually is.
 		crystalControls.appendChild(status);
 		crystalControls.appendChild(reply);
+		// ONE ROW, TWO TOGGLES (D-20261008-04). The links header and the workspace strip were a
+		// row each, 70px of footer before either said anything. They share the row now (`#link-sec`
+		// is the row), and what each opens expands in place beneath it, links first.
+		linkSec.appendChild(arte);
 		crystalControls.appendChild(linkSec);
-		crystalControls.appendChild(arte);
+		crystalControls.appendChild(linkBody);
 		crystalControls.appendChild(arteList);
 		// The header the section was just given is empty until this fills it, and
 		// the controls are rebuilt by the tag editor and the history view as well
@@ -57934,7 +58299,11 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 				// AND STORED AFTER THE REPLY, not here, for the reason `runTurn`'s own
 				// `ended` arm gives: the answer is pushed when `steer_crystal` returns,
 				// so a record written now sits over the message it is about.
-				pendingSteerEnd = endLogOf(ev);
+				// A daimon's turn is never handed to another device, so a stop here is the
+				// person's own Stop, or a cut-off nobody named.
+				var steerWhy = '';
+				if (String(ev.how || '') === 'stopped') { steerWhy = rec._aborted ? 'user' : 'stream_abort'; rec._aborted = false; }
+				pendingSteerEnd = endLogOf(ev, steerWhy);
 				// TRAINING WHEELS — the debug feed's `ended`, the daimon's half. See the
 				// same pair in `runTurn`'s `ended` arm.
 				if (roundPayload && roundSent !== step) dsEvent('round', roundPayload);
@@ -58155,11 +58524,12 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 				pendingSteerEnd = pendingSteerEnd || { role: 'end_log', offered: 0, rounds: step,
 					calls: 0, refused: 0, failed: 0, missing: [], mid: newMid(), ts: Date.now() };
 				pendingSteerEnd.how = 'paused';
+				delete pendingSteerEnd.why;		// a pause is not a stop with a reason
 			}
 			// The ending, last, under whatever the turn managed to say.
 			if (pendingSteerEnd) {
-				rec.messages.push(pendingSteerEnd);
-				if (onScreen()) appendEnding(pendingSteerEnd);
+				rec.messages.push(stampAfter(rec.messages, pendingSteerEnd));
+				if (onScreen()) appendEnding(pendingSteerEnd, false);
 				pendingSteerEnd = null;
 			}
 			rec.session = { v: 1, msgs: Array.prototype.slice.call(after || []),
@@ -58190,8 +58560,8 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			// An ending the engine had already named is not lost to the throw that
 			// followed it.
 			if (pendingSteerEnd) {
-				rec.messages.push(pendingSteerEnd);
-				if (onScreen()) appendEnding(pendingSteerEnd);
+				rec.messages.push(stampAfter(rec.messages, pendingSteerEnd));
+				if (onScreen()) appendEnding(pendingSteerEnd, false);
 				pendingSteerEnd = null;
 			}
 			rec.messages.push({ role: failRole(e), content: friendlyError(e),

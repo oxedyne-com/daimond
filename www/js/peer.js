@@ -4175,7 +4175,8 @@
 				trace.push('renew-capped');
 				stopCheck();
 				revoked = true;
-				try { if (d.abort) d.abort(); } catch (err) { /* idempotent */ }
+				// The reason rides with the abort, so the stop line on every device says it.
+				try { if (d.abort) d.abort('lease_cap'); } catch (err) { /* idempotent */ }
 				return;
 			}
 			var wall = Date.now();		// the wall clock, so a test's frozen `now` cannot freeze the pacing
@@ -4204,7 +4205,7 @@
 				trace.push('abort');
 				diag('collect REVOKED', 'turn=' + turnId + ' why=' + (!cur ? 'absent'
 					: cur.holder !== String(d.selfId) ? 'holder' : 'released'));
-				try { if (d.abort) d.abort(); } catch (err) { /* idempotent */ }
+				try { if (d.abort) d.abort('lease_revoked'); } catch (err) { /* idempotent */ }
 			}
 		}
 		// What the engine's journal events call: a nudge, never a forced read.
@@ -4255,7 +4256,7 @@
 				revoked = true;
 				trace.push('abort');
 				diag('collect REVOKED', 'turn=' + turnId + ' why=renew');
-				try { if (d.abort) d.abort(); } catch (err) { /* idempotent */ }
+				try { if (d.abort) d.abort('lease_revoked'); } catch (err) { /* idempotent */ }
 				return { ran: true, aborted: true, why: 'revoked', trace: trace };
 			}
 			// 4. RUN. A revoked lease HARD-ABORTS at once, via the read-only ticker and
@@ -4896,8 +4897,17 @@
 		// THE PRODUCT RECORD, as stamped: the same object on every frame and on the final
 		// copy, so a provisional row persisted before the parcel lands carries the same bytes.
 		if (m.prod)        row.prod    = m.prod;
+		// An ending is its figures and its word, not its content: without them the asker's
+		// provisional stop line has no `how` and draws nothing until the parcel lands.
+		if (m.role === 'end_log') END_FIELDS.forEach(function (k) {
+			if (m[k] == null) return;
+			row[k] = Array.isArray(m[k]) ? m[k].map(String) : (typeof m[k] === 'string' ? m[k] : (m[k] | 0));
+		});
 		return row;
 	}
+
+	// What an `end_log` carries beyond the common row: how the turn ended, why it stopped, and the tallies.
+	var END_FIELDS = ['how', 'why', 'offered', 'rounds', 'calls', 'refused', 'failed', 'malformed', 'reasoned', 'missing'];
 
 	// The figures `runTurn` stamps on a handed-off answer, and their types off the door.
 	var RAN_FACTS = ['ranMs', 'ranModel', 'ranTokIn', 'ranTokOut', 'ranCost'];
@@ -5116,6 +5126,7 @@
 		if (r.ranOn)       m.ranOn   = String(r.ranOn);
 		RAN_FACTS.forEach(function (k) { if (r[k] != null && r[k] !== '') m[k] = ranFact(k, r[k]); });
 		if (r.prod)        m.prod    = r.prod;
+		if (r.role === 'end_log') END_FIELDS.forEach(function (k) { if (r[k] != null) m[k] = r[k]; });
 		return m;
 	}
 	/// Copy a provisional row's drawable fields onto an existing one, in place, so the
@@ -5128,6 +5139,7 @@
 		RAN_FACTS.forEach(function (k) { if (src[k] != null) dst[k] = src[k]; else delete dst[k]; });
 		// Never taken away: a record, once a row has one, is the row's for good.
 		if (src.prod) dst.prod = src.prod;
+		if (src.role === 'end_log') END_FIELDS.forEach(function (k) { if (src[k] != null) dst[k] = src[k]; });
 	}
 	/// The drawable signature of a provisional row -- what a redraw or the transcript's
 	/// own `msgSig` would read, so an unchanged frame folds to null AND the final frame's
@@ -5137,7 +5149,8 @@
 		var c = m.content == null ? '' : String(m.content);
 		return m.role + '#' + c.length + '#' + (m.outcome || '') + '#' + (m.name || '')
 			+ '#' + (m.folded || 0) + '#' + (m.kept || 0) + '#' + (m.interrupted ? 1 : 0)
-			+ '#' + (m.ranOn || '') + '#' + (m.ranMs || 0);
+			+ '#' + (m.ranOn || '') + '#' + (m.ranMs || 0)
+			+ (m.role === 'end_log' ? '#' + (m.how || '') + '#' + (m.why || '') : '');
 	}
 
 	// The control a dispatched turn's footer offers, given its §5 display state. The

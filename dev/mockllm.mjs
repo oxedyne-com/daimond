@@ -397,7 +397,12 @@ const splitCall = (s) => {
 /// is recognised here rather than in each verifier because a real reducer is
 /// recognisable the same way -- by the role it was given -- and because every test
 /// that folds needs the same answer.
-const isReducer = (messages) => (messages || []).some((m) =>
+///
+/// A reducer holds no tools (`Role::has_tools`), so a request that carries any is a chat, a
+/// daimon or a worker whose prompt merely lists a `crystal.json`. Without this every
+/// ordinary chat in a profile that holds the Help Diamond was answered with a crystal
+/// proposal, and `verify_interject` never saw "Mock reply to: ...".
+const isReducer = (messages, tools) => !(tools && tools.length > 0) && (messages || []).some((m) =>
 	m && m.role === 'system' && /crystal/i.test(String(m.content || '')));
 
 /// A crystal carrying `words`, as the core schema wants it.
@@ -615,7 +620,7 @@ const leakMode = (messages) => {
 	return '';
 };
 
-const plan = (messages) => {
+const plan = (messages, tools) => {
 	const d      = parseDirective(lastUser(messages));
 	const rounds = toolRounds(messages);
 
@@ -709,7 +714,7 @@ const plan = (messages) => {
 	// Before the directives: a reducer answered with prose is a fold that cannot
 	// land. `@text` and the rest still win, so a test that wants to exercise a
 	// MALFORMED proposal -- and one does -- can still ask for one.
-	if (isReducer(messages) && d.kind === 'plain') {
+	if (isReducer(messages, tools) && d.kind === 'plain') {
 		return { text: crystalReply(d.text || d.rest || '', messages) };
 	}
 
@@ -1143,7 +1148,7 @@ const server = http.createServer((req, res) => {
 		// `@slow 9000 A-ANSWER` a two-second delay for weeks.
 		let p;
 		try {
-			p = plan(messages);
+			p = plan(messages, payload.tools);
 		} catch (e) {
 			if (e instanceof DirectiveError) {
 				console.error(`mockllm: REFUSED a directive it could not read -- ${e.message}`);
