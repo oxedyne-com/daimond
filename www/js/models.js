@@ -1118,6 +1118,10 @@
 		var out = { in: inPerM, out: outPerM };
 		if (cached !== null) out.cached = cached;
 		if (ctx !== null) out.ctx = ctx;
+		// A price per picture sent, in dollars, where the provider quotes one (OpenRouter's
+		// `pricing.image`); a look's cost counts it.
+		var img = (typeof p.image === 'number') ? p.image : parseFloat(p.image);
+		if (isFinite(img) && img > 0) out.img = img;
 		return out;
 	}
 
@@ -1247,6 +1251,53 @@
 		if (!p || !p.rates) return null;
 		var r = p.rates[model];
 		return (r && typeof r.sees === 'boolean') ? r.sees : null;
+	}
+
+	// What one look costs a model: the page's pictures and the ask, read, and the description
+	// written (D-20261009-27).
+	var LOOK_IN = 1500, LOOK_OUT = 200;
+
+	/// Who made `model`: the catalogue's own prefix (`maker/name`), or the provider itself for a
+	/// provider that lists only its own models under bare names.
+	function makerOf(provider, model) {
+		var m = String(model || ''), i = m.indexOf('/');
+		return i > 0 ? m.slice(0, i).replace(/^~/, '') : String(provider || '');
+	}
+
+	/// The account's default images model (D-20261009-27): of the models a provider with a key
+	/// lists as taking pictures, the one whose look costs least at its quoted rates, as
+	/// `{ provider, model, usd, familiar }`, or null when none is both seeing and priced. A model
+	/// quoted at nothing is passed over, since a free endpoint is rate-limited and a look must not
+	/// wait on it, and so is a batch variant; ties go to the provider's id, then the model's. `skip` (`{ provider, model }`)
+	/// is a model that may not describe its own pictures.
+	///
+	/// The floor: a catalogue lists hundreds of seeing models, and the cheapest of them all is
+	/// as often one nobody here has tried. So the pick is first made among the makers the
+	/// account already thinks with -- its default and drafting models, and `uses` (the caller's
+	/// list of `{ provider, model }`, the Diamonds' own) -- and `familiar` says so; only when none
+	/// of those makers offers a seeing priced model is the catalogue-wide cheapest taken.
+	function cheapestSeeing(skip, uses) {
+		var makers = {};
+		[getDefault(), getDraft()].concat(uses || []).forEach(function (u) {
+			if (u && u.model) makers[makerOf(u.provider, u.model)] = true;
+		});
+		var best = null, near = null;
+		Object.keys(store.providers).sort().forEach(function (pid) {
+			var p = store.providers[pid];
+			if (!p || !p.rates || !keyFor(pid)) return;
+			Object.keys(p.rates).sort().forEach(function (mid) {
+				var r = p.rates[mid];
+				if (!r || r.sees !== true || typeof r.in !== 'number' || typeof r.out !== 'number') return;
+				if (r.in <= 0 && r.out <= 0) return;
+				// A catalogue's batch variant answers on its own schedule, and a look must not wait.
+				if (/:batch$/.test(mid)) return;
+				if (skip && skip.provider === pid && skip.model === mid) return;
+				var usd = (LOOK_IN * r.in + LOOK_OUT * r.out) / 1e6 + (typeof r.img === 'number' ? r.img : 0);
+				if (!best || usd < best.usd) best = { provider: pid, model: mid, usd: usd, familiar: false };
+				if (makers[makerOf(pid, mid)] && (!near || usd < near.usd)) near = { provider: pid, model: mid, usd: usd, familiar: true };
+			});
+		});
+		return near || best;
 	}
 
 	/// The Effort levels `provider` lists for `model`, as `{ levels, dflt }`, or null when it
@@ -2125,6 +2176,7 @@
 			var row = priced ? { in: r.in, out: r.out } : {};
 			if (priced && typeof r.cached === 'number') row.cached = r.cached;
 			if (priced && typeof r.ctx    === 'number') row.ctx    = r.ctx;
+			if (priced && typeof r.img    === 'number') row.img    = r.img;
 			if (sighted) row.sees = r.sees;
 			if (levelled) {
 				row.efforts = r.efforts.map(String);
@@ -3657,6 +3709,7 @@
 
 	window.DaimondModels = {
 		render:         render,
+		cheapestSeeing: cheapestSeeing,
 		noteUse:        noteUse,
 		favourites:     favourites,
 		fillSelect:     fillSelect,

@@ -1796,6 +1796,7 @@
 	'crystal.back_to_form': '양식으로 돌아가기',
 	'crystal.memory_help': '이 diamond가 기억하는 것',
 	'crystal.memory_invalid': '올바른 JSON이 아니에요. 저장하지 않았어요.',
+	'crystal.fault_at': '{line}번째 줄, {column}번째 칸.',
 	'crystal.changed_elsewhere': '다른 기기에서 바뀌었어요',
 	'crystal.this_device': '이 기기',
 	'crystal.other_device': '다른 기기',

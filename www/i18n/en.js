@@ -2490,6 +2490,7 @@
 	'crystal.memory':         'Memory',
 	'crystal.memory_help':    'What this diamond remembers',
 	'crystal.memory_invalid': 'Not valid JSON. Nothing saved.',
+	'crystal.fault_at': 'Line {line}, column {column}.',
 	'crystal.changed_elsewhere': 'Changed on another device',
 	'crystal.this_device': 'This device',
 	'crystal.other_device': 'Other device',

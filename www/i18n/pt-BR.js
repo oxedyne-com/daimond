@@ -1757,6 +1757,7 @@
 	'crystal.back_to_form': 'Voltar ao formulário',
 	'crystal.memory_help': 'O que este diamond lembra',
 	'crystal.memory_invalid': 'JSON inválido. Nada foi salvo.',
+	'crystal.fault_at': 'Linha {line}, coluna {column}.',
 	'crystal.changed_elsewhere': 'Alterado em outro dispositivo',
 	'crystal.this_device': 'Este dispositivo',
 	'crystal.other_device': 'Outro dispositivo',

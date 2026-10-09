@@ -1797,6 +1797,7 @@
 	'crystal.back_to_form': 'フォームに戻る',
 	'crystal.memory_help': 'この diamond が覚えていること',
 	'crystal.memory_invalid': '正しい JSON ではありません。保存していません。',
+	'crystal.fault_at': '{line} 行目、{column} 文字目。',
 	'crystal.changed_elsewhere': '別のデバイスで変更されました',
 	'crystal.this_device': 'このデバイス',
 	'crystal.other_device': '別のデバイス',

@@ -1769,6 +1769,7 @@
 	'crystal.back_to_form': 'Retour au formulaire',
 	'crystal.memory_help': 'Ce que ce diamond retient',
 	'crystal.memory_invalid': 'JSON invalide. Rien n’a été enregistré.',
+	'crystal.fault_at': 'Ligne {line}, colonne {column}.',
 	'crystal.changed_elsewhere': 'Modifié sur un autre appareil',
 	'crystal.this_device': 'Cet appareil',
 	'crystal.other_device': 'Autre appareil',

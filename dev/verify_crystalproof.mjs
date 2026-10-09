@@ -91,6 +91,18 @@ async function lastPassed() {
 	}, id);
 }
 
+// The result of the newest `tool` call in a request, found by its tool_call_id. Not simply the last tool message: since LOOK3
+// the engine answers a page write with its own look as a further tool result, after the write's.
+function ownResult(req, tool) {
+	const ms = (req && req.messages) || [];
+	for (let i = ms.length - 1; i >= 0; i--) {
+		const c = ((ms[i].role === 'assistant' && ms[i].tool_calls) || []).filter((x) => x.function && x.function.name === tool).pop();
+		if (!c) continue;
+		const r = ms.find((m) => m.role === 'tool' && m.tool_call_id === c.id);
+		return r ? contentText(r.content) : null;
+	}
+	return null;
+}
 // One tool call by the daimon, answered with the text its result carried.
 async function daimon(tool, args) {
 	clearMockLog();
@@ -103,7 +115,7 @@ async function daimon(tool, args) {
 		if (!log.length) continue;
 		const n0 = toolsIn(log[0]).length;
 		const carrying = log.filter((r) => toolsIn(r).length > n0);
-		if (carrying.length) { const t = toolsIn(carrying[carrying.length - 1]); text = contentText(t[t.length - 1].content); }
+		if (carrying.length) text = ownResult(carrying[carrying.length - 1], tool);
 	}
 	await pg.waitForTimeout(1500);
 	return text === null ? '' : text;

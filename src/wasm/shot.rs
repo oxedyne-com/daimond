@@ -23,6 +23,7 @@ use crate::llm::{
     extract_json_number,
     extract_json_string,
 };
+use crate::tools::LookBy;
 use crate::wasm::js_str;
 use crate::wasm::refusal;
 
@@ -139,12 +140,13 @@ pub struct Look {
     pub model:  String,
     pub tokens: u64,
     pub usd:    f64,    // nought when the provider reported no cost
+    pub by:     LookBy, // the Diamond's choice, or which rule chose the account's default
 }
 
 /// The outcome of asking the images model to look.
 pub enum Looked {
     Seen(Look),
-    NoModel,            // none is set for this Diamond, or it is the model that cannot see
+    NoModel,            // none is set for this Diamond nor any seeing model priced on the account
     Failed(String),
 }
 
@@ -180,6 +182,7 @@ pub async fn look(id: &str, png: &[u8], prompt: &str) -> Outcome<Looked> {
         text:   extract_json_string(&json, "text").unwrap_or_default(),
         model:  extract_json_string(&json, "model").unwrap_or_default(),
         tokens: extract_json_number(&json, "tokens").unwrap_or(0),
-        usd:    extract_json_number(&json, "micro_usd").unwrap_or(0) as f64 / 1_000_000.0,
+        usd:    extract_json_number(&json, "nano_usd").unwrap_or(0) as f64 / 1_000_000_000.0,
+        by:     LookBy::from_rule(&extract_json_string(&json, "dflt").unwrap_or_default()),
     }))
 }

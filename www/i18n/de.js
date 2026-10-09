@@ -1762,6 +1762,7 @@
 	'crystal.back_to_form': 'Zurück zum Formular',
 	'crystal.memory_help': 'Was dieses Diamond sich merkt',
 	'crystal.memory_invalid': 'Kein gültiges JSON. Nichts gespeichert.',
+	'crystal.fault_at': 'Zeile {line}, Spalte {column}.',
 	'crystal.changed_elsewhere': 'Auf einem anderen Gerät geändert',
 	'crystal.this_device': 'Dieses Gerät',
 	'crystal.other_device': 'Anderes Gerät',

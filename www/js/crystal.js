@@ -85,7 +85,7 @@
  * on the wire, and everything else — recognised or not — is content.
  *
  *     window.DaimondCrystal = { CORE_KEYS, DEFAULT_PAGE, adopt, restyle, soften, draw, isDefault, FALLBACK_MS, PROTOCOL,
- *                               parse, toMarkdown, fromMarkdown,
+ *                               parse, fault, toMarkdown, fromMarkdown,
  *                               mount, unmount, fallback, render, setAssetReader, shotFrames }
  */
 (function () {
@@ -199,20 +199,128 @@
 	///
 	/// `error` is diagnostic — the engine's own words, for a console line or a
 	/// detail row. The sentence shown to the reader is the app's
-	/// `crystal.json_invalid`, never this.
+	/// `crystal.json_invalid`, never this. `at` is where the text stops being
+	/// JSON, as [`fault`] finds it, or null.
 	function parse(text) {
 		var s = str(text);
-		if (!s.trim()) return { ok: true, data: {}, error: '' };
+		if (!s.trim()) return { ok: true, data: {}, error: '', at: null };
 		var d;
 		try {
 			d = JSON.parse(s);
 		} catch (e) {
-			return { ok: false, data: null, error: String((e && e.message) || e) };
+			return { ok: false, data: null, error: String((e && e.message) || e), at: fault(s) };
 		}
 		if (d === null || typeof d !== 'object' || Array.isArray(d)) {
-			return { ok: false, data: null, error: 'The crystal must be a JSON object.' };
+			return { ok: false, data: null, error: 'The crystal must be a JSON object.', at: null };
 		}
-		return { ok: true, data: d, error: '' };
+		return { ok: true, data: d, error: '', at: null };
+	}
+
+	/// Where a text stops being JSON: `{offset, line, column}`, or null for a text that
+	/// parses. `offset` counts UTF-16 units, for a caret; `line` and `column` count from 1
+	/// in characters, for a person.
+	///
+	/// A scanner of its own because `JSON.parse` does not say where in every browser:
+	/// WebKit's message names no position at all, and V8's and Gecko's differ in form.
+	/// It points where `serde_json` (the engine's K0 gate) does, at the first character
+	/// that cannot continue the text -- the `b` in `"a "b" c"`.
+	function fault(text) {
+		var s = str(text);
+		var n = s.length;
+		var i = 0;
+		var HEX = /[0-9a-fA-F]/;
+		var DIG = /[0-9]/;
+		var stop = function () { throw { jsonAt: i }; };
+		var ws = function () {
+			while (i < n) {
+				var c = s.charCodeAt(i);
+				if (c === 32 || c === 9 || c === 10 || c === 13) i++; else break;
+			}
+		};
+		var digits = function () {
+			if (!DIG.test(s.charAt(i))) stop();
+			while (DIG.test(s.charAt(i))) i++;
+		};
+		var word = function (w) {
+			for (var k = 0; k < w.length; k++) {
+				if (s.charAt(i) !== w.charAt(k)) stop();
+				i++;
+			}
+		};
+		var string = function () {
+			i++;	// the opening quote
+			for (;;) {
+				if (i >= n) stop();
+				var c = s.charCodeAt(i);
+				if (c === 34) { i++; return; }
+				if (c < 32) stop();
+				if (c !== 92) { i++; continue; }
+				i++;	// the backslash
+				var e = s.charAt(i);
+				if (e && '"\\/bfnrt'.indexOf(e) >= 0) { i++; continue; }
+				if (e !== 'u') stop();
+				i++;
+				for (var k = 0; k < 4; k++) { if (!HEX.test(s.charAt(i))) stop(); i++; }
+			}
+		};
+		var value = function () {
+			ws();
+			var c = s.charAt(i);
+			if (c === '{') {
+				i++; ws();
+				if (s.charAt(i) === '}') { i++; return; }
+				for (;;) {
+					ws();
+					if (s.charAt(i) !== '"') stop();
+					string(); ws();
+					if (s.charAt(i) !== ':') stop();
+					i++;
+					value(); ws();
+					if (s.charAt(i) === ',') { i++; continue; }
+					if (s.charAt(i) === '}') { i++; return; }
+					stop();
+				}
+			}
+			if (c === '[') {
+				i++; ws();
+				if (s.charAt(i) === ']') { i++; return; }
+				for (;;) {
+					value(); ws();
+					if (s.charAt(i) === ',') { i++; continue; }
+					if (s.charAt(i) === ']') { i++; return; }
+					stop();
+				}
+			}
+			if (c === '"') return string();
+			if (c === 't') return word('true');
+			if (c === 'f') return word('false');
+			if (c === 'n') return word('null');
+			if (c === '-' || DIG.test(c)) {
+				if (c === '-') i++;
+				if (s.charAt(i) === '0') i++; else digits();
+				if (s.charAt(i) === '.') { i++; digits(); }
+				if (s.charAt(i) === 'e' || s.charAt(i) === 'E') {
+					i++;
+					if (s.charAt(i) === '+' || s.charAt(i) === '-') i++;
+					digits();
+				}
+				return;
+			}
+			stop();
+		};
+		try {
+			value(); ws();
+			if (i < n) stop();
+			return null;
+		} catch (e) {
+			// Nesting deep enough to exhaust the stack is not a place in the text.
+			if (!e || typeof e.jsonAt !== 'number') return null;
+			var off = e.jsonAt;
+			var head = s.slice(0, off);
+			var nl = head.lastIndexOf('\n');
+			var line = head.split('\n').length;
+			return { offset: off, line: line, column: Array.from(head.slice(nl + 1)).length + 1 };
+		}
 	}
 
 
@@ -3094,6 +3202,7 @@
 		FALLBACK_MS:  FALLBACK_MS,
 		PROTOCOL:     PROTOCOL,
 		parse:        parse,
+		fault:        fault,
 		toMarkdown:   toMarkdown,
 		fromMarkdown: fromMarkdown,
 		mount:        mount,

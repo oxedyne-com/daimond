@@ -3432,6 +3432,8 @@ body.locked .tile-fold, body.locked .spend-row { display: none; }
 /* What a daimon pays for this memory on every round, above the box it edits. */
 .crystal-memory-gauge { margin: 8px 0 0; font-size: var(--fs-xs); color: var(--text-secondary); font-family: var(--font-mono); }
 .crystal-memory-gauge.over { color: var(--danger, #e05555); }
+.crystal-mend-at { margin: 8px 0 0; font-size: var(--fs-xs); color: var(--text-secondary); }
+.crystal-mend-at.refused { color: var(--danger); }
 .crystal-form-hot { display: inline-flex; align-items: center; gap: 2px; white-space: nowrap; font-size: var(--fs-xs); color: var(--text-secondary); }
 .crystal-memory-ta { width: 100%; min-height: 220px; margin-top: 8px; background: var(--bg-tertiary); border: 1px solid transparent; border-radius: var(--radius-sm); color: var(--text-primary); padding: 12px; font-family: var(--font-mono); font-size: var(--fs-sm); line-height: 1.6; resize: vertical; }
 .crystal-memory-ta:focus { outline: 2px solid var(--accent); outline-offset: 1px; border-color: var(--accent); }
@@ -4885,6 +4887,11 @@ details.md-fold > .md-fold-body > :last-child { margin-bottom: 0; }
 	max-width: 50%; flex: 0 1 auto; min-width: 0; display: none;
 }
 .crollup.collapsed .crollup-peek { display: block; }
+/* A running turn's group stays folded at its head and shows its newest Thinking tile
+   open beneath it (D-20261009-28); the peek would repeat what that tile says. */
+.crollup.collapsed.live:not(.solo) > .crollup-body { display: flex; }
+.crollup.collapsed.live > .crollup-body > :not(.live-latest) { display: none; }
+.crollup.collapsed.live .crollup-peek { display: none; }
 /* Nested tiles carry no outer margin — the container gives them their inset —
    and sit on a slightly lifted ground so the nesting reads. */
 .crollup-body > .ctile { margin: 0; }

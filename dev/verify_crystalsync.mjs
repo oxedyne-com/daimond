@@ -45,11 +45,21 @@ const iso = d => {
 	const o = -d.getTimezoneOffset(), sg = o < 0 ? '-' : '+', a = Math.abs(o);
 	return ymd(d) + 'T' + p2(d.getHours()) + ':' + p2(d.getMinutes()) + ':00' + sg + p2(Math.floor(a / 60)) + ':' + p2(a % 60);
 };
-const YM    = ymd(new Date()).slice(0, 7);
-const SHARD = 'log/body/' + YM + '.jsonl';
-const ent = (kg, idn, h) => {
-	const d = new Date(); d.setHours(h, 0, 0, 0);
-	return JSON.stringify({ id: idn, at: iso(d), day: ymd(d), src: 'form', f: { kg }, w: Date.now() });
+
+/// A weight logged `k` steps before now (k = 3, 2, 1: oldest first), on the day the page
+/// itself would file it under. Seeded at fixed hours of today, the entries were in the
+/// future before 08:00 and, before the Body lane's day turns (`dayStart`, 04:00), on a day
+/// the page was not showing yet: the run was red from midnight (r545 QA B F-B3; the nightly
+/// runs it about 05:00). Kept inside the page's current day, so one shard holds them all.
+const DS    = JSON.parse(fs.readFileSync(path.join(DIR, 'lanes', 'body.json'), 'utf8')).dayStart || 0;
+const dayOf = (t) => ymd(new Date(t - DS * 60e3));
+const NOW0  = Date.now();
+const DAY0  = (() => { const d = new Date(NOW0 - DS * 60e3); d.setHours(0, 0, 0, 0); return d.getTime() + DS * 60e3; })();
+const SHARD = 'log/body/' + dayOf(NOW0).slice(0, 7) + '.jsonl';
+const agoAt = (k) => new Date(Math.max(DAY0, NOW0 - k * 5 * 60e3));
+const ent = (kg, idn, k) => {
+	const d = agoAt(k);
+	return JSON.stringify({ id: idn, at: iso(d), day: dayOf(d.getTime()), src: 'form', f: { kg }, w: Date.now() });
 };
 
 const mk = (who) => open({ name: 'crysync' + who, profile: scratch('pw', 'crysync' + who + '-' + process.pid),
@@ -167,7 +177,7 @@ try {
 	for (const rel of MAN.files.filter(f => f !== 'crystal.html')) {
 		await put(pa, id, rel, fs.readFileSync(path.join(DIR, rel), 'utf8'));
 	}
-	await put(pa, id, SHARD, ent(81.3, 'a1', 6) + '\n');
+	await put(pa, id, SHARD, ent(81.3, 'a1', 3) + '\n');
 	await pa.evaluate(() => { try { DaimondPanels.hide('guide'); DaimondPanels.hide('work'); DaimondPanels.show('ai'); } catch (e) {} });
 	await pa.waitForTimeout(400);
 	await pa.$$eval('.diamond-box', (els, n) => { const b = els.find(x => x.textContent.indexOf(n) >= 0); (b || els[0]).click(); }, NAME);
@@ -177,7 +187,7 @@ try {
 
 	// ══ 1. Looking, not typing ══════════════════════════════════════
 	await markFrame();
-	await fromB(id, bAppend, { shard: SHARD, line: ent(79.9, 'b1', 7) });
+	await fromB(id, bAppend, { shard: SHARD, line: ent(79.9, 'b1', 2) });
 	await pa.waitForTimeout(2500);
 	const t1 = await frameText() || '';
 	check(/79[.,]9/.test(t1), '1: an entry logged on B appears on A\'s open page', '79.9 shown=' + /79[.,]9/.test(t1));
@@ -204,7 +214,7 @@ try {
 	}
 	check(typed, '2: A has the Weigh-in form open, half typed');
 	await markFrame();
-	await fromB(id, bAppend, { shard: SHARD, line: ent(79.4, 'b2', 8) });
+	await fromB(id, bAppend, { shard: SHARD, line: ent(79.4, 'b2', 1) });
 	await pa.waitForTimeout(3000);
 	const st2 = await inFrame(() => {
 		const i = document.querySelector('[data-in="_note"]'), k = document.querySelector('[data-in="kg"]');

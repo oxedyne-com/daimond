@@ -15961,6 +15961,44 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		return box;
 	}
 
+	// ── The running turn's newest thought stays open ──────────────────
+	//
+	// D-20261009-28, the owner's words: "a whole series of Thinking and Tool tiles in
+	// sequence, I want these progressively folded into a Thinking and Tools tile, but still
+	// showing the word for word output of the latest Thinking tile." So while the turn on
+	// screen runs, the group holding its newest Thinking tile stays folded at its head and
+	// shows that one tile open beneath it, growing as it streams. When the turn ends it
+	// folds as the stored view draws it. The open state is decided here alone.
+	var liveLatest = null;      // the running turn's newest Thinking tile, held open
+
+	/// Open the running turn's newest Thinking tile in its folded group, folding the one
+	/// it replaces; with no turn running, fold the last one.
+	function liveWork() {
+		var next = null;
+		if (curGen()) {
+			var thinks = chatOutput.querySelectorAll('.crollup[data-t="work"] > .crollup-body > .ctile[data-t="think"]');
+			var cand = thinks.length ? thinks[thinks.length - 1] : null;
+			var asks = chatOutput.querySelectorAll(':scope > .chat-msg-user');
+			var ask = asks.length ? asks[asks.length - 1] : null;
+			// Only this turn's: a thought above the question belongs to a settled turn.
+			if (cand && (!ask || (ask.compareDocumentPosition(cand) & Node.DOCUMENT_POSITION_FOLLOWING))) next = cand;
+		}
+		if (next === liveLatest) return;    // a reader who folded it keeps it folded
+		var prev = liveLatest;
+		liveLatest = next;
+		if (prev) {
+			prev.classList.remove('live-latest');
+			if (!prev._held) prev.classList.add('collapsed');
+			var pbox = prev.closest('.crollup');
+			if (pbox) pbox.classList.remove('live');
+		}
+		if (next) {
+			next.classList.add('live-latest');
+			next.classList.remove('collapsed');
+			next.closest('.crollup').classList.add('live');
+		}
+	}
+
 	function rollNoun(cls, n) {
 		if (cls === 'work') return tn('chat.roll_work', n, { n: n });
 		if (cls === 'wire') return tn('chat.roll_system', n, { n: n });
@@ -17268,7 +17306,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		// says the reasoning is over, so the tile stops taking deltas and folds itself
 		// away. Unless the reader opened it, in which case it is theirs and it stays.
 		if (liveThink && node !== liveThink) {
-			if (!liveThink._held) liveThink.classList.add('collapsed');
+			if (!liveThink._held && !curGen()) liveThink.classList.add('collapsed');
 			liveThink = null;
 		}
 		// A tile pinned to the foot goes home once it no longer awaits the reader; one that
@@ -17290,6 +17328,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 				node.dataset.dir = '';               // the container carries the indent
 				prev._body.appendChild(node);
 				rollUpdate(prev);
+				liveWork();
 				placeFurniture();
 				return;
 			}
@@ -17305,6 +17344,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		var q = firstAwaiting() || document.getElementById('chat-queued');
 		if (q) chatOutput.insertBefore(node, q);
 		else chatOutput.appendChild(node);
+		liveWork();
 		placeFurniture();
 	}
 
@@ -17321,7 +17361,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		// A non-rollable tile reaching the thread closes any open thinking tile,
 		// exactly as `postToChat` does.
 		if (liveThink && node !== liveThink) {
-			if (!liveThink._held) liveThink.classList.add('collapsed');
+			if (!liveThink._held && !curGen()) liveThink.classList.add('collapsed');
 			liveThink = null;
 		}
 		reconcileAwaiting();
@@ -17715,6 +17755,13 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		// The peek is the summary sentence itself (the head), whole — the CSS clips it
 		// with an ellipsis, but the full sentence stays in the node.
 		if (div._peek) div._peek.textContent = head;
+		// ITS TYPE IS FINAL ONLY NOW, so only now is it grouped. It was drawn as an answer,
+		// which closed the run of working before it; left there, every round of prose and
+		// call stood as a tile and a box of its own, and the turn folded into one group only
+		// when a later render redrew it from the stored rows. Posted again through the one
+		// door, it joins the run as a reload would draw it (D-20261009-28).
+		div.remove();
+		postToChat(div);
 	}
 
 	/// Take the live reply tile away without drawing what is in it.
@@ -36206,6 +36253,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		// looked finished and the NEXT turn could not raise a spinner at all.
 		if (g) showSpinner((current && current._busy) || tOr('chat.busy', 'Thinking…'));
 		else hideSpinner();
+		liveWork();
 		if (!chatInput) return;
 		chatInput.disabled = false;
 		syncSendMode();
@@ -53256,7 +53304,8 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		var r = C.parse(s);
 		if (r && r.ok) return { text: s, data: r.data || {}, broken: null, unread: false };
 		if (s.trim().charAt(0) === '{') {
-			return { text: s, data: null, broken: String((r && r.error) || 'not valid JSON'), unread: false };
+			return { text: s, data: null, broken: String((r && r.error) || 'not valid JSON'), unread: false,
+				at: (r && r.at) || null };
 		}
 		return { text: '', data: null, broken: 'not a crystal: the file does not start with {', unread: true };
 	}
@@ -53344,7 +53393,8 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		return (C && typeof C.canon === 'function') ? C.canon(x) : JSON.stringify(x);
 	}
 
-	/// Is the memory panel open, or holding typing nobody saved? It is not replaced then.
+	/// Is the memory panel open, or is it (or the mend box) holding typing nobody saved? It is
+	/// not replaced then.
 	function crystalPanelHeld(mem) {
 		if (!mem) return false;
 		if (mem.open) return true;
@@ -53427,7 +53477,8 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			if (tok !== crystalTok || !currentDiamond || currentDiamond.id !== id) return;
 			var C = crystalLib();
 			var held = (C && typeof C.busy === 'function' && C.busy())
-				|| crystalPanelHeld(crystalBody.querySelector('.crystal-memory'));
+				|| crystalPanelHeld(crystalBody.querySelector('.crystal-memory'))
+				|| crystalPanelHeld(crystalBody.querySelector('.crystal-mend'));
 			if (held) { crystalRemountTimer = setTimeout(go, 1000); return; }
 			renderCrystal();
 		};
@@ -53805,8 +53856,8 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 	/// * `id` - The Diamond whose memory this is.
 	/// * `rawText` - `crystal.json` exactly as it sits on disk.
 	/// * `data` - The same, parsed, or `{}` where it would not parse.
-	/// * `broken` - Whether the file is JSON that does not parse: the raw text is then open at
-	///   once, which is the only way to mend it, and there is no form to save `{}` over it.
+	/// * `broken` - Whether the file is JSON that does not parse: it is mended in the face's
+	///   own mend box, so neither a form nor a raw editor is offered here.
 	function crystalMemoryPanel(id, rawText, data, broken, unread) {
 		var C = crystalLib();
 		var d = (data && typeof data === 'object') ? data : {};
@@ -53931,8 +53982,9 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		}
 
 		// Text that was never read cannot be shown or mended, and a Save over it would write
-		// whatever was typed over a file nobody saw.
-		if (unread) return box;
+		// whatever was typed over a file nobody saw. Text that will not parse is mended on the
+		// face itself, under the note that names it ([`crystalMendBox`]), not in here.
+		if (unread || broken) return box;
 		var rawBtn = document.createElement('button');
 		rawBtn.className = 'crystal-act mem-raw-btn';
 		rawBtn.setAttribute('aria-expanded', 'false');
@@ -53940,21 +53992,59 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		acts.appendChild(rawBtn);
 
 		// ── The raw file, one press away and no closer ────────────
-		var raw = document.createElement('div');
-		raw.className = 'mem-raw';
-		raw.hidden = !broken;
+		var raw = crystalRawEditor(id, rawText, d, false);
+		raw.hidden = true;
 		card.appendChild(raw);
-		if (broken) {
-			rawBtn.setAttribute('aria-expanded', 'true');
-			rawBtn.textContent = tOr('crystal.show_raw', 'Show raw memory') + ' ▾';
-		}
 		rawBtn.addEventListener('click', function () {
 			raw.hidden = !raw.hidden;
 			rawBtn.setAttribute('aria-expanded', raw.hidden ? 'false' : 'true');
 			rawBtn.textContent = tOr('crystal.show_raw', 'Show raw memory')
 				+ (raw.hidden ? ' ▸' : ' ▾');
 		});
+		return box;
+	}
 
+	/// The fault's place in plain words: "Line 3, column 24."
+	function crystalFaultWords(at) {
+		return at ? t('crystal.fault_at', { line: at.line, column: at.column }) : '';
+	}
+
+	/// Put the caret at the fault and bring its line into view. The box takes focus only when
+	/// nothing else holds it, so a remount never pulls a person out of the composer.
+	function crystalCaret(ta, at) {
+		if (!ta || !at) return;
+		try { ta.setSelectionRange(at.offset, at.offset); } catch (e) { /* not in the document */ }
+		var lh = parseFloat(getComputedStyle(ta).lineHeight) || 20;
+		ta.scrollTop = Math.max(0, (at.line - 3) * lh);
+		var act = document.activeElement;
+		if (!act || act === document.body) ta.focus({ preventScroll: true });
+	}
+
+	/// A crystal that starts with `{` and will not parse, drawn as what it is: its raw text,
+	/// editable, under the note that names it, with the fault's line and column said in words
+	/// and the caret put there. Ontheism's crystal lay broken for two days under a note that
+	/// promised "the text below" over no text at all (D-20261008-08). Save is the memory
+	/// panel's own door, so a text that still fails is refused with its new place and nothing
+	/// is written; the engine's K0 gate refuses it again underneath.
+	function crystalMendBox(id, rawText, at) {
+		var box = crystalRawEditor(id, rawText, null, true);
+		box.classList.add('crystal-mend');
+		var where = box.querySelector('.crystal-mend-at');
+		where.textContent = crystalFaultWords(at);
+		where.hidden = !at;
+		return box;
+	}
+
+	/// The raw `crystal.json` in a textarea with its Save: the memory panel's "Show raw
+	/// memory", and the mend box of a crystal that will not parse.
+	///
+	/// # Arguments
+	/// * `d` - The parsed crystal the editor opened on, for the merge; ignored when `broken`,
+	///   whose base is the raw text itself.
+	function crystalRawEditor(id, rawText, d, broken) {
+		var C = crystalLib();
+		var raw = document.createElement('div');
+		raw.className = 'mem-raw';
 		// WHAT THE DAIMON ACTUALLY PAYS FOR, above the box rather than in it.
 		//
 		// Since the split only the HOT part of a crystal rides in the system message on every
@@ -53966,7 +54056,8 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		raw.appendChild(gauge);
 		(async function () {
 			var app = diamondApp();
-			if (!app || typeof app.crystal_split_sizes !== 'function') { gauge.remove(); return; }
+			// A crystal that will not parse has no hot part to weigh.
+			if (broken || !app || typeof app.crystal_split_sizes !== 'function') { gauge.remove(); return; }
 			var z = null;
 			try { z = JSON.parse(await app.crystal_split_sizes(id)); } catch (e) { z = null; }
 			if (!z) { gauge.remove(); return; }
@@ -53979,13 +54070,18 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			// one and never has to be explained.
 			if (!z.whole && z.hot > z.hot_cap) gauge.classList.add('over');
 		}());
+		var where = document.createElement('p');
+		where.className = 'crystal-mend-at';
+		where.setAttribute('role', 'status');
+		where.hidden = true;
+		raw.appendChild(where);
 		var ta = document.createElement('textarea');
 		ta.className = 'crystal-memory-ta';
 		ta.spellcheck = false;
 		// Pretty-printed where it parses, so what opens is readable; verbatim where it
-		// does not, so a file a daimon left half-written can still be seen and mended.
+		// does not, so the fault's place is the place in the file.
 		var text = String(rawText || '');
-		try { text = JSON.stringify(JSON.parse(text), null, 2); } catch (e) { /* as-is */ }
+		if (!broken) { try { text = JSON.stringify(JSON.parse(text), null, 2); } catch (e) { /* as-is */ } }
 		ta.value = text;
 		// What was drawn, so typing nobody saved can be told from it: an arrival from another
 		// device does not replace a panel holding typing (`crystalPanelHeld`).
@@ -53997,19 +54093,22 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		save.className = 'crystal-act primary';
 		save.textContent = '✔ ' + t('common.save');
 		save.addEventListener('click', async function () {
-			// `next`, not `d`: `d` is this panel's own parsed crystal, and a second `var d`
-			// here would read as a reassignment of it to anybody skimming.
 			var next = null;
+			var at = null;
 			if (C && typeof C.parse === 'function') {
 				var r = C.parse(ta.value);
-				if (r && r.ok) next = r.data;
+				if (r && r.ok) next = r.data; else at = r ? r.at : null;
 			} else {
 				try { next = JSON.parse(ta.value); } catch (e) { next = null; }
 			}
 			// An array or a bare value is valid JSON and is not a crystal: what would be
-			// written back is not the shape everything downstream reads.
+			// written back is not the shape everything downstream reads. Refused here, in
+			// place, with the fault's new position; nothing reaches the store.
 			if (!next || typeof next !== 'object' || Array.isArray(next)) {
-				noticeDialog(t('crystal.save_failed'), t('crystal.memory_invalid'));
+				where.textContent = (t('crystal.memory_invalid') + ' ' + crystalFaultWords(at)).trim();
+				where.hidden = false;
+				where.classList.add('refused');
+				crystalCaret(ta, at);
 				return;
 			}
 			await memCommit(next, null);
@@ -54036,7 +54135,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		}
 		actions.appendChild(save);
 		raw.appendChild(actions);
-		return box;
+		return raw;
 	}
 
 	/// The stored crystal for a render: its `text`, the parsed copy `data` and `broken`, why it
@@ -54175,7 +54274,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 
 		// JSON that does not parse is NAMED, and not drawn as an empty crystal (which says "steer
 		// it below", an invitation to write a new one over the file) or as a one-section
-		// markdown crystal.  The raw text is open above this, the one place it can be mended.
+		// markdown crystal.  Its raw text is drawn under the note, the one place it can be mended.
 		if (broken !== null) {
 			try { console.warn('crystal.json ' + (got.unread ? '' : 'does not parse: ') + broken); } catch (e) { /* no console */ }
 			var bad = document.createElement('div');
@@ -54184,7 +54283,10 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			badNote.className = 'crystal-empty crystal-broken';
 			badNote.textContent = got.unread ? t('crystal.unreadable') : t('crystal.broken');
 			bad.appendChild(badNote);
+			var mend = got.unread ? null : crystalMendBox(id, text, got.at || null);
+			if (mend) bad.appendChild(mend);
 			crystalBody.appendChild(bad);
+			if (mend) crystalCaret(mend.querySelector('textarea'), got.at || null);
 			renderCrystalControls();
 			renderArtefacts();
 			return;
@@ -54439,13 +54541,30 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 	/// refused one. THE ONE PLACE THAT QUESTION IS ANSWERED: a dispatched worker refused a
 	/// picture (`Workers.visionTarget`) and a tool that holds one (`DaimondVision.look`) both
 	/// ask it, so there is no second router to drift from the first.
+	///
+	/// A Diamond with no images model chosen falls back to the account's default
+	/// (`DaimondModels.cheapestSeeing`, D-20261009-27), marked `dflt` with the rule that chose it
+	/// (`familiar`: a maker the account already uses; `cheapest`: none did), so a daimon whose own
+	/// model reads no pictures is never left blind for want of a setting it did not know of.
 	function imagesModelFor(diamondId, from) {
 		var chose = diamondModels()[diamondId];
-		if (!chose || !chose.visionModel) return;
-		var vm = diamondVisionModel(diamondId);
-		if (!vm || !vm.model) return;
-		if (from && vm.model === from.model && (vm.provider || '') === (from.provider || '')) return;
-		return { provider: vm.provider || '', model: vm.model };
+		var vm = (chose && chose.visionModel) ? diamondVisionModel(diamondId) : null;
+		if (vm && vm.model) {
+			if (from && vm.model === from.model && (vm.provider || '') === (from.provider || '')) return;
+			return { provider: vm.provider || '', model: vm.model };
+		}
+		// The models the account's Diamonds think with name the makers it already trusts.
+		var all = diamondModels(), uses = [];
+		Object.keys(all).forEach(function (k) {
+			var c = all[k] || {};
+			if (c.model) uses.push({ provider: c.provider || '', model: c.model });
+			if (c.workerModel) uses.push({ provider: c.workerProvider || '', model: c.workerModel });
+		});
+		var d = window.DaimondModels && DaimondModels.cheapestSeeing
+			? DaimondModels.cheapestSeeing(from && from.model ? { provider: from.provider || '', model: from.model } : null, uses)
+			: null;
+		if (!d) return;
+		return { provider: d.provider, model: d.model, dflt: d.familiar ? 'familiar' : 'cheapest', usd: d.usd };
 	}
 
 	/// Put one PNG, held by a tool, to a Diamond's images model and answer what it said.
@@ -54455,7 +54574,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 	/// provider key lives here and must not cross into the wasm, and the spend is written to the
 	/// ledger under the Diamond exactly as a dispatched worker's is (`recordSpend`).
 	///
-	/// Resolves a JSON string: `{ ok, text, model, tokens, micro_usd }`, `{ none: true }` when the
+	/// Resolves a JSON string: `{ ok, text, model, tokens, nano_usd }`, `{ none: true }` when the
 	/// Diamond has no images model (or it is the model that refused), or `{ error }`. It never
 	/// rejects: the caller's table is still good whatever happens here.
 	async function lookAt(reqJson) {
@@ -54492,9 +54611,14 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			var u = j.usage || {};
 			var pt = (u.prompt_tokens || u.input_tokens || 0) | 0, ct = (u.completion_tokens || u.output_tokens || 0) | 0;
 			var cost = Number(u.cost) || 0;
+			// A provider that reports no cost is priced at its quoted rates, so the look line
+			// still says what the look cost.
+			var rate = !cost && DaimondModels.rateFor ? DaimondModels.rateFor(to.provider, to.model) : null;
+			if (rate) cost = (pt * rate.inPerM + ct * rate.outPerM) / 1e6;
 			recordSpend(to.model, pt, ct, 0, cost, to.provider, id, '', { im: 1 });
 			if (!text.trim()) return JSON.stringify({ ok: false, error: to.model + ' answered with no words' });
-			return JSON.stringify({ ok: true, text: text, model: to.model, tokens: pt + ct, micro_usd: Math.round(cost * 1e6) });
+			return JSON.stringify({ ok: true, text: text, model: to.model, tokens: pt + ct,
+				nano_usd: Math.round(cost * 1e9), dflt: to.dflt || '' });
 		} catch (e) {
 			return JSON.stringify({ ok: false, error: String((e && e.message) || e).slice(0, 160) });
 		}
@@ -54600,6 +54724,8 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 	//   * NOTHING HALF-MADE. Every file is fetched BEFORE the Diamond is
 	//     created, so a build without the template says so instead of leaving an
 	//     empty Diamond named after a feature that did not arrive.
+
+	var CAPP_MERGE_OFFERED = false;	// TMPLOFF: see `cappMergeOffer`
 
 	/// The capps that ship with the app, by key.
 	var CAPP_TEMPLATES = {
@@ -55282,7 +55408,11 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 	/// * `id` - The Diamond being opened.
 	/// * `page` - Its stored `crystal.html`.
 	async function cappMergeOffer(id, page) {
-		var V = window.DaimondVersions;
+		// OFF (r545 hotfix TMPLOFF): a merged Life log threw `readLanes is not defined` for
+		// the owner. A merge that keeps the person's lines where both changed can drop a
+		// definition the template's other lines call, so nothing is offered until fire/tmpl2
+		// proves the merged page loads first. The stored page is never touched here.
+		var V = CAPP_MERGE_OFFERED ? window.DaimondVersions : null;
 		if (!V || !V.merge3 || page == null) return null;
 		var rec = await readCappRecord(id);
 		if (!rec || !rec.files || typeof rec.files !== 'object') return null;

@@ -117,8 +117,76 @@ r = await read();
 wellFormed('1c live single think', r);
 check('1c live: one lone Thinking tile is a plain tile',
 	r.units.some((u) => u === 'plain:think'), JSON.stringify(r.units));
+
+// ── 1d. LIVE FOLD (D-20261009-28). The owner's words: "a whole series of Thinking and
+// Tool tiles in sequence, I want these progressively folded into a Thinking and Tools
+// tile, but still showing the word for word output of the latest Thinking tile." A model
+// that narrates each step streams its prose as an answer, and the prose becomes Thinking
+// only at the call after it. Until r546 it stayed where it was drawn, outside any group,
+// so the turn drew think, tool, think, tool as loose tiles and folded only on a reload.
+const SAY2 = 'Now I will list it once more, to be sure of every name in it.';
+const turnP = chat(s, `@narrates 5000 I'll read the workspace first.;;file_list {"path":"."};;${SAY2};;file_list {"path":"."};;All listed.`, { timeout: 45000 });
+// The turn's own part of the thread: what follows its question.
+const turnRead = (say2) => {
+	const out = document.getElementById('chat-output');
+	const asks = out.querySelectorAll(':scope > .chat-msg-user');
+	const ask = asks[asks.length - 1];
+	const after = (n) => !!ask && !!(ask.compareDocumentPosition(n) & Node.DOCUMENT_POSITION_FOLLOWING);
+	const tools = [...out.querySelectorAll('.ctile[data-t="tool"]')].filter(after);
+	const groups = [...out.querySelectorAll(':scope > .crollup[data-t="work"]')].filter(after);
+	const loose = [...out.querySelectorAll(':scope > .ctile[data-t="think"], :scope > .crollup.solo[data-t="work"]')].filter(after).length;
+	const g = groups[groups.length - 1];
+	const kids = g ? [...g.querySelectorAll(':scope > .crollup-body > .ctile')] : [];
+	const thinks = kids.filter((k) => k.dataset.t === 'think');
+	const newest = thinks[thinks.length - 1];
+	const body = newest && newest.querySelector('.chat-thinking-body');
+	const shown = (el) => !!el && el.getClientRects().length > 0 && el.getBoundingClientRect().height > 0;
+	return {
+		tools: tools.length, groups: groups.length, loose,
+		kids: kids.map((k) => k.dataset.t).join(','),
+		headShown: !!g && shown(g.querySelector(':scope > .crollup-lbl')),
+		earlierShown: kids.filter((k) => k !== newest && shown(k)).length,
+		newestShown: shown(body),
+		newestText: body ? body.innerText.trim() : '',
+		say2,
+		groupFolded: !!g && g.classList.contains('collapsed'),
+		newestFolded: !!newest && newest.classList.contains('collapsed'),
+	};
+};
+await page.waitForFunction(() => {
+	const out = document.getElementById('chat-output');
+	const asks = out.querySelectorAll(':scope > .chat-msg-user');
+	const ask = asks[asks.length - 1];
+	return !!ask && [...out.querySelectorAll('.ctile[data-t="tool"]')]
+		.filter((n) => ask.compareDocumentPosition(n) & Node.DOCUMENT_POSITION_FOLLOWING).length >= 2;
+}, null, { timeout: 20000 }).catch(() => {});
+await page.waitForTimeout(600);
+const mid = await page.evaluate(turnRead, SAY2);
+check('1d live mid-turn: prose, call, prose, call is ONE Thinking and Tools group of 4, no loose Thinking',
+	mid.tools === 2 && mid.groups === 1 && mid.loose === 0 && mid.kids === 'think,tool,think,tool', JSON.stringify(mid));
+check('1d live mid-turn: the group is folded at its head, the earlier steps hidden',
+	mid.headShown && mid.earlierShown === 0, JSON.stringify(mid));
+check('1d live mid-turn: the newest Thinking tile shows its words in full',
+	mid.newestShown && mid.newestText === SAY2, JSON.stringify(mid));
+await shot(s, 'thinktools-livefold-mid');
+await turnP;
+await page.waitForTimeout(800);
+const end = await page.evaluate(turnRead, SAY2);
+check('1d live end: the turn ends as one folded group of 4, its newest Thinking folded too',
+	end.groups === 1 && end.loose === 0 && end.kids === 'think,tool,think,tool' && end.groupFolded && end.newestFolded && !end.newestShown,
+	JSON.stringify(end));
+r = await read();
+wellFormed('1d live fold', r);
+
 await shot(s, 'thinktools-live');
 const liveUnits = r.units.join('|');
+// Fold state of every group and tile, so the live thread at rest can be compared with
+// the same rows drawn by `renderHistory` after the reload.
+const foldOf = () => page.evaluate(() => [...document.querySelectorAll('#chat-output .crollup, #chat-output .ctile[data-t="think"], #chat-output .ctile[data-t="tool"]')]
+	.filter((n) => n.id !== 'wire-head' && !n.closest('#wire-head'))
+	.map((n) => (n.classList.contains('crollup') ? (n.classList.contains('solo') ? 's' : 'G') : n.dataset.t[0])
+		+ (n.classList.contains('collapsed') ? '-' : '+')).join(''));
+const liveFold = await foldOf();
 
 // ── 3 (seeded before the reload so one reload serves arms 2 and 3). A hand-off shaped
 // transcript: the asking device draws what the runner streamed back.
@@ -171,6 +239,9 @@ if (liveName) {
 	wellFormed('2 reload', r);
 	check('2 reload: the thread draws the same units as the live turn did',
 		r.units.join('|') === liveUnits, `live ${liveUnits} / reload ${r.units.join('|')}`);
+	const reFold = await foldOf();
+	check('2 reload: every group and tile is folded as the live thread left it',
+		reFold === liveFold, `live ${liveFold} / reload ${reFold}`);
 }
 
 // ── 3. HAND-OFF viewer ──

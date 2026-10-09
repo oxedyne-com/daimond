@@ -469,6 +469,26 @@ async function grab(name, rootSel, keep) {
 	if (process.env.CONS_SHOTS) await page.screenshot({ path: `${OUT}/shot_${surface.replace(/\W+/g, '_')}.png`, animations: 'disabled' }).catch(() => {});
 	log('surface', surface, a.items.length);
 }
+// The Diamond on screen with its crystal.json broken, as a pre-K0 turn left Ontheism's (D-20261008-08): the note, the fault's line and
+// column and the mend box with its Save. Planted under K0 through the store's own door and put back byte for byte after the grab, so
+// no other surface sees it.
+async function mendFace(name) {
+	const got = await ev(async () => {
+		const m = await import('/pkg/oxedyne_daimond.js');
+		const app = new m.DaimondApp('http://127.0.0.1/v1/chat/completions', '', 'none', 4096, '', true);
+		const shown = ((document.getElementById('current-session-name') || {}).textContent || '').trim();
+		const d = JSON.parse(await app.list_diamonds()).find((x) => x.name === shown);
+		if (!d) return null;
+		const was = await app.read_crystal_data(d.id);
+		await m.write_file('diamonds/' + d.id + '/crystal.json', '{\n  "title": "Kitchen renovation",\n  "summary": "Harlow said "yes" to the benchtop.",\n  "sections": []\n}');
+		return { id: d.id, was };
+	});
+	if (!got) { log('no Diamond for', name); CAP.missing.push(`${CFG}/${name}`); return; }
+	await click('#dview-chat'); await wait(700); await click('#dview-crystal'); await wait(1600);
+	await grab(name);
+	await ev(async (g) => { const m = await import('/pkg/oxedyne_daimond.js'); await m.write_file('diamonds/' + g.id + '/crystal.json', g.was); }, got);
+	await click('#dview-chat'); await wait(700); await click('#dview-crystal'); await wait(1200);
+}
 async function overlay(name, opener) {
 	await quiet();
 	const ok = typeof opener === 'function' ? await opener() : await click(opener);
@@ -808,6 +828,7 @@ async function deskSurfaces() {
 	await ev(() => { const t = [...document.querySelectorAll('.diamond-box')].find((e) => /Kitchen/.test(e.getAttribute('aria-label') || e.textContent)); if (t) (t.querySelector('.tile-label') || t).click(); });
 	await wait(1200);
 	await click('#dview-crystal'); await wait(1600); await grab('diamond_crystal');
+	await mendFace('diamond_crystal_mend');
 	for (const re of ['^\\W*history', 'tags', '^\\W*edit\\b']) {
 		await overlay('crystal_' + re.replace(/\W+/g, ''), async () => { await click('#dview-crystal'); await wait(900); return clickText('.crystal-bar button', re); });
 	}
@@ -920,6 +941,7 @@ async function carrySurfaces(wk) {
 	if (dia === true) {
 		await wait(1200);
 		await click('#dview-crystal'); await wait(1400); await grab('p_diamond_crystal');
+		await mendFace('p_diamond_crystal_mend');
 		await click('#dview-chat'); await wait(900); await grab('p_diamond_chat');
 		// The thread at its end: the last tile is the tail note, and its 44px squares must clear #chat-jump and #chat-end (the 68px foot, 260f7dea).
 		await page.waitForSelector('#chat-output .turn-files .turn-file-rate', { timeout: 8000, state: 'attached' }).catch(() => {});

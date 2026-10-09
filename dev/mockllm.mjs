@@ -38,6 +38,8 @@
 //                            TIME as well as rounds -- a worker still running when the turn
 //                            that dispatched it ends.
 //   @narrate <words> ;; <name> <json>
+//   @narrates <ms> <say1> ;; <call1> ;; <say2> ;; <call2> ;; <answer>
+//                            prose and a call each round, the answer after <ms>.
 //   @reason <working> ;; <answer>
 //                           the model THINKS before it answers, on the wire the way
 //                           OpenRouter sends it: `delta.reasoning` with the same words
@@ -209,7 +211,17 @@ const MODELS = [
 	// above is load-bearing for a file that is not about vision at all.
 	'mock/blind',
 	'mock/eyes',
+	// The one model the catalogue says takes pictures AND prices, so an account with no images
+	// model chosen falls back to it (the account's default images model, D-20261009-27).
+	'mock/cheap-eyes',
 ];
+
+/// What the catalogue says of a model beyond its id: OpenRouter's `architecture` and `pricing`
+/// (dollars per token, as strings, as OpenRouter sends them).
+const CATALOGUE = {
+	'mock/cheap-eyes': { architecture: { input_modalities: ['text', 'image'], output_modalities: ['text'] },
+		pricing: { prompt: '0.0000001', completion: '0.0000004' } },
+};
 
 /// The reasoning levels a model lists, in OpenRouter's own shape, so the page's Effort row
 /// has a model that offers levels (mock/thinker), a second that shares only some of them
@@ -915,6 +927,21 @@ const plan = (messages, tools) => {
 			return { text: (say || '').trim(), calls: [toolCall(nextCallId(), name, args)] };
 		}
 
+		// PROSE AND A CALL, ROUND AFTER ROUND, the shape of a real agentic turn whose model
+		// narrates each step ("I'll read X.") before calling. Each pair is one round; the
+		// last part is the answer, sent after a pause of <ms> so a check can look at the page
+		// while the turn is still running (D-20261009-28).
+		//   @narrates <ms> <say1> ;; <call1> ;; <say2> ;; <call2> ;; <answer>
+		case 'narrates': {
+			const sp    = d.rest.indexOf(' ');
+			const pause = numArg(sp === -1 ? d.rest : d.rest.slice(0, sp), 0, 'narrates');
+			const parts = (sp === -1 ? '' : d.rest.slice(sp + 1)).split(';;').map((x) => x.trim());
+			const pairs = Math.floor(parts.length / 2);
+			if (rounds >= pairs) return { text: parts[pairs * 2] || 'Narrated and done.', delayMs: pause };
+			const { name, args } = splitCall(parts[rounds * 2 + 1] || 'file_list {"path":"."}');
+			return { text: parts[rounds * 2], calls: [toolCall(nextCallId(), name, args)] };
+		}
+
 		case 'chain': {
 			// Two rounds of one call each, then a text reply — the shape a real
 			// agentic turn takes, and the one the UI has to keep up with.
@@ -1127,7 +1154,7 @@ const server = http.createServer((req, res) => {
 			return sendJson(res, { error: { message: 'mock: invalid api key' } }, 401);
 		}
 		return sendJson(res, { object: 'list', data: MODELS.map(id => ({ id, object: 'model',
-			...(EFFORT_LEVELS[id] ? { reasoning: EFFORT_LEVELS[id] } : {}) })) });
+			...(EFFORT_LEVELS[id] ? { reasoning: EFFORT_LEVELS[id] } : {}), ...(CATALOGUE[id] || {}) })) });
 	}
 
 	if (req.method !== 'POST') { cors(res); res.writeHead(404); return res.end(); }

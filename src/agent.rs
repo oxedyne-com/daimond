@@ -1698,10 +1698,13 @@ impl Agent {
         // And a page that fails its load proof when the model tries to end gets ONE as well (K1).
         let mut proof_nudged = false;
         // What this turn did to its Diamond's page, for the honest ending (infographic fix 5).
-        let mut page = PageLog { visual: registry.ctx.visual_ask(), ..Default::default() };
-        // And a visual ask that changed the page's styles and never looked after is told once to
-        // look before it ends (unit G); ending over it again ends the turn as it would have.
-        let mut look_nudged = false;
+        let mut page = PageLog::default();
+        // How many looks the engine took itself: a turn that changed its page and has not looked
+        // since is looked for before it ends (D-20261009-27), at most `LOOKS_AUTO_MAX` times.
+        let mut looks_auto = 0usize;
+        // THE ENGINE'S OWN LOOK, by the id it was given: the flag that tells its call from the
+        // model's.  Not read off the id's text, which the model could also produce.
+        let mut look_call: Option<String> = None;
         // WHERE EACH ROUND STARTED IN `working`, so "three rounds old" is a position rather than a
         // guess.  Cleared whenever a fold rebuilds the list, because a fold moves every index in
         // it and a stale mark would retire the wrong messages -- the newest ones.
@@ -1979,6 +1982,28 @@ impl Agent {
                 leaks = 0;
             }
 
+            // THE ENGINE LOOKS (D-20261009-27: "it should be able to view the crystal pixels itself,
+            // can it, and why isn't it??").  A daimon that changed its Diamond's page and has not
+            // looked at it since may not end blind: its ending becomes a round that draws the page
+            // at a phone and a desktop width, with the owner's theme and data, and measures what
+            // the style edits named.  The model then answers with the look in front of it -- the
+            // pictures when it reads pictures, else the images model's words and the table.  Not
+            // over a refusal or a failed load proof, whose nudges come first.
+            if resp.tool_calls.is_empty() && looks_auto < LOOKS_AUTO_MAX && page.look_due()
+                && setbacks.unmended().is_none() && registry.ctx.crystal_proof_blocked().is_none()
+            {
+                if let Some(dia) = registry.ctx.daimon() {
+                    looks_auto += 1;
+                    let id = engine_call_id(
+                        crate::tools::LOOK_AUTO_ID, &[&session.messages, &working]);
+                    look_call = Some(id.clone());
+                    resp.tool_calls.push(crate::protocol::ToolCall {
+                        id,
+                        name:      crate::tools::Tool::Capture.name().to_string(),
+                        arguments: crate::tools::auto_look_args(&dia, &page.sels),
+                    });
+                }
+            }
             if resp.tool_calls.is_empty() {
                 let empty_reply = resp.content.trim().is_empty();
                 // A TOOL-USING WORKER THAT ENDED WITH AN EMPTY FINAL REPLY.  It did the work --
@@ -2093,19 +2118,6 @@ impl Agent {
                     }
                     how = TurnEnd::Blocked;
                     said = proof.said().unwrap_or_default();
-                } else if !look_nudged && page.look_owed() {
-                    // A VISUAL CHANGE NOBODY LOOKED AT (9 Oct 2026): the Life log daimon made every
-                    // button 3.3 px shorter for "make the heights consistent" and said it was done.
-                    look_nudged = true;
-                    let reply = ChatMessage::Assistant {
-                        content: MessageContent::text(resp.content.clone()),
-                        tool_calls: Vec::new(),
-                    };
-                    working.push(reply.clone());
-                    session.messages.push(reply);
-                    working.push(ChatMessage::user(LOOK_NUDGE.to_string()));
-                    session.messages.push(ChatMessage::user(LOOK_NUDGE.to_string()));
-                    continue;
                 }
                 // THE SEAM, and only here. A run of prose with a tool call after it is
                 // working rather than an answer -- `demoteToWorking` in the page draws it as
@@ -2275,6 +2287,16 @@ impl Agent {
                     // Mutable because the setbacks below may add a line to it; see `Setbacks`.
                     let mut text = result.as_text().into_owned();
                     let outcome = crate::tools::call_outcome(&text);
+                    // The engine's own look opens on what it is, and a look that could not be
+                    // taken on why, so the daimon says so rather than calling the page seen.
+                    let auto = look_call.as_deref() == Some(tc.id.as_str());
+                    let result = if auto {
+                        let head = look_auto_head(outcome);
+                        text = fmt!("{}\n\n{}", head, text);
+                        headed(result, &head)
+                    } else {
+                        result
+                    };
                     // THE SAME FAILURE, COUNTED, by the tool layer's own outcome.  Only a call
                     // that failed or was refused is counted: reading one file twice is ordinary,
                     // and a turn that verifies its own work makes the same successful call on
@@ -2289,8 +2311,12 @@ impl Agent {
                     } else if let Some(stop) = verdict.stop {
                         blocked.get_or_insert(stop);
                     }
-                    if outcome == crate::tools::CallOutcome::Done {
-                        page.saw(&tc.name, &tc.arguments, &text);
+                    if auto {
+                        // Taken or not, the engine's look is spent: its result says which.
+                        look_call = None;
+                        page.looked();
+                    } else if outcome == crate::tools::CallOutcome::Done {
+                        page.saw(&tc.name, &tc.arguments);
                     } else {
                         page.failed(&tc.name, &tc.arguments);
                     }
@@ -3435,20 +3461,17 @@ struct PageLog {
 	wrote:		bool,			// a completed call changed the page this turn
 	restored:	bool,			// ... and the last one to touch it was a revert
 	checked:	Option<bool>,	// the last check of the page: did it fail?
-	visual:		bool,			// the ask is about how something looks
-	styled:		bool,			// a style edit of the page no look has followed
+	unseen:		bool,			// the page changed since the turn last looked at it
+	sels:		Vec<String>,	// the selectors the edits since then styled
 }
 
 impl PageLog {
 
 	/// Note a completed call.
-	///
-	/// `said` is its result: an edit that measured the page again by itself, after a look, has
-	/// been looked at.
-	fn saw(&mut self, name: &str, args: &str, said: &str) {
+	fn saw(&mut self, name: &str, args: &str) {
 		if crate::tools::Tool::looks_at_crystal(name, args) {
 			self.checked = Some(false);
-			self.styled = false;
+			self.looked();
 			return;
 		}
 		let tool = match crate::tools::Tool::from_name(name) {
@@ -3462,19 +3485,27 @@ impl PageLog {
 		}
 		if tool == crate::tools::Tool::FileRevert {
 			self.restored = self.wrote;
-			self.styled = false;
 		} else {
 			self.wrote = true;
 			self.restored = false;
-			if crate::tools::touches_style(args) {
-				self.styled = !said.contains(crate::tools::REMEASURE_HEAD);
+			self.unseen = true;
+			for sel in crate::tools::style_targets(args) {
+				if !self.sels.contains(&sel) && self.sels.len() < crate::tools::LOOK_TARGETS_MAX {
+					self.sels.push(sel);
+				}
 			}
 		}
 	}
 
-	/// Does a visual ask end with a style edit of the page that no look has followed?
-	fn look_owed(&self) -> bool {
-		self.visual && self.styled
+	/// Note a look at the page: what it showed is the page as it now stands.
+	fn looked(&mut self) {
+		self.unseen = false;
+		self.sels.clear();
+	}
+
+	/// Does the turn end on a page it changed and has not looked at since, and did not put back?
+	fn look_due(&self) -> bool {
+		self.unseen && !self.restored
 	}
 
 	/// Note a call that failed or was refused; only a failed check of the page counts.
@@ -3496,12 +3527,54 @@ impl PageLog {
 	}
 }
 
-/// What the model is told once when a visual ask edited the page's styles and never looked after.
-const LOOK_NUDGE: &str = "You changed how your Diamond's page looks and have not looked at it \
-	since your last edit. Before you answer: call crystal_look on the parts that were asked about, \
-	compare them with what they measured before, and put the measured difference in your answer, \
-	e.g. 'Log it and Edit group are now both 40 px; were 39 and 39'. If they measure the same as \
-	before, say so plainly; do not call it done.";
+// How many looks the engine takes itself in one turn: one after the turn's edits, and one more
+// when the model edits again after reading it; never a loop.
+const LOOKS_AUTO_MAX: usize = 2;
+
+/// An id for a call the engine makes itself, unique in the conversation `held` carries.
+///
+/// A provider is handed every earlier turn's calls with each request, and Anthropic refuses a
+/// request whose `tool_use` ids repeat, so a per-turn counter will not do (r546 D-26 F1: the
+/// round number gave `look_auto_3` to most edit turns).  The number starts past every call
+/// already held and moves on until the id is free, so a fold that dropped old calls cannot
+/// hand out one still standing.
+fn engine_call_id(base: &str, held: &[&[ChatMessage]]) -> String {
+	let ids = || held.iter().flat_map(|ms| ms.iter()).flat_map(|m| match m {
+		ChatMessage::Assistant { tool_calls, .. }	=> tool_calls.iter().map(|t| t.id.as_str()).collect(),
+		ChatMessage::Tool { tool_call_id, .. }		=> vec![tool_call_id.as_str()],
+		_											=> Vec::new(),
+	});
+	let mut n = ids().count() + 1;
+	loop {
+		let id = fmt!("{}_{}", base, n);
+		if !ids().any(|t| t == id) {
+			return id;
+		}
+		n += 1;
+	}
+}
+
+/// What opens the result of the engine's own look: what it is, or, when it could not be taken,
+/// that the daimon must say so (the result's own words give the reason).
+fn look_auto_head(outcome: crate::tools::CallOutcome) -> String {
+	match outcome {
+		crate::tools::CallOutcome::Done	=> crate::tools::LOOK_AUTO_HEAD.to_string(),
+		_								=> "The engine tried to look at your page after your last edit \
+			and could not; the reason follows. Say in your answer that the page was not seen, and \
+			why.".to_string(),
+	}
+}
+
+/// A tool result with `head` put before it, pictures and all.
+fn headed(c: MessageContent, head: &str) -> MessageContent {
+	match c {
+		MessageContent::Text(t)		=> MessageContent::text(fmt!("{}\n\n{}", head, t)),
+		MessageContent::Parts(mut v)	=> {
+			v.insert(0, crate::protocol::ContentPart::Text(fmt!("{}\n\n", head)));
+			MessageContent::Parts(v)
+		},
+	}
+}
 
 /// What the model is told once when it tries to end with a refusal standing.
 fn refusal_nudge(tool: &str, head: &str) -> String {
@@ -5376,53 +5449,63 @@ mod tests {
     fn test_repeat_failure_restored_page_is_not_delivered_00() {
         let page = r#"{"path":"diamonds/d1/crystal.html","content":"x"}"#;
         let mut p = PageLog::default();
-        p.saw("file_write", page, "Wrote");
+        p.saw("file_write", page);
         assert!(p.undelivered().is_none());
-        p.saw("file_revert", r#"{"path":"diamonds/d1/crystal.html"}"#, "");
+        p.saw("file_revert", r#"{"path":"diamonds/d1/crystal.html"}"#);
         assert_eq!(Some("I could not make the page; it is back as it was."), p.undelivered());
         // A revert asked for on its own is the delivery.
         let mut p = PageLog::default();
-        p.saw("file_revert", r#"{"path":"diamonds/d1/crystal.html"}"#, "");
+        p.saw("file_revert", r#"{"path":"diamonds/d1/crystal.html"}"#);
         assert!(p.undelivered().is_none());
         // The last check decides.
         let shot = r#"{"id":"d1","in":"crystal"}"#;
         p.failed("capture", shot);
         assert!(p.undelivered().is_some());
-        p.saw("capture", shot, "");
+        p.saw("capture", shot);
         assert!(p.undelivered().is_none());
     }
 
-    /// Unit G's look: a visual ask whose last style edit of the page no look followed is owed one;
-    /// a look, or an edit that measured the page again by itself, pays it.
+    /// D-20261009-27: a page changed since the turn last looked is due a look, naming the
+    /// selectors the edits styled; a look, of the model's or the engine's, pays it, and a page
+    /// put back is not looked at.
     #[test]
-    fn test_a_visual_style_edit_is_owed_a_look_until_one_follows_it_00() {
-        let css = r#"{"path":"diamonds/d1/crystal.html","old_string":".go{","new_string":".go{min-height:36px;"}"#;
+    fn test_a_page_changed_since_the_last_look_is_due_one_00() {
+        let css = r#"{"path":"diamonds/d1/crystal.html","old_string":".go{","new_string":".go{min-height:36px;}\n.ghost:hover{color:red}"}"#;
         let words = r#"{"path":"diamonds/d1/crystal.html","old_string":"Log it","new_string":"Log"}"#;
-        let mut p = PageLog { visual: true, ..Default::default() };
-        p.saw("file_edit", css, "Edited diamonds/d1/crystal.html");
-        assert!(p.look_owed(), "a style edit nobody looked at");
-        p.saw("crystal_look", r#"{"targets":[".go"]}"#, "probe");
-        assert!(!p.look_owed(), "looked after the edit");
-        p.saw("file_edit", css, "Edited diamonds/d1/crystal.html");
-        p.saw("capture", r#"{"in":"crystal"}"#, "");
-        assert!(!p.look_owed(), "capture in:crystal is a look as well");
-        p.saw("file_edit", css, &fmt!("Edited diamonds/d1/crystal.html\n\n{} ('.go', 1440 px):", crate::tools::REMEASURE_HEAD));
-        assert!(!p.look_owed(), "the edit measured the page again by itself");
-        p.saw("file_edit", words, "Edited diamonds/d1/crystal.html");
-        assert!(!p.look_owed(), "an edit of words is not a style edit");
+        let mut p = PageLog::default();
+        assert!(!p.look_due(), "nothing written, nothing to look at");
+        p.saw("file_edit", css);
+        assert!(p.look_due(), "a page edit nobody looked at");
+        assert_eq!(vec![".go".to_string(), ".ghost".to_string()], p.sels);
+        p.saw("crystal_look", r#"{"targets":[".go"]}"#);
+        assert!(!p.look_due() && p.sels.is_empty(), "looked after the edit");
+        p.saw("file_edit", words);
+        assert!(p.look_due(), "an edit of words changes the page too");
+        p.saw("capture", r#"{"in":"crystal"}"#);
+        assert!(!p.look_due(), "capture in:crystal is a look as well");
+        p.saw("file_edit", css);
+        p.looked();
+        assert!(!p.look_due(), "the engine's own look pays it");
+        p.saw("file_edit", css);
+        p.saw("file_revert", r#"{"path":"diamonds/d1/crystal.html"}"#);
+        assert!(!p.look_due(), "a page put back is not looked at");
         let mut q = PageLog::default();
-        q.saw("file_edit", css, "Edited diamonds/d1/crystal.html");
-        assert!(!q.look_owed(), "an ask that is not visual is not nudged");
+        q.saw("file_edit", r#"{"path":"diamonds/d1/notes.md","content":".go{x:1}"}"#);
+        assert!(!q.look_due(), "a file that is not the page");
     }
 
     /// One `file_write` of the Diamond's page that changes its styles.
     fn one_style_write() -> crate::llm::tests::Reply {
+        style_write_as("c0")
+    }
+
+    /// The same write under the call id `id`, as a real provider mints a fresh one every round.
+    fn style_write_as(id: &str) -> crate::llm::tests::Reply {
         crate::llm::tests::Reply::Sse {
             chunks: vec![
-                "data: {\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"id\":\"c0\",\
-                    \"type\":\"function\",\"function\":{\"name\":\"file_write\",\"arguments\":\
-                    \"{\\\"path\\\":\\\"diamonds/d1/crystal.html\\\",\\\"content\\\":\\\"<style>.go{min-height:36px}</style>\\\"}\"}}]}}]}\n\n"
-                    .to_string(),
+                fmt!("data: {{\"choices\":[{{\"delta\":{{\"tool_calls\":[{{\"index\":0,\"id\":\"{}\",\
+                    \"type\":\"function\",\"function\":{{\"name\":\"file_write\",\"arguments\":\
+                    \"{{\\\"path\\\":\\\"diamonds/d1/crystal.html\\\",\\\"content\\\":\\\"<style>.go{{min-height:36px}}</style>\\\"}}\"}}}}]}}}}]}}\n\n", id),
                 "data: {\"choices\":[{\"delta\":{},\"finish_reason\":\"tool_calls\"}]}\n\n"
                     .to_string(),
                 "data: [DONE]\n\n".to_string(),
@@ -5431,9 +5514,12 @@ mod tests {
         }
     }
 
-    /// A turn of `ask` whose model writes the page's styles, then only answers.
-    async fn ran_styled(ask: &str) -> (TurnEnding, Vec<String>) {
-        let registry = one_tool();
+    /// A turn of `ask` whose model writes the page's styles, then only answers, acting for a
+    /// Diamond when `dia` is given; what each request carried, and every event.
+    async fn ran_styled(ask: &str, dia: &str) -> (TurnEnding, Vec<String>, Vec<AgentEvent>) {
+        let mut registry = one_tool();
+        registry.tools.push(crate::tools::Tool::Capture);
+        registry.ctx.daimon_of = fmt!("{}", dia);
         let (port, seen) = crate::llm::tests::start_stub(
             vec![one_style_write(), plain_answer(), plain_answer(), plain_answer()]).await;
         let mut llm = crate::llm::tests::stub_client(port);
@@ -5441,28 +5527,89 @@ mod tests {
         let a = Agent::new(llm, "You are Daimond.");
         a.set_max_rounds(4);
         let mut session = Session::new(fmt!("s1"), fmt!("audit"), fmt!("model"));
-        let _ = a.run_turn(&mut session, ask.to_string(), &registry, &mut |_| {}).await;
+        let mut events = Vec::new();
+        let _ = a.run_turn(&mut session, ask.to_string(), &registry, &mut |e| events.push(e)).await;
         let bodies = seen.lock().map(|v| v.bodies.clone()).unwrap_or_default();
         match a.ending() {
-            Some(e) => (e, bodies),
+            Some(e) => (e, bodies, events),
             None    => panic!("a turn ran and said nothing at all about how it ended"),
         }
     }
 
-    /// Unit G, 9 Oct 2026 (Life log buttons): a visual ask that edited the page's styles and never
-    /// looked is told ONCE to look and report the measured difference; ending over it again ends
-    /// the turn as it would have, so the nudge cannot hold a turn forever.
+    /// D-20261009-27 ("it should be able to view the crystal pixels itself"): a daimon that wrote
+    /// its page and ends without looking is not let end blind.  The ENGINE looks, as a `capture`
+    /// of the page at both widths measuring the selectors the edit styled, in the tool log, and
+    /// the model answers with the look in front of it.  A look that cannot be taken (a test
+    /// process has no page to draw) says so, with the reason, in the result and the event, and
+    /// does not block the turn.
     #[tokio::test]
-    async fn test_a_visual_edit_never_looked_at_is_nudged_once_to_look_00() {
-        let (end, bodies) = ran_styled("make the button heights consistent").await;
+    async fn test_a_turn_that_wrote_its_page_is_looked_at_before_it_ends_00() {
+        let (end, bodies, events) = ran_styled("make the button heights consistent", "d1").await;
         assert_eq!(TurnEnd::Answered, end.how, "{:?}", end);
-        assert_eq!(3, bodies.len(), "the write, the ending, and one round after the nudge");
-        assert!(bodies[2].contains("call crystal_look") && bodies[2].contains("measured difference"),
-            "the model was not told to look before it ended");
-        // An ask that is not about looks is not nudged.
-        let (end, bodies) = ran_styled("save my notes on the page").await;
+        assert_eq!(3, bodies.len(), "the write, the ending turned into a look, and the answer");
+        let calls: Vec<(String, String)> = events.iter().filter_map(|e| match e {
+            AgentEvent::ToolCall { name, args, .. } => Some((name.clone(), args.clone())),
+            _ => None,
+        }).collect();
+        let look = calls.iter().find(|(n, _)| n == "capture").expect("the engine's look is in the tool log");
+        assert!(look.1.contains(r#""in":"crystal""#) && look.1.contains(r#""targets":[".go"]"#)
+            && !look.1.contains("width"), "both widths, measuring what was styled: {}", look.1);
+        let said = tool_results(&events).into_iter().find(|r| r.0 == "capture").expect("a result");
+        assert!(said.1 != CallOutcome::Done && said.2.contains("could not")
+            && said.2.contains("has no page to photograph") && !said.2.contains("Unknown key"),
+            "the reason is recorded, and the engine's own call is not taken for a mistake: {}", said.2);
+        assert!(bodies[2].contains("The engine tried to look at your page")
+            && bodies[2].contains("has no page to photograph"), "the model reads the reason");
+        // A turn that acts for no Diamond has no page to look at.
+        let (end, bodies, _) = ran_styled("make the button heights consistent", "").await;
         assert_eq!(TurnEnd::Answered, end.how, "{:?}", end);
-        assert_eq!(2, bodies.len(), "a turn that was not asked about looks was nudged");
+        assert_eq!(2, bodies.len(), "a turn for no Diamond was looked for");
+    }
+
+    /// r546 D-26 F1: the engine's look is a call in the conversation like any other, so its id
+    /// may not repeat there.  Two page-editing turns on one session put two engine looks in the
+    /// second turn's last request; every call id in it is distinct and answered exactly once.
+    /// (An id of `look_auto_<round>` repeated, and Anthropic refuses repeated `tool_use` ids.)
+    #[tokio::test]
+    async fn test_engine_look_ids_are_unique_across_turns_00() {
+        let mut registry = one_tool();
+        registry.tools.push(crate::tools::Tool::Capture);
+        registry.ctx.daimon_of = fmt!("d1");
+        let (port, seen) = crate::llm::tests::start_stub(vec![
+            style_write_as("c0"), plain_answer(), plain_answer(),
+            style_write_as("c1"), plain_answer(), plain_answer()]).await;
+        let mut llm = crate::llm::tests::stub_client(port);
+        llm.retry.max_attempts = 1;
+        let a = Agent::new(llm, "You are Daimond.");
+        a.set_max_rounds(4);
+        let mut session = Session::new(fmt!("s1"), fmt!("audit"), fmt!("model"));
+        let mut events = Vec::new();
+        for ask in ["make the buttons taller", "and a bit taller again"] {
+            let _ = a.run_turn(&mut session, ask.to_string(), &registry, &mut |e| events.push(e)).await;
+        }
+        let bodies = seen.lock().map(|v| v.bodies.clone()).unwrap_or_default();
+        let last = bodies.last().cloned().unwrap_or_default();
+        // Every value of `key` in the request body, in order.
+        let values = |key: &str| -> Vec<String> {
+            let pat = fmt!("\"{}\":\"", key);
+            last.match_indices(pat.as_str()).filter_map(|(i, _)| {
+                let rest = &last[i + pat.len()..];
+                rest.find('"').map(|e| rest[..e].to_string())
+            }).collect()
+        };
+        let calls = values("id");
+        let results = values("tool_call_id");
+        let looks = calls.iter().filter(|c| c.starts_with(crate::tools::LOOK_AUTO_ID)).count();
+        assert_eq!(2, looks, "both turns' engine looks are in the request: {:?}", calls);
+        let mut distinct = calls.clone();
+        distinct.sort();
+        distinct.dedup();
+        assert_eq!(calls.len(), distinct.len(), "every call id in the request is distinct: {:?}", calls);
+        for c in &calls {
+            assert_eq!(1, results.iter().filter(|r| *r == c).count(),
+                "call {} has exactly one result: {:?}", c, results);
+        }
+        assert_eq!(calls.len(), results.len(), "no result without its call: {:?} {:?}", calls, results);
     }
 
     /// Every `ToolResult` in a run, as `(name, outcome, text)`.

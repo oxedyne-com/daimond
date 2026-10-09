@@ -69,9 +69,10 @@ check('renderCrystal reads through readCrystalFor, not a catch that answers empt
 check('an unread crystal is told apart on the face', /crystal\.unreadable/.test(rc));
 const p = src.indexOf('\tfunction crystalMemoryPanel(');
 const panel = src.slice(p, src.indexOf('\n\t}\n', p));
+// MEND (58841c41) widened the guard to `unread || broken`: a broken crystal is mended on the face, not here.
 check('the memory panel draws no raw editor (and so no Save) for a crystal it never read',
 	/function crystalMemoryPanel\(id, rawText, data, broken, unread\)/.test(panel)
-	&& /if \(unread\) return box;[\s\S]*var rawBtn/.test(panel));
+	&& /if \(unread(?: \|\| broken)?\) return box;[\s\S]*var rawBtn/.test(panel));
 
 if (failures) { console.log(failures + ' failed'); process.exit(1); }
 console.log('crystalunread: all passed');

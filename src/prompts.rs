@@ -505,10 +505,10 @@ pub const NEVER_FORGET_NOTE: &str =
 /// `prompts/daimon.md` cannot lose it; `crystal_look`'s description says how, this says when.
 pub const LOOK_NOTE: &str =
 	"## Looking at a change to the page\n\n\
-	 When you change how `crystal.html` looks -- a size, a colour, a spacing, a font -- call \
-	 `crystal_look` on the parts asked about BEFORE you edit and AFTER, and put the measured \
-	 difference in your answer, in numbers, before and after. If they measure the same as \
-	 before, say plainly that nothing changed; never call it done.";
+	 Before you change how `crystal.html` looks -- a size, a colour, a spacing, a font -- call \
+	 `crystal_look` on the parts asked about. After your edits the engine looks for you before \
+	 the turn ends; put the measured difference in your answer, in numbers, before and after. \
+	 If they measure the same, say plainly that nothing changed; never call it done.";
 
 /// What a new Diamond's `REQUIREMENTS.md` says, and what an old one is given on its next turn.
 ///
@@ -3472,8 +3472,8 @@ mod tests {
 	#[test]
 	fn test_the_look_rule_reaches_a_daimon_and_survives_a_rewrite_00() {
 		for p in [Role::Daimon.compose(""), Role::Daimon.compose("Answer in haiku.")] {
-			assert!(p.contains("`crystal_look`") && p.contains("BEFORE you edit and AFTER"),
-				"the daimon is not told to look before and after a visual edit:\n{}", p);
+			assert!(p.contains("`crystal_look`") && p.contains("the engine looks for you"),
+				"the daimon is not told to look before a visual edit, and that the engine looks after:\n{}", p);
 			assert!(p.contains("measured difference") && p.contains("nothing changed"),
 				"the daimon is not told to report the numbers, or to say when nothing moved:\n{}", p);
 		}

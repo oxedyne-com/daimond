@@ -322,19 +322,24 @@ if (HAVE_STORE) {
 	check('a model not proven to see: the images model describes the page, and the result ends by telling the daimon to use the table',
 		/Seen at 390 px by the images model/.test(tu) && /\n\nUse the table\.$/.test(tu.trim()), tu.slice(-200));
 
-	// (6b) a model of a family that sees, which refuses anyway, and no images model: the first picture is offered and refused (that is
-	// how the model is found out)...
+	// (6b) a model of a family that sees, which refuses anyway, and no images model chosen: the first picture is offered and refused
+	// (that is how the model is found out)...
 	await setModels({ provider: prov, model: REFUSES });
 	await daimon({ in: 'crystal', width: 390 });
 	check('a model of a family that sees is offered the picture first, and the mock turns it away',
 		asked(REFUSES).some((r) => r.refusedImages), `refused: ${asked(REFUSES).filter((r) => r.refusedImages).length}`);
-	// ...and the next call knows: no picture goes out, and the result says so in one line, table intact.
+	// ...and the next call knows: no picture goes to it, and the account's default images model (D-20261009-27: the cheapest the
+	// catalogue says takes pictures, mock/cheap-eyes) describes the page, named as the default, with its cost; table intact.
 	const tb2 = await daimon({ in: 'crystal', width: 390 });
-	const oneLine = 'No images model is set (Diamonds > Settings > Workers, images), so only the table is returned. Use the table.';
-	check('no images model set: the result says so in one line', tb2.split('\n').filter((l) => l.includes('No images model is set')).length === 1
-		&& tb2.includes(oneLine), tb2.slice(-160));
-	check('no images model set: the table still comes back, and no picture was sent to any model', /^probe|^outline/.test(tb2) && /frame 390x844/.test(tb2) && mockLog().every((r) => !(r.images > 0)),
-		`images per request: ${mockLog().map((r) => r.images).join(',')}`);
+	const dfltLine = (tb2.split('\n').find((l) => /Seen at 390 px by/.test(l)) || '');
+	console.log('       | ' + dfltLine.slice(0, 220));
+	check('no images model chosen: the account\'s default describes the page, named, with its cost',
+		/by the account's default images model \(mock\/cheap-eyes, the cheapest that takes pictures from a maker the account already uses; \d+ tokens, \$0\.0*[1-9]\d?\)/.test(dfltLine)
+		&& !/No images model is set/.test(tb2), dfltLine.slice(0, 200) || tb2.slice(-160));
+	check('no images model chosen: the table still comes back, and only the default images model was sent the picture',
+		/^probe|^outline/.test(tb2) && /frame 390x844/.test(tb2) && asked('mock/cheap-eyes').some((r) => r.images >= 1)
+		&& mockLog().filter((r) => r.model !== 'mock/cheap-eyes').every((r) => !(r.images > 0)),
+		`images per request: ${mockLog().map((r) => r.model + ':' + r.images).join(',')}`);
 
 	// (6c) a model that refuses, with an images model set: the tool puts the picture to the images model and returns its words.
 	await setModels({ provider: prov, model: 'mock/blind', visionProvider: prov, visionModel: 'mock/eyes' });
@@ -393,8 +398,14 @@ if (HAVE_STORE) {
 		/\b204\b/.test(c1 || '') && !/\b204\b/.test(tabs[0] || '') && rowsOf(tabs[0] || '').length === 4, `${rowsOf(tabs[0] || '').length} rows`);
 	check('the measurement carries its verdict line, which is the first line under the header',
 		tabs.every((t) => /^probe [^\n]*\nverdict: /.test(t)), (tabs[0] || '').slice(0, 160));
+	// The capture before it sends its pictures to the images model (the account's default since D-20261009-27), and the engine's own
+	// look after the turn's last page write may too: neither is the edit's.  The edit's measurement is what passes between the daimon's
+	// request carrying the capture's result and the one carrying the edit's result, and none of those requests holds a picture.
+	const lg = mockLog(), toolsOf = (r) => ((r && r.messages) || []).filter((m) => m.role === 'tool').length, n0 = toolsOf(lg[0]);
+	const j = lg.findIndex((r) => toolsOf(r) >= n0 + 1), k = lg.findIndex((r) => toolsOf(r) >= n0 + 2);
 	check('the measurement is a table alone: no picture is taken, named or sent to a model',
-		!/Photographed|attached to this result/.test(after) && mockLog().every((r) => !(r.images > 0)), `images per request: ${mockLog().map((r) => r.images).join(',')}`);
+		!/Photographed|attached to this result/.test(after) && j >= 0 && k > j && lg.slice(j, k + 1).every((r) => !(r.images > 0)),
+		`capture result in request ${j}, edit result in ${k}; model:images per request: ${lg.map((r) => r.model + ':' + r.images).join(',')}`);
 	// A turn that has captured nothing is not told what the page measures: the capture above belonged to the turn before.
 	const [e2] = await daimonTools(`@seq ${edit(SHORT, TALL)}`, 1);
 	check('a turn that measured nothing gets the edit\'s own words and no measurement', /^Edited /.test(e2 || '') && !/After this edit/.test(e2 || '') && !/\nprobe /.test(e2 || ''), (e2 || '').slice(0, 160));
@@ -406,7 +417,7 @@ if (HAVE_STORE) {
 // ── (6e) a model not proven to see is not sent the capture's picture by a file_read of it either ──
 // `capture` keeps the picture it landed, and a daimon that reads it back as an image (the hand-off a worker is given) is answered as
 // `capture` answers it: the table's pointer, no picture in any request to the model.  `mock/fast` is on no list and has been sent no
-// picture by anyone in this run, so it is not proven.  No images model is set, so the line is the one-line refusal.
+// picture by anyone in this run, so it is not proven.  No images model is chosen, so the account's default may be asked.
 if (HAVE_STORE) {
 	await setModels({ provider: prov, model: 'mock/fast' });
 	const shot = `diamonds/${id}/shots/crystal-390.png`;
@@ -414,7 +425,7 @@ if (HAVE_STORE) {
 	console.log((r6 || '').split('\n').map((l) => '       | ' + l.slice(0, 190)).join('\n'));
 	check('a capture and a file_read of its picture in one turn: both came back', /^probe|^outline/.test(c6 || '') && (r6 || '').length > 0, `${(c6 || '').length} / ${(r6 || '').length} chars`);
 	check('a model not proven to see: file_read of the capture\'s picture returns no image, and no request to the model carries one',
-		!/attached to this result/.test(r6 || '') && mockLog().every((r) => !(r.images > 0) && !r.refusedImages), `images per request: ${mockLog().map((r) => r.images).join(',')}`);
+		!/attached to this result/.test(r6 || '') && asked('mock/fast').every((r) => !(r.images > 0) && !r.refusedImages), `images per request: ${mockLog().map((r) => r.model + ':' + r.images).join(',')}`);
 	check('the file_read result names the picture and ends by telling the daimon to use the table', (r6 || '').includes('crystal-390.png') && /Use the table\.$/.test((r6 || '').trim()), (r6 || '').slice(-160));
 }
 

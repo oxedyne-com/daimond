@@ -1790,6 +1790,7 @@
 	'crystal.back_to_form': '返回表单',
 	'crystal.memory_help': '这个 diamond 记住的内容',
 	'crystal.memory_invalid': '不是有效的 JSON，未保存。',
+	'crystal.fault_at': '第 {line} 行，第 {column} 列。',
 	'crystal.changed_elsewhere': '已在另一台设备上更改',
 	'crystal.this_device': '本设备',
 	'crystal.other_device': '另一台设备',
