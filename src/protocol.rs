@@ -234,6 +234,28 @@ impl ImagePart {
                  pictures. Do not describe what it looks like -- you have not seen it. Say so, \
                  and read it with \"as\":\"base64\" if you need its bytes to embed it]",
                 self.source, self.media.mime(), self.data.len()),
+            // The three below name WHERE the verdict came from, so that a model which repeats
+            // them to the owner repeats a fact and not a guess about its own eyes.
+            Dropped::Listed => fmt!(
+                "[image {} ({}, {} bytes) was left out because the provider's model list shows \
+                 this model as text-only. Do not describe what it looks like -- you have not \
+                 seen it. Tell the owner, and that an image model under Workers, images fixes \
+                 it; read it with \"as\":\"base64\" if you need its bytes]",
+                self.source, self.media.mime(), self.data.len()),
+            Dropped::Refused => fmt!(
+                "[image {} ({}, {} bytes) was left out because the provider refused the request \
+                 that carried it, though its model list shows this model takes pictures: a fault \
+                 in the request or the route, not blindness. Do not describe what it looks like. \
+                 Say it was refused and not that you cannot see; try a smaller picture]",
+                self.source, self.media.mime(), self.data.len()),
+            Dropped::Unconfirmed => fmt!(
+                "[image {} ({}, {} bytes) was not sent: Daimond cannot confirm that this model \
+                 reads pictures, as its provider's model list does not say. That is a gap in \
+                 Daimond and no proof that you cannot see. Do not describe what it looks like -- \
+                 you have not seen it. Tell the owner, and that choosing the model from the \
+                 provider's list or an image model under Workers, images fixes it; read it with \
+                 \"as\":\"base64\" if you need its bytes]",
+                self.source, self.media.mime(), self.data.len()),
         }
     }
 }
@@ -248,6 +270,12 @@ pub enum Dropped {
     ToFit,
     /// The endpoint will not take pictures at all, so fetching it again changes nothing.
     Unseeable,
+    /// The provider's model list shows the model as text-only.
+    Listed,
+    /// The provider refused a request that carried one, though its list shows the model sees.
+    Refused,
+    /// Nothing says the model reads pictures: the list is silent and the model is unknown.
+    Unconfirmed,
 }
 
 /// One piece of a message's content.
@@ -1064,7 +1092,7 @@ pub enum AgentEvent {
     /// It says WHICH model, because that is the fact anybody acting on this has to have: the
     /// worker that is re-routed by it needs to name the model it left, and a conversation that
     /// cannot be re-routed at all needs to name the model that would not look.
-    Unseeable { images: usize, model: String },
+    Unseeable { images: usize, model: String, source: String },
     /// A tool call is being made again because the ROAD failed under it, not the far end.
     ///
     /// Its own variant and not [`Text`](Self::Text), for the reason [`Compacted`](Self::Compacted)
@@ -1280,10 +1308,11 @@ impl AgentEvent {
                     m.insert(dat!("sp"), dat!(sp.clone()));
                 }
             }
-            Self::Unseeable { images, model } => {
+            Self::Unseeable { images, model, source } => {
                 m.insert(dat!("type"), dat!("unseeable"));
                 m.insert(dat!("images"), Dat::U64(*images as u64));
                 m.insert(dat!("model"), dat!(model.clone()));
+                m.insert(dat!("source"), dat!(source.clone()));
             }
             Self::Roading { name, attempt, of, wait_ms } => {
                 m.insert(dat!("type"),    dat!("roading"));

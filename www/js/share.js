@@ -122,6 +122,12 @@
 	/// A share still larger than this takes the file route, with the sentence
 	/// `carrierWhy` already writes. The file route is not a fallback: it is the
 	/// honest route for a person with no gateway account and for a stick.
+	///
+	/// THE RECEIVER MUST BE ABLE TO DURABLY HOLD WHAT THE RELAY CARRIES. The receiver
+	/// once kept the sealed envelope WHOLE inside its wrapped localStorage mailbox (~5 MiB
+	/// for the whole origin), so a 1.5 MiB envelope could already wedge every later save.
+	/// It now shelves the envelope in IndexedDB (`shelve` in post.js), whose quota is
+	/// orders larger than the gateway's own 3 MiB `max_bytes` on this route.
 	var RELAY_MAX = 3 * 1024 * 1024;
 
 	/// The most a share may carry, in bytes of file bodies. Exactly

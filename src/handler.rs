@@ -814,7 +814,7 @@ fn event_to_ws(ev: &AgentEvent) -> Option<(&'static str, Vec<Dat>)> {
                 dat!(note.clone())]),
         // The count before the model name, for the same reason as `compacted` above: how
         // many pictures were left out is drawable without reading a sentence.
-        AgentEvent::Unseeable { images, model } =>
+        AgentEvent::Unseeable { images, model, .. } =>
             ("unseeable", vec![Dat::U64(*images as u64), dat!(model.clone())]),
         // Not carried on this wire, for the reason `thinking` and `ended` are not: the WS
         // commands are declared in `src/syntax.rs` and widening one is a protocol change with no

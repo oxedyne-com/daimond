@@ -1185,6 +1185,13 @@ impl DaimondApp {
         self.agent.set_provider_routing(&order, &ignore, only);
     }
 
+    /// Tell the engine what the provider's own model list says of this app's model and pictures:
+    /// 1 takes them, -1 text-only, 0 nothing said.  It outranks the engine's name tables and
+    /// applies from the next request; see `LlmClient::set_sight`.
+    pub fn set_sight(&self, state: i32) {
+        self.agent.set_sight(state);
+    }
+
     /// How many tool-call rounds one turn of this agent may take.
     ///
     /// # Arguments
@@ -4149,10 +4156,12 @@ fn event_to_js(ev: &AgentEvent) -> JsValue {
             // an ordinary fold for ever, which is the reading the measurement most needs.
             set("shape", &JsValue::from_str(if *structured { "structured" } else { "prose" }));
         }
-        AgentEvent::Unseeable { images, model } => {
+        AgentEvent::Unseeable { images, model, source } => {
             set("type", &JsValue::from_str("unseeable"));
             set("images", &JsValue::from_f64(*images as f64));
             set("model", &JsValue::from_str(model));
+            // Where the verdict came from: provider, table or refusal.
+            set("source", &JsValue::from_str(source));
         }
         AgentEvent::Roading { name, attempt, of, wait_ms } => {
             set("type",    &JsValue::from_str("roading"));

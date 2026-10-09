@@ -836,6 +836,11 @@ impl Agent {
         self.llm.set_provider_routing(order, ignore, only);
     }
 
+    /// Hand the engine the provider's word on pictures; see `LlmClient::set_sight`.
+    pub fn set_sight(&self, state: i32) {
+        self.llm.set_sight(state);
+    }
+
     /// Re-assert the worker ceiling after a setting has been written.
     ///
     /// Nothing on a chat's agent: `hold_to_worker` has never been called, so the mark is off and
@@ -1536,9 +1541,10 @@ impl Agent {
             on_event(AgentEvent::Unseeable {
                 images: result.images().count(),
                 model:  self.llm.model.clone(),
+                source: self.llm.sight_source().to_string(),
             });
         }
-        crate::tools::unproven_sight(&registry.ctx, result).await
+        crate::tools::unproven_sight(&registry.ctx, result, self.llm.dropped_why(false)).await
     }
 
     /// [`Self::one_call`] with its events put in a buffer instead of on the wire.
@@ -1815,7 +1821,11 @@ impl Agent {
             // find out.
             if could_see && !self.llm.can_take_images() {
                 let images: usize = working.iter().map(|m| m.content().images().count()).sum();
-                on_event(AgentEvent::Unseeable { images, model: self.llm.model.clone() });
+                on_event(AgentEvent::Unseeable {
+                    images,
+                    model:  self.llm.model.clone(),
+                    source: self.llm.sight_source().to_string(),
+                });
             }
             self.gauge.observe(sent + schema, resp.prompt_tokens);
             session.prompt_tokens += resp.prompt_tokens;
@@ -4255,7 +4265,7 @@ mod tests {
     /// Every `Unseeable` in a run, as `(images, model)`.
     fn unseeable(events: &[AgentEvent]) -> Vec<(usize, String)> {
         events.iter().filter_map(|e| match e {
-            AgentEvent::Unseeable { images, model } => Some((*images, model.clone())),
+            AgentEvent::Unseeable { images, model, .. } => Some((*images, model.clone())),
             _ => None,
         }).collect()
     }
@@ -4328,9 +4338,18 @@ mod tests {
     async fn look_on(model: &str, learn: bool, shot: bool)
         -> (Vec<String>, String, bool, Vec<AgentEvent>)
     {
+        look_with(model, learn, 0, shot).await
+    }
+
+    /// [`look_on`] after the page has handed the engine the provider's word on pictures
+    /// (`sight`: 1 takes them, -1 text-only, 0 nothing said).
+    async fn look_with(model: &str, learn: bool, sight: i32, shot: bool)
+        -> (Vec<String>, String, bool, Vec<AgentEvent>)
+    {
         let (port, seen) = crate::llm::tests::start_stub(vec![asks_to_look(), plain_answer()]).await;
         let mut llm = crate::llm::tests::stub_client(port);
         llm.model = model.to_string();
+        llm.set_sight(sight);
         if learn {
             llm.mark_seen();
         }
@@ -4363,10 +4382,42 @@ mod tests {
         assert!(!bodies.iter().any(|b| b.contains(COVER_PNG_B64)),
             "a picture was sent to a model that has not been proven to read one");
         assert!(!image, "an image went into the stored conversation");
-        assert!(text.contains("cover.png") && text.contains("cannot be shown"),
+        // The words say what is true of it: Daimond could not confirm, which is not that the model
+        // cannot see.  "cannot be shown pictures" was the sentence a daimon repeated to the owner
+        // of a model that reads them (r540 T2).
+        assert!(text.contains("cover.png") && text.contains("cannot confirm"),
             "what stands in its place does not name the file and say so: {}", text);
+        assert!(!text.contains("cannot be shown"),
+            "an unknown model was told it cannot be shown pictures: {}", text);
         assert!(unseeable(&events).is_empty(),
             "a model nobody has caught refusing was announced as one that would not look: {:?}", events);
+    }
+
+    #[tokio::test]
+    async fn test_an_unknown_model_the_provider_lists_as_taking_pictures_is_sent_the_picture() {
+        // r540 T2 (owner D1).  `z-ai/glm-5.3-flash` is on no hand list, but the provider's own
+        // model list declares image input and the page hands that to the engine.  The picture
+        // goes to it, whole, and nothing is said to the daimon about not being shown one.
+        let (bodies, text, image, events) = look_with("z-ai/glm-5.3-flash", false, 1, false).await;
+        assert!(bodies.len() >= 2, "the turn did not reach its second request: {}", bodies.len());
+        assert!(bodies[bodies.len() - 1].contains(COVER_PNG_B64),
+            "a model the provider lists as taking pictures was not sent the picture");
+        assert!(image && !text.contains("cannot be shown") && !text.contains("cannot confirm"),
+            "the daimon was told it could not be shown a picture its provider says it takes: {}", text);
+        assert!(unseeable(&events).is_empty(), "{:?}", events);
+    }
+
+    #[tokio::test]
+    async fn test_a_model_the_provider_lists_as_text_only_is_told_so_and_not_that_daimond_is_unsure() {
+        let (bodies, text, image, events) = look_with("anthropic/claude-opus-5", false, -1, false).await;
+        assert!(!bodies.iter().any(|b| b.contains(COVER_PNG_B64)) && !image,
+            "a picture reached a model the provider lists as text-only");
+        assert!(text.contains("model list shows this model as text-only"), "{}", text);
+        let said = events.iter().filter_map(|e| match e {
+            AgentEvent::Unseeable { source, .. } => Some(source.clone()),
+            _ => None,
+        }).collect::<Vec<_>>();
+        assert_eq!(said, vec![fmt!("provider")], "the verdict's source was not named: {:?}", events);
     }
 
     #[tokio::test]

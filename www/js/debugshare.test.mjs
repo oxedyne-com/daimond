@@ -2169,6 +2169,39 @@ async function main() {
 		check('one event row costs a fraction of a millisecond', per < 0.5);
 	}
 
+	console.log('debugshare: arrive — the viewer\'s half of the latency instrument');
+	{
+		const env = makeEnv({ fastTimers: true, respond: () => 200 });
+		const DS = env.win.DEBUG_SHARE;
+		check('arrive is exposed', typeof DS.arrive === 'function');
+		// Sharing OFF: the ring still fills (a verifier reads it), the feed stays empty.
+		const made = Date.now() - 1500;
+		const rec = DS.arrive('tile', { mid: 'mXYZ123', made, via: 'frame', role: 'assistant', tid: 'T' + 'x'.repeat(80) });
+		check('arrive returns the record', !!rec && rec.k === 'tile');
+		check('the record carries made, at and ms = at - made', rec.made === made && rec.at >= made + 1500 && rec.ms === rec.at - made);
+		check('a string longer than 48 characters is cut', rec.tid.length === 48);
+		check('the mid is passed through untouched', rec.mid === 'mXYZ123');
+		check('the ring holds it while sharing is off', DS._arrivals().length === 1 && DS._arrivals()[0].mid === 'mXYZ123');
+		check('and nothing is queued for the feed', DS.outboxDepth() === 0);
+		// Sharing ON: the same call also rides the feed as "ev arrive".
+		DS.setEnabled(true);
+		DS.arrive('commit', { made: Date.now() - 900, via: 'parcel', rows: 3 });
+		const rows = DS._outbox().filter((r) => r.tag === 'ev arrive');
+		check('an arrive event is queued while sharing is on', rows.length === 1);
+		const ev = JSON.parse(rows[0].data);
+		check('the row carries k, made and ms', ev.k === 'commit' && ev.made > 0 && ev.ms >= 900 && ev.rows === 3);
+		// No stamp: ms is null rather than a nonsense figure.
+		const bare = DS.arrive('edit', {});
+		check('a record without made has ms null', bare.made === 0 && bare.ms === null);
+		// The ring is bounded and clearable.
+		for (let i = 0; i < 650; i++) DS.arrive('tile', { made: Date.now() - 1, mid: 'm' + i });
+		check('the ring is bounded at 600', DS._arrivals().length === 600);
+		DS._arrivalsClear();
+		check('and clears', DS._arrivals().length === 0);
+		DS.setEnabled(false);
+		env.halt();
+	}
+
 	console.log('');
 	if (failures) { console.log('FAILURES: ' + failures); process.exit(1); }
 	console.log('all debugshare checks passed');

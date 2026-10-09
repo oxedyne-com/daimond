@@ -34,6 +34,8 @@
      node www/js/ledger.test.mjs --break noanchor       # cutoff is `now - 90d`, unanchored
      node www/js/ledger.test.mjs --break nodelegate     # daimond.js keeps its own union
      node www/js/ledger.test.mjs --break swallow        # a refused write is swallowed (SIM-10)
+     node www/js/ledger.test.mjs --break noft|notc|note|nostall|zerowritten|norole
+                                                        # MC1: one turn fact taken away each
      node www/js/ledger.test.mjs                        # and then, clean
    ============================================================ */
 import { readFileSync } from 'node:fs';
@@ -56,7 +58,8 @@ const BREAK = (() => {
 	const i = process.argv.indexOf('--break');
 	return i >= 0 ? (process.argv[i + 1] || '') : '';
 })();
-const KNOWN = ['nomergeprune', 'noanchor', 'nodelegate', 'swallow'];
+const KNOWN = ['nomergeprune', 'noanchor', 'nodelegate', 'swallow',
+	'noft', 'notc', 'note', 'nostall', 'zerowritten', 'norole'];
 if (BREAK && !KNOWN.includes(BREAK)) {
 	console.error('unknown break ' + JSON.stringify(BREAK) + '; known: ' + KNOWN.join(', '));
 	process.exit(2);
@@ -103,6 +106,21 @@ function load() {
 		const needle = 'var ok = window.DaimondStore.put(KEY, entries, law);';
 		if (!src.includes(needle)) throw new Error('break target not found: ' + needle);
 		src = src.replace(needle, 'var ok = false; try { localStorage.setItem(KEY, JSON.stringify(entries)); ok = true; } catch (e) { /* BROKEN: swallowed */ }');
+	}
+
+	// MC1, one break per fact: each takes away one thing the meter or the write does.
+	const FACT_BREAKS = {
+		noft:        ['if (ft === undefined) ft = Math.max(0, now - t0);', '/* BROKEN: no ft */'],
+		notc:        ['tc++;', '/* BROKEN: no tc */'],
+		note:        ["if (ev.outcome === 'failed') te++;", '/* BROKEN: no te */'],
+		nostall:     ['if (last !== null && now - last >= stallMs) sg++;', '/* BROKEN: no stall */'],
+		zerowritten: ['isFinite(v) && v >= 0.5) entry[k]', 'isFinite(v) && v >= 0) entry[k]'],
+		norole:      ["if (typeof f.ro === 'string' && ROLES[f.ro]) entry.ro = f.ro;", '/* BROKEN: no ro */'],
+	};
+	if (FACT_BREAKS[BREAK]) {
+		const [needle, by] = FACT_BREAKS[BREAK];
+		if (!src.includes(needle)) throw new Error('break target not found: ' + needle);
+		src = src.replace(needle, by);
 	}
 
 	// eslint-disable-next-line no-new-func
@@ -292,6 +310,92 @@ function main() {
 		for (const [label, re] of sites) {
 			check(label + ' merges through DaimondLedger', re.test(src));
 		}
+	}
+
+	// MC1 (D-20261009-01): the turn's own facts -- first event, tools, stalls,
+	// images, role -- written on the entry by the device that ran the turn, through
+	// ONE entry point, `patchTurn`, with zero written as absent.
+	console.log('\nMC1: patchTurn writes the turn facts; zero is absent; one entry point');
+	{
+		const { L, store } = load();
+		const now = Date.now();
+		check('patchTurn is the one entry point (patchOutcome is gone)',
+			typeof L.patchTurn === 'function' && L.patchOutcome === undefined);
+		L.record({ ts: now - 5000, model: 'm', promptTokens: 20, completionTokens: 10,
+			costUsd: 0.03, provider: 'p', turnId: 'u1' });
+		const before = JSON.parse(store.get('daimond-ledger'))[0];
+		let patched = null;
+		try {
+			patched = L.patchTurn('u1', { dur: 4200.4, out: 'completed', ft: 812.4, tc: 3, te: 1,
+				sg: 0, im: 0, ro: 'c' });
+		} catch (e) { /* red on a build without it */ }
+		const e = JSON.parse(store.get('daimond-ledger') || '[]')[0] || {};
+		check('a patched entry carries dur, out and the facts',
+			!!patched && e.dur === 4200 && e.out === 'completed' && e.ft === 812 && e.tc === 3
+			&& e.te === 1 && e.ro === 'c', JSON.stringify(e));
+		check('zero facts are absent, not 0', !('sg' in e) && !('im' in e), JSON.stringify(e));
+		check('no price field moves', ['u', 'e', 'r', 'p', 'c', 'ca', 'm', 'pv', 't', 'tid']
+			.every((k) => JSON.stringify(e[k]) === JSON.stringify(before[k])), JSON.stringify(e));
+		check('the patched entry is stored in the one key order',
+			Object.keys(e).join(',') === 't,m,p,c,ca,u,e,pv,r,tid,dur,out,ft,ro,tc,te', Object.keys(e).join(','));
+		let none = 'threw';
+		try { none = L.patchTurn('never-seen', { dur: 1, out: 'failed' }); } catch (x) { /* red */ }
+		check('patching an id nobody recorded is a no-op returning null', none === null);
+		let bad = null;
+		try {
+			L.record({ ts: now - 3000, model: 'm2', promptTokens: 5, completionTokens: 5, provider: 'p',
+				turnId: 'u2', facts: { ft: -4, tc: NaN, te: 'x', sg: 2.6, im: 1, ro: 'z' } });
+			bad = JSON.parse(store.get('daimond-ledger')).find((x) => x.tid === 'u2');
+		} catch (x) { /* red */ }
+		check('record takes the facts too; a negative, non-number or unknown role is absent',
+			!!bad && !('ft' in bad) && !('tc' in bad) && !('te' in bad) && bad.sg === 3 && bad.im === 1
+			&& !('ro' in bad), JSON.stringify(bad));
+		let w = null;
+		try {
+			L.record({ ts: now - 2000, model: 'm3', promptTokens: 5, completionTokens: 5, provider: 'p',
+				turnId: 'w-run1', facts: { ft: 0, tc: 0, te: 0, sg: 0, im: 0, ro: 'w' } });
+			w = JSON.parse(store.get('daimond-ledger')).find((x) => x.tid === 'w-run1');
+		} catch (x) { /* red */ }
+		// A quiet turn adds only `ft` and `ro`.
+		check('a quiet turn adds only ft and ro', !!w && w.ft === 0 && w.ro === 'w'
+			&& !['tc', 'te', 'sg', 'im'].some((k) => k in w), JSON.stringify(w));
+	}
+
+	console.log('\nMC1: the turn meter -- first event, tool calls, failed tools, stalls');
+	{
+		const { L } = load();
+		let f = null;
+		try {
+			const t0 = 1000000;
+			const m = L.meter(t0, { stallMs: 1000 });
+			m.see({ type: 'round_meta' }, t0 + 100);			// not a model event: no ft
+			m.see({ type: 'thinking' }, t0 + 800);				// the first model event
+			m.see({ type: 'text' }, t0 + 900);
+			m.see({ type: 'text' }, t0 + 2100);					// a 1200 ms gap in one call: a stall
+			m.see({ type: 'tool_call' }, t0 + 2200);
+			m.see({ type: 'tool_result', outcome: 'failed' }, t0 + 9000);	// the tool's own time is not a stall
+			m.see({ type: 'text' }, t0 + 9500);					// a new provider call: no gap counted
+			m.see({ type: 'tool_call' }, t0 + 9600);
+			m.see({ type: 'tool_result', outcome: 'refused' }, t0 + 9700);	// the person's or policy's, not counted
+			m.see({ type: 'tool_call' }, t0 + 9800);
+			m.see({ type: 'tool_result', outcome: 'done' }, t0 + 9900);
+			m.end('silent');									// an ending without an answer: one more
+			f = m.facts('d');
+		} catch (x) { /* red */ }
+		check('ft is send to the first model event', !!f && f.ft === 800, JSON.stringify(f));
+		check('tc counts every tool result; te only the failed', !!f && f.tc === 3 && f.te === 1, JSON.stringify(f));
+		check('sg counts a gap in one call plus a silent ending, never tool time', !!f && f.sg === 2, JSON.stringify(f));
+		check('the role travels; no image means no im', !!f && f.ro === 'd' && !f.im, JSON.stringify(f));
+		let q = null;
+		try {
+			const m = L.meter(0, {});
+			m.see({ type: 'text' }, 59000);
+			m.see({ type: 'text' }, 118000);				// 59 s: under the 60 s default
+			m.end('done');
+			q = m.facts('c');
+		} catch (x) { /* red */ }
+		check('the default stall threshold is 60 s; a done ending is not a stall', !!q && !q.sg && q.ft === 59000,
+			JSON.stringify(q));
 	}
 
 	console.log('\n' + checks + ' checks, ' + failures + ' failed');

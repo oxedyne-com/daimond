@@ -1211,7 +1211,11 @@
 	'agent.model_vision_fallback': 'This task names an image, but no image model is set for this diamond, so it runs on the text model, {model}.',
 	'agent.model_rerouted':   '{from} cannot be shown pictures, so this worker moved to {to}.',
 	'agent.model_blind':      '{model} cannot be shown pictures, so the picture was left out.',
-	'agent.model_blind_none': '{model} cannot be shown pictures and this diamond has no image model set.',
+	'agent.model_blind_provider':      '{model} is listed by its provider as text-only, so the picture was left out.',
+	'agent.model_blind_table':      'Daimond’s own list has {model} as text-only, so the picture was left out. If its provider lists it as taking images, refresh that provider’s models in Settings.',
+	'agent.model_blind_refusal':      '{model} refused the picture, so it was left out.',
+	'agent.model_blind_none': 'This diamond has no image model set.',
+	'agent.model_configured_now': 'Set to {set} now; this worker started on {model}. A change applies from the next dispatch.',
 	// ── Pending ────────────────────────────────────────────────
 	'pending.empty':        'Nothing waiting.',
 	'pending.sort':         'Sort',
@@ -4112,6 +4116,8 @@
 	'post.share_add': 'Add',
 	'post.share_adding': 'Adding…',
 	'post.share_gone': 'That diamond is no longer waiting.',
+	'post.save_failed': 'This device could not save your mailbox. Its storage may be full, so new messages and diamonds are not being kept. Free some space, then reload.',
+	'post.share_env_gone': 'That diamond cannot be added from this device: it was not collected here.',
 	'post.share_sent_row': 'Sent {name} to {who}',
 	'post.expired':              'A message you sent was never collected and the relay has let it go.',
 	// The same, for several copies of one group message. {n} is the SENDER'S

@@ -139,8 +139,14 @@
 	//
 	// The result is the entry in ONE key order (`FIELD_ORDER`, then any other
 	// field by name), so key order is never content.
+	//
+	// The turn facts (`ft im ro sg tc te`, MC1) come LAST and in name order: that is
+	// exactly where a build that has never heard of them puts them (any other field,
+	// by name), so an r541 device and this one write the same bytes for the same
+	// entry and a mixed fleet's parcel settles instead of pushing for ever.
 	var PRICE_FIELDS = ['u', 'e', 'r', 'rp', 'u0'];
-	var FIELD_ORDER  = ['t', 'm', 'p', 'c', 'ca', 'u', 'e', 'pv', 'r', 'tid', 'dur', 'out', 'ol', 'u0', 'rp'];
+	var FIELD_ORDER  = ['t', 'm', 'p', 'c', 'ca', 'u', 'e', 'pv', 'r', 'tid', 'dur', 'out', 'ol', 'u0', 'rp',
+		'ft', 'im', 'ro', 'sg', 'tc', 'te'];
 
 	function canon(v) { return JSON.stringify(v === undefined ? null : v); }
 
@@ -280,7 +286,8 @@
 	/// Absent a reported figure the table prices it as before, now
 	/// with the real cached count.
 	///
-	/// The stored entry is compact: `{ t, m, p, c, ca, u, pv, r, e, tid, dur, out, ol }`
+	/// The stored entry is compact: `{ t, m, p, c, ca, u, pv, r, e, tid, dur, out, ol }`,
+	/// plus the turn facts (`turn.facts`, see `putFacts`),
 	/// where `u` is USD. Returns the entry, or null when the input is
 	/// unusable.
 	///
@@ -334,39 +341,102 @@
 			entry.out = turn.outcome;
 		}
 		if (turn.outcomeOnly) entry.ol = 1;
+		putFacts(entry, turn.facts);
 		// Through the merge, so the store holds the order every merge makes and
 		// adopting this device's own ledger moves nothing (SIM-7).
 		save(merge(load(), [entry], turn.ts));
 		return entry;
 	}
 
-	/// Attach a duration and an outcome to the entry already recorded for
-	/// `turnId` -- for the common case, a billed turn whose cost `record()`
-	/// already wrote before its duration and outcome were known (both are
-	/// only settled once the turn has fully ended). Finds the MOST RECENT
-	/// entry carrying that `tid` and patches it in place; a no-op, returning
-	/// null, when no such entry exists -- the caller's own fallback is to
-	/// `record` a fresh `outcomeOnly` entry instead, for a turn that billed
-	/// nothing to patch.
+	// ── Turn facts (MC1) ───────────────────────────────────────
+	// What the turn was like, written on the device that ran it:
+	//   ft  ms from send to the first model event (reasoning, prose or a tool call);
+	//   tc  tool calls; te  those the ENGINE says failed (`refused` is the person's or
+	//       the policy's, not the model's);
+	//   sg  stalls: gaps of `STALL_MS` or more between two model events in ONE provider
+	//       call (a tool's own run and the next call's wait are not counted), plus one
+	//       for a turn that ended silent, reasoned-only or malformed;
+	//   im  images sent to a model; ro  the role that ran it, `c` chat, `d` daimon, `w` worker.
+	// Zero is written as absent, so a quiet turn adds only `ft` and `ro`.
+	var STALL_MS = 60 * 1000;
+	var COUNT_FACTS = ['tc', 'te', 'sg', 'im'];
+	var ROLES = { c: 1, d: 1, w: 1 };
+	var DEAD_ENDS = { silent: 1, reasoned_only: 1, malformed: 1 };
+
+	function putFacts(entry, f) {
+		if (!f) return entry;
+		if (typeof f.ft === 'number' && isFinite(f.ft) && f.ft >= 0) entry.ft = Math.round(f.ft);
+		COUNT_FACTS.forEach(function (k) {
+			var v = f[k];
+			if (typeof v === 'number' && isFinite(v) && v >= 0.5) entry[k] = Math.round(v);
+		});
+		if (typeof f.ro === 'string' && ROLES[f.ro]) entry.ro = f.ro;
+		return entry;
+	}
+
+	/// A meter for one turn, fed every stream event where the path already receives
+	/// it. `t0` is when the turn was sent; `opts.stallMs` lowers the stall threshold
+	/// for a test. `see(ev, at)` takes the event; `end(how)` the engine's ending word;
+	/// `image(n)` images sent; `facts(role)` what `patchTurn` and `record` take.
+	function meter(t0, opts) {
+		var stallMs = (opts && opts.stallMs > 0) ? opts.stallMs : STALL_MS;
+		var ft, last = null, tc = 0, te = 0, sg = 0, im = 0, ended = false;
+		return {
+			see: function (ev, at) {
+				var now = typeof at === 'number' ? at : Date.now();
+				var ty = ev && ev.type;
+				if (ty === 'text' || ty === 'thinking' || ty === 'tool_call') {
+					if (ft === undefined) ft = Math.max(0, now - t0);
+					if (last !== null && now - last >= stallMs) sg++;
+					// A tool call closes the provider call: what follows is the tool's
+					// own run and then a fresh call, neither of them the model stalling.
+					last = ty === 'tool_call' ? null : now;
+				} else if (ty === 'tool_result') {
+					tc++;
+					if (ev.outcome === 'failed') te++;
+				} else if (ty === 'round_meta' || ty === 'continued' || ty === 'compacted') {
+					last = null;
+				}
+			},
+			end: function (how) {
+				if (!ended && DEAD_ENDS[String(how || '')]) { sg++; ended = true; }
+			},
+			image: function (n) { im += Math.max(0, n | 0); },
+			facts: function (role) {
+				return { ft: ft, tc: tc, te: te, sg: sg, im: im, ro: role };
+			},
+		};
+	}
+
+	/// Write what is known once a turn has ended onto the entry already recorded for
+	/// `turnId` -- the common case, a billed turn whose cost `record()` wrote before
+	/// its duration, outcome and facts were known. `facts` is `{ dur, out }` and the
+	/// turn facts above. Finds the MOST RECENT entry carrying that `tid` and patches
+	/// it in place; a no-op, returning null, when there is none -- the caller then
+	/// `record`s a fresh `outcomeOnly` entry for a turn that billed nothing.
 	///
 	/// Best-effort like every other write here: a caller that races this
 	/// against nothing (there is no concurrent write path in a single tab)
 	/// simply finds what `record` last wrote.
-	function patchOutcome(turnId, durationMs, outcome) {
+	function patchTurn(turnId, facts) {
 		if (!turnId) return null;
+		var f = facts || {};
 		var entries = load();
 		var tid = String(turnId);
 		for (var i = entries.length - 1; i >= 0; i--) {
 			var e = entries[i];
 			if (!e || e.tid !== tid) continue;
-			if (typeof durationMs === 'number' && isFinite(durationMs) && durationMs >= 0) {
-				e.dur = Math.round(durationMs);
+			if (typeof f.dur === 'number' && isFinite(f.dur) && f.dur >= 0) {
+				e.dur = Math.round(f.dur);
 			}
-			if (outcome === 'completed' || outcome === 'failed' || outcome === 'interrupted') {
-				e.out = outcome;
+			if (f.out === 'completed' || f.out === 'failed' || f.out === 'interrupted') {
+				e.out = f.out;
 			}
+			putFacts(e, f);
+			// Stored in the one key order, as a merge would leave it.
+			entries[i] = build(e, e, e);
 			save(entries);
-			return e;
+			return entries[i];
 		}
 		return null;
 	}
@@ -665,7 +735,8 @@
 
 	window.DaimondLedger = {
 		record:       record,
-		patchOutcome: patchOutcome,
+		patchTurn:   patchTurn,
+		meter:       meter,
 		totals:      totals,
 		perModel:    perModel,
 		perProvider: perProvider,

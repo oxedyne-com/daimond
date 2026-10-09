@@ -10913,6 +10913,54 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 
 	var refusedNoted = {};	// the refusals `applyChats` has put in the trail this page
 
+	// ── The viewer's half of the latency instrument (U0, 2026-10-08) ─────────────
+	//
+	// A tile or edit that lands on THIS device from another one is told to
+	// `DEBUG_SHARE.arrive`, with the origin's own `made` stamp, so `dev/lens.mjs latency`
+	// can say how long it took. Three doors deliver: the live progress frame
+	// (`applyProvisional`), the final frame's adoption (`adoptFinalFrame`) and the
+	// parcel merge (`applyChats`). Only rows made inside `ARRIVE_FRESH_MS` count: a
+	// device catching up on a day away is the L4 question and would swamp this one.
+	var ARRIVE_FRESH_MS = 600000;
+
+	/// Tell the instrument one arrival. Never throws into a save or a render.
+	function noteArrive(k, o) {
+		try { if (window.DEBUG_SHARE && DEBUG_SHARE.arrive) DEBUG_SHARE.arrive(k, o); } catch (e) { /* the instrument must not cost a pull */ }
+	}
+
+	/// The arrivals a pulled chat brought, as records for `noteArrive`: a row this device
+	/// did not hold (`tile`), the rows that are now held saved-real (`commit`, one per
+	/// chat, carrying the newest `made`), and a rename (`edit`). `localMsgs` is what this
+	/// device held before the merge. Pure: it reads, and returns records.
+	function arrivedIn(cid, localMsgs, remoteMsgs, nameWas, nameNow, metaAt) {
+		var out = [];
+		try {
+			var floor = Date.now() - ARRIVE_FRESH_MS;
+			var fresh = [];
+			var rm = Array.isArray(remoteMsgs) ? remoteMsgs : [];
+			for (var i = 0; i < rm.length; i++) {
+				var r = rm[i];
+				if (r && r.mid && !r.provisional && +r.ts > floor) fresh.push(r);
+			}
+			if (fresh.length) {
+				var held = {};
+				(Array.isArray(localMsgs) ? localMsgs : []).forEach(function (m) { if (m && m.mid) held[String(m.mid)] = m; });
+				var landed = 0, newest = 0;
+				fresh.forEach(function (r) {
+					var had = held[String(r.mid)];
+					if (had && !had.provisional) return;		// already held real (own echo, or framed)
+					landed++;
+					newest = Math.max(newest, +r.ts || 0);
+					if (!had) out.push({ k: 'tile', via: 'parcel', cid: cid, mid: r.mid, made: +r.ts, role: r.role, tid: r.iturn || undefined });
+				});
+				if (landed) out.push({ k: 'commit', via: 'parcel', cid: cid, rows: landed, made: newest });
+			}
+			if (nameWas !== nameNow && +metaAt > floor) out.push({ k: 'edit', via: 'parcel', cid: cid, what: 'chat.name', made: +metaAt });
+		} catch (e) { /* an unreadable row is not an arrival */ }
+		return out;
+	}
+
+
 	/// Merge the chats out of a pulled parcel. Tombstones union first so a
 	/// deletion on either device wins; then remote chats merge into stored chats
 	/// by the same freshest-wins, union-the-transcript rule the cross-tab path
@@ -10992,6 +11040,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		// stored truth for exactly these, and a chat the parcel never mentioned cannot
 		// have moved. See item #5-merge.
 		var touched = [];
+		var arrived = [];		// what this parcel brought, for the latency instrument (U0)
 		// The chats this parcel carried that could not be read here, by id: refused one by
 		// one, so the rest of the parcel lands. See "ONE CHAT THAT CANNOT BE READ" below.
 		var refused = [];
@@ -11116,6 +11165,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 				if (r.messages == null) r.messages = [];
 				diag('apply chat NEW', r.id + ' n=' + (Array.isArray(r.messages) ? r.messages.length : 0));
 				byId[r.id] = r;
+				arrived.push.apply(arrived, arrivedIn(r.id, [], r.messages, '', '', 0));
 				// What this device pressed on it before its record was lost here (an
 				// evicted store keeps localStorage) narrows to the copy arriving, as a
 				// merge's does below (R2; QA 2026-09-24, F1).
@@ -11152,6 +11202,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			// EVERY scalar from the newer-`updatedAt` side, which is the reverting bug.
 			// A parcel carries no session (collect strips it), so the session falls back
 			// to this device's own rather than being traded for the remote's nothing.
+			var nameWas = st.name || '';		// before the merge, which may hand back `st` itself (U0)
 			var merged = mergeChatRecords(r, st, {
 				localMsgs:     localMsgs,    remoteMsgs:    r.messages,
 				localSession:  localSession, remoteSession: r.session,
@@ -11165,6 +11216,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			diag('apply chat merge', r.id + ' local=' + localLen + ' remote=' + remoteLen
 				+ ' -> ' + mergedLen + (mergedLen > Math.max(localLen, remoteLen) ? ' RESURRECT' : ''));
 			byId[r.id] = merged;
+			arrived.push.apply(arrived, arrivedIn(r.id, localMsgs, r.messages, nameWas, merged.name || '', merged.metaAt));
 			// A holding taken off, marked out or Read-off on another device narrows what
 			// was pressed on it here (R2), as the merged record now stands.
 			if (DaimondMarksHere.chatSettle(r.id, merged.holds)) dropChatApp(r.id);
@@ -11192,6 +11244,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		});
 		ChatStore.save(out);
 		onChatsChangedElsewhere(touched);
+		arrived.slice(0, 200).forEach(function (a) { noteArrive(a.k, a); });
 		// A synced `msgTomb` can name a mid in a chat this parcel did NOT carry (an
 		// asymmetric topology -- the deletion travelled without the shortened chat).
 		// The chats the parcel DID carry were re-slimmed above, so their physical copies
@@ -16786,6 +16839,24 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		};
 	}
 
+	/// Does this node show the turn's outcome, rather than its question or its reasoning?
+	///
+	/// A GROUP IS JUDGED BY WHAT IS IN IT. Since D-20261007-04 every Thinking tile, a lone
+	/// one included, sits inside a `.crollup` whose own `data-t` is `work` -- the class it
+	/// rolls up under, not what it holds -- so testing the wrapper made a group of thinking
+	/// alone count as shown, and a turn that only reasoned, went silent or failed lost its
+	/// ending line (r541 QA B, F1). A group shows something only when a tile in it does.
+	function tileShows(k) {
+		if (!k || !k.classList) return false;
+		if (k.classList.contains('crollup')) {
+			var mem = k.querySelectorAll('.ctile');
+			for (var j = 0; j < mem.length; j++) if (tileShows(mem[j])) return true;
+			return false;
+		}
+		if (k.classList.contains('chat-msg-user')) return false;
+		return !(k.classList.contains('chat-msg-thinking') || k.dataset.t === 'think');
+	}
+
 	/// Close the turn on screen, but ONLY where the turn drew nothing else.
 	///
 	/// THE END-OF-TURN SUMMARY IS GONE (owner review 2026-09-05, asked
@@ -16815,20 +16886,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		// not evidence one arrived.
 		var kids = chatOutput.querySelectorAll('[data-turn="' + String(_turn) + '"]');
 		var shown = false;
-		for (var i = 0; i < kids.length; i++) {
-			var k = kids[i];
-			if (!k.classList) continue;
-			if (k.classList.contains('chat-msg-user')) continue;
-			// A lone thinking tile carries `chat-msg-thinking`; a RUN of them is
-			// wrapped in a `.crollup` container instead (`makeRollup`, above), whose
-			// own class list never gets that marker -- only `dataset.t === 'think'`
-			// says what it holds. Both must be skipped, or a second reasoning-only
-			// round (which rolls the first tile up rather than standing it alone)
-			// slips back into "something was shown" the moment there are two.
-			if (k.classList.contains('chat-msg-thinking') || k.dataset.t === 'think') continue;
-			shown = true;
-			break;
-		}
+		for (var i = 0; i < kids.length && !shown; i++) shown = tileShows(kids[i]);
 		// A STOPPED TURN SAYS SO EVEN THOUGH IT DREW SOMETHING, and that is the one
 		// ending for which `shown` is not the test. The words that arrived are exactly
 		// what makes it look finished: the partial reads as an answer, and only the
@@ -26475,10 +26533,20 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			else delete _finalMids[String(turnId)];
 		}
 		var prevLen = chat.messages.length;
+		var heldMids = {};		// rows of this turn already here, so only a NEW tile is an arrival (U0)
+		chat.messages.forEach(function (m) { if (m && m.mid && String(m.iturn || '') === String(turnId)) heldMids[String(m.mid)] = 1; });
 		var next = DaimondPeer.foldProvisional(chat.messages, turnId, rows);
 		if (!next) { if (final) adoptFinalFrame(turnId); return; }	// nothing to draw; the frame may still be the answer
 		var grewOnly = next.length === prevLen;	// no rows added: only content grew in place
 		chat.messages = next;
+		if (!grewOnly) {
+			var tfloor = Date.now() - ARRIVE_FRESH_MS;
+			next.forEach(function (m) {
+				if (m && m.provisional && m.mid && String(m.iturn || '') === String(turnId) && !heldMids[String(m.mid)] && +m.ts > tfloor) {
+					noteArrive('tile', { via: 'frame', cid: chat.id, tid: String(turnId), mid: m.mid, made: +m.ts, role: m.role });
+				}
+			});
+		}
 		// THE FINAL FRAME IS SAVED (2026-09-25). The runner acks its errand on the
 		// strength of this copy (peer.js `runErrand`, step 4: "durable in two places"),
 		// so a copy held only in page memory was one reload from gone, and was on disk
@@ -26534,17 +26602,19 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		if (!mids || !handoffDone(tid)) return false;
 		var chat = finalFrameChat(tid, true);
 		if (!chat || !chat.messages) return false;
-		var moved = 0;
+		var moved = 0, newest = 0;
 		var next = chat.messages.map(function (m) {
 			if (!m || !m.provisional || String(m.iturn || '') !== tid || !mids[String(m.mid)]) return m;
 			var c = {};
 			for (var k in m) { if (Object.prototype.hasOwnProperty.call(m, k) && k !== 'provisional') c[k] = m[k]; }
 			c.framed = 1;
 			moved++;
+			newest = Math.max(newest, +m.ts || 0);
 			return c;
 		});
 		delete _finalMids[tid];
 		if (!moved) return false;
+		if (newest > Date.now() - ARRIVE_FRESH_MS) noteArrive('commit', { via: 'frame', cid: chat.id, tid: tid, rows: moved, made: newest });
 		chat.messages = next;
 		touchChat(chat);
 		try { persistChats(); } catch (e) { /* drawn; the runner's parcel still comes */ }
@@ -33959,6 +34029,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		applyRoundLimit(chat.app);
 		applyFoldSettings(chat.app, chat.provider || '');
 		applyProviderRouting(chat.app, chat.provider || '', chat.model || '');
+		applySight(chat.app, chat.provider || '', chat.model || '');
 		applyCrystalCap(chat.app);
 		// THE STANDING NETWORK ANSWER, applied before this chat has run anything.
 		// `net_consent` lives on the engine and a new engine starts with none, so
@@ -36371,6 +36442,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		// only variable in this function that exists for telemetry; every other
 		// number reported below was already being kept.
 		var telT0 = Date.now();
+		var tmeter = turnMeter(telT0);			// MC1: the turn facts, from the same clock
 		tel('turn.send', turnsIn(chat));
 		// TRAINING WHEELS — the debug feed's `turn.start`. Ids, model and shape
 		// only; the prompt itself is never an event (transcripts ride the periodic
@@ -36475,6 +36547,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		var owns = function () { return current === chat && chats.indexOf(chat) !== -1; };
 		var onEvent = function (ev) {
 			if (!ev || !ev.type) return;
+			tmeter.see(ev);
 			if (ev.type === 'text') {
 				turnText += (ev.content || '');
 				// THE LIVE ANSWER, WHERE A STREAMED FRAME CAN REACH IT. The assistant
@@ -36719,7 +36792,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 				// model that would not look. Silence here is what let a daimon answer
 				// confidently about a cover nobody had shown it.
 				chat.messages.push({ role: 'vision_log',
-					content: t('agent.model_blind', { model: ev.model || chat.model || '' }),
+					content: blindLine(ev.model || chat.model || '', ev.source),
 					mid: newMid(), ts: Date.now() });
 				if (!owns()) return;
 				var visLast = chat.messages[chat.messages.length - 1];
@@ -37261,7 +37334,8 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 					: pausedBack ? 'interrupted'
 					: (threw || sawError) ? 'failed'
 					: 'completed';
-				recordTurnOutcome(chat.model, chat.provider, umid, Date.now() - telT0, turnOutcome);
+				tmeter.end(lastHow);
+				recordTurnOutcome(chat.model, chat.provider, umid, Date.now() - telT0, turnOutcome, tmeter.facts('c'));
 				// THE ENDING IS THE LAST RECORD OF THE TURN. Stored here, so it sits under
 				// the answer it is about rather than over it, and so a reload draws it where
 				// this sitting drew it.
@@ -37482,15 +37556,17 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 	// by identity rather than guessing from device, clock skew and prompt size.
 	// Optional: a caller spending against no single turn (a whole-chat fold)
 	// passes none, and the entry is stored exactly as it was before.
+	// `facts` are the turn facts (`DaimondLedger.meter`), for a caller that records once
+	// and never patches (a worker), or that knows one fact at the moment it bills (an image).
 	function recordSpend(model, promptTokens, completionTokens, cachedTokens, costUsd, provider,
-		diamondId, turnId) {
+		diamondId, turnId, facts) {
 		if (!window.DaimondLedger || (promptTokens + completionTokens) <= 0) return;
 		var entry = null;
 		try {
 			entry = DaimondLedger.record({ ts: Date.now(), model: model,
 				promptTokens: promptTokens, completionTokens: completionTokens,
 				cachedTokens: cachedTokens || 0, costUsd: costUsd || 0,
-				provider: provider || '', turnId: turnId || '' });
+				provider: provider || '', turnId: turnId || '', facts: facts || null });
 		} catch (e) { /* ledger is best-effort */ }
 		if (entry && window.DaimondGovernor) {
 			try { DaimondGovernor.observe(entry); } catch (e) { /* governor is best-effort */ }
@@ -37539,15 +37615,33 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 	/// token came back -- has no entry to find, so one is recorded fresh,
 	/// carrying the duration and outcome only: `outcomeOnly` skips pricing
 	/// entirely and marks it `ol`, so it is never counted as a billed turn.
-	function recordTurnOutcome(model, provider, turnId, durationMs, outcome) {
+	///
+	/// MC1: `turnFacts` (the turn's `meter`) ride the same write -- `patchTurn` is the
+	/// one entry point for everything learnt once the turn has ended.
+	function recordTurnOutcome(model, provider, turnId, durationMs, outcome, turnFacts) {
 		if (!window.DaimondLedger || !turnId) return;
 		try {
-			var patched = DaimondLedger.patchOutcome(turnId, durationMs, outcome);
+			var facts = Object.assign({}, turnFacts || {}, { dur: durationMs, out: outcome });
+			var patched = DaimondLedger.patchTurn(turnId, facts);
 			if (!patched) {
 				DaimondLedger.record({ ts: Date.now(), model: model || '', provider: provider || '',
-					turnId: turnId, durationMs: durationMs, outcome: outcome, outcomeOnly: true });
+					turnId: turnId, durationMs: durationMs, outcome: outcome, outcomeOnly: true,
+					facts: turnFacts || null });
 			}
 		} catch (e) { /* ledger is best-effort */ }
+	}
+
+	/// The turn meter (`DaimondLedger.meter`) for a turn sent at `t0`, fed by each path's
+	/// own event sink. One that measures nothing when the ledger is absent, as every
+	/// other ledger call here is best-effort. `window.__daimondStallMs` lowers the stall
+	/// threshold for a verifier (dev/verify_turnfacts.mjs), which cannot wait a minute.
+	function turnMeter(t0) {
+		var st = Number(window.__daimondStallMs);
+		if (window.DaimondLedger && typeof DaimondLedger.meter === 'function') {
+			return DaimondLedger.meter(t0, (st > 0) ? { stallMs: st } : undefined);
+		}
+		var none = function () { /* no ledger */ };
+		return { see: none, end: none, image: none, facts: function () { return null; } };
 	}
 
 	// The global spend readout at the foot of the Diamonds/Chats panel: day
@@ -38180,7 +38274,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 						// Which model would not take a picture, and which one this worker left
 						// when it moved. Without them a tile drawn after a reload says the work
 						// was always on the model it ended on, and the move is lost.
-						blindModel: r.blindModel || '', reroutedFrom: r.reroutedFrom || '',
+						blindModel: r.blindModel || '', blindSource: r.blindSource || '', reroutedFrom: r.reroutedFrom || '',
 						promptTokens: r.promptTokens, completionTokens: r.completionTokens,
 						// The cached share and the reported cost, so a tile drawn after a reload
 						// still says what the run actually cost rather than re-guessing it.
@@ -38902,6 +38996,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 				applyRoundLimit(run.app);
 				applyFoldSettings(run.app, run.provider || '');
 				applyProviderRouting(run.app, run.provider || '', run.model || '');
+				applySight(run.app, run.provider || '', run.model || '');
 				applyCrystalCap(run.app);
 				// EVERY worker, from either surface. A worker cannot ask a question and
 				// is told so in its own prompt, while the safety clause on top of that
@@ -39015,8 +39110,10 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			// so `lens events --kind round` shows a worker's rounds beside a chat's
 			// without either being mistaken for the other.
 			var wstep = 0, wroundSent = 0, wroundPayload = null;
+			var wmeter = turnMeter(Date.now());		// MC1: this session's turn facts
 			var sink = function (ev) {
 				if (!ev || !ev.type) return;
+				wmeter.see(ev);
 				if (ev.type === 'text') {
 					run.text += (ev.content || '');
 					// The text SINCE THE LAST TOOL RESULT -- reset below, every time one
@@ -39066,6 +39163,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 						});
 					}
 				} else if (ev.type === 'ended') {
+					wmeter.end(ev.how);
 					// The round the turn actually stopped on may not be one of the
 					// throttled ones sent above -- see `doSteer`'s identical `roundSent
 					// !== step` catch-up, right down to the reason.
@@ -39241,7 +39339,10 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 				// here was reading an unrelated variable. A chat-dispatched run has no
 				// `diamondId` -- see `agentDiamondChip` -- and bills nobody, which is what an
 				// ordinary chat's own turn does two thousand lines up.
-				recordSpend(run.model, _pt, _ct, _ca, _cost, run.provider, run.diamondId || '');
+				// MC1 (C2): under the run id its report's handle names (`h.worker(rid)`), so
+				// the entry joins to the report, with the facts its sink measured.
+				recordSpend(run.model, _pt, _ct, _ca, _cost, run.provider, run.diamondId || '',
+					(run.prov && run.prov.rid) || '', wmeter.facts('w'));
 				// `run.report` is what `gather` hands back to the daimon: the worker's
 				// FINAL answer -- `_tail`, the text since its last tool result, or the
 				// whole of `run.text` if it never ran one -- head+tail capped to ~8 KB.
@@ -39475,6 +39576,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			var to = this.visionTarget(run);
 			if (!to) {
 				run.blindModel = (ev && ev.model) || run.model || '';
+				run.blindSource = (ev && ev.source) || '';
 				this.persist();
 				this.render();
 				return;
@@ -39702,14 +39804,15 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 				if (from) {
 					var moved = t('agent.model_rerouted', { from: from, to: r.model });
 					return (r.blindModel && r.blindModel === r.model)
-						? moved + ' ' + t('agent.model_blind', { model: r.blindModel })
+						? moved + ' ' + blindLine(r.blindModel, r.blindSource)
 						: moved;
 				}
 				if (!r.blindModel) return '';
 				var chose = r.diamondId ? diamondModels()[r.diamondId] : null;
+				var said = blindLine(r.blindModel, r.blindSource);
 				return (r.diamondId && !(chose && chose.visionModel))
-					? t('agent.model_blind_none', { model: r.blindModel })
-					: t('agent.model_blind', { model: r.blindModel });
+					? said + ' ' + t('agent.model_blind_none')
+					: said;
 			}
 			var card = document.createElement('div');
 			card.className = 'acard ' + run.status;
@@ -39786,6 +39889,17 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 				vn.className = 'anote avision';
 				vn.textContent = vline;
 				card.appendChild(vn);
+			}
+
+			// A worker keeps the model it was dispatched on; a setting changed since applies
+			// only to the next dispatch. Said on the tile, so a tile still showing the old
+			// model while the settings name another is not read as the setting being ignored.
+			var nowSet = configuredNow(run);
+			if (nowSet) {
+				var cn = document.createElement('div');
+				cn.className = 'anote aconfigured';
+				cn.textContent = nowSet;
+				card.appendChild(cn);
 			}
 
 			// And how its turn ended, in the same voice. Furniture unless something
@@ -49849,6 +49963,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		applyRoundLimit(app);
 		applyFoldSettings(app, a.provider || '');
 		applyProviderRouting(app, a.provider || '', a.model || '');
+		applySight(app, a.provider || '', a.model || '');
 		applyCrystalCap(app);
 		_diamondApps[k] = app;
 		_sharedClients.add(app);
@@ -52265,14 +52380,20 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 	/// the tags -- which is why it is built once here rather than inline in each.
 	///
 	/// # Arguments
-	/// * `data` - The parsed crystal, handed to the editor when `✎` is pressed.
+	/// * `data` - The parsed crystal, handed to the editor when `✎` is pressed, or `null` from
+	///   [`crystalData`] for a text with no parsed copy. Edit is then left out: the form would
+	///   edit `{}` and its Save would write that over the file. The raw text in the memory panel
+	///   is the one place such a crystal is mended.
 	function crystalBar(data) {
 		var bar = document.createElement('div');
 		bar.className = 'crystal-bar';
-		var edit = document.createElement('button');
-		edit.className = 'crystal-act';
-		edit.textContent = t('files.edit');
-		edit.addEventListener('click', function () { editCrystal(data); });
+		var edit = null;
+		if (data !== null && data !== undefined) {
+			edit = document.createElement('button');
+			edit.className = 'crystal-act';
+			edit.textContent = t('files.edit');
+			edit.addEventListener('click', function () { editCrystal(data); });
+		}
 		var hist = document.createElement('button');
 		hist.className = 'crystal-act';
 		hist.textContent = t('crystal.history');
@@ -52304,7 +52425,8 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		tagsBtn.textContent = '# ' + t('crystal.tags');
 		tagsBtn.title = t('crystal.tags_help');
 		tagsBtn.addEventListener('click', showTagEditor);
-		bar.appendChild(edit); bar.appendChild(pageBtn);
+		if (edit) bar.appendChild(edit);
+		bar.appendChild(pageBtn);
 		bar.appendChild(hist); bar.appendChild(tagsBtn);
 		return bar;
 	}
@@ -52510,9 +52632,9 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		var edit = document.createElement('button');
 		edit.className = 'crystal-act';
 		edit.textContent = t('files.edit');
-		edit.addEventListener('click', function () { editCrystal(d); });
-		// The form edits the parsed copy, which is `{}` for a crystal that will not parse, and
-		// its Save would write that over the file.
+		edit.addEventListener('click', function () { editCrystal(data); });
+		// There is no parsed copy of a crystal that will not parse, and `editCrystal` refuses
+		// the `null` that stands for it, so the button is not offered.
 		if (!broken) acts.appendChild(edit);
 
 		// FOLD, where the fold lives. A daimon's conversation folds into its own crystal --
@@ -52697,7 +52819,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		var data = crystalData(text);
 		var broken = crystalBroken(text);
 		clearCrystalBody();
-		crystalBody.appendChild(crystalBar(data || {}));
+		crystalBody.appendChild(crystalBar(data));
 		// The raw memory, click-to-expand and editable, on every face-state below: a page
 		// renders the memory but does not let you see or change the memory itself, and
 		// `mount` and `fallback` touch only their own nodes, so this survives the swap.
@@ -53035,7 +53157,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			var u = j.usage || {};
 			var pt = (u.prompt_tokens || u.input_tokens || 0) | 0, ct = (u.completion_tokens || u.output_tokens || 0) | 0;
 			var cost = Number(u.cost) || 0;
-			recordSpend(to.model, pt, ct, 0, cost, to.provider, id);
+			recordSpend(to.model, pt, ct, 0, cost, to.provider, id, '', { im: 1 });
 			if (!text.trim()) return JSON.stringify({ ok: false, error: to.model + ' answered with no words' });
 			return JSON.stringify({ ok: true, text: text, model: to.model, tokens: pt + ct, micro_usd: Math.round(cost * 1e6) });
 		} catch (e) {
@@ -53840,10 +53962,17 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 	/// recoverable as a fold.
 	///
 	/// # Arguments
-	/// * `data` - The parsed crystal to edit.
+	/// * `data` - The parsed crystal to edit, as [`crystalData`] gave it. Its `null` -- a text
+	///   with no parsed copy, such as JSON that does not parse -- is refused, because the form
+	///   would open on `{}` and Save would write that over the file. Never coerce it to `{}`.
 	function editCrystal(data) {
 		var C = crystalLib();
 		var id = currentDiamond ? currentDiamond.id : '';
+		if (data === null || data === undefined || typeof data !== 'object' || Array.isArray(data)) {
+			noticeDialog(t('crystal.save_failed'),
+				tOr('crystal.json_invalid', 'That is not valid JSON, so nothing was saved.'));
+			return;
+		}
 		// The draft is a deep copy, so Cancel really is a cancel: the object handed in is the
 		// one the mounted page was given, and editing it in place would leave a rejected edit
 		// on screen behind the frame.
@@ -58030,6 +58159,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		// is what tells a worker-report hand-back apart from a steer somebody typed: 0
 		// is the composer, 1 and up is the app carrying a fan-out's reports back.
 		var dsT0 = Date.now();
+		var dmeter = turnMeter(dsT0);			// MC1: the turn facts, from the same clock
 		var dsP0 = (rec.app && rec.app.prompt_tokens) || 0;
 		var dsC0 = (rec.app && rec.app.completion_tokens) || 0;
 		var dsA0 = (rec.app && rec.app.cached_tokens) || 0;
@@ -58172,17 +58302,22 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			// (the daimon chat's id, shared by every steer it ever runs): `rec.id` found
 			// and patched the PREVIOUS steer's billed entry instead of this one's, so a
 			// failed turn tagged the wrong turn failed and this turn was never recorded
-			// at all. `dmid` is generated fresh per call (`newMid()`, above) and is the
-			// same id `meterDiamondTurn` below now bills against, so the entry `record()`
-			// wrote and the outcome patched here are always the same entry.
-			recordTurnOutcome(dsPair.model, dsPair.provider, dmid, Date.now() - dsT0,
-				(out === 'error') ? 'failed' : 'completed');
+			// at all. MC1 (C1): the key is now `dumid`, the person's message, which is
+			// this daimon answer's `prod.t` -- so the entry joins to what the turn
+			// produced, as a chat's joins on `umid`. It is as fresh per steer as `dmid`
+			// was (`newMid()`, or the handed-off turn's own id) and is the same id
+			// `meterDiamondTurn` below bills against, so the entry `record()` wrote and
+			// the facts patched here are always the same entry.
+			dmeter.end(lastHow);
+			recordTurnOutcome(dsPair.model, dsPair.provider, dumid, Date.now() - dsT0,
+				(out === 'error') ? 'failed' : 'completed', dmeter.facts('d'));
 		};
 		// The feed's `round`, throttled -- this is the loop that runs ~150 rounds; see
 		// the same pair in `runTurn`.
 		var roundSent = 0, roundPayload = null;
 		var onEvent = function (ev) {
 			if (!ev || !ev.type) return;
+			dmeter.see(ev);
 			// A HANDED-OFF turn checks lease liveness between the ticker's own reads, so a
 			// take-back aborts the daimon promptly rather than at the next tick. Not free:
 			// the check is a lease GET, so runErrand's `liveness` is single-flight and
@@ -58352,7 +58487,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 				// never enters its stored conversation -- see `Agent::run_tool_loop` -- and
 				// that the thread says so instead of going quiet.
 				rec.messages.push({ role: 'vision_log',
-					content: t('agent.model_blind', { model: ev.model || '' }),
+					content: blindLine(ev.model || '', ev.source),
 					mid: newMid(), ts: Date.now() });
 				var dVisLast = rec.messages[rec.messages.length - 1];
 				if (onScreen()) appendCompacted(dVisLast.content, undefined, undefined, dVisLast.ts);
@@ -58544,9 +58679,9 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		// and the Diamond's Links section stay stale until something unrelated
 		// redraws them, and the world model looks like it did not take.
 		signalLinksChanged();
-			// D-20260921 audit fix -- `dmid`, not `rec.id`; see the comment on
-			// `recordTurnOutcome` above, which now patches by the same id this bills under.
-			meterDiamondTurn(fa, diamondId, dmid);
+			// `dumid`, not `rec.id` (D-20260921) nor `dmid` (MC1 C1); see the comment on
+			// `recordTurnOutcome` above, which patches by the same id this bills under.
+			meterDiamondTurn(fa, diamondId, dumid);
 			crystalSay('');
 			await refreshDiamondAfterChange();
 			Files.refresh();
@@ -63631,6 +63766,51 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		var r = DaimondModels.parseRouting(text);
 		try {
 			app.set_provider_routing(r.order.join(','), r.ignore.join(','), !!r.only);
+		} catch (e) { /* an older wasm build has no setter */ }
+	}
+
+	/// The sentence for a picture the engine left out, by where its verdict came from.
+	///
+	/// `source` rides the engine's `unseeable` event: `provider` the provider's own model list
+	/// shows the model as text-only, `table` the engine's name table does, `refusal` the provider
+	/// turned a request with a picture away. An engine that predates the field sends none and gets
+	/// the older, plainer sentence. Literal keys, so the i18n check can see every one.
+	function blindLine(model, source) {
+		var a = { model: model || '' };
+		if (source === 'provider') return t('agent.model_blind_provider', a);
+		if (source === 'table')    return t('agent.model_blind_table', a);
+		if (source === 'refusal')  return t('agent.model_blind_refusal', a);
+		return t('agent.model_blind', a);
+	}
+
+	/// What a worker's tile says when the model the settings name now is not the one it started
+	/// on, or '' when they agree, when it moved of its own accord (the chip says so), or when it
+	/// is over: an old run is not annotated every time a setting changes.
+	function configuredNow(run) {
+		if (!run || !run.diamondId || !run.model || run._pinned) return '';
+		if (run.status !== 'running' && run.status !== 'queued' && run.status !== 'paused') return '';
+		if (run.reroutedFrom) return '';
+		var set = null;
+		try { set = run.sees ? diamondVisionModel(run.diamondId) : diamondWorkerModel(run.diamondId); }
+		catch (e) { return ''; }
+		if (!set || !set.model || set.model === run.model) return '';
+		return t('agent.model_configured_now', { set: set.model, model: run.model });
+	}
+
+	/// Hand the engine the provider's own word on whether this model takes pictures.
+	///
+	/// `DaimondModels.sightFor` reads what the provider's `/models` reply said (true, false, or
+	/// null when it said nothing) and `set_sight` makes it outrank the engine's hand-written
+	/// name tables and a refusal. Without it a multimodal model those tables had never heard of
+	/// was told it "cannot be shown pictures" and the picture was stripped. Null travels as 0,
+	/// which leaves the tables in charge exactly as before. Applied wherever
+	/// `applyProviderRouting` is, so an app built at any construction site gets it.
+	function applySight(app, providerId, model) {
+		if (!app || typeof app.set_sight !== 'function') return;
+		var s = null;
+		try { s = DaimondModels.sightFor(providerId || '', model || ''); } catch (e) { /* no store yet */ }
+		try {
+			app.set_sight(s === true ? 1 : (s === false ? -1 : 0));
 		} catch (e) { /* an older wasm build has no setter */ }
 	}
 

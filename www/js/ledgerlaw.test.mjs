@@ -256,5 +256,68 @@ console.log('\nC. repricing is the migration it says it is\n');
 		Math.abs(totals.usd - (0.11 + 0.5 + 0.0021 + 0 + 0.11)) < 1e-9, String(totals.usd));
 }
 
+// ── D. Mixed versions (MC1) ─────────────────────────────────────────
+// The turn facts (`ft tc te sg im ro`) are fields the r541 join law has never heard
+// of. They must cross a device still running it untouched, and a ledger merged
+// there and here must be the same bytes, or the parcel would push for ever.
+// `dev/fixtures/ledger_r541.js` is r541's own `ledger.js`, frozen.
+console.log('\nD. mixed versions: the turn facts through the r541 join law\n');
+{
+	const OLD_SRC = readFileSync(join(HERE, '../../dev/fixtures/ledger_r541.js'), 'utf8');
+	const od = (() => {
+		const win = {};
+		const store = new Map();
+		const ls = { getItem: (k) => (store.has(k) ? store.get(k) : null), setItem: (k, v) => store.set(k, String(v)),
+			removeItem: (k) => store.delete(k) };
+		loadStore(win, ls);
+		win.DaimondPricing = { priceFor: (m, p, c) => ({ usd: 0.001 * (p + c), estimated: true }) };
+		new Function('window', 'localStorage', OLD_SRC)(win, ls);
+		return win.DaimondLedger;
+	})();
+	const OM = (a, b) => od.merge(clone(a), clone(b), NOW);
+	const r = rng(541);
+	function factCopy(t) {
+		const e = copy(r, t);
+		if (r.chance(0.6)) e.ft = r.pick([0, 812, 4100]);
+		if (r.chance(0.5)) e.ro = r.pick(['c', 'd', 'w']);
+		if (r.chance(0.4)) e.tc = r.pick([1, 3]);
+		if (r.chance(0.3)) e.te = 1;
+		if (r.chance(0.2)) e.sg = r.pick([1, 2]);
+		if (r.chance(0.2)) e.im = 1;
+		// A key order drawn at random, as a device in another version would write it.
+		const o = {};
+		for (const k of shuffled(r, Object.keys(e))) o[k] = e[k];
+		return o;
+	}
+	let same = 0, fixed = 0, carried = 0, n = 200;
+	for (let i = 0; i < n; i++) {
+		const a = [], b = [];
+		for (const t of [NEW, NEW + 1, NEW + 2]) {
+			for (let k = r.pick([0, 1, 2]); k > 0; k--) a.push(factCopy(t));
+			for (let k = r.pick([0, 1, 2]); k > 0; k--) b.push(factCopy(t));
+		}
+		const nn = bytes(M(a, b)), no = bytes(OM(a, b)), on = bytes(OM(b, a)), oo = bytes(M(b, a));
+		if (nn === no && no === on && on === oo) same++;
+		// Collect after apply: an MC1 device re-merging what an r541 device made moves nothing.
+		const old = OM(a, b);
+		if (bytes(M(old, [])) === bytes(old) && bytes(OM(M(a, b), [])) === nn) fixed++;
+		// Every fact any copy carried survives the old law.
+		const keys = ['ft', 'tc', 'te', 'sg', 'im', 'ro'];
+		const had = a.concat(b).some((e) => keys.some((k) => k in e));
+		if (!had || old.some((e) => keys.some((k) => k in e))) carried++;
+	}
+	check('a ledger merged by r541 and by MC1, in either order, is the same bytes', same === n, same + '/' + n);
+	check('and it is a fixed point across the versions (collect after apply)', fixed === n, fixed + '/' + n);
+	check('the r541 law carries the facts through untouched', carried === n, carried + '/' + n);
+	// One pair by hand: an r541 copy without the facts, an MC1 copy with them.
+	const plain = { t: NEW, m: 'mock/fast', p: 100, c: 10, ca: 0, u: 0.11, e: false, pv: 'mock', r: 1, tid: 'u1',
+		dur: 4000, out: 'completed' };
+	const rich = Object.assign({}, plain, { ft: 812, ro: 'c', tc: 3, te: 1 });
+	const viaOld = OM([plain], [rich]), viaNew = M([rich], [plain]);
+	check('join(old copy, MC1 copy) keeps every fact, in both laws',
+		bytes(viaOld) === bytes(viaNew) && viaOld[0].ft === 812 && viaOld[0].te === 1 && viaOld[0].ro === 'c',
+		bytes(viaOld) + ' vs ' + bytes(viaNew));
+}
+
 console.log(failures ? `\n${failures} FAILED` : '\nALL PASS');
 if (failures) process.exitCode = 1;

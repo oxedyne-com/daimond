@@ -1126,6 +1126,36 @@
 		return out;
 	}
 
+	/// Does one entry of a `/models` reply say that the model takes pictures? True or false when
+	/// the provider says, and null when it says nothing, which is not the same as "no".
+	///
+	/// OpenRouter publishes `architecture.input_modalities` (and the older `architecture.modality`,
+	/// "text+image->text"); some providers carry the list at the top of the entry or as a
+	/// `capabilities` flag. THE PROVIDER'S WORD, because a hand table of model names is wrong for
+	/// every model released after it was written -- which is how two multimodal daimons told the
+	/// owner they could not be shown pictures. The engine treats this as outranking its own tables
+	/// (`LlmClient::set_sight`).
+	function sightOf(m) {
+		if (!m || typeof m !== 'object') return null;
+		var a = (m.architecture && typeof m.architecture === 'object') ? m.architecture : {};
+		var list = Array.isArray(a.input_modalities) ? a.input_modalities
+			: Array.isArray(m.input_modalities) ? m.input_modalities : null;
+		if (list && list.length) {
+			return list.some(function (x) { return String(x).toLowerCase() === 'image'; });
+		}
+		if (typeof a.modality === 'string' && a.modality.indexOf('->') > 0) {
+			return a.modality.split('->')[0].toLowerCase().indexOf('image') >= 0;
+		}
+		var c = (m.capabilities && typeof m.capabilities === 'object') ? m.capabilities : null;
+		if (c) {
+			if (typeof c.vision === 'boolean') return c.vision;
+			if (c.image_input && typeof c.image_input.supported === 'boolean') {
+				return c.image_input.supported;
+			}
+		}
+		return null;
+	}
+
 	/// Ask a provider what it can run. The list is cached, because a chat's model can be
 	/// switched from its header and re-asking on every switch would be rude to the provider
 	/// and slow for the user.
@@ -1150,7 +1180,12 @@
 			if (typeof m === 'string') return;
 			var mid = m.id || m.name;
 			var rr = ratesOf(m);
-			if (mid && rr) rates[mid] = rr;
+			var sees = sightOf(m);
+			if (!mid || (!rr && sees === null)) return;
+			// The pictures flag rides the rates row, so it is stored, merged and synced with them.
+			var row = rr || {};
+			if (sees !== null) row.sees = sees;
+			rates[mid] = row;
 		});
 		var p = store.providers[id];
 		if (!p) return ids;					// removed while it was asked
@@ -1180,6 +1215,18 @@
 			cachedPerM: (typeof r.cached === 'number') ? r.cached : null,
 			ctx:        (typeof r.ctx === 'number') ? r.ctx : null,
 		};
+	}
+
+	/// What `provider` says of pictures for `model`: true, false, or null when it never said.
+	///
+	/// The page hands this to the engine (`set_sight`) before a model is dispatched, so a model
+	/// the engine's name tables have never heard of is still shown a picture when the provider
+	/// lists it as taking one.
+	function sightFor(provider, model) {
+		var p = store.providers[provider];
+		if (!p || !p.rates) return null;
+		var r = p.rates[model];
+		return (r && typeof r.sees === 'boolean') ? r.sees : null;
 	}
 
 	/// The raw provider-routing text set on this model's own row, or '' when nobody has set
@@ -2017,10 +2064,13 @@
 		var out = {}, n = 0;
 		Object.keys(rates).sort().forEach(function (mid) {
 			var r = rates[mid];
-			if (!r || typeof r.in !== 'number' || typeof r.out !== 'number') return;
-			var row = { in: r.in, out: r.out };
-			if (typeof r.cached === 'number') row.cached = r.cached;
-			if (typeof r.ctx    === 'number') row.ctx    = r.ctx;
+			var priced = !!r && typeof r.in === 'number' && typeof r.out === 'number';
+			var sighted = !!r && typeof r.sees === 'boolean';
+			if (!priced && !sighted) return;
+			var row = priced ? { in: r.in, out: r.out } : {};
+			if (priced && typeof r.cached === 'number') row.cached = r.cached;
+			if (priced && typeof r.ctx    === 'number') row.ctx    = r.ctx;
+			if (sighted) row.sees = r.sees;
 			out[mid] = row;
 			n++;
 		});
@@ -3206,6 +3256,9 @@
 		fetchModels:    fetchModels,
 		// The live rates a provider published, which `DaimondPricing` asks before its table.
 		rateFor:        rateFor,
+		// Whether a provider lists a model as taking pictures; see `sightOf`.
+		sightOf:        sightOf,
+		sightFor:       sightFor,
 		// OpenRouter provider routing, set on a model's own row; see `routing` above.
 		routing:        routing,
 		setRouting:     setRouting,

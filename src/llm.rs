@@ -507,6 +507,10 @@ pub struct LlmClient {
     /// Set once a request that carried pictures has been answered, never refused: the model is
     /// shown to take one. The other half of [`Blind`]; see [`LlmClient::mark_seen`].
     seen:           Blind,
+    /// What the provider's own model list says of pictures, pushed by the page through
+    /// [`set_sight`](Self::set_sight): 0 nothing said, 1 takes pictures, 2 text-only.  Shared
+    /// across clones as `stream_idle_ms` is, and it outranks both name tables and a refusal.
+    sight:          std::rc::Rc<std::cell::Cell<u8>>,
     /// How long a stream may go without a byte before it is read as stalled rather than
     /// slow; see [`stream_sse`](Self::stream_sse) and `Limits::stream_idle_ms` in
     /// `src/compact.rs`, which `Agent::set_stream_idle_ms` pushes down into this.  An
@@ -1322,6 +1326,7 @@ impl LlmClient {
             tune:       std::rc::Rc::new(std::cell::Cell::new(ThinkTune::default())),
             blind:      new_blind(),
             seen:       new_blind(),
+            sight:      std::rc::Rc::new(std::cell::Cell::new(0)),
             stream_idle_ms: std::rc::Rc::new(std::cell::Cell::new(DEFAULT_STREAM_IDLE_MS)),
             provider_routing: std::rc::Rc::new(std::cell::RefCell::new(ProviderRouting::default())),
             tls_config,
@@ -1375,6 +1380,7 @@ impl LlmClient {
             tune:       std::rc::Rc::new(std::cell::Cell::new(ThinkTune::default())),
             blind:      new_blind(),
             seen:       new_blind(),
+            sight:      std::rc::Rc::new(std::cell::Cell::new(0)),
             stream_idle_ms: std::rc::Rc::new(std::cell::Cell::new(DEFAULT_STREAM_IDLE_MS)),
             provider_routing: std::rc::Rc::new(std::cell::RefCell::new(ProviderRouting::default())),
             secure,
@@ -1638,19 +1644,29 @@ impl LlmClient {
                     if !started && !retried_blind && images > 0 && !e.retryable {
                         retried_blind = true;
                         blind_pending = true;
+                        let why = self.dropped_why(true);
                         let text_only: Vec<ChatMessage> =
                             messages.iter()
-                            .map(|m| m.with_content(m.content().without_images(Dropped::Unseeable)))
+                            .map(|m| m.with_content(m.content().without_images(why)))
                             .collect();
                         body = self.build_body_ignoring(&text_only, tools, true, &stall_ignore);
                         blind_msgs = Some(text_only);
                         if notify {
+                            // The provider's list says it sees: the request was refused, not the
+                            // model blind, and the notice says which.
+                            let verdict = if self.declared() == Some(true) {
+                                "the provider refused the request, though it lists this model as \
+                                 taking pictures"
+                            } else {
+                                "it cannot see"
+                            };
                             on_token(Delta::Text(&fmt!(
                                 "\n[daimond: the model would not take {} image{}; asking again \
-                                 without {} -- it cannot see]\n",
+                                 without {} -- {}]\n",
                                 images,
                                 if images == 1 { "" } else { "s" },
-                                if images == 1 { "it" } else { "them" })));
+                                if images == 1 { "it" } else { "them" },
+                                verdict)));
                         }
                         continue;
                     }
@@ -1719,9 +1735,10 @@ impl LlmClient {
                     if !retried_blind && images > 0 && !e.retryable {
                         retried_blind = true;
                         blind_pending = true;
+                        let why = self.dropped_why(true);
                         let text_only: Vec<ChatMessage> =
                             messages.iter()
-                            .map(|m| m.with_content(m.content().without_images(Dropped::Unseeable)))
+                            .map(|m| m.with_content(m.content().without_images(why)))
                             .collect();
                         body = self.build_body(&text_only, tools, false);
                         continue;
@@ -1816,14 +1833,78 @@ impl LlmClient {
     /// * `messages` - The conversation about to be sent.
     /// Whether this endpoint has already been caught refusing pictures.
     fn is_blind(&self) -> bool {
+        match self.declared() {
+            Some(d) => !d,
+            None    => self.refused(),
+        }
+    }
+
+    /// The learned flag alone: has a request carrying pictures been turned away here?
+    fn refused(&self) -> bool {
         #[cfg(not(target_arch = "wasm32"))]
         { self.blind.load(std::sync::atomic::Ordering::Relaxed) }
         #[cfg(target_arch = "wasm32")]
         { self.blind.get() }
     }
 
+    /// What the provider's model list says of this model: `Some(true)` takes pictures,
+    /// `Some(false)` is text-only, `None` when it said nothing or was never asked.
+    pub(crate) fn declared(&self) -> Option<bool> {
+        match self.sight.get() {
+            1 => Some(true),
+            2 => Some(false),
+            _ => None,
+        }
+    }
+
+    /// Take the provider's word on pictures, from the `/models` reply the page already holds.
+    ///
+    /// The provider knows its own models and a hand table does not, so what it says outranks
+    /// both name tables ([`model_can_see`], [`model_sight_proven`]) and a refusal.  A refusal
+    /// of a model it lists as seeing is a fault in the request or the route, and is not
+    /// recorded as blindness.  Applies from the next request.
+    ///
+    /// # Arguments
+    /// * `state` - 1 the list shows pictures accepted, -1 text-only, anything else nothing said.
+    pub fn set_sight(&self, state: i32) {
+        self.sight.set(match state { 1 => 1, -1 => 2, _ => 0 });
+    }
+
+    /// Where this client's verdict on pictures comes from, for a message that must name it.
+    pub(crate) fn sight_source(&self) -> &'static str {
+        if self.declared().is_some()    { "provider" }
+        else if !model_can_see(&self.model) { "table" }
+        else                            { "refusal" }
+    }
+
+    /// Why pictures come out of a request or a tool reply for this client, as the elision says it.
+    ///
+    /// # Arguments
+    /// * `refused` - Whether the provider has just turned a request with pictures away.
+    pub(crate) fn dropped_why(&self, refused: bool) -> Dropped {
+        match (self.declared(), refused) {
+            (Some(true),  true)  => Dropped::Refused,
+            (Some(true),  false) => Dropped::Unconfirmed,
+            (Some(false), _)     => Dropped::Listed,
+            (None, _)            => {
+                if refused || !model_can_see(&self.model) || self.refused() {
+                    Dropped::Unseeable
+                } else {
+                    Dropped::Unconfirmed
+                }
+            }
+        }
+    }
+
     /// Record that it does, so no later turn pays to find out again.
+    ///
+    /// Not recorded where the provider lists the model as taking pictures: the refusal was
+    /// about the request, and a sticky verdict of blindness would be the provider's list
+    /// contradicted by one bad call.
     fn mark_blind(&self) {
+        if self.declared() == Some(true) {
+            return;
+        }
         #[cfg(not(target_arch = "wasm32"))]
         { self.blind.store(true, std::sync::atomic::Ordering::Relaxed) }
         #[cfg(target_arch = "wasm32")]
@@ -1857,7 +1938,10 @@ impl LlmClient {
     /// been turned away.  There is no third source -- no `vision` flag is published by anybody --
     /// so a model released after this line was written is taken to see until it says otherwise.
     pub fn can_take_images(&self) -> bool {
-        model_can_see(&self.model) && !self.is_blind()
+        match self.declared() {
+            Some(d) => d,
+            None    => model_can_see(&self.model) && !self.refused(),
+        }
     }
 
     /// Is this endpoint KNOWN to take pictures: a model on the allow-list
@@ -1868,7 +1952,11 @@ impl LlmClient {
     /// request layer asks before it sends one.  A tool that spends a picture's bytes on the
     /// chance that a model sees it asks this, so a model nobody has proven reads the table.
     pub fn sight_proven(&self) -> bool {
-        self.can_take_images() && (self.is_seen() || model_sight_proven(&self.model))
+        match self.declared() {
+            Some(d) => d,
+            None    => self.can_take_images()
+                && (self.is_seen() || model_sight_proven(&self.model)),
+        }
     }
 
     /// The conversation as it must be sent: whole, or with the pictures turned into words when
@@ -1882,8 +1970,9 @@ impl LlmClient {
             return None;
         }
         let _ = messages.len();
+        let why = self.dropped_why(false);
         Some(messages.iter()
-                            .map(|m| m.with_content(m.content().without_images(Dropped::Unseeable)))
+                            .map(|m| m.with_content(m.content().without_images(why)))
                             .collect())
     }
 
@@ -1893,7 +1982,9 @@ impl LlmClient {
         // goes ahead. Refusing here instead would leave a conversation that carries one image
         // permanently unable to take a turn -- which is what happened to a real Diamond on
         // 2026-08-13, where a cover read into the daimon's history bricked every later steer.
-        if images == 0 || model_can_see(&self.model) || self.is_blind() {
+        if images == 0 || self.declared().unwrap_or_else(|| model_can_see(&self.model))
+            || self.is_blind()
+        {
             return Ok(images);
         }
         Err(err!(
@@ -10592,5 +10683,107 @@ pub mod tests {
             .unwrap_or_else(|e| panic!("{}", e));
         assert_eq!((r.content.as_str(), r.stalled, connections(&seen)), ("answer", false, 1),
             "a model thinking silently behind pings was cut mid-thought");
+    }
+
+    // ── the provider's word on pictures (r540 T2, owner D1) ──
+
+    /// What the provider's own model list says of pictures, handed to the client by the page,
+    /// outranks the hand tables and a refusal.  The model ids are real ones the owner uses.
+    mod sight_from_metadata {
+        use super::*;
+
+        /// A multimodal model on no hand list, which the provider declares as taking images.
+        const UNKNOWN: &str = "z-ai/glm-5.3-flash";
+
+        #[test]
+        fn an_unknown_model_is_unconfirmed_until_the_provider_declares_it() {
+            let c = stub_client_of(1, UNKNOWN);
+            assert!(c.can_take_images() && !c.sight_proven(),
+                "the baseline moved: the tables should know nothing of {}", UNKNOWN);
+            assert_eq!(c.dropped_why(false), Dropped::Unconfirmed);
+            c.set_sight(1);
+            assert!(c.sight_proven() && c.can_take_images(),
+                "the provider lists {} as taking images and the client did not believe it", UNKNOWN);
+            assert_eq!(c.declared(), Some(true));
+            assert_eq!(c.sight_source(), "provider");
+        }
+
+        #[test]
+        fn a_text_only_listing_outranks_the_allow_list() {
+            let c = stub_client_of(1, "anthropic/claude-opus-5");
+            assert!(c.sight_proven(), "the allow-list should know claude");
+            c.set_sight(-1);
+            assert!(!c.sight_proven() && !c.can_take_images());
+            assert_eq!(c.dropped_why(false), Dropped::Listed);
+        }
+
+        #[test]
+        fn a_listing_outranks_the_deny_list_too() {
+            let c = stub_client_of(1, "openai/gpt-3.5-turbo");
+            assert!(!c.can_take_images(), "the deny-list should know gpt-3.5");
+            c.set_sight(1);
+            assert!(c.sight_proven() && c.can_take_images());
+        }
+
+        #[test]
+        fn nothing_said_gives_the_tables_back() {
+            let c = stub_client_of(1, "anthropic/claude-opus-5");
+            c.set_sight(-1);
+            c.set_sight(0);
+            assert!(c.sight_proven(), "set_sight(0) did not restore the tables");
+            assert_eq!(c.declared(), None);
+            c.set_sight(7);
+            assert_eq!(c.declared(), None, "an out-of-range state was taken as a verdict");
+        }
+
+        /// The listed model is sent the picture on the first request, and a refusal of that
+        /// request is retried without it but is NOT recorded as blindness: the list said it
+        /// sees, so the refusal was about the request.
+        #[tokio::test]
+        async fn a_refusal_of_a_listed_model_is_a_refusal_and_not_blindness() {
+            let (port, seen) = start_stub(vec![Reply::not_found(), Reply::answer()]).await;
+            let c = stub_client_of(port, UNKNOWN);
+            c.set_sight(1);
+            let mut sink = |_: Delta<'_>| {};
+            if let Err(e) = c.chat_stream_tools(&with_picture("what is on this cover"), None, &mut sink).await {
+                panic!("a refused picture must not kill the turn: {}", e);
+            }
+            let bodies = match seen.lock() { Ok(g) => g.bodies.clone(), Err(e) => panic!("stub: {}", e) };
+            assert!(bodies.len() == 2 && bodies[0].contains(DOC_PNG_B64),
+                "the listed model was not sent the picture first ({} requests)", bodies.len());
+            assert!(!bodies[1].contains(DOC_PNG_B64) && bodies[1].contains("provider refused the request"),
+                "the retry did not say it was a refusal: {}", bodies[1]);
+            assert!(!bodies[1].contains("cannot be shown"), "{}", bodies[1]);
+            assert!(c.can_take_images() && c.sight_proven() && !c.refused(),
+                "one refusal marked a model the provider lists as seeing blind");
+        }
+
+        /// The same refusal where nothing was declared is still learned, as before.
+        #[tokio::test]
+        async fn a_refusal_where_nothing_was_declared_is_still_learned() {
+            let (port, _seen) = start_stub(vec![Reply::not_found(), Reply::answer()]).await;
+            let c = stub_client_of(port, UNKNOWN);
+            let mut sink = |_: Delta<'_>| {};
+            if let Err(e) = c.chat_stream_tools(&with_picture("cover"), None, &mut sink).await {
+                panic!("a refused picture must not kill the turn: {}", e);
+            }
+            assert!(c.refused() && !c.can_take_images(), "the refusal was not learned");
+        }
+
+        /// A model the provider lists as text-only is not sent the picture at all.
+        #[tokio::test]
+        async fn a_text_only_listing_keeps_the_picture_off_the_wire() {
+            let (port, seen) = start_stub(vec![Reply::answer()]).await;
+            let c = stub_client_of(port, UNKNOWN);
+            c.set_sight(-1);
+            let mut sink = |_: Delta<'_>| {};
+            if let Err(e) = c.chat_stream_tools(&with_picture("cover"), None, &mut sink).await {
+                panic!("a text-only model must still take the turn: {}", e);
+            }
+            let bodies = match seen.lock() { Ok(g) => g.bodies.clone(), Err(e) => panic!("stub: {}", e) };
+            assert_eq!(bodies.len(), 1, "the request was sent more than once");
+            assert!(!bodies[0].contains(DOC_PNG_B64), "a picture went to a text-only model");
+            assert!(bodies[0].contains("model list shows this model as text-only"), "{}", bodies[0]);
+        }
     }
 }

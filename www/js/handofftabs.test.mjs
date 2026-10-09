@@ -119,6 +119,7 @@ const LIFTED = [
 	extractFn(APP, 'releaseOwnStaleLeases'),
 	'var _engineHeld = new WeakMap();',
 	extractFn(APP, 'ensureApp'),
+	extractFn(APP, 'applySight'),		// T2: ensureApp puts the model list's picture support on the app
 	extractFn(APP, 'seedEngine'),
 	extractFn(APP, 'armEngine'),
 	extractFn(APP, 'reconcileEngine'),

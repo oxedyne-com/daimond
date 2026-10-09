@@ -1267,6 +1267,46 @@
 		} catch (e) { fault(e); return false; }
 	}
 
+	// ── The arrive seam (U0 of the sync re-plan, 2026-10-08) ───────────────────
+	//
+	// A VIEWER LOGS WHAT IT RECEIVES. Until now the feed said what a device sent and
+	// nothing about what reached it, so "a tile made on one device takes N seconds to
+	// appear on another" had no number. `arrive(k, o)` is the viewer's half: one record
+	// per tile or edit that landed here, carrying the origin's own `made` stamp and this
+	// device's `at`, so `dev/lens.mjs latency` reads the gap off the pair.
+	//
+	//   k    'tile' (a row of a turn), 'edit' (a field of a state kind), or 'commit'
+	//        (a turn's rows held as saved-real, the last row's `made`)
+	//   via  'frame' (the live progress door) or 'parcel' (the account bundle)
+	//
+	// The ring below is kept whether or not sharing is on, because a verifier reads it
+	// (`_arrivals`) in a world where sharing is off; the feed event goes only when sharing
+	// is on, through the one seam. `made` is the origin's wall clock as the row carries it,
+	// so a cross-device figure holds the two clocks' skew until `made` is on the relay's
+	// clock (U1); a negative `ms` is that skew showing, and the reader counts it apart.
+	var ARRIVE_RING = 600;
+	var arrivals    = [];
+
+	/// Record one arrival. Never throws into the caller.
+	function arrive(k, o) {
+		try {
+			var made = +(o && o.made) || 0;
+			var at   = Date.now();
+			var rec  = { k: String(k || 'tile'), at: at, made: made, ms: made ? at - made : null };
+			if (o && typeof o === 'object') {
+				Object.keys(o).forEach(function (key) {
+					if (key === 'k' || key === 'at' || key === 'made' || key === 'ms') return;
+					if (o[key] === undefined || o[key] === null) return;
+					rec[key] = typeof o[key] === 'string' ? o[key].slice(0, 48) : o[key];
+				});
+			}
+			arrivals.push(rec);
+			if (arrivals.length > ARRIVE_RING) arrivals.splice(0, arrivals.length - ARRIVE_RING);
+			event('arrive', rec);
+			return rec;
+		} catch (e) { return null; }
+	}
+
 	/// The feed itself threw. One `feed.fault` is queued and collection stops for
 	/// the session -- but the DRAINER is left running, so the fault reaches the
 	/// gateway rather than sitting in a queue nobody empties. Idempotent: a second
@@ -2178,6 +2218,8 @@
 		// `fetch.fail` kind, and `noteRealFold` tells the fold inference to stand
 		// down because the engine reported a fold itself.
 		event:            event,
+		// The viewer's half of the latency instrument: `arrive(k, {tid, mid, made, ...})`.
+		arrive:           arrive,
 		noteFetchFail:    noteFetchFail,
 		noteRealFold:     noteRealFold,
 		/// Is the feed still collecting? False once it has faulted, even while the
@@ -2209,6 +2251,8 @@
 		// timed collectors, so the outage/reload/fault rules can be driven without
 		// waiting out an interval.
 		_outbox:      function () { return outbox.slice(); },
+		_arrivals:    function () { return arrivals.slice(); },
+		_arrivalsClear: function () { arrivals.length = 0; },
 		_persistNow:  persistNow,
 		_beatTick:    beatTick,
 		_capabilities: capabilities,

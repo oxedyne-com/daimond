@@ -47,6 +47,13 @@ function extractFn(src, name) {
 	return src.slice(start + 1, i);
 }
 
+/// Lifts the one-line `var name = ...;` declaration out of `src`.
+function extractVar(src, name) {
+	const m = src.match(new RegExp('^\\tvar ' + name + ' = [^\\n]*;$', 'm'));
+	if (!m) throw new Error('var not found: ' + name);
+	return m[0].slice(1);
+}
+
 // The message law is lifted with everything `mergeMessages` reaches (dev/syncprobe.mjs
 // `liftSource`), from the same tree as DAIMOND_JS, so no hand-kept list can drift from it.
 if (process.env.DAIMOND_JS && !process.env.TREE) process.env.TREE = join(dirname(process.env.DAIMOND_JS), '..', '..');
@@ -72,6 +79,9 @@ const lifted = new Function('env', [
 	extractFn(src, 'dispatchedPlaceholderIn'),
 	extractFn(src, 'handoffLeaseSettled'),
 	extractFn(src, 'handoffDone'),
+	// The latency instrument's arrive seam (U0) that `adoptFinalFrame` reports to.
+	extractVar(src, 'ARRIVE_FRESH_MS'),
+	extractFn(src, 'noteArrive'),
 	extractFn(src, 'finalFrameChat'),
 	extractFn(src, 'adoptFinalFrame'),
 	'return { mergeMessages: mergeMessages, adoptFinalFrame: adoptFinalFrame };',

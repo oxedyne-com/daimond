@@ -12742,9 +12742,11 @@ fn png_width(png: &[u8]) -> u32 {
 /// `capture` answers such a model, through [`unseen_pictures`], so the daimon is told to use the
 /// table and not to look again.  Any other picture keeps the elision that names the file: a logo
 /// the user asked about is not a page layout, and "Use the table." would be false of it.
-pub(crate) async fn unproven_sight(ctx: &ToolContext, result: MessageContent) -> MessageContent {
+pub(crate) async fn unproven_sight(ctx: &ToolContext, result: MessageContent, why: Dropped)
+    -> MessageContent
+{
     if !result.images().all(|i| ctx.is_shot(&i.data)) {
-        return result.without_images(Dropped::Unseeable);
+        return result.without_images(why);
     }
     let pics: Vec<(u32, String, Vec<u8>)> = result.images()
         .map(|i| (png_width(&i.data), i.source.clone(), i.data.clone()))

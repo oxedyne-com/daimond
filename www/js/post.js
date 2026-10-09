@@ -708,6 +708,11 @@
 	var _locked = 0;
 	var _stale  = false;
 
+	/// Did the last write of the record fail on the box itself? `render` says so at the top
+	/// of the view, because a mailbox that cannot save keeps no message and no gift, and the
+	/// only other tell was a relay that never emptied.
+	var _wedged = false;
+
 	/// A fresh, empty record.
 	function blank() {
 		return { v: REC_V, through: 0, seen: 0, acked: 0, tries: 0, holds: [], msgs: {}, notes: {}, groups: {},
@@ -798,6 +803,14 @@
 	async function save(rec) {
 		var obj = rec || _st;
 		if (!obj) return false;
+		// A RELAYED GIFT'S ENVELOPE NEVER RIDES THE RECORD. A share is sealed whole and can
+		// run to the relay's 3 MiB, inside a box of ~5 MiB for the whole origin: kept inline
+		// it made the record unwritable, `ackThrough` refused to ack, and the relay re-sent
+		// the one row for ever (U0). It is shelved in IndexedDB first -- committed before the
+		// record is written, so before any ack -- and here at the door, not only where a row
+		// is taken, because `adopt` can hand this record an older build's whole share. The
+		// ordinary path has none inline and awaits nothing.
+		if (hasInlineEnv(obj)) await shelve(obj);
 		// Captured HERE, not inside the queued `.then` below. This call can sit behind
 		// an earlier write on `_writing` for a tick or more, and the `storage` handler
 		// (below) nulls `_st` the moment ANOTHER tab writes -- so reading `_st` inside
@@ -806,17 +819,87 @@
 		// version check and answers `blank()`, discarding the store. The snapshot at
 		// the door is what this device actually had when `save()` was called.
 		var snapshot = JSON.stringify(obj);
+		var boxFull = false;		// the box refused the write, as against a wrap that threw
 		var mine = _writing = (_writing || Promise.resolve()).then(async function () {
 			try {
 				var wrapped = await DaimondIdentity.wrap(snapshot);
-				localStorage.setItem(LS, wrapped);
+				try { localStorage.setItem(LS, wrapped); }
+				catch (e2) { boxFull = true; throw e2; }
 				_raw = wrapped;
 				return true;
 			} catch (e) { log('store write failed', e); return false; }
 		});
 		var okSaved = await mine;
 		if (_writing === mine) _writing = null;
+		if (okSaved) flagWedged(false); else if (boxFull) flagWedged(true);
 		return okSaved;
+	}
+
+	// ── A gift's envelope, kept off the record ─────────────────
+	//
+	// `DaimondDurable` is the per-account IndexedDB store, whose quota is orders larger than
+	// the box. Its localStorage FALLBACK writes into the very box this exists to leave, so a
+	// device on the fallback is "not shelvable" and keeps the envelope inline as it always
+	// did: no worse than before, and the banner is the tell when that fails.
+
+	var ENV_KEY = 'shenv/';
+
+	/// Is the IndexedDB path live, rather than the fallback into the box?
+	async function shelvable() {
+		if (!window.DaimondDurable) return false;
+		try { await DaimondDurable.ready(); return !!DaimondDurable.durable(); }
+		catch (e) { return false; }
+	}
+
+	/// Does any share on the record carry its envelope inline?
+	function hasInlineEnv(rec) {
+		var sh = rec && rec.shares;
+		if (!sh) return false;
+		var keys = Object.keys(sh);
+		for (var i = 0; i < keys.length; i++) { if (sh[keys[i]] && sh[keys[i]].env) return true; }
+		return false;
+	}
+
+	/// Move every inline envelope to the store, leaving `envAt` on its share. A taken
+	/// share has landed, so its envelope is simply dropped. An envelope the store refuses
+	/// stays inline, and the share with it. Answers how many shares changed.
+	async function shelve(rec) {
+		var sh = rec.shares || {}, n = 0, can = null;
+		var keys = Object.keys(sh);
+		for (var i = 0; i < keys.length; i++) {
+			var a = keys[i], s1 = sh[a];
+			if (!s1 || !s1.env) continue;
+			if (s1.taken) { delete s1.env; delete s1.envAt; n++; continue; }
+			if (can === null) can = await shelvable();
+			if (!can) continue;
+			var env = s1.env, ok = false;
+			try { ok = await DaimondDurable.set(ENV_KEY + a, env); } catch (e) { ok = false; }
+			if (!ok) { log('envelope not shelved', a); continue; }
+			if (s1.taken) {
+				// Added while the write was in flight: addShare has pruned, so this is an orphan.
+				try { await DaimondDurable.del(ENV_KEY + a); } catch (e) { /* best effort */ }
+				continue;
+			}
+			if (s1.env === env) { s1.envAt = 'idb'; delete s1.env; n++; }
+		}
+		return n;
+	}
+
+	/// A share's envelope: inline, or fetched from the store. '' where this device holds
+	/// none.
+	async function envOf(sh, key) {
+		if (sh.env) return String(sh.env);
+		if (!sh.envAt || !window.DaimondDurable) return '';
+		var v = null;
+		try { v = await DaimondDurable.get(ENV_KEY + key); } catch (e) { v = null; }
+		return typeof v === 'string' ? v : '';
+	}
+
+	/// Raise or lower the mailbox-cannot-save banner, drawing only on a change.
+	function flagWedged(bad) {
+		if (_wedged === bad) return;
+		_wedged = bad;
+		try { render(); } catch (e) { /* the panel is not up */ }
 	}
 
 	/// Drop what is in memory, for an account switch or a lock.
@@ -1066,6 +1149,19 @@
 		delete rec.holds;		// per-device view of the shared box, never on the parcel -- see `seen`.
 		if (cursorsLocal()) { delete rec.through; delete rec.acked; }
 		delete rec.devAcks;		// what this device's relay last said, see `cursorsLocal`.
+		return stripEnv(rec);
+	}
+
+	/// A gift's envelope never rides the parcel (U0). It is up to 3 MiB against a 5 MiB
+	/// parcel ceiling, and the chunk liveness that would let a far device fetch it has no
+	/// `@sh/` manifest kind: the gift is Added on the device that collected it, and the
+	/// diamond it makes reaches the others by diamond sync, `taken` merging as before.
+	function stripEnv(rec) {
+		var sh = rec.shares;
+		if (!sh) return rec;
+		Object.keys(sh).forEach(function (a) {
+			if (sh[a] && typeof sh[a] === 'object') { delete sh[a].env; delete sh[a].envAt; }
+		});
 		return rec;
 	}
 
@@ -1129,7 +1225,8 @@
 			var r = rec.shares[addr];
 			if (!r || typeof r !== 'object' || !r.addr) return;
 			var mine = _st.shares[addr];
-			if (!mine) { _st.shares[addr] = r; moved = true; return; }
+			// A marker from a parcel points at THAT device's store, not this one's.
+			if (!mine) { if (!r.env) delete r.envAt; _st.shares[addr] = r; moved = true; return; }
 			if (r.taken && !mine.taken)   { mine.taken = 1; moved = true; }
 			if (r.hidden && !mine.hidden) { mine.hidden = 1; moved = true; }
 		});
@@ -2766,8 +2863,13 @@
 				'This build cannot share a diamond: its share format is not loaded.') };
 		}
 		var rec = st.shares[String(addr)];
+		var env = await envOf(rec, String(addr));
+		if (!env) {
+			return { ok: false, why: tOr('post.share_env_gone',
+				'That diamond cannot be added from this device: it was not collected here.') };
+		}
 		var reading;
-		try { reading = await DaimondShare.open(rec.env, rec.addr); }
+		try { reading = await DaimondShare.open(env, rec.addr); }
 		catch (e) { return { ok: false, why: String((e && e.message) || e) }; }
 		var r;
 		try {
@@ -2784,7 +2886,13 @@
 		// share was a page the receiver declined, and that is an answer rather than
 		// a failure: re-drawing the row would ask the same question again for ever.
 		rec.taken = 1;
-		await save();
+		// THE ENVELOPE GOES ONLY AFTER THE `taken` SAVE HAS LANDED. Pruned first, a failed
+		// save leaves a record that still says "waiting" with nothing left to Add from.
+		if (await save()) {
+			try { await DaimondDurable.del(ENV_KEY + String(addr)); } catch (e) { /* an orphan, harmless */ }
+			delete rec.envAt;
+			await save();
+		}
 		render();
 		return r;
 	}
@@ -3057,11 +3165,12 @@
 	}
 
 	/// The diamonds waiting to be added, ignored or blocked. Newest first, as the
-	/// message tray is.
+	/// message tray is. Only those this device holds the envelope of: a share adopted
+	/// from a parcel is metadata alone, and a row that cannot be Added is not offered.
 	function shares() {
 		if (!_st || !_st.shares) return [];
 		return Object.keys(_st.shares).map(function (k) { return _st.shares[k]; })
-			.filter(function (s2) { return s2 && !s2.taken && !s2.hidden; })
+			.filter(function (s2) { return s2 && !s2.taken && !s2.hidden && (s2.env || s2.envAt); })
 			.sort(function (a, b) { return (b.ts | 0) - (a.ts | 0); });
 	}
 
@@ -3199,6 +3308,11 @@
 				'Unlock Daimond to read your messages.')));
 			filled(true);		// locked is a state this view drew, not an absent feature
 			return;
+		}
+		if (_wedged) {
+			h.appendChild(elt('p', 'post-bad', tOr('post.save_failed',
+				'This device could not save your mailbox. Its storage may be full, so new messages '
+				+ 'and diamonds are not being kept. Free some space, then reload.')));
 		}
 
 		// The request tray, above the list, because it is the thing waiting on a
@@ -4177,6 +4291,8 @@
 				unread:  unread(),
 			};
 		},
+		/// Is the mailbox failing to save? Published for a verifier.
+		wedged:   function () { return _wedged; },
 		/// Drop what is in memory, for an account switch, a lock, or a verifier
 		/// that wants the store read again from disk.
 		forget:   forget,
