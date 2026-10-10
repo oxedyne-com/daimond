@@ -12,7 +12,7 @@
    and holds the act open for `ms`. Press Undo and `revert` runs.
    Let it expire and `commit` runs. One at a time: a second `able`
    commits the first at once rather than stacking, because toasts
-   are drawn at one fixed place and two of them are a mess (D8).
+   are drawn in one row and two of them are a mess (D8).
 
    THE SPLIT THAT MAKES IT SAFE. `revert` is cheap and local —
    put the row back on the rail, put the old name back. `commit` is
@@ -36,7 +36,7 @@
 	var DEFAULT_MS = 5000;
 
 	// The act in the window, or null. One at a time, always.
-	var held = null;		// { text, revert, commit, since, timer }
+	var held = null;		// { text, revert, commit, shown, since, timer }
 	var el = null;			// #daimond-undo, built once and reused
 
 	function t(k, v) { return window.DaimondI18n ? DaimondI18n.t(k, v) : k; }
@@ -80,6 +80,39 @@
 		return el;
 	}
 
+	/// A ROW OF THE COMPOSER, NOT AN OVERLAY (r547 QA-B F1/F2). A toast floating above the
+	/// composer covers whatever is drawn there: at a fixed 96px it stood over Send on a phone
+	/// (r545 QA-C2), and measured above the input bar it stood over the workspace strip's "+",
+	/// "Nothing kept here", the mark notice and the last message's Retry and Edit; at z 9999
+	/// it also stood over a tall dialog's buttons. Every one of those was a tap meant for
+	/// something else that reverted the turn's files. So the window is a row in the flow, at
+	/// the top of the composer area: the layout makes room for it, it covers nothing, and an
+	/// open dialog covers it the way it covers the rest of the page.
+	///
+	/// The composer areas are the bars marked `data-undo-row`; the attribute names the
+	/// element the row goes in front of, or is empty for the bar itself. The row goes to the
+	/// one a press at its centre reaches (the phone's sheet over the chat, say), else to the
+	/// first whose area is drawn even with its bar hidden (a chat panel with no chat open).
+	function home() {
+		var bars = document.querySelectorAll('[data-undo-row]'), drawn = null, top = null;
+		for (var i = 0; i < bars.length && !top; i++) {
+			var id = bars[i].getAttribute('data-undo-row');
+			var before = (id && document.getElementById(id)) || bars[i];
+			var box = before.parentNode;
+			if (!box || !box.getBoundingClientRect) continue;
+			var br = box.getBoundingClientRect();
+			if (!br.width || !br.height) continue;
+			if (!drawn) drawn = before;
+			var r = bars[i].getBoundingClientRect(), at = null;
+			if (r.width && r.height) {
+				try { at = document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2); } catch (e) { /* no layout */ }
+			}
+			if (at && bars[i].contains(at)) top = before;
+		}
+		var to = top || drawn;
+		if (to && (el.parentNode !== to.parentNode || el.nextSibling !== to)) to.parentNode.insertBefore(el, to);
+	}
+
 	function hide() {
 		if (el) { el.hidden = true; el.classList.remove('up'); }
 	}
@@ -108,6 +141,9 @@
 	/// did not get it.
 	function undo() {
 		if (!held) return;
+		// An act of a chat that is no longer on screen is withdrawn, never applied to
+		// the page now showing (r547 QA-B F3).
+		if (!isShown(held)) { flush(); return; }
 		var act = held;
 		held = null;
 		if (act.timer) clearTimeout(act.timer);
@@ -122,6 +158,8 @@
 	/// * `opts.text` - what the toast says; already translated by the caller.
 	/// * `opts.ms` - the window, in milliseconds. 5000 where absent.
 	/// * `opts.label` - the button's words, already translated; "Undo" where absent.
+	/// * `opts.shown` - is what the act belongs to still on screen? Where given, the act is
+	///   withdrawn as soon as it is not (`check`), and a press then reverts nothing.
 	function able(opts) {
 		opts = opts || {};
 		// The one before it stands, now — never two windows open at once (D8).
@@ -131,6 +169,7 @@
 			text:   String(opts.text == null ? '' : opts.text),
 			revert: opts.revert,
 			commit: opts.commit,
+			shown:  typeof opts.shown === 'function' ? opts.shown : null,
 			since:  Date.now(),
 			timer:  null,
 		};
@@ -139,11 +178,22 @@
 		var label = opts.label == null || opts.label === '' ? tOr('undo.undo', 'Undo') : String(opts.label);
 		node._btn.textContent = label;
 		node._btn.setAttribute('aria-label', label);
+		home();
 		node.hidden = false;
 		// Raised after the node is shown, so the transition has a frame to run in.
 		try { requestAnimationFrame(function () { if (el) el.classList.add('up'); }); }
 		catch (e) { node.classList.add('up'); }
 		held.timer = setTimeout(flush, ms);
+	}
+
+	function isShown(act) {
+		try { return !act.shown || !!act.shown(); } catch (e) { return false; }
+	}
+
+	/// Withdraw the act in the window when what it belongs to has left the screen. Called by
+	/// every path that changes the chat on screen; an act with no `shown` stays.
+	function check() {
+		if (held && !isShown(held)) flush();
 	}
 
 	/// What is in the window, for anything that has to know whether an act is
@@ -169,6 +219,7 @@
 		able:    able,
 		pending: pending,
 		flush:   flush,
+		check:   check,
 		undo:    undo,
 		DEFAULT_MS: DEFAULT_MS,
 	};

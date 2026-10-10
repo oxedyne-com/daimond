@@ -2610,6 +2610,7 @@
 	'capp.merge_conflict': 'Hay una página de {name} más nueva. Tus propios cambios se conservan. Donde cambia las mismas líneas que tú, se quedan las tuyas, y ambas se muestran abajo.',
 	'capp.merge_ok': 'Actualizar la página',
 	'capp.merge_later': 'Ahora no',
+	'capp.merge_waiting': 'Actualizada. La nueva página aparece en cuanto se guarde la entrada que estás escribiendo.',
 	'capp.merge_show': 'Donde ambos cambiasteis',
 	'capp.merge_line': 'Línea {n}',
 	'capp.merge_yours': 'La tuya',

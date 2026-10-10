@@ -2623,6 +2623,7 @@
 	'capp.merge_conflict': 'Une page {name} plus récente existe. Vos propres modifications sont conservées. Là où elle modifie les mêmes lignes que vous, les vôtres restent, et les deux sont montrées ci-dessous.',
 	'capp.merge_ok': 'Mettre la page à jour',
 	'capp.merge_later': 'Pas maintenant',
+	'capp.merge_waiting': 'Mise à jour. La nouvelle page s’affiche dès que l’entrée en cours de saisie est enregistrée.',
 	'capp.merge_show': 'Là où vous avez tous deux modifié',
 	'capp.merge_line': 'Ligne {n}',
 	'capp.merge_yours': 'La vôtre',

@@ -17,6 +17,11 @@
 //   5  Typing in the memory panel, an arrival, and the panel folded: the typing stays.
 //   6  Edit pressed while an arrival that changes the page is being drawn (by the clock,
 //      and at each of the redraw's reads of the page): the form is not wiped.
+//   7  A redraw in the middle of a re-read leaves another device's newer set value
+//      alone (r545 F1-2).
+//   8  A set typed and not ticked survives a log arrival and then a page arrival; the
+//      page arrival is drawn after the tick (r545 QA B F-B1).
+//   9  "Update the Page" on a forked page waits for a typed set too (r545 QA B F-B2).
 //
 // Fail-first: RED on dfd760b3 (the r543 repaint, which remounts) and on 08b15694 (no
 // repaint at all); GREEN on fire/crysync.
@@ -345,6 +350,139 @@ try {
 			if (b) b.click();
 		});
 		await pa.waitForTimeout(1500);
+	}
+
+	// ── The gym: a set row, pending, typed into and not ticked ──────
+	const GYM = 'log/gym/' + ymd(new Date()).slice(0, 7) + '.jsonl';
+	const tile = (re) => inFrame((r) => {
+		const t = [...document.querySelectorAll('[data-a="tile"]')].find(x => new RegExp(r).test(x.textContent));
+		if (t) t.click();
+		return !!t;
+	}, re);
+	const setKeys = () => inFrame(() => [...document.querySelectorAll('[data-set$="|kg"]')].map(i => i.getAttribute('data-set')));
+	const kgOf = (key) => inFrame((k) => {
+		const i = [...document.querySelectorAll('[data-set]')].find(x => x.getAttribute('data-set') === k);
+		return i ? i.value : null;
+	}, key);
+	/// A new pending squat set on the open page; answers its `data-set` key for kg.
+	const pendingSet = async () => {
+		await inFrame(() => { const b = document.querySelector('[data-a="lane"][data-v="gym"]'); if (b) b.click(); });
+		await pa.waitForTimeout(900);
+		const before = await setKeys() || [];
+		if (!(await tile('Add exercises'))) { await tile('Start a workout'); await pa.waitForTimeout(1000); await tile('Add exercises'); }
+		await pa.waitForTimeout(900);
+		await inFrame(() => { const b = document.querySelector('[data-a="ptoggle"][data-v="sq"]'); if (b) b.click(); });
+		await pa.waitForTimeout(300);
+		await inFrame(() => { const b = document.querySelector('[data-a="padd"]'); if (b) b.click(); });
+		await pa.waitForTimeout(1200);
+		return ((await setKeys()) || []).find(k => before.indexOf(k) < 0) || '';
+	};
+	const typeSet = async (key, v) => {
+		const loc = fr().locator('[data-set="' + key + '"]');
+		await loc.fill(v);
+		await pa.waitForTimeout(200);
+		await inFrame(() => document.activeElement && document.activeElement.blur());
+		await pa.waitForTimeout(300);
+	};
+	const busy = () => pa.evaluate(() => { try { return window.DaimondCrystal.busy(); } catch (e) { return null; } });
+
+	// ══ 7. A theme redraw in the middle of a re-read (r545 F1-2) ═════
+	// B moves a pending set A has not typed into. A redraw landing while A re-reads (here:
+	// after each shard is read, which is what a theme change does at the wrong moment)
+	// must not write the old value in A's row over B's newer one.
+	await reopen();
+	const k7 = await pendingSet();
+	check(!!k7, '7: A has a pending squat set', k7);
+	const e7 = String(await get(pa, id, GYM) || '').split('\n').filter(Boolean).map(x => JSON.parse(x)).filter(e => e.id === k7.split('|')[0]).pop();
+	if (e7) {
+		const nb = Object.assign({}, e7, { f: Object.assign({}, e7.f, { kg: '99' }), w: Date.now() + 1 });
+		// The page's functions are private to its closure, so the redraw is driven from outside,
+		// as a person's resize or theme change would: the frame's width flips every 40 ms through
+		// the whole arrival, and each flip redraws (ResizeObserver) whatever re-read is in flight.
+		await markFrame();
+		await fromB(id, bAppend, { shard: GYM, line: JSON.stringify(nb) });
+		let flips = 0;
+		for (const t0 = Date.now(); Date.now() - t0 < 3000; flips++) {
+			await pa.setViewportSize({ width: flips % 2 ? 1180 : 1280, height: 1400 });
+			await pa.waitForTimeout(40);
+		}
+		await pa.setViewportSize({ width: 1280, height: 1400 });
+		await pa.waitForTimeout(800);
+		const v7 = await kgOf(k7);
+		check(v7 === '99', '7: B\'s newer value for the set stands through redraws mid re-read',
+			'row shows ' + JSON.stringify(v7) + ' was ' + JSON.stringify(e7.f) + ', ' + flips + ' redraws');
+		check(await frameMark() === 'same', '7: same mount', await frameMark());
+	} else check(false, '7: the pending set is on disk', k7);
+
+	// ══ 8. A typed, unticked set through a log arrival and a page arrival (r545 F-B1) ══
+	await typeSet(k7, '142.5');
+	check(await busy() === true, '8: typed and blurred, the page is busy', String(await busy()));
+	await fromB(id, bAppend, { shard: SHARD, line: ent(78.8, 'b3', 1) });
+	await pa.waitForTimeout(2500);
+	check(await busy() === true, '8: still busy after another device\'s log arrives', String(await busy()));
+	// The person taps the field again and taps away, typing nothing.
+	await fr().locator('[data-set="' + k7 + '"]').click().catch(() => {});
+	await pa.waitForTimeout(200);
+	await inFrame(() => document.activeElement && document.activeElement.blur());
+	await pa.waitForTimeout(500);
+	await markFrame();
+	await fromB(id, bPage, { tag: 'page from B (8)' });
+	await pa.waitForTimeout(4000);
+	const v8 = await kgOf(k7);
+	check(await frameMark() === 'same' && v8 === '142.5',
+		'8: a page arrival waits, and the typed set is still there', await frameMark() + ' ' + JSON.stringify(v8));
+	await inFrame((k) => { const b = document.querySelector('[data-a="tick"][data-v="' + k + '"]'); if (b) b.click(); }, k7.split('|')[0]);
+	await pa.waitForTimeout(1500);
+	check(/142\.5/.test(String(await get(pa, id, GYM) || '')), '8: the tick writes it');
+	let m8 = 'same';
+	for (let k = 0; k < 10 && m8 === 'same'; k++) { await pa.waitForTimeout(500); m8 = await frameMark(); }
+	check(m8 === 'remounted', '8: and then the page that arrived is drawn', m8);
+
+	// ══ 9. "Update the Page" with a set typed and not ticked (r545 F-B2) ══
+	// A forked page of a past template that says when it is mid-entry, and its record.
+	const BASES = path.join(DIR, 'base');
+	const bf = fs.existsSync(BASES) ? fs.readdirSync(BASES).filter(f => /^[0-9a-f]{64}\.html$/.test(f)) : [];
+	const b9 = bf.map(f => ({ f, t: fs.readFileSync(path.join(BASES, f), 'utf8') }))
+		.filter(x => x.t.indexOf("cmd: 'dirty'") >= 0).sort((x, y) => y.t.length - x.t.length)[0];
+	check(!!b9, '9: a served base page that reports mid-entry', bf.length + ' bases');
+	if (b9) {
+		await put(pa, id, 'crystal.html', b9.t + '\n<!-- forked here -->\n');
+		await put(pa, id, 'capp.json', JSON.stringify({ capp: 'lifelog', v: MAN.v - 1, files: { 'crystal.html': b9.f.slice(0, 64) } }));
+		await reopen();
+		await pa.waitForTimeout(1500);
+		check(!!(await pa.$('#capp-offer .capp-offer-ok')), '9: the forked page is offered the template\'s fix');
+		const k9 = await pendingSet();
+		await typeSet(k9, '77.5');
+		await markFrame();
+		await pa.click('#capp-offer .capp-offer-ok').catch(() => {});
+		await pa.waitForTimeout(3000);
+		const v9 = await kgOf(k9);
+		const note9 = await pa.evaluate(() => { const e = document.getElementById('capp-offer'); return e ? e.textContent : ''; });
+		check(await frameMark() === 'same' && v9 === '77.5', '9: Update the Page waits for the typed set',
+			await frameMark() + ' ' + JSON.stringify(v9));
+		check(/entry you are typing/.test(note9), '9: and says why nothing has moved yet', note9.slice(0, 120));
+		await inFrame((k) => { const b = document.querySelector('[data-a="tick"][data-v="' + k + '"]'); if (b) b.click(); }, k9.split('|')[0]);
+		let m9 = 'same';
+		for (let k = 0; k < 10 && m9 === 'same'; k++) { await pa.waitForTimeout(500); m9 = await frameMark(); }
+		// The mark flips as the old frame goes; the new one's scripts may not have run yet.
+		let fixd = false, fr9 = [];
+		for (let k = 0; k < 20 && !fixd; k++) {
+			fr9 = [];
+			for (const f of pa.frames().filter(f => f.url().indexOf('blob:') === 0)) {
+				// The page's functions are closure-private: the drawn frame is measured by its source.
+				fr9.push(await f.evaluate(() => {
+					const h = document.documentElement.outerHTML;
+					return (/function anyTyped\(/.test(h) ? 'fix' : 'nofix') + (/forked here/.test(h) ? '+fork' : '') + ' ' + h.length;
+				}).catch(() => 'err'));
+			}
+			fixd = fr9.some(x => /^fix/.test(x));
+			if (!fixd) await pa.waitForTimeout(250);
+		}
+		const pg9 = await pa.evaluate((id) => window.__free.read_crystal_page(id), id);
+		const set9 = /77\.5/.test(String(await get(pa, id, GYM) || ''));
+		check(m9 === 'remounted' && fixd && /forked here/.test(pg9) && set9,
+			'9: after the tick the merged page is drawn, the fork kept and the set written',
+			JSON.stringify({ m9, fixd, fr9, inPage: /function anyTyped/.test(pg9), fork: /forked here/.test(pg9), set9 }));
 	}
 	await pa.screenshot({ path: scratch('crystalsync-end.png') });
 } catch (e) {

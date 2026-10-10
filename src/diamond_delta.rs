@@ -395,8 +395,9 @@ mod tests {
 	#[test]
 	fn test_the_fixture_is_the_real_shipped_capp_page() {
 		// 101,361 until U-A #2 (2026-10-09) drew its dates through DaimondTime; 101,783 until crysync's
-		// v5 re-read (r545, d8b0c821). Every claim below re-ran on the new page in the same run.
-		assert_eq!(PAGE.len(), 105_464, "the Log Life page is not the size it was measured at");
+		// v5 re-read (r545, d8b0c821); 105,464 until v6 kept typed sets as the page's own record
+		// (r545 QA B F-B1). Every claim below re-ran on the new page in the same run.
+		assert_eq!(PAGE.len(), 106_641, "the Log Life page is not the size it was measured at");
 	}
 
 	/// **The whole claim.** A hundred turns of the real page, every version

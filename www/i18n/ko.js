@@ -2652,6 +2652,7 @@
 	'capp.merge_conflict': '더 새로운 {name} 페이지가 있습니다. 직접 한 변경은 그대로 남습니다. 같은 줄을 바꾼 곳은 당신의 줄을 남기고, 둘 다 아래에 보여 줍니다.',
 	'capp.merge_ok': '페이지 업데이트',
 	'capp.merge_later': '나중에',
+	'capp.merge_waiting': '업데이트했습니다. 입력 중인 항목이 저장되면 새 페이지가 표시됩니다.',
 	'capp.merge_show': '둘 다 바꾼 곳',
 	'capp.merge_line': '{n}번째 줄',
 	'capp.merge_yours': '당신의 것',

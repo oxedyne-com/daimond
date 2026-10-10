@@ -1811,51 +1811,21 @@ function undo(es) {
 	for (i = 0; i < es.length; i++) out.push({ id: es[i].id, at: es[i].at, day: es[i].day, del: 1 });
 	put(l.id, out).then(function () { TOAST = null; draw(); });
 }
-/// The rows typed into and not yet ticked, per lane: `"<entry id>|<field>"` to what was
-/// typed. THIS record, and not the DOM, says what a person has typed: a redraw writes the
-/// typed value back as the row's `defaultValue`, so a test of value against default found
-/// nothing typed after the first redraw, the page told the app it was idle, and a remount
-/// took the set (r545 QA B F-B1). The tick, the form's save and a delete clear an entry's
-/// rows; an entry ticked or deleted on another device clears them as it arrives.
-var TYPED = {};
-function typed(ev) {
-	var t = ev.target, k = t && t.getAttribute ? t.getAttribute('data-set') : null;
-	if (k == null || !APP.contains(t)) return;
-	var l = lane();
-	(TYPED[l.id] || (TYPED[l.id] = {}))[k] = t.value;
-}
-function untype(ln, id) {
-	var m = TYPED[ln], k;
-	if (m) for (k in m) if (k.indexOf(id + '|') === 0) delete m[k];
-}
-/// Is this typed row still one there is something to type into?
-function typedLive(ln, k) {
-	var e = (LOG[ln] || {})[k.split('|')[0]];
-	return !!(e && e.p && !e.del);
-}
-function anyTyped() {
-	var ln, k;
-	for (ln in TYPED) for (k in TYPED[ln]) if (typedLive(ln, k)) return true;
-	return false;
-}
-/// What has been typed into the rows of the live list, moved into the copy in memory.
-/// The pending entry is already on disk; the tick is what writes it. A redraw that
-/// skipped this step would type over the row being filled in, which is the fault the
-/// entry form and the lane builder each carried once.
-///
-/// From `TYPED` only, never from every row on screen: a re-read may have brought a newer
-/// copy of an entry nobody typed into here, and the old values still standing in its row
-/// must not be written over it (r545 F1-2: a theme change mid re-read did exactly that).
-function readSets() {
-	var ln, k;
-	for (ln in TYPED) {
-		var m = TYPED[ln];
-		for (k in m) {
-			if (!typedLive(ln, k)) { delete m[k]; continue; }
-			var p = k.split('|'), e = LOG[ln][p[0]];
-			e.f = e.f || {};
-			if (m[k] === '') delete e.f[p[1]]; else e.f[p[1]] = m[k];
-		}
+/// What has been typed into the rows of the live list but not yet committed. The
+/// pending entry is already on disk, so this only moves the typing into the copy in
+/// memory; the tick is what writes it. A redraw that skipped this step would type
+/// over the row being filled in, which is the fault the entry form and the lane
+/// builder each carried once.
+/// `typed`: only the rows typed into since they were drawn, so a re-read that brought a
+/// newer copy of an entry is not overwritten by the old values still standing in its row.
+function readSets(typed) {
+	var l = lane(), ins = APP.querySelectorAll('[data-set]'), m = LOG[l.id] || {}, i;
+	for (i = 0; i < ins.length; i++) {
+		if (typed && ins[i].value === ins[i].defaultValue) continue;
+		var p = ins[i].getAttribute('data-set').split('|'), e = m[p[0]];
+		if (!e) continue;
+		e.f = e.f || {};
+		if (ins[i].value === '') delete e.f[p[1]]; else e.f[p[1]] = ins[i].value;
 	}
 }
 function readInputs() {
@@ -1999,7 +1969,6 @@ document.addEventListener('click', function (ev) {
 			delete c5.p;
 			c5.at = isoAt(new Date());
 			c5.src = 'tick';
-			untype(l.id, v);
 			put(l.id, [c5]).then(function () { restBump(l); draw(); });
 			draw();
 		}
@@ -2015,7 +1984,6 @@ document.addEventListener('click', function (ev) {
 	else if (a === 'del') {
 		var de = (LOG[l.id] || {})[v];
 		if (de) {
-			untype(l.id, v);
 			put(l.id, [{ id: v, at: de.at, day: de.day, del: 1 }]).then(function () {
 				S.scr = (sc && sc.back) || null; toast('Deleted'); draw();
 			});
@@ -2033,7 +2001,7 @@ document.addEventListener('click', function (ev) {
 		// does a set typed straight in. Correcting an old entry does not: nothing has
 		// just been done.
 		var was = !!ne.p, fresh = was || !sc.id;
-		if (was) { delete ne.p; ne.at = isoAt(new Date()); untype(l.id, ne.id); }
+		if (was) { delete ne.p; ne.at = isoAt(new Date()); }
 		if (fresh && l.rest) restCtx();
 		S.scr = (sc && sc.back) || null;
 		put(l.id, [ne]).then(function () { if (fresh) restBump(l); toast('Saved'); draw(); });
@@ -2088,7 +2056,7 @@ function settle() {
 		if (k) v = a.getAttribute(k);
 		try { s0 = a.selectionStart; s1 = a.selectionEnd; } catch (x) { s0 = null; }
 	}
-	try { readSets(); } catch (x) { }
+	try { readSets(true); } catch (x) { }
 	draw();
 	if (!k) return;
 	var ins = APP.querySelectorAll('[' + k + ']'), i;
@@ -2102,16 +2070,16 @@ function settle() {
 /// Is a person mid-entry? A screen over the log, a field with the focus, or a row typed
 /// into and not ticked. Said to the app only when it changes.
 function dirty() {
-	var on = !!S.scr, a = document.activeElement;
+	var on = !!S.scr, a = document.activeElement, i;
 	if (!on && a && a !== document.body && APP.contains(a) && /^(INPUT|TEXTAREA|SELECT)$/.test(a.tagName)) on = true;
-	if (!on) on = anyTyped();
+	if (!on) {
+		var ins = APP.querySelectorAll('[data-set]');
+		for (i = 0; i < ins.length; i++) if (ins[i].value !== ins[i].defaultValue) { on = true; break; }
+	}
 	if (on === DIRTY) return;
 	DIRTY = on;
 	post({ cmd: 'dirty', on: on });
 }
-// `typed` first, so `dirty` sees the row it has just recorded.
-document.addEventListener('input', typed);
-document.addEventListener('change', typed);
 document.addEventListener('input', dirty);
 document.addEventListener('focusin', dirty);
 document.addEventListener('focusout', function () { setTimeout(dirty, 0); });

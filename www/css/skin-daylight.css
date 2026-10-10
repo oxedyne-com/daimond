@@ -1122,7 +1122,7 @@
    every tile. `overflow: hidden` plus the last-reading ellipsis below is
    the narrowest-width fallback: earlier readings stay whole, only the last
    one gives up characters, and the row never wraps. */
-:root[data-skin="daylight"] .diamond-box > .diamond-meter      { grid-area: meter; margin-top: 3px; flex-wrap: nowrap; min-width: 0; gap: 0; white-space: nowrap; overflow: hidden; }
+:root[data-skin="daylight"] .diamond-box > .diamond-meter      { grid-area: meter; margin-top: 3px; flex-wrap: nowrap; min-width: 0; white-space: nowrap; overflow: hidden; }
 :root[data-skin="daylight"] .diamond-box .tile-model-chip      { min-width: 0; }	/* ellipsis already set, app.css */
 :root[data-skin="daylight"] .diamond-box > :not(.diamond-meter) { min-width: 0; }
 /* V4/V6. The same shape for a chat tile's model/meter pair (`.tile-active`):
@@ -1145,9 +1145,15 @@
    chip with no meter after it on the old shared line touched the first tag
    ("gpt-5home"). V1 already keeps the model and the tags on their own rows,
    so only the meter's internal join is left to state. */
+/* The join is the "·" and its margins, so the flex gap is nothing and both meters
+   take it from one rule: the chat meter used to keep app.css's 8px gap on top of
+   the dot's margins, and the Diamond meter none, so a price tag (which drops the
+   dot) touched the percentage before it (D-20261010-03). */
+:root[data-skin="daylight"] :is(.diamond-meter, .tile-meter) { --meter-join: 6px; gap: 0; }
+:root[data-skin="daylight"] :is(.diamond-meter, .tile-meter) > * + .tagb { margin-left: var(--meter-join); }
 :root[data-skin="daylight"] :is(.diamond-meter, .tile-meter) > * + *::before {
 	content: '\00b7';
-	margin: 0 6px;
+	margin: 0 var(--meter-join);
 	color: var(--text-muted);
 	font-family: var(--font);
 }
@@ -1167,17 +1173,10 @@
 /* U3 (D-20260929-03 varlen sweep): a reading's own width no longer moves the
    readings after it. Figures are fixed-width digits, the context percentage
    is given the room its widest value ("100%") needs and right-aligned within
-   it, and the token count keeps enough room that "12 tok" and "1.2M tok" take
-   the same box -- so a sibling tile's readings land at the same x whatever
-   this one's numbers say. */
+   it -- so a sibling tile's readings land at the same x whatever this one's
+   numbers say. */
 :root[data-skin="daylight"] :is(.diamond-meter, .tile-meter) > * { font-variant-numeric: tabular-nums; }
 :root[data-skin="daylight"] .tile-ctx-pct { min-width: 4ch; text-align: right; }
-/* A FLOOR alone still let an extreme reading ("123,456,789 tok", 15ch) grow
-   past it and push whatever comes after -- a ceiling too, with its own
-   ellipsis for the overflow, same as the row's actual last reading gets. */
-:root[data-skin="daylight"] .tile-meter > .tile-tok {
-	width: 10ch; display: inline-block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; vertical-align: bottom;
-}
 
 /* ── Phone ─────────────────────────────────────────────────── */
 @media (max-width: 760px) {

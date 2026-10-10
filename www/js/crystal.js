@@ -222,15 +222,20 @@
 	///
 	/// A scanner of its own because `JSON.parse` does not say where in every browser:
 	/// WebKit's message names no position at all, and V8's and Gecko's differ in form.
-	/// It points where `serde_json` (the engine's K0 gate) does, at the first character
-	/// that cannot continue the text -- the `b` in `"a "b" c"`.
+	/// It points where the engine's K0 gate (`crystal_json_fault`) does, so the owner and
+	/// the daimon are sent to one place: the first character that cannot continue the
+	/// text -- the `b` in `"a "b" c"` -- except where the fault began earlier, at a
+	/// trailing comma, the backslash of a bad escape, the start of a misspelt `true`, or
+	/// the last character of a text cut off inside a string. The table both suites run is
+	/// dev/fixtures/crystal_json_faults.json (r546 D-26 F5).
 	function fault(text) {
 		var s = str(text);
 		var n = s.length;
 		var i = 0;
 		var HEX = /[0-9a-fA-F]/;
 		var DIG = /[0-9]/;
-		var stop = function () { throw { jsonAt: i }; };
+		var stop = function (at) { throw { jsonAt: at === undefined ? i : at }; };
+		var cut = function () { stop(Math.max(0, n - 1)); };	// inside a string
 		var ws = function () {
 			while (i < n) {
 				var c = s.charCodeAt(i);
@@ -242,26 +247,31 @@
 			while (DIG.test(s.charAt(i))) i++;
 		};
 		var word = function (w) {
-			for (var k = 0; k < w.length; k++) {
-				if (s.charAt(i) !== w.charAt(k)) stop();
-				i++;
-			}
+			if (s.slice(i, i + w.length) !== w) stop();
+			i += w.length;
 		};
 		var string = function () {
 			i++;	// the opening quote
 			for (;;) {
-				if (i >= n) stop();
+				if (i >= n) cut();
 				var c = s.charCodeAt(i);
 				if (c === 34) { i++; return; }
 				if (c < 32) stop();
 				if (c !== 92) { i++; continue; }
-				i++;	// the backslash
+				var bs = i++;	// the backslash
 				var e = s.charAt(i);
-				if (e && '"\\/bfnrt'.indexOf(e) >= 0) { i++; continue; }
-				if (e !== 'u') stop();
+				if (!e) cut();
+				if ('"\\/bfnrt'.indexOf(e) >= 0) { i++; continue; }
+				if (e !== 'u') stop(bs);
 				i++;
-				for (var k = 0; k < 4; k++) { if (!HEX.test(s.charAt(i))) stop(); i++; }
+				for (var k = 0; k < 4; k++) { if (!HEX.test(s.charAt(i))) stop(bs); i++; }
 			}
+		};
+		// A comma the closer follows is the fault, not the closer.
+		var comma = function (close) {
+			var at = i++;
+			ws();
+			if (s.charAt(i) === close) stop(at);
 		};
 		var value = function () {
 			ws();
@@ -276,7 +286,7 @@
 					if (s.charAt(i) !== ':') stop();
 					i++;
 					value(); ws();
-					if (s.charAt(i) === ',') { i++; continue; }
+					if (s.charAt(i) === ',') { comma('}'); continue; }
 					if (s.charAt(i) === '}') { i++; return; }
 					stop();
 				}
@@ -286,7 +296,7 @@
 				if (s.charAt(i) === ']') { i++; return; }
 				for (;;) {
 					value(); ws();
-					if (s.charAt(i) === ',') { i++; continue; }
+					if (s.charAt(i) === ',') { comma(']'); continue; }
 					if (s.charAt(i) === ']') { i++; return; }
 					stop();
 				}

@@ -8,8 +8,8 @@
 // at all -- the raw editor sat inside the closed Memory panel above it -- so the owner could neither see the fault nor
 // mend it in place.
 //
-// Arms: the one-line fault from the diagnosis, a fault on line 3 of a pretty file, a still-broken Save, a mending Save, and
-// the mend box at phone width.
+// Arms: the one-line fault from the diagnosis, a fault on line 3 of a pretty file, a still-broken Save, a mending Save, a
+// CRLF file (clean before typing, caret in the drawn text), and the mend box at phone width.
 //
 //   node dev/verify_crystalmend.mjs
 import { open } from './harness.mjs';
@@ -61,7 +61,7 @@ const look = () => page.evaluate(() => {
 	const tas = body ? [...body.querySelectorAll('textarea')].filter(vis) : [];
 	return {
 		broken: (document.querySelector('.crystal-broken') || {}).textContent || '',
-		tas: tas.map(t => ({ v: t.value, at: t.selectionStart, end: t.selectionEnd })),
+		tas: tas.map(t => ({ v: t.value, at: t.selectionStart, end: t.selectionEnd, clean: t.value === t.defaultValue })),
 		text: body ? body.innerText : '',
 		drawn: !!document.querySelector('#crystal-frame-wrap, .crystal-fallback'),
 	};
@@ -121,6 +121,17 @@ check('mended: the stored crystal parses with the quotes kept', !!parsed && pars
 f = await face();
 check('mended: no broken note', !f.broken, f.broken.slice(0, 80));
 check('mended: the crystal draws', f.drawn);
+
+// ── (6) CRLF line ends (r546 D-26 F2): the box draws them as LF, so it must not count as typed in before anyone types,
+// and the caret is placed in what it drew, not at the raw file's offset (12, two CRs past the `"b"` at 10) ──────────
+const CRLF = '{\r\n "a":1\r\n "b":2\r\n}';
+await plant(CRLF);
+f = await face();
+m = mendBox(f, CRLF.replace(/\r\n/g, '\n'));
+check('CRLF: the raw text is drawn', !!m, JSON.stringify(f.tas.map(t => t.v.slice(0, 40))));
+check('CRLF: the box is not held before anyone types (value equals what was drawn)', !!m && m.clean, m ? String(m.clean) : 'no box');
+check('CRLF: named as line 3, column 2', /\b3\b[\s\S]*\b2\b/.test(f.text), f.text.slice(0, 200));
+check('CRLF: the caret at the "b" (offset 10 in the drawn text)', !!m && m.at === 10, m ? `${m.at}..${m.end}` : 'no box');
 
 // ── (5) the mend box at phone width: inside the viewport, no sideways page scroll ────────────────────────────────────
 await plant('{"title":"' + 'long words '.repeat(60) + '"x"}');

@@ -2565,6 +2565,7 @@
 	'capp.merge_conflict': 'There is a newer {name} page. Your own changes are kept. Where it changes the same lines you did, yours stay, and both are shown below.',
 	'capp.merge_ok': 'Update the Page',
 	'capp.merge_later': 'Not Now',
+	'capp.merge_waiting': 'Updated. The new page shows once the entry you are typing is saved.',
 	'capp.merge_show': 'Where you both changed it',
 	'capp.merge_line': 'Line {n}',
 	'capp.merge_yours': 'Yours',

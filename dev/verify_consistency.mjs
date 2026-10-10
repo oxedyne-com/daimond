@@ -524,11 +524,24 @@ async function rateSurfaces(pre) {
 /// Unfold the tile that holds the last match of `sel` (a thread drawn from history, and the transcript passes before this, leave tiles folded).
 // #12: the forked Log Life on its face, the template's offer above its page; then the places both changed, opened as a person opens them.
 // Answers false when the device holds no Log Life.
+// TMPLOFF switches the offer off at its source (`CAPP_MERGE_OFFERED` in www/js/daimond.js); with it off the offer is absent by design, not
+// missing. The switch is read from the tree under test, so the offer is covered again as soon as TMPL2 turns it on or removes it.
+const CAPP_OFFERED = (() => {
+	const src = fs.readFileSync(path.join(import.meta.dirname, '..', 'www', 'js', 'daimond.js'), 'utf8');
+	const m = src.match(/\bvar\s+CAPP_MERGE_OFFERED\s*=\s*(\w+)\s*;/);
+	return !m || m[1] !== 'false';
+})();
 async function cappOfferFace(pre) {
 	const hit = await ev(() => { const t = [...document.querySelectorAll('#diamond-list .diamond-box')].find((e) => ((e.querySelector('.session-box-name') || {}).textContent || '').trim() === 'Log Life'); if (!t) return false; (t.querySelector('.tile-label') || t).click(); return true; });
 	if (hit !== true) return false;
 	await wait(1200); await click('#dview-crystal'); await wait(2200);
-	if (!(await ev(() => !!document.getElementById('capp-offer')))) { log('MISSING', `${CFG}/${pre}diamond_capp_offer`, 'no offer on the forked Log Life'); CAP.missing.push(`${CFG}/${pre}diamond_capp_offer`); return true; }
+	const shown = await ev(() => !!document.getElementById('capp-offer'));
+	if (!CAPP_OFFERED) {
+		if (shown) { log('MISSING', `${CFG}/${pre}diamond_capp_offer`, 'an offer is shown while CAPP_MERGE_OFFERED is off'); CAP.missing.push(`${CFG}/${pre}diamond_capp_offer (shown while switched off)`); }
+		else CAP.notCovered.push({ label: 'capp offer', reason: 'offer off by design (TMPLOFF: CAPP_MERGE_OFFERED is false)', surface: `${CFG}/${pre}diamond_capp_offer` });
+		return true;
+	}
+	if (!shown) { log('MISSING', `${CFG}/${pre}diamond_capp_offer`, 'no offer on the forked Log Life'); CAP.missing.push(`${CFG}/${pre}diamond_capp_offer`); return true; }
 	await grab(pre + 'diamond_capp_offer');
 	if (await click('#capp-offer details > summary')) { await wait(400); await grab(pre + 'diamond_capp_conflicts'); await click('#capp-offer details > summary'); await wait(300); }
 	else CAP.missing.push(`${CFG}/${pre}diamond_capp_conflicts`);
@@ -1986,7 +1999,6 @@ const V_SAID  = ['Too long.', 'Just give me the command next time, and skip the 
 const V_CHIP  = ['tax', 'committee-review', 'leederville-kitchen-renovation-stage-two'];
 const V_TIME  = ['1m ago', '3 weeks ago', '2 years, 11 months ago'];
 const V_COST  = ['$0.01', 'A$1,234.56', 'A$1,234,567.89'];
-const V_TOK   = ['12 tok', '1.2M tok', '123,456,789 tok'];
 const V_FILE  = ['a.md', 'kitchen-renovation-quotes-final.md', 'a-very-long-file-name-for-the-kitchen-renovation-final-v3-with-benchtop-and-splashback.md'];
 const V_DIR   = ['q', 'joinery-and-benchtop-quotes', 'joinery-and-benchtop-quotes-from-every-supplier-we-spoke-to-in-2026'];
 // A changed file's path: a bare name, a nested path of about 60 characters, and one of 200 (a long directory and a long name).
@@ -2022,7 +2034,6 @@ const VSLOTS = [
 	['diamond meter last',  '#diamond-list', '.diamond-box', '.diamond-meter > :last-child', V_COST, /Tax return/],
 	['chat name',           '#session-list', '.chat-box', '.tile-when', V_NAME, /Flights/],
 	['chat model',          '#session-list', '.chat-box', '.tile-model-chip', V_MODEL, /Flights/],
-	['chat meter tokens',   '#session-list', '.chat-box', '.tile-tok', V_TOK, /Flights/],
 	['chat meter last',     '#session-list', '.chat-box', '.tile-meter > :last-child', V_COST, /Flights/],
 	['rail filter chip',    '#panel-rail', '.tagf-pool', '.tag-chip', V_CHIP, null, 'filter'],
 	['rail button label',   '#panel-rail', '.railhead', '#new-diamond-btn', V_BTN, null],

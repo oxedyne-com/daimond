@@ -2645,6 +2645,7 @@
 	'capp.merge_conflict': '有更新的 {name} 页面。你自己的修改会保留。它与你改动同一行的地方，保留你的版本，两者都显示在下方。',
 	'capp.merge_ok': '更新页面',
 	'capp.merge_later': '暂不',
+	'capp.merge_waiting': '已更新。正在输入的条目保存后，将显示新页面。',
 	'capp.merge_show': '你们都改动的地方',
 	'capp.merge_line': '第 {n} 行',
 	'capp.merge_yours': '你的版本',

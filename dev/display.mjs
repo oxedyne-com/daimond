@@ -53,6 +53,12 @@
 /// have nothing to do with the display, and removing it breaks a headless run.
 export const WAYLAND_VARS = ['WAYLAND_DISPLAY', 'XDG_SESSION_TYPE'];
 
+// No session bus for a browser. Chromium's main process otherwise asks systemd over
+// it for a scope of its own and leaves the one it was launched in (rc-build's, the
+// nightly's) for app.slice, escaping its MemoryMax: 4,289 escapes in three days to
+// 2026-10-10. `disabled:` is the bus address that refuses every connection.
+export const NO_BUS = { DBUS_SESSION_BUS_ADDRESS: 'disabled:' };
+
 /// A copy of `env` that a browser may be launched with.
 ///
 /// Every headed launch in `dev/` should pass its environment through this. There
@@ -65,7 +71,7 @@ export const WAYLAND_VARS = ['WAYLAND_DISPLAY', 'XDG_SESSION_TYPE'];
 export function cleanDisplayEnv(env = process.env) {
 	const out = { ...env };
 	for (const v of WAYLAND_VARS) delete out[v];
-	return out;
+	return Object.assign(out, NO_BUS);
 }
 
 /// The environment as this process INHERITED it, before the line below edits it.
@@ -82,6 +88,7 @@ export const INHERITED_ENV = { ...process.env };
 // without having to know any of the above. A side effect on import is worth it
 // here: what it protects is somebody else's screen.
 for (const v of WAYLAND_VARS) delete process.env[v];
+Object.assign(process.env, NO_BUS);
 
 // ┌───────────────────────────────────────────────────────────────┐
 // │ A display nobody is looking at, and the seat that is           │

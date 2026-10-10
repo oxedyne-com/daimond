@@ -930,14 +930,13 @@ body.resizing-v { cursor: row-resize; user-select: none; -webkit-user-select: no
    invariant 2 -- the light and the global spend readout are both still there. */
 .session-box[data-detail="simple"] .session-box-spend { display: none; }
 .session-box-spend { font-size: var(--fs-2xs); color: var(--text-muted); font-variant-numeric: tabular-nums; }
-/* The Diamond tile's meter row: context bar · relative time · spend, in the
-   shape of the meter on an ordinary chat tile (`.tile-meter`) minus the token
-   count. Shown in Max, hidden in Simple with the rest of the comparable
+/* The Diamond tile's meter row: context bar · spend · relative time, in the
+   shape of the meter on an ordinary chat tile (`.tile-meter`). Shown in Max, hidden in Simple with the rest of the comparable
    detail -- it is information, not a control, so invariant 2 is untouched.
    A missing context bar means the daimon has spent no tokens or its model
    publishes no window; the row still carries time and spend, so it renders
    whenever either exists. */
-.diamond-meter { display: flex; align-items: center; flex-wrap: nowrap; gap: 4px 8px; margin-top: 3px; min-width: 0; font-family: var(--font-mono); font-size: var(--fs-3xs-2xs); color: var(--text-muted); }
+.diamond-meter { display: flex; align-items: center; flex-wrap: nowrap; gap: 4px var(--meter-join); margin-top: 3px; min-width: 0; font-family: var(--font-mono); font-size: var(--fs-3xs-2xs); color: var(--text-muted); }
 .session-box[data-detail="simple"] .diamond-meter { display: none; }
 /* Tags, on a row of their own. They used to sit inline in `session-box-meta`,
    which read as though they belonged to the version number and the model chip,
@@ -2359,7 +2358,12 @@ span.arte-open { cursor: default; }
    whichever comes first, or Keep would be shoved away from Fold. */
 .tile-active-top .tile-fold, .tile-active-top .tile-keep:first-of-type { margin-left: auto; }
 .tile-active-top .tile-fold ~ .tile-keep { margin-left: 0; }
-.tile-meter { display: flex; align-items: center; flex-wrap: nowrap; gap: 4px 8px; min-width: 0; font-family: var(--font-mono); font-size: var(--fs-3xs-2xs); color: var(--text-muted); }
+/* THE METER JOIN (D-20261010-03): one length between a meter's readings, on a chat
+   tile and a Diamond tile alike, whatever stands in it -- the flex gap here, the
+   "·" margins in Daylight, and the space before a price tag, whose glyph is the
+   separator and so carries no dot of its own. */
+:is(.tile-meter, .diamond-meter) { --meter-join: 8px; }
+.tile-meter { display: flex; align-items: center; flex-wrap: nowrap; gap: 4px var(--meter-join); min-width: 0; font-family: var(--font-mono); font-size: var(--fs-3xs-2xs); color: var(--text-muted); }
 .tile-ctx { display: flex; align-items: center; gap: 4px; }
 /* `position: relative` so the fold mark can be placed along it, and the overflow
    clip that keeps the fill inside the rounded ends keeps the mark inside too. */
@@ -2374,7 +2378,6 @@ span.arte-open { cursor: default; }
 	background: var(--text-muted); opacity: 0.9;
 }
 .tile-ctx-pct { color: var(--text-secondary); }
-.tile-tok { white-space: nowrap; }
 .tile-cost { color: var(--text-secondary); white-space: nowrap; }
 /* THE PRICE TAG (D-20261009-18, variant B). Every estimated price in the app is
    this one element, built by `DaimondI18n.priceTag`: an outlined tag glyph and the
@@ -5230,31 +5233,31 @@ details.md-fold > .md-fold-body > :last-child { margin-bottom: 0; }
    The actionable twin of the plain `toast()`, which stays where it is for status
    nobody acts on. Two differences carry the whole of it: `pointer-events: auto`,
    because this one is MEANT to be pressed, and `role="status"` in the markup, so
-   a screen reader finishes its sentence before reading it out. It sits above the
-   composer rather than over it -- a five-second box across the send button is a
-   five-second box people press by accident.
-   AT EVERY WIDTH. It was 32px from the bottom on a wider screen, which is the send row
-   there too, and so across the send button: harmless while only a delete or a rename
-   raised it, and since every chat turn that changes a file offers its copies back for
-   fifteen seconds (`offerTurnUndo`, daimond.js), a click on Send in that time pressed
-   the toast and the message went nowhere (dev/verify_chatstore.mjs). */
+   a screen reader finishes its sentence before reading it out.
+   A ROW IN THE FLOW, AT THE TOP OF THE COMPOSER AREA (r547 QA-B F1/F2). As a fixed
+   overlay it covered whatever sat where it was drawn: Send at a fixed 96px on a phone,
+   then, measured above the input bar, the workspace strip, the mark notice and the
+   last message's Retry and Edit; and at z-index 9999 a tall dialog's buttons. Every
+   such tap pressed Undo and put the turn's files back. In the flow the layout makes
+   room for it and it covers nothing, and with no z-index of its own an open dialog
+   covers it as it covers the rest of the page. undo.js puts it in front of the
+   element its bar's `data-undo-row` names (dev/verify_undo_clear.mjs). */
 .daimond-undo {
-	position: fixed; left: 50%; bottom: calc(96px + env(safe-area-inset-bottom, 0px));
-	transform: translateX(-50%) translateY(6px);
-	z-index: 9999; display: flex; align-items: center; gap: 12px;
-	padding: 9px 12px 9px 16px; border-radius: 8px; max-width: min(80vw, 420px);
+	flex: none; display: flex; align-items: center; gap: 12px;
+	margin: 0 12px 8px; padding: 6px 8px 6px 12px; border-radius: var(--radius-sm);
 	pointer-events: auto; font-size: var(--fs-sm); color: var(--text-primary);
-	background: var(--bg-tertiary); border: 1px solid transparent;
-	box-shadow: 0 4px 16px rgba(0, 0, 0, .28);
-	opacity: 0; transition: opacity .15s, transform .15s;
+	background: var(--bg-tertiary); border: 1px solid var(--border);
+	opacity: 0; transition: opacity .15s;
 }
-.daimond-undo.up { opacity: 1; transform: translateX(-50%) translateY(0); }
+.daimond-undo.up { opacity: 1; }
 /* AND `hidden` MUST WIN. `display: flex` above beats the user agent's own
-   `[hidden] { display: none }`, so without this line the element stands over the
-   page for the whole session -- invisible at `opacity: 0`, and still taking every
+   `[hidden] { display: none }`, so without this line the row would hold its space
+   for the whole session -- invisible at `opacity: 0`, and still taking every
    click that lands on it, because this is the one toast with pointer events. */
 .daimond-undo[hidden] { display: none; }
-.daimond-undo-text { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* In the phone's sheet the row sits on the ask bar's own ground. */
+#msheet > .daimond-undo { margin: 0; border-radius: 0; border-width: 1px 0 0; }
+.daimond-undo-text { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .daimond-undo-btn {
 	flex: none; cursor: pointer; padding: 4px 12px; border-radius: var(--radius-sm);
 	font-size: var(--fs-sm); font-weight: 600;
@@ -5262,10 +5265,6 @@ details.md-fold > .md-fold-body > :last-child { margin-bottom: 0; }
 	border: 1px solid transparent;
 }
 .daimond-undo-btn:hover { background: color-mix(in srgb, var(--accent) 12%, transparent); }
-/* The width of a phone. */
-@media (max-width: 540px) {
-	.daimond-undo { max-width: calc(100vw - 24px); }
-}
 
 /* Retry and Edit & resend, on the last user tile only. They live in `.ctile-ctl`
    beside the copy button and wear its manners: invisible until the tile is

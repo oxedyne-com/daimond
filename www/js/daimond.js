@@ -4613,6 +4613,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		}
 		if (current && !chats.some(function (c) { return c.id === current.id; })) {
 			current = null;
+			undoCheck();
 			sessionNameEl.textContent = t('chat.no_chat');
 			renderEmptyState();
 			chatInputBar.style.display = 'none';
@@ -30451,6 +30452,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			// is reached through its Diamond, so opening one as a chat would put a
 			// conversation on screen that the rail says does not exist.
 			current = chats.find(function (c) { return !c.diamondId; }) || null;
+			undoCheck();
 			if (current) selectChat(current);
 			else { sessionNameEl.textContent = t('chat.no_chat'); renderEmptyState(); chatInputBar.style.display = 'none'; updateMeters(); }
 		}
@@ -30590,6 +30592,12 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 	function reselectChat(id) {
 		var c = chats.find(function (x) { return x.id === id; });
 		if (c) selectChat(c);
+	}
+
+	/// The chat on screen moved: withdraw an undo that belongs to the one that left.
+	function undoCheck() {
+		try { if (window.DaimondUndo && DaimondUndo.check) DaimondUndo.check(); }
+		catch (e) { /* the window is best-effort */ }
 	}
 
 	/// Offer the act just done back, for the few seconds somebody needs to
@@ -31376,6 +31384,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		// the box belongs to. See `moveComposerTo`.
 		moveComposerTo(chat);
 		current = chat;
+		undoCheck();
 		// Remembered so the next boot comes back here. See OPEN_CHAT_KEY.
 		try {
 			localStorage.setItem(OPEN_CHAT_KEY, chat && chat.id ? chat.id : '');
@@ -34661,8 +34670,8 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 	}
 
 	// The context bar alone: window fraction, fold mark, percentage. Factored out
-	// of `tileMeter` when the Diamond tile wanted the bar without the tokens and
-	// cost that ride beside it on a chat -- one implementation, two callers, so
+	// of `tileMeter` when the Diamond tile wanted the bar without the cost that
+	// rides beside it on a chat -- one implementation, two callers, so
 	// the bar cannot come to mean something slightly different in the two places.
 	/// Returns null when there is nothing to draw: no window published, or no
 	/// tokens spent. The two cases are different facts and the CALLER decides
@@ -34697,16 +34706,15 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		return ctx;
 	}
 
-	// The live per-chat meter: context-window fraction · tokens · cost.
+	// The live per-chat meter: context-window fraction, then cost. No token count
+	// (D-20261010-04): the percentage already says how full the chat is, and a raw
+	// count beside it was a second reading of the same thing in a harder unit.
 	function tileMeter(s) {
 		var wrap = document.createElement('div');
 		wrap.className = 'tile-meter';
 		var total = (s.promptTokens || 0) + (s.completionTokens || 0);
 		var ctx = tileCtxBar(s, chatWindow(s));
 		if (ctx) wrap.appendChild(ctx);
-		var toks = document.createElement('span'); toks.className = 'tile-tok';
-		toks.textContent = fmtCtx(total) + ' tok';
-		wrap.appendChild(toks);
 		if (window.DaimondPricing && total > 0) {
 			// What the provider charged, where it said. Only when it did not is the table asked,
 			// and then with the cached share and the provider id -- both of which this used to
@@ -37777,7 +37785,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			} else if (ev.type === 'versions') {
 				// The chat's own store kept what this turn replaced or removed. Offered
 				// back at once, and `file_revert` does the same whenever the user asks.
-				offerTurnUndo(ev);
+				offerTurnUndo(ev, owns);
 				if (String(ev.keeper || '').indexOf('chat:') === 0) filesEv = ev;
 			} else if (ev.type === 'interjected') {
 				// It has landed: the agent put it into the conversation at the seam,
@@ -52285,10 +52293,8 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		if (meta.firstChild) box.appendChild(meta);
 		// The meter row, BELOW the tags and shaped like the one on an ordinary
 		// chat tile: context bar with its percentage, then the relative time that
-		// used to sit in the meta row, then the spend. No token count — the chat
-		// tile's count is per-conversation running totals, and a Diamond's
-		// conversation is one of several things that spend under its id, so a count
-		// here would be a number that looks comparable to the chat's and is not.
+		// used to sit in the meta row, then the spend. No token count, as on a chat
+		// tile (D-20261010-04): the percentage is the reading that matters.
 		// The spend figure is the Diamond's OWN — the signals-index figure that was
 		// already on the tile — and NOT the daimon conversation's cost, for the same
 		// reason.
@@ -53170,6 +53176,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			// tools and fence are not a chat's; `sendUserMessage` is where the two part.
 			var rec = daimonChat(f);
 			current = rec;
+			undoCheck();
 			curAsstDiv = null; curAsstText = ''; lastToolBlock = null;
 			updateActiveSession();
 			showCentre('daimon');
@@ -53220,6 +53227,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		// talks to. The thread stays hidden; only the destination is set.
 		var crec = daimonChat(f);
 		current = crec;
+		undoCheck();
 		updateActiveSession();
 		showCentre('focus');
 		syncComposer();
@@ -54030,9 +54038,19 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		var box = crystalRawEditor(id, rawText, null, true);
 		box.classList.add('crystal-mend');
 		var where = box.querySelector('.crystal-mend-at');
+		at = crystalFaultDrawn(box.querySelector('textarea'), at);
 		where.textContent = crystalFaultWords(at);
 		where.hidden = !at;
 		return box;
+	}
+
+	/// The fault's place in the text a box DREW rather than in the file: the browser draws
+	/// CRLF as LF, so an offset into the file's bytes put the caret one place on for every
+	/// line break above the fault (r546 D-26 F2).  The save's base stays the file's bytes.
+	function crystalFaultDrawn(ta, at) {
+		var C = crystalLib();
+		if (!ta || !at || !C || typeof C.fault !== 'function') return at;
+		return C.fault(ta.value) || at;
 	}
 
 	/// The raw `crystal.json` in a textarea with its Save: the memory panel's "Show raw
@@ -54084,8 +54102,10 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		if (!broken) { try { text = JSON.stringify(JSON.parse(text), null, 2); } catch (e) { /* as-is */ } }
 		ta.value = text;
 		// What was drawn, so typing nobody saved can be told from it: an arrival from another
-		// device does not replace a panel holding typing (`crystalPanelHeld`).
-		ta.defaultValue = text;
+		// device does not replace a panel holding typing (`crystalPanelHeld`).  Read back, not
+		// `text`: the browser draws CRLF as LF, so a CRLF file compared with its own bytes
+		// counted as typed in before anyone typed, and was never replaced (r546 D-26 F2).
+		ta.defaultValue = ta.value;
 		raw.appendChild(ta);
 		var actions = document.createElement('div');
 		actions.className = 'crystal-memory-bar';
@@ -54257,7 +54277,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		// the render it asks for terminates because the record it writes puts the
 		// instance on the automatic path.
 		cappOfferLegacy(id, currentDiamond ? currentDiamond.name : '').then(function (changed) {
-			if (changed && currentDiamond && currentDiamond.id === id) renderCrystal();
+			if (changed && currentDiamond && currentDiamond.id === id) scheduleCrystalRemount(id);
 		}, function () { /* an offer that throws is one nobody was shown */ });
 
 		if (!C) {
@@ -54286,7 +54306,8 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			var mend = got.unread ? null : crystalMendBox(id, text, got.at || null);
 			if (mend) bad.appendChild(mend);
 			crystalBody.appendChild(bad);
-			if (mend) crystalCaret(mend.querySelector('textarea'), got.at || null);
+			if (mend) crystalCaret(mend.querySelector('textarea'),
+				crystalFaultDrawn(mend.querySelector('textarea'), got.at || null));
 			renderCrystalControls();
 			renderArtefacts();
 			return;
@@ -54674,7 +54695,13 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		// One write at a time, per page. Two appends that both read the old file before either
 		// wrote would each write old + their own line, and the first line would be gone -- the
 		// exact shape of the tag-loss incident, arriving through a different door.
-		_cappWrite = _cappWrite.then(async function () {
+		// EACH WRITE HAS ITS OWN OUTCOME (r547 CAPPWRITE). As `.then(body, onRejected)` a write
+		// after a failed one ran the onRejected in place of its body, and its caller was answered
+		// as if its bytes were down: every page write after a failed one was silently lost. Now a
+		// write runs once the one before has settled, either way; its caller awaits its own write,
+		// and the queue never holds a rejection. The chain is the tab's, not the Diamond's, so a
+		// failure on one Diamond must not cost another its write.
+		var run = _cappWrite.catch(function () { /* that write's page was told */ }).then(async function () {
 			var body = String(text == null ? '' : text);
 			if (mode === 'append') {
 				var had = '';
@@ -54691,8 +54718,16 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			// after the write, so a failure to stamp cannot lose the bytes -- it can only
 			// delay them travelling, which is recoverable and silent loss is not.
 			try { await Wasm.touch_diamond(id); } catch (e) { /* the bytes are down; say nothing */ }
-		}, function () { /* a failed write must not stop the next one */ });
-		return await _cappWrite;
+		});
+		// A failed save goes in the trail, naming the Diamond and the kind of error only: never
+		// the path or the words, which are the person's.
+		_cappWrite = run.catch(function (e) {
+			try {
+				var kind = e == null ? 'none' : (typeof e === 'object' ? String(e.name || (e.constructor && e.constructor.name) || 'object') : typeof e);
+				window.DaimondTrail.note('crystal page', 'save failed: ' + id + ' ' + kind);
+			} catch (e2) { /* no trail is not an error */ }
+		});
+		return await run;
 	}
 
 	/// The tail of the page-write chain, so appends serialise. See `writeCrystalAsset`.
@@ -55520,8 +55555,18 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 
 		ok.addEventListener('click', async function () {
 			ok.disabled = true; later.disabled = true;
-			await cappTakeMerge(id, offer);
-			if (currentDiamond && currentDiamond.id === id) renderCrystal();
+			var took = await cappTakeMerge(id, offer);
+			if (!currentDiamond || currentDiamond.id !== id) return;
+			// Through the scheduler, not straight to `renderCrystal`: a set typed into the
+			// page and not yet ticked would go with the remount (r545 QA B F-B2). The page
+			// says when it is mid-entry, and until it is not the line says why nothing moved.
+			var C = crystalLib();
+			if (took && C && typeof C.busy === 'function' && C.busy()) {
+				msg.textContent = tOr('capp.merge_waiting',
+					'Updated. The new page shows once the entry you are typing is saved.');
+				if (acts.parentNode) acts.parentNode.removeChild(acts);
+			}
+			scheduleCrystalRemount(id);
 		});
 		later.addEventListener('click', async function () {
 			ok.disabled = true; later.disabled = true;
@@ -61131,6 +61176,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		// the draft straight back.
 		moveComposerTo(null);
 		current = null;
+		undoCheck();
 		currentDiamond = null;
 		signalDiamondChanged();
 
@@ -67061,12 +67107,18 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 	/// A chat has no History panel of its own, so this toast is the page's door, and
 	/// `file_revert` -- offered to a chat since the store existed -- is the one the
 	/// user reaches by asking.
-	function offerTurnUndo(ev) {
+	///
+	/// ONLY WHILE THE CHAT IS ON SCREEN (r547 QA-B F3). A turn that ended while another
+	/// chat was showing raised the toast over that chat, and Undo there reverted the first
+	/// chat's files. So `shown` (the turn's own `owns`) gates the offer, and the window is
+	/// withdrawn the moment the chat leaves the screen (`DaimondUndo.check`).
+	function offerTurnUndo(ev, shown) {
 		var files = Array.isArray(ev.files) ? ev.files.slice() : [];
 		if (!files.length || !window.DaimondUndo || !window.DaimondVersions) return;
 		var keeper = String(ev.keeper || ''), v = Number(ev.version);
-		if (!keeper || !(v > 0)) return;
+		if (!keeper || !(v > 0) || typeof shown !== 'function' || !shown()) return;
 		DaimondUndo.able({
+			shown:  shown,
 			text:   tOr('versions.turn_kept', 'Copies kept of the files this turn changed: {n}',
 				{ n: files.length }),
 			ms:     15000,

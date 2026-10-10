@@ -2653,6 +2653,7 @@
 	'capp.merge_conflict': '新しい{name}のページがあります。あなた自身の変更はそのまま残ります。同じ行を変更している箇所はあなたの行を残し、両方を下に表示します。',
 	'capp.merge_ok': 'ページを更新',
 	'capp.merge_later': '今はしない',
+	'capp.merge_waiting': '更新しました。入力中の項目が保存されると、新しいページが表示されます。',
 	'capp.merge_show': '両方が変更した箇所',
 	'capp.merge_line': '{n}行目',
 	'capp.merge_yours': 'あなたの版',

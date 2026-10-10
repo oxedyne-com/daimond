@@ -833,7 +833,7 @@
 				     never shows. Said here, in ink, with the press that puts each one back.
 				     Filled by `renderMarkNotice`; hidden while there is nothing to confirm. -->
 				<div class="mark-notice" id="mark-notice" aria-live="polite" hidden></div>
-				<div class="chat-input-bar">
+				<div class="chat-input-bar" data-undo-row="chat-attachments">
 					<textarea id="chat-input" placeholder="Type a message…" rows="1" data-i18n-placeholder="chat.input_ph"></textarea>
 					<!-- The walk-back pair comes BEFORE Send, so Send is the last control and
 					     never moves: showing the pair narrows the field, not the row under the
@@ -1592,7 +1592,7 @@
 	     hidden for every guest that has no second face. -->
 	<div class="msheet-tabs" id="msheet-tabs" role="tablist" hidden></div>
 	<div class="msheet-scroll" id="msheet-body"></div>
-	<div class="msheet-ask" id="msheet-ask">
+	<div class="msheet-ask" id="msheet-ask" data-undo-row>
 		<div class="msheet-ask-note" id="msheet-ask-note" role="status" hidden></div>
 		<input id="msheet-ask-input" type="text" placeholder="Ask about this…" autocomplete="off" autocapitalize="sentences" spellcheck="true" data-i18n-placeholder="sheet.ask_ph">
 		<button id="msheet-ask-send" title="Ask" aria-label="Ask" data-i18n-title="sheet.ask" data-i18n-aria-label="sheet.ask"><svg class="ic send-arrow" viewBox="0 -2 24 24" aria-hidden="true"><path d="M12 16V4M8 8l4-4 4 4"/></svg></button>

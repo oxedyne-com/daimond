@@ -1988,8 +1988,10 @@ impl Agent {
             // at a phone and a desktop width, with the owner's theme and data, and measures what
             // the style edits named.  The model then answers with the look in front of it -- the
             // pictures when it reads pictures, else the images model's words and the table.  Not
-            // over a refusal or a failed load proof, whose nudges come first.
-            if resp.tool_calls.is_empty() && looks_auto < LOOKS_AUTO_MAX && page.look_due()
+            // over a refusal or a failed load proof, whose nudges come first.  Nor on the leg's
+            // last round: the look is a round, and one past the cap forces a fold over an answer
+            // already given (r546 D-26 F4), or on the final leg ends the turn `Capped`.
+            if resp.tool_calls.is_empty() && leg < max_rounds && looks_auto < LOOKS_AUTO_MAX && page.look_due()
                 && setbacks.unmended().is_none() && registry.ctx.crystal_proof_blocked().is_none()
             {
                 if let Some(dia) = registry.ctx.daimon() {
@@ -5619,6 +5621,37 @@ mod tests {
                 Some((name.clone(), *outcome, result.clone())),
             _ => None,
         }).collect()
+    }
+
+    /// r546 D-26 F4: the engine's look is a round, and a leg whose last round was the answer
+    /// has none left for it.  Taken there, it met the cap at the top of the next round: a
+    /// forced fold and a continuation, or, on the final leg, a turn ended `Capped` over an
+    /// answer it had already given.  The leg's cap outranks the look, so the answer stands.
+    #[tokio::test]
+    async fn test_engine_look_waits_for_room_in_the_leg_00() {
+        for legs in [0usize, 1] {
+            let mut registry = one_tool();
+            registry.tools.push(crate::tools::Tool::Capture);
+            registry.ctx.daimon_of = fmt!("d1");
+            let (port, seen) = crate::llm::tests::start_stub(
+                vec![one_style_write(), plain_answer(), plain_answer(), plain_answer()]).await;
+            let mut llm = crate::llm::tests::stub_client(port);
+            llm.retry.max_attempts = 1;
+            let a = Agent::new(llm, "You are Daimond.");
+            a.set_max_rounds(2);
+            a.limits.borrow_mut().max_continuations = legs;
+            let mut session = Session::new(fmt!("s1"), fmt!("audit"), fmt!("model"));
+            let mut events = Vec::new();
+            let _ = a.run_turn(&mut session, "make the buttons even".to_string(), &registry,
+                &mut |e| events.push(e)).await;
+            let bodies = seen.lock().map(|v| v.bodies.len()).unwrap_or_default();
+            let end = a.ending().map(|e| e.how);
+            assert_eq!(Some(TurnEnd::Answered), end, "{} continuations left", legs);
+            assert_eq!(2, bodies, "{} continuations left: the write and the answer, no look \
+                past the leg's cap", legs);
+            assert!(!events.iter().any(|e| matches!(e, AgentEvent::ToolCall { name, .. } if name == "capture")),
+                "{} continuations left: no look was taken past the cap", legs);
+        }
     }
 
     // ── A worker's report read inside the turn that started it ───────────────

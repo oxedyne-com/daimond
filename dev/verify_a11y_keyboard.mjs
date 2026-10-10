@@ -92,7 +92,6 @@ const GHOSTS = new Set([
 	'div.tile-active-top',
 	'span.tile-model-chip',
 	'div.tile-meter',
-	'span.tile-tok',
 	'div.tile-pending',
 ]);
 

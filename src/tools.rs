@@ -31860,47 +31860,20 @@ mod tests {
     // while the owner's panel showed raw JSON text: the file was not one JSON object, the browser
     // took `{}` from it, and nothing ever told the daimon that wrote it.
 
+    const CRYSTAL_JSON_FAULTS: &str = include_str!("../dev/fixtures/crystal_json_faults.json");
+
     #[test]
     fn test_a_crystal_that_does_not_parse_is_named_with_its_position_00() {
-        // (text, where it must be named, a word the reason must carry)
-        let bad: Vec<(String, &str, &str)> = vec![
-            (r#"{"title":"Ontheism","summary":"half a cry"#.to_string(),
-                "line 1, column 41", "ends inside a string"),
-            ("{\n  \"title\": \"The\nfabric\"\n}".to_string(),
-                "line 2, column 16", "line break"),
-            ("\u{feff}{\"a\":1}".to_string(),
-                "line 1, column 1", "byte order mark"),
-            ("{\"a\":1,\n}".to_string(),
-                "line 1, column 7", "trailing comma"),
-            (r#"["title","summary"]"#.to_string(),
-                "line 1, column 1", "one JSON object"),
-            (r#"{"a":1}{"b":2}"#.to_string(),
-                "line 1, column 8", "extra text"),
-            ("{'a':1}".to_string(),
-                "line 1, column 2", "double quotes"),
-            (r#"{"a":"\x"}"#.to_string(),
-                "line 1, column 7", "escape"),
-            (r#"{"a":01}"#.to_string(),
-                "line 1, column 7", "leading zero"),
-            (r#"{"a" 1}"#.to_string(),
-                "line 1, column 6", "':'"),
-            (r#"{a:1}"#.to_string(),
-                "line 1, column 2", "double quotes"),
-            ("{".to_string(),
-                "line 1, column 2", "ends inside an object"),
-            (r#"{"a":1 "b":2}"#.to_string(),
-                "line 1, column 8", "','"),
-            (r#"{"a":tru}"#.to_string(),
-                "line 1, column 6", "true"),
-            (r#"{"a":NaN}"#.to_string(),
-                "line 1, column 6", "unexpected"),
-            (r#"{"a":[1,2,]}"#.to_string(),
-                "line 1, column 10", "trailing comma"),
-            ("{\"a\":\"\u{0}\"}".to_string(),
-                "line 1, column 7", "control character"),
-            ("  \u{feff}".to_string(),
-                "line 1, column 3", "byte order mark"),
-        ];
+        // (text, where it must be named, a word the reason must carry).  The table is shared with
+        // the page's own scanner (www/js/crystalfault.test.mjs), so the mend box and the daimon
+        // are given one position for one fault (r546 D-26 F5).  Two rows are the engine's alone:
+        // the page's mend box opens only on text that starts with `{`.
+        let rows = crate::llm::parse_json_string_array(CRYSTAL_JSON_FAULTS);
+        assert!(rows.len() >= 60 && rows.len() % 3 == 0, "the shared table did not read: {}", rows.len());
+        let mut bad: Vec<(String, &str, &str)> = rows.chunks(3)
+            .map(|r| (r[0].clone(), r[1].as_str(), r[2].as_str())).collect();
+        bad.push((r#"["title","summary"]"#.to_string(), "line 1, column 1", "one JSON object"));
+        bad.push(("  \u{feff}".to_string(), "line 1, column 3", "byte order mark"));
         for (text, at, word) in &bad {
             let m = match crystal_json_fault(text) {
                 Some(m) => m,

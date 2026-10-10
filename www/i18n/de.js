@@ -2616,6 +2616,7 @@
 	'capp.merge_conflict': 'Es gibt eine neuere {name}-Seite. Deine eigenen Änderungen bleiben erhalten. Wo sie dieselben Zeilen ändert wie du, bleiben deine, und beide werden unten gezeigt.',
 	'capp.merge_ok': 'Seite aktualisieren',
 	'capp.merge_later': 'Nicht jetzt',
+	'capp.merge_waiting': 'Aktualisiert. Die neue Seite erscheint, sobald der Eintrag, den du gerade tippst, gespeichert ist.',
 	'capp.merge_show': 'Wo ihr beide geändert habt',
 	'capp.merge_line': 'Zeile {n}',
 	'capp.merge_yours': 'Deine',
