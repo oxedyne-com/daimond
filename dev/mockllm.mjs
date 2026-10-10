@@ -466,6 +466,7 @@ const crystalOnly = (words) => JSON.stringify({
 ///   untick      a REQUIREMENTS.md block with the ticked task deleted, which the
 ///               app must refuse and re-run
 ///   dropkey     a crystal with a populated key gone, likewise
+///   fat         a summary over the hot ceiling, until the retry names the room
 const reduceMode = () => {
 	if (process.env.DAIMOND_MOCK_REDUCE) return String(process.env.DAIMOND_MOCK_REDUCE);
 	try { return fs.readFileSync(LOG + '.reduce', 'utf8').trim(); } catch { return ''; }
@@ -488,6 +489,12 @@ const crystalReply = (words, messages) => {
 	})() || String(words || '');
 	const mode = reduceMode();
 	if (!mode) return crystalOnly(body);
+	// `fat`: a summary too long for any Diamond's always-present room, until the retry names
+	// the room (D-20261010-01); then the ordinary crystal.
+	if (mode === 'fat') {
+		return asked.includes('could not be stored') ? crystalOnly(body)
+			: JSON.stringify({ title: 'Mock crystal', summary: 's'.repeat(17 * 1024) }, null, 2);
+	}
 	// SPLIT ON THE SEPARATOR THE APP WRITES, not on the first occurrence of a heading: the
 	// crystal's own summary can quote one, and it does whenever a previous fold put the
 	// whole request in it. A quoted heading is inside a JSON string, so its newlines are

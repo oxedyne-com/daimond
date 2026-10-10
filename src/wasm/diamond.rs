@@ -1384,32 +1384,29 @@ pub(crate) async fn standing_retired(
         None    => return Ok((text, String::new())),
     };
     let cap = crate::tools::standing_cap(leaf);
-    if text.len() <= cap {
-        return Ok((text, String::new()));
-    }
-    let out = match leaf {
-        crate::tools::REQUIREMENTS_FILE => crate::tools::retire_done(&text, cap),
-        crate::tools::DECISIONS_FILE    => crate::tools::retire_decisions(&text, cap),
-        // `STATE.md` holds no history, so it has nothing to retire and is simply refused.
-        _                               => return Ok((text, String::new())),
-    };
+    let out = crate::tools::standing_retire(leaf, &text);
     if out.retired.is_empty() {
         return Ok((text, String::new()));
     }
     let archive = crate::tools::standing_archive(leaf, &crate::tools::diamond_of_path(path));
-    let mut all = opfs::read_file(root, &archive).await
-        .map(|b| String::from_utf8_lossy(&b).into_owned())
-        .unwrap_or_default();
-    if !all.is_empty() && !all.ends_with('\n') {
-        all.push('\n');
-    }
-    all.push_str(&out.retired);
-    res!(opfs::write_file(root, &archive, all.as_bytes()).await);
+    res!(archive_append(root, &archive, &out.retired).await);
     let moved = out.retired.lines().count();
     Ok((out.kept, fmt!(
         "\n{} was over its {}-byte ceiling, so the {} oldest finished {} moved to {}, where \
         recall still searches them and file_read still opens them. Nothing was deleted.",
         leaf, cap, moved, if moved == 1 { "line" } else { "lines" }, archive)))
+}
+
+/// Append retired lines to a standing file's archive.
+async fn archive_append(root: FileRoot, archive: &str, retired: &str) -> Outcome<()> {
+    let mut all = opfs::read_file(root, archive).await
+        .map(|b| String::from_utf8_lossy(&b).into_owned())
+        .unwrap_or_default();
+    if !all.is_empty() && !all.ends_with('\n') {
+        all.push('\n');
+    }
+    all.push_str(retired);
+    opfs::write_file(root, archive, all.as_bytes()).await
 }
 
 /// Write one of the three files, retiring what does not fit into its archive first.
@@ -2113,15 +2110,102 @@ pub async fn record_task_tick(
     append_log(id, &rec).await
 }
 
-/// Apply a confirmed fold: write the new crystal, snapshot a version, store
-/// the raw delta under `.daimond/deltas/`, and append a `fold` record that
-/// references the stored delta.  Advisory-fold discipline: this runs only
-/// after the user accepts the proposed crystal; the raw delta is always
-/// retained.
-pub async fn fold_apply(id: &str, new_crystal: &str, delta: &str, note: &str) -> Outcome<()> {
+/// Apply a fold, ALL OR NOTHING: the three files and the crystal under one version, or nothing.
+///
+/// D-20261010-01: the files used to be written first and the crystal after, each through its
+/// own door, so a crystal refused against the files' NEW weight left them rewritten with no
+/// version, no log row and no undo.  Now every ceiling is asked of the whole fold first
+/// ([`crate::agent::compact::fold_landing`]), under the version hold, and a refusal writes nothing.
+/// A write that fails after the files have landed puts them back before the error is returned.
+///
+/// The raw delta is kept under `.daimond/deltas/` and a `fold` record names it.  Answers the
+/// version the fold minted, which its Undo undoes, the headings it moved to cold to make room,
+/// empty where it moved none, and the paths recorded as rows of that version -- the ones the
+/// version undo can put back, empty where the fold rewrote none or the record failed.
+pub async fn fold_apply(
+    id:    &str,
+    want:  &crate::agent::compact::FoldProposal,
+    delta: &str,
+    note:  &str,
+)
+    -> Outcome<(u64, Vec<String>, Vec<String>)>
+{
     let now = now_ms() as u64;
+    let hold = res!(hold_versions(id).await);
+    let old = opfs::read_file(FileRoot::Opfs, &crystal_data_path(id)).await
+        .map(|b| String::from_utf8_lossy(&b).into_owned())
+        .unwrap_or_default();
+    let files = read_standing(id).await;
+    let land = match crate::agent::compact::fold_landing(id, &old, &files, want) {
+        Ok(l)    => l,
+        Err(why) => return Err(err!(
+            "{} Nothing was written: the crystal and its files are as they were.", why;
+            Invalid, Input, Size)),
+    };
     let parent = res!(read_meta(id).await).version;
-    let version = res!(snapshot(id, new_crystal, None, now).await);
+    let mut written: Vec<&'static str> = Vec::new();
+    let mut fault: Option<Error<ErrTag>> = None;
+    for (leaf, text) in land.files.iter() {
+        match opfs::write_file(FileRoot::Opfs, &standing_path(id, leaf), text.as_bytes()).await {
+            Ok(()) => written.push(leaf),
+            Err(e) => { fault = Some(e); break; },
+        }
+    }
+    let version = match fault {
+        Some(e) => Err(e),
+        None    => snapshot_held(&hold, id, &land.crystal, None, now).await,
+    };
+    let version = match version {
+        Ok(v)  => v,
+        Err(e) => {
+            // Put back what landed, so a refused fold leaves the Diamond as it found it.
+            for leaf in written {
+                let was = match leaf {
+                    crate::tools::REQUIREMENTS_FILE => &files.requirements,
+                    crate::tools::DECISIONS_FILE    => &files.decisions,
+                    _                               => &files.state,
+                };
+                if let Err(r) = opfs::write_file(FileRoot::Opfs, &standing_path(id, leaf),
+                    was.as_bytes()).await
+                {
+                    console_log(&fmt!("Diamond '{}': {} could not be put back after a failed \
+                        fold: {}", id, leaf, r));
+                }
+            }
+            return Err(e);
+        },
+    };
+    // THE FILES UNDER THE SAME NUMBER (D-20261010-01 item 6). The crystal's chain holds the
+    // crystal; the three files are rows of the file store, each with what it replaced, so the
+    // version undo ([`Plan::Undo`]) of this one version puts the whole fold back.  Recorded under
+    // the hold the version was minted in, so nothing mints between them.
+    let changes: Vec<Change> = land.files.iter().map(|(leaf, text)| {
+        let was = match *leaf {
+            crate::tools::REQUIREMENTS_FILE => &files.requirements,
+            crate::tools::DECISIONS_FILE    => &files.decisions,
+            _                               => &files.state,
+        };
+        Change {
+            before: Some(was.as_bytes().to_vec()),
+            ..Change::of(&standing_path(id, leaf), text.as_bytes().to_vec())
+        }
+    }).collect();
+    let paths: Vec<String> = changes.iter().map(|c| c.path.clone()).collect();
+    let recorded = match versions_record_held(&hold, id, Some(version), Cause::Fold, "", note,
+        changes).await
+    {
+        Ok(_)   => paths,
+        Err(e)  => {
+            console_log(&fmt!("Diamond '{}': the files of fold version {} could not be \
+                recorded, so its Undo puts back the crystal alone: {}", id, version, e));
+            Vec::new()
+        },
+    };
+    drop(hold);
+    for (leaf, lines) in land.retired.iter() {
+        let archive = crate::tools::standing_archive(leaf, id);
+        res!(archive_append(FileRoot::Opfs, &archive, lines).await);
+    }
 
     // Retain the raw delta, referenced by the log record.
     let dref = delta_path(id, version);
@@ -2138,7 +2222,8 @@ pub async fn fold_apply(id: &str, new_crystal: &str, delta: &str, note: &str) ->
         delta_ref: dref,
         note:      note.to_string(),
     };
-    append_log(id, &rec).await
+    res!(append_log(id, &rec).await);
+    Ok((version, land.moved, recorded))
 }
 
 /// Read a Diamond's log as a JSON array of records (each stored line is

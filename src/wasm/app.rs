@@ -2583,6 +2583,10 @@ impl DaimondApp {
     /// * `proposal` - The envelope [`DaimondApp::fold_propose`] returned, unchanged.
     /// * `delta` - What was folded in, kept beside the version it produced.
     /// * `note` - What the log record says about who asked.
+    ///
+    /// All or nothing: a fold that cannot land writes nothing.  Answers `{version, said}`: the
+    /// version the fold minted, whose version undo is the fold's Undo, and the sentence naming
+    /// the sections moved to cold to make room, empty where none were.
     pub async fn fold_apply(
         &self,
         id:        String,
@@ -2590,7 +2594,7 @@ impl DaimondApp {
         delta:     String,
         note:      String,
     )
-        -> Result<(), JsValue>
+        -> Result<String, JsValue>
     {
         self.fold_apply_inner(&id, &proposal, &delta, &note).await.map_err(to_js_err)
     }
@@ -3637,7 +3641,7 @@ impl DaimondApp {
 
     /// Apply a confirmed fold (see [`DaimondApp::fold_apply`]).
     async fn fold_apply_inner(&self, id: &str, proposal: &str, delta: &str, note: &str)
-        -> Outcome<()>
+        -> Outcome<String>
     {
         let want = res!(Self::proposal_of(proposal));
         // BEFORE THE FOLD REWRITES ANYTHING. The crystal chain takes its own snapshot inside
@@ -3655,21 +3659,18 @@ impl DaimondApp {
                     "the state of {} before this fold could not be recorded: {}", id, e)));
             }
         }
-        // The three files first, and the crystal last, so the version the snapshot mints is
-        // taken with the Diamond in the state the fold left it: `record_steer` and
-        // `diamond::fold_apply` both read the store as it stands.
-        for (leaf, text) in [
-            (crate::tools::REQUIREMENTS_FILE, &want.requirements),
-            (crate::tools::DECISIONS_FILE,    &want.decisions),
-            (crate::tools::STATE_FILE,        &want.state),
-        ] {
-            let text = match text {
-                Some(t) => t.clone(),
-                None    => continue,
-            };
-            res!(diamond::write_standing(id, leaf, &text).await);
-        }
-        diamond::fold_apply(id, &want.crystal, delta, note).await
+        // The files and the crystal together, under one version, or nothing (D-20261010-01).
+        let (version, moved, files) = res!(diamond::fold_apply(id, &want, delta, note).await);
+        let said = match moved.is_empty() {
+            true  => String::new(),
+            false => crate::tools::hot_demote_said(&moved).trim_end().to_string(),
+        };
+        let files = files.iter()
+            .map(|p| fmt!("\"{}\"", crate::llm::json_escape(p)))
+            .collect::<Vec<String>>()
+            .join(",");
+        Ok(fmt!("{{\"version\":{},\"said\":\"{}\",\"files\":[{}]}}", version,
+            crate::llm::json_escape(&said), files))
     }
 
     /// The envelope [`DaimondApp::fold_propose`] answers with, read back.
@@ -3730,19 +3731,38 @@ impl DaimondApp {
     /// a second such answer is refused outright.  Nothing is written by either round.
     async fn fold_propose_inner(&self, id: &str, delta: &str) -> Outcome<String> {
         let crystal = res!(diamond::read_crystal_data(id).await);
+        // A CRYSTAL THAT DOES NOT PARSE IS SAID BEFORE THE ROUND IS PAID FOR (D-20261010-01).
+        // The reducer would be handed the broken text and carry its fault forward.
+        if let Some(fault) = crate::tools::crystal_json_fault(&crystal) {
+            return Err(err!(
+                "This Diamond's crystal is damaged ({}), so nothing was folded and nothing was \
+                spent. Restore an earlier version from History, or ask its daimon to mend it, \
+                then fold again.", fault; Invalid, Data));
+        }
         // The three files ride with the crystal, because the reducer is now asked to rewrite
         // them too and a model cannot rewrite a file it has not been shown. Read once, before
         // either round, so the two rounds fold the same delta into the same state.
         let files = diamond::read_standing(id).await;
         let mut want = res!(self.reduce_round(id, delta, &crystal, &files, "").await);
         let lost = crate::agent::compact::fold_losses(&crystal, &files, &want);
-        if !lost.is_empty() {
+        let land = crate::agent::compact::fold_landing(id, &crystal, &files, &want).err();
+        if !lost.is_empty() || land.is_some() {
             // ONE RETRY, AND ONLY ONE. A reducer that destroys the record twice in a row is
             // not going to be talked round by a third sentence, and the user is waiting.
-            crate::wasm::entry::trail("FOLD WOULD DESTROY",
-                &fmt!("{} — {}", id, lost.join("; ")));
-            let again = res!(self.reduce_round(id, delta, &crystal, &files,
-                &Self::loss_note(&lost)).await);
+            let mut tail = String::new();
+            if !lost.is_empty() {
+                crate::wasm::entry::trail("FOLD WOULD DESTROY",
+                    &fmt!("{} — {}", id, lost.join("; ")));
+                tail.push_str(&Self::loss_note(&lost));
+            }
+            if let Some(why) = &land {
+                // THE CEILING IS NOT A DEAD END: the answer that would not fit is sent back
+                // with the room, rather than the paid round being lost at the store's door.
+                crate::wasm::entry::trail("FOLD WOULD NOT FIT", &fmt!("{} — {}", id, why));
+                let room = crate::tools::crystal_hot_room(files.hot_bytes());
+                tail.push_str(&crate::agent::compact::fold_room_note(why, room));
+            }
+            let again = res!(self.reduce_round(id, delta, &crystal, &files, &tail).await);
             let still = crate::agent::compact::fold_losses(&crystal, &files, &again);
             if !still.is_empty() {
                 return Err(err!(
@@ -3750,6 +3770,12 @@ impl DaimondApp {
                     again when told: {}. The crystal and its files are unchanged. Steer the \
                     Diamond instead, or fold a smaller delta.",
                     still.join("; "); Invalid, Data));
+            }
+            if let Err(why) = crate::agent::compact::fold_landing(id, &crystal, &files, &again) {
+                return Err(err!(
+                    "This fold would not fit in the Diamond, and the reducer's second answer \
+                    did not either: {} The crystal and its files are unchanged.", why;
+                    Invalid, Data, Size));
             }
             want = again;
         }
@@ -4047,7 +4073,7 @@ fn refuse(msg: &str) -> Error<ErrTag> {
 /// into the store, into the sync parcel, and into the log, on every turn that held one -- to buy
 /// what?  The model does not need it: the line names the file, `file_read` fetches it again, and
 /// a reloaded chat is a chat the model is re-reading anyway.  It is the same trade
-/// `crate::compact::elide_bulk` makes when the window fills, made for the same reason.
+/// `crate::agent::compact::elide_bulk` makes when the window fills, made for the same reason.
 fn message_to_js(msg: &ChatMessage) -> JsValue {
     let obj = js_sys::Object::new();
     let set = |k: &str, v: &JsValue| {

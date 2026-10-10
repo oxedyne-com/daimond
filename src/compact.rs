@@ -2831,6 +2831,102 @@ pub fn fold_losses(
 	lost
 }
 
+/// Everything a fold will write, settled before the first byte is.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct FoldLanding {
+	pub crystal: String,                          // as it lands, demoted where it had to be
+	pub files:   Vec<(&'static str, String)>,     // leaf, text after retirement
+	pub retired: Vec<(&'static str, String)>,     // leaf, lines for its archive
+	pub moved:   Vec<String>,                     // headings moved to cold
+}
+
+/// What a fold would leave on disk, or the refusal sentence -- asked of the NEW files.
+///
+/// **ALL OR NOTHING** (D-20261010-01).  A fold writes up to four documents, and the crystal's hot
+/// ceiling counts the three files inside it.  Checked one write at a time, the files landed and
+/// the crystal was then refused against their new weight: three rewritten files with no version,
+/// no log row and no undo.  So every ceiling is asked here, of the state the whole fold would
+/// leave, and the store writes only a landing this returned.
+///
+/// **THE HOT CEILING IS NOT A DEAD END.**  The round has been paid for and no daimon is there to
+/// write again, so the largest hot sections go cold until the crystal fits -- the move the file
+/// tools make on a second refusal.  Only what no move can fix (an over-long summary, a file over
+/// its ceiling after retirement, the total) is refused, and the reducer's retry is told the room.
+///
+/// # Arguments
+/// * `id` - The Diamond, for the archive a refusal names.
+/// * `old_crystal` - The crystal as it stands on disk.
+/// * `files` - The three files as they stand on disk.
+/// * `want` - The proposal.
+pub fn fold_landing(
+	id:          &str,
+	old_crystal: &str,
+	files:       &crate::tools::Standing,
+	want:        &FoldProposal,
+)
+	-> std::result::Result<FoldLanding, String>
+{
+	use crate::tools::{DECISIONS_FILE, REQUIREMENTS_FILE, STATE_FILE};
+	let mut land = FoldLanding::default();
+	let mut after = files.clone();
+	for (leaf, text, old) in [
+		(REQUIREMENTS_FILE, &want.requirements, &files.requirements),
+		(DECISIONS_FILE,    &want.decisions,    &files.decisions),
+		(STATE_FILE,        &want.state,        &files.state),
+	] {
+		let text = match text {
+			Some(t) => t,
+			None    => continue,
+		};
+		let out = crate::tools::standing_retire(leaf, text);
+		if crate::tools::standing_refused(leaf, out.kept.len(), old.len()) {
+			return Err(crate::tools::standing_cap_message(leaf, out.kept.len(), id));
+		}
+		match leaf {
+			REQUIREMENTS_FILE => after.requirements = out.kept.clone(),
+			DECISIONS_FILE    => after.decisions    = out.kept.clone(),
+			_                 => after.state        = out.kept.clone(),
+		}
+		if !out.retired.is_empty() {
+			land.retired.push((leaf, out.retired));
+		}
+		land.files.push((leaf, out.kept));
+	}
+	let hot = after.hot_bytes();
+	let mut crystal = want.crystal.clone();
+	if let Some(msg) = crate::tools::crystal_hot_refusal(&crystal, old_crystal, hot) {
+		match crate::tools::crystal_demote_to_fit(&crystal, crate::tools::crystal_hot_room(hot)) {
+			Some((text, moved)) => {
+				crystal   = text;
+				land.moved = moved;
+			},
+			None => return Err(msg),
+		}
+		if let Some(msg) = crate::tools::crystal_hot_refusal(&crystal, old_crystal, hot) {
+			return Err(msg);
+		}
+	}
+	if crate::tools::crystal_write_refused(crystal.len(), old_crystal.len()) {
+		return Err(crate::tools::crystal_cap_message(crystal.len()));
+	}
+	land.crystal = crystal;
+	Ok(land)
+}
+
+/// What the reducer's second round is told when its first answer would not land.
+///
+/// # Arguments
+/// * `why` - The refusal [`fold_landing`] gave.
+/// * `room` - The bytes the always-present part may weigh beside the files.
+pub fn fold_room_note(why: &str, room: usize) -> String {
+	fmt!(
+		"\n\n---\nYour last answer could not be stored, and it was not accepted:\n\n{}\n\n\
+		Write the whole answer again so that it fits. The always-present part of the crystal -- \
+		title, summary and every hot section -- has room for {} bytes beside the three files. \
+		Shorten the summary to what someone needs first, and put detail in a cold section.",
+		why, room)
+}
+
 /// How many sections a crystal flags hot, or 0 where it will not parse.
 fn hot_of_count(text: &str) -> usize {
 	let cfg = json_cfg();
@@ -5348,6 +5444,90 @@ mod tests {
 		assert!(plain.contains("## Next step\n\nRewrite"),
 			"and an ordinary fold's is not dressed as one:\n{}", plain);
 		assert!(!plain.contains("continues from here"));
+	}
+
+	/// Three files that leave the crystal only the floor of the hot ceiling, as Ontheism's did.
+	fn full_files() -> crate::tools::Standing {
+		let line = |i: usize| fmt!("- [ ] T{} {}\n", i, "an open requirement kept live ".repeat(2));
+		let mut req = fmt!("# Requirements\n\n");
+		let mut i = 0;
+		while req.len() + 80 < crate::tools::REQUIREMENTS_CAP { req.push_str(&line(i)); i += 1; }
+		let mut st = fmt!("# State\n\n");
+		while st.len() + 80 < crate::tools::STATE_CAP { st.push_str("where things are, said once more.\n"); }
+		let mut dec = fmt!("# Decisions\n\n");
+		for i in 0..200 {
+			dec.push_str(&fmt!("- 2026-10-0{} a decision recorded with its reason, {}\n", i % 9 + 1,
+				"because the record must say why ".repeat(2)));
+		}
+		crate::tools::Standing { requirements: req, decisions: dec, state: st }
+	}
+
+	/// A crystal whose summary weighs `summary` bytes, with `hot` hot sections of `each` bytes.
+	fn heavy_crystal(summary: usize, hot: usize, each: usize) -> String {
+		let secs: Vec<String> = (0..hot).map(|i| fmt!(
+			"{{\"heading\":\"Part {}\",\"hot\":true,\"body\":\"{}\"}}", i, "b".repeat(each)))
+			.collect();
+		fmt!("{{\"title\":\"T\",\"summary\":\"{}\",\"sections\":[{}]}}",
+			"s".repeat(summary), secs.join(","))
+	}
+
+	#[test]
+	fn test_a_fold_that_cannot_land_is_refused_before_anything_is_written_00() {
+		// D-20261010-01: the files were written and the crystal then refused against their NEW
+		// weight. The plan is asked of the whole fold, so a refusal leaves nothing to write.
+		let files = full_files();
+		let room = crate::tools::crystal_hot_room(files.hot_bytes());
+		assert!(room <= 2_600, "the fixture must leave about 2 KiB of room, left {}", room);
+		let old = heavy_crystal(200, 0, 0);
+		let mut st = files.state.clone();
+		st.push_str("## Zoapedia\n\nnew.\n");
+		let want = FoldProposal {
+			crystal: heavy_crystal(3 * 1024, 0, 0),
+			requirements: None, decisions: None, state: Some(st),
+		};
+		match fold_landing("d1", &old, &files, &want) {
+			Ok(l)  => panic!("a 3 KiB summary in 2 KiB of room landed: {:?}", l.moved),
+			Err(m) => assert!(m.contains("bytes"), "the refusal names the ceiling: {}", m),
+		}
+		assert!(fold_room_note("why", room).contains(&fmt!("{} bytes", room)));
+	}
+
+	#[test]
+	fn test_a_fold_over_the_hot_ceiling_moves_sections_cold_and_lands_00() {
+		// The round is paid for and no daimon will write again, so the fold door demotes on the
+		// first refusal rather than losing the work.
+		let files = full_files();
+		let old = heavy_crystal(200, 0, 0);
+		let want = FoldProposal {
+			crystal: heavy_crystal(300, 3, 1_000),
+			requirements: None, decisions: None, state: None,
+		};
+		assert!(crate::tools::crystal_hot_refusal(&want.crystal, &old, files.hot_bytes()).is_some(),
+			"the fixture must be over the room");
+		let l = match fold_landing("d1", &old, &files, &want) {
+			Ok(l)  => l,
+			Err(m) => panic!("a fold a demotion fits was refused: {}", m),
+		};
+		assert!(!l.moved.is_empty(), "nothing was moved cold");
+		assert!(crate::tools::crystal_hot_refusal(&l.crystal, &old, files.hot_bytes()).is_none());
+		assert!(l.files.is_empty(), "a file the reducer did not touch is written");
+	}
+
+	#[test]
+	fn test_a_fold_counts_the_new_files_against_the_crystals_room_00() {
+		// A crystal that fits beside the OLD files but not beside the files the fold writes.
+		let mut files = full_files();
+		let grown = files.state.clone();
+		files.state = fmt!("# State\n\nshort.\n");
+		let old = heavy_crystal(200, 0, 0);
+		let want = FoldProposal {
+			crystal: heavy_crystal(3 * 1024, 0, 0),
+			requirements: None, decisions: None, state: Some(grown),
+		};
+		assert!(crate::tools::crystal_hot_refusal(&want.crystal, &old, files.hot_bytes()).is_none(),
+			"the fixture must fit beside the old files");
+		assert!(fold_landing("d1", &old, &files, &want).is_err(),
+			"the crystal was measured against the files as they were");
 	}
 
 	/// A reply with no file heading in it is the old reply, parsed the old way.

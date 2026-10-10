@@ -1071,7 +1071,7 @@ fn sheet_shape(path: &str, bytes: &[u8], media: Media) -> Outcome<String> {
 ///   5 MB on Amazon Bedrock and Google Cloud. Two megabytes on disk is 2.67 MB base64, which
 ///   clears the tightest of those with room to spare, so a read that succeeds can always be sent.
 /// * **What it is worth.** An image is charged by area and the charge stops at
-///   [`crate::compact::IMAGE_TOKEN_CAP`], which a 2,576-pixel edge already reaches. Past that
+///   [`crate::agent::compact::IMAGE_TOKEN_CAP`], which a 2,576-pixel edge already reaches. Past that
 ///   point a bigger file buys the model no more detail than the provider's own downscale leaves
 ///   it -- only transfer, memory and journal weight.
 /// * **What the work actually produces.** This repository's own full-window screenshot at
@@ -1531,6 +1531,26 @@ pub fn standing_cap(leaf: &str) -> usize {
         DECISIONS_FILE    => DECISIONS_CAP,
         STATE_FILE        => STATE_CAP,
         _                 => 0,
+    }
+}
+
+/// One of the three as a write would leave it: over its ceiling, the oldest finished lines
+/// retired by [`retire_done`] or [`retire_decisions`]; under it, or `STATE.md`, unchanged.
+///
+/// The arithmetic both the file tools' door (`crate::wasm::diamond::standing_retired`) and a
+/// crystal fold's plan ([`crate::agent::compact::fold_landing`]) come through, so the two cannot retire
+/// differently.  Writes nothing: the archive append is the caller's.
+pub fn standing_retire(leaf: &str, text: &str) -> Retired {
+    let cap = standing_cap(leaf);
+    let keep = || Retired { kept: text.to_string(), retired: String::new() };
+    if text.len() <= cap {
+        return keep();
+    }
+    match leaf {
+        REQUIREMENTS_FILE => retire_done(text, cap),
+        DECISIONS_FILE    => retire_decisions(text, cap),
+        // `STATE.md` holds no history, so it has nothing to retire and is simply refused.
+        _                 => keep(),
     }
 }
 

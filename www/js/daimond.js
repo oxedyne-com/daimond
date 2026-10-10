@@ -30980,7 +30980,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 	/// `loadChatMessages` reads the row. Without this, a chat restored from the trash --
 	/// and any chat a reload left unopened -- answered "Turn into a diamond…" with "This
 	/// chat is empty", which is a sentence about this tab's memory and not about the chat.
-	async function openFoldPicker(chat, anchor, turns) {
+	async function openFoldPicker(chat, anchor, turns, chosen) {
 		closeFoldMenu();
 		if (chat && !chat._loaded) {
 			try { await loadChatMessages(chat); }
@@ -31015,6 +31015,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		neww.className = 'fold-menu-item new'; neww.textContent = t('fold.new_diamond');
 		neww.addEventListener('click', function () {
 			closeFoldMenu();
+			if (chosen) chosen();
 			foldChatIntoNew(chat, turns).catch(foldFailed);
 		});
 		menu.appendChild(neww);
@@ -31031,6 +31032,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			item.textContent = f.name;                 // escaped via textContent (H5)
 			item.addEventListener('click', function () {
 				closeFoldMenu();
+				if (chosen) chosen();
 				foldChatInto(chat, f.id, turns).catch(function (e) { foldFailed(e, f.id); });
 			});
 			menu.appendChild(item);
@@ -31093,16 +31095,23 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 	/// * `diamondId` - the Diamond being folded into, for `diamondModel`.
 	/// * `returns` - the tile, so the caller can settle a stage into `_body`.
 	function foldStageTile(chat, diamondId) {
-		var onFace = (typeof centreMode !== 'undefined' && centreMode === 'daimon')
-			|| (chat && chat.diamondId);
-		if (!onFace) return null;
-		var m = diamondModel(diamondId) || {};
+		// THE SOURCE CHAT, ON ANY FACE (D-20261010-01 item 3). The tile was drawn only
+		// on the daimon face, so a fold started from the rail or the crystal face ran
+		// with nothing in the chat it came from. It is made for every fold now, and put
+		// into the thread only where that chat is the one on screen: `postToChat` draws
+		// into whatever thread is up. Off screen, the row `foldSettle` keeps is the record.
 		var tile = buildTile('tool', { expanded: false,
 			who: t('fold.tile_title'), meta: 'fold', ts: Date.now() });
 		tile.classList.add('tool-block', 'running');
 		tilePeek(tile, t('fold.stage_read'));
-		tagTurn(tile);
-		postToChat(tile);
+		tile._chat = chat || null;
+		tile._diamondId = diamondId;
+		tile._t0 = Date.now();
+		if (chat && (current === chat || daimonOnScreen(chat))) {
+			tagTurn(tile);
+			postToChat(tile);
+			tile._posted = true;
+		}
 		return tile;
 	}
 
@@ -31110,35 +31119,82 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 	///
 	/// A stage key that does not exist is the caller's bug and is ignored
 	/// rather than rendered, so a bad key can never blank the tile.
-	/// `run` is the tile `foldStageTile` returned, or null off-face.
 	function foldStageSay(run, key) {
 		if (!run) return;
 		var line = t('fold.stage_' + key);
 		if (!line || line === ('fold.stage_' + key)) return;
+		run._stage = key;
 		run._body.textContent = line;
 	}
 
-	/// Take the `running` mark off a fold tile -- every path out of the fold
-	/// settles it, the failing ones via `foldStageFail` inside `foldFailed`.
-	function foldStageDone(run) {
-		if (!run) return;
+	/// Settle a fold tile, once, and keep what it came to in the source chat.
+	///
+	/// EVERY EXIT SETTLES IT (item 3): a tile left `running` reads as a fold still in
+	/// flight for ever. The outcome is also a row of the chat -- `note_log` for a fold
+	/// that landed or changed nothing, `error_log` for one that failed -- so it is there
+	/// on any face and after a reload, which a DOM tile is not. Drawn only where the tile
+	/// is not already saying it.
+	/// # Arguments
+	/// * `kind` - `done`, `unchanged`, `empty` or `failed`.
+	/// * `said` - The line under the tile's title: the error, or what the fold did.
+	function foldSettle(run, kind, said) {
+		if (!run || run._settled) return;
+		run._settled = true;
 		run.classList.remove('running');
+		var head = kind === 'failed' ? t('fold.stage_failed')
+			: kind === 'unchanged' ? t('fold.stage_unchanged')
+			: kind === 'empty' ? t('fold.nothing')
+			: t('fold.stage_done');
+		run._body.textContent = head;
+		if (said) tilePeek(run, said);
+		var chat = run._chat;
+		if (!chat || !Array.isArray(chat.messages)) return;
+		var line = said ? head + ': ' + said : head;
+		chat.messages.push({ role: kind === 'failed' ? 'error_log' : 'note_log',
+			content: line, mid: newMid(), ts: Date.now() });
+		// The row is not new content: a whole fold's "nothing new" mark counts it in.
+		if (chat.foldedInto && chat.foldedInto.id === run._diamondId) {
+			chat.foldedInto.at_len = chat.messages.length;
+		}
+		touchChat(chat);
+		persistChats();
+		if (!run._posted && (current === chat || daimonOnScreen(chat))) {
+			if (kind === 'failed') appendError(line); else appendNote(line);
+		}
 	}
 
-	/// Settle a fold tile that ended in an error, with the error said.
+	/// Settle a fold tile that ended in an error, with the error said, and keep the
+	/// error up until it is read: a toast was gone before anyone looked back.
 	function foldStageFail(run, e) {
-		if (!run) return;
-		run.classList.remove('running');
-		run._body.textContent = t('fold.stage_failed');
-		tilePeek(run, friendlyError(e));
+		var said = friendlyError(e);
+		foldSettle(run, 'failed', said);
+		foldLens(run, run && run._stage === 'commit' ? 'fold.apply' : 'fold.propose', 'failed', said);
+		noticeDialog(t('fold.stage_failed'), said);
+	}
+
+	/// One Lens row of a fold (item 4): which chat, which Diamond, on which model, how
+	/// long since the fold began, what it came to, and the refusal in the engine's words.
+	function foldLens(run, kind, outcome, refusal) {
+		if (!run || (run._lensed && run._lensed[kind])) return;
+		run._lensed = run._lensed || {};
+		run._lensed[kind] = true;
+		var m = diamondModel(run._diamondId) || {};
+		dsEvent(kind, {
+			chat:    run._chat ? String(run._chat.id || '') : '',
+			diamond: String(run._diamondId || ''),
+			model:   String(m.model || ''),
+			ms:      Date.now() - (run._t0 || Date.now()),
+			outcome: outcome,
+			full:    refusal ? String(refusal) : undefined,
+		});
 	}
 
 	function foldFailed(e, id) {
-		foldStageFail(_foldRun, e);
 		hideCrystalSpinner();
 		setCrystalStatus('');
 		if (id) setCrystalBusy(id, false);
-		toast(friendlyError(e), true);
+		if (_foldRun && !_foldRun._settled) { foldStageFail(_foldRun, e); return; }
+		noticeDialog(t('fold.stage_failed'), friendlyError(e));
 	}
 
 	/// Fold a chat into a Diamond. `turns`, when given, folds only those turns.
@@ -31185,7 +31241,10 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		// the chat face too (below): the crystal spinner and status line live on
 		// the crystal face, which is not the one up.
 		await selectDiamond(f);
-		setCrystalBusy(diamondId, true); setCrystalStatus(t('fold.proposing'), true);
+		// The label names where the chat is going (item 5): "Proposing fold…" was the
+		// word for a review step that has not existed since 2026-09-04.
+		var going = t('fold.proposing', { diamond: f.name });
+		setCrystalBusy(diamondId, true); setCrystalStatus(going, true);
 		// THE FOLD AS TILES (#17): the crystal spinner stays for the crystal
 		// face, and the transcript now carries the fold as it happens -- one
 		// labelled tile, one line per real stage, the same machinery a turn's
@@ -31193,6 +31252,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		// `run.text`, so the #16 cap keeps its meaning.
 		var frun = foldStageTile(chat, diamondId);
 		_foldRun = frun;
+		foldLens(frun, 'fold.start', turns ? 'turns' : 'whole');
 		showCrystalSpinner();
 		// PROGRESS WHERE THE USER IS LOOKING. A whole-chat fold of a daimon runs
 		// from the chat face, and the reducer round is the slowest call the app
@@ -31201,10 +31261,11 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		// of the scroll then nothing" (report 2026-09-05). The chat's own spinner
 		// is raised on the chat face so the wait is visible where the button is.
 		var onChatFace = (centreMode === 'daimon');
-		if (onChatFace) showSpinner(t('fold.proposing'));
+		if (onChatFace) showSpinner(going);
 		var delta = chatDelta(chat, turns), cur, proposed;
 		if (!delta) {                                  // ticked turns that carried no text
-			foldStageDone(frun);
+			foldSettle(frun, 'empty', t('fold.turns_empty'));
+			foldLens(frun, 'fold.propose', 'empty');
 			hideCrystalSpinner(); hideSpinner();
 			setCrystalStatus(''); setCrystalBusy(diamondId, false);
 			noticeDialog(t('fold.nothing'), t('fold.turns_empty'));
@@ -31215,18 +31276,15 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		var fa = diamondApp(diamondId);
 		try {
 			foldStageSay(frun, 'read');
-				cur = await fa.read_crystal_data(diamondId);
+			cur = await fa.read_crystal_data(diamondId);
 			foldStageSay(frun, 'propose');
 			proposed = await fa.fold_propose(diamondId, delta);
 		} catch (e) {
-			foldStageFail(frun, e);
 			meterDiamondTurn(fa, diamondId);
 			hideCrystalSpinner(); hideSpinner();
-			// The status line alone was invisible: it is 12px of muted grey under
-			// controls the user is not looking at, on a panel they may have left --
-			// so the reducer failure is also toasted, which shows on any face.
 			setCrystalStatus(friendlyError(e)); setCrystalBusy(diamondId, false);
-			toast(friendlyError(e), true);
+			// Settled, kept in the chat, and held on screen until read (item 3).
+			foldStageFail(frun, e);
 			return;
 		}
 		meterDiamondTurn(fa, diamondId);
@@ -31241,9 +31299,9 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		// envelope around an empty crystal would have passed a bare string test.
 		if (!foldEnvelope(proposed) || !String(foldEnvelope(proposed).crystal || '').trim()) {
 			foldStageFail(frun, new Error(t('fold.empty_reply')));
-			toast(t('fold.empty_reply'), true);
 			return;
 		}
+		foldLens(frun, 'fold.propose', 'ok');
 		var st = {
 			base: cur, proposed: proposed, delta: delta,
 			chatId: chat.id, chatName: chatDisplayName(chat),
@@ -31252,66 +31310,68 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			partial: !!turns,
 		};
 		// ONE CLICK COMMITS (owner decision 2026-09-04): "Fold means fold, done." The
-		// proposed crystal is written straight in — no Accept/Reject step. Two guards
-		// survive because they are not the review: the empty-reducer guard just above
-		// (a round that returned nothing never reaches here, so a bad round cannot wipe
-		// the crystal), and the version snapshot `fold_apply` takes on write — which is
-		// now the undo path for a fold the user did not want.
-		// THE VERSION THE FOLD IS ABOUT TO LEAVE BEHIND, read before it moves. It is
-		// the whole of the undo: `fold_apply` snapshots on write, so the state the
-		// user is giving up is exactly this version, and putting it back is a NEW
-		// version rather than a deletion of the fold (§8). Read now because
-		// afterwards there is no way to tell which of two numbers was the parent.
+		// proposed crystal is written straight in — no Accept/Reject step. The empty-reducer
+		// guard just above survives, because it is not the review; the fold's own version is
+		// the undo.
+		//
+		// THE VERSION THE FOLD IS ABOUT TO LEAVE BEHIND, read before it moves: the crystal
+		// half of the Undo puts this one back, written forward as a new version (§8).
 		var parentV = await diamondCrystalVersion(diamondId);
 		// And the conversation as it stands, for the same reason: a self-fold is
 		// about to empty it, and the array is the only copy once it does.
 		var wasMsgs = (chat.messages || []).slice();
 		var wasMids = wasMsgs.map(function (m) { return m.mid; });
+		var landed;
 		try {
 			foldStageSay(frun, 'commit');
-			await commitFold(diamondId, st);
-			foldStageDone(frun);
+			landed = await commitFold(diamondId, st);
 		} catch (e) {
 			setCrystalStatus(friendlyError(e));
-			toast(friendlyError(e), true);
+			foldStageFail(frun, e);
 			return;
 		}
+		// A FOLD THAT CHANGES NOTHING SAYS SO (item 3). It wrote nothing and minted
+		// nothing, and the "Folded" it used to show claimed otherwise.
+		if (!landed.changed) {
+			foldSettle(frun, 'unchanged', t('fold.unchanged_body', { diamond: f.name }));
+			foldLens(frun, 'fold.apply', 'unchanged');
+			noticeDialog(t('fold.stage_unchanged'), t('fold.unchanged_body', { diamond: f.name }));
+			return;
+		}
+		foldSettle(frun, 'done', landed.said || t('fold.committed', { diamond: f.name }));
+		foldLens(frun, 'fold.apply', 'ok');
 		// A DAIMON FOLDING INTO ITS OWN DIAMOND STARTS FRESH. The daimon-chat Fold
 		// button is the replacement for "Fresh daimon" (owner decision 2026-09-04): it
 		// absorbs the conversation into the crystal — the reducer read the WHOLE
 		// transcript — and, now that the crystal is COMMITTED, clears the conversation,
-		// so the chat begins empty with the updated crystal in effect. There is no
-		// reject window: the fold is already applied, so the clear is safe. Done only
-		// for a WHOLE fold of a daimon into ITSELF (`chat.diamondId === diamondId`); an
-		// ordinary chat keeps its thread and a partial fold leaves the rest.
+		// so the chat begins empty with the updated crystal in effect. Done only for a
+		// WHOLE fold of a daimon into ITSELF (`chat.diamondId === diamondId`).
 		// `clearDaimonSession` carries the 2026-08-14 data-loss guard, so this does not
 		// shorten any other conversation.
 		var selfFold = !turns && chat.diamondId && chat.diamondId === diamondId;
+		// AN ORDINARY CHAT FOLDED WHOLE HAS GONE INTO ITS DIAMOND (item 6), so it goes to
+		// the Trash -- not destroyed: the Undo below takes it back out. A daimon's own
+		// conversation and a fold of chosen turns stay where they are.
+		var trashed = !turns && !chat.diamondId;
 		if (selfFold) {
 			clearDaimonSession(chat, diamondId);
-			// REPAINT THE FACE THE USER IS ON. `clearDaimonSession` empties the record
-			// and persists, but paints nothing -- so the thread rendered before the
-			// fold sat on screen unchanged and the whole fold read as having done
-			// nothing (owner report 2026-09-05: the conversation was still there). A
-			// re-select from the now-empty record draws the fresh session. Only where
-			// the daimon's chat is actually up: the crystal face has no thread to be
-			// stale and `selectDiamond` already re-rendered its crystal. Mirrors the
-			// repaint in `mountDaimonReset`.
+			// REPAINT THE FACE THE USER IS ON: `clearDaimonSession` paints nothing, so
+			// the thread rendered before the fold sat on screen unchanged (owner report
+			// 2026-09-05). Mirrors the repaint in `mountDaimonReset`.
 			if (daimonOnScreen(chat)) await selectDiamond(f, 'chat');
 		}
+		if (trashed) removeChat(chat);
 		renderDiamondList();
-		// THE TOAST REPLACES `fold.committed`. A fold is one press, it is paid for,
-		// and until now the only way back from one the user did not want was to find
-		// the version in History and restore it -- which is exactly the hunt this
-		// window exists to spare them.
-		//
-		// `selfFold` is the only case with a transcript to put back, and it is also
-		// the only case with a destructive tail: the tombstone and the compaction
-		// that `clearDaimonSession` used to run on the spot now wait here for the
-		// window to close. An ordinary chat's fold commits nothing -- its thread was
-		// never touched -- so its revert is the crystal alone.
+		// THE UNDO IS THE FOLD'S ONE VERSION (item 6, lead ruling 9 Oct). `fold_apply`
+		// writes the crystal and the three files as one version; Undo puts that version
+		// back through the engine's version undo and the crystal's own chain, and takes
+		// the chat out of the Trash. `selfFold` keeps its destructive tail -- the
+		// tombstone and compaction `clearDaimonSession` defers -- for when the window closes.
 		undoAble(t('undo.folded', { name: f.name }),
-			function () { undoFold(chat, diamondId, parentV, selfFold ? wasMsgs : null); },
+			function () {
+				undoFold(chat, diamondId, parentV, landed.version, landed.files,
+					selfFold ? wasMsgs : null, trashed);
+			},
 			selfFold ? function () { commitDaimonClear(chat, wasMids); } : null);
 	}
 
@@ -31335,7 +31395,24 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 	/// and stays in it; what the user gets back is the memory as it stood, written
 	/// forward. That is the same rule the History panel's own Restore keeps, and it
 	/// is why an undone fold can itself be undone.
-	async function undoFold(chat, diamondId, parentV, msgs) {
+	async function undoFold(chat, diamondId, parentV, foldV, files, msgs, trashed) {
+		// THE FILES FIRST: what the fold's version replaced, each path back to its own
+		// row's `was` -- the version undo History and a turn's Undo use. `files` are the
+		// rows `fold_apply` recorded (REQUIREMENTS/DECISIONS/STATE.md as it rewrote them),
+		// so a fold that rewrote none has nothing to put back. One it did record that
+		// cannot be put back stops the Undo here, said, with nothing else moved: a
+		// crystal back without its files is the half-undo this exists to prevent.
+		if (foldV > 0 && files && files.length) {
+			var back = null;
+			try {
+				back = window.DaimondVersions
+					? await DaimondVersions.undoVersion(diamondId, foldV, files) : null;
+			} catch (e) { back = null; }
+			if (!back) {
+				noticeDialog(t('crystal.restore_failed'), t('fold.undo_files_failed'));
+				return;
+			}
+		}
 		try {
 			var was = await diamondApp().read_version(diamondId, parentV);
 			var wasPage = '';
@@ -31349,6 +31426,11 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		} catch (e) {
 			noticeDialog(t('crystal.restore_failed'), friendlyError(e));
 			return;
+		}
+		// Out of the Trash, and back on screen as Undo asks (`reselectChat`).
+		if (trashed && chat) {
+			await trashRestore(chat.id);
+			chat = chats.find(function (c) { return c.id === chat.id; }) || chat;
 		}
 		if (msgs) {
 			// Nothing was tombstoned -- that was the commit, and it never ran -- so
@@ -31367,6 +31449,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			persistChats();
 			renderSessionList();
 		}
+		if (trashed && chat) reselectChat(chat.id);
 		await refreshDiamondAfterChange();
 	}
 
@@ -32552,7 +32635,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		// ── The two ways to turn a chat into a Diamond (CHAT-15), moved off the
 		// row and into the cog: see `mountChatFoldKeep`. Acts, so they sit beside
 		// Share rather than under Advanced.
-		if (opts.chat) mountChatFoldKeep(card, opts.chat);
+		if (opts.chat) mountChatFoldKeep(card, opts.chat, close);
 
 		// ── Context. Only for a chat, which is the only thing here that HAS a durable
 		// conversation to fold; a Diamond's daimon has one from phase E. A reading,
@@ -32763,7 +32846,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 	/// of a paid round trip; Keep makes a NEW Diamond and carries the
 	/// transcript in whole, consults no model and costs nothing. Both are
 	/// offered because somebody reaching for the cog may want either.
-	function mountChatFoldKeep(card, chat) {
+	function mountChatFoldKeep(card, chat, close) {
 		var row = document.createElement('div');
 		row.className = 'tile-dlg-actions';
 		var fold = document.createElement('button');
@@ -32777,7 +32860,13 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		fold.title = chat.foldedInto
 			? t('tile.folded_help', { name: chat.foldedInto.name })
 			: t('tile.fold_all_help');
-		fold.addEventListener('click', function () { openFoldPicker(chat, fold); });
+		// THE DIALOG GOES ONCE A DIAMOND IS CHOSEN, as it does for Delete. It is the
+		// settings of a chat that is about to be folded and sent to the Trash, and
+		// left open it covered the fold's outcome and its Undo row, which a dialog
+		// covers like the rest of the page (UNDO-ROW, r547): the Undo was unreachable
+		// for the whole of its window. Closed at the choice, not at the press, so a
+		// person who backs out of the picker is still in their settings.
+		fold.addEventListener('click', function () { openFoldPicker(chat, fold, undefined, close); });
 		row.appendChild(fold);
 		var keep = document.createElement('button');
 		keep.type = 'button';
@@ -43344,7 +43433,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		// The same guard `foldChatInto` keeps, kept here too — it is not the review, and
 		// it reads the envelope's crystal for the reason given there.
 		if (!foldEnvelope(proposed) || !String(foldEnvelope(proposed).crystal || '').trim()) {
-			toast(t('fold.empty_reply'), true);
+			noticeDialog(t('fold.stage_failed'), t('fold.empty_reply'));
 			return;
 		}
 		// One click commits (owner decision 2026-09-04): a worker's summary folds
@@ -43354,13 +43443,20 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			base: cur, proposed: proposed, delta: delta,
 			chatId: null, chatName: sourceName, sourceRun: sourceRun || null,
 		};
+		var landed;
 		try {
-			await commitFold(diamondId, st);
+			landed = await commitFold(diamondId, st);
 		} catch (e) {
-			setCrystalStatus(friendlyError(e)); toast(friendlyError(e), true); return;
+			setCrystalStatus(friendlyError(e));
+			noticeDialog(t('fold.stage_failed'), friendlyError(e));
+			return;
+		}
+		if (!landed.changed) {
+			noticeDialog(t('fold.stage_unchanged'), t('fold.unchanged_body', { diamond: f.name }));
+			return;
 		}
 		renderDiamondList();
-		toast(t('fold.committed', { diamond: f.name }));
+		toast(landed.said || t('fold.committed', { diamond: f.name }));
 	}
 
 	// ── Workspace (OPFS over run_tool) ─────────────────────────
@@ -60769,16 +60865,23 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 	/// and whichever of REQUIREMENTS.md, DECISIONS.md and STATE.md the reducer
 	/// rewrote — carried back to `fold_apply` unchanged.
 	/// Throws on a write failure so the caller can report it and, for a daimon
-	/// self-fold, NOT clear the conversation.
+	/// self-fold, NOT clear the conversation. Resolves `{ changed, version, said }`:
+	/// whether anything was written, the version the fold minted (its Undo), and the
+	/// engine's sentence about sections moved cold to make room.
 	async function commitFold(diamondId, st) {
 		// A fold that changes nothing writes nothing: applying it would bump the
 		// version and store a duplicate delta, growing the history with nothing in it.
 		// Read off the envelope's crystal, not off the envelope: the envelope also
 		// carries the files, so comparing it with the crystal would never match and
 		// every fold would write a version.
-		if (foldChangesNothing(st)) return;
+		if (foldChangesNothing(st)) return { changed: false, version: 0, said: '' };
 		setCrystalStatus(t('fold.applying'));
-		await diamondApp().fold_apply(diamondId, st.proposed, st.delta, 'fold via UI');
+		var raw = await diamondApp().fold_apply(diamondId, st.proposed, st.delta, 'fold via UI');
+		var ans = {};
+		try { ans = JSON.parse(raw || '{}') || {}; }
+		catch (e) { ans = {}; }                      // landed; only the Undo's version is unknown
+		var landed = { changed: true, version: Number(ans.version) || 0, said: String(ans.said || ''),
+			files: Array.isArray(ans.files) ? ans.files.map(String) : [] };
 		await harvestArtefacts(diamondId, st);
 		// Record where the chat went, so the tile can say so and the user is not left
 		// wondering whether the fold took. A fold of a few chosen turns is not the
@@ -60811,6 +60914,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			Workers.render();
 		}
 		await refreshDiamondAfterChange();
+		return landed;
 	}
 
 	/// Would applying this proposal leave the Diamond exactly as it is?

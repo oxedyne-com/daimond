@@ -2432,13 +2432,17 @@
 	'fold.no_key':           'That diamond’s provider has no readable key. Unlock, or add one, to fold into it.',
 	'fold.nothing_new':      'Nothing new to fold',
 	'fold.nothing_new_body': '"{chat}" has not changed since it was folded into "{diamond}".',
-	// i18n-family: fold.stage_ = read propose commit failed
+	// i18n-family: fold.stage_ = read propose commit failed done unchanged
 	'fold.stage_read':       'Fold: reading the crystal',
 	'fold.stage_propose':    'Fold: reducing',
 		'fold.stage_commit':    'Fold: writing the crystal',
 	'fold.tile_title':      'Fold',
 	'fold.stage_failed':     'Fold failed',
-	'fold.proposing':        'Proposing fold…',
+	'fold.stage_done':       'Folded',
+	'fold.stage_unchanged':  'Nothing changed',
+	'fold.unchanged_body':   'The fold found nothing to add to “{diamond}”, so nothing was written.',
+	'fold.undo_files_failed': 'The fold’s changes to the Diamond’s files could not be undone, so nothing was changed. History still holds the version.',
+	'fold.proposing':        'Folding into {diamond}…',
 	'fold.busy_title':       'That diamond is working',
 	'fold.busy_body':        '“{diamond}” has a turn in flight, and a fold rewrites the same crystal. Wait for it to finish, then fold.',
 	'fold.diamond_gone':     'The diamond is gone',
@@ -2449,16 +2453,10 @@
 	// crystal, no Accept/Reject. The version history is the undo path.
 	'fold.applying':         'Folding…',
 	'fold.committed':        'Folded into “{diamond}”.',
-	'fold.committed_fresh':  'Folded into the crystal, and started fresh.',
-	'fold.proposed_toast':   'Fold proposed. Accept or Reject it below.',
-	'fold.proposed_elsewhere': 'Fold proposed on "{diamond}". Open it to Accept or Reject.',
-	'fold.pending_badge':    'fold waiting',
 	// The fold diff's heading. Four shapes rather than one with glue, because a
 	// language that puts the target first cannot reorder a fragment.
 	'diff.folding_chat':      'Folding "{chat}". Review the change, then Accept or Reject.',
 	'diff.folding_chat_into': 'Folding "{chat}" into "{diamond}". Review the change, then Accept or Reject.',
-	'diff.proposed':          'Proposed fold. Review the change, then Accept or Reject.',
-	'diff.proposed_into':     'Proposed fold into "{diamond}". Review the change, then Accept or Reject.',
 	'diff.no_change':         'No change proposed. The crystal already covers this.',
 	'diff.no_change_into':    'No change proposed into "{diamond}". The crystal already covers this.',
 	'diff.accept':            'Accept fold',
@@ -2467,7 +2465,6 @@
 	// What accepting would take OUT. A fold that only adds needs no warning; one
 	// that drops a key the crystal already holds is the change worth naming, and
 	// {keys} is the list of them, joined by the caller.
-	'fold.keys_lost':         'Accepting this removes: {keys}',
 
 	// ── The crystal ────────────────────────────────────────────
 	'crystal.page':           'Redesign Page…',
