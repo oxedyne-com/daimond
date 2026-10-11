@@ -9944,6 +9944,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 				var storedAt = packStamp(idata) || diamondStamp(r);	// the stamp the import lays down
 				try { await app.import_diamond(idata, twoSided); changed = true; }
 				catch (e) { idata = null; return 0; }
+				notePrunes(r.id);				// an arrival can prune; the Lens hears it
 				idata = null;							// free the export before the next Diamond
 				// The import laid both sides on the remote's copy: it is now the agreed
 				// fork point (S-SYNC #4), at the stamp that copy carries, not the entry's.
@@ -14919,6 +14920,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		/// caller is `DaimondShare.takeTemplate`.
 		openTemplate: async function (json) {
 			var id = await diamondApp().import_template(String(json || ''));
+			notePrunes(id);					// a copied version store can arrive over the limit
 			// It is on the rail now, and a filter left over from a moment ago would
 			// hide it behind "No Diamonds match" -- which reads exactly like the
 			// import having done nothing. The same three calls `createDiamond` makes,
@@ -53713,6 +53715,11 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 	}
 
 	async function selectDiamond(f, view) {
+		// The Diamond being left has its page's saves recorded now (D-20261009-29 item 5).
+		if (currentDiamond && currentDiamond.id && (!f || f.id !== currentDiamond.id)
+			&& window.DaimondVersions && DaimondVersions.flush) {
+			DaimondVersions.flush(currentDiamond.id);
+		}
 		// Before anything moves `current`, and once for both faces: they share the
 		// composer, so a draft belongs to the Diamond and not to the face. See
 		// `moveComposerTo`.
@@ -55287,7 +55294,13 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 				if (had && had.slice(-1) !== '\n') had += '\n';
 				body = had + body;
 			}
+			// MARKED BEFORE IT IS WRITTEN, keeping what it holds now as the row's `was`
+			// (D-20261009-29 item 5): this door wrote raw and marked nothing, so no History row
+			// held a page's saves and a restore ran over them. Recorded shortly after.
+			var V = window.DaimondVersions;
+			if (V && V.dirtyBefore) await V.dirtyBefore(id, path);
 			await Wasm.store_write(path, body);
+			if (V && V.recordSoon) V.recordSoon(id);
 			// AND STAMP THE DIAMOND. `store_write` is a raw OPFS write and moves nothing, but
 			// `touched` is what decides whose copy the other device takes: a phone where the
 			// user only ever logged into a capp would stay the STALE side, and the desktop's
@@ -56666,6 +56679,10 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		// every control below that reads a manifest is simply not drawn and the
 		// panel is the crystal history it has always been.
 		var files = !!(window.DaimondVersions && DaimondVersions.ready());
+		// One read serves the bar, the prune rows and the limit line.
+		var gaugeP = files ? DaimondVersions.gauge(id) : Promise.resolve({ pruned: [] });
+		var g0 = await gaugeP;
+		notePrunes(id, g0.pruned);
 
 		clearCrystalBody();
 		var bar = document.createElement('div');
@@ -56695,7 +56712,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			var gauge = document.createElement('span');
 			gauge.className = 'hist-gauge';
 			bar.appendChild(gauge);
-			DaimondVersions.gauge(id).then(function (g) {
+			gaugeP.then(function (g) {
 				gauge.textContent = t('versions.gauge',
 					{ used: fmtBytes(g.used || 0), cap: fmtBytes(g.cap || 0) });
 				// At nine tenths the number stops being information and becomes a
@@ -56721,14 +56738,96 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			list.appendChild(none);
 		}
 		// Newest first: the version you most likely want back is the last good one.
-		rows.forEach(function (r) { list.appendChild(histRow(id, r, files)); });
+		// A prune stands where the versions it removed stood, so a gap in the numbers
+		// is said where it is seen, with what went and when. `newer` is the VERSION
+		// above, never a prune row: a restore names the state it replaced.
+		var entries = files ? DaimondVersions.withPrunes(rows, g0.pruned || [])
+			: rows.map(function (r) { return { row: r }; });
+		var newer = null;
+		entries.forEach(function (e) {
+			if (!e.row) { list.appendChild(histPrunedRow(e.prune)); return; }
+			list.appendChild(histRow(id, e.row, files, newer));
+			newer = e.row;
+		});
 		crystalBody.appendChild(list);
-		if (files) crystalBody.appendChild(histFoot());
+		if (files) crystalBody.appendChild(histFoot(g0));
 		renderCrystalControls();
 	}
 
+	/// The versions one prune removed, as a row of their own: History never has a
+	/// gap nobody explains.
+	function histPrunedRow(rec) {
+		var row = document.createElement('div');
+		row.className = 'hist-row hist-pruned';
+		var head = document.createElement('div');
+		head.className = 'hist-head';
+		var ren = rec.on === 'renumber';
+		var kind = document.createElement('span');
+		kind.className = 'hist-kind';
+		kind.textContent = t(ren ? 'versions.renumbered_kind' : 'versions.pruned_kind');
+		var when = document.createElement('span');
+		when.className = 'hist-when';
+		when.textContent = rec.ts ? relTime(rec.ts) : '';
+		head.appendChild(kind); head.appendChild(when);
+		row.appendChild(head);
+		var day = function (ms) {
+			return (ms && window.DaimondTime) ? DaimondTime.fmtDate(ms) : '';
+		};
+		var note = document.createElement('div');
+		note.className = 'hist-note';
+		// A renumbering moved this device's versions above another copy's: nothing went.
+		note.textContent = ren ? tn('versions.renumbered_row', rec.versions.length, {
+			n: rec.versions.length, list: DaimondVersions.versionSpans(rec.versions),
+			to: DaimondVersions.versionSpans(rec.to || []),
+		}) : tn('versions.pruned_row', rec.versions.length, {
+			n: rec.versions.length, list: DaimondVersions.versionSpans(rec.versions),
+			from: day(rec.first), to: day(rec.last),
+		});
+		row.appendChild(note);
+		return row;
+	}
+
+	// The newest prune each Diamond has told the Lens of, so a record goes out once.
+	var _prunesSaid = new Map();
+	var _prunesFrom = Date.now();		// records older than this page were said by an earlier one
+
+	/// Tell the Lens of every prune it has not heard of: History losing versions is
+	/// a fact a trace must carry, not something found later by counting.
+	async function notePrunes(id, recs) {
+		if (!id || !window.DaimondVersions || !DaimondVersions.ready()) return;
+		try {
+			if (!recs) recs = (await DaimondVersions.gauge(id)).pruned || [];
+			var seen = Math.max(_prunesFrom, _prunesSaid.get(id) || 0);
+			recs.filter(function (r) { return r.ts >= seen; })
+				.sort(function (a, b) { return a.ts - b.ts; })
+				.forEach(function (r) {
+					if (r.on === 'renumber') {
+						dsEvent('versions.renumbered', { diamond: String(id), n: r.versions.length,
+							list: DaimondVersions.versionSpans(r.versions),
+							to: DaimondVersions.versionSpans(r.to || []) });
+						_prunesSaid.set(id, r.ts + 1);
+						return;
+					}
+					dsEvent('versions.pruned', {
+						diamond: String(id), on: r.on, n: r.versions.length,
+						list: DaimondVersions.versionSpans(r.versions),
+						first: r.first, last: r.last, bodies: r.bodies, bytes: r.bytes,
+					});
+					_prunesSaid.set(id, r.ts + 1);
+				});
+		} catch (e) { /* the Lens is a witness; it never fails the caller */ }
+	}
+
+	/// Is `r` a restore the person made, as against the copy a restore kept of a
+	/// file first (its note says `before ...`)?
+	function isRestoreRow(r) {
+		return !!r && (r.cause === 'restore' || r.kind === 'restore') && !/^before /.test(r.note || '');
+	}
+
 	/// One version: what it was, what it changed, and the two ways back.
-	function histRow(id, r, files) {
+	///
+	/// `newer` is the row above it, so the state a restore replaced says so.
+	function histRow(id, r, files, newer) {
 		var v = r.v;
 		var row = document.createElement('div');
 		row.className = 'hist-row';
@@ -56750,6 +56849,15 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		when.textContent = r.ts ? relTime(r.ts) : '';
 		head.appendChild(ver); head.appendChild(kind); head.appendChild(when);
 		row.appendChild(head);
+		// THE STATE A RESTORE REPLACED says so (D-20261009-29 item 3): it read as one
+		// more save, and the person looking for what they had before the restore had
+		// to work out which row it was.
+		if (isRestoreRow(newer)) {
+			var before = document.createElement('div');
+			before.className = 'hist-before-restore';
+			before.textContent = t('versions.before_restore', { when: newer.ts ? relTime(newer.ts) : '' });
+			row.appendChild(before);
+		}
 		// What the version WAS. Every record has carried a note since folds were
 		// written and the list showed none of them, so a history of a busy Diamond
 		// read as a column of "fold, fold, fold, edit" — the versions were all
@@ -56806,6 +56914,25 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		revert.textContent = t('crystal.restore');
 		revert.addEventListener('click', function () { restoreWholeVersion(id, v); });
 		acts.appendChild(view); acts.appendChild(revert);
+		// A RESTORE IS UNDONE AS ONE (D-20261009-29 item 1): the crystal and every
+		// file it put back go back to what it replaced, in one version of its own,
+		// which can itself be undone.
+		if (files && isRestoreRow(r)) {
+			var undo = document.createElement('button');
+			undo.className = 'crystal-act hist-undo-restore';
+			undo.textContent = t('versions.undo_restore');
+			undo.addEventListener('click', async function () {
+				if (diamondTurning(id)) {
+					var f = diamonds.find(function (x) { return x.id === id; }) || {};
+					noticeDialog(t('fold.busy_title'), t('fold.busy_body', { diamond: f.name || '' }));
+					return;
+				}
+				await DaimondVersions.undoVersion(id, v, (r.files || []).map(function (e) { return e.path; }));
+				await refreshDiamondAfterChange();
+				showCrystalHistory();
+			});
+			acts.appendChild(undo);
+		}
 		// A fold retains the raw delta it consumed, in a file the log record
 		// points at by `delta_ref`. It was kept but never shown, so the audit
 		// trail was write-only; a Delta button now reads that file back.
@@ -56876,12 +57003,24 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		restore.textContent = t('versions.restore_file');
 		var why = document.createElement('span');
 		why.className = 'hist-file-why';
-		row.appendChild(view); row.appendChild(restore); row.appendChild(why);
+		row.appendChild(view); row.appendChild(restore);
+		// WHAT THIS VERSION REPLACED, put back (D-20261009-29 item 4): Restore puts
+		// the file back as the version left it, and a changed file's earlier text
+		// had no button at all.
+		var before = null;
+		if (e.was && !e.gone) {
+			before = document.createElement('button');
+			before.className = 'crystal-act hist-file-before';
+			before.textContent = t('versions.restore_before');
+			row.appendChild(before);
+		}
+		row.appendChild(why);
 
 		/// Refuse both buttons, and say which of the three reasons it is.
 		function refuse(text) {
 			view.disabled = true;
 			restore.disabled = true;
+			if (before) before.disabled = true;
 			why.textContent = text;
 		}
 		// Too large to have kept a body at all: the manifest says the file changed
@@ -56927,6 +57066,9 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 				noticeDialog(t('fold.busy_title'), t('fold.busy_body', { diamond: f.name || '' }));
 				return;
 			}
+			// A DELETION'S ROW PUTS THE FILE BACK AS IT WAS (D-20261009-29 item 4): the
+			// state at the version is "gone", so restoring to it did nothing.
+			if (e.gone) { await putBack(); return; }
 			// This row, by its folder too: one path can have a row from two places at
 			// one version, and the one pressed is the one put back (HX3).
 			var res = await DaimondVersions.restoreFile(id, e.path, v, e.folder || '');
@@ -56942,13 +57084,41 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			why.textContent = '';
 			await refreshDiamondAfterChange();
 		});
+
+		/// Put back what this version replaced at this path: its `was`, or the file
+		/// it deleted.
+		async function putBack() {
+			if (diamondTurning(id)) {
+				var f = diamonds.find(function (x) { return x.id === id; }) || {};
+				noticeDialog(t('fold.busy_title'), t('fold.busy_body', { diamond: f.name || '' }));
+				return;
+			}
+			var res = await DaimondVersions.undoVersion(id, v, [e.path]);
+			var ref = res && (res.refused || []).find(function (x) { return x.path === e.path; });
+			if (ref) {
+				why.textContent = ref.why || t('versions.refused');
+				why.title = ref.said || '';
+				return;
+			}
+			why.textContent = '';
+			await refreshDiamondAfterChange();
+		}
+		if (before) before.addEventListener('click', putBack);
 		return row;
 	}
 
 	/// What the versions do NOT cover, said once under the list (contract §5).
-	function histFoot() {
+	function histFoot(g) {
 		var foot = document.createElement('div');
 		foot.className = 'hist-foot';
+		// The limit, and what goes first when it is reached, said where the history is read.
+		if (g && g.cap) {
+			var lim = document.createElement('span');
+			lim.className = 'hist-limit';
+			lim.textContent = t('versions.limit_note',
+				{ n: g.manifests_cap || 0, cap: fmtBytes(g.cap) });
+			foot.appendChild(lim);
+		}
 		var head = document.createElement('span');
 		head.className = 'hist-foot-head';
 		head.textContent = t('versions.on_machine');
@@ -56994,7 +57164,15 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		// leave today's memory over v12's files, which is a state that never
 		// existed. Asked once, up there, and not again here.
 		if (window.DaimondVersions && DaimondVersions.ready()) {
-			await DaimondVersions.restore(id, v, { ask: false });
+			var done = await DaimondVersions.restore(id, v, { ask: false });
+			// THE ENGINE PUT THE CRYSTAL AND PAGE BACK WITH THE FILES, in the one
+			// version the restore recorded (D-20261009-29 item 1), so its Undo puts
+			// all of it back. An engine without that, or a version kept as markdown,
+			// leaves the crystal to the page below, as before.
+			if (done && done.crystal === true) {
+				await refreshDiamondAfterChange();
+				return;
+			}
 		}
 		// A pre-migration version is markdown, and writing markdown into `crystal.json`
 		// would leave the Diamond holding a file nothing downstream can read. It goes
@@ -60650,6 +60828,8 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 				out:  String(out || 'done'),
 				dia:  1,
 			});
+			// A turn's last version may have pruned older ones; the Lens hears it beside the turn.
+			notePrunes(diamondId);
 			// D-20260921-01 — duration and outcome, the daimon's half of what
 			// `runTurn`'s `finally` stamps for an ordinary chat turn; see the
 			// comment there for the full classification. Only two outcomes are
@@ -64150,6 +64330,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 						pack.id = f.id;
 						await diamondApp().import_diamond(JSON.stringify(pack), false);
 						await diamondApp().delete_diamond(id);
+						notePrunes(f.id);
 					}
 				} catch (e) { /* skip one diamond */ }
 			}

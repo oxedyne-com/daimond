@@ -69,7 +69,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
 import { fileURLToPath } from 'node:url';
-import { open, shot, scratch, errors, signInAs, steerDiamond, storedChats } from './harness.mjs';
+import { open, shot, scratch, errors, signInAs, steerDiamond, storedChats, pressRowMark } from './harness.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const WWW  = path.join(HERE, '..', 'www');
@@ -331,11 +331,18 @@ const selectDiamond = async (page, name) => {
 
 /// A steer through the composer, waited to its end. The same path a person's turn takes,
 /// which is what puts the dirty-set drain and the turn-end snapshot under test.
-async function steer(s, text, timeout = 30000) {
+///
+/// `allow`: answer "Let <Diamond> change <folder>?" Allow, as the person does. A ◈ mark grants
+/// reading; the first write into the folder asks (daimond.js, "A WRITE ON FIRST USE").
+async function steer(s, text, timeout = 30000, allow = false) {
 	await steerDiamond(s, text);
 	await s.page.waitForTimeout(300);
 	const t0 = Date.now();
 	while (Date.now() - t0 < timeout) {
+		if (allow) await s.page.evaluate(() => {
+			const ok = document.querySelector('[data-ask="place"] .dlg-ok');
+			if (ok) ok.click();
+		});
 		const busy = await s.page.evaluate(() => {
 			const b = document.getElementById('chat-send');
 			if (!b) return false;
@@ -719,16 +726,19 @@ try {
 	// or, given nothing, everything — and `*` is a path it has no record of.
 	const whole = await engine(page, 'versions_restore', id, V1, '');
 	check('whole-version restore answers', whole.ok, whole.err || '');
-	check('the file that did not exist at v' + V1 + ' is GONE afterwards', (await readStore(page, `${D}/notes/late.md`)) === null);
+	// NOTHING ASKED, NOTHING NEWER TAKEN (lead ruling on D-20261009-29, 10 Oct): this restore
+	// asks nothing, so a file born since the version is KEPT; the History panel's Restore asks
+	// first (verify_history_restore.mjs arm 2), and only an undo removes what its step made.
+	check('the file that did not exist at v' + V1 + ' is KEPT, nothing having been asked', (await readStore(page, `${D}/notes/late.md`)) === 'born after v1');
 	check('and the file that did is back to its v' + V1 + ' bytes', (await readStore(page, `${D}/notes/a.md`)) === 'alpha one');
-	// THE ENGINE RESTORES FILES AND TOUCHES NO CRYSTAL, deliberately — it has no business
-	// minting a crystal version. `restoreWholeVersion` in the panel writes the crystal
-	// and the page back in ONE version afterwards, which is why "Restore v12" leaves one
-	// row and not two. What is checked here is the seam that makes that possible: the
-	// crystal as it stood is still readable for the panel to write.
-	check('the engine leaves the crystal to the panel, which can still read what it was',
-		(await readStore(page, `${D}/crystal.json`)) === crystalNow && whole.ok && crystalAtV1 !== crystalNow,
-		JSON.stringify(String(crystalAtV1 === undefined ? 'read_version threw' : crystalAtV1).slice(0, 60)));
+	// THE ENGINE PUTS THE CRYSTAL BACK IN THE SAME VERSION AS THE FILES (D-20261009-29 item 1):
+	// the panel wrote it afterwards, as a second version, so no one row undid a restore.
+	let saidCrystal = null;
+	try { saidCrystal = JSON.parse(whole.out).crystal; } catch (e) { /* not JSON */ }
+	const crystalAfter = await readStore(page, `${D}/crystal.json`);
+	check('the engine puts the crystal back with the files, in the one restore version',
+		whole.ok && saidCrystal === true && crystalAfter !== crystalNow,
+		JSON.stringify({ saidCrystal, after: String(crystalAfter).slice(0, 60), atV1: String(crystalAtV1).slice(0, 60) }));
 
 	// ── 6. Restore creates a version ────────────────────────────────
 	console.log('\n6. restore is never destructive');
@@ -747,7 +757,8 @@ try {
 	const ms6 = await manifests(page, id);
 	const m6 = newest(ms6);
 	check('THE ROW COUNT RISES BY ONE', ms6.length === rowsBefore + 1,
-		`${rowsBefore} → ${ms6.length}; on disk before the restore: ${JSON.stringify(preState)}`);
+		`${rowsBefore} → ${ms6.length}; on disk before the restore: ${JSON.stringify(preState)}; new rows `
+		+ JSON.stringify(ms6.slice(rowsBefore).map((m) => [m.v, m.cause, (m.files || []).map((e) => e.path)])).slice(0, 400));
 	check('the newest row is cause "restore"', !!m6 && m6.cause === 'restore', m6 ? m6.cause : 'none');
 	check('and its was IS the pre-restore hash, with the body kept — so the restore can itself be restored',
 		!!m6 && !!entry(m6, P('notes/a.md')) && entry(m6, P('notes/a.md')).was === preHash && await hasBody(page, id, preHash),
@@ -843,20 +854,20 @@ try {
 	await page.waitForTimeout(700);
 	await page.click('#panel-work [data-act="refresh"]', { force: true }).catch(() => {});
 	await page.waitForTimeout(1000);
+	// THE ROW'S ◈, which is where marking a folder lives now; the row paperclip this pressed
+	// moved into the Doc panel's toolbar, so the old lookup found nothing to press.
 	const clip = async () => {
-		for (const r of await page.$$('#panel-work .files-row')) {
-			const nm = await r.$eval('.files-name', (e) => e.textContent).catch(() => '');
-			if (nm.replace(/^[^A-Za-z0-9._-]+/, '').trim() === 'live') {
-				const c = await r.$('.attach-btn');
-				if (c) { await c.click({ force: true }); return true; }
-			}
+		// Back to the top of the tree first: the write into the folder opens it in the panel.
+		for (let i = 0; i < 4 && await page.$('#panel-work .files-up'); i++) {
+			await page.click('#panel-work .files-up', { force: true }).catch(() => {});
+			await page.waitForTimeout(500);
 		}
-		return false;
+		return pressRowMark(s, 'live');
 	};
-	check('the folder could be marked into the diamond through the paperclip', await clip());
+	check('the folder could be marked into the diamond through its ◈', await clip());
 	await page.waitForTimeout(1000);
 	await selectDiamond(page, 'Ledger Life');
-	await steer(s, '@tool file_write {"path":"live/site.txt","content":"v2 by the daimon"}');
+	await steer(s, '@tool file_write {"path":"live/site.txt","content":"v2 by the daimon"}', 30000, true);
 	const m11 = newest(await manifests(page, id));
 	const e11 = entry(m11, 'live/site.txt');
 	check('the manifest names the file by the path the tool used, with was = the bytes before',

@@ -8902,7 +8902,7 @@ fn machine_body(read: &MachineRead<'_>) -> (Option<Vec<u8>>, Option<String>) {
 /// * `path` - The SCOPED path, as the write door resolved it.
 #[cfg(any(target_arch = "wasm32", test))]
 pub(crate) fn stored_is_mark(dia: &str, path: &str) -> bool {
-    !path.starts_with(&fmt!("{}/", keeper_home(dia)))
+    crate::diamond_versions::is_users_path(&keeper_home(dia), path)
 }
 
 /// Does writing `after` over `before` at `path` leave less than half of what was there
@@ -20430,6 +20430,7 @@ impl Tool {
                         wiped,
                         folder:  None,
                         by:      ctx.by.clone(),
+                        door:    false,
                     }]).await;
                 // The record carries the copy now, so the hold's note would be a second one: the
                 // reservation and the note go, and the open folder's count stays with the turn.
@@ -21225,6 +21226,7 @@ impl Tool {
                                                 wiped,
                                                 folder:  None,
                                                 by:      ctx.by.clone(),
+                                                door:    false,
                                             });
                                     }
                                     Ok(MessageContent::text(
@@ -22449,6 +22451,7 @@ impl Tool {
                                     wiped,
                                     folder:  None,
                                     by:      ctx.by.clone(),
+                                    door:    false,
                                 });
                         }
                         Ok(MessageContent::text(
@@ -22888,6 +22891,7 @@ impl Tool {
                                     wiped,
                                     folder:  None,
                                     by:      ctx.by.clone(),
+                                    door:    false,
                                 });
                         }
                         // What is already on disk is said plainly. A model told only
@@ -22934,7 +22938,7 @@ impl Tool {
                     crate::wasm::diamond::capture(&dia, &raw,
                         crate::wasm::diamond::Change {
                             path: abs.clone(), after, before, found, carried: None,
-                            mark: true, refused, wiped, folder: None, by: ctx.by.clone() });
+                            mark: true, refused, wiped, folder: None, by: ctx.by.clone(), door: false });
                 }
                 return Ok(MessageContent::text(Self::edit_said(&abs, hunks.len())));
             },
@@ -24241,6 +24245,7 @@ impl Tool {
             wiped,
             folder:  None,
             by:      ctx.by.clone(),
+            door:    false,
         });
     }
 
@@ -24267,6 +24272,7 @@ impl Tool {
             wiped:   false,
             folder:  None,
             by:      ctx.by.clone(),
+            door:    false,
         });
     }
 
@@ -24543,6 +24549,7 @@ impl Tool {
                 wiped:   false,
                 folder:  h.folder,
                 by:      None,          // a restore is the person's own act
+                door:    false,
             });
         }
     }

@@ -91,6 +91,39 @@
 		catch (e) { dirty(id, path); }
 	}
 
+	// ── Recorded soon ────────────────────────────────────────────
+	//
+	// A PAGE'S SAVE IS RECORDED SHORTLY AFTER IT, not at a turn that may never come
+	// (D-20261009-29 item 5): a capp logging all day left weeks of appends that no
+	// History row held, and a restore ran over them. The mark is in the engine's
+	// memory, so it is recorded a quiet spell after the last save, when the person
+	// leaves the Diamond, and as the page goes; a restore records whatever is left.
+
+	var SOON_MS = 30000;
+	var soon = {};
+
+	/// Record `id`'s marked paths a quiet spell after the last call.
+	function recordSoon(id) {
+		if (!id) return;
+		if (soon[id]) clearTimeout(soon[id]);
+		soon[id] = setTimeout(function () { flush(id); }, SOON_MS);
+	}
+
+	/// Record `id`'s marked paths now, if any wait. Never rejects.
+	async function flush(id) {
+		if (!id || !soon[id]) return;
+		clearTimeout(soon[id]);
+		delete soon[id];
+		var a = app();
+		if (!a || typeof a.versions_record_dirty !== 'function') return;
+		try { await a.versions_record_dirty(String(id)); }
+		catch (e) { /* the mark stays; the next turn or restore records it */ }
+	}
+
+	window.addEventListener('pagehide', function () {
+		Object.keys(soon).forEach(function (id) { flush(id); });
+	});
+
 	/// Everything a share just landed is a change the user made (cause `share`).
 	function landed(id) {
 		if (!id || !ready() || typeof app().versions_landed !== 'function') return null;
@@ -165,7 +198,57 @@
 		return {
 			used: st.bytes || 0, cap: st.cap || 0, manifests: st.manifests || 0,
 			manifests_cap: st.manifests_cap || 0, file_max: st.file_max || 0,
+			pruned: prunedRecords(st.pruned),
 		};
+	}
+
+	/// The engine's prune records (`versions/pruned.json`), newest first, each with
+	/// a version list it can be named by. An older engine sends none.
+	function prunedRecords(list) {
+		if (!Array.isArray(list)) return [];
+		return list.filter(function (r) {
+			return r && Array.isArray(r.versions) && r.versions.length;
+		}).map(function (r) {
+			// A renumbering keeps each old number beside its new one; a prune names numbers once.
+			var ren = r.on === 'renumber' && Array.isArray(r.to) && r.to.length === r.versions.length;
+			var pairs = r.versions.map(function (v, i) { return [Number(v), ren ? Number(r.to[i]) : 0]; })
+				.filter(function (p) { return p[0] > 0; })
+				.sort(function (a, b) { return a[0] - b[0]; })
+				.filter(function (p, i, all) { return !i || p[0] !== all[i - 1][0]; });
+			return { ts: +r.ts || 0, on: String(r.on || ''),
+				versions: pairs.map(function (p) { return p[0]; }),
+				to: ren ? pairs.map(function (p) { return p[1]; }) : [],
+				first: +r.first || 0, last: +r.last || 0, bodies: +r.bodies || 0, bytes: +r.bytes || 0 };
+		}).sort(function (a, b) { return b.ts - a.ts; });
+	}
+
+	/// `[9,10,11,12,13,14,15,18,19]` as `v9-v15, v18, v19` (an en dash): runs collapse, so a
+	/// prune of a hundred versions is still one line.
+	function versionSpans(vs) {
+		var out = [], i = 0;
+		while (i < vs.length) {
+			var j = i;
+			while (j + 1 < vs.length && vs[j + 1] === vs[j] + 1) j++;
+			out.push(j > i + 1 ? 'v' + vs[i] + '\u2013v' + vs[j]
+				: (j === i + 1 ? 'v' + vs[i] + ', v' + vs[j] : 'v' + vs[i]));
+			i = j + 1;
+		}
+		return out.join(', ');
+	}
+
+	/// History as ONE list, newest first: each prune record stands where the newest
+	/// version it removed would have stood, so the gap reads in place; a renumbering
+	/// stands where it happened. Entries are `{ row }` or `{ prune }`.
+	function withPrunes(rows, recs) {
+		var out = [], k = 0;
+		var at = function (p) { return p.on === 'renumber' ? p.ts : p.last; };
+		var ps = (recs || []).slice().sort(function (a, b) { return at(b) - at(a); });
+		(rows || []).forEach(function (r) {
+			while (k < ps.length && at(ps[k]) >= (r.ts || 0)) out.push({ prune: ps[k++] });
+			out.push({ row: r });
+		});
+		while (k < ps.length) out.push({ prune: ps[k++] });
+		return out;
 	}
 
 	/// One body, by content hash. `null` where this device does not hold it — a
@@ -266,6 +349,13 @@
 		// and said so.
 		var gone = (entries || []).filter(function (e) { return e && e.gone && e.kept === true && e.left !== true; });
 		var takeGone = gone.length ? await askGone(gone, isUndo) : false;
+		// A FILE IN THE PERSON'S OWN FOLDER IS NEVER WRITTEN OVER UNASKED EITHER
+		// (D-20261009-29 item 6). The engine flags `over` where the bytes there now
+		// differ from the version's, and the person is asked once, Keep the default.
+		var overs = (entries || []).filter(function (e) {
+			return e && e.over === true && !e.gone && !e.skipped && e.left !== true;
+		});
+		var takeOver = overs.length ? await askTheirs(overs, isUndo) : true;
 		// A ROW FROM A FOLDER THE ENGINE CANNOT PLACE HERE IS PUT TO THE PERSON (release
 		// 5.2's HR, 2026-09-25): one kept before Daimond recorded which folder a file came
 		// from, or one recorded in a folder this device does not know -- on another device,
@@ -293,6 +383,9 @@
 					// The path did not exist at that version, so restoring TO it means
 					// taking it away again, through the Diamond's fence.
 					r = await run('file_delete', { path: e.path });
+				} else if (e.over === true && !takeOver) {
+					refused.push({ path: e.path, why: tOr('versions.gone_kept', 'Left in your folder') });
+					continue;
 				} else if (e.skipped) {
 					// A save recorded after its folder closed kept no bytes (HX4): it is in
 					// that folder, not too large, and the row says which.
@@ -432,6 +525,63 @@
 		} catch (e) { return false; }
 	}
 
+	/// Ask the person whether a restore may write over files in their own folder
+	/// whose contents differ from the version's. Resolves true only on their yes;
+	/// Keep is the default, and with no dialog the answer is no.
+	async function askTheirs(list, isUndo) {
+		var names = list.map(function (e) { return String(e.path); });
+		var shown = names.slice(0, 8).join(', ') + (names.length > 8 ? ', …' : '');
+		try {
+			if (!core() || !DaimondCore.confirm) return false;
+			var yes = await DaimondCore.confirm(
+				isUndo
+					? tOr('versions.undo_theirs_ask',
+						'Undoing this would replace {n} of your files with earlier contents: {paths}. Their current contents are kept in History. Replace them?',
+						{ n: names.length, paths: shown })
+					: tOr('versions.theirs_ask',
+						'Restoring this version would replace {n} of your files with its contents: {paths}. Their current contents are kept in History. Replace them?',
+						{ n: names.length, paths: shown }),
+				tOr('versions.over_allow', 'Replace them'),
+				{ title: tOr('versions.over_title', 'Replace files in your folder?'), danger: true,
+					cancelLabel: tOr('versions.gone_keep', 'Keep them'),
+					ask: 'restore-theirs', guard: true });
+			return yes === true;
+		} catch (e) { return false; }
+	}
+
+	/// Ask the person whether a restore may delete the Diamond's own files that
+	/// the version did not have. Each is named with when it last changed and the
+	/// History version that holds it. Resolves true only on their yes; Keep is the
+	/// default, and with no dialog the answer is no.
+	async function askOwn(own, isUndo, id) {
+		var pre = 'diamonds/' + id + '/';
+		var named = own.map(function (e) {
+			var p = String(e.path);
+			if (p.indexOf(pre) === 0) p = p.slice(pre.length);
+			var when = Number(e.ts) > 0 ? new Date(Number(e.ts)).toLocaleString() : '';
+			return Number(e.v) > 0
+				? tOr('versions.own_item', '{path} ({when}, in History as v{v})', { path: p, when: when, v: e.v })
+				: p;
+		});
+		var shown = named.slice(0, 8).join('; ') + (named.length > 8 ? '; …' : '');
+		try {
+			if (!core() || !DaimondCore.confirm) return false;
+			var yes = await DaimondCore.confirm(
+				isUndo
+					? tOr('versions.undo_own_ask',
+						'Undoing this would delete {n} of this Diamond’s files: {paths}. Each stays in History under the version named. Delete them?',
+						{ n: named.length, paths: shown })
+					: tOr('versions.own_ask',
+						'This version is older than {n} of this Diamond’s files: {paths}. Restoring it would delete them. Each stays in History under the version named. Delete them?',
+						{ n: named.length, paths: shown }),
+				tOr('versions.gone_allow', 'Delete them'),
+				{ title: tOr('versions.own_title', 'Delete this Diamond’s newer files?'), danger: true,
+					cancelLabel: tOr('versions.gone_keep', 'Keep them'),
+					ask: 'restore-own', guard: true });
+			return yes === true;
+		} catch (e) { return false; }
+	}
+
 	/// The undo window a restore opens.
 	///
 	/// A restore records its own `restore` version, each row carrying what stood
@@ -475,10 +625,15 @@
 		}
 		catch (e) { return null; }
 		if (!opened) return null;
-		var refused = [], res = null;
-		try { refused = await writeMachine(id, opened.machine || [], opened.ticket, !!undo); }
+		var refused = [], res = null, keepNew = false;
+		try {
+			// THE DIAMOND'S OWN NEWER FILES ARE ASKED ABOUT, KEEP THE DEFAULT
+			// (D-20261009-29 item 2): a capp's logs went with no question at all.
+			if ((opened.own || []).length) keepNew = !(await askOwn(opened.own, !!undo, id));
+			refused = await writeMachine(id, opened.machine || [], opened.ticket, !!undo);
+		}
 		finally {
-			try { res = parse(await eng.versions_restore_close(String(id), opened.ticket), null); }
+			try { res = parse(await eng.versions_restore_close(String(id), opened.ticket, keepNew), null); }
 			catch (e) { res = null; }
 		}
 		res = res || { version: Number(n), recorded: -1, restored: [], missing: [], refused: [] };
@@ -498,7 +653,9 @@
 	/// Undo of a restore of ten files minted ten versions. A file the version made is
 	/// put to the person before it goes, as a whole-version restore's is.
 	async function undoVersion(id, n, paths) {
-		if (!id || !ready() || !(Number(n) > 0) || !(paths || []).length) return null;
+		// No paths is the undo of a restore that put back only the crystal; the engine
+		// refuses it for any other version.
+		if (!id || !ready() || !(Number(n) > 0) || !Array.isArray(paths)) return null;
 		var res = await restoreAt(id, Number(n), '', paths);
 		if (!res) return null;
 		return { restored: res.restored || [], refused: res.refused || [], recorded: res.recorded };
@@ -709,6 +866,8 @@
 		ready:       ready,
 		dirty:       dirty,
 		dirtyBefore: dirtyBefore,
+		recordSoon:  recordSoon,
+		flush:       flush,
 		landed:      landed,
 		rows:        rows,
 		manifests:   manifests,
@@ -719,6 +878,8 @@
 		restoreFile: restoreFile,
 		undoVersion: undoVersion,
 		gauge:       gauge,
+		versionSpans: versionSpans,
+		withPrunes:  withPrunes,
 		diff:        diff,
 		lineDiff:    lineDiff,
 		DIFF_MAX_LINES: DIFF_MAX_LINES,

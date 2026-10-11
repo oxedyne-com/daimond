@@ -34,7 +34,8 @@
 //! parse, the resolver, the prune order and the sweep are tested against the manifests they will
 //! actually meet.
 
-use crate::llm::{extract_json_bool, extract_json_number, extract_json_string, json_escape};
+use crate::llm::{extract_json_bool, extract_json_number, extract_json_string,
+	extract_json_string_array, json_escape};
 use crate::rating::Author;
 
 use oxedyne_fe2o3_core::prelude::*;
@@ -59,7 +60,14 @@ pub const MANIFEST_EXT: &str = ".files.json";
 pub const BODY_DIR: &str = "b";
 
 /// The schema version a manifest carries.
-pub const MANIFEST_V: u64 = 1;
+///
+/// 2 (11 Oct 2026, D-26 review A F1-F3): a row a person's door wrote says so (`door`), so a
+/// manifest of 2 or above is read for page data by its rows ([`page_paths`]); one of 1 by its
+/// cause, the only evidence it had.
+pub const MANIFEST_V: u64 = 2;
+
+/// The first [`MANIFEST_V`] whose rows carry `door`.
+pub const DOOR_V: u64 = 2;
 
 /// What all of one Diamond's bodies may weigh before a prune runs, in bytes.
 ///
@@ -535,6 +543,7 @@ pub struct Entry {
 	pub skipped: Option<String>,	// why no body was kept: "size", or the hand's own reason
 	pub folder:  Option<String>,	// which folder a workspace-relative path was in: see `needs_folder`
 	pub by:      Option<Author>,	// the agent that wrote it; None for the user's door or a walk
+	pub door:    bool,		// a person's door wrote it (the dirty set), not a walk: see `page_paths`
 }
 
 impl Entry {
@@ -552,6 +561,7 @@ impl Entry {
 			skipped: None,
 			folder:  None,
 			by:      None,
+			door:    false,
 		}
 	}
 
@@ -598,6 +608,10 @@ impl Entry {
 		if let Some(by) = &self.by {
 			out.push_str(&fmt!(",\"by\":{}", by.to_json()));
 		}
+		// Written only when true: a build that has never heard of it reads the row it always read.
+		if self.door {
+			out.push_str(",\"door\":true");
+		}
 		out.push('}');
 		out
 	}
@@ -619,6 +633,7 @@ impl Entry {
 			skipped: extract_json_string(s, "skipped"),
 			folder:  extract_json_string(s, "folder").filter(|f| !f.is_empty()),
 			by:      object_inside(s, "by").and_then(Author::from_json),
+			door:    extract_json_bool(s, "door").unwrap_or(false),
 		})
 	}
 }
@@ -699,6 +714,30 @@ impl Manifest {
 	/// home, in the folder they opened or marked in -- that it changed?
 	pub fn keeps_users_file(&self) -> bool {
 		self.files.iter().any(|e| e.mark && e.was.is_some())
+	}
+
+	/// Does this version hold the user's own work: a copy of a file of theirs, or data a page
+	/// keeps in its Diamond ([`is_page_data`])?
+	///
+	/// Decided by the PATH, never by the stored `mark`: rows written before the path decided whose
+	/// a file is often carry no `mark` for a file in the user's folder (history_prune_diag,
+	/// 10 Oct 2026), and a flag that was wrong when written stays wrong on disk.
+	///
+	/// `page` is the store's page data, [`page_paths`].
+	pub fn keeps_users_work(&self, home: &str, page: &BTreeSet<String>) -> bool {
+		self.files.iter().any(|e|
+			(e.was.is_some() && is_users_path(home, &e.path)) || page.contains(&e.path))
+	}
+
+	/// Set every row's `mark` from its path, as [`is_users_path`] decides it for the keeper whose
+	/// home is `home`.
+	///
+	/// The read-side half of the rule `stored_is_mark` applies on write, so a row an older build
+	/// recorded unmarked is restored through the fence like any other file of the user's.
+	pub fn settle_marks(&mut self, home: &str) {
+		for e in self.files.iter_mut() {
+			e.mark = is_users_path(home, &e.path);
+		}
 	}
 
 	/// Is this version inside its destruction hold at `now`, and so not a prune candidate?
@@ -1081,6 +1120,7 @@ pub struct Change {
 	pub wiped:   bool,		// a write in this turn left under half: see `wipes`
 	pub folder:  Option<String>,	// the folder it was made in, where known at the act: see `needs_folder`
 	pub by:      Option<Author>,	// the agent whose act left `after`, from its `ToolContext`
+	pub door:    bool,		// read off the dirty set: a person's door wrote it
 }
 
 impl Change {
@@ -1089,14 +1129,14 @@ impl Change {
 	pub fn of(path: &str, body: Vec<u8>) -> Self {
 		Self { path: path.to_string(), after: Body::Held(body), before: None,
 			found: Found::Unread, carried: None, mark: false, refused: None, wiped: false,
-			folder: None, by: None }
+			folder: None, by: None, door: false }
 	}
 
 	/// A path that is no longer there.
 	pub fn gone(path: &str) -> Self {
 		Self { path: path.to_string(), after: Body::Gone, before: None,
 			found: Found::Unread, carried: None, mark: false, refused: None, wiped: false,
-			folder: None, by: None }
+			folder: None, by: None, door: false }
 	}
 }
 
@@ -1221,6 +1261,7 @@ pub fn capture_into(held: &mut Vec<(String, Change)>, raw: &str, change: Change)
 		folder:  slot.1.folder.take().or(folder),
 		// The row is a product of whoever left the bytes that stand, so the latest act names it.
 		by,
+		door:    false,
 	};
 }
 
@@ -1315,6 +1356,7 @@ fn restarted(path: &str, now: &[u8], mark: bool, folder: Option<String>) -> Chan
 		wiped:   false,
 		folder,
 		by:      None,		// the bytes found were nobody's in this turn
+		door:    false,
 	}
 }
 
@@ -1456,6 +1498,7 @@ pub fn moved(from: (&str, bool), to: (&str, bool), what: Moving) -> (Change, Cha
 		wiped:   false,
 		folder:  None,
 		by:      None,		// the mover names itself, which only its caller knows
+		door:    false,
 	};
 	let dst = Change {
 		path:    to.0.to_string(),
@@ -1468,6 +1511,7 @@ pub fn moved(from: (&str, bool), to: (&str, bool), what: Moving) -> (Change, Cha
 		wiped:   false,
 		folder:  None,
 		by:      None,
+		door:    false,
 	};
 	(src, dst)
 }
@@ -2268,6 +2312,19 @@ pub struct Caps {
 	pub manifests: usize,
 }
 
+/// How far below its ceilings a prune takes the store, in percent of each.
+pub const PRUNE_LOW_PCT: u64 = 90;
+
+impl Caps {
+	/// The low-water mark a prune works down to: [`PRUNE_LOW_PCT`] of each ceiling.
+	pub fn low(self) -> Self {
+		Self {
+			bytes:     ((self.bytes as u128) * (PRUNE_LOW_PCT as u128) / 100) as u64,
+			manifests: ((self.manifests as u64) * PRUNE_LOW_PCT / 100) as usize,
+		}
+	}
+}
+
 impl Default for Caps {
 	fn default() -> Self {
 		Self { bytes: versions_bytes_cap(), manifests: MANIFESTS_MAX }
@@ -2275,10 +2332,15 @@ impl Default for Caps {
 }
 
 /// What a prune would remove: the manifests, then the bodies nothing names any more.
+///
+/// `pages` is the page data the plan ranked by ([`page_paths`]): the store's own list joined with
+/// what the manifests show.  The caller keeps it ([`PAGES_LOG`]) BEFORE it deletes anything, so the
+/// evidence a prune takes away is never the last word on whose a path is.
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct Prune {
 	pub manifests: Vec<u64>,
 	pub bodies:    Vec<String>,
+	pub pages:     BTreeSet<String>,
 }
 
 impl Prune {
@@ -2287,17 +2349,128 @@ impl Prune {
 	}
 }
 
+/// Is `path` outside the keeper's home `home` (`diamonds/<id>` or `chats/<id>`), and so a file of
+/// the user's, in a folder they opened or marked in?
+pub fn is_users_path(home: &str, path: &str) -> bool {
+	home_rel(home, path).is_none()
+}
+
+/// The keeper's own directories that hold its working state rather than anybody's data.
+const KEEPER_DIRS: [&str; 4] = [".daimond", "versions", "shots", "dev"];
+
+/// The keeper's own records at the top of a home, which a page may never write (`crystal.js`
+/// `PAGE_NEVER_WRITES`).
+const KEEPER_FILES: [&str; 5] = ["crystal.json", "crystal.html", "crystal.md", "capp.json",
+	"triggers.json"];
+
+/// Could `path` be data a page keeps in its Diamond: inside the keeper's home `home`, and not one of
+/// the keeper's own directories ([`KEEPER_DIRS`]) or records ([`KEEPER_FILES`])?
+///
+/// Where the path sits says nothing more (D-26 review A F1, 11 Oct 2026): the Life log page keeps
+/// `index.json` at the top of its home, beside the daimon's `STATE.md`.  Whose a path IS, is
+/// [`page_paths`]'s, by who wrote it.
+pub fn is_page_data(home: &str, path: &str) -> bool {
+	match home_rel(home, path) {
+		Some(rel) => {
+			let top = rel.split('/').next().unwrap_or(rel);
+			let dir = rel.contains('/');
+			!(dir && KEEPER_DIRS.contains(&top)) && !(!dir && KEEPER_FILES.contains(&rel))
+		},
+		None      => false,
+	}
+}
+
+/// The paths that hold a page's data: those a person's door has written, by PROVENANCE and never
+/// by where the path sits (D-26 review A F1-F3, F8).
+///
+/// * `known`, the store's own list ([`PAGES_LOG`]): grow-only, so a path stays page data after
+///   the prune has taken every manifest that showed a door writing it (F2).
+/// * A row a door wrote (`door`), whatever the manifest's cause: a page write a Save drained is
+///   page data, while the Save's walk of the home is not (F3; verify_versions arm 7).
+/// * A manifest from before rows carried `door` ([`DOOR_V`]): its rows if its cause is
+///   [`Cause::User`], the only evidence it had.
+/// * A page file moved: a manifest that deletes a page path and writes its bytes elsewhere carries
+///   the status to the new path (F8).
+///
+/// Only paths [`is_page_data`] allows.  A path only turns have written is the daimon's notes
+/// wherever it sits, so its edits still go first.
+pub fn page_paths(
+	manifests: &[(u64, Manifest)],
+	home:      &str,
+	known:     &BTreeSet<String>,
+)
+	-> BTreeSet<String>
+{
+	let mut out: BTreeSet<String> = known.iter()
+		.filter(|p| is_page_data(home, p))
+		.cloned()
+		.collect();
+	let mut order: Vec<&(u64, Manifest)> = manifests.iter().collect();
+	order.sort_by_key(|(n, _)| *n);
+	for (_, m) in order.into_iter() {
+		let legacy = m.v < DOOR_V && m.cause == Cause::User;
+		for e in m.files.iter() {
+			if (e.door || legacy) && is_page_data(home, &e.path) {
+				out.insert(e.path.clone());
+			}
+		}
+		let moved: BTreeSet<&str> = m.files.iter()
+			.filter(|e| e.gone && out.contains(&e.path))
+			.filter_map(|e| e.was.as_deref())
+			.collect();
+		if moved.is_empty() {
+			continue;
+		}
+		for e in m.files.iter() {
+			if !e.gone && moved.contains(e.hash.as_str()) && is_page_data(home, &e.path) {
+				out.insert(e.path.clone());
+			}
+		}
+	}
+	out
+}
+
+/// The file in `versions/` that keeps the paths known to hold page data ([`page_paths`]), as a JSON
+/// array.  Grow-only: it travels with an export and is joined, never replaced, on import.
+pub const PAGES_LOG: &str = "pages.json";
+
+/// The paths a [`PAGES_LOG`] holds; nothing where it will not read.
+pub fn pages_read(json: &str) -> BTreeSet<String> {
+	extract_json_string_array(&fmt!("{{\"p\":{}}}", json.trim()), "p")
+		.unwrap_or_default()
+		.into_iter()
+		.filter(|p| !p.is_empty())
+		.collect()
+}
+
+/// `pages` as the file to write.
+pub fn pages_json(pages: &BTreeSet<String>) -> String {
+	let rows: Vec<String> = pages.iter().map(|p| fmt!("\"{}\"", json_escape(p))).collect();
+	fmt!("[{}]", rows.join(","))
+}
+
+/// `path` relative to the keeper's home, or `None` where it is not inside it.
+fn home_rel<'a>(home: &str, path: &'a str) -> Option<&'a str> {
+	path.strip_prefix(home).and_then(|r| r.strip_prefix('/')).filter(|r| !r.is_empty())
+}
+
 /// Which round of pruning takes this version, lowest first.
 ///
 /// Its cause's rank ([`Cause::prune_rank`]), with two exceptions above a Save.  A version keeping a
 /// copy of one of the USER'S files goes after a Save: the Diamond's own files are the daimon's
 /// working state, while a copy of the user's file is the only one there is, and an edit of the
-/// Diamond's own files must not evict it (re-check R4, 2026-09-23).  A version recording a
-/// destruction -- a delete, or a write that left less than half ([`wipes`]) -- goes last of all.
-pub fn prune_rank_of(m: &Manifest) -> u8 {
+/// Diamond's own files must not evict it (re-check R4, 2026-09-23).  Data a page keeps in its
+/// Diamond ranks with the user's files: it is what the user entered, not the daimon's notes
+/// ([`Manifest::keeps_users_work`]).  A version recording a destruction -- a delete, or a write
+/// that left less than half ([`wipes`]) -- goes last of all.
+///
+/// # Arguments
+/// * `home` - The keeper's home, `diamonds/<id>` or `chats/<id>`, which decides whose a path is.
+/// * `page` - The store's page data, [`page_paths`].
+pub fn prune_rank_of(m: &Manifest, home: &str, page: &BTreeSet<String>) -> u8 {
 	if m.holds_destruction() {
 		4
-	} else if m.keeps_users_file() {
+	} else if m.keeps_users_work(home, page) {
 		3
 	} else {
 		m.cause.prune_rank()
@@ -2329,30 +2502,38 @@ pub fn prune_rank_of(m: &Manifest) -> u8 {
 /// * `pinned` - Bodies to keep whatever the manifests say.
 /// * `caps` - The ceilings in force.
 /// * `now` - Wall clock, whole milliseconds, for the destruction hold.
+/// * `home` - The keeper's home, for [`prune_rank_of`].
+/// * `known` - The paths the store already knows hold page data ([`PAGES_LOG`]).
 pub fn prune_plan(
 	manifests: &[(u64, Manifest)],
 	held:      &[(String, u64)],
 	pinned:    &[String],
 	caps:      Caps,
 	now:       u64,
+	home:      &str,
+	known:     &BTreeSet<String>,
 )
 	-> Prune
 {
 	let sizes: BTreeMap<&str, u64> = held.iter().map(|(h, n)| (h.as_str(), *n)).collect();
 	let newest = manifests.iter().map(|(n, _)| *n).max().unwrap_or(0);
+	let page   = page_paths(manifests, home, known);
 
 	// Oldest and cheapest first; the newest manifest and a deletion inside its hold are not
 	// candidates at all.
 	let mut order: Vec<(u8, u64)> = manifests.iter()
 		.filter(|(n, m)| *n != newest && !m.held_at(now))
-		.map(|(n, m)| (prune_rank_of(m), *n))
+		.map(|(n, m)| (prune_rank_of(m, home, &page), *n))
 		.collect();
 	order.sort();
 
 	let mut keep: BTreeSet<u64> = manifests.iter().map(|(n, _)| *n).collect();
 	let mut dropped: Vec<u64> = Vec::new();
+	// A store inside its ceilings loses nothing; one over them goes down to the low-water mark, so
+	// a store at its limit prunes in rare batches rather than one version per save (D-26 A F6).
+	let low = if within(manifests, &keep, pinned, &sizes, caps) { caps } else { caps.low() };
 	for (_, n) in order.into_iter() {
-		if within(manifests, &keep, pinned, &sizes, caps) {
+		if within(manifests, &keep, pinned, &sizes, low) {
 			break;
 		}
 		keep.remove(&n);
@@ -2367,7 +2548,7 @@ pub fn prune_plan(
 		.collect();
 	bodies.sort();
 	dropped.sort();
-	Prune { manifests: dropped, bodies }
+	Prune { manifests: dropped, bodies, pages: page }
 }
 
 /// The bodies nothing on disk names any more.
@@ -2380,6 +2561,176 @@ pub fn unreferenced(manifests: &[(u64, Manifest)], held: &[String]) -> Vec<Strin
 	let mut out: Vec<String> = held.iter().filter(|h| !live.contains(*h)).cloned().collect();
 	out.sort();
 	out
+}
+
+/// How long after a body file is written a sweep leaves it alone, in ms, where the claims of the
+/// writes in flight cannot be read.
+pub const SWEEP_GRACE_MS: u64 = 60_000;	// far past any write's gap between its bodies and its name
+
+/// The claims of the writes in flight in every tab, under `versions/`: device-local, never carried.
+pub const CLAIMS_FILE: &str = "claims.json";
+
+/// How long a claim holds without renewal, in ms.
+pub const CLAIM_LEASE_MS: u64 = 120_000;	// a claimed write is one body and one note, seconds; a tab silent this long has closed or crashed
+
+/// A write in flight outside the version hold: its bodies are down, or going down, and the note
+/// naming them is not yet written (D-26 HISTFIX2 b5, rc-b ruling).  Written to [`CLAIMS_FILE`]
+/// before the first body and cleared once the name is written, each time under the version hold,
+/// so a sweep, which holds it too, reads every claim there is.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Claim {
+	pub tab:		String,			// the page that writes
+	pub token:		u64,			// its write, within the page
+	pub bodies:		Vec<String>,	// the hashes it relies on, written or found
+	pub started:	u64,			// epoch ms
+	pub until:		u64,			// the lease, epoch ms
+}
+
+impl Claim {
+	pub fn new(tab: &str, token: u64, bodies: Vec<String>, now: u64) -> Self {
+		Self { tab: tab.to_string(), token, bodies, started: now, until: now.saturating_add(CLAIM_LEASE_MS) }
+	}
+
+	/// Is the lease still running at `now`?  A claim past it is a write whose tab has gone.
+	pub fn live_at(&self, now: u64) -> bool {
+		now < self.until
+	}
+
+	pub fn is(&self, tab: &str, token: u64) -> bool {
+		self.tab == tab && self.token == token
+	}
+
+	fn to_json(&self) -> String {
+		let hs: Vec<String> = self.bodies.iter().map(|h| fmt!("\"{}\"", json_escape(h))).collect();
+		fmt!("{{\"tab\":\"{}\",\"token\":{},\"bodies\":[{}],\"started\":{},\"until\":{}}}",
+			json_escape(&self.tab), self.token, hs.join(","), self.started, self.until)
+	}
+}
+
+/// The claims a [`CLAIMS_FILE`] holds.  Refused where it will not read whole: a sweep must then
+/// fall back to [`SWEEP_GRACE_MS`], since a claim it cannot read is a write it cannot see.
+pub fn claims_read(json: &str) -> Outcome<Vec<Claim>> {
+	let t = json.trim();
+	if !(t.starts_with('[') && t.ends_with(']')) {
+		return Err(err!("The version claims file '{}' is not a JSON array: {:?}.",
+			CLAIMS_FILE, t.chars().take(40).collect::<String>(); Invalid, Input, Decode));
+	}
+	let body = &t[1..t.len() - 1];
+	let objs = objects_in(body);
+	if objs.is_empty() && !body.trim().is_empty() {
+		return Err(err!("The version claims file '{}' holds no whole claim: {:?}.",
+			CLAIMS_FILE, body.chars().take(40).collect::<String>(); Invalid, Input, Decode));
+	}
+	let mut out = Vec::new();
+	for (i, o) in objs.into_iter().enumerate() {
+		let tab = extract_json_string(o, "tab");
+		let token = extract_json_number(o, "token");
+		let started = extract_json_number(o, "started");
+		let until = extract_json_number(o, "until");
+		let bodies = extract_json_string_array(o, "bodies");
+		match (tab, token, started, until, bodies) {
+			(Some(tab), Some(token), Some(started), Some(until), Some(bodies)) =>
+				out.push(Claim { tab, token, bodies, started, until }),
+			_ => return Err(err!("Claim {} of the version claims file '{}' is missing a field: {}.",
+				i, CLAIMS_FILE, o; Invalid, Input, Decode)),
+		}
+	}
+	Ok(out)
+}
+
+/// `claims` as the [`CLAIMS_FILE`] to write.
+pub fn claims_json(claims: &[Claim]) -> String {
+	let rows: Vec<String> = claims.iter().map(|c| c.to_json()).collect();
+	fmt!("[{}]", rows.join(","))
+}
+
+/// What a sweep knows of the writes in flight: when the oldest began, the bodies they rely on,
+/// and whether it is blind to some of them because the claims would not read.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct InFlight {
+	pub oldest:		Option<u64>,
+	pub claimed:	BTreeSet<String>,
+	pub blind:		bool,			// the claims file would not read
+	pub expired:	Vec<Claim>,		// past their lease: ignored, and cleared by the sweep
+}
+
+impl InFlight {
+	/// This page's own writes in flight (`local`: when each began, and the bodies they claim),
+	/// with every tab's claims where they read (`claims`), or blind where they did not.
+	pub fn of(local: (Option<u64>, BTreeSet<String>), claims: Option<&[Claim]>, now: u64) -> Self {
+		let (mut oldest, mut claimed) = local;
+		let mut expired = Vec::new();
+		let blind = claims.is_none();
+		for c in claims.unwrap_or(&[]).iter() {
+			if !c.live_at(now) {
+				expired.push(c.clone());
+				continue;
+			}
+			oldest = Some(oldest.map_or(c.started, |o| o.min(c.started)));
+			claimed.extend(c.bodies.iter().cloned());
+		}
+		Self { oldest, claimed, blind, expired }
+	}
+
+	/// The claims to write back: those read, less the expired.
+	pub fn kept(claims: &[Claim], now: u64) -> Vec<Claim> {
+		claims.iter().filter(|c| c.live_at(now)).cloned().collect()
+	}
+}
+
+/// The time before which an unnamed body may be swept, or `None` where any may: the start of the
+/// oldest write in flight, and no later than [`SWEEP_GRACE_MS`] ago where the claims are unseen.
+pub fn sweep_cutoff(now: u64, f: &InFlight) -> Option<u64> {
+	let grace = if f.blind { Some(now.saturating_sub(SWEEP_GRACE_MS)) } else { None };
+	match (f.oldest, grace) {
+		(Some(a), Some(b))	=> Some(a.min(b)),
+		(a, b)				=> a.or(b),
+	}
+}
+
+/// The bodies of `cands` a sweep may delete: none that a manifest in `left` names, none a write in
+/// flight claims, and none written at or after `cutoff`.
+///
+/// **A body no version names may be one a version is writing now** (D-26 HISTFIX2 fix 3b): every
+/// write puts its bodies down before the manifest or note that names them, and one that finds a
+/// body already there writes nothing, so its age says nothing and only the claim keeps it.
+///
+/// # Arguments
+/// * `stamps` - When each body file was last written, in epoch ms.
+/// * `cutoff` - From [`sweep_cutoff`]; with a cutoff, a body of unknown age is kept.
+pub fn sweepable(
+	left:		&[(u64, Manifest)],
+	cands:		&[String],
+	stamps:		&BTreeMap<String, u64>,
+	cutoff:		Option<u64>,
+	claimed:	&BTreeSet<String>,
+)
+	-> Vec<String>
+{
+	unreferenced(left, cands).into_iter()
+		.filter(|h| !claimed.contains(h))
+		.filter(|h| match cutoff {
+			None	=> true,
+			Some(c)	=> stamps.get(h).map_or(false, |t| *t < c),
+		})
+		.collect()
+}
+
+/// The bodies on disk no manifest names that the sweep must leave: the writes in flight's.  A
+/// prune weighs them against the cap as it weighs a pinned body, since they stay on disk.
+pub fn staying(
+	manifests:	&[(u64, Manifest)],
+	held:		&[(String, u64)],
+	stamps:		&BTreeMap<String, u64>,
+	f:			&InFlight,
+	now:		u64,
+)
+	-> Vec<String>
+{
+	let all: Vec<String> = held.iter().map(|(h, _)| h.clone()).collect();
+	let free: BTreeSet<String> = sweepable(manifests, &all, stamps, sweep_cutoff(now, f), &f.claimed)
+		.into_iter().collect();
+	unreferenced(manifests, &all).into_iter().filter(|h| !free.contains(h)).collect()
 }
 
 /// Every hash the kept manifests name, as content or as what stood before it.
@@ -2434,18 +2785,364 @@ pub fn retained_bytes(manifests: &[(u64, Manifest)], held: &[(String, u64)], now
 		.fold(0u64, |a, b| a.saturating_add(b))
 }
 
-/// What the bodies these manifests name weigh, of what is actually on disk.
+/// What the store weighs on disk: every body there, named or not.
 ///
-/// The gauge's numerator. A hash the manifests name and the disk does not weighs nothing -- it is
-/// the "not on this device" case, and charging for bytes that are not here would read as a store
-/// the user cannot empty.
-pub fn used_bytes(manifests: &[(u64, Manifest)], held: &[(String, u64)]) -> u64 {
-	let keep: BTreeSet<u64> = manifests.iter().map(|(n, _)| *n).collect();
-	let live = live_hashes(manifests, &keep);
-	held.iter()
-		.filter(|(h, _)| live.contains(h))
-		.map(|(_, n)| *n)
-		.fold(0u64, |a, b| a.saturating_add(b))
+/// The gauge's numerator, and the bytes the cap is held against (D-26 HISTFIX2 b5): a body no
+/// version names still fills the device until the sweep takes it, so the gauge shows it.  A hash
+/// the manifests name and the disk does not weighs nothing -- the "not on this device" case.
+pub fn disk_bytes(held: &[(String, u64)]) -> u64 {
+	held.iter().map(|(_, n)| *n).fold(0u64, |a, b| a.saturating_add(b))
+}
+
+
+// ┌───────────────────────────────────────────────────────────────┐
+// │ What a prune removed                                           │
+// └───────────────────────────────────────────────────────────────┘
+
+/// The file in `versions/` that keeps the record of each prune, newest last.
+pub const PRUNE_LOG: &str = "pruned.json";
+
+/// The most prune records [`PRUNE_LOG`] keeps; past it the oldest fold into one summary record.
+pub const PRUNE_RECORDS_MAX: usize = 20;
+
+/// The `on` of the record the oldest prune records fold into ([`prune_log_push`]).
+pub const PRUNE_SUMMARY: &str = "summary";
+
+/// The `on` of the record a prune writes BEFORE it deletes anything: what it set out to remove.
+pub const PRUNE_INTENT: &str = "intent";
+
+/// The `on` an intent record is settled to when its prune never wrote the final record
+/// ([`prune_settle`]): a prune cut short, its counts those it planned.
+pub const PRUNE_INTERRUPTED: &str = "interrupted";
+
+/// The `on` of a row that records no prune but a renumbering: this device's versions filed above
+/// both histories when another copy arrived holding their numbers ([`PruneRecord::renumbered`]),
+/// so a jump in the numbers is said rather than read as a prune (D-26 B F2).
+pub const PRUNE_RENUMBER: &str = "renumber";
+
+/// Who a version is, whatever number it is filed at: when it was made and what its manifest says.
+/// A refile changes the number and not this, so a record keyed by it cannot go stale (D-26 B F2).
+pub fn version_id(m: &Manifest) -> String {
+	let h = hash_of(m.to_json().as_bytes());
+	fmt!("{}-{}", m.ts, &h[..h.len().min(12)])
+}
+
+/// What one prune removed.
+///
+/// Kept so the History can say that older versions went and when they were from, and so a later
+/// reader can tell a pruned body from a lost one: the prune of 10 Oct 2026 could be explained only
+/// because a scratch dump happened to exist (history_prune_diag).
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub struct PruneRecord {
+	pub ts:       u64,		// when it ran, whole milliseconds
+	pub on:       String,		// what it ran after: "record" or "arrival"
+	pub versions: Vec<u64>,		// the manifests removed, oldest first
+	pub ids:      Vec<String>,	// each one's version_id, beside it; "" where not known
+	pub to:       Vec<u64>,		// a renumbering's new numbers, beside the old
+	pub first:    u64,		// when the oldest of them was made
+	pub last:     u64,		// when the newest of them was made
+	pub bodies:   usize,		// bodies swept with them
+	pub orphans:  usize,		// of those, bodies no manifest named before the prune
+	pub bytes:    u64,		// what the swept bodies weighed
+}
+
+impl PruneRecord {
+
+	/// The record of `plan`, run over `manifests` and the bodies `held` at `now`.
+	pub fn of(plan: &Prune, manifests: &[(u64, Manifest)], held: &[(String, u64)], now: u64,
+		on: &str) -> Self
+	{
+		Self::of_removed(&plan.manifests, &plan.bodies, manifests, held, now, on)
+	}
+
+	/// The record of a prune that removed the manifests `removed` and the bodies `swept`, of the
+	/// `manifests` and bodies `held` it started from: what was actually deleted, not what was
+	/// planned (D-26 A F7).
+	pub fn of_removed(removed: &[u64], swept: &[String], manifests: &[(u64, Manifest)],
+		held: &[(String, u64)], now: u64, on: &str) -> Self
+	{
+		let gone: Vec<&Manifest> = manifests.iter()
+			.filter(|(n, _)| removed.contains(n))
+			.map(|(_, m)| m)
+			.collect();
+		let all: BTreeSet<u64> = manifests.iter().map(|(n, _)| *n).collect();
+		let named = live_hashes(manifests, &all);
+		let mut versions: Vec<u64> = removed.to_vec();
+		versions.sort();
+		versions.dedup();
+		let ids: Vec<String> = versions.iter()
+			.map(|v| manifests.iter().find(|(n, _)| n == v)
+				.map(|(_, m)| version_id(m))
+				.unwrap_or_default())
+			.collect();
+		let swept_set: BTreeSet<&str> = swept.iter().map(|h| h.as_str()).collect();
+		Self {
+			ts:       now,
+			on:       on.to_string(),
+			versions,
+			ids,
+			to:       Vec::new(),
+			first:    gone.iter().map(|m| m.ts).min().unwrap_or(0),
+			last:     gone.iter().map(|m| m.ts).max().unwrap_or(0),
+			bodies:   swept_set.len(),
+			orphans:  swept_set.iter().filter(|h| !named.contains(**h)).count(),
+			bytes:    held.iter()
+				.filter(|(h, _)| swept_set.contains(h.as_str()))
+				.map(|(_, n)| *n)
+				.fold(0u64, |a, b| a.saturating_add(b)),
+		}
+	}
+
+	/// The row of a refile that filed this device's versions at new numbers, `moves` being each
+	/// old number and its new one, of the `manifests` as they stood before it.
+	pub fn renumbered(moves: &[(u64, u64)], manifests: &[(u64, Manifest)], now: u64) -> Self {
+		let mut moves: Vec<(u64, u64)> = moves.to_vec();
+		moves.sort();
+		moves.dedup();
+		let of = |v: u64| manifests.iter().find(|(n, _)| *n == v).map(|(_, m)| m);
+		let tss: Vec<u64> = moves.iter().filter_map(|(v, _)| of(*v)).map(|m| m.ts).collect();
+		Self {
+			ts:       now,
+			on:       PRUNE_RENUMBER.to_string(),
+			versions: moves.iter().map(|(v, _)| *v).collect(),
+			ids:      moves.iter().map(|(v, _)| of(*v).map(version_id).unwrap_or_default()).collect(),
+			to:       moves.iter().map(|(_, t)| *t).collect(),
+			first:    tss.iter().copied().min().unwrap_or(0),
+			last:     tss.iter().copied().max().unwrap_or(0),
+			..Self::default()
+		}
+	}
+
+	/// Is this a renumbering's row rather than a prune's?
+	pub fn is_renumber(&self) -> bool {
+		self.on == PRUNE_RENUMBER
+	}
+
+	/// Take `other` into this record, which becomes the [`PRUNE_SUMMARY`] of both; two
+	/// renumbering rows fold into one renumbering row.
+	fn fold(&mut self, other: &PruneRecord) {
+		// Each version beside its identity and its new number, so the three stay in step.
+		let mut rows: Vec<(u64, String, u64)> = Vec::new();
+		for r in [&*self, other] {
+			for (i, v) in r.versions.iter().enumerate() {
+				rows.push((*v, r.ids.get(i).cloned().unwrap_or_default(),
+					r.to.get(i).copied().unwrap_or(0)));
+			}
+		}
+		rows.sort();
+		rows.dedup();
+		// A 0 is a time nobody knew, not the earliest.
+		let first = [self.first, other.first].into_iter().filter(|t| *t > 0).min().unwrap_or(0);
+		let renumber  = self.is_renumber() && other.is_renumber();
+		self.ts       = self.ts.max(other.ts);
+		self.on       = if renumber { PRUNE_RENUMBER } else { PRUNE_SUMMARY }.to_string();
+		self.versions = rows.iter().map(|(v, _, _)| *v).collect();
+		self.ids      = rows.iter().map(|(_, i, _)| i.clone()).collect();
+		self.to       = if renumber { rows.iter().map(|(_, _, t)| *t).collect() } else { Vec::new() };
+		self.first    = first;
+		self.last     = self.last.max(other.last);
+		self.bodies   = self.bodies.saturating_add(other.bodies);
+		self.orphans  = self.orphans.saturating_add(other.orphans);
+		self.bytes    = self.bytes.saturating_add(other.bytes);
+	}
+
+	pub fn to_json(&self) -> String {
+		let vs: Vec<String> = self.versions.iter().map(|v| fmt!("{}", v)).collect();
+		let ids: Vec<String> = self.ids.iter().map(|i| fmt!("\"{}\"", json_escape(i))).collect();
+		let to = if self.to.is_empty() { String::new() } else {
+			let t: Vec<String> = self.to.iter().map(|v| fmt!("{}", v)).collect();
+			fmt!(",\"to\":[{}]", t.join(","))
+		};
+		fmt!("{{\"ts\":{},\"on\":\"{}\",\"versions\":[{}],\"ids\":[{}]{},\"first\":{},\"last\":{},\
+			\"bodies\":{},\"orphans\":{},\"bytes\":{}}}", self.ts, json_escape(&self.on),
+			vs.join(","), ids.join(","), to, self.first, self.last, self.bodies, self.orphans,
+			self.bytes)
+	}
+
+	fn from_json(s: &str) -> Self {
+		let nums = |key: &str| -> Vec<u64> { array_inside(s, key)
+			.map(|a| a.split(',').filter_map(|v| v.trim().parse::<u64>().ok()).collect())
+			.unwrap_or_default() };
+		let versions = nums("versions");
+		let mut ids: Vec<String> = array_inside(s, "ids")
+			.filter(|a| !a.trim().is_empty())
+			.map(|a| a.split(',').map(|i| i.trim().trim_matches('"').to_string()).collect())
+			.unwrap_or_default();
+		// A record from before identities, or one that does not line up, keys by number alone.
+		if ids.len() != versions.len() {
+			ids = vec![String::new(); versions.len()];
+		}
+		let mut to = nums("to");
+		if to.len() != versions.len() {
+			to = Vec::new();
+		}
+		Self {
+			ts:       extract_json_number(s, "ts").unwrap_or(0),
+			on:       extract_json_string(s, "on").unwrap_or_default(),
+			versions,
+			ids,
+			to,
+			first:    extract_json_number(s, "first").unwrap_or(0),
+			last:     extract_json_number(s, "last").unwrap_or(0),
+			bodies:   extract_json_number(s, "bodies").unwrap_or(0) as usize,
+			orphans:  extract_json_number(s, "orphans").unwrap_or(0) as usize,
+			bytes:    extract_json_number(s, "bytes").unwrap_or(0),
+		}
+	}
+}
+
+/// The records a [`PRUNE_LOG`] holds, oldest first; nothing where it will not read.
+pub fn prune_log_read(json: &str) -> Vec<PruneRecord> {
+	objects_in(json).into_iter().map(PruneRecord::from_json).collect()
+}
+
+/// `json`'s records with `rec` added, as the file to write.
+///
+/// The log is bounded by folding, never by dropping (D-26 A F6, B F1): past [`PRUNE_RECORDS_MAX`]
+/// the second-oldest record folds into the oldest, a running [`PRUNE_SUMMARY`], so every version a
+/// prune removed stays named by some row.
+pub fn prune_log_push(json: &str, rec: &PruneRecord) -> String {
+	let mut all = prune_log_read(json);
+	all.push(rec.clone());
+	prune_log_json(all)
+}
+
+/// `recs` as the file to write: a version a record already names is not named again, and the
+/// prune rows and the renumbering rows are each folded to at most [`PRUNE_RECORDS_MAX`].
+///
+/// **A version is named by who it is, not its number** ([`version_id`]): a copy of a pruned
+/// version that arrives and is pruned again was already recorded, and gets no second row
+/// (D-26 B F2).  A record with no identities keys by nothing and is kept whole.
+pub fn prune_log_json(recs: Vec<PruneRecord>) -> String {
+	let mut seen_p: BTreeSet<String> = BTreeSet::new();
+	let mut seen_r: BTreeSet<String> = BTreeSet::new();
+	let mut prunes: Vec<PruneRecord> = Vec::new();
+	let mut renums: Vec<PruneRecord> = Vec::new();
+	for mut r in recs.into_iter() {
+		let had = !r.versions.is_empty();
+		let seen = if r.is_renumber() { &mut seen_r } else { &mut seen_p };
+		let keep: Vec<bool> = r.ids.iter().map(|i| i.is_empty() || seen.insert(i.clone())).collect();
+		if keep.iter().any(|k| !k) {
+			let pick = |xs: &Vec<u64>| -> Vec<u64> { xs.iter().zip(keep.iter())
+				.filter(|(_, k)| **k).map(|(x, _)| *x).collect() };
+			r.versions = pick(&r.versions);
+			if !r.to.is_empty() {
+				r.to = pick(&r.to);
+			}
+			r.ids = r.ids.iter().zip(keep.iter()).filter(|(_, k)| **k).map(|(i, _)| i.clone()).collect();
+			// Everything it named is named already; its bodies were counted where they went.
+			if had && r.versions.is_empty() {
+				continue;
+			}
+		}
+		if r.is_renumber() { renums.push(r); } else { prunes.push(r); }
+	}
+	for list in [&mut prunes, &mut renums] {
+		while list.len() > PRUNE_RECORDS_MAX {
+			let next = list.remove(1);
+			list[0].fold(&next);
+		}
+	}
+	let mut all: Vec<PruneRecord> = prunes;
+	all.extend(renums.into_iter());
+	all.sort_by_key(|r| r.ts);
+	let rows: Vec<String> = all.iter().map(|r| r.to_json()).collect();
+	fmt!("[{}]", rows.join(","))
+}
+
+/// `json` after a refile filed this device's versions at new numbers, `moves` being each old
+/// number and its new one: every prune record names what it removed at the number that version
+/// now stands at, and one [`PRUNE_RENUMBER`] row, `row`, says the move (D-26 B F2).  Without the
+/// first, a record named a number that now holds nothing, or another device's version.
+pub fn prune_log_refiled(json: &str, moves: &[(u64, u64)], row: &PruneRecord) -> String {
+	let map: std::collections::BTreeMap<u64, u64> = moves.iter().copied().collect();
+	let mut all = prune_log_read(json);
+	for r in all.iter_mut().filter(|r| !r.is_renumber()) {
+		for v in r.versions.iter_mut() {
+			if let Some(to) = map.get(v) {
+				*v = *to;
+			}
+		}
+	}
+	if !row.versions.is_empty() {
+		all.push(row.clone());
+	}
+	prune_log_json(all)
+}
+
+/// The rows History draws from `recs`: a pruned version that came back -- a copy arrived holding
+/// it, so `held` has it again -- is not shown as gone, and a row left naming nothing is not shown.
+/// The log itself keeps saying it was pruned; this is what is true now.
+pub fn prune_shown(recs: Vec<PruneRecord>, held: &[(u64, Manifest)]) -> Vec<PruneRecord> {
+	let here: BTreeSet<String> = held.iter().map(|(_, m)| version_id(m)).collect();
+	recs.into_iter().filter_map(|mut r| {
+		if r.is_renumber() || r.versions.is_empty() {
+			return Some(r);
+		}
+		let keep: Vec<bool> = r.ids.iter().map(|i| i.is_empty() || !here.contains(i)).collect();
+		if keep.iter().all(|k| *k) {
+			return Some(r);
+		}
+		r.versions = r.versions.iter().zip(keep.iter()).filter(|(_, k)| **k).map(|(v, _)| *v).collect();
+		r.ids = r.ids.iter().zip(keep.iter()).filter(|(_, k)| **k).map(|(i, _)| i.clone()).collect();
+		if r.versions.is_empty() { None } else { Some(r) }
+	}).collect()
+}
+
+/// This device's [`PRUNE_LOG`] `mine` joined with `theirs`, arriving with another copy, as the
+/// file to write: never one laid over the other (D-26 A F5, B F2).
+///
+/// Every record of this device's stays, summaries and interrupted ones included.  Of the
+/// arriving ones, an intent goes -- its prune ran, or did not, on the other device, and only that
+/// device can settle it -- and one this device already holds, by its time, kind and versions, is
+/// not held twice.  The rest join in time order, and [`prune_log_json`] drops any version already
+/// named and folds past the bound.
+pub fn prune_log_merge(mine: &str, theirs: &str) -> String {
+	let mut all = prune_log_read(mine);
+	let key = |r: &PruneRecord| (r.ts, r.on.clone(), r.versions.clone(), r.ids.clone());
+	let have: BTreeSet<(u64, String, Vec<u64>, Vec<String>)> = all.iter().map(key).collect();
+	for r in prune_log_read(theirs).into_iter() {
+		if r.on == PRUNE_INTENT || have.contains(&key(&r)) {
+			continue;
+		}
+		all.push(r);
+	}
+	all.sort_by_key(|r| r.ts);
+	prune_log_json(all)
+}
+
+/// `json` with its [`PRUNE_INTENT`] record at `ts` replaced by `fin`, the record of what that
+/// prune actually removed; a prune that removed nothing leaves no record at all.
+pub fn prune_log_finish(json: &str, ts: u64, fin: &PruneRecord) -> String {
+	let mut all: Vec<PruneRecord> = prune_log_read(json).into_iter()
+		.filter(|r| !(r.on == PRUNE_INTENT && r.ts == ts))
+		.collect();
+	if !fin.versions.is_empty() || fin.bodies > 0 {
+		all.push(fin.clone());
+	}
+	prune_log_json(all)
+}
+
+/// `recs` with every [`PRUNE_INTENT`] left by a prune that never finished settled against the
+/// manifests still `present`: it names only the versions that are gone, as
+/// [`PRUNE_INTERRUPTED`], and goes where it names none.  Whether it changed anything comes back
+/// with it, so a caller writes only a log that moved.
+pub fn prune_settle(recs: Vec<PruneRecord>, present: &BTreeSet<u64>) -> (Vec<PruneRecord>, bool) {
+	let mut moved = false;
+	let mut out = Vec::with_capacity(recs.len());
+	for mut r in recs.into_iter() {
+		if r.on != PRUNE_INTENT {
+			out.push(r);
+			continue;
+		}
+		moved = true;
+		r.versions.retain(|v| !present.contains(v));
+		r.on = PRUNE_INTERRUPTED.to_string();
+		if !r.versions.is_empty() {
+			out.push(r);
+		}
+	}
+	(out, moved)
 }
 
 
@@ -2737,6 +3434,7 @@ mod tests {
 		Entry::changed(path, body.as_bytes(), was.map(|s| hash_of(s.as_bytes())))
 	}
 
+	const HOME: &str = "diamonds/t";			// the keeper every test manifest belongs to
 	const TS: u64 = 1_757_900_000_000;			// when every test manifest was made
 	const LATER: u64 = TS + 30 * 24 * 60 * 60 * 1000;	// a month on, past any hold
 
@@ -2880,15 +3578,16 @@ mod tests {
 		];
 		let held: Vec<(String, u64)> = ["A1", "A2", "E1", "e0", "S", "E2", "e1b"].iter()
 			.map(|x| (hash_of(x.as_bytes()), 400u64)).collect();
-		// Room for three bodies of seven: inside the hold both deletions stay, whatever else goes.
-		let caps = Caps { bytes: 1_200, manifests: MANIFESTS_MAX };
-		let plan = prune_plan(&ms, &held, &[], caps, TS + 1_000);
+		// Room for three bodies of seven at the low-water mark (1_200): inside the hold both
+		// deletions stay, whatever else goes.
+		let caps = Caps { bytes: 1_334, manifests: MANIFESTS_MAX };
+		let plan = prune_plan(&ms, &held, &[], caps, TS + 1_000, HOME, &BTreeSet::new());
 		assert!(!plan.manifests.contains(&1) && !plan.manifests.contains(&2),
 			"a deletion inside its hold was pruned: {:?}", plan.manifests);
 		assert!(!plan.bodies.contains(&hash_of(b"A1")), "a deleted file's copy was swept");
 		assert_eq!(vec![3, 4], plan.manifests, "the ordinary versions go first, a save last of them");
 		// Past the hold, a deletion is still the LAST to go: after a Save.
-		let later = prune_plan(&ms, &held, &[], caps, LATER);
+		let later = prune_plan(&ms, &held, &[], caps, LATER, HOME, &BTreeSet::new());
 		assert_eq!(vec![1, 3, 4], later.manifests);
 		assert!(!later.manifests.contains(&2), "the newer deletion went before it had to");
 		// What the store may still take for a turn that holds a delete.
@@ -3169,7 +3868,7 @@ Garden: order two bags of bark for a bed.
 			"E2 old", "E3 new", "E3 old"].iter().map(|x| (h(x), 400u64)).collect();
 		// Room for three bodies of eight: the edits must make room among themselves.
 		let caps = Caps { bytes: 1_200, manifests: MANIFESTS_MAX };
-		let plan = prune_plan(&ms, &held, &[], caps, TS + 1_000);
+		let plan = prune_plan(&ms, &held, &[], caps, TS + 1_000, HOME, &BTreeSet::new());
 		assert!(!plan.manifests.contains(&1),
 			"the version that emptied a user's file was pruned inside its hold: {:?}", plan.manifests);
 		assert!(!plan.bodies.contains(&h("T1 as it was")),
@@ -3183,7 +3882,7 @@ Garden: order two bags of bark for a bed.
 		// Past the hold it is still the last to go: with room for two versions besides the newest,
 		// the two edits go and the wipe stays.
 		let roomier = Caps { bytes: 2_000, manifests: MANIFESTS_MAX };
-		let later = prune_plan(&ms, &held, &[], roomier, LATER);
+		let later = prune_plan(&ms, &held, &[], roomier, LATER, HOME, &BTreeSet::new());
 		assert_eq!(vec![2, 3], later.manifests,
 			"a wiped file's version went before the edits after its hold");
 	}
@@ -3211,8 +3910,8 @@ Garden: order two bags of bark for a bed.
 			.flat_map(|(_, m)| m.hashes())
 			.map(|x| (x, 100u64))
 			.collect();
-		// Room for the newest and one other version's pair of bodies.
-		let plan = prune_plan(&ms, &held, &[], Caps { bytes: 400, manifests: MANIFESTS_MAX }, LATER);
+		// Room for the newest and one other version's pair of bodies at the low-water mark (400).
+		let plan = prune_plan(&ms, &held, &[], Caps { bytes: 445, manifests: MANIFESTS_MAX }, LATER, "diamonds/d1", &BTreeSet::new());
 		assert_eq!(vec![2, 3], plan.manifests,
 			"a copy of the user's file went before a Save or the Diamond's own state");
 	}
@@ -3224,9 +3923,9 @@ Garden: order two bags of bark for a bed.
 		let ms = vec![(1, m(Cause::Turn, vec![e("a", "one", None)]))];
 		let held = vec![(hash_of(b"one"), 3u64), (hash_of(b"pending"), 3u64)];
 		let pin = vec![hash_of(b"pending")];
-		let plan = prune_plan(&ms, &held, &pin, Caps { bytes: 100, manifests: MANIFESTS_MAX }, LATER);
+		let plan = prune_plan(&ms, &held, &pin, Caps { bytes: 100, manifests: MANIFESTS_MAX }, LATER, HOME, &BTreeSet::new());
 		assert!(plan.bodies.is_empty(), "a pending copy was swept: {:?}", plan.bodies);
-		let bare = prune_plan(&ms, &held, &[], Caps { bytes: 100, manifests: MANIFESTS_MAX }, LATER);
+		let bare = prune_plan(&ms, &held, &[], Caps { bytes: 100, manifests: MANIFESTS_MAX }, LATER, HOME, &BTreeSet::new());
 		assert_eq!(vec![hash_of(b"pending")], bare.bodies);
 	}
 
@@ -3778,14 +4477,29 @@ Garden: order two bags of bark for a bed.
 		let held: Vec<(String, u64)> = (1..=6)
 			.map(|n| (hash_of(fmt!("{}", n).as_bytes()), 1_000u64))
 			.collect();
-		// Room for three manifests' worth of bodies, so three must go.
-		let plan = prune_plan(&ms, &held, &[], Caps { bytes: 3_000, manifests: MANIFESTS_MAX }, LATER);
+		// Room for three manifests' worth of bodies at the low-water mark (3_000), so three must go.
+		let plan = prune_plan(&ms, &held, &[], Caps { bytes: 3_334, manifests: MANIFESTS_MAX }, LATER, HOME, &BTreeSet::new());
 		// The two cheapest causes first, oldest within each, and then a discontinuity; the
 		// list itself comes back in version order.
 		assert_eq!(vec![1, 3, 4], plan.manifests);
 		assert!(!plan.manifests.contains(&2), "a user's own save was pruned before a turn's");
 		assert!(!plan.manifests.contains(&5), "a restore went before the fold above it");
 		assert!(!plan.manifests.contains(&6), "the newest manifest was pruned");
+	}
+
+	/// **A store inside its ceilings loses nothing; one over them goes down to 90% of each.**
+	#[test]
+	fn test_a_prune_goes_down_to_the_low_water_mark_00() {
+		let ms: Vec<(u64, Manifest)> = (1..=10)
+			.map(|n| (n, m(Cause::Turn, vec![e("a", &fmt!("{}", n), None)])))
+			.collect();
+		let held: Vec<(String, u64)> = (1..=10)
+			.map(|n| (hash_of(fmt!("{}", n).as_bytes()), 100u64))
+			.collect();
+		let at = prune_plan(&ms, &held, &[], Caps { bytes: 1_000, manifests: 10 }, LATER, HOME, &BTreeSet::new());
+		assert!(at.manifests.is_empty(), "a store at its ceiling, not over it, was pruned: {:?}", at.manifests);
+		let over = prune_plan(&ms, &held, &[], Caps { bytes: 999, manifests: 10 }, LATER, HOME, &BTreeSet::new());
+		assert_eq!(vec![1, 2], over.manifests, "down to 899 bytes, not just under 999");
 	}
 
 	#[test]
@@ -3796,7 +4510,8 @@ Garden: order two bags of bark for a bed.
 		let held: Vec<(String, u64)> = (1..=5)
 			.map(|n| (hash_of(fmt!("{}", n).as_bytes()), 1u64))
 			.collect();
-		let plan = prune_plan(&ms, &held, &[], Caps { bytes: u64::MAX, manifests: 3 }, LATER);
+		// A ceiling of 4 has its low-water mark at 3.
+		let plan = prune_plan(&ms, &held, &[], Caps { bytes: u64::MAX, manifests: 4 }, LATER, HOME, &BTreeSet::new());
 		assert_eq!(vec![1, 2], plan.manifests);
 	}
 
@@ -3804,7 +4519,7 @@ Garden: order two bags of bark for a bed.
 	fn test_a_store_of_one_oversized_manifest_is_left_at_one_rather_than_emptied() {
 		let ms = vec![(7, m(Cause::Turn, vec![e("a", "big", None)]))];
 		let held = vec![(hash_of(b"big"), 9_000_000u64)];
-		let plan = prune_plan(&ms, &held, &[], Caps { bytes: 1, manifests: 1 }, LATER);
+		let plan = prune_plan(&ms, &held, &[], Caps { bytes: 1, manifests: 1 }, LATER, HOME, &BTreeSet::new());
 		assert!(plan.manifests.is_empty(), "the only version held was pruned away");
 		assert!(plan.bodies.is_empty(), "the body of the only version held was swept");
 	}
@@ -3818,7 +4533,7 @@ Garden: order two bags of bark for a bed.
 			(2, m(Cause::Turn, vec![e("a", "two", Some("one"))])),
 		];
 		let held = vec![(hash_of(b"one"), 3u64), (hash_of(b"two"), 3u64)];
-		let plan = prune_plan(&ms, &held, &[], Caps { bytes: 4, manifests: MANIFESTS_MAX }, LATER);
+		let plan = prune_plan(&ms, &held, &[], Caps { bytes: 4, manifests: MANIFESTS_MAX }, LATER, HOME, &BTreeSet::new());
 		assert_eq!(vec![1], plan.manifests);
 		assert!(plan.bodies.is_empty(),
 			"the body version 2 names as `was` was swept, so its row restores nothing");
@@ -3832,10 +4547,10 @@ Garden: order two bags of bark for a bed.
 	}
 
 	#[test]
-	fn test_a_body_named_but_not_on_disk_weighs_nothing_in_the_gauge() {
-		let ms = vec![(1, m(Cause::Turn, vec![e("a", "one", None), e("b", "two", None)]))];
-		let held = vec![(hash_of(b"one"), 100u64)];
-		assert_eq!(100, used_bytes(&ms, &held));
+	fn test_the_gauge_weighs_what_is_on_disk_named_or_not() {
+		// "two" is named and not here: it weighs nothing.  The orphan is here: it weighs.
+		let held = vec![(hash_of(b"one"), 100u64), (hash_of(b"orphan"), 30u64)];
+		assert_eq!(130, disk_bytes(&held));
 	}
 
 	#[test]
@@ -4128,7 +4843,7 @@ Garden: order two bags of bark for a bed.
 		let before = if wiped { copy } else { found.map(|b| b.to_vec()) };
 		capture_into(held, path, Change { path: path.to_string(), after: Body::Held(after.to_vec()),
 			before, found: Found::of(found), carried: None, mark: true, refused: None, wiped,
-			folder: None, by: None });
+			folder: None, by: None, door: false });
 		wiped
 	}
 
@@ -4363,7 +5078,7 @@ Garden: order two bags of bark for a bed.
 		let row = |p: &str, was: Option<&str>, gone: bool| Entry { path: p.to_string(),
 			hash: if gone { String::new() } else { hash_of(p.as_bytes()) }, bytes: 1,
 			was: was.map(|w| w.to_string()), gone, wiped: false, mark: true, skipped: None,
-			folder: None, by: None };
+			folder: None, by: None, door: false };
 		let mut rows: Vec<(Entry, bool)> = (0..70)
 			.map(|i| (row(&fmt!("vault/new/f{}.md", i), None, false), false)).collect();
 		rows.push((row("vault/u.md", Some(&hash_of(b"u")), true), true));
@@ -4383,7 +5098,7 @@ Garden: order two bags of bark for a bed.
 	fn test_rows_holding_copies_past_the_bound_go_into_a_further_version_00() {
 		let row = |p: &str, was: Option<&str>| Entry { path: p.to_string(),
 			hash: hash_of(p.as_bytes()), bytes: 1, was: was.map(|w| w.to_string()), gone: false,
-			wiped: false, mark: true, skipped: None, folder: None, by: None };
+			wiped: false, mark: true, skipped: None, folder: None, by: None, door: false };
 		let mut rows: Vec<(Entry, bool)> = (0..10)
 			.map(|i| (row(&fmt!("vault/new/f{}.md", i), None), false)).collect();
 		for i in 0..65 {
@@ -4864,5 +5579,770 @@ Garden: order two bags of bark for a bed.
 		assert_eq!(chain_undo_version(&[0], 3, false), None);
 		assert_eq!(chain_undo_version(&[], 3, false), None);
 		Ok(())
+	}
+
+	// ┌───────────────────────────────────────────────────────────────┐
+	// │ Prune replay                                                   │
+	// └───────────────────────────────────────────────────────────────┘
+
+	const REPLAY: &str = include_str!("testdata/prune_replay_ontheism.txt");
+
+	/// The store a replay file describes: the manifests, the bodies on disk, and the time.
+	fn replay(text: &str) -> (Vec<(u64, Manifest)>, Vec<(String, u64)>, u64) {
+		let mut ms: Vec<(u64, Manifest)> = Vec::new();
+		let mut held: Vec<(String, u64)> = Vec::new();
+		let mut now = 0u64;
+		for line in text.lines().filter(|l| !l.starts_with('#')) {
+			let cols: Vec<&str> = line.splitn(3, '\t').collect();
+			match cols.as_slice() {
+				["now", ts]		=> now = ts.parse().unwrap_or(0),
+				["m", n, json]		=> match Manifest::from_json(json) {
+					Ok(m)	=> ms.push((n.parse().unwrap_or(0), m)),
+					Err(e)	=> panic!("replay manifest {} will not parse: {}", n, e),
+				},
+				["b", h, size]		=> held.push((h.to_string(), size.parse().unwrap_or(0))),
+				_			=> panic!("replay line not understood: {}", line),
+			}
+		}
+		(ms, held, now)
+	}
+
+	/// **The prune of 10 Oct 2026 kept the copies of the user's chapters** (history_prune_diag).
+	/// Ontheism's v14, v18 and v19 held the only Daimond copies of chapters in the user's own
+	/// folder, but rows written before the path decided whose a file is carried no `mark`, so the
+	/// three ranked as ordinary turns and went before thirty later STATE-only versions.
+	#[test]
+	fn test_replay_of_the_ontheism_prune_keeps_copies_of_the_users_files_00() {
+		let (ms, held, now) = replay(REPLAY);
+		assert_eq!(38, ms.len());
+		let caps = Caps { bytes: VERSIONS_BYTES_DEFAULT, manifests: MANIFESTS_MAX };
+		let plan = prune_plan(&ms, &held, &[], caps, now, "diamonds/ont", &BTreeSet::new());
+		for v in [14u64, 18, 19] {
+			assert!(!plan.manifests.contains(&v),
+				"v{} holds a copy of the user's file and was pruned: {:?}", v, plan.manifests);
+		}
+		assert!(!plan.manifests.is_empty(), "the store is over its ceiling and nothing went");
+	}
+
+	/// **A page's own data goes with the user's files, after the daimon's notes** (Life log,
+	/// 10 Oct 2026, at 99.8% of its limit).  Its page appends the user's entries to
+	/// `log/<lane>/<month>.jsonl` inside the Diamond, and those versions ranked as ordinary edits,
+	/// so the next change would have pruned the oldest entries' history before the daimon's
+	/// STATE.md rewrites.
+	#[test]
+	fn test_a_pages_own_data_outlasts_the_daimons_turn_edits_00() {
+		let own = |p: &str| fmt!("{}/{}", HOME, p);
+		let mut ms: Vec<(u64, Manifest)> = Vec::new();
+		let mut bodies: Vec<String> = Vec::new();
+		// Oldest first: four log entries by the page, then six turns rewriting STATE.md.
+		for n in 1..=4u64 {
+			let (now, was) = (fmt!("log {}", n), fmt!("log {}", n - 1));
+			let mut row = e(&own("log/diet/2026-10.jsonl"), &now, Some(&was));
+			row.door = true;
+			ms.push((n, m(Cause::User, vec![row])));
+			bodies.push(now);
+			bodies.push(was);
+		}
+		for n in 5..=10u64 {
+			let (now, was) = (fmt!("state {}", n), fmt!("state {}", n - 1));
+			ms.push((n, m(Cause::Turn, vec![e(&own("STATE.md"), &now, Some(&was))])));
+			bodies.push(now);
+			bodies.push(was);
+		}
+		// A daimon turn that edits the page's data is the user's data too.
+		ms.push((11, m(Cause::Turn, vec![e(&own("log/diet/2026-10.jsonl"), "lane b", Some("log 4"))])));
+		bodies.push("lane b".to_string());
+		ms.push((12, m(Cause::Turn, vec![e(&own("STATE.md"), "state 12", Some("state 10"))])));
+		bodies.push("state 12".to_string());
+		bodies.sort();
+		bodies.dedup();
+		let held: Vec<(String, u64)> = bodies.iter().map(|b| (hash_of(b.as_bytes()), 100u64)).collect();
+		// Room for every version but the turns' notes: the turns must make room among themselves.
+		let caps = Caps { bytes: 1_000, manifests: MANIFESTS_MAX };
+		let plan = prune_plan(&ms, &held, &[], caps, LATER, HOME, &BTreeSet::new());
+		assert!(!plan.manifests.is_empty(), "the store is over its ceiling and nothing went");
+		for v in [1u64, 2, 3, 4, 11] {
+			assert!(!plan.manifests.contains(&v),
+				"v{} holds the page's data and went before a turn's notes: {:?}", v, plan.manifests);
+		}
+		assert!(is_page_data(HOME, &own("log/diet/2026-10.jsonl")));
+		assert!(is_page_data(HOME, &own("cat/gym.json")));
+		assert!(is_page_data(HOME, &own("index.json")), "a page may keep data at the top (A F1)");
+		assert!(!is_page_data(HOME, &own("crystal.json")), "the keeper's own record");
+		assert!(!is_page_data(HOME, &own("capp.json")), "the keeper's own record");
+		assert!(!page_paths(&ms, HOME, &BTreeSet::new()).contains(&own("STATE.md")),
+			"only turns wrote the daimon's notes");
+		assert!(!is_page_data(HOME, &own("shots/a.png")));
+		assert!(!is_page_data(HOME, &own(".daimond/log")));
+		assert!(!is_page_data(HOME, "diamonds/other/log/x.jsonl"), "another Diamond's data");
+		assert!(!is_page_data(HOME, "book/ch1.typ"), "the user's folder is not page data");
+		assert!(is_users_path(HOME, "book/ch1.typ"));
+		assert!(!is_users_path(HOME, &own("STATE.md")));
+		assert!(is_users_path(HOME, "diamonds/tt/STATE.md"), "a keeper whose id begins with t's");
+	}
+
+	#[test]
+	fn test_a_save_outlasts_turns_writing_a_subfolder_no_page_wrote_00() {
+		// verify_versions arm 7 in miniature: turns rewrite `notes/p.md`, a subfolder of the
+		// Diamond's own folder that no page and no user door has ever written. Those are the
+		// daimon's notes, and they go before the Save.
+		let own = |p: &str| fmt!("{}/{}", HOME, p);
+		let mut ms: Vec<(u64, Manifest)> = Vec::new();
+		let mut bodies: Vec<String> = vec!["saved".to_string()];
+		ms.push((1, m(Cause::Save, vec![e(&own("notes/a.md"), "saved", None)])));
+		for n in 2..=12u64 {
+			let (now, was) = (fmt!("p {}", n), fmt!("p {}", n - 1));
+			ms.push((n, m(Cause::Turn, vec![e(&own("notes/p.md"), &now, Some(&was))])));
+			bodies.push(now);
+			bodies.push(was);
+		}
+		bodies.sort();
+		bodies.dedup();
+		let held: Vec<(String, u64)> = bodies.iter().map(|b| (hash_of(b.as_bytes()), 100u64)).collect();
+		let caps = Caps { bytes: 1_000, manifests: MANIFESTS_MAX };
+		let plan = prune_plan(&ms, &held, &[], caps, LATER, HOME, &BTreeSet::new());
+		assert!(!plan.manifests.is_empty(), "the store is over its ceiling and nothing went");
+		assert!(!plan.manifests.contains(&1), "the Save went before the daimon's notes: {:?}",
+			plan.manifests);
+		let page = page_paths(&ms, HOME, &BTreeSet::new());
+		assert!(page.is_empty(), "no page wrote anything: {:?}", page);
+	}
+
+	/// **A prune leaves a record of what it removed** (history_prune_diag, fix 3): the versions,
+	/// their dates, the bodies and their bytes, and which bodies nothing had named.
+	#[test]
+	fn test_a_prune_records_what_it_removed_00() {
+		let ms = vec![
+			(1, Manifest::new(Cause::Turn, TS, "", "", vec![e(&fmt!("{}/STATE.md", HOME), "s1", Some("s0"))])),
+			(2, Manifest::new(Cause::Turn, TS + 5, "", "", vec![e(&fmt!("{}/STATE.md", HOME), "s2", Some("s1"))])),
+			(3, Manifest::new(Cause::Turn, TS + 9, "", "", vec![e(&fmt!("{}/STATE.md", HOME), "s3", Some("s2"))])),
+		];
+		let mut held: Vec<(String, u64)> = ["s0", "s1", "s2", "s3"].iter()
+			.map(|b| (hash_of(b.as_bytes()), 100u64)).collect();
+		held.push((hash_of(b"orphan"), 7));
+		let caps = Caps { bytes: 200, manifests: MANIFESTS_MAX };
+		let plan = prune_plan(&ms, &held, &[], caps, LATER, HOME, &BTreeSet::new());
+		assert_eq!(vec![1, 2], plan.manifests);
+		let rec = PruneRecord::of(&plan, &ms, &held, LATER, "record");
+		assert_eq!(vec![1, 2], rec.versions);
+		assert_eq!((TS, TS + 5), (rec.first, rec.last));
+		assert_eq!(3, rec.bodies, "s0, s1 and the orphan: {:?}", plan.bodies);
+		assert_eq!(1, rec.orphans);
+		assert_eq!(207, rec.bytes);
+		let log = prune_log_push("", &rec);
+		assert_eq!(vec![rec.clone()], prune_log_read(&log));
+		let mut long = String::new();
+		for n in 0..(PRUNE_RECORDS_MAX as u64 + 3) {
+			let mut r = rec.clone();
+			r.ts = n;
+			r.ids = vec![String::new(); r.versions.len()];	// the same versions again, by number only
+			long = prune_log_push(&long, &r);
+		}
+		let back = prune_log_read(&long);
+		assert_eq!(PRUNE_RECORDS_MAX, back.len());
+		assert_eq!((3, PRUNE_SUMMARY), (back[0].ts, back[0].on.as_str()), "the oldest records fold");
+		assert_eq!(vec![1, 2], back[0].versions);
+		assert_eq!(4 * rec.bytes, back[0].bytes);
+	}
+
+	/// **A row an older build left unmarked reads back marked when its path is the user's.**
+	#[test]
+	fn test_settle_marks_decides_by_path_00() {
+		let mut man = m(Cause::Turn, vec![
+			e("book/ch1.typ", "b", Some("a")),
+			e(&fmt!("{}/STATE.md", HOME), "d", Some("c")),
+		]);
+		man.files[1].mark = true;
+		assert!(!man.files[0].mark);
+		man.settle_marks(HOME);
+		assert!(man.files[0].mark && !man.files[1].mark);
+		assert!(man.keeps_users_file());
+	}
+}
+#[cfg(test)]
+mod qa_d26a {
+	use super::*;
+
+	const HOME: &str = "diamonds/t";
+	const TS: u64 = 1_757_900_000_000;
+	const LATER: u64 = TS + 30 * 24 * 60 * 60 * 1000;
+
+	fn own(p: &str) -> String { fmt!("{}/{}", HOME, p) }
+	fn e(path: &str, body: &str, was: Option<&str>) -> Entry {
+		Entry::changed(path, body.as_bytes(), was.map(|s| hash_of(s.as_bytes())))
+	}
+	fn gone(path: &str, was: &str) -> Entry {
+		let mut g = e(path, "", None);
+		g.gone = true;
+		g.hash = String::new();
+		g.bytes = 0;
+		g.was = Some(hash_of(was.as_bytes()));
+		g
+	}
+	fn m(cause: Cause, files: Vec<Entry>) -> Manifest { Manifest::new(cause, TS, "m_1", "", files) }
+	// A person's door wrote these rows: what `dirty_changes` records.
+	fn dm(files: Vec<Entry>) -> Manifest {
+		m(Cause::User, files.into_iter().map(|mut f| { f.door = true; f }).collect())
+	}
+	fn held_of(ms: &[(u64, Manifest)]) -> Vec<(String, u64)> {
+		let mut hs: BTreeSet<String> = BTreeSet::new();
+		for (_, mf) in ms.iter() { for h in mf.hashes() { hs.insert(h); } }
+		hs.into_iter().map(|h| (h, 100u64)).collect()
+	}
+	fn scratch(ms: &mut Vec<(u64, Manifest)>, from: u64, to: u64) {
+		for n in from..=to {
+			let was = if n == from { None } else { Some(fmt!("s{}", n - 1)) };
+			ms.push((n, m(Cause::Turn, vec![e(&own("STATE.md"), &fmt!("s{}", n), was.as_deref())])));
+		}
+	}
+	fn plan(ms: &[(u64, Manifest)], bytes: u64) -> Prune {
+		plan_known(ms, bytes, &BTreeSet::new())
+	}
+	fn plan_known(ms: &[(u64, Manifest)], bytes: u64, known: &BTreeSet<String>) -> Prune {
+		prune_plan(ms, &held_of(ms), &[], Caps { bytes, manifests: MANIFESTS_MAX }, LATER, HOME, known)
+	}
+
+	// A1: page status erodes once the prune takes the last User manifest naming the path.
+	#[test]
+	fn qa_a1_page_status_survives_its_user_manifest_being_pruned() {
+		let mut ms: Vec<(u64, Manifest)> = Vec::new();
+		ms.push((1, dm(vec![e(&own("log/d.jsonl"), "L1", None)])));
+		for n in 2..=5u64 {
+			ms.push((n, m(Cause::Turn, vec![e(&own("log/d.jsonl"), &fmt!("L{}", n), Some(&fmt!("L{}", n - 1)))])));
+		}
+		scratch(&mut ms, 6, 15);
+		let p1 = plan(&ms, 600);
+		let known = p1.pages.clone();	// kept in PAGES_LOG before the deletes
+		println!("A1 plan1 {:?} page {:?}", p1.manifests, known);
+		ms.retain(|(n, _)| !p1.manifests.contains(n));
+		scratch(&mut ms, 16, 25);
+		// n=16 must chain from s15
+		ms.retain(|(n, _)| *n != 16);
+		ms.push((16, m(Cause::Turn, vec![e(&own("STATE.md"), "s16", Some("s15"))])));
+		let p2 = plan_known(&ms, 1200, &known);
+		println!("A1 plan2 {:?} page {:?}", p2.manifests, p2.pages);
+		let page_gone: Vec<u64> = p2.manifests.iter().copied().filter(|n| *n >= 2 && *n <= 5).collect();
+		let scratch_kept: Vec<u64> = (16..25u64).filter(|n| !p2.manifests.contains(n)).collect();
+		assert!(page_gone.is_empty() || scratch_kept.is_empty(),
+			"page-data versions {:?} pruned while daimon scratch {:?} survives", page_gone, scratch_kept);
+	}
+
+	// A2: a page (or the Files panel) writing a top-level file of the home.
+	#[test]
+	fn qa_a2_top_level_page_file_outlasts_scratch() {
+		let mut ms: Vec<(u64, Manifest)> = Vec::new();
+		for n in 1..=4u64 {
+			let was = if n == 1 { None } else { Some(fmt!("E{}", n - 1)) };
+			ms.push((n, dm(vec![e(&own("entries.jsonl"), &fmt!("E{}", n), was.as_deref())])));
+		}
+		scratch(&mut ms, 5, 10);
+		let p = plan(&ms, 800);
+		println!("A2 plan {:?}", p.manifests);
+		let user_gone: Vec<u64> = p.manifests.iter().copied().filter(|n| *n <= 4).collect();
+		let scratch_kept: Vec<u64> = (5..10u64).filter(|n| !p.manifests.contains(n)).collect();
+		assert!(user_gone.is_empty() || scratch_kept.is_empty(),
+			"the person's top-level writes {:?} pruned while scratch {:?} survives", user_gone, scratch_kept);
+	}
+
+	// A3: written first by the daimon, then by the person.
+	#[test]
+	fn qa_a3_daimon_first_then_person() {
+		let mut ms: Vec<(u64, Manifest)> = Vec::new();
+		ms.push((1, m(Cause::Turn, vec![e(&own("log/x.jsonl"), "X1", None)])));
+		ms.push((2, m(Cause::Turn, vec![e(&own("log/x.jsonl"), "X2", Some("X1"))])));
+		ms.push((3, dm(vec![e(&own("log/x.jsonl"), "X3", Some("X2"))])));
+		scratch(&mut ms, 4, 12);
+		let p = plan(&ms, 900);
+		println!("A3 plan {:?}", p.manifests);
+		let scratch_kept: Vec<u64> = (4..12u64).filter(|n| !p.manifests.contains(n)).collect();
+		for v in [1u64, 2, 3] {
+			assert!(!p.manifests.contains(&v) || scratch_kept.is_empty(), "v{} went before scratch {:?}", v, scratch_kept);
+		}
+	}
+
+	// A4: the page's write drained into a Save (versions_save drains the dirty set as Cause::Save).
+	#[test]
+	fn qa_a4_page_write_recorded_by_save_is_page_data() {
+		let mut ms: Vec<(u64, Manifest)> = Vec::new();
+		// The page's write the Save drained from the dirty set carries `door`; its walk does not.
+		let mut row = e(&own("log/x.jsonl"), "X1", None);
+		row.door = true;
+		ms.push((1, m(Cause::Save, vec![row, e(&own("notes/w.md"), "W", None)])));
+		for n in 2..=4u64 {
+			ms.push((n, m(Cause::Turn, vec![e(&own("log/x.jsonl"), &fmt!("X{}", n), Some(&fmt!("X{}", n - 1)))])));
+		}
+		scratch(&mut ms, 5, 14);
+		let p = plan(&ms, 1100);
+		println!("A4 plan {:?} page {:?}", p.manifests, p.pages);
+		assert!(!p.pages.contains(&own("notes/w.md")), "the Save's walk made no page data: {:?}", p.pages);
+		let page_gone: Vec<u64> = p.manifests.iter().copied().filter(|n| (2..=4).contains(n)).collect();
+		let scratch_kept: Vec<u64> = (5..14u64).filter(|n| !p.manifests.contains(n)).collect();
+		assert!(page_gone.is_empty() || scratch_kept.is_empty(),
+			"edits of a page path the person Saved {:?} pruned while scratch {:?} survives", page_gone, scratch_kept);
+	}
+
+	// A5: the person renames a page file in the Files panel; later daimon edits of the new name.
+	#[test]
+	fn qa_a5_user_rename() {
+		let mut ms: Vec<(u64, Manifest)> = Vec::new();
+		ms.push((1, dm(vec![e(&own("log/a.jsonl"), "A1", None)])));
+		ms.push((2, dm(vec![gone(&own("log/a.jsonl"), "A1"), e(&own("log/b.jsonl"), "A1", None)])));
+		ms.push((3, m(Cause::Turn, vec![e(&own("log/b.jsonl"), "B3", Some("A1"))])));
+		scratch(&mut ms, 4, 12);
+		let p = plan(&ms, 800);
+		println!("A5 plan {:?}", p.manifests);
+		let scratch_kept: Vec<u64> = (4..12u64).filter(|n| !p.manifests.contains(n)).collect();
+		for v in [1u64, 2, 3] {
+			assert!(!p.manifests.contains(&v) || scratch_kept.is_empty(), "v{} went before scratch {:?}", v, scratch_kept);
+		}
+	}
+
+	// A6: the daimon moves a page file to a new subfolder and keeps editing it there.
+	#[test]
+	fn qa_a6_daimon_moves_page_file() {
+		let mut ms: Vec<(u64, Manifest)> = Vec::new();
+		ms.push((1, dm(vec![e(&own("log/a.jsonl"), "A1", None)])));
+		ms.push((2, m(Cause::Turn, vec![gone(&own("log/a.jsonl"), "A1"), e(&own("arch/a.jsonl"), "A1", None)])));
+		for n in 3..=5u64 {
+			let was = if n == 3 { "A1".to_string() } else { fmt!("R{}", n - 1) };
+			ms.push((n, m(Cause::Turn, vec![e(&own("arch/a.jsonl"), &fmt!("R{}", n), Some(&was))])));
+		}
+		scratch(&mut ms, 6, 14);
+		let p = plan(&ms, 1000);
+		println!("A6 plan {:?} page {:?}", p.manifests, page_paths(&ms, HOME, &BTreeSet::new()));
+		let moved_gone: Vec<u64> = p.manifests.iter().copied().filter(|n| (3..=5).contains(n)).collect();
+		let scratch_kept: Vec<u64> = (6..14u64).filter(|n| !p.manifests.contains(n)).collect();
+		assert!(moved_gone.is_empty() || scratch_kept.is_empty(),
+			"the moved page file's versions {:?} pruned while scratch {:?} survives", moved_gone, scratch_kept);
+	}
+
+	// A7: deleted by the daimon then recreated (by the daimon, then the page).
+	#[test]
+	fn qa_a7_deleted_then_recreated() {
+		let mut ms: Vec<(u64, Manifest)> = Vec::new();
+		ms.push((1, dm(vec![e(&own("log/x.jsonl"), "X1", None)])));
+		ms.push((2, m(Cause::Turn, vec![gone(&own("log/x.jsonl"), "X1")])));
+		ms.push((3, m(Cause::Turn, vec![e(&own("log/x.jsonl"), "Y3", None)])));
+		ms.push((4, dm(vec![e(&own("log/x.jsonl"), "Y4", Some("Y3"))])));
+		scratch(&mut ms, 5, 13);
+		let p = plan(&ms, 900);
+		println!("A7 plan {:?}", p.manifests);
+		let scratch_kept: Vec<u64> = (5..13u64).filter(|n| !p.manifests.contains(n)).collect();
+		for v in [1u64, 2, 3, 4] {
+			assert!(!p.manifests.contains(&v) || scratch_kept.is_empty(), "v{} went before scratch {:?}", v, scratch_kept);
+		}
+	}
+
+	// A8: a prune whose manifest deletes failed is planned and recorded again. Since HISTFIX2 fix 3
+	// the prune is two-phase (prune_held): intent, deletes, then a final record of what went.
+	fn two_phase(log: &str, ms: &mut Vec<(u64, Manifest)>, bytes: u64, now: u64, fails: &[u64]) -> String {
+		let held = held_of(ms);
+		let p = plan(ms, bytes);
+		let intent = PruneRecord::of(&p, ms, &held, now, PRUNE_INTENT);
+		let logged = prune_log_push(log, &intent);
+		let removed: Vec<u64> = p.manifests.iter().copied().filter(|n| !fails.contains(n)).collect();
+		let fin = PruneRecord::of_removed(&removed, &[], ms, &held, now, "record");
+		ms.retain(|(n, _)| !removed.contains(n));
+		prune_log_finish(&logged, now, &fin)
+	}
+	#[test]
+	fn qa_a8_failed_delete_is_recorded_twice() {
+		let mut ms: Vec<(u64, Manifest)> = Vec::new();
+		scratch(&mut ms, 1, 12);
+		let all: Vec<u64> = (1..=12).collect();
+		// every delete failed: ms unchanged
+		let log1 = two_phase("", &mut ms, 800, LATER, &all);
+		let log2 = two_phase(&log1, &mut ms, 800, LATER + 1, &all);
+		let recs = prune_log_read(&log2);
+		let total: usize = recs.iter().map(|r| r.versions.len()).sum();
+		let distinct: BTreeSet<u64> = recs.iter().flat_map(|r| r.versions.iter().copied()).collect();
+		println!("A8 records {} versions counted {} distinct {}", recs.len(), total, distinct.len());
+		assert_eq!(total, distinct.len(), "versions counted twice across records: {:?}", recs);
+		let present: BTreeSet<u64> = ms.iter().map(|(n, _)| *n).collect();
+		assert!(distinct.is_disjoint(&present), "a record names versions still held: {:?}", recs);
+		// Half the deletes fail, then the next prune takes them: each version named once, when it went.
+		let log3 = two_phase(&log2, &mut ms, 800, LATER + 2, &[2, 4]);
+		let log4 = two_phase(&log3, &mut ms, 800, LATER + 3, &[]);
+		let recs = prune_log_read(&log4);
+		let total: usize = recs.iter().map(|r| r.versions.len()).sum();
+		let named: BTreeSet<u64> = recs.iter().flat_map(|r| r.versions.iter().copied()).collect();
+		let present: BTreeSet<u64> = ms.iter().map(|(n, _)| *n).collect();
+		println!("A8b records {:?} present {:?}", recs.iter().map(|r| r.versions.clone()).collect::<Vec<_>>(), present);
+		assert_eq!(total, named.len(), "versions counted twice: {:?}", recs);
+		assert!(named.is_disjoint(&present));
+		assert!(named.contains(&2) && named.contains(&4), "the retried versions went unrecorded");
+		assert!(recs.iter().all(|r| r.on != PRUNE_INTENT), "an intent outlived its prune");
+	}
+
+	// Fix 3: a prune cut short between its intent and its final record. The intent is settled
+	// against what is gone: only deleted versions are named, and an intent naming none goes.
+	#[test]
+	fn qa_f3_interrupted_intent_names_only_what_went() {
+		let mut ms: Vec<(u64, Manifest)> = Vec::new();
+		scratch(&mut ms, 1, 12);
+		let held = held_of(&ms);
+		let p = plan(&ms, 800);
+		assert!(p.manifests.len() >= 3, "{:?}", p.manifests);
+		let log = prune_log_push("", &PruneRecord::of(&p, &ms, &held, LATER, PRUNE_INTENT));
+		// the crash: only the first planned manifest was deleted
+		let gone = p.manifests[0];
+		ms.retain(|(n, _)| *n != gone);
+		let present: BTreeSet<u64> = ms.iter().map(|(n, _)| *n).collect();
+		let (recs, moved) = prune_settle(prune_log_read(&log), &present);
+		assert!(moved);
+		assert_eq!(1, recs.len());
+		assert_eq!((vec![gone], PRUNE_INTERRUPTED), (recs[0].versions.clone(), recs[0].on.as_str()));
+		// nothing deleted at all: the intent leaves no row
+		let all: BTreeSet<u64> = (1..=12).collect();
+		let (none, _) = prune_settle(prune_log_read(&log), &all);
+		assert!(none.is_empty(), "{:?}", none);
+		// a log with no intent is not rewritten
+		let fin = prune_log_finish(&log, LATER, &PruneRecord::of(&p, &ms, &held, LATER, "record"));
+		assert!(!prune_settle(prune_log_read(&fin), &present).1);
+	}
+
+	// A9: the record log keeps 20; the 21st prune drops the first record.
+	#[test]
+	fn qa_a9_record_cap_forgets_prunes() {
+		let mut log = String::new();
+		for i in 0..21u64 {
+			let r = PruneRecord { ts: i, on: "record".into(), versions: vec![i], first: i, last: i, bodies: 1, orphans: 0, bytes: 1, ..Default::default() };
+			log = prune_log_push(&log, &r);
+		}
+		let recs = prune_log_read(&log);
+		let named: BTreeSet<u64> = recs.iter().flat_map(|r| r.versions.iter().copied()).collect();
+		println!("A9 kept {} records, v0 named: {}", recs.len(), named.contains(&0));
+		assert!(named.contains(&0), "version 0 was pruned and no record names it any more");
+	}
+
+	// B P6 as a unit: a store at its version limit, 230 saves of page data. Every version History
+	// no longer holds is named by a prune row, none it still holds is, and the rows outlast 20 saves.
+	#[test]
+	fn qa_b_p6_rows_survive_many_saves_at_the_limit() {
+		let mut ms: Vec<(u64, Manifest)> = Vec::new();
+		let mut log = String::new();
+		let mut rows_seen = 0usize;
+		for n in 1..=230u64 {
+			let was = if n == 1 { None } else { Some(fmt!("L{}", n - 1)) };
+			ms.push((n, dm(vec![e(&own("lanes/log.json"), &fmt!("L{}", n), was.as_deref())])));
+			let p = plan(&ms, u64::MAX);
+			if !p.manifests.is_empty() {
+				let r = PruneRecord::of(&p, &ms, &held_of(&ms), LATER + n, "record");
+				log = prune_log_push(&log, &r);
+				ms.retain(|(v, _)| !p.manifests.contains(v));
+				rows_seen += 1;
+			}
+		}
+		let recs = prune_log_read(&log);
+		let named: BTreeSet<u64> = recs.iter().flat_map(|r| r.versions.iter().copied()).collect();
+		let present: BTreeSet<u64> = ms.iter().map(|(v, _)| *v).collect();
+		let unexplained: Vec<u64> = (1..=230u64)
+			.filter(|v| !present.contains(v) && !named.contains(v)).collect();
+		let both: Vec<u64> = named.intersection(&present).copied().collect();
+		println!("B P6 held {} prunes {} rows {} unexplained {}", present.len(), rows_seen, recs.len(), unexplained.len());
+		assert!(present.len() <= MANIFESTS_MAX);
+		assert!(unexplained.is_empty(), "versions gone with no prune row: {:?}", unexplained);
+		assert!(both.is_empty(), "prune rows name versions still held: {:?}", both);
+		assert!(rows_seen <= 3, "a store at its limit prunes in rare batches, not once per save: {} prunes", rows_seen);
+	}
+
+	// A10: the shipped Life log page saves `index.json` at the top of its home (crystal.html:1668).
+	#[test]
+	fn qa_a10_lifelog_index_json_is_page_data() {
+		assert!(is_page_data(HOME, &own("lanes/diet.json")), "lanes/ is page data");
+		let mut ms: Vec<(u64, Manifest)> = Vec::new();
+		for n in 1..=3u64 {
+			let was = if n == 1 { None } else { Some(fmt!("I{}", n - 1)) };
+			ms.push((n, dm(vec![e(&own("index.json"), &fmt!("I{}", n), was.as_deref())])));
+		}
+		scratch(&mut ms, 4, 10);
+		let p = plan(&ms, 800);
+		println!("A10 plan {:?} index.json page data: {}", p.manifests, is_page_data(HOME, &own("index.json")));
+		let gone: Vec<u64> = p.manifests.iter().copied().filter(|n| *n <= 3).collect();
+		assert!(gone.is_empty(), "the Life log's index.json versions {:?} went before the daimon's STATE.md", gone);
+	}
+
+	// A manifest from before rows carried `door` is read by its cause.
+	#[test]
+	fn qa_a11_legacy_user_manifest_is_page_data() {
+		let mut old = m(Cause::User, vec![e(&own("index.json"), "I1", None)]);
+		old.v = 1;
+		let now = m(Cause::User, vec![e(&own("STATE.md"), "S1", None)]);
+		let page = page_paths(&[(1, old), (2, now)], HOME, &BTreeSet::new());
+		assert!(page.contains(&own("index.json")), "{:?}", page);
+		assert!(!page.contains(&own("STATE.md")), "a v2 walk row is not a door's: {:?}", page);
+	}
+
+	// The store's page list reads back what it wrote, and is joined, never replaced.
+	#[test]
+	fn qa_a12_pages_log_round_trip() {
+		let mut set: BTreeSet<String> = BTreeSet::new();
+		set.insert(own("log/a \"b\".jsonl"));
+		set.insert(own("index.json"));
+		let back = pages_read(&pages_json(&set));
+		assert_eq!(set, back);
+		assert!(pages_read("").is_empty() && pages_read("not json").is_empty());
+		let known: BTreeSet<String> = [own("index.json"), "book/x.typ".to_string()].into_iter().collect();
+		let page = page_paths(&[], HOME, &known);
+		assert_eq!(vec![own("index.json")], page.into_iter().collect::<Vec<_>>(), "only page-data paths");
+	}
+
+	// Fix 4 (A F5, B F2): manifests 1..=n, each its own content, so each has its own identity.
+	fn run(n: u64) -> Vec<(u64, Manifest)> {
+		(1..=n).map(|v| (v, dm(vec![e(&own("log/a.jsonl"), &fmt!("L{}", v), None)]))).collect()
+	}
+
+	fn named(json: &str) -> Vec<u64> {
+		prune_log_read(json).iter().filter(|r| !r.is_renumber())
+			.flat_map(|r| r.versions.iter().copied()).collect()
+	}
+
+	// An arriving log is joined with this device's, never laid over it: B2's local prunes stay.
+	#[test]
+	fn qa_f4_import_joins_prune_logs() {
+		let ms = run(18);
+		let rec = |vs: &[u64], ts: u64, on: &str| PruneRecord::of_removed(vs, &[], &ms, &[], ts, on);
+		let mut mine = String::new();
+		for (i, vs) in [vec![2u64, 3], vec![4], vec![12], vec![13, 14], vec![15, 16, 17, 18]].iter().enumerate() {
+			mine = prune_log_push(&mine, &rec(vs, LATER + i as u64, "record"));
+		}
+		let mut theirs = String::new();
+		theirs = prune_log_push(&theirs, &rec(&[2, 3], LATER, "record"));	// shared history
+		theirs = prune_log_push(&theirs, &rec(&[4], LATER + 1, "record"));
+		theirs = prune_log_push(&theirs, &rec(&[5, 6], LATER + 9, "record"));	// theirs alone
+		theirs = prune_log_push(&theirs, &rec(&[7], LATER + 10, PRUNE_INTENT));	// in flight there
+		let all = prune_log_merge(&mine, &theirs);
+		let mut got = named(&all);
+		got.sort();
+		assert_eq!(vec![2u64, 3, 4, 5, 6, 12, 13, 14, 15, 16, 17, 18], got, "{}", all);
+		assert!(prune_log_read(&all).iter().all(|r| r.on != PRUNE_INTENT), "{}", all);
+		assert_eq!(all, prune_log_merge(&all, &all), "a log joined with itself is itself");
+		// A summary of this device's stays whatever arrives.
+		let ms30 = run(30);
+		let mut big = String::new();
+		for i in 0..25u64 {
+			big = prune_log_push(&big, &PruneRecord::of_removed(&[i + 1], &[], &ms30, &[], LATER + 100 + i, "record"));
+		}
+		let sum = prune_log_merge(&big, "");
+		assert!(prune_log_read(&sum).iter().any(|r| r.on == PRUNE_SUMMARY), "{}", sum);
+		assert!(prune_log_read(&prune_log_merge(&sum, &theirs)).iter().any(|r| r.on == PRUNE_SUMMARY));
+	}
+
+	// A copy of a pruned version that arrives and is pruned again is recorded once (B F2, PEERAT=3).
+	#[test]
+	fn qa_f4_repruned_arrival_named_once() {
+		let ms = run(5);
+		let mut log = prune_log_push("", &PruneRecord::of_removed(&[2, 3, 4, 5], &[], &ms, &[], LATER, "record"));
+		log = prune_log_finish(&log, LATER + 1,
+			&PruneRecord::of_removed(&[2, 3, 4, 5], &[], &ms, &[], LATER + 1, "arrival"));
+		assert_eq!(vec![2u64, 3, 4, 5], named(&log), "{}", log);
+		// Another version, same number, is another version: it is named.
+		let other = vec![(2u64, dm(vec![e(&own("log/a.jsonl"), "elsewhere", None)]))];
+		log = prune_log_push(&log, &PruneRecord::of_removed(&[2], &[], &other, &[], LATER + 2, "arrival"));
+		assert_eq!(vec![2u64, 3, 4, 5, 2], named(&log), "{}", log);
+		// A record from before identities keeps every number it names.
+		let old = "[{\"ts\":5,\"on\":\"record\",\"versions\":[2,3],\"first\":1,\"last\":2,\"bodies\":1,\"orphans\":0,\"bytes\":9}]";
+		let back = prune_log_read(&prune_log_merge(old, ""));
+		assert_eq!(vec![2u64, 3], back[0].versions);
+		assert_eq!(vec![String::new(), String::new()], back[0].ids);
+		// A pruned version a copy brought back is not shown as gone; the log still says it went.
+		let shown = prune_shown(prune_log_read(&log), &ms[2..3]);
+		let vs: Vec<u64> = shown.iter().flat_map(|r| r.versions.iter().copied()).collect();
+		assert_eq!(vec![2u64, 4, 5, 2], vs, "v3 is held again");
+	}
+
+	// A refile's renumbering is its own row, never read as a prune nor folded into one.
+	#[test]
+	fn qa_f4_renumber_row() {
+		let ms = run(16);
+		let r = PruneRecord::renumbered(&[(15, 21), (14, 20), (16, 22)], &ms, LATER);
+		assert!(r.is_renumber());
+		assert_eq!((vec![14u64, 15, 16], vec![20u64, 21, 22]), (r.versions.clone(), r.to.clone()));
+		let mut log = prune_log_push("", &r);
+		let back = prune_log_read(&log);
+		assert_eq!(r, back[0], "round trip: {}", log);
+		let ms30 = run(30);
+		for i in 0..30u64 {
+			log = prune_log_push(&log, &PruneRecord::of_removed(&[i + 1], &[], &ms30, &[], LATER + 1 + i, "record"));
+		}
+		let recs = prune_log_read(&log);
+		let ren: Vec<&PruneRecord> = recs.iter().filter(|x| x.is_renumber()).collect();
+		assert_eq!(1, ren.len(), "{}", log);
+		assert_eq!(vec![20u64, 21, 22], ren[0].to);
+		assert!(recs.iter().filter(|x| !x.is_renumber()).all(|x| x.to.is_empty()));
+		// Past the bound, renumbering rows fold into one renumbering row, each old number beside its new.
+		let mut many = String::new();
+		for i in 0..25u64 {
+			many = prune_log_push(&many, &PruneRecord::renumbered(&[(i + 1, i + 100)], &run(26), LATER + i));
+		}
+		let rs = prune_log_read(&many);
+		assert!(rs.len() <= PRUNE_RECORDS_MAX && rs.iter().all(|x| x.is_renumber()), "{}", many);
+		let pairs: Vec<(u64, u64)> = rs.iter().flat_map(|x| x.versions.iter().copied().zip(x.to.iter().copied())).collect();
+		assert_eq!(25, pairs.len());
+		assert!(pairs.iter().all(|(a, b)| *b == *a + 99), "{:?}", pairs);
+	}
+
+	// After a refile a prune record names the number its version now stands at (B2: this device's
+	// pruned v12-v18, whose memory moved to v22-v28, read as 12-18 and as the renumbered 12-21).
+	#[test]
+	fn qa_f4_refile_renumbers_prune_records() {
+		let ms = run(21);
+		let mut log = prune_log_push("", &PruneRecord::of_removed(&[2, 3], &[], &ms, &[], LATER, "record"));
+		log = prune_log_push(&log, &PruneRecord::of_removed(&[12, 13], &[], &ms, &[], LATER + 1, "record"));
+		let moves: Vec<(u64, u64)> = (12..=21u64).map(|v| (v, v + 10)).collect();
+		let row = PruneRecord::renumbered(&moves, &ms, LATER + 2);
+		let out = prune_log_read(&prune_log_refiled(&log, &moves, &row));
+		let prunes: Vec<Vec<u64>> = out.iter().filter(|r| !r.is_renumber()).map(|r| r.versions.clone()).collect();
+		assert_eq!(vec![vec![2u64, 3], vec![22, 23]], prunes);
+		let ren: Vec<&PruneRecord> = out.iter().filter(|r| r.is_renumber()).collect();
+		assert_eq!(1, ren.len());
+		assert_eq!((12..=21u64).collect::<Vec<_>>(), ren[0].versions);
+		assert_eq!(prune_log_read(&log)[1].ids, out[1].ids, "who they are does not move");
+	}
+
+	// Fix 3b: a version being written has its bodies down and no manifest yet. A prune whose intent
+	// write is refused sweeps unnamed bodies, then deletes and sweeps again; the version completes,
+	// and every body it names must be there.
+	#[test]
+	fn qa_f3b_sweep_leaves_a_version_being_written() {
+		let mut ms: Vec<(u64, Manifest)> = Vec::new();
+		scratch(&mut ms, 1, 12);
+		let now = LATER;
+		let start = now - 2_000;				// the write began two seconds ago
+		// Its bodies: one it wrote, one it found already there (an orphan of long ago).
+		let fresh = hash_of(b"being written");
+		let found = hash_of(b"old orphan");
+		let mut disk: Vec<(String, u64)> = held_of(&ms);
+		disk.push((fresh.clone(), 100));
+		disk.push((found.clone(), 100));
+		let mut stamps: BTreeMap<String, u64> = disk.iter().map(|(h, _)| (h.clone(), TS)).collect();
+		stamps.insert(fresh.clone(), start + 500);
+		let claimed: BTreeSet<String> = [fresh.clone(), found.clone()].into_iter().collect();
+		let f = InFlight::of((Some(start), claimed.clone()), Some(&[]), now);
+		let cutoff = sweep_cutoff(now, &f);
+		let p = prune_plan(&ms, &disk, &[], Caps { bytes: 800, manifests: MANIFESTS_MAX }, now, HOME,
+			&BTreeSet::new());
+		assert!(p.bodies.contains(&fresh) && p.bodies.contains(&found), "{:?}", p.bodies);
+		let mut on_disk: BTreeSet<String> = disk.iter().map(|(h, _)| h.clone()).collect();
+		// The intent write is refused: the orphan-only sweep.
+		for h in sweepable(&ms, &p.bodies, &stamps, cutoff, &claimed) { on_disk.remove(&h); }
+		// The deletes, then the sweep of what no surviving manifest names.
+		ms.retain(|(n, _)| !p.manifests.contains(n));
+		for h in sweepable(&ms, &p.bodies, &stamps, cutoff, &claimed) { on_disk.remove(&h); }
+		// The version completes.
+		let v = m(Cause::Turn, vec![e(&own("a.md"), "being written", None), e(&own("b.md"), "old orphan", None)]);
+		let missing: Vec<String> = v.hashes().into_iter().filter(|h| !on_disk.contains(h)).collect();
+		assert!(missing.is_empty(), "the new version names bodies the sweep took: {:?}", missing);
+		// Past the grace window and with no write in flight, an orphan does go.
+		let late = sweepable(&ms, &p.bodies, &stamps, sweep_cutoff(now, &InFlight::default()), &BTreeSet::new());
+		assert!(late.contains(&fresh) && late.contains(&found), "{:?}", late);
+	}
+
+	// prune_held's selection: the plan with the bodies the sweep must leave weighed, the deletes,
+	// then the sweep of what no surviving manifest names.  What it leaves on disk.
+	fn prune_as_held(
+		ms:		&mut Vec<(u64, Manifest)>,
+		disk:	&mut Vec<(String, u64)>,
+		stamps:	&BTreeMap<String, u64>,
+		f:		&InFlight,
+		cap:	u64,
+		now:	u64,
+	) {
+		let pinned = staying(ms, disk, stamps, f, now);
+		let p = prune_plan(ms, disk, &pinned, Caps { bytes: cap, manifests: MANIFESTS_MAX }, now, HOME,
+			&BTreeSet::new());
+		ms.retain(|(n, _)| !p.manifests.contains(n));
+		let gone = sweepable(ms, &p.bodies, stamps, sweep_cutoff(now, f), &f.claimed);
+		disk.retain(|(h, _)| !gone.contains(h));
+	}
+
+	// H-b: tab B's write is in flight -- a slow one, its lease renewed, one body written over a
+	// minute ago and one found already there as an orphan of long ago -- while tab A sweeps.  B's
+	// bodies stay, and B's version lands whole.
+	#[test]
+	fn qa_hf2_b_another_tabs_write_in_flight_keeps_its_bodies() -> Outcome<()> {
+		let mut ms: Vec<(u64, Manifest)> = Vec::new();
+		scratch(&mut ms, 1, 12);
+		let now = LATER;
+		let fresh = hash_of(b"being written");
+		let found = hash_of(b"old orphan");
+		let mut disk = held_of(&ms);
+		disk.push((fresh.clone(), 100));
+		disk.push((found.clone(), 100));
+		let mut stamps: BTreeMap<String, u64> = disk.iter().map(|(h, _)| (h.clone(), TS)).collect();
+		stamps.insert(fresh.clone(), now - 90_000);
+		let mut b = Claim::new("tabB", 7, vec![fresh.clone(), found.clone()], now - 100_000);
+		b.until = now + CLAIM_LEASE_MS / 2;	// renewed while it runs
+		let other = Claim::new("tabC", 1, vec![], now - 1_000);
+		// The file as tab A reads it, under the hold.
+		let claims = res!(claims_read(&claims_json(&[b.clone(), other])));
+		assert_eq!(b, claims[0]);
+		let f = InFlight::of((None, BTreeSet::new()), Some(&claims), now);
+		prune_as_held(&mut ms, &mut disk, &stamps, &f, 800, now);
+		let v = m(Cause::Turn, vec![e(&own("a.md"), "being written", None), e(&own("b.md"), "old orphan", None)]);
+		let missing: Vec<String> = v.hashes().into_iter().filter(|h| !disk.iter().any(|(d, _)| d == h)).collect();
+		assert!(missing.is_empty(), "B's version names bodies A's sweep took: {:?}", missing);
+		// And the store is held to its cap with B's bodies weighed.
+		assert!(disk_bytes(&disk) <= 800, "{} bytes on disk", disk_bytes(&disk));
+		Ok(())
+	}
+
+	// H-c: a tab killed mid-write leaves its claim and its bodies.  While the lease runs they stay
+	// and are weighed, so the disk is held under the cap; past the lease the claim is ignored and
+	// cleared, and the next sweep collects them.
+	#[test]
+	fn qa_hf2_c_a_killed_tabs_claim_expires_and_its_orphans_go() -> Outcome<()> {
+		let mut ms: Vec<(u64, Manifest)> = Vec::new();
+		scratch(&mut ms, 1, 12);
+		let t0 = LATER;
+		let orphans: Vec<String> = (0..3).map(|i| hash_of(fmt!("killed {}", i).as_bytes())).collect();
+		let mut disk = held_of(&ms);
+		for o in orphans.iter() { disk.push((o.clone(), 300)); }
+		let mut stamps: BTreeMap<String, u64> = disk.iter().map(|(h, _)| (h.clone(), TS)).collect();
+		for o in orphans.iter() { stamps.insert(o.clone(), t0 + 1_000); }
+		let dead = Claim::new("tabK", 3, orphans.clone(), t0);
+		let claims = res!(claims_read(&claims_json(&[dead.clone()])));
+		// The lease runs: kept, and weighed.
+		let now1 = t0 + 10_000;
+		let f1 = InFlight::of((None, BTreeSet::new()), Some(&claims), now1);
+		assert!(f1.expired.is_empty());
+		prune_as_held(&mut ms, &mut disk, &stamps, &f1, 1_400, now1);
+		for o in orphans.iter() { assert!(disk.iter().any(|(d, _)| d == o), "taken under a live lease"); }
+		assert!(disk_bytes(&disk) <= 1_400, "{} bytes on disk under a live claim", disk_bytes(&disk));
+		// Past the lease: ignored, cleared, collected.
+		let now2 = dead.until + 1;
+		let f2 = InFlight::of((None, BTreeSet::new()), Some(&claims), now2);
+		assert_eq!(vec![dead], f2.expired);
+		assert!(InFlight::kept(&claims, now2).is_empty());
+		prune_as_held(&mut ms, &mut disk, &stamps, &f2, 1_400, now2);
+		for o in orphans.iter() { assert!(!disk.iter().any(|(d, _)| d == o), "left past the lease"); }
+		assert!(disk_bytes(&disk) <= 1_400);
+		Ok(())
+	}
+
+	// H-d: a claims file that will not read is a write the sweep cannot see: it falls back to the
+	// grace window, so a body in flight stays, and an orphan of long ago still goes.
+	#[test]
+	fn qa_hf2_d_unreadable_claims_fall_back_to_the_grace_window() {
+		for bad in ["", "garbage", "[{\"tab\":\"x\"", "[{\"tab\":\"x\",\"token\":1}]"] {
+			assert!(claims_read(bad).is_err(), "{:?} read", bad);
+		}
+		assert_eq!(Ok(0), claims_read(" [ ] ").map(|c| c.len()).map_err(|_| ()));
+		let mut ms: Vec<(u64, Manifest)> = Vec::new();
+		scratch(&mut ms, 1, 12);
+		let now = LATER;
+		let fresh = hash_of(b"being written");
+		let old = hash_of(b"old orphan");
+		let mut disk = held_of(&ms);
+		disk.push((fresh.clone(), 100));
+		disk.push((old.clone(), 100));
+		let mut stamps: BTreeMap<String, u64> = disk.iter().map(|(h, _)| (h.clone(), TS)).collect();
+		stamps.insert(fresh.clone(), now - 5_000);
+		let f = InFlight::of((None, BTreeSet::new()), None, now);
+		assert!(f.blind);
+		assert_eq!(Some(now - SWEEP_GRACE_MS), sweep_cutoff(now, &f));
+		prune_as_held(&mut ms, &mut disk, &stamps, &f, 800, now);
+		assert!(disk.iter().any(|(d, _)| *d == fresh), "a body in flight was taken blind");
+		assert!(!disk.iter().any(|(d, _)| *d == old), "an orphan of long ago was kept");
 	}
 }

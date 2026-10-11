@@ -69,6 +69,7 @@ function makeTab(answer) {
 		DaimondI18n: { t: (k) => 'T:' + k },
 	};
 	win.window = win;
+	win.addEventListener = () => {}; // versions.js flushes on pagehide
 
 	const src = readFileSync(join(HERE, 'versions.js'), 'utf8');
 	const fn = new Function('window', 'with (window) {\n' + src + '\n}');

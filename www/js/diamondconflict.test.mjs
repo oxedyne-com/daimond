@@ -259,6 +259,8 @@ function build(harness) {
 		'function setDiamondModel() {}\n' +
 		'function bumpDiamonds() {}\n' +
 		'async function onDiamondsChangedElsewhere() {}\n' +
+		// The Lens's word on an arrival's prune (versionsprune.test.mjs asserts it).
+		'async function notePrunes() {}\n' +
 		'function signalLinksChanged() {}\n' +
 		'async function unionDiamondTags() { return false; }\n' +
 		'async function unionDiamondLinks() { return false; }\n' +

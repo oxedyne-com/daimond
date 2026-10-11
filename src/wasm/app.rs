@@ -2354,8 +2354,9 @@ impl DaimondApp {
     /// the caller that does have a door, which is the same `file_write` the Files panel uses.
     ///
     /// # Arguments
-    /// * `path` - One path, or empty for the whole version, which also REMOVES a file that did
-    ///   not exist at `version`.
+    /// * `path` - One path, or empty for the whole version.  Nothing is asked, so a file of the
+    ///   Diamond's that did not exist at `version` is KEPT; the asking restore is the open/close
+    ///   pair below.
     pub async fn versions_restore(&self, id: String, version: f64, path: String)
         -> Result<String, JsValue>
     {
@@ -2417,11 +2418,17 @@ impl DaimondApp {
         Ok(opened.said(version as u64))
     }
 
-    /// Close the restore `ticket` opened: `{version, recorded, restored, missing, refused}`.
+    /// Close the restore `ticket` opened: `{version, recorded, crystal, restored, missing, refused}`.
     /// Called whatever became of its acts, so the copies they kept are recorded.
-    pub async fn versions_restore_close(&self, id: String, ticket: f64) -> Result<String, JsValue> {
-        let closed = ok!(diamond::versions_restore_close(&id, ticket as u64).await
-            .map_err(to_js_err));
+    ///
+    /// # Arguments
+    /// * `keep_new` - The person kept the Diamond's own files the open named under `own`, so they
+    ///   stay where they are; absent is false.
+    pub async fn versions_restore_close(&self, id: String, ticket: f64, keep_new: Option<bool>)
+        -> Result<String, JsValue>
+    {
+        let closed = ok!(diamond::versions_restore_close_keeping(&id, ticket as u64,
+            keep_new.unwrap_or(false)).await.map_err(to_js_err));
         // What the engine's own writes left, beside what the agent last read; see
         // [`DaimondApp::versions_restore`].
         note_restores(&self.registry.ctx.read_seen, &closed.wrote, true).await;
@@ -2441,6 +2448,12 @@ impl DaimondApp {
     /// Pruned LAST of all the causes, which is what makes the button mean something.
     pub async fn versions_save_user(&self, id: String, note: String) -> Result<String, JsValue> {
         versions_said(ok!(diamond::versions_save(&id, &note).await.map_err(to_js_err)))
+    }
+
+    /// Record what the person's doors marked since the last record -- a page's saves -- as their
+    /// own version now: `{version, files}`, or `{}` where nothing had changed.
+    pub async fn versions_record_dirty(&self, id: String) -> Result<String, JsValue> {
+        versions_said(ok!(diamond::versions_record_dirty(&id).await.map_err(to_js_err)))
     }
 
     /// Record what a Diamond arrived holding, after a share has been landed.
