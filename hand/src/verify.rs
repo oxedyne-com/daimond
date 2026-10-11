@@ -7,51 +7,32 @@
 //! gets.  Half the proof of a release session is those scripts, so the machine
 //! that could write the code could not check it.
 //!
-//! **The reframe this module is built on is about provenance, not sandboxing.**
-//! The fence exists to contain a command a MODEL wrote.  A verifier is the
-//! repository's own code, and the model supplies no part of it: it supplies a
-//! *name* that is looked up in the directory, and at most a *break* that is
-//! looked up in the file's own declarations.  So the verb is in the same trust
-//! class as `cargo test`, and it runs the script outside the command fence
-//! deliberately -- which is stated in the report, stated in the tool's
-//! description, and recorded in the journal as `fence:none` so that nobody has
-//! to take this paragraph's word for it.
+//! **The reframe this module was built on, and where it broke.**  A verifier is
+//! the repository's own code: the model supplies a *name*, looked up in the
+//! directory, and at most a *break*, looked up in the file's own declarations.
+//! On that argument it ran outside the command fence until 2026-10-11.
 //!
-//! # And the reframe has to be enforced, not reported
+//! [`provenance`] asks whether the working file IS the commit -- membership is
+//! not enough, since a tracked file with one comment appended still passes
+//! `git ls-files --error-unmatch` -- and [`unfenced_refusal`] is the gate that
+//! [`conduct`] passes before anything runs and [`once`] before every spawn.
 //!
-//! Until 2026-08-25 it was not.  `REVIEW.md` §1.21: the trustworthiness of a
-//! verifier was measured -- `git ls-files --error-unmatch` -- and its only use
-//! was a phrase in the report's first line.  A daimon writes `dev/verify_x.mjs`
-//! with `file_write`, which every turn may do because the granted root is
-//! writable, and the verb runs it with no fence on it at all.  Proved with a
-//! script whose whole body wrote a file outside the granted root, which appeared.
+//! **Provenance says who wrote the bytes, never what they may reach.**  `.git`
+//! is inside every mark and every fence leaves it writable, so a daimon commits
+//! its own verifier through `run` and the bytes are then, truthfully, the
+//! commit's.  On 2026-10-11 that read another Diamond's files
+//! (`specs/daimond_verify_unfenced_diag_20261011.md`).  So a verifier and the
+//! world it stands now run behind the command fence, scoped to the calling
+//! Diamond's mark, with each further root a named need -- see "The fence a
+//! verifier runs behind" below.  The provenance gate stays: it is what makes
+//! the report's first line true, not what keeps the run contained -- and the
+//! git it asks runs behind the same fence, since the repository's config is the
+//! daimon's too and git runs what that config names.
 //!
-//! **The question is content, not membership.**  Appending one comment to a
-//! tracked verifier leaves `git ls-files --error-unmatch` exiting 0 while
-//! `git diff --quiet HEAD` on the same file exits 1, so enforcing what was
-//! already measured would have narrowed the hole without closing it.
-//! [`provenance`] therefore asks whether the working file IS the commit, and
-//! [`unfenced_refusal`] is the gate; [`conduct`] passes it before anything runs
-//! and [`once`] before every spawn.
-//!
-//! **The refusal is a capability difference and not a dead end**, which matters
-//! because improving a verifier is exactly the self-development this app is for.
-//! A verifier the daimon has just written still runs -- through `run`, inside
-//! the same fence every command gets, which 253 of this tree's 282 verifiers
-//! need nothing more than.  What it cannot do fenced is drive a browser or open
-//! a port, and the refusal says so, so a fenced failure is not misread as the
-//! script being broken.
-//!
-//! **What this does not close, and cannot from here.**  `.git` is inside the
-//! granted root and every fence leaves it writable -- `src/tools.rs` says so in
-//! its own words where it explains why a push injects `core.hooksPath` -- so a
-//! daimon can commit its own verifier and then be told, truthfully, that the
-//! bytes are the commit's.  That is one `run` call away and no check on this
-//! side reaches it.  What changes is that the act is now a commit in the
-//! repository's history rather than a `file_write` nobody sees, and that the
-//! report's first line stops being false.  Closing it needs either `.git` out
-//! of the fence or the owner's consent bound to the bytes; both are the owner's
-//! to rule on, and the reasoning is in `REVIEW.md` §1.21.
+//! **The refusal is a capability difference and not a dead end.**  A verifier
+//! the daimon has just written still runs through `run`, which is enough for
+//! the nine in ten that only read the tree; what `verify` adds is the headless
+//! browser's files and a world, and the refusal says so.
 //!
 //! # The one thing this module exists to make impossible
 //!
@@ -79,6 +60,7 @@ use crate::wire::{
     Resp,
     Sig,
     Stream,
+    TurnRules,
     World,
     CHUNK_MAX,
 };
@@ -105,7 +87,6 @@ use std::{
 
 use tokio::{
     io::AsyncReadExt,
-    process::Command,
     sync::mpsc::Sender,
 };
 
@@ -216,32 +197,36 @@ pub const EXIT_UNPROVEN: i32 = 2;
 // used to paint on the seat and now says it cannot, which is a capability this
 // verb never honestly had.
 
-/// The display names a verifier is never handed, whatever the hand was started with.
-pub const SEAT_VARS: &[&str] = &["DISPLAY", "WAYLAND_DISPLAY", "XDG_SESSION_TYPE"];
-
 /// The name that tells `dev/display.mjs` nobody is at the keyboard for this run.
 pub const UNATTENDED_VAR: &str = "DAIMOND_UNATTENDED";
 
-/// The environment a verifier is spawned with, from the hand's own.
+/// The environment a verifier is spawned with: run's, plus the unattended mark.
 ///
-/// Separate and pure so a test can put an environment to it without spawning
-/// anything -- the mistake `dev/verify_harness.mjs` exists because of was a rule
-/// that had no test because testing it meant opening a window.
+/// Built from nothing, never from the hand's own (rc-b F2, 11 Oct 2026).  The hand
+/// inherits the browser's whole environment, the seat and any token in it, and a
+/// committed verifier on a networked turn could post that out.  `run` gives a command
+/// the caller's pairs and the defaults [`crate::exec::add_defaults`] fills; `verify`
+/// carries no pairs, so a verifier gets the defaults alone, then the named needs below.
+/// No display arrives, so a headed verifier must start one of its own.
 ///
 /// # Arguments
-/// * `env` - The hand's own environment, name to value.
-pub fn unattended_env(env: &BTreeMap<String, String>) -> BTreeMap<String, String> {
-    let mut out = env.clone();
-    for v in SEAT_VARS {
-        out.remove(*v);
+/// * `node` - The node the sequence runs, found on the hand's own `PATH`.
+pub fn unattended_env(node: &Path) -> BTreeMap<String, String> {
+    let mut pairs = Vec::new();
+    crate::exec::add_defaults(&mut pairs);
+    let mut out: BTreeMap<String, String> = pairs.into_iter().collect();
+    // Named need: node's own directory first on PATH, so a verifier's `node` child (or
+    // world.sh's) is the node the hand found, wherever the owner keeps it.
+    if let Some(d) = node.parent().filter(|d| d.is_absolute()) {
+        let d = fmt!("{}", d.display());
+        let path = out.get("PATH").cloned().unwrap_or_default();
+        if !path.split(':').any(|p| p == d) {
+            out.insert(fmt!("PATH"), if path.is_empty() { d } else { fmt!("{}:{}", d, path) });
+        }
     }
+    // Named need: the mark `dev/display.mjs` reads to refuse the seat.
     out.insert(fmt!("{}", UNATTENDED_VAR), fmt!("1"));
     out
-}
-
-/// The hand's own environment, as a map.
-fn own_env() -> BTreeMap<String, String> {
-    std::env::vars().collect()
 }
 
 /// Is this a name a verifier may be looked up by?
@@ -331,8 +316,6 @@ pub struct Script {
     pub path:    PathBuf,
     /// Every break the file declares, in the order it declares them.
     pub breaks:  Vec<String>,
-    /// Whose bytes these are, as the repository can answer it.
-    pub prov:    Provenance,
 }
 
 /// Every break name a verifier's own source declares.
@@ -471,6 +454,14 @@ pub fn cap(root: &Path) -> String {
 /// process.
 pub const BY_ROOT: &str = "verify:by-root";
 
+/// The capability saying this hand runs every verifier behind [`verifier_fence`].
+///
+/// A hand older than 11 Oct 2026 ran a committed verifier with the person's whole
+/// access, so a Diamond could commit one that read another Diamond's files.  The
+/// page refuses `verify` on a hand that does not say this, and tells the person to
+/// update it: that hand is the hole, and nothing the page sends can fence it.
+pub const FENCED: &str = "verify:fenced";
+
 /// The sentence for a folder that is not a repository, naming the folder.
 ///
 /// **The remedy has to be one the reader can carry out.**  The refusal this
@@ -606,7 +597,6 @@ pub fn resolve(root: &Path, name: &str) -> Result<Script, String> {
     Ok(Script {
         name:    fmt!("{}", name),
         breaks:  declared_breaks(&src),
-        prov:    provenance(root, &file_str),
         file:    file_str,
         path,
     })
@@ -667,61 +657,164 @@ fn trim_for_message(s: &str) -> String {
 /// repository's own end-of-line and filter settings, which a hash of the bytes
 /// taken here would not.
 ///
+/// **The answer is advisory, not a boundary.**  The daimon can write this tree's
+/// `.git` from a fenced `run`, so it can forge a commit, an index or a config that
+/// makes git say "committed" about bytes it chose.  What keeps a Diamond's files its
+/// own is the fence every verifier runs behind; this check only stops a report from
+/// claiming an edited verifier is the commit's.  And because the config is the
+/// daimon's, git runs whatever it names -- an fsmonitor, a filter, a textconv -- so
+/// git itself is started behind the verifier fence with no network, through the one
+/// spawn path ([`crate::exec::fenced_command`]), never from the hand directly.  Until
+/// 2026-10-11 it was a bare `Command`, and a repository-local config entry copied
+/// another Diamond's file into this one while `ls-files` read the index.
+///
 /// Every argument vector is fixed but for one directory entry's own name, and
 /// there is no shell, so `--` before it is belt to the braces.
 ///
 /// # Arguments
 /// * `root` - The granted root, which is where git is asked.
 /// * `file` - The verifier's file name, from the directory entry.
-pub fn provenance(root: &Path, file: &str) -> Provenance {
+/// * `rules` - The turn's read-only and deny rules, as the verifier itself gets them.
+pub async fn provenance(
+    launcher:   &crate::exec::Launcher,
+    root:       &Path,
+    file:       &str,
+    rules:      Option<&TurnRules>,
+)
+    -> Provenance
+{
     let git = match on_path("git") {
         Some(p) => p,
         None    => return Provenance::Unknown(fmt!(
             "there is no git on this hand's PATH, so nothing here can say whose code this is")),
     };
     let rel = fmt!("{}/{}", DEV_DIR, file);
-    let ask = |args: &[&str]| -> std::io::Result<std::process::ExitStatus> {
-        std::process::Command::new(&git)
-            .arg("-C").arg(root)
-            .args(args)
-            .stdin(Stdio::null())
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .status()
+    // A private home and temporary directory, so git finds no user config it cannot read
+    // behind the fence and anything a hook writes outside the mark has somewhere to go.
+    let mut tmp = match crate::exec::Scratch::make(&fmt!("prov-{}", file)) {
+        Ok(t)  => t,
+        Err(e) => return Provenance::Unknown(fmt!(
+            "git could not be given a private directory to run in ({})", e.msgs().join(" "))),
     };
-    match ask(&["rev-parse", "--git-dir"]) {
-        Ok(s) if s.success()	=> (),
-        Ok(_)			=> return Provenance::Unknown(fmt!(
+    let fence = verifier_fence(root, tmp.dir(), false, rules);
+    let env   = prov_env(tmp.dir());
+    let ask   = Git { launcher, git: &git, root, fence: &fence, env: &env };
+    let answer = provenance_asked(&ask, root, &rel).await;
+    let _ = tmp.remove();
+    answer
+}
+
+/// The three questions, in order; see [`provenance`].
+async fn provenance_asked(ask: &Git<'_>, root: &Path, rel: &str) -> Provenance {
+    match ask.status(&["rev-parse", "--git-dir"]).await {
+        Ok(Some(0))	=> (),
+        Ok(_)		=> return Provenance::Unknown(fmt!(
             "the folder this hand was granted is not a git repository, so there is no commit \
             to compare this file with")),
-        Err(e)			=> return Provenance::Unknown(fmt!("git could not be run: {}", e)),
+        Err(e)		=> return Provenance::Unknown(fmt!("git could not be run: {}", e)),
     }
     // Asked without following the link, which is the whole point: `metadata` above
     // followed it and answered about the target.
-    match std::fs::symlink_metadata(root.join(&rel)) {
+    match std::fs::symlink_metadata(root.join(rel)) {
         Ok(m) if m.file_type().is_symlink()	=> return Provenance::Changed(Change::Linked),
         Ok(_)					=> (),
         Err(e)					=> return Provenance::Unknown(fmt!(
             "'{}' could not be looked at ({})", rel, e)),
     }
-    match ask(&["ls-files", "--error-unmatch", "--", &rel]) {
-        Ok(s) if s.success()	=> (),
-        Ok(_)			=> return Provenance::Changed(Change::Untracked),
-        Err(e)			=> return Provenance::Unknown(fmt!("git could not be run: {}", e)),
+    match ask.status(&["ls-files", "--error-unmatch", "--", rel]).await {
+        Ok(Some(0))	=> (),
+        Ok(_)		=> return Provenance::Changed(Change::Untracked),
+        Err(e)		=> return Provenance::Unknown(fmt!("git could not be run: {}", e)),
     }
     // `git diff` says 0 for no difference and 1 for a difference; anything else is git
     // failing to answer, and an unborn HEAD in a repository with no commits is exactly
     // that.  A failure to answer is never read as agreement.
-    match ask(&["diff", "--quiet", "HEAD", "--", &rel]) {
-        Ok(s) if s.success()		=> Provenance::Committed,
-        Ok(s) if s.code() == Some(1)	=> Provenance::Changed(Change::Edited),
-        Ok(s)				=> Provenance::Unknown(fmt!(
+    match ask.status(&["diff", "--quiet", "HEAD", "--", rel]).await {
+        Ok(Some(0))	=> Provenance::Committed,
+        Ok(Some(1))	=> Provenance::Changed(Change::Edited),
+        Ok(c)		=> Provenance::Unknown(fmt!(
             "git could not compare '{}' with the commit (it exited {}); a repository with no \
-            commit in it yet is the usual reason", rel, match s.code() {
+            commit in it yet is the usual reason", rel, match c {
                 Some(c) => fmt!("{}", c),
                 None    => fmt!("on a signal"),
             })),
-        Err(e)				=> Provenance::Unknown(fmt!("git could not be run: {}", e)),
+        Err(e)		=> Provenance::Unknown(fmt!("git could not be run: {}", e)),
+    }
+}
+
+/// How long one git question may take before it is killed: a configured fsmonitor that
+/// never answers must not hold the verb for its whole budget.
+const PROV_TIMEOUT: Duration = Duration::from_secs(30);
+
+/// Git's environment for a provenance question: the hand's `PATH` for the filters a
+/// repository names, and every home and temporary name pointed at the private scratch.
+fn prov_env(scratch: &Path) -> Vec<(String, String)> {
+    let mut env = Vec::new();
+    if let Ok(p) = std::env::var("PATH") {
+        env.push((fmt!("PATH"), p));
+    }
+    let s = fmt!("{}", scratch.display());
+    env.push((fmt!("HOME"), s.clone()));
+    env.push((fmt!("XDG_CONFIG_HOME"), s.clone()));
+    for k in crate::exec::TMP_VARS {
+        env.push((fmt!("{}", k), s.clone()));
+    }
+    env
+}
+
+/// One repository's git, started fenced for each question.
+struct Git<'a> {
+    launcher:   &'a crate::exec::Launcher,
+    git:        &'a Path,
+    root:       &'a Path,
+    fence:      &'a FenceSpec,
+    env:        &'a [(String, String)],
+}
+
+impl<'a> Git<'a> {
+
+    /// Runs `git -C <root> <args>` behind the fence and gives its exit code, `None` for a
+    /// signal.  A launcher that could not fence it exits with its own codes (125 to 127),
+    /// which every caller reads as git failing to answer, never as an answer.
+    async fn status(&self, args: &[&str]) -> Result<Option<i32>, String> {
+        let mut argv = vec![
+            fmt!("{}", self.git.display()), fmt!("-C"), fmt!("{}", self.root.display())];
+        argv.extend(args.iter().map(|a| fmt!("{}", a)));
+        let crate::exec::Fenced { mut cmd, payload, .. } = match crate::exec::fenced_command(
+            self.launcher, &[], self.fence, &argv, self.env, self.root, false)
+        {
+            Ok(f)  => f,
+            Err(s) => return Err(s),
+        };
+        cmd.stdout(Stdio::null());
+        cmd.stderr(Stdio::null());
+        let mut child = match cmd.spawn() {
+            Ok(c)  => c,
+            Err(e) => return Err(fmt!("the launcher that fences it could not be started ({})", e)),
+        };
+        let pgid = child.id().unwrap_or(0);
+        if let Some(mut w) = child.stdin.take() {
+            use tokio::io::AsyncWriteExt;
+            tokio::spawn(async move {
+                if w.write_all(&payload).await.is_ok() {
+                    let _ = w.shutdown().await;
+                }
+            });
+        }
+        match tokio::time::timeout(PROV_TIMEOUT, child.wait()).await {
+            Ok(Ok(s))  => match s.code() {
+                Some(c) if c >= crate::exec::EXIT_NO_PLAN && c <= crate::exec::EXIT_EXEC_FAILED =>
+                    Err(fmt!("the launcher could not fence it (exit {})", c)),
+                c => Ok(c),
+            },
+            Ok(Err(e)) => Err(fmt!("{}", e)),
+            Err(_)     => {
+                if pgid != 0 {
+                    let _ = crate::exec::signal_group(pgid, Sig::Kill).await;
+                }
+                Err(fmt!("it did not answer within {} s", PROV_TIMEOUT.as_secs()))
+            },
+        }
     }
 }
 
@@ -737,32 +830,28 @@ pub fn provenance(root: &Path, file: &str) -> Provenance {
 ///
 /// **The sentence is written to be acted on in one call.**  A refusal a model
 /// cannot converge on costs the run anyway -- so it hands over the command that
-/// runs the same file INSIDE the fence, which is where a command a model wrote
-/// belongs and is enough for the nine verifiers in ten here that only read the
-/// tree; it says what that cannot do, so a fenced failure is not misread as the
-/// verifier being broken; and it names the two things that reach the unfenced
-/// run, one of which is a person.
+/// runs the same file through `run`, which is enough for the nine verifiers in
+/// ten here that only read the tree; it says what that cannot do -- `run`'s fence
+/// lends no browser and stands no world -- so a failure there is not misread as
+/// the verifier being broken; and it names the commit that makes `verify` take it.
 ///
 /// # Arguments
-/// * `root` - The granted root.
+/// * `prov` - What [`provenance`] answered, asked as late as the caller could.
 /// * `file` - The verifier's file name, from the directory entry.
-pub fn unfenced_refusal(root: &Path, file: &str) -> Option<String> {
-    let prov = provenance(root, file);
-    let why = match &prov {
+pub fn unfenced_refusal(prov: &Provenance, file: &str) -> Option<String> {
+    let why = match prov {
         Provenance::Committed	=> return None,
         Provenance::Changed(c)	=> fmt!("{}", c.phrase()),
         Provenance::Unknown(w)	=> fmt!("{}", w),
     };
     Some(fmt!(
-        "Refused: dev/{} is not this repository's committed code -- {}. Nothing was run. A \
-        verifier is the one thing this hand runs OUTSIDE the command fence, and the whole of \
-        the reason is that its bytes came with the checkout instead of from a model; this \
-        hand cannot tell your edit from anybody else's, so it will not run one unfenced. \
-        RUN IT YOURSELF INSTEAD: 'run' with [\"node\",\"dev/{}\"] runs this same file inside \
-        the fence every command gets, which is all a verifier that reads the tree needs. It \
-        is not enough for one that drives a browser or opens a port -- the fence refuses \
-        both, so a failure there is the fence and not your script. To get the unfenced run, \
-        commit the file and ask again, or ask the person to run it themselves.",
+        "Refused: dev/{} is not this repository's committed code -- {}. Nothing was run. \
+        'verify' reports only on bytes that are the commit's, because its report says so; \
+        this hand cannot tell your edit from anybody else's. RUN IT YOURSELF INSTEAD: 'run' \
+        with [\"node\",\"dev/{}\"] runs this same file inside your own command fence, \
+        which lends it neither the headless browser nor a world, so a page verifier fails \
+        there for that reason and not for its own. To have 'verify' report on it, commit \
+        the file and ask again.",
         file, why, file))
 }
 
@@ -1256,6 +1345,165 @@ impl Ledger {
     pub fn sound(&self) -> bool {
         self.sound.load(Ordering::SeqCst)
     }
+
+    /// The fence with the journal denied in it, or why the fence reaches the journal.
+    ///
+    /// Exactly the two questions the dispatcher asks of a command's fence before it runs.
+    pub fn guard(&self, fence: &FenceSpec) -> Result<FenceSpec, String> {
+        let g = match self.jr.lock() {
+            Ok(g)  => g,
+            Err(_) => return Err(fmt!("the hand's journal lock is poisoned")),
+        };
+        if let Err(e) = g.check_fence(fence) {
+            return Err(e.msgs().join(" "));
+        }
+        Ok(g.fence_guard(fence))
+    }
+}
+
+// ┌───────────────────────────────────────────────────────────────┐
+// │ The fence a verifier runs behind                               │
+// └───────────────────────────────────────────────────────────────┘
+//
+// 2026-10-11, and the reason this section exists: until then a verifier ran with NO fence,
+// on the strength of its bytes being the commit's.  `.git` is inside every mark and every
+// fence leaves it writable, so a daimon committed `dev/verify_pwn.mjs` through its own `run`,
+// called `verify`, and read another Diamond's nonce (specs/daimond_verify_unfenced_diag_
+// 20261011.md).  Provenance says who wrote the bytes; it never said what they may reach.
+//
+// So a verifier, and the world it stands, now go through `exec::fenced_command` exactly as a
+// command does -- the same Landlock plan, the same seccomp filter, the same launcher -- with
+// the calling Diamond's mark as the one writable root.  Every root beyond the mark is a named
+// need, listed below with why.  What is deliberately NOT lent:
+//
+// * The display socket.  AF_UNIX stays refused by seccomp, because on Landlock below ABI 9 a
+//   granted socket file cannot be told apart from the session bus, and the bus starts
+//   processes outside every fence.  A verifier drives a HEADLESS browser, which needs none.
+// * Other toolchain caches (`~/.cache/daimond` and the like).  They hold other worlds'
+//   scratch and are not this Diamond's.
+
+/// Read-only roots under the home directory a verifier may need, beyond its own mark.
+pub const VERIFY_NEEDS_RO: &[&str] = &[
+    ".cache/ms-playwright",	// the headless browser dev/harness.mjs drives
+    ".nvm",					// node, where it is installed per user rather than in /usr
+    ".red-pw/node_modules",	// playwright-core, which dev/pw.mjs loads by path first
+];
+
+/// The fence a verifier and its world run behind: the mark, the run's scratch, and the
+/// named needs that exist on this machine.
+///
+/// `net` is the page's answer to the question `run` asks on the same turn, by the same
+/// function, so a verifier is never a wider way out than a command: a committed verifier
+/// that cannot read another Diamond must not be able to post this one's files anywhere
+/// either.  There is no loopback-only middle: Landlock scopes TCP by port and never by
+/// host, so a world (which binds and is connected to on loopback) stands only on a turn
+/// whose commands may reach the network too.
+///
+/// The turn's read-only and deny rules are carried as `run` carries them (rc-b F3, 11 Oct
+/// 2026): the mark is writable only where `run` could write it, a read-only subtree inside
+/// it stays read-only, and every deny holds.  With no rules -- a page older than the field
+/// -- the mark is read-only, the narrower of the two answers.
+///
+/// # Arguments
+/// * `net` - Whether the turn's `run` would be given the network.
+/// * `rules` - The read-only and deny lists of `run`'s fence on the same turn.
+pub fn verifier_fence(root: &Path, scratch: &Path, net: bool, rules: Option<&TurnRules>) -> FenceSpec {
+    let mut ro = Vec::new();
+    if let Some(h) = crate::exec::home_dir() {
+        for tail in VERIFY_NEEDS_RO {
+            let p = Path::new(&h).join(tail);
+            if p.exists() {
+                ro.push(fmt!("{}", p.display()));
+            }
+        }
+    }
+    // Compared resolved, so a symlinked spelling on either side cannot make a read-only
+    // mark look like a different, writable one.
+    let real = |p: &Path| std::fs::canonicalize(p).unwrap_or_else(|_| p.to_path_buf());
+    let mroot = real(root);
+    let mut rw = vec![fmt!("{}", scratch.display())];
+    let mut deny = Vec::new();
+    match rules {
+        None => ro.push(fmt!("{}", root.display())),
+        Some(r) => {
+            let locked = r.ro.iter().any(|q| mroot.starts_with(real(Path::new(q))));
+            if locked {
+                ro.push(fmt!("{}", root.display()));
+            } else {
+                rw.insert(0, fmt!("{}", root.display()));
+                // Nested read-only subtrees, which the hand carves out of the writable mark.
+                for q in &r.ro {
+                    if real(Path::new(q)).starts_with(&mroot) {
+                        ro.push(fmt!("{}", q));
+                    }
+                }
+            }
+            deny.extend(r.deny.iter().cloned());
+        },
+    }
+    FenceSpec { rw, ro, deny, net }
+}
+
+/// What a fenced verify spawn records as in force, as a command's record does.
+fn fence_mechs() -> Vec<String> {
+    let mut v = crate::exec::detected_fence().caps();
+    v.extend(crate::exec::detected_seccomp().caps());
+    v.push(fmt!("net:open"));
+    v
+}
+
+/// Starts `argv` behind the verifier fence, under the job's memory ceiling, with standard
+/// output and error piped and the launcher's plan already on its way down standard input.
+///
+/// # Arguments
+/// * `scratch` - Writable beside the mark, and where `TMPDIR` points.
+fn spawn_fenced(
+    job:     &Job,
+    argv:    &[String],
+    env:     &BTreeMap<String, String>,
+    scratch: &Path,
+)
+    -> Result<tokio::process::Child, String>
+{
+    let fence = match job.ledger.guard(&verifier_fence(&job.root, scratch, job.net, job.rules.as_ref())) {
+        Ok(f)  => f,
+        Err(s) => return Err(s),
+    };
+    // The hand's own environment, less what the launcher refuses outright -- the loader's
+    // family, which a test binary or a packaged browser may carry -- and less the scratch
+    // names, which are the hand's to answer.  Dropped rather than refused: nobody asked
+    // for them, so no caller is left believing a setting took effect.
+    let mut pairs: Vec<(String, String)> = env.iter()
+        .filter(|(k, _)| !crate::exec::loads_code(k)
+            && !crate::exec::TMP_VARS.iter().any(|t| t.eq_ignore_ascii_case(k)))
+        .map(|(k, v)| (k.clone(), v.clone()))
+        .collect();
+    // Last, so the hand's answer outranks anything the environment carried.
+    for k in crate::exec::TMP_VARS {
+        pairs.push((fmt!("{}", k), fmt!("{}", scratch.display())));
+    }
+    let crate::exec::Fenced { mut cmd, payload, .. } = match crate::exec::fenced_command(
+        &job.launcher, &job.cap.wrap(&[]), &fence, argv, &pairs, &job.root, false)
+    {
+        Ok(f)  => f,
+        Err(s) => return Err(s),
+    };
+    cmd.stdout(Stdio::piped());
+    cmd.stderr(Stdio::piped());
+    let mut child = match cmd.spawn() {
+        Ok(c)  => c,
+        Err(e) => return Err(fmt!("the launcher that fences it could not be started ({})", e)),
+    };
+    // The plan, then end-of-file: a verifier reads no input.
+    if let Some(mut w) = child.stdin.take() {
+        tokio::spawn(async move {
+            use tokio::io::AsyncWriteExt;
+            if w.write_all(&payload).await.is_ok() {
+                let _ = w.shutdown().await;
+            }
+        });
+    }
+    Ok(child)
 }
 
 // ┌───────────────────────────────────────────────────────────────┐
@@ -1277,10 +1525,10 @@ impl Ledger {
 // `/api` proxy and no mock.  There is no sequence of calls from inside the fence
 // that reaches a world.
 //
-// So this verb stands one.  It is already the one thing that runs outside the
-// command fence, on the argument that a verifier is the repository's own committed
-// code -- and the same argument covers the three files a world is made of, which
-// is why [`world_up`] asks about all three and not just the verifier.
+// So this verb stands one, behind the same verifier fence the verifier gets, with
+// the world's own scratch as its writable second root.  The provenance gate covers
+// the three files a world is made of, which is why [`world_up`] asks about all
+// three and not just the verifier.
 //
 // **The world number is the hand's, never the model's.**  `dev/world.sh`'s port
 // register is the one place a port is claimed, and it exists because a dozen
@@ -1312,8 +1560,8 @@ pub const WORLD_SCRATCH: &str = ".scratch/worlds";
 /// How long `dev/world.sh N --up` is given.
 pub const WORLD_UP_MS: u64 = 60_000;
 
-/// How long `dev/world.sh N --down` is given.
-pub const WORLD_DOWN_MS: u64 = 30_000;
+/// How long a world's group is given to end on TERM before it is sent KILL.
+pub const WORLD_DOWN_MS: u64 = 10_000;
 
 /// The memory ceiling a world, and each run beside it, is held under.
 pub const WORLD_MEM: &str = "4G";
@@ -1332,14 +1580,6 @@ pub const WORLD_ROOT_VAR: &str = "DAIMOND_WORLD_ROOT";
 
 /// The name that turns the memory ceiling off.
 pub const CAP_VAR: &str = "DAIMOND_VERIFY_CAP";
-
-/// The variables `dev/world.sh` HONOURS when a caller has already set them.
-///
-/// Cleared before `--up`, so the register decides.  The hand's environment is
-/// Chrome's and usually carries none of them, but a hand started from a shell
-/// inside somebody's world carries all three, and the world it then stood would
-/// be that shell's rather than its own.
-pub const WORLD_HONOURS: &[&str] = &["DAIMOND_GW_PORT", "DAIMOND_IMAP_PORT", "SMTPD_PORT"];
 
 /// What a sequence's processes are held under.
 ///
@@ -1407,14 +1647,6 @@ impl Cap {
                 v
             },
         }
-    }
-}
-
-/// The program a spawn argument vector names.
-fn prog_of(word: &str) -> PathBuf {
-    match word.contains('/') {
-        true	=> PathBuf::from(word),
-        false	=> on_path(word).unwrap_or_else(|| PathBuf::from(word)),
     }
 }
 
@@ -1574,7 +1806,8 @@ pub fn wants_live_gateway(src: &str) -> bool {
 pub fn world_line(n: u8, scratch: &str, cap: Cap, down: &Result<(), String>) -> String {
     let (a, m, g) = world_ports(n);
     let tail = match down {
-        Ok(())	=> fmt!("stood for this sequence and torn down (dev/world.sh {} --down exit 0)", n),
+        Ok(())	=> fmt!("stood for this sequence and torn down (its group ended, :{} :{} :{} free)",
+            a, m, g),
         Err(w)	=> fmt!("TEARDOWN FAILED: {}", w),
     };
     fmt!("[world: {} — app :{}, mock :{}, gateway :{} down (/api refuses), scratch {}/w{}, {} — {}]",
@@ -1672,7 +1905,6 @@ pub struct WorldUp {
 /// ordinary path calls [`world_down`] and then [`WorldGuard::disarm`], so this
 /// runs only where nothing else did.
 pub struct WorldGuard {
-    root:    PathBuf,
     scratch: PathBuf,
     n:       u8,
     pgid:    u32,
@@ -1680,12 +1912,8 @@ pub struct WorldGuard {
 }
 
 impl WorldGuard {
-    /// # Arguments
-    /// * `root` - The granted root.
-    /// * `up` - The world that is up.
-    pub fn arm(root: &Path, up: &WorldUp) -> Self {
+    pub fn arm(up: &WorldUp) -> Self {
         Self {
-            root:    root.to_path_buf(),
             scratch: up.scratch.clone(),
             n:       up.n,
             pgid:    up.pgid,
@@ -1709,20 +1937,9 @@ impl Drop for WorldGuard {
         if !self.armed {
             return;
         }
-        // Blocking, because a `Drop` cannot await. The script's own teardown first,
-        // since it kills by pid file and verifies the ports are free; the group kill
-        // after it, for whatever the script could not reach.
-        let sh = self.root.join(DEV_DIR).join(WORLD_SH);
-        let _ = std::process::Command::new("bash")
-            .arg(&sh)
-            .arg(fmt!("{}", self.n))
-            .arg("--down")
-            .current_dir(&self.root)
-            .env(WORLD_ROOT_VAR, &self.scratch)
-            .stdin(Stdio::null())
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .status();
+        // The group kill only, and never the script: `dev/world.sh` is in the mark, a daimon
+        // can commit it, and a `Drop` has no way to put it behind the fence. The world's
+        // servers were started in the launcher's group, so the kill reaches them.
         #[cfg(unix)]
         if self.pgid != 0 {
             if let Some(p) = rustix::process::Pid::from_raw(self.pgid as i32) {
@@ -1762,6 +1979,9 @@ pub struct Job {
     pub runner: Option<crate::exec::Runner>,
     /// What the world and each run are held under, decided once per sequence.
     pub cap:    Cap,
+    pub launcher: crate::exec::Launcher, // what applies the fence; the runner's own, so one code path
+    pub net:    bool,                       // what `run` gets on the same turn, never more
+    pub rules:  Option<TurnRules>,          // run's ro/deny on the same turn; None = mark read-only
 }
 
 /// The argument vector one run takes.
@@ -1787,16 +2007,17 @@ pub fn argv_for(job: &Job, brk: Option<&str>) -> Vec<String> {
     v
 }
 
-/// The environment `dev/world.sh` and every verifier run beside it is given.
+/// The environment `dev/world.sh` is given: a verifier's, plus the world's root.
 ///
-/// The hand's own, with the seat taken out, the unattended mark put in, and the
-/// three variables `world.sh` HONOURS removed -- so the register decides the
-/// world's ports rather than whatever shell the hand was started from.
-fn world_env(scratch: &Path) -> BTreeMap<String, String> {
-    let mut env = unattended_env(&own_env());
-    for k in WORLD_HONOURS {
-        env.remove(*k);
-    }
+/// The three variables `world.sh` HONOURS cannot arrive, since the environment is built
+/// from nothing, so the register decides the world's ports.
+///
+/// # Arguments
+/// * `node` - The sequence's node.
+/// * `scratch` - The world's own scratch.
+fn world_env(node: &Path, scratch: &Path) -> BTreeMap<String, String> {
+    let mut env = unattended_env(node);
+    // Named need: where `world.sh` stands the world.
     env.insert(fmt!("{}", WORLD_ROOT_VAR), fmt!("{}", scratch.display()));
     env
 }
@@ -1834,12 +2055,12 @@ fn said_by(err: &str) -> String {
 ///   identity probes run.
 async fn world_up(job: &Job, tx: &Sender<Resp>) -> Result<WorldUp, String> {
     for part in WORLD_PARTS {
-        let prov = provenance(&job.root, part);
+        let prov = provenance(&job.launcher, &job.root, part, job.rules.as_ref()).await;
         if !prov.committed() {
             return Err(fmt!(
                 "dev/{} is {}. A world is made of these three files and every one of them runs \
-                OUTSIDE the command fence, exactly as the verifier does -- so the same rule holds \
-                for them. Commit it and ask again.", part, prov.phrase()));
+                behind the same fence as the verifier -- so the same rule holds for them. Commit it \
+                and ask again.", part, prov.phrase()));
         }
     }
 
@@ -1872,16 +2093,16 @@ async fn world_up(job: &Job, tx: &Sender<Resp>) -> Result<WorldUp, String> {
         return Err(fmt!("world {}'s lock '{}' could not be taken ({})", n, lock.display(), e));
     }
 
-    let argv = job.cap.wrap(&vec![
+    // Behind the verifier fence like the verifier itself: `dev/world.sh` is in the mark,
+    // and a daimon can commit it as easily as a verifier.
+    let argv = vec![
         fmt!("bash"),
         fmt!("{}/{}", DEV_DIR, WORLD_SH),
         fmt!("{}", n),
         fmt!("--up"),
-    ]);
-    // Recorded before the process exists, with the REAL argument vector and the
-    // mechanisms that were actually in force -- `fence:none`, because this is the
-    // verb that runs the repository's own code outside the fence on purpose, and a
-    // record that hid that would be worse than no record at all.
+    ];
+    // Recorded before the process exists, with the REAL argument vector, the fence it
+    // runs behind and the mechanisms in force.
     if !job.ledger.sound() {
         let _ = std::fs::remove_file(&lock);
         return Err(fmt!("the hand's journal cannot be written"));
@@ -1894,20 +2115,10 @@ async fn world_up(job: &Job, tx: &Sender<Resp>) -> Result<WorldUp, String> {
         stdin:      None,
         timeout_ms: WORLD_UP_MS,
         capture:    Capture::Both,
-        fence:      FenceSpec {
-            rw:   vec![fmt!("{}", job.root.display())],
-            ro:   Vec::new(),
-            deny: Vec::new(),
-            net:  true,
-        },
+        fence:      verifier_fence(&job.root, &scratch, job.net, job.rules.as_ref()),
         toolkits:   Vec::new(),
         meter:    None,
-    }, &[
-        fmt!("fence:none"),
-        fmt!("verify:world"),
-        fmt!("mem:{}", job.cap.phrase()),
-        fmt!("net:open"),
-    ]);
+    }, &[fence_mechs(), vec![fmt!("verify:world"), fmt!("mem:{}", job.cap.phrase())]].concat());
     if let Some(ev) = ev {
         if let Err(e) = job.ledger.record(&ev) {
             let _ = std::fs::remove_file(&lock);
@@ -1916,27 +2127,15 @@ async fn world_up(job: &Job, tx: &Sender<Resp>) -> Result<WorldUp, String> {
         }
     }
 
-    let mut cmd = Command::new(prog_of(&argv[0]));
-    for a in argv.iter().skip(1) {
-        cmd.arg(a);
-    }
-    cmd.current_dir(&job.root);
-    cmd.env_clear();
-    cmd.envs(world_env(&scratch));
-    cmd.stdin(Stdio::null());
-    cmd.stdout(Stdio::piped());
-    cmd.stderr(Stdio::piped());
-    cmd.kill_on_drop(true);
-    // Its own group, so the dev server and the mock `--up` leaves behind are
-    // reachable by one number afterwards -- which is what makes them stoppable
-    // through `runs` and what `Bye` kills.
-    #[cfg(unix)]
-    cmd.process_group(0);
-    let child = match cmd.spawn() {
+    // In its own group (the launcher's), so the dev server and the mock `--up` leaves
+    // behind are reachable by one number afterwards -- which is what makes them stoppable
+    // through `runs` and what `Bye` kills.  `TMPDIR` is the world's own scratch, which the
+    // survivors go on writing in after the script returns.
+    let child = match spawn_fenced(job, &argv, &world_env(&job.node, &scratch), &scratch) {
         Ok(c)  => c,
         Err(e) => {
             let _ = std::fs::remove_file(&lock);
-            return Err(fmt!("dev/world.sh could not be started ({})", e));
+            return Err(fmt!("dev/world.sh could not be started: {}", e));
         },
     };
     let pgid = child.id().unwrap_or(0);
@@ -2012,98 +2211,88 @@ async fn world_up(job: &Job, tx: &Sender<Resp>) -> Result<WorldUp, String> {
 
 /// Takes the world down, and says what is still held if it could not.
 ///
+/// **The hand owns a world's lifetime, and `dev/world.sh --down` is never run.**  The
+/// script is in the mark, so a daimon can commit it; and run behind the fence it starts
+/// in a new Landlock domain, which may not signal the servers `--up` started in another
+/// (signals are scoped to the domain), so it failed every time and the group kill below
+/// did the work anyway.  The hand started the group, so the hand ends it: TERM, then KILL
+/// if it outlives [`WORLD_DOWN_MS`].  "Torn down" is said only when no process is left in
+/// the group and the three ports answer free; the bookkeeping is never believed instead.
+///
 /// # Arguments
 /// * `job` - The sequence.
 /// * `up` - The world.
 /// * `clean` - Whether the sequence's verdict was clean, which decides whether the
 ///   world's `serve.out`, `mock.out` and browser profiles are kept for reading.
 async fn world_down(job: &Job, up: &WorldUp, clean: bool) -> Result<(), String> {
-    let argv = vec![
-        fmt!("bash"),
-        fmt!("{}/{}", DEV_DIR, WORLD_SH),
-        fmt!("{}", up.n),
-        fmt!("--down"),
-    ];
-    let mut cmd = Command::new(prog_of(&argv[0]));
-    for a in argv.iter().skip(1) {
-        cmd.arg(a);
+    let (a, m, g) = world_ports(up.n);
+    let mut killed = false;
+    let _ = crate::exec::signal_group(up.pgid, Sig::Term).await;
+    let mut left = world_left(up.pgid, [a, m, g]).await;
+    let until = tokio::time::Instant::now() + Duration::from_millis(WORLD_DOWN_MS);
+    while !left.is_empty() && tokio::time::Instant::now() < until {
+        tokio::time::sleep(Duration::from_millis(100)).await;
+        left = world_left(up.pgid, [a, m, g]).await;
     }
-    cmd.current_dir(&job.root);
-    cmd.env_clear();
-    cmd.envs(world_env(&up.scratch));
-    cmd.stdin(Stdio::null());
-    cmd.stdout(Stdio::piped());
-    cmd.stderr(Stdio::piped());
-    cmd.kill_on_drop(true);
-    #[cfg(unix)]
-    cmd.process_group(0);
-    let said = match cmd.spawn() {
-        Ok(c) => match tokio::time::timeout(
-            Duration::from_millis(WORLD_DOWN_MS), c.wait_with_output()).await
-        {
-            Ok(Ok(o))	=> match o.status.success() {
-                true	=> None,
-                false	=> Some(fmt!("dev/world.sh --down exited {}",
-                    match o.status.code() {
-                        Some(c) => fmt!("{}", c),
-                        None    => fmt!("on a signal"),
-                    })),
-            },
-            Ok(Err(e))	=> Some(fmt!("dev/world.sh --down could not be waited on ({})", e)),
-            Err(_)		=> Some(fmt!("dev/world.sh --down did not finish within {} ms",
-                WORLD_DOWN_MS)),
-        },
-        Err(e) => Some(fmt!("dev/world.sh --down could not be started ({})", e)),
-    };
+    if !left.is_empty() {
+        killed = true;
+        let _ = crate::exec::signal_group(up.pgid, Sig::Kill).await;
+        let until = tokio::time::Instant::now() + Duration::from_millis(2_000);
+        while !left.is_empty() && tokio::time::Instant::now() < until {
+            tokio::time::sleep(Duration::from_millis(100)).await;
+            left = world_left(up.pgid, [a, m, g]).await;
+        }
+    }
     let ended = Event::Ended {
         id:        fmt!("{}#world", job.id),
-        exit:      match said { None => 0, Some(_) => 1 },
+        exit:      match left.is_empty() { true => 0, false => 1 },
         timed_out: false,
-        killed:    said.is_some(),
+        killed,
         out_bytes: 0,
         err_bytes: 0,
     };
     if let Err(e) = job.ledger.record(&ended) {
         eprintln!("daimond-hand: a world's teardown was not journalled: {}", e);
     }
-    let why = match said {
-        None	=> {
-            if let Some(r) = &job.runner {
-                let _ = r.forget(&up.run_id);
-            }
-            let _ = std::fs::remove_file(up.scratch.join(fmt!("w{}.lock", up.n)));
-            // A red sequence keeps its serve.out, mock.out and profiles, because
-            // those are what the daimon reads next. A clean one leaves nothing:
-            // a browser profile is tens of megabytes and this directory is inside
-            // the repository.
-            if clean {
-                let _ = std::fs::remove_dir_all(up.scratch.join(fmt!("w{}", up.n)));
-            }
-            return Ok(());
-        },
-        Some(w)	=> w,
-    };
-    // The script would not or could not. The group is what is left to try, and then
-    // the ports are asked rather than the bookkeeping believed.
-    let _ = crate::exec::signal_group(up.pgid, Sig::Kill).await;
-    tokio::time::sleep(Duration::from_millis(300)).await;
-    let (a, m, g) = world_ports(up.n);
-    let mut held = Vec::new();
-    for p in [a, m, g] {
+    if !left.is_empty() {
+        return Err(fmt!(
+            "{} still held after the group was sent TERM and then KILL; it is listed by runs \
+            as '{}' and can be stopped there", left.join(", "), up.run_id));
+    }
+    if let Some(r) = &job.runner {
+        let _ = r.forget(&up.run_id);
+    }
+    let _ = std::fs::remove_file(up.scratch.join(fmt!("w{}.lock", up.n)));
+    // A red sequence keeps its serve.out, mock.out and profiles, because those are what
+    // the daimon reads next. A clean one leaves nothing: a browser profile is tens of
+    // megabytes and this directory is inside the repository.
+    if clean {
+        let _ = std::fs::remove_dir_all(up.scratch.join(fmt!("w{}", up.n)));
+    }
+    Ok(())
+}
+
+/// What of a world is still standing: its group, if anybody is in it, and each held port.
+///
+/// Empty is the one answer that means torn down.  A group the machine would not answer
+/// about counts as standing, because "could not tell" is not "gone".
+///
+/// # Arguments
+/// * `pgid` - The group `--up` ran in.
+/// * `ports` - The world's app, mock and gateway ports.
+async fn world_left(pgid: u32, ports: [u16; 3]) -> Vec<String> {
+    let mut left = Vec::new();
+    match crate::exec::group_standing(pgid).await {
+        Some(false)	=> {},
+        Some(true)	=> left.push(fmt!("its group {}", pgid)),
+        None		=> left.push(fmt!("its group {} (the machine would not say)", pgid)),
+    }
+    for p in ports {
         if !port_free(p) {
-            held.push(fmt!(":{}", p));
+            left.push(fmt!(":{}", p));
         }
     }
-    if held.is_empty() {
-        if let Some(r) = &job.runner {
-            let _ = r.forget(&up.run_id);
-        }
-        let _ = std::fs::remove_file(up.scratch.join(fmt!("w{}.lock", up.n)));
-        return Err(fmt!("{}, and the group was killed instead; the three ports are free", why));
-    }
-    Err(fmt!(
-        "{}, {} still held after the group was killed; it is listed by runs as '{}' and can be \
-        stopped there", why, held.join(" "), up.run_id))
+    left
 }
 
 /// Reads a stream to its end, keeping at most `cap` bytes.
@@ -2155,7 +2344,14 @@ async fn once(
         Some(b) => fmt!("{}", b),
         None    => fmt!("clean"),
     };
-    let argv = job.cap.wrap(&argv_for(job, brk));
+    let argv = argv_for(job, brk);
+    // A private directory to write temporary files in, removed when the run ends: the
+    // mark is the only other writable root, and a browser's profile does not belong there.
+    let mut tmp = match crate::exec::Scratch::make(&fmt!("{}-{}", job.id, label)) {
+        Ok(t)  => t,
+        Err(e) => return Err(fmt!("it could not be given a private temporary directory ({})",
+            e.msgs().join(" "))),
+    };
     // The record is written before the process exists, exactly as a command's is, and with the
     // REAL argument vector -- so a reader of the journal sees the node invocation rather than a
     // verb they would have to trust this module's account of.
@@ -2170,23 +2366,11 @@ async fn once(
         stdin:      None,
         timeout_ms: left.as_millis() as u64,
         capture:    Capture::Both,
-        // What the process may touch, as intent. `mechs` below is what was actually in force,
-        // and it says `fence:none` -- because this verb runs a TRACKED SCRIPT outside the
-        // command fence on purpose, and a record that hid that would be worse than no record.
-        fence:      FenceSpec {
-            rw:   vec![fmt!("{}", job.root.display())],
-            ro:   Vec::new(),
-            deny: Vec::new(),
-            net:  true,
-        },
+        fence:      verifier_fence(&job.root, tmp.dir(), job.net, job.rules.as_ref()),
         toolkits:   Vec::new(),
         meter:    None,
-    }, &[
-        fmt!("fence:none"),
-        fmt!("verify:tracked-script"),
-        fmt!("mem:{}", job.cap.phrase()),
-        fmt!("net:open"),
-    ]);
+    }, &[fence_mechs(), vec![fmt!("verify:tracked-script"), fmt!("mem:{}", job.cap.phrase())]]
+        .concat());
     if let Some(ev) = ev {
         if let Err(e) = job.ledger.record(&ev) {
             return Err(fmt!("it could not be written to the journal ({})", e.msgs().join(" ")));
@@ -2196,7 +2380,8 @@ async fn once(
     // Asked again, as late as anything on this side can be. The sequence has been
     // running for minutes by the time a late break starts, and a command an earlier turn
     // left in the background can rewrite a file in that time.
-    if let Some(no) = unfenced_refusal(&job.root, &job.script.file) {
+    let prov = provenance(&job.launcher, &job.root, &job.script.file, job.rules.as_ref()).await;
+    if let Some(no) = unfenced_refusal(&prov, &job.script.file) {
         // The sentence opens with "Refused:" and every caller of `once` puts its own
         // word in front of what comes back from here, so the word is said once.
         let said = match no.strip_prefix("Refused: ") {
@@ -2208,36 +2393,21 @@ async fn once(
     }
 
     let started = std::time::Instant::now();
-    let mut cmd = Command::new(prog_of(&argv[0]));
-    for a in argv.iter().skip(1) {
-        cmd.arg(a);
-    }
-    cmd.current_dir(&job.root);
-    // Cleared and rebuilt rather than trimmed, because `Command` has no way to
-    // ask what it inherited: the map is the hand's own environment with the seat
-    // taken out and the mark put in, which is the same thing said once.
-    cmd.env_clear();
-    cmd.envs(unattended_env(&own_env()));
-    // And the world's block over the top of it. LAST, so that a `DAIMOND_PORT` the
-    // hand happened to inherit cannot outrank the world this sequence stood: the
-    // harness reads these four names and nothing else, and the fault this verb was
-    // written for is a verifier aimed at a world it was never given.
+    // Run's environment with the mark put in, and the world's block over the top of it
+    // (named need: the harness reads these names and nothing else, and the fault this verb
+    // was written for is a verifier aimed at a world it was never given).
+    let mut env = unattended_env(&job.node);
     for (k, v) in world.iter() {
-        cmd.env(k, v);
+        env.insert(k.clone(), v.clone());
     }
-    cmd.stdin(Stdio::null());
-    cmd.stdout(Stdio::piped());
-    cmd.stderr(Stdio::piped());
-    cmd.kill_on_drop(true);
-    // Its own group. `kill_on_drop` reaches the node process and nothing it
-    // started, and a browser verifier's whole job is to start a browser -- so a
-    // budget spent used to leave a Chromium behind, which the world made visible by
-    // leaving it holding the world's page open.
-    #[cfg(unix)]
-    cmd.process_group(0);
-    let mut child = match cmd.spawn() {
+    // Behind the command fence, scoped to this Diamond's mark: see "The fence a verifier
+    // runs behind". In its own group, so a budget spent takes the browser with it.
+    let mut child = match spawn_fenced(job, &argv, &env, tmp.dir()) {
         Ok(c)  => c,
-        Err(e) => return Err(fmt!("node could not be started ({})", e)),
+        Err(e) => {
+            let _ = tmp.remove();
+            return Err(fmt!("node could not be started: {}", e));
+        },
     };
     let child_pid = child.id().unwrap_or(0);
     // The page starts a 30-second clock at the request and stops it at `Started`, so the
@@ -2310,6 +2480,7 @@ async fn once(
     if let Err(e) = job.ledger.record(&ended) {
         eprintln!("daimond-hand: a verify run's ending was not journalled: {}", e);
     }
+    let _ = tmp.remove();
     if timed {
         return Err(fmt!("it ran past the budget and was killed"));
     }
@@ -2347,7 +2518,8 @@ pub async fn conduct(job: Job, tx: Sender<Resp>) -> Outcome<()> {
     // makes that defensible is that the script is the commit's. Asked here rather than
     // in `main.rs` because this function is the crate's public way in, and a gate in the
     // dispatcher is a gate the reproduction walked straight past.
-    if let Some(no) = unfenced_refusal(&job.root, &job.script.file) {
+    let prov = provenance(&job.launcher, &job.root, &job.script.file, job.rules.as_ref()).await;
+    if let Some(no) = unfenced_refusal(&prov, &job.script.file) {
         let _ = tx.send(Resp::Refused { id: fmt!("{}", job.id), reason: no }).await;
         return Ok(());
     }
@@ -2368,7 +2540,7 @@ pub async fn conduct(job: Job, tx: Sender<Resp>) -> Outcome<()> {
         match world_up(&job, &tx).await {
             Ok(u) => {
                 // Armed before anything can panic between here and the teardown.
-                guard = Some(WorldGuard::arm(&job.root, &u));
+                guard = Some(WorldGuard::arm(&u));
                 up    = Some(u);
             },
             // NOTHING RAN, so there is nothing to measure and nothing to report. A
@@ -2438,7 +2610,7 @@ pub async fn conduct(job: Job, tx: Sender<Resp>) -> Outcome<()> {
     };
 
     let shots = shots_since(&job.root, began);
-    let text  = report(&job.script, &passes, &verdict, &shots, &world_note);
+    let text  = report(&job.script, &prov, &passes, &verdict, &shots, &world_note);
     let bytes = text.len() as u64;
     let _ = tx.send(Resp::Chunk {
         id:     fmt!("{}", job.id),
@@ -2570,6 +2742,7 @@ async fn measure(
 ///
 /// # Arguments
 /// * `script` - The verifier.
+/// * `prov` - Whose bytes it was, as asked before the sequence ran.
 /// * `passes` - The clean run first, then each break with what it did.
 /// * `verdict` - What the sequence proved.
 /// * `shots` - Pictures this sequence wrote, workspace-relative.
@@ -2577,6 +2750,7 @@ async fn measure(
 ///   why it ran in none.
 pub fn report(
     script:  &Script,
+    prov:    &Provenance,
     passes:  &[(Pass, Option<Bite>)],
     verdict: &Verdict,
     shots:   &[String],
@@ -2589,12 +2763,11 @@ pub fn report(
         script.file,
         passes.len(),
         match passes.len() { 1 => "", _ => "s" },
-        script.prov.phrase()));
+        prov.phrase()));
     s.push_str(
-        "Run OUTSIDE the command fence, because these bytes are the commit's rather than a \
-        command anybody's model wrote -- that was checked against the commit before each run, \
-        and a verifier that differs from it is refused rather than reported. It reaches this \
-        machine as any script you run yourself would.\n");
+        "Run behind the command fence, scoped to this Diamond's folder, and only while these \
+        bytes are the commit's -- that was checked against the commit before each run, and a \
+        verifier that differs from it is refused rather than reported.\n");
     // Early, and above the runs, so that the trimming at the end of this function
     // cannot take it: a report whose numbers came from a world the reader does not
     // know about is a report about somebody else's app.
@@ -2676,7 +2849,40 @@ pub fn report(
 
 #[cfg(test)]
 mod tests {
+    const LAUNCH_CHILD: &str = "DAIMOND_HAND_TEST_VERIFY_LAUNCHER";
+
+    /// The launcher entry point, reached only in a re-executed test binary.
+    #[test]
+    fn launcher_child_entry() {
+        if std::env::var(LAUNCH_CHILD).is_err() {
+            return;
+        }
+        crate::exec::launch_main()
+    }
+
+    /// A launcher that re-enters this test binary at [`launcher_child_entry`].
+    fn test_launcher() -> Outcome<crate::exec::Launcher> {
+        let exe = res!(std::env::current_exe().map_err(|e| err!(e,
+            "The verify tests need to know their own binary."; Test, IO)));
+        Ok(crate::exec::Launcher::Explicit {
+            prog: exe,
+            args: vec![
+                fmt!("verify::tests::launcher_child_entry"),
+                fmt!("--exact"),
+                fmt!("--nocapture"),
+                // Or libtest prints the test's name with no newline, and the child's first
+                // line -- a world's first export, a verifier's first check -- is glued to it.
+                fmt!("--quiet"),
+                fmt!("--test-threads=1"),
+            ],
+            env:  vec![(fmt!("{}", LAUNCH_CHILD), fmt!("1"))],
+        })
+    }
+
     use super::*;
+
+    // A turn whose `run` may write its mark: no read-only rule, no deny.
+    static OPEN_RULES: TurnRules = TurnRules { ro: Vec::new(), deny: Vec::new() };
 
     use crate::wire::Breaks;
 
@@ -2742,52 +2948,34 @@ mod tests {
 
     #[test]
     fn a_verifier_is_handed_no_display_however_the_hand_got_one() {
-        // The hand as the browser starts it: a native messaging host inherits the
-        // browser's environment, and the browser is on the owner's screen.
-        let mine: BTreeMap<String, String> = [
-            ("DISPLAY", ":0"),
-            ("WAYLAND_DISPLAY", "wayland-0"),
-            ("XDG_SESSION_TYPE", "wayland"),
-            ("HOME", "/home/jason"),
-            ("PATH", "/usr/bin"),
-        ].iter().map(|(k, v)| (fmt!("{}", k), fmt!("{}", v))).collect();
-        let out = unattended_env(&mine);
-        for v in SEAT_VARS {
-            assert!(!out.contains_key(*v),
+        // The hand as the browser starts it inherits the seat; the verifier's
+        // environment is built from nothing, so none of it can arrive.
+        let out = unattended_env(Path::new("/usr/bin/node"));
+        for v in ["DISPLAY", "WAYLAND_DISPLAY", "XDG_SESSION_TYPE"] {
+            assert!(!out.contains_key(v),
                 "{} reached a verifier, so a headed one could paint on the seat", v);
         }
         assert_eq!(Some(&fmt!("1")), out.get(UNATTENDED_VAR),
             "the run was not marked unattended, so dev/display.mjs would allow :0");
-        // Everything else is untouched: a verifier with no HOME dies on the first
-        // line of any script in dev/, which is B13's neighbour in the same file.
-        assert_eq!(Some(&fmt!("/home/jason")), out.get("HOME"));
-        assert_eq!(Some(&fmt!("/usr/bin")), out.get("PATH"));
     }
 
     #[test]
-    fn a_hand_with_no_display_still_says_nobody_is_looking() {
-        // The mark is not conditional on there having been something to strip. An
-        // absent DISPLAY and an unattended run are different sentences in
-        // `dev/display.mjs`, and only the second one names the seat.
-        let mine: BTreeMap<String, String> =
-            [(fmt!("HOME"), fmt!("/home/jason"))].into_iter().collect();
-        let out = unattended_env(&mine);
-        assert_eq!(Some(&fmt!("1")), out.get(UNATTENDED_VAR));
-        assert_eq!(2, out.len(), "something else was added: {:?}", out);
+    fn a_verifier_gets_runs_names_and_the_mark_only() {
+        // run's defaults (HOME, PATH) and the mark: nothing else.
+        let out = unattended_env(Path::new("/usr/bin/node"));
+        let names: Vec<&str> = out.keys().map(|k| k.as_str()).collect();
+        for k in &names {
+            assert!(["HOME", "PATH", UNATTENDED_VAR].contains(k), "{} was added: {:?}", k, out);
+        }
+        assert!(out.contains_key("PATH"), "no PATH: {:?}", out);
+        // /usr/bin is already in the fixed list, so it is not added twice.
+        assert_eq!(Some(&fmt!("{}", crate::exec::PATH_FALLBACK)), out.get("PATH"));
     }
 
     #[test]
-    fn a_verifier_cannot_ask_to_be_watched() {
-        // The mark WINS over an inherited one. Nothing sets this name today, and a
-        // day when something does is a day when the last word has to be the hand's.
-        let mine: BTreeMap<String, String> = [
-            (fmt!("{}", UNATTENDED_VAR), fmt!("")),
-            (fmt!("DISPLAY"), fmt!(":0")),
-        ].into_iter().collect();
-        let out = unattended_env(&mine);
-        assert_eq!(Some(&fmt!("1")), out.get(UNATTENDED_VAR),
-            "an inherited empty mark survived, and an empty mark is read as absent");
-        assert!(!out.contains_key("DISPLAY"));
+    fn a_verifier_finds_the_node_the_hand_found() {
+        let out = unattended_env(Path::new("/opt/nodes/v22/bin/node"));
+        assert_eq!(Some(&fmt!("/opt/nodes/v22/bin:{}", crate::exec::PATH_FALLBACK)), out.get("PATH"));
     }
 
     // ── What a verifier declares ────────────────────────────────────
@@ -2864,6 +3052,9 @@ if (BREAK) console.log(`running with --break ${BREAK}`);
             world:  World::None,
             runner: None,
             cap:    Cap::None,
+            launcher: res!(test_launcher()),
+            net:    true,
+            rules:  Some(TurnRules::default()),
         };
         let argv = argv_for(&job, Some("nolinks"));
         assert_eq!(4, argv.len(), "{:?}", argv);
@@ -2976,10 +3167,9 @@ if (BREAK) console.log(`running with --break ${BREAK}`);
             file:   fmt!("verify_x.mjs"),
             path:   PathBuf::from("/w/dev/verify_x.mjs"),
             breaks: Vec::new(),
-            prov:   Provenance::Committed,
         };
         let verdict = Verdict::Unproven { passed: 0, failed: 0, declared: Vec::new() };
-        let text = report(&script, &[(p, None)], &verdict, &[], "[world: none]");
+        let text = report(&script, &Provenance::Committed, &[(p, None)], &verdict, &[], "[world: none]");
         assert!(text.contains("ERR_CONNECTION_REFUSED"),
             "the death did not reach the report, which is the only thing the model reads: {}",
             text);
@@ -3125,14 +3315,14 @@ if (BREAK) console.log(`running with --break ${BREAK}`);
             dead:   Vec::new(),
             unrun:  Vec::new(),
         };
-        let text = report(&script, &[(clean, None), (brk, Some(what))], &v, &[], "[world: none]");
+        let text = report(&script, &Provenance::Committed, &[(clean, None), (brk, Some(what))], &v, &[], "[world: none]");
         let last = match text.lines().filter(|l| !l.is_empty()).last() {
             Some(l) => l,
             None    => return Err(err!("the report is empty"; Test)),
         };
         assert!(last.starts_with(TRAILER), "the last line is {:?}", last);
         assert!(text.contains("RED: b went red"), "{}", text);
-        assert!(text.contains("OUTSIDE the command fence"),
+        assert!(text.contains("behind the command fence"),
             "the report does not say where it ran");
         Ok(())
     }
@@ -3149,7 +3339,7 @@ if (BREAK) console.log(`running with --break ${BREAK}`);
         clean.fails = (0..40_000).map(|i| fmt!("FAIL a very long check name number {}", i))
             .collect();
         let v = Verdict::Unproven { passed: 1, failed: 0, declared: Vec::new() };
-        let text = report(&script, &[(clean, None)], &v, &[], "[world: none]");
+        let text = report(&script, &Provenance::Committed, &[(clean, None)], &v, &[], "[world: none]");
         assert!(text.len() <= REPORT_MAX, "{} bytes", text.len());
         assert!(text.trim_end().ends_with(']'), "the trailer was cut off");
         assert!(text.contains(TRAILER), "the trailer is gone");
@@ -3281,12 +3471,11 @@ if (BREAK) console.log(`running with --break ${BREAK}`);
 
     // ── Whose code is this? ─────────────────────────────────────────
     //
-    // `REVIEW.md` §1.21.  A verifier runs OUTSIDE the command fence, and the
-    // whole of the argument for that is that its bytes came with the checkout.
-    // These tests aim at the argument rather than at the code: the fixture
-    // verifier's entire body writes a file OUTSIDE the granted root, so the
-    // marker's existence is the measurement.  A provenance that may run gets
-    // its marker; every other provenance must not.
+    // `REVIEW.md` §1.21, and 2026-10-11.  Provenance decides whether a verifier
+    // runs at all; the fence decides what a run may reach, and the second does not
+    // lean on the first -- a daimon can commit its own verifier.  The fixture
+    // verifier's body writes a file OUTSIDE the granted root, so the marker's
+    // existence is the measurement: no provenance, committed or not, may leave it.
 
     /// Runs one git command in a fixture tree.
     ///
@@ -3329,6 +3518,7 @@ if (BREAK) console.log(`running with --break ${BREAK}`);
     struct Attempt {
         refused: Option<String>,	// the sentence, where the hand declined
         escaped: bool,				// whether the marker outside the root appeared
+        said:    String,			// the report, where one was sent
     }
 
     /// Resolves and conducts a fixture verifier, and says what came of it.
@@ -3342,6 +3532,24 @@ if (BREAK) console.log(`running with --break ${BREAK}`);
     /// * `name` - The verifier's short name.
     /// * `marker` - The path the verifier writes, outside `root`.
     async fn attempt(root: &Path, name: &str, marker: &Path) -> Outcome<Attempt> {
+        attempt_net(root, name, marker, true).await
+    }
+
+    /// [`attempt`], with the turn's network named.
+    async fn attempt_net(root: &Path, name: &str, marker: &Path, net: bool) -> Outcome<Attempt> {
+        attempt_ruled(root, name, marker, net, Some(TurnRules::default())).await
+    }
+
+    /// [`attempt_net`], with the turn's read-only and deny rules named.
+    async fn attempt_ruled(
+        root:   &Path,
+        name:   &str,
+        marker: &Path,
+        net:    bool,
+        rules:  Option<TurnRules>,
+    )
+        -> Outcome<Attempt>
+    {
         if marker.exists() {
             res!(fs::remove_file(marker).map_err(|e| err!(e, "clearing {:?}", marker; Test, IO)));
         }
@@ -3351,7 +3559,8 @@ if (BREAK) console.log(`running with --break ${BREAK}`);
             Test, Missing)));
         let script = match resolve(root, name) {
             Ok(s)  => s,
-            Err(w) => return Ok(Attempt { refused: Some(w), escaped: marker.exists() }),
+            Err(w) => return Ok(Attempt {
+                refused: Some(w), escaped: marker.exists(), said: String::new() }),
         };
         let stem = match root.file_name().and_then(|n| n.to_str()) {
             Some(n) => fmt!("{}", n),
@@ -3376,6 +3585,9 @@ if (BREAK) console.log(`running with --break ${BREAK}`);
             world:  World::None,
             runner: None,
             cap:    Cap::None,
+            launcher: res!(test_launcher()),
+            net,
+            rules,
         };
         let (tx, mut rx) = tokio::sync::mpsc::channel(64);
         // Boxed, so the whole sequence's future lives on the heap. Inlined, `conduct`
@@ -3383,32 +3595,245 @@ if (BREAK) console.log(`running with --break ${BREAK}`);
         // test thread's stack before the first process starts.
         res!(Box::pin(conduct(job, tx)).await);
         let mut refused = None;
+        let mut said    = String::new();
         while let Some(r) = rx.recv().await {
-            if let Resp::Refused { reason, .. } = r {
-                refused = Some(reason);
+            match r {
+                Resp::Refused { reason, .. } => refused = Some(reason),
+                Resp::Chunk { data, .. }     => said.push_str(&data),
+                _                            => {},
             }
         }
-        Ok(Attempt { refused, escaped: marker.exists() })
+        Ok(Attempt { refused, escaped: marker.exists(), said })
     }
 
     #[tokio::test]
-    async fn a_verifier_the_checkout_brought_runs_outside_the_fence() -> Outcome<()> {
+    async fn a_committed_verifier_reaches_nothing_outside_its_mark() -> Outcome<()> {
+        // The hand-level form of the 2026-10-11 proof: a daimon commits a verifier
+        // through its own `run`, so the bytes ARE the commit's, and asks `verify` for
+        // it.  It must run -- refusing everything would pass the rest of this test and
+        // make the verb useless -- and it must neither write nor read past the mark.
         let root   = res!(tree("prov_committed"));
-        let marker = root.join("..").join("prov_committed.escaped");
-        let marker = PathBuf::from(fmt!("{}", marker.display()));
+        let marker = PathBuf::from(fmt!("{}", root.join("..").join("prov_committed.escaped").display()));
+        let secret = PathBuf::from(fmt!("{}", root.join("..").join("prov_committed.secret").display()));
+        let nonce  = "THEIRS-7f3a91c2";
+        res!(fs::write(&secret, nonce).map_err(|e| err!(e, "writing {:?}", secret; Test, IO)));
         res!(git(&root, &["init", "-q"]));
-        res!(put(&root, "probe", &escaper(&marker)));
+        res!(put(&root, "probe", &fmt!(
+            "import fs from 'node:fs';\n\
+            try {{ fs.writeFileSync({:?}, 'escaped\\n'); console.log('  FAIL wrote outside'); }} \
+            catch (e) {{ console.log(e.code === 'EACCES' ? '  ok   write refused' : '  FAIL write ' + e.code); }}\n\
+            try {{ console.log('  FAIL read ' + fs.readFileSync({:?}, 'utf8')); }} \
+            catch (e) {{ console.log(e.code === 'EACCES' ? '  ok   read refused' : '  FAIL read ' + e.code); }}\n",
+            fmt!("{}", marker.display()), fmt!("{}", secret.display()))));
         res!(git(&root, &["add", "dev/verify_probe.mjs"]));
         res!(git(&root, &["-c", "user.name=T", "-c", "user.email=t@t",
             "commit", "-q", "--no-verify", "-m", "probe"]));
         let a = res!(attempt(&root, "probe", &marker).await);
         assert!(a.refused.is_none(), "the committed case must run: {:?}", a.refused);
-        // The half that keeps this pair honest. Without it a guard that refused
-        // everything would leave the three tests below green while making the verb
-        // useless, which is the failure `REVIEW.md` was written about.
-        assert!(a.escaped,
-            "a verifier that IS the commit runs outside the fence, and this one wrote nothing \
-            outside the root -- so the three tests below prove nothing about a fence");
+        // Both checks pass only on the fence's own EACCES, so a count of two is the
+        // measurement and not merely a sign that the file ran.
+        assert!(a.said.contains("2 passed, 0 failed"),
+            "the committed verifier reached past its mark, or did not run: {}", a.said);
+        assert!(!a.escaped, "a committed verifier wrote outside its mark: {}", a.said);
+        assert!(!a.said.contains(nonce),
+            "a committed verifier read a file outside its mark: {}", a.said);
+        Ok(())
+    }
+
+    /// No link, shared-memory or named-need door takes a verifier past its mark.
+    ///
+    /// rc-b's lead proof, 11 Oct 2026: a symlink or hard link made inside the mark must not
+    /// read a file outside it, nor plant one outside it; `/dev/shm` is not lent at all; and the
+    /// browser's packages under `~/.red-pw/node_modules` are lent read-only, which the control
+    /// read shows, so the refused write is the fence's and not a missing folder.
+    #[tokio::test]
+    async fn a_verifier_reaches_past_its_mark_by_no_link_shm_or_named_need() -> Outcome<()> {
+        let root   = res!(tree("prov_links"));
+        let marker = PathBuf::from(fmt!("{}", root.join("..").join("prov_links.escaped").display()));
+        let secret = PathBuf::from(fmt!("{}", root.join("..").join("prov_links.secret").display()));
+        let nonce  = "THEIRS-5b0e72d4";
+        res!(fs::write(&secret, nonce).map_err(|e| err!(e, "writing {:?}", secret; Test, IO)));
+        let home = res!(std::env::var("HOME").map_err(|e| err!(e, "reading HOME"; Test, Configuration)));
+        let pw   = PathBuf::from(&home).join(".red-pw/node_modules");
+        let has_pw = pw.join("playwright-core").is_dir(); // only where the browser is installed
+        let probe = r#"import fs from 'node:fs';
+const no = (label, f) => { try { f(); console.log('  FAIL ' + label + ' was allowed'); return true; }
+	catch (e) { console.log((['EACCES', 'EPERM', 'EXDEV', 'EROFS'].includes(e.code) ? '  ok   ' : '  FAIL ')
+		+ label + ' ' + e.code); return false; } };
+no('read through a planted symlink', () => console.log('  leaked ' + fs.readFileSync('dev/planted', 'utf8')));
+no('symlink in, then read', () => { fs.symlinkSync('@SECRET@', 'dev/lnk');
+	console.log('  leaked ' + fs.readFileSync('dev/lnk', 'utf8')); });
+no('hard link in, then read', () => { fs.linkSync('@SECRET@', 'dev/hard');
+	console.log('  leaked ' + fs.readFileSync('dev/hard', 'utf8')); });
+no('hard link out', () => fs.linkSync('dev/verify_probe.mjs', '@MARKER@'));
+no('symlink out', () => fs.symlinkSync('x', '@MARKER@'));
+const shm = '/dev/shm/daimond-verify-probe-' + process.pid;
+if (no('shm write', () => fs.writeFileSync(shm, 'x'))) fs.unlinkSync(shm);
+no('shm list', () => fs.readdirSync('/dev/shm'));
+if (@PW@) {
+	const w = '@NEED@/daimond-verify-probe-' + process.pid;
+	if (no('named need write', () => fs.writeFileSync(w, 'x'))) fs.unlinkSync(w);
+	console.log(fs.readdirSync('@NEED@').includes('playwright-core') ? '  ok   named need read' : '  FAIL named need read');
+}
+"#
+            .replace("@SECRET@", &fmt!("{}", secret.display()))
+            .replace("@MARKER@", &fmt!("{}", marker.display()))
+            .replace("@NEED@", &fmt!("{}", pw.display()))
+            .replace("@PW@", if has_pw { "true" } else { "false" });
+        res!(git(&root, &["init", "-q"]));
+        res!(put(&root, "probe", &probe));
+        // A symlink already in the mark, as a checkout or an earlier turn could leave one.
+        let planted = root.join(DEV_DIR).join("planted");
+        res!(std::os::unix::fs::symlink(&secret, &planted)
+            .map_err(|e| err!(e, "planting {:?}", planted; Test, IO)));
+        res!(git(&root, &["add", "dev/verify_probe.mjs"]));
+        res!(git(&root, &["-c", "user.name=T", "-c", "user.email=t@t",
+            "commit", "-q", "--no-verify", "-m", "probe"]));
+        let a = res!(attempt(&root, "probe", &marker).await);
+        assert!(a.refused.is_none(), "the committed case must run: {:?}", a.refused);
+        let want = if has_pw { "9 passed, 0 failed" } else { "7 passed, 0 failed" };
+        assert!(a.said.contains(want), "a verifier reached past its mark: {}", a.said);
+        assert!(!a.escaped, "a verifier planted a file outside its mark: {}", a.said);
+        assert!(!a.said.contains(nonce), "a verifier read a file outside its mark: {}", a.said);
+        Ok(())
+    }
+
+    /// A verifier on a turn whose commands have no network reaches no port, loopback included.
+    ///
+    /// rc-b, 11 Oct 2026: with the read escape closed, an open network would have made a
+    /// committed verifier the way to post the mark's files out instead.  `run` is given the
+    /// network only when the turn's question says so; `verify` now takes the same answer, and
+    /// Landlock scopes TCP by port, never by host, so "no" means every TCP connect is refused.
+    /// The same verifier on a "yes" turn connects, so the refusal is the fence's and not a
+    /// broken probe.
+    #[tokio::test]
+    async fn a_verifier_without_the_turns_network_connects_nowhere() -> Outcome<()> {
+        let l = res!(std::net::TcpListener::bind("127.0.0.1:0")
+            .map_err(|e| err!(e, "binding a loopback listener"; Test, IO)));
+        let port = res!(l.local_addr().map_err(|e| err!(e, "reading its port"; Test, IO))).port();
+        let root   = res!(tree("prov_netless"));
+        let marker = PathBuf::from(fmt!("{}", root.join("..").join("prov_netless.escaped").display()));
+        res!(git(&root, &["init", "-q"]));
+        res!(put(&root, "probe", &fmt!(
+            "import net from 'node:net';\n\
+            const probe = (host, port, label) => new Promise(r => {{\n\
+            \tconst s = net.connect({{ host, port }});\n\
+            \ts.setTimeout(3000);\n\
+            \ts.on('connect', () => {{ console.log('  FAIL CONNECTED ' + label); s.destroy(); r(); }});\n\
+            \ts.on('error', e => {{ console.log((e.code === 'EACCES' ? '  ok   ' : '  FAIL ') + label + ' ' + e.code); r(); }});\n\
+            \ts.on('timeout', () => {{ console.log('  FAIL ' + label + ' timed out'); s.destroy(); r(); }});\n\
+            }});\n\
+            await probe('127.0.0.1', {}, 'loopback refused');\n\
+            await probe('192.0.2.1', 80, 'outside refused');\n", port)));
+        res!(git(&root, &["add", "dev/verify_probe.mjs"]));
+        res!(git(&root, &["-c", "user.name=T", "-c", "user.email=t@t",
+            "commit", "-q", "--no-verify", "-m", "probe"]));
+        let no = res!(attempt_net(&root, "probe", &marker, false).await);
+        assert!(no.refused.is_none(), "the committed case must run: {:?}", no.refused);
+        assert!(no.said.contains("2 passed, 0 failed") && !no.said.contains("CONNECTED"),
+            "a verifier on a turn without the network reached a port: {}", no.said);
+        let yes = res!(attempt_net(&root, "probe", &marker, true).await);
+        assert!(yes.said.contains("CONNECTED loopback"),
+            "the control could not connect on a turn WITH the network: {}", yes.said);
+        drop(l);
+        Ok(())
+    }
+
+    /// A verifier is handed run's environment, never the hand's own.
+    ///
+    /// rc-b F2, 11 Oct 2026: the hand inherits the browser's whole environment, so any
+    /// token in it reached a committed verifier and, on a networked turn, could leave.
+    /// The sentinel stands for that token; HOME, PATH and the unattended mark are the
+    /// names a verifier is given and must still arrive.
+    #[tokio::test]
+    async fn a_verifier_sees_none_of_the_hands_environment() -> Outcome<()> {
+        let sentinel = "DAIMOND_F2_SENTINEL_TOKEN";
+        // Safe in edition 2021; the name is this test's alone.
+        std::env::set_var(sentinel, "leaked-9c41");
+        let root   = res!(tree("prov_envless"));
+        let marker = PathBuf::from(fmt!("{}", root.join("..").join("prov_envless.escaped").display()));
+        res!(git(&root, &["init", "-q"]));
+        res!(put(&root, "probe", &fmt!(
+            "const e = process.env;\n\
+            console.log('  names ' + Object.keys(e).sort().join(','));\n\
+            console.log(e[{:?}] === undefined ? '  ok   sentinel absent' : '  FAIL sentinel present');\n\
+            for (const k of ['HOME', 'PATH', {:?}]) \
+            console.log(e[k] ? '  ok   ' + k + ' present' : '  FAIL ' + k + ' missing');\n",
+            sentinel, UNATTENDED_VAR)));
+        res!(git(&root, &["add", "dev/verify_probe.mjs"]));
+        res!(git(&root, &["-c", "user.name=T", "-c", "user.email=t@t",
+            "commit", "-q", "--no-verify", "-m", "probe"]));
+        let a = res!(attempt(&root, "probe", &marker).await);
+        std::env::remove_var(sentinel);
+        assert!(a.refused.is_none(), "the committed case must run: {:?}", a.refused);
+        assert!(a.said.contains("4 passed, 0 failed"),
+            "the verifier was handed the hand's environment, or lost a name it needs: {}", a.said);
+        Ok(())
+    }
+
+    /// A verifier writes nowhere `run` could not: a read-only mark, a read-only subtree of a
+    /// writable one, and a page too old to say are all read-only to it, and a deny holds.
+    ///
+    /// rc-b F3, 11 Oct 2026: `verifier_fence` made the first mark writable whatever the turn
+    /// said, so a committed verifier on a read-only mark could change it.  The open turn is
+    /// the control: the same probe writes there, so the refusals are the fence's.
+    #[tokio::test]
+    async fn a_verifier_keeps_the_turns_read_only_and_deny_rules() -> Outcome<()> {
+        let root   = res!(tree("prov_rofirst"));
+        let marker = PathBuf::from(fmt!("{}", root.join("..").join("prov_rofirst.escaped").display()));
+        let sub    = root.join("kept");
+        let hid    = root.join("hidden");
+        let free   = root.join("free");
+        for d in [&sub, &hid, &free] {
+            res!(fs::create_dir_all(d).map_err(|e| err!(e, "making {:?}", d; Test, IO)));
+        }
+        res!(fs::write(hid.join("s.txt"), "HID-55e1").map_err(|e| err!(e, "writing"; Test, IO)));
+        res!(git(&root, &["init", "-q"]));
+        let probe = |p: &Path| fmt!(
+            "try {{ fs.writeFileSync({:?}, 'x'); console.log('  FAIL WROTE {}'); }} \
+            catch (e) {{ console.log('  FAIL REFUSED {} ' + e.code); }}\n",
+            fmt!("{}", p.display()), p.display(), p.display());
+        res!(put(&root, "probe", &fmt!(
+            "import fs from 'node:fs';\n{}{}{}\
+            try {{ console.log('  FAIL READ ' + fs.readFileSync({:?}, 'utf8')); }} \
+            catch (e) {{ console.log('  FAIL UNREAD ' + e.code); }}\n\
+            console.log('  ok   ran');\n",
+            probe(&root.join("w.txt")), probe(&sub.join("w.txt")), probe(&free.join("w.txt")),
+            fmt!("{}", hid.join("s.txt").display()))));
+        res!(git(&root, &["add", "dev/verify_probe.mjs"]));
+        res!(git(&root, &["-c", "user.name=T", "-c", "user.email=t@t",
+            "commit", "-q", "--no-verify", "-m", "probe"]));
+        // Every observation is printed as a FAIL line because the report carries only those;
+        // the assertions below read them, not the counts.
+        let at = |p: &Path| fmt!("{}", p.display());
+        let wrote = |a: &Attempt, p: &Path| a.said.contains(&fmt!("WROTE {}", p.display()));
+        let clean = |p: &Path| { let _ = fs::remove_file(p); };
+        // Control: the open turn writes both places and reads the file.
+        let open = res!(attempt(&root, "probe", &marker).await);
+        assert!(wrote(&open, &root.join("w.txt")) && wrote(&open, &sub.join("w.txt"))
+            && open.said.contains("READ HID-55e1"), "the control could not write or read: {}", open.said);
+        clean(&root.join("w.txt")); clean(&sub.join("w.txt"));
+        // A read-only first mark.
+        let ro = TurnRules { ro: vec![at(&root)], deny: Vec::new() };
+        let a = res!(attempt_ruled(&root, "probe", &marker, false, Some(ro)).await);
+        assert!(a.refused.is_none(), "the read-only case must still run: {:?}", a.refused);
+        assert!(!wrote(&a, &root.join("w.txt")) && !wrote(&a, &sub.join("w.txt")),
+            "a verifier wrote into a read-only mark: {}", a.said);
+        clean(&root.join("w.txt")); clean(&sub.join("w.txt"));
+        // An older page, which sends no rules.
+        let a = res!(attempt_ruled(&root, "probe", &marker, false, None).await);
+        assert!(!wrote(&a, &root.join("w.txt")),
+            "a verifier from a page without rules wrote into the mark: {}", a.said);
+        clean(&root.join("w.txt"));
+        // A writable mark with a read-only subtree and a denied one. The hand carves such a
+        // mark one rule per child, as it does for `run`, so the root's own entries take no new
+        // file and the write is measured in a sibling directory.
+        let mixed = TurnRules { ro: vec![at(&sub)], deny: vec![at(&hid)] };
+        let a = res!(attempt_ruled(&root, "probe", &marker, false, Some(mixed)).await);
+        assert!(wrote(&a, &free.join("w.txt")), "the writable mark was not writable: {}", a.said);
+        assert!(!wrote(&a, &sub.join("w.txt")), "a read-only subtree was written: {}", a.said);
+        assert!(!a.said.contains("HID-55e1"), "a denied subtree was read: {}", a.said);
+        clean(&free.join("w.txt")); clean(&sub.join("w.txt"));
         Ok(())
     }
 
@@ -3434,8 +3859,9 @@ if (BREAK) console.log(`running with --break ${BREAK}`);
             Ok(s)  => s,
             Err(w) => { println!("REFUSED: {}", w); return Ok(()); },
         };
+        let prov = provenance(&res!(test_launcher()), &root, &script.file, Some(&OPEN_RULES)).await;
         println!("script  {:?}\nprov    {}\nbreaks  {:?}",
-            script.path, script.prov.phrase(), script.breaks);
+            script.path, prov.phrase(), script.breaks);
         let node = res!(on_path("node").ok_or_else(|| err!(
             "Every verifier is a Node script and there is no node on PATH."; Test, Missing)));
         let jdir = res!(tree("live_walk")).join("journal");
@@ -3449,6 +3875,9 @@ if (BREAK) console.log(`running with --break ${BREAK}`);
             world:  World::Infer,
             runner: None,
             cap:    Cap::detect(),
+            launcher: res!(test_launcher()),
+            net:    true,
+            rules:  Some(TurnRules::default()),
         };
         let (tx, mut rx) = tokio::sync::mpsc::channel(64);
         res!(Box::pin(conduct(job, tx)).await);
@@ -3470,7 +3899,8 @@ if (BREAK) console.log(`running with --break ${BREAK}`);
         // of things built and unreachable. So this one goes through `conduct`,
         // `once` and a real `execve`, and asks the child what it was actually given.
         let root   = res!(tree("prov_seat"));
-        let marker = root.join("..").join("prov_seat.saw");
+        // Inside the mark: the fence would refuse it one level up.
+        let marker = root.join("prov_seat.saw");
         let marker = PathBuf::from(fmt!("{}", marker.display()));
         res!(git(&root, &["init", "-q"]));
         res!(put(&root, "probe", &fmt!(
@@ -3576,15 +4006,15 @@ if (BREAK) console.log(`running with --break ${BREAK}`);
         assert!(no.contains("'run'"),
             "the refusal must name the tool that command goes to: {}", no);
         assert!(no.contains("commit"),
-            "the refusal must say what makes the unfenced run available: {}", no);
+            "the refusal must say what makes 'verify' take the file: {}", no);
         assert!(no.contains("browser"),
             "the refusal must say what the fenced route cannot do, or a daimon will read the \
             fenced run's failure as the verifier being broken: {}", no);
         Ok(())
     }
 
-    #[test]
-    fn a_verifier_that_is_a_symlink_is_not_the_commit_whatever_git_says() -> Outcome<()> {
+    #[tokio::test]
+    async fn a_verifier_that_is_a_symlink_is_not_the_commit_whatever_git_says() -> Outcome<()> {
         let root = res!(tree("prov_link"));
         res!(git(&root, &["init", "-q"]));
         // The target is an ordinary file inside the granted root, which every fenced
@@ -3599,25 +4029,27 @@ if (BREAK) console.log(`running with --break ${BREAK}`);
         res!(git(&root, &["add", "-A"]));
         res!(git(&root, &["-c", "user.name=T", "-c", "user.email=t@t",
             "commit", "-q", "--no-verify", "-m", "probe"]));
-        assert_eq!(Provenance::Changed(Change::Linked),
-            provenance(&root, "verify_probe.mjs"),
+        let prov = provenance(&res!(test_launcher()), &root, "verify_probe.mjs", Some(&OPEN_RULES)).await;
+        assert_eq!(Provenance::Changed(Change::Linked), prov,
             "a committed symlink read as the commit's own bytes");
-        let no = res!(unfenced_refusal(&root, "verify_probe.mjs").ok_or_else(|| err!(
+        let no = res!(unfenced_refusal(&prov, "verify_probe.mjs").ok_or_else(|| err!(
             "a committed symlink was allowed to run unfenced"; Test, Invalid)));
         assert!(no.contains("symbolic link"), "{}", no);
         Ok(())
     }
 
-    #[test]
-    fn membership_is_not_content_and_this_is_where_the_two_part() -> Outcome<()> {
+    #[tokio::test]
+    async fn membership_is_not_content_and_this_is_where_the_two_part() -> Outcome<()> {
+        let l = res!(test_launcher());
         let root = res!(tree("prov_parts"));
         res!(git(&root, &["init", "-q"]));
         res!(put(&root, "probe", "console.log('  ok   one');\n"));
         res!(git(&root, &["add", "dev/verify_probe.mjs"]));
         res!(git(&root, &["-c", "user.name=T", "-c", "user.email=t@t",
             "commit", "-q", "--no-verify", "-m", "probe"]));
-        assert_eq!(Provenance::Committed, provenance(&root, "verify_probe.mjs"));
-        assert!(unfenced_refusal(&root, "verify_probe.mjs").is_none());
+        let prov = provenance(&l, &root, "verify_probe.mjs", Some(&OPEN_RULES)).await;
+        assert_eq!(Provenance::Committed, prov);
+        assert!(unfenced_refusal(&prov, "verify_probe.mjs").is_none());
 
         // One appended comment. This is the case `REVIEW.md` §1.21 turns on: the index
         // goes on saying yes, and the bytes are the model's.
@@ -3630,8 +4062,53 @@ if (BREAK) console.log(`running with --break ${BREAK}`);
             .status().map_err(|e| err!(e, "ls-files"; Test, IO)));
         assert!(listed.success(),
             "the premise of this test is that git goes on naming an edited file");
-        assert_eq!(Provenance::Changed(Change::Edited), provenance(&root, "verify_probe.mjs"),
+        assert_eq!(Provenance::Changed(Change::Edited), provenance(&l, &root, "verify_probe.mjs", Some(&OPEN_RULES)).await,
             "the check followed the index rather than the bytes");
+        Ok(())
+    }
+
+    /// **The repository's config is the daimon's, so whatever it names runs fenced.**
+    ///
+    /// The 2026-10-11 review's F1: a fenced `run` can write the mark's `.git/config`, and
+    /// git runs the commands that config names while it reads the index.  Each of the
+    /// three doors below copies a file from a sibling "Diamond B" to a marker outside the
+    /// mark; asked from the hand unfenced, the copy lands.  Each also touches a file inside
+    /// the mark, which the fence allows, so a green run is not one where git simply never
+    /// consulted the config.
+    #[tokio::test]
+    async fn repository_config_runs_nothing_outside_the_fence() -> Outcome<()> {
+        let root   = res!(tree("prov_config"));
+        let b      = root.join("..").join("prov_config.b");
+        let _      = fs::remove_dir_all(&b);
+        res!(fs::create_dir_all(&b).map_err(|e| err!(e, "making {:?}", b; Test, IO)));
+        let secret = b.join("secret");
+        res!(fs::write(&secret, "B's own\n").map_err(|e| err!(e, "writing {:?}", secret; Test, IO)));
+        let marker = root.join("..").join("prov_config.pwned");
+        let _      = fs::remove_file(&marker);
+        let fired  = root.join(".fired");
+        res!(git(&root, &["init", "-q"]));
+        res!(put(&root, "probe", "console.log('  ok   one');\n"));
+        res!(git(&root, &["add", "dev/verify_probe.mjs"]));
+        res!(git(&root, &["-c", "user.name=T", "-c", "user.email=t@t",
+            "commit", "-q", "--no-verify", "-m", "probe"]));
+        // Written the way a daimon's `run` would: plain repository config, plus an
+        // attributes file to aim the filter and the diff driver at the verifier.
+        let cmd = fmt!("touch {} ; cat {} > {}", fired.display(), secret.display(), marker.display());
+        res!(git(&root, &["config", "core.fsmonitor", &cmd]));
+        res!(git(&root, &["config", "filter.x.clean", &fmt!("{} ; cat", cmd)]));
+        res!(git(&root, &["config", "diff.x.textconv", &fmt!("{} ; cat", cmd)]));
+        res!(git(&root, &["config", "alias.ls-files", &fmt!("!{}", cmd)]));
+        res!(fs::write(root.join(".gitattributes"), "dev/* filter=x diff=x\n")
+            .map_err(|e| err!(e, "writing attributes"; Test, IO)));
+        // A touch to the file's time, so git must look at the bytes rather than trust the
+        // index's stat, which is the path a filter runs on.
+        res!(put(&root, "probe", "console.log('  ok   one');\n"));
+        let _ = provenance(&res!(test_launcher()), &root, "verify_probe.mjs", Some(&OPEN_RULES)).await;
+        assert!(!marker.exists(),
+            "provenance ran repository config outside the fence: {:?} holds Diamond B's file",
+            marker);
+        assert!(fired.exists(),
+            "none of the configured commands ran at all, so this test proves nothing");
         Ok(())
     }
 
@@ -3714,8 +4191,9 @@ if (BREAK) console.log(`running with --break ${BREAK}`);
     ///
     /// It binds nothing: what is under test is the verb's half of the
     /// arrangement -- that a world is chosen, that its environment reaches the
-    /// verifier, and that `--down` is reached on every way out -- and a fixture
-    /// that started real servers would be measuring `dev/world.sh` instead.
+    /// verifier, and that the hand ends the world's group on every way out -- so
+    /// `--up` leaves one stand-in server (a `sleep`) in the group and writes its
+    /// pid down, and `--down` must never be asked for at all.
     ///
     /// # Arguments
     /// * `extra` - A line run inside `--up`, for the case where the world's own
@@ -3728,6 +4206,8 @@ if (BREAK) console.log(`running with --break ${BREAK}`);
             echo \"${{A#--}} $N\" >> \"$DAIMOND_WORLD_ROOT/actions.txt\"\n\
             if [ \"$A\" = \"--up\" ]; then\n\
             \t{}\n\
+            \tsleep 300 </dev/null >/dev/null 2>&1 &\n\
+            \techo $! > \"$DAIMOND_WORLD_ROOT/server.pid\"\n\
             \tmkdir -p \"$DAIMOND_WORLD_ROOT/w$N/world\"\n\
             \techo \"export DAIMOND_PORT=31337\"\n\
             \techo \"export DAIMOND_APP=http://localhost:31337\"\n\
@@ -3778,6 +4258,7 @@ if (BREAK) console.log(`running with --break ${BREAK}`);
         refused: Option<String>,	// the sentence, where the hand declined
         out:     String,			// the report
         actions: String,			// what the scripted world.sh was asked to do
+        standing: bool,				// its stand-in server outlived the sequence
     }
 
     /// Conducts a sequence over a fixture tree and says what came of it.
@@ -3815,6 +4296,9 @@ if (BREAK) console.log(`running with --break ${BREAK}`);
             world,
             runner: None,
             cap:    Cap::None,
+            launcher: res!(test_launcher()),
+            net:    true,
+            rules:  Some(TurnRules::default()),
         };
         let (tx, mut rx) = tokio::sync::mpsc::channel(64);
         res!(Box::pin(conduct(job, tx)).await);
@@ -3829,7 +4313,18 @@ if (BREAK) console.log(`running with --break ${BREAK}`);
         }
         let actions = fs::read_to_string(root.join(WORLD_SCRATCH).join("actions.txt"))
             .unwrap_or_default();
-        Ok(Ran { refused, out, actions })
+        // The stand-in server `--up` left, asked of the machine: gone, or a zombie
+        // nobody has reaped yet, is ended; anything else is a world left standing.
+        let server = fs::read_to_string(root.join(WORLD_SCRATCH).join("server.pid"))
+            .unwrap_or_default();
+        let server = server.trim();
+        let standing = !server.is_empty()
+            && match fs::read_to_string(fmt!("/proc/{}/stat", server)) {
+                Ok(st) => st.rsplit_once(')').map(|(_, t)| !t.trim_start().starts_with('Z'))
+                    .unwrap_or(true),
+                Err(_) => false,
+            };
+        Ok(Ran { refused, out, actions, standing })
     }
 
     #[tokio::test]
@@ -3854,8 +4349,9 @@ if (BREAK) console.log(`running with --break ${BREAK}`);
         assert!(r.out.contains("uncapped"),
             "the report does not say what the run was held under: {}", r.out);
         // Up, then down, and the order is the whole claim.
-        assert_eq!(vec!["up", "down"], verbs(&r.actions),
-            "the world was not taken down: {:?}", r.actions);
+        assert_eq!(vec!["up"], verbs(&r.actions),
+            "dev/world.sh was asked for more than --up: {:?}", r.actions);
+        assert!(!r.standing, "the world was not taken down (its server outlived the sequence): {:?}", r.actions);
         Ok(())
     }
 
@@ -3907,8 +4403,9 @@ if (BREAK) console.log(`running with --break ${BREAK}`);
             "an edited verifier ran unfenced"; Test, Invalid)));
         assert!(no.contains("stopped being the commit's"), "{}", no);
         // THE POINT: refused mid-sequence is still a way out, and the world took it.
-        assert_eq!(vec!["up", "down"], verbs(&r.actions),
-            "a sequence refused after the world came up left it standing: {:?}", r.actions);
+        assert_eq!(vec!["up"], verbs(&r.actions),
+            "dev/world.sh was asked for more than --up: {:?}", r.actions);
+        assert!(!r.standing, "a sequence refused after the world came up left it standing (its server outlived the sequence): {:?}", r.actions);
         assert!(no.contains("[world: 4"),
             "the refusal does not say what became of the world: {}", no);
         Ok(())
@@ -3923,8 +4420,9 @@ if (BREAK) console.log(`running with --break ${BREAK}`);
         let no = res!(r.refused.ok_or_else(|| err!(
             "a budget of one millisecond produced a report"; Test, Invalid)));
         assert!(no.contains("past the budget"), "{}", no);
-        assert_eq!(vec!["up", "down"], verbs(&r.actions),
-            "a spent budget left the world standing: {:?}", r.actions);
+        assert_eq!(vec!["up"], verbs(&r.actions),
+            "dev/world.sh was asked for more than --up: {:?}", r.actions);
+        assert!(!r.standing, "a spent budget left the world standing (its server outlived the sequence): {:?}", r.actions);
         Ok(())
     }
 
@@ -3949,14 +4447,18 @@ if (BREAK) console.log(`running with --break ${BREAK}`);
     }
 
     #[tokio::test]
-    async fn a_dropped_guard_takes_the_world_down_and_a_disarmed_one_does_not()
+    async fn a_dropped_guard_kills_the_group_and_never_runs_the_script()
         -> Outcome<()>
     {
-        // The path that survives a panic or an aborted task, where nothing else ran.
+        // The path that survives a panic or an aborted task. `dev/world.sh` is in the mark and
+        // a `Drop` cannot fence it, so the guard frees the lock and kills the group, and the
+        // script -- which a daimon can commit -- is never run from here.
         let root = res!(world_tree("world_guard",
             "console.log('  ok   it ran');\n", ""));
         let scratch = root.join(WORLD_SCRATCH);
         res!(fs::create_dir_all(&scratch).map_err(|e| err!(e, "making the scratch"; Test, IO)));
+        let lock = scratch.join("w41.lock");
+        res!(fs::write(&lock, "").map_err(|e| err!(e, "taking the lock"; Test, IO)));
         let up = WorldUp {
             n:       41,
             pgid:    0,	// no group: the fixture starts nothing, and 0 is never signalled
@@ -3966,20 +4468,19 @@ if (BREAK) console.log(`running with --break ${BREAK}`);
             run_id:  fmt!("w1-world"),
         };
         {
-            let g = WorldGuard::arm(&root, &up);
+            let g = WorldGuard::arm(&up);
             assert!(g.armed());
         }
-        assert_eq!("down 41\n", fs::read_to_string(scratch.join("actions.txt")).unwrap_or_default(),
-            "a dropped guard did not take the world down");
-        res!(fs::remove_file(scratch.join("actions.txt"))
-            .map_err(|e| err!(e, "clearing"; Test, IO)));
+        assert_eq!("", fs::read_to_string(scratch.join("actions.txt")).unwrap_or_default(),
+            "a dropped guard ran dev/world.sh outside the fence");
+        assert!(!lock.exists(), "a dropped guard left the world's lock");
+        res!(fs::write(&lock, "").map_err(|e| err!(e, "taking the lock again"; Test, IO)));
         {
-            let mut g = WorldGuard::arm(&root, &up);
+            let mut g = WorldGuard::arm(&up);
             g.disarm();
             assert!(!g.armed());
         }
-        assert_eq!("", fs::read_to_string(scratch.join("actions.txt")).unwrap_or_default(),
-            "a disarmed guard took a world down that the ordinary path had already taken");
+        assert!(lock.exists(), "a disarmed guard freed a lock the ordinary path owns");
         Ok(())
     }
 
@@ -4030,10 +4531,9 @@ if (BREAK) console.log(`running with --break ${BREAK}`);
             file:   fmt!("verify_probe.mjs"),
             path:   PathBuf::from("/w/dev/verify_probe.mjs"),
             breaks: Vec::new(),
-            prov:   Provenance::Committed,
         };
         let clean = pass_of("clean", "  ok   one\n");
-        let txt = report(&script, &[(clean, None)],
+        let txt = report(&script, &Provenance::Committed, &[(clean, None)],
             &Verdict::Unproven { passed: 1, failed: 0, declared: Vec::new() }, &[],
             "[world: none]");
         let first = res!(txt.lines().next().ok_or_else(|| err!("empty report"; Test, Invalid)));
@@ -4061,7 +4561,8 @@ if (BREAK) console.log(`running with --break ${BREAK}`);
             "commit", "-q", "--no-verify", "-m", "probe"]));
         let script = res!(resolve(&root, "probe").map_err(|w| err!("{}", w; Test, Invalid)));
         assert_eq!(vec![fmt!("swap")], script.breaks);
-        assert_eq!(Provenance::Committed, script.prov);
+        assert_eq!(Provenance::Committed,
+            provenance(&res!(test_launcher()), &root, &script.file, Some(&OPEN_RULES)).await);
         let node = res!(on_path("node").ok_or_else(|| err!("no node"; Test, Missing)));
         let jdir = root.join("..").join("prov_swap-journal");
         let jdir = PathBuf::from(fmt!("{}", jdir.display()));
@@ -4080,6 +4581,9 @@ if (BREAK) console.log(`running with --break ${BREAK}`);
             world:  World::None,
             runner: None,
             cap:    Cap::None,
+            launcher: res!(test_launcher()),
+            net:    true,
+            rules:  Some(TurnRules::default()),
         };
         let (tx, mut rx) = tokio::sync::mpsc::channel(64);
         res!(Box::pin(conduct(job, tx)).await);

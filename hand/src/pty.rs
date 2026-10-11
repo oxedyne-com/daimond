@@ -151,10 +151,7 @@ use tokio::{
         unix::AsyncFd,
         AsyncWriteExt,
     },
-    process::{
-        Child,
-        Command,
-    },
+    process::Child,
     sync::mpsc::{
         error::TrySendError,
         Receiver,
@@ -459,7 +456,7 @@ impl PtySessions {
         // Against the fence the caller sent, before the hand widens it: the
         // scratch and the terminal are roots the caller did not ask for, and a
         // spec that grants nothing must still read as granting nothing.
-        let dir = match vet_cwd(&cwd, &fence) {
+        let dir = match vet_cwd(&cwd, &fence, None) {
             Vetted::Ok(p)       => p,
             Vetted::Refused(s)  => return self.refuse(&id, &tx, s).await,
         };
@@ -526,13 +523,7 @@ impl PtySessions {
             meter: false,
         }));
 
-        let mut cmd = Command::new(res!(self.launcher.prog()));
-        cmd.args(self.launcher.args());
-        cmd.current_dir(&dir);
-        cmd.env_clear();
-        for (k, v) in self.launcher.env() {
-            cmd.env(k, v);
-        }
+        let mut cmd = res!(crate::exec::launcher_command(&self.launcher, &dir));
 
         // Standard input is the launcher's channel, exactly as it is for a piped
         // run: the plan arrives there, and the launcher replaces the descriptor

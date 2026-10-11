@@ -124,6 +124,13 @@ pub struct PtySize {
     pub rows: u16,
 }
 
+/// The read-only and deny lists of a turn's command fence, as [`Req::Verify`] carries them.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct TurnRules {
+    pub ro:   Vec<String>,
+    pub deny: Vec<String>,
+}
+
 /// Which of a verifier's declared breaks a [`Req::Verify`] should run.
 ///
 /// **Not a free string, and that is the point.**  A break is a mode the verifier
@@ -580,6 +587,19 @@ pub enum Req {
         /// reserves; the page says only whether one is wanted.  An older page
         /// sends no field at all and gets [`World::Infer`].
         world:      World,
+        /// Whether the verifier and its world may reach the network.
+        ///
+        /// The page sends what `run` would get on the same turn, decided by the
+        /// same question, so a verifier is never a wider door out than a command.
+        /// Absent is a page older than the field, and gets no network: the fence
+        /// fails closed rather than open.
+        net:        bool,
+        /// The read-only and deny rules of the fence `run` gets on the same turn.
+        ///
+        /// rc-b F3, 11 Oct 2026: without them a verifier wrote into a read-only mark.
+        /// `None` is a page older than the field, and its verifier gets the granted
+        /// tree read-only: narrower, never wider, than what that page's `run` gets.
+        rules:      Option<TurnRules>,
         /// The WHOLE sequence's wall-clock budget, not one run's.
         ///
         /// The page arms one timer from this, so it has to cover every run the

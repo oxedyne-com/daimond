@@ -16,10 +16,11 @@
 //! ask it to stop, and ask what is attached.
 //!
 //! **The fence is composed here, and nowhere else.**  A terminal session runs a
-//! real program on the user's machine, so it goes through the same fence and
-//! the same grant as `Tool::Run`: [`pty_request`] walks the identical path --
-//! ask the hand what machine it is on, refuse a hand that cannot fence,
-//! [`diamond_bounds`] then [`fence_spec`] -- and hands back the wire's own
+//! real program on the user's machine, so it goes through the same composer
+//! as `Tool::Run`, though not to the same size: [`pty_request`] asks the hand
+//! what machine it is on, refuses a hand that cannot fence, then composes
+//! [`terminal_bounds`] -- the machine grant, every deny kept, since 2026-08-26
+//! -- through [`fence_spec_surfaced`], and hands back the wire's own
 //! `open` request with the compartment already in it.  The page asks for that
 //! request and passes it through; it composes nothing, because a page that
 //! composed a fence would be a second opinion about what a program may touch,
@@ -41,7 +42,6 @@ use crate::llm::{
     json_escape,
 };
 use crate::tools::{
-    diamond_bounds,
     fence_enforced,
     fence_spec_surfaced,
     normalise,
@@ -50,6 +50,7 @@ use crate::tools::{
     Kit,
     Machine,
     Surface,
+    terminal_bounds,
 };
 use crate::wasm::js_str;
 use crate::wasm::refusal;
@@ -378,48 +379,18 @@ pub async fn pty_request(ask_json: String) -> String {
     let attached  = extract_json_string_array(ask, "attached").unwrap_or_default();
     let read_only = extract_json_string_array(ask, "read_only").unwrap_or_default();
     // A TERMINAL IS THE USER AT A KEYBOARD, NOT A DAIMON, so its fence is the machine grant
-    // and not this Diamond's attachments. The owner asked for it in those words on 2026-08-26:
-    // *"I don't really want the terminal to be daimon and chat workspace bound, I want it to be
-    // able to roam over the browser and machine workspaces of the user"*.
+    // and not this Diamond's attachments (owner, 2026-08-26). The composition, and why each part
+    // of it is safe, is `tools::terminal_bounds`; a daimon's `run` never reaches it.
     //
-    // Nothing is handed to a model by it. No `Tool` opens a terminal or types into one, so a
-    // daimon cannot reach this surface at all -- which is the whole reason the widening is safe
-    // here and would not be in `Tool::Run`. The boundary that remains is the one the user
-    // actually chose: the folder they granted the hand.
-    //
-    // ONLY THE ALLOW-LIST GOES. A folder the user marked read-only keeps its `Bound::NoWrite`,
-    // and every standing credential denial `fence_spec_surfaced` applies -- the hand's journal, the
-    // daimon's own key, `.gnupg`, `.aws`, `.config/oxedyne` and the rest -- is untouched. The one
-    // exception is `~/.ssh`: this surface passes `Surface::Terminal`, which lifts THAT deny alone so
-    // a user can `ssh` from the terminal as themselves (see `tools::Surface`). With no allow-list
-    // left, `fence_spec_surfaced` reads the turn as unscoped and grants the granted root, which is
-    // exactly the ask.
-    //
-    // `Bound::Nowhere` goes with them: it means "no Diamond at all", and a terminal that
-    // belongs to no Diamond is now an ordinary terminal rather than a refusal.
-    let mut bounds: Vec<Bound> = diamond_bounds(&own_dir, &attached, &read_only)
-        .into_iter()
-        .filter(|b| !matches!(b,
-            Bound::OnlyUnder(_) | Bound::OnlyWriteUnder(_) | Bound::Nowhere))
-        .collect();
-    // The toolchains the user granted this Diamond, and nothing else. The names
-    // come from what they decided, never from `argv`: a fence that widened
-    // itself to fit the program asked for would be a fence the caller chooses,
-    // and the whole arrangement rests on its not being one.
-    // `terminal_toolkit_bounds` and not `toolkit_bounds`, and the difference is the whole of
-    // the trust boundary: the Remote toolkit lends an ssh key, and an ssh reaches a shell on
-    // another machine that nothing here fences. A person opened this surface and is typing into
-    // it; a daimon's `run` never can, because `toolkit_bounds` -- which is what every other
-    // caller uses -- drops the rule. See `Toolkit::terminal_only`.
-    //
-    // The second argument is the MACHINE's answer and not this Diamond's. `ssh` is not a thing a
-    // Diamond holds -- a terminal is not tied to one either -- so the posture is the user's act
-    // on this computer, `install.sh --remote`, reported in `hello` as `remote:ready` and read
-    // here off `Machine`. No Diamond grants it, and one that never had it granted opens a
-    // terminal that can ssh exactly like every other.
-    bounds.extend(crate::tools::terminal_toolkit_bounds(
+    // The toolchains the user granted this Diamond, and nothing else: the names come from what
+    // they decided, never from `argv`. The second argument is the MACHINE's answer --
+    // `install.sh --remote`, reported in `hello` as `remote:ready` -- and not this Diamond's.
+    let bounds: Vec<Bound> = terminal_bounds(
+        &own_dir,
+        &attached,
+        &read_only,
         &extract_json_string_array(ask, "toolkits").unwrap_or_default(),
-        machine.remote));
+        machine.remote);
 
     // A tainted session loses the network, the same rule `egress_check` applies
     // to a URL -- and now the same rule the user's PERMISSION MODE governs. The
@@ -505,7 +476,9 @@ pub async fn pty_request(ask_json: String) -> String {
     // The hand refuses a working directory outside the fence, and so does the
     // extension. Refused here as well, where the sentence can still name the
     // folder the caller asked for rather than the absolute path two layers down.
-    if !inside(&cwd, &fence.rw) && !inside(&cwd, &fence.ro) {
+    // A denied folder is outside it too: since the Terminal's fence became the
+    // whole grant (9348afc4), `.daimond` sits inside `rw` and only the deny says no.
+    if (!inside(&cwd, &fence.rw) && !inside(&cwd, &fence.ro)) || inside(&cwd, &fence.deny) {
         return refused(&fmt!(
             "a terminal was asked for in \"{}\", which is outside what this Diamond may touch. A \
             session starts inside the folders the user attached to it.", cwd));

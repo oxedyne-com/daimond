@@ -489,11 +489,13 @@ const WASM_PATCHES = {
 	'w-nofence': [PTY_RS, 'if !fence_enforced(&machine.caps) {', 'if false {'],
 	'w-noroot': [PTY_RS, 'if !machine.rooted() {', 'if false {'],
 	'w-nopair': [PTY_RS, 'if extract_json_bool(&st, "paired") != Some(true) {', 'if false {'],
-	'w-nocwd': [PTY_RS, 'if !inside(&cwd, &fence.rw) && !inside(&cwd, &fence.ro) {', 'if false {'],
-	// THE DEFECT ITSELF, put back. Without the filter, `abs()` maps
-	// `diamonds/d1` under the granted root and the fence names a directory
-	// nothing creates — which is what shipped, and what the hand refused.
-	'w-storefence': [TOOLS_RS, '        .filter(|p| !is_store_path(p))\n', ''],
+	'w-nocwd': [PTY_RS, 'if (!inside(&cwd, &fence.rw) && !inside(&cwd, &fence.ro)) || inside(&cwd, &fence.deny) {',
+		'if false {'],
+	// A read-only mark dropped from the Terminal's whole-grant fence, which is what
+	// `fence_spec` did until 11 Oct 2026: an unscoped fence carved no `NoWrite`.
+	// (`w-storefence` went with 9348afc4: the Terminal composes no allow-list, so a
+	// store path cannot reach its fence; verify_scope.mjs pins it on a command's.)
+	'w-roterm': [TOOLS_RS, '            !w.is_empty() && !is_store_path(w)\n', '            false\n'],
 	// And the other half: with the store `cwd` taken literally, a terminal is
 	// asked for in the Diamond's own directory and refused as outside its own
 	// fence, however many folders are attached to it.
@@ -1012,8 +1014,11 @@ const ASK = {
 ///
 /// # Arguments
 /// * `ask` - What the panel would send, with anything overridden.
-/// * `st` - What the relay's `status()` should answer, or null for the real one.
+/// * `st` - What the relay's `status()` should answer; [`FENCED`] when not given. The real
+///   hand is not asked here: at this point it may still be waiting on its approval window,
+///   and a check answered by "still waiting" is about the window and not the composition.
 async function request(ask, st) {
+	st = st || FENCED;
 	return await page.evaluate(async ([ask, st]) => {
 		const real = window.DaimondHand.status;
 		if (st) window.DaimondHand.status = () => Promise.resolve(JSON.stringify(st));
@@ -1030,14 +1035,30 @@ const FENCED = {
 /// Every pty_request property, as one function so the same code answers for the
 /// whole wasm and for each broken one.
 const REQ_CHECKS = {
-	'composes the wire\'s own open, with the fence in it': async () => {
+	// THE 26 AUG DESIGN (9348afc4, owner): a terminal is the user at a keyboard, so
+	// its fence is the whole grant and not the Diamond's folders. No `Tool` reaches
+	// it; verify_scope.mjs asserts that a daimon's own command never gets this fence.
+	'composes the wire\'s own open, its fence the whole grant and not the Diamond\'s folders': async () => {
 		const r = await request(ASK);
 		return r.t === 'open' && !!r.fence
-			&& r.fence.rw.indexOf(`${GRANT}/${WORK_DIR}`) >= 0
-			&& r.fence.rw.indexOf(`${GRANT}/shared`) < 0
-			&& r.fence.ro.indexOf(`${GRANT}/shared`) >= 0
+			&& r.fence.rw.indexOf(GRANT) >= 0
+			&& r.fence.rw.indexOf(`${GRANT}/${WORK_DIR}`) < 0
 			&& r.fence.deny.indexOf(`${GRANT}/.daimond`) >= 0
 			&& r.size.cols === 100 && r.size.rows === 30;
+	},
+	// Only the allow-list goes: a folder the user marked read-only stays so.
+	'keeps a folder the user marked read-only read-only': async () => {
+		const r = await request(ASK);
+		return !!r.fence && r.fence.ro.indexOf(`${GRANT}/shared`) >= 0
+			&& r.fence.rw.indexOf(`${GRANT}/shared`) < 0;
+	},
+	// `.ssh` is lifted here and nowhere else; every other secret stays denied.
+	'lifts the user\'s own .ssh alone, every other secret still denied': async () => {
+		const r = await request(ASK, FENCED);
+		const home = os.homedir();
+		return !!r.fence && r.fence.deny.indexOf(`${home}/.ssh`) < 0
+			&& r.fence.deny.indexOf(`${home}/.gnupg`) >= 0
+			&& r.fence.deny.indexOf(`${home}/.config/oxedyne`) >= 0;
 	},
 	// The Diamond's own directory is in the browser's storage, so a fence naming
 	// it names a path nothing on this machine ever makes — and the hand refuses
@@ -1048,18 +1069,16 @@ const REQ_CHECKS = {
 		return JSON.stringify(r.fence).indexOf(`${GRANT}/diamonds`) < 0;
 	},
 	// And it still has to start somewhere. The panel asks for the Diamond, which
-	// is nowhere; `tools::start_dir` answers with the first folder attached to
-	// it, the same rule a command starts by.
-	'starts the session in the attached folder, though the panel asked for the Diamond': async () => {
+	// is nowhere on this disk; `tools::start_dir` answers from bounds with no
+	// allow-list, which is the grant itself.
+	'starts the session at the grant, though the panel asked for the Diamond': async () => {
 		const r = await request(ASK);
-		return r.cwd === `${GRANT}/${WORK_DIR}`;
+		return r.cwd === GRANT;
 	},
-	// A wall with a door in it. This refusal is shown to the USER verbatim, in
-	// the Terminal panel, so it has to name the thing they can do about it.
-	'refuses a Diamond with nothing attached, and says to attach a folder': async () => {
+	// A Diamond with nothing attached is an ordinary terminal now, not a wall.
+	'opens an ordinary terminal for a Diamond with nothing attached': async () => {
 		const r = await request(Object.assign({}, ASK, { attached: [], read_only: [] }));
-		return !!r.refused && !r.t && /attach/i.test(r.refused)
-			&& /Workspace panel/.test(r.refused);
+		return r.t === 'open' && !r.refused && r.fence.rw.indexOf(GRANT) >= 0;
 	},
 	'sends no TERM, which the hand sets and refuses a caller for naming': async () => {
 		const r = await request(ASK);
@@ -1125,9 +1144,11 @@ for (const name of Object.keys(REQ_CHECKS)) {
 	const huge = await request(Object.assign({}, ASK, { cols: 99999, rows: 0 }));
 	check('pty_request holds the size to what the wire can carry',
 		huge.size.cols === 2000 && huge.size.rows === 24, JSON.stringify(huge.size));
+	// A terminal that belongs to no Diamond is an ordinary terminal (9348afc4).
 	const nowhere = await request({ own_dir: '', attached: [], read_only: [], cwd: '' });
-	check('pty_request refuses a Diamond whose bounds name nowhere',
-		!!nowhere.refused && !nowhere.t, JSON.stringify(nowhere).slice(0, 120));
+	check('pty_request opens an ordinary terminal for a page with no Diamond',
+		nowhere.t === 'open' && !nowhere.refused && nowhere.fence.rw.indexOf(GRANT) >= 0,
+		JSON.stringify(nowhere).slice(0, 120));
 	const win = await request(ASK, Object.assign({}, FENCED, { os: 'windows' }));
 	check('pty_request refuses a machine with no pseudo-terminals',
 		!!win.refused && /Windows/.test(win.refused), JSON.stringify(win).slice(0, 120));
@@ -1294,11 +1315,19 @@ const stripped = await Promise.all([page.evaluate(async (req) => {
 	try { await DaimondHand.send(bare); }
 	catch (e) { sent = 'send rejected: ' + ((e && e.message) || e); }
 	await new Promise((r) => setTimeout(r, 2500));
+	// Closed before the id is let go, so section 3 types at the session it opened.
+	await DaimondHand.send({ t: 'signal', id: bare.id, sig: 'term' }).catch(() => {});
+	await new Promise((r) => setTimeout(r, 300));
 	off();
 	return sent || heard.join(' | ');
 }, kitreq), allow()]).then((r) => r[0]);
-check('and the same fence with no toolchain named is refused, in the extension\'s words',
-	/granted no toolchain/.test(stripped), String(stripped).slice(0, 200));
+// R1 (ef3f8814): a terminal drops every toolchain folder that is absent on this
+// machine, named or not. The ceiling admits ~/.config/git whether or not it
+// exists, so before the fix an unnamed toolchain was refused for a folder that
+// was not there; now the fence opens and the toolchain is simply not lent.
+check('and the same fence with no toolchain named opens, its absent toolchain folders dropped',
+	/opened/.test(stripped) && !/refused|error|send rejected/.test(stripped),
+	String(stripped).slice(0, 200));
 
 // ── §1.14, asked of the real hand, with nothing stood in for ────
 //
@@ -1344,13 +1373,27 @@ if (opened.id) {
 	check('what is typed reaches the program, which answers it',
 		/sum-42/.test(SAW), JSON.stringify(SAW.slice(-120)));
 
-	SAW = await typed('cat hello.txt\n');
+	// The session starts at the grant (9348afc4), so the Diamond's file is named by its folder.
+	SAW = await typed(`cat ${WORK_DIR}/hello.txt\n`);
 	check('the session can read inside the fence',
 		/inside the fence/.test(SAW), JSON.stringify(SAW.slice(-160)));
 
 	SAW = await typed('cat .daimond/secret.txt 2>&1 | tail -1\n');
 	check('and cannot read the folder the fence denies',
 		!/out of bounds/.test(SAW), JSON.stringify(SAW.slice(-200)));
+
+	// A folder the user marked read-only is read-only to the person at the keyboard too
+	// (9348afc4 keeps it so): the write is refused by the kernel, and nothing lands. The
+	// same write into the Diamond's own folder is the control, so the refusal is the fence's.
+	const roProbe = (dir, n) => `echo x > ${dir}/ro-probe; test -e ${dir}/ro-probe `
+		+ `&& echo "W${n}-$((1+1))-WROTE" || echo "W${n}-$((2+2))-HELD"\n`;
+	SAW = await typed(roProbe(`${GRANT}/${WORK_DIR}`, 1));
+	const roCtl = SAW;
+	SAW = await typed(roProbe(`${GRANT}/shared`, 2));
+	check('and cannot write into a folder the user marked read-only (its own folder takes the write)',
+		/W1-2-WROTE/.test(roCtl) && /W2-4-HELD/.test(SAW)
+			&& !fs.existsSync(path.join(GRANT, 'shared/ro-probe')),
+		JSON.stringify(roCtl.slice(-80)) + ' / ' + JSON.stringify(SAW.slice(-160)));
 
 	// ── What a fenced terminal cannot reach, and what that costs ────
 	//
@@ -1384,9 +1427,47 @@ if (opened.id) {
 	// filter and would work -- but nothing here can reach that machine, and no
 	// multiplexer can be started on this side either. A verifier that only ever
 	// ran `echo` could not have told anyone that.
-	SAW = await typed('ssh -o BatchMode=yes -o ConnectTimeout=3 127.0.0.1 true 2>&1 | tail -2\n', 6000);
-	check('ssh cannot read the keys, so a terminal cannot reach another machine',
-		/Host key verification failed|hostkeys_foreach failed/.test(SAW), JSON.stringify(SAW.slice(-200)));
+	// R2 (d752a277): the user's own ~/.ssh stays unreadable (it is outside every
+	// grant this terminal has), and the terminal reaches
+	// another machine only through Daimond's own ssh, lent by the Remote toolchain.
+	// Each answer is prefixed by sed with a word the shell COMPOSES ('SS''H' is
+	// typed, 'SSH' is printed), so the echo of what was typed cannot pass.
+	SAW = await typed('ls ~/.ssh 2>&1 | tail -1 | sed "s/^/SS""HLS: /"\n');
+	check('the user\'s own ~/.ssh cannot be read from a terminal',
+		/SSHLS: .*Permission denied/.test(SAW), JSON.stringify(SAW.slice(-200)));
+
+	SAW = await typed('command -v ssh | sed "s/^/WH""ICH: /"\n');
+	check('and ssh in a terminal is Daimond\'s own, from the Remote toolchain',
+		/WHICH: \S*\/\.config\/oxedyne\/daimond-hand\/bin\/ssh/.test(SAW), JSON.stringify(SAW.slice(-200)));
+
+	// The Remote grant is a terminal's alone. A raw command sent down the link
+	// naming it -- the toolchain and its folders in the fence -- is refused by
+	// the hand and never starts: no 'started', and its sentinel never written.
+	const RAN = path.join(GRANT, 'remote-exec-ran');
+	try { fs.unlinkSync(RAN); } catch (e) { /* absent */ }
+	const HOME = os.homedir();
+	const remoteExec = await Promise.all([page.evaluate(async ([root, ran, home]) => {
+		const id = 'remote-exec';
+		const heard = [];
+		const off = DaimondHand.subscribe(id, (m) => heard.push(
+			m.t + (m.t === 'refused' || m.t === 'error' ? ': ' + (m.reason || m.message || '') : '')));
+		let sent = '';
+		try {
+			await DaimondHand.send({
+				t: 'exec', id, argv: ['/bin/sh', '-c', 'touch ' + ran], cwd: root,
+				env: [], stdin: null, timeout_ms: 5000, capture: 'both', toolkits: ['remote'],
+				fence: { rw: [root], deny: [], net: false, ro: [
+					home + '/.config/oxedyne/daimond-hand/bin',
+					home + '/.config/oxedyne/daimond-hand/ssh'] },
+			});
+		} catch (e) { sent = 'send rejected: ' + ((e && e.message) || e); }
+		await new Promise((r) => setTimeout(r, 2500));
+		off();
+		return (sent ? sent + ' | ' : '') + heard.join(' | ');
+	}, [GRANT, RAN, HOME]), allow()]).then((r) => r[0]);
+	check('and a raw command granted the Remote toolchain is refused and never starts',
+		/refused: .*Remote toolchain/.test(remoteExec) && !/started|ended/.test(remoteExec)
+		&& !fs.existsSync(RAN), String(remoteExec).slice(0, 300));
 
 	SAW = await typed('tmux new-session -d -s edge 2>&1 | tail -1\n');
 	check('and tmux cannot open its socket, so nothing here can be made to persist',
@@ -1577,16 +1658,13 @@ await provedWasm('a tainted session loses the network', 'w-tainted',
 	'a tainted session loses the network');
 await provedWasm('a toolkit is never inferred from argv', 'w-argvkit',
 	'a toolkit comes from what the user granted, never from argv');
-// The defect that shipped, put back in the file it shipped from. `w-storefence`
-// is the fence mapping a Diamond's own directory onto the disk again, which is
-// what the hand refused the whole spec over; `w-storecwd` is a terminal taking
-// the panel's store `cwd` literally and asking for a session outside its own
-// fence. Both of them made every Diamond terminal refuse, and this file was
-// green through all of it.
-await provedWasm('the fence never names Daimond\'s own storage', 'w-storefence',
-	'names no path inside Daimond\'s own storage, which is not on this disk');
-await provedWasm('a session starts where the Diamond actually is', 'w-storecwd',
-	'starts the session in the attached folder, though the panel asked for the Diamond');
+// `w-roterm` is the Terminal's whole-grant fence dropping a read-only mark, which
+// shipped from 9348afc4 to 11 Oct 2026; `w-storecwd` is a terminal taking the
+// panel's store `cwd` literally and starting a session in a folder nothing makes.
+await provedWasm('a read-only mark survives the whole-grant fence', 'w-roterm',
+	'keeps a folder the user marked read-only read-only');
+await provedWasm('a session starts on the disk, never in Daimond\'s storage', 'w-storecwd',
+	'starts the session at the grant, though the panel asked for the Diamond');
 
 usingPkg = '';
 breaking = '';

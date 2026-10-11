@@ -44,6 +44,7 @@ use crate::wire::{
     RunState,
     Sig,
     Stream,
+    TurnRules,
     World,
     CHUNK_MAX,
     FRAME_MAX,
@@ -578,6 +579,24 @@ fn strs_field(obj: &Dat, what: &str, key: &str) -> Outcome<Vec<String>> {
 /// * `obj` - The decoded object.
 /// * `what` - The message being read, for the error.
 /// * `key` - The field wanted.
+fn turn_rules_of(obj: &Dat) -> Outcome<Option<TurnRules>> {
+    let mut seen = false;
+    for k in ["ro", "deny"] {
+        match res!(obj.map_get(&Dat::Str(fmt!("{}", k)))) {
+            None							=> {},
+            Some(Dat::Opt(b)) if b.is_none()	=> {},
+            Some(_)							=> seen = true,
+        }
+    }
+    if !seen {
+        return Ok(None);
+    }
+    Ok(Some(TurnRules {
+        ro:   res!(opt_strs_field(obj, "verify", "ro")),
+        deny: res!(opt_strs_field(obj, "verify", "deny")),
+    }))
+}
+
 fn opt_strs_field(obj: &Dat, what: &str, key: &str) -> Outcome<Vec<String>> {
     match res!(obj.map_get(&Dat::Str(key.to_string()))) {
         Some(_) => strs_field(obj, what, key),
@@ -1225,7 +1244,7 @@ fn req_dat(req: &Req) -> Dat {
                 },
             }
         },
-        Req::Verify { id, name, root, breaks, world, timeout_ms } => omapdat!{
+        Req::Verify { id, name, root, breaks, world, net, rules, timeout_ms } => omapdat!{
             "t"				=> "verify",
             "id"			=> Dat::Str(id.clone()),
             "name"			=> Dat::Str(name.clone()),
@@ -1236,6 +1255,15 @@ fn req_dat(req: &Req) -> Dat {
                 _		=> Dat::Opt(Box::new(None)),
             },
             "world"			=> Dat::Str(world.word().to_string()),
+            "net"			=> Dat::Bool(*net),
+            "ro"			=> match rules {
+                Some(r)	=> strs(&r.ro),
+                None	=> Dat::Opt(Box::new(None)),
+            },
+            "deny"			=> match rules {
+                Some(r)	=> strs(&r.deny),
+                None	=> Dat::Opt(Box::new(None)),
+            },
             "timeout_ms"	=> *timeout_ms,
         },
         Req::File { id, op, cwd, fence, toolkits } => omapdat!{
@@ -1440,6 +1468,14 @@ pub fn req_of_json(txt: &str) -> Outcome<Req> {
             root:       res!(opt_str_field(&obj, "verify", "root")).unwrap_or_default(),
             breaks:     res!(breaks_of(&obj)),
             world:      res!(world_of(&obj)),
+            // Absent fails closed: a page that predates the field said nothing about the
+            // network, and nothing is not a yes.
+            net:        match res!(obj.map_get(&Dat::Str(fmt!("net")))) {
+                Some(_)	=> res!(bool_field(&obj, "verify", "net")),
+                None	=> false,
+            },
+            // Absent (or null) on both is a page older than the field; see `TurnRules`.
+            rules:      res!(turn_rules_of(&obj)),
             timeout_ms: res!(safe_int_field(&obj, "verify", "timeout_ms")),
         }),
         "file" => Ok(Req::File {
@@ -2389,6 +2425,8 @@ mod tests {
                 root:       fmt!("/w/repo"),
                 breaks:     Breaks::All,
                 world:      World::Infer,
+                net:        true,
+                rules:      Some(TurnRules { ro: vec![fmt!("/w/repo/ro")], deny: vec![fmt!("/home/u/.ssh")] }),
                 timeout_ms: 1_200_000,
             },
             Req::Verify {
@@ -2397,6 +2435,8 @@ mod tests {
                 root:       String::new(),
                 breaks:     Breaks::One(fmt!("nolinks")),
                 world:      World::Stand,
+                net:        false,
+                rules:      None,
                 timeout_ms: 60_000,
             },
             Req::Verify {
@@ -2405,6 +2445,8 @@ mod tests {
                 root:       fmt!("/w/repo/sub"),
                 breaks:     Breaks::None,
                 world:      World::None,
+                net:        false,
+                rules:      Some(TurnRules { ro: vec![fmt!("/w/repo/ro")], deny: vec![fmt!("/home/u/.ssh")] }),
                 timeout_ms: SAFE_INT_MAX,
             },
             Req::Signal { id: fmt!("run-1"), sig: Sig::Term },
@@ -2641,8 +2683,32 @@ mod tests {
             root:       String::new(),
             breaks:     Breaks::One(fmt!("x")),
             world:      World::Infer,
+            net:        false,
+            rules:      None,
             timeout_ms: 1000,
         }, res!(req_of_json(good)));
+        Ok(())
+    }
+
+    /// A verify's read-only and deny rules: absent or null is an older page (`None`), and
+    /// either list present makes the rules present, the other then empty.
+    #[test]
+    fn a_verify_carries_the_turns_rules_and_an_older_page_carries_none() -> Outcome<()> {
+        let head = r#"{"t":"verify","id":"v","name":"graph","breaks":"all","break":null,"timeout_ms":1000"#;
+        for (tail, want) in [
+            ("}", None),
+            (r#","ro":null,"deny":null}"#, None),
+            (r#","ro":["/g/m"]}"#, Some(TurnRules { ro: vec![fmt!("/g/m")], deny: Vec::new() })),
+            (r#","ro":[],"deny":["/g/x"]}"#, Some(TurnRules { ro: Vec::new(), deny: vec![fmt!("/g/x")] })),
+        ] {
+            let txt = fmt!("{}{}", head, tail);
+            match res!(req_of_json(&txt)) {
+                Req::Verify { rules, .. } => assert_eq!(want, rules, "{}", txt),
+                other => return Err(err!("not a verify: {:?}", other; Test, Invalid)),
+            }
+        }
+        assert!(req_of_json(&fmt!("{}{}", head, r#","ro":"/g/m"}"#)).is_err(),
+            "a read-only list that is not a list was accepted");
         Ok(())
     }
 
@@ -2662,6 +2728,8 @@ mod tests {
             root:       String::new(),
             breaks:     Breaks::All,
             world:      World::Infer,
+            net:        false,
+            rules:      None,
             timeout_ms: 1000,
         }, res!(req_of_json(old)));
         for (w, want) in [("stand", World::Stand), ("none", World::None), ("infer", World::Infer)] {
@@ -2675,6 +2743,25 @@ mod tests {
         }
         let bad = r#"{"t":"verify","id":"v","name":"graph","breaks":"all","break":null,"world":"maybe","timeout_ms":1000}"#;
         assert!(req_of_json(bad).is_err(), "an invented world word was accepted");
+        Ok(())
+    }
+
+    /// A verify's network is what the page says, and nothing said is no network.
+    ///
+    /// A page older than the field would otherwise hand every verifier the network
+    /// whatever `run` was given on the same turn.
+    #[test]
+    fn a_verify_with_no_net_field_gets_no_network() -> Outcome<()> {
+        let base = r#"{"t":"verify","id":"v","name":"graph","breaks":"all","break":null,"timeout_ms":1000"#;
+        for (tail, want) in [("}", false), (r#","net":false}"#, false), (r#","net":true}"#, true)] {
+            let txt = fmt!("{}{}", base, tail);
+            match res!(req_of_json(&txt)) {
+                Req::Verify { net, .. } => assert_eq!(want, net, "{}", txt),
+                other => return Err(err!("{:?} is not a verify", other; Test, Invalid)),
+            }
+        }
+        let bad = fmt!("{}{}", base, r#","net":"yes"}"#);
+        assert!(req_of_json(&bad).is_err(), "a net that is not a boolean was accepted");
         Ok(())
     }
 

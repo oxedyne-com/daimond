@@ -646,6 +646,11 @@
 		/// which is what keeps this a clamp rather than a formality. Empty on an older hand,
 		/// and then a terminal is held to the granted root exactly as it always was.
 		let hostCeilings = [];
+		/// Did the hand's last `hello` say `run:root-start`: that a command may START at the
+		/// granted root, or between it and a fence root, traversal only (`vet_cwd` in
+		/// `hand/src/exec.rs`)? Until it has, a command's working directory is held inside its
+		/// fence here exactly as before, because an older hand refuses that start itself.
+		let hostRootStart = false;
 		/// The hand's own image: the hash of the bytes it is running, the file it
 		/// was launched from, and whether that file now holds different bytes.
 		///
@@ -1039,7 +1044,9 @@
 				// The image, on the same terms. `bin-stale:` is said only when it is TRUE,
 				// so it is cleared on every hello rather than left standing from the last.
 				hostStale = false;
+				hostRootStart = false;
 				for (const c of (Array.isArray(m.caps) ? m.caps : [])) {
+					if (c === 'run:root-start') hostRootStart = true;
 					if (typeof c !== 'string') continue;
 					if (c.indexOf('bin-sha:') === 0) hostSha = c.slice('bin-sha:'.length);
 					if (c.indexOf('bin:') === 0) hostBin = c.slice('bin:'.length);
@@ -1053,6 +1060,12 @@
 					// The hello that answered OUR question is ours. Forwarding it
 					// would hand the page an answer to a greeting it never sent.
 					return;
+				}
+				// The relay's own half of the root start. The page sends a command's cwd at the
+				// root only where BOTH say so: a newer hand behind this relay before the browser
+				// has reloaded it is otherwise a run refused here, at a cwd the hand would take.
+				if (Array.isArray(m.caps) && m.caps.indexOf('relay:root-start') < 0) {
+					m.caps = m.caps.concat(['relay:root-start']);
 				}
 			}
 
@@ -1462,7 +1475,7 @@
 			const env = wrongEnv(m.env);
 			if (env) return env;
 
-			return wrongFence(m.fence, m.cwd, m.toolkits);
+			return wrongFence(m.fence, m.cwd, m.toolkits, false, true);
 		}
 
 		/// What is wrong with a request to change one file.
@@ -1575,6 +1588,25 @@
 				return `verify needs timeout_ms: a whole number of milliseconds between 1 and ${TIMEOUT_MAX}, covering `
 					+ `the WHOLE sequence -- the clean run and every break after it.`;
 			}
+			// Absent is an older page, and the hand gives it no network; anything else
+			// has to be the turn's yes or no.
+			if (m.net !== undefined && typeof m.net !== 'boolean') {
+				return 'verify\'s net, when given, is true or false: whether this turn\'s commands may reach the network, '
+					+ 'which is all a verifier is ever given.';
+			}
+			// run's read-only and deny lists on the same turn. Absent (or null) is an older page,
+			// and the hand then keeps the whole mark read-only to the verifier. Both lists only
+			// ever narrow what a verifier may do, so the shape is checked here and the grant
+			// clamp is the hand's.
+			for (const field of ['ro', 'deny']) {
+				const list = m[field];
+				if (list === undefined || list === null) continue;
+				if (!Array.isArray(list) || !list.every((p) => typeof p === 'string' && absolute(p)
+					&& segments(p).indexOf('..') < 0)) {
+					return `verify's ${field}, when given, is a list of absolute paths without "..": the ${field} list of `
+						+ `the fence run gets on the same turn.`;
+				}
+			}
 			return null;
 		}
 
@@ -1665,7 +1697,8 @@
 		/// # Arguments
 		/// * `f` - The `fence` the page sent, if it sent one.
 		/// * `cwd` - The working directory, which has to be inside it.
-		function wrongFence(f, cwd, kits, terminal) {
+		/// * `start` - Whether a command may start above the fence (an exec only): see `hostRootStart`.
+		function wrongFence(f, cwd, kits, terminal, start) {
 			if (!f || typeof f !== 'object' || Array.isArray(f)) {
 				return 'exec needs a fence saying what the command may touch: {rw, ro, deny, net}. A command with no fence is a command '
 					+ 'with no compartment, and this hand does not run one.';
@@ -1694,7 +1727,11 @@
 			if (!roots.length) {
 				return 'That fence names no root at all, so the command could not read the directory it would run in. Say what it may work under.';
 			}
-			if (!roots.some((r) => under(cwd, r))) {
+			// Above the fence: a strict ancestor of one of its roots, and inside the grant. Both
+			// halves, as the hand checks them, because `/` is an ancestor of every root there is.
+			const above = start && hostRootStart && hostRoot && under(cwd, hostRoot)
+				&& roots.some((r) => under(r, cwd) && !under(cwd, r));
+			if (!above && !roots.some((r) => under(cwd, r))) {
 				return `The working directory "${cwd}" is outside the fence, which reaches ${roots.map((r) => `"${r}"`).join(', ')} `
 					+ `and nowhere else. Run it somewhere inside the fence, or say what you would need and let the user widen it.`;
 			}

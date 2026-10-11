@@ -246,7 +246,7 @@ pub const EXIT_EXEC_FAILED: i32 = 127;
 /// then resolved and checked against the fence like any other path, so a `PATH`
 /// pointing somewhere unfenced finds a program the command is not allowed to
 /// run and is refused by name.
-const PATH_FALLBACK: &str = "/usr/local/bin:/usr/bin:/bin";
+pub(crate) const PATH_FALLBACK: &str = "/usr/local/bin:/usr/bin:/bin";
 
 // ┌───────────────────────────────────────────────────────────────┐
 // │ Outcomes the caller distinguishes                              │
@@ -277,6 +277,8 @@ pub enum Signalled {
     Finished,		// no such run; it had already gone. Not an error
     Failed(String),	// the signal was attempted and did not take; the sentence says what happened
 }
+
+pub const CAP_RUN_ROOT_START: &str = "run:root-start"; // in `hello`: see `vet_cwd`'s `above`
 
 /// The result of vetting a working directory against a fence.
 pub(crate) enum Vetted {
@@ -371,6 +373,160 @@ impl Launcher {
 }
 
 // ┌───────────────────────────────────────────────────────────────┐
+// │ The one way a fenced process is made                           │
+// └───────────────────────────────────────────────────────────────┘
+
+/// A process made ready to start behind the fence: spawn `cmd`, then write `payload` to its
+/// standard input.  `prog` is the program the launcher will `exec`, resolved and vetted.
+pub struct Fenced {
+    pub cmd:     Command,
+    pub payload: Vec<u8>,
+    pub prog:    PathBuf,
+}
+
+/// Plans `fence`, vets the program against it and builds the launcher that applies both.
+///
+/// **Written once for every door that runs something a model could have written.**  A
+/// command and a verifier both come here, so neither can be the copy that forgot the fence:
+/// until 2026-10-11 the verifier was a bare `Command::new(node)`, and a daimon that committed
+/// a script into its own mark read another Diamond's files through it.
+///
+/// The caller sets standard output and error; this sets everything else, including the
+/// standard input the payload travels down and a process group of the child's own.
+///
+/// # Arguments
+/// * `wrap` - A program and its arguments to start the launcher under, such as a
+///   `systemd-run --scope` ceiling.  It runs OUTSIDE the fence, so it must be a constant of
+///   this binary and never anything a request carried.
+/// * `dir` - The working directory, already vetted against `fence`.
+/// * `metered` - Whether the launcher waits for the meter's byte before it `exec`s.
+pub fn fenced_command(
+    launcher:   &Launcher,
+    wrap:       &[String],
+    fence:      &FenceSpec,
+    argv:       &[String],
+    env:        &[(String, String)],
+    dir:        &Path,
+    metered:    bool,
+)
+    -> Result<Fenced, String>
+{
+    if argv.is_empty() {
+        return Err(fmt!("Refused: there is no program to run."));
+    }
+    // Release gate 1: the fence is in force, or nothing runs.  Decided here, where a failure
+    // is still a sentence; the launcher only applies the plan.
+    let plan = match detected_fence().plan(fence, &Unfenced::Refuse) {
+        Ok(p)  => p,
+        Err(e) => return Err(fmt!("Refused: {}", e.msgs().join(" "))),
+    };
+    // The other half of the compartment, and gate 1 applies to it identically.
+    //
+    // Landlock governs opening a file. It has no access right covering `chmod`,
+    // `chown`, `utimensat` or `setxattr`, and it does not govern `connect()` to a
+    // pathname unix socket below ABI 9 -- so on this kernel a fenced command could
+    // world-write a file inside the denied subtree, and could reach the session bus
+    // and start a process outside the fence entirely. Both were measured; neither is
+    // something `fence.rs` can express.
+    //
+    // Asked here rather than only in the launcher because a machine that cannot
+    // filter must produce a *sentence the page shows*, not an exit code and a line of
+    // stderr. The launcher asks again and dies if the answer changed, because being
+    if let Err(e) = detected_seccomp().plan(&SysSpec::for_command()) {
+        return Err(fmt!("Refused: {}", e.msgs().join(" ")));
+    }
+
+    // `argv[0]` is the one caller value that decides which *code* runs, and
+    // it was never checked. An absolute path outside the fence ran; so did
+    // `../outside/evil`; and so did a bare name resolved through a `PATH`
+    // the caller wrote, because `env_clear` then `execvp` resolves against
+    // the child's environment. The program is therefore resolved here, once,
+    // to an absolute path, checked against the fence, and handed to the
+    let prog = match vet_program(&argv[0], dir, env, &plan) {
+        Vetted0::Ok(p)      => p,
+        Vetted0::Refused(s) => return Err(s),
+    };
+    let payload = match encode_payload(&Payload {
+        prog:  prog.clone(),
+        argv:  argv.to_vec(),
+        env:   env.to_vec(),
+        plan:  plan.clone(),
+        tty:   false,
+        act:   Act::Exec,
+        meter: metered,
+    }) {
+        Ok(p)  => p,
+        Err(e) => return Err(fmt!("Refused: the launcher's plan could not be written. {}",
+            e.msgs().join(" "))),
+    };
+    let lprog = match launcher.prog() {
+        Ok(p)  => p,
+        Err(e) => return Err(fmt!("Refused: {}", e.msgs().join(" "))),
+    };
+    let mut cmd = match wrap.split_first() {
+        None => Command::new(&lprog), // as `launcher_command`, with the wrapper's arm beside it
+        Some((w0, rest)) => {
+            let mut c = Command::new(w0);
+            c.args(rest);
+            // NOT `/proc/self/exe`: by the time the wrapper `exec`s it, "self" is the wrapper.
+            // The hand's own pid names the same file with the same two guarantees -- the code
+            // this hand is running even if the binary was replaced, and no name to race for.
+            c.arg(match launcher {
+                Launcher::SelfExe           => PathBuf::from(fmt!("/proc/{}/exe", std::process::id())),
+                Launcher::Explicit { .. }   => lprog.clone(),
+            });
+            c
+        },
+    };
+    cmd.args(launcher.args());
+    cmd.current_dir(dir);
+    // The launcher's own environment, which `exec` replaces with the command's: that travels
+    // down the pipe.  A wrapper is given only the two names it needs to find the user's
+    // service manager, and nothing it passes on survives the launcher's `exec`.
+    cmd.env_clear();
+    if !wrap.is_empty() {
+        for k in WRAP_VARS {
+            if let Ok(v) = std::env::var(k) {
+                cmd.env(k, v);
+            }
+        }
+    }
+    for (k, v) in launcher.env() {
+        cmd.env(k, v);
+    }
+    // Standard input is the launcher's channel: the plan first, then the command's own input.
+    cmd.stdin(Stdio::piped());
+    cmd.kill_on_drop(true);
+    // Its own process group, so a kill reaches everything the command started.  `0` makes
+    // the child its own leader, so the group id is the child's pid.
+    #[cfg(unix)]
+    cmd.process_group(0);
+    Ok(Fenced { cmd, payload, prog })
+}
+
+/// How long the repository's own hooks setting may take to read before the commit is refused.
+pub const HOOKS_READ_TIMEOUT: Duration = Duration::from_secs(5);
+
+const WRAP_VARS: &[&str] = &["XDG_RUNTIME_DIR", "DBUS_SESSION_BUS_ADDRESS"]; // what `systemd-run --user` reads
+
+/// The launcher, started bare in `dir` with only its own environment, for a caller that
+/// sets the rest itself: a terminal, whose standard streams are a pty, and a file op.
+///
+/// Here rather than at each caller because this module is the one place the hand starts a
+/// process (`no_module_but_exec_starts_a_process` holds it to that), and the launcher is
+/// what applies the plan that travels down its standard input.
+pub fn launcher_command(launcher: &Launcher, dir: &Path) -> Outcome<Command> {
+    let mut cmd = Command::new(res!(launcher.prog()));
+    cmd.args(launcher.args());
+    cmd.current_dir(dir);
+    cmd.env_clear();
+    for (k, v) in launcher.env() {
+        cmd.env(k, v);
+    }
+    Ok(cmd)
+}
+
+// ┌───────────────────────────────────────────────────────────────┐
 // │ The registry                                                   │
 // └───────────────────────────────────────────────────────────────┘
 
@@ -427,6 +583,7 @@ pub struct Runner {
     live:     Arc<Mutex<HashMap<String, Live>>>,	// runs whose command is still going
     left:     Arc<Mutex<HashMap<String, Left>>>,	// runs that ended and left a group standing
     launcher: Arc<Launcher>,						// what is re-executed to apply the fence
+    above:    Option<PathBuf>,						// granted root a command may start at, above its fence
 }
 
 impl Default for Runner {
@@ -451,7 +608,25 @@ impl Runner {
             live:     Arc::new(Mutex::new(HashMap::new())),
             left:     Arc::new(Mutex::new(HashMap::new())),
             launcher: Arc::new(launcher),
+            above:    None,
         }
+    }
+
+    /// Lets a command start at the granted root, or anywhere between it and a fence root.
+    ///
+    /// See [`vet_cwd`]: the start is traversal only and the fence is unchanged. Without this a
+    /// command's working directory must be inside its fence, as it always had to be.
+    ///
+    /// # Arguments
+    /// * `root` - The hand's granted root.
+    /// The launcher this runner fences with, so a verifier is fenced by the same one.
+    pub fn launcher(&self) -> &Launcher {
+        &self.launcher
+    }
+
+    pub fn with_start_above(mut self, root: PathBuf) -> Self {
+        self.above = Some(root);
+        self
     }
 
     /// Starts a command and returns as soon as it exists.
@@ -547,7 +722,7 @@ impl Runner {
         // Against the fence the caller sent, before the hand widens it. The
         // scratch is a root the caller did not ask for, and a spec that grants
         // nothing must still read as granting nothing.
-        let dir = match vet_cwd(&cwd, &fence) {
+        let dir = match vet_cwd(&cwd, &fence, self.above.as_deref()) {
             Vetted::Ok(p)       => p,
             Vetted::Refused(s)  => return self.refuse(&id, &tx, s).await,
         };
@@ -594,94 +769,23 @@ impl Runner {
         // says why each of the two is there and why the rest are not.
         add_defaults(&mut env);
 
-        // The fence is decided here, in the hand, where a failure can still
-        // become a sentence the page shows. The launcher only applies it: by the
-        // time the plan is in the launcher's hands the only remaining move is to
-        // die, so a spec that cannot be honoured must fail on this side of the
-        // line. Release gate 1 is this call -- an unfenceable command is refused,
-        // never run and mentioned.
-        let plan = match detected_fence().plan(&fence, &Unfenced::Refuse) {
-            Ok(p)  => p,
-            Err(e) => return self.refuse(&id, &tx, fmt!(
-                "Refused: {}", e.msgs().join(" "))).await,
+        // The fence is decided here, in the hand, where a failure can still become a sentence
+        // the page shows: the plan, seccomp (release gate 1 for both halves of the
+        // compartment), the program resolved once against the fence, and the payload, all in
+        // [`fenced_command`] -- the one place every door that runs model-reachable bytes
+        // goes through.
+        let Fenced { mut cmd, payload, prog } = match fenced_command(
+            &self.launcher, &[], &fence, &argv, &env, &dir, metered)
+        {
+            Ok(f)  => f,
+            Err(s) => return self.refuse(&id, &tx, s).await,
         };
-
-        // The other half of the compartment, and gate 1 applies to it identically.
-        //
-        // Landlock governs opening a file. It has no access right covering `chmod`,
-        // `chown`, `utimensat` or `setxattr`, and it does not govern `connect()` to a
-        // pathname unix socket below ABI 9 -- so on this kernel a fenced command could
-        // world-write a file inside the denied subtree, and could reach the session bus
-        // and start a process outside the fence entirely. Both were measured; neither is
-        // something `fence.rs` can express.
-        //
-        // Asked here rather than only in the launcher because a machine that cannot
-        // filter must produce a *sentence the page shows*, not an exit code and a line of
-        // stderr. The launcher asks again and dies if the answer changed, because being
-        // wrong there is unrecoverable.
-        if let Err(e) = detected_seccomp().plan(&SysSpec::for_command()) {
-            return self.refuse(&id, &tx, fmt!(
-                "Refused: {}", e.msgs().join(" "))).await;
-        }
-
-        // `argv[0]` is the one caller value that decides which *code* runs, and
-        // it was never checked. An absolute path outside the fence ran; so did
-        // `../outside/evil`; and so did a bare name resolved through a `PATH`
-        // the caller wrote, because `env_clear` then `execvp` resolves against
-        // the child's environment. The program is therefore resolved here, once,
-        // to an absolute path, checked against the fence, and handed to the
-        // launcher already resolved so that nothing resolves it a second time.
-        let prog = match vet_program(&argv[0], &dir, &env, &plan) {
-            Vetted0::Ok(p)      => p,
-            Vetted0::Refused(s) => return self.refuse(&id, &tx, s).await,
-        };
-
-        let mut cmd = Command::new(res!(self.launcher.prog()));
-        cmd.args(self.launcher.args());
-        cmd.current_dir(&dir);
-
-        // The launcher's own environment, which is empty for the real launcher
-        // and which `exec` replaces with the command's in any case. The
-        // command's environment travels down the pipe, not through here.
-        cmd.env_clear();
-        for (k, v) in self.launcher.env() {
-            cmd.env(k, v);
-        }
-
-        // Standard input is the launcher's channel: the plan first, then the
-        // command's own input behind it. Where the caller sent no input the
-        // write end is closed after the plan, so the command reads end-of-file
-        // immediately -- which is what `Stdio::null()` used to provide, without
-        // needing `/dev/null` to be inside the fence.
-        cmd.stdin(Stdio::piped());
         match capture {
             Capture::Both => { cmd.stdout(Stdio::piped()); cmd.stderr(Stdio::piped()); },
             Capture::Out  => { cmd.stdout(Stdio::piped()); cmd.stderr(Stdio::null());  },
             Capture::Err  => { cmd.stdout(Stdio::null());  cmd.stderr(Stdio::piped()); },
             Capture::None => { cmd.stdout(Stdio::null());  cmd.stderr(Stdio::null());  },
         }
-
-        cmd.kill_on_drop(true);
-
-        // Its own process group, so the kill reaches the compilers and test
-        // binaries the command spawned rather than orphaning them.  `setpgid`
-        // is done by the child between fork and exec, and `0` means "become
-        // your own leader", so the group id is the child's own process id.
-        #[cfg(unix)]
-        cmd.process_group(0);
-
-        // The whole of what the launcher will do, encoded before there is a
-        // launcher to send it to, so that an encoding failure is a refusal
-        // rather than a process waiting on a pipe that will never fill.
-        let payload = res!(encode_payload(&Payload {
-            prog: prog.clone(),
-            argv: argv.clone(),
-            env:  env.clone(),
-            plan: plan.clone(),
-            tty:  false,
-            act:  Act::Exec,
-            meter: metered,
-        }));
 
         let mut child = res!(cmd.spawn()
             .map_err(|e| err!(e,
@@ -1164,7 +1268,7 @@ impl Files {
                 Bug, Invalid, Input)),
         };
 
-        let dir = match vet_cwd(&cwd, &fence) {
+        let dir = match vet_cwd(&cwd, &fence, None) {
             Vetted::Ok(p)      => p,
             Vetted::Refused(s) => return self.refuse(&id, &tx, s).await,
         };
@@ -1195,13 +1299,7 @@ impl Files {
             meter: false,
         }));
 
-        let mut cmd = Command::new(res!(self.launcher.prog()));
-        cmd.args(self.launcher.args());
-        cmd.current_dir(&dir);
-        cmd.env_clear();
-        for (k, v) in self.launcher.env() {
-            cmd.env(k, v);
-        }
+        let mut cmd = res!(launcher_command(&self.launcher, &dir));
         cmd.stdin(Stdio::piped());
         cmd.stdout(Stdio::piped());
         cmd.stderr(Stdio::piped());
@@ -1944,7 +2042,7 @@ fn counts_as_member(stat: &str, pgid: u32) -> bool {
 ///
 /// # Arguments
 /// * `pgid` - The group, which is the process id of the child that led it.
-async fn group_standing(pgid: u32) -> Option<bool> {
+pub(crate) async fn group_standing(pgid: u32) -> Option<bool> {
     if let Ok(dir) = std::fs::read_dir("/proc") {
         for entry in dir.flatten() {
             let name = entry.file_name();
@@ -2672,6 +2770,15 @@ const ENV_REFUSED: &[&str] = &[
     "SHELLOPTS",        // Turns on shell behaviour a caller was not given.
 ];
 
+/// Does this variable decide what code a program loads before its own runs?
+///
+/// The dynamic loader's whole family, not `LD_PRELOAD` alone: `LD_AUDIT` loads a
+/// library the same way, and `LD_LIBRARY_PATH` chooses which copy of a library a
+/// program gets.
+pub(crate) fn loads_code(k: &str) -> bool {
+    k.starts_with("LD_") || ENV_REFUSED.contains(&k)
+}
+
 /// Refuses an environment carrying a name that decides what code loads.
 ///
 /// # Arguments
@@ -2687,10 +2794,7 @@ pub(crate) fn screen_env(env: &[(String, String)]) -> Option<String> {
                 and cannot contain '=' or a null byte, because nothing downstream could tell \
                 where it ended.", k));
         }
-        // The dynamic loader's whole family, not `LD_PRELOAD` alone: `LD_AUDIT`
-        // loads a library the same way, and `LD_LIBRARY_PATH` chooses which
-        // copy of a library a program gets.
-        if k.starts_with("LD_") || ENV_REFUSED.contains(&k.as_str()) {
+        if loads_code(k) {
             return Some(fmt!(
                 "Refused: this command asked to run with {} set. That variable decides what code \
                 is loaded into the program before the program's own code runs, so it is a way to \
@@ -3428,19 +3532,26 @@ pub fn grant_user_dotfiles(fence: &mut FenceSpec, door: Door) -> Vec<String> {
 /// request NAMED is eligible, and it is dropped only when the filesystem says it
 /// is not there.
 ///
+/// **A TERMINAL drops every toolkit's absent folders, named or not.**  The extension and
+/// [`vet_roots`] admit any root under the machine's terminal ceiling, so a terminal's fence
+/// may carry `~/.config/git` with no toolkit named -- and on a machine without that folder
+/// it refused the whole terminal over a path nobody asked for (second security round, R1).
+/// Dropping is still the tightening direction, and a marked folder is still not eligible.
+///
 /// # Arguments
 /// * `fence` - The fence as it arrived; the absent toolchain roots are removed.
 /// * `kits` - The toolkit names the request carried.
+/// * `door` - Which door the fence is for.
 ///
 /// # Returns
 /// What was dropped, so a caller that wants to say so can.
-pub fn drop_absent_kit_roots(fence: &mut FenceSpec, kits: &[String]) -> Vec<String> {
+pub fn drop_absent_kit_roots(fence: &mut FenceSpec, kits: &[String], door: Door) -> Vec<String> {
     let home = match home_dir() {
         Some(h) => PathBuf::from(h),
         None    => return Vec::new(),
     };
     let tails = TOOLKIT_ROOTS.iter()
-        .filter(|k| kits.iter().any(|n| n == k.kit))
+        .filter(|k| door == Door::Terminal || kits.iter().any(|n| n == k.kit))
         .map(|k| home.join(k.tail))
         .collect::<Vec<_>>();
     if tails.is_empty() {
@@ -3538,44 +3649,172 @@ const HOOKED_VERBS: &[&str] = &[
 /// where the user configured none or named somewhere that is not there -- in which case
 /// there is no hook to lose, fenced or not.
 fn user_hooks_dir(env: &[(String, String)]) -> Option<(PathBuf, PathBuf)> {
-    let out = git_config_read(env, None, &["--global", "--show-origin"])?;
+    let out = git_config_global(env)?;
     let (origin, value) = out.split_once('\t')?;
     let file = PathBuf::from(origin.strip_prefix("file:")?).canonicalize().ok()?;
     let dir  = hooks_dir_of(value, None, env)?;
     Some((dir, file))
 }
 
-/// What `core.hooksPath` reads as, or `None` where it is unset and where git failed.
+/// The system's own git, found once among the directories only an administrator writes.
+///
+/// Never the hand's `PATH`: that puts `~/.cargo/bin`, `~/.local/bin` and `~/bin` first, they
+/// are lent to kits, and a `git` planted in one would run with the hand's authority (second
+/// security round, N3).
+fn system_git() -> Option<&'static Path> {
+    static GIT: OnceLock<Option<PathBuf>> = OnceLock::new();
+    GIT.get_or_init(|| ["/usr/bin/git", "/bin/git", "/usr/local/bin/git"].iter()
+        .map(PathBuf::from)
+        .find(|p| p.is_file()))
+        .as_deref()
+}
+
+/// The user's own global `core.hooksPath`, with the file that set it, as
+/// `git config --global --show-origin` prints them; `None` where it is unset, where git
+/// failed, and where git did not answer within [`HOOKS_READ_TIMEOUT`].
+///
+/// The one git the hand runs outside a fence, and it reads nothing a command can write: the
+/// global file is the user's, and it is asked from `/` so that no repository is in play.
 ///
 /// # Arguments
-/// * `env` - Overrides laid over the hand's own environment.
-/// * `cwd` - Where to ask from, which decides whether a repository's own configuration is
-///   in the answer.  `None` asks from wherever the hand is.
-/// * `flags` - Extra arguments to `git config`, before `--get`.
-fn git_config_read(
-    env:   &[(String, String)],
-    cwd:   Option<&Path>,
-    flags: &[&str],
-)
-    -> Option<String>
-{
-    let mut cmd = std::process::Command::new("git");
-    cmd.arg("config").args(flags).args(["--get", "core.hooksPath"]);
-    if let Some(d) = cwd {
-        cmd.current_dir(d);
-    }
+/// * `env` - Overrides laid over the hand's own environment.  Empty in the hand; a test
+///   passes `GIT_CONFIG_GLOBAL` so that it never touches the real configuration.
+fn git_config_global(env: &[(String, String)]) -> Option<String> {
+    let git = system_git()?;
+    let mut cmd = std::process::Command::new(git);
+    cmd.args(["config", "--global", "--show-origin", "--get", "core.hooksPath"])
+        .current_dir("/")
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null());
     for (k, v) in env {
         cmd.env(k, v);
     }
     // A prompt here would hang the hand rather than fail. `config --get` should never ask,
     // and this makes sure of it.
     cmd.env("GIT_TERMINAL_PROMPT", "0");
-    let out = cmd.output().ok()?;
-    if !out.status.success() {
+    let mut child = cmd.spawn().ok()?;
+    let start = std::time::Instant::now();
+    let st = loop {
+        match child.try_wait() {
+            Ok(Some(s)) => break s,
+            Ok(None) if start.elapsed() < HOOKS_READ_TIMEOUT =>
+                std::thread::sleep(Duration::from_millis(10)),
+            _ => {
+                let _ = child.kill();
+                let _ = child.wait();
+                return None;
+            },
+        }
+    };
+    if !st.success() {
         return None;
     }
-    let s = String::from_utf8_lossy(&out.stdout).trim_end_matches('\n').to_string();
+    let mut s = String::new();
+    {
+        use std::io::Read;
+        child.stdout.take()?.read_to_string(&mut s).ok()?;
+    }
+    let s = s.trim_end_matches('\n').to_string();
     if s.trim().is_empty() { None } else { Some(s) }
+}
+
+/// What `core.hooksPath` reads as in the repository at `here`, asked of a git started
+/// BEHIND `fence` -- the fence of the commit this guards, with no network -- with standard
+/// input closed and killed at [`HOOKS_READ_TIMEOUT`].
+///
+/// The repository's configuration is daimon-written, and git follows its `include.path`,
+/// `includeIf` and gitfile wherever they point.  Read by a bare git in the hand, that was
+/// another Diamond's configuration read for this one, and a FIFO there held the hand's
+/// message loop until someone fed it (second security round, N1).  Behind the fence git
+/// reads exactly what the commit itself would, so the answer can carry nothing the command
+/// could not already see.
+///
+/// `Ok(None)` where it is unset and where git failed, which includes an include it was not
+/// allowed to read: the caller refuses that, so a file outside the fence reads the same
+/// whatever is in it.  `Err` is the sentence for a read that could not be made or did not
+/// finish.
+///
+/// # Arguments
+/// * `global` - The user's global configuration, already known to be inside `fence`.
+async fn git_config_fenced(
+    launcher:   &Launcher,
+    fence:      &FenceSpec,
+    here:       &Path,
+    global:     &Path,
+    env:        &[(String, String)],
+)
+    -> Result<Option<String>, String>
+{
+    let git = match system_git() {
+        Some(g) => g,
+        None    => return Err(fmt!("Refused: the system's git could not be found to read this \
+            repository's hooks setting, so it is not known whether the commit would run the \
+            user's hooks.")),
+    };
+    let mut spec = fence.clone();
+    spec.net = false;
+    let argv = vec![fmt!("{}", git.display()), fmt!("config"), fmt!("--get"),
+        fmt!("core.hooksPath")];
+    let home = env.iter().find(|(k, _)| k == "HOME").map(|(_, v)| v.clone())
+        .or_else(|| std::env::var("HOME").ok())
+        .unwrap_or_else(|| fmt!("/nonexistent"));
+    let genv = vec![
+        (fmt!("GIT_CONFIG_GLOBAL"),     fmt!("{}", global.display())),
+        (fmt!("GIT_CONFIG_NOSYSTEM"),   fmt!("1")),
+        (fmt!("GIT_TERMINAL_PROMPT"),   fmt!("0")),
+        (fmt!("HOME"),                  home),
+        (fmt!("PATH"),                  fmt!("/usr/bin:/bin")),
+    ];
+    let Fenced { mut cmd, payload, .. } = match fenced_command(
+        launcher, &[], &spec, &argv, &genv, here, false)
+    {
+        Ok(f)  => f,
+        Err(s) => return Err(s),
+    };
+    cmd.stdout(Stdio::piped());
+    cmd.stderr(Stdio::null());
+    let mut child = match cmd.spawn() {
+        Ok(c)  => c,
+        Err(e) => return Err(fmt!("Refused: the launcher that fences the read of this \
+            repository's hooks setting could not be started ({}).", e)),
+    };
+    let pgid = child.id().unwrap_or(0);
+    // The plan, then end of input: git reads nothing from the page.
+    let mut stdin = child.stdin.take();
+    let asked = async move {
+        if let Some(w) = stdin.as_mut() {
+            use tokio::io::AsyncWriteExt;
+            if w.write_all(&payload).await.is_ok() {
+                let _ = w.shutdown().await;
+            }
+        }
+        drop(stdin);
+        child.wait_with_output().await
+    };
+    match tokio::time::timeout(HOOKS_READ_TIMEOUT, asked).await {
+        Ok(Ok(out)) => match out.status.code() {
+            Some(c) if c >= EXIT_NO_PLAN && c <= EXIT_EXEC_FAILED => Err(fmt!(
+                "Refused: the read of this repository's hooks setting could not be fenced \
+                (exit {}), so it was not made.", c)),
+            Some(0) => {
+                let s = String::from_utf8_lossy(&out.stdout).trim_end_matches('\n').to_string();
+                Ok(if s.trim().is_empty() { None } else { Some(s) })
+            },
+            _ => Ok(None),
+        },
+        Ok(Err(e)) => Err(fmt!("Refused: the read of this repository's hooks setting \
+            failed ({}).", e)),
+        Err(_) => {
+            if pgid != 0 {
+                let _ = signal_group(pgid, Sig::Kill).await;
+            }
+            Err(fmt!("Refused: this repository's configuration took longer than {} s to \
+                read -- something it includes is not a file that ends -- so it is not known \
+                whether the commit would run the user's hooks. Take the include out of \
+                .git/config.", HOOKS_READ_TIMEOUT.as_secs()))
+        },
+    }
 }
 
 /// The directory a `core.hooksPath` value names on this machine, if it is one.
@@ -3672,24 +3911,30 @@ pub fn grant_git_hooks(
 /// shell-wrapped commit still runs unscanned.  Written down rather than papered over: the
 /// honest boundary of this guard is the command it can see.
 ///
-/// And it fails OPEN where the hand cannot run `git config` at all -- no git on the hand's
-/// own `PATH`, or a `git config` that exits non-zero -- because it then cannot tell a
+/// The repository's own setting is read by a git behind `fence`, never by the hand itself:
+/// see [`git_config_fenced`].
+///
+/// And it fails OPEN where the hand cannot read the user's own setting at all -- no system
+/// git, or a `git config --global` that exits non-zero -- because it then cannot tell a
 /// machine with no `core.hooksPath` from a machine it could not ask.  Refusing both would
 /// refuse every commit on every ordinary machine, which is a guard nobody would keep.  The
 /// case is narrow: a hand that cannot find git is a hand whose fenced git will not run
 /// either.
 ///
 /// # Arguments
+/// * `fence` - The command's fence, which the repository's own setting is read behind.
 /// * `plan` - The fence as it will be enforced, which is the only honest thing to ask
 ///   "could git have read this" of.
 /// * `argv` - The command.
 /// * `cwd` - Where it will run, which decides which repository's configuration is in play.
 /// * `env` - Overrides for reading the user's configuration; empty in the hand.
-pub fn git_hooks_refusal(
-    plan:   &Plan,
-    argv:   &[String],
-    cwd:    &str,
-    env:    &[(String, String)],
+pub async fn git_hooks_refusal(
+    launcher:   &Launcher,
+    fence:      &FenceSpec,
+    plan:       &Plan,
+    argv:       &[String],
+    cwd:        &str,
+    env:        &[(String, String)],
 )
     -> Option<String>
 {
@@ -3736,8 +3981,10 @@ pub fn git_hooks_refusal(
             the git configuration if the hooks are not wanted.", want.display()));
     }
     let here = Path::new(cwd);
-    let effective = git_config_read(env, Some(here), &[])
-        .and_then(|v| hooks_dir_of(&v, Some(here), env));
+    let effective = match git_config_fenced(launcher, fence, here, &from, env).await {
+        Ok(v)  => v.and_then(|v| hooks_dir_of(&v, Some(here), env)),
+        Err(s) => return Some(s),
+    };
     if effective.as_deref() != Some(want.as_path()) {
         return Some(fmt!(
             "Refused: this repository's own configuration points core.hooksPath at {}, and \
@@ -3756,10 +4003,20 @@ pub fn git_hooks_refusal(
 /// Symbolic links are resolved before the comparison, because a link inside the
 /// fence pointing out of it is otherwise a way past the whole arrangement.
 ///
+/// **A command may also START above the fence** (`above` set, the command door only): at a
+/// directory that is an ancestor of one of the fence's own roots and no higher than the granted
+/// root. The file tools resolve a daimon's relative paths against the granted root, so a command
+/// started anywhere else reads `notes/x` as a different file from the one the model just wrote.
+/// Such a start is traversal only: Landlock does not gate path lookup, so `cat <mark>/x` works
+/// from there, while listing it, reading a file in it or creating one is refused by the kernel,
+/// because nothing in the plan grants it. The fence itself is not widened by a single path.
+///
 /// # Arguments
 /// * `cwd` - The absolute working directory the caller asked for.
 /// * `fence` - What the command may touch.
-pub(crate) fn vet_cwd(cwd: &str, fence: &FenceSpec) -> Vetted {
+/// * `above` - The granted root a traversal-only start may not rise past, or `None` where the
+///   working directory must be inside the fence (a terminal, a file operation).
+pub(crate) fn vet_cwd(cwd: &str, fence: &FenceSpec, above: Option<&Path>) -> Vetted {
     let raw = Path::new(cwd);
     if !raw.is_absolute() {
         return Vetted::Refused(fmt!(
@@ -3826,7 +4083,16 @@ pub(crate) fn vet_cwd(cwd: &str, fence: &FenceSpec) -> Vetted {
 
     let inside = fence.rw.iter().chain(fence.ro.iter())
         .any(|r| under(&dir, &resolve(r)));
-    if !inside {
+    // Above the fence: a strict ancestor of one of its roots, and inside the grant. Both halves,
+    // because every directory is an ancestor of something -- `/` of every root there is -- and
+    // a start the machine never granted is not this hand's to offer.
+    let start = !inside && match above {
+        Some(top) => under(&dir, &resolve(&fmt!("{}", top.display())))
+            && fence.rw.iter().chain(fence.ro.iter())
+                .any(|r| { let r = resolve(r); r != dir && under(&r, &dir) }),
+        None      => false,
+    };
+    if !inside && !start {
         let roots = fence.rw.iter().chain(fence.ro.iter())
             .map(|r| fmt!("'{}'", r))
             .collect::<Vec<_>>()
@@ -5438,6 +5704,98 @@ mod tests {
 
     use tokio::sync::mpsc::Receiver;
 
+    // ── One spawn path ──────────────────────────────────────────────
+
+    /// **No process is started anywhere in the hand but in the few functions named below.**
+    ///
+    /// The structural half of the 2026-10-11 review's F1: verify's provenance check ran
+    /// `git` with a bare `Command` on a tree the daimon writes, so the repository's own
+    /// config chose what ran, unfenced.  A rule that every spawn goes through
+    /// [`fenced_command`] or [`launcher_command`] is kept only if a second door cannot
+    /// be opened quietly, so this reads the hand's source and refuses one.  Test code is
+    /// exempt: it starts fixtures, never anything on a daimon's behalf.
+    ///
+    /// exec.rs itself is held to the rule, function by function (second security round,
+    /// N2): the whole file was exempt, and that is where the unfenced `git config` of N1
+    /// lived.  A tripwire on the text, not a proof -- it sees `Command::new` and
+    /// `process::Command`, not a spawn spelled some other way.
+    #[test]
+    fn no_module_but_exec_starts_a_process() -> Outcome<()> {
+        let src = Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
+        let rd = res!(std::fs::read_dir(&src).map_err(|e| err!(e, "listing {:?}", src; Test, IO)));
+        let mut found = Vec::new();
+        let mut seen = 0;
+        for entry in rd {
+            let p = res!(entry.map_err(|e| err!(e, "listing {:?}", src; Test, IO))).path();
+            let name = fmt!("{}", p.file_name().map(|n| n.to_string_lossy()).unwrap_or_default());
+            if !name.ends_with(".rs") {
+                continue;
+            }
+            seen += 1;
+            let text = res!(std::fs::read_to_string(&p).map_err(|e| err!(e, "reading {:?}", p; Test, IO)));
+            found.extend(stray_spawns(&name, &text));
+        }
+        assert!(seen >= 10, "the gate read {} modules; it is reading the wrong directory", seen);
+        assert!(found.is_empty(),
+            "a process is started outside the named spawn sites, so it is not behind the one \
+             fenced path: {:#?}", found);
+
+        // And the gate is not blind to exec.rs: a stray spawn added there is caught.
+        let exec = res!(std::fs::read_to_string(src.join("exec.rs"))
+            .map_err(|e| err!(e, "reading exec.rs"; Test, IO)));
+        let stray = exec.replacen("#[cfg(test)]\nmod tests",
+            "fn stray() { let _ = Command::new(\"x\"); }\n#[cfg(test)]\nmod tests", 1);
+        assert_eq!(stray_spawns("exec.rs", &stray).len(), 1,
+            "a stray Command::new in exec.rs was not caught");
+        Ok(())
+    }
+
+    /// The functions in exec.rs allowed to start a process, each for a reason.
+    const SPAWN_SITES: &[&str] = &[
+        "fenced_command",       // the fenced door, and its wrapper arm
+        "launcher_command",     // the launcher, which applies the plan
+        "operand_form",         // `kill`, absolute paths, fixed argv
+        "signal_group_named",   // `kill`, absolute paths, fixed argv
+        "git_config_global",    // the user's own global config, system git, bounded
+        "launch_inner",         // the launcher's own `exec`, after the fence
+    ];
+
+    /// Every line of `text` before its tests that starts a process, outside [`SPAWN_SITES`]
+    /// when `name` is exec.rs and anywhere otherwise.
+    fn stray_spawns(name: &str, text: &str) -> Vec<String> {
+        // Up to the module's tests, which are fixtures and not the hand.
+        let body = match text.find("#[cfg(test)]\nmod tests") {
+            Some(i) => &text[..i],
+            None    => &text[..],
+        };
+        let mut found = Vec::new();
+        let mut within = String::new();	// the function the line is in
+        for (n, line) in body.lines().enumerate() {
+            let t = line.trim_start();
+            if t.starts_with("//") {
+                continue;
+            }
+            let mut words = t.split(|c: char| c.is_whitespace() || c == '(' || c == '<');
+            while let Some(w) = words.next() {
+                if w == "fn" {
+                    within = fmt!("{}", words.next().unwrap_or(""));
+                    break;
+                }
+                if !matches!(w, "pub" | "pub(crate)" | "async" | "const" | "") {
+                    break;
+                }
+            }
+            if !(t.contains("Command::new") || t.contains("process::Command")) {
+                continue;
+            }
+            if name == "exec.rs" && SPAWN_SITES.contains(&within.as_str()) {
+                continue;
+            }
+            found.push(fmt!("{}:{} (in {}): {}", name, n + 1, within, t));
+        }
+        found
+    }
+
     // ── Becoming the launcher ───────────────────────────────────────
     //
     // Every command in these tests really is fenced, by the real `launch_main`,
@@ -5699,7 +6057,11 @@ mod tests {
 
     /// Runs one request to completion and hands back everything it said.
     async fn run(req: Req) -> Outcome<Vec<Resp>> {
-        let runner = res!(runner());
+        run_on(res!(runner()), req).await
+    }
+
+    /// [`run`], on a runner the caller configured.
+    async fn run_on(runner: Runner, req: Req) -> Outcome<Vec<Resp>> {
         let (tx, mut rx) = tokio::sync::mpsc::channel::<Resp>(4096);
         res!(runner.spawn(req, tx).await);
         Ok(collect(&mut rx).await)
@@ -6416,6 +6778,93 @@ mod tests {
         Ok(res!(std::fs::metadata(p), IO, File).permissions().mode() & 0o7777)
     }
 
+    /// A command may START at the granted root above a mark, and the kernel still fences it.
+    ///
+    /// The file tools resolve a scoped daimon's relative paths against the granted root, so
+    /// `run` has to start there or `cat notes/x` names a different file from the one just
+    /// written. The start is traversal only: every arm below that reads, lists or creates
+    /// anything at the root or beyond it must fail, and the one that reads inside the mark
+    /// must work. A runner that was not told the granted root keeps the old refusal, which is
+    /// what an older hand does and why the page reads `run:root-start` before relying on it.
+    #[tokio::test]
+    async fn a_command_may_start_at_the_root_above_its_mark_and_no_further() -> Outcome<()> {
+        let base = res!(fixture("root-start"));
+        let ws = base.join("ws");
+        res!(std::fs::create_dir_all(ws.join("notes")));
+        res!(std::fs::write(ws.join("notes/x.txt"), "marked"));
+        res!(std::os::unix::fs::symlink(base.join("outside"), ws.join("link")));
+        let fence = FenceSpec {
+            rw:   vec![fmt!("{}", ws.join("notes").display())],
+            ro:   Vec::new(),
+            deny: Vec::new(),
+            net:  false,
+        };
+        let at = |id: &str, cwd: &Path, argv: &[&str]| -> Req {
+            Req::Exec {
+                id:         fmt!("{}", id),
+                argv:       argv.iter().map(|a| fmt!("{}", a)).collect(),
+                cwd:        fmt!("{}", cwd.display()),
+                env:        Vec::new(),
+                stdin:      None,
+                timeout_ms: 10_000,
+                capture:    Capture::Both,
+                fence:      fence.clone(),
+                toolkits:   Vec::new(),
+                meter:      None,
+            }
+        };
+        let runner = res!(runner()).with_start_above(ws.clone());
+        let go = |req: Req| run_on(runner.clone(), req);
+        let exit_of = |rs: &[Resp]| -> Outcome<i32> {
+            match ended(rs) {
+                Some((exit, ..)) => Ok(exit),
+                None => Err(err!("No Ended was sent: {:?}", rs; Test, Missing)),
+            }
+        };
+
+        // Inside the mark, by a path relative to the root: works.
+        let rs = res!(go(at("cat", &ws, &["/bin/cat", "notes/x.txt"])).await);
+        assert_eq!(res!(exit_of(&rs)), 0, "a marked file was refused from the root: {}",
+            text_of(&rs, Stream::Err));
+        assert_eq!(text_of(&rs, Stream::Out), "marked");
+
+        // A relative write into the mark lands where the file tools would put it.
+        let rs = res!(go(at("w", &ws, &["/bin/sh", "-c", "echo hi > notes/w.txt"])).await);
+        assert_eq!(res!(exit_of(&rs)), 0, "a write into the mark failed: {}",
+            text_of(&rs, Stream::Err));
+        assert_eq!(res!(std::fs::read_to_string(ws.join("notes/w.txt"))), "hi\n");
+
+        // Listing the root: refused by the kernel.
+        let rs = res!(go(at("ls", &ws, &["/bin/ls", "."])).await);
+        assert_ne!(res!(exit_of(&rs)), 0, "the root was listed: {}", text_of(&rs, Stream::Out));
+        // Reading a file at the root but outside the mark: refused.
+        let rs = res!(go(at("rd", &ws, &["/bin/cat", "inside.txt"])).await);
+        assert_ne!(res!(exit_of(&rs)), 0, "an unmarked file at the root was read");
+        assert!(!text_of(&rs, Stream::Out).contains("inside"));
+        // Creating a file at the root: refused, and nothing is there afterwards.
+        let rs = res!(go(at("mk", &ws, &["/bin/sh", "-c", "echo x > made.txt"])).await);
+        assert_ne!(res!(exit_of(&rs)), 0, "a file was created at the root");
+        assert!(!ws.join("made.txt").exists(), "a file appeared at the root");
+        // Following a link at the root that points outside the fence: refused.
+        let rs = res!(go(at("ln", &ws, &["/bin/cat", "link/other.txt"])).await);
+        assert_ne!(res!(exit_of(&rs)), 0, "a link out of the fence was followed");
+        assert!(!text_of(&rs, Stream::Out).contains("other"));
+        // Climbing above the root and reading: refused.
+        let rs = res!(go(at("up", &ws, &["/bin/sh", "-c", "cd .. && cat outside/other.txt"])).await);
+        assert_ne!(res!(exit_of(&rs)), 0, "a file above the root was read");
+        assert!(!text_of(&rs, Stream::Out).contains("other"));
+
+        // Starting above the granted root, or through the link, is refused before anything runs.
+        assert!(res!(refusal(&res!(go(at("hi", &base, &["/bin/true"])).await)))
+            .contains("outside this command's fence"));
+        assert!(res!(refusal(&res!(go(at("lk", &ws.join("link"), &["/bin/true"])).await)))
+            .contains("outside this command's fence"));
+        // A runner that was not told the granted root keeps the old rule, as an older hand does.
+        assert!(res!(refusal(&res!(run(at("old", &ws, &["/bin/true"])).await)))
+            .contains("outside this command's fence"));
+        Ok(())
+    }
+
     /// The whole point, in one test: a real command, really fenced.
     ///
     /// Both halves are here because either alone proves nothing. The same
@@ -6842,11 +7291,12 @@ mod tests {
             res!(git(repo, &["add", "config.env"]));
         }
 
-        let runner = Runner::with_launcher(Launcher::Explicit {
+        let lch = Launcher::Explicit {
             prog: hand,
             args: vec![fmt!("{}", LAUNCH_ARG)],
             env:  Vec::new(),
-        });
+        };
+        let runner = Runner::with_launcher(lch.clone());
         let commit = |id: &str, at: &Path, fence: &FenceSpec, kits: &[String],
             env: &[(String, String)]| Req::Exec
         {
@@ -6908,9 +7358,9 @@ mod tests {
         // And that is the command the hand now refuses, before it runs, naming the
         // directory the repository chose and the one the user configured.
         let plan = res!(detected_fence().plan(&spec, &Unfenced::Refuse));
-        let said = match git_hooks_refusal(&plan,
+        let said = match git_hooks_refusal(&lch, &spec, &plan,
             &[fmt!("/usr/bin/git"), fmt!("commit"), fmt!("-m"), fmt!("x")],
-            &fmt!("{}", silent.display()), &readenv)
+            &fmt!("{}", silent.display()), &readenv).await
         {
             Some(s) => s,
             None    => return Err(err!(
@@ -6934,8 +7384,8 @@ mod tests {
             net:  false,
         };
         let noconf = res!(detected_fence().plan(&bare, &Unfenced::Refuse));
-        let said = match git_hooks_refusal(&noconf,
-            &[fmt!("/usr/bin/git"), fmt!("commit")], &fmt!("{}", silent.display()), &readenv)
+        let said = match git_hooks_refusal(&lch, &bare, &noconf,
+            &[fmt!("/usr/bin/git"), fmt!("commit")], &fmt!("{}", silent.display()), &readenv).await
         {
             Some(s) => s,
             None    => return Err(err!(
@@ -6954,8 +7404,8 @@ mod tests {
             net:  false,
         };
         let nohooks = res!(detected_fence().plan(&halfway, &Unfenced::Refuse));
-        let said = match git_hooks_refusal(&nohooks,
-            &[fmt!("/usr/bin/git"), fmt!("commit")], &fmt!("{}", hooked.display()), &readenv)
+        let said = match git_hooks_refusal(&lch, &halfway, &nohooks,
+            &[fmt!("/usr/bin/git"), fmt!("commit")], &fmt!("{}", hooked.display()), &readenv).await
         {
             Some(s) => s,
             None    => return Err(err!(
@@ -6985,19 +7435,19 @@ mod tests {
         for harmless in [vec![fmt!("git"), fmt!("status")], vec![fmt!("git"), fmt!("log")],
             vec![fmt!("git"), fmt!("push")], vec![fmt!("cargo"), fmt!("test")]]
         {
-            assert!(git_hooks_refusal(&noconf, &harmless,
-                &fmt!("{}", silent.display()), &readenv).is_none(),
+            assert!(git_hooks_refusal(&lch, &bare, &noconf, &harmless,
+                &fmt!("{}", silent.display()), &readenv).await.is_none(),
                 "{:?} was refused for a hook it does not run", harmless);
         }
         // `git -C <dir> commit` is still a commit: the verb is not always argv[1].
-        assert!(git_hooks_refusal(&noconf,
+        assert!(git_hooks_refusal(&lch, &bare, &noconf,
             &[fmt!("git"), fmt!("-C"), fmt!("elsewhere"), fmt!("commit")],
-            &fmt!("{}", silent.display()), &readenv).is_some(),
+            &fmt!("{}", silent.display()), &readenv).await.is_some(),
             "a commit spelled with -C was not seen as one");
 
         // ── The same fence, and a repository that leaves the hooks alone ─
-        assert!(git_hooks_refusal(&plan,
-            &[fmt!("/usr/bin/git"), fmt!("commit")], &fmt!("{}", hooked.display()), &readenv)
+        assert!(git_hooks_refusal(&lch, &spec, &plan,
+            &[fmt!("/usr/bin/git"), fmt!("commit")], &fmt!("{}", hooked.display()), &readenv).await
             .is_none(),
             "a commit that can reach the user's hooks was refused anyway");
 
@@ -7016,6 +7466,133 @@ mod tests {
         assert_eq!(res!(commits_in(&hooked)), "",
             "the credential was committed even though the hook ran");
 
+        Ok(())
+    }
+
+    /// The repository's own `core.hooksPath` is read BEHIND the commit's fence and within a
+    /// bound, never by a bare git in the hand.
+    ///
+    /// Second security round, N1: the read was an unfenced `git config` with no timeout in the
+    /// command's working directory, whose `.git/config` a daimon writes. An `include.path`
+    /// there named a file outside the fence -- another Diamond's -- and git read it for the
+    /// hand: its value came back in the refusal sentence, and whether a commit was refused
+    /// told a valid configuration from any other file. An `include.path` naming a FIFO
+    /// blocked git, and with it the hand's message loop, until someone fed the FIFO.
+    #[tokio::test]
+    async fn the_repository_hooks_read_is_fenced_and_bounded() -> Outcome<()> {
+        let hand  = res!(shipping_hand());
+        let base  = res!(fixture("git-hooks-fenced"));
+        let home  = base.join("home");
+        let hooks = home.join("hooks");
+        let ws    = base.join("ws");
+        let other = base.join("outside");	// another Diamond's mark
+        res!(std::fs::create_dir_all(&hooks));
+        let cfg = home.join(".gitconfig");
+        res!(std::fs::write(&cfg, fmt!("[core]\n\thooksPath = {}\n", hooks.display())));
+        // A hooks directory that exists, because only one that exists is ever named back.
+        let bdir = other.join("SECRET-FROM-DIAMOND-B");
+        res!(std::fs::create_dir_all(&bdir));
+        let bconf = other.join("conf");
+        res!(std::fs::write(&bconf, fmt!("[core]\n\thooksPath = {}\n", bdir.display())));
+        let bkey = other.join("id_key");
+        res!(std::fs::write(&bkey, "-----BEGIN KEY-----\x01\x02\n"));
+        let readenv = vec![(fmt!("GIT_CONFIG_GLOBAL"), fmt!("{}", cfg.display()))];
+        let git = |args: &[&str]| -> Outcome<()> {
+            let out = res!(std::process::Command::new("/usr/bin/git").args(args).current_dir(&ws)
+                .env("GIT_CONFIG_GLOBAL", &cfg).output());
+            if !out.status.success() {
+                return Err(err!("git {:?} failed: {}", args,
+                    String::from_utf8_lossy(&out.stderr); Test, IO));
+            }
+            Ok(())
+        };
+        res!(git(&["init", "-q"]));
+        let gcfg = ws.join(".git").join("config");
+        let clean = res!(std::fs::read_to_string(&gcfg));
+        let spec = FenceSpec {
+            rw:   vec![fmt!("{}", ws.display())],
+            ro:   vec![fmt!("{}", home.display())],
+            deny: Vec::new(),
+            net:  false,
+        };
+        let plan = res!(detected_fence().plan(&spec, &Unfenced::Refuse));
+        assert!(!plan.permits(&bconf, Level::Ro),
+            "the other Diamond's file is inside the fence, so this proves nothing");
+        let launcher = Launcher::Explicit {
+            prog: hand,
+            args: vec![fmt!("{}", LAUNCH_ARG)],
+            env:  Vec::new(),
+        };
+        let argv = vec![fmt!("/usr/bin/git"), fmt!("commit"), fmt!("-m"), fmt!("x")];
+        let cwd  = fmt!("{}", ws.display());
+        // Asked on a thread of its own, so that a read that never returns fails this test
+        // rather than hanging it.
+        let ask = |bound: u64| -> Option<Option<String>> {
+            let (tx, rx) = std::sync::mpsc::channel();
+            let (l, s, p, a, c, e) = (launcher.clone(), spec.clone(), plan.clone(),
+                argv.clone(), cwd.clone(), readenv.clone());
+            std::thread::spawn(move || {
+                let rt = match tokio::runtime::Builder::new_current_thread().enable_all().build() {
+                    Ok(r)  => r,
+                    Err(_) => return,
+                };
+                let said = rt.block_on(git_hooks_refusal(&l, &s, &p, &a, &c, &e));
+                let _ = tx.send(said);
+            });
+            rx.recv_timeout(Duration::from_secs(bound)).ok()
+        };
+
+        // The control: nothing in the repository's configuration, so nothing is refused.
+        assert_eq!(ask(30), Some(None), "a repository that names no hooks was refused");
+
+        // An include of the other Diamond's configuration: its value must not come back.
+        res!(git(&["config", "--no-includes", "--replace-all", "include.path",
+            &fmt!("{}", bconf.display())]));
+        let conf_said = match ask(30) {
+            Some(s) => s,
+            None    => return Err(err!("the read did not return"; Test, Missing)),
+        };
+        assert!(!fmt!("{:?}", conf_said).contains("SECRET-FROM-DIAMOND-B"),
+            "a file outside the fence was read for the daimon: {:?}", conf_said);
+        // And no oracle: a valid configuration and a key outside the fence answer alike.
+        res!(git(&["config", "--no-includes", "--replace-all", "include.path",
+            &fmt!("{}", bkey.display())]));
+        let key_said = match ask(30) {
+            Some(s) => s,
+            None    => return Err(err!("the read did not return"; Test, Missing)),
+        };
+        assert_eq!(conf_said.is_some(), key_said.is_some(),
+            "whether the commit is refused tells a configuration outside the fence from a \
+             key outside it: {:?} against {:?}", conf_said, key_said);
+        assert_eq!(conf_said, key_said,
+            "the two files outside the fence were told apart: {:?} against {:?}",
+            conf_said, key_said);
+
+        // A FIFO inside the mark: the read returns within its bound, refused.
+        let ff = ws.join(".git").join("ff");
+        let made = res!(std::process::Command::new("/usr/bin/mkfifo").arg(&ff).status());
+        assert!(made.success(), "mkfifo failed");
+        res!(std::fs::write(&gcfg, fmt!("{}[include]\n\tpath = {}\n", clean, ff.display())));
+        let t0 = std::time::Instant::now();
+        let fifo_said = ask(HOOKS_READ_TIMEOUT.as_secs() + 10);
+        let took = t0.elapsed();
+        // Whatever happened, nothing may be left blocked on the FIFO: open it for writing
+        // without waiting (O_NONBLOCK) and close it, which a reader still there sees as EOF.
+        let mut oo = std::fs::OpenOptions::new();
+        oo.write(true);
+        std::os::unix::fs::OpenOptionsExt::custom_flags(&mut oo, 0o4000);
+        let _ = oo.open(&ff);
+        let fifo_said = match fifo_said {
+            Some(s) => s,
+            None    => return Err(err!(
+                "a FIFO named by the repository's configuration held the hooks read for {:?}",
+                took; Test, Missing)),
+        };
+        assert!(took <= HOOKS_READ_TIMEOUT + Duration::from_secs(5),
+            "the read took {:?}, past its bound", took);
+        assert!(fifo_said.as_deref().map(|s| s.starts_with("Refused: ")).unwrap_or(false),
+            "a configuration that could not be read in time let the commit through: {:?}",
+            fifo_said);
         Ok(())
     }
 
@@ -8616,7 +9193,7 @@ mod tests {
             "a fence naming {} resolved, so this machine cannot show the failure",
             absent.display());
 
-        let gone = drop_absent_kit_roots(&mut spec, &kits);
+        let gone = drop_absent_kit_roots(&mut spec, &kits, Door::Command);
         assert_eq!(gone, vec![fmt!("{}", absent.display())],
             "the absent toolchain root was not the thing dropped");
         assert!(detected_fence().plan(&spec, &Unfenced::Refuse).is_ok(),
@@ -8631,7 +9208,7 @@ mod tests {
             deny: Vec::new(),
             net:  false,
         };
-        let gone = drop_absent_kit_roots(&mut marked, &kits);
+        let gone = drop_absent_kit_roots(&mut marked, &kits, Door::Command);
         assert!(gone.is_empty(), "a workspace root was dropped: {:?}", gone);
         assert_eq!(marked.rw, vec![fmt!("{}", ghost.display())]);
         assert!(detected_fence().plan(&marked, &Unfenced::Refuse).is_err(),
@@ -8648,7 +9225,7 @@ mod tests {
                 deny: Vec::new(),
                 net:  false,
             };
-            let gone = drop_absent_kit_roots(&mut have, &kits);
+            let gone = drop_absent_kit_roots(&mut have, &kits, Door::Command);
             assert!(gone.is_empty(), "a toolchain folder that exists was dropped: {:?}", gone);
         }
 
@@ -8660,8 +9237,24 @@ mod tests {
             deny: Vec::new(),
             net:  false,
         };
-        assert!(drop_absent_kit_roots(&mut none, &[]).is_empty(),
+        assert!(drop_absent_kit_roots(&mut none, &[], Door::Command).is_empty(),
             "a root was dropped for a toolkit the request never named");
+
+        // Except at a terminal, whose ceiling admits a toolchain folder with no toolkit
+        // named: the absent one is dropped there rather than refusing the terminal.
+        let gone = drop_absent_kit_roots(&mut none, &[], Door::Terminal);
+        assert_eq!(gone, vec![fmt!("{}", absent.display())],
+            "a terminal's absent toolchain root was not dropped");
+        assert!(none.ro.is_empty(), "the terminal's fence still names it: {:?}", none.ro);
+        // And a terminal's marked folder that is missing still refuses.
+        let mut tmarked = FenceSpec {
+            rw:   vec![fmt!("{}", ghost.display())],
+            ro:   Vec::new(),
+            deny: Vec::new(),
+            net:  false,
+        };
+        assert!(drop_absent_kit_roots(&mut tmarked, &[], Door::Terminal).is_empty(),
+            "a terminal's marked folder was dropped");
         Ok(())
     }
 

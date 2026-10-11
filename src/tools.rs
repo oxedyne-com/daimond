@@ -4226,6 +4226,12 @@ pub enum Bound {
     /// limitation, in a directory under no version control, and no worker was involved.  So the
     /// surface distinction is gone and the verb distinction is back: one rule, both surfaces, both
     /// doors.
+    ///
+    /// **What Landlock leaves visible.**  A command's fence stops it opening, listing, writing,
+    /// creating or removing anything outside the mark, but Landlock does not govern path metadata:
+    /// `stat`, `access` and `readlink` on a path beyond the mark still answer, so a command can
+    /// learn that a name exists and its size and times, though never its contents or a directory's
+    /// entries.
     OnlyWriteUnder(String),
     /// A toolchain the user granted this Diamond (see [`Toolkit`]).
     ///
@@ -5630,6 +5636,49 @@ pub fn terminal_toolkit_bounds(names: &[String], remote: bool) -> Vec<Bound> {
     out
 }
 
+/// The bounds the interactive terminal runs with: a Diamond's, with its allow-list taken away.
+///
+/// **A terminal is the user at a keyboard, not a daimon, so its fence is the machine grant and not
+/// this Diamond's attachments.**  The owner asked for it in those words on 2026-08-26 (9348afc4):
+/// *"I don't really want the terminal to be daimon and chat workspace bound, I want it to be able
+/// to roam over the browser and machine workspaces of the user"*.  No [`Tool`] opens a terminal or
+/// types into one, so a daimon cannot reach this surface -- which is the whole reason the widening
+/// is safe here and would not be in `Tool::Run`.
+///
+/// **Only the allow-list goes.**  A folder the user marked read-only keeps its [`Bound::NoWrite`],
+/// Daimond's own directory keeps its [`Bound::NoRead`], and every standing credential deny
+/// [`fence_spec_surfaced`] applies is untouched; only [`Surface::Terminal`] lifts `.ssh`.  With no
+/// allow-list left, [`fence_spec_surfaced`] reads the turn as unscoped and grants the granted root.
+/// [`Bound::Nowhere`] goes too: a terminal that belongs to no Diamond is an ordinary terminal.
+///
+/// **`crate::wasm::pty::pty_request` is the only caller there should ever be.**  A scoped command
+/// fence must never equal what this composes, and a unit test pins that the two stay apart.
+///
+/// **R2 becomes a hole the day a daimon gets a tool that types into a terminal**: this fence, the
+/// lifted `.ssh` and the Remote toolchain's ssh key are then a daimon's, and an ssh is a shell on
+/// another machine no fence here binds.
+///
+/// # Arguments
+/// * `toolkits` - The toolkit names the user granted this Diamond, never anything from `argv`.
+/// * `remote` - [`Machine::remote`], the machine's answer, see [`terminal_toolkit_bounds`].
+pub fn terminal_bounds(
+    own_dir:   &str,
+    attached:  &[String],
+    read_only: &[String],
+    toolkits:  &[String],
+    remote:    bool,
+) -> Vec<Bound> {
+    let mut out: Vec<Bound> = diamond_bounds(own_dir, attached, read_only)
+        .into_iter()
+        .filter(|b| !matches!(b,
+            Bound::OnlyUnder(_) | Bound::OnlyWriteUnder(_) | Bound::Nowhere))
+        .collect();
+    // `terminal_toolkit_bounds` and not `toolkit_bounds`: the Remote toolkit lends an ssh key, and
+    // a person typing here may use it where a daimon's `run` never can.
+    out.extend(terminal_toolkit_bounds(toolkits, remote));
+    out
+}
+
 // ── Two bounds on one turn ───────────────────────────────────────────────────
 //
 // A turn can be narrowed twice: once by the Diamond it works for, and once by the skill it runs
@@ -6181,7 +6230,17 @@ pub fn fence_spec_surfaced(
         // A store path cannot arrive here at all: it is not in `allow`, and no allowed prefix
         // encloses one -- `chats`, `diamonds` and `mail` are whole first segments, and the only
         // prefix above them is the empty one, which is dropped.
-        if !under(w, DAIMOND_DIR) && allow.iter().any(|a| under(w, a)) && !allow.contains(w) {
+        //
+        // An UNSCOPED turn's grant is the root itself, so every read-only mark is nested in it.
+        // The Terminal is the case that needs it: `terminal_bounds` takes the allow-list away and
+        // keeps each `NoWrite`, and until 11 Oct 2026 this loop then dropped them, so a folder the
+        // user marked read-only was writable from the Terminal, against 9348afc4's own account.
+        let nested = if scoped {
+            allow.iter().any(|a| under(w, a)) && !allow.contains(w)
+        } else {
+            !w.is_empty() && !is_store_path(w)
+        };
+        if !under(w, DAIMOND_DIR) && nested {
             let a = abs(w);
             if !ro.contains(&a) { ro.push(a); }
         }
@@ -6279,6 +6338,17 @@ pub fn fence_enforced(caps: &[String]) -> bool {
 }
 
 pub const CAP_METER_DELETES: &str = "meter:deletes"; // said by `hand/src/main.rs`
+pub const CAP_RUN_ROOT_START: &str = "run:root-start"; // said by `hand/src/main.rs`
+pub const CAP_RELAY_ROOT_START: &str = "relay:root-start"; // added by `ext/hand.js` to the hello
+
+/// May a command start at the workspace root above its fence? See [`ToolContext::run_cwd`].
+///
+/// Both ends vet the cwd, so both must say so: a newer hand behind an extension the browser
+/// has not reloaded would otherwise have every command refused by the relay.
+pub fn root_start(caps: &[String]) -> bool {
+    caps.iter().any(|c| c == CAP_RUN_ROOT_START)
+        && caps.iter().any(|c| c == CAP_RELAY_ROOT_START)
+}
 
 /// Does this hand meter what a command removes?
 ///
@@ -6625,6 +6695,12 @@ pub enum PathClaim {
     Removed,    // gone from the store when the call returned
 }
 
+/// A list of strings as a JSON array.
+fn json_list(v: &[String]) -> String {
+    let items: Vec<String> = v.iter().map(|s| fmt!("\"{}\"", json_escape(s))).collect();
+    fmt!("[{}]", items.join(","))
+}
+
 /// What a command may touch, as the machine hand's wire spells it.
 ///
 /// A mirror of the hand's own `wire::FenceSpec`, kept here rather than shared through a common
@@ -6647,13 +6723,9 @@ impl FenceSpec {
 
     /// This fence as the JSON the hand reads.
     pub fn to_json(&self) -> String {
-        let list = |v: &[String]| -> String {
-            let items: Vec<String> = v.iter().map(|s| fmt!("\"{}\"", json_escape(s))).collect();
-            fmt!("[{}]", items.join(","))
-        };
         fmt!(
             r#"{{"rw":{},"ro":{},"deny":{},"net":{}}}"#,
-            list(&self.rw), list(&self.ro), list(&self.deny), self.net,
+            json_list(&self.rw), json_list(&self.ro), json_list(&self.deny), self.net,
         )
     }
 
@@ -12341,6 +12413,45 @@ impl ToolContext {
             return prefix;
         }
         start_dir(&self.no_write)
+    }
+
+    /// Where `run` starts when the model names no `cwd`: where the file tools resolve paths.
+    ///
+    /// A scoped turn carries no prefix, so its file tools read `notes/x` from the workspace root,
+    /// while [`default_cwd`](ToolContext::default_cwd) starts its commands in the first attached
+    /// folder -- and `cat notes/x` then names a different file from the one just written. A hand
+    /// that reports [`CAP_RUN_ROOT_START`] lets a command start at the root as a traversal-only
+    /// directory (its fence is unchanged), so the two meanings become one. An older hand refuses
+    /// that start, and the turn keeps `default_cwd` there. A turn with nowhere to run keeps
+    /// nowhere: the root is a start only above an attached folder.
+    ///
+    /// Verification and the terminal keep `default_cwd`: neither resolves a model's paths.
+    ///
+    /// # Arguments
+    /// * `root_start` - Whether the hand reported [`CAP_RUN_ROOT_START`].
+    pub fn run_cwd(&self, root_start: bool) -> String {
+        let d = self.default_cwd();
+        if root_start && normalise(&self.path_prefix).is_empty() && self.may_start_in("", true) {
+            return String::new();
+        }
+        d
+    }
+
+    /// Whether a command may START in `path`: [`may_run_in`](ToolContext::may_run_in), or the
+    /// workspace root as a traversal-only start where the hand allows one (see
+    /// [`run_cwd`](ToolContext::run_cwd)).
+    ///
+    /// # Arguments
+    /// * `path` - The workspace-relative directory a command would start in.
+    /// * `root_start` - Whether the hand reported [`CAP_RUN_ROOT_START`].
+    pub fn may_start_in(&self, path: &str, root_start: bool) -> bool {
+        if self.may_run_in(path) {
+            return true;
+        }
+        root_start
+            && normalise(path).is_empty()
+            && !start_dir(&self.no_write).is_empty()
+            && !self.no_write.iter().any(|b| matches!(b, Bound::Nowhere))
     }
 
     /// Whether this turn is confined to a workspace at all -- a Diamond's or a chat's.
@@ -18865,7 +18976,7 @@ impl Tool {
             Tool::Verify => r#"{"type":"object","properties":{"name":{"type":"string","description":"A repository verifier's short name ('graph' for dev/verify_graph.mjs): letters, digits and underscores, never a path. LEAVE IT OUT for this project's own check."},"cwd":{"type":"string","description":"Project check: workspace-relative directory to verify (default: this turn's folder)"},"max_bytes":{"type":"integer","description":"Project check: output bytes carried (default 16000, max 80000)"},"break":{"type":"string","description":"Run the clean pass and only this ONE declared break; an undeclared one is refused with the list."},"clean_only":{"type":"boolean","description":"The clean pass alone. NOT PROVEN: it may show a fault, never that it works."},"world":{"type":"boolean","description":"Stand a dev world (default: yes if the verifier imports dev/harness.mjs); false if it starts its own servers."},"timeout_ms":{"type":"integer","description":"Budget in ms for the WHOLE sequence -- clean run plus every break (default 1200000, maximum 7200000). A break the budget does not reach is reported as never run."}},"required":[]}"#,
             Tool::Runs => r#"{"type":"object","properties":{"stop":{"type":"string","description":"Stop this run. It is the IDENTIFIER from this tool's own listing, such as 'run-1-bash' -- never a process id, never a program name and never a pattern. Leave it out to list without stopping anything."},"signal":{"type":"string","description":"Which signal to send with 'stop': 'term' to ask it to stop (the default), 'kill' to insist, 'int' to interrupt it as Ctrl-C would."},"read":{"type":"string","description":"Hand over the output being held for this run from before the page reloaded. The listing names which runs have any. It is handed over once and then let go, so read it before stopping that run."}},"required":[]}"#,
             Tool::Serve => r#"{"type":"object","properties":{"act":{"type":"string","enum":["start","stop","list"],"description":"Default 'list'"},"path":{"type":"string","description":"For 'start': workspace-relative folder to serve, inside a folder added on this computer"},"port":{"type":"integer","description":"For 'start': 1024-65535 (default 8800 and up)"},"id":{"type":"string","description":"For 'stop': the identifier 'start' or 'list' gave"}},"required":[]}"#,
-            Tool::Run => r#"{"type":"object","properties":{"argv":{"type":"array","items":{"type":"string"},"description":"The program, then each argument separately."},"cwd":{"type":"string","description":"Workspace-relative directory to run in (default: this Diamond's own directory). Never absolute."},"stdin":{"type":"string","description":"Text written to the command's standard input, then closed"},"timeout_ms":{"type":"integer","description":"Hard limit, ms (default 120000, max 900000)"},"max_bytes":{"type":"integer","description":"Output bytes carried (default 16000, max 80000)."}},"required":["argv"]}"#,
+            Tool::Run => r#"{"type":"object","properties":{"argv":{"type":"array","items":{"type":"string"},"description":"The program, then each argument separately."},"cwd":{"type":"string","description":"Workspace-relative directory to run in (default: the workspace root, where file-tool paths resolve). Never absolute."},"stdin":{"type":"string","description":"Text written to the command's standard input, then closed"},"timeout_ms":{"type":"integer","description":"Hard limit, ms (default 120000, max 900000)"},"max_bytes":{"type":"integer","description":"Output bytes carried (default 16000, max 80000)."}},"required":["argv"]}"#,
             Tool::SpawnAgent => r#"{"type":"object","properties":{"name":{"type":"string","description":"Short label for the agent, e.g. 'research-opfs'"},"task":{"type":"string","description":"The complete, self-contained instruction for the agent. It cannot see this conversation, so say everything it needs."}},"required":["name","task"]}"#,
             Tool::Gather => r#"{"type":"object","properties":{"names":{"type":"array","items":{"type":"string"},"description":"Worker names. Omit for every one this turn started and has not gathered."},"timeout_s":{"type":"integer","description":"Seconds to wait before answering with what has finished, 10..600. Default 600."},"partial":{"type":"boolean","description":"Answer at the FIRST report, not waiting for all. Default false."}}}"#,
             Tool::WebOpen => r#"{"type":"object","properties":{"url":{"type":"string","description":"Absolute URL of the page to show, including the https:// scheme"}},"required":["url"]}"#,
@@ -25737,6 +25848,8 @@ impl Tool {
         let cwd_rel = match cwd_rel {
             Some(c) => c,
             None    => {
+                // The refusals below are about having no folder at all, so they ask the start
+                // directory; where the command then starts is `run_cwd`'s answer.
                 let d = ctx.default_cwd();
                 // A chat, or a worker it dispatched, with nothing in scope but its own working
                 // folder. Its own words, because the Diamond sentence below would point at a
@@ -25759,7 +25872,7 @@ impl Tool {
                         folder to this Diamond in the Workspace panel, or name a 'cwd' inside one \
                         that is already attached.")));
                 }
-                d
+                ctx.run_cwd(root_start(&caps))
             }
         };
         // Before the bounds, and for the same reason the file tools' check comes first: an
@@ -25773,7 +25886,7 @@ impl Tool {
         // `may_read` would answer yes for every path in the workspace and this guard would have
         // quietly stopped guarding -- leaving a command to be refused two layers down by the hand,
         // in a sentence naming an absolute path the user never chose.
-        if !ctx.may_run_in(&cwd_rel) {
+        if !ctx.may_start_in(&cwd_rel, root_start(&caps)) {
             return Ok(Exec::Refused(ctx.refusal(&cwd_rel, true)));
         }
         // In scope, and still not a directory on this computer. A chat's scratch and a Diamond's
@@ -25844,33 +25957,17 @@ impl Tool {
         // it is the one case with nobody to ask -- so `net_step` answers it `Withhold` and nothing
         // below can turn that into a question.
         //
-        // These four lines are mirrored by `test_one_answer_covers_the_whole_turn_and_a_new_turn_
+        // `turn_net`'s lines are mirrored by `test_one_answer_covers_the_whole_turn_and_a_new_turn_
         // asks_again`, which is the only way the browser-only path here can be checked at all.
         // Keep them the same shape.
         let cmd = argv.join(" ");
-        let step = net_step(mode, ctx.net_risk(), ctx.is_unsupervised(), ctx.net_consent());
-        let step = match step {
-            NetStep::Ask => {
-                // Its own edge, not `egress_allowed_detail`, and for one reason: the page's gate
-                // answers `allow` outright for our own origin, and a command line resolved against
-                // the page IS our own origin, so this question asked through that door would be
-                // waved through by a shortcut meant for a URL. `egress_allowed_net` takes a yes
-                // only in a word the branch written for this question can say.
-                let answer = crate::wasm::web::egress_allowed_net(&ctx.turn_tag(), &cmd, &cwd_abs).await;
-                let v = net_verdict(answer);
-                ctx.set_net_consent(v);
-                // Read back rather than derived, so the turn's memory is what the fence is built
-                // from: two answers to one question is how a race gets the network.
-                net_step(mode, ctx.net_risk(), ctx.is_unsupervised(), ctx.net_consent())
-            },
-            other => other,
-        };
+        let gives_net = Self::turn_net(ctx, mode, &cmd, &cwd_abs).await;
         // Built from the answer, by the one function that builds a fence, out of the one argument a
         // rung -- or a user -- may move. The withheld fence is the one already in hand, so the
         // second call happens only where the user gave the network back, and everything but that
         // field comes from the turn's bounds and nothing else --
         // `test_a_yes_moves_nothing_but_the_network` holds it to exactly that.
-        let fence = if step.gives_net() {
+        let fence = if gives_net {
             command_fence(&bounds, &machine, false)
         } else {
             bare
@@ -26277,6 +26374,8 @@ impl Tool {
     /// writes it, as `verify::BY_ROOT`.
     #[cfg(any(target_arch = "wasm32", test))]
     const CAP_VERIFY_BY_ROOT: &str = "verify:by-root";
+    #[cfg(any(target_arch = "wasm32", test))]
+    const CAP_VERIFY_FENCED: &str = "verify:fenced"; // `hand/src/verify.rs`'s `verify::FENCED`
 
     /// Does this hand have verifiers to run at all?
     ///
@@ -26298,6 +26397,33 @@ impl Tool {
     #[cfg(any(target_arch = "wasm32", test))]
     fn verify_available(caps: &[String]) -> bool {
         caps.iter().any(|c| c == Self::CAP_VERIFY_BY_ROOT || c == "verify:dev")
+    }
+
+    /// The sentence refusing a named `verify` on this hand, or `None` to go ahead.
+    ///
+    /// # Arguments
+    /// * `caps` - What the hand said in its handshake.
+    #[cfg(any(target_arch = "wasm32", test))]
+    fn verify_gate(caps: &[String]) -> Option<String> {
+        if !Self::verify_available(caps) {
+            return Some(fmt!(
+                "Refused: the folder this hand was granted holds no 'dev/verify_*.mjs', so \
+                there is nothing here to verify with. This tool runs THIS repository's own \
+                verifiers; it is not a general test runner. Tell the user which folder they \
+                granted, and use 'run' for the project's own test command instead."));
+        }
+        // A hand that does not say its verifiers run fenced is one older than the fence, which
+        // ran a committed verifier with the person's whole access: nothing sent from here can
+        // fence it, so it is refused, and the remedy is the person's.
+        if !caps.iter().any(|c| c == Self::CAP_VERIFY_FENCED) {
+            return Some(fmt!(
+                "Refused: the machine hand on this computer is older than the one that runs \
+                verifiers behind a fence, so a verifier run through it could reach every file the \
+                user can. Nothing was run. Tell the user to update the hand (install the current \
+                Daimond hand and reload the extension), and use 'run' for the project's own test \
+                command meanwhile."));
+        }
+        None
     }
 
     /// The tree this Diamond is about, absolute on the machine, or empty for the granted root.
@@ -26357,8 +26483,14 @@ impl Tool {
     ///   granted root.  Composed from the turn's BOUNDS and never from the model's text -- it is
     ///   the mark the user made, which is the one thing that says which of the grant's
     ///   repositories this Diamond is about.
+    /// * `net` - What [`Tool::turn_net`] answered for this turn, which the hand's verifier fence
+    ///   takes as its network and never widens.
+    /// * `fence` - `run`'s fence on this turn, whose read-only and deny lists the hand's verifier
+    ///   fence carries (rc-b F3, 11 Oct 2026), so a verifier writes nowhere `run` could not.
     #[cfg(any(target_arch = "wasm32", test))]
-    fn verify_spec(args: &str, id: &str, root: &str) -> Result<String, String> {
+    fn verify_spec(args: &str, id: &str, root: &str, net: bool, fence: &FenceSpec)
+        -> Result<String, String>
+    {
         let name = match extract_json_string(args, "name") {
             Some(n) => n,
             None    => return Err(fmt!(
@@ -26412,13 +26544,16 @@ impl Tool {
             None	=> "infer",
         };
         Ok(fmt!(
-            r#"{{"t":"verify","id":"{}","name":"{}","root":"{}","breaks":"{}","break":{},"world":"{}","timeout_ms":{}}}"#,
+            r#"{{"t":"verify","id":"{}","name":"{}","root":"{}","breaks":"{}","break":{},"world":"{}","net":{},"ro":{},"deny":{},"timeout_ms":{}}}"#,
             json_escape(id),
             json_escape(&name),
             json_escape(root),
             breaks,
             brk,
             world,
+            net,
+            json_list(&fence.ro),
+            json_list(&fence.deny),
             budget))
     }
 
@@ -26752,6 +26887,34 @@ impl Tool {
     /// # Arguments
     /// * `args` - The raw tool arguments.
     /// * `ctx` - The turn.
+    /// Whether this turn's commands may reach the network: the ONE question `run` and `verify`
+    /// both ask, so a committed verifier is never a wider way out than a command.
+    ///
+    /// # Arguments
+    /// * `cmd` - What the user is asked about, as they would read it.
+    /// * `cwd_abs` - Where it runs.
+    #[cfg(target_arch = "wasm32")]
+    async fn turn_net(ctx: &ToolContext, mode: Mode, cmd: &str, cwd_abs: &str) -> bool {
+        let step = net_step(mode, ctx.net_risk(), ctx.is_unsupervised(), ctx.net_consent());
+        let step = match step {
+            NetStep::Ask => {
+                // Its own edge, not `egress_allowed_detail`, and for one reason: the page's gate
+                // answers `allow` outright for our own origin, and a command line resolved against
+                // the page IS our own origin, so this question asked through that door would be
+                // waved through by a shortcut meant for a URL. `egress_allowed_net` takes a yes
+                // only in a word the branch written for this question can say.
+                let answer = crate::wasm::web::egress_allowed_net(&ctx.turn_tag(), cmd, cwd_abs).await;
+                let v = net_verdict(answer);
+                ctx.set_net_consent(v);
+                // Read back rather than derived, so the turn's memory is what the fence is built
+                // from: two answers to one question is how a race gets the network.
+                net_step(mode, ctx.net_risk(), ctx.is_unsupervised(), ctx.net_consent())
+            },
+            other => other,
+        };
+        step.gives_net()
+    }
+
     #[cfg(target_arch = "wasm32")]
     async fn verify(args: &str, ctx: &ToolContext) -> Outcome<String> {
         let name = extract_json_string(args, "name")
@@ -26777,23 +26940,26 @@ impl Tool {
                 "The machine hand did not say which folder it was granted, so there is no tree \
                 to look a verifier up in. Nothing was run."; Missing, Configuration));
         }
-        if !Self::verify_available(&machine.caps) {
-            return Ok(fmt!(
-                "Refused: the folder this hand was granted holds no 'dev/verify_*.mjs', so \
-                there is nothing here to verify with. This tool runs THIS repository's own \
-                verifiers; it is not a general test runner. Tell the user which folder they \
-                granted, and use 'run' for the project's own test command instead."));
+        if let Some(r) = Self::verify_gate(&machine.caps) {
+            return Ok(r);
         }
         let root = Self::verify_root_of(ctx, &machine);
-        let spec = match Self::verify_spec(args, &Self::run_id("verify", ctx), &root) {
+        // The network `run` would get on this turn, asked the same way: a verifier that could
+        // not read another Diamond must not be able to post this one anywhere instead.
+        let net = Self::turn_net(ctx, mode(), &fmt!("verify {}", name), &root).await;
+        // `run`'s own fence on this turn, by the function `run` builds it with, so the verifier
+        // takes its read-only marks and deny rules (and, on a hand older than the deletion
+        // meter, its everything-read-only).
+        let fence = command_fence(&ctx.run_bounds(), &machine, true);
+        let spec = match Self::verify_spec(args, &Self::run_id("verify", ctx), &root, net, &fence) {
             Ok(s)  => bound_to_link(s, extract_json_number(&st, "link")),
             Err(r) => return Ok(r),
         };
-        // THE SAME QUESTION `run` ASKS, over the same fence and by the same function.  The
-        // verifier is not fenced -- `Desk::verify` in hand/src/main.rs says so, and says why: a
-        // verifier that drives a browser cannot run inside one.  What is fenced is its INPUT, a
-        // name looked up in the tracked tree's own `dev/`, so nothing the model wrote reaches a
-        // program, an argument or a path.  The one thing that could make this output a stranger's
+        // THE SAME QUESTION `run` ASKS, over the same fence and by the same function.  Since
+        // 11 Oct 2026 the verifier runs behind the hand's verifier fence (`verifier_fence` in
+        // hand/src/verify.rs), and its INPUT is still only a name looked up in the tracked tree's
+        // own `dev/`, so nothing the model wrote reaches a program, an argument or a path.  The
+        // one thing that could make this output a stranger's
         // words is therefore the TURN working somewhere a stranger's words live, which is exactly
         // what the fence states: an unbounded turn's fence IS the granted root and still answers
         // yes, mailbox and all, while a Diamond bounded to its own folder answers no.
@@ -33424,6 +33590,43 @@ mod tests {
     }
 
     #[test]
+    fn test_run_starts_at_the_root_only_where_the_hand_says_it_may_00() {
+        // A scoped worker writes `notes/x` through the file tools, which resolve it against the
+        // workspace root, then runs `cat notes/x` -- which started in the first attached folder
+        // and read `notes/notes/x`. A hand reporting `run:root-start` lets the command start at
+        // the root instead, as a traversal-only directory; an older hand does not, and the turn
+        // keeps the attached folder there.
+        let c = scoped(&["notes"], &[]);
+        assert_eq!(c.run_cwd(true), fmt!(""), "a new hand: run starts where paths resolve");
+        assert!(c.may_start_in("", true), "and the root is a legal START");
+        assert_eq!(c.run_cwd(false), fmt!("notes"), "an old hand: the first attached folder");
+        assert!(!c.may_start_in("", false), "and the root is refused, as the old hand would");
+        assert!(root_start(&[fmt!("fence:linux"), fmt!("{}", CAP_RUN_ROOT_START),
+            fmt!("{}", CAP_RELAY_ROOT_START)]));
+        assert!(!root_start(&[fmt!("fence:linux")]));
+        // A newer hand behind an extension that has not reloaded: the relay would refuse it.
+        assert!(!root_start(&[fmt!("fence:linux"), fmt!("{}", CAP_RUN_ROOT_START)]));
+        // A start, not a place: the fence is composed from the bounds and the root is not in it.
+        let m = Machine::at("/home/u/ws");
+        let f = fence_spec(&c.no_write, &m, false);
+        assert!(!f.rw.contains(&fmt!("/home/u/ws")) && !f.ro.contains(&fmt!("/home/u/ws")),
+            "the root is not granted by this: {:?}", f);
+        // Only the ROOT: another folder outside the scope is still no start.
+        assert!(!c.may_start_in("elsewhere", true));
+        // Nowhere to run stays nowhere: no attached folder, no root start.
+        let bare = scoped(&[], &[]);
+        assert_eq!(bare.run_cwd(true), fmt!(""));
+        assert!(!bare.may_start_in("", true), "a Diamond with nothing attached has no fence below the root");
+        // A prefixed turn resolves its paths under the prefix, so it starts there.
+        let mut d = ctx();
+        d.path_prefix = fmt!("src/api");
+        assert_eq!(d.run_cwd(true), fmt!("src/api"));
+        // An ordinary turn: the root, either way.
+        assert_eq!(ctx().run_cwd(true), fmt!(""));
+        assert_eq!(ctx().run_cwd(false), fmt!(""));
+    }
+
+    #[test]
     fn test_a_diamonds_command_cannot_reach_another_diamond_00() {
         // The claim §1.9 is about, stated as a fence rather than as a sentence. The contrast is
         // the point: an unscoped turn -- which is what every worker carried while nothing
@@ -36616,13 +36819,13 @@ mod tests {
             r#"{"name":"-rf"}"#,
             r#"{"name":""}"#,
         ] {
-            match Tool::verify_spec(bad, "v-1", "") {
+            match Tool::verify_spec(bad, "v-1", "", false, &FenceSpec::default()) {
                 Err(r) => assert!(r.starts_with("Refused:"), "{} -> {}", bad, r),
                 Ok(s)  => panic!("{} composed a request: {}", bad, s),
             }
         }
         // And the absence of the argument is its own sentence, not a silent default.
-        match Tool::verify_spec(r#"{}"#, "v-1", "") {
+        match Tool::verify_spec(r#"{}"#, "v-1", "", false, &FenceSpec::default()) {
             Err(r) => assert!(r.contains("needs 'name'"), "{}", r),
             Ok(s)  => panic!("a nameless call composed a request: {}", s),
         }
@@ -36633,7 +36836,7 @@ mod tests {
     /// has changed and this test is where it shows.
     #[test]
     fn test_verify_composes_a_selector_and_not_a_command() {
-        let spec = match Tool::verify_spec(r#"{"name":"graph"}"#, "v-1", "") {
+        let spec = match Tool::verify_spec(r#"{"name":"graph"}"#, "v-1", "", false, &FenceSpec::default()) {
             Ok(s)  => s,
             Err(r) => panic!("{}", r),
         };
@@ -36643,9 +36846,9 @@ mod tests {
         // Saying nothing about a world asks the hand to read the verifier's own source, which
         // is what a page built before the field existed does.
         assert!(spec.contains(r#""world":"infer""#), "{}", spec);
-        assert!(Tool::verify_spec(r#"{"name":"graph","world":true}"#, "v", "")
+        assert!(Tool::verify_spec(r#"{"name":"graph","world":true}"#, "v", "", false, &FenceSpec::default())
             .unwrap_or_default().contains(r#""world":"stand""#));
-        assert!(Tool::verify_spec(r#"{"name":"graph","world":false}"#, "v", "")
+        assert!(Tool::verify_spec(r#"{"name":"graph","world":false}"#, "v", "", false, &FenceSpec::default())
             .unwrap_or_default().contains(r#""world":"none""#));
         for forbidden in [r#""argv""#, r#""cwd""#, r#""env""#, r#""stdin""#, r#""fence""#] {
             assert!(!spec.contains(forbidden),
@@ -36659,36 +36862,73 @@ mod tests {
     /// wire says which of the three shapes was asked for so the two ends cannot disagree.
     #[test]
     fn test_verify_break_is_a_selector_and_clean_only_is_the_other_shape() {
-        let one = match Tool::verify_spec(r#"{"name":"graph","break":"nolinks"}"#, "v", "") {
+        let one = match Tool::verify_spec(r#"{"name":"graph","break":"nolinks"}"#, "v", "", false, &FenceSpec::default()) {
             Ok(s)  => s,
             Err(r) => panic!("{}", r),
         };
         assert!(one.contains(r#""breaks":"one""#) && one.contains(r#""break":"nolinks""#), "{}", one);
-        let none = match Tool::verify_spec(r#"{"name":"graph","clean_only":true}"#, "v", "") {
+        let none = match Tool::verify_spec(r#"{"name":"graph","clean_only":true}"#, "v", "", false, &FenceSpec::default()) {
             Ok(s)  => s,
             Err(r) => panic!("{}", r),
         };
         assert!(none.contains(r#""breaks":"none""#), "{}", none);
         // A break that is not spellable is refused here rather than sent.
-        assert!(Tool::verify_spec(r#"{"name":"graph","break":"../x"}"#, "v", "").is_err());
+        assert!(Tool::verify_spec(r#"{"name":"graph","break":"../x"}"#, "v", "", false, &FenceSpec::default()).is_err());
         // The two arguments want opposite runs, and one of them is the run that proves nothing.
-        match Tool::verify_spec(r#"{"name":"graph","break":"nolinks","clean_only":true}"#, "v", "") {
+        match Tool::verify_spec(r#"{"name":"graph","break":"nolinks","clean_only":true}"#, "v", "", false, &FenceSpec::default()) {
             Err(r) => assert!(r.contains("proves nothing"), "{}", r),
             Ok(s)  => panic!("both were accepted: {}", s),
         }
+    }
+
+    /// The network a verifier is sent with is the turn's answer, carried as given.
+    #[test]
+    fn test_verify_carries_the_turns_network() {
+        for net in [false, true] {
+            let spec = match Tool::verify_spec(r#"{"name":"graph"}"#, "v", "", net,
+                &FenceSpec::default()) {
+                Ok(s)  => s,
+                Err(r) => panic!("{}", r),
+            };
+            assert!(spec.contains(&fmt!(r#""net":{}"#, net)), "{}", spec);
+        }
+    }
+
+    /// The verifier takes `run`'s read-only and deny lists (rc-b F3), so the hand can keep a
+    /// read-only mark read-only to it; the empty lists still go, since absent means an older page.
+    #[test]
+    fn test_verify_carries_runs_read_only_and_deny_rules() {
+        let fence = FenceSpec {
+            rw:   vec![fmt!("/g/w")],
+            ro:   vec![fmt!("/g/a"), fmt!("/g/w/kept")],
+            deny: vec![fmt!("/home/u/.ssh")],
+            net:  false,
+        };
+        let spec = match Tool::verify_spec(r#"{"name":"graph"}"#, "v", "/g/a", false, &fence) {
+            Ok(s)  => s,
+            Err(r) => panic!("{}", r),
+        };
+        assert!(spec.contains(r#""ro":["/g/a","/g/w/kept"]"#), "{}", spec);
+        assert!(spec.contains(r#""deny":["/home/u/.ssh"]"#), "{}", spec);
+        let none = match Tool::verify_spec(r#"{"name":"graph"}"#, "v", "", false,
+            &FenceSpec::default()) {
+            Ok(s)  => s,
+            Err(r) => panic!("{}", r),
+        };
+        assert!(none.contains(r#""ro":[],"deny":[]"#), "{}", none);
     }
 
     /// The budget covers the WHOLE sequence and is capped, since the page arms one timer from it.
     #[test]
     fn test_verify_budget_is_bounded() {
         let big = match Tool::verify_spec(
-            r#"{"name":"graph","timeout_ms":999999999}"#, "v", "") {
+            r#"{"name":"graph","timeout_ms":999999999}"#, "v", "", false, &FenceSpec::default()) {
             Ok(s)  => s,
             Err(r) => panic!("{}", r),
         };
         assert!(big.contains(&fmt!(r#""timeout_ms":{}"#, Tool::VERIFY_BUDGET_MAX_MS)),
             "an unbounded budget went out: {}", big);
-        let plain = match Tool::verify_spec(r#"{"name":"graph"}"#, "v", "") {
+        let plain = match Tool::verify_spec(r#"{"name":"graph"}"#, "v", "", false, &FenceSpec::default()) {
             Ok(s)  => s,
             Err(r) => panic!("{}", r),
         };
@@ -36710,7 +36950,7 @@ mod tests {
     fn test_a_worker_verifies_its_own_work_and_is_charged_for_it() {
         // COMPOSED, and identically: `verify_spec` no longer asks whose turn this is.
         let asked = r#"{"name":"graph","break":"nolinks","timeout_ms":60000}"#;
-        let spec = match Tool::verify_spec(asked, "v-1", "") {
+        let spec = match Tool::verify_spec(asked, "v-1", "", false, &FenceSpec::default()) {
             Ok(s)  => s,
             Err(r) => panic!("a worker's verify call was refused: {}", r),
         };
@@ -37103,6 +37343,24 @@ CLEAN            27 passed, 0 failed, exit 0, 900 ms
             "a hand that answers per request was refused on the grant's own capability");
     }
 
+    /// **A hand that runs a verifier unfenced is refused it.**
+    ///
+    /// Before 11 Oct 2026 the hand ran a committed verifier with the person's whole access, so
+    /// a Diamond could write one that read another Diamond's files.  Such a hand cannot say
+    /// `verify:fenced`; one that says nothing is that hand, and the person is told to update it.
+    #[test]
+    fn test_verify_is_refused_on_a_hand_that_runs_it_unfenced() {
+        let old = [fmt!("fence:landlock"), fmt!("verify:dev"), fmt!("verify:by-root")];
+        let said = Tool::verify_gate(&old);
+        assert!(said.as_deref().map_or(false, |s| s.starts_with("Refused:") && s.contains("update")),
+            "a hand without the verifier fence was let run a verifier: {:?}", said);
+        let new = [fmt!("fence:landlock"), fmt!("verify:by-root"), fmt!("verify:fenced")];
+        assert_eq!(Tool::verify_gate(&new), None, "a fenced hand was refused verify");
+        // No verifiers at all is still its own sentence, whatever the fence.
+        let none = [fmt!("verify:none"), fmt!("verify:fenced")];
+        assert!(Tool::verify_gate(&none).map_or(false, |s| s.contains("holds no")));
+    }
+
     /// **The request names the folder the user MARKED, not the folder they granted.**
     ///
     /// The whole of blocker 2 of the real-repository bank, 2026-09-15: the hand was granted the
@@ -37116,7 +37374,7 @@ CLEAN            27 passed, 0 failed, exit 0, 900 ms
         let marked = scoped(&[&fmt!("daimond")], &[]);
         assert_eq!("/home/u/projects/daimond", Tool::verify_root_of(&marked, &machine));
         let spec = match Tool::verify_spec(r#"{"name":"graph"}"#, "v-1",
-            &Tool::verify_root_of(&marked, &machine))
+            &Tool::verify_root_of(&marked, &machine), false, &FenceSpec::default())
         {
             Ok(s)  => s,
             Err(r) => panic!("{}", r),
@@ -43462,6 +43720,56 @@ CLEAN            27 passed, 0 failed, exit 0, 900 ms
         // And it only ever REMOVES: the terminal must not gain a deny the Tool path lacks.
         assert!(term.deny.iter().all(|p| tool.deny.contains(p)),
             "the terminal surface invented a deny the Tool surface does not have: {:?}", term.deny);
+    }
+
+    /// **A scoped command's fence never equals the Terminal's.**
+    ///
+    /// The two are composed by the same [`fence_spec_surfaced`] from bounds that differ by the
+    /// allow-list alone (9348afc4, 2026-08-26), so a change to either composer could make them
+    /// converge or swap without a word: a daimon's `run` widened to the whole grant, or the
+    /// Terminal narrowed to one folder.  Asserted over the scopes a turn really has, on a hand
+    /// that meters removals and one that does not.
+    #[test]
+    fn test_a_scoped_command_fence_never_equals_the_terminals() {
+        let mut metered = machine("/home/u");
+        metered.caps.push(fmt!("meter:deletes"));
+        let unmetered = machine("/home/u");
+        let root = fmt!("/home/u/ws");
+        let cases: Vec<(&str, Vec<String>, Vec<String>)> = vec![
+            ("diamonds/d1",   vec![fmt!("work-a")],                vec![]),
+            ("diamonds/d1",   vec![fmt!("work-a"), fmt!("shared")], vec![fmt!("shared")]),
+            ("chats/c1/work", vec![fmt!("work-a")],                vec![]),
+            ("diamonds/d1",   vec![],                              vec![]), // nothing attached
+        ];
+        for m in [&metered, &unmetered] {
+            for (own, att, ro) in &cases {
+                let cmd  = command_fence(&diamond_bounds(own, att, ro), m, false);
+                let term = fence_spec_surfaced(
+                    &terminal_bounds(own, att, ro, &[], false), m, false, Surface::Terminal);
+                assert_ne!(cmd.to_json(), term.to_json(),
+                    "a scoped command fence equals the Terminal's for {} {:?}: {}",
+                    own, att, cmd.to_json());
+                // The Terminal reaches the whole grant; a command never does.
+                assert!(term.rw.contains(&root),
+                    "the Terminal lost the granted root for {} {:?}: {:?}", own, att, term.rw);
+                assert!(!cmd.rw.contains(&root) && !cmd.ro.contains(&root),
+                    "a scoped command reaches the whole grant for {} {:?}: {}",
+                    own, att, cmd.to_json());
+                // `.ssh` is lifted on the Terminal and nowhere else.
+                assert!(!term.deny.contains(&fmt!("/home/u/.ssh")),
+                    "the Terminal denies the user's own .ssh: {:?}", term.deny);
+                if !cmd.rw.is_empty() || !cmd.ro.is_empty() {
+                    assert!(cmd.deny.contains(&fmt!("/home/u/.ssh")),
+                        "a command reaches .ssh for {} {:?}: {:?}", own, att, cmd.deny);
+                }
+                // A folder the user marked read-only stays read-only on the Terminal.
+                for r in ro.iter() {
+                    let p = fmt!("{}/{}", root, r);
+                    assert!(term.ro.contains(&p) && !term.rw.contains(&p),
+                        "the Terminal lifted the read-only mark on {}: {}", p, term.to_json());
+                }
+            }
+        }
     }
 
     #[test]

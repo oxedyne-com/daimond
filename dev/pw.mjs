@@ -50,21 +50,78 @@ const core = await import(pathToFileURL(PW).href);
 
 const SHM_FLAG = '--disable-dev-shm-usage';
 
+/// Is this run the hand's (`verify`), behind its fence?  The hand marks every run it
+/// makes unattended, the same variable dev/display.mjs reads.
+const UNDER_HAND = !!(process.env.DAIMOND_UNATTENDED || '').trim();
+
 // A site's own `ignoreDefaultArgs` is kept: `true` already drops every default.
+//
+// UNDER THE HAND THE FLAG STAYS (11 Oct 2026).  The verifier fence never lends /dev/shm:
+// writable, it is every other process's shared memory too.  With the flag, Chromium keeps
+// its shared memory in $TMPDIR, which the hand points at the run's own scratch and removes
+// afterwards, so the NVMe writes measured above are bounded by one run.
 function shmInMemory(opts = {}) {
+	if (UNDER_HAND) return opts;
 	const own = opts.ignoreDefaultArgs;
 	if (own === true) return opts;
 	const list = Array.isArray(own) ? own : [];
 	return { ...opts, ignoreDefaultArgs: list.includes(SHM_FLAG) ? list : [ ...list, SHM_FLAG ] };
 }
 
+/// Playwright's headless shell: the browser a verifier gets under the hand.
+export const HEADLESS_SHELL = process.env.DAIMOND_HEADLESS_SHELL
+	|| firstThatOpens([
+		path.join(os.homedir(), '.cache/ms-playwright/chromium_headless_shell-1229/chrome-headless-shell-linux64/chrome-headless-shell'),
+	]);
+
+// UNDER THE HAND THE BROWSER IS THE HEADLESS SHELL (rc-b ruling, 11 Oct 2026).  The full
+// Chrome takes a ProcessSingleton, a bound AF_UNIX socket, which the verifier fence's seccomp
+// refuses -- and must keep refusing, because a socket grant cannot exclude the session bus.
+// The shell takes no singleton.  /proc is not lent either: other processes' command lines
+// carry secrets.
+//
+// --no-sandbox (Playwright's default, `chromiumSandbox: false`, stated here so it is a choice
+// and not an accident) is acceptable ONLY because the hand's Landlock + seccomp fence is the
+// real boundary around the whole browser: renderer and browser process alike can reach the
+// mark, the run's scratch and the named read-only needs, and nothing else.  Outside the hand
+// this branch is never taken.
+//
+// An extension flow needs the full browser, so it is refused here by name rather than run
+// as if the extension were loaded.
+function handBrowser(opts = {}) {
+	if (!UNDER_HAND) return opts;
+	const args = (opts.args || []).filter((a) => !a.startsWith('--headless'));
+	if (args.some((a) => a.startsWith('--load-extension'))) {
+		throw new Error('a verifier under the hand cannot load the MV3 extension: that needs the '
+			+ 'full Chrome, whose ProcessSingleton socket the verifier fence refuses.');
+	}
+	// What the fence costs a browser, each measured on 11 Oct and answered without lending:
+	// * Every child (zygote, renderer, GPU) is started by exec'ing /proc/self/exe unless named
+	//   ("GPU process launch failed: error_code=1002"), so it is named by path, with no zygote.
+	// * GPU information is gathered through libpci, which calls exit(1) when /sys/bus/pci is
+	//   unreadable ("pcilib: Cannot open /sys/bus/pci/devices", the GPU process dies six times
+	//   and the browser with it).  Playwright's `--enable-unsafe-swiftshader` asks for that
+	//   probe; with GL disabled there is no probe and Chromium composites in software, which
+	//   is all a headless verifier draws with.
+	// * A GPU process, even unsandboxed, opens /proc before anything else and dies when it
+	//   cannot ("FATAL:sandbox_linux.cc:616 ... Permission denied"), so with GL disabled the
+	//   compositor runs inside the browser process and there is no GPU process at all.
+	args.push(`--browser-subprocess-path=${HEADLESS_SHELL}`, '--no-zygote', '--disable-gpu', '--use-gl=disabled', '--in-process-gpu');
+	const own = opts.ignoreDefaultArgs;
+	const skip = own === true ? true
+		: [ ...(Array.isArray(own) ? own : []), '--enable-unsafe-swiftshader' ];
+	return { ...opts, args, ignoreDefaultArgs: skip, headless: true, chromiumSandbox: false,
+		executablePath: HEADLESS_SHELL };
+}
+
 const LAUNCH = {
-	launch:			(opts) => core.chromium.launch(shmInMemory(opts)),
-	launchPersistentContext:	(dir, opts) => core.chromium.launchPersistentContext(dir, shmInMemory(opts)),
-	launchServer:		(opts) => core.chromium.launchServer(shmInMemory(opts)),
+	launch:			(opts) => core.chromium.launch(handBrowser(shmInMemory(opts))),
+	launchPersistentContext:	(dir, opts) => core.chromium.launchPersistentContext(dir, handBrowser(shmInMemory(opts))),
+	launchServer:		(opts) => core.chromium.launchServer(handBrowser(shmInMemory(opts))),
 };
 
-/// Playwright's Chromium, whose every launch keeps shared memory in /dev/shm.
+/// Playwright's Chromium, whose every launch keeps shared memory in /dev/shm (in
+/// $TMPDIR, and the headless shell, under the hand).
 /// Everything else (`connectOverCDP`, `executablePath()`, `name()`) is the
 /// real BrowserType's, bound to it.
 export const chromium = new Proxy(core.chromium, {

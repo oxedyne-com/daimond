@@ -1570,11 +1570,19 @@ impl Desk {
         // folder the turn is working in, and a page that does not read it keeps the
         // older gate rather than sending a field an older hand would ignore.
         caps.push(fmt!("{}", verify::BY_ROOT));
+        // That every verifier runs behind the verifier fence. A page refuses `verify` on a
+        // hand that does not say so, because an older one ran it with the person's access.
+        caps.push(fmt!("{}", verify::FENCED));
         // That this hand can be ASKED what it is still running, and told to stop
         // one of them. A page that cannot see the capability cannot know whether
         // silence means "nothing is running" or "this hand is older than the
         // question", and those are opposite answers.
         caps.push(fmt!("runs:list-and-stop"));
+        // That a command may START at the granted root, or between it and a fence root, as a
+        // traversal-only working directory (`exec::vet_cwd`). The page starts `run` there only
+        // when it reads this, because an older hand refuses any working directory outside the
+        // fence and the page then keeps the first attached folder.
+        caps.push(fmt!("{}", daimond_hand::exec::CAP_RUN_ROOT_START));
         // Where the user's home is, so the page can place a toolkit.
         //
         // A compiler does not live in the workspace: cargo is under ~/.cargo, node under
@@ -1786,7 +1794,7 @@ impl Desk {
         // Not said to the page: a path that is not there grants nothing, and a
         // note on every command naming a folder the user never asked for is
         // noise. The list comes back so that a caller who wants it has it.
-        let _dropped = daimond_hand::exec::drop_absent_kit_roots(&mut spec, &kits);
+        let _dropped = daimond_hand::exec::drop_absent_kit_roots(&mut spec, &kits, door);
 
         // The directory git runs `pre-commit` from, which on this machine holds the
         // credential scanner. Read here rather than in the page, because the page cannot
@@ -1831,15 +1839,12 @@ impl Desk {
             return Ok(());
         }
 
-        // Release gate 1's companion: a commit runs the user's hooks or it does not run.
-        // Asked of the PLAN and not of the spec, because the plan is what the kernel will
-        // enforce -- and asked after it, because a command refused for its fence should say
-        // so about the fence. See `exec::git_hooks_refusal` for what each sentence means and
-        // for the one spelling this cannot see.
-        if let Some(s) = daimond_hand::exec::git_hooks_refusal(&plan, &argv, &cwd, &[]) {
-            self.refuse(&id, s);
-            return Ok(());
-        }
+        // Release gate 1's companion (a commit runs the user's hooks or it does not run) is
+        // asked in the command's own task below, not here: it starts a fenced git on the
+        // repository's configuration, which the daimon writes, and this is the hand's one
+        // message loop -- a FIFO named there held every Diamond's commands, terminals and
+        // kills on this hand until someone fed it (second security round, N1).
+        let hooks_fence = guarded.clone();
 
         // Written down before it runs, so the record cannot be missing a
         // command that started.
@@ -1868,7 +1873,20 @@ impl Desk {
         let bulk   = self.bulk.clone();
         let ctl    = self.ctl.clone();
         let files  = self.files.clone();
+        let launcher = self.runner.launcher().clone();
         tokio::spawn(async move {
+            // Asked of the PLAN and not of the spec, because the plan is what the kernel will
+            // enforce -- and asked after it, because a command refused for its fence should
+            // say so about the fence. See `exec::git_hooks_refusal` for what each sentence
+            // means and for the one spelling this cannot see. Journalled already, as a
+            // command the launcher refuses is: the record may hold a command that did not
+            // run, never miss one that did.
+            if let Some(s) = daimond_hand::exec::git_hooks_refusal(
+                &launcher, &hooks_fence, &plan, &argv, &cwd, &[]).await
+            {
+                let _ = ctl.send(Resp::Refused { id, reason: s }).await;
+                return;
+            }
             let out = match door {
                 Door::Terminal	=> ptys.open(req, bulk).await.map(|_| ()),
                 Door::Command	=> runner.spawn(req, bulk).await.map(|_| ()),
@@ -1908,9 +1926,10 @@ impl Desk {
     /// # Arguments
     /// * `req` - The [`Req::Verify`].
     async fn verify(&self, req: Req) -> Outcome<()> {
-        let (id, name, asked_root, want, world, budget_ms) = match &req {
-            Req::Verify { id, name, root, breaks, world, timeout_ms } =>
-                (id.clone(), name.clone(), root.clone(), breaks.clone(), *world, *timeout_ms),
+        let (id, name, asked_root, want, world, net, rules, budget_ms) = match &req {
+            Req::Verify { id, name, root, breaks, world, net, rules, timeout_ms } =>
+                (id.clone(), name.clone(), root.clone(), breaks.clone(), *world, *net,
+                    rules.clone(), *timeout_ms),
             _ => return Ok(()),
         };
 
@@ -1998,6 +2017,13 @@ impl Desk {
             // change inside a sequence, and a report that said `MemoryMax 4G` for
             // the world and `uncapped` for the run would be saying two things.
             cap:    verify::Cap::detect(),
+            launcher: self.runner.launcher().clone(),
+            // The page's answer to the question `run` asks on this turn, so a verifier
+            // is never a wider way out than a command.
+            net,
+            // The same turn's read-only and deny rules, so a verifier writes nowhere `run`
+            // could not; none from an older page leaves the mark read-only.
+            rules,
         };
 
         // A task of its own, as a command is: the dispatcher must stay able to answer while a
@@ -2499,7 +2525,7 @@ where
         verify_root: cfg.verify_root.clone(),
         ws,
         os,
-        runner: Runner::with_launcher(cfg.launcher.clone()),
+        runner: Runner::with_launcher(cfg.launcher.clone()).with_start_above(cfg.root.clone()),
         ptys:   daimond_hand::pty::PtySessions::with_launcher(cfg.launcher.clone()),
         files:  daimond_hand::exec::Files::with_launcher(cfg.launcher.clone()),
         jr:     Arc::clone(&jr),
@@ -4397,6 +4423,8 @@ mod tests {
             root:       fmt!("{}", root.display()),
             breaks:     daimond_hand::wire::Breaks::None,
             world:      daimond_hand::wire::World::None,
+            net:        false,
+            rules:      Some(daimond_hand::wire::TurnRules::default()),
             timeout_ms: 10_000,
         }
     }
@@ -4444,6 +4472,8 @@ mod tests {
             "the handshake does not say the tree is per request: {:?}", caps);
         assert!(caps.iter().any(|c| c == "verify:none"),
             "the parent of two repositories was described as one: {:?}", caps);
+        assert!(caps.iter().any(|c| c == daimond_hand::verify::FENCED),
+            "the handshake does not say verifiers run fenced: {:?}", caps);
         Ok(())
     }
 

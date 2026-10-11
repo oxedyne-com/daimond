@@ -1,1 +1,1 @@
-{"build":"5b3154ead3e1","note":"History shows when old versions go, keeps your files and page data longest, and asks before a restore replaces them"}
+{"build":"c4afb8248947","note":"Verifiers now run behind the same fence as commands, and a command may start at the workspace root"}

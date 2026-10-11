@@ -85,6 +85,7 @@ import { fileURLToPath } from 'node:url';
 
 import { open as openApp, scratch, MOCK } from './harness.mjs';
 import { whyStaleBinary, whyStaleWasm, refuse } from './staleguard.mjs';
+import { PW as PW_CORE, HEADLESS_SHELL } from './pw.mjs';
 
 const HERE	= path.dirname(fileURLToPath(import.meta.url));
 const ROOT	= path.join(HERE, '..');
@@ -279,17 +280,21 @@ try {
 	fs.mkdirSync(dirC);
 	fs.writeFileSync(path.join(dirC, 'unmarked.txt'), nonce('unmarked') + '\n');
 
-	// ── The fence the engine actually composes ──────────────────────
+	// ── The fences a daimon's own doors actually send ───────────────
 	//
-	// Captured from `fence_spec` through the same edge `Tool::run` uses, rather
-	// than written out here: what matters is what the ENGINE sends.
+	// Captured off the relay as `run` and `file_read` hand them down, rather than
+	// written out here or asked of another composer: what matters is what a
+	// DAIMON's doors send. Never `pty_request`: since 9348afc4 (2026-08-26) the
+	// Terminal is the user at a keyboard and reaches the whole grant on purpose, so
+	// its fence says nothing about a command's (`dev/verify_ptyedge.mjs` asserts
+	// that design; specs/daimond_scope_base_reds_diag_20261011.md).
 	//
-	// `pty_request` asks the relay where the hand's grant is, and the relay now refuses to
-	// answer for a page whose workspace is not that folder (`hand/REVIEW.md` §1.14). This
-	// browser's workspace is the OPFS sandbox — no automated one can be anything else, because
-	// a real folder needs a native dialog — so `status` is stood in for here with what the real
-	// hand actually reported a moment ago. The COMPOSER is the real one, and the fence it
-	// returns is what is then sent down the real relay to the real hand.
+	// The relay refuses to say where the hand's grant is for a page whose workspace
+	// is not that folder (`hand/REVIEW.md` §1.14). This browser's workspace is the
+	// OPFS sandbox — no automated one can be anything else, because a real folder
+	// needs a native dialog — so `status` is stood in for here with what the real
+	// hand actually reported a moment ago. The COMPOSER is the real one, and the
+	// fence it sends goes down the real relay to the real hand.
 	await page.evaluate((root) => {
 		const real = window.DaimondHand.status;
 		window.DaimondHand._realStatus = real;
@@ -303,32 +308,41 @@ try {
 		}));
 	}, GRANT);
 
-	const fenced = await page.evaluate(async ({ id, root, mock, engine }) => {
+	// The first request to the hand raises the extension's grant page; allowed as it opens.
+	const grant = allowHand();
+	const fenced = await page.evaluate(async ({ id, mock, engine, dirA }) => {
 		const mod = await window.__mod(engine);
 		const app = new mod.DaimondApp(mock, 'k', 'mock', 256, '', true);
 		const before = JSON.parse(app.diamond_scope());
 		app.set_diamond_scope('diamonds/' + id, '["work-a"]', '[]', '[]');
 		const after = JSON.parse(app.diamond_scope());
-		// The pty composer is the one edge that hands a fence back as text, and it
-		// is the SAME `fence_spec` a command goes through.
-		//
-		// `cwd` is the Diamond's own directory because that is what the Terminal
-		// panel sends — `cwd: b.own_dir` in `Files.bounds`'s caller — and a fence
-		// question answered against a tidier request than the app makes is a
-		// question about a different app.
-		const req = JSON.parse(await mod.pty_request(JSON.stringify({
+		// Every request the two doors hand the relay, read as it passes and then passed on.
+		const H = window.DaimondHand;
+		const realRun = H.run, realFile = H.file;
+		const seen = { run: [], file: [] };
+		H.run  = (j) => { try { seen.run.push(JSON.parse(j)); } catch (e) { /* not ours */ } return realRun.call(H, j); };
+		H.file = (j) => { try { seen.file.push(JSON.parse(j)); } catch (e) { /* not ours */ } return realFile.call(H, j); };
+		const t = (n, a) => app.run_tool(n, JSON.stringify(a)).then(String, (e) => 'THREW ' + e);
+		let said;
+		try {
+			said = {
+				run:  await t('run', { argv: ['/bin/cat', dirA + '/own.txt'] }),
+				file: await t('file_read', { path: 'work-a/own.txt' }),
+			};
+		} finally {
+			H.run = realRun;
+			H.file = realFile;
+		}
+		const run  = seen.run.find((r) => r.fence) || null;
+		const file = seen.file.find((r) => r.fence) || null;
+		// The Terminal's, for the same Diamond, which a command's must never equal.
+		const term = JSON.parse(await mod.pty_request(JSON.stringify({
 			own_dir: 'diamonds/' + id, attached: ['work-a'], read_only: [], toolkits: [],
 			cwd: 'diamonds/' + id, cols: 80, rows: 24,
 		})));
-		// And the same Diamond with nothing attached to it, which is what a fresh
-		// one is: no folder on this machine, so nothing to fence and nothing to
-		// open. The sentence matters as much as the refusal — see the check.
-		const bare = JSON.parse(await mod.pty_request(JSON.stringify({
-			own_dir: 'diamonds/' + id, attached: [], read_only: [], toolkits: [],
-			cwd: 'diamonds/' + id, cols: 80, rows: 24,
-		})));
-		return { before, after, req, bare, root };
-	}, { id: ids.a, root: GRANT, mock: MOCK, engine: ENGINE });
+		return { before, after, said, run, file, term };
+	}, { id: ids.a, mock: MOCK, engine: ENGINE, dirA });
+	await grant;
 
 	check('an unscoped agent declares no allow-list at all',
 		Array.isArray(fenced.before.allow) && fenced.before.allow.length === 0
@@ -344,38 +358,46 @@ try {
 			&& (fenced.after.write_allow || []).indexOf('work-a') >= 0
 			&& (fenced.after.allow || []).length === 0,
 		JSON.stringify(fenced.after));
-	const fence = fenced.req.fence || {};
-	const rw = fence.rw || [];
-	check('and the fence the engine composed names the folder attached to it, not the whole grant',
-		rw.indexOf(dirA) >= 0 && rw.indexOf(GRANT) < 0,
-		JSON.stringify(fenced.req).slice(0, 300));
-	// THE REGRESSION. A Diamond's own directory is in the browser's storage, so
-	// `<grant>/diamonds/<id>` is a directory nobody makes; a fence naming it is a
-	// fence the hand cannot resolve, and it refuses the whole spec — the real
-	// folder beside it included. Asserted over every list at once, because the
-	// path was equally fatal in `rw`, in `ro` and in a read carve-out.
-	check('and no part of it names a place inside Daimond\'s own storage, which is not on the disk',
-		JSON.stringify(fence).indexOf(store) < 0, JSON.stringify(fence).slice(0, 300));
-	check('and it does not name the other Diamond, or the folder attached to it, in any list',
-		!JSON.stringify(fence).includes(ids.c) && !JSON.stringify(fence).includes(dirB),
-		JSON.stringify(fence));
-	// The panel asks for a terminal in the Diamond's own directory, because that
-	// is what a Diamond is to it. The session has to start somewhere real, and
-	// `tools::start_dir` says where: the first folder the user attached.
-	check('and the session starts in that folder, though the panel asked for the Diamond itself',
-		fenced.req.cwd === dirA, JSON.stringify(fenced.req.cwd));
-	// A wall a person can get through. The refusal is shown to the USER, in the
-	// Terminal panel, verbatim: it has to name the thing they can do about it.
-	check('a Diamond with nothing attached is refused a terminal, and told to attach a folder',
-		!!fenced.bare.refused && fenced.bare.t === undefined
-			&& /attach/i.test(fenced.bare.refused) && /Workspace panel/.test(fenced.bare.refused),
-		JSON.stringify(fenced.bare).slice(0, 300));
+	check('the run tool reached the hand with a fence, and read the attached folder',
+		!!fenced.run && fenced.said.run.includes(MINE),
+		JSON.stringify(fenced.run).slice(0, 300) + ' | ' + fenced.said.run.slice(0, 200));
+	check('the file tool reached the hand with a fence, and read the attached folder',
+		!!fenced.file && fenced.said.file.includes(MINE),
+		JSON.stringify(fenced.file).slice(0, 300) + ' | ' + fenced.said.file.slice(0, 200));
+	const cmdFence  = (fenced.run && fenced.run.fence) || { rw: [], ro: [], deny: [], net: false };
+	const fileFence = (fenced.file && fenced.file.fence) || { rw: [], ro: [], deny: [], net: false };
+	for (const [door, f] of [['run', cmdFence], ['file_read', fileFence]]) {
+		check(`the ${door} fence names the folder attached to it, not the whole grant`,
+			(f.rw || []).indexOf(dirA) >= 0 && (f.rw || []).indexOf(GRANT) < 0
+				&& (f.ro || []).indexOf(GRANT) < 0,
+			JSON.stringify(f).slice(0, 300));
+		// THE REGRESSION. A Diamond's own directory is in the browser's storage, so
+		// `<grant>/diamonds/<id>` is a directory nobody makes; a fence naming it is a
+		// fence the hand cannot resolve, and it refuses the whole spec — the real
+		// folder beside it included. Asserted over every list at once, because the
+		// path was equally fatal in `rw`, in `ro` and in a read carve-out.
+		check(`and no part of the ${door} fence names a place inside Daimond's own storage`,
+			JSON.stringify(f).indexOf(store) < 0, JSON.stringify(f).slice(0, 300));
+		check(`and the ${door} fence does not name the other Diamond, or its folder, in any list`,
+			!JSON.stringify(f).includes(ids.c) && !JSON.stringify(f).includes(dirB),
+			JSON.stringify(f));
+	}
+	// The stand-in status says nothing of `run:root-start`, so this is the older hand's start:
+	// the first folder the user attached (`tools::start_dir`). PATH-ROOT below covers the newer.
+	check('and the command starts in that folder, though nothing named one',
+		!!fenced.run && fenced.run.cwd === dirA, JSON.stringify(fenced.run && fenced.run.cwd));
+	// The composer split, from the page's side (the unit test is
+	// `test_a_scoped_command_fence_never_equals_the_terminals`): the Terminal, for the same
+	// Diamond, reaches the whole grant, and the daimon's command does not.
+	check('and a command\'s fence is never the Terminal\'s, which reaches the whole grant',
+		!!fenced.term.fence && (fenced.term.fence.rw || []).indexOf(GRANT) >= 0
+			&& JSON.stringify(fenced.term.fence) !== JSON.stringify(cmdFence),
+		JSON.stringify(fenced.term).slice(0, 300));
 
 	// ── The command, and the kernel ─────────────────────────────────
 	//
 	// The fence just captured, sent down the real relay to the real hand. Not a
-	// fence this file composed: the object came out of `fence_spec`.
-	const grant = allowHand();
+	// fence this file composed: the object is the one `run` sent.
 	// `cwd` defaults to the fence's first writable root and can be named, so that
 	// a fence under test is the only thing under test: a working directory that
 	// does not exist is refused for its own reasons, and would stand in for the
@@ -392,13 +414,12 @@ try {
 		try { return { out: JSON.parse(raw.ok) }; } catch (e) { return { refused: raw.ok }; }
 	};
 
-	const own = await send(['/bin/cat', path.join(dirA, 'own.txt')], fenced.req.fence);
-	await grant;
+	const own = await send(['/bin/cat', path.join(dirA, 'own.txt')], cmdFence);
 	check('a command in Diamond A reads the folder attached to Diamond A',
 		!!own.out && String(own.out.stdout || '').includes(MINE),
 		JSON.stringify(own).slice(0, 300));
 
-	const theirs = await send(['/bin/cat', path.join(dirB, 'secret.txt')], fenced.req.fence);
+	const theirs = await send(['/bin/cat', path.join(dirB, 'secret.txt')], cmdFence);
 	check('and the same command cannot read the folder attached to Diamond B',
 		!own.refused && !(theirs.out && String(theirs.out.stdout || '').includes(THEIRS)),
 		JSON.stringify(theirs).slice(0, 300));
@@ -409,7 +430,7 @@ try {
 		!JSON.stringify(theirs).includes(THEIRS), JSON.stringify(theirs).slice(0, 200));
 
 	const wrote = await send(
-		['/bin/sh', '-c', `echo x > ${path.join(dirB, 'planted.txt')}`], fenced.req.fence);
+		['/bin/sh', '-c', `echo x > ${path.join(dirB, 'planted.txt')}`], cmdFence);
 	check('nor write into Diamond B\'s folder', !fs.existsSync(path.join(dirB, 'planted.txt')),
 		JSON.stringify(wrote).slice(0, 200));
 
@@ -504,6 +525,147 @@ try {
 		!filedoor.theirs.includes(THEIRS), filedoor.theirs.slice(0, 200));
 	check('nor write into it: the disk is untouched and nothing was planted',
 		!fs.existsSync(path.join(dirB, 'planted.txt')), filedoor.plant.slice(0, 200));
+	// ── PATH-ROOT: `run` starts where the file tools resolve paths (11 Oct) ──
+	//
+	// A scoped turn's file tools read `work-a/x` from the granted root, while its
+	// commands started in the first attached folder, so `cat work-a/x` read
+	// `work-a/work-a/x`. A hand that says `run:root-start` lets a command START at
+	// the root, traversal only: the fence is unchanged, so from there it reads the
+	// mark by path and is refused the root itself, Diamond B and a new file at the
+	// root. The stand-in status above says nothing of it, so every arm before this
+	// one is the OLD hand's behaviour, and the last arm here pins that fallback.
+	const pathroot = await page.evaluate(async ({ id, mock, engine, rel }) => {
+		const mod = await window.__mod(engine);
+		const was = window.DaimondHand.status;
+		const caps = ['fence:linux', 'landlock:abi-8', 'meter:deletes'];
+		const say = (more) => {
+			window.DaimondHand.status = () => was().then((st) => {
+				const j = JSON.parse(st);
+				j.caps = caps.concat(more);
+				return JSON.stringify(j);
+			});
+		};
+		const turn = async (scope) => {
+			const app = new mod.DaimondApp(mock, 'k', 'mock', 256, '', true);
+			scope(app);
+			const t = (n, a) => app.run_tool(n, JSON.stringify(a)).then(String, (e) => 'THREW ' + e);
+			return {
+				write: await t('file_write', { path: 'work-a/' + rel, content: rel + '\n' }),
+				cat:   await t('run', { argv: ['cat', 'work-a/' + rel] }),
+				ls:    await t('run', { argv: ['ls', '.'] }),
+				theirs: await t('run', { argv: ['cat', 'work-b/secret.txt'] }),
+				make:  await t('run', { argv: ['sh', '-c', 'echo x > made-at-root.txt'] }),
+				up:    await t('run', { argv: ['sh', '-c', 'cd .. && ls'] }),
+			};
+		};
+		const diamond = (app) => app.set_diamond_scope('diamonds/' + id, '["work-a"]', '[]', '[]');
+		const chat = (app) => app.set_chat_scope('chats/c-pathroot/work', '["work-a"]', '[]', '[]');
+		say(['run:root-start', 'relay:root-start']);
+		const d = await turn(diamond);
+		const c = await turn(chat);
+		say([]);
+		const old = await turn(diamond);
+		say(['run:root-start']);
+		const relay = await turn(diamond);
+		window.DaimondHand.status = was;
+		return { d, c, old, relay };
+	}, { id: ids.a, mock: MOCK, engine: ENGINE, rel: 'pathroot-' + MINE + '.txt' });
+	const relName = 'pathroot-' + MINE + '.txt';
+	const exited = (said) => { const m = /\[exit code: (-?\d+)\]/.exec(said); return m ? Number(m[1]) : null; };
+	const failed = (said) => /^Refused/.test(said) || (exited(said) !== null && exited(said) !== 0);
+	for (const [who, r] of [['a Diamond turn', pathroot.d], ['a chat turn', pathroot.c]]) {
+		check(`PATH-ROOT ${who}: a relative file_write then cat of the same path reads it back`,
+			exited(r.cat) === 0 && r.cat.includes(relName) && fs.existsSync(path.join(dirA, relName)),
+			r.write.slice(0, 120) + ' | ' + r.cat.slice(0, 240));
+		check(`PATH-ROOT ${who}: listing the root it starts at is refused by the kernel`,
+			failed(r.ls) && !r.ls.includes('work-b'), r.ls.slice(0, 240));
+		check(`PATH-ROOT ${who}: Diamond B's folder is still unreadable from the root`,
+			failed(r.theirs) && !r.theirs.includes(THEIRS), r.theirs.slice(0, 240));
+		check(`PATH-ROOT ${who}: creating a file at the root is refused`,
+			failed(r.make) && !fs.existsSync(path.join(GRANT, 'made-at-root.txt')), r.make.slice(0, 240));
+		check(`PATH-ROOT ${who}: climbing above the root and listing is refused`,
+			failed(r.up), r.up.slice(0, 240));
+	}
+	check('PATH-ROOT mixed version: an older hand, with no run:root-start, keeps the attached folder',
+		exited(pathroot.old.cat) !== 0 && !pathroot.old.cat.includes(relName + '\n'),
+		pathroot.old.cat.slice(0, 240));
+	check('PATH-ROOT mixed version: a newer hand behind an older relay keeps the attached folder, not a refusal',
+		exited(pathroot.relay.cat) !== null && exited(pathroot.relay.cat) !== 0 && !/^Refused/.test(pathroot.relay.cat),
+		pathroot.relay.cat.slice(0, 240));
+
+	// ── VERIFY-FENCE: a verifier the daimon committed is fenced like a command (11 Oct) ──
+	//
+	// `verify` ran a verifier with NO fence on the strength of its bytes being the commit's,
+	// and `.git` is writable inside every mark -- so Diamond A committed `dev/verify_pwn.mjs`
+	// through its own `run`, asked `verify` for it, and read Diamond B's secret
+	// (specs/daimond_verify_unfenced_diag_20261011.md). The hand now runs it behind the
+	// command fence scoped to A's mark: it still runs, and B's secret is EACCES.
+	const vfence = await page.evaluate(async ({ id, mock, engine, dirA, dirB, pwCore, shell }) => {
+		const mod = await window.__mod(engine);
+		const app = new mod.DaimondApp(mock, 'k', 'mock', 256, '', true);
+		app.set_diamond_scope('diamonds/' + id, '["work-a"]', '[]', '[]');
+		const t = (n, a) => app.run_tool(n, JSON.stringify(a)).then(String, (e) => 'THREW ' + e);
+		const script = [
+			'set -e',
+			`cd "${dirA}"`,
+			`export HOME="${dirA}" GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_SYSTEM=/dev/null`,
+			'git init -q', 'git config user.email a@b.c', 'git config user.name red',
+			'mkdir -p dev',
+			'cat > dev/verify_pwn.mjs <<"PWNEOF"',
+			'import fs from "node:fs";',
+			`try { console.log("cross-diamond read: " + fs.readFileSync("${dirB}/secret.txt", "utf8").trim()); }`,
+			'catch (e) { console.log("cross-diamond read refused: " + e.code); }',
+			// The browser half (rc-b ruling, 11 Oct): a verifier's browser is the same fenced
+			// process tree, so a page opened on B's file gets an error page, not the secret,
+			// while A's own file opens -- the control that makes the refusal mean something.
+			`const { chromium } = await import("${pwCore}");`,
+			`const b = await chromium.launch({ executablePath: "${shell}", headless: true,`,
+			`  ignoreDefaultArgs: ["--enable-unsafe-swiftshader"], args: ["--browser-subprocess-path=${shell}",`,
+			'  "--no-zygote", "--disable-gpu", "--use-gl=disabled", "--in-process-gpu"] });',
+			'const p = await b.newPage();',
+			'const look = async (f) => { try { await p.goto("file://" + f); return (await p.textContent("body")).trim(); }',
+			'  catch (e) { return "ERR " + String(e.message).split("\\n")[0]; } };',
+			`console.log("browser own: " + await look("${dirA}/own.txt"));`,
+			`console.log("browser cross: " + await look("${dirB}/secret.txt"));`,
+			'await b.close();',
+			'PWNEOF',
+			'git add -A', 'git commit -q -m pwn', 'echo COMMITTED',
+		].join('\n');
+		const commit = await t('run', { argv: ['sh', '-c', script] });
+		// The stand-in status above names no verify capability; the real hand says
+		// `verify:by-root`, which is what makes the engine send A's mark as the root, and
+		// `verify:fenced`, without which the engine refuses verify: a hand that does not say
+		// it is one older than the verifier fence, which ran the same verifier unfenced.
+		const was = window.DaimondHand.status;
+		const saying = (extra) => () => was().then((st) => {
+			const j = JSON.parse(st);
+			j.caps = j.caps.concat(extra);
+			return JSON.stringify(j);
+		});
+		let said, old;
+		try {
+			window.DaimondHand.status = saying(['verify:by-root']);
+			old = await t('verify', { name: 'pwn' });
+			window.DaimondHand.status = saying(['verify:by-root', 'verify:fenced']);
+			said = await t('verify', { name: 'pwn' });
+		} finally { window.DaimondHand.status = was; }
+		return { commit, said, old };
+	}, { id: ids.a, mock: MOCK, engine: ENGINE, dirA, dirB, pwCore: PW_CORE, shell: HEADLESS_SHELL });
+	check('VERIFY-FENCE: Diamond A commits its own verifier through run',
+		vfence.commit.includes('COMMITTED'), vfence.commit.slice(0, 240));
+	check('VERIFY-FENCE: a hand that does not say verify:fenced is refused verify, and told to update',
+		/^Refused:.*update the hand/s.test(vfence.old) && !vfence.old.includes(THEIRS), vfence.old.slice(0, 400));
+	check('VERIFY-FENCE: verify runs the committed verifier (it is the commit, so it is not refused)',
+		vfence.said.includes('dev/verify_pwn.mjs — 1 run'), vfence.said.slice(0, 400));
+	check("VERIFY-FENCE: the committed verifier cannot read Diamond B's secret",
+		!vfence.said.includes(THEIRS) && vfence.said.includes('cross-diamond read refused: EACCES'),
+		vfence.said.slice(0, 900));
+	check("VERIFY-FENCE: the committed verifier's browser opens Diamond A's own file (control)",
+		vfence.said.includes('browser own: ' + MINE), vfence.said.slice(0, 1400));
+	check("VERIFY-FENCE: and the same browser cannot open Diamond B's secret",
+		!vfence.said.includes(THEIRS) && /browser cross: (ERR|Your file couldn|.*ACCESS_DENIED)/.test(vfence.said),
+		vfence.said.slice(0, 1400));
+
 	// ── A relay that cannot carry a file operation SAYS SO, and does not hang ──
 	//
 	// Found by `dev/verify_chatfence.mjs` hanging for eight minutes on 2026-08-25. A
@@ -635,7 +797,7 @@ try {
 				t: 'file', id: 'sf-' + Math.random().toString(36).slice(2, 8),
 				op, path: target, cwd: fence.rw[0], fence, toolkits: [],
 			}, extra || {}))).then((v) => ({ ok: v }), (e) => ({ err: (e && e.message) || String(e) })),
-			{ op, target, fence: fenced.req.fence, extra: extra || null });
+			{ op, target, fence: fileFence, extra: extra || null });
 		if (raw.err) return { refused: raw.err };
 		try { return { out: JSON.parse(raw.ok) }; } catch (e) { return { refused: raw.ok }; }
 	};
@@ -698,8 +860,8 @@ try {
 	// principle; the hand still says no, and that is the whole shape of the
 	// outage.
 	const preFix = {
-		rw: [path.join(store, ids.a)].concat(fenced.req.fence.rw),
-		ro: fenced.req.fence.ro, deny: fenced.req.fence.deny, net: false,
+		rw: [path.join(store, ids.a)].concat(cmdFence.rw),
+		ro: cmdFence.ro, deny: cmdFence.deny, net: false,
 	};
 	const old = await send(['/bin/cat', path.join(dirA, 'own.txt')], preFix, dirA);
 	// The relay resolves with the hand's own sentence rather than rejecting, so
