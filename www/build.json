@@ -1,1 +1,1 @@
-{"build":"6aa436515c57","note":"A turn run on your other device now asks you here before it writes files, uses a toolkit or runs a command."}
+{"build":"a71c84cfad7b","note":"The workers panel stays smooth while agents stream, and keeps a bounded history of finished runs."}

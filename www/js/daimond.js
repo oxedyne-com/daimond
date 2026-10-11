@@ -39828,31 +39828,70 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			if (n > 0 && this.slotFree && this.slotFree.indexOf(n) === -1) this.slotFree.push(n);
 		},
 
-		/// How many runs survive a reload.
+		/// How many FINISHED runs are kept, in memory and across a reload.
 		///
-		/// It was twelve, and it was SILENT: `runs.unshift` puts the newest first,
-		/// so the thirteenth-oldest agent vanished on every reload with no count,
-		/// no note and no way to tell a short list from a truncated one — in the
-		/// panel whose whole job is to say what ran. Two hundred now, with the
-		/// number that did not fit kept beside them and shown at the foot of the
-		/// list, so the panel says what it is not showing.
-		KEEP: 200,
+		/// It was twelve and silent, then two hundred with the number that did not
+		/// fit shown at the foot of the list. Two hundred was not a bound: on
+		/// 11 Oct 2026 the owner's key held 81 runs in 2.38 MB, and every streamed
+		/// token redrew a tile for each of them (stack_0848.json). Forty finished
+		/// runs is two full fan-outs of history, which is what the readers of old
+		/// runs need -- `finishAwait`'s recovery by name and `priorSessionRun`'s
+		/// `continue:` both look for a recent run of the same Diamond -- and a
+		/// chat-dispatched report is in its chat's transcript as well as here.
+		/// A run something still waits on is never counted against it: see `pinned`.
+		FINISHED_KEEP: 40,
 
-		/// How many runs the last write could not keep. Persisted with them,
-		/// because the question this answers — "is this all of them?" — is asked
+		/// The most the persisted record may weigh, in characters of JSON: a fifth
+		/// of the smallest per-origin quota, so the workers' record can never be
+		/// what fills it. A record over it sheds its oldest finished runs.
+		PERSIST_MAX_CHARS: 1000000,
+
+		/// How many runs have been let go to the bounds above. Persisted with them,
+		/// because the question this answers -- "is this all of them?" -- is asked
 		/// after the reload that made it unanswerable.
 		dropped: 0,
 
-		/// Keep a record of every run. The live DaimondApp cannot survive a reload —
-		/// its fetch dies with the page — but the RECORD must, so an agent that
-		/// was cut off says so instead of vanishing.
-		///
-		/// A write that does not fit STEPS DOWN rather than failing whole: the
-		/// quota is spent mostly on reports, one long report can exceed it, and
-		/// losing the oldest runs is a cost where losing the record of everything
-		/// is a bug.
+		/// Is something still holding this run, so that letting it go would lose an
+		/// answer? Live and paused runs, a batch not yet gathered, a turn still
+		/// running, and a gather waiting on it by id.
+		pinned: function (r) {
+			if (r.status === 'running' || r.status === 'queued' || r.status === 'paused') return true;
+			if (r.batch && this.batches[r.batch]) return true;
+			if (r.turnId && this.liveTurns[r.turnId]) return true;
+			var id = String(r.id);
+			return this.awaiting.some(function (w) { return !w.done && w.ids.indexOf(id) !== -1; });
+		},
+
+		/// Let go of the finished runs beyond `keep`, oldest first, and count them.
+		prune: function (keep) {
+			var self = this, finished = 0, cut = 0;
+			var out = this.runs.filter(function (r) {
+				if (self.pinned(r)) return true;
+				if (finished < keep) { finished++; return true; }
+				cut++;
+				return false;
+			});
+			if (cut) {
+				this.runs = out;
+				this.dropped += cut;
+				this.touch(null);		// the set changed: the list is redrawn
+			}
+			return cut;
+		},
+
+		/// Ask for the record to be written. Debounced: a fan-out changes state many
+		/// times a second, and each write serialises every run. `pagehide` writes
+		/// anything still pending, so a closing tab loses nothing.
 		persist: function () {
 			var self = this;
+			if (this._persistTimer) return;
+			this._persistTimer = setTimeout(function () { self.persistNow(); }, 250);
+		},
+
+		persistNow: function () {
+			var self = this;
+			if (this._persistTimer) { clearTimeout(this._persistTimer); this._persistTimer = 0; }
+			this.prune(this.FINISHED_KEEP);
 			var all = this.runs.map(function (r) {
 					return {
 						id: r.id, name: r.name, task: r.task, diamondId: r.diamondId, diamondName: r.diamondName,
@@ -39887,19 +39926,28 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 						prov: r.prov || null,
 					};
 				});
-			var n = Math.min(all.length, this.KEEP);
-			for (;;) {
-				try {
-					localStorage.setItem(WORKERS_KEY, JSON.stringify({
-						v: 2, dropped: all.length - n, runs: all.slice(0, n) }));
-					self.dropped = all.length - n;
-					return;
-				} catch (e) {
-					// Halve and try again. Nothing kept at all is the one outcome
-					// worth spending several attempts to avoid.
-					if (n <= 1) { self.dropped = all.length; return; }
-					n = Math.floor(n / 2);
-				}
+			// Bounded by weight as well as by count: one run with a long report and
+			// hundreds of tool calls can outweigh forty ordinary ones. The oldest
+			// finished runs go first; a run something still holds never does.
+			var body = JSON.stringify({ v: 2, dropped: this.dropped, runs: all });
+			while (body.length > this.PERSIST_MAX_CHARS) {
+				var keep = this.runs.filter(function (r) { return !self.pinned(r); }).length - 1;
+				if (keep < 0 || !this.prune(keep)) break;
+				var ids = {};
+				this.runs.forEach(function (r) { ids[r.id] = 1; });
+				all = all.filter(function (r) { return ids[r.id]; });
+				body = JSON.stringify({ v: 2, dropped: this.dropped, runs: all });
+			}
+			try {
+				localStorage.setItem(WORKERS_KEY, body);
+			} catch (e) {
+				// A full or refused store is REPORTED, never thrown: this runs from a
+				// worker's stream, and a throw there would end the worker for want of
+				// a record of it. The runs are still in memory and on their tiles.
+				console.warn('[workers] the record of ' + all.length + ' run(s), '
+					+ body.length + ' chars, was not saved: ' + ((e && e.message) || e));
+				dsEvent('workers.persist', { runs: all.length, chars: body.length,
+					err: String((e && e.name) || e).slice(0, 60) });
 			}
 		},
 
@@ -39913,6 +39961,11 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			// kept wrote, and reading it is a line rather than a migration.
 			var stored = Array.isArray(raw) ? raw : ((raw && raw.runs) || []);
 			this.dropped = (!Array.isArray(raw) && raw && raw.dropped) | 0;
+			if (!this._pagehide) {
+				var me = this;
+				this._pagehide = function () { if (me._persistTimer) me.persistNow(); };
+				window.addEventListener('pagehide', this._pagehide);
+			}
 			if (!stored.length) return;
 			var self = this;
 			this.runs = stored.map(function (r) {
@@ -39929,7 +39982,10 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			// opens a panel every time it loads is a page rearranging itself under
 			// somebody who has only come back to read. The interrupted runs are on
 			// their tiles and the dock chip carries its badge; that is the telling.
-			this.persist();
+			//
+			// Written NOW, not debounced: this is also the heal. A record written by
+			// a release before the bounds is trimmed to them on its first load.
+			this.persistNow();
 			this.render();
 		},
 
@@ -40776,16 +40832,9 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 					// worker's answer and re-read by another model as if the worker had
 					// written it.
 					run.thinking = (run.thinking || '') + (ev.content || '');
-					// ONE REDRAW A FRAME, not one a delta. Reasoning now arrives as it is
-					// produced -- 1,378 pieces in one measured round -- and this tile
-					// redraws the whole panel. Coalescing onto the frame keeps the cost the
-					// same as it was when the working came in a single lump.
-					if (!self._thinkFrame) {
-						self._thinkFrame = requestAnimationFrame(function () {
-							self._thinkFrame = 0;
-							self.render();
-						});
-					}
+					// No draw of its own: reasoning arrives as it is produced -- 1,378
+					// pieces in one measured round -- and `touch` below draws this tile
+					// once a frame, as it does for every event.
 				} else if (ev.type === 'ended') {
 					wmeter.end(ev.how);
 					wrounds.flush();
@@ -40837,7 +40886,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 					// spent reading the app's own sentence. See `reportHasSubstance`.
 					run.said = (run.said || []).concat([said]);
 				}
-				self.render();
+				self.touch(run);
 			};
 			// A worker runs in this tab exactly as a chat turn does, so it needs the screen
 			// awake for the same reason. The count is shared; see `WakeLock`.
@@ -41371,21 +41420,57 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		/// Is anything still in flight? Leaving now would kill it.
 		busy: function () { return this.active > 0 || this.queue.length > 0; },
 
-		render: function () {
+		/// A run has changed and its tile wants redrawing -- or, with no run, the set
+		/// of runs has. ONE DRAW A FRAME, of only what changed: a worker streams
+		/// hundreds of events a second, and when each one redrew every tile the cost
+		/// was events times runs, which froze the owner's page on 11 Oct 2026 with 81
+		/// runs on the list (stack_0848.json).
+		touch: function (run) {
+			var self = this;
+			if (run) (this._dirty || (this._dirty = {}))[run.id] = 1;
+			else this._listKey = null;
+			if (this._frame) return;
+			this._frame = requestAnimationFrame(function () {
+				self._frame = 0;
+				self.flush();
+			});
+		},
+
+		/// Draw what `touch` asked for: the dirty tiles in place, or the whole list
+		/// when the runs it shows are no longer the runs it drew.
+		flush: function () {
+			var dirty = this._dirty || {};
+			this._dirty = {};
 			if (!agentsList) return;
-			agentsList.innerHTML = '';
-			renderAgentFilter();
-			var live = 0, self = this;
-			var finished = 0, shown = 0;
+			if (this.listKey() !== this._listKey) { this.render(); return; }
+			var self = this;
+			Object.keys(dirty).forEach(function (id) {
+				var old = self._drawn[id];
+				var run = self.runs.find(function (r) { return String(r.id) === id; });
+				if (!old || !run || !old.parentNode) return;
+				var card = self.tile(run);
+				old.parentNode.replaceChild(card, old);
+				self._drawn[id] = card;
+			});
+			this.chrome();
+		},
+
+		/// Which runs the list shows, in order, and what is said beneath them.
+		listKey: function () {
+			var ids = [];
+			this.runs.forEach(function (r) { if (agentMatches(r)) ids.push(r.id); });
+			return ids.join(',') + '|' + this.runs.length + '|' + this.dropped;
+		},
+
+		/// The counts, the controls and the lights the list carries, from the runs.
+		chrome: function () {
+			var live = 0, finished = 0;
 			var nRun = 0, nQueue = 0, nPause = 0;
 			this.runs.forEach(function (run) {
 				if (run.status === 'running') { live++; nRun++; }
 				else if (run.status === 'queued') { live++; nQueue++; }
 				else if (run.status === 'paused') { nPause++; }
 				else finished++;
-				if (!agentMatches(run)) return;
-				shown++;
-				agentsList.appendChild(self.tile(run));
 			});
 			if (agentsCount) agentsCount.textContent = live > 0 ? t('agents.live', { n: live }) : '';
 			updateAgentStat(nRun, nPause, nQueue);
@@ -41394,6 +41479,35 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			// clear, so the panel does not grow without bound with no way to prune.
 			var clearBtn = document.getElementById('agents-clear');
 			if (clearBtn) clearBtn.style.display = finished > 0 ? '' : 'none';
+			// THE LIGHTS, because `root/workers` is armed by what is in this list
+			// -- `workersArmed` counts the running and the queued -- and a run
+			// changing status announces no `daimond:pause`, which is the only other
+			// thing that repaints them. Without this, resuming one agent while the
+			// pump is held (queued, so the pump is now armed and held) left the
+			// global control painted as it was before: on an account with any
+			// other automation running, GREEN with its play verb disabled, so the
+			// one press that releases the pump could not be made. Seen the day
+			// the Optimiser's timer started arming its leaf, which is the day a
+			// fresh account first had something else armed.
+			repaintPause();
+		},
+
+		render: function () {
+			if (!agentsList) return;
+			agentsList.innerHTML = '';
+			renderAgentFilter();
+			var self = this, shown = 0;
+			// Everything is drawn now, so nothing a frame was waiting to draw is owed.
+			this._dirty = {};
+			this._drawn = {};
+			this.runs.forEach(function (run) {
+				if (!agentMatches(run)) return;
+				shown++;
+				var card = self.tile(run);
+				self._drawn[run.id] = card;
+				agentsList.appendChild(card);
+			});
+			this._listKey = this.listKey();
 			if (this.runs.length === 0) {
 				var empty = document.createElement('div');
 				empty.className = 'agents-empty';
@@ -41415,17 +41529,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 				cut.textContent = tn('agents.dropped', this.dropped);
 				agentsList.appendChild(cut);
 			}
-			// THE LIGHTS, because `root/workers` is armed by what is in this list
-			// -- `workersArmed` counts the running and the queued -- and a run
-			// changing status announces no `daimond:pause`, which is the only other
-			// thing that repaints them. Without this, resuming one agent while the
-			// pump is held (queued, so the pump is now armed and held) left the
-			// global control painted as it was before: on an account with any
-			// other automation running, GREEN with its play verb disabled, so the
-			// one press that releases the pump could not be made. Seen the day
-			// the Optimiser's timer started arming its leaf, which is the day a
-			// fresh account first had something else armed.
-			repaintPause();
+			this.chrome();
 		},
 
 		tile: function (run) {

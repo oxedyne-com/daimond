@@ -58,7 +58,7 @@ const BREAKS = {
 		with: '\t\t\tif (!locked && moneyRows(st, arow)) return;',
 	}],
 	// Twelve runs, as before.
-	cap12: [{ file: 'js/daimond.js', find: '\t\tKEEP: 200,', with: '\t\tKEEP: 12,' }],
+	cap12: [{ file: 'js/daimond.js', find: '\t\tFINISHED_KEEP: 40,', with: '\t\tFINISHED_KEEP: 12,' }],
 	// The cut still happens; the panel simply does not mention it.
 	silentcut: [{
 		file: 'js/daimond.js',
@@ -193,33 +193,38 @@ try {
 	//
 	// Two hundred and sixty runs, named, so what survives can be asked about by
 	// NAME. `w13` is the thirteenth-newest and is exactly what the old cap threw
-	// away.
+	// away. The bound is forty finished runs since 11 Oct 2026 (two hundred froze
+	// the page: dev/verify_worker_render.mjs), so the fortieth is kept, the
+	// forty-first is not, and the two hundred and twenty let go are counted.
 	const kept = await p.evaluate(async () => {
 		const W = window.DaimondWorkers;
 		W.runs = [];
+		W.dropped = 0;
 		for (let i = 1; i <= 260; i++) {
 			W.runs.push({ id: 'w' + i, name: 'agent-' + i, task: 'task ' + i,
 				diamondId: '', diamondName: '', chatId: '', chatName: '',
 				model: 'mock/fast', provider: 'mock', status: 'done', text: '', tools: [],
 				sees: false, promptTokens: 0, completionTokens: 0, cachedTokens: 0, costUsd: 0 });
 		}
-		W.persist();
+		W.persistNow();
 		let raw = null;
 		try { raw = JSON.parse(localStorage.getItem('daimond-workers')); } catch (e) { raw = null; }
 		const list = Array.isArray(raw) ? raw : ((raw && raw.runs) || []);
 		return {
 			n: list.length,
 			has13: list.some((r) => r.id === 'w13'),
-			has200: list.some((r) => r.id === 'w200'),
+			has40: list.some((r) => r.id === 'w40'),
+			has41: list.some((r) => r.id === 'w41'),
 			dropped: (raw && !Array.isArray(raw)) ? raw.dropped : null,
 			live: W.dropped,
 		};
 	});
 	check('the thirteenth-newest run survives a write, where it used to be thrown away',
 		kept.has13, kept.has13 ? kept.n + ' runs kept' : 'w13 is gone; ' + kept.n + ' kept');
-	check('and the two-hundredth does too', kept.has200, kept.n + ' runs kept');
+	check('and the fortieth does too, and the forty-first is let go to the bound',
+		kept.has40 && !kept.has41 && kept.n === 40, kept.n + ' runs kept');
 	check('what did not fit is counted rather than forgotten',
-		kept.dropped === 60 && kept.live === 60,
+		kept.dropped === 220 && kept.live === 220,
 		'stored dropped=' + kept.dropped + ', in memory=' + kept.live);
 
 	const note = await p.evaluate(async () => {
@@ -228,10 +233,10 @@ try {
 		await new Promise((r) => setTimeout(r, 400));
 		const el = document.querySelector('#agents-list .agents-dropped');
 		return { text: el ? (el.textContent || '') : '',
-			says: el ? window.DaimondI18n.tn('agents.dropped', 60) : '' };
+			says: el ? window.DaimondI18n.tn('agents.dropped', 220) : '' };
 	});
 	check('and the panel says what it is not showing, in words and with the number',
-		!!note.text && /60/.test(note.text) && note.text === note.says,
+		!!note.text && /220/.test(note.text) && note.text === note.says,
 		note.text ? note.text : 'no line at the foot of the list');
 
 	// ══ 3. The tile's controls are in the reader's language ════════════
