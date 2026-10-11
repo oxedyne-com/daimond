@@ -498,43 +498,41 @@
 /* ── The transcript ────────────────────────────────────────── */
 /* A reading column on the sheet. Every tile is flush: the speaker shows in the
    type, not in an indent or a box. */
-:root[data-skin="daylight"] .chat-output { --ct-indent: 0px; padding: 4px 28px 12px; line-height: 1.5; }
+:root[data-skin="daylight"] .chat-output { --ct-indent: 0px; padding: var(--tx-edge) var(--tx-inset); line-height: 1.5; }
+:root[data-skin="daylight"] { --tx-inset: 28px; }
 /* No reading-column cap (2026-09-29, owner: "a large unnecessary margin on
    the right"). A tile fills the stage's width less this padding, in both
    views, rather than stopping at a fixed measure and leaving the rest bare. */
 :root[data-skin="daylight"] .ctile,
 :root[data-skin="daylight"] .crollup {
 	background: transparent;
-	border-color: transparent;
+	border: 0;
 	border-radius: var(--radius);
-	margin: 6px 0;
 	transition: background-color 0.12s;
+}
+/* QUIET TILES (owner, D-20261010-16): your message, the answer and the Thinking-and-Tools
+   group each stand on a faint fill in their own hue, always, so the eye finds where one
+   entry ends without a line drawn round it. A lone step is its group, so the group wears
+   the fill and the step inside stays clear. */
+:root[data-skin="daylight"] .chat-output > :is(.ctile.chat-msg-user, .ctile.chat-msg-assistant, .ctile[data-t="rating"], .crollup[data-t="work"]) {
+	background: color-mix(in srgb, var(--ct-edge) 4.5%, transparent);
 }
 /* A tile shows its extent under the pointer, as a fill in its own hue: the
    structure is there when asked for, and no line draws it. */
 :root[data-skin="daylight"] .ctile:hover,
 :root[data-skin="daylight"] .crollup:hover {
-	background: color-mix(in srgb, var(--ct-edge) 6%, transparent);
-	border-color: transparent;
+	background: color-mix(in srgb, var(--ct-edge) 8%, transparent);
 }
 :root[data-skin="daylight"] .ctile .ctile:hover { background: color-mix(in srgb, var(--ct-edge) 8%, transparent); }
-/* A solo Tool step -- one call, no rollup drawn round it -- nests its `.ctile`
-   three and four selectors deep (`.crollup[data-t="work"] > .crollup-body >
-   .ctile[data-t="tool"]`, `.crollup.solo[...]`), which out-specifies the two rules above and
-   kept its green fill at rest under them (QA round 2, minor 6). Named
-   explicitly here rather than raised generically, so it drops to transparent
-   like every other tile and takes the same hover fill. */
-:root[data-skin="daylight"] .crollup[data-t="work"] > .crollup-body > .ctile[data-t="tool"],
-:root[data-skin="daylight"] .crollup.solo[data-t="work"] > .crollup-body > .ctile[data-t="tool"] {
-	background: transparent;
-}
-:root[data-skin="daylight"] .crollup[data-t="work"] > .crollup-body > .ctile[data-t="tool"]:hover,
-:root[data-skin="daylight"] .crollup.solo[data-t="work"] > .crollup-body > .ctile[data-t="tool"]:hover {
-	background: color-mix(in srgb, var(--ct-edge) 6%, transparent);
+/* A step inside a group is flat at rest, whatever its kind, and shows its extent under the
+   pointer; app.css gives a nested step a ground four selectors deep, so the step is named
+   as deeply here. A lone step takes no fill of its own: its group is already showing one. */
+:root[data-skin="daylight"] .crollup[data-t] > .crollup-body > .ctile[data-t] { background: transparent; }
+:root[data-skin="daylight"] .crollup[data-t]:not(.solo) > .crollup-body > .ctile[data-t]:hover {
+	background: color-mix(in srgb, var(--ct-edge) 8%, transparent);
 }
 :root[data-skin="daylight"] .ctile-lbl,
 :root[data-skin="daylight"] .crollup-lbl {
-	padding: 6px 12px 4px;
 	gap: 8px;
 	font-size: var(--dl-xs);
 	font-weight: var(--w-strong);
@@ -547,7 +545,7 @@
 :root[data-skin="daylight"] .ctile[data-t="user"] .ctile-who,
 :root[data-skin="daylight"] .ctile[data-t="rating"] .ctile-who { color: var(--text-secondary); }
 :root[data-skin="daylight"] .ctile-time { font-size: var(--dl-2xs); }
-:root[data-skin="daylight"] .ctile-body { padding: 0 var(--ct-pad-x) 10px; font-size: var(--dl-md); line-height: 1.56; }
+:root[data-skin="daylight"] .ctile-body { font-size: var(--dl-md); line-height: 1.56; }
 /* A stop line in the body's own type (F3), and its Continue's word on the same text edge as
    the line's: the button's inline padding is taken back by its margin, so its hover fill
    still has room (F4). */
@@ -1250,11 +1248,11 @@
 	}
 	:root[data-skin="daylight"] .chead { padding: 8px 4px 4px 16px; min-height: 52px; }
 	:root[data-skin="daylight"] .ctitle { font-size: var(--dl-md); font-weight: 600; }
-	:root[data-skin="daylight"] .chat-output { padding: 4px 12px 12px; }
+	:root[data-skin="daylight"] { --tx-inset: 12px; }
 	/* The foot of the thread clears the floating chevrons (see responsive.css): the thread's own 12px below its last
 	   tile, with an attachment strip showing between it and the bar, and the room the chevrons take when none does. */
 	:root[data-skin="daylight"] .chat-output { padding-bottom: 68px; }
-	:root[data-skin="daylight"] .chat-output:has(~ #chat-attachments:not([style*="none"])) { padding-bottom: 12px; }
+	:root[data-skin="daylight"] .chat-output:has(~ #chat-attachments:not([style*="none"])) { padding-bottom: 16px; }
 	/* Both of these were off the seven-step scale, and the "your turn" one
 	   also put the phone back in the condensed display face batch 1 took the
 	   computer out of. Removed: both tiles now take the shared `.ctile-body`
@@ -1459,8 +1457,10 @@
 	:root[data-skin="daylight"] .files-row, :root[data-skin="daylight"] .files-focus .r { box-sizing: border-box; min-height: 44px; align-items: center; }
 	:root[data-skin="daylight"] .files-row > .files-more { min-width: 20px; margin-left: 20px; text-align: center; }
 	/* A message's label bar is the collapse control and holds Copy: a 44px row, and 16px from the tile's edge, which clips an
-	   overlay that hangs outside it (`.ctile { overflow: hidden }`). */
-	:root[data-skin="daylight"] :is(.ctile-lbl, .crollup-lbl) { box-sizing: border-box; min-height: 44px; padding: 0 16px 0 12px; }
+	   overlay that hangs outside it (`.ctile { overflow: hidden }`). The 44px is the row's 19px line and the tile's one
+	   depth token above and below it, so the text in every tile, folded or open, sits at that depth (D-20261010-16). */
+	:root[data-skin="daylight"] { --tx-pad-y: 12.5px; }
+	:root[data-skin="daylight"] :is(.ctile-lbl, .crollup-lbl) { line-height: 19px; padding: var(--tx-pad-y) 16px var(--tx-pad-y) var(--ct-pad-x, 12px); }
 	/* The sort select has no pseudo-element to wear an overlay, so its box is the 44px. One class more than the head-tool rule
 	   above (0,4,0), which holds its height at 30px. */
 	:root[data-skin="daylight"] .pending-actions > select.pending-sort { height: 44px; min-height: 44px; }

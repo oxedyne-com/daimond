@@ -16576,13 +16576,6 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			setTurnOpen(div, !isTurnOpen(div));
 		});
 		_turn += 1;
-		// The FIRST question of a thread does not open a turn against a previous one,
-		// so it takes the ordinary within-turn gap above it, not the 12px turn
-		// separator. The `:first-child` guard in app.css that used to do this stopped
-		// firing once the System band became a permanent tile at the head of the
-		// thread -- the band, not the question, is the first child now -- so the mark
-		// travels on the tile instead (see .chat-msg-user.turn-first in app.css).
-		if (_turn === 1) div.classList.add('turn-first');
 		tagTurn(div);
 		tilePeek(div, text);
 		postToChat(div);

@@ -751,7 +751,10 @@ body.resizing-v { cursor: row-resize; user-select: none; -webkit-user-select: no
    `.imp-chip.on` marks the active chip (improve.css), so "Send this report"
    reads as the main verb beside "Not now". */
 .report-send   { background: var(--accent-soft); color: var(--accent-text); }
-.chat-err-report { display: block; margin-top: 6px; font-size: var(--fs-xs); }
+.chat-msg-error > .chat-err-report { display: block; margin-top: 6px; font-size: var(--fs-xs); border: 0; }
+/* The pill's 1px border would stand its words 1px off the note's foot, so here the hover ring is
+   drawn inside the box and takes no room. */
+.chat-msg-error > .chat-err-report:hover:not(:disabled) { box-shadow: inset 0 0 0 1px var(--accent); }
 /* One heading idiom for the whole drawer. The account (user-name) menu heads its
    groups with `.admin-sec` -- small, upper-case, muted -- while the Models,
    Credits and Push views wore `.settings-section h3` at `--fs-lg`, so the two
@@ -1030,7 +1033,7 @@ body.resizing-v { cursor: row-resize; user-select: none; -webkit-user-select: no
    it. That nudge accumulates: every focus-return crept the reader a little nearer
    the bottom until they were dumped at the live end. Turning anchoring off leaves
    the JS the sole authority over this container's scroll position. */
-.chat-output { flex: 1; overflow-y: auto; overflow-anchor: none; padding: 16px 20px; font-size: var(--fs-base); line-height: 1.6; color: var(--text-primary); word-break: break-word; }
+.chat-output { flex: 1; overflow-y: auto; overflow-anchor: none; padding: var(--tx-edge) var(--tx-inset); font-size: var(--fs-base); line-height: 1.6; color: var(--text-primary); word-break: break-word; }
 .chat-input-bar { display: flex; align-items: flex-end; gap: 8px; padding: 10px 12px; border-top: 1px solid var(--border); }
 #chat-input { flex: 1; background: var(--bg-tertiary); border: 1px solid var(--border-strong); border-radius: var(--radius); color: var(--text-primary); padding: 9px 12px; font-size: var(--fs-base); resize: none; max-height: 120px; line-height: 1.5; }
 #chat-input:focus { outline: 2px solid var(--accent); outline-offset: 1px; border-color: var(--accent); }
@@ -1085,12 +1088,6 @@ body.resizing-v { cursor: row-resize; user-select: none; -webkit-user-select: no
 .panel-say { font-size: var(--fs-2xs); color: var(--text-secondary); margin: 0 0 8px; }
 .panel-say.err { color: var(--accent-text); }
 /* Chat messages */
-/* An answer belongs to the question above it, so it sits close to it; the air
-   goes between turns instead, where it separates things that are separate.
-   (Each message also carries 22px of bottom padding — the gutter the copy
-   button lives in — so these margins are on top of that, not instead of it.) */
-.chat-msg { margin-bottom: 6px; }
-.chat-msg-user { margin-bottom: 2px; }
 .chat-msg-user { text-align: right; }
 .chat-msg-user .chat-msg-content {
 	display: inline-block;
@@ -1145,7 +1142,6 @@ body.resizing-v { cursor: row-resize; user-select: none; -webkit-user-select: no
    message that has not happened yet: the same bubble on the same side, dashed
    and dimmed, under a line saying what it is waiting for. Deliberately NOT
    .chat-msg-user — that class is how a turn is counted. */
-.chat-queued { margin-top: 10px; }
 .chat-queued-head { font-size: var(--fs-2xs); color: var(--text-muted); text-align: right; margin-bottom: 4px; }
 /* A fold notice's own head carries a time (`appendCompacted`) and needs the
    label and the time at opposite ends of the row; the bare heading above --
@@ -1190,16 +1186,11 @@ body.resizing-v { cursor: row-resize; user-select: none; -webkit-user-select: no
    it is not something anyone SAID, it is a note about the thread itself, and
    giving it a speaker's shape would read as the model summarising its own work.
    Tokens throughout, because an inline style does not survive a palette. */
-.chat-msg-compacted { margin: 10px 0; }
 .chat-msg-compacted .chat-queued-head { text-align: left; }
 /* D-20260929-03 (left bars): the dashed border is uniform now, not thicker on
    one side. */
 .chat-msg-compacted .chat-msg-content {
-	background: var(--bg-tertiary);
 	color: var(--text-secondary);
-	border: 1px solid transparent;
-	border-radius: var(--radius-sm);
-	padding: 8px 12px;
 	font-size: var(--fs-xs);
 	line-height: 1.5;
 	white-space: pre-wrap;
@@ -1215,16 +1206,10 @@ body.resizing-v { cursor: row-resize; user-select: none; -webkit-user-select: no
  * NOT reduced, because dimming the words would be the app hiding a conversation it has just
  * been accused of losing. What marks them is a line down the side, in the same border the
  * notice wears, so the eye can follow the region back to the rule that names it. */
-.chat-fold-line { position: relative; padding-top: 14px; }
-.chat-fold-line::before {
-	content: '';
-	position: absolute;
-	top: 4px; left: 0; right: 0;
-	border-top: 1px dashed var(--border-2);
-}
+/* FLAT SINCE D-20261010-16: every message is a tile now, so a boxed or ruled note would read
+   as one more tile. The fold is its words, under the padding every note takes. */
+.chat-fold-line > * + .chat-fold-boundary { margin-top: 6px; }
 .chat-fold-boundary {
-	margin-top: 6px;
-	padding: 0 2px;
 	color: var(--text-secondary);
 	font-size: var(--fs-xs);
 	line-height: 1.5;
@@ -1247,7 +1232,6 @@ body.resizing-v { cursor: row-resize; user-select: none; -webkit-user-select: no
    is, without a colour that says something broke. `refused > 0`, `failed > 0`
    or a missing path is the only thing that reaches it. */
 .chat-msg-ended {
-	margin: 2px 0 12px;
 	font-size: var(--fs-2xs);
 	line-height: 1.5;
 	color: var(--text-muted);
@@ -1272,7 +1256,6 @@ body.resizing-v { cursor: row-resize; user-select: none; -webkit-user-select: no
    their text edge: a tile's 1px frame and its body's inline padding (F4). Still a plain
    line: no box, no outline, no bar. */
 .chat-msg-ended.ended-stop {
-	padding-inline-start: calc(1px + var(--ct-pad-x));
 	font-size: var(--fs-base);
 	line-height: 1.55;
 	color: var(--text-primary);
@@ -1987,7 +1970,7 @@ span.arte-open { cursor: default; }
 }
 
 /* Inline tool-call blocks */
-.tool-block { margin: 8px 0; border: 1px solid transparent; border-radius: var(--radius); background: var(--bg-tertiary); overflow: hidden; font-size: var(--fs-sm); }
+.tool-block { border: 1px solid transparent; border-radius: var(--radius); background: var(--bg-tertiary); overflow: hidden; font-size: var(--fs-sm); }
 .tool-head { padding: 7px 12px; cursor: pointer; font-weight: 600; color: var(--accent-text); user-select: none; display: flex; align-items: center; gap: 6px; }
 .tool-head::before { content: '▾'; font-size: var(--fs-3xs); color: var(--text-muted); transition: transform 0.15s; }
 .tool-block.collapsed .tool-head::before { transform: rotate(-90deg); }
@@ -2014,7 +1997,6 @@ span.arte-open { cursor: default; }
    off meant this too, and what that actually did was take the model's own sentences off
    the screen: a turn of twenty calls kept nothing but its last paragraph. The switch is
    called Steps and it hides the steps. See `demoteToWorking` in www/js/daimond.js. */
-.chat-msg-working { margin: 4px 0 4px 2px; }
 .chat-working-line {
 	color: var(--text-muted);
 	font-size: var(--fs-sm);
@@ -2465,10 +2447,7 @@ span.arte-open { cursor: default; }
    both, but the warm skin loosens every other gap in the chat, and a gap that
    stayed at 6 there would be the one place left crowded. */
 .chat-msg { position: relative; }
-.chat-msg { --copy-gutter: calc(22px + 6px * var(--space-scale, 1)); padding-bottom: var(--copy-gutter); }
-.msg-copy { position: absolute; bottom: 0; background: var(--bg-tertiary); border: 1px solid transparent; color: var(--text-secondary); border-radius: var(--radius-sm); padding: 3px; line-height: 0; opacity: 0; transition: opacity 0.12s; }
-.chat-msg-assistant .msg-copy { left: 0; }
-.chat-msg-user .msg-copy { right: 0; }
+.msg-copy { position: absolute; top: var(--tx-note-y); inset-inline-end: var(--ct-pad-x, 12px); background: var(--bg-tertiary); border: 1px solid transparent; color: var(--text-secondary); border-radius: var(--radius-sm); padding: 3px; line-height: 0; opacity: 0; transition: opacity 0.12s; }
 .chat-msg:hover .msg-copy { opacity: 1; }
 .msg-copy:hover { color: var(--text-primary); }
 .msg-copy.done { color: var(--ok); }
@@ -4630,7 +4609,6 @@ details.md-fold > .md-fold-body > :last-child { margin-bottom: 0; }
 	border: 1px solid var(--border);
 	border-radius: var(--radius);
 	overflow: hidden;
-	margin: 3px 0;
 	transition: border-color 0.12s;
 }
 .ctile[data-dir="to"]    { margin-left:  var(--ct-indent); }
@@ -4669,7 +4647,7 @@ details.md-fold > .md-fold-body > :last-child { margin-bottom: 0; }
 	display: flex;
 	align-items: center;
 	gap: 8px;
-	padding: 6px 10px;
+	padding: var(--tx-pad-y) var(--ct-pad-x, 12px);
 	cursor: pointer;
 	font-size: var(--fs-2xs);
 	font-weight: 600;
@@ -4751,7 +4729,7 @@ details.md-fold > .md-fold-body > :last-child { margin-bottom: 0; }
 .ctile-rate .ctile-rate-more.on { color: var(--accent); background: color-mix(in srgb, var(--accent) 12%, transparent); }
 .ctile-rate-row { display: none; }
 .ctile-rate-tags { flex-wrap: wrap; gap: 2px; }
-#chat-output .ctile-rate-tags { padding: 2px 12px 8px; }
+#chat-output .ctile-rate-tags { padding: 2px var(--ct-pad-x) var(--tx-pad-y); }
 .ctile-rate-tags .tile-dlg-level { flex: 0 0 auto; }
 .ctile.collapsed > .ctile-rate-row,
 .ctile.collapsed > .ctile-rate-tags { display: none; }
@@ -4813,7 +4791,12 @@ details.md-fold > .md-fold-body > :last-child { margin-bottom: 0; }
 
 /* The body. */
 .chat-output { --ct-pad-x: 12px; }			/* a tile body's inline padding; a stop line keys its edge to it */
-.ctile-body { padding: 1px var(--ct-pad-x) 10px; font-size: var(--fs-base); color: var(--text-primary); line-height: 1.55; }
+.ctile-body { padding: 0 var(--ct-pad-x) var(--tx-pad-y); font-size: var(--fs-base); color: var(--text-primary); line-height: 1.55; }
+/* A body with nothing in it yet takes no depth: the answer tile is mounted holding only the empty
+   .chat-msg-content it streams into, a frame before its first token. Its label keeps its own depth
+   (below), so the two do not stack and the name does not move when the text lands. */
+.ctile-body:empty,
+.ctile-body:has(> .chat-msg-content:only-child:empty) { padding-bottom: 0; }
 .ctile.collapsed > .ctile-body { display: none; }
 /* A folded turn keeps its question on screen — the whole point of the collapse
    is to leave what you asked. So the You tile's body never hides. */
@@ -4823,6 +4806,9 @@ details.md-fold > .md-fold-body > :last-child { margin-bottom: 0; }
 .ctile-body p { margin: 0.35em 0; }
 .ctile-body p:first-child { margin-top: 0; }
 .ctile-body p:last-child { margin-bottom: 0; }
+/* The body's padding is the whole of the depth: its first and last block add nothing to it. */
+.ctile-body > :first-child, .ctile-body > .chat-msg-content > :first-child { margin-top: 0; }
+.ctile-body > :last-child, .ctile-body > .chat-msg-content > :last-child { margin-bottom: 0; }
 .ctile-body pre { background: var(--bg-tertiary); border-radius: var(--radius-sm); padding: 10px; overflow-x: auto; font-size: var(--fs-sm); margin: 6px 0; }
 .ctile-body code { font-family: var(--font-mono); font-size: var(--fs-sm); background: color-mix(in srgb, var(--ct-edge) 12%, transparent); padding: 1px 5px; border-radius: 4px; }
 .ctile-body pre code { background: none; padding: 0; }
@@ -4863,7 +4849,7 @@ details.md-fold > .md-fold-body > :last-child { margin-bottom: 0; }
 
 /* ── Rollup: a run of Thinking and Tool tiles (`work`), or of System tiles, under one container ── */
 .crollup {
-	min-width: 0; border-radius: var(--radius); overflow: hidden; margin: 3px 0;
+	min-width: 0; border-radius: var(--radius); overflow: hidden;
 	border: 1px solid var(--border); transition: border-color 0.12s;
 }
 .crollup[data-dir="to"]    { margin-left:  var(--ct-indent); }
@@ -4873,7 +4859,7 @@ details.md-fold > .md-fold-body > :last-child { margin-bottom: 0; }
 .crollup[data-t="wire"]  { --ct-edge: var(--warn); background: color-mix(in srgb, var(--warn) 8%, var(--bg-secondary)); }
 .crollup:hover { border-color: color-mix(in srgb, var(--ct-edge) 45%, var(--border)); }
 .crollup-lbl {
-	display: flex; align-items: center; gap: 8px; padding: 6px 10px; cursor: pointer;
+	display: flex; align-items: center; gap: 8px; padding: var(--tx-pad-y) var(--ct-pad-x, 12px); cursor: pointer;
 	font-size: var(--fs-2xs); font-weight: 600; color: var(--text-secondary); user-select: none;
 }
 .crollup-lbl:hover { background: color-mix(in srgb, var(--ct-edge) 9%, transparent); }
@@ -4882,7 +4868,9 @@ details.md-fold > .md-fold-body > :last-child { margin-bottom: 0; }
 	font-weight: 700; border-radius: 20px; padding: 1px 7px; line-height: 1.5;
 	font-variant-numeric: tabular-nums; flex: none; white-space: nowrap;
 }
-.crollup-body { padding: 3px 8px 8px; display: flex; flex-direction: column; gap: 3px; }
+/* The steps stand flush with their group, on its label's text column; the gap between two
+   of them is the in-turn gap, and a flex gap passes over a step that is not drawn. */
+.crollup-body { padding: var(--tx-gap-in) 0 0; display: flex; flex-direction: column; gap: var(--tx-gap-in); }
 .crollup.collapsed > .crollup-body { display: none; }
 .crollup-peek {
 	color: var(--text-muted); font-weight: 400; font-size: var(--fs-xs);
@@ -4895,15 +4883,13 @@ details.md-fold > .md-fold-body > :last-child { margin-bottom: 0; }
 .crollup.collapsed.live:not(.solo) > .crollup-body { display: flex; }
 .crollup.collapsed.live > .crollup-body > :not(.live-latest) { display: none; }
 .crollup.collapsed.live .crollup-peek { display: none; }
-/* Nested tiles carry no outer margin — the container gives them their inset —
-   and sit on a slightly lifted ground so the nesting reads. */
-.crollup-body > .ctile { margin: 0; }
+/* Nested tiles sit on a slightly lifted ground so the nesting reads. */
 .crollup[data-t="work"] > .crollup-body > .ctile[data-t="think"] { background: color-mix(in srgb, var(--text-secondary) 4%, var(--bg-tertiary)); }
 .crollup[data-t="work"] > .crollup-body > .ctile[data-t="tool"]  { background: color-mix(in srgb, var(--ok) 5%, var(--bg-tertiary)); }
 .crollup[data-t="wire"]  > .crollup-body > .ctile { background: color-mix(in srgb, var(--warn) 5%, var(--bg-tertiary)); }
 /* A run of one is not a rollup — hide the container chrome and let the single
    tile stand as itself. */
-.crollup.solo { background: none; border: none; margin: 3px 0; }
+.crollup.solo { background: none; border: none; }
 .crollup.solo[data-dir="to"]    { margin-left:  var(--ct-indent); }
 .crollup.solo[data-dir="from"]  { margin-right: var(--ct-indent); }
 .crollup.solo[data-dir="local"] { margin-left:  var(--ct-indent); margin-right: var(--ct-indent); }
@@ -4921,7 +4907,7 @@ details.md-fold > .md-fold-body > :last-child { margin-bottom: 0; }
 
 /* The user tile carries .chat-msg-user for older JS hooks, but it is a tile now,
    not a right-aligned bubble — so the old bubble geometry must not reach it. */
-.ctile.chat-msg-user { text-align: left; margin-bottom: 3px; }
+.ctile.chat-msg-user { text-align: left; }
 .chat-output.selecting .ctile.chat-msg-user { padding-right: 0; }
 /* The count beside the select controls. */
 .csel-count { color: var(--text-muted); font-size: var(--fs-2xs); white-space: nowrap; font-variant-numeric: tabular-nums; }
@@ -4934,20 +4920,44 @@ details.md-fold > .md-fold-body > :last-child { margin-bottom: 0; }
    Tighter turns, right-aligned sent-to-model text, a slimmer You tile, a
    borderless System container, and a per-tile checkbox for select mode. */
 
-/* 4 — Tighter gap between turns. A turn opens on a You tile and closes on the
-   Daimond reply; the air between two turns was the reply's bottom margin plus
-   the next You tile's top margin plus the You body's own padding. Halve the
-   tile margins and pull the top of each new turn up to its question. */
-.chat-output .ctile { margin-top: 2px; margin-bottom: 2px; }
-.chat-output .crollup { margin-top: 2px; margin-bottom: 2px; }
-.chat-output .ctile.chat-msg-user { margin-top: 12px; margin-bottom: 2px; }
-/* The FIRST question of a thread opens no turn against a previous one, so it
-   takes the within-turn 2px above it, not the 12px separator -- otherwise the
-   gap between the System band and the first You reads as a phantom turn break.
-   `:first-child` no longer catches it (the System band is the first child now),
-   so `.turn-first`, set by appendUserMessage on turn 1, carries the mark. */
-.chat-output .ctile.chat-msg-user:first-child,
-.chat-output .ctile.chat-msg-user.turn-first { margin-top: 2px; }
+/* 4 — THE GAPS OF THE TRANSCRIPT COME FROM THIS BLOCK AND NOWHERE ELSE (D-20261010-16).
+   Until r547 four margin rules, a skin override, a flex gap and the Copy gutter each set
+   part of the distance between two entries, and which won depended on the pair, the skin
+   and whether a group was open. Now the thread is one column, no entry has a margin of
+   its own, and the space above an entry is chosen by the two roles that meet:
+
+     any entry after another, inside a turn        --tx-gap-in     4px
+     a note after an answer                        --tx-gap-aside 12px
+     your message after anything but your own      --tx-gap-turn  24px
+
+   A note is a `.chat-msg` that is not a tile: a fold, how a turn ended, a fault, a system
+   line. The depth of the text inside an entry is one token per role: --tx-pad-y for a
+   tile (the skin raises it where the label row is a 44px tap row), --tx-note-y for a
+   note; both start --ct-pad-x from the entry's edge. dev/verify_transcript_gaps.mjs
+   measures all of it, so a margin put back on any entry fails the gate. */
+:root {
+	--tx-gap-in:	4px;
+	--tx-gap-aside:	12px;
+	--tx-gap-turn:	24px;
+	--tx-pad-y:		8px;
+	--tx-note-y:	8px;
+	--tx-inset:		20px;		/* the thread's inline padding; the Undo row keeps to it */
+	--tx-edge:		16px;		/* the thread's padding over its first entry and under its last */
+}
+.chat-output { display: flex; flex-direction: column; }
+.chat-output > * { flex: none; }
+.chat-output > * + * { margin-top: var(--tx-gap-in); }
+.chat-output > .ctile.chat-msg-assistant + .chat-msg:not(.ctile) { margin-top: var(--tx-gap-aside); }
+.chat-output > :not(.chat-msg-user) + .chat-msg-user { margin-top: var(--tx-gap-turn); }
+.chat-output > .chat-msg:not(.ctile) { padding: var(--tx-note-y) var(--ct-pad-x); }
+/* A label with its body under it gives up most of its lower padding, so the name sits on
+   its text; where the label is a tap row it keeps its height instead. A body with nothing in
+   it (see .ctile-body:empty) leaves the label its full padding. :has() cannot nest, so the
+   empty-wrapper case is read off the tile. */
+@media (min-width: 761px) {
+	.ctile:not(.collapsed):not(:has(> .ctile-body > .chat-msg-content:only-child:empty)) > .ctile-lbl:has(+ .ctile-body:not(:empty)),
+	.ctile[data-t="user"]:not(:has(> .ctile-body > .chat-msg-content:only-child:empty)) > .ctile-lbl:has(+ .ctile-body:not(:empty)) { padding-bottom: 2px; }
+}
 
 /* 6 — The You tile was taller than the rest because its inner .chat-msg-content
    still wore the old right-aligned bubble (accent-soft ground, 8px 14px pad)
@@ -4957,7 +4967,6 @@ details.md-fold > .md-fold-body > :last-child { margin-bottom: 0; }
 	display: block; background: none; color: inherit;
 	border-radius: 0; padding: 0; max-width: none;
 }
-.ctile[data-t="user"] > .ctile-body { padding-top: 2px; padding-bottom: 8px; }
 
 /* 5 — Text SENT to the model reads from the right. You and System sit right
    already (the indent); their body text follows. Code and schemas stay left,
@@ -4983,6 +4992,7 @@ details.md-fold > .md-fold-body > :last-child { margin-bottom: 0; }
    keeps the band's place across its own await, and a view change then needs no
    re-render to reveal it. */
 :root[data-view="simple"] #wire-head { display: none; }
+:root[data-view="simple"] #wire-head + * { margin-top: 0; }		/* hidden, it is no entry: what follows it is the thread's first */
 /* One muted line, with the count and the size, and no list of part names. */
 #wire-head .crollup-lbl { color: var(--text-muted); }
 /* The token total rides in the System header (see renderWire): keep the noun and
@@ -5073,15 +5083,17 @@ details.md-fold > .md-fold-body > :last-child { margin-bottom: 0; }
    291.7px without a model name. The name needs about 52px (eight characters and an
    ellipsis), so the header form needs a container of 96 + 291.7 + 52, which is 440px.
    It is the width at which the chat head drops to one row, too. */
-.ctile-rate-row { align-items: center; box-sizing: border-box; height: 34px; padding: 0 8px 12px; }
-/* The row's 8px puts the first glyph (4px inside its 16px box) on the answer text's left edge. The buttons
-   are 16px wide, and the first one's overlay lies inward (its left edge is the tile's) because the tile
-   clips at its edge; a 34px gap then makes the 50px pitch at which no two 44px overlays overlap. The row
-   is tall enough that the tile's own clip does not cut an overlay at the foot. */
+/* --rate-ink: how far the glyphs' ink stands inside their 16px box. Both arrows start at x 6 of a 24 viewBox
+   with a 1.75 round-capped stroke (`.ic`), so the ink begins at (6 - 0.875) / 24 of the box, 3.42px. */
+.ctile-rate-row { --rate-ink: calc(16px * 5.125 / 24); align-items: center; box-sizing: border-box; height: calc(16px + var(--tx-pad-y)); padding: 0 var(--ct-pad-x) var(--tx-pad-y) calc(var(--ct-pad-x) - var(--rate-ink)); }
+/* The row is the tile's last line of content: its glyphs' ink stands on the answer text's column and at the
+   tile's own depth from the foot, as a line of text would. The buttons are 16px wide, and a 34px gap
+   makes the 50px pitch at which no two 44px overlays overlap. Each overlay stands on the tile's foot
+   and the first one's left edge is the tile's, because the tile clips at its edge. */
 .ctile-rate-row .ctile-rate { gap: 34px; }
 .ctile-rate-row .ctile-rate button { position: relative; }
-.ctile-rate-row .ctile-rate button::after { content: ''; position: absolute; top: 50%; left: 50%; width: 44px; height: 44px; transform: translate(-50%, -50%); }
-.ctile-rate-row .ctile-rate button:first-child::after { left: -8px; transform: translateY(-50%); }
+.ctile-rate-row .ctile-rate button::after { content: ''; position: absolute; bottom: calc(2px - var(--tx-pad-y)); left: 50%; width: 44px; height: 44px; transform: translateX(-50%); }
+.ctile-rate-row .ctile-rate button:first-child::after { left: calc(var(--rate-ink) - var(--ct-pad-x)); transform: none; }
 @container aipane (max-width: 440px) {
 	.ctile > .ctile-lbl > .ctile-rate { display: none; }
 	.ctile-rate-row { display: flex; }
@@ -5244,7 +5256,7 @@ details.md-fold > .md-fold-body > :last-child { margin-bottom: 0; }
    element its bar's `data-undo-row` names (dev/verify_undo_clear.mjs). */
 .daimond-undo {
 	flex: none; display: flex; align-items: center; gap: 12px;
-	margin: 0 12px 8px; padding: 6px 8px 6px 12px; border-radius: var(--radius-sm);
+	margin: 0 var(--tx-inset) 8px; padding: 6px 8px 6px calc(var(--ct-pad-x, 12px) - 1px); border-radius: var(--radius-sm);
 	pointer-events: auto; font-size: var(--fs-sm); color: var(--text-primary);
 	background: var(--bg-tertiary); border: 1px solid var(--border);
 	opacity: 0; transition: opacity .15s;

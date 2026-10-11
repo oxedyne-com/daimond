@@ -108,7 +108,7 @@
 	   no longer share a strip that scrolls, so nothing here sets a gap, a floor or an overflow for it. */
 
 	/* Comfortable chat input row. */
-	.chat-output { padding: 12px 14px; }
+	:root { --tx-inset: 14px; }
 	.chat-msg-user .chat-msg-content,
 	.chat-msg-assistant .chat-msg-content { max-width: 100%; }
 	.chat-msg-content pre,
@@ -182,7 +182,7 @@
 	   of a Files tile, scrolled to the end, had its 44px squares covered by up to 11px (bar rule 8, V's FW5). The thread keeps
 	   that room below its last tile; with the strip showing, the strip is what they float over and the thread ends above them. */
 	.chat-output { padding-bottom: 68px; }
-	.chat-output:has(~ #chat-attachments:not([style*="none"])) { padding-bottom: 12px; }
+	.chat-output:has(~ #chat-attachments:not([style*="none"])) { padding-bottom: 16px; }
 
 	/* Give lists a little more row height for touch. A file row's comes from its
 	   44px min-height (files.css), which its 44px ◈ fills, so it takes no padding. */

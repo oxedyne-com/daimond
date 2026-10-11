@@ -19,7 +19,8 @@
 //     node dev/verify_consistency.mjs diff <runA> <runB> <cfgPrefix> [rootSel]
 //
 // `all` = seed, desk (1440×900) and phone (390×844) in Chromium, phone in WebKit,
-// each in Obsidian and Porcelain, then `report`. `report` re-reads the saved
+// each in Obsidian and Porcelain, then `report`, then the transcript gap gate
+// (dev/verify_transcript_gaps.mjs, both engines), whose faults count in the verdict. `report` re-reads the saved
 // captures, so the table can be corrected and re-run without a browser.
 import { open, chat, newChat, signInAs } from './harness.mjs';
 import { makePagePro } from './pro.mjs';
@@ -2592,10 +2593,23 @@ else if (MODE === 'webkit') await phone(true);
 else if (MODE === 'tap') { if (!fs.existsSync(PROF)) await seed(); await phone(false); await phone(true); }
 if (MODE === 'all') { await seed(); await desk(); await phone(false); await phone(true); }
 if (MODE === 'report' || MODE === 'all' || MODE === 'tap') {
-	const { bad, notCovered, parts } = report();
+	const rep = report(), { notCovered, parts } = rep;
+	let bad = rep.bad;
+	// The transcript's gaps are one rule (D-20261010-16), measured by its own gate in both engines against the same
+	// world. `all` runs it, so the by-role evidence deploy.sh step 0h asks for cannot be green with a gap off the rule.
+	if (MODE === 'all') {
+		const g = spawnSync('node', [path.join(import.meta.dirname, 'verify_transcript_gaps.mjs')], { encoding: 'utf8', maxBuffer: 64 << 20 });
+		const txt = String(g.stdout) + String(g.stderr);
+		const off = [...txt.matchAll(/^\w+: measured .*?; (\d+) off the rule/gm)].reduce((n, m) => n + Number(m[1]), 0);
+		const fails = (txt.match(/^  FAIL .*$/gm) || []);
+		// A run that died, or failed a check that is not a measure, still counts: never 0 on a gate that did not pass.
+		parts.gaps = g.status === 0 ? 0 : Math.max(off, fails.length, 1);
+		for (const l of txt.split('\n').filter((l) => /^\w+: measured|^  FAIL |^ALL ENGINES/.test(l))) log('gaps', l.trim());
+		bad += parts.gaps;
+	}
 	const covGroups = new Map(); for (const n of notCovered) covGroups.set(n.label, (covGroups.get(n.label) || 0) + 1);
 	const covStr = covGroups.size ? ` (not covered: ${[...covGroups.entries()].map(([k, n]) => `${k} ×${n}`).join(', ')})` : '';
-	const verdict = bad ? `FAIL: ${bad} unexplained differences (style ${parts.style}, casing ${parts.casing}, layout ${parts.layout}, missing ${parts.missing}, tap ${parts.tap}, send ${parts.send})${covStr}` : `PASS: every role consistent${covStr}`;
+	const verdict = bad ? `FAIL: ${bad} unexplained differences (style ${parts.style}, casing ${parts.casing}, layout ${parts.layout}, missing ${parts.missing}, tap ${parts.tap}, send ${parts.send}${parts.gaps != null ? `, transcript gaps ${parts.gaps}` : ''})${covStr}` : `PASS: every role consistent${covStr}`;
 	log(verdict);
 	// `all` is the by-role gate: it files its verdict under the www tree for deploy.sh step 0h. The writer refuses a dirty or moved tree, and a FAIL files a red record.
 	if (MODE === 'all') {

@@ -1130,7 +1130,7 @@ try {
 // ── The count is pinned ──────────────────────────────────────────────
 // Every check above runs whatever an earlier one said, so the number is a constant of
 // this file and a displaced case trips it (memory: assert the count rose).
-const EXPECTED = 92;
+const EXPECTED = 93;
 check(`exactly ${EXPECTED} checks ran — a displaced case trips this`, ran === EXPECTED, `ran ${ran}`);
 
 if (BREAK) {
