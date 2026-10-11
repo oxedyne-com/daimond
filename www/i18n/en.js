@@ -5017,7 +5017,7 @@
 	'versions.renumbered_kind': 'Renumbered',
 	'versions.renumbered_row.one': '{list} is now {to}, because a copy from another device arrived with that number.',
 	'versions.renumbered_row.other': '{n} versions ({list}) are now {to}, because a copy from another device arrived with those numbers.',
-	'versions.limit_note':     'History keeps up to {n} versions and {cap}. When it is full, the oldest of the daimon\u2019s edits go first; your saved versions, your own files, your page\u2019s data and deletions go last.',
+	'versions.limit_note':     'History is over its limit. Nothing is removed until the next update.',
 	'versions.cannot_compare': 'Cannot compare',
 	'versions.at_v':           '{name} at v{v}',
 	'versions.cap_label':      'Version history limit',

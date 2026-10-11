@@ -56716,7 +56716,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 				gauge.textContent = t('versions.gauge',
 					{ used: fmtBytes(g.used || 0), cap: fmtBytes(g.cap || 0) });
 				// At nine tenths the number stops being information and becomes a
-				// decision: the next snapshot starts pruning somebody's history.
+				// decision: History is near the limit it will be held to once KEEP-RULE ships.
 				if (g.cap && g.used / g.cap >= 0.9) {
 					gauge.classList.add('warn');
 					var link = document.createElement('button');
@@ -57111,12 +57111,13 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 	function histFoot(g) {
 		var foot = document.createElement('div');
 		foot.className = 'hist-foot';
-		// The limit, and what goes first when it is reached, said where the history is read.
-		if (g && g.cap) {
+		// KEEP-ALL until KEEP-RULE: nothing is pruned, so past the limit History says it keeps growing.
+		var over = g && ((g.cap && g.used > g.cap)
+			|| (g.manifests_cap && g.manifests > g.manifests_cap));
+		if (over) {
 			var lim = document.createElement('span');
 			lim.className = 'hist-limit';
-			lim.textContent = t('versions.limit_note',
-				{ n: g.manifests_cap || 0, cap: fmtBytes(g.cap) });
+			lim.textContent = t('versions.limit_note');
 			foot.appendChild(lim);
 		}
 		var head = document.createElement('span');

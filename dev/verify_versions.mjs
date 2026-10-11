@@ -24,8 +24,9 @@
 //      a path that did not exist at N is gone afterwards.
 //   6. RESTORE CREATES A VERSION. The row count rises by one and the pre-restore bytes are
 //      the newest row's `was`. Restore that destroys is the one thing this must never be.
-//   7. PRUNING TAKES THE OLDEST TURNS FIRST AND THE USER'S SAVE LAST, and leaves no
-//      manifest naming a body that is gone.
+//   7. NOTHING IS PRUNED (KEEP-ALL, held until KEEP-RULE): past the cap every turn's
+//      manifest and the user's save stay, every body they name is on disk, and the gauge
+//      reports the bytes over the cap. KEEP-RULE's release puts the prune checks back.
 //   8. A BODY MISSING ON THIS DEVICE SAYS SO — in the row, with Restore greyed — and
 //      nothing throws. The other device pruned it; this one must not pretend.
 //   9. EVERY ACT WITH AN UNDO TOAST DOES BOTH HALVES: the act happened, and Undo within
@@ -53,7 +54,7 @@
 //   node dev/verify_versions.mjs --break nosnapshot       # 1: the turn recorded nothing
 //   node dev/verify_versions.mjs --break nodedupe         # 2: a body per write
 //   node dev/verify_versions.mjs --break restorenoversion # 6: restore writes the bytes and no manifest
-//   node dev/verify_versions.mjs --break prunesave        # 7: the user's save goes first
+//   node dev/verify_versions.mjs --break prunes           # 7: a prune takes the oldest turn
 //   node dev/verify_versions.mjs --break undolate         # 9: the tail runs before the window
 //   node dev/verify_versions.mjs --break revertfence      # 11: restore writes past the fence
 //   node dev/verify_versions.mjs                          # and then, clean
@@ -128,14 +129,12 @@ const BREAKS = {
 				var e = m.files[i]; if (!e.hash) continue;
 				await store_write(dir + '/b/' + e.hash + '-' + names.length, await store_read(dir + '/b/' + e.hash));
 			}`) },
-	// The user's save is not protected: its cause is flipped, so the REAL prune takes it as
-	// the oldest turn on the next write that crosses the cap.
-	prunesave: { file: GLUE, needs: 'steer_crystal', append: afterTurn(`
-			for (var i = 0; i < names.length; i++) {
-				var p = dir + '/' + names[i];
-				var m = JSON.parse(await store_read(p));
-				if (m.cause === 'save') { m.cause = 'turn'; await store_write(p, JSON.stringify(m)); }
-			}`) },
+	// A prune comes back: after every turn the oldest manifest is emptied, as a prune of it
+	// would leave the version naming nothing (KEEP-ALL says nothing is taken).
+	prunes: { file: GLUE, needs: 'steer_crystal', append: afterTurn(`
+			if (!names.length) return r;
+			var p = dir + '/' + names[0];
+			var m = JSON.parse(await store_read(p)); m.files = []; await store_write(p, JSON.stringify(m));`) },
 	// Restore writes the old bytes straight into the file and no `restore` manifest: the
 	// destructive restore, which is the one implementation somebody would write first.
 	restorenoversion: { file: 'js/versions.js', needs: 'DaimondVersions', append: `
@@ -775,8 +774,11 @@ try {
 	});
 	check('two collects after a snapshot are the same bytes in the diamonds section', fixed.same, `${fixed.len} bytes`);
 
-	// ── 7. Cap pruning ──────────────────────────────────────────────
-	console.log('\n7. pruning takes the oldest turns first and the save last');
+	// ── 7. Past the cap, nothing is pruned (KEEP-ALL) ────────────────
+	// Re-aimed 11 Oct (r555stop): the live engine prunes nothing until KEEP-RULE, because the
+	// after-record prune could take a file's only older copy, a held deleted copy or a restore's
+	// target. These checks said the oldest turn went; under the hold every version stays.
+	console.log('\n7. past the cap, every version stays (KEEP-ALL until KEEP-RULE)');
 	// ON THE APP, NOT ON THE MODULE. The plan put the setter beside the module's own
 	// functions; lane A hung it on `DaimondApp` with the other ceilings, which is the
 	// object the settings panel already holds.
@@ -794,8 +796,9 @@ try {
 	}
 	const ms7 = await manifests(page, id);
 	const bs7 = await bodies(page, id);
-	check('the oldest turn manifests are gone', !ms7.some((m) => m.v === firstTurnV),
-		`still holding v${firstTurnV}: ${ms7.some((m) => m.v === firstTurnV)}; ${ms7.length} manifests`);
+	const first7 = ms7.find((m) => m.v === firstTurnV);
+	check('the oldest turn manifest is still there, naming its files (no prune)', !!first7 && (first7.files || []).length > 0,
+		`v${firstTurnV}: ${first7 ? (first7.files || []).length + ' files' : 'gone'}; ${ms7.length} manifests`);
 	check('THE USER\'S SAVE IS STILL THERE', ms7.some((m) => m.v === VS && m.cause === 'save'),
 		`v${VS}: ${JSON.stringify((ms7.find((m) => m.v === VS) || {}).cause)}`);
 	let dangling = [];
@@ -807,12 +810,14 @@ try {
 	}
 	check('and no remaining manifest names a body that is gone', dangling.length === 0, dangling.slice(0, 4).join(' '));
 	const total7 = bs7.length && (await listDir(page, `${D}/versions/b`)).reduce((a, e) => a + e.size, 0);
-	check('the bodies are under the cap', total7 <= 64 * 1024, `${total7} bytes`);
+	check('the bodies are OVER the cap: History grows rather than prune', total7 > 64 * 1024, `${total7} bytes`);
+	check('no prune record was written (versions/pruned.json absent)',
+		!(await listDir(page, `${D}/versions`)).some((e) => e.name === 'pruned.json'));
 	// `versions_list` is the ROWS; the gauge is `versions_state`, which is what the
 	// History bar draws its bar from.
 	const gauge = (await engine(page, 'versions_state', id));
 	let gaugeObj = null; try { gaugeObj = JSON.parse(gauge.out); } catch (e) { gaugeObj = null; }
-	check('versions_state reports the bytes and the cap the gauge draws', !!gaugeObj && gaugeObj.cap === 64 * 1024 && gaugeObj.bytes === total7,
+	check('versions_state reports the bytes (over the cap) and the cap the gauge draws', !!gaugeObj && gaugeObj.cap === 64 * 1024 && gaugeObj.bytes === total7,
 		gauge.ok ? String(gauge.out).slice(0, 80) : gauge.err);
 
 	// ── 8. Not on this device ───────────────────────────────────────

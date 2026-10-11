@@ -4353,6 +4353,8 @@ fn pages_log_path(id: &str) -> String {
 /// * `on` - What the prune ran after: `"record"` or `"arrival"`.
 async fn prune_held(_hold: &VersionHold, id: &str, on: &str) -> Outcome<(usize, usize)> {
     forget_room(id);
+    // KEEP-ALL until KEEP-RULE: a prune after a record could take a file's only older copy, a held deleted copy, or a restore's target.
+    return Ok((0, 0));
     let held   = versions_manifests(id).await;
     let (bodies, stamps) = versions_bodies_stamped(id).await;
     let now    = now_ms() as u64;

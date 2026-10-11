@@ -3802,7 +3802,7 @@
 	'versions.renumbered_kind': 'Renumerado',
 	'versions.renumbered_row.one': '{list} ahora es {to}, porque lleg\u00f3 una copia de otro dispositivo con ese n\u00famero.',
 	'versions.renumbered_row.other': '{n} versiones ({list}) ahora son {to}, porque lleg\u00f3 una copia de otro dispositivo con esos n\u00fameros.',
-	'versions.limit_note': 'El historial guarda hasta {n} versiones y {cap}. Cuando est\u00e1 lleno, primero se van las ediciones m\u00e1s antiguas del daimon; tus versiones guardadas, tus propios archivos, los datos de tu p\u00e1gina y las eliminaciones se van al final.',
+	'versions.limit_note': 'El historial ha superado su l\u00edmite. No se elimina nada hasta la pr\u00f3xima actualizaci\u00f3n.',
 	'versions.cannot_compare': 'No se puede comparar',
 	'versions.at_v': '{name} en v{v}',
 	'versions.cap_label': 'L\u00edmite del historial de versiones',

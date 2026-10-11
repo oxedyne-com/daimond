@@ -3817,7 +3817,7 @@
 	'versions.renumbered_kind': 'Renum\u00e9rot\u00e9',
 	'versions.renumbered_row.one': '{list} est d\u00e9sormais {to}, car une copie venue d\u2019un autre appareil portait ce num\u00e9ro.',
 	'versions.renumbered_row.other': '{n} versions ({list}) sont d\u00e9sormais {to}, car une copie venue d\u2019un autre appareil portait ces num\u00e9ros.',
-	'versions.limit_note': 'L\u2019historique garde jusqu\u2019\u00e0 {n} versions et {cap}. Quand il est plein, les plus anciennes modifications du daimon partent d\u2019abord ; vos versions enregistr\u00e9es, vos propres fichiers, les donn\u00e9es de votre page et les suppressions partent en dernier.',
+	'versions.limit_note': 'L\u2019historique a d\u00e9pass\u00e9 sa limite. Rien n\u2019est supprim\u00e9 avant la prochaine mise \u00e0 jour.',
 	'versions.cannot_compare': 'Comparaison impossible',
 	'versions.at_v': '{name} \u00e0 v{v}',
 	'versions.cap_label': 'Limite de l\u2019historique des versions',

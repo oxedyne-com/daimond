@@ -1,1 +1,1 @@
-{"build":"c4afb8248947","note":"Verifiers now run behind the same fence as commands, and a command may start at the workspace root"}
+{"build":"f8d8764ea061","note":"History keeps every version for now: nothing is removed, even past its limit, until the next update"}

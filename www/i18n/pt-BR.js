@@ -3801,7 +3801,7 @@
 	'versions.renumbered_kind': 'Renumerado',
 	'versions.renumbered_row.one': '{list} agora \u00e9 {to}, porque chegou uma c\u00f3pia de outro dispositivo com esse n\u00famero.',
 	'versions.renumbered_row.other': '{n} vers\u00f5es ({list}) agora s\u00e3o {to}, porque chegou uma c\u00f3pia de outro dispositivo com esses n\u00fameros.',
-	'versions.limit_note': 'O hist\u00f3rico guarda at\u00e9 {n} vers\u00f5es e {cap}. Quando est\u00e1 cheio, as edi\u00e7\u00f5es mais antigas do daimon saem primeiro; suas vers\u00f5es salvas, seus pr\u00f3prios arquivos, os dados da sua p\u00e1gina e as exclus\u00f5es saem por \u00faltimo.',
+	'versions.limit_note': 'O hist\u00f3rico passou do limite. Nada \u00e9 removido at\u00e9 a pr\u00f3xima atualiza\u00e7\u00e3o.',
 	'versions.cannot_compare': 'N\u00e3o d\u00e1 para comparar',
 	'versions.at_v': '{name} na v{v}',
 	'versions.cap_label': 'Limite do hist\u00f3rico de vers\u00f5es',

@@ -3809,7 +3809,7 @@
 	'versions.renumbered_kind': 'Umnummeriert',
 	'versions.renumbered_row.one': '{list} hei\u00dft jetzt {to}, weil eine Kopie von einem anderen Ger\u00e4t mit dieser Nummer eingetroffen ist.',
 	'versions.renumbered_row.other': '{n} Versionen ({list}) hei\u00dfen jetzt {to}, weil eine Kopie von einem anderen Ger\u00e4t mit diesen Nummern eingetroffen ist.',
-	'versions.limit_note': 'Der Verlauf beh\u00e4lt bis zu {n} Versionen und {cap}. Ist er voll, gehen zuerst die \u00e4ltesten \u00c4nderungen des Daimons; deine gespeicherten Versionen, deine eigenen Dateien, die Daten deiner Seite und L\u00f6schungen gehen zuletzt.',
+	'versions.limit_note': 'Der Verlauf hat seine Grenze \u00fcberschritten. Bis zum n\u00e4chsten Update wird nichts entfernt.',
 	'versions.cannot_compare': 'Kein Vergleich m\u00f6glich',
 	'versions.at_v': '{name} bei v{v}',
 	'versions.cap_label': 'Grenze des Versionsverlaufs',
