@@ -17,6 +17,7 @@ use crate::llm::json_escape;
 use crate::tools::SearchAnswer;
 use crate::tools::SearchHit;
 use crate::tools::Verdict;
+use crate::tools::Permit;
 use crate::wasm::js_str;
 use crate::wasm::refusal;
 
@@ -392,8 +393,8 @@ const EGRESS_GLOBAL: &str = "__daimondEgressAllowed";
 /// * `tool` - The wire name of the tool asking.
 /// * `url` - The destination it wants.
 /// * `granted` - Whether the conversation has already granted the web.
-pub async fn egress_reach(tool: &str, url: &str, granted: bool) -> crate::tools::EgressWord {
-    let answer = egress_ask_raw(tool, url, "", false, granted).await;
+pub async fn egress_reach(turn: &str, tool: &str, url: &str, granted: bool) -> crate::tools::EgressWord {
+    let answer = egress_ask_raw(turn, tool, url, "", false, granted).await;
     crate::tools::egress_word(answer.as_deref())
 }
 
@@ -404,8 +405,8 @@ pub async fn egress_reach(tool: &str, url: &str, granted: bool) -> crate::tools:
 /// * `tool` - The wire name of the tool asking.
 /// * `url` - The destination it wants.
 /// * `detail` - What is being sent, when the tool sends something other than the address.
-pub async fn egress_allowed_detail(tool: &str, url: &str, detail: &str) -> Option<Verdict> {
-    egress_allowed_act(tool, url, detail, false).await
+pub async fn egress_allowed_detail(turn: &str, tool: &str, url: &str, detail: &str) -> Option<Verdict> {
+    egress_allowed_act(turn, tool, url, detail, false).await
 }
 
 /// As [`egress_allowed_detail`], saying whether the actor is acting ALONE.
@@ -420,10 +421,10 @@ pub async fn egress_allowed_detail(tool: &str, url: &str, detail: &str) -> Optio
 /// * `url` - The destination it wants.
 /// * `detail` - What is being sent, when the tool sends something other than the address.
 /// * `alone` - Whether the agent asking has nobody watching it.
-pub async fn egress_allowed_act(tool: &str, url: &str, detail: &str, alone: bool)
+pub async fn egress_allowed_act(turn: &str, tool: &str, url: &str, detail: &str, alone: bool)
     -> Option<Verdict>
 {
-    egress_ask_js(tool, url, detail, alone, crate::tools::EGRESS_ALLOW_WORD).await
+    egress_ask_js(turn, tool, url, detail, alone, crate::tools::EGRESS_ALLOW_WORD).await
 }
 
 /// Ask whether a command on a turn that has read outside content may reach the network.
@@ -435,8 +436,8 @@ pub async fn egress_allowed_act(tool: &str, url: &str, detail: &str, alone: bool
 /// # Arguments
 /// * `cmd` - The command line, which is what the user is being asked about.
 /// * `cwd` - The folder it would run in.
-pub async fn egress_allowed_net(cmd: &str, cwd: &str) -> Option<Verdict> {
-    egress_ask_js(crate::tools::RUN_NET_TOOL, cmd, cwd, false,
+pub async fn egress_allowed_net(turn: &str, cmd: &str, cwd: &str) -> Option<Verdict> {
+    egress_ask_js(turn, crate::tools::RUN_NET_TOOL, cmd, cwd, false,
         crate::tools::RUN_NET_ALLOW_WORD).await
 }
 
@@ -446,8 +447,19 @@ pub async fn egress_allowed_net(cmd: &str, cwd: &str) -> Option<Verdict> {
 /// # Arguments
 /// * `cmd` - The command line, shown to the user.
 /// * `detail` - `{"id":"<diamond>","kits":["rust",...]}`, which the page draws and records from.
-pub async fn egress_allowed_kit(cmd: &str, detail: &str) -> Option<Verdict> {
-    egress_ask_js(crate::tools::KIT_TOOL, cmd, detail, false, crate::tools::KIT_ALLOW_WORD).await
+pub async fn egress_allowed_kit(turn: &str, cmd: &str, detail: &str) -> Option<Permit> {
+    egress_permit_js(turn, crate::tools::KIT_TOOL, cmd, detail, crate::tools::KIT_ALLOW_WORD).await
+}
+
+/// Ask whether a command may run in the ask-every-time mode.  A yes is
+/// [`crate::tools::EGRESS_ALLOW_WORD`]; a no says why (see [`crate::tools::Permit`]).
+///
+/// # Arguments
+/// * `tool` - The wire name of the run tool.
+/// * `cmd` - The command line, shown to the user.
+/// * `cwd` - The folder it would run in.
+pub async fn egress_allowed_run(turn: &str, tool: &str, cmd: &str, cwd: &str) -> Option<Permit> {
+    egress_permit_js(turn, tool, cmd, cwd, crate::tools::EGRESS_ALLOW_WORD).await
 }
 
 /// Ask whether this Diamond may change a place it was not given, after a write there was
@@ -457,9 +469,8 @@ pub async fn egress_allowed_kit(cmd: &str, detail: &str) -> Option<Verdict> {
 /// * `path` - The path the write was refused at, shown to the user.
 /// * `detail` - `{"id":"<diamond>","place":"<folder>","waiting":false}` (see
 ///   [`crate::tools::PlaceAsk::detail`]).
-pub async fn egress_allowed_place(path: &str, detail: &str) -> Option<Verdict> {
-    egress_ask_js(crate::tools::PLACE_TOOL, path, detail, false, crate::tools::PLACE_ALLOW_WORD)
-        .await
+pub async fn egress_allowed_place(turn: &str, path: &str, detail: &str) -> Option<Permit> {
+    egress_permit_js(turn, crate::tools::PLACE_TOOL, path, detail, crate::tools::PLACE_ALLOW_WORD).await
 }
 
 /// Ask whether one publication on the Social panel may go out.
@@ -477,8 +488,8 @@ pub async fn egress_allowed_place(path: &str, detail: &str) -> Option<Verdict> {
 ///
 /// # Arguments
 /// * `shown` - Exactly what would be published, as the panel composed it.
-pub async fn egress_allowed_publish(shown: &str) -> Option<Verdict> {
-    egress_ask_js(crate::tools::SOCIAL_SEND_TOOL, shown, "", false,
+pub async fn egress_allowed_publish(turn: &str, shown: &str) -> Option<Verdict> {
+    egress_ask_js(turn, crate::tools::SOCIAL_SEND_TOOL, shown, "", false,
         crate::tools::PUBLISH_ALLOW_WORD).await
 }
 
@@ -490,11 +501,17 @@ pub async fn egress_allowed_publish(shown: &str) -> Option<Verdict> {
 /// * `detail` - What is being sent, when the tool sends something other than the address.
 /// * `alone` - Whether the agent asking has nobody watching it.
 /// * `word` - The one string that means yes to this question.
-async fn egress_ask_js(tool: &str, url: &str, detail: &str, alone: bool, word: &str)
+async fn egress_ask_js(turn: &str, tool: &str, url: &str, detail: &str, alone: bool, word: &str)
     -> Option<Verdict>
 {
-    let answer = egress_ask_raw(tool, url, detail, alone, false).await;
+    let answer = egress_ask_raw(turn, tool, url, detail, alone, false).await;
     answer.map(|s| crate::tools::verdict_of(Some(s.as_str()), word))
+}
+
+/// Put one permit to the page's gate and read its answer, with why it was not granted.
+async fn egress_permit_js(turn: &str, tool: &str, url: &str, detail: &str, word: &str) -> Option<Permit> {
+    let answer = egress_ask_raw(turn, tool, url, detail, false, false).await;
+    answer.map(|s| crate::tools::permit_of(Some(s.as_str()), word))
 }
 
 /// Put one question to the page's gate and read its answer back as the string the page resolved
@@ -503,12 +520,14 @@ async fn egress_ask_js(tool: &str, url: &str, detail: &str, alone: bool, word: &
 /// The one place the payload is composed, so the two callers above cannot spell it differently.
 ///
 /// # Arguments
+/// * `turn` - The tag of the turn asking (`ToolContext::turn_tag`), by which the page tells
+///   a turn it runs for another device from one of its own; empty for an untagged turn.
 /// * `tool` - The wire name of the tool asking.
 /// * `url` - The destination it wants, or the command it wants to run.
 /// * `detail` - What is being sent, when the tool sends something other than the address.
 /// * `alone` - Whether the agent asking has nobody watching it.
 /// * `granted` - Whether the conversation has already granted the web (reaching questions only).
-async fn egress_ask_raw(tool: &str, url: &str, detail: &str, alone: bool, granted: bool)
+async fn egress_ask_raw(turn: &str, tool: &str, url: &str, detail: &str, alone: bool, granted: bool)
     -> Option<String>
 {
     let win = match web_sys::window() {
@@ -524,8 +543,8 @@ async fn egress_ask_raw(tool: &str, url: &str, detail: &str, alone: bool, grante
     }
     let f = f.unchecked_into::<js_sys::Function>();
     let payload = fmt!(
-        "{{\"tool\":\"{}\",\"url\":\"{}\",\"detail\":\"{}\",\"alone\":{},\"granted\":{}}}",
-        json_escape(tool), json_escape(url), json_escape(detail), alone, granted);
+        "{{\"tool\":\"{}\",\"url\":\"{}\",\"detail\":\"{}\",\"alone\":{},\"granted\":{},\"turn\":\"{}\"}}",
+        json_escape(tool), json_escape(url), json_escape(detail), alone, granted, json_escape(turn));
     let ret = match f.call1(&JsValue::NULL, &JsValue::from_str(&payload)) {
         Ok(v)  => v,
         Err(_) => return None,

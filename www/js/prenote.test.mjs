@@ -262,7 +262,8 @@ console.log('\nThe three paths set it, and nothing else does');
 	// the callers of runTurn that carry the person flag are the composer, the queue and a retry; the rest have none
 	const rt = calls(SRC, 'runTurn').filter((c) => c.owner !== 'runTurn');
 	const withPerson = rt.filter((c) => /person:\s*true/.test(c.text));
-	same('the person flag reaches runTurn from three places only (the composer, drainQueue, retryTurn)', withPerson.map((c) => c.owner).sort(), ['drainQueue', 'retryTurn', 'sendPressed']);
+	// retryRouted is retryTurn's own tail for a refused permit's Retry, run here when no peer takes it.
+	same('the person flag reaches runTurn from three places only (the composer, drainQueue, retryTurn)', withPerson.map((c) => c.owner).sort(), ['drainQueue', 'retryRouted', 'retryTurn', 'sendPressed']);
 	const none = rt.filter((c) => !/person:\s*true/.test(c.text)).map((c) => c.text.replace(/\s+/g, ' ').slice(0, 60));
 	check('a Continue, a gather round and a peer turn pass no person flag (so they take no pre)',
 		none.length >= 3 && none.every((t) => !/person/.test(t)), none);

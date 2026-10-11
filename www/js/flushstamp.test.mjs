@@ -77,32 +77,33 @@ const dispatchSrc = extractFn('dispatchToPeer');
 
 /// Runs the real `dispatchToPeer` over a dropped seed; answers the version the
 /// posted errand was sealed at.
-async function dispatchWith(fl) {
+async function dispatchWith(fl, auto) {
 	const S = syncStub(fl);
-	let sealedAt = null, posted = null;
+	let sealedAt = null, posted = null, errandAuto = null;
 	const plan = {
 		mark:   {},
 		fields: { seed: null },
-		errand: (v) => ({ parcelVersion: v }),
+		errand: (v) => ({ parcelVersion: v, auto: plan.auto }),
 	};
 	const Peer = {
 		REASON_DISPATCHED: 'dispatched',
-		buildDispatch: () => plan,
+		// As peer.js builds it: the errand carries the asker's posture, a strict boolean (B-F1).
+		buildDispatch: (chat, o) => { plan.auto = o.auto === true; return plan; },
 		sealFittingErrand: async () => ({ body: { envelope: 'seedless-v0' }, seedDropped: true, plan }),
-		sealForSelf: async (errand) => { sealedAt = errand.parcelVersion; return { envelope: 'sealed-v' + errand.parcelVersion }; },
+		sealForSelf: async (errand) => { sealedAt = errand.parcelVersion; errandAuto = errand.auto; return { envelope: 'sealed-v' + errand.parcelVersion }; },
 	};
 	const Post = { post: async (body) => { posted = body; return { ok: true }; } };
 	const win = { DaimondPeer: Peer, DaimondPost: Post, DaimondSync: S };
 	const noop = () => {};
 	const make = new Function('window', 'DaimondPeer', 'DaimondPost', 'DaimondSync', 'DaimondModels',
 		'diag', 'turnHold', 'selfDeviceId', 'markTurnDispatched', 't', 'touchChat', 'persistChats',
-		'ownsChat', 'renderHistory', 'recoverOneLocally', 'storedPre',
+		'ownsChat', 'renderHistory', 'recoverOneLocally', 'storedPre', 'autonomousPosture',
 		dispatchSrc + '\nreturn dispatchToPeer;');
 	const fn = make(win, Peer, Post, S, {}, noop, () => null, () => 'dev-a', noop, (k) => k, noop, noop,
-		() => false, noop, noop, () => '');
+		() => false, noop, noop, () => '', () => auto === true);
 	const chat = { id: 'c1', messages: [], provider: '', model: '' };
 	const out = await fn(chat, 'turn-1', 'hello', [], {});
-	return { out, sealedAt, posted, calls: S.calls };
+	return { out, sealedAt, posted, errandAuto, calls: S.calls };
 }
 
 console.log('\nDISPATCH: the dropped-seed errand names only a version a flush confirmed\n');
@@ -120,6 +121,11 @@ console.log('\nDISPATCH: the dropped-seed errand names only a version a flush co
 {
 	const r = await dispatchWith({ ok: true, version: 7 });
 	check('[ctl] a confirmed flush: sealed at its version, v7', r.sealedAt === 7, 'sealed at v' + r.sealedAt);
+	check('[ctl] a device not in the autonomous posture: the errand says so', r.errandAuto === false, 'auto ' + r.errandAuto);
+}
+{
+	const r = await dispatchWith({ ok: true, version: 7 }, true);
+	check('the errand carries the asking device\'s autonomous posture (B-F1)', r.errandAuto === true, 'auto ' + r.errandAuto);
 }
 {
 	const r = await dispatchWith(new Error('offline'));

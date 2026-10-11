@@ -1195,7 +1195,7 @@ impl Agent {
         // dispatched worker and `examples/devcycle_probe.rs` alike -- and a Diamond's daimon
         // SHARES its `read_seen` with the chat that made it, so an allowance reset anywhere else
         // would leak from one turn into the next. See `crate::tools::TurnState::spent`.
-        registry.begin_turn();
+        let _turn_end = registry.begin_turn();
         // AND THE TUNED GATHER CEILING GOES WITH IT.  `gather` is a tool and cannot see `Limits`;
         // this is the one place a turn begins, so it is where the figure is handed over.
         registry.ctx.set_gather_timeout_s(self.limits.borrow().gather_timeout_s);
@@ -4770,6 +4770,7 @@ mod tests {
             read_seen:   crate::tools::new_read_cache(),
             no_write:    Vec::new(),
             daimon_of:   String::new(),
+            turn:        String::new(),
             keeper:      String::new(),
             unconfirmed: Vec::new(),
             by_model:    false,
@@ -4821,6 +4822,7 @@ mod tests {
                 read_seen:   crate::tools::new_read_cache(),
                 no_write:    Vec::new(),
                 daimon_of:   String::new(),
+                turn:        String::new(),
                 keeper:      String::new(),
                 unconfirmed: Vec::new(),
                 by_model:    false,
@@ -5979,6 +5981,7 @@ mod tests {
             read_seen:   crate::tools::new_read_cache(),
             no_write:    Vec::new(),
             daimon_of:   String::new(),
+            turn:        String::new(),
             keeper:      String::new(),
             unconfirmed: Vec::new(),
             by_model:    false,

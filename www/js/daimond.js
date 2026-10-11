@@ -19989,10 +19989,107 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 	/// host, so the user knows why the turn is not progressing and the ball is theirs.
 	function consentActPhrase(ask) {
 		var tool = String((ask && ask.tool) || ''), host = String((ask && ask.host) || '');
+		if (DaimondPeer.permitAsk(tool)) return permitActPhrase(tool, ask && ask.about);
 		if (tool === 'web_type')   return t('turn.consent_act_type',  { host: host });
 		if (tool === 'web_click')  return t('turn.consent_act_click', { host: host });
 		if (tool === 'web_search') return t('turn.consent_act_search');
 		return t('turn.consent_act_reach', { host: host });
+	}
+
+	/// A permit's `about` (`{ id, kits | place }`), read against THIS device's Diamonds:
+	/// the Diamond, its name, and the kits named that this build knows.
+	function permitAbout(about) {
+		var a = {};
+		try { a = JSON.parse(String(about || '{}')) || {}; } catch (e) { a = {}; }
+		var d = diamonds.find(function (x) { return x.id === a.id; }) || null;
+		var kits = (Array.isArray(a.kits) ? a.kits : []).filter(function (n) {
+			return KITS.some(function (k) { return k.name === n; });
+		});
+		return {
+			diamond: d, name: d ? d.name : '', place: String(a.place || ''), kits: kits,
+			labels: kits.map(function (n) { return KITS.find(function (k) { return k.name === n; }).label; }),
+		};
+	}
+
+	/// What a handed-off turn wants to do, as a phrase after "permission to".
+	function permitActPhrase(kind, about) {
+		var a = permitAbout(about);
+		if (kind === 'place')   return t('permit.act_place', { place: a.place });
+		if (kind === 'toolkit') return t('permit.act_toolkit', { kits: a.labels.join(', ') });
+		return t('permit.act_run');
+	}
+
+	/// The headline and body for a permit asked from another device, in the words the
+	/// runner's own dialog uses, the device that asked named, and what a yes keeps.
+	function permitTileText(ask) {
+		var kind = String(ask.kind || ''), a = permitAbout(ask.about);
+		var dev = deviceLabelFor(String(ask.dispatchedBy || ''));
+		var shown = String(ask.detail || '');
+		var head;
+		if (kind === 'toolkit')    head = t('kit.ask_title', { name: a.name, kits: a.labels.join(', ') });
+		else if (kind === 'place') head = t('place.ask_title', { name: a.name, place: a.place });
+		else                       head = t('permmode.run_title');
+		var keep = kind === 'toolkit' ? t('permit.kit_kept', { device: dev }) : t('permit.turn_only', { device: dev });
+		return { head: head, body: shown + '\n\n' + keep };
+	}
+
+	/// What THIS device keeps of its yes to a permit. A toolkit is a Diamond's record,
+	/// synced, so the kits asked for are added to it here, those and no others. A place
+	/// and a command keep nothing: the place is in force for the turn only (a mark is in
+	/// force only where it was pressed, markshere.js R2), and a command is asked every time.
+	async function answerPermitHere(kind, about, verdict) {
+		if (kind !== 'toolkit' || verdict !== 'allow') return;
+		var a = permitAbout(about);
+		if (!a.diamond || !a.kits.length) return;
+		var has = Array.isArray(a.diamond.toolkits) ? a.diamond.toolkits.slice() : [];
+		a.kits.forEach(function (n) { if (has.indexOf(n) < 0) has.push(n); });
+		try {
+			await diamondApp().set_toolkits(a.diamond.id, JSON.stringify(has));
+		} catch (e) {
+			trail('toolkit', 'the yes could not be recorded: ' + friendlyError(e));
+			toast(t('kit.save_failed') + ': ' + friendlyError(e), true);
+		}
+		try { await loadDiamonds(); } catch (e) { /* the list repaints on its next load */ }
+	}
+
+	// The permits this device was asked, by cid, so the runner's word on one can say what it was.
+	var _permitAsks = Object.create(null);
+
+	/// onGrant: a runner says a permit THIS device sent was not granted, and why. Told on
+	/// the Pending panel, once per question, with a Retry that runs the turn again.
+	function noticePermit(grant) {
+		try {
+			var why = DaimondPeer.permitNotice(grant, selfDeviceId());
+			if (!why) return;
+			var cid = String(grant.cid || ''), key = 'permit:' + cid;
+			if (Pending.noticeUp(key) || Pending.noticed(key)) return;
+			var ask = _permitAsks[cid] || null;
+			delete _permitAsks[cid];
+			var head = why === 'refused' ? t('permit.refused')
+				: why === 'timeout' ? t('permit.timeout') : t('permit.unsupported');
+			Pending.add({
+				kind: 'notice', headline: head, key: key,
+				detail: ask ? t('permit.notice_detail', {
+					name: deviceLabelFor(String(grant.by || '')),
+					act: permitActPhrase(String(ask.kind || ''), ask.about) }) : '',
+				retry: { turnId: String(grant.turnId || '') },
+			});
+		} catch (e) { /* the refusal stands; only the word is lost */ }
+	}
+
+	/// The notice's Retry: run the turn the permit was refused in again, so it is asked
+	/// again. False when that cannot be done now (the turn is still held elsewhere).
+	function permitRetry(turnId) {
+		var id = String(turnId || '');
+		var chat = chatHoldingTurn(id);
+		if (!chat) return false;
+		var text = '';
+		for (var i = 0; i < chat.messages.length; i++) {
+			var m = chat.messages[i];
+			if (m && m.role === 'user' && String(m.iturn || m.mid || '') === id) { text = String(m.content || ''); break; }
+		}
+		if (!text) return false;
+		return retryTurn(chat, id, text, { person: true, route: true }) !== false;
 	}
 
 	/// Raise this request on the Pending panel, and wait there for its answer.
@@ -20053,6 +20150,9 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 	// Tiles this device has raised for an incoming BROADCAST ask, by cid, so a
 	// re-collected ask is not re-raised (dedup) and a resolved one is retired.
 	var _askTiles     = Object.create(null);	// cid -> pending tile id
+	var _askSeen      = Object.create(null);	// cid -> when THIS device first saw the ask (its own clock)
+	var _askHeld      = Object.create(null);	// cid -> the ask, for its wait, while it can be answered
+	var _askAnswered  = Object.create(null);	// cid -> true once a press here was taken for it
 	// The RESOLVED-cid ledger: cids for which a grant has been seen on this device.
 	// A device that was OFFLINE when the ask went out collects the ask AND the grant
 	// on reconnect; the grant (lower nothing -- higher seq than the ask) records the cid
@@ -20100,6 +20200,8 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		_runnerCtx[tid] = {
 			turnId: tid, eid: String(errand.eid || ''), chatId: String(errand.chatId || ''),
 			dispatchedBy: String(errand.dispatchedBy || ''), parkCount: errand.parkCount | 0,
+			asks: Array.isArray(errand.asks) ? errand.asks.slice() : [],	// permits the sender can answer
+			auto: errand.auto === true,	// the SENDER holds the autonomous posture
 			abort: null, tag: '', ui: [],
 		};
 	}
@@ -20203,7 +20305,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 	/// always fires; the reading/search path composes with the synced policy ABOVE
 	/// this, returning 'allow' before it ever gets here.
 	async function routeConsentAsk(req, host) {
-		var rc = activeRunnerTurn();
+		var rc = runnerTurnOf(req);
 		if (!rc) return 'deny';				// cannot tell which turn: refuse this act, park nothing
 		if (_openAskForTurn(rc.turnId)) return 'deny';	// one open ask per turnId at a time
 		var presence = (window.DaimondPresence && DaimondPresence.snapshot)
@@ -20261,6 +20363,138 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		return parkRunnerTurn(rc, 'consent-timeout');					// nobody answered in time
 	}
 
+	/// The turn this device runs FOR ANOTHER device, or null. A dispatcher's own local
+	/// recovery runs in `_runnerCtx` too, and there the person is here, so its dialogs stay.
+	///
+	/// WHICH turn is asking is read from the question itself (F1): the engine names the
+	/// turn in `req.turn`, and only the turn `runnerTagged` filed under that tag is the
+	/// handed-off one. This device's own turn on the same Diamond, running beside it,
+	/// carries another tag or none, and keeps its own dialog; it used to be taken for the
+	/// handed-off turn because that was the only one registered.
+	function permitRunnerTurn(req) {
+		var rc = runnerTurnByTag(req && req.turn);
+		if (!rc || !rc.dispatchedBy || rc.dispatchedBy === selfDeviceId()) return null;
+		return rc;
+	}
+
+	/// The runner turn the engine's tag names, or null: an untagged question is this
+	/// device's own turn.
+	function runnerTurnByTag(tag) {
+		tag = String(tag || '');
+		if (!tag) return null;
+		for (var k in _runnerCtx) {
+			if (_runnerCtx[k] && _runnerCtx[k].tag === tag) return _runnerCtx[k];
+		}
+		return null;
+	}
+
+	/// The runner turn a web act's question belongs to. A tagged question is its own
+	/// turn's or nobody's; one with no tag (the search door, which has no request to
+	/// read) falls back to the one active runner turn, as before.
+	function runnerTurnOf(req) {
+		var tag = String((req && req.turn) || '');
+		return tag ? runnerTurnByTag(tag) : activeRunnerTurn();
+	}
+
+	/// Runner side: put a permit (`place`, `toolkit`, `run`) to the device the turn was
+	/// sent from and AWAIT its answer (CONSENT-ROUTE, 10 Oct). Beside `routeConsentAsk`
+	/// rather than inside it, because the two part on what silence means: a consent
+	/// nobody answered parks the turn, a permit nobody answered is a refusal and the turn
+	/// goes on without it, as "Not now" would have it. Answers the engine's word: the
+	/// kind's own yes, or a no naming why (`DaimondPeer.permitNoWord`), so the model is
+	/// never told "the user said not now" for a question nobody answered or that could not
+	/// be put. Every refusal is told to the asking device (`refusePermit`), so a person is
+	/// never left guessing why the turn did without.
+	///
+	/// # Arguments
+	/// * `shown` - The thing authorised, as the question quotes it (path, command).
+	/// * `about` - JSON `{ id, kits | place }` the answering device needs to word it.
+	function routePermitAsk(rc, kind, shown, about) {
+		// ONE TURN'S PERMITS ARE ASKED ONE AFTER ANOTHER (F5): a turn that writes two files
+		// in one round raises both questions at once, and the second used to be refused
+		// unasked because the first was still open. It now waits its turn on the chain and
+		// is asked when the first settles, whichever way.
+		var run = (rc.permitQ || Promise.resolve()).then(function () {
+			return putPermitAsk(rc, kind, shown, about);
+		});
+		rc.permitQ = run.catch(function () { /* the next question is still asked */ });
+		return run;
+	}
+
+	async function putPermitAsk(rc, kind, shown, about) {
+		// A web act's question open on this turn: this one was never put to anybody.
+		if (_openAskForTurn(rc.turnId)) return DaimondPeer.permitNoWord('unsupported');
+		var presence = (window.DaimondPresence && DaimondPresence.snapshot)
+			? (DaimondPresence.snapshot() || {}) : {};
+		var route = DaimondPeer.consentRouteDecision(presence, selfDeviceId(), Date.now(),
+			{ windowMs: DaimondPeer.DISPATCH_FRESH_MS, source: rc.dispatchedBy });
+		var d = DaimondPeer.permitRouteDecision(kind, route, rc.dispatchedBy, rc.asks);
+		var wait = DaimondPeer.CONSENT_DEADLINE_MS || 60000;
+		var ask = DaimondPeer.makeAsk({
+			eid: rc.eid, turnId: rc.turnId, chatId: rc.chatId,
+			tool: kind, host: '', detail: String(shown || ''), kind: kind, about: String(about || ''),
+			deadline: Date.now() + wait, wait: wait, dispatchedBy: selfDeviceId(),
+			target: d.target || '',
+		});
+		if (d.action !== 'ask') {
+			trail(kind, (d.why === 'unsupported' ? 'could not ask on your other device'
+				: 'your other device was not there to ask') + ': ' + String(shown || '').slice(0, 120));
+			return refusePermit(rc, ask, d.why);
+		}
+		// An ask that could not be sealed or posted was never put to anybody, so the person
+		// and the model are told it could not be asked, never that nobody answered (B6b).
+		var body, posted = false;
+		try { body = await DaimondPeer.sealForSelf(ask); } catch (e) { body = null; }
+		if (body) {
+			try { var r = await DaimondPost.post(body); posted = !!(r && r.ok); }
+			catch (e) { posted = false; }
+		}
+		if (!posted) {
+			trail(kind, 'could not ask on your other device: ' + String(shown || '').slice(0, 120));
+			return refusePermit(rc, ask, 'unsupported');
+		}
+		await raiseBlocker(rc.turnId, {
+			kind: kind, cid: ask.cid, tool: kind, detail: ask.detail, about: ask.about, target: ask.target,
+			since: Date.now(),
+		});
+		var verdict = await new Promise(function (resolve) {
+			var done = false;
+			function settle(v) { if (done) return; done = true; delete _consentWait[ask.cid]; resolve(v); }
+			_consentWait[ask.cid] = { turnId: rc.turnId, kind: kind, target: ask.target, resolve: settle };
+			setTimeout(function () { settle(null); }, wait);
+		});
+		await clearBlocker(rc.turnId);
+		var out = DaimondPeer.permitOutcome(kind, verdict);
+		if (out.why) {
+			trail(kind, (out.why === 'refused' ? 'your other device said no' : 'your other device did not answer in time')
+				+ ': ' + String(shown || '').slice(0, 120));
+			tellPermit(rc, ask, out.why);
+		}
+		return out.word;
+	}
+
+	/// Refuse a permit for `why`: tell the device the turn came from, and answer the
+	/// engine the word naming that same reason.
+	function refusePermit(rc, ask, why) {
+		tellPermit(rc, ask, why);
+		return DaimondPeer.permitNoWord(why);
+	}
+
+	/// Tell the device that sent the turn why its permit was not granted: a deny grant for
+	/// the ask's cid, the reason in `choice`. It also takes the question down wherever it
+	/// is drawn (`adoptRemoteGrant`); an older build reads it as an answer to nothing.
+	/// Not awaited by the turn: a lost notice costs the explanation, never the refusal.
+	function tellPermit(rc, ask, why) {
+		try {
+			var grant = DaimondPeer.makeGrant({
+				cid: ask.cid, eid: rc.eid, turnId: rc.turnId, kind: ask.kind, verdict: 'deny',
+				choice: String(why || ''), by: selfDeviceId(), to: rc.dispatchedBy,
+			});
+			DaimondPeer.sealForSelf(grant).then(function (body) { return DaimondPost.post(body); })
+				.catch(function () { /* the refusal stands; only the word is lost */ });
+		} catch (e) { /* likewise */ }
+	}
+
 	/// Is there an outstanding ask for this turn (runner side awaiting, or a source
 	/// tile up)? Guards one-open-ask-per-turnId.
 	function _openAskForTurn(turnId) {
@@ -20307,10 +20541,13 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		try {
 			var cid = String(grant.cid || '');
 			if (!cid) return;
+			var turnId = String(grant.turnId || '');
+			var open = _openAsk[turnId];
+			var ask = _permitAsks[cid] || (open && String(open.cid || '') === cid ? open : null);
+			if (!DaimondPeer.grantSettlesAsk(ask, grant)) return;	// a third device's word on a permit settles nothing
 			_askResolved[cid] = true;				// suppress a later re-raise (offline return)
 			var tileId = _askTiles[cid];
 			if (!tileId) return;					// no local tile up for this cid
-			var turnId = String(grant.turnId || '');
 			delete _askTiles[cid];
 			if (turnId) delete _openAsk[turnId];
 			try { Pending.dismiss(tileId); } catch (e) { /* a stale tile the user can close by hand */ }
@@ -20336,13 +20573,18 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			// is at (the `_openAsk` marker above still lit the dispatch badge there). The
 			// FIRST device to answer resolves it everywhere: its grant dismisses these
 			// tiles (adoptRemoteGrant) and unblocks the runner (deliverGrant).
+			if (!_askSeen[cid]) { _askSeen[cid] = Date.now(); _askHeld[cid] = ask; }
 			var d = DaimondPeer.askRaiseDecision(ask, selfDeviceId(), Date.now(), {
 				resolved:  !!_askResolved[cid],
 				alreadyUp: !!_askTiles[cid],
+				seenAt:    _askSeen[cid],
 				canAnswer: someoneCanAnswer(),
 			});
 			if (!d.raise) return;
-			var txt = consentTileText(String(ask.tool || ''), String(ask.host || ''), String(ask.detail || ''));
+			var permit = DaimondPeer.permitAsk(ask.kind);
+			if (permit) _permitAsks[cid] = ask;
+			var txt = permit ? permitTileText(ask)
+				: consentTileText(String(ask.tool || ''), String(ask.host || ''), String(ask.detail || ''));
 			var id = Pending.add({
 				kind: 'consent', headline: txt.head, detail: txt.body, priority: 'high',
 			});
@@ -20354,12 +20596,18 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			// `_parked[id]` without resolving, so this branch never runs for an adopted
 			// dismiss and no second, conflicting grant is posted for a spent cid.
 			new Promise(function (resolve) { _parked[id] = resolve; }).then(function (verdict) {
+				// A permit's press is taken or turned away HERE, before anything is written
+				// or awaited, so the footer's control for the same question cannot answer too.
+				var act = permit ? permitAnswerGate(cid) : 'answer';
 				if (_askTiles[cid] !== id) return;			// already retired elsewhere (belt-and-braces)
 				delete _askTiles[cid];
 				delete _openAsk[turnId];
 				_askResolved[cid] = true;
 				try { renderDispatchedBadges(); } catch (e) {}
-				sealAndPostGrant(ask, verdict === 'allow' ? 'allow' : 'deny');
+				var v = verdict === 'allow' ? 'allow' : 'deny';
+				if (!permit) { sealAndPostGrant(ask, v); return; }
+				settlePermitAnswer(turnId, ask, v, act, function () { return sealAndPostGrant(ask, v); })
+					.catch(function () { /* nothing was written; the runner's wait ends it */ });
 			});
 		} catch (e) { /* a failure to raise leaves the runner to time out and park */ }
 	}
@@ -20418,6 +20666,10 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 	/// person who answered is not still looking at the question.
 	async function answerBlocker(turnId, blocker, verdict, choice) {
 		var b = blocker || {};
+		// A permit's press is taken or turned away before the first await, for the reason
+		// the tile's is: two controls stand for one question, and it takes one answer.
+		var isPermit = DaimondPeer.permitAsk(b.kind);
+		var act = isPermit ? permitAnswerGate(String(b.cid || '')) : 'answer';
 		// AN `ask` IS ANSWERED BY A MESSAGE, not by a verdict: the tool did not hold the
 		// turn open, so there is nothing on the runner to unblock -- the answer IS the
 		// chat's next message, and it can be sent from here. The grant below still goes,
@@ -20425,7 +20677,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		if (String(b.kind || '') === 'ask') {
 			try { await answerAskHere(turnId, choice); } catch (e) { /* the grant still goes */ }
 		}
-		try {
+		var postGrant = async function () {
 			// Addressed to the runner holding the turn, so no other device's ack takes it
 			// off the relay before the runner has it (D126).
 			var runner = '';
@@ -20437,7 +20689,12 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 				choice: String(choice == null ? '' : choice), by: selfDeviceId(), to: runner,
 			});
 			var body = await DaimondPeer.sealForSelf(grant);
-			await DaimondPost.post(body);
+			var r = await DaimondPost.post(body);
+			return !!(r && r.ok);
+		};
+		try {
+			if (isPermit) await settlePermitAnswer(turnId, b, verdict === 'allow' ? 'allow' : 'deny', act, postGrant);
+			else await postGrant();
 		} catch (e) { /* the runner's deadline is the safe fallback: it parks, bounded */ }
 		// The local view moves at once rather than at the next pull, so the button the
 		// person pressed stops being a button. The authoritative clear is the runner's.
@@ -20533,6 +20790,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			var list = DaimondPeer.reRaiseDecision(_openAsk, selfDeviceId(), Date.now(), {
 				resolved:  _askResolved,
 				up:        _askTiles,
+				seen:      _askSeen,
 				canAnswer: someoneCanAnswer(),
 			});
 			for (var i = 0; i < list.length; i++) raiseConsentFromPeer(list[i]);
@@ -20547,11 +20805,58 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			// it and acked it away before the runner saw it (R3 QA Q4, D126).
 			var grant = DaimondPeer.makeGrant({
 				cid: ask.cid, eid: ask.eid, turnId: ask.turnId, verdict: verdict, by: selfDeviceId(),
+				kind: String(ask.kind || 'consent'),	// a permit's answer must quote its kind
 				to: String(ask.dispatchedBy || ''),
 			});
 			var body = await DaimondPeer.sealForSelf(grant);
-			await DaimondPost.post(body);
-		} catch (e) { /* the runner's timeout is the safe fallback */ }
+			var r = await DaimondPost.post(body);
+			return !!(r && r.ok);
+		} catch (e) { return false; /* the runner's timeout is the safe fallback */ }
+	}
+
+	/// Take this device's ONE answer to a permit, or say why it takes none
+	/// (`DaimondPeer.permitAnswerDecision`). Synchronous on purpose: the tile and the
+	/// footer both stand for the question, and whichever is pressed first must close the
+	/// other before either awaits. A late press spends the question too.
+	function permitAnswerGate(cid) {
+		cid = String(cid || '');
+		var act = DaimondPeer.permitAnswerDecision(_askHeld[cid] || null,
+			{ spent: !!_askAnswered[cid], seenAt: _askSeen[cid] || 0 }, Date.now());
+		if (cid) _askAnswered[cid] = true;
+		return act;
+	}
+
+	/// Carry a permit's answer through, in the order that cannot leave a yes behind
+	/// that nobody is waiting for (F3). Nothing happens for a press that was spent or
+	/// late. A toolkit's yes is a WRITE to the Diamond, so before it the lease is read
+	/// again and the question must still be up there under this cid: the runner takes
+	/// it down the moment it stops waiting. Then the answer is posted, and only an
+	/// answer that was posted is kept here. A no, a place and a command keep nothing.
+	///
+	/// A runner that stops waiting between the lease read and its receipt of the answer
+	/// still leaves the kit written with the turn gone on without it; closing that needs
+	/// the runner to acknowledge the answer, which this does not do.
+	///
+	/// # Arguments
+	/// * `q`    - The question: `{ cid, kind, about }`, an ask or a blocker.
+	/// * `act`  - `permitAnswerGate`'s word for this press.
+	/// * `post` - Posts the answer; resolves true when the relay took it.
+	async function settlePermitAnswer(turnId, q, v, act, post) {
+		if (act !== 'answer') return false;
+		var kit = String(q.kind) === 'toolkit' && v === 'allow';
+		if (kit) {
+			try { if (window.DaimondSync && DaimondSync.pull) await DaimondSync.pull(true); }
+			catch (e) { /* offline: the lease as held is read, and the post below fails */ }
+			var up = null;
+			try { up = (window.DaimondLease && DaimondLease.blocker) ? DaimondLease.blocker(String(turnId)) : null; }
+			catch (e) { up = null; }
+			if (!up || String(up.cid || '') !== String(q.cid || '')) return false;
+		}
+		var sent = false;
+		try { sent = !!(await post()); } catch (e) { sent = false; }
+		if (!sent) return false;
+		await answerPermitHere(String(q.kind), q.about, v);
+		return true;
 	}
 
 	// HOW LONG A NETWORK QUESTION MAY STAND UNANSWERED.
@@ -20645,7 +20950,22 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		// not a model acting, and no posture waves it through. And the whole guard is
 		// a no-op whenever the posture is off — a machine that was never armed reaches
 		// none of this, and every dialog and park below stands exactly as before.
-		if (!strict && autonomousPosture() && (req.alone || !someoneCanAnswer())) {
+		//
+		// A PERMIT ON A TURN RUN FOR ANOTHER DEVICE IS THE ASKER'S TO GIVE (B-F1). The
+		// three permits (a place, a toolkit, a command) let a turn write or run on its
+		// owner's behalf, and the owner of a handed-off turn is at the device it came
+		// from. So there the ASKER's posture counts, carried on the errand (`rc.auto`),
+		// and this machine's own never grants: an armed runner used to wave through a
+		// write its sender was never asked about. With the asker unarmed the permit
+		// falls to its branch below and is asked at home. Web acts are untouched: an
+		// armed runner still finishes those itself.
+		var pkind = DaimondPeer.permitAsk(req.tool) ? String(req.tool) : '';
+		var hrc = (!strict && pkind) ? permitRunnerTurn(req) : null;
+		if (hrc && hrc.auto) return DaimondPeer.PERMIT_YES[pkind];
+		if (!hrc && !strict && autonomousPosture() && (req.alone || !someoneCanAnswer())) {
+			// A permit takes its own yes word too: a bare `allow` for a place or a toolkit
+			// is read by the engine as "the user said not now".
+			if (pkind) return DaimondPeer.PERMIT_YES[pkind];
 			// The yes WORD differs by tool: `run_net` and `social_send` read a bare
 			// `allow` as a refusal (each takes only its own word, see those branches
 			// below), so hand each the one it reads as yes. Every other tool takes the
@@ -20678,6 +20998,11 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			// rather than silently trimmed: a reader has to be able to tell that there is more,
 			// and "the rest of it is not on screen" is itself a reason to say no.
 			var shownCmd = cmd.length > 300 ? (cmd.slice(0, 300) + '…') : cmd;
+			// A HANDED-OFF TURN ASKS AT HOME (CONSENT-ROUTE): the runner is a machine
+			// nobody is at, so the question goes to the device the turn came from.
+			var rrc = strict ? null : permitRunnerTurn(req);
+			if (rrc) return await routePermitAsk(rrc, 'run', shownCmd,
+				JSON.stringify({ cwd: String(req.detail || '').slice(0, 300) }));
 			var okRun = await confirmDialog(
 				t('permmode.run_body', { cmd: shownCmd, cwd: String(req.detail || '').slice(0, 300) }),
 				t('permmode.run_ok'),
@@ -20703,10 +21028,21 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			});
 			var kd = diamonds.find(function (x) { return x.id === kreq.id; });
 			if (!kcmd.trim() || !kwant.length || !kd) return 'deny';
+			// A HANDED-OFF TURN: this device's own Diamond record is read first, and a kit
+			// it already grants needs nobody (arm 7); otherwise the device the turn came
+			// from is asked, and it writes the yes (`answerPermitHere`), not this one.
+			var krc = strict ? null : permitRunnerTurn(req);
+			if (krc) {
+				var khave = Array.isArray(kd.toolkits) ? kd.toolkits : [];
+				if (kwant.every(function (n) { return khave.indexOf(n) >= 0; })) return 'allow-kit';
+				return await routePermitAsk(krc, 'toolkit',
+					kcmd.length > 300 ? (kcmd.slice(0, 300) + '…') : kcmd,
+					JSON.stringify({ id: kd.id, kits: kwant }));
+			}
 			if (!someoneCanAnswer()) {
 				trail('toolkit', 'nobody could answer, so the command was refused: ' + kcmd.slice(0, 120));
 				setKitsWaiting(kd.id, kwant, true);
-				return 'deny';
+				return DaimondPeer.PERMIT_ABSENT_WORD;
 			}
 			var klabels = kwant.map(function (n) {
 				return KITS.find(function (k) { return k.name === n; }).label;
@@ -20758,9 +21094,24 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			var pplace = String(preq.place || '');
 			var pd = diamonds.find(function (x) { return x.id === preq.id; });
 			if (!ppath.trim() || !pplace || !pd) return 'deny';
+			// A HANDED-OFF TURN: a mark in force on THIS device needs nobody (arm 7).
+			// Otherwise the sending device is asked, and its yes is this turn's only: a
+			// mark is in force only where it was pressed (markshere.js R2), so no row is
+			// written on either device.
+			var prc = strict ? null : permitRunnerTurn(req);
+			if (prc) {
+				var pks = ['dir', 'file'];
+				for (var pk = 0; pk < pks.length; pk++) {
+					var pl = await linkTo(pd.id, rootedRef(pks[pk], pplace));
+					if (pl && markForce(pd.id, pl)) return 'allow-place';
+				}
+				return await routePermitAsk(prc, 'place',
+					ppath.length > 300 ? (ppath.slice(0, 300) + '…') : ppath,
+					JSON.stringify({ id: pd.id, place: pplace }));
+			}
 			if (!someoneCanAnswer()) {
 				trail('place', 'nobody could answer, so the write was refused: ' + ppath.slice(0, 120));
-				return 'deny';
+				return DaimondPeer.PERMIT_ABSENT_WORD;
 			}
 			var pwait = preq.waiting ? await waitingMarkAt(pd.id, pplace) : null;
 			var pbody = document.createElement('div');
@@ -21165,7 +21516,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		// offline), and awaits the answer in memory; on no reachable device or timeout it
 		// parks (abandon + re-run, bounded). Not under `strict`, whose crystal-page
 		// navigation is not a model act.
-		if (!strict && activeRunnerTurn()) {
+		if (!strict && runnerTurnOf(req)) {
 			return await routeConsentAsk(req, host);
 		}
 		// A LOCAL unsupervised WORKER (alone, and no dispatched errand in flight)
@@ -25251,7 +25602,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		if (!b) { foot.appendChild(document.createTextNode('')); return; }
 		var holder = (window.DaimondLease && DaimondLease.holder) ? DaimondLease.holder(m.iturn) : null;
 		var name = holder ? deviceLabelFor(holder) : '';
-		var spec = DaimondPeer.blockerTileSpec(b, name);
+		var spec = DaimondPeer.blockerTileSpec(b, name, selfDeviceId());
 
 		// A live spinner for as long as the turn is held up, the same dots the thread's
 		// own turn spinner uses: the turn has not stopped, it is waiting on a person.
@@ -25263,9 +25614,10 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 
 		var label = document.createElement('span');
 		label.className = 'ti-label';
-		var act = consentActPhrase({ tool: spec.tool, host: spec.host });
+		var act = consentActPhrase({ tool: spec.tool, host: spec.host, about: spec.about });
 		var q   = spec.detail || t('egress.nothing');
-		if (spec.kind === 'consent') {
+		var permit = DaimondPeer.permitAsk(spec.kind);
+		if (spec.kind === 'consent' || permit) {
 			label.textContent = name ? t('turn.block_consent_named', { name: name, act: act })
 				: t('turn.block_consent', { act: act });
 		} else if (spec.kind === 'ask') {
@@ -25284,7 +25636,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 
 		// THE EXACT STRING being authorised, for a consent -- the same rule the dialog
 		// keeps: what is being agreed to is not summarised.
-		if (spec.kind === 'consent' && spec.detail) {
+		if ((spec.kind === 'consent' || permit) && spec.detail) {
 			var quote = document.createElement('div');
 			quote.className = 'ti-block-detail';
 			quote.textContent = spec.detail;
@@ -25651,6 +26003,9 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			scope:  scopePaths || (Array.isArray(chat.holds) ? chat.holds : []),
 			pause:  pause,
 			dispatchedBy: by,
+			// THIS device's posture goes with the turn: on the runner it is the asker's
+			// word, the only posture that answers the turn's permits there (B-F1).
+			auto:   autonomousPosture(),
 			tried:  (opts && Array.isArray(opts.handedBack)) ? opts.handedBack : [],	// Q19
 			parkCount: parkCount,
 		};
@@ -26843,6 +27198,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			if (DaimondPeer.onGrant) DaimondPeer.onGrant(function (grant) {
 				deliverGrant(grant);
 				adoptRemoteGrant(grant);
+				noticePermit(grant);
 			});
 		} catch (e) { /* remote consent unavailable: a runner falls back to a park */ }
 		// D4 — a lease learned through a SYNC pull (the phone watching the peer claim,
@@ -28996,7 +29352,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 	/// answer syncs back); on desktop only a long/agentic turn. Answers whether it
 	/// dispatched; false falls through to the ordinary local run. Guarded, so any
 	/// hiccup runs locally -- the safe default.
-	async function maybeAutoDispatch(chat, text, words) {
+	async function maybeAutoDispatch(chat, text, words, mid) {
 		try {
 			// A DAIMON DISPATCHES TOO. The election/lease/hand-off is proven for chats and
 			// is switched on for daimons here: the runner services the turn through
@@ -29146,7 +29502,7 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			// this press sent and nothing typed since (`giveUpSent`), and gives them up
 			// from this conversation's box even when another is on screen now.
 			giveUpSent(chat, words === undefined ? text : words);
-			var umid = newMid();
+			var umid = mid || newMid();	// a retry's replacing turn keeps the id the ledger was told
 			_handoffStart[umid] = tSend;		// origin for the answer-arrival timing
 			// THE IN-FLIGHT TILE MUST ADVERTISE THE DEVICE THE CLAIM ROUTES TO, not the
 			// send-time freshest-peer GUESS (`d.peer`). When a nominee is SET, that is the
@@ -29867,7 +30223,16 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 		try { if (window.DaimondJournal) DaimondJournal.clearTurn(iturn); }
 		catch (e) { /* the continuation opens an entry of its own */ }
 		renderHistory(chat.messages);
+		if (ropts && ropts.route) return retryRouted(chat, text, nmid);
 		return runTurn(chat, text, Object.assign({}, ropts || { person: true }, { mid: nmid }));
+	}
+
+	/// A retry ASKED AGAIN WHERE IT WAS ASKED (a refused permit's Retry): the turn goes the
+	/// way a send goes, so a phone hands it to the peer again and the permit is asked of
+	/// this device again, rather than run here where the question never arises.
+	async function retryRouted(chat, text, nmid) {
+		if (await maybeAutoDispatch(chat, text, '', nmid)) return true;
+		return runTurn(chat, text, { person: true, mid: nmid });
 	}
 
 	/// Put the last question back in the composer, and run NOTHING.
@@ -42270,6 +42635,8 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			// A notice may name the news it carries, so it is told once: `noticed` after
 			// it is dismissed, `noticeUp` while it is on the panel.
 			if (kind === 'notice' && item.key) rec.key = String(item.key);
+			// A refused permit's notice can run its turn again (`permitRetry`).
+			if (kind === 'notice' && item.retry && item.retry.turnId) rec.retry = { turnId: String(item.retry.turnId) };
 			this.fresh();
 			// A proposal is the daimon answer it came from, filed under its own handle.
 			if (kind === 'proposal' && item.prod && window.DaimondProvenance) {
@@ -42465,6 +42832,12 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			go.title = it.kind === 'notice' ? t('dlg.ok') : t('pending.execute');
 			go.setAttribute('aria-label', it.kind === 'notice'
 				? t('dlg.ok') : t('pending.execute_named', { what: it.headline }));
+			if (it.kind === 'notice' && it.retry) {
+				go.className += ' pend-retry';
+				go.textContent = t('permit.retry');
+				go.title = t('permit.retry');
+				go.setAttribute('aria-label', t('permit.retry'));
+			}
 			go.addEventListener('click', function () { Pending.execute(it); });
 			// A tick that cannot do the thing is not offered. The turn this one
 			// belonged to went with the page it was asked on, so "do it" would
@@ -42524,6 +42897,11 @@ import * as Sbj from '../pkg/oxedyne_daimond.js';
 			// the tick is an acknowledgement, not a permission, so it says so with
 			// the wording this panel already had for exactly that (`note`, before it
 			// lost its one producer on 2026-08-15) rather than "Allowed."
+			if (it.kind === 'notice' && it.retry) {
+				if (!permitRetry(it.retry.turnId)) { toast(t('permit.retry_busy'), true); return; }
+				this.drop(it.id);
+				return;
+			}
 			if (it.kind === 'notice') { toast(t('pending.noted')); this.drop(it.id); return; }
 			if (!settleConsent(it.id, 'allow')) {
 				toast(t('pending.consent.gone'), true);

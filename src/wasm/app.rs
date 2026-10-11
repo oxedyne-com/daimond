@@ -193,6 +193,7 @@ impl DaimondApp {
             no_write:    Vec::new(),
             // A chat acts for no Diamond, so a link tool in one must be told which it means.
             daimon_of:   String::new(),
+            turn:        String::new(),
             keeper:      String::new(),
             unconfirmed: Vec::new(),
             by_model:    false,
@@ -606,7 +607,16 @@ impl DaimondApp {
     /// * `who` - The Diamond, or nothing for this client's own conversation.
     /// * `tag` - The page's own id for the turn.
     pub fn set_turn_tag(&self, who: Option<String>, tag: String) {
-        self.registry.ctx.set_turn_tag_for(&who.unwrap_or_default(), &tag);
+        let who = who.unwrap_or_default();
+        // THIS CLIENT'S OWN CONVERSATION RUNS ONE TURN AT A TIME, and its context is the one
+        // long-lived `registry.ctx`, which reads this setting through the whole turn.  While that
+        // turn holds the session the setting is therefore its own: the turn this call announces
+        // is about to be refused by `run_turn`, and its tag must not rename the one running.  A
+        // Diamond's turn needs no such care, since `compose_daimon` hands it a snapshot.
+        if who.is_empty() && self.session.try_borrow_mut().is_err() {
+            return;
+        }
+        self.registry.ctx.set_turn_tag_for(&who, &tag);
     }
 
     /// Whether this agent can read a worker's report inside the turn that started it.
@@ -1810,6 +1820,7 @@ impl DaimondApp {
             // turn. A restore recorded that way would land in the next turn's manifest under the
             // daimon's name, for a change the user made.
             daimon_of:   String::new(),
+            turn:        String::new(),
             keeper:      String::new(),
             unconfirmed: Vec::new(),
             by_model:    false,
@@ -3252,6 +3263,9 @@ impl DaimondApp {
             run:  String::new(),
             via:  String::new(),
         };
+        // The tag the page set for THIS turn, taken now: the setting is the Diamond's, and a second
+        // turn of the same Diamond (one run here for another device) rewrites it mid-flight.
+        let turn = self.registry.ctx.turn_tag_for(id);
         let ctx = ToolContext {
             workspace:   Workspace::unchecked(PathBuf::from("/")),
             executor:    Executor::Wasm,
@@ -3269,6 +3283,7 @@ impl DaimondApp {
             // Who this turn acts for, which the prefix used to say and no longer can.  A link this
             // daimon asserts goes in THIS Diamond's sidecar and is stamped `agent:daimon`.
             daimon_of:   id.to_string(),
+            turn,
             keeper:      id.to_string(),
             unconfirmed: waiting,
             by_model:    false,
@@ -3844,6 +3859,7 @@ impl DaimondApp {
             no_write:    Vec::new(),
             // The reducer holds no tools, so it asserts nothing and owns nothing.
             daimon_of:   String::new(),
+            turn:        String::new(),
             keeper:      String::new(),
             unconfirmed: Vec::new(),
             by_model:    false,

@@ -3479,6 +3479,18 @@
 	'place.ask_title': 'Let {name} change {place}?',
 	'place.ask_here_title': 'Let {name} change {place} here too?',
 	'place.allowed_on': 'Allowed on {device}.',
+	// A permit a handed-off turn asked here (CONSENT-ROUTE).
+	'permit.turn_only': '{device} is running this turn and asked here. A yes allows it for this turn only.',
+	'permit.kit_kept': '{device} is running this turn and asked here. A yes lets this Diamond use it from now on.',
+	'permit.act_place': 'change {place}',
+	'permit.act_toolkit': 'use {kits}',
+	'permit.act_run': 'run a command',
+	'permit.refused': 'You said no.',
+	'permit.timeout': 'Your other device didn\'t answer in time.',
+	'permit.unsupported': 'Could not ask on your other device.',
+	'permit.notice_detail': '{name} wanted to {act}. Retry runs the turn again and asks again.',
+	'permit.retry': 'Retry',
+	'permit.retry_busy': 'The turn is still running elsewhere. Retry when it has finished.',
 	'kit.save_failed':      'Allowed for this turn only; the grant was not saved',
 
 	// The network question a marked chat's first command puts (`hand/REVIEW.md` §1.13,

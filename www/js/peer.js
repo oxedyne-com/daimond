@@ -296,6 +296,15 @@
 			// back rather than running an incomplete conversation (S-HAND #3). null from an
 			// older dispatcher, which `holdsThread` reads as "fall back to holdsTurn".
 			thread:  o.thread || null,
+			// THE QUESTIONS THE DISPATCHING DEVICE CAN ANSWER for a handed-off turn
+			// (CONSENT-ROUTE, 10 Oct): a write outside the Diamond, a toolkit on first use, a
+			// command in the ask mode. A runner routes one of these to that device only when
+			// it is named here; [] from an older sender, whose device would draw such a
+			// question as a misleading "reach" tile, so the runner refuses it instead.
+			asks:    askList(o.asks),
+			// Does the SENDER hold the autonomous posture? On the runner it answers this
+			// turn's permits in the sender's place; the runner's own posture never does.
+			auto:    o.auto === true,
 			ts:      o.ts || Date.now(),
 		};
 	}
@@ -538,7 +547,14 @@
 			tool:    String(o.tool || ''),
 			host:    String(o.host || ''),
 			detail:  String(o.detail == null ? '' : o.detail),	// the uncut string to authorise
+			// 'consent' (a web act), or one of PERMIT_ASKS, whose grant must quote it.
+			kind:    permitAsk(o.kind) ? String(o.kind) : 'consent',
+			about:   String(o.about == null ? '' : o.about),	// a permit's { id, kits | place }, JSON
 			deadline:     +o.deadline || 0,		// epoch-ms (NOT |0: ms overflows 32 bits)
+			// How long the asker waits, in ms. The receiver counts it from when IT first saw
+			// the question, so two devices' clocks never have to agree (B-F9); `deadline`,
+			// on the asker's clock, stays for a receiver that predates this.
+			wait:         +o.wait || 0,
 			dispatchedBy: String(o.dispatchedBy || ''),	// the runner, so the grant routes home
 			target:  String(o.target || ''),	// the device that should raise/answer this ask
 			// THE ONE ADDRESSEE FIELD every note carries (`to`), read by `noteHeldFor`: an ask
@@ -1210,7 +1226,8 @@
 					prompt: prompt, pre: pre, model: model,
 					scope: scope, pause: pause, parcelVersion: parcelVersion,
 					deadline: deadline, dispatchedBy: by, parkCount: parkCount, ts: now,
-					seed: seed, thread: thread, tried: tried,
+					seed: seed, thread: thread, tried: tried, asks: PERMIT_ASKS,
+					auto: o.auto === true,
 				});
 			},
 			// The fully-resolved fields (bar parcelVersion), exposed for inspection.
@@ -2173,10 +2190,41 @@
 		var o = ask || {}, x = opts || {};
 		var n = now == null ? Date.now() : now;
 		if (x.resolved)                            return { raise: false, why: 'resolved' };
-		if (o.deadline && n > (+o.deadline || 0))  return { raise: false, why: 'expired' };
+		if (askExpired(o, x.seenAt, n))            return { raise: false, why: 'expired' };
 		if (x.alreadyUp)                           return { raise: false, why: 'dedup' };
+		// A PERMIT is asked of one device, the one the turn was sent from, and never
+		// broadcast: the runner keeps no dialog of its own for it, and another device's
+		// build is unknown (`permitRouteDecision`).
+		if (permitAsk(o.kind) && String(o.target || '') !== String(selfId || '')) {
+			return { raise: false, why: 'not-target' };
+		}
 		if (!x.canAnswer)                          return { raise: false, why: 'unattended' };
 		return { raise: true, why: 'broadcast' };
+	}
+
+	/// Has an ask outlived its asker's wait? Pure. An ask that says how long it waits is
+	/// timed from when this device first saw it (`seenAt`, this device's own clock): the
+	/// asker's `deadline` is a moment on ANOTHER device's clock, and a clock a minute and a
+	/// half ahead here used to bury a question before it was drawn. An older asker's ask
+	/// carries only the moment, and is read as before.
+	function askExpired(ask, seenAt, now) {
+		var o = ask || {}, w = +o.wait || 0, at = +seenAt || 0;
+		if (w > 0 && at > 0) return now > at + w;
+		return !!(o.deadline && now > (+o.deadline || 0));
+	}
+
+	/// What becomes of a press on a permit's Allow or Not now? Pure. `spent`: this
+	/// question already took an answer on this device, from the tile or the footer,
+	/// and takes no second. `late`: the asker has stopped waiting, so nothing is written
+	/// and nothing sent. Otherwise `answer`.
+	///
+	/// # Arguments
+	/// * `st` - `{ spent, seenAt }` as this device holds them for the ask's cid.
+	function permitAnswerDecision(ask, st, now) {
+		var x = st || {};
+		if (x.spent) return 'spent';
+		if (askExpired(ask, x.seenAt, now == null ? Date.now() : now)) return 'late';
+		return 'answer';
 	}
 
 	/// Which of the asks a device is holding should be RE-RAISED now? Pure, and the
@@ -2203,6 +2251,7 @@
 			var d = askRaiseDecision(ask, selfId, n, {
 				resolved:  !!(x.resolved && x.resolved[cid]),
 				alreadyUp: !!(x.up && x.up[cid]),
+				seenAt:    (x.seen && x.seen[cid]) || 0,
 				canAnswer: !!x.canAnswer,
 			});
 			if (d.raise) out.push(ask);
@@ -3688,7 +3737,96 @@
 	//                Report-only; the turn is handed back.
 	// ════════════════════════════════════════════════════════════
 
-	var BLOCKER_KINDS = ['consent', 'ask', 'fsa', 'lock', 'provider'];
+	var BLOCKER_KINDS = ['consent', 'ask', 'fsa', 'lock', 'provider', 'place', 'toolkit', 'run'];
+
+	// ── Permits: the three engine questions a hand-off routes home ──
+	//
+	// CONSENT-ROUTE (10 Oct). A write outside the Diamond (`place`), a toolkit on first use
+	// (`toolkit`) and a command in the ask mode (`run`) were asked as a dialog on the RUNNER,
+	// a machine nobody is at, so a handed-off turn sat there until B's own deadline or for
+	// ever. They are now asked on the device the turn was sent from, through the consent
+	// relay, and answered allow/deny under their own kind. A yes grants THIS TURN only: the
+	// engine's turn-scoped allow, never a mark (a mark is in force only where it was pressed,
+	// markshere.js R2), save the toolkit, which the answering device writes to the Diamond.
+	var PERMIT_ASKS = ['place', 'toolkit', 'run'];
+	var PERMIT_YES = { place: 'allow-place', toolkit: 'allow-kit', run: 'allow' };
+	// Why a permit was not granted, as the asking device is told it.
+	var PERMIT_WHYS = ['refused', 'timeout', 'unsupported'];
+	// The engine's word for each, so the model is told the same reason the person is
+	// (tools.rs `permit_of`): only a refusal is the user's no.
+	var PERMIT_NO_WORD = { refused: 'deny', timeout: 'deny-timeout', unsupported: 'deny-unasked' };
+
+	// The engine's word for a permit nobody was at THIS device to be asked (a local turn
+	// with the page hidden and no one answering): not the user's no either.
+	var PERMIT_ABSENT_WORD = 'deny-absent';
+
+	/// The engine's word for a permit not granted for `why`; an unknown reason is a plain no.
+	function permitNoWord(why) { return PERMIT_NO_WORD[String(why || '')] || 'deny'; }
+
+	/// Is `k` one of the three permit questions?
+	function permitAsk(k) { return PERMIT_ASKS.indexOf(String(k || '')) >= 0; }
+
+	/// The permit kinds named in `a`, known ones only, each once.
+	function askList(a) {
+		var out = [];
+		(Array.isArray(a) ? a : []).forEach(function (k) {
+			k = String(k || '');
+			if (permitAsk(k) && out.indexOf(k) < 0) out.push(k);
+		});
+		return out;
+	}
+
+	/// Where a runner may put a permit question, or why it may not. Pure.
+	///
+	/// `route` is `consentRouteDecision`'s answer; `source` the device the turn was sent
+	/// from; `asks` what that device's errand said it can answer. The question goes to the
+	/// SOURCE alone, the person's device: another attended device's build is unknown, and
+	/// one that predates permits would draw the question as a "reach" tile. So a source
+	/// that cannot answer is `unsupported`, and so is a source not awake: the question was
+	/// never put to anybody, so nobody "did not answer in time" (B-F3). Never a park.
+	function permitRouteDecision(kind, route, source, asks) {
+		var src = String(source || '');
+		if (!permitAsk(kind)) return { action: 'refuse', why: 'unsupported' };
+		if (askList(asks).indexOf(String(kind)) < 0) return { action: 'refuse', why: 'unsupported' };
+		var r = route || {};
+		if (r.action !== 'ask' || !r.peer || String(r.peer.deviceId || '') !== src || !src) {
+			return { action: 'refuse', why: 'unsupported' };
+		}
+		return { action: 'ask', target: src };
+	}
+
+	/// The engine's word for a permit's answer, and why. `verdict` is what the wait
+	/// resolved with: 'allow', 'deny', or null when the deadline passed.
+	function permitOutcome(kind, verdict) {
+		if (verdict === 'allow') return { word: PERMIT_YES[kind] || 'deny', why: '' };
+		var why = verdict === 'deny' ? 'refused' : 'timeout';
+		return { word: permitNoWord(why), why: why };
+	}
+
+	/// Is this grant a runner telling THIS device why its permit was not granted?
+	/// Answers the reason, or ''. The runner's own copy is not news to it.
+	function permitNotice(grant, selfId) {
+		var g = grant || {};
+		if (!permitAsk(g.kind) || g.verdict === 'allow') return '';
+		if (PERMIT_WHYS.indexOf(String(g.choice || '')) < 0) return '';
+		var me = String(selfId || '');
+		if (!me || String(g.by || '') === me) return '';
+		if (g.to && String(g.to) !== me) return '';
+		return String(g.choice);
+	}
+
+	/// Does this grant settle `ask` on a device that holds it? A permit is answered by its
+	/// target alone (`blockerAnswerDecision`), so only the target's answer, or the runner's
+	/// own word on it, takes the question down; a third device's grant, which the runner
+	/// drops, must not dismiss the question where it was asked and leave it to time out.
+	/// Any other ask keeps the broadcast rule: the first answer anywhere settles it.
+	function grantSettlesAsk(ask, grant) {
+		var a = ask || null, g = grant || {};
+		if (!a || !permitAsk(a.kind)) return true;
+		var by = String(g.by || '');
+		if (!by) return false;
+		return by === String(a.target || '') || by === String(a.dispatchedBy || '');
+	}
 
 	// A blocker is read by a human on another device, so its text is capped where
 	// it is built rather than where it is drawn: the lease door has a 64 KiB
@@ -3726,6 +3864,9 @@
 		if (o.cid)  out.cid  = String(o.cid);
 		if (o.tool) out.tool = String(o.tool);
 		if (o.host) out.host = String(o.host);
+		if (o.about && permitAsk(out.kind)) out.about = String(o.about).slice(0, BLOCKER_DETAIL_MAX);
+		// A permit names the one device that may answer it (the ask's `target`).
+		if (o.target && permitAsk(out.kind)) out.target = String(o.target);
 		if (Array.isArray(o.options) && o.options.length) {
 			out.options = o.options.slice(0, BLOCKER_OPTIONS_MAX).map(function (op) {
 				var lab = (op && typeof op === 'object') ? op.label : op;
@@ -3742,7 +3883,7 @@
 	/// about the runner that no answer elsewhere changes -- so those three offer
 	/// "Run here instead" and nothing that pretends to reach across.
 	function blockerAnswerable(kind) {
-		return kind === 'consent' || kind === 'ask';
+		return kind === 'consent' || kind === 'ask' || permitAsk(kind);
 	}
 
 	/// What a device should DRAW for a blocker, as data rather than as text: the
@@ -3755,7 +3896,11 @@
 	///   'choose'          -- one button per `options` entry, answerable here;
 	///   'runhere'         -- release the lease and re-seat locally (report-only).
 	/// An unknown kind draws as a report with 'runhere', never as a dead button.
-	function blockerTileSpec(blocker, name) {
+	/// A permit is answerable only on its `target`, the device the turn was sent from
+	/// (`selfId` is the drawing device): anywhere else it is reported and offers nothing,
+	/// the same rule `askRaiseDecision` keeps for the tile and `blockerAnswerDecision`
+	/// keeps on the runner.
+	function blockerTileSpec(blocker, name, selfId) {
 		var b = blocker || {};
 		var kind = blockerKind(b.kind) ? String(b.kind) : '';
 		var spec = {
@@ -3764,12 +3909,17 @@
 			detail:    String(b.detail || ''),
 			tool:      String(b.tool || ''),
 			host:      String(b.host || ''),
+			about:     String(b.about || ''),
+			target:    String(b.target || ''),
 			options:   Array.isArray(b.options) ? b.options.slice(0, BLOCKER_OPTIONS_MAX) : [],
 			since:     +b.since || 0,
 			answerable: blockerAnswerable(kind),
 			controls:  [],
 		};
-		if (kind === 'consent')                          spec.controls = ['grant', 'deny'];
+		if (permitAsk(kind) && (!spec.target || spec.target !== String(selfId || ''))) {
+			spec.answerable = false;						// not this device's question
+		}
+		else if (kind === 'consent' || permitAsk(kind))  spec.controls = ['grant', 'deny'];
 		else if (kind === 'ask' && spec.options.length)  spec.controls = ['choose'];
 		else                                             spec.controls = ['runhere'];
 		return spec;
@@ -3862,6 +4012,16 @@
 		if (!d.commit) return d;
 		var want = String(pending.kind || 'consent');
 		var got  = String(a.kind || 'consent');
+		// A permit is answered by its target alone: a third device that has the chat
+		// open, at any build, authorises nothing and refuses nothing, so the question
+		// stays with the person it was asked of.
+		if (permitAsk(want) && (!pending.target || String(a.by || '') !== String(pending.target))) {
+			return { commit: false, drop: true, why: 'not-target' };
+		}
+		// A PERMIT answered as a plain consent came from a device that cannot know what it
+		// agreed to (a build that predates permits drew it as "reach"), so it is a no, at
+		// once, rather than a drop that holds the turn to its deadline.
+		if (permitAsk(want) && got === 'consent') return { commit: true, kind: want, verdict: 'deny', why: 'old-answerer' };
 		if (want !== got) return { commit: false, drop: true, why: 'kind-mismatch' };
 		if (want === 'ask') {
 			var choice = String(a.choice == null ? '' : a.choice).trim();
@@ -5649,6 +5809,17 @@
 		blockerTileSpec:      blockerTileSpec,
 		blockerAnswerable:    blockerAnswerable,
 		blockerAnswerDecision: blockerAnswerDecision,
+		PERMIT_ASKS: PERMIT_ASKS,
+		permitAsk: permitAsk,
+		permitRouteDecision: permitRouteDecision,
+		permitOutcome: permitOutcome,
+		permitNoWord:  permitNoWord,
+		permitAnswerDecision: permitAnswerDecision,
+		askExpired:    askExpired,
+		PERMIT_ABSENT_WORD: PERMIT_ABSENT_WORD,
+		PERMIT_YES:    PERMIT_YES,
+		permitNotice: permitNotice,
+		grantSettlesAsk: grantSettlesAsk,
 		/// The two runner-self-recovery decisions: which of this device's own leases a
 		/// boot should release (`staleOwnLeaseDecision`), and whether a thrown error is
 		/// a hand-back rather than a crash (`runnerErrorKind` / `runnerErrorWhy`).
